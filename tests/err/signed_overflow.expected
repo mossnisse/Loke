@@ -21,5 +21,26 @@ L0397
 L0397
 @26:49
 L0397
+@32:25
+unsigned overflow: the result 260 does not fit `u8`
+L0397
+@33:31
+the result -2 does not fit `u32`
+L0397
+@34:30
+the result 65536 does not fit `u16`
+L0397
+@35:22
+the result -1 does not fit `u8`
+L0397
+@36:39
+the result 256 does not fit `u8`
+L0356
+@42:21
+a shift count cannot be negative, found -1
+L0397
 core/simd/simd.loke
 !%!(
+L0397
+core/simd/simd.loke
+the result 300 does not fit `u8`

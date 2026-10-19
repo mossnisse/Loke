@@ -41,13 +41,13 @@ checked_index :: proc(values: []int) -> int {
 	return first;
 }
 
-// Nothing here can panic: unsigned arithmetic wraps, a constant nonzero
+// Nothing here can panic: wrapping arithmetic never does, a constant nonzero
 // divisor cannot fault, and dropping `xs` runs no `drop` hook.
 cannot_panic :: proc(flag: bool, count: uint, scale: f64) -> uint {
 	arena := mem.Arena.init();
 	xs: [dynamic]int via arena.allocator() = {};
 	defer drop(arena);
-	next := count * 3 + 1;
+	next := count *% 3 +% 1;
 	half := next / 2;
 	ratio := scale / 0.0;
 	if (flag && ratio > 1.0 || half == 0) {
@@ -58,8 +58,18 @@ cannot_panic :: proc(flag: bool, count: uint, scale: f64) -> uint {
 	return next;
 }
 
+unsigned_addition :: proc(count: uint) -> uint {
+	arena := mem.Arena.init();
+	xs: [dynamic]int via arena.allocator() = {};
+	defer drop(arena);
+	next := count + 1;
+	drop(xs);
+	return next;
+}
+
 main :: proc() {
 	through_call();
+	_ = unsigned_addition(1);
 	values := [1]int{1};
 	_ = signed_addition(1) + checked_index(values);
 	_ = runtime_divisor(2) + cannot_panic(true, 2, 1.0);

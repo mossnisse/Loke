@@ -17,6 +17,16 @@ main :: proc() {
 	c: i32 = -1;
 	fmt.println(int(c >> count));
 
+	// Unsigned arithmetic is checked as signed arithmetic is, and a wrapping
+	// operator is the plain instruction.
+	u: u32 = 7;
+	v: u32 = 2;
+	fmt.println(u - v, u *% v);
+
+	// A signed shift count is tested for a negative value first.
+	k := 3;
+	fmt.println(int(c << k));
+
 	// Short-circuit blocks with a phi.
 	p := true;
 	q := false;

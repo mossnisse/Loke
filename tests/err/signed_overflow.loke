@@ -3,10 +3,10 @@ package main;
 import "core:fmt";
 import "core:simd";
 
-// design.md "Integer overflow": a signed result that does not fit is an error
-// wherever it is computed at compile time, and a panic at runtime
-// (tests/trap/signed_overflow), signed SIMD lanes included. Unsigned arithmetic
-// is modular, and an untyped constant is exact.
+// design.md "Integer overflow": a result that does not fit its integer type is
+// an error wherever it is computed at compile time, and a panic at runtime
+// (tests/trap/signed_overflow, tests/trap/unsigned_overflow), SIMD lanes
+// included. `+%`, `-%`, and `*%` wrap, and an untyped constant is exact.
 
 SUM :: i32(2147483647) + 1;
 DIFFERENCE :: i16(-32768) - 1;
@@ -29,14 +29,31 @@ NEGATED_LANES :: negated_lanes();
 summed_lanes :: proc() -> i8 { return simd.reduce_add(Simd(i8, 4){100, 27, 1, -100}); }
 SUMMED_LANES :: summed_lanes();
 
+UNSIGNED_SUM :: u8(250) + u8(10);
+UNSIGNED_DIFFERENCE :: u32(3) - u32(5);
+UNSIGNED_PRODUCT :: u16(256) * 256;
+UNSIGNED_NEGATION :: -u8(1);
+UNSIGNED_LANES :: Simd(u8, 2){255, 0} + 1;
+
+unsigned_summed :: proc() -> u8 { return simd.reduce_add(Simd(u8, 4){200, 100, 0, 0}); }
+UNSIGNED_SUMMED :: unsigned_summed();
+
+// design.md "Arithmetic operators": a negative count panics at run time.
+NEGATIVE_SHIFT :: 1 << i32(-1);
+
 // None of these is an error.
-MODULAR :: u8(250) + u8(10);
+MODULAR :: u8(250) +% u8(10);
+MODULAR_DIFFERENCE :: u32(3) -% u32(5);
+SIGNED_WRAP :: i8(127) *% 2;
 REMAINDER :: i64(-9223372036854775807 - 1) % -1;
 EXACT :: 9223372036854775807 + 1 - 1;
-UNSIGNED_LANES :: Simd(u8, 2){255, 0} + 1;
+EXACT_WRAP :: 9223372036854775807 +% 1 - 1;
+WRAPPED_LANES :: Simd(u8, 2){255, 0} +% 1;
 
 main :: proc() {
 	fmt.println(SUM, DIFFERENCE, PRODUCT, NEGATION, QUOTIENT, EVALUATED);
 	fmt.println(LANES, NEGATED_LANES, SUMMED_LANES);
-	fmt.println(MODULAR, REMAINDER, int(EXACT), UNSIGNED_LANES);
+	fmt.println(UNSIGNED_SUM, UNSIGNED_DIFFERENCE, UNSIGNED_PRODUCT, UNSIGNED_NEGATION, UNSIGNED_LANES);
+	fmt.println(UNSIGNED_SUMMED, NEGATIVE_SHIFT);
+	fmt.println(MODULAR, MODULAR_DIFFERENCE, SIGNED_WRAP, REMAINDER, int(EXACT), int(EXACT_WRAP), WRAPPED_LANES);
 }

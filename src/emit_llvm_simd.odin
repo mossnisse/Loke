@@ -60,11 +60,10 @@ emit_simd_binary_values :: proc(
 	right := simd_operand(e, right_value, right_type, vector)
 	float := type_is_float(e.c, info.element)
 
-	if !float && integer_traps_overflow(e.c, info.element) {
+	if !float {
 		#partial switch op {
-		case .Plus:  return emit_simd_checked(e, "sadd", info, llvm, left, right)
-		case .Minus: return emit_simd_checked(e, "ssub", info, llvm, left, right)
-		case .Star:  return emit_simd_checked(e, "smul", info, llvm, left, right)
+		case .Plus, .Minus, .Star:
+			return emit_simd_checked(e, op, info, llvm, left, right)
 		}
 	}
 	mnemonic := ""
@@ -83,12 +82,15 @@ emit_simd_binary_values :: proc(
 		fmt.sbprintfln(&e.b, "  %s = xor %s %s, %s", complement, llvm, right, simd_all_ones(e, info))
 		right = complement
 		mnemonic = "and"
-	case .Plus:  mnemonic = float ? "fadd" : "add"
-	case .Minus: mnemonic = float ? "fsub" : "sub"
-	case .Star:  mnemonic = float ? "fmul" : "mul"
-	case .Amp:   mnemonic = "and"
-	case .Pipe:  mnemonic = "or"
-	case .Tilde: mnemonic = "xor"
+	case .Plus:        mnemonic = float ? "fadd" : "add"
+	case .Minus:       mnemonic = float ? "fsub" : "sub"
+	case .Star:        mnemonic = float ? "fmul" : "mul"
+	case .Plus_Wrap:   mnemonic = "add"
+	case .Minus_Wrap:  mnemonic = "sub"
+	case .Star_Wrap:   mnemonic = "mul"
+	case .Amp:         mnemonic = "and"
+	case .Pipe:        mnemonic = "or"
+	case .Tilde:       mnemonic = "xor"
 	}
 	if mnemonic == "" {
 		backend_fail(e, "an unhandled SIMD operator reached emission")
@@ -99,11 +101,13 @@ emit_simd_binary_values :: proc(
 	return out
 }
 
-// design.md "Lane-wise operators": a signed lane that overflows panics the whole
+// design.md "Lane-wise operators": a lane that overflows panics the whole
 // operation, as the scalar operator would. The vector `*.with.overflow`
 // intrinsics answer the wrapped lanes and which of them wrapped.
 @(private = "file")
-emit_simd_checked :: proc(e: ^Emitter, intrinsic: string, info: ^Type_Info, llvm, left, right: string) -> string {
+emit_simd_checked :: proc(e: ^Emitter, op: Token_Kind, info: ^Type_Info, llvm, left, right: string) -> string {
+	signed := type_signed(e.c, info.element)
+	intrinsic := checked_intrinsic(op, signed)
 	key := fmt.aprintf("llvm.%s.with.overflow.v%d%s", intrinsic, info.count, simd_lane_llvm_type(e, info))
 	pair_type := fmt.aprintf("{{ %s, <%d x i1> }}", llvm, info.count)
 	if key not_in e.simd_intrinsics {
@@ -113,7 +117,7 @@ emit_simd_checked :: proc(e: ^Emitter, intrinsic: string, info: ^Type_Info, llvm
 	pair := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = call %s @%s(%s %s, %s %s)", pair, pair_type, key, llvm, left, llvm, right)
 	overflowed := extract(e, pair_type, pair, 1)
-	panic_if(e, simd_any_lane(e, info, overflowed), "int.overflow", "signed integer overflow")
+	panic_if(e, simd_any_lane(e, info, overflowed), "int.overflow", overflow_message(signed))
 	return extract(e, pair_type, pair, 0)
 }
 
@@ -171,14 +175,20 @@ emit_simd_divrem :: proc(
 	return out
 }
 
-// A count at or beyond the width gives the scalar result: zero, or the sign
-// bit for an arithmetic right shift.
+// A negative count lane panics the whole operation, and a count at or beyond
+// the width gives the scalar result: zero, or the sign bit for an arithmetic
+// right shift.
 @(private = "file")
 emit_simd_shift :: proc(
 	e: ^Emitter, op: Token_Kind, vector: Type_Id, info: ^Type_Info, left, right: string,
 ) -> string {
 	llvm := llvm_type(e, vector)
 	bits := type_bits(e.c, info.element)
+	if type_signed(e.c, info.element) {
+		negative := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = icmp slt %s %s, zeroinitializer", negative, llvm, right)
+		panic_if(e, simd_any_lane(e, info, negative), "shift.negative", "negative shift count")
+	}
 	oversized := temp(e)
 	fmt.sbprintfln(
 		&e.b, "  %s = icmp uge %s %s, %s", oversized, llvm, right, simd_repeated(e, info, fmt.aprintf("%d", bits)),
@@ -217,7 +227,7 @@ emit_simd_unary :: proc(e: ^Emitter, v: ^Expr_Unary, as_type: Type_Id) -> string
 	} else if type_is_float(e.c, info.element) {
 		fmt.sbprintfln(&e.b, "  %s = fneg %s %s", out, llvm, operand)
 	} else {
-		return emit_simd_checked(e, "ssub", info, llvm, "zeroinitializer", operand)
+		return emit_simd_checked(e, .Minus, info, llvm, "zeroinitializer", operand)
 	}
 	return out
 }
@@ -330,8 +340,8 @@ emit_simd_reduce :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 	case .Any: name = "or"
 	case .All: name = "and"
 	}
-	if !float && (fold == .Add || fold == .Mul) && integer_traps_overflow(e.c, info.element) {
-		return emit_simd_checked_fold(e, fold == .Add ? "sadd" : "smul", lane, count, value)
+	if !float && (fold == .Add || fold == .Mul) {
+		return emit_simd_checked_fold(e, fold == .Add ? .Plus : .Star, signed, lane, count, value)
 	}
 	if fold == .Any || fold == .All {
 		folded := simd_call_reduce(e, name, lane, count, value, "")
@@ -347,16 +357,16 @@ emit_simd_reduce :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 	return simd_call_reduce(e, name, lane, count, value, start)
 }
 
-// A signed sum or product folds from lane 0, left to right, through the scalar
-// checked operator, so a partial result that does not fit panics as the same
-// loop over the lanes would.
+// An integer sum or product folds from lane 0, left to right, through the
+// scalar checked operator, so a partial result that does not fit panics as the
+// same loop over the lanes would.
 @(private = "file")
-emit_simd_checked_fold :: proc(e: ^Emitter, intrinsic, lane: string, count: int, vector: string) -> string {
+emit_simd_checked_fold :: proc(e: ^Emitter, op: Token_Kind, signed: bool, lane: string, count: int, vector: string) -> string {
 	result := ""
 	for index in 0 ..< count {
 		element := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = extractelement <%d x %s> %s, i32 %d", element, count, lane, vector, index)
-		result = index == 0 ? element : emit_checked_signed(e, intrinsic, lane, result, element)
+		result = index == 0 ? element : emit_checked_integer(e, op, signed, lane, result, element)
 	}
 	return result
 }

@@ -1,0 +1,53 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Integer overflow": `+%`, `-%`, and `*%` keep the low bits for
+// signed and unsigned integers alike, at compile time as at run time, lane by
+// lane in a vector, and through `delegate` for a distinct integer type.
+
+FNV_OFFSET :: u64(14695981039346656037);
+FNV_PRIME :: u64(1099511628211);
+
+fnv1a :: proc(text: string) -> u64 {
+	hash := FNV_OFFSET;
+	foreach (b in text.bytes()) {
+		hash ~= u64(b);
+		hash *%= FNV_PRIME;
+	}
+	return hash;
+}
+
+FOLDED_HASH :: fnv1a("loke");
+WRAPPED :: u8(250) +% 10;
+SIGNED :: i8(-128) -% 1;
+EXACT :: 18446744073709551615 +% 1; // unfixed constants stay exact
+
+Hash :: distinct u32;
+
+impl Hash {
+	delegate(+%, *%, ==);
+}
+
+main :: proc() {
+	fmt.println(fnv1a("loke") == FOLDED_HASH, FOLDED_HASH);
+	fmt.println(WRAPPED, SIGNED, u128(EXACT));
+
+	a: u8 = 200;
+	b: u8 = 100;
+	fmt.println(a +% b, b -% a, a *% b, i32(2147483647) +% 1, i64(-1) *% i64(-9223372036854775807 - 1));
+	a +%= 56;
+	b -%= 101;
+	fmt.println(a, b);
+
+	// A `+%` binds as `+` does and a `*%` as `*`.
+	fmt.println(u8(1) +% u8(16) *% u8(16), (u8(1) +% u8(16)) *% u8(16));
+
+	lanes: Simd(u8, 4) = {255, 0, 128, 7};
+	fmt.println(lanes +% 1, lanes -% 1, lanes *% 2);
+
+	h := Hash(0xFFFF_FFFF);
+	h = h +% Hash(2);
+	h *%= Hash(3);
+	fmt.println(u32(h), h == Hash(3));
+}

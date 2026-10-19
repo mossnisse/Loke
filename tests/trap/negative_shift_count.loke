@@ -1,0 +1,13 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Arithmetic operators": a signed shift count may be any value but a
+// negative one, which panics; a count beyond the width is defined. A SIMD count
+// lane follows the same rule.
+main :: proc() {
+	count := 70;
+	fmt.println(1 << count, -8 >> count);
+	count = -1;
+	fmt.println(1 << count);
+}

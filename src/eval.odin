@@ -870,8 +870,8 @@ eval_unary_value :: proc(ev: ^Evaluator, op: Token_Kind, site: Span, value: Cons
 		return Eval_Value{}, false
 	}
 	if folded.kind == .Integer || folded.kind == .Rune {
-		if op == .Minus && !signed_fits(ev.k.c, folded.integer, type, ev.alloc) {
-			report_signed_overflow(ev.k.c, site, folded.integer, type, ev.alloc)
+		if op == .Minus && !integer_fits(ev.k.c, folded.integer, type, ev.alloc) {
+			report_integer_overflow(ev.k.c, site, folded.integer, type, ev.alloc)
 			eval_fold_failed(ev)
 			return Eval_Value{}, false
 		}
@@ -982,8 +982,8 @@ eval_simd_unary :: proc(ev: ^Evaluator, v: ^Expr_Unary, operand: Eval_Value) -> 
 			return Eval_Value{}, false
 		}
 		if folded.kind == .Integer || folded.kind == .Rune {
-			if v.op == .Minus && !signed_fits(ev.k.c, folded.integer, info.element, ev.alloc) {
-				report_signed_overflow(ev.k.c, v.op_span, folded.integer, info.element, ev.alloc)
+			if v.op == .Minus && !integer_fits(ev.k.c, folded.integer, info.element, ev.alloc) {
+				report_integer_overflow(ev.k.c, v.op_span, folded.integer, info.element, ev.alloc)
 				eval_fold_failed(ev)
 				return Eval_Value{}, false
 			}

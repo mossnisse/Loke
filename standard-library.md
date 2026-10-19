@@ -1249,8 +1249,8 @@ validate UTF-8 before treating them as text.
 ordinary records. `design.md` "Type conversion" specifies `math.wrap(T, value)`,
 which keeps an integer's low bits, and `math.to(T, value)`, which returns
 `Option(T)`; `design.md` "Integer overflow" specifies `wrapping_add`,
-`wrapping_sub`, `wrapping_mul`, `checked_add`, `checked_sub`, and
-`checked_mul`.
+`wrapping_sub`, and `wrapping_mul`, the procedure forms of `+%`, `-%`, and
+`*%`, and `checked_add`, `checked_sub`, and `checked_mul`.
 
 For any `interfaces.Numeric(T)`, `Complex(T)` has the fields `real` and
 `imaginary`, and `Quaternion(T)` has `real`, `i`, `j`, and `k`. Both have
@@ -1628,7 +1628,7 @@ Duration.truncate(self, unit: Duration) -> Duration
 Duration.round(self, unit: Duration) -> Duration
 ```
 
-A `Duration` is exact, and arithmetic that overflows panics, as signed integer
+A `Duration` is exact, and arithmetic that overflows panics, as integer
 arithmetic does ([Integer overflow](design.md#integer-overflow)). There is no
 `DAY`: once a zone has daylight saving, a calendar day is not always 24 hours,
 so steps of days belong to `Date`. There is no `Duration / Duration` either:

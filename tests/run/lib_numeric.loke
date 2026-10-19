@@ -181,8 +181,6 @@ floating :: proc() {
 	conjugated_q := Q{real = 0.0, i = 0.0, j = 0.0, k = 0.0}.conjugate();
 	fmt.println(math.sign_bit(negated_q.real), math.sign_bit(negated_q.k),
 	            math.sign_bit(conjugated_q.i), math.sign_bit(conjugated_q.k));
-	// Unsigned wraps exactly as `T(0) - x` did, which is what made the change safe.
-	fmt.println(-math.Complex(u32){real = 1, imaginary = 2});
 
 	// A formatter is handed `options` so it can spell its components the way it
 	// was asked to. An integer instantiation is where a base is observable.

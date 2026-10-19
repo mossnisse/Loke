@@ -736,7 +736,7 @@ expr_cannot_panic :: proc(c: ^Compiler, e: Expr) -> bool {
 		case .Not, .Tilde:
 			return expr_cannot_panic(c, v.operand)
 		case .Minus:
-			return wraps_on_overflow(c, base.type) && expr_cannot_panic(c, v.operand)
+			return underlying_kind(c, base.type) == .Float && expr_cannot_panic(c, v.operand)
 		}
 	case ^Expr_Binary:
 		if v.resolution.kind != .Builtin_Operator || !expr_cannot_panic(c, v.lhs) || !expr_cannot_panic(c, v.rhs) {
@@ -744,10 +744,16 @@ expr_cannot_panic :: proc(c: ^Compiler, e: Expr) -> bool {
 		}
 		#partial switch v.op {
 		case .And_And, .Or_Or, .Eq_Eq, .Not_Eq, .Lt, .Lt_Eq, .Gt, .Gt_Eq,
-		     .Amp, .Amp_Tilde, .Pipe, .Tilde, .Shl, .Shr:
+		     .Amp, .Amp_Tilde, .Pipe, .Tilde, .Plus_Wrap, .Minus_Wrap, .Star_Wrap:
 			return true
+		case .Shl, .Shr:
+			// design.md "Arithmetic operators": only a negative count panics.
+			count := expr_base(v.rhs)
+			return !type_signed(c, count.type) || count.is_const
 		case .Plus, .Minus, .Star:
-			return wraps_on_overflow(c, base.type)
+			// design.md "Integer overflow": floating-point arithmetic never panics;
+			// integer arithmetic does when the result does not fit.
+			return underlying_kind(c, base.type) == .Float
 		case .Slash, .Percent:
 			// design.md "Integer operators": only an integer divisor of zero, or a
 			// signed `MIN / -1`, panics.
@@ -774,19 +780,6 @@ expr_cannot_panic_operand :: proc(c: ^Compiler, e: Expr) -> bool {
 		return v.resolution.kind == .Field && expr_cannot_panic_operand(c, v.operand)
 	case ^Expr_Postfix:
 		return v.op == .Caret && !v.boxed && expr_cannot_panic(c, v.operand)
-	}
-	return false
-}
-
-// design.md "Integer overflow": unsigned and floating-point arithmetic never
-// panics; signed and rune arithmetic does when the result does not fit.
-@(private = "file")
-wraps_on_overflow :: proc(c: ^Compiler, type: Type_Id) -> bool {
-	#partial switch underlying_kind(c, type) {
-	case .Float:
-		return true
-	case .Int:
-		return !type_signed(c, type)
 	}
 	return false
 }

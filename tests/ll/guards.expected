@@ -6,6 +6,11 @@ smul.with.overflow.i64
 icmp uge i64
 select i1
 ashr i32
+call { i32, i1 } @llvm.usub.with.overflow.i32(i32 %t*, i32 %t*)
+= mul i32 %t*, %t*
+icmp slt i64 %t*, 0
+shift.negative
+not call { i32, i1 } @llvm.umul.with.overflow.i32(
 sc.rhs
 phi i1
 bounds

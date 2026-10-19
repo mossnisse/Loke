@@ -1400,10 +1400,8 @@ emit_unary_op :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, operand: strin
 	case .Minus:
 		if type_is_float(e.c, type) {
 			fmt.sbprintfln(&e.b, "  %s = fneg %s %s", out, llvm, operand)
-		} else if integer_traps_overflow(e.c, type) {
-			return emit_checked_signed(e, "ssub", llvm, "0", operand)
 		} else {
-			fmt.sbprintfln(&e.b, "  %s = sub %s 0, %s", out, llvm, operand)
+			return emit_checked_integer(e, .Minus, integer_computes_signed(e.c, type), llvm, "0", operand)
 		}
 	case .Tilde:
 		fmt.sbprintfln(&e.b, "  %s = xor %s %s, -1", out, llvm, operand)
@@ -1479,13 +1477,16 @@ Arith_Mnemonic :: struct {
 @(private = "file")
 arith_mnemonic :: proc(op: Token_Kind) -> Arith_Mnemonic {
 	#partial switch op {
-	case .Plus:  return {"add", "fadd"}
-	case .Minus: return {"sub", "fsub"}
-	case .Star:  return {"mul", "fmul"}
-	case .Slash: return {"",    "fdiv"}
-	case .Amp:   return {"and", ""}
-	case .Pipe:  return {"or",  ""}
-	case .Tilde: return {"xor", ""}
+	case .Plus:       return {"add", "fadd"}
+	case .Minus:      return {"sub", "fsub"}
+	case .Star:       return {"mul", "fmul"}
+	case .Plus_Wrap:  return {"add", ""}
+	case .Minus_Wrap: return {"sub", ""}
+	case .Star_Wrap:  return {"mul", ""}
+	case .Slash:      return {"",    "fdiv"}
+	case .Amp:        return {"and", ""}
+	case .Pipe:       return {"or",  ""}
+	case .Tilde:      return {"xor", ""}
 	}
 	return {}
 }
@@ -1499,8 +1500,10 @@ emit_binary_op :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, rhs_type: Typ
 		return out
 	}
 
-	signed := integer_traps_overflow(e.c, type)
+	signed := integer_computes_signed(e.c, type)
 	#partial switch op {
+	case .Plus, .Minus, .Star:
+		return emit_checked_integer(e, op, signed, llvm, lhs, rhs)
 	case .Slash, .Percent:
 		return emit_divrem(e, op, type, signed, lhs, rhs)
 	case .Shl, .Shr:
@@ -1512,21 +1515,16 @@ emit_binary_op :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, rhs_type: Typ
 		fmt.sbprintfln(&e.b, "  %s = and %s %s, %s", out, llvm, lhs, complement)
 		return out
 	}
-	if signed {
-		#partial switch op {
-		case .Plus:  return emit_checked_signed(e, "sadd", llvm, lhs, rhs)
-		case .Minus: return emit_checked_signed(e, "ssub", llvm, lhs, rhs)
-		case .Star:  return emit_checked_signed(e, "smul", llvm, lhs, rhs)
-		}
-	}
 	out := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = %s %s %s, %s", out, arith_mnemonic(op).integer, llvm, lhs, rhs)
 	return out
 }
 
-// design.md "Integer overflow": a signed result that does not fit panics. The
-// `*.with.overflow` intrinsics answer the wrapped value and whether it wrapped.
-emit_checked_signed :: proc(e: ^Emitter, intrinsic, llvm, lhs, rhs: string) -> string {
+// design.md "Integer overflow": a `+`, `-`, or `*` result that does not fit its
+// integer type panics. The `*.with.overflow` intrinsics answer the wrapped value
+// and whether it wrapped.
+emit_checked_integer :: proc(e: ^Emitter, op: Token_Kind, signed: bool, llvm, lhs, rhs: string) -> string {
+	intrinsic := checked_intrinsic(op, signed)
 	pair_type := strings.concatenate({"{ ", llvm, ", i1 }"})
 	pair := temp(e)
 	fmt.sbprintfln(
@@ -1534,8 +1532,21 @@ emit_checked_signed :: proc(e: ^Emitter, intrinsic, llvm, lhs, rhs: string) -> s
 		pair, pair_type, intrinsic, llvm, llvm, lhs, llvm, rhs,
 	)
 	overflowed := extract(e, pair_type, pair, 1)
-	panic_if(e, overflowed, "int.overflow", "signed integer overflow")
+	panic_if(e, overflowed, "int.overflow", overflow_message(signed))
 	return extract(e, pair_type, pair, 0)
+}
+
+// The `llvm.*.with.overflow` family for a checked `+`, `-`, or `*`.
+checked_intrinsic :: proc(op: Token_Kind, signed: bool) -> string {
+	#partial switch op {
+	case .Plus:  return signed ? "sadd" : "uadd"
+	case .Minus: return signed ? "ssub" : "usub"
+	}
+	return signed ? "smul" : "umul"
+}
+
+overflow_message :: proc(signed: bool) -> string {
+	return signed ? "signed integer overflow" : "unsigned integer overflow"
 }
 
 // Zero takes the trap seam. `MIN / -1` does not fit, so it panics as any signed
@@ -1577,14 +1588,21 @@ emit_divrem :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, signed: bool, lh
 	return out
 }
 
-// design.md: a shift count at or beyond the width is defined (zero, or the sign
-// bit for an arithmetic right shift), so none reaches an LLVM shift as poison.
+// design.md "Arithmetic operators": a negative count panics, and a count at or
+// beyond the width is defined (zero, or the sign bit for an arithmetic right
+// shift), so none reaches an LLVM shift as poison.
 @(private = "file")
 emit_shift :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, signed: bool, count_type: Type_Id, lhs, rhs: string) -> string {
 	llvm := llvm_type(e, type)
 	bits := type_bits(e.c, type)
 	count_llvm := llvm_type(e, count_type)
 	count_bits := type_bits(e.c, count_type)
+
+	if type_signed(e.c, count_type) {
+		negative := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = icmp slt %s %s, 0", negative, count_llvm, rhs)
+		panic_if(e, negative, "shift.negative", "negative shift count")
+	}
 
 	// Compared in the count's own width, before truncation could hide its size.
 	oversized := temp(e)

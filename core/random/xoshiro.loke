@@ -29,7 +29,7 @@ impl Xoshiro256 {
 		counter := seed;
 		words: [4]u64 = {};
 		foreach (i in 0 ..< 4) {
-			counter += SPLITMIX_GAMMA;
+			counter +%= SPLITMIX_GAMMA;
 			words[i] = mix64(counter);
 		}
 		return {words};
@@ -58,7 +58,7 @@ impl Xoshiro256 {
 		if ((self.words[0] | self.words[1] | self.words[2] | self.words[3]) == 0) {
 			self.words = entropy_words();
 		}
-		result := rotate_left(self.words[0] + self.words[3], 23) + self.words[0];
+		result := rotate_left(self.words[0] +% self.words[3], 23) +% self.words[0];
 		shifted := self.words[1] << 17;
 		self.words[2] ~= self.words[0];
 		self.words[3] ~= self.words[1];
@@ -129,8 +129,8 @@ impl Xoshiro256 {
 @(private)
 mix64 :: proc(value: u64) -> u64 {
 	z := value;
-	z = (z ~ (z >> 30)) * 0xbf58476d1ce4e5b9;
-	z = (z ~ (z >> 27)) * 0x94d049bb133111eb;
+	z = (z ~ (z >> 30)) *% 0xbf58476d1ce4e5b9;
+	z = (z ~ (z >> 27)) *% 0x94d049bb133111eb;
 	return z ~ (z >> 31);
 }
 

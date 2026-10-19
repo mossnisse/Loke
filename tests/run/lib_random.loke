@@ -205,7 +205,7 @@ ranges :: proc() {
 	whole_a := random.Xoshiro256.from_seed(6);
 	whole_b := random.Xoshiro256.from_seed(6);
 	fmt.println("whole u64", random.in_range(inout whole_a, u64(0) ..= 0xFFFF_FFFF_FFFF_FFFF) == whole_b.next_u64());
-	fmt.println("whole i64", random.in_range(inout whole_a, i64(-9223372036854775808) ..= i64(9223372036854775807)) == math.wrap(i64, whole_b.next_u64() + (1 << 63)));
+	fmt.println("whole i64", random.in_range(inout whole_a, i64(-9223372036854775808) ..= i64(9223372036854775807)) == math.wrap(i64, whole_b.next_u64() +% (1 << 63)));
 }
 
 scripted :: proc() {

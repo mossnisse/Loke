@@ -184,10 +184,10 @@
       "patterns": [
         { "name": "keyword.operator.arrow.loke", "match": "->" },
         { "name": "keyword.operator.range.loke", "match": "\\.\\.[=<]?" },
-        { "name": "keyword.operator.assignment.loke", "match": "(?:&~|<<|>>|[-+*/%|~&])?=(?!=)" },
+        { "name": "keyword.operator.assignment.loke", "match": "(?:&~|<<|>>|[-+*]%|[-+*/%|~&])?=(?!=)" },
         { "name": "keyword.operator.comparison.loke", "match": "==|!=|<=|>=|<|>" },
         { "name": "keyword.operator.logical.loke", "match": "&&|\\|\\||!" },
-        { "name": "keyword.operator.loke", "match": "&~|<<|>>|[-+*/%&|~^?$]" },
+        { "name": "keyword.operator.loke", "match": "&~|<<|>>|[-+*]%|[-+*/%&|~^?$]" },
         { "name": "keyword.operator.declaration.loke", "match": ":" }
       ]
     },

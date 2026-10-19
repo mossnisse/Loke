@@ -597,7 +597,7 @@ read design.md and grammar.md in full, checked each idea against comments.md
 and the questions above, and confirmed every behavior it cites with the
 shipped compiler at `1ba3c84`. Backward compatibility is not a constraint; a
 proposal that reverses a recorded decision says so. The proposals adopted since
-are defined in design.md, with their reasoning in comments.md; two remain.
+are defined in design.md, with their reasoning in comments.md; one remains.
 
 The structural concern is that more checking depends on inferred,
 whole-program facts than a library's signatures show; see
@@ -608,24 +608,7 @@ whole-program facts than a library's signatures show; see
 
 | Priority | Proposal | Main benefit |
 | --- | --- | --- |
-| Later | Checked unsigned arithmetic | Wraps become panics; reverses a decision |
 | Later | No public mutable globals | Effects stop crossing packages invisibly |
-
-### Checked unsigned arithmetic
-
-Signed `+`, `-`, and `*` panic on overflow; unsigned ones wrap. The compiler
-prints `4294967294` for `u32(3) - u32(5)` and `240` for `u8(' ') - u8('0')`,
-and `1 << k` is `0` for `k := -1`. Lengths are `int`, so unsigned values appear
-in byte, `u32`, and `u64` code — parsers, codecs, bindings — which is where an
-unnoticed wrap does harm. [Signed overflow panics](comments.md#signed-overflow-panics)
-keeps unsigned arithmetic modular for hashing and bit manipulation, which
-already have `math.wrapping_*` and could take Zig's `+%`, `-%`, and `*%` if the
-calls are heavy; the FNV hash in
-[Compile-time procedure evaluation](design.md#compile-time-procedure-evaluation)
-would need one. Proposal: check unsigned `+`, `-`, and `*` as signed ones are,
-keep shifts and atomics modular, and panic on a negative signed shift count,
-which a constant count already rejects. This reverses a recorded decision and
-costs a check wherever the optimizer cannot discharge it.
 
 ### No public mutable globals
 

@@ -9,7 +9,7 @@ COUNT   :: 2_000_000;
 BUCKETS :: 50_000;
 WORDS   :: 300_000;
 
-// xorshift64: unsigned arithmetic wraps, so the generator needs no masking.
+// xorshift64: `<<` keeps the low bits, so the generator needs no masking.
 next :: proc(state: inout u64) -> u64 {
 	state ~= state << 13;
 	state ~= state >> 7;

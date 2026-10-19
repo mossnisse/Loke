@@ -1,0 +1,10 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Lane-wise operators": a negative count lane panics the whole shift.
+main :: proc() {
+	lanes: Simd(i32, 4) = {1, 2, 3, 4};
+	fmt.println(lanes << Simd(i32, 4){0, 1, 40, 2});
+	fmt.println(lanes << Simd(i32, 4){0, 1, -1, 2});
+}

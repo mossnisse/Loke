@@ -57,11 +57,12 @@ main :: proc() {
 	// would have been for.
 	fmt.println((a > b) & (b > 3), (a > b) | (b > 3), ~(a > b));
 
-	// Signed and unsigned differ in both shift and comparison.
+	// Signed and unsigned differ in both shift and comparison; an unsigned lane
+	// wraps only through `-%` (tests/trap/simd_unsigned_overflow).
 	negative: Simd(i32, 4) = {-8, -1, 1, 8};
 	fmt.println(negative >> 1, negative >> 40, negative < 0);
 	unsigned: Simd(u32, 4) = {1, 2, 3, 4};
-	fmt.println(unsigned - 2, unsigned >> 1, unsigned > 2);
+	fmt.println(unsigned -% 2, unsigned >> 1, unsigned > 2);
 
 	// "`MIN % -1` is 0", lane by lane beside ordinary ones; `MIN / -1` panics
 	// (tests/trap/simd_signed_overflow).
@@ -237,11 +238,11 @@ compound_lanes :: proc() -> Simd(i32, 4) {
 FOLDED_COMPOUND :: compound_lanes();
 
 // Every `core:simd` procedure, over the cases that differ between folds: a
-// distinct lane, wrapping integer lanes, a signed minimum, an all-`-0.0` sum,
+// distinct lane, unsigned integer lanes, a signed minimum, an all-`-0.0` sum,
 // `f16` lanes, an order-dependent sum, and NaN lanes a minimum skips.
 library_folds :: proc() -> [16]f64 {
 	d: Simd(Lane, 4) = {Lane(1.5), Lane(-2.0), Lane(4.0), Lane(0.5)};
-	w: Simd(u8, 4) = {200, 3, 100, 1};
+	w: Simd(u8, 4) = {20, 3, 4, 1};
 	s: Simd(i8, 4) = {-100, 3, 100, -1};
 	z: Simd(f64, 2) = {-0.0, -0.0};
 	h: Simd(f16, 4) = {f16(1.5), f16(2.0), f16(-3.0), f16(0.25)};

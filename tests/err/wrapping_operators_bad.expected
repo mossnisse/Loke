@@ -1,0 +1,15 @@
+L0318
+@8:13
+`+%` does not apply to `rune`
+L0318
+@10:12
+`*%` does not apply to `f64`
+L0318
+@12:11
+`-%` does not apply to `bool`
+L0686
+@14:12
+`+%` does not apply to `f32` lanes
+L0318
+@15:8
+`+%` does not apply to `f64`

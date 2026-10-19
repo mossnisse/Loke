@@ -31,7 +31,7 @@ impl Pcg64 {
 		counter := seed;
 		words: [4]u64 = {};
 		foreach (i in 0 ..< 4) {
-			counter += SPLITMIX_GAMMA;
+			counter +%= SPLITMIX_GAMMA;
 			words[i] = mix64(counter);
 		}
 		return pcg_from_words(words);
@@ -66,10 +66,10 @@ impl Pcg64 {
 		high := math.wrap(u64, self.lcg >> 64);
 		low := math.wrap(u64, self.lcg) | 1;
 		high ~= high >> 32;
-		high *= PCG_CHEAP_MULTIPLIER;
+		high *%= PCG_CHEAP_MULTIPLIER;
 		high ~= high >> 48;
-		high *= low;
-		self.lcg = self.lcg * u128(PCG_CHEAP_MULTIPLIER) + self.increment;
+		high *%= low;
+		self.lcg = self.lcg *% u128(PCG_CHEAP_MULTIPLIER) +% self.increment;
 		return high;
 	}
 
@@ -87,13 +87,13 @@ impl Pcg64 {
 		total_addend := u128(0);
 		for (; remaining > 0; remaining >>= 1) {
 			if ((remaining & 1) != 0) {
-				total_multiplier *= multiplier;
-				total_addend = total_addend*multiplier + addend;
+				total_multiplier *%= multiplier;
+				total_addend = total_addend *% multiplier +% addend;
 			}
-			addend = (multiplier + 1)*addend;
-			multiplier *= multiplier;
+			addend = (multiplier +% 1) *% addend;
+			multiplier *%= multiplier;
 		}
-		self.lcg = total_multiplier*self.lcg + total_addend;
+		self.lcg = total_multiplier *% self.lcg +% total_addend;
 	}
 
 	// A new generator for an independent stream: four draws from this one,
@@ -117,8 +117,8 @@ pcg_from_words :: proc(words: [4]u64) -> Pcg64 {
 	stream := (u128(words[2]) << 64) | u128(words[3]);
 	increment := (stream << 1) | 1;
 	position := increment;
-	position += initial;
-	position = position * u128(PCG_CHEAP_MULTIPLIER) + increment;
+	position +%= initial;
+	position = position *% u128(PCG_CHEAP_MULTIPLIER) +% increment;
 	return {position, increment};
 }
 

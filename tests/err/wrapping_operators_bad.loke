@@ -1,0 +1,16 @@
+package main;
+
+// design.md "Integer overflow": `+%`, `-%`, and `*%` apply to integers and
+// integer lanes only. A rune, a float, a `bool`, and a float vector have no
+// wrapping arithmetic.
+main :: proc() {
+	letter := 'a';
+	_ = letter +% 1;
+	ratio := 1.5;
+	_ = ratio *% 2.0;
+	flag := true;
+	_ = flag -% false;
+	lanes: Simd(f32, 4) = {1, 2, 3, 4};
+	_ = lanes +% lanes;
+	ratio +%= 1.0;
+}

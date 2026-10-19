@@ -192,76 +192,51 @@ to :: proc($To: type, value: $From) -> Option(To)
 
 // --------------------------------------------- integer arithmetic policies --
 //
-// Signed `+`, `-`, and `*` panic on overflow (design.md "Integer overflow").
-// The `wrapping_` forms keep the low bits instead, as unsigned arithmetic
-// always does, and the `checked_` forms answer `.none` where the operator would
-// panic. Unsigned operands are accepted too, so generic code needs no split.
-//
-// The low bits of a sum, difference, or product depend only on the low bits of
-// its operands, so the wrapping forms compute in `u128`, which holds every
-// integer's bits, and wrap back. The optimizer narrows the arithmetic again.
-//
-// Signed SIMD lanes panic on overflow too (design.md "Lane-wise operators"), so
-// the wrapping forms also take two vectors of integer lanes. A lane computes in
-// the unsigned type of its own width: `u128` is not a lane type, and a wider
-// one could exceed a vector's 64 bytes. The conversions change no bits, so the
-// operation is the plain vector instruction.
+// `+`, `-`, and `*` panic on overflow (design.md "Integer overflow"). The
+// `wrapping_` forms keep the low bits instead, as `+%`, `-%`, and `*%` do, for
+// generic code and procedure values, and the `checked_` forms answer `.none`
+// where the operator would panic. SIMD lanes follow the scalar rule (design.md
+// "Lane-wise operators"), so the wrapping forms also take two vectors of integer
+// lanes.
 
 wrapping_add :: proc{wrapping_add_integer, wrapping_add_lanes};
 wrapping_sub :: proc{wrapping_sub_integer, wrapping_sub_lanes};
 wrapping_mul :: proc{wrapping_mul_integer, wrapping_mul_lanes};
 
 wrapping_add_integer :: proc(a: $T, b: T) -> T where interfaces.Integral(T) {
-	return wrap(T, wrap(u128, a) + wrap(u128, b));
+	return a +% b;
 }
 
 wrapping_sub_integer :: proc(a: $T, b: T) -> T where interfaces.Integral(T) {
-	return wrap(T, wrap(u128, a) - wrap(u128, b));
+	return a -% b;
 }
 
 wrapping_mul_integer :: proc(a: $T, b: T) -> T where interfaces.Integral(T) {
-	return wrap(T, wrap(u128, a) * wrap(u128, b));
+	return a *% b;
 }
 
 wrapping_add_lanes :: proc(a: Simd($T, $N), b: Simd(T, N)) -> Simd(T, N) where interfaces.Integral(T) {
-	U :: Unsigned_Lane(T);
-	return wrap(Simd(T, N), wrap(Simd(U, N), a) + wrap(Simd(U, N), b));
+	return a +% b;
 }
 
 wrapping_sub_lanes :: proc(a: Simd($T, $N), b: Simd(T, N)) -> Simd(T, N) where interfaces.Integral(T) {
-	U :: Unsigned_Lane(T);
-	return wrap(Simd(T, N), wrap(Simd(U, N), a) - wrap(Simd(U, N), b));
+	return a -% b;
 }
 
 wrapping_mul_lanes :: proc(a: Simd($T, $N), b: Simd(T, N)) -> Simd(T, N) where interfaces.Integral(T) {
-	U :: Unsigned_Lane(T);
-	return wrap(Simd(T, N), wrap(Simd(U, N), a) * wrap(Simd(U, N), b));
-}
-
-// The unsigned integer type of `T`'s width.
-@(private)
-Unsigned_Lane :: proc($T: type) -> type {
-	when (size_of(T) == 1) {
-		return u8;
-	} else when (size_of(T) == 2) {
-		return u16;
-	} else when (size_of(T) == 4) {
-		return u32;
-	} else {
-		return u64;
-	}
+	return a *% b;
 }
 
 // An overflowing sum wraps past the end that `b`'s sign points to, so it lands
 // on the wrong side of `a`.
 checked_add :: proc(a: $T, b: T) -> Option(T) where interfaces.Integral(T), interfaces.Ordered(T) {
-	sum := wrapping_add(a, b);
+	sum := a +% b;
 	if ((b < T(0)) != (sum < a)) { return .none; }
 	return sum;
 }
 
 checked_sub :: proc(a: $T, b: T) -> Option(T) where interfaces.Integral(T), interfaces.Ordered(T) {
-	difference := wrapping_sub(a, b);
+	difference := a -% b;
 	if ((b < T(0)) != (a < difference)) { return .none; }
 	return difference;
 }
@@ -269,10 +244,12 @@ checked_sub :: proc(a: $T, b: T) -> Option(T) where interfaces.Integral(T), inte
 // A product overflowed exactly when dividing it by `a` does not give back `b`.
 // For a signed `a` of -1 that division could itself overflow, at the minimum,
 // the one value whose negation does not fit — and there the product is `b`.
+// `a +% 1` names -1 without the constant `0 - 1`, which an unsigned `T` cannot
+// hold.
 checked_mul :: proc(a: $T, b: T) -> Option(T) where interfaces.Integral(T), interfaces.Ordered(T) {
-	product := wrapping_mul(a, b);
+	product := a *% b;
 	if (a == T(0)) { return product; }
-	if (a < T(0) && a == T(0) - T(1)) {
+	if (a < T(0) && a +% T(1) == T(0)) {
 		if (b != T(0) && product == b) { return .none; }
 		return product;
 	}

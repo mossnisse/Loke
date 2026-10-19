@@ -3764,6 +3764,8 @@ compound_applies :: proc(c: ^Compiler, op: Token_Kind, type: Type_Id) -> bool {
 	#partial switch op {
 	case .Plus, .Minus, .Star, .Slash:
 		return type_is_numeric(c, type)
+	case .Plus_Wrap, .Minus_Wrap, .Star_Wrap:
+		return type_is_integer(c, type)
 	case .Percent, .Pipe, .Tilde, .Amp, .Amp_Tilde, .Shl, .Shr:
 		return type_is_integer(c, type) || type_is_rune(c, type)
 	}

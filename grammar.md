@@ -99,15 +99,16 @@ receiver members, `x.len()` and `x.cap()`, not built-in procedures.
 ## Operators and punctuation
 
 ```
-+    -    *    /    %    &    &~   |    ~    <<   >>
++    -    *    /    %    &    &~   |    ~    <<   >>   +%   -%   *%
 &&   ||   !    ==   !=   <    <=   >    >=
-=    +=   -=   *=   /=   %=   |=   ~=   &=   &~=  <<=  >>=
+=    +=   -=   *=   /=   %=   |=   ~=   &=   &~=  <<=  >>=  +%=  -%=  *%=
 :    ;    ,    .    ..   ..=  ..<  ->   ---  ?    $    ^    @
 (    )    [    ]    {    }
 ```
 
 The longest match wins, so `&~=` lexes as one token and `..=` never lexes as
-`..` followed by `=`.
+`..` followed by `=`. `a -%b` is `a` `-%` `b`: no prefix `%` exists for the
+shorter reading to mean.
 
 `::` and `:=` are **token pairs**, not tokens: `x :: 1` is `x` `:` `:` `1`, and
 `x := 1` is `x` `:` `=` `1`. This is what makes `x: int = 1`, `x: = 1`, and
@@ -421,11 +422,11 @@ Hook_Definition  = "hook" "(" Hook_Role ")" Proc_Definition
 Hook_Declaration = "hook" "(" Hook_Role ")" Proc_Declaration
 Hook_Role        = "convert" | "copy" | "drop"
 
-Operator_Symbol = "+" | "-" | "*" | "/" | "%"
+Operator_Symbol = "+" | "-" | "*" | "/" | "%" | "+%" | "-%" | "*%"
                 | "|" | "~" | "&" | "&~" | "<<" | ">>"
                 | "==" | "!=" | "<" | "<=" | ">" | ">=" | "!"
                 | "in"
-                | "+=" | "-=" | "*=" | "/=" | "%="
+                | "+=" | "-=" | "*=" | "/=" | "%=" | "+%=" | "-%=" | "*%="
                 | "|=" | "~=" | "&=" | "&~=" | "<<=" | ">>="
                 | "[" "]" | "[" "]" "=" | "[" ":" "]"
 
@@ -500,7 +501,7 @@ Assignment   = Expression_List "=" Expression_List       // destructures when
                                                          // the left has 2+ and
                                                          // the right has 1
              | Expression Compound_Operator Expression
-Compound_Operator = "+=" | "-=" | "*=" | "/=" | "%="
+Compound_Operator = "+=" | "-=" | "*=" | "/=" | "%=" | "+%=" | "-%=" | "*%="
                   | "|=" | "~=" | "&=" | "&~=" | "<<=" | ">>="
 
 Expression_List = Expression ("," Expression)*
@@ -631,9 +632,9 @@ Level_2      = Level_3 ("||" Level_3)*                                          
 Level_3      = Level_4 ("&&" Level_4)*                                          // 3
 Level_4      = Level_5 (("==" | "!=" | "<" | ">" | "<=" | ">=" | "in") Level_5)? // 4
 Level_5      = Level_6 (("..=" | "..<") Level_6)?                               // 5
-Level_6      = Level_7 (("+" | "-" | "|" | "~") Level_7)*                       // 6
+Level_6      = Level_7 (("+" | "-" | "+%" | "-%" | "|" | "~") Level_7)*         // 6
 Level_7      = Unary_Expression
-               (("*" | "/" | "%" | "&" | "&~" | "<<" | ">>") Unary_Expression)*  // 7
+               (("*" | "*%" | "/" | "%" | "&" | "&~" | "<<" | ">>") Unary_Expression)*  // 7
 
 Unary_Expression = ("+" | "-" | "!" | "~" | "&" "mut"?) Unary_Expression
                  | Postfix_Expression

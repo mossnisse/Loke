@@ -13,7 +13,7 @@ belong in [standard-library.md](standard-library.md); release history is in
 | Procedures and callbacks | [Methods](#methods-interfaces-and-operator-overloading), [captures](#capture-literals), [callable views](#borrowed-callable-views) |
 | Compilation and configuration | [Compile time](#one-language-at-compile-time), [providers](#build-selected-services-and-explicit-runtime-state) |
 | Simpler language surface | [Removed or narrowed features](#removed-or-narrowed-features) |
-| Values and operations | [Overflow](#signed-overflow-panics), [slicing](#mutable-slicing-is-written-mut-alohi), [text](#slicing-text-keeps-its-panic) |
+| Values and operations | [Overflow](#integer-overflow-panics), [slicing](#mutable-slicing-is-written-mut-alohi), [text](#slicing-text-keeps-its-panic) |
 | Syntax and layout | [Syntax choices](#changed-syntax), [formatter](#formatting) |
 | Library and compiler decisions | [Library APIs](#standard-library-api-choices), [compiler audit](#compiler-architecture-audit-2026-09-28) |
 
@@ -1031,16 +1031,41 @@ Payloadless union variants use bare names. A type name cannot accidentally becom
 a payloadless variant, so Odin-style `union { int, string }` is diagnosed instead
 of silently changing meaning. The older `name:` spelling remains accepted.
 
-### Signed overflow panics
+### Integer overflow panics
 
-Signed arithmetic panics when the mathematical result cannot fit. This catches
-bad sizes and bounds while keeping behavior independent of optimization level.
-The cost is an overflow check where the compiler cannot prove the range.
+Integer `+`, `-`, and `*` panic when the mathematical result cannot fit, signed
+and unsigned alike. This catches bad sizes and bounds while keeping behavior
+independent of optimization level. The cost is an overflow check where the
+compiler cannot prove the range; for unsigned arithmetic it is one branch on the
+carry flag.
 
-Unsigned arithmetic stays modular for hashing and bit manipulation. Named
-`math.wrapping_*` operations request signed wrapping, and `checked_*` operations
-return an `Option`. Shifts remain bit operations and atomic arithmetic keeps its
-hardware read-modify-write semantics. See [Integer overflow](design.md#integer-overflow).
+Unsigned arithmetic was once modular, as in C, Go, and Odin. Lengths are `int`,
+so unsigned values appear mostly in byte, `u32`, and `u64` code: parsers,
+codecs, and bindings. There an unnoticed wrap does harm: `u32(3) - u32(5)` is
+4294967294, which converts to `int` without complaint and then sizes an
+allocation or bounds a loop. A length that goes below zero is the same bug as a
+signed sum that goes past its maximum, and the choice of a type should not decide
+whether it is caught. Swift checks both, and so does Zig in its safe modes;
+Rust checks both in debug builds only, which makes behavior depend on the build.
+
+Arithmetic that is modular by design — hashing, checksums, random number
+generators, multi-word carries — asks for it with `+%`, `-%`, and `*%`, Zig's
+spelling. Operators rather than only `math.wrapping_*` calls, because such code
+is chains of wrapping steps and must stay readable beside the reference it
+implements: `x *% PRIME +% c`, not nested calls. `math.wrapping_*` remains for
+generic code and procedure values, and `checked_*` returns an `Option`. The
+wrapping operators are integer-only: a rune that wraps is not a character, and a
+float has no low bits to keep.
+
+A wrapping operator also replaces the idioms that relied on unsigned wrap.
+`c - '0' < 10`, a digit test in one comparison, panics for a byte below `'0'`;
+it is written `c >= '0' && c <= '9'`, or `c -% '0' < 10` where the trick is
+wanted. Generic code over `interfaces.Integral` cannot write the constant
+`T(0) - T(1)` for an unsigned `T`, even in a branch that never runs for one,
+because the fold is checked; `a +% T(1) == T(0)` tests for -1 instead.
+
+Shifts remain bit operations and atomic arithmetic keeps its hardware
+read-modify-write semantics. See [Integer overflow](design.md#integer-overflow).
 
 ### Integer conversions keep the value
 
@@ -1052,19 +1077,27 @@ make a refactor from constant to variable change behavior silently.
 Those explicit operations also make wrapping arithmetic possible without
 relying on lossy ordinary casts.
 
-### Signed SIMD lanes follow the scalar rule
+### SIMD lanes follow the scalar rule
 
 Replacing a scalar kernel with SIMD should not change overflow behavior.
-Signed vector arithmetic therefore checks lanes and panics if any overflows;
-wrapping operations remain available by name. Reductions fold through the scalar
-checked operation so they agree with the loop they replace. This costs checks
-but preserves the numerical contract across optimization strategies.
+Integer vector arithmetic therefore checks lanes and panics if any overflows;
+`+%`, `-%`, and `*%` wrap lane by lane. Byte-lane image and codec kernels that
+rely on wrap say so with them rather than through an exemption for unsigned
+lanes. Reductions fold through the scalar checked operation so they agree with
+the loop they replace. This costs checks but preserves the numerical contract
+across optimization strategies.
 
 ### Signed shifts stay bit operations
 
 Shifts build masks and pack representations. Bits shifted out are discarded,
-including the sign bit, and every count has a defined result. Treating a shift
-as checked multiplication would reject useful expressions such as `i64(1) << 63`.
+including the sign bit, and every non-negative count has a defined result.
+Treating a shift as checked multiplication would reject useful expressions such
+as `i64(1) << 63`.
+
+A negative signed count panics. Reading it as unsigned made `1 << k` for
+`k := -1` quietly zero, which is never what a negative count meant; Go panics
+there too. A constant negative count was already an error, so the run-time rule
+only makes a variable agree with a constant.
 
 Signed `x << n` equals multiplication by a power of two only when that product
 fits. Explicitly separating bit operations from checked arithmetic keeps both

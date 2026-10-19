@@ -90,7 +90,7 @@ hash_name :: proc(name: string_view) -> int {
 // are walkable while evaluation runs.
 fnv1a :: proc(text: string_view) -> u64 {
 	hash: u64 = 14695981039346656037;
-	foreach (b in text.bytes()) { hash = (hash ~ u64(b)) * 1099511628211; }
+	foreach (b in text.bytes()) { hash = (hash ~ u64(b)) *% 1099511628211; }
 	return hash;
 }
 widths :: proc(text: string_view) -> int {

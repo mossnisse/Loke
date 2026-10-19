@@ -287,11 +287,11 @@ fold_arithmetic :: proc(
 	x, y := a.integer, b.integer
 	result: Big_Int
 	#partial switch op {
-	case .Plus:
+	case .Plus, .Plus_Wrap:
 		result = bi_add(storage, x, y)
-	case .Minus:
+	case .Minus, .Minus_Wrap:
 		result = bi_sub(storage, x, y)
-	case .Star:
+	case .Star, .Star_Wrap:
 		result = bi_mul(storage, x, y)
 	case .Slash:
 		result = bi_quo(storage, x, y)
@@ -307,7 +307,12 @@ fold_arithmetic :: proc(
 		result = bi_and_not(storage, x, y)
 	case .Shl, .Shr:
 		// design.md "Integer operators": a shift saturates, so a larger count folds
-		// as the limit. Only an untyped `<<` grows, up to a storage cap.
+		// as the limit. Only an untyped `<<` grows, up to a storage cap. A negative
+		// count, which only a signed type holds, panics at run time.
+		if bi_sign(y) < 0 {
+			errorf(c, op_span, "L0356", "a shift count cannot be negative, found %s", bi_text(storage, y))
+			return Const_Value{}, false
+		}
 		untyped := type_is_untyped(c, type)
 		limit := u64(bi_magnitude_bits(storage, x))
 		if op == .Shl {
@@ -328,34 +333,35 @@ fold_arithmetic :: proc(
 	}
 	#partial switch op {
 	case .Plus, .Minus, .Star, .Slash:
-		if !signed_fits(c, result, type, storage) {
-			report_signed_overflow(c, op_span, result, type, storage)
+		if !integer_fits(c, result, type, storage) {
+			report_integer_overflow(c, op_span, result, type, storage)
 			return Const_Value{}, false
 		}
 	}
 	return Const_Value{kind = a.kind, integer = wrap_to_type(c, result, type, storage)}, true
 }
 
-// design.md "Integer overflow": a signed result that does not fit its type is a
-// compile-time error where a runtime one would panic. An untyped constant is
-// exact, and unsigned arithmetic is modular.
-signed_fits :: proc(c: ^Compiler, value: Big_Int, type: Type_Id, allocator: mem.Allocator = {}) -> bool {
-	if type_is_untyped(c, type) || !integer_traps_overflow(c, type) {
+// design.md "Integer overflow": a result that does not fit its integer type is
+// a compile-time error where a runtime one would panic. An untyped constant is
+// exact, and only `+%`, `-%`, and `*%` wrap.
+integer_fits :: proc(c: ^Compiler, value: Big_Int, type: Type_Id, allocator: mem.Allocator = {}) -> bool {
+	if type_is_untyped(c, type) {
 		return true
 	}
 	bits := type_bits(c, type)
-	return bits <= 0 || bi_fits(value_allocator(c, allocator), value, bits, true)
+	return bits <= 0 || bi_fits(value_allocator(c, allocator), value, bits, integer_computes_signed(c, type))
 }
 
-report_signed_overflow :: proc(c: ^Compiler, span: Span, value: Big_Int, type: Type_Id, allocator: mem.Allocator = {}) {
+report_integer_overflow :: proc(c: ^Compiler, span: Span, value: Big_Int, type: Type_Id, allocator: mem.Allocator = {}) {
 	errorf(
-		c, span, "L0397", "signed overflow: the result %s does not fit `%s`",
+		c, span, "L0397", "%s overflow: the result %s does not fit `%s`",
+		integer_computes_signed(c, type) ? "signed" : "unsigned",
 		bi_text(value_allocator(c, allocator), value), type_name(c, type),
 	)
 }
 
-// design.md "Integer overflow": a typed result wraps to its width; an untyped
-// one stays exact.
+// design.md "Integer overflow": a typed result keeps the low bits of its
+// width, as `+%`, `<<`, and `math.wrap` do; an untyped one stays exact.
 wrap_to_type :: proc(c: ^Compiler, value: Big_Int, type: Type_Id, allocator: mem.Allocator = {}) -> Big_Int {
 	if type_is_untyped(c, type) {
 		return value

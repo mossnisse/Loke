@@ -48,5 +48,5 @@ Simd 4 true
 [false, true, true, true]
 [true, false, false, false] [true, true, true, false] [false, true, true, false] [false, true, false, false]
 [11, 12, 13, 14]
-[4.0, -6.0, -2.0, 4.0, 48.0, 96.0, -100.0, 100.0, -0.0, 0.75, 1.0, 1.5, 2.5, 37.0, 9.0, 1.0]
+[4.0, -6.0, -2.0, 4.0, 28.0, 240.0, -100.0, 100.0, -0.0, 0.75, 1.0, 1.5, 2.5, 37.0, 9.0, 1.0]
 true

@@ -64,7 +64,7 @@ emit_runtime_declarations :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "declare ptr @llvm.stacksave.p0()")
 	fmt.sbprintln(&e.b, "declare void @llvm.stackrestore.p0(ptr)")
 	for bits in ([]int{8, 16, 32, 64, 128}) {
-		for operation in ([]string{"sadd", "ssub", "smul"}) {
+		for operation in ([]string{"sadd", "ssub", "smul", "uadd", "usub", "umul"}) {
 			fmt.sbprintfln(&e.b, "declare {{ i%d, i1 }} @llvm.%s.with.overflow.i%d(i%d, i%d)", bits, operation, bits, bits, bits)
 		}
 	}

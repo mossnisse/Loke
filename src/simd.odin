@@ -320,7 +320,7 @@ simd_operator_applies :: proc(c: ^Compiler, op: Token_Kind, element: Type_Id) ->
 	#partial switch op {
 	case .Plus, .Minus, .Star, .Slash:
 		return integer || float
-	case .Percent, .Shl, .Shr:
+	case .Plus_Wrap, .Minus_Wrap, .Star_Wrap, .Percent, .Shl, .Shr:
 		return integer
 	case .Amp, .Pipe, .Tilde, .Amp_Tilde:
 		return integer || boolean

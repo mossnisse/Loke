@@ -10,6 +10,32 @@ checklist.
 
 ### Breaking changes
 
+- Unsigned `+`, `-`, `*`, and unary `-` panic when the result does not fit, as
+  signed arithmetic does: `u32(3) - u32(5)` stops the program with `unsigned
+  integer overflow` instead of giving 4294967294. Unsigned SIMD lanes and the
+  integer `simd.reduce_add` and `reduce_mul` are checked too, and a constant
+  that overflows is `L0397`. Upgrade code that wraps on purpose, such as a hash
+  or a random number generator, to the new wrapping operators, and code that
+  tested a byte range by subtraction to comparisons:
+
+  ```odin
+  // before
+  hash = (hash ~ u64(b)) * FNV_PRIME;
+  is_digit := c - '0' < 10;
+  // after
+  hash = (hash ~ u64(b)) *% FNV_PRIME;
+  is_digit := c >= '0' && c <= '9';
+  ```
+
+  Generic code over `interfaces.Integral` that writes the constant `T(0) - T(1)`
+  no longer compiles for an unsigned `T`; test `a +% T(1) == T(0)` for -1.
+
+- A negative signed shift count panics with `negative shift count` instead of
+  being read as a count beyond the width, so `1 << k` for `k := -1` no longer
+  answers 0. A constant negative count of a signed type is `L0356`, as an
+  unfixed one already was. Upgrade by keeping the count non-negative, or by
+  shifting by `math.wrap(uint, count)` where the old reading was meant.
+
 - `fs.Metadata.modified` is an `Option(time.Time)` instead of an `i64` of
   nanoseconds since the Unix epoch, and `.none` where the filesystem keeps no
   such time, which used to read as 0. Code comparing it with a number is
@@ -48,6 +74,13 @@ checklist.
 
 ### Added
 
+- The wrapping operators `+%`, `-%`, and `*%`, with `+%=`, `-%=`, and `*%=`,
+  keep the low bits of an integer sum, difference, or product, signed or
+  unsigned, and never panic. They bind as `+`, `-`, and `*` do, apply lane by
+  lane to integer SIMD vectors, and can be declared with `operator(...)` and
+  forwarded with `delegate`. `math.wrapping_add`, `wrapping_sub`, and
+  `wrapping_mul` remain as their procedure forms. See design.md "Integer
+  overflow".
 - Test procedures: `@(test)` marks a file-scope procedure that takes no
   parameters and returns nothing or a fallible union such as `Status(E)`, so
   `or_return` works in a test. `lokec <package> -test` builds the root

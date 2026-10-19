@@ -369,7 +369,7 @@ Assigning between different types requires an explicit conversion unless an impl
 
 An integer, rune, or enum value converts to an integer or rune type only when that type holds it: a narrowing that would lose bits, or a negative value converted to an unsigned type, [panics](#panics-and-unwinding), as an out-of-range floating-point conversion does. A constant one is a compilation diagnostic instead, and so is one in [compile-time evaluation](#compile-time-procedure-evaluation). A `Simd(U, N)(v)` applies the rule per lane, and one invalid lane faults the whole conversion.
 
-`math.wrap(T, value)` is the conversion that keeps the low bits of the two's-complement representation instead, the same wrap unsigned [arithmetic](#integer-overflow) defines; it is what bit manipulation, hashing, and reinterpreting a sign want. Its destination is an integer or rune type, its value an integer, rune, or enum, and it converts vectors of one lane count lane by lane. It folds when its value is constant. To validate input instead, `math.to(T, value)` returns `Option(T)`: the value when `T` represents it exactly, and `.none` otherwise. It is the integer twin of [`Enum.from_int`](#integer-conversion).
+`math.wrap(T, value)` is the conversion that keeps the low bits of the two's-complement representation instead, the same wrap the [wrapping operators](#integer-overflow) define; it is what bit manipulation, hashing, and reinterpreting a sign want. Its destination is an integer or rune type, its value an integer, rune, or enum, and it converts vectors of one lane count lane by lane. It folds when its value is constant. To validate input instead, `math.to(T, value)` returns `Option(T)`: the value when `T` represents it exactly, and `.none` otherwise. It is the integer twin of [`Enum.from_int`](#integer-conversion).
 
 ```odin
 count := 300;
@@ -1214,7 +1214,7 @@ Every operator below applies lane-wise and produces a vector of the same lane co
 | Operators | Element types | Result |
 |---|---|---|
 | `+`, `-`, `*`, `/` | integer, float | `Simd(T, N)` |
-| `%` | integer | `Simd(T, N)` |
+| `%`, `+%`, `-%`, `*%` | integer | `Simd(T, N)` |
 | unary `-` | signed integer, float | `Simd(T, N)` |
 | `&`, `\|`, `~`, `&~`, unary `~` | integer, `bool` | `Simd(T, N)` |
 | `<<`, `>>` | integer | `Simd(T, N)` |
@@ -1223,7 +1223,7 @@ Every operator below applies lane-wise and produces a vector of the same lane co
 
 A comparison **yields a lane mask, not a `bool`**. `a < b` on vectors has type `Simd(bool, N)`, so it cannot be an `if` condition; reduce it first with `simd.any` or `simd.all`. This is why `&&` and `||` are rejected on vectors: they short-circuit, and there is nothing lane-wise for a short circuit to mean. Use `&` and `|` on the masks instead.
 
-Every lane obeys the scalar rule for its own operator, unchanged. Integer division or remainder by a zero lane panics as it does for a scalar, and any zero divisor lane panics for the whole operation. Signed lanes are checked as signed scalars are: when `+`, `-`, `*`, `/`, or unary `-` overflows in any lane, the whole operation panics, and `MIN % -1` is 0. A kernel that wants signed wrap asks for it with [`math.wrapping_add`, `wrapping_sub`, and `wrapping_mul`](#integer-overflow), which also take vectors. Unsigned lanes are modular. A shift count at or beyond the element's width is defined exactly as it is for a scalar — the limit of the repeated one-bit shift — and a shift's right operand is a vector too, so `v << 2` splats the count. The count vector has the element type, which may be signed; each count lane is read as unsigned, so a negative lane is a count beyond the width.
+Every lane obeys the scalar rule for its own operator, unchanged. Integer division or remainder by a zero lane panics as it does for a scalar, and any zero divisor lane panics for the whole operation. Integer lanes, signed and unsigned, are checked as integer scalars are: when `+`, `-`, `*`, `/`, or unary `-` overflows in any lane, the whole operation panics, and `MIN % -1` is 0. A kernel that wants wrap asks for it with [`+%`, `-%`, and `*%`](#integer-overflow), lane by lane. A shift count at or beyond the element's width is defined exactly as it is for a scalar — the limit of the repeated one-bit shift — and a shift's right operand is a vector too, so `v << 2` splats the count. The count vector has the element type, which may be signed; a negative count lane panics the whole shift, as a negative scalar count does.
 
 Floating-point lanes follow the scalar floating-point rules unchanged: no contraction the source did not write, and no reassociation.
 
@@ -1240,7 +1240,7 @@ Floating-point lanes follow the scalar floating-point rules unchanged: no contra
 - `from_array(array) -> Simd(T, N)` and `to_array(v) -> [N]T`, the two conversions between a vector and an array of the same element and length. They are how vector data reaches ordinary code and how ordinary code reaches a vector;
 - `select(mask, a, b) -> Simd(T, N)`, choosing lane-wise between two vectors — what a lane mask is for;
 - `any(mask) -> bool` and `all(mask) -> bool`, which turn a lane mask back into control flow;
-- `reduce_add`, `reduce_mul`, `reduce_min`, and `reduce_max`, each folding a vector to one scalar. A floating-point sum and product are ordered, left to right, so their results do not depend on the target's vector width; a signed integer sum and product fold left to right too, through the checked scalar operator, so they panic where that loop over the lanes would; a minimum and a maximum need no such rule, because they do not depend on order. A floating-point sum starts from `-0.0` and a product from `1.0`, so a vector of nothing but `-0.0` sums to `-0.0`. `reduce_min` and `reduce_max` ignore NaN lanes and return a number whenever any lane holds one; a vector of nothing but NaN reduces to NaN. Where two lanes compare equal, including `-0.0` against `+0.0`, either may be the answer.
+- `reduce_add`, `reduce_mul`, `reduce_min`, and `reduce_max`, each folding a vector to one scalar. A floating-point sum and product are ordered, left to right, so their results do not depend on the target's vector width; an integer sum and product fold left to right too, through the checked scalar operator, so they panic where that loop over the lanes would; a minimum and a maximum need no such rule, because they do not depend on order. A floating-point sum starts from `-0.0` and a product from `1.0`, so a vector of nothing but `-0.0` sums to `-0.0`. `reduce_min` and `reduce_max` ignore NaN lanes and return a number whenever any lane holds one; a vector of nothing but NaN reduces to NaN. Where two lanes compare equal, including `-0.0` against `+0.0`, either may be the answer.
 
 The splat needs no procedure: a scalar in a vector position already is one.
 
@@ -2437,11 +2437,11 @@ The following may be overloaded:
 | Category | Operators |
 | --- | --- |
 | Unary | `+`, `-`, `!`, `~` |
-| Arithmetic | `+`, `-`, `*`, `/`, `%` |
+| Arithmetic | `+`, `-`, `*`, `/`, `%`, `+%`, `-%`, `*%` |
 | Bitwise and shifts | `\|`, `~`, `&`, `&~`, `<<`, `>>` |
 | Comparison | `==`, `!=`, `<`, `<=`, `>`, `>=` |
 | Membership | `in` |
-| Compound assignment | `+=`, `-=`, `*=`, `/=`, `%=`, `\|=`, `~=`, `&=`, `&~=`, `<<=`, `>>=` |
+| Compound assignment | `+=`, `-=`, `*=`, `+%=`, `-%=`, `*%=`, `/=`, `%=`, `\|=`, `~=`, `&=`, `&~=`, `<<=`, `>>=` |
 | Structural syntax | `[]`, `[]=`, `[:]` |
 
 `!=` falls back to `!(left == right)` when `==` exists and no more specific `!=` overload does. A compound assignment falls back to the binary operator plus assignment; a direct compound overload can avoid a temporary or allocation:
@@ -3696,6 +3696,10 @@ Binary:
 /       division                   integers, floats
 %       remainder (truncated)      integers
 
++%      wrapping sum               integers
+-%      wrapping subtraction       integers
+*%      wrapping multiplication    integers
+
 |       bitwise or                 integers
 ~       bitwise xor                integers
 &       bitwise and                integers
@@ -3714,15 +3718,19 @@ Each `+` allocates and copies the accumulated result, so repeated concatenation 
 
 Enum values do not support arithmetic or bitwise operators; see [Enumerations](#enumerations).
 
-The right operand in a shift expression must have an integer type or be an unfixed constant representable by a typed unsigned integer. A count of a signed type is read as unsigned, as a [SIMD](#lane-wise-operators) count lane is, so a negative count is one at or beyond the width. If the left operand of a non-constant shift expression is an unfixed constant, it is first implicitly converted to the type it would assume if the shift expression were replaced solely by the left operand alone (with type inference and hinting rules applied).
+`+`, `-`, and `*` on integers panic when the result does not fit; `+%`, `-%`, and `*%` keep its low bits instead. See [Integer overflow](#integer-overflow). The wrapping operators apply to integer types and integer [SIMD](#lane-wise-operators) lanes, not to runes or floats.
+
+The right operand in a shift expression must have an integer type or be an unfixed constant representable by a typed unsigned integer. A count of a signed type may be any value except a negative one, which **panics**, as a negative [SIMD](#lane-wise-operators) count lane does; a constant negative count is a compilation error. If the left operand of a non-constant shift expression is an unfixed constant, it is first implicitly converted to the type it would assume if the shift expression were replaced solely by the left operand alone (with type inference and hinting rules applied).
 
 ```odin
 n: u32 = 3;
 a: u8 = 1 << n;   // `1` is a `u8`, as in `a: u8 = 1`
 b := 1 << n;      // `1` is an `int`, as in `b := 1`
 k := 2;
-c := 1 << k;      // `k` is an `int`, read as unsigned
+c := 1 << k;      // `k` is an `int`
 d := 1 << -1;     // ERROR: an unfixed constant count cannot be negative
+k = -1;
+e := 1 << k;      // panics: negative shift count
 ```
 
 ### Comparison operators
@@ -3774,6 +3782,9 @@ Eager arithmetic and bitwise operations have a compound-assignment shorthand suc
 +=       sum and assign                   a += b is a = a + b
 -=       subtraction and assign           a -= b is a = a - b
 *=       multiplication and assign        a *= b is a = a * b
++%=      wrapping sum and assign          a +%= b is a = a +% b
+-%=      wrapping subtraction and assign  a -%= b is a = a -% b
+*%=      wrapping product and assign      a *%= b is a = a *% b
 /=       division and assign              a /= b is a = a / b
 %=       remainder (truncated) and assign a %= b is a = a % b
 
@@ -3870,8 +3881,8 @@ There are seven precedence levels for binary operators and the conditional expre
 
 ```text
 Precedence    Operator
-     7           *   /   %   &   &~  <<   >>
-     6           +   -   |   ~
+     7           *   *%  /   %   &   &~  <<   >>
+     6           +   -   +%  -%  |   ~
      5           ..=    ..<
      4           ==  !=  <   >    <=  >=   in
      3           &&
@@ -3918,7 +3929,7 @@ The exception to these rules is when the dividend x is the most negative value f
 
 If the divisor is a constant, it must not be zero. If the divisor is zero at runtime, a runtime panic occurs.
 
-A shift count is read as an unsigned integer, so it is never negative, and has no upper limit. Shifts are arithmetic for a signed left operand and logical for an unsigned one, behaving as `n` repeated one-bit shifts. So `x<<1` equals `x*2` whenever that product fits, and `x>>1` equals `x/2` truncated toward negative infinity. A left shift of a signed value [never panics](#integer-overflow): bits shifted out are discarded, the sign bit included.
+A shift count has no upper limit, and a negative one [panics](#arithmetic-operators). Shifts are arithmetic for a signed left operand and logical for an unsigned one, behaving as `n` repeated one-bit shifts. So `x<<1` equals `x*2` whenever that product fits, and `x>>1` equals `x/2` truncated toward negative infinity. A left shift of a signed value [never panics](#integer-overflow): bits shifted out are discarded, the sign bit included.
 
 A shift count that is equal to or greater than the width of the left operand has defined behavior. It is the limit of the repeated one-bit shift:
 
@@ -3937,34 +3948,36 @@ This differs from C, where such a shift count is undefined behavior.
 
 #### Integer overflow
 
-Unsigned `+`, `-`, `*`, and `<<` wrap modulo `2^n`, where `n` is the type's bit width.
+Every signed integer uses two’s-complement representation. For every integer type, and for `rune`, binary `+`, `-`, `*`, `/`, and unary `-` **panic** when the mathematical result does not fit the type: `i32(2147483647) + one`, `u32(3) - u32(5)`, and `MIN / -1` all stop the program, at every optimization level. Unsigned `/` never overflows, and unsigned unary `-` succeeds only for zero. Where the operation is evaluated at compile time — a constant expression or [compile-time evaluation](#compile-time-procedure-evaluation) — the same overflow is a compilation diagnostic instead. An unfixed constant is exact and never overflows; it is checked when it converts to a type.
 
-Every signed integer uses two’s-complement representation. For a signed type, and for `rune`, binary `+`, `-`, `*`, `/`, and unary `-` **panic** when the mathematical result does not fit the type: `i32(2147483647) + one` and `MIN / -1` both stop the program, at every optimization level. Where the operation is evaluated at compile time — a constant expression or [compile-time evaluation](#compile-time-procedure-evaluation) — the same overflow is a compilation diagnostic instead. An unfixed constant is exact and never overflows; it is checked when it converts to a type.
+The **wrapping operators** `+%`, `-%`, and `*%` keep the low `n` bits of the mathematical result, where `n` is the type's bit width: arithmetic modulo `2^n`, read back in two's complement for a signed type. They are for hashing, checksums, random number generators, and other arithmetic that is modular by design, and they never panic. They apply to integer types and integer [SIMD lanes](#lane-wise-operators); a rune or a float has no wrapping form. Each has a compound assignment, `+%=`, `-%=`, and `*%=`. Two unfixed constants stay exact, as they do for `+`.
 
 ```odin
 count: i32 = 2147483647;
-wrapped := math.wrapping_add(count, 1);  // -2147483648: wrap is asked for by name
+wrapped := count +% 1;                   // -2147483648: wrap is asked for
 none := math.checked_add(count, 1);      // .none
 count += 1;                              // panics: signed integer overflow
-LIMIT :: i8(127) + 1;            // ERROR: the result 128 does not fit `i8`
+used: u32 = 5;
+left := u32(3) - used;                   // panics: unsigned integer overflow
+hash = (hash ~ u64(byte)) *% FNV_PRIME;  // FNV-1a's step, modulo 2^64
+LIMIT :: i8(127) + 1;                    // ERROR: the result 128 does not fit `i8`
 ```
 
-These operations stay modular for signed operands: `<<`, which keeps the low bits exactly as for an unsigned type; `%`, which cannot overflow (`MIN % -1` is 0); atomic `add` and `sub`; and [`math.wrap`](#type-conversion). [SIMD lanes](#lane-wise-operators) follow the scalar rule. On the path that continues past a checked operation it did not overflow, so the optimizer may assume that result is in range.
+These operations stay modular: `<<`, which keeps the low bits; `%`, which cannot overflow (`MIN % -1` is 0); atomic `add` and `sub`, which keep the hardware read-modify-write; and [`math.wrap`](#type-conversion). [SIMD lanes](#lane-wise-operators) follow the scalar rule. On the path that continues past a checked operation it did not overflow, so the optimizer may assume that result is in range.
 
-`core:math` provides explicit policies for `+`, `-`, and `*`:
+`core:math` provides the same policies as procedures, for generic code and procedure values:
 
 | Operations | Policy |
 | --- | --- |
-| `math.wrapping_add`, `wrapping_sub`, `wrapping_mul` | Keep the result's low bits. |
+| `math.wrapping_add`, `wrapping_sub`, `wrapping_mul` | Keep the result's low bits, as `+%`, `-%`, and `*%` do. |
 | `math.checked_add`, `checked_sub`, `checked_mul` | Return `Option(T)`: `.some(result)` when the mathematical result fits `T`, otherwise `.none`. |
 
 Each accepts two operands of one signed or unsigned integer type; an unfixed
-second operand takes the first's type. Checked operations report unsigned
-overflow even though ordinary unsigned operators wrap:
+second operand takes the first's type:
 
 ```odin
 value: u8 = 255;
-fmt.println(value + 1, math.checked_add(value, 1)); // 0 .none
+fmt.println(value +% 1, math.checked_add(value, 1)); // 0 .none
 ```
 
 The wrapping forms also accept two vectors of one integer-lane `Simd` type and
@@ -6807,7 +6820,7 @@ Where this specification rejects a program, it often also says what the message 
 | Two borrows conflict | the root, the borrow, the conflicting operation, and the later use keeping the borrow live ([§](#places-and-overlap)) |
 | An owner escapes its allocator region | the escaping owner and its shorter-lived region ([§](#allocator-regions-and-region-provenance)) |
 | An unchecked pointer operation is written in a file that does not import `core:unsafe` | the operation, and the missing import ([§](#the-unsafe-package)) |
-| Signed arithmetic overflows at compile time | the mathematical result, and the type it does not fit ([§](#integer-overflow)) |
+| Integer arithmetic overflows at compile time | the mathematical result, and the type it does not fit ([§](#integer-overflow)) |
 | Two `@(export)` declarations use one symbol name | both declarations ([§](#export)) |
 
 [`@(require_results)`](#require_results) also requires a diagnostic for a result that is neither read nor explicitly discarded. [Copy-cost diagnostics](#copy-cost-diagnostics) are optional; when enabled, their warning policy applies to all applicable copy contexts.

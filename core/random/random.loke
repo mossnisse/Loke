@@ -51,14 +51,14 @@ in_range :: proc(source: inout $G, range: Range($T)) -> T
 	// one as wide as its type, needs no case of its own (design.md "Type
 	// conversion" on `math.wrap`).
 	low := math.wrap(u64, range.low);
-	span := math.wrap(u64, range.high) - low;
+	span := math.wrap(u64, range.high) -% low;
 	if (range.closed) {
-		span += 1;
+		span +%= 1;
 		if (span == 0) {
-			return math.wrap(T, low + source.next_u64());
+			return math.wrap(T, low +% source.next_u64());
 		}
 	}
-	return math.wrap(T, low + below(inout source, span));
+	return math.wrap(T, low +% below(inout source, span));
 }
 
 // A uniform value in `0 ..< span`, for a non-zero `span`.
@@ -68,9 +68,8 @@ below :: proc(source: inout $G, span: u64) -> u64 where Source(G) {
 	fraction := math.wrap(u64, product);
 	if (fraction < span) {
 		// 2^64 mod span: the count of low halves that would make some results
-		// one more likely than the rest. Unsigned `-` wraps, so `0 - span` is
-		// 2^64 - span.
-		threshold := (0 - span) % span;
+		// one more likely than the rest. `0 -% span` is 2^64 - span.
+		threshold := (0 -% span) % span;
 		for (; fraction < threshold; ) {
 			product = u128(source.next_u64()) * u128(span);
 			fraction = math.wrap(u64, product);

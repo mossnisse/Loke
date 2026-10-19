@@ -110,7 +110,7 @@ main :: proc() {
 	fmt.println(hours, "hours is", hours * SECONDS_PER_HOUR, "seconds");
 
 	small: u8 = 200;
-	fmt.println(small + 100);
+	fmt.println(small +% 100);
 	big: i32 = 2_000_000_000;
 	fmt.println(i64(big) * 2);
 }
@@ -126,10 +126,11 @@ A numeric constant has no fixed type until it is used, so `60` works as an
 `int` here and could equally be an `f64` elsewhere. Underscores in a number are
 only for reading: `2_000_000_000` is two billion.
 
-The last two lines show what happens at the edge of a type's range. An
-unsigned type wraps around: `200 + 100` in a `u8` is `300 - 256`, which is `44`.
-A signed type does not wrap. When a signed result does not fit, the program
-stops with a *panic* rather than carry on with a wrong number:
+The last two lines show what happens at the edge of a type's range. `+%`,
+`-%`, and `*%` wrap around: `200 +% 100` in a `u8` is `300 - 256`, which is
+`44`. Hashing and random number generators want that. The ordinary `+`, `-`,
+and `*` do not wrap, signed or unsigned. When a result does not fit, the
+program stops with a *panic* rather than carry on with a wrong number:
 
 ```odin file=overflow.loke
 package main;

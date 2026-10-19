@@ -357,9 +357,10 @@ ends_operand :: proc(l: ^Layout) -> bool {
 @(private = "file")
 binary_operator :: proc(kind: Token_Kind) -> bool {
 	#partial switch kind {
-	case .Plus, .Minus, .Star, .Slash, .Percent, .Amp, .Amp_Tilde, .Pipe, .Tilde, .Shl, .Shr,
-	     .And_And, .Or_Or, .Eq_Eq, .Not_Eq, .Lt, .Lt_Eq, .Gt, .Gt_Eq, .Assign, .Plus_Eq,
-	     .Minus_Eq, .Star_Eq, .Slash_Eq, .Percent_Eq, .Pipe_Eq, .Tilde_Eq, .Amp_Eq,
+	case .Plus, .Minus, .Star, .Plus_Wrap, .Minus_Wrap, .Star_Wrap, .Slash, .Percent, .Amp,
+	     .Amp_Tilde, .Pipe, .Tilde, .Shl, .Shr, .And_And, .Or_Or, .Eq_Eq, .Not_Eq, .Lt, .Lt_Eq,
+	     .Gt, .Gt_Eq, .Assign, .Plus_Eq, .Minus_Eq, .Star_Eq, .Plus_Wrap_Eq, .Minus_Wrap_Eq,
+	     .Star_Wrap_Eq, .Slash_Eq, .Percent_Eq, .Pipe_Eq, .Tilde_Eq, .Amp_Eq,
 	     .Amp_Tilde_Eq, .Shl_Eq, .Shr_Eq, .Range_Incl, .Range_Excl, .Arrow, .In,
 	     .Or_Else, .Via:
 		return true
@@ -373,7 +374,8 @@ binary_operator :: proc(kind: Token_Kind) -> bool {
 @(private = "file")
 written_tight :: proc(l: ^Layout, token: Token) -> bool {
 	#partial switch token.kind {
-	case .Plus, .Minus, .Star, .Slash, .Percent, .Amp, .Amp_Tilde, .Pipe, .Tilde, .Shl, .Shr:
+	case .Plus, .Minus, .Star, .Plus_Wrap, .Minus_Wrap, .Star_Wrap, .Slash, .Percent, .Amp,
+	     .Amp_Tilde, .Pipe, .Tilde, .Shl, .Shr:
 	case:
 		return false
 	}

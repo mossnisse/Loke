@@ -1,0 +1,13 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Integer overflow": unsigned `-` panics when the result does not
+// fit, as signed arithmetic does; `-%` asks for the wrap. `+`, `*`, and unary
+// `-` share the check (tests/ll/guards pins its shape).
+main :: proc() {
+	length: u32 = 3;
+	used: u32 = 5;
+	fmt.println(length -% used);
+	fmt.println(length - used);
+}

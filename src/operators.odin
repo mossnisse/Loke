@@ -23,11 +23,11 @@ operator_shape :: proc(symbol: string) -> (Operator_Shape, bool) {
 		return Operator_Shape{min = 1, max = 2, results = 1}, true // unary or binary
 	case "!":
 		return Operator_Shape{min = 1, max = 1, results = 1}, true
-	case "*", "/", "%", "|", "&", "&~", "<<", ">>":
+	case "*", "+%", "-%", "*%", "/", "%", "|", "&", "&~", "<<", ">>":
 		return Operator_Shape{min = 2, max = 2, results = 1}, true
 	case "==", "!=", "<", "<=", ">", ">=", "in":
 		return Operator_Shape{min = 2, max = 2, results = 1, boolean = true}, true
-	case "+=", "-=", "*=", "/=", "%=", "|=", "~=", "&=", "&~=", "<<=", ">>=":
+	case "+=", "-=", "*=", "+%=", "-%=", "*%=", "/=", "%=", "|=", "~=", "&=", "&~=", "<<=", ">>=":
 		return Operator_Shape{min = 2, max = 2, results = 0, assign = true}, true
 	case "[]":
 		return Operator_Shape{min = 2, max = -1, results = 1}, true
@@ -302,7 +302,7 @@ builtin_binary_defined :: proc(k: ^Checker, op: Token_Kind, lhs, rhs: Type_Id) -
 		if type_is_untyped(k.c, rhs) {
 			return type_is_integer(k.c, rhs) || type_is_rune(k.c, rhs)
 		}
-		// design.md "Arithmetic operators": a signed count is read as unsigned.
+		// design.md "Arithmetic operators": any integer count; a negative one panics.
 		return type_is_integer(k.c, rhs)
 	}
 	unified, ok := join_operand_types(k, lhs, rhs)
@@ -655,20 +655,23 @@ install_delegated_operator :: proc(
 // The binary operator a compound assignment applies, or `.EOF` when the kind
 // isn't one. The checker rejects non-compound statements using this answer, so
 // by the time the evaluator or backend asks, the result is always one of the
-// eleven.
+// fourteen.
 compound_operator :: proc(op: Token_Kind) -> Token_Kind {
 	#partial switch op {
-	case .Plus_Eq:      return .Plus
-	case .Minus_Eq:     return .Minus
-	case .Star_Eq:      return .Star
-	case .Slash_Eq:     return .Slash
-	case .Percent_Eq:   return .Percent
-	case .Pipe_Eq:      return .Pipe
-	case .Tilde_Eq:     return .Tilde
-	case .Amp_Eq:       return .Amp
-	case .Amp_Tilde_Eq: return .Amp_Tilde
-	case .Shl_Eq:       return .Shl
-	case .Shr_Eq:       return .Shr
+	case .Plus_Eq:         return .Plus
+	case .Minus_Eq:        return .Minus
+	case .Star_Eq:         return .Star
+	case .Plus_Wrap_Eq:    return .Plus_Wrap
+	case .Minus_Wrap_Eq:   return .Minus_Wrap
+	case .Star_Wrap_Eq:    return .Star_Wrap
+	case .Slash_Eq:        return .Slash
+	case .Percent_Eq:      return .Percent
+	case .Pipe_Eq:         return .Pipe
+	case .Tilde_Eq:        return .Tilde
+	case .Amp_Eq:          return .Amp
+	case .Amp_Tilde_Eq:    return .Amp_Tilde
+	case .Shl_Eq:          return .Shl
+	case .Shr_Eq:          return .Shr
 	}
 	return .EOF
 }
@@ -683,6 +686,12 @@ operator_token :: proc(symbol: string) -> Token_Kind {
 		return .Minus
 	case "*":
 		return .Star
+	case "+%":
+		return .Plus_Wrap
+	case "-%":
+		return .Minus_Wrap
+	case "*%":
+		return .Star_Wrap
 	case "/":
 		return .Slash
 	case "%":

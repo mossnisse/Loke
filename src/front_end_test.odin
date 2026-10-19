@@ -768,7 +768,7 @@ lexer_golden :: proc(t: ^testing.T) {
 	text := `name 123 1.5 "text" ` + "`raw`" + ` 'x'
 break case continue default defer distinct dyn dynamic else enum errdefer for foreach foreign if impl import in inout interface map move mut operator or_else or_return package proc return struct switch type union via when where
 static self slot using delegate thread_local manual
-+ - * / % & &~ | ~ << >> && || ! == != < <= > >= = += -= *= /= %= |= ~= &= &~= <<= >>= : ; , . .. ..= ..< -> --- ? $ ^ @ ( ) [ ] { }
++ - * +% -% *% / % & &~ | ~ << >> && || ! == != < <= > >= = += -= *= +%= -%= *%= /= %= |= ~= &= &~= <<= >>= : ; , . .. ..= ..< -> --- ? $ ^ @ ( ) [ ] { }
 /* nested /* block */ comment */`
 	c := test_compiler(text)
 	defer destroy_compilation(&c)
@@ -783,9 +783,10 @@ static self slot using delegate thread_local manual
 		.Inout, .Interface, .Map, .Move, .Mut, .Ident, .Or_Else, .Or_Return,
 		.Package, .Proc, .Return, .Struct, .Switch, .Type, .Union, .Ident, .When, .Ident,
 		.Ident, .Ident, .Ident, .Ident, .Ident, .Ident, .Ident,
-		.Plus, .Minus, .Star, .Slash, .Percent, .Amp, .Amp_Tilde, .Pipe, .Tilde,
-		.Shl, .Shr, .And_And, .Or_Or, .Not, .Eq_Eq, .Not_Eq, .Lt, .Lt_Eq,
-		.Gt, .Gt_Eq, .Assign, .Plus_Eq, .Minus_Eq, .Star_Eq, .Slash_Eq,
+		.Plus, .Minus, .Star, .Plus_Wrap, .Minus_Wrap, .Star_Wrap, .Slash, .Percent, .Amp,
+		.Amp_Tilde, .Pipe, .Tilde, .Shl, .Shr, .And_And, .Or_Or, .Not, .Eq_Eq, .Not_Eq,
+		.Lt, .Lt_Eq, .Gt, .Gt_Eq, .Assign, .Plus_Eq, .Minus_Eq, .Star_Eq, .Plus_Wrap_Eq,
+		.Minus_Wrap_Eq, .Star_Wrap_Eq, .Slash_Eq,
 		.Percent_Eq, .Pipe_Eq, .Tilde_Eq, .Amp_Eq, .Amp_Tilde_Eq, .Shl_Eq,
 		.Shr_Eq, .Colon, .Semicolon, .Comma, .Period, .Range, .Range_Incl,
 		.Range_Excl, .Arrow, .Uninit, .Question, .Dollar, .Caret, .At, .Lparen,

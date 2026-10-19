@@ -2007,8 +2007,8 @@ check_unary :: proc(k: ^Checker, v: ^Expr_Unary, expected: Type_Id) {
 		folded = bool_const(!value.boolean)
 	}
 	if folded.kind == .Integer || folded.kind == .Rune {
-		if v.op == .Minus && !signed_fits(k.c, folded.integer, v.type) {
-			report_signed_overflow(k.c, v.op_span, folded.integer, v.type)
+		if v.op == .Minus && !integer_fits(k.c, folded.integer, v.type) {
+			report_integer_overflow(k.c, v.op_span, folded.integer, v.type)
 			return
 		}
 		folded.integer = wrap_to_type(k.c, folded.integer, v.type)
@@ -2272,7 +2272,7 @@ check_logical :: proc(k: ^Checker, v: ^Expr_Binary) {
 }
 
 // design.md "Arithmetic operators": the shift count is an integer, a signed one
-// read as unsigned, or an untyped constant representable by an unsigned
+// panicking when negative, or an untyped constant representable by an unsigned
 // integer; an untyped left operand first takes the type it would have on its
 // own.
 @(private = "file")
@@ -2318,10 +2318,10 @@ check_shift :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id, left_type, 
 	v.const_value = folded
 }
 
-// The same rule for `a << b` and `a <<= b`: a typed integer count, read as
-// unsigned (design.md "Integer operators"), or an untyped constant a typed
-// unsigned integer could represent. The compound form checks its own operand
-// here rather than against the destination's type.
+// The same rule for `a << b` and `a <<= b`: a typed integer count, which
+// panics when negative (design.md "Arithmetic operators"), or an untyped
+// constant a typed unsigned integer could represent. The compound form checks
+// its own operand here rather than against the destination's type.
 check_shift_count :: proc(k: ^Checker, e: Expr) -> bool {
 	type := check_single_expr(k, e)
 	if type == INVALID_TYPE {
@@ -2580,6 +2580,9 @@ builtin_operator_applies :: proc(c: ^Compiler, op: Token_Kind, type: Type_Id) ->
 		return type_is_numeric(c, type) || type_kind(c, type) == .Untyped_String
 	case .Minus, .Star, .Slash:
 		return type_is_numeric(c, type)
+	case .Plus_Wrap, .Minus_Wrap, .Star_Wrap:
+		// design.md "Integer overflow": the wrapping operators are for integers.
+		return type_is_integer(c, type)
 	case .Percent:
 		return type_is_integer(c, type) || type_is_rune(c, type)
 	case .Amp, .Pipe, .Tilde, .Amp_Tilde:

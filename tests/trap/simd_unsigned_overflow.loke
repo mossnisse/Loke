@@ -1,0 +1,11 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Lane-wise operators": an unsigned lane that overflows panics the
+// whole operation, as the scalar operator would; `+%` wraps each lane instead.
+main :: proc() {
+	bytes: Simd(u8, 4) = {250, 1, 2, 3};
+	fmt.println(bytes +% 10);
+	fmt.println(bytes + 10);
+}
