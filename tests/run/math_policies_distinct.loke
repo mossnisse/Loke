@@ -1,0 +1,27 @@
+@(public)
+package main;
+
+import "base:interfaces";
+import "core:fmt";
+import "core:math";
+
+// design.md "Integer overflow": the `core:math` policy procedures ask only for
+// `interfaces.Integral`, which a distinct integer meets without wrapping
+// operators of its own, so they wrap its representation instead.
+Word :: distinct u32;
+
+impl Word {
+	delegate(+, -, *, /, %, |, ~, &, &~, ==, <);
+	left :: operator(<<) proc(a: Word, count: uint) -> Word { return Word(u32(a) << count); }
+	right :: operator(>>) proc(a: Word, count: uint) -> Word { return Word(u32(a) >> count); }
+}
+static_assert(interfaces.Integral(Word));
+
+main :: proc() {
+	fmt.println(
+		u32(math.wrapping_add(Word(0xFFFF_FFFF), Word(2))), u32(math.wrapping_sub(Word(3), Word(5))),
+		u32(math.wrapping_mul(Word(0x8000_0001), Word(2))),
+	);
+	fmt.println(math.checked_add(Word(3), Word(2)), math.checked_sub(Word(3), Word(5)));
+	fmt.println(math.checked_mul(Word(0x8000_0000), Word(2)), math.checked_mul(Word(7), Word(6)));
+}

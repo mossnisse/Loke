@@ -747,9 +747,11 @@ expr_cannot_panic :: proc(c: ^Compiler, e: Expr) -> bool {
 		     .Amp, .Amp_Tilde, .Pipe, .Tilde, .Plus_Wrap, .Minus_Wrap, .Star_Wrap:
 			return true
 		case .Shl, .Shr:
-			// design.md "Arithmetic operators": only a negative count panics.
+			// design.md "Arithmetic operators": only a negative count panics, and
+			// the checker rejects a constant one.
 			count := expr_base(v.rhs)
-			return !type_signed(c, count.type) || count.is_const
+			return !type_signed(c, count.type) ||
+				(count.is_const && count.const_value.kind == .Integer && bi_sign(count.const_value.integer) >= 0)
 		case .Plus, .Minus, .Star:
 			// design.md "Integer overflow": floating-point arithmetic never panics;
 			// integer arithmetic does when the result does not fit.

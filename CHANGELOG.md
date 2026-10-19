@@ -28,12 +28,13 @@ checklist.
   ```
 
   Generic code over `interfaces.Integral` that writes the constant `T(0) - T(1)`
-  no longer compiles for an unsigned `T`; test `a +% T(1) == T(0)` for -1.
+  no longer compiles for an unsigned `T`; test
+  `math.wrapping_add(a, T(1)) == T(0)` for -1.
 
 - A negative signed shift count panics with `negative shift count` instead of
   being read as a count beyond the width, so `1 << k` for `k := -1` no longer
-  answers 0. A constant negative count of a signed type is `L0356`, as an
-  unfixed one already was. Upgrade by keeping the count non-negative, or by
+  answers 0. A constant negative count of a signed type, or a constant SIMD
+  count with a negative lane, is `L0356`, as an unfixed one already was. Upgrade by keeping the count non-negative, or by
   shifting by `math.wrap(uint, count)` where the old reading was meant.
 
 - `fs.Metadata.modified` is an `Option(time.Time)` instead of an `i64` of

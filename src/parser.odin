@@ -1305,7 +1305,7 @@ parse_simple_statement :: proc(p: ^Parser) -> Stmt {
 	start := current(p)
 	lhs := parse_expression_list(p)
 
-	if at(p, .Assign) || is_compound_assign(current(p).kind) {
+	if at(p, .Assign) || compound_operator(current(p).kind) != .EOF {
 		op := advance(p)
 		// Compound assignment takes one expression on each side.
 		rhs: []Expr
@@ -1935,28 +1935,6 @@ parse_switch_case :: proc(p: ^Parser) -> Switch_Case {
 	entry.stmts = stmts[:]
 	entry.span = span_to_here(p, start)
 	return entry
-}
-
-@(private = "file")
-is_compound_assign :: proc(kind: Token_Kind) -> bool {
-	#partial switch kind {
-	case .Plus_Eq,
-	     .Minus_Eq,
-	     .Star_Eq,
-	     .Plus_Wrap_Eq,
-	     .Minus_Wrap_Eq,
-	     .Star_Wrap_Eq,
-	     .Slash_Eq,
-	     .Percent_Eq,
-	     .Pipe_Eq,
-	     .Tilde_Eq,
-	     .Amp_Eq,
-	     .Amp_Tilde_Eq,
-	     .Shl_Eq,
-	     .Shr_Eq:
-		return true
-	}
-	return false
 }
 
 // -------------------------------------------------------------- expressions --

@@ -653,9 +653,10 @@ install_delegated_operator :: proc(
 }
 
 // The binary operator a compound assignment applies, or `.EOF` when the kind
-// isn't one. The checker rejects non-compound statements using this answer, so
-// by the time the evaluator or backend asks, the result is always one of the
-// fourteen.
+// isn't one. The parser recognizes a compound assignment by this answer and the
+// checker rejects non-compound statements with it, so the syntax and the
+// lowering share one table, and by the time the evaluator or backend asks, the
+// result is always one of the fourteen.
 compound_operator :: proc(op: Token_Kind) -> Token_Kind {
 	#partial switch op {
 	case .Plus_Eq:         return .Plus

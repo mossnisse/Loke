@@ -2342,6 +2342,15 @@ validate_shift_count :: proc(k: ^Checker, e: Expr, type: Type_Id) -> bool {
 			return materialize(k, e, TYPE_UINT)
 		}
 	} else if type_is_integer(k.c, type) {
+		// design.md "Arithmetic operators": a constant negative count is an
+		// error whatever the left operand is, so it never reaches run time.
+		if base.is_const && base.const_value.kind == .Integer && bi_sign(base.const_value.integer) < 0 {
+			errorf(
+				k.c, expr_span(e), "L0356", "a shift count cannot be negative, found %s",
+				bi_text(k.c, base.const_value.integer),
+			)
+			return false
+		}
 		return true
 	}
 	errorf(

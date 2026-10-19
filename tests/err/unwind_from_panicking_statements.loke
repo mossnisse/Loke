@@ -58,6 +58,17 @@ cannot_panic :: proc(flag: bool, count: uint, scale: f64) -> uint {
 	return next;
 }
 
+// A constant signed count cannot be negative here, since the checker rejects
+// one that is, so this shift cannot panic; a variable count would be L0537.
+constant_signed_count :: proc(value: int) -> int {
+	arena := mem.Arena.init();
+	xs: [dynamic]int via arena.allocator() = {};
+	defer drop(arena);
+	next := value << i32(3);
+	drop(xs);
+	return next;
+}
+
 unsigned_addition :: proc(count: uint) -> uint {
 	arena := mem.Arena.init();
 	xs: [dynamic]int via arena.allocator() = {};
@@ -69,7 +80,7 @@ unsigned_addition :: proc(count: uint) -> uint {
 
 main :: proc() {
 	through_call();
-	_ = unsigned_addition(1);
+	_ = unsigned_addition(1) + uint(constant_signed_count(1));
 	values := [1]int{1};
 	_ = signed_addition(1) + checked_index(values);
 	_ = runtime_divisor(2) + cannot_panic(true, 2, 1.0);

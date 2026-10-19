@@ -1,0 +1,30 @@
+package main;
+
+// design.md "Arithmetic operators": a constant negative shift count is an error
+// whatever the left operand is, in a binary shift, a compound assignment, and a
+// constant SIMD count lane ("Lane-wise operators"). A run-time negative count
+// panics instead (tests/trap/negative_shift_count).
+shifted :: proc(value: int) -> int {
+	return value << i32(-1);
+}
+
+compound :: proc(value: int) -> int {
+	v := value;
+	v >>= i8(-3);
+	return v;
+}
+
+lanes :: proc(v: Simd(i32, 4)) -> Simd(i32, 4) {
+	return v << Simd(i32, 4){0, -1, 2, 3};
+}
+
+compound_lanes :: proc(v: Simd(i32, 4)) -> Simd(i32, 4) {
+	w := v;
+	w >>= Simd(i32, 4){1, 2, 3, -4};
+	return w;
+}
+
+main :: proc() {
+	_ = shifted(1) + compound(2);
+	_ = lanes({1, 2, 3, 4}) + compound_lanes({1, 2, 3, 4});
+}

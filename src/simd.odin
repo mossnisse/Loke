@@ -228,6 +228,11 @@ check_simd_binary :: proc(k: ^Checker, v: ^Expr_Binary, lhs, rhs: Type_Id) {
 		// A mask, not a `bool`: not an `if` condition until `simd.any` reduces it.
 		v.type = simd_of(k.c, TYPE_BOOL, info.count)
 		fold_simd_comparison(k, v)
+	case .Shl, .Shr:
+		if reject_negative_count_lanes(k, v.rhs, int(info.count)) {
+			return
+		}
+		fallthrough
 	case:
 		v.type = vector
 		left, right := expr_base(v.lhs), expr_base(v.rhs)
@@ -242,6 +247,27 @@ check_simd_binary :: proc(k: ^Checker, v: ^Expr_Binary, lhs, rhs: Type_Id) {
 		v.is_const = true
 		v.const_value = folded
 	}
+}
+
+// design.md "Lane-wise operators": a constant negative count lane is an error,
+// as a constant negative scalar count is, whatever the left operand; `v << c`
+// and `v <<= c` share the rule.
+reject_negative_count_lanes :: proc(k: ^Checker, count: Expr, lanes: int) -> bool {
+	base := expr_base(count)
+	if !base.is_const {
+		return false
+	}
+	for index in 0 ..< lanes {
+		lane := simd_lane_const(base.const_value, index)
+		if lane.kind == .Integer && bi_sign(lane.integer) < 0 {
+			errorf(
+				k.c, expr_span(count), "L0356", "a shift count cannot be negative, found %s in lane %d",
+				bi_text(k.c, lane.integer), index,
+			)
+			return true
+		}
+	}
+	return false
 }
 
 // A constant comparison folds to a constant mask, one lane at a time.

@@ -3562,6 +3562,9 @@ check_compound_assign :: proc(k: ^Checker, s: ^Stmt_Assign) {
 			return
 		}
 		materialize_value_expr(k, s.rhs[0], type, "assign")
+		if op == .Shl || op == .Shr {
+			reject_negative_count_lanes(k, s.rhs[0], int(info.count))
+		}
 		return
 	}
 	// The built-in compound operation wins where it is defined; otherwise a

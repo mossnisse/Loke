@@ -1062,7 +1062,10 @@ A wrapping operator also replaces the idioms that relied on unsigned wrap.
 it is written `c >= '0' && c <= '9'`, or `c -% '0' < 10` where the trick is
 wanted. Generic code over `interfaces.Integral` cannot write the constant
 `T(0) - T(1)` for an unsigned `T`, even in a branch that never runs for one,
-because the fold is checked; `a +% T(1) == T(0)` tests for -1 instead.
+because the fold is checked; `math.wrapping_add(a, T(1)) == T(0)` tests for -1
+instead. `Integral` does not require `+%`, so a distinct integer can satisfy it
+without one, and generic code wraps through `math.wrapping_*`, which work on
+the integer representation.
 
 Shifts remain bit operations and atomic arithmetic keeps its hardware
 read-modify-write semantics. See [Integer overflow](design.md#integer-overflow).

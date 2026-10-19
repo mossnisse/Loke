@@ -11,5 +11,5 @@ L0537
 @38:8
 dropping `arena` would end the region backing `xs`, which is still live here
 L0537
-@64:8
+@75:8
 dropping `arena` would end the region backing `xs`, which is still live here

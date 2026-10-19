@@ -23,6 +23,8 @@ South
 West
 {A, C} 2 3
 {} true
+4 false 66
+3 1
 {North = 3, East = 0, South = 0, West = 1} 4 4
 3 0 1
 North 3
