@@ -2854,14 +2854,6 @@ parse_anon_union_type :: proc(p: ^Parser, open: Token) -> Expr {
 			if _, colon := expect(p, .Colon, "L0254", "`:` after the alternative's label"); !colon {
 				bad = true
 			} else if !at(p, .Pipe) && !at(p, .Rparen) {
-				if current(p).kind == .Dollar {
-					parse_error(
-						p, span_of(p, current(p)), "L0254", fmt_found(p, current(p)),
-						"an anonymous union alternative cannot be a `$` template name; declare a `union` for that",
-					)
-					advance(p)
-					bad = true
-				}
 				variant.type = parse_type(p)
 				bad = bad || expr_has_error(variant.type)
 			}
@@ -2948,8 +2940,6 @@ anon_record_excluded_spelling :: proc(p: ^Parser) -> string {
 		return "a record type field has no `inout` mode; declare a `struct` for that"
 	case .Move:
 		return "a record type field has no `move` mode; declare a `struct` for that"
-	case .Dollar:
-		return "a record type field cannot be a `$` template name; declare a `struct` for that"
 	case .Range:
 		return "a record type field cannot be variadic; declare a `struct` for that"
 	case .At:

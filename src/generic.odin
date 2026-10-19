@@ -509,8 +509,72 @@ pattern_relation :: proc(a, b: Expr) -> Pattern_Relation {
 			relation = merge_pattern_relation(relation, pattern_relation(left.result.type, right.result.type))
 		}
 		return relation
+	case ^Type_Anon_Record:
+		right, ok := b.(^Type_Anon_Record)
+		if !ok { return .Crossed }
+		left_fields := anon_record_pattern_fields(left)
+		right_fields := anon_record_pattern_fields(right)
+		if len(left_fields) != len(right_fields) {
+			return .Crossed
+		}
+		relation := Pattern_Relation.Equal
+		for field, index in left_fields {
+			if field.name != right_fields[index].name {
+				return .Crossed
+			}
+			relation = merge_pattern_relation(relation, pattern_relation(field.type, right_fields[index].type))
+		}
+		return relation
+	case ^Type_Anon_Union:
+		right, ok := b.(^Type_Anon_Union)
+		if !ok || len(left.variants) != len(right.variants) {
+			return .Crossed
+		}
+		relation := Pattern_Relation.Equal
+		for variant in left.variants {
+			other := anon_union_pattern_variant(right, variant.name.text)
+			if other == nil || (variant.type == nil) != (other.type == nil) {
+				return .Crossed
+			}
+			if variant.type != nil {
+				relation = merge_pattern_relation(relation, pattern_relation(variant.type, other.type))
+			}
+		}
+		return relation
 	}
 	return .Equal
+}
+
+// A written record's fields one per name, `a, b: T` as two; an unlabelled
+// field's name is empty, since its position is its name.
+@(private = "file")
+Pattern_Field :: struct {
+	name: string,
+	type: Expr,
+}
+
+@(private = "file")
+anon_record_pattern_fields :: proc(record: ^Type_Anon_Record) -> []Pattern_Field {
+	fields := make([dynamic]Pattern_Field, context.temp_allocator)
+	for field in record.fields {
+		if len(field.names) == 0 {
+			append(&fields, Pattern_Field{type = field.type})
+		}
+		for name in field.names {
+			append(&fields, Pattern_Field{name = name.text, type = field.type})
+		}
+	}
+	return fields[:]
+}
+
+@(private = "file")
+anon_union_pattern_variant :: proc(written: ^Type_Anon_Union, label: string) -> ^Variant {
+	for &variant in written.variants {
+		if variant.name.text == label {
+			return &variant
+		}
+	}
+	return nil
 }
 
 compare_generic_specificity :: proc(a, b: ^Generic_Template) -> int {
@@ -588,12 +652,23 @@ pattern_shape :: proc(e: Expr, bindings: ^[dynamic]Name = nil) -> (specificity: 
 			append(&parts, arg.value)
 		}
 		_, has_poly = pattern_shape(v.callee, bindings)
-	// One layer each, holding no pattern: a name, a value, or a declared body. An
-	// anonymous record's fields are not matched, so a `$` there binds nothing.
+	// design.md "Specialization": a structural type's fields and payloads are
+	// patterns, matched by label and order.
+	case ^Type_Anon_Record:
+		for field in v.fields {
+			append(&parts, field.type)
+		}
+	case ^Type_Anon_Union:
+		for variant in v.variants {
+			if variant.type != nil {
+				append(&parts, variant.type)
+			}
+		}
+	// One layer each, holding no pattern: a name, a value, or a declared body.
 	case ^Expr_Error, ^Expr_Literal, ^Expr_Ident, ^Expr_Selector, ^Expr_Checked_Extract, ^Expr_Index,
 	     ^Expr_Slice, ^Expr_Postfix, ^Expr_Propagated_Error, ^Expr_Unary, ^Expr_Binary, ^Expr_Range, ^Expr_Or_Else, ^Expr_Cond,
 	     ^Expr_Move, ^Expr_Composite, ^Expr_Proc, ^Expr_Proc_Group, ^Expr_Operator, ^Type_Type,
-	     ^Type_Record, ^Type_Anon_Record, ^Type_Anon_Union, ^Type_Enum, ^Type_Interface:
+	     ^Type_Record, ^Type_Enum, ^Type_Interface:
 		return 1, false
 	}
 	specificity = 1
@@ -1080,6 +1155,47 @@ match_type_pattern :: proc(
 			return false
 		}
 		return v.result == nil || match_type_pattern(k, v.result.type, info.result, scope, out)
+
+	case ^Type_Anon_Record:
+		// design.md "Specialization": the same labels in the same order, each
+		// field's pattern against that field's type. An unlabelled pattern takes
+		// a labelled record by position, as the record converts to it.
+		if info.kind != .Struct || !info.anonymous_record {
+			return false
+		}
+		fields := anon_record_pattern_fields(v)
+		if len(fields) != len(info.fields) {
+			return false
+		}
+		for field, index in fields {
+			member := symbol_of(k.c, info.fields[index])
+			if member == nil || (field.name != "" && identifier_text(k.c, member.name) != field.name) {
+				return false
+			}
+			if !match_type_pattern(k, field.type, member.type, scope, out) {
+				return false
+			}
+		}
+		return true
+
+	case ^Type_Anon_Union:
+		// Each of the argument's alternatives is one of the pattern's by label,
+		// in any order, as widening asks; its payload binds that alternative's
+		// pattern. An alternative the argument lacks binds nothing.
+		if info.kind != .Union || !info.anonymous_union {
+			return false
+		}
+		for name, index in info.variant_names {
+			written := anon_union_pattern_variant(v, identifier_text(k.c, name))
+			payload := info.variants[index]
+			if written == nil || (written.type == nil) != (payload == TYPE_VOID) {
+				return false
+			}
+			if written.type != nil && !match_type_pattern(k, written.type, payload, scope, out) {
+				return false
+			}
+		}
+		return true
 	}
 	return false
 }

@@ -1,0 +1,25 @@
+L0437
+@13:10
+`$T` is not bound here
+L0437
+@13:17
+`$T` is not bound here
+L0392
+@19:2
+`same` does not apply: `(a: int, b: string_view)` does not match the shape of parameter 1
+L0392
+@21:2
+`labelled` does not apply: `(a: int, b: int)` does not match the shape of parameter 1
+L0392
+@23:2
+`optional` does not apply: `Maybe` does not match the shape of parameter 1
+L0392
+@25:2
+`optional` does not apply: `(some: int | none: | more:)` does not match the shape of parameter 1
+L0437
+@27:2
+`$E` is not bound here
+in the signature of `three(int)`
+L0437
+@28:13
+`$T` is not bound here

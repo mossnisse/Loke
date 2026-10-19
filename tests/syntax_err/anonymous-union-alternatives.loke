@@ -1,6 +1,7 @@
 // An anonymous union has two or more alternatives, each one label and its
-// colon; an alternative's type is not a `$` binding. A trailing `|` is
-// accepted, but not one with nothing between it and the previous `|`.
+// colon. A `$` binding in an alternative parses, as it does anywhere a type
+// is written. A trailing `|` is accepted, but not one with nothing between it
+// and the previous `|`.
 package main;
 
 One :: (a: int |);

@@ -1852,7 +1852,7 @@ Its identity is **structural**: the ordered sequence of its labels and payload t
 
 Otherwise it is an ordinary union. It is built with the contextual `.label(payload)` or through an alias, `Either.left(1)`, and `Either.left` is its [constructor](#constructing-a-variant). [Inspecting](#inspecting-a-union) it, [switch ownership](#switch-ownership), copy, move, drop, equality, formatting, and the [representation](#representation) are a named union's, so `(node: ^Node | end:)` is one address.
 
-It carries no attributes. It therefore has [no zero value](#types-with-no-zero-value), is not a [fallible expression](#typed-fallibility), so `or_else` and `or_return` reject it, and does not [require its results](#require_results). A union that needs one of those is declared, and `distinct` does not make an anonymous one nominal. An alternative's type is not a `$` binding. As for an anonymous record, methods on one are [extensions](#methods-and-implementation-blocks).
+It carries no attributes. It therefore has [no zero value](#types-with-no-zero-value), is not a [fallible expression](#typed-fallibility), so `or_else` and `or_return` reject it, and does not [require its results](#require_results). A union that needs one of those is declared, and `distinct` does not make an anonymous one nominal. A parameter's alternative may bind a `$` name, as described in [Specialization](#specialization). As for an anonymous record, methods on one are [extensions](#methods-and-implementation-blocks).
 
 ##### Widening by label
 
@@ -4986,6 +4986,26 @@ apply :: proc(x: $T, f: proc(value: T) -> $U) -> U {
 halve :: proc(value: int) -> f64 { return f64(value) / 2; }
 half := apply(7, halve);   // U is f64
 ```
+
+An [anonymous record](#anonymous-records) or [anonymous union](#anonymous-unions) is a shape as well, matched by label:
+
+```odin
+value_or :: proc(found: (some: $T | none:), fallback: T) -> T {
+	switch (found) {
+	case .some(value): return value;
+	case .none:        return fallback;
+	}
+}
+
+flip :: proc(pair: ($A, $B)) -> (B, A) {
+	first, second := pair;
+	return {second, first};
+}
+```
+
+- A record pattern matches an anonymous record with the same labels in the same order, and each field's pattern binds from that field's type. An unlabeled pattern matches a labeled record by position, since the record converts to it, so `flip(bounds())` binds both names from `(low: int, high: int)`.
+- A union pattern matches an anonymous union whose every alternative is one of the pattern's, by label in any order, with a payload exactly where the pattern's has one. Each payload's pattern binds from that alternative's payload type, and the argument then [widens](#widening-by-label) to the parameter type the pattern produces. An alternative the argument lacks binds nothing, so a name that only it holds must be bound by another parameter.
+- A named record or union matches neither, since its fields and variants belong to its declaration.
 
 The pattern binds types only. The argument must still convert to the parameter type it produces, following the mode, calling-convention, type-level effect, and result-contract rules for [procedure types](#procedure-type). Inferred [global write effects](#global-write-effects) are not part of type compatibility.
 

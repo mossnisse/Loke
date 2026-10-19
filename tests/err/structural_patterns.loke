@@ -1,0 +1,29 @@
+// design.md "Specialization": a structural pattern matches an anonymous record
+// with its labels in order and an anonymous union whose alternatives it has. A
+// named union matches neither, a name bound twice must agree, and a name only
+// an absent alternative holds stays unbound. An `impl` subject binds nothing.
+package main;
+
+same :: proc(pair: (a: $T, b: $T)) {}
+labelled :: proc(pair: (x: $T, y: $T)) {}
+optional :: proc(found: (some: $T | none:)) {}
+three :: proc(outcome: (ok: $T | err: $E | none:)) {}
+Maybe :: union { some: int, none }
+
+impl (a: $T, b: $T) {
+	sum :: proc(self) -> T { return self.a + self.b; }
+}
+
+main :: proc() {
+	mixed: (a: int, b: string_view) = {1, "x"};
+	same(mixed);
+	other: (a: int, b: int) = {1, 2};
+	labelled(other);
+	named: Maybe = .none;
+	optional(named);
+	extra: (some: int | none: | more:) = .none;
+	optional(extra);
+	partial: (ok: int | none:) = .none;
+	three(partial);
+	local: (a: $T, b: int);
+}

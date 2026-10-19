@@ -1,0 +1,76 @@
+// design.md "Specialization": a `$` inside an anonymous record or union binds
+// by label. A record pattern needs its labels in order, and an unlabelled one
+// takes a labelled record by position. A union pattern takes any argument
+// whose alternatives it has, in any order, which then widens.
+package main;
+import "core:fmt";
+
+value_or :: proc(found: (some: $T | none:), fallback: T) -> T {
+	switch (found) {
+	case .some(value): return value;
+	case .none:        return fallback;
+	}
+}
+
+flip :: proc(pair: ($A, $B)) -> (B, A) {
+	first, second := pair;
+	return {second, first};
+}
+
+swap_named :: proc(pair: (low: $A, high: $B)) -> (high: B, low: A) {
+	return {high = pair.high, low = pair.low};
+}
+
+count :: proc(entry: (items: []$T, name: string_view)) -> int {
+	return entry.items.len();
+}
+
+// One name bound twice: both payloads must agree.
+either :: proc(side: (left: $T | right: $T)) -> T {
+	switch (side) {
+	case .left(value):  return value;
+	case .right(value): return value;
+	}
+}
+
+describe :: proc { describe_any, describe_shape, describe_int }
+describe_any :: proc(value: $T) -> string_view { return "any"; }
+describe_shape :: proc(found: (some: $T | none:)) -> string_view { return "shape"; }
+describe_int :: proc(found: (some: int | none:)) -> string_view { return "int"; }
+
+Token :: move_only struct { id: int }
+take :: proc(held: (some: $T | none:)) -> int {
+	switch (held) {
+	case .some(token): return token.id;
+	case .none:        return 0;
+	}
+}
+
+bounds :: proc() -> (low: int, high: int) { return {1, 9}; }
+
+main :: proc() {
+	present: (some: int | none:) = .some(4);
+	absent: (some: int | none:) = .none;
+	fmt.println(value_or(present, 0), value_or(absent, 7));
+
+	reordered: (none: | some: string_view) = .some("widened");
+	fmt.println(value_or(reordered, "fallback"));
+
+	high, low := flip(bounds());
+	fmt.println(high, low);
+	mixed: (bool, f64) = {true, 2.5};
+	fmt.println(flip(mixed));
+	fmt.println(swap_named(bounds()));
+
+	values := [3]int{1, 2, 3};
+	entry: (items: []int, name: string_view) = {items = values[:], name = "three"};
+	fmt.println(count(entry));
+
+	side: (left: int | right: int) = .right(5);
+	fmt.println(either(side));
+
+	flag: (some: bool | none:) = .some(true);
+	fmt.println(describe(present), describe(flag), describe(3));
+
+	fmt.println(take((some: Token | none:).some(Token{id = 11})));
+}

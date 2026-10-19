@@ -626,6 +626,25 @@ is, so it is widened without a copy. The conversion does not reach through conta
 `[dynamic]` of the wider union has a different element size; that rebuilds the
 container, which is a loop the program writes.
 
+### Structural patterns
+
+Without bindings, a helper over "a value or nothing" took a named union such as
+`Option(T)` or one concrete shape, so an anonymous union could not reach generic
+code by its own spelling. A `$` inside a [structural
+pattern](design.md#specialization) makes the shape the constraint, as `[]$E`
+already does for a slice.
+
+The matching follows each type's own conversions, so a pattern accepts what a
+concrete parameter of the produced type would. A record's identity is its
+ordered fields and it converts only by dropping labels, so a record pattern
+needs the same labels in the same order, and an unlabeled one takes any record
+by position. A union converts by widening, so a union pattern takes any
+argument whose alternatives it has, in any order, and binds each payload by its
+label. Binding by label rather than position also means a reordered union
+binds the same names, which positional binding would silently swap. Named types
+stay out for the reason they stay out of widening: their fields and variants
+belong to a declaration, which `Option($T)` already matches.
+
 ### Per-variant switch cases
 
 Interpreters walking a tree, protocol handlers, and error reporters often do

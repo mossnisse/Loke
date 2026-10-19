@@ -172,6 +172,11 @@ resolve_variant_payload :: proc(k: ^Checker, variant: Variant, name: Identifier_
 	}
 	payload := resolve_type_syntax(k, variant.type)
 	if payload == INVALID_TYPE {
+		// An anonymous union's `$` that no argument bound names itself.
+		if type_syntax_has_poly(variant.type) {
+			report_unresolved_type(k, variant.type)
+			return INVALID_TYPE, false
+		}
 		errorf(k.c, expr_span(variant.type), "L0422", "this union variant payload is not a type")
 		return INVALID_TYPE, false
 	}

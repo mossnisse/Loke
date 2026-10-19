@@ -716,10 +716,15 @@ including why `Result`, `Option`, and `Status` remain the fallible boundaries
 ([Anonymous unions](comments.md#anonymous-unions)). What the proposal left
 open follows.
 
-### Bindings inside structural types
+### Generic implementations on structural shapes
 
-`(some: $T | none:)` and a `$` inside an anonymous record are rejected today.
-Binding by label and order in both is one later change.
+A parameter's anonymous record or union binds its `$` names by label
+([Specialization](design.md#specialization)), but an `impl` subject does not:
+`impl (a: $T, b: $T) { ... }` is `L0437`, since a generic `impl` names a
+generic record's application, as `impl Pair($T, $T)` does. An `impl` over a
+shape would be an [extension](design.md#methods-and-implementation-blocks)
+whose subject is a pattern, which method lookup does not match today. Revisit
+when a program wants methods on a family of shapes.
 
 ### Parametric aliases
 
@@ -763,8 +768,9 @@ Open points:
 - **Order.** Spliced alternatives would take their place in the written order,
   which is also the tag order.
 - **Generic sets.** `(..$E | limit: Limit_Error)` over a set bound by a
-  generic would need [`$` bindings inside structural types](#bindings-inside-structural-types)
-  first.
+  generic would need a `$` that binds a set of alternatives. A
+  [structural pattern](design.md#specialization) binds one payload per label,
+  not the rest of a union.
 - **Syntax.** `..` in a type is new. It is the variadic spread's punctuation,
   which [union argument expansion](design.md#union-argument-expansion) also
   uses.

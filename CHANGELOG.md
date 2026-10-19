@@ -80,6 +80,13 @@ checklist.
   checked, a place lends its payload and a temporary or `move` gives it up,
   and the call's value is the selected call's. See design.md
   [Union argument expansion](design.md#union-argument-expansion).
+- Structural patterns: a generic parameter may bind `$` names inside an
+  anonymous record or union, as in `proc(found: (some: $T | none:))` and
+  `proc(pair: ($A, $B)) -> (B, A)`. A record pattern needs its labels in
+  order, and an unlabelled one takes a labelled record by position. A union
+  pattern takes an argument whose alternatives it has, in any order, and binds
+  each payload by its label. See design.md
+  [Specialization](design.md#specialization).
 - `examples/orders.loke` checks orders against a stock list with anonymous
   unions: an error set per helper, widened by label into the caller's, and a
   labeled layer kept with `or_return .order`.
