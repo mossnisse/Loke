@@ -159,6 +159,70 @@ In priority order, each usable without the next:
   whether to adopt it, where to state it, and whether a check should report a
   spec citation in a public declaration's doc comment. The bundled packages'
   existing comments have not been moved.
+- **A checked-in interface file and an HTML page.** `-doc` is not used if a
+  reader must first know it exists, and that holds for people as much as for
+  agents: both open the package's folder and read what is there. Two outputs
+  of the same checker data would split the work:
+  - **An interface file in each package's directory**, like a C header: the
+    `package` line, then each public declaration's doc comment and signature,
+    with no bodies and nothing private. It is found by listing the folder, by
+    the editor's file tree, by grep, and on a code host, with no command to
+    learn. It is checked rather than trusted: the gate regenerates it and
+    fails when the checked-in copy differs, as Kotlin's API dumps and
+    Android's `api/current.txt` are checked, so it cannot go stale. A change
+    to the public API, or to a layer 1 fact such as a result that starts to
+    borrow, then shows in review as a diff of that file, which answers part
+    of "Inferred facts become API". It is output only: the compiler never
+    reads it, so the source stays the one authority and Loke does not get
+    C's two copies of each signature.
+  - **HTML from `-doc`**, for browsing packages not yet opened and for
+    publishing: see "HTML for people".
+
+  The interface file also replaces `-doc`'s Markdown. Measured on 2026-10-20,
+  the Markdown markup (a `## Name` heading and a ` ```loke ` fence around each
+  signature) is 20% of `core:container`'s page, 16% of `core:strings`'s, and
+  11% of `core:fmt`'s. The heading repeats the name the signature starts with,
+  and the fences exist only to switch between prose and code. A Loke-shaped
+  file has neither, an agent reads it as the code it already knows, and any
+  editor highlights it with the Loke grammar. Go's `go doc` prints
+  declarations the same way. An agent can read or grep the file, which covers
+  most of the index form in "Reading by an agent", though a single-entry form
+  still helps with a large package. Open:
+  - **The extension.** A package is its directory, so an `api.loke` would be
+    compiled as part of it; a distinct extension such as `.lokei` (as OCaml
+    has `.mli`) avoids that, and the editor grammar maps it to Loke.
+  - **Whether the file must parse.** That needs a declaration form without a
+    body.
+  - **How a record's private fields are shown**, if at all.
+  - **Target-dependent declarations.** Ten bundled packages have a top-level
+    `when` ([Conditional compilation](design.md#conditional-compilation)).
+    Those checked hold only private foreign imports, but a `when` can declare
+    public API, so the file is generated either for one reference target or
+    with the `when` conditions written into it.
+  - **What the gate checks.** Every package in the repository, or only those
+    that opt in, and how a package outside the repository runs the check.
+- **HTML for people.** Markdown needs a renderer and gives no links, while every
+  computer has a browser. `-doc=html` would write one page per package and an
+  index, and need not be checked in. The compiler would color signatures from
+  its own lexer, which is exact where a TextMate grammar approximates, and
+  could link each type named in a signature to its entry, since the checker
+  resolves it. Open: the option spelling, the output layout, and whether
+  hover's Markdown stays as it is.
+- **A marker for usage comments.** Instead of the convention in "Who a doc
+  comment is for", the comment syntax could carry the audience, as Rust's does:
+  `///` above a declaration is for its users and is all that `-doc` and hover
+  show, while `//` is for maintainers and is never shown. `//!` at the top of a
+  file could hold the package overview. `///` is not used in the repository and
+  not specified, and it needs only the lexer to tell comments apart, not new
+  grammar. The author then decides the audience once, where the comment is
+  written. It also bounds layer 3: only names in `///` comments are checked, so
+  maintainer notes may mention anything. Neither an attribute such as
+  `@(doc="…")`, which needs escaping and long strings, nor a prefix such as
+  `// doc:`, which a typo silently drops, does this as cheaply. The cost is one
+  pass over the bundled packages to mark their usage comments, which acting on
+  the 40% finding needs anyway. Open: whether an unmarked comment above a
+  public declaration still shows during a transition, and whether `///`
+  anywhere but above a declaration is reported.
 
 ## The `op`/`try_op` pair
 
