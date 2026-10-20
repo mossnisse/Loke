@@ -29,6 +29,96 @@ Decided so far, and built as `loke.project` (compiler-guide.md "Projects"):
   version, immutable commit ID, and content checksum for every dependency, as
   planned in [Packages and dependencies](future-plans.md#packages-and-dependencies).
 
+## Using a package without reading its code (2026-10-20)
+
+To use a package today you read its source. Hand-written documentation does
+not fix that, because nothing checks it and it goes stale. The direction
+proposed here: everything a package tells its users is either checked by the
+compiler or run by the test runner, and prose is left for intent, which goes
+stale slowest.
+
+Part of this exists. [`lokec -doc`](compiler-guide.md#common-options) derives
+each public declaration's signature from source, and hover shows the same
+declaration ([Language server](compiler-guide.md#language-server)). A signature
+already says how to call a procedure and, through its
+[fallible union](design.md#typed-fallibility), how it fails. What `-doc` adds
+beyond the signature is the comments above it, which are the unchecked part.
+The compiler also infers facts a user wants and neither `-doc` nor hover shows:
+
+| What a user asks | Where the answer is today |
+| --- | --- |
+| Does the result borrow my argument, or is it a copy? | The inferred [result contract](design.md#procedure-result-contracts), not shown |
+| Which allocator backs the result? | The contract's region provenance, not shown |
+| Does it allocate at all? | Not inferred: the region contract follows only the result |
+| Does it write global state? | The inferred [write effect](design.md#global-write-effects), not shown |
+| Can it return? | [`-> !`](design.md#diverging-procedures), shown |
+| Can it panic? | Not inferred |
+| What does a typical use look like? | Comments, or the package's tests |
+| What must the arguments satisfy? | Types where they can say it; otherwise comments |
+
+### Proposed layers
+
+In priority order, each usable without the next:
+
+1. **Show what the compiler infers.** `-doc` and hover add the result contract,
+   the allocator behind the result, and the write effect to each public
+   procedure, for example "result borrows `text`" or "writes package state".
+   No language change, and the analysis exists.
+2. **Examples that are tests.** A [test procedure](design.md#test-procedures)
+   names the declaration it illustrates, with something like
+   `@(example=split)`, and `-doc` prints its body under that declaration.
+   `lokec -test` runs it, so it cannot drift from the code.
+3. **Check the prose that remains.** A name a doc comment refers to must
+   resolve, as rustdoc's intra-doc links must, and `-doc` reports one that does
+   not. This catches renames and removals, not wrong claims.
+   `check-citations.ps1` already does the same for spec headings cited in
+   source comments.
+4. **Preconditions as code.** Checked clauses, shown by `-doc` and checked at
+   run time. This is a language feature, and types already carry many
+   preconditions (unsigned integers, non-null references), so it waits for
+   what layers 1 to 3 leave in comments.
+
+### Open points
+
+- **Inferred facts become API.** Once `-doc` shows an inferred contract,
+  callers depend on it, and an implementation change can change it silently.
+  Two answers, not exclusive: a written contract checked against the body, as
+  [Public borrow contracts should stand on their own](#public-borrow-contracts-should-stand-on-their-own)
+  proposes for borrows, and the compatibility tool in
+  [Hand-written package header files](comments.md#hand-written-package-header-files),
+  which would compare the shown facts between versions and report a changed
+  one as a possible break. Which facts need a written form, and which may stay
+  inferred?
+- **What to show.** Each procedure should gain about one line, not a dump of
+  the analysis. A write effect names package-private storage, which an
+  importer cannot name; whether to name it or say only "writes package state"
+  is open. A generic procedure's contract is per instantiation
+  ([Procedure result contracts](design.md#procedure-result-contracts)), so the
+  generic declaration may only have a contract stated in terms of its type
+  parameters, or none.
+- **Allocation.** Whether a call allocates, and from which allocator, is what
+  a caller with an arena or a hot loop most wants to know, and the result
+  contract does not answer it. It would need its own inferred effect, with the
+  same API question as the others.
+- **Panics.** Once checked arithmetic and indexing count, nearly every
+  procedure may panic, so a "may panic" mark carries no information. Reporting
+  only a reachable explicit `panic` or `assert` is one option; reporting
+  nothing is another.
+- **What an example may use.** An example shows what an importer can write, so
+  it should name only public declarations, unlike an ordinary test. A test
+  build runs only the root package's tests
+  ([Test procedures](design.md#test-procedures)), so an imported package's
+  examples run when that package is tested, not when its importer is.
+- **What a comment reference is.** Doc comments backtick names, expressions,
+  and types alike (`builder.len()`, `[dynamic]u8`), so checking every
+  backticked span would report false errors. Either only a backticked name or
+  dotted path is checked, or references get a syntax of their own, such as
+  `[split]`.
+- **Package overview.** The comments above a `package` clause describe the
+  whole package and are unchecked like any other. Layers 2 and 3 apply to them
+  too, but whether a package also needs a checked list of its main entry
+  points is open.
+
 ## The `op`/`try_op` pair
 
 Should a container keep both spellings of a fallible operation? `append`/`try_append`, `reserve`/`try_reserve`, and the rest double the container API over a failure-policy choice. Typed fallibility made the fallible variant cheap — a `try_` operation reports failure as a `Result` rather than a bare `bool`, over an ordinary library union with `@(failure=...)` and no compiler-known error type — which is what makes keeping both spellings need re-justifying. Every shipped container keeps its pair today; collapsing them is a separate decision with its own migration.
