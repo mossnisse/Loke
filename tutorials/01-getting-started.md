@@ -54,7 +54,7 @@ You can also build the compiler from source instead; the
 
 Make a directory for these tutorials, and save this as `hello.loke` inside it:
 
-```odin file=hello.loke
+```loke file=hello.loke
 package main;
 
 import "core:fmt";
@@ -96,7 +96,7 @@ here, needs none.
 `fmt.println` takes any number of values, of any type, and puts a space
 between them:
 
-```odin file=println.loke
+```loke file=println.loke
 package main;
 
 import "core:fmt";
@@ -119,7 +119,7 @@ the line above is empty
 The compiler checks the whole program before it writes anything. Here is a
 program with a mistake, saved as `mistake.loke`:
 
-```odin file=mistake.loke
+```loke file=mistake.loke
 package main;
 
 import "core:fmt";

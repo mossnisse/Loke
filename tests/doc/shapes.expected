@@ -4,7 +4,7 @@ A package comment opens the package's page.
 
 ## Point
 
-```odin
+```loke
 Point :: struct {
 	// Across, in metres.
 	x: f64,
@@ -17,7 +17,7 @@ A point on the plane.
 
 ## Handle
 
-```odin
+```loke
 Handle :: struct {
 	// and fields private to the package
 }
@@ -27,7 +27,7 @@ Opaque to importers.
 
 ## Facing
 
-```odin
+```loke
 Facing :: enum { North, South }
 ```
 
@@ -35,7 +35,7 @@ The directions a shape may face.
 
 ## MAX_SIDE
 
-```odin
+```loke
 MAX_SIDE :: 1000
 ```
 
@@ -43,19 +43,19 @@ The largest side any shape may have.
 
 ## make_point
 
-```odin
+```loke
 make_point :: proc(x: f64, y: f64) -> Point
 ```
 
 ## LIMIT
 
-```odin
+```loke
 LIMIT :: 10
 ```
 
 ## square_area
 
-```odin
+```loke
 @(require_results)
 square_area :: proc(side: f64) -> f64
 ```
@@ -65,7 +65,7 @@ It is always non-negative.
 
 ## Point.sum
 
-```odin
+```loke
 sum :: proc(self) -> f64
 ```
 
@@ -73,7 +73,7 @@ The sum of the coordinates.
 
 ## LONGEST
 
-```odin
+```loke
 LONGEST :: units.METRE * MAX_SIDE
 ```
 
@@ -86,7 +86,7 @@ after the root's.
 
 ## METRE
 
-```odin
+```loke
 METRE :: 1.0
 ```
 

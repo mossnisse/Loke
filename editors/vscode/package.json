@@ -39,6 +39,16 @@
         "language": "loke",
         "scopeName": "source.loke",
         "path": "./syntaxes/loke.tmLanguage.json"
+      },
+      {
+        "scopeName": "markdown.loke.codeblock",
+        "path": "./syntaxes/loke.markdown.tmLanguage.json",
+        "injectTo": [
+          "text.html.markdown"
+        ],
+        "embeddedLanguages": {
+          "meta.embedded.block.loke": "loke"
+        }
       }
     ],
     "commands": [

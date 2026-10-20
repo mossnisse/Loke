@@ -21,7 +21,7 @@ bounded_app/
 
 **`bounded_app/storage/storage.loke`**
 
-```odin file=bounded_app/storage/storage.loke
+```loke file=bounded_app/storage/storage.loke
 package storage;
 
 import "core:mem";
@@ -38,7 +38,7 @@ allocator_factory :: proc() -> Allocator {
 
 **`bounded_app/main.loke`**
 
-```odin file=bounded_app/main.loke
+```loke file=bounded_app/main.loke
 @(default_allocator = "./storage:allocator_factory")
 package main;
 

@@ -405,7 +405,7 @@ Time zones are what is left.
 The planned second phase, for a caller that wants the time on the machine's
 clock:
 
-```odin
+```loke
 Zone :: struct { /* private: a fixed offset or the system's zone */ }
 local_zone() -> Zone
 fixed_zone(offset: Offset) -> Zone

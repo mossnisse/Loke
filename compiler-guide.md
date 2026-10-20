@@ -170,7 +170,7 @@ The root package keeps its allocator and logger choices in source. The value
 names a public zero-argument provider factory; its package does not also need
 to be imported:
 
-```odin
+```loke
 @(
 	default_allocator = "./providers:allocator_factory",
 	default_logger = "./providers:logger_factory",

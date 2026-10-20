@@ -5,7 +5,7 @@ instance, so `-doc` reads their visibility from what is written.
 
 ## Pair
 
-```odin
+```loke
 Pair :: struct($T: type) {
 	// The left one.
 	left: T,
@@ -17,7 +17,7 @@ A pair of one type.
 
 ## Box
 
-```odin
+```loke
 Box :: struct($T: type) {
 	// and fields private to the package
 }
@@ -27,7 +27,7 @@ Opaque to importers.
 
 ## Pair($T).first
 
-```odin
+```loke
 first :: proc(self) -> T
 ```
 

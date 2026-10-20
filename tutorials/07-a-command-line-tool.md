@@ -39,7 +39,7 @@ tally/
 
 **`tally/ledger/ledger.loke`**
 
-```odin file=tally/ledger/ledger.loke
+```loke file=tally/ledger/ledger.loke
 package ledger;
 
 import "core:strconv";
@@ -111,7 +111,7 @@ categories :: proc(totals: Totals) -> [dynamic]string {
 
 **`tally/main.loke`**
 
-```odin file=tally/main.loke
+```loke file=tally/main.loke
 package main;
 
 import "core:fmt";

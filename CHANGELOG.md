@@ -16,7 +16,7 @@ checklist.
   gets `L0336`. `os.args` is now a constant, and every use of it reads as
   before. Upgrade by exporting a procedure in the variable's place:
 
-  ```odin
+  ```loke
   // before
   @(public)
   verbose: bool;
@@ -42,7 +42,7 @@ checklist.
   or a random number generator, to the new wrapping operators, and code that
   tested a byte range by subtraction to comparisons:
 
-  ```odin
+  ```loke
   // before
   hash = (hash ~ u64(b)) * FNV_PRIME;
   is_digit := c - '0' < 10;
@@ -67,7 +67,7 @@ checklist.
   `L0354`. Upgrade by unwrapping it and comparing times, or by asking for the
   count:
 
-  ```odin
+  ```loke
   // before
   if (info.modified > cutoff_nanoseconds) { ... }
   // after
@@ -84,7 +84,7 @@ checklist.
   is still chosen. Upgrade by declaring a struct for a record that needs its
   own comparison, or by calling the procedure by name:
 
-  ```odin
+  ```loke
   // before: picked the extension
   impl Span { same :: operator(==) proc(a, b: Span) -> bool { ... } }
   if (a == b) { ... }
@@ -218,6 +218,9 @@ checklist.
 
 ### Changed
 
+- `lokec -doc` writes its code blocks as ` ```loke ` rather than ` ```odin `,
+  as hover already did, and so does every Markdown file in the repository. The
+  VS Code extension highlights a ` ```loke ` block in a Markdown file's source.
 - Any reserved word may name a member: a field, an enum member, a union
   variant, a record type's label, an `impl` member, or an interface `slot`,
   so `token.type`, `Kind.default`, `.map`, `a.union(b)`, and the associated

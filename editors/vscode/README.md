@@ -42,6 +42,10 @@ the current file's program in a preview beside it.
 
 The server's messages appear in the **Output** panel under **Loke**.
 
+A fenced code block in a Markdown file whose info string starts with `loke`,
+as ` ```loke ` and the repository's ` ```loke file=hello.loke `, is highlighted
+as Loke in the file's source. The rendered preview does not highlight it.
+
 Highlighting comes from the text alone, so it goes by the shape of a name:
 `Type_Name` is shown as a type and `ALL_CAPS` as a constant. The grammar's
 keyword and predeclared-name lists are checked against the specification by

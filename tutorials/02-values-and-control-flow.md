@@ -7,7 +7,7 @@ calls, with particular attention to initialization, conversions, and mutation.
 
 `name := value` infers a variable's type; `name: Type = value` specifies it.
 
-```odin file=variables.loke
+```loke file=variables.loke
 package main;
 
 import "core:fmt";
@@ -62,7 +62,7 @@ A variable can be declared without a value, as `message: string;`, and given
 one later. Until then it has none, and the compiler rejects any read that might
 happen before an assignment:
 
-```odin file=dead.loke
+```loke file=dead.loke
 package main;
 
 import "core:fmt";
@@ -96,7 +96,7 @@ compiles. To start from a type's zero value on purpose, write `{}`:
 `name :: value` declares a constant: a value fixed when the program is
 compiled. Constants may use each other, in any order:
 
-```odin file=constants.loke
+```loke file=constants.loke
 package main;
 
 import "core:fmt";
@@ -132,7 +132,7 @@ The last two lines show what happens at the edge of a type's range. `+%`,
 and `*` do not wrap, signed or unsigned. When a result does not fit, the
 program stops with a *panic* rather than carry on with a wrong number:
 
-```odin file=overflow.loke
+```loke file=overflow.loke
 package main;
 
 import "core:fmt";
@@ -161,7 +161,7 @@ than an `i32` can hold. [Errors](05-errors.md) says more about panics.
 `if`, `else if`, and `else` use mandatory parentheses around conditions and
 braces around bodies, even for one statement.
 
-```odin file=ifs.loke
+```loke file=ifs.loke
 package main;
 
 import "core:fmt";
@@ -202,7 +202,7 @@ expression.
 runs, with no falling through into the next, and `case:` with nothing after it
 catches the rest:
 
-```odin file=decisions.loke
+```loke file=decisions.loke
 package main;
 
 import "core:fmt";
@@ -238,7 +238,7 @@ before `b`, and `a ..= b` includes it.
 `foreach` iterates ranges and containers. `for` supports both a C-style
 three-part header and a condition alone; there is no separate `while` keyword.
 
-```odin file=loops.loke
+```loke file=loops.loke
 package main;
 
 import "core:fmt";
@@ -282,7 +282,7 @@ Procedures use `proc`. An ordinary parameter binding is immutable; copy it
 into a local variable to reassign it. An `inout` parameter instead borrows the
 caller's variable for mutation.
 
-```odin file=procedures.loke
+```loke file=procedures.loke
 package main;
 
 import "core:fmt";
@@ -349,7 +349,7 @@ A few things to notice:
 An `inout` parameter requires `inout` at the call site too. Leaving out the
 marker is an error:
 
-```odin file=marker.loke
+```loke file=marker.loke
 package main;
 
 import "core:fmt";
@@ -387,7 +387,7 @@ Both pointer types are non-null and have no zero value: neither accepts `nil`
 or `{}`. Represent an absent pointer with `Option(^T)` and `.none` instead;
 [Errors](05-errors.md#option-a-value-that-may-be-absent) explains `Option`.
 
-```odin file=pointers.loke
+```loke file=pointers.loke
 package main;
 
 import "core:fmt";

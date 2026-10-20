@@ -85,7 +85,7 @@ document_decl :: proc(c: ^Compiler, b: ^strings.Builder, file: ^File, d: ^Decl, 
 	if owner != "" {
 		name = fmt.aprintf("%s.%s", owner, name)
 	}
-	fmt.sbprintfln(b, "\n## %s\n\n```odin", name)
+	fmt.sbprintfln(b, "\n## %s\n\n```loke", name)
 	// `@(public)` and `@(private)` decide whether the page shows it at all.
 	for attribute in d.attributes {
 		spelled := text[attribute.span.lo:attribute.span.hi]

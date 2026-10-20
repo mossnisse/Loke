@@ -73,7 +73,7 @@ Headings are cited by name from source comments and checked by
 This program creates a list of points and prints them, or reports an error if a
 coordinate is negative. It introduces features explained in the sections below.
 
-```odin
+```loke
 package main;
 
 import "core:fmt";
@@ -151,7 +151,7 @@ An expression statement always needs a semicolon, including when it ends in a co
 
 A lone `;` is an empty statement, valid anywhere including file scope. A semicolon after a brace-bodied form is thus a separate empty statement:
 
-```odin
+```loke
 Marker :: struct {}
 Tag :: struct {};   // the trailing `;` is a separate empty declaration
 x :: Point{1, 2};   // a composite-literal expression still needs `;`
@@ -163,7 +163,7 @@ Newlines never terminate statements; the compiler does not insert semicolons.
 
 Each control-flow statement (`if`, `for`, `foreach`, `switch`, `when`) has a parenthesized header and a braced body. An unbraced body is not allowed.
 
-```odin
+```loke
 if (x >= 0) { }
 for (i := 0; i < 10; i += 1) { }
 foreach (value in values) { }
@@ -196,7 +196,7 @@ Every other predeclared name may be shadowed by a declaration like any other nam
 
 A string literal uses double quotes, a character literal single quotes, and `\` starts an escape sequence. A raw string literal is enclosed in backticks and has no escapes.
 
-```odin
+```loke
 "This is a string"
 'A'
 '\n'                       // newline character
@@ -242,7 +242,7 @@ A numeric literal starts as an unfixed integer or unfixed floating constant, eva
 
 Converting a finite unfixed constant to a floating-point type rounds once, IEEE-754 round-to-nearest ties-to-even; it is rejected if the result would overflow to infinity, though rounding to subnormal or zero is allowed. Infinity and NaN may convert to a floating-point type but never to an integer; the IEEE class and an infinity's sign are preserved, and a NaN payload is implementation-defined.
 
-```odin
+```loke
 x: int = 1.0;      // ERROR: unfixed floating constant does not convert to `int`
 x: int = int(1.0); // OK: explicit floating-to-integer conversion
 y: f64 = 1;        // OK: integer constant rounded to `f64`
@@ -253,7 +253,7 @@ z: f64 = 0.1;      // OK: rounded once to `f64`
 
 A range is written with two endpoints: `low ..< high` excludes the high endpoint, and `low ..= high` includes it. Both forms include the low endpoint and produce an ordinary [`Range(T)`](#ranges) value:
 
-```odin
+```loke
 half   := 0 ..< 3;      // Range(int): 0, 1, 2
 closed := 0 ..= 3;      // Range(int): 0, 1, 2, 3
 letters := 'a' ..= 'c'; // Range(rune): a, b, c
@@ -267,7 +267,7 @@ See [Ranges](#ranges) for the type's fields and supported interfaces. The same s
 
 A line comment runs from `//` to the newline; a block comment is `/* ... */` and may nest. Comments may not appear inside a string or character literal.
 
-```odin
+```loke
 // a comment
 x: int; // trailing comment
 
@@ -287,7 +287,7 @@ x: int; // trailing comment
 
 Loke's basic types are:
 
-```odin
+```loke
 // booleans
 bool
 
@@ -357,7 +357,7 @@ Not being null proves nothing else: a reference is still a borrow, checked as on
 
 `T(v)` converts `v` to type `T` and always produces `T`:
 
-```odin
+```loke
 i := 123;
 f := f64(i);
 u := u32(f);
@@ -371,7 +371,7 @@ An integer, rune, or enum value converts to an integer or rune type only when th
 
 `math.wrap(T, value)` is the conversion that keeps the low bits of the two's-complement representation instead, the same wrap the [wrapping operators](#integer-overflow) define; it is what bit manipulation, hashing, and reinterpreting a sign want. Its destination is an integer or rune type, its value an integer, rune, or enum, and it converts vectors of one lane count lane by lane. It folds when its value is constant. To validate input instead, `math.to(T, value)` returns `Option(T)`: the value when `T` represents it exactly, and `.none` otherwise. It is the integer twin of [`Enum.from_int`](#integer-conversion).
 
-```odin
+```loke
 count := 300;
 byte := u8(count);              // panics: 300 does not fit `u8`
 low := math.wrap(u8, count);    // 44
@@ -410,7 +410,7 @@ The following list defines the implicit conversions. There are no user-defined o
 
 Some constant expressions have an unfixed type. Context implicitly converts an unfixed value to a compatible concrete type.
 
-```odin
+```loke
 I :: 42;      // unfixed integer; converts to an integer or floating type
 F :: 1.27;    // unfixed float; converts only to a floating type
 S :: "Hello"; // unfixed string; converts to string
@@ -428,7 +428,7 @@ use ordinary [managed-value semantics](#managed-values-and-storage): copies may
 share immutable backing storage, and cleanup uses its original allocator.
 That allocator must allow deallocation on any thread receiving the string.
 
-```odin
+```loke
 first := "hello";
 second := first;              // cheap copy; backing storage may be shared
 message := first + " world";  // a new string
@@ -470,7 +470,7 @@ so a plain loop binds one name. Byte offsets and rune ordinals are distinct:
 The views borrow their source, can be stored and passed, and do not copy or
 allocate. Byte offsets advance by 1–4 bytes and can be used for slicing:
 
-```odin
+```loke
 x := "AÅ✓";
 foreach (codepoint, offset in x.rune_offsets()) {
 	fmt.println(offset, codepoint);
@@ -487,7 +487,7 @@ Low-level string indices are byte offsets; Unicode procedures name their unit.
 
 Printing uses `core:fmt`'s structural `Formattable` interface:
 
-```odin
+```loke
 Formattable :: interface($Self: type) {
 	slot format: proc(self: ^, writer: Writer, options: Options);
 }
@@ -495,7 +495,7 @@ Formattable :: interface($Self: type) {
 
 The slot borrows the receiver without copying or consuming it. An inherent method with plain `self` or `self: ^` satisfies it. A type may define how it is printed by declaring that method in the same package as the type:
 
-```odin
+```loke
 Suit :: enum { Clubs, Diamonds, Hearts, Spades }
 Card :: struct { rank: int, suit: Suit }
 
@@ -547,7 +547,7 @@ For ordinary member lookup, a visible local extension named `format` takes prece
 
 **A `string` converts implicitly to a `string_view`**, and to a view of any subrange by slicing. The conversion is a zero-cost borrow needing no validation, since a `string` is already valid UTF-8. String literals convert the same way, with static lifetime.
 
-```odin
+```loke
 byte_count :: proc(text: string_view) -> int { return text.len(); }
 
 owned := "Hej, världen";
@@ -568,7 +568,7 @@ Use `string_view` to read text and `string` to store it. The conversion runs one
 
 A string literal may initialize a `cstring_view` (its bytes have static lifetime). A runtime `string` uses `to_c_view()`, which borrows the string as `bytes()` does: a `string`'s storage always ends in a terminator, so the view can be kept, returned, or stored wherever a borrow of the string can. A `string` may contain U+0000, and C reads such a view only up to the first zero; `C_String` below rejects an interior zero when that must be caught:
 
-```odin
+```loke
 static_name: cstring_view = "Hellope";
 text := string.from_utf8(static_name) or_else ""; // validates and copies, or uses the fallback
 c_api(runtime_name.to_c_view());   // borrows `runtime_name` for the call
@@ -584,7 +584,7 @@ Safe conversions return managed values or explicit borrows; they never hide a mu
 
 A validating constructor returns an [`Option`](#typed-fallibility): the payload on valid input, `.none` on invalid. Handle it with a `switch` or with `or_else`:
 
-```odin
+```loke
 switch (string.from_utf8(bytes)) {
 case .some(text): fmt.println(text);
 case .none:
@@ -629,7 +629,7 @@ In the table below `src` is the source value, and the action is one of: **copy**
 
 A pointer contains the memory address of a value. `^T` is a read-only pointer to `T` and `^mut T` a mutable one. Neither is ever null, so neither has a zero value (see [Types with no zero value](#types-with-no-zero-value)), and both are one machine address: the capability is static and changes no layout, no ABI, and no calling convention. A pointer that may be absent is an `Option(^T)`:
 
-```odin
+```loke
 p: Option(^int) = .none;
 ```
 
@@ -638,7 +638,7 @@ create a pointer that can also change it; this borrow is exclusive. Both require
 an initialized value whose address can be taken, and `&mut` additionally requires
 permission to modify it:
 
-```odin
+```loke
 i := 423;
 reader := &i;      // ^int: can read i
 writer := &mut i;  // ^mut int: can read and change i
@@ -648,7 +648,7 @@ writer := &mut i;  // ^mut int: can read and change i
 
 The postfix `^` operator dereferences a pointer. Dereferencing either capability yields a place with an address; only `^mut T` yields one that may be written:
 
-```odin
+```loke
 fmt.println(writer^); // read `i` through the pointer
 writer^ = 1337;       // write `i` through the pointer
 reader^ = 1337;       // ERROR: `^int` is a read-only borrow
@@ -664,7 +664,7 @@ Pointer arithmetic is not an operator. Address calculation goes through a [C poi
 
 `Box(T)` owns one value of type `T` in an allocation of its own. It is to `^T` what `[dynamic]T` is to `[]T`: an owner whose read-only borrow is a pointer. A box is one address, and its allocation records the allocator that made it, so dropping or copying a box needs nothing else.
 
-```odin
+```loke
 Tree :: struct {
 	value:       int,
 	left, right: Option(Box(Tree)),
@@ -678,7 +678,7 @@ root := Tree{value = 2, left = .some(move(leaf))};
 
 `b^` is the payload. It is a place, writable exactly when `b` is, as an element of a dynamic array has its container's capability. Field selection, indexing, and method calls reach through a box as through a [pointer](#pointers), after the box's own members such as `clone`. A box converts implicitly to `^T`, a read-only borrow of its payload, and `&mut b^` is the mutable borrow. Either borrows `b`, so while one is live `b` cannot be moved, dropped, or assigned.
 
-```odin
+```loke
 lookup :: proc(tree: ^Tree) -> int { return tree.value; }
 
 node := box(Tree{value = 3});
@@ -698,7 +698,7 @@ A box is neither comparable nor hashable, and it is not [foreign-ABI-safe](#fore
 
 A C pointer describes a foreign (C-like) pointer that acts like an array. `[^]T` is a C pointer to `T`. Its zero value is nil.
 
-```odin
+```loke
 p: [^]int = nil;
 ```
 
@@ -706,7 +706,7 @@ C pointers support unchecked indexing, slicing, implicit conversion to `rawptr`,
 
 The following are the rules for indexing and slicing for C pointers, and what type they produce depending on the operands given:
 
-```odin
+```loke
 x: [^]T = ...;
 ```
 
@@ -722,7 +722,7 @@ A C pointer is always mutable, so a bounded slice of one is a `[]mut T`; it conv
 
 Interacting with C pointers is easiest using `unsafe.raw_data`, which makes the loss of bounds and borrow capability visible at the call site.
 
-```odin
+```loke
 a: [^]int = nil;
 fmt.println(a); // <nil>
 b := [?]int { 10, 20, 30 };
@@ -734,7 +734,7 @@ fmt.println(a, a[1], b); // 0x7FFCBE9FE688 20 [10, 20, 30]
 
 `unsafe.raw_data` is a `core:unsafe` procedure that returns the underlying data of a built-in data type as a C pointer. A C pointer carries neither a length nor a read-only capability, and its lifetime is no longer checked after conversion.
 
-```odin
+```loke
 unsafe.raw_data([]$E)              -> [^]E;    // read-only slices; capability is discarded
 unsafe.raw_data([]mut $E)          -> [^]E;    // mutable slices
 unsafe.raw_data([dynamic]$E)       -> [^]E;    // dynamic arrays
@@ -752,7 +752,7 @@ For a nested fixed array, `unsafe.raw_data` exposes one array level at a time. I
 layout of a record containing one field per element. Indices are integers or
 runes, starting at zero:
 
-```odin
+```loke
 x := [5]int{1, 2, 3, 4, 5};
 fmt.println(x[0]); // 1
 ```
@@ -766,7 +766,7 @@ place; ordinary `x[:]` remains read-only. See [Slices](#slices).
 
 A multidimensional fixed array is an ordinary nested array. `[Rows][Columns]T` means an outer array of `Rows` values, each of which is an inner `[Columns]T` array:
 
-```odin
+```loke
 grid := [2][3]int{
 	{1, 2, 3},
 	{4, 5, 6},
@@ -784,13 +784,13 @@ Nested fixed arrays are one contiguous value; they are not arrays of pointers. T
 
 A fixed-array length can be inferred from its literal with a question mark (`?`):
 
-```odin
+```loke
 x := [?]int{1, 2, 3, 4, 5};
 ```
 
 Designated initializers set elements by index or index range:
 
-```odin
+```loke
 favorite_animals := [?]string{
 	// Assign by index
 	0 = "Raven",
@@ -804,14 +804,14 @@ favorite_animals := [?]string{
 
 `x.len()` returns the array length.
 
-```odin
+```loke
 x: [5]int = {};
 static_assert(x.len() == 5);
 ```
 
 Built-in array access is always bounds checked, at compile time for constant indices and at runtime otherwise. Unchecked access crosses the `core:unsafe` boundary and uses a C pointer:
 
-```odin
+```loke
 p := unsafe.raw_data(&mut x);
 p[n] = 123; // unchecked; the programmer proves that n is valid
 ```
@@ -836,7 +836,7 @@ therefore spells its borrow explicitly: `fill(&mut buffer[:])`.
 `a[low:high]` includes `low` and excludes `high`. Omitted bounds default to zero
 and length, so `a[:]` views the whole sequence. `x.len()` returns a slice's length.
 
-```odin
+```loke
 fibonaccis := [6]int{0, 1, 1, 2, 3, 5};
 s: []int = fibonaccis[1:4];
 fmt.println(s); // [1, 1, 2]
@@ -846,7 +846,7 @@ A slice has no allocator or scope-exit cleanup. It borrows its owner's storage
 under [Borrows and lifetimes](#borrows-and-lifetimes), preventing invalidation
 while live:
 
-```odin
+```loke
 numbers := [dynamic]int{1, 2, 3};
 view: []int = numbers[:];
 numbers.append(4);   // ERROR: `numbers` may reallocate while `view` is live
@@ -865,7 +865,7 @@ A slice literal omits the array length: `[]int{1, 6, 3}` creates a hidden
 
 **A slice literal has the type it is written with.** `[]T{...}` produces `[]T` and `[]mut T{...}` produces `[]mut T`; the capability is never inferred. A `[]mut T` literal may still be weakened by an explicit `[]T` destination, like any other mutable slice. A bare `{}` at a slice type is not a slice literal but the [empty view](#empty-slices), a constant with no backing array, so it may be returned.
 
-```odin
+```loke
 readable := []int{1, 6, 3};        // []int
 writable := []mut int{1, 6, 3};    // []mut int
 writable[0] = 99;
@@ -878,7 +878,7 @@ The backing array of a slice literal is a hidden fixed-array owner that is alway
 
 The zero value of a slice is the empty view, written `{}`. It has a length of 0 and points at no memory. Slices are not comparable, so emptiness is tested with `len`, which answers the same for the zero value and for an empty subslice such as `a[0:0]`:
 
-```odin
+```loke
 s: []int = {};
 if (s.len() == 0) {
 	fmt.println("s is empty!");
@@ -889,7 +889,7 @@ if (s.len() == 0) {
 
 `values.swap(left, right)` makes two elements of a `[]mut T` trade contents, and `slice.swap(values, left, right)` is the free spelling of the same operation. A dynamic array has the same member, as it has `sort`. Each index is bounds-checked like any other, so an out-of-range one panics, and two equal indices leave the element as it is.
 
-```odin
+```loke
 names := [dynamic]string{"Ada", "Bo", "Cy"};
 names.swap(0, 2);   // [Cy, Bo, Ada]
 ```
@@ -902,7 +902,7 @@ A read-only `[]T` has no `swap`, exactly as it has no `sort`.
 
 `slice.sort` sorts ascending and `slice.reverse_sort` descending according to the element type's `Ordered` implementation. `slice.sort_by` instead takes a comparator:
 
-```odin
+```loke
 sort_by :: proc(values: []mut $T, less: $C)
 	where interfaces.Callable(C, proc(left, right: T) -> bool)
 ```
@@ -936,7 +936,7 @@ for callable comparators.
 `[dynamic]T` is a mutable owning sequence whose length and capacity may change
 at runtime. Its zero value is empty and immediately usable:
 
-```odin
+```loke
 x: [dynamic]int = {};
 x.append(10);
 ```
@@ -959,7 +959,7 @@ and its allocator. Each array records the allocator used for cleanup:
 cleanup. Procedures take allocators through ordinary parameters and defaults.
 Backing storage can be frame-local:
 
-```odin
+```loke
 buffer: [4096]u8 = {};
 arena := mem.Arena.from_buffer(&mut buffer[:]);
 data: [dynamic]int via arena.allocator() = {};
@@ -972,7 +972,7 @@ data.append(1, 2, 3); // storage is in buffer; no heap allocation
 
 Container operations use method syntax. These are built-in operations rather than dynamically dispatched methods.
 
-```odin
+```loke
 x: [dynamic]int = {};
 x.append(123);
 x.append(4, 1, 74, 3); // append multiple values at once
@@ -997,7 +997,7 @@ The prefix specifies the failure contract, not a particular error type. Ordinary
 
 **Indexed assignment does not change the array length.** `x[i] = v` causes an out-of-range panic when `i >= x.len()`. This rule prevents an incorrect index from silently increasing the array length. To assign past the current end, first change the length and then assign:
 
-```odin
+```loke
 x: [dynamic]int = {};
 x.reserve(16);
 x.insert(0, 10);
@@ -1020,7 +1020,7 @@ Use `resize` to grow and zero-fill an array, or `append` to add elements at the 
 
 An element given to `append`, `insert`, or `find_or_insert` is taken the way an initialization takes it, exactly as `m[key] = elem` and a container literal take theirs: a temporary or `move(x)` transfers into the container, and a borrowed place is copied. A move-only element therefore enters from a temporary or through `move`:
 
-```odin
+```loke
 Connection :: move_only struct { id: int }
 
 connections: [dynamic]Connection = {};
@@ -1034,7 +1034,7 @@ Ownership passes at the call. When `find_or_insert` finds the key already presen
 
 The `try_` forms — `try_append`, `try_insert`, and `try_find_or_insert` — take their element the same way, and a failure leaves the container unchanged. A borrowed place is copied in only on success, so a failure leaves it exactly as the caller had it. An element the call took, a temporary or `move(x)`, is dropped on failure: `move(x)` ends `x` whether or not the insertion succeeds. A move-only element therefore enters a `try_` form exactly as it enters `append`:
 
-```odin
+```loke
 connections.try_append(connect("c.example")) or_return;  // dropped if the append fails
 ```
 
@@ -1048,7 +1048,7 @@ Removing from a dynamic array can be done in several ways using the built-in pro
 - `remove_unordered` removes and returns an element in O(1) by moving the last element into its location.
 - `remove` removes and returns an element while preserving order.
 
-```odin
+```loke
 x: [dynamic]int = {};
 x.append(1, 2, 3, 4, 5); // [1, 2, 3, 4, 5]
 x.pop(); // [1, 2, 3, 4]
@@ -1068,7 +1068,7 @@ Along with `len` and `cap`, a dynamic array supports:
 - `x.reserve(n)` makes the capacity at least `n` without changing the length.
 - `x.shrink()` reduces the capacity to the current length, or to a specified minimum.
 
-```odin
+```loke
 x: [dynamic]int = {};
 fmt.println(x.len(), x.cap()); // 0 0
 x.append(1, 2, 3); // [1, 2, 3]
@@ -1088,7 +1088,7 @@ fmt.println(x.len(), x.cap()); // 0 5
 
 Managed dynamic arrays need no explicit construction or deletion. Their zero value is usable, literals create managed values, and capacity can be reserved separately:
 
-```odin
+```loke
 a: [dynamic]int = {};   // a.len() == 0, a.cap() == 0
 b := [dynamic]int{1, 2, 3};
 c: [dynamic]int = {};
@@ -1103,7 +1103,7 @@ temporary.reserve(64);
 
 [`drop`](#owners-and-drop) releases an owner explicitly; managed code can instead leave it to automatic scope cleanup.
 
-```odin
+```loke
 drop(b);
 // `b` is dead here; assign a complete new value before using it again.
 b = [dynamic]int{};
@@ -1112,7 +1112,7 @@ assert(b.len() == 0);
 
 `make` returns an ordinary owning value, cleaned up at scope exit like any other, and follows the allocator's [failure policy](#allocation-failure). `try_make` returns the failure instead; in a procedure returning a compatible `Result`, `or_return` propagates it. Moving the owner still requires `move`:
 
-```odin
+```loke
 Log :: struct { lines: [dynamic]string }
 
 open_log :: proc(allocator: mem.Allocator) -> Result(Log, mem.Allocator_Error) {
@@ -1137,7 +1137,7 @@ A [move-only](#lifecycle-hooks-and-resource-types) element type is held too:
 - `append`, `insert`, `try_append`, and `try_insert` are [procedure groups](#explicit-procedure-overloading) whose other member consumes, so `values.append(move(token))` or a temporary reaches it, as on a dynamic array. A consuming `try_` form that fails leaves the array unchanged and drops the element it took, as [container insertion](#container-insertion) describes; a caller who must keep the element checks `space()` or `is_full()` first.
 - `get_mut`, `view`, `slice`, `iter_mut`, `pop`, `remove`, `clear`, and [`foreach`](#borrowing-iteration) copy nothing and are unaffected.
 
-```odin
+```loke
 x: Small_Array(int, 8) = {};
 x.append(1, 2, 3);
 fmt.println(x.len(), x.cap()); // 3 8
@@ -1149,7 +1149,7 @@ fmt.println(x.len(), x.cap()); // 3 8
 
 A range is an ordinary first-class value, not a piece of loop syntax. It may be bound to a variable, passed to a parameter, inferred into a `$` parameter, returned, or stored in a field, and it keeps its half-open or closed kind wherever it travels:
 
-```odin
+```loke
 window :: proc(n: int) -> Range(int) { return 0 ..< n; }
 low_of :: proc(r: Range($T)) -> T { return r.low; }
 
@@ -1159,7 +1159,7 @@ assert(low_of(3 ..= 7) == 3);
 
 `Range(T)` has three public fields — `low: T`, `high: T`, and `closed: bool` — so code that must inspect a range rather than walk it reads them directly. `x in r` tests membership: it holds when `r.low <= x` and `x < r.high`, or `x <= r.high` for a closed range, evaluating `x` and then `r` once each. A written range takes its endpoint type from a typed `x`, so `ch in 'a' ..= 'z'` tests a `u8` against a `Range(u8)`; a range of unfixed endpoints otherwise defaults to `int` or `rune` as a range literal does, and the element converts to the range's endpoint type.
 
-```odin
+```loke
 is_lower :: proc(c: rune) -> bool { return c in 'a' ..= 'z'; }
 static_assert(3 in 0 ..< 10);
 ```
@@ -1190,14 +1190,14 @@ A `Simd(bool, N)` is the **lane mask** type. Its lanes are one bit of informatio
 
 A `Simd` is written as a composite literal with one element per lane, in lane order:
 
-```odin
+```loke
 lanes: Simd(f32, 4) = {1.0, 2.0, 3.0, 4.0};
 zeroes: Simd(f32, 4) = {};
 ```
 
 A scalar converts to a vector implicitly wherever a vector is expected, producing the **splat** — every lane equal to that scalar. The reverse is not a conversion:
 
-```odin
+```loke
 doubled := lanes * 2.0;                 // the scalar splats to all four lanes
 half: Simd(f32, 4) = 0.5;               // {0.5, 0.5, 0.5, 0.5}
 one_lane := Simd(f32, 4){0.5};          // {0.5, 0, 0, 0}: a literal fills lanes
@@ -1262,7 +1262,7 @@ Any type can be a map key when it satisfies `interfaces.Hashable`, with a **cohe
 
 A struct, union, or anonymous record that keeps the generated [structural `==`](#comparison-operators) — it declares no `==` and no `hash` of its own — has a generated `hash` too, and so is a key with nothing written, when every part is hashable: each field, or each variant's payload. A part with its own `==` counts when it also has its own `hash`, which the generated one calls for it. The generated `hash` mixes the fields in declaration order, or a union's variant and then its payload, the way a fixed array mixes its elements, and it is coherent with the generated `==` by construction. A packed struct, one with an [`@(initialized)`](#uninitialized-capacity) field, and a capture literal's record have none.
 
-```odin
+```loke
 Point :: struct { x, y: int }
 visits: map[Point]int = {};    // no `==` or `hash` written
 visits[Point{1, 2}] = 1;
@@ -1270,7 +1270,7 @@ visits[Point{1, 2}] = 1;
 
 A key must also be copyable. It is copied into the map on insertion, and a lookup has to write a second value equal to it — which a `move_only` type exists to prevent. A move-only key is rejected where the map type is named; a move-only *value* is fine (see [Container insertion](#container-insertion)).
 
-```odin
+```loke
 m: map[string]int = {};
 m["Bob"] = 2;          // insert or update
 fmt.println(m["Bob"]); // read; panics if "Bob" is missing
@@ -1279,7 +1279,7 @@ m.remove("Bob");       // returns the removed value as `Option(int)`
 
 A map literal initializes a map:
 
-```odin
+```loke
 m := map[string]int{
 	"Bob" = 2,
 	"Chloe" = 5,
@@ -1292,7 +1292,7 @@ A map literal allocates from the destination's allocator: the declaration's `via
 
 **Every other index position requires the entry** and panics for a missing key, exactly as a dynamic array's index panics out of range: a read, a field or element chain (`m[key].wins = 7`), a compound assignment (`m[key] += 1`), an `inout` argument, and `&m[key]`. Part of an element cannot be written into an element that is not there, so a partly updated element is never created by accident. Because no index form manufactures a value, an element type with no zero is used like any other.
 
-```odin
+```loke
 Score :: struct {
 	wins: int,
 	losses: int,
@@ -1310,7 +1310,7 @@ m["Dana"].wins = 7;     // panics: "Dana" has no element whose `.wins` could be 
 
 A lookup that tolerates a missing key is a method; each is listed under [Map container operations](#map-container-operations):
 
-```odin
+```loke
 present := "Bob" in m;                         // presence only
 bob := m.lookup_value("Bob") or_else Score{};  // an owned copy, or a fallback
 switch (m.find_mut("Bob")) {           // a pointer to the stored element
@@ -1326,7 +1326,7 @@ A pointer from `find`, `find_mut`, `find_or_insert`, or `&m[key]` borrows the ma
 
 A `map[string]V` is queried with a `string_view` as well as a `string`. `view in m`, `m[view]` in every position but the inserting one, and the non-storing lookups — `find`, `find_mut`, `lookup_value`, and `remove` — all take the borrowed form, so a query builds no owned key and an owned one is not cloned to be compared:
 
-```odin
+```loke
 counts: map[string]int = {};
 counts["hellope"] = 1;
 word := text[0:7];              // a `string_view` into a longer buffer
@@ -1357,7 +1357,7 @@ The built-in map supports these container operations:
 
 A type alias gives another name to a type:
 
-```odin
+```loke
 My_Int :: int;
 static_assert(My_Int == int);
 ```
@@ -1366,7 +1366,7 @@ static_assert(My_Int == int);
 
 A distinct type is a new type with the same representation as its underlying type.
 
-```odin
+```loke
 My_Int :: distinct int;
 static_assert(My_Int != int);
 ```
@@ -1381,7 +1381,7 @@ A distinct type may define its own methods, operators, named constructors, conve
 
 Each named aggregate type (`struct`, `enum`, or `union`) is distinct: two declarations with the same fields are two types.
 
-```odin
+```loke
 Marker :: struct {}
 Other :: struct {}
 static_assert(Marker != Other);
@@ -1393,7 +1393,7 @@ static_assert(Marker != Other);
 
 `delegate` generates forwarding overloads from a list of operator symbols, parsed exactly as [`operator(...)`](#operator-declarations), inside an `impl` block for a distinct type. It replaces the one-line unwrap-apply-wrap overload a numeric newtype would otherwise write for every operator it wants:
 
-```odin
+```loke
 Meters :: distinct f64;
 
 impl Meters {
@@ -1421,7 +1421,7 @@ A `struct` type is written only as the value of a constant declaration, `Name ::
 
 The dot operator selects a field:
 
-```odin
+```loke
 Vector2 :: struct {
 	x: f32,
 	y: f32,
@@ -1433,7 +1433,7 @@ fmt.println(v.x);
 
 The dot operator can also select a field through a struct pointer:
 
-```odin
+```loke
 v := Vector2{1, 2};
 p := &mut v;
 p.x = 1335;
@@ -1446,7 +1446,7 @@ For a pointer to a struct, `p.field` is equivalent to `p^.field`.
 
 A parenthesized field list is a record type with no declaration site — the lightweight product type, written wherever a type is written. Its fields are either all **labeled**, `(name: Type, ...)`, or all **unlabeled**, `(Type, Type, ...)`:
 
-```odin
+```loke
 entry: (key: string_view, value: int);
 Entry :: (key: string_view, value: int);   // an alias, not a new nominal type
 lookup :: proc(k: string_view) -> (value: int, found: bool) { ... }
@@ -1462,7 +1462,7 @@ Every field is public. A labeled field is selected by name; an unlabeled field h
 
 A record is constructed by a contextually typed composite literal or through a type alias:
 
-```odin
+```loke
 entry: Entry = {key = "port", value = 8080};
 named := Entry{key = "port", value = 8080};
 return .ok({key = k, value = v});
@@ -1475,7 +1475,7 @@ A parenthesized group is a record type when its first field is **labeled** or wh
 
 Two or more bindings on the left of `:=` or `=`, with one record on the right, project that record's fields positionally. A single binding takes the whole value. `foreach`'s binding list is the same rule. A `_` padding field has no name, so it fills no binding. An [unlabeled](#anonymous-records) field is not padding: its position is its name, and it fills its binding.
 
-```odin
+```loke
 q, r := divmod(17, 5);
 low, high = minmax(a, b);
 foreach (key, value in table) { ... }
@@ -1485,7 +1485,7 @@ The record must have exactly as many **directly declared** fields as there are b
 
 A nominal record — a struct, or a `distinct` type over one — destructures only in the package that declares its fields, since that package may reorder them. Elsewhere the value is bound whole and its fields selected by name. An [anonymous record](#anonymous-records) destructures anywhere: its field order is its type identity.
 
-```odin
+```loke
 x, y := geom.origin();          // ERROR: `geom.Point`'s fields are declared in `geom`
 low, high := geom.bounds();     // fine: `bounds` returns `(low: int, high: int)`
 ```
@@ -1499,7 +1499,7 @@ Ownership follows the operand's category, exactly as every other binding does:
 
 Retained fields are prepared in declaration order before any binding is published, and assignment follows the ordinary prepare-then-write rule. If cloning fails, it cleans partial field temporaries and leaves the source untouched.
 
-```odin
+```loke
 // The temporary is consumed: nothing is cloned.
 name, bytes := read_document(path) or_return;
 
@@ -1512,7 +1512,7 @@ doc_name, doc_bytes := doc;
 
 A struct literal starts with its type and a pair of braces. Elements may be positional, named, or a mix with every positional element first. Any field the literal omits takes its type's zero value, and a field whose type has no zero cannot be omitted:
 
-```odin
+```loke
 Vector3 :: struct {
 	x, y, z: f32,
 }
@@ -1528,7 +1528,7 @@ A positional element is allowed only in the package that declares the struct's f
 
 A named initializer list can supply a subset of fields. Field order does not matter. Omitted fields use their zero value:
 
-```odin
+```loke
 v := Vector3{z=1, y=2};
 assert(v.x == 0);
 assert(v.y == 2);
@@ -1541,7 +1541,7 @@ Elements evaluate **in source order**, whatever field each one names, and are th
 
 A field marked `@(required)` must be supplied by every literal of its struct, positionally or by name. Its other fields still zero-fill:
 
-```odin
+```loke
 Account :: struct {
 	@(required) id: u64,
 	name: string,
@@ -1555,7 +1555,7 @@ A struct with a required field has [no zero value](#types-with-no-zero-value), s
 
 A field that groups values without needing a type of its own is an anonymous record; a nested group that needs hooks, privacy, or attributes is a declared struct of its own.
 
-```odin
+```loke
 Window :: struct {
 	title: string,
 	position: (x, y: int),
@@ -1570,7 +1570,7 @@ w.size.width = 800;
 
 Structs can be annotated with different memory layout and alignment requirements:
 
-```odin
+```loke
 struct @(align=4)  {...} // require four-byte alignment
 struct @(packed)    {...} // remove padding between fields
 ```
@@ -1581,7 +1581,7 @@ These use the same attribute syntax as declarations and statements. See [Layout 
 
 A struct field declared with `using` promotes that field's fields for selector lookup on the containing value. Only fields are promoted: the field type's methods are not, so `value.position.length()` stays explicit.
 
-```odin
+```loke
 Vector3 :: struct { x, y, z: f32 }
 Quaternion :: struct { x, y, z, w: f32 }
 
@@ -1601,7 +1601,7 @@ Promoted names are only field-lookup shorthand. An explicitly declared field on 
 
 A union is a discriminated union, also known as a tagged union or sum type. Every variant is **named**, and a variant may carry a payload or carry nothing.
 
-```odin
+```loke
 Value :: union {
 	flag:   bool,
 	number: i32,
@@ -1615,7 +1615,7 @@ v: Value = .text("Hello");
 
 A variant with a payload is written `name: Type`; one without is the bare name, and `name:` with nothing after the colon means the same. A bare type is not a variant: the name is the variant's identity, so two variants may carry the same payload type and remain distinct. A payloadless variant may therefore not be named by a type in scope, so Odin's `union { int, string }` is rejected rather than read as two payloadless variants.
 
-```odin
+```loke
 Temperature :: union { celsius: f64, fahrenheit: f64 }   // two variants, one payload type
 ```
 
@@ -1625,7 +1625,7 @@ A variant is identified by its name and declaration index, not its payload type.
 
 `.name(payload)` builds a variant where the union type is known from context; `U.name(payload)` names the union explicitly. A payloadless variant is written without the call: `.name`, or `U.name`. So is a variant whose payload is `Unit`, which has only one value: `.ok` builds `Result(Unit, E)`, and `.ok(Unit{})` remains valid.
 
-```odin
+```loke
 v = .number(7);
 v = Value.number(7);
 v = .absent;
@@ -1636,7 +1636,7 @@ Record-field initialization rules apply to the payload: a place argument clones 
 
 Outside a call, `U.name` of a payload variant is the variant's **constructor**: a procedure value of type `proc(payload: move P) -> U`, where `P` is the payload type. It takes its payload over, so a place is passed to it as `move(x)`, where `U.name(x)` would clone the place. The contextual `.name` is not a constructor, since a destination never chooses the union; a generic union names its instance, as in `Option(int).some`. The one exception is an `or_return` [failure operand](#the-failure-operand), where the procedure's result has already chosen the union, so `.io` is the constructor of its failure payload's `io` variant.
 
-```odin
+```loke
 number := Value.number;   // proc(payload: move i32) -> Value
 v = number(7);
 ```
@@ -1645,7 +1645,7 @@ v = number(7);
 
 A union is inspected with a `switch`, whose cases are variant names. A case may bind that variant's payload locally with `.name(binding)`, or as a writable place with `.name(&mut binding)` (see [Switch ownership](#switch-ownership)). Two or more bindings, `.name(left, right)`, bind the fields of a record payload instead. This is a deliberately small pattern: each binding is one identifier (or `_`), and patterns do not nest. Payloadless variants are written as bare `.name`.
 
-```odin
+```loke
 switch (v) {
 case .text(text):
 	static_assert(type_of(text) == string);
@@ -1663,7 +1663,7 @@ The switch reads the union's tag. `type_of(v)` remains `Value` everywhere, while
 
 Field bindings take a record payload apart as a `foreach` header takes apart its element: by the [destructuring](#destructuring) rule, so the payload must be a record with exactly as many directly declared, visible fields as there are bindings, a nominal record only in the package that declares its fields. A `&mut` marks one binding, and only that field is a writable place. Each binding is the payload's field itself under [Switch ownership](#switch-ownership), so a switch over a place clones nothing:
 
-```odin
+```loke
 Expr :: union {
 	number: int,
 	add:    (left: Box(Expr), right: Box(Expr)),
@@ -1679,7 +1679,7 @@ eval :: proc(e: ^Expr) -> int {
 
 A case that lists several variants, and a default case, bind nothing: their variants carry different payloads. An [expanded case](#per-variant-switch-cases), `$variant(payload)`, binds each remaining variant's payload in a copy of its own. Such a case reads the subject itself, which keeps the union type. A temporary subject has no name to read, so a switch that needs the whole value there switches over a local holding it:
 
-```odin
+```loke
 switch (v) {
 case .text(text):    static_assert(type_of(text) == string);
 case .number, .real: static_assert(type_of(v) == Value);
@@ -1695,7 +1695,7 @@ Writing `_` as the binding name acquires no binding.
 
 `value.as(.name)` reads one variant without a switch. It yields `Option(P)`, where `P` is that variant's payload type, or `Unit` for a payloadless variant: `.some` holding a copy of the payload when `name` is the active variant, and `.none` otherwise. It borrows `value` as a comparison does, so a place keeps its value and a temporary lives until the end of its complete expression. A move-only payload cannot be copied out and is rejected; match it with a `switch`. The argument is always an implicit selector naming a variant of `value`'s union, and no `impl` or `extend` member of a union may be named `as`.
 
-```odin
+```loke
 radius := shape.as(.circle) or_else 0;
 if (shape.as(.empty) != .none) { return 0; }
 n := shape.as(.count) or_return;    // in a procedure returning an Option
@@ -1711,7 +1711,7 @@ Field bindings follow the same two rules field by field. Over a place each bindi
 
 A case written `.name(&mut binding)` binds the payload as a writable place instead, as `foreach (&mut value in items)` binds an element. The subject must be a writable place, and the case borrows it exclusively: the subject cannot be read or written while the binding, or anything borrowed through it, is still used. Assigning the binding replaces the payload in place, and like any binding over a place it cannot be moved or dropped. A field binding written `&mut` needs the same writable subject and borrows only its field of the payload, so `.add(&mut left, &mut right)` takes two disjoint places and an unmarked sibling stays read-only. A borrow taken through the binding borrows that part of the payload, with field precision as for a local, and also carries the subject's borrow. Each time the case runs, the binding names the payload the subject holds then, so a borrow kept from an earlier pass does not conflict with the new binding; the subject's borrow it carries still does. Storing one back into the carrier the subject was reached through, as `cursor = &mut node.next` does below, is therefore the self-store of [Weakening and reborrows](#weakening-and-reborrows) and suspends nothing:
 
-```odin
+```loke
 Node :: struct { value: int, next: Option(Box(Node)) }
 
 push_back :: proc(head: ^mut Option(Box(Node)), value: int) {
@@ -1729,7 +1729,7 @@ push_back :: proc(head: ^mut Option(Box(Node)), value: int) {
 
 A case written `$variant(payload)` covers every variant no earlier case names, one at a time. The switch behaves as if it listed `case .name(payload):` for each of those variants, in declaration order, each with its own copy of the case's body:
 
-```odin
+```loke
 Circle :: struct { radius: f64 }
 Square :: struct { side: f64 }
 impl Circle { area :: proc(self) -> f64 { return 3.14159 * self.radius * self.radius; } }
@@ -1753,7 +1753,7 @@ area :: proc(shape: ^Shape) -> f64 {
 
 In a generic procedure the subject's type decides the copies, so one procedure reports any union however its alternatives were [widened](#widening-by-label):
 
-```odin
+```loke
 report :: proc(error: $E) where is_union(E) {
 	switch (error) {
 	case $variant(e): fmt.println("failed:", variant.name, e);
@@ -1767,7 +1767,7 @@ The [`where`](#where-clauses) bound [`is_union(E)`](#built-in-procedures) report
 
 `f(..u)`, where `u` is a union, calls `f` with the active variant's payload as the argument named by that variant's label. It means the switch
 
-```odin
+```loke
 switch (u) {
 case $variant(payload): f(<the label of variant> = payload);
 }
@@ -1775,7 +1775,7 @@ case $variant(payload): f(<the label of variant> = payload);
 
 so ordinary [overload resolution](#operator-lookup-and-overload-resolution) picks, for each label, the member of a [procedure group](#explicit-procedure-overloading) whose parameter has that name:
 
-```odin
+```loke
 Event :: union { key: rune, click: (x: int, y: int), quit }
 
 handle :: proc { on_key, on_click, on_quit }
@@ -1800,7 +1800,7 @@ A union has **no zero value** unless it designates one, because there is no vari
 
 `@(zero=name)` designates one. It is valid only for the *first* declared variant, and that variant's payload must itself be all-zero, so the union's zero stays the all-zero representation every other zero is.
 
-```odin
+```loke
 Maybe :: union @(zero=none) { none, some: int }
 m: Maybe;              // accepted: the zero is `.none`
 
@@ -1830,7 +1830,7 @@ One exception stores no tag. A union of exactly two variants, one without a payl
 
 A parenthesized list of labeled alternatives separated by `|` is a union with no declaration site, the counterpart of an [anonymous record](#anonymous-records):
 
-```odin
+```loke
 Either :: (left: int | right: int);   // an alias, not a new nominal type
 find :: proc(key: string_view) -> (found: int | missing:) { ... }
 
@@ -1842,7 +1842,7 @@ read_config :: proc(path: string_view) -> Result(Config, (io: io.Error | parse: 
 
 Each alternative is `label: Type`, or `label:` for one that carries nothing. The colon is required, so `(a | b)` stays a parenthesized expression, and each alternative has one label, so `(a, b: int | c:)` is an error. There are at least two alternatives, and their labels are distinct. A trailing `|` is accepted, as a trailing comma is in a record, so a union written one alternative per line can end every line alike:
 
-```odin
+```loke
 Event :: (
 	key: rune |
 	resize: (width: int, height: int) |
@@ -1860,7 +1860,7 @@ It carries no attributes. It therefore has [no zero value](#types-with-no-zero-v
 
 An anonymous union value converts implicitly to an anonymous union type that has, for each of its alternatives, an alternative with the same label and the same payload type, or the same payloadless label. The destination may have more alternatives, in any order. The value keeps its active alternative and that alternative's payload, under the destination's tag for the label:
 
-```odin
+```loke
 Config_Error :: (io: io.Error | parse: Parse_Error);
 
 start :: proc() -> Result(App, (io: io.Error | parse: Parse_Error | net: Net_Error)) {
@@ -1882,13 +1882,13 @@ A caller keeps a callee's error set as one layer with a wrapping label, `(config
 
 An enumeration is a closed sum type whose variants carry no payload. `enum` offers compact syntax and control over its integer representation. Every value names exactly one declared variant. Variants have declaration order:
 
-```odin
+```loke
 Direction :: enum { North, East, South, West }
 ```
 
 The following holds:
 
-```odin
+```loke
 int(Direction.North) == 0
 int(Direction.East)  == 1
 int(Direction.South) == 2
@@ -1897,7 +1897,7 @@ int(Direction.West)  == 3
 
 Enum fields can be assigned an explicit value:
 
-```odin
+```loke
 Http_Status :: enum {
 	Ok = 200,
 	Created,          // 201
@@ -1908,7 +1908,7 @@ Http_Status :: enum {
 
 If an enumeration requires a specific size, a backing integer type can be specified. By default, `int` is used as the backing type for an enumeration. Variant representations must be distinct and fit the backing type, including automatically incremented values. An enum with no variants is uninhabited.
 
-```odin
+```loke
 Suit :: enum u8 { Clubs, Diamonds, Hearts, Spades } // Suit is 8 bits
 ```
 
@@ -1918,7 +1918,7 @@ Enum members are named constants, not numbers with a name: they may have holes, 
 
 `Enum.from_int(value) -> Option(Enum)` validates membership. It takes one plain argument of any integer type, including a `distinct` integer; an untyped integer constant takes the backing type and must fit it. An argument whose value is a declared representation produces `.some(variant)`, and every other value produces `.none`, including one the backing type cannot hold. The argument is evaluated once, and validation works identically at compile time and runtime. It neither panics nor silently narrows its input.
 
-```odin
+```loke
 Http_Status :: enum { Ok = 200, Not_Found = 404, Teapot = 418 }
 
 code := 404;
@@ -1943,7 +1943,7 @@ An implicit selector omits the enumeration type when context supplies that type.
 
 For example:
 
-```odin
+```loke
 Suit :: enum { Clubs, Diamonds, Hearts, Spades }
 suit: Suit;
 suit = Suit.Hearts;
@@ -1961,7 +1961,7 @@ Every enum type has a compiler-provided `values()`, a constant fixed array of it
 
 `values()` is the only way to iterate an enumeration. A *type* is never accepted in a `foreach` header — `foreach (x in Direction)`, `foreach (x in int)`, and `foreach (x in Some_Struct)` are all errors — so iteration always runs over a value through the ordinary [iteration protocol](#iteration-protocol), and every [adapter](#iteration-adapters) applies to an enum as it does to any other array.
 
-```odin
+```loke
 Direction :: enum { North, East, South, West }
 
 foreach (direction, index in Direction.values().indexed()) {
@@ -1983,14 +1983,14 @@ A procedure type is a code pointer. It always names a procedure, so it has no ze
 
 Examples:
 
-```odin
+```loke
 proc(x: int) -> bool
 proc(c: proc(x: int) -> bool) -> (count: i32, ratio: f32);
 ```
 
 A variable can have a procedure type:
 
-```odin
+```loke
 Callback :: proc() -> int;
 a: Callback = proc() -> int { return 0; };
 fmt.println(a()); // 0
@@ -2010,7 +2010,7 @@ The default calling convention is `loke`, unless a declaration is within a forei
 
 A procedure type with a different calling convention can be declared like the following:
 
-```odin
+```loke
 proc "c" (n: i32, data: rawptr)
 ```
 
@@ -2032,7 +2032,7 @@ An inferred procedure type retains its declaration's result-provenance contract.
 
 `type` is a compile-time-only type whose values are Loke types. It is used for generic type parameters, compile-time reflection, and procedures that compute a type:
 
-```odin
+```loke
 Index_Type :: proc($Count: uint) -> type {
 	when (Count <= 256) {
 		return u8;
@@ -2054,7 +2054,7 @@ Two `type` values support `==` and `!=` during compilation; equality means the s
 
 `typeid` is used by `any_view`, [`dyn Interface`](#borrowed-dynamic-interface-values), and runtime reflection:
 
-```odin
+```loke
 a := typeid_of(bool);
 i: int = 123;
 b := typeid_of(type_of(i));
@@ -2062,7 +2062,7 @@ b := typeid_of(type_of(i));
 
 A typeid can be mapped to relevant type information which can be used in applications such as printing types and editing data:
 
-```odin
+```loke
 import "base:runtime";
 
 main :: proc() {
@@ -2079,7 +2079,7 @@ For a union value, `type_of(value)` is the union's static type. Its active varia
 
 The metadata layouts are public and belong to `base:runtime`, which a program must import to name them:
 
-```odin
+```loke
 Type_Kind :: enum u8 {
 	Invalid, Void, Bool, Signed_Int, Unsigned_Int, Float, Rune,
 	Raw_Pointer, Pointer, C_Pointer, Array, Slice, Dynamic_Array, Map,
@@ -2125,7 +2125,7 @@ All three preserve source declaration order, after conditional `when` selection.
 
 A `meta.Field` bound by static expansion provides compiler-defined operations whose result follows that particular field's type:
 
-```odin
+```loke
 visit_fields :: proc(value: ^$T, visitor: inout $Visitor) {
 	foreach ($field in fields_of(T)) {
 		visitor.visit(field.pointer(value));
@@ -2143,14 +2143,14 @@ Reflection values may be inspected, compared for identity, passed to `$` paramet
 
 It may be a local variable or parameter, but it cannot be a result type, global, struct or union field, container element, or captured/stored value. The ordinary local borrow checker ensures a local `any_view` does not outlive or overlap an invalidating operation on its source. A temporary converted for a call remains valid through that complete call expression. A temporary converted into a local `any_view` is [extended](#temporaries-and-procedure-boundaries) to the end of the block, and dropped there:
 
-```odin
+```loke
 view: any_view = make_guard();
 fmt.println(view);       // fine: the guard lives until the block ends
 ```
 
 **A variadic `..any_view` parameter is the only exception to the container rule.** Formatting procedures such as `fmt.println(a, b, c)` use this form. The caller converts each argument to `any_view`. It materializes a temporary `[]any_view` for the duration of the call.
 
-```odin
+```loke
 println :: proc(args: ..any_view) { ... }
 ```
 
@@ -2160,14 +2160,14 @@ The slice and its elements borrow the caller's temporary arguments and live only
 
 Conversion from a concrete value to `any_view` is implicit when an `any_view` parameter or local destination is expected, and it never allocates. `any_view(value)` writes the same conversion out, for a subject or an argument with no `any_view` destination. A `type` or reflection descriptor exists only while compiling, so it cannot be erased. It supports runtime checked extractions and a switch over its type.
 
-```odin
+```loke
 print_value :: proc(value: any_view) { ... }
 print_value(42); // the temporary lives through the call
 ```
 
 `value.(T)` extracts a `T` and panics on a type mismatch. `value.as(T)` returns `Option(T)`, which can be inspected without panicking:
 
-```odin
+```loke
 print_text :: proc(value: any_view) {
 	switch (value.as(string)) {
 	case .some(text): fmt.println(text);
@@ -2178,7 +2178,7 @@ print_text :: proc(value: any_view) {
 
 A switch over an `any_view` matches the type it holds. A case names one or more concrete types, and a case naming one type may bind the value as that type with `T(name)`, the spelling of a conversion. A case that is already a complete type, such as `Option(int)`, names that type rather than binding: `Option(int)(item)` binds; a composite or pointer type is parenthesised there as in a conversion. The binding is read-only, since an `any_view` lends what it views. A case naming several types, and the default case, read the subject, which stays an `any_view`. No list of cases covers every type, so such a switch needs a default case:
 
-```odin
+```loke
 describe :: proc(value: any_view) {
 	switch (value) {
 	case int(n):        fmt.println("int", n);
@@ -2207,7 +2207,7 @@ User-defined syntax does not change parsing. Operators keep their built-in prece
 
 An `impl` block associates procedures and constants with a type. A first parameter named `self` is the receiver, its type written explicitly or inferred from the `impl` type.
 
-```odin
+```loke
 Vector2 :: struct {
 	x, y: f32,
 }
@@ -2233,7 +2233,7 @@ origin := Vector2.zero;
 
 Method-call syntax is uniform procedure-call syntax:
 
-```odin
+```loke
 v.length_squared();
 // equivalent to
 Vector2.length_squared(v);
@@ -2243,7 +2243,7 @@ The four [receiver forms](#receiver-forms) are `self`, `self: ^`, `self: inout`,
 
 The same block form adds methods or operators to a type from another package:
 
-```odin
+```loke
 impl vendor.Vector2 {
 	to_string :: proc(self, allocator: mem.Allocator = mem.default_allocator()) -> string {
 		return fmt.to_string(allocator, "(", self.x, ", ", self.y, ")");
@@ -2265,7 +2265,7 @@ Field lookup takes priority over method-call sugar. Otherwise methods use normal
 
 A procedure body may declare types and procedures, and may write an `impl` whose subject is a type declared in that same body. This is what keeps a one-off callable record beside the call that takes it:
 
-```odin
+```loke
 sort_pending :: proc(values: []mut int, limit: int) {
 	By_Threshold :: struct { limit: int }
 	impl By_Threshold {
@@ -2296,7 +2296,7 @@ Each form may also spell the type, as in `self: Type`, `self: ^Type`, or `self: 
 
 A plain `self` is a value: nothing borrowed from it outlives the call. A method that hands out a view of its receiver says so with `self: ^`. In the body `self` is then a `^Type`, reading fields through it as any pointer does, and `self^` is the value. Method syntax takes the address implicitly, so `value.view()` needs no `&`; `Type.view(&value)` writes it out. Where the receiver is a constant or a temporary, it is materialized as for `&`.
 
-```odin
+```loke
 Buffer :: struct { data: [64]u8, used: int }
 
 impl Buffer {
@@ -2320,7 +2320,7 @@ A consuming receiver takes its receiver the way a [`move` parameter](#temporarie
 
 A consuming method cannot be called on file-scope, `static`, or `thread_local` storage, since it would leave that storage dead; use `exchange` to install a replacement first. Nor can it consume a field or element, for the same reason `move` cannot.
 
-```odin
+```loke
 counter.bump();          // `self: inout`, marker implicit
 total := move(counter).consume();  // `self: move`, transfer written
 ```
@@ -2331,7 +2331,7 @@ A `self: ^mut Type` is **not** a receiver: it is an ordinary pointer parameter w
 
 A value whose type has a `call` method is called like a procedure: `x(args)` is `x.call(args)`. The method is found and ranked as any method is, so a type may group several `call` overloads, and its receiver form applies as it would to `x.call(args)`. It is reached as `x.call` reaches it, through a pointer or a box, and an unfixed constant takes its default type. A field named `call` that holds a procedure does not make its record callable: `x(args)` names the method, never the field that [field lookup](#methods-and-implementation-blocks) prefers for the text `x.call(args)`.
 
-```odin
+```loke
 By_Tag :: struct { descending: bool }
 
 impl By_Tag {
@@ -2351,7 +2351,7 @@ Generic code accepts a procedure or such a value through the catalogue's [`Calla
 
 An `impl` block may name a generic type by writing its shape, binding parameters with `$` as a [specialized](#specialization) procedure parameter does. The bound names are in scope throughout the block:
 
-```odin
+```loke
 Table :: struct($Key, $Value: type) {
 	count:     int,
 	allocator: mem.Allocator,
@@ -2388,7 +2388,7 @@ A block may target one specialization, `impl Table(string, int) { ... }`; when b
 
 An operator implementation is an ordinary named procedure marked `operator(symbol)`. The name allows direct calls, function values, and explicit disambiguation.
 
-```odin
+```loke
 impl Vector2 {
 	add :: operator(+) proc(left, right: Vector2) -> Vector2 {
 		return {left.x + right.x, left.y + right.y};
@@ -2414,7 +2414,7 @@ e := Vector2.add(a, b);
 
 Operands and the return type may have different types:
 
-```odin
+```loke
 impl Matrix4 {
 	transform_point :: operator(*) proc(matrix: Matrix4, point: Vector3) -> Vector3 {
 		...
@@ -2424,7 +2424,7 @@ impl Matrix4 {
 
 Operator declarations may be grouped and overloaded:
 
-```odin
+```loke
 add :: operator(+) proc{
 	add_vector2,
 	add_vector3,
@@ -2446,7 +2446,7 @@ The following may be overloaded:
 
 `!=` falls back to `!(left == right)` when `==` exists and no more specific `!=` overload does. A compound assignment falls back to the binary operator plus assignment; a direct compound overload can avoid a temporary or allocation:
 
-```odin
+```loke
 impl Big_Int {
 	add_assign :: operator(+=) proc(left: inout Big_Int, right: Big_Int) {
 		left.add_in_place(right);
@@ -2466,7 +2466,7 @@ An [anonymous record](#anonymous-records) or [anonymous union](#anonymous-unions
 
 A `distinct` type is not a built-in type for this rule, even when its underlying type is: `Meters :: distinct f64` is a user type with ordinary operator overloads. (Its conversion to and from `f64` is still a built-in conversion, so it takes precedence under [Resolving `T(...)`](#resolving-t).)
 
-```odin
+```loke
 Meters :: distinct f64;
 
 impl Meters {
@@ -2503,7 +2503,7 @@ An exact generic match beats a concrete overload that needs conversion unless th
 
 `operator([])` defines indexed reads. An overload returning `inout T` produces an assignable location; `operator([]=)` handles computed or proxy assignment when no location can be returned.
 
-```odin
+```loke
 Grid :: struct {
 	width, height: int,
 	cells: [dynamic]f32,
@@ -2534,7 +2534,7 @@ The same rule applies to built-in indexing of maps and dynamic arrays. Place pos
 
 `operator([]=)` is for containers with no location to hand out — computed, compressed, proxied, or validating storage. It takes the receiver, the index list, and the new value last, and returns nothing:
 
-```odin
+```loke
 Sparse_Grid :: struct {
 	entries: map[[2]int]f32,
 }
@@ -2568,7 +2568,7 @@ A compound assignment on such a type reads through `operator([])` and writes bac
 
 The written form selects between the two, as it does for built-in slicing: `&mut x[a:b]` requires the overload yielding `[]mut T`, and `x[a:b]` requires one yielding anything else. The destination selects nothing, and a form the type does not offer is an error rather than a fallback to the other:
 
-```odin
+```loke
 part := &mut small[0:2];   // the `inout` overload; `small` must be a mutable place
 read := small[0:2];        // the read-only overload
 ```
@@ -2581,7 +2581,7 @@ An indexing or slicing overload is responsible for its own bounds checks.
 
 A type is iterable when `iter` gives an iterator whose `next` returns `.some(item)` for each step and `.none` at the end ([Typed fallibility](#typed-fallibility)). Ranges, strings, string views, fixed arrays, slices, dynamic arrays, and maps all follow this protocol. Use [`Enum.values()`](#iterating-an-enumeration) to iterate an enum's members.
 
-```odin
+```loke
 Countdown :: struct {
 	start: int,
 }
@@ -2641,7 +2641,7 @@ A manual `next()` call returns `Item`, pointers and all. Code that must be gener
 
 Ordinary traversal copies nothing, whatever the element type, and a [move-only](#lifecycle-hooks-and-resource-types) element is read like any other. To own a copy of each borrowed element, write [`copied()`](#iteration-adapters); removing or otherwise transferring elements is a container operation rather than a traversal mode.
 
-```odin
+```loke
 foreach (item in items) { inspect(item); }              // borrowed: no clone, move-only included
 foreach (&mut item in items) { item.count += 1; }           // mutable: an exclusive loan per step
 foreach (item in make_items()) { inspect(item); }       // temporary kept through the statement
@@ -2671,7 +2671,7 @@ A single binding receives the element `T` itself for a borrowed or mutable leaf,
 
 One `foreach` binding receives the whole element, or for a record mode the whole lent record. Two or more destructure a record element by declaration order, and a parenthesized group nests:
 
-```odin
+```loke
 foreach (entry in table) {
 	fmt.println(entry.key^, entry.value^);
 }
@@ -2719,7 +2719,7 @@ Adapters preserve borrows. Iterating an adapter over a borrowed collection keeps
 
 A stored adapter keeps the capability of what it was made from and never upgrades it. `v := items.indexed()` and `v := items[:].indexed()` read-borrow `items` while `v` is live; `v := (&mut items[:]).indexed()` holds the exclusive loan `&mut items[:]` took, so it can be traversed by reference, stored, passed, and returned like the `[]mut T` it wraps:
 
-```odin
+```loke
 view := (&mut values[:]).indexed();
 fmt.println(values.len());          // ERROR: `view` holds the exclusive loan of `values`
 foreach (&mut value, index in view) { value += index; }
@@ -2738,7 +2738,7 @@ Built-in containers also provide these views:
 
 Each view implements `Iterable`, can be stored or passed while its source remains valid, and starts a fresh traversal on each `iter()` call.
 
-```odin
+```loke
 scores := map[string]int{"a" = 1, "b" = 2};
 
 total :: proc(numbers: $S) -> int where interfaces.Iterable(S), S.Element == int {
@@ -2764,7 +2764,7 @@ Because these are ordinary methods, a type that declares its own `keys`, `values
 
 Traversing a place borrows it, and that is the default: no adapter, marker, or view is needed to read a collection without copying it.
 
-```odin
+```loke
 Ticket :: move_only struct { id: int }
 
 sum :: proc(items: []Ticket) -> int {
@@ -2780,7 +2780,7 @@ Fixed arrays, slices, dynamic arrays, and the standard `Small_Array(T, N)` yield
 
 Because the binding names the source's own storage, a borrowed yield **carries the source's provenance**. It, and any `&item` taken from it, stays valid after the iterator advances and after the iterator is dropped, for as long as the source itself is valid:
 
-```odin
+```loke
 first: Option(^Entry) = .none;
 foreach (item in items) {
 	if (first == .none) { first = .some(&item); }   // outlives the loop; `items` must too
@@ -2795,7 +2795,7 @@ For a user-defined iterator whose `next` returns `^Element`, the pointer it retu
 
 An `&mut` leaf anywhere in the pattern makes the traversal mutable:
 
-```odin
+```loke
 foreach (&mut value in collection) { ... }
 foreach (key, &mut value in table) { ... }
 foreach (&mut value, index in slice.indexed()) { ... }
@@ -2815,7 +2815,7 @@ A temporary root lives for the complete `foreach` statement and lends its elemen
 
 Struct literals construct records. Validated or computed construction uses named procedures:
 
-```odin
+```loke
 impl Vector2 {
 	from_components :: proc(x, y: f32) -> Vector2 {
 		return {x, y};
@@ -2842,7 +2842,7 @@ Other behavior, including `hash`, `format`, and iteration, uses ordinary methods
 
 A target type defines an explicit conversion with `hook(convert)`:
 
-```odin
+```loke
 Meters :: distinct f64;
 Kilometers :: distinct f64;
 
@@ -2869,7 +2869,7 @@ Records and fixed arrays receive field-wise (element-wise) `try_clone`, `clone`,
 - `hook(drop)`: `proc(self: inout T)`
 - `hook(copy)`: `proc(self, allocator: Allocator) -> Result(T, Allocator_Error)`
 
-```odin
+```loke
 // A resource whose zero handle is valid carries a separate validity flag.
 File :: move_only struct {
 	handle: int,
@@ -2952,7 +2952,7 @@ Built-in types provide the methods they support. Lifecycle behavior is customize
 
 A type declares one of these customization operations as a method:
 
-```odin
+```loke
 impl Ring_Buffer {
 	len :: proc(self) -> int { return self.count; }
 }
@@ -2982,7 +2982,7 @@ including representation identity for floating arguments.
 
 An interface may put a [`where`](#where-clauses) clause between its parameters and body. These expressions are compile-time Boolean predicates, evaluated before the body requirements for every application, so they suit a restriction that should be tested first:
 
-```odin
+```loke
 Inline_Storable :: interface($Self: type, $Limit: int)
 	where Limit > 0, size_of(Self) <= Limit {
 	slot hash: proc(self) -> uint;
@@ -2993,7 +2993,7 @@ Inline_Storable :: interface($Self: type, $Limit: int)
 
 Satisfaction is structural. A type satisfies an interface when its operations and members meet the requirements; no `implements` declaration is consulted. The interface declaration is compile-time metadata rather than a runtime value type. Runtime polymorphism is requested explicitly with [`dyn Interface`](#borrowed-dynamic-interface-values).
 
-```odin
+```loke
 Additive :: interface($T: type) {
 	T(0) -> T;
 	(a, b: T) a + b -> T;
@@ -3024,7 +3024,7 @@ A requirement beginning with `(` is always a binding list; a requirement whose o
 
 A binding `name: inout T` is a hypothetical exclusive mutable place: it may be read and may select an `inout` receiver, parameter, or indexing overload. A result `-> inout T` requires the expression to denote an assignable place of exactly `T`, with no result conversion. These forms exist only during requirement checking and add no first-class reference type:
 
-```odin
+```loke
 Mutable_Indexable :: interface($T: type, $Element: type) {
 	(value: inout T, index: int) value[index] -> inout Element;
 }
@@ -3038,7 +3038,7 @@ Only `inout` is admitted in a binding list. A consuming operation can be require
 
 An associated constant is an ordinary expression requirement: `T.ZERO -> Element;` asks for a member `ZERO` on `T` whose value converts to `Element`. When the required result is `type`, the member must evaluate to a compile-time type; it is then an **associated type** usable in later requirements and in constrained generic code:
 
-```odin
+```loke
 Source :: interface($T: type) {
 	T.Element -> type;
 	(value: T) value.read() -> T.Element;
@@ -3076,7 +3076,7 @@ Evaluating an interface application as an ordinary Boolean may simply produce fa
 
 Interface satisfaction is checked when an interface is required. A type author can request an earlier check with a file-scope [`static_assert`](#static_assertboolean):
 
-```odin
+```loke
 Shape :: interface($T: type) {
 	slot name: proc(self) -> string;
 	slot area: proc(self) -> f64;
@@ -3103,7 +3103,7 @@ It remains an ordinary compile-time assertion: it registers no conformance, is n
 
 `base:interfaces` exports the standard catalogue. Outside that package, use its qualifier, as in `interfaces.Sequence(S)`. Built-in and user-defined types use the same structural checks.
 
-```odin
+```loke
 Equatable :: interface($T: type) {
 	(a, b: T) a == b -> bool;
 }
@@ -3190,7 +3190,7 @@ Growable_Sequence :: interface($Self: type) {
 - `Callable(C, Signature)` takes a procedure type as `Signature`. It holds by a built-in rule, since a parameter list is not a requirement an interface body can spell. A procedure type holds when it converts to `Signature`. Any other type holds when it has a `call` method that takes a plain `self`, matches `Signature`'s parameter types, modes, reset effects, and result exactly and its Loke calling convention, and retains its arguments no further than `Signature`'s [escape levels](#escapelevel) allow. A field named `call` does not count.
 - `C.Result` is what a callable returns: a procedure type's result, or the result of the type's `call` method, unless the type declares its own `Result`. A type whose `call` methods return different types, or nothing, has none. A bare bound `Callable(C, ...)`, written directly or composed by another interface, lets the body [call](#calling-a-value) a value of type `C`, reaching its `call` method even where the declaring package could not otherwise see it. `dyn interfaces.Callable(Signature)` is the [borrowed callable view](#borrowed-callable-views) `dyn proc(...)`:
 
-```odin
+```loke
 apply_twice :: proc(value: int, f: $C) -> int
 	where interfaces.Callable(C, proc(n: int) -> int) {
 	return f(f(value));
@@ -3246,7 +3246,7 @@ Runtime polymorphism reuses the same structural interfaces as generics. It is re
 
 For runtime use, erasure substitutes the concrete implementation type for the subject, while every other generic parameter stays an explicit type or constant-value argument of the dynamic type. The catalogue's `interfaces.Iterator(Self, Item)` is one such interface, and so is this one:
 
-```odin
+```loke
 Drawable :: interface($Self: type) {
 	slot draw: proc(self, canvas: inout Canvas);
 }
@@ -3283,7 +3283,7 @@ For an interface mixing receiver modes, the capability decides which slots the v
 
 Conversion is an ordinary explicit conversion from a pointer to the concrete subject. `&` builds a read-only view and `&mut` a mutable one; a mutable view requires `^mut Concrete`, while building a `dyn I` from a `^mut Concrete` is ordinary weakening:
 
-```odin
+```loke
 Canvas :: struct { strokes: int }
 Circle :: struct { r: f64 }
 
@@ -3320,7 +3320,7 @@ Use `any_view`, not `dyn`, when checked runtime type inspection is required.
 
 A dyn view satisfies its own interface through compiler-provided forwarding slots — the bridge between static and runtime polymorphism. `dyn mut I` satisfies `I` whatever its receiver modes; `dyn I` satisfies `I` only when every required receiver is immutable, because those are the only slots it exposes. A `dyn` value also converts without allocation to a composed base interface, keeping its data pointer and capability and selecting the base interface's witness.
 
-```odin
+```loke
 paint :: proc(value: ^$T, canvas: inout Canvas)
 	where Drawable(T) {
 	value^.draw(inout canvas);
@@ -3338,7 +3338,7 @@ Closed heterogeneous ownership uses unions. Open ownership requires an explicit 
 
 `dyn proc(parameters) -> Result` is a borrowed view of anything [callable](#calling-a-value) with that signature. It is the short form of `dyn interfaces.Callable(proc(parameters) -> Result)`, one type under either spelling. Like any `dyn` view it is two words, a data pointer and a code pointer, but the second is the code to call rather than a table of slots. A callback API that takes one sees only the parameters and the result, never what the callable captured, and is one non-generic procedure; a generic `$C` constrained by `Callable` is the alternative when the call should be direct:
 
-```odin
+```loke
 visit :: proc(nodes: []Node, f: dyn proc(node: ^Node)) {
 	foreach (node in nodes) { f(&node); }
 }
@@ -3353,7 +3353,7 @@ visit(nodes, (dyn proc(node: ^Node))(&by_depth));  // a named callable record: w
 
 **What it borrows.** A procedure is the view's data word itself, so converting one, or a local holding one, borrows nothing. A capture literal's value is viewed where it is: converting a named one borrows that local, and a temporary lives until the end of its complete expression, as for any `dyn` view, unless a local's value [extends](#temporaries-and-procedure-boundaries) it. Passing a literal as an argument is therefore fine, and so is storing one straight into a `dyn proc` local, which keeps the literal until the block ends:
 
-```odin
+```loke
 f: dyn proc() = proc() capture(&mut n) { n += 1; };
 f();                                    // the literal lives until the block ends
 bump := proc() capture(&mut n) { n += 1; };
@@ -3375,7 +3375,7 @@ Like every `dyn` view, a `dyn proc` view has no zero value and is not comparable
 
 A variable declaration creates a variable in the current scope.
 
-```odin
+```loke
 x: int; // declares an uninitialized `int`; `x` starts dead
 y, z: int; // both variables start dead
 ```
@@ -3388,7 +3388,7 @@ Liveness is not required in an **unevaluated operand**. `type_of(expression)`, t
 
 Parameters start live. File-scope, `static`, and `thread_local` variables use the constant-initialization rule under [Storage modifiers](#storage-modifiers) and therefore still receive their zero value when they omit an initializer.
 
-```odin
+```loke
 count: int;
 // fmt.println(count); // ERROR: `count` is dead
 
@@ -3405,7 +3405,7 @@ Each declaration in a scope must have a unique name. A local declaration must no
 
 This restriction applies only to local scopes. A local declaration may shadow a file-scope declaration, an imported package name, or a predeclared identifier such as `byte` or `size_of`; the three [reserved names](#predeclared-names) are the exception. The program cannot use the shadowed name in that local scope.
 
-```odin
+```loke
 x := 10;
 x := 20; // ERROR: `x` is already declared in this scope
 x = 20;  // OK: assignment to the existing `x`
@@ -3417,7 +3417,7 @@ test, z := 20, 30; // ERROR: `z` is already declared in this scope
 
 Owning values such as `string`, `[dynamic]T`, and `map[K]V` may own backing storage. A live managed value releases its resources when it leaves scope. See [`string`](#string-type).
 
-```odin
+```loke
 numbers := [dynamic]int{1, 4, 9};
 greeting := "hello";
 message := greeting + ", world";   // a new owning `string`
@@ -3459,7 +3459,7 @@ Whether a place is copied or a temporary transferred changes what an expression 
 
 **An eligible last-use copy of a local transfers ownership.** This applies when a binding or assignment would clone a whole local variable or `move` parameter whose copy may allocate — a `[dynamic]T`, `map[K]V`, or `Box(T)`, a record with a [`hook(copy)`](#lifecycle-hooks-and-resource-types), or anything that holds one — and no path reads the local again before reassignment or scope exit. Subject to the exclusions below, the value transfers as with `move(x)`, leaving the source dead.
 
-```odin
+```loke
 first := [dynamic]int{1, 2, 3};
 second := first;          // `first` is read below: a clone
 second.append(4);
@@ -3485,7 +3485,7 @@ The runtime drops every live managed TLS owner. A value that must escape that te
 
 Do not rely on implicit process cleanup for an operation with an external effect — flushing a file, closing a socket, releasing a shared-memory lock. Use an owning scope, `defer`, or an explicit `drop` in `main`:
 
-```odin
+```loke
 cache: map[string]int;             // reclaimed by the OS at exit, no drop runs
 
 main :: proc() {
@@ -3501,14 +3501,14 @@ Storage modifiers follow `:` and specify duration: where and how long a variable
 - `static` creates one instance for the life of the process. The value remains available between calls.
 - `thread_local` creates one instance for each thread. A live managed value is dropped at normal thread return.
 
-```odin
+```loke
 counter: static int;          // keeps its value across calls
 current: thread_local ^Task;  // one per thread
 ```
 
 A modifier may also be written where the type is inferred:
 
-```odin
+```loke
 counter: static = 0;
 session: thread_local = 0;
 ```
@@ -3539,7 +3539,7 @@ Managed locals may own allocator-supplied backing storage. Use a [`Box(T)`](#own
 
 `drop(value)` cleans up a definitely live lexical owning variable, writes the inert zero representation, and marks it **dead**. It is forbidden on static-duration storage and its subplaces. Scope exit drops every live managed lexical owner unless consumed by [`unsafe.forget`](#unsafeforget).
 
-```odin
+```loke
 // Within a procedure returning a compatible Result:
 buffer := try_make([dynamic]u8, allocator=my_allocator) or_return;
 drop(buffer); // or leave it to scope exit
@@ -3547,7 +3547,7 @@ drop(buffer); // or leave it to scope exit
 
 `drop` and `move` are compiler special forms operating on variables, not directly on fields, elements, or map entries. To release a field's storage while keeping its aggregate live, use [`exchange`](#exchange) to extract the old value and install a replacement:
 
-```odin
+```loke
 old := exchange(inout record.buffer, {});  // `record` stays live throughout
 drop(old);                                 // now an ordinary local
 ```
@@ -3558,7 +3558,7 @@ Dropping the whole aggregate, which drops its fields in reverse declaration orde
 
 `unsafe.forget(value)` consumes a value without cleaning it up or releasing its owned contents, deliberately leaking or relinquishing the resource:
 
-```odin
+```loke
 held := open_device();
 unsafe.forget(move(held));  // the device driver owns it now
 ```
@@ -3574,13 +3574,13 @@ For foreign handoff, prefer a library-defined consuming `into_raw` that returns 
 
 A constant binds a name to a value. The value must be available at compile time and cannot change.
 
-```odin
+```loke
 x :: "what"; // constant `x` has the unfixed string value "what"
 ```
 
 A constant declaration can specify a type:
 
-```odin
+```loke
 y : int : 123;
 z :: y + 7; // constant computations are possible
 ```
@@ -3598,7 +3598,7 @@ A constant is a value, not a variable, and an ordinary use of one is substituted
 
 **A constant used in any of those ways is materialized into read-only storage.** All uses of that constant share one backing object. A constant whose type holds an [`Atomic(T)`](#concurrency-and-the-memory-model) is never materialized, because an atomic changes through a `^`; borrowing one is a compile-time error, while an ordinary use still copies it.
 
-```odin
+```loke
 NUMBERS :: [?]int{7, 42, 628};
 
 main :: proc() {
@@ -3641,7 +3641,7 @@ An ordinary runtime expression may consume a compile-time value. The reverse is 
 
 A normal `proc` may be evaluated at compile time when its result is required in a compile-time context. The same procedure may be called at runtime when its signature and result are runtime-representable:
 
-```odin
+```loke
 hash_name :: proc(text: string_view) -> u64 {
 	hash: u64 = 14695981039346656037;
 	foreach (b in text.bytes()) {   // bytes, not runes: string iteration yields code points
@@ -3722,7 +3722,7 @@ Enum values do not support arithmetic or bitwise operators; see [Enumerations](#
 
 The right operand in a shift expression must have an integer type or be an unfixed constant representable by a typed unsigned integer. A count of a signed type may be any value except a negative one, which **panics**, as a negative [SIMD](#lane-wise-operators) count lane does; a constant negative count is a compilation error. If the left operand of a non-constant shift expression is an unfixed constant, it is first implicitly converted to the type it would assume if the shift expression were replaced solely by the left operand alone (with type inference and hinting rules applied).
 
-```odin
+```loke
 n: u32 = 3;
 a: u8 = 1 << n;   // `1` is a `u8`, as in `a: u8 = 1`
 b := 1 << n;      // `1` is an `int`, as in `b := 1`
@@ -3815,7 +3815,7 @@ Both forms are always single-valued: every addressable operand yields exactly on
 
 For an operand `x` of pointer type `^T`, `x^` denotes the `T` pointed to. Explicit `x^` and implicit dereferences such as `x.field` need no test, because a `^T` is never null. Dereferencing an address that is dangling, misaligned, or otherwise invalid is undefined behavior, and can arise only through an unchecked lifetime hole, raw-pointer manipulation, or foreign code.
 
-```odin
+```loke
 &count;                  // a variable
 &values[index_of(key)];  // an element
 &Point{1, 2};            // a materialized temporary
@@ -3827,7 +3827,7 @@ deref(nil); // ERROR: `nil` is not a value of `^int`
 
 ### Conditional expression
 
-```odin
+```loke
 parity := "even" if n % 2 == 0 else "odd";
 BUFFER_SIZE :: 4096 if LOKE_OS == .Windows else 8192; // a constant
 ```
@@ -3836,7 +3836,7 @@ When the condition and selected value are constant, the result is constant. Use 
 
 The result is a temporary that owns its value, whatever takes it. A place operand is copied into it under [the ownership rule](#value-semantics-and-the-ownership-rule), so a `string` retains its text and a `[dynamic]T` is cloned; a temporary or `move(x)` operand transfers:
 
-```odin
+```loke
 xs := [dynamic]int{1};
 ys := [dynamic]int{2};
 a := xs if flag else ys;               // clones the one selected
@@ -3855,7 +3855,7 @@ b := move(xs) if flag else ys.clone(); // one transferred, one written copy
 
 The `in` in a `foreach` header separates bindings from the iterable expression. In an ordinary `for` condition, `in` retains its usual membership-operator meaning, but a condition-only header written as a bare `name in expression` is rejected; see [for statement](#for-statement):
 
-```odin
+```loke
 foreach (x in y) {} // iteration
 for ((x in y)) {}   // condition-only loop: repeats while `x` is in `y`
 ```
@@ -3896,7 +3896,7 @@ Binary operators of the same precedence associate from left to right. For instan
 
 **Level 1 is the exception: it associates from right to left.** This is what makes both of its forms chain the way they read:
 
-```odin
+```loke
 a if c1 else b if c2 else d   // a if c1 else (b if c2 else d)
 x or_else y or_else z         // x or_else (y or_else z)
 ```
@@ -3905,7 +3905,7 @@ The conditional groups as an else-if chain. `or_else` uses the same right groupi
 
 The postfix forms — call `()`, index `[]`, slice `[:]`, selector `.`, dereference `^`, panicking checked extraction `.(T)`, and `or_return` — are not in the table because they bind tighter than every unary and binary operator. They associate left to right among themselves. `-x^` is `-(x^)`, `f() or_return + 1` is `(f() or_return) + 1`, and `a.b().as(T) or_else c` is `(a.b().as(T)) or_else c`. `or_return` is postfix rather than binary: its [failure operand](#the-failure-operand) is optional and is itself a postfix expression, so the whole form is one postfix expression. After `or_return`, a token that begins a primary expression (an identifier, a literal, `.`, `(`, `[`, `{`, `move`, or `proc`) begins the failure operand; `^` and the unary and binary operators do not:
 
-```odin
+```loke
 total := count() or_return .io * 2;   // (count() or_return .io) * 2
 n     := value() or_return + 1;       // (value() or_return) + 1
 size  := (text() or_return).len();    // a member of the success payload
@@ -3917,7 +3917,7 @@ A suffix after a bare `or_return` would be read as the failure operand, so a mem
 
 For integer values `x` and `y`, quotient `q = x/y` and remainder `r = x%y` satisfy:
 
-```odin
+```loke
 x = q*y + r   and |r| < |y|;
 ```
 
@@ -3936,7 +3936,7 @@ A shift count that is equal to or greater than the width of the left operand has
 - `x << y` is `0` once `y >= 8*size_of(x)`, for both signed and unsigned `x`.
 - `x >> y` is `0` once `y >= 8*size_of(x)` for unsigned `x` or non-negative signed `x`, and `-1` for negative signed `x`, because an arithmetic shift replicates the sign bit.
 
-```odin
+```loke
 u: u32 = 1;
 i: i32 = -1;
 assert(u >> 32 == 0);
@@ -3952,7 +3952,7 @@ Every signed integer uses two’s-complement representation. For every integer t
 
 The **wrapping operators** `+%`, `-%`, and `*%` keep the low `n` bits of the mathematical result, where `n` is the type's bit width: arithmetic modulo `2^n`, read back in two's complement for a signed type. They are for hashing, checksums, random number generators, and other arithmetic that is modular by design, and they never panic. They apply to integer types and integer [SIMD lanes](#lane-wise-operators); a rune or a float has no wrapping form. Each has a compound assignment, `+%=`, `-%=`, and `*%=`. Two unfixed constants stay exact, as they do for `+`.
 
-```odin
+```loke
 count: i32 = 2147483647;
 wrapped := count +% 1;                   // -2147483648: wrap is asked for
 none := math.checked_add(count, 1);      // .none
@@ -3975,7 +3975,7 @@ These operations stay modular: `<<`, which keeps the low bits; `%`, which cannot
 Each accepts two operands of one signed or unsigned integer type; an unfixed
 second operand takes the first's type:
 
-```odin
+```loke
 value: u8 = 255;
 fmt.println(value +% 1, math.checked_add(value, 1)); // 0 .none
 ```
@@ -4002,7 +4002,7 @@ Floating-point operations are not contracted or reassociated. Each operation the
 
 An assignment statement writes a new value to a storage location:
 
-```odin
+```loke
 x: int = 123; // declares a new variable `x` with type `int` and assigns a value to it
 x = 637; // assigns a new value to `x`
 ```
@@ -4011,14 +4011,14 @@ x = 637; // assigns a new value to `x`
 
 One statement can assign multiple variables:
 
-```odin
+```loke
 x, y := 1, "hello"; // declares `x` and `y` and infers the types from the assignments
 y, x = "bye", 5;
 ```
 
 `:=` consists of the two tokens `:` and `=`. The following declarations are equivalent:
 
-```odin
+```loke
 x: int = 123;
 x:     = 123; // default type for an integer literal is `int`
 x := 123;
@@ -4026,7 +4026,7 @@ x := 123;
 
 Assignment has value semantics and is one of the contexts the [ownership rule](#value-semantics-and-the-ownership-rule) covers: assigning a place [clones](#standard-customization-procedures) it, so the destination is independent of the source, while `string` and `Shared(T)` share their storage and a pointer, slice, or view still refers to what it did.
 
-```odin
+```loke
 a := [dynamic]int{1, 2, 3};
 b := a; // independent clone: modifying `b` does not modify `a`
 b[0] = 99;
@@ -4035,7 +4035,7 @@ assert(a[0] == 1);
 
 `move(value)` transfers ownership without a copy. The operation writes the inert zero representation to the lexical source and marks it dead until a later full assignment. It cannot target [static-duration storage](#storage-modifiers); use [`exchange`](#exchange) when the source must remain live with a replacement.
 
-```odin
+```loke
 c := move(a); // transfers the allocation; `a` is now dead
 a = [dynamic]int{7, 8}; // a full assignment revives `a`
 ```
@@ -4048,7 +4048,7 @@ On failure, the compiler invokes that allocator's [failure policy](#allocation-f
 
 `exchange(inout destination, replacement)` replaces a definitely live value and returns its previous value without cloning:
 
-```odin
+```loke
 previous := exchange(inout current, {});
 ```
 
@@ -4060,7 +4060,7 @@ To make two elements of a mutable slice trade places, use [`values.swap`](#swapp
 
 `exchange` is permitted for lexical and static-duration destinations. It is the only operation that can move the current value out of file-scope, `static`, or `thread_local` storage, because it simultaneously leaves a completed live replacement. Like any `inout` operation, it is rejected while an incompatible borrow of the destination is live. It is not an atomic memory operation and provides no inter-thread synchronization; concurrent code uses `Atomic(T)` or a lock.
 
-```odin
+```loke
 cache: Cache; // file-scope, always live
 
 take_cache :: proc() -> Cache {
@@ -4086,7 +4086,7 @@ each iteration. A false condition ends the loop. The initial and post statements
 are optional; both separators remain. An omitted condition is true, so `for (;;) {}`
 loops indefinitely.
 
-```odin
+```loke
 for (i := 0; i < 10; i += 1) {
 	fmt.println(i);
 }
@@ -4096,7 +4096,7 @@ for (i := 0; i < 10; i += 1) {
 `name in expression` requires another pair of parentheses; use `foreach` to
 iterate instead:
 
-```odin
+```loke
 for (key in counts) { }     // ERROR: iterate with `foreach (key in counts)`
 for ((key in counts)) { }   // repeat while `key` is a member
 ```
@@ -4111,7 +4111,7 @@ This restriction applies only to the whole condition-only `for` header.
 
 An integer range is iterable, so the [basic `for` loop](#basic-for-loop) above can also be written as
 
-```odin
+```loke
 foreach (i in 0..<10) {
 	fmt.println(i);
 }
@@ -4123,7 +4123,7 @@ foreach (i in 0..=9) {
 
 The built-in iterable types include strings, arrays, slices, dynamic arrays, maps, and integer ranges:
 
-```odin
+```loke
 some_string := "Hello, 世界";
 foreach (character in some_string) {
 	fmt.println(character);       // a rune: string iteration yields code points
@@ -4152,7 +4152,7 @@ foreach (key, value in some_map) {   // the map's element is `{key, value}`
 
 Every binding list names the fields of one [`Element`](#element-bindings), so a second binding exists only when the element is a two-field record. An index, a key, or an offset comes from an [adapter or a container view](#iteration-adapters) — an ordinary borrowed value the loop iterates, never extra header syntax:
 
-```odin
+```loke
 foreach (character, ordinal in some_string.indexed()) {
 	fmt.println(ordinal, character);
 }
@@ -4169,7 +4169,7 @@ foreach (value in some_map.values()) {   // values alone, no entry record
 
 What a binding receives — a borrow, a mutable place written `&mut value`, or an owned element — is decided by the header alone, under the [traversal modes](#traversal-modes):
 
-```odin
+```loke
 foreach (&mut value in some_dynamic_array) { value += 1; }   // mutable: the root must be writable
 foreach (key, &mut value in some_map) { value += 1; }        // map keys stay immutable
 ```
@@ -4180,7 +4180,7 @@ Evaluating a place or borrow carrier establishes an iterator loan, immutable for
 
 A `foreach` whose bindings carry `$` is a compile-time expansion rather than a runtime loop:
 
-```odin
+```loke
 print_record :: proc(value: ^$T) {
 	foreach ($field, $index in fields_of(T).indexed()) {
 		fmt.println(index, field.name, field.get(value));
@@ -4198,7 +4198,7 @@ Every binding uses `$`; mixing runtime and compile-time bindings in one header i
 
 Reverse traversal is the ordinary [`reversed()` adapter](#iteration-adapters) rather than control-flow syntax:
 
-```odin
+```loke
 array := [?]int { 10, 20, 30, 40, 50 };
 
 foreach (x in array.reversed()) {
@@ -4214,7 +4214,7 @@ A map does not reverse, because its [iteration order](#maps) is unspecified. To 
 statement runs before the condition, separated by `;`. Its variables are scoped
 to the entire `if`, including `else if` and `else` branches:
 
-```odin
+```loke
 if (x := next_value(); x < 0) {
 	fmt.println("x is negative");
 } else if (x == 0) {
@@ -4228,7 +4228,7 @@ if (x := next_value(); x < 0) {
 
 A switch statement selects a case by comparing its required subject expression with case values. It may include an initialization statement before the subject, separated by a semicolon. The default case is written `default:`; `case:` with no value is the same case.
 
-```odin
+```loke
 switch (os := LOKE_OS; os) {
 case .Windows:
 	fmt.println("Windows");
@@ -4241,7 +4241,7 @@ Only the selected case runs, so no `break` is needed at the end of a case. Case 
 
 Switch cases are evaluated from top to bottom, stopping when a case succeeds. For example:
 
-```odin
+```loke
 switch (i) {
 case 0:
 case limit():
@@ -4252,7 +4252,7 @@ case limit():
 
 The header is an initialization statement and a subject, and binds nothing: `switch (x in set)` switches on the boolean membership test. A switch over a [union](#inspecting-a-union) or an [`any_view`](#any_view-type) matches variants or types instead of comparing values, and each case binds what it matches. This keeps unrelated payload names and types out of the other branches:
 
-```odin
+```loke
 switch (token) {
 case .number(value): use_number(value);
 case .word(text):    use_word(text);
@@ -4262,7 +4262,7 @@ case .end:
 
 A case may also list a range, written with the `..<` and `..=` spelling of a [range literal](#range-literals) but matched as syntax rather than built as a value:
 
-```odin
+```loke
 switch (c) {
 case 'A'..='Z', 'a'..='z', '0'..='9':
 	fmt.println("c is alphanumeric");
@@ -4276,7 +4276,7 @@ An enum or union switch must list every variant or include `default:`. An empty
 default explicitly ignores the remaining variants. Exhaustive coverage
 guarantees a case runs; if every case terminates, no trailing return is needed:
 
-```odin
+```loke
 Direction :: enum { North, East, South, West }
 
 degrees :: proc(d: Direction) -> int {
@@ -4301,7 +4301,7 @@ a default.
 
 `if` and `for` take one switch case as their header, `case Pattern = subject`. The pattern is anything a [switch](#switch-statement) case may write, usually a variant with its binding. The `if` form runs its block when the subject matches, with the binding in scope there and nowhere else, and its `else` otherwise:
 
-```odin
+```loke
 if (case .some(entry) = table.find(key)) {
 	use(entry);
 } else {
@@ -4311,7 +4311,7 @@ if (case .some(entry) = table.find(key)) {
 
 The `for` form evaluates the subject once per step and runs its block while the subject matches; the first value that does not match ends the loop. That is a stream read to its end, with `or_return` handling a failure in the ordinary way:
 
-```odin
+```loke
 for (case .some(entry) = reader.next() or_return) {
 	use(entry);
 }
@@ -4328,7 +4328,7 @@ Deferred code may not transfer control out of the deferred statement. `return` a
 
 The following will print 4 then 234:
 
-```odin
+```loke
 package main;
 
 import "core:fmt";
@@ -4352,7 +4352,7 @@ equivalent to `defer { if (failed) { rollback(); } }`.
 
 `errdefer` is a `defer` that runs only when the procedure leaves with its failure variant, whether by `or_return` or by a `return` whose value has the failure tag, so `return .err(e)` and `return saved_outcome` behave alike. It requires a result that is a [fallible union](#typed-fallibility) (`L0720`) and takes `defer`'s restrictions. It is registered and ordered as a `defer` is; a scope left any other way — its end, `break`, `continue`, or a `return` of the success variant — discards it. It undoes incomplete work, which needs no flag:
 
-```odin
+```loke
 add_user :: proc(db: inout Db, user: User) -> Status(Db_Error) {
 	db.users.append(user);
 	errdefer _ = db.users.pop();   // undo the append if a later step fails
@@ -4365,7 +4365,7 @@ Under the `unwind` [panic strategy](#panics-and-unwinding) a pending `errdefer` 
 
 A deferred operation that returns a `Result` must handle that result within the deferred action. It cannot propagate failure with `or_return`:
 
-```odin
+```loke
 read_file :: proc() -> Status(io.Error) {
 	file := fs.open_read("my_file.txt") or_return;
 	defer {
@@ -4382,7 +4382,7 @@ read_file :: proc() -> Status(io.Error) {
 
 A result is anonymous, so there is no result local for a `defer` to reach — and the deferred statement runs after the return expression has been evaluated, so mutating what it named changes nothing the caller sees:
 
-```odin
+```loke
 snapshot :: proc() -> int {
 	n := 123;
 	defer {
@@ -4408,7 +4408,7 @@ The contents of a `when` branch match its location. Inside a procedure, a select
 
 Example:
 
-```odin
+```loke
 print_architecture :: proc() {
 	when (LOKE_ARCH == .Amd64) {
 		fmt.println("x86-64");
@@ -4430,7 +4430,7 @@ See [Conditional compilation](#conditional-compilation) for built-in constants t
 
 `break` exits the innermost enclosing `for` or `foreach`. It takes no operand, and using it outside a loop is an error. Switches, conditions, and ordinary blocks are not breakable constructs; a break in a switch case passes through the switch to the nearest loop.
 
-```odin
+```loke
 for (cond) {
 	switch (next_action()) {
 	case .stop:
@@ -4446,7 +4446,7 @@ for (cond) {
 
 `continue` starts the next iteration of the innermost enclosing `for` or `foreach`. It takes no operand, and using it outside a loop is an error.
 
-```odin
+```loke
 for (cond) {
 	if (get_foo()) {
 		continue;
@@ -4463,7 +4463,7 @@ for (cond) {
 
 A procedure contains executable code. The `proc` keyword defines a procedure literal:
 
-```odin
+```loke
 fibonacci :: proc(n: int) -> int {
 	if (n < 1) {
 		return 0;
@@ -4483,7 +4483,7 @@ fmt.println(fibonacci(3)); // 2
 
 A procedure literal may list what it captures in a clause between its signature and its body:
 
-```odin
+```loke
 limit := 5;
 less := proc(a, b: int) -> bool capture(limit) {
 	return (a < limit) && !(b < limit);
@@ -4517,7 +4517,7 @@ Each entry is a mode, a name, and optionally `= value`. The short forms capture 
 
 **Its type.** The literal is a value of a record: the type a programmer would declare in the body, with one field per capture in clause order and a `call` method that takes a plain `self` and the literal's parameters and returns its result. Each literal is its own type, and in a generic procedure each instance's is its own, as for any [body-local type](#methods-and-implementation-blocks). The value is [called](#calling-a-value) like a procedure, and a generic API takes it through [`interfaces.Callable`](#standard-interface-catalogue):
 
-```odin
+```loke
 apply :: proc(value: int, f: $C) -> int where interfaces.Callable(C, proc(n: int) -> int) {
 	return f(value);
 }
@@ -4532,7 +4532,7 @@ No signature can name it, so it cannot be returned or held in a file-scope type;
 
 **Borrows.** A literal with a borrowed capture carries that borrow and is checked as a record holding a `^T` or `^mut T` is ([Values that contain borrows](#values-that-contain-borrows)): it cannot outlive the captured root, and the root may not be written, moved, or dropped while the literal is live.
 
-```odin
+```loke
 less := proc(a, b: int) -> bool capture(&limit) { return a < limit && b < limit; };
 limit += 1;   // ERROR: `limit` is borrowed by `less`, which is used below
 slice.sort_by(values, less);
@@ -4540,7 +4540,7 @@ slice.sort_by(values, less);
 
 A `&mut` capture is storage reached through a `^mut` the call received, so storing an argument's borrow in it needs `@(escape=stored)` on that parameter, as for any destination under [Retaining a borrow](#retaining-a-borrow):
 
-```odin
+```loke
 collect :: proc(@(escape=stored) nodes: []^Node, f: $C)
 	where interfaces.Callable(C, proc(@(escape=stored) node: ^Node)) {
 	foreach (node in nodes) { f(node); }
@@ -4556,7 +4556,7 @@ A capture literal is a runtime value. It is declared with `:=`, never `::`; it a
 
 A procedure can have zero or more parameters. This procedure multiplies two integers:
 
-```odin
+```loke
 multiply :: proc(x: int, y: int) -> int {
 	return x * y;
 }
@@ -4565,7 +4565,7 @@ fmt.println(multiply(137, 432));
 
 Consecutive parameters can share one type annotation. Thus, `x: int, y: int` can be written as `x, y: int`:
 
-```odin
+```loke
 multiply :: proc(x, y: int) -> int {
 	return x * y;
 }
@@ -4598,7 +4598,7 @@ Returning such a borrowed parameter by value performs a logical clone, since the
 
 An ordinary parameter borrows its argument:
 
-```odin
+```loke
 sum :: proc(values: [dynamic]int) -> int {
 	// `values` is a read-only borrow; no array copy is made.
 	result := 0;
@@ -4613,7 +4613,7 @@ sum :: proc(values: [dynamic]int) -> int {
 
 Use `inout` for a mutable borrow and `move` when a procedure must take ownership:
 
-```odin
+```loke
 sort_in_place :: proc(values: inout [dynamic]int) {
 	values.sort();
 }
@@ -4633,7 +4633,7 @@ process_owned(move(numbers));
 
 **A temporary needs no `move` marker.** It already owns its value, and transferring it leaves no named source dead. This is also the rule for [`unsafe.forget`](#unsafeforget) and [built-in insertion](#container-insertion):
 
-```odin
+```loke
 connections.append(connect("a.example"));   // a temporary: no marker
 c := connect("b.example");
 connections.append(move(c));                // a place: written out, `c` is dead after the call
@@ -4659,7 +4659,7 @@ Converting an operand to a destination type is not itself a copy: `print(count)`
 
 An immutable parameter can be copied into a mutable local with a different name, subject to the type's ordinary copy rules. Modifying the local binding does not modify the caller's binding. An `inout` parameter instead permits modifying the caller's variable directly.
 
-```odin
+```loke
 countdown :: proc(from: int) {
 	remaining := from; // mutable local copy; `from` remains immutable
 	for (remaining > 0) {
@@ -4673,7 +4673,7 @@ countdown :: proc(from: int) {
 
 A variadic procedure accepts a variable number of arguments. The variadic parameter is the last one, in a procedure type as in a declaration; `proc(nums: ..int, tail: int)` is an error.
 
-```odin
+```loke
 sum :: proc(nums: ..int) -> int {
 	result := 0;
 	foreach (n in nums) {
@@ -4699,7 +4699,7 @@ One result type may reach the end of its body: a [fallible union](#typed-fallibi
 
 To hand back several values, return one [anonymous record](#anonymous-records) and [destructure](#destructuring) it at the call site. Its fields need no names when the caller destructures it:
 
-```odin
+```loke
 swap :: proc(x, y: int) -> (int, int) {
 	return {y, x};
 }
@@ -4713,7 +4713,7 @@ The parenthesized result spelling is therefore one record type, at any arity. La
 
 A result may be declared `inout T`. The procedure then returns a **mutable borrow of a place** rather than a value, and the corresponding `return` expression is written `return inout place`. Any procedure may declare one; [`operator([])`](#indexing-and-slicing) is the common case rather than the only one, and it is what makes `grid[3, 2] = 1.0` and `&grid[3, 2]` work.
 
-```odin
+```loke
 pick :: proc(xs: inout [4]int, index: int) -> inout int {
 	return inout xs[index];
 }
@@ -4727,7 +4727,7 @@ The returned expression must denote an assignable place of exactly the declared 
 
 An `inout` result is a [borrow carrier](#storage-roots-and-borrow-carriers), and its lifetime follows exactly the rules a returned `^T` follows under [Temporaries and procedure boundaries](#temporaries-and-procedure-boundaries): it derives root provenance from the procedure's `inout` parameters, `inout` receiver, and other borrowed arguments, or from an allocation or static root. A place rooted in the procedure's own frame ends when it returns, so it cannot be returned as `inout`; an ordinary `value: T` parameter is immutable, so a place projected out of one cannot be returned as `inout` either.
 
-```odin
+```loke
 escape :: proc() -> inout int {
 	local := [4]int{1, 2, 3, 4};
 	return inout local[0];   // ERROR: `local` ends when this procedure returns
@@ -4742,7 +4742,7 @@ A procedure declared `-> !` never returns to its caller. Its body may not reach 
 
 A call to a diverging procedure stands wherever a value of any type is expected, and nothing after it runs:
 
-```odin
+```loke
 fail :: proc(message: string) -> ! {
 	log.error(message);
 	os.exit(1);
@@ -4760,7 +4760,7 @@ Divergence belongs to the declaration, not to the procedure type: `proc() -> !` 
 
 A call can name its arguments. Named arguments show the parameter for each value and do not depend on parameter order:
 
-```odin
+```loke
 create_window :: proc(title: string, x, y: int, width, height: int, monitor: Option(^Monitor)) -> Result(^mut Window, Window_Error) {...};
 
 window := create_window(title="Hellope Title", monitor=.none, width=854, height=480, x=0, y=0) or_return;
@@ -4770,7 +4770,7 @@ One call can contain positional and named arguments. Positional arguments must o
 
 An `inout` argument may also be named, with the mode remaining visible after the `=`: `update(target=inout value)`. A named `move` argument uses the ordinary expression form, `store(value=move(source))`.
 
-```odin
+```loke
 draw_label :: proc(text: string, x, y: int, bold: bool, size := 12) {}
 draw_label("Hellope", 10, y=20, bold=true);   // `size` takes its default
 ```
@@ -4779,7 +4779,7 @@ draw_label("Hellope", 10, y=20, bold=true);   // `size` takes its default
 
 A parameter can have a default value. The call uses the default when it omits that argument:
 
-```odin
+```loke
 create_window :: proc(title: string, x := 0, y := 0, width := 854, height := 480, monitor: Option(^Monitor) = .none) -> Result(^mut Window, Window_Error) {...};
 
 window1 := create_window("Title1") or_return;
@@ -4794,7 +4794,7 @@ Only ordinary value parameters and `$` parameters may have defaults. An `inout` 
 
 A `$` parameter's default is a compile-time argument written in advance. A call that omits it evaluates the default exactly as a written `$` argument is evaluated, so the default must be a constant and may call a procedure that runs at compile time. A default that refers to no other parameter means the same in every instantiation, so it is checked at the declaration — it must resolve, be constant, and fit the parameter's type — whether or not any call omits it. One that refers to an earlier parameter, as `$N: int = size_of(T)` does, is checked for each call that uses it.
 
-```odin
+```loke
 fill :: proc($T: type, $N: int = 4) -> [N]T { return {}; }
 bytes := fill(u8);        // N is 4
 wider := fill(u8, 16);    // N is 16
@@ -4804,7 +4804,7 @@ Defaults belong to a named declaration, not its procedure type. A call to a dire
 
 Allocator-taking procedures conventionally default to the program provider. The provider implementation is selected once by the final build, while its returned `Allocator` remains an ordinary runtime value:
 
-```odin
+```loke
 read_file :: proc(
 	path: string,
 	allocator := mem.default_allocator(),
@@ -4820,7 +4820,7 @@ The compiler-provided [`caller_location()`](#caller_location) expression is also
 
 Procedure overloads are declared explicitly as named procedure groups:
 
-```odin
+```loke
 bool_to_string :: proc(b: bool) -> string {...};
 int_to_string  :: proc(i: int)  -> string {...};
 
@@ -4829,7 +4829,7 @@ to_string :: proc{bool_to_string, int_to_string}
 
 Each member retains its ordinary name and may be called directly. A call through the group uses the [overload-resolution rules](#operator-lookup-and-overload-resolution). An unresolved tie is a compile-time error. A [union argument expansion](#union-argument-expansion), `group(..value)`, selects a member per variant by the parameter its label names.
 
-```odin
+```loke
 to_text :: proc{
 	int_to_text,
 	float_to_text,
@@ -4872,7 +4872,7 @@ An explicit generic parameter is supplied by the caller. A parameter of type `ty
 
 Prefix a parameter name with `$` to require a compile-time argument. The following example uses two compile-time parameters to initialize an array of known length:
 
-```odin
+```loke
 make_f32_array :: proc($N: int, $val: f32) -> [N]f32 {
 	res: [N]f32 = {};
 	foreach (i in 0..<N) {
@@ -4886,7 +4886,7 @@ array := make_f32_array(3, 2);
 
 Types can also be explicitly passed through a `$` parameter of compile-time-only type `type`:
 
-```odin
+```loke
 byte_count :: proc($T: type, count: int) -> int {
 	return size_of(T) * count;
 }
@@ -4900,7 +4900,7 @@ Structures and unions declare generic parameters using the same parameter-list s
 
 Arguments whose parameter type is `type` are types; arguments to any other parameter are compile-time constant expressions. Bare names are resolved after parsing, so both `Buffer(Element, Count)` and `Buffer(u8, 4096)` use the same argument syntax. A value argument is not restricted to an identifier.
 
-```odin
+```loke
 Table_Slot :: struct($Key, $Value: type) {
 	occupied: bool,
 	hash:    u32,
@@ -4912,7 +4912,7 @@ slot: Table_Slot(string, int);
 
 Generic union:
 
-```odin
+```loke
 Parse_Error :: enum { Empty, Too_Long, Bad_Digit }
 Parsed :: union($T: type) @(failure=failed) { value: T, failed: Parse_Error }
 r: Parsed(int) = .value(123);
@@ -4933,7 +4933,7 @@ parameter-list colon.
 
 #### Procedures with inferred generic parameters
 
-```odin
+```loke
 squares :: proc($N: $I, $T: type) -> [N]T {
 	// `N` is the constant value passed
 	// `I` is the type of `N`
@@ -4958,7 +4958,7 @@ foreach (v, i in array.indexed()) {
 
 A generic parameter can require a structural shape. Write the shape in the parameter type and prefix the parts to bind with `$`:
 
-```odin
+```loke
 // Only allow read-only slices, binding their element type.
 // A []mut E argument may call this through capability weakening.
 first_slice_value :: proc(values: []$E) -> Option(E) {
@@ -4993,7 +4993,7 @@ find :: proc(table: ^Table($Key, $Value), key: Key) -> Option(Value) {
 
 A procedure type is a shape too. Its parameter and result types may bind names, so a callback's result type comes from the procedure passed:
 
-```odin
+```loke
 apply :: proc(x: $T, f: proc(value: T) -> $U) -> U {
 	return f(x);
 }
@@ -5004,7 +5004,7 @@ half := apply(7, halve);   // U is f64
 
 An [anonymous record](#anonymous-records) or [anonymous union](#anonymous-unions) is a shape as well, matched by label:
 
-```odin
+```loke
 value_or :: proc(found: (some: $T | none:), fallback: T) -> T {
 	switch (found) {
 	case .some(value): return value;
@@ -5028,7 +5028,7 @@ A parameter written this way is more specific than an unconstrained `$T`, which 
 
 When the whole aggregate type is also needed, write it explicitly:
 
-```odin
+```loke
 swapped :: proc(pair: [2]$E) -> [2]E {
 	return [2]E{pair[1], pair[0]};
 }
@@ -5048,7 +5048,7 @@ A bound may reference generic type and value parameters in scope from the declar
 
 **A failed bound on a method of an instantiated generic `impl` excludes that method from the instantiation.** It is not an error: the method is simply not a member of that type, so no lookup finds it, its body is never checked against arguments it was not written for, and the backend emits nothing for it. A call to one reports the ordinary missing-member error, with a note pointing at the bound that did not hold. This is what lets one generic type serve element types that cannot do everything it offers, rather than failing the moment such an instance exists:
 
-```odin
+```loke
 impl Small_Array($T, $N) {
 	// A move-only element cannot be copied out, so `Small_Array(File, 8)` has no
 	// `get` — and is still a usable array, reached through `get_mut` and `view`.
@@ -5066,7 +5066,7 @@ Some cases that a where clause may be useful:
 
 - Generic parameter checks for procedures. The bound here is about what `E` *can do*, so it is written as an [interface](#interfaces-as-reusable-constraints) rather than as a type predicate:
 
-```odin
+```loke
 // A fixed array has no `.x`/`.y` swizzle selectors; index it.
 cross_2d :: proc(a, b: [2]$E) -> E
 	where interfaces.Numeric(E) {
@@ -5096,7 +5096,7 @@ fmt.println(cross_3d(x, y));
 
 - Solving disambiguations with polymorphic procedures in a procedure grouping:
 
-```odin
+```loke
 pick_long :: proc(x: [$N]int) -> bool
 	where N > 2 {
 	return true;
@@ -5116,7 +5116,7 @@ assert(!is_long([2]int{4, 9}));     // only `pick_short` is viable
 
 - Restrictions on generic parameters for record types. Note the division of labor: `interfaces.Integral(T)` is a capability requirement, while `N > 2` is a predicate over a value and is what a `where` clause is for:
 
-```odin
+```loke
 Stencil :: struct($T: type, $N: int)
 	where interfaces.Integral(T),
 		  N > 2 {
@@ -5184,7 +5184,7 @@ Operations propagate the two dependencies differently:
 
 For example, the two rejected returns below fail for different reasons:
 
-```odin
+```loke
 bad_view :: proc() -> []u8 {
 	arena := mem.Arena.init();
 	bytes: [dynamic]u8 via arena.allocator() = {};
@@ -5243,7 +5243,7 @@ Where the weakening happens decides what it costs. A **fresh** borrow — `&mut 
 
 Weakening an **existing** mutable carrier is a read-only reborrow of it. While the reborrow is live, the carrier it was taken from is suspended for writing: it may not be written through or reborrowed mutably, which includes copying it into another mutable carrier; after the reborrow's last use, the source is usable again. Without this a mutable alias could write behind the reborrow's back. Reading the suspended carrier is still allowed, because a read cannot write behind anything: passing it where a read-only carrier is wanted, reading an element, `len`, `cap`, `hash`, reslicing it read-only, traversing it by value, and printing it. So `slice.equal(xs, xs)` is accepted for `xs: []mut int`.
 
-```odin
+```loke
 source: []mut int = &mut numbers[0:2];
 reborrow: []int = source;    // a read-only reborrow of `source`
 fmt.println(reborrow[0]);
@@ -5255,7 +5255,7 @@ Moving the last use of `reborrow` above the write makes the same program legal. 
 
 Any carrier derived from an existing mutable carrier is a reborrow of it, mutable or read-only: a copy, a reslice, `&mut xs[i]` or `&xs[i]`, a record field it is stored in, and a `foreach` over it. A mutable reborrow suspends the carrier for every use, reads included, until the last use of the reborrow and of anything reborrowed from that in turn, so two mutable views reached through one carrier are never usable at once:
 
-```odin
+```loke
 bump :: proc(xs: []mut int) {
 	view := xs;
 	view[0] = 7;
@@ -5284,7 +5284,7 @@ Moving, dropping, freeing, fully assigning, or exchanging a root invalidates bor
 
 A borrow is live from its creation to its last use within the procedure body. Copies of a read-only borrow extend the same loan to the last use of any copy; a copy of a mutable one is a [reborrow](#weakening-and-reborrows). A borrow that is never used again stops constraining its root immediately.
 
-```odin
+```loke
 numbers := [dynamic]int{1, 2, 3};
 
 view := numbers[:];
@@ -5298,7 +5298,7 @@ fmt.println(second[0]);
 
 Dropping a value that runs a hand-written `hook(drop)`, its own or one of something it owns, is a use of every borrow the value carries, since the hook may read them. That drop happens at scope exit, at an explicit `drop`, and when the variable is assigned over, so a lock guard holding a borrow of its mutex keeps the mutex borrowed until the guard's scope ends, even if the guard is never named again. A value moved away no longer carries its borrows, and dropping a container runs no hook of its own, so a `[dynamic][]int` constrains its roots only until its last use.
 
-```odin
+```loke
 Guard :: move_only struct { p: ^[dynamic]int }
 impl Guard { done :: hook(drop) proc(self: inout) { fmt.println(self.p^.len()); } }
 
@@ -5322,7 +5322,7 @@ A value temporary lives until the end of its complete expression. A borrow deriv
 
 A call ends the path, a method call with a `self: ^` receiver included, and so does a field of a literal. A `for` update and a deferred statement extend nothing, since each runs again without leaving its scope. A loop body is a block of its own, so a temporary extended there ends with each iteration.
 
-```odin
+```loke
 p := &Point{1, 2};                       // lives until the block ends
 items := [dynamic]int{1, 2, 3}[:];       // the dynamic array lives with `items`
 view: any_view = make_guard();           // the guard is dropped at the end of the block
@@ -5330,7 +5330,7 @@ view: any_view = make_guard();           // the guard is dropped at the end of t
 
 A borrow derived from a local root cannot be returned:
 
-```odin
+```loke
 bad :: proc() -> []int {
 	local := [dynamic]int{1, 2, 3};
 	return local[:]; // ERROR: `local` ends when the procedure returns
@@ -5339,7 +5339,7 @@ bad :: proc() -> []int {
 
 A borrow returned from storage reachable through a borrowed parameter derives root provenance from the borrowed arguments that its procedure result contract names. A call through a plain procedure type conservatively uses every borrowed argument:
 
-```odin
+```loke
 first_half :: proc(values: []int) -> []int {
 	return values[:values.len()/2];
 }
@@ -5355,7 +5355,7 @@ fmt.println(bad.len());
 
 Passing that same slice to something that consumes it within the statement is allowed, because the borrow never escapes the expression:
 
-```odin
+```loke
 fmt.println(([dynamic]int{1, 2, 3, 4}[:]).len()); // fine
 ```
 
@@ -5380,7 +5380,7 @@ Where a parameter reaches a borrow through its own [carrier paths](#values-that-
 
 The summary also tells a borrow *of* the storage a parameter reaches apart from a value read *out of* it. `return values[:1]` borrows the caller's storage; `return values[0]` copies an element, and a copied `string_view` borrows only what that element borrowed. A result read out of an argument's storage substitutes what the storage holds at any depth, not the argument, so it does not suspend a mutable argument and cannot outlive what the elements borrow:
 
-```odin
+```loke
 first :: proc(values: []string_view) -> string_view { return values[0]; }
 
 arr := [2]string_view{"b", "a"};
@@ -5394,7 +5394,7 @@ At a call, actual argument roots and allocator regions replace the corresponding
 
 An inferred callback type retains the declaration's result contract, including carrier paths, roots, and allocator-region dependencies. Indirect calls through that type preserve the same provenance as direct calls.
 
-```odin
+```loke
 choose :: proc(input, scratch: []int) -> []int { return input; }
 Chooser :: type_of(choose);
 
@@ -5458,7 +5458,7 @@ A parameter is answered by its written level and by nothing else, because only t
 
 At a call, `stored` or `static` means the callee may write the argument's borrows into any compatible mutable destination it receives. Each destination then applies the same lifetime rule as direct assignment. Static and thread-local destinations require a source that outlives them:
 
-```odin
+```loke
 keep :: proc(destination: inout Holder, @(escape=stored) values: []int) {
 	destination.view = values;
 }
@@ -5475,7 +5475,7 @@ Writing a value into its own root, as `self.rest = self.rest[n:]` does, is not a
 
 A parameter's new borrow of its own storage is the exception. `h.view = h.items[:]` leaves the caller's storage borrowing itself, which the caller must know to stop the value outliving that storage, so it is a retention of `h` and needs `@(escape=stored)`. At a call, a `stored` argument that is also a mutable destination may land in itself:
 
-```odin
+```loke
 Holder :: struct { items: [4]int, view: []int }
 point :: proc(@(escape=stored) h: ^mut Holder) { h.view = h.items[:]; }
 
@@ -5490,7 +5490,7 @@ make_holder :: proc() -> Holder {
 
 A borrow of a global cannot be invalidated by a procedure the borrow is live across. Every procedure has an inferred **write effect**: the file-scope, `static`, and `thread_local` storage it may write, invalidate, or borrow mutably, directly or through calls. A hook the language calls counts as a call where it runs: a `hook(drop)` wherever a value is dropped — at a scope exit or a `move` parameter's return, by `drop`, by an assignment replacing a value, by a container operation discarding elements, at the end of a temporary's statement or extended block, or while a panic unwinds — a `hook(convert)` at its conversion, and the `format` methods printing reaches, which are all of them, since an erased value's type is known only at run time. A copy hook writes no global (see [Lifecycle hooks and resource types](#lifecycle-hooks-and-resource-types)), so a copy has no effect to count. Writes by foreign code, and writes through pointers or views stored in globals, are excluded; see [What is not checked](#what-is-not-checked). A call counts as a write to each global in its callee's effect, at the point where its arguments are already borrowed, so a borrow of that global still in use across the call conflicts exactly as a write in the same body would:
 
-```odin
+```loke
 cache: [dynamic]int;
 
 reset :: proc() { cache.clear(); cache.shrink(); }
@@ -5525,7 +5525,7 @@ If a view has no locally provable lifetime, make an owned copy with `clone`, use
 
 Operations that discard or manufacture provenance, or that assert a liveness the compiler cannot see, live in `core:unsafe`. It is an ordinary package; its visible import is the review mechanism.
 
-```odin
+```loke
 import "core:unsafe";
 
 raw := unsafe.raw_data(bytes);       // checked provenance is discarded
@@ -5545,7 +5545,7 @@ A conversion to `^T` or `^mut T` from `rawptr` or a C pointer, and `unsafe.cstri
 
 Everything else stays ordinary code: a conversion to `rawptr`, or from `^T` to `[^]T`, only loses provenance, and weakening `^mut T` to `^T` is checked. Declaring a foreign procedure that takes or returns a C pointer needs no import either; using the pointer it returns does. A file in a `base:` package, which is the language's own runtime and cannot import `core:`, is exempt. Any other file is rejected at each such operation, with a diagnostic naming it.
 
-```odin
+```loke
 escape :: proc() -> ^mut int {
 	local := 5;
 	r: rawptr = &mut local;
@@ -5561,7 +5561,7 @@ escape :: proc() -> ^mut int {
 
 `unsafe.transmute(T, value)` reads the storage of `value` as a `T`. Its first argument is a type, as `size_of(T)`'s is, and it needs no addressable operand:
 
-```odin
+```loke
 f := f32(123);
 u := unsafe.transmute(u32, f);
 ```
@@ -5582,7 +5582,7 @@ A fixed-capacity container reserves storage for `N` elements and holds fewer. Th
 
 `@(initialized = count)` on a fixed array field says that only its first `count` elements are values, naming a sibling field of type `int` that holds how many:
 
-```odin
+```loke
 Small_Array :: struct($T: type, $N: int) {
 	@(private, initialized = count) items: [N]T,
 	@(private) count: int,
@@ -5595,7 +5595,7 @@ The count's accuracy is the container author's promise, so the attribute is vali
 
 Two `core:unsafe` operations move values across that boundary, because neither [`move`](#assignment-statements) nor [`exchange`](#exchange) can. `move` cannot name an element, and `exchange` installs a replacement the element type may not have.
 
-```odin
+```loke
 unsafe.write(self.items[self.count], move(value)); // storage becomes a value
 taken := unsafe.take(self.items[last]);            // the value leaves the storage
 ```
@@ -5624,7 +5624,7 @@ An executable is built from a package named `main` containing exactly one proced
 
 A fallible `main` exits with status 0 on success. On failure the startup code writes `error: ` and the failure payload, as a formatted [`panic`](#built-in-procedures) prints its arguments, and a newline to standard error, after anything the program wrote to standard output; it then drops the payload and exits with status 1. A failure variant with no payload prints the whole value, such as `.failed`. The program need not import `core:fmt`. This is what lets `main` use `or_return`:
 
-```odin
+```loke
 main :: proc() -> Status(Config_Error) {
 	config := load_config("app.conf") or_return;
 	run(config);
@@ -5644,7 +5644,7 @@ Normal return from `main` runs its scope-exit actions before the process ends. M
 
 A status returned from `main`, or a failure it reports, takes effect after those scope-exit actions, so cleanup runs before a nonzero exit:
 
-```odin
+```loke
 main :: proc() -> i32 {
 	// `initialize` returns Result(State, Error); `run` returns an i32 status.
 	switch (application.initialize()) {
@@ -5680,7 +5680,7 @@ Indexing copies an owning string; iteration borrows runtime-owned bytes valid fo
 
 `@(test)` marks a **test procedure**:
 
-```odin
+```loke
 package digits;
 
 Parse_Error :: enum { Not_A_Digit }
@@ -5713,7 +5713,7 @@ A [panic](#panics-and-unwinding) cannot be caught, so a runner that reports ever
 
 The following program imports the fmt and os packages from the core library collection.
 
-```odin
+```loke
 package main;
 
 import "core:fmt";
@@ -5729,7 +5729,7 @@ By convention, the package name is the last element of the import path. Thus, fi
 
 An import can specify an alias instead of the default name:
 
-```odin
+```loke
 import "core:fmt";
 import format "core:fmt"; // reference a package by a different name
 ```
@@ -5814,7 +5814,7 @@ The predeclared operations used by this document are:
 
 The `message` of `assert` and `panic` must be a compile-time string constant, such as a literal or a named string constant; a runtime `string` value is rejected. Runtime values go after it: each argument converts to an `any_view`, and the report prints it after the message, preceded by a space, as `fmt.eprintln` would. The report is written straight to the error stream, so the program need not import `core:fmt`. The arguments of an `assert` are evaluated only when its condition fails:
 
-```odin
+```loke
 assert(i < n, "index out of range:", i, "of", n);
 // loke: panic: index out of range: 7 of 4
 ```
@@ -5831,7 +5831,7 @@ A compile-time failure prints a scalar argument's value and any other argument a
 
 Absence and failure are **types**, not a trailing result. A procedure that may have no answer returns `Option(T)`; one that may fail returns `Result(T, E)`, or `Status(E)` when it produces nothing on success. All three are ordinary [unions](#unions) declared in `base:runtime`, and all are recognized by their *shape* rather than by their names:
 
-```odin
+```loke
 Unit :: struct {}
 
 Option :: union($T: type) @(zero=none, failure=none) { none, some: T }
@@ -5845,7 +5845,7 @@ Status :: union($E: type) @(failure=err) { ok, err: E }
 
 `Option` designates `none` as both its zero and its failure, so an `Option` has an all-zero "absent" value and participates in the failure protocol. `Result` designates `err` as its failure and requires its results to be handled; it has no zero, because neither arm is one. `Status` is the same with a success that carries nothing, so a procedure that only fails needs no empty type in its signature and may end, or `return;`, without `return .ok;` ([One result](#one-result), [Success returns](#success-returns)):
 
-```odin
+```loke
 save :: proc(config: Config) -> Status(io.Error) {
 	fs.create_directories(config.directory) or_return;
 	fs.write_text(config.path, config.text) or_return;
@@ -5856,7 +5856,7 @@ save :: proc(config: Config) -> Status(io.Error) {
 
 A **fallible expression** is one whose type is a union of exactly two variants with `@(failure=name)` written on it. That is the only thing [`or_else`](#or_else-expression) and [`or_return`](#or_return-operator) look for, so a user-declared union is a first-class participant:
 
-```odin
+```loke
 Parsed :: union @(failure=bad) { value: int, bad: Parse_Error }
 ```
 
@@ -5868,7 +5868,7 @@ A producer's result count is its own, and a destination never changes it. Where 
 
 In a procedure whose result is a fallible union with a success payload, `return value;` builds the success variant when `value` is not the whole result: `return n;` means `return .ok(n);` in a `Result(int, E)` and `return .some(n);` in an `Option(int)`.
 
-```odin
+```loke
 digit :: proc(c: rune) -> Result(int, Parse_Error) {
 	if (c < '0' || c > '9') { return .err(.Bad_Digit); }
 	return int(c - '0');
@@ -5908,7 +5908,7 @@ as a `Status`'s, yields `Unit`, as it does for `or_return`. The fallback must be
 assignable to the payload's type and runs only on failure.
 Selecting a managed fallback place clones it; a temporary or `move(x)` transfers.
 
-```odin
+```loke
 m: map[string]int = {};
 i := m.lookup_value("hellope") or_else 123;
 assert(i == 123);
@@ -5924,7 +5924,7 @@ where the fallback would be. On failure it runs as that statement would at the
 same point, with the same cleanups, and the expression produces only the
 success payload:
 
-```odin
+```loke
 foreach (name in names) {
 	entry := table.find(name) or_else continue;   // skip a name not in the table
 	use(entry);
@@ -5951,7 +5951,7 @@ On failure, control returns from the innermost enclosing procedure. That procedu
 
 The operand's temporaries are destroyed before the return completes, and the ordinary `defer` and cleanup rules run. `or_return` cannot appear outside a procedure or inside a deferred statement. A nested procedure propagates only from itself, never from its lexical parent.
 
-```odin
+```loke
 Error_Code :: enum { Failed }
 step  :: proc() -> Status(Error_Code)      { return .ok; }
 value :: proc() -> Result(int, Error_Code) { return .ok(123); }
@@ -5971,7 +5971,7 @@ See [Operator ownership](#operator-ownership).
 
 `operand or_return failure` propagates as a bare `or_return` does, but the error it returns is built from `failure`, which is evaluated only when the operand fails. It is checked against `F`, the failure payload type of the enclosing procedure's result, and `E` is the operand's failure payload, or nothing when the operand's failure carries none, as `Option`'s `none` does:
 
-```odin
+```loke
 Time_Error :: enum { Missing_Colon, Not_A_Number }
 App_Error  :: union { time: Time_Error, io: io.Error, log_write: io.Error }
 
@@ -5996,7 +5996,7 @@ load :: proc(path: string_view) -> Result(int, App_Error) {
 
 A result whose failure carries nothing, such as `Option(T)`, takes no failure operand. The failure operand runs after the error is taken and before the operand's temporaries are destroyed and the ordinary cleanups run; it may read locals like any expression, and an `or_return` inside it propagates from the same procedure. An error that is costly to build therefore costs nothing on success:
 
-```odin
+```loke
 category_total := add_amount(previous, amount)
 	or_return {number, "category total is out of range"};   // built only for a bad line
 ```
@@ -6007,7 +6007,7 @@ Each site names its variant, so two variants with one payload type need no rule,
 
 Assignability is the whole rule for a bare `or_return`, so a `Result(T, Parse_Error)` does not propagate into a `Result(T, App_Error)` merely because `App_Error` has a `parse: Parse_Error` variant. Nothing could choose that variant on its own: two variants may carry the same payload type, so the wrapping is named rather than guessed. Where the failure propagates, the [failure operand](#the-failure-operand) names it:
 
-```odin
+```loke
 Parse_Error :: enum { Bad_Digit, Empty }
 App_Error   :: union { parse: Parse_Error, io: io.Error }
 
@@ -6019,7 +6019,7 @@ read_setting :: proc(text: string_view) -> Result(int, App_Error) {
 
 A result that is stored or passed on rather than propagated is converted by `Result.map_error`, which takes the mapper as an argument:
 
-```odin
+```loke
 outcome := parse(text).map_error(App_Error.parse);   // a Result(int, App_Error)
 ```
 
@@ -6035,7 +6035,7 @@ signature is accepted.
 
 An `Option` has no error to map: its failure, `none`, carries nothing. A replacement supplies one where the absence propagates, so it becomes a failure in the caller's domain:
 
-```odin
+```loke
 Config_Error :: enum { Missing_Port, Bad_Port }
 
 port :: proc(settings: map[string]int) -> Result(int, Config_Error) {
@@ -6055,7 +6055,7 @@ Every adaptation is written where the failure propagates or is inspected: a fail
 
 A source whose every step can fail returns `Result(Option(T), E)`: a value, the end of the input, or a failure. The three states are distinct — reaching the end is not a failure — so such a source is not an [iterable](#iteration-protocol), because `foreach` has nowhere to put the error. The language adds no second loop form for it. An ordinary loop, `or_return`, and a switch are the whole idiom:
 
-```odin
+```loke
 count_entries :: proc(directory: string_view) -> Result(int, io.Error) {
 	reader := fs.read_directory(directory) or_return;
 	total := 0;
@@ -6128,7 +6128,7 @@ If none are selected, the runtime supplies the system heap allocator and standar
 
 A selection is a string-valued attribute on the root package clause. This puts it before every import without giving import order semantic meaning:
 
-```odin
+```loke
 @(
 	default_allocator = "./providers:allocator_factory",
 	default_logger = "./providers:logger_factory",
@@ -6157,7 +6157,7 @@ The selected handle keeps its identity and allocator region. A factory must retu
 
 Discarding a callee's body does not discard the caller's expressions. An unguarded call below the level still checks and evaluates its arguments; removing those too takes a caller-side [`when`](#when-statement), which is the ordinary rule that a discarded branch is neither checked nor emitted:
 
-```odin
+```loke
 log.debug("state", expensive());                       // argument still evaluated
 when (LOKE_LOG_LEVEL <= .Debug) {
 	log.debug("state", expensive());                   // neither checked nor emitted
@@ -6184,7 +6184,7 @@ Temporary storage uses an explicit `mem.Scratch` or `mem.Arena` owner. `free_all
 
 `Arena` and `Scratch` are move-only region owners. A fixed-buffer arena borrows the supplied storage; provider-backed construction takes a parent allocator and defaults it to the program provider. Ordinary construction applies the parent's failure policy if the owner cannot be created, while the `try_` procedures return a `Result` containing either the owner or an error, never a partial owner. Every constructor takes a final `policy: mem.Failure_Policy`, `.Panic` unless written, which the new region's own allocation failures follow; see [Allocation failure](#allocation-failure). A provider-backed child must be dropped before its parent region is reset or ended. The zero `Arena` or `Scratch`, which a `static` provider holds until it is assigned, owns an empty region: allocating a byte or more from it fails, and resetting or dropping it does nothing.
 
-```odin
+```loke
 fixed := mem.Arena.from_buffer(&mut buffer[:]);
 arena := mem.Arena.init(parent_allocator);
 scratch := mem.Scratch.init();
@@ -6215,7 +6215,7 @@ The `bad_owner` example under [How root and region provenance compose](#how-root
 
 `free_all` names the allocator being reset. A procedure may reset a region it created locally. Resetting a received or other pre-existing allocator requires an `@(allocator_reset)` parameter.
 
-```odin
+```loke
 release_scratch :: proc(@(allocator_reset) allocator: Allocator) {
 	free_all(allocator);
 }
@@ -6230,7 +6230,7 @@ The following low-level procedures are built in. Normal managed strings, arrays,
 
 - `make(Container, ..., allocator := mem.default_allocator()) -> Container` constructs a dynamic array or map with selected backing storage. A length creates zero values and therefore requires one; capacity or map reservation does not. The result is an ordinary owning value.
 
-```odin
+```loke
 zero_length := make([dynamic]int);
 with_length := make([dynamic]int, 32);
 with_length_and_capacity := make([dynamic]int, 16, 64);
@@ -6240,13 +6240,13 @@ made_map_with_reservation := make(map[string]int, 64);
 
 - `free_all(@(allocator_reset) allocator: Allocator)` frees every allocation in the allocator's region. No tracked dependent may survive the reset, and the annotation carries this invalidation through wrappers and indirect calls. An allocator that does not support region reset aborts the process without unwinding, but checked code cannot reach that abort: only [local regions](#allocators), which always reset, can be named by a reset.
 
-```odin
+```loke
 free_all(my_allocator);
 ```
 
 - `drop` releases a live managed lexical owner. See [Owners and `drop`](#owners-and-drop) for its full rules, the automatic scope-exit and TLS cases, and its restriction on static-duration storage.
 
-```odin
+```loke
 numbers := [dynamic]int{1, 2, 3};
 drop(numbers);   // released here rather than at scope exit
 ```
@@ -6270,7 +6270,7 @@ The policy is part of the allocator value and follows an explicitly supplied all
 
 An explicitly fallible form returns the failure to the caller. A procedure returning a compatible `Result` may propagate it with `or_return`:
 
-```odin
+```loke
 backup := source.try_clone() or_return;
 numbers.try_append(value) or_return;
 ```
@@ -6372,7 +6372,7 @@ These rules define representation, not lifetime. A pointer, `cstring_view`, or `
 
 This declaration creates the foreign import name `kernel32`. A foreign block uses that name to associate declarations with the library:
 
-```odin
+```loke
 foreign import kernel32 "system:kernel32.lib";
 foreign kernel32 {
 	ExitProcess :: proc "stdcall" (exit_code: u32) ---;
@@ -6381,7 +6381,7 @@ foreign kernel32 {
 
 A foreign block can also declare a global variable that the foreign library defines:
 
-```odin
+```loke
 foreign lib {
 	x: i32;
 }
@@ -6391,7 +6391,7 @@ Foreign procedure declarations have the `c` calling convention by default unless
 
 Attributes can change properties of declarations in a foreign block:
 
-```odin
+```loke
 @(default_calling_convention = "stdcall")
 foreign kernel32 {
 	@(link_name="GetLastError") get_last_error :: proc() -> i32 ---;
@@ -6406,7 +6406,7 @@ Foreign blocks accept `@(default_calling_convention)`, `@(link_name)` on members
 
 Conditional source selection uses the [`when` statement](#when-statement), whose conditions usually read the constants below:
 
-```odin
+```loke
 when (LOKE_OS == .Linux) {
 	// Do Linux stuff
 }
@@ -6436,7 +6436,7 @@ Build configuration defines compile-time values for the complete project.
 
 The build system may provide integer, boolean, or string configuration values. Source code reads them with `build_config`, always supplying a default:
 
-```odin
+```loke
 ENABLE_LOGGING :: build_config(ENABLE_LOGGING, false); // defaults to false
 VERBOSE :: build_config(APP_VERBOSE, true);            // the key may differ from the constant's name
 
@@ -6471,7 +6471,7 @@ These four compile-time operations are ordinary predeclared identifiers. They us
 
 `static_assert` checks a compile-time condition and accepts an optional constant message. A false condition is a compile-time error. Ordinary `assert` runs in the phase of the call that reaches it.
 
-```odin
+```loke
 static_assert(SOME_CONST_CONDITION);
 static_assert(N > 0, "N must be positive");
 ```
@@ -6486,7 +6486,7 @@ Returns the configured value for an identifier, or `default` when none is provid
 
 Returns a `runtime.Source_Code_Location`. With no argument it identifies the call site. With an entity argument it identifies that variable's or procedure's declaration.
 
-```odin
+```loke
 greet :: proc() {}
 
 main :: proc() {
@@ -6503,7 +6503,7 @@ main :: proc() {
 
 `Source_Code_Location` is public, belongs to `base:runtime`, and is a constant. Calling `caller_location()` or `source_location()` needs no import, as using an `Option` needs none; writing the type's name, `runtime.Source_Code_Location`, imports `base:runtime` like any other of its declarations. `type_info_of` behaves the same way:
 
-```odin
+```loke
 Source_Code_Location :: struct {
 	file:      string_view,
 	procedure: string_view,
@@ -6514,7 +6514,7 @@ Source_Code_Location :: struct {
 
 Line and column are one-based, and both views point at static storage.
 
-```odin
+```loke
 package example_caller_location;
 
 import "core:fmt";
@@ -6564,7 +6564,7 @@ Storage duration uses [storage modifiers](#storage-modifiers), not attributes, a
 
 This attribute specifies the default calling convention for all procedures in a foreign block:
 
-```odin
+```loke
 @(default_calling_convention = "stdcall")
 foreign kernel32 {
 	@(link_name="LoadLibraryA") load_library_a  :: proc(c_str: cstring_view) -> Hmodule ---;
@@ -6575,7 +6575,7 @@ foreign kernel32 {
 
 This attribute marks a procedure as deprecated. The compiler reports the specified message for each use of the procedure.
 
-```odin
+```loke
 @(deprecated="'open' is deprecated, use 'open_file' instead")
 open :: proc() {
 	...
@@ -6596,7 +6596,7 @@ The exported name is the declaration's name or its [`@(link_name)`](#link_namest
 
 This attribute specifies the symbol name of a variable or procedure. It can occur on an exported declaration or on a declaration in a foreign block:
 
-```odin
+```loke
 foreign libc {
 	@(link_name = "abs")
 	c_abs :: proc(value: i32) -> i32 ---;   // C `int`, not Loke `int`
@@ -6614,7 +6614,7 @@ Names package visibility, which is already the default. It applies to top-level 
 
 In a file with a [`@(public)`](#public) package declaration, it excludes a declaration from the file-wide public default:
 
-```odin
+```loke
 @(public)
 package glfw;
 
@@ -6626,7 +6626,7 @@ scratch_buffer: [64]u8;   // not part of the package API
 
 This attribute exports a top-level declaration or struct field from its package. Without it, only code in the same package can use the declaration or field.
 
-```odin
+```loke
 @(public)
 LIMIT :: 64; // visible to importers of this package
 @(public)
@@ -6635,7 +6635,7 @@ limit :: proc() -> int { return LIMIT; }
 
 A variable is never public: `@(public)` on a file-scope variable, on one with a `static` or `thread_local` modifier, or on a variable in a foreign block is a compile-time error. Another package reaches the storage only through a procedure that reads it, writes it, or returns a borrow of it, so a caller in another package can hold a borrow that a [write effect](#global-write-effects) conflicts with only when such a procedure visibly returns one.
 
-```odin
+```loke
 counter: int;            // package-private
 
 @(public)
@@ -6644,7 +6644,7 @@ count :: proc() -> int { return counter; }
 
 Applying `@(public)` to the package declaration makes everything in that file public by default, except its variables, which stay package-private:
 
-```odin
+```loke
 @(public)
 package geometry;
 ```
@@ -6657,7 +6657,7 @@ Within a public-default file, `@(private)` narrows an individual declaration bac
 
 Reading the name in any way satisfies the requirement, including `_ = binding`, so the diagnostic asks only whether the binding was looked at, never whether every variant was handled. Each result is asked separately: a required result a call stores in a local, by its declaration or by an assignment, is a compile-time error when no path reads it before the local is next written or leaves scope. A read on one path is enough, as is a borrow of the local held elsewhere; a value built in place, such as `.err(code)`, was produced by no call and is not asked about.
 
-```odin
+```loke
 outcome := save();
 _ = outcome;
 outcome = save();       // ERROR: overwritten or out of scope before a read
@@ -6668,7 +6668,7 @@ The requirement can originate in either a declaration or a result type:
 - On a procedure declaration, it applies to that procedure's results regardless of their types. On a procedure group or foreign block, it applies to the procedures in that group or block.
 - On a type declaration (a union, struct, enum, or distinct type), it is a property of the type. It also applies when an aggregate contains that type, and is preserved through overloads, generic instances, imports, and calls through procedure values.
 
-```odin
+```loke
 @(require_results)
 save :: proc() -> bool {
 	return true;
@@ -6691,7 +6691,7 @@ Marks a file-scope procedure as a test, which a test build runs and no code may 
 
 Written after `union`, before its body. `@(zero=name)` gives the union a zero value, and must name its first variant, whose payload is all-zero; see [Zero values and `@(zero=)`](#zero-values-and-zero). `@(failure=name)` marks one variant of a two-variant union as its failure, which is what [`or_else`](#or_else-expression) and [`or_return`](#or_return-operator) recognize; see [The failure protocol](#the-failure-protocol-and-failure).
 
-```odin
+```loke
 Maybe :: union @(zero=none, failure=none) { none, some: int }
 ```
 
@@ -6723,7 +6723,7 @@ This attribute applies to a struct. It removes the padding normally inserted bet
 
 Individual packed fields are not addressable: `&value.field` is rejected even at an aligned offset. The whole packed struct remains addressable. A binding that would name a packed field in place holds a copy of it instead, and borrowing that binding is rejected as `&value.field` is; such a binding cannot be written `&mut`. That is a switch case binding over a field of a packed payload or over a payload reached through a packed struct, and a `foreach` leaf over an element of an array stored in a packed struct or over a field of a packed element, at any depth below it.
 
-```odin
+```loke
 Packed :: struct @(packed) { x: u8, y: i32, z: u16, w: u8 }
 ```
 
@@ -6731,7 +6731,7 @@ Packed :: struct @(packed) { x: u8, y: i32, z: u16, w: u8 }
 
 This attribute can be applied to a struct or union. It specifies that the value is aligned to `N` bytes. Fields remain in source order.
 
-```odin
+```loke
 Aligned_Flag :: struct @(align=4) {
 	set: bool,
 }
@@ -6749,7 +6749,7 @@ Aligned_Value :: union @(align=4) {
 
 Used to interface with vararg functions in foreign procedures.
 
-```odin
+```loke
 foreign libc {
 	printf :: proc(format: cstring_view, @(c_vararg) args: ..any_view) -> i32 ---;
 }
@@ -6761,7 +6761,7 @@ foreign libc {
 
 Adapts a foreign const-reference parameter to a pointer-based ABI while keeping it read-only in Loke. It is allowed only on foreign declarations, not as a performance annotation for ordinary parameters.
 
-```odin
+```loke
 foreign graphics {
 	draw_mesh :: proc(@(by_ptr) mesh: Mesh) ---;
 }
@@ -6783,7 +6783,7 @@ A Loke procedure is verified: every `free_all` operation on a region that existe
 
 Bounds retention of a borrowed argument, or of an owner taken by `move`: `none`, `result` (the default), `stored`, or `static`, in increasing order. The parameter's type must reach a borrow carrier, or the parameter must be `move`. The bound is part of the procedure type and applies to bodies, indirect calls, and generic calls. See [Escape levels](#escape-levels).
 
-```odin
+```loke
 pick :: proc(input: []int, @(escape=none) scratch: []int) -> []int {
 	return input; // returning `scratch` instead is an error
 }

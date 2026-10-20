@@ -10,7 +10,7 @@ use. A *panic* is for the other kind of failure: a bug that stops the program.
 `Option(T)` is a union with two variants: `.some(value)` holds a `T`, and `.none`
 holds nothing.
 
-```odin file=options.loke
+```loke file=options.loke
 package main;
 
 import "core:fmt";
@@ -59,7 +59,7 @@ there, and `from_int` for a number that names no enum value.
 `Result(T, E)` has the variants `.ok(value)` and `.err(error)`. The error type is
 yours to choose; an enum is the usual start.
 
-```odin file=results.loke
+```loke file=results.loke
 package main;
 
 import "core:fmt";
@@ -126,7 +126,7 @@ A procedure that can fail but has nothing to return on success returns a
 `Status(E)`, whose variants are `.ok` and `.err(error)`. It may end without a
 `return`, which means success:
 
-```odin file=status.loke
+```loke file=status.loke
 package main;
 
 import "core:fmt";
@@ -155,7 +155,7 @@ saved
 A `Result` must not be ignored. Calling a procedure that returns one and doing
 nothing with the result is an error:
 
-```odin file=ignored.loke
+```loke file=ignored.loke
 package main;
 
 import "core:strconv";
@@ -186,7 +186,7 @@ For other scope-exit work, `defer` runs a statement when the enclosing block
 ends, including an early `return`. Panic cleanup depends on the build's
 strategy, described below.
 
-```odin file=cleanup.loke
+```loke file=cleanup.loke
 package main;
 
 import "core:fmt";
@@ -223,7 +223,7 @@ program reached: the early `return` skips the second one.
 `errdefer` is a `defer` that runs only when the procedure returns its failure,
 which is what undoing a half-finished change needs:
 
-```odin file=undo.loke
+```loke file=undo.loke
 package main;
 
 import "core:fmt";
@@ -262,7 +262,7 @@ These *panic*: the program prints a report and stops with a failing exit code.
 `assert(condition, message)` panics when a condition you expect to hold does
 not, and `panic(message)` panics unconditionally:
 
-```odin file=checks.loke
+```loke file=checks.loke
 package main;
 
 import "core:fmt";

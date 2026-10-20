@@ -9,7 +9,7 @@ This page uses a file to make those transitions visible.
 `&value` borrows existing storage. A value that needs an allocation of its own
 is owned by a `Box(T)`, which releases it when the box goes out of scope:
 
-```odin file=explicit_allocation.loke
+```loke file=explicit_allocation.loke
 package main;
 
 import "core:fmt";
@@ -61,7 +61,7 @@ Save this input as `tracked_input.txt`:
 some input
 ```
 
-```odin file=owned_resource.loke
+```loke file=owned_resource.loke
 package main;
 
 import "core:fmt";

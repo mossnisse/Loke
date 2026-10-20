@@ -41,7 +41,7 @@ The toolchain report should end with `ready=yes`. Otherwise, see
 
 Save this as `hello.loke`:
 
-```odin
+```loke
 package main;
 import "core:fmt";
 

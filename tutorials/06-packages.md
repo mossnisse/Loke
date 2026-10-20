@@ -20,7 +20,7 @@ inventory/
 
 **`inventory/main.loke`**
 
-```odin file=inventory/main.loke
+```loke file=inventory/main.loke
 package main;
 
 import "core:fmt";
@@ -44,7 +44,7 @@ main :: proc() {
 
 **`inventory/stock/shelf.loke`**
 
-```odin file=inventory/stock/shelf.loke
+```loke file=inventory/stock/shelf.loke
 package stock;
 
 // Items and how many of each are in stock. Only what is marked `@(public)` can
@@ -75,7 +75,7 @@ The second prints a report, using a helper that only the package can call:
 
 **`inventory/stock/report.loke`**
 
-```odin file=inventory/stock/report.loke
+```loke file=inventory/stock/report.loke
 package stock;
 
 import "core:fmt";

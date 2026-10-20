@@ -2468,13 +2468,13 @@ expect_documented_example :: proc(t: ^testing.T, page, example: string) {
 		return
 	}
 	rest := text[start:]
-	open_fence := strings.index(rest, "```odin\n")
-	if !testing.expectf(t, open_fence >= 0, "%s: \"A first program\" has no odin block", page) {
+	open_fence := strings.index(rest, "```loke\n")
+	if !testing.expectf(t, open_fence >= 0, "%s: \"A first program\" has no loke block", page) {
 		return
 	}
-	rest = rest[open_fence + len("```odin\n"):]
+	rest = rest[open_fence + len("```loke\n"):]
 	close_fence := strings.index(rest, "\n```")
-	if !testing.expectf(t, close_fence >= 0, "%s: the odin block is not closed", page) {
+	if !testing.expectf(t, close_fence >= 0, "%s: the loke block is not closed", page) {
 		return
 	}
 

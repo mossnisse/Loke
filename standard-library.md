@@ -171,7 +171,7 @@ I/O. It is not a universal application error type.
 
 The declarations are:
 
-```odin
+```loke
 Code :: enum {
 	End_Of_Input,
 	Unexpected_End,
@@ -258,7 +258,7 @@ UTF-16 path conversion. Check each API's signature and allocation contract.
 Streams are synchronous and blocking. `Reader` and `Writer` have `slot`
 requirements, so they support dynamic interface views such as `dyn mut io.Writer`.
 
-```odin
+```loke
 Reader :: interface($Self: type) {
 	slot read: proc(self: inout Self, destination: []mut u8) -> Result(int, Error);
 }
@@ -283,7 +283,7 @@ The contracts are:
 
 Core helpers:
 
-```odin
+```loke
 Line_Options :: struct { keep_ending: bool }
 
 copy(destination, source, buffer: []mut u8 = {}) -> Result(u64, Error)
@@ -313,14 +313,14 @@ Use `io.write_formatted` for fallible output. A `fmt.Sink` cannot return an
 error; the bridge stops writing after the first stream failure and returns that
 error after formatting. `write_formatted_line` also appends a newline.
 
-```odin
+```loke
 write_formatted(writer, args: ..any_view) -> Status(Error)
 write_formatted_line(writer, args: ..any_view) -> Status(Error)
 ```
 
 `fmt` formats into memory with:
 
-```odin
+```loke
 to_string(allocator: Allocator, args: ..any_view) -> string
 ```
 
@@ -335,7 +335,7 @@ the remaining arguments. For another sink, format in memory and call
 thread start, join, and unlock edges of design.md "Concurrency and the memory
 model".
 
-```odin
+```loke
 spawn(entry: proc(value: move T), arg: move T) -> Thread
 spawn(entry: proc()) -> Thread
 Thread.join(self: inout)
@@ -375,7 +375,7 @@ The compiler warns when a spawned entry writes file-scope or `static` storage
 
 ## `core:fmt`
 
-```odin
+```loke
 Sink :: interface($Self: type) {
 	slot write: proc(self: inout Self, bytes: []u8);
 }
@@ -466,7 +466,7 @@ those primitives.
 
 All returned indices are byte offsets:
 
-```odin
+```loke
 contains(text, needle: string_view) -> bool
 starts_with(text, prefix: string_view) -> bool
 ends_with(text, suffix: string_view) -> bool
@@ -485,7 +485,7 @@ non-overlapping occurrences.
 
 These do not allocate and return `string_view`s borrowing the input:
 
-```odin
+```loke
 trim_space(text) -> string_view
 trim_left_space(text) -> string_view
 trim_right_space(text) -> string_view
@@ -514,7 +514,7 @@ a later `core:unicode` package.
 Slicing inside a code point panics. Validate offsets obtained from raw byte
 searches or outside input, or round them to a code-point boundary:
 
-```odin
+```loke
 try_slice(text: string_view, low, high: int) -> Option(string_view)
 floor_boundary(text: string_view, offset: int) -> int
 ceil_boundary(text: string_view, offset: int) -> int
@@ -535,7 +535,7 @@ encoding of `é`.
 
 ### Allocating transformations
 
-```odin
+```loke
 copy(text: string_view, allocator: Allocator = ...) -> string
 try_copy(text: string_view, allocator: Allocator = ...)
 	-> Result(string, Allocator_Error)
@@ -573,7 +573,7 @@ it binds on first growth. Use `strings.init(allocator)` to select an allocator
 up front. Length and capacity count bytes. The append operations below are
 methods; `append` and `try_append` accept either text or a rune.
 
-```odin
+```loke
 String_Builder :: struct { /* private representation */ }
 
 init :: proc(allocator: Allocator = mem.default_allocator()) -> String_Builder
@@ -645,7 +645,7 @@ owned buffer.
 
 `from_string` is a free constructor; `view` and `len` are methods.
 
-```odin
+```loke
 C_String :: struct { /* private representation */ }
 
 Error :: enum { Contains_Zero, Out_Of_Memory }
@@ -668,7 +668,7 @@ byte-oriented constructor or accessor yet.
 The conversion `core:fs`, `core:os`, and `core:term` share for the wide Windows
 APIs.
 
-```odin
+```loke
 Error :: enum { Invalid_Data, Out_Of_Memory, Contains_Zero }
 
 encode(text: string_view, allocator := mem.default_allocator())
@@ -691,7 +691,7 @@ A binary format fixes each field's byte order; these wrappers put that order in
 the field's type, so the swap happens at `store` and `load` rather than wherever
 a caller remembers it.
 
-```odin
+```loke
 Order :: enum { Little, Big }
 host_order() -> Order
 byte_swap(value: $T) -> T where interfaces.Integral(T)
@@ -720,7 +720,7 @@ Parsing does not belong in `strings`: it interprets text as another type.
 
 The procedures are:
 
-```odin
+```loke
 parse_bool(text: string_view) -> Option(bool)
 parse_i64(text: string_view, base := 0) -> Result(i64, Parse_Error)
 parse_u64(text: string_view, base := 0) -> Result(u64, Parse_Error)
@@ -760,7 +760,7 @@ formatting system.
 design.md "Build-selected providers" says how a program selects its logger, and
 "Compiled log level" what `-log-level` removes. This is the package's surface.
 
-```odin
+```loke
 Level :: enum { Debug, Info, Warning, Error, Off }   // contributed by the compiler
 
 Sink :: interface($Self: type) {
@@ -805,7 +805,7 @@ live handle.
 
 ### Opening and file I/O
 
-```odin
+```loke
 Access :: enum {Read, Write, Read_Write}
 Disposition :: enum {
 	Open_Existing,
@@ -856,7 +856,7 @@ multiple writes from multiple processes into one atomic transaction.
 
 ### Whole-file convenience
 
-```odin
+```loke
 read_bytes(path, allocator := mem.default_allocator(), limit := 0)
 	-> Result([dynamic]u8, io.Error)
 read_text(path, allocator := mem.default_allocator(), limit := 0)
@@ -887,7 +887,7 @@ filesystem failures to the caller. For formatted stream output, use
 
 ### Filesystem operations
 
-```odin
+```loke
 metadata(path) -> Result(Metadata, io.Error)
 exists(path) -> Result(bool, io.Error)
 remove(path) -> Status(io.Error)
@@ -942,7 +942,7 @@ what Windows does.
 
 Path operations are lexical and perform no filesystem access:
 
-```odin
+```loke
 separator() -> rune
 is_absolute(path: string_view) -> bool
 volume(path: string_view) -> string_view
@@ -988,7 +988,7 @@ keyboard hook and not GUI input.
 
 ### Standard byte streams and line input
 
-```odin
+```loke
 stdin() -> Input
 stdout() -> Output
 stderr() -> Output
@@ -1025,7 +1025,7 @@ fallible stream output uses `term.stdout()` with `io.write_all` or
 
 ### Raw mode and key events
 
-```odin
+```loke
 Raw_Options :: struct { interrupt_as_key: bool }
 Raw_Mode :: move_only struct { /* private state */ }
 
@@ -1101,7 +1101,7 @@ UI are not provided.
 
 Besides `os.args` and `os.exit`, `core:os` has these process-level operations:
 
-```odin
+```loke
 get_environment(name: string_view,
 	allocator := mem.default_allocator()) -> Result(Option(string), io.Error)
 set_environment(name, value: string_view) -> Status(io.Error)
@@ -1131,7 +1131,7 @@ Starting another process is [`core:process`](#coreprocess).
 
 A child process is started from a `Command` and owned by the `Child` it returns:
 
-```odin
+```loke
 Stdio :: enum {Inherit, Null, Pipe}
 
 Variable :: struct {
@@ -1296,7 +1296,7 @@ too large for the format still meets the addend.
 from the operating system. Every procedure takes the generator `inout`, as
 `core:io` takes a stream; the package owns no generator of its own.
 
-```odin
+```loke
 Source :: interface($Self: type) {
 	slot next_u64: proc(self: inout Self) -> u64;
 }
@@ -1595,7 +1595,7 @@ so it also runs during
 
 ### Clocks
 
-```odin
+```loke
 now() -> Time
 tick_now() -> Tick
 Tick.elapsed(self) -> Duration
@@ -1618,7 +1618,7 @@ reading shows the time has passed.
 
 ### Durations
 
-```odin
+```loke
 Duration :: distinct i64
 NANOSECOND, MICROSECOND, MILLISECOND, SECOND, MINUTE, HOUR :: Duration
 
@@ -1668,7 +1668,7 @@ A duration prints in the short form:
 
 ### Instants
 
-```odin
+```loke
 Time :: struct { /* private: Unix nanoseconds */ }
 
 from_unix_nanoseconds(nanoseconds: i64) -> Time
@@ -1689,7 +1689,7 @@ range has a local date and time at every offset.
 
 ### The calendar
 
-```odin
+```loke
 Month :: enum { January = 1, February, ..., December }
 Weekday :: enum { Monday = 1, Tuesday, ..., Sunday }
 
@@ -1737,7 +1737,7 @@ zone there is no daylight saving.
 
 ### Offsets
 
-```odin
+```loke
 Offset :: struct { /* private: minutes east of UTC */ }
 UTC :: Offset{}
 Offset.from_minutes(minutes: int) -> Option(Offset)
@@ -1774,7 +1774,7 @@ instant first; compare `to_time()` instead.
 
 A wrapper chooses another form, as `fmt.fixed` does for floats:
 
-```odin
+```loke
 Precision :: enum { Shortest, Seconds, Milliseconds, Microseconds, Nanoseconds }
 Style :: struct { basic: bool, iso: bool, precision: Precision }
 DEFAULT_STYLE :: Style{}
@@ -1790,7 +1790,7 @@ unit before the short form prints, so `.Milliseconds` gives `1.234s` and
 `153ms`. `basic` drops the separators, which also makes a timestamp fit in a
 Windows file name, where `:` is not allowed: `backup-20261015T123456Z.zip`.
 
-```odin
+```loke
 Parse_Error :: enum { Invalid_Syntax, Invalid_Value, Missing_Offset, Out_Of_Range }
 
 parse_time(text: string_view) -> Result(Time, Parse_Error)

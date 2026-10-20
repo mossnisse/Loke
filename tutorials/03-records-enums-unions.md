@@ -9,7 +9,7 @@ A `struct` is a record with named fields. A literal lists the fields in order,
 or names them; a field left out takes its zero value if its type has one.
 Otherwise the literal must supply that field explicitly.
 
-```odin file=records.loke
+```loke file=records.loke
 package main;
 
 import "core:fmt";
@@ -51,7 +51,7 @@ method, covered later in
 Some fields cannot be left out. A pointer such as `^int` has no zero value,
 because it is never null. This program is rejected:
 
-```odin file=required_field.loke
+```loke file=required_field.loke
 package main;
 
 Reading :: struct { value: ^int }
@@ -74,7 +74,7 @@ error[L0424]: `^int` has no zero value, so it cannot be produced by the omitted 
 Supply the pointer explicitly. If absence is part of the type's meaning, use
 an `Option` field, whose zero value is `.none`:
 
-```odin file=reference_fields.loke
+```loke file=reference_fields.loke
 package main;
 
 import "core:fmt";
@@ -106,7 +106,7 @@ An `impl` block attaches procedures and constants to a type. A procedure whose
 first parameter is `self` is a *method*, called with a dot on a value. One
 without `self` is called on the type itself.
 
-```odin file=methods.loke
+```loke file=methods.loke
 package main;
 
 import "core:fmt";
@@ -177,7 +177,7 @@ An `enum` is a type with a fixed list of named values. Inside a context that
 already knows the enum's type, a value can be written with just a leading dot,
 as `.North` instead of `Direction.North`.
 
-```odin file=enums.loke
+```loke file=enums.loke
 package main;
 
 import "core:fmt";
@@ -227,7 +227,7 @@ A `switch` over an enum must handle every value, or say that it ignores the rest
 with an empty `case:`. That is why `turn_right` needs no `return` after the
 switch: some case always returns. Forget one, and the compiler says which:
 
-```odin file=missing_case.loke
+```loke file=missing_case.loke
 package main;
 
 import "core:fmt";
@@ -261,7 +261,7 @@ A `union` holds exactly one of several named *variants*, and each variant may
 carry a value of its own type. It is how Loke says "a shape is a circle, or a
 rectangle, or nothing":
 
-```odin file=unions.loke
+```loke file=unions.loke
 package main;
 
 import "core:fmt";

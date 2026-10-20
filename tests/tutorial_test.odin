@@ -11,8 +11,8 @@ import "core:testing"
 // what a reader copies is what was compiled. A fenced block is a checked file
 // when its info string names one, and a checked result when it names a program:
 //
-//   ```odin file=hello.loke           a program of one file, compiled as a file
-//   ```odin file=shop/main.loke       a file of the program `shop`, compiled as
+//   ```loke file=hello.loke           a program of one file, compiled as a file
+//   ```loke file=shop/main.loke       a file of the program `shop`, compiled as
 //                                     a directory; `shop/stock/stock.loke` is
 //                                     a package it imports
 //   ```text file=scores.csv           a data file the programs can read

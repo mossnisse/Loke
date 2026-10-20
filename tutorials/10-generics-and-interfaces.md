@@ -12,7 +12,7 @@ A parameter written with `$` is filled in when the program is compiled. In
 `values: []$T`, the compiler reads `T` off the argument: call `largest` with a
 slice of `int` and `T` is `int`.
 
-```odin file=generic_procs.loke
+```loke file=generic_procs.loke
 package main;
 
 import "base:interfaces";
@@ -63,7 +63,7 @@ plum
 A record may take `$` parameters too. An `impl` block for it binds the same
 names, and they can be used throughout:
 
-```odin file=stack.loke
+```loke file=stack.loke
 package main;
 
 import "core:fmt";
@@ -117,7 +117,7 @@ An interface is a named list of requirements. A type meets it by having what it
 asks for; nothing needs to declare that it does. A `slot` requirement asks for a
 method with a given signature:
 
-```odin file=interfaces.loke
+```loke file=interfaces.loke
 package main;
 
 import "core:fmt";
@@ -191,7 +191,7 @@ The standard interfaces, such as `Ordered`, `Equatable`, `Hashable`, and
 When a type does not meet an interface, the compiler says which requirement it
 missed:
 
-```odin file=unsatisfied.loke
+```loke file=unsatisfied.loke
 package main;
 
 import "core:fmt";

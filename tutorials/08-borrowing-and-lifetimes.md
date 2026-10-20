@@ -27,7 +27,7 @@ caller gives up the value, and the callee becomes responsible for it.
 
 A view can leave a procedure when its storage belongs to the caller:
 
-```odin file=borrowed_results.loke
+```loke file=borrowed_results.loke
 package main;
 
 import "core:fmt";
@@ -80,7 +80,7 @@ use `^Record` when returning a view into a caller's record. Return an owning
 
 Two mutable views may coexist when the compiler can prove they do not overlap:
 
-```odin file=separate_borrows.loke
+```loke file=separate_borrows.loke
 package main;
 
 import "core:fmt";
@@ -115,7 +115,7 @@ do not overlap in time when it cannot prove separation.
 
 This procedure tries to return a pointer to its own local variable:
 
-```odin file=escaping_local.loke
+```loke file=escaping_local.loke
 package main;
 
 bad :: proc() -> ^int {

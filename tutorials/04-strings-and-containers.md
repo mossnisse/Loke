@@ -9,7 +9,7 @@ A `string` is text, always valid UTF-8, and it cannot be changed once made.
 Operations on it say which unit they count in: `len` is in bytes, and
 `rune_count` is in Unicode scalar values, called *runes*.
 
-```odin file=text.loke
+```loke file=text.loke
 package main;
 
 import "core:fmt";
@@ -98,7 +98,7 @@ A fixed array has a length that is part of its type, as `[5]int`. A dynamic
 array, `[dynamic]int`, grows as you append to it. A slice, `[]int`, is a view of
 part of either one.
 
-```odin file=arrays.loke
+```loke file=arrays.loke
 package main;
 
 import "core:fmt";
@@ -176,7 +176,7 @@ A map stores values under keys. `counts[key] = value` adds or replaces an entry.
 Reading `counts[key]` requires the key to be there, and panics if it is not;
 `key in counts` asks whether it is.
 
-```odin file=maps.loke
+```loke file=maps.loke
 package main;
 
 import "core:fmt";
@@ -243,7 +243,7 @@ costs nothing. A dynamic array or map *can* change, so assigning one **copies
 it**: the new variable gets a second container of its own, which means
 allocating memory and copying every element.
 
-```odin file=copies.loke
+```loke file=copies.loke
 package main;
 
 import "core:fmt";
@@ -277,7 +277,7 @@ the limit, and `-copy-cost=off` turns both warnings off).
 
 When you want to be sure which of the two happens, say so:
 
-```odin file=ownership.loke
+```loke file=ownership.loke
 package main;
 
 import "core:fmt";
@@ -345,7 +345,7 @@ compiler checks that the owner stays valid while the view is in use. Appending
 to a dynamic array can move its elements to new memory, so it may not happen
 while a slice of the array is still used:
 
-```odin file=invalidate.loke
+```loke file=invalidate.loke
 package main;
 
 import "core:fmt";

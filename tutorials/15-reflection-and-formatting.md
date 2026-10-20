@@ -6,7 +6,7 @@ then shows how a type controls its printed representation.
 
 ## Expand once per field
 
-```odin file=reflected_fields.loke
+```loke file=reflected_fields.loke
 package main;
 
 import "core:fmt";
@@ -53,7 +53,7 @@ field to a new local can copy it, just as an ordinary field access can.
 
 ## Inspect enum declarations
 
-```odin file=reflected_enum.loke
+```loke file=reflected_enum.loke
 package main;
 
 import "core:fmt";
@@ -89,7 +89,7 @@ A custom format method avoids exposing fields merely to make them printable.
 method satisfies the interface; no registration or explicit implementation
 declaration is needed.
 
-```odin file=custom_format.loke
+```loke file=custom_format.loke
 package main;
 
 import "core:fmt";

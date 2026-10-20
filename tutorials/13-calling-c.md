@@ -7,7 +7,7 @@ your own.
 
 ## Declaring C procedures
 
-```odin file=c_runtime.loke
+```loke file=c_runtime.loke
 package main;
 
 import "core:fmt";
@@ -108,7 +108,7 @@ and a length, a `cstring_view`, or a plain record of C-compatible fields; see
 `strchr` returns a pointer into its input when it finds a character, or NULL
 when the character is absent. Bind its result as `Option(cstring_view)`:
 
-```odin file=nullable_c.loke
+```loke file=nullable_c.loke
 package main;
 
 import "core:fmt";
@@ -173,7 +173,7 @@ and compile it with Clang. `lokec -print-toolchain` shows where Clang is:
 A `foreign import` of a path without a prefix names a file relative to the
 source file that imports it:
 
-```odin file=squares.loke
+```loke file=squares.loke
 package main;
 
 import "core:fmt";

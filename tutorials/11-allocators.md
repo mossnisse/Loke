@@ -12,7 +12,7 @@ storage in batches.
 
 Use an `Allocator` parameter when the caller should choose where a result lives:
 
-```odin file=allocator_results.loke
+```loke file=allocator_results.loke
 package main;
 
 import "core:fmt";
@@ -60,7 +60,7 @@ defaults to the program's allocator.
 A scratch region is useful when each batch needs temporary containers that
 should all be discarded together:
 
-```odin file=scratch_batches.loke
+```loke file=scratch_batches.loke
 package main;
 
 import "core:fmt";
@@ -100,7 +100,7 @@ A container still needs its allocator for cleanup, even if you are done reading
 its elements. Put it in an inner scope, as in the first example, or explicitly
 `drop` it before resetting its region. This is rejected:
 
-```odin file=early_reset.loke
+```loke file=early_reset.loke
 package main;
 
 import "core:fmt";
@@ -134,7 +134,7 @@ arena's lifetime.
 Ordinary `append` follows the allocator's failure policy, usually a panic.
 Its `try_` counterpart returns a `Result` instead:
 
-```odin file=bounded_allocation.loke
+```loke file=bounded_allocation.loke
 package main;
 
 import "core:fmt";

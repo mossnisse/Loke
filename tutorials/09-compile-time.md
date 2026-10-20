@@ -6,7 +6,7 @@ The context requiring the result decides when the procedure executes.
 
 ## One procedure, two phases
 
-```odin file=compile_time_basics.loke
+```loke file=compile_time_basics.loke
 package main;
 
 import "core:fmt";
@@ -44,7 +44,7 @@ compilation error, even if the assertion appears inside `main`. An ordinary
 
 Compile-time procedures can use locals, mutation, and loops:
 
-```odin file=compiled_table.loke
+```loke file=compiled_table.loke
 package main;
 
 import "core:fmt";
@@ -77,7 +77,7 @@ in the program. Nothing allocates or fills this table at startup.
 `if` selects a runtime branch. `when` requires a compile-time condition and
 selects which source is checked and emitted. Both branches must still parse.
 
-```odin file=build_choice.loke
+```loke file=build_choice.loke
 package main;
 
 import "core:fmt";
