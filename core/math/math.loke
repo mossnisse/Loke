@@ -471,9 +471,7 @@ fused_multiply_add :: proc(a: u64, b: u64, c: u64, precision: int, max_exponent:
 		low := fused_align(z);
 		// Make `high` the larger term.
 		if (low.exponent > high.exponent || (low.exponent == high.exponent && low.significand > high.significand)) {
-			larger := low;
-			low = high;
-			high = larger;
+			high, low = low, high;
 		}
 		// A shift of at most 20 loses nothing: the terms' low 20 bits are
 		// zero. A longer one leaves the larger term's top bit, and the sum's,
