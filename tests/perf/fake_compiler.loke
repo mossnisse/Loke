@@ -5,6 +5,7 @@ import "core:fs";
 import "core:io";
 import "core:os";
 import "core:path";
+import "core:process";
 import "core:strings";
 import "core:time";
 
@@ -17,9 +18,15 @@ import "core:time";
 //   wrong-later   the first run of each program prints the expected output and
 //                 every later one prints something else, more slowly
 //   hang          sleeps for a minute first
+//   locked        starts a detached copy of itself, which keeps the executable
+//                 from being deleted for a second, and prints something else
 
 main :: proc() -> Status(io.Error) {
 	self := os.executable_path() or_return;
+	if (os.args.len() == 2 && os.args[1] == "linger") {
+		time.sleep(time.SECOND);
+		return .ok;
+	}
 	if (os.args.len() > 1) {
 		for (i := 1; i + 1 < os.args.len(); i += 1) {
 			if (os.args[i] == "-o") {
@@ -31,6 +38,13 @@ main :: proc() -> Status(io.Error) {
 	}
 	mode := (os.get_environment("LOKE_PERF_FAKE") or_return) or_else "";
 	if (mode == "hang") { time.sleep(60 * time.SECOND); }
+	if (mode == "locked") {
+		// No inherited pipe, so perf.ps1 does not wait for the copy's output.
+		_ = process.spawn({program = self, arguments = []string_view{"linger"},
+			stdin = .Null, stdout = .Null, stderr = .Null}) or_return;
+		fmt.println("not the expected output");
+		return .ok;
+	}
 	if (mode == "wrong-later") {
 		marker := strings.init();
 		marker.append(self);

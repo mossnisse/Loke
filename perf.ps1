@@ -353,8 +353,19 @@ try {
         Write-Warning 'No loke-lsp.exe to measure; build it or pass -Lsp'
     }
 } finally {
-    if ((Split-Path -Leaf $work) -eq "loke-perf-$PID" -and (Test-Path -LiteralPath $work)) {
-        Remove-Item -LiteralPath $work -Recurse -Force
+    # Windows can refuse to delete an executable for a moment after its process
+    # exits, or while a scanner reads it, so the removal is retried. One that
+    # still fails warns: a throw here would replace the error that ended the
+    # measurement.
+    if ((Split-Path -Leaf $work) -eq "loke-perf-$PID") {
+        foreach ($attempt in 1..20) {
+            if (-not (Test-Path -LiteralPath $work)) { break }
+            try {
+                Remove-Item -LiteralPath $work -Recurse -Force
+            } catch {
+                if ($attempt -eq 20) { Write-Warning "cannot remove ${work}: $_" } else { Start-Sleep -Milliseconds 250 }
+            }
+        }
     }
 }
 

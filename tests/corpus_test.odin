@@ -244,8 +244,10 @@ perf_script_validates_and_cleans_up :: proc(t: ^testing.T) {
 // perf.ps1 driven by tests/perf/fake_compiler.loke, which builds in no time
 // and whose benchmarks print their .expected: a baseline that is also -Out is
 // compared before it is replaced, a record of other sources is not compared,
-// every run's output is checked rather than only the fastest's, and a program
-// that hangs fails the measurement after -TimeoutSeconds.
+// every run's output is checked rather than only the fastest's, a program
+// that hangs fails the measurement after -TimeoutSeconds, and an executable
+// still locked when the measurement fails neither hides that failure nor
+// stays behind.
 @(test)
 perf_script_compares_and_checks_every_run :: proc(t: ^testing.T) {
 	os.make_directory(TMP)
@@ -293,6 +295,15 @@ perf_script_compares_and_checks_every_run :: proc(t: ^testing.T) {
 	)
 	work := join_path({temp, fmt.tprintf("loke-perf-%d", state.pid)}, context.temp_allocator)
 	testing.expectf(t, !os.exists(work), "the timed-out run left %s behind", work)
+	remove_tree(work)
+
+	state, stdout, stderr, err = perf(fake, append_env(inherited, "LOKE_PERF_FAKE=locked"), "-Repeat", "1")
+	testing.expectf(
+		t, err == nil && state.exit_code != 0 && strings.contains(stderr, "(run 1) printed"),
+		"a locked executable hid the wrong output:\n%s%s", stdout, stderr,
+	)
+	work = join_path({temp, fmt.tprintf("loke-perf-%d", state.pid)}, context.temp_allocator)
+	testing.expectf(t, !os.exists(work), "the run with a locked executable left %s behind", work)
 	remove_tree(work)
 }
 

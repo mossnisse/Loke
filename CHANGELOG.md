@@ -371,6 +371,9 @@ checklist.
   Each record names a hash of the sources it measured, and a figure whose
   sources differ from the baseline's reads `(sources changed)` instead of a
   percentage.
+- `perf.ps1` retries removing its work directory while Windows still holds
+  an executable that has just run, and warns if it cannot. A failed removal
+  used to replace the error that ended the measurement.
 
 ## [0.8.0] - 2026-10-13
 
