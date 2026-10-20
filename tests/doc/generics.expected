@@ -1,0 +1,34 @@
+# package generics
+
+A generic record's fields and a generic `impl`'s members are checked per
+instance, so `-doc` reads their visibility from what is written.
+
+## Pair
+
+```odin
+Pair :: struct($T: type) {
+	// The left one.
+	left: T,
+	// and fields private to the package
+}
+```
+
+A pair of one type.
+
+## Box
+
+```odin
+Box :: struct($T: type) {
+	// and fields private to the package
+}
+```
+
+Opaque to importers.
+
+## Pair($T).first
+
+```odin
+first :: proc(self) -> T
+```
+
+The left one again.

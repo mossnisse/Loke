@@ -265,6 +265,10 @@ checklist.
 
 ### Fixed
 
+- `lokec -doc` documents generic records and generic `impl` blocks. A generic
+  struct's public fields were missing, so `container.Bit_Set` printed as an
+  empty struct, and no member of a generic `impl` appeared, such as any of
+  `Bit_Set`'s methods.
 - `is_copyable(expression)` no longer moves out of its operand.
   `is_copyable(move(value))` emitted no move but left `value` dead, so its
   drop never ran and a later use was `L0500`. Its operand is now unevaluated,

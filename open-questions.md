@@ -114,6 +114,15 @@ In priority order, each usable without the next:
   backticked span would report false errors. Either only a backticked name or
   dotted path is checked, or references get a syntax of their own, such as
   `[split]`.
+- **Compiler-contributed declarations.** Some public names of bundled packages,
+  such as all of `core:mem`'s and `core:unsafe`'s, are contributed by the
+  compiler and have no source declaration, so `-doc` and hover cannot show a
+  signature for them ([`-doc` omits compiler-contributed declarations](known-gaps.md#-doc-omits-compiler-contributed-declarations)).
+  One answer is to declare each in the package's source with no body and an
+  attribute binding it to the compiler's implementation, as Rust declares its
+  intrinsics, so its signature is written once and checked. An operation no
+  Loke signature can state, such as `unsafe.transmute`, would need another
+  answer.
 - **Package overview.** The comments above a `package` clause describe the
   whole package and are unchecked like any other. Layers 2 and 3 apply to them
   too, but whether a package also needs a checked list of its main entry

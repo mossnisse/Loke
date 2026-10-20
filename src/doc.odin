@@ -45,18 +45,18 @@ document_package :: proc(c: ^Compiler, b: ^strings.Builder, id: Package_Id) {
 		for item in file.active_items {
 			#partial switch v in item {
 			case ^Decl:
-				document_decl(c, b, v, "")
+				document_decl(c, b, file, v, "")
 			case ^Item_Foreign_Block:
 				for member in v.members {
 					if d, is_decl := member.(^Decl); is_decl {
-						document_decl(c, b, d, "")
+						document_decl(c, b, file, d, "")
 					}
 				}
 			case ^Item_Impl:
 				owner := source_text(c, v.type)
 				for member in v.members {
 					if d, is_decl := member.(^Decl); is_decl {
-						document_decl(c, b, d, owner)
+						document_decl(c, b, file, d, owner)
 					}
 				}
 			}
@@ -65,12 +65,17 @@ document_package :: proc(c: ^Compiler, b: ^strings.Builder, id: Package_Id) {
 }
 
 @(private = "file")
-document_decl :: proc(c: ^Compiler, b: ^strings.Builder, d: ^Decl, owner: string) {
-	if len(d.names) == 0 || len(d.symbols) == 0 {
+document_decl :: proc(c: ^Compiler, b: ^strings.Builder, file: ^File, d: ^Decl, owner: string) {
+	if len(d.names) == 0 {
 		return
 	}
-	// design.md "Test procedures": no importer can call a test.
-	if symbol := symbol_of(c, d.symbols[0]); symbol == nil || !symbol.public || symbol.is_test {
+	if len(d.symbols) == 0 {
+		// A generic `impl`'s members are checked per instance.
+		if owner == "" || !written_is_public(d.attributes, file.attributes) {
+			return
+		}
+	} else if symbol := symbol_of(c, d.symbols[0]); symbol == nil || !symbol.public || symbol.is_test {
+		// design.md "Test procedures": no importer can call a test.
 		return
 	}
 	text := c.sources[d.span.file].text
@@ -97,7 +102,7 @@ document_decl :: proc(c: ^Compiler, b: ^strings.Builder, d: ^Decl, owner: string
 			}
 		case ^Type_Record:
 			if v.kind == .Struct {
-				signature = public_struct(c, text[d.names[0].span.lo:v.span.hi], v)
+				signature = public_struct(c, file, text[d.names[0].span.lo:v.span.hi], v)
 			}
 		}
 	}
@@ -121,17 +126,24 @@ written_start :: proc(text: string, lo: u32, attributes: []Attribute) -> u32 {
 // `Name :: struct { ... }` with only its public fields, one to a line, each
 // after its doc comment.
 @(private = "file")
-public_struct :: proc(c: ^Compiler, written: string, record: ^Type_Record) -> string {
+public_struct :: proc(c: ^Compiler, file: ^File, written: string, record: ^Type_Record) -> string {
 	b := strings.builder_make()
 	open := strings.index_byte(written, '{')
 	fmt.sbprintln(&b, strings.trim_space(written[:open + 1]))
 	text := c.sources[record.span.file].text
 	hidden := false
 	for field in record.fields {
-		if len(field.symbols) == 0 {
+		public: bool
+		if len(record.generic_params) > 0 {
+			// A generic record's fields are checked per instance.
+			public = written_is_public(field.attributes, file.attributes, file.package_name == "main")
+		} else if len(field.symbols) == 0 {
 			continue
+		} else {
+			symbol := symbol_of(c, field.symbols[0])
+			public = symbol != nil && symbol.public
 		}
-		if symbol := symbol_of(c, field.symbols[0]); symbol != nil && symbol.public {
+		if public {
 			if doc := doc_comment(c, field.span); doc != "" {
 				for line in strings.split_lines(doc) {
 					fmt.sbprintln(&b, strings.trim_right_space(fmt.tprintf("\t// %s", line)))

@@ -1,0 +1,30 @@
+// A generic record's fields and a generic `impl`'s members are checked per
+// instance, so `-doc` reads their visibility from what is written.
+@(public)
+package generics;
+
+// A pair of one type.
+Pair :: struct($T: type) {
+	// The left one.
+	left: T,
+	@(private) right: T,
+}
+
+// Opaque to importers.
+Box :: struct($T: type) {
+	@(private) value: T,
+}
+
+impl Pair($T) {
+	// The left one again.
+	first :: proc(self) -> T { return self.left; }
+
+	@(private)
+	second :: proc(self) -> T { return self.right; }
+}
+
+impl Box($T) {
+	// Hidden: private to the package.
+	@(private)
+	open :: proc(self) -> T { return self.value; }
+}

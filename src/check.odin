@@ -589,13 +589,17 @@ attributes_are_public :: proc(k: ^Checker, attributes: []Attribute, span: Span, 
 		errorf(k.c, span, "L0332", "this %s is both `@(public)` and `@(private)`", what)
 		return false
 	}
-	if own_public {
-		return true
-	}
-	if own_private {
+	return written_is_public(attributes, k.file_node.attributes if k.file_node != nil else nil, by_default)
+}
+
+// The same rule without its diagnostic, for syntax no symbol records: a
+// generic record's fields and a generic `impl`'s members are checked per
+// instance, so `-doc` reads the template's attributes.
+written_is_public :: proc(attributes, file_attributes: []Attribute, by_default := false) -> bool {
+	if has_attribute(attributes, "private") {
 		return false
 	}
-	return by_default || k.file_node != nil && has_attribute(k.file_node.attributes, "public")
+	return has_attribute(attributes, "public") || by_default || has_attribute(file_attributes, "public")
 }
 
 // design.md `@(escape=...)`: the written level, which only a parameter carrying
