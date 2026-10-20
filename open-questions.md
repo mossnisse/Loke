@@ -127,6 +127,38 @@ In priority order, each usable without the next:
   whole package and are unchecked like any other. Layers 2 and 3 apply to them
   too, but whether a package also needs a checked list of its main entry
   points is open.
+- **Reading by an agent.** A coding agent works through the shell, not the
+  language server, so `-doc` is the interface it has, but nothing tells it to
+  prefer `-doc` over the source, and `-doc` prints only whole packages. Measured
+  on 2026-10-20, the page is 34% (`core:fs`) to 73% (`core:container`) of the
+  package source's size, most of it comments; the headings and signatures
+  alone are 10% to 25%. Two `-doc` forms would let an agent read only what it
+  is about to call, as `go doc` does: an index with one signature line per
+  public declaration, and a single named entry, such as `split` or
+  `Bit_Set.contains`. AGENTS.md would then say to read those rather than a
+  package's source. The inferred facts of layer 1 help an agent most, because
+  without them it reads the body to learn whether a result borrows, allocates,
+  or writes package state. Open: the option spelling, how an entry names an
+  `impl` member, and whether the index carries those facts or only the entry
+  does. The ratio reflects the bundled packages, which are thin and mostly
+  public: `-doc` grows with the public surface and the source with the
+  implementation, so a package with more private code saves more.
+- **Who a doc comment is for.** `-doc` and hover show the comment directly
+  above a public declaration, so whatever is written there is read by every
+  user and every agent. In the bundled packages it serves maintainers too.
+  Measured on 2026-10-20 over 14 `core` packages, comments are 53% of `-doc`'s
+  output, and about 40% of that prose is for maintainers: spec citations, how
+  an operation is implemented, why an overflow cannot happen, and one note of
+  work still to do in `core:io`. The rest says what no signature can, such as
+  that `core:strings` counts bytes, that `sort` is not stable, or that a
+  `Once` action must not reach its own `once`. A convention would split the
+  two audiences without new syntax: the comment above a public declaration
+  says how to use it, and implementation notes and spec citations go in the
+  body or above private code, which `-doc` never shows. Facts that layer 1
+  derives, such as "allocates nothing", would then leave the comment. Open:
+  whether to adopt it, where to state it, and whether a check should report a
+  spec citation in a public declaration's doc comment. The bundled packages'
+  existing comments have not been moved.
 
 ## The `op`/`try_op` pair
 
