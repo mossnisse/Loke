@@ -483,6 +483,7 @@ declare_all :: proc(k: ^Checker, d: ^Decl, top_level := false) {
 		return // already collected in an earlier phase
 	}
 	d.top_level = top_level
+	public := top_level && declaration_is_public(k, d)
 	symbols := make([dynamic]Symbol_Id, 0, len(d.names), k.c.semantic_allocator)
 	for name in d.names {
 		if name.text == "_" {
@@ -514,7 +515,7 @@ declare_all :: proc(k: ^Checker, d: ^Decl, top_level := false) {
 			span   = name.span,
 			decl   = d,
 			pkg    = k.pkg,
-			public = top_level && declaration_is_public(k, d),
+			public = public,
 			// An instantiation resolves names in the declaration's own scope.
 			def_scope     = k.scope,
 			def_file      = k.file,
@@ -534,19 +535,23 @@ declare_all :: proc(k: ^Checker, d: ^Decl, top_level := false) {
 		append(&symbols, id)
 	}
 	d.symbols = symbols[:]
-	reject_public_variable(k, d)
 }
 
-// design.md "`@(public)`": a package-level variable is never public, so another
-// package reaches one only through a procedure, and a write effect crosses a
-// package boundary only through a borrow that procedure visibly returns. A
-// public-default file or foreign block leaves its variables package-private
-// without a diagnostic.
-reject_public_variable :: proc(k: ^Checker, d: ^Decl) {
-	if !d.top_level || d.kind != .Var {
-		return
+// design.md "Exported names": package-private by default. `@(public)` exports
+// one declaration; `@(public)` on the package clause makes the file's
+// declarations public by default, and `@(private)` opts one back out.
+//
+// design.md "`@(public)`": a variable is never public, so another package
+// reaches one only through a procedure. A written `@(public)` on one is
+// L0338, unless L0332 already rejected it beside `@(private)`; a public
+// default leaves it package-private without a diagnostic. Reports, so it is
+// asked once per declaration.
+declaration_is_public :: proc(k: ^Checker, d: ^Decl) -> bool {
+	public := attributes_are_public(k, d.attributes, d.span, "declaration")
+	if d.kind != .Var {
+		return public
 	}
-	if attribute, written := find_attribute(d.attributes, "public"); written {
+	if attribute, written := find_attribute(d.attributes, "public"); written && !has_attribute(d.attributes, "private") {
 		errorf(
 			k.c,
 			attribute.span,
@@ -554,18 +559,7 @@ reject_public_variable :: proc(k: ^Checker, d: ^Decl) {
 			"a variable cannot be `@(public)`; export a procedure that reads it or returns a borrow of it",
 		)
 	}
-	for sid in d.symbols {
-		if sym := symbol_of(k.c, sid); sym != nil {
-			sym.public = false
-		}
-	}
-}
-
-// design.md "Exported names": package-private by default. `@(public)` exports
-// one declaration; `@(public)` on the package clause makes the file's
-// declarations public by default, and `@(private)` opts one back out.
-declaration_is_public :: proc(k: ^Checker, d: ^Decl) -> bool {
-	return attributes_are_public(k, d.attributes, d.span, "declaration")
+	return false
 }
 
 // The operators a `delegate` generates are members as a declaration in the

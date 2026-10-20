@@ -27,3 +27,11 @@ LIMIT :: 3;
 
 @(public)
 count :: proc() -> int { return counter; }
+
+// Visibility is decided once per declaration: one diagnostic for two names,
+// and only the conflict for a variable that is both.
+@(public)
+first, second: int;
+
+@(public, private)
+both: int;

@@ -15,3 +15,8 @@ L0338
 @8:3
 L0338
 @14:4
+L0338
+@33:3
+L0332
+@36:1
+this declaration is both `@(public)` and `@(private)`
