@@ -30,6 +30,9 @@ character must be ASCII.
 
 ## Whitespace and comments
 
+A line ends with a newline or with a carriage return followed by a newline. A
+carriage return anywhere else, inside a comment or literal too, is an error.
+
 Whitespace is space, tab, carriage return, and newline. It separates tokens and
 is otherwise insignificant: there is **no automatic semicolon insertion** and no
 layout rule. A newline is not a terminator.

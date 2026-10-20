@@ -978,6 +978,43 @@ comments_are_kept_on_the_source :: proc(t: ^testing.T) {
 	testing.expectf(t, slice.equal(got[:], want), "comments: got %q, want %q", got[:], want)
 }
 
+// grammar.md "Whitespace and comments": a carriage return outside a `\r\n` is
+// L0115 wherever it stands, reported once per file at the first one.
+@(test)
+a_lone_carriage_return_is_rejected :: proc(t: ^testing.T) {
+	cases := []struct {
+		text: string,
+		at:   u32,
+	} {
+		{"x := 1;\ry := 2;", 7},
+		{"x := 1; // a\rb\r\n", 12},
+		{"x := `a\rb`;", 7},
+		{"/* \r */ x := 1;", 3},
+		{"x := 1;\r", 7},
+		{"a\rb\rc\r", 1}, // a whole file of them is one diagnostic
+	}
+	for test_case in cases {
+		c := test_compiler(test_case.text)
+		defer destroy_compilation(&c)
+		tokens := lex(&c, 0)
+		delete(tokens)
+		testing.expectf(t, c.error_count == 1, "%q: expected one diagnostic, got %d", test_case.text, c.error_count)
+		if len(c.diagnostics) == 1 {
+			d := c.diagnostics[0]
+			testing.expectf(t, d.code == "L0115", "%q: expected L0115, got %s", test_case.text, d.code)
+			testing.expectf(t, d.span.lo == test_case.at && d.span.hi == test_case.at + 1, "%q: expected the carriage return at %d, got %v", test_case.text, test_case.at, d.span)
+		}
+	}
+
+	// Its valid neighbours: a `\r\n` line ending, in a comment and a raw string
+	// too, and the `\r` escape.
+	valid := test_compiler("x := 1;\r\n// a\r\ny := `a\r\nb`; z := \"\\r\";\r\n")
+	defer destroy_compilation(&valid)
+	tokens := lex(&valid, 0)
+	delete(tokens)
+	testing.expectf(t, valid.error_count == 0, "valid line endings produced %d diagnostics", valid.error_count)
+}
+
 // A backslash escapes no line ending, so a string missing its closing quote is
 // one bad line rather than two: the code below it still reaches the parser.
 @(test)

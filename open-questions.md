@@ -226,10 +226,6 @@ every `drop` hook and `defer` would have to be correct under, and the temptation
 to use it as ordinary error handling in place of [`or_return`](design.md#or_return-operator).
 Not required by anything in this document.
 
-## exponent operator
-
- ** for pow(a,b)? ^ are used for pointers.
-
 ## intrinsics and inline assembly
 
 How to add some suport to go even more low level and use SIMD efficiently, Intrinsic or inline assembly?
@@ -379,9 +375,6 @@ copyable, and nothing already in the package changes.
 
 ### Smaller open points
 
-- **The `µ` in `µs`.** It is U+00B5, two bytes of UTF-8, as Go prints it. A
-  console whose code page is not UTF-8 shows it wrongly; `us` is the ASCII
-  alternative, which the parser accepts either way.
 - **Calendar durations.** `P1Y2M3D` has no type; `add_months` and its siblings
   do the arithmetic. A `Period` type waits for a caller that stores or parses
   one.
@@ -786,22 +779,3 @@ the declaration, not to a procedure-value type. `@(noreturn)` would state that
 more literally than punctuation. `-> never` also reads well, but should be
 spelled only if the language adds a real uninhabited type, with its rules for
 procedure types and conversions.
-
-## Lone carriage returns in the language server
-
-The LSP source review of 2026-10-16 found two line-ending problems in
-[paths.odin](lsp/paths.odin). Positions inside a `\r\n` are now clamped
-before the `\r`. A lone `\r` is still not a line break for the server, though
-the [LSP text-document rules](https://github.com/microsoft/language-server-protocol/blob/gh-pages/_specifications/specification-3-14.md#text-documents)
-make it one: in `"abc\rdef"`, the client's `{1, 1}` is the server's line 0, so
-`position_to_offset` returns the end of the text rather than 5.
-
-The server counts lines as the compiler does, by its
-[source line table](src/source.odin), which only `\n` ends. That matches the
-language: [grammar.md "Whitespace and comments"](grammar.md#whitespace-and-comments)
-makes a carriage return whitespace, and a line comment runs to the newline, so
-a `\r`-only file is one line whose first `//` comments out everything after
-it. Treating a lone `\r` as a line break in the server alone would disagree
-with every compiler-reported span. Agreeing with the protocol needs either
-compiler line tables, and the formatter's, that also end lines at a lone `\r`,
-or a decision that `\r`-only sources are rejected or normalized on load.

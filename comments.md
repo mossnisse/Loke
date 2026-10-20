@@ -897,6 +897,16 @@ Octal escapes added an ambiguous byte-versus-character spelling. Loke's former
 `\x` already spells bytes and `\u` characters, so octal escapes are rejected
 and the diagnostic points to those alternatives.
 
+### No exponent operator
+
+Odin has no `**`, and Loke does not add one. Its precedence has a trap:
+`-2 ** 2` is -4 in Python and an error in JavaScript, and either answer
+surprises someone. It would be the one right-associative binary operator. An
+integer `**` needs its own overflow rule and an answer for a negative
+exponent, and a floating one is `pow`, whose special cases (`pow(NaN, 0)`
+is 1) are a library contract rather than an operator's. `^` is taken by
+pointers, as in Odin. `math.pow` and `math.pow_f32` name the operation.
+
 ### Sized boolean types
 
 Loke has one byte-sized `bool`. Foreign boolean typedefs bind as their actual
@@ -1296,6 +1306,20 @@ Calling a procedure literal immediately requires parentheses:
 `VALUE :: (proc() -> int { return 7; })();`. Otherwise a following statement
 beginning with `(` could be mistaken for a call on the preceding declaration.
 
+### A carriage return only ends a line with a newline
+
+Odin's lexer skips a carriage return as whitespace wherever it stands. Loke
+accepts one only before a newline and rejects any other as `L0115`, inside
+comments and literals too. Every line table in the toolchain (diagnostics,
+the formatter, the language server) ends lines at `\n` alone, while the
+[LSP text-document rules](https://github.com/microsoft/language-server-protocol/blob/gh-pages/_specifications/specification-3-14.md#text-documents)
+also end one at a lone `\r`. A file with one therefore had two line
+numberings: in `"abc\rdef"` an editor's line 1 was the compiler's line 0, and
+a line comment before the `\r` hid everything after it. Accepting lone `\r`
+as a line ending everywhere would fix that only at the cost of a third line
+ending no current editor writes by default. Normalizing it on load would make
+a raw string's value differ from its bytes.
+
 ### `transmute` is a procedure in `core:unsafe`, not an operator
 
 Bit reinterpretation uses `unsafe.transmute(T, value)`. Types are already call
@@ -1566,6 +1590,10 @@ boundaries and API shapes follow a few common choices:
   and a stale copy gives wrong local times with no error. When a caller needs
   them, the data is the system's own, kept current by its updates: ICU on
   Windows and the TZif files elsewhere. The compiler never ships tzdata.
+- **A duration prints `µs`.** The `µ` is U+00B5, two bytes of UTF-8, as Go
+  prints it. A console whose code page is not UTF-8 shows it wrongly, but
+  that console misprints every non-ASCII string, and the parser accepts `us`
+  and the Greek `μ` alike, so an ASCII-only writer loses nothing.
 
 ## Compiler architecture audit (2026-09-28)
 

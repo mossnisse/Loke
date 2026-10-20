@@ -132,7 +132,7 @@ This is [examples/tour.loke](examples/tour.loke); the test suite compiles it and
 
 ## File format
 
-A Loke source file is UTF-8 without a byte order mark (BOM).
+A Loke source file is UTF-8 without a byte order mark (BOM). A line ends with a newline (LF) or a carriage return followed by a newline (CRLF); a carriage return anywhere else is an error.
 
 ## Code blocks
 

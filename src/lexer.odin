@@ -141,6 +141,7 @@ lex :: proc(c: ^Compiler, file: u32) -> []Token {
 		src  = c.sources[file].text,
 	}
 	clear(&c.sources[file].comments)
+	reject_lone_carriage_returns(&l)
 	tokens := make([dynamic]Token)
 	for {
 		t := next_token(&l)
@@ -150,6 +151,25 @@ lex :: proc(c: ^Compiler, file: u32) -> []Token {
 		}
 	}
 	return tokens[:]
+}
+
+// grammar.md "Whitespace and comments": a carriage return only ever begins a
+// `\r\n`. Checked over the whole text, comments and literals included, so that
+// every line table, which only `\n` ends, agrees with an editor's. The first
+// is reported: a file that has one usually ends every line that way.
+@(private = "file")
+reject_lone_carriage_returns :: proc(l: ^Lexer) {
+	for i := 0; i < len(l.src); i += 1 {
+		if l.src[i] == '\r' && (i + 1 == len(l.src) || l.src[i + 1] != '\n') {
+			errorf(
+				l.c,
+				Span{file = l.file, lo = u32(i), hi = u32(i + 1)},
+				"L0115",
+				"a carriage return must be followed by a newline",
+			)
+			return
+		}
+	}
 }
 
 @(private = "file")

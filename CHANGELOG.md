@@ -10,6 +10,12 @@ checklist.
 
 ### Breaking changes
 
+- A carriage return in a source file must be followed by a newline. A lone one,
+  inside a comment or a raw string too, is `L0115`, reported at the first in
+  each file; it used to be whitespace, which numbered lines differently from
+  an editor. Upgrade by saving the file with LF or CRLF line endings, and by
+  writing a carriage return a raw string held as `"\r"`.
+
 - Unsigned `+`, `-`, `*`, and unary `-` panic when the result does not fit, as
   signed arithmetic does: `u32(3) - u32(5)` stops the program with `unsigned
   integer overflow` instead of giving 4294967294. Unsigned SIMD lanes and the
