@@ -2,8 +2,6 @@ declare double @sqrt(double)
 declare float @sqrtf(float)
 declare double @hypot(double, double)
 declare float @hypotf(float, float)
-declare double @fma(double, double, double)
-declare float @fmaf(float, float, float)
 declare double @pow(double, double)
 declare float @powf(float, float)
 declare double @sin(double)
@@ -17,7 +15,7 @@ call double @sqrt(double
 call float @sqrtf(float
 call double @hypot(double
 call float @hypotf(float
-call double @fma(double
-call float @fmaf(float
 call double @fmod(double
 call float @fmodf(float
+not @fma(
+not @fmaf(

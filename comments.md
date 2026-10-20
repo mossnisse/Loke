@@ -1123,6 +1123,13 @@ Horner form, says so. It is a procedure rather than an operator because it is
 rare outside such kernels and takes three operands. See
 [Floating-point operators](design.md#floating-point-operators).
 
+It is computed in integer arithmetic, with the exact product in a `u128`,
+instead of calling the C library. Microsoft documents its `fma` as allowed to
+round incorrectly, and older versions did on processors without the
+instruction; the CRT is linked statically from whichever SDK a build finds.
+The baseline x86-64 target has no FMA instruction, so the software path is the
+only one today. It is slower than the instruction, and correct.
+
 ### SIMD lanes follow the scalar rule
 
 Replacing a scalar kernel with SIMD should not change overflow behavior.

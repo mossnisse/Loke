@@ -11,8 +11,6 @@ main :: proc() {
 	_ = math.sqrt_f32(f32(2.0));
 	_ = math.hypot(3.0, 4.0);
 	_ = math.hypot_f32(f32(3.0), f32(4.0));
-	_ = math.fma(2.0, 3.0, 4.0);
-	_ = math.fma_f32(f32(2.0), f32(3.0), f32(4.0));
 	_ = math.pow(2.0, 10.0);
 	_ = math.pow_f32(f32(2.0), f32(10.0));
 	_ = math.sin(1.0);
@@ -22,6 +20,10 @@ main :: proc() {
 	_ = math.exp_f32(f32(1.0));
 	_ = math.tan_f32(f32(1.0));
 	_ = math.acos_f32(f32(0.0));
+	// `fma` is computed in Loke, not by the C library, whose `fma` is not
+	// correctly rounded in every version.
+	_ = math.fma(2.0, 3.0, 4.0);
+	_ = math.fma_f32(f32(2.0), f32(3.0), f32(4.0));
 	// Classification is a bit test in Loke source, not a runtime call: no
 	// `declare` of any kind belongs to it.
 	_ = math.is_nan(1.0);

@@ -165,9 +165,9 @@ trigonometry :: proc() {
 	            close_f32(math.to_radians_f32(f32(90.0)), f32(math.PI/2.0)));
 }
 
-// `fma` rounds once. `a` is `1 + 2^-27`, so `a*a` is `1 + 2^-26 + 2^-54`, whose
-// last term the rounded product drops: the fused form keeps it. At `f32`, `1 +
-// 2^-12` squared drops `2^-24` the same way.
+// `fma` rounds once, and nowhere else. `a` is `1 + 2^-27`, so `a*a` is
+// `1 + 2^-26 + 2^-54`, whose last term the rounded product drops: the fused
+// form keeps it. At `f32`, `1 + 2^-12` squared drops `2^-24` the same way.
 fused :: proc() {
 	a: f64 = 1.0 + 7.450580596923828e-09;
 	product := a*a;
@@ -177,12 +177,34 @@ fused :: proc() {
 	fmt.println(math.fma_f32(a32, a32, -product32), a32*a32 - product32);
 	fmt.println(math.fma(2.0, 3.0, 4.0), math.fma_f32(f32(2.0), f32(3.0), f32(4.0)));
 
+	// `(1 + 2^-27)*(1 + 2^-26)` is a midpoint: its `2^-53` term is half the
+	// unit in the last place. Alone it rounds to even, which is down; an addend
+	// too far below it to be kept in the sum still decides the direction. At
+	// `f32` the midpoint is `(2^60 + 2^48)^2` and the addend the smallest
+	// subnormal.
+	b: f64 = 1.0 + 1.4901161193847656e-08;
+	tie := math.fma(a, b, 0.0);
+	fmt.println(tie == a*b, math.fma(a, b, 1.0e-300) - tie, math.fma(a, b, -1.0e-300) == tie);
+	big32 := a32*f32(1152921504606846976.0);
+	tie32 := math.fma_f32(big32, big32, f32(0.0));
+	fmt.println(tie32 == big32*big32, math.fma_f32(big32, big32, math.F32_MIN_SUBNORMAL) - tie32,
+	            math.fma_f32(big32, big32, f32(0.0) - math.F32_MIN_SUBNORMAL) == tie32);
+
 	// The special cases of the written product and sum.
 	fmt.println(math.is_nan(math.fma(INF, 0.0, 1.0)), math.is_nan(math.fma(INF, 1.0, 0.0 - INF)));
 	fmt.println(math.is_nan(math.fma(NAN, 1.0, 1.0)), math.is_nan(math.fma(1.0, 1.0, NAN)));
 	fmt.println(math.fma(INF, 2.0, 1.0), math.is_nan_f32(math.fma_f32(INF32, f32(0.0), f32(1.0))));
 	fmt.println(bits64(math.fma(1.0, 1.0, -1.0)), bits64(math.fma(-0.0, 1.0, -0.0)));
 	fmt.println(bits64(math.fma(0.0, -1.0, 0.0)), bits32(math.fma_f32(f32(-0.0), f32(1.0), f32(-0.0))));
+
+	// The product is exact, so it neither overflows nor underflows before the
+	// sum: `1e308*2` is finite here, and a negative product too small for a
+	// subnormal still rounds to `-0`.
+	fmt.println(math.fma(1.0e308, 2.0, 0.0 - INF), math.fma(1.0e308, 2.0, -1.0e308), math.fma(1.0e308, 2.0, 0.0));
+	fmt.println(bits64(math.fma(0.0 - math.F64_MIN_SUBNORMAL, 0.5, 0.0)),
+	            bits64(math.fma(math.F64_MIN_NORMAL, 0.5, 0.0)), bits64(math.fma(math.F64_MIN_SUBNORMAL, 0.75, 0.0)));
+	fmt.println(math.fma_f32(f32(3.0e38), f32(2.0), f32(0.0) - INF32), math.fma_f32(f32(3.0e38), f32(2.0), f32(-3.0e38)));
+	fmt.println(bits32(math.fma_f32(f32(0.0) - math.F32_MIN_SUBNORMAL, f32(0.5), f32(0.0))));
 }
 
 main :: proc() {

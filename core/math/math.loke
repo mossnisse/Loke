@@ -340,10 +340,6 @@ foreign platform_math {
 	rt_hypot_f64 :: proc "c" (a: f64, b: f64) -> f64 ---;
 	@(link_name="hypotf")
 	rt_hypot_f32 :: proc "c" (a: f32, b: f32) -> f32 ---;
-	@(link_name="fma")
-	rt_fma_f64 :: proc "c" (a: f64, b: f64, c: f64) -> f64 ---;
-	@(link_name="fmaf")
-	rt_fma_f32 :: proc "c" (a: f32, b: f32, c: f32) -> f32 ---;
 	@(link_name="pow")
 	rt_pow_f64 :: proc "c" (a: f64, b: f64) -> f64 ---;
 	@(link_name="powf")
@@ -409,16 +405,174 @@ hypot_f32 :: proc(a: f32, b: f32) -> f32 { return rt_hypot_f32(a, b); }
 
 // `a*b + c` with a single rounding: the product is not rounded before the sum
 // (design.md "Floating-point operators"). Unlike a transcendental function's,
-// the result is promised correctly rounded. The special cases are those of the
-// written product and sum:
+// the result is promised correctly rounded. A NaN operand gives a NaN, and
+// otherwise the special cases are those of the exact product and the sum:
 //
-//   a NaN operand                            -> NaN
 //   a or b infinite, the other zero          -> NaN
-//   a*b infinite, c the opposite infinity    -> NaN
+//   a or b infinite, c the opposite infinity -> NaN
 //   a*b + c exactly zero                     -> +0, unless a*b and c are both
 //                                               negative zeros
-fma :: proc(a: f64, b: f64, c: f64) -> f64 { return rt_fma_f64(a, b, c); }
-fma_f32 :: proc(a: f32, b: f32, c: f32) -> f32 { return rt_fma_f32(a, b, c); }
+//
+// A finite product never overflows on its way to the sum, so
+// `fma(1.0e308, 2.0, -infinity)` is `-infinity`.
+//
+// Computed in integer arithmetic rather than by the C library, whose `fma` is
+// not correctly rounded in every version a toolchain may link.
+fma :: proc(a: f64, b: f64, c: f64) -> f64 {
+	if (!is_finite(a) || !is_finite(b) || a == 0.0 || b == 0.0) {
+		// The product is exact: an infinity, a NaN, or a signed zero.
+		return a*b + c;
+	}
+	if (!is_finite(c)) { return c; }
+	bits := fused_multiply_add(unsafe.transmute(u64, a), unsafe.transmute(u64, b),
+		unsafe.transmute(u64, c), 53, 1023);
+	return unsafe.transmute(f64, bits);
+}
+
+fma_f32 :: proc(a: f32, b: f32, c: f32) -> f32 {
+	if (!is_finite_f32(a) || !is_finite_f32(b) || a == f32(0.0) || b == f32(0.0)) {
+		return a*b + c;
+	}
+	if (!is_finite_f32(c)) { return c; }
+	bits := fused_multiply_add(u64(unsafe.transmute(u32, a)), u64(unsafe.transmute(u32, b)),
+		u64(unsafe.transmute(u32, c)), 24, 127);
+	return unsafe.transmute(f32, u32(bits));
+}
+
+// One finite operand of `fused_multiply_add`: `significand * 2^exponent`.
+@(private)
+Fused_Operand :: struct {
+	negative:    bool,
+	significand: u128,
+	exponent:    int,
+}
+
+// The encoding of a finite `a*b + c` in a binary format of `precision`
+// significand bits and maximum exponent `max_exponent`, given the encodings of
+// its finite operands, `a` and `b` non-zero. The product is exact in `u128`;
+// both terms are aligned with their top bit at bit 125, which leaves room for
+// a carry, and a term shifted right keeps a sticky bit for whatever it lost.
+@(private)
+fused_multiply_add :: proc(a: u64, b: u64, c: u64, precision: int, max_exponent: int) -> u64 {
+	x := fused_operand(a, precision, max_exponent);
+	y := fused_operand(b, precision, max_exponent);
+	z := fused_operand(c, precision, max_exponent);
+
+	// Below 2^106, so the product cannot overflow; `*%` keeps the 128-bit
+	// multiply free of an overflow check.
+	product := Fused_Operand{
+		negative    = x.negative != y.negative,
+		significand = x.significand *% y.significand,
+		exponent    = x.exponent + y.exponent,
+	};
+	high := fused_align(product);
+	sum := high.significand;
+	if (z.significand != 0) {
+		low := fused_align(z);
+		// Make `high` the larger term.
+		if (low.exponent > high.exponent || (low.exponent == high.exponent && low.significand > high.significand)) {
+			larger := low;
+			low = high;
+			high = larger;
+		}
+		// A shift of at most 20 loses nothing: the terms' low 20 bits are
+		// zero. A longer one leaves the larger term's top bit, and the sum's,
+		// far above the sticky bit.
+		shift := high.exponent - low.exponent;
+		aligned := low.significand >> shift;
+		if (aligned << shift != low.significand) { aligned |= 1; }
+		if (high.negative == low.negative) {
+			sum = high.significand + aligned;
+		} else {
+			sum = high.significand - aligned;
+		}
+	}
+	if (sum == 0) {
+		// Exact cancellation, which round-to-nearest makes `+0`.
+		return 0;
+	}
+
+	// Normalize the sum to bit 127 and round at the bit worth the result's
+	// unit in the last place: the format's precision for a normal result, or
+	// the smallest subnormal's for a smaller one.
+	top := leading_zeros_u128(sum);
+	sum <<= top;
+	exponent := high.exponent - top;
+	min_exponent := 1 - max_exponent;
+	unit := 128 - precision;
+	subnormal_unit := min_exponent - precision + 1 - exponent;
+	if (subnormal_unit > unit) { unit = subnormal_unit; }
+	// The exponent field holds `2*max_exponent + 1` at most, so the sign bit
+	// is the next one up.
+	sign := u64(0);
+	if (high.negative) { sign = u64(2*max_exponent + 2) << (precision - 1); }
+	if (unit > 128) {
+		// Below half the smallest subnormal.
+		return sign;
+	}
+	significand := sum >> unit;
+	remainder := sum - (significand << unit);
+	half := u128(1) << (unit - 1);
+	if (remainder > half || (remainder == half && (significand & 1) == 1)) {
+		significand += 1;
+	}
+
+	if (unit > 128 - precision) {
+		// A subnormal encodes its significand as it is, and one that rounds up
+		// to the smallest normal carries into the exponent field by itself.
+		return sign | u64(significand);
+	}
+	result_exponent := 127 + exponent;
+	if (significand >> precision != 0) {
+		significand >>= 1;
+		result_exponent += 1;
+	}
+	if (result_exponent > max_exponent) {
+		return sign | (u64(2*max_exponent + 1) << (precision - 1));
+	}
+	// The significand's leading bit adds one to the biased exponent below it.
+	return sign | ((u64(result_exponent + max_exponent - 1) << (precision - 1)) + u64(significand));
+}
+
+// The operand an encoding holds, a subnormal one included.
+@(private)
+fused_operand :: proc(bits: u64, precision: int, max_exponent: int) -> Fused_Operand {
+	fraction_bits := precision - 1;
+	field := bits >> fraction_bits;
+	biased := int(field & u64(2*max_exponent + 1));
+	fraction := u128(bits & ((u64(1) << fraction_bits) - 1));
+	if (biased == 0) {
+		return {negative = field > u64(2*max_exponent + 1), significand = fraction,
+			exponent = 2 - max_exponent - precision};
+	}
+	return {negative = field > u64(2*max_exponent + 1),
+		significand = fraction | (u128(1) << fraction_bits),
+		exponent = biased - max_exponent - fraction_bits};
+}
+
+// A non-zero term shifted so that its top bit is bit 125.
+@(private)
+fused_align :: proc(term: Fused_Operand) -> Fused_Operand {
+	shift := leading_zeros_u128(term.significand) - 2;
+	return {negative = term.negative, significand = term.significand << shift,
+		exponent = term.exponent - shift};
+}
+
+// The number of zero bits above the highest set bit of a non-zero `x`.
+@(private)
+leading_zeros_u128 :: proc(x: u128) -> int {
+	count := 0;
+	value := x;
+	width := 64;
+	for (width > 0) {
+		if (value >> (128 - width) == 0) {
+			count += width;
+			value <<= width;
+		}
+		width /= 2;
+	}
+	return count;
+}
 
 // `base` raised to `exponent`, following the IEC 60559 special-case table:
 //

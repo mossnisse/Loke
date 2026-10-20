@@ -1284,9 +1284,11 @@ The procedures backed by the C library promise the classifications, signs,
 poles, and domain results documented on each one. They do not promise correctly
 rounded results, identical last bits across platforms, a particular NaN
 payload, or `errno` contents, and they never turn a floating-point exception
-into a panic. `fma(a, b, c)` is the exception to the first: it computes `a*b + c` with a
+into a panic. `fma(a, b, c)` is not one of them: it computes `a*b + c` with a
 single rounding, correctly rounded, since `design.md` "Floating-point
-operators" never fuses the written expression.
+operators" never fuses the written expression. Its result does not depend on
+the C library, and the product's exponent is not bounded, so a finite product
+too large for the format still meets the addend.
 
 ## `core:random`
 
