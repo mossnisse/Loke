@@ -39,6 +39,14 @@ inf true
 -inf true
 inf 0
 0.0 inf
+5.551115123125783e-17 0.0
+5.9604645e-8 0.0
+10.0 10.0
+true true
+true true
+inf true
+0 9223372036854775808
+0 2147483648
 1.0 1.0 1.0
 1.0 1.0 3.5
 true true

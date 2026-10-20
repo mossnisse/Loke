@@ -99,6 +99,9 @@ checklist.
 
 ### Added
 
+- `math.fma(a, b, c)` and `math.fma_f32` compute `a*b + c` with a single
+  rounding. The compiler never fuses a written `a*b + c`, so this is the way
+  to ask for it. See standard-library.md "`core:math`".
 - The wrapping operators `+%`, `-%`, and `*%`, with `+%=`, `-%=`, and `*%=`,
   keep the low bits of an integer sum, difference, or product, signed or
   unsigned, and never panic. They bind as `+`, `-`, and `*` do, apply lane by

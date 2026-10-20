@@ -340,6 +340,10 @@ foreign platform_math {
 	rt_hypot_f64 :: proc "c" (a: f64, b: f64) -> f64 ---;
 	@(link_name="hypotf")
 	rt_hypot_f32 :: proc "c" (a: f32, b: f32) -> f32 ---;
+	@(link_name="fma")
+	rt_fma_f64 :: proc "c" (a: f64, b: f64, c: f64) -> f64 ---;
+	@(link_name="fmaf")
+	rt_fma_f32 :: proc "c" (a: f32, b: f32, c: f32) -> f32 ---;
 	@(link_name="pow")
 	rt_pow_f64 :: proc "c" (a: f64, b: f64) -> f64 ---;
 	@(link_name="powf")
@@ -402,6 +406,19 @@ sqrt_f32 :: proc(x: f32) -> f32 { return rt_sqrt_f32(x); }
 // a NaN operand: `hypot(infinity, NaN)` is `+infinity`.
 hypot :: proc(a: f64, b: f64) -> f64 { return rt_hypot_f64(a, b); }
 hypot_f32 :: proc(a: f32, b: f32) -> f32 { return rt_hypot_f32(a, b); }
+
+// `a*b + c` with a single rounding: the product is not rounded before the sum
+// (design.md "Floating-point operators"). Unlike a transcendental function's,
+// the result is promised correctly rounded. The special cases are those of the
+// written product and sum:
+//
+//   a NaN operand                            -> NaN
+//   a or b infinite, the other zero          -> NaN
+//   a*b infinite, c the opposite infinity    -> NaN
+//   a*b + c exactly zero                     -> +0, unless a*b and c are both
+//                                               negative zeros
+fma :: proc(a: f64, b: f64, c: f64) -> f64 { return rt_fma_f64(a, b, c); }
+fma_f32 :: proc(a: f32, b: f32, c: f32) -> f32 { return rt_fma_f32(a, b, c); }
 
 // `base` raised to `exponent`, following the IEC 60559 special-case table:
 //

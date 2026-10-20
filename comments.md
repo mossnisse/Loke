@@ -1107,6 +1107,22 @@ make a refactor from constant to variable change behavior silently.
 Those explicit operations also make wrapping arithmetic possible without
 relying on lossy ordinary casts.
 
+### Fused multiply-add is written
+
+A floating-point expression is evaluated as written: `a*b + c` rounds the
+product and then the sum, and the compiler never fuses them. A fused result is
+usually more accurate but not always wanted. `a*b - a*b` stops being zero when
+one product is fused and the other rounded, and the sign of a discriminant
+`b*b - 4.0*a*c` can flip. If the compiler chose, the result would change
+with the optimization level and the target. C and Go let the implementation fuse; Rust and Java never do and offer the
+fused operation by name.
+
+`math.fma(a, b, c)` is that name. It rounds once on every target, so code that
+relies on the extra precision, such as an error-free product or a polynomial in
+Horner form, says so. It is a procedure rather than an operator because it is
+rare outside such kernels and takes three operands. See
+[Floating-point operators](design.md#floating-point-operators).
+
 ### SIMD lanes follow the scalar rule
 
 Replacing a scalar kernel with SIMD should not change overflow behavior.

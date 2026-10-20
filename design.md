@@ -3992,7 +3992,7 @@ For floating-point types:
 
 Floating-point division by zero follows IEEE-754 and does not panic: a non-zero dividend produces `+Inf` or `-Inf` according to the signs of the operands, and `0.0/0.0` produces a NaN. Integer division by zero panics. Default floating-point exception handling is non-stop; a program that wants trapping behavior installs it through the target's floating-point environment.
 
-Floating-point operations are not contracted or reassociated. Each operation the source writes is evaluated and rounded on its own, so `a*b + c` is a multiplication then an addition, never a fused multiply-add whose result could differ.
+Floating-point operations are not contracted or reassociated. Each operation the source writes is evaluated and rounded on its own, so `a*b + c` is a multiplication then an addition, never a fused multiply-add whose result could differ. A fused multiply-add, which rounds once, is written `math.fma(a, b, c)` ([`core:math`](standard-library.md#coremath)).
 
 # 6. Statements & Control Flow
 

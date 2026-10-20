@@ -11,6 +11,8 @@ main :: proc() {
 	_ = math.sqrt_f32(f32(2.0));
 	_ = math.hypot(3.0, 4.0);
 	_ = math.hypot_f32(f32(3.0), f32(4.0));
+	_ = math.fma(2.0, 3.0, 4.0);
+	_ = math.fma_f32(f32(2.0), f32(3.0), f32(4.0));
 	_ = math.pow(2.0, 10.0);
 	_ = math.pow_f32(f32(2.0), f32(10.0));
 	_ = math.sin(1.0);

@@ -1272,9 +1272,9 @@ The rest of the package is:
   are bit tests: no rounding, and a NaN is never quieted;
 - `min`, `max`, and `clamp` over any numeric, ordered `T`; `clamp` with
   `high < low` panics;
-- `floor`, `ceil`, `round`, `trunc`, `mod`, `sqrt`, `hypot`, `pow`, `exp`, `log`,
-  `log2`, `log10`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`,
-  `to_radians`, and `to_degrees`.
+- `floor`, `ceil`, `round`, `trunc`, `mod`, `sqrt`, `hypot`, `fma`, `pow`,
+  `exp`, `log`, `log2`, `log10`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`,
+  `atan2`, `to_radians`, and `to_degrees`.
 
 Floating-point functions use an unsuffixed name for `f64` and `_f32` for
 `f32`, avoiding ambiguous overloads for untyped literals. There is no implicit
@@ -1284,7 +1284,9 @@ The procedures backed by the C library promise the classifications, signs,
 poles, and domain results documented on each one. They do not promise correctly
 rounded results, identical last bits across platforms, a particular NaN
 payload, or `errno` contents, and they never turn a floating-point exception
-into a panic.
+into a panic. `fma(a, b, c)` is the exception to the first: it computes `a*b + c` with a
+single rounding, correctly rounded, since `design.md` "Floating-point
+operators" never fuses the written expression.
 
 ## `core:random`
 

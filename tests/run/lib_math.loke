@@ -165,10 +165,31 @@ trigonometry :: proc() {
 	            close_f32(math.to_radians_f32(f32(90.0)), f32(math.PI/2.0)));
 }
 
+// `fma` rounds once. `a` is `1 + 2^-27`, so `a*a` is `1 + 2^-26 + 2^-54`, whose
+// last term the rounded product drops: the fused form keeps it. At `f32`, `1 +
+// 2^-12` squared drops `2^-24` the same way.
+fused :: proc() {
+	a: f64 = 1.0 + 7.450580596923828e-09;
+	product := a*a;
+	fmt.println(math.fma(a, a, -product), a*a - product);
+	a32: f32 = f32(1.0) + f32(0.000244140625);
+	product32 := a32*a32;
+	fmt.println(math.fma_f32(a32, a32, -product32), a32*a32 - product32);
+	fmt.println(math.fma(2.0, 3.0, 4.0), math.fma_f32(f32(2.0), f32(3.0), f32(4.0)));
+
+	// The special cases of the written product and sum.
+	fmt.println(math.is_nan(math.fma(INF, 0.0, 1.0)), math.is_nan(math.fma(INF, 1.0, 0.0 - INF)));
+	fmt.println(math.is_nan(math.fma(NAN, 1.0, 1.0)), math.is_nan(math.fma(1.0, 1.0, NAN)));
+	fmt.println(math.fma(INF, 2.0, 1.0), math.is_nan_f32(math.fma_f32(INF32, f32(0.0), f32(1.0))));
+	fmt.println(bits64(math.fma(1.0, 1.0, -1.0)), bits64(math.fma(-0.0, 1.0, -0.0)));
+	fmt.println(bits64(math.fma(0.0, -1.0, 0.0)), bits32(math.fma_f32(f32(-0.0), f32(1.0), f32(-0.0))));
+}
+
 main :: proc() {
 	rounding();
 	remainder();
 	roots();
+	fused();
 	powers();
 	trigonometry();
 }

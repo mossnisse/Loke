@@ -110,7 +110,7 @@ allocating string transformations other than `copy`, Unicode case mapping,
 normalization, and grapheme segmentation; terminal colors, cursor movement,
 mouse and resize events; `thread.try_spawn`, `try_lock`, condition variables,
 and thread identity. Math gaps include hyperbolics,
-`cbrt`/`fma`/`ldexp`/`frexp`/`modf`, `erf`, `gamma`, lane-wise SIMD math, and
+`cbrt`/`ldexp`/`frexp`/`modf`, `erf`, `gamma`, lane-wise SIMD math, and
 integer bit helpers. `core:simd`'s remaining gaps are specified in
 [What SIMD does not do](design.md#what-simd-does-not-do).
 
