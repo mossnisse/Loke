@@ -1,0 +1,10 @@
+package main; import "core:fmt";
+
+import "lib";
+
+main :: proc() {
+	fmt.println(lib.counter);
+	fmt.println(lib.total);
+	fmt.println(lib._commode);
+	fmt.println(lib.LIMIT, lib.count(), lib.total_now(), lib.abs(-2));
+}

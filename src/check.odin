@@ -534,6 +534,31 @@ declare_all :: proc(k: ^Checker, d: ^Decl, top_level := false) {
 		append(&symbols, id)
 	}
 	d.symbols = symbols[:]
+	reject_public_variable(k, d)
+}
+
+// design.md "`@(public)`": a package-level variable is never public, so another
+// package reaches one only through a procedure, and a write effect crosses a
+// package boundary only through a borrow that procedure visibly returns. A
+// public-default file or foreign block leaves its variables package-private
+// without a diagnostic.
+reject_public_variable :: proc(k: ^Checker, d: ^Decl) {
+	if !d.top_level || d.kind != .Var {
+		return
+	}
+	if attribute, written := find_attribute(d.attributes, "public"); written {
+		errorf(
+			k.c,
+			attribute.span,
+			"L0338",
+			"a variable cannot be `@(public)`; export a procedure that reads it or returns a borrow of it",
+		)
+	}
+	for sid in d.symbols {
+		if sym := symbol_of(k.c, sid); sym != nil {
+			sym.public = false
+		}
+	}
 }
 
 // design.md "Exported names": package-private by default. `@(public)` exports

@@ -47,10 +47,10 @@ The largest side any shape may have.
 make_point :: proc(x: f64, y: f64) -> Point
 ```
 
-## limit
+## LIMIT
 
 ```odin
-limit := 10
+LIMIT :: 10
 ```
 
 ## square_area

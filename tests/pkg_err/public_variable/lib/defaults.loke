@@ -1,0 +1,8 @@
+@(public)
+package lib;
+
+// A public-default file leaves its variables package-private, with no
+// diagnostic.
+total := 0;
+
+total_now :: proc() -> int { return total; }

@@ -31,9 +31,10 @@ foreign loke_runtime {
 @(public)
 Args :: struct {}
 
-// The zero value is the whole vector; there is nothing else one could be.
+// The zero value is the whole vector; there is nothing else one could be. A
+// constant, since a variable cannot be public (design.md "`@(public)`").
 @(public)
-args: Args = {};
+args :: Args{};
 
 @(public)
 Args_Iterator :: struct { next_index: int }

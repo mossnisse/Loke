@@ -29,7 +29,7 @@ make_point :: proc(x: f64, y: f64) -> Point {
 	return Point{x, y, 0};
 }
 
-limit := 10; // trailing, so not the doc comment of what follows
+LIMIT :: 10; // trailing, so not the doc comment of what follows
 // The area of a square with `side`.
 // It is always non-negative.
 @(require_results)

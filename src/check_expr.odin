@@ -1196,7 +1196,9 @@ check_package_selector :: proc(k: ^Checker, v: ^Expr_Selector, ident: ^Expr_Iden
 	symbol := symbol_of(k.c, symbol_id)
 	if symbol == nil || !symbol.public {
 		errorf(k.c, v.span, "L0336", "`%s` is not public in package `%s`", v.name.text, ident.name)
-		if symbol != nil {
+		if symbol != nil && symbol.kind == .Var {
+			add_notef(k.c, symbol.span, "declared here; a variable is never public, so export a procedure that reads it")
+		} else if symbol != nil {
 			add_notef(k.c, symbol.span, "declared here; add `@(public)` to export it")
 		}
 		v.type = INVALID_TYPE

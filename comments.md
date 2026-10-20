@@ -804,6 +804,23 @@ The package is the encapsulation boundary. `@(private)` means package-private;
 with public defaults. Code needing an independent boundary belongs in another
 package.
 
+### No public variables
+
+Odin exports a variable as it exports anything else. Loke rejects
+`@(public)` on a variable, and a public-default file or foreign block leaves
+its variables package-private. [Global write effects](design.md#global-write-effects)
+are inferred over the whole program and are not part of a procedure's type,
+so with public variables a library that added a write to one of its globals
+could break a caller in another package that held a borrow of it, with no
+signature changed. A caller can now borrow another package's storage only
+through a procedure whose result contract shows that it lends static storage,
+and incremental checking has one inferred dependency fewer that signatures
+miss. The cost to `core` was `os.args`, a zero-sized view that became a
+constant. Read-only public globals were not added to soften the rule: a
+constant already covers a value fixed at compile time, and a value computed
+at run time is a procedure, which can still change how it is computed. This
+was proposed by the language design review of 2026-10-11.
+
 ### Standard free aliases
 
 `f(x)` uses lexical lookup; `x.f()` uses receiver lookup. Special aliases such

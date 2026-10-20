@@ -1,0 +1,17 @@
+L0336
+@6:14
+`counter` is not public in package `lib`
+a variable is never public, so export a procedure that reads it
+L0336
+@7:14
+`total` is not public in package `lib`
+L0336
+@8:14
+`_commode` is not public in package `lib`
+L0338
+@5:3
+a variable cannot be `@(public)`
+L0338
+@8:3
+L0338
+@14:4

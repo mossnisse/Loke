@@ -5502,7 +5502,7 @@ reset();                        // ERROR: a read-only slice of `cache` is still 
 fmt.println(view[0]);
 ```
 
-The effect covers a value parameter, whose managed storage is shared with the caller for the call, as much as a view. A call through a procedure value may run any procedure of a compatible type, and a `dyn` call any witness the program builds for that slot, so each takes the union of their effects. Effects are whole-program and need no annotation; a procedure's effect is not part of its type.
+The effect covers a value parameter, whose managed storage is shared with the caller for the call, as much as a view. A call through a procedure value may run any procedure of a compatible type, and a `dyn` call any witness the program builds for that slot, so each takes the union of their effects. Effects are whole-program and need no annotation; a procedure's effect is not part of its type. Since no variable is [public](#public), a caller borrows another package's storage only through a procedure's result, whose [result contract](#procedure-result-contracts) shows the static provenance.
 
 The same effect finds likely data races. When the entry passed to `core:thread`'s `spawn` is a named procedure whose effect writes file-scope or `static` storage, the call is reported with a warning, since every thread shares that storage. `thread_local` storage belongs to the thread, and an atomic operation takes a read-only receiver, so neither counts as a write here; nor does storage reached through a `thread.Mutex` guard. The warning finds no race the effect cannot see, such as one through a pointer or view.
 
@@ -5665,7 +5665,7 @@ An [object build](#build-configuration) has no entry or argument conversion, so 
 
 #### `os.Args`
 
-`os.args` has type `os.Args`, a stateless, read-only view of the process-lifetime argument vector. Its zero value denotes the whole vector.
+`os.args` is a constant of type `os.Args`, a stateless, read-only view of the process-lifetime argument vector. Its zero value denotes the whole vector.
 
 | Operation | Result |
 | --- | --- |
@@ -6398,7 +6398,7 @@ foreign kernel32 {
 }
 ```
 
-Foreign blocks accept `@(default_calling_convention)`, `@(link_name)` on members, `@(public)`, and `@(require_results)`; see [Attributes](#attributes). A binding usually wants `@(public)` on the block or on the package declaration.
+Foreign blocks accept `@(default_calling_convention)`, `@(link_name)` on members, `@(public)`, and `@(require_results)`; see [Attributes](#attributes). A binding usually wants `@(public)` on the block or on the package declaration, which exports its procedures; a foreign global stays package-private, as every [variable](#public) does.
 
 # Appendices
 
@@ -6539,7 +6539,7 @@ An attribute specifies a property of a declaration, parameter, statement, block,
 
 | Attribute | Applies to | Effect |
 | --- | --- | --- |
-| `@(public)` | declarations other than imports, struct fields, foreign blocks, and the package clause (where it makes the whole file public by default) | [exports from the package](#public) |
+| `@(public)` | declarations other than imports and variables, struct fields, foreign blocks, and the package clause (where it makes the whole file public by default) | [exports from the package](#public) |
 | `@(private)` | declarations other than imports and the package clause, struct fields, and foreign blocks | [package visibility, the default](#private) |
 | `@(export)` | procedure and variable declarations | [emits a symbol for external linking](#export) |
 | `@(link_name=<string>)` | procedure and variable declarations, including foreign ones | [sets the symbol name](#link_namestring) |
@@ -6628,12 +6628,21 @@ This attribute exports a top-level declaration or struct field from its package.
 
 ```odin
 @(public)
-my_variable: int; // visible to importers of this package
+LIMIT :: 64; // visible to importers of this package
 @(public)
-my_other_variable: int;
+limit :: proc() -> int { return LIMIT; }
 ```
 
-Applying `@(public)` to the package declaration makes everything in that file public by default:
+A variable is never public: `@(public)` on a file-scope variable, on one with a `static` or `thread_local` modifier, or on a variable in a foreign block is a compile-time error. Another package reaches the storage only through a procedure that reads it, writes it, or returns a borrow of it, so a caller in another package can hold a borrow that a [write effect](#global-write-effects) conflicts with only when such a procedure visibly returns one.
+
+```odin
+counter: int;            // package-private
+
+@(public)
+count :: proc() -> int { return counter; }
+```
+
+Applying `@(public)` to the package declaration makes everything in that file public by default, except its variables, which stay package-private:
 
 ```odin
 @(public)

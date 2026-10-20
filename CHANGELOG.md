@@ -10,6 +10,24 @@ checklist.
 
 ### Breaking changes
 
+- A variable cannot be `@(public)`: one at file scope, with `static` or
+  `thread_local`, or in a foreign block is `L0338`. A public-default file or
+  foreign block leaves its variables package-private, so an importer naming one
+  gets `L0336`. `os.args` is now a constant, and every use of it reads as
+  before. Upgrade by exporting a procedure in the variable's place:
+
+  ```odin
+  // before
+  @(public)
+  verbose: bool;
+  // after
+  verbose: bool;
+  @(public)
+  is_verbose :: proc() -> bool { return verbose; }
+  @(public)
+  set_verbose :: proc(on: bool) { verbose = on; }
+  ```
+
 - A carriage return in a source file must be followed by a newline. A lone one,
   inside a comment or a raw string too, is `L0115`, reported at the first in
   each file; it used to be whitespace, which numbered lines differently from

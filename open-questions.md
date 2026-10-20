@@ -583,43 +583,6 @@ it. Process termination may end the guarantee because no parent continues.
 Do not add futures, async syntax, or reactive variables merely to solve this
 borrow-and-join problem. See [Concurrency refinements](#concurrency-refinements).
 
-## Language design review (2026-10-11)
-
-A second set of proposals, not an amendment to the specification. The review
-read design.md and grammar.md in full, checked each idea against comments.md
-and the questions above, and confirmed every behavior it cites with the
-shipped compiler at `1ba3c84`. Backward compatibility is not a constraint; a
-proposal that reverses a recorded decision says so. The proposals adopted since
-are defined in design.md, with their reasoning in comments.md; one remains.
-
-The structural concern is that more checking depends on inferred,
-whole-program facts than a library's signatures show; see
-[No public mutable globals](#no-public-mutable-globals) and
-[Public borrow contracts should stand on their own](#public-borrow-contracts-should-stand-on-their-own).
-
-### Recommended order
-
-| Priority | Proposal | Main benefit |
-| --- | --- | --- |
-| Later | No public mutable globals | Effects stop crossing packages invisibly |
-
-### No public mutable globals
-
-[Global write effects](design.md#global-write-effects) are inferred over the
-whole program and are not part of a procedure's type. A print takes the union
-of every `format` method's effect, a `dyn` call that of every witness for its
-slot. A library that adds a write to one of its globals can therefore break a
-caller in another package with no signature changed, and incremental checking
-must track inferred effects as a dependency that signatures miss.
-
-A caller conflicts only over a global it can borrow. Reject `@(public)` on
-mutable file-scope, `static`, and `thread_local` variables, and an importer can
-borrow another package's global only through a procedure returning that borrow,
-whose result contract already shows static provenance. Effects then cross a
-package boundary only for statics a package visibly lends. `core` pays almost
-nothing: its one public mutable global, `os.args`, is a zero-sized view that
-could be a constant.
-
 ## Error handling (2026-10-13)
 
 The error handling proposal of this date is adopted. design.md defines it under

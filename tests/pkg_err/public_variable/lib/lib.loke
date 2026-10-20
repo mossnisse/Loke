@@ -1,0 +1,29 @@
+package lib;
+
+// design.md "`@(public)`": a variable is never public, at file scope, with a
+// storage modifier, or in a foreign block.
+@(public)
+counter: int;
+
+@(public)
+limit: static int = 3;
+
+foreign import crt "system:msvcrt.lib";
+
+foreign crt {
+	@(public) _fmode: i32;
+}
+
+// A public foreign block exports its procedures but not its variables.
+@(public)
+foreign crt {
+	_commode: i32;
+	abs :: proc "c" (value: i32) -> i32 ---;
+}
+
+// A constant and a procedure that reads a variable stay public.
+@(public)
+LIMIT :: 3;
+
+@(public)
+count :: proc() -> int { return counter; }

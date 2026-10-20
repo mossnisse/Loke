@@ -38,7 +38,7 @@ declare_foreign_block :: proc(k: ^Checker, block: ^Item_Foreign_Block) {
 				continue
 			}
 			sym.is_foreign = true
-			if !own_visibility && block_sets_visibility {
+			if !own_visibility && block_sets_visibility && sym.kind != .Var {
 				sym.public = block_public
 			}
 		}
