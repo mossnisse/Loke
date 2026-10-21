@@ -54,8 +54,7 @@ Shared_Block :: struct($T: type) {
 /// A strong handle: one stable, heap-allocated `T` payload and an atomic
 /// strong-reference count. It has no zero value: a handle always shares a
 /// payload, and `Option(Shared(T))` is the absent one.
-// design.md: "It owns one stable, heap-allocated `T` payload and an atomic
-// strong-reference count."
+// design.md "Shared ownership".
 //
 // The block travels as a `rawptr` rather than a typed pointer so the handle
 // carries no borrow: a `Shared(T)` is an owner, and nothing about it should
@@ -132,9 +131,8 @@ impl Shared($T) {
 	/// It does *not* make concurrent access to `T` safe. State that changes behind
 	/// a handle lives in `core:sync`'s `Atomic` or `Once` fields, whose operations
 	/// work through a `^T`, or behind another protocol of the caller's own.
-	// design.md: "`handle.get()` returns a non-owning `^T` whose root provenance
-	// derives from that handle." That is what the `^` receiver buys: it borrows
-	// the caller's handle.
+	// design.md "Shared ownership". That is what the `^` receiver buys: it
+	// borrows the caller's handle.
 	get :: proc(self: ^) -> ^T {
 		block := (^mut Shared_Block(T))(self.block);
 		return &block^.payload[0];
@@ -164,8 +162,7 @@ impl Shared($T) {
 	/// Another handle to the same payload: the strong count goes up and nothing
 	/// is allocated, so `clone` and ordinary assignment share the control block
 	/// instead of cloning `T`. The payload keeps the allocator it was made with.
-	// design.md: "`try_clone` increments the strong count without a new
-	// allocation." The allocator parameter is therefore unused.
+	// design.md "Shared ownership". The allocator parameter is unused.
 	share :: hook(copy) proc(self, allocator: Allocator) -> Result(Shared(T), Allocator_Error) {
 		block := (^mut Shared_Block(T))(self.block);
 		// Relaxed is enough to *add* a reference: the new handle is a copy of one

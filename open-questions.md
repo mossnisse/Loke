@@ -351,6 +351,15 @@ steps are in priority order; each is usable without the next.
 - **Signatures Loke cannot state.** Step 7 leaves operations such as
   `unsafe.transmute`, whose typing no Loke signature expresses, without a
   declaration.
+- **Members of package-private types.** A public-default file makes an `impl`
+  member public even when its type is package-private, so `-doc` lists it
+  although no importer can name the type: `lokec core/time -doc` shows 28
+  members of `Text` and `Scanner`, and `core:fmt`, `core:io`, `core:log`,
+  `core:path`, `core:slice`, and `core:thread` have more. Hiding every member
+  of a private type would also hide the methods of an opaque type that a
+  public procedure returns, which an importer does call. Step 2 needs the
+  rule; one answer is to show such members only when a public signature
+  reaches their type. Found by a review of the `///` migration on 2026-10-21.
 - **Interface files outside the repository.** Whether a project's own
   packages get `api.lokei` by default, and whether `loke.project` should name
   the packages `-api-check` covers.

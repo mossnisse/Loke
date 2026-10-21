@@ -197,8 +197,9 @@ join :: proc(writer: fmt.Writer, options: fmt.Options, component: $T, unit: stri
 // spelling, because there is no `f32` -> `f64` widening to hide one behind.
 
 impl Complex(f64) {
-	/// The magnitude. It does not overflow while the components themselves are
-	/// representable.
+	/// The magnitude. It avoids the overflow and underflow that squaring the
+	/// components would cause; a magnitude beyond `f64`'s range is still
+	/// infinity.
 	// `hypot`, not `sqrt(norm_squared())`: the magnitude of a complex number
 	// whose components are large is representable long after the sum of their
 	// squares is not.

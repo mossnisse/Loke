@@ -52,9 +52,9 @@ impl Duration {
 	milliseconds :: proc(self) -> i64 { return i64(self) / i64(MILLISECOND); }
 	microseconds :: proc(self) -> i64 { return i64(self) / i64(MICROSECOND); }
 
-	/// The duration in seconds. A duration below 2^53 nanoseconds converts
-	/// exactly.
-	// The whole seconds and the rest convert separately.
+	/// The duration in seconds, rounded to an `f64`, so converting it back with
+	/// `from_seconds_f64` need not give the same duration.
+	// The whole seconds and the rest convert separately, and their sum rounds.
 	seconds_f64 :: proc(self) -> f64 {
 		return f64(i64(self) / i64(SECOND)) + f64(i64(self) % i64(SECOND)) / 1e9;
 	}

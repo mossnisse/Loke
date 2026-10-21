@@ -89,7 +89,7 @@ impl Text {
 		foreach (byte in text.bytes()) { self.put(byte); }
 	}
 
-	/// `value` in at least `width` digits, zero-padded.
+	// `value` in at least `width` digits, zero-padded.
 	put_number :: proc(self: inout, value: u64, width: int) {
 		digits: [20]u8 = {};
 		count := 0;
@@ -105,9 +105,9 @@ impl Text {
 		}
 	}
 
-	/// A fraction of `digits` decimal places, `value` being less than
-	/// 10^digits: shortest drops the trailing zeros, and nothing prints for
-	/// zero; otherwise exactly `keep` places, truncated.
+	// A fraction of `digits` decimal places, `value` being less than
+	// 10^digits: shortest drops the trailing zeros, and nothing prints for
+	// zero; otherwise exactly `keep` places, truncated.
 	put_fraction :: proc(self: inout, value: u64, digits: int, keep: int, shortest: bool) {
 		rest := value;
 		places := digits;
@@ -399,7 +399,7 @@ impl Scanner {
 		return true;
 	}
 
-	/// A separator the extended format writes and the basic format leaves out.
+	// A separator the extended format writes and the basic format leaves out.
 	separator :: proc(self: inout, byte: u8) -> Status(Parse_Error) {
 		if (!self.basic && !self.take(byte)) { return .err(.Invalid_Syntax); }
 		return .ok;
@@ -410,7 +410,7 @@ impl Scanner {
 		return .ok;
 	}
 
-	/// Exactly `count` decimal digits.
+	// Exactly `count` decimal digits.
 	digits :: proc(self: inout, count: int) -> Result(int, Parse_Error) {
 		value := 0;
 		foreach (_ in 0 ..< count) {
@@ -422,15 +422,15 @@ impl Scanner {
 		return value;
 	}
 
-	/// `.` or `,` and at least one digit, as nanoseconds; digits past the ninth
-	/// are read and dropped. No separator is no fraction.
+	// `.` or `,` and at least one digit, as nanoseconds; digits past the ninth
+	// are read and dropped. No separator is no fraction.
 	nanoseconds :: proc(self: inout) -> Result(i64, Parse_Error) {
 		if (!self.take(u8('.')) && !self.take(u8(','))) { return 0; }
 		fraction := self.fraction() or_return;
 		return i64(fraction_of(fraction, u64(SECOND)));
 	}
 
-	/// The digits after a decimal sign, at least one.
+	// The digits after a decimal sign, at least one.
 	fraction :: proc(self: inout) -> Result([]u8, Parse_Error) {
 		start := self.at;
 		for (; self.peek() >= u8('0') && self.peek() <= u8('9'); ) { self.at += 1; }
@@ -438,8 +438,8 @@ impl Scanner {
 		return self.bytes[start:self.at];
 	}
 
-	/// `2026-10-15` or `20261015`. The separator after the year decides the
-	/// format for the rest of the value.
+	// `2026-10-15` or `20261015`. The separator after the year decides the
+	// format for the rest of the value.
 	date :: proc(self: inout) -> Result(Date, Parse_Error) {
 		year := self.digits(4) or_return;
 		self.basic = self.peek() != u8('-');
@@ -451,7 +451,7 @@ impl Scanner {
 		return Date.from_components(year, month, day) or_return .Invalid_Value;
 	}
 
-	/// `14:34:56.789` or `143456.789`; seconds are required, as in RFC 3339.
+	// `14:34:56.789` or `143456.789`; seconds are required, as in RFC 3339.
 	time_of_day :: proc(self: inout) -> Result(Time_Of_Day, Parse_Error) {
 		hour := self.digits(2) or_return;
 		self.separator(u8(':')) or_return;
@@ -478,8 +478,8 @@ impl Scanner {
 		return Date_Time{date, time};
 	}
 
-	/// `Z`, or a sign and hours and minutes. `-00:00`, which RFC 3339 used for
-	/// an unknown local offset, reads as `Z`, the spelling RFC 9557 gives it.
+	// `Z`, or a sign and hours and minutes. `-00:00`, which RFC 3339 used for
+	// an unknown local offset, reads as `Z`, the spelling RFC 9557 gives it.
 	offset :: proc(self: inout) -> Result(Offset, Parse_Error) {
 		if (self.take(u8('Z')) || self.take(u8('z'))) { return UTC; }
 		sign := 1;
@@ -495,8 +495,8 @@ impl Scanner {
 		return Offset{sign * (hours * 60 + minutes)};
 	}
 
-	/// A leap second ends a UTC minute: local minute 59 at `Z`, 29 at +05:30,
-	/// 44 at +05:45.
+	// A leap second ends a UTC minute: local minute 59 at `Z`, 29 at +05:30,
+	// 44 at +05:45.
 	// standard-library "Leap seconds".
 	confirm_leap :: proc(self, time: Time_Of_Day, offset: Offset) -> Status(Parse_Error) {
 		if (self.leap && ((time.minute() - offset.east) % 60 + 60) % 60 != 59) {
@@ -505,7 +505,7 @@ impl Scanner {
 		return .ok;
 	}
 
-	/// Digits and an optional fraction, with at least one digit before it.
+	// Digits and an optional fraction, with at least one digit before it.
 	number :: proc(self: inout) -> Result(Number, Parse_Error) {
 		number := Number{};
 		start := self.at;
@@ -522,7 +522,7 @@ impl Scanner {
 		return number;
 	}
 
-	/// After the `P`: `T` and hours, minutes, and seconds, at least one of them.
+	// After the `P`: `T` and hours, minutes, and seconds, at least one of them.
 	iso_duration :: proc(self: inout) -> Result(u64, Parse_Error) {
 		total: u64 = 0;
 		components := 0;
@@ -562,7 +562,7 @@ impl Scanner {
 		return total;
 	}
 
-	/// `1h30m`, `2m0.5s`, `153ms`, `1.5µs`, `250ns`.
+	// `1h30m`, `2m0.5s`, `153ms`, `1.5µs`, `250ns`.
 	short_duration :: proc(self: inout) -> Result(u64, Parse_Error) {
 		total: u64 = 0;
 		last := -1;
