@@ -7,6 +7,7 @@ package geometry;
 
 import "./units";
 import text "core:fmt";
+import "core:math";
 import "core:mem";
 
 /// A point. The interface file shows only its public fields.
@@ -80,7 +81,11 @@ impl Measured($T) {
 /// The corners of a square, one at a time.
 corners :: proc() -> Corner_Iterator ---;
 
-// `Corner_Iterator` is private to the package, but a public declaration names it.
+// Private to the package, but a public declaration names it.
+Corner_Iterator :: struct {
+	at: int,
+}
+
 impl Corner_Iterator {
 	/// The next corner, or `.none` after the fourth.
 	next :: proc(self: inout Corner_Iterator) -> Option(int) ---;
@@ -110,3 +115,63 @@ Linux_Only :: struct {
 
 /// The perimeter of a square with sides of `side`.
 square_perimeter :: proc(side: f64) -> f64 ---;
+
+accept :: proc(items: []mut u8) ---;
+
+when (LOKE_DEBUG) {
+
+/// Only debug builds have it.
+DEBUG_ONLY :: 1;
+
+}
+
+when (LOKE_DEBUG) {
+
+import dep "core:io";
+
+code_of :: proc(code: dep.Code) ---;
+
+} else {
+
+import dep "core:fs";
+
+code_of :: proc(kind: dep.Kind) ---;
+
+}
+
+when (math.PI > 3.0) {
+
+/// Pi is more than three.
+PI_IS_LARGE :: true;
+
+}
+
+/// The double-click time, in milliseconds.
+@(link_name="GetDoubleClickTime")
+@(require_results)
+double_click_time :: proc "stdcall" () -> u32 ---;
+
+// Private to the package, but a public declaration names it.
+small :: proc(value: int) -> int ---;
+
+// Private to the package, but a public declaration names it.
+large :: proc(value: string_view) -> int ---;
+
+/// The size of a number or a text.
+size :: proc{small, large};
+
+// Private to the package, but a public declaration names it.
+Inner :: struct {}
+
+// Private to the package, but a public declaration names it.
+Alias :: Inner;
+
+/// One value, whose type is private.
+make_one :: proc() -> Alias ---;
+
+impl Inner {
+	/// Always one.
+	next :: proc(self) -> int ---;
+}
+
+clear_into :: proc(Scratch: int) ---;

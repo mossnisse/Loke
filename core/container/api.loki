@@ -233,6 +233,11 @@ impl Small_Array($T, $N) {
 		self: inout, @(escape=stored) values: ..T,
 	) where is_copyable(T) ---;
 
+	// Private to the package, but a public declaration names it.
+	append_one_copied :: proc(
+		self: inout, @(escape=stored) value: T,
+	) where is_copyable(T) ---;
+
 	/// Nothing is written unless everything fits, which is the `try_` promise.
 	try_append_copied :: proc(
 		self: inout, @(escape=stored) values: ..T,

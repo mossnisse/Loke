@@ -196,6 +196,9 @@ impl Styled($T) {
 	format :: proc(self, writer: fmt.Writer, options: fmt.Options) ---;
 }
 
+// Private to the package, but a public declaration names it.
+is_styled :: proc($T: type) -> bool ---;
+
 Parse_Error :: enum {
 	/// The wrong shape: a missing separator, a digit too few, text left over.
 	Invalid_Syntax,

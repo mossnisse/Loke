@@ -22,6 +22,12 @@ impl Thread {
 	join :: proc(self: inout) ---;
 }
 
+// Private to the package, but a public declaration names it.
+spawn_with :: proc(entry: proc(value: move $T), @(escape=static) arg: move T) -> Thread ---;
+
+// Private to the package, but a public declaration names it.
+spawn_plain :: proc(entry: proc()) -> Thread ---;
+
 spawn :: proc{spawn_with, spawn_plain};
 
 /// A `T` that one thread at a time may reach. `lock` blocks until the calling

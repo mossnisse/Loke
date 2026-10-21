@@ -1,0 +1,71 @@
+// The reproductions of the interface generator's review on 2026-10-21.
+@(public)
+package geometry;
+
+import "core:math";
+
+// A comment between two tokens leaves them apart.
+accept :: proc(items: []mut/* a note */u8) {}
+
+// A condition's comments are not shown, nor is a `when` that shows nothing.
+when (/* a note */ LOKE_DEBUG) {
+
+/// Only debug builds have it.
+DEBUG_ONLY :: 1;
+
+}
+
+// An import in a branch stays in its branch.
+when (LOKE_DEBUG) {
+
+import dep "core:io";
+
+code_of :: proc(code: dep.Code) {}
+
+} else {
+
+import dep "core:fs";
+
+code_of :: proc(kind: dep.Kind) {}
+
+}
+
+// An import a condition alone uses is written.
+when (math.PI > 3.0) {
+
+/// Pi is more than three.
+PI_IS_LARGE :: true;
+
+}
+
+foreign import user32 "system:user32.lib";
+
+// The block's convention and result requirement reach its members.
+@(require_results, default_calling_convention="stdcall")
+foreign user32 {
+	/// The double-click time, in milliseconds.
+	@(link_name="GetDoubleClickTime")
+	double_click_time :: proc() -> u32 ---;
+}
+
+// A public group shows its private members.
+@(private) small :: proc(value: int) -> int { return value; }
+@(private) large :: proc(value: string_view) -> int { return value.len(); }
+
+/// The size of a number or a text.
+size :: proc{small, large};
+
+// A private alias is followed to the type it names.
+@(private) Inner :: struct {}
+@(private) Alias :: Inner;
+
+/// One value, whose type is private.
+make_one :: proc() -> Alias { return Inner{}; }
+
+impl Inner {
+	/// Always one.
+	next :: proc(self) -> int { return 1; }
+}
+
+// A parameter is not the private type it is spelled like.
+clear_into :: proc(Scratch: int) {}

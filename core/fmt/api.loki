@@ -106,6 +106,9 @@ Padded :: struct($T: type) {
 	fill: Fill,
 }
 
+// Private to the package, but a public declaration names it.
+Fill :: enum { Left, Right, Zero }
+
 impl Padded($T) {
 	format :: proc(self, writer: Writer, options: Options) ---;
 }

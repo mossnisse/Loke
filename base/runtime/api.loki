@@ -137,7 +137,25 @@ Weak :: struct($T: type) {
 	// and fields private to the package
 }
 
+// Private to the package, but a public declaration names it.
+shared_from_clone :: proc(
+	value: $T, allocator: Allocator = default_allocator(),
+) -> Shared(T) where is_copyable(T) ---;
+
+// Private to the package, but a public declaration names it.
+shared_from_move :: proc(value: move $T, allocator: Allocator = default_allocator()) -> Shared(T) ---;
+
 shared :: proc{shared_from_clone, shared_from_move};
+
+// Private to the package, but a public declaration names it.
+try_shared_from_clone :: proc(
+	value: $T, allocator: Allocator = default_allocator(),
+) -> Result(Shared(T), Allocator_Error) where is_copyable(T) ---;
+
+// Private to the package, but a public declaration names it.
+try_shared_from_move :: proc(
+	@(escape=stored) value: move $T, allocator: Allocator = default_allocator(),
+) -> Result(Shared(T), Allocator_Error) ---;
 
 try_shared :: proc{try_shared_from_clone, try_shared_from_move};
 

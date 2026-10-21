@@ -367,6 +367,42 @@ steps are in priority order; each is usable without the next.
   packages get `api.loki` by default, and whether `loke.project` should name
   the packages `-api-check` covers.
 
+### Interface-generator review (2026-10-21)
+
+A review of `7cc087d`, "Generate a checked-in interface file, api.loki, for
+each package", found five correctness problems, fixed in the commit after it:
+comment filtering that joined tokens, imports moved out of their `when`
+branch, foreign members that lost the block's convention and result
+requirement, public overload groups whose private members were not shown, and
+private-type reachability decided by spelling. As the review recommended, a
+reference is now followed to the declaration the checker resolved it to, and
+by written name only in syntax the checker never resolved. Imports are the
+exception: the checker rewrites `mem.default_allocator()` into a reference to
+the procedure, so the imports the written text needs are found in that text.
+
+**Should a public declaration be allowed to name a private one?**
+[Exported names](design.md#exported-names) does not forbid it, and following
+references showed the bundled packages doing it in three ways, which the
+interface files now show, marked private:
+
+- a public field of a private type: `fmt.Padded`'s `fill: Fill`. An importer
+  can read and write the field but cannot name its type, so it cannot declare
+  a `Fill` variable or pass one through its own procedures;
+- a private procedure in a public `where` clause: `core:time`'s `is_styled`;
+- private procedures behind a public overload group: `thread.spawn`,
+  `runtime.shared` and `try_shared`, and `container.Small_Array`'s `append`.
+
+A private type that a public procedure returns is a fourth way, which no
+bundled package uses. The group case looks deliberate: a group exports one
+name over several signatures, and its members' own names are not meant to be
+API. The type cases look accidental. Rust warns on a private type in a public
+signature, and Go allows an unexported return type although its documentation
+cannot then describe the type. The options are to keep allowing all of it, as
+now; to warn when a public signature or public field names a private type, or
+a public `where` clause a private procedure, but not for a group's members;
+or to make that an error. The warning would make `fmt.Fill` public and keep
+the interface writer's private notes for groups only.
+
 ## The `op`/`try_op` pair
 
 Should a container keep both spellings of a fallible operation? `append`/`try_append`, `reserve`/`try_reserve`, and the rest double the container API over a failure-policy choice. Typed fallibility made the fallible variant cheap — a `try_` operation reports failure as a `Result` rather than a bare `bool`, over an ordinary library union with `@(failure=...)` and no compiler-known error type — which is what makes keeping both spellings need re-justifying. Every shipped container keeps its pair today; collapsing them is a separate decision with its own migration.

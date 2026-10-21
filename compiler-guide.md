@@ -155,21 +155,29 @@ The file holds, in order:
 
 - a comment saying it is generated, then the doc comments of the package's
   `package` clauses, file by file, and the `package` clause;
-- an import for each package its declarations name;
+- an import for each package the written declarations and conditions name,
+  except one written inside a `when`, which stays in its branch;
 - each public declaration, in the order of the package's file names and then
   of the source. A procedure is its signature with a `---` body; a struct
   shows its public fields and says when it has others; anything else is shown
   as written. Of the comments, only doc comments are kept;
-- the public members of an `impl`, in an `impl` block. A type that is private
-  to the package is not shown, nor are its members, unless a shown declaration
-  names it, as a public procedure that returns a private iterator type does;
-  the members are then shown after a comment saying the type is private;
+- the public members of an `impl`, in an `impl` block;
 - a file-scope `when` with its condition as written, and every branch that
-  holds something public, so the file is the same on every target. `-doc`
+  holds something shown, so the file is the same on every target. `-doc`
   shows only the branch taken.
 
-Tests, variables, and private declarations are never shown. A public member of
-a foreign block is shown as a plain declaration. `-api` checks the packages as
+A private declaration is shown too once a shown one names it, after a comment
+saying it is private: a type that a public procedure returns or a public field
+has, and the members of its `impl`; a procedure that a public overload group
+gathers; a constant in a default value; and whatever those name in turn. An
+importer cannot name such a declaration, but does reach it. A name is followed
+to the declaration the checker resolved it to, so a parameter spelled like a
+private type does not reach the type, and a private alias reaches the type it
+names. Tests and variables are never shown.
+
+A public member of a foreign block is shown as a plain declaration, with the
+block's `default_calling_convention` written into its signature and the
+block's `require_results` among its attributes. `-api` checks the packages as
 [`-doc`](#common-options) does, so a `package main` needs no `main`.
 
 The file is valid Loke that [`-fmt`](#common-options) leaves unchanged, but no

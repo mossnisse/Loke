@@ -119,9 +119,11 @@ checklist.
 - `lokec <dir> -api` writes each package's interface file, `api.loki`, in its
   directory: the public API as Loke source, each declaration after its doc
   comment and without a body, with a file-scope `when` kept whole so the file
-  is the same on every target. `-api-check` writes nothing, lists the files
-  `-api` would change, and exits 1 if there are any. No compilation reads an
-  interface file. Every package in `core/` and `base/` has one checked in, and
+  is the same on every target. A private declaration that a shown one names,
+  such as a private type a public procedure returns or the members of a public
+  overload group, is shown after a comment saying it is private. `-api-check`
+  writes nothing, lists the files `-api` would change, and exits 1 if there are
+  any. No compilation reads an interface file. Every package in `core/` and `base/` has one checked in, and
   the test suite checks that each is current; to use a package, read its
   `api.loki`. See compiler-guide.md "Interface files".
 - `math.fma(a, b, c)` and `math.fma_f32` compute `a*b + c` with a single,
@@ -300,11 +302,14 @@ checklist.
 ### Fixed
 
 - `lokec -doc` no longer shows the members of a type private to the package,
-  which no importer can name, such as the 28 members of `core:time`'s `Text`
-  and `Scanner`; they are shown only when a public declaration names the type.
-  It no longer shows the body of an operator or hook, such as
+  which no importer can reach, such as the 28 members of `core:time`'s `Text`
+  and `Scanner`. A private declaration a shown one names is shown, marked
+  private, such as the procedures behind `thread.spawn` and `fmt.Padded`'s
+  `Fill`. It no longer shows the body of an operator or hook, such as
   `operator(<) proc(left, right: Date) -> bool { ... }`, the `//` comments
-  inside an enum, a union, or a signature, or a field's `@(public)`.
+  inside an enum, a union, or a signature, or a field's `@(public)`, and a
+  foreign block's members show its calling convention and result
+  requirement.
 - `lokec -doc` documents generic records and generic `impl` blocks. A generic
   struct's public fields were missing, so `container.Bit_Set` printed as an
   empty struct, and no member of a generic `impl` appeared, such as any of
