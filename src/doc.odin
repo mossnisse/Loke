@@ -124,6 +124,7 @@ interface_text :: proc(c: ^Compiler, id: Package_Id) -> (string, bool) {
 
 	// Copied source keeps its own line ends; the file has LF only.
 	raw, _ := strings.remove_all(strings.to_string(b), "\r")
+	raw = plain_comments(raw)
 	scratch: Compiler
 	defer destroy_compilation(&scratch)
 	formatted, ok := "", false
@@ -135,6 +136,27 @@ interface_text :: proc(c: ^Compiler, id: Package_Id) -> (string, bool) {
 		return "", false
 	}
 	return formatted, true
+}
+
+// `text` with each doc comment written `//`. Every comment of an interface
+// file is for the package's users, so `///` would mark nothing.
+@(private = "file")
+plain_comments :: proc(text: string) -> string {
+	scratch: Compiler
+	defer destroy_compilation(&scratch)
+	append(&scratch.sources, Source{text = text, line_starts = {}})
+	delete(lex(&scratch, 0))
+	b := strings.builder_make()
+	at := u32(0)
+	for comment in scratch.sources[0].comments {
+		if is_doc_comment(text[comment.lo:comment.hi]) {
+			strings.write_string(&b, text[at:comment.lo])
+			strings.write_string(&b, "//")
+			at = comment.lo + len("///")
+		}
+	}
+	strings.write_string(&b, text[at:])
+	return strings.to_string(b)
 }
 
 // One entry of a package's API.

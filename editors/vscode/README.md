@@ -15,10 +15,12 @@ in this directory:
 ```powershell
 npm install
 npx @vscode/vsce package --skip-license
-codium --install-extension loke-0.1.0.vsix
+codium --install-extension loke-0.1.0.vsix --force
 ```
 
 Use `code` instead of `codium` for VS Code. Reload the window afterwards.
+Repeat all three after the extension changes: the version stays `0.1.0`, so
+`--force` is what replaces the installed copy.
 
 ## Settings
 

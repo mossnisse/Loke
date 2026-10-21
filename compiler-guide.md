@@ -136,7 +136,8 @@ local directories for now ([open-questions.md "Package and import versioning"](o
 
 A package's interface file, `api.loki`, is its public API as Loke source: what
 an importer can name, each declaration after its
-[doc comment](design.md#doc-comments), without bodies. It is generated from
+[doc comment](design.md#doc-comments), without bodies. Its comments are
+written `//`, since every comment in the file is for the package's users. It is generated from
 the package and checked in beside its `.loke` files, so it shows up in a
 directory listing, a search, and a code review. To use a package, read its
 `api.loki`; read its source only to change it.

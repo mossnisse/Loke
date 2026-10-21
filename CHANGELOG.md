@@ -118,7 +118,7 @@ checklist.
 
 - `lokec <dir> -api` writes each package's interface file, `api.loki`, in its
   directory: the public API as Loke source, each declaration after its doc
-  comment and without a body, with a file-scope `when` kept whole so the file
+  comment, written `//`, and without a body, with a file-scope `when` kept whole so the file
   is the same on every target. A private declaration that a shown one names,
   such as a private type a public procedure returns or the members of a public
   overload group, is shown after a comment saying it is private. `-api-check`

@@ -1731,7 +1731,7 @@ documentation_matches_lokec_api :: proc(t: ^testing.T) {
 	open(&h, "app/shapes/shapes.loke", commented)
 	page = documentation_page(&h, "app/shapes/shapes.loke")
 	testing.expect_value(t, page, fresh_documentation(&h, "app", "app/shapes/shapes.loke", {{"app/shapes/shapes.loke", commented}}))
-	testing.expect(t, strings.contains(page, "package shapes;") && strings.contains(page, "/// A unit square.\nUNIT :: Square{side = 1};"))
+	testing.expect(t, strings.contains(page, "package shapes;") && strings.contains(page, "// A unit square.\nUNIT :: Square{side = 1};"))
 
 	// With the program closed, the library is its own root, checked again
 	// after each edit.
