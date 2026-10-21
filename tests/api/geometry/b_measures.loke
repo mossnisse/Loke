@@ -1,0 +1,8 @@
+/// Every measure is in metres.
+package geometry;
+
+/// The perimeter of a square with sides of `side`.
+@(public)
+square_perimeter :: proc(side: f64) -> f64 { return 4 * side; }
+
+helper :: proc() {}

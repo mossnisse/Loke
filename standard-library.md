@@ -5,8 +5,8 @@ Implemented for Windows x64. Other targets are planned; see
 
 This is the library's API reference. Signature blocks are summaries: they may
 omit generic constraints, parameter modes, or private fields. For exact
-declarations, read the package source or run `lokec core/<package> -doc`
-(see [Common options](compiler-guide.md#common-options)).
+declarations, read the package's `api.loki`
+(see [Interface files](compiler-guide.md#interface-files)) or its source.
 Examples use Loke syntax; the API summaries use Odin-style declaration sketches.
 
 | Task | Packages |

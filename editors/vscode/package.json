@@ -29,7 +29,8 @@
           "Loke"
         ],
         "extensions": [
-          ".loke"
+          ".loke",
+          ".loki"
         ],
         "configuration": "./language-configuration.json"
       }
@@ -54,7 +55,7 @@
     "commands": [
       {
         "command": "loke.showDocumentation",
-        "title": "Loke: Show Documentation"
+        "title": "Loke: Show Interface"
       }
     ],
     "configuration": {

@@ -39,6 +39,10 @@ options:
                   (file inputs only)
     -check-layout compare every folded size/alignment/offset with LLVM's own
     -doc          print the root package's public API as Markdown and stop
+    -api          write api.loki, the interface file, in the directory of the
+                  root package and of each project package, and stop
+    -api-check    list the interface files -api would change, exit 1 if there
+                  are any, and stop
     -fmt          rewrite the input file, or a directory's .loke files, in
                   the canonical layout, and stop
     -fmt-check    list the files -fmt would change, exit 1 if there are any,
@@ -86,6 +90,8 @@ Options :: struct {
 	dump_tokens: bool,
 	check_layout: bool,
 	doc:        bool,
+	api:        bool,
+	api_check:  bool,
 	fmt:        bool,
 	fmt_check:  bool,
 	run_tests:  bool,
@@ -203,9 +209,18 @@ run :: proc() -> int {
 		return 0
 	}
 
-	if !check_session(&s, opts.input, opts.doc) {
+	if (opts.api || opts.api_check) && !is_directory(opts.input) {
+		fmt.eprintfln("error: %s needs a directory input", opts.api ? "-api" : "-api-check")
+		return 2
+	}
+	if !check_session(&s, opts.input, opts.doc || opts.api || opts.api_check) {
 		report(c)
 		return 1
+	}
+	if opts.api || opts.api_check {
+		status := write_interfaces(c, c.root_package, opts.api_check)
+		report(c) // warnings
+		return status
 	}
 	if opts.doc {
 		page := document_project(c, c.root_package)
@@ -272,6 +287,10 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
 			opts.check_layout = true
 		case arg == "-doc":
 			opts.doc = true
+		case arg == "-api":
+			opts.api = true
+		case arg == "-api-check":
+			opts.api_check = true
 		case arg == "-fmt":
 			opts.fmt = true
 		case arg == "-fmt-check":

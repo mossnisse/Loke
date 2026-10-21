@@ -276,8 +276,9 @@ Implementation order:
 5. **Formatting and documentation — shipped.** `textDocument/formatting`
    answers the layout `lokec -fmt` writes for the unsaved text, as one edit
    over the changed lines, without waiting for a check. The
-   `loke.documentation` command answers the page `lokec -doc` prints for the
-   document's root. Regressions compare both with the command-line tools in
+   `loke.documentation` command answered the page `lokec -doc` prints for the
+   document's root, and since the interface file answers what `lokec -api`
+   writes for the document's package. Regressions compare both with the command-line tools in
    process and over pipes, and cover repeated formatting, CRLF text, refusals,
    unsaved imports, a library rechecked after edits, and a program `lokec`
    would reject for its missing `main`. See

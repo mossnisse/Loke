@@ -129,7 +129,7 @@ marker such as Rust's `//!` is needed. There is no transition period: the
 bundled packages are converted in the same change, and in them a spec citation
 belongs in a `//` comment, which `check-citations.ps1` enforces.
 
-**2. Each package directory holds a checked-in interface file, `api.lokei`.**
+**2. Each package directory holds a checked-in interface file, `api.loki`.**
 `lokec <dir> -api` writes it: Loke source with every public declaration and no
 bodies, in the order of the package's file names and then source order. For
 example (shortened, and with illustrative contracts):
@@ -166,11 +166,11 @@ split :: proc(text: string_view, separator: string_view) -> Split_Iterator ---;
   `-fmt-check` does. The gate runs it for every bundled package, as Kotlin's
   API dumps and Android's `api/current.txt` are checked.
 - **Reviewed.** A change to the public API, or to an inferred fact, shows as a
-  diff of `api.lokei` in the commit that makes it.
+  diff of `api.loki` in the commit that makes it.
 - **Output only.** The compiler never reads it, so the source stays the one
   authority and Loke does not get C's two copies of every signature, which
   [Hand-written package header files](comments.md#hand-written-package-header-files)
-  rejects. The `.lokei` extension keeps it out of the package, whose files are
+  rejects. The `.loki` extension keeps it out of the package, whose files are
   its `.loke` files.
 - **Parses and is formatted.** It is valid Loke syntax that `-fmt` leaves
   unchanged, though it is never checked: a procedure ends in `---`, the
@@ -184,6 +184,15 @@ split :: proc(text: string_view, separator: string_view) -> Split_Iterator ---;
   does not depend on the target or the defines that generate it. In the
   bundled packages, `core:fs`'s `Directory_Reader` and its members are the
   only public declarations inside a top-level `when` today.
+- **Private types only where an importer meets them.** A public-default file
+  makes an `impl` member public even when its type is package-private, so
+  `-doc` used to list members no importer can reach, such as the 28 of
+  `core:time`'s `Text` and `Scanner`. Hiding every member of a private type
+  would also hide the methods of a private type that a public procedure
+  returns, which an importer does call. So an `impl` of a private type is
+  shown, after a comment saying the type is private, only once a shown
+  declaration names the type, and `-doc` follows the same rule. No bundled
+  package returns a private type today.
 
 **3. Inferred facts are shown, one line each.** The interface file and hover
 add an `// inferred:` line to a public procedure for its result contract and
@@ -270,26 +279,29 @@ steps are in priority order; each is usable without the next.
    - [compiler-guide.md](compiler-guide.md): `-doc` and hover say `///`.
      CHANGELOG: a Changed line and an upgrade note, since existing `//` doc
      comments stop being shown.
-2. **The interface file.**
+2. **The interface file** — done on 2026-10-21. Cases are directories under
+   `tests/api/` whose checked-in `api.loki` files are the goldens, so
+   `-api-check` is the comparison. `loke-lsp` already ignored every document
+   that is not a `.loke` file, and the extension now sends it only those.
    - `src/doc.odin`: an interface writer beside the Markdown one, sharing
      visibility and the struct view: package clause and overview, the imports
      its signatures name, `---` bodies, `impl` blocks, enum and union members
      with their `///` comments only, and `when` blocks as written, whose
      declarations take their visibility from written attributes as a generic
      record's fields do.
-   - `src/main.odin`: `-api` writes `api.lokei` in the root's directory and in
+   - `src/main.odin`: `-api` writes `api.loki` in the root's directory and in
      each project package's; `-api-check` writes nothing and exits 1 on a
      difference.
-   - Generate and check in `api.lokei` for every package in `core/` and
+   - Generate and check in `api.loki` for every package in `core/` and
      `base/`, subpackages such as `core/encoding/json` included.
-   - Tests: `tests/api/*.loke` cases with `.lokei` goldens; a corpus test that
+   - Tests: `tests/api/*.loke` cases with `.loki` goldens; a corpus test that
      runs `-api-check` on every bundled package; a check that every
-     `api.lokei` parses and that `-fmt-check` accepts it.
-   - Editor: `editors/vscode/package.json` maps `.lokei` to the `loke`
-     language, and `loke-lsp` ignores `.lokei` documents rather than checking
+     `api.loki` parses and that `-fmt-check` accepts it.
+   - Editor: `editors/vscode/package.json` maps `.loki` to the `loke`
+     language, and `loke-lsp` ignores `.loki` documents rather than checking
      them. `loke.documentation` answers the interface text, and
      `extension.js` opens it as a `loke` document.
-   - AGENTS.md: to use a package, read its `api.lokei`; read its source only
+   - AGENTS.md: to use a package, read its `api.loki`; read its source only
      to change it, and regenerate the file with `-api` after a public change.
    - [compiler-guide.md](compiler-guide.md) documents `-api` and `-api-check`,
      [compiler-architecture.md](compiler-architecture.md) the writer, and
@@ -300,7 +312,7 @@ steps are in priority order; each is usable without the next.
      (`src/borrow.odin`) and the write effect from `c.global_writes`
      (`src/global_effects.odin`), turned into the phrasings above; hover adds
      the same line.
-   - Regenerate every `api.lokei` and read the diff: each line is a claim
+   - Regenerate every `api.loki` and read the diff: each line is a claim
      about a bundled procedure, and a surprising one is a finding for
      `known-gaps.md` or for the procedure.
    - Tests: a case for each phrasing, a generic procedure and a `when`
@@ -351,17 +363,8 @@ steps are in priority order; each is usable without the next.
 - **Signatures Loke cannot state.** Step 7 leaves operations such as
   `unsafe.transmute`, whose typing no Loke signature expresses, without a
   declaration.
-- **Members of package-private types.** A public-default file makes an `impl`
-  member public even when its type is package-private, so `-doc` lists it
-  although no importer can name the type: `lokec core/time -doc` shows 28
-  members of `Text` and `Scanner`, and `core:fmt`, `core:io`, `core:log`,
-  `core:path`, `core:slice`, and `core:thread` have more. Hiding every member
-  of a private type would also hide the methods of an opaque type that a
-  public procedure returns, which an importer does call. Step 2 needs the
-  rule; one answer is to show such members only when a public signature
-  reaches their type. Found by a review of the `///` migration on 2026-10-21.
 - **Interface files outside the repository.** Whether a project's own
-  packages get `api.lokei` by default, and whether `loke.project` should name
+  packages get `api.loki` by default, and whether `loke.project` should name
   the packages `-api-check` covers.
 
 ## The `op`/`try_op` pair

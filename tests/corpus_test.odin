@@ -1344,6 +1344,134 @@ documentation_lists_the_public_api :: proc(t: ^testing.T) {
 	}
 }
 
+// compiler-guide.md "Interface files". Each case directory holds the checked-in
+// `api.loki` of its root package and of each project package, so `-api-check`
+// is the comparison. A copy without them gets them back from `-api`, and once
+// one is edited, `-api-check` names it and fails.
+@(test)
+interface_files_match_their_packages :: proc(t: ^testing.T) {
+	cases, _ := filepath.glob("tests/api/*")
+	testing.expect(t, len(cases) > 0, "no interface-file cases found")
+	for dir in cases {
+		checked, stdout, stderr, err := exec(
+			os.Process_Desc{command = []string{compiler_path(), dir, "-api-check"}},
+			context.allocator,
+		)
+		testing.expectf(
+			t, err == nil && checked.exit_code == 0 && len(stdout) == 0 && len(stderr) == 0,
+			"%s: -api-check failed (exit %d)\n%s%s", dir, checked.exit_code, string(stdout), string(stderr),
+		)
+
+		copy := fmt.tprintf("%s/api/%s", TMP, filepath.base(dir))
+		remove_tree(copy)
+		goldens := make([dynamic]string, context.temp_allocator)
+		copy_package_sources(dir, copy, &goldens)
+		written, _, write_stderr, write_err := exec(
+			os.Process_Desc{command = []string{compiler_path(), copy, "-api"}},
+			context.allocator,
+		)
+		if !testing.expectf(t, write_err == nil && written.exit_code == 0, "%s: -api failed\n%s", dir, string(write_stderr)) {
+			continue
+		}
+		for golden in goldens {
+			expected, _ := os.read_entire_file(golden, context.temp_allocator)
+			relative := strings.trim_prefix(golden, dir)
+			got, read_err := os.read_entire_file(fmt.tprintf("%s%s", copy, relative), context.temp_allocator)
+			testing.expectf(
+				t, read_err == nil && normalise(string(got)) == normalise(string(expected)),
+				"%s: -api wrote\n%s\ninstead of\n%s", golden, string(got), string(expected),
+			)
+		}
+
+		root_file := fmt.tprintf("%s/api.loki", copy)
+		edited, _ := os.read_entire_file(root_file, context.temp_allocator)
+		_ = os.write_entire_file(root_file, transmute([]u8)strings.concatenate({string(edited), "\nedited :: 1;\n"}, context.temp_allocator))
+		stale, stale_out, _, stale_err := exec(
+			os.Process_Desc{command = []string{compiler_path(), copy, "-api-check"}},
+			context.allocator,
+		)
+		testing.expectf(
+			t, stale_err == nil && stale.exit_code == 1 && strings.contains(string(stale_out), "api.loki"),
+			"%s: -api-check passed an edited interface file (exit %d)\n%s", dir, stale.exit_code, string(stale_out),
+		)
+	}
+
+	// Written beside a package's files, so a file input has no package
+	// directory to write into.
+	file_input, _, file_stderr, file_err := exec(
+		os.Process_Desc{command = []string{compiler_path(), "tests/doc/shapes.loke", "-api"}},
+		context.allocator,
+	)
+	testing.expectf(
+		t, file_err == nil && file_input.exit_code == 2 && strings.contains(string(file_stderr), "needs a directory"),
+		"-api accepted a file input (exit %d)\n%s", file_input.exit_code, string(file_stderr),
+	)
+}
+
+// Copies the `.loke` files of `from` and its subdirectories into `to`, and
+// lists the `api.loki` files it leaves behind.
+@(private)
+copy_package_sources :: proc(from, to: string, goldens: ^[dynamic]string) {
+	os.make_directory_all(to)
+	entries, _ := os.read_all_directory_by_path(from, context.temp_allocator)
+	for entry in entries {
+		source := fmt.tprintf("%s/%s", from, entry.name)
+		if entry.type == .Directory {
+			copy_package_sources(source, fmt.tprintf("%s/%s", to, entry.name), goldens)
+		} else if strings.has_suffix(entry.name, ".loke") {
+			text, _ := os.read_entire_file(source, context.temp_allocator)
+			_ = os.write_entire_file(fmt.tprintf("%s/%s", to, entry.name), text)
+		} else if entry.name == "api.loki" {
+			append(goldens, source)
+		}
+	}
+}
+
+// compiler-guide.md "Interface files": every bundled package's `api.loki` is
+// what `-api` would write, and `-fmt` leaves it as it is.
+@(test)
+bundled_interface_files_are_current :: proc(t: ^testing.T) {
+	jobs := make([dynamic]Exec, context.temp_allocator)
+	for root in ([]string{"core", "base"}) {
+		collect_interface_checks(root, &jobs)
+	}
+	testing.expect(t, len(jobs) > 0, "no bundled packages found")
+	exec_all(jobs[:])
+	for job in jobs {
+		testing.expectf(
+			t,
+			job.err == nil && job.state.exit_code == 0 && len(job.stdout) == 0,
+			"`lokec %s %s` failed; regenerate with `-api` and review the diff:\n%s%s",
+			job.command[1], job.command[2], string(job.stdout), string(job.stderr),
+		)
+	}
+}
+
+// For each directory holding a package, `-api-check` on it and `-fmt-check` on
+// its interface file.
+@(private)
+collect_interface_checks :: proc(dir: string, jobs: ^[dynamic]Exec) {
+	entries, _ := os.read_all_directory_by_path(dir, context.temp_allocator)
+	package_dir := false
+	for entry in entries {
+		if entry.type == .Directory {
+			collect_interface_checks(fmt.tprintf("%s/%s", dir, entry.name), jobs)
+		} else if strings.has_suffix(entry.name, ".loke") {
+			package_dir = true
+		}
+	}
+	if package_dir {
+		for check in ([]string{"-api-check", "-fmt-check"}) {
+			command := make([]string, 3, context.temp_allocator)
+			command[0], command[1], command[2] = compiler_path(), dir, check
+			if check == "-fmt-check" {
+				command[1] = fmt.tprintf("%s/api.loki", dir)
+			}
+			append(jobs, Exec{command = command})
+		}
+	}
+}
+
 // design.md "Program entry and exit": the corpus runs every
 // other case with no arguments, so this is the one that passes a real vector —
 // including non-ASCII arguments and a surrogate pair, which is what exercises

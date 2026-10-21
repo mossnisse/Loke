@@ -1,0 +1,156 @@
+/// Shapes on a plane, and their measures.
+// A note for maintainers beside the overview is not shown.
+@(public)
+package geometry;
+
+import "core:mem";
+// Used only in a body, so the interface file does not import it.
+import "core:strings";
+import text "core:fmt";
+import "./units";
+
+/// A point. The interface file shows only its public fields.
+Point :: struct {
+	/// Across, in metres.
+	x: f64,
+	y: f64, // a trailing note is not shown
+	@(private) cached: f64,
+}
+
+/// Which way a shape faces.
+Facing :: enum {
+	// Not shown.
+	North,
+	/// The way a new shape faces.
+	South,
+}
+
+/// A shape's size, or nothing for a point.
+Size :: union {
+	/// Across and down.
+	area: (width: f64, height: f64),
+	point:,
+}
+
+/// The longest side any shape may have.
+LIMIT :: units.METRE * 1000;
+
+/// A counter is a variable, which is never public.
+counter: int = 0;
+
+/// Whether `name` names a facing.
+is_facing :: proc(name: string_view) -> bool {
+	return strings.contains("North South", name);
+}
+
+/// `point` scaled by `factor`.
+scale :: proc(point: Point, factor: f64) -> Point {
+	return Point{point.x * factor, point.y * factor, 0};
+}
+
+scale_each :: proc(point: Point, across: f64, down: f64) -> Point {
+	return Point{point.x * across, point.y * down, 0};
+}
+
+/// Either form of scaling.
+resize :: proc{scale, scale_each};
+
+/// Writes `point` to `writer`.
+show :: proc(
+	writer: text.Writer, // where it goes
+	point: Point,
+	allocator: Allocator = mem.default_allocator(),
+) {}
+
+impl Point {
+	/// The sum of the coordinates.
+	sum :: proc(self) -> f64 { return self.x + self.y; }
+
+	/// Componentwise.
+	add :: operator(+) proc(left, right: Point) -> Point {
+		return Point{left.x + right.x, left.y + right.y, 0};
+	}
+
+	@(private)
+	scratch :: proc(self) {}
+}
+
+Metres :: distinct f64;
+
+impl Metres {
+	delegate(+, -);
+}
+
+/// A value, and how many samples it comes from.
+Measured :: struct($T: type) {
+	value: T,
+	@(private) samples: int,
+}
+
+impl Measured($T) {
+	/// The value, however many samples.
+	get :: proc(self) -> T { return self.value; }
+}
+
+/// The corners of a square, one at a time.
+corners :: proc() -> Corner_Iterator { return Corner_Iterator{0}; }
+
+// Private, but `corners` hands one out, so its members are shown.
+@(private)
+Corner_Iterator :: struct { at: int }
+
+impl Corner_Iterator {
+	/// The next corner, or `.none` after the fourth.
+	next :: proc(self: inout Corner_Iterator) -> Option(int) {
+		if (self.at == 4) { return .none; }
+		self.at += 1;
+		return .some(self.at);
+	}
+}
+
+// Nothing public names it, so its members are not shown.
+@(private)
+Scratch :: struct { value: int }
+
+impl Scratch {
+	reset :: proc(self: inout Scratch) { self.value = 0; }
+}
+
+@(test)
+scaling_keeps_the_origin :: proc() {}
+
+foreign import kernel32 "system:kernel32.lib";
+
+foreign kernel32 {
+	/// The calling thread's last error code.
+	@(link_name="GetLastError")
+	last_error :: proc "stdcall" () -> u32 ---;
+}
+
+when (LOKE_OS == .Windows) {
+
+/// The separator on this target.
+SEPARATOR :: '\\';
+
+@(private)
+foreign kernel32 {
+	@(link_name="GetTickCount")
+	ticks :: proc "stdcall" () -> u32 ---;
+}
+
+} else when (LOKE_OS == .Linux) {
+
+/// The separator on this target.
+SEPARATOR :: '/';
+
+/// Only Linux has it.
+Linux_Only :: struct {
+	public_field: int,
+	@(private) hidden: int,
+}
+
+} else {
+
+@(private) UNUSED :: 0;
+
+}

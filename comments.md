@@ -964,9 +964,20 @@ use that justifies pretending unwritten storage contains a value.
 ### Hand-written package header files
 
 A public-signature file maintained beside the implementation would duplicate
-every public declaration. `lokec -doc` already derives the API from source.
-A future compatibility tool could generate and compare manifests; it should
-not require authors to maintain another set of declarations.
+every public declaration, and the two copies would drift, as C's headers and
+their definitions do. The [interface file](compiler-guide.md#interface-files)
+gives readers the same view without a second copy: `lokec -api` generates
+`api.loki` from the source, `-api-check` fails when it is stale, and no
+compilation reads it, so the `.loke` files stay the only authority.
+
+It is checked in rather than generated on demand because people and agents
+read what is in the directory, and a command they must first learn about loses
+to that; a checked-in file also turns a change to a package's public API into
+a diff in the commit that makes it, as Kotlin's API dumps and Android's
+`api/current.txt` do. It is Loke rather than Markdown because a reader already
+knows the syntax, the editor highlights it, and the signatures are the source's
+own, with no headings or fences repeating the names. The `.loki` extension
+keeps it out of the package, whose files are its `.loke` files.
 
 ## Changed features
 

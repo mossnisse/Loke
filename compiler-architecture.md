@@ -290,7 +290,7 @@ Paths below are relative to `src/`.
 | `lexer.odin` | Tokens and lexical scanning. |
 | `parser.odin`, `ast.odin`, `ast_dump.odin` | Recursive-descent parsing, syntax node definitions, error recovery, and deterministic syntax dumps. |
 | `formatter.odin` | Token-preserving `-fmt` and `-fmt-check` for parseable source. |
-| `doc.odin` | `-doc` Markdown for the checked root and imported project packages. |
+| `doc.odin` | `-doc` Markdown and `-api` interface files for the checked root and imported project packages, from one model of each package's API. |
 | `semantic.odin`, `universe.odin` | Semantic stores, interning, predeclared names, and compiler-contributed members. |
 
 ### Checking and language features
@@ -545,7 +545,7 @@ session arenas, and optional package checkpoints. CLI presentation stays in
 | --- | --- |
 | `init_session(&s, config)` | Initialize a zeroed session; copy configuration strings/arrays. Defaults to `DEFAULT_COMPILATION_CONFIG`. Invalid configuration returns false with diagnostics; a live session cannot be reinitialized. |
 | `check_session(&s, input)` | Replace the compilation, reload inputs, check, validate entry/exports, and finalize. Return false with diagnostics on errors. The input path is copied. |
-| `check_session(&s, input, documentation = true)` | Check for `-doc`, without executable-entry validation or emission finalization. Cannot emit. |
+| `check_session(&s, input, documentation = true)` | Check for `-doc` and `-api`, without executable-entry validation or emission finalization. Cannot emit. |
 | `check_session_incremental(&s, input, documentation = false)` | Reuse an eligible dependency prefix; otherwise perform a full check. Documentation checks reuse their own checkpoints. See [Incremental checking](#incremental-checking). |
 | `session_check_stats(&s)` | Rechecked/reused package IDs and semantic/checkpoint byte counts. ID slices expire on the next check or destruction. |
 | `invalidate_session(&s)` | Expire the result after external changes. Repeated calls are safe; false only for an uninitialized/destroyed session. |
@@ -724,7 +724,7 @@ The server never duplicates the front end: every result comes from the
 | `requests.odin` | Request queueing, waiting, cancelled and stale requests; hover, definition, and document symbols. |
 | `editing.odin` | Completion and signature help, from the compiler's tokens and the queries above. |
 | `rename.odin` | References and rename across roots, and rename's refusals. |
-| `tools.odin` | Formatting and the documentation command, through `-fmt` and `-doc`. |
+| `tools.odin` | Formatting and the documentation command, through `-fmt` and `-api`. |
 | `paths.odin` | `file:` URIs, path keys, and UTF-8/UTF-16 positions. |
 
 A reader thread frames stdin into an inbox. The main thread runs checks, so it
@@ -824,7 +824,7 @@ branch hides the renamed one. A public extension is also
 checked as a package name. A method may not be renamed to or from a name in
 `query_implicit_names`, and a parameter to or from `self`.
 
-Formatting and documentation call the procedures behind `-fmt` and `-doc`
+Formatting and documentation call the procedures behind `-fmt` and `-api`
 rather than reimplementing them. `textDocument/formatting` needs no check, so
 it is answered as soon as it is dispatched: `format_text` registers the
 document's text in a scratch `Compiler` under the same encoding rules
@@ -832,20 +832,22 @@ document's text in a scratch `Compiler` under the same encoding rules
 from the first that changed to the last in one edit, so both ends of its range
 start a line. A refusal reports the first error and its line. The
 `loke.documentation` command queues like a position request and answers with
-`document_project` for the document's root. It skips the position requests'
-check that the snapshot holds the document, so a check that failed before
-loading it, such as for a malformed manifest, still fails the command, and a
-failure names the first error `lokec -doc` would report. A library root was checked as
-`lokec -doc` checks it, so its snapshot is used directly. A program root is
-checked again with `check_session` in documentation mode, in a temporary
-session with the same configuration and overlays, so that an executable-only
-error such as a missing `main` does not block the page, and the root's
-checkpoints stay as they are. The page is built in the request's temporary
-memory because `document_project` frees little.
+`interface_of_source`, the interface file of the document's package. It skips
+the position requests' check that the snapshot holds the document, so a check
+that failed before loading it, such as for a malformed manifest, still fails
+the command, and a failure names the first error `lokec -api` would report. A
+library root was checked as `lokec -api` checks it, so its snapshot is used
+directly. A program root is checked again with `check_session` in
+documentation mode, in a temporary session with the same configuration and
+overlays, so that an executable-only error such as a missing `main` does not
+block the interface, and the root's checkpoints stay as they are. The text is
+built in the request's temporary memory because `interface_of_source` frees
+little.
 
 `editors/vscode/` is a thin client for VS Code and VSCodium: it starts the
-server, passes its settings as `initializationOptions`, and shows the page the
-documentation command returns. Its TextMate grammar highlights from the text
+server for `.loke` documents only, passes its settings as
+`initializationOptions`, and shows the interface the documentation command
+returns as a Loke document. Its TextMate grammar highlights from the text
 alone, naming the keywords and predeclared names; `tests/editor_test.odin`
 compares those lists with grammar.md "Keywords" and design.md "Predeclared
 names" in both directions, so a new keyword or built-in also needs the grammar.
@@ -855,7 +857,7 @@ relative to edits, and compares results after rapid edits and disk changes with
 a fresh batch check. It compares formatting with `format_files` and the
 documentation command with a fresh documentation-mode check.
 `tests/lsp_test.odin` runs the built executable over pipes, and compares its
-formatting and documentation with `lokec.exe -fmt` and `-doc`.
+formatting and documentation with `lokec.exe -fmt` and `-api`.
 `perf.ps1` times the built server editing `bench/workspace`, from each
 notification to its answer: opening it, edits to its root package and to a
 library package, and completion in an unfinished statement. Each figure

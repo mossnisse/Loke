@@ -66,6 +66,7 @@ if ($LASTEXITCODE -eq 0) { .\args.exe first "two words" }
 | `-log-level=debug\|info\|warning\|error\|off` | Set the compiled `LOKE_LOG_LEVEL` used by `core:log`. Default: `debug`. |
 | `-fmt`, `-fmt-check` | Rewrite a file, or a directory's `.loke` files, in the canonical layout (comments.md "Formatting"); `-fmt-check` only lists the files that would change and exits 1 if there are any. Only whitespace changes. |
 | `-doc` | Print the package's public API as Markdown and stop: the [doc comments](design.md#doc-comments) of its `package` clauses, then each public declaration's signature and public struct field, with its doc comment, then a page for each package of the project it imports. A doc comment starts with `///`; other comments are not shown. A standard-library directory works too: `lokec core\strings -doc`. |
+| `-api`, `-api-check` | Write the [interface file](#interface-files) `api.loki` in the directory of the root package and of each package of the project it imports, and stop; `-api-check` writes nothing, lists the interface files `-api` would change, and exits 1 if there are any. The input must be a directory. |
 | `-g` | Emit debug information at any `-opt` level: procedures, local variables and their types, and a line for each statement, loop update, and block's closing `}`. An executable gets a `.pdb` beside it, carrying natvis rules that show a string's text, a map's entries, and the value an `any_view` or `dyn` points at in Visual Studio and WinDbg, and a panic prints the Loke call stack after its report. |
 | `-debug` | Set `LOKE_DEBUG` to `true`. It does not imply `-g`, and `-g` does not imply it. |
 
@@ -130,6 +131,52 @@ project's directory for it, which is how a dependency is patched or vendored.
 `base` and `core` cannot appear in a manifest; they default to the bundled
 library, but an explicit `-collection` can override either. Dependencies are
 local directories for now ([open-questions.md "Package and import versioning"](open-questions.md#package-and-import-versioning)).
+
+## Interface files
+
+A package's interface file, `api.loki`, is its public API as Loke source: what
+an importer can name, each declaration after its
+[doc comment](design.md#doc-comments), without bodies. It is generated from
+the package and checked in beside its `.loke` files, so it shows up in a
+directory listing, a search, and a code review. To use a package, read its
+`api.loki`; read its source only to change it.
+
+```powershell
+.\lokec.exe shapes -api          # write shapes\api.loki, and one per project package
+.\lokec.exe shapes -api-check    # list the stale ones, and exit 1 if there are any
+```
+
+Every package in `core/` and `base/` has one, and the test suite runs
+`-api-check` on each, so a change to a bundled package's public API shows up
+as a diff of its `api.loki` in the same commit. A project can run
+`-api-check` in its own build the same way.
+
+The file holds, in order:
+
+- a comment saying it is generated, then the doc comments of the package's
+  `package` clauses, file by file, and the `package` clause;
+- an import for each package its declarations name;
+- each public declaration, in the order of the package's file names and then
+  of the source. A procedure is its signature with a `---` body; a struct
+  shows its public fields and says when it has others; anything else is shown
+  as written. Of the comments, only doc comments are kept;
+- the public members of an `impl`, in an `impl` block. A type that is private
+  to the package is not shown, nor are its members, unless a shown declaration
+  names it, as a public procedure that returns a private iterator type does;
+  the members are then shown after a comment saying the type is private;
+- a file-scope `when` with its condition as written, and every branch that
+  holds something public, so the file is the same on every target. `-doc`
+  shows only the branch taken.
+
+Tests, variables, and private declarations are never shown. A public member of
+a foreign block is shown as a plain declaration. `-api` checks the packages as
+[`-doc`](#common-options) does, so a `package main` needs no `main`.
+
+The file is valid Loke that [`-fmt`](#common-options) leaves unchanged, but no
+compilation reads it: the `.loke` files stay the only source of the package,
+and the `.loki` extension keeps the file out of it. `-api-check` compares the
+text without carriage returns, so a checkout that turned its line ends into
+CRLF does not make it stale.
 
 ## Running tests
 
@@ -338,11 +385,13 @@ Two more operations reuse the command-line tools:
   refused with the line of the first error.
 - **Documentation** is the command `loke.documentation`, which an editor sends
   as `workspace/executeCommand` with an open document's URI as its only
-  argument. It answers with the Markdown page [`-doc`](#common-options) prints
-  for the document's root, described below, using unsaved text. It waits for
-  the root's check, as other requests do, and fails when `lokec -doc` would
-  fail because the program has errors. How the page is shown is up to the
-  editor.
+  argument. It answers with the [interface file](#interface-files) `-api`
+  writes for the document's package, checked through the document's root,
+  described below, and using unsaved text. It waits for the root's check, as
+  other requests do, and fails when `lokec -api` would fail because the
+  program has errors. How the text is shown is up to the editor; the bundled
+  extension opens it as a Loke document. The server does not check an
+  `api.loki` the editor opens.
 
 Each open document is checked through a root, which is what `lokec` would be
 given:

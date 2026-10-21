@@ -3,7 +3,7 @@
 Syntax highlighting for `.loke` files, and the `loke-lsp` language server:
 diagnostics as you type, hover, go to definition, document symbols,
 completion, signature help, find references, rename, formatting, and the
-`-doc` page of the current program. What each operation does is described in
+interface file of the current package. What each operation does is described in
 [Language server](../../compiler-guide.md#language-server).
 
 ## Install
@@ -37,8 +37,10 @@ changing them. To format on save:
 
 ## Commands
 
-**Loke: Show Documentation** opens the Markdown page `lokec -doc` prints for
-the current file's program in a preview beside it.
+**Loke: Show Interface** opens, beside the current file, the interface file
+`lokec -api` writes for its package: every public declaration and its doc
+comment, without bodies, from the unsaved text. A checked-in `api.loki` opens
+as Loke too, and the server leaves it unchecked.
 
 The server's messages appear in the **Output** panel under **Loke**.
 

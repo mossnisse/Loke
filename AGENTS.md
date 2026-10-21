@@ -42,6 +42,10 @@ a minimal reproduction; never reword the spec to match a bug.
   regression test for a behavior fix; validate editorial fixes with relevant
   documentation checks. Agent memory is not project documentation.
 - In repository documents, link files by relative path and heading anchor.
+- To use a bundled package, read its `api.loki`; read its source only to
+  change it. After changing a package's public API or doc comments, run
+  `lokec <dir> -api` and commit the regenerated file
+  (see [Interface files](compiler-guide.md#interface-files)).
 
 ## Testing
 

@@ -116,6 +116,14 @@ checklist.
 
 ### Added
 
+- `lokec <dir> -api` writes each package's interface file, `api.loki`, in its
+  directory: the public API as Loke source, each declaration after its doc
+  comment and without a body, with a file-scope `when` kept whole so the file
+  is the same on every target. `-api-check` writes nothing, lists the files
+  `-api` would change, and exits 1 if there are any. No compilation reads an
+  interface file. Every package in `core/` and `base/` has one checked in, and
+  the test suite checks that each is current; to use a package, read its
+  `api.loki`. See compiler-guide.md "Interface files".
 - `math.fma(a, b, c)` and `math.fma_f32` compute `a*b + c` with a single,
   correct rounding, the same with every C library. The compiler never fuses a
   written `a*b + c`, so this is the way to ask for it. See
@@ -235,6 +243,12 @@ checklist.
 
 ### Changed
 
+- The language server's `loke.documentation` command answers with the
+  interface file `-api` writes for the document's package, instead of the
+  `-doc` Markdown page for its root. The VS Code extension's **Loke: Show
+  Interface**, formerly **Show Documentation**, opens it as a Loke document,
+  and the extension treats an `api.loki` as Loke without the server checking
+  it.
 - `lokec -doc` writes its code blocks as ` ```loke ` rather than ` ```odin `,
   as hover already did, and so does every Markdown file in the repository. The
   VS Code extension highlights a ` ```loke ` block in a Markdown file's source.
@@ -285,6 +299,12 @@ checklist.
 
 ### Fixed
 
+- `lokec -doc` no longer shows the members of a type private to the package,
+  which no importer can name, such as the 28 members of `core:time`'s `Text`
+  and `Scanner`; they are shown only when a public declaration names the type.
+  It no longer shows the body of an operator or hook, such as
+  `operator(<) proc(left, right: Date) -> bool { ... }`, the `//` comments
+  inside an enum, a union, or a signature, or a field's `@(public)`.
 - `lokec -doc` documents generic records and generic `impl` blocks. A generic
   struct's public fields were missing, so `container.Bit_Set` printed as an
   empty struct, and no member of a generic `impl` appeared, such as any of

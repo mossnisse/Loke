@@ -1,5 +1,5 @@
 // Formatting and generated documentation, from the same procedures as
-// `lokec -fmt` and `lokec -doc`, applied to the editor's unsaved text.
+// `lokec -fmt` and `lokec -api`, applied to the editor's unsaved text.
 package lsp
 
 import "core:encoding/json"
@@ -10,8 +10,8 @@ import lokec "../src"
 
 INVALID_PARAMS :: -32602
 
-// The `workspace/executeCommand` command whose result is the Markdown page
-// `lokec -doc` prints for a document's root.
+// The `workspace/executeCommand` command whose result is the interface file
+// `lokec -api` writes for a document's package.
 DOCUMENTATION_COMMAND :: "loke.documentation"
 
 // `textDocument/formatting`: the document's text as `lokec -fmt` would write
@@ -102,12 +102,12 @@ execute_command :: proc(s: ^Server, id: json.Value, params: json.Value) {
 	queue_document_request(s, id, .Documentation, document_at(s, string(uri)), nil)
 }
 
-// The page describes the root, not the document, so it skips the guard
+// The interface needs the whole root checked, so the command skips the guard
 // position requests use: a check that failed before loading the document, as
 // for a malformed manifest or a file with a byte order mark, still fails the
-// command, as `lokec -doc` fails.
+// command, as `lokec -api` fails.
 answer_documentation :: proc(s: ^Server, request: Pending_Request, doc: ^Document) {
-	page, failure := documentation(s, doc.root)
+	page, failure := documentation(s, doc)
 	if failure != "" {
 		send_error(s, request.id, REQUEST_FAILED, failure)
 		return
@@ -117,37 +117,41 @@ answer_documentation :: proc(s: ^Server, request: Pending_Request, doc: ^Documen
 	send_result(s, request.id, strings.to_string(b))
 }
 
-// The page `lokec -doc` prints for the root, or why it would fail. A library
-// root was checked exactly as `lokec -doc` checks it, so its snapshot is used;
-// a program is checked again in documentation mode, in a session of its own,
-// so the root's reusable packages stay as they are.
-documentation :: proc(s: ^Server, root: ^Root) -> (page: string, failure: string) {
+// The interface file `lokec -api` writes for the document's package, checked
+// through its root, or why it would fail. A library root was checked exactly
+// as `lokec -api` checks it, so its snapshot is used; a program is checked
+// again in documentation mode, in a session of its own, so the root's reusable
+// packages stay as they are.
+documentation :: proc(s: ^Server, doc: ^Document) -> (page: string, failure: string) {
+	root := doc.root
 	if root.library {
 		if root.session.compiler.error_count > 0 { return "", documentation_failure(&root.session.compiler) }
-		return temporary_page(&root.session.compiler), ""
+		return temporary_page(&root.session.compiler, doc.path)
 	}
 	session: lokec.Compilation_Session
 	defer lokec.destroy_session(&session)
 	if !lokec.init_session(&session, s.config) { return "", documentation_failure(&session.compiler) }
-	for _, doc in s.documents { lokec.set_session_overlay(&session, doc.path, doc.text) }
+	for _, open in s.documents { lokec.set_session_overlay(&session, open.path, open.text) }
 	if !lokec.check_session(&session, root.path, documentation = true) { return "", documentation_failure(&session.compiler) }
-	return temporary_page(&session.compiler), ""
+	return temporary_page(&session.compiler, doc.path)
 }
 
-// Why `lokec -doc` would fail: the first error it would report.
+// Why `lokec -api` would fail: the first error it would report.
 @(private = "file")
 documentation_failure :: proc(c: ^lokec.Compiler) -> string {
-	FAILED :: "the program has errors, so `lokec -doc` would print no documentation"
+	FAILED :: "the program has errors, so `lokec -api` would write no interface file"
 	for d in c.diagnostics {
 		if d.severity == .Error { return fmt.tprintf("%s; the first is %s: %s", FAILED, d.code, d.message) }
 	}
 	return FAILED
 }
 
-// `document_project` allocates as it goes, as a command that prints once and
-// exits may, so everything it allocates lives only as long as the request.
+// `interface_of_source` allocates as it goes, as a command that writes once
+// and exits may, so everything it allocates lives only as long as the request.
 @(private = "file")
-temporary_page :: proc(c: ^lokec.Compiler) -> string {
+temporary_page :: proc(c: ^lokec.Compiler, path: string) -> (page: string, failure: string) {
 	context.allocator = context.temp_allocator
-	return lokec.document_project(c, c.root_package)
+	text, ok := lokec.interface_of_source(c, path)
+	if !ok { return "", "internal error: the interface file would not parse" }
+	return text, ""
 }

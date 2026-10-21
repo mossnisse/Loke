@@ -1,0 +1,6 @@
+/// Lengths, in metres.
+@(public)
+package units;
+
+/// One metre.
+METRE :: 1.0;

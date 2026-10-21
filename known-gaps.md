@@ -15,6 +15,8 @@ no source declaration, so the page leaves it out. `lokec core\mem -doc` prints
 only the package comment, with none of `Allocator`, `Allocator_Error`,
 `default_allocator`, `Arena`, `Scratch`, `Failure_Policy`, `try_arena`, and
 `try_scratch`. The same holds for `core:unsafe`'s operations, `math.wrap`,
-`log.Level`, `sync.Memory_Order`, and `core:meta`'s descriptors. Their
-signatures are in comments in the package source, which nothing checks. See
+`log.Level`, `sync.Memory_Order`, and `core:meta`'s descriptors.
+[Interface files](compiler-guide.md#interface-files) leave them out the same
+way, so `core/mem/api.loki` holds only the package clause. Their signatures
+are in comments in the package source, which nothing checks. See
 [Using a package without reading its code](open-questions.md#using-a-package-without-reading-its-code-proposal-2026-10-21).

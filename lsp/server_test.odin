@@ -1673,9 +1673,10 @@ formatting_matches_lokec_fmt :: proc(t: ^testing.T) {
 	testing.expect(t, is_null_result(reply_to(&h, take(&h), 84)))
 }
 
-// What `lokec -doc` prints for `root` with `unsaved` as overlays.
+// The interface file `lokec -api` writes for `document`'s package, checked
+// through `root` with `unsaved` as overlays.
 @(private = "file")
-fresh_documentation :: proc(h: ^Harness, root: string, unsaved: []Unsaved) -> string {
+fresh_documentation :: proc(h: ^Harness, root, document: string, unsaved: []Unsaved) -> string {
 	s: lokec.Compilation_Session
 	defer lokec.destroy_session(&s)
 	testing.expect(h.t, lokec.init_session(&s))
@@ -1684,7 +1685,8 @@ fresh_documentation :: proc(h: ^Harness, root: string, unsaved: []Unsaved) -> st
 	}
 	if !testing.expect(h.t, lokec.check_session(&s, lokec.join_path({h.root, root}, context.temp_allocator), documentation = true)) { return "" }
 	context.allocator = context.temp_allocator
-	return lokec.document_project(&s.compiler, s.compiler.root_package)
+	text, _ := lokec.interface_of_source(&s.compiler, lokec.join_path({h.root, document}, context.temp_allocator))
+	return text
 }
 
 @(private = "file")
@@ -1703,11 +1705,12 @@ documentation_page :: proc(h: ^Harness, relative: string) -> string {
 	return page
 }
 
-// The documentation command answers with the page `lokec -doc` prints for the
-// document's root, from unsaved text, for a program and for a library across
-// incremental checks; it waits for the check and refuses a program with errors.
+// The documentation command answers with the interface file `lokec -api`
+// writes for the document's package, from unsaved text, for a program and for
+// a library across incremental checks; it waits for the check and refuses a
+// program with errors.
 @(test)
-documentation_matches_lokec_doc :: proc(t: ^testing.T) {
+documentation_matches_lokec_api :: proc(t: ^testing.T) {
 	h: Harness
 	if !start(&h, t, "documentation") { finish(&h); return }
 	defer finish(&h)
@@ -1720,15 +1723,15 @@ documentation_matches_lokec_doc :: proc(t: ^testing.T) {
 	testing.expect_value(t, len(take(&h)), 0)
 	settle(&h)
 	page, _ := member_string(reply_to(&h, take(&h), 91), "result")
-	testing.expect_value(t, page, fresh_documentation(&h, "app", {}))
-	testing.expect(t, strings.contains(page, "# package shapes") && strings.contains(page, "Its area."))
+	testing.expect_value(t, page, fresh_documentation(&h, "app", "app/main.loke", {}))
+	testing.expect(t, strings.contains(page, "package main;") && !strings.contains(page, "Its area."))
 
 	// An unsaved comment in an imported package, documented through the program.
 	commented := strings.concatenate({shapes_text, "\n/// A unit square.\nUNIT :: Square{side = 1};\n"}, context.temp_allocator)
 	open(&h, "app/shapes/shapes.loke", commented)
 	page = documentation_page(&h, "app/shapes/shapes.loke")
-	testing.expect_value(t, page, fresh_documentation(&h, "app", {{"app/shapes/shapes.loke", commented}}))
-	testing.expect(t, strings.contains(page, "A unit square."))
+	testing.expect_value(t, page, fresh_documentation(&h, "app", "app/shapes/shapes.loke", {{"app/shapes/shapes.loke", commented}}))
+	testing.expect(t, strings.contains(page, "package shapes;") && strings.contains(page, "/// A unit square.\nUNIT :: Square{side = 1};"))
 
 	// With the program closed, the library is its own root, checked again
 	// after each edit.
@@ -1741,7 +1744,7 @@ documentation_matches_lokec_doc :: proc(t: ^testing.T) {
 	for text, index in edits {
 		change(&h, "app/shapes/shapes.loke", text, index + 2)
 		page = documentation_page(&h, "app/shapes/shapes.loke")
-		testing.expectf(t, page == fresh_documentation(&h, "app/shapes", {{"app/shapes/shapes.loke", text}}), "edit %d:\n%s", index, page)
+		testing.expectf(t, page == fresh_documentation(&h, "app/shapes", "app/shapes/shapes.loke", {{"app/shapes/shapes.loke", text}}), "edit %d:\n%s", index, page)
 	}
 	root := only_root(&h)
 	testing.expect(t, root != nil && root.library)
@@ -1756,13 +1759,13 @@ documentation_matches_lokec_doc :: proc(t: ^testing.T) {
 	testing.expect_value(t, error_code(reply_to(&h, take(&h), 93)), CONTENT_MODIFIED)
 	request_documentation(&h, 94, "app/main.loke")
 	testing.expect(t, is_null_result(reply_to(&h, take(&h), 94)))
-	// `lokec` rejects a `main` package without `main`, but `lokec -doc` still
+	// `lokec` rejects a `main` package without `main`, but `lokec -api` still
 	// documents it.
 	tool := "package main;\nimport \"shapes\";\n\n/// One square's area.\n@(public) unit_area :: proc() -> int { return shapes.area(shapes.Square{side = 1}); }\n"
 	write_file(&h, "tool/shapes/shapes.loke", shapes_text)
 	open(&h, "tool/main.loke", tool)
 	page = documentation_page(&h, "tool/main.loke")
-	testing.expect_value(t, page, fresh_documentation(&h, "tool", {{"tool/main.loke", tool}}))
+	testing.expect_value(t, page, fresh_documentation(&h, "tool", "tool/main.loke", {{"tool/main.loke", tool}}))
 	testing.expect(t, strings.contains(page, "One square's area."))
 	request(&h, "95", "workspace/executeCommand", `{"command":"loke.unknown","arguments":[]}`)
 	testing.expect_value(t, error_code(reply_to(&h, take(&h), 95)), INVALID_PARAMS)
@@ -1770,10 +1773,10 @@ documentation_matches_lokec_doc :: proc(t: ^testing.T) {
 	testing.expect_value(t, error_code(reply_to(&h, take(&h), 96)), INVALID_PARAMS)
 }
 
-// The documentation command fails where `lokec -doc` fails before the document
+// The documentation command fails where `lokec -api` fails before the document
 // is loaded at all: a malformed manifest, and a byte order mark.
 @(test)
-documentation_fails_where_lokec_doc_fails :: proc(t: ^testing.T) {
+documentation_fails_where_lokec_api_fails :: proc(t: ^testing.T) {
 	h: Harness
 	if !start(&h, t, "documentation-failures") { finish(&h); return }
 	defer finish(&h)
@@ -1796,7 +1799,7 @@ documentation_fails_where_lokec_doc_fails :: proc(t: ^testing.T) {
 		s: lokec.Compilation_Session
 		testing.expect(t, lokec.init_session(&s))
 		dir := lokec.path_dir(lokec.join_path({h.root, c.relative}, context.temp_allocator), context.temp_allocator)
-		testing.expectf(t, !lokec.check_session(&s, dir, documentation = true), "%s: `lokec -doc` succeeds", c.relative)
+		testing.expectf(t, !lokec.check_session(&s, dir, documentation = true), "%s: `lokec -api` succeeds", c.relative)
 		lokec.destroy_session(&s)
 		close(&h, c.relative)
 		settle(&h)

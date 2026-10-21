@@ -323,8 +323,8 @@ lsp_reply :: proc(p: ^Lsp_Process, id: i64, timeout: time.Duration = 60 * time.S
 	}
 }
 
-// Formatting and the documentation command answer what `lokec -fmt` writes
-// and `lokec -doc` prints for the same text.
+// Formatting and the documentation command answer what `lokec -fmt` and
+// `lokec -api` write for the same text.
 @(test)
 lsp_formats_and_documents_like_lokec :: proc(t: ^testing.T) {
 	root := fmt.tprintf("%s/lsp-tools-%d", TMP, os.get_pid())
@@ -340,8 +340,9 @@ lsp_formats_and_documents_like_lokec :: proc(t: ^testing.T) {
 	formatted, _, fmt_stderr, fmt_err := exec(os.Process_Desc{command = []string{compiler_path(), copy, "-fmt"}}, context.allocator)
 	if !testing.expectf(t, fmt_err == nil && formatted.exit_code == 0, "-fmt failed:\n%s", string(fmt_stderr)) { return }
 	expected_text, _ := os.read_entire_file(copy, context.temp_allocator)
-	documented, page, doc_stderr, doc_err := exec(os.Process_Desc{command = []string{compiler_path(), fmt.tprintf("%s/shapes", root), "-doc"}}, context.allocator)
-	if !testing.expectf(t, doc_err == nil && documented.exit_code == 0, "-doc failed:\n%s", string(doc_stderr)) { return }
+	documented, _, doc_stderr, doc_err := exec(os.Process_Desc{command = []string{compiler_path(), fmt.tprintf("%s/shapes", root), "-api"}}, context.allocator)
+	if !testing.expectf(t, doc_err == nil && documented.exit_code == 0, "-api failed:\n%s", string(doc_stderr)) { return }
+	page, _ := os.read_entire_file(fmt.tprintf("%s/shapes/api.loki", root), context.temp_allocator)
 	absolute := os.get_absolute_path(source, context.temp_allocator) or_else source
 	path, _ := strings.replace_all(absolute, "\\", "/", context.temp_allocator)
 	uri := fmt.tprintf("file:///%s", path)
