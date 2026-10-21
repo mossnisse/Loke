@@ -1,17 +1,18 @@
-// `Little_Endian(T)` and `Big_Endian(T)`: storage wrappers that fix a field's
-// byte order regardless of the target's (standard-library "`core:endian`").
-//
-// The wrapper is the *stored* form. Nothing arithmetic is defined on it: a
-// caller `store`s a host value into one and `load`s a host value back out, and
-// the byte swap — if the target needs one at all — happens exactly at those two
-// points. That is the whole reason to have the type instead of remembering to
-// swap at each use.
-//
-//     header: (magic: endian.Big_Endian(u32)) = {};
-//     header.magic = endian.Big_Endian(u32).store(0xCAFEBABE);
-//     fmt.println(header.magic.load());
-//
-// `T` is an integer type. A one-byte `T` needs no swap and gets none.
+/// `Little_Endian(T)` and `Big_Endian(T)`: storage wrappers that fix a field's
+/// byte order regardless of the target's.
+///
+/// The wrapper is the *stored* form. Nothing arithmetic is defined on it: a
+/// caller `store`s a host value into one and `load`s a host value back out, and
+/// the byte swap — if the target needs one at all — happens exactly at those two
+/// points. That is the whole reason to have the type instead of remembering to
+/// swap at each use.
+///
+///     header: (magic: endian.Big_Endian(u32)) = {};
+///     header.magic = endian.Big_Endian(u32).store(0xCAFEBABE);
+///     fmt.println(header.magic.load());
+///
+/// `T` is an integer type. A one-byte `T` needs no swap and gets none.
+// standard-library "`core:endian`".
 @(public)
 package endian;
 
@@ -31,27 +32,28 @@ Little_Endian :: struct($T: type) where interfaces.Integral(T) {
 }
 
 impl Little_Endian($T) {
-	// A host value in little-endian storage.
+	/// A host value in little-endian storage.
 	store :: proc(value: T) -> Little_Endian(T) {
 		return {host_to(value, Order.Little)};
 	}
 
-	// The host value back. On a little-endian target both directions are the
-	// identity, and `host_to` folds them away rather than leaving a branch for
-	// the optimizer.
+	/// The host value back.
+	// On a little-endian target both directions are the identity, and `host_to`
+	// folds them away rather than leaving a branch for the optimizer.
 	load :: proc(self) -> T {
 		return host_to(self.stored, Order.Little);
 	}
 
-	// Explicit only: a silent conversion from `T` would put a host value where a
-	// stored one belongs at every assignment, which is the bug this type exists
-	// to prevent. `Little_Endian(u32)(x)` is the written form.
+	/// Explicit only: a silent conversion from `T` would put a host value where a
+	/// stored one belongs at every assignment, which is the bug this type exists
+	/// to prevent. `Little_Endian(u32)(x)` is the written form.
 	from_host :: hook(convert) proc(value: T) -> Little_Endian(T) {
 		return {host_to(value, Order.Little)};
 	}
 
-	// The value, not the storage: printing the swapped bytes would be a puzzle.
-	// `format_to_with`, so a caller asking for hex gets hex.
+	/// Prints the host value, not the stored bytes, with the caller's options, so
+	/// a caller asking for hex gets hex.
+	// `format_to_with` does that; printing the swapped bytes would be a puzzle.
 	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
 		fmt.format_to_with(writer, options, self.load());
 	}
@@ -79,12 +81,12 @@ impl Big_Endian($T) {
 	}
 }
 
-// The two byte orders, named here rather than reused from `LOKE_ENDIAN` so this
-// package's public surface does not depend on a compiler-provided enum's
-// spelling.
+/// The two byte orders.
+// Named here rather than reused from `LOKE_ENDIAN` so this package's public
+// surface does not depend on a compiler-provided enum's spelling.
 Order :: enum { Little, Big };
 
-// The host order, as this package spells it.
+/// The host order, as this package spells it.
 host_order :: proc() -> Order {
 	when (LOKE_ENDIAN == .Big) { return Order.Big; } else { return Order.Little; }
 }
@@ -107,8 +109,10 @@ host_to :: proc(value: $T, $wanted: Order) -> T where interfaces.Integral(T) {
 	}
 }
 
-// A one-byte value has nothing to swap, and the `when` keeps the wide-mask
-// arithmetic below out of checking for it — `T(0xFF)` does not fit in an `i8`.
+/// `value` with its bytes in the opposite order. A one-byte value comes back
+/// unchanged.
+// The `when` keeps the wide-mask arithmetic below out of checking for a
+// one-byte `T`: `T(0xFF)` does not fit in an `i8`.
 byte_swap :: proc(value: $T) -> T where interfaces.Integral(T) {
 	when (size_of(T) == 1) {
 		return value;

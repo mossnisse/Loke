@@ -1,14 +1,17 @@
-// Slice algorithms: design.md "Slices", design.md "Sorting slices", and
-// design.md "Slice queries and copies".
+/// Slice algorithms.
+///
+/// Only `clone`/`try_clone` allocate storage of their own, and say so by
+/// returning an owner. Copying an element can allocate through its copy hook,
+/// so `fill`, and the one result copy `min` and `max` return, may allocate as
+/// well.
+///
+/// The mutating procedures take `[]mut T`, so passing a read-only `[]T` is a
+/// compile-time error rather than a silent no-op.
+// design.md "Slices", design.md "Sorting slices", and design.md "Slice queries
+// and copies".
 //
 // The public surface is ordinary Loke over `[]T` and `[]mut T`. The one private
-// sorting bridge reaches the runtime's raw relocation machinery. Only
-// `clone`/`try_clone` allocate storage of their own, and say so by returning an
-// owner. Copying an element can allocate through its copy hook, so `fill`, and
-// the one result copy `min` and `max` return, may allocate as well.
-//
-// The mutating procedures take `[]mut T`, so passing a read-only `[]T` is the
-// compile-time error design.md promises rather than a silent no-op.
+// sorting bridge reaches the runtime's raw relocation machinery.
 @(public)
 package slice;
 
@@ -17,10 +20,11 @@ import "core:mem";
 
 // ---------------------------------------------------------------- ordering --
 
-// Sorts in place according to `less`: a plain procedure, or a value whose
-// `call` method compares, such as a record carrying configuration or checked
-// borrows (design.md "Sorting slices"). It is borrowed for the call and
-// retained nowhere, and sorting allocates nothing.
+/// Sorts in place according to `less`: a plain procedure, or a value whose
+/// `call` method compares, such as a record carrying configuration or checked
+/// borrows. It is borrowed for the call and retained nowhere, and sorting
+/// allocates nothing. The sort is not stable.
+// design.md "Sorting slices".
 //
 // The package-private intrinsic owns only the bridge to the shared
 // byte-relocating runtime introsort: it receives an ordering record's address
@@ -43,28 +47,29 @@ impl Ordering($T, $C) {
 	}
 }
 
-// Ascending, in place. No allocation, and no comparator: `Ordered` is the
-// precondition, and design.md's `Ordered` is IEEE-754 for floats, so a slice
-// containing NaN sorts to an unspecified permutation rather than trapping.
-//
+/// Ascending, in place. No allocation, and no comparator: `Ordered` is the
+/// precondition, and `Ordered` is IEEE-754 for floats, so a slice containing
+/// NaN sorts to an unspecified permutation rather than trapping. The same as
+/// `values.sort()`. The sort is not stable.
 // This is design.md's free spelling of the contributed `values.sort()` member,
 // and it forwards to it: one introsort in the runtime, reached by both, so the
-// two spellings cannot drift apart. The sort is not stable.
+// two spellings cannot drift apart.
 sort :: proc(values: []mut $T) where interfaces.Ordered(T) {
 	values.sort();
 }
 
-// Descending. Sorting with the comparison reversed, not sorting and then
-// reversing: the two differ for equal-comparing elements only, and neither
-// order is stable, so one pass is enough.
+/// Descending. The sort is not stable.
+// Sorting with the comparison reversed, not sorting and then reversing: the
+// two differ for equal-comparing elements only, and neither order is stable,
+// so one pass is enough.
 reverse_sort :: proc(values: []mut $T) where interfaces.Ordered(T) {
 	values.reverse_sort();
 }
 
-// Whether `sort` would leave the slice as it is. `Ordered` is IEEE-754 for
-// floats here too, so a NaN is neither `<` nor `>=` anything: `is_sorted` says
-// true of a slice a NaN sits in the middle of, and `sort` may still move it.
-// The two agree that no pair is out of order, which is all either claims.
+/// Whether `sort` would leave the slice as it is. `Ordered` is IEEE-754 for
+/// floats here too, so a NaN is neither `<` nor `>=` anything: `is_sorted` says
+/// true of a slice a NaN sits in the middle of, and `sort` may still move it.
+/// The two agree that no pair is out of order, which is all either claims.
 is_sorted :: proc(values: []$T) -> bool where interfaces.Ordered(T) {
 	foreach (i in 1 ..< values.len()) {
 		if (values[i] < values[i - 1]) { return false; }
@@ -79,9 +84,9 @@ is_reverse_sorted :: proc(values: []$T) -> bool where interfaces.Ordered(T) {
 	return true;
 }
 
-// The leftmost index at which `wanted` could be inserted while keeping the
-// slice sorted, plus whether it is already there. `values` must be sorted
-// ascending; a caller who has not sorted gets a meaningless answer, not a trap.
+/// The leftmost index at which `wanted` could be inserted while keeping the
+/// slice sorted, plus whether it is already there. `values` must be sorted
+/// ascending; a caller who has not sorted gets a meaningless answer, not a trap.
 binary_search :: proc(values: []$T, wanted: T) -> (index: int, found: bool)
 	where interfaces.Ordered(T) {
 	low := 0;
@@ -95,22 +100,23 @@ binary_search :: proc(values: []$T, wanted: T) -> (index: int, found: bool)
 
 // ------------------------------------------------------------------ places --
 
-// Two elements trade contents, which is the one rearrangement that installs no
-// new value: no copy or drop hook runs on either element, and no vacated slot
-// has to be filled. That is what reaches a move-only element and a no-zero one
-// alike -- `exchange` needs a replacement, and the zero is the only one
+/// The elements at `left` and `right` trade contents: no copy or drop hook runs
+/// on either, so it reaches a move-only element and one with no zero value
+/// alike. Each index is bounds-checked, and two equal indices leave the element
+/// as it is. The same as `values.swap()`.
+// The one rearrangement that installs no new value: no vacated slot has to be
+// filled. `exchange` needs a replacement, and the zero is the only one
 // available without a copy, which an element type may not have at all.
 //
 // This is design.md's free spelling of the contributed `values.swap()` member,
 // and it forwards to it exactly as `sort` does: one implementation, reached by
-// both spellings. Each index is bounds-checked there, and two equal indices
-// leave the element as it is.
+// both spellings.
 swap :: proc(values: []mut $T, left: int, right: int) {
 	values.swap(left, right);
 }
 
-// Reverses the order of the elements in place. Built on `swap`, so it reaches a
-// move-only element for the same reason `swap` does.
+/// Reverses the order of the elements in place. Built on `swap`, so it reaches a
+/// move-only element for the same reason `swap` does.
 reverse :: proc(values: []mut $T) {
 	low := 0;
 	high := values.len();
@@ -159,10 +165,12 @@ equal :: proc(left: []$T, right: []T) -> bool where interfaces.Equatable(T) {
 	return true;
 }
 
-// `.none` for an empty slice: there is no minimum of nothing, and returning the
-// zero value would be a wrong answer rather than a missing one. The candidate
-// changes only for an element `<` it, so ties keep the earliest and a NaN wins
-// only from index 0; `max` is the same with `<` reversed.
+/// The smallest element, or `.none` for an empty slice. Ties keep the earliest,
+/// and a NaN wins only from index 0; `max` is the same with `<` reversed. Only
+/// the result is copied.
+// There is no minimum of nothing, and returning the zero value would be a
+// wrong answer rather than a missing one. The candidate changes only for an
+// element `<` it.
 //
 // The search keeps the winner's index rather than a copy of it, so the only
 // element copy is the one the result needs: a candidate whose copy hook
@@ -187,7 +195,8 @@ max :: proc(values: []$T) -> Option(T) where interfaces.Ordered(T) {
 
 // --------------------------------------------------------------- ownership --
 
-// design.md "Slices": the way to keep data after its owner expires.
+/// An owned copy of `values`: the way to keep data after its owner expires.
+// design.md "Slices".
 clone :: proc(values: []$T, allocator: Allocator = mem.default_allocator()) -> [dynamic]T {
 	// `slice.try_clone` below, not a receiver member: a slice is a borrow and
 	// owns nothing to clone. Failure follows the allocator's policy.

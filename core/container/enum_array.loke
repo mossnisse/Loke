@@ -1,13 +1,13 @@
-// `Enum_Array(Enum, T)`: one `T` per declared member (design.md's catalogue row
-// for enum iteration, and "Iterating an enumeration").
-//
-// Indexed by the member, not by a number: `counts[.North] += 1`. A member's slot
-// is its declaration position, so an enum with holes costs one slot per member
-// rather than one per representable value.
-//
-// The zero value holds every member's zero value, so no construction is needed
-// when `T` has one. A `T` without a zero value is held too: `filled` builds
-// every slot from the value it is given.
+/// `Enum_Array(Enum, T)`: one `T` per declared member.
+///
+/// Indexed by the member, not by a number: `counts[.North] += 1`. A member's slot
+/// is its declaration position, so an enum with holes costs one slot per member
+/// rather than one per representable value.
+///
+/// The zero value holds every member's zero value, so no construction is needed
+/// when `T` has one. A `T` without a zero value is held too: `filled` builds
+/// every slot from the value it is given.
+// design.md's catalogue row for enum iteration, and "Iterating an enumeration".
 @(public)
 package container;
 
@@ -19,8 +19,9 @@ Enum_Array :: struct($E: type, $T: type) {
 }
 
 impl Enum_Array($E, $T) {
-	// Every slot set to `value`, which copies it once per member and so is not
-	// part of a move-only instantiation (design.md "where clauses").
+	/// Every slot set to `value`, which copies it once per member, so a move-only
+	/// instance has no `filled`.
+	// design.md "where clauses".
 	//
 	// Starting from the zero value would demand one `T` has no use for, so the
 	// slots are built in a `Small_Array`, whose storage is capacity rather than
@@ -41,13 +42,13 @@ impl Enum_Array($E, $T) {
 		}
 	}
 
-	// The number of declared members, which is also the number of slots: an
-	// `Enum_Array` is never partly present.
+	/// The number of declared members, which is also the number of slots: an
+	/// `Enum_Array` is never partly present.
 	len :: proc(self) -> int { return E.values().len(); }
 	cap :: proc(self) -> int { return E.values().len(); }
 
-	// Reading a slot out by value is a written copy; `get_mut` reaches it
-	// without one.
+	/// Reading a slot out by value is a written copy; `get_mut` reaches it
+	/// without one.
 	get :: operator([]) proc(self, member: E) -> T where is_copyable(T) {
 		return self.slots[position_of(member)].clone();
 	}
@@ -56,24 +57,25 @@ impl Enum_Array($E, $T) {
 		return inout self.slots[position_of(member)];
 	}
 
-	// A slot lent where it is stored, so an immutable array reaches an element
-	// `get` cannot copy: `slots.at(.First).id`. A `self: ^` receiver is the
-	// caller's value (design.md "Receiver forms"), as for `Small_Array.view`.
+	/// A slot lent where it is stored, so an immutable array reaches an element
+	/// `get` cannot copy: `slots.at(.First).id`.
+	// A `self: ^` receiver is the caller's value (design.md "Receiver forms"), as
+	// for `Small_Array.view`.
 	at :: proc(self: ^, member: E) -> ^T {
 		return &self.slots[position_of(member)];
 	}
 
 	// -------------------------------------------------------- iteration --
 
-	// Iteration yields `{key, value}` entries, the shape design.md gives a map's
-	// `Element` — an enum-keyed container is a keyed container, so a bare value
-	// would lose the half a caller usually wants.
+	/// Iteration yields `{key, value}` entries, as a map's does.
+	// The shape design.md gives a map's `Element` — an enum-keyed container is a
+	// keyed container, so a bare value would lose the half a caller usually wants.
 	Element  :: (key: E, value: T);
 
-	// The iterator borrows the slots rather than carrying a copy of the whole
-	// array: a `self: ^` receiver designates the caller's value (design.md
-	// "Receiver forms"), so a view of its inline storage is derived from the
-	// caller's root.
+	/// The iterator borrows the slots rather than carrying a copy of the whole
+	/// array.
+	// A `self: ^` receiver designates the caller's value (design.md "Receiver
+	// forms"), so a view of its inline storage is derived from the caller's root.
 	iter :: proc(self: ^) -> Enum_Array_Iterator(E, T) { return {self.slots[:], 0}; }
 
 	iter_mut :: proc(self: inout) -> Enum_Array_Mut_Iterator(E, T) { return {&mut self.slots[:], 0}; }
@@ -92,9 +94,9 @@ impl Enum_Array($E, $T) {
 	}
 }
 
-// A borrow of the array's slots plus the traversal position. The array cannot
-// be mutated, moved, or dropped while this is live, which is the ordinary borrow
-// rule rather than anything this type arranges.
+/// A borrow of the array's slots plus the traversal position. The array cannot
+/// be mutated, moved, or dropped while this is live, which is the ordinary borrow
+/// rule rather than anything this type arranges.
 Enum_Array_Iterator :: struct($E: type, $T: type) {
 	@(private) slots: []T,
 	@(private) at:    int,
@@ -116,8 +118,8 @@ impl Enum_Array_Iterator($E, $T) {
 	}
 }
 
-// `foreach (key, &mut value in array)`: the key is still made per step, and the
-// value is lent mutably until the next step.
+/// `foreach (key, &mut value in array)`: the key is still made per step, and the
+/// value is lent mutably until the next step.
 Enum_Array_Mut_Iterator :: struct($E: type, $T: type) {
 	@(private) slots: []mut T,
 	@(private) at:    int,

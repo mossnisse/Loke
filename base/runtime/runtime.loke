@@ -1,15 +1,18 @@
-// The runtime ABI package (design.md "Allocators", "`type` and `typeid`",
-// m6a-plan decision "Runtime metadata ABI").
+/// The runtime ABI package: the layouts the compiler and the seed runtime both
+/// write, which are the allocator surface, the public type metadata, and
+/// `Source_Code_Location`.
+///
+/// `Allocator` and `Allocator_Error` are the same types the unqualified
+/// predeclared names are: `runtime.Allocator` and `Allocator` are one type,
+/// not two.
+// design.md "Allocators", "`type` and `typeid`", m6a-plan decision "Runtime
+// metadata ABI".
 //
-// This package is authoritative for the layouts the compiler and the seed
-// runtime both write: the allocator surface, the public type metadata, and
-// `Source_Code_Location`. The compiler checks these declarations against the
-// layouts it writes, field names, order, and types, and the enums member by
-// member, so the two cannot drift apart silently.
-//
+// This package is authoritative for those layouts. The compiler checks these
+// declarations against the layouts it writes, field names, order, and types,
+// and the enums member by member, so the two cannot drift apart silently.
 // `Allocator` and `Allocator_Error` are contributed by the compiler
-// (`src/stdlib.odin`) and bind the *same* types the unqualified predeclared
-// names do. `runtime.Allocator` and `Allocator` are one type, not two.
+// (`src/stdlib.odin`).
 //
 // Adding a field, or an enum member, requires a runtime ABI version bump:
 // generated metadata tables are written against exactly this field order.
@@ -18,8 +21,8 @@ package runtime;
 
 import "base:interfaces";
 
-// Every kind a `typeid` can describe. `Invalid` is the zero value, which is
-// what an unknown or forged id resolves to.
+/// Every kind a `typeid` can describe. `Invalid` is the zero value, which is
+/// what an unknown or forged id resolves to.
 @(public)
 Type_Kind :: enum u8 {
 	Invalid, Void, Bool, Signed_Int, Unsigned_Int, Float, Rune,
@@ -31,12 +34,12 @@ Type_Kind :: enum u8 {
 @(public)
 Member_Kind :: enum u8 { Field, Enum_Value, Union_Variant, Parameter, Result }
 
-// One member of an aggregate. Names use static storage, so a `Member_Info`
-// owns nothing and needs no cleanup.
-//
-// `value_low`/`value_high` carry an enum member's raw value in two words,
-// without narrowing a signed or unsigned 128-bit value; the owning type's
-// `bits` and `signed` say how to read them. Unused fields are zero.
+/// One member of an aggregate. Names use static storage, so a `Member_Info`
+/// owns nothing and needs no cleanup.
+///
+/// `value_low`/`value_high` carry an enum member's raw value in two words,
+/// without narrowing a signed or unsigned 128-bit value; the owning type's
+/// `bits` and `signed` say how to read them. Unused fields are zero.
 @(public)
 Member_Info :: struct {
 	kind:       Member_Kind,
@@ -47,15 +50,16 @@ Member_Info :: struct {
 	value_high: u64,
 }
 
-// design.md "`type` and `typeid`": the runtime half of reflection. A `typeid` is
-// an ordinary scalar, so `type_info_of` is a checked lookup rather than a
-// promise that every id is valid.
-//
-// Aggregate member tables expose public fields only; procedure entries retain
-// written parameter and result order, and union variants retain declaration
-// order. Unused scalar, relation, and member fields are zero. A `Distinct`
-// entry's `element` is the type it is declared over, and the shape is that
-// type's entry to describe.
+/// The runtime half of reflection. A `typeid` is an ordinary scalar, so
+/// `type_info_of` is a checked lookup rather than a promise that every id is
+/// valid.
+///
+/// Aggregate member tables expose public fields only; procedure entries retain
+/// written parameter and result order, and union variants retain declaration
+/// order. Unused scalar, relation, and member fields are zero. A `Distinct`
+/// entry's `element` is the type it is declared over, and the shape is that
+/// type's entry to describe.
+// design.md "`type` and `typeid`".
 @(public)
 Type_Info :: struct {
 	id:      typeid,
@@ -71,9 +75,9 @@ Type_Info :: struct {
 	members: []Member_Info,
 }
 
-// design.md "Concurrency and the memory model": the ordering an atomic
-// operation asks for. The compiler checks these names and values against its
-// own copy in `src/atomics.odin`.
+/// The ordering an atomic operation asks for.
+// design.md "Concurrency and the memory model". The compiler checks these
+// names and values against its own copy in `src/atomics.odin`.
 @(public)
 Memory_Order :: enum u8 {
 	Relaxed,
@@ -83,8 +87,8 @@ Memory_Order :: enum u8 {
 	Sequentially_Consistent,
 }
 
-// design.md: `source_location` and `caller_location` produce one of these.
-// Line and column are one-based, and both views point at static storage.
+/// What `source_location` and `caller_location` produce. Line and column are
+/// one-based, and both views point at static storage.
 @(public)
 Source_Code_Location :: struct {
 	file:      string_view,
@@ -102,7 +106,7 @@ Source_Code_Location :: struct {
 // there is no honest default between success and failure, so it must be
 // constructed.
 
-// The empty type: what `or_return` yields for a success that carries nothing.
+/// The empty type: what `or_return` yields for a success that carries nothing.
 @(public)
 Unit :: struct {}
 
@@ -113,9 +117,9 @@ Option :: union($T: type) @(zero=none, failure=none) { none, some: T }
 @(require_results)
 Result :: union($T, $E: type) @(failure=err) { ok: T, err: E }
 
-// A fallible operation that produces nothing on success. Its success carries
-// no payload, so its body may end without `return .ok;` (design.md "One
-// result").
+/// A fallible operation that produces nothing on success. Its success carries
+/// no payload, so its body may end without `return .ok;`.
+// design.md "One result".
 @(public)
 @(require_results)
 Status :: union($E: type) @(failure=err) { ok, err: E }

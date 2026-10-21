@@ -1,13 +1,14 @@
-// Lexical path operations (standard-library "`core:path`").
-//
-// Everything here is **lexical**: no procedure in this package touches the
-// filesystem. `clean` removes redundant separators and `.`/`..` elements without
-// resolving a symlink or asking whether anything exists, which is why it can be
-// used on a path for a file that has not been created yet. Resolution against a
-// real filesystem belongs in `core:fs`, and returns an I/O error.
-//
-// Paths are UTF-8 `string_view`s. Results that own storage take an allocator,
-// like every other owning result in the library.
+/// Lexical path operations.
+///
+/// Everything here is **lexical**: no procedure in this package touches the
+/// filesystem. `clean` removes redundant separators and `.`/`..` elements without
+/// resolving a symlink or asking whether anything exists, which is why it can be
+/// used on a path for a file that has not been created yet. Resolution against a
+/// real filesystem belongs in `core:fs`, and returns an I/O error.
+///
+/// Paths are UTF-8 `string_view`s. Results that own storage take an allocator,
+/// like every other owning result in the library.
+// standard-library "`core:path`".
 @(public)
 package path;
 
@@ -32,10 +33,10 @@ is_separator :: proc(value: u8) -> bool {
 	return value == u8(SEPARATOR) || value == u8(ALTERNATE);
 }
 
-// Whether the path names a location without needing a current directory *or* a
-// current drive. On Windows `C:\x` and `\\server\share\x` are absolute, while
-// `\x` (drive-relative) and `C:x` (directory-relative) are not — a distinction
-// that only shows up in tests written for it.
+/// Whether the path names a location without needing a current directory *or* a
+/// current drive. On Windows `C:\x` and `\\server\share\x` are absolute, while
+/// `\x` (drive-relative) and `C:x` (directory-relative) are not.
+// A distinction that only shows up in tests written for it.
 is_absolute :: proc(path: string_view) -> bool {
 	volume := volume_length(path);
 	if (volume == 0) { return false; }
@@ -45,9 +46,9 @@ is_absolute :: proc(path: string_view) -> bool {
 	return rest.len() > 0 && is_separator(rest[0]);
 }
 
-// The leading volume, or "": `C:` for a drive path, `\\server\share` or
-// `\\?\UNC\server\share` for a UNC one. Nothing above it can be created,
-// removed, or walked, which is what a caller needs it for.
+/// The leading volume, or "": `C:` for a drive path, `\\server\share` or
+/// `\\?\UNC\server\share` for a UNC one. Nothing above it can be created,
+/// removed, or walked, which is what a caller needs it for.
 volume :: proc(path: string_view) -> string_view {
 	return path[0:volume_length(path)];
 }
@@ -87,9 +88,9 @@ is_drive_letter :: proc(value: u8) -> bool {
 	return (value >= u8('a') && value <= u8('z')) || (value >= u8('A') && value <= u8('Z'));
 }
 
-// The last element. A trailing separator is ignored, so `base("a/b/")` is `b`,
-// and the volume is never part of it: `base("C:a")` is `a`, while a root -- a
-// `C:\` or a `\\server\share` -- has no last element at all.
+/// The last element. A trailing separator is ignored, so `base("a/b/")` is `b`,
+/// and the volume is never part of it: `base("C:a")` is `a`, while a root -- a
+/// `C:\` or a `\\server\share` -- has no last element at all.
 base :: proc(path: string_view) -> string_view {
 	trimmed := without_trailing_separators(path);
 	bytes := trimmed.bytes();
@@ -101,8 +102,8 @@ base :: proc(path: string_view) -> string_view {
 	return trimmed[at:];
 }
 
-// Everything before the last element, with no trailing separator except at a
-// root. A path with no separator at all has the directory `.`.
+/// Everything before the last element, with no trailing separator except at a
+/// root. A path with no separator at all has the directory `.`.
 directory :: proc(path: string_view) -> string_view {
 	trimmed := without_trailing_separators(path);
 	bytes := trimmed.bytes();
@@ -118,9 +119,9 @@ directory :: proc(path: string_view) -> string_view {
 	return trimmed[0:at];
 }
 
-// The extension of the last element, **including** the dot, or "". A leading dot
-// names a hidden file rather than an extension, so `extension(".config")` is "",
-// and `..` names the parent rather than a file with the extension `.`.
+/// The extension of the last element, **including** the dot, or "". A leading dot
+/// names a hidden file rather than an extension, so `extension(".config")` is "",
+/// and `..` names the parent rather than a file with the extension `.`.
 extension :: proc(path: string_view) -> string_view {
 	name := base(path);
 	if (name == "..") { return ""; }
@@ -133,7 +134,7 @@ extension :: proc(path: string_view) -> string_view {
 	return "";
 }
 
-// The last element without its extension.
+/// The last element without its extension.
 stem :: proc(path: string_view) -> string_view {
 	name := base(path);
 	return name[0:name.len() - extension(name).len()];
@@ -149,9 +150,8 @@ without_trailing_separators :: proc(path: string_view) -> string_view {
 	return path[0:end];
 }
 
-// The parts as one path, cleaned. Empty parts are dropped, so joining with ""
-// changes nothing.
-//
+/// The parts as one path, cleaned. Empty parts are dropped, so joining with ""
+/// changes nothing.
 // A slice rather than a variadic: a variadic absorbs every trailing argument, so
 // a defaulted allocator before one could never be omitted and one after it could
 // never be supplied.
@@ -210,21 +210,22 @@ join :: proc(
 	return clean(builder.view(), allocator);
 }
 
-// Redundant separators, `.` elements, and resolvable `..` elements removed. The
-// result uses the target's separator throughout.
-//
-// This is a *lexical* rewrite: `a/b/../c` becomes `a\c` whether or not `b` is a
-// symbolic link, which is why `fs` gets a separate resolving operation.
-//
-// `allocator` takes the scratch as well as the result: the element stack and the
-// builder both come from it. Against the heap that is invisible, but a caller
-// sizing a `mem.Arena` should budget a few times the result rather than exactly
-// it — a bump region reclaims a dropped temporary only at `free_all`.
-//
-// An extended-length `\\?\` path is returned unchanged. Those exist
-// precisely to bypass normalization — Windows passes them to the filesystem
-// verbatim — so rewriting one would be wrong. Recognizing its volume does not
-// normalize the remaining elements (standard-library "`core:path`").
+/// Redundant separators, `.` elements, and resolvable `..` elements removed. The
+/// result uses the target's separator throughout.
+///
+/// This is a *lexical* rewrite: `a/b/../c` becomes `a\c` whether or not `b` is a
+/// symbolic link, which is why `fs` gets a separate resolving operation.
+///
+/// `allocator` takes the scratch as well as the result: the element stack and the
+/// builder both come from it. Against the heap that is invisible, but a caller
+/// sizing a `mem.Arena` should budget a few times the result rather than exactly
+/// it — a bump region reclaims a dropped temporary only at `free_all`.
+///
+/// An extended-length `\\?\` path is returned unchanged. Those exist
+/// precisely to bypass normalization — Windows passes them to the filesystem
+/// verbatim — so rewriting one would be wrong.
+// Recognizing its volume does not normalize the remaining elements
+// (standard-library "`core:path`").
 clean :: proc(path: string_view, allocator: Allocator = mem.default_allocator()) -> string {
 	if (strings.starts_with(path, "\\\\?\\")) {
 		return strings.copy(path, allocator);

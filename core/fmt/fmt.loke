@@ -1,31 +1,32 @@
-// Formatted output (design.md "String format printing").
-//
-// `Formattable` supplies `value.format(writer, options)`. `Writer` is a
-// borrowed byte sink — a `dyn mut Sink` view — and `Options` is what a formatter
-// reads to spell a scalar. Both layouts are shared with the seed runtime, which
-// is where a formatter's bytes finally go.
-//
-// The compiler supplies default methods for printable types. Erased arguments
-// recover the same coherent interface witness an explicit `dyn Formattable`
-// uses; importing an extension cannot change a type's printed representation.
+/// Formatted output.
+///
+/// `Formattable` supplies `value.format(writer, options)`. `Writer` is a
+/// borrowed byte sink — a `dyn mut Sink` view — and `Options` is what a formatter
+/// reads to spell a scalar.
+///
+/// The compiler supplies default methods for printable types. Erased arguments
+/// recover the same coherent interface witness an explicit `dyn Formattable`
+/// uses; importing an extension cannot change a type's printed representation.
+// design.md "String format printing". Both layouts are shared with the seed
+// runtime, which is where a formatter's bytes finally go.
 @(public)
 package fmt;
 
 import "base:interfaces";
 
-// One byte sink. Any record with this `write` is one, so the same view serves a
-// stream, a buffer, and a counting sink; `(fmt.Writer)(&mut sink)` makes it.
+/// One byte sink. Any record with this `write` is one, so the same view serves a
+/// stream, a buffer, and a counting sink; `(fmt.Writer)(&mut sink)` makes it.
 @(public)
 Sink :: interface($Self: type) {
 	slot write: proc(self: inout Self, bytes: []u8);
 }
 
-// The view a formatter writes through. It borrows the sink for the call, which
-// is as long as any formatter keeps it.
+/// The view a formatter writes through. It borrows the sink for the call, which
+/// is as long as any formatter keeps it.
 @(public)
 Writer :: dyn mut Sink;
 
-// How a formatter spells a scalar. `base` is 2 to 36; anything else reads as 10.
+/// How a formatter spells a scalar. `base` is 2 to 36; anything else reads as 10.
 @(public)
 Options :: struct {
 	@(public) base:      int,
@@ -35,8 +36,8 @@ Options :: struct {
 @(public)
 DEFAULT_OPTIONS :: Options{10, false};
 
-// One borrowed printed representation. Inherent methods customize it; the
-// compiler supplies defaults for other printable runtime types.
+/// One borrowed printed representation. Inherent methods customize it; the
+/// compiler supplies defaults for other printable runtime types.
 @(public)
 Formattable :: interface($Self: type) {
 	slot format: proc(self: ^, writer: Writer, options: Options);
@@ -84,24 +85,26 @@ eprintln :: proc(args: ..any_view) {
 	write_bytes(w, "\n");
 }
 
-// The process sinks, as ordinary values. The intrinsics behind them are
-// package-private — nothing outside this package should reach the dispatch
-// table — so these are what a caller writing to a `Writer` uses.
+/// The process sinks, as ordinary values: what a caller writing to a `Writer`
+/// uses.
+// The intrinsics behind them are package-private — nothing outside this
+// package should reach the dispatch table.
 @(public)
 stdout :: proc() -> Writer { return stdout_writer(); }
 
 @(public)
 stderr :: proc() -> Writer { return stderr_writer(); }
 
-// design.md's own examples separate arguments with a space:
-// `fmt.println(offset, codepoint)` prints `0 A`.
+/// The arguments, separated by a space: `fmt.println(offset, codepoint)` prints
+/// `0 A`.
+// As design.md's own examples separate them.
 @(public)
 format_to :: proc(w: Writer, args: ..any_view) {
 	emit(w, DEFAULT_OPTIONS, ..args);
 }
 
-// The arguments back to back, with nothing between: what a `format` method
-// uses to write `(3, 4)`, and anything else whose punctuation is its own.
+/// The arguments back to back, with nothing between: what a `format` method
+/// uses to write `(3, 4)`, and anything else whose punctuation is its own.
 @(public)
 concat_to :: proc(w: Writer, args: ..any_view) {
 	foreach (a in args) {
@@ -109,35 +112,36 @@ concat_to :: proc(w: Writer, args: ..any_view) {
 	}
 }
 
-// The same, with the caller choosing how a scalar is spelled: `Options{16, true}`
-// writes `CAFEBABE` where the default writes `3405691582`. The seed runtime has
-// always implemented base 2 to 36 and both digit cases; until this procedure
-// existed nothing could ask for them, because `format_any` is package-private
-// and every call site here passed `DEFAULT_OPTIONS`.
+/// The same, with the caller choosing how a scalar is spelled: `Options{16, true}`
+/// writes `CAFEBABE` where the default writes `3405691582`. `options` comes
+/// first because a variadic absorbs the trailing arguments.
+// The seed runtime has always implemented base 2 to 36 and both digit cases;
+// until this procedure existed nothing could ask for them, because
+// `format_any` is package-private and every call site here passed
+// `DEFAULT_OPTIONS`.
 //
-// `options` leads for the same reason `to_string`'s allocator does: a variadic
-// absorbs the trailing arguments. The name differs rather than overloading
-// `format_to`, because an `Options` is itself a formattable value — so
-// `format_to(w, options, x)` would be an ambiguous call rather than an obvious
-// one.
+// The name differs rather than overloading `format_to`, because an `Options`
+// is itself a formattable value — so `format_to(w, options, x)` would be an
+// ambiguous call rather than an obvious one.
 @(public)
 format_to_with :: proc(w: Writer, options: Options, args: ..any_view) {
 	emit(w, options, ..args);
 }
 
-// The same formatting, into memory instead of a stream.
+/// The same formatting, into memory instead of a stream. The allocator comes
+/// first because a variadic absorbs the trailing arguments.
+///
+/// Together with `io.write_string` this is the simple fallback for any sink:
+/// format in memory, then write the result and handle that write's error. To
+/// append to a `strings.String_Builder`, pass the result to its own `append`.
+// The allocator is a required *leading* parameter, not a defaulted trailing
+// one: nothing after a variadic can be supplied and nothing defaulted before
+// it can be omitted.
 //
-// The allocator is a required *leading* parameter, not a defaulted trailing one:
-// a variadic absorbs the trailing arguments, so nothing after it can be supplied
-// and nothing defaulted before it can be omitted.
-//
-// Together with `io.write_string` this is the simple fallback for any sink:
-// format in memory, then write the result and handle that write's error. To
-// append to a `strings.String_Builder`, pass the result to its own `append` —
-// that one line is why this package does not import `core:strings` for an
-// `append_to` of its own. Almost every program imports `core:fmt`, an imported
-// package is emitted whole, and the measured cost of that import was hello
-// world's IR going from 397 lines to 4923.
+// That one `append` line is why this package does not import `core:strings`
+// for an `append_to` of its own. Almost every program imports `core:fmt`, an
+// imported package is emitted whole, and the measured cost of that import was
+// hello world's IR going from 397 lines to 4923.
 @(public)
 to_string :: proc(allocator: Allocator, args: ..any_view) -> string {
 	collector := Collector{make([dynamic]u8, 0, 64, allocator)};
@@ -175,9 +179,9 @@ emit :: proc(w: Writer, options: Options, args: ..any_view) {
 
 // ------------------------------------------------------ width and precision --
 
-// `value` with exactly `digits` digits after the point, rounded to nearest with
-// ties to even: `fixed(3.14159, 2)` prints `3.14`. `digits` is 0 to 40; a value
-// outside reads as the nearer end. NaN and the infinities print as any float.
+/// `value` with exactly `digits` digits after the point, rounded to nearest with
+/// ties to even: `fixed(3.14159, 2)` prints `3.14`. `digits` is 0 to 40; a value
+/// outside reads as the nearer end. NaN and the infinities print as any float.
 @(public)
 fixed :: proc(value: f64, digits: int) -> Fixed {
 	return Fixed{value, digits};
@@ -192,24 +196,24 @@ impl Fixed {
 	}
 }
 
-// `value` printed in at least `width` runes, padded with spaces on the left so
-// that a column of them lines up on the right: `pad_left(42, 5)` prints `   42`.
-// A longer value prints whole. `width` counts runes, not display columns.
+/// `value` printed in at least `width` runes, padded with spaces on the left so
+/// that a column of them lines up on the right: `pad_left(42, 5)` prints `   42`.
+/// A longer value prints whole. `width` counts runes, not display columns.
 @(public)
 pad_left :: proc(value: $T, width: int) -> Padded(T) {
 	return Padded(T){value, width, .Left};
 }
 
-// The same, padded on the right, for a column that lines up on the left.
+/// The same, padded on the right, for a column that lines up on the left.
 @(public)
 pad_right :: proc(value: $T, width: int) -> Padded(T) {
 	return Padded(T){value, width, .Right};
 }
 
-// An integer padded with zeros after its sign, so `zero_pad(7, 3)` prints `007`
-// and `zero_pad(-7, 3)` prints `-07`. The sign counts toward `width`, and a
-// leading `+` from a type's own `format` is a sign too. A `rune` is `Integral`
-// but prints as its character, so it is rejected; `int(r)` pads its code point.
+/// An integer padded with zeros after its sign, so `zero_pad(7, 3)` prints `007`
+/// and `zero_pad(-7, 3)` prints `-07`. The sign counts toward `width`, and a
+/// leading `+` from a type's own `format` is a sign too. A `rune` is `Integral`
+/// but prints as its character, so it is rejected; `int(r)` pads its code point.
 @(public)
 zero_pad :: proc(value: $T, width: int) -> Padded(T) where interfaces.Integral(T), T != rune {
 	return Padded(T){value, width, .Zero};

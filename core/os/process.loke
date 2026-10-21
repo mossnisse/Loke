@@ -1,8 +1,9 @@
-// Process state: the environment, the working directory, and the executable's
-// own path (standard-library "`core:os` additions").
-//
-// Files are **not** here. `core:os` is process state; opening a file is
-// `core:fs.open`. Starting another process is `core:process`.
+/// Process state: the environment, the working directory, and the executable's
+/// own path.
+///
+/// Files are **not** here. `core:os` is process state; opening a file is
+/// `core:fs.open`. Starting another process is `core:process`.
+// standard-library "`core:os` additions".
 @(public)
 package os;
 
@@ -11,15 +12,16 @@ import "core:io";
 import "core:mem";
 import "core:unsafe";
 
-// The value of `name`, or `.none` when it is not set at all. `Option` is what
-// separates a missing variable from one whose value is the empty string; the
-// owning result uses the supplied allocator.
-//
-// A name or value that is not valid Unicode is `Invalid_Data`: the library's
-// contract is UTF-8, and a native string that cannot be represented is reported
-// rather than silently changed.
-// All environment operations reject an empty name, `=`, or U+0000 before the
-// platform call (standard-library "`core:os` additions").
+/// The value of `name`, or `.none` when it is not set at all. `Option` is what
+/// separates a missing variable from one whose value is the empty string; the
+/// owning result uses the supplied allocator.
+///
+/// A name or value that is not valid Unicode is `Invalid_Data`: the library's
+/// contract is UTF-8, and a native string that cannot be represented is reported
+/// rather than silently changed.
+/// All environment operations reject an empty name, `=`, or U+0000 before the
+/// platform call.
+// standard-library "`core:os` additions".
 get_environment :: proc(
 	name: string_view, allocator: Allocator = mem.default_allocator(),
 ) -> Result(Option(string), io.Error) {
@@ -27,8 +29,8 @@ get_environment :: proc(
 	return get_environment_native(name, allocator);
 }
 
-// A variable set to the empty string is present and empty: a later
-// `get_environment` answers `.some("")`, not `.none`.
+/// A variable set to the empty string is present and empty: a later
+/// `get_environment` answers `.some("")`, not `.none`.
 set_environment :: proc(name: string_view, value: string_view) -> Status(io.Error) {
 	validate_environment_name(name) or_return;
 	return set_environment_native(name, value);

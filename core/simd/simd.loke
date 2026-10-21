@@ -1,10 +1,11 @@
-// `core:simd` (design.md "SIMD vectors").
-//
-// The operators on `Simd(T, N)` are the language's, and they cover everything
-// that is lane-wise. What is left is everything that crosses lanes — a
-// reduction, a select, a conversion to or from an array — and none of it can be
-// written as a loop here, because design.md makes a lane index constant. So
-// each of these is one compiler intrinsic with a Loke name.
+/// Operations on `Simd(T, N)` that cross lanes.
+///
+/// The operators on `Simd(T, N)` are the language's, and they cover everything
+/// that is lane-wise. What is left is everything that crosses lanes — a
+/// reduction, a select, a conversion to or from an array.
+// design.md "SIMD vectors". None of these can be written as a loop here,
+// because design.md makes a lane index constant, so each is one compiler
+// intrinsic with a Loke name.
 @(public)
 package simd;
 
@@ -30,12 +31,14 @@ Fold :: enum u8 {
 	All,
 }
 
+/// The vector with the lanes of `values`, in order: how ordinary code reaches a
+/// vector.
+///
+/// A vector and its array have the same lanes in the same order and the same
+/// bytes; only the alignment differs, and the conversion owns that.
 // design.md: "the two conversions between a vector and an array of the same
 // element and length. They are how vector data reaches ordinary code and how
 // ordinary code reaches a vector."
-//
-// A vector and its array have the same lanes in the same order and the same
-// bytes; only the alignment differs, and the conversion owns that.
 from_array :: proc(values: [$N]$T) -> Simd(T, N) {
 	return simd_cast(values);
 }
@@ -44,15 +47,19 @@ to_array :: proc(vector: Simd($T, $N)) -> [N]T {
 	return simd_cast(vector);
 }
 
+/// Chooses lane-wise between two vectors: lane `i` of the result is
+/// `when_true`'s where the mask lane is true and `when_false`'s where it is
+/// false.
+///
+/// Both vectors are evaluated: this is a lane-wise choice, not a branch.
 // design.md: "`select(mask, a, b) -> Simd(T, N)`, choosing lane-wise between
-// two vectors — what a lane mask is for." Lane `i` of the result is `a`s where
-// the mask lane is true and `b`s where it is false.
-//
-// Both vectors are evaluated: this is a lane-wise choice, not a branch.
+// two vectors — what a lane mask is for."
 select :: proc(mask: Simd(bool, $N), when_true: Simd($T, N), when_false: Simd(T, N)) -> Simd(T, N) {
 	return simd_select(mask, when_true, when_false);
 }
 
+/// Whether any lane of `mask` is true, turning a lane mask back into control
+/// flow.
 // design.md: "`any(mask) -> bool` and `all(mask) -> bool`, which turn a lane
 // mask back into control flow." A comparison on vectors produces a mask rather
 // than a `bool` precisely so that the reduction is written rather than assumed.
@@ -64,17 +71,18 @@ all :: proc(mask: Simd(bool, $N)) -> bool {
 	return simd_reduce(mask, Fold.All);
 }
 
-// design.md: "`reduce_add`, `reduce_mul`, `reduce_min`, and `reduce_max`, each
-// folding a vector to one scalar. A floating-point sum and product are ordered,
-// left to right, so their results do not depend on the target's vector width; a
-// signed integer sum and product fold left to right too, through the checked
-// scalar operator, so they panic where that loop over the lanes would; a
-// minimum and a maximum need no such rule, because they do not depend on order.
-// A floating-point sum starts from `-0.0` and a product from `1.0`, so a vector
-// of nothing but `-0.0` sums to `-0.0`. `reduce_min` and `reduce_max` ignore NaN
-// lanes and return a number whenever any lane holds one; a vector of
-// nothing but NaN reduces to NaN. Where two lanes compare equal, including
-// `-0.0` against `+0.0`, either may be the answer."
+/// `reduce_add`, `reduce_mul`, `reduce_min`, and `reduce_max` each fold a
+/// vector to one scalar. A floating-point sum and product are ordered, left to
+/// right, so their results do not depend on the target's vector width; a
+/// signed integer sum and product fold left to right too, through the checked
+/// scalar operator, so they panic where that loop over the lanes would; a
+/// minimum and a maximum need no such rule, because they do not depend on
+/// order. A floating-point sum starts from `-0.0` and a product from `1.0`, so
+/// a vector of nothing but `-0.0` sums to `-0.0`. `reduce_min` and `reduce_max`
+/// ignore NaN lanes and return a number whenever any lane holds one; a vector
+/// of nothing but NaN reduces to NaN. Where two lanes compare equal, including
+/// `-0.0` against `+0.0`, either may be the answer.
+// Quoted from design.md "SIMD vectors".
 reduce_add :: proc(vector: Simd($T, $N)) -> T {
 	return simd_reduce(vector, Fold.Add);
 }

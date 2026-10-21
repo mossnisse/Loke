@@ -1,10 +1,12 @@
-// Threads, and the mutex that guards what they share (standard-library.md
-// "`core:thread`", design.md "Concurrency and the memory model").
+/// Threads, and the mutex that guards what they share.
+///
+/// `spawn` and `join` supply the thread start and join edges of happens-before,
+/// and `Mutex` the unlock-to-lock edge.
+// standard-library "`core:thread`", design.md "Concurrency and the memory
+// model".
 //
-// Ordinary Loke over kernel32 and two runtime entry points: `spawn` and `join`
-// supply the thread start and join edges of happens-before, and `Mutex` the
-// unlock-to-lock edge. The kernel32 calls sit behind
-// `when (LOKE_OS == .Windows)`, as in `core:process`.
+// Ordinary Loke over kernel32 and two runtime entry points. The kernel32 calls
+// sit behind `when (LOKE_OS == .Windows)`, as in `core:process`.
 @(public)
 package thread;
 
@@ -52,22 +54,22 @@ foreign loke_runtime {
 @(private) INFINITE :: u32(0xFFFFFFFF);
 @(private) ALL_PROCESSOR_GROUPS :: u16(0xFFFF);
 
-// How many threads can run at once on this machine: its logical processors, in
-// every processor group, and never less than one.
+/// How many threads can run at once on this machine: its logical processors, in
+/// every processor group, and never less than one.
 processor_count :: proc() -> int {
 	count := int(rt_processor_count(ALL_PROCESSOR_GROUPS));
 	return count if count > 0 else 1;
 }
 
-// A running thread. Dropping one joins it, so a thread never outlives the owner
-// of its handle; `join` says so at the point it happens.
+/// A running thread. Dropping one joins it, so a thread never outlives the owner
+/// of its handle; `join` says so at the point it happens.
 Thread :: move_only struct {
 	@(private) handle: int,
 }
 
 impl Thread {
-	// Waits for the thread to return. Its writes, and its `thread_local` drops,
-	// happen before this returns.
+	/// Waits for the thread to return. Its writes, and its `thread_local` drops,
+	/// happen before this returns.
 	join :: proc(self: inout) {
 		if (self.handle == 0) { return; }
 		rt_wait(self.handle, INFINITE);
@@ -152,38 +154,39 @@ run_plain :: proc(entry: move proc()) {
 
 spawn :: proc{spawn_with, spawn_plain};
 
-// A `T` that one thread at a time may reach. `lock` blocks until the calling
-// thread holds it and answers a guard; the guard reaches the value, and
-// dropping it unlocks. An unlock happens before the next lock.
-//
-// Every operation takes a read-only `^` receiver, as `sync.Atomic`'s do, so a
-// `Mutex` works in file-scope storage and behind a `Shared(T)`. It is
-// move-only: the lock word is an `Atomic`.
+/// A `T` that one thread at a time may reach. `lock` blocks until the calling
+/// thread holds it and answers a guard; the guard reaches the value, and
+/// dropping it unlocks. An unlock happens before the next lock.
+///
+/// Every operation takes a read-only `^` receiver, so a `Mutex` works in
+/// file-scope storage and behind a `Shared(T)`. It is move-only.
+// As `sync.Atomic`'s do. Move-only because the lock word is an `Atomic`.
 Mutex :: struct($T: type) {
 	// A Windows SRWLOCK: one pointer, unlocked at zero, written only by the
 	// system's own atomic operations.
 	@(private) word: sync.Atomic(uintptr),
-	// Public for the same reason `Atomic`'s `value` is: a caller that owns the
-	// mutex outright, before spawning or after joining, needs no lock.
+	/// For a caller that owns the mutex outright, before spawning or after joining,
+	/// which needs no lock.
+	// Public for the same reason `Atomic`'s `value` is.
 	value: T,
 }
 
 impl Mutex($T) {
-	// Locking a mutex this thread already holds never returns.
+	/// Locking a mutex this thread already holds never returns.
 	lock :: proc(self: ^) -> Guard(T) {
 		rt_lock(rawptr(&self.word.value));
 		return Guard(T){self};
 	}
 }
 
-// The pointer borrows the mutex, so it cannot move or end while locked.
+/// The pointer borrows the mutex, so it cannot move or end while locked.
 Guard :: move_only struct($T: type) {
 	@(private) mutex: ^Mutex(T),
 }
 
 impl Guard($T) {
-	// The guarded value, for as long as this guard holds the lock: an `inout`
-	// result borrows the guard, so nothing reached through it outlives the lock.
+	/// The guarded value, for as long as this guard holds the lock: an `inout`
+	/// result borrows the guard, so nothing reached through it outlives the lock.
 	get :: proc(self: inout) -> inout T {
 		return inout (^mut T)(rawptr(&self.mutex.value))^;
 	}

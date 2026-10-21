@@ -1,18 +1,19 @@
-// `Atomic(T)`, `fence`, and `Once` (design.md "Concurrency and the memory
-// model", design.md "Atomic operations and Once").
+/// `Atomic(T)`, `fence`, and `Once`.
+///
+/// **Ordering arguments are `$` parameters throughout**, so an ordering must
+/// be a constant at the call.
+///
+/// Data races are not checked: a race is undefined behaviour, and there are no
+/// implicit `Send`/`Sync` interfaces.
+// design.md "Concurrency and the memory model", design.md "Atomic operations
+// and Once".
 //
 // The compiler owns the operations whose ordering is part of the instruction,
-// and everything here is ordinary Loke over them.
-//
-// **Ordering arguments are `$` parameters throughout.** A constant at the
-// caller does not make an ordinary parameter constant inside this body, and the
+// and everything here is ordinary Loke over them. A constant at the caller
+// does not make an ordinary parameter constant inside this body, and the
 // intrinsics require a constant — so forwarding an ordering through a runtime
 // parameter would not compile, and a `$` one keeps it constant across the
-// boundary.
-//
-// Data races are not checked. design.md is explicit that a race is undefined
-// behaviour and that there are no implicit `Send`/`Sync` interfaces; the
-// compiler lowers the model rather than verifying it.
+// boundary. The compiler lowers the memory model rather than verifying it.
 @(public)
 package sync;
 
@@ -27,21 +28,23 @@ package sync;
 // because a contributed name and a source declaration share one package scope
 // and two `fence`s would be a redeclaration.
 
-// The atomic types are `bool`, the integer and rune types, an enum over a
-// supported integer, and any pointer. The arithmetic operations are integers
-// only, which is design.md's own rule that an enum member is a named constant
-// rather than a number with a name.
-//
-// The zero value is `T`s zero, and nothing has to run before it is usable.
-//
-// `move_only`, because a copy of an atomic is a *non-atomic* read of it that
-// hands back a second, unrelated atomic. That is never what a caller means, and
-// design.md propagates it structurally, so `Once` below is move-only too.
+/// The atomic types are `bool`, the integer and rune types, an enum over a
+/// supported integer, and any pointer. The arithmetic operations are integers
+/// only.
+///
+/// The zero value is `T`'s zero, and nothing has to run before it is usable.
+///
+/// `move_only`, because a copy of an atomic is a *non-atomic* read of it that
+/// hands back a second, unrelated atomic. A record holding one is move-only
+/// too.
+// Integers only is design.md's own rule that an enum member is a named
+// constant rather than a number with a name. design.md propagates `move_only`
+// structurally, so `Once` below is move-only too.
 Atomic :: move_only struct($T: type) {
-	// Public, because a caller that has proven it has exclusive access — during
-	// construction, or after joining every other thread — reads and writes it
-	// without paying for a synchronizing operation. Every *atomic* access goes
-	// through the methods below.
+	/// Public, because a caller that has proven it has exclusive access — during
+	/// construction, or after joining every other thread — reads and writes it
+	/// without paying for a synchronizing operation. Every *atomic* access goes
+	/// through the methods below.
 	@(public) value: T,
 }
 
@@ -62,7 +65,7 @@ impl Atomic($T) {
 		atomic_store(&self.value, value, order);
 	}
 
-	// The previous value.
+	/// The previous value.
 	exchange :: proc(
 		self: ^, value: T,
 		$order: Memory_Order = Memory_Order.Sequentially_Consistent,
@@ -70,10 +73,11 @@ impl Atomic($T) {
 		return atomic_exchange(&self.value, value, order);
 	}
 
+	/// Writes `desired` if the value is `expected`. `swapped` says whether the
+	/// write happened, and `observed` is what was there — the value replaced when
+	/// it swapped, and the value that stopped it when it did not.
 	// Both orderings stay constants across this boundary, which is what the two
-	// `$` parameters are for. `swapped` says whether the write happened,
-	// and `observed` is what was there — the value replaced when it swapped, and
-	// the value that stopped it when it did not.
+	// `$` parameters are for.
 	compare_exchange :: proc(
 		self: ^, expected: T, desired: T,
 		$success: Memory_Order = Memory_Order.Sequentially_Consistent,
@@ -86,7 +90,7 @@ impl Atomic($T) {
 		return {observed = expected, swapped = false};
 	}
 
-	// The five read-modify-writes, each answering the *previous* value.
+	/// The five read-modify-writes, each answering the *previous* value.
 	add :: proc(
 		self: ^, value: T,
 		$order: Memory_Order = Memory_Order.Sequentially_Consistent,
@@ -123,22 +127,21 @@ impl Atomic($T) {
 	}
 }
 
-// A standalone barrier. `.Relaxed` orders nothing and is rejected: a fence that
-// does nothing is a mistake, not a no-op.
+/// A standalone barrier. `.Relaxed` orders nothing and is rejected: a fence that
+/// does nothing is a mistake, not a no-op.
 fence :: proc($order: Memory_Order = Memory_Order.Sequentially_Consistent) {
 	atomic_fence(order);
 }
 
-// design.md "Program entry and exit" names `Once` as the way to guard lazy
-// setup: file-scope and `static` storage use constant initialization (design.md
-// "Storage modifiers"), so anything that must *run* runs on first use instead.
-//
-// The zero value is an unfired `Once`, which is what lets it live in `static`
-// storage with no initializer.
-//
-// `do` fires through a read-only `^` receiver, as every atomic operation does,
-// so a `Once` works wherever it can be reached: in `static` storage, and behind
-// the `^T` a `Shared(T)` hands out.
+/// The way to guard lazy setup: file-scope and `static` storage are initialized
+/// by constants, so anything that must *run* runs on first use instead.
+///
+/// The zero value is an unfired `Once`, which is what lets it live in `static`
+/// storage with no initializer. It works wherever it can be reached: in
+/// `static` storage, and behind the `^T` a `Shared(T)` hands out.
+// design.md "Program entry and exit" names `Once` for this, and design.md
+// "Storage modifiers" gives static storage constant initialization. `do` fires
+// through a read-only `^` receiver, as every atomic operation does.
 Once :: struct {
 	@(private) state: Atomic(u32),
 }
@@ -159,19 +162,19 @@ ONCE_DONE :: u32(2);
 ONCE_POISONED :: u32(3);
 
 impl Once {
-	// Runs `action` exactly once across every thread that reaches this. A caller
-	// that arrives while another thread is still running it waits, so `do`
-	// returning means the action has *completed*, not merely started — which is
-	// the only guarantee that makes it usable for initialization.
-	//
+	/// Runs `action` exactly once across every thread that reaches this. A caller
+	/// that arrives while another thread is still running it waits, so `do`
+	/// returning means the action has *completed*, not merely started. Whatever
+	/// the action wrote is visible to every thread that returns from `do`.
+	///
+	/// An action must not reach its own `once`: a re-entrant `do` waits for itself
+	/// and never returns, and nothing reports it.
 	// The winner publishes with a release store and every other thread observes
-	// with an acquire load, so whatever the action wrote is visible to all of
-	// them.
+	// with an acquire load.
 	//
-	// An action must not reach its own `once`: the thread running it is the one
-	// the wait below spins on, so a re-entrant `do` waits for itself and never
-	// returns. Detecting that case needs a thread identity, which the library
-	// does not expose, so it is a rule rather than a diagnostic.
+	// The thread running the action is the one the wait below spins on. Detecting
+	// re-entry needs a thread identity, which the library does not expose, so it
+	// is a rule rather than a diagnostic.
 	do :: proc(self: ^Once, action: proc()) {
 		if (self.state.load(Memory_Order.Acquire) == ONCE_DONE) { return; }
 		observed, won := self.state.compare_exchange(
@@ -196,8 +199,8 @@ impl Once {
 		if (observed == ONCE_POISONED) { panic("a `Once` action panicked"); }
 	}
 
-	// Has the action completed? A `false` may be stale the moment it is read;
-	// only `true` is a durable answer.
+	/// Has the action completed? A `false` may be stale the moment it is read;
+	/// only `true` is a durable answer.
 	is_done :: proc(self: ^) -> bool {
 		return self.state.load(Memory_Order.Acquire) == ONCE_DONE;
 	}

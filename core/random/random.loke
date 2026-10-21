@@ -1,47 +1,47 @@
-// Seeded generators, operating-system entropy, and the values drawn from them
-// (standard-library "`core:random`").
-//
-// Everything a program draws goes through one protocol: a `Source` hands out
-// 64 uniformly random bits per `next_u64`. The procedures in this file turn
-// those bits into integers, floats, booleans, and permutations, and each one
-// says exactly how many draws it takes and how it maps them, because that
-// mapping is part of the contract: a seeded generator replays the same values
-// in every release (standard-library "Reproducibility").
-//
-// The procedures take the source `inout`, as `core:io` takes a stream, so a
-// generator of this package, a caller's own `Source`, and a `dyn mut Source`
-// view all work:
-//
-//     rng := random.Xoshiro256.from_seed(42);
-//     die := random.in_range(inout rng, 1 ..= 6);
-//     random.shuffle(inout rng, &mut deck[:]);
-//
-// There is no package-owned generator. A program that wants one declares its
-// own, `rng: thread_local random.Xoshiro256;`, whose zero value seeds itself
-// from the operating system on its first draw.
+/// Seeded generators, operating-system entropy, and the values drawn from them.
+///
+/// Everything a program draws goes through one protocol: a `Source` hands out
+/// 64 uniformly random bits per `next_u64`. The procedures in this file turn
+/// those bits into integers, floats, booleans, and permutations, and each one
+/// says exactly how many draws it takes and how it maps them, because that
+/// mapping is part of the contract: a seeded generator replays the same values
+/// in every release.
+///
+/// The procedures take the source `inout`, as `core:io` takes a stream, so a
+/// generator of this package, a caller's own `Source`, and a `dyn mut Source`
+/// view all work:
+///
+///     rng := random.Xoshiro256.from_seed(42);
+///     die := random.in_range(inout rng, 1 ..= 6);
+///     random.shuffle(inout rng, &mut deck[:]);
+///
+/// There is no package-owned generator. A program that wants one declares its
+/// own, `rng: thread_local random.Xoshiro256;`, whose zero value seeds itself
+/// from the operating system on its first draw.
+// standard-library "`core:random`", "Reproducibility".
 @(public)
 package random;
 
 import "base:interfaces";
 import "core:math";
 
-// 64 uniformly random bits per call. The one slot every procedure here builds
-// on, and a `slot`, so `dyn mut random.Source` is a view of any generator.
+/// 64 uniformly random bits per call. The one slot every procedure here builds
+/// on, and a `slot`, so `dyn mut random.Source` is a view of any generator.
 Source :: interface($Self: type) {
 	slot next_u64: proc(self: inout Self) -> u64;
 }
 
-// One value of `range`, every value equally likely. The endpoints are an
-// integer or rune type of at most 64 bits, and the range keeps its kind:
-// `1 ..= 6` includes 6 and `0 ..< n` excludes `n`. An empty range panics.
-//
-// Lemire's nearly-divisionless method: one draw per attempt, multiplied by the
-// span and kept when its low half clears the rejection threshold, which it does
-// on the first attempt unless the span is close to 2^64. The result is `low`
-// plus that offset, in two's complement. A range of all 2^64 values uses one
-// draw as the offset, with nothing to reject. A one-value range still takes its
-// draw, so a stream's later values do not depend on whether a range happened
-// to be narrow.
+/// One value of `range`, every value equally likely. The endpoints are an
+/// integer or rune type of at most 64 bits, and the range keeps its kind:
+/// `1 ..= 6` includes 6 and `0 ..< n` excludes `n`. An empty range panics.
+///
+/// Lemire's nearly-divisionless method: one draw per attempt, multiplied by the
+/// span and kept when its low half clears the rejection threshold, which it does
+/// on the first attempt unless the span is close to 2^64. The result is `low`
+/// plus that offset, in two's complement. A range of all 2^64 values uses one
+/// draw as the offset, with nothing to reject. A one-value range still takes its
+/// draw, so a stream's later values do not depend on whether a range happened
+/// to be narrow.
 in_range :: proc(source: inout $G, range: Range($T)) -> T
 	where Source(G), interfaces.Ordered(T), size_of(T) <= 8 {
 	if ((range.high < range.low) if range.closed else (range.high <= range.low)) {
@@ -78,13 +78,13 @@ below :: proc(source: inout $G, span: u64) -> u64 where Source(G) {
 	return u64(product >> 64);
 }
 
-// True or false, equally likely: the top bit of one draw.
+/// True or false, equally likely: the top bit of one draw.
 boolean :: proc(source: inout $G) -> bool where Source(G) {
 	return (source.next_u64() >> 63) == 1;
 }
 
-// True with `probability`, which must be in [0, 1]. Exactly one `unit` draw,
-// even for 0 and 1, which are then never and always.
+/// True with `probability`, which must be in [0, 1]. Exactly one `unit` draw,
+/// even for 0 and 1, which are then never and always.
 bernoulli :: proc(source: inout $G, probability: f64) -> bool where Source(G) {
 	// Written so a NaN fails it too.
 	if (!(probability >= 0.0 && probability <= 1.0)) {
@@ -93,9 +93,9 @@ bernoulli :: proc(source: inout $G, probability: f64) -> bool where Source(G) {
 	return unit(inout source) < probability;
 }
 
-// `destination` filled with random bytes: the little-endian bytes of one draw
-// per eight, with the unused bytes of a final partial draw discarded. Not for
-// secrets; see `fill_secure`.
+/// `destination` filled with random bytes: the little-endian bytes of one draw
+/// per eight, with the unused bytes of a final partial draw discarded. Not for
+/// secrets; see `fill_secure`.
 fill :: proc(source: inout $G, destination: []mut u8) where Source(G) {
 	index := 0;
 	for (; index < destination.len(); ) {
@@ -108,20 +108,20 @@ fill :: proc(source: inout $G, destination: []mut u8) where Source(G) {
 	}
 }
 
-// `values` in a uniformly random order. Fisher–Yates from the end: for each
-// index `i` from the last down to 1, one `in_range(0 ..= i)` picks the element
-// that trades places with it. Fewer than two elements take no draw. The swap
-// runs no copy or drop hook, so any element type can be shuffled (design.md
-// "Swapping elements").
+/// `values` in a uniformly random order. Fisher–Yates from the end: for each
+/// index `i` from the last down to 1, one `in_range(0 ..= i)` picks the element
+/// that trades places with it. Fewer than two elements take no draw. The swap
+/// runs no copy or drop hook, so any element type can be shuffled.
+// design.md "Swapping elements".
 shuffle :: proc(source: inout $G, values: []mut $T) where Source(G) {
 	for (i := values.len() - 1; i > 0; i -= 1) {
 		values.swap(i, in_range(inout source, 0 ..= i));
 	}
 }
 
-// A copy of one element, each equally likely, or `.none` for an empty slice,
-// which takes no draw. Otherwise one `in_range(0 ..< values.len())`; pick from a
-// move-only element type that way, by index.
+/// A copy of one element, each equally likely, or `.none` for an empty slice,
+/// which takes no draw. Otherwise one `in_range(0 ..< values.len())`; pick from a
+/// move-only element type that way, by index.
 choose :: proc(source: inout $G, values: []$T) -> Option(T)
 	where Source(G), is_copyable(T) {
 	if (values.len() == 0) { return .none; }
@@ -132,22 +132,22 @@ choose :: proc(source: inout $G, values: []$T) -> Option(T)
 @(private) UNIT_F64 :: 1.0 / 9007199254740992.0;
 @(private) UNIT_F32 :: 1.0 / 16777216.0;
 
-// A float in [0, 1): the top 53 bits of one draw, scaled by 2^-53, so every
-// multiple of 2^-53 below 1 is equally likely and the largest is 1 - 2^-53.
+/// A float in [0, 1): the top 53 bits of one draw, scaled by 2^-53, so every
+/// multiple of 2^-53 below 1 is equally likely and the largest is 1 - 2^-53.
 unit :: proc(source: inout $G) -> f64 where Source(G) {
 	return f64(source.next_u64() >> 11) * UNIT_F64;
 }
 
-// `unit` at `f32`: the top 24 bits of one draw, scaled by 2^-24.
+/// `unit` at `f32`: the top 24 bits of one draw, scaled by 2^-24.
 unit_f32 :: proc(source: inout $G) -> f32 where Source(G) {
 	return f32(source.next_u64() >> 40) * UNIT_F32;
 }
 
-// A float in [low, high), from `unit` draws. The bounds must be finite with
-// `low < high`. A value that rounds up to `high` is drawn again, which is rare
-// unless the two bounds are a few representable values apart. A span too wide
-// for `f64`, such as `-F64_MAX` to `F64_MAX`, is interpolated instead of
-// subtracted, so it does not overflow.
+/// A float in [low, high), from `unit` draws. The bounds must be finite with
+/// `low < high`. A value that rounds up to `high` is drawn again, which is rare
+/// unless the two bounds are a few representable values apart. A span too wide
+/// for `f64`, such as `-F64_MAX` to `F64_MAX`, is interpolated instead of
+/// subtracted, so it does not overflow.
 uniform :: proc(source: inout $G, low, high: f64) -> f64 where Source(G) {
 	if (!(math.is_finite(low) && math.is_finite(high) && low < high)) {
 		panic("random.uniform: the bounds must be finite, with low below high");
@@ -161,7 +161,7 @@ uniform :: proc(source: inout $G, low, high: f64) -> f64 where Source(G) {
 	}
 }
 
-// `uniform` at `f32`, from `unit_f32` draws.
+/// `uniform` at `f32`, from `unit_f32` draws.
 uniform_f32 :: proc(source: inout $G, low, high: f32) -> f32 where Source(G) {
 	if (!(math.is_finite_f32(low) && math.is_finite_f32(high) && low < high)) {
 		panic("random.uniform_f32: the bounds must be finite, with low below high");

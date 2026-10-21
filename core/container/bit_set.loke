@@ -1,12 +1,13 @@
-// `Bit_Set(Enum)`: a set of enum members held as bits (design.md's catalogue
-// row for flag sets, and "Iterating an enumeration").
-//
-// A member's bit is its *declaration position*, not its numeric value, so an
-// enum with holes — `enum { A, B = 4, C = 7 }` — still needs exactly three
-// bits. That is also why this is not a hardware register layout: design.md
-// keeps those on integer masks with explicit accessors.
-//
-// The zero value is the empty set.
+/// `Bit_Set(Enum)`: a set of enum members held as bits.
+///
+/// A member's bit is its *declaration position*, not its numeric value, so an
+/// enum with holes — `enum { A, B = 4, C = 7 }` — still needs exactly three
+/// bits. That is also why this is not a hardware register layout; use an
+/// integer mask with explicit accessors for one.
+///
+/// The zero value is the empty set.
+// design.md's catalogue row for flag sets, and "Iterating an enumeration".
+// design.md keeps hardware register layouts on integer masks.
 @(public)
 package container;
 
@@ -21,14 +22,14 @@ Bit_Set :: struct($E: type) {
 impl Bit_Set($E) {
 	// ------------------------------------------------------- construction --
 
-	// Every listed member, and nothing else. `Bit_Set(Direction).of(.North, .West)`.
+	/// Every listed member, and nothing else. `Bit_Set(Direction).of(.North, .West)`.
 	of :: proc(members: ..E) -> Bit_Set(E) {
 		result: Bit_Set(E) = {};
 		foreach (member in members) { result.set(member); }
 		return result;
 	}
 
-	// Every declared member.
+	/// Every declared member.
 	all :: proc() -> Bit_Set(E) {
 		result: Bit_Set(E) = {};
 		foreach (at in 0 ..< E.values().len()) { result.words[at/64] |= bit(at); }
@@ -39,7 +40,7 @@ impl Bit_Set($E) {
 
 	contains :: proc(self, member: E) -> bool { return self.has(position_of(member)); }
 
-	// The number of members present, not the enum's size — `cap` is that.
+	/// The number of members present, not the enum's size — `cap` is that.
 	len :: proc(self) -> int {
 		total := 0;
 		foreach (word in self.words) { total += popcount(word); }
@@ -72,10 +73,10 @@ impl Bit_Set($E) {
 
 	// -------------------------------------------------------- operators --
 
-	// Union, intersection, difference, and symmetric difference, spelled with the
-	// integer operators they are: `Integral` already gives `|`, `&`, `&~` and `~`
-	// exactly these meanings on the underlying words, so each of these is that
-	// operator applied word by word.
+	/// Union, intersection, difference, and symmetric difference, spelled with the
+	/// integer operators: `|`, `&`, `&~` and `~`. `==` compares two sets.
+	// `Integral` already gives those operators exactly these meanings on the
+	// underlying words, so each of these is that operator applied word by word.
 	//
 	// `==` is not written here: `words` is a fixed array of `u64`, so the record's
 	// generated field-wise equality already compares exactly these bits, and the
@@ -112,8 +113,9 @@ impl Bit_Set($E) {
 		return result;
 	}
 
-	// Every member `self` does not hold. Bits above the last member stay clear,
-	// so a complement never invents a position no member owns.
+	/// Every member `self` does not hold.
+	// Bits above the last member stay clear, so a complement never invents a
+	// position no member owns.
 	complement :: operator(~) proc(self: Bit_Set(E)) -> Bit_Set(E) {
 		return Bit_Set(E).all() &~ self;
 	}
@@ -151,10 +153,10 @@ impl Bit_Set($E) {
 	has :: proc(self, at: int) -> bool { return self.words[at/64] & bit(at) != 0; }
 }
 
-// Iterating a set yields the members it holds, in declaration order. The
-// iterator carries a copy of the words rather than a borrow of them: a set is
-// one `u64` per 64 members, so for every enum worth writing the copy is no
-// larger than the slice header a borrow would need.
+/// Iterating a set yields the members it holds, in declaration order. The
+/// iterator holds a copy of the set, not a borrow of it.
+// A set is one `u64` per 64 members, so for every enum worth writing the copy
+// is no larger than the slice header a borrow would need.
 Bit_Set_Iterator :: struct($E: type) {
 	@(private) held: Bit_Set(E),
 	@(private) at:   int,

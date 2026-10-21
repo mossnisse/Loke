@@ -1,14 +1,14 @@
-// Standard streams, line input, and terminal key events (standard-library
-// "`core:term`").
-//
-// Terminal input has two levels. Line input is the default for a command-line
-// program and works when the standard handles are redirected to pipes or files.
-// Key events are an explicit terminal-only facility: a scoped `Raw_Mode`, not a
-// global keyboard hook and not GUI input.
-//
-// **Importing this package does nothing.** It performs no I/O, reads no
-// environment state, and changes no terminal mode. The standard handles are
-// acquired by a call, and raw mode exists only while a `Raw_Mode` value does.
+/// Standard streams, line input, and terminal key events.
+///
+/// Terminal input has two levels. Line input is the default for a command-line
+/// program and works when the standard handles are redirected to pipes or files.
+/// Key events are an explicit terminal-only facility: a scoped `Raw_Mode`, not a
+/// global keyboard hook and not GUI input.
+///
+/// **Importing this package does nothing.** It performs no I/O, reads no
+/// environment state, and changes no terminal mode. The standard handles are
+/// acquired by a call, and raw mode exists only while a `Raw_Mode` value does.
+// standard-library "`core:term`".
 @(public)
 package term;
 
@@ -18,8 +18,8 @@ import "core:mem";
 import "core:sync";
 import "core:unsafe";
 
-// A borrowed process standard handle. These lightweight values do not own the
-// handle and cannot close it — the process does, and outlives every one of them.
+/// A borrowed process standard handle. These lightweight values do not own the
+/// handle and cannot close it — the process does, and outlives every one of them.
 Input :: struct {
 	@(private) handle: int,
 }
@@ -29,14 +29,13 @@ Output :: struct {
 }
 
 impl Input {
-	// The raw byte stream, which is what makes `Input` an `io.Reader`.
-	//
-	// ponytail: bytes, through `ReadFile`. When the handle is a real console
-	// rather than a pipe, those bytes are in the console's input code page, not
-	// UTF-8 — so this is the right entry for redirected input and for ASCII, and
-	// `read_line` below is what a program should use for interactive text. A
-	// UTF-8 console reader needs a buffer that survives between calls, which this
-	// deliberately non-owning value does not have.
+	/// The raw byte stream, which is what makes `Input` an `io.Reader`. From a
+	/// real console the bytes are in the console's input code page, not UTF-8, so
+	/// this suits redirected input and ASCII; `read_line` is what a program should
+	/// use for interactive text.
+	// ponytail: bytes, through `ReadFile`. A UTF-8 console reader needs a buffer
+	// that survives between calls, which this deliberately non-owning value does
+	// not have.
 	read :: proc(self: inout Input, destination: []mut u8) -> Result(int, io.Error) {
 		if (destination.len() == 0) { return 0; }
 		return read_handle(self.handle, destination);
@@ -44,12 +43,12 @@ impl Input {
 }
 
 impl Output {
-	// Bytes, through `WriteFile`, with the mirror of `Input.read`'s caveat: a real
-	// console renders them in its *output* code page, so non-ASCII UTF-8 arrives
-	// intact only where that page is UTF-8. Redirected output is the bytes given.
-	//
-	// `core:fmt` buffers standard output and this does not, so what `fmt` holds is
-	// flushed first; otherwise redirected output comes out of order.
+	/// Bytes, with the mirror of `Input.read`'s caveat: a real console renders them
+	/// in its *output* code page, so non-ASCII UTF-8 arrives intact only where that
+	/// page is UTF-8. Redirected output is the bytes given. What `core:fmt` holds
+	/// for standard output is flushed first.
+	// Through `WriteFile`. `core:fmt` buffers standard output and this does not,
+	// so without the flush redirected output comes out of order.
 	write :: proc(self: inout Output, source: []u8) -> Result(int, io.Error) {
 		if (source.len() == 0) { return 0; }
 		rt_flush_stdout();
@@ -71,11 +70,11 @@ foreign loke_runtime {
 	rt_flush_stdout :: proc "c" () ---;
 }
 
-// One line from standard input, without its ending unless `keep_ending` asks.
-//
-// A real console is read as UTF-16 and converted, so typed non-ASCII text
-// arrives intact; a redirected handle is read as bytes and validated as UTF-8.
-// End of input before any byte is `End_Of_Input`.
+/// One line from standard input, without its ending unless `keep_ending` asks.
+///
+/// A real console is read as UTF-16 and converted, so typed non-ASCII text
+/// arrives intact; a redirected handle is read as bytes and validated as UTF-8.
+/// End of input before any byte is `End_Of_Input`.
 read_line :: proc(
 	allocator: Allocator = mem.default_allocator(),
 	options: io.Line_Options = {},
@@ -87,11 +86,11 @@ read_line :: proc(
 	return io.read_line(inout source, allocator, options);
 }
 
-// The label, then a line. It returns an output failure as well as an input one,
-// and does not add a newline of its own.
-//
-// There is nothing to flush: this package's `Output` is unbuffered, so the label
-// has reached the operating system before the read begins.
+/// The label, then a line. It returns an output failure as well as an input one,
+/// and does not add a newline of its own.
+///
+/// There is nothing to flush: this package's `Output` is unbuffered, so the label
+/// has reached the operating system before the read begins.
 prompt :: proc(
 	label: string_view,
 	allocator: Allocator = mem.default_allocator(),
@@ -105,13 +104,13 @@ prompt :: proc(
 // ------------------------------------------------------------- key events --
 
 Key :: enum {
-	// The event carries a scalar value in `value`.
+	/// The event carries a scalar value in `value`.
 	Character,
 	Up, Down, Left, Right,
 	Home, End, Page_Up, Page_Down,
 	Insert, Delete, Backspace, Enter, Escape, Tab,
 	F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12,
-	// A key this decoder has no name for. `value` is zero.
+	/// A key this decoder has no name for. `value` is zero.
 	Unknown,
 }
 
@@ -124,9 +123,9 @@ Key_Event :: struct {
 }
 
 Raw_Options :: struct {
-	// By default Ctrl+C keeps its ordinary meaning and interrupts the process.
-	// Asking for it as a key event means the program is responsible for
-	// terminating itself.
+	/// By default Ctrl+C keeps its ordinary meaning and interrupts the process.
+	/// Asking for it as a key event means the program is responsible for
+	/// terminating itself.
 	interrupt_as_key: bool,
 }
 
@@ -311,16 +310,17 @@ read_console_line :: proc(
 	}
 }
 
-// The scoped resource. Its `drop` restores the exact previous mode on ordinary
-// return, `break`, `continue`, and — **only in a build using the `unwind` panic
-// strategy** — during panic unwinding.
-//
-// Under the `abort` strategy no cleanup is guaranteed, and `os.exit` runs no
-// `defer`, no `drop`, and no thread-local cleanup on any strategy: a program
-// that calls `os.exit` while raw leaves the user's terminal raw. Because a
-// wedged terminal outlives the process that wedged it, `begin_raw` also
-// registers a console control handler, so Ctrl+C, Ctrl+Break, and closing the
-// window restore the mode without depending on Loke cleanup running at all.
+/// The scoped resource. Its `drop` restores the exact previous mode on ordinary
+/// return, `break`, `continue`, and — **only in a build using the `unwind` panic
+/// strategy** — during panic unwinding.
+///
+/// Under the `abort` strategy no cleanup is guaranteed, and `os.exit` runs no
+/// `defer`, no `drop`, and no thread-local cleanup on any strategy: a program
+/// that calls `os.exit` while raw leaves the user's terminal raw. Ctrl+C,
+/// Ctrl+Break, and closing the window restore the mode whatever the strategy.
+// Because a wedged terminal outlives the process that wedged it, `begin_raw`
+// also registers a console control handler, so those restore the mode without
+// depending on Loke cleanup running at all.
 Raw_Mode :: move_only struct {
 	@(private) handle:   int,
 	@(private) previous: u32,
@@ -355,8 +355,8 @@ restore_handler :: proc "stdcall" (event: u32) -> i32 {
 	return 0;
 }
 
-// Raw mode for the duration of the returned value. Redirected input is
-// `Not_A_Terminal`.
+/// Raw mode for the duration of the returned value. Redirected input is
+/// `Not_A_Terminal`.
 begin_raw :: proc(
 	input: Input = stdin(), options: Raw_Options = {},
 ) -> Result(Raw_Mode, io.Error) {
@@ -403,20 +403,21 @@ begin_raw :: proc(
 }
 
 impl Raw_Mode {
+	/// Restores the previous mode, best-effort; `close` reports a failure.
 	// One owner of a terminal mode; a second would restore it twice, out of order.
-	// A best-effort `close`, so a failed restore leaves the control handler armed
-	// here as well.
+	// A failed restore leaves the control handler armed here as well.
 	release :: hook(drop) proc(self: inout Raw_Mode) {
 		_ = self.close();
 	}
 
-	// Idempotent, and leaves the value inert even when the restore failed.
-	//
+	/// Restores the previous mode. Idempotent, and leaves the value inert even when
+	/// the restore failed. After a failed restore, a later `begin_raw` answers
+	/// `Already_Exists`.
 	// The claim is released after the restore, not before it: a failed restore
 	// leaves the control handler armed with the cooked mode, which is the only
-	// path left once this value is inert. It also leaves the claim held, so a
-	// later `begin_raw` answers `Already_Exists` -- the console's state is no
-	// longer known, and the mode to put back is still this one.
+	// path left once this value is inert. It also leaves the claim held, because
+	// the console's state is no longer known, and the mode to put back is still
+	// this one.
 	close :: proc(self: inout Raw_Mode) -> Status(io.Error) {
 		if (!self.live) { return .ok; }
 		self.live = false;
@@ -426,15 +427,18 @@ impl Raw_Mode {
 		handler_handle.store(0);
 	}
 
-	// One key event. Key releases, mouse events, focus changes, and window resizes
-	// are consumed and skipped: they belong to a later terminal package, and a
-	// caller of this one asked for keys. So is Shift, Ctrl, or Alt pressed on its
-	// own, because a modifier is a flag on the key it modifies, not a key.
+	/// One key event. Key releases, mouse events, focus changes, and window resizes
+	/// are consumed and skipped, and so is Shift, Ctrl, or Alt pressed on its own:
+	/// a modifier is a flag on the key it modifies, not a key.
+	///
+	/// A held key's repeats arrive as individual events, in order.
+	// Those other events belong to a later terminal package, and a caller of this
+	// one asked for keys.
 	//
 	// A held key arrives as one record carrying a count, and that count is handed
-	// back as that many events (standard-library "Raw mode and key events": repeats are individual
-	// events). Ordering is unchanged by it -- every repeat belongs to the record
-	// already read, so they all precede the next one.
+	// back as that many events (standard-library "Raw mode and key events").
+	// Ordering is unchanged by it — every repeat belongs to the record already
+	// read, so they all precede the next one.
 	read_key :: proc(self: inout Raw_Mode) -> Result(Key_Event, io.Error) {
 		if (!self.live) {
 			return .err(io.make_error(.Not_A_Terminal, .Read_Key));

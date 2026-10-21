@@ -1,11 +1,13 @@
-// Clocks, durations, instants, the calendar, fixed UTC offsets, and ISO 8601
-// text (standard-library "`core:time`").
-//
-// Everything but the three clock procedures is integer arithmetic in Loke, so
-// it also runs during compile-time evaluation. `now`, `tick_now`, and `sleep`
-// ask the operating system, and sit behind `when (LOKE_OS == .Windows)` at the
-// end of this file. Named time zones are deliberately absent; see
-// open-questions.md "Named time zones".
+/// Clocks, durations, instants, the calendar, fixed UTC offsets, and ISO 8601
+/// text.
+///
+/// Everything but the three clock procedures, `now`, `tick_now`, and `sleep`,
+/// is integer arithmetic in Loke, so it also runs during compile-time
+/// evaluation. There are no named time zones.
+// standard-library "`core:time`". The clock procedures ask the operating
+// system, and sit behind `when (LOKE_OS == .Windows)` at the end of this file.
+// Named time zones are deliberately absent; see open-questions.md "Named time
+// zones".
 @(public)
 package time;
 
@@ -14,9 +16,9 @@ import "core:math";
 
 // ---------------------------------------------------------------- durations --
 
-// Signed nanoseconds, about 292 years either way. There is no `DAY`: once a zone
-// has daylight saving a calendar day is not always 24 hours, so steps of days
-// belong to `Date`.
+/// Signed nanoseconds, about 292 years either way. There is no `DAY`: once a zone
+/// has daylight saving a calendar day is not always 24 hours, so steps of days
+/// belong to `Date`.
 Duration :: distinct i64;
 
 NANOSECOND  :: Duration(1);
@@ -38,33 +40,34 @@ impl Duration {
 		return Duration(left * i64(right));
 	}
 
-	// There is no `Duration / Duration`: beside this one it would make `d / 2`
-	// ambiguous, since the constant converts to either. A count of units is
-	// `seconds()` and its siblings, or `i64(d) / i64(unit)`.
+	/// There is no `Duration / Duration`: beside this one it would make `d / 2`
+	/// ambiguous, since the constant converts to either. A count of units is
+	/// `seconds()` and its siblings, or `i64(d) / i64(unit)`.
 	divide :: operator(/) proc(left: Duration, right: i64) -> Duration {
 		return Duration(i64(left) / right);
 	}
 
-	// Whole units, rounding toward zero.
+	/// Whole units, rounding toward zero.
 	seconds :: proc(self) -> i64 { return i64(self) / i64(SECOND); }
 	milliseconds :: proc(self) -> i64 { return i64(self) / i64(MILLISECOND); }
 	microseconds :: proc(self) -> i64 { return i64(self) / i64(MICROSECOND); }
 
-	// The whole seconds and the rest convert separately, so a duration below
-	// 2^53 nanoseconds converts exactly.
+	/// The duration in seconds. A duration below 2^53 nanoseconds converts
+	/// exactly.
+	// The whole seconds and the rest convert separately.
 	seconds_f64 :: proc(self) -> f64 {
 		return f64(i64(self) / i64(SECOND)) + f64(i64(self) % i64(SECOND)) / 1e9;
 	}
 
-	// A multiple of `unit`, toward zero. A unit of zero or less leaves the
-	// duration as it is, as Go's does.
+	/// A multiple of `unit`, toward zero. A unit of zero or less leaves the
+	/// duration as it is, as Go's does.
 	truncate :: proc(self, unit: Duration) -> Duration {
 		if (unit <= 0) { return self; }
 		return self - self % unit;
 	}
 
-	// The nearest multiple of `unit`, halves away from zero. A result beyond the
-	// range panics, as the arithmetic would.
+	/// The nearest multiple of `unit`, halves away from zero. A result beyond the
+	/// range panics, as the arithmetic would.
 	round :: proc(self, unit: Duration) -> Duration {
 		if (unit <= 0) { return self; }
 		remainder := self % unit;
@@ -85,8 +88,8 @@ impl Duration {
 	}
 }
 
-// `seconds` rounded to the nearest nanosecond, or `.none` for a NaN, an
-// infinity, or a value beyond the range.
+/// `seconds` rounded to the nearest nanosecond, or `.none` for a NaN, an
+/// infinity, or a value beyond the range.
 from_seconds_f64 :: proc(seconds: f64) -> Option(Duration) {
 	nanoseconds := seconds * 1e9;
 	// 2^63 is exact in an `f64`. A NaN fails both comparisons. Past 2^52 every
@@ -108,9 +111,9 @@ from_seconds_f64 :: proc(seconds: f64) -> Option(Duration) {
 
 // ----------------------------------------------------------------- instants --
 
-// An instant: nanoseconds since 1970-01-01T00:00:00Z, from 1677-09-21 to
-// 2262-04-11. Unix time, so every day has 86 400 seconds and leap seconds are
-// not counted. The zero value is the epoch.
+/// An instant: nanoseconds since 1970-01-01T00:00:00Z, from 1677-09-21 to
+/// 2262-04-11. Unix time, so every day has 86 400 seconds and leap seconds are
+/// not counted. The zero value is the epoch.
 Time :: struct {
 	@(private) nanoseconds: i64,
 }
@@ -128,8 +131,9 @@ impl Time {
 		return Duration(left.nanoseconds - right.nanoseconds);
 	}
 
-	// A struct is not ordered field by field (design.md "Comparison
-	// operators"), so each ordering is declared.
+	/// Earlier instants are less.
+	// A struct is not ordered field by field (design.md "Comparison operators"),
+	// so each ordering is declared.
 	less :: operator(<) proc(left, right: Time) -> bool { return left.nanoseconds < right.nanoseconds; }
 	less_equal :: operator(<=) proc(left, right: Time) -> bool { return left.nanoseconds <= right.nanoseconds; }
 	greater :: operator(>) proc(left, right: Time) -> bool { return left.nanoseconds > right.nanoseconds; }
@@ -137,8 +141,8 @@ impl Time {
 
 	unix_nanoseconds :: proc(self) -> i64 { return self.nanoseconds; }
 
-	// Whole seconds, rounding down, so an instant before 1970 that is not on a
-	// second reads as the second it falls in.
+	/// Whole seconds, rounding down, so an instant before 1970 that is not on a
+	/// second reads as the second it falls in.
 	unix_seconds :: proc(self) -> i64 { return floor_div(self.nanoseconds, i64(SECOND)); }
 
 	utc :: proc(self) -> Date_Time {
@@ -148,6 +152,7 @@ impl Time {
 		};
 	}
 
+	/// The date and time at `offset`.
 	// The day and the time of day are split before the offset is applied, so an
 	// instant at either end of the range cannot overflow on the way.
 	at_offset :: proc(self, offset: Offset) -> Offset_Date_Time {
@@ -174,7 +179,7 @@ from_unix_nanoseconds :: proc(nanoseconds: i64) -> Time {
 	return Time{nanoseconds};
 }
 
-// `.none` for a second outside the range of `Time`.
+/// `.none` for a second outside the range of `Time`.
 from_unix_seconds :: proc(seconds: i64) -> Option(Time) {
 	nanoseconds := math.checked_mul(seconds, i64(SECOND)) or_return;
 	return Time{nanoseconds};
@@ -182,8 +187,8 @@ from_unix_seconds :: proc(seconds: i64) -> Option(Time) {
 
 // ------------------------------------------------------------------- clocks --
 
-// A monotonic clock reading. Only the difference between two readings of one
-// process means anything; the zero value is a reading at an unspecified moment.
+/// A monotonic clock reading. Only the difference between two readings of one
+/// process means anything; the zero value is a reading at an unspecified moment.
 Tick :: struct {
 	@(private) nanoseconds: i64,
 }
@@ -200,8 +205,8 @@ impl Tick {
 	}
 }
 
-// The system clock. It follows changes to the clock's setting, so a reading can
-// be earlier than the one before it; measure intervals with `tick_now`.
+/// The system clock. It follows changes to the clock's setting, so a reading can
+/// be earlier than the one before it; measure intervals with `tick_now`.
 now :: proc() -> Time {
 	return Time{system_nanoseconds()};
 }
@@ -210,9 +215,9 @@ tick_now :: proc() -> Tick {
 	return Tick{monotonic_nanoseconds()};
 }
 
-// Blocks the calling thread for at least `duration`; zero or less returns at
-// once. The platform's sleep can return early, so this sleeps again until the
-// monotonic clock shows the time has passed.
+/// Blocks the calling thread for at least `duration`; zero or less returns at
+/// once. The platform's sleep can return early, so this sleeps again until the
+/// monotonic clock shows the time has passed.
 sleep :: proc(duration: Duration) {
 	if (duration <= 0) { return; }
 	// The time slept, not a deadline: a reading plus the longest duration

@@ -1,9 +1,11 @@
-// Process arguments and termination (design.md "Program entry and exit").
-//
-// This is ordinary Loke source over one foreign block: the compiler knows
-// nothing about `os`. Startup belongs to the executable runtime, which converts
-// the incoming UTF-16 argument vector to cached UTF-8 before the initial thread
-// attaches, so importing this package runs no package initializer.
+/// Process arguments and termination.
+///
+/// Importing this package runs no package initializer: the argument vector is
+/// ready before `main`.
+// design.md "Program entry and exit". This is ordinary Loke source over one
+// foreign block: the compiler knows nothing about `os`. Startup belongs to the
+// executable runtime, which converts the incoming UTF-16 argument vector to
+// cached UTF-8 before the initial thread attaches.
 @(public)
 package os;
 
@@ -24,15 +26,15 @@ foreign loke_runtime {
 	rt_exit :: proc "c" (status: i32) -> ! ---;
 }
 
-// The process argument vector: read-only, with process lifetime and no storage
-// of its own. `len` counts, indexing copies into an owning `string`, and
-// iteration yields borrowed `string_view`s over the runtime's cached bytes —
-// which outlive every use, because the process owns them.
+/// The process argument vector: read-only, with process lifetime and no storage
+/// of its own. `len` counts, indexing copies into an owning `string`, and
+/// iteration yields borrowed `string_view`s over the runtime's cached bytes —
+/// which outlive every use, because the process owns them.
 @(public)
 Args :: struct {}
 
-// The zero value is the whole vector; there is nothing else one could be. A
-// constant, since a variable cannot be public (design.md "`@(public)`").
+/// The zero value is the whole vector; there is nothing else one could be.
+// A constant, since a variable cannot be public (design.md "`@(public)`").
 @(public)
 args :: Args{};
 
@@ -47,6 +49,8 @@ impl Args {
 		return rt_args_count();
 	}
 
+	/// The argument at `index`, copied into an owning `string`. An out-of-range
+	/// index panics.
 	// design.md "string type conversions": the conversion validates UTF-8 and
 	// copies into owned storage. The runtime's bytes are already valid, so the
 	// `.none` case is unreachable. An out-of-range index panics, as every index
@@ -74,9 +78,10 @@ impl Args_Iterator {
 	}
 }
 
-// A borrow of one cached argument. The bytes live for the process, so the view
-// has no owner to outlive; the runtime already validated them as UTF-8, which is
-// why the `.none` case is unreachable. An out-of-range index panics.
+/// A borrow of one cached argument. The bytes live for the process, so the view
+/// has no owner to outlive. An out-of-range index panics.
+// The runtime already validated them as UTF-8, which is why the `.none` case
+// is unreachable.
 @(public)
 view_at :: proc(index: int) -> string_view {
 	if (index < 0 || index >= rt_args_count()) {
@@ -86,10 +91,10 @@ view_at :: proc(index: int) -> string_view {
 	return unsafe.string_view(bytes, rt_args_len(index)) or_else "";
 }
 
-// design.md "Program entry and exit": terminates immediately. It runs no
-// `defer`, no automatic `drop`, and no thread-local cleanup — the process dies
-// inside the call, so that is true by construction rather than by a rule the
-// compiler enforces.
+/// Terminates the process immediately. It runs no `defer`, no automatic `drop`,
+/// and no thread-local cleanup.
+// design.md "Program entry and exit". The process dies inside the call, so
+// that is true by construction rather than by a rule the compiler enforces.
 @(public)
 exit :: proc(status: i32) -> ! {
 	rt_exit(status);

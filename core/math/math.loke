@@ -1,21 +1,23 @@
-// The elementary functions and the constants (standard-library "`core:math`").
+/// The elementary functions and the constants.
+///
+/// Every float-specific procedure has exactly two concrete spellings: the
+/// unsuffixed name takes and returns `f64`, and the `_f32` name takes and
+/// returns `f32`. They are not a procedure group, so `math.sqrt(2.0)` is not
+/// ambiguous. `f16` gets nothing.
+///
+/// The CRT-backed procedures promise the classifications, signs, poles, and
+/// domain results documented on each one. They do not promise correctly rounded
+/// transcendental results, identical last bits across platforms, a particular
+/// NaN payload, or portable `errno` contents. They never turn a floating-point
+/// exception or an `errno` value into a panic.
+// standard-library "`core:math`".
 //
-// Every float-specific procedure has exactly two concrete spellings: the
-// unsuffixed name takes and returns `f64`, and the `_f32` name takes and
-// returns `f32`. They are deliberately *not* a procedure group — design.md
-// "Operator lookup and overload resolution" leaves `f32` vs `f64` overloads
-// ambiguous for an untyped literal, so `math.sqrt(2.0)` would not compile if
-// they were one. Both widths ship together because Loke has no implicit
-// `f32` -> `f64` widening: an `f32` caller without a twin would write
-// `f32(math.sqrt(f64(x)))`, which rounds twice.
-//
-// `f16` gets nothing. The C library has no `f16` variants.
-//
-// The CRT-backed procedures promise the classifications, signs, poles, and
-// domain results documented on each one. They do not promise correctly rounded
-// transcendental results, identical last bits across platforms, a particular
-// NaN payload, or portable `errno` contents. They never turn a floating-point
-// exception or an `errno` value into a panic.
+// Deliberately not a procedure group — design.md "Operator lookup and overload
+// resolution" leaves `f32` vs `f64` overloads ambiguous for an untyped literal,
+// so `math.sqrt(2.0)` would not compile if they were one. Both widths ship
+// together because Loke has no implicit `f32` -> `f64` widening: an `f32`
+// caller without a twin would write `f32(math.sqrt(f64(x)))`, which rounds
+// twice. The C library has no `f16` variants.
 @(public)
 package math;
 
@@ -35,16 +37,15 @@ LN2      :: 0.693147180559945309417232121458176568;
 LN10     :: 2.30258509299404568401799145468436421;
 SQRT_TWO :: 1.41421356237309504880168872420969808;
 
+/// `EPSILON` is the gap from `1` to the next representable value; `MIN_NORMAL`
+/// is the smallest positive normal value and `MIN_SUBNORMAL` the smallest
+/// positive subnormal one. The NaN payload is canonical only for the constant —
+/// a procedure may propagate or return another quiet payload.
 // Infinity and the canonical quiet NaN have no literal spelling, and a decimal
 // literal for a limit is a transcription no reader can check. Every typed limit
 // is therefore its exact IEEE-754 pattern, folded at compile time. The unsafe
 // dependency is an implementation detail: nothing in the public surface below
 // takes or returns anything from `core:unsafe`.
-//
-// `EPSILON` is the gap from `1` to the next representable value; `MIN_NORMAL`
-// is the smallest positive normal value and `MIN_SUBNORMAL` the smallest
-// positive subnormal one. The NaN payload is canonical only for the constant —
-// a procedure may propagate or return another quiet payload.
 F32_EPSILON       :: unsafe.transmute(f32, u32(0x34000000));
 F64_EPSILON       :: unsafe.transmute(f64, u64(0x3cb0000000000000));
 F32_MAX           :: unsafe.transmute(f32, u32(0x7f7fffff));
@@ -78,8 +79,8 @@ F64_NAN           :: unsafe.transmute(f64, u64(0x7ff8000000000000));
 
 // --------------------------------------------- classification and sign --
 
-// Whether `x` is a NaN: the maximum exponent with a non-zero significand. True
-// for both quiet and signalling NaNs, and for either sign.
+/// Whether `x` is a NaN: the maximum exponent with a non-zero significand. True
+/// for both quiet and signalling NaNs, and for either sign.
 is_nan :: proc(x: f64) -> bool {
 	return (unsafe.transmute(u64, x) & F64_MAGNITUDE) > F64_EXPONENT;
 }
@@ -88,7 +89,7 @@ is_nan_f32 :: proc(x: f32) -> bool {
 	return (unsafe.transmute(u32, x) & F32_MAGNITUDE) > F32_EXPONENT;
 }
 
-// Whether `x` is either infinity.
+/// Whether `x` is either infinity.
 is_infinite :: proc(x: f64) -> bool {
 	return (unsafe.transmute(u64, x) & F64_MAGNITUDE) == F64_EXPONENT;
 }
@@ -97,7 +98,7 @@ is_infinite_f32 :: proc(x: f32) -> bool {
 	return (unsafe.transmute(u32, x) & F32_MAGNITUDE) == F32_EXPONENT;
 }
 
-// Whether `x` is neither infinite nor a NaN. Zeros and subnormals are finite.
+/// Whether `x` is neither infinite nor a NaN. Zeros and subnormals are finite.
 is_finite :: proc(x: f64) -> bool {
 	return (unsafe.transmute(u64, x) & F64_EXPONENT) != F64_EXPONENT;
 }
@@ -106,8 +107,8 @@ is_finite_f32 :: proc(x: f32) -> bool {
 	return (unsafe.transmute(u32, x) & F32_EXPONENT) != F32_EXPONENT;
 }
 
-// The sign bit itself, not `x < 0`: true for `-0.0` and for a negative NaN,
-// which is the whole reason to ask.
+/// The sign bit itself, not `x < 0`: true for `-0.0` and for a negative NaN,
+/// which is the whole reason to ask.
 sign_bit :: proc(x: f64) -> bool {
 	return (unsafe.transmute(u64, x) & F64_SIGN) != 0;
 }
@@ -116,8 +117,8 @@ sign_bit_f32 :: proc(x: f32) -> bool {
 	return (unsafe.transmute(u32, x) & F32_SIGN) != 0;
 }
 
-// The magnitude of `x`. Clearing the sign bit maps `-0.0` to `+0.0` and leaves
-// a NaN's payload and quiet/signalling bit exactly as they were.
+/// The magnitude of `x`. Clearing the sign bit maps `-0.0` to `+0.0` and leaves
+/// a NaN's payload and quiet/signalling bit exactly as they were.
 abs :: proc(x: f64) -> f64 {
 	return unsafe.transmute(f64, unsafe.transmute(u64, x) & F64_MAGNITUDE);
 }
@@ -126,8 +127,8 @@ abs_f32 :: proc(x: f32) -> f32 {
 	return unsafe.transmute(f32, unsafe.transmute(u32, x) & F32_MAGNITUDE);
 }
 
-// The magnitude of `magnitude` with the sign bit of `sign`. Both operands keep
-// their payloads: this composes representations, it does not compute.
+/// The magnitude of `magnitude` with the sign bit of `sign`. Both operands keep
+/// their payloads: this composes representations, it does not compute.
 copy_sign :: proc(magnitude: f64, sign: f64) -> f64 {
 	return unsafe.transmute(f64,
 		(unsafe.transmute(u64, magnitude) & F64_MAGNITUDE) |
@@ -146,22 +147,22 @@ copy_sign_f32 :: proc(magnitude: f32, sign: f32) -> f32 {
 // and pointers do not acquire arithmetic-looking operations from `core:math`.
 // `core:slice` already has `min`/`max` over a slice; these are the scalar forms.
 
-// `a` when `a < b`, and `b` otherwise. Equal or unordered operands therefore
-// select the second argument — including two signed zeros, and a NaN in either
-// position.
+/// `a` when `a < b`, and `b` otherwise. Equal or unordered operands therefore
+/// select the second argument — including two signed zeros, and a NaN in either
+/// position.
 min :: proc(a, b: $T) -> T where interfaces.Numeric(T), interfaces.Ordered(T) {
 	return a if a < b else b;
 }
 
-// `a` when `b < a`, and `b` otherwise, with the same tie and NaN rule as `min`.
+/// `a` when `b < a`, and `b` otherwise, with the same tie and NaN rule as `min`.
 max :: proc(a, b: $T) -> T where interfaces.Numeric(T), interfaces.Ordered(T) {
 	return a if b < a else b;
 }
 
-// `value` brought inside `[low, high]`. Reversed bounds are a caller mistake
-// with no defensible answer, so they panic rather than silently picking one.
-// A NaN `value` is returned unchanged, and a NaN bound is unordered against
-// everything and so does not clamp on that side.
+/// `value` brought inside `[low, high]`. Reversed bounds are a caller mistake
+/// with no defensible answer, so they panic rather than silently picking one.
+/// A NaN `value` is returned unchanged, and a NaN bound is unordered against
+/// everything and so does not clamp on that side.
 clamp :: proc(value, low, high: $T) -> T where interfaces.Numeric(T), interfaces.Ordered(T) {
 	assert(!(high < low), "math.clamp needs low <= high");
 	if (value < low) { return low; }
@@ -169,12 +170,13 @@ clamp :: proc(value, low, high: $T) -> T where interfaces.Numeric(T), interfaces
 	return value;
 }
 
-// `value` as a `To`, or `.none` when `To` cannot represent it exactly.
-//
-// `To(value)` panics when the value does not fit (design.md "Type
-// conversion"), and the compiler-contributed `wrap(To, value)` keeps its low
-// bits instead. This asks, which is what validating input wants. It is the
-// scalar twin of `Enum.from_int`: it neither traps nor silently narrows.
+/// `value` as a `To`, or `.none` when `To` cannot represent it exactly.
+///
+/// `To(value)` panics when the value does not fit, and the compiler-contributed
+/// `wrap(To, value)` keeps its low bits instead. This asks, which is what
+/// validating input wants. It is the scalar twin of `Enum.from_int`: it neither
+/// traps nor silently narrows.
+// design.md "Type conversion".
 //
 // The check is a round trip plus a sign comparison. The round trip alone is not
 // enough, because between two types of the same width it always succeeds —
@@ -236,6 +238,7 @@ wrapping_mul_lanes :: proc(a: Simd($T, $N), b: Simd(T, N)) -> Simd(T, N) where i
 	return a *% b;
 }
 
+/// `a + b`, or `.none` when the sum does not fit in `T`.
 // An overflowing sum wraps past the end that `b`'s sign points to, so it lands
 // on the wrong side of `a`.
 checked_add :: proc(a: $T, b: T) -> Option(T) where interfaces.Integral(T), interfaces.Ordered(T) {
@@ -250,6 +253,7 @@ checked_sub :: proc(a: $T, b: T) -> Option(T) where interfaces.Integral(T), inte
 	return difference;
 }
 
+/// `a * b`, or `.none` when the product does not fit in `T`.
 // A product overflowed exactly when dividing it by `a` does not give back `b`.
 // For a signed `a` of -1 that division could itself overflow, at the minimum,
 // the one value whose negation does not fit — and there the product is `b`.
@@ -355,32 +359,32 @@ foreign platform_math {
 // infinite argument to `floor`, `ceil`, `round` or `trunc` returns itself.
 // All four preserve the sign of a zero.
 
-// The largest integral value not greater than `x`.
+/// The largest integral value not greater than `x`.
 floor :: proc(x: f64) -> f64 { return rt_floor_f64(x); }
 floor_f32 :: proc(x: f32) -> f32 { return rt_floor_f32(x); }
 
-// The smallest integral value not less than `x`.
+/// The smallest integral value not less than `x`.
 ceil :: proc(x: f64) -> f64 { return rt_ceil_f64(x); }
 ceil_f32 :: proc(x: f32) -> f32 { return rt_ceil_f32(x); }
 
-// The nearest integral value, with halfway cases rounded *away from zero* —
-// `round(0.5)` is `1` and `round(-0.5)` is `-1`. This is not the current
-// rounding mode's tie rule, which rounds halves to even.
+/// The nearest integral value, with halfway cases rounded *away from zero* —
+/// `round(0.5)` is `1` and `round(-0.5)` is `-1`. This is not the current
+/// rounding mode's tie rule, which rounds halves to even.
 round :: proc(x: f64) -> f64 { return rt_round_f64(x); }
 round_f32 :: proc(x: f32) -> f32 { return rt_round_f32(x); }
 
-// `x` with its fractional part discarded: the integral value nearest to zero.
+/// `x` with its fractional part discarded: the integral value nearest to zero.
 trunc :: proc(x: f64) -> f64 { return rt_trunc_f64(x); }
 trunc_f32 :: proc(x: f32) -> f32 { return rt_trunc_f32(x); }
 
-// The floating remainder: the mathematical result of `x - trunc(x/y)*y`,
-// without computing that overflow-prone expression. Floating types have no `%`
-// operator, so this is that operator's name in Loke terms.
-//
-//   y is zero, or x is infinite  -> NaN
-//   x finite, y infinite         -> x
-//   otherwise                    -> a result whose sign matches x, including
-//                                   an exact zero, which keeps x's zero sign
+/// The floating remainder: the mathematical result of `x - trunc(x/y)*y`,
+/// without computing that overflow-prone expression. Floating types have no `%`
+/// operator, so this is that operator's name in Loke terms.
+///
+///   y is zero, or x is infinite  -> NaN
+///   x finite, y infinite         -> x
+///   otherwise                    -> a result whose sign matches x, including
+///                                   an exact zero, which keeps x's zero sign
 mod :: proc(x: f64, y: f64) -> f64 { return rt_mod_f64(x, y); }
 mod_f32 :: proc(x: f32, y: f32) -> f32 { return rt_mod_f32(x, y); }
 
@@ -389,32 +393,33 @@ mod_f32 :: proc(x: f32, y: f32) -> f32 { return rt_mod_f32(x, y); }
 // None of these panics on a floating domain or a pole: the result is a NaN or
 // an infinity, which is what the type can already represent.
 
-// The non-negative square root.
-//
-//   -0.0            -> -0.0   (the sign of zero is preserved)
-//   x < 0           -> NaN
-//   +infinity       -> +infinity
+/// The non-negative square root.
+///
+///   -0.0            -> -0.0   (the sign of zero is preserved)
+///   x < 0           -> NaN
+///   +infinity       -> +infinity
 sqrt :: proc(x: f64) -> f64 { return rt_sqrt_f64(x); }
 sqrt_f32 :: proc(x: f32) -> f32 { return rt_sqrt_f32(x); }
 
-// `sqrt(a*a + b*b)`, computed without the intermediate overflow or underflow
-// that spelling causes. Always non-negative, and an infinite operand wins over
-// a NaN operand: `hypot(infinity, NaN)` is `+infinity`.
+/// `sqrt(a*a + b*b)`, computed without the intermediate overflow or underflow
+/// that spelling causes. Always non-negative, and an infinite operand wins over
+/// a NaN operand: `hypot(infinity, NaN)` is `+infinity`.
 hypot :: proc(a: f64, b: f64) -> f64 { return rt_hypot_f64(a, b); }
 hypot_f32 :: proc(a: f32, b: f32) -> f32 { return rt_hypot_f32(a, b); }
 
-// `a*b + c` with a single rounding: the product is not rounded before the sum
-// (design.md "Floating-point operators"). Unlike a transcendental function's,
-// the result is promised correctly rounded. A NaN operand gives a NaN, and
-// otherwise the special cases are those of the exact product and the sum:
-//
-//   a or b infinite, the other zero          -> NaN
-//   a or b infinite, c the opposite infinity -> NaN
-//   a*b + c exactly zero                     -> +0, unless a*b and c are both
-//                                               negative zeros
-//
-// A finite product never overflows on its way to the sum, so
-// `fma(1.0e308, 2.0, -infinity)` is `-infinity`.
+/// `a*b + c` with a single rounding: the product is not rounded before the sum.
+/// Unlike a transcendental function's, the result is promised correctly
+/// rounded. A NaN operand gives a NaN, and otherwise the special cases are
+/// those of the exact product and the sum:
+///
+///   a or b infinite, the other zero          -> NaN
+///   a or b infinite, c the opposite infinity -> NaN
+///   a*b + c exactly zero                     -> +0, unless a*b and c are both
+///                                               negative zeros
+///
+/// A finite product never overflows on its way to the sum, so
+/// `fma(1.0e308, 2.0, -infinity)` is `-infinity`.
+// design.md "Floating-point operators".
 //
 // Computed in integer arithmetic rather than by the C library, whose `fma` is
 // not correctly rounded in every version a toolchain may link.
@@ -572,37 +577,37 @@ leading_zeros_u128 :: proc(x: u128) -> int {
 	return count;
 }
 
-// `base` raised to `exponent`, following the IEC 60559 special-case table:
-//
-//   pow(x, +-0)                          -> 1, for every x including NaN
-//   pow(1, y)                            -> 1, for every y including NaN
-//   pow(x, 1)                            -> x
-//   pow(NaN, y != 0)                     -> NaN
-//   pow(x < 0, y non-integral)           -> NaN
-//   pow(+-0, y < 0 odd integer)          -> +-infinity
-//   pow(+-0, y < 0 otherwise)            -> +infinity
-//   pow(+-0, y > 0 odd integer)          -> +-0
-//   pow(+-0, y > 0 otherwise)            -> +0
-//   pow(-1, +-infinity)                  -> 1
-//   pow(abs(x) < 1, -infinity)           -> +infinity
-//   pow(abs(x) < 1, +infinity)           -> +0
-//   pow(abs(x) > 1, -infinity)           -> +0
-//   pow(abs(x) > 1, +infinity)           -> +infinity
-//   pow(-infinity, y)                    -> pow(-0, -y)
-//   pow(+infinity, y < 0)                -> +0
-//   pow(+infinity, y > 0)                -> +infinity
+/// `base` raised to `exponent`, following the IEC 60559 special-case table:
+///
+///   pow(x, +-0)                          -> 1, for every x including NaN
+///   pow(1, y)                            -> 1, for every y including NaN
+///   pow(x, 1)                            -> x
+///   pow(NaN, y != 0)                     -> NaN
+///   pow(x < 0, y non-integral)           -> NaN
+///   pow(+-0, y < 0 odd integer)          -> +-infinity
+///   pow(+-0, y < 0 otherwise)            -> +infinity
+///   pow(+-0, y > 0 odd integer)          -> +-0
+///   pow(+-0, y > 0 otherwise)            -> +0
+///   pow(-1, +-infinity)                  -> 1
+///   pow(abs(x) < 1, -infinity)           -> +infinity
+///   pow(abs(x) < 1, +infinity)           -> +0
+///   pow(abs(x) > 1, -infinity)           -> +0
+///   pow(abs(x) > 1, +infinity)           -> +infinity
+///   pow(-infinity, y)                    -> pow(-0, -y)
+///   pow(+infinity, y < 0)                -> +0
+///   pow(+infinity, y > 0)                -> +infinity
 pow :: proc(base: f64, exponent: f64) -> f64 { return rt_pow_f64(base, exponent); }
 pow_f32 :: proc(base: f32, exponent: f32) -> f32 { return rt_pow_f32(base, exponent); }
 
-// `e` raised to `x`. Overflow gives `+infinity` and underflow `+0`.
+/// `e` raised to `x`. Overflow gives `+infinity` and underflow `+0`.
 exp :: proc(x: f64) -> f64 { return rt_exp_f64(x); }
 exp_f32 :: proc(x: f32) -> f32 { return rt_exp_f32(x); }
 
-// The natural logarithm, and the two other bases. All three share the poles:
-//
-//   x < 0           -> NaN
-//   +-0             -> -infinity
-//   +infinity       -> +infinity
+/// The natural logarithm, and the two other bases. All three share the poles:
+///
+///   x < 0           -> NaN
+///   +-0             -> -infinity
+///   +infinity       -> +infinity
 log :: proc(x: f64) -> f64 { return rt_log_f64(x); }
 log_f32 :: proc(x: f32) -> f32 { return rt_log_f32(x); }
 
@@ -626,27 +631,28 @@ cos_f32 :: proc(x: f32) -> f32 { return rt_cos_f32(x); }
 tan :: proc(x: f64) -> f64 { return rt_tan_f64(x); }
 tan_f32 :: proc(x: f32) -> f32 { return rt_tan_f32(x); }
 
-// The inverse sine, in `[-PI/2, PI/2]`. Outside `[-1, 1]` the result is a NaN.
+/// The inverse sine, in `[-PI/2, PI/2]`. Outside `[-1, 1]` the result is a NaN.
 asin :: proc(x: f64) -> f64 { return rt_asin_f64(x); }
 asin_f32 :: proc(x: f32) -> f32 { return rt_asin_f32(x); }
 
-// The inverse cosine, in `[0, PI]`. Outside `[-1, 1]` the result is a NaN.
+/// The inverse cosine, in `[0, PI]`. Outside `[-1, 1]` the result is a NaN.
 acos :: proc(x: f64) -> f64 { return rt_acos_f64(x); }
 acos_f32 :: proc(x: f32) -> f32 { return rt_acos_f32(x); }
 
-// The inverse tangent of one operand, in `[-PI/2, PI/2]`.
+/// The inverse tangent of one operand, in `[-PI/2, PI/2]`.
 atan :: proc(x: f64) -> f64 { return rt_atan_f64(x); }
 atan_f32 :: proc(x: f32) -> f32 { return rt_atan_f32(x); }
 
-// The inverse tangent of `y/x`, using the signs of both to place the result in
-// the correct quadrant, in `[-PI, PI]`. The signed-zero and infinity cases are
-// the ones IEC 60559 defines, so `atan2(+0, -0)` is `+PI` and `atan2(-0, +0)`
-// is `-0`.
+/// The inverse tangent of `y/x`, using the signs of both to place the result in
+/// the correct quadrant, in `[-PI, PI]`. The signed-zero and infinity cases are
+/// the ones IEC 60559 defines, so `atan2(+0, -0)` is `+PI` and `atan2(-0, +0)`
+/// is `-0`.
 atan2 :: proc(y: f64, x: f64) -> f64 { return rt_atan2_f64(y, x); }
 atan2_f32 :: proc(y: f32, x: f32) -> f32 { return rt_atan2_f32(y, x); }
 
-// Degrees to radians and back. One multiply each, and the two conversions every
-// caller otherwise open-codes with a constant that is a digit short.
+/// Degrees to radians and back.
+// One multiply each, and the two conversions every caller otherwise open-codes
+// with a constant that is a digit short.
 to_radians :: proc(degrees: f64) -> f64 { return degrees*(PI/180.0); }
 to_radians_f32 :: proc(degrees: f32) -> f32 { return degrees*f32(PI/180.0); }
 

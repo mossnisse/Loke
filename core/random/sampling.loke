@@ -1,28 +1,29 @@
-// Choosing among indices (standard-library "Sampling"): `Weighted`, an alias
-// table for drawing indices in proportion to weights, and `sample`, which draws
-// elements without replacement.
+/// Choosing among indices: `Weighted`, an alias table for drawing indices in
+/// proportion to weights, and `sample`, which draws elements without
+/// replacement.
+// standard-library "Sampling".
 @(public)
 package random;
 
 import "core:math";
 import "core:mem";
 
-// Indices `0 ..< n` drawn with probability proportional to `n` weights, in
-// constant time per draw: Vose's alias method ("A linear algorithm for
-// generating random numbers with a given distribution", 1991). Building it
-// takes time and two arrays proportional to `n`.
-//
-// Each index owns a column holding the chance of keeping it and the index to
-// give instead, so a draw is a uniform column and one comparison.
+/// Indices `0 ..< n` drawn with probability proportional to `n` weights, in
+/// constant time per draw: Vose's alias method ("A linear algorithm for
+/// generating random numbers with a given distribution", 1991). Building it
+/// takes time and two arrays proportional to `n`.
+///
+/// Each index owns a column holding the chance of keeping it and the index to
+/// give instead, so a draw is a uniform column and one comparison.
 Weighted :: struct {
 	@(private) keep: [dynamic]f64,
 	@(private) alias: [dynamic]int,
 }
 
 impl Weighted {
-	// A table for `weights`, which must be finite and not negative, with a
-	// finite positive sum. A zero weight's index is never drawn. Storage comes
-	// from `allocator` and follows its failure policy.
+	/// A table for `weights`, which must be finite and not negative, with a
+	/// finite positive sum. A zero weight's index is never drawn. Storage comes
+	/// from `allocator` and follows its failure policy.
 	from_weights :: proc(weights: []f64, allocator: Allocator = mem.default_allocator()) -> Weighted {
 		total := weight_total(weights);
 		count := weights.len();
@@ -33,7 +34,7 @@ impl Weighted {
 		return Weighted{move(keep), move(alias)};
 	}
 
-	// `from_weights`, reporting an allocation failure instead.
+	/// `from_weights`, reporting an allocation failure instead.
 	try_from_weights :: proc(
 		weights: []f64, allocator: Allocator = mem.default_allocator(),
 	) -> Result(Weighted, Allocator_Error) {
@@ -46,12 +47,12 @@ impl Weighted {
 		return Weighted{move(keep), move(alias)};
 	}
 
-	// The number of indices, `weights.len()`.
+	/// The number of indices, `weights.len()`.
 	len :: proc(self) -> int { return self.keep.len(); }
 
-	// One index, each with probability its weight over the sum: one
-	// `in_range(0 ..< len)` picks a column and one `unit` draw keeps it or takes
-	// its alias.
+	/// One index, each with probability its weight over the sum: one
+	/// `in_range(0 ..< len)` picks a column and one `unit` draw keeps it or takes
+	/// its alias.
 	pick :: proc(self, source: inout $G) -> int where Source(G) {
 		column := in_range(inout source, 0 ..< self.keep.len());
 		if (unit(inout source) < self.keep[column]) { return column; }
@@ -122,13 +123,13 @@ build_alias :: proc(weights: []f64, total: f64, keep: []mut f64, alias: []mut in
 	}
 }
 
-// Moves a uniformly random `count` of the elements of `values` to its front, in
-// random order, so `values[:count]` is a sample without replacement and the rest
-// are the elements not chosen. `count` must be in `0 ..= values.len()`. Fisher–
-// Yates from the front: for each index `i` below `count`, one
-// `in_range(i ..< values.len())` picks the element that trades places with it.
-// `shuffle` with `count` of `values.len()` is the same permutation drawn in the
-// opposite direction, not the same sequence.
+/// Moves a uniformly random `count` of the elements of `values` to its front, in
+/// random order, so `values[:count]` is a sample without replacement and the rest
+/// are the elements not chosen. `count` must be in `0 ..= values.len()`. Fisher–
+/// Yates from the front: for each index `i` below `count`, one
+/// `in_range(i ..< values.len())` picks the element that trades places with it.
+/// `shuffle` with `count` of `values.len()` is the same permutation drawn in the
+/// opposite direction, not the same sequence.
 sample :: proc(source: inout $G, values: []mut $T, count: int) where Source(G) {
 	if (count < 0 || count > values.len()) {
 		panic("random.sample: the count must be between 0 and the number of values");

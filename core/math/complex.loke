@@ -1,12 +1,13 @@
-// `Complex(T)` and `Quaternion(T)` (design.md "Library numeric types").
-//
-// Deliberately not primitive: these are ordinary structs with ordinary methods,
-// operators, conversion hooks, and formatting, and they get no special
-// relationship with the compiler. `tests/run/lib_numeric.loke` writes the
-// `T = f64` case out by hand to show a user could.
-//
-// A scalar converts through `hook(convert)`, written out: `Complex(f64)(x)`.
-// That is the ordinary conversion rule, not a numeric special case.
+/// `Complex(T)` and `Quaternion(T)`.
+///
+/// These are ordinary structs with ordinary methods, operators, conversion
+/// hooks, and formatting, not primitive types.
+///
+/// A scalar converts through `hook(convert)`, written out: `Complex(f64)(x)`.
+/// That is the ordinary conversion rule, not a numeric special case.
+// design.md "Library numeric types". Deliberately not primitive: they get no
+// special relationship with the compiler. `tests/run/lib_numeric.loke` writes
+// the `T = f64` case out by hand to show a user could.
 @(public)
 package math;
 
@@ -46,7 +47,8 @@ impl Complex($T) {
 		};
 	}
 
-	// The textbook form. It overflows for operands whose squares do not fit.
+	/// The textbook form, which overflows for operands whose squares do not fit.
+	/// `Complex(f32)` and `Complex(f64)` divide without that overflow.
 	// `T` here is any `Numeric` type, integers included, so it cannot reach the
 	// scaled floating `hypot`; the `f32` and `f64` blocks below replace this
 	// member for those two instantiations with one that does not form `c*c+d*d`.
@@ -66,25 +68,28 @@ impl Complex($T) {
 		return {self.real, -self.imaginary};
 	}
 
-	// The squared magnitude, for any `Numeric` `T`. `abs` needs a square root and
-	// therefore a floating `T`, so it lives in the two exact blocks below; an
-	// integer instantiation still has this.
+	/// The squared magnitude, for any `Numeric` `T`. `abs` exists only for a
+	/// floating `T`.
+	// `abs` needs a square root and therefore a floating `T`, so it lives in the
+	// two exact blocks below; an integer instantiation still has this.
 	norm_squared :: proc(self) -> T {
 		return self.real*self.real + self.imaginary*self.imaginary;
 	}
 
-	// `format_to_with` for the components, so the caller's base and case reach
-	// them: `T` may be an integer, and a formatter that took `options` only to
-	// format with the defaults would spell a `Complex(i32)` in base 10 however
-	// it was asked for. The separators are text and read nothing from `options`.
+	/// Prints the components with the caller's options, so a requested base and
+	/// case reach them.
+	// `format_to_with` for the components: `T` may be an integer, and a formatter
+	// that took `options` only to format with the defaults would spell a
+	// `Complex(i32)` in base 10 however it was asked for. The separators are text
+	// and read nothing from `options`.
 	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
 		fmt.format_to_with(writer, options, self.real);
 		join(writer, options, self.imaginary, "i");
 	}
 }
 
-// The Hamilton quaternions: one real part and three imaginary units with
-// `i*j == k` and `j*i == -k`, so multiplication does not commute.
+/// The Hamilton quaternions: one real part and three imaginary units with
+/// `i*j == k` and `j*i == -k`, so multiplication does not commute.
 Quaternion :: struct($T: type) where interfaces.Numeric(T) {
 	real: T,
 	i:    T,
@@ -192,6 +197,8 @@ join :: proc(writer: fmt.Writer, options: fmt.Options, component: $T, unit: stri
 // spelling, because there is no `f32` -> `f64` widening to hide one behind.
 
 impl Complex(f64) {
+	/// The magnitude. It does not overflow while the components themselves are
+	/// representable.
 	// `hypot`, not `sqrt(norm_squared())`: the magnitude of a complex number
 	// whose components are large is representable long after the sum of their
 	// squares is not.
@@ -199,11 +206,11 @@ impl Complex(f64) {
 		return hypot(self.real, self.imaginary);
 	}
 
+	/// Division that does not overflow merely because the squares of finite,
+	/// non-zero denominator components would. It does not claim bit-for-bit C
+	/// complex semantics for every NaN/infinity combination.
 	// Smith's method: divide through by the larger denominator component, so
-	// `c*c + d*d` is never formed. The guarantee is narrow and testable — finite
-	// non-zero denominator components do not overflow merely because their
-	// squares would. It does not claim bit-for-bit C complex semantics for every
-	// NaN/infinity combination.
+	// `c*c + d*d` is never formed. The guarantee is narrow and testable.
 	divide :: operator(/) proc(left, right: Complex(f64)) -> Complex(f64) {
 		// Smith's bounded ratio still leaves one addition in each numerator and
 		// denominator. When the denominator is in the top binade, halve all four
@@ -253,8 +260,8 @@ impl Complex(f64) {
 		};
 	}
 
-	// Through the specialised division rather than `conjugate/norm_squared`,
-	// which would reintroduce the overflow that division just removed.
+	/// `1/self`, without the overflow `conjugate/norm_squared` would risk.
+	// Through the specialised division, which removes that overflow.
 	inverse :: proc(self) -> Complex(f64) {
 		return Complex(f64){1.0, 0.0}/self;
 	}
@@ -309,21 +316,23 @@ impl Complex(f32) {
 }
 
 impl Quaternion(f64) {
+	/// The magnitude, without the overflow or underflow of the sum of four
+	/// squares. The extra rounding is within the libm accuracy this package
+	/// promises.
 	// Nested `hypot` rather than the root of the sum of four squares: the same
-	// overflow and underflow argument, one level deeper. The extra rounding is
-	// within the target libm accuracy contract this package promises.
+	// overflow and underflow argument, one level deeper.
 	abs :: proc(self) -> f64 {
 		return hypot(hypot(self.real, self.i), hypot(self.j, self.k));
 	}
 
-	// `conjugate/norm_squared`, staged so no avoidable overflow happens on the
-	// way: every component is divided by the largest magnitude first, which puts
-	// the normalized sum of squares in `[1, 4]` whatever the input scale was.
-	// Each component then divides by the sum and the scale separately. A shared
+	/// `1/self`, with no avoidable overflow whatever the input scale. A zero
+	/// quaternion divides zero by zero and yields NaN components, which is the
+	/// scalar floating rule rather than a special case.
+	// `conjugate/norm_squared`, staged: every component is divided by the largest
+	// magnitude first, which puts the normalized sum of squares in `[1, 4]`. Each
+	// component then divides by the sum and the scale separately. A shared
 	// `1/(scale*sum)` factor would overflow for a subnormal scale and take every
 	// finite component, and every zero one, with it.
-	// A zero quaternion divides zero by zero and yields NaN components, which is
-	// the scalar floating rule rather than a special case.
 	inverse :: proc(self) -> Quaternion(f64) {
 		scale := max(max(abs(self.real), abs(self.i)),
 			max(abs(self.j), abs(self.k)));

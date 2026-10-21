@@ -1,9 +1,10 @@
-// ISO 8601 text (standard-library "ISO 8601 text").
-//
-// Each type prints in the ISO 8601 extended format, in the RFC 3339 profile
-// where one applies, and its parser reads that back, the basic format, and
-// RFC 3339's allowances. A duration prints in a short form, `1h30m`, and reads
-// that or ISO 8601's `PT1H30M`.
+/// ISO 8601 text.
+///
+/// Each type prints in the ISO 8601 extended format, in the RFC 3339 profile
+/// where one applies, and its parser reads that back, the basic format, and
+/// RFC 3339's allowances. A duration prints in a short form, `1h30m`, and reads
+/// that or ISO 8601's `PT1H30M`.
+// standard-library "ISO 8601 text".
 @(public)
 package time;
 
@@ -12,14 +13,14 @@ import "core:math";
 
 // --------------------------------------------------------------- printing --
 
-// How many digits of a second print. A fixed precision truncates and never
-// rounds, so it never prints a second that has not arrived yet; for a
-// `Duration` it truncates to that unit before the short form prints.
+/// How many digits of a second print. A fixed precision truncates and never
+/// rounds, so it never prints a second that has not arrived yet; for a
+/// `Duration` it truncates to that unit before the short form prints.
 Precision :: enum { Shortest, Seconds, Milliseconds, Microseconds, Nanoseconds }
 
-// `basic` drops the separators: `20261015T123456Z`. `iso` prints a `Duration`
-// in ISO 8601 rather than the short form, and changes nothing for the other
-// types, which print ISO 8601 already.
+/// `basic` drops the separators: `20261015T123456Z`. `iso` prints a `Duration`
+/// in ISO 8601 rather than the short form, and changes nothing for the other
+/// types, which print ISO 8601 already.
 Style :: struct {
 	basic:     bool,
 	iso:       bool,
@@ -28,7 +29,7 @@ Style :: struct {
 
 DEFAULT_STYLE :: Style{};
 
-// `value` printed in `style`, as `fmt.fixed` does for a float.
+/// `value` printed in `style`, as `fmt.fixed` does for a float.
 styled :: proc(value: $T, style: Style) -> Styled(T) where is_styled(T) {
 	return Styled(T){value, style};
 }
@@ -88,7 +89,7 @@ impl Text {
 		foreach (byte in text.bytes()) { self.put(byte); }
 	}
 
-	// `value` in at least `width` digits, zero-padded.
+	/// `value` in at least `width` digits, zero-padded.
 	put_number :: proc(self: inout, value: u64, width: int) {
 		digits: [20]u8 = {};
 		count := 0;
@@ -104,9 +105,9 @@ impl Text {
 		}
 	}
 
-	// A fraction of `digits` decimal places, `value` being less than
-	// 10^digits: shortest drops the trailing zeros, and nothing prints for
-	// zero; otherwise exactly `keep` places, truncated.
+	/// A fraction of `digits` decimal places, `value` being less than
+	/// 10^digits: shortest drops the trailing zeros, and nothing prints for
+	/// zero; otherwise exactly `keep` places, truncated.
 	put_fraction :: proc(self: inout, value: u64, digits: int, keep: int, shortest: bool) {
 		rest := value;
 		places := digits;
@@ -246,21 +247,21 @@ impl Text {
 // ---------------------------------------------------------------- parsing --
 
 Parse_Error :: enum {
-	// The wrong shape: a missing separator, a digit too few, text left over.
+	/// The wrong shape: a missing separator, a digit too few, text left over.
 	Invalid_Syntax,
-	// A field outside its range: month 13, 2026-02-29, minute 60, or a
-	// calendar unit in a duration, which a `Duration` cannot hold exactly.
+	/// A field outside its range: month 13, 2026-02-29, minute 60, or a
+	/// calendar unit in a duration, which a `Duration` cannot hold exactly.
 	Invalid_Value,
-	// A date and time with no offset, given to `parse_time` or
-	// `parse_offset_date_time`.
+	/// A date and time with no offset, given to `parse_time` or
+	/// `parse_offset_date_time`.
 	Missing_Offset,
-	// A valid value the type cannot hold: a `Time` after 2262, a duration
-	// beyond 292 years.
+	/// A valid value the type cannot hold: a `Time` after 2262, a duration
+	/// beyond 292 years.
 	Out_Of_Range,
 }
 
-// A date, time, and offset, converted to UTC. The offset is required, since a
-// local time names no instant.
+/// A date, time, and offset, converted to UTC. The offset is required, since a
+/// local time names no instant.
 parse_time :: proc(text: string_view) -> Result(Time, Parse_Error) {
 	scanner := Scanner{bytes = trim(text)};
 	date_time := scanner.date_time() or_return;
@@ -281,7 +282,7 @@ parse_offset_date_time :: proc(text: string_view) -> Result(Offset_Date_Time, Pa
 	return date_time.at_offset(offset);
 }
 
-// An offset is rejected rather than dropped.
+/// An offset is rejected rather than dropped.
 parse_date_time :: proc(text: string_view) -> Result(Date_Time, Parse_Error) {
 	scanner := Scanner{bytes = trim(text)};
 	date_time := scanner.date_time() or_return;
@@ -313,9 +314,9 @@ parse_offset :: proc(text: string_view) -> Result(Offset, Parse_Error) {
 	return offset;
 }
 
-// The short form, `1h30m` or `-153ms`, or ISO 8601's, `PT1H30M`. In either the
-// units come largest first, each at most once, with a fraction only on the
-// last. `us` is read as `µs`.
+/// The short form, `1h30m` or `-153ms`, or ISO 8601's, `PT1H30M`. In either the
+/// units come largest first, each at most once, with a fraction only on the
+/// last. `us` is read as `µs`.
 parse_duration :: proc(text: string_view) -> Result(Duration, Parse_Error) {
 	scanner := Scanner{bytes = trim(text)};
 	negative := scanner.take(u8('-'));
@@ -398,7 +399,7 @@ impl Scanner {
 		return true;
 	}
 
-	// A separator the extended format writes and the basic format leaves out.
+	/// A separator the extended format writes and the basic format leaves out.
 	separator :: proc(self: inout, byte: u8) -> Status(Parse_Error) {
 		if (!self.basic && !self.take(byte)) { return .err(.Invalid_Syntax); }
 		return .ok;
@@ -409,7 +410,7 @@ impl Scanner {
 		return .ok;
 	}
 
-	// Exactly `count` decimal digits.
+	/// Exactly `count` decimal digits.
 	digits :: proc(self: inout, count: int) -> Result(int, Parse_Error) {
 		value := 0;
 		foreach (_ in 0 ..< count) {
@@ -421,15 +422,15 @@ impl Scanner {
 		return value;
 	}
 
-	// `.` or `,` and at least one digit, as nanoseconds; digits past the ninth
-	// are read and dropped. No separator is no fraction.
+	/// `.` or `,` and at least one digit, as nanoseconds; digits past the ninth
+	/// are read and dropped. No separator is no fraction.
 	nanoseconds :: proc(self: inout) -> Result(i64, Parse_Error) {
 		if (!self.take(u8('.')) && !self.take(u8(','))) { return 0; }
 		fraction := self.fraction() or_return;
 		return i64(fraction_of(fraction, u64(SECOND)));
 	}
 
-	// The digits after a decimal sign, at least one.
+	/// The digits after a decimal sign, at least one.
 	fraction :: proc(self: inout) -> Result([]u8, Parse_Error) {
 		start := self.at;
 		for (; self.peek() >= u8('0') && self.peek() <= u8('9'); ) { self.at += 1; }
@@ -437,8 +438,8 @@ impl Scanner {
 		return self.bytes[start:self.at];
 	}
 
-	// `2026-10-15` or `20261015`. The separator after the year decides the
-	// format for the rest of the value.
+	/// `2026-10-15` or `20261015`. The separator after the year decides the
+	/// format for the rest of the value.
 	date :: proc(self: inout) -> Result(Date, Parse_Error) {
 		year := self.digits(4) or_return;
 		self.basic = self.peek() != u8('-');
@@ -450,7 +451,7 @@ impl Scanner {
 		return Date.from_components(year, month, day) or_return .Invalid_Value;
 	}
 
-	// `14:34:56.789` or `143456.789`; seconds are required, as in RFC 3339.
+	/// `14:34:56.789` or `143456.789`; seconds are required, as in RFC 3339.
 	time_of_day :: proc(self: inout) -> Result(Time_Of_Day, Parse_Error) {
 		hour := self.digits(2) or_return;
 		self.separator(u8(':')) or_return;
@@ -477,8 +478,8 @@ impl Scanner {
 		return Date_Time{date, time};
 	}
 
-	// `Z`, or a sign and hours and minutes. `-00:00`, which RFC 3339 used for
-	// an unknown local offset, reads as `Z`, the spelling RFC 9557 gives it.
+	/// `Z`, or a sign and hours and minutes. `-00:00`, which RFC 3339 used for
+	/// an unknown local offset, reads as `Z`, the spelling RFC 9557 gives it.
 	offset :: proc(self: inout) -> Result(Offset, Parse_Error) {
 		if (self.take(u8('Z')) || self.take(u8('z'))) { return UTC; }
 		sign := 1;
@@ -494,8 +495,9 @@ impl Scanner {
 		return Offset{sign * (hours * 60 + minutes)};
 	}
 
-	// A leap second ends a UTC minute: local minute 59 at `Z`, 29 at +05:30,
-	// 44 at +05:45 (standard-library "Leap seconds").
+	/// A leap second ends a UTC minute: local minute 59 at `Z`, 29 at +05:30,
+	/// 44 at +05:45.
+	// standard-library "Leap seconds".
 	confirm_leap :: proc(self, time: Time_Of_Day, offset: Offset) -> Status(Parse_Error) {
 		if (self.leap && ((time.minute() - offset.east) % 60 + 60) % 60 != 59) {
 			return .err(.Invalid_Value);
@@ -503,7 +505,7 @@ impl Scanner {
 		return .ok;
 	}
 
-	// Digits and an optional fraction, with at least one digit before it.
+	/// Digits and an optional fraction, with at least one digit before it.
 	number :: proc(self: inout) -> Result(Number, Parse_Error) {
 		number := Number{};
 		start := self.at;
@@ -520,7 +522,7 @@ impl Scanner {
 		return number;
 	}
 
-	// After the `P`: `T` and hours, minutes, and seconds, at least one of them.
+	/// After the `P`: `T` and hours, minutes, and seconds, at least one of them.
 	iso_duration :: proc(self: inout) -> Result(u64, Parse_Error) {
 		total: u64 = 0;
 		components := 0;
@@ -560,7 +562,7 @@ impl Scanner {
 		return total;
 	}
 
-	// `1h30m`, `2m0.5s`, `153ms`, `1.5µs`, `250ns`.
+	/// `1h30m`, `2m0.5s`, `153ms`, `1.5µs`, `250ns`.
 	short_duration :: proc(self: inout) -> Result(u64, Parse_Error) {
 		total: u64 = 0;
 		last := -1;

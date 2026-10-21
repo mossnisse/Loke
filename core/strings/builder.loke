@@ -1,19 +1,22 @@
-// `String_Builder`: repeated appends into one growing buffer, finished as one
-// immutable `string` (design.md "string type", standard-library
-// "`String_Builder`").
+/// `String_Builder`: repeated appends into one growing buffer, finished as one
+/// immutable `string`.
+// design.md "string type", standard-library "`String_Builder`".
 @(public)
 package strings;
 
 import "core:mem";
 
+/// A growing buffer finished as one immutable `string`. **The zero value is a
+/// usable, empty, allocator-unbound builder**: the first growth binds the
+/// default provider. `init` exists only to choose another allocator up front.
+///
+/// The buffer holds valid UTF-8 at every public boundary, so there is no
+/// arbitrary byte append: a caller with bytes that are not text wants a
+/// `[dynamic]u8`.
 // design.md's own example is `builder: String_Builder = {};` followed by
-// `append`, so **the zero value is a usable, empty, allocator-unbound builder**.
-// It inherits that from the `[dynamic]u8` it wraps: the first growth binds the
-// default provider. `init` exists only to choose another allocator up front.
-//
-// The buffer holds valid UTF-8 at every public boundary. There is deliberately
-// no arbitrary byte append: it could break that invariant, and a caller with
-// bytes that are not text wants a `[dynamic]u8`, not this.
+// `append`. The zero value inherits that from the `[dynamic]u8` it wraps.
+// There is deliberately no arbitrary byte append: it could break that
+// invariant.
 String_Builder :: struct {
 	@(private) data: [dynamic]u8,
 	// The zero `Allocator`, the default provider, until `init` selects one,
@@ -21,19 +24,19 @@ String_Builder :: struct {
 	@(private) allocator: Allocator,
 }
 
-// A builder whose buffer *and* finished string come from `allocator`.
+/// A builder whose buffer *and* finished string come from `allocator`.
 init :: proc(allocator: Allocator = mem.default_allocator()) -> String_Builder {
 	made := make([dynamic]u8, 0, 0, allocator);
 	return String_Builder{move(made), allocator};
 }
 
 impl String_Builder {
-	// Bytes, not runes: this is the buffer's length, and it is what `builder.len()`
-	// resolves to.
+	/// The number of bytes written, not runes.
+	// This is the buffer's length, and it is what `builder.len()` resolves to.
 	len :: proc(self) -> int { return self.data.len(); }
 	cap :: proc(self) -> int { return self.data.cap(); }
 
-	// Room for `additional` more bytes, on top of what is already written.
+	/// Room for `additional` more bytes, on top of what is already written.
 	reserve :: proc(self: inout String_Builder, additional: int) {
 		wanted := wanted_capacity(self.data.len(), additional);
 		self.data.reserve(wanted);
@@ -53,8 +56,8 @@ impl String_Builder {
 		self.data.append(..encoded[0:count]);
 	}
 
-	// One ASCII byte. The name says `ascii` because that is the only byte a
-	// caller can add without knowing where a rune begins.
+	/// One ASCII byte. The name says `ascii` because that is the only byte a
+	/// caller can add without knowing where a rune begins.
 	append_byte_ascii :: proc(self: inout String_Builder, value: u8) {
 		if (value >= 0x80) { panic("append_byte_ascii takes an ASCII byte"); }
 		self.data.append(value);
@@ -78,43 +81,42 @@ impl String_Builder {
 
 	try_append :: proc{try_append_text, try_append_rune};
 
-	// Keeps the allocation, which is what makes a builder reusable across lines.
+	/// Keeps the allocation, which is what makes a builder reusable across lines.
 	clear :: proc(self: inout String_Builder) { self.data.clear(); }
 
+	/// The text as an owned `string`: one linear copy. The buffer is retained for
+	/// reuse afterwards.
 	// design.md: a dynamic array owns raw element storage while a runtime string
 	// points past a reference-counted header, so the two are not
-	// storage-compatible and this is one linear copy. The buffer is retained for
-	// reuse afterwards.
+	// storage-compatible.
 	finish :: proc(self: inout String_Builder) -> string {
 		text := self.copy_string(self.allocator);
 		self.data.clear();
 		return text;
 	}
 
-	// The same, reporting an allocation failure instead of applying a policy. The
-	// builder is left completely unchanged when it fails.
+	/// The same, reporting an allocation failure instead of applying a policy. The
+	/// builder is left completely unchanged when it fails.
 	try_finish :: proc(self: inout String_Builder) -> Result(string, Allocator_Error) {
 		text := self.try_copy_string(self.allocator) or_return;
 		self.data.clear();
 		return text;
 	}
 
-	// What is written so far, borrowed rather than copied. The view reads the
-	// builder's own buffer, so it cannot outlive the next append — and does not
-	// have to be trusted to: an append while the view is still live is rejected
-	// (L0512, "a read-only borrow of it is still in use"). `copy_string` is the
-	// one to reach for when the text really must outlast the builder.
-	//
-	// This exists so a caller who only needs to *read* the assembled text does
-	// not have to allocate a `string` to do it: `path.join` hands the view
-	// straight to `path.clean`.
+	/// What is written so far, borrowed rather than copied, so a caller who only
+	/// reads the assembled text need not allocate a `string`. The view reads the
+	/// builder's own buffer, so an append while the view is still live is
+	/// rejected. `copy_string` is the one to reach for when the text really must
+	/// outlast the builder.
+	// The rejection is L0512, "a read-only borrow of it is still in use".
+	// `path.join` hands the view straight to `path.clean`.
 	view :: proc(self: ^) -> string_view {
 		// Unreachable through the public surface, which never admits a partial
 		// rune. The diverging fallback is a guard, not a policy.
 		return string_view.from_utf8(self.data[:]) or_else panic("String_Builder holds invalid UTF-8");
 	}
 
-	// A copy of what is written so far. The builder is not disturbed either way.
+	/// A copy of what is written so far. The builder is not disturbed either way.
 	copy_string :: proc(self, allocator: Allocator = mem.default_allocator()) -> string {
 		// Failure follows the allocator's policy.
 		switch (self.try_copy_string(allocator)) {

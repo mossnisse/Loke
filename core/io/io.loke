@@ -1,15 +1,16 @@
-// Byte streams and the shared I/O error (standard-library "Shared I/O
-// contract").
+/// Byte streams and the shared I/O error.
+///
+/// This package owns the error type used by `io`, `fs`, `term`, and fallible
+/// process I/O. It is **not** a universal application error type: it describes
+/// what a byte stream or an operating system did, and nothing else.
+///
+/// Everything here is synchronous and blocking, and there are no buffered
+/// wrappers: `read_to_end` plus a caller's own `[]mut u8` covers most needs.
+// standard-library "Shared I/O contract".
 //
-// This package owns the error type used by `io`, `fs`, `term`, and fallible
-// process I/O. It is **not** a universal application error type: it describes
-// what a byte stream or an operating system did, and nothing else.
-//
-// The first release is synchronous and blocking. Buffered wrappers are
-// deliberately absent — `read_to_end` plus a caller's own `[]mut u8` covers what
-// the rest of the library needs, and buffering policy is worth designing against
-// a measured cost. When it arrives it will be an explicit wrapper value, never
-// hidden global state.
+// Buffered wrappers are deliberately absent: buffering policy is worth
+// designing against a measured cost. When it arrives it will be an explicit
+// wrapper value, never hidden global state.
 @(public)
 package io;
 
@@ -19,8 +20,8 @@ import "core:strings";
 
 // ----------------------------------------------------------------- errors --
 
-// A normalized failure. Platform error numbers stay in `native_code`; nothing
-// here is a Windows or POSIX constant.
+/// A normalized failure. Platform error numbers stay in `native_code`; nothing
+/// here is a Windows or POSIX constant.
 Code :: enum {
 	End_Of_Input,
 	Unexpected_End,
@@ -33,8 +34,8 @@ Code :: enum {
 	Would_Block,
 	Broken_Pipe,
 	Not_A_Terminal,
-	// The stream was closed before this call. Distinct from `Unsupported`, which
-	// is a live stream asked for a direction it does not have.
+	/// The stream was closed before this call. Distinct from `Unsupported`, which
+	/// is a live stream asked for a direction it does not have.
 	Closed,
 	Directory_Not_Empty,
 	Out_Of_Space,
@@ -44,10 +45,11 @@ Code :: enum {
 	Other,
 }
 
-// A closed, non-owning description of *which* operation failed. It replaces a
-// borrowed operation string, so an error can never outlive its diagnostic text.
-// Add a member when a public operation needs a distinct diagnostic; do not put
-// paths or other caller data in an error merely for context.
+/// A closed, non-owning description of *which* operation failed, so an error
+/// can never outlive its diagnostic text.
+// It replaces a borrowed operation string. Add a member when a public
+// operation needs a distinct diagnostic; do not put paths or other caller data
+// in an error merely for context.
 Operation :: enum {
 	Read,
 	Write,
@@ -74,17 +76,20 @@ Operation :: enum {
 	Other,
 }
 
-// Owned scalars only: no borrowed path, and no allocation merely to report a
-// failure. The fields are package-private; the queries below are the access.
+/// Owned scalars only: no borrowed path, and no allocation merely to report a
+/// failure. The fields are package-private; the queries below are the access.
+/// Every fallible procedure here returns `Result(T, Error)` and composes with
+/// `or_return`.
 // design.md "Typed fallibility": failure is a payload inside `Result`, not a
-// nil-status wrapper around one. Every fallible procedure here returns
-// `Result(T, Error)` and composes with `or_return`.
+// nil-status wrapper around one.
 Error :: struct {
 	@(private) code:        Code,
 	@(private) native_code: u32,
 	@(private) operation:   Operation,
 }
 
+/// An `Error` for a `Reader` or `Writer` implementation, or another package
+/// that calls the platform, to report.
 // Public because Loke has package and public visibility only: `core:fs`,
 // `core:term`, `core:os`, and third-party `Reader`/`Writer` implementations
 // cannot call a package-private constructor. Both take owned scalar data, so
@@ -93,9 +98,10 @@ make_error :: proc(code: Code, operation: Operation, native_code: u32 = 0) -> Er
 	return Error{code, native_code, operation};
 }
 
-// The one table from a platform error number to a portable code, shared by every
-// package that calls the platform. The numbers are Windows system error codes,
-// the only backend so far; a number the table does not know is `Other`.
+/// The portable `Error` for a platform error number. The numbers are Windows
+/// system error codes; a number the table does not know is `Other`.
+// The one table from a platform error number to a portable code, shared by
+// every package that calls the platform. Windows is the only backend so far.
 from_native_code :: proc(native_code: u32, operation: Operation) -> Error {
 	n := native_code;
 	code := Code.Other;
@@ -114,10 +120,11 @@ from_native_code :: proc(native_code: u32, operation: Operation) -> Error {
 	return Error{code, native_code, operation};
 }
 
+/// The `Error` for an allocation failure. No procedure here returns both an
+/// `Allocator_Error` and an `Error`.
 // The one conversion point between the two vocabularies. A procedure here that
 // allocates takes an allocator, uses the `try_` form internally, destroys any
-// partial result, and converts the failure exactly once — so no procedure ever
-// returns both an `Allocator_Error` and an `Error`.
+// partial result, and converts the failure exactly once.
 from_allocator_error :: proc(operation: Operation) -> Error {
 	return Error{.Out_Of_Memory, 0, operation};
 }
@@ -131,9 +138,10 @@ operation_of :: proc(error: Error) -> Operation { return error.operation; }
 native_code_of :: proc(error: Error) -> u32 { return error.native_code; }
 
 impl Error {
+	/// Prints the operation and the code, so `fmt.eprintln("error:", error)` reads
+	/// as a sentence rather than three raw fields.
 	// design.md's coherence rule: a `format` is eligible only in the value type's
-	// own package, and this is that package. `fmt.eprintln("error:", error)`
-	// therefore prints the operation and the code rather than three raw fields.
+	// own package, and this is that package.
 	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
 		fmt.format_to(writer, self.operation, "failed:", self.code);
 		if (self.native_code != 0) {
@@ -148,23 +156,24 @@ impl Error {
 
 // ---------------------------------------------------------------- streams --
 
-// The two protocols. Both are declared with `slot` requirements, which is what
-// dyn-compatibility needs — and that is what makes `dyn mut Writer` exist for
-// the formatting adapter below. Both slots take `inout self`, so both views are
-// mutable ones.
-//
-// The contracts are:
-//
-//   - a count is always between zero and the supplied slice length;
-//   - an empty slice succeeds immediately with a zero count;
-//   - a read reports `End_Of_Input` only when it produced no more bytes;
-//   - an implementation that made progress reports the count and surfaces the
-//     failure on the *next* call, because a `Result` carries one or the other
-//     and progress must never be lost;
-//   - a zero count with no error is permitted only for an empty slice;
-//   - `write` may write only a prefix — `write_all` handles partial writes; and
-//   - an implementation retries an interrupted platform call where that is safe
-//     and no observable progress has happened.
+/// The two protocols. Both slots take `inout self`, and both interfaces have
+/// `dyn` views, `dyn mut Reader` and `dyn mut Writer`.
+// Both are declared with `slot` requirements, which is what dyn-compatibility
+// needs — and that is what makes `dyn mut Writer` exist for the formatting
+// adapter below.
+///
+/// The contracts are:
+///
+///   - a count is always between zero and the supplied slice length;
+///   - an empty slice succeeds immediately with a zero count;
+///   - a read reports `End_Of_Input` only when it produced no more bytes;
+///   - an implementation that made progress reports the count and surfaces the
+///     failure on the *next* call, because a `Result` carries one or the other
+///     and progress must never be lost;
+///   - a zero count with no error is permitted only for an empty slice;
+///   - `write` may write only a prefix — `write_all` handles partial writes; and
+///   - an implementation retries an interrupted platform call where that is safe
+///     and no observable progress has happened.
 Reader :: interface($Self: type) {
 	slot read: proc(self: inout Self, destination: []mut u8) -> Result(int, Error);
 }
@@ -180,13 +189,13 @@ Line_Options :: struct { keep_ending: bool }
 @(private)
 CHUNK :: 4096;
 
-// Fills `destination` completely, or fails. A stream that ends early is
-// `Unexpected_End`, which is the difference between this and `read`.
-//
-// "Or fails" is not "or leaves the buffer alone": a failure part way through
-// has already written the bytes it did read, and a `Result` carries the error
-// rather than the count, so a caller cannot learn how far it got. Read into a
-// scratch buffer instead when the destination must stay intact on failure.
+/// Fills `destination` completely, or fails. A stream that ends early is
+/// `Unexpected_End`, which is the difference between this and `read`.
+///
+/// "Or fails" is not "or leaves the buffer alone": a failure part way through
+/// has already written the bytes it did read, and a `Result` carries the error
+/// rather than the count, so a caller cannot learn how far it got. Read into a
+/// scratch buffer instead when the destination must stay intact on failure.
 read_exact :: proc(reader: inout $R, destination: []mut u8) -> Status(Error) where Reader(R) {
 	filled := 0;
 	for (; filled < destination.len(); ) {
@@ -203,7 +212,7 @@ read_exact :: proc(reader: inout $R, destination: []mut u8) -> Status(Error) whe
 	}
 }
 
-// Writes every byte, looping over partial writes.
+/// Writes every byte, looping over partial writes.
 write_all :: proc(writer: inout $W, source: []u8) -> Status(Error) where Writer(W) {
 	written := 0;
 	for (; written < source.len(); ) {
@@ -223,12 +232,12 @@ write_string :: proc(writer: inout $W, text: string_view) -> Status(Error) where
 	return write_all(inout writer, text.bytes());
 }
 
-// Everything the reader has left, as owned bytes.
-//
-// A `limit` of zero or less means no library-imposed limit. A positive limit is
-// what keeps an untrusted stream from causing an unbounded allocation: input
-// that would make the result exceed it destroys the partial result and returns
-// `Limit_Exceeded` alone.
+/// Everything the reader has left, as owned bytes.
+///
+/// A `limit` of zero or less means no library-imposed limit. A positive limit is
+/// what keeps an untrusted stream from causing an unbounded allocation: input
+/// that would make the result exceed it destroys the partial result and returns
+/// `Limit_Exceeded` alone.
 read_to_end :: proc(
 	reader: inout $R,
 	allocator: Allocator = mem.default_allocator(),
@@ -256,13 +265,13 @@ read_to_end :: proc(
 	}
 }
 
-// Bytes from `source` into `destination` until the source ends, answering how
-// many moved. A caller's `buffer` avoids the frame-sized one.
-//
-// The count is a success answer only. A `Result` carries the error instead on
-// failure, so a partial transfer reports no total and cannot be resumed from
-// one -- a caller who needs that owns the loop and calls `read` and `write_all`
-// itself.
+/// Bytes from `source` into `destination` until the source ends, answering how
+/// many moved. A caller's `buffer` avoids the frame-sized one.
+///
+/// The count is a success answer only. A `Result` carries the error instead on
+/// failure, so a partial transfer reports no total and cannot be resumed from
+/// one -- a caller who needs that owns the loop and calls `read` and `write_all`
+/// itself.
 copy :: proc(
 	destination: inout $W, source: inout $R, buffer: []mut u8 = {},
 ) -> Result(u64, Error) where Writer(W), Reader(R) {
@@ -283,13 +292,14 @@ copy :: proc(
 	}
 }
 
-// One line, without its ending unless `keep_ending` asks for it. `\r\n` and `\n`
-// both end a line; an unterminated final line is returned successfully, and end
-// of input before any byte at all is `End_Of_Input`.
-//
+/// One line, without its ending unless `keep_ending` asks for it. `\r\n` and `\n`
+/// both end a line; an unterminated final line is returned successfully, and end
+/// of input before any byte at all is `End_Of_Input`.
+///
+/// It reads one byte per `read`, which suits a terminal or a small file.
 // ponytail: one `read` per byte, because this package has no buffered reader
-// yet. Correct for a terminal and for a small file, and the obvious thing to
-// revisit when the buffered wrapper lands — it goes behind this same signature.
+// yet. The obvious thing to revisit when the buffered wrapper lands — it goes
+// behind this same signature.
 read_line :: proc(
 	reader: inout $R,
 	allocator: Allocator = mem.default_allocator(),
@@ -348,10 +358,10 @@ read_line :: proc(
 
 // ------------------------------------------------------- formatting bridge --
 
-// A `fmt.Sink` cannot report a failure, which is fine for a diagnostic sink and
-// wrong for a file. These two format through a sink that writes into an
-// `io.Writer`, latch the first `Error`, make every later write a no-op, and
-// return the latched error when formatting is done.
+/// A `fmt.Sink` cannot report a failure, which is fine for a diagnostic sink and
+/// wrong for a file. These two format through a sink that writes into an
+/// `io.Writer`, latch the first `Error`, make every later write a no-op, and
+/// return the latched error when formatting is done.
 write_formatted :: proc(writer: inout $W, args: ..any_view) -> Status(Error) where Writer(W) {
 	latch := Latch{(dyn mut Writer)(&mut writer), .none};
 	fmt.format_to((fmt.Writer)(&mut latch), ..args);

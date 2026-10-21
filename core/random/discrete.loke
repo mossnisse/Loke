@@ -1,19 +1,19 @@
-// Counting distributions (standard-library "Distributions"): `geometric`,
-// `poisson`, and `binomial`.
-//
-// `poisson` and `binomial` follow numpy's `random_poisson` and
-// `random_binomial` (numpy/random/src/distributions/distributions.c) step for
-// step, so their draws are specified by those algorithms, as `unit`'s are.
-// All three call `core:math`, so none runs at compile time.
+/// Counting distributions: `geometric`, `poisson`, and `binomial`.
+///
+/// `poisson` and `binomial` follow numpy's `random_poisson` and
+/// `random_binomial` (numpy/random/src/distributions/distributions.c) step for
+/// step, so their draws are specified by those algorithms, as `unit`'s are.
+/// All three call `core:math`, so none runs at compile time.
+// standard-library "Distributions".
 @(public)
 package random;
 
 import "core:math";
 
-// The number of failures before the first success in trials that each succeed
-// with `probability`, in (0, 1]. One `unit` draw `u`, by inversion:
-// `floor(log(1 - u) / log(1 - probability))`, and the largest `u64` when that is
-// larger.
+/// The number of failures before the first success in trials that each succeed
+/// with `probability`, in (0, 1]. One `unit` draw `u`, by inversion:
+/// `floor(log(1 - u) / log(1 - probability))`, and the largest `u64` when that is
+/// larger.
 geometric :: proc(source: inout $G, probability: f64) -> u64 where Source(G) {
 	if (!(probability > 0.0 && probability <= 1.0)) {
 		panic("random.geometric: the probability must be above 0 and at most 1");
@@ -26,11 +26,11 @@ geometric :: proc(source: inout $G, probability: f64) -> u64 where Source(G) {
 	return u64(failures);
 }
 
-// A Poisson-distributed count with `mean`, which must be finite, not negative,
-// and at most 2^62. A mean of zero returns 0 without a draw; below 10, one
-// `unit` draw per unit of the result plus one (Knuth's multiplication); from 10,
-// Hörmann's transformed rejection with squeeze, PTRS, with two `unit` draws per
-// attempt.
+/// A Poisson-distributed count with `mean`, which must be finite, not negative,
+/// and at most 2^62. A mean of zero returns 0 without a draw; below 10, one
+/// `unit` draw per unit of the result plus one (Knuth's multiplication); from 10,
+/// Hörmann's transformed rejection with squeeze, PTRS, with two `unit` draws per
+/// attempt.
 poisson :: proc(source: inout $G, mean: f64) -> u64 where Source(G) {
 	if (!(mean >= 0.0 && mean <= POISSON_MEAN_LIMIT)) {
 		panic("random.poisson: the mean must be finite, not negative, and at most 2^62");
@@ -118,11 +118,11 @@ deviance :: proc(x: f64, m: f64) -> f64 {
 	return sum;
 }
 
-// The number of successes in `trials` independent trials that each succeed with
-// `probability`, in [0, 1]. No draw for zero trials or a probability of 0.
-// Otherwise, with `p` the smaller of `probability` and its complement, sequential
-// inversion when `trials * p` is at most 30, and the BTPE rejection sampler
-// otherwise; the result for the complement is `trials` minus the count.
+/// The number of successes in `trials` independent trials that each succeed with
+/// `probability`, in [0, 1]. No draw for zero trials or a probability of 0.
+/// Otherwise, with `p` the smaller of `probability` and its complement, sequential
+/// inversion when `trials * p` is at most 30, and the BTPE rejection sampler
+/// otherwise; the result for the complement is `trials` minus the count.
 binomial :: proc(source: inout $G, trials: u64, probability: f64) -> u64 where Source(G) {
 	if (!(probability >= 0.0 && probability <= 1.0)) {
 		panic("random.binomial: the probability must be between 0 and 1");

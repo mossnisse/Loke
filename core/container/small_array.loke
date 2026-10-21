@@ -1,27 +1,29 @@
-// `Small_Array(T, N)`: a growable sequence with inline fixed capacity
-// (design.md "Fixed-capacity arrays").
-//
-// Its backing storage never allocates. Operations that would exceed `N` panic;
-// their `try_` forms report `Capacity_Error` and leave the value completely
-// unchanged on capacity failure — the library-wide `try_` contract, applied to
-// a capacity limit. Element copying follows the ordinary copy rules.
-//
-// The zero value is a usable, empty array, so `x: Small_Array(int, 8) = {};`
-// needs no construction.
-//
-// A move-only element is held too. The members that copy one — `get` and the
-// `_copied` insertions — are bound on `is_copyable(T)`, so they are simply not
-// members of such an instance (design.md "where clauses"). `append`, `insert`,
-// and their `try_` forms are procedure groups whose other member consumes, so
-// `values.append(move(token))` is the way in, just as it is for a dynamic
-// array, and everything that reaches an element without copying it is
-// unchanged.
+/// `Small_Array(T, N)`: a growable sequence with inline fixed capacity.
+///
+/// Its backing storage never allocates. Operations that would exceed `N` panic;
+/// their `try_` forms report `Capacity_Error` and leave the value completely
+/// unchanged on capacity failure — the library-wide `try_` contract, applied to
+/// a capacity limit. Element copying follows the ordinary copy rules.
+///
+/// The zero value is a usable, empty array, so `x: Small_Array(int, 8) = {};`
+/// needs no construction.
+///
+/// A move-only element is held too. The members that copy one — `get` and the
+/// `_copied` insertions — are not members of such an instance. `append`,
+/// `insert`, and their `try_` forms also take an element by `move`, so
+/// `values.append(move(token))` is the way in, just as it is for a dynamic
+/// array, and everything that reaches an element without copying it is
+/// unchanged.
+// design.md "Fixed-capacity arrays". The copying members are bound on
+// `is_copyable(T)` (design.md "where clauses"), and the insertions are
+// procedure groups whose other member consumes.
 @(public)
 package container;
 
 import "core:fmt";
 import "core:unsafe";
 
+/// What a `try_` operation reports when the array is full.
 // design.md writes `try_append` as `Status(Capacity_Error)`, so this is
 // the payload inside that result union, not a second fallible shape. Nothing
 // about it is compiler-known: it is an ordinary record with ordinary queries.
@@ -31,9 +33,9 @@ Capacity_Error :: struct {
 }
 
 impl Capacity_Error {
-	// How many elements the operation would have needed room for.
+	/// How many elements the operation would have needed room for.
 	requested_of :: proc(self) -> int { return self.requested; }
-	// The fixed `N` it could not exceed.
+	/// The fixed `N` it could not exceed.
 	capacity_of :: proc(self) -> int { return self.capacity; }
 
 	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
@@ -46,6 +48,7 @@ impl Capacity_Error {
 	}
 }
 
+/// `N` is at least 1.
 // `N > 0` because a zero-capacity growable array can only panic, and a caller
 // who wants no storage wants no container.
 Small_Array :: struct($T: type, $N: int) where N > 0 {
@@ -62,6 +65,7 @@ impl Small_Array($T, $N) {
 
 	Element  :: T;
 
+	/// The number of elements.
 	// The queries borrow: a plain `self` of trivial elements is passed by value
 	// (design.md "Parameter semantics and ABI lowering"), which here would copy
 	// all `N` slots to read one count.
@@ -71,10 +75,11 @@ impl Small_Array($T, $N) {
 	is_full :: proc(self: ^) -> bool { return self.count == N; }
 	space :: proc(self: ^) -> int { return N - self.count; }
 
-	// Reading an element out by value is a copy, so this is not part of a
-	// move-only instantiation (design.md "where clauses"), and the copy is a
-	// written `clone` because it may allocate. `get_mut`, `view` and `slice`
-	// reach the element without one, and `remove` hands it over entirely.
+	/// Reading an element out by value is a written `clone`, because it may
+	/// allocate, so a move-only instance has no `get`. `get_mut`, `view` and
+	/// `slice` reach the element without a copy, and `remove` hands it over
+	/// entirely.
+	// design.md "where clauses".
 	get :: operator([]) proc(self: ^, index: int) -> T where is_copyable(T) {
 		self.check_index(index);
 		return self.items[index].clone();
@@ -85,41 +90,39 @@ impl Small_Array($T, $N) {
 		return inout self.items[index];
 	}
 
-	// `x[a:b]` over the live prefix only, which is why this is not the built-in
-	// fixed array's own slicing: the `N - count` trailing slots are capacity, not
-	// elements.
-	//
-	// The receiver is immutable, so `x[a:b]` reads on any array rather than only
-	// on a mutable one.
+	/// `x[a:b]` over the live elements only, not the `N - count` trailing slots of
+	/// capacity. It reads on any array, not only a mutable one.
+	// This is why it is not the built-in fixed array's own slicing.
 	span :: operator([:]) proc(self: ^, low: int, high: int) -> []T {
 		self.check_span(low, high);
 		return self.items[low:high];
 	}
 
-	// The writable subrange, which `&mut x[a:b]` selects (design.md "Indexing
-	// and slicing").
+	/// The writable subrange, which `&mut x[a:b]` selects.
+	// design.md "Indexing and slicing".
 	span_mut :: operator([:]) proc(self: inout, low: int, high: int) -> []mut T {
 		self.check_span(low, high);
 		return &mut self.items[low:high];
 	}
 
-	// The whole live prefix as one mutable view.
+	/// The whole live prefix as one mutable view.
 	slice :: proc(self: inout) -> []mut T {
 		return &mut self.items[0:self.count];
 	}
 
 	// ----------------------------------------------------------- iteration --
 
-	// The whole live prefix as one read-only view. The immutable counterpart of
-	// `slice`: a `self: ^` receiver is the caller's value (design.md "Receiver
-	// forms"), so a view of its inline storage is derived from the caller's root
-	// and needs no `inout`.
+	/// The whole live prefix as one read-only view: the immutable counterpart of
+	/// `slice`.
+	// A `self: ^` receiver is the caller's value (design.md "Receiver forms"), so
+	// a view of its inline storage is derived from the caller's root and needs no
+	// `inout`.
 	view :: proc(self: ^) -> []T {
 		return self.items[0:self.count];
 	}
 
-	// The iterator borrows the live prefix. It allocates nothing, copies no
-	// element, and its size does not depend on `N`.
+	/// The iterator borrows the live prefix. It allocates nothing, copies no
+	/// element, and its size does not depend on `N`.
 	iter :: proc(self: ^) -> Small_Array_Iterator(T) {
 		return {self.view(), 0, false};
 	}
@@ -154,7 +157,7 @@ impl Small_Array($T, $N) {
 		self.insert_copied(index, value);
 	}
 
-	// Nothing is written unless everything fits, which is the `try_` promise.
+	/// Nothing is written unless everything fits, which is the `try_` promise.
 	try_append_copied :: proc(
 		self: inout, @(escape=stored) values: ..T,
 	) -> Status(Capacity_Error) where is_copyable(T) {
@@ -178,8 +181,10 @@ impl Small_Array($T, $N) {
 		}
 	}
 
-	// Validate the index even when full. Capacity failure leaves the array
-	// untouched; a bad index is always a programmer error.
+	/// Like `try_append_copied`, at `index`. Capacity failure leaves the array
+	/// untouched; a bad index panics even when the array is full.
+	// The index is validated even when full: a bad index is always a programmer
+	// error.
 	try_insert_copied :: proc(
 		self: inout, index: int, @(escape=stored) value: T,
 	) -> Status(Capacity_Error) where is_copyable(T) {
@@ -193,12 +198,13 @@ impl Small_Array($T, $N) {
 		return .ok;
 	}
 
-	// The consuming half of the insertion groups below. The copying members read
-	// out of a borrowed argument, which a move-only element cannot do, so these
-	// take theirs with `move`, and an argument that owns its value — a temporary
-	// or `move(...)` — selects them (design.md "Operator lookup and overload
-	// resolution", tie-breaker 1). A failed `try_` form drops the value it took,
-	// as built-in insertion does (design.md "Container insertion").
+	/// The consuming half of the insertion groups below: it takes its element with
+	/// `move`, and an argument that owns its value — a temporary or `move(...)` —
+	/// selects it. A failed `try_` form drops the value it took, as built-in
+	/// insertion does.
+	// The copying members read out of a borrowed argument, which a move-only
+	// element cannot do (design.md "Operator lookup and overload resolution",
+	// tie-breaker 1; design.md "Container insertion").
 	try_append_moved :: proc(
 		self: inout, @(escape=stored) value: move T,
 	) -> Status(Capacity_Error) {
@@ -238,27 +244,26 @@ impl Small_Array($T, $N) {
 		self.move_last_to(index);
 	}
 
-	// One name per operation, exactly as built-in insertion has one: a borrowed
-	// place copies, a temporary or `move(...)` transfers. The call site therefore
-	// reads the same here as on `[dynamic]T`.
+	/// One name per operation, exactly as built-in insertion has one: a borrowed
+	/// place copies, a temporary or `move(...)` transfers. The call site therefore
+	/// reads the same here as on `[dynamic]T`.
 	append :: proc{append_one_copied, append_copied, append_moved};
 	insert :: proc{insert_copied, insert_moved};
 	try_append :: proc{try_append_copied, try_append_moved};
 	try_insert :: proc{try_insert_copied, try_insert_moved};
 
-	// The last element, removed, or .none when empty, like a dynamic array.
-	//
+	/// The last element, removed, or .none when empty, like a dynamic array.
 	// Every retirement below shortens around the element it takes, so the slot it
-	// leaves behind is capacity again: no
-	// element is ever reachable from two indices at once, and none is left where
-	// the drop of `self` would release it a second time.
+	// leaves behind is capacity again: no element is ever reachable from two
+	// indices at once, and none is left where the drop of `self` would release it
+	// a second time.
 	pop :: proc(self: inout) -> Option(T) {
 		if (self.count == 0) { return .none; }
 		self.count -= 1;
 		return unsafe.take(self.items[self.count]);
 	}
 
-	// Order-preserving: each following element moves down into the vacant slot.
+	/// Order-preserving: each following element moves down into the vacant slot.
 	remove :: proc(self: inout, index: int) -> T {
 		self.check_index(index);
 		removed := unsafe.take(self.items[index]);
@@ -271,7 +276,7 @@ impl Small_Array($T, $N) {
 		return removed;
 	}
 
-	// O(1), at the cost of the order: the last element takes the hole.
+	/// O(1), at the cost of the order: the last element takes the hole.
 	remove_unordered :: proc(self: inout, index: int) -> T {
 		self.check_index(index);
 		removed := unsafe.take(self.items[index]);
@@ -282,8 +287,9 @@ impl Small_Array($T, $N) {
 		return removed;
 	}
 
-	// Length only. Each retired element is taken out and dropped as the discarded
-	// value it is; the storage behind the new length is capacity again.
+	/// Sets the length to zero, dropping each element.
+	// Each retired element is taken out and dropped as the discarded value it is;
+	// the storage behind the new length is capacity again.
 	clear :: proc(self: inout) {
 		for (self.count > 0) {
 			self.count -= 1;
@@ -330,12 +336,12 @@ impl Small_Array($T, $N) {
 	}
 }
 
-// A borrow of the array's live prefix plus the traversal state. The array it
-// came from cannot be mutated, moved, or dropped while this is live, which is
-// the ordinary borrow rule rather than anything this type arranges.
-//
-// design.md "Iteration protocol": one iterator serves both directions, because
-// they differ only in which end `at` counts from.
+/// A borrow of the array's live prefix plus the traversal state. The array it
+/// came from cannot be mutated, moved, or dropped while this is live. One
+/// iterator serves both directions.
+// That is the ordinary borrow rule rather than anything this type arranges.
+// design.md "Iteration protocol": both directions differ only in which end
+// `at` counts from.
 Small_Array_Iterator :: struct($T: type) {
 	@(private) items:   []T,
 	@(private) at:      int,
@@ -357,8 +363,8 @@ impl Small_Array_Iterator($T) {
 	}
 }
 
-// A mutable traversal borrows the same inline prefix. Each pointer returned by
-// next() is a loan of the iterator and must end before it is advanced again.
+/// A mutable traversal borrows the same inline prefix. Each pointer returned by
+/// next() is a loan of the iterator and must end before it is advanced again.
 Small_Array_Mut_Iterator :: struct($T: type) {
 	@(private) items: []mut T,
 	@(private) at: int,

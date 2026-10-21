@@ -1,4 +1,8 @@
-// Files, directories, and file metadata (standard-library "`core:fs`").
+/// Files, directories, and file metadata.
+///
+/// Public signatures describe portable behavior and normalized `io.Code`s; a
+/// native error number reaches a caller only through `io.native_code_of`.
+// standard-library "`core:fs`".
 //
 // `design.md`'s "Library types assumed by this specification" once put `open`,
 // `close`, and `Handle` in `core:os`. They live here: `core:os` is *process*
@@ -7,9 +11,7 @@
 // point of the move.
 //
 // Everything platform-specific in this package sits behind `when (LOKE_OS ==
-// .Windows)` in this one file, over a foreign block per platform. Public
-// signatures describe portable behavior and normalized `io.Code`s; a native
-// error number reaches a caller only through `io.native_code_of`.
+// .Windows)` in this one file, over a foreign block per platform.
 @(public)
 package fs;
 
@@ -38,9 +40,9 @@ Disposition :: enum {
 Open_Options :: struct {
 	access:      Access,
 	disposition: Disposition,
-	// Every write begins at the current end of the file. This is not a
-	// cross-process transaction: two appending processes do not interleave their
-	// writes atomically merely because both opened in this mode.
+	/// Every write begins at the current end of the file. This is not a
+	/// cross-process transaction: two appending processes do not interleave their
+	/// writes atomically merely because both opened in this mode.
 	append:      bool,
 }
 
@@ -51,33 +53,33 @@ Kind :: enum {File, Directory, Other}
 Metadata :: struct {
 	kind:     Kind,
 	size:     u64,
-	// When the file was last written, or `.none` where the filesystem keeps no
-	// such time.
+	/// When the file was last written, or `.none` where the filesystem keeps no
+	/// such time.
 	modified: Option(time.Time),
 }
 
-// The safe owning wrapper around a native file handle. Its fields are private,
-// its zero value is closed, cloning is disabled, and `drop` closes a live
-// handle.
-//
-// `File` satisfies both `io.Reader` and `io.Writer`: structural satisfaction is
-// a property of the static type, so it has both slots whatever options a
-// particular instance was opened with. Using an unsupported direction returns
-// `Unsupported` at run time.
+/// The safe owning wrapper around a native file handle. Its fields are private,
+/// its zero value is closed, cloning is disabled, and `drop` closes a live
+/// handle.
+///
+/// `File` satisfies both `io.Reader` and `io.Writer`: structural satisfaction is
+/// a property of the static type, so it has both slots whatever options a
+/// particular instance was opened with. Using an unsupported direction returns
+/// `Unsupported` at run time.
 File :: move_only struct {
 	@(private) handle: Handle,
 	@(private) access: Access,
 }
 
 impl File {
-	// A best-effort close. It cannot report a failure — `close` is what a caller
-	// uses to observe one.
+	/// A best-effort close. It cannot report a failure — `close` is what a caller
+	/// uses to observe one.
 	release :: hook(drop) proc(self: inout File) {
 		// The discard is the point: a drop has nowhere to report to.
 		_ = self.close();
 	}
 
-	// Idempotent: the value is left inert even when the close itself failed.
+	/// Idempotent: the value is left inert even when the close itself failed.
 	close :: proc(self: inout File) -> Status(io.Error) {
 		if (self.handle == NO_HANDLE) { return .ok; }
 		handle := self.handle;
@@ -122,10 +124,10 @@ impl File {
 	}
 }
 
-// Truncating writes to the file, so a read-only open that would truncate is
-// refused rather than performed. So is `Truncate_Existing` with `append`: Windows
-// truncates an existing file only for a caller holding the full write right,
-// which is exactly what append mode gives up. Both refusals leave the file alone.
+/// Truncating writes to the file, so a read-only open that would truncate is
+/// refused rather than performed. So is `Truncate_Existing` with `append`: Windows
+/// truncates an existing file only for a caller holding the full write right,
+/// which is exactly what append mode gives up. Both refusals leave the file alone.
 open :: proc(path: string_view, options: Open_Options) -> Result(File, io.Error) {
 	truncates := options.disposition == .Create_Or_Truncate || options.disposition == .Truncate_Existing;
 	if ((truncates && options.access == .Read) || (options.disposition == .Truncate_Existing && options.append)) {
@@ -138,7 +140,7 @@ open_read :: proc(path: string_view) -> Result(File, io.Error) {
 	return open(path, Open_Options{.Read, .Open_Existing, false});
 }
 
-// Creates the file, or truncates an existing one.
+/// Creates the file, or truncates an existing one.
 create :: proc(path: string_view) -> Result(File, io.Error) {
 	return open(path, Open_Options{.Write, .Create_Or_Truncate, false});
 }
@@ -149,9 +151,9 @@ append :: proc(path: string_view) -> Result(File, io.Error) {
 
 // -------------------------------------------------- whole-file convenience --
 
-// The whole file as owned bytes. The `limit` contract is `io.read_to_end`'s: a
-// positive limit that would be exceeded returns `Limit_Exceeded` and no partial
-// result.
+/// The whole file as owned bytes. The `limit` contract is `io.read_to_end`'s: a
+/// positive limit that would be exceeded returns `Limit_Exceeded` and no partial
+/// result.
 read_bytes :: proc(
 	path: string_view, allocator: Allocator = mem.default_allocator(), limit: int = 0,
 ) -> Result([dynamic]u8, io.Error) {
@@ -167,15 +169,16 @@ read_bytes :: proc(
 	}
 }
 
-// The whole file as text. The bytes are validated: a file that is not UTF-8 is
-// `Invalid_Data`, never silently repaired.
-//
-// This allocates the file twice over, and that is the floor rather than a debt:
-// a `[dynamic]u8` owns raw element storage while a `string` points past a
-// reference-counted header, so the two are never storage-compatible and the
-// bytes have to be read somewhere before they can be copied into string storage
-// (`core:strings` `String_Builder.finish` pays the same copy for the same
-// reason). A caller who cannot afford the second copy wants `read_bytes`.
+/// The whole file as text. The bytes are validated: a file that is not UTF-8 is
+/// `Invalid_Data`, never silently repaired.
+///
+/// This allocates the file twice over; a caller who cannot afford the second
+/// copy wants `read_bytes`.
+// That is the floor rather than a debt: a `[dynamic]u8` owns raw element
+// storage while a `string` points past a reference-counted header, so the two
+// are never storage-compatible and the bytes have to be read somewhere before
+// they can be copied into string storage (`core:strings`
+// `String_Builder.finish` pays the same copy for the same reason).
 read_text :: proc(
 	path: string_view, allocator: Allocator = mem.default_allocator(), limit: int = 0,
 ) -> Result(string, io.Error) {
@@ -184,9 +187,10 @@ read_text :: proc(
 	return strings.try_copy(view, allocator) or_return io.from_allocator_error(.Read);
 }
 
-// Truncates an existing file only after the target has been opened. This is not
-// an atomic replacement; a `replace_atomic` with documented same-filesystem and
-// durability guarantees can be added later.
+/// Truncates an existing file only after the target has been opened. This is
+/// not an atomic replacement.
+// A `replace_atomic` with documented same-filesystem and durability guarantees
+// can be added later.
 write_bytes :: proc(path: string_view, data: []u8) -> Status(io.Error) {
 	file := create(path) or_return;
 	written := io.write_all(inout file, data);
@@ -217,9 +221,9 @@ metadata :: proc(path: string_view) -> Result(Metadata, io.Error) {
 	return metadata_native(path);
 }
 
-// False only for a definite not-found answer. A permission failure or an I/O
-// failure is still an error, because "I could not tell" is not "it is not
-// there".
+/// False only for a definite not-found answer. A permission failure or an I/O
+/// failure is still an error, because "I could not tell" is not "it is not
+/// there".
 exists :: proc(path: string_view) -> Result(bool, io.Error) {
 	switch (metadata(path)) {
 	case .ok: return true;
@@ -239,9 +243,8 @@ create_directory :: proc(path: string_view) -> Status(io.Error) {
 	return create_directory_native(path);
 }
 
-// Every missing parent, then the directory itself. An existing directory is not
-// a failure.
-//
+/// Every missing parent, then the directory itself. An existing directory is not
+/// a failure.
 // Nothing at or above the volume is a directory anything can create — `C:` is a
 // drive and a UNC prefix is a share — so the walk starts past whatever
 // `path.volume` finds.
@@ -280,27 +283,27 @@ remove_directory :: proc(path: string_view) -> Status(io.Error) {
 	return remove_directory_native(path);
 }
 
-// A **move-only streaming reader**, not an owning array.
-//
-// This is not a preference. A `[dynamic]Directory_Entry` whose entries own their
-// name would retain and release that name at every step, and a walk that only
-// reads each name should not pay for a copy of it. The reader borrows instead,
-// yielding one entry at a time; a caller that wants an array collects one
-// itself.
-//
-// `next` answers `Result(Option(Directory_Entry), io.Error)`, so the reader is
-// not a `foreach` iterable: the end of the directory and a broken enumeration
-// are different answers and `foreach` has nowhere to put the second. The loop
-// to write is design.md "Streaming a fallible source":
-//
-//     reader := fs.read_directory(directory) or_return;
-//     for (;;) {
-//         entry := reader.next() or_return;
-//         switch (entry) {
-//         case .some(found): use(found.name);  // valid until the next step
-//         case .none:        return .ok;
-//         }
-//     }
+/// A **move-only streaming reader**, not an owning array: it borrows each
+/// entry's name, yielding one entry at a time; a caller that wants an array
+/// collects one itself.
+///
+/// `next` answers `Result(Option(Directory_Entry), io.Error)`, so the reader is
+/// not a `foreach` iterable: the end of the directory and a broken enumeration
+/// are different answers and `foreach` has nowhere to put the second. The loop
+/// to write is:
+///
+///     reader := fs.read_directory(directory) or_return;
+///     for (;;) {
+///         entry := reader.next() or_return;
+///         switch (entry) {
+///         case .some(found): use(found.name);  // valid until the next step
+///         case .none:        return .ok;
+///         }
+///     }
+// This is not a preference. A `[dynamic]Directory_Entry` whose entries own
+// their name would retain and release that name at every step, and a walk that
+// only reads each name should not pay for a copy of it. The loop is design.md
+// "Streaming a fallible source".
 read_directory :: proc(
 	path: string_view, allocator: Allocator = mem.default_allocator(),
 ) -> Result(Directory_Reader, io.Error) {
@@ -314,8 +317,8 @@ read_directory :: proc(
 }
 
 Directory_Entry :: struct {
-	// Borrowed from the reader, and valid only until the next `next`. Clone it to
-	// keep it.
+	/// Borrowed from the reader, and valid only until the next `next`. Clone it to
+	/// keep it.
 	name: string_view,
 	kind: Kind,
 }
@@ -611,6 +614,7 @@ remove_directory_native :: proc(path: string_view) -> Status(io.Error) {
 	}
 }
 
+/// The open enumeration `read_directory` returns.
 // The search handle plus the record Windows fills. `pending` is the entry
 // `FindFirstFileW` already produced: the first `next` consumes it rather than
 // advancing, which is what makes the first entry visible at all.
@@ -625,7 +629,7 @@ Directory_Reader :: move_only struct {
 }
 
 impl Directory_Reader {
-	// A best-effort close, as `File`'s is.
+	/// A best-effort close, as `File`'s is.
 	release :: hook(drop) proc(self: inout Directory_Reader) {
 		_ = self.close();
 	}
@@ -639,9 +643,10 @@ impl Directory_Reader {
 		}
 	}
 
-	// The next entry, or `.none` at the end of the directory. `.` and `..` are
-	// skipped: they are an artefact of the platform's enumeration, not entries a
-	// program asked for.
+	/// The next entry, or `.none` at the end of the directory. `.` and `..` are
+	/// skipped.
+	// They are an artefact of the platform's enumeration, not entries a program
+	// asked for.
 	//
 	// ponytail: one allocation per entry, because the name is decoded into an
 	// owned `string` whose view is handed out. Decoding straight into a reused

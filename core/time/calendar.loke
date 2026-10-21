@@ -1,5 +1,5 @@
-// The proleptic Gregorian calendar of ISO 8601, and fixed UTC offsets
-// (standard-library "The calendar" and "Offsets").
+/// The proleptic Gregorian calendar of ISO 8601, and fixed UTC offsets.
+// standard-library "The calendar" and "Offsets".
 //
 // Day counts use Howard Hinnant's public-domain `days_from_civil` and
 // `civil_from_days`, which are exact over the whole range without tables.
@@ -14,7 +14,7 @@ Month :: enum {
 	July, August, September, October, November, December,
 }
 
-// Numbered as ISO 8601 numbers them, Monday first.
+/// Numbered as ISO 8601 numbers them, Monday first.
 Weekday :: enum { Monday = 1, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday }
 
 is_leap_year :: proc(year: int) -> bool {
@@ -31,9 +31,10 @@ days_in_month :: proc(year: int, month: Month) -> int {
 
 // -------------------------------------------------------------------- dates --
 
-// A date from 0000-01-01 to 9999-12-31, the years ISO 8601 writes in four
-// digits. It counts days rather than holding a month, so its zero value,
-// 1970-01-01, is a date (comments.md "Zeros that are values").
+/// A date from 0000-01-01 to 9999-12-31, the years ISO 8601 writes in four
+/// digits. Its zero value, 1970-01-01, is a date.
+// It counts days rather than holding a month, so its zero value is a date
+// (comments.md "Zeros that are values").
 Date :: struct {
 	@(private) days: i64,
 }
@@ -59,18 +60,18 @@ impl Date {
 
 	day :: proc(self) -> int { return civil_from_days(self.days).day; }
 
-	// 1970-01-01 was a Thursday.
+	/// 1970-01-01 was a Thursday.
 	weekday :: proc(self) -> Weekday {
 		return Weekday.from_int(floor_mod(self.days + 3, 7) + 1) or_else panic("time: a weekday outside 1 to 7");
 	}
 
-	// 1 for January 1st.
+	/// 1 for January 1st.
 	day_of_year :: proc(self) -> int {
 		return int(self.days - days_from_civil(self.year(), 1, 1)) + 1;
 	}
 
-	// ISO 8601's week-numbering year and week. A week belongs to the year its
-	// Thursday is in, so 2021-01-03 is in 2020's week 53.
+	/// ISO 8601's week-numbering year and week. A week belongs to the year its
+	/// Thursday is in, so 2021-01-03 is in 2020's week 53.
 	iso_week :: proc(self) -> (year: int, week: int) {
 		thursday := self.days + i64(4 - int(self.weekday()));
 		year := civil_from_days(thursday).year;
@@ -81,8 +82,8 @@ impl Date {
 		return in_range(self.days + days);
 	}
 
-	// The same day of the month, or the month's last day when it is shorter:
-	// 2026-01-31 plus one month is 2026-02-28.
+	/// The same day of the month, or the month's last day when it is shorter:
+	/// 2026-01-31 plus one month is 2026-02-28.
 	add_months :: proc(self, months: i64) -> Date {
 		civil := civil_from_days(self.days);
 		total := i64(civil.year) * 12 + i64(civil.month - 1) + months;
@@ -93,7 +94,7 @@ impl Date {
 		return Date{days_from_civil(int(year), int(month), day)};
 	}
 
-	// 2024-02-29 plus one year is 2025-02-28.
+	/// 2024-02-29 plus one year is 2025-02-28.
 	add_years :: proc(self, years: i64) -> Date {
 		return self.add_months(years * 12);
 	}
@@ -114,14 +115,15 @@ impl Date {
 
 // ------------------------------------------------------------- times of day --
 
-// Nanoseconds since midnight, less than 24 hours. The zero value is midnight.
+/// Nanoseconds since midnight, less than 24 hours. The zero value is midnight.
 Time_Of_Day :: struct {
 	@(private) nanoseconds: i64,
 }
 
 impl Time_Of_Day {
-	// Second 60 is not accepted here: a leap second has no `Time`, and only the
-	// parsers read one, as second 59 (standard-library "Leap seconds").
+	/// `.none` for a field out of range. Second 60 is not accepted: a leap second
+	/// has no `Time`, and only the parsers read one, as second 59.
+	// standard-library "Leap seconds".
 	from_components :: proc(hour, minute, second: int, nanosecond: int = 0) -> Option(Time_Of_Day) {
 		if (hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59) { return .none; }
 		if (nanosecond < 0 || nanosecond > 999999999) { return .none; }
@@ -149,8 +151,8 @@ impl Time_Of_Day {
 
 // ------------------------------------------------------- dates with a time --
 
-// A date and a time of day, with no offset. Without a zone there is no daylight
-// saving, so adding a `Duration` counts every day as 24 hours.
+/// A date and a time of day, with no offset. Without a zone there is no daylight
+/// saving, so adding a `Duration` counts every day as 24 hours.
 Date_Time :: struct {
 	date: Date,
 	time: Time_Of_Day,
@@ -161,6 +163,7 @@ impl Date_Time {
 		return left.moved(floor_div(i64(right), NANOSECONDS_PER_DAY), floor_mod(i64(right), NANOSECONDS_PER_DAY));
 	}
 
+	/// `left` moved back by `right`.
 	// `left + -right` would overflow negating the most negative duration, so the
 	// whole days and the rest are negated apart: whole days never overflow.
 	subtract :: operator(-) proc(left: Date_Time, right: Duration) -> Date_Time {
@@ -204,8 +207,8 @@ impl Date_Time {
 
 // ------------------------------------------------------------------ offsets --
 
-// Whole minutes east of UTC, from -23:59 to +23:59, the range RFC 3339 writes.
-// The zero value is UTC.
+/// Whole minutes east of UTC, from -23:59 to +23:59, the range RFC 3339 writes.
+/// The zero value is UTC.
 Offset :: struct {
 	@(private) east: int,
 }
@@ -227,17 +230,18 @@ impl Offset {
 	}
 }
 
-// A date and time, and the offset it was read at. It has `==` and no `<`: two
-// values for one instant at different offsets are unequal, and ordering their
-// fields would put the later instant first, so compare `to_time()` instead.
+/// A date and time, and the offset it was read at. It has `==` and no `<`: two
+/// values for one instant at different offsets are unequal, and ordering their
+/// fields would put the later instant first, so compare `to_time()` instead.
 Offset_Date_Time :: struct {
 	date_time: Date_Time,
 	offset:    Offset,
 }
 
 impl Offset_Date_Time {
-	// `.none` outside the range of `Time`. The sum is taken in 128 bits: the
-	// local time can be past the range of `Time` where the instant is not.
+	/// The instant, or `.none` outside the range of `Time`.
+	// The sum is taken in 128 bits: the local time can be past the range of `Time`
+	// where the instant is not.
 	to_time :: proc(self) -> Option(Time) {
 		instant := i128(self.date_time.date.days) * i128(NANOSECONDS_PER_DAY) +
 			i128(self.date_time.time.nanoseconds) - i128(self.offset.east) * i128(MINUTE);
