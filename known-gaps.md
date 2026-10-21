@@ -17,4 +17,4 @@ only the package comment, with none of `Allocator`, `Allocator_Error`,
 `try_scratch`. The same holds for `core:unsafe`'s operations, `math.wrap`,
 `log.Level`, `sync.Memory_Order`, and `core:meta`'s descriptors. Their
 signatures are in comments in the package source, which nothing checks. See
-[Using a package without reading its code](open-questions.md#using-a-package-without-reading-its-code-2026-10-20).
+[Using a package without reading its code](open-questions.md#using-a-package-without-reading-its-code-proposal-2026-10-21).

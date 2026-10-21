@@ -29,200 +29,287 @@ Decided so far, and built as `loke.project` (compiler-guide.md "Projects"):
   version, immutable commit ID, and content checksum for every dependency, as
   planned in [Packages and dependencies](future-plans.md#packages-and-dependencies).
 
-## Using a package without reading its code (2026-10-20)
+## Using a package without reading its code (proposal, 2026-10-21)
 
 To use a package today you read its source. Hand-written documentation does
-not fix that, because nothing checks it and it goes stale. The direction
-proposed here: everything a package tells its users is either checked by the
-compiler or run by the test runner, and prose is left for intent, which goes
-stale slowest.
+not fix that, because nothing checks it and it goes stale. The proposal: what a
+package tells its users is generated from its source, checked by the compiler,
+or run by the test runner, and prose is kept for intent, which goes stale
+slowest. It is a proposal for review, not yet a plan of record: once accepted,
+the implementation plan below moves to [future-plans.md](future-plans.md) and
+the language rules to [design.md](design.md).
 
-Part of this exists. [`lokec -doc`](compiler-guide.md#common-options) derives
-each public declaration's signature from source, and hover shows the same
-declaration ([Language server](compiler-guide.md#language-server)). A signature
-already says how to call a procedure and, through its
-[fallible union](design.md#typed-fallibility), how it fails. What `-doc` adds
-beyond the signature is the comments above it, which are the unchecked part.
-The compiler also infers facts a user wants and neither `-doc` nor hover shows:
+### What exists and what is missing
 
-| What a user asks | Where the answer is today |
-| --- | --- |
-| Does the result borrow my argument, or is it a copy? | The inferred [result contract](design.md#procedure-result-contracts), not shown |
-| Which allocator backs the result? | The contract's region provenance, not shown |
-| Does it allocate at all? | Not inferred: the region contract follows only the result |
-| Does it write global state? | The inferred [write effect](design.md#global-write-effects), not shown |
-| Can it return? | [`-> !`](design.md#diverging-procedures), shown |
-| Can it panic? | Not inferred |
-| What does a typical use look like? | Comments, or the package's tests |
-| What must the arguments satisfy? | Types where they can say it; otherwise comments |
+[`lokec -doc`](compiler-guide.md#common-options) prints each public
+declaration's signature, derived from source, with the comments directly above
+it, and hover shows the same ([Language server](compiler-guide.md#language-server)).
+A signature already says how to call a procedure and, through its
+[fallible union](design.md#typed-fallibility), how it fails. Four problems
+remain, measured on the bundled packages on 2026-10-20:
 
-### Proposed layers
+- **Nobody runs `-doc`.** People and agents open the package's folder and read
+  what is there, and a command they must first learn about loses to that.
+- **The comments serve two audiences.** Comments are 53% of `-doc`'s output
+  over 14 `core` packages, and about 40% of that prose is for maintainers:
+  spec citations, how an operation is implemented, why an overflow cannot
+  happen. `core:strings`'s `index`, for example, is documented only by a note
+  on its search algorithm. The rest says what no signature can, such as that
+  `core:strings` counts bytes or that `sort` is not stable.
+- **The format costs tokens.** The Markdown headings and code fences are 11%
+  (`core:fmt`) to 20% (`core:container`) of a page, and the heading repeats the
+  name the signature starts with.
+- **Inferred facts are hidden.** The compiler infers whether a result borrows
+  an argument and from which allocator it comes (the
+  [result contract](design.md#procedure-result-contracts)), and whether a call
+  writes package state (the [write effect](design.md#global-write-effects)).
+  Neither `-doc` nor hover shows them, so a reader opens the body to learn
+  them.
 
-In priority order, each usable without the next:
+### Proposal
 
-1. **Show what the compiler infers.** `-doc` and hover add the result contract,
-   the allocator behind the result, and the write effect to each public
-   procedure, for example "result borrows `text`" or "writes package state".
-   No language change, and the analysis exists.
-2. **Examples that are tests.** A [test procedure](design.md#test-procedures)
-   names the declaration it illustrates, with something like
-   `@(example=split)`, and `-doc` prints its body under that declaration.
-   `lokec -test` runs it, so it cannot drift from the code.
-3. **Check the prose that remains.** A name a doc comment refers to must
-   resolve, as rustdoc's intra-doc links must, and `-doc` reports one that does
-   not. This catches renames and removals, not wrong claims.
-   `check-citations.ps1` already does the same for spec headings cited in
-   source comments.
-4. **Preconditions as code.** Checked clauses, shown by `-doc` and checked at
-   run time. This is a language feature, and types already carry many
-   preconditions (unsigned integers, non-null references), so it waits for
-   what layers 1 to 3 leave in comments.
+**1. `///` marks a doc comment.** A line comment that starts with `///`, but
+not `////`, is a doc comment. It documents the declaration, field, enum
+member, or `package` clause directly below it, with no blank line between, and
+is the only comment that `-doc`, hover, and the interface file show. `//` is
+for maintainers and is never shown. A doc comment is still whitespace to the
+grammar, so it changes no program's meaning. A `///` that documents nothing,
+such as one inside a body or above a blank line, is a warning. Block comments
+are never doc comments.
 
-### Open points
+The author decides the audience once, where the comment is written. Neither an
+attribute such as `@(doc="…")`, which needs escaping and long strings, nor a
+prefix such as `// doc:`, which a typo silently drops, does this as cheaply.
+The package overview is the `///` above a `package` clause, so no second
+marker such as Rust's `//!` is needed. There is no transition period: the
+bundled packages are converted in the same change, and in them a spec citation
+belongs in a `//` comment, which `check-citations.ps1` enforces.
 
-- **Inferred facts become API.** Once `-doc` shows an inferred contract,
-  callers depend on it, and an implementation change can change it silently.
-  Two answers, not exclusive: a written contract checked against the body, as
-  [Public borrow contracts should stand on their own](#public-borrow-contracts-should-stand-on-their-own)
-  proposes for borrows, and the compatibility tool in
-  [Hand-written package header files](comments.md#hand-written-package-header-files),
-  which would compare the shown facts between versions and report a changed
-  one as a possible break. Which facts need a written form, and which may stay
-  inferred?
-- **What to show.** Each procedure should gain about one line, not a dump of
-  the analysis. A write effect names package-private storage, which an
-  importer cannot name; whether to name it or say only "writes package state"
-  is open. A generic procedure's contract is per instantiation
-  ([Procedure result contracts](design.md#procedure-result-contracts)), so the
-  generic declaration may only have a contract stated in terms of its type
-  parameters, or none.
-- **Allocation.** Whether a call allocates, and from which allocator, is what
-  a caller with an arena or a hot loop most wants to know, and the result
-  contract does not answer it. It would need its own inferred effect, with the
-  same API question as the others.
-- **Panics.** Once checked arithmetic and indexing count, nearly every
-  procedure may panic, so a "may panic" mark carries no information. Reporting
-  only a reachable explicit `panic` or `assert` is one option; reporting
-  nothing is another.
-- **What an example may use.** An example shows what an importer can write, so
-  it should name only public declarations, unlike an ordinary test. A test
-  build runs only the root package's tests
-  ([Test procedures](design.md#test-procedures)), so an imported package's
-  examples run when that package is tested, not when its importer is.
-- **What a comment reference is.** Doc comments backtick names, expressions,
-  and types alike (`builder.len()`, `[dynamic]u8`), so checking every
-  backticked span would report false errors. Either only a backticked name or
-  dotted path is checked, or references get a syntax of their own, such as
-  `[split]`.
-- **Compiler-contributed declarations.** Some public names of bundled packages,
-  such as all of `core:mem`'s and `core:unsafe`'s, are contributed by the
-  compiler and have no source declaration, so `-doc` and hover cannot show a
-  signature for them ([`-doc` omits compiler-contributed declarations](known-gaps.md#-doc-omits-compiler-contributed-declarations)).
-  One answer is to declare each in the package's source with no body and an
-  attribute binding it to the compiler's implementation, as Rust declares its
-  intrinsics, so its signature is written once and checked. An operation no
-  Loke signature can state, such as `unsafe.transmute`, would need another
-  answer.
-- **Package overview.** The comments above a `package` clause describe the
-  whole package and are unchecked like any other. Layers 2 and 3 apply to them
-  too, but whether a package also needs a checked list of its main entry
-  points is open.
-- **Reading by an agent.** A coding agent works through the shell, not the
-  language server, so `-doc` is the interface it has, but nothing tells it to
-  prefer `-doc` over the source, and `-doc` prints only whole packages. Measured
-  on 2026-10-20, the page is 34% (`core:fs`) to 73% (`core:container`) of the
-  package source's size, most of it comments; the headings and signatures
-  alone are 10% to 25%. Two `-doc` forms would let an agent read only what it
-  is about to call, as `go doc` does: an index with one signature line per
-  public declaration, and a single named entry, such as `split` or
-  `Bit_Set.contains`. AGENTS.md would then say to read those rather than a
-  package's source. The inferred facts of layer 1 help an agent most, because
-  without them it reads the body to learn whether a result borrows, allocates,
-  or writes package state. Open: the option spelling, how an entry names an
-  `impl` member, and whether the index carries those facts or only the entry
-  does. The ratio reflects the bundled packages, which are thin and mostly
-  public: `-doc` grows with the public surface and the source with the
-  implementation, so a package with more private code saves more.
-- **Who a doc comment is for.** `-doc` and hover show the comment directly
-  above a public declaration, so whatever is written there is read by every
-  user and every agent. In the bundled packages it serves maintainers too.
-  Measured on 2026-10-20 over 14 `core` packages, comments are 53% of `-doc`'s
-  output, and about 40% of that prose is for maintainers: spec citations, how
-  an operation is implemented, why an overflow cannot happen, and one note of
-  work still to do in `core:io`. The rest says what no signature can, such as
-  that `core:strings` counts bytes, that `sort` is not stable, or that a
-  `Once` action must not reach its own `once`. A convention would split the
-  two audiences without new syntax: the comment above a public declaration
-  says how to use it, and implementation notes and spec citations go in the
-  body or above private code, which `-doc` never shows. Facts that layer 1
-  derives, such as "allocates nothing", would then leave the comment. Open:
-  whether to adopt it, where to state it, and whether a check should report a
-  spec citation in a public declaration's doc comment. The bundled packages'
-  existing comments have not been moved.
-- **A checked-in interface file and an HTML page.** `-doc` is not used if a
-  reader must first know it exists, and that holds for people as much as for
-  agents: both open the package's folder and read what is there. Two outputs
-  of the same checker data would split the work:
-  - **An interface file in each package's directory**, like a C header: the
-    `package` line, then each public declaration's doc comment and signature,
-    with no bodies and nothing private. It is found by listing the folder, by
-    the editor's file tree, by grep, and on a code host, with no command to
-    learn. It is checked rather than trusted: the gate regenerates it and
-    fails when the checked-in copy differs, as Kotlin's API dumps and
-    Android's `api/current.txt` are checked, so it cannot go stale. A change
-    to the public API, or to a layer 1 fact such as a result that starts to
-    borrow, then shows in review as a diff of that file, which answers part
-    of "Inferred facts become API". It is output only: the compiler never
-    reads it, so the source stays the one authority and Loke does not get
-    C's two copies of each signature.
-  - **HTML from `-doc`**, for browsing packages not yet opened and for
-    publishing: see "HTML for people".
+**2. Each package directory holds a checked-in interface file, `api.lokei`.**
+`lokec <dir> -api` writes it: Loke source with every public declaration and no
+bodies, in the order of the package's file names and then source order. For
+example (shortened, and with illustrative contracts):
 
-  The interface file also replaces `-doc`'s Markdown. Measured on 2026-10-20,
-  the Markdown markup (a `## Name` heading and a ` ```loke ` fence around each
-  signature) is 20% of `core:container`'s page, 16% of `core:strings`'s, and
-  11% of `core:fmt`'s. The heading repeats the name the signature starts with,
-  and the fences exist only to switch between prose and code. A Loke-shaped
-  file has neither, an agent reads it as the code it already knows, and any
-  editor highlights it with the Loke grammar. Go's `go doc` prints
-  declarations the same way. An agent can read or grep the file, which covers
-  most of the index form in "Reading by an agent", though a single-entry form
-  still helps with a large package. Open:
-  - **The extension.** A package is its directory, so an `api.loke` would be
-    compiled as part of it; a distinct extension such as `.lokei` (as OCaml
-    has `.mli`) avoids that, and the editor grammar maps it to Loke.
-  - **Whether the file must parse.** That needs a declaration form without a
-    body.
-  - **How a record's private fields are shown**, if at all.
-  - **Target-dependent declarations.** Ten bundled packages have a top-level
-    `when` ([Conditional compilation](design.md#conditional-compilation)).
-    Those checked hold only private foreign imports, but a `when` can declare
-    public API, so the file is generated either for one reference target or
-    with the `when` conditions written into it.
-  - **What the gate checks.** Every package in the repository, or only those
-    that opt in, and how a package outside the repository runs the check.
-- **HTML for people.** Markdown needs a renderer and gives no links, while every
-  computer has a browser. `-doc=html` would write one page per package and an
-  index, and need not be checked in. The compiler would color signatures from
-  its own lexer, which is exact where a TextMate grammar approximates, and
-  could link each type named in a signature to its entry, since the checker
-  resolves it. Open: the option spelling, the output layout, and whether
-  hover's Markdown stays as it is.
-- **A marker for usage comments.** Instead of the convention in "Who a doc
-  comment is for", the comment syntax could carry the audience, as Rust's does:
-  `///` above a declaration is for its users and is all that `-doc` and hover
-  show, while `//` is for maintainers and is never shown. `//!` at the top of a
-  file could hold the package overview. `///` is not used in the repository and
-  not specified, and it needs only the lexer to tell comments apart, not new
-  grammar. The author then decides the audience once, where the comment is
-  written. It also bounds layer 3: only names in `///` comments are checked, so
-  maintainer notes may mention anything. Neither an attribute such as
-  `@(doc="…")`, which needs escaping and long strings, nor a prefix such as
-  `// doc:`, which a typo silently drops, does this as cheaply. The cost is one
-  pass over the bundled packages to mark their usage comments, which acting on
-  the 40% finding needs anyway. Open: whether an unmarked comment above a
-  public declaration still shows during a transition, and whether `///`
-  anywhere but above a declaration is reported.
+```loke
+// Generated by `lokec -api` from this directory's .loke files. Do not edit.
+
+/// UTF-8 algorithms and efficient construction. Every index and length here
+/// is a **byte offset**; nothing in this package counts graphemes.
+package strings;
+
+import "core:mem";
+
+/// A growing buffer finished as one immutable `string`. The zero value is a
+/// usable, empty builder that allocates from the default provider.
+String_Builder :: struct {
+	// and fields private to the package
+}
+
+/// A builder whose buffer and finished string come from `allocator`.
+// inferred: result is backed by `allocator`
+init :: proc(allocator: Allocator = mem.default_allocator()) -> String_Builder ---;
+
+/// Every part between occurrences of `separator`, left to right.
+// inferred: result borrows `text` and `separator`
+split :: proc(text: string_view, separator: string_view) -> Split_Iterator ---;
+```
+
+- **Found without a command.** Listing the folder, the editor's file tree,
+  grep, and a code host all show it. An agent reads or greps it, so `-doc`
+  needs no index or single-entry form for agents.
+- **Checked, so it cannot go stale.** `lokec <dir> -api-check` writes nothing,
+  names the file if it differs from what `-api` would write, and exits 1, as
+  `-fmt-check` does. The gate runs it for every bundled package, as Kotlin's
+  API dumps and Android's `api/current.txt` are checked.
+- **Reviewed.** A change to the public API, or to an inferred fact, shows as a
+  diff of `api.lokei` in the commit that makes it.
+- **Output only.** The compiler never reads it, so the source stays the one
+  authority and Loke does not get C's two copies of every signature, which
+  [Hand-written package header files](comments.md#hand-written-package-header-files)
+  rejects. The `.lokei` extension keeps it out of the package, whose files are
+  its `.loke` files.
+- **Parses and is formatted.** It is valid Loke syntax that `-fmt` leaves
+  unchanged, though it is never checked: a procedure ends in `---`, the
+  existing [bodiless form](grammar.md#procedures). A struct shows its public
+  fields and notes that private ones exist; enums and unions show their
+  members. An `impl`'s public members appear inside `impl Type { … }` and a
+  foreign block's as plain declarations. The file imports exactly the packages
+  its signatures name.
+- **Target-independent.** A public declaration inside a file-scope `when` is
+  written inside the same `when`, with its condition as written, so the file
+  does not depend on the target or the defines that generate it. In the
+  bundled packages every top-level `when` holds only private declarations
+  today.
+
+**3. Inferred facts are shown, one line each.** The interface file and hover
+add an `// inferred:` line to a public procedure for its result contract and
+its write effect, and say nothing when there is nothing to report:
+
+- ``result borrows `text` `` or ``result borrows `list.items` ``, from the
+  parameter paths the result contract records;
+- ``result is backed by `allocator` ``, from its region provenance;
+- `writes package state`, for the package's own globals, or
+  ``writes state of `core:log` ``, for another package's.
+
+A generic procedure's contract is per instantiation, and a declaration inside
+a `when` is checked for one target only, so neither gets the line. An inferred
+fact is not a compatibility promise: a release names a changed `inferred:`
+line of a bundled package as a possible break. A
+[written contract](#public-borrow-contracts-should-stand-on-their-own), once
+it exists, would be shown in its place, without "inferred".
+
+**4. Examples are tests.** `@(example=split)` marks a
+[test procedure](design.md#test-procedures) that illustrates `split`, or
+`Type.member` for an `impl` member, of its own package. It follows every test
+rule, and in addition it may name only public declarations, because it shows
+what an importer can write. The interface file lists each example by name
+under its declaration (``// example: `split_on_commas` ``), and the HTML page
+shows its body. The gate builds each bundled package with `-test`, so an
+example that stops compiling or fails is caught.
+
+**5. Names in doc comments are checked.** A backticked span in a `///`
+comment that is a name or dotted path, such as `split`, `Builder.len`, or
+`mem.Allocator`, must resolve, as rustdoc's intra-doc links must. It resolves
+in the documented declaration's package and imports, and also among its
+parameters and, for a type or `impl` member, the type's members. A span with
+any other character, such as `builder.len()` or `[dynamic]u8`, is prose and is
+not checked. An unresolved name is a warning in every check, so the editor
+shows it. This catches renames and removals, not wrong claims.
+
+**6. `-doc` writes HTML for people.** A browser is on every computer, and a
+Markdown page needs a renderer and has no links. `lokec <dir> -doc` writes
+`index.html` and one page per package of the project into `doc/`, or the
+directory `-o` names. Each page is self-contained, with inline CSS for light
+and dark themes and no scripts. Signatures are colored from the compiler's own
+tokens, which is exact where a TextMate grammar approximates, and every name in
+a signature or checked reference links to its declaration's anchor (`#split`,
+`#String_Builder.append`). Doc comments are rendered from a stated subset:
+paragraphs, inline code, `*emphasis*`, `**strong**`, `- ` lists, and indented
+code blocks. The HTML is generated, not checked in. Hover stays Markdown,
+which the protocol requires, and the editor's documentation command shows the
+interface file as a Loke document instead of a Markdown preview.
+
+### Not proposed
+
+- **A "may panic" mark.** Once checked arithmetic and indexing count, nearly
+  every procedure may panic, so the mark carries no information. A
+  precondition a caller must meet is written in the doc comment.
+- **Preconditions as code.** Checked clauses are a language feature, and
+  types already carry many preconditions. They wait for what remains in doc
+  comments after the steps below.
+- **Index and single-entry forms of `-doc`.** The interface file and grep
+  cover what an agent needs.
+- **A checked list of a package's main entry points.** The overview's checked
+  references cover it.
+
+### Implementation plan
+
+Each step is one or more commits that update the spec, implementation, tests,
+citing comments, and CHANGELOG together, and passes `.\test-all.ps1`. The
+steps are in priority order; each is usable without the next.
+
+1. **`///` doc comments.**
+   - [design.md "Comments"](design.md#comments): define a doc comment and what
+     it documents, and the warning for one that documents nothing.
+   - `src/doc.odin` `doc_comment`: take only `///` lines and strip `/// `.
+     Hover (`query_documentation` in `src/queries.odin`) uses the same
+     procedure, so it follows.
+   - A warning, with a new diagnostic code, for a `///` that documents
+     nothing.
+   - Convert `core/` and `base/` by hand, one commit per few packages: usage
+     prose becomes `///`; implementation notes, spec citations, and to-do notes
+     stay `//`, below the doc comment or in the body.
+   - `check-citations.ps1`: report a spec citation in a `///` comment in
+     `core/` or `base/`.
+   - Tests: `tests/doc/` cases in `///`, plus cases for `////`, block
+     comments, and a misplaced `///`; an LSP hover test.
+   - [compiler-guide.md](compiler-guide.md): `-doc` and hover say `///`.
+     CHANGELOG: a Changed line and an upgrade note, since existing `//` doc
+     comments stop being shown.
+2. **The interface file.**
+   - `src/doc.odin`: an interface writer beside the Markdown one, sharing
+     visibility and the struct view: package clause and overview, the imports
+     its signatures name, `---` bodies, `impl` blocks, enum and union members
+     with their `///` comments only, and `when` blocks as written, whose
+     declarations take their visibility from written attributes as a generic
+     record's fields do.
+   - `src/main.odin`: `-api` writes `api.lokei` in the root's directory and in
+     each project package's; `-api-check` writes nothing and exits 1 on a
+     difference.
+   - Generate and check in `api.lokei` for every package in `core/` and
+     `base/`, subpackages such as `core/encoding/json` included.
+   - Tests: `tests/api/*.loke` cases with `.lokei` goldens; a corpus test that
+     runs `-api-check` on every bundled package; a check that every
+     `api.lokei` parses and that `-fmt-check` accepts it.
+   - Editor: `editors/vscode/package.json` maps `.lokei` to the `loke`
+     language, and `loke-lsp` ignores `.lokei` documents rather than checking
+     them. `loke.documentation` answers the interface text, and
+     `extension.js` opens it as a `loke` document.
+   - AGENTS.md: to use a package, read its `api.lokei`; read its source only
+     to change it, and regenerate the file with `-api` after a public change.
+   - [compiler-guide.md](compiler-guide.md) documents `-api` and `-api-check`,
+     [compiler-architecture.md](compiler-architecture.md) the writer, and
+     [comments.md "Hand-written package header files"](comments.md#hand-written-package-header-files)
+     why the file is generated and never read. CHANGELOG: Added.
+3. **Inferred lines.**
+   - `src/doc.odin`: the result contract from `result_summary`
+     (`src/borrow.odin`) and the write effect from `c.global_writes`
+     (`src/global_effects.odin`), turned into the phrasings above; hover adds
+     the same line.
+   - Regenerate every `api.lokei` and read the diff: each line is a claim
+     about a bundled procedure, and a surprising one is a finding for
+     `known-gaps.md` or for the procedure.
+   - Tests: a case for each phrasing, a generic procedure and a `when`
+     declaration getting none, and a procedure with nothing to report.
+   - [releasing.md](releasing.md): a changed `inferred:` line in a bundled
+     package is listed as a possible break. CHANGELOG: Added.
+4. **Examples.**
+   - [design.md "Test procedures"](design.md#test-procedures): the `example`
+     attribute, what it may name, and that it is a test in every other way.
+   - Checker: resolve the named declaration, and report a private name used
+     in an example's body.
+   - `src/doc.odin`: the `// example:` line in the interface file.
+   - Gate: a corpus test that runs `-test` on every bundled package with
+     tests. None has any today.
+   - Write a first few examples in `core:strings` and `core:container`.
+     CHANGELOG: Added.
+5. **Checked references.**
+   - Resolution of backticked spans in `///` comments in the scopes above, a
+     warning code for an unresolved one, and the scope rule in design.md
+     "Comments".
+   - Fix what it reports in `core/` and `base/`.
+   - Tests: resolved and unresolved names, a parameter, a member, and prose
+     spans that are not checked. CHANGELOG: Added.
+6. **HTML `-doc`.**
+   - A new `src/doc_html.odin`: pages, anchors, coloring from the lexer's
+     tokens, links from the checker's resolution of each name in a signature,
+     the comment subset, and examples' bodies.
+   - `src/main.odin`: `-doc` writes the directory, with `-o` to choose it.
+     The Markdown writer and `tests/doc/`'s Markdown goldens are removed.
+   - Tests: an HTML golden for one case, and a check that every link on every
+     bundled package's page has a target.
+   - [compiler-guide.md](compiler-guide.md): `-doc` and the comment subset.
+     CHANGELOG: Changed, with an upgrade note for scripts that read `-doc`'s
+     Markdown.
+7. **Compiler-contributed declarations**, which fixes
+   [`-doc` omits compiler-contributed declarations](known-gaps.md#-doc-omits-compiler-contributed-declarations).
+   Declare each name that `src/stdlib.odin` contributes, such as all of
+   `core:mem`'s, in its package's source with a `---` body and an attribute
+   binding it to the compiler's implementation, as Rust declares its
+   intrinsics, so its signature is written once, checked, and shown.
+
+### Still open
+
+- **Allocation.** Whether a call allocates at all is what a caller with an
+  arena or a hot loop most wants to know, and the result contract does not
+  answer it. It needs its own inferred effect, and then an `inferred:`
+  phrasing.
+- **Signatures Loke cannot state.** Step 7 leaves operations such as
+  `unsafe.transmute`, whose typing no Loke signature expresses, without a
+  declaration.
+- **Interface files outside the repository.** Whether a project's own
+  packages get `api.lokei` by default, and whether `loke.project` should name
+  the packages `-api-check` covers.
 
 ## The `op`/`try_op` pair
 
