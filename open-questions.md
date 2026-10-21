@@ -29,6 +29,50 @@ Decided so far, and built as `loke.project` (compiler-guide.md "Projects"):
   version, immutable commit ID, and content checksum for every dependency, as
   planned in [Packages and dependencies](future-plans.md#packages-and-dependencies).
 
+### Review (2026-10-21)
+
+The local-directory workflow is implemented; versioned resolution is still a
+direction. These findings concern the choices needed before extending it, not
+compiler divergences from the current specification. The lock, offline builds,
+and explicit update boundary are already covered by
+[Packages and dependencies](future-plans.md#packages-and-dependencies).
+
+- **Separate a collection prefix from dependency identity.** Two independent
+  libraries can both use `json` for unrelated sources. The flat namespace
+  rejects their combination even though those packages share no types; an
+  import alias cannot repair it, since it renames the binding after the
+  collection prefix has resolved. Conversely, one name naming one directory
+  does not prevent the same versioned source being required under two names
+  and resolved to two different versions. Choose whether published prefixes
+  must be globally canonical, or whether each manifest's aliases map to a
+  separate dependency identity used for version selection and deduplication.
+  The identity must survive a change of fetch location or a local replacement.
+  The current global conflict rule is deliberate, but preserving type identity
+  alone does not require unrelated sources to share a global alias namespace.
+- **Bound minimum-version selection by compatibility.** If one dependency
+  requires `json` 1.4 and another requires 2.0, taking the highest minimum
+  chooses 2.0 without establishing that the first dependency can use it.
+  [Go's major-version rule](https://go.dev/ref/mod#major-version-suffixes)
+  gives incompatible majors distinct module identities; its minimum-only
+  requirements assume compatibility within an identity. Decide whether Loke
+  rejects mixed incompatible majors or gives them separate identities, and
+  define the compatibility boundary for `0.x` and prereleases too. Merely
+  staying within one major is insufficient before 1.0: Loke's own
+  [Version policy](releasing.md#version-policy) permits breaking minor
+  releases. This decision belongs with dependency identity, before the
+  versioned manifest syntax is fixed.
+- **Qualify the one-manifest-line vendoring claim.** A root manifest with
+  `require consumer ../consumer` and `require json vendor/json` conflicts with
+  a `consumer/loke.project` containing `require json ../json`: the vendored
+  and original directories differ. A compiler probe reports `L0399`; passing
+  `-collection json=<vendored-directory>` instead succeeds, as
+  [Projects](compiler-guide.md#projects) documents. Updating one manifest line
+  therefore works only when the remaining requirements still name the same
+  directory. If manifest-only vendoring must also replace a shared transitive
+  dependency, define a root replacement rule separately from ordinary
+  requirements. Otherwise document that the explicit collection override is
+  required for this case.
+
 ## Using a package without reading its code (proposal, 2026-10-21)
 
 To use a package today you read its source. Hand-written documentation does
