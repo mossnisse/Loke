@@ -319,11 +319,11 @@ api_items :: proc(b: ^Api_Builder, items: []Item, out: ^[dynamic]Api_Item, in_wh
 	for item in items {
 		#partial switch v in item {
 		case ^Decl:
-			api_decl(b, v, "", nil, out)
+			api_decl(b, v, "", nil, out, nil)
 		case ^Item_Foreign_Block:
 			for member in v.members {
 				if d, is_decl := member.(^Decl); is_decl {
-					api_decl(b, d, "", v.attributes, out)
+					api_decl(b, d, "", v.attributes, out, nil)
 				}
 			}
 		case ^Item_Impl:
@@ -355,10 +355,13 @@ api_impl :: proc(b: ^Api_Builder, v: ^Item_Impl, out: ^[dynamic]Api_Item) {
 	if name := leading_name(subject); name in b.private_names {
 		impl.private_subject = name
 	}
+	// `impl Box($T)` binds `T` for its members.
+	bound := make([dynamic]string)
+	bind_poly_names(&bound, v.type)
 	for member in v.members {
 		#partial switch m in member {
 		case ^Decl:
-			api_decl(b, m, subject, nil, &impl.members)
+			api_decl(b, m, subject, nil, &impl.members, bound[:])
 		case ^Item_Delegate:
 			// `delegation_is_public`: the file's default decides.
 			if has_attribute(b.file.attributes, "public") {
@@ -402,14 +405,17 @@ api_when :: proc(b: ^Api_Builder, v: ^Item_When, out: ^[dynamic]Api_Item) {
 	append(out, chosen)
 }
 
-// `subject` is the written subject of the `impl` `d` is a member of, and
-// `block` the attributes of the foreign block it is a member of, which a
-// member's own override.
+// `subject` is the written subject of the `impl` `d` is a member of, `block`
+// the attributes of the foreign block it is a member of, which a member's own
+// override, and `bound` the names its `impl` binds.
 @(private = "file")
-api_decl :: proc(b: ^Api_Builder, d: ^Decl, subject: string, block: []Attribute, out: ^[dynamic]Api_Item) {
+api_decl :: proc(
+	b: ^Api_Builder, d: ^Decl, subject: string, block: []Attribute, out: ^[dynamic]Api_Item,
+	bound: []string,
+) {
 	// design.md "Exported names": a variable is never public. design.md "Test
-	// procedures": no importer can call a test.
-	if len(d.names) == 0 || d.names[0].text == "_" || d.kind == .Var || decl_is_test(b.c, d) {
+	// procedures": no importer can call a test, and only `@(test)` makes one.
+	if len(d.names) == 0 || d.names[0].text == "_" || d.kind == .Var || has_attribute(d.attributes, "test") {
 		return
 	}
 	c := b.c
@@ -429,6 +435,8 @@ api_decl :: proc(b: ^Api_Builder, d: ^Decl, subject: string, block: []Attribute,
 		}
 	}
 	w := Ref_Walk{b = b, subject = owner}
+	append(&w.bound, ..bound)
+	attribute_refs(&w, d.attributes)
 	api_refs(&w, d.declared_type)
 	lo, hi := d.names[0].span.lo, d.span.hi
 	if literal := decl_proc_literal(d); literal != nil {
@@ -438,10 +446,7 @@ api_decl :: proc(b: ^Api_Builder, d: ^Decl, subject: string, block: []Attribute,
 		written := strings.trim_right(strings.trim_space(shown_text(b, source, lo, hi)), ";")
 		item.text = strings.trim_space(strings.trim_suffix(written, "---"))
 		item.terminator = " ---;"
-		api_refs(&w, literal.signature)
-		for clause in literal.where_clauses {
-			api_refs(&w, clause)
-		}
+		api_refs(&w, literal)
 		// design.md "Foreign system": a member takes the block's calling
 		// convention and result requirement unless it states its own.
 		if has_attribute(block, "require_results") && !has_attribute(d.attributes, "require_results") {
@@ -460,6 +465,8 @@ api_decl :: proc(b: ^Api_Builder, d: ^Decl, subject: string, block: []Attribute,
 		item.text = strings.trim_right(written, ";")
 		if record := decl_struct(d); record != nil {
 			item.text = public_struct(b, record, lo)
+			bind_generic_params(&w.bound, record.generic_params)
+			attribute_refs(&w, record.attributes)
 			for parameter in record.generic_params {
 				api_refs(&w, parameter.type)
 			}
@@ -511,15 +518,6 @@ decl_is_public :: proc(c: ^Compiler, file: ^File, d: ^Decl, block: []Attribute =
 }
 
 @(private = "file")
-decl_is_test :: proc(c: ^Compiler, d: ^Decl) -> bool {
-	if len(d.symbols) > 0 {
-		symbol := symbol_of(c, d.symbols[0])
-		return symbol != nil && symbol.is_test
-	}
-	return has_attribute(d.attributes, "test")
-}
-
-@(private = "file")
 decl_struct :: proc(d: ^Decl) -> ^Type_Record {
 	if len(d.values) == 1 {
 		if record, is_record := d.values[0].(^Type_Record); is_record && record.kind == .Struct {
@@ -535,6 +533,9 @@ Ref_Walk :: struct {
 	// The subject of the `impl` the syntax is in, whose members a written
 	// name may also mean.
 	subject: string,
+	// The parameters and `$` names in scope, which a written name means before
+	// any declaration of the package.
+	bound:   [dynamic]string,
 	refs:    [dynamic]string,
 }
 
@@ -555,7 +556,15 @@ api_refs :: proc(w: ^Ref_Walk, e: Expr) {
 			append(&w.refs, key)
 		}
 	case ^Expr_Selector:
-		// An import's name resolves to no declaration of the package.
+		// A member, as `Boxed.DEFAULT`; an import's name resolves to no
+		// declaration of the package.
+		if v.resolution.symbol != INVALID_SYMBOL {
+			if key, declared := w.b.declared[v.resolution.symbol]; declared {
+				append(&w.refs, key)
+			}
+		} else if ident, is_ident := v.operand.(^Expr_Ident); is_ident && ident.resolution.kind == .Unresolved && !slice.contains(w.bound[:], ident.name) {
+			append(&w.refs, fmt.aprintf("%s.%s", ident.name, v.name.text))
+		}
 		api_refs(w, v.operand)
 	case ^Expr_Checked_Extract:
 		api_refs(w, v.operand)
@@ -605,10 +614,13 @@ api_refs :: proc(w: ^Ref_Walk, e: Expr) {
 			api_refs(w, element.value)
 		}
 	case ^Expr_Proc:
+		mark := len(w.bound)
+		bind_signature(&w.bound, v.signature)
 		api_refs(w, v.signature)
 		for clause in v.where_clauses {
 			api_refs(w, clause)
 		}
+		resize(&w.bound, mark)
 	case ^Expr_Proc_Group:
 		for name in v.names {
 			ref_by_name(w, name.text)
@@ -634,6 +646,8 @@ api_refs :: proc(w: ^Ref_Walk, e: Expr) {
 		api_refs(w, v.key)
 		api_refs(w, v.value)
 	case ^Type_Proc:
+		mark := len(w.bound)
+		bind_signature(&w.bound, v)
 		for parameter in v.params {
 			api_refs(w, parameter.type)
 			api_refs(w, parameter.default)
@@ -641,7 +655,12 @@ api_refs :: proc(w: ^Ref_Walk, e: Expr) {
 		if v.result != nil {
 			api_refs(w, v.result.type)
 		}
+		resize(&w.bound, mark)
 	case ^Type_Record:
+		mark := len(w.bound)
+		bind_generic_params(&w.bound, v.generic_params)
+		attribute_refs(w, v.attributes)
+		defer resize(&w.bound, mark)
 		for parameter in v.generic_params {
 			api_refs(w, parameter.type)
 		}
@@ -668,6 +687,9 @@ api_refs :: proc(w: ^Ref_Walk, e: Expr) {
 			api_refs(w, field.value)
 		}
 	case ^Type_Interface:
+		mark := len(w.bound)
+		bind_generic_params(&w.bound, v.generic_params)
+		defer resize(&w.bound, mark)
 		for parameter in v.generic_params {
 			api_refs(w, parameter.type)
 		}
@@ -685,10 +707,64 @@ api_refs :: proc(w: ^Ref_Walk, e: Expr) {
 	}
 }
 
-// A name nothing resolved: a declaration of the package, or in an `impl`, a
-// member of its subject.
+// The values of `attributes` that are expressions, as `N` in `@(align=N)`.
+// design.md "Attribute categories": the others' values are strings, or names
+// of variants, fields, and escape levels, which are not references.
+@(private = "file")
+attribute_refs :: proc(w: ^Ref_Walk, attributes: []Attribute) {
+	for attribute in attributes {
+		if len(attribute.path) == 1 {
+			switch attribute.path[0].text {
+			case "zero", "failure", "initialized", "escape":
+				continue
+			}
+		}
+		api_refs(w, attribute.value)
+	}
+}
+
+// Each parameter's name, and each `$` name its types and defaults bind.
+@(private = "file")
+bind_signature :: proc(bound: ^[dynamic]string, signature: ^Type_Proc) {
+	if signature == nil {
+		return
+	}
+	for parameter in signature.params {
+		for name in parameter.names {
+			append(bound, name.name.text)
+		}
+		bind_poly_names(bound, parameter.type)
+		bind_poly_names(bound, parameter.default)
+	}
+}
+
+@(private = "file")
+bind_generic_params :: proc(bound: ^[dynamic]string, parameters: []Generic_Param) {
+	for parameter in parameters {
+		for name in parameter.names {
+			append(bound, name.text)
+		}
+	}
+}
+
+// The `$` names written in type syntax, as `T` in `[]$T`.
+@(private = "file")
+bind_poly_names :: proc(bound: ^[dynamic]string, e: Expr) {
+	type_syntax_any_name(e, bound, proc(data: rawptr, node: Expr) -> bool {
+		if poly, is_poly := node.(^Type_Poly); is_poly {
+			append((^[dynamic]string)(data), poly.name.text)
+		}
+		return false
+	})
+}
+
+// A name nothing resolved, and no parameter or `$` name binds: a declaration
+// of the package, or in an `impl`, a member of its subject.
 @(private = "file")
 ref_by_name :: proc(w: ^Ref_Walk, name: string) {
+	if slice.contains(w.bound[:], name) {
+		return
+	}
 	append(&w.refs, name)
 	if w.subject != "" {
 		append(&w.refs, fmt.aprintf("%s.%s", w.subject, name))

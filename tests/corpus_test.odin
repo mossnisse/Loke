@@ -1353,14 +1353,20 @@ interface_files_match_their_packages :: proc(t: ^testing.T) {
 	cases, _ := filepath.glob("tests/api/*")
 	testing.expect(t, len(cases) > 0, "no interface-file cases found")
 	for dir in cases {
-		checked, stdout, stderr, err := exec(
-			os.Process_Desc{command = []string{compiler_path(), dir, "-api-check"}},
-			context.allocator,
-		)
-		testing.expectf(
-			t, err == nil && checked.exit_code == 0 && len(stdout) == 0 && len(stderr) == 0,
-			"%s: -api-check failed (exit %d)\n%s%s", dir, checked.exit_code, string(stdout), string(stderr),
-		)
+		// The file does not depend on the build: `-debug` takes the other
+		// branch of each `when (LOKE_DEBUG)`.
+		for flag in ([]string{"", "-debug"}) {
+			command := make([dynamic]string, context.temp_allocator)
+			append(&command, compiler_path(), dir, "-api-check")
+			if flag != "" {
+				append(&command, flag)
+			}
+			checked, stdout, stderr, err := exec(os.Process_Desc{command = command[:]}, context.allocator)
+			testing.expectf(
+				t, err == nil && checked.exit_code == 0 && len(stdout) == 0 && len(stderr) == 0,
+				"%s: -api-check %s failed (exit %d)\n%s%s", dir, flag, checked.exit_code, string(stdout), string(stderr),
+			)
+		}
 
 		copy := fmt.tprintf("%s/api/%s", TMP, filepath.base(dir))
 		remove_tree(copy)
@@ -1441,8 +1447,8 @@ bundled_interface_files_are_current :: proc(t: ^testing.T) {
 		testing.expectf(
 			t,
 			job.err == nil && job.state.exit_code == 0 && len(job.stdout) == 0,
-			"`lokec %s %s` failed; regenerate with `-api` and review the diff:\n%s%s",
-			job.command[1], job.command[2], string(job.stdout), string(job.stderr),
+			"`lokec %s` failed; regenerate with `-api` and review the diff:\n%s%s",
+			strings.join(job.command[1:], " ", context.temp_allocator), string(job.stdout), string(job.stderr),
 		)
 	}
 }
@@ -1461,13 +1467,15 @@ collect_interface_checks :: proc(dir: string, jobs: ^[dynamic]Exec) {
 		}
 	}
 	if package_dir {
-		for check in ([]string{"-api-check", "-fmt-check"}) {
-			command := make([]string, 3, context.temp_allocator)
-			command[0], command[1], command[2] = compiler_path(), dir, check
-			if check == "-fmt-check" {
-				command[1] = fmt.tprintf("%s/api.loki", dir)
-			}
-			append(jobs, Exec{command = command})
+		// `-debug` takes the other branch of each `when (LOKE_DEBUG)`, which
+		// must not change the file.
+		checks := [][]string{
+			{compiler_path(), dir, "-api-check"},
+			{compiler_path(), dir, "-api-check", "-debug"},
+			{compiler_path(), fmt.tprintf("%s/api.loki", dir), "-fmt-check"},
+		}
+		for check in checks {
+			append(jobs, Exec{command = slice.clone(check, context.temp_allocator)})
 		}
 	}
 }

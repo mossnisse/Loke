@@ -370,7 +370,8 @@ steps are in priority order; each is usable without the next.
 ### Interface-generator review (2026-10-21)
 
 A review of `7cc087d`, "Generate a checked-in interface file, api.loki, for
-each package", found five correctness problems, fixed in the commit after it:
+each package", found five correctness problems whose original reproductions
+were fixed in `1eef98d`:
 comment filtering that joined tokens, imports moved out of their `when`
 branch, foreign members that lost the block's convention and result
 requirement, public overload groups whose private members were not shown, and
@@ -402,6 +403,19 @@ now; to warn when a public signature or public field names a private type, or
 a public `where` clause a private procedure, but not for a group's members;
 or to make that an error. The warning would make `fmt.Fill` public and keep
 the interface writer's private notes for groups only.
+
+### Follow-up review of interface fixes (2026-10-21)
+
+A review of `1eef98d`, "Fix the interface writer's five review findings",
+found three more cases, fixed in the commit after it: in syntax the checker
+never resolved, a parameter or `$` name was taken for a private declaration
+spelled the same, which also made an interface generated without `-debug`
+stale under it; a private member selected through its type, as
+`Boxed.DEFAULT` in a default value, was not followed; and a constant in
+`@(align=N)` was not followed. The review's simplification, reading
+`@(test)` directly instead of through a helper, is applied too. Each case is
+in `tests/api/bindings`, and every case and bundled package is now checked
+with and without `-debug`.
 
 ## The `op`/`try_op` pair
 

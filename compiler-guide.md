@@ -173,7 +173,11 @@ gathers; a constant in a default value; and whatever those name in turn. An
 importer cannot name such a declaration, but does reach it. A name is followed
 to the declaration the checker resolved it to, so a parameter spelled like a
 private type does not reach the type, and a private alias reaches the type it
-names. Tests and variables are never shown.
+names. In syntax the checker never resolved, an untaken `when` branch or a
+generic template, a name a parameter or `$` name binds still means that
+binding, so the file is the same with and without `-debug`. A member selected
+through its type, as `Boxed.DEFAULT`, and a constant in `@(align=N)` are
+followed too. Tests and variables are never shown.
 
 A public member of a foreign block is shown as a plain declaration, with the
 block's `default_calling_convention` written into its signature and the

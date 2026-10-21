@@ -1,0 +1,45 @@
+// The reproductions of the follow-up interface review on 2026-10-21. The test
+// also checks this case with `-debug`, which must not change the file.
+@(public)
+package bindings;
+
+// Nothing shown names it, so neither it nor its member is shown.
+@(private) Scratch :: struct {}
+
+impl Scratch {
+	reset :: proc(self) {}
+}
+
+// A parameter is not the private type it is spelled like, in the branch the
+// checker reads or in the one it skips.
+when (LOKE_DEBUG) {
+
+/// `value`, or by default `Scratch`.
+pick :: proc(Scratch: int, value: int = Scratch) -> int { return value; }
+
+} else {
+
+/// Always zero.
+pick :: proc() -> int { return 0; }
+
+}
+
+/// `value` itself: a `$` name is not the private type either.
+identity :: proc(value: $Scratch) -> Scratch { return value; }
+
+/// A type with a private member.
+Boxed :: struct {}
+
+impl Boxed {
+	@(private) DEFAULT :: 7;
+}
+
+/// `value`, which defaults to the private member.
+read :: proc(value: int = Boxed.DEFAULT) -> int { return value; }
+
+@(private) ALIGNMENT :: 16;
+
+/// Laid out at a private alignment.
+Aligned :: struct @(align=ALIGNMENT) {
+	value: u8,
+}
