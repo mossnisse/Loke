@@ -182,8 +182,8 @@ split :: proc(text: string_view, separator: string_view) -> Split_Iterator ---;
 - **Target-independent.** A public declaration inside a file-scope `when` is
   written inside the same `when`, with its condition as written, so the file
   does not depend on the target or the defines that generate it. In the
-  bundled packages every top-level `when` holds only private declarations
-  today.
+  bundled packages, `core:fs`'s `Directory_Reader` and its members are the
+  only public declarations inside a top-level `when` today.
 
 **3. Inferred facts are shown, one line each.** The interface file and hover
 add an `// inferred:` line to a public procedure for its result contract and
@@ -252,7 +252,7 @@ Each step is one or more commits that update the spec, implementation, tests,
 citing comments, and CHANGELOG together, and passes `.\test-all.ps1`. The
 steps are in priority order; each is usable without the next.
 
-1. **`///` doc comments.**
+1. **`///` doc comments** — done on 2026-10-21.
    - [design.md "Comments"](design.md#comments): define a doc comment and what
      it documents, and the warning for one that documents nothing.
    - `src/doc.odin` `doc_comment`: take only `///` lines and strip `/// `.

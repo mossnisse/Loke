@@ -3,20 +3,20 @@
 @(public)
 package generics;
 
-// A pair of one type.
+/// A pair of one type.
 Pair :: struct($T: type) {
-	// The left one.
+	/// The left one.
 	left: T,
 	@(private) right: T,
 }
 
-// Opaque to importers.
+/// Opaque to importers.
 Box :: struct($T: type) {
 	@(private) value: T,
 }
 
 impl Pair($T) {
-	// The left one again.
+	/// The left one again.
 	first :: proc(self) -> T { return self.left; }
 
 	@(private)
@@ -24,7 +24,7 @@ impl Pair($T) {
 }
 
 impl Box($T) {
-	// Hidden: private to the package.
+	/// Hidden: private to the package.
 	@(private)
 	open :: proc(self) -> T { return self.value; }
 }

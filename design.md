@@ -277,6 +277,32 @@ x: int; // trailing comment
 */
 ```
 
+### Doc comments
+
+A line comment that starts with `///`, but not `////`, is a **doc comment**. Its text is what follows the `///` and one space after it, if there is one. Like any comment it has no effect on the program; it is what documentation tools, such as [`lokec -doc`](compiler-guide.md#common-options) and the language server's hover, show for the item it documents, and they show no other comment.
+
+These items can be documented:
+
+- a file's `package` clause, which documents the package;
+- a declaration at file scope, including one in an `impl` block, a foreign block, or a file-scope `when`;
+- a record's field or variant, an enum's member, and an interface's requirement, wherever the type is written.
+
+An item's comment block is the comments directly above it, or above its first attribute: each on a line of its own, with no blank line between them or below the last. The doc comments in that block, in order, document the item; the other comments in it do not, so a note for the item's maintainers may stand among them. A doc comment that is in no item's block, such as one inside a procedure body, one that shares its line with code, or one above a blank line, is reported as a warning.
+
+```loke
+/// Text measured in bytes.
+package measure;
+
+/// The number of bytes in `text`.
+// The built-in is already O(1); this only gives it a name in this package.
+@(public)
+byte_count :: proc(text: string_view) -> int {
+	/// A warning: a local is not an item a doc comment documents.
+	count := text.len();
+	return count;
+}
+```
+
 # 2. Types & Values
 
 *Grammar: [Types](grammar.md#types), [Records](grammar.md#records).*

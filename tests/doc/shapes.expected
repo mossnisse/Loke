@@ -1,12 +1,12 @@
 # package shapes
 
-A package comment opens the package's page.
+A package's doc comment opens the package's page.
 
 ## Point
 
 ```loke
 Point :: struct {
-	// Across, in metres.
+	/// Across, in metres.
 	x: f64,
 	y: f64,
 	// and fields private to the package
@@ -30,8 +30,6 @@ Opaque to importers.
 ```loke
 Facing :: enum { North, South }
 ```
-
-The directions a shape may face.
 
 ## MAX_SIDE
 

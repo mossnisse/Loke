@@ -180,8 +180,8 @@ query_references :: proc(s: ^Compilation_Session, handle: Symbol_Handle, include
 	return out[:], true
 }
 
-// The comments written directly above the binding's declaration, as `-doc`
-// shows them. The caller owns the text. False when there are none.
+// The binding's doc comment (design.md "Doc comments"), as `-doc` shows
+// it. The caller owns the text. False when there are none.
 query_documentation :: proc(s: ^Compilation_Session, handle: Symbol_Handle, allocator := context.allocator) -> (string, bool) {
 	symbol, found := query_symbol(s, handle)
 	if !found || symbol.extent.span.file == NO_FILE { return "", false }

@@ -1,0 +1,65 @@
+/// design.md "Doc comments": a doc comment documents the item directly below
+/// it, or below the comments between them; anywhere else it is a warning.
+package main;
+
+/// Above an import: an import is not documented.
+import "core:fmt";
+
+/// Documented, through the attribute and a maintainer note.
+// A maintainer note.
+@(require_results)
+twice :: proc(value: int) -> int { return value * 2; }
+
+/// Documented.
+Shape :: union {
+	/// A variant.
+	Circle: f64,
+	Square: f64,
+}
+
+/// Documented.
+Colour :: enum {
+	/// A member.
+	Red,
+	Green,
+}
+
+/// Documented.
+Sized :: interface($Self: type) {
+	/// A requirement.
+	slot size: proc(self: Self) -> int;
+}
+
+/// Documented.
+Pair :: struct {
+	/// A field of an anonymous record field.
+	inner: (
+		/// Its own field.
+		left: int,
+		right: int,
+	),
+}
+
+when (LOKE_OS == .Windows) {
+	/// Documented, in a taken branch.
+	WINDOWS :: true;
+} else {
+	/// Documented, in a branch that is not taken.
+	ELSEWHERE :: true;
+}
+
+/// Above an impl block: the block itself is not documented.
+impl Pair {
+	/// Documented: an impl member.
+	left_of :: proc(self) -> int { return self.inner.left; }
+}
+
+/// Above a blank line.
+
+//// Four slashes: an ordinary comment, never reported.
+main :: proc() {
+	/// Inside a body.
+	x := twice(2); /// Sharing its line with code.
+	fmt.println(x, undeclared);
+}
+/// At the end of the file.

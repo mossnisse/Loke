@@ -319,10 +319,11 @@ session_snapshot_queries_follow_checked_bindings :: proc(t: ^testing.T) {
 	dependency := join_path({root, "unsaved", "values", "values.loke"}, context.temp_allocator)
 	text := `package main;
 import "values";
-// A box of
-// one item.
+/// A box of
+/// one item.
 Box :: struct { item: int }
 Wrap :: struct($Element: type) { content: Element }
+// Only a note for maintainers.
 plain :: proc(value: int = 1) -> int { return value; }
 floating :: proc(value: f64) -> f64 { return value; }
 pick :: proc{plain, floating};
@@ -409,7 +410,7 @@ main :: proc() {
 	}
 	plain := snapshot_test_symbol(t, &s, snapshot, file, "plain")
 	_, found = query_documentation(&s, plain)
-	testing.expect(t, !found, "a declaration with no comment above it has no documentation")
+	testing.expect(t, !found, "a declaration with no doc comment above it has no documentation")
 	main_handle := snapshot_test_symbol(t, &s, snapshot, file, "main")
 	local, local_found := query_symbol(&s, outer.symbol)
 	testing.expect(t, local_found && local.parent == main_handle && strings.has_prefix(text[local.extent.span.lo:local.extent.span.hi], "value := 7"))

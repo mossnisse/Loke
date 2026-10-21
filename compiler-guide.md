@@ -65,7 +65,7 @@ if ($LASTEXITCODE -eq 0) { .\args.exe first "two words" }
 | `-runtime=<dir>` | Override the C runtime source directory, normally `runtime/` beside the compiler. |
 | `-log-level=debug\|info\|warning\|error\|off` | Set the compiled `LOKE_LOG_LEVEL` used by `core:log`. Default: `debug`. |
 | `-fmt`, `-fmt-check` | Rewrite a file, or a directory's `.loke` files, in the canonical layout (comments.md "Formatting"); `-fmt-check` only lists the files that would change and exits 1 if there are any. Only whitespace changes. |
-| `-doc` | Print the package's public API as Markdown and stop: the comments above its `package` clauses, then each public declaration's signature and public struct field, with the comments directly above it, then a page for each package of the project it imports. A standard-library directory works too: `lokec core\strings -doc`. |
+| `-doc` | Print the package's public API as Markdown and stop: the [doc comments](design.md#doc-comments) of its `package` clauses, then each public declaration's signature and public struct field, with its doc comment, then a page for each package of the project it imports. A doc comment starts with `///`; other comments are not shown. A standard-library directory works too: `lokec core\strings -doc`. |
 | `-g` | Emit debug information at any `-opt` level: procedures, local variables and their types, and a line for each statement, loop update, and block's closing `}`. An executable gets a `.pdb` beside it, carrying natvis rules that show a string's text, a map's entries, and the value an `any_view` or `dyn` points at in Visual Studio and WinDbg, and a panic prints the Loke call stack after its report. |
 | `-debug` | Set `LOKE_DEBUG` to `true`. It does not imply `-g`, and `-g` does not imply it. |
 
@@ -279,8 +279,8 @@ server discards the stale result and checks again.
 The server also answers these requests for open documents, from the same check
 that produced the diagnostics:
 
-- **Hover** shows the declaration of the name under the cursor and the comments
-  written directly above it, as [`-doc`](#common-options) shows them. A
+- **Hover** shows the declaration of the name under the cursor and its
+  [doc comment](design.md#doc-comments), as [`-doc`](#common-options) shows it. A
   procedure shows its signature, a type or constant its declaration, and a
   variable, parameter, or field its type.
 - **Go to definition** jumps to where the name is declared, including in an

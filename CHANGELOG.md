@@ -10,6 +10,23 @@ checklist.
 
 ### Breaking changes
 
+- `-doc` and hover show only [doc comments](design.md#doc-comments), line
+  comments that start with `///`, and no longer the `//` comments above a
+  declaration, so a `//` note for maintainers can stand beside one. A `///`
+  that documents nothing, such as one in a body, is the warning `L0260`. The
+  bundled packages' usage comments are now `///`, and their spec citations and
+  implementation notes are no longer shown. Upgrade by writing the comments
+  meant for a declaration's users with `///`:
+
+  ```loke
+  // before
+  // The number of bytes in `text`.
+  byte_count :: proc(text: string_view) -> int { return text.len(); }
+  // after
+  /// The number of bytes in `text`.
+  byte_count :: proc(text: string_view) -> int { return text.len(); }
+  ```
+
 - A variable cannot be `@(public)`: one at file scope, with `static` or
   `thread_local`, or in a foreign block is `L0338`. A public-default file or
   foreign block leaves its variables package-private, so an importer naming one

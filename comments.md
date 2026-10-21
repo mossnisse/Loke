@@ -1360,6 +1360,20 @@ as a line ending everywhere would fix that only at the cost of a third line
 ending no current editor writes by default. Normalizing it on load would make
 a raw string's value differ from its bytes.
 
+### Doc comments start with `///`
+
+Odin's documentation tools show the comments directly above a declaration. In
+Loke's bundled packages about 40% of that text was for maintainers: spec
+citations, how an operation is implemented, and work still to do. A marker lets
+the author say once, where the comment is written, who it is for, so a note for
+maintainers can stand beside the documentation without being shown. An
+attribute such as `@(doc="…")` would need escaping and long strings, and a
+prefix inside an ordinary comment, such as `// doc:`, would be dropped silently
+by a typo. `///` is also Rust's and C#'s marker. A `///` that documents nothing
+is a warning, so a doc comment cannot be lost by a blank line or by standing
+above something that is not documented. See
+[Using a package without reading its code](open-questions.md#using-a-package-without-reading-its-code-proposal-2026-10-21).
+
 ### `transmute` is a procedure in `core:unsafe`, not an operator
 
 Bit reinterpretation uses `unsafe.transmute(T, value)`. Types are already call

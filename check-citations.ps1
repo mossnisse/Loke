@@ -1,7 +1,7 @@
 # Source comments cite the spec documents by section name, roughly 700 times. A
 # renamed heading breaks every citation silently, so the convention is only
 # worth having if it is checked. Exits non-zero and lists every citation with no
-# matching heading.
+# matching heading, and every citation in a doc comment of a bundled package.
 #
 # Matching is ordinal (case-sensitive) on purpose: a hashtable lookup ignores
 # case, which let three citations drift to a lower-case spelling of a real
@@ -39,18 +39,25 @@ try {
         # the extension is optional. The name may wrap onto the next comment
         # line before its opening quote.
         $base = [regex]::Escape([System.IO.Path]::GetFileNameWithoutExtension($spec))
-        $pattern = "$base(?:\.md)?\s+(?:(?://|\*)\s*)?`"([^`"]+)`""
+        $pattern = "$base(?:\.md)?\s+(?:(?:///?|\*)\s*)?`"([^`"]+)`""
 
         foreach ($path in $texts.Keys) {
             $text = $texts[$path]
+            $rel = $path.Substring($repoRoot.Length + 1)
             foreach ($m in [regex]::Matches($text, $pattern)) {
                 $checked++
+                $line = ($text.Substring(0, $m.Index) -split "`n").Count
                 # A citation may wrap across comment lines; fold it back to one line.
-                $name = [regex]::Replace($m.Groups[1].Value, '\s*(\r?\n)\s*(//|\*)?\s*', ' ').Trim()
+                $name = [regex]::Replace($m.Groups[1].Value, '\s*(\r?\n)\s*(///?|\*)?\s*', ' ').Trim()
                 if (-not $headings.Contains($name)) {
-                    $line = ($text.Substring(0, $m.Index) -split "`n").Count
-                    $rel = $path.Substring($repoRoot.Length + 1)
                     $broken += "{0}:{1}: {2} `"{3}`" is not a heading" -f $rel, $line, $spec, $name
+                }
+                # design.md "Doc comments": a bundled package's doc comments are
+                # for its users, and a spec citation is for its maintainers.
+                $start = $text.LastIndexOf("`n", $m.Index) + 1
+                if ($rel -match '^(core|base)\\' -and $text.Substring($start).TrimStart().StartsWith('///') -and
+                    -not $text.Substring($start).TrimStart().StartsWith('////')) {
+                    $broken += "{0}:{1}: {2} `"{3}`" is cited in a doc comment; cite it in a // comment" -f $rel, $line, $spec, $name
                 }
             }
         }
@@ -58,7 +65,7 @@ try {
 
     if ($broken.Count -gt 0) {
         $broken | Sort-Object | ForEach-Object { Write-Host $_ }
-        Write-Host "$($broken.Count) of $checked citation(s) name no heading"
+        Write-Host "$($broken.Count) problem(s) in $checked citation(s)"
         exit 1
     }
     Write-Host "$checked spec citations: all resolve"

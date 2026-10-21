@@ -673,7 +673,8 @@ expect_definition :: proc(t: ^testing.T, reply: json.Value, uri: string, at: Pos
 
 @(test)
 hover_shows_declarations_and_comments :: proc(t: ^testing.T) {
-	text := "package main;\n// Adds two numbers.\n// Never overflows here.\nadd :: proc(a: int, b: int) -> int { return a + b; }\nPoint :: struct { x: int, y: int }\nmain :: proc() {\n\ttotal := add(1, 2);\n\tp := Point{x = total, y = 0};\n\t_ = p.x;\n}\n"
+	// design.md "Doc comments": the `//` note among them is not shown.
+	text := "package main;\n/// Adds two numbers.\n// A note for maintainers.\n/// Never overflows here.\nadd :: proc(a: int, b: int) -> int { return a + b; }\nPoint :: struct { x: int, y: int }\nmain :: proc() {\n\ttotal := add(1, 2);\n\tp := Point{x = total, y = 0};\n\t_ = p.x;\n}\n"
 	for markdown in ([]bool{true, false}) {
 		h: Harness
 		params := `{"capabilities":{"textDocument":{"hover":{"contentFormat":["markdown","plaintext"]}}}}` if markdown else `{"capabilities":{}}`
@@ -926,7 +927,7 @@ completion_item :: proc(reply: json.Value, label: string) -> json.Value {
 
 @(test)
 completion_offers_members_and_names_in_scope :: proc(t: ^testing.T) {
-	main_text := "package main;\nimport \"lib\";\nColor :: enum { Red, Green }\nPoint :: struct { x, y: int }\nimpl Point {\n\tlength :: proc(self) -> int { return self.x + self.y; }\n}\n// Adds two numbers.\nadd :: proc(a, b: int) -> int { return a + b; }\nmain :: proc() {\n\tp := Point{1, 2};\n\tc := Color.Red;\n\t// p.\n\t_ = \"p.\";\n\t{\n\t\tinner := add(p.x, lib.twice(1));\n\t\t_ = inner;\n\t}\n\tlater := c;\n\tp.\n}\n"
+	main_text := "package main;\nimport \"lib\";\nColor :: enum { Red, Green }\nPoint :: struct { x, y: int }\nimpl Point {\n\tlength :: proc(self) -> int { return self.x + self.y; }\n}\n/// Adds two numbers.\nadd :: proc(a, b: int) -> int { return a + b; }\nmain :: proc() {\n\tp := Point{1, 2};\n\tc := Color.Red;\n\t// p.\n\t_ = \"p.\";\n\t{\n\t\tinner := add(p.x, lib.twice(1));\n\t\t_ = inner;\n\t}\n\tlater := c;\n\tp.\n}\n"
 	lib_text := "package lib;\n@(public) twice :: proc(n: int) -> int { return n * 2; }\nhidden :: proc() {}\n"
 	for listed in ([]bool{false, true}) {
 		h: Harness
@@ -985,7 +986,7 @@ signature_summary :: proc(reply: json.Value) -> string {
 
 @(test)
 signature_help_follows_the_argument_being_written :: proc(t: ^testing.T) {
-	text := "package main;\nPoint :: struct { x, y: int }\nimpl Point {\n\tscale :: proc(self, factor: int) -> Point { return {self.x * factor, self.y * factor}; }\n}\n// Adds two numbers.\nadd :: proc(a, b: int) -> int { return a + b; }\nplain :: proc(value: int) -> int { return value; }\nfloating :: proc(value: f64) -> f64 { return value; }\npick :: proc{plain, floating};\nmain :: proc() {\n\tp := Point{1, 2};\n\t_ = p.scale(2);\n\t_ = pick(1);\n\t_ = add(plain(1), 2);\n\t_ = add(b = 2, a = 1);\n\tif (add(1, 2) > 0) {}\n\tadd(1, \n}\n"
+	text := "package main;\nPoint :: struct { x, y: int }\nimpl Point {\n\tscale :: proc(self, factor: int) -> Point { return {self.x * factor, self.y * factor}; }\n}\n/// Adds two numbers.\nadd :: proc(a, b: int) -> int { return a + b; }\nplain :: proc(value: int) -> int { return value; }\nfloating :: proc(value: f64) -> f64 { return value; }\npick :: proc{plain, floating};\nmain :: proc() {\n\tp := Point{1, 2};\n\t_ = p.scale(2);\n\t_ = pick(1);\n\t_ = add(plain(1), 2);\n\t_ = add(b = 2, a = 1);\n\tif (add(1, 2) > 0) {}\n\tadd(1, \n}\n"
 	for offsets in ([]bool{true, false}) {
 		h: Harness
 		params := `{"capabilities":{"textDocument":{"signatureHelp":{"signatureInformation":{"parameterInformation":{"labelOffsetSupport":true}}}}}}` if offsets else `{"capabilities":{}}`
@@ -1514,7 +1515,7 @@ requests_follow_incremental_checks :: proc(t: ^testing.T) {
 	settle(&h)
 	take(&h)
 
-	renamed := "@(public) package shapes;\nSquare :: struct { side: int }\n\n// The area.\nsurface :: proc(s: Square) -> int { return s.side * s.side; }\n"
+	renamed := "@(public) package shapes;\nSquare :: struct { side: int }\n\n/// The area.\nsurface :: proc(s: Square) -> int { return s.side * s.side; }\n"
 	uses := "package main;\nimport \"shapes\";\nmain :: proc() {\n\t_ = shapes.surface(shapes.Square{side = 2});\n}\n"
 	change(&h, "app/shapes/shapes.loke", renamed, 2)
 	at_area := fmt.tprintf(`{{"textDocument":{{"uri":%s}},"position":{{"line":3,"character":14}}}}`, quoted(uri_of(&h, "app/main.loke")))
@@ -1711,7 +1712,7 @@ documentation_matches_lokec_doc :: proc(t: ^testing.T) {
 	if !start(&h, t, "documentation") { finish(&h); return }
 	defer finish(&h)
 	main_text := "package main;\nimport \"shapes\";\nmain :: proc() {\n\t_ = shapes.area(shapes.Square{side = 2});\n}\n"
-	shapes_text := "// Shapes to measure.\n@(public) package shapes;\n\n// A square.\nSquare :: struct { side: int }\n\n// Its area.\narea :: proc(s: Square) -> int { return s.side * s.side; }\n"
+	shapes_text := "/// Shapes to measure.\n@(public) package shapes;\n\n/// A square.\nSquare :: struct { side: int }\n\n/// Its area.\narea :: proc(s: Square) -> int { return s.side * s.side; }\n"
 	write_file(&h, "app/main.loke", main_text)
 	write_file(&h, "app/shapes/shapes.loke", shapes_text)
 	open(&h, "app/main.loke", main_text)
@@ -1723,7 +1724,7 @@ documentation_matches_lokec_doc :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(page, "# package shapes") && strings.contains(page, "Its area."))
 
 	// An unsaved comment in an imported package, documented through the program.
-	commented := strings.concatenate({shapes_text, "\n// A unit square.\nUNIT :: Square{side = 1};\n"}, context.temp_allocator)
+	commented := strings.concatenate({shapes_text, "\n/// A unit square.\nUNIT :: Square{side = 1};\n"}, context.temp_allocator)
 	open(&h, "app/shapes/shapes.loke", commented)
 	page = documentation_page(&h, "app/shapes/shapes.loke")
 	testing.expect_value(t, page, fresh_documentation(&h, "app", {{"app/shapes/shapes.loke", commented}}))
@@ -1733,8 +1734,8 @@ documentation_matches_lokec_doc :: proc(t: ^testing.T) {
 	// after each edit.
 	close(&h, "app/main.loke")
 	edits := []string{
-		strings.concatenate({commented, "\n// Twice the area.\ndouble :: proc(s: Square) -> int { return 2 * area(s); }\n"}, context.temp_allocator),
-		strings.concatenate({commented, "\n// Thrice the area.\ntriple :: proc(s: Square) -> int { return 3 * area(s); }\n"}, context.temp_allocator),
+		strings.concatenate({commented, "\n/// Twice the area.\ndouble :: proc(s: Square) -> int { return 2 * area(s); }\n"}, context.temp_allocator),
+		strings.concatenate({commented, "\n/// Thrice the area.\ntriple :: proc(s: Square) -> int { return 3 * area(s); }\n"}, context.temp_allocator),
 		shapes_text,
 	}
 	for text, index in edits {
@@ -1757,7 +1758,7 @@ documentation_matches_lokec_doc :: proc(t: ^testing.T) {
 	testing.expect(t, is_null_result(reply_to(&h, take(&h), 94)))
 	// `lokec` rejects a `main` package without `main`, but `lokec -doc` still
 	// documents it.
-	tool := "package main;\nimport \"shapes\";\n\n// One square's area.\n@(public) unit_area :: proc() -> int { return shapes.area(shapes.Square{side = 1}); }\n"
+	tool := "package main;\nimport \"shapes\";\n\n/// One square's area.\n@(public) unit_area :: proc() -> int { return shapes.area(shapes.Square{side = 1}); }\n"
 	write_file(&h, "tool/shapes/shapes.loke", shapes_text)
 	open(&h, "tool/main.loke", tool)
 	page = documentation_page(&h, "tool/main.loke")

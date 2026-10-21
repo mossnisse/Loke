@@ -332,7 +332,7 @@ lsp_formats_and_documents_like_lokec :: proc(t: ^testing.T) {
 	if !testing.expect(t, os.make_directory_all(fmt.tprintf("%s/shapes", root)) == nil) { return }
 	os.make_directory_all(fmt.tprintf("%s/copy", root))
 	defer remove_tree(root)
-	text := "// Shapes to measure.\n@(public) package shapes;\n\n// A square.\nSquare :: struct {\nside: int,\n}\n\n// Its area.\narea :: proc(s: Square) -> int {\n        return s.side*s.side;\n}\n"
+	text := "/// Shapes to measure.\n@(public) package shapes;\n\n/// A square.\nSquare :: struct {\nside: int,\n}\n\n/// Its area.\narea :: proc(s: Square) -> int {\n        return s.side*s.side;\n}\n"
 	source := fmt.tprintf("%s/shapes/shapes.loke", root)
 	copy := fmt.tprintf("%s/copy/shapes.loke", root)
 	_ = os.write_entire_file(source, transmute([]byte)text)

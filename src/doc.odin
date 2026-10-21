@@ -1,6 +1,6 @@
 // `-doc`: the public API of the root package, and of each package of the
 // project it imports, as Markdown, from their checked public declarations and
-// the comments written directly above them.
+// their doc comments (design.md "Doc comments").
 package lokec
 
 import "core:fmt"
@@ -20,7 +20,7 @@ document_project :: proc(c: ^Compiler, root: Package_Id) -> string {
 	return strings.to_string(b)
 }
 
-// The comments above each file's package clause, a paragraph per file, then
+// The doc comments of each file's package clause, a paragraph per file, then
 // every public declaration, in file and source order: its signature, then its
 // doc comment. A procedure is shown without its body and a struct with only
 // its public fields and their comments; everything else is shown as written.
@@ -146,7 +146,7 @@ public_struct :: proc(c: ^Compiler, file: ^File, written: string, record: ^Type_
 		if public {
 			if doc := doc_comment(c, field.span); doc != "" {
 				for line in strings.split_lines(doc) {
-					fmt.sbprintln(&b, strings.trim_right_space(fmt.tprintf("\t// %s", line)))
+					fmt.sbprintln(&b, strings.trim_right_space(fmt.tprintf("\t/// %s", line)))
 				}
 			}
 			fmt.sbprintfln(&b, "\t%s,", strings.trim_right(text[field.span.lo:field.span.hi], ","))
@@ -161,27 +161,48 @@ public_struct :: proc(c: ^Compiler, file: ^File, written: string, record: ^Type_
 	return strings.to_string(b)
 }
 
-// The comments directly above `at`, one to a line with no blank line between
-// them or below the last, and none sharing its line with code. Their markers
-// are removed.
+// design.md "Doc comments": the doc comments in the block directly above `at`,
+// one to a line, with their markers removed.
 doc_comment :: proc(c: ^Compiler, at: Span) -> string {
 	source := &c.sources[at.file]
+	first, last := comment_block(source, at.lo)
+	lines := make([dynamic]string)
+	defer delete(lines)
+	for comment in source.comments[first:last] {
+		written := source.text[comment.lo:comment.hi]
+		if is_doc_comment(written) {
+			written = written[3:]
+			append(&lines, strings.has_prefix(written, " ") ? written[1:] : written)
+		}
+	}
+	return strings.join(lines[:], "\n")
+}
+
+@(private = "file")
+is_doc_comment :: proc(written: string) -> bool {
+	return strings.has_prefix(written, "///") && !strings.has_prefix(written, "////")
+}
+
+// The comments directly above `lo`, as a range of `source.comments`: each on a
+// line of its own, with no blank line between them or below the last.
+@(private = "file")
+comment_block :: proc(source: ^Source, lo: u32) -> (first, last: int) {
 	text := source.text
-	// The comments are in source order, so the first one ending after `at`
+	// The comments are in source order, so the first one ending after `lo`
 	// starts the search without visiting the later ones.
 	low, high := 0, len(source.comments)
 	for low < high {
 		middle := (low + high) / 2
-		if source.comments[middle].hi > at.lo {
+		if source.comments[middle].hi > lo {
 			high = middle
 		} else {
 			low = middle + 1
 		}
 	}
-	first := low
+	first = low
 	for index := low - 1; index >= 0; index -= 1 {
 		comment := source.comments[index]
-		below := at.lo if first == low else source.comments[first].lo
+		below := lo if first == low else source.comments[first].lo
 		gap := text[comment.hi:below]
 		line_start := strings.last_index_byte(text[:comment.lo], '\n') + 1
 		if strings.count(gap, "\n") != 1 || strings.trim_space(gap) != "" ||
@@ -190,18 +211,123 @@ doc_comment :: proc(c: ^Compiler, at: Span) -> string {
 		}
 		first = index
 	}
-	lines := make([dynamic]string)
-	defer delete(lines)
-	for comment in source.comments[first:low] {
-		written := text[comment.lo:comment.hi]
-		if strings.has_prefix(written, "//") {
-			written = written[2:]
-			append(&lines, strings.has_prefix(written, " ") ? written[1:] : written)
-		} else {
-			append(&lines, strings.trim_space(written[2:len(written) - 2]))
+	return first, low
+}
+
+// design.md "Doc comments": a doc comment in no documented item's block is
+// reported. Every `when` branch counts, taken or not, so the report does not
+// depend on the target.
+check_doc_comments :: proc(c: ^Compiler, file: ^File) {
+	source := &c.sources[file.file]
+	found := false
+	for comment in source.comments {
+		if is_doc_comment(source.text[comment.lo:comment.hi]) {
+			found = true
+			break
 		}
 	}
-	return strings.join(lines[:], "\n")
+	if !found {
+		return
+	}
+	w := Doc_Walk{source = source, documented = make([]bool, len(source.comments), context.temp_allocator)}
+	if file.package_name != "" {
+		// The clause's span is its name's.
+		keyword := u32(strings.last_index(source.text[:file.package_span.lo], "package"))
+		document_block(&w, written_start(source.text, keyword, file.attributes))
+	}
+	for item in file.items {
+		walk_documented_item(&w, item)
+	}
+	for comment, index in source.comments {
+		if !w.documented[index] && is_doc_comment(source.text[comment.lo:comment.hi]) {
+			warnf(
+				c, comment, "L0260",
+				"this doc comment documents nothing: it must be directly above a declaration, field, variant, member, or `package` clause, with no blank line between",
+			)
+		}
+	}
+}
+
+@(private = "file")
+Doc_Walk :: struct {
+	source:     ^Source,
+	documented: []bool, // per comment
+}
+
+@(private = "file")
+document_block :: proc(w: ^Doc_Walk, lo: u32) {
+	first, last := comment_block(w.source, lo)
+	for index in first ..< last {
+		w.documented[index] = true
+	}
+}
+
+@(private = "file")
+walk_documented_item :: proc(w: ^Doc_Walk, item: Item) {
+	#partial switch v in item {
+	case ^Decl:
+		if len(v.names) > 0 {
+			document_block(w, written_start(w.source.text, min(v.span.lo, v.names[0].span.lo), v.attributes))
+		}
+		walk_documented_type(w, v.declared_type)
+		for value in v.values {
+			walk_documented_type(w, value)
+		}
+	case ^Item_Impl:
+		for member in v.members {
+			walk_documented_item(w, member)
+		}
+	case ^Item_Foreign_Block:
+		for member in v.members {
+			walk_documented_item(w, member)
+		}
+	case ^Item_Block:
+		for member in v.items {
+			walk_documented_item(w, member)
+		}
+	case ^Item_When:
+		walk_documented_item(w, v.then)
+		walk_documented_item(w, v.otherwise)
+	}
+}
+
+// The members of a type written in a declaration, and of the types written in
+// those members.
+@(private = "file")
+walk_documented_type :: proc(w: ^Doc_Walk, e: Expr) {
+	#partial switch v in e {
+	case ^Type_Record:
+		walk_documented_fields(w, v.fields)
+		walk_documented_variants(w, v.variants)
+	case ^Type_Anon_Record:
+		walk_documented_fields(w, v.fields)
+	case ^Type_Anon_Union:
+		walk_documented_variants(w, v.variants)
+	case ^Type_Enum:
+		for field in v.fields {
+			document_block(w, field.span.lo)
+		}
+	case ^Type_Interface:
+		for requirement in v.requirements {
+			document_block(w, requirement.span.lo)
+		}
+	}
+}
+
+@(private = "file")
+walk_documented_fields :: proc(w: ^Doc_Walk, fields: []Field) {
+	for field in fields {
+		document_block(w, written_start(w.source.text, field.span.lo, field.attributes))
+		walk_documented_type(w, field.type)
+	}
+}
+
+@(private = "file")
+walk_documented_variants :: proc(w: ^Doc_Walk, variants: []Variant) {
+	for variant in variants {
+		document_block(w, variant.span.lo)
+		walk_documented_type(w, variant.type)
+	}
 }
 
 @(private = "file")

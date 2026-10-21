@@ -1,26 +1,27 @@
-// A package comment opens the package's page.
+/// A package's doc comment opens the package's page.
+// A plain comment beside it is for maintainers, and is not shown.
 @(public)
 package shapes;
 
 import "./units";
 
-// A point on the plane.
+/// A point on the plane.
 Point :: struct {
-	// Across, in metres.
+	/// Across, in metres.
 	x: f64,
 	y: f64,
 	@(private) cached_length: f64,
 }
 
-// Opaque to importers.
+/// Opaque to importers.
 Handle :: struct {
 	@(private) index: int,
 }
 
-/* The directions a shape may face. */
+/* A block comment is not a doc comment. */
 Facing :: enum { North, South }
 
-// The largest side any shape may have.
+/// The largest side any shape may have.
 MAX_SIDE :: 1000;
 
 // This comment is separated by a blank line, so it documents nothing.
@@ -29,25 +30,27 @@ make_point :: proc(x: f64, y: f64) -> Point {
 	return Point{x, y, 0};
 }
 
+//// Four slashes are not a doc comment.
 LIMIT :: 10; // trailing, so not the doc comment of what follows
-// The area of a square with `side`.
-// It is always non-negative.
+/// The area of a square with `side`.
+// A note for maintainers among the doc comments is left out.
+/// It is always non-negative.
 @(require_results)
 square_area :: proc(side: f64) -> f64 {
 	return side * side;
 }
 
-// Hidden: private to the package.
+/// Hidden: private to the package.
 @(private)
 helper :: proc() {}
 
 impl Point {
-	// The sum of the coordinates.
+	/// The sum of the coordinates.
 	sum :: proc(self) -> f64 { return self.x + self.y; }
 
 	@(private)
 	scratch :: proc(self) {}
 }
 
-// The longest side, in metres.
+/// The longest side, in metres.
 LONGEST :: units.METRE * MAX_SIDE;

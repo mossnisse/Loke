@@ -1,13 +1,10 @@
 # package generics
 
-A generic record's fields and a generic `impl`'s members are checked per
-instance, so `-doc` reads their visibility from what is written.
-
 ## Pair
 
 ```loke
 Pair :: struct($T: type) {
-	// The left one.
+	/// The left one.
 	left: T,
 	// and fields private to the package
 }

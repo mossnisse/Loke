@@ -198,6 +198,9 @@ check_package_bodies :: proc(k: ^Checker, package_id: Package_Id) {
 	}
 	k.pkg = package_id
 	k.lookup_pkg = package_id
+	for file in pkg.files {
+		check_doc_comments(k.c, file)
+	}
 
 	// Phase 2b: fields and callable signatures.
 	for file in pkg.files {
