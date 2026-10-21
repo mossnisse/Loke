@@ -973,6 +973,10 @@ it. Process termination may end the guarantee because no parent continues.
 Do not add futures, async syntax, or reactive variables merely to solve this
 borrow-and-join problem. See [Concurrency refinements](#concurrency-refinements).
 
+[concurrency-proposal.md](concurrency-proposal.md) proposes one answer:
+`parallel` blocks whose `spawn`ed calls keep their argument borrows until the
+block joins, with channels and mutex waiting for workers.
+
 ## Error handling (2026-10-13)
 
 The error handling proposal of this date is adopted. design.md defines it under

@@ -97,6 +97,7 @@ To build the language server too, run `odin build lsp -out:loke-lsp.exe`.
 | Language rules and syntax | [Design](design.md) and [grammar](grammar.md), both normative |
 | Design rationale and differences from Odin | [Comments](comments.md) |
 | Open questions and planned work | [Open questions](open-questions.md) and [future plans](future-plans.md) |
+| Proposed structured concurrency | [Concurrency proposal](concurrency-proposal.md) |
 
 The library covers text, containers, files, processes, threads, synchronization,
 math, and allocators. Import the packages you use, such as `core:fmt` or
