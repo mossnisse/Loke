@@ -1,0 +1,34 @@
+package main;
+import "core:fmt";
+
+// design.md "Temporaries and procedure boundaries": `any_view(value)` and a
+// written `dyn proc` conversion are the implicit conversion written out, so a
+// local receiving one extends the temporary it views to the end of the block.
+
+Guard :: struct { n: int }
+impl Guard {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Guard, Allocator_Error) {
+		return .ok(Guard{self.n});
+	}
+	release :: hook(drop) proc(self: inout Guard) { fmt.println("drop", self.n); }
+}
+
+make :: proc() -> [1]int { return [1]int{4}; }
+guard :: proc(n: int) -> Guard { return Guard{n}; }
+
+main :: proc() {
+	v := any_view(make());
+	fmt.println(v);
+	{
+		implicit: any_view = guard(1);
+		explicit := any_view(guard(2));
+		assigned: any_view = 0;
+		assigned = any_view(guard(3));
+		fmt.println(implicit, explicit, assigned);
+	}
+	n := 0;
+	f := (dyn proc())(proc() capture(&mut n) { n += 1; });
+	f();
+	f();
+	fmt.println(n);
+}

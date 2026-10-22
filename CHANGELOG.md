@@ -360,6 +360,10 @@ checklist.
 - Two `any_view`s of one slice field, `v1: any_view = held.items;` and
   `v2: any_view = held.items;`, may be live together, as two of a slice
   local already could; the second was `L0641`.
+- A local initialized or assigned from an explicit `any_view(make())` or
+  `(dyn proc())(proc() capture(&mut n) { ... })` extends the temporary to the
+  end of the block, as the implicit conversion does. Using the local was
+  `L0513`.
 
 - `lokec -doc` no longer shows the members of a type private to the package,
   which no importer can reach, such as the 28 members of `core:time`'s `Text`

@@ -430,7 +430,10 @@ extends_into_local :: proc(c: ^Compiler, id: Symbol_Id) -> bool {
 
 // The value a local receives: an implicit view conversion borrows the value it
 // converts, and `&`, `&mut`, and slicing borrow their operand. Reslicing a view
-// borrows what the view does, so the path goes on through it. Calls end it.
+// borrows what the view does, so the path goes on through it. Calls end it,
+// except an explicit `any_view(value)` or `dyn proc` conversion, which is the
+// implicit one written out (design.md "any_view type", "Borrowed callable
+// views").
 @(private = "file")
 mark_extending_path :: proc(c: ^Compiler, value: Expr, into: ^map[^Expr_Base]bool) {
 	base := expr_base(value)
@@ -439,6 +442,10 @@ mark_extending_path :: proc(c: ^Compiler, value: Expr, into: ^map[^Expr_Base]boo
 	}
 	if base.erased_from != INVALID_TYPE || base.view_from != INVALID_TYPE {
 		mark_borrowed_temporary(value, into)
+	}
+	if operand, erasing := explicit_erasure_operand(value); erasing {
+		mark_extending_path(c, operand, into)
+		return
 	}
 	#partial switch v in value {
 	case ^Expr_Unary:
@@ -456,6 +463,23 @@ mark_extending_path :: proc(c: ^Compiler, value: Expr, into: ^map[^Expr_Base]boo
 			mark_borrowed_temporary(v.operand, into)
 		}
 	}
+}
+
+// The erased operand of an explicit conversion to `any_view` or `dyn proc`,
+// whose result is that operand.
+explicit_erasure_operand :: proc(value: Expr) -> (Expr, bool) {
+	call, is_call := value.(^Expr_Call)
+	if !is_call || len(call.bound) != 1 || call.bound[0] == nil {
+		return nil, false
+	}
+	if _, conversion := call.operation.(Call_Conversion); !conversion {
+		return nil, false
+	}
+	operand := call.bound[0]
+	if base := expr_base(operand); base == nil || base.erased_from == INVALID_TYPE {
+		return nil, false
+	}
+	return operand, true
 }
 
 // A borrowed value and the projections leading to the temporary holding it:

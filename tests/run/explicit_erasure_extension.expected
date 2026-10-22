@@ -1,0 +1,6 @@
+[4]
+Guard{n = 1} Guard{n = 2} Guard{n = 3}
+drop 3
+drop 2
+drop 1
+2

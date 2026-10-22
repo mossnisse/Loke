@@ -4021,11 +4021,12 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	case Call_Text, Call_Text_Conversion:
 		return prov_text_call(graph, v)
 	case Call_Conversion:
-		// design.md "any_view type": `any_view(value)` is the implicit
-		// conversion written out. Its operand is erased and is the result, so
-		// it borrows the place it views as at an `any_view` destination.
-		if v.type == TYPE_ANY_VIEW && len(v.bound) == 1 && v.bound[0] != nil {
-			return walk_flow_expr(graph, v.bound[0])
+		// design.md "any_view type", "Borrowed callable views": `any_view(value)`
+		// and a `dyn proc` conversion are the implicit conversion written out.
+		// The operand is erased and is the result, so it borrows what it views
+		// as at a typed destination.
+		if operand, erasing := explicit_erasure_operand(v); erasing {
+			return walk_flow_expr(graph, operand)
 		}
 	}
 	if result, handled := prov_builtin_call(graph, v); handled {
