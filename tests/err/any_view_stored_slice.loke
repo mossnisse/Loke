@@ -30,6 +30,14 @@ explicit :: proc(a: []mut int, ys: []mut int) -> int {
 	return v.([]mut int)[0];
 }
 
+// An identity conversion around it is still that conversion.
+nested :: proc(a: []mut int, ys: []mut int) -> int {
+	xs := a;
+	v := any_view(any_view(xs));
+	xs = ys;
+	return v.([]mut int)[0];
+}
+
 // A view of a field borrows the field, read-only, as one of a local does.
 Holder :: struct { items: []mut int }
 

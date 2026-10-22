@@ -364,6 +364,9 @@ checklist.
   `(dyn proc())(proc() capture(&mut n) { ... })` extends the temporary to the
   end of the block, as the implicit conversion does. Using the local was
   `L0513`.
+- An identity conversion around an explicit erasure,
+  `any_view(any_view(make()))` or `(dyn proc())((dyn proc())(...))`, extends
+  the temporary as the single conversion does; using the local was `L0513`.
 
 - `lokec -doc` no longer shows the members of a type private to the package,
   which no importer can reach, such as the 28 members of `core:time`'s `Text`

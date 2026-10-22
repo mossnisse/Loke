@@ -466,7 +466,8 @@ mark_extending_path :: proc(c: ^Compiler, value: Expr, into: ^map[^Expr_Base]boo
 }
 
 // The erased operand of an explicit conversion to `any_view` or `dyn proc`,
-// whose result is that operand.
+// whose result is that operand. Identity conversions wrapped around it are
+// looked through: their result is their operand.
 explicit_erasure_operand :: proc(value: Expr) -> (Expr, bool) {
 	call, is_call := value.(^Expr_Call)
 	if !is_call || len(call.bound) != 1 || call.bound[0] == nil {
@@ -476,8 +477,15 @@ explicit_erasure_operand :: proc(value: Expr) -> (Expr, bool) {
 		return nil, false
 	}
 	operand := call.bound[0]
-	if base := expr_base(operand); base == nil || base.erased_from == INVALID_TYPE {
+	base := expr_base(operand)
+	if base == nil {
 		return nil, false
+	}
+	if base.erased_from == INVALID_TYPE {
+		if base.type != call.type {
+			return nil, false
+		}
+		return explicit_erasure_operand(operand)
 	}
 	return operand, true
 }

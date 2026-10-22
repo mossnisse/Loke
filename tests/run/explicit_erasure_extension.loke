@@ -4,6 +4,7 @@ import "core:fmt";
 // design.md "Temporaries and procedure boundaries": `any_view(value)` and a
 // written `dyn proc` conversion are the implicit conversion written out, so a
 // local receiving one extends the temporary it views to the end of the block.
+// A conversion to the same view type around it is an identity and extends too.
 
 Guard :: struct { n: int }
 impl Guard {
@@ -19,6 +20,8 @@ guard :: proc(n: int) -> Guard { return Guard{n}; }
 main :: proc() {
 	v := any_view(make());
 	fmt.println(v);
+	nested := any_view(any_view(make()));
+	fmt.println(nested);
 	{
 		implicit: any_view = guard(1);
 		explicit := any_view(guard(2));
@@ -30,5 +33,8 @@ main :: proc() {
 	f := (dyn proc())(proc() capture(&mut n) { n += 1; });
 	f();
 	f();
+	fmt.println(n);
+	g := (dyn proc())((dyn proc())(proc() capture(&mut n) { n += 10; }));
+	g();
 	fmt.println(n);
 }
