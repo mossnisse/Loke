@@ -1084,6 +1084,33 @@ syntax exists, and gives milestone 4 the facts it keys on.
 
 ### Milestone 3: the new summaries
 
+**Done**, except the window. `compute_thread_summaries` in
+`global_effects.odin` builds each body's graph once more after the result
+summaries settle and records, per procedure, the reach effect
+(`Compiler.reach_effects`) and the allocator-use effect
+(`Compiler.allocator_uses`), and for the program the drops every thread runs at
+exit (`Compiler.thread_exit_drops`), one per managed `thread_local` owner's
+release and per hook. Each part keeps an `Effect_Source`: the body's own access,
+or the call, witness target, or hook it came through, with any provenance
+precision loss. Unit tests are in `src/thread_summaries_test.odin`.
+
+- **Conservative where the plan left room:** handing a carrier with a global
+  origin to any call, returning it, or storing it counts as reaching through
+  it, rather than consulting per-parameter facts of the callee. A copy of an
+  owner from a place counts as a possible clone from the default provider.
+- **Unknown regions:** a static-duration provider, an allocator read from a
+  global or a received record's field, a temporary provider's parent, and a
+  `thread_local` owner's `via` allocator are an unknown region, as region
+  provenance names them today. Check 9 can reserve them only as a whole.
+- **Off unless wanted:** the pass costs one more graph per body, 10 to 20
+  percent of front-end time in `perf.ps1`, and nothing reads the summaries yet,
+  so it runs only when `Compiler.thread_summaries_wanted` is set. Milestone 4
+  sets it for a program containing a `parallel` block.
+- **Left for milestone 4:** the window needs the `parallel` statement, so it
+  is computed with the hidden join local there.
+
+The plan as written:
+
 The reach effect, allocator-use effect, `thread_local` drop effects, and the
 window, as defined under
 [The summaries the checks read](#the-summaries-the-checks-read).

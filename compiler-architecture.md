@@ -231,6 +231,20 @@ loads through caller storage, substituted through the actual arguments.
 Whole-program global-write effects also apply at calls. Operators without an
 `Expr_Call` use synthesized call events for the selected procedure.
 
+Once the result summaries settle, `compute_thread_summaries` builds each body's
+graph once more to collect the summaries structured concurrency will read
+([The summaries the checks read](concurrency-proposal.md#the-summaries-the-checks-read)):
+the reach effect, from `Reach` events resolved to the globals whose stored
+carriers they touch; the allocator-use effect, per parameter, from the region
+facts at each allocating operation; and the drops every thread runs at exit.
+Both effects settle over the calls the write effects found, so a call through
+a value or a `dyn` slot takes every target's, and each part keeps the call or
+hook it came through for diagnostics. The facts are recorded only while
+`thread_facts_pending` is set, so the other passes do not pay for them, and the
+pass runs only when `thread_summaries_wanted` is set: it adds 10 to 20 percent
+to the front end, which only a program the checks read the summaries for should
+pay.
+
 ### Closed semantic registries
 
 Before emission, the checked program must contain exact map/order policies,
@@ -328,7 +342,7 @@ Paths below are relative to `src/`.
 | `proc_contracts.odin` | Inferred callback result contracts, checked substitution bounds, and immutable borrow arguments. |
 | `precision.odin` | Diagnostic metadata explaining bounded provenance merges without changing acceptance. |
 | `borrow.odin` | Root loans, carrier paths, result summaries, escape contracts, allocator-region analysis, and diagnostics. |
-| `global_effects.odin` | Whole-program global writes and their copy-hook and thread-entry diagnostics. |
+| `global_effects.odin` | Whole-program global writes and their copy-hook and thread-entry diagnostics; the reach and allocator-use effects and thread-exit drops. |
 | `region.odin` | `Arena`/`Scratch` semantic types. |
 
 ### LLVM and toolchain

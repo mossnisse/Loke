@@ -88,6 +88,9 @@ Prov_Root :: struct {
 	name:   string,
 	// `Param`: which borrowed parameter, for substitution at a direct call.
 	param_index: int,
+	// What another body may have stored in a global: that global, so the reach
+	// effect can tell whose stored carriers a borrow came from.
+	origin: Symbol_Id,
 	// A `Param` that reaches caller storage: per load depth, the `content` loan
 	// standing for what that many loads through it read. The last stands for
 	// every depth from its own on.
@@ -737,6 +740,56 @@ merge_region_provenance :: proc(into: ^Region_Set, from: Region_Set) -> bool {
 	return changed
 }
 
+// concurrency-proposal.md "The summaries the checks read": the regions a
+// procedure may allocate from, resize or free in, reset, or destroy. A
+// parameter's is whatever each caller passes, and the call substitutes it; a
+// region the body creates is its own, and only its provider's parent, where
+// the provider draws and returns blocks, is a caller's concern
+// (`prov_caller_region`). `regions` never names a local.
+Allocator_Use :: struct {
+	regions: Region_Set,
+	// Where each part comes from: one per parameter, then the default
+	// provider's region and an unknown one.
+	param_sources:  []Effect_Source,
+	default_source: Effect_Source,
+	unknown_source: Effect_Source,
+}
+
+new_allocator_use :: proc(param_count: int, allocator: mem.Allocator) -> Allocator_Use {
+	count := max(param_count, 1)
+	return Allocator_Use {
+		regions       = Region_Set{params = make([]bool, count, allocator)},
+		param_sources = make([]Effect_Source, count, allocator),
+	}
+}
+
+allocator_use_is_empty :: proc(use: Allocator_Use) -> bool {
+	return use.regions.params == nil || region_is_empty(use.regions)
+}
+
+// Adds what `set` names, each part new to `into` attributed to `source`.
+merge_allocator_use :: proc(into: ^Allocator_Use, set: Region_Set, source: Effect_Source) -> bool {
+	grew := false
+	for wanted, index in set.params {
+		if wanted && index < len(into.regions.params) && !into.regions.params[index] {
+			into.regions.params[index] = true
+			into.param_sources[index] = source
+			grew = true
+		}
+	}
+	if set.default && !into.regions.default {
+		into.regions.default = true
+		into.default_source = source
+		grew = true
+	}
+	if (set.unknown || set.crowded || set.locals != 0) && !into.regions.unknown {
+		into.regions.unknown = true
+		into.unknown_source = source
+		grew = true
+	}
+	return grew
+}
+
 // ------------------------------------------------------- result summaries --
 
 // The root component of a result-provenance summary (design.md "Temporaries
@@ -1219,6 +1272,9 @@ analyze_program_provenance :: proc(k: ^Checker) {
 		}
 	}
 	check_proc_contracts(k)
+	if k.c.thread_summaries_wanted {
+		compute_thread_summaries(k)
+	}
 	for body in k.c.checked_bodies {
 		if body.clean {
 			analyze_provenance(k, body.literal)
@@ -1562,6 +1618,73 @@ analyze_provenance :: proc(k: ^Checker, literal: ^Expr_Proc) {
 		return
 	}
 	solve_provenance(k, graph)
+}
+
+// concurrency-proposal.md "The summaries the checks read": the globals whose
+// stored carriers the body itself reaches, from each `Reach` event and from
+// what it returns or stores where another body may reach through it. A
+// global's stored carrier is a loan of its existing content, a loan of the
+// global's own storage when that holds carriers, or the global's own slot,
+// which another call may have refilled. A `@(synchronized)` variable's package
+// vouches for every access through it.
+body_global_reach :: proc(k: ^Checker, graph: ^Flow_Graph, out: ^[dynamic]Global_Effect) {
+	state := Prov_State{graph = graph, k = k}
+	if !prepare_state(&state) {
+		return
+	}
+	solve_reaching(&state)
+	for block in graph.blocks {
+		if !block.prov_visited {
+			continue
+		}
+		copy(state.reach, block.reach_entry)
+		copy(state.precision, block.precision_entry)
+		copy(state.ended, block.ended_entry)
+		for event in block.prov {
+			#partial switch event.kind {
+			case .Reach, .Escape, .Retain, .Publish:
+				for slot in event.sources {
+					note_reached_globals(&state, slot, event.span, out)
+				}
+			}
+			run_prov_event(&state, event, state.reach, state.ended)
+		}
+	}
+}
+
+@(private = "file")
+note_reached_globals :: proc(state: ^Prov_State, slot: int, span: Span, out: ^[dynamic]Global_Effect) {
+	graph := state.graph
+	c := state.k.c
+	source := Effect_Source{span = span, precision = state.precision[slot]}
+	add_reached_global(c, out, graph.prov_slots[slot].symbol, source)
+	row := reach_row(state, state.reach, slot)
+	for index in 0 ..< state.loans {
+		if !bit_get(row, index) {
+			continue
+		}
+		root := graph.roots[int(graph.loans[index].root)]
+		if root.origin != INVALID_SYMBOL {
+			add_reached_global(c, out, root.origin, source)
+		} else if root.kind == .Static || root.kind == .Thread_Local {
+			add_reached_global(c, out, root.symbol, source)
+		}
+	}
+}
+
+@(private = "file")
+add_reached_global :: proc(c: ^Compiler, out: ^[dynamic]Global_Effect, global: Symbol_Id, source: Effect_Source) {
+	sym := symbol_of(c, global)
+	if sym == nil || sym.kind != .Var || !symbol_outlives_bodies(sym) || sym.synchronized ||
+	   !type_carries_borrow(c, sym.type).any {
+		return
+	}
+	for existing in out {
+		if existing.global == global {
+			return
+		}
+	}
+	append(out, Global_Effect{global = global, source = source})
 }
 
 @(private = "file")

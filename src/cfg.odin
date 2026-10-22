@@ -266,6 +266,9 @@ Prov_State :: struct {
 	effect_stores: [dynamic]Effect_Store,
 	// `thread.spawn` calls, kept on the graph so a repeated pass notes each once.
 	thread_spawns: [dynamic]Thread_Spawn,
+	// The allocator use this body's own operations make, while the thread
+	// summaries collect (`prov_note_allocator_use`).
+	allocator_use: Allocator_Use,
 	callee_expr:   Expr,
 	// design.md "Allocator regions and region provenance".
 	region_of:       map[Symbol_Id]Region_Set,
@@ -949,7 +952,7 @@ unwind_drop_effects :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span, exit:
 	if !live.reached || slice.contains(live.dead, id) {
 		return
 	}
-	prov_drop_effects(graph, sym.type, span, identifier_text(graph.k.c, sym.name))
+	prov_drop_effects(graph, sym.type, span, identifier_text(graph.k.c, sym.name), region = prov_symbol_drop_region(graph, id))
 }
 
 // A local holding a provider ends its region when it is cleaned up, dropped,
@@ -2054,6 +2057,7 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 			walk_flow_expr(graph, v.rhs)
 			if prov {
 				prov_operator_effects(graph, v)
+				prov_note_fresh_owner(graph, v)
 			}
 		}
 
@@ -2234,6 +2238,9 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 		// A non-empty container literal evaluates its destination's `via` first.
 		if len(v.elements) > 0 {
 			walk_flow_expr(graph, v.via)
+			if prov && (underlying_kind(graph.k.c, v.type) == .Dynamic_Array || underlying_kind(graph.k.c, v.type) == .Map) {
+				prov_note_fresh_owner(graph, v, v.via)
+			}
 		}
 		if prov {
 			if content := prov_temp_content(graph, v.type); len(content) > 0 {

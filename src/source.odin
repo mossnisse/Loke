@@ -299,6 +299,19 @@ Compiler :: struct {
 	indirect_writes:     map[string][]Symbol_Id,
 	global_writes_ready: bool,
 	thread_spawns:       [dynamic]Thread_Spawn,
+	// The bodies the write effects settled over, for the summaries after them.
+	effect_program:      Effect_Program,
+	// concurrency-proposal.md "The summaries the checks read": per body, the
+	// globals whose stored carriers it may reach and the allocator regions it may
+	// use; and what every thread runs when it exits, a `thread_local` owner's
+	// drop. Settled after the result summaries, while `thread_facts_pending`,
+	// and only when `thread_summaries_wanted`: the pass costs a graph per body,
+	// so only a program that a check reads them for pays for it.
+	thread_summaries_wanted: bool,
+	reach_effects:        map[Symbol_Id][]Global_Effect,
+	allocator_uses:       map[Symbol_Id]Allocator_Use,
+	thread_exit_drops:    []Thread_Exit_Drop,
+	thread_facts_pending: bool,
 
 	// Static-duration locals, in declaration order. They need module-level
 	// storage, which cannot be written inside a function body, so the checker
