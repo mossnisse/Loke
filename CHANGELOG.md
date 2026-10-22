@@ -260,6 +260,14 @@ checklist.
   `chunks_mut`, lets tasks log and print, and records the open
   thread-contract questions. Still a proposal only.
 
+- Made the structured concurrency proposal
+  [ready for implementation](concurrency-proposal.md#implementation-plan).
+  It declares synchronized state with `@(synchronized)` and thread-crossing
+  parameters with `@(cross_thread)` instead of recognizing names, defines the
+  new effect summaries and the lowering onto `core:thread`, and plans five
+  milestones with their spec, compiler, and test changes. Accepted language
+  behavior is unchanged.
+
 - The language server's `loke.documentation` command answers with the
   interface file `-api` writes for the document's package, instead of the
   `-doc` Markdown page for its root. The VS Code extension's **Loke: Show

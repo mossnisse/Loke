@@ -1,16 +1,26 @@
 # Structured concurrency: a proposal
 
-Status: **proposal**. Nothing here is accepted syntax or behavior yet;
-[design.md](design.md) stays normative. This answers
+Status: **ready for implementation**. Every decision the first
+implementation needs is settled here, and the
+[implementation plan](#implementation-plan) says what each milestone changes.
+Nothing here is accepted syntax or behavior yet: [design.md](design.md) and
+[grammar.md](grammar.md) stay normative, and each milestone moves its part of
+this text into them in the same commit as the compiler change, as
+[AGENTS.md](AGENTS.md) requires. This answers
 [Thread transfer needs a visible contract](open-questions.md#thread-transfer-needs-a-visible-contract)
 and part of [Concurrency refinements](open-questions.md#concurrency-refinements).
 
 This revision incorporates the
 [pre-implementation review](open-questions.md#structured-concurrency-proposal-review-2026-10-22)
-and the [follow-up review](open-questions.md#structured-concurrency-follow-up-review-2026-10-22).
-The initial feature is lexical fork/join with statically known spawned calls
-and results assigned to dead outer locals. Channels, cancellation-aware waiting,
-and pools follow as separate library additions under the contracts below.
+and the [follow-up review](open-questions.md#structured-concurrency-follow-up-review-2026-10-22),
+and settles the thread-crossing and synchronization declarations they left
+open, as [recorded](open-questions.md#structured-concurrency-implementation-readiness-2026-10-22)
+with the questions that pass raised. The initial feature is lexical
+fork/join with statically known spawned calls and results assigned to dead
+outer locals. Channels, cancellation-aware
+waiting, and pools follow as separate library additions under the contracts
+below; [later extensions](#later-extensions) lists what stays undecided, none
+of which blocks the first implementation.
 
 ## Contents
 
@@ -22,11 +32,12 @@ and pools follow as separate library additions under the contracts below.
 - [New checks](#new-checks)
 - [Procedure summaries](#procedure-summaries)
 - [What the checks buy](#what-the-checks-buy)
+- [Lowering](#lowering)
 - [Waiting for work](#waiting-for-work)
 - [Rejected programs](#rejected-programs)
 - [What it does not do](#what-it-does-not-do)
-- [Open choices](#open-choices)
-- [Order of work](#order-of-work)
+- [Later extensions](#later-extensions)
+- [Implementation plan](#implementation-plan)
 
 ## The idea
 
@@ -89,7 +100,9 @@ elements under the initial thread-per-spawn executor.
 - `spawn result = call;` assigns the returned value to `result` on the worker.
   Initially `result` must name a dead lexical local declared outside the
   block. Fields, indices, destructuring, `_`, and replacement of a live value
-  are not result destinations. Its storage is reserved exclusively until
+  are not result destinations. The call must have one result, of exactly the
+  local's declared type: no implicit conversion runs on the worker, and a
+  multiple-result call has no destination. Its storage is reserved exclusively until
   joining: the parent cannot read, borrow, assign, move, or drop it, even if
   the worker has already completed. There can be only one assigning spawn
   for that local on an executed path before joining. No zero value or copy
@@ -114,7 +127,8 @@ elements under the initial thread-per-spawn executor.
   [Failure and cleanup](#failure-and-cleanup). `spawn call or_return;` is not
   supported, and a fallible result cannot be silently discarded by a bare spawn.
 - `parallel (executor) { ... }` is the later pool form; see
-  [Waiting for work](#waiting-for-work). The initial implementation accepts
+  [Waiting for work](#waiting-for-work). The initial implementation parses the
+  header, so the syntax is reserved, and rejects it in the checker: it accepts
   only `parallel { ... }`. An executor is selected lexically, never inherited
   implicitly by a helper or nested block.
 - `spawn` appears only lexically inside a `parallel` block of the same
@@ -123,6 +137,11 @@ elements under the initial thread-per-spawn executor.
   A `defer` or `errdefer` body may not contain `spawn`, as it may not contain
   `return`: a deferred spawn would start a task during cleanup, possibly while
   unwinding, where a failure to start one aborts.
+- A `parallel` block cannot run during
+  [compile-time evaluation](design.md#compile-time-procedure-evaluation): reaching one
+  there is a compile-time evaluation error, as calling a foreign procedure is.
+  Running its tasks serially is not a faithful substitute (see
+  [What the checks buy](#what-the-checks-buy)).
 
 Proposed grammar additions, using [grammar.md](grammar.md#expressions):
 
@@ -282,30 +301,50 @@ Threads add what one thread cannot do. These checks are new:
    view at the spawn is checked through its concrete type; a `dyn` view that
    arrives already erased hides its captures and requires exclusive access,
    as well as the transfer eligibility required by check 8.
-   Only compiler-recognized synchronizing operations may mutate shared state
-   through a read-only receiver: `Atomic`, `Mutex`, and `Once`, extended to
-   `Channel` and cancellation state when those libraries are added. This is an
-   inferred sharing check; omitting a user-written `Sync` interface does not
-   remove the check.
+   This is an inferred sharing check; omitting a user-written `Sync` interface
+   does not remove it.
 
-   A synchronizing operation counts as a write against every other kind of
-   access. While a synchronized value is shared with a live task, no
-   participant may read or write its ordinary fields, such as the public
-   `value` of `Atomic(T)` or `Mutex(T)`, directly. Those fields serve a caller
-   that owns the value outright, before the first spawn that shares it or after
-   the join. Within one thread a plain read and an atomic operation are ordered,
-   which is why the one rule lets them coexist; across tasks they race:
+   Checked code cannot write through a read-only receiver except by an atomic
+   operation, or by a cast through `unsafe` such as `Mutex`'s guard performs.
+   The state tasks can change through a shared borrow is therefore the storage
+   those operations reach, and its declaring package marks each field holding
+   it **`@(synchronized)`**: `Atomic(T).value` and `Mutex(T).value` now, and
+   the private state of `Channel` and `Stop_Source` when they are added.
+   `Once` needs no mark, since its only field is a private `Atomic`.
+
+   Outside the package that declares it, any access to a synchronized field —
+   read, write, or borrow — requires exclusive access to the record holding
+   it: an owner with no live loan, or a path through `^mut`, `[]mut`, or
+   `inout`. Through a read-only borrow it is an error, with or without tasks,
+   and while the owner is lent read-only, to a task or otherwise, a direct
+   access through the owner is an error too. A synchronizing operation thus
+   counts as a write against every plain access, reads included. Within one
+   thread a plain read and an atomic operation are ordered, but across tasks
+   they race:
 
    ```loke
    hits: sync.Atomic(int) = {};
    parallel {
        spawn count_into(&hits, xs);   // hits.add(1) through `^`
-       fmt.println(hits.value);       // ERROR: plain read of `hits` while a task may update it
+       fmt.println(hits.value);       // ERROR: `value` is synchronized, and `hits` is lent to a task
    }
    ```
+
+   The declaring package's own code is trusted to synchronize its accesses, as
+   `Guard.get` does under the lock; that is the `unsafe` boundary it already
+   crosses. Taking a synchronized field's address only to convert it to
+   `rawptr` is not an access either: `Mutex.lock` hands
+   `rawptr(&self.word.value)` to the system lock from outside `core:sync`, and
+   what a raw pointer does is the raw-pointer trust boundary. The rule
+   enforces what both fields' documentation already says, that they serve a
+   caller owning the value outright, and the compiler keys
+   on the attribute rather than on the names `Atomic` and `Mutex`. It rejects
+   a plain read through `^Atomic(T)` that compiles today, so the release that
+   adds it needs an [upgrade note](releasing.md#upgrade-notes).
 6. **Check global access, including stored aliases.** From the first spawn to
-   the join, neither a spawned call's [write effect](design.md#global-write-effects) nor
-   the block's own statements may write file-scope or `static` storage. This is
+   the join, the block's [window](#the-summaries-the-checks-read), neither a
+   spawned call's [write effect](design.md#global-write-effects) nor the
+   block's own statements may write file-scope or `static` storage. This is
    an error, where `thread.spawn` gets a warning. Existing write effects exclude
    writes through pointers or views stored in globals, so they are insufficient.
    A new conservative effect also records access through global borrow carriers,
@@ -318,19 +357,20 @@ Threads add what one thread cannot do. These checks are new:
 
    Both effects propagate through calls, callbacks, implicit hooks, and cleanup,
    including worker TLS destruction on thread exit. They apply to the parent
-   while tasks are live as well as to every task. Synchronizing operations on
-   `Atomic`, `Once`, `Mutex`, and later channel and cancellation state are
-   allowed; access to a mutex's
-   payload must be through its guard. Their ordinary fields receive no
-   exemption. A thread's own TLS may be mutated, but a carrier stored there
-   must not hide unsynchronized access to shared storage. Apply the same carrier
-   check to such access; TLS duration alone does not make its pointee local.
+   while tasks are live as well as to every task. An atomic operation, and the
+   declaring package's access to a `@(synchronized)` field, is not a write
+   here, as under [Global write effects](design.md#global-write-effects) today;
+   access to a mutex's payload must be through its guard. Other access to a
+   synchronized field gets no exemption. A thread's own TLS may be mutated,
+   but a carrier stored there must not hide unsynchronized access to shared
+   storage. Apply the same carrier check to such access; TLS duration alone
+   does not make its pointee local.
 
    Two consequences need stating. First, a `Once` action's own writes are not
    exempt: lazy setup of a file-scope value through `once.do(load)` writes that
    value, so a task that may run it is rejected. Initialize before the first
-   spawn, or pass the value as an argument; a checked form is an
-   [open choice](#open-choices). Second, under thread-per-spawn a task's
+   spawn, or pass the value as an argument; a checked form is a
+   [later extension](#later-extensions). Second, under thread-per-spawn a task's
    completion includes its thread's TLS destruction, so every task carries the
    effects of every managed `thread_local` drop in the program. One
    `thread_local` owner, in any package, whose drop hook writes a global
@@ -339,14 +379,27 @@ Threads add what one thread cannot do. These checks are new:
 
    Calls through the build-selected
    [providers](design.md#build-selected-providers) are a stated trust boundary,
-   not a global-carrier access. `core:log` dispatches through a file-scope
-   `dyn mut` handle, which this check would otherwise reject in every task that
-   logs. A provider is published before `main` and never replaced, and its
-   thread safety is already the provider's responsibility; the standard logger
-   serializes with a `Mutex`. This proposal makes that a requirement: a logging
-   provider must accept concurrent records, and the default allocator provider
-   must accept concurrent use (check 9). The compiler does not verify it.
-   Whether selection should declare it is an [open choice](#open-choices).
+   not a global-carrier access. `core:log` dispatches through its file-scope
+   `selected: Option(Logger)`, a `dyn mut` handle, which this check would
+   otherwise reject in every task that logs. A provider is published before
+   `main` and never replaced, and its thread safety is already the provider's
+   responsibility; the standard logger serializes with a `Mutex`. This
+   proposal makes that a requirement: a logging provider must accept
+   concurrent records, and the default allocator provider must accept
+   concurrent use (check 9). The compiler does not verify it. Whether
+   selection should declare it is a [later extension](#later-extensions).
+
+   The boundary is declared, not inferred from names. `@(synchronized)` on a
+   file-scope or `static` variable says its package vouches for every access
+   to it and through every carrier stored in it: the package's own accesses
+   are not writes for this check, and access through its stored carriers is
+   not a global-carrier access. Since no variable is
+   [public](design.md#public), only the declaring package's code reaches one
+   directly, and others reach it through what that package's procedures
+   return, such as `log.current()`. `core:log` marks `selected`. The standard
+   sink needs nothing: `standard_logger` already builds its view from a raw
+   address so no global write is recorded. Allocator operations are governed by
+   check 9, not by this one.
 7. **Check borrow transfers in both directions.** A borrow rooted in
    `thread_local` storage cannot cross between parent and worker, even with a
    persistent pool. This applies recursively to arguments, receivers, captures,
@@ -405,7 +458,7 @@ Threads add what one thread cannot do. These checks are new:
    may use it, and a second task or the parent using it is rejected. A library
    therefore cannot hand one caller-supplied allocator to several tasks, even
    when every caller passes the default provider; that needs a concurrency
-   contract on the parameter, an [open choice](#open-choices). Unknown region
+   contract on the parameter, a [later extension](#later-extensions). Unknown region
    provenance, from unchecked code, remains an explicit trust boundary and is
    not evidence of independence.
    Debug overlap checks in `Arena` and `Scratch` supplement these rules; they
@@ -417,15 +470,29 @@ and the complete region rule — apply to `thread.spawn`, which keeps
 also meet the channel's stricter retention requirement below.
 
 `thread.spawn`, `Channel.send`, and a pool's submission are ordinary library
-procedures, so the checks need a declaration to key on rather than a list of
-names. A parameter attribute in the manner of `@(escape=...)`, spelling open,
-marks an argument that crosses to another thread. The compiler applies checks
-7 to 9 to every argument so marked, wherever it is declared, so a user-written
-thread wrapper or executor is checked as `thread.spawn` is. A foreign or
-`unsafe` wrapper that omits the attribute crosses threads unchecked, which
-is the raw-pointer trust boundary again. The synchronizing operations of
-check 5 likewise need a declaration rather than recognition by name; that is
-part of the same [open choice](#open-choices).
+procedures, so the checks key on a declaration rather than a list of names.
+The parameter attribute **`@(cross_thread)`** marks an argument that crosses to
+another thread:
+
+- On a `move` parameter, which must also be `@(escape=static)`, it applies
+  checks 7 to 9 to the argument at every call. Nothing shorter than the
+  process can bound an unstructured thread, so a borrowed parameter cannot
+  carry it; a pool's scoped submission will need its own rule.
+- On a parameter of procedure type, it says the procedure runs on another
+  thread. Its target's write effect then gets the existing warning
+  (`L0707`), which `global_effects.odin` today raises only for
+  `thread.spawn` by name. A procedure value cannot carry state, so checks 7
+  to 9 have nothing more to inspect.
+- On any other parameter, or on a foreign procedure's parameter, it is an
+  error.
+
+`thread.spawn_with` marks both `entry` and `arg`, and `spawn_plain` marks
+`entry`. A user-written thread wrapper or executor that marks its parameters
+is checked as `thread.spawn` is. A foreign or `unsafe` wrapper that omits the
+attribute crosses threads unchecked, which is the raw-pointer trust boundary
+again. Together with `@(synchronized)` under check 5, this settles the
+declaration question the follow-up review left open: the compiler recognizes
+no concurrency type or procedure by name.
 
 Applying checks 7 to 9 to `thread.spawn` rejects programs that compile today:
 a `thread_local` borrow, a thread-affine value, or an owner whose provider
@@ -454,6 +521,37 @@ Two kinds of call need different treatment:
   effects above use the same whole-program union. Without it no task could
   print (`core:fmt` reaches `format` methods through `any_view`), call
   `once.do(action)`, or pass a comparison procedure to `slice.sort_by`.
+
+### The summaries the checks read
+
+Each is a whole-program fact per procedure, settled to a fixed point over
+recursion like the existing summaries, and taken through calls, callbacks,
+hooks, and cleanup as [Global write effects](design.md#global-write-effects)
+already does. Only the second and third are new.
+
+| Summary | What it holds | Status |
+| --- | --- | --- |
+| Write effect | Globals a procedure may write, invalidate, or borrow mutably | Exists in `global_effects.odin` |
+| Reach effect | Globals whose *stored carriers* a procedure dereferences, indexes, slices, calls, or dispatches through | New |
+| Allocator-use effect | Regions on which a procedure may allocate, resize, free, reset, or destroy, per parameter or captured region | New; reset is the existing [`@(allocator_reset)`](design.md#allocator_reset) fact |
+| Result contract | Root and region provenance of results and written-back arguments | Exists in `borrow.odin` |
+| Transfer facts | Whether a value's type reaches a `thread_local` borrow, a thread-affine type, or an erased value of unknown eligibility | New, per type, not per procedure |
+
+The reach effect gives a carrier loaded from global storage a provenance
+origin naming that global, as `content_loans` does for loads through caller
+storage, and records every access through a value of that origin, after
+copies into locals and through helper arguments and results. During a block's
+window, for each global reached by a task or by the parent, every carrier path
+of the global's declared type must be read-only in the sense of check 5: no
+`^mut`, `[]mut`, `dyn mut`, `&mut` capture, `dyn`, or `any_view`. A reached
+`thread_local` global is held to the same rule. Raw pointers stored in globals
+stay a trust boundary, and a `@(synchronized)` variable is exempt.
+
+The **window** of a block is every program point inside it reachable from an
+executed `spawn`, including its cleanup, up to the join. Statements before the
+first `spawn` on every path are outside it, so a block may set up globals and
+then spawn. The checks of 6 and 9 that apply "from spawn to join" use this
+definition, computed on the `Prov_Diagnose` control-flow graph.
 
 The union is conservative: one compatible procedure anywhere in the program
 that writes a global puts that write in every such call's effect. Diagnostics
@@ -498,6 +596,61 @@ or wait observes it.
 For a thread-per-spawn executor, completion includes that thread's normal TLS
 destruction. A persistent pool retains its TLS between tasks; joining a block
 does not destroy the worker's TLS.
+
+## Lowering
+
+The runtime side is ordinary Loke in `core:thread`, as `thread.spawn` is
+today; no new C runtime entry point is needed. The package gains a private
+task scope that the compiler names through a registered lifecycle operation,
+not by lookup from user code:
+
+```text
+Task_Scope :: move_only struct          // private to core:thread
+Task_Scope.start(self: inout, run: proc(frame: rawptr), frame: rawptr)
+                                        // reserves a slot, then creates the thread
+hook(drop) on Task_Scope                // joins every started thread, in start order
+```
+
+- **The block.** Entering `parallel` initializes a hidden `Task_Scope` local
+  with a zero value: no allocation until the first spawn. Its drop is the
+  join, ordered by [rule 3](#rules-from-existing-rules) after the block's own
+  cleanup. The scope's drop needs no flag: it is always initialized.
+- **Each spawn site.** Checking a spawn synthesizes a frame record and a run
+  procedure, much as [capture literals](design.md#capture-literals) lower to a
+  record and a `call` method in `capture.odin`. The frame holds the prepared
+  callee receiver, the arguments (copied, moved, or as borrows), the
+  argument temporaries, and, for `spawn result = call`, a `^mut` to the
+  result local. The run procedure performs the call, writes the result
+  through that pointer with `unsafe.write`, since the local is dead, drops the
+  frame's remaining contents, and frees the frame.
+- **Registration.** `start` first grows the scope's thread list so the next
+  append cannot fail; growth failure panics while the parent still owns the
+  frame, whose contents the unwind then drops. It then creates the thread;
+  creation failure takes the frame back, as `spawn_with` does today, and
+  panics. Only then does it append the handle. This is the
+  [ordering contract](#failure-to-start-a-task): either the task is owned and
+  joined, or it never runs.
+- **Result initialization.** A task that is registered completes unless the
+  program ends, since a worker's panic terminates the program. So a result
+  local is initialized after the join exactly when its spawn registered. The
+  lifecycle analysis records that with the ordinary dynamic initialization
+  flag, set by the parent right after `start` returns, and the enclosing
+  scope drops the result through that flag on every exit, unwinding
+  included. No runtime completion tracking is needed.
+- **Frames.** A frame is allocated from the default allocator, which check 9
+  already requires to accept concurrent use, and freed on the worker. A frame
+  outlives the spawn statement, so spawns in a loop need no per-iteration
+  stack slot.
+- **Threads.** Each task runs through the existing `thread_main`, which
+  attaches to the runtime's panic state and runs the thread's `thread_local`
+  drops before exit. Waiting for the thread handle therefore orders TLS
+  destruction before the join returns, as
+  [What the checks buy](#what-the-checks-buy) requires.
+
+Emission follows the [recorded operations](compiler-architecture.md#one-annotated-ast):
+the checker records the synthesized frame type, run procedure, and scope
+operations on the statement nodes, enrolls them as committed artifacts, and
+`emit_llvm_stmt.odin` lowers the recorded operations without lookup.
 
 ## Waiting for work
 
@@ -760,6 +913,13 @@ parallel { spawn use_config(); }         // ERROR: the `Once` action writes `con
 parallel {
 	defer spawn flush();                 // ERROR: no `spawn` in a deferred statement
 }
+
+peek :: proc(hits: ^sync.Atomic(int)) -> int {
+	return hits.value;                   // ERROR: `value` is synchronized; use `hits.load()`
+}
+
+submit :: proc(@(cross_thread) job: move Job) { ... }
+                                         // ERROR: `@(cross_thread)` needs `@(escape=static)`
 ```
 
 Here `allocate_work` allocates through its `Allocator` argument, and `work`
@@ -777,7 +937,7 @@ parallel {
 
 parallel {
 	spawn work(0, data);
-	log.info("started");                 // provider calls are a stated trust boundary
+	log.info("started");                 // `log.selected` is `@(synchronized)`
 }
 ```
 
@@ -797,12 +957,12 @@ parallel {
   a flag is sufficient only for computations that check it without blocking.
 - `thread_local` storage a task touches is that of whichever thread runs it.
 
-## Open choices
+## Later extensions
 
 The initial spelling, thread-per-spawn default, panic-on-submission-failure
-policy, and join during parent unwinding are chosen within this proposal.
-They are still subject to acceptance with the proposal as a whole. Remaining
-extensions are:
+policy, join during parent unwinding, and the `@(synchronized)` and
+`@(cross_thread)` declarations are decided here. These remain open, and none
+blocks milestones 1 to 5 of the [implementation plan](#implementation-plan):
 
 1. **Indirect call contracts.** How to encode and expose the
    [procedure summaries](#procedure-summaries) without losing facts through
@@ -811,74 +971,197 @@ extensions are:
 2. **Recoverable submission.** How to return arguments after failure to
    start a task, without confusing submission failure with worker failure.
 3. **Richer result destinations.** Whether live replacement, fields, indices,
-   or destructuring justify their evaluation, initialization, and cleanup
-   rules. The initial form intentionally supports only dead outer locals.
+   destructuring, or an implicit conversion on the worker justify their
+   evaluation, initialization, and cleanup rules. The initial form supports
+   only dead outer locals of the call's exact result type.
 4. **Channel items carrying borrows.** A later retention rule for the
    read-only `send` receiver; process-duration retention remains the initial
    contract. Also defer rendezvous channels and nondefault queue allocators.
 5. **Blocking-aware pools.** Whether to compensate for waits or provide a
    separate executor. Fixed pools initially make only the limited progress
-   guarantee above.
-6. **Thread-crossing and synchronization declarations.** The spelling of the
-   parameter attribute that marks an argument crossing threads, and how a
-   library declares its synchronizing operations instead of the compiler
-   recognizing `Atomic`, `Mutex`, `Once`, and `Channel` by name.
-7. **Provider and allocator thread contracts.** Whether a build-selected
+   guarantee above. A pool's scoped submission also needs a crossing rule for
+   borrowed arguments, which `@(cross_thread)` does not give.
+6. **Provider and allocator thread contracts.** Whether a build-selected
    allocator or logging provider must declare that it accepts concurrent use,
    so the compiler checks it instead of trusting it. Whether an `Allocator`
    parameter can promise a concurrent region, so a library can share a
    caller's allocator among tasks.
-8. **Checked lazy initialization.** Whether a `sync.Once(T)` or similar that
+7. **Checked lazy initialization.** Whether a `sync.Once(T)` or similar that
    owns its value, as `Mutex(T)` does, should replace `Once` guarding separate
    file-scope storage, so tasks can run lazy setup.
 
-## Order of work
+## Implementation plan
 
-1. Compiler-known `split_at_mut`, from
-   [Provide checked disjoint access](open-questions.md#provide-checked-disjoint-access),
-   and `chunks_mut`, specified under [Waiting for work](#waiting-for-work).
-   Without them, tasks cannot each take a mutable piece of one slice.
-2. The checking model for statically resolved spawned calls: the scope-owned
-   join, argument copying, result initialization and provenance, checks 5 to 9,
-   and propagation through all reachable calls and cleanup, using the
-   whole-program union for indirect calls. Global-carrier access and allocator
-   lifecycle exclusion are prerequisites for checked concurrency, not
-   follow-up safety improvements. The thread-crossing attribute lands here
-   too, with the `thread.spawn` upgrade note.
-3. `parallel`, `spawn call`, and `spawn result = call`: parser and lowering
-   onto a thread-per-spawn runtime in [`core:thread`](standard-library.md#corethread).
-   Include atomic task registration and failed-submission cleanup. Keep the
-   feature unavailable to ordinary checked programs until the checks above
-   are enforced together.
-4. Validate the rules with acceptance and rejection tests before adding other
-   executors: return an outer slice and keep its loan after the join; reject TLS
-   results, temporary-backed results, thread-affine results, and nested error
-   payloads carrying them; reject races through global carriers and copied
-   allocator handles; check moved-owner drops, completed result cleanup, parent
-   cleanup, and shared parent allocators. Reject live or repeated result
-   destinations. Test conditional spawns for definite assignment, all early
-   exits, enclosing `errdefer` on explicit post-join propagation, and injected
-   submission failure after a successful spawn. Check that ordinary calls
-   named `parallel` and `spawn` still parse, and that a parenthesized
-   `parallel` literal does. Accept a loop index copied into each task and a
-   task that logs or prints. Reject a plain read of a shared `Atomic`'s
-   `value`, a received allocator handed to two tasks, a task running a `Once`
-   action that writes a global, a `spawn` in a deferred statement, and a
-   `thread_local` drop hook that writes a global, with a diagnostic naming
-   the hook.
-5. Extend callable support only after summaries preserve every needed fact.
+Each milestone is one or more commits that leave `.\test-all.ps1` passing and
+update the documents [AGENTS.md](AGENTS.md) lists in the same commit as the
+behavior. Milestones 1 to 3 are useful on their own and ship as they land.
+Milestone 4 lands behind a gate; milestone 5 removes it. File names follow the
+[source-code map](compiler-architecture.md#source-code-map).
+
+### Milestone 1: disjoint slice access
+
+`split_at_mut` and `chunks_mut`, as specified under
+[Provide checked disjoint access](open-questions.md#provide-checked-disjoint-access)
+and [Waiting for work](#waiting-for-work). Without them tasks cannot each take
+a mutable piece of one slice.
+
+- **Spec:** both members under [Slices](design.md#slices), and the
+  `chunks_mut` exception under
+  [By-reference iteration](design.md#by-reference-iteration).
+- **Compiler:** the member table in `slice.odin`; one mutable reborrow of the
+  source for the result's carrier paths in `borrow.odin`; yielded chunks
+  rooted in the source rather than the iterator in `iteration_mutable.odin`;
+  lowering in `emit_llvm_calls.odin` and `emit_llvm_iteration.odin`.
+- **Tests:** in `tests/run`, both halves written while live and chunks held
+  past their loop. In `tests/err`, a write through the source, reallocation
+  of its owner, a half retained beyond the source, and a use of the source
+  while a chunk is live. A `chunks_mut(0)` panic in `tests/trap`.
+- **Changelog:** Added.
+
+### Milestone 2: thread declarations
+
+`@(synchronized)`, `@(cross_thread)`, and `@(thread_affine)`, applied to
+`thread.spawn`. This makes today's unstructured threads safer before any new
+syntax exists, and gives milestone 4 the facts it keys on.
+
+- **Spec:** three entries under
+  [Attribute reference](design.md#attribute-reference), and their categories
+  under [Attribute categories](design.md#attribute-categories). In
+  [Concurrency and the memory model](design.md#concurrency-and-the-memory-model),
+  replace "Its plain `value` field keeps the ordinary rules" with the
+  synchronized-field rule of check 5, and state checks 7 and 8 for crossing
+  arguments. Key the warning in
+  [Global write effects](design.md#global-write-effects) on `@(cross_thread)`.
+  Narrow the thread bullets of [What is not checked](design.md#what-is-not-checked).
+- **Compiler:** validation in `attributes.odin`; `thread_affine` propagation
+  beside `move_only` in `hooks.odin`; the exclusive-access rule for
+  synchronized fields at place access in `borrow.odin`; the `@(synchronized)`
+  variable exemption and an attribute-keyed `note_thread_spawn` in
+  `global_effects.odin`, removing its package-and-name test; transfer facts
+  (TLS borrows, thread-affine reach, erased eligibility) per type, checked at
+  each `@(cross_thread)` argument in `borrow.odin`. With `@(escape=static)`
+  only process-lifetime regions can cross, so check 9 here reduces to
+  rejecting a region whose provider has no cross-thread contract.
+- **Library:** mark `sync.Atomic(T).value`, `thread.Mutex(T).value`, and
+  `log.selected` `@(synchronized)`, and the parameters of `spawn_with` and
+  `spawn_plain` `@(cross_thread)`. Regenerate `api.loki` for `core/sync`,
+  `core/thread`, and `core/log` with `lokec <dir> -api`.
+- **Tests:** in `tests/err`, a plain `value` read through `^Atomic(T)`, a
+  `value` read while the atomic is lent, a TLS borrow moved into
+  `thread.spawn`, a thread-affine payload nested in an owner, an erased value
+  of unknown eligibility, and `@(cross_thread)` without `@(escape=static)` or
+  on a foreign parameter. In `tests/run`, a user-written thread wrapper whose
+  marked argument is accepted, with the existing `L0707` warning cases
+  unchanged.
+- **Changelog:** Breaking changes, with upgrade notes for the `value` read
+  (call `load()`, or reach the atomic through `^mut`) and for the values
+  `thread.spawn` now rejects.
+
+### Milestone 3: the new summaries
+
+The reach effect, allocator-use effect, `thread_local` drop effects, and the
+window, as defined under
+[The summaries the checks read](#the-summaries-the-checks-read).
+
+- **Compiler:** global-origin carrier provenance in `cfg_provenance.odin`;
+  the reach effect and the program-wide set of managed `thread_local` drop
+  effects in `global_effects.odin`; per-parameter allocator use, extending
+  the region analysis that already carries `@(allocator_reset)`, in
+  `borrow.odin`. Diagnostics name the contributing procedure, witness, or
+  hook, through the existing notes in `precision.odin` where a merge is
+  involved.
+- **Tests:** unit tests in `src` for each summary over direct calls,
+  recursion, procedure-value unions, `dyn` witnesses, hooks, and cleanup.
+  Nothing user-visible consumes the summaries yet, so there is no changelog
+  line.
+
+### Milestone 4: `parallel` and `spawn`, gated
+
+The statements, every rule and check above for statically resolved calls,
+and thread-per-spawn lowering. A hidden `-unstable-parallel` option, not in
+[compiler-guide.md](compiler-guide.md), enables the checker; without it a
+`parallel` statement is an error saying the feature is not available yet.
+The parser always accepts the syntax, so its decisions are tested from the
+start.
+
+- **Syntax:** `Stmt_Parallel` and `Stmt_Spawn` in `ast.odin`, with support in
+  `ast_dump.odin`, `ast_clone.odin`, and `formatter.odin`; the contextual
+  decisions under [Syntax](#syntax) at statement start in `parser.odin`, with
+  recovery fixtures. The lexer is unchanged: both words stay identifiers.
+- **Checking:** a new `parallel.odin` owns block and spawn checking: lexical
+  placement, the `defer` ban, static callee resolution, the argument copy
+  rule, result destination rules, and the executor header's rejection. It
+  synthesizes each spawn's frame record and run procedure, as `capture.odin`
+  does for capture literals, and records them on the statement.
+- **Ownership:** the hidden join local and the window in `cfg.odin`; spawn
+  loans lasting to the join, checks 5, 7, and 9, and result provenance in
+  `borrow.odin`; result-local reservation and initialization at registration
+  in `lifecycle.odin`; check 6's errors in `global_effects.odin`.
+  Compile-time evaluation rejects a block in `eval.odin`.
+- **Lowering:** `Task_Scope` in `core/thread/thread.loke`, as under
+  [Lowering](#lowering); the recorded operations in `emit_llvm_stmt.odin`;
+  the new records in `emission_contract.odin`.
+- **Tools:** `parallel` and `spawn` in the language server's completion and
+  semantic tokens, and in the VS Code grammar under `editors/vscode/syntaxes`.
+- **Tests:** every program under [Rejected programs](#rejected-programs) in
+  `tests/err`, with its accepted counterpart in `tests/run`; parse cases in
+  `tests/syntax` and `tests/syntax_err`, including `parallel(pool);`,
+  `spawn(callback);`, `object.spawn(args);`, and a parenthesized `parallel`
+  literal. Also: an outer slice returned and its loan kept after the join;
+  TLS, temporary-backed, and thread-affine results, including inside error
+  payloads; races through global carriers and copied allocator handles;
+  moved-owner drops, completed-result cleanup, parent cleanup, and shared
+  parent allocators; conditional spawns and definite assignment; every early
+  exit, including unwinding through the block; an enclosing `errdefer` on
+  post-join propagation; a submission failure injected after a successful
+  spawn; a multiple-result callee and a mismatched result type; a block in
+  compile-time evaluation; and a `thread_local` drop hook writing a global,
+  with the diagnostic naming the hook.
+- **Changelog:** none while gated.
+
+### Milestone 5: enable
+
+Remove the gate once every test of milestone 4 passes and
+`.\test-all.ps1 -Full` passes.
+
+- **Spec:** move [Syntax](#syntax) through
+  [Failure to start a task](#failure-to-start-a-task), the checks, and the
+  happens-before edges into a new "Structured concurrency" section under
+  [Concurrency and the memory model](design.md#concurrency-and-the-memory-model);
+  the statements into [Statements](grammar.md#statements), both words into
+  the contextual table under [Keywords](grammar.md#keywords), and the
+  statement-start decisions into
+  [Resolved ambiguities](grammar.md#resolved-ambiguities). The rationale for
+  inferred checks over `Send` and `Sync`, and for lexical joins over handles,
+  goes to [comments.md](comments.md).
+- **Library and examples:** the `core:thread` section of
+  [standard-library.md](standard-library.md#corethread); the sort and
+  `parallel_sum` above as programs in `examples/`, run by the test suite.
+- **Bookkeeping:** close the answered part of
+  [Thread transfer needs a visible contract](open-questions.md#thread-transfer-needs-a-visible-contract),
+  leaving the later extensions there; record any check that ships narrower
+  than specified in [known-gaps.md](known-gaps.md) with a reproduction; and
+  reduce this proposal to the milestones still ahead.
+- **Changelog:** Added, and a breaking-change note for the statement-start
+  `parallel` literal.
+
+### Later milestones
+
 6. Add `Stop_Source`, `Channel`, and mutex waiting together with the shutdown
-   protocol. Test stop-before-wait and stop-during-registration races, close
-   racing with send, ownership of unsent items, draining after close, and all
-   consumers failing while a producer is blocked. Verify that an operation
-   reports success exactly when it committed and cleans up exactly once.
+   protocol, marking their state `@(synchronized)` and `Channel.send`'s item
+   `@(cross_thread)`. Test stop-before-wait and stop-during-registration races,
+   close racing with send, ownership of unsent items, draining after close,
+   and all consumers failing while a producer is blocked. Verify that an
+   operation reports success exactly when it committed and cleans up exactly
+   once. Add the channel-fed worker pipeline to `examples/`.
 7. Add `Pool` and the executor header. Test independent nested work with one
    worker, explicit recursive executor selection, TLS reuse, and pool lifetime.
    Reject a parent TLS borrow live across a pool join whose tasks write that
-   storage.
-   Check documented blocking limits with bounded test harnesses; do not make
-   the suite depend on a deadlock resolving. Serial execution is not a
-   correctness oracle for thread-dependent tasks.
+   storage. Check documented blocking limits with bounded test harnesses; do
+   not make the suite depend on a deadlock resolving. Serial execution is not
+   a correctness oracle for thread-dependent tasks.
+8. Extend callable support only after summaries preserve every needed fact
+   (later extension 1).
 
 Once callable summaries are supported, scoped spawning can also accommodate
 the thread worker named under
@@ -886,6 +1169,6 @@ the thread worker named under
 its callable need not outlive the joining scope. The first implementation
 uses a named entry and explicit arguments instead.
 
-Try it on the concrete programs open-questions names before deciding: a
-sorting or partitioning algorithm, a parallel numeric kernel, and a worker pool
-fed by a channel.
+The concrete programs open-questions names are part of the plan: the sort
+and the numeric kernel become examples in milestone 5, and the worker pool fed
+by a channel in milestone 6.

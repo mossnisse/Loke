@@ -988,7 +988,7 @@ channel close and failed-send ownership, and limited pool progress.
 
 The first implementation must enforce every applicable safety check for
 statically known calls; unknown indirect effects are rejected. The remaining
-questions are the [extensions](concurrency-proposal.md#open-choices):
+questions are the [extensions](concurrency-proposal.md#later-extensions):
 
 - How public and erased procedure contracts preserve all sharing, transfer,
   global-access, allocator, and result-provenance facts.
@@ -1001,7 +1001,7 @@ questions are the [extensions](concurrency-proposal.md#open-choices):
   progress guarantee.
 
 These extensions do not prevent the smaller initial feature. Validate its
-[acceptance and rejection cases](concurrency-proposal.md#order-of-work) before
+[acceptance and rejection cases](concurrency-proposal.md#implementation-plan) before
 adding library concurrency: a scope-owned join guarantees storage lifetime,
 but does not itself guarantee termination or wake a blocked participant.
 
@@ -1037,12 +1037,16 @@ and the bundled packages. Its fixes are in [the proposal](concurrency-proposal.m
   parenthesized. `spawn` is rejected in deferred statements, the grammar takes
   attributes, the flagship sort bounds its depth, and rule 2 cites the one rule.
 
-Still open; the first four are among the proposal's
-[open choices](concurrency-proposal.md#open-choices):
+How a library declares an argument that crosses threads, and its own
+synchronized state, was open after this review and is now decided:
+`@(cross_thread)` on a parameter and `@(synchronized)` on a field or variable,
+so the compiler recognizes no concurrency type or procedure by name. See
+[Preparing for implementation](#structured-concurrency-implementation-readiness-2026-10-22)
+below.
 
-- How a library declares an argument that crosses threads and its own
-  synchronizing operations, instead of the compiler recognizing `thread.spawn`,
-  `Atomic`, `Mutex`, `Once`, and `Channel` by name.
+Still open; the first three are among the proposal's
+[later extensions](concurrency-proposal.md#later-extensions):
+
 - Whether build-selected allocator and logging providers must declare that
   they accept concurrent use, so it is checked rather than trusted. Today a
   build can select an arena-backed default allocator and race silently.
@@ -1053,6 +1057,42 @@ Still open; the first four are among the proposal's
 - The whole-program union is conservative: one compatible procedure anywhere
   that writes a global affects every indirect call of its type. Measure how
   often that rejects real programs before relying on it.
+
+### Structured concurrency implementation readiness (2026-10-22)
+
+A third pass made [the proposal](concurrency-proposal.md#implementation-plan)
+ready to implement. It decided what the first implementation needed:
+
+- `@(synchronized)` marks a field, or a file-scope or `static` variable, whose
+  declaring package synchronizes every access to it. Outside that package,
+  access to a synchronized field needs exclusive access to its record, and a
+  synchronized variable's stored carriers are exempt from the global-carrier
+  check. `Atomic(T).value`, `Mutex(T).value`, and `log.selected` carry it,
+  which replaces the provider exemption inferred from names.
+- `@(cross_thread)` marks a `move` parameter, which must also be
+  `@(escape=static)`, or a procedure-typed parameter that runs on another
+  thread. `thread.spawn` carries it, and the existing race warning keys on it.
+- The new summaries are defined: a reach effect for globals' stored carriers,
+  an allocator-use effect, per-type transfer facts, and a block's window.
+- Lowering is ordinary Loke in `core:thread`; a result local's
+  initialization flag is set when its task registers, since a registered task
+  completes unless the program ends.
+- A result destination must have the call's exact type; a `parallel` block is
+  a compile-time evaluation error; the executor header parses and is rejected.
+- Work proceeds in five milestones, the fourth behind a hidden
+  `-unstable-parallel` option.
+
+Open, to settle with evidence during the milestones:
+
+- `@(synchronized)` rejects a plain read of `value` through `^Atomic(T)`,
+  which compiles today. In the bundled packages and tests every plain read is
+  through an unlent owner, which stays allowed, and `Mutex.lock`'s
+  `rawptr(&self.word.value)` is covered by the raw-address exception. Whether
+  outside code relies on the rejected form is unknown until milestone 2 ships
+  its upgrade note.
+- The reach effect rejects a `dyn` or `any_view` stored in a global even when
+  only read, since an erased value hides captures that may write. Whether the
+  witness union could accept read-only `dyn` registries is open.
 
 ## Error handling (2026-10-13)
 
