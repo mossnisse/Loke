@@ -896,9 +896,13 @@ prov_read_is_reads_only :: proc(c: ^Compiler, type: Type_Id) -> bool {
 // is wanted is only read, which a read-only reborrow of it allows, so
 // `Views{xs, xs}`, and `v: []int = xs` or `v = xs` beside another read-only
 // view of `xs`, are accepted.
+// An erased value is not only read: a stored `any_view` borrows the place it
+// views (design.md "any_view type"), which a call argument does only for the
+// call.
 @(private)
 prov_walk_stored :: proc(graph: ^Flow_Graph, value: Expr, destination: Type_Id) -> []int {
-	if prov_argument_only_read(graph, value, destination) {
+	if base := expr_base(value); base != nil && base.erased_from == INVALID_TYPE &&
+	   prov_argument_only_read(graph, value, destination) {
 		return prov_read_carrier(graph, value, true)
 	}
 	return walk_flow_expr(graph, value)

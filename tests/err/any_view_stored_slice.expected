@@ -1,0 +1,5 @@
+L0512
+@10:2
+`xs` cannot be assigned here: a read-only view of it is still in use
+L0512
+@18:2

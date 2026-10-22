@@ -1,0 +1,22 @@
+package main;
+
+// design.md "any_view type": an `any_view` holding an erased slice borrows the
+// slice variable it views, so the variable may not be reassigned while the
+// view is live, whether the view is declared or assigned.
+
+declared :: proc(a: []mut int, ys: []mut int) -> int {
+	xs := a;
+	v: any_view = xs;
+	xs = ys;
+	return v.([]mut int)[0];
+}
+
+assigned :: proc(a: []mut int, ys: []mut int) -> int {
+	xs := a;
+	v: any_view = 0;
+	v = xs;
+	xs = ys;
+	return v.([]mut int)[0];
+}
+
+main :: proc() {}
