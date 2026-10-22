@@ -7,6 +7,10 @@ package main;
 
 Pair :: struct { a: []mut int, b: []mut int }
 Views :: struct { a: []int, b: []int }
+Inner :: struct { a: []mut int }
+Outer :: struct { x: Inner, y: Inner }
+View :: struct { a: []int }
+Outer_View :: struct { x: View, y: View }
 
 use :: proc(pair: Pair) { pair.a[0] = 1; pair.b[0] = 2; }
 
@@ -28,11 +32,37 @@ returned :: proc(xs: []mut int) -> (left: []mut int, right: []mut int) {
 	return {&mut xs[:1], &mut xs[1:]};
 }
 
+// design.md "Values that contain borrows": a record holding a mutable carrier
+// is lent as the carrier is, in a literal and in a call.
+nested :: proc(xs: []mut int) {
+	both := Outer{Inner{xs}, Inner{xs}};
+	both.x.a[0] = both.y.a[0];
+}
+nested_array :: proc(xs: []mut int) {
+	both := [2]Inner{Inner{xs}, Inner{xs}};
+	both[0].a[0] = 1;
+}
+copied_record :: proc(xs: []mut int) {
+	inner := Inner{xs};
+	both := Outer{inner, inner};
+	both.x.a[0] = 1;
+}
+take :: proc(p: Inner, q: Inner) { p.a[0] = 1; q.a[0] = 2; }
+passed_record :: proc(xs: []mut int) {
+	inner := Inner{xs};
+	take(inner, inner);
+}
+
 // Different carriers, and read-only fields, are fine.
 fine :: proc(xs: []mut int, ys: []mut int) {
 	use(Pair{xs, ys});
 	views := Views{xs, xs};
 	_ = views.a[0] + views.b[0];
+	take(Inner{xs}, Inner{ys});
+	outer := Outer{Inner{xs}, Inner{ys}};
+	outer.x.a[0] = outer.y.a[0];
+	read := Outer_View{View{xs}, View{xs}};
+	_ = read.x.a[0] + read.y.a[0];
 }
 
 main :: proc() {}

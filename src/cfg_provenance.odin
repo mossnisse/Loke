@@ -546,8 +546,10 @@ prov_composite_content :: proc(graph: ^Flow_Graph, v: ^Expr_Composite, content: 
 		// design.md "Weakening and reborrows": a mutable carrier stored in an
 		// element is a reborrow of it, live until the literal is built, so no
 		// later element may use the same carrier: `Pair{xs, xs}` would hold two
-		// mutable views of one sequence.
-		lent := carrier_is_mutable(graph.k.c, prov_element_type(graph, v, index))
+		// mutable views of one sequence. A record element is checked as the
+		// carriers inside it are (design.md "Values that contain borrows"), so
+		// `Outer{Inner{xs}, Inner{xs}}` is caught too.
+		lent := type_carries_borrow(graph.k.c, prov_element_type(graph, v, index)).mutable
 		if lent {
 			loans = prov_lend_carrier(graph, loans, held, expr_span(element.value))
 		}
@@ -4329,7 +4331,9 @@ prov_call_argument :: proc(
 	prov_reborrow(graph, actual, param_type)
 	// A mutable carrier passed on as one is reborrowed until the call and what
 	// it returns are done with it, so no other argument may use it meanwhile.
-	if carrier_is_mutable(c, param_type) && !(index == 0 && has_receiver) {
+	// A record holding one is lent as its carriers are (design.md "Values that
+	// contain borrows").
+	if type_carries_borrow(c, param_type).mutable && !(index == 0 && has_receiver) {
 		actual = prov_lend_carrier(graph, actual, borrowed^, expr_span(argument))
 	} else if type_is_carrier(c, param_type) && !(index == 0 && has_receiver) {
 		// design.md "Weakening and reborrows": an existing mutable carrier
