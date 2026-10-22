@@ -82,6 +82,14 @@ attribute_spec :: proc(name: string) -> (Attr_Spec, bool) {
 		return {{.Struct_Field}, .Deferred, false}, true
 	case "required":
 		return {{.Struct_Field}, .None, false}, true
+	case "synchronized":
+		// Which variables may carry it is `validate_decl_attributes`'.
+		return {{.Struct_Field, .Var_Decl}, .None, false}, true
+	case "thread_affine":
+		return {{.Struct_Literal, .Union_Literal}, .None, false}, true
+	case "cross_thread":
+		// What the parameter must be is `check_cross_thread_attribute`'.
+		return {{.Parameter}, .None, false}, true
 	case "zero", "failure":
 		// A variant name, checked in `src/union.odin`.
 		return {{.Union_Literal}, .Deferred, false}, true
@@ -113,7 +121,13 @@ attr_pos_name :: proc(pos: Attr_Pos) -> string {
 
 // Reports each misuse in one attribute list, once per written list: generic
 // instances and static foreach copies share the spans, so they are skipped.
-validate_attribute_list :: proc(k: ^Checker, attributes: []Attribute, pos: Attr_Pos, scope := Attr_Scope.Global) {
+validate_attribute_list :: proc(
+	k: ^Checker,
+	attributes: []Attribute,
+	pos: Attr_Pos,
+	scope := Attr_Scope.Global,
+	duration := Duration.None,
+) {
 	if len(attributes) == 0 {
 		return
 	}
@@ -176,6 +190,9 @@ validate_attribute_list :: proc(k: ^Checker, attributes: []Attribute, pos: Attr_
 				errorf(k.c, attribute.span, "L0608", "`@(%s)` needs a string value", name)
 			}
 		case .Deferred:
+		}
+		if name == "synchronized" && pos == .Var_Decl {
+			validate_synchronized_variable(k, attribute, scope, duration)
 		}
 	}
 	// design.md: `@(link_name)` names an exported or foreign symbol.
@@ -266,7 +283,7 @@ validate_decl_attributes :: proc(k: ^Checker, d: ^Decl, scope := Attr_Scope.Glob
 	if len(d.symbols) == 0 {
 		return
 	}
-	validate_attribute_list(k, d.attributes, decl_attr_position(k, d), scope)
+	validate_attribute_list(k, d.attributes, decl_attr_position(k, d), scope, d.duration)
 	// A generic template never resolves, so its parameters and record are
 	// reached here rather than only at resolution.
 	if literal := decl_proc_literal(d); literal != nil {
@@ -276,6 +293,28 @@ validate_decl_attributes :: proc(k: ^Checker, d: ^Decl, scope := Attr_Scope.Glob
 		if record, ok := d.values[0].(^Type_Record); ok {
 			validate_record_attributes(k, record)
 		}
+	}
+}
+
+// design.md "@(synchronized)": a variable every thread shares, which is
+// file-scope or `static` storage. A `thread_local` one is the thread's own, a
+// plain local is the frame's, and foreign storage is no package's to vouch for.
+@(private = "file")
+validate_synchronized_variable :: proc(k: ^Checker, attribute: Attribute, scope: Attr_Scope, duration: Duration) {
+	reason := ""
+	switch {
+	case scope == .Foreign:
+		reason = "a foreign variable, whose accesses no package synchronizes"
+	case duration == .Thread_Local:
+		reason = "a `thread_local` variable, which each thread has its own of"
+	case scope == .Local && duration != .Static:
+		reason = "a local variable, which only its own frame reaches"
+	}
+	if reason != "" {
+		errorf(
+			k.c, attribute.span, "L0721",
+			"`@(synchronized)` marks storage every thread shares, and this is %s", reason,
+		)
 	}
 }
 

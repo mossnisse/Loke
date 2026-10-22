@@ -1094,11 +1094,11 @@ ready to implement. It decided what the first implementation needed:
 Open, to settle with evidence during the milestones:
 
 - `@(synchronized)` rejects a plain read of `value` through `^Atomic(T)`,
-  which compiles today. In the bundled packages and tests every plain read is
-  through an unlent owner, which stays allowed, and `Mutex.lock`'s
-  `rawptr(&self.word.value)` is covered by the raw-address exception. Whether
-  outside code relies on the rejected form is unknown until milestone 2 ships
-  its upgrade note.
+  which used to compile. Milestone 2 shipped it with an upgrade note; no
+  bundled package, test, example, or tutorial needed changing, and
+  `Mutex.lock`'s `rawptr(&self.word.value)` is covered by the raw-address
+  exception. Whether outside code relies on the rejected form is still
+  unknown.
 - The reach effect rejects a `dyn` or `any_view` stored in a global even when
   only read, since an erased value hides captures that may write. Whether the
   witness union could accept read-only `dyn` registries is open.

@@ -1,15 +1,17 @@
 package main;
 
 import "core:sync";
+import "core:thread";
 
 // design.md "Materialization": a borrowed constant lives in read-only storage,
-// and an atomic's operations write through a `^`. A constant holding one can
-// be copied, never borrowed.
+// and a synchronized field changes through a `^`. A constant holding one, an
+// atomic's or a mutex's, can be copied, never borrowed.
 
 Counter :: struct { hits: sync.Atomic(int), ready: sync.Once }
 
 START :: sync.Atomic(int){value = 5};
 EMPTY :: Counter{};
+LOCK :: thread.Mutex(int){};
 
 main :: proc() {
 	_ = START.add(1);
@@ -17,4 +19,5 @@ main :: proc() {
 	EMPTY.ready.do(proc() {});
 	fresh := START;
 	_ = fresh.add(1);
+	guard := LOCK.lock();
 }

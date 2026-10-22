@@ -347,8 +347,12 @@ processor_count() -> int
 `spawn` runs `entry(arg)` on a new thread. The argument is moved in, and any
 borrow it carries must be of process-lifetime storage, as
 `@(escape=static)` requires, so a string literal travels and a slice of a local
-does not. Several values travel as one record. Running out of memory or of
-threads panics; there is no `try_spawn` yet.
+does not. Several values travel as one record. Both parameters are
+`@(cross_thread)`, so the argument is checked on its way: it may hold or reach
+nothing `@(thread_affine)`, reach no `dyn` view the call did not make, and own
+nothing backed by an allocator its caller received (design.md "Concurrency and
+the memory model"). Running out of memory or of threads panics; there is no
+`try_spawn` yet.
 
 `join` waits for the thread to return: its writes and its `thread_local` drops
 happen before `join` returns, and a second `join` does nothing. Dropping a
@@ -362,7 +366,9 @@ an `inout` result that borrows the guard, and dropping the guard unlocks. An
 unlock happens before the next lock. `lock` takes a read-only receiver, as the
 `Atomic` operations do, so a mutex behind a `Shared(T)` handle or in file-scope
 storage still locks. The field `value` is public for a caller that owns the
-mutex outright, before spawning or after joining. Locking a mutex the thread
+mutex outright, before spawning or after joining. It is `@(synchronized)`, as
+`Atomic`'s `value` is: it is reached only through the owner or through `^mut`
+or `inout`, and not while the mutex is lent (design.md "@(synchronized)"). Locking a mutex the thread
 already holds never returns. `Mutex` is move-only.
 
 `processor_count` is how many threads can run at once: the machine's logical
@@ -370,8 +376,10 @@ processors, at least one. A program that divides work among threads, such as a
 test harness running a case per thread, sizes its pool by it.
 
 The compiler warns when a spawned entry writes file-scope or `static` storage
-(design.md "Global write effects"). Storage behind a `Mutex` or an `Atomic`, and
-`thread_local` storage, do not count.
+(design.md "Global write effects"). Storage behind a `Mutex` or an `Atomic`,
+`thread_local` storage, and a `@(synchronized)` variable do not count. A wrapper
+whose own parameters are `@(cross_thread)` is checked and warned about as
+`spawn` is.
 
 ## `core:fmt`
 

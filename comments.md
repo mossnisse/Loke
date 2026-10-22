@@ -88,6 +88,22 @@ It is a warning because it cannot establish whether the writes happen only
 before spawning or after joining. The [memory model](design.md#concurrency-and-the-memory-model)
 defines the synchronization guarantees.
 
+The warning and the checks on what a thread receives key on
+[`@(cross_thread)`](design.md#cross_thread), not on the name `thread.spawn`,
+so a wrapper or executor a program writes is checked by declaring the same
+parameters. The attribute is part of the procedure type, as an escape level
+is: a fact kept only on the declaration would let a call through a procedure
+value skip the checks it promised. A wrapper's own call of `spawn` is not
+warned about, since the entry that runs is the one its callers passed, and
+their calls are reported.
+
+`Atomic` and `Mutex` keep `value` public so that a caller owning one outright,
+before spawning or after joining, pays for no synchronization.
+[`@(synchronized)`](design.md#synchronized) keeps that access from reaching a
+borrowed one, where an atomic operation through another read-only loan may be
+writing it. It is an attribute, not a list of types, so the channel and stop
+state the structured concurrency proposal adds later need no compiler change.
+
 ### Child processes
 
 A child process needs explicit choices about argument quoting, handle

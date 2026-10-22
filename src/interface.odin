@@ -936,6 +936,10 @@ call_effects_match :: proc(c: ^Compiler, method, signature: Type_Id) -> bool {
 		   flag_at(have.param_by_ptr, index + 1) != flag_at(wanted.param_by_ptr, index) {
 			return false
 		}
+		// design.md "@(cross_thread)": a call through the view checks no less.
+		if flag_at(have.param_cross_thread, index + 1) && !flag_at(wanted.param_cross_thread, index) {
+			return false
+		}
 	}
 	return true
 }

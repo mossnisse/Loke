@@ -3647,7 +3647,7 @@ A constant is a value, not a variable, and an ordinary use of one is substituted
 - taking its address with `&`
 - a borrowing traversal, which lends the elements themselves
 
-**A constant used in any of those ways is materialized into read-only storage.** All uses of that constant share one backing object. A constant whose type holds an [`Atomic(T)`](#concurrency-and-the-memory-model) is never materialized, because an atomic changes through a `^`; borrowing one is a compile-time error, while an ordinary use still copies it.
+**A constant used in any of those ways is materialized into read-only storage.** All uses of that constant share one backing object. A constant whose type holds a [`@(synchronized)`](#synchronized) field, such as an [`Atomic(T)`](#concurrency-and-the-memory-model) or a `thread.Mutex(T)`, is never materialized, because such a field changes through a `^`; borrowing one is a compile-time error, while an ordinary use still copies it.
 
 ```loke
 NUMBERS :: [?]int{7, 42, 628};
@@ -5278,7 +5278,7 @@ The language has no `const` qualifier. **Capability is in the carrier's type, sp
 
 `string_view` and ordinary read-only parameter access are immutable borrows too. Other read-only storage — a [materialized constant](#materialization) — is read-only by how it was declared.
 
-An immutable borrow permits reads only. While one is live, the root may be read through compatible paths — including through other immutable borrows of the same place, of which any number may be live at once — but it may not be written, moved, dropped, freed, or invalidated. The one exception is an [`Atomic(T)`](#concurrency-and-the-memory-model) operation, which writes through a read-only receiver: no atomic access conflicts with another.
+An immutable borrow permits reads only. While one is live, the root may be read through compatible paths — including through other immutable borrows of the same place, of which any number may be live at once — but it may not be written, moved, dropped, freed, or invalidated. The one exception is an [`Atomic(T)`](#concurrency-and-the-memory-model) operation, which writes through a read-only receiver: no atomic access conflicts with another. Such a field is [`@(synchronized)`](#synchronized), so code outside its package may reach it only with exclusive access, and an access through the owner counts as a write against every loan of it, reads included.
 
 A mutable borrow permits reads and writes through that borrow. While one is live, the root cannot be accessed through a competing name or overlap another live borrow.
 
@@ -5555,7 +5555,7 @@ fmt.println(view[0]);
 
 The effect covers a value parameter, whose managed storage is shared with the caller for the call, as much as a view. A call through a procedure value may run any procedure of a compatible type, and a `dyn` call any witness the program builds for that slot, so each takes the union of their effects. Effects are whole-program and need no annotation; a procedure's effect is not part of its type. Since no variable is [public](#public), a caller borrows another package's storage only through a procedure's result, whose [result contract](#procedure-result-contracts) shows the static provenance.
 
-The same effect finds likely data races. When the entry passed to `core:thread`'s `spawn` is a named procedure whose effect writes file-scope or `static` storage, the call is reported with a warning, since every thread shares that storage. `thread_local` storage belongs to the thread, and an atomic operation takes a read-only receiver, so neither counts as a write here; nor does storage reached through a `thread.Mutex` guard. The warning finds no race the effect cannot see, such as one through a pointer or view.
+The same effect finds likely data races. When a named procedure is passed for a [`@(cross_thread)`](#cross_thread) parameter of procedure type, as the entry of `core:thread`'s `spawn` is, and its effect writes file-scope or `static` storage, the call is reported with a warning, since every thread shares that storage. A procedure with such a parameter of its own, a thread wrapper, forwards what its callers pass, and their calls are the ones reported. `thread_local` storage belongs to the thread, and an atomic operation takes a read-only receiver, so neither counts as a write here; nor does storage reached through a `thread.Mutex` guard, or a [`@(synchronized)`](#synchronized) variable, whose package vouches for every access to it. The warning finds no race the effect cannot see, such as one through a pointer or view.
 
 ### What is not checked
 
@@ -5564,8 +5564,9 @@ The analysis is local to one procedure body, together with the recorded summary 
 - dereferencing `rawptr`, `[^]T`, or a `^T` with unknown provenance;
 - pointers or views manufactured or stripped of provenance through `core:unsafe`;
 - aliases hidden by foreign code, and what a foreign procedure retains of a borrowed argument after it returns;
-- transferring borrows or unchecked addresses between threads, and keeping a `thread_local` borrow past the end of its thread;
-- concurrent access to the same storage, beyond the warning for a spawned entry's writes under [Global write effects](#global-write-effects). A data race is undefined behavior, and there are no implicit `Send`/`Sync` interfaces: [`Atomic(T)`](#concurrency-and-the-memory-model) makes one location's accesses race-free and nothing else;
+- transferring unchecked addresses between threads, and anything handed to another thread by a procedure whose parameter does not carry [`@(cross_thread)`](#cross_thread), such as a foreign one; and keeping a `thread_local` borrow past the end of its thread;
+- concurrent access to the same storage, beyond the warning for a spawned entry's writes under [Global write effects](#global-write-effects) and the exclusive access a [`@(synchronized)`](#synchronized) field requires. A data race is undefined behavior, and there are no implicit `Send`/`Sync` interfaces: [`Atomic(T)`](#concurrency-and-the-memory-model) makes one location's accesses race-free and nothing else;
+- an owner backed by a file-scope or `static` `mem.Arena` or `mem.Scratch`, moved to another thread: region provenance does not name such a region, so the thread and its spawner may both allocate from it;
 - which thread releases the last [`Shared(T)`](#shared-ownership) handle, and therefore which thread runs `T`'s `drop` and uses the control block's allocator;
 - everything [`unsafe.free`](#the-unsafe-package) releases.
 - a global written through a pointer or view to it that was itself stored in a global, or by foreign code, while a borrow of it is live.
@@ -6339,7 +6340,7 @@ Two accesses conflict when they touch overlapping bytes and at least one is a wr
 The `core:sync` package provides `Atomic(T)` for booleans, integers, enums with a supported integer backing type, pointers, and an `Option(^T)`, which is one address (see [Representation](#representation)) and starts as `.none`.
 
 - Operations accept `.Relaxed`, `.Acquire`, `.Release`, `.Acquire_Release`, or `.Sequentially_Consistent` where meaningful. `core:sync.fence(order)` accepts every ordering except `.Relaxed`. Invalid type, operation, or ordering combinations are compile-time errors.
-- Every operation, writes included, takes a read-only `self: ^` receiver, because no atomic access conflicts with another. So an `Atomic(T)` reached through a `^T`, such as a `Shared(T)` payload, can still be updated. Its plain `value` field keeps the ordinary rules.
+- Every operation, writes included, takes a read-only `self: ^` receiver, because no atomic access conflicts with another. So an `Atomic(T)` reached through a `^T`, such as a `Shared(T)` payload, can still be updated. Its plain `value` field is [`@(synchronized)`](#synchronized): outside `core:sync`, reading, writing, or borrowing it needs exclusive access to the atomic, through an owner or a path through `^mut`, `[]mut`, or `inout`. Through a read-only borrow it is an error, and while the atomic is lent read-only, even a read of `value` through the owner conflicts with that loan, since an operation through the loan may be writing it: within one thread the two are ordered, but on different threads they race. `thread.Mutex(T)`'s `value` is synchronized the same way.
 - `Atomic(T)` is move-only, because copying one is a non-atomic read that yields a second, unrelated atomic. `Once` holds an `Atomic` and is move-only by the same structural rule.
 
 Loke adopts the C++20 atomic ordering model, excluding dependency-ordered `consume`, as the normative model for atomics. The relevant rules are restated here so ordinary code does not need another language specification:
@@ -6355,8 +6356,22 @@ Thread transfer follows these rules:
 
 - Moving an ordinary owning value transfers that owner. No checked borrow may remain in the sending thread.
 - Copying has the same semantics as within one thread. Ordinary owners create independent values; immutable `string` and `Shared(T)` may share thread-safe handle state according to their documented copy semantics.
-- The programmer must ensure that a transferred owner's entire lifecycle, including custom drop hooks, foreign resources, and allocator operations, is valid on the receiving thread. The compiler does not verify this obligation.
+- The programmer must ensure that a transferred owner's entire lifecycle, including custom drop hooks, foreign resources, and allocator operations, is valid on the receiving thread. The compiler verifies the parts of this obligation stated below, for a value passed through a `@(cross_thread)` parameter, and no more.
 - Raw pointers, stored borrows, foreign handles, and unchecked views may be transferred, but the compiler does not prove their pointees remain alive or race-free.
+
+A value that crosses to another thread through a [`@(cross_thread)`](#cross_thread) parameter, as the arguments of `core:thread`'s `spawn` do, is checked at each call:
+
+- It carries no borrow of `thread_local` storage. Such a parameter is also `@(escape=static)`, which `thread_local` storage does not satisfy: each thread has its own, and it ends with its thread.
+- It holds and reaches nothing [`@(thread_affine)`](#thread_affine), through fields, variants, elements, pointees, owned and shared payloads, and the type arguments of a generic record.
+- It reaches no `dyn` or `any_view` value, which hides the type that would show it may cross, unless the value is converted to the view at the call, where its concrete type is checked instead.
+- An owner in it is not backed by an allocator region the calling procedure received, which may be one that does not accept use from another thread. The default provider accepts concurrent use; a value that arrived through the calling procedure's own `@(cross_thread)` parameter was checked where it was passed.
+
+```loke
+Window :: struct @(thread_affine) { handle: int }
+show :: proc(window: move Window) {}
+
+background := thread.spawn(show, Window{});   // ERROR: `Window` is `@(thread_affine)`
+```
 
 Threads and retained tasks receive only the arguments explicitly moved or copied into them. A request environment, logger, clock, scratch owner, or other service handle is transferred like any other value, and transferring a handle does not make its underlying state thread-safe.
 
@@ -6601,6 +6616,9 @@ An attribute specifies a property of a declaration, parameter, statement, block,
 | `@(default_allocator=<string>)`, `@(default_logger=<string>)` | the root package clause | [select the program's providers](#default_allocatorstring-and-default_loggerstring) |
 | `@(zero=<variant>)`, `@(failure=<variant>)` | union types | [designate the zero and failure variants](#zerovariant-and-failurevariant) |
 | `@(initialized=<field>)` | a fixed array field of a struct | [only a counted prefix holds values](#initializedfield) |
+| `@(synchronized)` | struct fields, and file-scope and `static` variables | [its package synchronizes every access](#synchronized) |
+| `@(thread_affine)` | struct and union types | [values stay on the thread that made them](#thread_affine) |
+| `@(cross_thread)` | `move` parameters that are also `@(escape=static)`, and parameters of procedure type | [the argument goes to another thread](#cross_thread) |
 | `@(packed)`, `@(align=N)` | struct types; `align` also union types | [record layout](#packed) |
 | `@(allocator_reset)` | `Allocator` parameters | [a call may reset the region](#allocator_reset) |
 | `@(escape=<level>)` | parameters whose type reaches a borrow | [bounds what a call may keep](#escapelevel) |
@@ -6753,6 +6771,57 @@ On a struct field, requires every literal of the struct to supply it, and so lea
 #### `@(initialized=<field>)`
 
 On a fixed array field of a struct, names a sibling `int` field that counts how many leading elements hold values; the rest is uninitialized capacity. Valid only in a file that imports `core:unsafe`. See [Uninitialized capacity](#uninitialized-capacity).
+
+#### `@(synchronized)`
+
+Marks a struct field, or a file-scope or `static` variable, whose declaring package synchronizes every access to it: storage that an atomic operation or a lock changes while other code holds only a read-only borrow. It takes no value. A `thread_local` or other local variable, and a variable in a foreign block, cannot carry it.
+
+On a field it restricts code outside the package that declares the record. There, any access to the field, a read, a write, or a borrow, requires exclusive access to the record holding it: an owner, a temporary, or a path through `^mut`, `[]mut`, or `inout`. Reaching it through a read-only `^T` or `[]T`, a value parameter, or a read-only binding is an error. While the owner is lent read-only, an access through the owner conflicts with that loan as a write does, reads included, and a borrow of the field excludes every other access to the owner while it lasts, as a mutable borrow does. Within one thread a plain read and an atomic operation are ordered, but the read-only loan may be on another thread, where they race.
+
+```loke
+peek :: proc(hits: ^sync.Atomic(int)) -> int {
+	return hits.value;    // ERROR: through a read-only `^T`; call `hits.load()`
+}
+
+count :: proc() {
+	hits: sync.Atomic(int) = {};
+	view := &hits;
+	total := hits.value;  // ERROR: `hits` is lent read-only to `view`
+	_ = view.load();
+}
+```
+
+The declaring package's own code is trusted to synchronize its accesses, as the `Atomic` operations and `thread.Guard.get` do. Taking the field's address only to convert it to `rawptr`, as `rawptr(&self.word.value)` does, accesses nothing and is allowed; what is done through the raw pointer is [not checked](#what-is-not-checked). A constant holding a synchronized field is never [materialized](#materialization).
+
+On a variable it says that the package vouches for every access to the variable and through the carriers stored in it, so a spawned entry's write to it is not reported as a likely race (see [Global write effects](#global-write-effects)). Since no variable is [public](#public), only the declaring package reaches one directly.
+
+`sync.Atomic(T).value` and `thread.Mutex(T).value` are synchronized, and so is the variable through which `core:log` publishes the selected logging provider.
+
+#### `@(thread_affine)`
+
+Written after `struct` or `union`, before its body, as [`@(packed)`](#packed) is. A value of the type must stay on the thread that created it, as a handle to a window or another foreign resource tied to its thread must, or a value whose `hook(drop)` must run there. It takes no value. The property propagates structurally: a record, union, array, or container holding one, and a pointer, slice, box, or `Shared(T)` reaching one, is restricted too.
+
+A thread-affine value cannot be moved, copied, or borrowed into another thread: it may not reach an argument for a [`@(cross_thread)`](#cross_thread) parameter (see [Concurrency and the memory model](#concurrency-and-the-memory-model)). A thread may create, use, and drop its own thread-affine values. Ordinary types need no annotation.
+
+#### `@(cross_thread)`
+
+Marks a parameter whose argument goes to another thread, so that every call is checked as a call of `core:thread`'s `spawn` is. It takes no value, and it is part of the procedure type, as [`@(escape=<level>)`](#escapelevel) is: a procedure converts to a type that marks more parameters `@(cross_thread)`, whose calls check more, but not to one that marks fewer.
+
+- On a `move` parameter, which must also be `@(escape=static)`, it applies the checks under [Concurrency and the memory model](#concurrency-and-the-memory-model) to the argument. Nothing shorter than the process bounds a thread the call starts, so a borrowed parameter cannot carry it.
+- On a parameter of procedure type, it says that the procedure runs on another thread, and a named procedure passed there whose effect writes shared storage gets the race warning under [Global write effects](#global-write-effects). A procedure value carries no state, so nothing else is checked.
+- On any other parameter, or on a foreign procedure's parameter, it is an error: what foreign code hands to a thread is not checked.
+
+```loke
+run_on_thread :: proc(
+	@(cross_thread) entry: proc(job: move Job),
+	@(cross_thread, escape=static) job: move Job,
+) {
+	worker := thread.spawn(entry, move(job));
+	worker.join();
+}
+```
+
+`thread.spawn` marks its entry and its argument. A user-written thread wrapper or executor that marks its parameters is checked as `thread.spawn` is; one that omits the attribute, such as a foreign one, crosses threads unchecked.
 
 #### `@(default_allocator=<string>)` and `@(default_logger=<string>)`
 

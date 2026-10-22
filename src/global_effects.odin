@@ -2,6 +2,7 @@ package lokec
 
 import "core:fmt"
 import "core:mem"
+import "core:slice"
 
 // design.md "Global write effects": a call writes whatever static-duration
 // storage its callee may write, directly or through its own callees. Each body's
@@ -18,7 +19,8 @@ Effect_Call :: struct {
 	dyn_index:     int,
 }
 
-// A `thread.spawn` call and the procedure it starts.
+// A call passing a procedure for a `@(cross_thread)` parameter, and that
+// procedure.
 Thread_Spawn :: struct {
 	entry: Symbol_Id,
 	span:  Span,
@@ -141,7 +143,7 @@ prov_call_effects :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 		return
 	}
 	if !c.global_writes_ready {
-		note_thread_spawn(graph, v, target.callee)
+		note_thread_spawn(graph, v)
 	}
 	prov_effect_call(graph, target, v.span)
 }
@@ -268,50 +270,62 @@ prov_key_effects :: proc(graph: ^Flow_Graph, map_type: Type_Id, span: Span) {
 	prov_equality_effects(graph, key, span)
 }
 
-// design.md "Global write effects": a `thread.spawn` whose entry is a named
-// procedure, kept until the effects settle.
+// design.md "Global write effects": a named procedure passed for a
+// `@(cross_thread)` parameter of procedure type runs on another thread, so it
+// is kept until the effects settle.
 @(private = "file")
-note_thread_spawn :: proc(graph: ^Flow_Graph, v: ^Expr_Call, callee: Symbol_Id) {
+note_thread_spawn :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 	c := graph.k.c
-	sym := symbol_of(c, callee)
-	if sym == nil || len(v.bound) == 0 {
+	proc_type := call_proc_type(c, v)
+	info := underlying_info(c, proc_type)
+	if info == nil || len(info.param_cross_thread) == 0 || body_crosses_threads(graph) {
 		return
 	}
-	if origin := symbol_of(c, sym.instance_of); origin != nil {
-		sym = origin
+	for argument, index in v.bound {
+		if argument == nil || index >= len(info.parameters) || !proc_param_crosses_thread(c, proc_type, index) ||
+		   underlying_kind(c, info.parameters[index]) != .Proc {
+			continue
+		}
+		entry := INVALID_SYMBOL
+		#partial switch e in argument {
+		case ^Expr_Ident:
+			entry = e.symbol
+		case ^Expr_Selector:
+			entry = e.resolution.symbol
+		}
+		if entry_sym := symbol_of(c, entry); entry_sym != nil && entry_sym.kind == .Proc {
+			append(&graph.thread_spawns, Thread_Spawn{entry = entry, span = v.span})
+		}
 	}
-	pkg := package_of(c, sym.pkg)
-	name := identifier_text(c, sym.name)
-	if pkg == nil || pkg.key != STD_THREAD || (name != "spawn_with" && name != "spawn_plain") {
-		return
+}
+
+// A thread wrapper, such as `thread.spawn_plain`, hands what its own
+// `@(cross_thread)` parameters received on to another thread. Its callers'
+// entries are the ones reported, so the trampoline it starts is not.
+@(private = "file")
+body_crosses_threads :: proc(graph: ^Flow_Graph) -> bool {
+	c := graph.k.c
+	if graph.literal == nil {
+		return false
 	}
-	entry := INVALID_SYMBOL
-	#partial switch e in v.bound[0] {
-	case ^Expr_Ident:
-		entry = e.symbol
-	case ^Expr_Selector:
-		entry = e.resolution.symbol
+	sym := symbol_of(c, graph.literal.symbol)
+	if sym == nil {
+		return false
 	}
-	entry_sym := symbol_of(c, entry)
-	if entry_sym == nil || entry_sym.kind != .Proc {
-		return
-	}
-	// `spawn`'s own forwarding to `spawn_with` is not a caller's entry.
-	if entry_pkg := package_of(c, entry_sym.pkg); entry_pkg != nil && entry_pkg.key == STD_THREAD {
-		return
-	}
-	append(&graph.thread_spawns, Thread_Spawn{entry = entry, span = v.span})
+	info := underlying_info(c, sym.proc_type)
+	return info != nil && slice.contains(info.param_cross_thread, true)
 }
 
 // A spawned entry that writes a global every thread shares races with any other
-// thread that reaches it. `thread_local` storage is the thread's own, and an
-// atomic operation reads its receiver, so neither is a write here.
+// thread that reaches it. `thread_local` storage is the thread's own, an atomic
+// operation reads its receiver, and a `@(synchronized)` variable's package
+// vouches for every access to it, so none is a write here.
 @(private = "file")
 warn_thread_races :: proc(c: ^Compiler) {
 	for spawn in c.thread_spawns {
 		for global in c.global_writes[spawn.entry] {
 			sym := symbol_of(c, global)
-			if sym == nil || sym.duration == .Thread_Local {
+			if sym == nil || sym.duration == .Thread_Local || sym.synchronized {
 				continue
 			}
 			warnf(

@@ -39,7 +39,8 @@ erase_proc_contract :: proc(c: ^Compiler, type: Type_Id) -> Type_Id {
 	info := type_of(c, type)
 	if info == nil || info.kind != .Proc || info.proc_contract == INVALID_SYMBOL { return type }
 	return intern_proc_type(c, info.parameters, info.param_modes, info.result, info.result_inout,
-		info.convention, info.param_resets, info.param_by_ptr, info.c_vararg, info.param_escapes)
+		info.convention, info.param_resets, info.param_by_ptr, info.c_vararg, info.param_escapes,
+		param_cross_thread = info.param_cross_thread)
 }
 
 record_proc_contract_check :: proc(c: ^Compiler, from, to: Type_Id, span: Span) {
@@ -148,7 +149,7 @@ join_callback_types :: proc(c: ^Compiler, a, b: Type_Id) -> (Type_Id, bool) {
 	}
 	p := type_of(c, plain)
 	return intern_proc_type(c, p.parameters, p.param_modes, p.result, p.result_inout, p.convention,
-		p.param_resets, p.param_by_ptr, p.c_vararg, p.param_escapes, join), true
+		p.param_resets, p.param_by_ptr, p.c_vararg, p.param_escapes, join, p.param_cross_thread), true
 }
 
 is_contract_join :: proc(c: ^Compiler, id: Symbol_Id) -> bool {

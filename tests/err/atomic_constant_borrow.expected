@@ -1,9 +1,12 @@
 L0705
-@15:6
-`Atomic(int)` is or holds a `sync.Atomic`
+@17:6
+`Atomic(int)` holds the synchronized field `value`
 L0705
-@16:8
-`Counter` is or holds a `sync.Atomic`
+@18:8
+`Counter` holds the synchronized field `value`
 L0705
-@17:2
-`Counter` is or holds a `sync.Atomic`
+@19:2
+`Counter` holds the synchronized field `value`
+L0705
+@22:11
+`Mutex(int)` holds the synchronized field `value`

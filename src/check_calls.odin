@@ -948,7 +948,13 @@ check_conversion :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
 		return
 	}
 	// Checked without the target as context: the conversion node owns it.
+	saved_raw_place := k.raw_address_place
+	if address, is_unary := v.args[0].value.(^Expr_Unary); is_unary && address.op == .Amp &&
+	   type_underlying(k.c, target) == TYPE_RAWPTR && address.operand != nil {
+		k.raw_address_place = address.operand
+	}
 	source := check_single_expr(k, v.args[0].value)
+	k.raw_address_place = saved_raw_place
 	if source == INVALID_TYPE {
 		v.type = INVALID_TYPE
 		return

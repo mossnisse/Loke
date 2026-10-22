@@ -1,0 +1,44 @@
+// design.md "@(synchronized)": outside its package, a synchronized field is
+// reached only with exclusive access to its record. A read-only path is an
+// error, and while the owner is lent read-only, reaching the field through the
+// owner conflicts with that loan as a write does, reads included. A field's
+// address taken only for `rawptr` is no access.
+package main;
+
+import "core:sync";
+import "core:thread";
+import "core:fmt";
+
+peek :: proc(hits: ^sync.Atomic(int)) -> int { return hits.value; }
+copied :: proc(hits: sync.Atomic(int)) -> int { return hits.value; }
+nested :: proc(lock: ^thread.Mutex([2]int)) -> int { return lock.value[0]; }
+
+// Each of these is exclusive, so all are accepted.
+poke :: proc(hits: ^mut sync.Atomic(int)) -> int { return hits.value; }
+owned :: proc(hits: inout sync.Atomic(int)) -> int { return hits.value; }
+raw :: proc(hits: ^sync.Atomic(int)) -> rawptr { return rawptr(&hits.value); }
+
+total: thread.Mutex(int);
+
+@(synchronized) shared_count: int;
+@(synchronized) mine: thread_local int;
+
+main :: proc() {
+	hits: sync.Atomic(int) = {};
+	hits.value = 3;
+	fmt.println(hits.value);
+	view := &hits;
+	read := hits.value;
+	_ = view.load();
+	field := &hits.value;
+	_ = hits.load();
+	fmt.println(field^);
+	guard := total.lock();
+	held := total.value;
+	guard.get() += 1;
+}
+
+locals :: proc() {
+	@(synchronized) calls: static int = 0;
+	@(synchronized) local := 0;
+}

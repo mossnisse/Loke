@@ -1,0 +1,24 @@
+L0722
+@12:55
+outside `core:sync` it is reached only with exclusive access to its record, not through a read-only `^T`
+L0722
+@13:56
+not through a value parameter
+L0722
+@14:61
+outside `core:thread`
+L0721
+@24:3
+a `thread_local` variable
+L0511
+@31:10
+this access through a synchronized field of `hits` is not compatible with the read-only pointer
+L0511
+@34:6
+the exclusive pointer of it
+L0511
+@37:10
+synchronized field of `total`
+L0721
+@43:4
+a local variable

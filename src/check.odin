@@ -61,6 +61,10 @@ Body_Context :: struct {
 	// own, already reported once on its written body (L0455).
 	branches_reported: bool,
 	in_defer:          bool,
+	// The place whose address a `rawptr(&place)` conversion is taking, which
+	// is not an access to a synchronized field on its chain (design.md
+	// "@(synchronized)").
+	raw_address_place: Expr,
 	// `loop_depth` where the current `defer` began: a loop inside it is a
 	// target its statement may leave to.
 	defer_loop_depth:  int,
@@ -639,6 +643,42 @@ check_escape_attribute :: proc(
 	return level
 }
 
+// design.md "@(cross_thread)": an argument that crosses to another thread. A
+// `move` one must be keepable for the whole process, since nothing shorter
+// bounds an unstructured thread, and a procedure value carries no state of its
+// own. Foreign code crosses threads unchecked, so it cannot claim the checks.
+check_cross_thread_attribute :: proc(
+	k: ^Checker,
+	attributes: []Attribute,
+	type: Type_Id,
+	mode: Param_Mode,
+	escape: Escape_Level,
+	in_foreign: bool,
+	span: Span,
+	report := true,
+) -> bool {
+	if !has_attribute(attributes, "cross_thread") {
+		return false
+	}
+	problem := ""
+	switch {
+	case in_foreign:
+		problem = "cannot mark a foreign procedure's parameter: what foreign code hands to a thread is not checked"
+	case type == INVALID_TYPE || underlying_kind(k.c, type) == .Proc:
+		return type != INVALID_TYPE
+	case mode == .Move && escape == .Static:
+		return true
+	case mode == .Move:
+		problem = "on a `move` parameter needs `@(escape=static)` too: nothing shorter than the process bounds another thread"
+	case:
+		problem = "marks a `move` parameter or one of procedure type"
+	}
+	if report {
+		errorf(k.c, span, "L0723", "`@(cross_thread)` %s", problem)
+	}
+	return false
+}
+
 // Is this signature one binding of a declaration written for many? A generic
 // procedure, an instance of one, or any member of an `impl` block on a generic
 // record instance.
@@ -907,6 +947,7 @@ resolve_struct_fields :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) {
 				bound.public = public && !padding
 				bound.is_using = field.is_using
 				bound.required = has_attribute(field.attributes, "required")
+				bound.synchronized = has_attribute(field.attributes, "synchronized")
 			}
 			append(&bindings, binding)
 			if binding != INVALID_SYMBOL {
@@ -920,6 +961,7 @@ resolve_struct_fields :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) {
 		// design.md "Record layout attributes".
 		info.packed = has_attribute(value.attributes, "packed")
 		info.written_align = record_written_alignment(k, value)
+		info.thread_affine = has_attribute(value.attributes, "thread_affine")
 	}
 	resolve_uninitialized_fields(k, type, value)
 }
@@ -1324,6 +1366,7 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 	modes := make([dynamic]Param_Mode, 0, 4, k.c.semantic_allocator)
 	resets_list := make([dynamic]bool, 0, 4, k.c.semantic_allocator)
 	escapes_list := make([dynamic]Escape_Level, 0, 4, k.c.semantic_allocator)
+	crosses_list := make([dynamic]bool, 0, 4, k.c.semantic_allocator)
 	by_ptr_list := make([dynamic]bool, 0, 4, k.c.semantic_allocator)
 	param_symbols := make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
 	param_names := make([dynamic]Identifier_Id, 0, 4, context.temp_allocator)
@@ -1397,6 +1440,10 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 			resets := has_attribute(parameter.attributes, "allocator_reset") &&
 				!split_receiver
 			resets = allocator_reset_ok(k, resets, written_type, parameter.span)
+			crosses := check_cross_thread_attribute(
+				k, parameter.attributes, written_type, mode, escape, is_foreign, parameter.span,
+				report = name_index == 0,
+			)
 			if mode == .Variadic && name_type != INVALID_TYPE {
 				if !variadic_position_ok(k, literal.signature.params, position, name_index, parameter.span) {
 					name_type, mode = written_type, .Value
@@ -1416,6 +1463,7 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 				bound.immutable = bound.mode == .Value
 				bound.owner_proc = literal
 				bound.allocator_reset = resets
+				bound.cross_thread = crosses
 				bound.escape = escape
 			}
 			if position == 0 && name_index == 0 &&
@@ -1430,6 +1478,7 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 			append(&modes, mode)
 			append(&resets_list, resets)
 			append(&escapes_list, escape)
+			append(&crosses_list, crosses)
 			append(&by_ptr_list, is_by_ptr)
 			append(&param_symbols, binding)
 			append(&defaults, default)
@@ -1463,6 +1512,7 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 		literal.signature.convention, resets_list[:],
 		param_by_ptr = by_ptr_list[:], c_vararg = saw_c_vararg,
 		param_escapes = escapes_list[:],
+		param_cross_thread = crosses_list[:],
 		proc_contract = !is_foreign && literal.body != nil && result_needs_contract(k.c, result_type, result_inout) ? symbol_id : INVALID_SYMBOL,
 	)
 	// Creating bindings may have grown the symbol store.
@@ -1936,6 +1986,7 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 		modes := make([dynamic]Param_Mode, 0, len(value.params), k.c.semantic_allocator)
 		resets := make([dynamic]bool, 0, len(value.params), k.c.semantic_allocator)
 		escapes := make([dynamic]Escape_Level, 0, len(value.params), k.c.semantic_allocator)
+		crosses := make([dynamic]bool, 0, len(value.params), k.c.semantic_allocator)
 		for parameter, position in value.params {
 			// The reset effect is part of the procedure type.
 			marked := has_attribute(parameter.attributes, "allocator_reset")
@@ -1971,7 +2022,12 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 				append(&params, resolved)
 				append(&modes, mode)
 				append(&resets, marked)
-				append(&escapes, check_escape_attribute(k, parameter.attributes, resolved, parameter.span, borrowing = mode == .Borrow || mode == .Inout || mode == .Move))
+				escape := check_escape_attribute(k, parameter.attributes, resolved, parameter.span, borrowing = mode == .Borrow || mode == .Inout || mode == .Move)
+				append(&escapes, escape)
+				append(&crosses, check_cross_thread_attribute(
+					k, parameter.attributes, resolved, mode, escape, false, parameter.span,
+					report = name_index == 0,
+				))
 			}
 		}
 		result_type := INVALID_TYPE
@@ -1992,6 +2048,7 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 		value.denoted_type = intern_proc_type(
 			k.c, params[:], modes[:], result_type, result_inout, value.convention, resets[:],
 			param_escapes = escapes[:],
+			param_cross_thread = crosses[:],
 		)
 		value.resolution.kind = .Type
 		return value.denoted_type
@@ -2318,6 +2375,7 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 	for symbol_id in d.symbols {
 		if sym := symbol_of(k.c, symbol_id); sym != nil {
 			sym.duration = d.duration
+			sym.synchronized = sym.kind == .Var && has_attribute(d.attributes, "synchronized")
 		}
 	}
 	if len(d.symbols) == 1 {

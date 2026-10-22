@@ -115,8 +115,20 @@ Proj_Kind :: enum u8 {
 Proj_Step :: struct {
 	precision: Precision_Loss,
 	kind:      Proj_Kind,
+	// design.md "@(synchronized)": the step selects a synchronized field from
+	// outside its package, so reaching the place is exclusive access.
+	synchronized: bool,
 	lo:        i64,
 	hi:        i64,
+}
+
+path_is_synchronized :: proc(path: []Proj_Step) -> bool {
+	for step in path {
+		if step.synchronized {
+			return true
+		}
+	}
+	return false
 }
 
 proj_field :: proc(index: int) -> Proj_Step {
@@ -2407,14 +2419,20 @@ report_borrow_conflict :: proc(state: ^Prov_State, event: Prov_Event, loan: Prov
 			loan.what,
 		)
 	} else {
+		// design.md "@(synchronized)": such an access counts as a write, and a
+		// borrow of the field as a mutable one, whatever was written.
+		access := event.access == .Write ? "write" : "read"
+		if path_is_synchronized(event.path) {
+			access = "access through a synchronized field"
+		}
 		errorf(
 			k.c,
 			event.span,
 			"L0511",
 			conflicting,
-			event.access == .Write ? "write" : "read",
+			access,
 			root_label(root),
-			loan.mutable ? "mutable" : "read-only",
+			path_is_synchronized(loan.path) ? "exclusive" : loan.mutable ? "mutable" : "read-only",
 			loan.what,
 		)
 	}
@@ -2646,6 +2664,10 @@ report_retention :: proc(
 				add_notef(state.k.c, root.span, "%s is declared here", root_label(root))
 			}
 			add_notef(state.k.c, loan.span, "the %s is created here", loan.what)
+			// design.md "@(cross_thread)": this is why one cannot reach a thread.
+			if root.kind == .Thread_Local && into == .Process {
+				add_notef(state.k.c, root.span, "each thread has its own `thread_local` storage, which ends with that thread")
+			}
 			return true
 		}
 	}

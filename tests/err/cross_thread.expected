@@ -1,0 +1,40 @@
+L0726
+@48:35
+`numbers` is backed by an allocator region this procedure received
+L0723
+@56:19
+needs `@(escape=static)` too
+L0723
+@57:15
+marks a `move` parameter or one of procedure type
+L0723
+@62:27
+cannot mark a foreign procedure's parameter
+L0647
+@69:7
+this slice borrows `buffer`
+each thread has its own `thread_local` storage
+L0724
+@70:34
+`Window` is `@(thread_affine)`
+L0724
+@71:35
+`Windows` holds or reaches `Window`
+L0724
+@72:35
+`Via_Pointer` holds or reaches `Window`
+L0724
+@73:34
+`Choice` is `@(thread_affine)`
+L0725
+@74:34
+`Erased` reaches `dyn Sized`
+L0725
+@76:32
+`dyn Sized` hides the type it erased
+L0724
+@78:32
+reaches `Window_Counter`
+L0310
+@83:35
+cannot initialise `proc(proc())` with `proc(@(cross_thread) proc())`

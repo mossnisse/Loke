@@ -23,10 +23,13 @@ impl Thread {
 }
 
 // Private to the package, but a public declaration names it.
-spawn_with :: proc(entry: proc(value: move $T), @(escape=static) arg: move T) -> Thread ---;
+spawn_with :: proc(
+	@(cross_thread) entry: proc(value: move $T),
+	@(cross_thread, escape=static) arg: move T,
+) -> Thread ---;
 
 // Private to the package, but a public declaration names it.
-spawn_plain :: proc(entry: proc()) -> Thread ---;
+spawn_plain :: proc(@(cross_thread) entry: proc()) -> Thread ---;
 
 spawn :: proc{spawn_with, spawn_plain};
 
@@ -38,8 +41,9 @@ spawn :: proc{spawn_with, spawn_plain};
 // file-scope storage and behind a `Shared(T)`. It is move-only.
 Mutex :: struct($T: type) {
 	// For a caller that owns the mutex outright, before spawning or after joining,
-	// which needs no lock.
-	value: T,
+	// which needs no lock. Synchronized, as `Atomic`'s `value` is: outside this
+	// package it is reached only with exclusive access to the mutex.
+	@(synchronized) value: T,
 	// and fields private to the package
 }
 

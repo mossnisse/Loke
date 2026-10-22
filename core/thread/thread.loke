@@ -121,9 +121,14 @@ thread_main :: proc "stdcall" (raw: rawptr) -> u32 {
 
 // Runs `entry(arg)` on a new thread. The argument is moved in, and any borrow it
 // carries must be of process-lifetime storage, so nothing the thread holds can
-// end under it. Running out of memory or threads panics.
+// end under it. Both cross to the new thread, which is what makes the compiler
+// check them (design.md "@(cross_thread)"). Running out of memory or threads
+// panics.
 @(private)
-spawn_with :: proc(entry: proc(value: move $T), @(escape=static) arg: move T) -> Thread {
+spawn_with :: proc(
+	@(cross_thread) entry: proc(value: move $T),
+	@(cross_thread, escape=static) arg: move T,
+) -> Thread {
 	block := (^mut Start(T))(unsafe.new(Start(T){run = Start(T).begin, entry = entry}));
 	unsafe.write(block^.arg[0], move(arg));
 	block^.live = 1;
@@ -142,7 +147,7 @@ spawn_with :: proc(entry: proc(value: move $T), @(escape=static) arg: move T) ->
 }
 
 @(private)
-spawn_plain :: proc(entry: proc()) -> Thread {
+spawn_plain :: proc(@(cross_thread) entry: proc()) -> Thread {
 	plain := entry;
 	return spawn_with(run_plain, move(plain));
 }
@@ -166,9 +171,10 @@ Mutex :: struct($T: type) {
 	// system's own atomic operations.
 	@(private) word: sync.Atomic(uintptr),
 	/// For a caller that owns the mutex outright, before spawning or after joining,
-	/// which needs no lock.
+	/// which needs no lock. Synchronized, as `Atomic`'s `value` is: outside this
+	/// package it is reached only with exclusive access to the mutex.
 	// Public for the same reason `Atomic`'s `value` is.
-	value: T,
+	@(synchronized) value: T,
 }
 
 impl Mutex($T) {

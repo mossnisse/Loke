@@ -42,8 +42,10 @@ Logger :: dyn mut Sink;
 // Where a selected logging provider is published. Generated startup writes the
 // factory's result here, once, before `main`; until then it is `.none` and
 // every call goes to the standard sink below. That is also what makes an
-// unselected build need no initialization at all.
-@(private)
+// unselected build need no initialization at all. Synchronized: it is
+// published before any thread starts and never replaced, and the provider it
+// names accepts concurrent records (design.md "Build-selected providers").
+@(private, synchronized)
 selected: Option(Logger) = .none;
 
 /// The handle the program is logging through, for code that wants to pass it on

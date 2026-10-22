@@ -109,6 +109,9 @@ Expr_Selector :: struct {
 	// A selected union variant: the union and the variant's index.
 	variant_union: Type_Id,
 	variant_index: int,
+	// design.md "@(synchronized)": a synchronized field reached from outside its
+	// declaring package, which the borrow analysis counts as exclusive access.
+	synchronized:  bool,
 }
 
 // `x.(T)` traps and yields one value; `x.as(T)` yields `Option(T)`.

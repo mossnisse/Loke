@@ -1,0 +1,85 @@
+// design.md "@(cross_thread)" and "@(thread_affine)": an argument crossing to
+// another thread may carry no `thread_local` borrow, nothing thread-affine,
+// nothing erased whose type cannot be checked, and no owner backed by a region
+// the spawning procedure received. The attribute marks only a `move`
+// parameter kept for the process, or one of procedure type, and a procedure
+// type with it does not convert to one without.
+package main;
+
+import "core:thread";
+import "core:mem";
+
+buffer: thread_local [4]int;
+
+Window :: struct @(thread_affine) { handle: int }
+Windows :: struct { open: [dynamic]Window }
+Via_Pointer :: struct { window: ^Window }
+Choice :: union @(thread_affine) { none, some: int }
+
+Sized :: interface($Self: type) {
+	slot size: proc(self) -> int;
+}
+Counter :: struct { value: int }
+impl Counter {
+	size :: proc(self) -> int { return self.value; }
+}
+Erased :: struct { view: dyn Sized }
+
+counter: Counter = {};
+screen: Window = {};
+Window_Counter :: struct @(thread_affine) { value: int }
+impl Window_Counter {
+	size :: proc(self) -> int { return self.value; }
+}
+screen_counter: Window_Counter = {};
+
+slice_entry :: proc(values: move []int) {}
+window_entry :: proc(window: move Window) {}
+windows_entry :: proc(windows: move Windows) {}
+pointer_entry :: proc(holder: move Via_Pointer) {}
+choice_entry :: proc(choice: move Choice) {}
+erased_entry :: proc(holder: move Erased) {}
+view_entry :: proc(view: move dyn Sized) {}
+numbers_entry :: proc(numbers: move [dynamic]int) {}
+
+received :: proc(allocator: mem.Allocator) {
+	numbers: [dynamic]int via allocator = {};
+	numbers.append(1);
+	a := thread.spawn(numbers_entry, move(numbers));
+}
+
+// A wrapper's own marked argument was checked where it was passed.
+forward :: proc(@(cross_thread, escape=static) numbers: move [dynamic]int) {
+	a := thread.spawn(numbers_entry, move(numbers));
+}
+
+no_escape :: proc(@(cross_thread) numbers: move [dynamic]int) {}
+plain :: proc(@(cross_thread) count: int) {}
+
+foreign import kernel32 "system:kernel32.lib";
+foreign kernel32 {
+	@(link_name="Sleep")
+	sleep :: proc "stdcall" (@(cross_thread) milliseconds: u32) ---;
+}
+
+starts :: proc(@(cross_thread) entry: proc()) {}
+nothing :: proc() {}
+
+main :: proc() {
+	a := thread.spawn(slice_entry, buffer[:]);
+	b := thread.spawn(window_entry, Window{});
+	c := thread.spawn(windows_entry, Windows{});
+	d := thread.spawn(pointer_entry, Via_Pointer{&screen});
+	e := thread.spawn(choice_entry, Choice.none);
+	f := thread.spawn(erased_entry, Erased{(dyn Sized)(&counter)});
+	view := (dyn Sized)(&counter);
+	g := thread.spawn(view_entry, move(view));
+	h := thread.spawn(view_entry, (dyn Sized)(&counter));
+	i := thread.spawn(view_entry, (dyn Sized)(&screen_counter));
+	received(mem.default_allocator());
+}
+
+converts :: proc() {
+	unchecked: proc(entry: proc()) = starts;
+	unchecked(nothing);
+}

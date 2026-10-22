@@ -961,6 +961,9 @@ select_field :: proc(
 	v.type = sym.type
 	v.value_category = .Place
 	inherit_capability(&v.base, operand_base, through_pointer, pointer_mutable)
+	if sym.synchronized && sym.pkg != k.pkg && !on_raw_address_chain(k, v) {
+		check_synchronized_access(k, v, sym)
+	}
 	// Selecting from a constant aggregate is itself constant.
 	if operand_base.is_const && operand_base.const_value.kind == .Aggregate {
 		aggregate := operand_base.const_value.aggregate
@@ -994,6 +997,70 @@ inherit_capability :: proc(v, operand: ^Expr_Base, through_pointer, pointer_muta
 		v.assignable = operand.assignable
 		v.immutable = operand.immutable
 	}
+}
+
+// design.md "@(synchronized)": outside the declaring package, reaching a
+// synchronized field needs exclusive access to the record holding it, since a
+// synchronizing operation through a read-only borrow may write it meanwhile.
+// The place must be one a write could reach; the borrow analysis then counts
+// the access as a write against every loan of the owner.
+@(private = "file")
+check_synchronized_access :: proc(k: ^Checker, v: ^Expr_Selector, field: ^Symbol) {
+	v.synchronized = true
+	reason := ""
+	#partial switch v.immutable {
+	case .None:
+		if v.assignable {
+			return
+		}
+		reason = "this expression"
+	case .Constant, .Temporary, .Read_Only:
+		// Its own temporary, or a constant nothing can change.
+		return
+	case .Through_Pointer:
+		reason = "a read-only `^T`"
+	case .Through_Slice:
+		reason = "a read-only `[]T`"
+	case .Value_Parameter:
+		reason = "a value parameter, which shares its caller's storage"
+	case .Loop_Binding:
+		reason = "a `foreach` binding, which names the element read-only"
+	case .Payload_Binding:
+		reason = "a case binding over storage the subject still owns"
+	case:
+		reason = "a read-only name"
+	}
+	pkg := package_of(k.c, field.pkg)
+	errorf(
+		k.c, v.span, "L0722",
+		"`%s` is `@(synchronized)`, so outside `%s` it is reached only with exclusive access to its record, not through %s",
+		identifier_text(k.c, field.name), pkg != nil ? pkg.key : "its package", reason,
+	)
+	add_notef(
+		k.c, v.span,
+		"use the type's synchronizing operations, or reach it through an owner, `^mut`, `[]mut`, or `inout`",
+	)
+}
+
+// Whether `v` is on the place chain of a `rawptr(&place)` conversion, which
+// takes an address without accessing what is there.
+@(private = "file")
+on_raw_address_chain :: proc(k: ^Checker, v: ^Expr_Selector) -> bool {
+	place := k.raw_address_place
+	for place != nil {
+		if expr_base(place) == &v.base {
+			return true
+		}
+		#partial switch link in place {
+		case ^Expr_Selector:
+			place = link.operand
+		case ^Expr_Index:
+			place = link.operand
+		case:
+			return false
+		}
+	}
+	return false
 }
 
 // The `using` fields leading from `record` to a field named `name`, ending with

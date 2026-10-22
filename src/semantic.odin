@@ -177,6 +177,10 @@ Type_Info :: struct {
 	// This bit records an explicit leaf declaration; containing records inherit
 	// it through lifecycle classification.
 	move_only:     bool,
+	// design.md "@(thread_affine)": values must stay on the thread that made
+	// them. An explicit leaf too; what holds or reaches one inherits it through
+	// `thread_affine_part`.
+	thread_affine: bool,
 	// Inherent members written by `impl`. `extend` never writes here — its
 	// members are package-scoped and live in `Package.extensions`.
 	members:    []Symbol_Id,
@@ -191,6 +195,9 @@ Type_Info :: struct {
 	// through a type that hides it. Nil means every parameter is at the default.
 	param_resets: []bool,
 	param_escapes: []Escape_Level,
+	// design.md "@(cross_thread)": the parameters whose argument runs or travels
+	// on another thread, which every call checks, through a value too.
+	param_cross_thread: []bool,
 	// A compile-time reference to an inferred result contract; plain written
 	// signatures erase this bound.
 	proc_contract: Symbol_Id,
@@ -646,6 +653,9 @@ Symbol :: struct {
 	// design.md "Required fields": every literal supplies this field, so its
 	// record has no zero value.
 	required:    bool,
+	// design.md "@(synchronized)": a field or shared variable whose declaring
+	// package synchronizes every access to it.
+	synchronized: bool,
 	mode:        Param_Mode,
 	// The declaring procedure literal, for the capture check in step 6.
 	owner_proc:  rawptr,
@@ -663,6 +673,9 @@ Symbol :: struct {
 	// design.md "`@(allocator_reset)`": a successful call may end this
 	// parameter's region. Verified in the body, carried in the procedure type.
 	allocator_reset: bool,
+	// design.md "@(cross_thread)": the argument runs or travels on another
+	// thread. Carried in the procedure type.
+	cross_thread:    bool,
 	// design.md `@(escape=...)`: what a call may leave behind that depends on
 	// this parameter. `.Result` unless written otherwise.
 	escape:          Escape_Level,
@@ -1054,6 +1067,7 @@ intern_proc_type :: proc(
 	c_vararg := false,
 	param_escapes: []Escape_Level = nil,
 	proc_contract := INVALID_SYMBOL,
+	param_cross_thread: []bool = nil,
 ) -> Type_Id {
 	init_semantic_stores(c)
 	hash := u64(0xcbf29ce484222325)
@@ -1083,6 +1097,9 @@ intern_proc_type :: proc(
 			hash = (hash ~ u64(index + 1) << 32 ~ u64(level)) * HASH_MULTIPLIER
 		}
 	}
+	for value, index in param_cross_thread {
+		if value { hash = (hash ~ u64(index + 1) << 48) * HASH_MULTIPLIER }
+	}
 	bucket := c.proc_types[hash]
 	for candidate in bucket {
 		info := c.types[candidate]
@@ -1094,6 +1111,7 @@ intern_proc_type :: proc(
 		   equal_reset_effects(info.param_resets, param_resets) &&
 		   equal_reset_effects(info.param_by_ptr, param_by_ptr) &&
 		   equal_escape_levels(info.param_escapes, param_escapes) &&
+		   equal_reset_effects(info.param_cross_thread, param_cross_thread) &&
 		   info.proc_contract == proc_contract &&
 		   info.c_vararg == c_vararg {
 			return candidate
@@ -1111,6 +1129,11 @@ intern_proc_type :: proc(
 		by_ptr_copy = make([]bool, len(param_by_ptr), c.semantic_allocator)
 		copy(by_ptr_copy, param_by_ptr)
 	}
+	cross_copy: []bool
+	if has_reset_effect(param_cross_thread) {
+		cross_copy = make([]bool, len(param_cross_thread), c.semantic_allocator)
+		copy(cross_copy, param_cross_thread)
+	}
 	escape_copy: []Escape_Level
 	if has_escape_level(param_escapes) {
 		escape_copy = make([]Escape_Level, len(param_escapes), c.semantic_allocator)
@@ -1125,6 +1148,7 @@ intern_proc_type :: proc(
 		param_modes   = mode_copy,
 		param_resets  = reset_copy,
 		param_escapes = escape_copy,
+		param_cross_thread = cross_copy,
 		proc_contract = proc_contract,
 		param_by_ptr  = by_ptr_copy,
 		c_vararg      = c_vararg,
@@ -1199,6 +1223,13 @@ proc_escape_weakens_to :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	   !equal_reset_effects(a.param_by_ptr, b.param_by_ptr) {
 		return false
 	}
+	// design.md "@(cross_thread)": calls through the destination may check an
+	// argument the procedure does not need checked, never skip one it does.
+	for index in 0 ..< len(a.parameters) {
+		if proc_param_crosses_thread(c, from, index) && !proc_param_crosses_thread(c, to, index) {
+			return false
+		}
+	}
 	for index in 0 ..< len(a.parameters) {
 		have, want := proc_param_escape(c, from, index), proc_param_escape(c, to, index)
 		// An inferred contract may meet a written `none`; `check_proc_contracts`
@@ -1260,6 +1291,13 @@ equal_reset_effects :: proc(a, b: []bool) -> bool {
 		}
 	}
 	return true
+}
+
+// design.md "@(cross_thread)": whether the argument for parameter `index` runs
+// or travels on another thread.
+proc_param_crosses_thread :: proc(c: ^Compiler, proc_type: Type_Id, index: int) -> bool {
+	info := underlying_info(c, proc_type)
+	return info != nil && index < len(info.param_cross_thread) && info.param_cross_thread[index]
 }
 
 // Whether parameter `index` of this procedure type may reset the allocator
@@ -2264,6 +2302,9 @@ proc_type_name :: proc(c: ^Compiler, info: ^Type_Info, allocator: mem.Allocator)
 		// signatures must not print the same.
 		if index < len(info.param_resets) && info.param_resets[index] {
 			strings.write_string(&b, "@(allocator_reset) ")
+		}
+		if index < len(info.param_cross_thread) && info.param_cross_thread[index] {
+			strings.write_string(&b, "@(cross_thread) ")
 		}
 		if index < len(info.param_escapes) && info.param_escapes[index] != .Result {
 			strings.write_string(&b, "@(escape=")

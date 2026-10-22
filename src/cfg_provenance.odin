@@ -1251,7 +1251,7 @@ prov_reborrow :: proc(graph: ^Flow_Graph, slots: []int, destination: Type_Id, in
 	for slot in slots {
 		entry := graph.prov_slots[slot]
 		if entry.fresh_loan != NO_LOAN {
-			if weakens {
+			if weakens && !path_is_synchronized(graph.loans[int(entry.fresh_loan)].path) {
 				graph.loans[int(entry.fresh_loan)].mutable = false
 				if entry.fresh_access_index >= 0 {
 					graph.blocks[entry.fresh_access_block].prov[entry.fresh_access_index].access = .Read
@@ -1398,7 +1398,9 @@ prov_borrow :: proc(
 	access_block := NO_BLOCK,
 	access_index := -1,
 ) -> []int {
-	loan := prov_new_loan(graph, root, path, mutable, span, what)
+	// design.md "@(synchronized)": even a read-only borrow of a synchronized
+	// field excludes every other access while it lasts.
+	loan := prov_new_loan(graph, root, path, mutable || path_is_synchronized(path), span, what)
 	slot := prov_temp_slot(graph)
 	graph.prov_slots[slot].fresh_loan = loan
 	graph.prov_slots[slot].fresh_access_block = access_block
@@ -1424,6 +1426,13 @@ prov_access :: proc(
 	if kind != .Read {
 		prov_note_static_write(graph, root)
 	}
+	// design.md "@(synchronized)": a synchronizing operation may write the
+	// field through any read-only borrow, so even reading it conflicts with one.
+	// It is still no write to a global's effect.
+	access := kind
+	if kind == .Read && path_is_synchronized(path) {
+		access = .Write
+	}
 	if viewed := prov_root_view(graph, root); len(viewed) > 0 {
 		prov_emit(graph, Prov_Event{kind = .Live, sources = viewed, span = span})
 	}
@@ -1431,7 +1440,7 @@ prov_access :: proc(
 		kind   = .Access,
 		root   = root,
 		path   = path,
-		access = kind,
+		access = access,
 		span   = span,
 		verb   = verb,
 	})
@@ -2965,7 +2974,9 @@ prov_call_moved_owner :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int, lev
 prov_field_step :: proc(graph: ^Flow_Graph, v: ^Expr_Selector) -> Proj_Step {
 	if !type_is_union(graph.k.c, expr_base(v.operand).type) {
 		if field := symbol_of(graph.k.c, v.resolution.symbol); field != nil {
-			return proj_field(int(field.index))
+			step := proj_field(int(field.index))
+			step.synchronized = v.synchronized
+			return step
 		}
 	}
 	return proj_wild()
@@ -4110,6 +4121,7 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		borrowed = prov_join(graph, borrowed, actuals[0])
 	}
 	prov_call_resets(graph, v)
+	prov_call_cross_thread(graph, v)
 	prov_call_retention(graph, v, actuals)
 	prov_container_content(graph, v, container_op, actuals)
 	prov_call_effects(graph, v)
@@ -4955,6 +4967,115 @@ prov_call_resets :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 		}
 		prov_reset(graph, prov_region_of(graph, argument), v.span, false, v)
 	}
+}
+
+// design.md "@(cross_thread)": what an argument takes to another thread must
+// be able to go. `@(escape=static)` already keeps its borrows to storage that
+// lasts for the process, so a `thread_local` one cannot cross; what remains is
+// thread affinity, erasure that hides it, and an allocator region the other
+// thread may not be allowed to use. Only the default region is known to
+// accept use from any thread; one this procedure received may be a region
+// that does not (design.md "Allocator regions and region provenance").
+@(private = "file")
+prov_call_cross_thread :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
+	c := graph.k.c
+	if graph.mode != .Prov_Diagnose || !committing(c) {
+		return
+	}
+	proc_type := call_proc_type(c, v)
+	info := underlying_info(c, proc_type)
+	if info == nil || len(info.param_cross_thread) == 0 {
+		return
+	}
+	for argument, index in v.bound {
+		if argument == nil || index >= len(info.parameters) || !proc_param_crosses_thread(c, proc_type, index) ||
+		   underlying_kind(c, info.parameters[index]) == .Proc {
+			continue
+		}
+		base := expr_base(argument)
+		if base == nil || base.type == INVALID_TYPE {
+			continue
+		}
+		facts := transfer_facts(c, prov_transferred_type(c, argument))
+		span := expr_span(argument)
+		switch {
+		case facts.affine != INVALID_TYPE:
+			if facts.affine == base.type {
+				errorf(c, span, "L0724", "`%s` is `@(thread_affine)`, so it cannot cross to another thread", type_name(c, base.type))
+			} else {
+				errorf(
+					c, span, "L0724",
+					"`%s` holds or reaches `%s`, which is `@(thread_affine)`, so it cannot cross to another thread",
+					type_name(c, base.type), type_name(c, facts.affine),
+				)
+			}
+			if declared := symbol_of(c, type_of(c, facts.affine).symbol); declared != nil {
+				add_notef(c, declared.span, "`%s` is declared here", type_name(c, facts.affine))
+			}
+		case facts.erased == base.type:
+			errorf(
+				c, span, "L0725",
+				"`%s` hides the type it erased, so nothing shows that it may cross to another thread",
+				type_name(c, base.type),
+			)
+			add_notef(c, span, "pass the concrete value instead, or convert it to the view at this call")
+		case facts.erased != INVALID_TYPE:
+			errorf(
+				c, span, "L0725",
+				"`%s` reaches `%s`, which hides the type it erased, so nothing shows that it may cross to another thread",
+				type_name(c, base.type), type_name(c, facts.erased),
+			)
+			add_notef(c, span, "pass the concrete value instead, or convert it to the view at this call")
+		}
+		if region_is_parameter_backed(prov_received_region(graph, prov_result_region(graph, argument))) {
+			errorf(
+				c, span, "L0726",
+				"%s is backed by an allocator region this procedure received, which another thread may not be allowed to use",
+				prov_owner_name(graph, argument),
+			)
+			add_notef(c, span, "build it with the default allocator, or in the thread that uses it")
+		}
+	}
+}
+
+// What an argument takes across: a `dyn` or `any_view` made at the call is
+// checked through what it erased, which is known there.
+@(private = "file")
+prov_transferred_type :: proc(c: ^Compiler, argument: Expr) -> Type_Id {
+	base := expr_base(argument)
+	if base.erased_from != INVALID_TYPE {
+		return base.erased_from
+	}
+	if call, is_call := argument.(^Expr_Call); is_call && len(call.bound) == 1 && call.bound[0] != nil &&
+	   underlying_kind(c, call.type) == .Dyn {
+		#partial switch _ in call.operation {
+		case Call_Dyn_Conversion, Call_Conversion:
+			return expr_base(call.bound[0]).type
+		}
+	}
+	return base.type
+}
+
+// The regions of `set` this body received and has not had checked: an owner
+// that arrived through a `@(cross_thread)` `move` parameter was checked at the
+// call that passed it.
+@(private = "file")
+prov_received_region :: proc(graph: ^Flow_Graph, set: Region_Set) -> Region_Set {
+	rest := prov_empty_region(graph)
+	region_merge(&rest, set)
+	if graph.literal.signature == nil {
+		return rest
+	}
+	index := 0
+	for parameter in graph.literal.signature.params {
+		for id in parameter.symbols {
+			defer index += 1
+			if sym := symbol_of(graph.k.c, id); sym != nil && sym.cross_thread && sym.mode == .Move && index < len(rest.params) {
+				rest.params[index] = false
+			}
+		}
+	}
+	return rest
 }
 
 // design.md "Temporaries and procedure boundaries": a direct call substitutes

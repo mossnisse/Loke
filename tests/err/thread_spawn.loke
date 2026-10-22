@@ -1,8 +1,10 @@
 // design.md "Global write effects" and core:thread: a spawned entry that writes
 // a global every thread shares is warned about, through a callee and for a
-// `static` local too, while `thread_local`, atomic operations, and a `Mutex`
-// are not; a spawned argument may not borrow shorter-lived storage; and a
-// pointer from a guard may not outlive the lock.
+// `static` local too, while `thread_local`, atomic operations, a `Mutex`, and a
+// `@(synchronized)` variable are not; so is an entry passed to a user wrapper's
+// `@(cross_thread)` parameter, at the wrapper's call; a spawned argument may
+// not borrow shorter-lived storage; and a pointer from a guard may not outlive
+// the lock.
 package main;
 
 import "core:sync";
@@ -32,6 +34,13 @@ raw :: proc() { hits.value = 1; }
 
 sum :: proc(values: move []int) {}
 
+@(synchronized) vouched: int;
+vouch :: proc() { vouched += 1; }
+
+start :: proc(@(cross_thread) entry: proc()) {
+	worker := thread.spawn(entry);
+}
+
 main :: proc() {
 	a := thread.spawn(indirect);
 	b := thread.spawn(fine);
@@ -40,6 +49,8 @@ main :: proc() {
 
 	local := [3]int{1, 2, 3};
 	e := thread.spawn(sum, local[:]);
+	f := thread.spawn(vouch);
+	start(bump);
 }
 
 escapes :: proc() {

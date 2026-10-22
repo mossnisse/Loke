@@ -1027,6 +1027,25 @@ a library procedure return two overlapping mutable views.
 
 ### Milestone 2: thread declarations
 
+**Done.** The three attributes are in design.md under
+[Attribute reference](design.md#attribute-reference), and the checks at a
+crossing argument under
+[Concurrency and the memory model](design.md#concurrency-and-the-memory-model).
+`@(cross_thread)` is part of the procedure type, as escape levels are, so a
+call through a procedure value is checked too. The race warning skips a thread
+wrapper's own forwarding by the wrapper's attribute, not by its package, and
+the refusal to borrow a constant from read-only storage keys on a synchronized
+field, where it used to recognize `Atomic` by name. The erased-eligibility
+check accepts a view converted at the call.
+
+- **Left for milestones 3 and 4:** an owner backed by a file-scope or `static`
+  `mem.Arena` crosses unchecked, since region provenance names such a region
+  as unknown; design.md lists it under
+  [What is not checked](design.md#what-is-not-checked). The allocator-use
+  effect and the reservation of check 9 close it.
+
+The plan as written:
+
 `@(synchronized)`, `@(cross_thread)`, and `@(thread_affine)`, applied to
 `thread.spawn`. This makes today's unstructured threads safer before any new
 syntax exists, and gives milestone 4 the facts it keys on.

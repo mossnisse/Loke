@@ -19,11 +19,15 @@ package sync;
 // hands back a second, unrelated atomic. A record holding one is move-only
 // too.
 Atomic :: move_only struct($T: type) {
-	// Public, because a caller that has proven it has exclusive access — during
+	// Public, because a caller that has exclusive access — during
 	// construction, or after joining every other thread — reads and writes it
 	// without paying for a synchronizing operation. Every *atomic* access goes
 	// through the methods below.
-	value: T,
+	//
+	// Synchronized: outside this package, `value` is reached only through an
+	// owner nothing borrows, or through `^mut`, `[]mut`, or `inout`, never
+	// through a read-only `^`, where an atomic operation may be writing it.
+	@(public, synchronized) value: T,
 }
 
 impl Atomic($T) {

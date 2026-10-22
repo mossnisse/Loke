@@ -1,0 +1,54 @@
+// design.md "@(cross_thread)": a user-written thread wrapper that marks its
+// parameters is checked as `thread.spawn` is, and forwards what it received
+// unchecked a second time. A procedure without the attribute stores in a type
+// with it, whose calls check more. A `@(thread_affine)` value made and dropped
+// on one thread never crosses, and a synchronized field is read through the
+// owner once every thread that used it has joined.
+package main;
+
+import "core:fmt";
+import "core:sync";
+import "core:thread";
+
+Job :: struct { name: string, rounds: int, values: [dynamic]int }
+
+hits: sync.Atomic(int);
+
+// A handle that must stay on the thread that opened it.
+Handle :: struct @(thread_affine) { id: int }
+
+work :: proc(job: move Job) {
+	opened := Handle{id = job.rounds};
+	foreach (_ in 0..<opened.id) {
+		hits.add(1);
+	}
+	job.values.append(job.rounds);
+}
+
+// Starts `entry(job)` on its own thread and waits for it.
+run_on_thread :: proc(
+	@(cross_thread) entry: proc(job: move Job),
+	@(cross_thread, escape=static) job: move Job,
+) {
+	worker := thread.spawn(entry, move(job));
+	worker.join();
+}
+
+// Runs `entry(job)` here.
+run_here :: proc(entry: proc(job: move Job), job: move Job) {
+	entry(move(job));
+}
+
+Start :: proc(@(cross_thread) entry: proc(job: move Job), @(cross_thread, escape=static) job: move Job);
+
+main :: proc() {
+	run_on_thread(work, Job{"first", 1000, {}});
+	run_on_thread(work, Job{"second", 2000, {1, 2}});
+	start: Start = run_on_thread;
+	start(work, Job{"third", 3000, {}});
+	start = run_here;
+	start(work, Job{"fourth", 4000, {}});
+	fmt.println(hits.value);
+	here := Handle{id = 7};
+	fmt.println(here.id);
+}

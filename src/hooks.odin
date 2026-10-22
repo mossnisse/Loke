@@ -351,6 +351,69 @@ has_excluded_copy_hook :: proc(c: ^Compiler, info: ^Type_Info) -> bool {
 	return false
 }
 
+// ------------------------------------------------------ transfer facts --
+
+// design.md "@(thread_affine)": what a value would take to another thread
+// that may not go. `affine` is a thread-affine type it holds or reaches, and
+// `erased` a `dyn` or `any_view` it reaches, behind which affinity cannot be
+// seen. Like `move_only`, affinity propagates structurally, but transfer also
+// follows pointees, owned and shared payloads, container elements, and a
+// generic record's type arguments. A raw address is not followed: what it
+// reaches is unchecked.
+Transfer_Facts :: struct {
+	affine: Type_Id,
+	erased: Type_Id,
+}
+
+transfer_facts :: proc(c: ^Compiler, type: Type_Id) -> Transfer_Facts {
+	facts := Transfer_Facts{affine = INVALID_TYPE, erased = INVALID_TYPE}
+	visited := make(map[Type_Id]bool, 8, context.temp_allocator)
+	transfer_facts_walk(c, type, &facts, &visited)
+	return facts
+}
+
+@(private = "file")
+transfer_facts_walk :: proc(c: ^Compiler, type: Type_Id, facts: ^Transfer_Facts, visited: ^map[Type_Id]bool) {
+	if type == INVALID_TYPE || visited[type] || (facts.affine != INVALID_TYPE && facts.erased != INVALID_TYPE) {
+		return
+	}
+	visited[type] = true
+	info := type_of(c, type)
+	if info == nil {
+		return
+	}
+	if info.thread_affine && facts.affine == INVALID_TYPE {
+		facts.affine = type
+	}
+	#partial switch info.kind {
+	case .Dyn, .Any_View:
+		if facts.erased == INVALID_TYPE {
+			facts.erased = type
+		}
+	case .Distinct, .Pointer, .C_Pointer, .Slice, .Dynamic_Array, .Box, .Array, .Simd:
+		transfer_facts_walk(c, info.element, facts, visited)
+	case .Map:
+		transfer_facts_walk(c, info.key, facts, visited)
+		transfer_facts_walk(c, info.element, facts, visited)
+	case .Struct:
+		for field in info.fields {
+			if sym := symbol_of(c, field); sym != nil {
+				transfer_facts_walk(c, sym.type, facts, visited)
+			}
+		}
+		// A `Shared(T)` holds its payload behind a `rawptr`, as a view may.
+		for arg in info.instance_args {
+			if arg.is_type {
+				transfer_facts_walk(c, arg.type, facts, visited)
+			}
+		}
+	case .Union:
+		for variant in info.variants {
+			transfer_facts_walk(c, variant, facts, visited)
+		}
+	}
+}
+
 // ------------------------------------------------- generated copy members --
 
 // Contributed only when `clone`/`try_clone` is looked up: `lifecycle_of` caches,

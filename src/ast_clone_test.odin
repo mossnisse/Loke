@@ -24,7 +24,7 @@ ast_clone_classifies_every_node_field :: proc(t: ^testing.T) {
 		{Expr_Error, "", ""},
 		{Expr_Literal, "kind text", ""},
 		{Expr_Ident, "name name_id", "symbol"},
-		{Expr_Selector, "operand name", "variant_union variant_index"},
+		{Expr_Selector, "operand name", "variant_union variant_index synchronized"},
 		{Expr_Checked_Extract, "operand target mode", "payload"},
 		{Expr_Index, "operand indices", "bound map_inserts"},
 		{Expr_Slice, "operand lo hi mutable", "bound"},

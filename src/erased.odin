@@ -251,17 +251,20 @@ install_dyn_call_slot :: proc(k: ^Checker, dyn, signature: Type_Id) {
 	modes := make([]Param_Mode, count, k.c.semantic_allocator)
 	resets := make([]bool, count, k.c.semantic_allocator)
 	escapes := make([]Escape_Level, count, k.c.semantic_allocator)
+	crosses := make([]bool, count, k.c.semantic_allocator)
 	params[0], modes[0], escapes[0] = dyn, .Value, .Result
 	for parameter, index in wanted.parameters {
 		params[index + 1] = parameter
 		modes[index + 1] = proc_parameter_mode(k.c, signature, index)
 		resets[index + 1] = index < len(wanted.param_resets) && wanted.param_resets[index]
 		escapes[index + 1] = proc_param_escape(k.c, signature, index)
+		crosses[index + 1] = proc_param_crosses_thread(k.c, signature, index)
 	}
 	proc_type := intern_proc_type(
 		k.c, params, modes, wanted.result, wanted.result_inout, "",
 		param_resets = resets, param_escapes = escapes,
 		proc_contract = receiver_contract(k.c, wanted.proc_contract),
+		param_cross_thread = crosses,
 	)
 	member := new_symbol(k.c, Symbol {
 		name           = intern_identifier(k.c, "call"),
@@ -349,9 +352,13 @@ dyn_proc_source_signature :: proc(c: ^Compiler, from: Type_Id) -> Type_Id {
 	if len(info.param_resets) > 1 {
 		resets = info.param_resets[1:]
 	}
+	crosses: []bool
+	if len(info.param_cross_thread) > 1 {
+		crosses = info.param_cross_thread[1:]
+	}
 	return intern_proc_type(
 		c, info.parameters[1:], info.param_modes[1:], info.result, info.result_inout, "",
-		param_resets = resets, param_escapes = escapes,
+		param_resets = resets, param_escapes = escapes, param_cross_thread = crosses,
 	)
 }
 

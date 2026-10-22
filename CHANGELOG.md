@@ -114,7 +114,56 @@ checklist.
   (`L0366`). Upgrade by adding `case .Test:`, or `case:` for the builds the
   switch does not care about.
 
+- `sync.Atomic(T)`'s and `thread.Mutex(T)`'s `value` fields are
+  [`@(synchronized)`](design.md#synchronized): outside their packages they are
+  reached only with exclusive access. A read through a read-only `^Atomic(T)`,
+  a value parameter, or a read-only binding is `L0722`, and a read through the
+  owner while it is lent read-only is `L0511`, since an atomic operation
+  through that loan may be writing it. Upgrade by calling `load()`, or by
+  reaching the atomic through `^mut`:
+
+  ```loke
+  // before
+  peek :: proc(hits: ^sync.Atomic(int)) -> int { return hits.value; }
+  // after
+  peek :: proc(hits: ^sync.Atomic(int)) -> int { return hits.load(); }
+  ```
+
+- `thread.spawn` checks the argument it moves to the new thread
+  ([Concurrency and the memory model](design.md#concurrency-and-the-memory-model)).
+  One that holds or reaches a `@(thread_affine)` type is `L0724`; one reaching
+  a `dyn` or `any_view` the call did not make is `L0725`, since the erased type
+  cannot be checked; and an owner backed by an allocator the spawning
+  procedure received is `L0726`. A borrow of `thread_local` storage was already
+  rejected and now says why. Upgrade by passing the concrete value, converting
+  it to the view at the call, or building the owner with the default
+  allocator:
+
+  ```loke
+  // before
+  start :: proc(allocator: mem.Allocator) {
+      jobs: [dynamic]Job via allocator = {};
+      worker := thread.spawn(run, move(jobs));
+  }
+  // after
+  start :: proc() {
+      jobs: [dynamic]Job = {};
+      worker := thread.spawn(run, move(jobs));
+  }
+  ```
+
 ### Added
+
+- Three attributes declare thread facts, so the compiler names no concurrency
+  type or procedure. [`@(synchronized)`](design.md#synchronized) marks a field,
+  or a file-scope or `static` variable, whose package synchronizes every access
+  to it (`L0721` elsewhere). [`@(thread_affine)`](design.md#thread_affine) on a
+  struct or union keeps its values, and everything holding or reaching one, on
+  the thread that made them. [`@(cross_thread)`](design.md#cross_thread) on a
+  `move` parameter that is also `@(escape=static)`, or on one of procedure
+  type, makes a user-written thread wrapper checked and warned about as
+  `thread.spawn` is (`L0723` on any other parameter). It is part of the
+  procedure type.
 
 - `xs.split_at_mut(mid)` on a `[]mut T` returns two mutable halves,
   `(left: []mut T, right: []mut T)`, usable at once and checked as one
