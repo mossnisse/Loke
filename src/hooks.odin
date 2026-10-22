@@ -606,6 +606,26 @@ clone_may_allocate :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	return false
 }
 
+// Whether a `type` holds allocator storage its drop releases: a `string`, a
+// container, a provider, a box, a `Shared(T)` handle, or a record or union
+// holding one. A `move_only` or hooked record of plain parts is managed for
+// its lifecycle but frees nothing itself; what its hook does is the hook's.
+type_owns_allocation :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	if type == INVALID_TYPE || !type_is_managed(c, type) {
+		return false
+	}
+	entry := lifecycle_of(c, type)
+	if entry.intrinsic || entry.container || entry.provider || entry.boxed || type_is_shared_handle(c, type) {
+		return true
+	}
+	for part in lifecycle_parts(c, type) {
+		if type_owns_allocation(c, part) {
+			return true
+		}
+	}
+	return false
+}
+
 // Only a custom copy hook or a container's clone can fail; a generated clone
 // fails when some part's can.
 type_clone_is_fallible :: proc(c: ^Compiler, type: Type_Id) -> bool {

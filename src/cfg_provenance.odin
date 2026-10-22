@@ -3647,7 +3647,7 @@ prov_declare_region :: proc(
 		region_merge(&set, initializer_region)
 	}
 	// An owner copied from a place may be cloned.
-	if managed && initializer != nil && expression_is_borrowed_place(initializer) {
+	if initializer != nil && clone_may_allocate(graph.k.c, sym.type) && expression_is_borrowed_place(initializer) {
 		prov_note_allocator_use(graph, set, sym.span, owned = true)
 	}
 	if !region_is_empty(set) {
@@ -3732,7 +3732,7 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 		if value != nil && s.op == .Assign {
 			prov_region_escape(graph, target, value)
 			// An owner copied from a place may be cloned.
-			if graph.k.c.thread_facts_pending && type_is_managed(graph.k.c, expr_base(target).type) &&
+			if graph.k.c.thread_facts_pending && clone_may_allocate(graph.k.c, expr_base(target).type) &&
 			   expression_is_borrowed_place(value) {
 				prov_note_allocator_use(graph, prov_region_of(graph, value), expr_span(value), owned = true)
 			}
@@ -4054,6 +4054,7 @@ prov_argument_is_inout :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int) ->
 @(private)
 prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	c := graph.k.c
+	prov_call_allocator_use(graph, v)
 	#partial switch _ in v.operation {
 	case Call_Text, Call_Text_Conversion:
 		return prov_text_call(graph, v)
@@ -4066,7 +4067,6 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 			return walk_flow_expr(graph, operand)
 		}
 	}
-	prov_call_allocator_use(graph, v)
 	if result, handled := prov_builtin_call(graph, v); handled {
 		return result
 	}
@@ -4922,11 +4922,13 @@ prov_container_content :: proc(graph: ^Flow_Graph, v: ^Expr_Call, op: Container_
 @(private = "file")
 prov_text_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	source: []int
+	reached: []int
 	for argument, index in v.bound {
 		if argument == nil {
 			continue
 		}
 		loans := walk_flow_expr(graph, argument)
+		reached = prov_join(graph, reached, loans)
 		if index == 0 {
 			source = loans
 			// An owning `string` receiver lends its own storage, which a temporary
@@ -4940,6 +4942,8 @@ prov_text_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 			}
 		}
 	}
+	// A text operation reads through the views it is given.
+	prov_reach(graph, reached, v.span)
 	if !text_result_borrows(graph.k.c, v) {
 		return nil
 	}
@@ -5519,6 +5523,10 @@ prov_call_allocator_use :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 	changes_storage := !supplied || (member.synth == .Container_Op && member.container_op in ALLOCATING_OPS)
 	followed := call_follows_bodies(c, v)
 	info := underlying_info(c, call_proc_type(c, v))
+	// A text operation borrows its operands rather than copying them.
+	_, text := v.operation.(Call_Text)
+	_, conversion := v.operation.(Call_Text_Conversion)
+	text ||= conversion
 	count := len(v.bound) > 0 ? len(v.bound) : len(v.args)
 	allocators := prov_empty_region(graph)
 	for index in 0 ..< count {
@@ -5531,9 +5539,9 @@ prov_call_allocator_use :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 		if info != nil && index < len(info.param_modes) {
 			mode = info.param_modes[index]
 		}
-		managed := type_is_managed(c, type)
+		owns := type_owns_allocation(c, type)
 		switch {
-		case managed && mode == .Value && expression_is_borrowed_place(argument):
+		case !text && mode == .Value && clone_may_allocate(c, type) && expression_is_borrowed_place(argument):
 			prov_note_allocator_use(graph, Region_Set{}, expr_span(argument), owned = true)
 		case followed:
 		case type_underlying(c, type) == TYPE_ALLOCATOR:
@@ -5541,7 +5549,7 @@ prov_call_allocator_use :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 			region_merge(&allocators, set)
 			prov_note_allocator_use(graph, set, expr_span(argument))
 		case !changes_storage:
-		case managed && (mode == .Inout || mode == .Move):
+		case owns && (mode == .Inout || mode == .Move):
 			prov_note_allocator_use(graph, prov_storage_region(graph, argument), expr_span(argument), owned = true)
 		case !supplied && carrier_is_mutable(c, type) && !type_is_region_provider(c, type):
 			if set := prov_viewed_region(graph, argument); !region_is_empty(set) {
@@ -5555,7 +5563,7 @@ prov_call_allocator_use :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 	// An owner a builtin or a supplied member makes, such as `make`'s, `box`'s,
 	// or a clone, comes from the allocator it is given or the default.
 	allocates := builtin == .Unsafe_New || builtin == .Unsafe_Try_New || builtin == .Unsafe_Free
-	if type_is_managed(c, v.type) || allocates {
+	if type_owns_allocation(c, v.type) || allocates {
 		prov_note_allocator_use(graph, allocators, v.span, owned = true)
 	}
 }
@@ -5565,7 +5573,7 @@ prov_call_allocator_use :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 // from the default.
 @(private)
 prov_note_fresh_owner :: proc(graph: ^Flow_Graph, e: Expr, via: Expr = nil) {
-	if !graph.k.c.thread_facts_pending || !type_is_managed(graph.k.c, expr_base(e).type) {
+	if !graph.k.c.thread_facts_pending || !type_owns_allocation(graph.k.c, expr_base(e).type) {
 		return
 	}
 	set := Region_Set{}

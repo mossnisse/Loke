@@ -690,7 +690,7 @@ prov_drop_effects :: proc(
 ) {
 	regions: []Region_Set
 	if set, known := region.?; known {
-		if type_is_managed(graph.k.c, type) {
+		if type_owns_allocation(graph.k.c, type) {
 			prov_note_allocator_use(graph, set, span, owned = true)
 		}
 		regions = make([]Region_Set, 1, graph.alloc)
@@ -1224,13 +1224,13 @@ collect_thread_exit_drops :: proc(c: ^Compiler) {
 			continue
 		}
 		hooks := type_drop_hooks(c, sym.type)
-		managed := type_is_managed(c, sym.type)
-		if !managed && len(hooks) == 0 {
+		owns := type_owns_allocation(c, sym.type)
+		if !owns && len(hooks) == 0 {
 			continue
 		}
 		owner := Region_Set{default = sym.via == nil, unknown = sym.via != nil}
 		variable := Symbol_Id(index)
-		if managed {
+		if owns {
 			use := new_allocator_use(0, c.semantic_allocator)
 			merge_allocator_use(&use, owner, Effect_Source{span = sym.span})
 			append(&drops, Thread_Exit_Drop{variable = variable, use = use})
@@ -1304,19 +1304,21 @@ resize_allocator_use :: proc(use: ^Allocator_Use, count: int) {
 	use^ = grown
 }
 
+// Adds `from`'s parts new to `into`, each keeping its own source.
 @(private = "file")
 merge_allocator_use_from :: proc(into: ^Allocator_Use, from: Allocator_Use) {
 	for wanted, index in from.regions.params {
-		if wanted {
-			params := make([]bool, index + 1, context.temp_allocator)
-			params[index] = true
-			merge_allocator_use(into, Region_Set{params = params}, from.param_sources[index])
+		if wanted && index < len(into.regions.params) && !into.regions.params[index] {
+			into.regions.params[index] = true
+			into.param_sources[index] = from.param_sources[index]
 		}
 	}
-	if from.regions.default {
-		merge_allocator_use(into, Region_Set{default = true}, from.default_source)
+	if from.regions.default && !into.regions.default {
+		into.regions.default = true
+		into.default_source = from.default_source
 	}
-	if from.regions.unknown {
-		merge_allocator_use(into, Region_Set{unknown = true}, from.unknown_source)
+	if from.regions.unknown && !into.regions.unknown {
+		into.regions.unknown = true
+		into.unknown_source = from.unknown_source
 	}
 }

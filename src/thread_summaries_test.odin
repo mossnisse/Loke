@@ -298,3 +298,42 @@ remember :: proc() { local: thread_local Tracked; }
 	testing.expect(t, released, "the managed owner's release is listed")
 	testing.expect(t, local_hooked, "a procedure's `thread_local` owner is listed too")
 }
+
+// Text operations return before the ordinary call path, so their reads and
+// allocations are recorded on their own.
+@(test)
+text_calls_reach_and_allocate :: proc(t: ^testing.T) {
+	p: Checked
+	defer destroy_checked(&p)
+	if !summarized(t, &p, `
+shared: string_view;
+touch :: proc() -> int { return shared.rune_count(); }
+duplicate :: proc(s: string_view) -> string { return s.copy(); }
+count :: proc(s: string_view) -> int { return s.rune_count(); }
+`) {
+		return
+	}
+	expect_reach(t, &p, "touch", "shared")
+	testing.expect(t, use_of(t, &p, "duplicate").regions.default, "`copy` allocates from the default provider")
+	testing.expect(t, allocator_use_is_empty(use_of(t, &p, "count")), "counting runes allocates nothing")
+}
+
+// A `move_only` record of plain fields is managed for its lifecycle but frees
+// no allocator storage.
+@(test)
+plain_move_only_drops_use_no_allocator :: proc(t: ^testing.T) {
+	p: Checked
+	defer destroy_checked(&p)
+	if !summarized(t, &p, `
+Token :: move_only struct { id: int }
+token: thread_local Token;
+hold :: proc() { held := Token{1}; }
+`) {
+		return
+	}
+	testing.expect(t, allocator_use_is_empty(use_of(t, &p, "hold")), "dropping a plain `Token` frees nothing")
+	token := symbol_named(t, &p, "token", .Var)
+	for drop in p.c.thread_exit_drops {
+		testing.expect(t, drop.variable != token, "a plain `Token` owner releases no storage at thread exit")
+	}
+}
