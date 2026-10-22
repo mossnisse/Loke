@@ -542,14 +542,15 @@ prov_composite_content :: proc(graph: ^Flow_Graph, v: ^Expr_Composite, content: 
 		if element.value == nil {
 			continue
 		}
-		loans := walk_flow_expr(graph, element.value)
-		// design.md "Weakening and reborrows": a mutable carrier stored in an
-		// element is a reborrow of it, live until the literal is built, so no
-		// later element may use the same carrier: `Pair{xs, xs}` would hold two
-		// mutable views of one sequence. A record element is checked as the
-		// carriers inside it are (design.md "Values that contain borrows"), so
-		// `Outer{Inner{xs}, Inner{xs}}` is caught too.
-		lent := type_carries_borrow(graph.k.c, prov_element_type(graph, v, index)).mutable
+		element_type := prov_element_type(graph, v, index)
+		loans := prov_walk_stored(graph, element.value, element_type)
+		// design.md "Weakening and reborrows": a mutable carrier stored in an element is a reborrow of it, live
+		// until the literal is built, so no later element may use the same
+		// carrier: `Pair{xs, xs}` would hold two mutable views of one sequence.
+		// A record element is checked as the carriers inside it are (design.md
+		// "Values that contain borrows"), so `Outer{Inner{xs}, Inner{xs}}` is
+		// caught too.
+		lent := type_carries_borrow(graph.k.c, element_type).mutable
 		if lent {
 			loans = prov_lend_carrier(graph, loans, held, expr_span(element.value))
 		}
@@ -891,6 +892,18 @@ prov_read_is_reads_only :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	return !type_carries_borrow(c, type).mutable
 }
 
+// design.md "Weakening and reborrows": a carrier stored where a read-only one
+// is wanted is only read, which a read-only reborrow of it allows, so
+// `Views{xs, xs}` and `v: []int = xs` beside another read-only view of `xs`
+// are accepted.
+@(private)
+prov_walk_stored :: proc(graph: ^Flow_Graph, value: Expr, destination: Type_Id) -> []int {
+	if prov_argument_only_read(graph, value, destination) {
+		return prov_read_carrier(graph, value, true)
+	}
+	return walk_flow_expr(graph, value)
+}
+
 // The carriers `operand` holds, for a read through them.
 @(private = "file")
 prov_read_carrier :: proc(graph: ^Flow_Graph, operand: Expr, reads_only: bool) -> []int {
@@ -1116,13 +1129,18 @@ prov_hold_result :: proc(graph: ^Flow_Graph, sources: []int, result_type: Type_I
 // after it, and keeps what its carriers held then, whatever those expressions
 // write. A mutable carrier is reborrowed into a derived slot, which keeps the
 // source suspended as storing it would; any other slot is copied into a
-// temporary. With `keep_reborrows`, a slot that is already a reborrow, as a
-// lent carrier is, is kept as it is: a copy would end the reborrow early.
+// temporary. A copy of a reborrow is a reborrow of the same source, so the
+// source stays suspended while the copy is live, though the slot it came from
+// may be assigned. With `keep_reborrows`, a slot that is already a mutable
+// reborrow, as a lent carrier is, is kept as it is: the carrier it suspends
+// cannot be written meanwhile. A read-only reborrow, such as a `[]int` field
+// weakened from a `[]mut int`, is still copied: a later element may assign
+// the field.
 @(private = "file")
 prov_capture :: proc(graph: ^Flow_Graph, slots: []int, span: Span, keep_reborrows := false) -> []int {
 	out := make([dynamic]int, 0, len(slots), graph.alloc)
 	for slot in slots {
-		if keep_reborrows && prov_slot_is_reborrow(graph, slot) {
+		if keep_reborrows && prov_slot_is_reborrow(graph, slot, mutable_only = true) {
 			append(&out, slot)
 			continue
 		}
@@ -1132,6 +1150,13 @@ prov_capture :: proc(graph: ^Flow_Graph, slots: []int, span: Span, keep_reborrow
 		}
 		held := prov_temp_slot(graph)
 		prov_emit(graph, Prov_Event{kind = .Def, slot = held, loan = NO_LOAN, sources = prov_one(graph, slot), span = span})
+		for index in 0 ..< len(graph.reborrows) {
+			if reborrow := graph.reborrows[index]; reborrow.derived == slot {
+				reborrow.derived = held
+				reborrow.span = span
+				append(&graph.reborrows, reborrow)
+			}
+		}
 		append(&out, held)
 	}
 	return out[:]
@@ -1311,9 +1336,9 @@ prov_reborrow_traversal :: proc(graph: ^Flow_Graph, sources: []int, span: Span, 
 
 // A reborrow of a carrier, named or a traversal's, whose copies extend it.
 @(private = "file")
-prov_slot_is_reborrow :: proc(graph: ^Flow_Graph, slot: int) -> bool {
+prov_slot_is_reborrow :: proc(graph: ^Flow_Graph, slot: int, mutable_only := false) -> bool {
 	for reborrow in graph.reborrows {
-		if reborrow.derived == slot {
+		if reborrow.derived == slot && (reborrow.mutable || !mutable_only) {
 			return true
 		}
 	}

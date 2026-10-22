@@ -1,25 +1,31 @@
 L0641
-@22:15
+@23:15
 `xs` cannot be used here: a mutable reborrow of it is still in use
 L0641
-@25:33
+@26:33
 L0641
-@29:28
+@30:28
 L0641
-@32:27
+@33:27
 L0641
-@36:28
+@37:28
 L0641
-@42:33
+@43:33
 L0641
-@46:36
+@47:36
 L0641
-@51:23
+@52:23
 `inner` cannot be used here: a mutable reborrow of it is still in use
 L0641
-@57:14
+@58:14
 L0641
-@64:31
+@65:31
 `xs` cannot be used here: a mutable reborrow of it is still in use
 L0641
-@68:32
+@69:32
+L0641
+@103:2
+`external` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@109:2
+`external` cannot be used here: a read-only reborrow of it is still in use

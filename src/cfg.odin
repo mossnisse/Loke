@@ -1349,6 +1349,16 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false, lends :=
 	}
 }
 
+// The symbol one declared value initializes alone, or `INVALID_SYMBOL` when it
+// is destructured or spread over several.
+@(private = "file")
+decl_value_symbol :: proc(d: ^Decl, index: int) -> Symbol_Id {
+	if d.destructure.active || len(d.values) != len(d.symbols) {
+		return INVALID_SYMBOL
+	}
+	return d.symbols[index]
+}
+
 @(private = "file")
 walk_flow_decl :: proc(graph: ^Flow_Graph, d: ^Decl) {
 	if d.kind == .Const || d.top_level {
@@ -1369,7 +1379,12 @@ walk_flow_decl :: proc(graph: ^Flow_Graph, d: ^Decl) {
 			walk_flow_bound_value(graph, value, d, nil, index)
 			continue
 		}
-		result := walk_flow_expr(graph, value)
+		result: []int
+		if sym := symbol_of(graph.k.c, decl_value_symbol(d, index)); sym != nil {
+			result = prov_walk_stored(graph, value, sym.type)
+		} else {
+			result = walk_flow_expr(graph, value)
+		}
 		if value_loans != nil {
 			value_loans[index] = result
 		}

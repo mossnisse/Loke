@@ -345,6 +345,14 @@ checklist.
   until the literal is built, so a later element may not use the carrier
   either: `Pair{xs, write(xs)}` and `Wrapped{Inner{xs}, xs[0]}` were accepted
   and are now `L0641`.
+- A carrier suspended by a read-only reborrow can be copied into another
+  read-only carrier, as [Weakening and reborrows](design.md#weakening-and-reborrows)
+  allows: `v1: []int = xs; v2: []int = xs;` and two `Views{xs}` literals
+  while both are live were `L0641`.
+- A literal element that a later element writes keeps the read-only reborrow
+  it held: with `view := View{xs}`,
+  `held := Snapshot{view, replace(inout view.a, other)}` let `xs` be written
+  while `held.first.a` still viewed it. That write is now `L0641`.
 
 - `lokec -doc` no longer shows the members of a type private to the package,
   which no importer can reach, such as the 28 members of `core:time`'s `Text`

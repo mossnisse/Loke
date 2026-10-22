@@ -15,6 +15,7 @@ Counted :: struct { a: []mut int, n: int }
 Wrapped :: struct { x: Inner, n: int }
 Holder :: struct { ro: []int, rw: []mut int }
 Held :: struct { first: Holder, second: int }
+Snapshot :: struct { first: View, second: int }
 
 use :: proc(pair: Pair) { pair.a[0] = 1; pair.b[0] = 2; }
 
@@ -92,6 +93,21 @@ mixed_fields :: proc(external: []int, writable: []mut int) -> []int {
 	holder := Holder{external, writable};
 	held := Held{holder, replace(inout holder.ro, local[:])};
 	return held.first.ro;
+}
+
+// A captured read-only field is still a reborrow of its source, so the source
+// stays suspended for writing while the literal holds it.
+lent_snapshot :: proc(external: []mut int, writable: []mut int, other: []int) -> int {
+	holder := Holder{external, writable};
+	held := Held{holder, replace(inout holder.ro, other)};
+	external[0] = 5;
+	return held.first.ro[0];
+}
+read_only_snapshot :: proc(external: []mut int, other: []int) -> int {
+	view := View{external};
+	held := Snapshot{view, replace(inout view.a, other)};
+	external[0] = 5;
+	return held.first.a[0];
 }
 
 main :: proc() {}

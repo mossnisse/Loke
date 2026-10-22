@@ -1,0 +1,47 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Weakening and reborrows": a carrier suspended by a read-only
+// reborrow may still be read, including copied where a read-only carrier is
+// wanted, so these hold several read-only views of `xs` at once.
+
+Views :: struct { a: []int }
+Holder :: struct { ro: []int, rw: []mut int }
+Held :: struct { first: Holder, second: int }
+
+declarations :: proc(xs: []mut int) {
+	v1: []int = xs;
+	v2: []int = xs;
+	fmt.println(v1[0], v2[1]);
+}
+
+records :: proc(xs: []mut int) {
+	r1 := Views{xs};
+	r2 := Views{xs};
+	both := [2]Views{Views{xs}, Views{xs}};
+	fmt.println(r1.a[0], r2.a[1], both[0].a[0], both[1].a[1]);
+}
+
+replace :: proc(slot: inout []int, @(escape=stored) value: []int) -> int {
+	slot = value;
+	return 0;
+}
+
+// design.md "Evaluation order": the first element keeps the `ro` it held
+// before the second assigns it, which is `external`, not `local`.
+weakened_field :: proc(external: []mut int, writable: []mut int) -> []int {
+	local := [1]int{42};
+	holder := Holder{external, writable};
+	held := Held{holder, replace(inout holder.ro, local[:])};
+	return held.first.ro;
+}
+
+main :: proc() {
+	values := [2]int{1, 2};
+	other := [1]int{3};
+	xs := &mut values[:];
+	declarations(xs);
+	records(xs);
+	fmt.println(weakened_field(xs, &mut other[:]));
+}

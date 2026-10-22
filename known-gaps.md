@@ -21,24 +21,6 @@ way, so `core/mem/api.loki` holds only the package clause. Their signatures
 are in comments in the package source, which nothing checks. See
 [Using a package without reading its code](open-questions.md#using-a-package-without-reading-its-code-proposal-2026-10-21).
 
-### A second read-only copy of a suspended carrier is rejected
-
-[Weakening and reborrows](design.md#weakening-and-reborrows) lets a carrier
-suspended by a read-only reborrow still be read, including "passing it where
-a read-only carrier is wanted". Copying it into a second read-only carrier
-while the first is live is `L0641` instead:
-
-```loke
-values := [2]int{1, 2};
-xs := &mut values[:];
-v1: []int = xs;
-v2: []int = xs;            // L0641: a read-only reborrow of `xs` is still in use
-fmt.println(v1[0], v2[0]);
-```
-
-The same happens for two record literals with read-only fields, `Views{xs}`
-then `Views{xs}`, while the first is live.
-
 ### Mutable slices appended to one dynamic array conflict
 
 Two distinct mutable carriers stored in one container should not conflict:
