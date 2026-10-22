@@ -1,0 +1,12 @@
+// concurrency-proposal.md "Milestone 4: `parallel` and `spawn`, gated": the
+// syntax parses, and checking says the statements are not available yet.
+package main;
+
+work :: proc(n: int) {}
+
+main :: proc() {
+	parallel {
+		spawn work(1);
+	}
+	spawn work(2);
+}

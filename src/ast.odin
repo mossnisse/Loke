@@ -827,6 +827,8 @@ Stmt :: union {
 	^Stmt_Defer,
 	^Stmt_Return,
 	^Stmt_Branch,
+	^Stmt_Parallel,
+	^Stmt_Spawn,
 	^Block,
 }
 
@@ -1057,6 +1059,31 @@ Stmt_Branch :: struct {
 	kind:       Token_Kind, // `.Break` or `.Continue`
 }
 
+// `parallel { ... }`, which joins every task it starts before it is left
+// (concurrency-proposal.md "Syntax"). The parenthesized executor is the later
+// pool form, parsed so the syntax is reserved.
+Stmt_Parallel :: struct {
+	using base: Node_Base,
+	keyword:    Span,
+	executor:   Expr, // nil for the bare form
+	body:       ^Block,
+	// Written by the checker: the block later phases run instead of this
+	// statement, which declares the hidden scope local before `body`.
+	lowered:    ^Block,
+	scope:      Symbol_Id,
+}
+
+// `spawn call;` or `spawn result = call;`, directly inside a `parallel` block
+// (concurrency-proposal.md "Syntax").
+Stmt_Spawn :: struct {
+	using base: Node_Base,
+	keyword:    Span,
+	result:     ^Expr_Ident, // nil unless the call's value is assigned
+	call:       Expr, // an `^Expr_Call`; the parser rejects anything else
+	// Written by the checker.
+	task:       ^Spawn_Task,
+}
+
 stmt_base :: proc(s: Stmt) -> ^Node_Base {
 	switch v in s {
 	case ^Decl:
@@ -1084,6 +1111,10 @@ stmt_base :: proc(s: Stmt) -> ^Node_Base {
 	case ^Stmt_Return:
 		return &v.base
 	case ^Stmt_Branch:
+		return &v.base
+	case ^Stmt_Parallel:
+		return &v.base
+	case ^Stmt_Spawn:
 		return &v.base
 	case ^Block:
 		return &v.base
@@ -1333,6 +1364,9 @@ File :: struct {
 	// `items` with selected `when` branches flattened in, in source order. The
 	// checker reads this; `-dump-ast` prints `items`.
 	active_items: []Item,
+	// Some body holds a `parallel` statement, whose hidden scope is a
+	// `core:thread` type, so that package is a dependency.
+	uses_parallel: bool,
 }
 
 destroy_ast :: proc(f: ^File) {

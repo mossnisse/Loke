@@ -1,0 +1,16 @@
+// concurrency-proposal.md "Syntax": `spawn` starts one call, whose failure is
+// a value to assign, and a `parallel` block ends the statement it starts.
+package main;
+
+main :: proc() {
+	parallel {
+		spawn work(0) or_return;
+		spawn total;
+		spawn total = work(0) + 1;
+	}
+	parallel{1}.run();
+	parallel(T){1}.run();
+	parallel {}(next)();
+}
+
+sentinel :: proc() { }

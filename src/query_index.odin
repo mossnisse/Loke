@@ -168,6 +168,13 @@ index_query_stmt :: proc(index: ^Query_Index, stmt: Stmt) {
 			for inner in entry.stmts { index_query_stmt(index, inner) }
 		}
 	case ^Stmt_Defer: index_query_stmt(index, v.stmt)
+	case ^Stmt_Parallel:
+		index_query_region(index, v.span)
+		index_query_expr(index, v.executor)
+		index_query_stmt(index, v.body)
+	case ^Stmt_Spawn:
+		index_query_expr(index, v.result)
+		index_query_expr(index, v.call)
 	case ^Stmt_Return: if v.value != nil { index_query_expr(index, v.value.expr) }
 	}
 }

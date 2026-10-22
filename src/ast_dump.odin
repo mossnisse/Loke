@@ -381,6 +381,28 @@ dump_stmt :: proc(b: ^strings.Builder, stmt: Stmt, depth: int) {
 		dump_attributes(b, node.attributes)
 		fmt.sbprintln(b, ")")
 
+	case ^Stmt_Parallel:
+		dump_indent(b, depth)
+		fmt.sbprint(b, "(parallel")
+		dump_attributes(b, node.attributes)
+		if node.executor != nil {
+			dump_child(b, node.executor, depth)
+		}
+		fmt.sbprintln(b)
+		dump_block(b, node.body, depth + 1)
+		dump_indent(b, depth)
+		fmt.sbprintln(b, ")")
+
+	case ^Stmt_Spawn:
+		dump_indent(b, depth)
+		fmt.sbprint(b, "(spawn")
+		dump_attributes(b, node.attributes)
+		if node.result != nil {
+			fmt.sbprintf(b, " result=%q", node.result.name)
+		}
+		dump_child(b, node.call, depth)
+		fmt.sbprintln(b, ")")
+
 	case ^Block:
 		dump_block(b, node, depth)
 	}

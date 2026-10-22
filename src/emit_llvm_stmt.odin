@@ -121,6 +121,9 @@ emit_stmt :: proc(e: ^Emitter, stmt: Stmt, lends := false) {
 			return
 		}
 		emit_foreach(e, s)
+
+	case ^Stmt_Parallel, ^Stmt_Spawn:
+		backend_fail(e, "a `parallel` statement reached emission")
 	}
 }
 

@@ -74,6 +74,9 @@ Body_Context :: struct {
 	loop_broken:       bool,
 	// One flag slot per syntactic `defer` in the procedure being checked.
 	defer_slots:       int,
+	// The innermost `parallel` block of this procedure being checked, which a
+	// `spawn` joins (concurrency-proposal.md "Syntax").
+	parallel_block:    ^Stmt_Parallel,
 }
 
 // What a statement can do to control flow.
@@ -3087,6 +3090,12 @@ check_stmt :: proc(k: ^Checker, stmt: Stmt) -> Flow_Info {
 
 	case ^Stmt_Branch:
 		return check_branch(k, s)
+
+	case ^Stmt_Parallel:
+		return check_parallel(k, s)
+
+	case ^Stmt_Spawn:
+		return check_spawn(k, s)
 
 	case ^Block:
 		return check_scoped_block(k, s)

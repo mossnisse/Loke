@@ -57,6 +57,8 @@ Token_Kind :: enum {
 	Dynamic,
 	Hook,
 	Operator,
+	Parallel,
+	Spawn,
 	Via,
 	Where,
 

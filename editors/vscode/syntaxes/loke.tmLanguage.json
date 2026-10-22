@@ -140,6 +140,8 @@
     "keywords": {
       "patterns": [
         { "name": "keyword.control.loke", "match": "(?<!\\.)\\b(?:if|else|for|foreach|in|switch|case|default|break|continue|return|defer|errdefer|when|or_else|or_return)\\b" },
+        { "name": "keyword.control.loke", "match": "(?<!\\.)\\bparallel\\b(?=\\s*(?:\\{|\\([^;]*\\)\\s*\\{))" },
+        { "name": "keyword.control.loke", "match": "(?<!\\.)\\bspawn\\b(?=\\s+[A-Za-z_])" },
         { "name": "storage.type.loke", "match": "(?<!\\.)\\b(?:proc|struct|enum|union|interface|map|dyn|distinct|type|impl|foreign)\\b" },
         { "name": "storage.type.loke", "match": "(?<=\\[)dynamic(?=\\])" },
         { "name": "storage.type.loke", "match": "(?<!\\.)\\boperator\\b(?=\\s*\\(\\s*[^\\w\\s(])" },

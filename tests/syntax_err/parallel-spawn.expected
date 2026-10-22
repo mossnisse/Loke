@@ -1,0 +1,18 @@
+L0261
+@7:17
+a task's failure is a value: assign the outcome with `spawn outcome = call;` and propagate it after the block joins
+L0261
+@8:9
+`spawn` starts one call: `spawn work(arguments);`
+L0261
+@9:17
+`spawn` starts one call: `spawn work(arguments);`
+L0261
+@11:2
+a `parallel` block ends with its `}`; parenthesize a composite literal of a type named `parallel` that starts a statement, as in `(parallel{...}).run();`
+L0261
+@12:2
+a `parallel` block ends with its `}`; parenthesize a composite literal of a type named `parallel` that starts a statement, as in `(parallel{...}).run();`
+L0261
+@13:2
+a `parallel` block ends with its `}`; parenthesize a composite literal of a type named `parallel` that starts a statement, as in `(parallel{...}).run();`

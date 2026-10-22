@@ -650,6 +650,24 @@ clone_stmt :: proc(c: ^Compiler, s: Stmt) -> Stmt {
 		n.kind = v.kind
 		return n
 
+	case ^Stmt_Parallel:
+		n := new(Stmt_Parallel, c.semantic_allocator)
+		clone_node_base(c, &n.base, &v.base)
+		n.keyword = v.keyword
+		n.executor = clone_expr(c, v.executor)
+		n.body = clone_block(c, v.body)
+		return n
+
+	case ^Stmt_Spawn:
+		n := new(Stmt_Spawn, c.semantic_allocator)
+		clone_node_base(c, &n.base, &v.base)
+		n.keyword = v.keyword
+		if v.result != nil {
+			n.result = clone_expr(c, v.result).(^Expr_Ident)
+		}
+		n.call = clone_expr(c, v.call)
+		return n
+
 	case ^Block:
 		return clone_block(c, v)
 	}

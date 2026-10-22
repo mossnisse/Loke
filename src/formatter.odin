@@ -409,7 +409,8 @@ maybe_prefix :: proc(kind: Token_Kind) -> bool {
 @(private = "file")
 spaced_keyword :: proc(kind: Token_Kind) -> bool {
 	#partial switch kind {
-	case .If, .For, .Foreach, .Switch, .When, .Return, .Case, .In, .Else, .Or_Else, .Via, .Where, .Defer, .Errdefer:
+	case .If, .For, .Foreach, .Switch, .When, .Return, .Case, .In, .Else, .Or_Else, .Via, .Where, .Defer, .Errdefer,
+	     .Parallel:
 		return true
 	}
 	return false

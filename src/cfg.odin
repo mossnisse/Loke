@@ -710,7 +710,7 @@ stmt_cannot_panic :: proc(c: ^Compiler, stmt: Stmt) -> bool {
 		return s.value == nil || (!s.value.is_inout && expr_cannot_panic(c, s.value.expr))
 	case ^Stmt_Branch:
 		return true
-	case ^Item_Impl, ^Stmt_Error, ^Stmt_Foreach, ^Stmt_When, ^Stmt_Switch, ^Stmt_Defer:
+	case ^Item_Impl, ^Stmt_Error, ^Stmt_Foreach, ^Stmt_When, ^Stmt_Switch, ^Stmt_Defer, ^Stmt_Parallel, ^Stmt_Spawn:
 	}
 	return false
 }
@@ -1352,6 +1352,12 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false, lends :=
 		if selected := when_selected_block(s); selected != nil {
 			walk_flow_stmts(graph, selected.stmts)
 		}
+
+	case ^Stmt_Parallel:
+		walk_flow_block(graph, s.lowered != nil ? s.lowered : s.body)
+
+	case ^Stmt_Spawn:
+		walk_flow_expr(graph, s.call)
 	}
 }
 

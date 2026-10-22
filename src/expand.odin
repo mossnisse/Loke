@@ -243,6 +243,8 @@ stmt_has_branch :: proc(k: ^Checker, stmt: Stmt) -> bool {
 		return true
 	case ^Block:
 		return block_has_branch(k, v)
+	case ^Stmt_Parallel:
+		return block_has_branch(k, v.body)
 	case ^Stmt_If:
 		found := block_has_branch(k, v.then)
 		return v.otherwise != nil && stmt_has_branch(k, v.otherwise) || found

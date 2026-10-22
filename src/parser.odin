@@ -46,6 +46,8 @@ Parser :: struct {
 	// A procedure literal an argument's type probe already parsed, handed to
 	// the expression reparse so nested literals are not parsed exponentially.
 	probed:         Probed_Literal,
+	// Some statement is a `parallel` block.
+	uses_parallel:  bool,
 	allocator:      mem.Allocator,
 }
 
@@ -73,6 +75,7 @@ parse :: proc(c: ^Compiler, file: u32, tokens: []Token, syntax_allocator := mem.
 	}
 	parse_package_clause(&p, &result)
 	result.items = parse_items(&p, stop_at_rbrace = false)
+	result.uses_parallel = p.uses_parallel
 	return result
 }
 
@@ -1256,6 +1259,13 @@ parse_statement :: proc(p: ^Parser) -> (Stmt, bool) {
 		return error_stmt(p, span_of(p, t)), true
 	}
 
+	if starts_parallel(p) {
+		return with_attributes(parse_parallel(p), attributes), true
+	}
+	if contextual_at(p, 0, .Spawn, "spawn") && peek_token(p, 1).kind == .Ident {
+		return with_attributes(parse_spawn(p), attributes), true
+	}
+
 	if group, nested := scans_nested_pattern(p); nested {
 		errorf(
 			p.c, span_of(p, group), "L0207",
@@ -1751,6 +1761,127 @@ parse_defer :: proc(p: ^Parser) -> Stmt {
 	s.on_failure = start.kind == .Errdefer
 	s.stmt = inner
 	s.has_error = !got || stmt_has_error(inner)
+	return s
+}
+
+// concurrency-proposal.md "Syntax": at statement start `parallel` is a keyword
+// only before `{`, or before a parenthesized header whose matching `)` is
+// followed by `{`, so `parallel(pool);` stays a call.
+@(private = "file")
+starts_parallel :: proc(p: ^Parser) -> bool {
+	if !contextual_at(p, 0, .Parallel, "parallel") {
+		return false
+	}
+	#partial switch peek_token(p, 1).kind {
+	case .Lbrace:
+		return true
+	case .Lparen:
+		close := matching_offset(p, 1)
+		return close > 0 && peek_token(p, close + 1).kind == .Lbrace
+	}
+	return false
+}
+
+// The offset of the token closing the bracket at `offset`, or -1 when the
+// brackets between do not balance.
+@(private = "file")
+matching_offset :: proc(p: ^Parser, offset: int) -> int {
+	open := peek_token(p, offset).kind
+	depth := 0
+	for at := offset; ; at += 1 {
+		kind := peek_token(p, at).kind
+		#partial switch kind {
+		case .Lparen, .Lbracket, .Lbrace:
+			depth += 1
+		case .Rparen, .Rbracket, .Rbrace:
+			depth -= 1
+			if depth == 0 {
+				closes := open == .Lparen && kind == .Rparen || open == .Lbracket && kind == .Rbracket ||
+					open == .Lbrace && kind == .Rbrace
+				return closes ? at : -1
+			}
+		case .EOF:
+			return -1
+		}
+	}
+}
+
+@(private = "file")
+parse_parallel :: proc(p: ^Parser) -> Stmt {
+	// A statement-start composite literal of a type named `parallel`, as in
+	// `parallel{...}.run();`, now parses as this statement; one followed by a
+	// selector or an adjacent call is reported as that literal.
+	body_at := peek_token(p, 1).kind == .Lbrace ? 1 : matching_offset(p, 1) + 1
+	if close := matching_offset(p, body_at); close > 0 {
+		end, follows := peek_token(p, close), peek_token(p, close + 1)
+		if follows.kind == .Period || follows.kind == .Lparen && follows.lo == end.hi {
+			start := take_as(p, .Parallel)
+			parse_error(
+				p, span_of(p, start), "L0261", "a `parallel` block",
+				"a `parallel` block ends with its `}`; parenthesize a composite literal of a type named `parallel` that starts a statement, as in `%s`",
+				"(parallel{...}).run();",
+			)
+			sync_to_statement(p)
+			return error_stmt(p, span_to_here(p, start))
+		}
+	}
+
+	start := take_as(p, .Parallel)
+	p.uses_parallel = true
+	executor: Expr
+	header_ok := true
+	if allow(p, .Lparen) {
+		executor = parse_expr(p)
+		_, closed := expect(p, .Rparen, "L0245", "`)` to close the `parallel` header")
+		header_ok = closed && !expr_has_error(executor)
+	}
+	body, body_ok := parse_block(p)
+
+	s := new_stmt(p, Stmt_Parallel, start)
+	s.keyword = span_of(p, start)
+	s.executor = executor
+	s.body = body
+	s.has_error = !header_ok || !body_ok || body.has_error
+	return s
+}
+
+// `spawn` (Identifier "=")? Task_Call ";" (concurrency-proposal.md "Syntax"),
+// where the call is the whole expression.
+@(private = "file")
+parse_spawn :: proc(p: ^Parser) -> Stmt {
+	start := take_as(p, .Spawn)
+	result: ^Expr_Ident
+	if peek_token(p, 1).kind == .Assign {
+		name := name_of(p, advance(p))
+		result = new_expr(p, Expr_Ident, name.span.lo)
+		result.name, result.name_id = name.text, name.id
+		advance(p) // `=`
+	}
+	call := parse_expr(p)
+	ok := !expr_has_error(call)
+	if _, is_call := call.(^Expr_Call); ok && !is_call {
+		if postfix, is_postfix := call.(^Expr_Postfix); is_postfix && postfix.op == .Or_Return {
+			parse_error(
+				p, postfix.op_span, "L0261", "found `or_return`",
+				"a task's failure is a value: assign the outcome with `spawn outcome = call;` and propagate it after the block joins",
+			)
+		} else {
+			parse_error(p, expr_span(call), "L0261", "not a call", "`spawn` starts one call: `spawn work(arguments);`")
+		}
+		ok = false
+	}
+	terminated := false
+	if expr_has_error(call) {
+		sync_to_statement(p)
+	} else {
+		_, terminated = expect(p, .Semicolon, "L0216", "`;` after the statement")
+	}
+
+	s := new_stmt(p, Stmt_Spawn, start)
+	s.keyword = span_of(p, start)
+	s.result = result
+	s.call = call
+	s.has_error = !ok || !terminated
 	return s
 }
 

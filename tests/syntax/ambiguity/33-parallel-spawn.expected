@@ -1,0 +1,34 @@
+(file package="main"
+  (const names=["main"]
+    (proc (proc-type)
+      (block
+        (parallel
+          (block
+            (spawn (call (ident "work") (ident "i") (ident "data")))
+            (spawn result="low" (call (ident "sum") (slice-of (ident "xs") _ (ident "mid"))))
+            (spawn (call (selector (ident "shapes") "area") (ident "circle")))
+            (parallel
+              (block
+                (spawn (call (ident "work") (int "0") (ident "data")))
+              )
+            )
+          )
+        )
+        (parallel (ident "pool")
+          (block
+            (spawn (call (ident "work") (int "1") (ident "data")))
+          )
+        )
+        (call (ident "parallel") (ident "pool"))
+        (call (selector (call (ident "parallel") (ident "pool")) "wait"))
+        (call (ident "spawn") (ident "callback"))
+        (call (selector (ident "object") "spawn") (ident "args"))
+        (call (selector (composite (ident "parallel") (int "1")) "run"))
+        (var names=["spawn"]
+          (ident "parallel")
+        )
+        (assign Assign (lhs (ident "spawn")) (rhs (int "1")))
+      )
+    )
+  )
+)
