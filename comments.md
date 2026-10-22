@@ -94,8 +94,11 @@ so a wrapper or executor a program writes is checked by declaring the same
 parameters. The attribute is part of the procedure type, as an escape level
 is: a fact kept only on the declaration would let a call through a procedure
 value skip the checks it promised. A trampoline entry that calls a procedure
-value it received is not warned about for that call, since the procedure is
-the one its caller passed, and that crossing call is reported. A first version
+value it received, itself or through helpers it hands the value to, is not
+warned about for that call, since the procedure is the one its caller passed,
+and that crossing call is reported. Following the value takes a second
+whole-program summary of which parameters each body calls; the write effect
+itself keeps the plain union, which borrow checking needs. A first version
 instead skipped every `spawn` in a body with a `@(cross_thread)` parameter,
 which also hid an entry the wrapper named itself.
 

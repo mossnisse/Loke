@@ -16,9 +16,26 @@ Effect_Call :: struct {
 	type:          Type_Id,
 	dyn_interface: Symbol_Id,
 	dyn_index:     int,
-	// Through a procedure value the body received as a parameter: what it runs
-	// is whatever the caller passed.
+	// Through a procedure value the body received as its parameter `parameter`:
+	// what it runs is whatever the caller passed.
 	through_parameter: bool,
+	parameter:         int,
+	// A direct call's arguments, by parameter, for following a procedure value
+	// the body hands on to its callee.
+	args:              []Effect_Arg,
+}
+
+// Where a direct call's argument comes from, when it may be a procedure value.
+Effect_Arg :: struct {
+	kind:      Effect_Arg_Kind,
+	parameter: int,       // `.Parameter`: the calling body's own parameter
+	procedure: Symbol_Id, // `.Procedure`: a named procedure
+}
+
+Effect_Arg_Kind :: enum u8 {
+	Other,
+	Parameter,
+	Procedure,
 }
 
 // A call passing a named procedure for a `@(cross_thread)` parameter, and that
@@ -116,13 +133,13 @@ call_effect :: proc(c: ^Compiler, v: ^Expr_Call) -> (Effect_Call, bool) {
 		return Effect_Call{callee = id}, true
 	}
 	if base := expr_base(v.callee); base != nil && underlying_kind(c, base.type) == .Proc {
-		received := false
+		call := Effect_Call{type = base.type}
 		if ident, is_ident := v.callee.(^Expr_Ident); is_ident {
 			if callee := symbol_of(c, ident.symbol); callee != nil && callee.kind == .Parameter {
-				received = true
+				call.through_parameter, call.parameter = true, int(callee.index)
 			}
 		}
-		return Effect_Call{type = base.type, through_parameter = received}, true
+		return call, true
 	}
 	return {}, false
 }
@@ -153,8 +170,42 @@ prov_call_effects :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 	}
 	if !c.global_writes_ready {
 		note_thread_spawn(graph, v)
+		if target.callee != INVALID_SYMBOL {
+			target.args = effect_args(c, v, graph.alloc)
+		}
 	}
 	prov_effect_call(graph, target, v.span)
+}
+
+// Each argument that is a procedure value the body received, or a named
+// procedure, by the callee's parameter it binds.
+@(private = "file")
+effect_args :: proc(c: ^Compiler, v: ^Expr_Call, allocator: mem.Allocator) -> []Effect_Arg {
+	args := make([]Effect_Arg, len(v.bound), allocator)
+	for argument, index in v.bound {
+		value := argument
+		if moved, is_move := value.(^Expr_Move); is_move {
+			value = moved.value
+		}
+		id := INVALID_SYMBOL
+		#partial switch e in value {
+		case ^Expr_Ident:
+			id = e.symbol
+		case ^Expr_Selector:
+			id = e.resolution.symbol
+		}
+		sym := symbol_of(c, id)
+		if sym == nil || underlying_kind(c, expr_base(value).type) != .Proc {
+			continue
+		}
+		#partial switch sym.kind {
+		case .Parameter:
+			args[index] = Effect_Arg{kind = .Parameter, parameter = int(sym.index)}
+		case .Proc:
+			args[index] = Effect_Arg{kind = .Procedure, procedure = id}
+		}
+	}
+	return args
 }
 
 // Map operations that hash or compare keys: a lookup, an insertion, and a
@@ -310,36 +361,28 @@ note_thread_spawn :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 // A spawned entry that writes a global every thread shares races with any other
 // thread that reaches it. `thread_local` storage is the thread's own, an atomic
 // operation reads its receiver, and a `@(synchronized)` variable's package
-// vouches for every access to it, so none is a write here. A call the entry
-// makes through a procedure value it received runs what its caller passed,
-// which is reported where that crossing call passes it, so a trampoline such
-// as `thread.spawn_plain`'s is not blamed for every procedure of its type.
+// vouches for every access to it, so none is a write here. A procedure value the
+// entry received runs what its caller passed, which is reported where that
+// crossing call passes it, so the entry is not blamed for calling it, directly
+// or through helpers it hands the value to (`callback_effects`).
 @(private = "file")
 warn_thread_races :: proc(
 	c: ^Compiler,
 	bodies: []Body_Effects,
 	index_of: map[Symbol_Id]int,
 	used_as_value: map[Symbol_Id]bool,
+	callers: [][dynamic]int,
 ) {
+	if len(c.thread_spawns) == 0 {
+		return
+	}
+	own := callback_effects(c, bodies, index_of, used_as_value, callers)
 	for spawn in c.thread_spawns {
 		index, found := index_of[spawn.entry]
 		if !found {
 			continue
 		}
-		entry := bodies[index]
-		writes := make([dynamic]Symbol_Id, 0, len(entry.writes), context.temp_allocator)
-		append(&writes, ..entry.writes[:entry.direct])
-		for call in entry.calls {
-			if call.through_parameter {
-				continue
-			}
-			for target in effect_targets(c, call, bodies, index_of, used_as_value) {
-				for global in bodies[target].writes {
-					add_global_write(&writes, global)
-				}
-			}
-		}
-		for global in writes {
+		for global in own[index].writes {
 			sym := symbol_of(c, global)
 			if sym == nil || sym.duration == .Thread_Local || sym.synchronized {
 				continue
@@ -352,6 +395,113 @@ warn_thread_races :: proc(
 			add_notef(c, sym.span, "declared here; make it `thread_local`, an `Atomic`, or a `thread.Mutex`")
 		}
 	}
+}
+
+// One body's writes apart from the procedure values it received, and which of
+// its parameters it may call: those values run whatever each caller passes.
+@(private = "file")
+Callback_Effects :: struct {
+	writes: [dynamic]Symbol_Id,
+	called: [dynamic]int,
+}
+
+// Settled over the whole program, as the write effects are. A direct call
+// contributes its callee's own writes, and for each parameter the callee calls,
+// what the argument there runs: nothing yet if it is this body's own received
+// value, which joins `called`; a named procedure's whole effect; and otherwise
+// every procedure of the parameter's type. Other calls contribute everything
+// they may reach.
+@(private = "file")
+callback_effects :: proc(
+	c: ^Compiler,
+	bodies: []Body_Effects,
+	index_of: map[Symbol_Id]int,
+	used_as_value: map[Symbol_Id]bool,
+	callers: [][dynamic]int,
+) -> []Callback_Effects {
+	out := make([]Callback_Effects, len(bodies), context.temp_allocator)
+	for &entry, index in out {
+		entry.writes = make([dynamic]Symbol_Id, 0, bodies[index].direct, context.temp_allocator)
+		append(&entry.writes, ..bodies[index].writes[:bodies[index].direct])
+		entry.called = make([dynamic]int, context.temp_allocator)
+	}
+	queued := make([]bool, len(bodies), context.temp_allocator)
+	pending := make([dynamic]int, 0, len(bodies), context.temp_allocator)
+	for index := len(bodies) - 1; index >= 0; index -= 1 {
+		append(&pending, index)
+		queued[index] = true
+	}
+	for len(pending) > 0 {
+		index := pop(&pending)
+		queued[index] = false
+		grew := false
+		for call in bodies[index].calls {
+			if call.through_parameter {
+				grew |= add_index(&out[index].called, call.parameter)
+				continue
+			}
+			target, direct := index_of[call.callee]
+			if call.callee == INVALID_SYMBOL || !direct {
+				for reached in effect_targets(c, call, bodies, index_of, used_as_value) {
+					for global in bodies[reached].writes {
+						grew |= add_global_write(&out[index].writes, global)
+					}
+				}
+				continue
+			}
+			for global in out[target].writes {
+				grew |= add_global_write(&out[index].writes, global)
+			}
+			for parameter in out[target].called {
+				arg := parameter < len(call.args) ? call.args[parameter] : Effect_Arg{}
+				switch arg.kind {
+				case .Parameter:
+					grew |= add_index(&out[index].called, arg.parameter)
+				case .Procedure:
+					for global in c.global_writes[arg.procedure] {
+						grew |= add_global_write(&out[index].writes, global)
+					}
+				case .Other:
+					any_of_type := Effect_Call{type = proc_parameter_type(c, bodies[target].type, parameter)}
+					for reached in effect_targets(c, any_of_type, bodies, index_of, used_as_value) {
+						for global in bodies[reached].writes {
+							grew |= add_global_write(&out[index].writes, global)
+						}
+					}
+				}
+			}
+		}
+		if !grew {
+			continue
+		}
+		for caller in callers[index] {
+			if !queued[caller] {
+				queued[caller] = true
+				append(&pending, caller)
+			}
+		}
+	}
+	return out
+}
+
+@(private = "file")
+proc_parameter_type :: proc(c: ^Compiler, proc_type: Type_Id, index: int) -> Type_Id {
+	info := underlying_info(c, proc_type)
+	if info == nil || index >= len(info.parameters) {
+		return INVALID_TYPE
+	}
+	return info.parameters[index]
+}
+
+@(private = "file")
+add_index :: proc(list: ^[dynamic]int, value: int) -> bool {
+	for existing in list {
+		if existing == value {
+			return false
+		}
+	}
+	append(list, value)
+	return true
 }
 
 // Dropping a value runs its `hook(drop)`s, which write what a call of each
@@ -463,6 +613,14 @@ compute_global_writes :: proc(k: ^Checker) {
 		effects.direct = len(effects.writes)
 		effects.calls = make([]Effect_Call, len(graph.effect_calls), context.temp_allocator)
 		copy(effects.calls, graph.effect_calls[:])
+		// The graph's storage is reset below.
+		for &call in effects.calls {
+			if len(call.args) > 0 {
+				args := make([]Effect_Arg, len(call.args), context.temp_allocator)
+				copy(args, call.args)
+				call.args = args
+			}
+		}
 		for id in graph.effect_values {
 			used_as_value[id] = true
 		}
@@ -546,7 +704,7 @@ compute_global_writes :: proc(k: ^Checker) {
 		}
 	}
 	c.global_writes_ready = true
-	warn_thread_races(c, bodies[:], index_of, used_as_value)
+	warn_thread_races(c, bodies[:], index_of, used_as_value, callers)
 	reject_copy_hook_writes(c)
 }
 
