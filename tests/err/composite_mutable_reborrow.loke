@@ -11,6 +11,10 @@ Inner :: struct { a: []mut int }
 Outer :: struct { x: Inner, y: Inner }
 View :: struct { a: []int }
 Outer_View :: struct { x: View, y: View }
+Counted :: struct { a: []mut int, n: int }
+Wrapped :: struct { x: Inner, n: int }
+Holder :: struct { ro: []int, rw: []mut int }
+Held :: struct { first: Holder, second: int }
 
 use :: proc(pair: Pair) { pair.a[0] = 1; pair.b[0] = 2; }
 
@@ -53,6 +57,18 @@ passed_record :: proc(xs: []mut int) {
 	take(inner, inner);
 }
 
+// The reborrow an element takes lasts until the literal is built, so a later
+// element that is not itself lent may not use the carrier either.
+write :: proc(xs: []mut int) -> int { xs[0] = 1; return 0; }
+later_call :: proc(xs: []mut int) {
+	counted := Counted{xs, write(xs)};
+	counted.a[0] = 2;
+}
+later_read :: proc(xs: []mut int) {
+	wrapped := Wrapped{Inner{xs}, xs[0]};
+	wrapped.x.a[0] = 2;
+}
+
 // Different carriers, and read-only fields, are fine.
 fine :: proc(xs: []mut int, ys: []mut int) {
 	use(Pair{xs, ys});
@@ -63,6 +79,19 @@ fine :: proc(xs: []mut int, ys: []mut int) {
 	outer.x.a[0] = outer.y.a[0];
 	read := Outer_View{View{xs}, View{xs}};
 	_ = read.x.a[0] + read.y.a[0];
+}
+
+// design.md "Evaluation order": a lent record's read-only field keeps the value
+// it held before a later element writes it.
+replace :: proc(slot: inout []int, @(escape=stored) value: []int) -> int {
+	slot = value;
+	return 0;
+}
+mixed_fields :: proc(external: []int, writable: []mut int) -> []int {
+	local := [1]int{42};
+	holder := Holder{external, writable};
+	held := Held{holder, replace(inout holder.ro, local[:])};
+	return held.first.ro;
 }
 
 main :: proc() {}

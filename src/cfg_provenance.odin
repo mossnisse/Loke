@@ -555,13 +555,26 @@ prov_composite_content :: proc(graph: ^Flow_Graph, v: ^Expr_Composite, content: 
 		}
 		// A later element may write what this one read (design.md "Evaluation
 		// order"). A lent carrier needs no copy: it is suspended, so a later
-		// element cannot write it, and a copy would end the reborrow early.
-		if !lent && len(loans) > 0 && prov_elements_may_write(v.elements[index + 1:]) {
-			loans = prov_capture(graph, loans, expr_span(element.value))
+		// element cannot write it, and a copy would end the reborrow early. The
+		// read-only carriers of a lent record are still copied.
+		if len(loans) > 0 && prov_elements_may_write(v.elements[index + 1:]) {
+			loans = prov_capture(graph, loans, expr_span(element.value), keep_reborrows = lent)
 		}
 		held = prov_join(graph, held, loans)
 		prefix, known := prov_element_prefix(graph, v, index)
 		append(&parts, Part{loans, prefix, expr_base(element.value).type, known})
+	}
+	// Building the literal uses each reborrow its elements took, so the
+	// carrier stays suspended through every later element, not only the
+	// lent ones: `Pair{xs, g(xs)}` uses `xs` while the pair's view is live.
+	reborrows := make([dynamic]int, 0, len(held), graph.alloc)
+	for slot in held {
+		if prov_slot_is_reborrow(graph, slot) {
+			append(&reborrows, slot)
+		}
+	}
+	if len(reborrows) > 0 {
+		prov_emit(graph, Prov_Event{kind = .Live, sources = reborrows[:], span = v.span})
 	}
 	for slot in content {
 		sources: []int
@@ -1103,11 +1116,16 @@ prov_hold_result :: proc(graph: ^Flow_Graph, sources: []int, result_type: Type_I
 // after it, and keeps what its carriers held then, whatever those expressions
 // write. A mutable carrier is reborrowed into a derived slot, which keeps the
 // source suspended as storing it would; any other slot is copied into a
-// temporary.
+// temporary. With `keep_reborrows`, a slot that is already a reborrow, as a
+// lent carrier is, is kept as it is: a copy would end the reborrow early.
 @(private = "file")
-prov_capture :: proc(graph: ^Flow_Graph, slots: []int, span: Span) -> []int {
+prov_capture :: proc(graph: ^Flow_Graph, slots: []int, span: Span, keep_reborrows := false) -> []int {
 	out := make([dynamic]int, 0, len(slots), graph.alloc)
 	for slot in slots {
+		if keep_reborrows && prov_slot_is_reborrow(graph, slot) {
+			append(&out, slot)
+			continue
+		}
 		if prov_slot_is_mutable_carrier(graph, slot) {
 			append(&out, ..prov_reborrow_traversal(graph, prov_one(graph, slot), span, true))
 			continue

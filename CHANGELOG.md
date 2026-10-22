@@ -341,7 +341,10 @@ checklist.
   call arguments already were. Use `split_at_mut` for two halves. A record
   holding a mutable carrier is lent as the carrier is, so
   `Outer{Inner{xs}, Inner{xs}}`, `Outer{inner, inner}`, and `take(inner, inner)`
-  for `Inner :: struct { a: []mut int }` are `L0641` too.
+  for `Inner :: struct { a: []mut int }` are `L0641` too. The reborrow lasts
+  until the literal is built, so a later element may not use the carrier
+  either: `Pair{xs, write(xs)}` and `Wrapped{Inner{xs}, xs[0]}` were accepted
+  and are now `L0641`.
 
 - `lokec -doc` no longer shows the members of a type private to the package,
   which no importer can reach, such as the 28 members of `core:time`'s `Text`
