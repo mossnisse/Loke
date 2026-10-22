@@ -31,3 +31,20 @@ main :: proc() {
 	inner := r.rows[0];
 	fmt.println(seen[0][0], inner[0]);
 }
+
+// An assignment into a read-only carrier is a read-only reborrow, as a
+// declaration is.
+assigned :: proc(xs: []mut int) -> int {
+	v: []int = {};
+	v = xs;
+	xs[0] = 1;
+	return v[0];
+}
+assigned_mutable :: proc(xs: []mut int) -> int {
+	m: []mut int = {};
+	m = xs;
+	r: []int = {};
+	r = xs;
+	m[0] = 2;
+	return r[0];
+}

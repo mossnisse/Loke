@@ -1359,6 +1359,19 @@ decl_value_symbol :: proc(d: ^Decl, index: int) -> Symbol_Id {
 	return d.symbols[index]
 }
 
+// One assigned value, read as a declaration's initializer is: stored into a
+// read-only carrier, it is only read.
+@(private = "file")
+walk_flow_assigned :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value: Expr, index: int) -> []int {
+	if s.op != .Assign || s.destructure.active || len(s.lhs) != len(s.rhs) || is_discard(s.lhs[index]) {
+		return walk_flow_expr(graph, value)
+	}
+	if target := expr_base(s.lhs[index]); target != nil {
+		return prov_walk_stored(graph, value, target.type)
+	}
+	return walk_flow_expr(graph, value)
+}
+
 @(private = "file")
 walk_flow_decl :: proc(graph: ^Flow_Graph, d: ^Decl) {
 	if d.kind == .Const || d.top_level {
@@ -1533,7 +1546,7 @@ walk_flow_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 	for value, index in s.rhs {
 		if graph.mode == .Lifecycle {
 			walk_flow_bound_value(graph, value, nil, s, index)
-		} else if result := walk_flow_expr(graph, value); value_loans != nil {
+		} else if result := walk_flow_assigned(graph, s, value, index); value_loans != nil {
 			value_loans[index] = result
 		}
 		// A clone allocates through the destination's `via`, evaluated here.

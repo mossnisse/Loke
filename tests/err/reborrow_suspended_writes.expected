@@ -13,3 +13,9 @@ L0641
 L0641
 @32:14
 a mutable reborrow of it is still in use
+L0641
+@40:2
+`xs` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@47:6
+`xs` cannot be used here: a mutable reborrow of it is still in use

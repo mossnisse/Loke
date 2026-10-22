@@ -894,8 +894,8 @@ prov_read_is_reads_only :: proc(c: ^Compiler, type: Type_Id) -> bool {
 
 // design.md "Weakening and reborrows": a carrier stored where a read-only one
 // is wanted is only read, which a read-only reborrow of it allows, so
-// `Views{xs, xs}` and `v: []int = xs` beside another read-only view of `xs`
-// are accepted.
+// `Views{xs, xs}`, and `v: []int = xs` or `v = xs` beside another read-only
+// view of `xs`, are accepted.
 @(private)
 prov_walk_stored :: proc(graph: ^Flow_Graph, value: Expr, destination: Type_Id) -> []int {
 	if prov_argument_only_read(graph, value, destination) {

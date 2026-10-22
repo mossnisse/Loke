@@ -347,8 +347,9 @@ checklist.
   and are now `L0641`.
 - A carrier suspended by a read-only reborrow can be copied into another
   read-only carrier, as [Weakening and reborrows](design.md#weakening-and-reborrows)
-  allows: `v1: []int = xs; v2: []int = xs;` and two `Views{xs}` literals
-  while both are live were `L0641`.
+  allows: `v1: []int = xs; v2: []int = xs;`, the same through assignment
+  (`v1 = xs; v2 = xs;`), and two `Views{xs}` literals while both are live
+  were `L0641`.
 - A literal element that a later element writes keeps the read-only reborrow
   it held: with `view := View{xs}`,
   `held := Snapshot{view, replace(inout view.a, other)}` let `xs` be written
