@@ -245,6 +245,14 @@ checklist.
 
 ### Changed
 
+- Revised the [structured concurrency proposal](concurrency-proposal.md#the-idea)
+  to check transfers in both directions, global aliases, and allocator cleanup,
+  and to handle worker failures explicitly after joining. The proposed syntax
+  is now `spawn result = call;`, initially limited to dead outer locals and
+  statically known callees. Task-start failure, cancellation-aware shutdown,
+  and pool progress have explicit contracts and staged implementation plans.
+  This remains a design proposal; accepted language behavior is unchanged.
+
 - The language server's `loke.documentation` command answers with the
   interface file `-api` writes for the document's package, instead of the
   `-doc` Markdown page for its root. The VS Code extension's **Loke: Show

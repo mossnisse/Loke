@@ -977,6 +977,34 @@ borrow-and-join problem. See [Concurrency refinements](#concurrency-refinements)
 `parallel` blocks whose `spawn`ed calls keep their argument borrows until the
 block joins, with channels and mutex waiting for workers.
 
+### Structured concurrency proposal review (2026-10-22)
+
+The review is incorporated into [the revised proposal](concurrency-proposal.md#syntax),
+not into the accepted language. It now chooses `spawn result = call;` with
+only dead outer locals as result destinations, keeps cleanup before joining,
+and specifies [task-start failure](concurrency-proposal.md#failure-to-start-a-task).
+Its later library stages define explicit cancellation with wakeable waits,
+channel close and failed-send ownership, and limited pool progress.
+
+The first implementation must enforce every applicable safety check for
+statically known calls; unknown indirect effects are rejected. The remaining
+questions are the [extensions](concurrency-proposal.md#open-choices):
+
+- How public and erased procedure contracts preserve all sharing, transfer,
+  global-access, allocator, and result-provenance facts.
+- How recoverable submission returns prepared arguments on failure.
+- Whether richer result destinations justify their extra lifetime and
+  cleanup rules.
+- How channels retain borrowed items, support rendezvous, and use nondefault
+  queue allocators.
+- How an executor can support blocking work beyond the fixed pool's limited
+  progress guarantee.
+
+These extensions do not prevent the smaller initial feature. Validate its
+[acceptance and rejection cases](concurrency-proposal.md#order-of-work) before
+adding library concurrency: a scope-owned join guarantees storage lifetime,
+but does not itself guarantee termination or wake a blocked participant.
+
 ## Error handling (2026-10-13)
 
 The error handling proposal of this date is adopted. design.md defines it under
