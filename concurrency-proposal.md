@@ -1019,11 +1019,10 @@ a library procedure return two overlapping mutable views.
   `split_at_mut` in `eval.odin`.
 - **Tests:** `split_at_mut` and `chunks_mut` in `tests/run`, `tests/err`, and
   `tests/trap`, and `composite_mutable_reborrow` in `tests/err`.
-- **Left for milestone 4:** chunks cannot yet be collected in a container: the
-  elements of a `[dynamic][]mut T` share one content slot, so a second
-  mutable slice appended conflicts with the first (see
-  [known-gaps.md](known-gaps.md)). Tasks take chunks as `spawn` arguments,
-  which this does not affect.
+- **Fixed later:** chunks could not at first be collected in a container: a
+  container operation's own read of its argument conflicted with the
+  reborrow it stored, so any `[]mut T` appended to a container that was used
+  afterwards was `L0641`. `tests/run/chunks_mut` now collects them.
 
 ### Milestone 2: thread declarations
 

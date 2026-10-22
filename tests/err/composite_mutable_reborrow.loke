@@ -110,4 +110,19 @@ read_only_snapshot :: proc(external: []mut int, other: []int) -> int {
 	return held.first.a[0];
 }
 
+// A container stores a carrier as a literal's element does: appending two
+// carriers is fine, and appending one twice holds two mutable views of it.
+appended :: proc(xs: []mut int, ys: []mut int) {
+	held := [dynamic][]mut int{};
+	held.append(xs);
+	held.append(ys);
+	held[0][0] = held[1][0];
+}
+appended_twice :: proc(xs: []mut int) {
+	held := [dynamic][]mut int{};
+	held.append(xs);
+	held.append(xs);
+	held[0][0] = 1;
+}
+
 main :: proc() {}

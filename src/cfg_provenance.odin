@@ -4126,12 +4126,15 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	prov_call_resets(graph, v)
 	prov_call_cross_thread(graph, v)
 	prov_call_retention(graph, v, actuals)
-	prov_container_content(graph, v, container_op, actuals)
 	prov_call_effects(graph, v)
 	prov_argument_drop_effects(graph, v)
 	if len(borrowed) > 0 {
 		prov_emit(graph, Prov_Event{kind = .Live, sources = borrowed, span = v.span})
 	}
+	// What the container stores reborrows the arguments, so it is stored after
+	// their use in the call: the operation's own read of an argument is not a
+	// use of it while the stored copy lives.
+	prov_container_content(graph, v, container_op, actuals)
 	return prov_store_call_results(graph, v, actuals)
 }
 

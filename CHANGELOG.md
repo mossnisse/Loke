@@ -383,6 +383,10 @@ checklist.
 
 ### Fixed
 
+- A `[]mut T` appended or inserted into a container that is used afterwards is
+  no longer `L0641`. The operation's own read of its argument counted as a use
+  of the carrier it had just stored, so `held.append(b)` followed by any use of
+  `held` was rejected, and `chunks_mut`'s chunks could not be collected.
 - One composite literal can no longer hold two mutable views of one carrier:
   `Pair{xs, xs}` and `Pair{&mut xs[:1], &mut xs[1:]}` for `xs: []mut int`
   were accepted, though [Weakening and reborrows](design.md#weakening-and-reborrows)

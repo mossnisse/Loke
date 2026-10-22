@@ -4,7 +4,7 @@ import "core:fmt";
 
 // design.md "Chunks of a mutable slice": `chunks_mut` hands out disjoint
 // mutable chunks of a `[]mut T`, and a chunk may be held while the loop goes
-// on and after it ends.
+// on and after it ends, also in a container.
 
 fill :: proc(rows: []mut int, value: int) {
 	foreach (&mut x in rows) { x = value; }
@@ -46,4 +46,14 @@ main :: proc() {
 		none += 1;
 	}
 	fmt.println(none, xs);
+
+	// Collected, each chunk stays its own mutable slice.
+	held := [dynamic][]mut int{};
+	foreach (rows in xs.chunks_mut(3)) {
+		held.append(rows);
+	}
+	foreach (rows in held) {
+		rows[0] = rows.len();
+	}
+	fmt.println(held.len(), xs);
 }
