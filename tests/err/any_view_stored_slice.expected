@@ -1,5 +1,16 @@
 L0512
-@10:2
+@12:2
 `xs` cannot be assigned here: a read-only view of it is still in use
 L0512
-@18:2
+@20:2
+L0512
+@29:2
+L0511
+@39:2
+this write of `held` is not compatible with the read-only view of it that is still in use
+L0641
+@44:2
+L0641
+@50:7
+L0641
+@51:7

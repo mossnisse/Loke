@@ -1545,9 +1545,13 @@ prov_erase :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 	// Also a use of what a carrier already refers to, so erasure cannot hide
 	// a stale view. A view of a slice local only reads it, so it holds a
 	// read-only reborrow, as a `[]T` parameter would.
+	// A field or element holding such a slice is read the same way, so two
+	// views of `held.items` may be live together.
 	loans: []int
 	if ident, plain := prov_plain_slice_local(graph, e); plain {
 		loans = prov_reborrow_traversal(graph, prov_read_ident(graph, ident, .Read, reads_only = true), span, false)
+	} else if prov_plain_slice_place(graph, e) {
+		loans = prov_reborrow_traversal(graph, prov_read_erased_place(graph, e), span, false)
 	} else {
 		loans = walk_flow_expr_erased(graph, e)
 	}
@@ -1607,6 +1611,36 @@ prov_hidden_root :: proc(graph: ^Flow_Graph, span: Span, name: string) -> Root_I
 	root := prov_new_root(graph, .Temporary, span, name)
 	append(&graph.in_scope, Flow_Cleanup{kind = .Prov_Root, root = root, span = span})
 	return root
+}
+
+// As `prov_plain_slice_local`, for a field or element of a local: an erased
+// slice whose elements hold no borrows.
+@(private = "file")
+prov_plain_slice_place :: proc(graph: ^Flow_Graph, e: Expr) -> bool {
+	base := expr_base(e)
+	if base == nil || base.view_from != INVALID_TYPE || base.erased_from == INVALID_TYPE {
+		return false
+	}
+	if _, is_ident := e.(^Expr_Ident); is_ident {
+		return false
+	}
+	c := graph.k.c
+	if underlying_kind(c, base.erased_from) != .Slice ||
+	   type_carries_borrow(c, underlying_info(c, base.erased_from).element).any {
+		return false
+	}
+	_, _, place := prov_place_of(graph, e)
+	return place
+}
+
+// What an erased place holds, read only, with the erasure hook suppressed.
+@(private = "file")
+prov_read_erased_place :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
+	base := expr_base(e)
+	saved, saved_type := base.erased_from, base.type
+	base.erased_from, base.type = INVALID_TYPE, saved
+	defer { base.erased_from, base.type = saved, saved_type }
+	return prov_read_carrier(graph, e, true)
 }
 
 // The ordinary walk with the erasure hook suppressed.
@@ -3986,6 +4020,13 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	#partial switch _ in v.operation {
 	case Call_Text, Call_Text_Conversion:
 		return prov_text_call(graph, v)
+	case Call_Conversion:
+		// design.md "any_view type": `any_view(value)` is the implicit
+		// conversion written out. Its operand is erased and is the result, so
+		// it borrows the place it views as at an `any_view` destination.
+		if v.type == TYPE_ANY_VIEW && len(v.bound) == 1 && v.bound[0] != nil {
+			return walk_flow_expr(graph, v.bound[0])
+		}
 	}
 	if result, handled := prov_builtin_call(graph, v); handled {
 		return result

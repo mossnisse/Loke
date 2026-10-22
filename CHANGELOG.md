@@ -354,6 +354,12 @@ checklist.
   it held: with `view := View{xs}`,
   `held := Snapshot{view, replace(inout view.a, other)}` let `xs` be written
   while `held.first.a` still viewed it. That write is now `L0641`.
+- A stored `any_view(xs)` borrows `xs`, as the implicit conversion does:
+  `v = any_view(xs); xs = ys;` was accepted while `v` was live, and `v` then
+  saw `ys`. It is now `L0512`.
+- Two `any_view`s of one slice field, `v1: any_view = held.items;` and
+  `v2: any_view = held.items;`, may be live together, as two of a slice
+  local already could; the second was `L0641`.
 
 - `lokec -doc` no longer shows the members of a type private to the package,
   which no importer can reach, such as the 28 members of `core:time`'s `Text`
