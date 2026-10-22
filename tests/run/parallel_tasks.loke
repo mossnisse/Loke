@@ -1,0 +1,162 @@
+// concurrency-proposal.md "Rejected programs": the accepted counterpart of
+// each, and the accepted examples. Each task's work is visible after its
+// block joins.
+package main;
+
+import "base:interfaces";
+import "core:fmt";
+import "core:log";
+import "core:mem";
+import "core:sync";
+
+add_into :: proc(total: ^mut int, xs: []int) {
+	foreach (x in xs) { total^ += x; }
+}
+
+fill :: proc(buffer: ^mut [4]int) {
+	buffer^[0] = 7;
+}
+
+fill_list :: proc(list: ^mut [dynamic]int) {
+	list^.append(1);
+	list^.append(2);
+}
+
+hits: sync.Atomic(int) = {};
+
+record_hit :: proc() { _ = hits.add(1); }
+
+run :: proc(action: $F) where interfaces.Callable(F, proc()) { action(); }
+
+counter: thread_local int;
+
+count_here :: proc() -> int {
+	counter += 1;
+	return counter;
+}
+
+increment :: proc(view: []mut int) { view[0] += 1; }
+
+allocate_work :: proc(allocator: Allocator) -> int {
+	values: [dynamic]int via allocator = {};
+	values.append(1);
+	values.append(2);
+	return values.len();
+}
+
+config: [2]int;
+config_once: sync.Once;
+plain: int;
+
+load_config :: proc() { config[0] = 40; }
+
+use_config :: proc(loaded: ^[2]int) -> int { return loaded^[0] + 2; }
+
+work :: proc(i: int, data: ^[4]int) { _ = hits.add(data^[i]); }
+
+pick :: proc(xs: []int, high: bool) -> []int {
+	if (high) { return xs[2:]; }
+	return xs[:2];
+}
+
+main :: proc() {
+	xs := [4]int{1, 2, 3, 4};
+	mid := xs.len() / 2;
+	low, high: int = 0, 0;
+	parallel {
+		spawn add_into(&mut low, xs[:mid]);
+		spawn add_into(&mut high, xs[mid:]);
+	}
+	fmt.println("halves", low, high);
+
+	buffer: [4]int = {};
+	parallel {
+		spawn fill(&mut buffer);
+	}
+	fmt.println("buffer", buffer[0]);
+
+	scratch := [dynamic]int{};
+	parallel {
+		spawn fill_list(&mut scratch);
+	}
+	fmt.println("scratch", scratch.len());
+
+	parallel {
+		spawn record_hit();
+		spawn record_hit();
+	}
+	fmt.println("hits", hits.load());
+
+	n := 0;
+	bump := proc() capture(&mut n) { n += 1; };
+	parallel {
+		spawn run(move(bump));
+	}
+	fmt.println("bumped", n);
+
+	first, second: int;
+	parallel {
+		spawn first = count_here();
+		spawn second = count_here();
+	}
+	fmt.println("thread-local", first, second);
+
+	values := [1]int{0};
+	parallel {
+		spawn increment(&mut values[:]);
+	}
+	fmt.println("incremented", values[0]);
+
+	left := mem.Arena.init();
+	right := mem.Arena.init();
+	a, b: int;
+	parallel {
+		spawn a = allocate_work(left.allocator());
+		spawn b = allocate_work(right.allocator());
+		spawn allocate_work(mem.default_allocator());
+	}
+	fmt.println("arenas", a, b);
+
+	config_once.do(load_config);
+	answer: int;
+	parallel {
+		spawn answer = use_config(&config);
+	}
+	fmt.println("config", answer);
+
+	hits.store(0);
+	data := [4]int{1, 10, 100, 1000};
+	parallel {
+		foreach (i in 0..<data.len()) {
+			spawn work(i, &data);
+		}
+		log.info("started");
+	}
+	fmt.println("work", hits.load());
+
+	chosen: []int;
+	parallel {
+		spawn chosen = pick(xs[:], true);
+	}
+	fmt.println("chosen", chosen[0], chosen.len());
+
+	either: int;
+	parallel {
+		if (low > high) {
+			spawn either = count_here();
+		} else {
+			spawn either = use_config(&config);
+		}
+	}
+	fmt.println("either", either);
+
+	// The window starts at a spawn, so a path that has not spawned is outside.
+	parallel {
+		if (low > high) {
+			spawn record_hit();
+		} else {
+			plain = 5;
+		}
+	}
+	fmt.println("plain", plain);
+}

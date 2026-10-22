@@ -244,6 +244,7 @@ impl Guard {
 scoped :: proc() { g := Guard{1}; }
 deferred :: proc(list: inout [dynamic]int) { defer list.append(1); }
 dropped :: proc(a: Allocator) { xs := make([dynamic]int, 0, 4, a); drop(xs); }
+consumed :: proc(values: move [dynamic]int) {}
 `) {
 		return
 	}
@@ -254,6 +255,9 @@ dropped :: proc(a: Allocator) { xs := make([dynamic]int, 0, 4, a); drop(xs); }
 	testing.expectf(t, scoped.unknown_source.via == symbol_named(t, &p, "release", .Proc), "`scoped` names the hook")
 	testing.expect(t, uses_param(use_of(t, &p, "deferred"), 0), "a deferred append is the body's")
 	testing.expect(t, uses_param(use_of(t, &p, "dropped"), 0), "`dropped` frees in its parameter's region")
+	consumed := use_of(t, &p, "consumed")
+	testing.expect(t, uses_param(consumed, 0), "a `move` owner is released in its argument's region")
+	testing.expect(t, !consumed.regions.default, "not in the default provider's")
 }
 
 @(test)

@@ -219,6 +219,10 @@ Compiler :: struct {
 	materialized:       map[Symbol_Id]^Materialized,
 	materialized_order: [dynamic]^Materialized,
 
+	// The committed spawns (`src/parallel.odin`), whose frames and run
+	// procedures the emitter reads (concurrency-proposal.md "Lowering").
+	spawn_tasks: [dynamic]^Spawn_Task,
+
 	// Lifecycle classification (`src/hooks.odin`), cached per nominal type.
 	lifecycles: map[Type_Id]^Lifecycle,
 	// Attribute lists already validated, by the first attribute's position. A
@@ -237,6 +241,9 @@ Compiler :: struct {
 	// duplicates at least this many inline bytes, or when its clone may allocate.
 	copy_cost_threshold: u64,
 	copy_cost_enabled:   bool,
+	// `parallel` blocks are checked and lowered (`parallel.odin`); without the
+	// hidden option a block is reported as not available yet.
+	unstable_parallel:   bool,
 	// Allocating binding and assignment copies of the body being analysed,
 	// reported once last-use transfer has settled which stay copies.
 	held_copy_reports: [dynamic]Held_Copy_Report,
@@ -606,7 +613,7 @@ Emission_Registries :: struct {
 	typeids, typeid_order, witnesses, witness_order: int,
 	materialized, materialized_order:                int,
 	instances, checked_bodies, static_locals:        int,
-	synth_procs:                                     int,
+	synth_procs, spawn_tasks:                        int,
 	format_requested, type_info_requested:           bool,
 }
 
@@ -621,6 +628,7 @@ emission_registries :: proc(c: ^Compiler) -> Emission_Registries {
 		checked_bodies      = len(c.checked_bodies),
 		static_locals       = len(c.static_locals),
 		synth_procs         = len(c.synth_procs),
+		spawn_tasks         = len(c.spawn_tasks),
 		format_requested    = c.format_requested,
 		type_info_requested = c.type_info_requested,
 	}

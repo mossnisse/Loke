@@ -1365,8 +1365,10 @@ File :: struct {
 	// checker reads this; `-dump-ast` prints `items`.
 	active_items: []Item,
 	// Some body holds a `parallel` statement, whose hidden scope is a
-	// `core:thread` type, so that package is a dependency.
-	uses_parallel: bool,
+	// `core:thread` type, so that package is a dependency; `parallel_bound`
+	// once import discovery has added it.
+	uses_parallel:  bool,
+	parallel_bound: bool,
 }
 
 destroy_ast :: proc(f: ^File) {

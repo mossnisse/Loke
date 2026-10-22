@@ -1,0 +1,3 @@
+L0731
+@22:2
+each task of this block drops `cache` when its thread exits, and its hook `release` writes `released`, which every thread shares

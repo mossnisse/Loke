@@ -1,0 +1,45 @@
+L0727
+@24:2
+`spawn` belongs inside a `parallel` block of the same procedure
+L0728
+@31:9
+`live_answer` cannot take a task's result here: it already holds a value, or another task's result
+L0728
+@37:9
+`pending_answer` cannot take a task's result here: it already holds a value, or another task's result
+L0500
+@44:9
+`conditional_answer` cannot be used here: it is live on only some of the paths that reach this point
+L0727
+@47:9
+a deferred statement cannot `spawn`
+L0728
+@52:9
+a task's result goes to a local variable declared before the `parallel` block, and `inner` is not one
+L0728
+@61:16
+this call has several results, so a task has nowhere to put them; return one record from the procedure the task runs
+L0728
+@62:17
+this call returns `int`, and `small` is a `i32`; the worker assigns the result without converting it
+L0728
+@63:24
+this call has no result to assign to `nothing_back`
+L0728
+@64:9
+`spawn` starts a procedure or method named directly; a procedure value, a built-in, or a conversion cannot be spawned yet
+L0728
+@65:9
+`spawn` starts a Loke procedure; call a foreign one from a Loke procedure the task runs
+L0728
+@66:9
+`spawn` cannot start a call with a variadic pack yet; pass a slice to a procedure the task runs
+L0728
+@67:9
+a task cannot hand back an `inout` result, which is a place of the worker's call
+L0612
+@68:9
+this call produces `Result(int, string)`, which must be used or discarded with `_ = ...`
+L0727
+@71:12
+an executor header is the later pool form; a `parallel` block runs each task on a thread of its own, so write `parallel { ... }`

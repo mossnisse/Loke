@@ -360,14 +360,17 @@ has_excluded_copy_hook :: proc(c: ^Compiler, info: ^Type_Info) -> bool {
 // follows pointees, owned and shared payloads, container elements, and a
 // generic record's type arguments. An unchecked address, a `rawptr` or a C
 // pointer, is not followed: design.md "Concurrency and the memory model" lets
-// one cross without proving anything about what it reaches.
+// one cross without proving anything about what it reaches. `mutable` is a
+// mutable carrier it holds or reaches, `^mut`, `[]mut`, or `dyn mut`, through
+// which a task sharing it could write (concurrency-proposal.md check 5).
 Transfer_Facts :: struct {
-	affine: Type_Id,
-	erased: Type_Id,
+	affine:  Type_Id,
+	erased:  Type_Id,
+	mutable: Type_Id,
 }
 
 transfer_facts :: proc(c: ^Compiler, type: Type_Id) -> Transfer_Facts {
-	facts := Transfer_Facts{affine = INVALID_TYPE, erased = INVALID_TYPE}
+	facts := Transfer_Facts{affine = INVALID_TYPE, erased = INVALID_TYPE, mutable = INVALID_TYPE}
 	visited := make(map[Type_Id]bool, 8, context.temp_allocator)
 	transfer_facts_walk(c, type, &facts, &visited)
 	return facts
@@ -375,7 +378,8 @@ transfer_facts :: proc(c: ^Compiler, type: Type_Id) -> Transfer_Facts {
 
 @(private = "file")
 transfer_facts_walk :: proc(c: ^Compiler, type: Type_Id, facts: ^Transfer_Facts, visited: ^map[Type_Id]bool) {
-	if type == INVALID_TYPE || visited[type] || (facts.affine != INVALID_TYPE && facts.erased != INVALID_TYPE) {
+	if type == INVALID_TYPE || visited[type] ||
+	   (facts.affine != INVALID_TYPE && facts.erased != INVALID_TYPE && facts.mutable != INVALID_TYPE) {
 		return
 	}
 	visited[type] = true
@@ -385,6 +389,12 @@ transfer_facts_walk :: proc(c: ^Compiler, type: Type_Id, facts: ^Transfer_Facts,
 	}
 	if info.thread_affine && facts.affine == INVALID_TYPE {
 		facts.affine = type
+	}
+	#partial switch info.kind {
+	case .Pointer, .Slice, .Dyn:
+		if info.mutable && facts.mutable == INVALID_TYPE {
+			facts.mutable = type
+		}
 	}
 	#partial switch info.kind {
 	case .Dyn, .Any_View:

@@ -1,0 +1,49 @@
+// concurrency-proposal.md "Syntax": the parallel quicksort, whose parent sorts
+// one half while a task sorts the other, down to a depth limit.
+package main;
+
+import "core:fmt";
+import "core:slice";
+
+partition :: proc(xs: []mut int) -> int {
+	pivot := xs[xs.len() - 1];
+	store := 0;
+	foreach (i in 0..<xs.len() - 1) {
+		if (xs[i] < pivot) {
+			xs[i], xs[store] = xs[store], xs[i];
+			store += 1;
+		}
+	}
+	xs[store], xs[xs.len() - 1] = xs[xs.len() - 1], xs[store];
+	return store;
+}
+
+sort :: proc(xs: []mut int, depth := 0) {
+	if (xs.len() <= 16) { slice.sort(xs); return; }
+	left, rest := xs.split_at_mut(partition(xs));
+	right := &mut rest[1:];
+	if (depth >= 3) {
+		sort(left, depth + 1);
+		sort(right, depth + 1);
+		return;
+	}
+	parallel {
+		spawn sort(left, depth + 1);
+		sort(right, depth + 1);
+	}
+}
+
+main :: proc() {
+	values: [dynamic]int = {};
+	seed := 12345;
+	foreach (_ in 0..<1000) {
+		seed = (seed * 1103515245 + 12345) % 2147483648;
+		values.append(seed % 1000);
+	}
+	sort(&mut values[:]);
+	ok := true;
+	foreach (i in 1..<values.len()) {
+		if (values[i - 1] > values[i]) { ok = false; }
+	}
+	fmt.println("sorted", ok, values.len());
+}

@@ -318,7 +318,7 @@ Paths below are relative to `src/`.
 | `enums.odin`, `union.odin`, `optional.odin`, `erased.odin` | Enums, unions, extraction/failure protocol, erased views, and witnesses. |
 | `slice.odin`, `container.odin`, `text.odin`, `simd.odin`, `atomics.odin` | The slice type, its shared ABI type and queries; managed-container, text, SIMD, and atomic semantics, and the member tables of the built-in carriers. |
 | `capture.odin` | Lower capture literals to ordinary records, `call` methods, and record literals. |
-| `parallel.odin` | `parallel` blocks and `spawn` statements, which are not available yet ([concurrency-proposal.md](concurrency-proposal.md#milestone-4-parallel-and-spawn-gated)). |
+| `parallel.odin` | `parallel` blocks and `spawn` statements, checked only under the hidden `-unstable-parallel` option: each spawn's frame record and run procedure ([concurrency-proposal.md](concurrency-proposal.md#milestone-4-parallel-and-spawn-gated)). |
 | `box.odin` | Box types, construction, unboxing, dereference projections, and shared allocation layout. |
 | `hash.odin`, `format.odin`, `iterate.odin` | Contributed hashing, coherent formatting, ranges, `foreach`, and iteration protocol support. |
 | `iteration_adapters.odin`, `iteration_mutable.odin`, `iteration_yield.odin` | Iterable adapters, mutable lending, and ownership/borrow modes of yielded bindings. |
@@ -343,7 +343,7 @@ Paths below are relative to `src/`.
 | `proc_contracts.odin` | Inferred callback result contracts, checked substitution bounds, and immutable borrow arguments. |
 | `precision.odin` | Diagnostic metadata explaining bounded provenance merges without changing acceptance. |
 | `borrow.odin` | Root loans, carrier paths, result summaries, escape contracts, allocator-region analysis, and diagnostics. |
-| `global_effects.odin` | Whole-program global writes and their copy-hook and thread-entry diagnostics; the reach and allocator-use effects and thread-exit drops. |
+| `global_effects.odin` | Whole-program global writes and their copy-hook and thread-entry diagnostics; the reach and allocator-use effects and thread-exit drops, and what a `parallel` block's parent does with them while its tasks run. |
 | `region.odin` | `Arena`/`Scratch` semantic types. |
 
 ### LLVM and toolchain

@@ -159,6 +159,7 @@ remember_incremental_inputs :: proc(s: ^Compilation_Session, input: string, docu
 @(private = "file")
 same_file_topology :: proc(a, b: ^File, a_text, b_text: string) -> bool {
 	if a.package_name != b.package_name || len(a.attributes) != len(b.attributes) || selects_imports(b.items, false) { return false }
+	if a.uses_parallel != b.uses_parallel { return false }
 	// File attributes include provider defaults, which discovery reads.
 	for attribute, index in a.attributes {
 		other := b.attributes[index].span
@@ -329,6 +330,7 @@ try_incremental_check :: proc(s: ^Compilation_Session, input: string, documentat
 				imports := make([dynamic]^Item_Import, context.temp_allocator)
 				collect_file_imports(file.items, &imports)
 				for imported in imports { imported.bound = false }
+				file.parallel_bound = false
 			}
 			rebuild_active_items(c, pkg)
 		}

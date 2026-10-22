@@ -1859,6 +1859,20 @@ parse_spawn :: proc(p: ^Parser) -> Stmt {
 	}
 	call := parse_expr(p)
 	ok := !expr_has_error(call)
+	// concurrency-proposal.md "Syntax": a field, an index, or a destructuring
+	// is no result destination.
+	if ok && at(p, .Assign) {
+		parse_error(
+			p, expr_span(call), "L0261", "not a local variable",
+			"a task's result goes to a local variable: `spawn name = call;`",
+		)
+		sync_to_statement(p)
+		s := new_stmt(p, Stmt_Spawn, start)
+		s.keyword = span_of(p, start)
+		s.call = call
+		s.has_error = true
+		return s
+	}
 	if _, is_call := call.(^Expr_Call); ok && !is_call {
 		if postfix, is_postfix := call.(^Expr_Postfix); is_postfix && postfix.op == .Or_Return {
 			parse_error(

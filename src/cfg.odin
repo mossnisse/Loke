@@ -30,6 +30,12 @@ Flow_Event_Kind :: enum {
 	// A region reset, where the provenance pass later asks which owners were
 	// dead (design.md: a dropped owner no longer blocks a reset).
 	Reset_Point,
+	// Like `Init`, from a task's result: the local must hold no value yet
+	// (concurrency-proposal.md "Syntax").
+	Spawn_Result,
+	// A declaration without a value: the local starts dead, also on a loop's
+	// next iteration, which reaches it holding the last one's value.
+	Declare,
 }
 
 Flow_Event :: struct {
@@ -239,6 +245,26 @@ Prov_State :: struct {
 	// The carrier slots of a lent loop element, which is the stored carrier
 	// rather than a copy: a copy taken from one reborrows these instead.
 	lent_aliases:   map[int][]int,
+	// Per `parallel` block's hidden scope, the slot holding what its tasks
+	// lend (`prov_spawn`); `spawning` is the call whose lending is collected
+	// into `spawn_held`.
+	task_slots:     map[Symbol_Id]int,
+	spawning:       ^Expr_Call,
+	spawn_held:     []int,
+	// concurrency-proposal.md check 6: how many `parallel` blocks enclose the
+	// statement being walked, and each block's hidden scope by its index.
+	parallel_depth:   int,
+	parallel_scopes:  [dynamic]Symbol_Id,
+	has_window_event: bool,
+	// The effects being recorded are a spawned call's, which run on its task;
+	// `effect_name` describes the call whose writes are being recorded.
+	task_effects:     bool,
+	effect_name:      string,
+	// concurrency-proposal.md check 9: the regions the spawned call's task
+	// reserves, collected while its effects are, and each spawn in the order
+	// walked: its block's window bit, its reservation, and where it is.
+	task_reserve:     Region_Set,
+	task_sites:       [dynamic]Task_Site,
 	// Slots each of whose definitions holds a value disjoint from the one
 	// before: a `chunks_mut` loop's binding. Redefining one severs the
 	// reborrows taken from its previous value (design.md "Chunks of a mutable
@@ -1354,10 +1380,36 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false, lends :=
 		}
 
 	case ^Stmt_Parallel:
+		// The provenance modes check what runs while the block's tasks may.
+		depth := graph.prov != nil ? &graph.parallel_depth : nil
+		if depth != nil {
+			depth^ += 1
+		}
 		walk_flow_block(graph, s.lowered != nil ? s.lowered : s.body)
+		if depth != nil {
+			depth^ -= 1
+		}
 
 	case ^Stmt_Spawn:
-		walk_flow_expr(graph, s.call)
+		walk_flow_spawn(graph, s)
+	}
+}
+
+// concurrency-proposal.md "Syntax": a spawn's arguments are prepared as its
+// call's are, and its result local holds a value from the spawn on, which the
+// enclosing scope's cleanup drops after the join.
+@(private = "file")
+walk_flow_spawn :: proc(graph: ^Flow_Graph, s: ^Stmt_Spawn) {
+	if graph.mode != .Lifecycle {
+		prov_spawn(graph, s)
+		return
+	}
+	walk_flow_expr(graph, s.call)
+	if s.result == nil {
+		return
+	}
+	if slot, tracked := graph.by_symbol[s.result.symbol]; tracked {
+		emit(graph, Flow_Event{kind = .Spawn_Result, slot = slot, span = s.result.span, name = s.result.name})
 	}
 }
 
@@ -1448,6 +1500,7 @@ walk_flow_decl :: proc(graph: ^Flow_Graph, d: ^Decl) {
 			graph.tracked[slot].unchecked = true
 		}
 		if initializer == nil {
+			emit(graph, Flow_Event{kind = .Declare, slot = slot, span = sym.span})
 			continue
 		}
 		emit(graph, Flow_Event {
@@ -2614,7 +2667,7 @@ reads_before :: proc(events: []Flow_Event, from: int, reads: []bool) {
 		#partial switch event.kind {
 		case .Use, .Kill:
 			reads[event.slot] = true
-		case .Init, .Assign:
+		case .Init, .Assign, .Spawn_Result, .Declare:
 			reads[event.slot] = false
 		}
 	}

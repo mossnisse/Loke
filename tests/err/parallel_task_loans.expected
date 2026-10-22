@@ -1,0 +1,20 @@
+L0511
+@33:18
+this write of `total` is not compatible with the mutable pointer of it that is still in use
+a task holds it until this `parallel` block joins
+L0511
+@39:15
+this read of `buffer` is not compatible with the mutable pointer of it that is still in use
+L0513
+@42:2
+this pointer is used after `scratch`, the local it borrows, has ended
+declare the storage before the block
+L0512
+@51:3
+`shared` cannot be assigned here: a read-only pointer of it is still in use
+L0511
+@60:13
+this read of `view` is not compatible with the mutable slice of it that is still in use
+L0511
+@68:2
+this write of `xs` is not compatible with the read-only slice of it that is still in use

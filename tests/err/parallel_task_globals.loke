@@ -1,0 +1,60 @@
+// concurrency-proposal.md check 6: from a block's first spawn to its join,
+// neither a task nor the parent writes a global every thread shares, or reaches
+// through one that stores a mutable or erased carrier.
+package main;
+
+import "core:fmt";
+import "core:sync";
+
+hits: int;
+values: [1]int;
+view: []mut int;
+config: [2]int;
+config_once: sync.Once;
+
+setup :: proc() { view = &mut values[:]; }
+
+record_hit :: proc() { hits += 1; }
+
+increment :: proc() { view[0] += 1; }
+
+through_helper :: proc() { increment(); }
+
+load_config :: proc() { config[0] = 1; }
+
+use_config :: proc() -> int {
+	config_once.do(load_config);
+	return config[0];
+}
+
+add :: proc(target: []mut int) { target[0] += 1; }
+
+square :: proc(n: int) -> int { return n * n; }
+
+main :: proc() {
+	setup();
+	parallel { spawn record_hit(); }
+	parallel { spawn increment(); }
+	parallel { spawn through_helper(); }
+	answer: int;
+	parallel { spawn answer = use_config(); }
+	parallel { spawn add(view); }
+
+	hits = 1;
+	local := [2]int{0, 0};
+	parallel {
+		spawn add(&mut local[:]);
+		hits = 2;
+		record_hit();
+		fmt.println(view[0]);
+	}
+
+	// A spawn in a loop runs on the next iteration's statements before it.
+	parallel {
+		foreach (i in 0..<2) {
+			hits = i;
+			spawn square(i);
+		}
+	}
+	fmt.println(hits, answer, local[0]);
+}

@@ -1,0 +1,3 @@
+L0341
+@15:10
+a `parallel` block cannot run during compile-time evaluation

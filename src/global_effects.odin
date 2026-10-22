@@ -85,7 +85,7 @@ Body_Effects :: struct {
 }
 
 // A write, invalidation, or mutable borrow of a global's storage.
-prov_note_static_write :: proc(graph: ^Flow_Graph, root: Root_Id) {
+prov_note_static_write :: proc(graph: ^Flow_Graph, root: Root_Id, span: Span) {
 	if root == NO_ROOT {
 		return
 	}
@@ -93,6 +93,7 @@ prov_note_static_write :: proc(graph: ^Flow_Graph, root: Root_Id) {
 	if (entry.kind != .Static && entry.kind != .Thread_Local) || entry.symbol == INVALID_SYMBOL {
 		return
 	}
+	prov_note_shared_effect(graph, entry.symbol, .Write, span)
 	for existing in graph.effect_writes {
 		if existing == entry.symbol {
 			return
@@ -200,7 +201,7 @@ prov_call_effects :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 			target.args = effect_args(c, v, graph.alloc)
 		}
 	}
-	if c.thread_facts_pending {
+	if prov_tracks_allocator_use(graph) {
 		target.regions = prov_argument_regions(graph, v)
 	}
 	prov_effect_call(graph, target, v.span)
@@ -745,6 +746,40 @@ prov_effect_call :: proc(graph: ^Flow_Graph, target: Effect_Call, span: Span, dr
 	if !c.global_writes_ready {
 		return
 	}
+	name := effect_call_description(c, target, dropped, described, unnamed)
+	// concurrency-proposal.md check 6: what the parent calls while its tasks
+	// run reaches what the callee's summaries say. The writes are noted where
+	// they become accesses below.
+	if graph.parallel_depth > 0 && !graph.task_effects && !c.thread_facts_pending {
+		caller := "a procedure this call may reach"
+		if sym := symbol_of(c, target.callee); sym != nil {
+			caller = fmt.tprintf("`%s`", identifier_text(c, sym.name))
+		}
+		for reached in effect_call_reach(c, target) {
+			prov_note_shared_effect(graph, reached, .Read, span, caller)
+		}
+	}
+	// concurrency-proposal.md check 9: and allocates where the callee's
+	// summary says, with the call's arguments for its parameters.
+	if graph.parallel_depth > 0 && !c.thread_facts_pending {
+		for index in effect_targets(c, target, &c.effect_program) {
+			body := c.effect_program.bodies[index].symbol
+			if from, found := c.allocator_uses[body]; found {
+				prov_note_window_allocator_use(graph, substituted_region(graph, from, target, body == target.callee), span)
+			}
+		}
+	}
+	graph.effect_name = name
+	defer graph.effect_name = ""
+	for global in effect_call_writes(c, target) {
+		root := prov_root_for_symbol(graph, global)
+		prov_access(graph, root, nil, .Invalidate, span, name)
+	}
+}
+
+// What a call reached through `target` is said to do in a diagnostic.
+@(private = "file")
+effect_call_description :: proc(c: ^Compiler, target: Effect_Call, dropped, described: string, unnamed: bool) -> string {
 	name := ""
 	if described != "" {
 		name = described
@@ -757,10 +792,67 @@ prov_effect_call :: proc(graph: ^Flow_Graph, target: Effect_Call, span: Span, dr
 	} else {
 		name = "modified by a procedure this call may reach"
 	}
-	for global in effect_call_writes(c, target) {
-		root := prov_root_for_symbol(graph, global)
-		prov_access(graph, root, nil, .Invalidate, span, name)
+	return name
+}
+
+// The globals whose stored carriers one call target may reach, from the
+// thread summaries.
+@(private = "file")
+effect_call_reach :: proc(c: ^Compiler, target: Effect_Call) -> []Symbol_Id {
+	out := make([dynamic]Symbol_Id, 0, 2, context.temp_allocator)
+	for index in effect_targets(c, target, &c.effect_program) {
+		for reached in c.reach_effects[c.effect_program.bodies[index].symbol] {
+			add_global_write(&out, reached.global)
+		}
 	}
+	return out[:]
+}
+
+// concurrency-proposal.md check 6: inside a `parallel` block, a write of a
+// global or a reach through one it stores is kept for the window check, which
+// the solver applies where a task may be running. `name` says what call made
+// it, or is empty for the body's own. A thread's own `thread_local` storage,
+// and a `@(synchronized)` variable, whose package vouches for every access, are
+// not shared writes; a carrier stored in `thread_local` storage is still
+// reached.
+prov_note_shared_effect :: proc(graph: ^Flow_Graph, global: Symbol_Id, access: Access_Kind, span: Span, name := "") {
+	c := graph.k.c
+	if graph.parallel_depth == 0 || graph.task_effects || !c.global_writes_ready || c.thread_facts_pending {
+		return
+	}
+	sym := symbol_of(c, global)
+	if sym == nil || sym.synchronized || (access != .Read && sym.duration == .Thread_Local) {
+		return
+	}
+	described := name if name != "" else graph.effect_name
+	prov_emit(graph, Prov_Event{kind = .Shared_Effect, symbol = global, access = access, span = span, name = described})
+}
+
+// A callee's allocator use at one call, in the caller's terms, as
+// `substitute_allocator_use` settles it.
+@(private = "file")
+substituted_region :: proc(graph: ^Flow_Graph, from: Allocator_Use, call: Effect_Call, direct: bool) -> Region_Set {
+	out := prov_empty_region(graph)
+	out.default = from.regions.default
+	out.unknown = from.regions.unknown
+	for wanted, parameter in from.regions.params {
+		if !wanted {
+			continue
+		}
+		switch {
+		case call.regions == nil:
+			out.unknown = true
+		case direct:
+			if parameter < len(call.regions) {
+				region_merge(&out, call.regions[parameter])
+			}
+		case:
+			for set in call.regions {
+				region_merge(&out, set)
+			}
+		}
+	}
+	return out
 }
 
 // The settled writes of one call target.

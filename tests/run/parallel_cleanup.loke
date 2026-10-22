@@ -1,0 +1,97 @@
+// concurrency-proposal.md "Failure and cleanup": a task drops what was moved
+// into it, a completed result is dropped by the scope that declared it, the
+// block's own locals are dropped before the join, and every exit from the
+// block joins first.
+package main;
+
+import "core:fmt";
+import "core:sync";
+
+drops: sync.Atomic(int) = {};
+
+Tracked :: struct { id: int }
+
+impl Tracked {
+	release :: hook(drop) proc(self: inout) {
+		_ = drops.add(self.id);
+	}
+}
+
+consume :: proc(value: move Tracked) -> int { return value.id; }
+
+make_tracked :: proc(id: int) -> Tracked { return Tracked{id}; }
+
+compute :: proc(n: int) -> int { return n * 2; }
+
+early :: proc(stop: bool) -> int {
+	answer: int;
+	parallel {
+		spawn answer = compute(4);
+		if (stop) {
+			return 7;
+		}
+	}
+	return answer;
+}
+
+first_even :: proc(limit: int) -> int {
+	found := -1;
+	foreach (i in 0..<limit) {
+		doubled: int;
+		parallel {
+			spawn doubled = compute(i);
+			if (i == 2) {
+				break;
+			}
+		}
+		found = doubled;
+	}
+	return found;
+}
+
+Failure :: enum { Odd }
+
+checked :: proc(n: int) -> Result(int, Failure) {
+	if (n % 2 == 1) { return .err(.Odd); }
+	return .ok(n);
+}
+
+propagate :: proc(n: int) -> Result(int, Failure) {
+	errdefer fmt.println("undo", n);
+	outcome: Result(int, Failure);
+	parallel {
+		spawn outcome = checked(n);
+	}
+	value := outcome or_return;
+	return .ok(value + 1);
+}
+
+main :: proc() {
+	moved := Tracked{1};
+	got: int;
+	parallel {
+		spawn got = consume(move(moved));
+	}
+	fmt.println("moved", got, drops.load());
+
+	{
+		made: Tracked;
+		parallel {
+			spawn made = make_tracked(10);
+		}
+		fmt.println("made", made.id, drops.load());
+	}
+	fmt.println("after scope", drops.load());
+
+	doubled: int;
+	parallel {
+		local := Tracked{100};
+		spawn doubled = compute(1);
+	}
+	fmt.println("block local", doubled, drops.load());
+
+	fmt.println("early", early(true), early(false));
+	fmt.println("break", first_even(5));
+	fmt.println("propagate", propagate(2) or_else -1);
+	fmt.println("propagate", propagate(3) or_else -1);
+}

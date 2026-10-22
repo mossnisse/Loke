@@ -1,0 +1,59 @@
+// concurrency-proposal.md check 9: a task reserves every allocator region
+// other than the default provider's that it may use, from its spawn to the
+// join, through copied handles, moved owners, received allocators, and the
+// parents of local arenas.
+package main;
+
+import "core:mem";
+
+allocate_work :: proc(allocator: Allocator) -> int {
+	values: [dynamic]int via allocator = {};
+	values.append(1);
+	return values.len();
+}
+
+consume :: proc(values: move [dynamic]int) -> int {
+	return values.len();
+}
+
+fan_out :: proc(allocator: Allocator) -> int {
+	a, b: int;
+	parallel {
+		spawn a = allocate_work(allocator);
+		spawn b = allocate_work(allocator);
+	}
+	return a + b;
+}
+
+main :: proc() {
+	arena := mem.Arena.init();
+	allocator := arena.allocator();
+	first: int;
+	parallel {
+		spawn first = allocate_work(allocator);
+		allocate_work(allocator);
+	}
+
+	moved: int;
+	parallel {
+		owned: [dynamic]int via allocator = {};
+		owned.append(3);
+		spawn moved = consume(move(owned));
+		free_all(allocator);
+	}
+
+	parallel {
+		foreach (i in 0..<2) {
+			spawn allocate_work(allocator);
+		}
+	}
+
+	parent := mem.Arena.init();
+	left := mem.Arena.init(parent.allocator());
+	right := mem.Arena.init(parent.allocator());
+	parallel {
+		spawn allocate_work(left.allocator());
+		spawn allocate_work(right.allocator());
+	}
+	_ = fan_out(mem.default_allocator());
+}

@@ -122,8 +122,115 @@ emit_stmt :: proc(e: ^Emitter, stmt: Stmt, lends := false) {
 		}
 		emit_foreach(e, s)
 
-	case ^Stmt_Parallel, ^Stmt_Spawn:
-		backend_fail(e, "a `parallel` statement reached emission")
+	case ^Stmt_Parallel:
+		if s.lowered == nil {
+			backend_fail(e, "an unchecked `parallel` block reached emission")
+			return
+		}
+		emit_scoped_block(e, s.lowered)
+
+	case ^Stmt_Spawn:
+		emit_spawn(e, s)
+	}
+}
+
+// concurrency-proposal.md "Lowering": the parent evaluates the callee's
+// arguments in their order into a frame from the default allocator, which the
+// task's `run` takes apart and frees. A value the task owns is held for the
+// unwind until `start` has handed the frame to a thread, so a failure to start
+// drops it on the parent.
+@(private = "file")
+emit_spawn :: proc(e: ^Emitter, s: ^Stmt_Spawn) {
+	task := s.task
+	call, is_call := s.call.(^Expr_Call)
+	if task == nil || !is_call {
+		backend_fail(e, "an unchecked `spawn` reached emission")
+		return
+	}
+	frame_info := type_of(e.c, task.frame)
+	callee := symbol_of(e.c, call.resolution.symbol)
+	callee_type := callee == nil ? nil : underlying_info(e.c, callee.proc_type)
+	if frame_info == nil || callee_type == nil {
+		backend_fail(e, "a `spawn` has no frame")
+		return
+	}
+	frame_type := llvm_type(e, task.frame)
+	field_address :: proc(e: ^Emitter, info: ^Type_Info, frame_type, frame: string, field: int) -> string {
+		return gep_field(e, frame_type, frame, int(symbol_of(e.c, info.fields[field]).index))
+	}
+
+	allocator := emit_default_allocator(e)
+	frame := temp(e)
+	fmt.sbprintfln(
+		&e.b, "  %s = call ptr @loke_rt_v1_alloc(ptr %s, i64 %d, i64 %d)",
+		frame, allocator, type_size(e.c, task.frame), type_align(e.c, task.frame),
+	)
+	failed := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", failed, frame)
+	fail_label, ok_label := new_label(e, "spawn.no_frame"), new_label(e, "spawn.frame")
+	branch_if(e, failed, fail_label, ok_label)
+	place_label(e, fail_label)
+	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", allocator)
+	fmt.sbprintln(&e.b, "  unreachable")
+	place_label(e, ok_label)
+	e.terminated = false
+
+	// A default reads the parameters bound to its left, as at a call.
+	outer_params := e.param_values
+	own_params := make(map[Symbol_Id]string)
+	defer {
+		delete(own_params)
+		e.param_values = outer_params
+	}
+	owned := make([dynamic]Deferred)
+	defer delete(owned)
+	for step in 0 ..< len(call.bound) {
+		index := call_slot_at(call, step)
+		argument := call.bound[index]
+		type := callee_type.parameters[index]
+		is_default := index < len(callee.param_defaults) && argument == callee.param_defaults[index]
+		e.param_values = is_default ? own_params : outer_params
+		field := field_address(e, frame_info, frame_type, frame, spawn_argument_field(index))
+		bound: string
+		switch task.kinds[index] {
+		case .Address:
+			address := emit_address(e, argument)
+			fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", address, field)
+			mode := index < len(callee_type.param_modes) ? callee_type.param_modes[index] : Param_Mode.Value
+			bound = param_mode_is_pointer(mode) ? address : load_place(e, type, address)
+		case .Copy:
+			bound = emit_expr(e, argument)
+			store(e, type, bound, field)
+		case .Owned:
+			bound = emit_expr(e, argument)
+			append(&owned, hold_temporary_value(e, type, bound))
+			store(e, type, bound, field)
+		}
+		if index < len(callee.param_symbols) && callee.param_symbols[index] != INVALID_SYMBOL {
+			own_params[callee.param_symbols[index]] = bound
+		}
+	}
+	e.param_values = outer_params
+	if task.result != INVALID_SYMBOL {
+		field := field_address(e, frame_info, frame_type, frame, spawn_result_field(task))
+		fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", e.names[task.result], field)
+	}
+	fmt.sbprintfln(
+		&e.b, "  call void %s(ptr %s, ptr %s, ptr %s)",
+		symbol_name(e, task.start), e.names[task.scope], symbol_name(e, task.run), frame,
+	)
+	// The task has the frame now; what it owns is its to drop.
+	for entry in owned {
+		finish_temporary_drop(e, entry)
+	}
+	// concurrency-proposal.md "Lowering": a registered task completes before the
+	// join, so the result is initialized from here, for its enclosing scope's
+	// cleanup on every exit.
+	if task.result != INVALID_SYMBOL {
+		if flag := drop_flag_of(e, task.result); flag != "" {
+			fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", flag)
+		}
+		revive_place(e, s.result)
 	}
 }
 

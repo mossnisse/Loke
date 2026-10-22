@@ -1,0 +1,24 @@
+L0730
+@35:18
+this task's result holds a pointer of `counter`, which is the worker's own `thread_local` storage, so it cannot cross to the parent
+L0730
+@39:18
+this task is handed a pointer of `counter`, which is the parent's own `thread_local` storage, so it cannot cross to the task
+L0729
+@45:13
+`proc() capture(&mut n)` reaches `^mut int`, so a task sharing it could write what the parent reaches too: move it into the task, or pass the mutable borrow itself
+L0729
+@52:24
+`^Scene` reaches `[]mut int`, so a task sharing it could write what the parent reaches too: move it into the task, or pass the mutable borrow itself
+L0724
+@57:18
+`Window` is `@(thread_affine)`, so it cannot cross to another thread
+L0724
+@58:14
+`Window` is `@(thread_affine)`, so it cannot cross to another thread
+L0724
+@62:19
+`Result(int, Failure)` holds or reaches `Failure`, which is `@(thread_affine)`, so it cannot cross to another thread
+L0513
+@68:11
+this pointer is used after this temporary has ended

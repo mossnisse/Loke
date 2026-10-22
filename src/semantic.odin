@@ -861,6 +861,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.dyn_proc_adapters = make(map[Type_Id]Symbol_Id, c.semantic_allocator)
 	c.materialized = make(map[Symbol_Id]^Materialized, c.semantic_allocator)
 	c.materialized_order = make([dynamic]^Materialized, 0, 4, c.semantic_allocator)
+	c.spawn_tasks = make([dynamic]^Spawn_Task, 0, 2, c.semantic_allocator)
 	c.lifecycles = make(map[Type_Id]^Lifecycle, c.semantic_allocator)
 	c.validated_attributes = make(map[u64]bool, c.semantic_allocator)
 	c.lifecycle_operations = make(map[Type_Id]Lifecycle_Operations, c.semantic_allocator)

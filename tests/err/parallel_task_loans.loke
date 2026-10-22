@@ -1,0 +1,70 @@
+// concurrency-proposal.md "Rejected programs": what a task borrows stays lent
+// until its block joins, so the parent and other tasks cannot use it.
+package main;
+
+import "core:fmt";
+
+add_into :: proc(total: ^mut int, xs: []int) {
+	foreach (x in xs) { total^ += x; }
+}
+
+fill :: proc(buffer: ^mut [4]int) {
+	buffer^[0] = 1;
+}
+
+fill_list :: proc(list: ^mut [dynamic]int) {
+	list^.append(1);
+}
+
+read :: proc(value: ^int) -> int {
+	return value^;
+}
+
+add :: proc(target: []mut int) { target[0] += 1; }
+
+upper :: proc(xs: []int) -> []int { return xs[2:]; }
+
+main :: proc() {
+	xs := [4]int{1, 2, 3, 4};
+	mid := 2;
+	total := 0;
+	parallel {
+		spawn add_into(&mut total, xs[:mid]);
+		spawn add_into(&mut total, xs[mid:]);
+	}
+
+	buffer: [4]int = {};
+	parallel {
+		spawn fill(&mut buffer);
+		fmt.println(buffer[0]);
+	}
+
+	parallel {
+		scratch := [dynamic]int{};
+		spawn fill_list(&mut scratch);
+	}
+
+	shared := 1;
+	answer: int;
+	parallel {
+		spawn answer = read(&shared);
+		shared = 2;
+	}
+
+	// concurrency-proposal.md "Rules from existing rules" 1: a `[]mut` passed
+	// by name is the first task's alone.
+	cells := [2]int{0, 0};
+	view := &mut cells[:];
+	parallel {
+		spawn add(view);
+		spawn add(view);
+	}
+
+	// A borrowed result keeps its loan after the join.
+	chosen: []int;
+	parallel {
+		spawn chosen = upper(xs[:]);
+	}
+	xs[3] = 0;
+	fmt.println(total, answer, chosen[0]);
+}

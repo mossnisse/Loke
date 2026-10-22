@@ -1,0 +1,34 @@
+// concurrency-proposal.md "Failure and cleanup": a panic in the parent
+// unwinds through the block's join, so its tasks finish first, and a result a
+// completed task assigned is dropped by the unwind.
+package main;
+
+import "core:fmt";
+import "core:sync";
+
+finished: sync.Atomic(int) = {};
+
+Tracked :: struct { id: int }
+
+impl Tracked {
+	release :: hook(drop) proc(self: inout) {
+		fmt.println("drop", self.id, "after", finished.load(), "tasks");
+	}
+}
+
+finish :: proc() { _ = finished.add(1); }
+
+make_tracked :: proc(id: int) -> Tracked {
+	_ = finished.add(1);
+	return Tracked{id};
+}
+
+main :: proc() {
+	defer fmt.println("joined", finished.load());
+	made: Tracked;
+	parallel {
+		spawn finish();
+		spawn made = make_tracked(5);
+		panic("parent failed");
+	}
+}

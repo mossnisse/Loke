@@ -1,0 +1,15 @@
+L0732
+@23:3
+this task may use the allocator `allocator` was given, which a task started earlier reserves until the join
+L0732
+@34:3
+this uses `arena`'s allocator, which a running task reserves until this `parallel` block joins
+L0732
+@42:3
+this uses `arena`'s allocator, which a running task reserves until this `parallel` block joins
+L0732
+@47:4
+this task may use `arena`'s allocator, which the task this `spawn` started on an earlier iteration reserves until the join
+L0732
+@56:3
+this task may use `parent`'s allocator, which a task started earlier reserves until the join

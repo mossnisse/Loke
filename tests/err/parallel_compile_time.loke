@@ -1,0 +1,17 @@
+// concurrency-proposal.md "Milestone 4: `parallel` and `spawn`, gated":
+// compile-time evaluation runs no threads, so it rejects a block.
+package main;
+
+double :: proc(n: int) -> int { return n * 2; }
+
+computed :: proc() -> int {
+	answer: int;
+	parallel {
+		spawn answer = double(2);
+	}
+	return answer;
+}
+
+value := computed();
+
+main :: proc() {}

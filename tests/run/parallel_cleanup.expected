@@ -1,0 +1,9 @@
+moved 1 1
+made 10 1
+after scope 11
+block local 2 111
+early 7 8
+break 2
+propagate 3
+undo 3
+propagate -1

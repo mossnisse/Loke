@@ -1,0 +1,69 @@
+// concurrency-proposal.md checks 5, 7, and 8: a task shares only what is
+// read-only all the way down, no `thread_local` borrow crosses between a task
+// and its parent, and no thread-affine value crosses at all.
+package main;
+
+import "base:interfaces";
+
+counter: thread_local int;
+
+borrow_tls :: proc() -> ^int { return &counter; }
+
+read :: proc(value: ^int) -> int { return value^; }
+
+run :: proc(action: $F) where interfaces.Callable(F, proc()) { action(); }
+
+Scene :: struct { cells: []mut int }
+
+measure :: proc(scene: ^Scene) -> int { return scene.cells.len(); }
+
+Window :: struct @(thread_affine) { handle: int }
+
+open :: proc() -> Window { return Window{1}; }
+
+show :: proc(window: Window) {}
+
+Failure :: union @(thread_affine) { none, window: Window }
+
+try_open :: proc() -> Result(int, Failure) { return .ok(1); }
+
+first :: proc(list: ^[dynamic]int) -> ^int { return &list^[0]; }
+
+main :: proc() {
+	result: ^int;
+	parallel {
+		spawn result = borrow_tls();
+	}
+	answer: int;
+	parallel {
+		spawn answer = read(&counter);
+	}
+
+	n := 0;
+	bump := proc() capture(&mut n) { n += 1; };
+	parallel {
+		spawn run(bump);
+	}
+
+	cells := [2]int{0, 0};
+	scene := Scene{&mut cells[:]};
+	size: int;
+	parallel {
+		spawn size = measure(&scene);
+	}
+
+	window: Window;
+	parallel {
+		spawn window = open();
+		spawn show(Window{2});
+	}
+	outcome: Result(int, Failure);
+	parallel {
+		spawn outcome = try_open();
+	}
+	element: ^int;
+	parallel {
+		spawn element = first(&[dynamic]int{1, 2});
+	}
+	answer = element^;
+}

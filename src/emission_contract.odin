@@ -160,6 +160,23 @@ validate_emission_dependencies :: proc(c: ^Compiler) -> bool {
 			}
 		}
 	}
+	// concurrency-proposal.md "Lowering": a spawn's frame leads with the run
+	// slot, then one field per bound argument and the result's address, and
+	// its run and start procedures are checked.
+	for task in c.spawn_tasks {
+		frame := underlying_info(c, task.frame)
+		fields := len(task.kinds) + 1 + (task.result != INVALID_SYMBOL ? 1 : 0)
+		if frame == nil || frame.kind != .Struct || len(frame.fields) != fields {
+			return emission_contract_error(c, "a spawn has no registered frame")
+		}
+		if !emission_procedure_available(c, task.run) || !emission_procedure_available(c, task.start) {
+			return emission_contract_error(c, "a spawn has no checked run or start procedure")
+		}
+		scope, result := symbol_of(c, task.scope), symbol_of(c, task.result)
+		if scope == nil || scope.kind != .Var || (task.result != INVALID_SYMBOL && (result == nil || result.kind != .Var)) {
+			return emission_contract_error(c, "a spawn's scope or result is not a local")
+		}
+	}
 	for entry in c.materialized_order {
 		if entry == nil || entry.name == "" || entry.value.kind == .Invalid ||
 		   type_of(c, entry.type) == nil || c.materialized[entry.symbol] != entry {
@@ -173,7 +190,7 @@ validate_emission_dependencies :: proc(c: ^Compiler) -> bool {
 // one), type, or registry entry changes it.
 Semantic_Extent :: struct {
 	symbols, types, instances, synthesized, witnesses, materialized,
-	typeids, formatters, lifecycle, map_keys, orders: int,
+	typeids, formatters, lifecycle, map_keys, orders, spawns: int,
 }
 
 semantic_extent :: proc(c: ^Compiler) -> Semantic_Extent {
@@ -183,6 +200,7 @@ semantic_extent :: proc(c: ^Compiler) -> Semantic_Extent {
 		materialized = len(c.materialized_order), typeids = len(c.typeid_order),
 		formatters = len(c.formatters), lifecycle = len(c.lifecycle_operations),
 		map_keys = len(c.map_key_policies), orders = len(c.order_policies),
+		spawns = len(c.spawn_tasks),
 	}
 }
 

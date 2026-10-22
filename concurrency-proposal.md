@@ -1129,6 +1129,46 @@ window, as defined under
 
 ### Milestone 4: `parallel` and `spawn`, gated
 
+**Done**, behind `-unstable-parallel`. A block lowers to a hidden
+`Task_Scope` local, private to `core:thread`, which a program using `parallel`
+loads; `start` creates a thread per spawn and the scope's drop hook joins them.
+Each spawn's frame is allocated from the default provider on the parent and
+freed by its run procedure on the worker. `Compiler.spawn_tasks` records every
+committed spawn for the emission contract.
+
+- **The window** is computed on the `Prov_Diagnose` graph from a start event at
+  each spawn and a join event where the hidden local drops: a may-analysis with
+  one bit per spawn site, so a branch that has not spawned is outside it and a
+  spawn in a loop holds it open around the back edge. Check 6's events are
+  recorded where the write effects are, in `global_effects.odin`; the solver in
+  `borrow.odin` reports them, with check 9's.
+- **Conservative where the plan left room:** inside the window the parent may
+  not reach through a global carrier holding mutable or erased state even when
+  no task reaches that global. A spawn in a loop conflicts with its own earlier
+  tasks over any reserved region. Past 64 spawn sites in one body, the last
+  window bit is shared and never cleared, so the window stays open to the end of
+  the body. A task's effects are its run procedure's settled summaries.
+- **Rule 1 made explicit:** a mutable carrier passed by name lends the name
+  itself to the task until the join, so `spawn add(view); spawn add(view);`
+  is rejected. Before this, the copy of the carrier was not exclusive.
+- **Fixed on the way:** a local declared without a value started a loop's next
+  iteration holding the previous iteration's value in the lifecycle analysis,
+  which rejected a result local declared in a loop body. A `move` parameter's
+  release was summarized in the default provider's region rather than its
+  argument's, because its drop was recorded before its region was bound.
+- **Rejected for now:** a spawned procedure value, built-in, foreign procedure,
+  call with a variadic pack, or callee with an `inout` result, each with a
+  diagnostic saying how to wrap it in a procedure the task runs.
+- **Tools:** completion offers both words, as it does every keyword token kind;
+  neither is a semantic token, since both stay identifiers to the lexer. The
+  VS Code grammar highlights both, and `tests/editor_test.odin` accepts them
+  there although grammar.md does not list them until milestone 5.
+- **Not tested:** a submission failure after a successful spawn. Nothing makes
+  thread creation fail on demand, so the path where `start` panics with earlier
+  tasks running is only read, not run.
+
+The plan as written:
+
 The statements, every rule and check above for statically resolved calls,
 and thread-per-spawn lowering. A hidden `-unstable-parallel` option, not in
 [compiler-guide.md](compiler-guide.md), enables the checker; without it a

@@ -1,0 +1,25 @@
+// concurrency-proposal.md check 6: a task's thread drops every `thread_local`
+// owner when it exits, so a drop hook writing a global rejects every block,
+// and the diagnostic names the owner and its hook.
+package main;
+
+released: int;
+
+Cache :: struct { n: int }
+
+impl Cache {
+	release :: hook(drop) proc(self: inout) {
+		released += 1;
+	}
+}
+
+cache: thread_local Cache;
+
+work :: proc(n: int) -> int { return n; }
+
+main :: proc() {
+	answer: int;
+	parallel {
+		spawn answer = work(1);
+	}
+}

@@ -46,6 +46,30 @@ Prov_Kind :: enum u8 {
 	// written through them, or handed to a call that may. Only the thread
 	// summaries' reach effect reads it.
 	Reach,
+	// What `sources` borrow crosses between a task and its parent; `verb` is
+	// "argument" or "result" (concurrency-proposal.md check 7).
+	Cross,
+	// concurrency-proposal.md check 6: a spawn starts the task running
+	// `symbol`, given what `sources` borrow, from the spawn site `slot`
+	// indexes in `task_sites`; a join ends the window of the block whose bit
+	// is `slot`, and every task started in it.
+	Task_Start,
+	Task_Join,
+	// The body's own write of the global `symbol`, or with `access` `Read` its
+	// reach through what the global stores, made by a call `name` describes
+	// when it is not empty. Emitted only inside a `parallel` block.
+	Shared_Effect,
+	// The parent's allocator use of `region` inside a `parallel` block
+	// (concurrency-proposal.md check 9).
+	Region_Use,
+}
+
+// One spawn of a body: the window bit of its `parallel` block, the regions
+// its task reserves, and where it is (concurrency-proposal.md check 9).
+Task_Site :: struct {
+	block:   int,
+	reserve: Region_Set,
+	span:    Span,
 }
 
 // design.md "Capabilities and the one rule": a read is compatible with a
@@ -100,6 +124,8 @@ Prov_Event :: struct {
 	// `Live`: the carrier is only read, so a live read-only reborrow of it does
 	// not conflict (design.md "Weakening and reborrows").
 	reads_only:    bool,
+	// `Task_Start`, `Shared_Effect`: see `Prov_Kind`.
+	symbol:        Symbol_Id,
 }
 
 // A borrowed parameter arrives holding the caller's storage, which the entry
@@ -973,6 +999,11 @@ prov_drop_reads :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> bool {
 
 @(private)
 prov_drop_use :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span, at_scope_exit := false) {
+	// A `parallel` block's join uses what its tasks hold.
+	if held, joins := graph.task_slots[id]; joins {
+		prov_emit(graph, Prov_Event{kind = .Live, sources = prov_one(graph, held), span = span})
+		prov_emit(graph, Prov_Event{kind = .Task_Join, slot = prov_window_bit(graph, id), span = span})
+	}
 	if !prov_drop_reads(graph, id) {
 		return
 	}
@@ -1386,7 +1417,7 @@ prov_new_loan :: proc(
 	what: string,
 ) -> Loan_Id {
 	if mutable {
-		prov_note_static_write(graph, root)
+		prov_note_static_write(graph, root, span)
 		descriptor := graph.roots[int(root)]
 		if descriptor.kind == .Local && descriptor.symbol != INVALID_SYMBOL {
 			graph.lent_locals[descriptor.symbol] = true
@@ -1436,7 +1467,7 @@ prov_access :: proc(
 		return NO_BLOCK, -1
 	}
 	if kind != .Read {
-		prov_note_static_write(graph, root)
+		prov_note_static_write(graph, root, span)
 	}
 	// design.md "@(synchronized)": a synchronizing operation may write the
 	// field through any read-only borrow, so even reading it conflicts with one.
@@ -1498,11 +1529,6 @@ prov_bind_parameters :: proc(graph: ^Flow_Graph, literal: ^Expr_Proc) {
 			if sym == nil {
 				continue
 			}
-			// A `move` parameter is dropped when the body returns; callers see
-			// that write through this body's effect.
-			if parameter.mode == .Move {
-				prov_scope_drop_effects(graph, id, sym.span)
-			}
 			// design.md "Allocator regions and region provenance": an owner moved in,
 			// a copy of one passed in, and what a carrier passed in views keep the
 			// argument's region, which the caller substitutes.
@@ -1511,6 +1537,12 @@ prov_bind_parameters :: proc(graph: ^Flow_Graph, literal: ^Expr_Proc) {
 				set := prov_empty_region(graph)
 				set.params[index] = true
 				graph.region_of[id] = set
+			}
+			// A `move` parameter is dropped when the body returns; callers see
+			// that write through this body's effect, and its release frees in
+			// the argument's region.
+			if parameter.mode == .Move {
+				prov_scope_drop_effects(graph, id, sym.span)
 			}
 			slot, is_carrier := prov_slot_for_symbol(graph, id)
 			// An aggregate parameter gets one loan per shape path.
@@ -3732,7 +3764,7 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 		if value != nil && s.op == .Assign {
 			prov_region_escape(graph, target, value)
 			// An owner copied from a place may be cloned.
-			if graph.k.c.thread_facts_pending && clone_may_allocate(graph.k.c, expr_base(target).type) &&
+			if prov_tracks_allocator_use(graph) && clone_may_allocate(graph.k.c, expr_base(target).type) &&
 			   expression_is_borrowed_place(value) {
 				prov_note_allocator_use(graph, prov_region_of(graph, value), expr_span(value), owned = true)
 			}
@@ -4054,7 +4086,10 @@ prov_argument_is_inout :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int) ->
 @(private)
 prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	c := graph.k.c
+	// A spawned call's arguments are copied for its task, which runs it.
+	graph.task_effects = v == graph.spawning && !c.thread_facts_pending
 	prov_call_allocator_use(graph, v)
+	graph.task_effects = false
 	#partial switch _ in v.operation {
 	case Call_Text, Call_Text_Conversion:
 		return prov_text_call(graph, v)
@@ -4128,10 +4163,15 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 			actuals[index] = walk_flow_expr(graph, argument.value)
 			borrowed = prov_join(graph, borrowed, actuals[index])
 		}
-		prov_reach_call(graph, callee, actuals, v.span)
+		spawned := v == graph.spawning && !graph.k.c.thread_facts_pending
+		if !spawned {
+			prov_reach_call(graph, callee, actuals, v.span)
+		}
 		// The reset precedes the boundary use, so the actuals are live at it.
 		prov_call_resets(graph, v)
+		graph.task_effects = spawned
 		prov_call_effects(graph, v)
+		graph.task_effects = false
 		if len(borrowed) > 0 {
 			prov_emit(graph, Prov_Event{kind = .Live, sources = borrowed, span = v.span})
 		}
@@ -4155,12 +4195,19 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		actuals[0] = prov_lend_split_receiver(graph, split_receiver, split_read, expr_span(v.bound[0]))
 		borrowed = prov_join(graph, borrowed, actuals[0])
 	}
-	prov_reach_call(graph, callee, actuals, v.span)
+	// A spawned call runs on its task, whose reach and effects its start
+	// checks; the parent only prepares the arguments.
+	spawned := v == graph.spawning && !graph.k.c.thread_facts_pending
+	if !spawned {
+		prov_reach_call(graph, callee, actuals, v.span)
+	}
 	prov_call_resets(graph, v)
 	prov_call_cross_thread(graph, v)
 	prov_call_retention(graph, v, actuals)
+	graph.task_effects = spawned
 	prov_call_effects(graph, v)
 	prov_argument_drop_effects(graph, v)
+	graph.task_effects = false
 	if len(borrowed) > 0 {
 		prov_emit(graph, Prov_Event{kind = .Live, sources = borrowed, span = v.span})
 	}
@@ -4168,7 +4215,108 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	// their use in the call: the operation's own read of an argument is not a
 	// use of it while the stored copy lives.
 	prov_container_content(graph, v, container_op, actuals)
+	if v == graph.spawning {
+		graph.spawn_held = borrowed
+		for actual in actuals {
+			graph.spawn_held = prov_join(graph, graph.spawn_held, actual)
+		}
+	}
 	return prov_store_call_results(graph, v, actuals)
+}
+
+// concurrency-proposal.md "Rules from existing rules": a spawn is checked as
+// a call whose duration extends to the join. What its arguments lend and
+// carry, and the result local it reserves, are held by the block's hidden
+// scope from here on, so its drop at the join is a use of every loan. The
+// result takes the call's provenance as an assignment would, with no access:
+// the parent cannot reach it before the join.
+@(private)
+prov_spawn :: proc(graph: ^Flow_Graph, s: ^Stmt_Spawn) {
+	call, is_call := s.call.(^Expr_Call)
+	if !is_call {
+		return
+	}
+	outer, outer_held := graph.spawning, graph.spawn_held
+	graph.spawning, graph.spawn_held = call, nil
+	graph.task_reserve = {}
+	result := walk_flow_expr(graph, call)
+	held := graph.spawn_held
+	graph.spawning, graph.spawn_held = outer, outer_held
+	task := s.task
+	if task == nil {
+		return
+	}
+	// concurrency-proposal.md "Rules from existing rules" 1: a mutable carrier
+	// passed by name is the task's alone, so the name itself is lent to it.
+	// An allocator handle is check 9's.
+	for argument, index in call.bound {
+		if argument == nil || index >= len(task.kinds) || task.kinds[index] != .Copy {
+			continue
+		}
+		type := expr_base(argument).type
+		if type_is_region_provider(graph.k.c, type) || !carrier_is_mutable(graph.k.c, type) {
+			continue
+		}
+		if root, path, ok := prov_place_of(graph, argument); ok {
+			held = prov_join(graph, held, prov_borrow(graph, root, path, true, expr_span(argument), carrier_noun(graph.k.c, type)))
+		}
+	}
+	prov_spawn_transfers(graph, s, call, held, result)
+	if s.result != nil {
+		prov_store_region(graph, s.result, call)
+		prov_store_loans(graph, s.result, result, call.span)
+		if root, path, ok := prov_place_of(graph, s.result); ok {
+			held = prov_join(graph, held, prov_borrow(graph, root, path, true, s.result.span, "task result"))
+		}
+	}
+	if graph.task_slots == nil {
+		graph.task_slots = make(map[Symbol_Id]int, 4, graph.alloc)
+	}
+	// The task runs from here: what it reaches, and what the parent does
+	// until the join, are checked against the globals (check 6).
+	runs := task.run
+	if runs not_in graph.k.c.effect_program.index_of {
+		runs = call.resolution.symbol
+	}
+	graph.has_window_event = true
+	if graph.task_sites == nil {
+		graph.task_sites = make([dynamic]Task_Site, 0, 2, graph.alloc)
+	}
+	append(&graph.task_sites, Task_Site{block = prov_window_bit(graph, task.scope), reserve = graph.task_reserve, span = s.span})
+	prov_emit(graph, Prov_Event{
+		kind = .Task_Start, slot = len(graph.task_sites) - 1, symbol = runs, sources = held, span = s.span,
+		name = identifier_text(graph.k.c, symbol_of(graph.k.c, call.resolution.symbol).name),
+	})
+	slot, found := graph.task_slots[task.scope]
+	if !found {
+		slot = prov_temp_slot(graph)
+		graph.task_slots[task.scope] = slot
+		prov_emit(graph, Prov_Event{kind = .Def, slot = slot, loan = NO_LOAN, sources = held, span = s.span})
+		return
+	}
+	// Earlier tasks still hold theirs through this spawn's own accesses: a
+	// redefinition alone is not a use of what it keeps. The hold is the join's.
+	join := s.span
+	if scope := symbol_of(graph.k.c, task.scope); scope != nil {
+		join = scope.span
+	}
+	prov_emit(graph, Prov_Event{kind = .Live, sources = prov_one(graph, slot), span = join})
+	prov_emit(graph, Prov_Event{kind = .Def, slot = slot, loan = NO_LOAN, sources = prov_join(graph, prov_one(graph, slot), held), span = s.span})
+}
+
+// A `parallel` block's index, in the order its first spawn is walked.
+@(private)
+prov_window_bit :: proc(graph: ^Flow_Graph, scope: Symbol_Id) -> int {
+	for existing, index in graph.parallel_scopes {
+		if existing == scope {
+			return index
+		}
+	}
+	if graph.parallel_scopes == nil {
+		graph.parallel_scopes = make([dynamic]Symbol_Id, 0, 2, graph.alloc)
+	}
+	append(&graph.parallel_scopes, scope)
+	return len(graph.parallel_scopes) - 1
 }
 
 // The calls with provenance rules of their own: a shared constructor and the
@@ -5053,35 +5201,7 @@ prov_call_cross_thread :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 		}
 		facts := transfer_facts(c, prov_transferred_type(c, argument))
 		span := expr_span(argument)
-		switch {
-		case facts.affine != INVALID_TYPE:
-			if facts.affine == base.type {
-				errorf(c, span, "L0724", "`%s` is `@(thread_affine)`, so it cannot cross to another thread", type_name(c, base.type))
-			} else {
-				errorf(
-					c, span, "L0724",
-					"`%s` holds or reaches `%s`, which is `@(thread_affine)`, so it cannot cross to another thread",
-					type_name(c, base.type), type_name(c, facts.affine),
-				)
-			}
-			if declared := symbol_of(c, type_of(c, facts.affine).symbol); declared != nil {
-				add_notef(c, declared.span, "`%s` is declared here", type_name(c, facts.affine))
-			}
-		case facts.erased == base.type:
-			errorf(
-				c, span, "L0725",
-				"`%s` hides the type it erased, so nothing shows that it may cross to another thread",
-				type_name(c, base.type),
-			)
-			add_notef(c, span, "pass the concrete value instead, or convert it to the view at this call")
-		case facts.erased != INVALID_TYPE:
-			errorf(
-				c, span, "L0725",
-				"`%s` reaches `%s`, which hides the type it erased, so nothing shows that it may cross to another thread",
-				type_name(c, base.type), type_name(c, facts.erased),
-			)
-			add_notef(c, span, "pass the concrete value instead, or convert it to the view at this call")
-		}
+		report_transfer_facts(c, base.type, facts, span)
 		if prov_has_received_region(graph, prov_result_region(graph, argument)) {
 			errorf(
 				c, span, "L0726",
@@ -5090,6 +5210,106 @@ prov_call_cross_thread :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 			)
 			add_notef(c, span, "build it with the default allocator, or in the thread that uses it")
 		}
+	}
+}
+
+// design.md "@(thread_affine)": a value crossing to another thread holds or
+// reaches nothing thread-affine, and no erased value whose eligibility the
+// compiler cannot see.
+@(private = "file")
+report_transfer_facts :: proc(c: ^Compiler, type: Type_Id, facts: Transfer_Facts, span: Span) {
+		base_type := type
+		switch {
+		case facts.affine != INVALID_TYPE:
+			if facts.affine == base_type {
+				errorf(c, span, "L0724", "`%s` is `@(thread_affine)`, so it cannot cross to another thread", type_name(c, base_type))
+			} else {
+				errorf(
+					c, span, "L0724",
+					"`%s` holds or reaches `%s`, which is `@(thread_affine)`, so it cannot cross to another thread",
+					type_name(c, base_type), type_name(c, facts.affine),
+				)
+			}
+			if declared := symbol_of(c, type_of(c, facts.affine).symbol); declared != nil {
+				add_notef(c, declared.span, "`%s` is declared here", type_name(c, facts.affine))
+			}
+		case facts.erased == base_type:
+			errorf(
+				c, span, "L0725",
+				"`%s` hides the type it erased, so nothing shows that it may cross to another thread",
+				type_name(c, base_type),
+			)
+			add_notef(c, span, "pass the concrete value instead, or convert it to the view at this call")
+		case facts.erased != INVALID_TYPE:
+			errorf(
+				c, span, "L0725",
+				"`%s` reaches `%s`, which hides the type it erased, so nothing shows that it may cross to another thread",
+				type_name(c, base_type), type_name(c, facts.erased),
+			)
+			add_notef(c, span, "pass the concrete value instead, or convert it to the view at this call")
+		}
+}
+
+// concurrency-proposal.md checks 5, 7, and 8 at a spawn. An argument the task
+// shares with the parent, one neither moved, nor `inout`, nor a mutable
+// carrier passed itself, reaches no mutable carrier (check 5); nothing that
+// crosses in either direction is or reaches a thread-affine type or an erased
+// value of unknown eligibility (check 8); and no borrow of `thread_local`
+// storage crosses, which the solver checks on `crossing` (check 7).
+@(private = "file")
+prov_spawn_transfers :: proc(graph: ^Flow_Graph, s: ^Stmt_Spawn, call: ^Expr_Call, held, result: []int) {
+	c := graph.k.c
+	task := s.task
+	if graph.mode != .Prov_Diagnose || !committing(c) {
+		return
+	}
+	info := underlying_info(c, call_proc_type(c, call))
+	for argument, index in call.bound {
+		if argument == nil || info == nil || index >= len(info.parameters) || index >= len(task.kinds) {
+			continue
+		}
+		base := expr_base(argument)
+		if base == nil || base.type == INVALID_TYPE {
+			continue
+		}
+		span := expr_span(argument)
+		transferred := prov_transferred_type(c, argument)
+		facts := transfer_facts(c, transferred)
+		mode := index < len(info.param_modes) ? info.param_modes[index] : Param_Mode.Value
+		// A moved argument is the task's alone, even one copied into the frame.
+		_, moved := argument.(^Expr_Move)
+		shared := task.kinds[index] != .Owned && mode != .Inout && !moved
+		if shared && base.erased_from == INVALID_TYPE && (base.type == facts.erased && !carrier_is_mutable(c, base.type)) {
+			errorf(
+				c, span, "L0729",
+				"`%s` hides what it captures, so a task may share it only as its own: move it into the task",
+				type_name(c, base.type),
+			)
+			continue
+		}
+		report_transfer_facts(c, base.type, facts, span)
+		if shared && facts.mutable != INVALID_TYPE && !carrier_is_mutable(c, transferred) {
+			errorf(
+				c, span, "L0729",
+				"`%s` reaches `%s`, so a task sharing it could write what the parent reaches too: move it into the task, or pass the mutable borrow itself",
+				type_name(c, base.type), type_name(c, facts.mutable),
+			)
+		}
+	}
+	if s.result != nil {
+		if sym := symbol_of(c, task.result); sym != nil {
+			report_transfer_facts(c, sym.type, transfer_facts(c, sym.type), call.span)
+		}
+	}
+	prov_emit(graph, Prov_Event {
+		kind = .Cross, sources = prov_join(graph, held, prov_load_deep(graph, held, call.span)),
+		span = call.span, verb = "argument",
+	})
+	if len(result) > 0 {
+		prov_emit(graph, Prov_Event {
+			kind = .Cross, sources = prov_join(graph, result, prov_load_deep(graph, result, call.span)),
+			span = call.span, verb = "result",
+		})
 	}
 }
 
@@ -5374,7 +5594,7 @@ prov_result_reads_through_receiver :: proc(c: ^Compiler, v: ^Expr_Call, index: i
 // globals whose stored carriers those are. Returns `carriers`.
 @(private)
 prov_reach :: proc(graph: ^Flow_Graph, carriers: []int, span: Span) -> []int {
-	if graph.k.c.thread_facts_pending && len(carriers) > 0 {
+	if (graph.k.c.thread_facts_pending || graph.parallel_depth > 0) && len(carriers) > 0 {
 		prov_emit(graph, Prov_Event{kind = .Reach, sources = carriers, span = span})
 	}
 	return carriers
@@ -5384,7 +5604,7 @@ prov_reach :: proc(graph: ^Flow_Graph, carriers: []int, span: Span) -> []int {
 // a view dispatches through it.
 @(private = "file")
 prov_reach_call :: proc(graph: ^Flow_Graph, callee: []int, actuals: [][]int, span: Span) {
-	if !graph.k.c.thread_facts_pending {
+	if !graph.k.c.thread_facts_pending && graph.parallel_depth == 0 {
 		return
 	}
 	reached := callee
@@ -5399,7 +5619,15 @@ prov_reach_call :: proc(graph: ^Flow_Graph, callee: []int, actuals: [][]int, spa
 // region recorded is bound to the default provider (design.md "Allocators").
 @(private)
 prov_note_allocator_use :: proc(graph: ^Flow_Graph, set: Region_Set, span: Span, owned := false) {
+	if !prov_tracks_allocator_use(graph) {
+		return
+	}
 	if !graph.k.c.thread_facts_pending {
+		used := prov_region_closure(graph, set)
+		if owned && region_is_empty(set) {
+			used.default = true
+		}
+		prov_note_window_allocator_use(graph, used, span)
 		return
 	}
 	visible := prov_caller_region(graph, set)
@@ -5410,6 +5638,61 @@ prov_note_allocator_use :: proc(graph: ^Flow_Graph, set: Region_Set, span: Span,
 		graph.allocator_use = new_allocator_use(graph.param_count, graph.alloc)
 	}
 	merge_allocator_use(&graph.allocator_use, visible, Effect_Source{span = span})
+}
+
+// Whether allocator use is being recorded: while the thread summaries collect,
+// and inside a `parallel` block once they have settled, for check 9.
+@(private)
+prov_tracks_allocator_use :: proc(graph: ^Flow_Graph) -> bool {
+	c := graph.k.c
+	return c.thread_facts_pending || (graph.parallel_depth > 0 && c.global_writes_ready)
+}
+
+// concurrency-proposal.md check 9: inside a `parallel` block, a spawned
+// call's allocator use is what its task reserves, and any other is the
+// parent's, checked against the reservations of the tasks that may be running.
+// The default provider's region permits concurrent use, so it reserves
+// nothing.
+@(private)
+prov_note_window_allocator_use :: proc(graph: ^Flow_Graph, set: Region_Set, span: Span) {
+	if graph.task_effects {
+		if graph.task_reserve.params == nil {
+			graph.task_reserve = prov_empty_region(graph)
+		}
+		region_merge(&graph.task_reserve, set)
+		graph.task_reserve.default = false
+		return
+	}
+	used := set
+	used.default = false
+	if region_is_empty(used) {
+		return
+	}
+	graph.has_window_event = true
+	prov_emit(graph, Prov_Event{kind = .Region_Use, region = used, span = span})
+}
+
+// `set` with every local provider's parent added, as `prov_caller_region`
+// finds them, but keeping the locals: two arenas over one unsynchronized
+// parent share that parent's state.
+@(private)
+prov_region_closure :: proc(graph: ^Flow_Graph, set: Region_Set) -> Region_Set {
+	out := prov_empty_region(graph)
+	region_merge(&out, set)
+	pending, seen := set.locals, u64(0)
+	for pending & ~seen != 0 {
+		position := bits.count_trailing_zeros(pending & ~seen)
+		seen |= u64(1) << position
+		if int(position) >= len(graph.provider_symbols) {
+			out.unknown = true
+			continue
+		}
+		if parent, found := graph.provider_parents[graph.provider_symbols[position]]; found {
+			region_merge(&out, parent)
+			pending |= parent.locals
+		}
+	}
+	return out
 }
 
 // What a caller can name of `set`. A region this body created stands for the
@@ -5462,7 +5745,7 @@ prov_used_region :: proc(graph: ^Flow_Graph, e: Expr) -> Region_Set {
 // thread summaries collect.
 @(private)
 prov_drop_region :: proc(graph: ^Flow_Graph, e: Expr) -> Maybe(Region_Set) {
-	if !graph.k.c.thread_facts_pending || e == nil {
+	if !prov_tracks_allocator_use(graph) || e == nil {
 		return nil
 	}
 	return prov_region_of(graph, e)
@@ -5470,7 +5753,7 @@ prov_drop_region :: proc(graph: ^Flow_Graph, e: Expr) -> Maybe(Region_Set) {
 
 @(private)
 prov_symbol_drop_region :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> Maybe(Region_Set) {
-	if !graph.k.c.thread_facts_pending {
+	if !prov_tracks_allocator_use(graph) {
 		return nil
 	}
 	return prov_region_for_symbol(graph, id)
@@ -5488,7 +5771,8 @@ prov_argument_regions :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []Region_Set
 		if argument == nil || !prov_type_has_region(c, expr_base(argument).type) {
 			continue
 		}
-		set := prov_caller_region(graph, prov_used_region(graph, argument))
+		used := prov_used_region(graph, argument)
+		set := prov_caller_region(graph, used) if graph.k.c.thread_facts_pending else prov_region_closure(graph, used)
 		if region_is_empty(set) {
 			continue
 		}
@@ -5516,7 +5800,7 @@ ALLOCATING_OPS :: bit_set[Container_Op]{
 @(private = "file")
 prov_call_allocator_use :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 	c := graph.k.c
-	if !c.thread_facts_pending || v.dispatch != nil {
+	if !prov_tracks_allocator_use(graph) || v.dispatch != nil {
 		return
 	}
 	builtin := Builtin_Kind.None
@@ -5584,7 +5868,7 @@ prov_call_allocator_use :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 // from the default.
 @(private)
 prov_note_fresh_owner :: proc(graph: ^Flow_Graph, e: Expr, via: Expr = nil) {
-	if !graph.k.c.thread_facts_pending || !type_owns_allocation(graph.k.c, expr_base(e).type) {
+	if !prov_tracks_allocator_use(graph) || !type_owns_allocation(graph.k.c, expr_base(e).type) {
 		return
 	}
 	set := Region_Set{}

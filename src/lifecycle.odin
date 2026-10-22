@@ -1015,11 +1015,9 @@ states_equal :: proc(a, b: []Liveness) -> bool {
 run_events :: proc(block: ^Flow_Block, state: []Liveness) {
 	for event in block.events {
 		#partial switch event.kind {
-		case .Init, .Assign:
+		case .Init, .Assign, .Spawn_Result:
 			state[event.slot] = .Live
-		case .Kill:
-			state[event.slot] = .Dead
-		case .Cleanup:
+		case .Kill, .Cleanup, .Declare:
 			state[event.slot] = .Dead
 		}
 	}
@@ -1038,9 +1036,9 @@ report_events :: proc(
 		}
 		if block.unwind {
 			#partial switch event.kind {
-			case .Init, .Assign:
+			case .Init, .Assign, .Spawn_Result:
 				state[event.slot] = .Live
-			case .Kill, .Cleanup:
+			case .Kill, .Cleanup, .Declare:
 				state[event.slot] = .Dead
 			}
 			continue
@@ -1048,6 +1046,20 @@ report_events :: proc(
 		local := &graph.tracked[event.slot]
 		#partial switch event.kind {
 		case .Init:
+			local.ever_written = true
+			state[event.slot] = .Live
+		case .Declare:
+			state[event.slot] = .Dead
+		case .Spawn_Result:
+			// concurrency-proposal.md "Syntax": neither a live value nor another
+			// task's result is replaced.
+			if state[event.slot] != .Dead {
+				message := "`%s` cannot take a task's result here: it already holds a value, or another task's result"
+				if state[event.slot] == .Conditional {
+					message = "`%s` cannot take a task's result here: it holds a value, or another task's result, on some of the paths that reach this point"
+				}
+				errorf(k.c, event.span, "L0728", message, event.name)
+			}
 			local.ever_written = true
 			state[event.slot] = .Live
 		case .Assign:

@@ -159,6 +159,44 @@ run_plain :: proc(entry: move proc()) {
 
 spawn :: proc{spawn_with, spawn_plain};
 
+// The tasks of one `parallel` block (concurrency-proposal.md "Lowering"). The
+// compiler declares one per block, zero until its first spawn, and calls
+// `start` through what it registered when it checked this package; no source
+// names either. Dropping the scope is the block's join.
+@(private)
+Task_Scope :: move_only struct {
+	threads: [dynamic]int,
+}
+
+impl Task_Scope {
+	// Starts the task `frame` holds on a new thread. A frame leads with a slot
+	// for the procedure that runs it, which `thread_main` calls. The thread's
+	// place in the list is reserved first, so once the thread exists nothing
+	// here can fail; until then no thread has the frame, and a failure panics
+	// with it still the caller's (concurrency-proposal.md "Failure to start a
+	// task").
+	start :: proc(self: inout, run: proc(frame: rawptr), frame: rawptr) {
+		wanted := self.threads.len() + 1;
+		self.threads.reserve(wanted);
+		(^mut Start_Header)(frame)^.run = run;
+		handle := rt_create_thread(nil, 0, thread_main, frame, 0, nil);
+		if (handle == 0) {
+			panic("thread creation failed");
+		}
+		self.threads.append(handle);
+	}
+
+	// Joins every task, in start order: each one's writes, and its thread's
+	// `thread_local` drops, happen before the block is left.
+	@(private)
+	join :: hook(drop) proc(self: inout) {
+		foreach (handle in self.threads) {
+			rt_wait(handle, INFINITE);
+			rt_close(handle);
+		}
+	}
+}
+
 /// A `T` that one thread at a time may reach. `lock` blocks until the calling
 /// thread holds it and answers a guard; the guard reaches the value, and
 /// dropping it unlocks. An unlock happens before the next lock.

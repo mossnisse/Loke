@@ -1705,7 +1705,7 @@ prepare_state :: proc(state: ^Prov_State) -> bool {
 	graph := state.graph
 	state.slots = len(graph.prov_slots)
 	state.loans = len(graph.loans)
-	if state.loans == 0 && !graph.has_region_event {
+	if state.loans == 0 && !graph.has_region_event && !graph.has_window_event {
 		return false
 	}
 	state.row_bytes = (2 * state.loans + 7) / 8
@@ -2176,10 +2176,16 @@ report_provenance :: proc(state: ^Prov_State) {
 	// One expression gets one borrow diagnostic: a receiver and the call it
 	// starts, or two rules meeting the same mistake, report once.
 	reported := make(map[[2]u32]bool, 8, graph.alloc)
-	for block in graph.blocks {
+	window_entry := solve_window(state)
+	shared := Shared_Reports{
+		seen   = make(map[Shared_Report]bool, 4, graph.alloc),
+		scopes = make(map[int]bool, 2, graph.alloc),
+	}
+	for block, id in graph.blocks {
 		if !block.prov_visited || len(block.prov) == 0 {
 			continue
 		}
+		window := window_entry[id]
 		count := len(block.prov)
 		// Liveness after each event that consults it, replayed from the block exit.
 		live_after := make([][]bool, count, graph.alloc)
@@ -2212,8 +2218,467 @@ report_provenance :: proc(state: ^Prov_State) {
 					reported[at] = true
 				}
 			}
+			check_shared_event(state, event, window, &shared)
+			window = window_step(graph, window, event)
 			run_prov_event(state, event, state.reach, state.ended)
 			run_severing_event(state, event)
+		}
+	}
+}
+
+// ------------------------------------------------------- check 6 window --
+// concurrency-proposal.md check 6: from a block's first spawn to its join,
+// neither a task nor the parent may write a global every thread shares, or
+// reach through one that stores mutable or erased state.
+
+// The spawns whose tasks may be running on entry to each block, one bit per
+// spawn site (`task_sites`): a spawn sets its own, and a join clears those of
+// its block. A path through a loop that spawns returns to the head with the
+// bit set. Past 64 sites, the last bit is shared and never cleared, which
+// keeps the window open to the end of the body.
+@(private = "file")
+solve_window :: proc(state: ^Prov_State) -> []u64 {
+	graph := state.graph
+	entry := make([]u64, len(graph.blocks), graph.alloc)
+	if !graph.has_window_event {
+		return entry
+	}
+	exit := make([]u64, len(graph.blocks), graph.alloc)
+	for changed := true; changed; {
+		changed = false
+		for block, id in graph.blocks {
+			if !block.prov_visited {
+				continue
+			}
+			mask := u64(0)
+			for predecessor in block.preds {
+				mask |= exit[int(predecessor)]
+			}
+			entry[id] = mask
+			for event in block.prov {
+				mask = window_step(graph, mask, event)
+			}
+			if mask != exit[id] {
+				exit[id] = mask
+				changed = true
+			}
+		}
+	}
+	return entry
+}
+
+@(private = "file")
+window_step :: proc(graph: ^Flow_Graph, mask: u64, event: Prov_Event) -> u64 {
+	#partial switch event.kind {
+	case .Task_Start:
+		return mask | site_bit(event.slot)
+	case .Task_Join:
+		out := mask
+		for site, index in graph.task_sites {
+			if site.block == event.slot && index < 63 {
+				out &= ~site_bit(index)
+			}
+		}
+		return out
+	}
+	return mask
+}
+
+@(private = "file")
+site_bit :: proc(site: int) -> u64 {
+	return u64(1) << uint(min(site, 63))
+}
+
+// The sites whose tasks may be running, by `mask`; the shared last bit stands
+// for every site from 63 on.
+@(private = "file")
+running_sites :: proc(graph: ^Flow_Graph, mask: u64) -> []int {
+	out := make([dynamic]int, 0, 2, graph.alloc)
+	for index in 0 ..< len(graph.task_sites) {
+		if mask & site_bit(index) != 0 {
+			append(&out, index)
+		}
+	}
+	return out[:]
+}
+
+@(private = "file")
+Shared_Report :: struct {
+	span:   Span,
+	global: Symbol_Id,
+}
+
+// What has been reported, so a global met twice at one place, or a block's
+// thread-exit drops, are reported once.
+@(private = "file")
+Shared_Reports :: struct {
+	seen:   map[Shared_Report]bool,
+	scopes: map[int]bool,
+}
+
+@(private = "file")
+check_shared_event :: proc(state: ^Prov_State, event: Prov_Event, window: u64, shared: ^Shared_Reports) {
+	#partial switch event.kind {
+	case .Task_Start:
+		check_task_globals(state, event, shared)
+		check_task_reservation(state, event, window)
+	case .Region_Use:
+		check_parent_allocator_use(state, event, window)
+	case .Shared_Effect:
+		if window == 0 {
+			return
+		}
+		if event.access == .Read {
+			report_shared_reach(state, event.symbol, event.span, window, shared, event.name)
+		} else {
+			report_parent_write(state, event, window, shared)
+		}
+	case .Reach, .Escape, .Retain, .Publish:
+		if window == 0 {
+			return
+		}
+		reached := make([dynamic]Global_Effect, 0, 2, state.graph.alloc)
+		for slot in event.sources {
+			note_reached_globals(state, slot, event.span, &reached)
+		}
+		for global in reached {
+			report_shared_reach(state, global.global, event.span, window, shared)
+		}
+	}
+}
+
+// What a global stores that a task sharing it could race on: a mutable
+// carrier, through which any thread may write, or an erased one, which hides
+// what it reaches. An allocator's operations are check 9's.
+@(private = "file")
+shared_carrier_hazard :: proc(c: ^Compiler, global: Symbol_Id) -> (hazard: Type_Id, erased: bool) {
+	sym := symbol_of(c, global)
+	if sym == nil || sym.synchronized || type_underlying(c, sym.type) == TYPE_ALLOCATOR ||
+	   type_is_region_provider(c, sym.type) {
+		return INVALID_TYPE, false
+	}
+	facts := transfer_facts(c, sym.type)
+	if facts.mutable != INVALID_TYPE {
+		return facts.mutable, false
+	}
+	return facts.erased, facts.erased != INVALID_TYPE
+}
+
+@(private = "file")
+shared_hazard_text :: proc(c: ^Compiler, global: Symbol_Id, hazard: Type_Id, erased: bool) -> string {
+	name := identifier_text(c, symbol_of(c, global).name)
+	if erased {
+		return fmt.tprintf("`%s` holds `%s`, which hides what it reaches", name, type_name(c, hazard))
+	}
+	return fmt.tprintf("`%s` holds `%s`, through which another thread may write as well", name, type_name(c, hazard))
+}
+
+// The span of the innermost `parallel` keyword whose tasks may be running.
+@(private = "file")
+window_block_span :: proc(state: ^Prov_State, window: u64) -> Span {
+	graph := state.graph
+	innermost := -1
+	for site in running_sites(graph, window) {
+		innermost = max(innermost, graph.task_sites[site].block)
+	}
+	if innermost >= 0 {
+		if scope := symbol_of(state.k.c, graph.parallel_scopes[innermost]); scope != nil {
+			return scope.span
+		}
+	}
+	return {}
+}
+
+// concurrency-proposal.md check 9: two reserved sets conflict where they may
+// name one region. A parameter may be any handle its caller passes, so two
+// may be the same; a local region is distinct from any that existed at
+// entry; an unknown region may be any of them.
+@(private = "file")
+reservations_conflict :: proc(a, b: Region_Set) -> bool {
+	if region_is_empty(a) || region_is_empty(b) {
+		return false
+	}
+	if a.unknown || b.unknown || a.crowded || b.crowded {
+		return true
+	}
+	return (region_is_parameter_backed(a) && region_is_parameter_backed(b)) || a.locals & b.locals != 0
+}
+
+// The region two reserved sets may share, said as a diagnostic names it.
+@(private = "file")
+shared_region_text :: proc(state: ^Prov_State, a, b: Region_Set) -> string {
+	graph := state.graph
+	c := state.k.c
+	common := a.locals & b.locals
+	for position in 0 ..< 64 {
+		if common & (u64(1) << uint(position)) != 0 && position < len(graph.provider_symbols) {
+			if sym := symbol_of(c, graph.provider_symbols[position]); sym != nil {
+				return fmt.tprintf("`%s`'s allocator", identifier_text(c, sym.name))
+			}
+		}
+	}
+	if region_is_parameter_backed(a) && region_is_parameter_backed(b) && graph.literal != nil {
+		if owner := symbol_of(c, graph.literal.symbol); owner != nil {
+			for wanted, index in a.params {
+				if wanted && index < len(owner.param_symbols) {
+					if sym := symbol_of(c, owner.param_symbols[index]); sym != nil {
+						return fmt.tprintf("the allocator `%s` was given", identifier_text(c, sym.name))
+					}
+				}
+			}
+		}
+	}
+	return "an allocator region this procedure cannot tell apart from it"
+}
+
+// A task reserves the regions it may use until the join, so no other task
+// that may be running uses them, nor another from the same spawn in a loop.
+@(private = "file")
+check_task_reservation :: proc(state: ^Prov_State, event: Prov_Event, window: u64) {
+	graph := state.graph
+	c := state.k.c
+	site := graph.task_sites[event.slot]
+	for other in running_sites(graph, window) {
+		reserved := graph.task_sites[other]
+		if !reservations_conflict(site.reserve, reserved.reserve) {
+			continue
+		}
+		region := shared_region_text(state, site.reserve, reserved.reserve)
+		if other == event.slot {
+			errorf(
+				c, event.span, "L0732",
+				"this task may use %s, which the task this `spawn` started on an earlier iteration reserves until the join",
+				region,
+			)
+			add_notef(c, event.span, "an allocator that is not the default provider serves one task at a time; give each task its own")
+		} else {
+			errorf(c, event.span, "L0732", "this task may use %s, which a task started earlier reserves until the join", region)
+			add_notef(c, reserved.span, "that task is started here")
+		}
+		return
+	}
+}
+
+// The parent may not use a region a running task reserves, cleanup included.
+@(private = "file")
+check_parent_allocator_use :: proc(state: ^Prov_State, event: Prov_Event, window: u64) {
+	graph := state.graph
+	c := state.k.c
+	for other in running_sites(graph, window) {
+		reserved := graph.task_sites[other]
+		if !reservations_conflict(event.region, reserved.reserve) {
+			continue
+		}
+		errorf(
+			c, event.span, "L0732",
+			"this uses %s, which a running task reserves until this `parallel` block joins",
+			shared_region_text(state, event.region, reserved.reserve),
+		)
+		add_notef(c, reserved.span, "that task is started here")
+		return
+	}
+}
+
+@(private = "file")
+first_report :: proc(shared: ^Shared_Reports, span: Span, global: Symbol_Id) -> bool {
+	key := Shared_Report{span = span, global = global}
+	if shared.seen[key] {
+		return false
+	}
+	shared.seen[key] = true
+	return true
+}
+
+@(private = "file")
+report_parent_write :: proc(state: ^Prov_State, event: Prov_Event, window: u64, shared: ^Shared_Reports) {
+	c := state.k.c
+	if !first_report(shared, event.span, event.symbol) {
+		return
+	}
+	sym := symbol_of(c, event.symbol)
+	how := event.name if event.name != "" else "written"
+	errorf(
+		c, event.span, "L0731",
+		"`%s` is %s while this `parallel` block's tasks may be running, and every thread shares it",
+		identifier_text(c, sym.name), how,
+	)
+	add_notef(c, window_block_span(state, window), "a task runs from its `spawn` until this block ends")
+	add_notef(c, sym.span, "declared here; write it before the first `spawn` or after the block, or make it an `Atomic` or a `thread.Mutex`")
+}
+
+@(private = "file")
+report_shared_reach :: proc(
+	state: ^Prov_State, global: Symbol_Id, span: Span, window: u64, shared: ^Shared_Reports, callee := "",
+) {
+	c := state.k.c
+	hazard, erased := shared_carrier_hazard(c, global)
+	if hazard == INVALID_TYPE || !first_report(shared, span, global) {
+		return
+	}
+	who := "this" if callee == "" else callee
+	errorf(
+		c, span, "L0731",
+		"%s reaches through `%s` while this `parallel` block's tasks may be running: %s",
+		who, identifier_text(c, symbol_of(c, global).name), shared_hazard_text(c, global, hazard, erased),
+	)
+	add_notef(c, window_block_span(state, window), "a task runs from its `spawn` until this block ends")
+}
+
+// A task does what its procedure's settled summaries say, and reaches through
+// what it is given; every task also runs each `thread_local` owner's drop when
+// its thread exits, reported once per block.
+@(private = "file")
+check_task_globals :: proc(state: ^Prov_State, event: Prov_Event, shared: ^Shared_Reports) {
+	c := state.k.c
+	for global in c.global_writes[event.symbol] {
+		sym := symbol_of(c, global)
+		if sym == nil || sym.duration == .Thread_Local || sym.synchronized || !first_report(shared, event.span, global) {
+			continue
+		}
+		errorf(
+			c, event.span, "L0731",
+			"`%s` may write `%s`, which every task and the parent share",
+			event.name, identifier_text(c, sym.name),
+		)
+		add_notef(c, sym.span, "declared here; return what the task computes, or make it an `Atomic` or a `thread.Mutex`")
+	}
+	for reached in c.reach_effects[event.symbol] {
+		hazard, erased := shared_carrier_hazard(c, reached.global)
+		if hazard == INVALID_TYPE || !first_report(shared, event.span, reached.global) {
+			continue
+		}
+		errorf(
+			c, event.span, "L0731",
+			"`%s` reaches through `%s`, which every task and the parent share: %s",
+			event.name, identifier_text(c, symbol_of(c, reached.global).name),
+			shared_hazard_text(c, reached.global, hazard, erased),
+		)
+		note_reach_chain(c, reached)
+	}
+	given := make([dynamic]Global_Effect, 0, 2, state.graph.alloc)
+	for slot in event.sources {
+		note_reached_globals(state, slot, event.span, &given)
+	}
+	for reached in given {
+		hazard, erased := shared_carrier_hazard(c, reached.global)
+		if hazard == INVALID_TYPE || !first_report(shared, event.span, reached.global) {
+			continue
+		}
+		errorf(
+			c, event.span, "L0731",
+			"this task is given what `%s` stores, which every task and the parent share: %s",
+			identifier_text(c, symbol_of(c, reached.global).name), shared_hazard_text(c, reached.global, hazard, erased),
+		)
+	}
+	index := state.graph.task_sites[event.slot].block
+	if shared.scopes[index] {
+		return
+	}
+	shared.scopes[index] = true
+	block := event.span
+	if scope := symbol_of(c, state.graph.parallel_scopes[index]); scope != nil {
+		block = scope.span
+	}
+	for drop in c.thread_exit_drops {
+		if drop.hook == INVALID_SYMBOL {
+			continue
+		}
+		owner := symbol_of(c, drop.variable)
+		hook := symbol_of(c, drop.hook)
+		for global in drop.writes {
+			sym := symbol_of(c, global)
+			if sym == nil || sym.duration == .Thread_Local || sym.synchronized {
+				continue
+			}
+			errorf(
+				c, block, "L0731",
+				"each task of this block drops `%s` when its thread exits, and its hook `%s` writes `%s`, which every thread shares",
+				identifier_text(c, owner.name), identifier_text(c, hook.name), identifier_text(c, sym.name),
+			)
+			add_notef(c, owner.span, "`%s` is declared here", identifier_text(c, owner.name))
+			add_notef(c, hook.span, "`%s` is declared here", identifier_text(c, hook.name))
+		}
+		for reached in drop.reach {
+			hazard, erased := shared_carrier_hazard(c, reached.global)
+			if hazard == INVALID_TYPE {
+				continue
+			}
+			errorf(
+				c, block, "L0731",
+				"each task of this block drops `%s` when its thread exits, and its hook `%s` reaches through `%s`: %s",
+				identifier_text(c, owner.name), identifier_text(c, hook.name),
+				identifier_text(c, symbol_of(c, reached.global).name), shared_hazard_text(c, reached.global, hazard, erased),
+			)
+			add_notef(c, owner.span, "`%s` is declared here", identifier_text(c, owner.name))
+		}
+	}
+}
+
+// Where a task's summarized reach comes from: each call on the way, from the
+// spawned procedure's, to the access itself. The run procedure's own call of
+// the spawned one is the spawn, and is not repeated.
+@(private = "file")
+note_reach_chain :: proc(c: ^Compiler, reached: Global_Effect) {
+	source := reached.source
+	for step := 0; step < 8; step += 1 {
+		via := symbol_of(c, source.via)
+		if via == nil {
+			if source.span != (Span{}) {
+				add_notef(c, source.span, "reached here")
+			}
+			return
+		}
+		if step > 0 {
+			add_notef(c, source.span, "through `%s`", identifier_text(c, via.name))
+		}
+		next, found := Effect_Source{}, false
+		for entry in c.reach_effects[source.via] {
+			if entry.global == reached.global {
+				next, found = entry.source, true
+				break
+			}
+		}
+		if !found {
+			return
+		}
+		source = next
+	}
+}
+
+// concurrency-proposal.md check 7: each thread has its own `thread_local`
+// storage, so no borrow of it crosses between a task and its parent, in
+// either direction. A worker may use its own within itself.
+@(private = "file")
+check_crossing :: proc(state: ^Prov_State, event: Prov_Event) {
+	graph := state.graph
+	for source in event.sources {
+		row := reach_row(state, state.reach, source)
+		for index in 0 ..< state.loans {
+			if !bit_get(row, index) || state.ended[index] {
+				continue
+			}
+			loan := graph.loans[index]
+			root := graph.roots[int(loan.root)]
+			if root.kind != .Thread_Local {
+				continue
+			}
+			if event.verb == "result" {
+				errorf(
+					state.k.c, event.span, "L0730",
+					"this task's result holds a %s of %s, which is the worker's own `thread_local` storage, so it cannot cross to the parent",
+					loan.what, root_phrase(root),
+				)
+			} else {
+				errorf(
+					state.k.c, event.span, "L0730",
+					"this task is handed a %s of %s, which is the parent's own `thread_local` storage, so it cannot cross to the task",
+					loan.what, root_phrase(root),
+				)
+			}
+			if root.span.file != NO_FILE {
+				add_notef(state.k.c, root.span, "each thread has its own `thread_local` storage, which ends with that thread")
+			}
+			return
 		}
 	}
 }
@@ -2253,6 +2718,8 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 		}
 	}
 	#partial switch event.kind {
+	case .Cross:
+		check_crossing(state, event)
 	case .Access:
 		it := live_loans(state, live)
 		for slot, index in next_live_loan(&it) {
@@ -2642,6 +3109,18 @@ report_root_outlived :: proc(state: ^Prov_State, event: Prov_Event, loan: Prov_L
 		}
 	}
 	add_notef(k.c, loan.span, "the %s is created here", loan.what)
+	// concurrency-proposal.md "Rules from existing rules": the block's own
+	// locals end before its join.
+	for scope in state.graph.task_slots {
+		if sym := symbol_of(k.c, scope); sym != nil && sym.span == later {
+			add_notef(
+				k.c, later,
+				"a task holds the %s until this `parallel` block joins, after its own locals end; declare the storage before the block, or spawn from a `parallel` block nested after it",
+				loan.what,
+			)
+			break
+		}
+	}
 }
 
 // design.md "Procedure result contracts": a loan created in the arguments of a
@@ -2689,6 +3168,12 @@ add_borrow_notes :: proc(state: ^Prov_State, root: Prov_Root, loan: Prov_Loan, l
 add_use_note :: proc(state: ^Prov_State, later: Span) {
 	if later.file == NO_FILE {
 		return
+	}
+	for scope in state.graph.task_slots {
+		if sym := symbol_of(state.k.c, scope); sym != nil && sym.span == later {
+			add_notef(state.k.c, later, "and a task holds it until this `parallel` block joins, which keeps it live")
+			return
+		}
 	}
 	if state.graph.scope_drops[later] {
 		add_notef(state.k.c, later, "and is still used when this is dropped at the end of its scope, which keeps it live")

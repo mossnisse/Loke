@@ -1,29 +1,551 @@
 // `parallel` blocks and `spawn` statements (concurrency-proposal.md "Syntax"),
-// which are not available yet: milestone 4 of the proposal's implementation
-// plan checks and lowers them behind a hidden option.
+// checked and lowered behind the hidden `-unstable-parallel` option until
+// milestone 5 of the proposal's implementation plan enables them.
+//
+// A block is checked as the block a programmer would write with a hidden local
+// declared first: a `core:thread` `Task_Scope`, whose drop joins every task
+// (concurrency-proposal.md "Rules from existing rules"). Later phases run that
+// block, `Stmt_Parallel.lowered`, instead of the statement. A spawn is checked
+// as the call it starts. Its arguments are prepared on the parent into a frame
+// record, and a synthesized `run` procedure, checked as ordinary code, makes
+// the call on the worker from that frame (concurrency-proposal.md "Lowering").
 package lokec
 
+import "core:fmt"
+
+// How one argument reaches the task, which decides its frame field.
+Spawn_Field_Kind :: enum u8 {
+	// Copied into the task: a `value: T` argument whose type copies without a
+	// hook or an allocation. Only what the value borrows lasts to the join.
+	Copy,
+	// A temporary or moved value the task owns; the worker drops what its call
+	// does not consume.
+	Owned,
+	// The address of the parent's place, which stays lent to the task until the
+	// join: an `inout` or `self: ^` argument, or a managed `value: T` one.
+	Address,
+}
+
 // What checking a spawn records for later phases.
-Spawn_Task :: struct {}
+Spawn_Task :: struct {
+	// The frame: a leading `rawptr` slot `Task_Scope.start` fills with `run`,
+	// one field per bound argument in parameter order, then the result's
+	// address when there is one.
+	frame:  Type_Id,
+	run:    Symbol_Id,
+	// The enclosing block's hidden `Task_Scope` local, and its `start`.
+	scope:  Symbol_Id,
+	start:  Symbol_Id,
+	kinds:  []Spawn_Field_Kind,
+	result: Symbol_Id, // INVALID_SYMBOL for a bare spawn
+}
+
+// The frame field holding bound argument `index`, and the result's address.
+spawn_argument_field :: proc(index: int) -> int {
+	return index + 1
+}
+
+spawn_result_field :: proc(task: ^Spawn_Task) -> int {
+	return len(task.kinds) + 1
+}
+
+// The names the synthesized code binds in scopes of its own. None can be
+// written, so none collides with the source.
+@(private = "file")
+PARALLEL_SCOPE :: "parallel$scope"
 
 check_parallel :: proc(k: ^Checker, s: ^Stmt_Parallel) -> Flow_Info {
-	errorf(k.c, s.keyword, "L0727", "`parallel` blocks are not available yet")
+	outer_block := k.parallel_block
+	defer k.parallel_block = outer_block
+	if !k.c.unstable_parallel {
+		errorf(k.c, s.keyword, "L0727", "`parallel` blocks are not available yet")
+		if s.executor != nil {
+			check_expr(k, s.executor)
+		}
+		k.parallel_block = s
+		return check_scoped_block(k, s.body)
+	}
+	// concurrency-proposal.md check 6 reads the thread summaries.
+	k.c.thread_summaries_wanted = true
+	// concurrency-proposal.md "Syntax": the header is reserved for pools.
 	if s.executor != nil {
 		check_expr(k, s.executor)
+		errorf(
+			k.c, expr_span(s.executor), "L0727",
+			"an executor header is the later pool form; a `parallel` block runs each task on a thread of its own, so write `%s`",
+			"parallel { ... }",
+		)
 	}
-	outer := k.parallel_block
+	scope_type := task_scope_type(k)
+	if scope_type == INVALID_TYPE {
+		k.parallel_block = s
+		return check_scoped_block(k, s.body)
+	}
+
+	outer := k.scope
+	k.scope = new_scope(k.c, outer, .Local)
+	defer k.scope = outer
+	hidden := hidden_scope_declaration(k, s, scope_type)
+	check_local_declaration(k, hidden)
+	if len(hidden.symbols) == 1 {
+		s.scope = hidden.symbols[0]
+	}
 	k.parallel_block = s
-	defer k.parallel_block = outer
-	return check_scoped_block(k, s.body)
+	flow := check_scoped_block(k, s.body)
+
+	lowered := new(Block, k.c.semantic_allocator)
+	lowered.span = s.span
+	lowered.stmts = make([]Stmt, 2, k.c.semantic_allocator)
+	lowered.stmts[0] = hidden
+	lowered.stmts[1] = s.body
+	s.lowered = lowered
+	return flow
+}
+
+// `parallel$scope: Task_Scope = {};`, its type bound to a name only the
+// block's own scope has.
+@(private = "file")
+hidden_scope_declaration :: proc(k: ^Checker, s: ^Stmt_Parallel, scope_type: Type_Id) -> ^Decl {
+	span := s.keyword
+	alias := intern_identifier(k.c, "parallel$scope$type")
+	k.scope.names[alias] = new_associated_type(k.c, "Task_Scope", scope_type, INVALID_TYPE)
+	type := synth_ident(k, "Task_Scope", alias, span)
+	value := new(Expr_Composite, k.c.semantic_allocator)
+	value.span = span
+	d := new(Decl, k.c.semantic_allocator)
+	d.span = span
+	d.kind = .Var
+	d.names = make([]Name, 1, k.c.semantic_allocator)
+	d.names[0] = Name{text = PARALLEL_SCOPE, span = span, id = intern_identifier(k.c, PARALLEL_SCOPE)}
+	d.declared_type = type
+	d.values = make([]Expr, 1, k.c.semantic_allocator)
+	d.values[0] = value
+	return d
+}
+
+// `core:thread`'s `Task_Scope`, which import discovery loaded for a program
+// with a `parallel` block, and its `start`.
+@(private = "file")
+task_scope_type :: proc(k: ^Checker) -> Type_Id {
+	pkg := standard_package(k.c, STD_THREAD)
+	if pkg == nil || pkg.scope == nil {
+		return INVALID_TYPE
+	}
+	sym := symbol_of(k.c, pkg.scope.names[intern_identifier(k.c, "Task_Scope")] or_else INVALID_SYMBOL)
+	if sym == nil || sym.kind != .Type || sym.type == INVALID_TYPE {
+		errorf(k.c, no_span(), "L0727", "`%s` declares no `Task_Scope`, which a `parallel` block needs", STD_THREAD)
+		return INVALID_TYPE
+	}
+	return sym.type
+}
+
+task_scope_start :: proc(c: ^Compiler, scope_type: Type_Id) -> Symbol_Id {
+	info := type_of(c, scope_type)
+	if info == nil {
+		return INVALID_SYMBOL
+	}
+	return member_named(c, info.members, intern_identifier(c, "start"))
+}
+
+@(private = "file")
+standard_package :: proc(c: ^Compiler, key: string) -> ^Package {
+	for &pkg in c.packages {
+		if pkg.key == key {
+			return &pkg
+		}
+	}
+	return nil
 }
 
 check_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn) -> Flow_Info {
-	if k.parallel_block == nil {
+	block := k.parallel_block
+	if block == nil {
 		errorf(k.c, s.keyword, "L0727", "`spawn` belongs inside a `parallel` block of the same procedure")
+	} else if k.in_defer {
+		// concurrency-proposal.md "Syntax": a deferred spawn would start a task
+		// during cleanup, possibly while unwinding.
+		errorf(k.c, s.keyword, "L0727", "a deferred statement cannot `spawn`")
 	}
+	call, is_call := s.call.(^Expr_Call)
+	if !is_call {
+		return FLOWS
+	}
+	result_type := INVALID_TYPE
 	if s.result != nil {
-		check_expr(k, s.result)
+		result_type = check_expr(k, s.result, position = .Place)
 	}
-	check_expr(k, s.call)
+	type := check_expr(k, call)
+	if s.result == nil {
+		report_discarded_required_results(k, call)
+	}
+	if block == nil || k.in_defer || !k.c.unstable_parallel || block.scope == INVALID_SYMBOL ||
+	   type == INVALID_TYPE || (s.result != nil && result_type == INVALID_TYPE) {
+		return FLOWS
+	}
+	callee, callee_ok := spawned_callee(k, call)
+	result, result_ok := spawn_result_symbol(k, s, block, type)
+	if !callee_ok || !result_ok {
+		return FLOWS
+	}
+	lower_spawn(k, s, block, callee, result)
 	return FLOWS
+}
+
+// concurrency-proposal.md "Syntax": the spawned call resolves statically to a
+// procedure or method declared in Loke, including a generic instance.
+@(private = "file")
+spawned_callee :: proc(k: ^Checker, call: ^Expr_Call) -> (^Symbol, bool) {
+	c := k.c
+	_, procedure := call.operation.(Call_Procedure)
+	sym := symbol_of(c, call.resolution.symbol)
+	if !procedure || call.dispatch != nil || sym == nil || sym.kind != .Proc || sym.synth != .None ||
+	   sym.delegated {
+		errorf(
+			c, expr_span(call.callee), "L0728",
+			"`spawn` starts a procedure or method named directly; a procedure value, a built-in, or a conversion cannot be spawned yet",
+		)
+		return nil, false
+	}
+	info := underlying_info(c, sym.proc_type)
+	if info == nil {
+		return nil, false
+	}
+	if convention_is_foreign(info.convention) {
+		errorf(c, expr_span(call.callee), "L0728", "`spawn` starts a Loke procedure; call a foreign one from a Loke procedure the task runs")
+		return nil, false
+	}
+	if call.is_variadic {
+		errorf(c, call.span, "L0728", "`spawn` cannot start a call with a variadic pack yet; pass a slice to a procedure the task runs")
+		return nil, false
+	}
+	if info.result_inout {
+		errorf(c, call.span, "L0728", "a task cannot hand back an `inout` result, which is a place of the worker's call")
+		return nil, false
+	}
+	return sym, true
+}
+
+// concurrency-proposal.md "Syntax": `result` names a lexical local declared
+// outside the block, of exactly the call's one result type.
+@(private = "file")
+spawn_result_symbol :: proc(k: ^Checker, s: ^Stmt_Spawn, block: ^Stmt_Parallel, type: Type_Id) -> (Symbol_Id, bool) {
+	c := k.c
+	if s.result == nil {
+		return INVALID_SYMBOL, true
+	}
+	id := s.result.symbol
+	sym := symbol_of(c, id)
+	if sym == nil {
+		return INVALID_SYMBOL, false
+	}
+	inside := sym.span.file == block.span.file && sym.span.lo >= block.span.lo && sym.span.hi <= block.span.hi
+	if sym.kind != .Var || symbol_outlives_bodies(sym) || sym.borrowed_binding != .None || inside {
+		errorf(
+			c, s.result.span, "L0728",
+			"a task's result goes to a local variable declared before the `parallel` block, and `%s` is not one",
+			s.result.name,
+		)
+		if inside {
+			add_notef(c, sym.span, "declared inside the block, so it ends before the join")
+		}
+		return INVALID_SYMBOL, false
+	}
+	if type == TYPE_VOID {
+		errorf(c, s.call.(^Expr_Call).span, "L0728", "this call has no result to assign to `%s`", s.result.name)
+		return INVALID_SYMBOL, false
+	}
+	if info := type_of(c, type); info != nil && info.anonymous_record {
+		errorf(
+			c, s.call.(^Expr_Call).span, "L0728",
+			"this call has several results, so a task has nowhere to put them; return one record from the procedure the task runs",
+		)
+		return INVALID_SYMBOL, false
+	}
+	if type != sym.type {
+		errorf(
+			c, s.call.(^Expr_Call).span, "L0728",
+			"this call returns `%s`, and `%s` is a `%s`; the worker assigns the result without converting it",
+			type_name(c, type), s.result.name, type_name(c, sym.type),
+		)
+		return INVALID_SYMBOL, false
+	}
+	return id, true
+}
+
+// The frame record and `run` procedure for one spawn, declared in a scope of
+// their own: `run` takes every argument out of the frame and makes the call.
+//
+//     frame :: struct { run: rawptr, arg$0: ..., result: ^mut R }
+//     run :: proc(frame: ^mut frame) {
+//         owned$1 := unsafe.take(frame.arg$1);
+//         unsafe.write(frame.result^, callee(frame.arg$0^, inout ..., move(owned$1)));
+//         unsafe.free(frame);
+//     }
+@(private = "file")
+lower_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn, block: ^Stmt_Parallel, callee: ^Symbol, result: Symbol_Id) {
+	c := k.c
+	call := s.call.(^Expr_Call)
+	info := underlying_info(c, callee.proc_type)
+	builtins, found := unsafe_builtins(k)
+	if !found {
+		return
+	}
+	span := call.span
+
+	task := new(Spawn_Task, c.semantic_allocator)
+	task.scope = block.scope
+	if scope := symbol_of(c, block.scope); scope != nil {
+		task.start = task_scope_start(c, scope.type)
+	}
+	if task.start == INVALID_SYMBOL {
+		return
+	}
+	task.result = result
+	task.kinds = make([]Spawn_Field_Kind, len(call.bound), c.semantic_allocator)
+	field_types := make([]Type_Id, len(call.bound) + 2, c.semantic_allocator)
+	field_types[0] = TYPE_RAWPTR
+	for argument, index in call.bound {
+		type := index < len(info.parameters) ? info.parameters[index] : INVALID_TYPE
+		mode := index < len(info.param_modes) ? info.param_modes[index] : Param_Mode.Value
+		kind := spawn_field_kind(c, argument, type, mode)
+		task.kinds[index] = kind
+		field_types[spawn_argument_field(index)] = kind == .Address ? pointer_to(c, type, mode == .Inout) : type
+	}
+	fields := field_types[:len(call.bound) + 1]
+	if result != INVALID_SYMBOL {
+		field_types[spawn_result_field(task)] = pointer_to(c, symbol_of(c, result).type, true)
+		fields = field_types
+	}
+
+	outer := k.scope
+	k.scope = new_scope(c, outer, .Local)
+	defer k.scope = outer
+
+	// The record, each field's type bound to a name only this scope has.
+	record_name := fmt.aprintf("spawn$frame$%d", span.lo, allocator = c.semantic_allocator)
+	record_id := intern_identifier(c, record_name)
+	record := new(Type_Record, c.semantic_allocator)
+	record.span = span
+	record.kind = .Struct
+	record.fields = make([]Field, len(fields), c.semantic_allocator)
+	for type, index in fields {
+		alias := intern_identifier(c, fmt.aprintf("spawn$type$%d", index, allocator = c.semantic_allocator))
+		k.scope.names[alias] = new_associated_type(c, "spawn$type", type, INVALID_TYPE)
+		names := make([]Name, 1, c.semantic_allocator)
+		names[0] = synth_name(c, frame_field_name(c, task, index), span)
+		record.fields[index] = Field{span = span, names = names, type = synth_ident(k, "spawn$type", alias, span)}
+	}
+	frame_decl := synth_const(k, record_name, record_id, record, span)
+	check_local_declaration(k, frame_decl)
+	frame_sym := symbol_of(c, frame_decl.symbols[0])
+	if frame_sym == nil || frame_sym.type == INVALID_TYPE {
+		return
+	}
+	task.frame = frame_sym.type
+
+	callee_alias := intern_identifier(c, "spawn$callee")
+	k.scope.names[callee_alias] = call.resolution.symbol
+	for name, index in ([]string{"spawn$take", "spawn$write", "spawn$free"}) {
+		k.scope.names[intern_identifier(c, name)] = builtins[index]
+	}
+
+	frame_param := intern_identifier(c, "spawn$frame")
+	frame_of :: proc(k: ^Checker, id: Identifier_Id, span: Span) -> Expr {
+		return synth_ident(k, "spawn$frame", id, span)
+	}
+	stmts := make([dynamic]Stmt, 0, len(call.bound) + 2, c.semantic_allocator)
+	args := make([]Argument, len(call.bound), c.semantic_allocator)
+	for kind, index in task.kinds {
+		mode := index < len(info.param_modes) ? info.param_modes[index] : Param_Mode.Value
+		field := synth_selector(c, frame_of(k, frame_param, span), frame_field_name(c, task, spawn_argument_field(index)), span)
+		value: Expr
+		argument_mode := Argument_Mode.Value
+		switch kind {
+		case .Copy:
+			value = field
+		case .Address:
+			value = synth_deref(c, field, span)
+			if mode == .Inout {
+				argument_mode = .Inout
+			}
+		case .Owned:
+			local := fmt.aprintf("spawn$owned$%d", index, allocator = c.semantic_allocator)
+			local_id := intern_identifier(c, local)
+			taken := synth_call(c, synth_ident(k, "spawn$take", intern_identifier(c, "spawn$take"), span), {field}, span)
+			owned := new(Decl, c.semantic_allocator)
+			owned.span = span
+			owned.kind = .Var
+			owned.names = make([]Name, 1, c.semantic_allocator)
+			owned.names[0] = Name{text = local, span = span, id = local_id}
+			owned.values = make([]Expr, 1, c.semantic_allocator)
+			owned.values[0] = taken
+			append(&stmts, owned)
+			value = synth_ident(k, local, local_id, span)
+			if mode == .Move {
+				moved := new(Expr_Move, c.semantic_allocator)
+				moved.span = span
+				moved.value = value
+				value = moved
+			}
+		}
+		args[index] = Argument{span = span, mode = argument_mode, value = value}
+	}
+	inner := new(Expr_Call, c.semantic_allocator)
+	inner.span = span
+	inner.callee = synth_ident(k, "spawn$callee", callee_alias, span)
+	inner.args = args
+	made: Expr = inner
+	if result != INVALID_SYMBOL {
+		destination := synth_deref(c, synth_selector(c, frame_of(k, frame_param, span), frame_field_name(c, task, spawn_result_field(task)), span), span)
+		made = synth_call(c, synth_ident(k, "spawn$write", intern_identifier(c, "spawn$write"), span), {destination, inner}, span)
+	}
+	append(&stmts, synth_expr_stmt(c, made, span))
+	freed := synth_call(c, synth_ident(k, "spawn$free", intern_identifier(c, "spawn$free"), span), {frame_of(k, frame_param, span)}, span)
+	append(&stmts, synth_expr_stmt(c, freed, span))
+
+	// `proc(spawn$frame: ^mut <frame>)`, its type spelled as one more alias.
+	frame_pointer := intern_identifier(c, "spawn$frame$pointer")
+	k.scope.names[frame_pointer] = new_associated_type(c, "spawn$frame", pointer_to(c, task.frame, true), INVALID_TYPE)
+	param_names := make([]Param_Name, 1, c.semantic_allocator)
+	param_names[0] = Param_Name{name = Name{text = "spawn$frame", span = span, id = frame_param}}
+	params := make([]Parameter, 1, c.semantic_allocator)
+	params[0] = Parameter{span = span, names = param_names, mode = .Value, type = synth_ident(k, "spawn$frame", frame_pointer, span)}
+	signature := new(Type_Proc, c.semantic_allocator)
+	signature.span = span
+	signature.params = params
+	body := new(Block, c.semantic_allocator)
+	body.span = span
+	body.stmts = stmts[:]
+	literal := new(Expr_Proc, c.semantic_allocator)
+	literal.span = span
+	literal.signature = signature
+	literal.body = body
+	run_name := fmt.aprintf("spawn$run$%d", span.lo, allocator = c.semantic_allocator)
+	run_decl := synth_const(k, run_name, intern_identifier(c, run_name), literal, span)
+	errors := c.error_count
+	check_local_declaration(k, run_decl)
+	if c.error_count != errors || len(run_decl.symbols) != 1 {
+		return
+	}
+	task.run = run_decl.symbols[0]
+	if committing(c) {
+		s.task = task
+		append(&c.spawn_tasks, task)
+	}
+}
+
+// concurrency-proposal.md "Syntax": a `value: T` argument is copied into the
+// task when `T` copies without a hook and without allocating; a managed one
+// stays borrowed, as an ordinary call borrows it, unless it is a temporary,
+// which belongs to the task.
+@(private = "file")
+spawn_field_kind :: proc(c: ^Compiler, argument: Expr, type: Type_Id, mode: Param_Mode) -> Spawn_Field_Kind {
+	switch mode {
+	case .Inout:
+		return .Address
+	case .Move, .Variadic:
+		return .Owned
+	case .Borrow:
+		return expression_is_borrowed_place(argument) ? .Address : .Owned
+	case .Value:
+	}
+	if !type_is_managed(c, type) {
+		return .Copy
+	}
+	return expression_is_borrowed_place(argument) ? .Address : .Owned
+}
+
+@(private = "file")
+frame_field_name :: proc(c: ^Compiler, task: ^Spawn_Task, field: int) -> string {
+	if field == 0 {
+		return "run"
+	}
+	if task.result != INVALID_SYMBOL && field == spawn_result_field(task) {
+		return "result"
+	}
+	return fmt.aprintf("arg%d", field - 1, allocator = c.semantic_allocator)
+}
+
+// `unsafe.take`, `unsafe.write`, and `unsafe.free`, which `core:thread`
+// imports, so its `parallel` dependency loaded them.
+@(private = "file")
+unsafe_builtins :: proc(k: ^Checker) -> ([3]Symbol_Id, bool) {
+	out: [3]Symbol_Id
+	pkg := standard_package(k.c, STD_UNSAFE)
+	if pkg == nil || pkg.scope == nil {
+		return out, false
+	}
+	for name, index in ([]string{"take", "write", "free"}) {
+		out[index] = pkg.scope.names[intern_identifier(k.c, name)] or_else INVALID_SYMBOL
+		if out[index] == INVALID_SYMBOL {
+			return out, false
+		}
+	}
+	return out, true
+}
+
+// ------------------------------------------------------- synthesized syntax --
+
+@(private = "file")
+synth_name :: proc(c: ^Compiler, text: string, span: Span) -> Name {
+	return Name{text = text, span = span, id = intern_identifier(c, text)}
+}
+
+@(private = "file")
+synth_ident :: proc(k: ^Checker, text: string, id: Identifier_Id, span: Span) -> ^Expr_Ident {
+	ident := new(Expr_Ident, k.c.semantic_allocator)
+	ident.span = span
+	ident.name, ident.name_id = text, id
+	return ident
+}
+
+@(private = "file")
+synth_selector :: proc(c: ^Compiler, operand: Expr, field: string, span: Span) -> Expr {
+	selector := new(Expr_Selector, c.semantic_allocator)
+	selector.span = span
+	selector.operand = operand
+	selector.name = synth_name(c, field, span)
+	return selector
+}
+
+@(private = "file")
+synth_deref :: proc(c: ^Compiler, operand: Expr, span: Span) -> Expr {
+	deref := new(Expr_Postfix, c.semantic_allocator)
+	deref.span = span
+	deref.op, deref.op_span = .Caret, span
+	deref.operand = operand
+	return deref
+}
+
+@(private = "file")
+synth_call :: proc(c: ^Compiler, callee: Expr, values: []Expr, span: Span) -> Expr {
+	call := new(Expr_Call, c.semantic_allocator)
+	call.span = span
+	call.callee = callee
+	call.args = make([]Argument, len(values), c.semantic_allocator)
+	for value, index in values {
+		call.args[index] = Argument{span = span, value = value}
+	}
+	return call
+}
+
+@(private = "file")
+synth_expr_stmt :: proc(c: ^Compiler, value: Expr, span: Span) -> Stmt {
+	s := new(Stmt_Expr, c.semantic_allocator)
+	s.span = span
+	s.exprs = make([]Expr, 1, c.semantic_allocator)
+	s.exprs[0] = value
+	return s
+}
+
+@(private = "file")
+synth_const :: proc(k: ^Checker, text: string, id: Identifier_Id, value: Expr, span: Span) -> ^Decl {
+	d := new(Decl, k.c.semantic_allocator)
+	d.span = span
+	d.kind = .Const
+	d.names = make([]Name, 1, k.c.semantic_allocator)
+	d.names[0] = Name{text = text, span = span, id = id}
+	d.values = make([]Expr, 1, k.c.semantic_allocator)
+	d.values[0] = value
+	return d
 }

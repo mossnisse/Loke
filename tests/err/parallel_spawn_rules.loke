@@ -1,0 +1,74 @@
+// concurrency-proposal.md "Syntax": where a spawn may appear, what it may
+// start, and where its result may go.
+package main;
+
+foreign import libc "system:msvcrt.lib";
+
+foreign libc {
+	abs :: proc "c" (value: i32) -> i32 ---;
+}
+
+compute :: proc() -> int { return 1; }
+
+pair :: proc() -> (int, int) { return {1, 2}; }
+
+nothing :: proc() {}
+
+sum :: proc(values: ..int) -> int { return values.len(); }
+
+pick :: proc(value: inout int) -> inout int { return inout value; }
+
+work :: proc(n: int) -> Result(int, string) { return .ok(n); }
+
+outer :: proc() {
+	spawn nothing();
+}
+
+main :: proc() {
+	needed := compute() == 1;
+	live_answer := 0;
+	parallel {
+		spawn live_answer = compute();
+	}
+
+	pending_answer: int;
+	parallel {
+		spawn pending_answer = compute();
+		spawn pending_answer = compute();
+	}
+
+	conditional_answer: int;
+	parallel {
+		if (needed) { spawn conditional_answer = compute(); }
+	}
+	use := conditional_answer;
+
+	parallel {
+		defer spawn nothing();
+	}
+
+	parallel {
+		inner: int;
+		spawn inner = compute();
+	}
+
+	both: int;
+	small: i32;
+	nothing_back: int;
+	callback := compute;
+	place := 0;
+	parallel {
+		spawn both = pair();
+		spawn small = compute();
+		spawn nothing_back = nothing();
+		spawn callback();
+		spawn abs(1);
+		spawn sum(1, 2);
+		spawn pick(inout place);
+		spawn work(1);
+	}
+
+	parallel (1) {
+		spawn nothing();
+	}
+}
