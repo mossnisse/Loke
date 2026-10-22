@@ -5027,7 +5027,7 @@ prov_call_cross_thread :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 			)
 			add_notef(c, span, "pass the concrete value instead, or convert it to the view at this call")
 		}
-		if region_is_parameter_backed(prov_received_region(graph, prov_result_region(graph, argument))) {
+		if prov_has_received_region(graph, prov_result_region(graph, argument)) {
 			errorf(
 				c, span, "L0726",
 				"%s is backed by an allocator region this procedure received, which another thread may not be allowed to use",
@@ -5059,26 +5059,27 @@ prov_transferred_type :: proc(c: ^Compiler, argument: Expr) -> Type_Id {
 	return base.type
 }
 
-// The regions of `set` this body received and has not had checked: an owner
-// that arrived through a `@(cross_thread)` `move` parameter was checked at the
-// call that passed it.
+// Whether `set` names a region this body received and has not had checked: an
+// owner that arrived through a `@(cross_thread)` `move` parameter was checked
+// at the call that passed it.
 @(private = "file")
-prov_received_region :: proc(graph: ^Flow_Graph, set: Region_Set) -> Region_Set {
-	rest := prov_empty_region(graph)
-	region_merge(&rest, set)
+prov_has_received_region :: proc(graph: ^Flow_Graph, set: Region_Set) -> bool {
 	if graph.literal.signature == nil {
-		return rest
+		return region_is_parameter_backed(set)
 	}
 	index := 0
 	for parameter in graph.literal.signature.params {
 		for id in parameter.symbols {
 			defer index += 1
-			if sym := symbol_of(graph.k.c, id); sym != nil && sym.cross_thread && sym.mode == .Move && index < len(rest.params) {
-				rest.params[index] = false
+			if index >= len(set.params) || !set.params[index] {
+				continue
+			}
+			if sym := symbol_of(graph.k.c, id); sym == nil || !sym.cross_thread || sym.mode != .Move {
+				return true
 			}
 		}
 	}
-	return rest
+	return false
 }
 
 // design.md "Temporaries and procedure boundaries": a direct call substitutes

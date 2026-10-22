@@ -178,8 +178,8 @@ Type_Info :: struct {
 	// it through lifecycle classification.
 	move_only:     bool,
 	// design.md "@(thread_affine)": values must stay on the thread that made
-	// them. An explicit leaf too; what holds or reaches one inherits it through
-	// `thread_affine_part`.
+	// them. Only the declaring type is marked; `transfer_facts` finds what holds
+	// or reaches one when it crosses a thread boundary.
 	thread_affine: bool,
 	// Inherent members written by `impl`. `extend` never writes here — its
 	// members are package-scoped and live in `Package.extensions`.
