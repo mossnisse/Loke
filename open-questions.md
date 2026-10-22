@@ -1005,6 +1005,55 @@ These extensions do not prevent the smaller initial feature. Validate its
 adding library concurrency: a scope-owned join guarantees storage lifetime,
 but does not itself guarantee termination or wake a blocked participant.
 
+### Structured concurrency follow-up review (2026-10-22)
+
+A second review checked the revised proposal against design.md, grammar.md,
+and the bundled packages. Its fixes are in [the proposal](concurrency-proposal.md#syntax):
+
+- A pool worker that helps at a join could run a child on the parent's thread
+  while the parent held a borrow of that thread's TLS. The join under a helping
+  executor now carries its tasks' `thread_local` effects.
+- A plain read of a shared `Atomic` or `Mutex` field raced with a task's
+  synchronized write. Synchronizing operations now conflict with every other
+  access, reads included.
+- Under the ordinary parameter rule, `spawn work(i)` borrowed a loop index past
+  its iteration. Arguments that copy without a hook or allocation are now
+  copied into the task.
+- `chunks_mut` was described as existing and attributed to
+  [Provide checked disjoint access](#provide-checked-disjoint-access), which
+  proposes only `split_at_mut`. Existing iteration rules forbid it; the
+  proposal now specifies it.
+- Rejecting every indirect call a task reaches would have barred printing,
+  `once.do`, and `slice.sort_by`. Calls a task makes now use the whole-program
+  union of [Global write effects](design.md#global-write-effects); only the
+  spawned call must resolve statically.
+- Check 6 rejected every task that logs. Build-selected providers are now a
+  stated trust boundary, required to accept concurrent use.
+- A received allocator could be read as either a possibly shared region or an
+  unknown one. It is now a possibly non-concurrent region.
+- The proposal now states that applying its checks to `thread.spawn` is a
+  breaking change, that a `thread_local` drop hook writing a global rejects
+  every block, and that a statement-initial `parallel` literal must be
+  parenthesized. `spawn` is rejected in deferred statements, the grammar takes
+  attributes, the flagship sort bounds its depth, and rule 2 cites the one rule.
+
+Still open; the first four are among the proposal's
+[open choices](concurrency-proposal.md#open-choices):
+
+- How a library declares an argument that crosses threads and its own
+  synchronizing operations, instead of the compiler recognizing `thread.spawn`,
+  `Atomic`, `Mutex`, `Once`, and `Channel` by name.
+- Whether build-selected allocator and logging providers must declare that
+  they accept concurrent use, so it is checked rather than trusted. Today a
+  build can select an arena-backed default allocator and race silently.
+- Whether an `Allocator` parameter can promise a concurrent region, so a
+  library can share a caller's allocator among tasks.
+- Whether a value-owning `Once(T)` should give tasks checked lazy setup; until
+  then a task that may run a `Once` action writing a global is rejected.
+- The whole-program union is conservative: one compatible procedure anywhere
+  that writes a global affects every indirect call of its type. Measure how
+  often that rejects real programs before relying on it.
+
 ## Error handling (2026-10-13)
 
 The error handling proposal of this date is adopted. design.md defines it under

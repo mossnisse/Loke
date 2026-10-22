@@ -253,6 +253,13 @@ checklist.
   and pool progress have explicit contracts and staged implementation plans.
   This remains a design proposal; accepted language behavior is unchanged.
 
+- Revised the structured concurrency proposal again after a
+  [follow-up review](open-questions.md#structured-concurrency-follow-up-review-2026-10-22).
+  It closes two race holes (pool helping against thread-local borrows, and
+  plain reads of shared atomics), copies plain arguments into tasks, specifies
+  `chunks_mut`, lets tasks log and print, and records the open
+  thread-contract questions. Still a proposal only.
+
 - The language server's `loke.documentation` command answers with the
   interface file `-api` writes for the document's package, instead of the
   `-doc` Markdown page for its root. The VS Code extension's **Loke: Show
