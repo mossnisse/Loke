@@ -1364,10 +1364,11 @@ File :: struct {
 	// `items` with selected `when` branches flattened in, in source order. The
 	// checker reads this; `-dump-ast` prints `items`.
 	active_items: []Item,
-	// Some body holds a `parallel` statement, whose hidden scope is a
-	// `core:thread` type, so that package is a dependency; `parallel_bound`
-	// once import discovery has added it.
-	uses_parallel:  bool,
+	// Where each `parallel` keyword is. A block's hidden scope is a
+	// `core:thread` type, so that package is a dependency of a file whose
+	// selected items hold one; `parallel_bound` once import discovery has
+	// added it.
+	parallels:      []u32,
 	parallel_bound: bool,
 }
 

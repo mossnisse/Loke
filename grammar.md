@@ -86,6 +86,8 @@ Contextual keywords, reserved only in the positions given:
 | `dynamic` | between the `[` and `]` that begin a type |
 | `hook` | at the start of a constant's value, followed by `(`, an identifier, `)`, and `proc` |
 | `operator` | at the start of a constant's value, followed by `(`, an `Operator_Symbol`, and `)` |
+| `parallel` | at the start of a statement, followed by `{`, or by a parenthesized header whose matching `)` is followed by `{` |
+| `spawn` | at the start of a statement, followed by an identifier |
 | `via` | directly after a variable's declared type |
 | `where` | directly after the signature, generic parameters, or attributes it constrains |
 
@@ -493,6 +495,8 @@ Statement = Block
           | Defer_Statement
           | Return_Statement
           | Branch_Statement
+          | Parallel_Statement
+          | Spawn_Statement
           | Attributes? Simple_Statement ";"
           | ";"                                  // empty statement
 
@@ -544,7 +548,22 @@ Return_Statement = Attributes? "return" Return_Value? ";"
 Return_Value   = "inout"? Expression
 
 Branch_Statement = Attributes? ("break" | "continue") ";"
+
+Parallel_Statement = Attributes? "parallel" ("(" Expression ")")? Block
+Spawn_Statement    = Attributes? "spawn" (Identifier "=")? Postfix_Expression ";"
 ```
+
+A `Spawn_Statement`'s expression is one call: an identifier, optionally
+qualified or a method selector, ending in a call suffix. A conversion, an
+`or_return`, an operator applied to the call, and a field or index before the
+`=` are syntax errors. `spawn` is a statement, never an expression, so
+`x := spawn f();` does not parse as a spawn.
+
+Both statements parse in every build. Their meaning is
+[proposed](concurrency-proposal.md#syntax) rather than specified: the checker
+accepts them only under the hidden `-unstable-parallel` option, and otherwise
+reports that `parallel` blocks are not available yet. The parenthesized
+executor header is reserved for a later form, and the checker rejects it.
 
 `for (;;)` is the three-part header with every part empty. `for (cond)` is the
 condition-only form.
@@ -813,6 +832,15 @@ The productions above use the following deterministic parsing rules:
   call. Anywhere else both are ordinary identifiers.
 - At the start of an `impl` member, a reserved word followed by `:` is the
   member's name.
+- At the start of a statement, `parallel` begins a `Parallel_Statement` only
+  when followed by `{`, or by a parenthesized header whose matching `)` is
+  followed by `{`, so `parallel(pool);` stays a call. A composite literal of a
+  type named `parallel` that starts a statement is therefore parenthesized:
+  `(parallel{1}).run();`. A block directly followed by `.` or `(` is reported
+  as that literal, suggesting the parentheses. `spawn` begins a
+  `Spawn_Statement` only when followed by an identifier, so `spawn(callback);`
+  stays a call; `object.spawn(args);` is a method call wherever it appears.
+  Anywhere else both are ordinary identifiers.
 - A `Where_Clause` is followed immediately by the declaration's `{`, so an
   expression in the clause may not have a `Composite_Literal` at its top level:
   in `where Additive(T) {` the brace opens the body. A bound that needs a

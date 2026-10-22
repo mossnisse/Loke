@@ -1,0 +1,4 @@
+-unstable-parallel
+-panic=unwind
+-collection
+frame_provider=tests/trap/frame_provider

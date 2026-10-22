@@ -174,6 +174,7 @@ emit_spawn :: proc(e: ^Emitter, s: ^Stmt_Spawn) {
 	fmt.sbprintln(&e.b, "  unreachable")
 	place_label(e, ok_label)
 	e.terminated = false
+	unclaimed := begin_frame_release(e, task.frame, frame)
 
 	// A default reads the parameters bound to its left, as at a call.
 	outer_params := e.param_values
@@ -219,7 +220,8 @@ emit_spawn :: proc(e: ^Emitter, s: ^Stmt_Spawn) {
 		&e.b, "  call void %s(ptr %s, ptr %s, ptr %s)",
 		symbol_name(e, task.start), e.names[task.scope], symbol_name(e, task.run), frame,
 	)
-	// The task has the frame now; what it owns is its to drop.
+	// The task has the frame now, and what it owns is its to drop.
+	finish_temporary_drop(e, unclaimed)
 	for entry in owned {
 		finish_temporary_drop(e, entry)
 	}

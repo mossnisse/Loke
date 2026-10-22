@@ -254,7 +254,7 @@ discover_imports :: proc(c: ^Compiler, k: ^Checker) -> bool {
 		id := Package_Id(index)
 		for position := 0; position < len(package_of(c, id).files); position += 1 {
 			file := package_of(c, id).files[position]
-			if file.uses_parallel && c.unstable_parallel && !file.parallel_bound {
+			if c.unstable_parallel && !file.parallel_bound && selects_parallel(file) {
 				file.parallel_bound = true
 				changed = true
 				bind_parallel_edge(c, id, file)
@@ -324,14 +324,30 @@ bind_import_edge :: proc(c: ^Compiler, id: Package_Id, file: ^File, imported: ^I
 	})
 }
 
+// Whether a selected item holds a `parallel` keyword: an unselected `when`
+// branch is never checked, so it needs nothing. One in a body's own `when` is
+// counted, since a statement's branch is chosen while checking.
+@(private = "file")
+selects_parallel :: proc(file: ^File) -> bool {
+	for item in file.active_items {
+		span := item_span(item)
+		for offset in file.parallels {
+			if offset >= span.lo && offset < span.hi {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // concurrency-proposal.md "Lowering": a `parallel` block's hidden scope is
 // `core:thread`'s, so the package is a dependency no source names. The edge
-// binds no alias.
+// binds no alias. Where no collection provides it, the block that needs it says
+// so (`check_parallel`), and a block in a branch no check reaches needs nothing.
 @(private = "file")
 bind_parallel_edge :: proc(c: ^Compiler, id: Package_Id, file: ^File) {
 	dir, why := resolve_import_path(c, file, STD_THREAD)
-	if why != .Ok {
-		errorf(c, no_span(), "L0329", "a `parallel` block needs `%s`, which no collection provides", STD_THREAD)
+	if why != .Ok || !os.is_dir(dir) {
 		return
 	}
 	target, loaded := load_package_dir(c, dir, STD_THREAD, no_span())

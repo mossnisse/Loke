@@ -1,0 +1,3 @@
+L0329
+@11:2
+a `parallel` block needs `core:thread`, which no collection provides

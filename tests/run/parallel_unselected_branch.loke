@@ -1,0 +1,10 @@
+// concurrency-proposal.md "Lowering": only a selected `parallel` block makes
+// `core:thread` a dependency. This program is built against a `core`
+// collection without it, and its one block is in an unselected branch.
+package main;
+
+when (false) {
+	hidden :: proc() { parallel {} }
+}
+
+main :: proc() {}

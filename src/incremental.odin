@@ -80,6 +80,23 @@ selects_imports :: proc(items: []Item, selected: bool) -> bool {
 	return false
 }
 
+// Whether a `parallel` keyword lies in a file-scope `when` branch, whose
+// selection decides whether `core:thread` is a dependency.
+@(private = "file")
+selects_parallel_by_when :: proc(items: []Item, parallels: []u32) -> bool {
+	for item in items {
+		#partial switch v in item {
+		case ^Item_Block:
+			if selects_parallel_by_when(v.items, parallels) { return true }
+		case ^Item_When:
+			for offset in parallels {
+				if offset >= v.span.lo && offset < v.span.hi { return true }
+			}
+		}
+	}
+	return false
+}
+
 @(private)
 check_static_packages :: proc(k: ^Checker, order: []Package_Id, start: int) {
 	for index in start ..< len(order) {
@@ -159,7 +176,8 @@ remember_incremental_inputs :: proc(s: ^Compilation_Session, input: string, docu
 @(private = "file")
 same_file_topology :: proc(a, b: ^File, a_text, b_text: string) -> bool {
 	if a.package_name != b.package_name || len(a.attributes) != len(b.attributes) || selects_imports(b.items, false) { return false }
-	if a.uses_parallel != b.uses_parallel { return false }
+	// Which `parallel` blocks are selected decides whether `core:thread` loads.
+	if (len(a.parallels) > 0) != (len(b.parallels) > 0) || selects_parallel_by_when(b.items, b.parallels) { return false }
 	// File attributes include provider defaults, which discovery reads.
 	for attribute, index in a.attributes {
 		other := b.attributes[index].span

@@ -1,0 +1,18 @@
+@(public)
+package frame_provider;
+
+import "core:mem";
+
+// The default allocator for `parallel_frame_release`: an arena, which takes
+// back its newest allocation when it is freed, so a program can tell whether
+// a freed block was the last one made.
+@(private)
+storage: static [65536]u8 = {};
+
+@(private)
+region: static mem.Arena = {};
+
+allocator_factory :: proc() -> Allocator {
+	region = mem.Arena.from_buffer(&mut storage[:]);
+	return region.allocator();
+}

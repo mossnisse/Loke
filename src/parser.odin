@@ -47,7 +47,7 @@ Parser :: struct {
 	// the expression reparse so nested literals are not parsed exponentially.
 	probed:         Probed_Literal,
 	// Some statement is a `parallel` block.
-	uses_parallel:  bool,
+	parallels:      [dynamic]u32, // each `parallel` keyword's offset
 	allocator:      mem.Allocator,
 }
 
@@ -75,7 +75,7 @@ parse :: proc(c: ^Compiler, file: u32, tokens: []Token, syntax_allocator := mem.
 	}
 	parse_package_clause(&p, &result)
 	result.items = parse_items(&p, stop_at_rbrace = false)
-	result.uses_parallel = p.uses_parallel
+	result.parallels = p.parallels[:]
 	return result
 }
 
@@ -1827,7 +1827,10 @@ parse_parallel :: proc(p: ^Parser) -> Stmt {
 	}
 
 	start := take_as(p, .Parallel)
-	p.uses_parallel = true
+	if p.parallels == nil {
+		p.parallels = make([dynamic]u32, 0, 2, p.allocator)
+	}
+	append(&p.parallels, span_of(p, start).lo)
 	executor: Expr
 	header_ok := true
 	if allow(p, .Lparen) {

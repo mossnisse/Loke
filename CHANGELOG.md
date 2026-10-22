@@ -152,7 +152,31 @@ checklist.
   }
   ```
 
+- `parallel` and `spawn` are contextual keywords at the start of a statement
+  ([Keywords](grammar.md#keywords)). A statement that begins with a composite
+  literal of a type named `parallel` followed by a selector or a call, such as
+  `parallel{1}.run();`, now parses as a `parallel` block and is `L0261`; so is
+  `parallel(T){1}.run();`. Every other use of the name, `parallel(pool);` and
+  `x := parallel{1};` among them, means what it did. Upgrade by
+  parenthesizing the literal:
+
+  ```loke
+  // before
+  parallel{1}.run();
+  // after
+  (parallel{1}).run();
+  ```
+
 ### Added
+
+- `parallel { ... }` blocks and `spawn` statements parse in every build
+  ([Statements](grammar.md#statements)). They are checked and compiled only
+  under the hidden, unstable `-unstable-parallel` option, which runs each
+  spawned call on a thread of its own and joins them when the block ends, as
+  the [concurrency proposal](concurrency-proposal.md#syntax) describes;
+  without it a block is `L0727`. Their meaning is not yet in
+  [design.md](design.md), so the option and what it accepts may change in any
+  release ([Version policy](releasing.md#version-policy)).
 
 - Three attributes declare thread facts, so the compiler names no concurrency
   type or procedure. [`@(synchronized)`](design.md#synchronized) marks a field,

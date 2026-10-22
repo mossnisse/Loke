@@ -55,9 +55,6 @@ editor_grammar_follows_the_specification :: proc(t: ^testing.T) {
 	for word in reserved {
 		testing.expectf(t, keyword_words[word], "the keyword `%s` is not highlighted by %s", word, EDITOR_GRAMMAR)
 	}
-	// concurrency-proposal.md "Milestone 4: `parallel` and `spawn`, gated":
-	// grammar.md lists the two statements' words once milestone 5 enables them.
-	for word in ([]string{"parallel", "spawn"}) { contextual[word] = true }
 	for word in keyword_words {
 		testing.expectf(t, reserved[word] || contextual[word], "%s highlights `%s` as a keyword, but grammar.md does not list it", EDITOR_GRAMMAR, word)
 	}

@@ -1163,9 +1163,12 @@ committed spawn for the emission contract.
   neither is a semantic token, since both stay identifiers to the lexer. The
   VS Code grammar highlights both, and `tests/editor_test.odin` accepts them
   there although grammar.md does not list them until milestone 5.
-- **Not tested:** a submission failure after a successful spawn. Nothing makes
-  thread creation fail on demand, so the path where `start` panics with earlier
-  tasks running is only read, not run.
+- **Failure to start:** the parent registers each frame for the unwind until
+  `start` returns, so a panic in preparing an argument, in reserving the
+  task's place, or in creating its thread releases it, and the parent's own
+  guards drop the owned arguments. `tests/trap/parallel_frame_release` runs the
+  argument case. Nothing makes thread creation fail on demand, so that path,
+  with earlier tasks running, is only read, not run.
 
 The plan as written:
 

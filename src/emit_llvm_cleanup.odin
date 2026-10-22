@@ -39,6 +39,9 @@ Deferred :: struct {
 	// A box's allocation, published at `place_env`, whose payload `type` is
 	// being dropped: replay releases the allocation and nothing else.
 	box_release: bool,
+	// A spawn's frame of record `type`, published at `place_env`, which no task
+	// has claimed: replay returns it to the default provider.
+	frame_release: bool,
 	// Index in the procedure's registration state, or -1 under `-panic=abort`.
 	slot: int,
 	// When a compiler-owned value was registered, so an exit that owes several
@@ -395,6 +398,8 @@ emit_unwind_thunk :: proc(e: ^Emitter) {
 			pop_temporaries(e)
 		} else if entry.box_release {
 			emit_box_release(e, entry.type, unwind_env_load(e, env, entry.place_env))
+		} else if entry.frame_release {
+			emit_frame_release(e, entry.type, unwind_env_load(e, env, entry.place_env))
 		} else if entry.temporary_place {
 			emit_drop_place(e, entry.type, unwind_env_load(e, env, entry.place_env))
 		} else if place, bound := e.names[entry.place_symbol]; bound {
@@ -430,6 +435,30 @@ begin_temporary_drop :: proc(e: ^Emitter, type: Type_Id, place: string) -> Defer
 	unwind_publish_env(e, entry.place_env, place)
 	unwind_register(e, entry)
 	return entry
+}
+
+// concurrency-proposal.md "Failure to start a task": a spawn's frame is the
+// parent's until `Task_Scope.start` returns, so a panic before then, in an
+// argument or in starting the thread, releases it.
+@(private)
+begin_frame_release :: proc(e: ^Emitter, frame_type: Type_Id, frame: string) -> Deferred {
+	entry := Deferred{type = frame_type, frame_release = true, slot = -1, place_env = -1}
+	if !unwind_enabled(e) {
+		return entry
+	}
+	entry.place_env = unwind_reserve_env(e)
+	unwind_reserve(e, &entry)
+	unwind_publish_env(e, entry.place_env, frame)
+	unwind_register(e, entry)
+	return entry
+}
+
+@(private)
+emit_frame_release :: proc(e: ^Emitter, frame_type: Type_Id, frame: string) {
+	fmt.sbprintfln(
+		&e.b, "  call void @loke_rt_v1_free(ptr %s, ptr %s, i64 %d, i64 %d)",
+		emit_default_allocator(e), frame, type_size(e.c, frame_type), type_align(e.c, frame_type),
+	)
 }
 
 // Registers a box's allocation for panic replay while its payload is dropped,

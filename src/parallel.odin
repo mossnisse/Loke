@@ -76,7 +76,7 @@ check_parallel :: proc(k: ^Checker, s: ^Stmt_Parallel) -> Flow_Info {
 			"parallel { ... }",
 		)
 	}
-	scope_type := task_scope_type(k)
+	scope_type := task_scope_type(k, s.keyword)
 	if scope_type == INVALID_TYPE {
 		k.parallel_block = s
 		return check_scoped_block(k, s.body)
@@ -124,11 +124,15 @@ hidden_scope_declaration :: proc(k: ^Checker, s: ^Stmt_Parallel, scope_type: Typ
 }
 
 // `core:thread`'s `Task_Scope`, which import discovery loaded for a program
-// with a `parallel` block, and its `start`.
+// with a `parallel` block where a collection provides it, and its `start`.
 @(private = "file")
-task_scope_type :: proc(k: ^Checker) -> Type_Id {
+task_scope_type :: proc(k: ^Checker, keyword: Span) -> Type_Id {
 	pkg := standard_package(k.c, STD_THREAD)
-	if pkg == nil || pkg.scope == nil {
+	if pkg == nil {
+		errorf(k.c, keyword, "L0329", "a `parallel` block needs `%s`, which no collection provides", STD_THREAD)
+		return INVALID_TYPE
+	}
+	if pkg.scope == nil {
 		return INVALID_TYPE
 	}
 	sym := symbol_of(k.c, pkg.scope.names[intern_identifier(k.c, "Task_Scope")] or_else INVALID_SYMBOL)

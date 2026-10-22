@@ -1,0 +1,12 @@
+// concurrency-proposal.md "Lowering": a `parallel` block's hidden scope is
+// `core:thread`'s. A block in an unselected `when` branch is never checked and
+// needs nothing; a checked one reports the missing package where it is.
+package main;
+
+when (false) {
+	hidden :: proc() { parallel {} }
+}
+
+main :: proc() {
+	parallel {}
+}

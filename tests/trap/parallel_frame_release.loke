@@ -1,0 +1,31 @@
+// concurrency-proposal.md "Failure to start a task": a spawn's frame is the
+// parent's until a task claims it, so a panic before then, here in preparing
+// an argument, releases it. The default allocator is an arena, which takes
+// back its newest block when that is freed: the probe after the unwind finds
+// the frame's address free again.
+@(default_allocator = "frame_provider:allocator_factory")
+package main;
+
+import "core:fmt";
+import "core:unsafe";
+
+explode :: proc() -> int {
+	panic("an argument failed");
+}
+
+work :: proc(n: int) {}
+
+probe :: proc() -> rawptr {
+	block := unsafe.new(0);
+	address := rawptr(block);
+	unsafe.free(block);
+	return address;
+}
+
+main :: proc() {
+	before := probe();
+	defer fmt.println("frame released", probe() == before);
+	parallel {
+		spawn work(explode());
+	}
+}
