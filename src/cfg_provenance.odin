@@ -4920,34 +4920,45 @@ prov_container_content :: proc(graph: ^Flow_Graph, v: ^Expr_Call, op: Container_
 // design.md "string type conversions": a text operation either borrows its
 // operand or returns a fresh owner with no loans.
 @(private = "file")
+// The checker binds a text operation's one operand: the text, or the bytes
+// or runes a conversion reads.
 prov_text_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
-	source: []int
-	reached: []int
-	for argument, index in v.bound {
-		if argument == nil {
-			continue
-		}
-		loans := walk_flow_expr(graph, argument)
-		reached = prov_join(graph, reached, loans)
-		if index == 0 {
-			source = loans
-			// An owning `string` receiver lends its own storage, which a temporary
-			// gives up at the end of its statement.
-			if len(source) == 0 && text_result_borrows(graph.k.c, v) {
-				if root, path, ok := prov_place_of(graph, argument); ok {
-					source = prov_borrow(graph, root, path, false, v.span, "view")
-				} else if !type_is_carrier(graph.k.c, expr_base(argument).type) && prov_expr_is_temporary(argument) {
-					source = prov_borrow(graph, prov_temp_root(graph, expr_span(argument)), nil, false, v.span, "view")
-				}
-			}
-		}
+	if len(v.bound) != 1 || v.bound[0] == nil {
+		return nil
 	}
-	// A text operation reads through the views it is given.
-	prov_reach(graph, reached, v.span)
+	operand := v.bound[0]
+	source := walk_flow_expr(graph, operand)
+	if text_reads_bytes(v) {
+		prov_reach(graph, source, v.span)
+	}
 	if !text_result_borrows(graph.k.c, v) {
 		return nil
 	}
+	// An owning `string` operand lends its own storage, which a temporary gives
+	// up at the end of its statement.
+	if len(source) == 0 {
+		if root, path, ok := prov_place_of(graph, operand); ok {
+			return prov_borrow(graph, root, path, false, v.span, "view")
+		}
+		if !type_is_carrier(graph.k.c, expr_base(operand).type) && prov_expr_is_temporary(operand) {
+			return prov_borrow(graph, prov_temp_root(graph, expr_span(operand)), nil, false, v.span, "view")
+		}
+	}
 	return source
+}
+
+// Whether a text operation reads the bytes its operand views. `byte_len` reads
+// only the header, and `bytes`, `runes`, and `rune_offsets` only derive views,
+// whose later reads, returns, and stores are recorded where they happen.
+@(private = "file")
+text_reads_bytes :: proc(v: ^Expr_Call) -> bool {
+	if operation, is_text := v.operation.(Call_Text); is_text {
+		#partial switch operation.op {
+		case .Byte_Len, .Bytes, .Runes, .Rune_Offsets:
+			return false
+		}
+	}
+	return true
 }
 
 // design.md "Standard customization procedures": a clone is ownership-recursive,

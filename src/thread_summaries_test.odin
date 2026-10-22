@@ -300,7 +300,7 @@ remember :: proc() { local: thread_local Tracked; }
 }
 
 // Text operations return before the ordinary call path, so their reads and
-// allocations are recorded on their own.
+// allocations are recorded on their own; reading only the header is no reach.
 @(test)
 text_calls_reach_and_allocate :: proc(t: ^testing.T) {
 	p: Checked
@@ -308,12 +308,17 @@ text_calls_reach_and_allocate :: proc(t: ^testing.T) {
 	if !summarized(t, &p, `
 shared: string_view;
 touch :: proc() -> int { return shared.rune_count(); }
+header :: proc() -> int { return shared.byte_len(); }
+handed :: proc() -> []u8 { return shared.bytes(); }
 duplicate :: proc(s: string_view) -> string { return s.copy(); }
 count :: proc(s: string_view) -> int { return s.rune_count(); }
 `) {
 		return
 	}
 	expect_reach(t, &p, "touch", "shared")
+	// A header read touches no bytes; a derived view handed back may be read.
+	expect_no_reach(t, &p, "header", "shared")
+	expect_reach(t, &p, "handed", "shared")
 	testing.expect(t, use_of(t, &p, "duplicate").regions.default, "`copy` allocates from the default provider")
 	testing.expect(t, allocator_use_is_empty(use_of(t, &p, "count")), "counting runes allocates nothing")
 }

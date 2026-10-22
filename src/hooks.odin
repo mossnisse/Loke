@@ -615,7 +615,8 @@ type_owns_allocation :: proc(c: ^Compiler, type: Type_Id) -> bool {
 		return false
 	}
 	entry := lifecycle_of(c, type)
-	if entry.intrinsic || entry.container || entry.provider || entry.boxed || type_is_shared_handle(c, type) {
+	// `intrinsic` covers `string`, containers, and providers.
+	if entry.intrinsic || entry.boxed || type_is_shared_handle(c, type) {
 		return true
 	}
 	for part in lifecycle_parts(c, type) {
