@@ -3,7 +3,9 @@
 // unchecked a second time. A procedure without the attribute stores in a type
 // with it, whose calls check more. A `@(thread_affine)` value made and dropped
 // on one thread never crosses, and a synchronized field is read through the
-// owner once every thread that used it has joined.
+// owner once every thread that used it has joined. An unchecked C pointer
+// crosses whatever it points to, and an `any_view` made at the call is checked
+// through the value it erased.
 package main;
 
 import "core:fmt";
@@ -34,6 +36,16 @@ run_on_thread :: proc(
 	worker.join();
 }
 
+// Takes what it is given to another thread, without starting one.
+pass_address :: proc(@(cross_thread, escape=static) address: move [^]Handle) -> bool {
+	return address == nil;
+}
+
+shown: int = 5;
+pass_view :: proc(@(cross_thread, escape=static) view: move any_view) {
+	fmt.println(view);
+}
+
 // Runs `entry(job)` here.
 run_here :: proc(entry: proc(job: move Job), job: move Job) {
 	entry(move(job));
@@ -51,4 +63,6 @@ main :: proc() {
 	fmt.println(hits.value);
 	here := Handle{id = 7};
 	fmt.println(here.id);
+	fmt.println(pass_address(nil));
+	pass_view(any_view(shown));
 }

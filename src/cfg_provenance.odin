@@ -5039,18 +5039,21 @@ prov_call_cross_thread :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 }
 
 // What an argument takes across: a `dyn` or `any_view` made at the call is
-// checked through what it erased, which is known there.
+// checked through what it erased, which is known there. An explicit conversion
+// to either is the implicit one written out, so its operand is what was erased.
 @(private = "file")
 prov_transferred_type :: proc(c: ^Compiler, argument: Expr) -> Type_Id {
 	base := expr_base(argument)
 	if base.erased_from != INVALID_TYPE {
 		return base.erased_from
 	}
-	if call, is_call := argument.(^Expr_Call); is_call && len(call.bound) == 1 && call.bound[0] != nil &&
-	   underlying_kind(c, call.type) == .Dyn {
+	if call, is_call := argument.(^Expr_Call); is_call && len(call.bound) == 1 && call.bound[0] != nil {
+		kind := underlying_kind(c, call.type)
 		#partial switch _ in call.operation {
 		case Call_Dyn_Conversion, Call_Conversion:
-			return expr_base(call.bound[0]).type
+			if kind == .Dyn || kind == .Any_View {
+				return prov_transferred_type(c, call.bound[0])
+			}
 		}
 	}
 	return base.type

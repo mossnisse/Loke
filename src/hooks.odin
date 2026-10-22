@@ -358,8 +358,9 @@ has_excluded_copy_hook :: proc(c: ^Compiler, info: ^Type_Info) -> bool {
 // `erased` a `dyn` or `any_view` it reaches, behind which affinity cannot be
 // seen. Like `move_only`, affinity propagates structurally, but transfer also
 // follows pointees, owned and shared payloads, container elements, and a
-// generic record's type arguments. A raw address is not followed: what it
-// reaches is unchecked.
+// generic record's type arguments. An unchecked address, a `rawptr` or a C
+// pointer, is not followed: design.md "Concurrency and the memory model" lets
+// one cross without proving anything about what it reaches.
 Transfer_Facts :: struct {
 	affine: Type_Id,
 	erased: Type_Id,
@@ -390,7 +391,7 @@ transfer_facts_walk :: proc(c: ^Compiler, type: Type_Id, facts: ^Transfer_Facts,
 		if facts.erased == INVALID_TYPE {
 			facts.erased = type
 		}
-	case .Distinct, .Pointer, .C_Pointer, .Slice, .Dynamic_Array, .Box, .Array, .Simd:
+	case .Distinct, .Pointer, .Slice, .Dynamic_Array, .Box, .Array, .Simd:
 		transfer_facts_walk(c, info.element, facts, visited)
 	case .Map:
 		transfer_facts_walk(c, info.key, facts, visited)

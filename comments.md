@@ -93,9 +93,11 @@ The warning and the checks on what a thread receives key on
 so a wrapper or executor a program writes is checked by declaring the same
 parameters. The attribute is part of the procedure type, as an escape level
 is: a fact kept only on the declaration would let a call through a procedure
-value skip the checks it promised. A wrapper's own call of `spawn` is not
-warned about, since the entry that runs is the one its callers passed, and
-their calls are reported.
+value skip the checks it promised. A trampoline entry that calls a procedure
+value it received is not warned about for that call, since the procedure is
+the one its caller passed, and that crossing call is reported. A first version
+instead skipped every `spawn` in a body with a `@(cross_thread)` parameter,
+which also hid an entry the wrapper named itself.
 
 `Atomic` and `Mutex` keep `value` public so that a caller owning one outright,
 before spawning or after joining, pays for no synchronization.

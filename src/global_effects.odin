@@ -2,7 +2,6 @@ package lokec
 
 import "core:fmt"
 import "core:mem"
-import "core:slice"
 
 // design.md "Global write effects": a call writes whatever static-duration
 // storage its callee may write, directly or through its own callees. Each body's
@@ -17,9 +16,12 @@ Effect_Call :: struct {
 	type:          Type_Id,
 	dyn_interface: Symbol_Id,
 	dyn_index:     int,
+	// Through a procedure value the body received as a parameter: what it runs
+	// is whatever the caller passed.
+	through_parameter: bool,
 }
 
-// A call passing a procedure for a `@(cross_thread)` parameter, and that
+// A call passing a named procedure for a `@(cross_thread)` parameter, and that
 // procedure.
 Thread_Spawn :: struct {
 	entry: Symbol_Id,
@@ -32,6 +34,7 @@ Body_Effects :: struct {
 	symbol: Symbol_Id,
 	type:   Type_Id,
 	writes:  [dynamic]Symbol_Id,
+	direct:  int, // how many of `writes` the body makes itself
 	calls:   []Effect_Call,
 	targets: [dynamic]int, // the bodies those calls may run
 }
@@ -113,7 +116,13 @@ call_effect :: proc(c: ^Compiler, v: ^Expr_Call) -> (Effect_Call, bool) {
 		return Effect_Call{callee = id}, true
 	}
 	if base := expr_base(v.callee); base != nil && underlying_kind(c, base.type) == .Proc {
-		return Effect_Call{type = base.type}, true
+		received := false
+		if ident, is_ident := v.callee.(^Expr_Ident); is_ident {
+			if callee := symbol_of(c, ident.symbol); callee != nil && callee.kind == .Parameter {
+				received = true
+			}
+		}
+		return Effect_Call{type = base.type, through_parameter = received}, true
 	}
 	return {}, false
 }
@@ -271,19 +280,18 @@ prov_key_effects :: proc(graph: ^Flow_Graph, map_type: Type_Id, span: Span) {
 }
 
 // design.md "Global write effects": a named procedure passed for a
-// `@(cross_thread)` parameter of procedure type runs on another thread, so it
-// is kept until the effects settle.
+// `@(cross_thread)` parameter runs on another thread, as an entry or as the
+// value an entry calls, so it is kept until the effects settle.
 @(private = "file")
 note_thread_spawn :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 	c := graph.k.c
 	proc_type := call_proc_type(c, v)
 	info := underlying_info(c, proc_type)
-	if info == nil || len(info.param_cross_thread) == 0 || body_crosses_threads(graph) {
+	if info == nil || len(info.param_cross_thread) == 0 {
 		return
 	}
 	for argument, index in v.bound {
-		if argument == nil || index >= len(info.parameters) || !proc_param_crosses_thread(c, proc_type, index) ||
-		   underlying_kind(c, info.parameters[index]) != .Proc {
+		if argument == nil || !proc_param_crosses_thread(c, proc_type, index) {
 			continue
 		}
 		entry := INVALID_SYMBOL
@@ -299,31 +307,39 @@ note_thread_spawn :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 	}
 }
 
-// A thread wrapper, such as `thread.spawn_plain`, hands what its own
-// `@(cross_thread)` parameters received on to another thread. Its callers'
-// entries are the ones reported, so the trampoline it starts is not.
-@(private = "file")
-body_crosses_threads :: proc(graph: ^Flow_Graph) -> bool {
-	c := graph.k.c
-	if graph.literal == nil {
-		return false
-	}
-	sym := symbol_of(c, graph.literal.symbol)
-	if sym == nil {
-		return false
-	}
-	info := underlying_info(c, sym.proc_type)
-	return info != nil && slice.contains(info.param_cross_thread, true)
-}
-
 // A spawned entry that writes a global every thread shares races with any other
 // thread that reaches it. `thread_local` storage is the thread's own, an atomic
 // operation reads its receiver, and a `@(synchronized)` variable's package
-// vouches for every access to it, so none is a write here.
+// vouches for every access to it, so none is a write here. A call the entry
+// makes through a procedure value it received runs what its caller passed,
+// which is reported where that crossing call passes it, so a trampoline such
+// as `thread.spawn_plain`'s is not blamed for every procedure of its type.
 @(private = "file")
-warn_thread_races :: proc(c: ^Compiler) {
+warn_thread_races :: proc(
+	c: ^Compiler,
+	bodies: []Body_Effects,
+	index_of: map[Symbol_Id]int,
+	used_as_value: map[Symbol_Id]bool,
+) {
 	for spawn in c.thread_spawns {
-		for global in c.global_writes[spawn.entry] {
+		index, found := index_of[spawn.entry]
+		if !found {
+			continue
+		}
+		entry := bodies[index]
+		writes := make([dynamic]Symbol_Id, 0, len(entry.writes), context.temp_allocator)
+		append(&writes, ..entry.writes[:entry.direct])
+		for call in entry.calls {
+			if call.through_parameter {
+				continue
+			}
+			for target in effect_targets(c, call, bodies, index_of, used_as_value) {
+				for global in bodies[target].writes {
+					add_global_write(&writes, global)
+				}
+			}
+		}
+		for global in writes {
 			sym := symbol_of(c, global)
 			if sym == nil || sym.duration == .Thread_Local || sym.synchronized {
 				continue
@@ -444,6 +460,7 @@ compute_global_writes :: proc(k: ^Checker) {
 		}
 		effects.writes = make([dynamic]Symbol_Id, 0, len(graph.effect_writes), context.temp_allocator)
 		append(&effects.writes, ..graph.effect_writes[:])
+		effects.direct = len(effects.writes)
 		effects.calls = make([]Effect_Call, len(graph.effect_calls), context.temp_allocator)
 		copy(effects.calls, graph.effect_calls[:])
 		for id in graph.effect_values {
@@ -529,7 +546,7 @@ compute_global_writes :: proc(k: ^Checker) {
 		}
 	}
 	c.global_writes_ready = true
-	warn_thread_races(c)
+	warn_thread_races(c, bodies[:], index_of, used_as_value)
 	reject_copy_hook_writes(c)
 }
 

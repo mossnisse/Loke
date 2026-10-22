@@ -2,9 +2,11 @@
 // a global every thread shares is warned about, through a callee and for a
 // `static` local too, while `thread_local`, atomic operations, a `Mutex`, and a
 // `@(synchronized)` variable are not; so is an entry passed to a user wrapper's
-// `@(cross_thread)` parameter, at the wrapper's call; a spawned argument may
-// not borrow shorter-lived storage; and a pointer from a guard may not outlive
-// the lock.
+// `@(cross_thread)` parameter, at the wrapper's call, while an entry the
+// wrapper names itself still is in its body; a named procedure a trampoline
+// entry calls through its argument is warned about where it is passed, and
+// the trampoline is not; a spawned argument may not borrow shorter-lived
+// storage; and a pointer from a guard may not outlive the lock.
 package main;
 
 import "core:sync";
@@ -39,7 +41,10 @@ vouch :: proc() { vouched += 1; }
 
 start :: proc(@(cross_thread) entry: proc()) {
 	worker := thread.spawn(entry);
+	own := thread.spawn(indirect);
 }
+
+trampoline :: proc(job: move proc()) { job(); }
 
 main :: proc() {
 	a := thread.spawn(indirect);
@@ -51,6 +56,7 @@ main :: proc() {
 	e := thread.spawn(sum, local[:]);
 	f := thread.spawn(vouch);
 	start(bump);
+	g := thread.spawn(trampoline, bump);
 }
 
 escapes :: proc() {
