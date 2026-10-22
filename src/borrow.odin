@@ -891,6 +891,23 @@ set_synth_result_summary :: proc(c: ^Compiler, declaration: Symbol_Id, param: in
 	c.result_summaries[declaration] = summary
 }
 
+// As `set_synth_result_summary`, with each carrier path of a record result
+// depending on `param` separately, as a body's summary would: the halves of
+// `split_at_mut` destructure into two reborrows rather than two reads of one.
+set_synth_content_summary :: proc(c: ^Compiler, declaration: Symbol_Id, param: int) {
+	sym := symbol_of(c, declaration)
+	if sym == nil || sym.result == INVALID_TYPE || param >= len(sym.params) {
+		return
+	}
+	summary := new(Proc_Summary, c.semantic_allocator)
+	summary.result = new_result_provenance(c, len(sym.params), sym.result, true)
+	summary.result.params[param] = type_carries_borrow(c, sym.result).any
+	for &content in summary.result.content {
+		content.dependencies.params[param] = true
+	}
+	c.result_summaries[declaration] = summary
+}
+
 result_summary :: proc(c: ^Compiler, declaration: Symbol_Id) -> (Result_Provenance, bool) {
 	if is_contract_join(c, declaration) {
 		return joined_result_summary(c, symbol_of(c, declaration).members)
@@ -1057,6 +1074,10 @@ Prov_State :: struct {
 	// A loan ended on every path to here. Checks skip only these, so an
 	// invalidation that reaches its own loop head still meets the loan it ends.
 	ended:   []bool,
+	// Per reborrow, severed on every path to here (`Flow_Block.severed_entry`).
+	// Sized before `resolve_content_reads` adds reborrows of loaded carriers,
+	// which are never severed.
+	severed: []bool,
 	// Scratch: the loans one event ends.
 	released: []bool,
 	live:    []bool,
@@ -1561,6 +1582,8 @@ prepare_state :: proc(state: ^Prov_State) -> bool {
 		block.reach_exit = make([]u8, width, graph.alloc)
 		block.ended_entry = make([]bool, state.loans, graph.alloc)
 		block.ended_exit = make([]bool, state.loans, graph.alloc)
+		block.severed_entry = make([]bool, len(graph.reborrows), graph.alloc)
+		block.severed_exit = make([]bool, len(graph.reborrows), graph.alloc)
 		block.live_entry = make([]bool, max(state.slots, 1), graph.alloc)
 		block.live_exit = make([]bool, max(state.slots, 1), graph.alloc)
 		block.use_entry = make([]Span, max(state.slots, 1), graph.alloc)
@@ -1571,6 +1594,7 @@ prepare_state :: proc(state: ^Prov_State) -> bool {
 	state.precision = make([]Precision_Loss, state.slots, graph.alloc)
 	state.released = make([]bool, state.loans, graph.alloc)
 	state.ended = make([]bool, state.loans, graph.alloc)
+	state.severed = make([]bool, len(graph.reborrows), graph.alloc)
 	state.live = make([]bool, max(state.slots, 1), graph.alloc)
 	state.uses = make([]Span, max(state.slots, 1), graph.alloc)
 	state.merged = make([]u8, max(state.row_bytes, 1), graph.alloc)
@@ -1593,6 +1617,7 @@ solve_reaching :: proc(state: ^Prov_State) {
 		mem.zero_slice(state.reach)
 		mem.zero_slice(state.precision)
 		mem.zero_slice(state.ended)
+		mem.zero_slice(state.severed)
 		if id != 0 {
 			seen := false
 			for predecessor in block.preds {
@@ -1607,8 +1632,12 @@ solve_reaching :: proc(state: ^Prov_State) {
 					for value, index in source.ended_exit {
 						state.ended[index] &&= value
 					}
+					for value, index in source.severed_exit {
+						state.severed[index] &&= value
+					}
 				} else {
 					copy(state.ended, source.ended_exit)
+					copy(state.severed, source.severed_exit)
 				}
 				seen = true
 			}
@@ -1625,24 +1654,49 @@ solve_reaching :: proc(state: ^Prov_State) {
 		copy(block.reach_entry, state.reach)
 		copy(block.precision_entry, state.precision)
 		copy(block.ended_entry, state.ended)
+		copy(block.severed_entry, state.severed)
 		for event in block.prov {
 			run_prov_event(state, event, state.reach, state.ended)
+			run_severing_event(state, event)
 		}
 		if block.prov_visited &&
 		   slice.equal(block.precision_exit, state.precision) &&
 		   slice.equal(block.reach_exit, state.reach) &&
-		   slice.equal(block.ended_exit, state.ended) {
+		   slice.equal(block.ended_exit, state.ended) &&
+		   slice.equal(block.severed_exit, state.severed) {
 			continue
 		}
 		copy(block.reach_exit, state.reach)
 		copy(block.precision_exit, state.precision)
 		copy(block.ended_exit, state.ended)
+		copy(block.severed_exit, state.severed)
 		block.prov_visited = true
 		for successor in block.succs {
 			if !queued[int(successor)] {
 				append(&queue, successor)
 				queued[int(successor)] = true
 			}
+		}
+	}
+}
+
+// design.md "Chunks of a mutable slice": redefining a fresh slot severs the
+// reborrows of its previous value, and redefining a reborrow's derived slot
+// takes it afresh.
+@(private = "file")
+run_severing_event :: proc(state: ^Prov_State, event: Prov_Event) {
+	graph := state.graph
+	if event.kind != .Def || len(graph.fresh_slots) == 0 {
+		return
+	}
+	for reborrow, index in graph.reborrows[:len(state.severed)] {
+		if !graph.fresh_slots[reborrow.source] {
+			continue
+		}
+		if reborrow.source == event.slot {
+			state.severed[index] = true
+		} else if reborrow.derived == event.slot {
+			state.severed[index] = false
 		}
 	}
 }
@@ -2011,6 +2065,7 @@ report_provenance :: proc(state: ^Prov_State) {
 		copy(state.reach, block.reach_entry)
 		copy(state.precision, block.precision_entry)
 		copy(state.ended, block.ended_entry)
+		copy(state.severed, block.severed_entry)
 		for event, index in block.prov {
 			// A temporary's end has no span of its own and is never merged.
 			at := [2]u32{event.span.file, event.span.lo}
@@ -2023,6 +2078,7 @@ report_provenance :: proc(state: ^Prov_State) {
 				}
 			}
 			run_prov_event(state, event, state.reach, state.ended)
+			run_severing_event(state, event)
 		}
 	}
 }
@@ -2195,10 +2251,11 @@ live_reborrow_of :: proc(state: ^Prov_State, source: int, live: []bool, reads_on
 	graph := state.graph
 	visited := make(map[int]bool, 8, context.temp_allocator)
 	pending := make([dynamic]int, 0, 8, context.temp_allocator)
-	for reborrow in graph.reborrows {
+	for reborrow, index in graph.reborrows {
 		// Only a mutable reborrow excludes a read; what is derived from a
-		// read-only one is read-only too.
-		if reborrow.source != source || reborrow.passes_on || (reads_only && !reborrow.mutable) {
+		// read-only one is read-only too. A severed one was taken from an
+		// earlier value of a fresh source.
+		if reborrow.source != source || reborrow.passes_on || (reads_only && !reborrow.mutable) || (index < len(state.severed) && state.severed[index]) {
 			continue
 		}
 		clear(&pending)

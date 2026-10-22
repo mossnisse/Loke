@@ -1421,6 +1421,8 @@ emit_synth_procs :: proc(e: ^Emitter) {
 			emit_synth_map_next(e, symbol, name)
 		case .Text_Next, .Rune_Offsets_Next:
 			emit_synth_text_next(e, symbol, name)
+		case .Chunks_Next:
+			emit_synth_chunks_next(e, symbol, name)
 		case .Try_Clone:
 			emit_synth_try_clone(e, symbol, name)
 		case .Clone:

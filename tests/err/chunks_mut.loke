@@ -1,0 +1,59 @@
+package main;
+
+// design.md "Chunks of a mutable slice": the chunks are one mutable reborrow
+// of the receiver, so the receiver is suspended while any chunk is live, in
+// the loop and after it. A chunk binding is a mutable carrier of its own, so a
+// copy of it suspends it for the rest of its step.
+
+same :: proc(rows: []mut int) -> []mut int { return rows; }
+
+source_in_loop :: proc(xs: []mut int) {
+	foreach (rows in xs.chunks_mut(2)) {
+		xs[0] = 1;
+		rows[0] = 2;
+	}
+}
+held_after_loop :: proc(xs: []mut int) {
+	first: []mut int = {};
+	foreach (rows in xs.chunks_mut(2)) {
+		first = rows;
+		break;
+	}
+	xs[0] = 1;
+	first[0] = 2;
+}
+alias_in_step :: proc(xs: []mut int) {
+	foreach (rows in xs.chunks_mut(2)) {
+		copy := same(rows);
+		rows[0] = 2;
+		copy[0] = 3;
+	}
+}
+grow_owner :: proc() {
+	values := [dynamic]int{1, 2, 3};
+	first: []mut int = {};
+	foreach (rows in (&mut values[:]).chunks_mut(2)) {
+		first = rows;
+		break;
+	}
+	values.append(4);
+	first[0] = 2;
+}
+view_outlives_use :: proc(xs: []mut int) {
+	view := xs.chunks_mut(2);
+	foreach (rows in view) { rows[0] = 1; }
+	xs[0] = 2;
+	foreach (rows in view) { rows[0] = 3; }
+}
+read_only :: proc(xs: []int) {
+	foreach (rows in xs.chunks_mut(2)) {}
+}
+
+CHUNKED :: chunked();
+chunked :: proc() -> int {
+	values := [4]int{};
+	view := (&mut values[:]).chunks_mut(2);
+	return 0;
+}
+
+main :: proc() {}

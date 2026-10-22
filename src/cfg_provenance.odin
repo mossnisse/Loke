@@ -524,6 +524,9 @@ prov_composite_content :: proc(graph: ^Flow_Graph, v: ^Expr_Composite, content: 
 	}
 	parts := make([dynamic]Part, 0, 2 * len(v.elements), graph.alloc)
 	is_map := underlying_kind(graph.k.c, v.type) == .Map
+	// What earlier elements hold, used again as each later mutable carrier is
+	// lent, as `prov_call` does for arguments.
+	held: []int
 	for element, index in v.elements {
 		if is_map {
 			loans := walk_flow_expr(graph, element.key)
@@ -540,11 +543,21 @@ prov_composite_content :: proc(graph: ^Flow_Graph, v: ^Expr_Composite, content: 
 			continue
 		}
 		loans := walk_flow_expr(graph, element.value)
+		// design.md "Weakening and reborrows": a mutable carrier stored in an
+		// element is a reborrow of it, live until the literal is built, so no
+		// later element may use the same carrier: `Pair{xs, xs}` would hold two
+		// mutable views of one sequence.
+		lent := carrier_is_mutable(graph.k.c, prov_element_type(graph, v, index))
+		if lent {
+			loans = prov_lend_carrier(graph, loans, held, expr_span(element.value))
+		}
 		// A later element may write what this one read (design.md "Evaluation
-		// order").
-		if len(loans) > 0 && prov_elements_may_write(v.elements[index + 1:]) {
+		// order"). A lent carrier needs no copy: it is suspended, so a later
+		// element cannot write it, and a copy would end the reborrow early.
+		if !lent && len(loans) > 0 && prov_elements_may_write(v.elements[index + 1:]) {
 			loans = prov_capture(graph, loans, expr_span(element.value))
 		}
+		held = prov_join(graph, held, loans)
 		prefix, known := prov_element_prefix(graph, v, index)
 		append(&parts, Part{loans, prefix, expr_base(element.value).type, known})
 	}
@@ -567,6 +580,34 @@ prov_composite_content :: proc(graph: ^Flow_Graph, v: ^Expr_Composite, content: 
 		prov_define_one_content(graph, slot, sources, v.span)
 	}
 	return content
+}
+
+// The type one literal element is stored as, after any weakening: a `[]mut T`
+// stored in a `[]T` field is only read.
+@(private = "file")
+prov_element_type :: proc(graph: ^Flow_Graph, v: ^Expr_Composite, index: int) -> Type_Id {
+	c := graph.k.c
+	info := underlying_info(c, v.type)
+	if info == nil {
+		return expr_base(v.elements[index].value).type
+	}
+	#partial switch info.kind {
+	case .Array, .Slice, .Dynamic_Array, .Map:
+		return info.element
+	case .Struct:
+		field := INVALID_SYMBOL
+		if key := v.elements[index].key; key == nil {
+			if index < len(v.field_indices) && v.field_indices[index] >= 0 && v.field_indices[index] < len(info.fields) {
+				field = info.fields[v.field_indices[index]]
+			}
+		} else if name, is_ident := key.(^Expr_Ident); is_ident {
+			field = struct_field(c, v.type, intern_identifier(c, name.name))
+		}
+		if sym := symbol_of(c, field); sym != nil {
+			return sym.type
+		}
+	}
+	return expr_base(v.elements[index].value).type
 }
 
 @(private = "file")
@@ -949,6 +990,26 @@ prov_bind_value :: proc(graph: ^Flow_Graph, id: Symbol_Id, sources: []int, span:
 	if content := prov_content_slots(graph, id); len(content) > 0 {
 		prov_define_content(graph, content, sources, span, copies = copies)
 	}
+}
+
+// design.md "Chunks of a mutable slice": a chunk is a reborrow of the view that
+// does not suspend the view, so the view advances while earlier chunks are
+// held, and through it the chunk keeps the sliced carrier suspended. Each step
+// binds a value disjoint from the last, so redefining the binding severs the
+// reborrows taken from the chunk before. False when the binding is not a
+// carrier slot.
+@(private)
+prov_bind_chunk :: proc(graph: ^Flow_Graph, id: Symbol_Id, sources: []int, span: Span) -> bool {
+	slot, is_carrier := prov_slot_for_symbol(graph, id)
+	if !is_carrier {
+		return false
+	}
+	for source in sources {
+		append(&graph.reborrows, Prov_Reborrow{source = source, derived = slot, span = span, mutable = true, passes_on = true})
+	}
+	graph.fresh_slots[slot] = true
+	prov_emit(graph, Prov_Event{kind = .Def, slot = slot, loan = NO_LOAN, sources = sources, span = span})
+	return true
 }
 
 // Publishes content into another value's slots by matching paths.
@@ -3943,9 +4004,19 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	borrowed: []int
 	// Evaluation order, not parameter order: a named argument written first
 	// borrows before a later one invalidates.
+	split_receiver, split_read: []int
 	for step in 0 ..< len(v.bound) {
 		index := call_slot_at(v, step)
+		if index == 0 && prov_op_lends_receiver(container_op) && v.bound[0] != nil {
+			split_receiver = walk_flow_expr(graph, v.bound[0])
+			split_read = prov_snapshot(graph, split_receiver, expr_span(v.bound[0]))
+			continue
+		}
 		actuals[index] = prov_call_argument(graph, v, index, receiver, has_receiver, container_op, &borrowed)
+	}
+	if prov_op_lends_receiver(container_op) && len(v.bound) > 0 && v.bound[0] != nil {
+		actuals[0] = prov_lend_split_receiver(graph, split_receiver, split_read, expr_span(v.bound[0]))
+		borrowed = prov_join(graph, borrowed, actuals[0])
 	}
 	prov_call_resets(graph, v)
 	prov_call_retention(graph, v, actuals)
@@ -4293,6 +4364,35 @@ prov_argument_drop_effects :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 	}
 }
 
+// What `slots` hold now, in temporaries a later write cannot redefine.
+@(private = "file")
+prov_snapshot :: proc(graph: ^Flow_Graph, slots: []int, span: Span) -> []int {
+	out := make([]int, len(slots), graph.alloc)
+	for slot, index in slots {
+		out[index] = prov_temp_slot(graph)
+		prov_emit(graph, Prov_Event{kind = .Def, slot = out[index], loan = NO_LOAN, sources = prov_one(graph, slot), span = span})
+	}
+	return out
+}
+
+// design.md "Splitting a mutable slice": the receiver is read before `mid` and
+// lent after it, so `xs.split_at_mut(xs.len() / 2)` may still read `xs`. The
+// value read is what is lent, so the halves stay tied to it even if `mid`
+// reassigns `xs`; the reborrow suspends `xs` only while `xs` still views the
+// same storage.
+@(private = "file")
+prov_lend_split_receiver :: proc(graph: ^Flow_Graph, receiver, read: []int, span: Span) -> []int {
+	out := make([]int, len(read), graph.alloc)
+	for slot, index in read {
+		out[index] = prov_temp_slot(graph)
+		prov_emit(graph, Prov_Event{kind = .Def, slot = out[index], loan = NO_LOAN, sources = prov_one(graph, slot), span = span})
+		if prov_slot_is_mutable_carrier(graph, receiver[index]) {
+			append(&graph.reborrows, Prov_Reborrow{source = receiver[index], derived = out[index], span = span, mutable = true})
+		}
+	}
+	return out
+}
+
 // design.md "Weakening and reborrows": a mutable carrier lent to a call is
 // reborrowed for it. The arguments already evaluated are held through the call,
 // so they are used again after the reborrow is taken, which catches one that
@@ -4530,6 +4630,14 @@ prov_op_returns_view :: proc(op: Container_Op) -> bool {
 		return true
 	}
 	return false
+}
+
+// design.md "Splitting a mutable slice", "Chunks of a mutable slice": the
+// result views what the receiver views, so the receiver is lent as a mutable
+// carrier argument is.
+@(private = "file")
+prov_op_lends_receiver :: proc(op: Container_Op) -> bool {
+	return op == .Split_At_Mut || op == .Chunks_Mut
 }
 
 @(private = "file")

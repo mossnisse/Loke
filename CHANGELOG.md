@@ -116,6 +116,16 @@ checklist.
 
 ### Added
 
+- `xs.split_at_mut(mid)` on a `[]mut T` returns two mutable halves,
+  `(left: []mut T, right: []mut T)`, usable at once and checked as one
+  reborrow of `xs`, so `left, right := xs.split_at_mut(xs.len() / 2);`
+  works ([Splitting a mutable slice](design.md#splitting-a-mutable-slice)).
+  It also runs at compile time.
+- `xs.chunks_mut(n)` on a `[]mut T` yields consecutive mutable chunks of `n`
+  elements, which stay usable after the loop advances and after it ends while
+  `xs` stays suspended ([Chunks of a mutable slice](design.md#chunks-of-a-mutable-slice)).
+  A length below one panics.
+
 - `lokec <dir> -api` writes each package's interface file, `api.loki`, in its
   directory: the public API as Loke source, each declaration after its doc
   comment, written `//`, and without a body, with a file-scope `when` kept whole so the file
@@ -323,6 +333,12 @@ checklist.
   for any count.
 
 ### Fixed
+
+- One composite literal can no longer hold two mutable views of one carrier:
+  `Pair{xs, xs}` and `Pair{&mut xs[:1], &mut xs[1:]}` for `xs: []mut int`
+  were accepted, though [Weakening and reborrows](design.md#weakening-and-reborrows)
+  makes each element a reborrow of `xs`. They are now `L0641`, as two such
+  call arguments already were. Use `split_at_mut` for two halves.
 
 - `lokec -doc` no longer shows the members of a type private to the package,
   which no importer can reach, such as the 28 members of `core:time`'s `Text`

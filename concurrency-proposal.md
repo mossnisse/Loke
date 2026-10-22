@@ -669,26 +669,30 @@ shade_all :: proc(pixels: []mut Rgb, scene: ^Scene) {
 }
 ```
 
-No existing rule allows this loop. A mutable traversal ends each loan before
-the iterator advances ([By-reference iteration](design.md#by-reference-iteration)),
-and a mutable reborrow suspends its source until its last use, but here every
-chunk stays lent to a task until the join. `chunks_mut` is therefore one more
-compiler-known operation built like `split_at_mut`:
+No rule before milestone 1 allowed this loop. A mutable traversal ends each
+loan before the iterator advances
+([By-reference iteration](design.md#by-reference-iteration)), and a mutable
+reborrow suspends its source until its last use, but here every chunk stays
+lent to a task until the join. `chunks_mut` is therefore a compiler-known
+operation built like `split_at_mut`. Both are now in design.md, under
+[Splitting a mutable slice](design.md#splitting-a-mutable-slice) and
+[Chunks of a mutable slice](design.md#chunks-of-a-mutable-slice):
 
-- `xs.chunks_mut(n)` on `[]mut T` takes one mutable reborrow of `xs` for as
-  long as any chunk it yields is live, so `xs` is suspended until then.
-- Each yielded chunk is an owned `[]mut T` whose root provenance is that of
-  `xs`, not of the iterator. The iterator temporary ends with the `foreach`
-  statement, inside the block; chunks remain valid after it, as `split_at_mut`'s
-  halves do.
-- Chunks are disjoint by construction, so loans of different chunks do not
-  conflict with each other, and no disjointness relation is tracked.
+- `xs.chunks_mut(n)` on `[]mut T` takes one mutable reborrow of `xs`, and
+  `xs` stays suspended while the view or any chunk is live.
+- Each chunk is a reborrow of the view that does not suspend the view, so the
+  loop advances while earlier chunks are held; through the view, each chunk
+  keeps `xs` suspended. Chunks remain valid after the loop, as
+  `split_at_mut`'s halves do.
+- Chunks are disjoint by construction. A chunk binding is a fresh value on
+  each step, so the analysis severs reborrows of the previous step's chunk
+  when it binds the next one; within one step, a copy of the chunk suspends
+  it as any reborrow does. No disjointness relation is tracked.
 - `n` must be positive; a final chunk may be shorter. `n <= 0` panics.
 
-A user-written iterator cannot provide this, for the reason a
-[library `split_at_mut`](open-questions.md#provide-checked-disjoint-access)
-cannot. Acceptance tests should reject a use of `xs` while a
-chunk is live and accept chunks held past the loop.
+A user-written iterator cannot provide this, for the reason a library
+`split_at_mut` cannot (see
+[Provide checked disjoint access](open-questions.md#provide-checked-disjoint-access)).
 
 ### Cancellation and shutdown
 
@@ -1000,23 +1004,26 @@ Milestone 4 lands behind a gate; milestone 5 removes it. File names follow the
 
 ### Milestone 1: disjoint slice access
 
-`split_at_mut` and `chunks_mut`, as specified under
-[Provide checked disjoint access](open-questions.md#provide-checked-disjoint-access)
-and [Waiting for work](#waiting-for-work). Without them tasks cannot each take
-a mutable piece of one slice.
+**Done.** `split_at_mut` and `chunks_mut` are in design.md under
+[Splitting a mutable slice](design.md#splitting-a-mutable-slice) and
+[Chunks of a mutable slice](design.md#chunks-of-a-mutable-slice). The
+implementation found and fixed a checker hole first: two mutable reborrows of
+one carrier in one composite literal, `Pair{xs, xs}`, were accepted, which let
+a library procedure return two overlapping mutable views.
 
-- **Spec:** both members under [Slices](design.md#slices), and the
-  `chunks_mut` exception under
-  [By-reference iteration](design.md#by-reference-iteration).
-- **Compiler:** the member table in `slice.odin`; one mutable reborrow of the
-  source for the result's carrier paths in `borrow.odin`; yielded chunks
-  rooted in the source rather than the iterator in `iteration_mutable.odin`;
-  lowering in `emit_llvm_calls.odin` and `emit_llvm_iteration.odin`.
-- **Tests:** in `tests/run`, both halves written while live and chunks held
-  past their loop. In `tests/err`, a write through the source, reallocation
-  of its owner, a half retained beyond the source, and a use of the source
-  while a chunk is live. A `chunks_mut(0)` panic in `tests/trap`.
-- **Changelog:** Added.
+- **Compiler:** both members and the `Chunks_Mut([]mut T)` view in
+  `container.odin`; their bodies in `emit_llvm_containers.odin`; the
+  receiver lent after the other arguments, per-field result summaries, and
+  chunk bindings in `cfg_provenance.odin` and `cfg.odin`; severing of
+  reborrows taken from a previous chunk in `borrow.odin`; compile-time
+  `split_at_mut` in `eval.odin`.
+- **Tests:** `split_at_mut` and `chunks_mut` in `tests/run`, `tests/err`, and
+  `tests/trap`, and `composite_mutable_reborrow` in `tests/err`.
+- **Left for milestone 4:** chunks cannot yet be collected in a container: the
+  elements of a `[dynamic][]mut T` share one content slot, so a second
+  mutable slice appended conflicts with the first (see
+  [known-gaps.md](known-gaps.md)). Tasks take chunks as `spawn` arguments,
+  which this does not affect.
 
 ### Milestone 2: thread declarations
 

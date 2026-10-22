@@ -1,0 +1,19 @@
+L0641
+@11:2
+`xs` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@16:14
+L0512
+@22:2
+`values` cannot be modified here: a mutable slice of it is still in use
+L0526
+@28:9
+`local` ends when this procedure returns
+L0641
+@33:2
+`left` cannot be used here
+L0641
+@38:12
+L0363
+@42:12
+`[]int` has no field or member `split_at_mut`

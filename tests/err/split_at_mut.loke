@@ -1,0 +1,56 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Splitting a mutable slice": the two halves are one mutable
+// reborrow of the receiver, so the receiver is suspended while either is live,
+// and the halves are bounded by what the receiver views.
+
+write_source :: proc(xs: []mut int) {
+	left, right := xs.split_at_mut(1);
+	xs[0] = 1;
+	left[0] = 2;
+}
+read_source :: proc(xs: []mut int) {
+	left, right := xs.split_at_mut(1);
+	fmt.println(xs[0]);
+	right[0] = 2;
+}
+grow_owner :: proc() {
+	values := [dynamic]int{1, 2, 3};
+	halves := (&mut values[:]).split_at_mut(1);
+	values.append(4);
+	halves.left[0] = 1;
+}
+outlive :: proc() -> []mut int {
+	local := [4]int{};
+	left, right := (&mut local[:]).split_at_mut(2);
+	return right;
+}
+copy_half :: proc(xs: []mut int) {
+	left, right := xs.split_at_mut(1);
+	again := left;
+	left[0] = 1;
+	again[0] = 2;
+}
+split_twice :: proc(xs: []mut int) {
+	first := xs.split_at_mut(1);
+	second := xs.split_at_mut(2);
+	first.left[0] = 1;
+}
+read_only :: proc(xs: []int) {
+	halves := xs.split_at_mut(1);
+}
+
+// Distinct halves, a half returned, and the receiver after the halves are done
+// are fine.
+fine :: proc(xs: []mut int) -> []mut int {
+	left, right := xs.split_at_mut(1);
+	left[0] = right[0];
+	right[0] = 3;
+	xs[0] = 4;
+	_, rest := xs.split_at_mut(1);
+	return rest;
+}
+
+main :: proc() {}

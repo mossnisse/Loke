@@ -1,0 +1,18 @@
+L0641
+@12:3
+`xs` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@22:2
+L0641
+@28:3
+`rows` cannot be used here
+L0512
+@39:2
+`values` cannot be modified here
+L0641
+@45:2
+L0363
+@49:19
+`[]int` has no field or member `chunks_mut`
+L0341
+`chunks_mut` has no compile-time meaning yet

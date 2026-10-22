@@ -1,0 +1,12 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Splitting a mutable slice": a split index past the end panics, as
+// slicing past it does.
+main :: proc() {
+	values := [3]int{1, 2, 3};
+	at := 4;
+	halves := (&mut values[:]).split_at_mut(at);
+	fmt.println(halves.left.len());
+}

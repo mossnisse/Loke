@@ -532,6 +532,8 @@ Synth_Kind :: enum {
 	Text_Iter,
 	Text_Next,
 	Rune_Offsets_Next,
+	// design.md "Chunks of a mutable slice".
+	Chunks_Next,
 	Try_Clone,
 	Clone,
 	Dyn_Forward,

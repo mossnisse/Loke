@@ -133,6 +133,12 @@ Container_Op :: enum {
 	// design.md "Swapping elements": one operation, since two `inout` borrows of
 	// the same sequence could not be proven distinct.
 	Swap,
+	// design.md "Splitting a mutable slice": two halves that are one reborrow
+	// of the receiver, which no library procedure could prove disjoint.
+	Split_At_Mut,
+	// design.md "Chunks of a mutable slice": a view whose chunks borrow the
+	// receiver, not the view.
+	Chunks_Mut,
 	Map_Find,
 	Map_Find_Or_Insert,
 	Map_Lookup_Value,
@@ -261,7 +267,7 @@ ensure_slice_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
 	if !info.mutable {
 		return
 	}
-	members := make([dynamic]Symbol_Id, 0, 3, k.c.semantic_allocator)
+	members := make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
 	append(&members, container_member(
 		k, type, "sort", .Sort,
 		[]Type_Id{type}, []Param_Mode{.Value}, INVALID_TYPE, 0, .Value,
@@ -275,7 +281,59 @@ ensure_slice_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
 		[]Type_Id{type, TYPE_INT, TYPE_INT}, []Param_Mode{.Value, .Value, .Value},
 		INVALID_TYPE, 0, .Value,
 	))
+	// Both halves borrow the receiver, so the caller's slice stays suspended
+	// while either is live.
+	halves := anon_record_type(k.c, []Anon_Record_Field{
+		{name = intern_identifier(k.c, "left"), type = type},
+		{name = intern_identifier(k.c, "right"), type = type},
+	})
+	split := container_member(
+		k, type, "split_at_mut", .Split_At_Mut,
+		[]Type_Id{type, TYPE_INT}, []Param_Mode{.Value, .Value}, halves, 0, .Value,
+	)
+	set_synth_content_summary(k.c, split, 0)
+	append(&members, split)
+	chunks := container_member(
+		k, type, "chunks_mut", .Chunks_Mut,
+		[]Type_Id{type, TYPE_INT}, []Param_Mode{.Value, .Value}, chunks_mut_type(k, type), 0, .Value,
+	)
+	set_synth_content_summary(k.c, chunks, 0)
+	append(&members, chunks)
 	add_members(k.c, type, members[:])
+}
+
+// Field positions of `Chunks_Mut(T)`.
+CHUNKS_REST :: 0
+CHUNKS_SIZE :: 1
+
+// design.md "Chunks of a mutable slice": what `chunks_mut` returns, which is its
+// own iterator. It holds the part of the slice not yet handed out and the chunk
+// length.
+@(private = "file")
+chunks_mut_type :: proc(k: ^Checker, slice: Type_Id) -> Type_Id {
+	c := k.c
+	name := intern_identifier(c, fmt.aprintf("Chunks_Mut(%s)", type_name(c, slice), allocator = c.semantic_allocator))
+	type := new_type(c, Type_Info{kind = .Struct, name = name, element = slice})
+	fields := make([]Symbol_Id, 2, c.semantic_allocator)
+	fields[CHUNKS_REST] = new_field(c, "rest", slice, CHUNKS_REST)
+	fields[CHUNKS_SIZE] = new_field(c, "size", TYPE_INT, CHUNKS_SIZE)
+	info := type_of(c, type)
+	info.fields = fields
+	info.backend_label = fmt.aprintf("Chunks_Mut.%d", slice, allocator = c.semantic_allocator)
+	info.contributed += {.Iteration}
+	next := synth_proc(c, "next", .Chunks_Next, type, []Type_Id{type}, []Param_Mode{.Inout}, option_type(k, slice))
+	if sym := symbol_of(c, next); sym != nil {
+		sym.has_receiver = true
+		sym.receiver = .Inout
+	}
+	set_synth_result_summary(c, next, 0)
+	add_members(c, type, []Symbol_Id{
+		new_associated_type(c, "Element", slice, type),
+		new_associated_type(c, "Iterator", type, type),
+		adapter_proc(k, "iter", .Iterator_Copy, type, .Borrow, type),
+		next,
+	})
+	return type
 }
 
 // design.md "Map container operations".

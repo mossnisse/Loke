@@ -95,6 +95,10 @@ Flow_Block :: struct {
 	precision_exit:  []Precision_Loss,
 	ended_entry:     []bool,
 	ended_exit:      []bool,
+	// Per reborrow: severed on every path to here, by a redefinition of its
+	// fresh source (`Flow_Graph.fresh_slots`).
+	severed_entry:   []bool,
+	severed_exit:    []bool,
 	live_entry:      []bool,
 	live_exit:       []bool,
 	use_entry:       []Span,
@@ -235,6 +239,11 @@ Prov_State :: struct {
 	// The carrier slots of a lent loop element, which is the stored carrier
 	// rather than a copy: a copy taken from one reborrows these instead.
 	lent_aliases:   map[int][]int,
+	// Slots each of whose definitions holds a value disjoint from the one
+	// before: a `chunks_mut` loop's binding. Redefining one severs the
+	// reborrows taken from its previous value (design.md "Chunks of a mutable
+	// slice").
+	fresh_slots:    map[int]bool,
 	// One slot per `carrier_shape` path of a local that holds carriers.
 	content_by_symbol: map[Symbol_Id][]int,
 	// The keyed map-shape entry each constant key uses, first written first.
@@ -362,6 +371,7 @@ build_flow_pass :: proc(
 		graph.view_loans = make(map[Symbol_Id][]int, 8, allocator)
 		graph.step_views = make(map[Symbol_Id]bool, 8, allocator)
 		graph.lent_aliases = make(map[int][]int, 8, allocator)
+		graph.fresh_slots = make(map[int]bool, 2, allocator)
 		graph.content_by_symbol = make(map[Symbol_Id][]int, 8, allocator)
 		graph.call_results = make(map[^Expr_Call]Prov_Call_Result, 8, allocator)
 		graph.operator_calls = make(map[rawptr]^Expr_Call, 4, allocator)
@@ -1714,6 +1724,12 @@ walk_foreach_binding_provenance :: proc(
 		if !binding.is_ref && s.kind != .Protocol && len(elements) > 0 {
 			loans = elements
 		}
+		// design.md "Chunks of a mutable slice": a chunk takes the view's loans
+		// without reborrowing the view, so the view advances while earlier
+		// chunks are held. The chunks are disjoint by construction.
+		if foreach_yields_chunks(graph.k.c, s) && prov_bind_chunk(graph, binding.symbol, loans, expr_span(s.iterable)) {
+			continue
+		}
 		// A lent element is the stored carrier, not a copy of it, so it does not
 		// reborrow what the container holds (design.md "Borrowing iteration"):
 		// reading it reads that carrier, which the iterator loan already guards.
@@ -1726,6 +1742,12 @@ walk_foreach_binding_provenance :: proc(
 			prov_bind_view(graph, binding.symbol, iterated, lends = !foreach_is_place_loop(s))
 		}
 	}
+}
+
+@(private = "file")
+foreach_yields_chunks :: proc(c: ^Compiler, s: ^Stmt_Foreach) -> bool {
+	next := symbol_of(c, s.next_symbol)
+	return s.kind == .Protocol && next != nil && next.synth == .Chunks_Next
 }
 
 @(private = "file")

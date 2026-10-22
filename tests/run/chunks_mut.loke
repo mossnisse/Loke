@@ -1,0 +1,49 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Chunks of a mutable slice": `chunks_mut` hands out disjoint
+// mutable chunks of a `[]mut T`, and a chunk may be held while the loop goes
+// on and after it ends.
+
+fill :: proc(rows: []mut int, value: int) {
+	foreach (&mut x in rows) { x = value; }
+}
+
+main :: proc() {
+	values := [dynamic]int{1, 2, 3, 4, 5, 6, 7};
+	xs := &mut values[:];
+
+	// The last chunk is shorter when the length is not a multiple.
+	step := 0;
+	foreach (rows in xs.chunks_mut(3)) {
+		fill(rows, step);
+		fmt.println(rows.len());
+		step += 1;
+	}
+	fmt.println(xs);
+
+	// Chunks from different steps are live at once, here and past the loop.
+	first: []mut int = {};
+	last: []mut int = {};
+	count := 0;
+	foreach (rows in xs.chunks_mut(2)) {
+		rows[0] = 10 * count;
+		if (count == 0) { first = rows; } else { last = rows; }
+		count += 1;
+	}
+	first[1] = -1;
+	last[0] += first[0];
+	fmt.println(count, first.len(), last.len());
+
+	// A chunk longer than the slice is the whole slice, and an empty slice
+	// has no chunks.
+	foreach (rows in xs.chunks_mut(100)) {
+		fmt.println(rows.len());
+	}
+	none := 0;
+	foreach (rows in (&mut xs[:0]).chunks_mut(2)) {
+		none += 1;
+	}
+	fmt.println(none, xs);
+}

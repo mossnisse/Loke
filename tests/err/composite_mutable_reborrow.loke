@@ -1,0 +1,38 @@
+package main;
+
+// design.md "Weakening and reborrows": a mutable carrier stored in a literal's
+// element is a reborrow of it, so no later element of the same literal may
+// use that carrier again. Each pair below would hold two mutable views of one
+// sequence.
+
+Pair :: struct { a: []mut int, b: []mut int }
+Views :: struct { a: []int, b: []int }
+
+use :: proc(pair: Pair) { pair.a[0] = 1; pair.b[0] = 2; }
+
+copies :: proc(xs: []mut int) {
+	use(Pair{xs, xs});
+}
+reslices :: proc(xs: []mut int) {
+	pair := Pair{&mut xs[:1], &mut xs[1:]};
+	pair.a[0] = pair.b[0];
+}
+mixed :: proc(xs: []mut int) {
+	use(Pair{b = xs, a = &mut xs[:]});
+}
+array :: proc(xs: []mut int) {
+	both := [2][]mut int{xs, xs};
+	both[0][0] = 1;
+}
+returned :: proc(xs: []mut int) -> (left: []mut int, right: []mut int) {
+	return {&mut xs[:1], &mut xs[1:]};
+}
+
+// Different carriers, and read-only fields, are fine.
+fine :: proc(xs: []mut int, ys: []mut int) {
+	use(Pair{xs, ys});
+	views := Views{xs, xs};
+	_ = views.a[0] + views.b[0];
+}
+
+main :: proc() {}

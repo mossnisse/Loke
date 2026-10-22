@@ -835,6 +835,15 @@ constness alone does not establish either.
 
 ### Provide checked disjoint access
 
+**Adopted (2026-10-22)** as
+[Splitting a mutable slice](design.md#splitting-a-mutable-slice), with
+[Chunks of a mutable slice](design.md#chunks-of-a-mutable-slice) for the
+data-parallel case. Implementing it showed that the claim below about a
+checked-slicing body was false until then: one record literal could hold two
+mutable reborrows of a carrier, `{&mut xs[:mid], &mut xs[mid:]}`, so a
+library procedure could return two overlapping mutable views. That is now
+`L0641`, and the claim holds. What follows is the original question.
+
 Two runtime slice ranges conservatively overlap, so two *mutable* halves of
 one sequence cannot be live at once: after `left := &mut xs[:mid]`, the
 reborrow suspends `xs`, and `&mut xs[mid:]` is `L0641`.

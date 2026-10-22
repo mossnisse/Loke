@@ -1576,6 +1576,29 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 		self.elements[left], self.elements[right] = self.elements[right], self.elements[left]
 		return none, true
 
+	case .Chunks_Mut:
+		// Its chunks are handed out by a protocol iterator, which compile-time
+		// evaluation does not run.
+		eval_fail(ev, v.span, "L0341", "`chunks_mut` has no compile-time meaning yet")
+		return nil, false
+
+	case .Split_At_Mut:
+		// Both halves view the receiver's elements (design.md "Splitting a
+		// mutable slice").
+		mid, mid_ok := count_argument(ev, v, 1)
+		if !mid_ok {
+			return nil, false
+		}
+		if mid > len(self.elements) {
+			eval_fail(ev, v.span, "L0361", "split index %d is out of range for length %d", mid, len(self.elements))
+			return nil, false
+		}
+		halves, err := make([]Eval_Value, 2, ev.alloc)
+		if err != nil { return nil, false }
+		halves[0] = Eval_Value{kind = .Aggregate, type = self.type, elements = self.elements[:mid]}
+		halves[1] = Eval_Value{kind = .Aggregate, type = self.type, elements = self.elements[mid:]}
+		return eval_one(ev, Eval_Value{kind = .Aggregate, type = symbol.result, elements = halves})
+
 	case .Insert:
 		at, at_ok := count_argument(ev, v, 1)
 		value, value_ok := argument(ev, v, 2)

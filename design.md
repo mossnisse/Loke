@@ -924,6 +924,31 @@ No copy or drop hook runs on either element, so a swap works for an element type
 
 A read-only `[]T` has no `swap`, exactly as it has no `sort`.
 
+#### Splitting a mutable slice
+
+`xs.split_at_mut(mid)` divides a `[]mut T` into the two mutable slices `xs[:mid]` and `xs[mid:]`, returned as the [anonymous record](#anonymous-records) `(left: []mut T, right: []mut T)`. `mid` is checked like a slice bound: it may equal `xs.len()`, leaving `right` empty, and a negative or larger one panics.
+
+```loke
+left, right := xs.split_at_mut(xs.len() / 2);
+left[0] = right[0];    // both halves are usable at once
+```
+
+The halves are one mutable [reborrow](#weakening-and-reborrows) of `xs`, taken after `mid` is evaluated, so `mid` may read `xs`. While either half is in use, `xs` is suspended as it is for any reborrow, and neither half outlives what `xs` views. The halves never overlap, so writing through one never conflicts with the other.
+
+No other spelling gives two mutable views of one sequence: `&mut xs[:mid]` and `&mut xs[mid:]` are two reborrows of `xs`, which cannot be live at once, and a procedure cannot return them together either. That is why this is a contributed member rather than a `core:slice` procedure. A read-only `[]T` needs no such member, since two read-only reslices may be live together.
+
+#### Chunks of a mutable slice
+
+`xs.chunks_mut(n)` on a `[]mut T` is a view that yields `xs` in consecutive mutable chunks of `n` elements, the last one shorter when `n` does not divide `xs.len()`. A chunk length below one panics. The view is its own iterator, `Chunks_Mut([]mut T)`, whose `Element` is `[]mut T`.
+
+```loke
+foreach (rows in pixels.chunks_mut(4096)) {
+	shade(rows, scene);
+}
+```
+
+Taking the view is one mutable [reborrow](#weakening-and-reborrows) of `xs`, as [`split_at_mut`](#splitting-a-mutable-slice) is, and the chunks share it: while the view or any chunk is in use, `xs` is suspended. Unlike an element of a [by-reference traversal](#by-reference-iteration), a chunk is an owned `[]mut T` and stays usable after the loop advances and after it ends, since no two chunks overlap. A copy of a chunk is an ordinary reborrow of it, so a chunk binding is suspended by its copies for the rest of its step, and the next step binds a new chunk. A chunk taken by calling `next` directly is a reborrow of the view, so it ends before the view advances. A `chunks_mut` view has no compile-time meaning yet.
+
 #### Sorting slices
 
 `slice.sort` sorts ascending and `slice.reverse_sort` descending according to the element type's `Ordered` implementation. `slice.sort_by` instead takes a comparator:
@@ -2831,7 +2856,7 @@ Mutable fixed arrays, dynamic arrays, `Small_Array`, maps, and user-defined cont
 
 The user-defined protocol has associated `Element` and `Mut_Iterator` types, `iter_mut :: proc(self: inout Self) -> Mut_Iterator` for a container or `iter_mut :: proc(self) -> Mut_Iterator` for a view, and `next :: proc(self: inout Mut_Iterator) -> Option(Item)`. The iterator's `next` decides the yield mode as for reading. The source is mutably borrowed for the whole traversal, which is exclusive: it cannot even be read through another path while the loop runs, and a `[]mut T` or other mutable view is [reborrowed](#weakening-and-reborrows) by it.
 
-Each successful `next()` lends one element, and **every loan it hands out — nested pointers and pointers derived from them included — ends before the iterator advances or is dropped.** That holds on every exit, `break` and `continue` among them, and for manual `next()` calls as much as for a header.
+Each successful `next()` lends one element, and **every loan it hands out — nested pointers and pointers derived from them included — ends before the iterator advances or is dropped.** That holds on every exit, `break` and `continue` among them, and for manual `next()` calls as much as for a header. [`chunks_mut`](#chunks-of-a-mutable-slice) is the one traversal that hands out mutable views which outlive their step, which no user-written iterator can.
 
 #### Temporary roots
 

@@ -206,6 +206,106 @@ emit_synth_swap :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	fmt.sbprintln(&e.b, "}")
 }
 
+// design.md "Splitting a mutable slice": one bounds check and two headers over
+// the receiver's elements.
+@(private = "file")
+emit_synth_split :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
+	function := begin_function_emission(e)
+	defer finish_function_emission(e, function)
+	header := llvm_type(e, symbol.params[0])
+	element_llvm := llvm_type(e, slice_element(e.c, symbol.params[0]))
+	halves := llvm_type(e, symbol.result)
+
+	fmt.sbprintf(&e.b, "define %s%s %s(", llvm_linkage(name), llvm_result_type(e, symbol.result), name)
+	fmt.sbprint(&e.b, sret_param(e, symbol.result))
+	open_function(
+		e, "%s %%arg0, %s %%arg1)", synth_param_llvm(e, symbol, 0), synth_param_llvm(e, symbol, 1),
+	)
+	e.terminated = false
+
+	data, count := synth_sequence_storage(e, symbol, false)
+	// Unsigned, so a negative `mid` fails the same comparison; `mid == len`
+	// leaves `right` empty.
+	out_of_range := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp ugt i64 %%arg1, %s", out_of_range, count)
+	panic_if(e, out_of_range, "bounds", "split index out of range")
+
+	rest := gep_at(e, element_llvm, data, "%arg1")
+	rest_count := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = sub i64 %s, %%arg1", rest_count, count)
+	left := insert(e, header, "undef", "ptr", data, SLICE_DATA)
+	left = insert(e, header, left, "i64", "%arg1", SLICE_LEN)
+	right := insert(e, header, "undef", "ptr", rest, SLICE_DATA)
+	right = insert(e, header, right, "i64", rest_count, SLICE_LEN)
+	value := insert(e, halves, "undef", header, left, 0)
+	value = insert(e, halves, value, header, right, 1)
+	emit_ret(e, symbol.result, value)
+	fmt.sbprintln(&e.b, "}")
+}
+
+// design.md "Chunks of a mutable slice": the view over the receiver, after the
+// chunk length is checked.
+@(private = "file")
+emit_synth_chunks :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
+	function := begin_function_emission(e)
+	defer finish_function_emission(e, function)
+	header := llvm_type(e, symbol.params[0])
+	chunks := llvm_type(e, symbol.result)
+
+	fmt.sbprintf(&e.b, "define %s%s %s(", llvm_linkage(name), llvm_result_type(e, symbol.result), name)
+	fmt.sbprint(&e.b, sret_param(e, symbol.result))
+	open_function(
+		e, "%s %%arg0, %s %%arg1)", synth_param_llvm(e, symbol, 0), synth_param_llvm(e, symbol, 1),
+	)
+	e.terminated = false
+
+	not_positive := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp slt i64 %%arg1, 1", not_positive)
+	panic_if(e, not_positive, "bounds", "chunk length must be positive")
+	value := insert(e, chunks, "undef", header, synth_receiver_value(e, symbol), CHUNKS_REST)
+	value = insert(e, chunks, value, "i64", "%arg1", CHUNKS_SIZE)
+	emit_ret(e, symbol.result, value)
+	fmt.sbprintln(&e.b, "}")
+}
+
+// `next` for `chunks_mut`: the next `size` elements of what is left, or all of
+// it when fewer remain, and what is left past them.
+@(private)
+emit_synth_chunks_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
+	function := begin_function_emission(e)
+	defer finish_function_emission(e, function)
+	option := symbol.result
+	slice := option_payload(e.c, option)
+	header := llvm_type(e, slice)
+	element := llvm_type(e, slice_element(e.c, slice))
+	iterator := llvm_type(e, symbol.params[0])
+
+	open_function(e, "define %s%s %s(%sptr %%arg0)", llvm_linkage(name), llvm_result_type(e, option), name, sret_param(e, option))
+	e.terminated = false
+	rest_ptr := gep_field(e, iterator, "%arg0", CHUNKS_REST)
+	rest := load(e, header, rest_ptr)
+	data := extract(e, header, rest, SLICE_DATA)
+	count := extract(e, header, rest, SLICE_LEN)
+	size := load(e, "i64", gep_field(e, iterator, "%arg0", CHUNKS_SIZE))
+	empty := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp sle i64 %s, 0", empty, count)
+	stop_label, yield_label := new_label(e, "chunks.stop"), new_label(e, "chunks.yield")
+	branch_if(e, empty, stop_label, yield_label)
+
+	place_label(e, yield_label)
+	short, taken, left := temp(e), temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp slt i64 %s, %s", short, count, size)
+	fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 %s, i64 %s", taken, short, count, size)
+	fmt.sbprintfln(&e.b, "  %s = sub i64 %s, %s", left, count, taken)
+	chunk := emit_ptr_len(e, header, data, taken)
+	store(e, slice, emit_ptr_len(e, header, gep_at(e, element, data, taken), left), rest_ptr)
+	emit_ret(e, option, emit_option_some(e, option, chunk))
+
+	place_label(e, stop_label)
+	emit_ret(e, option, "zeroinitializer")
+	fmt.sbprintln(&e.b, "}")
+}
+
 // `core:slice.sort_by`: the checked comparator and its concrete `call` method
 // are erased only at this C ABI seam.
 @(private)
@@ -718,6 +818,12 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 	case .Swap:
 		emit_synth_swap(e, symbol, name)
 		return
+	case .Split_At_Mut:
+		emit_synth_split(e, symbol, name)
+		return
+	case .Chunks_Mut:
+		emit_synth_chunks(e, symbol, name)
+		return
 	}
 	function := begin_function_emission(e)
 	defer finish_function_emission(e, function)
@@ -1081,7 +1187,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 			&e.b, "  %s = call i32 @loke_rt_v1_map_shrink(ptr %%arg0, ptr %s, i64 %%arg1)", status, ops,
 		)
 
-	case .None, .Sort, .Reverse_Sort, .Swap:
+	case .None, .Sort, .Reverse_Sort, .Swap, .Split_At_Mut, .Chunks_Mut:
 		backend_fail(e, "a contributed container member has no operation")
 		fmt.sbprintln(&e.b, "  ret void")
 		fmt.sbprintln(&e.b, "}")
