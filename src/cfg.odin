@@ -262,6 +262,8 @@ Prov_State :: struct {
 	// Procedures this body uses as values, and the callee being walked, which is
 	// a call rather than a use.
 	effect_values: [dynamic]Symbol_Id,
+	// What each variable holding a procedure may be given.
+	effect_stores: [dynamic]Effect_Store,
 	// `thread.spawn` calls, kept on the graph so a repeated pass notes each once.
 	thread_spawns: [dynamic]Thread_Spawn,
 	callee_expr:   Expr,
@@ -380,6 +382,7 @@ build_flow_pass :: proc(
 		graph.effect_writes = make([dynamic]Symbol_Id, allocator)
 		graph.effect_calls = make([dynamic]Effect_Call, allocator)
 		graph.effect_values = make([dynamic]Symbol_Id, allocator)
+		graph.effect_stores = make([dynamic]Effect_Store, allocator)
 		graph.thread_spawns = make([dynamic]Thread_Spawn, allocator)
 		graph.region_of = make(map[Symbol_Id]Region_Set, 8, allocator)
 		graph.region_content = make(map[Symbol_Id][]Prov_Region_Content, 8, allocator)
@@ -1408,6 +1411,7 @@ walk_flow_decl :: proc(graph: ^Flow_Graph, d: ^Decl) {
 		}
 	}
 	if graph.mode != .Lifecycle {
+		prov_note_declared_procs(graph, d)
 		prov_declare(graph, d, value_loans)
 		return
 	}
@@ -1489,7 +1493,6 @@ declaration_evaluates_via :: proc(c: ^Compiler, d: ^Decl, index: int) -> bool {
 
 // One binding's initializer, and whether one was written; a written nil is
 // `---`. One value spread over several bindings initializes each.
-@(private = "file")
 declared_initializer :: proc(d: ^Decl, symbol_index: int) -> (initializer: Expr, written: bool) {
 	if len(d.values) == 0 {
 		return nil, false
@@ -1518,6 +1521,7 @@ walk_flow_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 		}
 	}
 	if graph.mode != .Lifecycle {
+		prov_note_assigned_procs(graph, s)
 		// design.md "Operator declarations": `operator([]=)` and a direct compound
 		// overload are the whole statement, a call like any other.
 		if s.place_setter != INVALID_SYMBOL {

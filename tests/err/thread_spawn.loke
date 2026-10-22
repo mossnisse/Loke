@@ -5,9 +5,11 @@
 // `@(cross_thread)` parameter, at the wrapper's call, while an entry the
 // wrapper names itself still is in its body; a named procedure a trampoline
 // entry calls through its argument is warned about where it is passed, and
-// the trampoline is not, even when it hands the value to a helper, though a
-// procedure it names for that helper is its own; a spawned argument may not borrow shorter-lived
-// storage; and a pointer from a guard may not outlive the lock.
+// the trampoline is not, even when it hands the value to a helper that copies
+// it to a local, though a procedure it names for that helper, or stores in its
+// parameter by assignment or through `inout`, is its own; a spawned argument
+// may not borrow shorter-lived storage; and a pointer from a guard may not
+// outlive the lock.
 package main;
 
 import "core:sync";
@@ -49,6 +51,11 @@ trampoline :: proc(job: move proc()) { job(); }
 relay :: proc(job: proc()) { job(); }
 forwarder :: proc(job: move proc()) { relay(job); }
 relays_bump :: proc(job: move proc()) { relay(bump); }
+relay_held :: proc(job: proc()) { held := job; held(); }
+holds :: proc(job: move proc()) { relay_held(job); }
+reassigns :: proc(job: move proc()) { job = bump; job(); }
+replace :: proc(target: inout proc()) { target = bump; }
+replaces :: proc(job: move proc()) { replace(inout job); job(); }
 
 main :: proc() {
 	a := thread.spawn(indirect);
@@ -63,6 +70,9 @@ main :: proc() {
 	g := thread.spawn(trampoline, bump);
 	h := thread.spawn(forwarder, vouch);
 	i := thread.spawn(relays_bump, vouch);
+	j := thread.spawn(holds, vouch);
+	k := thread.spawn(reassigns, vouch);
+	l := thread.spawn(replaces, vouch);
 }
 
 escapes :: proc() {

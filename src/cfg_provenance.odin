@@ -1378,9 +1378,12 @@ prov_new_loan :: proc(
 ) -> Loan_Id {
 	if mutable {
 		prov_note_static_write(graph, root)
-		if descriptor := graph.roots[int(root)]; descriptor.kind == .Local && descriptor.symbol != INVALID_SYMBOL {
+		descriptor := graph.roots[int(root)]
+		if descriptor.kind == .Local && descriptor.symbol != INVALID_SYMBOL {
 			graph.lent_locals[descriptor.symbol] = true
 		}
+		// Whatever is written through the loan, the variable may now hold.
+		prov_note_proc_store(graph, descriptor.symbol, nil)
 	}
 	append(&graph.loans, Prov_Loan{root = root, path = path, mutable = mutable, span = span, what = what})
 	return Loan_Id(len(graph.loans) - 1)

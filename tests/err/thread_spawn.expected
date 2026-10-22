@@ -1,22 +1,29 @@
 warning[L0707]: `indirect` writes `count`, which every thread shares
-@45:9
+@47:9
 warning[L0707]: `indirect` writes `count`, which every thread shares
-@54:7
+@61:7
 warning[L0707]: `with_static` writes `calls`
-@56:7
+@63:7
 warning[L0707]: `raw` writes `hits`
-@57:7
+@64:7
 L0647
-@60:7
+@67:7
 this slice borrows `local`, which does not outlive `arg`
 warning[L0707]: `bump` writes `count`
-@62:2
+@69:2
 warning[L0707]: `bump` writes `count`
-@63:7
+@70:7
 warning[L0707]: `relays_bump` writes `count`
-@65:7
+@72:7
+warning[L0707]: `reassigns` writes `count`
+@74:7
+warning[L0707]: `replaces` writes `count`
+@75:7
+warning[L0707]: `replaces` writes `hits`
+@75:7
 !`vouch` writes
 !`trampoline` writes
 !`forwarder` writes
+!`holds` writes
 L0513
-@74:2
+@84:2

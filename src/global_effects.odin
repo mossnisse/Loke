@@ -16,26 +16,37 @@ Effect_Call :: struct {
 	type:          Type_Id,
 	dyn_interface: Symbol_Id,
 	dyn_index:     int,
-	// Through a procedure value the body received as its parameter `parameter`:
-	// what it runs is whatever the caller passed.
-	through_parameter: bool,
-	parameter:         int,
-	// A direct call's arguments, by parameter, for following a procedure value
-	// the body hands on to its callee.
-	args:              []Effect_Arg,
+	// Through a procedure value held in this body's parameter or local
+	// `variable`, and once the body is summarized, the values it may hold.
+	variable:      Symbol_Id,
+	through:       []Effect_Arg,
+	// A direct call's arguments that may be followed, each with the callee
+	// parameter it binds; one missing there may be any procedure of its type.
+	args:          []Effect_Arg,
 }
 
-// Where a direct call's argument comes from, when it may be a procedure value.
+// What a procedure value may be.
 Effect_Arg :: struct {
 	kind:      Effect_Arg_Kind,
-	parameter: int,       // `.Parameter`: the calling body's own parameter
-	procedure: Symbol_Id, // `.Procedure`: a named procedure
+	binding:   int,       // in `Effect_Call.args`: the callee parameter it binds
+	parameter: int,       // `.Parameter`: the body's own parameter
+	symbol:    Symbol_Id, // `.Procedure`, or `.Variable` until summarized
 }
 
 Effect_Arg_Kind :: enum u8 {
-	Other,
-	Parameter,
-	Procedure,
+	Other,     // any procedure of its type
+	Parameter, // what the caller passed for the parameter
+	Procedure, // a named procedure
+	Variable,  // whatever a variable of this body may hold
+	Nil,       // none: a declaration without a value
+}
+
+// A value stored into a variable that holds a procedure. A declaration's makes
+// the variable followed; a parameter is followed from the start.
+Effect_Store :: struct {
+	variable: Symbol_Id,
+	value:    Effect_Arg,
+	declares: bool,
 }
 
 // A call passing a named procedure for a `@(cross_thread)` parameter, and that
@@ -134,10 +145,8 @@ call_effect :: proc(c: ^Compiler, v: ^Expr_Call) -> (Effect_Call, bool) {
 	}
 	if base := expr_base(v.callee); base != nil && underlying_kind(c, base.type) == .Proc {
 		call := Effect_Call{type = base.type}
-		if ident, is_ident := v.callee.(^Expr_Ident); is_ident {
-			if callee := symbol_of(c, ident.symbol); callee != nil && callee.kind == .Parameter {
-				call.through_parameter, call.parameter = true, int(callee.index)
-			}
+		if ident, is_ident := v.callee.(^Expr_Ident); is_ident && effect_variable(c, ident.symbol) {
+			call.variable = ident.symbol
 		}
 		return call, true
 	}
@@ -177,35 +186,173 @@ prov_call_effects :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 	prov_effect_call(graph, target, v.span)
 }
 
-// Each argument that is a procedure value the body received, or a named
-// procedure, by the callee's parameter it binds.
+// Each argument that is a named procedure or a variable's value, with the
+// callee's parameter it binds; most calls pass neither.
 @(private = "file")
 effect_args :: proc(c: ^Compiler, v: ^Expr_Call, allocator: mem.Allocator) -> []Effect_Arg {
-	args := make([]Effect_Arg, len(v.bound), allocator)
+	args: [dynamic]Effect_Arg
 	for argument, index in v.bound {
-		value := argument
-		if moved, is_move := value.(^Expr_Move); is_move {
-			value = moved.value
-		}
-		id := INVALID_SYMBOL
-		#partial switch e in value {
-		case ^Expr_Ident:
-			id = e.symbol
-		case ^Expr_Selector:
-			id = e.resolution.symbol
-		}
-		sym := symbol_of(c, id)
-		if sym == nil || underlying_kind(c, expr_base(value).type) != .Proc {
+		value := effect_value(c, argument)
+		if value.kind == .Other {
 			continue
 		}
-		#partial switch sym.kind {
-		case .Parameter:
-			args[index] = Effect_Arg{kind = .Parameter, parameter = int(sym.index)}
-		case .Proc:
-			args[index] = Effect_Arg{kind = .Procedure, procedure = id}
+		if args == nil {
+			args = make([dynamic]Effect_Arg, 0, 2, allocator)
+		}
+		value.binding = index
+		append(&args, value)
+	}
+	return args[:]
+}
+
+// A parameter, or a local, whose procedure value is followed through the body.
+@(private = "file")
+effect_variable :: proc(c: ^Compiler, id: Symbol_Id) -> bool {
+	sym := symbol_of(c, id)
+	if sym == nil || underlying_kind(c, sym.type) != .Proc {
+		return false
+	}
+	return sym.kind == .Parameter || (sym.kind == .Var && sym.duration == .None)
+}
+
+// What a procedure-valued expression may be.
+@(private = "file")
+effect_value :: proc(c: ^Compiler, e: Expr) -> Effect_Arg {
+	value := e
+	if moved, is_move := value.(^Expr_Move); is_move {
+		value = moved.value
+	}
+	id := INVALID_SYMBOL
+	#partial switch v in value {
+	case ^Expr_Ident:
+		id = v.symbol
+	case ^Expr_Selector:
+		id = v.resolution.symbol
+	case:
+		return {}
+	}
+	if underlying_kind(c, expr_base(value).type) != .Proc {
+		return {}
+	}
+	if sym := symbol_of(c, id); sym != nil && sym.kind == .Proc {
+		return Effect_Arg{kind = .Procedure, symbol = id}
+	}
+	if effect_variable(c, id) {
+		return Effect_Arg{kind = .Variable, symbol = id}
+	}
+	return {}
+}
+
+// design.md "Global write effects": a value stored into a variable that holds a
+// procedure, followed so a call through it runs only what it may hold. A write
+// that is neither a declaration nor a plain assignment passes no value, and may
+// store anything.
+prov_note_proc_store :: proc(graph: ^Flow_Graph, variable: Symbol_Id, value: Expr, declares := false, written := true) {
+	c := graph.k.c
+	if c.global_writes_ready || !effect_variable(c, variable) {
+		return
+	}
+	stored := written ? effect_value(c, value) : Effect_Arg{kind = .Nil}
+	for existing in graph.effect_stores {
+		if existing.variable == variable && existing.value == stored && existing.declares == declares {
+			return
 		}
 	}
-	return args
+	append(&graph.effect_stores, Effect_Store{variable = variable, value = stored, declares = declares})
+}
+
+prov_note_declared_procs :: proc(graph: ^Flow_Graph, d: ^Decl) {
+	for id, index in d.symbols {
+		if d.destructure.active {
+			prov_note_proc_store(graph, id, nil, declares = true)
+			continue
+		}
+		initializer, written := declared_initializer(d, index)
+		prov_note_proc_store(graph, id, initializer, declares = true, written = written && initializer != nil)
+	}
+}
+
+prov_note_assigned_procs :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
+	plain := s.op == .Assign && !s.destructure.active && len(s.rhs) == len(s.lhs)
+	for target, index in s.lhs {
+		if ident, is_ident := target.(^Expr_Ident); is_ident {
+			prov_note_proc_store(graph, ident.symbol, plain ? s.rhs[index] : nil)
+		}
+	}
+}
+
+// What a variable may hold: a parameter what its caller passed, and either
+// every value stored into it. One no declaration of this body made, as a loop's
+// binding, may hold anything.
+@(private = "file")
+effect_variable_values :: proc(c: ^Compiler, stores: []Effect_Store, variable: Symbol_Id) -> []Effect_Arg {
+	out := make([dynamic]Effect_Arg, 0, 2, context.temp_allocator)
+	visited := make(map[Symbol_Id]bool, 4, context.temp_allocator)
+	collect_variable_values(c, stores, variable, &out, &visited)
+	return out[:]
+}
+
+@(private = "file")
+collect_variable_values :: proc(
+	c: ^Compiler,
+	stores: []Effect_Store,
+	variable: Symbol_Id,
+	out: ^[dynamic]Effect_Arg,
+	visited: ^map[Symbol_Id]bool,
+) {
+	if variable in visited^ {
+		return
+	}
+	visited^[variable] = true
+	declared := false
+	if sym := symbol_of(c, variable); sym != nil && sym.kind == .Parameter {
+		add_effect_value(out, Effect_Arg{kind = .Parameter, parameter = int(sym.index)})
+		declared = true
+	}
+	for store in stores {
+		if store.variable != variable {
+			continue
+		}
+		declared ||= store.declares
+		#partial switch store.value.kind {
+		case .Variable:
+			collect_variable_values(c, stores, store.value.symbol, out, visited)
+		case .Nil:
+		case:
+			add_effect_value(out, store.value)
+		}
+	}
+	if !declared {
+		add_effect_value(out, Effect_Arg{})
+	}
+}
+
+// A call's arguments with each variable replaced by what it may hold.
+@(private = "file")
+effect_resolved_args :: proc(c: ^Compiler, stores: []Effect_Store, args: []Effect_Arg) -> []Effect_Arg {
+	out := make([dynamic]Effect_Arg, 0, len(args), context.temp_allocator)
+	for arg in args {
+		if arg.kind != .Variable {
+			add_effect_value(&out, arg)
+			continue
+		}
+		for value in effect_variable_values(c, stores, arg.symbol) {
+			bound := value
+			bound.binding = arg.binding
+			add_effect_value(&out, bound)
+		}
+	}
+	return out[:]
+}
+
+@(private = "file")
+add_effect_value :: proc(list: ^[dynamic]Effect_Arg, value: Effect_Arg) {
+	for existing in list {
+		if existing == value {
+			return
+		}
+	}
+	append(list, value)
 }
 
 // Map operations that hash or compare keys: a lookup, an insertion, and a
@@ -363,8 +510,9 @@ note_thread_spawn :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 // operation reads its receiver, and a `@(synchronized)` variable's package
 // vouches for every access to it, so none is a write here. A procedure value the
 // entry received runs what its caller passed, which is reported where that
-// crossing call passes it, so the entry is not blamed for calling it, directly
-// or through helpers it hands the value to (`callback_effects`).
+// crossing call passes it, so the entry is not blamed for calling it, directly,
+// through a local it copied the value to, or through helpers it hands the value
+// to (`callback_effects`).
 @(private = "file")
 warn_thread_races :: proc(
 	c: ^Compiler,
@@ -405,11 +553,11 @@ Callback_Effects :: struct {
 	called: [dynamic]int,
 }
 
-// Settled over the whole program, as the write effects are. A direct call
-// contributes its callee's own writes, and for each parameter the callee calls,
-// what the argument there runs: nothing yet if it is this body's own received
-// value, which joins `called`; a named procedure's whole effect; and otherwise
-// every procedure of the parameter's type. Other calls contribute everything
+// Settled over the whole program, as the write effects are. A call through a
+// variable contributes what each value it may hold runs (`add_callback_value`).
+// A direct call contributes its callee's own writes, and for each parameter the
+// callee calls, what the arguments bound there run, or every procedure of the
+// parameter's type when none was followed. Other calls contribute everything
 // they may reach.
 @(private = "file")
 callback_effects :: proc(
@@ -436,8 +584,10 @@ callback_effects :: proc(
 		queued[index] = false
 		grew := false
 		for call in bodies[index].calls {
-			if call.through_parameter {
-				grew |= add_index(&out[index].called, call.parameter)
+			if call.variable != INVALID_SYMBOL {
+				for value in call.through {
+					grew |= add_callback_value(c, &out[index], value, call.type, bodies, index_of, used_as_value)
+				}
 				continue
 			}
 			target, direct := index_of[call.callee]
@@ -453,21 +603,16 @@ callback_effects :: proc(
 				grew |= add_global_write(&out[index].writes, global)
 			}
 			for parameter in out[target].called {
-				arg := parameter < len(call.args) ? call.args[parameter] : Effect_Arg{}
-				switch arg.kind {
-				case .Parameter:
-					grew |= add_index(&out[index].called, arg.parameter)
-				case .Procedure:
-					for global in c.global_writes[arg.procedure] {
-						grew |= add_global_write(&out[index].writes, global)
+				type := proc_parameter_type(c, bodies[target].type, parameter)
+				bound := false
+				for arg in call.args {
+					if arg.binding == parameter {
+						bound = true
+						grew |= add_callback_value(c, &out[index], arg, type, bodies, index_of, used_as_value)
 					}
-				case .Other:
-					any_of_type := Effect_Call{type = proc_parameter_type(c, bodies[target].type, parameter)}
-					for reached in effect_targets(c, any_of_type, bodies, index_of, used_as_value) {
-						for global in bodies[reached].writes {
-							grew |= add_global_write(&out[index].writes, global)
-						}
-					}
+				}
+				if !bound {
+					grew |= add_callback_value(c, &out[index], Effect_Arg{}, type, bodies, index_of, used_as_value)
 				}
 			}
 		}
@@ -482,6 +627,37 @@ callback_effects :: proc(
 		}
 	}
 	return out
+}
+
+// What running `value` adds to a body: nothing yet for what its own caller
+// passed, which joins `called`; a named procedure's whole effect; and anything
+// else, every procedure of its type.
+@(private = "file")
+add_callback_value :: proc(
+	c: ^Compiler,
+	out: ^Callback_Effects,
+	value: Effect_Arg,
+	type: Type_Id,
+	bodies: []Body_Effects,
+	index_of: map[Symbol_Id]int,
+	used_as_value: map[Symbol_Id]bool,
+) -> bool {
+	grew := false
+	#partial switch value.kind {
+	case .Parameter:
+		grew = add_index(&out.called, value.parameter)
+	case .Procedure:
+		for global in c.global_writes[value.symbol] {
+			grew |= add_global_write(&out.writes, global)
+		}
+	case .Other:
+		for reached in effect_targets(c, Effect_Call{type = type}, bodies, index_of, used_as_value) {
+			for global in bodies[reached].writes {
+				grew |= add_global_write(&out.writes, global)
+			}
+		}
+	}
+	return grew
 }
 
 @(private = "file")
@@ -615,10 +791,11 @@ compute_global_writes :: proc(k: ^Checker) {
 		copy(effects.calls, graph.effect_calls[:])
 		// The graph's storage is reset below.
 		for &call in effects.calls {
+			if call.variable != INVALID_SYMBOL {
+				call.through = effect_variable_values(c, graph.effect_stores[:], call.variable)
+			}
 			if len(call.args) > 0 {
-				args := make([]Effect_Arg, len(call.args), context.temp_allocator)
-				copy(args, call.args)
-				call.args = args
+				call.args = effect_resolved_args(c, graph.effect_stores[:], call.args)
 			}
 		}
 		for id in graph.effect_values {

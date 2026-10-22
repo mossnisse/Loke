@@ -98,7 +98,11 @@ value it received, itself or through helpers it hands the value to, is not
 warned about for that call, since the procedure is the one its caller passed,
 and that crossing call is reported. Following the value takes a second
 whole-program summary of which parameters each body calls; the write effect
-itself keeps the plain union, which borrow checking needs. A first version
+itself keeps the plain union, which borrow checking needs. Within a body the
+value is followed through its parameters and locals by what each is assigned,
+without regard to order: a variable assigned a named procedure anywhere may
+run it, and one written any other way may run anything, so reassigning the
+received value, even through `inout`, cannot hide a writer. A first version
 instead skipped every `spawn` in a body with a `@(cross_thread)` parameter,
 which also hid an entry the wrapper named itself.
 
