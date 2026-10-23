@@ -2663,6 +2663,10 @@ end_loans :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8, ended: []b
 @(private = "file")
 load_pointee_content :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8, reads: ^[dynamic]int = nil) {
 	graph := state.graph
+	if event.writable {
+		load_writable_content(state, event, reach, reads)
+		return
+	}
 	mem.zero_slice(state.merged)
 	loss := graph.prov_slots[event.slot].precision | path_precision(event.path)
 	for carrier in event.into {
@@ -2688,6 +2692,110 @@ load_pointee_content :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8,
 	}
 	copy(reach_row(state, reach, event.slot), state.merged)
 	state.precision[event.slot] = loss
+}
+
+// A `writable` load: the loans of every mutable carrier reached from
+// `event.into`, going on through those and through read-only carriers whose
+// pointee reaches a destination (`prov_load_writable`). What `into` names is
+// only read through, as `prov_mutable_reach` already kept the mutable ones.
+@(private = "file")
+load_writable_content :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8, reads: ^[dynamic]int) {
+	graph := state.graph
+	mem.zero_slice(state.merged)
+	loss := graph.prov_slots[event.slot].precision
+	pending := make([]bool, state.loans, context.temp_allocator)
+	for carrier in event.into {
+		row := reach_row(state, reach, carrier)
+		for index in 0 ..< state.loans {
+			if bit_get(row, index) {
+				pending[index] = true
+			}
+		}
+	}
+	expanded := make([]bool, state.loans, context.temp_allocator)
+	for grew := true; grew; {
+		grew = false
+		for index in 0 ..< state.loans {
+			if pending[index] && !expanded[index] {
+				expanded[index] = true
+				grew = true
+				load_writable_through(state, index, reach, &loss, reads, pending)
+			}
+		}
+	}
+	copy(reach_row(state, reach, event.slot), state.merged)
+	state.precision[event.slot] = loss
+}
+
+// The carriers in the storage one loan names, as `load_through_loan` finds
+// them: a mutable one's loans join `state.merged`, and those of any carrier a
+// write may go on through become `pending`. Storage with no local content
+// stands for what it holds, unless its type holds nothing a write could reach.
+@(private = "file")
+load_writable_through :: proc(
+	state: ^Prov_State,
+	loan_index: int,
+	reach: []u8,
+	loss: ^Precision_Loss,
+	reads: ^[dynamic]int,
+	pending: []bool,
+) {
+	graph := state.graph
+	c := graph.k.c
+	loan := graph.loans[loan_index]
+	root := graph.roots[int(loan.root)]
+	sym := symbol_of(c, root.symbol)
+	found := false
+	if sym != nil && !(root.kind == .Param && (loan.content || type_is_carrier(c, sym.type))) {
+		slots := graph.content_by_symbol[root.symbol]
+		bare: [1]int
+		bare_type := INVALID_TYPE
+		if index, exists := graph.slot_by_symbol[root.symbol]; exists {
+			bare[0] = index
+			slots = bare[:]
+			bare_type = sym.type
+		}
+		for index in slots {
+			slot := graph.prov_slots[index]
+			if !paths_overlap(slot.path, loan.path) {
+				continue
+			}
+			found = true
+			loss^ |= state.precision[index]
+			if reads != nil && !slice.contains(reads[:], index) {
+				append(reads, index)
+			}
+			// A truncated or unshaped slot stands for every carrier below it.
+			destination, follow := true, true
+			type := bare_type != INVALID_TYPE ? bare_type : slot.content_type
+			if type != INVALID_TYPE && !slot.content_truncated {
+				info := underlying_info(c, type)
+				pointee := info != nil ? info.element : INVALID_TYPE
+				destination = carrier_is_mutable(c, type) && type_carries_borrow(c, pointee).any
+				follow = destination || prov_type_reaches_destination(c, pointee)
+			}
+			row := reach_row(state, reach, index)
+			if destination {
+				bytes_or(state.merged, row)
+			}
+			if follow {
+				for held in 0 ..< state.loans {
+					if bit_get(row, held) {
+						pending[held] = true
+					}
+				}
+			}
+		}
+	}
+	if found || sym != nil && root.kind != .Param && !type_carries_borrow(c, sym.type).any {
+		return
+	}
+	loss^ |= path_precision(loan.path)
+	deeper := loan_index
+	if count := len(root.content_loans); count > 0 {
+		deeper = int(root.content_loans[min(loan.depth, count - 1)])
+	}
+	bit_mark(state.merged, deeper)
 }
 
 // Joins into `state.merged` what the storage one loan names holds at `path`;

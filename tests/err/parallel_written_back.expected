@@ -112,3 +112,6 @@ L0647
 @355:2
 this borrow borrows `counter`, which does not outlive `fallback`, where it may be stored
 provenance precision limit: paths below 4 aggregate projection steps are merged
+L0730
+@381:19
+is handed a borrow of `counter`

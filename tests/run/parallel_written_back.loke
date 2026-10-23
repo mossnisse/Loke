@@ -8,8 +8,9 @@
 // storage the argument's mutable carriers name, not in what it points at. A
 // result read back from or returned by a callback is likewise the passed
 // callback's, also through a copy of it or a local procedure literal, and a
-// read-only field beside a written one receives nothing, however deep, nor does
-// a record cut at a budget whose read-only pointers lead to no mutable field.
+// read-only field beside a written one receives nothing, however deep or
+// recursive, nor does a record cut at a budget whose read-only pointers lead to
+// no mutable field, nor a read-only sibling of a pointer leading to one.
 package main;
 
 import "core:fmt";
@@ -85,6 +86,19 @@ Calm3 :: struct { calm: Calm2 }
 Calm4 :: struct { calm: Calm3 }
 Holder :: struct { view: ^int }
 publish_beside :: proc(root: ^mut Calm4, out: ^mut ^int) { out^ = &counter; }
+Split0 :: struct { ptr: ^Box, view: ^int }
+Split1 :: struct { split: Split0 }
+Split2 :: struct { split: Split1 }
+Split3 :: struct { split: Split2 }
+Split4 :: struct { split: Split3 }
+publish_split :: proc(root: ^mut Split4) { root^.split.split.split.split.ptr^.out^ = &counter; }
+Node :: struct { next: Option(^mut Node), view: ^int }
+publish_node :: proc(root: ^mut Node) {
+	switch (root^.next) {
+	case .some(next): next^.view = &counter;
+	case .none:
+	}
+}
 literal_shared :: proc() -> ^int {
 	g: proc() -> ^int = proc() -> ^int { return &shared; };
 	return g();
@@ -193,4 +207,12 @@ main :: proc() {
 		spawn read_slot(calm.calm.calm.calm.calm.ptr^.view, &mut calm_seen);
 	}
 	fmt.println(nest_slot^, beside^, calm_seen);
+	split_slot: ^int = &kept_value;
+	split_box := Box{&mut split_slot};
+	split := Split4{Split3{Split2{Split1{Split0{&split_box, &fallback}}}}};
+	publish_split(&mut split);
+	child := Node{.none, &fallback};
+	node := Node{.some(&mut child), &kept_value};
+	publish_node(&mut node);
+	fmt.println(split_slot^, node.view^, child.view^);
 }

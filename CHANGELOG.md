@@ -430,6 +430,10 @@ checklist.
   stored there or *may* reach the task, and a note names the limit, as
   [Minimum provenance precision](design.md#minimum-provenance-precision)
   requires. A merged stored value likewise *may* borrow the storage named.
+  Below a cut or a recursive type, a write-back no longer lands in what a
+  read-only pointer names, so replacing a recursive child's `view: ^int`
+  with a `thread_local` borrow is no longer `L0647` when the old `view` named
+  static storage.
 - A `[]mut T` appended or inserted into a container that is used afterwards is
   no longer `L0641`. The operation's own read of its argument counted as a use
   of the carrier it had just stored, so `held.append(b)` followed by any use of

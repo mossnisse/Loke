@@ -121,6 +121,9 @@ Prov_Event :: struct {
 	revives:       bool,
 	// `Load`: also reads through what was read, at any depth.
 	deep:          bool,
+	// A deep `Load`: follows only the carriers a write may go through, and
+	// keeps only what mutable ones name (`prov_load_writable`).
+	writable:      bool,
 	// `Live`: the carrier is only read, so a live read-only reborrow of it does
 	// not conflict (design.md "Weakening and reborrows").
 	reads_only:    bool,
@@ -4016,6 +4019,20 @@ prov_load_deep :: proc(graph: ^Flow_Graph, carriers: []int, span: Span, from := 
 	return through
 }
 
+// Where a write through `carriers` may land at any depth: the storage each
+// mutable carrier below them names, reached through mutable carriers and
+// through read-only ones whose pointee still reaches a destination, so
+// `view: ^int` beside a recursive `next: ^mut Node` names no destination.
+prov_load_writable :: proc(graph: ^Flow_Graph, carriers: []int, span: Span) -> []int {
+	if len(carriers) == 0 {
+		return nil
+	}
+	graph.has_content_load = true
+	slot := prov_temp_slot(graph)
+	prov_emit(graph, Prov_Event{kind = .Load, slot = slot, into = carriers, deep = true, writable = true, span = span})
+	return prov_one(graph, slot)
+}
+
 // An argument and everything it reaches, for a callee with no summary to say
 // which of the two it hands back or keeps.
 @(private = "file")
@@ -4854,10 +4871,10 @@ prov_write_back_into_argument :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: 
 // The carriers among `carriers`, a value of `type`, that a write may go
 // through: each mutable one, and in what any carrier points at, each mutable
 // one again. A read-only carrier is no destination, but a mutable one read
-// through it is. A truncated path stands for every carrier below it, as does a
-// pointee whose type is already being walked, since a recursive type reaches
-// any depth; a read-only truncated path counts when a carrier in it leads to a
-// destination.
+// through it is. Below a truncated path, or a pointee whose type is already
+// being walked, the walk goes on in the analysis (`prov_load_writable`), since
+// a recursive type reaches any depth; a read-only truncated path counts when a
+// carrier in it leads to a destination.
 @(private = "file")
 prov_mutable_reach :: proc(graph: ^Flow_Graph, carriers: []int, type: Type_Id, span: Span, walking: ^map[Type_Id]bool = nil) -> []int {
 	c := graph.k.c
@@ -4886,10 +4903,13 @@ prov_mutable_reach :: proc(graph: ^Flow_Graph, carriers: []int, type: Type_Id, s
 			continue
 		}
 		if path.truncated || chain[info.element] {
-			below := prov_load_deep(graph, selected, span)
+			below := prov_load_writable(graph, selected, span)
 			// design.md "Minimum provenance precision": what is below a cut is
-			// merged, so a borrow written there may land in any of it.
-			for slot in below { graph.prov_slots[slot].precision |= path.precision }
+			// merged, so a borrow written there may land in any of it. A
+			// recursive type merges nothing the walk would have kept apart.
+			if path.truncated {
+				for slot in below { graph.prov_slots[slot].precision |= path.precision }
+			}
 			out = prov_join(graph, out, below)
 			continue
 		}
@@ -4951,7 +4971,6 @@ prov_writable_arguments :: proc(graph: ^Flow_Graph, v: ^Expr_Call, proc_type: Ty
 // mutable carrier, at any depth, to storage that can hold one, as `p^.view =
 // values` or `ctx.destination.view = values` does. Searched over the types
 // reached, each once, so no depth hides one.
-@(private = "file")
 prov_type_reaches_destination :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	visited := make(map[Type_Id]bool, context.temp_allocator)
 	return type_reaches_destination(c, type, &visited)

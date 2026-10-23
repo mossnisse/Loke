@@ -269,10 +269,14 @@ rather than stopping at a depth, so a long chain hides nothing, and a
 recursive type stands for every carrier below it. A carrier path cut at the
 depth or width budget names no carrier, so both search the value it cut
 (`Carrier_Path.cut`) for a read-only carrier that leads to a destination.
-Everything below the cut is then a destination, so the slots it loads carry the
-path's precision; a write through a carrier passes that precision to the
-storage it lands in, and `L0646`, `L0647`, and `L0730` then say the borrow
-*may* be there. Only the loan a spawned call leaves is exempt from
+Below a cut, and below a type already on the walk, the rest is left to the
+analysis: a `writable` deep `Load` (`prov_load_writable`) keeps what each
+mutable carrier reached names, going on through mutable carriers and through
+read-only ones whose pointee reaches a destination, so a recursive
+`view: ^int` names none. The slots loaded below a cut carry the path's
+precision; a write through a carrier passes that precision to the storage it
+lands in, and `L0646`, `L0647`, and `L0730` then say the borrow *may* be
+there. Only the loan a spawned call leaves is exempt from
 the crossing check, which the spawn has reported; one a call on the parent
 leaves is checked when it reaches a later task, as a borrow taken there directly
 would be.
