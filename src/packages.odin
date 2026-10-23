@@ -24,10 +24,10 @@ compile_program :: proc(c: ^Compiler, input: string) -> (Package_Id, bool) {
 	load_provider_packages(c)
 
 	k := Checker{c = c}
-	// With no `import` inside a file-scope `when`, discovery needs no semantic
-	// preparation. Checking each dependency, its own selection included, before
-	// preparing its dependents gives checkpoints a boundary with no references
-	// back into a later package.
+	// If file-scope selection cannot add an import or a `parallel` dependency,
+	// discovery needs no semantic preparation. Checking each dependency, its
+	// own selection included, before its dependents gives checkpoints a boundary
+	// with no references back into a later package.
 	for index in 1 ..< len(c.packages) { rebuild_active_items(c, &c.packages[index]) }
 	_ = discover_imports(c, &k)
 	if !check_import_cycles(c) { return root, false }
