@@ -4852,21 +4852,24 @@ prov_write_back_into_argument :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: 
 }
 
 // The carriers among `carriers`, a value of `type`, that a write may go
-// through: each mutable one, and in what it points at, each mutable one again.
-// A truncated path stands for every carrier below it.
+// through: each mutable one, and in what any carrier points at, each mutable
+// one again. A read-only carrier is no destination, but a mutable one read
+// through it is. A truncated path stands for every carrier below it.
 @(private = "file")
 prov_mutable_reach :: proc(graph: ^Flow_Graph, carriers: []int, type: Type_Id, span: Span, depth := 0) -> []int {
 	c := graph.k.c
 	out: []int
 	for path in carrier_shape(c, type) {
-		if !path.mutable {
+		if path.truncated && !path.mutable {
 			continue
 		}
 		selected := prov_select_content(graph, carriers, type, path.steps)
 		if len(selected) == 0 {
 			continue
 		}
-		out = prov_join(graph, out, selected)
+		if path.mutable {
+			out = prov_join(graph, out, selected)
+		}
 		if path.truncated || depth >= CARRIER_DEPTH {
 			out = prov_join(graph, out, prov_load_deep(graph, selected, span))
 			continue

@@ -255,6 +255,8 @@ effect_value :: proc(c: ^Compiler, e: Expr) -> Effect_Arg {
 		id = v.symbol
 	case ^Expr_Selector:
 		id = v.resolution.symbol
+	case ^Expr_Proc:
+		id = v.symbol
 	case:
 		return {}
 	}

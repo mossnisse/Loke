@@ -242,4 +242,36 @@ returned_through_named_local :: proc() {
 	_ = result^;
 }
 
+// A mutable field read through a read-only pointer is still written, and a
+// local procedure literal is the procedure it names.
+Box :: struct { out: ^mut ^int }
+publish_box :: proc(box: ^mut ^Box) { box^^.out^ = &counter; }
+literal_local :: proc() -> ^int {
+	g: proc() -> ^int = proc() -> ^int { return &counter; };
+	return g();
+}
+
+through_read_only_pointer :: proc() {
+	other := 0;
+	slot: ^int = &other;
+	box := Box{&mut slot};
+	view: ^Box = &box;
+	parallel { spawn publish_box(&mut view); }
+}
+
+parent_read_only_pointer_later_spawned :: proc() {
+	other := 0;
+	slot: ^int = &other;
+	box := Box{&mut slot};
+	view: ^Box = &box;
+	publish_box(&mut view);
+	parallel { spawn read_slot(slot); }
+}
+
+returned_through_literal_local :: proc() {
+	result: ^int;
+	parallel { spawn result = literal_local(); }
+	_ = result^;
+}
+
 main :: proc() {}

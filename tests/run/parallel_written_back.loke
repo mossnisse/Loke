@@ -7,8 +7,8 @@
 // both fit the callback's type or contract. A write-back lands only in the
 // storage the argument's mutable carriers name, not in what it points at. A
 // result read back from or returned by a callback is likewise the passed
-// callback's, also through a copy of it, and a read-only field beside a
-// written one receives nothing.
+// callback's, also through a copy of it or a local procedure literal, and a
+// read-only field beside a written one receives nothing.
 package main;
 
 import "core:fmt";
@@ -58,6 +58,13 @@ call_copy :: proc(h: proc() -> ^int) -> ^int {
 pass_copy :: proc(h: proc() -> ^int) -> ^int {
 	g := h;
 	return call_copy(g);
+}
+Box :: struct { out: ^mut ^int }
+Mixed :: struct { view: ^int, box: ^Box }
+publish_mixed :: proc(mixed: ^mut Mixed) { mixed^.box^.out^ = &counter; }
+literal_shared :: proc() -> ^int {
+	g: proc() -> ^int = proc() -> ^int { return &shared; };
+	return g();
 }
 
 main :: proc() {
@@ -131,4 +138,13 @@ main :: proc() {
 		spawn copy_passed = pass_copy(borrow_shared);
 	}
 	fmt.println(pair_slot^, copied^, copy_read^ + copy_passed^);
+	box_slot: ^int = &kept_value;
+	box := Box{&mut box_slot};
+	mixed := Mixed{&fallback, &box};
+	publish_mixed(&mut mixed);
+	literal_read: ^int;
+	parallel {
+		spawn literal_read = literal_shared();
+	}
+	fmt.println(box_slot^, literal_read^);
 }
