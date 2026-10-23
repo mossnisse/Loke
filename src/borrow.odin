@@ -2565,7 +2565,7 @@ run_prov_event :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8, ended
 				if !bit_get(row, index) || ended[index] {
 					continue
 				}
-				publish_into_loan(state, reach, graph.loans[index])
+				publish_into_loan(state, reach, graph.loans[index], state.precision[slot])
 			}
 		}
 	}
@@ -2814,7 +2814,9 @@ solve_loan_liveness :: proc(state: ^Prov_State) {
 
 // Joins `state.merged` into the slots holding what one loan's storage contains.
 @(private = "file")
-publish_into_loan :: proc(state: ^Prov_State, reach: []u8, loan: Prov_Loan) {
+// A carrier whose loans were merged may name storage the write never reaches,
+// so what lands there carries the carrier's precision as well.
+publish_into_loan :: proc(state: ^Prov_State, reach: []u8, loan: Prov_Loan, carrier_loss: Precision_Loss) {
 	graph := state.graph
 	root := graph.roots[int(loan.root)]
 	if root.symbol == INVALID_SYMBOL {
@@ -2826,7 +2828,7 @@ publish_into_loan :: proc(state: ^Prov_State, reach: []u8, loan: Prov_Loan) {
 		}
 		if paths_overlap(slot.path, loan.path) {
 			bytes_or(reach_row(state, reach, index), state.merged)
-			state.precision[index] |= state.merged_precision | slot.precision | path_precision(loan.path)
+			state.precision[index] |= state.merged_precision | carrier_loss | slot.precision | path_precision(loan.path)
 		}
 	}
 }
@@ -3345,17 +3347,20 @@ check_crossing :: proc(state: ^Prov_State, event: Prov_Event) {
 			if root.kind != .Thread_Local || loan.what == WRITTEN_BACK_BORROW {
 				continue
 			}
+			// design.md "Minimum provenance precision": with the dependency merged,
+			// the borrow may only seem to be there.
+			merged := state.diagnostic_precision != {}
 			if event.verb == "result" {
 				errorf(
 					state.k.c, event.span, "L0730",
-					"this task's result holds a %s of %s, which is the worker's own `thread_local` storage, so it cannot cross to the parent",
-					loan.what, root_phrase(root),
+					"this task's result %s a %s of %s, which is the worker's own `thread_local` storage, so it cannot cross to the parent",
+					merged ? "may hold" : "holds", loan.what, root_phrase(root),
 				)
 			} else {
 				errorf(
 					state.k.c, event.span, "L0730",
-					"this task is handed a %s of %s, which is the parent's own `thread_local` storage, so it cannot cross to the task",
-					loan.what, root_phrase(root),
+					"this task %s a %s of %s, which is the parent's own `thread_local` storage, so it cannot cross to the task",
+					merged ? "may be handed" : "is handed", loan.what, root_phrase(root),
 				)
 			}
 			if root.span.file != NO_FILE {
@@ -3874,7 +3879,7 @@ check_retention :: proc(state: ^Prov_State, event: Prov_Event) {
 	if len(event.into) > 0 {
 		seen := make(map[Root_Id]bool, 4, context.temp_allocator)
 		it := live_loans(state, nil, event.into)
-		for _, index in next_live_loan(&it) {
+		for slot, index in next_live_loan(&it) {
 			target := graph.loans[index].root
 			if seen[target] {
 				continue
@@ -3882,7 +3887,7 @@ check_retention :: proc(state: ^Prov_State, event: Prov_Event) {
 			seen[target] = true
 			destination := graph.roots[int(target)]
 			into := retain_kind_for_root(destination.kind)
-			if into != .None && report_retention(state, event, into, target, destination) {
+			if into != .None && report_retention(state, event, into, target, destination, state.precision[slot]) {
 				return
 			}
 		}
@@ -3896,7 +3901,12 @@ check_retention :: proc(state: ^Prov_State, event: Prov_Event) {
 }
 
 // Reports the first loan of the stored value that does not reach the
-// destination; returns whether it did.
+// destination; returns whether it did. `destination_loss` is the precision of
+// the carrier that names the destination.
+//
+// design.md "Minimum provenance precision": a merged dependency may be the
+// only reason the value looks like a borrow of that storage, or the carrier
+// like one naming that destination, so the message says each may be so.
 @(private = "file")
 report_retention :: proc(
 	state: ^Prov_State,
@@ -3904,8 +3914,11 @@ report_retention :: proc(
 	into: Retain_Kind,
 	target: Root_Id,
 	destination: Prov_Root,
+	destination_loss: Precision_Loss = {},
 ) -> bool {
 	graph := state.graph
+	borrows := state.diagnostic_precision != {} ? "may borrow" : "borrows"
+	stored := destination_loss != {} ? ", where it may be stored" : ""
 	for source in event.sources {
 		row := reach_row(state, state.reach, source)
 		for index in 0 ..< state.loans {
@@ -3930,11 +3943,13 @@ report_retention :: proc(
 					state.k.c,
 					event.span,
 					"L0646",
-					"this %s borrows %s, which is not written `@(escape=%s)`, so it cannot reach %s",
+					"this %s %s %s, which is not written `@(escape=%s)`, so it cannot reach %s%s",
 					loan.what,
+					borrows,
 					root_phrase(root),
 					escape_level_name(retain_kind_level(into)),
 					retain_destination(event, destination),
+					stored,
 				)
 			} else {
 				if root_satisfies_retention(root.kind, into) {
@@ -3944,13 +3959,16 @@ report_retention :: proc(
 					state.k.c,
 					event.span,
 					"L0647",
-					"this %s borrows %s, which does not outlive %s: %s",
+					"this %s %s %s, which does not outlive %s%s: %s",
 					loan.what,
+					borrows,
 					root_phrase(root),
 					retain_destination(event, destination),
+					stored,
 					retain_kind_text(into),
 				)
 			}
+			state.diagnostic_precision |= destination_loss
 			if root.symbol != INVALID_SYMBOL && root.span.file != NO_FILE {
 				add_notef(state.k.c, root.span, "%s is declared here", root_label(root))
 			}

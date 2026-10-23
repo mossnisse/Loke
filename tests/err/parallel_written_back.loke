@@ -337,4 +337,23 @@ parent_wide_later_spawned :: proc() {
 	parallel { spawn read_slot(slot); }
 }
 
+// A write-back below the cut may land anywhere there, so it names the limit and
+// says only that a read-only sibling of static storage may receive it.
+fallback := 1;
+Split0 :: struct { ptr: ^Box, view: ^int }
+Split1 :: struct { split: Split0 }
+Split2 :: struct { split: Split1 }
+Split3 :: struct { split: Split2 }
+Split4 :: struct { split: Split3 }
+publish_split :: proc(root: ^mut Split4) { root^.split.split.split.split.ptr^.out^ = &counter; }
+
+parent_truncated_sibling :: proc() {
+	other := 0;
+	slot: ^int = &other;
+	box := Box{&mut slot};
+	split := Split4{Split3{Split2{Split1{Split0{&box, &fallback}}}}};
+	publish_split(&mut split);
+	_ = slot^;
+}
+
 main :: proc() {}

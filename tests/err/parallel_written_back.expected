@@ -102,7 +102,13 @@ L0730
 handed a borrow of `counter`
 L0730
 @328:19
-handed a borrow of `counter`
+may be handed a borrow of `counter`
+provenance precision limit: paths below 4 aggregate projection steps are merged
 L0730
 @337:19
-handed a borrow of `counter`
+may be handed a borrow of `counter`
+provenance precision limit: more than 64 carrier paths collapse to one whole-value dependency
+L0647
+@355:2
+this borrow borrows `counter`, which does not outlive `fallback`, where it may be stored
+provenance precision limit: paths below 4 aggregate projection steps are merged

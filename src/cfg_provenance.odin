@@ -4886,7 +4886,11 @@ prov_mutable_reach :: proc(graph: ^Flow_Graph, carriers: []int, type: Type_Id, s
 			continue
 		}
 		if path.truncated || chain[info.element] {
-			out = prov_join(graph, out, prov_load_deep(graph, selected, span))
+			below := prov_load_deep(graph, selected, span)
+			// design.md "Minimum provenance precision": what is below a cut is
+			// merged, so a borrow written there may land in any of it.
+			for slot in below { graph.prov_slots[slot].precision |= path.precision }
+			out = prov_join(graph, out, below)
 			continue
 		}
 		pointee := prov_temp_content(graph, info.element)

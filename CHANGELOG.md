@@ -424,6 +424,12 @@ checklist.
 
 ### Fixed
 
+- A borrow written back below a provenance budget's cut, or stored through a
+  carrier whose destinations a budget merged, no longer gets a definite
+  `L0646`, `L0647`, or `L0730`. The message now says the value *may* be
+  stored there or *may* reach the task, and a note names the limit, as
+  [Minimum provenance precision](design.md#minimum-provenance-precision)
+  requires. A merged stored value likewise *may* borrow the storage named.
 - A `[]mut T` appended or inserted into a container that is used afterwards is
   no longer `L0641`. The operation's own read of its argument counted as a use
   of the carrier it had just stored, so `held.append(b)` followed by any use of
