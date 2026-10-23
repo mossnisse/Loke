@@ -2823,6 +2823,16 @@ prov_store_region_set :: proc(
 		prov_define_region_content(graph, root, element ? prov_extend(graph, path, proj_wild()) : path, region)
 		return
 	}
+	prov_store_region_through(graph, destination, region, owner)
+}
+
+// An owner written through the carriers `destination` reaches, into storage
+// this body cannot name.
+@(private = "file")
+prov_store_region_through :: proc(graph: ^Flow_Graph, destination: Expr, region: Region_Set, owner: string) {
+	if region_is_empty(region) {
+		return
+	}
 	// A write through a parameter's carrier, or a local one set from it, is
 	// what the caller learns of.
 	for param in prov_written_parameters(graph, destination) {
@@ -2928,7 +2938,8 @@ prov_call_written_regions :: proc(graph: ^Flow_Graph, v: ^Expr_Call, proc_type: 
 		}
 	}
 	for destination, index in v.bound {
-		if destination == nil || index >= len(info.parameters) {
+		packed := call_packs(v, index)
+		if (destination == nil && !packed) || index >= len(info.parameters) {
 			continue
 		}
 		region := everything
@@ -2937,15 +2948,48 @@ prov_call_written_regions :: proc(graph: ^Flow_Graph, v: ^Expr_Call, proc_type: 
 				continue
 			}
 			region = prov_substitute_region(graph, v, written[index])
-		} else if !prov_argument_is_place(graph, v, index) && !carrier_is_mutable(c, info.parameters[index]) {
-			continue
+		} else if packed || !prov_argument_is_place(graph, v, index) {
+			type := info.parameters[index]
+			if !carrier_is_mutable(c, type) && !prov_type_reaches_mutable(c, type) {
+				continue
+			}
 		}
-		place := destination
-		if unary, is_unary := destination.(^Expr_Unary); is_unary && unary.op == .Amp {
-			place = unary.operand
+		if packed {
+			next_element, next_spread := 0, 0
+			for is_spread in v.variadic_order {
+				if is_spread {
+					prov_leave_region(graph, v.variadic_spreads[next_spread], region)
+					next_spread += 1
+				} else {
+					prov_leave_region(graph, v.variadic_elements[next_element], region)
+					next_element += 1
+				}
+			}
+		} else if prov_argument_is_place(graph, v, index) {
+			prov_store_region_set(graph, destination, region, CALL_LEFT_OWNER)
+		} else {
+			prov_leave_region(graph, destination, region)
 		}
-		prov_store_region_set(graph, place, region, "an owner this call leaves")
 	}
+}
+
+CALL_LEFT_OWNER :: "an owner this call leaves"
+
+// Where a carrier argument takes what the callee leaves through it. `&mut
+// place` names the place, and also what the place's own mutable carriers
+// reach; any other carrier, `&place` among them, is written through, as
+// `p^ = owner` is (design.md "Allocator regions and region provenance").
+@(private = "file")
+prov_leave_region :: proc(graph: ^Flow_Graph, argument: Expr, region: Region_Set) {
+	c := graph.k.c
+	if unary, is_unary := argument.(^Expr_Unary); is_unary && unary.op == .Amp && carrier_is_mutable(c, expr_base(argument).type) {
+		prov_store_region_set(graph, unary.operand, region, CALL_LEFT_OWNER)
+		if prov_type_reaches_mutable(c, expr_base(unary.operand).type) {
+			prov_store_region_through(graph, unary.operand, region, CALL_LEFT_OWNER)
+		}
+		return
+	}
+	prov_store_region_through(graph, argument, region, CALL_LEFT_OWNER)
 }
 
 @(private = "file")
@@ -5029,15 +5073,26 @@ prov_type_reaches_destination :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	return type_reaches_destination(c, type, &visited)
 }
 
+// design.md "Allocator regions and region provenance": whether a callee
+// receiving `type` can write an owner through it: through a mutable carrier at
+// any depth, whatever it points at, as `outs[0]^ = make(...)` does through
+// `outs: ..^mut [dynamic]int`.
+prov_type_reaches_mutable :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	visited := make(map[Type_Id]bool, context.temp_allocator)
+	return type_reaches_destination(c, type, &visited, owners = true)
+}
+
+// With `owners`, any mutable carrier is a destination, not only one whose
+// pointee can hold a borrow.
 @(private = "file")
-type_reaches_destination :: proc(c: ^Compiler, type: Type_Id, visited: ^map[Type_Id]bool) -> bool {
+type_reaches_destination :: proc(c: ^Compiler, type: Type_Id, visited: ^map[Type_Id]bool, owners := false) -> bool {
 	if visited[type] {
 		return false
 	}
 	visited[type] = true
 	for path in carrier_shape(c, type) {
 		if path.truncated {
-			if truncated_reaches_destination(c, path, visited) {
+			if truncated_reaches_destination(c, path, visited, owners) {
 				return true
 			}
 			continue
@@ -5046,10 +5101,10 @@ type_reaches_destination :: proc(c: ^Compiler, type: Type_Id, visited: ^map[Type
 		if info == nil {
 			continue
 		}
-		if path.mutable && type_carries_borrow(c, info.element).any {
+		if path.mutable && (owners || type_carries_borrow(c, info.element).any) {
 			return true
 		}
-		if type_reaches_destination(c, info.element, visited) {
+		if type_reaches_destination(c, info.element, visited, owners) {
 			return true
 		}
 	}
@@ -5061,7 +5116,7 @@ type_reaches_destination :: proc(c: ^Compiler, type: Type_Id, visited: ^map[Type
 // when its pointee reaches one, as `ptr: ^Leaf` does with `Leaf{out: ^mut ^int}`
 // below the depth budget.
 @(private = "file")
-truncated_reaches_destination :: proc(c: ^Compiler, path: Carrier_Path, visited: ^map[Type_Id]bool) -> bool {
+truncated_reaches_destination :: proc(c: ^Compiler, path: Carrier_Path, visited: ^map[Type_Id]bool, owners := false) -> bool {
 	if path.mutable {
 		return true
 	}
@@ -5070,7 +5125,7 @@ truncated_reaches_destination :: proc(c: ^Compiler, path: Carrier_Path, visited:
 	carrier_leaves(c, path.cut, &leaves, &walking)
 	for leaf in leaves {
 		info := underlying_info(c, leaf)
-		if info != nil && type_reaches_destination(c, info.element, visited) {
+		if info != nil && type_reaches_destination(c, info.element, visited, owners) {
 			return true
 		}
 	}

@@ -1,0 +1,44 @@
+// design.md "Allocator regions and region provenance": an owner a call leaves
+// through a read-only carrier reaching a mutable one, a variadic `..^mut T` or
+// a `^Box` holding a `^mut T`, directly or forwarded, is accepted from an
+// allocator that outlives it, and from an arena declared before the owner that
+// is never reset.
+package main;
+
+import "core:mem";
+import "core:fmt";
+
+point :: proc(allocator: Allocator, outs: ..^mut [dynamic]int) {
+	outs[0]^ = make([dynamic]int, 2, allocator);
+}
+
+Box :: struct { out: ^mut [dynamic]int }
+point_box :: proc(allocator: Allocator, box: ^Box) {
+	box^.out^ = make([dynamic]int, 2, allocator);
+}
+
+forward_box :: proc(allocator: Allocator, box: ^Box) {
+	point_box(allocator, box);
+}
+
+forward_pack :: proc(allocator: Allocator, outs: ..^mut [dynamic]int) {
+	point(allocator, ..outs);
+}
+
+main :: proc() {
+	out: [dynamic]int = {};
+	point(mem.default_allocator(), &mut out);
+	boxed: [dynamic]int = {};
+	box := Box{&mut boxed};
+	point_box(mem.default_allocator(), &box);
+	forwarded: [dynamic]int = {};
+	forward_box(mem.default_allocator(), &Box{&mut forwarded});
+	packed: [dynamic]int = {};
+	forward_pack(mem.default_allocator(), &mut packed);
+	fmt.println(out.len(), boxed.len(), forwarded.len(), packed.len());
+
+	arena := mem.Arena.init();
+	kept: [dynamic]int = {};
+	point(arena.allocator(), &mut kept);
+	fmt.println(kept.len());
+}

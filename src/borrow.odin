@@ -2039,19 +2039,19 @@ parameter_writes_caller :: proc(c: ^Compiler, info: ^Type_Info, index: int) -> b
 		prov_type_reaches_destination(c, type)
 }
 
-// Whether a parameter names caller storage the body may write: `inout`, or a
-// mutable pointer or slice.
+// Whether a parameter names caller storage the body may write: `inout`, a
+// mutable pointer or slice, or a read-only carrier reaching one, such as a
+// variadic `..^mut T` or a `^Box` whose field is `^mut T`.
 param_writes_caller :: proc(c: ^Compiler, param: ^Symbol) -> bool {
-	return param != nil && (param.mode == .Inout || carrier_is_mutable(c, param.type))
+	return param != nil && (param.mode == .Inout || carrier_is_mutable(c, param.type) || prov_type_reaches_mutable(c, param.type))
 }
 
-// Whether a body may leave anything in its caller's storage: through a
-// parameter it writes, or one reaching a mutable carrier it may write through.
+// Whether a body may leave anything in its caller's storage, through a
+// parameter it may write.
 @(private = "file")
 proc_may_write_owners :: proc(c: ^Compiler, sym: ^Symbol) -> bool {
 	for id in sym.param_symbols {
-		param := symbol_of(c, id)
-		if param_writes_caller(c, param) || param != nil && prov_type_reaches_destination(c, param.type) {
+		if param_writes_caller(c, symbol_of(c, id)) {
 			return true
 		}
 	}

@@ -1,0 +1,76 @@
+// design.md "Allocator regions and region provenance": an owner a call leaves
+// through a read-only carrier that reaches a mutable one, a variadic
+// `..^mut T` or a `^Box` whose field is `^mut T`, keeps its region, directly
+// or through a procedure forwarding the carrier. A reset while it is live is
+// an error, as for a `^mut T` parameter; written through a pointer the caller
+// holds rather than a place it names, a local region is an error at the call,
+// as `p^ = owner` is.
+package main;
+
+import "core:mem";
+import "core:fmt";
+
+point :: proc(allocator: Allocator, outs: ..^mut [dynamic]int) {
+	outs[0]^ = make([dynamic]int, 2, allocator);
+}
+
+Box :: struct { out: ^mut [dynamic]int }
+point_box :: proc(allocator: Allocator, box: ^Box) {
+	box^.out^ = make([dynamic]int, 2, allocator);
+}
+
+point_direct :: proc(allocator: Allocator, out: ^mut [dynamic]int) {
+	out^ = make([dynamic]int, 2, allocator);
+}
+
+forward_pack :: proc(allocator: Allocator, outs: ..^mut [dynamic]int) {
+	point(allocator, ..outs);
+}
+
+forward_box :: proc(allocator: Allocator, box: ^Box) {
+	point_box(allocator, box);
+}
+
+variadic :: proc() {
+	arena := mem.Arena.init();
+	out: [dynamic]int = {};
+	point(arena.allocator(), &mut out);
+	free_all(arena.allocator());
+	fmt.println(out[0]);
+}
+
+boxed :: proc() {
+	arena := mem.Arena.init();
+	out: [dynamic]int = {};
+	box := Box{&mut out};
+	point_box(arena.allocator(), &box);
+	free_all(arena.allocator());
+	fmt.println(out[0]);
+}
+
+held_pointer :: proc() {
+	arena := mem.Arena.init();
+	out: [dynamic]int = {};
+	p := &mut out;
+	point_direct(arena.allocator(), p);
+	free_all(arena.allocator());
+	fmt.println(out[0]);
+}
+
+forwarded_pack :: proc() {
+	arena := mem.Arena.init();
+	out: [dynamic]int = {};
+	forward_pack(arena.allocator(), &mut out);
+	free_all(arena.allocator());
+	fmt.println(out[0]);
+}
+
+forwarded_box :: proc() {
+	arena := mem.Arena.init();
+	out: [dynamic]int = {};
+	forward_box(arena.allocator(), &Box{&mut out});
+	free_all(arena.allocator());
+	fmt.println(out[0]);
+}
+
+main :: proc() {}

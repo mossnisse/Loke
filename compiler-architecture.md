@@ -228,7 +228,13 @@ do not report lifecycle errors or add normal-path cleanup points.
   shared strings, even when container storage uses the destination allocator.
 
 Result summaries, written-argument regions, and escape levels propagate these
-facts through direct, generic, and indirect calls. `content_loans` represent
+facts through direct, generic, and indirect calls. A written-argument region is
+summarized for each parameter a body may write (`param_writes_caller`):
+`inout`, a mutable carrier, or a read-only one reaching a mutable carrier at
+any depth (`prov_type_reaches_mutable`), such as `..^mut T` or a `^Box` holding
+a `^mut T`. At the call it lands in the place `&mut place` or an `inout`
+argument names; any other carrier argument, each pack operand among them, is
+written through (`prov_leave_region`), as `p^ = owner` is. `content_loans` represent
 loads through caller storage, substituted through the actual arguments.
 Whole-program global-write effects also apply at calls. Operators without an
 `Expr_Call` use synthesized call events for the selected procedure.
