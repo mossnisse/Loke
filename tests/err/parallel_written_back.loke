@@ -1,7 +1,7 @@
 // design.md "Borrows crossing between tasks": a borrow of the worker's own
 // `thread_local` storage cannot reach the parent through what the task's call
-// writes into an argument, directly or through a helper, a field, or an
-// element.
+// writes into an argument, directly or through a helper, a field, an element,
+// or a callback. One the parent's own call leaves cannot later reach a task.
 package main;
 
 counter: thread_local int;
@@ -31,6 +31,53 @@ through_element :: proc(cells: []mut ^int) {
 
 through_field :: proc(holder: ^mut Holder) {
 	parallel { spawn publish_field(holder); }
+}
+
+invoke :: proc(f: proc(out: ^mut ^int), out: ^mut ^int) { f(out); }
+relay :: proc(f: proc(out: ^mut ^int), out: ^mut ^int) { invoke(f, out); }
+through_local :: proc(f: proc(out: ^mut ^int), out: ^mut ^int) { g := f; g(out); }
+invoke_view :: proc(f: dyn proc(out: ^mut ^int), out: ^mut ^int) { f(out); }
+read_slot :: proc(p: ^int) { _ = p^; }
+
+through_callback :: proc() {
+	other := 0;
+	slot: ^int = &other;
+	parallel { spawn invoke(publish, &mut slot); }
+	_ = slot^;
+}
+
+through_relayed_callback :: proc(slot: ^mut ^int) {
+	parallel { spawn relay(publish, slot); }
+}
+
+through_callback_local :: proc(slot: ^mut ^int) {
+	parallel { spawn through_local(publish, slot); }
+}
+
+through_callable_view :: proc(slot: ^mut ^int) {
+	parallel { spawn invoke_view(publish, slot); }
+}
+
+// Reported once, at the task that writes it back.
+reported_once :: proc() {
+	other := 0;
+	slot: ^int = &other;
+	parallel { spawn publish(&mut slot); }
+	parallel { spawn read_slot(slot); }
+}
+
+parent_borrow_later_spawned :: proc() {
+	other := 0;
+	slot: ^int = &other;
+	publish(&mut slot);
+	parallel { spawn read_slot(slot); }
+}
+
+parent_callback_later_spawned :: proc() {
+	other := 0;
+	slot: ^int = &other;
+	invoke(publish, &mut slot);
+	parallel { spawn read_slot(slot); }
 }
 
 main :: proc() {}

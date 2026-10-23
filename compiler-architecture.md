@@ -237,7 +237,11 @@ solved for which `thread_local` global it may leave in each argument
 call leaves a borrow of that global in the matching argument, so a helper that
 forwards its parameter is summarized too, and a spawn reports any argument its
 call may write one into (`L0730`), since the worker's storage ends with its
-thread.
+thread. A call through a procedure value or a `dyn` slot leaves what any body
+the global-write effects found for it may leave (`indirect_call_targets`). Only
+the loan a spawned call leaves is exempt from the crossing check, which the
+spawn has reported; one a call on the parent leaves is checked when it reaches
+a later task, as a borrow taken there directly would be.
 
 Once the result summaries settle, `compute_thread_summaries` builds each body's
 graph once more to collect the summaries a `parallel` block's checks read

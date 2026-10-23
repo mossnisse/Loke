@@ -1475,15 +1475,24 @@ note_parameter_write :: proc(written: []Symbol_Id, root: Prov_Root, global: Symb
 	return true
 }
 
-// The `thread_local` writes of a call's declaration; a join's members are
-// unioned.
-thread_local_write_summary :: proc(c: ^Compiler, declaration: Symbol_Id) -> []Symbol_Id {
-	if !is_contract_join(c, declaration) {
+// The `thread_local` writes of a call: its declaration's, a join's members'
+// unioned, or with neither, those of every body a call through a value or a
+// `dyn` slot may run (`indirect_call_targets`), each argument bound to the
+// parameter at its position.
+call_thread_local_writes :: proc(c: ^Compiler, call: ^Expr_Call) -> []Symbol_Id {
+	declaration := call_contract_declaration(c, call)
+	if declaration != INVALID_SYMBOL && !is_contract_join(c, declaration) {
 		return c.thread_local_writes[declaration]
 	}
+	targets: []Symbol_Id
+	if declaration != INVALID_SYMBOL {
+		targets = symbol_of(c, declaration).members
+	} else if call_writes_caller(c, call) {
+		targets = indirect_call_targets(c, call)
+	}
 	out: []Symbol_Id
-	for member in symbol_of(c, declaration).members {
-		written := c.thread_local_writes[member]
+	for target in targets {
+		written := c.thread_local_writes[target]
 		if out == nil && written != nil {
 			out = make([]Symbol_Id, len(written), c.semantic_allocator)
 			for &global in out {
@@ -1497,6 +1506,20 @@ thread_local_write_summary :: proc(c: ^Compiler, declaration: Symbol_Id) -> []Sy
 		}
 	}
 	return out
+}
+
+// Whether a call's signature has a parameter its callee may write through.
+call_writes_caller :: proc(c: ^Compiler, call: ^Expr_Call) -> bool {
+	info := underlying_info(c, call_proc_type(c, call))
+	if info == nil {
+		return false
+	}
+	for parameter, index in info.parameters {
+		if (index < len(info.param_modes) && info.param_modes[index] == .Inout) || carrier_is_mutable(c, parameter) {
+			return true
+		}
+	}
+	return false
 }
 
 // Whether a parameter names caller storage the body may write: `inout`, or a

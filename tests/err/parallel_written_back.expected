@@ -13,3 +13,24 @@ may leave a borrow of `counter` in this argument
 L0730
 @33:33
 may leave a borrow of `counter` in this argument
+L0730
+@45:35
+may leave a borrow of `counter` in this argument
+L0730
+@50:34
+may leave a borrow of `counter` in this argument
+L0730
+@54:42
+may leave a borrow of `counter` in this argument
+L0730
+@58:31
+may leave a borrow of `counter` in this argument
+L0730
+@65:27
+may leave a borrow of `counter` in this argument
+L0730
+@73:19
+handed a borrow of `counter`
+L0730
+@80:19
+handed a borrow of `counter`

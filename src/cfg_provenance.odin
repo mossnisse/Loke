@@ -4783,8 +4783,9 @@ prov_call_retention :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]int)
 	}
 }
 
-// What a `thread_local` borrow a callee leaves in an argument is called. The
-// spawn reports it from the summary, so the crossing check passes over it.
+// What a `thread_local` borrow a spawned call leaves in an argument is called.
+// The spawn reports it from the summary, so the crossing check passes over it;
+// one left by any other call crosses no further than a borrow taken directly.
 WRITTEN_BACK_BORROW :: "written-back borrow"
 
 // design.md "Borrows crossing between tasks": what the task's call may write
@@ -4792,7 +4793,7 @@ WRITTEN_BACK_BORROW :: "written-back borrow"
 // argument came from, a local or the parent's own caller.
 @(private = "file")
 report_thread_local_writes :: proc(c: ^Compiler, call: ^Expr_Call) {
-	written := thread_local_write_summary(c, call_contract_declaration(c, call))
+	written := call_thread_local_writes(c, call)
 	for global, index in written {
 		if global == INVALID_SYMBOL || index >= len(call.bound) || call.bound[index] == nil {
 			continue
@@ -4815,12 +4816,19 @@ report_thread_local_writes :: proc(c: ^Compiler, call: ^Expr_Call) {
 // so a task's call that does is seen to hand it to the parent.
 @(private = "file")
 prov_call_thread_local_writes :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]int) {
-	written := thread_local_write_summary(graph.k.c, call_contract_declaration(graph.k.c, v))
-	for global, index in written {
+	c := graph.k.c
+	// A call through a value is summarized from every body it may run.
+	if graph.mode == .Prov_Summary && call_contract_declaration(c, v) == INVALID_SYMBOL && call_writes_caller(c, v) {
+		for target in indirect_call_targets(c, v) {
+			prov_note_summary_dependency(graph, target, true)
+		}
+	}
+	what := v == graph.spawning ? WRITTEN_BACK_BORROW : "borrow"
+	for global, index in call_thread_local_writes(c, v) {
 		if global == INVALID_SYMBOL || index >= len(v.bound) || index >= len(actuals) || v.bound[index] == nil {
 			continue
 		}
-		sources := prov_borrow(graph, prov_root_for_symbol(graph, global), nil, false, v.span, WRITTEN_BACK_BORROW)
+		sources := prov_borrow(graph, prov_root_for_symbol(graph, global), nil, false, v.span, what)
 		prov_retain_into_argument(graph, v, index, actuals[index], sources)
 	}
 }

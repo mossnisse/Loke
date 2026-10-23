@@ -1152,6 +1152,21 @@ call_follows_bodies :: proc(c: ^Compiler, v: ^Expr_Call) -> bool {
 	return target.callee == INVALID_SYMBOL || target.callee in c.effect_program.index_of
 }
 
+// The bodies a call through a value or a `dyn` slot may run, as the write
+// effects found them; none for a direct call, or before they settle.
+indirect_call_targets :: proc(c: ^Compiler, v: ^Expr_Call) -> []Symbol_Id {
+	target, ok := call_effect(c, v)
+	if !ok || target.callee != INVALID_SYMBOL {
+		return nil
+	}
+	reached := effect_targets(c, target, &c.effect_program)
+	out := make([]Symbol_Id, len(reached), context.temp_allocator)
+	for index, position in reached {
+		out[position] = c.effect_program.bodies[index].symbol
+	}
+	return out
+}
+
 // One body's own thread facts, and the bodies each of its calls may run.
 @(private = "file")
 Thread_Body :: struct {
