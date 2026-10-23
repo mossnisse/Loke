@@ -237,28 +237,32 @@ solved for which `thread_local` global it may leave in each argument
 call leaves a borrow of that global in the matching argument, so a helper that
 forwards its parameter is summarized too, and a spawn reports any argument its
 call may write one into (`L0730`), since the worker's storage ends with its
-thread. A body that calls a callback it received records, as a
-`Callback_Write`, which parameter may receive what that callback leaves in
-which of its arguments; the summary reads a `Static` stand-in root for it,
-which nothing else constrains. A direct call substitutes the procedure it
-passes, or forwards the record when it passes its own callback parameter;
-any other value, and any call through a value or a `dyn` slot, may be any body
-the global-write effects found for its type (`indirect_call_targets`,
-`callable_type_targets`), whatever contract the type carries, since a contract
-bounds only the result. A stand-in that reaches a `return` is recorded as a
-`Callback_Read` instead of a result dependency, substituted the same way where
-the result is (`prov_callback_result`), and a contract's substitute may read no
-callback the contract does not. Each summary lines up with the call's
-arguments by its parameter count: a callable view passes itself before a held
-procedure's parameters, and a callable record's `call` takes the record the
-view hides. A callback resolved on a later round can add summary dependencies,
-which the worklist registers as they appear. The borrow a call leaves lands in
-the storage the argument's mutable carriers name, and below that only where a
-pointee reaches another mutable carrier (`prov_write_back_into_argument`), so
-read-only storage the argument points at is no destination. Only the loan a
-spawned call leaves is exempt from the crossing check, which the spawn has
-reported; one a call on the parent leaves is checked when it reaches a later
-task, as a borrow taken there directly would be.
+thread. A body that calls a callback it received records, as a `Callback_Write`,
+which parameter may receive what that callback leaves in which of its arguments;
+the summary reads a `Static` stand-in root for it, which nothing else
+constrains. A direct call substitutes the procedure it passes, or forwards the
+record when it passes its own callback parameter; any other value, and any call
+through a value or a `dyn` slot, may be any body the global-write effects found
+for its type (`indirect_call_targets`, `callable_type_targets`), whatever
+contract the type carries, since a contract bounds only the result. A stand-in
+that reaches a `return` is recorded as a `Callback_Read` instead of a result
+dependency, substituted the same way where the result is
+(`prov_callback_result`), and a contract's substitute may read no callback the
+contract does not. A callback's own result is one more argument
+(`CALLBACK_RESULT`): a call through a value with no summary may also return the
+`thread_local` borrow any body of its type may return, or its stand-in when the
+value is the body's own callback (`prov_callback_returned`), and a named
+procedure substitutes what its result summary names. Each summary lines up with
+the call's arguments by its parameter count: a callable view passes itself
+before a held procedure's parameters, and a callable record's `call` takes the
+record the view hides. A callback resolved on a later round can add summary
+dependencies, which the worklist registers as they appear. The borrow a call
+leaves lands in the storage the argument's mutable carriers name, and below that
+only where a pointee reaches another mutable carrier
+(`prov_write_back_into_argument`), so read-only storage the argument points at
+is no destination. Only the loan a spawned call leaves is exempt from the
+crossing check, which the spawn has reported; one a call on the parent leaves is
+checked when it reaches a later task, as a borrow taken there directly would be.
 
 Once the result summaries settle, `compute_thread_summaries` builds each body's
 graph once more to collect the summaries a `parallel` block's checks read

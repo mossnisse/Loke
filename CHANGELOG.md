@@ -11,17 +11,18 @@ checklist.
 ### Breaking changes
 
 - A `parallel` task that may write a borrow of its own `thread_local` storage
-  back through a mutable argument, directly or through a callback of any
-  type, including a callable view or one with an inferred contract, is now
-  rejected with `L0730`, as is a task handed such a borrow that a call on the
-  parent left in its variable. A procedure passed by name for a callback is
-  judged by what it writes back itself, and by what it leaves for a result
-  read back from it, not by every procedure of its type. A procedure whose
-  result may hold a `thread_local` borrow one of its callbacks leaves no
-  longer converts to an inferred contract (`type_of`) whose result does not
-  (`L0645`). Upgrade by
-  keeping that borrow inside the thread that owns the storage, or by writing
-  back a value whose storage remains live after the join.
+  back through a mutable argument, directly or through a callback of any type,
+  including a callable view or one with an inferred contract, is now rejected
+  with `L0730`, as is a task handed such a borrow that a call on the parent left
+  in its variable. So is a task's result that a callback called through a plain
+  procedure type or a `dyn proc` view may return such a borrow in. A procedure
+  passed by name for a callback is judged by what it writes back itself, and by
+  what it leaves for a result read back from it, not by every procedure of its
+  type. A procedure whose result may hold a `thread_local` borrow one of its
+  callbacks leaves no longer converts to an inferred contract (`type_of`) whose
+  result does not (`L0645`). Upgrade by keeping that borrow inside the thread
+  that owns the storage, or by writing back a value whose storage remains live
+  after the join.
 
 - `-doc` and hover show only [doc comments](design.md#doc-comments), line
   comments that start with `///`, and no longer the `//` comments above a

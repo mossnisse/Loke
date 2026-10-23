@@ -7,33 +7,6 @@ the compiler, unless the rewording is the intended fix.
 
 ## Gaps
 
-### A callback's returned `thread_local` borrow can reach the parent
-
-[Borrows crossing between tasks](design.md#borrows-crossing-between-tasks)
-forbids a task's result from holding a borrow of the worker's `thread_local`
-storage. A callback that returns one, called through a plain procedure type,
-is accepted, and `result` points into the worker's ended storage:
-
-```loke
-package main;
-
-counter: thread_local int;
-borrow_tls :: proc() -> ^int { return &counter; }
-call_it :: proc(h: proc() -> ^int) -> ^int { return h(); }
-
-main :: proc() {
-    result: ^int;
-    parallel { spawn result = call_it(borrow_tls); }
-    _ = result^;
-}
-```
-
-A call through a plain procedure type has no result summary, so with no
-escaping argument its result gets an unknown root (`prov_call_result`), which
-the crossing check does not treat as `thread_local` storage. What a callback
-leaves in an argument is substituted at each call (`Callback_Write`,
-`Callback_Read`); what it returns is not.
-
 ### A spawned call cannot take a variadic pack
 
 [Spawn statements](design.md#spawn-statements) lets a task call any procedure

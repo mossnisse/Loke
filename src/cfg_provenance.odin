@@ -5561,6 +5561,7 @@ prov_call_result :: proc(
 		if len(out) == 0 {
 			out = prov_synthetic_borrow(graph, v, .Unknown, result_type)
 		}
+		out = prov_join(graph, out, prov_callback_returned(graph, v, result_type))
 	}
 	return type_is_carrier(c, result_type) ? out : prov_value_content(graph, out, result_type, v.span)
 }
@@ -5589,6 +5590,31 @@ prov_callback_result :: proc(graph: ^Flow_Graph, v: ^Expr_Call, callee: Symbol_I
 		out = prov_join(graph, out, prov_borrow(graph, root, nil, mutable, v.span, carrier_noun(c, result_type)))
 	}
 	return out
+}
+
+// design.md "Borrows crossing between tasks": a call through a value may
+// return a borrow of the `thread_local` storage of the thread that runs it,
+// which an unknown root does not show: any procedure of its type may, or
+// while a body is summarized and the value is that body's own callback, the
+// one its caller passes (`call_callback_returns`).
+@(private = "file")
+prov_callback_returned :: proc(graph: ^Flow_Graph, v: ^Expr_Call, result_type: Type_Id) -> []int {
+	c := graph.k.c
+	consulted := make([dynamic]Symbol_Id, 0, 4, context.temp_allocator)
+	returned := call_callback_returns(c, v, graph.mode == .Prov_Summary, &consulted)
+	for target in consulted {
+		prov_note_summary_dependency(graph, target, prov_has_direct_body(c, target))
+	}
+	root := NO_ROOT
+	switch {
+	case returned.callback != INVALID_SYMBOL:
+		root = prov_forwarded_root(graph, returned.callback, returned.argument, v.span)
+	case returned.global != INVALID_SYMBOL:
+		root = prov_root_for_symbol(graph, returned.global)
+	case:
+		return nil
+	}
+	return prov_borrow(graph, root, nil, type_carries_borrow(c, result_type).mutable, v.span, carrier_noun(c, result_type))
 }
 
 @(private = "file")

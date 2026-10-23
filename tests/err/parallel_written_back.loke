@@ -1,8 +1,8 @@
 // design.md "Borrows crossing between tasks": a borrow of the worker's own
 // `thread_local` storage cannot reach the parent through what the task's call
 // writes into an argument, directly or through a helper, a field, an element,
-// or a callback, nor through the task's result read back from a callback. One
-// the parent's own call leaves cannot later reach a task.
+// or a callback, nor through the task's result read back from a callback or
+// returned by one. One the parent's own call leaves cannot later reach a task.
 package main;
 
 import "base:interfaces";
@@ -176,6 +176,35 @@ take_ignore :: proc(g: Ignore_Result) {}
 
 callback_read_outside_contract :: proc() {
 	take_ignore(apply_result);
+}
+
+// A callback called through a plain type or a view returns the worker's own.
+borrow_tls :: proc() -> ^int { return &counter; }
+call_returning :: proc(h: proc() -> ^int) -> ^int { return h(); }
+relay_returning :: proc(h: proc() -> ^int) -> ^int { return call_returning(h); }
+call_view_returning :: proc(h: dyn proc() -> ^int) -> ^int { return h(); }
+
+returned_through_callback :: proc() {
+	result: ^int;
+	parallel { spawn result = call_returning(borrow_tls); }
+	_ = result^;
+}
+
+returned_through_relay :: proc() {
+	result: ^int;
+	parallel { spawn result = relay_returning(borrow_tls); }
+	_ = result^;
+}
+
+returned_through_view :: proc() {
+	result: ^int;
+	parallel { spawn result = call_view_returning(borrow_tls); }
+	_ = result^;
+}
+
+parent_returned_later_spawned :: proc() {
+	slot := call_returning(borrow_tls);
+	parallel { spawn read_slot(slot); }
 }
 
 main :: proc() {}

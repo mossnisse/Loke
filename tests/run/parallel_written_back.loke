@@ -6,13 +6,15 @@
 // callback that writes nothing back is told apart from one that does, though
 // both fit the callback's type or contract. A write-back lands only in the
 // storage the argument's mutable carriers name, not in what it points at. A
-// result read back from a callback is likewise the passed callback's.
+// result read back from or returned by a callback is likewise the passed
+// callback's.
 package main;
 
 import "core:fmt";
 
 counter: thread_local int;
 fallback: int;
+shared := 5;
 
 publish :: proc(out: ^mut ^int) { out^ = &counter; }
 read_own :: proc(out: ^mut int) { counter += 1; out^ = counter; }
@@ -37,6 +39,11 @@ apply_result :: proc(f: proc(out: ^mut ^int), start: ^int) -> ^int {
 relay_result :: proc(f: proc(out: ^mut ^int), start: ^int) -> ^int { return apply_result(f, start); }
 Apply_Result :: type_of(apply_result);
 contract_result :: proc(g: Apply_Result, f: proc(out: ^mut ^int), start: ^int) -> ^int { return g(f, start); }
+borrow_tls :: proc() -> ^int { return &counter; }
+borrow_shared :: proc() -> ^int { return &shared; }
+call_returning :: proc(h: proc() -> ^int) -> ^int { return h(); }
+relay_returning :: proc(h: proc() -> ^int) -> ^int { return call_returning(h); }
+call_view_returning :: proc(h: dyn proc() -> ^int) -> ^int { return h(); }
 
 main :: proc() {
 	plain := 0;
@@ -80,5 +87,18 @@ main :: proc() {
 		spawn relayed_result = relay_result(keep, &kept_value);
 		spawn contract_read = contract_result(apply_result, keep, &kept_value);
 	}
+	// `borrow_tls` is a value here; `borrow_shared` stands in for it in each task.
+	own := call_returning(borrow_tls);
+	returned, relayed, viewed: ^int;
+	parallel {
+		spawn returned = call_returning(borrow_shared);
+		spawn relayed = relay_returning(borrow_shared);
+		spawn viewed = call_view_returning(borrow_shared);
+	}
+	shared_seen := 0;
+	parallel {
+		spawn read_slot(call_returning(borrow_shared), &mut shared_seen);
+	}
 	fmt.println(plain, called, view^, seen, kept_seen, pointed^, direct_result^ + relayed_result^ + contract_read^);
+	fmt.println(own^, returned^ + relayed^ + viewed^, shared_seen);
 }

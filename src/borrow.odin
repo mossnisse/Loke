@@ -1544,6 +1544,10 @@ Callback_Write :: struct {
 	callback, argument, into: int,
 }
 
+// A callback's own result, as the argument a `Callback_Write` or
+// `Callback_Read` names: what a call through it returns.
+CALLBACK_RESULT :: -1
+
 // design.md "Borrows crossing between tasks": a body's result may hold what a
 // callback it received, in parameter `callback`, leaves in its own argument
 // `argument`. Each call of the body substitutes the callback it passes
@@ -1807,7 +1811,10 @@ procedure_left_at :: proc(
 	if sym == nil || arity < 0 {
 		return INVALID_SYMBOL
 	}
-	index := argument + len(sym.param_symbols) - arity
+	index := argument
+	if argument != CALLBACK_RESULT {
+		index += len(sym.param_symbols) - arity
+	}
 	// A cycle of callbacks adds nothing its first visit does not.
 	key := [2]int{int(id), index}
 	if seen[key] {
@@ -1815,6 +1822,9 @@ procedure_left_at :: proc(
 	}
 	seen[key] = true
 	append(consulted, id)
+	if index == CALLBACK_RESULT {
+		return returned_thread_local(c, id, consulted, seen)
+	}
 	if written := c.thread_local_writes[id]; index >= 0 && index < len(written) && written[index] != INVALID_SYMBOL {
 		return written[index]
 	}
@@ -1828,6 +1838,60 @@ procedure_left_at :: proc(
 		}
 	}
 	return INVALID_SYMBOL
+}
+
+// A `thread_local` global procedure `id` may return a borrow of: one its result
+// summary names, or what a callback it calls may leave for its result.
+@(private = "file")
+returned_thread_local :: proc(c: ^Compiler, id: Symbol_Id, consulted: ^[dynamic]Symbol_Id, seen: ^map[[2]int]bool) -> Symbol_Id {
+	if summary, found := result_summary(c, id); found {
+		for global in summary.globals {
+			if global_sym := symbol_of(c, global); global_sym != nil && global_sym.duration == .Thread_Local {
+				return global
+			}
+		}
+	}
+	sym := symbol_of(c, id)
+	for read in c.callback_result_reads[id] {
+		if read.callback >= len(sym.param_symbols) {
+			continue
+		}
+		type := symbol_of(c, sym.param_symbols[read.callback]).type
+		if global := type_left_at(c, type, read.argument, consulted, seen); global != INVALID_SYMBOL {
+			return global
+		}
+	}
+	return INVALID_SYMBOL
+}
+
+// What a call through a value or a `dyn` slot may return of a callback's
+// `thread_local` storage, which a call with no summary does not show: with
+// `forward`, the calling body's own callback as a stand-in; otherwise what any
+// procedure of the callee's type may return. `at` is unused.
+call_callback_returns :: proc(c: ^Compiler, call: ^Expr_Call, forward: bool, consulted: ^[dynamic]Symbol_Id) -> Thread_Local_Left {
+	none := Thread_Local_Left{global = INVALID_SYMBOL, callback = INVALID_SYMBOL}
+	type := INVALID_TYPE
+	callee := call.callee
+	if selector, is_selector := callee.(^Expr_Selector); is_selector && selector.operand != nil {
+		if base := expr_base(selector.operand); base != nil && dyn_proc_signature(c, base.type) != INVALID_TYPE {
+			callee = selector.operand
+		}
+	}
+	if base := expr_base(callee); base != nil {
+		type = base.type
+	}
+	if callable_arity(c, type) < 0 {
+		return none
+	}
+	seen := make(map[[2]int]bool, context.temp_allocator)
+	guess := type_left_at(c, type, CALLBACK_RESULT, consulted, &seen)
+	if guess == INVALID_SYMBOL {
+		return none
+	}
+	if callback := called_parameter(c, call); forward && callback != INVALID_SYMBOL {
+		return {global = INVALID_SYMBOL, callback = callback, argument = CALLBACK_RESULT}
+	}
+	return {global = guess, callback = INVALID_SYMBOL}
 }
 
 // What any procedure a value of the callable `type` may hold leaves in its

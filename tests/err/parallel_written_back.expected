@@ -64,3 +64,15 @@ result holds a pointer of `counter`
 L0645
 @178:14
 does not satisfy the inferred contract of `ignore_result`
+L0730
+@189:28
+result holds a pointer of `counter`
+L0730
+@195:28
+result holds a pointer of `counter`
+L0730
+@201:28
+result holds a pointer of `counter`
+L0730
+@207:19
+handed a pointer of `counter`
