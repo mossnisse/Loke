@@ -5,6 +5,8 @@
 // is never reset. So is one left through a local copy of such a carrier. A
 // write through a local's own field is not one through another field holding
 // the caller's carrier, so it may use a region the caller's owner outlives.
+// An owner written through a pointer held in a local is fine while its region
+// is not reset.
 package main;
 
 import "core:mem";
@@ -47,6 +49,19 @@ write_local :: proc(allocator: Allocator, box: ^Box) -> int {
 	return local.len();
 }
 
+held :: proc(@(allocator_reset) allocator: Allocator) -> int {
+	out: [dynamic]int = {};
+	p := &mut out;
+	point_direct(allocator, p);
+	q := p;
+	q^.append(7);
+	return out.len();
+}
+
+point_direct :: proc(allocator: Allocator, out: ^mut [dynamic]int) {
+	out^ = make([dynamic]int, 2, allocator);
+}
+
 main :: proc() {
 	out: [dynamic]int = {};
 	point(mem.default_allocator(), &mut out);
@@ -73,4 +88,5 @@ main :: proc() {
 	scratch := mem.Arena.init();
 	untouched: [dynamic]int = {};
 	fmt.println(write_local(scratch.allocator(), &Box{&mut untouched}), untouched.len());
+	fmt.println(held(scratch.allocator()));
 }

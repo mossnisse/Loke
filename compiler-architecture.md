@@ -239,9 +239,12 @@ its carriers (`b := box^`, `b := Box{box^.out}`), from either operand of a
 conditional, `or_else`, or `move`. Each alias records the path in the local
 that holds the parameter's carriers (`Written_Alias`), from a literal's field
 or an assignment to `pair.unused`, so a write through `pair.local^` is not one
-through `pair.unused`. At the call it lands in the place `&mut place` or an
-`inout` argument names; any other carrier argument, each pack operand among them, is
-written through (`prov_leave_region`), as `p^ = owner` is. `content_loans` represent
+through `pair.unused`. An alias set from `&mut place` or `place[:]` of a
+local also records that place, so an owner written through `p := &mut out`
+lands in `out`'s region facts and a later reset sees it. At the call it lands
+in the place `&mut place` or an `inout` argument names; any other carrier
+argument, each pack operand among them, is written through
+(`prov_leave_region`), as `p^ = owner` is. `content_loans` represent
 loads through caller storage, substituted through the actual arguments.
 Whole-program global-write effects also apply at calls. Operators without an
 `Expr_Call` use synthesized call events for the selected procedure.

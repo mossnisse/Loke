@@ -6,7 +6,10 @@
 // holds rather than a place it names, a local region is an error at the call,
 // as `p^ = owner` is. A local copy of such a carrier, or a value built from
 // one, writes into the caller as the carrier does, whichever operand of a
-// conditional supplies it and whichever field of a local holds it.
+// conditional supplies it and whichever field of a local holds it. An owner
+// written through a pointer the caller holds, or a record holding one, lands
+// in the place `&mut place` lent it, so a later reset of that region is an
+// error there too, from a received allocator as from a local arena.
 package main;
 
 import "core:mem";
@@ -142,6 +145,31 @@ through_fields :: proc() {
 	conditional_box(arena.allocator(), &box, true);
 	field_box(arena.allocator(), &box);
 	fmt.println(out.len());
+}
+
+held_reset :: proc(@(allocator_reset) allocator: Allocator) {
+	out: [dynamic]int = {};
+	p := &mut out;
+	point_direct(allocator, p);
+	free_all(allocator);
+	fmt.println(out[0]);
+}
+
+held_box_reset :: proc(@(allocator_reset) allocator: Allocator) {
+	out: [dynamic]int = {};
+	box := Box{&mut out};
+	point_box(allocator, &box);
+	free_all(allocator);
+	fmt.println(out[0]);
+}
+
+held_body_reset :: proc(@(allocator_reset) allocator: Allocator) {
+	out: [dynamic]int = {};
+	p := &mut out;
+	q := p;
+	q^ = make([dynamic]int, 2, allocator);
+	free_all(allocator);
+	fmt.println(out[0]);
 }
 
 main :: proc() {}

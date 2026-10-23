@@ -38,6 +38,14 @@ checklist.
   the call, as `p^ = make(...)` already was. Upgrade by passing `&mut owner`
   itself, or by allocating from an allocator that outlives the owner.
 
+- An owner written through a pointer held in a local, such as `p := &mut out`
+  or `box := Box{&mut out}`, now keeps its allocator's region in `out`, by
+  `p^ = make(...)` or by a call such as `fill(allocator, p)`. A later
+  `free_all` of that region while `out` is live is `L0537`, including from an
+  `@(allocator_reset)` parameter's allocator, as passing `&mut out` directly
+  already was. Upgrade by resetting the region after the owner's last use, or
+  by allocating from an allocator that outlives it.
+
 - Each operand of a variadic pack now lends as one argument of its type does,
   so a mutable carrier passed by name is reborrowed for the call, and
   `fill(out, out)` for `fill :: proc(outs: ..^mut int)` is `L0641`, as

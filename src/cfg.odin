@@ -320,9 +320,10 @@ Prov_State :: struct {
 	// Locals a mutable loan was ever taken of: only these can be reached through
 	// a pointer or slice. Flow-insensitive, like the region facts.
 	lent_locals: map[Symbol_Id]bool,
-	// The writable parameters each local was ever set from, at the path in the
-	// local holding their carriers, so a write through it is a write the caller
-	// learns of. Flow-insensitive too.
+	// What each local's carriers were ever set to reach, at the path in the local
+	// holding them: a writable parameter's storage, so a write through it is a
+	// write the caller learns of, or a local place `&mut place` lent, so a reset
+	// sees an owner written there. Flow-insensitive too.
 	written_aliases: map[Symbol_Id][]Written_Alias,
 	has_region_event: bool,
 	// The uses that are a local's `drop` at scope exit, for the note naming them.
