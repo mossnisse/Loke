@@ -7,6 +7,65 @@ the compiler, unless the rewording is the intended fix.
 
 ## Gaps
 
+### A task's result read back through a callback is judged by its type
+
+[Borrows crossing between tasks](design.md#borrows-crossing-between-tasks)
+allows a task to use a borrow of its own `thread_local` storage within its
+call. Here the task passes `keep`, which writes nothing, yet its result is
+rejected because another procedure of the callback's type, `publish`, is used
+as a value elsewhere:
+
+```loke
+package main;
+
+counter: thread_local int;
+publish :: proc(out: ^mut ^int) { out^ = &counter; }
+keep :: proc(out: ^mut ^int) {}
+apply :: proc(f: proc(out: ^mut ^int), start: ^int) -> ^int {
+    current := start;
+    f(&mut current);
+    return current;
+}
+
+main :: proc() {
+    other := 0;
+    view := apply(publish, &other);
+    result: ^int;
+    parallel { spawn result = apply(keep, &other); } // L0730
+    _ = result^;
+}
+```
+
+What a callback parameter leaves in an argument is substituted at each call
+for the write-back check (`Callback_Write`), but a result summary has no such
+parameter: it takes what any procedure of the callback's type may leave.
+
+### A write-back through a carrier of static storage reports `L0647`
+
+A procedure may leave a borrow of its own thread's `thread_local` storage in
+its caller's storage on one thread, as `slot = &counter` does directly. Doing
+the same through a call is rejected when the argument points at storage that
+outlives the thread, although only `slot` itself is written:
+
+```loke
+package main;
+
+counter: thread_local int;
+fallback: int;
+publish :: proc(out: ^mut ^int) { out^ = &counter; }
+
+main :: proc() {
+    slot: ^int = &fallback;
+    publish(&mut slot); // L0647
+    slot = &counter;    // accepted
+    _ = slot^;
+}
+```
+
+The call stores the borrow through the argument's carriers and everything they
+reach (`prov_retain_into_argument`), so `fallback`, which holds no borrow, is
+treated as a destination too.
+
 ### A spawned call cannot take a variadic pack
 
 [Spawn statements](design.md#spawn-statements) lets a task call any procedure

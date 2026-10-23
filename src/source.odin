@@ -292,6 +292,9 @@ Compiler :: struct {
 	// the storage that argument names, or INVALID_SYMBOL (design.md "Borrows
 	// crossing between tasks").
 	thread_local_writes: map[Symbol_Id][]Symbol_Id,
+	// What a body may leave in caller storage from its calls through the
+	// callbacks it received, substituted at each call (`Callback_Write`).
+	callback_thread_local_writes: map[Symbol_Id][]Callback_Write,
 	// design.md "Borrowed callable views": a signature's contract with the view
 	// as an added first parameter, both ways.
 	receiver_contracts:   map[Symbol_Id]Symbol_Id,

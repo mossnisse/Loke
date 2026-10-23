@@ -95,6 +95,11 @@ Prov_Root :: struct {
 	// standing for what that many loads through it read. The last stands for
 	// every depth from its own on.
 	content_loans: []Loan_Id,
+	// A `Static` stand-in, while a body is summarized, for what the callback in
+	// parameter `param_index` may leave in its argument `argument`
+	// (`Callback_Write`). Only that summary reads it, so it constrains nothing.
+	forwarded: bool,
+	argument:  int,
 	// `Provider`: the region the control block belongs to. Empty means
 	// unrecorded, which every reset reaches.
 	region: Region_Set,
@@ -1242,23 +1247,33 @@ analyze_program_provenance :: proc(k: ^Checker) {
 	queue := make([dynamic]^Expr_Proc, 0, len(k.c.checked_bodies), context.temp_allocator)
 	queued := make([]bool, len(k.c.symbols), context.temp_allocator)
 	callers := make(map[Symbol_Id][dynamic]^Expr_Proc, context.temp_allocator)
+	// How many of each body's dependencies `callers` has: a resolved callback
+	// adds more on a later round, appended after them.
+	registered := make([]int, len(k.c.symbols), context.temp_allocator)
+	register :: proc(c: ^Compiler, callers: ^map[Symbol_Id][dynamic]^Expr_Proc, registered: []int, literal: ^Expr_Proc) {
+		dependencies := c.result_summary_dependencies[literal.symbol]
+		for callee in dependencies[registered[int(literal.symbol)]:] {
+			if callee not_in callers^ {
+				callers^[callee] = make([dynamic]^Expr_Proc, 0, 4, context.temp_allocator)
+			}
+			append(&callers^[callee], literal)
+		}
+		registered[int(literal.symbol)] = len(dependencies)
+	}
 	for body in k.c.checked_bodies {
 		if !body.clean {
 			continue
 		}
 		append(&queue, body.literal)
 		queued[int(body.literal.symbol)] = true
-		for callee in k.c.result_summary_dependencies[body.literal.symbol] {
-			if callee not_in callers {
-				callers[callee] = make([dynamic]^Expr_Proc, 0, 4, context.temp_allocator)
-			}
-			append(&callers[callee], body.literal)
-		}
+		register(k.c, &callers, registered, body.literal)
 	}
 	for head := 0; head < len(queue); head += 1 {
 		literal := queue[head]
 		queued[int(literal.symbol)] = false
-		if !summarize_body(k, literal) {
+		grew := summarize_body(k, literal)
+		register(k.c, &callers, registered, literal)
+		if !grew {
 			continue
 		}
 		// Bound to a local first: iterating the map index directly miscompiles.
@@ -1338,11 +1353,7 @@ summarize_body :: proc(k: ^Checker, literal: ^Expr_Proc) -> bool {
 	// `thread_local` storage at all.
 	stores_thread_local := writes && graph_borrows_thread_local(graph)
 	if sym.result == INVALID_TYPE {
-		if _, known := k.c.result_summary_dependencies[literal.symbol]; !known {
-			dependencies := make([]Symbol_Id, len(graph.summary_callees), k.c.semantic_allocator)
-			copy(dependencies, graph.summary_callees[:])
-			k.c.result_summary_dependencies[literal.symbol] = dependencies
-		}
+		record_summary_dependencies(k.c, literal.symbol, graph.summary_callees[:])
 		if stores_thread_local {
 			state := Prov_State{graph = graph, k = k}
 			if prepare_state(&state) {
@@ -1358,11 +1369,7 @@ summarize_body :: proc(k: ^Checker, literal: ^Expr_Proc) -> bool {
 		summary.result = new_result_provenance(k.c, len(sym.param_symbols), sym.result, true)
 		k.c.result_summaries[literal.symbol] = summary
 	}
-	if _, known := k.c.result_summary_dependencies[literal.symbol]; !known {
-		dependencies := make([]Symbol_Id, len(graph.summary_callees), k.c.semantic_allocator)
-		copy(dependencies, graph.summary_callees[:])
-		k.c.result_summary_dependencies[literal.symbol] = dependencies
-	}
+	record_summary_dependencies(k.c, literal.symbol, graph.summary_callees[:])
 	state := Prov_State{graph = graph, k = k}
 	if !prepare_state(&state) {
 		return changed
@@ -1374,10 +1381,34 @@ summarize_body :: proc(k: ^Checker, literal: ^Expr_Proc) -> bool {
 	return collect_escape_provenance(&state, summary) || changed
 }
 
+// The bodies whose summaries this one read. A callback's summary is read only
+// once a callee is seen to call it, so the set may grow on a later round.
+@(private = "file")
+record_summary_dependencies :: proc(c: ^Compiler, declaration: Symbol_Id, callees: []Symbol_Id) {
+	known := c.result_summary_dependencies[declaration]
+	added := 0
+	for callee in callees {
+		if !slice.contains(known, callee) {
+			added += 1
+		}
+	}
+	if added == 0 && declaration in c.result_summary_dependencies {
+		return
+	}
+	grown := make([dynamic]Symbol_Id, 0, len(known) + added, c.semantic_allocator)
+	append(&grown, ..known)
+	for callee in callees {
+		if !slice.contains(grown[:], callee) {
+			append(&grown, callee)
+		}
+	}
+	c.result_summary_dependencies[declaration] = grown[:]
+}
+
 @(private = "file")
 graph_borrows_thread_local :: proc(graph: ^Flow_Graph) -> bool {
 	for root in graph.roots {
-		if root.kind == .Thread_Local {
+		if root.kind == .Thread_Local || root.forwarded {
 			return true
 		}
 	}
@@ -1386,9 +1417,10 @@ graph_borrows_thread_local :: proc(graph: ^Flow_Graph) -> bool {
 
 // design.md "Borrows crossing between tasks": for each parameter, a
 // `thread_local` global whose borrow the body may store in the caller storage
-// it names, read off each store there. A call leaves the same borrow in its
-// argument (`prov_call_thread_local_writes`), so a task's call that hands one
-// back to its parent is seen at the spawn.
+// it names, and what a callback it received may leave there, read off each
+// store there. A call leaves the same borrow in its argument
+// (`prov_call_thread_local_writes`), so a task's call that hands one back to
+// its parent is seen at the spawn.
 @(private = "file")
 collect_thread_local_writes :: proc(state: ^Prov_State, declaration: Symbol_Id, count: int) -> bool {
 	graph := state.graph
@@ -1411,7 +1443,7 @@ collect_thread_local_writes :: proc(state: ^Prov_State, declaration: Symbol_Id, 
 		copy(state.ended, block.ended_entry)
 		for event in block.prov {
 			if event.kind == .Retain {
-				changed = note_thread_local_write(state, event, written) || changed
+				changed = note_thread_local_write(state, event, declaration, written) || changed
 			}
 			run_prov_event(state, event, state.reach, state.ended)
 		}
@@ -1419,35 +1451,53 @@ collect_thread_local_writes :: proc(state: ^Prov_State, declaration: Symbol_Id, 
 	return changed
 }
 
-// The first `thread_local` global a stored value borrows, recorded for each
-// parameter whose caller storage receives it: the stored place's root, or the
-// roots of the carrier it was written through.
+// The first `thread_local` global a stored value borrows, and each callback's
+// stand-in it holds, recorded for each parameter whose caller storage receives
+// it: the stored place's root, or the roots of the carrier it was written
+// through.
 @(private = "file")
-note_thread_local_write :: proc(state: ^Prov_State, event: Prov_Event, written: []Symbol_Id) -> bool {
+note_thread_local_write :: proc(state: ^Prov_State, event: Prov_Event, declaration: Symbol_Id, written: []Symbol_Id) -> bool {
 	graph := state.graph
 	global := stored_thread_local(state, event.sources)
-	if global == INVALID_SYMBOL {
+	forwarded := stored_forwarded(state, event.sources)
+	if global == INVALID_SYMBOL && len(forwarded) == 0 {
 		return false
 	}
-	changed := false
+	destinations := make([dynamic]Prov_Root, 0, 2, context.temp_allocator)
 	if len(event.into) > 0 {
 		it := live_loans(state, nil, event.into)
 		for _, index in next_live_loan(&it) {
-			changed = note_parameter_write(written, graph.roots[int(graph.loans[index].root)], global) || changed
+			append(&destinations, graph.roots[int(graph.loans[index].root)])
 		}
 	} else if event.root != NO_ROOT {
-		changed = note_parameter_write(written, graph.roots[int(event.root)], global)
+		append(&destinations, graph.roots[int(event.root)])
+	}
+	changed := false
+	for root in destinations {
+		if root.kind != .Param || root.param_index < 0 || root.param_index >= len(written) {
+			continue
+		}
+		if global != INVALID_SYMBOL && written[root.param_index] == INVALID_SYMBOL {
+			written[root.param_index] = global
+			changed = true
+		}
+		for stand_in in forwarded {
+			write := Callback_Write{callback = stand_in.param_index, argument = stand_in.argument, into = root.param_index}
+			changed = add_callback_write(state.k.c, declaration, write) || changed
+		}
 	}
 	return changed
 }
 
+// A stored value's `thread_local` borrow, other than one guessed for a
+// callback, which its stand-in records instead.
 @(private = "file")
 stored_thread_local :: proc(state: ^Prov_State, sources: []int) -> Symbol_Id {
 	graph := state.graph
 	for source in sources {
 		row := reach_row(state, state.reach, source)
 		for index in 0 ..< state.loans {
-			if !bit_get(row, index) || state.ended[index] {
+			if !bit_get(row, index) || state.ended[index] || graph.loans[index].what == GUESSED_BORROW {
 				continue
 			}
 			root := graph.roots[int(graph.loans[index].root)]
@@ -1466,60 +1516,255 @@ stored_thread_local :: proc(state: ^Prov_State, sources: []int) -> Symbol_Id {
 }
 
 @(private = "file")
-note_parameter_write :: proc(written: []Symbol_Id, root: Prov_Root, global: Symbol_Id) -> bool {
-	if root.kind != .Param || root.param_index < 0 || root.param_index >= len(written) ||
-	   written[root.param_index] != INVALID_SYMBOL {
-		return false
-	}
-	written[root.param_index] = global
-	return true
-}
-
-// The `thread_local` writes of a call, by argument: its declaration's, a
-// join's members', and for a call through a value or a `dyn` slot, also those
-// of every body it may run (`indirect_call_targets`), since a contract bounds
-// only what the result borrows. A summary with one parameter fewer than the
-// call has arguments is a procedure a callable view holds, after the view
-// itself; one with one more is a callable record's `call`, whose record the
-// view hides.
-call_thread_local_writes :: proc(c: ^Compiler, call: ^Expr_Call) -> []Symbol_Id {
-	out: []Symbol_Id
-	for target in thread_local_write_targets(c, call) {
-		written := c.thread_local_writes[target]
-		shift := len(call.bound) - len(written)
-		for global, index in written {
-			at := index + shift
-			if global == INVALID_SYMBOL || at < 0 || at >= len(call.bound) {
+stored_forwarded :: proc(state: ^Prov_State, sources: []int) -> []Prov_Root {
+	graph := state.graph
+	out: [dynamic]Prov_Root
+	for source in sources {
+		row := reach_row(state, state.reach, source)
+		for index in 0 ..< state.loans {
+			if !bit_get(row, index) || state.ended[index] {
 				continue
 			}
-			if out == nil {
-				out = make([]Symbol_Id, len(call.bound), c.semantic_allocator)
-				for &unset in out {
-					unset = INVALID_SYMBOL
+			root := graph.roots[int(graph.loans[index].root)]
+			if root.forwarded {
+				if out == nil {
+					out = make([dynamic]Prov_Root, 0, 2, context.temp_allocator)
 				}
-			}
-			if out[at] == INVALID_SYMBOL {
-				out[at] = global
+				append(&out, root)
 			}
 		}
 	}
-	return out
+	return out[:]
 }
 
-// The declarations whose `thread_local` writes a call may make.
-thread_local_write_targets :: proc(c: ^Compiler, call: ^Expr_Call) -> []Symbol_Id {
+// design.md "Borrows crossing between tasks": a body that calls a callback it
+// received may leave in its parameter `into` what that callback leaves in its
+// own argument `argument`, counted among the callback's parameters. Each call
+// of the body substitutes the callback it passes (`call_thread_local_left`).
+Callback_Write :: struct {
+	callback, argument, into: int,
+}
+
+@(private = "file")
+add_callback_write :: proc(c: ^Compiler, declaration: Symbol_Id, write: Callback_Write) -> bool {
+	known := c.callback_thread_local_writes[declaration]
+	if slice.contains(known, write) {
+		return false
+	}
+	grown := make([]Callback_Write, len(known) + 1, c.semantic_allocator)
+	copy(grown, known)
+	grown[len(known)] = write
+	c.callback_thread_local_writes[declaration] = grown
+	return true
+}
+
+// What a call may leave in its argument `at`, by its position in the call's
+// bound arguments: a borrow of `global`, and while a body is summarized, what
+// the callback that body received in parameter `callback` leaves in its own
+// argument `argument`. With a callback, `global` is only what any procedure of
+// its type may leave, kept for the result's provenance.
+Thread_Local_Left :: struct {
+	at:       int,
+	global:   Symbol_Id,
+	callback: Symbol_Id,
+	argument: int,
+}
+
+// What a call may leave in its arguments. A direct call substitutes the
+// procedure it passes for each callback its callee calls; a call through a
+// value or a `dyn` slot may run any body the global-write effects found for it
+// (`indirect_call_targets`), whatever contract its type carries, since a
+// contract bounds only what the result borrows. A summary with one parameter
+// fewer than the call has arguments is a procedure a callable view holds,
+// after the view itself; one with one more is a callable record's `call`,
+// whose record the view hides. With `forward`, a callback the calling body
+// received itself stays its own caller's to name. `consulted` gathers each
+// summary read.
+call_thread_local_left :: proc(c: ^Compiler, call: ^Expr_Call, forward: bool, consulted: ^[dynamic]Symbol_Id) -> []Thread_Local_Left {
+	if !call_writes_caller(c, call) {
+		return nil
+	}
+	count := len(call.bound)
+	out := make([dynamic]Thread_Local_Left, 0, 2, context.temp_allocator)
+	seen := make(map[[2]int]bool, context.temp_allocator)
+	if callback := called_parameter(c, call); forward && callback != INVALID_SYMBOL {
+		type := symbol_of(c, callback).type
+		info := underlying_info(c, call_proc_type(c, call))
+		for argument, index in call.bound {
+			if argument == nil || info == nil || index >= len(info.parameters) || !parameter_writes_caller(c, info, index) {
+				continue
+			}
+			position := index - (count - callable_arity(c, type))
+			append(&out, Thread_Local_Left {
+				at = index, callback = callback, argument = position,
+				global = type_left_at(c, type, position, consulted, &seen),
+			})
+		}
+		return out[:]
+	}
+	for target in call_thread_local_targets(c, call) {
+		append(consulted, target)
+		sym := symbol_of(c, target)
+		if sym == nil {
+			continue
+		}
+		shift := count - len(sym.param_symbols)
+		for global, index in c.thread_local_writes[target] {
+			if global != INVALID_SYMBOL && index + shift >= 0 && index + shift < count {
+				append(&out, Thread_Local_Left{at = index + shift, global = global, callback = INVALID_SYMBOL})
+			}
+		}
+		for write in c.callback_thread_local_writes[target] {
+			at, passed := write.into + shift, write.callback + shift
+			if at < 0 || at >= count || write.callback >= len(sym.param_symbols) {
+				continue
+			}
+			type := symbol_of(c, sym.param_symbols[write.callback]).type
+			value: Expr = passed >= 0 && passed < count ? call.bound[passed] : nil
+			left := callback_value_left(c, value, type, write.argument, forward, consulted, &seen)
+			left.at = at
+			if left.global != INVALID_SYMBOL || left.callback != INVALID_SYMBOL {
+				append(&out, left)
+			}
+		}
+	}
+	return out[:]
+}
+
+// The declarations a call's summary is read from: its callee, or every body a
+// call through a value or a `dyn` slot may run.
+@(private = "file")
+call_thread_local_targets :: proc(c: ^Compiler, call: ^Expr_Call) -> []Symbol_Id {
+	if targets, indirect := indirect_call_targets(c, call); indirect {
+		return targets
+	}
 	declaration := call_contract_declaration(c, call)
-	if original, shifted := c.receiver_contract_of[declaration]; shifted {
-		declaration = original
+	if declaration == INVALID_SYMBOL {
+		return nil
 	}
-	targets := make([dynamic]Symbol_Id, 0, 4, context.temp_allocator)
-	if declaration != INVALID_SYMBOL {
-		append(&targets, ..contract_members(c, declaration))
+	single := make([]Symbol_Id, 1, context.temp_allocator)
+	single[0] = declaration
+	return single
+}
+
+// The parameter of the calling body a call goes through: `f(out)`, or
+// `f.call(out)` on a callable view.
+@(private = "file")
+called_parameter :: proc(c: ^Compiler, call: ^Expr_Call) -> Symbol_Id {
+	callee := call.callee
+	if selector, is_selector := callee.(^Expr_Selector); is_selector && selector.operand != nil {
+		if base := expr_base(selector.operand); base == nil || dyn_proc_signature(c, base.type) == INVALID_TYPE {
+			return INVALID_SYMBOL
+		}
+		callee = selector.operand
 	}
-	if call_writes_caller(c, call) {
-		append(&targets, ..indirect_call_targets(c, call))
+	ident, is_ident := callee.(^Expr_Ident)
+	if !is_ident {
+		return INVALID_SYMBOL
 	}
-	return targets[:]
+	sym := symbol_of(c, ident.symbol)
+	if sym == nil || sym.kind != .Parameter || callable_arity(c, sym.type) < 0 {
+		return INVALID_SYMBOL
+	}
+	return ident.symbol
+}
+
+// How many parameters a procedure type or a `dyn proc` view's signature has,
+// or -1 for any other type.
+@(private = "file")
+callable_arity :: proc(c: ^Compiler, type: Type_Id) -> int {
+	signature := type
+	if underlying_kind(c, type) != .Proc {
+		signature = dyn_proc_signature(c, type)
+	}
+	info := underlying_info(c, signature)
+	if info == nil || info.kind != .Proc {
+		return -1
+	}
+	return len(info.parameters)
+}
+
+// What the callback `value`, passed for a parameter of `type`, leaves in its
+// argument `argument`: a named procedure's own summary; with `forward`, the
+// calling body's own callback parameter as a stand-in; otherwise what any
+// procedure of the type may leave.
+@(private = "file")
+callback_value_left :: proc(
+	c: ^Compiler, value: Expr, type: Type_Id, argument: int, forward: bool,
+	consulted: ^[dynamic]Symbol_Id, seen: ^map[[2]int]bool,
+) -> Thread_Local_Left {
+	named := value
+	if moved, is_move := named.(^Expr_Move); is_move {
+		named = moved.value
+	}
+	id := INVALID_SYMBOL
+	#partial switch v in named {
+	case ^Expr_Ident:
+		id = v.symbol
+	case ^Expr_Selector:
+		id = v.resolution.symbol
+	case ^Expr_Proc:
+		id = v.symbol
+	}
+	sym := symbol_of(c, id)
+	arity := callable_arity(c, type)
+	if sym != nil && sym.kind == .Proc && prov_has_direct_body(c, id) {
+		return {global = procedure_left_at(c, id, arity, argument, consulted, seen), callback = INVALID_SYMBOL}
+	}
+	guess := type_left_at(c, type, argument, consulted, seen)
+	if forward && sym != nil && sym.kind == .Parameter && callable_arity(c, sym.type) == arity {
+		return {global = guess, callback = id, argument = argument}
+	}
+	return {global = guess, callback = INVALID_SYMBOL}
+}
+
+// A `thread_local` global that procedure `id`, standing for a callback whose
+// signature has `arity` parameters, may leave in that signature's argument
+// `argument`. A callback it calls in turn may be any procedure of its type.
+@(private = "file")
+procedure_left_at :: proc(
+	c: ^Compiler, id: Symbol_Id, arity, argument: int, consulted: ^[dynamic]Symbol_Id, seen: ^map[[2]int]bool,
+) -> Symbol_Id {
+	sym := symbol_of(c, id)
+	if sym == nil || arity < 0 {
+		return INVALID_SYMBOL
+	}
+	index := argument + len(sym.param_symbols) - arity
+	// A cycle of callbacks adds nothing its first visit does not.
+	key := [2]int{int(id), index}
+	if seen[key] {
+		return INVALID_SYMBOL
+	}
+	seen[key] = true
+	append(consulted, id)
+	if written := c.thread_local_writes[id]; index >= 0 && index < len(written) && written[index] != INVALID_SYMBOL {
+		return written[index]
+	}
+	for write in c.callback_thread_local_writes[id] {
+		if write.into != index || write.callback >= len(sym.param_symbols) {
+			continue
+		}
+		type := symbol_of(c, sym.param_symbols[write.callback]).type
+		if global := type_left_at(c, type, write.argument, consulted, seen); global != INVALID_SYMBOL {
+			return global
+		}
+	}
+	return INVALID_SYMBOL
+}
+
+// What any procedure a value of the callable `type` may hold leaves in its
+// argument `argument`.
+@(private = "file")
+type_left_at :: proc(
+	c: ^Compiler, type: Type_Id, argument: int, consulted: ^[dynamic]Symbol_Id, seen: ^map[[2]int]bool,
+) -> Symbol_Id {
+	arity := callable_arity(c, type)
+	for target in callable_type_targets(c, type) {
+		if global := procedure_left_at(c, target, arity, argument, consulted, seen); global != INVALID_SYMBOL {
+			return global
+		}
+	}
+	return INVALID_SYMBOL
 }
 
 // Whether a call's signature has a parameter its callee may write through.
@@ -1529,12 +1774,17 @@ call_writes_caller :: proc(c: ^Compiler, call: ^Expr_Call) -> bool {
 	if info == nil {
 		return false
 	}
-	for parameter, index in info.parameters {
-		if (index < len(info.param_modes) && info.param_modes[index] == .Inout) || carrier_is_mutable(c, parameter) {
+	for _, index in info.parameters {
+		if parameter_writes_caller(c, info, index) {
 			return true
 		}
 	}
 	return false
+}
+
+@(private = "file")
+parameter_writes_caller :: proc(c: ^Compiler, info: ^Type_Info, index: int) -> bool {
+	return (index < len(info.param_modes) && info.param_modes[index] == .Inout) || carrier_is_mutable(c, info.parameters[index])
 }
 
 // Whether a parameter names caller storage the body may write: `inout`, or a

@@ -14,9 +14,10 @@ checklist.
   back through a mutable argument, directly or through a callback of any
   type, including a callable view or one with an inferred contract, is now
   rejected with `L0730`, as is a task handed such a borrow that a call on the
-  parent left in its variable. Upgrade by keeping that borrow inside the
-  thread that owns the storage, or by writing back a value whose storage
-  remains live after the join.
+  parent left in its variable. A procedure passed by name for a callback is
+  judged by what it writes back itself, not by every procedure of its type.
+  Upgrade by keeping that borrow inside the thread that owns the storage, or
+  by writing back a value whose storage remains live after the join.
 
 - `-doc` and hover show only [doc comments](design.md#doc-comments), line
   comments that start with `///`, and no longer the `//` comments above a

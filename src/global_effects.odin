@@ -1153,13 +1153,36 @@ call_follows_bodies :: proc(c: ^Compiler, v: ^Expr_Call) -> bool {
 }
 
 // The bodies a call through a value or a `dyn` slot may run, as the write
-// effects found them; none for a direct call, or before they settle.
-indirect_call_targets :: proc(c: ^Compiler, v: ^Expr_Call) -> []Symbol_Id {
+// effects found them, and whether the call is one; none before they settle.
+// A procedure type's inferred contract bounds only what its result borrows, so
+// any body of its plain signature may be the one called.
+indirect_call_targets :: proc(c: ^Compiler, v: ^Expr_Call) -> ([]Symbol_Id, bool) {
 	target, ok := call_effect(c, v)
 	if !ok || target.callee != INVALID_SYMBOL {
+		return nil, false
+	}
+	if target.dyn_interface == INVALID_SYMBOL {
+		target.type = erase_proc_contract(c, type_underlying(c, target.type))
+	}
+	return effect_target_symbols(c, target), true
+}
+
+// The bodies a value of a procedure type or a `dyn proc` view may run.
+callable_type_targets :: proc(c: ^Compiler, type: Type_Id) -> []Symbol_Id {
+	if underlying_kind(c, type) == .Proc {
+		return effect_target_symbols(c, Effect_Call{type = erase_proc_contract(c, type_underlying(c, type))})
+	}
+	signature := dyn_proc_signature(c, type)
+	if signature == INVALID_TYPE {
 		return nil
 	}
-	reached := effect_targets(c, target, &c.effect_program)
+	view := underlying_info(c, type)
+	return effect_target_symbols(c, Effect_Call{dyn_interface = view.dyn_interface, type = signature})
+}
+
+@(private = "file")
+effect_target_symbols :: proc(c: ^Compiler, call: Effect_Call) -> []Symbol_Id {
+	reached := effect_targets(c, call, &c.effect_program)
 	out := make([]Symbol_Id, len(reached), context.temp_allocator)
 	for index, position in reached {
 		out[position] = c.effect_program.bodies[index].symbol

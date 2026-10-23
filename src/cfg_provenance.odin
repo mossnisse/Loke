@@ -4053,7 +4053,6 @@ prov_parameter_type :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int) -> Ty
 	return info.parameters[index]
 }
 
-@(private = "file")
 prov_has_direct_body :: proc(c: ^Compiler, id: Symbol_Id) -> bool {
 	if is_contract_join(c, id) {
 		for member in symbol_of(c, id).members {
@@ -4787,23 +4786,29 @@ prov_call_retention :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]int)
 // The spawn reports it from the summary, so the crossing check passes over it;
 // one left by any other call crosses no further than a borrow taken directly.
 WRITTEN_BACK_BORROW :: "written-back borrow"
+// What any procedure of a callback's type might leave is called, while a body
+// is summarized: the result's provenance keeps it, but the callback's stand-in
+// records the write-back (`Callback_Write`).
+GUESSED_BORROW :: "borrow a callback may leave"
 
 // design.md "Borrows crossing between tasks": what the task's call may write
 // into an argument stays behind after the worker's thread ends, wherever the
 // argument came from, a local or the parent's own caller.
 @(private = "file")
 report_thread_local_writes :: proc(c: ^Compiler, call: ^Expr_Call) {
-	written := call_thread_local_writes(c, call)
-	for global, index in written {
-		if global == INVALID_SYMBOL || index >= len(call.bound) || call.bound[index] == nil {
+	consulted := make([dynamic]Symbol_Id, 0, 4, context.temp_allocator)
+	reported := make([]bool, len(call.bound), context.temp_allocator)
+	for left in call_thread_local_left(c, call, false, &consulted) {
+		if left.global == INVALID_SYMBOL || reported[left.at] || call.bound[left.at] == nil {
 			continue
 		}
-		sym := symbol_of(c, global)
+		sym := symbol_of(c, left.global)
 		if sym == nil {
 			continue
 		}
+		reported[left.at] = true
 		errorf(
-			c, expr_span(call.bound[index]), "L0730",
+			c, expr_span(call.bound[left.at]), "L0730",
 			"this task's call may leave a borrow of `%s` in this argument, but it is the worker's own `thread_local` storage, so it cannot cross to the parent",
 			identifier_text(c, sym.name),
 		)
@@ -4813,24 +4818,44 @@ report_thread_local_writes :: proc(c: ^Compiler, call: ^Expr_Call) {
 
 // design.md "Borrows crossing between tasks": a callee that may leave a borrow
 // of a `thread_local` global in an argument leaves it in the caller's storage,
-// so a task's call that does is seen to hand it to the parent.
+// so a task's call that does is seen to hand it to the parent. While a body is
+// summarized, a callback it received leaves its stand-in instead.
 @(private = "file")
 prov_call_thread_local_writes :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]int) {
 	c := graph.k.c
-	// A call through a value is summarized from every body it may run.
-	if graph.mode == .Prov_Summary {
-		for target in thread_local_write_targets(c, v) {
-			prov_note_summary_dependency(graph, target, prov_has_direct_body(c, target))
-		}
+	consulted := make([dynamic]Symbol_Id, 0, 4, context.temp_allocator)
+	lefts := call_thread_local_left(c, v, graph.mode == .Prov_Summary, &consulted)
+	for target in consulted {
+		prov_note_summary_dependency(graph, target, prov_has_direct_body(c, target))
 	}
 	what := v == graph.spawning ? WRITTEN_BACK_BORROW : "borrow"
-	for global, index in call_thread_local_writes(c, v) {
-		if global == INVALID_SYMBOL || index >= len(v.bound) || index >= len(actuals) || v.bound[index] == nil {
+	for left in lefts {
+		if left.at >= len(actuals) || v.bound[left.at] == nil {
 			continue
 		}
-		sources := prov_borrow(graph, prov_root_for_symbol(graph, global), nil, false, v.span, what)
-		prov_retain_into_argument(graph, v, index, actuals[index], sources)
+		if left.callback != INVALID_SYMBOL {
+			stand_in := prov_forwarded_root(graph, left.callback, left.argument, v.span)
+			sources := prov_borrow(graph, stand_in, nil, false, v.span, "callback's write")
+			prov_retain_into_argument(graph, v, left.at, actuals[left.at], sources)
+		}
+		if left.global != INVALID_SYMBOL {
+			label := left.callback != INVALID_SYMBOL ? GUESSED_BORROW : what
+			sources := prov_borrow(graph, prov_root_for_symbol(graph, left.global), nil, false, v.span, label)
+			prov_retain_into_argument(graph, v, left.at, actuals[left.at], sources)
+		}
 	}
+}
+
+// The stand-in for what the callback in `callback`, this body's parameter,
+// leaves in its argument `argument`.
+@(private = "file")
+prov_forwarded_root :: proc(graph: ^Flow_Graph, callback: Symbol_Id, argument: int, span: Span) -> Root_Id {
+	sym := symbol_of(graph.k.c, callback)
+	root := prov_new_root(graph, .Static, span, identifier_text(graph.k.c, sym.name))
+	graph.roots[int(root)].forwarded = true
+	graph.roots[int(root)].param_index = int(sym.index)
+	graph.roots[int(root)].argument = argument
+	return root
 }
 
 // Where a `stored` argument may land: an `inout` parameter or receiver, or a
