@@ -63,7 +63,7 @@ main :: proc() {
 		spawn nothing_back = nothing();
 		spawn callback();
 		spawn abs(1);
-		spawn sum(1, 2);
+		spawn sum(1, 2); // a variadic pack is the task's own
 		spawn pick(inout place);
 		spawn work(1);
 	}

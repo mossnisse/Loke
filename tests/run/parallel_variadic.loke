@@ -1,0 +1,84 @@
+// design.md "Spawn statements": a task may start a call with a variadic pack.
+// Its elements are evaluated and copied on the parent and belong to the task,
+// which drops them on the worker; a spread passes the slice it views, whose
+// elements a pack with other operands copies in on the worker. A lone spread
+// forwards the slice, and an empty pack is empty.
+package main;
+
+import "core:fmt";
+import "core:sync";
+
+copies: sync.Atomic(int) = {};
+drops: sync.Atomic(int) = {};
+
+Tracked :: struct { id: int }
+
+impl Tracked {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Tracked, Allocator_Error) {
+		_ = copies.add(1);
+		return .ok(Tracked{self.id});
+	}
+	release :: hook(drop) proc(self: inout) {
+		_ = drops.add(self.id);
+	}
+}
+
+sum :: proc(xs: ..int) -> int {
+	total := 0;
+	foreach (x in xs) { total += x; }
+	return total;
+}
+
+scaled :: proc(factor: int, xs: ..int) -> int {
+	return factor * sum(..xs);
+}
+
+lengths :: proc(parts: ..string) -> int {
+	total := 0;
+	foreach (part in parts) { total += part.len(); }
+	return total;
+}
+
+ids :: proc(items: ..Tracked) -> int {
+	total := 0;
+	foreach (item in items) { total += item.id; }
+	return total;
+}
+
+read_all :: proc(views: ..^int) -> int {
+	total := 0;
+	foreach (view in views) { total += view^; }
+	return total;
+}
+
+main :: proc() {
+	odds := []int{1, 3, 5};
+	more := [dynamic]int{10, 20};
+	name := string("abc");
+	one, two := 1, 2;
+	packed, forwarded, mixed, empty, strings_total, unscaled, viewed: int;
+	parallel {
+		spawn packed = sum(1, 2, 3);
+		spawn forwarded = sum(..odds);
+		spawn mixed = scaled(2, 1, ..odds, 4, ..more);
+		spawn empty = sum();
+		spawn strings_total = lengths(name, string("de"), name);
+		spawn unscaled = scaled(3);
+		spawn viewed = read_all(&one, &two, &one);
+	}
+	fmt.println(packed, forwarded, mixed, empty, strings_total, unscaled, viewed, name.len());
+
+	kept := Tracked{1};
+	given := Tracked{100};
+	owned: int;
+	parallel {
+		spawn owned = ids(kept.clone(), Tracked{10}, move(given));
+	}
+	fmt.println(owned, copies.load(), drops.load());
+	shared := []Tracked{Tracked{1000}};
+	spread: int;
+	parallel {
+		spawn spread = ids(Tracked{20000}, ..shared);
+	}
+	fmt.println(spread, copies.load(), drops.load(), kept.id);
+}

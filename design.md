@@ -6453,6 +6453,8 @@ An argument for an ordinary `value: T` parameter is **copied into the task** whe
 
 Temporaries made for a spawn's arguments belong to the task and are dropped on the worker when the call returns. A result cannot borrow their storage.
 
+A [variadic pack](#variadic-parameters) belongs to the task too. Its elements are evaluated and copied into it on the parent, in written order, as at any call, and are dropped on the worker. A spread `..xs` passes the slice it views, which the task borrows read-only until the join, so its storage must outlive the block: `spawn total(..make_list())` is an error, as `spawn total(make_list()[:])` is. A lone spread forwards that slice; in a pack with other operands, the spread's elements are copied into the pack on the worker.
+
 **Result destinations.** In `spawn result = call;`, `result` names a local variable declared before the block, in the same procedure, and dead at the spawn: declared without a value, or moved from. A field, an index, a destructuring, `_`, and a live variable are not destinations. The call has exactly one result, of exactly the local's declared type, since no conversion runs on the worker; a call with several results has no destination. The worker writes the result into the local.
 
 From the spawn to the join the local is reserved to the task: the parent cannot read, borrow, assign, move, or drop it, even after the worker has finished, and no other spawn on a path through the block may assign it. After the join it is definitely initialized on the paths that executed its spawn and dead on the others, as an assignment there would leave it:

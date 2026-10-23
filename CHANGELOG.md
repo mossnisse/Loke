@@ -188,7 +188,8 @@ checklist.
   waits for all of them on every way out of the block, a panic included. A
   task may borrow the caller's locals, which stay lent to it until the join,
   and `spawn result = call;` hands its result back through a local declared
-  before the block. The compiler rejects a task that shares something
+  before the block. A spawned call may take a variadic pack, which belongs to
+  the task, as `spawn total = sum(1, 2, 3);` does. The compiler rejects a task that shares something
   writable (`L0729`), writes or reaches through a global while tasks run
   (`L0731`), hands a `thread_local` borrow across (`L0730`), or uses an
   allocator another task may be using (`L0732`). `examples/parallel.loke`

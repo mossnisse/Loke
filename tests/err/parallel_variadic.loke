@@ -1,0 +1,75 @@
+// design.md "Spawn statements" and "Task borrows and the join": a variadic
+// pack's operands are checked as the task's arguments. A spread's storage is
+// borrowed until the join, so it outlives the block or the spawn is an error,
+// as is a pack element borrowing a block local or the parent's `thread_local`
+// storage, two mutable borrows of one place, and a shared spread reaching a
+// mutable carrier.
+package main;
+
+counter: thread_local int;
+
+sum :: proc(xs: ..int) -> int {
+	total := 0;
+	foreach (x in xs) { total += x; }
+	return total;
+}
+fill :: proc(slots: ..^mut int) { foreach (slot in slots) { slot^ = 1; } }
+read :: proc(views: ..^int) -> int { return views[0]^; }
+make_list :: proc() -> [dynamic]int { return [dynamic]int{1, 2}; }
+
+temporary_spread :: proc() -> int {
+	got: int;
+	parallel { spawn got = sum(1, ..make_list()); }
+	return got;
+}
+
+temporary_forward :: proc() -> int {
+	got: int;
+	parallel { spawn got = sum(..make_list()); }
+	return got;
+}
+
+local_spread :: proc() -> int {
+	got: int;
+	parallel {
+		inner := []int{1, 2};
+		spawn got = sum(..inner, 3);
+	}
+	return got;
+}
+
+twice :: proc() {
+	a := 0;
+	parallel { spawn fill(&mut a, &mut a); }
+}
+
+parent_reads :: proc() {
+	a := 0;
+	parallel {
+		spawn fill(&mut a);
+		_ = a;
+	}
+}
+
+local_element :: proc() -> int {
+	got: int;
+	parallel {
+		inner := 4;
+		spawn got = read(&inner);
+	}
+	return got;
+}
+
+thread_local_element :: proc() -> int {
+	got: int;
+	parallel { spawn got = read(&counter); }
+	return got;
+}
+
+shared_mutable_spread :: proc(slots: []^mut int) {
+	parallel { spawn fill(&mut counter_copy, ..slots); }
+}
+
+counter_copy := 0;
+
+main :: proc() {}

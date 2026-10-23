@@ -32,9 +32,6 @@ L0728
 @65:9
 `spawn` starts a Loke procedure; call a foreign one from a Loke procedure the task runs
 L0728
-@66:9
-`spawn` cannot start a call with a variadic pack yet; pass a slice to a procedure the task runs
-L0728
 @67:9
 a task cannot hand back an `inout` result, which is a place of the worker's call
 L0612

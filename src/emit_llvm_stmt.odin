@@ -192,6 +192,11 @@ emit_spawn :: proc(e: ^Emitter, s: ^Stmt_Spawn) {
 		is_default := index < len(callee.param_defaults) && argument == callee.param_defaults[index]
 		e.param_values = is_default ? own_params : outer_params
 		field := field_address(e, frame_info, frame_type, frame, spawn_argument_field(index))
+		if spawn_packs(call, index) {
+			pack := symbol_of(e.c, frame_info.fields[spawn_argument_field(index)]).type
+			emit_spawn_pack(e, task, call, type, pack, field, &owned)
+			continue
+		}
 		bound: string
 		switch task.kinds[index] {
 		case .Address:
@@ -233,6 +238,36 @@ emit_spawn :: proc(e: ^Emitter, s: ^Stmt_Spawn) {
 			fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", flag)
 		}
 		revive_place(e, s.result)
+	}
+}
+
+// design.md "Spawn statements": a variadic pack's operands, evaluated in their
+// written order into the frame's pack record. An element is copied as the pack
+// would copy it, and one the task owns is held for the unwind like any owned
+// argument; a spread stores the `[]T` it views.
+@(private = "file")
+emit_spawn_pack :: proc(
+	e: ^Emitter, task: ^Spawn_Task, call: ^Expr_Call, slice, pack: Type_Id, record: string, owned: ^[dynamic]Deferred,
+) {
+	info := type_of(e.c, pack)
+	record_type := llvm_type(e, pack)
+	element := slice_element(e.c, slice)
+	managed := emit_lifecycle(e, element).managed
+	next_element, next_spread := 0, 0
+	for is_spread, position in call.variadic_order {
+		slot := gep_field(e, record_type, record, int(symbol_of(e.c, info.fields[position]).index))
+		if is_spread {
+			store(e, slice, emit_expr(e, call.variadic_spreads[next_spread]), slot)
+			next_spread += 1
+			continue
+		}
+		expr := call.variadic_elements[next_element]
+		next_element += 1
+		value := emit_copied_expr(e, expr, element, managed && expression_is_borrowed_place(expr))
+		if task.pack[position] == .Owned {
+			append(owned, hold_temporary_value(e, element, value))
+		}
+		store(e, element, value, slot)
 	}
 }
 

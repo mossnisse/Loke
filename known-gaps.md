@@ -7,33 +7,6 @@ the compiler, unless the rewording is the intended fix.
 
 ## Gaps
 
-### A spawned call cannot take a variadic pack
-
-[Spawn statements](design.md#spawn-statements) lets a task call any procedure
-written in Loke, but a call whose variadic parameter is filled from separate
-arguments is rejected:
-
-```loke
-package main;
-
-sum :: proc(xs: ..int) -> int {
-    total := 0;
-    foreach (x in xs) { total += x; }
-    return total;
-}
-
-main :: proc() {
-    answer: int;
-    parallel {
-        spawn answer = sum(1, 2, 3);   // L0728: "cannot start a call with a variadic pack yet"
-    }
-}
-```
-
-The pack is a temporary slice of the parent's statement, and the frame has no
-field that owns its elements for the task. Passing a slice to a procedure the
-task runs works today.
-
 ### `-doc` omits compiler-contributed declarations
 
 [`-doc`](compiler-guide.md#common-options) prints "each public declaration's

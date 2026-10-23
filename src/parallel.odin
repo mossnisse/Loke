@@ -38,6 +38,15 @@ Spawn_Task :: struct {
 	start:  Symbol_Id,
 	kinds:  []Spawn_Field_Kind,
 	result: Symbol_Id, // INVALID_SYMBOL for a bare spawn
+	// A call with a variadic pack: its slot's field is a record holding each
+	// element and spread in `variadic_order`, with how each reaches the task.
+	pack:   []Spawn_Field_Kind,
+}
+
+// Whether bound argument `index` of a spawned call is a variadic pack built
+// from separate arguments, rather than one forwarded slice.
+spawn_packs :: proc(call: ^Expr_Call, index: int) -> bool {
+	return call.is_variadic && !call.variadic_forwards && index == call.variadic_slot
 }
 
 // The frame field holding bound argument `index`, and the result's address.
@@ -211,10 +220,6 @@ spawned_callee :: proc(k: ^Checker, call: ^Expr_Call) -> (^Symbol, bool) {
 		errorf(c, expr_span(call.callee), "L0728", "`spawn` starts a Loke procedure; call a foreign one from a Loke procedure the task runs")
 		return nil, false
 	}
-	if call.is_variadic {
-		errorf(c, call.span, "L0728", "`spawn` cannot start a call with a variadic pack yet; pass a slice to a procedure the task runs")
-		return nil, false
-	}
 	if info.result_inout {
 		errorf(c, call.span, "L0728", "a task cannot hand back an `inout` result, which is a place of the worker's call")
 		return nil, false
@@ -278,6 +283,10 @@ spawn_result_symbol :: proc(k: ^Checker, s: ^Stmt_Spawn, block: ^Stmt_Parallel, 
 //         unsafe.write(frame.result^, callee(frame.arg$0^, inout ..., move(owned$1)));
 //         unsafe.free(frame);
 //     }
+//
+// design.md "Spawn statements": a variadic pack's slot holds a record of its
+// operands, `pack :: struct { p0: T, p1: []T }`, and `run` packs them again:
+// `callee(..., move(pack$owned$0), ..frame.arg$2.p1)`.
 @(private = "file")
 lower_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn, block: ^Stmt_Parallel, callee: ^Symbol, result: Symbol_Id) {
 	c := k.c
@@ -298,6 +307,11 @@ lower_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn, block: ^Stmt_Parallel, callee: 
 		return
 	}
 	task.result = result
+
+	outer := k.scope
+	k.scope = new_scope(c, outer, .Local)
+	defer k.scope = outer
+
 	task.kinds = make([]Spawn_Field_Kind, len(call.bound), c.semantic_allocator)
 	field_types := make([]Type_Id, len(call.bound) + 2, c.semantic_allocator)
 	field_types[0] = TYPE_RAWPTR
@@ -305,6 +319,16 @@ lower_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn, block: ^Stmt_Parallel, callee: 
 		type := index < len(info.parameters) ? info.parameters[index] : INVALID_TYPE
 		mode := index < len(info.param_modes) ? info.param_modes[index] : Param_Mode.Value
 		kind := spawn_field_kind(c, argument, type, mode)
+		if spawn_packs(call, index) {
+			pack := spawn_pack_record(k, task, call, type, span)
+			if pack == INVALID_TYPE {
+				return
+			}
+			kind, type = .Owned, pack
+		} else if call.is_variadic && index == call.variadic_slot {
+			// A lone spread forwards the slice it views, as at any call.
+			kind = .Copy
+		}
 		task.kinds[index] = kind
 		field_types[spawn_argument_field(index)] = kind == .Address ? pointer_to(c, type, mode == .Inout) : type
 	}
@@ -314,31 +338,15 @@ lower_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn, block: ^Stmt_Parallel, callee: 
 		fields = field_types
 	}
 
-	outer := k.scope
-	k.scope = new_scope(c, outer, .Local)
-	defer k.scope = outer
-
-	// The record, each field's type bound to a name only this scope has.
-	record_name := fmt.aprintf("spawn$frame$%d", span.lo, allocator = c.semantic_allocator)
-	record_id := intern_identifier(c, record_name)
-	record := new(Type_Record, c.semantic_allocator)
-	record.span = span
-	record.kind = .Struct
-	record.fields = make([]Field, len(fields), c.semantic_allocator)
-	for type, index in fields {
-		alias := intern_identifier(c, fmt.aprintf("spawn$type$%d", index, allocator = c.semantic_allocator))
-		k.scope.names[alias] = new_associated_type(c, "spawn$type", type, INVALID_TYPE)
-		names := make([]Name, 1, c.semantic_allocator)
-		names[0] = synth_name(c, frame_field_name(c, task, index), span)
-		record.fields[index] = Field{span = span, names = names, type = synth_ident(k, "spawn$type", alias, span)}
+	field_names := make([]string, len(fields), c.semantic_allocator)
+	for &name, index in field_names {
+		name = frame_field_name(c, task, index)
 	}
-	frame_decl := synth_const(k, record_name, record_id, record, span)
-	check_local_declaration(k, frame_decl)
-	frame_sym := symbol_of(c, frame_decl.symbols[0])
-	if frame_sym == nil || frame_sym.type == INVALID_TYPE {
+	frame_name := fmt.aprintf("spawn$frame$%d", span.lo, allocator = c.semantic_allocator)
+	task.frame = synth_record(k, frame_name, "spawn$type", field_names, fields, span)
+	if task.frame == INVALID_TYPE {
 		return
 	}
-	task.frame = frame_sym.type
 
 	callee_alias := intern_identifier(c, "spawn$callee")
 	k.scope.names[callee_alias] = call.resolution.symbol
@@ -351,10 +359,18 @@ lower_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn, block: ^Stmt_Parallel, callee: 
 		return synth_ident(k, "spawn$frame", id, span)
 	}
 	stmts := make([dynamic]Stmt, 0, len(call.bound) + 2, c.semantic_allocator)
-	args := make([]Argument, len(call.bound), c.semantic_allocator)
+	args := make([dynamic]Argument, 0, len(call.bound) + len(task.pack), c.semantic_allocator)
 	for kind, index in task.kinds {
 		mode := index < len(info.param_modes) ? info.param_modes[index] : Param_Mode.Value
 		field := synth_selector(c, frame_of(k, frame_param, span), frame_field_name(c, task, spawn_argument_field(index)), span)
+		if spawn_packs(call, index) {
+			spawn_repack(k, task, call, field, &stmts, &args, span)
+			continue
+		}
+		if call.is_variadic && index == call.variadic_slot {
+			append(&args, Argument{span = span, mode = .Spread, value = field})
+			continue
+		}
 		value: Expr
 		argument_mode := Argument_Mode.Value
 		switch kind {
@@ -369,14 +385,7 @@ lower_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn, block: ^Stmt_Parallel, callee: 
 			local := fmt.aprintf("spawn$owned$%d", index, allocator = c.semantic_allocator)
 			local_id := intern_identifier(c, local)
 			taken := synth_call(c, synth_ident(k, "spawn$take", intern_identifier(c, "spawn$take"), span), {field}, span)
-			owned := new(Decl, c.semantic_allocator)
-			owned.span = span
-			owned.kind = .Var
-			owned.names = make([]Name, 1, c.semantic_allocator)
-			owned.names[0] = Name{text = local, span = span, id = local_id}
-			owned.values = make([]Expr, 1, c.semantic_allocator)
-			owned.values[0] = taken
-			append(&stmts, owned)
+			append(&stmts, synth_var(c, local, local_id, taken, span))
 			value = synth_ident(k, local, local_id, span)
 			if mode == .Move {
 				moved := new(Expr_Move, c.semantic_allocator)
@@ -385,12 +394,12 @@ lower_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn, block: ^Stmt_Parallel, callee: 
 				value = moved
 			}
 		}
-		args[index] = Argument{span = span, mode = argument_mode, value = value}
+		append(&args, Argument{span = span, mode = argument_mode, value = value})
 	}
 	inner := new(Expr_Call, c.semantic_allocator)
 	inner.span = span
 	inner.callee = synth_ident(k, "spawn$callee", callee_alias, span)
-	inner.args = args
+	inner.args = args[:]
 	made: Expr = inner
 	if result != INVALID_SYMBOL {
 		destination := synth_deref(c, synth_selector(c, frame_of(k, frame_param, span), frame_field_name(c, task, spawn_result_field(task)), span), span)
@@ -428,6 +437,59 @@ lower_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn, block: ^Stmt_Parallel, callee: 
 	if committing(c) {
 		s.task = task
 		append(&c.spawn_tasks, task)
+	}
+}
+
+// design.md "Spawn statements": the record a variadic pack's operands are
+// held in until the worker packs them again. An element is copied into the
+// task, or owned by it when its type is managed, as the pack would own it; a
+// spread is the `[]T` it views, which the task borrows until the join.
+@(private = "file")
+spawn_pack_record :: proc(k: ^Checker, task: ^Spawn_Task, call: ^Expr_Call, pack: Type_Id, span: Span) -> Type_Id {
+	c := k.c
+	element := slice_element(c, pack)
+	task.pack = make([]Spawn_Field_Kind, len(call.variadic_order), c.semantic_allocator)
+	types := make([]Type_Id, len(call.variadic_order), c.semantic_allocator)
+	names := make([]string, len(call.variadic_order), c.semantic_allocator)
+	for is_spread, index in call.variadic_order {
+		names[index] = spawn_pack_field_name(c, index)
+		types[index] = is_spread ? pack : element
+		task.pack[index] = !is_spread && type_is_managed(c, element) ? .Owned : .Copy
+	}
+	name := fmt.aprintf("spawn$pack$%d", span.lo, allocator = c.semantic_allocator)
+	return synth_record(k, name, "spawn$pack$type", names, types, span)
+}
+
+spawn_pack_field_name :: proc(c: ^Compiler, index: int) -> string {
+	return fmt.aprintf("p%d", index, allocator = c.semantic_allocator)
+}
+
+// The worker's arguments for a held pack, in its written order: an owned
+// element moved out of the frame, a copied one read, and a spread forwarded.
+@(private = "file")
+spawn_repack :: proc(
+	k: ^Checker, task: ^Spawn_Task, call: ^Expr_Call, field: Expr,
+	stmts: ^[dynamic]Stmt, args: ^[dynamic]Argument, span: Span,
+) {
+	c := k.c
+	for is_spread, index in call.variadic_order {
+		operand := synth_selector(c, field, spawn_pack_field_name(c, index), span)
+		if is_spread {
+			append(args, Argument{span = span, mode = .Spread, value = operand})
+			continue
+		}
+		if task.pack[index] == .Copy {
+			append(args, Argument{span = span, value = operand})
+			continue
+		}
+		local := fmt.aprintf("spawn$pack$owned$%d", index, allocator = c.semantic_allocator)
+		local_id := intern_identifier(c, local)
+		taken := synth_call(c, synth_ident(k, "spawn$take", intern_identifier(c, "spawn$take"), span), {operand}, span)
+		append(stmts, synth_var(c, local, local_id, taken, span))
+		moved := new(Expr_Move, c.semantic_allocator)
+		moved.span = span
+		moved.value = synth_ident(k, local, local_id, span)
+		append(args, Argument{span = span, value = moved})
 	}
 }
 
@@ -533,6 +595,43 @@ synth_expr_stmt :: proc(c: ^Compiler, value: Expr, span: Span) -> Stmt {
 	s.exprs = make([]Expr, 1, c.semantic_allocator)
 	s.exprs[0] = value
 	return s
+}
+
+// A struct declared in the current scope, each field's type bound to a name
+// only this scope has.
+@(private = "file")
+synth_record :: proc(k: ^Checker, name, alias_prefix: string, field_names: []string, types: []Type_Id, span: Span) -> Type_Id {
+	c := k.c
+	record := new(Type_Record, c.semantic_allocator)
+	record.span = span
+	record.kind = .Struct
+	record.fields = make([]Field, len(types), c.semantic_allocator)
+	for type, index in types {
+		alias := intern_identifier(c, fmt.aprintf("%s$%d", alias_prefix, index, allocator = c.semantic_allocator))
+		k.scope.names[alias] = new_associated_type(c, alias_prefix, type, INVALID_TYPE)
+		names := make([]Name, 1, c.semantic_allocator)
+		names[0] = synth_name(c, field_names[index], span)
+		record.fields[index] = Field{span = span, names = names, type = synth_ident(k, alias_prefix, alias, span)}
+	}
+	decl := synth_const(k, name, intern_identifier(c, name), record, span)
+	check_local_declaration(k, decl)
+	if len(decl.symbols) != 1 {
+		return INVALID_TYPE
+	}
+	sym := symbol_of(c, decl.symbols[0])
+	return sym == nil ? INVALID_TYPE : sym.type
+}
+
+@(private = "file")
+synth_var :: proc(c: ^Compiler, text: string, id: Identifier_Id, value: Expr, span: Span) -> ^Decl {
+	d := new(Decl, c.semantic_allocator)
+	d.span = span
+	d.kind = .Var
+	d.names = make([]Name, 1, c.semantic_allocator)
+	d.names[0] = Name{text = text, span = span, id = id}
+	d.values = make([]Expr, 1, c.semantic_allocator)
+	d.values[0] = value
+	return d
 }
 
 @(private = "file")

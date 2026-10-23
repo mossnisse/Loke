@@ -5539,36 +5539,33 @@ prov_spawn_transfers :: proc(graph: ^Flow_Graph, s: ^Stmt_Spawn, call: ^Expr_Cal
 	}
 	info := underlying_info(c, call_proc_type(c, call))
 	for argument, index in call.bound {
-		if argument == nil || info == nil || index >= len(info.parameters) || index >= len(task.kinds) {
+		if info == nil || index >= len(info.parameters) || index >= len(task.kinds) {
 			continue
 		}
-		base := expr_base(argument)
-		if base == nil || base.type == INVALID_TYPE {
+		// Each pack element is the task's own when the pack owns it, and a
+		// spread is shared, as the slice it views.
+		if spawn_packs(call, index) {
+			next_element, next_spread := 0, 0
+			for is_spread, position in call.variadic_order {
+				if is_spread {
+					prov_transfer_argument(c, call.variadic_spreads[next_spread], true)
+					next_spread += 1
+					continue
+				}
+				element := call.variadic_elements[next_element]
+				next_element += 1
+				_, moved := element.(^Expr_Move)
+				prov_transfer_argument(c, element, task.pack[position] != .Owned && !moved)
+			}
 			continue
 		}
-		span := expr_span(argument)
-		transferred := prov_transferred_type(c, argument)
-		facts := transfer_facts(c, transferred)
+		if argument == nil {
+			continue
+		}
 		mode := index < len(info.param_modes) ? info.param_modes[index] : Param_Mode.Value
 		// A moved argument is the task's alone, even one copied into the frame.
 		_, moved := argument.(^Expr_Move)
-		shared := task.kinds[index] != .Owned && mode != .Inout && !moved
-		if shared && base.erased_from == INVALID_TYPE && (base.type == facts.erased && !carrier_is_mutable(c, base.type)) {
-			errorf(
-				c, span, "L0729",
-				"`%s` hides what it captures, so a task may share it only as its own: move it into the task",
-				type_name(c, base.type),
-			)
-			continue
-		}
-		report_transfer_facts(c, base.type, facts, span)
-		if shared && facts.mutable != INVALID_TYPE && !carrier_is_mutable(c, transferred) {
-			errorf(
-				c, span, "L0729",
-				"`%s` reaches `%s`, so a task sharing it could write what the parent reaches too: move it into the task, or pass the mutable borrow itself",
-				type_name(c, base.type), type_name(c, facts.mutable),
-			)
-		}
+		prov_transfer_argument(c, argument, task.kinds[index] != .Owned && mode != .Inout && !moved)
 	}
 	if s.result != nil {
 		if sym := symbol_of(c, task.result); sym != nil {
@@ -5585,6 +5582,35 @@ prov_spawn_transfers :: proc(graph: ^Flow_Graph, s: ^Stmt_Spawn, call: ^Expr_Cal
 			kind = .Cross, sources = prov_join(graph, result, prov_load_deep(graph, result, call.span)),
 			span = call.span, verb = "result",
 		})
+	}
+}
+
+// One value crossing to a task, which it shares with the parent unless it is
+// the task's alone.
+@(private = "file")
+prov_transfer_argument :: proc(c: ^Compiler, argument: Expr, shared: bool) {
+	base := expr_base(argument)
+	if base == nil || base.type == INVALID_TYPE {
+		return
+	}
+	span := expr_span(argument)
+	transferred := prov_transferred_type(c, argument)
+	facts := transfer_facts(c, transferred)
+	if shared && base.erased_from == INVALID_TYPE && (base.type == facts.erased && !carrier_is_mutable(c, base.type)) {
+		errorf(
+			c, span, "L0729",
+			"`%s` hides what it captures, so a task may share it only as its own: move it into the task",
+			type_name(c, base.type),
+		)
+		return
+	}
+	report_transfer_facts(c, base.type, facts, span)
+	if shared && facts.mutable != INVALID_TYPE && !carrier_is_mutable(c, transferred) {
+		errorf(
+			c, span, "L0729",
+			"`%s` reaches `%s`, so a task sharing it could write what the parent reaches too: move it into the task, or pass the mutable borrow itself",
+			type_name(c, base.type), type_name(c, facts.mutable),
+		)
 	}
 }
 

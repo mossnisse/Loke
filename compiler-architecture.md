@@ -324,7 +324,11 @@ hook(drop) on Task_Scope                // joins every started thread, in start 
   argument (copied, owned, or as an address), and the result local's address.
   The run procedure takes the owned arguments out of the frame, makes the
   call, writes the result through the address with `unsafe.write`, since the
-  local is dead, and frees the frame.
+  local is dead, and frees the frame. A variadic pack's field is a record of
+  its operands in written order (`Spawn_Task.pack`): the parent fills it as
+  `emit_variadic_pack` would copy each element, and `run` packs them again,
+  moving owned elements in and passing each spread on as `..s`. A lone spread
+  is a copied slice the worker forwards.
 - **Registration.** `emit_llvm_stmt.odin` fills the frame on the parent from
   the default allocator, which accepts concurrent use. The parent registers
   the frame for the unwind until `start` returns, beside the guards that drop
