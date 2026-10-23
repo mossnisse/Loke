@@ -232,7 +232,10 @@ facts through direct, generic, and indirect calls. A written-argument region is
 summarized for each parameter a body may write (`param_writes_caller`):
 `inout`, a mutable carrier, or a read-only one reaching a mutable carrier at
 any depth (`prov_type_reaches_mutable`), such as `..^mut T` or a `^Box` holding
-a `^mut T`. At the call it lands in the place `&mut place` or an `inout`
+a `^mut T`. In the body, a write through a local set from such a parameter
+counts as one through the parameter (`written_aliases`): a carrier into its
+storage, a copy of a read-only carrier (`alias := outs`), or a value holding
+its carriers (`b := box^`, `b := Box{box^.out}`). At the call it lands in the place `&mut place` or an `inout`
 argument names; any other carrier argument, each pack operand among them, is
 written through (`prov_leave_region`), as `p^ = owner` is. `content_loans` represent
 loads through caller storage, substituted through the actual arguments.

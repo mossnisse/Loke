@@ -2872,15 +2872,24 @@ prov_written_parameters :: proc(graph: ^Flow_Graph, destination: Expr) -> []Symb
 	return nil
 }
 
-// design.md "Allocator regions and region provenance": a local mutable
-// carrier set from a writable parameter's storage, as `alias := dst`,
-// `&mut dst^.items`, or `dst[1:]` set it, reaches the caller's storage.
+// design.md "Allocator regions and region provenance": a local set from a
+// writable parameter's storage, as `alias := dst`, `&mut dst^.items`, or
+// `dst[1:]` set it, reaches the caller's storage. So does a copy of a read-only
+// carrier reaching a mutable one, as `alias := outs` of `outs: ..^mut T`, and a
+// value holding one, as `b := box^` or `b := Box{box.out}` of `box: ^Box`.
 @(private = "file")
 prov_note_written_alias :: proc(graph: ^Flow_Graph, local: Symbol_Id, value: Expr) {
-	sym := symbol_of(graph.k.c, local)
-	if value == nil || sym == nil || sym.kind != .Var || sym.duration != .None || !carrier_is_mutable(graph.k.c, sym.type) {
+	c := graph.k.c
+	sym := symbol_of(c, local)
+	if value == nil || sym == nil || sym.kind != .Var || sym.duration != .None ||
+	   !(carrier_is_mutable(c, sym.type) || prov_type_reaches_mutable(c, sym.type)) {
 		return
 	}
+	prov_note_alias_source(graph, local, value)
+}
+
+@(private = "file")
+prov_note_alias_source :: proc(graph: ^Flow_Graph, local: Symbol_Id, value: Expr) {
 	source := value
 	#partial switch v in value {
 	case ^Expr_Unary:
@@ -2889,6 +2898,13 @@ prov_note_written_alias :: proc(graph: ^Flow_Graph, local: Symbol_Id, value: Exp
 		}
 	case ^Expr_Slice:
 		source = v.operand
+	case ^Expr_Composite:
+		for element in v.elements {
+			if element.value != nil {
+				prov_note_alias_source(graph, local, element.value)
+			}
+		}
+		return
 	}
 	for param in prov_written_parameters(graph, source) {
 		prov_add_written_alias(graph, local, param)

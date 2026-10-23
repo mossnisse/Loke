@@ -7,6 +7,39 @@ compiler, unless the rewording is the intended fix.
 
 ## Gaps
 
+### A held pointer can hide an owner from a later allocator reset
+
+[Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)
+rejects resetting a region while a live owner uses it. A call that writes an
+owner through a pointer held in a local variable is accepted when the allocator
+is a resettable parameter, even though the caller reads that owner after the
+reset. Passing `&mut out` directly to `fill` instead is rejected with `L0537`.
+The same omission occurs through a read-only `^Box` containing the pointer.
+
+```loke
+package main;
+
+import "core:fmt";
+import "core:mem";
+
+fill :: proc(allocator: Allocator, dst: ^mut [dynamic]int) {
+	dst^ = make([dynamic]int, 2, allocator);
+}
+
+check :: proc(@(allocator_reset) allocator: Allocator) {
+	out: [dynamic]int = {};
+	p := &mut out;
+	fill(allocator, p);
+	free_all(allocator);
+	fmt.println(out[0]);
+}
+
+main :: proc() {
+	arena := mem.Arena.init();
+	check(arena.allocator());
+}
+```
+
 ### `-doc` omits compiler-contributed declarations
 
 [`-doc`](compiler-guide.md#common-options) prints "each public declaration's

@@ -2,7 +2,7 @@
 // through a read-only carrier reaching a mutable one, a variadic `..^mut T` or
 // a `^Box` holding a `^mut T`, directly or forwarded, is accepted from an
 // allocator that outlives it, and from an arena declared before the owner that
-// is never reset.
+// is never reset. So is one left through a local copy of such a carrier.
 package main;
 
 import "core:mem";
@@ -25,6 +25,16 @@ forward_pack :: proc(allocator: Allocator, outs: ..^mut [dynamic]int) {
 	point(allocator, ..outs);
 }
 
+copied_pack :: proc(allocator: Allocator, outs: ..^mut [dynamic]int) {
+	alias := outs;
+	alias[0]^ = make([dynamic]int, 3, allocator);
+}
+
+copied_box :: proc(allocator: Allocator, box: ^Box) {
+	b := Box{box^.out};
+	b.out^ = make([dynamic]int, 3, allocator);
+}
+
 main :: proc() {
 	out: [dynamic]int = {};
 	point(mem.default_allocator(), &mut out);
@@ -41,4 +51,10 @@ main :: proc() {
 	kept: [dynamic]int = {};
 	point(arena.allocator(), &mut kept);
 	fmt.println(kept.len());
+
+	copy_out: [dynamic]int = {};
+	copied_pack(arena.allocator(), &mut copy_out);
+	copy_boxed: [dynamic]int = {};
+	copied_box(mem.default_allocator(), &Box{&mut copy_boxed});
+	fmt.println(copy_out.len(), copy_boxed.len());
 }

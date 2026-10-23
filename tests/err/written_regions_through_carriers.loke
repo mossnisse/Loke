@@ -4,7 +4,8 @@
 // or through a procedure forwarding the carrier. A reset while it is live is
 // an error, as for a `^mut T` parameter; written through a pointer the caller
 // holds rather than a place it names, a local region is an error at the call,
-// as `p^ = owner` is.
+// as `p^ = owner` is. A local copy of such a carrier, or a value built from
+// one, writes into the caller as the carrier does.
 package main;
 
 import "core:mem";
@@ -69,6 +70,50 @@ forwarded_box :: proc() {
 	arena := mem.Arena.init();
 	out: [dynamic]int = {};
 	forward_box(arena.allocator(), &Box{&mut out});
+	free_all(arena.allocator());
+	fmt.println(out[0]);
+}
+
+copied_pack :: proc(allocator: Allocator, outs: ..^mut [dynamic]int) {
+	alias := outs;
+	alias[0]^ = make([dynamic]int, 2, allocator);
+}
+
+copied_box :: proc(allocator: Allocator, box: ^Box) {
+	b := box^;
+	b.out^ = make([dynamic]int, 2, allocator);
+}
+
+rebuilt_box :: proc(allocator: Allocator, box: ^Box) {
+	b := Box{box^.out};
+	b.out^ = make([dynamic]int, 2, allocator);
+}
+
+spread_copy :: proc(allocator: Allocator, outs: ..^mut [dynamic]int) {
+	alias := outs;
+	point(allocator, ..alias);
+}
+
+copied :: proc() {
+	arena := mem.Arena.init();
+	out: [dynamic]int = {};
+	copied_pack(arena.allocator(), &mut out);
+	free_all(arena.allocator());
+	fmt.println(out[0]);
+}
+
+copied_boxes :: proc() {
+	arena := mem.Arena.init();
+	out: [dynamic]int = {};
+	copied_box(arena.allocator(), &Box{&mut out});
+	rebuilt_box(arena.allocator(), &Box{&mut out});
+	fmt.println(out[0]);
+}
+
+spread_copied :: proc() {
+	arena := mem.Arena.init();
+	out: [dynamic]int = {};
+	spread_copy(arena.allocator(), &mut out);
 	free_all(arena.allocator());
 	fmt.println(out[0]);
 }

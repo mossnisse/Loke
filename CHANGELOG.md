@@ -29,7 +29,9 @@ checklist.
 - An owner a call leaves through a read-only carrier that reaches a mutable
   one now keeps its allocator's region, as one left through a `^mut T`
   parameter does: through a variadic `..^mut T`, or a `^Box` whose field is
-  `^mut T`, a later `free_all` of that region while the owner is live is
+  `^mut T`, written directly, through a local copy of the carrier such as
+  `alias := outs`, or through a value built from it such as `b := box^`,
+  a later `free_all` of that region while the owner is live is
   `L0537`. One left through a pointer the caller holds, or through such a
   record, is written through a pointer, so from a local arena it is `L0536` at
   the call, as `p^ = make(...)` already was. Upgrade by passing `&mut owner`
