@@ -3576,7 +3576,7 @@ File-scope and `static` storage is ready before `main` starts. Thread-local stor
 
 The following rules also apply to `static` and `thread_local`:
 
-- A `static` has a stable address for the life of the process. A `thread_local` has a stable address for the life of its thread. A procedure can return a borrow of either one. Storing a `thread_local` borrow in process-duration storage is rejected, because thread storage does not outlive the process; see [Retaining a borrow](#retaining-a-borrow). A program must also not send a `thread_local` borrow to another thread or keep it after its thread ends, and the borrow analysis does not check those two errors.
+- A `static` has a stable address for the life of the process. A `thread_local` has a stable address for the life of its thread. A procedure can return a borrow of either one. Storing a `thread_local` borrow in process-duration storage is rejected, because thread storage does not outlive the process; see [Retaining a borrow](#retaining-a-borrow). A program must also not send a `thread_local` borrow to another thread or keep it after its thread ends. Transfers through [`@(cross_thread)`](#cross_thread) and [`parallel` tasks](#borrows-crossing-between-tasks) are checked; unchecked addresses, foreign code, and other paths past a thread's end remain the programmer's responsibility (see [What is not checked](#what-is-not-checked)).
 - An allocator-binding owner starts in the constant, allocator-unbound zero state and binds the default allocator when first needed. `via` is forbidden because its runtime allocator expression is not constant. To select another allocator, construct an owner in an explicit startup or thread-start procedure and move it into the variable. `string` and `Shared(T)` retain the moved allocation's allocator.
 
 #### Owners and `drop`
@@ -6476,7 +6476,7 @@ A result that borrows storage older than the block keeps its loan after the join
 
 A spawn's call is checked as a call that lasts until the join:
 
-- A read-only argument keeps its root read-only borrowed until the join. A mutable carrier, `inout`, or `move` argument is the task's alone. A `[]mut T` passed by name lends that name to the task, so `spawn add(view); spawn add(view);` is an error, as two `&mut` arguments would be. An argument copied into the task lends nothing of its own storage; only the borrows it carries last until the join.
+- A read-only argument keeps its root read-only borrowed until the join. A mutable carrier, `inout`, or `move` argument is the task's alone. A `[]mut T` passed by name reborrows the carrier until the join, so `spawn add(view); spawn add(view);` is an error, as two `&mut` arguments would be. A fresh binding of a disjoint chunk on the next loop iteration may be lent to another task. An argument copied into the task lends nothing of its own storage; only the borrows it carries last until the join.
 - A task borrows only storage that outlives the block. The join is a use of every task loan, so a local declared inside the block, which is dropped before the join, cannot be lent to a task: `spawn fill(&mut scratch)` of one is an error. Declare the local before the block, or before a nested block that spawns. A view copied from outer data, such as `chunk := xs[a:b]` inside the block, borrows `xs` and may be lent.
 - The block's own cleanup runs while the task loans are live, so a deferred statement or an implicit drop that conflicts with one is an error.
 

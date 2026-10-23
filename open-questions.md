@@ -1085,8 +1085,8 @@ ready to implement. It decided what the first implementation needed:
   completes unless the program ends.
 - A result destination must have the call's exact type; a `parallel` block is
   a compile-time evaluation error; the executor header parses and is rejected.
-- Work proceeds in five milestones, the fourth behind a hidden
-  `-unstable-parallel` option.
+- The first five milestones shipped; the remaining library work is in the
+  [implementation plan](concurrency-proposal.md#implementation-plan).
 
 Open, to settle with evidence during the milestones:
 
