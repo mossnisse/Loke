@@ -117,4 +117,23 @@ through_capture_literal :: proc(slot: ^mut ^int) {
 	parallel { spawn invoke_view((dyn proc(out: ^mut ^int))(&writer), slot); }
 }
 
+// Through two mutable levels, the write lands in what `inner` points at.
+publish_deep :: proc(out: ^mut ^mut ^int) { out^^ = &counter; }
+
+through_two_levels :: proc() {
+	other := 0;
+	slot: ^int = &other;
+	inner: ^mut ^int = &mut slot;
+	parallel { spawn publish_deep(&mut inner); }
+	_ = slot^;
+}
+
+parent_two_levels_later_spawned :: proc() {
+	other := 0;
+	slot: ^int = &other;
+	inner: ^mut ^int = &mut slot;
+	publish_deep(&mut inner);
+	parallel { spawn read_slot(slot); }
+}
+
 main :: proc() {}

@@ -4836,14 +4836,42 @@ prov_call_thread_local_writes :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals
 		if left.callback != INVALID_SYMBOL {
 			stand_in := prov_forwarded_root(graph, left.callback, left.argument, v.span)
 			sources := prov_borrow(graph, stand_in, nil, false, v.span, "callback's write")
-			prov_retain_into_argument(graph, v, left.at, actuals[left.at], sources)
+			prov_write_back_into_argument(graph, v, left.at, actuals[left.at], sources)
 		}
 		if left.global != INVALID_SYMBOL {
 			label := left.callback != INVALID_SYMBOL ? GUESSED_BORROW : what
 			sources := prov_borrow(graph, prov_root_for_symbol(graph, left.global), nil, false, v.span, label)
-			prov_retain_into_argument(graph, v, left.at, actuals[left.at], sources)
+			prov_write_back_into_argument(graph, v, left.at, actuals[left.at], sources)
 		}
 	}
+}
+
+// design.md "Borrows crossing between tasks": what a callee writes back lands
+// in the storage the argument's mutable carriers name. Below that, it lands
+// only where another mutable carrier leads, so storage that `slot: ^int`
+// points at is no destination of `publish(&mut slot)`.
+@(private = "file")
+prov_write_back_into_argument :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int, carrier, sources: []int) {
+	if prov_argument_is_place(graph, v, index) || prov_writes_below_pointee(graph.k.c, prov_parameter_type(graph, v, index)) {
+		prov_retain_into_argument(graph, v, index, carrier, sources)
+		return
+	}
+	prov_publish_through(graph, carrier, sources, v.span)
+}
+
+// Whether what a mutable carrier of `type` points at itself reaches storage a
+// write could leave a borrow in.
+@(private = "file")
+prov_writes_below_pointee :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	for path in carrier_shape(c, type) {
+		if path.truncated {
+			return true
+		}
+		if info := underlying_info(c, path.type); info != nil && prov_type_reaches_destination(c, info.element) {
+			return true
+		}
+	}
+	return false
 }
 
 // The stand-in for what the callback in `callback`, this body's parameter,

@@ -250,10 +250,13 @@ bounds only the result. A result summary still takes that guess (a
 parameter count: a callable view passes itself before a held procedure's
 parameters, and a callable record's `call` takes the record the view hides. A
 callback resolved on a later round can add summary dependencies, which the
-worklist registers as they appear. Only the loan a spawned call leaves is
-exempt from the crossing check, which the spawn has reported; one a call on the
-parent leaves is checked when it reaches a later task, as a borrow taken there
-directly would be.
+worklist registers as they appear. The borrow a call leaves lands in the
+storage the argument's mutable carriers name, and below that only where a
+pointee reaches another mutable carrier (`prov_write_back_into_argument`), so
+read-only storage the argument points at is no destination. Only the loan a
+spawned call leaves is exempt from the crossing check, which the spawn has
+reported; one a call on the parent leaves is checked when it reaches a later
+task, as a borrow taken there directly would be.
 
 Once the result summaries settle, `compute_thread_summaries` builds each body's
 graph once more to collect the summaries a `parallel` block's checks read

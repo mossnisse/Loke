@@ -46,3 +46,9 @@ handed a borrow of `counter`
 L0730
 @117:68
 may leave a borrow of `counter` in this argument
+L0730
+@127:32
+may leave a borrow of `counter` in this argument
+L0730
+@136:19
+handed a borrow of `counter`

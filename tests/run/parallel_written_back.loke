@@ -4,12 +4,14 @@
 // one thread a procedure may leave a borrow of its `thread_local` storage in its
 // caller's, which a task may not be handed but the parent may still use. A
 // callback that writes nothing back is told apart from one that does, though
-// both fit the callback's type or contract.
+// both fit the callback's type or contract. A write-back lands only in the
+// storage the argument's mutable carriers name, not in what it points at.
 package main;
 
 import "core:fmt";
 
 counter: thread_local int;
+fallback: int;
 
 publish :: proc(out: ^mut ^int) { out^ = &counter; }
 read_own :: proc(out: ^mut int) { counter += 1; out^ = counter; }
@@ -61,5 +63,7 @@ main :: proc() {
 	parallel {
 		spawn read_slot(kept, &mut kept_seen);
 	}
-	fmt.println(plain, called, view^, seen, kept_seen);
+	pointed: ^int = &fallback;
+	publish(&mut pointed);
+	fmt.println(plain, called, view^, seen, kept_seen, pointed^);
 }

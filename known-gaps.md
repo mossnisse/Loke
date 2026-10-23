@@ -40,32 +40,6 @@ What a callback parameter leaves in an argument is substituted at each call
 for the write-back check (`Callback_Write`), but a result summary has no such
 parameter: it takes what any procedure of the callback's type may leave.
 
-### A write-back through a carrier of static storage reports `L0647`
-
-A procedure may leave a borrow of its own thread's `thread_local` storage in
-its caller's storage on one thread, as `slot = &counter` does directly. Doing
-the same through a call is rejected when the argument points at storage that
-outlives the thread, although only `slot` itself is written:
-
-```loke
-package main;
-
-counter: thread_local int;
-fallback: int;
-publish :: proc(out: ^mut ^int) { out^ = &counter; }
-
-main :: proc() {
-    slot: ^int = &fallback;
-    publish(&mut slot); // L0647
-    slot = &counter;    // accepted
-    _ = slot^;
-}
-```
-
-The call stores the borrow through the argument's carriers and everything they
-reach (`prov_retain_into_argument`), so `fallback`, which holds no borrow, is
-treated as a destination too.
-
 ### A spawned call cannot take a variadic pack
 
 [Spawn statements](design.md#spawn-statements) lets a task call any procedure
