@@ -2,7 +2,9 @@
 // file-scope storage held in a local accepts an owner from an allocator that
 // outlives it, and an allocator handle written through it is checked as one
 // stored by name is: as a borrow of an `@(escape=static)` parameter. A call
-// that leaves only such a handle in a record holding owners leaves no owner.
+// that leaves only such a handle in a record holding owners leaves no owner,
+// and one that also leaves an owner from an allocator that outlives the
+// storage leaves only that owner, however far it is forwarded.
 package main;
 
 import "core:mem";
@@ -32,6 +34,22 @@ forward_allocator :: proc(@(escape=static) allocator: Allocator, dst: ^mut State
 	set_allocator(allocator, dst);
 }
 
+set_both :: proc(@(escape=static) handle: Allocator, owner_allocator: Allocator, dst: ^mut State) {
+	dst^.alloc = handle;
+	dst^.items = make([dynamic]int, 2, owner_allocator);
+}
+
+forward_both :: proc(@(escape=static) handle: Allocator, dst: ^mut State) {
+	set_both(handle, mem.default_allocator(), dst);
+}
+
+install_both :: proc(@(escape=static) handle: Allocator) -> int {
+	s := &mut state;
+	set_both(handle, mem.default_allocator(), s);
+	forward_both(handle, &mut state);
+	return state.items.len();
+}
+
 install :: proc(@(escape=static) allocator: Allocator) {
 	set_allocator(allocator, &mut state);
 	s := &mut state;
@@ -44,6 +62,7 @@ main :: proc() {
 	p^.append(3);
 	keep(mem.default_allocator());
 	install(mem.default_allocator());
+	fmt.println(install_both(mem.default_allocator()));
 	q := &mut state.items;
 	q^ = make([dynamic]int, 1, state.alloc);
 	fmt.println(held.len(), state.items.len());

@@ -3,7 +3,8 @@
 // `thread_local` storage. A pointer to that storage held in a local, directly,
 // copied, or in a record, is the same destination: a write through it, or a
 // call leaving an owner through it, is L0536, as storing by name is. So is
-// a call leaving an owner in a record's field, however it is passed.
+// a call leaving an owner in a record's field, however it is passed, even
+// when the same call also leaves an allocator handle beside it.
 package main;
 
 import "core:mem";
@@ -61,6 +62,16 @@ call_items :: proc(allocator: Allocator) {
 	set_items(allocator, &mut state);
 	s := &mut state;
 	set_items(allocator, s);
+}
+
+set_both :: proc(@(escape=static) handle: Allocator, owner_allocator: Allocator, dst: ^mut State) {
+	dst^.alloc = handle;
+	dst^.items = make([dynamic]int, 2, owner_allocator);
+}
+
+call_both :: proc(@(escape=static) handle: Allocator, owner_allocator: Allocator) {
+	s := &mut state;
+	set_both(handle, owner_allocator, s);
 }
 
 main :: proc() {

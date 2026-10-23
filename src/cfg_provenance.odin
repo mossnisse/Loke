@@ -1871,11 +1871,13 @@ prov_define_region_content :: proc(
 	if id == INVALID_SYMBOL {
 		return
 	}
+	// A handle's entry stays apart from an owner's at the same path, so what
+	// backs an owner is still told from it (design.md "Allocator regions and
+	// region provenance").
 	content := graph.region_content[id]
 	for &entry in content {
-		if len(entry.path) == len(path) && path_has_exact_prefix(entry.path, path) {
+		if entry.handle == handle && len(entry.path) == len(path) && path_has_exact_prefix(entry.path, path) {
 			region_merge(&entry.region, region)
-			entry.handle &&= handle
 			graph.region_content[id] = content
 			return
 		}
@@ -1886,6 +1888,26 @@ prov_define_region_content :: proc(
 	copy(grown[:], content)
 	append(&grown, Prov_Region_Content{path = stored_path, region = region, handle = handle})
 	graph.region_content[id] = grown[:]
+}
+
+// Records a stored value's regions at a path: `owned`, the part backing an
+// owner, as an owner's entry, and the rest as an allocator handle's.
+@(private = "file")
+prov_define_stored_content :: proc(graph: ^Flow_Graph, root: Root_Id, path: []Proj_Step, region, owned: Region_Set) {
+	prov_define_region_content(graph, root, path, owned)
+	handles := prov_empty_region(graph)
+	region_merge(&handles, owned)
+	if region_merge_grows(&handles, region) {
+		prov_define_region_content(graph, root, path, region, handle = true)
+	}
+}
+
+// Merges `from` into `into`, reporting whether `into` gained anything.
+@(private = "file")
+region_merge_grows :: proc(into: ^Region_Set, from: Region_Set) -> bool {
+	before := region_weight(into^)
+	region_merge(into, from)
+	return region_weight(into^) != before
 }
 
 // One provider position in a local: a field path its type fixes, or the path
@@ -2879,7 +2901,7 @@ prov_store_region_set :: proc(
 		if !region_is_empty(owned) {
 			prov_region_escape_set(graph, destination, owned, owner)
 		}
-		prov_define_region_content(graph, root, element ? prov_extend(graph, path, proj_wild()) : path, region, region_is_empty(owned))
+		prov_define_stored_content(graph, root, element ? prov_extend(graph, path, proj_wild()) : path, region, owned)
 		return
 	}
 	prov_store_region_through(graph, destination, region, owned, owner)
@@ -2900,10 +2922,13 @@ prov_store_region_through :: proc(graph: ^Flow_Graph, destination: Expr, region:
 	// and a call leaves owners through its carrier arguments.
 	checked := !region_is_empty(owned) && (owner == CALL_LEFT_OWNER || type_is_managed(graph.k.c, expr_base(destination).type))
 	escaped := false
+	// `dst^.alloc` lands in the `alloc` field of what `dst` points at.
+	below := prov_path_below_carrier(graph, destination)
 	for alias in prov_written_targets(graph, destination) {
-		prov_define_region_content(graph, prov_root_for_symbol(graph, alias.target), alias.at, region, region_is_empty(owned))
+		at := prov_concat_path(graph, alias.at, below)
+		prov_define_stored_content(graph, prov_root_for_symbol(graph, alias.target), at, region, owned)
 		sym := symbol_of(graph.k.c, alias.target)
-		if !checked || escaped || sym == nil || sym.kind == .Parameter || !type_is_managed(graph.k.c, prov_type_at(graph.k.c, sym.type, alias.at)) {
+		if !checked || escaped || sym == nil || sym.kind == .Parameter || !type_is_managed(graph.k.c, prov_type_at(graph.k.c, sym.type, at)) {
 			continue
 		}
 		escaped = prov_region_escape_into(graph, expr_span(destination), alias.target, owned, owner)
@@ -2923,6 +2948,89 @@ prov_store_region_through :: proc(graph: ^Flow_Graph, destination: Expr, region:
 		region = rest,
 		moved  = moved,
 	})
+}
+
+// The path a write through `destination` takes inside the storage its
+// outermost carrier points at: `[alloc]` for `dst^.alloc`, nothing for `dst^`
+// or a carrier argument itself. A further carrier ends it, since what lies
+// past one is other storage.
+@(private = "file")
+prov_path_below_carrier :: proc(graph: ^Flow_Graph, destination: Expr) -> []Proj_Step {
+	steps := make([dynamic]Proj_Step, 0, 4, context.temp_allocator)
+	// Steps from the destination inward, each marked whether it passes a
+	// carrier.
+	derefs := make([dynamic]bool, 0, 4, context.temp_allocator)
+	e := destination
+	walk: for {
+		if _, _, ok := prov_place_of(graph, e); ok {
+			break
+		}
+		c := graph.k.c
+		#partial switch v in e {
+		case ^Expr_Selector:
+			if v.resolution.kind != .Field || v.operand == nil {
+				break walk
+			}
+			append(&steps, prov_field_step(graph, v))
+			append(&derefs, false)
+			if type_is_pointer(c, expr_base(v.operand).type) {
+				// An auto-deref: the field is in what the pointer points at.
+				append(&steps, Proj_Step{})
+				append(&derefs, true)
+			}
+			e = v.operand
+		case ^Expr_Postfix:
+			if v.op != .Caret {
+				break walk
+			}
+			if type_is_box(c, expr_base(v.operand).type) {
+				append(&steps, proj_wild())
+				append(&derefs, false)
+			} else {
+				append(&steps, Proj_Step{})
+				append(&derefs, true)
+			}
+			e = v.operand
+		case ^Expr_Index:
+			if len(v.bound) > 0 || v.operand == nil {
+				break walk
+			}
+			#partial switch underlying_kind(c, expr_base(v.operand).type) {
+			case .Array, .Dynamic_Array, .Map:
+				index_path := prov_index_path(graph, v)
+				#reverse for step in index_path {
+					append(&steps, step)
+					append(&derefs, false)
+				}
+			case:
+				// A slice's elements are what it points at.
+				append(&steps, proj_wild())
+				append(&derefs, false)
+				append(&steps, Proj_Step{})
+				append(&derefs, true)
+			}
+			e = v.operand
+		case:
+			break walk
+		}
+	}
+	// From the place outward: skip to the first carrier, keep what follows up
+	// to the next.
+	out := make([dynamic]Proj_Step, 0, len(steps), graph.alloc)
+	passed := false
+	#reverse for step, index in steps {
+		if derefs[index] {
+			if passed {
+				break
+			}
+			passed = true
+			continue
+		}
+		if passed {
+			append(&out, step)
+		}
+	}
+	return out[:]
 }
 
 // What a local's carriers may reach: a writable parameter's storage, or a

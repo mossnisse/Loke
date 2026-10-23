@@ -1,24 +1,27 @@
 L0536
-@26:2
+@27:2
 this value is backed by an allocator region this procedure received, so it cannot be stored in `held` (file-scope storage), which outlives that region
 L0536
-@32:2
+@33:2
 this value is backed by an allocator region this procedure received, so it cannot be stored in `spare` (`thread_local` storage), which outlives that region
 L0536
-@38:2
+@39:2
 this value is backed by an allocator region this procedure received, so it cannot be stored in `kept` (`static` storage), which outlives that region
 L0536
-@43:2
+@44:2
 this value is backed by an allocator region this procedure received, so it cannot be stored in `state` (file-scope storage), which outlives that region
 L0536
-@48:18
+@49:18
 an owner this call leaves is backed by an allocator region this procedure received, so it cannot be stored in `held` (file-scope storage), which outlives that region
 L0536
-@53:18
+@54:18
 an owner this call leaves is backed by an allocator region this procedure received, so it cannot be stored in `held` (file-scope storage), which outlives that region
 L0536
-@61:28
+@62:28
 an owner this call leaves is backed by an allocator region this procedure received, so it cannot be stored in `state` (file-scope storage), which outlives that region
 L0536
-@63:23
+@64:23
+an owner this call leaves is backed by an allocator region this procedure received, so it cannot be stored in `state` (file-scope storage), which outlives that region
+L0536
+@74:36
 an owner this call leaves is backed by an allocator region this procedure received, so it cannot be stored in `state` (file-scope storage), which outlives that region

@@ -467,6 +467,9 @@ checklist.
   into a file-scope `state: State { items: [dynamic]int, alloc: Allocator }`,
   is no longer `L0536` for an owner escaping, directly or through a pointer
   held in a local. Assigning `state.alloc = allocator` was already accepted.
+  Nor is one that also leaves an owner from an allocator that outlives the
+  storage, as `dst^.items = make([dynamic]int, 2, owner_allocator)` beside the
+  handle does, directly or through a procedure forwarding `dst`.
 - A write through one field of a local record is no longer taken for a write
   into the caller's storage because another field holds a parameter's
   carrier: with `pair := Pair{box^.out, &mut local}`, an owner written
