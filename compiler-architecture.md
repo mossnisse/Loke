@@ -232,7 +232,10 @@ facts through direct, generic, and indirect calls. A written-argument region is
 summarized for each parameter a body may write (`param_writes_caller`):
 `inout`, a mutable carrier, or a read-only one reaching a mutable carrier at
 any depth (`prov_type_reaches_mutable`), such as `..^mut T` or a `^Box` holding
-a `^mut T`. In the body, a write through a local set from such a parameter
+a `^mut T`. The part backing owners is kept apart (`written_owner_regions`):
+an allocator handle left there keeps its region for the owners later made from
+it, but only the owners' part is checked against the storage it lands in, as a
+store by name checks only an owner. In the body, a write through a local set from such a parameter
 counts as one through the parameter (`written_aliases`): a carrier into its
 storage, a copy of a read-only carrier (`alias := outs`), or a value holding
 its carriers (`b := box^`, `b := Box{box^.out}`), from either operand of a

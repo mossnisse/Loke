@@ -2,7 +2,8 @@
 // received region may not be stored in file-scope, `static`, or
 // `thread_local` storage. A pointer to that storage held in a local, directly,
 // copied, or in a record, is the same destination: a write through it, or a
-// call leaving an owner through it, is L0536, as storing by name is.
+// call leaving an owner through it, is L0536, as storing by name is. So is
+// a call leaving an owner in a record's field, however it is passed.
 package main;
 
 import "core:mem";
@@ -50,6 +51,16 @@ call_held :: proc(allocator: Allocator) {
 call_boxed :: proc(allocator: Allocator) {
 	box := Box{&mut held};
 	fill(allocator, box.out);
+}
+
+set_items :: proc(allocator: Allocator, dst: ^mut State) {
+	dst^.items = make([dynamic]int, 2, allocator);
+}
+
+call_items :: proc(allocator: Allocator) {
+	set_items(allocator, &mut state);
+	s := &mut state;
+	set_items(allocator, s);
 }
 
 main :: proc() {

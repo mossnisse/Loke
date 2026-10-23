@@ -2072,27 +2072,45 @@ collect_written_regions :: proc(c: ^Compiler, graph: ^Flow_Graph, declaration: S
 		}
 		c.written_regions[declaration] = written
 	}
+	owners, owners_found := c.written_owner_regions[declaration]
+	if !owners_found {
+		owners = make([]Region_Set, count, c.semantic_allocator)
+		for &set in owners {
+			set.params = make([]bool, max(count, 1), c.semantic_allocator)
+		}
+		c.written_owner_regions[declaration] = owners
+	}
 	changed := false
 	for id, index in sym.param_symbols {
 		if !param_writes_caller(c, symbol_of(c, id)) {
 			continue
 		}
-		set := prov_region_for_symbol(graph, id)
-		set.locals, set.crowded = 0, false
-		// What the argument already was says nothing new about it.
-		if index < len(set.params) {
-			set.params[index] = false
-		}
-		changed = merge_region_provenance(&written[index], set) || changed
+		changed = merge_region_provenance(&written[index], written_parameter_region(graph, id, index, false)) || changed
+		changed = merge_region_provenance(&owners[index], written_parameter_region(graph, id, index, true)) || changed
 	}
 	return changed
 }
 
+// What a body leaves in a parameter, or with `owners` only what backs an owner
+// there. What the argument already was says nothing new about it.
+@(private = "file")
+written_parameter_region :: proc(graph: ^Flow_Graph, id: Symbol_Id, index: int, owners: bool) -> Region_Set {
+	set := prov_region_for_symbol(graph, id, owners = owners)
+	set.locals, set.crowded = 0, false
+	if index < len(set.params) {
+		set.params[index] = false
+	}
+	return set
+}
+
 // The written regions of a call's declaration; a join's members are unioned.
-written_region_summary :: proc(c: ^Compiler, declaration: Symbol_Id) -> ([]Region_Set, bool) {
+// `owners` asks only for the regions backing owners left there, without an
+// allocator handle's.
+written_region_summary :: proc(c: ^Compiler, declaration: Symbol_Id, owners := false) -> ([]Region_Set, bool) {
+	table := owners ? &c.written_owner_regions : &c.written_regions
 	// A view's own row is empty: a plain receiver is not written.
 	if original, shifted := c.receiver_contract_of[declaration]; shifted {
-		written, found := written_region_summary(c, original)
+		written, found := written_region_summary(c, original, owners)
 		if !found {
 			return nil, false
 		}
@@ -2104,12 +2122,12 @@ written_region_summary :: proc(c: ^Compiler, declaration: Symbol_Id) -> ([]Regio
 		return out, true
 	}
 	if !is_contract_join(c, declaration) {
-		written, found := c.written_regions[declaration]
+		written, found := table[declaration]
 		return written, found
 	}
 	out: []Region_Set
 	for member in symbol_of(c, declaration).members {
-		written, found := c.written_regions[member]
+		written, found := table[member]
 		if !found {
 			continue
 		}

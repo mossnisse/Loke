@@ -288,6 +288,8 @@ Compiler :: struct {
 	// Per parameter, the regions of owners a body may leave in the storage that
 	// argument names (design.md "Allocator regions and region provenance").
 	written_regions: map[Symbol_Id][]Region_Set,
+	// The part of `written_regions` backing owners, not allocator handles.
+	written_owner_regions: map[Symbol_Id][]Region_Set,
 	// Per parameter, a `thread_local` global whose borrow a body may leave in
 	// the storage that argument names, or INVALID_SYMBOL (design.md "Borrows
 	// crossing between tasks").

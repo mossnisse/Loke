@@ -153,6 +153,9 @@ Prov_Call_Result :: struct {
 Prov_Region_Content :: struct {
 	path:   []Proj_Step,
 	region: Region_Set,
+	// Only allocator handles were stored here, no owner, so the region says what
+	// an owner made from them is in but backs nothing itself.
+	handle: bool,
 }
 
 // The payload under a union's wildcard alternative: unwrapping keeps every borrow
@@ -1759,7 +1762,7 @@ prov_seed_regions :: proc(graph: ^Flow_Graph, seed: ^Flow_Graph) {
 	for id, content in seed.region_content {
 		copied := make([]Prov_Region_Content, len(content), graph.alloc)
 		for entry, index in content {
-			copied[index] = Prov_Region_Content{path = slice.clone(entry.path, graph.alloc), region = prov_empty_region(graph)}
+			copied[index] = Prov_Region_Content{path = slice.clone(entry.path, graph.alloc), region = prov_empty_region(graph), handle = entry.handle}
 			region_merge(&copied[index].region, entry.region)
 		}
 		graph.region_content[id] = copied
@@ -1817,7 +1820,7 @@ region_weight :: proc(set: Region_Set) -> int {
 // Every region dependency of a symbol, including its field facts. A carrier's
 // own entry is what it views, which only a read through it reaches.
 @(private)
-prov_region_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id, viewed := false) -> Region_Set {
+prov_region_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id, viewed := false, owners := false) -> Region_Set {
 	out := prov_empty_region(graph)
 	sym := symbol_of(graph.k.c, id)
 	carrier := sym != nil && type_is_carrier(graph.k.c, sym.type) && !type_is_region_provider(graph.k.c, sym.type) && type_underlying(graph.k.c, sym.type) != TYPE_ALLOCATOR
@@ -1825,7 +1828,10 @@ prov_region_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id, viewed := fals
 		region_merge(&out, direct)
 	}
 	for content in graph.region_content[id] {
-		region_merge(&out, content.region)
+		// `owners` asks only what backs an owner stored there.
+		if !owners || !content.handle {
+			region_merge(&out, content.region)
+		}
 	}
 	return out
 }
@@ -1856,6 +1862,7 @@ prov_define_region_content :: proc(
 	root: Root_Id,
 	path: []Proj_Step,
 	region: Region_Set,
+	handle := false,
 ) {
 	if root == NO_ROOT || region_is_empty(region) {
 		return
@@ -1868,6 +1875,7 @@ prov_define_region_content :: proc(
 	for &entry in content {
 		if len(entry.path) == len(path) && path_has_exact_prefix(entry.path, path) {
 			region_merge(&entry.region, region)
+			entry.handle &&= handle
 			graph.region_content[id] = content
 			return
 		}
@@ -1876,7 +1884,7 @@ prov_define_region_content :: proc(
 	copy(stored_path, path)
 	grown := make([dynamic]Prov_Region_Content, len(content), len(content) + 1, graph.alloc)
 	copy(grown[:], content)
-	append(&grown, Prov_Region_Content{path = stored_path, region = region})
+	append(&grown, Prov_Region_Content{path = stored_path, region = region, handle = handle})
 	graph.region_content[id] = grown[:]
 }
 
@@ -2844,14 +2852,23 @@ prov_store_region :: proc(graph: ^Flow_Graph, destination: Expr, value: Expr, el
 	   (type_is_carrier(c, type) || !prov_type_has_region(c, type)) {
 		return
 	}
-	prov_store_region_set(graph, destination, prov_result_region(graph, value), prov_owner_name(graph, value), element)
+	// design.md "Allocator regions and region provenance": an allocator handle
+	// is not an owner, so only the owners made from it are checked against the
+	// storage it lands in.
+	region := prov_result_region(graph, value)
+	owned := type_is_managed(c, type) ? region : prov_empty_region(graph)
+	prov_store_region_set(graph, destination, region, owned, prov_owner_name(graph, value), element)
 }
 
+// `region` is every region the stored value is in, and `owned` the part that
+// backs an owner, which the storage is checked against; the rest is an
+// allocator handle's.
 @(private = "file")
 prov_store_region_set :: proc(
 	graph: ^Flow_Graph,
 	destination: Expr,
 	region: Region_Set,
+	owned: Region_Set,
 	owner: string,
 	element := false,
 ) {
@@ -2859,17 +2876,19 @@ prov_store_region_set :: proc(
 		return
 	}
 	if root, path, ok := prov_place_of(graph, destination); ok {
-		prov_region_escape_set(graph, destination, region, owner)
-		prov_define_region_content(graph, root, element ? prov_extend(graph, path, proj_wild()) : path, region)
+		if !region_is_empty(owned) {
+			prov_region_escape_set(graph, destination, owned, owner)
+		}
+		prov_define_region_content(graph, root, element ? prov_extend(graph, path, proj_wild()) : path, region, region_is_empty(owned))
 		return
 	}
-	prov_store_region_through(graph, destination, region, owner)
+	prov_store_region_through(graph, destination, region, owned, owner)
 }
 
 // An owner written through the carriers `destination` reaches, into storage
 // this body cannot name.
 @(private = "file")
-prov_store_region_through :: proc(graph: ^Flow_Graph, destination: Expr, region: Region_Set, owner: string) {
+prov_store_region_through :: proc(graph: ^Flow_Graph, destination: Expr, region: Region_Set, owned: Region_Set, owner: string) {
 	if region_is_empty(region) {
 		return
 	}
@@ -2879,15 +2898,15 @@ prov_store_region_through :: proc(graph: ^Flow_Graph, destination: Expr, region:
 	// `thread_local` place outlives a received region, so an owner landing there
 	// is rejected as a store by name into it is: only where an owner is stored,
 	// and a call leaves owners through its carrier arguments.
-	owned := owner == CALL_LEFT_OWNER || type_is_managed(graph.k.c, expr_base(destination).type)
+	checked := !region_is_empty(owned) && (owner == CALL_LEFT_OWNER || type_is_managed(graph.k.c, expr_base(destination).type))
 	escaped := false
 	for alias in prov_written_targets(graph, destination) {
-		prov_define_region_content(graph, prov_root_for_symbol(graph, alias.target), alias.at, region)
+		prov_define_region_content(graph, prov_root_for_symbol(graph, alias.target), alias.at, region, region_is_empty(owned))
 		sym := symbol_of(graph.k.c, alias.target)
-		if !owned || escaped || sym == nil || sym.kind == .Parameter || !type_is_managed(graph.k.c, prov_type_at(graph.k.c, sym.type, alias.at)) {
+		if !checked || escaped || sym == nil || sym.kind == .Parameter || !type_is_managed(graph.k.c, prov_type_at(graph.k.c, sym.type, alias.at)) {
 			continue
 		}
-		escaped = prov_region_escape_into(graph, expr_span(destination), alias.target, region, owner)
+		escaped = prov_region_escape_into(graph, expr_span(destination), alias.target, owned, owner)
 	}
 	if escaped {
 		return
@@ -3112,6 +3131,8 @@ prov_call_written_regions :: proc(graph: ^Flow_Graph, v: ^Expr_Call, proc_type: 
 	if !found && direct {
 		return // no parameter it writes can hold an owner
 	}
+	// What backs an owner left there, as opposed to an allocator handle.
+	owners, _ := written_region_summary(c, callee, owners = true)
 	everything := prov_empty_region(graph)
 	if !found {
 		for argument, index in v.bound {
@@ -3129,12 +3150,16 @@ prov_call_written_regions :: proc(graph: ^Flow_Graph, v: ^Expr_Call, proc_type: 
 		if (destination == nil && !packed) || index >= len(info.parameters) {
 			continue
 		}
-		region := everything
+		region, owned := everything, everything
 		if found {
 			if index >= len(written) {
 				continue
 			}
 			region = prov_substitute_region(graph, v, written[index])
+			owned = prov_empty_region(graph)
+			if index < len(owners) {
+				owned = prov_substitute_region(graph, v, owners[index])
+			}
 		} else if packed || !prov_argument_is_place(graph, v, index) {
 			type := info.parameters[index]
 			if !carrier_is_mutable(c, type) && !prov_type_reaches_mutable(c, type) {
@@ -3145,17 +3170,17 @@ prov_call_written_regions :: proc(graph: ^Flow_Graph, v: ^Expr_Call, proc_type: 
 			next_element, next_spread := 0, 0
 			for is_spread in v.variadic_order {
 				if is_spread {
-					prov_leave_region(graph, v.variadic_spreads[next_spread], region)
+					prov_leave_region(graph, v.variadic_spreads[next_spread], region, owned)
 					next_spread += 1
 				} else {
-					prov_leave_region(graph, v.variadic_elements[next_element], region)
+					prov_leave_region(graph, v.variadic_elements[next_element], region, owned)
 					next_element += 1
 				}
 			}
 		} else if prov_argument_is_place(graph, v, index) {
-			prov_store_region_set(graph, destination, region, CALL_LEFT_OWNER)
+			prov_store_region_set(graph, destination, region, owned, CALL_LEFT_OWNER)
 		} else {
-			prov_leave_region(graph, destination, region)
+			prov_leave_region(graph, destination, region, owned)
 		}
 	}
 }
@@ -3167,16 +3192,16 @@ CALL_LEFT_OWNER :: "an owner this call leaves"
 // reach; any other carrier, `&place` among them, is written through, as
 // `p^ = owner` is (design.md "Allocator regions and region provenance").
 @(private = "file")
-prov_leave_region :: proc(graph: ^Flow_Graph, argument: Expr, region: Region_Set) {
+prov_leave_region :: proc(graph: ^Flow_Graph, argument: Expr, region, owned: Region_Set) {
 	c := graph.k.c
 	if unary, is_unary := argument.(^Expr_Unary); is_unary && unary.op == .Amp && carrier_is_mutable(c, expr_base(argument).type) {
-		prov_store_region_set(graph, unary.operand, region, CALL_LEFT_OWNER)
+		prov_store_region_set(graph, unary.operand, region, owned, CALL_LEFT_OWNER)
 		if prov_type_reaches_mutable(c, expr_base(unary.operand).type) {
-			prov_store_region_through(graph, unary.operand, region, CALL_LEFT_OWNER)
+			prov_store_region_through(graph, unary.operand, region, owned, CALL_LEFT_OWNER)
 		}
 		return
 	}
-	prov_store_region_through(graph, argument, region, CALL_LEFT_OWNER)
+	prov_store_region_through(graph, argument, region, owned, CALL_LEFT_OWNER)
 }
 
 @(private = "file")
@@ -4116,7 +4141,7 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 			   (type_is_managed(graph.k.c, expr_base(target).type) ||
 			    type_underlying(graph.k.c, expr_base(target).type) == TYPE_ALLOCATOR) {
 				prov_define_region_content(
-					graph, root, path, value_region,
+					graph, root, path, value_region, !type_is_managed(graph.k.c, expr_base(target).type),
 				)
 			}
 			prov_walk_subscripts(graph, target, s.op == .Assign)
@@ -5563,8 +5588,9 @@ prov_container_content :: proc(graph: ^Flow_Graph, v: ^Expr_Call, op: Container_
 			spreads = v.bound[v.variadic_slot:][:1]
 		}
 		for spread in spreads {
+			spread_region := prov_storage_region(graph, spread)
 			prov_store_region_set(
-				graph, v.bound[0], prov_storage_region(graph, spread), prov_owner_name(graph, spread), element = true,
+				graph, v.bound[0], spread_region, spread_region, prov_owner_name(graph, spread), element = true,
 			)
 		}
 	}

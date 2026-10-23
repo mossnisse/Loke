@@ -462,6 +462,11 @@ checklist.
 
 ### Fixed
 
+- A call that leaves only an allocator handle in a record holding owners, such
+  as `set_allocator(allocator, &mut state)` writing `dst^.alloc = allocator`
+  into a file-scope `state: State { items: [dynamic]int, alloc: Allocator }`,
+  is no longer `L0536` for an owner escaping, directly or through a pointer
+  held in a local. Assigning `state.alloc = allocator` was already accepted.
 - A write through one field of a local record is no longer taken for a write
   into the caller's storage because another field holds a parameter's
   carrier: with `pair := Pair{box^.out, &mut local}`, an owner written
