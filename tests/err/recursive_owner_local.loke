@@ -1,0 +1,12 @@
+// design.md "Structs": a record cannot contain itself by value. A local of
+// such a type holding a container is reported once, and the allocator-use
+// walk over its parts stops at the cycle.
+package main;
+
+Leaf :: struct { text: string }
+Token :: move_only struct { id: Locked_Holder }
+Locked_Holder :: struct { token: Token, kids: [dynamic]Leaf }
+
+main :: proc() {
+	locked: Locked_Holder = {};
+}

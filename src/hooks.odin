@@ -80,6 +80,11 @@ finalize_type_lifecycle :: proc(c: ^Compiler, type: Type_Id) -> bool {
 // element (they all share its operations), or every union payload.
 @(private = "file")
 lifecycle_parts :: proc(c: ^Compiler, type: Type_Id) -> []Type_Id {
+	// A type that contains itself by value is already `L0364`, and walking its
+	// parts would not end.
+	if info := type_of(c, type_underlying(c, type)); info != nil && info.size_state == .Cyclic {
+		return nil
+	}
 	count := clone_part_count(c, type)
 	if underlying_kind(c, type) == .Array { count = min(count, 1) }
 	parts := make([dynamic]Type_Id, 0, count, context.temp_allocator)

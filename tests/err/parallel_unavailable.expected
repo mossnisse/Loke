@@ -1,6 +1,0 @@
-L0727
-@8:2
-`parallel` blocks are not available yet
-L0727
-@11:2
-`spawn` belongs inside a `parallel` block of the same procedure
