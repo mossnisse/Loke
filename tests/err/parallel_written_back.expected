@@ -94,3 +94,9 @@ handed a borrow of `counter`
 L0730
 @273:28
 result holds a pointer of `counter`
+L0730
+@303:19
+handed a borrow of `counter`
+L0730
+@308:19
+handed a borrow of `counter`

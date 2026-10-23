@@ -274,4 +274,38 @@ returned_through_literal_local :: proc() {
 	_ = result^;
 }
 
+// However deep a chain of read-only pointers runs, or however a type recurses,
+// the mutable field at its end is written.
+Link0 :: struct { out: ^mut ^int, view: ^int }
+Link1 :: struct { next: ^Link0 }
+Link2 :: struct { next: ^Link1 }
+Link3 :: struct { next: ^Link2 }
+Link4 :: struct { next: ^Link3 }
+Link5 :: struct { next: ^Link4 }
+publish_deep_chain :: proc(root: ^mut ^Link5) {
+	root^^.next^.next^.next^.next^.next^.out^ = &counter;
+}
+Tree :: struct { left: ^mut Tree, right: ^Tree, view: ^int }
+publish_tree :: proc(tree: ^mut Tree) { tree^.left^.left^.view = &counter; }
+read_tree :: proc(tree: ^Tree) { _ = tree^.view^; }
+
+parent_deep_chain_later_spawned :: proc() {
+	other := 0;
+	slot: ^int = &other;
+	link0 := Link0{&mut slot, &other};
+	link1 := Link1{&link0};
+	link2 := Link2{&link1};
+	link3 := Link3{&link2};
+	link4 := Link4{&link3};
+	link5 := Link5{&link4};
+	view: ^Link5 = &link5;
+	publish_deep_chain(&mut view);
+	parallel { spawn read_slot(slot); }
+}
+
+parent_recursive_later_spawned :: proc(tree: ^mut Tree) {
+	publish_tree(tree);
+	parallel { spawn read_tree(tree); }
+}
+
 main :: proc() {}

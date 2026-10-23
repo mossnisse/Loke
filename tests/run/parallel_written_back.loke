@@ -8,7 +8,7 @@
 // storage the argument's mutable carriers name, not in what it points at. A
 // result read back from or returned by a callback is likewise the passed
 // callback's, also through a copy of it or a local procedure literal, and a
-// read-only field beside a written one receives nothing.
+// read-only field beside a written one receives nothing, however deep.
 package main;
 
 import "core:fmt";
@@ -62,6 +62,15 @@ pass_copy :: proc(h: proc() -> ^int) -> ^int {
 Box :: struct { out: ^mut ^int }
 Mixed :: struct { view: ^int, box: ^Box }
 publish_mixed :: proc(mixed: ^mut Mixed) { mixed^.box^.out^ = &counter; }
+Link0 :: struct { out: ^mut ^int, view: ^int }
+Link1 :: struct { next: ^Link0 }
+Link2 :: struct { next: ^Link1 }
+Link3 :: struct { next: ^Link2 }
+Link4 :: struct { next: ^Link3 }
+Link5 :: struct { next: ^Link4 }
+publish_deep_chain :: proc(root: ^mut ^Link5) {
+	root^^.next^.next^.next^.next^.next^.out^ = &counter;
+}
 literal_shared :: proc() -> ^int {
 	g: proc() -> ^int = proc() -> ^int { return &shared; };
 	return g();
@@ -147,4 +156,14 @@ main :: proc() {
 		spawn literal_read = literal_shared();
 	}
 	fmt.println(box_slot^, literal_read^);
+	deep_slot: ^int = &kept_value;
+	link0 := Link0{&mut deep_slot, &fallback};
+	link1 := Link1{&link0};
+	link2 := Link2{&link1};
+	link3 := Link3{&link2};
+	link4 := Link4{&link3};
+	link5 := Link5{&link4};
+	deep_view: ^Link5 = &link5;
+	publish_deep_chain(&mut deep_view);
+	fmt.println(deep_slot^);
 }

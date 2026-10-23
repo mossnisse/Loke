@@ -4854,10 +4854,17 @@ prov_write_back_into_argument :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: 
 // The carriers among `carriers`, a value of `type`, that a write may go
 // through: each mutable one, and in what any carrier points at, each mutable
 // one again. A read-only carrier is no destination, but a mutable one read
-// through it is. A truncated path stands for every carrier below it.
+// through it is. A truncated path stands for every carrier below it, as does a
+// pointee whose type is already being walked, since a recursive type reaches
+// any depth.
 @(private = "file")
-prov_mutable_reach :: proc(graph: ^Flow_Graph, carriers: []int, type: Type_Id, span: Span, depth := 0) -> []int {
+prov_mutable_reach :: proc(graph: ^Flow_Graph, carriers: []int, type: Type_Id, span: Span, walking: ^map[Type_Id]bool = nil) -> []int {
 	c := graph.k.c
+	chain := walking
+	if chain == nil {
+		chain = new(map[Type_Id]bool, context.temp_allocator)
+		chain^ = make(map[Type_Id]bool, context.temp_allocator)
+	}
 	out: []int
 	for path in carrier_shape(c, type) {
 		if path.truncated && !path.mutable {
@@ -4870,12 +4877,12 @@ prov_mutable_reach :: proc(graph: ^Flow_Graph, carriers: []int, type: Type_Id, s
 		if path.mutable {
 			out = prov_join(graph, out, selected)
 		}
-		if path.truncated || depth >= CARRIER_DEPTH {
-			out = prov_join(graph, out, prov_load_deep(graph, selected, span))
+		info := underlying_info(c, path.type)
+		if !path.truncated && (info == nil || !prov_type_reaches_destination(c, info.element)) {
 			continue
 		}
-		info := underlying_info(c, path.type)
-		if info == nil || !prov_type_reaches_destination(c, info.element) {
+		if path.truncated || chain[info.element] {
+			out = prov_join(graph, out, prov_load_deep(graph, selected, span))
 			continue
 		}
 		pointee := prov_temp_content(graph, info.element)
@@ -4883,7 +4890,9 @@ prov_mutable_reach :: proc(graph: ^Flow_Graph, carriers: []int, type: Type_Id, s
 			prov_emit(graph, Prov_Event{kind = .Load, slot = slot, into = selected, path = graph.prov_slots[slot].path, span = span})
 		}
 		graph.has_content_load ||= len(pointee) > 0
-		out = prov_join(graph, out, prov_mutable_reach(graph, pointee, info.element, span, depth + 1))
+		chain[info.element] = true
+		out = prov_join(graph, out, prov_mutable_reach(graph, pointee, info.element, span, chain))
+		chain[info.element] = false
 	}
 	return out
 }
@@ -4932,12 +4941,20 @@ prov_writable_arguments :: proc(graph: ^Flow_Graph, v: ^Expr_Call, proc_type: Ty
 
 // Whether a callee receiving `type` can write a borrow through it: through a
 // mutable carrier, at any depth, to storage that can hold one, as `p^.view =
-// values` or `ctx.destination.view = values` does.
+// values` or `ctx.destination.view = values` does. Searched over the types
+// reached, each once, so no depth hides one.
 @(private = "file")
-prov_type_reaches_destination :: proc(c: ^Compiler, type: Type_Id, depth := 0) -> bool {
-	if depth > CARRIER_DEPTH {
+prov_type_reaches_destination :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	visited := make(map[Type_Id]bool, context.temp_allocator)
+	return type_reaches_destination(c, type, &visited)
+}
+
+@(private = "file")
+type_reaches_destination :: proc(c: ^Compiler, type: Type_Id, visited: ^map[Type_Id]bool) -> bool {
+	if visited[type] {
 		return false
 	}
+	visited[type] = true
 	for path in carrier_shape(c, type) {
 		if path.truncated {
 			if path.mutable {
@@ -4952,7 +4969,7 @@ prov_type_reaches_destination :: proc(c: ^Compiler, type: Type_Id, depth := 0) -
 		if path.mutable && type_carries_borrow(c, info.element).any {
 			return true
 		}
-		if prov_type_reaches_destination(c, info.element, depth + 1) {
+		if type_reaches_destination(c, info.element, visited) {
 			return true
 		}
 	}
