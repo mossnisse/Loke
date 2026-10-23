@@ -76,3 +76,12 @@ result holds a pointer of `counter`
 L0730
 @207:19
 handed a pointer of `counter`
+L0730
+@230:32
+may leave a borrow of `counter` in this argument
+L0730
+@235:28
+result holds a pointer of `counter`
+L0730
+@241:28
+result holds a pointer of `counter`

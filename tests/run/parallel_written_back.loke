@@ -7,7 +7,8 @@
 // both fit the callback's type or contract. A write-back lands only in the
 // storage the argument's mutable carriers name, not in what it points at. A
 // result read back from or returned by a callback is likewise the passed
-// callback's.
+// callback's, also through a copy of it, and a read-only field beside a
+// written one receives nothing.
 package main;
 
 import "core:fmt";
@@ -44,6 +45,20 @@ borrow_shared :: proc() -> ^int { return &shared; }
 call_returning :: proc(h: proc() -> ^int) -> ^int { return h(); }
 relay_returning :: proc(h: proc() -> ^int) -> ^int { return call_returning(h); }
 call_view_returning :: proc(h: dyn proc() -> ^int) -> ^int { return h(); }
+Pair :: struct { view: ^int, out: ^mut ^int }
+publish_pair :: proc(pair: ^mut Pair) { pair^.out^ = &counter; }
+through_copy :: proc(f: proc(out: ^mut ^int), out: ^mut ^int) {
+	g := f;
+	g(out);
+}
+call_copy :: proc(h: proc() -> ^int) -> ^int {
+	g := h;
+	return g();
+}
+pass_copy :: proc(h: proc() -> ^int) -> ^int {
+	g := h;
+	return call_copy(g);
+}
 
 main :: proc() {
 	plain := 0;
@@ -101,4 +116,19 @@ main :: proc() {
 	}
 	fmt.println(plain, called, view^, seen, kept_seen, pointed^, direct_result^ + relayed_result^ + contract_read^);
 	fmt.println(own^, returned^ + relayed^ + viewed^, shared_seen);
+	pair_slot: ^int = &kept_value;
+	pair := Pair{&fallback, &mut pair_slot};
+	publish_pair(&mut pair);
+	through_copy(publish, &mut view);
+	_ = call_copy(borrow_tls);
+	copied: ^int = &kept_value;
+	parallel {
+		spawn through_copy(keep, &mut copied);
+	}
+	copy_read, copy_passed: ^int;
+	parallel {
+		spawn copy_read = call_copy(borrow_shared);
+		spawn copy_passed = pass_copy(borrow_shared);
+	}
+	fmt.println(pair_slot^, copied^, copy_read^ + copy_passed^);
 }

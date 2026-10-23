@@ -4791,10 +4791,10 @@ WRITTEN_BACK_BORROW :: "written-back borrow"
 // into an argument stays behind after the worker's thread ends, wherever the
 // argument came from, a local or the parent's own caller.
 @(private = "file")
-report_thread_local_writes :: proc(c: ^Compiler, call: ^Expr_Call) {
+report_thread_local_writes :: proc(c: ^Compiler, call: ^Expr_Call, body: Symbol_Id) {
 	consulted := make([dynamic]Symbol_Id, 0, 4, context.temp_allocator)
 	reported := make([]bool, len(call.bound), context.temp_allocator)
-	for left in call_thread_local_left(c, call, false, &consulted) {
+	for left in call_thread_local_left(c, call, body, false, &consulted) {
 		if left.global == INVALID_SYMBOL || reported[left.at] || call.bound[left.at] == nil {
 			continue
 		}
@@ -4820,7 +4820,7 @@ report_thread_local_writes :: proc(c: ^Compiler, call: ^Expr_Call) {
 prov_call_thread_local_writes :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]int) {
 	c := graph.k.c
 	consulted := make([dynamic]Symbol_Id, 0, 4, context.temp_allocator)
-	lefts := call_thread_local_left(c, v, graph.mode == .Prov_Summary, &consulted)
+	lefts := call_thread_local_left(c, v, graph.literal.symbol, graph.mode == .Prov_Summary, &consulted)
 	for target in consulted {
 		prov_note_summary_dependency(graph, target, prov_has_direct_body(c, target))
 	}
@@ -4842,31 +4842,47 @@ prov_call_thread_local_writes :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals
 }
 
 // design.md "Borrows crossing between tasks": what a callee writes back lands
-// in the storage the argument's mutable carriers name. Below that, it lands
-// only where another mutable carrier leads, so storage that `slot: ^int`
-// points at is no destination of `publish(&mut slot)`.
+// in the storage the argument's mutable carriers name, and below that only
+// where another mutable carrier leads (`prov_mutable_reach`), so neither what
+// `slot: ^int` points at in `publish(&mut slot)` nor a read-only field beside
+// a mutable one is a destination.
 @(private = "file")
 prov_write_back_into_argument :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int, carrier, sources: []int) {
-	if prov_argument_is_place(graph, v, index) || prov_writes_below_pointee(graph.k.c, prov_parameter_type(graph, v, index)) {
-		prov_retain_into_argument(graph, v, index, carrier, sources)
-		return
-	}
-	prov_publish_through(graph, carrier, sources, v.span)
+	prov_retain_into_argument(graph, v, index, carrier, sources, mutable_only = true)
 }
 
-// Whether what a mutable carrier of `type` points at itself reaches storage a
-// write could leave a borrow in.
+// The carriers among `carriers`, a value of `type`, that a write may go
+// through: each mutable one, and in what it points at, each mutable one again.
+// A truncated path stands for every carrier below it.
 @(private = "file")
-prov_writes_below_pointee :: proc(c: ^Compiler, type: Type_Id) -> bool {
+prov_mutable_reach :: proc(graph: ^Flow_Graph, carriers: []int, type: Type_Id, span: Span, depth := 0) -> []int {
+	c := graph.k.c
+	out: []int
 	for path in carrier_shape(c, type) {
-		if path.truncated {
-			return true
+		if !path.mutable {
+			continue
 		}
-		if info := underlying_info(c, path.type); info != nil && prov_type_reaches_destination(c, info.element) {
-			return true
+		selected := prov_select_content(graph, carriers, type, path.steps)
+		if len(selected) == 0 {
+			continue
 		}
+		out = prov_join(graph, out, selected)
+		if path.truncated || depth >= CARRIER_DEPTH {
+			out = prov_join(graph, out, prov_load_deep(graph, selected, span))
+			continue
+		}
+		info := underlying_info(c, path.type)
+		if info == nil || !prov_type_reaches_destination(c, info.element) {
+			continue
+		}
+		pointee := prov_temp_content(graph, info.element)
+		for slot in pointee {
+			prov_emit(graph, Prov_Event{kind = .Load, slot = slot, into = selected, path = graph.prov_slots[slot].path, span = span})
+		}
+		graph.has_content_load ||= len(pointee) > 0
+		out = prov_join(graph, out, prov_mutable_reach(graph, pointee, info.element, span, depth + 1))
 	}
-	return false
+	return out
 }
 
 // The stand-in for what the callback in `callback`, this body's parameter,
@@ -4950,6 +4966,7 @@ prov_retain_into_argument :: proc(
 	index: int,
 	carrier: []int,
 	sources: []int,
+	mutable_only := false,
 ) {
 	argument := v.bound[index]
 	if argument == nil {
@@ -4957,12 +4974,25 @@ prov_retain_into_argument :: proc(
 	}
 	if !prov_argument_is_place(graph, v, index) {
 		// Through the argument's carriers, and what they reach in turn.
-		prov_publish_through(graph, prov_with_content(graph, carrier, v.span), sources, v.span)
+		through: []int
+		if mutable_only {
+			through = prov_mutable_reach(graph, carrier, prov_parameter_type(graph, v, index), v.span)
+		} else {
+			through = prov_with_content(graph, carrier, v.span)
+		}
+		prov_publish_through(graph, through, sources, v.span)
 		return
 	}
 	// `inout p` with `p: ^mut T`: through `p` as well as into it.
 	if prov_type_reaches_destination(graph.k.c, expr_base(argument).type) {
-		prov_publish_through(graph, prov_with_content(graph, prov_carrier_slots(graph, argument), v.span), sources, v.span)
+		held := prov_carrier_slots(graph, argument)
+		through: []int
+		if mutable_only {
+			through = prov_mutable_reach(graph, held, expr_base(argument).type, v.span)
+		} else {
+			through = prov_with_content(graph, held, v.span)
+		}
+		prov_publish_through(graph, through, sources, v.span)
 	}
 	root, path, ok := prov_place_of(graph, argument)
 	if !ok {
@@ -5438,7 +5468,7 @@ prov_spawn_transfers :: proc(graph: ^Flow_Graph, s: ^Stmt_Spawn, call: ^Expr_Cal
 			report_transfer_facts(c, sym.type, transfer_facts(c, sym.type), call.span)
 		}
 	}
-	report_thread_local_writes(c, call)
+	report_thread_local_writes(c, call, graph.literal.symbol)
 	prov_emit(graph, Prov_Event {
 		kind = .Cross, sources = prov_join(graph, held, prov_load_deep(graph, held, call.span)),
 		span = call.span, verb = "argument",
@@ -5574,7 +5604,7 @@ prov_call_result :: proc(
 prov_callback_result :: proc(graph: ^Flow_Graph, v: ^Expr_Call, callee: Symbol_Id, result_type: Type_Id) -> []int {
 	c := graph.k.c
 	consulted := make([dynamic]Symbol_Id, 0, 4, context.temp_allocator)
-	reads := call_callback_reads(c, v, callee, graph.mode == .Prov_Summary, &consulted)
+	reads := call_callback_reads(c, v, callee, graph.literal.symbol, graph.mode == .Prov_Summary, &consulted)
 	for target in consulted {
 		prov_note_summary_dependency(graph, target, prov_has_direct_body(c, target))
 	}
@@ -5594,27 +5624,29 @@ prov_callback_result :: proc(graph: ^Flow_Graph, v: ^Expr_Call, callee: Symbol_I
 
 // design.md "Borrows crossing between tasks": a call through a value may
 // return a borrow of the `thread_local` storage of the thread that runs it,
-// which an unknown root does not show: any procedure of its type may, or
-// while a body is summarized and the value is that body's own callback, the
-// one its caller passes (`call_callback_returns`).
+// which an unknown root does not show: what each procedure the value may be
+// returns, or while a body is summarized and the value is a callback that body
+// received, the one its caller passes (`call_callback_returns`).
 @(private = "file")
 prov_callback_returned :: proc(graph: ^Flow_Graph, v: ^Expr_Call, result_type: Type_Id) -> []int {
 	c := graph.k.c
 	consulted := make([dynamic]Symbol_Id, 0, 4, context.temp_allocator)
-	returned := call_callback_returns(c, v, graph.mode == .Prov_Summary, &consulted)
+	returned := call_callback_returns(c, v, graph.literal.symbol, graph.mode == .Prov_Summary, &consulted)
 	for target in consulted {
 		prov_note_summary_dependency(graph, target, prov_has_direct_body(c, target))
 	}
-	root := NO_ROOT
-	switch {
-	case returned.callback != INVALID_SYMBOL:
-		root = prov_forwarded_root(graph, returned.callback, returned.argument, v.span)
-	case returned.global != INVALID_SYMBOL:
-		root = prov_root_for_symbol(graph, returned.global)
-	case:
-		return nil
+	out: []int
+	for left in returned {
+		root := NO_ROOT
+		if left.callback != INVALID_SYMBOL {
+			root = prov_forwarded_root(graph, left.callback, left.argument, v.span)
+		} else {
+			root = prov_root_for_symbol(graph, left.global)
+		}
+		mutable := type_carries_borrow(c, result_type).mutable
+		out = prov_join(graph, out, prov_borrow(graph, root, nil, mutable, v.span, carrier_noun(c, result_type)))
 	}
-	return prov_borrow(graph, root, nil, type_carries_borrow(c, result_type).mutable, v.span, carrier_noun(c, result_type))
+	return out
 }
 
 @(private = "file")

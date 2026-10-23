@@ -298,6 +298,11 @@ Compiler :: struct {
 	// What a body's result may hold that a callback it received leaves in an
 	// argument, substituted at each call (`Callback_Read`).
 	callback_result_reads: map[Symbol_Id][]Callback_Read,
+	// design.md "Global write effects": per call in a body, what a procedure
+	// variable it calls through may hold, and what each procedure-valued
+	// argument may be, as the write effects resolved them.
+	called_values:   map[Call_Site][]Effect_Arg,
+	argument_values: map[Call_Site][]Effect_Arg,
 	// design.md "Borrowed callable views": a signature's contract with the view
 	// as an added first parameter, both ways.
 	receiver_contracts:   map[Symbol_Id]Symbol_Id,

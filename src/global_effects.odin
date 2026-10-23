@@ -29,6 +29,12 @@ Effect_Call :: struct {
 	regions:       []Region_Set,
 }
 
+// A call in one body; a generic's instances share its spans.
+Call_Site :: struct {
+	body: Symbol_Id,
+	span: Span,
+}
+
 // What a procedure value may be.
 Effect_Arg :: struct {
 	kind:      Effect_Arg_Kind,
@@ -902,11 +908,14 @@ compute_global_writes :: proc(k: ^Checker) {
 		copy(effects.calls, graph.effect_calls[:])
 		// The graph's storage is reset below.
 		for &call in effects.calls {
+			site := Call_Site{body = body.literal.symbol, span = call.span}
 			if call.variable != INVALID_SYMBOL {
 				call.through = effect_variable_values(c, graph.effect_stores[:], call.variable)
+				c.called_values[site] = clone_effect_args(c, call.through)
 			}
 			if len(call.args) > 0 {
 				call.args = effect_resolved_args(c, graph.effect_stores[:], call.args)
+				c.argument_values[site] = clone_effect_args(c, call.args)
 			}
 		}
 		for id in graph.effect_values {
@@ -1099,6 +1108,13 @@ add_global_write :: proc(writes: ^[dynamic]Symbol_Id, global: Symbol_Id) -> bool
 	}
 	append(writes, global)
 	return true
+}
+
+@(private = "file")
+clone_effect_args :: proc(c: ^Compiler, args: []Effect_Arg) -> []Effect_Arg {
+	out := make([]Effect_Arg, len(args), c.semantic_allocator)
+	copy(out, args)
+	return out
 }
 
 @(private = "file")

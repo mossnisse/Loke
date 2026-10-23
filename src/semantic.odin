@@ -880,6 +880,8 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.thread_local_writes = make(map[Symbol_Id][]Symbol_Id, c.semantic_allocator)
 	c.callback_thread_local_writes = make(map[Symbol_Id][]Callback_Write, c.semantic_allocator)
 	c.callback_result_reads = make(map[Symbol_Id][]Callback_Read, c.semantic_allocator)
+	c.called_values = make(map[Call_Site][]Effect_Arg, c.semantic_allocator)
+	c.argument_values = make(map[Call_Site][]Effect_Arg, c.semantic_allocator)
 	c.proc_contract_checks = make([dynamic]Proc_Contract_Check, 0, 4, c.semantic_allocator)
 	c.contract_joins = make([dynamic]Symbol_Id, 0, 4, c.semantic_allocator)
 	c.static_locals = make([dynamic]Symbol_Id, 0, 4, c.semantic_allocator)

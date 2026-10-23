@@ -207,4 +207,39 @@ parent_returned_later_spawned :: proc() {
 	parallel { spawn read_slot(slot); }
 }
 
+// A field beside a read-only one, and copies of a callback, still carry it.
+Pair :: struct { view: ^int, out: ^mut ^int }
+publish_pair :: proc(pair: ^mut Pair) { pair^.out^ = &counter; }
+call_copy :: proc(h: proc() -> ^int) -> ^int {
+	g := h;
+	return g();
+}
+pass_copy :: proc(h: proc() -> ^int) -> ^int {
+	g := h;
+	return call_copy(g);
+}
+named_local :: proc() -> ^int {
+	g := borrow_tls;
+	return g();
+}
+
+through_mutable_field :: proc() {
+	other := 0;
+	slot: ^int = &other;
+	pair := Pair{&other, &mut slot};
+	parallel { spawn publish_pair(&mut pair); }
+}
+
+returned_through_copy :: proc() {
+	result: ^int;
+	parallel { spawn result = pass_copy(borrow_tls); }
+	_ = result^;
+}
+
+returned_through_named_local :: proc() {
+	result: ^int;
+	parallel { spawn result = named_local(); }
+	_ = result^;
+}
+
 main :: proc() {}

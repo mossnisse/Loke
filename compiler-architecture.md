@@ -252,17 +252,20 @@ contract does not. A callback's own result is one more argument
 (`CALLBACK_RESULT`): a call through a value with no summary may also return the
 `thread_local` borrow any body of its type may return, or its stand-in when the
 value is the body's own callback (`prov_callback_returned`), and a named
-procedure substitutes what its result summary names. Each summary lines up with
-the call's arguments by its parameter count: a callable view passes itself
-before a held procedure's parameters, and a callable record's `call` takes the
-record the view hides. A callback resolved on a later round can add summary
-dependencies, which the worklist registers as they appear. The borrow a call
-leaves lands in the storage the argument's mutable carriers name, and below that
-only where a pointee reaches another mutable carrier
-(`prov_write_back_into_argument`), so read-only storage the argument points at
-is no destination. Only the loan a spawned call leaves is exempt from the
-crossing check, which the spawn has reported; one a call on the parent leaves is
-checked when it reaches a later task, as a borrow taken there directly would be.
+procedure substitutes what its result summary names. What a procedure variable
+or argument may hold is what the global-write effects resolved for that call
+(`Compiler.called_values`, `Compiler.argument_values`), so a copy of a callback
+is still the callback. Each summary lines up with the call's arguments by its
+parameter count: a callable view passes itself before a held procedure's
+parameters, and a callable record's `call` takes the record the view hides. A
+callback resolved on a later round can add summary dependencies, which the
+worklist registers as they appear. The borrow a call leaves lands only where the
+argument's mutable carrier paths lead, level by level (`prov_mutable_reach`), so
+neither read-only storage the argument points at nor a read-only field beside a
+mutable one is a destination. Only the loan a spawned call leaves is exempt from
+the crossing check, which the spawn has reported; one a call on the parent
+leaves is checked when it reaches a later task, as a borrow taken there directly
+would be.
 
 Once the result summaries settle, `compute_thread_summaries` builds each body's
 graph once more to collect the summaries a `parallel` block's checks read

@@ -1600,31 +1600,62 @@ Thread_Local_Left :: struct {
 // contract bounds only what the result borrows. A summary with one parameter
 // fewer than the call has arguments is a procedure a callable view holds,
 // after the view itself; one with one more is a callable record's `call`,
-// whose record the view hides. With `forward`, a callback the calling body
-// received itself stays its own caller's to name. `consulted` gathers each
-// summary read.
-call_thread_local_left :: proc(c: ^Compiler, call: ^Expr_Call, forward: bool, consulted: ^[dynamic]Symbol_Id) -> []Thread_Local_Left {
+// whose record the view hides. What a variable or argument of the calling
+// `body` may hold is what the write effects resolved (`Compiler.called_values`,
+// `Compiler.argument_values`), so a copy of a callback is still that callback.
+// With `forward`, a callback the calling body received itself stays its own
+// caller's to name. `consulted` gathers each summary read.
+call_thread_local_left :: proc(
+	c: ^Compiler, call: ^Expr_Call, body: Symbol_Id, forward: bool, consulted: ^[dynamic]Symbol_Id,
+) -> []Thread_Local_Left {
 	if !call_writes_caller(c, call) {
 		return nil
 	}
 	count := len(call.bound)
 	out := make([dynamic]Thread_Local_Left, 0, 2, context.temp_allocator)
 	seen := make(map[[2]int]bool, context.temp_allocator)
-	if callback := called_parameter(c, call); forward && callback != INVALID_SYMBOL {
+	targets := make([dynamic]Symbol_Id, 0, 4, context.temp_allocator)
+	stand_ins := make([dynamic]Symbol_Id, 0, 2, context.temp_allocator)
+	if values, through := callee_values(c, call, body); through {
+		unresolved := false
+		for value in values {
+			#partial switch value.kind {
+			case .Procedure:
+				append(&targets, value.symbol)
+			case .Nil:
+			case .Parameter:
+				if callback := body_parameter(c, body, value.parameter); forward && callback != INVALID_SYMBOL {
+					append(&stand_ins, callback)
+				} else {
+					unresolved = true
+				}
+			case:
+				unresolved = true
+			}
+		}
+		if unresolved {
+			indirect, _ := indirect_call_targets(c, call)
+			append(&targets, ..indirect)
+		}
+	} else {
+		append(&targets, ..call_thread_local_targets(c, call))
+	}
+	info := underlying_info(c, call_proc_type(c, call))
+	for callback in stand_ins {
 		type := symbol_of(c, callback).type
-		info := underlying_info(c, call_proc_type(c, call))
 		for argument, index in call.bound {
 			if argument == nil || info == nil || index >= len(info.parameters) || !parameter_writes_caller(c, info, index) {
 				continue
 			}
 			position := index - (count - callable_arity(c, type))
+			// Only a type some procedure of which may leave one needs a stand-in.
 			if type_left_at(c, type, position, consulted, &seen) != INVALID_SYMBOL {
 				append(&out, Thread_Local_Left{at = index, global = INVALID_SYMBOL, callback = callback, argument = position})
 			}
 		}
-		return out[:]
 	}
-	for target in call_thread_local_targets(c, call) {
+	site := Call_Site{body = body, span = call.span}
+	for target in targets {
 		append(consulted, target)
 		sym := symbol_of(c, target)
 		if sym == nil {
@@ -1642,11 +1673,12 @@ call_thread_local_left :: proc(c: ^Compiler, call: ^Expr_Call, forward: bool, co
 				continue
 			}
 			type := symbol_of(c, sym.param_symbols[write.callback]).type
-			value: Expr = passed >= 0 && passed < count ? call.bound[passed] : nil
-			left := callback_value_left(c, value, type, write.argument, forward, consulted, &seen)
-			left.at = at
-			if left.global != INVALID_SYMBOL || left.callback != INVALID_SYMBOL {
-				append(&out, left)
+			for value in passed_values(c, site, call, passed) {
+				left := value_left(c, value, type, write.argument, body, forward, consulted, &seen)
+				if left.global != INVALID_SYMBOL || left.callback != INVALID_SYMBOL {
+					left.at = at
+					append(&out, left)
+				}
 			}
 		}
 	}
@@ -1669,11 +1701,79 @@ call_thread_local_targets :: proc(c: ^Compiler, call: ^Expr_Call) -> []Symbol_Id
 	return single
 }
 
+// What the value a call goes through may be: what the write effects resolved
+// for a procedure variable, or a callable view the calling body received.
+@(private = "file")
+callee_values :: proc(c: ^Compiler, call: ^Expr_Call, body: Symbol_Id) -> ([]Effect_Arg, bool) {
+	if values, found := c.called_values[Call_Site{body = body, span = call.span}]; found {
+		return values, true
+	}
+	if callback := called_parameter(c, call); callback != INVALID_SYMBOL {
+		single := make([]Effect_Arg, 1, context.temp_allocator)
+		single[0] = Effect_Arg{kind = .Parameter, parameter = int(symbol_of(c, callback).index)}
+		return single, true
+	}
+	return nil, false
+}
+
+// What the argument a call passes at `passed` may be: what the write effects
+// resolved for it, or else what the expression names.
+@(private = "file")
+passed_values :: proc(c: ^Compiler, site: Call_Site, call: ^Expr_Call, passed: int) -> []Effect_Arg {
+	out := make([dynamic]Effect_Arg, 0, 2, context.temp_allocator)
+	for value in c.argument_values[site] {
+		if value.binding == passed {
+			append(&out, value)
+		}
+	}
+	if len(out) > 0 {
+		return out[:]
+	}
+	value: Expr = passed >= 0 && passed < len(call.bound) ? call.bound[passed] : nil
+	if moved, is_move := value.(^Expr_Move); is_move {
+		value = moved.value
+	}
+	id := INVALID_SYMBOL
+	#partial switch v in value {
+	case ^Expr_Ident:
+		id = v.symbol
+	case ^Expr_Selector:
+		id = v.resolution.symbol
+	case ^Expr_Proc:
+		id = v.symbol
+	}
+	named := Effect_Arg{}
+	if sym := symbol_of(c, id); sym != nil && sym.kind == .Proc {
+		named = Effect_Arg{kind = .Procedure, symbol = id}
+	} else if sym != nil && sym.kind == .Parameter {
+		named = Effect_Arg{kind = .Parameter, parameter = int(sym.index)}
+	}
+	append(&out, named)
+	return out[:]
+}
+
+// The parameter of `body` at `index`, if it holds a callable.
+@(private = "file")
+body_parameter :: proc(c: ^Compiler, body: Symbol_Id, index: int) -> Symbol_Id {
+	sym := symbol_of(c, body)
+	if sym == nil {
+		return INVALID_SYMBOL
+	}
+	for id in sym.param_symbols {
+		if parameter := symbol_of(c, id); parameter != nil && int(parameter.index) == index && callable_arity(c, parameter.type) >= 0 {
+			return id
+		}
+	}
+	return INVALID_SYMBOL
+}
+
 // What a call's result may hold from the callbacks its callee calls
 // (`Callback_Read`): the callback each passes resolved as for a write-back
-// (`callback_value_left`), `at` unused. A callable view's contract reads its
+// (`value_left`), `at` unused. A callable view's contract reads its
 // original's, past the view.
-call_callback_reads :: proc(c: ^Compiler, call: ^Expr_Call, declaration: Symbol_Id, forward: bool, consulted: ^[dynamic]Symbol_Id) -> []Thread_Local_Left {
+call_callback_reads :: proc(
+	c: ^Compiler, call: ^Expr_Call, declaration, body: Symbol_Id, forward: bool, consulted: ^[dynamic]Symbol_Id,
+) -> []Thread_Local_Left {
 	if declaration == INVALID_SYMBOL {
 		return nil
 	}
@@ -1683,6 +1783,7 @@ call_callback_reads :: proc(c: ^Compiler, call: ^Expr_Call, declaration: Symbol_
 	}
 	out: [dynamic]Thread_Local_Left
 	seen := make(map[[2]int]bool, context.temp_allocator)
+	site := Call_Site{body = body, span = call.span}
 	for member in contract_members(c, contract) {
 		append(consulted, member)
 		sym := symbol_of(c, member)
@@ -1694,15 +1795,15 @@ call_callback_reads :: proc(c: ^Compiler, call: ^Expr_Call, declaration: Symbol_
 			if read.callback >= len(sym.param_symbols) {
 				continue
 			}
-			passed := read.callback + shift
 			type := symbol_of(c, sym.param_symbols[read.callback]).type
-			value: Expr = passed >= 0 && passed < len(call.bound) ? call.bound[passed] : nil
-			left := callback_value_left(c, value, type, read.argument, forward, consulted, &seen)
-			if left.global != INVALID_SYMBOL || left.callback != INVALID_SYMBOL {
-				if out == nil {
-					out = make([dynamic]Thread_Local_Left, 0, 2, context.temp_allocator)
+			for value in passed_values(c, site, call, read.callback + shift) {
+				left := value_left(c, value, type, read.argument, body, forward, consulted, &seen)
+				if left.global != INVALID_SYMBOL || left.callback != INVALID_SYMBOL {
+					if out == nil {
+						out = make([dynamic]Thread_Local_Left, 0, 2, context.temp_allocator)
+					}
+					append(&out, left)
 				}
-				append(&out, left)
 			}
 		}
 	}
@@ -1764,40 +1865,34 @@ callable_arity :: proc(c: ^Compiler, type: Type_Id) -> int {
 	return len(info.parameters)
 }
 
-// What the callback `value`, passed for a parameter of `type`, leaves in its
-// argument `argument`: a named procedure's own summary; with `forward`, the
-// calling body's own callback parameter as a stand-in, where any procedure of
-// the type may leave one at all; otherwise what any procedure of the type may
-// leave.
+// What a callback that may be `value`, of `type`, leaves in its argument
+// `argument`: a named procedure's own summary; with `forward`, a callback the
+// calling `body` received as a stand-in, where any procedure of the type may
+// leave one at all; otherwise what any procedure of the type may leave.
 @(private = "file")
-callback_value_left :: proc(
-	c: ^Compiler, value: Expr, type: Type_Id, argument: int, forward: bool,
+value_left :: proc(
+	c: ^Compiler, value: Effect_Arg, type: Type_Id, argument: int, body: Symbol_Id, forward: bool,
 	consulted: ^[dynamic]Symbol_Id, seen: ^map[[2]int]bool,
 ) -> Thread_Local_Left {
-	named := value
-	if moved, is_move := named.(^Expr_Move); is_move {
-		named = moved.value
-	}
-	id := INVALID_SYMBOL
-	#partial switch v in named {
-	case ^Expr_Ident:
-		id = v.symbol
-	case ^Expr_Selector:
-		id = v.resolution.symbol
-	case ^Expr_Proc:
-		id = v.symbol
-	}
-	sym := symbol_of(c, id)
+	none := Thread_Local_Left{global = INVALID_SYMBOL, callback = INVALID_SYMBOL}
 	arity := callable_arity(c, type)
-	if sym != nil && sym.kind == .Proc && prov_has_direct_body(c, id) {
-		return {global = procedure_left_at(c, id, arity, argument, consulted, seen), callback = INVALID_SYMBOL}
+	#partial switch value.kind {
+	case .Nil:
+		return none
+	case .Procedure:
+		if prov_has_direct_body(c, value.symbol) {
+			return {global = procedure_left_at(c, value.symbol, arity, argument, consulted, seen), callback = INVALID_SYMBOL}
+		}
+	case .Parameter:
+		callback := body_parameter(c, body, value.parameter)
+		if forward && callback != INVALID_SYMBOL && callable_arity(c, symbol_of(c, callback).type) == arity {
+			if type_left_at(c, type, argument, consulted, seen) == INVALID_SYMBOL {
+				return none
+			}
+			return {global = INVALID_SYMBOL, callback = callback, argument = argument}
+		}
 	}
-	guess := type_left_at(c, type, argument, consulted, seen)
-	if forward && sym != nil && sym.kind == .Parameter && callable_arity(c, sym.type) == arity {
-		// Only a type some procedure of which may leave one needs a stand-in.
-		return {global = INVALID_SYMBOL, callback = guess == INVALID_SYMBOL ? INVALID_SYMBOL : id, argument = argument}
-	}
-	return {global = guess, callback = INVALID_SYMBOL}
+	return {global = type_left_at(c, type, argument, consulted, seen), callback = INVALID_SYMBOL}
 }
 
 // A `thread_local` global that procedure `id`, standing for a callback whose
@@ -1865,11 +1960,13 @@ returned_thread_local :: proc(c: ^Compiler, id: Symbol_Id, consulted: ^[dynamic]
 }
 
 // What a call through a value or a `dyn` slot may return of a callback's
-// `thread_local` storage, which a call with no summary does not show: with
-// `forward`, the calling body's own callback as a stand-in; otherwise what any
-// procedure of the callee's type may return. `at` is unused.
-call_callback_returns :: proc(c: ^Compiler, call: ^Expr_Call, forward: bool, consulted: ^[dynamic]Symbol_Id) -> Thread_Local_Left {
-	none := Thread_Local_Left{global = INVALID_SYMBOL, callback = INVALID_SYMBOL}
+// `thread_local` storage, which a call with no summary does not show: for each
+// value it may go through (`callee_values`), as `value_left` resolves it, or
+// with none resolved, what any procedure of the callee's type may return. `at`
+// is unused.
+call_callback_returns :: proc(
+	c: ^Compiler, call: ^Expr_Call, body: Symbol_Id, forward: bool, consulted: ^[dynamic]Symbol_Id,
+) -> []Thread_Local_Left {
 	type := INVALID_TYPE
 	callee := call.callee
 	if selector, is_selector := callee.(^Expr_Selector); is_selector && selector.operand != nil {
@@ -1881,17 +1978,24 @@ call_callback_returns :: proc(c: ^Compiler, call: ^Expr_Call, forward: bool, con
 		type = base.type
 	}
 	if callable_arity(c, type) < 0 {
-		return none
+		return nil
 	}
+	values, through := callee_values(c, call, body)
+	if !through {
+		values = []Effect_Arg{{}}
+	}
+	out: [dynamic]Thread_Local_Left
 	seen := make(map[[2]int]bool, context.temp_allocator)
-	guess := type_left_at(c, type, CALLBACK_RESULT, consulted, &seen)
-	if guess == INVALID_SYMBOL {
-		return none
+	for value in values {
+		left := value_left(c, value, type, CALLBACK_RESULT, body, forward, consulted, &seen)
+		if left.global != INVALID_SYMBOL || left.callback != INVALID_SYMBOL {
+			if out == nil {
+				out = make([dynamic]Thread_Local_Left, 0, 2, context.temp_allocator)
+			}
+			append(&out, left)
+		}
 	}
-	if callback := called_parameter(c, call); forward && callback != INVALID_SYMBOL {
-		return {global = INVALID_SYMBOL, callback = callback, argument = CALLBACK_RESULT}
-	}
-	return {global = guess, callback = INVALID_SYMBOL}
+	return out[:]
 }
 
 // What any procedure a value of the callable `type` may hold leaves in its
