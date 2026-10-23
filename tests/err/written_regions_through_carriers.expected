@@ -1,27 +1,33 @@
 L0537
-@39:2
+@40:2
 this reset would end the region backing `out`, which is still live here
 L0536
-@47:31
+@48:31
 an owner this call leaves is backed by an allocator region created in this procedure
 L0536
-@56:34
+@57:34
 an owner this call leaves is backed by an allocator region created in this procedure
 L0537
-@65:2
+@66:2
 this reset would end the region backing `out`, which is still live here
 L0536
-@72:33
+@73:33
 an owner this call leaves is backed by an allocator region created in this procedure
 L0537
-@101:2
+@102:2
 this reset would end the region backing `out`, which is still live here
 L0536
-@108:32
+@109:32
 an owner this call leaves is backed by an allocator region created in this procedure
 L0536
-@109:33
+@110:33
 an owner this call leaves is backed by an allocator region created in this procedure
 L0537
-@117:2
+@118:2
 this reset would end the region backing `out`, which is still live here
+L0536
+@142:37
+an owner this call leaves is backed by an allocator region created in this procedure
+L0536
+@143:31
+an owner this call leaves is backed by an allocator region created in this procedure

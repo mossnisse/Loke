@@ -320,10 +320,10 @@ Prov_State :: struct {
 	// Locals a mutable loan was ever taken of: only these can be reached through
 	// a pointer or slice. Flow-insensitive, like the region facts.
 	lent_locals: map[Symbol_Id]bool,
-	// The writable parameters each local pointer or slice was ever set from,
-	// so a write through it is a write the caller learns of. Flow-insensitive
-	// too.
-	written_aliases: map[Symbol_Id][]Symbol_Id,
+	// The writable parameters each local was ever set from, at the path in the
+	// local holding their carriers, so a write through it is a write the caller
+	// learns of. Flow-insensitive too.
+	written_aliases: map[Symbol_Id][]Written_Alias,
 	has_region_event: bool,
 	// The uses that are a local's `drop` at scope exit, for the note naming them.
 	scope_drops:      map[Span]bool,
@@ -431,7 +431,7 @@ build_flow_pass :: proc(
 		graph.temp_provider_bits = make(map[^Expr_Call]u64, 4, allocator)
 		graph.temp_providers = make([dynamic]Temp_Provider, allocator)
 		graph.lent_locals = make(map[Symbol_Id]bool, 4, allocator)
-		graph.written_aliases = make(map[Symbol_Id][]Symbol_Id, 4, allocator)
+		graph.written_aliases = make(map[Symbol_Id][]Written_Alias, 4, allocator)
 	}
 	graph.break_block, graph.continue_block = NO_BLOCK, NO_BLOCK
 	graph.current = new_flow_block(graph)

@@ -30,7 +30,8 @@ checklist.
   one now keeps its allocator's region, as one left through a `^mut T`
   parameter does: through a variadic `..^mut T`, or a `^Box` whose field is
   `^mut T`, written directly, through a local copy of the carrier such as
-  `alias := outs`, or through a value built from it such as `b := box^`,
+  `alias := outs` or `alias := box if flag else box`, or through a value
+  built from it such as `b := box^` or a field set by `pair.out = box^.out`,
   a later `free_all` of that region while the owner is live is
   `L0537`. One left through a pointer the caller holds, or through such a
   record, is written through a pointer, so from a local arena it is `L0536` at
@@ -445,6 +446,11 @@ checklist.
 
 ### Fixed
 
+- A write through one field of a local record is no longer taken for a write
+  into the caller's storage because another field holds a parameter's
+  carrier: with `pair := Pair{box^.out, &mut local}`, an owner written
+  through `pair.local^` from the caller's arena is no longer `L0536` at the
+  call.
 - A borrow written back below a provenance budget's cut, or stored through a
   carrier whose destinations a budget merged, no longer gets a definite
   `L0646`, `L0647`, or `L0730`. The message now says the value *may* be

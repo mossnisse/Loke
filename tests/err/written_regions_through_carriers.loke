@@ -5,7 +5,8 @@
 // an error, as for a `^mut T` parameter; written through a pointer the caller
 // holds rather than a place it names, a local region is an error at the call,
 // as `p^ = owner` is. A local copy of such a carrier, or a value built from
-// one, writes into the caller as the carrier does.
+// one, writes into the caller as the carrier does, whichever operand of a
+// conditional supplies it and whichever field of a local holds it.
 package main;
 
 import "core:mem";
@@ -116,6 +117,31 @@ spread_copied :: proc() {
 	spread_copy(arena.allocator(), &mut out);
 	free_all(arena.allocator());
 	fmt.println(out[0]);
+}
+
+Pair :: struct { unused: ^mut [dynamic]int, local: ^mut [dynamic]int }
+
+conditional_box :: proc(allocator: Allocator, box: ^Box, flag: bool) {
+	alias := box if flag else box;
+	alias^.out^ = make([dynamic]int, 2, allocator);
+}
+
+field_box :: proc(allocator: Allocator, box: ^Box) {
+	first: [dynamic]int = {};
+	second: [dynamic]int = {};
+	pair := Pair{&mut first, &mut second};
+	pair.unused = box^.out;
+	copy := pair;
+	copy.unused^ = make([dynamic]int, 2, allocator);
+}
+
+through_fields :: proc() {
+	arena := mem.Arena.init();
+	out: [dynamic]int = {};
+	box := Box{&mut out};
+	conditional_box(arena.allocator(), &box, true);
+	field_box(arena.allocator(), &box);
+	fmt.println(out.len());
 }
 
 main :: proc() {}

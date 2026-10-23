@@ -235,8 +235,12 @@ any depth (`prov_type_reaches_mutable`), such as `..^mut T` or a `^Box` holding
 a `^mut T`. In the body, a write through a local set from such a parameter
 counts as one through the parameter (`written_aliases`): a carrier into its
 storage, a copy of a read-only carrier (`alias := outs`), or a value holding
-its carriers (`b := box^`, `b := Box{box^.out}`). At the call it lands in the place `&mut place` or an `inout`
-argument names; any other carrier argument, each pack operand among them, is
+its carriers (`b := box^`, `b := Box{box^.out}`), from either operand of a
+conditional, `or_else`, or `move`. Each alias records the path in the local
+that holds the parameter's carriers (`Written_Alias`), from a literal's field
+or an assignment to `pair.unused`, so a write through `pair.local^` is not one
+through `pair.unused`. At the call it lands in the place `&mut place` or an
+`inout` argument names; any other carrier argument, each pack operand among them, is
 written through (`prov_leave_region`), as `p^ = owner` is. `content_loans` represent
 loads through caller storage, substituted through the actual arguments.
 Whole-program global-write effects also apply at calls. Operators without an

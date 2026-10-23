@@ -2,7 +2,9 @@
 // through a read-only carrier reaching a mutable one, a variadic `..^mut T` or
 // a `^Box` holding a `^mut T`, directly or forwarded, is accepted from an
 // allocator that outlives it, and from an arena declared before the owner that
-// is never reset. So is one left through a local copy of such a carrier.
+// is never reset. So is one left through a local copy of such a carrier. A
+// write through a local's own field is not one through another field holding
+// the caller's carrier, so it may use a region the caller's owner outlives.
 package main;
 
 import "core:mem";
@@ -35,6 +37,16 @@ copied_box :: proc(allocator: Allocator, box: ^Box) {
 	b.out^ = make([dynamic]int, 3, allocator);
 }
 
+Pair :: struct { unused: ^mut [dynamic]int, local: ^mut [dynamic]int }
+
+write_local :: proc(allocator: Allocator, box: ^Box) -> int {
+	local: [dynamic]int = {};
+	pair := Pair{box^.out, &mut local};
+	copy := pair;
+	copy.local^ = make([dynamic]int, 4, allocator);
+	return local.len();
+}
+
 main :: proc() {
 	out: [dynamic]int = {};
 	point(mem.default_allocator(), &mut out);
@@ -57,4 +69,8 @@ main :: proc() {
 	copy_boxed: [dynamic]int = {};
 	copied_box(mem.default_allocator(), &Box{&mut copy_boxed});
 	fmt.println(copy_out.len(), copy_boxed.len());
+
+	scratch := mem.Arena.init();
+	untouched: [dynamic]int = {};
+	fmt.println(write_local(scratch.allocator(), &Box{&mut untouched}), untouched.len());
 }

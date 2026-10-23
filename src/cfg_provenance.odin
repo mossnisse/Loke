@@ -1751,9 +1751,9 @@ prov_seed_regions :: proc(graph: ^Flow_Graph, seed: ^Flow_Graph) {
 	for id in seed.lent_locals {
 		graph.lent_locals[id] = true
 	}
-	for id, params in seed.written_aliases {
-		for param in params {
-			prov_add_written_alias(graph, id, param)
+	for id, aliases in seed.written_aliases {
+		for alias in aliases {
+			prov_add_written_alias(graph, id, alias.param, alias.path)
 		}
 	}
 	for id, content in seed.region_content {
@@ -1777,7 +1777,7 @@ prov_carry_regions :: proc(graph: ^Flow_Graph, allocator: mem.Allocator) -> ^Flo
 	carry.region_of = make(map[Symbol_Id]Region_Set, len(graph.region_of), allocator)
 	carry.provider_parents = make(map[Symbol_Id]Region_Set, len(graph.provider_parents), allocator)
 	carry.lent_locals = make(map[Symbol_Id]bool, len(graph.lent_locals), allocator)
-	carry.written_aliases = make(map[Symbol_Id][]Symbol_Id, len(graph.written_aliases), allocator)
+	carry.written_aliases = make(map[Symbol_Id][]Written_Alias, len(graph.written_aliases), allocator)
 	carry.region_content = make(map[Symbol_Id][]Prov_Region_Content, len(graph.region_content), allocator)
 	prov_seed_regions(carry, graph)
 	return carry
@@ -1799,8 +1799,8 @@ prov_region_weight :: proc(graph: ^Flow_Graph) -> int {
 			weight += 1 + region_weight(entry.region)
 		}
 	}
-	for _, params in graph.written_aliases {
-		weight += len(params)
+	for _, aliases in graph.written_aliases {
+		weight += len(aliases)
 	}
 	return weight + len(graph.lent_locals)
 }
@@ -2852,74 +2852,154 @@ prov_store_region_through :: proc(graph: ^Flow_Graph, destination: Expr, region:
 	})
 }
 
+// A writable parameter a local was set from, and the path in the local that
+// holds the parameter's carriers; nil when the whole local may.
+Written_Alias :: struct {
+	param: Symbol_Id,
+	path:  []Proj_Step,
+}
+
 // The parameters whose `^mut` or `[]mut` a write goes through, as `p^`,
-// `p.x`, or `p[i]` do, directly or through a local carrier set from one.
+// `p.x`, or `p[i]` do, directly or through a local set from one.
 @(private = "file")
 prov_written_parameters :: proc(graph: ^Flow_Graph, destination: Expr) -> []Symbol_Id {
-	#partial switch v in destination {
-	case ^Expr_Ident:
-		if sym := symbol_of(graph.k.c, v.symbol); sym != nil && sym.kind == .Parameter && param_writes_caller(graph.k.c, sym) {
-			return slice.clone([]Symbol_Id{v.symbol}, graph.alloc)
+	out := make([dynamic]Symbol_Id, 0, 2, graph.alloc)
+	for alias in prov_written_aliases_at(graph, destination) {
+		if !slice.contains(out[:], alias.param) {
+			append(&out, alias.param)
 		}
-		return graph.written_aliases[v.symbol]
+	}
+	return out[:]
+}
+
+// The writable parameters whose carriers the storage `e` names or reads
+// through may hold, each with its path below that storage. The storage is the
+// longest place in `e`'s chain, so `pair.local^` asks about `pair`'s `local`
+// field alone (design.md "Minimum provenance precision").
+@(private = "file")
+prov_written_aliases_at :: proc(graph: ^Flow_Graph, e: Expr) -> []Written_Alias {
+	if root, path, ok := prov_place_of(graph, e); ok {
+		return prov_written_aliases_of(graph, graph.roots[int(root)].symbol, path)
+	}
+	#partial switch v in e {
+	case ^Expr_Ident:
+		return prov_written_aliases_of(graph, v.symbol, nil)
 	case ^Expr_Selector:
-		return prov_written_parameters(graph, v.operand)
+		return prov_written_aliases_at(graph, v.operand)
 	case ^Expr_Index:
-		return prov_written_parameters(graph, v.operand)
+		return prov_written_aliases_at(graph, v.operand)
 	case ^Expr_Postfix:
-		return prov_written_parameters(graph, v.operand)
+		return prov_written_aliases_at(graph, v.operand)
 	}
 	return nil
+}
+
+@(private = "file")
+prov_written_aliases_of :: proc(graph: ^Flow_Graph, id: Symbol_Id, path: []Proj_Step) -> []Written_Alias {
+	if sym := symbol_of(graph.k.c, id); sym != nil && sym.kind == .Parameter && param_writes_caller(graph.k.c, sym) {
+		return slice.clone([]Written_Alias{{param = id}}, graph.alloc)
+	}
+	out := make([dynamic]Written_Alias, 0, 2, graph.alloc)
+	for alias in graph.written_aliases[id] {
+		if !paths_overlap(alias.path, path) {
+			continue
+		}
+		// What lies below the asked-for storage keeps its place there.
+		rest: []Proj_Step
+		if len(alias.path) > len(path) {
+			rest = alias.path[len(path):]
+		}
+		append(&out, Written_Alias{param = alias.param, path = rest})
+	}
+	return out[:]
 }
 
 // design.md "Allocator regions and region provenance": a local set from a
 // writable parameter's storage, as `alias := dst`, `&mut dst^.items`, or
 // `dst[1:]` set it, reaches the caller's storage. So does a copy of a read-only
 // carrier reaching a mutable one, as `alias := outs` of `outs: ..^mut T`, and a
-// value holding one, as `b := box^` or `b := Box{box.out}` of `box: ^Box`.
+// value holding one, as `b := box^` or `b := Box{box.out}` of `box: ^Box`,
+// whichever operand of a conditional, `or_else`, or `move` supplies it.
+// `path` is where in the local the value is stored, as `pair.local = ...`
+// stores it, and `type` the type stored there.
 @(private = "file")
-prov_note_written_alias :: proc(graph: ^Flow_Graph, local: Symbol_Id, value: Expr) {
+prov_note_written_alias :: proc(graph: ^Flow_Graph, local: Symbol_Id, value: Expr, path: []Proj_Step = nil, type := INVALID_TYPE) {
 	c := graph.k.c
 	sym := symbol_of(c, local)
-	if value == nil || sym == nil || sym.kind != .Var || sym.duration != .None ||
-	   !(carrier_is_mutable(c, sym.type) || prov_type_reaches_mutable(c, sym.type)) {
+	if value == nil || sym == nil || sym.kind != .Var || sym.duration != .None {
 		return
 	}
-	prov_note_alias_source(graph, local, value)
+	stored := type == INVALID_TYPE ? sym.type : type
+	if !carrier_is_mutable(c, stored) && !prov_type_reaches_mutable(c, stored) {
+		return
+	}
+	prov_note_alias_source(graph, local, value, path)
 }
 
+// Records what `value` holds of writable parameters at `prefix` in `local`: a
+// literal's fields at their own paths, so one field's carrier is not
+// another's (design.md "Minimum provenance precision").
 @(private = "file")
-prov_note_alias_source :: proc(graph: ^Flow_Graph, local: Symbol_Id, value: Expr) {
+prov_note_alias_source :: proc(graph: ^Flow_Graph, local: Symbol_Id, value: Expr, prefix: []Proj_Step) {
 	source := value
+	// A carrier into the storage points at it; paths inside it are not the
+	// local's own.
+	into := false
 	#partial switch v in value {
 	case ^Expr_Unary:
 		if v.op == .Amp {
-			source = v.operand
+			source, into = v.operand, true
 		}
 	case ^Expr_Slice:
-		source = v.operand
+		source, into = v.operand, true
+	case ^Expr_Cond:
+		prov_note_alias_source(graph, local, v.then, prefix)
+		prov_note_alias_source(graph, local, v.otherwise, prefix)
+		return
+	case ^Expr_Or_Else:
+		prov_note_alias_source(graph, local, v.value, prefix)
+		if v.fallback != nil {
+			prov_note_alias_source(graph, local, v.fallback, prefix)
+		}
+		return
+	case ^Expr_Move:
+		prov_note_alias_source(graph, local, v.value, prefix)
+		return
 	case ^Expr_Composite:
-		for element in v.elements {
-			if element.value != nil {
-				prov_note_alias_source(graph, local, element.value)
+		kind := underlying_kind(graph.k.c, v.type)
+		for element, index in v.elements {
+			if element.value == nil {
+				continue
 			}
+			at := prefix
+			if kind == .Struct || kind == .Array {
+				if step, known := prov_element_prefix(graph, v, index); known {
+					at = prov_concat_path(graph, prefix, step)
+				}
+			}
+			prov_note_alias_source(graph, local, element.value, at)
 		}
 		return
 	}
-	for param in prov_written_parameters(graph, source) {
-		prov_add_written_alias(graph, local, param)
+	if source == nil {
+		return
+	}
+	for alias in prov_written_aliases_at(graph, source) {
+		prov_add_written_alias(graph, local, alias.param, into ? prefix : prov_concat_path(graph, prefix, alias.path))
 	}
 }
 
 @(private = "file")
-prov_add_written_alias :: proc(graph: ^Flow_Graph, local, param: Symbol_Id) {
+prov_add_written_alias :: proc(graph: ^Flow_Graph, local, param: Symbol_Id, path: []Proj_Step) {
 	existing := graph.written_aliases[local]
-	if slice.contains(existing, param) {
-		return
+	for alias in existing {
+		if alias.param == param && len(alias.path) == len(path) && path_has_exact_prefix(alias.path, path) {
+			return
+		}
 	}
-	grown := make([]Symbol_Id, len(existing) + 1, graph.alloc)
+	grown := make([]Written_Alias, len(existing) + 1, graph.alloc)
 	copy(grown, existing)
-	grown[len(existing)] = param
+	grown[len(existing)] = Written_Alias{param = param, path = slice.clone(path, graph.alloc)}
 	graph.written_aliases[local] = grown
 }
 
@@ -3901,6 +3981,9 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 		}
 		prov_retain_escape(graph, target, sources, expr_span(target))
 		root, path, place_ok := prov_place_of(graph, target)
+		if place_ok && s.op == .Assign {
+			prov_note_written_alias(graph, graph.roots[int(root)].symbol, value, path, target_type)
+		}
 		if !place_ok && s.op == .Assign {
 			// A store through a carrier, or into what an `inout` result names.
 			through := prov_retain_through_carrier(graph, target)
