@@ -10,7 +10,10 @@
 // callback's, also through a copy of it or a local procedure literal, and a
 // read-only field beside a written one receives nothing, however deep or
 // recursive, nor does a record cut at a budget whose read-only pointers lead to
-// no mutable field, nor a read-only sibling of a pointer leading to one.
+// no mutable field, nor a read-only sibling of a pointer leading to one. A
+// write through a read-only parameter, a slice or a pointer to a record holding
+// a mutable carrier, lands where that carrier points and not in what the
+// element itself names.
 package main;
 
 import "core:fmt";
@@ -99,6 +102,8 @@ publish_node :: proc(root: ^mut Node) {
 	case .none:
 	}
 }
+publish_slice :: proc(outs: []^mut ^int) { outs[0]^ = &counter; }
+publish_through_view :: proc(box: ^Box) { box^.out^ = &counter; }
 literal_shared :: proc() -> ^int {
 	g: proc() -> ^int = proc() -> ^int { return &shared; };
 	return g();
@@ -215,4 +220,11 @@ main :: proc() {
 	node := Node{.some(&mut child), &kept_value};
 	publish_node(&mut node);
 	fmt.println(split_slot^, node.view^, child.view^);
+	slice_slot: ^int = &fallback;
+	outs := []^mut ^int{&mut slice_slot};
+	publish_slice(outs);
+	view_slot: ^int = &fallback;
+	view_box := Box{&mut view_slot};
+	publish_through_view(&view_box);
+	fmt.println(slice_slot^, view_slot^, fallback);
 }

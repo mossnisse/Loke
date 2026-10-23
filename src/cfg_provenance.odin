@@ -4518,9 +4518,33 @@ prov_call_argument :: proc(
 	argument := v.bound[index]
 	// design.md "Variadic parameters": the pack slot holds no written
 	// expression unless a sole spread is forwarded.
-	if v.is_variadic && index == v.variadic_slot && !v.variadic_forwards {
-		actual = walk_variadic_pack(graph, v)
-		borrowed^ = prov_join(graph, borrowed^, actual)
+	// Each operand lends as one argument of its type would: an element as the
+	// pack's element, a spread as the slice it views. A mutable carrier passed
+	// by name is reborrowed, so `fill(out, out)` uses `out` while it is lent.
+	if call_packs(v, index) {
+		pack := prov_parameter_type(graph, v, index)
+		element := slice_element(c, pack)
+		next_element, next_spread := 0, 0
+		for is_spread in v.variadic_order {
+			operand: Expr
+			type := element
+			if is_spread {
+				operand, type = v.variadic_spreads[next_spread], pack
+				next_spread += 1
+			} else {
+				operand = v.variadic_elements[next_element]
+				next_element += 1
+			}
+			lent := walk_flow_expr(graph, operand)
+			prov_reborrow(graph, lent, type)
+			if type_carries_borrow(c, type).mutable {
+				lent = prov_lend_carrier(graph, lent, borrowed^, expr_span(operand))
+			} else if type_is_carrier(c, type) {
+				lent = prov_reborrow_traversal(graph, lent, expr_span(operand), false)
+			}
+			borrowed^ = prov_join(graph, borrowed^, lent)
+			actual = prov_join(graph, actual, lent)
+		}
 		return actual
 	}
 	if argument == nil {
@@ -4812,21 +4836,39 @@ report_thread_local_writes :: proc(c: ^Compiler, call: ^Expr_Call, body: Symbol_
 	consulted := make([dynamic]Symbol_Id, 0, 4, context.temp_allocator)
 	reported := make([]bool, len(call.bound), context.temp_allocator)
 	for left in call_thread_local_left(c, call, body, false, &consulted) {
-		if left.global == INVALID_SYMBOL || reported[left.at] || call.bound[left.at] == nil {
+		if left.global == INVALID_SYMBOL || left.at >= len(call.bound) || reported[left.at] {
 			continue
 		}
+		span, written := prov_argument_span(call, left.at)
 		sym := symbol_of(c, left.global)
-		if sym == nil {
+		if sym == nil || !written {
 			continue
 		}
 		reported[left.at] = true
 		errorf(
-			c, expr_span(call.bound[left.at]), "L0730",
+			c, span, "L0730",
 			"this task's call may leave a borrow of `%s` in this argument, but it is the worker's own `thread_local` storage, so it cannot cross to the parent",
 			identifier_text(c, sym.name),
 		)
 		add_notef(c, sym.span, "each thread has its own `thread_local` storage, which ends with that thread")
 	}
+}
+
+// Where bound argument `index` is written: its expression, or for a variadic
+// pack its first operand. False for an empty pack, which nothing is left in.
+@(private = "file")
+prov_argument_span :: proc(call: ^Expr_Call, index: int) -> (Span, bool) {
+	if !call_packs(call, index) {
+		argument := call.bound[index]
+		return argument == nil ? Span{} : expr_span(argument), argument != nil
+	}
+	if len(call.variadic_order) == 0 {
+		return Span{}, false
+	}
+	if call.variadic_order[0] {
+		return expr_span(call.variadic_spreads[0]), true
+	}
+	return expr_span(call.variadic_elements[0]), true
 }
 
 // design.md "Borrows crossing between tasks": a callee that may leave a borrow
@@ -4843,7 +4885,7 @@ prov_call_thread_local_writes :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals
 	}
 	what := v == graph.spawning ? WRITTEN_BACK_BORROW : "borrow"
 	for left in lefts {
-		if left.at >= len(actuals) || v.bound[left.at] == nil {
+		if left.at >= len(actuals) || (v.bound[left.at] == nil && !call_packs(v, left.at)) {
 			continue
 		}
 		if left.callback != INVALID_SYMBOL {
@@ -4911,6 +4953,17 @@ prov_mutable_reach :: proc(graph: ^Flow_Graph, carriers: []int, type: Type_Id, s
 				for slot in below { graph.prov_slots[slot].precision |= path.precision }
 			}
 			out = prov_join(graph, out, below)
+			continue
+		}
+		// design.md "Slice literals": a slice also carries its elements' loans,
+		// as a variadic pack does its operands', so what it holds may be an
+		// element as well as the storage it views. That storage is searched by
+		// its own carriers' types, since an element's loan names no element.
+		if info.kind == .Slice {
+			chain[info.element] = true
+			out = prov_join(graph, out, prov_mutable_reach(graph, selected, info.element, span, chain))
+			chain[info.element] = false
+			out = prov_join(graph, out, prov_load_writable(graph, selected, span))
 			continue
 		}
 		pointee := prov_temp_content(graph, info.element)
@@ -5076,10 +5129,12 @@ prov_retain_into_argument :: proc(
 	mutable_only := false,
 ) {
 	argument := v.bound[index]
-	if argument == nil {
+	// A variadic pack is a slice over its operands, which no place names.
+	packed := call_packs(v, index)
+	if argument == nil && !packed {
 		return
 	}
-	if !prov_argument_is_place(graph, v, index) {
+	if packed || !prov_argument_is_place(graph, v, index) {
 		// Through the argument's carriers, and what they reach in turn.
 		through: []int
 		if mutable_only {
@@ -5542,11 +5597,12 @@ prov_spawn_transfers :: proc(graph: ^Flow_Graph, s: ^Stmt_Spawn, call: ^Expr_Cal
 		if info == nil || index >= len(info.parameters) || index >= len(task.kinds) {
 			continue
 		}
-		// Each pack element is the task's own when the pack owns it, and a
-		// spread is shared, as the slice it views.
-		if spawn_packs(call, index) {
+		// A pack element is the task's own when it is a temporary or moved in.
+		// One copied from a place the parent keeps is shared, as a copy of
+		// what that place reaches, and so is a spread, as the slice it views.
+		if call_packs(call, index) {
 			next_element, next_spread := 0, 0
-			for is_spread, position in call.variadic_order {
+			for is_spread in call.variadic_order {
 				if is_spread {
 					prov_transfer_argument(c, call.variadic_spreads[next_spread], true)
 					next_spread += 1
@@ -5555,7 +5611,7 @@ prov_spawn_transfers :: proc(graph: ^Flow_Graph, s: ^Stmt_Spawn, call: ^Expr_Cal
 				element := call.variadic_elements[next_element]
 				next_element += 1
 				_, moved := element.(^Expr_Move)
-				prov_transfer_argument(c, element, task.pack[position] != .Owned && !moved)
+				prov_transfer_argument(c, element, !moved && expression_is_borrowed_place(element))
 			}
 			continue
 		}

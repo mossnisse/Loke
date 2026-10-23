@@ -115,3 +115,9 @@ provenance precision limit: paths below 4 aggregate projection steps are merged
 L0730
 @381:19
 is handed a borrow of `counter`
+L0730
+@395:19
+is handed a borrow of `counter`
+L0730
+@403:19
+is handed a borrow of `counter`

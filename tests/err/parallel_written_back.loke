@@ -381,4 +381,26 @@ parent_recursive_chain_later_spawned :: proc() {
 	parallel { spawn read_slot(slot); }
 }
 
+// A parameter that is itself read-only but reaches a mutable carrier is
+// written through too: a pointer to a record holding one, and a slice of them,
+// whose elements' loans the slice carries.
+publish_through_view :: proc(box: ^Box) { box^.out^ = &counter; }
+publish_slice :: proc(outs: []^mut ^int) { outs[0]^ = &counter; }
+
+parent_read_only_parameter_later_spawned :: proc() {
+	other := 0;
+	slot: ^int = &other;
+	box := Box{&mut slot};
+	publish_through_view(&box);
+	parallel { spawn read_slot(slot); }
+}
+
+parent_slice_parameter_later_spawned :: proc() {
+	other := 0;
+	slot: ^int = &other;
+	outs := []^mut ^int{&mut slot};
+	publish_slice(outs);
+	parallel { spawn read_slot(slot); }
+}
+
 main :: proc() {}

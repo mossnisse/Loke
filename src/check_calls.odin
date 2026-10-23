@@ -1283,6 +1283,13 @@ bind_variadic_arguments :: proc(
 	return ok
 }
 
+// Whether bound argument `index` of a call is a variadic pack built from
+// separate arguments, which has no `bound` expression, rather than one
+// forwarded slice.
+call_packs :: proc(call: ^Expr_Call, index: int) -> bool {
+	return call.is_variadic && !call.variadic_forwards && index == call.variadic_slot
+}
+
 // design.md "Named arguments": the slot a name reaches, shared by overload
 // resolution and binding so they cannot disagree. `limit` stops short of a
 // variadic pack. -1 when nothing carries the name, including a call through a

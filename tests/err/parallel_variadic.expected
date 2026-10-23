@@ -1,24 +1,36 @@
 L0513
-@22:2
+@24:2
 this slice is used after this temporary has ended
 L0513
-@28:2
+@30:2
 this slice is used after this temporary has ended
 L0513
-@34:2
+@36:2
 this slice is used after this slice literal has ended
 L0511
-@43:32
+@45:32
 this write of `a` is not compatible with the mutable pointer of it that is still in use
 L0511
-@50:7
+@52:7
 this read of `a` is not compatible with the mutable pointer of it that is still in use
 L0513
-@56:2
+@58:2
 this pointer is used after `inner`, the local it borrows, has ended
 L0730
-@65:25
+@67:25
 this task is handed a pointer of `counter`
 L0729
-@70:45
+@72:45
 `[]^mut int` reaches `^mut int`, so a task sharing it could write what the parent reaches too
+L0729
+@84:20
+`Item` reaches `^mut int`, so a task sharing it could write what the parent reaches too
+L0641
+@85:3
+`item` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@94:3
+`out` cannot be used here: a mutable reborrow of it is still in use
+L0730
+@103:27
+this task's call may leave a borrow of `counter` in this argument

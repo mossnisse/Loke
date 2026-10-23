@@ -2029,9 +2029,14 @@ call_writes_caller :: proc(c: ^Compiler, call: ^Expr_Call) -> bool {
 	return false
 }
 
+// design.md "Borrows crossing between tasks": also a read-only carrier that
+// reaches a mutable one, such as `outs: []^mut ^int` or a variadic `..^mut ^int`,
+// which a borrow can be written through.
 @(private = "file")
 parameter_writes_caller :: proc(c: ^Compiler, info: ^Type_Info, index: int) -> bool {
-	return (index < len(info.param_modes) && info.param_modes[index] == .Inout) || carrier_is_mutable(c, info.parameters[index])
+	type := info.parameters[index]
+	return (index < len(info.param_modes) && info.param_modes[index] == .Inout) || carrier_is_mutable(c, type) ||
+		prov_type_reaches_destination(c, type)
 }
 
 // Whether a parameter names caller storage the body may write: `inout`, or a
@@ -2040,10 +2045,13 @@ param_writes_caller :: proc(c: ^Compiler, param: ^Symbol) -> bool {
 	return param != nil && (param.mode == .Inout || carrier_is_mutable(c, param.type))
 }
 
+// Whether a body may leave anything in its caller's storage: through a
+// parameter it writes, or one reaching a mutable carrier it may write through.
 @(private = "file")
 proc_may_write_owners :: proc(c: ^Compiler, sym: ^Symbol) -> bool {
 	for id in sym.param_symbols {
-		if param_writes_caller(c, symbol_of(c, id)) {
+		param := symbol_of(c, id)
+		if param_writes_caller(c, param) || param != nil && prov_type_reaches_destination(c, param.type) {
 			return true
 		}
 	}
@@ -2772,6 +2780,12 @@ load_writable_through :: proc(
 				info := underlying_info(c, type)
 				pointee := info != nil ? info.element : INVALID_TYPE
 				destination = carrier_is_mutable(c, type) && type_carries_borrow(c, pointee).any
+				// design.md "Slice literals": a slice also carries its elements'
+				// loans, so a mutable element's are destinations as well.
+				if info != nil && info.kind == .Slice {
+					element := underlying_info(c, pointee)
+					destination ||= carrier_is_mutable(c, pointee) && element != nil && type_carries_borrow(c, element.element).any
+				}
 				follow = destination || prov_type_reaches_destination(c, pointee)
 			}
 			row := reach_row(state, reach, index)

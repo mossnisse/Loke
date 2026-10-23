@@ -43,12 +43,6 @@ Spawn_Task :: struct {
 	pack:   []Spawn_Field_Kind,
 }
 
-// Whether bound argument `index` of a spawned call is a variadic pack built
-// from separate arguments, rather than one forwarded slice.
-spawn_packs :: proc(call: ^Expr_Call, index: int) -> bool {
-	return call.is_variadic && !call.variadic_forwards && index == call.variadic_slot
-}
-
 // The frame field holding bound argument `index`, and the result's address.
 spawn_argument_field :: proc(index: int) -> int {
 	return index + 1
@@ -319,7 +313,7 @@ lower_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn, block: ^Stmt_Parallel, callee: 
 		type := index < len(info.parameters) ? info.parameters[index] : INVALID_TYPE
 		mode := index < len(info.param_modes) ? info.param_modes[index] : Param_Mode.Value
 		kind := spawn_field_kind(c, argument, type, mode)
-		if spawn_packs(call, index) {
+		if call_packs(call, index) {
 			pack := spawn_pack_record(k, task, call, type, span)
 			if pack == INVALID_TYPE {
 				return
@@ -363,7 +357,7 @@ lower_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn, block: ^Stmt_Parallel, callee: 
 	for kind, index in task.kinds {
 		mode := index < len(info.param_modes) ? info.param_modes[index] : Param_Mode.Value
 		field := synth_selector(c, frame_of(k, frame_param, span), frame_field_name(c, task, spawn_argument_field(index)), span)
-		if spawn_packs(call, index) {
+		if call_packs(call, index) {
 			spawn_repack(k, task, call, field, &stmts, &args, span)
 			continue
 		}

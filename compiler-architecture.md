@@ -122,10 +122,12 @@ effects. Graphs serve analysis; LLVM still walks the AST directly.
 | `Prov_Diagnose` | Provenance events for checking each body's borrows and regions. |
 
 Each body/mode/summary round gets a fresh graph. Provenance construction preserves
-settled lifecycle annotations and emits no diagnostics or lasting compiler
-mutations. Allocator-region facts are accumulated to a fixed point, so later
-writes can reach earlier reads. Copy retained facts before reclaiming each pass;
-only one graph needs to remain allocated at a time.
+settled lifecycle annotations and makes no lasting compiler mutations; the only
+diagnostics it emits are a spawn's transfer checks (`prov_spawn_transfers`).
+Allocator-region facts are accumulated to a fixed point, so later writes can
+reach earlier reads. Copy retained facts before reclaiming each pass, and drop
+what a superseded pass reported, so each diagnostic appears once; only one
+graph needs to remain allocated at a time.
 
 ### Allocation domains
 
@@ -276,7 +278,14 @@ read-only ones whose pointee reaches a destination, so a recursive
 `view: ^int` names none. The slots loaded below a cut carry the path's
 precision; a write through a carrier passes that precision to the storage it
 lands in, and `L0646`, `L0647`, and `L0730` then say the borrow *may* be
-there. Only the loan a spawned call leaves is exempt from
+there. A parameter counts as written when it is `inout`, a mutable carrier, or
+a read-only one reaching a mutable carrier (`parameter_writes_caller`), such
+as `outs: []^mut ^int` or a variadic `..^mut ^int`. A slice also carries its
+elements' loans, so a slice path is walked at its element type as well, and
+the storage it views by its own carriers' types (`prov_load_writable`). A
+variadic pack is a slice over its operands, so it takes the same walk, and
+each operand lends as one argument of its type would. Only the loan a spawned
+call leaves is exempt from
 the crossing check, which the spawn has reported; one a call on the parent
 leaves is checked when it reaches a later task, as a borrow taken there directly
 would be.
@@ -328,7 +337,8 @@ hook(drop) on Task_Scope                // joins every started thread, in start 
   its operands in written order (`Spawn_Task.pack`): the parent fills it as
   `emit_variadic_pack` would copy each element, and `run` packs them again,
   moving owned elements in and passing each spread on as `..s`. A lone spread
-  is a copied slice the worker forwards.
+  is a copied slice the worker forwards. An element copied from a place the
+  parent keeps is shared with the task, as a copy of what that place reaches.
 - **Registration.** `emit_llvm_stmt.odin` fills the frame on the parent from
   the default allocator, which accepts concurrent use. The parent registers
   the frame for the unwind until `start` returns, beside the guards that drop

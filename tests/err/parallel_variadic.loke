@@ -2,8 +2,10 @@
 // pack's operands are checked as the task's arguments. A spread's storage is
 // borrowed until the join, so it outlives the block or the spawn is an error,
 // as is a pack element borrowing a block local or the parent's `thread_local`
-// storage, two mutable borrows of one place, and a shared spread reaching a
-// mutable carrier.
+// storage, two mutable borrows of one place, a shared spread reaching a
+// mutable carrier, an element copied from a place the parent keeps that
+// reaches one, a mutable carrier passed by name, which stays reborrowed until
+// the join, and a `thread_local` borrow the task's call leaves in an element.
 package main;
 
 counter: thread_local int;
@@ -71,5 +73,35 @@ shared_mutable_spread :: proc(slots: []^mut int) {
 }
 
 counter_copy := 0;
+
+Item :: struct { name: string, out: ^mut int }
+fill_items :: proc(items: ..Item) { items[0].out^ = 1; }
+
+copied_element_shared :: proc() {
+	a := 0;
+	item := Item{string("x"), &mut a};
+	parallel {
+		spawn fill_items(item);
+		item.out^ = 2;
+	}
+}
+
+carrier_by_name :: proc() {
+	a := 0;
+	out := &mut a;
+	parallel {
+		spawn fill(out);
+		out^ = 2;
+	}
+}
+
+publish :: proc(outs: ..^mut ^int) { outs[0]^ = &counter; }
+
+written_back_element :: proc() {
+	other := 0;
+	slot: ^int = &other;
+	parallel { spawn publish(&mut slot); }
+	_ = slot^;
+}
 
 main :: proc() {}

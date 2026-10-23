@@ -1,0 +1,23 @@
+// design.md "Weakening and reborrows": each operand of a variadic pack lends
+// as one argument of its type would, so a mutable carrier passed by name is
+// reborrowed for the call, and a second operand cannot use it meanwhile. Once
+// the call returns the carrier is usable again.
+package main;
+
+fill :: proc(outs: ..^mut int) { foreach (out in outs) { out^ = 1; } }
+
+twice :: proc() {
+	a := 0;
+	out := &mut a;
+	fill(out, out);
+}
+
+once :: proc() -> int {
+	a := 0;
+	out := &mut a;
+	fill(out);
+	out^ = 3;
+	return a;
+}
+
+main :: proc() {}

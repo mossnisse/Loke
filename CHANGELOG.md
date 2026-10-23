@@ -11,7 +11,9 @@ checklist.
 ### Breaking changes
 
 - A `parallel` task that may write a borrow of its own `thread_local` storage
-  back through a mutable argument, directly or through a callback of any type,
+  back through a mutable argument, or through a read-only one that reaches a
+  mutable carrier, such as a `[]^mut ^int` or a variadic `..^mut ^int`,
+  directly or through a callback of any type,
   including a callable view or one with an inferred contract, is now rejected
   with `L0730`, as is a task handed such a borrow that a call on the parent left
   in its variable. So is a task's result that a callback called through a plain
@@ -23,6 +25,12 @@ checklist.
   result does not (`L0645`). Upgrade by keeping that borrow inside the thread
   that owns the storage, or by writing back a value whose storage remains live
   after the join.
+
+- Each operand of a variadic pack now lends as one argument of its type does,
+  so a mutable carrier passed by name is reborrowed for the call, and
+  `fill(out, out)` for `fill :: proc(outs: ..^mut int)` is `L0641`, as
+  `two(out, out)` with two `^mut int` parameters already was. Upgrade by
+  passing the carrier once, or by calling once per carrier.
 
 - `-doc` and hover show only [doc comments](design.md#doc-comments), line
   comments that start with `///`, and no longer the `//` comments above a
@@ -189,7 +197,8 @@ checklist.
   task may borrow the caller's locals, which stay lent to it until the join,
   and `spawn result = call;` hands its result back through a local declared
   before the block. A spawned call may take a variadic pack, which belongs to
-  the task, as `spawn total = sum(1, 2, 3);` does. The compiler rejects a task that shares something
+  the task, as `spawn total = sum(1, 2, 3);` does; an element copied from a
+  place the parent keeps is shared with the task (`L0729`). The compiler rejects a task that shares something
   writable (`L0729`), writes or reaches through a global while tasks run
   (`L0731`), hands a `thread_local` borrow across (`L0730`), or uses an
   allocator another task may be using (`L0732`). `examples/parallel.loke`

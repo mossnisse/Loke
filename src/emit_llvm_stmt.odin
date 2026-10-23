@@ -192,7 +192,7 @@ emit_spawn :: proc(e: ^Emitter, s: ^Stmt_Spawn) {
 		is_default := index < len(callee.param_defaults) && argument == callee.param_defaults[index]
 		e.param_values = is_default ? own_params : outer_params
 		field := field_address(e, frame_info, frame_type, frame, spawn_argument_field(index))
-		if spawn_packs(call, index) {
+		if call_packs(call, index) {
 			pack := symbol_of(e.c, frame_info.fields[spawn_argument_field(index)]).type
 			emit_spawn_pack(e, task, call, type, pack, field, &owned)
 			continue
