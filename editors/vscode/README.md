@@ -51,6 +51,10 @@ as ` ```loke ` and the repository's ` ```loke file=hello.loke `, is highlighted
 as Loke in the file's source. The rendered preview does not highlight it.
 
 Highlighting comes from the text alone, so it goes by the shape of a name:
-`Type_Name` is shown as a type and `ALL_CAPS` as a constant. The grammar's
+`Type_Name` is shown as a type and `ALL_CAPS` as a constant. The contextual
+keywords `parallel` and `spawn` are shown as keywords only at the start of a
+statement, and the start of a line counts as one: a type named `parallel`
+whose literal begins a continued line, as in `value :=` followed by
+`parallel{1};`, is shown as a keyword. The grammar's
 keyword and predeclared-name lists are checked against the specification by
 `tests/editor_test.odin`.

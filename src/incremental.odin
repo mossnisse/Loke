@@ -52,14 +52,16 @@ Arena_Block_Image :: struct {
 MAX_PACKAGE_CACHE_BYTES :: 64 * 1024 * 1024
 
 // Only an `import` inside a file-scope `when` lets selection change the
-// package graph. A `when` that selects declarations alone, such as the platform
-// code of `core:fs`, reads only its own package and what that imports, so it
-// settles before any dependent package is prepared.
+// package graph, or a `parallel` block there, which needs `core:thread`. A
+// `when` that selects declarations alone, such as the platform code of
+// `core:fs`, reads only its own package and what that imports, so it settles
+// before any dependent package is prepared.
 @(private)
 static_package_graph :: proc(c: ^Compiler) -> bool {
 	if any_provider_selected(c) { return false }
 	for file in c.parsed_files {
 		if selects_imports(file.items, false) { return false }
+		if c.unstable_parallel && selects_parallel_by_when(file.items, file.parallels) { return false }
 	}
 	return true
 }

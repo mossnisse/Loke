@@ -1,0 +1,18 @@
+// concurrency-proposal.md "Lowering": a `parallel` block in a selected
+// file-scope `when` branch makes `core:thread` a dependency, although
+// discovery runs before the branch is selected.
+package main;
+
+import "core:fmt";
+
+when (true) {
+	double :: proc(x: int) -> int { return x * 2; }
+
+	main :: proc() {
+		result: int;
+		parallel {
+			spawn result = double(21);
+		}
+		fmt.println(result);
+	}
+}
