@@ -4786,10 +4786,6 @@ prov_call_retention :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]int)
 // The spawn reports it from the summary, so the crossing check passes over it;
 // one left by any other call crosses no further than a borrow taken directly.
 WRITTEN_BACK_BORROW :: "written-back borrow"
-// What any procedure of a callback's type might leave is called, while a body
-// is summarized: the result's provenance keeps it, but the callback's stand-in
-// records the write-back (`Callback_Write`).
-GUESSED_BORROW :: "borrow a callback may leave"
 
 // design.md "Borrows crossing between tasks": what the task's call may write
 // into an argument stays behind after the worker's thread ends, wherever the
@@ -4839,8 +4835,7 @@ prov_call_thread_local_writes :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals
 			prov_write_back_into_argument(graph, v, left.at, actuals[left.at], sources)
 		}
 		if left.global != INVALID_SYMBOL {
-			label := left.callback != INVALID_SYMBOL ? GUESSED_BORROW : what
-			sources := prov_borrow(graph, prov_root_for_symbol(graph, left.global), nil, false, v.span, label)
+			sources := prov_borrow(graph, prov_root_for_symbol(graph, left.global), nil, false, v.span, what)
 			prov_write_back_into_argument(graph, v, left.at, actuals[left.at], sources)
 		}
 	}
@@ -5535,10 +5530,11 @@ prov_call_result :: proc(
 	if summary, found := result_summary(c, callee); found {
 		// Sibling fields share one synthesized root per kind.
 		synthetic := make(map[Root_Kind]Root_Id, graph.alloc)
+		read := prov_callback_result(graph, v, callee, result_type)
 		if summary.content_type == result_type && len(summary.content) > 0 {
 			content := prov_temp_content(graph, result_type)
 			for slot in content {
-				sources: []int
+				sources := read
 				for path in summary.content {
 					if paths_overlap(graph.prov_slots[slot].path, path.path.steps) {
 						leaf_type := path.path.truncated ? result_type : path.path.type
@@ -5549,7 +5545,7 @@ prov_call_result :: proc(
 			}
 			return content
 		}
-		out = prov_substitute_result(graph, v, actuals, summary.dependencies, result_type, &synthetic)
+		out = prov_join(graph, read, prov_substitute_result(graph, v, actuals, summary.dependencies, result_type, &synthetic))
 	} else if direct {
 		// No summary yet is a forward fixed-point edge, not erased metadata.
 		return nil
@@ -5567,6 +5563,32 @@ prov_call_result :: proc(
 		}
 	}
 	return type_is_carrier(c, result_type) ? out : prov_value_content(graph, out, result_type, v.span)
+}
+
+// design.md "Borrows crossing between tasks": what the result may hold that a
+// callback the callee calls leaves in an argument, with the callback this call
+// passes: its `thread_local` borrow, or while a body is summarized and the
+// callback is that body's own, its stand-in.
+@(private = "file")
+prov_callback_result :: proc(graph: ^Flow_Graph, v: ^Expr_Call, callee: Symbol_Id, result_type: Type_Id) -> []int {
+	c := graph.k.c
+	consulted := make([dynamic]Symbol_Id, 0, 4, context.temp_allocator)
+	reads := call_callback_reads(c, v, callee, graph.mode == .Prov_Summary, &consulted)
+	for target in consulted {
+		prov_note_summary_dependency(graph, target, prov_has_direct_body(c, target))
+	}
+	out: []int
+	for read in reads {
+		root := NO_ROOT
+		if read.callback != INVALID_SYMBOL {
+			root = prov_forwarded_root(graph, read.callback, read.argument, v.span)
+		} else {
+			root = prov_root_for_symbol(graph, read.global)
+		}
+		mutable := type_carries_borrow(c, result_type).mutable
+		out = prov_join(graph, out, prov_borrow(graph, root, nil, mutable, v.span, carrier_noun(c, result_type)))
+	}
+	return out
 }
 
 @(private = "file")

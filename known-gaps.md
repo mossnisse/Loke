@@ -7,38 +7,32 @@ the compiler, unless the rewording is the intended fix.
 
 ## Gaps
 
-### A task's result read back through a callback is judged by its type
+### A callback's returned `thread_local` borrow can reach the parent
 
 [Borrows crossing between tasks](design.md#borrows-crossing-between-tasks)
-allows a task to use a borrow of its own `thread_local` storage within its
-call. Here the task passes `keep`, which writes nothing, yet its result is
-rejected because another procedure of the callback's type, `publish`, is used
-as a value elsewhere:
+forbids a task's result from holding a borrow of the worker's `thread_local`
+storage. A callback that returns one, called through a plain procedure type,
+is accepted, and `result` points into the worker's ended storage:
 
 ```loke
 package main;
 
 counter: thread_local int;
-publish :: proc(out: ^mut ^int) { out^ = &counter; }
-keep :: proc(out: ^mut ^int) {}
-apply :: proc(f: proc(out: ^mut ^int), start: ^int) -> ^int {
-    current := start;
-    f(&mut current);
-    return current;
-}
+borrow_tls :: proc() -> ^int { return &counter; }
+call_it :: proc(h: proc() -> ^int) -> ^int { return h(); }
 
 main :: proc() {
-    other := 0;
-    view := apply(publish, &other);
     result: ^int;
-    parallel { spawn result = apply(keep, &other); } // L0730
+    parallel { spawn result = call_it(borrow_tls); }
     _ = result^;
 }
 ```
 
-What a callback parameter leaves in an argument is substituted at each call
-for the write-back check (`Callback_Write`), but a result summary has no such
-parameter: it takes what any procedure of the callback's type may leave.
+A call through a plain procedure type has no result summary, so with no
+escaping argument its result gets an unknown root (`prov_call_result`), which
+the crossing check does not treat as `thread_local` storage. What a callback
+leaves in an argument is substituted at each call (`Callback_Write`,
+`Callback_Read`); what it returns is not.
 
 ### A spawned call cannot take a variadic pack
 

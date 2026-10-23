@@ -15,9 +15,13 @@ checklist.
   type, including a callable view or one with an inferred contract, is now
   rejected with `L0730`, as is a task handed such a borrow that a call on the
   parent left in its variable. A procedure passed by name for a callback is
-  judged by what it writes back itself, not by every procedure of its type.
-  Upgrade by keeping that borrow inside the thread that owns the storage, or
-  by writing back a value whose storage remains live after the join.
+  judged by what it writes back itself, and by what it leaves for a result
+  read back from it, not by every procedure of its type. A procedure whose
+  result may hold a `thread_local` borrow one of its callbacks leaves no
+  longer converts to an inferred contract (`type_of`) whose result does not
+  (`L0645`). Upgrade by
+  keeping that borrow inside the thread that owns the storage, or by writing
+  back a value whose storage remains live after the join.
 
 - `-doc` and hover show only [doc comments](design.md#doc-comments), line
   comments that start with `///`, and no longer the `//` comments above a

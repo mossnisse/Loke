@@ -245,13 +245,15 @@ passes, or forwards the record when it passes its own callback parameter;
 any other value, and any call through a value or a `dyn` slot, may be any body
 the global-write effects found for its type (`indirect_call_targets`,
 `callable_type_targets`), whatever contract the type carries, since a contract
-bounds only the result. A result summary still takes that guess (a
-`GUESSED_BORROW` loan). Each summary lines up with the call's arguments by its
-parameter count: a callable view passes itself before a held procedure's
-parameters, and a callable record's `call` takes the record the view hides. A
-callback resolved on a later round can add summary dependencies, which the
-worklist registers as they appear. The borrow a call leaves lands in the
-storage the argument's mutable carriers name, and below that only where a
+bounds only the result. A stand-in that reaches a `return` is recorded as a
+`Callback_Read` instead of a result dependency, substituted the same way where
+the result is (`prov_callback_result`), and a contract's substitute may read no
+callback the contract does not. Each summary lines up with the call's
+arguments by its parameter count: a callable view passes itself before a held
+procedure's parameters, and a callable record's `call` takes the record the
+view hides. A callback resolved on a later round can add summary dependencies,
+which the worklist registers as they appear. The borrow a call leaves lands in
+the storage the argument's mutable carriers name, and below that only where a
 pointee reaches another mutable carrier (`prov_write_back_into_argument`), so
 read-only storage the argument points at is no destination. Only the loan a
 spawned call leaves is exempt from the crossing check, which the spawn has

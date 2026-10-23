@@ -74,10 +74,14 @@ check_proc_contracts :: proc(k: ^Checker) {
 		if b.proc_contract != INVALID_SYMBOL {
 			bound, known := result_summary(k.c, b.proc_contract)
 			written := written_contract_within(k.c, a.proc_contract, b.proc_contract)
-			if !have || !known || !result_contract_within(actual, bound) || written >= 0 {
+			read, reads_within := callback_reads_within(k.c, a.proc_contract, b.proc_contract)
+			if !have || !known || !result_contract_within(actual, bound) || written >= 0 || !reads_within {
 				errorf(k.c, check.span, "L0645", "procedure result provenance does not satisfy the inferred contract of `%s`",
 					contract_name(k.c, b.proc_contract))
-				if written >= 0 {
+				if !reads_within {
+					add_notef(k.c, check.span, "the result of `%s` may hold what `%s` leaves in an argument, which that contract excludes",
+						contract_name(k.c, a.proc_contract), contract_param_name(k.c, a.proc_contract, read.callback))
+				} else if written >= 0 {
 					add_notef(k.c, check.span, "`%s` may leave an owner in `%s` from a region that contract does not",
 						contract_name(k.c, a.proc_contract), contract_param_name(k.c, a.proc_contract, written))
 				} else if have && known {

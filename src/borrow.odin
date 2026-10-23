@@ -96,8 +96,9 @@ Prov_Root :: struct {
 	// every depth from its own on.
 	content_loans: []Loan_Id,
 	// A `Static` stand-in, while a body is summarized, for what the callback in
-	// parameter `param_index` may leave in its argument `argument`
-	// (`Callback_Write`). Only that summary reads it, so it constrains nothing.
+	// parameter `param_index` may leave in its argument `argument`. Only the
+	// `Callback_Write` and `Callback_Read` summaries read it; it constrains
+	// nothing else.
 	forwarded: bool,
 	argument:  int,
 	// `Provider`: the region the control block belongs to. Empty means
@@ -1378,7 +1379,7 @@ summarize_body :: proc(k: ^Checker, literal: ^Expr_Proc) -> bool {
 	if stores_thread_local {
 		changed = collect_thread_local_writes(&state, literal.symbol, len(sym.param_symbols)) || changed
 	}
-	return collect_escape_provenance(&state, summary) || changed
+	return collect_escape_provenance(&state, literal.symbol, summary) || changed
 }
 
 // The bodies whose summaries this one read. A callback's summary is read only
@@ -1489,15 +1490,13 @@ note_thread_local_write :: proc(state: ^Prov_State, event: Prov_Event, declarati
 	return changed
 }
 
-// A stored value's `thread_local` borrow, other than one guessed for a
-// callback, which its stand-in records instead.
 @(private = "file")
 stored_thread_local :: proc(state: ^Prov_State, sources: []int) -> Symbol_Id {
 	graph := state.graph
 	for source in sources {
 		row := reach_row(state, state.reach, source)
 		for index in 0 ..< state.loans {
-			if !bit_get(row, index) || state.ended[index] || graph.loans[index].what == GUESSED_BORROW {
+			if !bit_get(row, index) || state.ended[index] {
 				continue
 			}
 			root := graph.roots[int(graph.loans[index].root)]
@@ -1545,6 +1544,27 @@ Callback_Write :: struct {
 	callback, argument, into: int,
 }
 
+// design.md "Borrows crossing between tasks": a body's result may hold what a
+// callback it received, in parameter `callback`, leaves in its own argument
+// `argument`. Each call of the body substitutes the callback it passes
+// (`call_callback_reads`).
+Callback_Read :: struct {
+	callback, argument: int,
+}
+
+@(private = "file")
+add_callback_read :: proc(c: ^Compiler, declaration: Symbol_Id, read: Callback_Read) -> bool {
+	known := c.callback_result_reads[declaration]
+	if slice.contains(known, read) {
+		return false
+	}
+	grown := make([]Callback_Read, len(known) + 1, c.semantic_allocator)
+	copy(grown, known)
+	grown[len(known)] = read
+	c.callback_result_reads[declaration] = grown
+	return true
+}
+
 @(private = "file")
 add_callback_write :: proc(c: ^Compiler, declaration: Symbol_Id, write: Callback_Write) -> bool {
 	known := c.callback_thread_local_writes[declaration]
@@ -1559,10 +1579,9 @@ add_callback_write :: proc(c: ^Compiler, declaration: Symbol_Id, write: Callback
 }
 
 // What a call may leave in its argument `at`, by its position in the call's
-// bound arguments: a borrow of `global`, and while a body is summarized, what
+// bound arguments: a borrow of `global`, or while a body is summarized, what
 // the callback that body received in parameter `callback` leaves in its own
-// argument `argument`. With a callback, `global` is only what any procedure of
-// its type may leave, kept for the result's provenance.
+// argument `argument`.
 Thread_Local_Left :: struct {
 	at:       int,
 	global:   Symbol_Id,
@@ -1595,10 +1614,9 @@ call_thread_local_left :: proc(c: ^Compiler, call: ^Expr_Call, forward: bool, co
 				continue
 			}
 			position := index - (count - callable_arity(c, type))
-			append(&out, Thread_Local_Left {
-				at = index, callback = callback, argument = position,
-				global = type_left_at(c, type, position, consulted, &seen),
-			})
+			if type_left_at(c, type, position, consulted, &seen) != INVALID_SYMBOL {
+				append(&out, Thread_Local_Left{at = index, global = INVALID_SYMBOL, callback = callback, argument = position})
+			}
 		}
 		return out[:]
 	}
@@ -1647,6 +1665,64 @@ call_thread_local_targets :: proc(c: ^Compiler, call: ^Expr_Call) -> []Symbol_Id
 	return single
 }
 
+// What a call's result may hold from the callbacks its callee calls
+// (`Callback_Read`): the callback each passes resolved as for a write-back
+// (`callback_value_left`), `at` unused. A callable view's contract reads its
+// original's, past the view.
+call_callback_reads :: proc(c: ^Compiler, call: ^Expr_Call, declaration: Symbol_Id, forward: bool, consulted: ^[dynamic]Symbol_Id) -> []Thread_Local_Left {
+	if declaration == INVALID_SYMBOL {
+		return nil
+	}
+	contract := declaration
+	if original, shifted := c.receiver_contract_of[declaration]; shifted {
+		contract = original
+	}
+	out: [dynamic]Thread_Local_Left
+	seen := make(map[[2]int]bool, context.temp_allocator)
+	for member in contract_members(c, contract) {
+		append(consulted, member)
+		sym := symbol_of(c, member)
+		if sym == nil {
+			continue
+		}
+		shift := len(call.bound) - len(sym.param_symbols)
+		for read in c.callback_result_reads[member] {
+			if read.callback >= len(sym.param_symbols) {
+				continue
+			}
+			passed := read.callback + shift
+			type := symbol_of(c, sym.param_symbols[read.callback]).type
+			value: Expr = passed >= 0 && passed < len(call.bound) ? call.bound[passed] : nil
+			left := callback_value_left(c, value, type, read.argument, forward, consulted, &seen)
+			if left.global != INVALID_SYMBOL || left.callback != INVALID_SYMBOL {
+				if out == nil {
+					out = make([dynamic]Thread_Local_Left, 0, 2, context.temp_allocator)
+				}
+				append(&out, left)
+			}
+		}
+	}
+	return out[:]
+}
+
+// design.md "Procedure result contracts": a call through a contract reads the
+// callbacks its result may hold from the contract's own declaration, so a
+// substitute may read no others. The first read of `from` that `to` lacks.
+callback_reads_within :: proc(c: ^Compiler, from, to: Symbol_Id) -> (Callback_Read, bool) {
+	for member in contract_members(c, from) {
+		for read in c.callback_result_reads[member] {
+			found := false
+			for bound in contract_members(c, to) {
+				found = found || slice.contains(c.callback_result_reads[bound], read)
+			}
+			if !found {
+				return read, false
+			}
+		}
+	}
+	return {}, true
+}
+
 // The parameter of the calling body a call goes through: `f(out)`, or
 // `f.call(out)` on a callable view.
 @(private = "file")
@@ -1686,8 +1762,9 @@ callable_arity :: proc(c: ^Compiler, type: Type_Id) -> int {
 
 // What the callback `value`, passed for a parameter of `type`, leaves in its
 // argument `argument`: a named procedure's own summary; with `forward`, the
-// calling body's own callback parameter as a stand-in; otherwise what any
-// procedure of the type may leave.
+// calling body's own callback parameter as a stand-in, where any procedure of
+// the type may leave one at all; otherwise what any procedure of the type may
+// leave.
 @(private = "file")
 callback_value_left :: proc(
 	c: ^Compiler, value: Expr, type: Type_Id, argument: int, forward: bool,
@@ -1713,7 +1790,8 @@ callback_value_left :: proc(
 	}
 	guess := type_left_at(c, type, argument, consulted, seen)
 	if forward && sym != nil && sym.kind == .Parameter && callable_arity(c, sym.type) == arity {
-		return {global = guess, callback = id, argument = argument}
+		// Only a type some procedure of which may leave one needs a stand-in.
+		return {global = INVALID_SYMBOL, callback = guess == INVALID_SYMBOL ? INVALID_SYMBOL : id, argument = argument}
 	}
 	return {global = guess, callback = INVALID_SYMBOL}
 }
@@ -1875,7 +1953,7 @@ written_region_summary :: proc(c: ^Compiler, declaration: Symbol_Id) -> ([]Regio
 
 // Every loan that can reach a `return` becomes a possibility in the summary.
 @(private = "file")
-collect_escape_provenance :: proc(state: ^Prov_State, summary: ^Proc_Summary) -> bool {
+collect_escape_provenance :: proc(state: ^Prov_State, declaration: Symbol_Id, summary: ^Proc_Summary) -> bool {
 	graph := state.graph
 	changed := false
 	for block in graph.blocks {
@@ -1912,6 +1990,12 @@ collect_escape_provenance :: proc(state: ^Prov_State, summary: ^Proc_Summary) ->
 						if !bit_get(row, index) {
 							continue
 						}
+						// What a callback leaves is the caller's to name.
+						if stand_in := graph.roots[int(graph.loans[index].root)]; stand_in.forwarded {
+							read := Callback_Read{callback = stand_in.param_index, argument = stand_in.argument}
+							changed = add_callback_read(state.k.c, declaration, read) || changed
+							continue
+						}
 						changed = merge_loan_provenance(state, &into.dependencies, index) || changed
 						for &content in into.content {
 							if slot.content_shape == into.content_type && !paths_overlap(slot.path, content.path.steps) {
@@ -1945,6 +2029,9 @@ paths_equal :: proc(a, b: []Proj_Step) -> bool {
 merge_loan_provenance :: proc(state: ^Prov_State, into: ^Result_Dependencies, index: int) -> bool {
 	loan := state.graph.loans[index]
 	root := state.graph.roots[int(loan.root)]
+	if root.forwarded {
+		return false
+	}
 	one := Result_Dependencies{}
 	switch root.kind {
 	case .Param:

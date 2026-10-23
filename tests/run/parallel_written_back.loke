@@ -5,7 +5,8 @@
 // caller's, which a task may not be handed but the parent may still use. A
 // callback that writes nothing back is told apart from one that does, though
 // both fit the callback's type or contract. A write-back lands only in the
-// storage the argument's mutable carriers name, not in what it points at.
+// storage the argument's mutable carriers name, not in what it points at. A
+// result read back from a callback is likewise the passed callback's.
 package main;
 
 import "core:fmt";
@@ -28,6 +29,14 @@ publish_returning :: proc(out: ^mut ^int) -> ^int {
 keep_returning :: proc(out: ^mut ^int) -> ^int { return &counter; }
 Contract :: type_of(publish_returning);
 call_contract :: proc(f: Contract, out: ^mut ^int) { _ = f(out); }
+apply_result :: proc(f: proc(out: ^mut ^int), start: ^int) -> ^int {
+	current := start;
+	f(&mut current);
+	return current;
+}
+relay_result :: proc(f: proc(out: ^mut ^int), start: ^int) -> ^int { return apply_result(f, start); }
+Apply_Result :: type_of(apply_result);
+contract_result :: proc(g: Apply_Result, f: proc(out: ^mut ^int), start: ^int) -> ^int { return g(f, start); }
 
 main :: proc() {
 	plain := 0;
@@ -65,5 +74,11 @@ main :: proc() {
 	}
 	pointed: ^int = &fallback;
 	publish(&mut pointed);
-	fmt.println(plain, called, view^, seen, kept_seen, pointed^);
+	direct_result, relayed_result, contract_read: ^int;
+	parallel {
+		spawn direct_result = apply_result(keep, &kept_value);
+		spawn relayed_result = relay_result(keep, &kept_value);
+		spawn contract_read = contract_result(apply_result, keep, &kept_value);
+	}
+	fmt.println(plain, called, view^, seen, kept_seen, pointed^, direct_result^ + relayed_result^ + contract_read^);
 }

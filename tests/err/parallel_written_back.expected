@@ -1,54 +1,66 @@
 L0730
-@19:27
+@20:27
 may leave a borrow of `counter` in this argument
 L0730
-@23:27
+@24:27
 may leave a borrow of `counter` in this argument
 L0730
-@27:39
+@28:39
 may leave a borrow of `counter` in this argument
 L0730
-@31:35
+@32:35
 may leave a borrow of `counter` in this argument
 L0730
-@35:33
+@36:33
 may leave a borrow of `counter` in this argument
 L0730
-@47:35
+@48:35
 may leave a borrow of `counter` in this argument
 L0730
-@52:34
+@53:34
 may leave a borrow of `counter` in this argument
 L0730
-@56:42
+@57:42
 may leave a borrow of `counter` in this argument
 L0730
-@60:40
+@61:40
 may leave a borrow of `counter` in this argument
 L0730
-@67:27
+@68:27
 may leave a borrow of `counter` in this argument
 L0730
-@75:19
+@76:19
 handed a borrow of `counter`
 L0730
-@82:19
+@83:19
 handed a borrow of `counter`
 L0730
-@98:54
+@99:54
 may leave a borrow of `counter` in this argument
 L0730
-@103:44
+@104:44
 may leave a borrow of `counter` in this argument
 L0730
-@110:19
+@111:19
 handed a borrow of `counter`
 L0730
-@117:68
+@118:68
 may leave a borrow of `counter` in this argument
 L0730
-@127:32
+@128:32
 may leave a borrow of `counter` in this argument
 L0730
-@136:19
+@137:19
 handed a borrow of `counter`
+L0730
+@154:28
+result holds a pointer of `counter`
+L0730
+@161:28
+result holds a pointer of `counter`
+L0730
+@168:28
+result holds a pointer of `counter`
+L0645
+@178:14
+does not satisfy the inferred contract of `ignore_result`

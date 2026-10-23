@@ -1,7 +1,8 @@
 // design.md "Borrows crossing between tasks": a borrow of the worker's own
 // `thread_local` storage cannot reach the parent through what the task's call
 // writes into an argument, directly or through a helper, a field, an element,
-// or a callback. One the parent's own call leaves cannot later reach a task.
+// or a callback, nor through the task's result read back from a callback. One
+// the parent's own call leaves cannot later reach a task.
 package main;
 
 import "base:interfaces";
@@ -134,6 +135,47 @@ parent_two_levels_later_spawned :: proc() {
 	inner: ^mut ^int = &mut slot;
 	publish_deep(&mut inner);
 	parallel { spawn read_slot(slot); }
+}
+
+// The result holds what the callback passed leaves, directly, through a
+// relaying helper, or through a contract.
+apply_result :: proc(f: proc(out: ^mut ^int), start: ^int) -> ^int {
+	current := start;
+	f(&mut current);
+	return current;
+}
+relay_result :: proc(f: proc(out: ^mut ^int), start: ^int) -> ^int { return apply_result(f, start); }
+Apply_Result :: type_of(apply_result);
+contract_result :: proc(g: Apply_Result, f: proc(out: ^mut ^int), start: ^int) -> ^int { return g(f, start); }
+
+result_through_callback :: proc() {
+	other := 0;
+	result: ^int;
+	parallel { spawn result = apply_result(publish, &other); }
+	_ = result^;
+}
+
+result_through_relay :: proc() {
+	other := 0;
+	result: ^int;
+	parallel { spawn result = relay_result(publish, &other); }
+	_ = result^;
+}
+
+result_through_contract :: proc() {
+	other := 0;
+	result: ^int;
+	parallel { spawn result = contract_result(apply_result, publish, &other); }
+	_ = result^;
+}
+
+// A contract whose result reads no callback admits no substitute that does.
+ignore_result :: proc(f: proc(out: ^mut ^int), start: ^int) -> ^int { return start; }
+Ignore_Result :: type_of(ignore_result);
+take_ignore :: proc(g: Ignore_Result) {}
+
+callback_read_outside_contract :: proc() {
+	take_ignore(apply_result);
 }
 
 main :: proc() {}
