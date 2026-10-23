@@ -4856,7 +4856,8 @@ prov_write_back_into_argument :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: 
 // one again. A read-only carrier is no destination, but a mutable one read
 // through it is. A truncated path stands for every carrier below it, as does a
 // pointee whose type is already being walked, since a recursive type reaches
-// any depth.
+// any depth; a read-only truncated path counts when a carrier in it leads to a
+// destination.
 @(private = "file")
 prov_mutable_reach :: proc(graph: ^Flow_Graph, carriers: []int, type: Type_Id, span: Span, walking: ^map[Type_Id]bool = nil) -> []int {
 	c := graph.k.c
@@ -4868,7 +4869,10 @@ prov_mutable_reach :: proc(graph: ^Flow_Graph, carriers: []int, type: Type_Id, s
 	out: []int
 	for path in carrier_shape(c, type) {
 		if path.truncated && !path.mutable {
-			continue
+			visited := make(map[Type_Id]bool, context.temp_allocator)
+			if !truncated_reaches_destination(c, path, &visited) {
+				continue
+			}
 		}
 		selected := prov_select_content(graph, carriers, type, path.steps)
 		if len(selected) == 0 {
@@ -4957,7 +4961,7 @@ type_reaches_destination :: proc(c: ^Compiler, type: Type_Id, visited: ^map[Type
 	visited[type] = true
 	for path in carrier_shape(c, type) {
 		if path.truncated {
-			if path.mutable {
+			if truncated_reaches_destination(c, path, visited) {
 				return true
 			}
 			continue
@@ -4974,6 +4978,66 @@ type_reaches_destination :: proc(c: ^Compiler, type: Type_Id, visited: ^map[Type
 		}
 	}
 	return false
+}
+
+// A truncated path names no carrier, so the value it cut is searched instead:
+// a mutable carrier in it is a destination, and a read-only one leads to one
+// when its pointee reaches one, as `ptr: ^Leaf` does with `Leaf{out: ^mut ^int}`
+// below the depth budget.
+@(private = "file")
+truncated_reaches_destination :: proc(c: ^Compiler, path: Carrier_Path, visited: ^map[Type_Id]bool) -> bool {
+	if path.mutable {
+		return true
+	}
+	leaves := make([dynamic]Type_Id, 0, 4, context.temp_allocator)
+	walking := make(map[Type_Id]bool, context.temp_allocator)
+	carrier_leaves(c, path.cut, &leaves, &walking)
+	for leaf in leaves {
+		info := underlying_info(c, leaf)
+		if info != nil && type_reaches_destination(c, info.element, visited) {
+			return true
+		}
+	}
+	return false
+}
+
+// The carrier types in a value of `type`, without following any of them; the
+// same walk `type_carries_borrow` takes.
+@(private = "file")
+carrier_leaves :: proc(c: ^Compiler, type: Type_Id, out: ^[dynamic]Type_Id, walking: ^map[Type_Id]bool) {
+	if type == INVALID_TYPE || walking[type] {
+		return
+	}
+	if type_is_carrier(c, type) {
+		append(out, type)
+		return
+	}
+	info := underlying_info(c, type)
+	if info == nil || !type_carries_borrow(c, type).any {
+		return
+	}
+	walking[type] = true
+	if payload := shared_payload_type(c, type); payload != INVALID_TYPE {
+		carrier_leaves(c, payload, out, walking)
+		return
+	}
+	#partial switch info.kind {
+	case .Struct:
+		for field in info.fields {
+			if sym := symbol_of(c, field); sym != nil {
+				carrier_leaves(c, sym.type, out, walking)
+			}
+		}
+	case .Union:
+		for variant in info.variants {
+			carrier_leaves(c, variant, out, walking)
+		}
+	case .Array, .Dynamic_Array, .Box:
+		carrier_leaves(c, info.element, out, walking)
+	case .Map:
+		carrier_leaves(c, info.key, out, walking)
+		carrier_leaves(c, info.element, out, walking)
+	}
 }
 
 // One argument receiving what another may leave in it, joined since the callee

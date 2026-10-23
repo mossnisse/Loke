@@ -100,3 +100,9 @@ handed a borrow of `counter`
 L0730
 @308:19
 handed a borrow of `counter`
+L0730
+@328:19
+handed a borrow of `counter`
+L0730
+@337:19
+handed a borrow of `counter`

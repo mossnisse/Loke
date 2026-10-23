@@ -8,7 +8,8 @@
 // storage the argument's mutable carriers name, not in what it points at. A
 // result read back from or returned by a callback is likewise the passed
 // callback's, also through a copy of it or a local procedure literal, and a
-// read-only field beside a written one receives nothing, however deep.
+// read-only field beside a written one receives nothing, however deep, nor does
+// a record cut at a budget whose read-only pointers lead to no mutable field.
 package main;
 
 import "core:fmt";
@@ -71,6 +72,19 @@ Link5 :: struct { next: ^Link4 }
 publish_deep_chain :: proc(root: ^mut ^Link5) {
 	root^^.next^.next^.next^.next^.next^.out^ = &counter;
 }
+Nest0 :: struct { ptr: ^Box }
+Nest1 :: struct { nest: Nest0 }
+Nest2 :: struct { nest: Nest1 }
+Nest3 :: struct { nest: Nest2 }
+Nest4 :: struct { nest: Nest3 }
+publish_nest :: proc(root: ^mut Nest4) { root^.nest.nest.nest.nest.ptr^.out^ = &counter; }
+Calm0 :: struct { ptr: ^Holder }
+Calm1 :: struct { calm: Calm0 }
+Calm2 :: struct { calm: Calm1 }
+Calm3 :: struct { calm: Calm2 }
+Calm4 :: struct { calm: Calm3 }
+Holder :: struct { view: ^int }
+publish_beside :: proc(root: ^mut Calm4, out: ^mut ^int) { out^ = &counter; }
 literal_shared :: proc() -> ^int {
 	g: proc() -> ^int = proc() -> ^int { return &shared; };
 	return g();
@@ -166,4 +180,17 @@ main :: proc() {
 	deep_view: ^Link5 = &link5;
 	publish_deep_chain(&mut deep_view);
 	fmt.println(deep_slot^);
+	nest_slot: ^int = &kept_value;
+	nest_box := Box{&mut nest_slot};
+	nest := Nest4{Nest3{Nest2{Nest1{Nest0{&nest_box}}}}};
+	publish_nest(&mut nest);
+	holder := Holder{&shared};
+	calm := Calm4{Calm3{Calm2{Calm1{Calm0{&holder}}}}};
+	beside: ^int = &kept_value;
+	publish_beside(&mut calm, &mut beside);
+	calm_seen := 0;
+	parallel {
+		spawn read_slot(calm.calm.calm.calm.calm.ptr^.view, &mut calm_seen);
+	}
+	fmt.println(nest_slot^, beside^, calm_seen);
 }

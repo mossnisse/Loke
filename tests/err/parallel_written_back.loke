@@ -308,4 +308,33 @@ parent_recursive_later_spawned :: proc(tree: ^mut Tree) {
 	parallel { spawn read_tree(tree); }
 }
 
+// Nor does a record cut at the depth or width budget hide a mutable field behind
+// a read-only pointer inside it.
+Nest0 :: struct { ptr: ^Box }
+Nest1 :: struct { nest: Nest0 }
+Nest2 :: struct { nest: Nest1 }
+Nest3 :: struct { nest: Nest2 }
+Nest4 :: struct { nest: Nest3 }
+publish_nest :: proc(root: ^mut Nest4) { root^.nest.nest.nest.nest.ptr^.out^ = &counter; }
+Wide :: struct { views: [8][8]string_view, ptr: ^Box }
+publish_wide :: proc(wide: ^mut Wide) { wide^.ptr^.out^ = &counter; }
+
+parent_truncated_later_spawned :: proc() {
+	other := 0;
+	slot: ^int = &other;
+	box := Box{&mut slot};
+	nest := Nest4{Nest3{Nest2{Nest1{Nest0{&box}}}}};
+	publish_nest(&mut nest);
+	parallel { spawn read_slot(slot); }
+}
+
+parent_wide_later_spawned :: proc() {
+	other := 0;
+	slot: ^int = &other;
+	box := Box{&mut slot};
+	wide := Wide{ptr = &box};
+	publish_wide(&mut wide);
+	parallel { spawn read_slot(slot); }
+}
+
 main :: proc() {}

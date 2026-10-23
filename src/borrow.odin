@@ -444,6 +444,7 @@ Carrier_Path :: struct {
 	type:      Type_Id, // the leaf carrier, or INVALID_TYPE when truncated
 	mutable:   bool,    // for a truncated path, whether any carrier below is
 	truncated: bool,    // cut at a limit; stands for every carrier below it
+	cut:       Type_Id, // for a truncated path, the type of the value cut
 }
 
 Carrier_Reach :: struct {
@@ -549,7 +550,7 @@ carrier_shape :: proc(c: ^Compiler, type: Type_Id) -> []Carrier_Path {
 	shape := out[:]
 	if len(shape) > CARRIER_WIDTH {
 		whole := make([]Carrier_Path, 1, c.semantic_allocator)
-		whole[0] = carrier_truncated(nil, type_carries_borrow(c, type), {.Width})
+		whole[0] = carrier_truncated(nil, type, type_carries_borrow(c, type), {.Width})
 		shape = whole
 	}
 	c.carrier_shapes[type] = shape
@@ -583,7 +584,7 @@ carrier_shape_walk :: proc(
 		return // a scalar subtree, and the one place a cycle of scalars stops
 	}
 	if depth >= CARRIER_DEPTH {
-		append(out, carrier_truncated(carrier_steps(c, prefix, nil), reach, {.Depth}))
+		append(out, carrier_truncated(carrier_steps(c, prefix, nil), type, reach, {.Depth}))
 		return
 	}
 	info := underlying_info(c, type)
@@ -641,8 +642,8 @@ carrier_shape_walk :: proc(
 }
 
 @(private = "file")
-carrier_truncated :: proc(steps: []Proj_Step, reach: Carrier_Reach, loss: Precision_Loss) -> Carrier_Path {
-	return Carrier_Path{steps = steps, type = INVALID_TYPE, mutable = reach.mutable, truncated = true, precision = loss | path_precision(steps)}
+carrier_truncated :: proc(steps: []Proj_Step, cut: Type_Id, reach: Carrier_Reach, loss: Precision_Loss) -> Carrier_Path {
+	return Carrier_Path{steps = steps, type = INVALID_TYPE, mutable = reach.mutable, truncated = true, cut = cut, precision = loss | path_precision(steps)}
 }
 
 @(private = "file")

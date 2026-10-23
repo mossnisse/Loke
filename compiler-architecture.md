@@ -266,7 +266,9 @@ but neither read-only storage the argument points at nor a read-only field
 beside a mutable one is a destination. The walk and the test for whether a type
 reaches a destination (`prov_type_reaches_destination`) visit each type once
 rather than stopping at a depth, so a long chain hides nothing, and a
-recursive type stands for every carrier below it. Only the loan a spawned call leaves is exempt from
+recursive type stands for every carrier below it. A carrier path cut at the
+depth or width budget names no carrier, so both search the value it cut
+(`Carrier_Path.cut`) for a read-only carrier that leads to a destination. Only the loan a spawned call leaves is exempt from
 the crossing check, which the spawn has reported; one a call on the parent
 leaves is checked when it reaches a later task, as a borrow taken there directly
 would be.
