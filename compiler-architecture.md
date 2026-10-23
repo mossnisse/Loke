@@ -231,6 +231,14 @@ loads through caller storage, substituted through the actual arguments.
 Whole-program global-write effects also apply at calls. Operators without an
 `Expr_Call` use synthesized call events for the selected procedure.
 
+A body that writes caller storage and borrows `thread_local` storage is also
+solved for which `thread_local` global it may leave in each argument
+(`Compiler.thread_local_writes`), read off its stores into caller storage. A
+call leaves a borrow of that global in the matching argument, so a helper that
+forwards its parameter is summarized too, and a spawn reports any argument its
+call may write one into (`L0730`), since the worker's storage ends with its
+thread.
+
 Once the result summaries settle, `compute_thread_summaries` builds each body's
 graph once more to collect the summaries a `parallel` block's checks read
 ([Globals while tasks run](design.md#globals-while-tasks-run) and

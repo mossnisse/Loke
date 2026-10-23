@@ -1334,11 +1334,21 @@ summarize_body :: proc(k: ^Checker, literal: ^Expr_Proc) -> bool {
 		return false
 	}
 	changed := writes && collect_written_regions(k.c, graph, literal.symbol, sym)
+	// What a body stores in caller storage needs solving only when it borrows
+	// `thread_local` storage at all.
+	stores_thread_local := writes && graph_borrows_thread_local(graph)
 	if sym.result == INVALID_TYPE {
 		if _, known := k.c.result_summary_dependencies[literal.symbol]; !known {
 			dependencies := make([]Symbol_Id, len(graph.summary_callees), k.c.semantic_allocator)
 			copy(dependencies, graph.summary_callees[:])
 			k.c.result_summary_dependencies[literal.symbol] = dependencies
+		}
+		if stores_thread_local {
+			state := Prov_State{graph = graph, k = k}
+			if prepare_state(&state) {
+				solve_reaching(&state)
+				changed = collect_thread_local_writes(&state, literal.symbol, len(sym.param_symbols)) || changed
+			}
 		}
 		return changed
 	}
@@ -1358,7 +1368,135 @@ summarize_body :: proc(k: ^Checker, literal: ^Expr_Proc) -> bool {
 		return changed
 	}
 	solve_reaching(&state)
+	if stores_thread_local {
+		changed = collect_thread_local_writes(&state, literal.symbol, len(sym.param_symbols)) || changed
+	}
 	return collect_escape_provenance(&state, summary) || changed
+}
+
+@(private = "file")
+graph_borrows_thread_local :: proc(graph: ^Flow_Graph) -> bool {
+	for root in graph.roots {
+		if root.kind == .Thread_Local {
+			return true
+		}
+	}
+	return false
+}
+
+// design.md "Borrows crossing between tasks": for each parameter, a
+// `thread_local` global whose borrow the body may store in the caller storage
+// it names, read off each store there. A call leaves the same borrow in its
+// argument (`prov_call_thread_local_writes`), so a task's call that hands one
+// back to its parent is seen at the spawn.
+@(private = "file")
+collect_thread_local_writes :: proc(state: ^Prov_State, declaration: Symbol_Id, count: int) -> bool {
+	graph := state.graph
+	c := state.k.c
+	written, found := c.thread_local_writes[declaration]
+	if !found {
+		written = make([]Symbol_Id, count, c.semantic_allocator)
+		for &global in written {
+			global = INVALID_SYMBOL
+		}
+		c.thread_local_writes[declaration] = written
+	}
+	changed := false
+	for block in graph.blocks {
+		if !block.prov_visited {
+			continue
+		}
+		copy(state.reach, block.reach_entry)
+		copy(state.precision, block.precision_entry)
+		copy(state.ended, block.ended_entry)
+		for event in block.prov {
+			if event.kind == .Retain {
+				changed = note_thread_local_write(state, event, written) || changed
+			}
+			run_prov_event(state, event, state.reach, state.ended)
+		}
+	}
+	return changed
+}
+
+// The first `thread_local` global a stored value borrows, recorded for each
+// parameter whose caller storage receives it: the stored place's root, or the
+// roots of the carrier it was written through.
+@(private = "file")
+note_thread_local_write :: proc(state: ^Prov_State, event: Prov_Event, written: []Symbol_Id) -> bool {
+	graph := state.graph
+	global := stored_thread_local(state, event.sources)
+	if global == INVALID_SYMBOL {
+		return false
+	}
+	changed := false
+	if len(event.into) > 0 {
+		it := live_loans(state, nil, event.into)
+		for _, index in next_live_loan(&it) {
+			changed = note_parameter_write(written, graph.roots[int(graph.loans[index].root)], global) || changed
+		}
+	} else if event.root != NO_ROOT {
+		changed = note_parameter_write(written, graph.roots[int(event.root)], global)
+	}
+	return changed
+}
+
+@(private = "file")
+stored_thread_local :: proc(state: ^Prov_State, sources: []int) -> Symbol_Id {
+	graph := state.graph
+	for source in sources {
+		row := reach_row(state, state.reach, source)
+		for index in 0 ..< state.loans {
+			if !bit_get(row, index) || state.ended[index] {
+				continue
+			}
+			root := graph.roots[int(graph.loans[index].root)]
+			if root.kind != .Thread_Local {
+				continue
+			}
+			if root.symbol != INVALID_SYMBOL {
+				return root.symbol
+			}
+			if root.origin != INVALID_SYMBOL {
+				return root.origin
+			}
+		}
+	}
+	return INVALID_SYMBOL
+}
+
+@(private = "file")
+note_parameter_write :: proc(written: []Symbol_Id, root: Prov_Root, global: Symbol_Id) -> bool {
+	if root.kind != .Param || root.param_index < 0 || root.param_index >= len(written) ||
+	   written[root.param_index] != INVALID_SYMBOL {
+		return false
+	}
+	written[root.param_index] = global
+	return true
+}
+
+// The `thread_local` writes of a call's declaration; a join's members are
+// unioned.
+thread_local_write_summary :: proc(c: ^Compiler, declaration: Symbol_Id) -> []Symbol_Id {
+	if !is_contract_join(c, declaration) {
+		return c.thread_local_writes[declaration]
+	}
+	out: []Symbol_Id
+	for member in symbol_of(c, declaration).members {
+		written := c.thread_local_writes[member]
+		if out == nil && written != nil {
+			out = make([]Symbol_Id, len(written), c.semantic_allocator)
+			for &global in out {
+				global = INVALID_SYMBOL
+			}
+		}
+		for global, index in written {
+			if index < len(out) && out[index] == INVALID_SYMBOL {
+				out[index] = global
+			}
+		}
+	}
+	return out
 }
 
 // Whether a parameter names caller storage the body may write: `inout`, or a
@@ -2660,7 +2798,7 @@ check_crossing :: proc(state: ^Prov_State, event: Prov_Event) {
 			}
 			loan := graph.loans[index]
 			root := graph.roots[int(loan.root)]
-			if root.kind != .Thread_Local {
+			if root.kind != .Thread_Local || loan.what == WRITTEN_BACK_BORROW {
 				continue
 			}
 			if event.verb == "result" {

@@ -288,6 +288,10 @@ Compiler :: struct {
 	// Per parameter, the regions of owners a body may leave in the storage that
 	// argument names (design.md "Allocator regions and region provenance").
 	written_regions: map[Symbol_Id][]Region_Set,
+	// Per parameter, a `thread_local` global whose borrow a body may leave in
+	// the storage that argument names, or INVALID_SYMBOL (design.md "Borrows
+	// crossing between tasks").
+	thread_local_writes: map[Symbol_Id][]Symbol_Id,
 	// design.md "Borrowed callable views": a signature's contract with the view
 	// as an added first parameter, both ways.
 	receiver_contracts:   map[Symbol_Id]Symbol_Id,

@@ -1,0 +1,15 @@
+L0730
+@17:27
+may leave a borrow of `counter` in this argument
+L0730
+@21:27
+may leave a borrow of `counter` in this argument
+L0730
+@25:39
+may leave a borrow of `counter` in this argument
+L0730
+@29:35
+may leave a borrow of `counter` in this argument
+L0730
+@33:33
+may leave a borrow of `counter` in this argument

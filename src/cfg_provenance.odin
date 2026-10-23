@@ -4748,6 +4748,7 @@ prov_call_retention :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]int)
 		return
 	}
 	prov_call_written_regions(graph, v, proc_type)
+	prov_call_thread_local_writes(graph, v, actuals)
 	destinations: []int
 	for held, index in actuals {
 		level := proc_param_escape(graph.k.c, proc_type, index)
@@ -4779,6 +4780,48 @@ prov_call_retention :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]int)
 				prov_retain_into_argument(graph, v, target, actuals[target], slots)
 			}
 		}
+	}
+}
+
+// What a `thread_local` borrow a callee leaves in an argument is called. The
+// spawn reports it from the summary, so the crossing check passes over it.
+WRITTEN_BACK_BORROW :: "written-back borrow"
+
+// design.md "Borrows crossing between tasks": what the task's call may write
+// into an argument stays behind after the worker's thread ends, wherever the
+// argument came from, a local or the parent's own caller.
+@(private = "file")
+report_thread_local_writes :: proc(c: ^Compiler, call: ^Expr_Call) {
+	written := thread_local_write_summary(c, call_contract_declaration(c, call))
+	for global, index in written {
+		if global == INVALID_SYMBOL || index >= len(call.bound) || call.bound[index] == nil {
+			continue
+		}
+		sym := symbol_of(c, global)
+		if sym == nil {
+			continue
+		}
+		errorf(
+			c, expr_span(call.bound[index]), "L0730",
+			"this task's call may leave a borrow of `%s` in this argument, but it is the worker's own `thread_local` storage, so it cannot cross to the parent",
+			identifier_text(c, sym.name),
+		)
+		add_notef(c, sym.span, "each thread has its own `thread_local` storage, which ends with that thread")
+	}
+}
+
+// design.md "Borrows crossing between tasks": a callee that may leave a borrow
+// of a `thread_local` global in an argument leaves it in the caller's storage,
+// so a task's call that does is seen to hand it to the parent.
+@(private = "file")
+prov_call_thread_local_writes :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]int) {
+	written := thread_local_write_summary(graph.k.c, call_contract_declaration(graph.k.c, v))
+	for global, index in written {
+		if global == INVALID_SYMBOL || index >= len(v.bound) || index >= len(actuals) || v.bound[index] == nil {
+			continue
+		}
+		sources := prov_borrow(graph, prov_root_for_symbol(graph, global), nil, false, v.span, WRITTEN_BACK_BORROW)
+		prov_retain_into_argument(graph, v, index, actuals[index], sources)
 	}
 }
 
@@ -5339,6 +5382,7 @@ prov_spawn_transfers :: proc(graph: ^Flow_Graph, s: ^Stmt_Spawn, call: ^Expr_Cal
 			report_transfer_facts(c, sym.type, transfer_facts(c, sym.type), call.span)
 		}
 	}
+	report_thread_local_writes(c, call)
 	prov_emit(graph, Prov_Event {
 		kind = .Cross, sources = prov_join(graph, held, prov_load_deep(graph, held, call.span)),
 		span = call.span, verb = "argument",

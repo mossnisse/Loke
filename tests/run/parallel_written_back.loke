@@ -1,0 +1,23 @@
+// design.md "Borrows crossing between tasks": the accepted counterpart of
+// tests/err/parallel_written_back. A task may use its own `thread_local`
+// storage and write back a value read from it, and on one thread a procedure
+// may leave a borrow of its `thread_local` storage in its caller's.
+package main;
+
+import "core:fmt";
+
+counter: thread_local int;
+
+publish :: proc(out: ^mut ^int) { out^ = &counter; }
+read_own :: proc(out: ^mut int) { counter += 1; out^ = counter; }
+
+main :: proc() {
+	plain := 0;
+	parallel {
+		spawn read_own(&mut plain);
+	}
+	other := 0;
+	view: ^int = &other;
+	publish(&mut view);
+	fmt.println(plain, view^);
+}

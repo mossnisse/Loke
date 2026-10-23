@@ -877,6 +877,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.receiver_contracts = make(map[Symbol_Id]Symbol_Id, c.semantic_allocator)
 	c.receiver_contract_of = make(map[Symbol_Id]Symbol_Id, c.semantic_allocator)
 	c.written_regions = make(map[Symbol_Id][]Region_Set, c.semantic_allocator)
+	c.thread_local_writes = make(map[Symbol_Id][]Symbol_Id, c.semantic_allocator)
 	c.proc_contract_checks = make([dynamic]Proc_Contract_Check, 0, 4, c.semantic_allocator)
 	c.contract_joins = make([dynamic]Symbol_Id, 0, 4, c.semantic_allocator)
 	c.static_locals = make([dynamic]Symbol_Id, 0, 4, c.semantic_allocator)

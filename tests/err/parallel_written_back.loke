@@ -1,0 +1,36 @@
+// design.md "Borrows crossing between tasks": a borrow of the worker's own
+// `thread_local` storage cannot reach the parent through what the task's call
+// writes into an argument, directly or through a helper, a field, or an
+// element.
+package main;
+
+counter: thread_local int;
+Holder :: struct { view: ^int }
+
+publish :: proc(out: ^mut ^int) { out^ = &counter; }
+forward :: proc(out: ^mut ^int) { publish(out); }
+publish_inout :: proc(out: inout ^int) { out = &counter; }
+publish_element :: proc(out: []mut ^int) { out[0] = &counter; }
+publish_field :: proc(out: ^mut Holder) { out^.view = &counter; }
+
+direct :: proc(slot: ^mut ^int) {
+	parallel { spawn publish(slot); }
+}
+
+through_helper :: proc(slot: ^mut ^int) {
+	parallel { spawn forward(slot); }
+}
+
+through_inout :: proc(slot: ^mut ^int) {
+	parallel { spawn publish_inout(inout slot^); }
+}
+
+through_element :: proc(cells: []mut ^int) {
+	parallel { spawn publish_element(cells); }
+}
+
+through_field :: proc(holder: ^mut Holder) {
+	parallel { spawn publish_field(holder); }
+}
+
+main :: proc() {}
