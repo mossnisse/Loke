@@ -46,6 +46,14 @@ checklist.
   already was. Upgrade by resetting the region after the owner's last use, or
   by allocating from an allocator that outlives it.
 
+- An owner written through a pointer to file-scope, `static`, or
+  `thread_local` storage held in a local, such as `p := &mut held` followed
+  by `p^ = make(..., allocator)` or `fill(allocator, p)`, is now `L0536` when
+  its region is one the procedure received, as assigning to `held` directly
+  already was; for a region it created, the message now names that storage.
+  Upgrade by allocating what such storage keeps from an allocator that
+  outlives it.
+
 - Each operand of a variadic pack now lends as one argument of its type does,
   so a mutable carrier passed by name is reborrowed for the call, and
   `fill(out, out)` for `fill :: proc(outs: ..^mut int)` is `L0641`, as

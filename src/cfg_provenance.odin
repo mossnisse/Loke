@@ -2733,12 +2733,51 @@ prov_region_escape_set :: proc(graph: ^Flow_Graph, target: Expr, region: Region_
 	if !ok {
 		return
 	}
-	sym := symbol_of(graph.k.c, graph.roots[int(root)].symbol)
+	prov_region_escape_into(graph, expr_span(target), graph.roots[int(root)].symbol, region, owner)
+}
+
+// The type of the value at `path` in a value of `type`, or of the innermost
+// value the path is known to stay in.
+@(private = "file")
+prov_type_at :: proc(c: ^Compiler, type: Type_Id, path: []Proj_Step) -> Type_Id {
+	current := type
+	for step in path {
+		info := underlying_info(c, current)
+		if info == nil {
+			return current
+		}
+		#partial switch info.kind {
+		case .Struct:
+			if step.kind != .Field || step.lo < 0 || int(step.lo) >= len(info.fields) {
+				return current
+			}
+			field := symbol_of(c, info.fields[int(step.lo)])
+			if field == nil {
+				return current
+			}
+			current = field.type
+		case .Array, .Dynamic_Array, .Slice:
+			if step.kind != .Range && step.kind != .Wild {
+				return current
+			}
+			current = info.element
+		case:
+			return current
+		}
+	}
+	return current
+}
+
+// Whether storing an owner of `region` into the variable `id`, at `span`, lets
+// it outlive that region; reports it if so.
+@(private = "file")
+prov_region_escape_into :: proc(graph: ^Flow_Graph, span: Span, id: Symbol_Id, region: Region_Set, owner: string) -> bool {
+	sym := symbol_of(graph.k.c, id)
 	if sym == nil {
-		return
+		return false
 	}
 	storage := ""
-	param := graph.roots[int(root)].kind == .Param
+	param := sym.kind == .Parameter
 	switch {
 	case sym.duration == .Thread_Local: storage = "`thread_local` storage"
 	case sym.duration == .Static:       storage = "`static` storage"
@@ -2746,24 +2785,25 @@ prov_region_escape_set :: proc(graph: ^Flow_Graph, target: Expr, region: Region_
 	case param:                         storage = "storage the caller owns"
 	}
 	if storage == "" {
-		return
+		return false
 	}
 	// A received region may back what the caller owns; only a local one ends
 	// first. An owner moved in is kept only as far as its parameter allows.
 	moved, set := prov_moved_parameter(graph, region, param ? .Stored : .Static)
 	if moved == "" && !region_has_local(set) && (param || !region_is_parameter_backed(set)) {
-		return
+		return false
 	}
 	// design.md "Required diagnostics" names the escaping owner; the
 	// destination follows its kind of storage.
 	prov_emit(graph, Prov_Event {
 		kind   = .Region_Escape,
-		span   = expr_span(target),
+		span   = span,
 		verb   = owner,
 		name   = fmt.aprintf("`%s` (%s)", identifier_text(graph.k.c, sym.name), storage, allocator = graph.alloc),
 		region = set,
 		moved  = moved,
 	})
+	return true
 }
 
 // A value's loans written into a place, as assignment writes them.
@@ -2835,9 +2875,22 @@ prov_store_region_through :: proc(graph: ^Flow_Graph, destination: Expr, region:
 	}
 	// A write through a parameter's carrier, or a local one set from it, is
 	// what the caller learns of; one through a local set from `&mut place` lands
-	// in that place, which a later reset then sees.
+	// in that place, which a later reset then sees. A file-scope, `static`, or
+	// `thread_local` place outlives a received region, so an owner landing there
+	// is rejected as a store by name into it is: only where an owner is stored,
+	// and a call leaves owners through its carrier arguments.
+	owned := owner == CALL_LEFT_OWNER || type_is_managed(graph.k.c, expr_base(destination).type)
+	escaped := false
 	for alias in prov_written_targets(graph, destination) {
 		prov_define_region_content(graph, prov_root_for_symbol(graph, alias.target), alias.at, region)
+		sym := symbol_of(graph.k.c, alias.target)
+		if !owned || escaped || sym == nil || sym.kind == .Parameter || !type_is_managed(graph.k.c, prov_type_at(graph.k.c, sym.type, alias.at)) {
+			continue
+		}
+		escaped = prov_region_escape_into(graph, expr_span(destination), alias.target, region, owner)
+	}
+	if escaped {
+		return
 	}
 	moved, rest := prov_moved_parameter(graph, region, .Stored)
 	if moved == "" && !region_has_local(rest) {
@@ -2854,7 +2907,7 @@ prov_store_region_through :: proc(graph: ^Flow_Graph, destination: Expr, region:
 }
 
 // What a local's carriers may reach: a writable parameter's storage, or a
-// local place, at `at` in it, that `&mut place` or `place[:]` lent. `path` is
+// variable's place, at `at` in it, that `&mut place` or `place[:]` lent. `path` is
 // where in the local those carriers are held; nil when the whole local may
 // hold them.
 Written_Alias :: struct {
@@ -3009,7 +3062,7 @@ prov_note_alias_source :: proc(graph: ^Flow_Graph, local: Symbol_Id, value: Expr
 	if into && carrier_is_mutable(graph.k.c, expr_base(value).type) {
 		if root, at, ok := prov_place_of(graph, source); ok {
 			target := graph.roots[int(root)].symbol
-			if sym := symbol_of(graph.k.c, target); sym != nil && sym.kind == .Var && sym.duration == .None {
+			if sym := symbol_of(graph.k.c, target); sym != nil && sym.kind == .Var {
 				prov_add_written_alias(graph, local, Written_Alias{target = target, at = at, path = prefix})
 			}
 		}

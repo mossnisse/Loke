@@ -322,8 +322,9 @@ Prov_State :: struct {
 	lent_locals: map[Symbol_Id]bool,
 	// What each local's carriers were ever set to reach, at the path in the local
 	// holding them: a writable parameter's storage, so a write through it is a
-	// write the caller learns of, or a local place `&mut place` lent, so a reset
-	// sees an owner written there. Flow-insensitive too.
+	// write the caller learns of, or a variable's place `&mut place` lent, so a
+	// reset sees an owner written there and static storage rejects one.
+	// Flow-insensitive too.
 	written_aliases: map[Symbol_Id][]Written_Alias,
 	has_region_event: bool,
 	// The uses that are a local's `drop` at scope exit, for the note naming them.

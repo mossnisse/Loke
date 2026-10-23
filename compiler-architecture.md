@@ -240,8 +240,10 @@ conditional, `or_else`, or `move`. Each alias records the path in the local
 that holds the parameter's carriers (`Written_Alias`), from a literal's field
 or an assignment to `pair.unused`, so a write through `pair.local^` is not one
 through `pair.unused`. An alias set from `&mut place` or `place[:]` of a
-local also records that place, so an owner written through `p := &mut out`
-lands in `out`'s region facts and a later reset sees it. At the call it lands
+variable also records that place, so an owner written through `p := &mut out`
+lands in `out`'s region facts and a later reset sees it, and one written
+through a pointer to file-scope, `static`, or `thread_local` storage is
+checked as a store into it by name is (`prov_region_escape_into`). At the call it lands
 in the place `&mut place` or an `inout` argument names; any other carrier
 argument, each pack operand among them, is written through
 (`prov_leave_region`), as `p^ = owner` is. `content_loans` represent

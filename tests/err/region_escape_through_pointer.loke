@@ -1,0 +1,60 @@
+// design.md "Allocator regions and region provenance": an owner backed by a
+// received region may not be stored in file-scope, `static`, or
+// `thread_local` storage. A pointer to that storage held in a local, directly,
+// copied, or in a record, is the same destination: a write through it, or a
+// call leaving an owner through it, is L0536, as storing by name is.
+package main;
+
+import "core:mem";
+import "core:fmt";
+
+held: [dynamic]int;
+spare: thread_local [dynamic]int;
+
+State :: struct { items: [dynamic]int, alloc: Allocator }
+state: State;
+
+Box :: struct { out: ^mut [dynamic]int }
+
+fill :: proc(allocator: Allocator, dst: ^mut [dynamic]int) {
+	dst^ = make([dynamic]int, 2, allocator);
+}
+
+write_held :: proc(allocator: Allocator) {
+	p := &mut held;
+	p^ = make([dynamic]int, 2, allocator);
+}
+
+write_copied :: proc(allocator: Allocator) {
+	p := &mut spare;
+	q := p;
+	q^ = make([dynamic]int, 2, allocator);
+}
+
+write_static :: proc(allocator: Allocator) {
+	kept: static [dynamic]int;
+	p := &mut kept;
+	p^ = make([dynamic]int, 2, allocator);
+}
+
+write_field :: proc(allocator: Allocator) {
+	p := &mut state.items;
+	p^ = make([dynamic]int, 2, allocator);
+}
+
+call_held :: proc(allocator: Allocator) {
+	p := &mut held;
+	fill(allocator, p);
+}
+
+call_boxed :: proc(allocator: Allocator) {
+	box := Box{&mut held};
+	fill(allocator, box.out);
+}
+
+main :: proc() {
+	arena := mem.Arena.init();
+	write_held(arena.allocator());
+	free_all(arena.allocator());
+	fmt.println(held[0]);
+}

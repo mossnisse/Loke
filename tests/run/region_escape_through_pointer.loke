@@ -1,0 +1,34 @@
+// design.md "Allocator regions and region provenance": a pointer to
+// file-scope storage held in a local accepts an owner from an allocator that
+// outlives it, and an allocator handle written through it is checked as one
+// stored by name is: as a borrow of an `@(escape=static)` parameter.
+package main;
+
+import "core:mem";
+import "core:fmt";
+
+held: [dynamic]int;
+
+State :: struct { items: [dynamic]int, alloc: Allocator }
+state: State;
+
+fill :: proc(allocator: Allocator, dst: ^mut [dynamic]int) {
+	dst^ = make([dynamic]int, 2, allocator);
+}
+
+keep :: proc(@(escape=static) allocator: Allocator) {
+	p := &mut state.alloc;
+	p^ = allocator;
+	s := &mut state;
+	s^.alloc = allocator;
+}
+
+main :: proc() {
+	p := &mut held;
+	fill(mem.default_allocator(), p);
+	p^.append(3);
+	keep(mem.default_allocator());
+	q := &mut state.items;
+	q^ = make([dynamic]int, 1, state.alloc);
+	fmt.println(held.len(), state.items.len());
+}
