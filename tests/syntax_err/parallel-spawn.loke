@@ -1,4 +1,4 @@
-// concurrency-proposal.md "Syntax": `spawn` starts one call, whose failure is
+// grammar.md "Control flow": `spawn` starts one call, whose failure is
 // a value to assign, into a local variable, and a `parallel` block ends the
 // statement it starts.
 package main;

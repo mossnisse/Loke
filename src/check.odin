@@ -75,7 +75,7 @@ Body_Context :: struct {
 	// One flag slot per syntactic `defer` in the procedure being checked.
 	defer_slots:       int,
 	// The innermost `parallel` block of this procedure being checked, which a
-	// `spawn` joins (concurrency-proposal.md "Syntax").
+	// `spawn` joins (design.md "Spawn statements").
 	parallel_block:    ^Stmt_Parallel,
 }
 

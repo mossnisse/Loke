@@ -1,4 +1,4 @@
-// concurrency-proposal.md "Rejected programs": what a task borrows stays lent
+// design.md "Task borrows and the join": what a task borrows stays lent
 // until its block joins, so the parent and other tasks cannot use it.
 package main;
 
@@ -21,6 +21,7 @@ read :: proc(value: ^int) -> int {
 }
 
 add :: proc(target: []mut int) { target[0] += 1; }
+bump :: proc(target: ^mut int) { target^ += 1; }
 
 upper :: proc(xs: []int) -> []int { return xs[2:]; }
 
@@ -51,8 +52,8 @@ main :: proc() {
 		shared = 2;
 	}
 
-	// concurrency-proposal.md "Rules from existing rules" 1: a `[]mut` passed
-	// by name is the first task's alone.
+	// design.md "Task borrows and the join": a `[]mut` passed by name stays
+	// reborrowed by the first task until the join.
 	cells := [2]int{0, 0};
 	view := &mut cells[:];
 	parallel {
@@ -67,4 +68,25 @@ main :: proc() {
 	}
 	xs[3] = 0;
 	fmt.println(total, answer, chosen[0]);
+}
+
+// A view spawned on every iteration is still held by the earlier iteration's
+// task; only a fresh binding, as a chunk is, is lent anew on each step.
+lend_each_step :: proc(view: []mut int) {
+	parallel {
+		foreach (_ in 0 ..< 2) {
+			spawn add(view);
+		}
+	}
+}
+
+// Each iteration's task holds `total` until the join, so the next iteration
+// cannot lend it again.
+bump_each_step :: proc() {
+	total := 0;
+	parallel {
+		foreach (_ in 0 ..< 2) {
+			spawn bump(&mut total);
+		}
+	}
 }

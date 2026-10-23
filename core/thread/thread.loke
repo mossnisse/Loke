@@ -159,10 +159,10 @@ run_plain :: proc(entry: move proc()) {
 
 spawn :: proc{spawn_with, spawn_plain};
 
-// The tasks of one `parallel` block (concurrency-proposal.md "Lowering"). The
-// compiler declares one per block, zero until its first spawn, and calls
-// `start` through what it registered when it checked this package; no source
-// names either. Dropping the scope is the block's join.
+// The tasks of one `parallel` block (compiler-architecture.md "Lowering
+// parallel blocks"). The compiler declares one per block, zero until its first
+// spawn, and calls `start` through what it registered when it checked this
+// package; no source names either. Dropping the scope is the block's join.
 @(private)
 Task_Scope :: move_only struct {
 	threads: [dynamic]int,
@@ -173,8 +173,7 @@ impl Task_Scope {
 	// for the procedure that runs it, which `thread_main` calls. The thread's
 	// place in the list is reserved first, so once the thread exists nothing
 	// here can fail; until then no thread has the frame, and a failure panics
-	// with it still the caller's (concurrency-proposal.md "Failure to start a
-	// task").
+	// with it still the caller's (design.md "Failure to start a task").
 	start :: proc(self: inout, run: proc(frame: rawptr), frame: rawptr) {
 		wanted := self.threads.len() + 1;
 		self.threads.reserve(wanted);

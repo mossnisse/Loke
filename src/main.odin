@@ -106,7 +106,6 @@ Options :: struct {
 	debug_info: bool,
 	debug:      bool,
 	log_level:  Log_Level,
-	unstable_parallel: bool,
 }
 
 // `-define:LOKE_TRACK_MEMORY=true` reports every allocation `run` did not free,
@@ -167,7 +166,6 @@ run :: proc() -> int {
 		panic_unwind = opts.panic_unwind, opt_mode = opts.opt_mode,
 		build_mode = opts.build_mode, debug_info = opts.debug_info,
 		debug = opts.debug, log_level = opts.log_level,
-		unstable_parallel = opts.unstable_parallel,
 	}) {
 		report(c)
 		return 1
@@ -299,10 +297,6 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
 			opts.fmt_check = true
 		case arg == "-g":
 			opts.debug_info = true
-		// Not in USAGE: concurrency-proposal.md "Milestone 4: `parallel` and
-		// `spawn`, gated".
-		case arg == "-unstable-parallel":
-			opts.unstable_parallel = true
 		case arg == "-debug":
 			opts.debug = true
 		case arg == "-collection":

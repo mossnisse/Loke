@@ -1,4 +1,4 @@
-// concurrency-proposal.md "Syntax": at statement start `parallel` is a keyword
+// grammar.md "Resolved ambiguities": at statement start `parallel` is a keyword
 // before `{` or before a parenthesized header followed by `{`, and `spawn`
 // before an identifier. Everywhere else both are names.
 package main;

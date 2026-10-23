@@ -1,4 +1,4 @@
-// concurrency-proposal.md "Syntax": where a spawn may appear, what it may
+// design.md "Spawn statements": where a spawn may appear, what it may
 // start, and where its result may go.
 package main;
 

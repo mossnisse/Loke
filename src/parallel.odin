@@ -1,14 +1,14 @@
-// `parallel` blocks and `spawn` statements (concurrency-proposal.md "Syntax"),
-// checked and lowered behind the hidden `-unstable-parallel` option until
-// milestone 5 of the proposal's implementation plan enables them.
+// `parallel` blocks and `spawn` statements (design.md "Structured
+// concurrency").
 //
 // A block is checked as the block a programmer would write with a hidden local
 // declared first: a `core:thread` `Task_Scope`, whose drop joins every task
-// (concurrency-proposal.md "Rules from existing rules"). Later phases run that
-// block, `Stmt_Parallel.lowered`, instead of the statement. A spawn is checked
-// as the call it starts. Its arguments are prepared on the parent into a frame
-// record, and a synthesized `run` procedure, checked as ordinary code, makes
-// the call on the worker from that frame (concurrency-proposal.md "Lowering").
+// (design.md "Parallel blocks"). Later phases run that block,
+// `Stmt_Parallel.lowered`, instead of the statement. A spawn is checked as the
+// call it starts. Its arguments are prepared on the parent into a frame record,
+// and a synthesized `run` procedure, checked as ordinary code, makes the call
+// on the worker from that frame (compiler-architecture.md "Lowering parallel
+// blocks").
 package lokec
 
 import "core:fmt"
@@ -57,17 +57,10 @@ PARALLEL_SCOPE :: "parallel$scope"
 check_parallel :: proc(k: ^Checker, s: ^Stmt_Parallel) -> Flow_Info {
 	outer_block := k.parallel_block
 	defer k.parallel_block = outer_block
-	if !k.c.unstable_parallel {
-		errorf(k.c, s.keyword, "L0727", "`parallel` blocks are not available yet")
-		if s.executor != nil {
-			check_expr(k, s.executor)
-		}
-		k.parallel_block = s
-		return check_scoped_block(k, s.body)
-	}
-	// concurrency-proposal.md check 6 reads the thread summaries.
+	// The window checks read the thread summaries (design.md "Globals while
+	// tasks run").
 	k.c.thread_summaries_wanted = true
-	// concurrency-proposal.md "Syntax": the header is reserved for pools.
+	// design.md "Parallel blocks": the header is reserved for pools.
 	if s.executor != nil {
 		check_expr(k, s.executor)
 		errorf(
@@ -166,7 +159,7 @@ check_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn) -> Flow_Info {
 	if block == nil {
 		errorf(k.c, s.keyword, "L0727", "`spawn` belongs inside a `parallel` block of the same procedure")
 	} else if k.in_defer {
-		// concurrency-proposal.md "Syntax": a deferred spawn would start a task
+		// design.md "Spawn statements": a deferred spawn would start a task
 		// during cleanup, possibly while unwinding.
 		errorf(k.c, s.keyword, "L0727", "a deferred statement cannot `spawn`")
 	}
@@ -182,7 +175,7 @@ check_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn) -> Flow_Info {
 	if s.result == nil {
 		report_discarded_required_results(k, call)
 	}
-	if block == nil || k.in_defer || !k.c.unstable_parallel || block.scope == INVALID_SYMBOL ||
+	if block == nil || k.in_defer || block.scope == INVALID_SYMBOL ||
 	   type == INVALID_TYPE || (s.result != nil && result_type == INVALID_TYPE) {
 		return FLOWS
 	}
@@ -195,7 +188,7 @@ check_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn) -> Flow_Info {
 	return FLOWS
 }
 
-// concurrency-proposal.md "Syntax": the spawned call resolves statically to a
+// design.md "Spawn statements": the spawned call resolves statically to a
 // procedure or method declared in Loke, including a generic instance.
 @(private = "file")
 spawned_callee :: proc(k: ^Checker, call: ^Expr_Call) -> (^Symbol, bool) {
@@ -229,7 +222,7 @@ spawned_callee :: proc(k: ^Checker, call: ^Expr_Call) -> (^Symbol, bool) {
 	return sym, true
 }
 
-// concurrency-proposal.md "Syntax": `result` names a lexical local declared
+// design.md "Spawn statements": `result` names a lexical local declared
 // outside the block, of exactly the call's one result type.
 @(private = "file")
 spawn_result_symbol :: proc(k: ^Checker, s: ^Stmt_Spawn, block: ^Stmt_Parallel, type: Type_Id) -> (Symbol_Id, bool) {
@@ -438,7 +431,7 @@ lower_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn, block: ^Stmt_Parallel, callee: 
 	}
 }
 
-// concurrency-proposal.md "Syntax": a `value: T` argument is copied into the
+// design.md "Spawn statements": a `value: T` argument is copied into the
 // task when `T` copies without a hook and without allocating; a managed one
 // stays borrowed, as an ordinary call borrows it, unless it is a temporary,
 // which belongs to the task.

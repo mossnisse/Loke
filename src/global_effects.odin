@@ -747,9 +747,9 @@ prov_effect_call :: proc(graph: ^Flow_Graph, target: Effect_Call, span: Span, dr
 		return
 	}
 	name := effect_call_description(c, target, dropped, described, unnamed)
-	// concurrency-proposal.md check 6: what the parent calls while its tasks
-	// run reaches what the callee's summaries say. The writes are noted where
-	// they become accesses below.
+	// design.md "Globals while tasks run": what the parent calls while its
+	// tasks run reaches what the callee's summaries say. The writes are noted
+	// where they become accesses below.
 	if graph.parallel_depth > 0 && !graph.task_effects && !c.thread_facts_pending {
 		caller := "a procedure this call may reach"
 		if sym := symbol_of(c, target.callee); sym != nil {
@@ -759,7 +759,7 @@ prov_effect_call :: proc(graph: ^Flow_Graph, target: Effect_Call, span: Span, dr
 			prov_note_shared_effect(graph, reached, .Read, span, caller)
 		}
 	}
-	// concurrency-proposal.md check 9: and allocates where the callee's
+	// design.md "Allocators and tasks": and allocates where the callee's
 	// summary says, with the call's arguments for its parameters.
 	if graph.parallel_depth > 0 && !c.thread_facts_pending {
 		for index in effect_targets(c, target, &c.effect_program) {
@@ -808,7 +808,7 @@ effect_call_reach :: proc(c: ^Compiler, target: Effect_Call) -> []Symbol_Id {
 	return out[:]
 }
 
-// concurrency-proposal.md check 6: inside a `parallel` block, a write of a
+// design.md "Globals while tasks run": inside a `parallel` block, a write of a
 // global or a reach through one it stores is kept for the window check, which
 // the solver applies where a task may be running. `name` says what call made
 // it, or is empty for the body's own. A thread's own `thread_local` storage,
@@ -1110,11 +1110,12 @@ clone_symbols :: proc(c: ^Compiler, symbols: []Symbol_Id) -> []Symbol_Id {
 
 // ------------------------------------------------------- thread summaries --
 
-// concurrency-proposal.md "The summaries the checks read": where one part of a
-// summary comes from. `via` is INVALID_SYMBOL for the body's own access at
-// `span`; otherwise `span` is the call, hook run, or drop that reaches `via`,
-// whose own summary says where it got it, so a diagnostic can follow the chain.
-// `precision` is the provenance merge that may have widened the access.
+// compiler-architecture.md "Ownership, lifecycle, and provenance": where one
+// part of a summary comes from. `via` is INVALID_SYMBOL for the body's own
+// access at `span`; otherwise `span` is the call, hook run, or drop that
+// reaches `via`, whose own summary says where it got it, so a diagnostic can
+// follow the chain. `precision` is the provenance merge that may have widened
+// the access.
 Effect_Source :: struct {
 	via:       Symbol_Id,
 	span:      Span,
@@ -1132,7 +1133,7 @@ Global_Effect :: struct {
 
 // A `thread_local` owner every thread drops when it exits, and what that drop
 // does: the owner's own release (`hook` INVALID_SYMBOL), or one of its hooks.
-// Every task carries all of them (concurrency-proposal.md check 6).
+// Every task carries all of them (design.md "Globals while tasks run").
 Thread_Exit_Drop :: struct {
 	variable: Symbol_Id,
 	hook:     Symbol_Id,

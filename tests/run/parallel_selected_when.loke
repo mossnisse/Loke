@@ -1,5 +1,5 @@
-// concurrency-proposal.md "Lowering": a `parallel` block in a selected
-// file-scope `when` branch makes `core:thread` a dependency, although
+// compiler-architecture.md "Lowering parallel blocks": a `parallel` block in a
+// selected file-scope `when` branch makes `core:thread` a dependency, although
 // discovery runs before the branch is selected.
 package main;
 

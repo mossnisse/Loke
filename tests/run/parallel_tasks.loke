@@ -1,4 +1,4 @@
-// concurrency-proposal.md "Rejected programs": the accepted counterpart of
+// design.md "Structured concurrency": the accepted counterpart of
 // each, and the accepted examples. Each task's work is visible after its
 // block joins.
 package main;

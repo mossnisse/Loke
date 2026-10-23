@@ -1,4 +1,4 @@
-// concurrency-proposal.md "Failure and cleanup": a task drops what was moved
+// design.md "Task failure and cleanup": a task drops what was moved
 // into it, a completed result is dropped by the scope that declared it, the
 // block's own locals are dropped before the join, and every exit from the
 // block joins first.

@@ -1,5 +1,5 @@
-// concurrency-proposal.md "Syntax": the parallel quicksort, whose parent sorts
-// one half while a task sorts the other, down to a depth limit.
+// design.md "Structured concurrency": the parallel quicksort, whose parent
+// sorts one half while a task sorts the other, down to a depth limit.
 package main;
 
 import "core:fmt";

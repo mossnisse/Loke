@@ -3143,7 +3143,7 @@ eval_stmt_inner :: proc(ev: ^Evaluator, stmt: Stmt) -> Eval_Flow {
 		return eval_foreach(ev, s)
 
 	case ^Stmt_Parallel:
-		// concurrency-proposal.md "Syntax": running the tasks serially would
+		// design.md "Parallel blocks": running the tasks serially would
 		// not be a faithful substitute.
 		eval_fail(ev, s.keyword, "L0341", "a `parallel` block cannot run during compile-time evaluation")
 		return .Fail

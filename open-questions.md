@@ -961,37 +961,33 @@ numeric limits alone does not solve this architectural issue.
 
 ### Thread transfer needs a visible contract
 
-[The memory model](design.md#concurrency-and-the-memory-model) deliberately leaves
-data races, thread-affine destruction, and allocator thread compatibility to
-the programmer. An atomic reference count does not make its payload or bound
-allocator safe to use on another thread. The current `thread.spawn` also uses
-`@(escape=static)`, so joining its handle is not sufficient to let a worker
-borrow an ordinary local slice.
+Answered for work joined before its caller continues.
+[Structured concurrency](design.md#structured-concurrency) adds `parallel`
+blocks whose tasks keep their argument borrows until a join the block owns,
+which survives every early exit and cannot be skipped by `unsafe.forget`. The
+checks a task needs are inferred rather than declared through `Send` and
+`Sync`, apart from `@(thread_affine)`, `@(synchronized)`, and
+`@(cross_thread)`; [comments.md](comments.md#tasks-that-borrow-joined-by-their-block)
+gives the reasons. Futures, async syntax, and reactive variables were not
+needed to borrow across a join.
 
-**Proposal:** initially make unchecked cross-thread transfer explicit. A later
-checked API can validate recursive transfer/share capabilities, with opt-outs
-for foreign handles and custom lifecycle hooks and an explicit contract for
-allocator deallocation on another thread. A type-only `Send` predicate is not
-enough when two values of the same owning type may use different allocators.
+Still open:
 
-Add scoped workers only with a scope-owned join guarantee, enabling disjoint
-borrowed slices to be processed before the parent continues. That guarantee
-must survive ordinary early exits and leaked/dropped user handles; relying
-solely on a handle's destructor is insufficient when `unsafe.forget` can skip
-it. Process termination may end the guarantee because no parent continues.
-Do not add futures, async syntax, or reactive variables merely to solve this
-borrow-and-join problem. See [Concurrency refinements](#concurrency-refinements).
-
-[concurrency-proposal.md](concurrency-proposal.md) proposes one answer:
-`parallel` blocks whose `spawn`ed calls keep their argument borrows until the
-block joins, with channels and mutex waiting for workers.
+- A thread `core:thread`'s `spawn` starts outlives any scope, so it still
+  takes only `@(escape=static)` arguments, and keeping a `thread_local` borrow
+  past the end of its thread is still unchecked; see
+  [What is not checked](design.md#what-is-not-checked).
+- The [later extensions](concurrency-proposal.md#later-extensions):
+  indirect spawned calls, recoverable submission, richer result destinations,
+  channel items carrying borrows, blocking-aware pools, provider and allocator
+  thread contracts, and checked lazy initialization.
 
 ### Structured concurrency proposal review (2026-10-22)
 
-The review is incorporated into [the revised proposal](concurrency-proposal.md#syntax),
-not into the accepted language. It now chooses `spawn result = call;` with
+The review was incorporated into the revised proposal, which is now
+[Structured concurrency](design.md#structured-concurrency). It now chooses `spawn result = call;` with
 only dead outer locals as result destinations, keeps cleanup before joining,
-and specifies [task-start failure](concurrency-proposal.md#failure-to-start-a-task).
+and specifies [task-start failure](design.md#failure-to-start-a-task).
 Its later library stages define explicit cancellation with wakeable waits,
 channel close and failed-send ownership, and limited pool progress.
 
@@ -1017,7 +1013,8 @@ but does not itself guarantee termination or wake a blocked participant.
 ### Structured concurrency follow-up review (2026-10-22)
 
 A second review checked the revised proposal against design.md, grammar.md,
-and the bundled packages. Its fixes are in [the proposal](concurrency-proposal.md#syntax):
+and the bundled packages. Its fixes are in
+[Structured concurrency](design.md#structured-concurrency):
 
 - A pool worker that helps at a join could run a child on the parent's thread
   while the parent held a borrow of that thread's TLS. The join under a helping

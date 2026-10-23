@@ -169,14 +169,17 @@ checklist.
 
 ### Added
 
-- `parallel { ... }` blocks and `spawn` statements parse in every build
-  ([Statements](grammar.md#statements)). They are checked and compiled only
-  under the hidden, unstable `-unstable-parallel` option, which runs each
-  spawned call on a thread of its own and joins them when the block ends, as
-  the [concurrency proposal](concurrency-proposal.md#syntax) describes;
-  without it a block is `L0727`. Their meaning is not yet in
-  [design.md](design.md), so the option and what it accepts may change in any
-  release ([Version policy](releasing.md#version-policy)).
+- [Structured concurrency](design.md#structured-concurrency): a
+  `parallel { ... }` block runs each `spawn`ed call on a thread of its own and
+  waits for all of them on every way out of the block, a panic included. A
+  task may borrow the caller's locals, which stay lent to it until the join,
+  and `spawn result = call;` hands its result back through a local declared
+  before the block. The compiler rejects a task that shares something
+  writable (`L0729`), writes or reaches through a global while tasks run
+  (`L0731`), hands a `thread_local` borrow across (`L0730`), or uses an
+  allocator another task may be using (`L0732`). `examples/parallel.loke`
+  sorts and sums with them. A program with a `parallel` block depends on
+  `core:thread` without importing it.
 
 - Three attributes declare thread facts, so the compiler names no concurrency
   type or procedure. [`@(synchronized)`](design.md#synchronized) marks a field,
@@ -328,7 +331,7 @@ checklist.
 
 ### Changed
 
-- Revised the [structured concurrency proposal](concurrency-proposal.md#the-idea)
+- Revised the [structured concurrency proposal](concurrency-proposal.md)
   to check transfers in both directions, global aliases, and allocator cleanup,
   and to handle worker failures explicitly after joining. The proposed syntax
   is now `spawn result = call;`, initially limited to dead outer locals and

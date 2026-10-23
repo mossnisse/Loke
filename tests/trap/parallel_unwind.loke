@@ -1,4 +1,4 @@
-// concurrency-proposal.md "Failure and cleanup": a panic in the parent
+// design.md "Task failure and cleanup": a panic in the parent
 // unwinds through the block's join, so its tasks finish first, and a result a
 // completed task assigned is dropped by the unwind.
 package main;

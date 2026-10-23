@@ -7,6 +7,66 @@ the compiler, unless the rewording is the intended fix.
 
 ## Gaps
 
+### A task's `thread_local` borrow written back through an argument
+
+[Borrows crossing between tasks](design.md#borrows-crossing-between-tasks)
+rejects a borrow of `thread_local` storage that crosses from a task to its
+parent "in a value written back through a mutable argument". The compiler
+checks a task's result, but not what its call writes through a mutable
+argument, so this is accepted, and `slot` points into the worker's storage
+after its thread has ended:
+
+```loke
+package main;
+import "core:fmt";
+
+counter: thread_local int;
+publish :: proc(out: ^mut ^int) { out^ = &counter; }
+
+main :: proc() {
+    other := 0;
+    slot: ^int = &other;
+    parallel {
+        spawn publish(&mut slot);
+    }
+    fmt.println(slot^);
+}
+```
+
+A callee's summary records the allocator regions it writes through each
+argument but not the roots of the borrows it stores there, so the caller does
+not know `slot` holds a `thread_local` borrow. The same summary gap leaves
+[What is not checked](design.md#what-is-not-checked)'s "keeping a
+`thread_local` borrow past the end of its thread" to the programmer for a
+thread `core:thread` starts.
+
+### A spawned call cannot take a variadic pack
+
+[Spawn statements](design.md#spawn-statements) lets a task call any procedure
+written in Loke, but a call whose variadic parameter is filled from separate
+arguments is rejected:
+
+```loke
+package main;
+
+sum :: proc(xs: ..int) -> int {
+    total := 0;
+    foreach (x in xs) { total += x; }
+    return total;
+}
+
+main :: proc() {
+    answer: int;
+    parallel {
+        spawn answer = sum(1, 2, 3);   // L0728: "cannot start a call with a variadic pack yet"
+    }
+}
+```
+
+The pack is a temporary slice of the parent's statement, and the frame has no
+field that owns its elements for the task. Passing a slice to a procedure the
+task runs works today.
+
 ### `-doc` omits compiler-contributed declarations
 
 [`-doc`](compiler-guide.md#common-options) prints "each public declaration's

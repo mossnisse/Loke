@@ -335,6 +335,13 @@ the remaining arguments. For another sink, format in memory and call
 thread start, join, and unlock edges of design.md "Concurrency and the memory
 model".
 
+For work that ends before its caller continues, a `parallel` block is usually
+the better tool: its tasks may borrow the caller's locals, and the compiler
+checks what they share (design.md "Structured concurrency"). The block starts
+each task on a thread of its own through a private part of this package, so a
+program with a `parallel` block depends on `core:thread` without importing it.
+`spawn` below is for a thread that outlives the procedure starting it.
+
 ```loke
 spawn(entry: proc(value: move T), arg: move T) -> Thread
 spawn(entry: proc()) -> Thread
@@ -379,7 +386,8 @@ The compiler warns when a spawned entry writes file-scope or `static` storage
 (design.md "Global write effects"). Storage behind a `Mutex` or an `Atomic`,
 `thread_local` storage, and a `@(synchronized)` variable do not count. A wrapper
 whose own parameters are `@(cross_thread)` is checked and warned about as
-`spawn` is.
+`spawn` is. A task of a `parallel` block that writes such storage is an error
+instead (design.md "Globals while tasks run").
 
 ## `core:fmt`
 

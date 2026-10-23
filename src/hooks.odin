@@ -367,7 +367,7 @@ has_excluded_copy_hook :: proc(c: ^Compiler, info: ^Type_Info) -> bool {
 // pointer, is not followed: design.md "Concurrency and the memory model" lets
 // one cross without proving anything about what it reaches. `mutable` is a
 // mutable carrier it holds or reaches, `^mut`, `[]mut`, or `dyn mut`, through
-// which a task sharing it could write (concurrency-proposal.md check 5).
+// which a task sharing it could write (design.md "Sharing with tasks").
 Transfer_Facts :: struct {
 	affine:  Type_Id,
 	erased:  Type_Id,

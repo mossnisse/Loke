@@ -232,8 +232,9 @@ Whole-program global-write effects also apply at calls. Operators without an
 `Expr_Call` use synthesized call events for the selected procedure.
 
 Once the result summaries settle, `compute_thread_summaries` builds each body's
-graph once more to collect the summaries structured concurrency will read
-([The summaries the checks read](concurrency-proposal.md#the-summaries-the-checks-read)):
+graph once more to collect the summaries a `parallel` block's checks read
+([Globals while tasks run](design.md#globals-while-tasks-run) and
+[Allocators and tasks](design.md#allocators-and-tasks)):
 the reach effect, from `Reach` events resolved to the globals whose stored
 carriers they touch; the allocator-use effect, per parameter, from the region
 facts at each allocating operation; and the drops every thread runs at exit.
@@ -241,9 +242,72 @@ Both effects settle over the calls the write effects found, so a call through
 a value or a `dyn` slot takes every target's, and each part keeps the call or
 hook it came through for diagnostics. The facts are recorded only while
 `thread_facts_pending` is set, so the other passes do not pay for them, and the
-pass runs only when `thread_summaries_wanted` is set: it adds 10 to 20 percent
-to the front end, which only a program the checks read the summaries for should
-pay.
+pass runs only when `thread_summaries_wanted` is set, which checking a
+`parallel` block does: it adds 10 to 20 percent to the front end, which only a
+program with a block should pay.
+
+### Lowering parallel blocks
+
+A [`parallel` block](design.md#structured-concurrency) needs no runtime entry
+point of its own: its tasks run through `core:thread`, whose private
+`Task_Scope` the compiler names through a registered lifecycle operation, not
+by lookup from user code. A program with a selected block depends on
+`core:thread` without importing it, so discovery binds that package for any
+file whose selected items hold a `parallel` keyword (`File.parallels`), and a
+block reports `L0329` where no collection provides it.
+
+```text
+Task_Scope :: move_only struct          // private to core:thread
+Task_Scope.start(self: inout, run: proc(frame: rawptr), frame: rawptr)
+                                        // reserves a slot, then creates the thread
+hook(drop) on Task_Scope                // joins every started thread, in start order
+```
+
+- **The block.** `parallel.odin` checks a block as the block a programmer
+  would write with a hidden `Task_Scope` local declared first, zero until its
+  first spawn, and records that block as `Stmt_Parallel.lowered`. The local's
+  drop is the join, so the ordinary cleanup order runs the block's own
+  cleanup first.
+- **Each spawn site.** Checking a spawn synthesizes a frame record and a run
+  procedure, as `capture.odin` does for capture literals, and records them in
+  `Compiler.spawn_tasks`. The frame holds a leading slot for `run`, each bound
+  argument (copied, owned, or as an address), and the result local's address.
+  The run procedure takes the owned arguments out of the frame, makes the
+  call, writes the result through the address with `unsafe.write`, since the
+  local is dead, and frees the frame.
+- **Registration.** `emit_llvm_stmt.odin` fills the frame on the parent from
+  the default allocator, which accepts concurrent use. The parent registers
+  the frame for the unwind until `start` returns, beside the guards that drop
+  the owned arguments. `start` grows the scope's thread list before creating
+  the thread, so the append afterwards cannot fail, and a creation failure
+  panics with the frame still the parent's, which the unwind frees. Either the
+  task is owned and joined, or it never runs.
+- **Result initialization.** A registered task completes unless the program
+  ends, so the parent sets the result local's ordinary dynamic initialization
+  flag right after `start` returns, and the enclosing scope drops the result
+  through that flag on every exit. No runtime completion tracking is needed.
+- **Threads.** Each task runs through the existing `thread_main`, which
+  attaches to the runtime's panic state and runs the thread's `thread_local`
+  drops before exit, so waiting for the thread orders its TLS destruction
+  before the join returns.
+
+The checks run on the `Prov_Diagnose` graph. A block's tasks hold what they
+lend in one slot per block, `task_slots`, which the hidden local's drop uses,
+so every task loan is live until the join. Each spawn adds to it rather than
+replacing it, so a spawn in a loop keeps the earlier iterations' loans, and
+the join empties it for a block entered again. A spawn site that reborrows a
+mutable carrier also holds a slot of its own, `task_holds`, derived from that
+carrier, so the carrier stays suspended until the join while a loop's fresh
+chunk binding is not. A spawn emits a `Task_Start` event naming its site in
+`task_sites`, with what its arguments hold and the regions its task reserves,
+and the hidden local's drop emits `Task_Join` for its block. The window solver in `borrow.odin` is a may-analysis over blocks
+with one bit per spawn site, so a branch that has not spawned is outside the
+window and a spawn in a loop holds it open around the back edge; past 64
+sites, the last bit is shared and never cleared. Writes and reaches inside a
+block are recorded as `Shared_Effect` events in `global_effects.odin`, and the
+parent's allocator use as `Region_Use` events, and the solver reports both
+against the tasks that may be running. The emission contract validates each
+recorded spawn.
 
 ### Closed semantic registries
 
@@ -318,7 +382,7 @@ Paths below are relative to `src/`.
 | `enums.odin`, `union.odin`, `optional.odin`, `erased.odin` | Enums, unions, extraction/failure protocol, erased views, and witnesses. |
 | `slice.odin`, `container.odin`, `text.odin`, `simd.odin`, `atomics.odin` | The slice type, its shared ABI type and queries; managed-container, text, SIMD, and atomic semantics, and the member tables of the built-in carriers. |
 | `capture.odin` | Lower capture literals to ordinary records, `call` methods, and record literals. |
-| `parallel.odin` | `parallel` blocks and `spawn` statements, checked only under the hidden `-unstable-parallel` option: each spawn's frame record and run procedure ([concurrency-proposal.md](concurrency-proposal.md#milestone-4-parallel-and-spawn-gated)). |
+| `parallel.odin` | `parallel` blocks and `spawn` statements: placement, callee and result rules, and each spawn's frame record and run procedure ([Lowering parallel blocks](#lowering-parallel-blocks)). |
 | `box.odin` | Box types, construction, unboxing, dereference projections, and shared allocation layout. |
 | `hash.odin`, `format.odin`, `iterate.odin` | Contributed hashing, coherent formatting, ranges, `foreach`, and iteration protocol support. |
 | `iteration_adapters.odin`, `iteration_mutable.odin`, `iteration_yield.odin` | Iterable adapters, mutable lending, and ownership/borrow modes of yielded bindings. |

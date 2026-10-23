@@ -1060,7 +1060,7 @@ Stmt_Branch :: struct {
 }
 
 // `parallel { ... }`, which joins every task it starts before it is left
-// (concurrency-proposal.md "Syntax"). The parenthesized executor is the later
+// (design.md "Parallel blocks"). The parenthesized executor is the later
 // pool form, parsed so the syntax is reserved.
 Stmt_Parallel :: struct {
 	using base: Node_Base,
@@ -1074,7 +1074,7 @@ Stmt_Parallel :: struct {
 }
 
 // `spawn call;` or `spawn result = call;`, directly inside a `parallel` block
-// (concurrency-proposal.md "Syntax").
+// (design.md "Spawn statements").
 Stmt_Spawn :: struct {
 	using base: Node_Base,
 	keyword:    Span,

@@ -559,10 +559,8 @@ qualified or a method selector, ending in a call suffix. A conversion, an
 `=` are syntax errors. `spawn` is a statement, never an expression, so
 `x := spawn f();` does not parse as a spawn.
 
-Both statements parse in every build. Their meaning is
-[proposed](concurrency-proposal.md#syntax) rather than specified: the checker
-accepts them only under the hidden `-unstable-parallel` option, and otherwise
-reports that `parallel` blocks are not available yet. The parenthesized
+Their meaning is under
+[Structured concurrency](design.md#structured-concurrency). The parenthesized
 executor header is reserved for a later form, and the checker rejects it.
 
 `for (;;)` is the three-part header with every part empty. `for (cond)` is the

@@ -47,9 +47,9 @@ Prov_Kind :: enum u8 {
 	// summaries' reach effect reads it.
 	Reach,
 	// What `sources` borrow crosses between a task and its parent; `verb` is
-	// "argument" or "result" (concurrency-proposal.md check 7).
+	// "argument" or "result" (design.md "Borrows crossing between tasks").
 	Cross,
-	// concurrency-proposal.md check 6: a spawn starts the task running
+	// design.md "Globals while tasks run": a spawn starts the task running
 	// `symbol`, given what `sources` borrow, from the spawn site `slot`
 	// indexes in `task_sites`; a join ends the window of the block whose bit
 	// is `slot`, and every task started in it.
@@ -60,12 +60,12 @@ Prov_Kind :: enum u8 {
 	// when it is not empty. Emitted only inside a `parallel` block.
 	Shared_Effect,
 	// The parent's allocator use of `region` inside a `parallel` block
-	// (concurrency-proposal.md check 9).
+	// (design.md "Allocators and tasks").
 	Region_Use,
 }
 
 // One spawn of a body: the window bit of its `parallel` block, the regions
-// its task reserves, and where it is (concurrency-proposal.md check 9).
+// its task reserves, and where it is (design.md "Allocators and tasks").
 Task_Site :: struct {
 	block:   int,
 	reserve: Region_Set,
@@ -1001,8 +1001,17 @@ prov_drop_reads :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> bool {
 prov_drop_use :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span, at_scope_exit := false) {
 	// A `parallel` block's join uses what its tasks hold.
 	if held, joins := graph.task_slots[id]; joins {
-		prov_emit(graph, Prov_Event{kind = .Live, sources = prov_one(graph, held), span = span})
+		sources := prov_one(graph, held)
+		if holds, reborrowed := graph.task_holds[id]; reborrowed {
+			sources = prov_join(graph, sources, holds[:])
+		}
+		prov_emit(graph, Prov_Event{kind = .Live, sources = sources, span = span})
 		prov_emit(graph, Prov_Event{kind = .Task_Join, slot = prov_window_bit(graph, id), span = span})
+		// The tasks are done, so a block entered again, as a loop body's is,
+		// starts holding nothing.
+		for slot in sources {
+			prov_emit(graph, Prov_Event{kind = .Def, slot = slot, loan = NO_LOAN, span = span})
+		}
 	}
 	if !prov_drop_reads(graph, id) {
 		return
@@ -4224,7 +4233,7 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	return prov_store_call_results(graph, v, actuals)
 }
 
-// concurrency-proposal.md "Rules from existing rules": a spawn is checked as
+// design.md "Task borrows and the join": a spawn is checked as
 // a call whose duration extends to the join. What its arguments lend and
 // carry, and the result local it reserves, are held by the block's hidden
 // scope from here on, so its drop at the join is a use of every loan. The
@@ -4246,21 +4255,6 @@ prov_spawn :: proc(graph: ^Flow_Graph, s: ^Stmt_Spawn) {
 	if task == nil {
 		return
 	}
-	// concurrency-proposal.md "Rules from existing rules" 1: a mutable carrier
-	// passed by name is the task's alone, so the name itself is lent to it.
-	// An allocator handle is check 9's.
-	for argument, index in call.bound {
-		if argument == nil || index >= len(task.kinds) || task.kinds[index] != .Copy {
-			continue
-		}
-		type := expr_base(argument).type
-		if type_is_region_provider(graph.k.c, type) || !carrier_is_mutable(graph.k.c, type) {
-			continue
-		}
-		if root, path, ok := prov_place_of(graph, argument); ok {
-			held = prov_join(graph, held, prov_borrow(graph, root, path, true, expr_span(argument), carrier_noun(graph.k.c, type)))
-		}
-	}
 	prov_spawn_transfers(graph, s, call, held, result)
 	if s.result != nil {
 		prov_store_region(graph, s.result, call)
@@ -4273,7 +4267,8 @@ prov_spawn :: proc(graph: ^Flow_Graph, s: ^Stmt_Spawn) {
 		graph.task_slots = make(map[Symbol_Id]int, 4, graph.alloc)
 	}
 	// The task runs from here: what it reaches, and what the parent does
-	// until the join, are checked against the globals (check 6).
+	// until the join, are checked against the globals (design.md "Globals while
+	// tasks run").
 	runs := task.run
 	if runs not_in graph.k.c.effect_program.index_of {
 		runs = call.resolution.symbol
@@ -4291,17 +4286,60 @@ prov_spawn :: proc(graph: ^Flow_Graph, s: ^Stmt_Spawn) {
 	if !found {
 		slot = prov_temp_slot(graph)
 		graph.task_slots[task.scope] = slot
-		prov_emit(graph, Prov_Event{kind = .Def, slot = slot, loan = NO_LOAN, sources = held, span = s.span})
-		return
 	}
-	// Earlier tasks still hold theirs through this spawn's own accesses: a
-	// redefinition alone is not a use of what it keeps. The hold is the join's.
 	join := s.span
 	if scope := symbol_of(graph.k.c, task.scope); scope != nil {
 		join = scope.span
 	}
+	prov_hold_until_join(graph, slot, held, s.span, join)
+	prov_spawn_reborrows(graph, task.scope, held, s.span, join)
+}
+
+// Adds what a task holds to `slot`. Earlier tasks, of another spawn or of this
+// one on an earlier iteration, still hold theirs through this spawn's own
+// accesses: a redefinition alone is not a use of what it keeps, so the slot is
+// used first, at the join, which is what holds it.
+@(private = "file")
+prov_hold_until_join :: proc(graph: ^Flow_Graph, slot: int, held: []int, span, join: Span) {
 	prov_emit(graph, Prov_Event{kind = .Live, sources = prov_one(graph, slot), span = join})
-	prov_emit(graph, Prov_Event{kind = .Def, slot = slot, loan = NO_LOAN, sources = prov_join(graph, prov_one(graph, slot), held), span = s.span})
+	prov_emit(graph, Prov_Event{kind = .Def, slot = slot, loan = NO_LOAN, sources = prov_join(graph, prov_one(graph, slot), held), span = span})
+}
+
+// design.md "Task borrows and the join": a mutable carrier the spawned call
+// reborrows stays reborrowed until the join, so the carrier it came from is
+// suspended until then, and `spawn add(view); spawn add(view);` uses `view`
+// while the first task holds it. The hold is the spawn site's own, so the next
+// spawn's argument is not mistaken for what an earlier task holds, and a loop's
+// chunk binding, fresh on each step, may be lent again on the next.
+@(private = "file")
+prov_spawn_reborrows :: proc(graph: ^Flow_Graph, scope: Symbol_Id, held: []int, span, join: Span) {
+	hold := -1
+	existing := len(graph.reborrows)
+	for lent in held {
+		for index in 0 ..< existing {
+			reborrow := graph.reborrows[index]
+			if reborrow.derived != lent || !reborrow.mutable {
+				continue
+			}
+			if hold < 0 {
+				hold = prov_temp_slot(graph)
+			}
+			append(&graph.reborrows, Prov_Reborrow{source = reborrow.source, derived = hold, span = span, mutable = true})
+		}
+	}
+	if hold < 0 {
+		return
+	}
+	prov_hold_until_join(graph, hold, held, span, join)
+	if graph.task_holds == nil {
+		graph.task_holds = make(map[Symbol_Id][dynamic]int, 4, graph.alloc)
+	}
+	holds := graph.task_holds[scope]
+	if holds == nil {
+		holds = make([dynamic]int, 0, 2, graph.alloc)
+	}
+	append(&holds, hold)
+	graph.task_holds[scope] = holds
 }
 
 // A `parallel` block's index, in the order its first spawn is walked.
@@ -5250,12 +5288,12 @@ report_transfer_facts :: proc(c: ^Compiler, type: Type_Id, facts: Transfer_Facts
 		}
 }
 
-// concurrency-proposal.md checks 5, 7, and 8 at a spawn. An argument the task
-// shares with the parent, one neither moved, nor `inout`, nor a mutable
-// carrier passed itself, reaches no mutable carrier (check 5); nothing that
-// crosses in either direction is or reaches a thread-affine type or an erased
-// value of unknown eligibility (check 8); and no borrow of `thread_local`
-// storage crosses, which the solver checks on `crossing` (check 7).
+// design.md "Sharing with tasks" and "Borrows crossing between tasks" at a
+// spawn. An argument the task shares with the parent, one neither moved, nor
+// `inout`, nor a mutable carrier passed itself, reaches no mutable carrier;
+// nothing that crosses in either direction is or reaches a thread-affine type
+// or an erased value of unknown eligibility; and no borrow of `thread_local`
+// storage crosses, which the solver checks on `crossing`.
 @(private = "file")
 prov_spawn_transfers :: proc(graph: ^Flow_Graph, s: ^Stmt_Spawn, call: ^Expr_Call, held, result: []int) {
 	c := graph.k.c
@@ -5586,9 +5624,9 @@ prov_result_reads_through_receiver :: proc(c: ^Compiler, v: ^Expr_Call, index: i
 }
 
 // ------------------------------------------------------- thread summaries --
-// concurrency-proposal.md "The summaries the checks read": facts recorded only
-// while `compute_thread_summaries` builds each body's graph, so no other pass
-// pays for them.
+// compiler-architecture.md "Ownership, lifecycle, and provenance": facts
+// recorded only while `compute_thread_summaries` builds each body's graph, so
+// no other pass pays for them.
 
 // What `carriers` hold is reached here; the reach effect resolves it to the
 // globals whose stored carriers those are. Returns `carriers`.
@@ -5641,14 +5679,14 @@ prov_note_allocator_use :: proc(graph: ^Flow_Graph, set: Region_Set, span: Span,
 }
 
 // Whether allocator use is being recorded: while the thread summaries collect,
-// and inside a `parallel` block once they have settled, for check 9.
+// and inside a `parallel` block once they have settled, for its reservations.
 @(private)
 prov_tracks_allocator_use :: proc(graph: ^Flow_Graph) -> bool {
 	c := graph.k.c
 	return c.thread_facts_pending || (graph.parallel_depth > 0 && c.global_writes_ready)
 }
 
-// concurrency-proposal.md check 9: inside a `parallel` block, a spawned
+// design.md "Allocators and tasks": inside a `parallel` block, a spawned
 // call's allocator use is what its task reserves, and any other is the
 // parent's, checked against the reservations of the tasks that may be running.
 // The default provider's region permits concurrent use, so it reserves

@@ -111,7 +111,60 @@ before spawning or after joining, pays for no synchronization.
 [`@(synchronized)`](design.md#synchronized) keeps that access from reaching a
 borrowed one, where an atomic operation through another read-only loan may be
 writing it. It is an attribute, not a list of types, so the channel and stop
-state the structured concurrency proposal adds later need no compiler change.
+state planned for [structured concurrency](concurrency-proposal.md) need no
+compiler change.
+
+### Tasks that borrow, joined by their block
+
+A [`parallel` block](design.md#structured-concurrency) answers one problem:
+letting threads work on the caller's data, such as two halves of a slice,
+without copying it to the heap or proving a lifetime by hand. A task joined
+before its block ends is a call that lasts longer, so the borrow checker
+already knows what it may touch. Odin leaves this to `thread.create` and the
+programmer; Rust's scoped threads solve it with a closure, `Send` and `Sync`,
+and lifetimes on the scope.
+
+**Lexical joins, not handles.** The join belongs to the block, which cannot be
+named, stored, or forgotten. A join a handle's drop performed would be skipped
+by `unsafe.forget` or by storing the handle, and every borrow a task holds
+would then outlive its storage. A helper cannot receive the scope either: that
+would need a contract for what the helper may lend to its caller's tasks. A
+helper opens its own block, and a long-lived server puts its block in `main`.
+The cost is that results come back through locals declared before the block,
+rather than as values a handle returns.
+
+**Inferred checks, not `Send` and `Sync`.** The facts a task needs are about
+values, not types: two owners of one type may use different allocators, and a
+record is safe to share when what it reaches is read-only, not because its
+type says so. The checks are inferred, as the borrow checks and the write
+effect are, so ordinary types need no annotation. The few declarations that
+remain say what inference cannot see: `@(thread_affine)` for a handle that
+must stay on its thread, `@(synchronized)` for state a package protects
+itself, and `@(cross_thread)` for a library procedure that starts a thread.
+The price is whole-program effects, so a change in one procedure's body can
+reject a block elsewhere, and the diagnostics name the procedure that
+contributed the effect.
+
+**Errors where `thread.spawn` warns.** A thread `core:thread` starts may run
+until any later point, so a write to a global there is only a likely race. A
+task runs between its spawn and the join, which the compiler sees, so the same
+write while a task may be running is an error.
+
+**A thread per task, with no serial fallback.** Running the tasks one after
+another would be cheaper, but it is a different program: `thread_local`
+storage starts fresh on each task's thread, and blocking tasks that wait for
+each other would deadlock in sequence. The first executor starts a thread per
+spawn and makes a failure to start one panic, so a spawn has no result to
+handle. Pools, and an executor named in the block's header, are planned as
+library additions under the same checks.
+
+**Results only to dead outer locals.** A task's result is written on the
+worker, so the destination cannot be read, replaced, or dropped until the
+join. A dead local of exactly the result type needs no zero value, no
+conversion on the worker, and no rule for dropping a value it replaces, and the
+existing definite-initialization analysis says where it holds a value after
+the join. Fields, indices, and conversions can be added if a program needs
+them.
 
 ### Child processes
 

@@ -16,6 +16,7 @@ different part of the language:
 - `aliasing.loke` — places and overlap: disjoint mutable slices and elements loaned at once, a mutable borrow returned as an `inout` result, and `@(escape=stored)`.
 - `arena_pipeline.loke` — allocators, `via`, local arena and scratch regions, and reusable reset.
 - `shapes.loke` — interfaces dispatched two ways: specialized generics and erased `dyn`.
+- `parallel.loke` — `parallel` blocks: a quicksort whose halves sort on separate threads, a sum whose tasks hand back their results, and chunks of one array scaled by a task each.
 - `config_parser.loke` — unions, `or_return`, optional-ok, `or_else`, `defer`, lifecycle hooks, and `indexed()`.
 - `tokens.loke` — declaring a union, variant switches, and `case` lists that match ranges.
 - `orders.loke` — anonymous unions: a union written in a signature with no declaration, labels that keep equal payload types apart, an error set per helper that a bare `or_return` widens by label into the caller's, a wrapping label that keeps a layer, and success returns.
@@ -47,7 +48,7 @@ automatically, so no collection flags are needed.
 
 ## How these are checked
 
-`odin test tests` compiles all eighteen from these sources — not from copies — and
+`odin test tests` compiles all nineteen from these sources — not from copies — and
 compares the output of the ones that produce a fixed result. `greeting` is run
 twice in a scratch directory with supplied input, so the second run has to find
 what the first wrote; `streaming` is run against a real file, a missing one, and

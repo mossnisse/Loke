@@ -740,7 +740,7 @@ merge_region_provenance :: proc(into: ^Region_Set, from: Region_Set) -> bool {
 	return changed
 }
 
-// concurrency-proposal.md "The summaries the checks read": the regions a
+// design.md "Allocators and tasks": the regions a
 // procedure may allocate from, resize or free in, reset, or destroy. A
 // parameter's is whatever each caller passes, and the call substitutes it; a
 // region the body creates is its own, and only its provider's parent, where
@@ -1620,7 +1620,7 @@ analyze_provenance :: proc(k: ^Checker, literal: ^Expr_Proc) {
 	solve_provenance(k, graph)
 }
 
-// concurrency-proposal.md "The summaries the checks read": the globals whose
+// design.md "Globals while tasks run": the globals whose
 // stored carriers the body itself reaches, from each `Reach` event and from
 // what it returns or stores where another body may reach through it. A
 // global's stored carrier is a loan of its existing content, a loan of the
@@ -2226,8 +2226,8 @@ report_provenance :: proc(state: ^Prov_State) {
 	}
 }
 
-// ------------------------------------------------------- check 6 window --
-// concurrency-proposal.md check 6: from a block's first spawn to its join,
+// --------------------------------------------------------- task window --
+// design.md "Globals while tasks run": from a block's first spawn to its join,
 // neither a task nor the parent may write a global every thread shares, or
 // reach through one that stores mutable or erased state.
 
@@ -2349,7 +2349,8 @@ check_shared_event :: proc(state: ^Prov_State, event: Prov_Event, window: u64, s
 
 // What a global stores that a task sharing it could race on: a mutable
 // carrier, through which any thread may write, or an erased one, which hides
-// what it reaches. An allocator's operations are check 9's.
+// what it reaches. An allocator's operations are reserved instead
+// (design.md "Allocators and tasks").
 @(private = "file")
 shared_carrier_hazard :: proc(c: ^Compiler, global: Symbol_Id) -> (hazard: Type_Id, erased: bool) {
 	sym := symbol_of(c, global)
@@ -2389,7 +2390,7 @@ window_block_span :: proc(state: ^Prov_State, window: u64) -> Span {
 	return {}
 }
 
-// concurrency-proposal.md check 9: two reserved sets conflict where they may
+// design.md "Allocators and tasks": two reserved sets conflict where they may
 // name one region. A parameter may be any handle its caller passes, so two
 // may be the same; a local region is distinct from any that existed at
 // entry; an unknown region may be any of them.
@@ -2645,9 +2646,9 @@ note_reach_chain :: proc(c: ^Compiler, reached: Global_Effect) {
 	}
 }
 
-// concurrency-proposal.md check 7: each thread has its own `thread_local`
-// storage, so no borrow of it crosses between a task and its parent, in
-// either direction. A worker may use its own within itself.
+// design.md "Borrows crossing between tasks": each thread has its own
+// `thread_local` storage, so no borrow of it crosses between a task and its
+// parent, in either direction. A worker may use its own within itself.
 @(private = "file")
 check_crossing :: proc(state: ^Prov_State, event: Prov_Event) {
 	graph := state.graph
@@ -3062,7 +3063,7 @@ report_suspended_reborrow :: proc(
 	} else {
 		add_notef(k.c, reborrow.span, "the %s reborrow is taken here", capability)
 	}
-	add_notef(k.c, later, "and is still used here, which keeps the reborrow live")
+	add_use_note(state, later)
 }
 
 @(private = "file")
@@ -3109,7 +3110,7 @@ report_root_outlived :: proc(state: ^Prov_State, event: Prov_Event, loan: Prov_L
 		}
 	}
 	add_notef(k.c, loan.span, "the %s is created here", loan.what)
-	// concurrency-proposal.md "Rules from existing rules": the block's own
+	// design.md "Task borrows and the join": the block's own
 	// locals end before its join.
 	for scope in state.graph.task_slots {
 		if sym := symbol_of(k.c, scope); sym != nil && sym.span == later {

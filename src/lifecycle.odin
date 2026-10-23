@@ -1051,7 +1051,7 @@ report_events :: proc(
 		case .Declare:
 			state[event.slot] = .Dead
 		case .Spawn_Result:
-			// concurrency-proposal.md "Syntax": neither a live value nor another
+			// design.md "Spawn statements": neither a live value nor another
 			// task's result is replaced.
 			if state[event.slot] != .Dead {
 				message := "`%s` cannot take a task's result here: it already holds a value, or another task's result"

@@ -1764,7 +1764,7 @@ parse_defer :: proc(p: ^Parser) -> Stmt {
 	return s
 }
 
-// concurrency-proposal.md "Syntax": at statement start `parallel` is a keyword
+// grammar.md "Resolved ambiguities": at statement start `parallel` is a keyword
 // only before `{`, or before a parenthesized header whose matching `)` is
 // followed by `{`, so `parallel(pool);` stays a call.
 @(private = "file")
@@ -1848,7 +1848,7 @@ parse_parallel :: proc(p: ^Parser) -> Stmt {
 	return s
 }
 
-// `spawn` (Identifier "=")? Task_Call ";" (concurrency-proposal.md "Syntax"),
+// `spawn` (Identifier "=")? Task_Call ";" (grammar.md "Control flow"),
 // where the call is the whole expression.
 @(private = "file")
 parse_spawn :: proc(p: ^Parser) -> Stmt {
@@ -1862,7 +1862,7 @@ parse_spawn :: proc(p: ^Parser) -> Stmt {
 	}
 	call := parse_expr(p)
 	ok := !expr_has_error(call)
-	// concurrency-proposal.md "Syntax": a field, an index, or a destructuring
+	// design.md "Spawn statements": a field, an index, or a destructuring
 	// is no result destination.
 	if ok && at(p, .Assign) {
 		parse_error(

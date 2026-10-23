@@ -143,7 +143,7 @@ A code block uses braces (`{}`) and creates a scope for its local variables.
 Most statements end with a semicolon (`;`). A statement omits the semicolon when its outermost form ends in a declaration or statement block, so the closing `}` terminates:
 
 - `if`, `for`, `foreach`, `switch`, and `when`
-- a block or deferred block
+- a block, deferred block, or `parallel` block
 - procedure, record, interface, procedure-group, and brace-bodied operator definitions
 - top-level `impl` and `foreign` blocks
 
@@ -3708,7 +3708,7 @@ id := hash_name(user_text);         // ordinary runtime call
 A compile-time call requires every value it reads from outside its own locals to be compile-time known. Its executed path may use ordinary expressions, procedures, local variables, mutation, control flow, recursion, and temporary managed containers. It may not:
 
 - read or modify runtime or mutable file-scope state;
-- call foreign code or use volatile, atomic, thread, clock, random, environment, file-system, network, or process operations;
+- call foreign code, run a [`parallel` block](#parallel-blocks), or use volatile, atomic, thread, clock, random, environment, file-system, network, or process operations;
 - observe a runtime address, convert a pointer to an integer, or retain a pointer to evaluator-owned storage;
 - use a runtime allocator or transfer an evaluator-owned managed value into the generated program;
 - make a value whose drop or copy would run a hand-written `hook(drop)` or `hook(copy)`: a record that declares one, or a record, fixed array, or union holding such a record. A container or `Option` that holds no such value, such as an empty `[dynamic]T` or `.none`, may still be used.
@@ -4375,7 +4375,7 @@ Each form means exactly the switch it abbreviates: `if (case P = e) A else B` is
 
 A defer statement defers the execution of a statement until the end of the scope it is in. It is registered when execution reaches the `defer` statement and participates in the unified LIFO scope-exit ordering described under [Managed values and storage](#managed-values-and-storage).
 
-Deferred code may not transfer control out of the deferred statement. `return` and `or_return` are invalid there. `break` or `continue` may target only a loop wholly inside the deferred statement. A deferred statement may not contain another `defer` or `errdefer`.
+Deferred code may not transfer control out of the deferred statement. `return` and `or_return` are invalid there. `break` or `continue` may target only a loop wholly inside the deferred statement. A deferred statement may not contain another `defer` or `errdefer`, or a [`spawn`](#spawn-statements).
 
 The following will print 4 then 234:
 
@@ -5555,7 +5555,7 @@ fmt.println(view[0]);
 
 The effect covers a value parameter, whose managed storage is shared with the caller for the call, as much as a view. A call through a procedure value may run any procedure of a compatible type, and a `dyn` call any witness the program builds for that slot, so each takes the union of their effects. Effects are whole-program and need no annotation; a procedure's effect is not part of its type. Since no variable is [public](#public), a caller borrows another package's storage only through a procedure's result, whose [result contract](#procedure-result-contracts) shows the static provenance.
 
-The same effect finds likely data races. When a named procedure is passed for a [`@(cross_thread)`](#cross_thread) parameter of procedure type, as the entry of `core:thread`'s `spawn` is, and its effect writes file-scope or `static` storage, the call is reported with a warning, since every thread shares that storage. A named procedure passed for any other `@(cross_thread)` parameter is reported the same way, since an entry may call it. A call an entry makes through a procedure value it received as a parameter runs whatever its caller passed, which is reported where that value crossed, so the entry is not blamed for it, nor for copying the value to a local or handing it to a helper that does either; a trampoline such as the one a thread wrapper starts is reported only for its own writes. A parameter or local the body assigns a named procedure may also run that procedure, and one written any other way, such as through `&mut` or `inout`, or that no declaration of the body introduces, such as a loop's binding, may run any procedure of its type, as may a procedure value the entry obtains any other way, under the union rule above. `thread_local` storage belongs to the thread, and an atomic operation takes a read-only receiver, so neither counts as a write here; nor does storage reached through a `thread.Mutex` guard, or a [`@(synchronized)`](#synchronized) variable, whose package vouches for every access to it. The warning finds no race the effect cannot see, such as one through a pointer or view.
+The same effect finds likely data races. When a named procedure is passed for a [`@(cross_thread)`](#cross_thread) parameter of procedure type, as the entry of `core:thread`'s `spawn` is, and its effect writes file-scope or `static` storage, the call is reported with a warning, since every thread shares that storage. A named procedure passed for any other `@(cross_thread)` parameter is reported the same way, since an entry may call it. A call an entry makes through a procedure value it received as a parameter runs whatever its caller passed, which is reported where that value crossed, so the entry is not blamed for it, nor for copying the value to a local or handing it to a helper that does either; a trampoline such as the one a thread wrapper starts is reported only for its own writes. A parameter or local the body assigns a named procedure may also run that procedure, and one written any other way, such as through `&mut` or `inout`, or that no declaration of the body introduces, such as a loop's binding, may run any procedure of its type, as may a procedure value the entry obtains any other way, under the union rule above. `thread_local` storage belongs to the thread, and an atomic operation takes a read-only receiver, so neither counts as a write here; nor does storage reached through a `thread.Mutex` guard, or a [`@(synchronized)`](#synchronized) variable, whose package vouches for every access to it. The warning finds no race the effect cannot see, such as one through a pointer or view. Inside a `parallel` block, where every task is joined, such a write is an error instead, and a reach through a stored pointer or view is checked too; see [Globals while tasks run](#globals-while-tasks-run).
 
 ### What is not checked
 
@@ -5565,8 +5565,8 @@ The analysis is local to one procedure body, together with the recorded summary 
 - pointers or views manufactured or stripped of provenance through `core:unsafe`;
 - aliases hidden by foreign code, and what a foreign procedure retains of a borrowed argument after it returns;
 - transferring unchecked addresses between threads, and anything handed to another thread by a procedure whose parameter does not carry [`@(cross_thread)`](#cross_thread), such as a foreign one; and keeping a `thread_local` borrow past the end of its thread;
-- concurrent access to the same storage, beyond the warning for a spawned entry's writes under [Global write effects](#global-write-effects) and the exclusive access a [`@(synchronized)`](#synchronized) field requires. A data race is undefined behavior, and there are no implicit `Send`/`Sync` interfaces: [`Atomic(T)`](#concurrency-and-the-memory-model) makes one location's accesses race-free and nothing else;
-- an owner backed by a file-scope or `static` `mem.Arena` or `mem.Scratch`, moved to another thread: region provenance does not name such a region, so the thread and its spawner may both allocate from it;
+- concurrent access to the same storage, beyond the warning for a spawned entry's writes under [Global write effects](#global-write-effects), the exclusive access a [`@(synchronized)`](#synchronized) field requires, and the checks on a `parallel` block's tasks under [Structured concurrency](#structured-concurrency). A data race is undefined behavior, and there are no implicit `Send`/`Sync` interfaces: [`Atomic(T)`](#concurrency-and-the-memory-model) makes one location's accesses race-free and nothing else;
+- an owner backed by a file-scope or `static` `mem.Arena` or `mem.Scratch`, moved into a thread `core:thread`'s `spawn` starts: region provenance does not name such a region, so the thread and its spawner may both allocate from it. A `parallel` block's task reserves such a region as one of unknown provenance;
 - which thread releases the last [`Shared(T)`](#shared-ownership) handle, and therefore which thread runs `T`'s `drop` and uses the control block's allocator;
 - everything [`unsafe.free`](#the-unsafe-package) releases.
 - a global written through a pointer or view to it that was itself stored in a global, or by foreign code, while a borrow of it is live.
@@ -6166,7 +6166,7 @@ A panic raised by a `drop` hook or deferred statement during unwinding aborts th
 
 ### Threads
 
-A panic terminates the whole program; only the panicking thread can unwind. Other threads run no local drops or defers and have no guaranteed cleanup opportunity. Coordinated shutdown requires ordinary error values, worker joins, and cleanup without panicking. Resources that must survive abrupt termination need an external protocol or operating-system guarantee.
+A panic terminates the whole program; only the panicking thread can unwind. Other threads run no local drops or defers and have no guaranteed cleanup opportunity. Coordinated shutdown requires ordinary error values, worker joins, and cleanup without panicking. A panic in the parent of a [`parallel` block](#task-failure-and-cleanup) waits for the block's tasks before the frames they borrow are dropped. Resources that must survive abrupt termination need an external protocol or operating-system guarantee.
 
 ## Memory and program services
 
@@ -6331,9 +6331,9 @@ The `try_` forms of allocating operations, `try_box`, `try_make`, and `unsafe.tr
 
 ## Concurrency and the memory model
 
-Threads, mutexes, channels, and thread pools are library facilities, but reads and writes performed by them obey one language memory model. `core:thread` provides the first two; see [standard-library.md](standard-library.md) "`core:thread`".
+Threads, mutexes, channels, and thread pools are library facilities, and a [`parallel` block](#structured-concurrency) runs calls as tasks the language joins; reads and writes performed by any of them obey one language memory model. `core:thread` provides the first two; see [standard-library.md](standard-library.md) "`core:thread`".
 
-Within one thread, evaluations are ordered by the rules under [Evaluation order](#evaluation-order). Evaluation and ownership transfer of a new thread's arguments happen before its first operation. On normal thread return, TLS destruction is sequenced before the thread's final operation; that final operation happens before a successful join returns. A mutex unlock happens before the next successful lock of that mutex. Atomic synchronization is defined below. These edges, together with ordinary sequenced-before order, form the **happens-before** relation.
+Within one thread, evaluations are ordered by the rules under [Evaluation order](#evaluation-order). Evaluation and ownership transfer of a new thread's arguments happen before its first operation. On normal thread return, TLS destruction is sequenced before the thread's final operation; that final operation happens before a successful join returns. A mutex unlock happens before the next successful lock of that mutex. Evaluating a [`spawn`](#spawn-statements)'s callee, receiver, and arguments happens before its task starts, and everything the task does, its result's assignment, its argument cleanup, and its thread's TLS destruction included, happens before its block's join completes. Atomic synchronization is defined below. These edges, together with ordinary sequenced-before order, form the **happens-before** relation.
 
 Two accesses conflict when they touch overlapping bytes and at least one is a write. If conflicting non-atomic accesses from different threads are not ordered by happens-before, the program has a data race and its behavior is undefined. Ordinary variables, pointers, container headers, reference counts, and struct fields are not implicitly atomic. This rule permits conventional optimizing compilers while making synchronization requirements explicit.
 
@@ -6405,6 +6405,224 @@ Handle accounting is safe across threads, but destruction may be thread-affine. 
 Shared ownership does **not** make concurrent access to `T` safe. `handle.get()` returns a non-owning `^T` that cannot outlive the handle. Conflicting access, including through different handles, still requires synchronization. State that changes behind a handle is held in `Atomic(T)` or `Once` fields, whose operations work through that `^T`.
 
 Strong-reference cycles are permitted and leak until explicitly broken. `Weak(T)` is the non-owning companion: its zero value, written `{}`, is an empty handle whose `upgrade` answers `.none`, it cannot use `via` either, and it keeps the control block but not the payload alive, and `upgrade` returns `Option(Shared(T))`. Libraries that build cyclic graphs should use weak back-edges or explicit teardown.
+
+### Structured concurrency
+
+A `parallel` block runs calls as **tasks**, each on a thread of its own, and waits for every one of them before control leaves the block. A task is a call that lasts until that **join**: what its arguments borrow stays lent to it until then, so [the one rule](#capabilities-and-the-one-rule) keeps the parent and other tasks off storage a task may write. The checks below cover what a lasting call does not: storage every thread shares, `thread_local` storage, thread-affine values, and allocator state.
+
+```loke
+sort :: proc(xs: []mut int, depth := 0) {
+	if (xs.len() <= 4096) { slice.sort(xs); return; }
+	left, rest := xs.split_at_mut(partition(xs));
+	right := &mut rest[1:];               // the pivot is in place
+	if (depth >= 6) {                     // at most 64 threads at once
+		sort(left, depth + 1);
+		sort(right, depth + 1);
+		return;
+	}
+	parallel {
+		spawn sort(left, depth + 1);
+		sort(right, depth + 1);           // the parent takes the other half
+	}
+	// both halves are sorted here
+}
+```
+
+Every ancestor waits at its join, so a recursive program bounds its depth, as `sort` does: a size cutoff alone would keep one thread alive per partition.
+
+#### Parallel blocks
+
+`parallel { ... }` is a block. Leaving it by any path, its end, `return`, `break`, `continue`, `or_return`, or a panic unwinding through it, waits for every task it started. It behaves as if it declared, before its first statement, a hidden local that holds its tasks and whose drop joins them: the block's own deferred statements and locals are cleaned up first, newest first, then the join runs, then the enclosing scope continues its exit. So `defer jobs.close()` inside a block runs before the join waits for the tasks it wakes.
+
+The hidden local is not a value. It cannot be named, moved, returned, stored, or passed to [`unsafe.forget`](#unsafeforget), so every exit joins.
+
+`parallel (executor) { ... }` is reserved for running the tasks on an executor such as a thread pool. It parses, and checking rejects it.
+
+A block cannot run during [compile-time procedure evaluation](#compile-time-procedure-evaluation): reaching one there is a compile-time evaluation error, as calling a foreign procedure is. Running the tasks one after another on the evaluating thread would not be the same program (see [What the task checks cover](#what-the-task-checks-cover)).
+
+#### Spawn statements
+
+`spawn call;` starts a task, and `spawn result = call;` starts one whose call's result goes to `result`. The callee, receiver, and arguments are evaluated on the parent, at the statement, in ordinary [evaluation order](#evaluation-order); borrows are taken and moves happen there. The prepared call then runs on a new thread.
+
+- `spawn` appears only lexically inside a `parallel` block of the same procedure. It cannot appear in a procedure the block calls, in a [capture literal](#capture-literals)'s body, which is a procedure of its own, or in a `defer` or `errdefer` statement, where a task would start during cleanup, perhaps while unwinding. Each nested block joins its own tasks.
+- The call names a procedure or method written in Loke, including a generic instance, directly: not a procedure value, a `dyn` method, a built-in procedure, a conversion, or a foreign procedure. Wrap any of those in a procedure the task calls. Calls the task makes in turn may be indirect; their effects are the unions under [Global write effects](#global-write-effects).
+- The whole statement is one call. `spawn call or_return;` is not supported, and a task cannot hand back an [`inout` result](#inout-results), which is a place of the worker's own call. `spawn` is a statement, not an expression.
+- A bare spawn follows the ordinary rules for an unused result: a fallible result cannot be discarded, and a nonfallible one the call returns is dropped on the worker.
+
+An argument for an ordinary `value: T` parameter is **copied into the task** when `T` copies without a `hook(copy)` and without allocating: scalars, enums, borrow carriers, and records and arrays of them. The task's parameter then lives in task storage, and only the borrows the value carries last until the join. So `foreach (i in 0..<n) { spawn work(i, data); }` is accepted although `i` ends with each iteration. A managed `value: T` argument, a record holding a container for instance, is borrowed until the join, as an ordinary call borrows it for the call; move or clone it to give the task its own.
+
+Temporaries made for a spawn's arguments belong to the task and are dropped on the worker when the call returns. A result cannot borrow their storage.
+
+**Result destinations.** In `spawn result = call;`, `result` names a local variable declared before the block, in the same procedure, and dead at the spawn: declared without a value, or moved from. A field, an index, a destructuring, `_`, and a live variable are not destinations. The call has exactly one result, of exactly the local's declared type, since no conversion runs on the worker; a call with several results has no destination. The worker writes the result into the local.
+
+From the spawn to the join the local is reserved to the task: the parent cannot read, borrow, assign, move, or drop it, even after the worker has finished, and no other spawn on a path through the block may assign it. After the join it is definitely initialized on the paths that executed its spawn and dead on the others, as an assignment there would leave it:
+
+```loke
+parallel_sum :: proc(xs: []f64) -> f64 {
+	mid := xs.len() / 2;
+	low: f64;                     // unreadable until the join
+	high: f64;
+	parallel {
+		spawn low = sum(xs[:mid]);
+		spawn high = sum(xs[mid:]);
+	}
+	return low + high;
+}
+```
+
+A result that borrows storage older than the block keeps its loan after the join, for as long as the result needs it; the join ends the task's loans, not the result's.
+
+#### Task borrows and the join
+
+A spawn's call is checked as a call that lasts until the join:
+
+- A read-only argument keeps its root read-only borrowed until the join. A mutable carrier, `inout`, or `move` argument is the task's alone. A `[]mut T` passed by name lends that name to the task, so `spawn add(view); spawn add(view);` is an error, as two `&mut` arguments would be. An argument copied into the task lends nothing of its own storage; only the borrows it carries last until the join.
+- A task borrows only storage that outlives the block. The join is a use of every task loan, so a local declared inside the block, which is dropped before the join, cannot be lent to a task: `spawn fill(&mut scratch)` of one is an error. Declare the local before the block, or before a nested block that spawns. A view copied from outer data, such as `chunk := xs[a:b]` inside the block, borrows `xs` and may be lent.
+- The block's own cleanup runs while the task loans are live, so a deferred statement or an implicit drop that conflicts with one is an error.
+
+```loke
+parallel {
+	spawn add_into(&mut total, xs[:mid]);
+	spawn add_into(&mut total, xs[mid:]);  // ERROR: `total` is lent to the first task until the join
+}
+
+parallel {
+	spawn fill(&mut buffer);
+	fmt.println(buffer[0]);                // ERROR: `buffer` is lent to a task until the join
+}
+```
+
+#### Task failure and cleanup
+
+A task's failure is a value, not a return from its parent. The join waits for every task, whether or not one returned a failure, and selects no error and stops no sibling. The parent handles the results after the join, in the order it chooses:
+
+```loke
+run_pair :: proc() -> Status(Work_Error) {
+	errdefer rollback();
+	first: Status(Work_Error);
+	second: Status(Work_Error);
+	parallel {
+		spawn first = work(0);
+		spawn second = work(1);
+	}
+	first or_return;               // `first` wins if both fail, whichever finished first
+	second or_return;
+	return .ok;
+}
+```
+
+An unconsumed result is dropped by ordinary ownership rules. The enclosing `errdefer` runs when the failure propagates after the join; one inside the block was already discarded at the block's normal end, so rollback for task results belongs to the scope that handles them.
+
+A parent `return`, `break`, `continue`, or `or_return` inside the block keeps its meaning: the exit value is evaluated, the block's cleanup runs, the tasks join, and the exit continues. A task's result does not override a pending return or panic, and a return value cannot read a place still lent to a task. An `or_return` in the parent inside the block runs its pending `errdefer`s before the join, subject to the same borrow checks as other cleanup.
+
+On every exit, unwinding included, a result local whose spawn executed holds its value before enclosing cleanup reaches it, and one whose spawn did not execute stays dead. Neither is readable during the block's own cleanup.
+
+A panic on a task's thread ends the program, as a panic on any thread does (see [Threads](#threads)). A panic in the parent unwinds into the block, which joins its tasks before older frames are dropped, since the tasks borrow them; a task that never finishes keeps that unwind waiting.
+
+#### Failure to start a task
+
+Failing to allocate a task's bookkeeping or to create its thread panics. A spawn has no recoverable failure; that is distinct from the task's call returning a failure value.
+
+Either a task is owned by its block and will be joined, or it never runs and the parent still owns its prepared arguments. Under `unwind`, a panic while preparing the arguments drops the initialized temporaries, and a failure to start drops the prepared arguments on the parent; values explicitly moved into the call stay moved, and the spawn's result local stays dead. The tasks already started stay registered: the block's cleanup runs and they join before enclosing storage is released. Under `abort` the ordinary immediate termination applies.
+
+A failed task is never run on the parent instead, which would change what its `thread_local` storage and blocking calls see.
+
+#### Sharing with tasks
+
+What a task shares with the parent or another task is read-only all the way down. A read-only argument to a task reaches no `mut` carrier along its [carrier paths](#values-that-contain-borrows): no `^mut`, `[]mut`, `dyn mut`, or `&mut` capture of a [capture literal](#capture-literals), whose `call` writes through it. A mutable carrier passed directly, an `inout` argument, or a moved value is the task's alone instead. A value converted to a `dyn` view at the spawn is checked through its concrete type; one that arrives already erased hides its captures and must be the task's alone, and must also be shown able to cross, as under [Borrows crossing between tasks](#borrows-crossing-between-tasks).
+
+```loke
+bump := proc() capture(&mut n) { n += 1; };
+parallel { spawn run(bump); }           // ERROR: a shared callable writes `n`; pass move(bump)
+```
+
+Checked code writes through a read-only borrow only by an atomic operation or through a lock, and those reach [`@(synchronized)`](#synchronized) fields, whose plain access needs exclusive access to their record. So a task sharing an `Atomic(T)` or a `thread.Mutex(T)` through `^` may update it, and the parent may not read its `value` while it is lent:
+
+```loke
+hits: sync.Atomic(int) = {};
+parallel {
+	spawn count_into(&hits, xs);   // hits.add(1) through `^`
+	fmt.println(hits.value);       // ERROR: `value` is synchronized, and `hits` is lent to a task
+}
+```
+
+#### Globals while tasks run
+
+The **window** of a block is every point inside it, its cleanup included, reachable from an executed `spawn`, up to the join. Statements before the first spawn on every path are outside it, so a block may set up storage and then spawn. In the window, neither a task nor the parent may:
+
+- write file-scope or `static` storage, as the [write effect](#global-write-effects) counts writes: an error here, where a thread `core:thread`'s `spawn` starts only gets a warning;
+- reach through a carrier stored in file-scope, `static`, or `thread_local` storage that reaches mutable, erased, or unknown state: a `^mut`, `[]mut`, `dyn mut`, or `&mut` capture, or a `dyn` or `any_view`. Reading through a global carrier is allowed when everything it reaches is read-only in the sense of [Sharing with tasks](#sharing-with-tasks).
+
+What a procedure reaches is its **reach effect**: the globals whose stored carriers it dereferences, indexes, slices, calls, or dispatches through, after copies into locals and through the helpers it hands them to, over calls, callbacks, implicit hooks, and cleanup, with the unions of [Global write effects](#global-write-effects). The write effect alone misses a write through a pointer or view stored in a global, which the reach effect catches: two tasks writing through a global `[]mut T` are rejected though its header never changes.
+
+```loke
+values: [1]int;                            // file scope
+view: []mut int;                           // file scope
+increment :: proc() { view[0] += 1; }
+// In the parent procedure:
+view = &mut values[:];
+parallel {
+	spawn increment();                    // ERROR: access through a global mutable carrier
+}
+```
+
+An atomic operation, and the declaring package's access to a `@(synchronized)` field, is not a write here. A `@(synchronized)` variable is exempt as a whole, since its package vouches for every access to it and through the carriers stored in it; `core:log` publishes the selected logger through one, so a task may log. A task's own `thread_local` storage may be written, but a carrier stored there is held to the reach rule.
+
+Two consequences follow. A [`Once`](#atomic-operations-and-once) action's writes count, so a task that may run `once.do(load)` where `load` writes a file-scope value is rejected: initialize before the first spawn, or pass the value. And a task's thread drops every managed `thread_local` owner when it exits, so every task carries the effects of every such drop in the program: one `thread_local` owner, in any package, whose drop writes a global rejects every block. The diagnostic names that declaration and its hook.
+
+Calls through the build-selected [providers](#build-selected-providers) are a trust boundary, not a global access. A provider is published before `main` and never replaced. A logging provider must accept concurrent records, and the default allocator provider concurrent use; the compiler does not verify either.
+
+#### Borrows crossing between tasks
+
+A borrow of `thread_local` storage does not cross between a task and its parent, in either direction: not in an argument, receiver, capture, or result, a failure payload, or a value written back through a mutable argument. Each thread has its own such storage, and a task's ends with its thread. A task may use and drop a borrow of its own `thread_local` storage within its call.
+
+```loke
+counter: thread_local int;                 // file scope, one instance per thread
+borrow_tls :: proc() -> ^int { return &counter; }
+// In the parent procedure:
+result: ^int;
+parallel {
+	spawn result = borrow_tls();           // ERROR: a worker's `thread_local` borrow crosses to the parent
+}
+```
+
+A result's provenance is the callee's [result contract](#procedure-result-contracts). A result that borrows the worker's locals or the task's temporaries is rejected; a borrowed result derives from storage that outlives its destination, and its loans are kept after the join. The same holds for a borrow written into caller-owned storage.
+
+A [`@(thread_affine)`](#thread_affine) value is not moved, copied, or borrowed into or out of a task, through any of the paths above, owned and shared payloads included. A task may create, use, and drop its own. A value reaching a `dyn` or `any_view` the spawn did not make cannot be shown free of one, and is rejected.
+
+#### Allocators and tasks
+
+Allocation, resizing, freeing, resetting, and destroying a provider each operate on an [allocator region](#allocator-regions-and-region-provenance). A task **reserves** every region it may operate on, other than the default provider's, from its spawn to the join, and no other task and not the parent may operate on a reserved region meanwhile. Region provenance survives handle copies and owner moves, so a copied handle or a moved owner still names its region:
+
+```loke
+arena := mem.Arena.init();
+allocator := arena.allocator();
+parallel {
+	spawn allocate_work(allocator);       // reserves `arena`'s region until the join
+	allocate_work(allocator);             // ERROR: a copied handle still names `arena`
+}
+```
+
+What a procedure may operate on is its **allocator-use effect**, per parameter and captured region, over calls, callbacks, hooks, and cleanup. It counts the implicit operations too: clones, argument temporaries' cleanup, owner drops, returned owners, and the parent's cleanup before the join. A local region's provider is reserved with it, since two arenas over one parent provider share that provider's state. A use that cannot be narrowed reserves every region the call can reach through its handles and owners, and a region of unknown provenance may be any region. Reading existing elements through a view operates on no allocator; the lifetime rules still forbid resetting a region while it is borrowed.
+
+The default provider accepts concurrent allocation and freeing from any thread, so its region is never reserved. `Arena` and `Scratch` accept use from one thread at a time, which the reservation ensures. A spawn in a loop conflicts with the task the same spawn started on an earlier iteration when both may use one reserved region.
+
+An allocator a procedure received as a parameter may be any region its caller passes, so inside the procedure it is a region that may not accept concurrent use: the first task that may use it reserves it, and a second task or the parent using it is rejected, even when every caller passes the default provider.
+
+```loke
+fan_out :: proc(allocator: Allocator) {
+	parallel {
+		spawn allocate_work(allocator);
+		spawn allocate_work(allocator);  // ERROR: a received allocator may not accept concurrent use
+	}
+}
+```
+
+#### What the task checks cover
+
+With the checks above, conflicting unsynchronized accesses through checked roots and known allocator regions are compile-time errors within a block's tasks. Raw pointers, unknown provenance, foreign code, build-selected providers, and threads started some other way stay trust boundaries (see [What is not checked](#what-is-not-checked)).
+
+Each task runs on a thread of its own, started for it, so its `thread_local` storage starts fresh and is destroyed when the task's thread exits, before the join returns. Running the tasks one after another on one thread is not the same program: two fresh threads each incrementing a zero-initialized `thread_local` counter return `(1, 1)`, where two calls on one thread return `(1, 2)`. Blocking tasks may also deadlock when run in sequence.
 
 ## Foreign system
 
@@ -6793,7 +7011,7 @@ count :: proc() {
 
 The declaring package's own code is trusted to synchronize its accesses, as the `Atomic` operations and `thread.Guard.get` do. Taking the field's address only to convert it to `rawptr`, as `rawptr(&self.word.value)` does, accesses nothing and is allowed; what is done through the raw pointer is [not checked](#what-is-not-checked). A constant holding a synchronized field is never [materialized](#materialization).
 
-On a variable it says that the package vouches for every access to the variable and through the carriers stored in it, so a spawned entry's write to it is not reported as a likely race (see [Global write effects](#global-write-effects)). Since no variable is [public](#public), only the declaring package reaches one directly.
+On a variable it says that the package vouches for every access to the variable and through the carriers stored in it, so a spawned entry's write to it is not reported as a likely race (see [Global write effects](#global-write-effects)), and a `parallel` block's tasks may use it (see [Globals while tasks run](#globals-while-tasks-run)). Since no variable is [public](#public), only the declaring package reaches one directly.
 
 `sync.Atomic(T).value` and `thread.Mutex(T).value` are synchronized, and so is the variable through which `core:log` publishes the selected logging provider.
 
@@ -6801,7 +7019,7 @@ On a variable it says that the package vouches for every access to the variable 
 
 Written after `struct` or `union`, before its body, as [`@(packed)`](#packed) is. A value of the type must stay on the thread that created it, as a handle to a window or another foreign resource tied to its thread must, or a value whose `hook(drop)` must run there. It takes no value. The property propagates structurally: a record, union, array, or container holding one, and a pointer, slice, box, or `Shared(T)` reaching one, is restricted too.
 
-A thread-affine value cannot be moved, copied, or borrowed into another thread: it may not reach an argument for a [`@(cross_thread)`](#cross_thread) parameter (see [Concurrency and the memory model](#concurrency-and-the-memory-model)). A thread may create, use, and drop its own thread-affine values. Ordinary types need no annotation.
+A thread-affine value cannot be moved, copied, or borrowed into another thread: it may not reach an argument for a [`@(cross_thread)`](#cross_thread) parameter (see [Concurrency and the memory model](#concurrency-and-the-memory-model)), nor cross between a task and its parent (see [Borrows crossing between tasks](#borrows-crossing-between-tasks)). A thread may create, use, and drop its own thread-affine values. Ordinary types need no annotation.
 
 #### `@(cross_thread)`
 
@@ -6969,6 +7187,7 @@ Terms this specification gives a precise meaning, with the section that defines 
 | **fallible expression** | An expression whose type is a union of exactly two variants carrying `@(failure=name)`. This shape, not a privileged name, is what `or_else` and `or_return` recognize. See [Typed fallibility](#typed-fallibility). |
 | **inert** | A value on which dropping does nothing: the zero value of a type with a drop hook, or a lexical source after `move` or `drop`. See [Lifecycle hooks and resource types](#lifecycle-hooks-and-resource-types). |
 | **inherent member** | A member declared by an `impl` in the subject type's own package. Contrast an extension member. See [Methods and implementation blocks](#methods-and-implementation-blocks). |
+| **join** | Where a `parallel` block waits for every task it started, after its own cleanup, on every exit. See [Parallel blocks](#parallel-blocks). |
 | **live / dead** | A local is *live* once fully assigned and *dead* before that, or after `move` or `drop`. Only a live local may be read, borrowed, addressed, moved, or dropped. See [Variable declarations](#variable-declarations). |
 | **managed value** | An owning value whose resources are released automatically when it leaves scope. See [Managed values and storage](#managed-values-and-storage). |
 | **materialize** | To give a constant or temporary read-only storage because a use needs an address, such as `&` or a non-constant index. See [Materialization](#materialization). |
@@ -6983,8 +7202,10 @@ Terms this specification gives a precise meaning, with the section that defines 
 | **slot** | A named method requirement in an interface, written `slot name: proc(...)`. A `dyn` view calls it through the witness. See [Interface bodies](#interface-bodies). |
 | **specialization binding** | A `$name` introducing a compile-time input or pattern name. `$` appears only where the name is bound. See [Compile-time phases](#compile-time-phases). |
 | **storage root** | A variable, value temporary, or allocation that owns storage, and the anchor for borrows of it. Cleanup policy does not decide what is a root. See [Storage roots and borrow carriers](#storage-roots-and-borrow-carriers). |
+| **task** | A call a `spawn` statement starts on a thread of its own, lasting until its block's join. See [Spawn statements](#spawn-statements). |
 | **temporary** | A value not bound to a name. It lives until the end of its complete expression, or of the enclosing statement in a `foreach`, `switch`, or `if` header, or of its block when a local's value borrows it. A temporary transfers where a place would be copied. See [Temporaries and procedure boundaries](#temporaries-and-procedure-boundaries). |
 | **unfixed constant** | A constant with no fixed type until context converts it, such as the literal `42`. See [Unfixed constants](#unfixed-constants). |
+| **window** | The points of a `parallel` block reachable from an executed `spawn`, up to the join, where tasks may be running. See [Globals while tasks run](#globals-while-tasks-run). |
 | **witness** | Immutable evidence that a concrete type satisfies an interface's named slots. One per `(Interface, Concrete, arguments...)` tuple; not a source-level value. See [Runtime polymorphism](#runtime-polymorphism). |
 | **yield mode** | How an iterator hands back each element — owned, borrowed, mutable, or a record lending some fields — read from `next`'s `Item` against `Element`. It fixes what a loop binding receives. See [Yield modes](#yield-modes). |
 

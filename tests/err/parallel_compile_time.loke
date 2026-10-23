@@ -1,5 +1,5 @@
-// concurrency-proposal.md "Milestone 4: `parallel` and `spawn`, gated":
-// compile-time evaluation runs no threads, so it rejects a block.
+// design.md "Parallel blocks": compile-time evaluation runs no threads, so it
+// rejects a block.
 package main;
 
 double :: proc(n: int) -> int { return n * 2; }

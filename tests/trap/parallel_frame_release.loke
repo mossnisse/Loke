@@ -1,4 +1,4 @@
-// concurrency-proposal.md "Failure to start a task": a spawn's frame is the
+// design.md "Failure to start a task": a spawn's frame is the
 // parent's until a task claims it, so a panic before then, here in preparing
 // an argument, releases it. The default allocator is an arena, which takes
 // back its newest block when that is freed: the probe after the unwind finds

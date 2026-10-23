@@ -220,7 +220,8 @@ Compiler :: struct {
 	materialized_order: [dynamic]^Materialized,
 
 	// The committed spawns (`src/parallel.odin`), whose frames and run
-	// procedures the emitter reads (concurrency-proposal.md "Lowering").
+	// procedures the emitter reads (compiler-architecture.md "Lowering parallel
+	// blocks").
 	spawn_tasks: [dynamic]^Spawn_Task,
 
 	// Lifecycle classification (`src/hooks.odin`), cached per nominal type.
@@ -241,9 +242,6 @@ Compiler :: struct {
 	// duplicates at least this many inline bytes, or when its clone may allocate.
 	copy_cost_threshold: u64,
 	copy_cost_enabled:   bool,
-	// `parallel` blocks are checked and lowered (`parallel.odin`); without the
-	// hidden option a block is reported as not available yet.
-	unstable_parallel:   bool,
 	// Allocating binding and assignment copies of the body being analysed,
 	// reported once last-use transfer has settled which stay copies.
 	held_copy_reports: [dynamic]Held_Copy_Report,
@@ -308,12 +306,12 @@ Compiler :: struct {
 	thread_spawns:       [dynamic]Thread_Spawn,
 	// The bodies the write effects settled over, for the summaries after them.
 	effect_program:      Effect_Program,
-	// concurrency-proposal.md "The summaries the checks read": per body, the
-	// globals whose stored carriers it may reach and the allocator regions it may
-	// use; and what every thread runs when it exits, a `thread_local` owner's
-	// drop. Settled after the result summaries, while `thread_facts_pending`,
-	// and only when `thread_summaries_wanted`: the pass costs a graph per body,
-	// so only a program that a check reads them for pays for it.
+	// design.md "Globals while tasks run": per body, the globals whose stored
+	// carriers it may reach and the allocator regions it may use; and what
+	// every thread runs when it exits, a `thread_local` owner's drop. Settled
+	// after the result summaries, while `thread_facts_pending`, and only when
+	// `thread_summaries_wanted`: the pass costs a graph per body, so only a
+	// program that a check reads them for pays for it.
 	thread_summaries_wanted: bool,
 	reach_effects:        map[Symbol_Id][]Global_Effect,
 	allocator_uses:       map[Symbol_Id]Allocator_Use,

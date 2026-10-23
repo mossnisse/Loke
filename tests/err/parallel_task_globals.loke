@@ -1,4 +1,4 @@
-// concurrency-proposal.md check 6: from a block's first spawn to its join,
+// design.md "Globals while tasks run": from a block's first spawn to its join,
 // neither a task nor the parent writes a global every thread shares, or reaches
 // through one that stores a mutable or erased carrier.
 package main;

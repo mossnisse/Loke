@@ -31,7 +31,7 @@ Flow_Event_Kind :: enum {
 	// dead (design.md: a dropped owner no longer blocks a reset).
 	Reset_Point,
 	// Like `Init`, from a task's result: the local must hold no value yet
-	// (concurrency-proposal.md "Syntax").
+	// (design.md "Spawn statements").
 	Spawn_Result,
 	// A declaration without a value: the local starts dead, also on a loop's
 	// next iteration, which reaches it holding the last one's value.
@@ -246,13 +246,15 @@ Prov_State :: struct {
 	// rather than a copy: a copy taken from one reborrows these instead.
 	lent_aliases:   map[int][]int,
 	// Per `parallel` block's hidden scope, the slot holding what its tasks
-	// lend (`prov_spawn`); `spawning` is the call whose lending is collected
+	// lend (`prov_spawn`), and each task's reborrows of mutable carriers, one
+	// slot per spawn site; `spawning` is the call whose lending is collected
 	// into `spawn_held`.
 	task_slots:     map[Symbol_Id]int,
+	task_holds:     map[Symbol_Id][dynamic]int,
 	spawning:       ^Expr_Call,
 	spawn_held:     []int,
-	// concurrency-proposal.md check 6: how many `parallel` blocks enclose the
-	// statement being walked, and each block's hidden scope by its index.
+	// design.md "Globals while tasks run": how many `parallel` blocks enclose
+	// the statement being walked, and each block's hidden scope by its index.
 	parallel_depth:   int,
 	parallel_scopes:  [dynamic]Symbol_Id,
 	has_window_event: bool,
@@ -260,7 +262,7 @@ Prov_State :: struct {
 	// `effect_name` describes the call whose writes are being recorded.
 	task_effects:     bool,
 	effect_name:      string,
-	// concurrency-proposal.md check 9: the regions the spawned call's task
+	// design.md "Allocators and tasks": the regions the spawned call's task
 	// reserves, collected while its effects are, and each spawn in the order
 	// walked: its block's window bit, its reservation, and where it is.
 	task_reserve:     Region_Set,
@@ -1395,7 +1397,7 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false, lends :=
 	}
 }
 
-// concurrency-proposal.md "Syntax": a spawn's arguments are prepared as its
+// design.md "Spawn statements": a spawn's arguments are prepared as its
 // call's are, and its result local holds a value from the spawn on, which the
 // enclosing scope's cleanup drops after the join.
 @(private = "file")

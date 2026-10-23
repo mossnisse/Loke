@@ -17,9 +17,6 @@ Compilation_Config :: struct {
 	debug_info:        bool,
 	debug:             bool,
 	log_level:         Log_Level,
-	// concurrency-proposal.md "Milestone 4: `parallel` and `spawn`, gated":
-	// the hidden `-unstable-parallel` option, which no guide documents.
-	unstable_parallel: bool,
 }
 
 DEFAULT_COMPILATION_CONFIG :: Compilation_Config{
@@ -91,7 +88,6 @@ configure_session :: proc(s: ^Compilation_Session) -> bool {
 	c.opt_mode, c.build_mode = config.opt_mode, config.build_mode
 	c.debug_info, c.debug = config.debug_info, config.debug
 	c.log_level = config.log_level
-	c.unstable_parallel = config.unstable_parallel
 	configured := seed_defines(c, config.defines) && register_collections(c, config.collections)
 	c.source_overlays = &s.overlays
 	return configured

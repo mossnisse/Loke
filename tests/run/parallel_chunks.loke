@@ -1,0 +1,23 @@
+// design.md "Task borrows and the join": a chunk binding is fresh on each
+// step, so a task holding one chunk until the join does not keep the next
+// step from lending the next chunk.
+package main;
+
+import "core:fmt";
+
+fill :: proc(chunk: []mut int, value: int) {
+	foreach (&mut x in chunk) { x = value; }
+}
+
+main :: proc() {
+	cells: [10]int = {};
+	view := &mut cells[:];
+	parallel {
+		step := 0;
+		foreach (chunk in view.chunks_mut(3)) {
+			spawn fill(chunk, step);
+			step += 1;
+		}
+	}
+	fmt.println(cells[0], cells[3], cells[6], cells[9]);
+}

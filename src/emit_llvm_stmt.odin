@@ -134,11 +134,11 @@ emit_stmt :: proc(e: ^Emitter, stmt: Stmt, lends := false) {
 	}
 }
 
-// concurrency-proposal.md "Lowering": the parent evaluates the callee's
-// arguments in their order into a frame from the default allocator, which the
-// task's `run` takes apart and frees. A value the task owns is held for the
-// unwind until `start` has handed the frame to a thread, so a failure to start
-// drops it on the parent.
+// compiler-architecture.md "Lowering parallel blocks": the parent evaluates the
+// callee's arguments in their order into a frame from the default allocator,
+// which the task's `run` takes apart and frees. A value the task owns is held
+// for the unwind until `start` has handed the frame to a thread, so a failure
+// to start drops it on the parent.
 @(private = "file")
 emit_spawn :: proc(e: ^Emitter, s: ^Stmt_Spawn) {
 	task := s.task
@@ -225,9 +225,9 @@ emit_spawn :: proc(e: ^Emitter, s: ^Stmt_Spawn) {
 	for entry in owned {
 		finish_temporary_drop(e, entry)
 	}
-	// concurrency-proposal.md "Lowering": a registered task completes before the
-	// join, so the result is initialized from here, for its enclosing scope's
-	// cleanup on every exit.
+	// compiler-architecture.md "Lowering parallel blocks": a registered task
+	// completes before the join, so the result is initialized from here, for
+	// its enclosing scope's cleanup on every exit.
 	if task.result != INVALID_SYMBOL {
 		if flag := drop_flag_of(e, task.result); flag != "" {
 			fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", flag)

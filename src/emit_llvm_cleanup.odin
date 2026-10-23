@@ -437,7 +437,7 @@ begin_temporary_drop :: proc(e: ^Emitter, type: Type_Id, place: string) -> Defer
 	return entry
 }
 
-// concurrency-proposal.md "Failure to start a task": a spawn's frame is the
+// design.md "Failure to start a task": a spawn's frame is the
 // parent's until `Task_Scope.start` returns, so a panic before then, in an
 // argument or in starting the thread, releases it.
 @(private)

@@ -1,4 +1,4 @@
-// concurrency-proposal.md check 9: a task reserves every allocator region
+// design.md "Allocators and tasks": a task reserves every allocator region
 // other than the default provider's that it may use, from its spawn to the
 // join, through copied handles, moved owners, received allocators, and the
 // parents of local arenas.

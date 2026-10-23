@@ -1,6 +1,6 @@
-// concurrency-proposal.md checks 5, 7, and 8: a task shares only what is
-// read-only all the way down, no `thread_local` borrow crosses between a task
-// and its parent, and no thread-affine value crosses at all.
+// design.md "Sharing with tasks" and "Borrows crossing between tasks": a task
+// shares only what is read-only all the way down, and neither a `thread_local`
+// borrow nor a thread-affine value crosses between a task and its parent.
 package main;
 
 import "base:interfaces";

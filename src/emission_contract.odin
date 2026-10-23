@@ -160,9 +160,9 @@ validate_emission_dependencies :: proc(c: ^Compiler) -> bool {
 			}
 		}
 	}
-	// concurrency-proposal.md "Lowering": a spawn's frame leads with the run
-	// slot, then one field per bound argument and the result's address, and
-	// its run and start procedures are checked.
+	// compiler-architecture.md "Lowering parallel blocks": a spawn's frame
+	// leads with the run slot, then one field per bound argument and the
+	// result's address, and its run and start procedures are checked.
 	for task in c.spawn_tasks {
 		frame := underlying_info(c, task.frame)
 		fields := len(task.kinds) + 1 + (task.result != INVALID_SYMBOL ? 1 : 0)

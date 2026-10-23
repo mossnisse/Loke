@@ -1,0 +1,99 @@
+package main;
+import "core:fmt";
+import "core:slice";
+
+// Work split across threads that borrow the caller's data, and joined before
+// the caller goes on.
+//
+// A `parallel` block waits for every task it started before control leaves it
+// (design.md "Structured concurrency"). Until then a task's arguments stay lent
+// to it, as a call's do, so the borrow checker keeps the parent and the other
+// tasks off what one task may write: no copy to the heap, no lock, and no
+// lifetime written by hand.
+
+// The last element is the pivot. Smaller ones move in front of it, and it ends
+// at the index returned.
+partition :: proc(xs: []mut int) -> int {
+	pivot := xs[xs.len() - 1];
+	store := 0;
+	foreach (i in 0 ..< xs.len() - 1) {
+		if (xs[i] < pivot) {
+			xs[i], xs[store] = xs[store], xs[i];
+			store += 1;
+		}
+	}
+	xs[store], xs[xs.len() - 1] = xs[xs.len() - 1], xs[store];
+	return store;
+}
+
+// `split_at_mut` gives two mutable views the compiler knows are disjoint, so
+// one can go to a task while the parent sorts the other. Every ancestor waits
+// at its join, so the depth is bounded: at most 2^6 threads at once.
+sort :: proc(xs: []mut int, depth := 0) {
+	if (xs.len() <= 4096) { slice.sort(xs); return; }
+	left, rest := xs.split_at_mut(partition(xs));
+	right := &mut rest[1:];               // the pivot is already in place
+	if (depth >= 6) {
+		sort(left, depth + 1);
+		sort(right, depth + 1);
+		return;
+	}
+	parallel {
+		spawn sort(left, depth + 1);
+		sort(right, depth + 1);
+	}
+}
+
+sum :: proc(xs: []f64) -> f64 {
+	total := 0.0;
+	foreach (x in xs) { total += x; }
+	return total;
+}
+
+// A task's result goes to a local declared before the block and still dead.
+// The parent cannot touch it until the join, and after the join it holds the
+// task's value.
+parallel_sum :: proc(xs: []f64) -> f64 {
+	mid := xs.len() / 2;
+	low: f64;
+	high: f64;
+	parallel {
+		spawn low = sum(xs[:mid]);
+		spawn high = sum(xs[mid:]);
+	}
+	return low + high;
+}
+
+// Each chunk is a mutable view of its own, lent to its task until the join.
+// `scale` is a plain `f64`, copied into each task.
+scale_all :: proc(xs: []mut f64, scale: f64) {
+	parallel {
+		foreach (chunk in xs.chunks_mut(25000)) {
+			spawn scale_chunk(chunk, scale);
+		}
+	}
+}
+
+scale_chunk :: proc(chunk: []mut f64, scale: f64) {
+	foreach (&mut x in chunk) { x *= scale; }
+}
+
+main :: proc() {
+	values: [dynamic]int = {};
+	seed := 12345;
+	foreach (_ in 0 ..< 200000) {
+		seed = (seed * 1103515245 + 12345) % 2147483648;
+		values.append(seed % 1000000);
+	}
+	sort(&mut values[:]);
+	sorted := true;
+	foreach (i in 1 ..< values.len()) {
+		if (values[i - 1] > values[i]) { sorted = false; }
+	}
+	fmt.println("sorted", values.len(), "values:", sorted);
+
+	samples: [dynamic]f64 = {};
+	foreach (i in 0 ..< 100000) { samples.append(f64(i % 100)); }
+	scale_all(&mut samples[:], 0.5);
+	fmt.println("sum of halves:", parallel_sum(samples[:]));
+}

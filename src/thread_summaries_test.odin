@@ -3,7 +3,7 @@ package lokec
 import "core:strings"
 import "core:testing"
 
-// concurrency-proposal.md "The summaries the checks read": the reach effect,
+// design.md "Globals while tasks run": the reach effect,
 // the allocator-use effect, and the drops every thread runs at exit, over
 // direct calls, recursion, procedure values, `dyn` witnesses, hooks, and
 // cleanup.

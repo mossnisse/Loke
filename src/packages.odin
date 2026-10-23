@@ -254,7 +254,7 @@ discover_imports :: proc(c: ^Compiler, k: ^Checker) -> bool {
 		id := Package_Id(index)
 		for position := 0; position < len(package_of(c, id).files); position += 1 {
 			file := package_of(c, id).files[position]
-			if c.unstable_parallel && !file.parallel_bound && selects_parallel(file) {
+			if !file.parallel_bound && selects_parallel(file) {
 				file.parallel_bound = true
 				changed = true
 				bind_parallel_edge(c, id, file)
@@ -340,10 +340,11 @@ selects_parallel :: proc(file: ^File) -> bool {
 	return false
 }
 
-// concurrency-proposal.md "Lowering": a `parallel` block's hidden scope is
-// `core:thread`'s, so the package is a dependency no source names. The edge
-// binds no alias. Where no collection provides it, the block that needs it says
-// so (`check_parallel`), and a block in a branch no check reaches needs nothing.
+// compiler-architecture.md "Lowering parallel blocks": a `parallel` block's
+// hidden scope is `core:thread`'s, so the package is a dependency no source
+// names. The edge binds no alias. Where no collection provides it, the block
+// that needs it says so (`check_parallel`), and a block in a branch no check
+// reaches needs nothing.
 @(private = "file")
 bind_parallel_edge :: proc(c: ^Compiler, id: Package_Id, file: ^File) {
 	dir, why := resolve_import_path(c, file, STD_THREAD)
