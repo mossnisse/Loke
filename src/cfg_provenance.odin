@@ -4818,9 +4818,9 @@ report_thread_local_writes :: proc(c: ^Compiler, call: ^Expr_Call) {
 prov_call_thread_local_writes :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]int) {
 	c := graph.k.c
 	// A call through a value is summarized from every body it may run.
-	if graph.mode == .Prov_Summary && call_contract_declaration(c, v) == INVALID_SYMBOL && call_writes_caller(c, v) {
-		for target in indirect_call_targets(c, v) {
-			prov_note_summary_dependency(graph, target, true)
+	if graph.mode == .Prov_Summary {
+		for target in thread_local_write_targets(c, v) {
+			prov_note_summary_dependency(graph, target, prov_has_direct_body(c, target))
 		}
 	}
 	what := v == graph.spawning ? WRITTEN_BACK_BORROW : "borrow"

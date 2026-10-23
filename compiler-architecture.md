@@ -238,7 +238,11 @@ call leaves a borrow of that global in the matching argument, so a helper that
 forwards its parameter is summarized too, and a spawn reports any argument its
 call may write one into (`L0730`), since the worker's storage ends with its
 thread. A call through a procedure value or a `dyn` slot leaves what any body
-the global-write effects found for it may leave (`indirect_call_targets`). Only
+the global-write effects found for it may leave (`indirect_call_targets`), even
+through a type with an inferred contract, which bounds only the result. Each
+summary lines up with the call's arguments by its parameter count: a callable
+view passes itself before a held procedure's parameters, and a callable
+record's `call` takes the record the view hides. Only
 the loan a spawned call leaves is exempt from the crossing check, which the
 spawn has reported; one a call on the parent leaves is checked when it reaches
 a later task, as a borrow taken there directly would be.

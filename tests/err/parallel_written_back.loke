@@ -4,6 +4,8 @@
 // or a callback. One the parent's own call leaves cannot later reach a task.
 package main;
 
+import "base:interfaces";
+
 counter: thread_local int;
 Holder :: struct { view: ^int }
 
@@ -78,6 +80,41 @@ parent_callback_later_spawned :: proc() {
 	slot: ^int = &other;
 	invoke(publish, &mut slot);
 	parallel { spawn read_slot(slot); }
+}
+
+baseline :: proc(out: ^mut ^int) -> ^int { return &counter; }
+publish_returning :: proc(out: ^mut ^int) -> ^int {
+	out^ = &counter;
+	return &counter;
+}
+Baseline :: type_of(baseline);
+invoke_contract :: proc(f: Baseline, out: ^mut ^int) { _ = f(out); }
+noop :: proc(out: ^mut ^int) {}
+Noop :: type_of(noop);
+invoke_callable :: proc(f: dyn interfaces.Callable(Noop), out: ^mut ^int) { f.call(out); }
+
+// A contract bounds only what the result borrows.
+through_contract :: proc(slot: ^mut ^int) {
+	parallel { spawn invoke_contract(publish_returning, slot); }
+}
+
+// The view is the call's first argument, before the procedure's parameters.
+through_callable_call :: proc(slot: ^mut ^int) {
+	parallel { spawn invoke_callable(publish, slot); }
+}
+
+parent_callable_later_spawned :: proc() {
+	other := 0;
+	slot: ^int = &other;
+	invoke_callable(publish, &mut slot);
+	parallel { spawn read_slot(slot); }
+}
+
+// A capture literal's `call` takes its record first, which the view hides.
+through_capture_literal :: proc(slot: ^mut ^int) {
+	tag := 1;
+	writer := proc(out: ^mut ^int) capture(tag) { out^ = &counter; };
+	parallel { spawn invoke_view((dyn proc(out: ^mut ^int))(&writer), slot); }
 }
 
 main :: proc() {}

@@ -1475,40 +1475,55 @@ note_parameter_write :: proc(written: []Symbol_Id, root: Prov_Root, global: Symb
 	return true
 }
 
-// The `thread_local` writes of a call: its declaration's, a join's members'
-// unioned, or with neither, those of every body a call through a value or a
-// `dyn` slot may run (`indirect_call_targets`), each argument bound to the
-// parameter at its position.
+// The `thread_local` writes of a call, by argument: its declaration's, a
+// join's members', and for a call through a value or a `dyn` slot, also those
+// of every body it may run (`indirect_call_targets`), since a contract bounds
+// only what the result borrows. A summary with one parameter fewer than the
+// call has arguments is a procedure a callable view holds, after the view
+// itself; one with one more is a callable record's `call`, whose record the
+// view hides.
 call_thread_local_writes :: proc(c: ^Compiler, call: ^Expr_Call) -> []Symbol_Id {
-	declaration := call_contract_declaration(c, call)
-	if declaration != INVALID_SYMBOL && !is_contract_join(c, declaration) {
-		return c.thread_local_writes[declaration]
-	}
-	targets: []Symbol_Id
-	if declaration != INVALID_SYMBOL {
-		targets = symbol_of(c, declaration).members
-	} else if call_writes_caller(c, call) {
-		targets = indirect_call_targets(c, call)
-	}
 	out: []Symbol_Id
-	for target in targets {
+	for target in thread_local_write_targets(c, call) {
 		written := c.thread_local_writes[target]
-		if out == nil && written != nil {
-			out = make([]Symbol_Id, len(written), c.semantic_allocator)
-			for &global in out {
-				global = INVALID_SYMBOL
-			}
-		}
+		shift := len(call.bound) - len(written)
 		for global, index in written {
-			if index < len(out) && out[index] == INVALID_SYMBOL {
-				out[index] = global
+			at := index + shift
+			if global == INVALID_SYMBOL || at < 0 || at >= len(call.bound) {
+				continue
+			}
+			if out == nil {
+				out = make([]Symbol_Id, len(call.bound), c.semantic_allocator)
+				for &unset in out {
+					unset = INVALID_SYMBOL
+				}
+			}
+			if out[at] == INVALID_SYMBOL {
+				out[at] = global
 			}
 		}
 	}
 	return out
 }
 
+// The declarations whose `thread_local` writes a call may make.
+thread_local_write_targets :: proc(c: ^Compiler, call: ^Expr_Call) -> []Symbol_Id {
+	declaration := call_contract_declaration(c, call)
+	if original, shifted := c.receiver_contract_of[declaration]; shifted {
+		declaration = original
+	}
+	targets := make([dynamic]Symbol_Id, 0, 4, context.temp_allocator)
+	if declaration != INVALID_SYMBOL {
+		append(&targets, ..contract_members(c, declaration))
+	}
+	if call_writes_caller(c, call) {
+		append(&targets, ..indirect_call_targets(c, call))
+	}
+	return targets[:]
+}
+
 // Whether a call's signature has a parameter its callee may write through.
+@(private = "file")
 call_writes_caller :: proc(c: ^Compiler, call: ^Expr_Call) -> bool {
 	info := underlying_info(c, call_proc_type(c, call))
 	if info == nil {

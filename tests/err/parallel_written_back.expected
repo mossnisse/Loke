@@ -1,36 +1,48 @@
 L0730
-@17:27
+@19:27
 may leave a borrow of `counter` in this argument
 L0730
-@21:27
+@23:27
 may leave a borrow of `counter` in this argument
 L0730
-@25:39
+@27:39
 may leave a borrow of `counter` in this argument
 L0730
-@29:35
+@31:35
 may leave a borrow of `counter` in this argument
 L0730
-@33:33
+@35:33
 may leave a borrow of `counter` in this argument
 L0730
-@45:35
+@47:35
 may leave a borrow of `counter` in this argument
 L0730
-@50:34
+@52:34
 may leave a borrow of `counter` in this argument
 L0730
-@54:42
+@56:42
 may leave a borrow of `counter` in this argument
 L0730
-@58:31
+@60:40
 may leave a borrow of `counter` in this argument
 L0730
-@65:27
+@67:27
 may leave a borrow of `counter` in this argument
 L0730
-@73:19
+@75:19
 handed a borrow of `counter`
 L0730
-@80:19
+@82:19
 handed a borrow of `counter`
+L0730
+@98:54
+may leave a borrow of `counter` in this argument
+L0730
+@103:44
+may leave a borrow of `counter` in this argument
+L0730
+@110:19
+handed a borrow of `counter`
+L0730
+@117:68
+may leave a borrow of `counter` in this argument
