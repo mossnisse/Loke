@@ -1258,7 +1258,7 @@ mark_aliased_moves :: proc(graph: ^Flow_Graph, e: Expr) {
 end_statement_temporaries :: proc(graph: ^Flow_Graph, mark, providers: int, stmt: Stmt) {
 	// These owners finish with the expression, before its providers end. A
 	// temporary extended to the block remains in the cleanup stack instead.
-	roots := slice.clone(graph.temp_roots[mark:], graph.alloc)
+	roots := graph.temp_roots[mark:]
 	resize(&graph.temp_roots, mark)
 	// A temporary provider can end after a declaration has installed its
 	// owner. Record that boundary in lifecycle too, after the statement's writes.
@@ -1281,7 +1281,6 @@ end_statement_temporaries :: proc(graph: ^Flow_Graph, mark, providers: int, stmt
 	#reverse for root in roots {
 		prov_emit(graph, Prov_Event{kind = .Root_End, root = root})
 	}
-	resize(&graph.temp_roots, mark)
 }
 
 // Temporaries end with their statement, but a header's initial statement
@@ -1367,7 +1366,17 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false, lends :=
 				held = prov_hold_result(graph, prov_join(graph, sources, contents), result_type, expr_span(value.expr))
 			}
 			returning, failing := returned_variant(graph, s)
+			// design.md "Temporaries and procedure boundaries": the completed
+			// return expression's temporaries end before local cleanup. Keep
+			// the result's dependencies separately in `graph.returning`, and restore
+			// the construction stack for other control-flow paths afterwards.
+			temporaries := graph.temp_roots
+			owners := graph.held_owners
+			graph.temp_roots = nil
+			graph.held_owners = nil
 			emit_cleanups(graph, 0, s, returning = returning, failing = failing)
+			graph.temp_roots = temporaries
+			graph.held_owners = owners
 			graph.returning = outer
 			prov_entry_report_effects(graph, s.span)
 			if len(held) > 0 {
@@ -2036,9 +2045,9 @@ walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) -> (carried: []int
 		if c.arm != nil {
 			carried = prov_join(graph, carried, walk_flow_expr(graph, c.arm))
 		}
-		append(&arm_roots, ..graph.temp_roots[roots:])
-		resize(&graph.temp_roots, roots)
 		leave_flow_scope(graph)
+		if graph.current != NO_BLOCK { append(&arm_roots, ..graph.temp_roots[roots:]) }
+		resize(&graph.temp_roots, roots)
 		link(graph, graph.current, merge)
 	}
 	append(&graph.temp_roots, ..arm_roots[:])
@@ -2053,6 +2062,8 @@ prov_bind_case_name :: proc(
 	consumes: bool, variants: []int, slot := -1,
 ) {
 	// Over a place, the binding is the stored payload, not a copy of it.
+	// A deferred switch can be expanded more than once in the same graph.
+	delete_key(&graph.region_aliases, symbol)
 	prov_bind_value(graph, symbol, sources, span, copies = consumes)
 	prov_bind_case_region(graph, symbol, s.subject, variants, slot)
 	// A place subject keeps its payload, so the binding views its storage;
@@ -2391,18 +2402,28 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 		graph.current = new_flow_block(graph)
 		link(graph, entry, graph.current)
 		then_loans := walk_flow_expr(graph, v.then)
-		then_roots := slice.clone(graph.temp_roots[roots:], graph.alloc)
-		then_cleanups := slice.clone(graph.in_scope[cleanups:], graph.alloc)
+		then_reaches := graph.current != NO_BLOCK
+		then_roots: []Root_Id
+		then_cleanups: []Flow_Cleanup
+		if then_reaches {
+			then_roots = slice.clone(graph.temp_roots[roots:], graph.alloc)
+			then_cleanups = slice.clone(graph.in_scope[cleanups:], graph.alloc)
+		}
 		resize(&graph.temp_roots, roots)
 		resize(&graph.in_scope, cleanups)
 		link(graph, graph.current, merge)
 		graph.current = new_flow_block(graph)
 		link(graph, entry, graph.current)
 		else_loans := walk_flow_expr(graph, v.otherwise)
+		else_reaches := graph.current != NO_BLOCK
+		if !else_reaches {
+			resize(&graph.temp_roots, roots)
+			resize(&graph.in_scope, cleanups)
+		}
 		append(&graph.temp_roots, ..then_roots)
 		append(&graph.in_scope, ..then_cleanups)
 		link(graph, graph.current, merge)
-		graph.current = merge
+		graph.current = then_reaches || else_reaches ? merge : NO_BLOCK
 		return prov_join(graph, then_loans, else_loans)
 
 	case ^Expr_Propagated_Error:

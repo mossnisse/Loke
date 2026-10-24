@@ -10,6 +10,12 @@ checklist.
 
 ### Breaking changes
 
+- Borrowed switch payload writes now check the subject's storage lifetime and
+  preserve stored borrows after the case ends. A carrier with both known and
+  unresolved targets also keeps the owner-escape restriction. Unsafe stores
+  report `L0647`, `L0513`, or `L0536`. Upgrade by storing only borrows and owners
+  that outlive the subject, or resolve the destination before storing.
+
 - Allocator resets now account for owners lending temporary views or erased
   arguments, including temporaries extended by a local and deferred cleanup
   order. Borrowed switch payloads reached through known carriers also preserve
@@ -503,6 +509,12 @@ checklist.
   for any count.
 
 ### Fixed
+
+- Returning a scalar computed from an arena-backed temporary, or continuing
+  after a diverging conditional branch, no longer reports a spurious allocator
+  lifetime error. Destructured declarations and assignments now use each
+  field's copy plan and destination allocator while preserving logical copies
+  of borrowed or shared storage.
 
 - A transferred initializer with an unevaluated `via` containing a temporary
   allocator no longer triggers a compiler assertion or gains a dependency on

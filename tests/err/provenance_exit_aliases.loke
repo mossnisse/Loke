@@ -1,0 +1,81 @@
+// design.md "Values that contain borrows" and "Allocator regions and region
+// provenance": borrowed payload writes retain in the subject's storage;
+// unknown carrier alternatives and logical field copies keep dependencies.
+package main;
+import "core:mem";
+import "core:fmt";
+
+View :: struct { values: []int }
+kept: Option(View);
+global_payload :: proc() {
+	kept = .some(View{});
+	local := [1]int{42};
+	switch (kept) {
+	case .some(&mut view): view.values = local[:];
+	case .none:
+	}
+}
+kept_slice: Option([]int);
+global_slice :: proc() {
+	initial: static [1]int = {};
+	kept_slice = .some(initial[:]);
+	local := [1]int{42};
+	switch (kept_slice) {
+	case .some(&mut view): view = local[:];
+	case .none:
+	}
+}
+nested_payload :: proc() {
+	value: Option(Option(View)) = .some(.some(View{}));
+	{
+		local := [1]int{42};
+		switch (value) {
+		case .some(&mut inner):
+			switch (inner) {
+			case .some(&mut view): view.values = local[:];
+			case .none:
+			}
+		case .none:
+		}
+	}
+	fmt.println(value);
+}
+
+kept_strings: Option([dynamic]string);
+point :: proc(pointer: ^mut Option([dynamic]string)) -> ^mut Option([dynamic]string) { return pointer; }
+mixed_pointer :: proc() {
+	arena := mem.Arena.init();
+	kept_strings = .some(make([dynamic]string));
+	local: Option([dynamic]string) = .some(make([dynamic]string));
+	pointer := &mut local;
+	pointer = point(&mut kept_strings);
+	switch (pointer^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 42));
+	case .none:
+	}
+	drop(local);
+}
+Pair :: struct { values: [dynamic]string, count: int }
+copied: [dynamic]string;
+logical_copy :: proc() {
+	arena := mem.Arena.init();
+	source := Pair{[dynamic]string{fmt.to_string(arena.allocator(), 42)}, 0};
+	copied, _ = source;
+	fmt.println(source);
+}
+logical_declaration :: proc() {
+	arena := mem.Arena.init();
+	source := Pair{[dynamic]string{fmt.to_string(arena.allocator(), 42)}, 0};
+	values, _ := source;
+	fmt.println(source);
+	drop(source);
+	free_all(arena.allocator());
+	fmt.println(values);
+}
+// Returned dependencies still survive local cleanup, unlike discarded owners.
+bad_return :: proc() -> string {
+	arena := mem.Arena.init();
+	return fmt.to_string(arena.allocator(), 42);
+}
+
+main :: proc() {}

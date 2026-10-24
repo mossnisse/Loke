@@ -1,0 +1,99 @@
+// design.md "Temporaries and procedure boundaries", "Inspecting a union",
+// and "Destructuring": completed owners end at exits, payload writes reach
+// their subjects, and retained fields clone into their destination's allocator.
+package main;
+import "core:mem";
+import "core:fmt";
+
+length :: proc(values: []int) -> int { return values.len(); }
+build :: proc() -> int {
+	arena := mem.Arena.init();
+	return length(make([dynamic]int, 2, arena.allocator())[:]);
+}
+consume :: proc(values: []int, ignored: int) -> int { return values.len() + ignored; }
+empty :: proc() -> []int { return {}; }
+fail :: proc(values: []int) -> ! { panic("stop"); }
+reset :: proc(@(allocator_reset) allocator: Allocator) -> int { free_all(allocator); return 0; }
+branches :: proc(flag: bool) {
+	arena := mem.Arena.init();
+	assert(consume(fail(make([dynamic]int, 2, arena.allocator())[:]) if flag else empty(), reset(arena.allocator())) == 0);
+	assert(consume(empty() if !flag else fail(make([dynamic]int, 2, arena.allocator())[:]), reset(arena.allocator())) == 0);
+}
+early_return :: proc(value: Option(int)) -> int {
+	arena := mem.Arena.init();
+	return consume(make([dynamic]int, 2, arena.allocator())[:], value or_else return 7);
+}
+
+View :: struct { first, second: []int }
+kept_view: Option(View);
+global_control :: proc() {
+	local: static [1]int = {42};
+	kept_view = .some(View{});
+	switch (kept_view) {
+	case .some(&mut view): view.first = local[:];
+	case .none:
+	}
+}
+payload_control :: proc() {
+	local := [1]int{42};
+	other := [1]int{10};
+	value: Option(View) = .some(View{});
+	switch (value) {
+	case .some(&mut view):
+		view.first = local[:];
+		// Replacing the same field removes its previous borrow.
+		view.first = {};
+		view.second = other[:];
+	case .none:
+	}
+	local[0] = 43;
+	switch (value) {
+	case .some(&mut view): view.second = {};
+	case .none:
+	}
+	assert(local[0] == 43);
+}
+kept_values: Option([dynamic]string);
+point :: proc(pointer: ^mut Option([dynamic]string)) -> ^mut Option([dynamic]string) { return pointer; }
+unknown_control :: proc() {
+	kept_values = .some(make([dynamic]string));
+	local: Option([dynamic]string) = .some(make([dynamic]string));
+	pointer := &mut local;
+	pointer = point(&mut kept_values);
+	switch (pointer^) {
+	case .some(&mut values): values.append(fmt.to_string(mem.default_allocator(), 42));
+	case .none:
+	}
+	drop(local);
+}
+
+Pair :: struct { values: [dynamic]int, count: int }
+impl Pair {
+	// Destructuring copies the field, so this hook must not run.
+	copy :: hook(copy) proc(self: ^Pair, allocator: Allocator) -> Result(Pair, Allocator_Error) {
+		panic("containing copy hook");
+	}
+}
+kept: [dynamic]int;
+independent_copies :: proc() {
+	arena := mem.Arena.init();
+	source := Pair{make([dynamic]int, 1, arena.allocator()), 0};
+	declared, _ := source;
+	kept, _ = source;
+	assert(source.values.len() == 1);
+	drop(source);
+	free_all(arena.allocator());
+	assert(declared.len() == 1 && kept.len() == 1);
+}
+
+main :: proc() {
+	assert(build() == 2);
+	branches(false);
+	assert(early_return(.none) == 7);
+	assert(early_return(.some(3)) == 5);
+	global_control();
+	payload_control();
+	unknown_control();
+	independent_copies();
+	fmt.println(kept_view, kept_values, kept);
+}

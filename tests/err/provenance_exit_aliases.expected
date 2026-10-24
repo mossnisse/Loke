@@ -1,0 +1,21 @@
+L0647
+@14:25
+does not outlive `kept`: process-lifetime storage
+L0647
+@24:25
+does not outlive `kept_slice`: process-lifetime storage
+L0513
+@41:14
+used after `local`
+L0536
+@53:27
+storage reached through a pointer or slice
+L0536
+@63:2
+`copied` (file-scope storage)
+L0537
+@72:2
+region backing `values`
+L0592
+@78:9
+allocator region that ends when this procedure returns
