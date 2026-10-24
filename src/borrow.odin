@@ -104,12 +104,13 @@ Prov_Root :: struct {
 	// `Provider`: the region the control block belongs to. Empty means
 	// unrecorded, which every reset reaches.
 	region: Region_Set,
-	// `Temporary`: a local's value extended it to the end of its block. Its
-	// value's type, dropped there, and the slot keeping what that value
-	// borrows live until then when its drop runs a hook, or -1.
+	// `Temporary`: whether a local extended it to the block's end, its source
+	// type, and the slot keeping its borrows live when its drop runs a hook.
 	extended: bool,
 	dropped:  Type_Id,
 	content:  int,
+	// The managed temporary lending this root, before a view or erasure.
+	owner:    Expr,
 }
 
 // ---------------------------------------------------------- projections --

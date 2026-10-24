@@ -1,0 +1,116 @@
+// design.md "Allocator regions and region provenance": converted temporaries
+// and payload aliases retain their owners through resets and escape checks.
+package main;
+import "core:mem";
+import "core:fmt";
+
+reset :: proc(@(allocator_reset) allocator: Allocator) -> int {
+	free_all(allocator);
+	return 0;
+}
+consume :: proc(values: []int, ignored: int) { fmt.println(values, ignored); }
+consume_text :: proc(text: string_view, ignored: int) { fmt.println(text, ignored); }
+
+temporary_slice :: proc() {
+	arena := mem.Arena.init();
+	consume(make([dynamic]int, 1, arena.allocator())[:], reset(arena.allocator()));
+}
+erased_string :: proc() {
+	arena := mem.Arena.init();
+	fmt.println(fmt.to_string(arena.allocator(), 42), reset(arena.allocator()));
+}
+converted_string :: proc() {
+	arena := mem.Arena.init();
+	consume_text(fmt.to_string(arena.allocator(), 42), reset(arena.allocator()));
+}
+extended_slice :: proc() {
+	arena := mem.Arena.init();
+	view: []int = make([dynamic]int, 1, arena.allocator())[:];
+	free_all(arena.allocator());
+	fmt.println(view);
+}
+extended_erasure :: proc() {
+	arena := mem.Arena.init();
+	view: any_view = fmt.to_string(arena.allocator(), 42);
+	free_all(arena.allocator());
+	fmt.println(view);
+}
+deferred_reset :: proc() {
+	arena := mem.Arena.init();
+	view: []int = make([dynamic]int, 1, arena.allocator())[:];
+	defer free_all(arena.allocator());
+	fmt.println(view);
+}
+allocated_policy :: proc() {
+	values: [dynamic]int via mem.Arena.init().allocator() = {};
+	fmt.println(values);
+}
+
+indirect_subject :: proc() {
+	arena := mem.Arena.init();
+	value: Option([dynamic]string) = .some(make([dynamic]string));
+	pointer := &mut value;
+	switch (pointer^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 42));
+	case .none:
+	}
+	free_all(arena.allocator());
+	fmt.println(value);
+}
+Wrapped :: struct { value: Option([dynamic]string) }
+indirect_field :: proc() {
+	arena := mem.Arena.init();
+	wrapped := Wrapped{.some(make([dynamic]string))};
+	pointer := &mut wrapped;
+	switch (pointer^.value) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 42));
+	case .none:
+	}
+	free_all(arena.allocator());
+	fmt.println(wrapped);
+}
+fill :: proc(value: ^mut Option([dynamic]string), allocator: Allocator) {
+	switch (value^) {
+	case .some(&mut values): values.append(fmt.to_string(allocator, 42));
+	case .none:
+	}
+}
+indirect_parameter :: proc() {
+	arena := mem.Arena.init();
+	value: Option([dynamic]string) = .some(make([dynamic]string));
+	fill(&mut value, arena.allocator());
+	free_all(arena.allocator());
+	fmt.println(value);
+}
+global_value: Option([dynamic]string);
+indirect_global :: proc() {
+	arena := mem.Arena.init();
+	global_value = .some(make([dynamic]string));
+	pointer := &mut global_value;
+	switch (pointer^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 42));
+	case .none:
+	}
+}
+
+kept: [dynamic]string;
+logical_copy_escape :: proc() {
+	arena := mem.Arena.init();
+	source := [dynamic]string{fmt.to_string(arena.allocator(), 42)};
+	kept = source;
+	fmt.println(source);
+}
+
+point :: proc(pointer: ^mut Option([dynamic]string)) -> ^mut Option([dynamic]string) { return pointer; }
+unresolved_subject :: proc() {
+	arena := mem.Arena.init();
+	value: Option([dynamic]string) = .some(make([dynamic]string));
+	pointer := &mut value;
+	switch (point(pointer)^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 42));
+	case .none:
+	}
+	fmt.println(value);
+}
+
+main :: proc() {}

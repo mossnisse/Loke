@@ -10,6 +10,13 @@ checklist.
 
 ### Breaking changes
 
+- Allocator resets now account for owners lending temporary views or erased
+  arguments, including temporaries extended by a local and deferred cleanup
+  order. Borrowed switch payloads reached through known carriers also preserve
+  their region dependencies. Unsafe resets report `L0537`; escapes through an
+  unresolved carrier remain `L0536`. Upgrade by resetting after dependent
+  owners are cleaned up, and evaluate resets before creating dependent views.
+
 - Allocator resets now account for consumed switch payloads, received `move`
   parameters, and owned arguments held during evaluation. Writes through borrowed
   switch payloads also retain their region dependencies in the subject. Unsafe
@@ -496,6 +503,13 @@ checklist.
   for any count.
 
 ### Fixed
+
+- A transferred initializer with an unevaluated `via` containing a temporary
+  allocator no longer triggers a compiler assertion or gains a dependency on
+  that unused policy. A later copy still evaluates the declaration's policy.
+- Independent implicit copies into static storage no longer fail owner-escape
+  checks against the source allocation replaced by the copy. Retained logical
+  copies still keep their source dependencies.
 
 - Implicit union-widening copies in declarations and assignments now use the
   destination allocator for copied storage, allowing the source region to reset

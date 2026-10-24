@@ -1,0 +1,39 @@
+L0537
+@16:55
+region backing `this temporary`
+L0537
+@20:52
+region backing `this temporary`
+L0537
+@24:53
+region backing `this temporary`
+L0537
+@29:2
+region backing `this temporary`
+L0537
+@35:2
+region backing `this temporary`
+L0537
+@41:8
+region backing `this temporary`
+L0537
+@45:27
+this temporary allocator
+L0537
+@57:2
+region backing `value`
+L0537
+@69:2
+region backing `wrapped`
+L0537
+@82:2
+region backing `value`
+L0536
+@91:27
+`global_value` (file-scope storage)
+L0536
+@100:2
+`kept` (file-scope storage)
+L0536
+@110:27
+storage reached through a pointer or slice

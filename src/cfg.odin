@@ -857,20 +857,15 @@ drop_cannot_panic :: proc(c: ^Compiler, e: Expr) -> bool {
 	return is_ident && len(type_drop_hooks(c, ident.type)) == 0
 }
 
-// Walked where it runs, with itself and the later registrations popped, as at
-// runtime; that also stops a diagnosed `return` inside it from expanding itself
-// again. The walk reuses the backing storage, so the entries are saved, not the
-// header.
+// The cleanup walk already popped this registration and everything after it,
+// as at runtime. A diagnosed `return` cannot expand this defer again.
 @(private = "file")
 emit_deferred :: proc(graph: ^Flow_Graph, index: int, action: Flow_Cleanup, exit: rawptr) {
-	tail := slice.clone(graph.in_scope[index:], graph.alloc)
 	outer := graph.expansion
 	graph.expansion = {action.deferred, exit}
-	resize(&graph.in_scope, index)
 	walk_flow_stmt(graph, action.deferred.stmt)
 	graph.expansion = outer
 	resize(&graph.in_scope, index)
-	append(&graph.in_scope, ..tail)
 }
 
 // How a `return` meets a pending `errdefer` (design.md "defer statement"): one
@@ -910,8 +905,20 @@ returned_variant :: proc(graph: ^Flow_Graph, s: ^Stmt_Return) -> (returning, fai
 emit_cleanups :: proc(
 	graph: ^Flow_Graph, down_to: int, exit: rawptr, unwinding := false, returning := false, failing := false,
 ) {
-	for index := len(graph.in_scope) - 1; index >= down_to; index -= 1 {
-		action := graph.in_scope[index]
+	// An already-diagnosed exit inside a defer can name a scope deeper than
+	// its currently popped stack. It has no registrations left to run.
+	if down_to >= len(graph.in_scope) { return }
+	// Pop registrations as they run. A reset in an earlier cleanup must not
+	// see a temporary owner already dropped by a later registration. Restore
+	// the stack afterwards so another control-flow exit can replay it.
+	tail := slice.clone(graph.in_scope[down_to:], graph.alloc)
+	defer {
+		resize(&graph.in_scope, down_to)
+		append(&graph.in_scope, ..tail)
+	}
+	for index := len(tail) - 1; index >= 0; index -= 1 {
+		resize(&graph.in_scope, down_to + index)
+		action := tail[index]
 		switch action.kind {
 		case .Defer:
 			if action.deferred.on_failure && !unwinding && !failing {
@@ -924,12 +931,12 @@ emit_cleanups :: proc(
 				link(graph, from, merge)
 				graph.current = new_flow_block(graph)
 				link(graph, from, graph.current)
-				emit_deferred(graph, index, action, exit)
+				emit_deferred(graph, down_to + index, action, exit)
 				link(graph, graph.current, merge)
 				graph.current = merge
 				continue
 			}
-			emit_deferred(graph, index, action, exit)
+			emit_deferred(graph, down_to + index, action, exit)
 		case .Prov_Root:
 			root := graph.roots[int(action.root)]
 			if root.extended && root.dropped != INVALID_TYPE {
@@ -1249,6 +1256,10 @@ mark_aliased_moves :: proc(graph: ^Flow_Graph, e: Expr) {
 // backed by one is reported, then the temporary roots.
 @(private = "file")
 end_statement_temporaries :: proc(graph: ^Flow_Graph, mark, providers: int, stmt: Stmt) {
+	// These owners finish with the expression, before its providers end. A
+	// temporary extended to the block remains in the cleanup stack instead.
+	roots := slice.clone(graph.temp_roots[mark:], graph.alloc)
+	resize(&graph.temp_roots, mark)
 	// A temporary provider can end after a declaration has installed its
 	// owner. Record that boundary in lifecycle too, after the statement's writes.
 	key := Reset_Key{graph.literal, stmt_base(stmt), INVALID_SYMBOL, graph.expansion}
@@ -1267,8 +1278,8 @@ end_statement_temporaries :: proc(graph: ^Flow_Graph, mark, providers: int, stmt
 		}
 		resize(&graph.temp_providers, providers)
 	}
-	for index := len(graph.temp_roots) - 1; index >= mark; index -= 1 {
-		prov_emit(graph, Prov_Event{kind = .Root_End, root = graph.temp_roots[index]})
+	#reverse for root in roots {
+		prov_emit(graph, Prov_Event{kind = .Root_End, root = root})
 	}
 	resize(&graph.temp_roots, mark)
 }
@@ -1997,6 +2008,8 @@ walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) -> (carried: []int
 			link(graph, graph.current, merge)
 		}
 	}
+	roots := len(graph.temp_roots)
+	arm_roots := make([dynamic]Root_Id, graph.alloc)
 	for c, index in s.cases {
 		graph.current = bodies[index]
 		enter_flow_scope(graph)
@@ -2023,9 +2036,12 @@ walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) -> (carried: []int
 		if c.arm != nil {
 			carried = prov_join(graph, carried, walk_flow_expr(graph, c.arm))
 		}
+		append(&arm_roots, ..graph.temp_roots[roots:])
+		resize(&graph.temp_roots, roots)
 		leave_flow_scope(graph)
 		link(graph, graph.current, merge)
 	}
+	append(&graph.temp_roots, ..arm_roots[:])
 	graph.current = merge
 	return
 }
@@ -2369,15 +2385,22 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 
 	case ^Expr_Cond:
 		walk_flow_expr(graph, v.cond)
+		roots, cleanups := len(graph.temp_roots), len(graph.in_scope)
 		entry := graph.current
 		merge := new_flow_block(graph)
 		graph.current = new_flow_block(graph)
 		link(graph, entry, graph.current)
 		then_loans := walk_flow_expr(graph, v.then)
+		then_roots := slice.clone(graph.temp_roots[roots:], graph.alloc)
+		then_cleanups := slice.clone(graph.in_scope[cleanups:], graph.alloc)
+		resize(&graph.temp_roots, roots)
+		resize(&graph.in_scope, cleanups)
 		link(graph, graph.current, merge)
 		graph.current = new_flow_block(graph)
 		link(graph, entry, graph.current)
 		else_loans := walk_flow_expr(graph, v.otherwise)
+		append(&graph.temp_roots, ..then_roots)
+		append(&graph.in_scope, ..then_cleanups)
 		link(graph, graph.current, merge)
 		graph.current = merge
 		return prov_join(graph, then_loans, else_loans)

@@ -259,8 +259,9 @@ expression, source type, and allocator kept in `Prov_Region_Copy`. Explicit clon
 select that context through `prov_clone_region_at`; copied declarations and
 assignments, implicit variant copies, and copied error payloads use the same
 rules. Widening remaps destination paths to the source type before querying
-the copy. Newly allocated storage uses the destination,
-while logical copies retain their source regions. Custom copy hooks use their result
+the copy. `prov_result_region_fields` supplies the same copied field facts to
+stores and escape checks, including a projected source. Newly allocated storage
+uses the destination, while logical copies retain their source regions. Custom copy hooks use their result
 summaries. Container element facts use the same projected-place walk as record
 fields (`prov_define_value_regions`), so nested containers of static strings
 do not retain their old allocation. Shared and weak handles separate their
@@ -277,7 +278,15 @@ returned payload as well as owners lifecycle records at each reset or provider
 end, including consumed bindings and moved parameters. Evaluated owned operands
 are held while later operands run; moved arguments leave that set on entry to
 the callee. Borrowed switch bindings alias their subject's payload paths for
-region reads, writes, and escape checks, including through nested bindings.
+region reads, writes, and escape checks, including through nested bindings
+and known carrier targets. Unknown and cyclic cursor targets retain an unresolved alias
+for the owner-escape check. Temporary-provider queries allocate an identity;
+only walking the handle call registers an evaluated provider to end at the
+statement boundary. A borrowed temporary root also records its managed owner
+and original type, so views and erasure retain its regions. Cleanup traversal
+pops registrations as they run and restores them for other exits; an earlier
+reset therefore sees only owners whose cleanup is still pending. Alternative
+expression branches keep their temporary registrations apart until they merge.
 Reset queries exclude allocator
 handle fields while retaining owners and borrowed data; provider destruction
 still checks every control-block dependency.

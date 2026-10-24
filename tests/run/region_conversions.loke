@@ -1,0 +1,110 @@
+// design.md "Allocator regions and region provenance": independent copies and
+// completed temporary lifetimes allow resets after their actual cleanup.
+package main;
+import "core:mem";
+import "core:fmt";
+
+consume :: proc(values: []int) { assert(values.len() == 1); }
+length :: proc(values: []int) -> int { return values.len(); }
+reset_view :: proc(@(allocator_reset) allocator: Allocator) -> []int {
+	free_all(allocator);
+	return {};
+}
+temporary_boundaries :: proc(flag: bool) {
+	arena := mem.Arena.init();
+	consume(make([dynamic]int, 1, arena.allocator())[:]);
+	free_all(arena.allocator());
+	fmt.println(fmt.to_string(arena.allocator(), 42));
+	free_all(arena.allocator());
+	{
+		defer free_all(arena.allocator());
+		view: []int = make([dynamic]int, 1, arena.allocator())[:];
+		consume(view);
+	}
+	free_all(arena.allocator());
+	// A temporary created in the then branch is absent while the else runs.
+	assert(length(make([dynamic]int, 1, arena.allocator())[:] if flag else reset_view(arena.allocator())) == (1 if flag else 0));
+	free_all(arena.allocator());
+}
+
+policy_calls: int;
+policy :: proc() -> Allocator { policy_calls += 1; return mem.default_allocator(); }
+unevaluated_policies :: proc() {
+	values: [dynamic]int via mem.Arena.init().allocator() = make([dynamic]int, 1);
+	assert(values.len() == 1);
+	other: [dynamic]int via policy() = make([dynamic]int, 1);
+	assert(policy_calls == 0);
+	source := make([dynamic]int, 2);
+	other = source;
+	assert(source.len() == 2);
+	assert(policy_calls == 1);
+	assert(other.len() == 2);
+}
+
+indirect_payload :: proc() {
+	arena := mem.Arena.init();
+	value: Option([dynamic]string) = .some(make([dynamic]string));
+	pointer := &mut value;
+	switch (pointer^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 42));
+	case .none:
+	}
+	fmt.println(value);
+	drop(value);
+	free_all(arena.allocator());
+}
+
+kept: [dynamic]int;
+Small :: (values: [dynamic]int | none:);
+Wide :: (none: | other: int | values: [dynamic]int);
+Holder :: struct { value: Wide }
+held: Option(Holder);
+independent_copies :: proc() {
+	arena := mem.Arena.init();
+	source := make([dynamic]int, 1, arena.allocator());
+	kept = source;
+	assert(source.len() == 1);
+	drop(source);
+	small: Small = .values(make([dynamic]int, 1, arena.allocator()));
+	wide: Wide = .none;
+	wide = small;
+	fmt.println(small);
+	drop(small);
+	held = .some(Holder{move(wide)});
+	free_all(arena.allocator());
+	fmt.println(kept, held);
+}
+
+point :: proc(pointer: ^mut Option([dynamic]string)) -> ^mut Option([dynamic]string) { return pointer; }
+unresolved_subject :: proc() {
+	value: Option([dynamic]string) = .some(make([dynamic]string));
+	pointer := &mut value;
+	switch (point(pointer)^) {
+	case .some(&mut values): values.append(fmt.to_string(mem.default_allocator(), 42));
+	case .none:
+	}
+	assert((value.as(.some) or_else make([dynamic]string)).len() == 1);
+}
+
+Node :: struct { next: Option(Box(Node)) }
+recursive_cursor :: proc() -> int {
+	head: Option(Box(Node)) = .some(box(Node{.some(box(Node{.none}))}));
+	cursor := &mut head;
+	count := 0;
+	for (;;) {
+		switch (cursor^) {
+		case .some(&mut node): count += 1; cursor = &mut node.next;
+		case .none: return count;
+		}
+	}
+}
+
+main :: proc() {
+	temporary_boundaries(false);
+	temporary_boundaries(true);
+	unevaluated_policies();
+	indirect_payload();
+	independent_copies();
+	unresolved_subject();
+	assert(recursive_cursor() == 2);
+}
