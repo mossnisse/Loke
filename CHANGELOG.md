@@ -466,6 +466,12 @@ checklist.
 
 ### Fixed
 
+- Managed records with only unmanaged fields again obey a moved parameter's
+  escape contract. Storing one in caller-owned storage without
+  `@(escape=stored)`, or in static storage without `@(escape=static)`, reports
+  `L0536`, including through locals, nested records, and returned values.
+  Use the appropriate annotation when retention is intended. Allocator-handle
+  fields remain separate from the record's own dependency.
 - A whole-record store no longer treats an allocator handle's region as
   backing the record's owners. A record containing an `@(escape=static)`
   handle and an owner built with `mem.default_allocator()` can enter static

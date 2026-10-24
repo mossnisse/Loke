@@ -892,7 +892,9 @@ new_result_provenance :: proc(c: ^Compiler, param_count: int, type: Type_Id, wit
 
 // Keep record fields separate so a handle's region does not back a sibling
 // owner, including inside nested records (design.md "Allocator regions and
-// region provenance"). Providers keep their parent region as one value.
+// region provenance"). A managed record also keeps its own dependency: a
+// moved parameter's escape contract applies even with only scalar fields.
+// Providers keep their parent region as one value.
 @(private)
 region_field_shape :: proc(c: ^Compiler, type: Type_Id, allocator: mem.Allocator) -> []Prov_Region_Content {
 	out := make([dynamic]Prov_Region_Content, 0, 0, allocator)
@@ -904,6 +906,9 @@ region_field_shape :: proc(c: ^Compiler, type: Type_Id, allocator: mem.Allocator
 region_field_shape_into :: proc(c: ^Compiler, type: Type_Id, prefix: []Proj_Step, out: ^[dynamic]Prov_Region_Content, allocator: mem.Allocator) {
 	info := underlying_info(c, type)
 	if info != nil && info.kind == .Struct && !type_is_region_provider(c, type) && len(prefix) < 8 {
+		if type_is_managed(c, type) {
+			append(out, Prov_Region_Content{path = prefix, record = true})
+		}
 		for field_id, index in info.fields {
 			field := symbol_of(c, field_id)
 			if field == nil { continue }
@@ -1033,7 +1038,9 @@ receiver_result_summary :: proc(c: ^Compiler, from: Result_Provenance) -> Result
 	out.region = receiver_region(c, from.region)
 	out.region_content = make([]Prov_Region_Content, len(from.region_content), c.semantic_allocator)
 	for content, index in from.region_content {
-		out.region_content[index] = Prov_Region_Content{path = content.path, region = receiver_region(c, content.region)}
+		out.region_content[index] = Prov_Region_Content{
+			path = content.path, region = receiver_region(c, content.region), handle = content.handle, record = content.record,
+		}
 	}
 	return out
 }

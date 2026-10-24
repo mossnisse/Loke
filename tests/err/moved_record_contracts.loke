@@ -1,0 +1,65 @@
+// design.md "Allocator regions and region provenance": a managed record's
+// own moved-parameter dependency survives even when none of its fields owns
+// storage. Locals, result summaries, and nested records preserve it too.
+package main;
+
+Token :: move_only struct { id: int }
+held: Token;
+Wrapped :: struct { token: Token }
+wrapped: Wrapped;
+
+global_borrow :: proc(value: move Token) {
+	held = move(value);
+}
+
+global_stored :: proc(@(escape=stored) value: move Token) {
+	held = move(value);
+}
+
+caller_borrow :: proc(dst: inout Token, value: move Token) {
+	dst = move(value);
+}
+
+local_borrow :: proc(value: move Token) {
+	local := move(value);
+	held = move(local);
+}
+
+assigned_borrow :: proc(value: move Token) {
+	local: Token = {};
+	local = move(value);
+	held = move(local);
+}
+
+identity :: proc(value: move Token) -> Token { return move(value); }
+
+returned_borrow :: proc(value: move Token) {
+	held = identity(move(value));
+}
+
+nested_borrow :: proc(value: move Token) {
+	wrapped = Wrapped{move(value)};
+}
+
+Tracked :: struct { id: int }
+impl Tracked {
+	release :: hook(drop) proc(self: inout Tracked) { self.id = 0; }
+}
+tracked: Tracked;
+
+custom_drop_borrow :: proc(value: move Tracked) {
+	tracked = move(value);
+}
+
+wrap :: proc(value: move Token) -> Wrapped { return Wrapped{move(value)}; }
+
+returned_nested_borrow :: proc(value: move Token) {
+	local := wrap(move(value));
+	wrapped = move(local);
+}
+
+conditional_borrow :: proc(value: move Token, flag: bool) {
+	held = identity(move(value)) if flag else Token{0};
+}
+
+main :: proc() {}

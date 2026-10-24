@@ -241,9 +241,11 @@ recorded at its path below the carrier (`prov_path_below_carrier`), so
 `dst^.alloc = handle` and `dst^.items = make(...)` stay distinct. Whole-record
 stores use the same distinction: region facts for locals and procedure results
 keep record fields separate, recursively (`region_field_shape`), and owner
-escape reads only the fields holding owners (`prov_result_region_at`). In the
-body, a write through a local set from such a parameter
-counts as one through the parameter (`written_aliases`): a carrier into its
+escape reads the fields holding owners and the record's own dependency
+(`prov_result_region_at`). That dependency has its own entry at the record's
+path, so a scalar managed record keeps its moved-parameter escape contract
+through locals and results. In the body, a write through a local set from such
+a parameter counts as one through the parameter (`written_aliases`): a carrier into its
 storage, a copy of a read-only carrier (`alias := outs`), or a value holding
 its carriers (`b := box^`, `b := Box{box^.out}`), from either operand of a
 conditional, `or_else`, or `move`. Each alias records the path in the local

@@ -1,0 +1,44 @@
+// design.md "Allocator regions and region provenance": a scalar managed
+// record may be returned, stored in caller storage with escape=stored, and
+// stored globally with escape=static. A fresh record's allocator handle is
+// still separate from the record's own ownership dependency.
+package main;
+
+import "core:mem";
+import "core:fmt";
+
+Token :: move_only struct { id: int }
+held: Token;
+
+identity :: proc(value: move Token) -> Token { return move(value); }
+
+store :: proc(dst: inout Token, @(escape=stored) value: move Token) {
+	dst = identity(move(value));
+}
+
+keep :: proc(@(escape=static) value: move Token) {
+	local := identity(move(value));
+	held = move(local);
+}
+
+Handle :: move_only struct { allocator: Allocator }
+handle: Handle;
+
+fresh_handle :: proc(@(escape=static) allocator: Allocator) -> Handle {
+	return Handle{allocator};
+}
+
+install_handle :: proc(@(escape=static) allocator: Allocator) {
+	handle = Handle{allocator};
+	local := fresh_handle(allocator);
+	handle = move(local);
+}
+
+main :: proc() {
+	local: Token = {};
+	store(inout local, Token{42});
+	fmt.println(local.id);
+	keep(move(local));
+	fmt.println(held.id);
+	install_handle(mem.default_allocator());
+}

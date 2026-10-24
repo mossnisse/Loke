@@ -156,6 +156,9 @@ Prov_Region_Content :: struct {
 	// Only allocator handles were stored here, no owner, so the region says what
 	// an owner made from them is in but backs nothing itself.
 	handle: bool,
+	// In a value/result shape, this is the record's own dependency at `path`,
+	// separate from the dependencies of its fields.
+	record: bool,
 }
 
 // The payload under a union's wildcard alternative: unwrapping keeps every borrow
@@ -348,7 +351,7 @@ prov_result_region :: proc(graph: ^Flow_Graph, value: Expr) -> Region_Set {
 
 // The allocator region of one projected result field, without joining siblings.
 @(private = "file")
-prov_result_region_at :: proc(graph: ^Flow_Graph, value: Expr, path: []Proj_Step, owners := false) -> Region_Set {
+prov_result_region_at :: proc(graph: ^Flow_Graph, value: Expr, path: []Proj_Step, owners := false, record := false) -> Region_Set {
 	if owners {
 		type := prov_type_at(graph.k.c, expr_base(value).type, path)
 		if !type_is_managed(graph.k.c, type) {
@@ -357,36 +360,38 @@ prov_result_region_at :: proc(graph: ^Flow_Graph, value: Expr, path: []Proj_Step
 		if fields := region_field_shape(graph.k.c, type, graph.alloc); len(fields) > 0 {
 			out := prov_empty_region(graph)
 			for field in fields {
-				if !field.handle {
+				if field.record {
+					region_merge(&out, prov_result_region_at(graph, value, prov_concat_path(graph, path, field.path), record = true))
+				} else if !field.handle {
 					region_merge(&out, prov_result_region_at(graph, value, prov_concat_path(graph, path, field.path), owners = true))
 				}
 			}
 			return out
 		}
 	}
-	if len(path) == 0 {
+	if len(path) == 0 && !record {
 		return prov_result_region(graph, value)
 	}
 	#partial switch v in prov_through_or_return(value) {
 	case ^Expr_Move:
-		return prov_result_region_at(graph, v.value, path, owners)
+		return prov_result_region_at(graph, v.value, path, owners, record)
 	case ^Expr_Cond:
 		out := prov_empty_region(graph)
-		region_merge(&out, prov_result_region_at(graph, v.then, path, owners))
-		region_merge(&out, prov_result_region_at(graph, v.otherwise, path, owners))
+		region_merge(&out, prov_result_region_at(graph, v.then, path, owners, record))
+		region_merge(&out, prov_result_region_at(graph, v.otherwise, path, owners, record))
 		return out
 	case ^Expr_Or_Else:
 		out := prov_empty_region(graph)
-		region_merge(&out, prov_result_region_at(graph, v.value, path, owners))
+		region_merge(&out, prov_result_region_at(graph, v.value, path, owners, record))
 		if v.fallback != nil {
-			region_merge(&out, prov_result_region_at(graph, v.fallback, path, owners))
+			region_merge(&out, prov_result_region_at(graph, v.fallback, path, owners, record))
 		}
 		return out
 	case ^Expr_Call:
 		if v.dispatch != nil {
 			out := prov_empty_region(graph)
 			for entry in v.dispatch.cases {
-				region_merge(&out, prov_result_region_at(graph, entry.arm, path, owners))
+				region_merge(&out, prov_result_region_at(graph, entry.arm, path, owners, record))
 			}
 			return out
 		}
@@ -394,6 +399,9 @@ prov_result_region_at :: proc(graph: ^Flow_Graph, value: Expr, path: []Proj_Step
 			out := prov_empty_region(graph)
 			matched := false
 			for content in result.region_content {
+				if record && (!content.record || len(content.path) != len(path) || !path_has_exact_prefix(content.path, path)) {
+					continue
+				}
 				if paths_overlap(content.path, path) {
 					matched = true
 					region_merge(&out, content.region)
@@ -403,19 +411,21 @@ prov_result_region_at :: proc(graph: ^Flow_Graph, value: Expr, path: []Proj_Step
 		}
 	case ^Expr_Composite:
 		out := prov_empty_region(graph)
+		// A fresh record has no dependency of its own; only its fields do.
+		if record && len(path) == 0 { return out }
 		for element, index in v.elements {
 			prefix, known := prov_element_prefix(graph, v, index)
 			if !known || element.value == nil || len(path) < len(prefix) {
 				continue
 			}
 			if paths_overlap(prefix, path[:len(prefix)]) {
-				region_merge(&out, prov_result_region_at(graph, element.value, path[len(prefix):], owners))
+				region_merge(&out, prov_result_region_at(graph, element.value, path[len(prefix):], owners, record))
 			}
 		}
 		return out
 	}
 	if root, base, ok := prov_place_of(graph, value); ok {
-		return prov_region_content_at(graph, root, prov_concat_path(graph, base, path), owners)
+		return prov_region_content_at(graph, root, prov_concat_path(graph, base, path), owners || record, record)
 	}
 	return prov_result_region(graph, value)
 }
@@ -424,7 +434,7 @@ prov_result_region_at :: proc(graph: ^Flow_Graph, value: Expr, path: []Proj_Step
 prov_result_region_fields :: proc(graph: ^Flow_Graph, value: Expr, type: Type_Id) -> []Prov_Region_Content {
 	out := region_field_shape(graph.k.c, type, graph.alloc)
 	for &content in out {
-		content.region = prov_result_region_at(graph, value, content.path)
+		content.region = prov_result_region_at(graph, value, content.path, record = content.record)
 	}
 	return out
 }
@@ -1844,7 +1854,7 @@ prov_region_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id, viewed := fals
 
 // The region dependencies at one path; a whole-value fact reaches every path.
 @(private = "file")
-prov_region_content_at :: proc(graph: ^Flow_Graph, root: Root_Id, path: []Proj_Step, owners := false) -> Region_Set {
+prov_region_content_at :: proc(graph: ^Flow_Graph, root: Root_Id, path: []Proj_Step, owners := false, record := false) -> Region_Set {
 	out := prov_empty_region(graph)
 	if root == NO_ROOT {
 		return out
@@ -1854,6 +1864,9 @@ prov_region_content_at :: proc(graph: ^Flow_Graph, root: Root_Id, path: []Proj_S
 		region_merge(&out, direct)
 	}
 	for content in graph.region_content[id] {
+		// The record's own dependency can come from a containing owner, but
+		// never from one of its fields (design.md "Allocator regions and region provenance").
+		if record && len(content.path) > len(path) { continue }
 		if (!owners || !content.handle) && (len(path) == 0 || len(content.path) == 0 || paths_overlap(content.path, path)) {
 			region_merge(&out, content.region)
 		}
@@ -1874,7 +1887,7 @@ prov_define_value_regions :: proc(graph: ^Flow_Graph, root: Root_Id, path: []Pro
 		return
 	}
 	for field in fields {
-		region := prov_result_region_at(graph, value, prov_concat_path(graph, source, field.path))
+		region := prov_result_region_at(graph, value, prov_concat_path(graph, source, field.path), record = field.record)
 		owned := field.handle ? prov_empty_region(graph) : region
 		prov_define_stored_content(graph, root, prov_concat_path(graph, path, field.path), region, owned)
 	}
@@ -2557,6 +2570,8 @@ prov_call_region_content :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []Prov_Re
 		out[index] = Prov_Region_Content {
 			path = path,
 			region = prov_substitute_region(graph, v, content.region),
+			handle = content.handle,
+			record = content.record,
 		}
 	}
 	return out
