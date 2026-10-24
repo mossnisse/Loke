@@ -10,6 +10,13 @@ checklist.
 
 ### Breaking changes
 
+- Union widening, deeply nested indirect logical copies, propagated errors,
+  and directly returned map-literal keys now preserve their allocator-region
+  dependencies. Unsafe resets report `L0537` and returns from local arenas
+  report `L0592`, including through error mappers and widened error domains.
+  Upgrade by dropping dependent values before resetting their region, and
+  allocate returned payloads and keys from an allocator that outlives them.
+
 - Indirect calls returning logical copies now retain borrowed inputs' allocator
   regions, and map index assignment retains the inserted key's region. Unsafe
   resets and escapes now report `L0537` or `L0536`, as their direct-call and
@@ -481,6 +488,18 @@ checklist.
   for any count.
 
 ### Fixed
+
+- Procedures with matching container or record result contracts can again
+  substitute for one another without a spurious `L0645`. Backing allocations
+  and payload fields are checked independently; mismatched fields still fail.
+- Allocator handles held in managed records or shared payloads no longer
+  incorrectly block `free_all` with `L0537`. Their provider must still outlive
+  their use. Switch payload and field bindings preserve the same handle/owner
+  separation as successful unwrapping, avoiding spurious `L0536` stores.
+- Unboxing no longer retains the released box allocation's region. Implicit
+  union payload copies and `as` copies use the destination allocator for new
+  storage, while strings and other retained payload allocations keep their
+  source regions. Independent copies no longer cause spurious `L0537` resets.
 
 - Shared payloads containing allocator handles and `Result` success records
   with owning error types no longer incorrectly report `L0536` for a handle

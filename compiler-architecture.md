@@ -245,22 +245,35 @@ escape reads the fields holding owners and the record's own dependency
 (`prov_result_region_at`). That dependency has its own entry at the record's
 path, so a scalar managed record keeps its moved-parameter escape contract
 through locals and results. Union field steps identify variant indices, so
-success and error payloads have independent facts. Queries follow temporary
-field projections, constructors, and success unwrapping. `Region_Query` selects
+success and error payloads have independent facts. Widening remaps region paths
+by variant label, including through explicit conversions. Queries follow temporary
+field projections, constructors, success unwrapping, and switch bindings.
+Result contracts compare corresponding paths and fact kinds, keeping backing
+dependencies separate from payload dependencies. `Region_Query` selects
 all regions, owner regions, or the value's own backing dependency. Shapes stop
 at a bounded depth; their conservative leaves are queried without expanding
 them again, including for recursive container types.
 
-Generated explicit clones compute copied regions recursively
-(`prov_clone_region_at`): newly allocated storage uses the destination, while
-logical copies retain their source regions. Custom copy hooks use their result
+Copies compute regions recursively (`prov_copied_region_at`), with their source
+expression and allocator kept in `Prov_Region_Copy`. Explicit clones select
+that context through `prov_clone_region_at`; implicit variant copies and copied
+error payloads use the same rules. Newly allocated storage uses the destination,
+while logical copies retain their source regions. Custom copy hooks use their result
 summaries. Container element facts use the same projected-place walk as record
 fields (`prov_define_value_regions`), so nested containers of static strings
 do not retain their old allocation. Shared and weak handles separate their
 control block's allocator from their payload's regions, and copies, downgrades,
 and upgrades keep both. An indirect result capable of sharing storage also
-conservatively retains borrowed input regions. Map index insertion records key
-regions alongside key loans, including through a mutable carrier.
+conservatively retains borrowed input regions, including at a shape depth cut.
+Map index insertion records key regions alongside key loans, including through
+a mutable carrier; whole map-literal regions include their keys too.
+
+Implicit failure returns record the error's region and per-field facts in the
+enclosing result's failure variant (`prov_error_region_fields`). A mapper reads
+the same error facts through `Expr_Propagated_Error`. Deferred resets check the
+returned payload as well as lexical owners. Reset queries exclude allocator
+handle fields while retaining owners and borrowed data; provider destruction
+still checks every control-block dependency.
 
 In the body, a write through a local set from such a parameter counts as one
 through the parameter (`written_aliases`): a carrier into its storage, a copy of

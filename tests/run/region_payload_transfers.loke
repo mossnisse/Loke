@@ -1,0 +1,113 @@
+// design.md "Allocator regions and region provenance" and design.md "Procedure result contracts":
+// independent copies, handle fields, and matching result contracts remain valid.
+package main;
+
+import "core:mem";
+import "core:fmt";
+
+Handle :: move_only struct { allocator: Allocator }
+Pair :: move_only struct { allocator: Allocator, marker: int }
+held: Handle;
+
+install :: proc(@(escape=static) allocator: Allocator) {
+	value: Option(Handle) = .some(Handle{allocator});
+	switch (move(value)) {
+	case .some(handle): held = move(handle);
+	case .none:
+	}
+	pair: Option(Pair) = .some(Pair{allocator, 42});
+	switch (move(pair)) {
+	case .some(captured_allocator, marker):
+		held = Handle{captured_allocator};
+		assert(marker == 42);
+	case .none:
+	}
+}
+
+reset_handles :: proc() {
+	arena := mem.Arena.init();
+	handle := Handle{arena.allocator()};
+	shared_handle := shared(Handle{arena.allocator()});
+	free_all(arena.allocator());
+	fmt.println(make([dynamic]int, 1, handle.allocator).len());
+	fmt.println(make([dynamic]int, 2, shared_handle.get()^.allocator).len());
+}
+
+return_handle :: proc(@(allocator_reset) @(escape=static) allocator: Allocator) -> Handle {
+	defer free_all(allocator);
+	return Handle{allocator};
+}
+
+unbox_and_copy :: proc() {
+	arena := mem.Arena.init();
+	boxed := box("literal", arena.allocator());
+	text := move(boxed).unbox();
+	free_all(arena.allocator());
+	fmt.println(text);
+	source := make([dynamic]int, 3, arena.allocator());
+	kept: Option([dynamic]int) = .some(source);
+	drop(source);
+	free_all(arena.allocator());
+	fmt.println(kept);
+	values: Option([dynamic]int) = .some(make([dynamic]int, 2, arena.allocator()));
+	copy := values.as(.some) or_else make([dynamic]int);
+	drop(values);
+	free_all(arena.allocator());
+	fmt.println(copy.len());
+	Small :: (values: [dynamic]int | blank:);
+	Wide :: (blank: | number: int | values: [dynamic]int);
+	original: Small = .values(make([dynamic]int, 1, arena.allocator()));
+	widened := Wide(original);
+	drop(original);
+	free_all(arena.allocator());
+	assert((widened.as(.values) or_else make([dynamic]int)).len() == 1);
+}
+
+reference :: proc(allocator: Allocator) -> [dynamic]string {
+	return make([dynamic]string, 1, allocator);
+}
+same :: proc(allocator: Allocator) -> [dynamic]string {
+	return make([dynamic]string, 1, allocator);
+}
+Record :: struct { values: [dynamic]string }
+reference_record :: proc(allocator: Allocator) -> Record {
+	return Record{make([dynamic]string, 2, allocator)};
+}
+same_record :: proc(allocator: Allocator) -> Record {
+	return Record{make([dynamic]string, 2, allocator)};
+}
+
+Callback :: type_of(reference);
+Record_Callback :: type_of(reference_record);
+contracts :: proc() {
+	callback: Callback = same;
+	fmt.println(callback(mem.default_allocator()).len());
+	record_callback: Record_Callback = same_record;
+	fmt.println(record_callback(mem.default_allocator()).values.len());
+}
+
+copy_error :: proc(allocator: Allocator) -> Result(int, [dynamic]int) {
+	value: Result(int, [dynamic]int) = .err(make([dynamic]int, 2, allocator));
+	n := value or_return;
+	return .ok(n);
+}
+replace_error :: proc(allocator: Allocator) -> Result(int, string) {
+	value: Result(int, string) = .err(fmt.to_string(allocator, 42));
+	n := move(value) or_return "replacement";
+	return .ok(n);
+}
+independent_errors :: proc() {
+	arena := mem.Arena.init();
+	values := copy_error(arena.allocator());
+	text := replace_error(arena.allocator());
+	free_all(arena.allocator());
+	fmt.println(values, text);
+}
+
+main :: proc() {
+	install(mem.default_allocator());
+	reset_handles();
+	unbox_and_copy();
+	contracts();
+	independent_errors();
+}

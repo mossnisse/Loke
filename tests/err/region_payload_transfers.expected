@@ -1,0 +1,42 @@
+L0537
+@15:2
+region backing `kept`
+L0537
+@25:2
+region backing `kept`
+L0537
+@33:2
+region backing `kept`
+L0537
+@46:2
+region backing `kept`
+L0537
+@66:2
+region backing `kept`
+L0537
+@73:2
+region backing `kept`
+L0592
+@80:7
+backed by `arena`
+L0537
+@96:2
+region backing `kept`
+L0592
+@103:9
+backed by `arena`
+L0592
+@109:9
+backed by `arena`
+L0537
+@116:2
+region backing `kept`
+L0537
+@126:2
+region backing `kept`
+L0645
+@141:47
+inferred contract of `reference`
+L0537
+@144:8
+region backing the returned value

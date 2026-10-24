@@ -1320,7 +1320,7 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false, lends :=
 				}
 				escaping := prov_escape_region(graph, value.expr)
 				if !value.is_inout {
-					graph.returning = new_clone(Prov_Returning{region = escaping, span = expr_span(value.expr)}, graph.alloc)
+					graph.returning = new_clone(Prov_Returning{region = prov_reset_value_region(graph, value.expr), span = expr_span(value.expr)}, graph.alloc)
 				}
 				result_type := expr_base(value.expr).type
 				if sym := symbol_of(graph.k.c, graph.literal.symbol); sym != nil {
@@ -1978,7 +1978,7 @@ walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) -> (carried: []int
 		enter_flow_scope(graph)
 		if graph.mode != .Lifecycle {
 			if len(c.fields) == 0 {
-				prov_bind_case_name(graph, s, c.binding_symbol, c.binding_ref, prov_case_payload(graph, s, c, subject), c.span, consumes)
+				prov_bind_case_name(graph, s, c.binding_symbol, c.binding_ref, prov_case_payload(graph, s, c, subject), c.span, consumes, c.variant_indices)
 			}
 			// design.md "Inspecting a union": each field binding is that field of
 			// the payload, borrowed apart from its siblings.
@@ -1987,7 +1987,7 @@ walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) -> (carried: []int
 					continue
 				}
 				sources := prov_case_field(graph, s, field, subject, c.span)
-				prov_bind_case_name(graph, s, field.symbol, field.is_ref, sources, c.span, consumes, field.slot)
+				prov_bind_case_name(graph, s, field.symbol, field.is_ref, sources, c.span, consumes, c.variant_indices, field.slot)
 			}
 		} else {
 			track_case_binding(graph, c.binding_symbol, consumes)
@@ -2010,11 +2010,11 @@ walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) -> (carried: []int
 @(private = "file")
 prov_bind_case_name :: proc(
 	graph: ^Flow_Graph, s: ^Stmt_Switch, symbol: Symbol_Id, is_ref: bool, sources: []int, span: Span,
-	consumes: bool, slot := -1,
+	consumes: bool, variants: []int, slot := -1,
 ) {
 	// Over a place, the binding is the stored payload, not a copy of it.
 	prov_bind_value(graph, symbol, sources, span, copies = consumes)
-	prov_bind_case_region(graph, symbol, s.subject)
+	prov_bind_case_region(graph, symbol, s.subject, variants, slot)
 	// A place subject keeps its payload, so the binding views its storage;
 	// a consumed one is the binding's own, which ends with its case
 	// (design.md "Switch ownership").
@@ -2189,6 +2189,8 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 				)
 			}
 			proc_symbol := symbol_of(graph.k.c, graph.literal.symbol)
+			outer_returning: ^Prov_Returning
+			if prov { outer_returning = graph.returning }
 			held: []int
 			if prov && proc_symbol != nil && proc_symbol.result != INVALID_TYPE {
 				shape, operand_fallible := fallible_of(graph.k, expr_base(v.operand).type)
@@ -2214,14 +2216,21 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 						}
 					}
 					contents := prov_load_deep(graph, escaping, v.span)
+					region := prov_error_region_at(graph, v, nil, .All)
+					fields := prov_error_region_fields(graph, v, proc_symbol.result)
+					graph.returning = new_clone(Prov_Returning{
+						region = prov_reset_fields_region(graph, proc_symbol.result, fields), span = v.span,
+					}, graph.alloc)
 					prov_emit(graph, Prov_Event {
 						kind = .Escape, sources = escaping, into = contents, span = v.span,
+						region = region, region_content = fields, name = prov_region_name(graph, region),
 					})
 					held = prov_hold_result(graph, prov_join(graph, escaping, contents), proc_symbol.result, v.span)
 				}
 			}
 			emit_cleanups(graph, 0, v, failing = true)
 			if prov {
+				graph.returning = outer_returning
 				prov_entry_report_effects(graph, v.span)
 			}
 			if len(held) > 0 {

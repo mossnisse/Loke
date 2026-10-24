@@ -265,7 +265,9 @@ result_contract_within :: proc(a, b: Result_Provenance) -> bool {
 			if !region_contract_within(a.region, target.region) { return false }
 		} else {
 			for source in a.region_content {
-				if paths_overlap(source.path, target.path) && !region_contract_within(source.region, target.region) { return false }
+				// Backing and payload facts are independent even at overlapping paths.
+				if source.own == target.own && source.handle == target.handle && prov_same_path(source.path, target.path) &&
+				   !region_contract_within(source.region, target.region) { return false }
 			}
 		}
 	}

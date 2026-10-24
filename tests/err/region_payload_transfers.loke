@@ -1,0 +1,149 @@
+// design.md "Allocator regions and region provenance", design.md "Widening by label",
+// and design.md "or_return operator": transferred payloads keep their regions.
+package main;
+
+import "core:mem";
+import "core:fmt";
+
+Small :: (word: string | blank:);
+Wide :: (blank: | number: int | word: string);
+
+widen_local :: proc() {
+	arena := mem.Arena.init();
+	source: Small = .word(fmt.to_string(arena.allocator(), 42));
+	kept: Wide = move(source);
+	free_all(arena.allocator());
+	fmt.println(kept);
+}
+
+widen_extract :: proc() {
+	arena := mem.Arena.init();
+	source: Small = .word(fmt.to_string(arena.allocator(), 42));
+	widened: Wide = move(source);
+	kept := widened.as(.word) or_else "";
+	drop(widened);
+	free_all(arena.allocator());
+	fmt.println(kept);
+}
+
+widen_convert :: proc() {
+	arena := mem.Arena.init();
+	source: Small = .word(fmt.to_string(arena.allocator(), 42));
+	kept := Wide(move(source));
+	free_all(arena.allocator());
+	fmt.println(kept);
+}
+
+Deep :: [1][1][1][1][1][1][1][1][1]string;
+copy_deep :: proc(value: Deep, allocator: Allocator) -> Deep { return value; }
+
+indirect_deep :: proc() {
+	arena := mem.Arena.init();
+	source := Deep{{{{{{{{{fmt.to_string(arena.allocator(), 42)}}}}}}}}};
+	callback: proc(value: Deep, allocator: Allocator) -> Deep = copy_deep;
+	kept := callback(source, mem.default_allocator());
+	drop(source);
+	free_all(arena.allocator());
+	fmt.println(kept);
+}
+
+make_error :: proc(allocator: Allocator) -> Result(int, string) {
+	return .err(fmt.to_string(allocator, 42));
+}
+forward_error :: proc(allocator: Allocator) -> Result(int, string) {
+	n := make_error(allocator) or_return;
+	return .ok(n);
+}
+identity :: proc(error: string) -> string { return error; }
+map_error :: proc(allocator: Allocator) -> Result(int, string) {
+	n := make_error(allocator) or_return identity;
+	return .ok(n);
+}
+
+propagated_error :: proc() {
+	arena := mem.Arena.init();
+	kept := forward_error(arena.allocator());
+	free_all(arena.allocator());
+	fmt.println(kept);
+}
+
+mapped_error :: proc() {
+	arena := mem.Arena.init();
+	kept := map_error(arena.allocator());
+	free_all(arena.allocator());
+	fmt.println(kept);
+}
+
+local_error :: proc() -> Result(int, string) {
+	arena := mem.Arena.init();
+	value: Result(int, string) = .err(fmt.to_string(arena.allocator(), 42));
+	n := move(value) or_return;
+	return .ok(n);
+}
+
+Small_Error :: (word: string | blank:);
+Wide_Error :: (blank: | number: int | word: string);
+small_error :: proc(allocator: Allocator) -> Result(int, Small_Error) {
+	return .err(.word(fmt.to_string(allocator, 42)));
+}
+wide_error :: proc(allocator: Allocator) -> Result(int, Wide_Error) {
+	n := small_error(allocator) or_return;
+	return .ok(n);
+}
+widen_error :: proc() {
+	arena := mem.Arena.init();
+	kept := wide_error(arena.allocator());
+	free_all(arena.allocator());
+	fmt.println(kept);
+}
+
+return_key :: proc() -> map[string]int {
+	arena := mem.Arena.init();
+	key := fmt.to_string(arena.allocator(), 42);
+	return map[string]int{key = 7};
+}
+State :: struct { values: map[string]int }
+return_nested_key :: proc() -> State {
+	arena := mem.Arena.init();
+	key := fmt.to_string(arena.allocator(), 42);
+	return State{map[string]int{key = 7}};
+}
+
+unboxed_string :: proc() {
+	arena := mem.Arena.init();
+	boxed := box(fmt.to_string(arena.allocator(), 42));
+	kept := move(boxed).unbox();
+	free_all(arena.allocator());
+	fmt.println(kept);
+}
+
+union_string_copy :: proc() {
+	arena := mem.Arena.init();
+	source := make([dynamic]string, 1);
+	source[0] = fmt.to_string(arena.allocator(), 42);
+	kept: Option([dynamic]string) = .some(source);
+	drop(source);
+	free_all(arena.allocator());
+	fmt.println(kept);
+}
+
+reference :: proc(allocator: Allocator) -> [dynamic]string {
+	values := make([dynamic]string, 1, allocator);
+	values[0] = "literal".copy();
+	return values;
+}
+different_fields :: proc(allocator: Allocator) -> [dynamic]string {
+	values := make([dynamic]string, 1);
+	values[0] = fmt.to_string(allocator, 42);
+	return values;
+}
+Callback :: type_of(reference);
+bad_contract :: proc() { callback: Callback = different_fields; }
+
+deferred_error_reset :: proc(@(allocator_reset) allocator: Allocator) -> Result(int, string) {
+	defer free_all(allocator);
+	n := make_error(allocator) or_return;
+	return .ok(n);
+}
+
+main :: proc() {}
