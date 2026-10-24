@@ -285,11 +285,24 @@ region reads, writes, and escape checks, including through nested bindings
 and known carrier targets. Carrier targets include an explicit unknown alternative
 (`Written_Alias.target == INVALID_SYMBOL`), which survives alongside known
 targets and prevents an incomplete set from becoming a resolved payload alias.
-Unknown and cyclic cursor targets retain an unresolved alias for the
-owner-escape check. Borrowed payload carrier writes also publish into the
-subject's slots, resolving alias prefixes and translating union tag steps into
+A source capable of holding writable carriers contributes an unknown alternative
+when it has no target facts, including a global carrier read. A known address
+records only the storage it names, not the targets of carriers inside that
+storage. `prov_place_carrier` identifies the last carrier crossed to reach a
+place; alias reads load the carriers held in that storage separately. Targets
+therefore follow successive dereferences and carrier fields without treating
+a pointer variable as its own pointee. Reslicing a carrier forwards its targets;
+slicing owned storage records its address. Written target paths stop at eight
+projections, matching region shapes, and carry the depth precision marker.
+This bounds recursive cursor growth; a truncated projection always joins
+previous content. Unknown and cyclic cursor targets
+retain an unresolved alias for the owner-escape check. Borrowed payload carrier
+writes also publish into the subject's slots, resolving alias prefixes and translating union tag steps into
 carrier-shape wildcards; unknown storage uses the solver's `Publish` event.
-Borrow retention resolves the binding's view loans to the actual destination.
+Publication preserves previous content at possible destinations. Uniqueness
+must survive every alias in a nested chain before a write can replace a
+subject's carrier slot. Borrow retention resolves the binding's view loans to
+the actual destination.
 Temporary-provider queries allocate an identity;
 only walking the handle call registers an evaluated provider to end at the
 statement boundary. A borrowed temporary root also records its managed owner
@@ -297,8 +310,9 @@ and original type, so views and erasure retain its regions. Cleanup traversal
 pops registrations as they run and restores them for other exits; an earlier
 reset therefore sees only owners whose cleanup is still pending. Alternative
 expression branches keep their temporary registrations apart and merge only
-continuing branches. Return cleanup excludes completed expression temporaries
-and staged operands while retaining the returned value's dependencies. The
+continuing branches. `emit_return_cleanups` excludes discarded expression
+temporaries and staged operands while retaining the returned value's
+dependencies, for explicit returns and implicit `or_return` failures alike. The
 statement-end walk borrows the ending root tail as a slice after shrinking the
 registration stack; its queries and root-end events do not append to that stack.
 Reset queries exclude allocator

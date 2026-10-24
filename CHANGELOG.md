@@ -10,6 +10,13 @@ checklist.
 
 ### Breaking changes
 
+- Writes through borrowed payloads now preserve old borrows in every possible
+  destination, and reading an unresolved global carrier retains its target
+  uncertainty alongside earlier known targets. Dangling uses report `L0513`;
+  escaping arena-backed owners report `L0536`. Upgrade by replacing the borrow
+  in each destination before its source ends and allocating retained owners
+  from a region that outlives their storage.
+
 - Borrowed switch payload writes now check the subject's storage lifetime and
   preserve stored borrows after the case ends. A carrier with both known and
   unresolved targets also keeps the owner-escape restriction. Unsafe stores
@@ -509,6 +516,11 @@ checklist.
   for any count.
 
 ### Fixed
+
+- Taking a known local address no longer inherits uncertainty from carriers
+  stored inside that local. Implicit `or_return` exits now discard abandoned
+  argument temporaries before local cleanup, matching explicit returns while
+  preserving the propagated error's dependencies.
 
 - Returning a scalar computed from an arena-backed temporary, or continuing
   after a diverging conditional branch, no longer reports a spurious allocator

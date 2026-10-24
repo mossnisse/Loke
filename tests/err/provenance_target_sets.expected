@@ -1,0 +1,27 @@
+L0513
+@22:14
+used after `local`
+L0513
+@40:14
+used after `local`
+L0536
+@58:27
+storage reached through a pointer or slice
+L0536
+@70:27
+storage reached through a pointer or slice
+L0592
+@82:46
+allocator region that ends when this procedure returns
+L0537
+@86:8
+region backing the returned value
+L0536
+@97:27
+`kept` (file-scope storage)
+L0536
+@108:27
+`kept` (file-scope storage)
+L0536
+@120:27
+`tree` (file-scope storage)

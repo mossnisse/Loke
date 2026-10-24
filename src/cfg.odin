@@ -896,6 +896,26 @@ returned_variant :: proc(graph: ^Flow_Graph, s: ^Stmt_Return) -> (returning, fai
 	return true, false
 }
 
+// design.md "Temporaries and procedure boundaries" and "or_return operator":
+// discarded expression owners end before local cleanup on every return path.
+// The result's own dependencies remain in `graph.returning` and its held loans.
+@(private = "file")
+emit_return_cleanups :: proc(graph: ^Flow_Graph, exit: rawptr, returning := false, failing := false) {
+	if graph.mode == .Lifecycle {
+		emit_cleanups(graph, 0, exit, returning = returning, failing = failing)
+		return
+	}
+	temporaries := graph.temp_roots
+	owners := graph.held_owners
+	graph.temp_roots = nil
+	graph.held_owners = nil
+	defer {
+		graph.temp_roots = temporaries
+		graph.held_owners = owners
+	}
+	emit_cleanups(graph, 0, exit, returning = returning, failing = failing)
+}
+
 // Cleanup events for every registration above `down_to`, innermost first
 // (design.md). `exit` is the jump that runs them, nil at a scope's end; an
 // `unwinding` exit drops each local only where the lifecycle pass found it live.
@@ -1366,17 +1386,7 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false, lends :=
 				held = prov_hold_result(graph, prov_join(graph, sources, contents), result_type, expr_span(value.expr))
 			}
 			returning, failing := returned_variant(graph, s)
-			// design.md "Temporaries and procedure boundaries": the completed
-			// return expression's temporaries end before local cleanup. Keep
-			// the result's dependencies separately in `graph.returning`, and restore
-			// the construction stack for other control-flow paths afterwards.
-			temporaries := graph.temp_roots
-			owners := graph.held_owners
-			graph.temp_roots = nil
-			graph.held_owners = nil
-			emit_cleanups(graph, 0, s, returning = returning, failing = failing)
-			graph.temp_roots = temporaries
-			graph.held_owners = owners
+			emit_return_cleanups(graph, s, returning = returning, failing = failing)
 			graph.returning = outer
 			prov_entry_report_effects(graph, s.span)
 			if len(held) > 0 {
@@ -2279,7 +2289,7 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 					held = prov_hold_result(graph, prov_join(graph, escaping, contents), proc_symbol.result, v.span)
 				}
 			}
-			emit_cleanups(graph, 0, v, failing = true)
+			emit_return_cleanups(graph, v, failing = true)
 			if prov {
 				graph.returning = outer_returning
 				prov_entry_report_effects(graph, v.span)

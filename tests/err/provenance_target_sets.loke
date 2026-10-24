@@ -1,0 +1,125 @@
+// design.md "Values that contain borrows", "Allocator regions and region
+// provenance", and "or_return operator": possible targets keep old borrows,
+// unknown carrier reads remain unknown, and propagated errors keep dependencies.
+package main;
+import "core:mem";
+import "core:fmt";
+
+View :: struct { values: []int }
+One :: union { some: View }
+possible_targets :: proc() {
+	first: One = .some(View{});
+	second: One = .some(View{});
+	{
+		local := [1]int{42};
+		first = .some(View{local[:]});
+		pointer := &mut first;
+		pointer = &mut second;
+		switch (pointer^) {
+		case .some(&mut view): view.values = {};
+		}
+	}
+	fmt.println(first);
+}
+Outer :: union { some: One }
+nested_targets :: proc() {
+	first: Outer = .some(.some(View{}));
+	second: Outer = .some(.some(View{}));
+	{
+		local := [1]int{42};
+		first = .some(.some(View{local[:]}));
+		pointer := &mut first;
+		pointer = &mut second;
+		switch (pointer^) {
+		case .some(&mut inner):
+			switch (inner) {
+			case .some(&mut view): view.values = {};
+			}
+		}
+	}
+	fmt.println(first);
+}
+
+kept: Option([dynamic]string);
+handle: Option(^mut Option([dynamic]string));
+Holder :: struct { handle: Option(^mut Option([dynamic]string)) }
+holder: Holder;
+setup :: proc() {
+	kept = .some(make([dynamic]string));
+	handle = .some(&mut kept);
+	holder.handle = .some(&mut kept);
+}
+global_carrier :: proc() {
+	arena := mem.Arena.init();
+	local: Option([dynamic]string) = .some(make([dynamic]string));
+	pointer := &mut local;
+	pointer = handle or_else return;
+	switch (pointer^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 42));
+	case .none:
+	}
+	drop(local);
+}
+global_field :: proc() {
+	arena := mem.Arena.init();
+	local: Option([dynamic]string) = .some(make([dynamic]string));
+	pointer := &mut local;
+	saved := holder.handle;
+	pointer = saved or_else return;
+	switch (pointer^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 42));
+	case .none:
+	}
+	drop(local);
+}
+
+failure :: proc(allocator: Allocator) -> Result(int, string) {
+	return .err(fmt.to_string(allocator, 42));
+}
+consume :: proc(values: []int, extra: int) -> int { return values.len() + extra; }
+escaping_error :: proc() -> Result(int, string) {
+	arena := mem.Arena.init();
+	result := consume(make([dynamic]int, 2)[:], failure(arena.allocator()) or_return);
+	return .ok(result);
+}
+reset_error :: proc(@(allocator_reset) allocator: Allocator) -> Result(int, string) {
+	defer free_all(allocator);
+	result := failure(allocator) or_return;
+	return .ok(result);
+}
+
+double_global :: proc() {
+	arena := mem.Arena.init();
+	kept = .some(make([dynamic]string));
+	pointer := &mut kept;
+	outer := &mut pointer;
+	switch (outer^^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 42));
+	case .none:
+	}
+}
+Pointers :: struct { value: ^mut Option([dynamic]string) }
+stored_global :: proc() {
+	arena := mem.Arena.init();
+	kept = .some(make([dynamic]string));
+	stored := Pointers{&mut kept};
+	read := &stored;
+	switch (read.value^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 42));
+	case .none:
+	}
+}
+
+Tree :: struct { children: [dynamic]Tree, values: Option([dynamic]string) }
+tree: Tree;
+recursive_global :: proc(flag: bool) {
+	arena := mem.Arena.init();
+	cursor := &mut tree;
+	for (flag) { cursor = &mut cursor^.children[0]; }
+	switch (cursor^.values) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 42));
+	case .none:
+	}
+}
+
+main :: proc() {}

@@ -1,0 +1,147 @@
+// design.md "Values that contain borrows", "Storage roots and borrow carriers",
+// and "or_return operator": unique writes replace, carrier contents do not
+// change a known address, and abandoned arguments end before return cleanup.
+package main;
+import "core:mem";
+import "core:fmt";
+
+View :: struct { values: []int }
+One :: union { some: View }
+unique_target :: proc() {
+	value: One = .some(View{});
+	{
+		local := [1]int{42};
+		value = .some(View{local[:]});
+		pointer := &mut value;
+		switch (pointer^) {
+		case .some(&mut view): view.values = {};
+		}
+	}
+	switch (value) {
+	case .some(view): assert(view.values.len() == 0);
+	}
+}
+
+Payload :: struct { values: [dynamic]string, pointer: ^mut int }
+known_address :: proc() {
+	arena := mem.Arena.init();
+	x := 0;
+	value: Option(Payload) = .some(Payload{make([dynamic]string), &mut x});
+	pointer := &mut value;
+	switch (pointer^) {
+	case .some(&mut payload): payload.values.append(fmt.to_string(arena.allocator(), 42));
+	case .none:
+	}
+	switch (value) {
+	case .some(payload): assert(payload.values[0] == "42");
+	case .none: panic("missing payload");
+	}
+	drop(value);
+	free_all(arena.allocator());
+}
+
+kept: Option([dynamic]string);
+handle: Option(^mut Option([dynamic]string));
+setup :: proc() {
+	kept = .some(make([dynamic]string));
+	handle = .some(&mut kept);
+}
+unknown_target :: proc() {
+	local: Option([dynamic]string) = .some(make([dynamic]string));
+	pointer := &mut local;
+	pointer = handle or_else return;
+	switch (pointer^) {
+	case .some(&mut values): values.append(fmt.to_string(mem.default_allocator(), 42));
+	case .none:
+	}
+	drop(local);
+}
+Links :: struct { unknown, known: ^mut Option([dynamic]string) }
+separate_fields :: proc() {
+	arena := mem.Arena.init();
+	local: Option([dynamic]string) = .some(make([dynamic]string));
+	links := Links{handle or_else return, &mut local};
+	switch (links.known^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 43));
+	case .none:
+	}
+	switch (local) {
+	case .some(values): assert(values[0] == "43");
+	case .none: panic("missing values");
+	}
+	drop(local);
+	free_all(arena.allocator());
+}
+
+consume :: proc(values: []int, extra: int) -> int { return values.len() + extra; }
+consume_owner :: proc(values: [dynamic]int, extra: int) -> int { return values.len() + extra; }
+implicit_view :: proc(value: Option(int)) -> Option(int) {
+	arena := mem.Arena.init();
+	return .some(consume(make([dynamic]int, 2, arena.allocator())[:], value or_return));
+}
+implicit_owner :: proc(value: Option(int)) -> Option(int) {
+	arena := mem.Arena.init();
+	defer free_all(arena.allocator());
+	result := consume_owner(make([dynamic]int, 2, arena.allocator()), value or_return);
+	return .some(result);
+}
+
+Pointers :: struct { value: ^mut Option([dynamic]string) }
+indirect_carriers :: proc() {
+	arena := mem.Arena.init();
+	value: Option([dynamic]string) = .some(make([dynamic]string));
+	pointer := &mut value;
+	outer := &mut pointer;
+	switch (outer^^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 42));
+	case .none:
+	}
+	stored := Pointers{pointer};
+	read := &stored;
+	switch (read.value^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 43));
+	case .none:
+	}
+	switch (value) {
+	case .some(values): assert(values.len() == 2);
+	case .none: panic("missing values");
+	}
+	drop(value);
+	free_all(arena.allocator());
+	array := [1]Option([dynamic]string){.some(make([dynamic]string))};
+	view := &mut array[:];
+	resliced := &mut view[:];
+	switch (resliced[0]) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 44));
+	case .none:
+	}
+	switch (array[0]) {
+	case .some(values): assert(values[0] == "44");
+	case .none: panic("missing element");
+	}
+	drop(array);
+	free_all(arena.allocator());
+}
+
+Node :: struct { children: [dynamic]Node }
+recursive_address :: proc(flag: bool) -> int {
+	root := Node{};
+	cursor := &mut root;
+	for (flag) { cursor = &mut cursor^.children[0]; }
+	return cursor^.children.len();
+}
+
+main :: proc() {
+	unique_target();
+	known_address();
+	setup();
+	unknown_target();
+	separate_fields();
+	indirect_carriers();
+	assert(recursive_address(false) == 0);
+	assert(implicit_view(.none) == .none);
+	assert((implicit_view(.some(3)) or_else 0) == 5);
+	assert(implicit_owner(.none) == .none);
+	assert((implicit_owner(.some(3)) or_else 0) == 5);
+	fmt.println(kept);
+}
