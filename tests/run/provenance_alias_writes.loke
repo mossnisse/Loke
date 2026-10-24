@@ -1,0 +1,109 @@
+// design.md "Values that contain borrows" and "Minimum provenance precision":
+// recursive carrier positions converge; known sources, read-only access, and
+// unrelated fields retain their target facts.
+package main;
+import "core:mem";
+import "core:fmt";
+
+Node :: struct { children: [dynamic]Node, target: Option(^mut int) }
+wrap :: proc(count: int) -> int {
+	node := Node{};
+	for (i := 0; i < count; i += 1) { node = Node{[dynamic]Node{move(node)}, {}}; }
+	return node.children.len();
+}
+kept: Option([dynamic]string);
+handle: Option(^mut Option([dynamic]string));
+setup :: proc() {
+	kept = .some(make([dynamic]string));
+	handle = .some(&mut kept);
+}
+mixed_load :: proc() {
+	local: Option([dynamic]string) = .some(make([dynamic]string));
+	local_pointer := &mut local;
+	switch (handle) {
+	case .some(&mut pointer):
+		outer := &mut local_pointer;
+		outer = &mut pointer;
+		switch (outer^^) {
+		case .some(&mut values): values.append(fmt.to_string(mem.default_allocator(), 42));
+		case .none:
+		}
+	case .none:
+	}
+	drop(local);
+}
+known_sources :: proc() {
+	arena := mem.Arena.init();
+	first: Option([dynamic]string) = .some(make([dynamic]string));
+	second: Option([dynamic]string) = .some(make([dynamic]string));
+	a := &mut first;
+	b := &mut second;
+	outer := &mut a;
+	outer = &mut b;
+	switch (outer^^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 43));
+	case .none:
+	}
+	fmt.println(first, second);
+	drop(first);
+	drop(second);
+	free_all(arena.allocator());
+}
+inspect :: proc(pointer: ^ ^mut Option([dynamic]string)) { }
+Read_Only :: struct { pointer: ^ ^mut Option([dynamic]string) }
+inspect_wrapper :: proc(wrapper: ^Read_Only) { }
+inspect_optional :: proc(optional: Option(^ ^mut Option([dynamic]string))) { }
+read_only :: proc() {
+	arena := mem.Arena.init();
+	value: Option([dynamic]string) = .some(make([dynamic]string));
+	pointer := &mut value;
+	inspect(&pointer);
+	inspect_wrapper(&Read_Only{&mut pointer});
+	inspect_optional(.some(&mut pointer));
+	switch (pointer^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 44));
+	case .none:
+	}
+	fmt.println(value);
+	drop(value);
+	free_all(arena.allocator());
+}
+Pair :: struct { first, second: ^mut Option([dynamic]string) }
+retarget :: proc(pointer: inout ^mut Option([dynamic]string)) { pointer = &mut kept; }
+field_isolation :: proc() {
+	arena := mem.Arena.init();
+	first: Option([dynamic]string) = .some(make([dynamic]string));
+	second: Option([dynamic]string) = .some(make([dynamic]string));
+	pair := Pair{&mut first, &mut second};
+	retarget(inout pair.first);
+	switch (pair.second^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 45));
+	case .none:
+	}
+	fmt.println(first, second);
+	drop(first);
+	drop(second);
+	free_all(arena.allocator());
+}
+retarget_pointer :: proc(pointer: ^mut ^mut Option([dynamic]string)) { pointer^ = &mut kept; }
+callee_default :: proc() {
+	local: Option([dynamic]string) = .some(make([dynamic]string));
+	pointer := &mut local;
+	retarget_pointer(&mut pointer);
+	switch (pointer^) {
+	case .some(&mut values): values.append(fmt.to_string(mem.default_allocator(), 46));
+	case .none:
+	}
+	drop(local);
+}
+
+main :: proc() {
+	assert(wrap(0) == 0 && wrap(3) == 1);
+	setup();
+	mixed_load();
+	known_sources();
+	read_only();
+	field_isolation();
+	callee_default();
+	fmt.println(kept);
+}

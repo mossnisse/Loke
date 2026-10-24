@@ -10,6 +10,13 @@ checklist.
 
 ### Breaking changes
 
+- Indirect carrier loads now retain unresolved alternatives from every possible
+  source. Calls that may overwrite carrier-valued storage also invalidate stale
+  target facts, including through nested wrappers and variadic arguments.
+  Arena-backed owners escaping through these paths now report `L0536`. Upgrade
+  by allocating retained owners from a region that outlives their destination;
+  use read-only access to the carrier itself for calls that only inspect it.
+
 - Writes through borrowed payloads now preserve old borrows in every possible
   destination, and reading an unresolved global carrier retains its target
   uncertainty alongside earlier known targets. Dangling uses report `L0513`;
@@ -516,6 +523,11 @@ checklist.
   for any count.
 
 ### Fixed
+
+- Recursive owning containers containing carriers no longer make analysis grow
+  unbounded carrier-position paths when repeatedly wrapping a moved value.
+  Both target-storage paths and carrier-position paths now converge within the
+  existing conservative projection budget.
 
 - Taking a known local address no longer inherits uncertainty from carriers
   stored inside that local. Implicit `or_return` exits now discard abandoned

@@ -286,16 +286,28 @@ and known carrier targets. Carrier targets include an explicit unknown alternati
 (`Written_Alias.target == INVALID_SYMBOL`), which survives alongside known
 targets and prevents an incomplete set from becoming a resolved payload alias.
 A source capable of holding writable carriers contributes an unknown alternative
-when it has no target facts, including a global carrier read. A known address
+when it has no target facts, including a global carrier read. Indirect loads
+apply this rule per possible source, so one known source cannot hide another
+source's missing facts. Union constructors forward their payload's carrier
+targets; copied payloads also retain an unresolved alternative. A known address
 records only the storage it names, not the targets of carriers inside that
 storage. `prov_place_carrier` identifies the last carrier crossed to reach a
 place; alias reads load the carriers held in that storage separately. Targets
 therefore follow successive dereferences and carrier fields without treating
 a pointer variable as its own pointee. Reslicing a carrier forwards its targets;
-slicing owned storage records its address. Written target paths stop at eight
-projections, matching region shapes, and carry the depth precision marker.
-This bounds recursive cursor growth; a truncated projection always joins
-previous content. Unknown and cyclic cursor targets
+slicing owned storage records its address. Both written target-storage paths
+(`Written_Alias.at`) and carrier-position paths (`Written_Alias.path`) stop at
+eight projections and carry the depth precision marker. This bounds recursive
+cursor growth and repeated container wrapping; a truncated projection always
+joins previous content. `prov_path_below_carrier` collects projections only
+until the closest carrier, then reverses them, without a separate marker array.
+Call processing (`prov_call_written_aliases`) adds unresolved alternatives to
+carrier storage the writable parameter contract may replace. It follows known
+nested targets and borrowed payload aliases, distinguishes read-only storage
+from writable carriers inside it, and handles literal payloads, optional
+payloads, pack elements, and spreads. A visited set distinguishes storage paths
+and write capabilities to terminate cycles. Literal fields and variants use
+their declared capabilities, including weakening, when following targets. Unknown and cyclic cursor targets
 retain an unresolved alias for the owner-escape check. Borrowed payload carrier
 writes also publish into the subject's slots, resolving alias prefixes and translating union tag steps into
 carrier-shape wildcards; unknown storage uses the solver's `Publish` event.

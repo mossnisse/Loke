@@ -3657,69 +3657,53 @@ prov_region_escape_through :: proc(graph: ^Flow_Graph, span: Span, region: Regio
 @(private = "file")
 prov_path_below_carrier :: proc(graph: ^Flow_Graph, destination: Expr) -> []Proj_Step {
 	steps := make([dynamic]Proj_Step, 0, 4, context.temp_allocator)
-	// Steps from the destination inward, each marked whether it passes a
-	// carrier.
-	derefs := make([dynamic]bool, 0, 4, context.temp_allocator)
 	e := destination
 	walk: for {
 		if _, _, ok := prov_place_of(graph, e); ok {
-			break
+			return nil
 		}
 		c := graph.k.c
 		#partial switch v in e {
 		case ^Expr_Selector:
 			if v.resolution.kind != .Field || v.operand == nil {
-				break walk
+				return nil
 			}
 			append(&steps, prov_field_step(graph, v))
-			append(&derefs, false)
 			if type_is_pointer(c, expr_base(v.operand).type) {
-				// An auto-deref: the field is in what the pointer points at.
-				append(&steps, Proj_Step{})
-				append(&derefs, true)
+				break walk
 			}
 			e = v.operand
 		case ^Expr_Postfix:
 			if v.op != .Caret {
+				return nil
+			}
+			if !type_is_box(c, expr_base(v.operand).type) {
 				break walk
 			}
-			if type_is_box(c, expr_base(v.operand).type) {
-				append(&steps, proj_wild())
-				append(&derefs, false)
-			} else {
-				append(&steps, Proj_Step{})
-				append(&derefs, true)
-			}
+			append(&steps, proj_wild())
 			e = v.operand
 		case ^Expr_Index:
 			if len(v.bound) > 0 || v.operand == nil {
-				break walk
+				return nil
 			}
 			#partial switch underlying_kind(c, expr_base(v.operand).type) {
 			case .Array, .Dynamic_Array, .Map:
 				index_path := prov_index_path(graph, v)
 				#reverse for step in index_path {
 					append(&steps, step)
-					append(&derefs, false)
 				}
 			case:
-				// A slice's elements are what it points at.
 				append(&steps, proj_wild())
-				append(&derefs, false)
-				append(&steps, Proj_Step{})
-				append(&derefs, true)
+				break walk
 			}
 			e = v.operand
 		case:
-			break walk
+			return nil
 		}
 	}
-	// Keep only the projections after the last carrier crossed, in path order.
 	out := make([dynamic]Proj_Step, 0, len(steps), graph.alloc)
-	for is_deref, index in derefs {
-		if !is_deref { continue }
-		#reverse for step in steps[:index] { append(&out, step) }
-		break
+	#reverse for step in steps {
+		append(&out, step)
 	}
 	return out[:]
 }
@@ -3782,7 +3766,14 @@ prov_written_aliases_at :: proc(graph: ^Flow_Graph, e: Expr) -> []Written_Alias 
 			if target.target == INVALID_SYMBOL {
 				append(&out, target)
 			} else {
-				append(&out, ..prov_written_aliases_of(graph, target.target, prov_concat_path(graph, target.at, below)))
+				loaded := prov_written_aliases_of(graph, target.target, prov_concat_path(graph, target.at, below))
+				if len(loaded) == 0 && prov_alias_source_is_unknown(graph.k.c, e) {
+					// Each source must contribute facts or uncertainty, even when
+					// another source of this load has known targets.
+					append(&out, Written_Alias{target = INVALID_SYMBOL})
+				} else {
+					append(&out, ..loaded)
+				}
 			}
 		}
 		return out[:]
@@ -3879,6 +3870,17 @@ prov_note_alias_source :: proc(graph: ^Flow_Graph, local: Symbol_Id, value: Expr
 	case ^Expr_Move:
 		prov_note_alias_source(graph, local, v.value, prefix)
 		return
+	case ^Expr_Call:
+		if construction, ok := v.operation.(Call_Union_Construct); ok {
+			if len(v.bound) > 0 && v.bound[0] != nil {
+				payload := prov_extend(graph, prefix, proj_wild())
+				prov_note_alias_source(graph, local, v.bound[0], payload)
+				if construction.clone && prov_type_reaches_mutable(graph.k.c, expr_base(v.bound[0]).type) {
+					prov_add_written_alias(graph, local, Written_Alias{target = INVALID_SYMBOL, path = payload})
+				}
+			}
+			return
+		}
 	case ^Expr_Composite:
 		kind := underlying_kind(graph.k.c, v.type)
 		for element, index in v.elements {
@@ -3944,9 +3946,13 @@ prov_add_written_alias :: proc(graph: ^Flow_Graph, local: Symbol_Id, alias: Writ
 	alias := alias
 	if alias.target == INVALID_SYMBOL {
 		alias.at = nil // uncertainty has no storage path to extend
-	} else if len(alias.at) >= WRITTEN_ALIAS_DEPTH {
-		alias.at = slice.clone(alias.at[:WRITTEN_ALIAS_DEPTH], graph.alloc)
-		alias.at[WRITTEN_ALIAS_DEPTH - 1].precision += {.Depth}
+	}
+	paths := [2]^[]Proj_Step{&alias.at, &alias.path}
+	for path in paths {
+		if len(path^) >= WRITTEN_ALIAS_DEPTH {
+			path^ = slice.clone(path^[:WRITTEN_ALIAS_DEPTH], graph.alloc)
+			path^[WRITTEN_ALIAS_DEPTH - 1].precision += {.Depth}
+		}
 	}
 	existing := graph.written_aliases[local]
 	for known in existing {
@@ -3962,6 +3968,151 @@ prov_add_written_alias :: proc(graph: ^Flow_Graph, local: Symbol_Id, alias: Writ
 		path   = slice.clone(alias.path, graph.alloc),
 	}
 	graph.written_aliases[local] = grown
+}
+
+// A call may replace writable carrier storage without a source expression in
+// this body. Keep an unresolved alternative there, including through nested
+// carriers (design.md "Allocator regions and region provenance").
+@(private = "file")
+prov_call_written_aliases :: proc(graph: ^Flow_Graph, call: ^Expr_Call) {
+	c := graph.k.c
+	info := underlying_info(c, call_proc_type(c, call))
+	if info == nil { return }
+	seen := make([dynamic]Written_Alias_Visit, graph.alloc)
+	for argument, index in call.bound {
+		if index >= len(info.parameters) { continue }
+		if call_packs(call, index) {
+			element := underlying_info(c, info.parameters[index]).element
+			for value in call.variadic_elements { prov_forget_argument_aliases(graph, value, element, false, &seen) }
+			for spread in call.variadic_spreads { prov_forget_argument_aliases(graph, spread, info.parameters[index], false, &seen) }
+			continue
+		}
+		inout := index < len(info.param_modes) && info.param_modes[index] == .Inout
+		prov_forget_argument_aliases(graph, argument, info.parameters[index], inout, &seen)
+	}
+}
+
+@(private = "file")
+prov_forget_argument_aliases :: proc(
+	graph: ^Flow_Graph, argument: Expr, parameter: Type_Id, inout: bool, seen: ^[dynamic]Written_Alias_Visit,
+) {
+	if argument == nil { return }
+	c := graph.k.c
+	if !inout && !carrier_is_mutable(c, parameter) && !prov_type_reaches_mutable(c, parameter) { return }
+	if inout {
+		prov_forget_place_aliases(graph, argument, true, seen)
+		return
+	}
+	#partial switch value in argument {
+	case ^Expr_Composite:
+		for element, index in value.elements {
+			if element.key != nil && underlying_kind(c, value.type) == .Map {
+				prov_forget_argument_aliases(graph, element.key, underlying_info(c, value.type).key, false, seen)
+			}
+			if element.value == nil { continue }
+			type := expr_base(element.value).type
+			if prefix, known := prov_element_prefix(graph, value, index); known { type = prov_type_at(c, value.type, prefix) }
+			prov_forget_argument_aliases(graph, element.value, type, false, seen)
+		}
+		return
+	case ^Expr_Call:
+		if construction, constructs := value.operation.(Call_Union_Construct); constructs {
+			if len(value.bound) > 0 && value.bound[0] != nil {
+				type := value.widened_from == INVALID_TYPE ? value.type : value.widened_from
+				if value.erased_from != INVALID_TYPE { type = value.erased_from }
+				payload := expr_base(value.bound[0]).type
+				if union_info := underlying_info(c, type); union_info != nil && union_info.kind == .Union && construction.index < len(union_info.variants) {
+					payload = union_info.variants[construction.index]
+				}
+				prov_forget_argument_aliases(graph, value.bound[0], payload, false, seen)
+			}
+			return
+		}
+	case ^Expr_Cond:
+		prov_forget_argument_aliases(graph, value.then, parameter, false, seen)
+		prov_forget_argument_aliases(graph, value.otherwise, parameter, false, seen)
+		return
+	case ^Expr_Move:
+		prov_forget_argument_aliases(graph, value.value, parameter, false, seen)
+		return
+	case ^Expr_Or_Else:
+		prov_forget_argument_aliases(graph, value.value, expr_base(value.value).type, false, seen)
+		prov_forget_argument_aliases(graph, value.fallback, parameter, false, seen)
+		return
+	}
+	if address, ok := argument.(^Expr_Unary); ok && address.op == .Amp {
+		prov_forget_place_aliases(graph, address.operand, carrier_is_mutable(c, parameter), seen)
+		return
+	}
+	source := argument
+	if view, ok := argument.(^Expr_Slice); ok {
+		if !type_is_carrier(c, expr_base(view.operand).type) {
+			prov_forget_place_aliases(graph, view.operand, carrier_is_mutable(c, parameter), seen)
+			return
+		}
+		source = view.operand
+	}
+	aliases := prov_written_aliases_at(graph, source)
+	for carrier in carrier_shape(c, parameter) {
+		for alias in aliases {
+			if paths_overlap(alias.path, carrier.steps) {
+				prov_forget_storage_aliases(graph, alias.target, alias.at, carrier.mutable, seen)
+			}
+		}
+	}
+}
+
+Written_Alias_Visit :: struct {
+	target: Symbol_Id,
+	path: []Proj_Step,
+	writable: bool,
+}
+
+@(private = "file")
+prov_forget_place_aliases :: proc(graph: ^Flow_Graph, place: Expr, writable: bool, seen: ^[dynamic]Written_Alias_Visit) {
+	if root, path, ok := prov_place_of(graph, place); ok {
+		prov_forget_storage_aliases(graph, graph.roots[int(root)].symbol, path, writable, seen)
+		return
+	}
+	if prov_place_carrier(graph, place) == nil {
+		// A temporary literal has no named storage, but the carriers it holds
+		// still reach caller storage through their own capabilities.
+		prov_forget_argument_aliases(graph, place, expr_base(place).type, false, seen)
+		return
+	}
+	below := prov_path_below_carrier(graph, place)
+	for alias in prov_written_targets(graph, place, as_place = true) {
+		prov_forget_storage_aliases(graph, alias.target, prov_concat_path(graph, alias.at, below), writable, seen)
+	}
+}
+
+@(private = "file")
+prov_forget_storage_aliases :: proc(
+	graph: ^Flow_Graph, target: Symbol_Id, storage: []Proj_Step, writable: bool, seen: ^[dynamic]Written_Alias_Visit,
+) {
+	sym := symbol_of(graph.k.c, target)
+	if sym == nil { return }
+	path := storage[:min(len(storage), WRITTEN_ALIAS_DEPTH)]
+	for visit in seen^ {
+		if visit.target == target && visit.writable == writable && prov_same_path(visit.path, path) { return }
+	}
+	append(seen, Written_Alias_Visit{target, path, writable})
+	for alias in graph.region_aliases[target] {
+		if alias.root != NO_ROOT {
+			prov_forget_storage_aliases(graph, graph.roots[int(alias.root)].symbol,
+			                           prov_concat_path(graph, alias.path, path), writable, seen)
+		}
+	}
+	for carrier in carrier_shape(graph.k.c, prov_type_at(graph.k.c, sym.type, path)) {
+		at := prov_concat_path(graph, path, carrier.steps)
+		previous := prov_written_aliases_of(graph, target, at)
+		if writable && (carrier.truncated || prov_type_reaches_mutable(graph.k.c, carrier.type)) {
+			prov_add_written_alias(graph, target, Written_Alias{target = INVALID_SYMBOL, path = at})
+		}
+		for alias in previous {
+			prov_forget_storage_aliases(graph, alias.target, alias.at, carrier.mutable, seen)
+		}
+	}
 }
 
 // design.md "Allocator regions and region provenance": a call leaves in each
@@ -5250,6 +5401,7 @@ prov_argument_is_inout :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int) ->
 @(private)
 prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	c := graph.k.c
+	defer prov_call_written_aliases(graph, v)
 	held := len(graph.held_owners)
 	defer resize(&graph.held_owners, held)
 	// A spawned call's arguments are copied for its task, which runs it.
