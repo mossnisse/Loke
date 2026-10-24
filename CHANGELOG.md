@@ -383,6 +383,10 @@ checklist.
 
 ### Changed
 
+- Edited the [language specification](design.md#contents) for clarity and
+  concision, separating rules from exceptions and consolidating repeated
+  explanations. Language behavior, section headings, and examples are unchanged.
+
 - Revised the [structured concurrency proposal](concurrency-proposal.md)
   to check transfers in both directions, global aliases, and allocator cleanup,
   and to handle worker failures explicitly after joining. The proposed syntax
