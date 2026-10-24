@@ -1,0 +1,42 @@
+L0537
+@19:3
+region backing `text`
+L0537
+@26:2
+region backing `value`
+L0537
+@32:48
+region backing `this temporary`
+L0537
+@38:19
+region backing `this temporary`
+L0537
+@44:54
+region backing `this temporary`
+L0537
+@52:56
+region backing `text`
+L0537
+@63:2
+region backing `value`
+L0537
+@74:2
+region backing `value`
+L0537
+@89:2
+region backing `value`
+L0537
+@103:2
+region backing `value`
+L0537
+@115:2
+region backing `kept`
+L0537
+@125:2
+region backing `kept`
+L0537
+@139:2
+region backing `value`
+L0536
+@148:27
+`global_value` (file-scope storage)

@@ -278,6 +278,20 @@ prov_bind_case_region :: proc(graph: ^Flow_Graph, id: Symbol_Id, subject: Expr, 
 	if !prov_type_has_region(graph.k.c, sym.type) {
 		return
 	}
+	// design.md "Inspecting a union": a borrowed binding names the subject's
+	// payload. Region writes through it must reach the same storage too.
+	if sym.borrowed_binding != .None && underlying_kind(graph.k.c, expr_base(subject).type) == .Union && len(variants) > 0 {
+		if root, at, ok := prov_place_of(graph, subject); ok {
+			aliases := make([]Prov_Region_Alias, len(variants), graph.alloc)
+			for variant, index in variants {
+				path := prov_extend(graph, at, proj_field(variant))
+				if slot >= 0 { path = prov_extend(graph, path, proj_field(slot)) }
+				aliases[index] = {root, path}
+			}
+			graph.region_aliases[id] = aliases
+			return
+		}
+	}
 	if underlying_kind(graph.k.c, expr_base(subject).type) == .Union && len(variants) == 1 {
 		path := prov_extend(graph, nil, proj_field(variants[0]))
 		if slot >= 0 { path = prov_extend(graph, path, proj_field(slot)) }
@@ -453,7 +467,6 @@ prov_result_region_at :: proc(graph: ^Flow_Graph, value: Expr, path: []Proj_Step
 			out := prov_empty_region(graph)
 			matched := false
 			for content in result.region_content {
-				if query == .Owners && content.handle { continue }
 				if query == .Own && (!content.own || !prov_same_path(content.path, path)) {
 					continue
 				}
@@ -531,7 +544,7 @@ prov_error_region_at :: proc(graph: ^Flow_Graph, v: ^Expr_Postfix, path: []Proj_
 	}
 	path = prov_concat_path(graph, {proj_field(shape.failure)}, path)
 	if v.borrows && type_is_managed(graph.k.c, from) {
-		return prov_copied_region_at(graph, Prov_Region_Copy{v.operand, Region_Set{default = true}}, shape.union_type, path, query)
+		return prov_copied_region_at(graph, Prov_Region_Copy{value = v.operand, allocator = Region_Set{default = true}}, shape.union_type, path, query)
 	}
 	return prov_result_region_at(graph, v.operand, path, query)
 }
@@ -712,6 +725,7 @@ prov_composite_content :: proc(graph: ^Flow_Graph, v: ^Expr_Composite, content: 
 	for element, index in v.elements {
 		if is_map {
 			loans := walk_flow_expr(graph, element.key)
+			prov_hold_owner(graph, element.key)
 			// The key is evaluated before its own value, which may write what it
 			// read, as may a later element.
 			if len(loans) > 0 && (prov_expr_may_write(element.value) || prov_elements_may_write(v.elements[index + 1:])) {
@@ -726,6 +740,7 @@ prov_composite_content :: proc(graph: ^Flow_Graph, v: ^Expr_Composite, content: 
 		}
 		element_type := prov_element_type(graph, v, index)
 		loans := prov_walk_stored(graph, element.value, element_type)
+		prov_hold_owner(graph, element.value)
 		// design.md "Weakening and reborrows": a mutable carrier stored in an element is a reborrow of it, live
 		// until the literal is built, so no later element may use the same
 		// carrier: `Pair{xs, xs}` would hold two mutable views of one sequence.
@@ -1875,6 +1890,13 @@ prov_empty_region :: proc(graph: ^Flow_Graph) -> Region_Set {
 // Region facts only grow, within a pass and from one pass to the next.
 @(private)
 prov_merge_region_of :: proc(graph: ^Flow_Graph, id: Symbol_Id, set: Region_Set) {
+	if aliases := graph.region_aliases[id]; len(aliases) > 0 {
+		sym := symbol_of(graph.k.c, id)
+		for alias in aliases {
+			prov_define_region_content(graph, alias.root, alias.path, set, handle = !type_is_managed(graph.k.c, sym.type))
+		}
+		return
+	}
 	existing, found := graph.region_of[id]
 	if !found {
 		existing = prov_empty_region(graph)
@@ -1966,6 +1988,12 @@ region_weight :: proc(set: Region_Set) -> int {
 @(private)
 prov_region_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id, viewed := false, owners := false) -> Region_Set {
 	out := prov_empty_region(graph)
+	if aliases := graph.region_aliases[id]; len(aliases) > 0 {
+		for alias in aliases {
+			region_merge(&out, prov_region_content_at(graph, alias.root, alias.path, owners ? .Owners : .All))
+		}
+		return out
+	}
 	sym := symbol_of(graph.k.c, id)
 	carrier := sym != nil && type_is_carrier(graph.k.c, sym.type) && !type_is_region_provider(graph.k.c, sym.type) && type_underlying(graph.k.c, sym.type) != TYPE_ALLOCATOR
 	if direct, found := graph.region_of[id]; found && (viewed || !carrier) {
@@ -1988,6 +2016,12 @@ prov_region_content_at :: proc(graph: ^Flow_Graph, root: Root_Id, path: []Proj_S
 		return out
 	}
 	id := graph.roots[int(root)].symbol
+	if aliases := graph.region_aliases[id]; len(aliases) > 0 {
+		for alias in aliases {
+			region_merge(&out, prov_region_content_at(graph, alias.root, prov_concat_path(graph, alias.path, path), query))
+		}
+		return out
+	}
 	if direct, found := graph.region_of[id]; found {
 		region_merge(&out, direct)
 	}
@@ -2008,20 +2042,50 @@ prov_region_content_at :: proc(graph: ^Flow_Graph, root: Root_Id, path: []Proj_S
 // A record copied or moved as a whole keeps the same field facts as separate
 // writes. In particular, its allocator handles do not back its owners.
 @(private = "file")
-prov_define_value_regions :: proc(graph: ^Flow_Graph, root: Root_Id, path: []Proj_Step, value: Expr, source: []Proj_Step = nil) {
+prov_define_value_regions :: proc(
+	graph: ^Flow_Graph, root: Root_Id, path: []Proj_Step, value: Expr, source: []Proj_Step = nil,
+	copies := false, allocator := Region_Set{default = true},
+) {
 	type := prov_type_at(graph.k.c, expr_base(value).type, source)
 	fields := region_field_shape(graph.k.c, type, graph.alloc)
 	if len(fields) == 0 {
-		region := prov_result_region_at(graph, value, source)
-		owned := prov_result_region_at(graph, value, source, .Owners)
+		region := prov_stored_region_at(graph, value, source, .All, copies, allocator)
+		owned := prov_stored_region_at(graph, value, source, .Owners, copies, allocator)
 		prov_define_stored_content(graph, root, path, region, owned)
 		return
 	}
 	for field in fields {
-		region := prov_result_region_at(graph, value, prov_concat_path(graph, source, field.path), field.own ? .Own : .All)
+		region := prov_stored_region_at(graph, value, prov_concat_path(graph, source, field.path), field.own ? .Own : .All, copies, allocator)
 		owned := field.handle ? prov_empty_region(graph) : region
 		prov_define_stored_content(graph, root, prov_concat_path(graph, path, field.path), region, owned, own = field.own)
 	}
+}
+
+// A stored copy allocates in its destination's allocator before widening
+// remaps the payload tag (design.md "Widening by label").
+@(private = "file")
+prov_stored_region_at :: proc(graph: ^Flow_Graph, value: Expr, path: []Proj_Step, query: Region_Query, copies: bool, allocator: Region_Set) -> Region_Set {
+	if !copies { return prov_result_region_at(graph, value, path, query) }
+	type := expr_base(value).type
+	path := path
+	if from := expr_base(value).widened_from; union_widens_to(graph.k.c, from, type) {
+		mapped, possible := prov_widened_region_path(graph, from, type, path)
+		if !possible { return prov_empty_region(graph) }
+		type, path = from, mapped
+	}
+	return prov_copied_region_at(graph, Prov_Region_Copy{value = value, allocator = allocator, as_type = type}, type, path, query)
+}
+
+@(private = "file")
+prov_destination_allocator :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> Region_Set {
+	if allocator := symbol_via_allocator(graph.k.c, id); allocator != nil { return prov_region_of(graph, allocator) }
+	return Region_Set{default = true}
+}
+
+// A borrowed binding's region facts live at its subject's payload path.
+Prov_Region_Alias :: struct {
+	root: Root_Id,
+	path: []Proj_Step,
 }
 
 // Records a managed value stored at a path. Flow-insensitive, so writes merge.
@@ -2039,6 +2103,12 @@ prov_define_region_content :: proc(
 	}
 	id := graph.roots[int(root)].symbol
 	if id == INVALID_SYMBOL {
+		return
+	}
+	if aliases := graph.region_aliases[id]; len(aliases) > 0 {
+		for alias in aliases {
+			prov_define_region_content(graph, alias.root, prov_concat_path(graph, alias.path, path), region, handle, own)
+		}
 		return
 	}
 	// A handle's entry stays apart from an owner's at the same path, so what
@@ -2589,13 +2659,13 @@ prov_temp_provider_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> Region_S
 
 // The end of a temporary provider's statement ends its region.
 @(private)
-prov_temp_provider_end :: proc(graph: ^Flow_Graph, provider: Temp_Provider) {
+prov_temp_provider_end :: proc(graph: ^Flow_Graph, provider: Temp_Provider, live: Reset_Liveness) {
 	if graph.mode == .Lifecycle {
 		return
 	}
 	set := prov_empty_region(graph)
 	set.locals = provider.bit
-	prov_reset(graph, set, provider.span, true, nil, ends = "this temporary allocator, which ends with its statement,", provider_end = true)
+	prov_reset(graph, set, provider.span, true, nil, live, ends = "this temporary allocator, which ends with its statement,", provider_end = true)
 }
 
 // Exact constructor facts: backing storage is separate from payload fields,
@@ -2790,11 +2860,12 @@ prov_call_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call, result_type: Type_Id
 Prov_Region_Copy :: struct {
 	value: Expr,
 	allocator: Region_Set,
+	as_type: Type_Id,
 }
 
 @(private = "file")
 prov_clone_region_at :: proc(graph: ^Flow_Graph, v: ^Expr_Call, type: Type_Id, path: []Proj_Step, query := Region_Query.All) -> Region_Set {
-	return prov_copied_region_at(graph, Prov_Region_Copy{v.bound[0], prov_allocation_region(graph, v)}, type, path, query)
+	return prov_copied_region_at(graph, Prov_Region_Copy{value = v.bound[0], allocator = prov_allocation_region(graph, v)}, type, path, query)
 }
 
 @(private = "file")
@@ -2802,7 +2873,7 @@ prov_copied_region_at :: proc(graph: ^Flow_Graph, source: Prov_Region_Copy, type
 	type := type
 	for step, index in path {
 		if type_is_shared_handle(graph.k.c, type) {
-			return prov_source_region_at(graph, source.value, path, query)
+			return prov_source_region_at(graph, source.value, path, query, source.as_type)
 		}
 		if hook := lifecycle_of(graph.k.c, type).custom_try_clone; hook != INVALID_SYMBOL {
 			return prov_copy_hook_region(graph, source, hook, path[:index], path[index:], query)
@@ -2821,14 +2892,14 @@ prov_allocation_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call, allocator_inde
 }
 
 @(private = "file")
-prov_source_region_at :: proc(graph: ^Flow_Graph, value: Expr, path: []Proj_Step, query := Region_Query.All) -> Region_Set {
+prov_source_region_at :: proc(graph: ^Flow_Graph, value: Expr, path: []Proj_Step, query := Region_Query.All, as_type := INVALID_TYPE) -> Region_Set {
 	if address, ok := value.(^Expr_Unary); ok && address.op == .Amp {
 		return prov_result_region_at(graph, address.operand, path, query)
 	}
 	if type_is_carrier(graph.k.c, expr_base(value).type) {
 		return prov_storage_region(graph, value)
 	}
-	return prov_result_region_at(graph, value, path, query)
+	return prov_result_region_at(graph, value, path, query, as_type)
 }
 
 @(private = "file")
@@ -2838,7 +2909,7 @@ prov_copy_hook_region :: proc(graph: ^Flow_Graph, source: Prov_Region_Copy, hook
 	summary, found := result_summary(c, hook)
 	out := prov_empty_region(graph)
 	if !found {
-		region_merge(&out, prov_source_region_at(graph, source.value, prefix))
+		region_merge(&out, prov_source_region_at(graph, source.value, prefix, as_type = source.as_type))
 		region_merge(&out, source.allocator)
 		return out
 	}
@@ -2852,7 +2923,6 @@ prov_copy_hook_region :: proc(graph: ^Flow_Graph, source: Prov_Region_Copy, hook
 		matched := false
 		for content in summary.region_content {
 			if query == .Own && (!content.own || !prov_same_path(content.path, projected_path)) { continue }
-			if query == .Owners && content.handle { continue }
 			if content.own && len(content.path) < len(projected_path) { continue }
 			if paths_overlap(content.path, projected_path) {
 				matched = true
@@ -2863,7 +2933,7 @@ prov_copy_hook_region :: proc(graph: ^Flow_Graph, source: Prov_Region_Copy, hook
 	}
 	for wanted, index in set.params {
 		if !wanted { continue }
-		if index == 0 { region_merge(&out, prov_source_region_at(graph, source.value, prefix)) }
+		if index == 0 { region_merge(&out, prov_source_region_at(graph, source.value, prefix, as_type = source.as_type)) }
 		if index == 1 { region_merge(&out, source.allocator) }
 	}
 	out.default ||= set.default
@@ -2875,14 +2945,14 @@ prov_copy_hook_region :: proc(graph: ^Flow_Graph, source: Prov_Region_Copy, hook
 prov_copied_type_region :: proc(graph: ^Flow_Graph, source: Prov_Region_Copy, type: Type_Id, path: []Proj_Step, query: Region_Query, depth := 0) -> Region_Set {
 	c := graph.k.c
 	out := prov_empty_region(graph)
-	if !prov_type_has_region(c, type) || (query == .Owners && !type_is_managed(c, type)) { return out }
+	if !prov_type_has_region(c, type) { return out }
 	if depth > 8 {
-		region_merge(&out, prov_source_region_at(graph, source.value, path))
+		region_merge(&out, prov_source_region_at(graph, source.value, path, as_type = source.as_type))
 		region_merge(&out, source.allocator)
 		return out
 	}
 	if type_underlying(c, type) == TYPE_STRING || type_underlying(c, type) == TYPE_ALLOCATOR || type_is_shared_handle(c, type) || type_is_carrier(c, type) {
-		return prov_source_region_at(graph, source.value, path, query)
+		return prov_source_region_at(graph, source.value, path, query, source.as_type)
 	}
 	if hook := lifecycle_of(c, type).custom_try_clone; hook != INVALID_SYMBOL {
 		return prov_copy_hook_region(graph, source, hook, path, nil, query)
@@ -3021,7 +3091,7 @@ prov_reset :: proc(
 	span: Span,
 	direct: bool,
 	at: ^Expr_Call,
-	cleanup_dead: []Symbol_Id = nil,
+	cleanup_live: Reset_Liveness = {},
 	ends := "",
 	ending := INVALID_SYMBOL,
 	provider_end := false,
@@ -3049,19 +3119,19 @@ prov_reset :: proc(
 	// A live owner in an overlapping region blocks the reset, since its cleanup
 	// still runs. Liveness is lifecycle's answer, recorded one pass earlier; a
 	// dropped owner no longer blocks (design.md).
-	dead := cleanup_dead
+	live := cleanup_live
 	if at != nil {
-		live, found := graph.k.c.reset_dead[Reset_Key{graph.literal, at, INVALID_SYMBOL, graph.expansion}]
+		found: bool
+		live, found = graph.k.c.reset_dead[Reset_Key{graph.literal, at, INVALID_SYMBOL, graph.expansion}]
 		assert(found, "the provenance walk reached a reset the lifecycle walk did not")
-		dead = live.dead
 	}
-	for id in graph.owners_in_scope {
+	for id in live.owners {
 		owner := symbol_of(graph.k.c, id)
 		if owner == nil {
 			continue
 		}
 		// The local being ended is what ends the region, not a dependant of it.
-		if slice.contains(dead, id) || id == ending {
+		if id == ending {
 			continue
 		}
 		if type_is_region_provider(graph.k.c, owner.type) {
@@ -3089,6 +3159,17 @@ prov_reset :: proc(
 		event.owner_span = owner.span
 		break
 	}
+	// Evaluated operands remain live while later operands run.
+	if event.verb == "" {
+		for value in graph.held_owners {
+			region := provider_end ? prov_result_region(graph, value) : prov_reset_value_region(graph, value)
+			if regions_may_overlap(region, set) {
+				event.verb = "this temporary"
+				event.owner_span = expr_span(value)
+				break
+			}
+		}
+	}
 	// design.md "Allocators": a result reaches the caller before the deferred
 	// statements run, so it is live across a reset among them.
 	if event.verb == "" && !provider_end && graph.returning != nil && regions_may_overlap(graph.returning.region, set) {
@@ -3096,6 +3177,15 @@ prov_reset :: proc(
 		event.owner_span = graph.returning.span
 	}
 	prov_emit(graph, event)
+}
+
+// design.md "Evaluation order": an owned value already evaluated is live
+// while later operands run, even when its named source has been moved.
+@(private)
+prov_hold_owner :: proc(graph: ^Flow_Graph, value: Expr) {
+	if value != nil && type_is_managed(graph.k.c, expr_base(value).type) && !expression_is_borrowed_place(value) {
+		append(&graph.held_owners, value)
+	}
 }
 
 // A borrow stored where it outlives the statement, resolved as a place so fields,
@@ -3248,6 +3338,11 @@ prov_type_at :: proc(c: ^Compiler, type: Type_Id, path: []Proj_Step) -> Type_Id 
 // it outlive that region; reports it if so.
 @(private = "file")
 prov_region_escape_into :: proc(graph: ^Flow_Graph, span: Span, id: Symbol_Id, region: Region_Set, owner: string) -> bool {
+	for alias in graph.region_aliases[id] {
+		if prov_region_escape_into(graph, span, graph.roots[int(alias.root)].symbol, region, owner) {
+			return true
+		}
+	}
 	sym := symbol_of(graph.k.c, id)
 	if sym == nil {
 		return false
@@ -4370,7 +4465,7 @@ extended_temporary :: proc(e: Expr) -> Expr {
 // result, an operator's (`a + "yz"`), a conditional's or `or_else`'s, or a
 // moved value. A field or element of one is part of it, so `build().items[:]`
 // ends with its statement too.
-@(private = "file")
+@(private)
 prov_expr_is_temporary :: proc(e: Expr) -> bool {
 	#partial switch v in e {
 	case ^Expr_Composite, ^Expr_Call, ^Expr_Cond, ^Expr_Or_Else, ^Expr_Move, ^Expr_Propagated_Error:
@@ -4407,7 +4502,7 @@ prov_declare :: proc(graph: ^Flow_Graph, d: ^Decl, value_loans: [][]int) {
 			initializer = d.values[symbol_index]
 		}
 		projected := d.destructure.active ? symbol_index : -1
-		prov_declare_region(graph, id, sym, initializer, projected)
+		prov_declare_region(graph, id, sym, initializer, projected, symbol_index < len(d.value_clones) && d.value_clones[symbol_index])
 		if projected < 0 {
 			prov_note_written_alias(graph, id, initializer)
 		}
@@ -4452,6 +4547,7 @@ prov_declare_region :: proc(
 	sym: ^Symbol,
 	initializer: Expr,
 	projected: int = -1,
+	copies := false,
 ) {
 	initializer_region := Region_Set{}
 	if initializer != nil && type_is_carrier(graph.k.c, sym.type) && !type_is_region_provider(graph.k.c, sym.type) {
@@ -4481,7 +4577,6 @@ prov_declare_region :: proc(
 				graph.provider_parents[id] = parent
 			}
 		}
-		append(&graph.owners_in_scope, id)
 		return
 	}
 	if type_underlying(graph.k.c, sym.type) == TYPE_ALLOCATOR || type_is_carrier(graph.k.c, sym.type) {
@@ -4507,7 +4602,7 @@ prov_declare_region :: proc(
 		// than making every field depend on the whole initializer.
 		source: []Proj_Step
 		if projected >= 0 { source = {proj_field(projected)} }
-		prov_define_value_regions(graph, prov_root_for_symbol(graph, id), nil, initializer, source)
+		prov_define_value_regions(graph, prov_root_for_symbol(graph, id), nil, initializer, source, copies, prov_destination_allocator(graph, id))
 	}
 	// An owner copied from a place may be cloned.
 	if initializer != nil && clone_may_allocate(graph.k.c, sym.type) && expression_is_borrowed_place(initializer) {
@@ -4542,11 +4637,6 @@ prov_declare_region :: proc(
 				region = owned,
 			})
 		}
-	}
-	// Every lexical owner registers for reset checks (design.md); its region may
-	// be learned from a later assignment.
-	if sym.duration == .None && managed {
-		append(&graph.owners_in_scope, id)
 	}
 }
 
@@ -4657,7 +4747,7 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 				if !type_is_carrier(graph.k.c, target_type) && type_underlying(graph.k.c, target_type) != TYPE_ALLOCATOR {
 					source: []Proj_Step
 					if s.destructure.active { source = {proj_field(index)} }
-					prov_define_value_regions(graph, prov_root_for_symbol(graph, ident.symbol), nil, value, source)
+					prov_define_value_regions(graph, prov_root_for_symbol(graph, ident.symbol), nil, value, source, index < len(s.rhs_clones) && s.rhs_clones[index], prov_destination_allocator(graph, ident.symbol))
 				} else {
 					prov_merge_region_of(graph, ident.symbol, value_region)
 				}
@@ -4728,7 +4818,7 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 			    type_underlying(graph.k.c, expr_base(target).type) == TYPE_ALLOCATOR) {
 				source: []Proj_Step
 				if s.destructure.active { source = {proj_field(index)} }
-				prov_define_value_regions(graph, root, path, value, source)
+				prov_define_value_regions(graph, root, path, value, source, index < len(s.rhs_clones) && s.rhs_clones[index], prov_destination_allocator(graph, place_root_symbol(target)))
 			}
 			prov_walk_subscripts(graph, target, s.op == .Assign)
 			prov_access(graph, root, path, .Write, expr_span(target))
@@ -4956,6 +5046,8 @@ prov_argument_is_inout :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int) ->
 @(private)
 prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	c := graph.k.c
+	held := len(graph.held_owners)
+	defer resize(&graph.held_owners, held)
 	// A spawned call's arguments are copied for its task, which runs it.
 	graph.task_effects = v == graph.spawning && !c.thread_facts_pending
 	prov_call_allocator_use(graph, v)
@@ -5031,6 +5123,7 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		borrowed: []int
 		for argument, index in v.args {
 			actuals[index] = walk_flow_expr(graph, argument.value)
+			prov_hold_owner(graph, argument.value)
 			borrowed = prov_join(graph, borrowed, actuals[index])
 		}
 		spawned := v == graph.spawning && !graph.k.c.thread_facts_pending
@@ -5060,6 +5153,7 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 			continue
 		}
 		actuals[index] = prov_call_argument(graph, v, index, receiver, has_receiver, container_op, &borrowed)
+		prov_hold_owner(graph, v.bound[index])
 	}
 	if prov_op_lends_receiver(container_op) && len(v.bound) > 0 && v.bound[0] != nil {
 		actuals[0] = prov_lend_split_receiver(graph, split_receiver, split_read, expr_span(v.bound[0]))
@@ -5070,6 +5164,15 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	spawned := v == graph.spawning && !graph.k.c.thread_facts_pending
 	if !spawned {
 		prov_reach_call(graph, callee, actuals, v.span)
+	}
+	// A moved argument now belongs to the callee, which checks its own resets
+	// against that parameter's lifetime. Value arguments remain caller-owned
+	// until the call returns (design.md "Parameter semantics and ABI lowering").
+	resize(&graph.held_owners, held)
+	for argument, index in v.bound {
+		mode := proc_parameter_mode(c, call_proc_type(c, v), index)
+		if index == 0 && has_receiver { mode = receiver }
+		if mode != .Move { prov_hold_owner(graph, argument) }
 	}
 	prov_call_resets(graph, v)
 	prov_call_cross_thread(graph, v)
@@ -5227,6 +5330,7 @@ prov_builtin_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> (result: []int, 
 	// handle's one step, as for a box; the library body hides them in a `rawptr`.
 	if payload, fallible := shared_constructor_payload(c, v); payload != nil {
 		loans := walk_flow_expr(graph, payload)
+		prov_hold_owner(graph, payload)
 		for argument in v.bound[1:] {
 			if argument != nil {
 				walk_flow_expr(graph, argument)
@@ -5255,6 +5359,7 @@ prov_builtin_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> (result: []int, 
 				return nil, true
 			}
 			loans := walk_flow_expr(graph, v.bound[0])
+			prov_hold_owner(graph, v.bound[0])
 			if len(v.bound) > 1 {
 				walk_flow_expr(graph, v.bound[1])
 			}

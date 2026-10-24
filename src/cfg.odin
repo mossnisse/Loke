@@ -71,11 +71,12 @@ Defer_Expansion :: struct {
 	exit:     rawptr,
 }
 
-// The owners dead at one reset point. Lifecycle registers every point it walks
-// and solves the reachable ones, so the provenance walk tells an unreachable
-// point from one the two walks keyed differently, which is a compiler bug.
+// The owners live and symbols dead at one reset point. Lifecycle registers
+// every point it walks and solves the reachable ones, so the provenance walk
+// tells an unreachable point from one the walks keyed differently, a compiler bug.
 Reset_Liveness :: struct {
 	dead:    []Symbol_Id,
+	owners:  []Symbol_Id,
 	reached: bool,
 }
 
@@ -119,12 +120,11 @@ Flow_Cleanup_Kind :: enum {
 	Prov_Root,
 }
 
-// Where an open scope's cleanups and region-backed owners start. Only
+// Where an open scope's cleanups start. Only
 // `leave_flow_scope` pops them, so an abrupt exit can run a scope's cleanups
 // without ending it.
 Flow_Scope :: struct {
 	cleanups: int,
-	owners:   int,
 }
 
 // Locals and defers share one cleanup order: a deferred read is valid only if
@@ -167,6 +167,9 @@ Flow_Graph :: struct {
 	// Walk state both modes keep.
 	// Temporaries ending with the current statement (design.md).
 	temp_roots:     [dynamic]Root_Id,
+	// Lifecycle counts temporary providers until their statement boundary;
+	// provenance keeps their region tokens in `temp_providers` instead.
+	temp_provider_count: int,
 	// The borrowed temporaries a statement extends to its block's end
 	// (`mark_extended_temporaries`).
 	extended:       map[^Expr_Base]bool,
@@ -178,7 +181,6 @@ Flow_Graph :: struct {
 	// The `move`s and `exchange`s whose value becomes a new local or a result,
 	// which takes the provider's region with it rather than ending it.
 	aliased_moves:    map[rawptr]bool,
-	owners_in_scope: [dynamic]Symbol_Id,
 	// The content of the error each `or_return` mapper is called with.
 	propagated_errors: map[^Expr_Postfix][]int,
 
@@ -301,6 +303,10 @@ Prov_State :: struct {
 	// design.md "Allocator regions and region provenance".
 	region_of:       map[Symbol_Id]Region_Set,
 	region_content:  map[Symbol_Id][]Prov_Region_Content,
+	// Borrowed payload bindings name storage in their switch subject.
+	region_aliases:  map[Symbol_Id][]Prov_Region_Alias,
+	// Owned operands held while later operands are evaluated.
+	held_owners:     [dynamic]Expr,
 	// The parent allocator a provider depends on until it is dropped.
 	provider_parents: map[Symbol_Id]Region_Set,
 	param_count:     int,
@@ -393,7 +399,6 @@ build_flow_pass :: proc(
 	graph.held = make([dynamic]int, allocator)
 	graph.lent = make(map[int]bool, 4, allocator)
 	graph.last_uses = make([dynamic]Last_Use, allocator)
-	graph.owners_in_scope = make([dynamic]Symbol_Id, allocator)
 	graph.temp_roots = make([dynamic]Root_Id, allocator)
 	graph.extended = make(map[^Expr_Base]bool, 4, allocator)
 	graph.extended_content = make(map[^Expr_Base][]int, 4, allocator)
@@ -423,6 +428,8 @@ build_flow_pass :: proc(
 		graph.thread_spawns = make([dynamic]Thread_Spawn, allocator)
 		graph.region_of = make(map[Symbol_Id]Region_Set, 8, allocator)
 		graph.region_content = make(map[Symbol_Id][]Prov_Region_Content, 8, allocator)
+		graph.region_aliases = make(map[Symbol_Id][]Prov_Region_Alias, 4, allocator)
+		graph.held_owners = make([dynamic]Expr, allocator)
 		graph.provider_parents = make(map[Symbol_Id]Region_Set, 4, allocator)
 		graph.provider_bits = make(map[Symbol_Id]u64, 4, allocator)
 		graph.map_key_entries = make(map[string]int, 4, allocator)
@@ -621,7 +628,7 @@ emit_unwind_cleanups :: proc(graph: ^Flow_Graph) {
 enter_flow_scope :: proc(graph: ^Flow_Graph) {
 	append(
 		&graph.scopes,
-		Flow_Scope{cleanups = len(graph.in_scope), owners = len(graph.owners_in_scope)},
+		Flow_Scope{cleanups = len(graph.in_scope)},
 	)
 }
 
@@ -630,7 +637,6 @@ leave_flow_scope :: proc(graph: ^Flow_Graph) {
 	scope := pop(&graph.scopes)
 	emit_cleanups(graph, scope.cleanups, nil)
 	resize(&graph.in_scope, scope.cleanups)
-	resize(&graph.owners_in_scope, scope.owners)
 }
 
 @(private = "file")
@@ -858,7 +864,6 @@ drop_cannot_panic :: proc(c: ^Compiler, e: Expr) -> bool {
 @(private = "file")
 emit_deferred :: proc(graph: ^Flow_Graph, index: int, action: Flow_Cleanup, exit: rawptr) {
 	tail := slice.clone(graph.in_scope[index:], graph.alloc)
-	owners := len(graph.owners_in_scope)
 	outer := graph.expansion
 	graph.expansion = {action.deferred, exit}
 	resize(&graph.in_scope, index)
@@ -866,7 +871,6 @@ emit_deferred :: proc(graph: ^Flow_Graph, index: int, action: Flow_Cleanup, exit
 	graph.expansion = outer
 	resize(&graph.in_scope, index)
 	append(&graph.in_scope, ..tail)
-	resize(&graph.owners_in_scope, owners)
 }
 
 // How a `return` meets a pending `errdefer` (design.md "defer statement"): one
@@ -1022,7 +1026,7 @@ provider_region_end :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span, node:
 		return
 	}
 	region := path == nil ? prov_provider_region(graph, id) : prov_provider_region_at(graph, id, path)
-	prov_reset(graph, region, span, true, nil, live.dead, ends, id, provider_end = true)
+	prov_reset(graph, region, span, true, nil, live, ends, id, provider_end = true)
 }
 
 // A `move` out of a local ends what it holds, unless the move is into a new
@@ -1140,7 +1144,7 @@ provider_indirect_end :: proc(graph: ^Flow_Graph, node: rawptr, span: Span, verb
 		return
 	}
 	set := prov_empty_region(graph)
-	for id in graph.owners_in_scope {
+	for id in live.owners {
 		sym := symbol_of(graph.k.c, id)
 		if sym == nil || !type_carries_provider(graph.k.c, sym.type) || !graph.lent_locals[id] {
 			continue
@@ -1153,7 +1157,7 @@ provider_indirect_end :: proc(graph: ^Flow_Graph, node: rawptr, span: Span, verb
 		return
 	}
 	ends := fmt.aprintf("%s through a pointer or slice", verb, allocator = graph.alloc)
-	prov_reset(graph, set, span, true, nil, live.dead, ends, provider_end = true)
+	prov_reset(graph, set, span, true, nil, live, ends, provider_end = true)
 }
 
 // Assigning into a provider inside a local drops the provider there before.
@@ -1244,10 +1248,22 @@ mark_aliased_moves :: proc(graph: ^Flow_Graph, e: Expr) {
 // The temporaries a statement made end with it: providers first, so an owner
 // backed by one is reported, then the temporary roots.
 @(private = "file")
-end_statement_temporaries :: proc(graph: ^Flow_Graph, mark, providers: int) {
-	if graph.prov != nil {
+end_statement_temporaries :: proc(graph: ^Flow_Graph, mark, providers: int, stmt: Stmt) {
+	// A temporary provider can end after a declaration has installed its
+	// owner. Record that boundary in lifecycle too, after the statement's writes.
+	key := Reset_Key{graph.literal, stmt_base(stmt), INVALID_SYMBOL, graph.expansion}
+	if graph.mode == .Lifecycle && graph.temp_provider_count > providers {
+		graph.k.c.cleanup_reset_dead[key] = {}
+		if len(graph.tracked) > 0 {
+			emit(graph, Flow_Event{kind = .Reset_Point, span = stmt_span(stmt), reset = key})
+		}
+		graph.temp_provider_count = providers
+	}
+	if graph.mode != .Lifecycle && len(graph.temp_providers) > providers {
+		live, found := graph.k.c.cleanup_reset_dead[key]
+		assert(found, "the provenance walk ended a temporary provider the lifecycle walk did not")
 		for index := len(graph.temp_providers) - 1; index >= providers; index -= 1 {
-			prov_temp_provider_end(graph, graph.temp_providers[index])
+			prov_temp_provider_end(graph, graph.temp_providers[index], live)
 		}
 		resize(&graph.temp_providers, providers)
 	}
@@ -1268,9 +1284,9 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false, lends :=
 		mark_extended_temporaries(graph.k.c, stmt, &graph.extended)
 	}
 	mark := len(graph.temp_roots)
-	providers := graph.prov == nil ? 0 : len(graph.temp_providers)
+	providers := graph.mode == .Lifecycle ? graph.temp_provider_count : len(graph.temp_providers)
 	defer if !extend {
-		end_statement_temporaries(graph, mark, providers)
+		end_statement_temporaries(graph, mark, providers, stmt)
 	}
 	switch s in stmt {
 	case ^Stmt_Error, ^Item_Impl:
@@ -1449,6 +1465,9 @@ walk_flow_decl :: proc(graph: ^Flow_Graph, d: ^Decl) {
 	if d.kind == .Const || d.top_level {
 		return
 	}
+	held := 0
+	if graph.mode != .Lifecycle { held = len(graph.held_owners) }
+	defer if graph.mode != .Lifecycle { resize(&graph.held_owners, held) }
 	value_loans: [][]int
 	if graph.mode != .Lifecycle && len(d.values) > 0 {
 		value_loans = make([][]int, len(d.values), graph.alloc)
@@ -1473,6 +1492,7 @@ walk_flow_decl :: proc(graph: ^Flow_Graph, d: ^Decl) {
 		if value_loans != nil {
 			value_loans[index] = result
 		}
+		prov_hold_owner(graph, value)
 	}
 	for _, index in d.symbols {
 		if declaration_evaluates_via(graph.k.c, d, index) {
@@ -1578,6 +1598,9 @@ declared_initializer :: proc(d: ^Decl, symbol_index: int) -> (initializer: Expr,
 
 @(private = "file")
 walk_flow_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
+	held := 0
+	if graph.mode != .Lifecycle { held = len(graph.held_owners) }
+	defer if graph.mode != .Lifecycle { resize(&graph.held_owners, held) }
 	if s.lowered != nil {
 		walk_flow_block(graph, s.lowered)
 		return
@@ -1622,6 +1645,7 @@ walk_flow_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 			walk_flow_bound_value(graph, value, nil, s, index)
 		} else if result := walk_flow_assigned(graph, s, value, index); value_loans != nil {
 			value_loans[index] = result
+			prov_hold_owner(graph, value)
 		}
 		// A clone allocates through the destination's `via`, evaluated here.
 		if index < len(s.rhs_clones) && s.rhs_clones[index] && index < len(s.lhs) {
@@ -2311,6 +2335,9 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 		walk_flow_expr(graph, v.hi)
 
 	case ^Expr_Composite:
+		held := 0
+		if prov { held = len(graph.held_owners) }
+		defer if prov { resize(&graph.held_owners, held) }
 		// A non-empty container literal evaluates its destination's `via` first.
 		if len(v.elements) > 0 {
 			walk_flow_expr(graph, v.via)
@@ -2331,8 +2358,10 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 		for element in v.elements {
 			if is_map {
 				walk_flow_expr(graph, element.key)
+				if prov { prov_hold_owner(graph, element.key) }
 			}
 			walk_flow_expr(graph, element.value)
+			if prov { prov_hold_owner(graph, element.value) }
 		}
 		if prov && is_map && len(v.elements) > 0 {
 			prov_key_effects(graph, v.type, v.span)
@@ -2465,6 +2494,10 @@ walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		return nil
 	}
 	provider_container_moves(graph, v)
+	if graph.mode == .Lifecycle && call_provider_op(graph.k.c, v) == .Handle &&
+	   len(v.bound) > 0 && prov_expr_is_temporary(v.bound[0]) {
+		graph.temp_provider_count += 1
+	}
 	if graph.mode != .Lifecycle {
 		out := prov_call(graph, v)
 		provider_container_end(graph, v)

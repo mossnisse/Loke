@@ -1,0 +1,72 @@
+// design.md "Allocator regions and region provenance": dropping an owner or
+// replacing an allocation with an independent copy permits a later reset.
+package main;
+import "core:mem";
+import "core:fmt";
+
+consume :: proc(value: string) { assert(value == "42"); }
+drop_then_reset :: proc(@(allocator_reset) allocator: Allocator, value: move string) {
+	drop(value);
+	free_all(allocator);
+}
+
+owner_boundaries :: proc() {
+	arena := mem.Arena.init();
+	value: Option(string) = .some(fmt.to_string(arena.allocator(), 42));
+	switch (move(value)) {
+	case .some(text):
+		assert(text == "42");
+		drop(text);
+		free_all(arena.allocator());
+	case .none:
+	}
+	// Both a named move and an argument temporary become the callee's owner.
+	text := fmt.to_string(arena.allocator(), 42);
+	drop_then_reset(arena.allocator(), move(text));
+	drop_then_reset(arena.allocator(), fmt.to_string(arena.allocator(), 42));
+	consume(fmt.to_string(arena.allocator(), 42));
+	free_all(arena.allocator());
+	// A case cleanup also ends its owner before the following reset.
+	other: Option(string) = .some(fmt.to_string(arena.allocator(), 42));
+	switch (move(other)) {
+	case .some(payload): consume(payload);
+	case .none:
+	}
+	free_all(arena.allocator());
+}
+
+borrowed_payload :: proc() {
+	arena := mem.Arena.init();
+	value: Option([dynamic]string) = .some(make([dynamic]string));
+	switch (value) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 42));
+	case .none:
+	}
+	fmt.println(value);
+	drop(value);
+	free_all(arena.allocator());
+}
+
+Small :: (values: [dynamic]int | none:);
+Wide :: (none: | other: int | values: [dynamic]int);
+Holder :: struct { value: Wide }
+widened_copies :: proc() {
+	arena := mem.Arena.init();
+	source: Small = .values(make([dynamic]int, 1, arena.allocator()));
+	declared: Wide = source;
+	assigned: Wide = .none;
+	assigned = source;
+	holder := Holder{.none};
+	holder.value = source;
+	// Keep source live to force copies at all three stores.
+	fmt.println(source);
+	drop(source);
+	free_all(arena.allocator());
+	fmt.println(declared, assigned, holder.value);
+}
+
+main :: proc() {
+	owner_boundaries();
+	borrowed_payload();
+	widened_copies();
+}

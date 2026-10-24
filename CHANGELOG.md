@@ -10,6 +10,14 @@ checklist.
 
 ### Breaking changes
 
+- Allocator resets now account for consumed switch payloads, received `move`
+  parameters, and owned arguments held during evaluation. Writes through borrowed
+  switch payloads also retain their region dependencies in the subject. Unsafe
+  resets report `L0537`, and stores through borrowed bindings into longer-lived
+  storage report `L0536`. Upgrade by dropping dependent owners before resetting,
+  evaluate resets before constructing dependent arguments, and allocate stored
+  payloads from an allocator that outlives their destination.
+
 - Union widening, deeply nested indirect logical copies, propagated errors,
   and directly returned map-literal keys now preserve their allocator-region
   dependencies. Unsafe resets report `L0537` and returns from local arenas
@@ -488,6 +496,10 @@ checklist.
   for any count.
 
 ### Fixed
+
+- Implicit union-widening copies in declarations and assignments now use the
+  destination allocator for copied storage, allowing the source region to reset
+  after its owners end. Logical copies still retain their source dependencies.
 
 - Procedures with matching container or record result contracts can again
   substitute for one another without a spurious `L0645`. Backing allocations

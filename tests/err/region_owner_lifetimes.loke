@@ -1,0 +1,153 @@
+// design.md "Allocator regions and region provenance": resets must account
+// for owned bindings, evaluated operands, and writes through borrowed payloads.
+package main;
+import "core:mem";
+import "core:fmt";
+
+reset :: proc(@(allocator_reset) allocator: Allocator) -> int {
+	free_all(allocator);
+	return 0;
+}
+consume :: proc(value: string, ignored: int) { fmt.println(value, ignored); }
+take :: proc(value: move string, ignored: int) { fmt.println(value, ignored); }
+
+consumed_payload :: proc() {
+	arena := mem.Arena.init();
+	value: Option(string) = .some(fmt.to_string(arena.allocator(), 42));
+	switch (move(value)) {
+	case .some(text):
+		free_all(arena.allocator());
+		fmt.println(text);
+	case .none:
+	}
+}
+
+moved_parameter :: proc(@(allocator_reset) allocator: Allocator, value: move string) {
+	free_all(allocator);
+	fmt.println(value);
+}
+
+temporary_argument :: proc() {
+	arena := mem.Arena.init();
+	consume(fmt.to_string(arena.allocator(), 42), reset(arena.allocator()));
+}
+
+moved_argument :: proc() {
+	arena := mem.Arena.init();
+	text := fmt.to_string(arena.allocator(), 42);
+	take(move(text), reset(arena.allocator()));
+}
+
+Pair :: struct { text: string, ignored: int }
+literal_operands :: proc() {
+	arena := mem.Arena.init();
+	value := Pair{fmt.to_string(arena.allocator(), 42), reset(arena.allocator())};
+	fmt.println(value);
+}
+
+assignment_operands :: proc() {
+	arena := mem.Arena.init();
+	text := "";
+	ignored := 0;
+	text, ignored = fmt.to_string(arena.allocator(), 42), reset(arena.allocator());
+	fmt.println(text, ignored);
+}
+
+borrowed_append :: proc() {
+	arena := mem.Arena.init();
+	value: Option([dynamic]string) = .some(make([dynamic]string));
+	switch (value) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 42));
+	case .none:
+	}
+	free_all(arena.allocator());
+	fmt.println(value);
+}
+
+borrowed_field :: proc() {
+	arena := mem.Arena.init();
+	value: Option(Pair) = .some(Pair{"", 0});
+	switch (value) {
+	case .some(&mut pair): pair.text = fmt.to_string(arena.allocator(), 42);
+	case .none:
+	}
+	free_all(arena.allocator());
+	fmt.println(value);
+}
+
+borrowed_nested :: proc() {
+	arena := mem.Arena.init();
+	value: Option(Option([dynamic]string)) = .some(.some(make([dynamic]string)));
+	switch (value) {
+	case .some(&mut inner):
+		switch (inner) {
+		case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 42));
+		case .none:
+		}
+	case .none:
+	}
+	free_all(arena.allocator());
+	fmt.println(value);
+}
+
+append :: proc(values: inout [dynamic]string, allocator: Allocator) {
+	values.append(fmt.to_string(allocator, 42));
+}
+borrowed_call :: proc() {
+	arena := mem.Arena.init();
+	value: Option([dynamic]string) = .some(make([dynamic]string));
+	switch (value) {
+	case .some(&mut values): append(inout values, arena.allocator());
+	case .none:
+	}
+	free_all(arena.allocator());
+	fmt.println(value);
+}
+
+Small :: (values: [dynamic]string | none:);
+Wide :: (none: | other: int | values: [dynamic]string);
+widened_logical_copy :: proc() {
+	arena := mem.Arena.init();
+	source: Small = .values([dynamic]string{fmt.to_string(arena.allocator(), 42)});
+	kept: Wide = source;
+	fmt.println(source);
+	drop(source);
+	free_all(arena.allocator());
+	fmt.println(kept);
+}
+
+widened_destination :: proc() {
+	arena := mem.Arena.init();
+	source: Small = .values(make([dynamic]string, 1));
+	kept: Wide via arena.allocator() = source;
+	fmt.println(source);
+	drop(source);
+	free_all(arena.allocator());
+	fmt.println(kept);
+}
+
+fill :: proc(value: inout Option([dynamic]string), allocator: Allocator) {
+	switch (value) {
+	case .some(&mut values): values.append(fmt.to_string(allocator, 42));
+	case .none:
+	}
+}
+borrowed_callee :: proc() {
+	arena := mem.Arena.init();
+	value: Option([dynamic]string) = .some(make([dynamic]string));
+	fill(inout value, arena.allocator());
+	free_all(arena.allocator());
+	fmt.println(value);
+}
+
+global_value: Option([dynamic]string);
+borrowed_global :: proc() {
+	arena := mem.Arena.init();
+	global_value = .some(make([dynamic]string));
+	switch (global_value) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 42));
+	case .none:
+	}
+}
+
+main :: proc() {}

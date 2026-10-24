@@ -1126,15 +1126,18 @@ record_reset_liveness :: proc(k: ^Checker, graph: ^Flow_Graph, event: Flow_Event
 		return
 	}
 	dead := make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
+	owners := make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
 	for local, slot in graph.tracked {
 		if state[slot] == .Dead {
 			append(&dead, local.symbol)
+		} else if sym := symbol_of(k.c, local.symbol); sym != nil && type_is_managed(k.c, sym.type) {
+			append(&owners, local.symbol)
 		}
 	}
 	if event.call != nil {
-		k.c.reset_dead[event.reset] = {dead[:], true}
+		k.c.reset_dead[event.reset] = {dead = dead[:], owners = owners[:], reached = true}
 	} else {
-		k.c.cleanup_reset_dead[event.reset] = {dead[:], true}
+		k.c.cleanup_reset_dead[event.reset] = {dead = dead[:], owners = owners[:], reached = true}
 	}
 }
 

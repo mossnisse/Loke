@@ -255,9 +255,11 @@ at a bounded depth; their conservative leaves are queried without expanding
 them again, including for recursive container types.
 
 Copies compute regions recursively (`prov_copied_region_at`), with their source
-expression and allocator kept in `Prov_Region_Copy`. Explicit clones select
-that context through `prov_clone_region_at`; implicit variant copies and copied
-error payloads use the same rules. Newly allocated storage uses the destination,
+expression, source type, and allocator kept in `Prov_Region_Copy`. Explicit clones
+select that context through `prov_clone_region_at`; copied declarations and
+assignments, implicit variant copies, and copied error payloads use the same
+rules. Widening remaps destination paths to the source type before querying
+the copy. Newly allocated storage uses the destination,
 while logical copies retain their source regions. Custom copy hooks use their result
 summaries. Container element facts use the same projected-place walk as record
 fields (`prov_define_value_regions`), so nested containers of static strings
@@ -271,7 +273,12 @@ a mutable carrier; whole map-literal regions include their keys too.
 Implicit failure returns record the error's region and per-field facts in the
 enclosing result's failure variant (`prov_error_region_fields`). A mapper reads
 the same error facts through `Expr_Propagated_Error`. Deferred resets check the
-returned payload as well as lexical owners. Reset queries exclude allocator
+returned payload as well as owners lifecycle records at each reset or provider
+end, including consumed bindings and moved parameters. Evaluated owned operands
+are held while later operands run; moved arguments leave that set on entry to
+the callee. Borrowed switch bindings alias their subject's payload paths for
+region reads, writes, and escape checks, including through nested bindings.
+Reset queries exclude allocator
 handle fields while retaining owners and borrowed data; provider destruction
 still checks every control-block dependency.
 
