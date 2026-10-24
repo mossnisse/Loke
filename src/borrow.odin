@@ -894,7 +894,7 @@ new_result_provenance :: proc(c: ^Compiler, param_count: int, type: Type_Id, wit
 // owner, including inside nested records (design.md "Allocator regions and
 // region provenance"). A managed record also keeps its own dependency: a
 // moved parameter's escape contract applies even with only scalar fields.
-// Providers keep their parent region as one value.
+// Providers and shared handles keep their backing region as one value.
 @(private)
 region_field_shape :: proc(c: ^Compiler, type: Type_Id, allocator: mem.Allocator) -> []Prov_Region_Content {
 	out := make([dynamic]Prov_Region_Content, 0, 0, allocator)
@@ -904,8 +904,10 @@ region_field_shape :: proc(c: ^Compiler, type: Type_Id, allocator: mem.Allocator
 
 @(private = "file")
 region_field_shape_into :: proc(c: ^Compiler, type: Type_Id, prefix: []Proj_Step, out: ^[dynamic]Prov_Region_Content, allocator: mem.Allocator) {
+	type := type
+	type = region_record_type(c, type)
 	info := underlying_info(c, type)
-	if info != nil && info.kind == .Struct && !type_is_region_provider(c, type) && len(prefix) < 8 {
+	if info != nil && info.kind == .Struct && !type_is_region_provider(c, type) && !type_is_shared_handle(c, type) && len(prefix) < 8 {
 		if type_is_managed(c, type) {
 			append(out, Prov_Region_Content{path = prefix, record = true})
 		}
@@ -920,6 +922,28 @@ region_field_shape_into :: proc(c: ^Compiler, type: Type_Id, prefix: []Proj_Step
 	} else if len(prefix) > 0 {
 		append(out, Prov_Region_Content{path = prefix, handle = !type_is_managed(c, type)})
 	}
+}
+
+// A wrapper with only one region-carrying alternative has the same record
+// fields as that payload. Other alternatives contribute no region facts.
+// This keeps Option/Result payloads precise without merging their handles
+// into owners (design.md "Allocator regions and region provenance").
+@(private)
+region_record_type :: proc(c: ^Compiler, type: Type_Id) -> Type_Id {
+	type := type
+	for _ in 0..<8 {
+		info := underlying_info(c, type)
+		if info == nil || info.kind != .Union { break }
+		payload := INVALID_TYPE
+		for variant in info.variants {
+			if variant == TYPE_VOID || !prov_type_has_region(c, variant) { continue }
+			if payload != INVALID_TYPE { return type }
+			payload = variant
+		}
+		if payload == INVALID_TYPE { break }
+		type = payload
+	}
+	return type
 }
 
 // Constant map entries are numbered per body, so a summary path widens them to
@@ -2193,7 +2217,7 @@ collect_escape_provenance :: proc(state: ^Prov_State, declaration: Symbol_Id, su
 				}
 				for escaped in event.region_content {
 					for &content in into.region_content {
-						if !paths_equal(content.path, escaped.path) {
+						if !prov_same_path(content.path, escaped.path) {
 							continue
 						}
 						changed = merge_region_provenance(&content.region, escaped.region) || changed
@@ -2232,19 +2256,6 @@ collect_escape_provenance :: proc(state: ^Prov_State, declaration: Symbol_Id, su
 		}
 	}
 	return changed
-}
-
-@(private = "file")
-paths_equal :: proc(a, b: []Proj_Step) -> bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for step, index in a {
-		if step.kind != b[index].kind || step.lo != b[index].lo || step.hi != b[index].hi {
-			return false
-		}
-	}
-	return true
 }
 
 @(private = "file")

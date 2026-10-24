@@ -6570,6 +6570,8 @@ An owning value has **region provenance**: the region supplying its backing stor
 
 An allocator handle carries a region identity without owning storage in that region. In a record holding both handles and owners, only the regions backing its owners constrain owner escape; a handle's region does not back a sibling owner. This holds for a whole-record assignment, a record moved from a local, or one a call returns or writes through an argument, just as for separate field writes. The handle still borrows its provider's control block under [Allocators](#allocators), and an owner later built from that handle takes its region.
 
+Wrapping a record in `Option` or `Result`, unwrapping it, or projecting it from a temporary result preserves that separation and the record's own moved-parameter dependency. A wrapper with only one region-carrying payload has that payload's record field provenance; alternatives that carry no region add none.
+
 Region provenance is distinct from the root provenance carried by a borrow. Their complete composition rule is specified under [How root and region provenance compose](#how-root-and-region-provenance-compose). This section defines the region half: it constrains owner escape and allocator reset, but does not itself grant borrow capabilities or decide whether aliases may overlap.
 
 Procedure checking is conservatively polymorphic over an owning argument's region provenance. Result provenance follows these rules:
@@ -6577,6 +6579,7 @@ Procedure checking is conservatively polymorphic over an owning argument's regio
 - An owner received through a `move` parameter may be used locally or returned. A returned owner keeps the moved value's region dependency. It may be retained in storage the caller owns only when the parameter is written `@(escape=stored)`, and in static storage only with `@(escape=static)`; the call then treats the moved argument as stored, with its region, into each argument the callee may write, or into static storage. A managed record keeps this dependency even when all its fields are unmanaged, including through locals, nested records, and procedure results.
 - Returning an ordinary borrowed managed parameter follows the clone rule under [Parameter semantics](#parameter-semantics-and-abi-lowering). A mutable clone takes the result allocator's region provenance; a shared-storage logical clone keeps the source allocation's provenance.
 - An owning result built with an allocator parameter derives its region provenance from that argument. A call whose body the checker follows is backed by exactly the allocators that body builds the result with, so an allocator argument the body never uses backs nothing. A call it cannot follow, through a procedure value or a `dyn` slot, is backed by every allocator argument.
+- Explicit `clone` and `try_clone` follow the same region rule as other copies: newly allocated storage takes the destination allocator's region, while a logical copy of a `string` or shared handle keeps its existing allocation's region. Generated copies apply this rule recursively to fields and container elements; a custom copy hook uses its result's region provenance.
 - An owner a callee leaves in an argument it may write, through an `inout` parameter or a `^mut` or `[]mut` one, derives its region provenance the same way: after the call, that argument is backed by the regions of the allocator and moved-owner arguments the owner was built from.
 
 A diagnostic identifies the escaping owner and its shorter-lived allocator region.
@@ -6746,6 +6749,8 @@ Threads and retained tasks receive only the arguments explicitly moved or copied
 `Shared(T)` is a library type for shared ownership of one stable `T` payload. A handle always shares a payload, so it has no zero value, and copies use thread-safe handle accounting.
 
 `shared(value)` clones a borrowed value into shared storage; a temporary, or `shared(move(value))`, moves in. `clone` and assignment create another handle, `move` transfers one, and the final `drop` destroys the payload exactly once. A handle is never consumed implicitly at its last use. A handle, strong or weak, carries the borrows its payload holds, as a [box](#owned-values) does (see [Values that contain borrows](#values-that-contain-borrows)), so a `Shared(View)` cannot outlive what its `View` borrows.
+
+Both strong and weak handles keep the allocator region backing their control block. Copies, `downgrade`, and successful `upgrade` preserve that dependency, so the allocator may not be reset while either kind of handle is live, and a handle may not escape a local allocator's lifetime. A payload moved into shared storage keeps its owner regions too; a cloned payload follows the copy rule under [Allocator regions and region provenance](#allocator-regions-and-region-provenance).
 
 Construction uses `mem.default_allocator()` unless an `allocator` argument selects another. Use `try_shared` to handle failure. The shared allocation retains its allocator, so a `Shared(T)` declaration cannot use `via`.
 

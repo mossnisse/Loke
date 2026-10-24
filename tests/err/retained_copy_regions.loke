@@ -1,0 +1,128 @@
+// design.md "Allocator regions and region provenance": explicit logical
+// clones retain their allocation regions, including inside generated copies.
+// Shared and Weak handles keep the region of their common control block.
+package main;
+
+import "core:mem";
+import "core:fmt";
+
+Text :: struct { value: string }
+
+string_clone :: proc() {
+	arena := mem.Arena.init();
+	source := fmt.to_string(arena.allocator(), 42);
+	kept := source.clone();
+	drop(source);
+	free_all(arena.allocator());
+	fmt.println(kept);
+}
+
+fallible_clone :: proc() {
+	arena := mem.Arena.init();
+	source := fmt.to_string(arena.allocator(), 42);
+	kept := source.try_clone() or_else "fallback";
+	drop(source);
+	free_all(arena.allocator());
+	fmt.println(kept);
+}
+
+record_clone :: proc() {
+	arena := mem.Arena.init();
+	source := Text{fmt.to_string(arena.allocator(), 42)};
+	kept := source.clone();
+	drop(source);
+	free_all(arena.allocator());
+	fmt.println(kept.value);
+}
+
+container_clone :: proc() {
+	arena := mem.Arena.init();
+	source: [dynamic]string = {};
+	source.append(fmt.to_string(arena.allocator(), 42));
+	kept := source.clone();
+	drop(source);
+	free_all(arena.allocator());
+	fmt.println(kept[0]);
+}
+
+returned_clone :: proc() -> Text {
+	arena := mem.Arena.init();
+	source := Text{fmt.to_string(arena.allocator(), 42)};
+	return source.clone();
+}
+
+shared_reset :: proc() {
+	arena := mem.Arena.init();
+	kept := shared(42, arena.allocator());
+	free_all(arena.allocator());
+	fmt.println(kept.get()^);
+}
+
+shared_return :: proc() -> Shared(int) {
+	arena := mem.Arena.init();
+	kept := shared(42, arena.allocator());
+	return kept;
+}
+
+shared_clone :: proc() {
+	arena := mem.Arena.init();
+	source := shared(42, arena.allocator());
+	kept := source.clone();
+	drop(source);
+	free_all(arena.allocator());
+	fmt.println(kept.get()^);
+}
+
+weak_handle :: proc() {
+	arena := mem.Arena.init();
+	source := shared(42, arena.allocator());
+	kept := source.downgrade();
+	drop(source);
+	free_all(arena.allocator());
+	fmt.println(kept.strong_count());
+}
+
+fallible_shared :: proc() {
+	arena := mem.Arena.init();
+	kept := try_shared(42, arena.allocator()) or_else shared(0);
+	free_all(arena.allocator());
+	fmt.println(kept.get()^);
+}
+
+upgraded_handle :: proc() {
+	arena := mem.Arena.init();
+	source := shared(42, arena.allocator());
+	weak := source.downgrade();
+	kept := weak.upgrade() or_else shared(0);
+	drop(source);
+	drop(weak);
+	free_all(arena.allocator());
+	fmt.println(kept.get()^);
+}
+
+shared_payload :: proc() {
+	arena := mem.Arena.init();
+	text := fmt.to_string(arena.allocator(), 42);
+	kept := shared(move(text));
+	free_all(arena.allocator());
+	fmt.println(kept.get()^);
+}
+
+main :: proc() {}
+
+Data :: struct { values: [dynamic]int }
+impl Data {
+	release :: hook(drop) proc(self: inout Data) {}
+	copy :: hook(copy) proc(self, allocator: Allocator) -> Result(Data, Allocator_Error) {
+		return .ok(Data{self.values.try_clone(allocator) or_return});
+	}
+}
+Allocator_Box :: struct { allocator: Allocator }
+
+unknown_hook_destination :: proc(@(allocator_reset) allocator: Allocator, box: Allocator_Box) {
+	source := Data{[dynamic]int{1, 2, 3}};
+	kept := source.clone(box.allocator);
+	drop(source);
+	free_all(allocator);
+	fmt.println(kept.values.len());
+}

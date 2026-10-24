@@ -10,6 +10,15 @@ checklist.
 
 ### Breaking changes
 
+- Explicit string clones, generated copies retaining shared storage, and
+  `Shared`/`Weak` handles now keep their backing allocator regions. Resetting
+  those regions while a retained owner is live reports `L0537`, and escaping
+  owners report `L0536` or `L0592`. Copies, downgrades, upgrades, and fallible
+  constructors preserve these checks. Upgrade by resetting the allocator
+  after every dependent handle or logical copy has been dropped, or by using
+  an allocator that outlives them. Allocating clones still use the destination
+  allocator for their new storage.
+
 - A `parallel` task that may write a borrow of its own `thread_local` storage
   back through a mutable argument, or through a read-only one that reaches a
   mutable carrier, such as a `[]^mut ^int` or a variadic `..^mut ^int`,
@@ -466,6 +475,10 @@ checklist.
 
 ### Fixed
 
+- Unwrapping a fresh record from `Option` or `Result`, or copying it from a
+  temporary record field, no longer treats an `@(escape=static)` allocator
+  handle as backing the record itself and incorrectly reports `L0536`.
+  Moved records retain their own escape contracts through the same operations.
 - Managed records with only unmanaged fields again obey a moved parameter's
   escape contract. Storing one in caller-owned storage without
   `@(escape=stored)`, or in static storage without `@(escape=static)`, reports

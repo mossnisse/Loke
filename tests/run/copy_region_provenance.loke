@@ -1,0 +1,97 @@
+// design.md "Allocator regions and region provenance": allocating clones
+// use their destination allocator; logical copies keep their source storage.
+// Handles in wrapped or projected record results are not owner regions.
+package main;
+
+import "core:mem";
+import "core:fmt";
+
+Handle :: move_only struct { allocator: Allocator }
+held: Handle;
+
+optional :: proc(@(escape=static) allocator: Allocator) -> Option(Handle) {
+	return .some(Handle{allocator});
+}
+
+fallible :: proc(@(escape=static) allocator: Allocator) -> Result(Handle, Allocator_Error) {
+	return .ok(Handle{allocator});
+}
+
+Copy_Handle :: struct { allocator: Allocator }
+impl Copy_Handle { release :: hook(drop) proc(self: inout Copy_Handle) {} }
+Wrap :: struct { value: Copy_Handle }
+copied: Copy_Handle;
+
+wrapped :: proc(@(escape=static) allocator: Allocator) -> Wrap {
+	return Wrap{Copy_Handle{allocator}};
+}
+
+install :: proc(@(escape=static) allocator: Allocator) {
+	held = optional(allocator) or_else Handle{allocator};
+	value := optional(allocator);
+	held = move(value) or_else Handle{allocator};
+	held = fallible(allocator) or_else Handle{allocator};
+	copied = wrapped(allocator).value;
+	fmt.println(make([dynamic]int, 2, held.allocator).len());
+}
+
+Text :: struct { value: string }
+
+clones :: proc() {
+	arena := mem.Arena.init();
+	source := make([dynamic]int, 3, arena.allocator());
+	kept := source.clone();
+	drop(source);
+	free_all(arena.allocator());
+	fmt.println(kept.len());
+	text := Text{"hello"};
+	copy := text.try_clone() or_else Text{"fallback"};
+	fmt.println(copy.value);
+	literal_source: [dynamic]string via arena.allocator() = {"literal"};
+	middle := literal_source.clone(arena.allocator());
+	text_copy := middle.clone();
+	drop(literal_source);
+	drop(middle);
+	free_all(arena.allocator());
+	fmt.println(text_copy[0]);
+}
+
+Data :: struct { values: [dynamic]int }
+impl Data {
+	release :: hook(drop) proc(self: inout Data) {}
+	copy :: hook(copy) proc(self, allocator: Allocator) -> Result(Data, Allocator_Error) {
+		return .ok(Data{self.values.try_clone(allocator) or_return});
+	}
+}
+
+custom_copy :: proc() {
+	arena := mem.Arena.init();
+	source := Data{make([dynamic]int, 3, arena.allocator())};
+	kept := source.clone();
+	drop(source);
+	free_all(arena.allocator());
+	fmt.println(kept.values.len());
+}
+
+shared_copy :: proc() {
+	arena := mem.Arena.init();
+	source := make([dynamic]int, 4, arena.allocator());
+	kept := shared(source);
+	drop(source);
+	free_all(arena.allocator());
+	fmt.println(kept.get()^.len());
+	{
+		selected := shared(42, arena.allocator());
+		copy := selected.clone();
+		weak := copy.downgrade();
+		fmt.println(copy.get()^, weak.strong_count());
+	}
+	free_all(arena.allocator());
+}
+
+main :: proc() {
+	install(mem.default_allocator());
+	clones();
+	custom_copy();
+	shared_copy();
+}

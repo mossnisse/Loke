@@ -63,3 +63,9 @@ conditional_borrow :: proc(value: move Token, flag: bool) {
 }
 
 main :: proc() {}
+
+optional_identity :: proc(value: move Token) -> Option(Token) { return .some(move(value)); }
+
+unwrapped_borrow :: proc(value: move Token) {
+	held = optional_identity(move(value)) or_else Token{0};
+}

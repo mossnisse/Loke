@@ -244,9 +244,23 @@ keep record fields separate, recursively (`region_field_shape`), and owner
 escape reads the fields holding owners and the record's own dependency
 (`prov_result_region_at`). That dependency has its own entry at the record's
 path, so a scalar managed record keeps its moved-parameter escape contract
-through locals and results. In the body, a write through a local set from such
-a parameter counts as one through the parameter (`written_aliases`): a carrier into its
-storage, a copy of a read-only carrier (`alias := outs`), or a value holding
+through locals and results. A single region-carrying union payload has the same
+record shape (`region_record_type`), and queries follow temporary field
+projections and union constructors. `Region_Query` selects all regions, owner
+regions, or the record's own dependency.
+
+Generated explicit clones compute copied regions recursively
+(`prov_clone_region_at`): newly allocated storage uses the destination, while
+logical copies retain their source regions. Custom copy hooks use their result
+summaries. Container element facts stay apart from the container allocation
+(`prov_define_container_regions`), so cloning a container of static strings
+does not retain its old allocation. Shared and weak handles are opaque owners
+in region shapes: construction records the control block's allocator and the
+payload's regions, and copies, downgrades, and upgrades keep that dependency.
+
+In the body, a write through a local set from such a parameter counts as one
+through the parameter (`written_aliases`): a carrier into its storage, a copy of
+a read-only carrier (`alias := outs`), or a value holding
 its carriers (`b := box^`, `b := Box{box^.out}`), from either operand of a
 conditional, `or_else`, or `move`. Each alias records the path in the local
 that holds the parameter's carriers (`Written_Alias`), from a literal's field
