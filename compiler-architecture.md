@@ -238,7 +238,11 @@ it, but only the owners' part is checked against the storage it lands in, as a
 store by name checks only an owner. A handle's region content entry is kept
 apart from an owner's at the same path, and a write through a carrier is
 recorded at its path below the carrier (`prov_path_below_carrier`), so
-`dst^.alloc = handle` and `dst^.items = make(...)` stay distinct. In the body, a write through a local set from such a parameter
+`dst^.alloc = handle` and `dst^.items = make(...)` stay distinct. Whole-record
+stores use the same distinction: region facts for locals and procedure results
+keep record fields separate, recursively (`region_field_shape`), and owner
+escape reads only the fields holding owners (`prov_result_region_at`). In the
+body, a write through a local set from such a parameter
 counts as one through the parameter (`written_aliases`): a carrier into its
 storage, a copy of a read-only carrier (`alias := outs`), or a value holding
 its carriers (`b := box^`, `b := Box{box^.out}`), from either operand of a

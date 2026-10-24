@@ -1,0 +1,24 @@
+L0536
+@17:2
+this value is backed by an allocator region this procedure received, so it cannot be stored in `state` (file-scope storage)
+L0536
+@18:41
+an owner this call leaves is backed by an allocator region this procedure received, so it cannot be stored in `state` (file-scope storage)
+L0536
+@20:36
+an owner this call leaves is backed by an allocator region this procedure received, so it cannot be stored in `state` (file-scope storage)
+L0536
+@25:2
+this value is backed by an allocator region created in this procedure, so it cannot be stored in `state` (file-scope storage)
+L0537
+@32:2
+this reset would end the region backing `out`, which is still live here
+L0592
+@39:9
+backed by `arena`
+L0592
+@46:9
+backed by `arena`
+L0647
+@51:2
+this allocator handle borrows the allocator control block it borrows, which does not outlive `state`: process-lifetime storage

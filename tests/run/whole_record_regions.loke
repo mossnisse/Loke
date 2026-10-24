@@ -1,0 +1,75 @@
+// design.md "Allocator regions and region provenance": a whole-record store
+// keeps allocator handles apart from the regions backing its owners, just as
+// separate field stores do, directly, through a carrier, and when forwarded.
+package main;
+
+import "core:mem";
+import "core:fmt";
+
+State :: struct { items: [dynamic]int, alloc: Allocator }
+state: State;
+Envelope :: struct { value: State }
+envelope: Envelope;
+
+set_both :: proc(@(escape=static) handle: Allocator, dst: ^mut State) {
+	dst^ = State{make([dynamic]int, 2, mem.default_allocator()), handle};
+}
+
+forward :: proc(@(escape=static) handle: Allocator, dst: ^mut State) {
+	set_both(handle, dst);
+}
+
+make_state :: proc(@(escape=static) handle: Allocator) -> State {
+	return State{make([dynamic]int, 7, mem.default_allocator()), handle};
+}
+
+make_envelope :: proc(@(escape=static) handle: Allocator) -> Envelope {
+	local := Envelope{make_state(handle)};
+	return local;
+}
+
+set_inout :: proc(@(escape=static) handle: Allocator, dst: inout State) {
+	dst = State{alloc = handle, items = make([dynamic]int, 8, mem.default_allocator())};
+}
+
+install :: proc(@(escape=static) handle: Allocator) {
+	set_both(handle, &mut state);
+	fmt.println(state.items.len());
+	forward(handle, &mut state);
+	fmt.println(state.items.len());
+	{
+		p := &mut state;
+		forward(handle, p);
+	}
+	fmt.println(state.items.len());
+	state = State{make([dynamic]int, 3, mem.default_allocator()), handle};
+	fmt.println(state.items.len());
+	{
+		p := &mut state;
+		p^ = State{make([dynamic]int, 4, mem.default_allocator()), handle};
+	}
+	fmt.println(state.items.len());
+	local := State{make([dynamic]int, 5, mem.default_allocator()), handle};
+	state = move(local);
+	fmt.println(state.items.len());
+	assigned: State = {};
+	assigned = State{make([dynamic]int, 6, mem.default_allocator()), handle};
+	state = move(assigned);
+	fmt.println(state.items.len());
+	state = make_state(handle);
+	fmt.println(state.items.len());
+	envelope = make_envelope(handle);
+	fmt.println(envelope.value.items.len());
+	set_inout(handle, inout state);
+	fmt.println(state.items.len());
+	state = State{make([dynamic]int, 9, mem.default_allocator()), handle}
+		if state.items.len() == 8 else make_state(handle);
+	fmt.println(state.items.len());
+	kept: static State;
+	kept = State{make([dynamic]int, 10, mem.default_allocator()), handle};
+	fmt.println(kept.items.len());
+}
+
+main :: proc() {
+	install(mem.default_allocator());
+}

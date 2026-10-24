@@ -1,0 +1,54 @@
+// design.md "Allocator regions and region provenance": keeping a handle
+// separate from an owner does not let the owner's region escape or be reset
+// while it is live. A retained handle still supplies the region of later owners.
+package main;
+
+import "core:mem";
+import "core:fmt";
+
+State :: struct { items: [dynamic]int, alloc: Allocator }
+state: State;
+
+set_both :: proc(@(escape=static) handle: Allocator, owner_allocator: Allocator, dst: ^mut State) {
+	dst^ = State{make([dynamic]int, 2, owner_allocator), handle};
+}
+
+received :: proc(@(escape=static) handle: Allocator, owner_allocator: Allocator) {
+	state = State{make([dynamic]int, 2, owner_allocator), handle};
+	set_both(handle, owner_allocator, &mut state);
+	p := &mut state;
+	set_both(handle, owner_allocator, p);
+}
+
+local_owner :: proc(@(escape=static) handle: Allocator) {
+	arena := mem.Arena.init();
+	state = State{make([dynamic]int, 2, arena.allocator()), handle};
+}
+
+stored_owner :: proc(@(escape=static) handle: Allocator) {
+	arena := mem.Arena.init();
+	out: State = {};
+	set_both(handle, arena.allocator(), &mut out);
+	free_all(arena.allocator());
+	fmt.println(out.items.len());
+}
+
+retained_handle :: proc() -> [dynamic]int {
+	arena := mem.Arena.init();
+	local := State{make([dynamic]int, 2, mem.default_allocator()), arena.allocator()};
+	return make([dynamic]int, 2, local.alloc);
+}
+
+assigned_handle :: proc() -> [dynamic]int {
+	arena := mem.Arena.init();
+	local: State = {};
+	local = State{make([dynamic]int, 2, mem.default_allocator()), arena.allocator()};
+	return make([dynamic]int, 2, local.alloc);
+}
+
+escaping_handle :: proc() {
+	arena := mem.Arena.init();
+	state = State{make([dynamic]int, 2, mem.default_allocator()), arena.allocator()};
+}
+
+main :: proc() {}

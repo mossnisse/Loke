@@ -841,7 +841,7 @@ Result_Provenance :: struct {
 	content:      []Result_Content_Provenance,
 	// The region component, independent of the root one.
 	region:         Region_Set,
-	region_content: []Prov_Region_Content, // per direct field
+	region_content: []Prov_Region_Content, // per record field, recursively
 }
 
 Proc_Summary :: struct {
@@ -883,18 +883,38 @@ new_result_provenance :: proc(c: ^Compiler, param_count: int, type: Type_Id, wit
 			out.precision |= out.content[index].dependencies.precision
 		}
 	}
-	if info := underlying_info(c, type); info != nil && info.kind == .Struct {
-		out.region_content = make([]Prov_Region_Content, len(info.fields), c.semantic_allocator)
-		for _, index in info.fields {
-			path := make([]Proj_Step, 1, c.semantic_allocator)
-			path[0] = proj_field(index)
-			out.region_content[index] = Prov_Region_Content {
-				path = path,
-				region = Region_Set{params = make([]bool, param_count, c.semantic_allocator)},
-			}
-		}
+	out.region_content = region_field_shape(c, type, c.semantic_allocator)
+	for &content in out.region_content {
+		content.region.params = make([]bool, param_count, c.semantic_allocator)
 	}
 	return out
+}
+
+// Keep record fields separate so a handle's region does not back a sibling
+// owner, including inside nested records (design.md "Allocator regions and
+// region provenance"). Providers keep their parent region as one value.
+@(private)
+region_field_shape :: proc(c: ^Compiler, type: Type_Id, allocator: mem.Allocator) -> []Prov_Region_Content {
+	out := make([dynamic]Prov_Region_Content, 0, 0, allocator)
+	region_field_shape_into(c, type, nil, &out, allocator)
+	return out[:]
+}
+
+@(private = "file")
+region_field_shape_into :: proc(c: ^Compiler, type: Type_Id, prefix: []Proj_Step, out: ^[dynamic]Prov_Region_Content, allocator: mem.Allocator) {
+	info := underlying_info(c, type)
+	if info != nil && info.kind == .Struct && !type_is_region_provider(c, type) && len(prefix) < 8 {
+		for field_id, index in info.fields {
+			field := symbol_of(c, field_id)
+			if field == nil { continue }
+			path := make([]Proj_Step, len(prefix) + 1, allocator)
+			copy(path, prefix)
+			path[len(prefix)] = proj_field(index)
+			region_field_shape_into(c, field.type, path, out, allocator)
+		}
+	} else if len(prefix) > 0 {
+		append(out, Prov_Region_Content{path = prefix, handle = !type_is_managed(c, type)})
+	}
 }
 
 // Constant map entries are numbered per body, so a summary path widens them to

@@ -466,6 +466,13 @@ checklist.
 
 ### Fixed
 
+- A whole-record store no longer treats an allocator handle's region as
+  backing the record's owners. A record containing an `@(escape=static)`
+  handle and an owner built with `mem.default_allocator()` can enter static
+  storage in one assignment, as separate field writes already could. This
+  also works through writable arguments, forwarding calls, local records,
+  and returned records, including nested fields; owners still keep their
+  own regions for escape and reset checks.
 - A call that leaves only an allocator handle in a record holding owners, such
   as `set_allocator(allocator, &mut state)` writing `dst^.alloc = allocator`
   into a file-scope `state: State { items: [dynamic]int, alloc: Allocator }`,

@@ -6568,6 +6568,8 @@ An allocator has a region identity. Copying the allocator preserves that identit
 
 An owning value has **region provenance**: the region supplying its backing storage must outlive it. An owner backed by a local region cannot escape that region through a return, static-duration storage, storage the caller owns, aggregate, or container. Moving the owner preserves the dependency, and so does storing it: a container or aggregate holding the owner is backed by its region too. A write through a pointer or slice has no destination the checker can name, so an owner backed by a local region may not be written through one.
 
+An allocator handle carries a region identity without owning storage in that region. In a record holding both handles and owners, only the regions backing its owners constrain owner escape; a handle's region does not back a sibling owner. This holds for a whole-record assignment, a record moved from a local, or one a call returns or writes through an argument, just as for separate field writes. The handle still borrows its provider's control block under [Allocators](#allocators), and an owner later built from that handle takes its region.
+
 Region provenance is distinct from the root provenance carried by a borrow. Their complete composition rule is specified under [How root and region provenance compose](#how-root-and-region-provenance-compose). This section defines the region half: it constrains owner escape and allocator reset, but does not itself grant borrow capabilities or decide whether aliases may overlap.
 
 Procedure checking is conservatively polymorphic over an owning argument's region provenance. Result provenance follows these rules:
