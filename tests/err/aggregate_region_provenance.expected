@@ -1,0 +1,36 @@
+L0537
+@14:2
+region backing `kept`
+L0537
+@26:2
+region backing `kept`
+L0537
+@36:2
+region backing `kept`
+L0537
+@46:2
+region backing `table`
+L0537
+@56:2
+region backing `table`
+L0536
+@64:15
+`global_table`
+L0536
+@70:2
+`global_table`
+L0537
+@81:2
+region backing `kept`
+L0537
+@90:2
+region backing `kept`
+L0536
+@97:2
+`global_result`
+L0537
+@105:2
+region backing `kept`
+L0537
+@114:2
+region backing `kept`

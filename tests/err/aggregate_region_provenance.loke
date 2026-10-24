@@ -1,0 +1,118 @@
+// design.md "Allocator regions and region provenance" and design.md "Maps":
+// retained payloads and inserted keys keep their backing regions.
+package main;
+
+import "core:mem";
+import "core:fmt";
+
+indirect_clone :: proc() {
+	arena := mem.Arena.init();
+	source := fmt.to_string(arena.allocator(), 42);
+	copy: proc(value: ^string, allocator: Allocator) -> string = string.clone;
+	kept := copy(&source, mem.default_allocator());
+	drop(source);
+	free_all(arena.allocator());
+	fmt.println(kept);
+}
+
+copy_string :: proc(value: string, allocator: Allocator) -> string { return value; }
+
+indirect_copy :: proc() {
+	arena := mem.Arena.init();
+	source := fmt.to_string(arena.allocator(), 42);
+	copy: proc(value: string, allocator: Allocator) -> string = copy_string;
+	kept := copy(source, mem.default_allocator());
+	drop(source);
+	free_all(arena.allocator());
+	fmt.println(kept);
+}
+
+indirect_shared :: proc() {
+	arena := mem.Arena.init();
+	source := shared(42, arena.allocator());
+	copy: proc(value: ^Shared(int), allocator: Allocator) -> Shared(int) = Shared(int).clone;
+	kept := copy(&source, mem.default_allocator());
+	drop(source);
+	free_all(arena.allocator());
+	fmt.println(kept.get()^);
+}
+
+map_key :: proc() {
+	arena := mem.Arena.init();
+	table: map[string]int = {};
+	key := fmt.to_string(arena.allocator(), 42);
+	table[key] = 7;
+	drop(key);
+	free_all(arena.allocator());
+	fmt.println(table.len());
+}
+
+map_key_alias :: proc(@(allocator_reset) allocator: Allocator) {
+	table: map[string]int = {};
+	key := fmt.to_string(allocator, 42);
+	alias := &mut table;
+	alias^[key] = 7;
+	drop(key);
+	free_all(allocator);
+	fmt.println(table.len());
+}
+
+global_table: map[string]int;
+
+map_key_escape :: proc(allocator: Allocator) {
+	key := fmt.to_string(allocator, 42);
+	global_table[key] = 7;
+}
+
+map_key_escape_alias :: proc(allocator: Allocator) {
+	key := fmt.to_string(allocator, 42);
+	alias := &mut global_table;
+	alias^[key] = 7;
+}
+
+State :: struct { values: [dynamic]string }
+
+nested_string :: proc() {
+	arena := mem.Arena.init();
+	source := State{make([dynamic]string)};
+	source.values.append(fmt.to_string(arena.allocator(), 42));
+	kept := source.clone();
+	drop(source);
+	free_all(arena.allocator());
+	fmt.println(kept.values.len());
+}
+
+Handle :: move_only struct { allocator: Allocator }
+
+result_error :: proc() {
+	arena := mem.Arena.init();
+	kept: Result(Handle, string) = .err(fmt.to_string(arena.allocator(), 42));
+	free_all(arena.allocator());
+	fmt.println(kept);
+}
+
+global_result: Result(Handle, string) = .err("");
+
+result_error_escape :: proc(allocator: Allocator) {
+	global_result = .err(fmt.to_string(allocator, 42));
+}
+
+shared_handle_allocation :: proc() {
+	arena := mem.Arena.init();
+	handle := shared(Handle{arena.allocator()});
+	kept := make([dynamic]int, 1, handle.get()^.allocator);
+	drop(handle);
+	free_all(arena.allocator());
+	fmt.println(kept.len());
+}
+
+shared_payload_clone :: proc() {
+	arena := mem.Arena.init();
+	source := shared(fmt.to_string(arena.allocator(), 42));
+	kept := source.clone();
+	drop(source);
+	free_all(arena.allocator());
+	fmt.println(kept.get()^);
+}
+
+main :: proc() {}

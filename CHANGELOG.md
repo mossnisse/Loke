@@ -10,6 +10,13 @@ checklist.
 
 ### Breaking changes
 
+- Indirect calls returning logical copies now retain borrowed inputs' allocator
+  regions, and map index assignment retains the inserted key's region. Unsafe
+  resets and escapes now report `L0537` or `L0536`, as their direct-call and
+  map-method equivalents already did. Upgrade by dropping every retained copy
+  and map before resetting its region, or by using an allocator that outlives
+  the destination.
+
 - Explicit string clones, generated copies retaining shared storage, and
   `Shared`/`Weak` handles now keep their backing allocator regions. Resetting
   those regions while a retained owner is live reports `L0537`, and escaping
@@ -474,6 +481,15 @@ checklist.
   for any count.
 
 ### Fixed
+
+- Shared payloads containing allocator handles and `Result` success records
+  with owning error types no longer incorrectly report `L0536` for a handle
+  backing an owner. Actual payload owners and error allocations retain their
+  escape and reset checks, including after unwrapping or cloning.
+- Generated clones of nested arrays, maps, and boxes distinguish the source
+  container's allocation from retained element storage. A clone containing
+  only independent elements no longer incorrectly blocks resetting the source
+  allocator with `L0537`.
 
 - Unwrapping a fresh record from `Option` or `Result`, or copying it from a
   temporary record field, no longer treats an `@(escape=static)` allocator

@@ -244,19 +244,23 @@ keep record fields separate, recursively (`region_field_shape`), and owner
 escape reads the fields holding owners and the record's own dependency
 (`prov_result_region_at`). That dependency has its own entry at the record's
 path, so a scalar managed record keeps its moved-parameter escape contract
-through locals and results. A single region-carrying union payload has the same
-record shape (`region_record_type`), and queries follow temporary field
-projections and union constructors. `Region_Query` selects all regions, owner
-regions, or the record's own dependency.
+through locals and results. Union field steps identify variant indices, so
+success and error payloads have independent facts. Queries follow temporary
+field projections, constructors, and success unwrapping. `Region_Query` selects
+all regions, owner regions, or the value's own backing dependency. Shapes stop
+at a bounded depth; their conservative leaves are queried without expanding
+them again, including for recursive container types.
 
 Generated explicit clones compute copied regions recursively
 (`prov_clone_region_at`): newly allocated storage uses the destination, while
 logical copies retain their source regions. Custom copy hooks use their result
-summaries. Container element facts stay apart from the container allocation
-(`prov_define_container_regions`), so cloning a container of static strings
-does not retain its old allocation. Shared and weak handles are opaque owners
-in region shapes: construction records the control block's allocator and the
-payload's regions, and copies, downgrades, and upgrades keep that dependency.
+summaries. Container element facts use the same projected-place walk as record
+fields (`prov_define_value_regions`), so nested containers of static strings
+do not retain their old allocation. Shared and weak handles separate their
+control block's allocator from their payload's regions, and copies, downgrades,
+and upgrades keep both. An indirect result capable of sharing storage also
+conservatively retains borrowed input regions. Map index insertion records key
+regions alongside key loans, including through a mutable carrier.
 
 In the body, a write through a local set from such a parameter counts as one
 through the parameter (`written_aliases`): a carrier into its storage, a copy of

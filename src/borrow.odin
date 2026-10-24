@@ -841,7 +841,7 @@ Result_Provenance :: struct {
 	content:      []Result_Content_Provenance,
 	// The region component, independent of the root one.
 	region:         Region_Set,
-	region_content: []Prov_Region_Content, // per record field, recursively
+	region_content: []Prov_Region_Content, // backing and payload facts, recursively
 }
 
 Proc_Summary :: struct {
@@ -894,7 +894,8 @@ new_result_provenance :: proc(c: ^Compiler, param_count: int, type: Type_Id, wit
 // owner, including inside nested records (design.md "Allocator regions and
 // region provenance"). A managed record also keeps its own dependency: a
 // moved parameter's escape contract applies even with only scalar fields.
-// Providers and shared handles keep their backing region as one value.
+// Containers and shared handles separate their allocation from their payload.
+// Union field steps name variant indices; root borrow paths remain unchanged.
 @(private)
 region_field_shape :: proc(c: ^Compiler, type: Type_Id, allocator: mem.Allocator) -> []Prov_Region_Content {
 	out := make([dynamic]Prov_Region_Content, 0, 0, allocator)
@@ -904,46 +905,56 @@ region_field_shape :: proc(c: ^Compiler, type: Type_Id, allocator: mem.Allocator
 
 @(private = "file")
 region_field_shape_into :: proc(c: ^Compiler, type: Type_Id, prefix: []Proj_Step, out: ^[dynamic]Prov_Region_Content, allocator: mem.Allocator) {
-	type := type
-	type = region_record_type(c, type)
 	info := underlying_info(c, type)
-	if info != nil && info.kind == .Struct && !type_is_region_provider(c, type) && !type_is_shared_handle(c, type) && len(prefix) < 8 {
-		if type_is_managed(c, type) {
-			append(out, Prov_Region_Content{path = prefix, record = true})
+	if !prov_type_has_region(c, type) { return }
+	if info != nil && !type_is_region_provider(c, type) && len(prefix) < 8 {
+		payload := shared_payload_type(c, type)
+		compound := payload != INVALID_TYPE || info.kind == .Struct || info.kind == .Union ||
+		            info.kind == .Array || info.kind == .Dynamic_Array || info.kind == .Map || info.kind == .Box
+		if !compound {
+			append(out, Prov_Region_Content{path = prefix, handle = !type_is_managed(c, type)})
+			return
 		}
-		for field_id, index in info.fields {
-			field := symbol_of(c, field_id)
-			if field == nil { continue }
+		if type_is_managed(c, type) {
+			append(out, Prov_Region_Content{path = prefix, own = true})
+		}
+		children := make([dynamic]Type_Id, 0, 0, allocator)
+		if payload != INVALID_TYPE {
+			append(&children, payload)
+		} else if info.kind == .Struct {
+			for field_id in info.fields {
+				field := symbol_of(c, field_id)
+				append(&children, field == nil ? INVALID_TYPE : field.type)
+			}
+		} else if info.kind == .Union {
+			append(&children, ..info.variants)
+		} else if info.kind == .Map {
 			path := make([]Proj_Step, len(prefix) + 1, allocator)
 			copy(path, prefix)
-			path[len(prefix)] = proj_field(index)
-			region_field_shape_into(c, field.type, path, out, allocator)
+			path[len(prefix)] = proj_wild()
+			region_field_shape_into(c, info.key, path_with_field(path, PROJ_MAP_KEY, allocator), out, allocator)
+			region_field_shape_into(c, info.element, path_with_field(path, PROJ_MAP_VALUE, allocator), out, allocator)
+			return
+		} else {
+			append(&children, info.element)
 		}
-	} else if len(prefix) > 0 {
+		for child, index in children {
+			path := make([]Proj_Step, len(prefix) + 1, allocator)
+			copy(path, prefix)
+			path[len(prefix)] = info.kind == .Struct && payload == INVALID_TYPE || info.kind == .Union ? proj_field(index) : proj_wild()
+			region_field_shape_into(c, child, path, out, allocator)
+		}
+	} else {
 		append(out, Prov_Region_Content{path = prefix, handle = !type_is_managed(c, type)})
 	}
 }
 
-// A wrapper with only one region-carrying alternative has the same record
-// fields as that payload. Other alternatives contribute no region facts.
-// This keeps Option/Result payloads precise without merging their handles
-// into owners (design.md "Allocator regions and region provenance").
-@(private)
-region_record_type :: proc(c: ^Compiler, type: Type_Id) -> Type_Id {
-	type := type
-	for _ in 0..<8 {
-		info := underlying_info(c, type)
-		if info == nil || info.kind != .Union { break }
-		payload := INVALID_TYPE
-		for variant in info.variants {
-			if variant == TYPE_VOID || !prov_type_has_region(c, variant) { continue }
-			if payload != INVALID_TYPE { return type }
-			payload = variant
-		}
-		if payload == INVALID_TYPE { break }
-		type = payload
-	}
-	return type
+@(private = "file")
+path_with_field :: proc(prefix: []Proj_Step, index: int, allocator: mem.Allocator) -> []Proj_Step {
+	path := make([]Proj_Step, len(prefix) + 1, allocator)
+	copy(path, prefix)
+	path[len(prefix)] = proj_field(index)
+	return path
 }
 
 // Constant map entries are numbered per body, so a summary path widens them to
@@ -1063,7 +1074,7 @@ receiver_result_summary :: proc(c: ^Compiler, from: Result_Provenance) -> Result
 	out.region_content = make([]Prov_Region_Content, len(from.region_content), c.semantic_allocator)
 	for content, index in from.region_content {
 		out.region_content[index] = Prov_Region_Content{
-			path = content.path, region = receiver_region(c, content.region), handle = content.handle, record = content.record,
+			path = content.path, region = receiver_region(c, content.region), handle = content.handle, own = content.own,
 		}
 	}
 	return out

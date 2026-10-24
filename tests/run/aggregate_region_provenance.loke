@@ -1,0 +1,88 @@
+// design.md "Allocator regions and region provenance": backing allocations,
+// payload owners, and allocator handles remain separate through aggregates.
+package main;
+
+import "core:mem";
+import "core:fmt";
+
+Handle :: move_only struct { allocator: Allocator }
+held: Handle;
+shared_handle: Option(Shared(Handle));
+
+make_handle :: proc(@(escape=static) allocator: Allocator) -> Result(Handle, string) {
+	return .ok(Handle{allocator});
+}
+
+propagate :: proc(@(escape=static) allocator: Allocator) -> Result(Handle, string) {
+	return .ok(make_handle(allocator) or_return);
+}
+
+install :: proc(@(escape=static) allocator: Allocator) {
+	held = make_handle(allocator) or_else Handle{allocator};
+	result := propagate(allocator);
+	held = move(result) or_else Handle{allocator};
+	shared_handle = .some(shared(Handle{allocator}));
+	shared_handle = .some(try_shared(Handle{allocator}) or_else shared(Handle{allocator}));
+	fmt.println(make([dynamic]int, 2, held.allocator).len());
+}
+
+State :: struct {
+	values: [dynamic]string,
+	table: map[string]string,
+	boxed: Box([dynamic]string),
+}
+
+make_state :: proc(allocator: Allocator) -> State {
+	return State{
+		make([dynamic]string, 1, allocator),
+		make(map[string]string, allocator),
+		box(make([dynamic]string, 2, allocator), allocator),
+	};
+}
+
+nested_copies :: proc() {
+	arena := mem.Arena.init();
+	source := make_state(arena.allocator());
+	kept := source.clone();
+	again := kept.try_clone() or_else make_state(mem.default_allocator());
+	drop(source);
+	free_all(arena.allocator());
+	fmt.println(again.values.len(), again.table.len(), again.boxed^.len());
+	{
+		table: map[string]int = {};
+		key := fmt.to_string(arena.allocator(), 42);
+		table[key] = 7;
+		fmt.println(table.len());
+	}
+	free_all(arena.allocator());
+}
+
+copy_array :: proc(value: ^[dynamic]int, allocator: Allocator) -> [dynamic]int {
+	return value^.clone(allocator);
+}
+
+indirect_array :: proc() {
+	arena := mem.Arena.init();
+	source := make([dynamic]int, 3, arena.allocator());
+	copy: proc(value: ^[dynamic]int, allocator: Allocator) -> [dynamic]int = copy_array;
+	kept := copy(&source, mem.default_allocator());
+	drop(source);
+	free_all(arena.allocator());
+	fmt.println(kept.len());
+}
+
+Node :: struct { left: Option(Box(Node)), right: Option(Box(Node)) }
+
+recursive_shape :: proc() -> Node {
+	root := Node{.none, .none};
+	return root.clone();
+}
+
+main :: proc() {
+	install(mem.default_allocator());
+	nested_copies();
+	indirect_array();
+	root := recursive_shape();
+	copy := Node{.none, .none};
+	copy = move(root);
+}
