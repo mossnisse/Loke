@@ -58,3 +58,37 @@ These records do not isolate provenance analysis time, normalization time,
 graph replay counts, or analysis arena peak memory. Add those measurements when
 the normalized replay boundary is introduced; retain the process-level record
 for total cost comparisons.
+
+### Storage and place normalization (stage 2)
+
+[provenance-normalization-stage2.json](provenance-normalization-stage2.json)
+records the stage 2 working tree following `ba8443f`, measured on 2026-10-25
+with the same machine, tools, repeat count, and unchanged workload source hashes
+as the initial baseline. No test suite or other compiler workload ran during
+capture. Compiler and LSP SHA-256 values were:
+
+- `lokec.exe`:
+  `12dfe0741ea01e3dcac2acbb4ce256f1f201a898d38de5250be69eac06e1c285`.
+- `loke-lsp.exe`:
+  `bef30fa2265c9c845a02c0a7ec0b11d8f7b46591d07ccd18f4c708a3a7e4da7e`.
+
+Capture command:
+
+```powershell
+.\perf.ps1 -Baseline bench/baselines/provenance-normalization-before.json -Out bench/baselines/provenance-normalization-stage2.json
+```
+
+| Workload | Initial front end (ms) | Stage 2 front end (ms) | Initial / stage 2 compiler peak (MB) |
+| --- | ---: | ---: | ---: |
+| `bench/provenance.loke` | 36 | 38 | 12.3 / 12.3 |
+| `bench/workspace` | 404 | 453 | 63.5 / 63.6 |
+| `examples/corpus_runner.loke` | 648 | 728 | 98.4 / 98.2 |
+
+The measured front-end increases are about 6%, 12%, and 12%, respectively.
+Workspace LSP timings increased by 3–5%, with peak working set changing from
+107.2 to 106.6 MB. Executable sizes and checked benchmark outputs were unchanged.
+These observations include ordinary timing noise and do not isolate the cost
+of provenance analysis. Stage 2 still reconstructs graphs and copies normalized
+descriptions between region passes; stage 4's replay boundary should be measured
+against both records. The initial representation trades some measured time for
+shared storage semantics without increasing retained whole-program body state.

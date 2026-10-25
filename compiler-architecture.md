@@ -132,8 +132,11 @@ graph needs to remain allocated at a time.
 The [provenance normalization contract](provenance-normalization-contract.md#initial-operation-contracts)
 records the operation invariants, current AST-sensitive helper inventory,
 inspection tests, and performance baseline for migrating this construction
-boundary. Stage 1 establishes that baseline; production graph construction
-still follows the AST.
+boundary. [provenance_input.odin](src/provenance_input.odin) supplies stage 2's
+body-local storage/value IDs and canonical typed places. Target and region
+facts share storage IDs; direct places name storage, while indirect places
+name the evaluated carrier and its selected path. Graph construction still
+walks the AST for evaluation and effects.
 
 ### Allocation domains
 
@@ -254,8 +257,10 @@ through locals and results. Union field steps identify variant indices, so
 success and error payloads have independent facts. Widening remaps region paths
 by variant label, including through explicit conversions. Queries follow temporary
 field projections, constructors, success unwrapping, and switch bindings.
-Stored region content is keyed by `Written_Storage`, including anonymous backing
-arrays. Known indirect reads query the selected target path instead of joining
+Stored region content is keyed by `Storage_Id`, including anonymous backing
+arrays. `Prov_Input` interns the corresponding `Written_Storage` keys, keeping
+symbols for named storage and source/type/expansion identity for temporaries.
+Known indirect reads query the selected target path instead of joining
 unrelated fields; unresolved alternatives retain the conservative fallback.
 Result contracts compare corresponding paths and fact kinds, keeping backing
 dependencies separate from payload dependencies. `Region_Query` selects
@@ -317,15 +322,19 @@ slicing owned storage records its address. Both written target-storage paths
 (`Written_Alias.at`) and carrier-position paths (`Written_Alias.path`) stop at
 eight projections and carry the depth precision marker. This bounds recursive
 cursor growth and repeated container wrapping; a truncated projection always
-joins previous content. `prov_path_below_carrier` collects projections only
-until the closest carrier, reverses them in place, and clones the result into
-the graph's allocation domain.
-Written storage is identified by a symbol, or by a temporary's AST identity and
-storage type. Slice literals use their hidden array's type and record their
-element targets in that storage. An implicit view records the address of its
+joins previous content. `prov_place_of`, `prov_place_carrier`, and
+`prov_path_below_carrier` read one canonical `Prov_Place`, whose base is a
+storage ID or a carrier value ID and whose path ends below that base.
+Written storage is identified by a symbol, or by a temporary's AST identity,
+storage type, and defer expansion. Slice literals use their hidden array's
+type and record their element targets in that storage. An implicit view records the address of its
 owner storage; a box view adds the payload step. Copies and reslices therefore
 follow the same storage facts, including unresolved alternatives introduced by
-a call through another view. Anonymous storage identities survive graph passes.
+a call through another view. Storage IDs and their normalized descriptions
+survive graph passes. Until operation replay replaces graph reconstruction,
+descriptions are copied with carried facts into the next pass, including owned
+paths and map-key strings; no description points into a reclaimed graph or
+carry arena.
 `prov_borrowed_storage` shares storage discovery between target lookup,
 source-target recording, and call invalidation. Unboxing removes its source
 payload step; checked variant extraction replaces the source variant step with

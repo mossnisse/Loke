@@ -1,0 +1,23 @@
+package main;
+import "core:fmt";
+
+// design.md "Splitting a mutable slice", "Temporaries and procedure boundaries".
+deferred :: proc(early: bool) {
+    defer {
+        view: []int = make([dynamic]int, 2);
+        fmt.println("deferred", view.len());
+    }
+    if (early) { return; }
+}
+
+main :: proc() {
+    first := [4]int{1, 2, 3, 4};
+    receiver := &mut first[:];
+    halves := receiver.split_at_mut(receiver.len() / 2);
+    halves.left[0] = 10;
+    halves.right[0] = 20;
+    left, right := halves.left.len(), halves.right.len();
+    fmt.println(first, left, right);
+    deferred(false);
+    deferred(true);
+}

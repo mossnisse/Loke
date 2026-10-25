@@ -1,10 +1,10 @@
-# Provenance normalization: stage 1 contract and baseline
+# Provenance normalization: contracts and implementation
 
 Stage 1 of the [migration plan](provenance-normalization-proposal.md#migration-plan)
-establishes the semantic boundary that later stages will replace. Production
-analysis still consumes the checked AST. The inspection tests deliberately use
-the existing checked annotations, storage keys, graphs, and summaries; they do
-not introduce a second operation builder before its consumers can migrate.
+established the semantic boundary and baseline. Stage 2 introduces shared
+storage IDs and canonical typed places in production. Evaluation and effect
+construction still walk the checked AST while later stages migrate transfers
+and operation replay.
 
 The [language specification](design.md#borrows-and-lifetimes) remains
 authoritative. The baseline records current behavior, with an explicit
@@ -35,7 +35,7 @@ observes its semantic input or result.
 | Task effect | Evaluate prepared operands on the parent and apply task reach, transfer, and join effects at their existing boundaries. | The existing [thread-summary tests](src/thread_summaries_test.odin) and [parallel task controls](tests/run/parallel_tasks.loke) cover reach, allocator use, thread-exit drops, and joins. |
 | Diagnostic origin | Keep the original source operation and owner names through synthetic storage and values. Report after facts settle. | A returned local slice reports `L0526` on `local[:]`; `normalization_diagnostic_origin_contract`. |
 
-The new inspection tests are in
+The inspection tests are in
 [provenance_normalization_test.odin](src/provenance_normalization_test.odin).
 They assert properties rather than root numbers, slot counts, map order, or
 complete textual graph dumps. The same properties should migrate to normalized
@@ -43,11 +43,65 @@ input inspection as operations become available. The delayed-reborrow test uses
 a single straight-line body so comparing event positions does not infer runtime
 order from unrelated CFG blocks.
 
+## Stage 2: storage and places
+
+[provenance_input.odin](src/provenance_input.odin) owns the normalized
+descriptions. `Storage_Id` and `Value_Id` are small body-local IDs, with zero
+reserved for unresolved storage or an absent value. `Prov_Storage` records its
+checked type, source span, storage kind, and lifetime category. A
+`Written_Storage` key provides correspondence: named storage keeps its symbol;
+anonymous storage keeps its source identity, storage type, and defer expansion.
+Named locals keep one abstract identity across exits, while evaluations inside
+different defer expansions have separate keys. Generic bodies have separate
+input tables.
+
+`Prov_Place` has a checked result type and projection path, starting either at
+a storage ID or at a carrier value ID. `prov_place_of`, `prov_place_carrier`,
+and `prov_path_below_carrier` now query this shared description; their separate
+recursive syntax walks are removed. A carrier value's source place identifies
+its descriptor, and a dereference starts at the carrier value, preserving the
+distinction between a pointer and what it points at. Borrowed payload bindings
+retain their alias relation to the subject's storage and payload path through
+the existing fact construction.
+
+Roots, written targets, and region contents use the same storage IDs, including
+hidden arrays and materialized owners. Initialization and later stores meet at
+the actual cleanup root. Reset correspondence continues to use `Reset_Key`.
+Captured receiver values have their own value IDs and retain the source value
+and binding; their copied carrier slots remain separate analysis state. The
+existing split-receiver reborrow consumes those captured slots after later
+arguments have run.
+
+Input descriptions are cached by source identity, checked representation, and
+defer expansion. The representation key includes the effective type and
+view/erasure annotations because existing evaluation helpers temporarily expose
+an owner's original checked representation. This cache stores no alias sets,
+region sets, loans, or call summaries. Identifiers resolve directly through
+their symbols: reset analysis creates scratch identifier nodes, whose reusable
+addresses cannot serve as cached place identities.
+
+During this stage, the existing region fixed point still rebuilds graphs.
+Normalized descriptions are copied with the carried facts, keeping assigned IDs
+and independently owning projection slices and map-key strings before the old
+graph or carry arena is reclaimed. New syntax queries may add descriptions;
+correspondence across separate builds uses keys rather than numeric IDs. Full
+construction of immutable operations before replay remains stage 4 work.
+
+Three additional inspection tests check direct/indirect place boundaries,
+defer expansion identity, and receiver capture across reassignment. The
+[runtime control](tests/run/provenance_normalized_places.loke) checks slice
+splitting and cleanup on normal and early exits. A new reassignment control
+also exposed a baseline
+[emission divergence](known-gaps.md#mutable-slice-splitting-reloads-a-rebound-receiver-during-emission),
+recorded separately with a minimal reproduction. The capture inspection checks
+analysis metadata, not the emitter's current handling of that example.
+
 ## AST-sensitive construction inventory
 
-This inventory identifies the boundaries that stages 2–4 must replace. Symbol
-names refer to the current implementation; source links identify their owning
-files. Type-based shape and overlap helpers, the existing solvers, and summary
+This stage 1 inventory identifies the boundaries that stages 2–4 migrate.
+Stage 2 replaces the three independent place walks and migrates storage keys
+in fact state to IDs. Source-form transfer visitors remain for stage 3.
+Type-based shape and overlap helpers, the existing solvers, and summary
 scheduling remain reusable.
 
 | Construction responsibility | Current AST-sensitive helpers | Replacement input and migration stage |
@@ -109,7 +163,8 @@ Run the compiler unit suite and the affected integration suites using
 [Testing and verification](compiler-architecture.md#testing-and-verification).
 The new benchmark is also exercised by `perf.ps1`, which validates its output at
 `-opt=speed`. Stage 1 changes tests, workload inputs, and documentation; stage 2
-introduces shared storage IDs and canonical places in production.
+adds the shared descriptions and storage IDs in production. Both the compiler
+and LSP must be rebuilt before direct integration runs after that migration.
 
 The operation contracts, helper inventory, behavioral expectations, summary
 assertions, and measured baseline are the stage 1 deliverables. A baseline
@@ -121,3 +176,13 @@ including the eight new inspection tests, with memory tracking enabled. The
 performance workflow completed all 24 records and checked every benchmark run's
 output. Local documentation links, heading citations, and whitespace checks
 passed.
+
+Stage 2 validation on 2026-10-25: all 157 compiler and 43 LSP unit tests passed,
+both binaries rebuilt, and the baseline integration suites passed after
+rerunning the rejection and debugger suites. The debugger required execution
+outside the sandbox. The rejection rerun confirmed that scratch-symbol lookup
+preserves the existing reset diagnostics. The performance workflow completed
+24 records and checked all benchmark output; the
+[stage 2 measurements](bench/baselines/README.md#storage-and-place-normalization-stage-2)
+record the observed front-end time increase and essentially unchanged process
+peak memory.

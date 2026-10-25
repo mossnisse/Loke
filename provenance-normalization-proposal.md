@@ -1,11 +1,12 @@
 # Proposal: normalized input for provenance and borrow analysis
 
-**Status:** stage 1 implemented, 2026-10-25. This proposes an internal compiler
+**Status:** stages 1–2 implemented, 2026-10-25. This proposes an internal compiler
 refactor; it does not change the language contract. The rules in
 [design.md](design.md#borrows-and-lifetimes) remain authoritative. The
 [stage 1 contract and baseline](provenance-normalization-contract.md#initial-operation-contracts)
-are recorded; production normalization starts in stage 2. Pending architectural
-decisions are tracked in
+are recorded; [stage 2](provenance-normalization-contract.md#stage-2-storage-and-places)
+provides shared storage IDs and typed places. Transfers and complete operation
+replay remain stages 3–4. Pending architectural decisions are tracked in
 [Open questions](open-questions.md#normalized-input-for-provenance-analysis).
 
 ## Recommendation
@@ -338,6 +339,13 @@ inspection tests, and measured performance. The existing
 [hook dependency-discovery follow-up](open-questions.md#normalization-baseline-follow-up)
 must be resolved separately before claiming that hook-summary invalidation is
 preserved by the migration.
+
+Stage 2 uses one canonical place description for direct storage and indirect
+carrier access. Storage IDs are shared by roots, targets, and region contents;
+captured receiver values retain their source bindings and separate fact slots.
+The [implementation notes](provenance-normalization-contract.md#stage-2-storage-and-places)
+describe the current bridge across reconstructed graph passes and the separate
+receiver-emission finding.
 
 | Stage | Change | Exit criterion |
 | --- | --- | --- |

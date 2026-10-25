@@ -75,19 +75,19 @@ main :: proc() {}`) { return }
 	if graph == nil { return }
 	hidden := normalization_symbol(t, &p, "hidden")
 	alias := normalization_symbol(t, &p, "alias")
-	first := graph.written_aliases[Written_Storage{symbol = hidden}]
-	second := graph.written_aliases[Written_Storage{symbol = alias}]
+	first := graph.written_aliases[prov_storage_id(graph, Written_Storage{symbol = hidden})]
+	second := graph.written_aliases[prov_storage_id(graph, Written_Storage{symbol = alias})]
 	if !testing.expect(t, len(first) == 1 && len(second) == 1, "both views must identify one backing object") { return }
 	storage := first[0].target
-	testing.expect(t, storage == second[0].target && storage.temporary != nil, "copied views lost anonymous storage identity")
-	testing.expect(t, underlying_kind(&p.c, storage.type) == .Array, "a slice descriptor is not its hidden array")
+	testing.expect(t, storage == second[0].target && prov_storage(graph, storage).key.temporary != nil, "copied views lost anonymous storage identity")
+	testing.expect(t, underlying_kind(&p.c, prov_storage(graph, storage).type) == .Array, "a slice descriptor is not its hidden array")
 	root, found := graph.root_by_storage[storage]
 	if !testing.expect(t, found, "backing storage has no cleanup root") { return }
 	bindings := graph.region_aliases[normalization_symbol(t, &p, "payload")]
 	if testing.expect(t, len(bindings) == 1, "the borrowed payload must have one known destination") {
 		testing.expect(t, bindings[0].root == root, "the payload binding created a second owner")
 		path := bindings[0].path
-		shape, _ := fallible_of(&k, underlying_info(&p.c, storage.type).element)
+		shape, _ := fallible_of(&k, underlying_info(&p.c, prov_storage(graph, storage).type).element)
 		testing.expectf(t, len(path) == 2 && (path[0].kind == .Wild || (path[0].kind == .Range && path[0].lo == 0)) &&
 		                   path[1].kind == .Field && path[1].lo == i64(shape.success),
 		                "the payload lost its array-element and variant projections: %v", path)
@@ -108,7 +108,9 @@ main :: proc() {}`) { return }
 	// key. Keeping both graphs here also exposes accidental references to a
 	// reclaimed pass buffer under the unit suite's memory tracking.
 	again := build_flow_graph(&k, graph.literal, .Prov_Diagnose)
-	_, retained := again.root_by_storage[storage]
+	key := prov_storage(graph, storage).key
+	corresponding := again.input.storage_ids[key]
+	_, retained := again.root_by_storage[corresponding]
 	testing.expect(t, retained, "storage correspondence changed across graph builds")
 }
 
@@ -133,14 +135,14 @@ main :: proc() {}`) { return }
 	pointer := normalization_symbol(t, &p, "pointer")
 	destination := normalization_symbol(t, &p, "destination")
 	known, unknown := false, false
-	for alias in graph.written_aliases[Written_Storage{symbol = pointer}] {
-		known ||= alias.target.symbol == destination
-		unknown ||= alias.target == (Written_Storage{})
+	for alias in graph.written_aliases[prov_storage_id(graph, Written_Storage{symbol = pointer})] {
+		known ||= prov_storage(graph, alias.target).key.symbol == destination
+		unknown ||= alias.target == 0
 	}
-	testing.expectf(t, known && unknown, "a known assignment erased an unresolved alternative: %v", graph.written_aliases[Written_Storage{symbol = pointer}])
-	addresses := graph.written_aliases[Written_Storage{symbol = normalization_symbol(t, &p, "descriptor")}]
+	testing.expectf(t, known && unknown, "a known assignment erased an unresolved alternative: %v", graph.written_aliases[prov_storage_id(graph, Written_Storage{symbol = pointer})])
+	addresses := graph.written_aliases[prov_storage_id(graph, Written_Storage{symbol = normalization_symbol(t, &p, "descriptor")})]
 	if testing.expect(t, len(addresses) == 1, "taking an address must name only that storage") {
-		testing.expect(t, addresses[0].target.symbol == pointer, "the descriptor's address was replaced by its pointee")
+		testing.expect(t, prov_storage(graph, addresses[0].target).key.symbol == pointer, "the descriptor's address was replaced by its pointee")
 	}
 }
 
@@ -325,7 +327,7 @@ main :: proc() {}`) { return }
 	               "an implicit view must retain the original owner type")
 	materialized := false
 	for storage, root in graph.root_by_storage {
-		if storage.temporary != base { continue }
+		if prov_storage(graph, storage).key.temporary != base { continue }
 		owner := graph.roots[int(root)]
 		materialized ||= owner.extended && owner.dropped == base.view_from && owner.owner != nil
 	}
@@ -397,4 +399,134 @@ main :: proc() {}`)
 	testing.expect_value(t, diagnostic.code, "L0526")
 	testing.expect_value(t, p.c.sources[diagnostic.span.file].text[diagnostic.span.lo:diagnostic.span.hi], "local[:]")
 	testing.expect(t, strings.contains(diagnostic.message, "local"), "synthetic analysis names replaced the source owner")
+}
+
+// design.md "Storage roots and borrow carriers", "Places and overlap".
+@(test)
+normalization_place_boundaries_contract :: proc(t: ^testing.T) {
+	p: Checked
+	defer destroy_checked(&p)
+	if !normalization_checked(t, &p, `package main;
+Pair :: struct { left: int, right: int }
+places :: proc(input: ^mut Pair, outer: ^mut ^mut Pair) {
+    named := Pair{1, 2};
+    other_named := Pair{3, 4};
+    direct := &named.left;
+    indirect := &input.left;
+    nested := &outer^^.right;
+}
+main :: proc() {}`) { return }
+	k: Checker
+	graph := normalization_graph(t, &k, &p, "places")
+	if graph == nil { return }
+	for name, index in ([]string{"direct", "indirect", "nested"}) {
+		decl := normalization_decl(t, &p, graph.literal, name)
+		if decl == nil { continue }
+		address, ok := decl.values[0].(^Expr_Unary)
+		if !testing.expect(t, ok) { continue }
+		place := prov_input_place(graph, address.operand)
+		testing.expect(t, len(place.path) == 1 && place.path[0].kind == .Field, "a field projection must remain explicit")
+		testing.expect_value(t, place.type, TYPE_INT)
+		if index == 0 {
+			storage, direct := place.base.(Storage_Id)
+			if testing.expect(t, direct, "a lexical place must name storage") {
+				testing.expect(t, prov_storage(graph, storage).key.symbol == normalization_symbol(t, &p, "named"), "the selected field lost its owner")
+			}
+		} else {
+			carrier, indirect := place.base.(Value_Id)
+			if !testing.expect(t, indirect, "a dereference must name a carrier value") { continue }
+			value := graph.input.values[int(carrier)]
+			if index == 1 {
+				_, descriptor := value.place.base.(Storage_Id)
+				testing.expect(t, descriptor, "the pointer's descriptor is distinct from its pointee")
+			} else {
+				_, another_load := value.place.base.(Value_Id)
+				testing.expect(t, another_load && place.path[0].lo == 1, "successive dereferences must preserve the last carrier and selected sibling")
+			}
+		}
+		count := len(graph.input.places)
+		again := prov_input_place(graph, address.operand)
+		testing.expect(t, again.base == place.base && len(graph.input.places) == count, "a repeated query reconstructed the place")
+	}
+	// The region-reset builder reuses a stack identifier while querying several
+	// owners of the same type. Its address is not a storage identity.
+	named := normalization_symbol(t, &p, "named")
+	other := normalization_symbol(t, &p, "other_named")
+	scratch := Expr_Ident{base = Expr_Base{type = symbol_of(&p.c, named).type}, symbol = named}
+	first := prov_input_place(graph, &scratch)
+	scratch.symbol = other
+	second := prov_input_place(graph, &scratch)
+	testing.expect(t, first.base != second.base, "a synthetic symbol query reused another owner's cached place")
+}
+
+// design.md "defer statement", "Temporaries and procedure boundaries".
+@(test)
+normalization_defer_storage_contract :: proc(t: ^testing.T) {
+	p: Checked
+	defer destroy_checked(&p)
+	if !normalization_checked(t, &p, `package main;
+expanded :: proc(early: bool) {
+    defer {
+        deferred_view: []int = make([dynamic]int, 2);
+        assert(deferred_view.len() == 2);
+    }
+    if (early) { return; }
+}
+main :: proc() {}`) { return }
+	k: Checker
+	graph := normalization_graph(t, &k, &p, "expanded")
+	if graph == nil { return }
+	normal, abrupt := Storage_Id(0), Storage_Id(0)
+	for entry, index in graph.input.storages {
+		if entry.key.temporary == nil || underlying_kind(&p.c, entry.type) != .Dynamic_Array { continue }
+		if entry.key.expansion.deferred == nil { continue }
+		testing.expect(t, entry.lifetime == .Scope, "an extended deferred owner needs scope cleanup")
+		if entry.key.expansion.exit == nil { normal = Storage_Id(index) } else { abrupt = Storage_Id(index) }
+	}
+	testing.expect(t, normal != 0 && abrupt != 0 && normal != abrupt, "evaluations in different defer expansions need separate storage")
+	named := normalization_symbol(t, &p, "deferred_view")
+	count := 0
+	for entry in graph.input.storages {
+		if entry.key.symbol != named { continue }
+		count += 1
+		testing.expect(t, entry.key.expansion == (Defer_Expansion{}), "a named local keeps one identity across exits")
+	}
+	testing.expect_value(t, count, 1)
+}
+
+// design.md "Splitting a mutable slice": captures describe evaluated values;
+// their source places identify bindings without turning captures into reloads.
+@(test)
+normalization_captured_reassignment_contract :: proc(t: ^testing.T) {
+	p: Checked
+	defer destroy_checked(&p)
+	if !normalization_checked(t, &p, `package main;
+replace :: proc(receiver: inout []mut int, @(escape=stored) replacement: []mut int) -> int {
+    receiver = replacement;
+    return 1;
+}
+capture :: proc() -> int {
+    first := [2]int{1, 2};
+    second := [2]int{3, 4};
+    rebound := &mut first[:];
+    halves := rebound.split_at_mut(replace(inout rebound, &mut second[:]));
+    return halves.left[0];
+}
+main :: proc() {}`) { return }
+	k: Checker
+	graph := normalization_graph(t, &k, &p, "capture")
+	if graph == nil { return }
+	rebound := normalization_symbol(t, &p, "rebound")
+	found := false
+	for id, slots in graph.captured_values {
+		value := graph.input.values[int(id)]
+		if !testing.expect(t, value.captured_from != 0 && value.captured_from != id && len(slots) > 0,
+		                   "a capture must have an evaluated source and independent fact slots") { continue }
+		source := graph.input.values[int(value.captured_from)]
+		storage, direct := source.place.base.(Storage_Id)
+		if !testing.expect(t, direct && prov_storage(graph, storage).key.symbol == rebound, "the capture lost its original source binding") { continue }
+		testing.expect(t, source.type == value.type && value.place.base == source.place.base, "capture metadata must retain its checked carrier type and source")
+		found = true
+	}
+	testing.expect(t, found, "the split must record the receiver capture before later arguments run")
 }

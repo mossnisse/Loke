@@ -231,13 +231,15 @@ Last_Use :: struct {
 
 // The state only the provenance modes build.
 Prov_State :: struct {
+	using input: ^Prov_Input,
 	roots:          [dynamic]Prov_Root,
 	loans:          [dynamic]Prov_Loan,
 	prov_slots:     [dynamic]Prov_Slot,
 	reborrows:      [dynamic]Prov_Reborrow,
 	entry_defs:     [dynamic]Prov_Entry_Def,
 	root_by_symbol: map[Symbol_Id]Root_Id,
-	root_by_storage: map[Written_Storage]Root_Id,
+	root_by_storage: map[Storage_Id]Root_Id,
+	captured_values: map[Value_Id][]int,
 	slot_by_symbol: map[Symbol_Id]int,
 	// What a non-owning binding (a loop element, a switch payload over a place)
 	// views: every access and borrow through it also uses the source.
@@ -277,8 +279,7 @@ Prov_State :: struct {
 	fresh_slots:    map[int]bool,
 	// One slot per `carrier_shape` path of a local that holds carriers.
 	content_by_symbol: map[Symbol_Id][]int,
-	// The keyed map-shape entry each constant key uses, first written first.
-	map_key_entries: map[string]int,
+	// Call results settled for this fact-building pass.
 	call_results:   map[^Expr_Call]Prov_Call_Result,
 	// The call each user operator stands for, keyed by its node.
 	operator_calls: map[rawptr]^Expr_Call,
@@ -303,7 +304,7 @@ Prov_State :: struct {
 	callee_expr:   Expr,
 	// design.md "Allocator regions and region provenance".
 	region_of:       map[Symbol_Id]Region_Set,
-	region_content:  map[Written_Storage][]Prov_Region_Content,
+	region_content:  map[Storage_Id][]Prov_Region_Content,
 	// Borrowed payload bindings name storage in their switch subject.
 	region_aliases:  map[Symbol_Id][]Prov_Region_Alias,
 	// Owned operands held while later operands are evaluated.
@@ -332,7 +333,7 @@ Prov_State :: struct {
 	// write the caller learns of, or a variable's place `&mut place` lent, so a
 	// reset sees an owner written there and static storage rejects one.
 	// Flow-insensitive too.
-	written_aliases: map[Written_Storage][]Written_Alias,
+	written_aliases: map[Storage_Id][]Written_Alias,
 	has_region_event: bool,
 	// The uses that are a local's `drop` at scope exit, for the note naming them.
 	scope_drops:      map[Span]bool,
@@ -407,12 +408,14 @@ build_flow_pass :: proc(
 	graph.propagated_errors = make(map[^Expr_Postfix][]int, 4, allocator)
 	if mode != .Lifecycle {
 		graph.prov = new(Prov_State, allocator)
+		graph.input = new_prov_input(allocator, seed != nil ? seed.input : nil)
 		graph.roots = make([dynamic]Prov_Root, allocator)
 		graph.loans = make([dynamic]Prov_Loan, allocator)
 		graph.prov_slots = make([dynamic]Prov_Slot, allocator)
 		graph.entry_defs = make([dynamic]Prov_Entry_Def, allocator)
 		graph.root_by_symbol = make(map[Symbol_Id]Root_Id, 8, allocator)
-		graph.root_by_storage = make(map[Written_Storage]Root_Id, 4, allocator)
+		graph.root_by_storage = make(map[Storage_Id]Root_Id, 4, allocator)
+		graph.captured_values = make(map[Value_Id][]int, 2, allocator)
 		graph.slot_by_symbol = make(map[Symbol_Id]int, 8, allocator)
 		graph.view_loans = make(map[Symbol_Id][]int, 8, allocator)
 		graph.step_views = make(map[Symbol_Id]bool, 8, allocator)
@@ -429,12 +432,11 @@ build_flow_pass :: proc(
 		graph.effect_stores = make([dynamic]Effect_Store, allocator)
 		graph.thread_spawns = make([dynamic]Thread_Spawn, allocator)
 		graph.region_of = make(map[Symbol_Id]Region_Set, 8, allocator)
-		graph.region_content = make(map[Written_Storage][]Prov_Region_Content, 8, allocator)
+		graph.region_content = make(map[Storage_Id][]Prov_Region_Content, 8, allocator)
 		graph.region_aliases = make(map[Symbol_Id][]Prov_Region_Alias, 4, allocator)
 		graph.held_owners = make([dynamic]Expr, allocator)
 		graph.provider_parents = make(map[Symbol_Id]Region_Set, 4, allocator)
 		graph.provider_bits = make(map[Symbol_Id]u64, 4, allocator)
-		graph.map_key_entries = make(map[string]int, 4, allocator)
 		graph.reborrows = make([dynamic]Prov_Reborrow, allocator)
 		graph.provider_symbols = make([dynamic]Symbol_Id, allocator)
 		graph.provider_paths = make(map[Symbol_Id][]Provider_Path, 4, allocator)
@@ -442,7 +444,7 @@ build_flow_pass :: proc(
 		graph.temp_provider_bits = make(map[^Expr_Call]u64, 4, allocator)
 		graph.temp_providers = make([dynamic]Temp_Provider, allocator)
 		graph.lent_locals = make(map[Symbol_Id]bool, 4, allocator)
-		graph.written_aliases = make(map[Written_Storage][]Written_Alias, 4, allocator)
+		graph.written_aliases = make(map[Storage_Id][]Written_Alias, 4, allocator)
 	}
 	graph.break_block, graph.continue_block = NO_BLOCK, NO_BLOCK
 	graph.current = new_flow_block(graph)

@@ -665,31 +665,13 @@ prov_root_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> Root_Id {
 	if sym == nil {
 		return NO_ROOT
 	}
-	kind := Root_Kind.Local
-	#partial switch sym.kind {
-	case .Var:
-		// design.md "Storage modifiers": `thread_local` ends with its thread.
-		switch {
-		case sym.duration == .Thread_Local:
-			kind = .Thread_Local
-		case symbol_outlives_bodies(sym):
-			kind = .Static
-		}
-	case .Parameter:
-		// A pointer-mode parameter aliases the caller's root (design.md "Receiver
-		// forms"), which lets `proc(self) -> []T` return a slice of it. A
-		// `value: T` is a value: nothing borrowed from it outlives the call.
-		if param_mode_is_pointer(sym.mode) {
-			kind = .Param
-		}
-	case .Const:
-		// design.md "Materialization": one read-only object for the program.
-		kind = .Materialized
-	case:
-		return NO_ROOT
-	}
+	storage := prov_storage_id(graph, Written_Storage{symbol = id})
+	if storage == 0 { return NO_ROOT }
+	kind := prov_storage(graph, storage).kind
 	root := prov_new_root(graph, kind, sym.span, identifier_text(graph.k.c, sym.name))
 	graph.roots[int(root)].symbol = id
+	graph.roots[int(root)].storage = storage
+	graph.root_by_storage[storage] = root
 	if kind == .Param {
 		graph.roots[int(root)].param_index = int(sym.index)
 	}
@@ -1761,7 +1743,7 @@ prov_access :: proc(
 	return graph.current, len(graph.blocks[graph.current].prov) - 1
 }
 
-@(private = "file")
+@(private)
 prov_extend :: proc(graph: ^Flow_Graph, path: []Proj_Step, step: Proj_Step) -> []Proj_Step {
 	out := make([]Proj_Step, len(path) + 1, graph.alloc)
 	copy(out, path)
@@ -1769,7 +1751,7 @@ prov_extend :: proc(graph: ^Flow_Graph, path: []Proj_Step, step: Proj_Step) -> [
 	return out
 }
 
-@(private = "file")
+@(private)
 prov_concat_path :: proc(graph: ^Flow_Graph, prefix, path: []Proj_Step) -> []Proj_Step {
 	out := make([]Proj_Step, len(prefix) + len(path), graph.alloc)
 	copy(out, prefix)
@@ -1821,6 +1803,7 @@ prov_bind_parameters :: proc(graph: ^Flow_Graph, literal: ^Expr_Proc) {
 			name := identifier_text(graph.k.c, sym.name)
 			root := prov_new_root(graph, .Param, sym.span, name)
 			graph.roots[int(root)].symbol = id
+			graph.roots[int(root)].storage = prov_storage_id(graph, Written_Storage{symbol = id})
 			graph.roots[int(root)].param_index = index
 			// What the caller storage it reaches holds, which loads through it yield.
 			depths := make([]Loan_Id, max(1, load_depth(graph.k.c, sym.type)), graph.alloc)
@@ -2036,12 +2019,13 @@ prov_carry_regions :: proc(graph: ^Flow_Graph, allocator: mem.Allocator) -> ^Flo
 	carry := new(Flow_Graph, allocator)
 	carry.alloc = allocator
 	carry.prov = new(Prov_State, allocator)
+	carry.input = new_prov_input(allocator, graph.input)
 	carry.param_count = graph.param_count
 	carry.region_of = make(map[Symbol_Id]Region_Set, len(graph.region_of), allocator)
 	carry.provider_parents = make(map[Symbol_Id]Region_Set, len(graph.provider_parents), allocator)
 	carry.lent_locals = make(map[Symbol_Id]bool, len(graph.lent_locals), allocator)
-	carry.written_aliases = make(map[Written_Storage][]Written_Alias, len(graph.written_aliases), allocator)
-	carry.region_content = make(map[Written_Storage][]Prov_Region_Content, len(graph.region_content), allocator)
+	carry.written_aliases = make(map[Storage_Id][]Written_Alias, len(graph.written_aliases), allocator)
+	carry.region_content = make(map[Storage_Id][]Prov_Region_Content, len(graph.region_content), allocator)
 	prov_seed_regions(carry, graph)
 	return carry
 }
@@ -2093,14 +2077,14 @@ prov_region_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id, viewed := fals
 	if direct, found := graph.region_of[id]; found && (viewed || !carrier) {
 		region_merge(&out, direct)
 	}
-	for content in graph.region_content[Written_Storage{symbol = id}] {
+	for content in graph.region_content[prov_storage_id(graph, Written_Storage{symbol = id})] {
 		// `owners` asks only what backs an owner stored there.
 		if !owners || !content.handle {
 			region_merge(&out, content.region)
 		}
 	}
 	if viewed {
-		for alias in prov_written_aliases_of(graph, Written_Storage{symbol = id}, nil) {
+		for alias in prov_written_aliases_of(graph, prov_storage_id(graph, Written_Storage{symbol = id}), nil) {
 			region_merge(&out, prov_region_content_at(graph, prov_root_for_storage(graph, alias.target), alias.at,
 			                                        owners ? .Owners : .All))
 		}
@@ -2210,7 +2194,7 @@ prov_define_region_content :: proc(
 	}
 	id := graph.roots[int(root)].symbol
 	storage := prov_storage_for_root(graph, root)
-	if storage == (Written_Storage{}) {
+	if storage == 0 {
 		return
 	}
 	if aliases := graph.region_aliases[id]; len(aliases) > 0 {
@@ -2685,7 +2669,7 @@ prov_read_storage_regions :: proc(graph: ^Flow_Graph, value: Expr, path: []Proj_
 	known := len(aliases) > 0
 	below := prov_concat_path(graph, prov_path_below_carrier(graph, value), path)
 	for alias in aliases {
-		if alias.target == (Written_Storage{}) { known = false; continue }
+		if alias.target == 0 { known = false; continue }
 		region_merge(&out, prov_region_content_at(graph, prov_root_for_storage(graph, alias.target),
 		                                        prov_concat_path(graph, alias.at, below), query))
 	}
@@ -3336,12 +3320,12 @@ prov_reset_temporary :: proc(graph: ^Flow_Graph, root: Root_Id, event: ^Prov_Eve
 	// Later writes into a temporary's backing storage are live until its
 	// actual cleanup, just as its initial owners are (design.md
 	// "Allocator regions and region provenance").
-	if temporary.storage.temporary != nil && type_is_managed(graph.k.c, temporary.storage.type) {
+	if prov_storage(graph, temporary.storage).key.temporary != nil && type_is_managed(graph.k.c, prov_storage(graph, temporary.storage).type) {
 		fields := graph.region_content[temporary.storage]
 		if event.provider_end {
 			for field in fields { region_merge(&region, field.region) }
 		} else {
-			region_merge(&region, prov_reset_fields_region(graph, temporary.storage.type, fields))
+			region_merge(&region, prov_reset_fields_region(graph, prov_storage(graph, temporary.storage).type, fields))
 		}
 	}
 	if region_is_empty(region) || !regions_may_overlap(region, event.region) { return false }
@@ -3408,32 +3392,9 @@ prov_retain_through_carrier :: proc(graph: ^Flow_Graph, place: Expr) -> []int {
 // that storage is a separate step from finding the storage itself.
 @(private = "file")
 prov_place_carrier :: proc(graph: ^Flow_Graph, place: Expr) -> Expr {
-	c := graph.k.c
-	#partial switch v in place {
-	case ^Expr_Postfix:
-		if v.op == .Caret && type_is_box(c, expr_base(v.operand).type) {
-			return prov_place_carrier(graph, v.operand)
-		}
-		if v.op == .Caret {
-			return v.operand
-		}
-	case ^Expr_Selector:
-		if v.resolution.kind != .Field || v.operand == nil {
-			return nil
-		}
-		if type_is_pointer(c, expr_base(v.operand).type) {
-			return v.operand // an auto-deref
-		}
-		return prov_place_carrier(graph, v.operand)
-	case ^Expr_Index:
-		if len(v.bound) > 0 || v.operand == nil {
-			return nil // user-defined addressing
-		}
-		#partial switch underlying_kind(c, expr_base(v.operand).type) {
-		case .Array, .Dynamic_Array, .Map:
-			return prov_place_carrier(graph, v.operand)
-		}
-		return v.operand
+	normalized := prov_input_place(graph, place)
+	if carrier, indirect := normalized.base.(Value_Id); indirect {
+		return graph.input.values[int(carrier)].origin
 	}
 	return nil
 }
@@ -3662,11 +3623,11 @@ prov_store_region_through :: proc(graph: ^Flow_Graph, destination: Expr, region:
 	for alias in prov_written_targets(graph, destination) {
 		at := prov_concat_path(graph, alias.at, below)
 		prov_define_stored_content(graph, prov_root_for_storage(graph, alias.target), at, region, owned)
-		sym := symbol_of(graph.k.c, alias.target.symbol)
+		sym := symbol_of(graph.k.c, prov_storage(graph, alias.target).key.symbol)
 		if !checked || escaped || sym == nil || sym.kind == .Parameter || !type_is_managed(graph.k.c, prov_type_at(graph.k.c, sym.type, at)) {
 			continue
 		}
-		escaped = prov_region_escape_into(graph, expr_span(destination), alias.target.symbol, owned, owner)
+		escaped = prov_region_escape_into(graph, expr_span(destination), prov_storage(graph, alias.target).key.symbol, owned, owner)
 	}
 	if escaped {
 		return
@@ -3698,87 +3659,31 @@ prov_region_escape_through :: proc(graph: ^Flow_Graph, span: Span, region: Regio
 // or a carrier argument itself. Earlier carriers lead to other storage.
 @(private = "file")
 prov_path_below_carrier :: proc(graph: ^Flow_Graph, destination: Expr) -> []Proj_Step {
-	steps := make([dynamic]Proj_Step, 0, 4, context.temp_allocator)
-	e := destination
-	walk: for {
-		if _, _, ok := prov_place_of(graph, e); ok {
-			return nil
-		}
-		c := graph.k.c
-		#partial switch v in e {
-		case ^Expr_Selector:
-			if v.resolution.kind != .Field || v.operand == nil {
-				return nil
-			}
-			append(&steps, prov_field_step(graph, v))
-			if type_is_pointer(c, expr_base(v.operand).type) {
-				break walk
-			}
-			e = v.operand
-		case ^Expr_Postfix:
-			if v.op != .Caret {
-				return nil
-			}
-			if !type_is_box(c, expr_base(v.operand).type) {
-				break walk
-			}
-			append(&steps, proj_wild())
-			e = v.operand
-		case ^Expr_Index:
-			if len(v.bound) > 0 || v.operand == nil {
-				return nil
-			}
-			#partial switch underlying_kind(c, expr_base(v.operand).type) {
-			case .Array, .Dynamic_Array, .Map:
-				index_path := prov_index_path(graph, v)
-				#reverse for step in index_path {
-					append(&steps, step)
-				}
-			case:
-				append(&steps, proj_wild())
-				break walk
-			}
-			e = v.operand
-		case:
-			return nil
-		}
-	}
-	slice.reverse(steps[:])
-	return slice.clone(steps[:], graph.alloc)
+	place := prov_input_place(graph, destination)
+	if _, indirect := place.base.(Value_Id); indirect { return place.path }
+	return nil
 }
 
-// A named place or an anonymous owner's storage. Temporary identity survives
-// graph passes; slice literal storage has the checker's hidden array type.
-// The zero value is unresolved storage (design.md "Minimum provenance precision").
-Written_Storage :: struct {
-	symbol: Symbol_Id,
-	temporary: ^Expr_Base,
-	type: Type_Id,
+@(private)
+prov_storage_for_root :: proc(graph: ^Flow_Graph, root: Root_Id) -> Storage_Id {
+	if root == NO_ROOT { return 0 }
+	return graph.roots[int(root)].storage
 }
 
-@(private = "file")
-prov_storage_for_root :: proc(graph: ^Flow_Graph, root: Root_Id) -> Written_Storage {
-	if root == NO_ROOT { return {} }
-	entry := graph.roots[int(root)]
-	if entry.symbol != INVALID_SYMBOL { return Written_Storage{symbol = entry.symbol} }
-	return entry.storage
-}
-
-// Anonymous storage shares the real temporary's root and cleanup boundary;
-// its region facts use the stable storage key across graph passes.
-@(private = "file")
-prov_root_for_storage :: proc(graph: ^Flow_Graph, storage: Written_Storage) -> Root_Id {
-	if storage.symbol != INVALID_SYMBOL { return prov_root_for_symbol(graph, storage.symbol) }
-	if storage.temporary == nil { return NO_ROOT }
+@(private)
+prov_root_for_storage :: proc(graph: ^Flow_Graph, storage: Storage_Id) -> Root_Id {
+	if storage == 0 { return NO_ROOT }
+	entry := prov_storage(graph, storage)
+	if entry.key.symbol != INVALID_SYMBOL { return prov_root_for_symbol(graph, entry.key.symbol) }
 	if root, found := graph.root_by_storage[storage]; found { return root }
-	root := prov_new_root(graph, .Temporary, storage.temporary.span, "this temporary")
+	root := prov_new_root(graph, entry.kind, entry.span, "this temporary")
 	graph.roots[int(root)].storage = storage
 	graph.root_by_storage[storage] = root
 	return root
 }
 
 @(private = "file")
-prov_borrowed_storage :: proc(graph: ^Flow_Graph, value: Expr) -> (Written_Storage, []Proj_Step, bool) {
+prov_borrowed_storage :: proc(graph: ^Flow_Graph, value: Expr) -> (Storage_Id, []Proj_Step, bool) {
 	if expr_base(value).view_from != INVALID_TYPE {
 		storage, at := prov_owner_view_storage(graph, value)
 		return storage, at, true
@@ -3786,42 +3691,40 @@ prov_borrowed_storage :: proc(graph: ^Flow_Graph, value: Expr) -> (Written_Stora
 	if literal, ok := value.(^Expr_Composite); ok && literal.backing != INVALID_TYPE {
 		return prov_slice_literal_storage(graph, literal), nil, true
 	}
-	return {}, nil, false
+	return 0, nil, false
 }
 
 @(private = "file")
-prov_written_storage_type :: proc(graph: ^Flow_Graph, storage: Written_Storage) -> Type_Id {
-	if storage.temporary != nil { return storage.type }
-	if sym := symbol_of(graph.k.c, storage.symbol); sym != nil { return sym.type }
-	return INVALID_TYPE
+prov_written_storage_type :: proc(graph: ^Flow_Graph, storage: Storage_Id) -> Type_Id {
+	return prov_storage(graph, storage).type
 }
 
-// Implicit views borrow owner storage, not the targets of its payload's
-// carriers (design.md "Owned values" and "Dynamic arrays").
+// Implicit views borrow owner storage, not carriers held inside that storage.
 @(private = "file")
-prov_owner_view_storage :: proc(graph: ^Flow_Graph, value: Expr) -> (Written_Storage, []Proj_Step) {
+prov_owner_view_storage :: proc(graph: ^Flow_Graph, value: Expr) -> (Storage_Id, []Proj_Step) {
 	base := expr_base(value)
 	owner, viewed := base.view_from, base.type
 	base.view_from, base.type = INVALID_TYPE, owner
 	defer base.view_from, base.type = owner, viewed
-	storage: Written_Storage
+	storage: Storage_Id
 	path: []Proj_Step
-	if root, at, ok := prov_place_of(graph, value); ok {
-		storage.symbol, path = graph.roots[int(root)].symbol, at
+	place := prov_input_place(graph, value)
+	if direct, ok := place.base.(Storage_Id); ok {
+		storage, path = direct, place.path
 	} else {
-		storage = Written_Storage{temporary = base, type = owner}
+		storage = prov_storage_id(graph, Written_Storage{temporary = base, type = owner})
 		prov_note_alias_source(graph, storage, value, nil)
 	}
 	if type_is_box(graph.k.c, owner) { path = prov_extend(graph, path, proj_wild()) }
 	return storage, path
 }
 
-// All copies of a slice literal view share the hidden array's target facts.
-// A callee replacing its elements must invalidate every such view too
-// (design.md "Minimum provenance precision").
+// All views of a slice literal share its hidden array's target facts.
 @(private = "file")
-prov_slice_literal_storage :: proc(graph: ^Flow_Graph, value: ^Expr_Composite) -> Written_Storage {
-	storage := Written_Storage{temporary = &value.base, type = value.backing}
+prov_slice_literal_storage :: proc(graph: ^Flow_Graph, value: ^Expr_Composite) -> Storage_Id {
+	storage := prov_storage_id(graph, Written_Storage{temporary = &value.base, type = value.backing})
+	graph.input.storages[int(storage)].kind = .Slice_Literal
+	graph.input.storages[int(storage)].lifetime = .Scope
 	for element, index in value.elements {
 		if element.value == nil { continue }
 		step, _ := prov_element_step(graph, value, value.backing, true, index)
@@ -3835,7 +3738,7 @@ prov_slice_literal_storage :: proc(graph: ^Flow_Graph, value: ^Expr_Composite) -
 // where in the local those carriers are held; nil when the whole local may
 // hold them. A zero target is an unresolved alternative, not an empty set.
 Written_Alias :: struct {
-	target: Written_Storage,
+	target: Storage_Id,
 	at:     []Proj_Step,
 	path:   []Proj_Step,
 }
@@ -3855,7 +3758,7 @@ prov_written_targets :: proc(graph: ^Flow_Graph, destination: Expr, as_place := 
 		if through := prov_place_carrier(graph, destination); through != nil {
 			carrier = through
 		} else if as_place && prov_expr_is_temporary(destination) && !type_is_carrier(graph.k.c, expr_base(destination).type) {
-			storage := Written_Storage{temporary = expr_base(destination), type = expr_base(destination).type}
+			storage := prov_storage_id(graph, Written_Storage{temporary = expr_base(destination), type = expr_base(destination).type})
 			prov_note_alias_source(graph, storage, destination, nil)
 			return slice.clone([]Written_Alias{{target = storage}}, graph.alloc)
 		}
@@ -3889,13 +3792,13 @@ prov_written_aliases_at :: proc(graph: ^Flow_Graph, e: Expr) -> []Written_Alias 
 		return slice.clone([]Written_Alias{{target = storage, at = at}}, graph.alloc)
 	}
 	if root, path, ok := prov_place_of(graph, e); ok {
-		return prov_written_aliases_of(graph, Written_Storage{symbol = graph.roots[int(root)].symbol}, path)
+		return prov_written_aliases_of(graph, prov_storage_for_root(graph, root), path)
 	}
 	if carrier := prov_place_carrier(graph, e); carrier != nil {
 		out := make([dynamic]Written_Alias, graph.alloc)
 		below := prov_path_below_carrier(graph, e)
 		for target in prov_written_aliases_at(graph, carrier) {
-			if target.target == (Written_Storage{}) {
+			if target.target == 0 {
 				append(&out, target)
 			} else {
 				loaded := prov_written_aliases_of(graph, target.target, prov_concat_path(graph, target.at, below))
@@ -3914,14 +3817,14 @@ prov_written_aliases_at :: proc(graph: ^Flow_Graph, e: Expr) -> []Written_Alias 
 	case ^Expr_Call:
 		#partial switch _ in v.operation {
 		case Call_Box_Unbox, Call_Union_As:
-			storage := Written_Storage{temporary = &v.base, type = v.type}
+			storage := prov_storage_id(graph, Written_Storage{temporary = &v.base, type = v.type})
 			prov_note_alias_source(graph, storage, v, nil)
 			return prov_written_aliases_of(graph, storage, nil)
 		}
 	case ^Expr_Move:
 		return prov_written_aliases_at(graph, v.value)
 	case ^Expr_Ident:
-		return prov_written_aliases_of(graph, Written_Storage{symbol = v.symbol}, nil)
+		return prov_written_aliases_of(graph, prov_storage_id(graph, Written_Storage{symbol = v.symbol}), nil)
 	case ^Expr_Selector:
 		return prov_written_aliases_at(graph, v.operand)
 	case ^Expr_Index:
@@ -3937,12 +3840,12 @@ prov_written_aliases_at :: proc(graph: ^Flow_Graph, e: Expr) -> []Written_Alias 
 }
 
 @(private = "file")
-prov_written_aliases_of :: proc(graph: ^Flow_Graph, id: Written_Storage, path: []Proj_Step) -> []Written_Alias {
-	if sym := symbol_of(graph.k.c, id.symbol); sym != nil && sym.kind == .Parameter && param_writes_caller(graph.k.c, sym) {
+prov_written_aliases_of :: proc(graph: ^Flow_Graph, id: Storage_Id, path: []Proj_Step) -> []Written_Alias {
+	if sym := symbol_of(graph.k.c, prov_storage(graph, id).key.symbol); sym != nil && sym.kind == .Parameter && param_writes_caller(graph.k.c, sym) {
 		return slice.clone([]Written_Alias{{target = id}}, graph.alloc)
 	}
 	out := make([dynamic]Written_Alias, 0, 2, graph.alloc)
-	if aliases := graph.region_aliases[id.symbol]; len(aliases) > 0 {
+	if aliases := graph.region_aliases[prov_storage(graph, id).key.symbol]; len(aliases) > 0 {
 		for alias in aliases {
 			if alias.root == NO_ROOT {
 				append(&out, Written_Alias{})
@@ -3985,14 +3888,14 @@ prov_note_written_alias :: proc(graph: ^Flow_Graph, local: Symbol_Id, value: Exp
 	if !type_is_carrier(c, stored) && !type_carries_borrow(c, stored).any {
 		return
 	}
-	prov_note_alias_source(graph, Written_Storage{symbol = local}, value, path)
+	prov_note_alias_source(graph, prov_storage_id(graph, Written_Storage{symbol = local}), value, path)
 }
 
 // Records what `value` holds of writable parameters at `prefix` in `local`: a
 // literal's fields at their own paths, so one field's carrier is not
 // another's (design.md "Minimum provenance precision").
 @(private = "file")
-prov_note_alias_source :: proc(graph: ^Flow_Graph, local: Written_Storage, value: Expr, prefix: []Proj_Step, unwrap := 0) {
+prov_note_alias_source :: proc(graph: ^Flow_Graph, local: Storage_Id, value: Expr, prefix: []Proj_Step, unwrap := 0) {
 	if value == nil { return }
 	if storage, at, known := prov_borrowed_storage(graph, value); known {
 		prov_add_written_alias(graph, local, Written_Alias{target = storage, at = at, path = prefix})
@@ -4088,7 +3991,7 @@ prov_note_alias_source :: proc(graph: ^Flow_Graph, local: Written_Storage, value
 		if root, at, ok := prov_place_of(graph, source); ok {
 			target := graph.roots[int(root)].symbol
 			if sym := symbol_of(graph.k.c, target); sym != nil && sym.kind == .Var {
-				prov_add_written_alias(graph, local, Written_Alias{target = Written_Storage{symbol = target}, at = at, path = prefix})
+				prov_add_written_alias(graph, local, Written_Alias{target = prov_storage_id(graph, Written_Storage{symbol = target}), at = at, path = prefix})
 				// This address names the storage, not the targets of carriers
 				// stored inside it (design.md "Storage roots and borrow carriers").
 				return
@@ -4148,9 +4051,9 @@ prov_alias_source_is_unknown :: proc(c: ^Compiler, value: Expr) -> bool {
 }
 
 @(private = "file")
-prov_add_written_alias :: proc(graph: ^Flow_Graph, local: Written_Storage, alias: Written_Alias) {
+prov_add_written_alias :: proc(graph: ^Flow_Graph, local: Storage_Id, alias: Written_Alias) {
 	alias := alias
-	if alias.target == (Written_Storage{}) {
+	if alias.target == 0 {
 		alias.at = nil // uncertainty has no storage path to extend
 	}
 	paths := [2]^[]Proj_Step{&alias.at, &alias.path}
@@ -4278,7 +4181,7 @@ prov_forget_argument_aliases :: proc(
 }
 
 Written_Alias_Visit :: struct {
-	target: Written_Storage,
+	target: Storage_Id,
 	path: []Proj_Step,
 	writable: bool,
 }
@@ -4286,7 +4189,7 @@ Written_Alias_Visit :: struct {
 @(private = "file")
 prov_forget_place_aliases :: proc(graph: ^Flow_Graph, place: Expr, writable: bool, seen: ^[dynamic]Written_Alias_Visit) {
 	if root, path, ok := prov_place_of(graph, place); ok {
-		prov_forget_storage_aliases(graph, Written_Storage{symbol = graph.roots[int(root)].symbol}, path, writable, seen)
+		prov_forget_storage_aliases(graph, prov_storage_for_root(graph, root), path, writable, seen)
 		return
 	}
 	if prov_place_carrier(graph, place) == nil {
@@ -4303,7 +4206,7 @@ prov_forget_place_aliases :: proc(graph: ^Flow_Graph, place: Expr, writable: boo
 
 @(private = "file")
 prov_forget_storage_aliases :: proc(
-	graph: ^Flow_Graph, target: Written_Storage, storage: []Proj_Step, writable: bool, seen: ^[dynamic]Written_Alias_Visit,
+	graph: ^Flow_Graph, target: Storage_Id, storage: []Proj_Step, writable: bool, seen: ^[dynamic]Written_Alias_Visit,
 ) {
 	type := prov_written_storage_type(graph, target)
 	if type == INVALID_TYPE { return }
@@ -4312,7 +4215,7 @@ prov_forget_storage_aliases :: proc(
 		if visit.target == target && visit.writable == writable && prov_same_path(visit.path, path) { return }
 	}
 	append(seen, Written_Alias_Visit{target, path, writable})
-	for alias in graph.region_aliases[target.symbol] {
+	for alias in graph.region_aliases[prov_storage(graph, target).key.symbol] {
 		if alias.root != NO_ROOT {
 			prov_forget_storage_aliases(graph, prov_storage_for_root(graph, alias.root),
 			                           prov_concat_path(graph, alias.path, path), writable, seen)
@@ -4606,53 +4509,10 @@ prov_indices_may_write :: proc(indices: []Expr) -> bool {
 // that is a use of the carrier, not a competing access to a root.
 @(private)
 prov_place_of :: proc(graph: ^Flow_Graph, e: Expr) -> (Root_Id, []Proj_Step, bool) {
-	c := graph.k.c
-	#partial switch v in e {
-	case ^Expr_Ident:
-		root := prov_root_for_symbol(graph, v.symbol)
-		return root, nil, root != NO_ROOT
-
-	case ^Expr_Selector:
-		if v.resolution.kind != .Field || v.operand == nil {
-			return NO_ROOT, nil, false
-		}
-		operand_type := expr_base(v.operand).type
-		if type_is_pointer(c, operand_type) {
-			return NO_ROOT, nil, false // an auto-deref reaches another root
-		}
-		root, path, ok := prov_place_of(graph, v.operand)
-		if !ok {
-			return NO_ROOT, nil, false
-		}
-		return root, prov_extend(graph, path, prov_field_step(graph, v)), true
-
-	case ^Expr_Postfix:
-		// design.md "Owned values": the payload lives in the box's allocation, so
-		// the box is the root, as a container is its element's.
-		if v.op != .Caret || !type_is_box(c, expr_base(v.operand).type) {
-			return NO_ROOT, nil, false
-		}
-		root, path, ok := prov_place_of(graph, v.operand)
-		if !ok {
-			return NO_ROOT, nil, false
-		}
-		return root, prov_extend(graph, path, proj_wild()), true
-
-	case ^Expr_Index:
-		if len(v.bound) > 0 || v.operand == nil {
-			return NO_ROOT, nil, false // user-defined addressing
-		}
-		// An element lives in its container's current allocation, so the container
-		// is the root and relocation ends the borrow.
-		#partial switch underlying_kind(c, expr_base(v.operand).type) {
-		case .Array, .Dynamic_Array, .Map:
-			root, path, ok := prov_place_of(graph, v.operand)
-			if !ok {
-				return NO_ROOT, nil, false
-			}
-			return root, prov_concat_path(graph, path, prov_index_path(graph, v)), true
-		}
-		return NO_ROOT, nil, false
+	place := prov_input_place(graph, e)
+	if storage, direct := place.base.(Storage_Id); direct {
+		root := prov_root_for_storage(graph, storage)
+		return root, place.path, root != NO_ROOT
 	}
 	return NO_ROOT, nil, false
 }
@@ -4930,7 +4790,9 @@ prov_slice :: proc(graph: ^Flow_Graph, v: ^Expr_Slice) -> []int {
 @(private)
 prov_slice_literal :: proc(graph: ^Flow_Graph, literal: ^Expr_Composite, mutable: bool, elements: []int) -> []int {
 	span := literal.span
-	storage := Written_Storage{temporary = &literal.base, type = literal.backing}
+	storage := prov_storage_id(graph, Written_Storage{temporary = &literal.base, type = literal.backing})
+	graph.input.storages[int(storage)].kind = .Slice_Literal
+	graph.input.storages[int(storage)].lifetime = .Scope
 	root := prov_root_for_storage(graph, storage)
 	graph.roots[int(root)].kind = .Slice_Literal
 	graph.roots[int(root)].name = "this slice literal"
@@ -4986,7 +4848,8 @@ prov_temp_root :: proc(graph: ^Flow_Graph, span: Span) -> Root_Id {
 prov_temp_root_of :: proc(graph: ^Flow_Graph, e: Expr, content: []int) -> Root_Id {
 	span := expr_span(e)
 	extends := graph.extended[expr_base(e)]
-	storage := Written_Storage{temporary = expr_base(e), type = expr_base(e).type}
+	storage := prov_storage_id(graph, Written_Storage{temporary = expr_base(e), type = expr_base(e).type})
+	graph.input.storages[int(storage)].lifetime = extends ? .Scope : .Expression
 	root := prov_root_for_storage(graph, storage)
 	if extends {
 		append(&graph.in_scope, Flow_Cleanup{kind = .Prov_Root, root = root, span = span})
@@ -5738,19 +5601,21 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	borrowed: []int
 	// Evaluation order, not parameter order: a named argument written first
 	// borrows before a later one invalidates.
-	split_receiver, split_read: []int
+	split_receiver: []int
+	split_value: Value_Id
 	for step in 0 ..< len(v.bound) {
 		index := call_slot_at(v, step)
 		if index == 0 && prov_op_lends_receiver(container_op) && v.bound[0] != nil {
 			split_receiver = walk_flow_expr(graph, v.bound[0])
-			split_read = prov_snapshot(graph, split_receiver, expr_span(v.bound[0]))
+			split_value = prov_input_capture(graph, v, v.bound[0])
+			graph.captured_values[split_value] = prov_snapshot(graph, split_receiver, expr_span(v.bound[0]))
 			continue
 		}
 		actuals[index] = prov_call_argument(graph, v, index, receiver, has_receiver, container_op, &borrowed)
 		prov_hold_owner(graph, v.bound[index])
 	}
 	if prov_op_lends_receiver(container_op) && len(v.bound) > 0 && v.bound[0] != nil {
-		actuals[0] = prov_lend_split_receiver(graph, split_receiver, split_read, expr_span(v.bound[0]))
+		actuals[0] = prov_lend_split_receiver(graph, split_receiver, graph.captured_values[split_value], expr_span(v.bound[0]))
 		borrowed = prov_join(graph, borrowed, actuals[0])
 	}
 	// A spawned call runs on its task, whose reach and effects its start
