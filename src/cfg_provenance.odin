@@ -2501,7 +2501,7 @@ prov_region_of :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
 		return prov_error_region_at(graph, form, nil, .All)
 	case Prov_Form_Selector, Prov_Form_Index:
 		if call := prov_operator_value(graph, id); call != 0 {
-			return prov_operator_region(graph, call)
+			return prov_result_region(graph, call)
 		}
 		if root, path, ok := prov_value_place_of(graph, id); ok {
 			set := prov_region_content_at(graph, root, path)
@@ -2515,7 +2515,7 @@ prov_region_of :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
 		return prov_read_region(graph, id)
 	case Prov_Form_Binary, Prov_Form_Unary, Prov_Form_Slice:
 		if call := prov_operator_value(graph, id); call != 0 {
-			return prov_operator_region(graph, call)
+			return prov_result_region(graph, call)
 		}
 	case Prov_Form_Postfix:
 		if form.op == .Caret && form.boxed {
@@ -2549,15 +2549,6 @@ prov_region_of :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
 		return set
 	}
 	return Region_Set{}
-}
-
-// The region of the call a user operator stands for.
-@(private = "file")
-prov_operator_region :: proc(graph: ^Flow_Graph, call: Value_Id) -> Region_Set {
-	if result, found := graph.call_results[prov_value(graph, call).form.(Prov_Form_Call).call]; found {
-		return result.region
-	}
-	return prov_call_region(graph, call, prov_value(graph, call).type)
 }
 
 // design.md "Allocator regions and region provenance": a copy of a managed

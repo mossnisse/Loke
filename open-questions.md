@@ -62,6 +62,30 @@ both applied:
 The diagnostics match `4751305` on all 1348 test, example, tutorial, bench, and
 package inputs.
 
+### Call-argument simplification review (2026-10-25)
+
+Resolved (2026-10-25): the cleanup below is applied. Both callers in
+`prov_region_of` now read an operator's call through `prov_result_region`, and
+`prov_operator_region` is deleted; diagnostics match `bfdf31a` on all 1348
+corpus inputs.
+
+Review of `bfdf31a` ("Read provenance call arguments from recorded value forms")
+found no correctness regression. The recorded argument values and operator-call
+values keep substitution within the value representation, including its defer
+expansion, and removing the operand pre-interning walk simplifies construction.
+
+One optional cleanup remains in [cfg_provenance.odin](src/cfg_provenance.odin):
+`prov_operator_region` repeats the cached-call-result lookup and fallback already
+provided by `prov_result_region`. An operator's recorded call is a
+`Prov_Form_Call` with its unconverted result type, so the two callers can use
+`prov_result_region` directly and the nine-line helper can be deleted.
+
+The current compiler passed all 168 unit tests, and acceptance and diagnostic
+messages matched its parent on 22 focused inputs covering providers, deferred
+calls, erasure, shared owners, user operators, and variadic writes. An isolated
+implementation of the cleanup passed the same 168 tests and matched the current
+compiler and its parent on 11 focused operator and variadic inputs.
+
 ### Normalization baseline follow-up
 
 Resolved in stage 3 (2026-10-25). Stage 1's

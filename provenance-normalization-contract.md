@@ -545,7 +545,9 @@ box's operand from the bound values too.
 A user operator's form records the value of the call it stands for instead of
 the synthesized call node, so its region is found from that value
 (`prov_operator_value`, replacing `prov_value_call`) rather than by looking the
-node up again in the expansion of the reading site.
+node up again in the expansion of the reading site. A review of stage 5e found
+that reading it needs no helper of its own: `prov_result_region` already
+returns a call's settled result or falls back to `prov_call_region`.
 
 Freezing no longer interns every operand beneath each value
 (`prov_query_operands` is gone); it still describes each value's transfer.
