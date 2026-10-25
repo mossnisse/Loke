@@ -94,7 +94,7 @@ prov_value_call :: proc(graph: ^Flow_Graph, id: Value_Id) -> ^Expr_Call {
 	return nil
 }
 
-@(private)
+@(private = "file")
 prov_argument_values :: proc(graph: ^Flow_Graph, call: ^Expr_Call, expansion: Defer_Expansion) -> []Value_Id {
 	count := len(call.bound) > 0 ? len(call.bound) : len(call.args)
 	values := make([]Value_Id, count, graph.alloc)
@@ -111,8 +111,10 @@ prov_receiver_value :: proc(arguments: []Value_Id) -> Value_Id {
 	return len(arguments) > 0 ? arguments[0] : 0
 }
 
-// The argument values of a call an event names, in the expansion of its site.
+// The argument values of a call an event names, from the call's value in the
+// expansion of the event's site. A query of a value reads its own form instead,
+// which keeps the value's expansion.
 @(private)
 prov_call_values :: proc(graph: ^Flow_Graph, call: ^Expr_Call) -> []Value_Id {
-	return prov_input_call(graph, call).values
+	return prov_value(graph, prov_operand_value(graph, call, graph.expansion)).form.(Prov_Form_Call).arguments
 }

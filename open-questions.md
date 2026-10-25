@@ -39,6 +39,28 @@ call's arguments. The separate
 [receiver emission divergence](known-gaps.md#mutable-slice-splitting-reloads-a-rebound-receiver-during-emission)
 remains open.
 
+### Value-form simplification review (2026-10-25)
+
+Resolved (2026-10-25). Review of `4751305` ("Record provenance value forms at
+interning") found no correctness regression and two optional simplifications,
+both applied:
+
+- **One call-argument value list.** `Prov_Call_Input` no longer stores its own
+  argument values. An event that names a call reads the form of the call's value
+  in the expansion of its site (`prov_call_values` in
+  [provenance_form.odin](src/provenance_form.odin)); a leaf query still reads the
+  original value's form, which keeps that value's expansion, as the
+  [stage 5d notes](provenance-normalization-contract.md#stage-5d-value-forms)
+  require.
+- **No read-input lookup table.** [prov_input_read](src/provenance_read.odin)
+  derives its fallback operand from the value's form and reads an
+  `unknown_alias` classification recorded when the value is interned, so it no
+  longer writes to the input. `read_inputs` and its freeze-time preparation are
+  gone.
+
+The diagnostics match `4751305` on all 1348 test, example, tutorial, bench, and
+package inputs.
+
 ### Normalization baseline follow-up
 
 Resolved in stage 3 (2026-10-25). Stage 1's

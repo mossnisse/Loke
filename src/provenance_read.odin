@@ -9,12 +9,8 @@ Prov_Read_Input :: struct {
 }
 
 prov_input_read :: proc(graph: ^Flow_Graph, id: Value_Id) -> Prov_Read_Input {
-	if input, found := graph.input.read_inputs[id]; found { return input }
-	prov_writable_input(graph)
 	value := prov_value(graph, id)
-	input: Prov_Read_Input
-	if value.origin == nil { return input }
-	input.unknown_alias = prov_alias_source_is_unknown(graph.k.c, value.type, value.origin)
+	input := Prov_Read_Input{unknown_alias = value.unknown_alias}
 	#partial switch form in value.form {
 	case Prov_Form_Selector: input.fallback = form.operand
 	case Prov_Form_Index: input.fallback = form.operand
@@ -22,7 +18,6 @@ prov_input_read :: proc(graph: ^Flow_Graph, id: Value_Id) -> Prov_Read_Input {
 	case Prov_Form_Unary:
 		if form.op == .Amp { input.fallback = form.operand }
 	}
-	graph.input.read_inputs[id] = input
 	return input
 }
 

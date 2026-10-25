@@ -52,6 +52,9 @@ Prov_Value :: struct {
 	form: Prov_Form,
 	// Its storage ends with its statement (`prov_expr_is_temporary`).
 	temporary: bool,
+	// A read through it may find targets no write named
+	// (`prov_alias_source_is_unknown`).
+	unknown_alias: bool,
 }
 
 Prov_Input_Key :: struct {
@@ -78,7 +81,6 @@ Prov_Input :: struct {
 	copy_operations: map[Type_Id]Prov_Copy_Operation,
 	calls: map[Prov_Input_Key]Prov_Call_Input,
 	synthetic_calls: map[Prov_Synthetic_Call_Key]^Expr_Call,
-	read_inputs: map[Value_Id]Prov_Read_Input,
 	// Preserve the bounded constant-map-key assignment along with cached paths.
 	map_key_entries: map[string]int,
 }
@@ -107,7 +109,6 @@ new_prov_input :: proc(allocator: mem.Allocator, seed: ^Prov_Input = nil) -> ^Pr
 	input.copy_operations = make(map[Type_Id]Prov_Copy_Operation, 4, allocator)
 	input.calls = make(map[Prov_Input_Key]Prov_Call_Input, 4, allocator)
 	input.synthetic_calls = make(map[Prov_Synthetic_Call_Key]^Expr_Call, 2, allocator)
-	input.read_inputs = make(map[Value_Id]Prov_Read_Input, 4, allocator)
 	input.map_key_entries = make(map[string]int, 4, allocator)
 	if seed == nil {
 		append(&input.storages, Prov_Storage{})
@@ -128,7 +129,6 @@ new_prov_input :: proc(allocator: mem.Allocator, seed: ^Prov_Input = nil) -> ^Pr
 	for type, operation in seed.copy_operations { input.copy_operations[type] = operation }
 	for key, input_call in seed.calls { input.calls[key] = prov_clone_call_input(input_call, allocator) }
 	for key, call in seed.synthetic_calls { input.synthetic_calls[key] = call }
-	for id, read in seed.read_inputs { input.read_inputs[id] = read }
 	for key, entry in seed.map_key_entries { input.map_key_entries[strings.clone(key, allocator)] = entry }
 	return input
 }
@@ -260,6 +260,7 @@ prov_intern_value :: proc(graph: ^Flow_Graph, e: Expr, repr: Prov_Repr, expansio
 	form := prov_describe_form(graph, e, expansion)
 	value := &graph.input.values[int(id)]
 	value.place, value.form, value.temporary = place, form, prov_expr_is_temporary(e)
+	value.unknown_alias = prov_alias_source_is_unknown(graph.k.c, repr.type, e)
 	return id
 }
 

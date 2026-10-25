@@ -169,7 +169,6 @@ prov_finish_effect_program :: proc(program: ^Prov_Effect_Program, graph: ^Flow_G
 		id := Value_Id(index)
 		graph.expansion = graph.input.values[index].expansion
 		_ = prov_value_transfer(graph, id)
-		_ = prov_input_read(graph, id)
 		clear(&operands)
 		prov_query_operands(graph, graph.input.values[index].origin, &operands)
 		for operand in operands { _ = prov_input_value(graph, operand) }

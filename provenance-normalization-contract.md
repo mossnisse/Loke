@@ -479,9 +479,11 @@ a provider moved into another and for a declaration's initializer. An
 allocator handle's receiver is a value, which an allocator control block's root
 records for its settled region. `prov_argument_regions` and
 `prov_call_allocator_use` start from a call an event names, so they read the
-argument values of its call input (`Prov_Call_Input.values`), which is keyed by
-the expansion of the event's site. A call result's region and the replayed call
-operations find their call through the form too.
+form of the call's value in the expansion of the event's site. A call result's
+region and the replayed call operations find their call through the form too.
+Whether a read through a value may find targets no write named is recorded with
+the value (`unknown_alias`), so the read input is derived from the value and
+its form rather than kept in a table of its own.
 
 What these queries still read from the origin node is a key (a temporary's
 storage, a call's result), a span or name for a diagnostic, or checked metadata:
@@ -516,6 +518,13 @@ same machine, `perf.ps1` measured front-end time from 3% lower to 4% higher
 workspace language server within 1% per operation with an unchanged
 102.7 MB peak. Executable sizes were unchanged and every benchmark output
 matched.
+
+A review of stage 5d found two duplicate records, now removed. A call input
+kept its own copy of the argument values its value's form holds; an event now
+reads the form of the call's value at its site instead. The read-input table
+cached a fallback operand the form already records and an alias
+classification fixed by the value; both are now read from the value. The
+diagnostics still match the stage 5c commit on all 1348 corpus inputs.
 
 ## AST-sensitive construction inventory
 
