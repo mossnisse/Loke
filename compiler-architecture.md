@@ -154,12 +154,16 @@ reads before replay. [provenance_effect.odin](src/provenance_effect.odin) record
 and replays declarations, stores, borrowed bindings, provider transfers, call
 results/writes, and target invalidation. Replay uses frozen input tables and
 cannot walk source operands. Leaf region and target queries read a value's
-recorded representation, and the construction walk tracks open conversions
-without rewriting the checked AST. See the
+recorded representation and its checked form
+([provenance_form.odin](src/provenance_form.odin)), which holds its operands
+and a call's arguments as values; the construction walk tracks open
+conversions without rewriting the checked AST. See the
 [stage 4 contract](provenance-normalization-contract.md#stage-4-fact-replay-and-call-inputs)
 for the profiling tool and the
 [stage 5b contract](provenance-normalization-contract.md#stage-5b-recorded-events)
-for event materialization.
+for event materialization, and the
+[stage 5d contract](provenance-normalization-contract.md#stage-5d-value-forms)
+for what a query may still read from the AST.
 
 ### Allocation domains
 

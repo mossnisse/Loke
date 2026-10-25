@@ -14,8 +14,9 @@ makes leaf queries value-based, and
 [stage 5b](provenance-normalization-contract.md#stage-5b-recorded-events)
 replaces the final loan/event walk with recorded events.
 [Stage 5c](provenance-normalization-contract.md#stage-5c-migration-scaffolding)
-removes the comparison code and lists the queries that still read source forms.
-Pending architectural decisions are tracked in
+removes the comparison code and lists the queries that still read source forms;
+[stage 5d](provenance-normalization-contract.md#stage-5d-value-forms) has them
+read each value's recorded form. Pending architectural decisions are tracked in
 [Open questions](open-questions.md#normalized-input-for-provenance-analysis).
 
 ## Recommendation
@@ -371,8 +372,9 @@ once with settled facts through the remaining event bridge. The
 [stage 4 notes](provenance-normalization-contract.md#stage-4-fact-replay-and-call-inputs)
 state that boundary explicitly. Stage 5a replaced the checked leaf adapters with
 value-based queries, and stage 5b the final walk with recorded events. Stage 5c
-removed the temporary comparison code; the queries it lists still choose their
-rule by source form.
+removed the temporary comparison code, and stage 5d made the queries it lists
+read each value's recorded form; the call-substitution helpers still walk a
+call's arguments.
 
 | Stage | Change | Exit criterion |
 | --- | --- | --- |

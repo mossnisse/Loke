@@ -350,7 +350,7 @@ prov_replay_fact_operation :: proc(graph: ^Flow_Graph, op: Prov_Fact_Operation) 
 	case Prov_Effect_Targets:
 		prov_note_alias_source(graph, operation.storage, operation.value, operation.path)
 	case Prov_Effect_Call:
-		call := prov_value(graph, operation.value).origin.(^Expr_Call)
+		call := prov_value(graph, operation.value).form.(Prov_Form_Call).call
 		switch operation.kind {
 		case .Result:
 			graph.call_results[call] = Prov_Call_Result{region = prov_call_region(graph, operation.value, prov_value(graph, operation.value).type),

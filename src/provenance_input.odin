@@ -49,6 +49,9 @@ Prov_Value :: struct {
 	expansion: Defer_Expansion,
 	// A captured value copies its source's place but is not a later reload of it.
 	place: Prov_Place,
+	form: Prov_Form,
+	// Its storage ends with its statement (`prov_expr_is_temporary`).
+	temporary: bool,
 }
 
 Prov_Input_Key :: struct {
@@ -245,7 +248,7 @@ prov_input_value :: proc(graph: ^Flow_Graph, e: Expr) -> Value_Id {
 	return prov_intern_value(graph, e, prov_repr(graph, e), graph.expansion)
 }
 
-@(private = "file")
+@(private)
 prov_intern_value :: proc(graph: ^Flow_Graph, e: Expr, repr: Prov_Repr, expansion: Defer_Expansion) -> Value_Id {
 	key := Prov_Input_Key{node = expr_base(e), repr = repr, expansion = expansion}
 	if id, found := graph.input.value_ids[key]; found { return id }
@@ -254,7 +257,9 @@ prov_intern_value :: proc(graph: ^Flow_Graph, e: Expr, repr: Prov_Repr, expansio
 	append(&graph.input.values, Prov_Value{origin = e, repr = repr, expansion = expansion})
 	graph.input.value_ids[key] = id
 	place := prov_place_as(graph, e, key)
-	graph.input.values[int(id)].place = place
+	form := prov_describe_form(graph, e, expansion)
+	value := &graph.input.values[int(id)]
+	value.place, value.form, value.temporary = place, form, prov_expr_is_temporary(e)
 	return id
 }
 

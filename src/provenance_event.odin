@@ -31,7 +31,7 @@ Prov_Event_Escape :: struct {
 	sources, into: []int,
 	span:          Span,
 	value:         Value_Id,
-	propagated:    ^Expr_Postfix,
+	propagated:    Maybe(Prov_Form_Error),
 	result:        Type_Id,
 }
 
@@ -118,8 +118,9 @@ Prov_Event_Operation :: union {
 
 // An allocator control block's root, whose region is its provider's.
 Prov_Root_Region :: struct {
-	root: Root_Id,
-	call: ^Expr_Call,
+	root:     Root_Id,
+	call:     ^Expr_Call,
+	receiver: Value_Id,
 }
 
 // `first` and `count` are the construction events the operation produced in
@@ -235,9 +236,9 @@ prov_materialize_event :: proc(graph: ^Flow_Graph, operation: Prov_Event_Operati
 prov_materialize_escape :: proc(graph: ^Flow_Graph, op: Prov_Event_Escape) {
 	region: Region_Set
 	fields: []Prov_Region_Content
-	if op.propagated != nil {
-		region = prov_error_region_at(graph, op.propagated, nil, .All)
-		fields = prov_error_region_fields(graph, op.propagated, op.result)
+	if propagated, known := op.propagated.?; known {
+		region = prov_error_region_at(graph, propagated, nil, .All)
+		fields = prov_error_region_fields(graph, propagated, op.result)
 	} else {
 		region = prov_escape_region(graph, op.value)
 		fields = prov_result_region_fields(graph, op.value, op.result)
@@ -254,8 +255,8 @@ prov_materialize_escape :: proc(graph: ^Flow_Graph, op: Prov_Event_Escape) {
 // deferred statements run.
 @(private)
 prov_returning_region :: proc(graph: ^Flow_Graph, returning: Prov_Returning) -> Region_Set {
-	if returning.propagated != nil {
-		return prov_reset_fields_region(graph, returning.result, prov_error_region_fields(graph, returning.propagated, returning.result))
+	if propagated, known := returning.propagated.?; known {
+		return prov_reset_fields_region(graph, returning.result, prov_error_region_fields(graph, propagated, returning.result))
 	}
 	return prov_reset_value_region(graph, returning.value)
 }
@@ -306,7 +307,7 @@ prov_materialize_events :: proc(graph, final: ^Flow_Graph, program: ^Prov_Effect
 		append(&by_block[site.block], Replacement{site.first, site.count, site.sequence, false, slice.clone(final.blocks[site.block].prov[first:], graph.alloc)})
 	}
 	for entry in program.root_regions {
-		graph.roots[int(entry.root)].region, _ = prov_handle_region(final, entry.call)
+		graph.roots[int(entry.root)].region, _ = prov_handle_region(final, entry.call, entry.receiver)
 	}
 	graph.has_region_event = false
 	window := graph.has_window_event

@@ -2265,8 +2265,9 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 						}
 					}
 					contents := prov_load_deep(graph, escaping, v.span)
-					graph.returning = new_clone(Prov_Returning{propagated = v, result = proc_symbol.result, span = v.span}, graph.alloc)
-					prov_event(graph, Prov_Event_Escape{sources = escaping, into = contents, span = v.span, propagated = v, result = proc_symbol.result})
+					propagated := prov_error_form(graph, v, graph.expansion)
+					graph.returning = new_clone(Prov_Returning{propagated = propagated, result = proc_symbol.result, span = v.span}, graph.alloc)
+					prov_event(graph, Prov_Event_Escape{sources = escaping, into = contents, span = v.span, propagated = propagated, result = proc_symbol.result})
 					held = prov_hold_result(graph, prov_join(graph, escaping, contents), proc_symbol.result, v.span)
 				}
 			}

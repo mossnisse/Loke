@@ -398,8 +398,8 @@ prov_join :: proc(graph: ^Flow_Graph, a, b: []int) -> []int {
 
 @(private)
 prov_result_region :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
-	if call, ok := prov_value(graph, id).origin.(^Expr_Call); ok {
-		if result, found := graph.call_results[call]; found {
+	if form, ok := prov_value(graph, id).form.(Prov_Form_Call); ok {
+		if result, found := graph.call_results[form.call]; found {
 			return result.region
 		}
 	}
@@ -438,12 +438,12 @@ prov_result_region_at :: proc(graph: ^Flow_Graph, id: Value_Id, path: []Proj_Ste
 		return prov_transfer_region(graph, transfer, path, query)
 	}
 	if len(path) == 0 && query == .All { return prov_result_region(graph, id) }
-	#partial switch v in value.origin {
-	case ^Expr_Propagated_Error:
-		return prov_error_region_at(graph, v.owner, path, query)
-	case ^Expr_Call:
+	#partial switch form in value.form {
+	case Prov_Form_Error:
+		return prov_error_region_at(graph, form, path, query)
+	case Prov_Form_Call:
 		if region, known := prov_constructed_region_at(graph, id, path, query); known { return region }
-		if result, found := graph.call_results[v]; found && len(result.region_content) > 0 {
+		if result, found := graph.call_results[form.call]; found && len(result.region_content) > 0 {
 			out := prov_empty_region(graph)
 			matched := false
 			for content in result.region_content {
@@ -458,12 +458,11 @@ prov_result_region_at :: proc(graph: ^Flow_Graph, id: Value_Id, path: []Proj_Ste
 			}
 			if matched { return out }
 		}
-	case ^Expr_Selector:
-		if v.resolution.kind == .Field && v.operand != nil &&
-		   underlying_kind(graph.k.c, prov_type(graph, v.operand)) == .Struct {
-			return prov_result_region_at(graph, prov_input_value(graph, v.operand), prov_concat_path(graph, {prov_field_step(graph, v)}, path), query)
+	case Prov_Form_Selector:
+		if form.field && form.operand != 0 &&
+		   underlying_kind(graph.k.c, prov_value(graph, form.operand).type) == .Struct {
+			return prov_result_region_at(graph, form.operand, prov_concat_path(graph, {form.step}, path), query)
 		}
-
 	}
 	if root, base, ok := prov_value_place_of(graph, id); ok {
 		return prov_region_content_at(graph, root, prov_concat_path(graph, base, path), query)
@@ -499,8 +498,8 @@ prov_result_region_fields :: proc(
 // design.md "or_return operator": propagating a place copies its error;
 // propagating a temporary transfers it. Both preserve the selected payload.
 @(private)
-prov_error_region_at :: proc(graph: ^Flow_Graph, v: ^Expr_Postfix, path: []Proj_Step, query: Region_Query, target := INVALID_TYPE) -> Region_Set {
-	shape, ok := fallible_of(graph.k, prov_type(graph, v.operand))
+prov_error_region_at :: proc(graph: ^Flow_Graph, error: Prov_Form_Error, path: []Proj_Step, query: Region_Query, target := INVALID_TYPE) -> Region_Set {
+	shape, ok := fallible_of(graph.k, prov_value(graph, error.operand).type)
 	if !ok { return prov_empty_region(graph) }
 	from := shape.info.variants[shape.failure]
 	path := path
@@ -510,21 +509,21 @@ prov_error_region_at :: proc(graph: ^Flow_Graph, v: ^Expr_Postfix, path: []Proj_
 		path = mapped
 	}
 	path = prov_concat_path(graph, {proj_field(shape.failure)}, path)
-	operand := prov_input_value(graph, v.operand)
-	if v.borrows && type_is_managed(graph.k.c, from) {
+	operand := error.operand
+	if error.borrows && type_is_managed(graph.k.c, from) {
 		return prov_copied_region_at(graph, Prov_Region_Copy{value = operand, allocator = Region_Set{default = true}}, shape.union_type, path, query)
 	}
 	return prov_result_region_at(graph, operand, path, query)
 }
 
 @(private)
-prov_error_region_fields :: proc(graph: ^Flow_Graph, v: ^Expr_Postfix, result_type: Type_Id) -> []Prov_Region_Content {
+prov_error_region_fields :: proc(graph: ^Flow_Graph, error: Prov_Form_Error, result_type: Type_Id) -> []Prov_Region_Content {
 	target, ok := fallible_of(graph.k, result_type)
 	if !ok { return nil }
 	out := region_field_shape(graph.k.c, result_type, graph.alloc)
 	for &content in out {
 		if len(content.path) == 0 || content.path[0].kind != .Field || int(content.path[0].lo) != target.failure { continue }
-		content.region = prov_error_region_at(graph, v, content.path[1:], content.own ? .Own : .All, target.info.variants[target.failure])
+		content.region = prov_error_region_at(graph, error, content.path[1:], content.own ? .Own : .All, target.info.variants[target.failure])
 	}
 	return out
 }
@@ -588,14 +587,14 @@ prov_symbol_region :: proc(graph: ^Flow_Graph, id: Symbol_Id, type: Type_Id) -> 
 prov_escape_region :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
 	value := prov_value(graph, id)
 	if id != 0 && type_is_region_provider(graph.k.c, value.type) {
-		#partial switch v in value.origin {
-		case ^Expr_Ident:
-			if parent, found := graph.provider_parents[v.symbol]; found {
+		#partial switch form in value.form {
+		case Prov_Form_Symbol:
+			if parent, found := graph.provider_parents[form.symbol]; found {
 				return parent
 			}
 			return Region_Set{}
-		case ^Expr_Move:
-			return prov_escape_region(graph, prov_input_value(graph, v.value))
+		case Prov_Form_Move:
+			return prov_escape_region(graph, form.operand)
 		}
 	}
 	return prov_result_region(graph, id)
@@ -2335,28 +2334,29 @@ prov_provider_use :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span) {
 // The provider tokens a value moved out of locals carries, through composite
 // literals, `exchange`, and `box`, or 0.
 @(private = "file")
-prov_moved_bits :: proc(graph: ^Flow_Graph, e: Expr) -> u64 {
-	source: Expr
-	#partial switch v in e {
-	case ^Expr_Move:
-		source = v.value
-	case ^Expr_Call:
+prov_moved_bits :: proc(graph: ^Flow_Graph, id: Value_Id) -> u64 {
+	source: Value_Id
+	#partial switch form in prov_value(graph, id).form {
+	case Prov_Form_Move:
+		source = form.operand
+	case Prov_Form_Call:
+		v := form.call
 		if sym := symbol_of(graph.k.c, v.resolution.symbol); sym != nil && sym.builtin == .Exchange && len(v.bound) == 2 {
-			source = v.bound[0]
-		} else if payload := boxed_payload(graph.k.c, v); payload != nil {
-			return prov_moved_bits(graph, payload)
+			source = form.arguments[0]
+		} else if boxed_payload(graph.k.c, v) != nil {
+			return prov_moved_bits(graph, form.arguments[0])
 		}
-	case ^Expr_Composite:
+	case Prov_Form_Composite:
 		bits: u64
-		for element in v.elements {
-			if element.value != nil {
-				bits |= prov_moved_bits(graph, element.value)
+		for element in form.elements {
+			if element != 0 {
+				bits |= prov_moved_bits(graph, element)
 			}
 		}
 		return bits
 	}
-	if source != nil {
-		if root, _, ok := prov_place_of(graph, source); ok && graph.roots[int(root)].kind == .Local {
+	if source != 0 {
+		if root, _, ok := prov_value_place_of(graph, source); ok && graph.roots[int(root)].kind == .Local {
 			return graph.provider_bits[graph.roots[int(root)].symbol]
 		}
 	}
@@ -2369,7 +2369,7 @@ prov_merge_moved_bits :: proc(graph: ^Flow_Graph, root: Symbol_Id, value: Value_
 	recorded := prov_effect_active(graph)
 	if recorded { prov_effect_begin(graph, Prov_Effect_Move_Provider{root, prov_effect_value(graph, value)}) }
 	defer prov_effect_end(graph, recorded)
-	bits := prov_moved_bits(graph, prov_value(graph, value).origin)
+	bits := prov_moved_bits(graph, value)
 	if bits == 0 {
 		return
 	}
@@ -2494,13 +2494,13 @@ prov_region_of :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
 	if transfer := prov_value_transfer(graph, id); transfer != nil {
 		return prov_transfer_region(graph, transfer, nil, .All)
 	}
-	#partial switch v in e {
-	case ^Expr_Ident:
-		return prov_symbol_region(graph, v.symbol, value.type)
-	case ^Expr_Propagated_Error:
-		return prov_error_region_at(graph, v.owner, nil, .All)
-	case ^Expr_Selector, ^Expr_Index:
-		if call := prov_call_node(graph, e); call != nil {
+	#partial switch form in value.form {
+	case Prov_Form_Symbol:
+		return prov_symbol_region(graph, form.symbol, value.type)
+	case Prov_Form_Error:
+		return prov_error_region_at(graph, form, nil, .All)
+	case Prov_Form_Selector, Prov_Form_Index:
+		if call := prov_value_call(graph, id); call != nil {
 			return prov_call_node_region(graph, call)
 		}
 		if root, path, ok := prov_value_place_of(graph, id); ok {
@@ -2513,28 +2513,29 @@ prov_region_of :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
 			return set
 		}
 		return prov_read_region(graph, id)
-	case ^Expr_Binary, ^Expr_Unary, ^Expr_Slice:
-		if call := prov_call_node(graph, e); call != nil {
+	case Prov_Form_Binary, Prov_Form_Unary, Prov_Form_Slice:
+		if call := prov_value_call(graph, id); call != nil {
 			return prov_call_node_region(graph, call)
 		}
-	case ^Expr_Postfix:
-		if v.op == .Caret && type_is_box(c, prov_type(graph, v.operand)) {
+	case Prov_Form_Postfix:
+		if form.op == .Caret && form.boxed {
 			if root, path, ok := prov_value_place_of(graph, id); ok {
 				return prov_region_content_at(graph, root, path)
 			}
 			return prov_read_region(graph, id)
 		}
-		if v.op == .Caret {
-			return prov_viewed_region(graph, prov_input_value(graph, v.operand))
+		if form.op == .Caret {
+			return prov_viewed_region(graph, form.operand)
 		}
-	case ^Expr_Call:
+	case Prov_Form_Call:
+		v := form.call
 		if sym := symbol_of(c, v.resolution.symbol); sym != nil && sym.builtin == .Default_Allocator {
 			set := prov_empty_region(graph)
 			set.default = true
 			return set
 		}
 		// `arena.allocator()` names the provider's own region.
-		if set, ok := prov_handle_region(graph, v); ok {
+		if set, ok := prov_handle_region(graph, v, prov_receiver_value(form.arguments)); ok {
 			return set
 		}
 		if result, found := graph.call_results[v]; found {
@@ -2579,24 +2580,24 @@ prov_storage_region :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
 
 @(private = "file")
 prov_viewed_region :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
-	#partial switch v in prov_value(graph, id).origin {
-	case ^Expr_Ident:
-		return prov_region_for_symbol(graph, v.symbol, viewed = true)
-	case ^Expr_Unary:
-		if v.op == .Amp {
-			return prov_storage_region(graph, prov_input_value(graph, v.operand))
+	#partial switch form in prov_value(graph, id).form {
+	case Prov_Form_Symbol:
+		return prov_region_for_symbol(graph, form.symbol, viewed = true)
+	case Prov_Form_Unary:
+		if form.op == .Amp {
+			return prov_storage_region(graph, form.operand)
 		}
-	case ^Expr_Slice:
-		if v.resolution.kind != .User_Operator && v.operand != nil {
-			return prov_storage_region(graph, prov_input_value(graph, v.operand))
+	case Prov_Form_Slice:
+		if form.operator == nil && form.operand != 0 {
+			return prov_storage_region(graph, form.operand)
 		}
-	case ^Expr_Move:
-		return prov_viewed_region(graph, prov_input_value(graph, v.value))
-	case ^Expr_Call:
-		if prov_receiver_is_shared_handle(graph, v) && len(v.bound) > 0 {
-			return prov_source_region_at(graph, prov_input_value(graph, v.bound[0]), {proj_wild()})
+	case Prov_Form_Move:
+		return prov_viewed_region(graph, form.operand)
+	case Prov_Form_Call:
+		if prov_receiver_is_shared_handle(graph, form.call) && len(form.call.bound) > 0 {
+			return prov_source_region_at(graph, form.arguments[0], {proj_wild()})
 		}
-	case ^Expr_Selector, ^Expr_Index:
+	case Prov_Form_Selector, Prov_Form_Index:
 		if _, _, ok := prov_value_place_of(graph, id); !ok {
 			return prov_read_region(graph, id)
 		}
@@ -2627,19 +2628,19 @@ prov_read_storage_regions :: proc(graph: ^Flow_Graph, id: Value_Id, path: []Proj
 prov_read_region :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
 	out, known := prov_read_storage_regions(graph, id, nil, .All)
 	if known { return out }
-	operand: Expr
-	#partial switch v in prov_value(graph, id).origin {
-	case ^Expr_Index:
-		operand = v.operand
-	case ^Expr_Selector:
-		if v.resolution.kind == .Field {
-			operand = v.operand
+	operand: Value_Id
+	#partial switch form in prov_value(graph, id).form {
+	case Prov_Form_Index:
+		operand = form.operand
+	case Prov_Form_Selector:
+		if form.field {
+			operand = form.operand
 		}
 	}
-	if operand == nil {
+	if operand == 0 {
 		return out
 	}
-	region_merge(&out, prov_storage_region(graph, prov_input_value(graph, operand)))
+	region_merge(&out, prov_storage_region(graph, operand))
 	return out
 }
 
@@ -2661,17 +2662,18 @@ prov_bind_element_region :: proc(graph: ^Flow_Graph, id: Symbol_Id, iterable: Va
 // The region an `arena.allocator()` names; unknown unless the receiver is a
 // named provider.
 @(private)
-prov_handle_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> (Region_Set, bool) {
+prov_handle_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call, receiver: Value_Id) -> (Region_Set, bool) {
 	if call_provider_op(graph.k.c, v) != .Handle || len(v.bound) == 0 {
 		return Region_Set{}, false
 	}
-	ident, is_ident := v.bound[0].(^Expr_Ident)
-	if !is_ident && prov_expr_is_temporary(v.bound[0]) {
+	receiver := prov_value(graph, receiver)
+	ident, is_ident := receiver.form.(Prov_Form_Symbol)
+	if !is_ident && receiver.temporary {
 		return prov_temp_provider_region(graph, v), true
 	}
 	if !is_ident {
 		// A provider inside a local record or container: the token of its position.
-		if root, path, ok := prov_place_of(graph, v.bound[0]); ok {
+		if root, path, ok := prov_root_place(graph, receiver.place); ok {
 			if descriptor := graph.roots[int(root)]; descriptor.kind == .Local && descriptor.symbol != INVALID_SYMBOL {
 				return prov_provider_region_at(graph, descriptor.symbol, path), true
 			}
@@ -2697,7 +2699,7 @@ Temp_Provider :: struct {
 // `result`; its region is read where a deferred reset needs it.
 Prov_Returning :: struct {
 	value:      Value_Id,
-	propagated: ^Expr_Postfix,
+	propagated: Maybe(Prov_Form_Error),
 	result:     Type_Id,
 	span:       Span,
 }
@@ -2737,7 +2739,7 @@ prov_constructed_region_at :: proc(graph: ^Flow_Graph, id: Value_Id, path: []Pro
 	c := graph.k.c
 	out := prov_empty_region(graph)
 	value := prov_value(graph, id)
-	v := value.origin.(^Expr_Call)
+	v := value.form.(Prov_Form_Call).call
 	payload, fallible := shared_constructor_payload(c, v)
 	shared_copy := prov_receiver_is_shared_handle(graph, v) && len(v.bound) > 0 &&
 	               prov_type_or_wrapped(c, value.type, type_is_shared_handle)
@@ -2778,7 +2780,8 @@ prov_type_shares_region :: proc(c: ^Compiler, type: Type_Id) -> bool {
 prov_call_region :: proc(graph: ^Flow_Graph, id: Value_Id, result_type: Type_Id) -> Region_Set {
 	c := graph.k.c
 	out := prov_empty_region(graph)
-	v := prov_value(graph, id).origin.(^Expr_Call)
+	form := prov_value(graph, id).form.(Prov_Form_Call)
+	v := form.call
 	allocator_result := prov_carries_allocator(c, result_type)
 	// A diverging call's value is never produced, so it is in no region.
 	if (!type_is_managed(c, result_type) && !allocator_result) || call_diverges(c, v) {
@@ -2819,7 +2822,7 @@ prov_call_region :: proc(graph: ^Flow_Graph, id: Value_Id, result_type: Type_Id)
 		return out
 	}
 	// Also here, because a stored call result is consulted before `prov_region_of`.
-	if set, ok := prov_handle_region(graph, v); ok {
+	if set, ok := prov_handle_region(graph, v, prov_receiver_value(form.arguments)); ok {
 		return set
 	}
 	// A fixed arena has no region parent; its buffer is an ordinary loan.
@@ -2905,8 +2908,8 @@ prov_allocation_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call, allocator_inde
 @(private = "file")
 prov_source_region_at :: proc(graph: ^Flow_Graph, id: Value_Id, path: []Proj_Step, query := Region_Query.All, as_type := INVALID_TYPE) -> Region_Set {
 	value := prov_value(graph, id)
-	if address, ok := value.origin.(^Expr_Unary); ok && address.op == .Amp {
-		return prov_result_region_at(graph, prov_input_value(graph, address.operand), path, query)
+	if address, ok := value.form.(Prov_Form_Unary); ok && address.op == .Amp {
+		return prov_result_region_at(graph, address.operand, path, query)
 	}
 	if type_is_carrier(graph.k.c, value.type) {
 		return prov_storage_region(graph, id)
@@ -3018,7 +3021,7 @@ prov_substitute_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call, summary: Regio
 // whole-result region.
 @(private)
 prov_call_region_content :: proc(graph: ^Flow_Graph, id: Value_Id) -> []Prov_Region_Content {
-	v := prov_value(graph, id).origin.(^Expr_Call)
+	v := prov_value(graph, id).form.(Prov_Form_Call).call
 	if transfer := prov_value_transfer(graph, id); transfer != nil {
 		out := region_field_shape(graph.k.c, prov_value(graph, id).type, graph.alloc)
 		for &content in out {
@@ -3663,7 +3666,7 @@ prov_written_targets :: proc(graph: ^Flow_Graph, destination: Value_Id, as_place
 	if as_place || !type_is_carrier(graph.k.c, value.type) {
 		if through := prov_place_carrier(graph, destination); through != 0 {
 			carrier = through
-		} else if as_place && prov_expr_is_temporary(value.origin) && !type_is_carrier(graph.k.c, value.type) {
+		} else if as_place && value.temporary && !type_is_carrier(graph.k.c, value.type) {
 			storage := prov_storage_id(graph, Written_Storage{temporary = expr_base(value.origin), type = value.type})
 			prov_note_alias_source(graph, storage, destination, nil)
 			return slice.clone([]Written_Alias{{target = storage}}, graph.alloc)
@@ -3709,7 +3712,7 @@ prov_written_aliases_at :: proc(graph: ^Flow_Graph, id: Value_Id) -> []Written_A
 				append(&out, target)
 			} else {
 				loaded := prov_written_aliases_of(graph, target.target, prov_concat_path(graph, target.at, below))
-				if len(loaded) == 0 && prov_alias_source_is_unknown(graph.k.c, value.type, value.origin) {
+				if len(loaded) == 0 && prov_input_read(graph, id).unknown_alias {
 					// Each source must contribute facts or uncertainty, even when
 					// another source of this load has known targets.
 					append(&out, Written_Alias{})
@@ -3720,21 +3723,10 @@ prov_written_aliases_at :: proc(graph: ^Flow_Graph, id: Value_Id) -> []Written_A
 		}
 		return out[:]
 	}
-	#partial switch v in value.origin {
-	case ^Expr_Ident:
-		return prov_written_aliases_of(graph, prov_storage_id(graph, Written_Storage{symbol = v.symbol}), nil)
-	case ^Expr_Selector:
-		return prov_written_aliases_at(graph, prov_input_value(graph, v.operand))
-	case ^Expr_Index:
-		return prov_written_aliases_at(graph, prov_input_value(graph, v.operand))
-	case ^Expr_Postfix:
-		return prov_written_aliases_at(graph, prov_input_value(graph, v.operand))
-	case ^Expr_Unary:
-		if v.op == .Amp {
-			return prov_written_aliases_at(graph, prov_input_value(graph, v.operand))
-		}
+	if symbol, named := value.form.(Prov_Form_Symbol); named {
+		return prov_written_aliases_of(graph, prov_storage_id(graph, Written_Storage{symbol = symbol.symbol}), nil)
 	}
-	return nil
+	return prov_written_aliases_at(graph, prov_input_read(graph, id).fallback)
 }
 
 @(private)
@@ -4733,7 +4725,7 @@ prov_declare_region :: proc(
 	// A provider moved in keeps its region, and so its token.
 	if initializer != nil && sym.duration == .None && projected < 0 {
 		if _, found := graph.provider_bits[id]; !found {
-			if bits := prov_moved_bits(graph, initializer); bits != 0 {
+			if bits := prov_moved_bits(graph, value); bits != 0 {
 				graph.provider_moved[id] = bits
 			}
 		}
@@ -4770,7 +4762,7 @@ prov_declare_region :: proc(
 		// empty container needs a policy fact of its own; copies and nonempty
 		// literals already query the allocator they actually use.
 		empty := initializer == nil
-		if literal, ok := initializer.(^Expr_Composite); ok { empty = len(literal.elements) == 0 }
+		if literal, ok := prov_value(graph, value).form.(Prov_Form_Composite); ok { empty = len(literal.elements) == 0 }
 		if empty && type_is_container(graph.k.c, sym.type) { region_merge(&set, prov_region_of(graph, prov_input_value(graph, written))) }
 	}
 	if initializer != nil {
@@ -5234,7 +5226,8 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		// lifecycle, independently of its movable owner's inline storage.
 		receiver := v.bound[0]
 		held := walk_flow_expr(graph, receiver)
-		region, _ := prov_handle_region(graph, v)
+		receiver_value := prov_input_value(graph, receiver)
+		region, _ := prov_handle_region(graph, v, receiver_value)
 		// Querying a policy does not evaluate it. Only this walk creates a
 		// provider whose lifetime ends with the statement (design.md "Allocators").
 		if prov_expr_is_temporary(receiver) && region.locals != 0 {
@@ -5249,7 +5242,7 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 				// A named provider's region is a carried fact, settled later; one in
 				// a record is its position's token, from the walk.
 				if _, named := receiver.(^Expr_Ident); named && graph.effect_program != nil {
-					append(&graph.effect_program.root_regions, Prov_Root_Region{root, v})
+					append(&graph.effect_program.root_regions, Prov_Root_Region{root, v, receiver_value})
 				}
 			} else {
 				return prov_join(graph, held, prov_borrow(graph, place, path, false, v.span, "allocator handle"))
@@ -7265,9 +7258,9 @@ prov_caller_region :: proc(graph: ^Flow_Graph, set: Region_Set) -> Region_Set {
 // The region an operation given `e` may use: an allocator the analysis cannot
 // name, such as one read from a global, is an unknown one.
 @(private = "file")
-prov_used_region :: proc(graph: ^Flow_Graph, e: Expr) -> Region_Set {
-	set := prov_storage_region(graph, prov_input_value(graph, e))
-	if region_is_empty(set) && type_underlying(graph.k.c, prov_type(graph, e)) == TYPE_ALLOCATOR {
+prov_used_region :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
+	set := prov_storage_region(graph, id)
+	if region_is_empty(set) && type_underlying(graph.k.c, prov_value(graph, id).type) == TYPE_ALLOCATOR {
 		set = prov_empty_region(graph)
 		set.unknown = true
 	}
@@ -7297,11 +7290,11 @@ prov_symbol_drop_region :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> Maybe(Prov
 @(private)
 prov_argument_regions :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []Region_Set {
 	c := graph.k.c
-	count := len(v.bound) > 0 ? len(v.bound) : len(v.args)
+	arguments := prov_call_values(graph, v)
+	count := len(arguments)
 	out: []Region_Set
-	for index in 0 ..< count {
-		argument := len(v.bound) > 0 ? v.bound[index] : v.args[index].value
-		if argument == nil || !prov_type_has_region(c, prov_type(graph, argument)) {
+	for argument, index in arguments {
+		if argument == 0 || !prov_type_has_region(c, prov_value(graph, argument).type) {
 			continue
 		}
 		used := prov_used_region(graph, argument)
@@ -7355,33 +7348,33 @@ prov_call_allocator_use :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 	_, text := v.operation.(Call_Text)
 	_, conversion := v.operation.(Call_Text_Conversion)
 	text ||= conversion
-	count := len(v.bound) > 0 ? len(v.bound) : len(v.args)
 	allocators := prov_empty_region(graph)
-	for index in 0 ..< count {
-		argument := len(v.bound) > 0 ? v.bound[index] : v.args[index].value
-		if argument == nil {
+	for argument, index in prov_call_values(graph, v) {
+		if argument == 0 {
 			continue
 		}
-		type := prov_type(graph, argument)
+		value := prov_value(graph, argument)
+		type := value.type
+		span := expr_span(value.origin)
 		mode := Param_Mode.Value
 		if info != nil && index < len(info.param_modes) {
 			mode = info.param_modes[index]
 		}
 		owns := type_owns_allocation(c, type)
 		switch {
-		case !text && mode == .Value && clone_may_allocate(c, type) && expression_is_borrowed_place(argument):
-			prov_note_allocator_use(graph, Region_Set{}, expr_span(argument), owned = true)
+		case !text && mode == .Value && clone_may_allocate(c, type) && expression_is_borrowed_place(value.origin):
+			prov_note_allocator_use(graph, Region_Set{}, span, owned = true)
 		case followed:
 		case type_underlying(c, type) == TYPE_ALLOCATOR:
 			set := prov_used_region(graph, argument)
 			region_merge(&allocators, set)
-			prov_note_allocator_use(graph, set, expr_span(argument))
+			prov_note_allocator_use(graph, set, span)
 		case !changes_storage:
 		case owns && (mode == .Inout || mode == .Move):
-			prov_note_allocator_use(graph, prov_storage_region(graph, prov_input_value(graph, argument)), expr_span(argument), owned = true)
+			prov_note_allocator_use(graph, prov_storage_region(graph, argument), span, owned = true)
 		case !supplied && carrier_is_mutable(c, type) && !type_is_region_provider(c, type):
-			if set := prov_viewed_region(graph, prov_input_value(graph, argument)); !region_is_empty(set) {
-				prov_note_allocator_use(graph, set, expr_span(argument))
+			if set := prov_viewed_region(graph, argument); !region_is_empty(set) {
+				prov_note_allocator_use(graph, set, span)
 			}
 		}
 	}

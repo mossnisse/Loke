@@ -8,7 +8,7 @@ construction now record ordered fact operations for replay. Stage 5a makes leaf
 region and target queries read normalized values, and stage 5b materializes
 fact-dependent events from recorded operations instead of a final walk. Stage 5c
 removes the migration's comparison code and lists the queries that still read
-source forms.
+source forms, and stage 5d records each value's form so those queries read it.
 
 The [language specification](design.md#borrows-and-lifetimes) remains
 authoritative. The baseline records current behavior, with an explicit
@@ -448,10 +448,74 @@ The operands they reach are interned while the program freezes, so the
 frozen-input check holds; the remaining step is to record each value's form,
 its operand values, and its call's argument values when the value is interned,
 and have these queries read that record instead.
+[Stage 5d](#stage-5d-value-forms) takes that step.
 
 Stage 5c validation on 2026-10-25: the quick gate passed all 166 compiler unit
 tests, 43 LSP unit tests, and 60 integration checks after rebuilding both
 binaries. All 2214 spec citations resolve; the removed comparison held one.
+
+## Stage 5d: value forms
+
+Interning a value now also records its checked form (`Prov_Form`,
+[provenance_form.odin](src/provenance_form.odin)): an identifier's symbol; a
+selector's operand and, for a field, its projection; an index's or slice's
+operand; a unary or postfix operator with its operand, and whether a
+dereferenced operand is a box; a move's operand; a propagated error's fallible
+operand; a composite literal's elements; and a call with its argument values.
+The call a user operator stands for is part of its form. Operands are interned
+at their checked representation in their parent's expansion, so a query reads
+the same value during construction, replay, and materialization. A value also
+records whether its storage ends with its statement (`temporary`).
+
+The queries [stage 5c](#stage-5c-migration-scaffolding) lists, and the region
+helpers they share, now choose their rule from the form and read operands as
+values: `prov_region_of`, `prov_result_region`, `prov_result_region_at`,
+`prov_viewed_region`, `prov_read_region`, `prov_source_region_at`,
+`prov_escape_region`, `prov_written_aliases_at`, `prov_written_targets`, and
+the read input's fallback operand. A propagated error is a `Prov_Form_Error`
+also in the escape event and the returned-value record, so `prov_error_region_at`
+takes no AST node. Moved provider tokens are read from a value's form, both for
+a provider moved into another and for a declaration's initializer. An
+allocator handle's receiver is a value, which an allocator control block's root
+records for its settled region. `prov_argument_regions` and
+`prov_call_allocator_use` start from a call an event names, so they read the
+argument values of its call input (`Prov_Call_Input.values`), which is keyed by
+the expansion of the event's site. A call result's region and the replayed call
+operations find their call through the form too.
+
+What these queries still read from the origin node is a key (a temporary's
+storage, a call's result), a span or name for a diagnostic, or checked metadata:
+whether a node is a constant, its value category, and a call's resolution.
+
+Recording a call's argument values only in its call input was tried first, and
+the corpus comparison caught it: a call input is keyed by the expansion of the
+site that reads it, so a handle such as `arena.allocator()` in a `defer`, whose
+value was interned in the defer's expansion, read the input of an expansion
+that never recorded it, and 13 inputs stopped at the frozen-input assertion.
+A value's form therefore holds its call's argument values itself.
+
+The call-substitution helpers still walk a call's arguments:
+`prov_call_region`, `prov_constructed_region_at`, `prov_allocation_region`,
+`prov_clone_region_at`, `prov_substitute_region`, `prov_call_written_aliases`,
+`prov_call_written_regions`, `prov_leave_region`, and
+`prov_forget_argument_aliases`. They reach the argument values through
+`prov_input_value`, which freezing interns for every operand
+(`prov_query_operands`). Reading the form's arguments there instead is the
+remaining step of stage 5.
+
+`normalization_value_form_contract` inspects the forms of a method call on a
+field of a dereferenced pointer. No language behavior change is intended: on
+all 1348 test, example, tutorial, bench, and package inputs, the diagnostics
+match the stage 5c commit.
+
+Stage 5d validation on 2026-10-25: the quick gate passed all 167 compiler unit
+tests, 43 LSP unit tests, and 60 integration checks after rebuilding both
+binaries. All 2214 spec citations resolve. Against the stage 5c commit on the
+same machine, `perf.ps1` measured front-end time from 3% lower to 4% higher
+(4% on `bench/workspace`), compiler peak working set within 1%, and the
+workspace language server within 1% per operation with an unchanged
+102.7 MB peak. Executable sizes were unchanged and every benchmark output
+matched.
 
 ## AST-sensitive construction inventory
 

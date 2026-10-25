@@ -30,6 +30,8 @@ Prov_Call_Input :: struct {
 	container: Container_Op,
 	// The receiver is loaded at its argument point and lent after all operands.
 	capture: Value_Id,
+	// Its arguments' values (`prov_argument_values`).
+	values: []Value_Id,
 }
 
 // design.md "Evaluation order", "Parameter semantics and ABI lowering",
@@ -70,6 +72,7 @@ prov_input_call :: proc(graph: ^Flow_Graph, call: ^Expr_Call) -> Prov_Call_Input
 	if prov_op_lends_receiver(input.container) && len(call.bound) > 0 && call.bound[0] != nil {
 		input.capture = prov_input_capture(graph, call, call.bound[0])
 	}
+	input.values = prov_argument_values(graph, call, graph.expansion)
 	graph.input.calls[key] = input
 	return input
 }
@@ -78,5 +81,6 @@ prov_clone_call_input :: proc(input: Prov_Call_Input, allocator: mem.Allocator) 
 	out := input
 	out.arguments = slice.clone(input.arguments, allocator)
 	out.order = slice.clone(input.order, allocator)
+	out.values = slice.clone(input.values, allocator)
 	return out
 }

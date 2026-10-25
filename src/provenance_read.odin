@@ -15,12 +15,12 @@ prov_input_read :: proc(graph: ^Flow_Graph, id: Value_Id) -> Prov_Read_Input {
 	input: Prov_Read_Input
 	if value.origin == nil { return input }
 	input.unknown_alias = prov_alias_source_is_unknown(graph.k.c, value.type, value.origin)
-	#partial switch origin in value.origin {
-	case ^Expr_Selector: input.fallback = prov_input_value(graph, origin.operand)
-	case ^Expr_Index: input.fallback = prov_input_value(graph, origin.operand)
-	case ^Expr_Postfix: input.fallback = prov_input_value(graph, origin.operand)
-	case ^Expr_Unary:
-		if origin.op == .Amp { input.fallback = prov_input_value(graph, origin.operand) }
+	#partial switch form in value.form {
+	case Prov_Form_Selector: input.fallback = form.operand
+	case Prov_Form_Index: input.fallback = form.operand
+	case Prov_Form_Postfix: input.fallback = form.operand
+	case Prov_Form_Unary:
+		if form.op == .Amp { input.fallback = form.operand }
 	}
 	graph.input.read_inputs[id] = input
 	return input

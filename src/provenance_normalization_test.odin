@@ -602,6 +602,37 @@ main :: proc() {}`) { return }
 	}
 }
 
+// A value's form records its operands as the values its queries read, so no
+// query follows the origin node to them.
+@(test)
+normalization_value_form_contract :: proc(t: ^testing.T) {
+	p: Checked
+	defer destroy_checked(&p)
+	if !normalization_checked(t, &p, `package main;
+Pair :: struct { first: [dynamic]int, second: [dynamic]int }
+pick :: proc(pair: ^Pair, allocator: Allocator) -> [dynamic]int { return pair^.second.clone(allocator); }
+main :: proc() {}`) { return }
+	body := normalization_body(t, &p, "pick")
+	if body == nil { return }
+	k := Checker{c = &p.c}
+	graph := build_flow_graph(&k, body, .Prov_Summary)
+	ret, returns := body.body.stmts[0].(^Stmt_Return)
+	if !testing.expect(t, returns && ret.value != nil) { return }
+	call, is_call := ret.value.expr.(^Expr_Call)
+	if !testing.expect(t, is_call && len(call.bound) == 2) { return }
+	form, called := prov_value(graph, prov_input_value(graph, call)).form.(Prov_Form_Call)
+	if !testing.expect(t, called && form.call == call && len(form.arguments) == 2, "a call's value does not record its arguments") { return }
+	testing.expect_value(t, form.arguments[0], prov_input_value(graph, call.bound[0]))
+	allocator, named := prov_value(graph, form.arguments[1]).form.(Prov_Form_Symbol)
+	testing.expect(t, named && identifier_text(&p.c, symbol_of(&p.c, allocator.symbol).name) == "allocator", "an identifier argument does not name its symbol")
+	field, selects := prov_value(graph, form.arguments[0]).form.(Prov_Form_Selector)
+	if !testing.expect(t, selects && field.field && field.step == proj_field(1), "a field selection does not record its projection") { return }
+	load, loads := prov_value(graph, field.operand).form.(Prov_Form_Postfix)
+	if !testing.expect(t, loads && load.op == .Caret && !load.boxed, "a dereference does not record its operand") { return }
+	pointer, is_symbol := prov_value(graph, load.operand).form.(Prov_Form_Symbol)
+	testing.expect(t, is_symbol && identifier_text(&p.c, symbol_of(&p.c, pointer.symbol).name) == "pair", "a dereference's operand is not the pointer's value")
+}
+
 // design.md "Allocator regions and region provenance": a checked copy operation
 // retains hook identity, while each replay substitutes the hook's current facts.
 @(test)
