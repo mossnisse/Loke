@@ -10,6 +10,14 @@ checklist.
 
 ### Breaking changes
 
+- Owners written through a mutable borrow of array storage, or through a
+  stored read-only pointer that reaches a mutable carrier, now retain their
+  destination's storage identity and allocator dependencies. Premature resets
+  report `L0537`; for example, `fill(a, &mut owners[:]); free_all(a); use(owners);`
+  can no longer pass checking. Upgrade by putting `owners` and its uses in an
+  inner block and calling `free_all(a)` after that block's cleanup, or by
+  explicitly dropping the dependent owners before resetting their region.
+
 - Borrowed switch payloads in anonymous storage now preserve callee writes,
   and payloads extracted with `unbox` or `as` retain their carrier targets.
   Unsafe arena-backed owner escapes report `L0536`. Owners written into slice

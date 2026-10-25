@@ -92,3 +92,38 @@ of provenance analysis. Stage 2 still reconstructs graphs and copies normalized
 descriptions between region passes; stage 4's replay boundary should be measured
 against both records. The initial representation trades some measured time for
 shared storage semantics without increasing retained whole-program body state.
+
+### Transfer normalization (stage 3)
+
+[provenance-normalization-stage3.json](provenance-normalization-stage3.json)
+records the stage 3 working tree following `fcac12d`, measured on 2026-10-25
+with the same machine, tools, repeat count, and unchanged workload source hashes
+as the previous records. No test suite or other compiler workload ran during
+capture. Compiler and LSP SHA-256 values were:
+
+- `lokec.exe`:
+  `6f503fefc992f598410361f195cd23071fdcb6fc10f1f6071072cdc53f4333d3`.
+- `loke-lsp.exe`:
+  `294c0226fd56371a3449dc32ab5df018bd8f08889c22fb971d6044bc37f2c971`.
+
+Capture command:
+
+```powershell
+.\perf.ps1 -Baseline bench/baselines/provenance-normalization-stage2.json -Out bench/baselines/provenance-normalization-stage3.json
+```
+
+| Workload | Initial / stage 2 / stage 3 front end (ms) | Stage 2 / stage 3 compiler peak (MB) |
+| --- | ---: | ---: |
+| `bench/provenance.loke` | 36 / 38 / 41 | 12.3 / 12.3 |
+| `bench/workspace` | 404 / 453 / 439 | 63.6 / 63.6 |
+| `examples/corpus_runner.loke` | 648 / 728 / 760 | 98.2 / 98.3 |
+
+Relative to stage 2, the selected front-end changes are +8%, −3%, and +4%.
+Relative to the initial compiler, they are +14%, +9%, and +17%. Workspace LSP
+timings increased by 3–5%: open 620 ms, root edit 419 ms, library edit 520 ms,
+and completion 424 ms. Its peak working set changed from 106.6 to 106.4 MB.
+All 24 records completed, executable sizes stayed unchanged, and benchmark
+outputs matched. These measurements include timing noise and cover the complete
+front end rather than provenance alone. Stage 3 still copies normalized input
+between graph passes; stage 4 must measure the complete replay boundary against
+all three records before making performance claims.

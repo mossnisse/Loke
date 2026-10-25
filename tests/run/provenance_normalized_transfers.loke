@@ -1,0 +1,36 @@
+package main;
+import "core:mem";
+import "core:fmt";
+
+fill :: proc(allocator: Allocator, values: []mut [dynamic]int) {
+    values[0] = make([dynamic]int, 1, allocator);
+}
+
+Holder :: struct { output: ^mut [dynamic]int }
+fill_holder :: proc(allocator: Allocator, holder: ^Holder) {
+    holder.output^ = make([dynamic]int, 1, allocator);
+}
+
+// design.md "Allocator regions and region provenance": cleanup ends the
+// dependent owners before the region is reset, including indirect writes.
+ended :: proc(@(allocator_reset) allocator: Allocator) {
+    {
+        owners: [1][dynamic]int = {};
+        fill(allocator, &mut owners[:]);
+        fmt.println(owners[0].len());
+    }
+    {
+        output: [dynamic]int = {};
+        holder := Holder{&mut output};
+        pointer := &holder;
+        fill_holder(allocator, pointer);
+        fmt.println(output.len());
+    }
+    free_all(allocator);
+}
+
+main :: proc() {
+    arena := mem.Arena.init();
+    ended(arena.allocator());
+    fmt.println("transfers ended");
+}

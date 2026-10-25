@@ -214,6 +214,8 @@ main :: proc() {}`) { return }
 		if testing.expect(t, copy_hook != INVALID_SYMBOL && found, "the checked copy hook must have a result summary") {
 			testing.expect(t, result_uses_param(hook_summary.result.dependencies, 0), "the hook lost its borrowed input")
 			testing.expect(t, len(hook_summary.result.region.params) > 1 && hook_summary.result.region.params[1], "the hook lost its destination allocator")
+			testing.expect(t, slice.contains(p.c.result_summary_dependencies[hooked.symbol], copy_hook),
+			               "a generated copy must register the nested checked hook's summary dependency")
 		}
 	}
 	forward := normalization_body(t, &p, "forward")
@@ -323,6 +325,11 @@ main :: proc() {}`) { return }
 	unpacked := normalization_decl(t, &p, graph.literal, "unpacked")
 	if view == nil || selected == nil || unpacked == nil { return }
 	base := expr_base(view.values[0])
+	borrow, borrows := prov_input_transfer(graph, view.values[0]).(Prov_Transfer_Borrow)
+	if testing.expect(t, borrows, "an owner view must normalize as a borrow") {
+		testing.expect(t, borrow.storage != 0 && graph.input.values[int(borrow.owner)].type == base.view_from && !borrow.writable,
+		               "the view must retain its original owner and read-only capability")
+	}
 	testing.expect(t, underlying_kind(&p.c, base.view_from) == .Dynamic_Array && underlying_kind(&p.c, base.type) == .Slice,
 	               "an implicit view must retain the original owner type")
 	materialized := false
@@ -339,6 +346,15 @@ main :: proc() {}`) { return }
 			extraction, checked := call.operation.(Call_Union_As)
 			shape, ok := fallible_of(&k, expr_base(call.bound[0]).type)
 			testing.expect(t, checked && ok && extraction.index == shape.success, "the selected variant must remain checked metadata")
+			transfer, transfers := prov_input_transfer(graph, call).(Prov_Transfer_Forward)
+			if testing.expect(t, transfers) {
+				part := transfer.component
+				result, _ := fallible_of(&k, call.type)
+				testing.expect(t, part.mode == .Clone && part.copy.type == union_variant_payload(&p.c, expr_base(call.bound[0]).type, extraction.index),
+				               "checked extraction must select the payload's copy operation")
+				testing.expect(t, len(part.from) == 1 && part.from[0] == proj_field(extraction.index) &&
+				                  len(part.to) == 1 && part.to[0] == proj_field(result.success), "extraction must remap the selected payload into success")
+			}
 		}
 	}
 	unbox, is_call := unpacked.values[0].(^Expr_Call)
@@ -346,6 +362,12 @@ main :: proc() {}`) { return }
 		_, unboxes := unbox.operation.(Call_Box_Unbox)
 		_, consumes := unbox.bound[0].(^Expr_Move)
 		testing.expect(t, unboxes && consumes, "unboxing must consume the box rather than copy its payload")
+		transfer, transfers := prov_input_transfer(graph, unbox).(Prov_Transfer_Forward)
+		if testing.expect(t, transfers) {
+			part := transfer.component
+			testing.expect(t, part.mode == .Move && len(part.from) == 1 && part.from[0].kind == .Wild && len(part.to) == 0,
+			               "unbox must move out of the box payload without retaining its backing allocation")
+		}
 	}
 }
 
@@ -529,4 +551,88 @@ main :: proc() {}`) { return }
 		found = true
 	}
 	testing.expect(t, found, "the split must record the receiver capture before later arguments run")
+}
+
+// design.md "Allocator regions and region provenance", "Widening by label".
+@(test)
+normalization_variant_region_transfer_contract :: proc(t: ^testing.T) {
+	p: Checked
+	defer destroy_checked(&p)
+	if !normalization_checked(t, &p, `package main;
+Small :: (word: string | blank:);
+Wide :: (blank: | number: int | word: string);
+widen :: proc(input: string) -> Wide {
+    narrow: Small = .word(input);
+    wide: Wide = move(narrow);
+    return move(wide);
+}
+boxed :: proc(allocator: Allocator) -> Option(Box(int)) {
+    return .some(box(1, allocator));
+}
+extracted :: proc(allocator: Allocator) -> [dynamic]int {
+    values: Option([dynamic]int) = .some(make([dynamic]int, 2, allocator));
+    copy := values.as(.some) or_else make([dynamic]int);
+    drop(values);
+    return move(copy);
+}
+main :: proc() {}`) { return }
+	for name in ([]string{"widen", "boxed"}) {
+		body := normalization_body(t, &p, name)
+		if body == nil { continue }
+		summary := p.c.result_summaries[body.symbol]
+		kept := false
+		for content in summary.result.region_content {
+			kept ||= len(content.region.params) > 0 && content.region.params[0]
+		}
+		testing.expectf(t, kept, "%s lost the source's payload region: %v", name, summary.result.region_content)
+	}
+	extracted := normalization_body(t, &p, "extracted")
+	if extracted != nil {
+		region := p.c.result_summaries[extracted.symbol].result.region
+		testing.expectf(t, region.default && !region.unknown && (len(region.params) == 0 || !region.params[0]),
+		                "checked extraction must replace the source backing allocation: %v", region)
+	}
+}
+
+// design.md "Allocator regions and region provenance": a checked copy operation
+// retains hook identity, while each replay substitutes the hook's current facts.
+@(test)
+normalization_copy_summary_replay_contract :: proc(t: ^testing.T) {
+	p: Checked
+	defer destroy_checked(&p)
+	if !normalization_checked(t, &p, `package main;
+Held :: struct { values: [dynamic]int, view: []int }
+impl Held {
+    copy_held :: hook(copy) proc(self, allocator: Allocator) -> Result(Held, Allocator_Error) {
+        return .ok(Held{self.values.clone(allocator), self.view});
+    }
+}
+Nested :: struct { held: Held }
+hooked :: proc(input: Nested) -> Nested { return input.clone(); }
+main :: proc() {}`) { return }
+	body := normalization_body(t, &p, "hooked")
+	if body == nil { return }
+	k := Checker{c = &p.c}
+	graph := build_flow_graph(&k, body, .Prov_Summary)
+	ret, returns := body.body.stmts[0].(^Stmt_Return)
+	if !testing.expect(t, returns && ret.value != nil) { return }
+	transfer := prov_input_transfer(graph, ret.value.expr)
+	held := symbol_of(&p.c, normalization_symbol(t, &p, "Held")).type
+	operation := prov_input_copy_operation(graph, held)
+	if !testing.expect(t, operation.hook != INVALID_SYMBOL && operation.checked_body) { return }
+	original := p.c.result_summaries[operation.hook]
+	defer p.c.result_summaries[operation.hook] = original
+	growing: Proc_Summary
+	p.c.result_summaries[operation.hook] = &growing
+	before := prov_transfer_region(graph, transfer, nil, .All)
+	params := [2]bool{true, true}
+	growing.result.region = Region_Set{params = params[:]}
+	after := prov_transfer_region(graph, transfer, nil, .All)
+	testing.expect(t, !before.default && (len(before.params) == 0 || !before.params[0]), "an empty hook summary supplied settled dependencies")
+	testing.expect(t, after.default && len(after.params) > 0 && after.params[0], "replay did not observe the grown source and allocator dependencies")
+	testing.expect(t, slice.contains(graph.summary_callees[:], operation.hook), "replay omitted the nested hook dependency")
+	count := len(graph.input.transfers)
+	again := prov_input_transfer(graph, ret.value.expr)
+	testing.expect(t, len(graph.input.transfers) == count && again.(Prov_Transfer_Forward).component.source == transfer.(Prov_Transfer_Forward).component.source,
+	               "summary growth changed the normalized transfer or its source identity")
 }

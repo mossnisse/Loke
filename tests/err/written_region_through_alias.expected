@@ -10,6 +10,12 @@ region backing `ys`
 L0537
 @37:2
 region backing `ys`
+L0537
+@41:2
+region backing `zs`
 L0536
 @42:14
 reached through a pointer or slice
+L0537
+@43:2
+region backing `zs`

@@ -135,8 +135,15 @@ inspection tests, and performance baseline for migrating this construction
 boundary. [provenance_input.odin](src/provenance_input.odin) supplies stage 2's
 body-local storage/value IDs and canonical typed places. Target and region
 facts share storage IDs; direct places name storage, while indirect places
-name the evaluated carrier and its selected path. Graph construction still
-walks the AST for evaluation and effects.
+name the evaluated carrier and its selected path.
+[provenance_transfer.odin](src/provenance_transfer.odin) normalizes stage 3's
+constructors, views, payload extraction, widening, and checked copy/move modes.
+[provenance_transfer_facts.odin](src/provenance_transfer_facts.odin) applies those
+shared source/destination paths to current target and region facts. Copy
+operations retain checked hook identity and register dependencies on its current
+result summary, including hooks nested in generated copies. Graph construction
+still walks the AST for evaluation and effects; leaf call/place adapters expose
+and restore captured checked representations until stage 4 completes replay.
 
 ### Allocation domains
 
@@ -309,9 +316,9 @@ Read-only carriers also retain targets so region reads can follow their storage.
 A source capable of holding checked carriers contributes an unknown alternative
 when it has no target facts, including a global carrier read. Indirect loads
 apply this rule per possible source, so one known source cannot hide another
-source's missing facts. `prov_constructor_alias_payload` identifies union and
-box payloads for both source-target recording and call invalidation, including
-fallible boxes. Copied payloads also retain an unresolved alternative. Map
+source's missing facts. Normalized transfer components identify union and
+box payloads for source-target recording, call invalidation, and region queries,
+including fallible boxes. Copied payloads also retain an unresolved alternative. Map
 literal keys and values keep separate target paths. A known address
 records only the storage it names, not the targets of carriers inside that
 storage. `prov_place_carrier` identifies the last carrier crossed to reach a
@@ -335,8 +342,8 @@ survive graph passes. Until operation replay replaces graph reconstruction,
 descriptions are copied with carried facts into the next pass, including owned
 paths and map-key strings; no description points into a reclaimed graph or
 carry arena.
-`prov_borrowed_storage` shares storage discovery between target lookup,
-source-target recording, and call invalidation. Unboxing removes its source
+`prov_borrowed_storage` reads a normalized borrow's storage identity for target
+lookup, source-target recording, and call invalidation. Unboxing removes its source
 payload step; checked variant extraction replaces the source variant step with
 the result's success step, retaining an unresolved alternative for a copied
 mutable payload. Both stored values and direct arguments use these projections.
@@ -345,11 +352,11 @@ carrier storage the writable parameter contract may replace. It follows known
 nested targets and borrowed payload aliases, distinguishes read-only storage
 from writable carriers inside it, and handles literal payloads, optional
 payloads, pack elements, and spreads. A visited set distinguishes storage paths
-and write capabilities to terminate cycles. Literal elements use
-`prov_element_type` for their declared capabilities. Source-target recording
-strips selected success steps for stored `or_else` and `or_return` expressions;
-direct call traversal also strips these steps while retaining the effective
-parameter capability, including for an `or_else` fallback. View invalidation
+and write capabilities to terminate cycles. Literal components retain their
+checked destination types and paths. Shared transfer projections select the
+success payload for stored and direct `or_else`/`or_return` values, including
+the fallback alternative, before invalidation applies the effective parameter
+capability. View invalidation
 follows the backing storage's carrier shape so a read-only outer view preserves
 the capabilities of mutable carriers inside it. Unknown
 and cyclic cursor targets retain an unresolved alias for the owner-escape check

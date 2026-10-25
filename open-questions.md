@@ -29,30 +29,28 @@ lifecycle operations and consult current summaries for
 and the representation distinguishes a captured receiver from its source binding
 for a [delayed reborrow](provenance-normalization-proposal.md#delayed-reborrow-of-a-captured-receiver).
 The migration and validation criteria now cover nested hooks, summary changes,
-and receiver reassignment during later argument evaluation. Implementation and
-validation remain pending; these findings concerned missing proposal contracts,
-not established compiler divergences.
+and receiver reassignment during later argument evaluation. Stages 2–3 now cover
+capture identities, nested hook dependencies, and transfer replay after summary
+growth. Full call/effect replay remains stage 4; the separate
+[receiver emission divergence](known-gaps.md#mutable-slice-splitting-reloads-a-rebound-receiver-during-emission)
+remains open.
 
 ### Normalization baseline follow-up
 
-Stage 1's [inspection suite](src/provenance_normalization_test.odin) found an
-existing limitation in custom-hook dependency discovery. An `impl` copy-hook
-symbol can name a checked body while `proc_literal` is nil and `decl_proc` of
-its declaration is also nil. `prov_has_direct_body` then returns false and
-`prov_note_summary_dependency` omits that hook from the caller's summary
-dependencies, although `prov_copy_hook_region` reads its result summary.
+Resolved in stage 3 (2026-10-25). Stage 1's
+[inspection suite](src/provenance_normalization_test.odin) found that an `impl`
+copy-hook symbol can have a checked body while both `proc_literal` and
+`decl_proc` are nil. Direct-body discovery omitted the dependency despite
+reading the hook's summary.
 
-The `normalization_summary_and_custom_copy_contract` fixture reproduces the
-shape with `Held`, its `copy_held` hook, and `Nested`: the hook has a result
-summary, but `hooked` has no recorded dependency on it. Its current summary
-values are covered by the baseline assertions. No source-level incorrect
-acceptance or rejection has been established, so this is an architectural
-follow-up rather than a confirmed specification divergence.
-
-Resolve direct-body discovery against checked member bodies and test a hook
-whose summary changes after its caller has run. Keep any behavior correction
-and reproduction distinct from normalization, as the
-[proposal requires](provenance-normalization-proposal.md#scope-and-invariants).
+Normalized copy operations now resolve hook bodies through the checked-body
+registry. `normalization_summary_and_custom_copy_contract` asserts the nested
+dependency, and `normalization_copy_summary_replay_contract` grows a hook's
+summary after constructing its caller's transfer and checks that replay reads
+the new source and allocator dependencies without changing operation identity.
+No source-level incorrect acceptance or rejection was established for the old
+discovery limitation; it remains distinct from the separately reproduced reset
+fixes in the [stage 3 notes](provenance-normalization-contract.md#stage-3-transfers).
 
 ## Package and import versioning
 

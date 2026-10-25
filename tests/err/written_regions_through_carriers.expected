@@ -20,6 +20,9 @@ L0536
 @76:33
 an owner this call leaves is backed by an allocator region created in this procedure
 L0537
+@77:2
+this reset would end the region backing `out`, which is still live here
+L0537
 @105:2
 this reset would end the region backing `out`, which is still live here
 L0536

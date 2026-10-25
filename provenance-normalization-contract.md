@@ -2,13 +2,14 @@
 
 Stage 1 of the [migration plan](provenance-normalization-proposal.md#migration-plan)
 established the semantic boundary and baseline. Stage 2 introduces shared
-storage IDs and canonical typed places in production. Evaluation and effect
-construction still walk the checked AST while later stages migrate transfers
-and operation replay.
+storage IDs and canonical typed places in production. Stage 3 shares typed
+transfers between target and region construction. Evaluation and effect
+construction still walk the checked AST until stage 4 introduces operation replay.
 
 The [language specification](design.md#borrows-and-lifetimes) remains
 authoritative. The baseline records current behavior, with an explicit
-[dependency-discovery follow-up](open-questions.md#normalization-baseline-follow-up).
+[dependency-discovery finding](open-questions.md#normalization-baseline-follow-up),
+resolved in stage 3.
 
 ## Initial operation contracts
 
@@ -96,11 +97,80 @@ also exposed a baseline
 recorded separately with a minimal reproduction. The capture inspection checks
 analysis metadata, not the emitter's current handling of that example.
 
+## Stage 3: transfers
+
+[provenance_transfer.odin](src/provenance_transfer.odin) interprets the migrated
+source forms once into `Prov_Transfer`: forwarding, alternatives, aggregates,
+owner borrows, and addresses. Components name a source `Value_Id`, checked type,
+source/destination projection paths, transfer mode, lifecycle operation, and
+allocator input. Normalized values retain the checked representation used to
+describe them, including original owner types and union widening annotations.
+Paths are owned by the input arena and copied along with storage descriptions
+between graph passes.
+
+Builtin allocation/union constructors, explicit and implicit owner views, `unbox`, checked `as`,
+`or_else`/`or_return`, union widening, and settled copies/moves use these
+descriptions. A box allocation and its transferred payload have separate paths;
+unboxing selects the payload and preserves its move mode. Variant transfers
+retain checked tag indices and widening remaps. A stored copy also names its
+copy root, so destructuring clones the selected field and widening clones
+before remapping variants.
+
+[provenance_transfer_facts.odin](src/provenance_transfer_facts.odin) applies the
+same component projections to current carrier targets and allocator regions.
+Target projection adapts union tag steps to the existing solver's bounded
+carrier paths. Region queries retain the typed paths and distinguish backing,
+payload owners, and allocator handles. Neither consumer matches the migrated
+constructor or extraction syntax again. Direct arguments and stored values use
+the same target recipe; invalidation applies the effective parameter capability
+to its result. The former constructor-payload helper, unwrap-depth adjustments,
+and duplicate transfer cases in target/region visitors are removed.
+
+Checked copy operations retain hook identity and consult the checked-body
+registry, including inherent member bodies. Generated copies recurse by type
+until they reach a custom hook, register its summary dependency, and substitute
+its current successful result regions. Operations cache no summary or region
+facts. Inspection tests check nested dependencies and replay one unchanged
+transfer before and after a hook summary grows. Existing copy and extraction
+runtime/rejection cases cover cleanup, copied borrows, and allocator selection;
+new inspection assertions pin move/clone modes and payload remapping.
+
+This remains an incremental bridge: normalized descriptions are populated during
+the existing graph walk. Leaf calls and place reads temporarily expose a value's
+captured checked representation to the remaining adapters, then restore it.
+Ordinary library calls, including the shared-handle adapters, call effects,
+error propagation, evaluation points, and lifecycle events still use the existing
+traversal. Stage 4 must complete that vocabulary before moving
+the region fixed point to immutable operation replay.
+
+Two behavior corrections have independent compile-only reproductions in
+[provenance_normalized_transfers.loke](tests/err/provenance_normalized_transfers.loke).
+The stage 2 compiler accepted both premature resets: a call writing owners through
+a mutable array view lost the array storage identity, and a call through a stored
+read-only pointer failed to follow a writable carrier in its contents. Both now
+report `L0537` at the reset, as required by
+[allocator region provenance](design.md#allocator-regions-and-region-provenance).
+Three additional reset diagnostics in existing rejection cases follow from these
+corrections; their expected results are updated. The
+[valid control](tests/run/provenance_normalized_transfers.loke) ends dependent
+owners before resetting and checks runtime output. The
+[changelog](CHANGELOG.md#breaking-changes) gives upgrade guidance.
+
+Validation covers 159 compiler unit tests, 43 LSP unit tests, and all 60 quick-gate
+integration checks. The final gate's only failure was binary freshness after a
+comment-only source edit; both binaries were rebuilt and that check passed on
+rerun. The valid-copy corpus exposed an omitted-count `make` normalization case
+during development; it is fixed, and the extraction summary test now asserts
+the default allocator without an unknown dependency. Citation and local-link
+checks also pass. Performance observations are recorded with the
+[baselines](bench/baselines/README.md#transfer-normalization-stage-3).
+
 ## AST-sensitive construction inventory
 
 This stage 1 inventory identifies the boundaries that stages 2–4 migrate.
 Stage 2 replaces the three independent place walks and migrates storage keys
-in fact state to IDs. Source-form transfer visitors remain for stage 3.
+in fact state to IDs. Stage 3 replaces the constructor, view, extraction, and
+copy/move transfer cases with the shared descriptions above.
 Type-based shape and overlap helpers, the existing solvers, and summary
 scheduling remain reusable.
 

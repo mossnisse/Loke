@@ -347,9 +347,9 @@ prov_region_alias_reaches :: proc(graph: ^Flow_Graph, root: Root_Id, id: Symbol_
 // ------------------------------------------------- provenance construction --
 
 // Graph construction for the lattices in `src/borrow.odin`: allocates in the
-// graph's arena and reads the typed AST without reporting. `prov_owner_view`
-// and `walk_flow_expr_erased` alone write it, clearing a conversion while
-// they walk its source and restoring it before they return.
+// graph's arena and reads the typed AST without reporting. Conversion walkers,
+// transfer normalization, and its leaf adapters temporarily expose a source's
+// checked representation and restore it before returning.
 
 @(private)
 prov_emit :: proc(graph: ^Flow_Graph, event: Prov_Event) {
@@ -413,7 +413,7 @@ prov_result_region :: proc(graph: ^Flow_Graph, value: Expr) -> Region_Set {
 // The allocator region of one projected result field, without joining siblings.
 Region_Query :: enum { All, Owners, Own }
 
-@(private = "file")
+@(private)
 prov_result_region_at :: proc(graph: ^Flow_Graph, value: Expr, path: []Proj_Step, query := Region_Query.All, as_type := INVALID_TYPE) -> Region_Set {
 	if expr_base(value) == nil { return prov_empty_region(graph) }
 	type := as_type == INVALID_TYPE ? expr_base(value).type : as_type
@@ -437,68 +437,15 @@ prov_result_region_at :: proc(graph: ^Flow_Graph, value: Expr, path: []Proj_Step
 			return out
 		}
 	}
-	if len(path) == 0 && query == .All {
-		return prov_result_region(graph, value)
+	if transfer := prov_input_transfer(graph, value); transfer != nil {
+		return prov_transfer_region(graph, transfer, path, query)
 	}
-	// design.md "Widening by label": region paths remap with the payload tag.
-	if from := expr_base(value).widened_from; union_widens_to(graph.k.c, from, type) {
-		mapped, possible := prov_widened_region_path(graph, from, type, path)
-		if !possible { return prov_empty_region(graph) }
-		return prov_result_region_at(graph, value, mapped, query, from)
-	}
+	if len(path) == 0 && query == .All { return prov_result_region(graph, value) }
 	#partial switch v in value {
 	case ^Expr_Propagated_Error:
 		return prov_error_region_at(graph, v.owner, path, query)
-	case ^Expr_Postfix:
-		if v.op == .Or_Return {
-			if shape, ok := fallible_of(graph.k, expr_base(v.operand).type); ok {
-				return prov_result_region_at(graph, v.operand, prov_concat_path(graph, {proj_field(shape.success)}, path), query)
-			}
-			return prov_result_region_at(graph, v.operand, path, query)
-		}
-	case ^Expr_Move:
-		return prov_result_region_at(graph, v.value, path, query)
-	case ^Expr_Cond:
-		out := prov_empty_region(graph)
-		region_merge(&out, prov_result_region_at(graph, v.then, path, query))
-		region_merge(&out, prov_result_region_at(graph, v.otherwise, path, query))
-		return out
-	case ^Expr_Or_Else:
-		out := prov_empty_region(graph)
-		if shape, ok := fallible_of(graph.k, expr_base(v.value).type); ok {
-			region_merge(&out, prov_result_region_at(graph, v.value, prov_concat_path(graph, {proj_field(shape.success)}, path), query))
-		}
-		if v.fallback != nil {
-			region_merge(&out, prov_result_region_at(graph, v.fallback, path, query))
-		}
-		return out
 	case ^Expr_Call:
-		if v.dispatch != nil {
-			out := prov_empty_region(graph)
-			for entry in v.dispatch.cases {
-				region_merge(&out, prov_result_region_at(graph, entry.arm, path, query))
-			}
-			return out
-		}
-		if operation, conversion := v.operation.(Call_Conversion); conversion && len(v.bound) > 0 && v.bound[0] != nil &&
-		   union_widens_to(graph.k.c, expr_base(v.bound[0]).type, type) {
-			mapped, possible := prov_widened_region_path(graph, expr_base(v.bound[0]).type, type, path)
-			if !possible { return prov_empty_region(graph) }
-			if operation.clones { return prov_clone_region_at(graph, v, expr_base(v.bound[0]).type, mapped, query) }
-			return prov_result_region_at(graph, v.bound[0], mapped, query)
-		}
-		if construction, ok := v.operation.(Call_Union_Construct); ok {
-			if len(path) == 0 || path[0].kind != .Field || path[0].lo != i64(construction.index) || len(v.bound) == 0 || v.bound[0] == nil {
-				return prov_empty_region(graph)
-			}
-			if construction.clone {
-				return prov_clone_region_at(graph, v, expr_base(v.bound[0]).type, path[1:], query)
-			}
-			return prov_result_region_at(graph, v.bound[0], path[1:], query)
-		}
-		if region, known := prov_constructed_region_at(graph, v, path, query); known {
-			return region
-		}
+		if region, known := prov_constructed_region_at(graph, v, path, query); known { return region }
 		if result, found := graph.call_results[v]; found && len(result.region_content) > 0 {
 			out := prov_empty_region(graph)
 			matched := false
@@ -519,24 +466,7 @@ prov_result_region_at :: proc(graph: ^Flow_Graph, value: Expr, path: []Proj_Step
 		   underlying_kind(graph.k.c, expr_base(v.operand).type) == .Struct {
 			return prov_result_region_at(graph, v.operand, prov_concat_path(graph, {prov_field_step(graph, v)}, path), query)
 		}
-	case ^Expr_Composite:
-		out := prov_empty_region(graph)
-		// A fresh record has no dependency of its own; only its fields do.
-		if query == .Own && len(path) == 0 { return out }
-		for element, index in v.elements {
-			if underlying_kind(graph.k.c, v.type) == .Map && element.key != nil && len(path) >= 2 &&
-			   paths_overlap(path[1:2], {proj_field(PROJ_MAP_KEY)}) {
-				region_merge(&out, prov_result_region_at(graph, element.key, path[2:], query))
-			}
-			prefix, known := prov_element_prefix(graph, v, index)
-			if !known || element.value == nil || len(path) < len(prefix) {
-				continue
-			}
-			if paths_overlap(prefix, path[:len(prefix)]) {
-				region_merge(&out, prov_result_region_at(graph, element.value, path[len(prefix):], query))
-			}
-		}
-		return out
+
 	}
 	if root, base, ok := prov_place_of(graph, value); ok {
 		return prov_region_content_at(graph, root, prov_concat_path(graph, base, path), query)
@@ -819,7 +749,7 @@ prov_composite_content :: proc(graph: ^Flow_Graph, v: ^Expr_Composite, content: 
 
 // The type one literal element is stored as, after any weakening: a `[]mut T`
 // stored in a `[]T` field is only read.
-@(private = "file")
+@(private)
 prov_element_type :: proc(graph: ^Flow_Graph, v: ^Expr_Composite, index: int) -> Type_Id {
 	c := graph.k.c
 	info := underlying_info(c, v.type)
@@ -862,7 +792,7 @@ prov_expr_may_write :: proc(e: Expr) -> bool {
 
 // The path one literal element's value fills: a field, an index range, or a
 // map entry's value under its key's entry.
-@(private = "file")
+@(private)
 prov_element_prefix :: proc(graph: ^Flow_Graph, v: ^Expr_Composite, index: int) -> ([]Proj_Step, bool) {
 	#partial switch underlying_kind(graph.k.c, v.type) {
 	case .Map:
@@ -2150,19 +2080,9 @@ prov_define_value_regions :: proc(
 @(private = "file")
 prov_stored_region_at :: proc(graph: ^Flow_Graph, value: Expr, path: []Proj_Step, query: Region_Query, copies: bool, allocator: Region_Set, as_type := INVALID_TYPE, copy_from: []Proj_Step = nil) -> Region_Set {
 	if !copies { return prov_result_region_at(graph, value, path, query, as_type) }
-	type := as_type == INVALID_TYPE ? expr_base(value).type : as_type
-	path := path
-	// design.md "Destructuring": clone the retained field itself, without
-	// invoking hooks on its containing record. Source queries keep the prefix.
-	if len(copy_from) > 0 {
-		return prov_copied_region_at(graph, Prov_Region_Copy{value = value, allocator = allocator, as_type = type, prefix = copy_from}, prov_type_at(graph.k.c, type, copy_from), path[len(copy_from):], query)
-	}
-	if from := expr_base(value).widened_from; union_widens_to(graph.k.c, from, type) {
-		mapped, possible := prov_widened_region_path(graph, from, type, path)
-		if !possible { return prov_empty_region(graph) }
-		type, path = from, mapped
-	}
-	return prov_copied_region_at(graph, Prov_Region_Copy{value = value, allocator = allocator, as_type = type}, type, path, query)
+	component := prov_input_stored_copy(graph, value, path, copy_from, as_type)
+	if component.source == 0 { return prov_empty_region(graph) }
+	return prov_copy_component_region(graph, component, nil, query, allocator)
 }
 
 @(private = "file")
@@ -2506,6 +2426,9 @@ prov_region_of :: proc(graph: ^Flow_Graph, e: Expr) -> Region_Set {
 		set.default = true
 		return set
 	}
+	if transfer := prov_input_transfer(graph, e); transfer != nil {
+		return prov_transfer_region(graph, transfer, nil, .All)
+	}
 	#partial switch v in e {
 	case ^Expr_Ident:
 		// A provider as a value is backed by its parent; the region it provides is
@@ -2514,24 +2437,8 @@ prov_region_of :: proc(graph: ^Flow_Graph, e: Expr) -> Region_Set {
 			return graph.provider_parents[v.symbol] or_else Region_Set{}
 		}
 		return prov_region_for_symbol(graph, v.symbol)
-	case ^Expr_Move:
-		return prov_region_of(graph, v.value)
 	case ^Expr_Propagated_Error:
 		return prov_error_region_at(graph, v.owner, nil, .All)
-	case ^Expr_Cond:
-		out := prov_empty_region(graph)
-		region_merge(&out, prov_region_of(graph, v.then))
-		region_merge(&out, prov_region_of(graph, v.otherwise))
-		return out
-	case ^Expr_Or_Else:
-		out := prov_empty_region(graph)
-		if shape, ok := fallible_of(graph.k, expr_base(v.value).type); ok {
-			region_merge(&out, prov_result_region_at(graph, v.value, {proj_field(shape.success)}))
-		}
-		if v.fallback != nil {
-			region_merge(&out, prov_region_of(graph, v.fallback))
-		}
-		return out
 	case ^Expr_Selector, ^Expr_Index:
 		if call := prov_call_node(graph, e); call != nil {
 			return prov_call_node_region(graph, call)
@@ -2551,12 +2458,6 @@ prov_region_of :: proc(graph: ^Flow_Graph, e: Expr) -> Region_Set {
 			return prov_call_node_region(graph, call)
 		}
 	case ^Expr_Postfix:
-		if v.op == .Or_Return {
-			if shape, ok := fallible_of(graph.k, expr_base(v.operand).type); ok {
-				return prov_result_region_at(graph, v.operand, {proj_field(shape.success)})
-			}
-			return prov_region_of(graph, v.operand)
-		}
 		if v.op == .Caret && type_is_box(c, expr_base(v.operand).type) {
 			if root, path, ok := prov_place_of(graph, e); ok {
 				return prov_region_content_at(graph, root, path)
@@ -2566,26 +2467,7 @@ prov_region_of :: proc(graph: ^Flow_Graph, e: Expr) -> Region_Set {
 		if v.op == .Caret {
 			return prov_viewed_region(graph, v.operand)
 		}
-	case ^Expr_Composite:
-		out := prov_empty_region(graph)
-		for element in v.elements {
-			if underlying_kind(c, v.type) == .Map && element.key != nil {
-				region_merge(&out, prov_region_of(graph, element.key))
-			}
-			if element.value != nil {
-				region_merge(&out, prov_region_of(graph, element.value))
-			}
-		}
-		return out
 	case ^Expr_Call:
-		// design.md "Union argument expansion": the value is one arm's.
-		if v.dispatch != nil {
-			out := prov_empty_region(graph)
-			for entry in v.dispatch.cases {
-				region_merge(&out, prov_region_of(graph, entry.arm))
-			}
-			return out
-		}
 		if sym := symbol_of(c, v.resolution.symbol); sym != nil && sym.builtin == .Default_Allocator {
 			set := prov_empty_region(graph)
 			set.default = true
@@ -2618,7 +2500,7 @@ prov_call_node_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> Region_Set {
 // as a clone, so it keeps the source's region. What a carrier views is backed
 // by the regions of the owners it was taken from: a view or pointer local takes
 // them from each value it is given, and a carrier parameter from its argument.
-@(private = "file")
+@(private)
 prov_storage_region :: proc(graph: ^Flow_Graph, e: Expr) -> Region_Set {
 	c := graph.k.c
 	if base := expr_base(e); base != nil && type_underlying(c, base.type) == TYPE_ALLOCATOR {
@@ -2782,45 +2664,21 @@ prov_temp_provider_end :: proc(graph: ^Flow_Graph, provider: Temp_Provider, live
 prov_constructed_region_at :: proc(graph: ^Flow_Graph, v: ^Expr_Call, path: []Proj_Step, query: Region_Query) -> (Region_Set, bool) {
 	c := graph.k.c
 	out := prov_empty_region(graph)
-	payload, shared_fallible := shared_constructor_payload(c, v)
-	allocation, allocates := v.operation.(Call_Allocation)
-	box_constructor := false
-	if sym := symbol_of(c, v.resolution.symbol); sym != nil {
-		box_constructor = sym.builtin == .Box_New || sym.builtin == .Try_Box
-	}
+	payload, fallible := shared_constructor_payload(c, v)
 	shared_copy := prov_receiver_is_shared_handle(graph, v) && len(v.bound) > 0 &&
 	               prov_type_or_wrapped(c, v.type, type_is_shared_handle)
-	if payload != nil || allocates || shared_copy {
-		path := path
-		if shape, ok := fallible_of(graph.k, v.type); ok && (shared_fallible || allocates && allocation.fallible || shared_copy) {
-			if len(path) == 0 || path[0].kind != .Field || path[0].lo != i64(shape.success) { return out, true }
-			path = path[1:]
-		}
-		if shared_copy { return prov_source_region_at(graph, v.bound[0], path, query), true }
-		if len(path) == 0 {
-			if payload != nil || box_constructor { return prov_allocation_region(graph, v), true }
-			return prov_allocation_region(graph, v, len(v.bound) - 1), true
-		}
-		if payload == nil {
-			if box_constructor {
-				payload = v.bound[0]
-			}
-		}
-		if payload == nil { return out, true } // make's elements are zero values
-		if expression_is_borrowed_place(payload) {
-			return prov_clone_region_at(graph, v, expr_base(payload).type, path[1:], query), true
-		}
-		return prov_result_region_at(graph, payload, path[1:], query), true
-	}
-	if _, unbox := v.operation.(Call_Box_Unbox); unbox {
-		return prov_source_region_at(graph, v.bound[0], prov_concat_path(graph, {proj_wild()}, path), query), true
-	}
-	if extraction, ok := v.operation.(Call_Union_As); ok {
-		shape, _ := fallible_of(graph.k, v.type)
+	if payload == nil && !shared_copy { return out, false }
+	path := path
+	if shape, ok := fallible_of(graph.k, v.type); ok && (fallible || shared_copy) {
 		if len(path) == 0 || path[0].kind != .Field || path[0].lo != i64(shape.success) { return out, true }
-		return prov_clone_region_at(graph, v, expr_base(v.bound[0]).type, prov_concat_path(graph, {proj_field(extraction.index)}, path[1:]), query), true
+		path = path[1:]
 	}
-	return out, false
+	if shared_copy { return prov_source_region_at(graph, v.bound[0], path, query), true }
+	if len(path) == 0 { return prov_allocation_region(graph, v), true }
+	if expression_is_borrowed_place(payload) {
+		return prov_clone_region_at(graph, v, expr_base(payload).type, path[1:], query), true
+	}
+	return prov_result_region_at(graph, payload, path[1:], query), true
 }
 
 // Whether a logical copy can keep an input's allocation instead of allocating
@@ -2851,9 +2709,8 @@ prov_call_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call, result_type: Type_Id
 	if (!type_is_managed(c, result_type) && !allocator_result) || call_diverges(c, v) {
 		return out
 	}
-	if callee := symbol_of(c, call_contract_declaration(c, v)); callee != nil &&
-	   (callee.synth == .Clone || callee.synth == .Try_Clone) && len(v.bound) > 0 {
-		return prov_clone_region_at(graph, v, callee.owner_type, nil)
+	if transfer := prov_input_transfer(graph, v); transfer != nil {
+		return prov_transfer_region(graph, transfer, nil, .All)
 	}
 	// design.md "Shared ownership": the control block is an allocation of
 	// the selected allocator, even though its library record holds a raw pointer.
@@ -2872,34 +2729,11 @@ prov_call_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call, result_type: Type_Id
 	   prov_type_or_wrapped(c, result_type, type_is_shared_handle) {
 		return prov_storage_region(graph, v.bound[0])
 	}
-	if operation, conversion := v.operation.(Call_Conversion); conversion && len(v.bound) > 0 && v.bound[0] != nil &&
-	   union_widens_to(c, expr_base(v.bound[0]).type, result_type) {
-		if operation.clones { return prov_clone_region_at(graph, v, expr_base(v.bound[0]).type, nil) }
-		return prov_result_region(graph, v.bound[0])
-	}
-	if construction, ok := v.operation.(Call_Union_Construct); ok {
-		if construction.clone && len(v.bound) > 0 {
-			return prov_clone_region_at(graph, v, expr_base(v.bound[0]).type, nil)
-		}
-		for argument in v.bound {
-			if argument != nil {
-				region_merge(&out, prov_region_of(graph, argument))
-			}
-		}
-		return out
-	}
 	// design.md "string type conversions": these copy into the default allocator.
 	if operation, conversion := v.operation.(Call_Text_Conversion); conversion &&
 	   (operation.op == .String_From_Bytes || operation.op == .String_From_C_View) {
 		out.default = true
 		return out
-	}
-	// The payload `unbox` hands out is backed by what backed its box.
-	if _, unbox := v.operation.(Call_Box_Unbox); unbox {
-		return prov_source_region_at(graph, v.bound[0], {proj_wild()})
-	}
-	if extraction, ok := v.operation.(Call_Union_As); ok {
-		return prov_clone_region_at(graph, v, expr_base(v.bound[0]).type, {proj_field(extraction.index)})
 	}
 	if _, extraction := v.operation.(Call_Extract); extraction && type_is_managed(c, result_type) {
 		out.default = true
@@ -2907,18 +2741,6 @@ prov_call_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call, result_type: Type_Id
 	}
 	if sym := symbol_of(c, v.resolution.symbol); sym != nil && sym.builtin == .Default_Allocator {
 		out.default = true
-		return out
-	}
-	// design.md "Owned values": a box is backed by the allocator that made it,
-	// the default when none is written, and by whatever a payload handed to it
-	// is backed by. A payload cloned from a place allocates from the box's.
-	if sym := symbol_of(c, v.resolution.symbol); sym != nil && (sym.builtin == .Box_New || sym.builtin == .Try_Box) {
-		region_merge(&out, prov_allocation_region(graph, v))
-		if expression_is_borrowed_place(v.bound[0]) {
-			region_merge(&out, prov_clone_region_at(graph, v, expr_base(v.bound[0]).type, nil))
-		} else {
-			region_merge(&out, prov_region_of(graph, v.bound[0]))
-		}
 		return out
 	}
 	// Also here, because a stored call result is consulted before `prov_region_of`.
@@ -2982,15 +2804,15 @@ prov_clone_region_at :: proc(graph: ^Flow_Graph, v: ^Expr_Call, type: Type_Id, p
 	return prov_copied_region_at(graph, Prov_Region_Copy{value = v.bound[0], allocator = prov_allocation_region(graph, v)}, type, path, query)
 }
 
-@(private = "file")
+@(private)
 prov_copied_region_at :: proc(graph: ^Flow_Graph, source: Prov_Region_Copy, type: Type_Id, path: []Proj_Step, query := Region_Query.All) -> Region_Set {
 	type := type
 	for step, index in path {
 		if type_is_shared_handle(graph.k.c, type) {
 			return prov_copy_source_region_at(graph, source, path, query)
 		}
-		if hook := lifecycle_of(graph.k.c, type).custom_try_clone; hook != INVALID_SYMBOL {
-			return prov_copy_hook_region(graph, source, hook, path[:index], path[index:], query)
+		if operation := prov_input_copy_operation(graph, type); operation.hook != INVALID_SYMBOL {
+			return prov_copy_hook_region(graph, source, operation, path[:index], path[index:], query)
 		}
 		type = prov_type_at(graph.k.c, type, {step})
 	}
@@ -3017,10 +2839,10 @@ prov_source_region_at :: proc(graph: ^Flow_Graph, value: Expr, path: []Proj_Step
 }
 
 @(private = "file")
-prov_copy_hook_region :: proc(graph: ^Flow_Graph, source: Prov_Region_Copy, hook: Symbol_Id, prefix, path: []Proj_Step, query: Region_Query) -> Region_Set {
+prov_copy_hook_region :: proc(graph: ^Flow_Graph, source: Prov_Region_Copy, operation: Prov_Copy_Operation, prefix, path: []Proj_Step, query: Region_Query) -> Region_Set {
 	c := graph.k.c
-	prov_note_summary_dependency(graph, hook, prov_has_direct_body(c, hook))
-	summary, found := result_summary(c, hook)
+	prov_note_summary_dependency(graph, operation.hook, operation.checked_body)
+	summary, found := result_summary(c, operation.hook)
 	out := prov_empty_region(graph)
 	if !found {
 		region_merge(&out, prov_copy_source_region_at(graph, source, prefix))
@@ -3068,8 +2890,8 @@ prov_copied_type_region :: proc(graph: ^Flow_Graph, source: Prov_Region_Copy, ty
 	if type_underlying(c, type) == TYPE_STRING || type_underlying(c, type) == TYPE_ALLOCATOR || type_is_shared_handle(c, type) || type_is_carrier(c, type) {
 		return prov_copy_source_region_at(graph, source, path, query)
 	}
-	if hook := lifecycle_of(c, type).custom_try_clone; hook != INVALID_SYMBOL {
-		return prov_copy_hook_region(graph, source, hook, path, nil, query)
+	if operation := prov_input_copy_operation(graph, type); operation.hook != INVALID_SYMBOL {
+		return prov_copy_hook_region(graph, source, operation, path, nil, query)
 	}
 	info := underlying_info(c, type)
 	if info == nil { return out }
@@ -3120,20 +2942,14 @@ prov_substitute_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call, summary: Regio
 // whole-result region.
 @(private = "file")
 prov_call_region_content :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []Prov_Region_Content {
-	callee := call_contract_declaration(graph.k.c, v)
-	if sym := symbol_of(graph.k.c, callee); sym != nil && (sym.synth == .Clone || sym.synth == .Try_Clone) && len(v.bound) > 0 {
+	if transfer := prov_input_transfer(graph, v); transfer != nil {
 		out := region_field_shape(graph.k.c, v.type, graph.alloc)
 		for &content in out {
-			path := content.path
-			if sym.synth == .Try_Clone {
-				shape, ok := fallible_of(graph.k, v.type)
-				if !ok || len(path) == 0 || path[0].lo != i64(shape.success) { continue }
-				path = path[1:]
-			}
-			content.region = prov_clone_region_at(graph, v, sym.owner_type, path, content.own ? .Own : .All)
+			content.region = prov_transfer_region(graph, transfer, content.path, content.own ? .Own : .All)
 		}
 		return out
 	}
+	callee := call_contract_declaration(graph.k.c, v)
 	summary, found := result_summary(graph.k.c, callee)
 	if !found || len(summary.region_content) == 0 {
 		return nil
@@ -3447,7 +3263,7 @@ prov_region_escape_set :: proc(graph: ^Flow_Graph, target: Expr, region: Region_
 
 // The type of the value at `path` in a value of `type`, or of the innermost
 // value the path is known to stay in.
-@(private = "file")
+@(private)
 prov_type_at :: proc(c: ^Compiler, type: Type_Id, path: []Proj_Step) -> Type_Id {
 	current := type
 	for step in path {
@@ -3618,11 +3434,16 @@ prov_store_region_through :: proc(graph: ^Flow_Graph, destination: Expr, region:
 	// and a call leaves owners through its carrier arguments.
 	checked := !region_is_empty(owned) && (owner == CALL_LEFT_OWNER || type_is_managed(graph.k.c, expr_base(destination).type))
 	escaped := false
+	seen := make([dynamic]Written_Alias_Visit, graph.alloc)
 	// `dst^.alloc` lands in the `alloc` field of what `dst` points at.
 	below := prov_concat_path(graph, prov_path_below_carrier(graph, destination), suffix)
 	for alias in prov_written_targets(graph, destination) {
 		at := prov_concat_path(graph, alias.at, below)
 		prov_define_stored_content(graph, prov_root_for_storage(graph, alias.target), at, region, owned)
+		if owner == CALL_LEFT_OWNER && !carrier_is_mutable(graph.k.c, expr_base(destination).type) &&
+		   prov_type_reaches_mutable(graph.k.c, expr_base(destination).type) {
+			prov_store_reachable_regions(graph, alias.target, at, false, region, owned, &seen)
+		}
 		sym := symbol_of(graph.k.c, prov_storage(graph, alias.target).key.symbol)
 		if !checked || escaped || sym == nil || sym.kind == .Parameter || !type_is_managed(graph.k.c, prov_type_at(graph.k.c, sym.type, at)) {
 			continue
@@ -3633,6 +3454,27 @@ prov_store_region_through :: proc(graph: ^Flow_Graph, destination: Expr, region:
 		return
 	}
 	prov_region_escape_through(graph, expr_span(destination), region, owner)
+}
+
+// A read-only outer carrier can still reach writable carriers in its contents.
+// Normalized addresses keep the descriptor and its contents separate, so a
+// callee's aggregate write summary must follow those nested destinations.
+@(private = "file")
+prov_store_reachable_regions :: proc(graph: ^Flow_Graph, storage: Storage_Id, path: []Proj_Step,
+                                      writable: bool, region, owned: Region_Set, seen: ^[dynamic]Written_Alias_Visit) {
+	if storage == 0 { return }
+	bounded := path[:min(len(path), WRITTEN_ALIAS_DEPTH)]
+	for visit in seen^ {
+		if visit.target == storage && visit.writable == writable && prov_same_path(visit.path, bounded) { return }
+	}
+	append(seen, Written_Alias_Visit{storage, bounded, writable})
+	if writable { prov_define_stored_content(graph, prov_root_for_storage(graph, storage), bounded, region, owned) }
+	type := prov_type_at(graph.k.c, prov_storage(graph, storage).type, bounded)
+	for carrier in carrier_shape(graph.k.c, type) {
+		for alias in prov_written_aliases_of(graph, storage, prov_concat_path(graph, bounded, carrier.steps)) {
+			prov_store_reachable_regions(graph, alias.target, alias.at, carrier.mutable, region, owned, seen)
+		}
+	}
 }
 
 // design.md "Allocator regions and region provenance": an unresolved carrier
@@ -3684,12 +3526,9 @@ prov_root_for_storage :: proc(graph: ^Flow_Graph, storage: Storage_Id) -> Root_I
 
 @(private = "file")
 prov_borrowed_storage :: proc(graph: ^Flow_Graph, value: Expr) -> (Storage_Id, []Proj_Step, bool) {
-	if expr_base(value).view_from != INVALID_TYPE {
-		storage, at := prov_owner_view_storage(graph, value)
-		return storage, at, true
-	}
-	if literal, ok := value.(^Expr_Composite); ok && literal.backing != INVALID_TYPE {
-		return prov_slice_literal_storage(graph, literal), nil, true
+	if borrow, ok := prov_input_transfer(graph, value).(Prov_Transfer_Borrow); ok {
+		_ = prov_value_aliases(graph, prov_input_value(graph, value))
+		return borrow.storage, borrow.path, true
 	}
 	return 0, nil, false
 }
@@ -3697,40 +3536,6 @@ prov_borrowed_storage :: proc(graph: ^Flow_Graph, value: Expr) -> (Storage_Id, [
 @(private = "file")
 prov_written_storage_type :: proc(graph: ^Flow_Graph, storage: Storage_Id) -> Type_Id {
 	return prov_storage(graph, storage).type
-}
-
-// Implicit views borrow owner storage, not carriers held inside that storage.
-@(private = "file")
-prov_owner_view_storage :: proc(graph: ^Flow_Graph, value: Expr) -> (Storage_Id, []Proj_Step) {
-	base := expr_base(value)
-	owner, viewed := base.view_from, base.type
-	base.view_from, base.type = INVALID_TYPE, owner
-	defer base.view_from, base.type = owner, viewed
-	storage: Storage_Id
-	path: []Proj_Step
-	place := prov_input_place(graph, value)
-	if direct, ok := place.base.(Storage_Id); ok {
-		storage, path = direct, place.path
-	} else {
-		storage = prov_storage_id(graph, Written_Storage{temporary = base, type = owner})
-		prov_note_alias_source(graph, storage, value, nil)
-	}
-	if type_is_box(graph.k.c, owner) { path = prov_extend(graph, path, proj_wild()) }
-	return storage, path
-}
-
-// All views of a slice literal share its hidden array's target facts.
-@(private = "file")
-prov_slice_literal_storage :: proc(graph: ^Flow_Graph, value: ^Expr_Composite) -> Storage_Id {
-	storage := prov_storage_id(graph, Written_Storage{temporary = &value.base, type = value.backing})
-	graph.input.storages[int(storage)].kind = .Slice_Literal
-	graph.input.storages[int(storage)].lifetime = .Scope
-	for element, index in value.elements {
-		if element.value == nil { continue }
-		step, _ := prov_element_step(graph, value, value.backing, true, index)
-		prov_note_alias_source(graph, storage, element.value, {step})
-	}
-	return storage
 }
 
 // What a local's carriers may reach: a writable parameter's storage, or a
@@ -3751,7 +3556,7 @@ WRITTEN_ALIAS_DEPTH :: 8
 // The storage a write through `destination` may land in, as `p^`, `p.x`, or
 // `p[i]` reach it: a parameter's, directly or through a local set from one,
 // or a local place a local carrier was set to point at.
-@(private = "file")
+@(private)
 prov_written_targets :: proc(graph: ^Flow_Graph, destination: Expr, as_place := false) -> []Written_Alias {
 	carrier := destination
 	if as_place || !type_is_carrier(graph.k.c, expr_base(destination).type) {
@@ -3785,11 +3590,11 @@ prov_same_path :: proc(a, b: []Proj_Step) -> bool {
 // with its path below that storage (design.md "Minimum provenance precision").
 // A read through a carrier first selects its storage, then loads the carriers
 // held there; it does not conflate successive levels of indirection.
-@(private = "file")
+@(private)
 prov_written_aliases_at :: proc(graph: ^Flow_Graph, e: Expr) -> []Written_Alias {
 	if e == nil { return nil }
-	if storage, at, known := prov_borrowed_storage(graph, e); known {
-		return slice.clone([]Written_Alias{{target = storage, at = at}}, graph.alloc)
+	if transfer := prov_input_transfer(graph, e); transfer != nil {
+		return prov_value_aliases(graph, prov_input_value(graph, e))
 	}
 	if root, path, ok := prov_place_of(graph, e); ok {
 		return prov_written_aliases_of(graph, prov_storage_for_root(graph, root), path)
@@ -3814,15 +3619,6 @@ prov_written_aliases_at :: proc(graph: ^Flow_Graph, e: Expr) -> []Written_Alias 
 		return out[:]
 	}
 	#partial switch v in e {
-	case ^Expr_Call:
-		#partial switch _ in v.operation {
-		case Call_Box_Unbox, Call_Union_As:
-			storage := prov_storage_id(graph, Written_Storage{temporary = &v.base, type = v.type})
-			prov_note_alias_source(graph, storage, v, nil)
-			return prov_written_aliases_of(graph, storage, nil)
-		}
-	case ^Expr_Move:
-		return prov_written_aliases_at(graph, v.value)
 	case ^Expr_Ident:
 		return prov_written_aliases_of(graph, prov_storage_id(graph, Written_Storage{symbol = v.symbol}), nil)
 	case ^Expr_Selector:
@@ -3894,152 +3690,17 @@ prov_note_written_alias :: proc(graph: ^Flow_Graph, local: Symbol_Id, value: Exp
 // Records what `value` holds of writable parameters at `prefix` in `local`: a
 // literal's fields at their own paths, so one field's carrier is not
 // another's (design.md "Minimum provenance precision").
-@(private = "file")
-prov_note_alias_source :: proc(graph: ^Flow_Graph, local: Storage_Id, value: Expr, prefix: []Proj_Step, unwrap := 0) {
+@(private)
+prov_note_alias_source :: proc(graph: ^Flow_Graph, local: Storage_Id, value: Expr, prefix: []Proj_Step) {
 	if value == nil { return }
-	if storage, at, known := prov_borrowed_storage(graph, value); known {
-		prov_add_written_alias(graph, local, Written_Alias{target = storage, at = at, path = prefix})
-		return
-	}
-	source := value
-	// A carrier into the storage points at it; paths inside it are not the
-	// local's own.
-	into := false
-	storage_address := false
-	#partial switch v in value {
-	case ^Expr_Unary:
-		if v.op == .Amp {
-			source, into = v.operand, true
-			storage_address = true
-		}
-	case ^Expr_Slice:
-		source, into = v.operand, true
-		storage_address = !type_is_carrier(graph.k.c, expr_base(source).type)
-	case ^Expr_Cond:
-		prov_note_alias_source(graph, local, v.then, prefix, unwrap)
-		prov_note_alias_source(graph, local, v.otherwise, prefix, unwrap)
-		return
-	case ^Expr_Or_Else:
-		prov_note_alias_source(graph, local, v.value, prefix, unwrap + 1)
-		if v.fallback != nil {
-			prov_note_alias_source(graph, local, v.fallback, prefix, unwrap)
-		}
-		return
-	case ^Expr_Move:
-		prov_note_alias_source(graph, local, v.value, prefix, unwrap)
-		return
-	case ^Expr_Postfix:
-		if v.op == .Or_Return {
-			prov_note_alias_source(graph, local, v.operand, prefix, unwrap + 1)
-			return
-		}
-	case ^Expr_Call:
-		#partial switch operation in v.operation {
-		case Call_Box_Unbox:
-			if len(v.bound) > 0 { prov_note_alias_source(graph, local, v.bound[0], prefix, unwrap + 1) }
-			return
-		case Call_Union_As:
-			if len(v.bound) > 0 {
-				// The source and checked result each have one variant step;
-				// extraction replaces it (design.md "Unions").
-				prov_note_alias_source(graph, local, v.bound[0], prefix, unwrap)
-				payload := union_variant_payload(graph.k.c, expr_base(v.bound[0]).type, operation.index)
-				if prov_type_reaches_mutable(graph.k.c, payload) {
-					at := unwrap == 0 ? prov_extend(graph, prefix, proj_wild()) : prefix
-					prov_add_written_alias(graph, local, Written_Alias{path = at})
-				}
-			}
-			return
-		}
-		if payload_value, _, depth, clones := prov_constructor_alias_payload(graph, v); payload_value != nil {
-			payload := prefix
-			for _ in unwrap ..< depth { payload = prov_extend(graph, payload, proj_wild()) }
-			prov_note_alias_source(graph, local, payload_value, payload, max(0, unwrap - depth))
-			if clones && prov_type_reaches_mutable(graph.k.c, expr_base(payload_value).type) {
-				prov_add_written_alias(graph, local, Written_Alias{path = payload})
-			}
-			return
-		}
-	case ^Expr_Composite:
-		kind := underlying_kind(graph.k.c, v.type)
-		for element, index in v.elements {
-			if kind == .Map && element.key != nil {
-				entry := prov_extend(graph, prefix, prov_map_entry_step(graph, v.type, element.key))
-				prov_note_alias_source(graph, local, element.key, prov_extend(graph, entry, proj_field(PROJ_MAP_KEY)))
-			}
-			if element.value == nil {
-				continue
-			}
-			at := prefix
-			if kind == .Dynamic_Array {
-				at = prov_extend(graph, prefix, proj_wild())
-			} else if kind == .Struct || kind == .Array || kind == .Map {
-				if step, known := prov_element_prefix(graph, v, index); known {
-					at = prov_concat_path(graph, prefix, step)
-				}
-			}
-			prov_note_alias_source(graph, local, element.value, at)
-		}
-		return
-	}
-	if source == nil {
-		return
-	}
-	// `&mut out` or `out[:]` lends a local place: a write through the carrier
-	// lands there.
-	if storage_address {
-		if root, at, ok := prov_place_of(graph, source); ok {
-			target := graph.roots[int(root)].symbol
-			if sym := symbol_of(graph.k.c, target); sym != nil && sym.kind == .Var {
-				prov_add_written_alias(graph, local, Written_Alias{target = prov_storage_id(graph, Written_Storage{symbol = target}), at = at, path = prefix})
-				// This address names the storage, not the targets of carriers
-				// stored inside it (design.md "Storage roots and borrow carriers").
-				return
-			}
-		}
-	}
-	aliases := storage_address ? prov_written_targets(graph, source, as_place = true) : prov_written_aliases_at(graph, source)
-	below := storage_address ? prov_path_below_carrier(graph, source) : nil
-	for alias in aliases {
-		prov_add_written_alias(graph, local, Written_Alias {
-			target = alias.target,
-			at     = storage_address ? prov_concat_path(graph, alias.at, below) : alias.at,
-			path   = into ? prefix : prov_concat_path(graph, prefix, alias.path[min(unwrap, len(alias.path)):]),
-		})
-	}
-	// design.md "Allocator regions and region provenance": known targets are
-	// not a completeness proof. An unresolved source can replace an earlier address;
-	// retain that uncertainty at the carrier's path across later passes.
-	if len(aliases) == 0 && (into || prov_alias_source_is_unknown(graph.k.c, source)) {
-		prov_add_written_alias(graph, local, Written_Alias{path = prefix})
+	_ = prov_input_transfer(graph, value)
+	for alias in prov_value_aliases(graph, prov_input_value(graph, value)) {
+		prov_add_written_alias(graph, local, Written_Alias{target = alias.target, at = alias.at,
+		                       path = prov_concat_path(graph, prefix, alias.path)})
 	}
 }
 
-// Constructors retain payload targets below their owner/variant steps. Share
-// this with call invalidation so storing a constructor does not hide targets
-// that passing it inline exposes (design.md "Minimum provenance precision").
-@(private = "file")
-prov_constructor_alias_payload :: proc(graph: ^Flow_Graph, call: ^Expr_Call) -> (value: Expr, payload_type: Type_Id, depth: int, clones: bool) {
-	if len(call.bound) == 0 || call.bound[0] == nil { return }
-	c := graph.k.c
-	#partial switch operation in call.operation {
-	case Call_Union_Construct:
-		type := call.widened_from == INVALID_TYPE ? call.type : call.widened_from
-		if call.erased_from != INVALID_TYPE { type = call.erased_from }
-		payload := expr_base(call.bound[0]).type
-		if info := underlying_info(c, type); info != nil && info.kind == .Union && operation.index < len(info.variants) {
-			payload = info.variants[operation.index]
-		}
-		return call.bound[0], payload, 1, operation.clone
-	case Call_Allocation:
-		if sym := symbol_of(c, call.resolution.symbol); sym != nil && (sym.builtin == .Box_New || sym.builtin == .Try_Box) {
-			return call.bound[0], operation.type, operation.fallible ? 2 : 1, expression_is_borrowed_place(call.bound[0])
-		}
-	}
-	return
-}
-
-@(private = "file")
+@(private)
 prov_alias_source_is_unknown :: proc(c: ^Compiler, value: Expr) -> bool {
 	type := expr_base(value).type
 	if !type_is_carrier(c, type) && !type_carries_borrow(c, type).any { return false }
@@ -4050,7 +3711,7 @@ prov_alias_source_is_unknown :: proc(c: ^Compiler, value: Expr) -> bool {
 	return true
 }
 
-@(private = "file")
+@(private)
 prov_add_written_alias :: proc(graph: ^Flow_Graph, local: Storage_Id, alias: Written_Alias) {
 	alias := alias
 	if alias.target == 0 {
@@ -4101,79 +3762,20 @@ prov_call_written_aliases :: proc(graph: ^Flow_Graph, call: ^Expr_Call) {
 	}
 }
 
-// `unwrap` selects success-payload layers in the source while `parameter`
-// describes the selected value's effective capability, including weakening.
+// The effective parameter capability applies to the normalized value's paths.
 @(private = "file")
 prov_forget_argument_aliases :: proc(
 	graph: ^Flow_Graph, argument: Expr, parameter: Type_Id, inout: bool, seen: ^[dynamic]Written_Alias_Visit,
-	unwrap := 0,
 ) {
 	if argument == nil { return }
 	c := graph.k.c
 	if !inout && !carrier_is_mutable(c, parameter) && !prov_type_reaches_mutable(c, parameter) { return }
-	if inout {
-		prov_forget_place_aliases(graph, argument, true, seen)
-		return
-	}
-	if storage, at, known := prov_borrowed_storage(graph, argument); known {
-		writable := expr_base(argument).view_from == INVALID_TYPE && carrier_is_mutable(c, parameter)
-		prov_forget_storage_aliases(graph, storage, at, writable, seen)
-		return
-	}
-	#partial switch value in argument {
-	case ^Expr_Composite:
-		for element, index in value.elements {
-			if element.key != nil && underlying_kind(c, value.type) == .Map {
-				prov_forget_argument_aliases(graph, element.key, underlying_info(c, value.type).key, false, seen)
-			}
-			if element.value == nil { continue }
-			prov_forget_argument_aliases(graph, element.value, prov_element_type(graph, value, index), false, seen)
-		}
-		return
-	case ^Expr_Call:
-		if payload, type, depth, _ := prov_constructor_alias_payload(graph, value); payload != nil {
-			if unwrap > 0 {
-				type = parameter
-				for _ in unwrap ..< depth { type = prov_type_at(c, type, {proj_wild()}) }
-			}
-			prov_forget_argument_aliases(graph, payload, type, false, seen, max(0, unwrap - depth))
-			return
-		}
-	case ^Expr_Cond:
-		prov_forget_argument_aliases(graph, value.then, parameter, false, seen, unwrap)
-		prov_forget_argument_aliases(graph, value.otherwise, parameter, false, seen, unwrap)
-		return
-	case ^Expr_Move:
-		prov_forget_argument_aliases(graph, value.value, parameter, false, seen, unwrap)
-		return
-	case ^Expr_Or_Else:
-		// Select the success payload while retaining the parameter's weakened
-		// capability (design.md "Weakening and reborrows").
-		prov_forget_argument_aliases(graph, value.value, parameter, false, seen, unwrap + 1)
-		prov_forget_argument_aliases(graph, value.fallback, parameter, false, seen, unwrap)
-		return
-	case ^Expr_Postfix:
-		if value.op == .Or_Return {
-			prov_forget_argument_aliases(graph, value.operand, parameter, false, seen, unwrap + 1)
-			return
-		}
-	}
-	if address, ok := argument.(^Expr_Unary); ok && address.op == .Amp {
-		prov_forget_place_aliases(graph, address.operand, carrier_is_mutable(c, parameter), seen)
-		return
-	}
-	source := argument
-	if view, ok := argument.(^Expr_Slice); ok {
-		if !type_is_carrier(c, expr_base(view.operand).type) {
-			prov_forget_place_aliases(graph, view.operand, carrier_is_mutable(c, parameter), seen)
-			return
-		}
-		source = view.operand
-	}
-	aliases := prov_written_aliases_at(graph, source)
+	if inout { prov_forget_place_aliases(graph, argument, true, seen); return }
+	_ = prov_input_transfer(graph, argument)
+	aliases := prov_value_aliases(graph, prov_input_value(graph, argument))
 	for carrier in carrier_shape(c, parameter) {
 		for alias in aliases {
-			if paths_overlap(alias.path[min(unwrap, len(alias.path)):], carrier.steps) {
+			if paths_overlap(alias.path, carrier.steps) {
 				prov_forget_storage_aliases(graph, alias.target, alias.at, carrier.mutable, seen)
 			}
 		}
@@ -4587,7 +4189,7 @@ prov_const_int :: proc(graph: ^Flow_Graph, e: Expr) -> (i64, bool) {
 
 // A constant key's own entry while slots remain, else the wildcard, which
 // overlaps every keyed entry.
-@(private = "file")
+@(private)
 prov_map_entry_step :: proc(graph: ^Flow_Graph, map_type: Type_Id, key: Expr) -> Proj_Step {
 	if key == nil || !map_shape_is_keyed(graph.k.c, map_type) {
 		return proj_wild()

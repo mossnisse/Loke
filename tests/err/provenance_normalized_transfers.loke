@@ -1,0 +1,30 @@
+package main;
+
+// design.md "Allocator regions and region provenance": borrowed array storage
+// retains owners written through its mutable view until their actual cleanup.
+fill :: proc(allocator: Allocator, values: []mut [dynamic]int) {
+    values[0] = make([dynamic]int, 1, allocator);
+}
+
+array_reset :: proc(@(allocator_reset) allocator: Allocator) {
+    owners: [1][dynamic]int = {};
+    fill(allocator, &mut owners[:]);
+    free_all(allocator);
+    assert(owners[0].len() == 1);
+}
+
+Holder :: struct { output: ^mut [dynamic]int }
+fill_holder :: proc(allocator: Allocator, holder: ^Holder) {
+    holder.output^ = make([dynamic]int, 1, allocator);
+}
+
+stored_pointer_reset :: proc(@(allocator_reset) allocator: Allocator) {
+    output: [dynamic]int = {};
+    holder := Holder{&mut output};
+    pointer := &holder;
+    fill_holder(allocator, pointer);
+    free_all(allocator);
+    assert(output.len() == 1);
+}
+
+main :: proc() {}

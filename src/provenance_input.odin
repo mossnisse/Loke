@@ -39,6 +39,7 @@ Prov_Place :: struct {
 Prov_Value :: struct {
 	origin: Expr,
 	type: Type_Id,
+	view_from, erased_from, widened_from: Type_Id,
 	place: Prov_Place,
 	// A captured value keeps its source binding but is not a later reload of it.
 	captured_from: Value_Id,
@@ -47,6 +48,7 @@ Prov_Value :: struct {
 Prov_Input_Key :: struct {
 	node: ^Expr_Base,
 	type, view_from, erased_from: Type_Id,
+	widened_from: Type_Id,
 	expansion: Defer_Expansion,
 	capture: bool,
 }
@@ -57,6 +59,8 @@ Prov_Input :: struct {
 	values: [dynamic]Prov_Value,
 	value_ids: map[Prov_Input_Key]Value_Id,
 	places: map[Prov_Input_Key]Prov_Place,
+	transfers: map[Value_Id]Prov_Transfer,
+	copy_operations: map[Type_Id]Prov_Copy_Operation,
 	// Preserve the bounded constant-map-key assignment along with cached paths.
 	map_key_entries: map[string]int,
 }
@@ -71,6 +75,8 @@ new_prov_input :: proc(allocator: mem.Allocator, seed: ^Prov_Input = nil) -> ^Pr
 	input.values = make([dynamic]Prov_Value, allocator)
 	input.value_ids = make(map[Prov_Input_Key]Value_Id, 8, allocator)
 	input.places = make(map[Prov_Input_Key]Prov_Place, 8, allocator)
+	input.transfers = make(map[Value_Id]Prov_Transfer, 8, allocator)
+	input.copy_operations = make(map[Type_Id]Prov_Copy_Operation, 4, allocator)
 	input.map_key_entries = make(map[string]int, 4, allocator)
 	if seed == nil {
 		append(&input.storages, Prov_Storage{})
@@ -87,6 +93,8 @@ new_prov_input :: proc(allocator: mem.Allocator, seed: ^Prov_Input = nil) -> ^Pr
 		owned.path = slice.clone(place.path, allocator)
 		input.places[key] = owned
 	}
+	for id, transfer in seed.transfers { input.transfers[id] = prov_clone_transfer(transfer, allocator) }
+	for type, operation in seed.copy_operations { input.copy_operations[type] = operation }
 	for key, entry in seed.map_key_entries { input.map_key_entries[strings.clone(key, allocator)] = entry }
 	return input
 }
@@ -131,7 +139,7 @@ prov_input_key :: proc(graph: ^Flow_Graph, e: Expr) -> Prov_Input_Key {
 	base := expr_base(e)
 	if base == nil { return {} }
 	return Prov_Input_Key{node = base, type = base.type, view_from = base.view_from,
-	                      erased_from = base.erased_from, expansion = graph.expansion}
+	                      erased_from = base.erased_from, widened_from = base.widened_from, expansion = graph.expansion}
 }
 
 prov_input_value :: proc(graph: ^Flow_Graph, e: Expr) -> Value_Id {
@@ -139,7 +147,8 @@ prov_input_value :: proc(graph: ^Flow_Graph, e: Expr) -> Value_Id {
 	if key.node == nil { return 0 }
 	if id, found := graph.input.value_ids[key]; found { return id }
 	id := Value_Id(len(graph.input.values))
-	append(&graph.input.values, Prov_Value{origin = e, type = key.type})
+	append(&graph.input.values, Prov_Value{origin = e, type = key.type, view_from = key.view_from,
+	                                    erased_from = key.erased_from, widened_from = key.widened_from})
 	graph.input.value_ids[key] = id
 	place := prov_input_place(graph, e)
 	graph.input.values[int(id)].place = place
