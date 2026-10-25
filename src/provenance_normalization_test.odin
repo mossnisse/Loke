@@ -666,22 +666,18 @@ chain :: proc(allocator: Allocator) {
     assert(contents.len() == 1);
 }
 main :: proc() {}`
-	p, baseline: Checked
+	p: Checked
 	defer destroy_checked(&p)
-	defer destroy_checked(&baseline)
-	if !normalization_checked(t, &p, source) || !normalization_checked(t, &baseline, source) { return }
-	k, old_k: Checker
+	if !normalization_checked(t, &p, source) { return }
+	k: Checker
 	graph := normalization_graph(t, &k, &p, "chain")
-	body := normalization_body(t, &baseline, "chain")
-	if graph == nil || body == nil { return }
-	old_k.c = &baseline.c
-	old := normalization_legacy_graph(&old_k, body, .Prov_Diagnose)
+	if graph == nil { return }
+	// The first iteration allocates from the default; later ones from what
+	// `allocator` reached through the chain.
 	current := prov_region_for_symbol(graph, normalization_symbol(t, &p, "contents"))
-	previous := prov_region_for_symbol(old, normalization_symbol(t, &baseline, "contents"))
 	testing.expect(t, len(current.params) > 0 && current.params[0], "the replay stopped before the forwarding chain reached the owner")
-	testing.expect_value(t, current.default, previous.default)
-	testing.expect_value(t, current.unknown, previous.unknown)
-	testing.expect(t, slice.equal(current.params, previous.params), "operation replay disagrees with the independent AST fixed point")
+	testing.expect(t, current.default, "the replay lost the default allocator of the first iteration")
+	testing.expect(t, !current.unknown, "a local forwarding chain made the region unknown")
 	program := graph.normalized_effects
 	testing.expect(t, program != nil && program.input.frozen && program.replays >= 4, "the loop did not saturate one frozen operation program")
 }

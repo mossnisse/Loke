@@ -86,7 +86,7 @@ build_provenance_replay :: proc(k: ^Checker, literal: ^Expr_Proc, mode: Flow_Mod
 	program.events = make([dynamic]Prov_Event_Site, allocator)
 	program.root_regions = make([dynamic]Prov_Root_Region, allocator)
 	program.borrowed_owners = make(map[Value_Id]bool, 4, allocator)
-	initial := build_flow_pass(k, literal, allocator, mode, nil, program)
+	initial := build_flow_pass(k, literal, allocator, mode, program)
 	initial.effect_program = nil
 	program.param_count = initial.param_count
 	weight := prov_region_weight(initial)
@@ -109,7 +109,7 @@ build_provenance_replay :: proc(k: ^Checker, literal: ^Expr_Proc, mode: Flow_Mod
 	carry_arena, replay_arena: virtual.Arena
 	defer virtual.arena_destroy(&carry_arena)
 	defer virtual.arena_destroy(&replay_arena)
-	carry := prov_carry_regions(initial, virtual.arena_allocator(&carry_arena), copy_input = false)
+	carry := prov_carry_regions(initial, virtual.arena_allocator(&carry_arena))
 	seeded := weight
 	for {
 		graph := prov_fact_graph(k, literal, mode, program, virtual.arena_allocator(&replay_arena))
@@ -121,7 +121,7 @@ build_provenance_replay :: proc(k: ^Checker, literal: ^Expr_Proc, mode: Flow_Mod
 		settled := current_weight == seeded
 		if !settled {
 			free_all(virtual.arena_allocator(&carry_arena))
-			carry = prov_carry_regions(graph, virtual.arena_allocator(&carry_arena), copy_input = false)
+			carry = prov_carry_regions(graph, virtual.arena_allocator(&carry_arena))
 		}
 		program.peak_used_bytes = max(program.peak_used_bytes,
 		                             k.c.analysis_arena.total_used - initial_bytes + carry_arena.total_used + replay_arena.total_used)

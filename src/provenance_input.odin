@@ -89,10 +89,9 @@ prov_writable_input :: proc(graph: ^Flow_Graph) {
 	graph.input = new_prov_input(graph.alloc, graph.input)
 }
 
-// A finished graph's queries and the test-only AST comparison clone input
-// metadata; fact replay and materialization share one frozen body input. Clone
-// every owned slice so copies cannot point into a discarded construction pass
-// or the carry arena.
+// Fact replay and materialization share one frozen body input; a finished
+// graph's query copies it before adding to it (`prov_writable_input`). The copy
+// owns its slices, so its additions leave the frozen input as it was.
 new_prov_input :: proc(allocator: mem.Allocator, seed: ^Prov_Input = nil) -> ^Prov_Input {
 	input := new(Prov_Input, allocator)
 	input.alloc = allocator

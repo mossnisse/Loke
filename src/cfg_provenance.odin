@@ -1461,11 +1461,6 @@ prov_capture_slots :: proc(graph: ^Flow_Graph, slots: []int, rewritten: []int, s
 	return out[:]
 }
 
-@(private)
-prov_carrier_is_read_only :: proc(graph: ^Flow_Graph, type: Type_Id) -> bool {
-	return type_is_carrier(graph.k.c, type) && !carrier_is_mutable(graph.k.c, type)
-}
-
 // A slice local whose elements are plain data, which reading cannot turn into
 // a way to write (design.md "Weakening and reborrows").
 @(private)
@@ -2005,11 +2000,11 @@ prov_seed_regions :: proc(graph: ^Flow_Graph, seed: ^Flow_Graph) {
 // A pass's region facts alone, in `allocator`, to seed the next pass after this
 // one's graph is reclaimed.
 @(private)
-prov_carry_regions :: proc(graph: ^Flow_Graph, allocator: mem.Allocator, copy_input := true) -> ^Flow_Graph {
+prov_carry_regions :: proc(graph: ^Flow_Graph, allocator: mem.Allocator) -> ^Flow_Graph {
 	carry := new(Flow_Graph, allocator)
 	carry.alloc = allocator
 	carry.prov = new(Prov_State, allocator)
-	carry.input = copy_input ? new_prov_input(allocator, graph.input) : graph.input
+	carry.input = graph.input
 	carry.param_count = graph.param_count
 	carry.region_of = make(map[Symbol_Id]Region_Set, len(graph.region_of), allocator)
 	carry.provider_parents = make(map[Symbol_Id]Region_Set, len(graph.provider_parents), allocator)

@@ -12,7 +12,10 @@ replays fact-changing effects over frozen input.
 [Stage 5a](provenance-normalization-contract.md#stage-5a-value-based-leaf-queries)
 makes leaf queries value-based, and
 [stage 5b](provenance-normalization-contract.md#stage-5b-recorded-events)
-replaces the final loan/event walk with recorded events. Pending architectural decisions are tracked in
+replaces the final loan/event walk with recorded events.
+[Stage 5c](provenance-normalization-contract.md#stage-5c-migration-scaffolding)
+removes the comparison code and lists the queries that still read source forms.
+Pending architectural decisions are tracked in
 [Open questions](open-questions.md#normalized-input-for-provenance-analysis).
 
 ## Recommendation
@@ -367,7 +370,9 @@ or transfer descriptions. Reset, cleanup, task, and loan events are materialized
 once with settled facts through the remaining event bridge. The
 [stage 4 notes](provenance-normalization-contract.md#stage-4-fact-replay-and-call-inputs)
 state that boundary explicitly. Stage 5a replaced the checked leaf adapters with
-value-based queries, and stage 5b the final walk with recorded events.
+value-based queries, and stage 5b the final walk with recorded events. Stage 5c
+removed the temporary comparison code; the queries it lists still choose their
+rule by source form.
 
 | Stage | Change | Exit criterion |
 | --- | --- | --- |

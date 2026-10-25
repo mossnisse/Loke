@@ -6,7 +6,9 @@ storage IDs and canonical typed places in production. Stage 3 shares typed
 transfers between target and region construction. Evaluation and effect
 construction now record ordered fact operations for replay. Stage 5a makes leaf
 region and target queries read normalized values, and stage 5b materializes
-fact-dependent events from recorded operations instead of a final walk.
+fact-dependent events from recorded operations instead of a final walk. Stage 5c
+removes the migration's comparison code and lists the queries that still read
+source forms.
 
 The [language specification](design.md#borrows-and-lifetimes) remains
 authoritative. The baseline records current behavior, with an explicit
@@ -240,9 +242,9 @@ explains why the final event expansion follows settled destinations.
 Four inspection tests cover a forwarding chain requiring several fact rounds,
 named-argument order and delayed receiver capture, and replay after a nested
 hook summary grows without extending input tables, plus retention of global
-write events when a zero-weight graph skips replay. The forwarding test compares
-an independent checked program with the former AST fixed point, kept only in
-[provenance_replay_test.odin](src/provenance_replay_test.odin). Existing runtime
+write events when a zero-weight graph skips replay. The forwarding test compared
+an independent checked program with the former AST fixed point until
+[stage 5c](#stage-5c-migration-scaffolding) removed that comparison. Existing runtime
 and rejection suites remain the behavioral controls; no language behavior
 change is intended by this stage.
 
@@ -410,9 +412,51 @@ workspace language server 5–11% faster per operation with a peak working set
 of 103.4 MB instead of 108.2 MB. Executable sizes were unchanged and every
 benchmark output matched.
 
+## Stage 5c: migration scaffolding
+
+The comparison code kept during the migration is gone. The forwarding test
+compared the replay with the former AST fixed point, rebuilt in
+`provenance_replay_test.odin` by walking the body again with the previous
+pass's facts; it now asserts the settled region of its owner directly. That
+rebuild was the only user of a graph seeded from another pass, and of a carry
+holding its own copy of the input tables, so `build_flow_pass` and
+`new_flow_graph` lose their seed and `prov_carry_regions` always shares the
+frozen input. An unused helper, `prov_carrier_is_read_only`, is also removed.
+A finished graph's query still takes a private copy of the input before adding
+to it (`prov_writable_input`).
+
+Stage 5's exit criterion is not met yet. The construction walk is the
+normalizer: it reads source syntax to intern values, places, transfers, and
+call inputs, and to record fact and event operations. Below it, a query should
+read only recorded input, keeping the checked AST as a key, a diagnostic span
+or name, or checked metadata such as a call's resolution. A static call graph
+from fact replay and event materialization finds these queries still choosing
+their rule by the form of a value's origin node, or walking a call's
+arguments:
+
+| Query | What it still reads from the AST |
+| --- | --- |
+| `prov_region_of`, `prov_result_region_at` | The origin's form: an identifier's symbol, a selector's field, a dereference, a propagated error, a call |
+| `prov_written_aliases_at` | The operand of a selector, index, dereference, or address |
+| `prov_escape_region` | A provider's identifier or moved operand |
+| `prov_moved_bits`, `prov_expr_is_temporary` | Moved, exchanged, boxed, and composite operands; which forms are temporaries |
+| `prov_call_node`, `prov_operator_call` | Which operator forms stand for a user operator's call, and their operands |
+| `prov_error_region_at` | The operand of a propagated error |
+| `prov_argument_regions`, `prov_call_allocator_use`, `prov_handle_region` | A call's arguments and their types; a provider's receiver form |
+
+The operands they reach are interned while the program freezes, so the
+frozen-input check holds; the remaining step is to record each value's form,
+its operand values, and its call's argument values when the value is interned,
+and have these queries read that record instead.
+
+Stage 5c validation on 2026-10-25: the quick gate passed all 166 compiler unit
+tests, 43 LSP unit tests, and 60 integration checks after rebuilding both
+binaries. All 2214 spec citations resolve; the removed comparison held one.
+
 ## AST-sensitive construction inventory
 
-This stage 1 inventory identifies the boundaries that stages 2–4 migrate.
+This stage 1 inventory identifies the boundaries that stages 2–4 migrate;
+[stage 5c](#stage-5c-migration-scaffolding) lists what remains.
 Stage 2 replaces the three independent place walks and migrates storage keys
 in fact state to IDs. Stage 3 replaces the constructor, view, extraction, and
 copy/move transfer cases with the shared descriptions above.

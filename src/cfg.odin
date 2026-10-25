@@ -356,13 +356,13 @@ NO_BLOCK :: Block_Id(-1)
 // nil for a body with nothing to track; a provenance mode always builds one.
 build_flow_graph :: proc(k: ^Checker, literal: ^Expr_Proc, mode := Flow_Mode.Lifecycle) -> ^Flow_Graph {
 	if mode == .Lifecycle || literal == nil || literal.body == nil {
-		return build_flow_pass(k, literal, k.c.analysis_allocator, mode, nil)
+		return build_flow_pass(k, literal, k.c.analysis_allocator, mode)
 	}
 	return build_provenance_replay(k, literal, mode)
 }
 
 @(private)
-new_flow_graph :: proc(k: ^Checker, literal: ^Expr_Proc, allocator: mem.Allocator, mode: Flow_Mode, seed: ^Flow_Graph = nil, normalized_input: ^Prov_Input = nil) -> ^Flow_Graph {
+new_flow_graph :: proc(k: ^Checker, literal: ^Expr_Proc, allocator: mem.Allocator, mode: Flow_Mode, normalized_input: ^Prov_Input = nil) -> ^Flow_Graph {
 	if literal == nil || literal.body == nil {
 		return nil
 	}
@@ -386,7 +386,7 @@ new_flow_graph :: proc(k: ^Checker, literal: ^Expr_Proc, allocator: mem.Allocato
 	graph.propagated_errors = make(map[^Expr_Postfix][]int, 4, allocator)
 	if mode != .Lifecycle {
 		graph.prov = new(Prov_State, allocator)
-		graph.input = normalized_input != nil ? normalized_input : new_prov_input(allocator, seed != nil ? seed.input : nil)
+		graph.input = normalized_input != nil ? normalized_input : new_prov_input(allocator)
 		graph.converting = make([dynamic]Prov_Converting, allocator)
 		graph.roots = make([dynamic]Prov_Root, allocator)
 		graph.loans = make([dynamic]Prov_Loan, allocator)
@@ -437,10 +437,9 @@ build_flow_pass :: proc(
 	literal: ^Expr_Proc,
 	allocator: mem.Allocator,
 	mode: Flow_Mode,
-	seed: ^Flow_Graph,
 	program: ^Prov_Effect_Program = nil,
 ) -> ^Flow_Graph {
-	graph := new_flow_graph(k, literal, allocator, mode, seed)
+	graph := new_flow_graph(k, literal, allocator, mode)
 	if graph == nil { return nil }
 	graph.effect_program = program
 
@@ -451,9 +450,6 @@ build_flow_pass :: proc(
 		track_move_parameters(graph, literal)
 	} else {
 		prov_bind_parameters(graph, literal)
-		if seed != nil {
-			prov_seed_regions(graph, seed)
-		}
 	}
 	walk_flow_block(graph, literal.body)
 	leave_flow_scope(graph)
