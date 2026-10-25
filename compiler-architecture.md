@@ -283,7 +283,7 @@ are held while later operands run; moved arguments leave that set on entry to
 the callee. Borrowed switch bindings alias their subject's payload paths for
 region reads, writes, and escape checks, including through nested bindings
 and known carrier targets. Carrier targets include an explicit unknown alternative
-(`Written_Alias.target == INVALID_SYMBOL`), which survives alongside known
+(`Written_Alias.target == Written_Storage{}`), which survives alongside known
 targets. Borrowed payload aliases retain the known destinations and an optional
 final `NO_ROOT` alternative. Region reads and writes follow the known aliases
 and also retain a local snapshot for unresolved storage. Escape checks enforce
@@ -305,16 +305,26 @@ slicing owned storage records its address. Both written target-storage paths
 eight projections and carry the depth precision marker. This bounds recursive
 cursor growth and repeated container wrapping; a truncated projection always
 joins previous content. `prov_path_below_carrier` collects projections only
-until the closest carrier, then reverses them, without a separate marker array.
+until the closest carrier, reverses them in place, and clones the result into
+the graph's allocation domain.
+Written storage is identified by a symbol, or by a temporary's AST identity and
+storage type. Slice literals use their hidden array's type and record their
+element targets in that storage. An implicit view records the address of its
+owner storage; a box view adds the payload step. Copies and reslices therefore
+follow the same storage facts, including unresolved alternatives introduced by
+a call through another view. Anonymous storage identities survive graph passes.
 Call processing (`prov_call_written_aliases`) adds unresolved alternatives to
 carrier storage the writable parameter contract may replace. It follows known
 nested targets and borrowed payload aliases, distinguishes read-only storage
 from writable carriers inside it, and handles literal payloads, optional
 payloads, pack elements, and spreads. A visited set distinguishes storage paths
 and write capabilities to terminate cycles. Literal elements use
-`prov_element_type` for their declared capabilities. Selecting an `or_else`
-success payload strips its source variant steps while retaining the effective
-parameter capability; the fallback is checked with that capability too. Unknown
+`prov_element_type` for their declared capabilities. Source-target recording
+strips selected success steps for stored `or_else` and `or_return` expressions;
+direct call traversal also strips these steps while retaining the effective
+parameter capability, including for an `or_else` fallback. View invalidation
+follows the backing storage's carrier shape so a read-only outer view preserves
+the capabilities of mutable carriers inside it. Unknown
 and cyclic cursor targets retain an unresolved alias for the owner-escape check
 alongside any acyclic known targets. Borrowed payload carrier
 writes also publish into the subject's slots, resolving alias prefixes and translating union tag steps into

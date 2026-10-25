@@ -134,11 +134,167 @@ stored_map_key :: proc() {
 	append_default(pointer, 6);
 }
 
+inspect_box_mixed :: proc(wrapper: Box(Mixed)) {}
+inspect_view_mixed :: proc(wrapper: ^Mixed) {}
+inspect_values :: proc(pointers: []^mut Option([dynamic]string)) {}
+inspect_readers :: proc(pointers: []^ ^mut Option([dynamic]string)) {}
+retarget_view :: proc(wrapper: ^Wrapper) { wrapper.pointer^ = &mut kept; }
+replace_element :: proc(pointers: []mut ^mut Option([dynamic]string)) { pointers[0] = &mut kept; }
+
+stored_read_only_success :: proc(named: bool, mark: int) {
+	arena := mem.Arena.init();
+	value: Option([dynamic]string) = .some(make([dynamic]string));
+	other: Option([dynamic]string) = .none;
+	first := &mut value;
+	second := &mut other;
+	if (named) {
+		result := try_box(Mixed{&first, &mut second});
+		boxed := result or_else return;
+		inspect_box_mixed(boxed);
+	} else {
+		boxed := try_box(Mixed{&first, &mut second}) or_else return;
+		inspect_box_mixed(boxed);
+	}
+	switch (first^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), mark));
+	case .none:
+	}
+	fmt.println(value);
+	drop(value);
+	free_all(arena.allocator());
+}
+stored_read_only_view :: proc() {
+	arena := mem.Arena.init();
+	value: Option([dynamic]string) = .some(make([dynamic]string));
+	other: Option([dynamic]string) = .none;
+	first := &mut value;
+	second := &mut other;
+	boxed := box(Mixed{&first, &mut second});
+	view: ^Mixed = boxed;
+	inspect_view_mixed(view);
+	switch (first^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 16));
+	case .none:
+	}
+	fmt.println(value);
+	drop(value);
+	free_all(arena.allocator());
+}
+literal_element_target :: proc() {
+	arena := mem.Arena.init();
+	value: Option([dynamic]string) = .some(make([dynamic]string));
+	pointers := []^mut Option([dynamic]string){&mut value};
+	inspect_values(pointers);
+	switch (pointers[0]^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 17));
+	case .none:
+	}
+	fmt.println(value);
+	drop(value);
+	free_all(arena.allocator());
+}
+literal_read_only_target :: proc() {
+	arena := mem.Arena.init();
+	value: Option([dynamic]string) = .some(make([dynamic]string));
+	pointer := &mut value;
+	pointers := []^ ^mut Option([dynamic]string){&pointer};
+	inspect_readers(pointers);
+	switch (pointer^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 18));
+	case .none:
+	}
+	fmt.println(value);
+	drop(value);
+	free_all(arena.allocator());
+}
+
+implicit_box_view :: proc() {
+	local: Option([dynamic]string) = .none;
+	pointer := &mut local;
+	boxed := box(Wrapper{&mut pointer});
+	retarget_view(boxed);
+	append_default(pointer, 7);
+}
+
+stored_box_view :: proc() {
+	local: Option([dynamic]string) = .none;
+	pointer := &mut local;
+	boxed := box(Wrapper{&mut pointer});
+	view: ^Wrapper = boxed;
+	retarget_view(view);
+	append_default(pointer, 8);
+}
+
+temporary_box_view :: proc() {
+	local: Option([dynamic]string) = .none;
+	pointer := &mut local;
+	view: ^Wrapper = box(Wrapper{&mut pointer});
+	retarget_view(view);
+	append_default(pointer, 9);
+}
+
+implicit_array_view :: proc() {
+	local: Option([dynamic]string) = .none;
+	pointer := &mut local;
+	pointers := [dynamic]^mut ^mut Option([dynamic]string){&mut pointer};
+	retarget_slice(pointers);
+	append_default(pointer, 10);
+}
+
+stored_array_view :: proc() {
+	local: Option([dynamic]string) = .none;
+	pointer := &mut local;
+	pointers := [dynamic]^mut ^mut Option([dynamic]string){&mut pointer};
+	view: []^mut ^mut Option([dynamic]string) = pointers;
+	retarget_slice(view);
+	append_default(pointer, 11);
+}
+
+copied_slice_literal :: proc() {
+	local: Option([dynamic]string) = .none;
+	pointer := &mut local;
+	pointers := []^mut ^mut Option([dynamic]string){&mut pointer};
+	copy := pointers;
+	retarget_slice(copy);
+	append_default(pointer, 12);
+}
+
+copied_mutable_slice :: proc() {
+	local: Option([dynamic]string) = .none;
+	pointers := []mut ^mut Option([dynamic]string){&mut local};
+	copy := pointers;
+	replace_element(copy);
+	append_default(pointers[0], 13);
+}
+
+direct_propagated_success :: proc() -> Result(int, Allocator_Error) {
+	arena := mem.Arena.init();
+	value: Option([dynamic]string) = .some(make([dynamic]string));
+	other: Option([dynamic]string) = .none;
+	first := &mut value;
+	second := &mut other;
+	inspect_box_mixed(try_box(Mixed{&first, &mut second}) or_return);
+	switch (first^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 19));
+	case .none:
+	}
+	fmt.println(value);
+	drop(value);
+	free_all(arena.allocator());
+	return .ok(19);
+}
+
 main :: proc() {
 	read_only_success();
 	read_only_fallback();
 	read_only_fields();
 	read_only_containers();
+	stored_read_only_success(false, 14);
+	stored_read_only_success(true, 15);
+	stored_read_only_view();
+	literal_element_target();
+	literal_read_only_target();
+	assert((direct_propagated_success() or_else return) == 19);
 	kept = .some(make([dynamic]string));
 	literal_slice();
 	literal_dynamic();
@@ -146,5 +302,12 @@ main :: proc() {
 	inline_box();
 	fallible_box();
 	stored_map_key();
+	implicit_box_view();
+	stored_box_view();
+	temporary_box_view();
+	implicit_array_view();
+	stored_array_view();
+	copied_slice_literal();
+	copied_mutable_slice();
 	fmt.println(kept);
 }

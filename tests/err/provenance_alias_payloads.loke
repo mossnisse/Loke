@@ -152,4 +152,170 @@ mixed_target_reset :: proc(@(allocator_reset) allocator: Allocator) {
 	fmt.println(local);
 }
 
+Outer :: struct { tag: int, inner: Wrapper }
+retarget_outer :: proc(wrapper: Box(Outer)) { wrapper.inner.pointer^ = &mut kept; }
+retarget_view :: proc(wrapper: ^Wrapper) { wrapper.pointer^ = &mut kept; }
+replace_element :: proc(pointers: []mut ^mut Option([dynamic]string)) { pointers[0] = &mut kept; }
+
+stored_success :: proc() {
+	arena := mem.Arena.init();
+	local: Option([dynamic]string) = .some(make([dynamic]string));
+	pointer := &mut local;
+	boxed := try_box(Outer{1, Wrapper{&mut pointer}}) or_else return;
+	retarget_outer(boxed);
+	switch (pointer^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 44));
+	case .none:
+	}
+	drop(local);
+}
+
+named_success :: proc() {
+	arena := mem.Arena.init();
+	local: Option([dynamic]string) = .some(make([dynamic]string));
+	pointer := &mut local;
+	result := try_box(Outer{1, Wrapper{&mut pointer}});
+	boxed := result or_else return;
+	retarget_outer(boxed);
+	switch (pointer^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 44));
+	case .none:
+	}
+	drop(local);
+}
+
+propagated_success :: proc() -> Result(int, Allocator_Error) {
+	arena := mem.Arena.init();
+	local: Option([dynamic]string) = .some(make([dynamic]string));
+	pointer := &mut local;
+	boxed := try_box(Outer{1, Wrapper{&mut pointer}}) or_return;
+	retarget_outer(boxed);
+	switch (pointer^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 44));
+	case .none:
+	}
+	drop(local);
+	return .ok(0);
+}
+
+implicit_box_view :: proc() {
+	arena := mem.Arena.init();
+	local: Option([dynamic]string) = .some(make([dynamic]string));
+	pointer := &mut local;
+	boxed := box(Wrapper{&mut pointer});
+	retarget_view(boxed);
+	switch (pointer^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 44));
+	case .none:
+	}
+	drop(local);
+}
+
+stored_box_view :: proc() {
+	arena := mem.Arena.init();
+	local: Option([dynamic]string) = .some(make([dynamic]string));
+	pointer := &mut local;
+	boxed := box(Wrapper{&mut pointer});
+	view: ^Wrapper = boxed;
+	retarget_view(view);
+	switch (pointer^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 44));
+	case .none:
+	}
+	drop(local);
+}
+
+temporary_box_view :: proc() {
+	arena := mem.Arena.init();
+	local: Option([dynamic]string) = .some(make([dynamic]string));
+	pointer := &mut local;
+	view: ^Wrapper = box(Wrapper{&mut pointer});
+	retarget_view(view);
+	switch (pointer^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 44));
+	case .none:
+	}
+	drop(local);
+}
+
+implicit_array_view :: proc() {
+	arena := mem.Arena.init();
+	local: Option([dynamic]string) = .some(make([dynamic]string));
+	pointer := &mut local;
+	pointers := [dynamic]^mut ^mut Option([dynamic]string){&mut pointer};
+	retarget_slice(pointers);
+	switch (pointer^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 44));
+	case .none:
+	}
+	drop(local);
+}
+
+stored_array_view :: proc() {
+	arena := mem.Arena.init();
+	local: Option([dynamic]string) = .some(make([dynamic]string));
+	pointer := &mut local;
+	pointers := [dynamic]^mut ^mut Option([dynamic]string){&mut pointer};
+	view: []^mut ^mut Option([dynamic]string) = pointers;
+	retarget_slice(view);
+	switch (pointer^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 44));
+	case .none:
+	}
+	drop(local);
+}
+
+stored_slice_literal :: proc() {
+	arena := mem.Arena.init();
+	local: Option([dynamic]string) = .some(make([dynamic]string));
+	pointer := &mut local;
+	pointers := []^mut ^mut Option([dynamic]string){&mut pointer};
+	retarget_slice(pointers);
+	switch (pointer^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 44));
+	case .none:
+	}
+	drop(local);
+}
+
+copied_slice_literal :: proc() {
+	arena := mem.Arena.init();
+	local: Option([dynamic]string) = .some(make([dynamic]string));
+	pointer := &mut local;
+	pointers := []^mut ^mut Option([dynamic]string){&mut pointer};
+	copy := pointers;
+	retarget_slice(copy);
+	switch (pointer^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 44));
+	case .none:
+	}
+	drop(local);
+}
+
+writable_literal_copy :: proc() {
+	arena := mem.Arena.init();
+	local: Option([dynamic]string) = .some(make([dynamic]string));
+	pointers := []mut ^mut Option([dynamic]string){&mut local};
+	copy := pointers;
+	replace_element(copy);
+	switch (pointers[0]^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 45));
+	case .none:
+	}
+	drop(local);
+}
+
+inline_propagated_success :: proc() -> Result(int, Allocator_Error) {
+	arena := mem.Arena.init();
+	local: Option([dynamic]string) = .some(make([dynamic]string));
+	pointer := &mut local;
+	retarget_outer(try_box(Outer{1, Wrapper{&mut pointer}}) or_return);
+	switch (pointer^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 46));
+	case .none:
+	}
+	drop(local);
+	return .ok(0);
+}
+
 main :: proc() {}

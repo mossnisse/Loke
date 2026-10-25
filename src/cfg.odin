@@ -331,7 +331,7 @@ Prov_State :: struct {
 	// write the caller learns of, or a variable's place `&mut place` lent, so a
 	// reset sees an owner written there and static storage rejects one.
 	// Flow-insensitive too.
-	written_aliases: map[Symbol_Id][]Written_Alias,
+	written_aliases: map[Written_Storage][]Written_Alias,
 	has_region_event: bool,
 	// The uses that are a local's `drop` at scope exit, for the note naming them.
 	scope_drops:      map[Span]bool,
@@ -440,7 +440,7 @@ build_flow_pass :: proc(
 		graph.temp_provider_bits = make(map[^Expr_Call]u64, 4, allocator)
 		graph.temp_providers = make([dynamic]Temp_Provider, allocator)
 		graph.lent_locals = make(map[Symbol_Id]bool, 4, allocator)
-		graph.written_aliases = make(map[Symbol_Id][]Written_Alias, 4, allocator)
+		graph.written_aliases = make(map[Written_Storage][]Written_Alias, 4, allocator)
 	}
 	graph.break_block, graph.continue_block = NO_BLOCK, NO_BLOCK
 	graph.current = new_flow_block(graph)

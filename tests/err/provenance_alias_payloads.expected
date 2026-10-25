@@ -31,3 +31,39 @@ storage reached through a pointer or slice
 L0537
 @151:2
 region backing `local`
+L0536
+@167:27
+storage reached through a pointer or slice
+L0536
+@181:27
+storage reached through a pointer or slice
+L0536
+@194:27
+storage reached through a pointer or slice
+L0536
+@208:27
+storage reached through a pointer or slice
+L0536
+@222:27
+storage reached through a pointer or slice
+L0536
+@235:27
+storage reached through a pointer or slice
+L0536
+@248:27
+storage reached through a pointer or slice
+L0536
+@262:27
+storage reached through a pointer or slice
+L0536
+@275:27
+storage reached through a pointer or slice
+L0536
+@289:27
+storage reached through a pointer or slice
+L0536
+@302:27
+storage reached through a pointer or slice
+L0536
+@314:27
+storage reached through a pointer or slice

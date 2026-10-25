@@ -5507,6 +5507,14 @@ by `or_else` and to its fallback. Read-only access to a carrier's own storage do
 target, though writable carriers inside a read-only wrapper keep their own
 capabilities.
 
+A stored success selected by `or_else` or `or_return` keeps the payload's
+carrier paths without its former variant step, just as a directly used success
+does. An owner-to-view conversion names the owner's backing storage, separately
+from the targets of carriers stored inside it. Copies and reslices of a view,
+including a slice literal's hidden array, share that storage: a call that can
+replace its carriers cannot leave another view's earlier target facts as proof
+of their contents.
+
 A user record contains carriers but is not itself a new carrier. A record of `rawptr` or `[^]T` fields carries no checked provenance; a checked carrier rebuilt from untracked storage has unknown provenance.
 
 ### Capabilities and the one rule

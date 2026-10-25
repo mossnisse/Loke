@@ -10,6 +10,12 @@ checklist.
 
 ### Breaking changes
 
+- Stored success payloads, owner-to-view conversions, and copies of slice
+  literals now preserve carrier storage identity when invalidating targets
+  after writable calls. Unsafe arena-backed owners escaping through these
+  paths report `L0536`. Upgrade by allocating retained owners from a region
+  that outlives their destination.
+
 - Writable-call target invalidation now follows box payloads, map keys and
   values, and literal slice and dynamic-array elements. Unresolved payload
   targets also preserve known destinations' lifetime constraints, so owners
@@ -530,6 +536,10 @@ checklist.
   for any count.
 
 ### Fixed
+
+- Unwrapping a fallible box into a local now preserves its payload's carrier
+  field paths, so calls no longer confuse read-only and writable sibling fields
+  and spuriously reject later local writes with `L0536`.
 
 - Read-only calls receiving an `or_else` success payload now preserve the
   parameter's weakened capability, avoiding spurious `L0536` errors on later
