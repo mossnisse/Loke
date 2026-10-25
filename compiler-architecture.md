@@ -130,7 +130,7 @@ operations; subsequent rounds replay those operations in disposable fact state.
 Only carried facts are copied between rounds. A final walk builds loan, reset,
 cleanup, and task events with settled destinations and regions. Construction and
 superseded-round diagnostics are discarded, so each diagnostic appears once.
-This final event bridge remains until stage 5 removes the remaining AST adapters.
+This final event bridge remains until stage 5 removes it.
 
 The [provenance normalization contract](provenance-normalization-contract.md#initial-operation-contracts)
 records the operation invariants, current AST-sensitive helper inventory,
@@ -151,8 +151,9 @@ capture. [provenance_read.odin](src/provenance_read.odin) classifies leaf alias
 reads before replay. [provenance_effect.odin](src/provenance_effect.odin) records
 and replays declarations, stores, borrowed bindings, provider transfers, call
 results/writes, and target invalidation. Replay uses frozen input tables and
-cannot walk source operands; checked leaf adapters still expose and restore a
-value's captured representation. See the
+cannot walk source operands. Leaf region and target queries read a value's
+recorded representation, and the construction walk tracks open conversions
+without rewriting the checked AST. See the
 [stage 4 contract](provenance-normalization-contract.md#stage-4-fact-replay-and-call-inputs)
 for that remaining boundary and the profiling tool.
 

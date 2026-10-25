@@ -4,8 +4,9 @@ Stage 1 of the [migration plan](provenance-normalization-proposal.md#migration-p
 established the semantic boundary and baseline. Stage 2 introduces shared
 storage IDs and canonical typed places in production. Stage 3 shares typed
 transfers between target and region construction. Evaluation and effect
-construction now record ordered fact operations for replay. A final loan/event
-walk and checked leaf adapters remain until stage 5 removes that bridge.
+construction now record ordered fact operations for replay. Stage 5a makes leaf
+region and target queries read normalized values. A final loan/event walk
+remains until the rest of stage 5 removes that bridge.
 
 The [language specification](design.md#borrows-and-lifetimes) remains
 authoritative. The baseline records current behavior, with an explicit
@@ -78,8 +79,9 @@ arguments have run.
 
 Input descriptions are cached by source identity, checked representation, and
 defer expansion. The representation key includes the effective type and
-view/erasure annotations because existing evaluation helpers temporarily expose
-an owner's original checked representation. This cache stores no alias sets,
+view/erasure annotations because an owner beneath a conversion is a distinct
+value ([stage 5a](#stage-5a-value-based-leaf-queries) replaced the original
+temporary exposure of that representation). This cache stores no alias sets,
 region sets, loans, or call summaries. Identifiers resolve directly through
 their symbols: reset analysis creates scratch identifier nodes, whose reusable
 addresses cannot serve as cached place identities.
@@ -222,8 +224,9 @@ Once the monotone fact weight stops growing, a final graph walk materializes
 loan, reset, cleanup, global, and task events with those settled facts. This
 preserves precise publication through borrowed payloads, ordered held operands,
 normal/unwind cleanup, and the existing reset and task worklists. It is an
-explicit stage 5 bridge: checked leaf queries still read source metadata and
-temporarily expose captured representations. This stage removes repeated
+explicit stage 5 bridge: at this stage checked leaf queries still read source
+metadata and temporarily exposed captured representations, until
+[stage 5a](#stage-5a-value-based-leaf-queries). This stage removes repeated
 control-flow/source evaluation from the inner fixed point; it does not yet make
 all event construction independent of the checked AST. Whole-program summary
 visits continue to build one body at a time.
@@ -272,6 +275,42 @@ a record's field re-recorded that field's carrier targets at the record's root.
 declaration and for a map key inserted into a map with its own allocator. The
 quick gate then passed all 165 compiler unit tests, 43 LSP unit tests, and 60
 integration checks with both binaries rebuilt; all 2208 spec citations resolve.
+
+## Stage 5a: value-based leaf queries
+
+Leaf region and target queries take a `Value_Id` and read the value's recorded
+representation: its type, view, erasure, widening, and composite backing
+(`Prov_Repr`). An operand is the value of its own node at its checked
+representation. A value beneath one implicit conversion comes from
+`prov_value_beneath`, which interns a distinct value rather than rewriting the
+node. Replay therefore passes recorded values directly; `prov_open_value`,
+`prov_close_value`, and the in-place type swaps in the view, erasure, widening,
+and backing paths are gone: provenance construction no longer rewrites a node's
+representation.
+
+The construction walk still evaluates source syntax. A conversion walker records
+the conversion it is beneath in `Flow_Graph.converting`, and walk code reads
+representation through `prov_repr` and `prov_type`, which fall back to the
+checked representation. Values are interned under the same keys as before, so
+replay looks up the values construction recorded.
+
+A query can follow a fact-dependent branch to an operand, as the region read of
+an unknown carrier falls back to its operand. Freezing the program therefore
+interns a value for every operand a recorded value's query can reach, including
+the call a user operator stands for. A later round that takes a different
+branch finds those values without writing to frozen input. Identifiers also get
+values now; their places still come from symbol storage.
+
+Call inputs and split-receiver captures are keyed by the call node and defer
+expansion only: a call is never itself beneath a conversion, so its
+representation adds no identity. Reset queries read a symbol's region through
+`prov_reset_symbol_region` instead of a scratch identifier node. No language
+behavior change is intended; the existing normalization inspection, runtime, and
+rejection suites are the controls.
+
+Stage 5a validation on 2026-10-25: the quick gate passed all 165 compiler unit
+tests, 43 LSP unit tests, and 60 integration checks after rebuilding both
+binaries. All 2209 spec citations resolve.
 
 ## AST-sensitive construction inventory
 

@@ -235,6 +235,8 @@ Last_Use :: struct {
 // The state only the provenance modes build.
 Prov_State :: struct {
 	input: ^Prov_Input,
+	// The conversions the walk is evaluating the sources of (`prov_repr`).
+	converting: [dynamic]Prov_Converting,
 	roots:          [dynamic]Prov_Root,
 	loans:          [dynamic]Prov_Loan,
 	prov_slots:     [dynamic]Prov_Slot,
@@ -380,6 +382,7 @@ new_flow_graph :: proc(k: ^Checker, literal: ^Expr_Proc, allocator: mem.Allocato
 	if mode != .Lifecycle {
 		graph.prov = new(Prov_State, allocator)
 		graph.input = normalized_input != nil ? normalized_input : new_prov_input(allocator, seed != nil ? seed.input : nil)
+		graph.converting = make([dynamic]Prov_Converting, allocator)
 		graph.roots = make([dynamic]Prov_Root, allocator)
 		graph.loans = make([dynamic]Prov_Loan, allocator)
 		graph.prov_slots = make([dynamic]Prov_Slot, allocator)
@@ -1130,7 +1133,7 @@ place_is_direct :: proc(c: ^Compiler, place: Expr) -> bool {
 // Static storage is not followed.
 @(private)
 provider_place_end :: proc(graph: ^Flow_Graph, place: Expr, node: rawptr, span: Span, verb: string, preposition := "") {
-	if !type_carries_provider(graph.k.c, expr_base(place).type) {
+	if !type_carries_provider(graph.k.c, prov_type(graph, place)) {
 		return
 	}
 	if root := provider_place_root(graph, place); root != INVALID_SYMBOL {
@@ -1232,11 +1235,11 @@ provider_container_end :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 	if root != INVALID_SYMBOL && sym.container_op in STORING_CONTAINER_OPS && graph.mode != .Lifecycle {
 		for argument in v.bound[1:] {
 			if argument != nil {
-				prov_merge_moved_bits(graph, root, argument)
+				prov_merge_moved_bits(graph, root, prov_input_value(graph, argument))
 			}
 		}
 		for argument in v.variadic_elements {
-			prov_merge_moved_bits(graph, root, argument)
+			prov_merge_moved_bits(graph, root, prov_input_value(graph, argument))
 		}
 	}
 }
@@ -1360,11 +1363,11 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false, lends :=
 				} else {
 					sources = walk_flow_expr(graph, value.expr)
 				}
-				escaping := prov_escape_region(graph, value.expr)
+				escaping := prov_escape_region(graph, prov_input_value(graph, value.expr))
 				if !value.is_inout {
-					graph.returning = new_clone(Prov_Returning{region = prov_reset_value_region(graph, value.expr), span = expr_span(value.expr)}, graph.alloc)
+					graph.returning = new_clone(Prov_Returning{region = prov_reset_value_region(graph, prov_input_value(graph, value.expr)), span = expr_span(value.expr)}, graph.alloc)
 				}
-				result_type := expr_base(value.expr).type
+				result_type := prov_type(graph, value.expr)
 				if sym := symbol_of(graph.k.c, graph.literal.symbol); sym != nil {
 					result_type = sym.result
 				}
@@ -1375,7 +1378,7 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false, lends :=
 					into           = contents,
 					span           = expr_span(value.expr),
 					region         = escaping,
-					region_content = prov_result_region_fields(graph, value.expr, result_type),
+					region_content = prov_result_region_fields(graph, prov_input_value(graph, value.expr), result_type),
 					// The frame's regions end here, so the diagnostic names them.
 					name           = prov_region_name(graph, escaping),
 				})
@@ -1397,7 +1400,7 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false, lends :=
 			// still sees it (design.md "defer statement").
 			killed := false
 			if ident, is_ident := value.expr.(^Expr_Ident); is_ident && !value.clone_on_return &&
-			   type_is_managed(graph.k.c, copied_type(ident, ident.type)) {
+			   type_is_managed(graph.k.c, copied_type(ident, prov_type(graph, ident))) {
 				if slot, tracked := graph.by_symbol[ident.symbol]; tracked {
 					emit(graph, Flow_Event{kind = .Kill, slot = slot, span = ident.span, name = ident.name})
 					killed = true
@@ -1573,7 +1576,7 @@ walk_flow_decl :: proc(graph: ^Flow_Graph, d: ^Decl) {
 note_required_write :: proc(graph: ^Flow_Graph, id: Symbol_Id, value: Expr) {
 	sym := symbol_of(graph.k.c, id)
 	call, is_call := value.(^Expr_Call)
-	if sym == nil || !sym.named || graph.current == NO_BLOCK || !is_call || call.type == INVALID_TYPE {
+	if sym == nil || !sym.named || graph.current == NO_BLOCK || !is_call || prov_type(graph, call) == INVALID_TYPE {
 		return
 	}
 	if _, built := call.operation.(Call_Union_Construct); built {
@@ -1888,7 +1891,7 @@ walk_foreach_binding_provenance :: proc(
 		sym := symbol_of(graph.k.c, binding.symbol)
 		lent := sym != nil && sym.borrowed_binding != .None && !binding.is_ref
 		prov_bind_value(graph, binding.symbol, loans, expr_span(s.iterable), copies = !lent)
-		prov_bind_element_region(graph, binding.symbol, s.iterable)
+		prov_bind_element_region(graph, binding.symbol, prov_input_value(graph, s.iterable))
 		// A lent or mutable element is the source's storage, not a copy.
 		if sym != nil && sym.borrowed_binding != .None {
 			prov_bind_view(graph, binding.symbol, iterated, lends = !foreach_is_place_loop(s))
@@ -1982,7 +1985,7 @@ walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) -> (carried: []int
 	// A switch over a temporary consumes it into the case binding; one over a
 	// place borrows it, for the whole switch.
 	consumes := s.kind != .Value && s.subject != nil &&
-		expr_base(s.subject).type != TYPE_ANY_VIEW &&
+		prov_type(graph, s.subject) != TYPE_ANY_VIEW &&
 		!expression_is_borrowed_place(s.subject)
 	held := len(graph.held)
 	defer resize(&graph.held, held)
@@ -2071,7 +2074,7 @@ prov_bind_case_name :: proc(
 	// A deferred switch can be expanded more than once in the same graph.
 	prov_forget_region_binding(graph, symbol)
 	prov_bind_value(graph, symbol, sources, span, copies = consumes)
-	prov_bind_case_region(graph, symbol, s.subject, variants, slot)
+	prov_bind_case_region(graph, symbol, prov_input_value(graph, s.subject), variants, slot)
 	// A place subject keeps its payload, so the binding views its storage;
 	// a consumed one is the binding's own, which ends with its case
 	// (design.md "Switch ownership").
@@ -2119,10 +2122,10 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 	}
 	// design.md "any_view type": an erased view borrows the place it came from.
 	if prov {
-		if base := expr_base(e); base != nil && base.erased_from != INVALID_TYPE {
+		if expr_base(e) != nil && prov_repr(graph, e).erased_from != INVALID_TYPE {
 			return prov_erase(graph, e)
 		}
-		if base := expr_base(e); base != nil && base.view_from != INVALID_TYPE {
+		if expr_base(e) != nil && prov_repr(graph, e).view_from != INVALID_TYPE {
 			return prov_owner_view(graph, e)
 		}
 	}
@@ -2198,23 +2201,23 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 	case ^Expr_Postfix:
 		// design.md "Owned values": reading `b^` reads the box, as reading `xs[i]`
 		// reads a dynamic array.
-		if prov && v.op == .Caret && type_is_box(graph.k.c, expr_base(v.operand).type) {
+		if prov && v.op == .Caret && type_is_box(graph.k.c, prov_type(graph, v.operand)) {
 			if root, path, ok := prov_place_of(graph, v); ok {
 				prov_walk_subscripts(graph, v)
 				prov_access(graph, root, path, .Read, v.span)
-				return prov_read_content(graph, root, path, v.type, v.span)
+				return prov_read_content(graph, root, path, prov_type(graph, v), v.span)
 			}
-			only := prov_read_is_reads_only(graph.k.c, v.type)
+			only := prov_read_is_reads_only(graph.k.c, prov_type(graph, v))
 			if carriers, path, ok := prov_read_through_carrier(graph, v, only); ok {
-				return prov_load_content(graph, carriers, path, v.type, v.span, only)
+				return prov_load_content(graph, carriers, path, prov_type(graph, v), v.span, only)
 			}
 			loans := walk_flow_expr(graph, v.operand)
-			return prov_project_content(graph, loans, expr_base(v.operand).type, {proj_wild()}, v.type, v.span)
+			return prov_project_content(graph, loans, prov_type(graph, v.operand), {proj_wild()}, prov_type(graph, v), v.span)
 		}
 		if prov && v.op == .Caret {
-			only := prov_read_is_reads_only(graph.k.c, v.type)
+			only := prov_read_is_reads_only(graph.k.c, prov_type(graph, v))
 			carriers, _, _ := prov_read_through_carrier(graph, v, only)
-			return prov_load_content(graph, carriers, nil, v.type, v.span, only)
+			return prov_load_content(graph, carriers, nil, prov_type(graph, v), v.span, only)
 		}
 		operand_loans := walk_flow_expr(graph, v.operand)
 		if v.op == .Or_Return {
@@ -2228,10 +2231,10 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 			// its `return`, as an `or_else` exit does; a mapper's error carries
 			// the operand's failure content.
 			if v.failure_exit != nil {
-				shape, _ := fallible_of(graph.k, expr_base(v.operand).type)
+				shape, _ := fallible_of(graph.k, prov_type(graph, v.operand))
 				if prov && v.failure_maps {
 					graph.propagated_errors[v] = prov_payload_content(
-						graph, operand_loans, expr_base(v.operand).type,
+						graph, operand_loans, prov_type(graph, v.operand),
 						shape.info.variants[shape.failure], v.span,
 					)
 				} else if prov && !v.borrows {
@@ -2243,7 +2246,7 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 				walk_flow_stmt(graph, v.failure_exit)
 				graph.current = resume
 				return prov_payload_content(
-					graph, operand_loans, expr_base(v.operand).type, v.type, v.span,
+					graph, operand_loans, prov_type(graph, v.operand), prov_type(graph, v), v.span,
 				)
 			}
 			proc_symbol := symbol_of(graph.k.c, graph.literal.symbol)
@@ -2251,13 +2254,13 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 			if prov { outer_returning = graph.returning }
 			held: []int
 			if prov && proc_symbol != nil && proc_symbol.result != INVALID_TYPE {
-				shape, operand_fallible := fallible_of(graph.k, expr_base(v.operand).type)
+				shape, operand_fallible := fallible_of(graph.k, prov_type(graph, v.operand))
 				target, target_fallible := fallible_of(graph.k, proc_symbol.result)
 				if operand_fallible && target_fallible {
 					from := shape.info.variants[shape.failure]
 					into := target.info.variants[target.failure]
 					escaping := prov_payload_content(
-						graph, operand_loans, expr_base(v.operand).type, from, v.span,
+						graph, operand_loans, prov_type(graph, v.operand), from, v.span,
 					)
 					if failure_assignment_borrows(graph.k.c, from, into) {
 						if root, path, is_place := prov_place_of(graph, v.operand); is_place {
@@ -2297,7 +2300,7 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 			graph.current = resume
 			// The success payload carries the operand's loans and regions.
 			return prov_payload_content(
-				graph, operand_loans, expr_base(v.operand).type, v.type, v.span,
+				graph, operand_loans, prov_type(graph, v.operand), prov_type(graph, v), v.span,
 			)
 		}
 
@@ -2307,16 +2310,16 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 				prov_walk_subscripts(graph, v)
 				prov_access(graph, root, path, .Read, v.span)
 				// The read yields the field's content, with no lasting borrow.
-				return prov_read_content(graph, root, path, v.type, v.span)
+				return prov_read_content(graph, root, path, prov_type(graph, v), v.span)
 			}
-			only := prov_read_is_reads_only(graph.k.c, v.type)
+			only := prov_read_is_reads_only(graph.k.c, prov_type(graph, v))
 			if carriers, path, ok := prov_read_through_carrier(graph, v, only); ok {
-				return prov_load_content(graph, carriers, path, v.type, v.span, only)
+				return prov_load_content(graph, carriers, path, prov_type(graph, v), v.span, only)
 			}
 			loans := walk_flow_expr(graph, v.operand)
 			if v.resolution.kind == .Field && v.operand != nil {
 				return prov_project_content(
-					graph, loans, expr_base(v.operand).type, {prov_field_step(graph, v)}, v.type, v.span,
+					graph, loans, prov_type(graph, v.operand), {prov_field_step(graph, v)}, prov_type(graph, v), v.span,
 				)
 			}
 			return nil
@@ -2331,7 +2334,7 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 			if root, path, ok := prov_place_of(graph, v); ok {
 				prov_walk_subscripts(graph, v)
 				prov_access(graph, root, path, .Read, v.span)
-				return prov_read_content(graph, root, path, v.type, v.span)
+				return prov_read_content(graph, root, path, prov_type(graph, v), v.span)
 			}
 			// An element of plain data read out of a slice local only reads the
 			// carrier (design.md "Weakening and reborrows").
@@ -2341,18 +2344,18 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 				for index in v.indices {
 					walk_flow_expr(graph, index)
 				}
-				return prov_load_content(graph, carriers, nil, v.type, v.span)
+				return prov_load_content(graph, carriers, nil, prov_type(graph, v), v.span)
 			}
-			only := prov_read_is_reads_only(graph.k.c, v.type)
+			only := prov_read_is_reads_only(graph.k.c, prov_type(graph, v))
 			if carriers, path, ok := prov_read_through_carrier(graph, v, only); ok {
-				return prov_load_content(graph, carriers, path, v.type, v.span, only)
+				return prov_load_content(graph, carriers, path, prov_type(graph, v), v.span, only)
 			}
 			loans := walk_flow_expr(graph, v.operand)
 			for index in v.indices {
 				loans = prov_join(graph, loans, walk_flow_expr(graph, index))
 			}
 			return prov_project_content(
-				graph, loans, expr_base(v.operand).type, prov_index_path(graph, v), v.type, v.span,
+				graph, loans, prov_type(graph, v.operand), prov_index_path(graph, v), prov_type(graph, v), v.span,
 			)
 		}
 		walk_flow_expr(graph, v.operand)
@@ -2375,20 +2378,20 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 		// A non-empty container literal evaluates its destination's `via` first.
 		if len(v.elements) > 0 {
 			walk_flow_expr(graph, v.via)
-			if prov && (underlying_kind(graph.k.c, v.type) == .Dynamic_Array || underlying_kind(graph.k.c, v.type) == .Map) {
+			if prov && (underlying_kind(graph.k.c, prov_type(graph, v)) == .Dynamic_Array || underlying_kind(graph.k.c, prov_type(graph, v)) == .Map) {
 				prov_note_fresh_owner(graph, v, v.via)
 			}
 		}
 		if prov {
-			if content := prov_temp_content(graph, v.type); len(content) > 0 {
+			if content := prov_temp_content(graph, prov_type(graph, v)); len(content) > 0 {
 				content = prov_composite_content(graph, v, content)
-				if v.backing != INVALID_TYPE {
-					return prov_slice_literal(graph, v, carrier_is_mutable(graph.k.c, v.type), content)
+				if prov_repr(graph, v).backing != INVALID_TYPE {
+					return prov_slice_literal(graph, v, carrier_is_mutable(graph.k.c, prov_type(graph, v)), content)
 				}
 				return content
 			}
 		}
-		is_map := underlying_kind(graph.k.c, v.type) == .Map
+		is_map := underlying_kind(graph.k.c, prov_type(graph, v)) == .Map
 		for element in v.elements {
 			if is_map {
 				walk_flow_expr(graph, element.key)
@@ -2398,7 +2401,7 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 			if prov { prov_hold_owner(graph, element.value) }
 		}
 		if prov && is_map && len(v.elements) > 0 {
-			prov_key_effects(graph, v.type, v.span)
+			prov_key_effects(graph, prov_type(graph, v), v.span)
 		}
 
 	case ^Expr_Cond:
@@ -2449,7 +2452,7 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 			link(graph, entry, graph.current)
 			walk_flow_stmt(graph, v.exit)
 			graph.current = resume
-			return prov_payload_content(graph, value_loans, expr_base(v.value).type, v.type, v.span)
+			return prov_payload_content(graph, value_loans, prov_type(graph, v.value), prov_type(graph, v), v.span)
 		}
 		entry := graph.current
 		merge := new_flow_block(graph)
@@ -2459,7 +2462,7 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 		fallback_loans := walk_flow_expr(graph, v.fallback)
 		link(graph, graph.current, merge)
 		graph.current = merge
-		payload := prov_payload_content(graph, value_loans, expr_base(v.value).type, v.type, v.span)
+		payload := prov_payload_content(graph, value_loans, prov_type(graph, v.value), prov_type(graph, v), v.span)
 		return prov_join(graph, payload, fallback_loans)
 
 	case ^Expr_Checked_Extract:
@@ -2467,11 +2470,11 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 		if prov {
 			// A union keeps its alternatives below a wildcard; an erased view
 			// points at the value.
-			operand_type := expr_base(v.operand).type
+			operand_type := prov_type(graph, v.operand)
 			if type_is_union(graph.k.c, operand_type) {
-				return prov_project_content(graph, loans, operand_type, {proj_wild()}, v.type, v.span)
+				return prov_project_content(graph, loans, operand_type, {proj_wild()}, prov_type(graph, v), v.span)
 			}
-			return prov_load_content(graph, loans, nil, v.type, v.span)
+			return prov_load_content(graph, loans, nil, prov_type(graph, v), v.span)
 		}
 		return nil
 
@@ -2514,14 +2517,14 @@ walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		if graph.mode == .Lifecycle {
 			return nil
 		}
-		return prov_project_content(graph, loans, expr_base(v.bound[0]).type, {proj_wild()}, v.type, v.span)
+		return prov_project_content(graph, loans, prov_type(graph, v.bound[0]), {proj_wild()}, prov_type(graph, v), v.span)
 	case Call_Union_As:
 		// Both unions keep their payloads below one wildcard.
 		loans := walk_flow_expr(graph, v.bound[0])
 		if graph.mode == .Lifecycle {
 			return nil
 		}
-		return prov_project_content(graph, loans, expr_base(v.bound[0]).type, nil, v.type, v.span)
+		return prov_project_content(graph, loans, prov_type(graph, v.bound[0]), nil, prov_type(graph, v), v.span)
 	case Call_Union_Construct:
 		loans: []int
 		if len(v.bound) == 1 {
@@ -2532,7 +2535,7 @@ walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		// `field.get(value)` reads the place `field.pointer(value)^`.
 		if operation.op == .Field_Get {
 			carriers := walk_flow_expr(graph, v.bound[0])
-			return graph.mode == .Lifecycle ? nil : prov_load_content(graph, carriers, nil, v.type, v.span)
+			return graph.mode == .Lifecycle ? nil : prov_load_content(graph, carriers, nil, prov_type(graph, v), v.span)
 		}
 	}
 	builtin := Builtin_Kind.None
@@ -2731,7 +2734,7 @@ settle_last_uses :: proc(graph: ^Flow_Graph) {
 			continue
 		}
 		ident := site^.(^Expr_Ident)
-		if !clone_may_allocate(graph.k.c, copied_type(ident, ident.type)) {
+		if !clone_may_allocate(graph.k.c, copied_type(ident, prov_type(graph, ident))) {
 			continue
 		}
 		event.kind = .Kill

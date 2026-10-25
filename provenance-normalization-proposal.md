@@ -8,8 +8,10 @@ are recorded; [stage 2](provenance-normalization-contract.md#stage-2-storage-and
 provides shared storage IDs and typed places. [Stage 3](provenance-normalization-contract.md#stage-3-transfers)
 shares typed transfer operations between target and region construction.
 [Stage 4](provenance-normalization-contract.md#stage-4-fact-replay-and-call-inputs)
-replays fact-changing effects over frozen input; the final loan/event bridge
-remains for stage 5. Pending architectural decisions are tracked in
+replays fact-changing effects over frozen input.
+[Stage 5a](provenance-normalization-contract.md#stage-5a-value-based-leaf-queries)
+makes leaf queries value-based; the final loan/event bridge remains for the rest
+of stage 5. Pending architectural decisions are tracked in
 [Open questions](open-questions.md#normalized-input-for-provenance-analysis).
 
 ## Recommendation
@@ -363,8 +365,8 @@ replay cannot evaluate source operands or construct new values, storage, calls,
 or transfer descriptions. Reset, cleanup, task, and loan events are materialized
 once with settled facts through the remaining event bridge. The
 [stage 4 notes](provenance-normalization-contract.md#stage-4-fact-replay-and-call-inputs)
-state that boundary explicitly; removing the final walk and checked leaf adapters
-remains stage 5 work.
+state that boundary explicitly. Stage 5a replaced the checked leaf adapters with
+value-based queries; removing the final walk remains stage 5 work.
 
 | Stage | Change | Exit criterion |
 | --- | --- | --- |

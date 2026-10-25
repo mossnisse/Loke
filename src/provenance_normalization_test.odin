@@ -333,7 +333,7 @@ main :: proc() {}`) { return }
 	unpacked := normalization_decl(t, &p, graph.literal, "unpacked")
 	if view == nil || selected == nil || unpacked == nil { return }
 	base := expr_base(view.values[0])
-	borrow, borrows := prov_input_transfer(graph, view.values[0]).(Prov_Transfer_Borrow)
+	borrow, borrows := prov_value_transfer(graph, prov_input_value(graph, view.values[0])).(Prov_Transfer_Borrow)
 	if testing.expect(t, borrows, "an owner view must normalize as a borrow") {
 		testing.expect(t, borrow.storage != 0 && graph.input.values[int(borrow.owner)].type == base.view_from,
 		               "the view must retain its original owner")
@@ -354,7 +354,7 @@ main :: proc() {}`) { return }
 			extraction, checked := call.operation.(Call_Union_As)
 			shape, ok := fallible_of(&k, expr_base(call.bound[0]).type)
 			testing.expect(t, checked && ok && extraction.index == shape.success, "the selected variant must remain checked metadata")
-			transfer, transfers := prov_input_transfer(graph, call).(Prov_Transfer_Forward)
+			transfer, transfers := prov_value_transfer(graph, prov_input_value(graph, call)).(Prov_Transfer_Forward)
 			if testing.expect(t, transfers) {
 				part := transfer.component
 				result, _ := fallible_of(&k, call.type)
@@ -370,7 +370,7 @@ main :: proc() {}`) { return }
 		_, unboxes := unbox.operation.(Call_Box_Unbox)
 		_, consumes := unbox.bound[0].(^Expr_Move)
 		testing.expect(t, unboxes && consumes, "unboxing must consume the box rather than copy its payload")
-		transfer, transfers := prov_input_transfer(graph, unbox).(Prov_Transfer_Forward)
+		transfer, transfers := prov_value_transfer(graph, prov_input_value(graph, unbox)).(Prov_Transfer_Forward)
 		if testing.expect(t, transfers) {
 			part := transfer.component
 			testing.expect(t, part.mode == .Move && len(part.from) == 1 && part.from[0].kind == .Wild && len(part.to) == 0,
@@ -625,7 +625,7 @@ main :: proc() {}`) { return }
 	graph := build_flow_graph(&k, body, .Prov_Summary)
 	ret, returns := body.body.stmts[0].(^Stmt_Return)
 	if !testing.expect(t, returns && ret.value != nil) { return }
-	transfer := prov_input_transfer(graph, ret.value.expr)
+	transfer := prov_value_transfer(graph, prov_input_value(graph, ret.value.expr))
 	held := symbol_of(&p.c, normalization_symbol(t, &p, "Held")).type
 	operation := prov_input_copy_operation(graph, held)
 	if !testing.expect(t, operation.hook != INVALID_SYMBOL && prov_has_direct_body(&p.c, operation.hook)) { return }
@@ -641,7 +641,7 @@ main :: proc() {}`) { return }
 	testing.expect(t, after.default && len(after.params) > 0 && after.params[0], "replay did not observe the grown source and allocator dependencies")
 	testing.expect(t, slice.contains(graph.summary_callees[:], operation.hook), "replay omitted the nested hook dependency")
 	count := len(graph.input.transfers)
-	again := prov_input_transfer(graph, ret.value.expr)
+	again := prov_value_transfer(graph, prov_input_value(graph, ret.value.expr))
 	testing.expect(t, len(graph.input.transfers) == count && again.(Prov_Transfer_Forward).component.source == transfer.(Prov_Transfer_Forward).component.source,
 	               "summary growth changed the normalized transfer or its source identity")
 }

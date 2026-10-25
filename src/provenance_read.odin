@@ -11,12 +11,10 @@ Prov_Read_Input :: struct {
 prov_input_read :: proc(graph: ^Flow_Graph, id: Value_Id) -> Prov_Read_Input {
 	if input, found := graph.input.read_inputs[id]; found { return input }
 	prov_writable_input(graph)
-	value := graph.input.values[int(id)]
+	value := prov_value(graph, id)
 	input: Prov_Read_Input
 	if value.origin == nil { return input }
-	saved := prov_open_value(graph, id)
-	defer prov_close_value(saved)
-	input.unknown_alias = prov_alias_source_is_unknown(graph.k.c, value.origin)
+	input.unknown_alias = prov_alias_source_is_unknown(graph.k.c, value.type, value.origin)
 	#partial switch origin in value.origin {
 	case ^Expr_Selector: input.fallback = prov_input_value(graph, origin.operand)
 	case ^Expr_Index: input.fallback = prov_input_value(graph, origin.operand)

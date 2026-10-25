@@ -34,8 +34,9 @@ Prov_Call_Input :: struct {
 
 // design.md "Evaluation order", "Parameter semantics and ABI lowering",
 // "Splitting a mutable slice".
+// Keyed by the call node alone, as its capture is (`prov_input_capture`).
 prov_input_call :: proc(graph: ^Flow_Graph, call: ^Expr_Call) -> Prov_Call_Input {
-	key := prov_input_key(graph, call)
+	key := Prov_Input_Key{node = &call.base, expansion = graph.expansion}
 	if input, found := graph.input.calls[key]; found { return input }
 	prov_writable_input(graph)
 	c := graph.k.c

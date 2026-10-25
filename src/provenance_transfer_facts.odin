@@ -3,27 +3,6 @@ package lokec
 
 import "core:slice"
 
-// Leaf calls and place reads still use the AST evaluation bridge until stage 4.
-// Expose the checked representation captured by the normalizer, then restore it.
-Prov_Value_Origin :: struct {
-	base: ^Expr_Base,
-	type, view, erased, widened: Type_Id,
-}
-
-@(private)
-prov_open_value :: proc(graph: ^Flow_Graph, id: Value_Id) -> Prov_Value_Origin {
-	value := graph.input.values[int(id)]
-	base := expr_base(value.origin)
-	saved := Prov_Value_Origin{base, base.type, base.view_from, base.erased_from, base.widened_from}
-	base.type, base.view_from, base.erased_from, base.widened_from = value.type, value.view_from, value.erased_from, value.widened_from
-	return saved
-}
-
-@(private)
-prov_close_value :: proc(saved: Prov_Value_Origin) {
-	saved.base.type, saved.base.view_from, saved.base.erased_from, saved.base.widened_from = saved.type, saved.view, saved.erased, saved.widened
-}
-
 @(private = "file")
 prov_alias_projection :: proc(graph: ^Flow_Graph, type: Type_Id, path: []Proj_Step) -> []Proj_Step {
 	out := slice.clone(path, graph.alloc)
@@ -61,10 +40,8 @@ prov_value_aliases :: proc(graph: ^Flow_Graph, id: Value_Id) -> []Written_Alias 
 			if storage, direct := source.place.base.(Storage_Id); direct {
 				return slice.clone([]Written_Alias{{target = storage, at = source.place.path}}, graph.alloc)
 			}
-			saved := prov_open_value(graph, operation.source)
-			defer prov_close_value(saved)
 			out := make([dynamic]Written_Alias, graph.alloc)
-			for alias in prov_written_targets(graph, source.origin, as_place = true) {
+			for alias in prov_written_targets(graph, operation.source, as_place = true) {
 				append(&out, Written_Alias{target = alias.target, at = prov_concat_path(graph, alias.at, source.place.path)})
 			}
 			if len(out) == 0 { append(&out, Written_Alias{}) }
@@ -107,11 +84,8 @@ prov_note_borrowed_owner :: proc(graph: ^Flow_Graph, id: Value_Id) {
 }
 
 prov_value_region :: proc(graph: ^Flow_Graph, id: Value_Id, path: []Proj_Step, query: Region_Query) -> Region_Set {
-	value := graph.input.values[int(id)]
 	if transfer := graph.input.transfers[id]; transfer != nil { return prov_transfer_region(graph, transfer, path, query) }
-	saved := prov_open_value(graph, id)
-	defer prov_close_value(saved)
-	return prov_result_region_at(graph, value.origin, path, query, value.type)
+	return prov_result_region_at(graph, id, path, query, prov_value(graph, id).type)
 }
 
 @(private = "file")
@@ -125,11 +99,9 @@ prov_component_region :: proc(graph: ^Flow_Graph, component: Prov_Component, pat
 
 prov_copy_component_region :: proc(graph: ^Flow_Graph, component: Prov_Component, path: []Proj_Step,
                                    query: Region_Query, allocator: Region_Set) -> Region_Set {
-	source := graph.input.values[int(component.source)]
-	saved := prov_open_value(graph, component.source)
-	defer prov_close_value(saved)
+	source := prov_value(graph, component.source)
 	selected := prov_concat_path(graph, component.from, path)
-	return prov_copied_region_at(graph, Prov_Region_Copy{value = source.origin, prefix = component.copy_from,
+	return prov_copied_region_at(graph, Prov_Region_Copy{value = component.source, prefix = component.copy_from,
 	                             as_type = source.type, allocator = allocator}, component.copy.type,
 	                             selected[len(component.copy_from):], query)
 }

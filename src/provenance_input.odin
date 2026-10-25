@@ -33,22 +33,34 @@ Prov_Place :: struct {
 	type: Type_Id,
 }
 
+// The representation an expression's value has: its checked one, or the
+// source beneath one of its implicit conversions (`prov_value_beneath`).
+Prov_Repr :: struct {
+	type, view_from, erased_from, widened_from: Type_Id,
+	// A slice literal's hidden array (design.md "Slice literals").
+	backing: Type_Id,
+}
+
+// Queries read a value's representation from here, never from its origin node,
+// which keeps its checked one.
 Prov_Value :: struct {
 	origin: Expr,
-	type: Type_Id,
+	using repr: Prov_Repr,
 	expansion: Defer_Expansion,
-	view_from, erased_from, widened_from: Type_Id,
 	// A captured value copies its source's place but is not a later reload of it.
 	place: Prov_Place,
 }
 
 Prov_Input_Key :: struct {
 	node: ^Expr_Base,
-	type, view_from, erased_from: Type_Id,
-	widened_from: Type_Id,
+	repr: Prov_Repr,
 	expansion: Defer_Expansion,
 	capture: bool,
 }
+
+// The implicit conversions a checked node can carry (design.md "string type
+// conversions", "any_view type", "Widening by label", "Slice literals").
+Prov_Conversion :: enum { View, Erasure, Widening, Backing }
 
 Prov_Input :: struct {
 	// Owns every table and inserted key; writes go through prov_writable_input.
@@ -154,31 +166,99 @@ prov_storage :: proc(graph: ^Flow_Graph, id: Storage_Id) -> Prov_Storage {
 	return graph.input.storages[int(id)]
 }
 
+prov_value :: proc(graph: ^Flow_Graph, id: Value_Id) -> Prov_Value {
+	return graph.input.values[int(id)]
+}
+
+prov_checked_repr :: proc(e: Expr) -> Prov_Repr {
+	base := expr_base(e)
+	if base == nil { return {} }
+	repr := Prov_Repr{base.type, base.view_from, base.erased_from, base.widened_from, INVALID_TYPE}
+	if literal, ok := e.(^Expr_Composite); ok { repr.backing = literal.backing }
+	return repr
+}
+
+// A conversion whose source the walk is evaluating: until it ends, `node` is
+// walked at `repr`, the representation beneath that conversion.
+Prov_Converting :: struct {
+	node: ^Expr_Base,
+	repr: Prov_Repr,
+}
+
+// The representation the walk currently evaluates `e` at. The checked node is
+// never rewritten; an open conversion overrides its representation instead.
+prov_repr :: proc(graph: ^Flow_Graph, e: Expr) -> Prov_Repr {
+	base := expr_base(e)
+	if graph.prov != nil && base != nil {
+		for index := len(graph.converting) - 1; index >= 0; index -= 1 {
+			if graph.converting[index].node == base { return graph.converting[index].repr }
+		}
+	}
+	return prov_checked_repr(e)
+}
+
+// Walks `e` beneath one of its implicit conversions until `prov_end_conversion`.
+prov_begin_conversion :: proc(graph: ^Flow_Graph, e: Expr, conversion: Prov_Conversion) {
+	append(&graph.converting, Prov_Converting{expr_base(e), prov_repr_beneath(prov_repr(graph, e), conversion)})
+}
+
+prov_end_conversion :: proc(graph: ^Flow_Graph) {
+	pop(&graph.converting)
+}
+
+@(private = "file")
+prov_repr_beneath :: proc(repr: Prov_Repr, conversion: Prov_Conversion) -> Prov_Repr {
+	repr := repr
+	switch conversion {
+	case .View:     repr.type, repr.view_from = repr.view_from, INVALID_TYPE
+	case .Erasure:  repr.type, repr.erased_from = repr.erased_from, INVALID_TYPE
+	case .Widening: repr.type, repr.widened_from = repr.widened_from, INVALID_TYPE
+	case .Backing:  repr.type, repr.backing = repr.backing, INVALID_TYPE
+	}
+	return repr
+}
+
+prov_type :: proc(graph: ^Flow_Graph, e: Expr) -> Type_Id {
+	return prov_repr(graph, e).type
+}
+
 @(private)
 prov_input_key :: proc(graph: ^Flow_Graph, e: Expr) -> Prov_Input_Key {
 	base := expr_base(e)
 	if base == nil { return {} }
-	return Prov_Input_Key{node = base, type = base.type, view_from = base.view_from,
-	                      erased_from = base.erased_from, widened_from = base.widened_from, expansion = graph.expansion}
+	return Prov_Input_Key{node = base, repr = prov_repr(graph, e), expansion = graph.expansion}
 }
 
 prov_input_value :: proc(graph: ^Flow_Graph, e: Expr) -> Value_Id {
-	key := prov_input_key(graph, e)
-	if key.node == nil { return 0 }
+	if expr_base(e) == nil { return 0 }
+	return prov_intern_value(graph, e, prov_repr(graph, e), graph.expansion)
+}
+
+@(private = "file")
+prov_intern_value :: proc(graph: ^Flow_Graph, e: Expr, repr: Prov_Repr, expansion: Defer_Expansion) -> Value_Id {
+	key := Prov_Input_Key{node = expr_base(e), repr = repr, expansion = expansion}
 	if id, found := graph.input.value_ids[key]; found { return id }
 	prov_writable_input(graph)
 	id := Value_Id(len(graph.input.values))
-	append(&graph.input.values, Prov_Value{origin = e, type = key.type, expansion = key.expansion, view_from = key.view_from,
-	                                    erased_from = key.erased_from, widened_from = key.widened_from})
+	append(&graph.input.values, Prov_Value{origin = e, repr = repr, expansion = expansion})
 	graph.input.value_ids[key] = id
-	place := prov_input_place(graph, e)
+	place := prov_place_as(graph, e, key)
 	graph.input.values[int(id)].place = place
 	return id
 }
 
+// The value one implicit conversion of `id` converts: the owner beneath a view,
+// the concrete value beneath an erasure, the smaller union beneath a widening,
+// or a slice literal's hidden array.
+prov_value_beneath :: proc(graph: ^Flow_Graph, id: Value_Id, conversion: Prov_Conversion) -> Value_Id {
+	value := prov_value(graph, id)
+	return prov_intern_value(graph, value.origin, prov_repr_beneath(value.repr, conversion), value.expansion)
+}
+
+// A call's capture is keyed by the call node alone: its checked inputs do not
+// depend on the representation its result is converted to.
 prov_input_capture :: proc(graph: ^Flow_Graph, call: ^Expr_Call, source: Expr) -> Value_Id {
-	key := prov_input_key(graph, call)
-	key.capture = true
+	key := Prov_Input_Key{node = &call.base, expansion = graph.expansion, capture = true}
 	if id, found := graph.input.value_ids[key]; found { return id }
 	prov_writable_input(graph)
 	from := prov_input_value(graph, source)
@@ -194,16 +274,20 @@ prov_input_capture :: proc(graph: ^Flow_Graph, call: ^Expr_Call, source: Expr) -
 prov_input_place :: proc(graph: ^Flow_Graph, e: Expr) -> Prov_Place {
 	key := prov_input_key(graph, e)
 	if key.node == nil { return {} }
-	// Reset queries manufacture stack-local identifiers. Resolve those through
-	// their symbols rather than caching the address of a reusable scratch node.
+	return prov_place_as(graph, e, key)
+}
+
+@(private = "file")
+prov_place_as :: proc(graph: ^Flow_Graph, e: Expr, key: Prov_Input_Key) -> Prov_Place {
+	// An identifier's place is its symbol's storage, which needs no cache entry.
 	if ident, named := e.(^Expr_Ident); named {
 		id := prov_storage_id(graph, Written_Storage{symbol = ident.symbol})
-		if id != 0 { return Prov_Place{base = id, type = key.type} }
-		return Prov_Place{type = key.type}
+		if id != 0 { return Prov_Place{base = id, type = key.repr.type} }
+		return Prov_Place{type = key.repr.type}
 	}
 	if place, found := graph.input.places[key]; found { return place }
 	place := prov_describe_place(graph, e)
-	place.type = key.type
+	place.type = key.repr.type
 	if place.base != nil {
 		prov_writable_input(graph)
 		graph.input.places[key] = place
