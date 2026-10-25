@@ -7,19 +7,20 @@ package lokec
 Prov_Form_Symbol :: struct { symbol: Symbol_Id }
 // `operand.name`; `step` is its projection when it selects a field.
 Prov_Form_Selector :: struct { operand: Value_Id, step: Proj_Step, field: bool }
-// `operator` is the call a user operator stands for.
-Prov_Form_Index :: struct { operand: Value_Id, operator: ^Expr_Call }
-Prov_Form_Slice :: struct { operand: Value_Id, operator: ^Expr_Call }
-Prov_Form_Binary :: struct { operator: ^Expr_Call }
-Prov_Form_Unary :: struct { operand: Value_Id, op: Token_Kind, operator: ^Expr_Call }
+// `operator` is the value of the call a user operator stands for.
+Prov_Form_Index :: struct { operand: Value_Id, operator: Value_Id }
+Prov_Form_Slice :: struct { operand: Value_Id, operator: Value_Id }
+Prov_Form_Binary :: struct { operator: Value_Id }
+Prov_Form_Unary :: struct { operand: Value_Id, op: Token_Kind, operator: Value_Id }
 // `boxed` when the operand is a box, whose payload `operand^` names.
 Prov_Form_Postfix :: struct { operand: Value_Id, op: Token_Kind, boxed: bool }
 Prov_Form_Move :: struct { operand: Value_Id }
 // The error an `or_return` propagates, from its fallible `operand`.
 Prov_Form_Error :: struct { operand: Value_Id, borrows: bool }
 // `arguments` are the values of its bound arguments, or of its written ones
-// for a call without bound arguments.
-Prov_Form_Call :: struct { call: ^Expr_Call, arguments: []Value_Id }
+// for a call without bound arguments; `pack` those of a variadic pack built
+// from separate arguments, in `variadic_order`.
+Prov_Form_Call :: struct { call: ^Expr_Call, arguments, pack: []Value_Id }
 Prov_Form_Composite :: struct { elements: []Value_Id }
 Prov_Form :: union {
 	Prov_Form_Symbol, Prov_Form_Selector, Prov_Form_Index, Prov_Form_Slice, Prov_Form_Binary,
@@ -45,13 +46,13 @@ prov_describe_form :: proc(graph: ^Flow_Graph, e: Expr, expansion: Defer_Expansi
 		if form.field && v.operand != nil { form.step = prov_field_step(graph, v) }
 		return form
 	case ^Expr_Index:
-		return Prov_Form_Index{prov_operand_value(graph, v.operand, expansion), prov_form_operator(graph, v)}
+		return Prov_Form_Index{prov_operand_value(graph, v.operand, expansion), prov_form_operator(graph, v, expansion)}
 	case ^Expr_Slice:
-		return Prov_Form_Slice{prov_operand_value(graph, v.operand, expansion), prov_form_operator(graph, v)}
+		return Prov_Form_Slice{prov_operand_value(graph, v.operand, expansion), prov_form_operator(graph, v, expansion)}
 	case ^Expr_Binary:
-		return Prov_Form_Binary{prov_form_operator(graph, v)}
+		return Prov_Form_Binary{prov_form_operator(graph, v, expansion)}
 	case ^Expr_Unary:
-		return Prov_Form_Unary{prov_operand_value(graph, v.operand, expansion), v.op, prov_form_operator(graph, v)}
+		return Prov_Form_Unary{prov_operand_value(graph, v.operand, expansion), v.op, prov_form_operator(graph, v, expansion)}
 	case ^Expr_Postfix:
 		boxed := v.operand != nil && type_is_box(c, expr_base(v.operand).type)
 		return Prov_Form_Postfix{prov_operand_value(graph, v.operand, expansion), v.op, boxed}
@@ -60,7 +61,7 @@ prov_describe_form :: proc(graph: ^Flow_Graph, e: Expr, expansion: Defer_Expansi
 	case ^Expr_Propagated_Error:
 		return prov_error_form(graph, v.owner, expansion)
 	case ^Expr_Call:
-		return Prov_Form_Call{v, prov_argument_values(graph, v, expansion)}
+		return Prov_Form_Call{v, prov_argument_values(graph, v, expansion), prov_pack_values(graph, v, expansion)}
 	case ^Expr_Composite:
 		elements := make([]Value_Id, len(v.elements), graph.alloc)
 		for element, index in v.elements { elements[index] = prov_operand_value(graph, element.value, expansion) }
@@ -76,22 +77,21 @@ prov_error_form :: proc(graph: ^Flow_Graph, owner: ^Expr_Postfix, expansion: Def
 }
 
 @(private = "file")
-prov_form_operator :: proc(graph: ^Flow_Graph, e: Expr) -> ^Expr_Call {
-	return expr_base(e).resolution.kind == .User_Operator ? prov_operator_call(graph, e) : nil
+prov_form_operator :: proc(graph: ^Flow_Graph, e: Expr, expansion: Defer_Expansion) -> Value_Id {
+	if expr_base(e).resolution.kind != .User_Operator { return 0 }
+	return prov_operand_value(graph, prov_operator_call(graph, e), expansion)
 }
 
-// The call a value stands for: its own, unless it dispatches through an
-// interface, or a user operator's.
+// The value of the call a user operator's value stands for, or 0.
 @(private)
-prov_value_call :: proc(graph: ^Flow_Graph, id: Value_Id) -> ^Expr_Call {
+prov_operator_value :: proc(graph: ^Flow_Graph, id: Value_Id) -> Value_Id {
 	#partial switch form in prov_value(graph, id).form {
-	case Prov_Form_Call:   return form.call.dispatch == nil ? form.call : nil
 	case Prov_Form_Index:  return form.operator
 	case Prov_Form_Slice:  return form.operator
 	case Prov_Form_Binary: return form.operator
 	case Prov_Form_Unary:  return form.operator
 	}
-	return nil
+	return 0
 }
 
 @(private = "file")
@@ -103,6 +103,31 @@ prov_argument_values :: proc(graph: ^Flow_Graph, call: ^Expr_Call, expansion: De
 		values[index] = prov_operand_value(graph, argument, expansion)
 	}
 	return values
+}
+
+@(private = "file")
+prov_pack_values :: proc(graph: ^Flow_Graph, call: ^Expr_Call, expansion: Defer_Expansion) -> []Value_Id {
+	values := make([]Value_Id, len(call.variadic_order), graph.alloc)
+	next_element, next_spread := 0, 0
+	for is_spread, index in call.variadic_order {
+		operand: Expr
+		if is_spread {
+			operand = call.variadic_spreads[next_spread]
+			next_spread += 1
+		} else {
+			operand = call.variadic_elements[next_element]
+			next_element += 1
+		}
+		values[index] = prov_operand_value(graph, operand, expansion)
+	}
+	return values
+}
+
+// The values of a call's bound arguments, by parameter; none for a call
+// without bound arguments.
+@(private)
+prov_bound_values :: proc(form: Prov_Form_Call) -> []Value_Id {
+	return len(form.call.bound) > 0 ? form.arguments : nil
 }
 
 // A method call's receiver: its first argument.

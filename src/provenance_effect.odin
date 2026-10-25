@@ -160,18 +160,13 @@ prov_note_replay_statistics :: proc(c: ^Compiler, program: ^Prov_Effect_Program)
 prov_finish_effect_program :: proc(program: ^Prov_Effect_Program, graph: ^Flow_Graph) {
 	// Describe every value before reclaiming construction scratch. No later fact
 	// round may add values, storage, or checked call descriptions. A later round
-	// can follow another branch of a query, so every operand beneath a value is
-	// interned at its checked representation too.
+	// can follow another branch of a query; the operands it reaches are in the
+	// values' forms and transfers, interned with them.
 	expansion := graph.expansion
 	defer graph.expansion = expansion
-	operands := make([dynamic]Expr, context.temp_allocator)
 	for index := 1; index < len(graph.input.values); index += 1 {
-		id := Value_Id(index)
 		graph.expansion = graph.input.values[index].expansion
-		_ = prov_value_transfer(graph, id)
-		clear(&operands)
-		prov_query_operands(graph, graph.input.values[index].origin, &operands)
-		for operand in operands { _ = prov_input_value(graph, operand) }
+		_ = prov_value_transfer(graph, Value_Id(index))
 	}
 	// The construction graph and its metadata share the body's analysis arena.
 	// Reuse that metadata instead of retaining a second copy of every table.
@@ -187,41 +182,6 @@ prov_finish_effect_program :: proc(program: ^Prov_Effect_Program, graph: ^Flow_G
 	program.operator_calls = graph.operator_calls
 	program.lent_locals = graph.lent_locals
 	program.blocks = len(graph.blocks)
-}
-
-// The expressions a leaf query can follow from a value of `e`, including the
-// call a user operator stands for.
-@(private = "file")
-prov_query_operands :: proc(graph: ^Flow_Graph, e: Expr, out: ^[dynamic]Expr) {
-	add :: proc(out: ^[dynamic]Expr, operands: ..Expr) {
-		for operand in operands { if operand != nil { append(out, operand) } }
-	}
-	if base := expr_base(e); base != nil {
-		if call, found := graph.operator_calls[rawptr(base)]; found { add(out, call) }
-	}
-	#partial switch v in e {
-	case ^Expr_Selector:        add(out, v.operand)
-	case ^Expr_Checked_Extract: add(out, v.operand)
-	case ^Expr_Index:           add(out, v.operand); add(out, ..v.indices); add(out, ..v.bound)
-	case ^Expr_Slice:           add(out, v.operand, v.lo, v.hi); add(out, ..v.bound)
-	case ^Expr_Postfix:         add(out, v.operand)
-	case ^Expr_Propagated_Error:
-		if v.owner != nil { add(out, v.owner.operand) }
-	case ^Expr_Unary:           add(out, v.operand)
-	case ^Expr_Binary:          add(out, v.lhs, v.rhs)
-	case ^Expr_Or_Else:         add(out, v.value, v.fallback)
-	case ^Expr_Cond:            add(out, v.then, v.otherwise)
-	case ^Expr_Move:            add(out, v.value)
-	case ^Expr_Composite:
-		for element in v.elements { add(out, element.key, element.value) }
-		add(out, v.via)
-	case ^Expr_Call:
-		if v.dispatch != nil { return }
-		add(out, ..v.bound)
-		add(out, ..v.variadic_elements)
-		add(out, ..v.variadic_spreads)
-		for argument in v.args { add(out, argument.value) }
-	}
 }
 
 // A replay round starts from the ordinary constructor, so every fact map exists;
@@ -354,8 +314,8 @@ prov_replay_fact_operation :: proc(graph: ^Flow_Graph, op: Prov_Fact_Operation) 
 		case .Result:
 			graph.call_results[call] = Prov_Call_Result{region = prov_call_region(graph, operation.value, prov_value(graph, operation.value).type),
 			                                            region_content = prov_call_region_content(graph, operation.value)}
-		case .Write: prov_call_written_regions(graph, call, prov_input_call(graph, call).signature)
-		case .Invalidate: prov_call_written_aliases(graph, call)
+		case .Write: prov_call_written_regions(graph, operation.value, prov_input_call(graph, call).signature)
+		case .Invalidate: prov_call_written_aliases(graph, operation.value)
 		}
 	case Prov_Effect_Store:
 		prov_store_region(graph, operation.destination, operation.value, operation.element)

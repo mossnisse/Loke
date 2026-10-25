@@ -8,7 +8,8 @@ construction now record ordered fact operations for replay. Stage 5a makes leaf
 region and target queries read normalized values, and stage 5b materializes
 fact-dependent events from recorded operations instead of a final walk. Stage 5c
 removes the migration's comparison code and lists the queries that still read
-source forms, and stage 5d records each value's form so those queries read it.
+source forms, stage 5d records each value's form so those queries read it, and
+stage 5e moves the call-substitution helpers onto the recorded call arguments.
 
 The [language specification](design.md#borrows-and-lifetimes) remains
 authoritative. The baseline records current behavior, with an explicit
@@ -503,7 +504,7 @@ The call-substitution helpers still walk a call's arguments:
 `prov_forget_argument_aliases`. They reach the argument values through
 `prov_input_value`, which freezing interns for every operand
 (`prov_query_operands`). Reading the form's arguments there instead is the
-remaining step of stage 5.
+remaining step of stage 5, which [stage 5e](#stage-5e-call-arguments) takes.
 
 `normalization_value_form_contract` inspects the forms of a method call on a
 field of a dereferenced pointer. No language behavior change is intended: on
@@ -525,6 +526,59 @@ reads the form of the call's value at its site instead. The read-input table
 cached a fallback operand the form already records and an alias
 classification fixed by the value; both are now read from the value. The
 diagnostics still match the stage 5c commit on all 1348 corpus inputs.
+
+## Stage 5e: call arguments
+
+The call-substitution helpers now read a call's argument values from its
+value's form. `prov_bound_values` gives the values of a call's bound arguments
+by parameter, and a call's form also records the values of a variadic pack
+built from separate arguments (`pack`), in the order they were written.
+`prov_call_region`, `prov_constructed_region_at`, `prov_call_region_content`,
+`prov_allocation_region`, `prov_clone_region_at`, and `prov_substitute_region`
+substitute through those values. `prov_call_written_aliases` and
+`prov_call_written_regions` take the call's value, which the replayed
+`Prov_Effect_Call` operation already records; `prov_forget_argument_aliases`
+and `prov_leave_region` take an argument's value, and the latter tells a
+`&mut place` argument from its form. `prov_moved_bits` reads an exchange's or a
+box's operand from the bound values too.
+
+A user operator's form records the value of the call it stands for instead of
+the synthesized call node, so its region is found from that value
+(`prov_operator_value`, replacing `prov_value_call`) rather than by looking the
+node up again in the expansion of the reading site.
+
+Freezing no longer interns every operand beneath each value
+(`prov_query_operands` is gone); it still describes each value's transfer.
+Every operand a query follows is now part of a value's form or transfer, and is
+interned with that value.
+
+A static call graph from fact replay and event materialization finds no query
+that still chooses its rule by source syntax or walks an operand. The
+interning procedures it reaches only return recorded values once the input is
+frozen, which `prov_writable_input` asserts. The AST it reads otherwise is a key, a
+diagnostic span or name, or checked metadata: a call's resolution, an
+argument's value category, how many arguments a call binds, and a variadic
+pack's order. Three lookups are keyed by a node the walk evaluated at the same
+site: an event's call input and argument values (`prov_input_call`,
+`prov_call_values`), a declaration's `via` allocator
+(`prov_destination_allocator`), and a temporary root's owner
+(`prov_reset_temporary`). Replay and materialization restore each operation's
+block and expansion, so these keys find the values the walk interned there.
+This meets the stage 5 exit criterion.
+
+`normalization_operator_pack_form_contract` inspects a user operator's call
+value and a variadic pack. No language behavior change is intended: on all
+1348 test, example, tutorial, bench, and package inputs, the diagnostics match
+the stage 5d review commit, both with and without the freeze-time operand
+interning.
+
+Stage 5e validation on 2026-10-25: the quick gate passed all 168 compiler unit
+tests, 43 LSP unit tests, and 60 integration checks after rebuilding both
+binaries. All 2214 spec citations resolve. Against the stage 5d review commit
+on the same machine, `perf.ps1` measured front-end time from 5% lower to 5%
+higher, compiler peak working set within 1%, and the workspace language server
+within 2% per operation with a 102.9 MB peak, unchanged. Executable sizes were
+unchanged and every benchmark output matched.
 
 ## AST-sensitive construction inventory
 

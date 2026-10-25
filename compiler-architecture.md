@@ -162,7 +162,7 @@ conversions without rewriting the checked AST. See the
 for the profiling tool and the
 [stage 5b contract](provenance-normalization-contract.md#stage-5b-recorded-events)
 for event materialization, and the
-[stage 5d contract](provenance-normalization-contract.md#stage-5d-value-forms)
+[stage 5e contract](provenance-normalization-contract.md#stage-5e-call-arguments)
 for what a query may still read from the AST.
 
 ### Allocation domains

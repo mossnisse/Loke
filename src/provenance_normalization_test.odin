@@ -633,6 +633,41 @@ main :: proc() {}`) { return }
 	testing.expect(t, is_symbol && identifier_text(&p.c, symbol_of(&p.c, pointer.symbol).name) == "pair", "a dereference's operand is not the pointer's value")
 }
 
+// A user operator's form records the value of the call it stands for, and a
+// call's form the values of a pack built from separate arguments.
+@(test)
+normalization_operator_pack_form_contract :: proc(t: ^testing.T) {
+	p: Checked
+	defer destroy_checked(&p)
+	if !normalization_checked(t, &p, `package main;
+Vec :: struct { x: int }
+add :: operator(+) proc(a, b: Vec) -> Vec { return Vec{a.x + b.x}; }
+pack :: proc(rest: ..int) {}
+sum :: proc(a, b: Vec, n: int) -> Vec { pack(1, n); return a + b; }
+main :: proc() {}`) { return }
+	body := normalization_body(t, &p, "sum")
+	if body == nil { return }
+	k := Checker{c = &p.c}
+	graph := build_flow_graph(&k, body, .Prov_Summary)
+	statement, is_expr := body.body.stmts[0].(^Stmt_Expr)
+	if !testing.expect(t, is_expr && len(statement.exprs) == 1) { return }
+	call, is_call := statement.exprs[0].(^Expr_Call)
+	if !testing.expect(t, is_call && len(call.variadic_order) == 2) { return }
+	form := prov_value(graph, prov_input_value(graph, call)).form.(Prov_Form_Call)
+	if !testing.expect(t, len(form.pack) == 2, "a call's value does not record its pack") { return }
+	testing.expect_value(t, form.pack[0], prov_input_value(graph, call.variadic_elements[0]))
+	element, named := prov_value(graph, form.pack[1]).form.(Prov_Form_Symbol)
+	testing.expect(t, named && identifier_text(&p.c, symbol_of(&p.c, element.symbol).name) == "n", "a pack element is not its argument's value")
+	ret, returns := body.body.stmts[1].(^Stmt_Return)
+	if !testing.expect(t, returns && ret.value != nil) { return }
+	binary, adds := prov_value(graph, prov_input_value(graph, ret.value.expr)).form.(Prov_Form_Binary)
+	if !testing.expect(t, adds && binary.operator != 0, "a user operator does not record its call's value") { return }
+	operator, calls := prov_value(graph, binary.operator).form.(Prov_Form_Call)
+	if !testing.expect(t, calls && len(operator.arguments) == 2, "a user operator's call does not record its operands") { return }
+	left, is_symbol := prov_value(graph, operator.arguments[0]).form.(Prov_Form_Symbol)
+	testing.expect(t, is_symbol && identifier_text(&p.c, symbol_of(&p.c, left.symbol).name) == "a", "a user operator's first operand is not its left side")
+}
+
 // design.md "Allocator regions and region provenance": a checked copy operation
 // retains hook identity, while each replay substitutes the hook's current facts.
 @(test)

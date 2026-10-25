@@ -34,8 +34,9 @@ capture identities, nested hook dependencies, and transfer replay after summary
 growth. Stage 4 now freezes checked call inputs and replays fact-changing effects,
 and stage 5b removed the final loan/event walk. Since
 [stage 5d](provenance-normalization-contract.md#stage-5d-value-forms) the leaf
-queries read recorded value forms; the call-substitution helpers still walk a
-call's arguments. The separate
+queries read recorded value forms, and since
+[stage 5e](provenance-normalization-contract.md#stage-5e-call-arguments) the
+call-substitution helpers read recorded call arguments. The separate
 [receiver emission divergence](known-gaps.md#mutable-slice-splitting-reloads-a-rebound-receiver-during-emission)
 remains open.
 
