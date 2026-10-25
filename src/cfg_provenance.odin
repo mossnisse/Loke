@@ -4945,7 +4945,9 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 
 // design.md "Operator declarations": a user operator is a call to the procedure
 // it resolved to, its operands bound in parameter order. Each operator node keeps
-// one call node, so a later region or place query finds that call's result.
+// one call node, so a later region or place query finds that call's result. The
+// call yields the procedure's result, beneath any implicit conversion of the
+// node: an erased `[dynamic]T` result still depends on its allocator.
 @(private)
 prov_operator_call :: proc(graph: ^Flow_Graph, e: Expr) -> ^Expr_Call {
 	if call, found := graph.operator_calls[rawptr(expr_base(e))]; found {
@@ -4966,7 +4968,7 @@ prov_operator_call :: proc(graph: ^Flow_Graph, e: Expr) -> ^Expr_Call {
 		bound[0] = v.operand
 	}
 	base := expr_base(e)
-	call := prov_synthetic_call(graph, base.resolution.chosen_overload, bound, base.type, base.span, indexes)
+	call := prov_synthetic_call(graph, base.resolution.chosen_overload, bound, prov_unconverted_type(e), base.span, indexes)
 	graph.operator_calls[rawptr(base)] = call
 	return call
 }

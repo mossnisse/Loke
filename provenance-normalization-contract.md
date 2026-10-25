@@ -312,6 +312,17 @@ Stage 5a validation on 2026-10-25: the quick gate passed all 165 compiler unit
 tests, 43 LSP unit tests, and 60 integration checks after rebuilding both
 binaries. All 2209 spec citations resolve.
 
+A review of stage 5a on 2026-10-25 found that a user operator's synthetic call
+took its node's converted type, so an erased `[dynamic]int` operator result
+lost its allocator dependency and a later argument's reset was accepted. The
+synthetic call now takes the type beneath every implicit conversion
+(`prov_unconverted_type`), which no walk state changes. The
+`erased_operator_reset` case in
+[provenance_normalized_transfers.loke](tests/err/provenance_normalized_transfers.loke)
+failed before the fix. The quick gate then passed all 165 compiler unit tests,
+43 LSP unit tests, and 60 integration checks with both binaries rebuilt; all
+2210 spec citations resolve.
+
 ## AST-sensitive construction inventory
 
 This stage 1 inventory identifies the boundaries that stages 2–4 migrate.

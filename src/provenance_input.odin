@@ -178,6 +178,16 @@ prov_checked_repr :: proc(e: Expr) -> Prov_Repr {
 	return repr
 }
 
+// The type `e` evaluates to before its implicit conversions, independent of the
+// walk: what a user operator's procedure returns, for one.
+prov_unconverted_type :: proc(e: Expr) -> Type_Id {
+	repr := prov_checked_repr(e)
+	if repr.erased_from != INVALID_TYPE { repr = prov_repr_beneath(repr, .Erasure) }
+	if repr.widened_from != INVALID_TYPE { repr = prov_repr_beneath(repr, .Widening) }
+	if repr.view_from != INVALID_TYPE { repr = prov_repr_beneath(repr, .View) }
+	return repr.type
+}
+
 // A conversion whose source the walk is evaluating: until it ends, `node` is
 // walked at `repr`, the representation beneath that conversion.
 Prov_Converting :: struct {

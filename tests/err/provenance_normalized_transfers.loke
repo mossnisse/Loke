@@ -27,4 +27,23 @@ stored_pointer_reset :: proc(@(allocator_reset) allocator: Allocator) {
     assert(output.len() == 1);
 }
 
+// design.md "Evaluation order": an erased user-operator result keeps the
+// allocator its owner came from while a later argument resets it.
+Maker :: struct { allocator: Allocator }
+impl Maker {
+    get :: operator([]) proc(self, index: int) -> [dynamic]int {
+        return make([dynamic]int, 1, self.allocator);
+    }
+}
+reset :: proc(@(allocator_reset) allocator: Allocator) -> int {
+    free_all(allocator);
+    return 0;
+}
+show :: proc(value: any_view, code: int) {}
+
+erased_operator_reset :: proc(@(allocator_reset) allocator: Allocator) {
+    maker := Maker{allocator};
+    show(maker[0], reset(allocator));
+}
+
 main :: proc() {}
