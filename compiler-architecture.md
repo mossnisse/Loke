@@ -129,6 +129,12 @@ reach earlier reads. Copy retained facts before reclaiming each pass, and drop
 what a superseded pass reported, so each diagnostic appears once; only one
 graph needs to remain allocated at a time.
 
+The [provenance normalization contract](provenance-normalization-contract.md#initial-operation-contracts)
+records the operation invariants, current AST-sensitive helper inventory,
+inspection tests, and performance baseline for migrating this construction
+boundary. Stage 1 establishes that baseline; production graph construction
+still follows the AST.
+
 ### Allocation domains
 
 | Storage | Lifetime and contents |

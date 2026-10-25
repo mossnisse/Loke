@@ -33,6 +33,27 @@ and receiver reassignment during later argument evaluation. Implementation and
 validation remain pending; these findings concerned missing proposal contracts,
 not established compiler divergences.
 
+### Normalization baseline follow-up
+
+Stage 1's [inspection suite](src/provenance_normalization_test.odin) found an
+existing limitation in custom-hook dependency discovery. An `impl` copy-hook
+symbol can name a checked body while `proc_literal` is nil and `decl_proc` of
+its declaration is also nil. `prov_has_direct_body` then returns false and
+`prov_note_summary_dependency` omits that hook from the caller's summary
+dependencies, although `prov_copy_hook_region` reads its result summary.
+
+The `normalization_summary_and_custom_copy_contract` fixture reproduces the
+shape with `Held`, its `copy_held` hook, and `Nested`: the hook has a result
+summary, but `hooked` has no recorded dependency on it. Its current summary
+values are covered by the baseline assertions. No source-level incorrect
+acceptance or rejection has been established, so this is an architectural
+follow-up rather than a confirmed specification divergence.
+
+Resolve direct-body discovery against checked member bodies and test a hook
+whose summary changes after its caller has run. Keep any behavior correction
+and reproduction distinct from normalization, as the
+[proposal requires](provenance-normalization-proposal.md#scope-and-invariants).
+
 ## Package and import versioning
 
 Should import paths encode package versions? And should a package declaration remain mandatory in every file, when every file in a directory must name the same package anyway, or is it ceremony? The current version requires the declaration and leaves dependency versions to the build system or package manager. A future package design may need reproducible version selection without making source imports depend on a particular registry.

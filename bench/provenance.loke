@@ -1,0 +1,48 @@
+package main;
+
+import "core:fmt";
+
+// Forward calls and recursion require summary revisits. Each trip preserves a
+// borrowed payload through anonymous backing, a box, and checked extraction.
+// The expected output keeps perf.ps1's measurements tied to valid behavior.
+Envelope :: struct { values: []int }
+
+first :: proc(values: []int, count: int) -> []int { return second(values, count); }
+second :: proc(values: []int, count: int) -> []int { return third(values, count); }
+third :: proc(values: []int, count: int) -> []int { return fourth(values, count); }
+fourth :: proc(values: []int, count: int) -> []int { return fifth(values, count); }
+fifth :: proc(values: []int, count: int) -> []int { return sixth(values, count); }
+sixth :: proc(values: []int, count: int) -> []int { return seventh(values, count); }
+seventh :: proc(values: []int, count: int) -> []int { return eighth(values, count); }
+eighth :: proc(values: []int, count: int) -> []int {
+    if (count == 0) { return values; }
+    assert(payloads(values) == values[0]);
+    return first(values, count - 1);
+}
+
+payloads :: proc(values: []int) -> int {
+    wrappers := []Option(Envelope){.some(Envelope{values})};
+    selected: Envelope;
+    switch (wrappers[0]) {
+    case .some(payload): selected = payload;
+    case .none: return values[0];
+    }
+    boxed := box(selected);
+    unpacked := move(boxed).unbox();
+    optional: Option(Envelope) = .some(unpacked);
+    checked := optional.as(.some) or_else return values[0];
+    boxed_again := box(checked);
+    optional_again: Option(Envelope) = .some(move(boxed_again).unbox());
+    extracted := optional_again.as(.some) or_else return values[0];
+    return extracted.values[0];
+}
+
+main :: proc() {
+    values := [4]int{2, 3, 5, 7};
+    checksum := 0;
+    foreach (_ in 0 ..< 1000) {
+        result := first(values[:], 8);
+        foreach (value in result) { checksum += value; }
+    }
+    fmt.println(checksum);
+}

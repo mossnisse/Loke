@@ -1,9 +1,11 @@
 # Proposal: normalized input for provenance and borrow analysis
 
-**Status:** draft for review, 2026-10-25. This proposes an internal compiler
+**Status:** stage 1 implemented, 2026-10-25. This proposes an internal compiler
 refactor; it does not change the language contract. The rules in
-[design.md](design.md#borrows-and-lifetimes) remain authoritative. Implementation has not
-started. Pending architectural decisions are tracked in
+[design.md](design.md#borrows-and-lifetimes) remain authoritative. The
+[stage 1 contract and baseline](provenance-normalization-contract.md#initial-operation-contracts)
+are recorded; production normalization starts in stage 2. Pending architectural
+decisions are tracked in
 [Open questions](open-questions.md#normalized-input-for-provenance-analysis).
 
 ## Recommendation
@@ -329,6 +331,13 @@ guessing it in the normalizer.
 
 Each stage should leave a usable compiler and remove the replaced logic before
 the next stage expands the representation.
+
+Stage 1 is complete: the [contract and baseline](provenance-normalization-contract.md#initial-operation-contracts)
+record operation invariants, the AST-sensitive helper inventory, semantic
+inspection tests, and measured performance. The existing
+[hook dependency-discovery follow-up](open-questions.md#normalization-baseline-follow-up)
+must be resolved separately before claiming that hook-summary invalidation is
+preserved by the migration.
 
 | Stage | Change | Exit criterion |
 | --- | --- | --- |
