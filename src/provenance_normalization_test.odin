@@ -1,5 +1,6 @@
 package lokec
 
+import "core:mem"
 import "core:slice"
 import "core:strings"
 import "core:testing"
@@ -683,6 +684,41 @@ main :: proc() {}`
 	testing.expect(t, slice.equal(current.params, previous.params), "operation replay disagrees with the independent AST fixed point")
 	program := graph.normalized_effects
 	testing.expect(t, program != nil && program.input.frozen && program.replays >= 4, "the loop did not saturate one frozen operation program")
+}
+
+// Rebuilding a body's events after its facts settle allocates only in the
+// analysis arena, which each body's check reclaims: a language server checks
+// the same bodies again on every edit.
+@(test)
+normalization_materialization_allocator_contract :: proc(t: ^testing.T) {
+	p: Checked
+	defer destroy_checked(&p)
+	if !normalization_checked(t, &p, `package main;
+forward :: proc(allocator: Allocator) {
+    first: Allocator = {};
+    second: Allocator = {};
+    contents: [dynamic]int = {};
+    for (i := 0; i < 2; i += 1) {
+        contents = make([dynamic]int, 1, first);
+        first = second;
+        second = allocator;
+    }
+    assert(contents.len() == 1);
+}
+main :: proc() {}`) { return }
+	tracking: mem.Tracking_Allocator
+	mem.tracking_allocator_init(&tracking, context.allocator)
+	defer mem.tracking_allocator_destroy(&tracking)
+	k: Checker
+	graph: ^Flow_Graph
+	{
+		context.allocator = mem.tracking_allocator(&tracking)
+		graph = normalization_graph(t, &k, &p, "forward")
+	}
+	if graph == nil { return }
+	program := graph.normalized_effects
+	testing.expect(t, program != nil && program.replays > 0, "the body did not replay its recorded operations")
+	testing.expectf(t, len(tracking.allocation_map) == 0, "materialization left %d allocations outside the analysis arena", len(tracking.allocation_map))
 }
 
 // design.md "Evaluation order", "Splitting a mutable slice": checked call

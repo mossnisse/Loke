@@ -5,8 +5,8 @@ established the semantic boundary and baseline. Stage 2 introduces shared
 storage IDs and canonical typed places in production. Stage 3 shares typed
 transfers between target and region construction. Evaluation and effect
 construction now record ordered fact operations for replay. Stage 5a makes leaf
-region and target queries read normalized values. A final loan/event walk
-remains until the rest of stage 5 removes that bridge.
+region and target queries read normalized values, and stage 5b materializes
+fact-dependent events from recorded operations instead of a final walk.
 
 The [language specification](design.md#borrows-and-lifetimes) remains
 authoritative. The baseline records current behavior, with an explicit
@@ -220,8 +220,9 @@ loan, and event buffers empty. Recording
 also omits scalar operands and operations that cannot change provenance facts,
 while retaining their source evaluation slots and effects.
 
-Once the monotone fact weight stops growing, a final graph walk materializes
-loan, reset, cleanup, global, and task events with those settled facts. This
+Once the monotone fact weight stops growing, a final graph walk materialized
+loan, reset, cleanup, global, and task events with those settled facts, until
+[stage 5b](#stage-5b-recorded-events) recorded those events instead. This
 preserves precise publication through borrowed payloads, ordered held operands,
 normal/unwind cleanup, and the existing reset and task worklists. It is an
 explicit stage 5 bridge: at this stage checked leaf queries still read source
@@ -322,6 +323,82 @@ synthetic call now takes the type beneath every implicit conversion
 failed before the fix. The quick gate then passed all 165 compiler unit tests,
 43 LSP unit tests, and 60 integration checks with both binaries rebuilt; all
 2210 spec citations resolve.
+
+## Stage 5b: recorded events
+
+The final event walk is gone. Compared field by field over the test, example,
+and package corpus, the construction graph and the final walk's had the same
+blocks, Flow events, loans, roots, slots, and reborrows; they differed only in
+some event payloads and in events present only with settled facts. A trace of
+every carried-fact read outside a recorded fact operation, over the same
+corpus, found the construction sites below, whose results reach only events,
+diagnostics, and summary outputs. Construction therefore produces the returned
+graph. Each such site records a `Prov_Event_Operation`
+([provenance_event.odin](src/provenance_event.odin)): its fact-independent
+inputs, such as values, symbols, spans, and carrier slots, and the walk state it
+reads, captured as values. Its materializer runs at once with the facts
+construction has, and again once they settle.
+
+| Operation | Construction sites | Fact-dependent output |
+| --- | --- | --- |
+| `Prov_Event_Reset` | `free_all`, resetting parameters, provider drops, moves, and scope ends, temporary providers, ends through a pointer | The region, which live owner, held operand, temporary, or returned value blocks it, whether it is covered; an end through a pointer only for providers something was lent (`lent_locals`) |
+| `Prov_Event_Escape` | `return`, `or_return` | The escaping region, its field regions, and the frame-region name |
+| `Prov_Event_Region_Escape`, `Prov_Event_Key_Escape`, `Prov_Event_Static_Escape` | Assigned owners, inserted map keys, owners a call keeps in static storage | Whether a region escape is reported, and its region |
+| `Prov_Event_Allocator_Use`, `Prov_Event_Call_Allocator_Use` | `free_all`, clones, drops, fresh container literals, calls no summary follows | `Region_Use` window events, task reservations, the allocator-use summary |
+| `Prov_Event_Effect_Use` | Call and drop effects | The regions an effect call's parameters are given, and its window allocator use |
+| `Prov_Event_Received_Region` | `@(cross_thread)` arguments | `L0726` |
+
+The resetting walk state (held operands, temporary roots, the value a `return`
+hands back) becomes values: `Prov_Returning` now names the returned value or
+the propagated error, and its region is read where a deferred reset needs it.
+An allocator control block's root also takes its named provider's settled
+region; a provider inside a record keeps its position's token, which comes from
+the walk.
+
+Fact operations record the construction events they emitted, and every
+recorded operation carries a sequence number, block, defer expansion, and the
+`parallel` depth and task site it ran under. Once the facts settle, one more
+round replays the fact operations into a fact graph seeded with them and
+materializes the event operations interleaved in recorded order, so each sees
+the flow-sensitive replay state of its site, such as a borrowed binding's
+region aliases. An event operation's construction events are replaced by its
+materialization. A fact operation's replay may emit only `Region_Escape` and
+`Region_Use` checks, whose position within their block the solver does not
+read; they replace its construction ones. Allocator use, task reservations,
+and effect-call regions are rebuilt into the returned graph, which also
+receives the settled facts.
+
+Construction diagnostics stand, apart from those an event operation reported,
+which its settled materialization reports again; replayed fact operations report
+nothing. The frozen-input check now has no escape path: replay and
+materialization may read only recorded input. A zero-weight graph is still
+returned directly.
+
+Before the switch, a development build checked both graphs side by side on 889
+inputs, comparing events, loans, roots, slots, root regions, settled facts,
+diagnostics, region and window flags, and summary outputs, with no difference.
+That comparison is not kept. Few existing programs reach a fact-dependent site
+before its facts settle, so
+[provenance_settled_events.loke](tests/err/provenance_settled_events.loke)
+widens an allocator handle later in a loop than a task reservation, an
+allocator-use summary, and a crossing owner that read it; the construction
+graph alone accepts all three.
+
+Materialization allocates only in the body's analysis arena, which
+`normalization_materialization_allocator_contract` checks, since a language
+server checks the same bodies on every edit. Its per-block replacement lists
+first came from the process heap, which no check reclaims; over the
+measurement's 31 rechecks the server's peak working set rose from 108 to
+144 MB, and the test failed until they were allocated in the arena.
+
+Stage 5b validation on 2026-10-25: the quick gate passed all 166 compiler unit
+tests, 43 LSP unit tests, and 60 integration checks after rebuilding both
+binaries. All 2213 spec citations resolve. Against the stage 5a commit on the
+same machine, `perf.ps1` measured front-end time 3–19% lower on every program
+(18% on `bench/workspace`), compiler peak working set up to 12% lower, and the
+workspace language server 5–11% faster per operation with a peak working set
+of 103.4 MB instead of 108.2 MB. Executable sizes were unchanged and every
+benchmark output matched.
 
 ## AST-sensitive construction inventory
 

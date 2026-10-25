@@ -1,0 +1,66 @@
+// design.md "Allocator regions and region provenance": what an allocator
+// handle may name is settled over the whole body, so a use earlier in a loop
+// than the assignment that widens it is checked against the wider region.
+package main;
+
+import "core:mem";
+import "core:thread";
+
+allocate_work :: proc(allocator: Allocator) -> int {
+	values: [dynamic]int via allocator = {};
+	values.append(1);
+	return values.len();
+}
+
+// design.md "Allocators and tasks": the task reserves what the handle may
+// name on any iteration.
+widened_reservation :: proc() {
+	arena := mem.Arena.init();
+	handle := mem.default_allocator();
+	foreach (i in 0..<2) {
+		first: int;
+		parallel {
+			spawn first = allocate_work(handle);
+			allocate_work(handle);
+		}
+		handle = arena.allocator();
+	}
+}
+
+// A body's allocator use reaches the parameter its handle takes later.
+uses_later :: proc(allocator: Allocator) -> int {
+	handle := mem.default_allocator();
+	count := 0;
+	foreach (i in 0..<2) {
+		values: [dynamic]int via handle = {};
+		values.append(1);
+		count += values.len();
+		handle = allocator;
+	}
+	return count;
+}
+
+summarized_reservation :: proc() {
+	arena := mem.Arena.init();
+	first: int;
+	parallel {
+		spawn first = uses_later(arena.allocator());
+		allocate_work(arena.allocator());
+	}
+}
+
+numbers_entry :: proc(numbers: move [dynamic]int) {}
+
+// design.md "@(cross_thread)": the owner crossing on a later iteration is
+// backed by the received region.
+received_later :: proc(allocator: Allocator) {
+	handle := mem.default_allocator();
+	foreach (i in 0..<2) {
+		numbers: [dynamic]int via handle = {};
+		numbers.append(1);
+		task := thread.spawn(numbers_entry, move(numbers));
+		handle = allocator;
+	}
+}
+
+main :: proc() {}

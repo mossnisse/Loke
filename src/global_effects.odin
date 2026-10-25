@@ -207,10 +207,7 @@ prov_call_effects :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 			target.args = effect_args(c, v, graph.alloc)
 		}
 	}
-	if prov_tracks_allocator_use(graph) {
-		target.regions = prov_argument_regions(graph, v)
-	}
-	prov_effect_call(graph, target, v.span)
+	prov_effect_call(graph, target, v.span, regions_of = prov_tracks_allocator_use(graph) ? v : nil)
 }
 
 // Each argument that is a named procedure or a variable's value, with the
@@ -695,18 +692,13 @@ add_index :: proc(list: ^[dynamic]int, value: int) -> bool {
 // While the thread summaries collect, `region` is the value's when known
 // (`prov_drop_region`): releasing an owner frees in it, and a hook is given it.
 prov_drop_effects :: proc(
-	graph: ^Flow_Graph, type: Type_Id, span: Span, dropped := "", unnamed := false, region: Maybe(Region_Set) = nil,
+	graph: ^Flow_Graph, type: Type_Id, span: Span, dropped := "", unnamed := false, region: Maybe(Prov_Use_Region) = nil,
 ) {
-	regions: []Region_Set
-	if set, known := region.?; known {
-		if type_owns_allocation(graph.k.c, type) {
-			prov_note_allocator_use(graph, set, span, owned = true)
-		}
-		regions = make([]Region_Set, 1, graph.alloc)
-		regions[0] = prov_caller_region(graph, set)
+	if set, known := region.?; known && type_owns_allocation(graph.k.c, type) {
+		prov_event(graph, Prov_Event_Allocator_Use{set, span, true})
 	}
 	for hook in type_drop_hooks(graph.k.c, type) {
-		prov_effect_call(graph, Effect_Call{callee = hook, regions = regions}, span, dropped, unnamed = unnamed)
+		prov_effect_call(graph, Effect_Call{callee = hook}, span, dropped, unnamed = unnamed, dropped_region = region)
 	}
 }
 
@@ -743,15 +735,25 @@ prov_scope_drop_effects :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span) {
 	}
 }
 
+// `regions_of` or `dropped_region` gives the regions the target's parameters
+// are given, read from facts when the effect materializes.
 @(private = "file")
-prov_effect_call :: proc(graph: ^Flow_Graph, target: Effect_Call, span: Span, dropped := "", described := "", unnamed := false) {
+prov_effect_call :: proc(
+	graph: ^Flow_Graph, target: Effect_Call, span: Span, dropped := "", described := "", unnamed := false,
+	regions_of: ^Expr_Call = nil, dropped_region: Maybe(Prov_Use_Region) = nil,
+) {
 	c := graph.k.c
+	effect := -1
 	if !c.global_writes_ready || c.thread_facts_pending {
 		recorded := target
 		recorded.span = span
+		effect = len(graph.effect_calls)
 		append(&graph.effect_calls, recorded)
 	}
+	_, drops := dropped_region.?
+	use := Prov_Event_Effect_Use{target, regions_of, dropped_region, effect, span}
 	if !c.global_writes_ready {
+		if regions_of != nil || drops { prov_event(graph, use) }
 		return
 	}
 	name := effect_call_description(c, target, dropped, described, unnamed)
@@ -767,21 +769,31 @@ prov_effect_call :: proc(graph: ^Flow_Graph, target: Effect_Call, span: Span, dr
 			prov_note_shared_effect(graph, reached, .Read, span, caller)
 		}
 	}
-	// design.md "Allocators and tasks": and allocates where the callee's
-	// summary says, with the call's arguments for its parameters.
-	if graph.parallel_depth > 0 && !c.thread_facts_pending {
-		for index in effect_targets(c, target, &c.effect_program) {
-			body := c.effect_program.bodies[index].symbol
-			if from, found := c.allocator_uses[body]; found {
-				prov_note_window_allocator_use(graph, substituted_region(graph, from, target, body == target.callee), span)
-			}
-		}
+	if regions_of != nil || drops {
+		prov_event(graph, use)
+	} else {
+		prov_window_effect_use(graph, target, span)
 	}
 	graph.effect_name = name
 	defer graph.effect_name = ""
 	for global in effect_call_writes(c, target) {
 		root := prov_root_for_symbol(graph, global)
 		prov_access(graph, root, nil, .Invalidate, span, name)
+	}
+}
+
+// design.md "Allocators and tasks": a call inside a `parallel` block allocates
+// where the callee's summary says, with the call's arguments for its parameters.
+prov_window_effect_use :: proc(graph: ^Flow_Graph, target: Effect_Call, span: Span) {
+	c := graph.k.c
+	if graph.parallel_depth == 0 || c.thread_facts_pending || !c.global_writes_ready {
+		return
+	}
+	for index in effect_targets(c, target, &c.effect_program) {
+		body := c.effect_program.bodies[index].symbol
+		if from, found := c.allocator_uses[body]; found {
+			prov_note_window_allocator_use(graph, substituted_region(graph, from, target, body == target.callee), span)
+		}
 	}
 }
 

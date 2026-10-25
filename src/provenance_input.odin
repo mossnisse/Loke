@@ -80,17 +80,19 @@ Prov_Input :: struct {
 	map_key_entries: map[string]int,
 }
 
-// Replay has a fixed vocabulary. The final event bridge can still materialize
-// implicit hook temporaries; give it a private copy on the first such addition.
+// Replay and event materialization have a fixed vocabulary: every input they
+// read was recorded while the construction walk ran. A query of the finished
+// graph may still add one; it gets a private copy on the first such addition.
 prov_writable_input :: proc(graph: ^Flow_Graph) {
 	if !graph.input.frozen { return }
 	assert(!graph.replaying_facts, "fact replay discovered input absent from normalization")
 	graph.input = new_prov_input(graph.alloc, graph.input)
 }
 
-// Graph materialization and the test-only AST comparison clone input metadata;
-// fact replay shares one frozen body input. Clone every owned slice so copies
-// cannot point into a discarded construction pass or the carry arena.
+// A finished graph's queries and the test-only AST comparison clone input
+// metadata; fact replay and materialization share one frozen body input. Clone
+// every owned slice so copies cannot point into a discarded construction pass
+// or the carry arena.
 new_prov_input :: proc(allocator: mem.Allocator, seed: ^Prov_Input = nil) -> ^Prov_Input {
 	input := new(Prov_Input, allocator)
 	input.alloc = allocator

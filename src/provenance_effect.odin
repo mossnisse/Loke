@@ -35,15 +35,25 @@ Prov_Fact_Operation :: union {
 	Prov_Effect_Forget_Binding, Prov_Effect_Borrow_Owner,
 }
 
+// `first` and `count` are the construction events emitted while the operation
+// ran; `sequence` orders it among the recorded events.
 Prov_Effect_Site :: struct {
 	operation: Prov_Fact_Operation,
 	block: Block_Id,
 	expansion: Defer_Expansion,
+	first, count: int,
+	sequence: int,
+	// The walk state its replay reads.
+	parallel_depth: int,
+	task: int,
 }
 
 Prov_Effect_Program :: struct {
 	alloc: mem.Allocator,
 	operations: [dynamic]Prov_Effect_Site,
+	events: [dynamic]Prov_Event_Site,
+	root_regions: [dynamic]Prov_Root_Region,
+	sequence: int,
 	// Materialized owner views already recorded by a query.
 	borrowed_owners: map[Value_Id]bool,
 	input: ^Prov_Input,
@@ -73,8 +83,9 @@ build_provenance_replay :: proc(k: ^Checker, literal: ^Expr_Proc, mode: Flow_Mod
 	program := new(Prov_Effect_Program, allocator)
 	program.alloc = allocator
 	program.operations = make([dynamic]Prov_Effect_Site, allocator)
+	program.events = make([dynamic]Prov_Event_Site, allocator)
+	program.root_regions = make([dynamic]Prov_Root_Region, allocator)
 	program.borrowed_owners = make(map[Value_Id]bool, 4, allocator)
-	reported := len(k.c.diagnostics)
 	initial := build_flow_pass(k, literal, allocator, mode, nil, program)
 	initial.effect_program = nil
 	program.param_count = initial.param_count
@@ -90,7 +101,9 @@ build_provenance_replay :: proc(k: ^Checker, literal: ^Expr_Proc, mode: Flow_Mod
 		return initial
 	}
 	prov_finish_effect_program(program, initial)
-	truncate_diagnostics(k.c, reported)
+	// What a recorded event reported from unsettled facts is reported again
+	// once they settle; the rest of the construction diagnostics stand.
+	prov_drop_event_diagnostics(k.c, program)
 	program.normalization_time = time.tick_since(started)
 	replay_started := time.tick_now()
 	carry_arena, replay_arena: virtual.Arena
@@ -117,16 +130,19 @@ build_provenance_replay :: proc(k: ^Checker, literal: ^Expr_Proc, mode: Flow_Mod
 		seeded = current_weight
 	}
 	program.replay_time = time.tick_since(replay_started)
-	// The remaining loan/event bridge runs once with settled facts. In particular,
-	// borrowed payload publication must see every possible destination. Stage 5
-	// removes this final bridge after those operations share the replay vocabulary.
+	// The construction graph's loans, roots, and control flow do not depend on
+	// the carried facts. Its fact-dependent events are materialized again from
+	// the settled facts, interleaved with one more replay of the fact operations.
 	materialization_started := time.tick_now()
-	result := build_flow_pass(k, literal, allocator, mode, carry, normalized = program)
+	final := prov_fact_graph(k, literal, mode, program, allocator)
+	prov_seed_regions(final, carry)
+	prov_materialize_events(initial, final, program)
+	prov_seed_regions(initial, carry)
 	program.materialization_time = time.tick_since(materialization_started)
 	program.peak_used_bytes = max(program.peak_used_bytes, k.c.analysis_arena.total_used - initial_bytes + carry_arena.total_used)
-	result.normalized_effects = program
+	initial.normalized_effects = program
 	prov_note_replay_statistics(k.c, program)
-	return result
+	return initial
 }
 
 @(private = "file")
@@ -242,12 +258,19 @@ prov_effect_symbol_relevant :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> bool {
 
 // The record helpers below run only while prov_effect_active holds.
 prov_effect_begin :: proc(graph: ^Flow_Graph, operation: Prov_Fact_Operation) {
-	append(&graph.effect_program.operations, Prov_Effect_Site{operation, graph.current, graph.expansion})
+	program := graph.effect_program
+	program.sequence += 1
+	first := graph.current == NO_BLOCK ? 0 : len(graph.blocks[graph.current].prov)
+	append(&program.operations, Prov_Effect_Site{operation, graph.current, graph.expansion, first, 0, program.sequence, graph.parallel_depth, prov_task_index(graph)})
 	graph.effect_depth += 1
 }
 
 prov_effect_end :: proc(graph: ^Flow_Graph, recorded: bool) {
-	if recorded { graph.effect_depth -= 1 }
+	if !recorded { return }
+	graph.effect_depth -= 1
+	site := &graph.effect_program.operations[len(graph.effect_program.operations) - 1]
+	assert(site.block == graph.current, "a fact operation changed blocks")
+	if site.block != NO_BLOCK { site.count = len(graph.blocks[site.block].prov) - site.first }
 }
 
 prov_effect_value :: proc(graph: ^Flow_Graph, id: Value_Id) -> Value_Id {
@@ -315,7 +338,7 @@ prov_replay_fact_operations :: proc(graph: ^Flow_Graph, program: ^Prov_Effect_Pr
 // Every operation reads its values' recorded representations; the checked
 // nodes are only their origins. This never walks an operand or builds control
 // flow.
-@(private = "file")
+@(private)
 prov_replay_fact_operation :: proc(graph: ^Flow_Graph, op: Prov_Fact_Operation) {
 	switch operation in op {
 	case Prov_Effect_Declare:

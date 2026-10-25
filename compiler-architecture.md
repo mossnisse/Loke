@@ -127,10 +127,12 @@ diagnostics it emits are a spawn's transfer checks (`prov_spawn_transfers`).
 Allocator-region and target facts are accumulated to a fixed point, so later
 writes can reach earlier reads. A construction walk records ordered fact
 operations; subsequent rounds replay those operations in disposable fact state.
-Only carried facts are copied between rounds. A final walk builds loan, reset,
-cleanup, and task events with settled destinations and regions. Construction and
-superseded-round diagnostics are discarded, so each diagnostic appears once.
-This final event bridge remains until stage 5 removes it.
+Only carried facts are copied between rounds. The construction graph's control
+flow, loans, roots, and carrier slots do not depend on the carried facts; the
+events, diagnostics, and summary outputs that do are recorded as event
+operations ([provenance_event.odin](src/provenance_event.odin)) and materialized
+again, interleaved with one more replay, once the facts settle. Superseded
+diagnostics are discarded, so each diagnostic appears once.
 
 The [provenance normalization contract](provenance-normalization-contract.md#initial-operation-contracts)
 records the operation invariants, current AST-sensitive helper inventory,
@@ -155,7 +157,9 @@ cannot walk source operands. Leaf region and target queries read a value's
 recorded representation, and the construction walk tracks open conversions
 without rewriting the checked AST. See the
 [stage 4 contract](provenance-normalization-contract.md#stage-4-fact-replay-and-call-inputs)
-for that remaining boundary and the profiling tool.
+for the profiling tool and the
+[stage 5b contract](provenance-normalization-contract.md#stage-5b-recorded-events)
+for event materialization.
 
 ### Allocation domains
 
@@ -350,13 +354,12 @@ type and record their element targets in that storage. An implicit view records 
 owner storage; a box view adds the payload step. Copies and reslices therefore
 follow the same storage facts, including unresolved alternatives introduced by
 a call through another view. Storage IDs and their normalized descriptions
-survive graph passes. Replay shares the frozen input instead of copying it with
-carried facts. The final event bridge copies it privately only if it creates
-additional implicit temporaries. Copies own their paths and map-key strings;
+survive graph passes. Replay and event materialization share the frozen input
+instead of copying it with carried facts. Copies own their paths and map-key strings;
 no description points into a disposable fact or carry arena. Construction
 metadata and synthetic calls remain in the body's analysis arena.
-`prov_borrowed_storage` reads a normalized borrow's storage identity for target
-lookup, source-target recording, and call invalidation. Unboxing removes its source
+A normalized borrow transfer (`Prov_Transfer_Borrow`) names its storage identity
+for target lookup, source-target recording, and call invalidation. Unboxing removes its source
 payload step; checked variant extraction replaces the source variant step with
 the result's success step, retaining an unresolved alternative for a copied
 mutable payload. Both stored values and direct arguments use these projections.

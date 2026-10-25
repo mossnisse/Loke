@@ -1,0 +1,9 @@
+L0732
+@24:4
+which a running task reserves until this `parallel` block joins
+L0732
+@48:3
+which a running task reserves until this `parallel` block joins
+L0726
+@61:39
+`numbers` is backed by an allocator region this procedure received

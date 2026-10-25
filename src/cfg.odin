@@ -162,6 +162,7 @@ Flow_Graph :: struct {
 	effect_program: ^Prov_Effect_Program,
 	effect_depth: int,
 	replaying_facts: bool,
+	// The recorded program a provenance graph was materialized from.
 	normalized_effects: ^Prov_Effect_Program,
 
 	// Nil in lifecycle mode, so a lifecycle walk cannot read what only the
@@ -276,6 +277,10 @@ Prov_State :: struct {
 	// reserves, collected while its effects are, and each spawn in the order
 	// walked: its block's window bit, its reservation, and where it is.
 	task_reserve:     Region_Set,
+	// While a body's events materialize: the task site its spawned call's
+	// effects reserve for, and the graph receiving the summary outputs.
+	task_index:       int,
+	materialized:     ^Flow_Graph,
 	task_sites:       [dynamic]Task_Site,
 	// Slots each of whose definitions holds a value disjoint from the one
 	// before: a `chunks_mut` loop's binding. Redefining one severs the
@@ -434,15 +439,10 @@ build_flow_pass :: proc(
 	mode: Flow_Mode,
 	seed: ^Flow_Graph,
 	program: ^Prov_Effect_Program = nil,
-	normalized: ^Prov_Effect_Program = nil,
 ) -> ^Flow_Graph {
-	graph := new_flow_graph(k, literal, allocator, mode, seed, normalized != nil ? normalized.input : nil)
+	graph := new_flow_graph(k, literal, allocator, mode, seed)
 	if graph == nil { return nil }
 	graph.effect_program = program
-	graph.normalized_effects = normalized
-	if normalized != nil {
-		for key, value in normalized.operator_calls { graph.operator_calls[key] = value }
-	}
 
 	// Parameters live in a scope outside the body's, so a `move` parameter's
 	// cleanup is the outermost.
@@ -1169,21 +1169,22 @@ provider_indirect_end :: proc(graph: ^Flow_Graph, node: rawptr, span: Span, verb
 	if !live.reached {
 		return
 	}
-	set := prov_empty_region(graph)
+	// Which of these was lent is a carried fact, read when the reset materializes.
+	owners := make([dynamic]Symbol_Id, graph.alloc)
 	for id in live.owners {
 		sym := symbol_of(graph.k.c, id)
-		if sym == nil || !type_carries_provider(graph.k.c, sym.type) || !graph.lent_locals[id] {
+		if sym == nil || !type_carries_provider(graph.k.c, sym.type) {
 			continue
 		}
 		if root, rooted := graph.root_by_symbol[id]; rooted && graph.roots[int(root)].kind == .Local {
-			region_merge(&set, prov_provider_region(graph, id))
+			append(&owners, id)
 		}
 	}
-	if region_is_empty(set) {
+	if len(owners) == 0 {
 		return
 	}
 	ends := fmt.aprintf("%s through a pointer or slice", verb, allocator = graph.alloc)
-	prov_reset(graph, set, span, true, nil, live, ends, provider_end = true)
+	prov_reset(graph, Prov_Reset_Indirect{owners[:]}, span, true, nil, live, ends, provider_end = true)
 }
 
 // Assigning into a provider inside a local drops the provider there before.
@@ -1363,25 +1364,16 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false, lends :=
 				} else {
 					sources = walk_flow_expr(graph, value.expr)
 				}
-				escaping := prov_escape_region(graph, prov_input_value(graph, value.expr))
+				returned := prov_input_value(graph, value.expr)
 				if !value.is_inout {
-					graph.returning = new_clone(Prov_Returning{region = prov_reset_value_region(graph, prov_input_value(graph, value.expr)), span = expr_span(value.expr)}, graph.alloc)
+					graph.returning = new_clone(Prov_Returning{value = returned, span = expr_span(value.expr)}, graph.alloc)
 				}
 				result_type := prov_type(graph, value.expr)
 				if sym := symbol_of(graph.k.c, graph.literal.symbol); sym != nil {
 					result_type = sym.result
 				}
 				contents := prov_load_deep(graph, sources, expr_span(value.expr))
-				prov_emit(graph, Prov_Event {
-					kind           = .Escape,
-					sources        = sources,
-					into           = contents,
-					span           = expr_span(value.expr),
-					region         = escaping,
-					region_content = prov_result_region_fields(graph, prov_input_value(graph, value.expr), result_type),
-					// The frame's regions end here, so the diagnostic names them.
-					name           = prov_region_name(graph, escaping),
-				})
+				prov_event(graph, Prov_Event_Escape{sources = sources, into = contents, span = expr_span(value.expr), value = returned, result = result_type})
 				held = prov_hold_result(graph, prov_join(graph, sources, contents), result_type, expr_span(value.expr))
 			}
 			returning, failing := returned_variant(graph, s)
@@ -2277,15 +2269,8 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 						}
 					}
 					contents := prov_load_deep(graph, escaping, v.span)
-					region := prov_error_region_at(graph, v, nil, .All)
-					fields := prov_error_region_fields(graph, v, proc_symbol.result)
-					graph.returning = new_clone(Prov_Returning{
-						region = prov_reset_fields_region(graph, proc_symbol.result, fields), span = v.span,
-					}, graph.alloc)
-					prov_emit(graph, Prov_Event {
-						kind = .Escape, sources = escaping, into = contents, span = v.span,
-						region = region, region_content = fields, name = prov_region_name(graph, region),
-					})
+					graph.returning = new_clone(Prov_Returning{propagated = v, result = proc_symbol.result, span = v.span}, graph.alloc)
+					prov_event(graph, Prov_Event_Escape{sources = escaping, into = contents, span = v.span, propagated = v, result = proc_symbol.result})
 					held = prov_hold_result(graph, prov_join(graph, escaping, contents), proc_symbol.result, v.span)
 				}
 			}

@@ -1761,15 +1761,24 @@ historical fix lists and test counts are available in Git history.
 
 The [normalization migration](provenance-normalization-proposal.md#migration-plan)
 separates checked operations from growing target and allocator-region facts.
-Stage 4 first saturates the fact-changing operations, then builds the final loan,
+Stage 4 first saturates the fact-changing operations, then built the final loan,
 reset, cleanup, and task events with settled destinations. Borrowed payload
 publication can resolve more destinations on a later fact round; freezing its
 first loan-event expansion would preserve an incomplete set or the wrong
-replacement precision. Keeping a final event bridge preserves the existing
-solver behavior while that event vocabulary migrates in stage 5.
+replacement precision.
+
+Stage 5b keeps the construction graph instead of walking the body again. Its
+loans, roots, slots, and event sequence do not depend on the carried facts, so
+only what does is recorded and materialized again from the settled facts. The
+materialization replays the fact operations once more, interleaved with the
+recorded events, so a region escape through a borrowed payload sees the
+binding's aliases as they were at its site. Rebuilding the events from the
+recorded inputs alone, rather than splicing them into the construction graph,
+would mean recording every loan and slot the walk creates, which no fact
+changes.
 
 The frozen input is shared within one concrete body build. Whole-program summary
 visits still rebuild the body, so retaining normalized bodies across those visits
 remains a measured later decision. The
 [profiling records](bench/baselines/README.md#fact-replay-stage-4) distinguish
-normalization, fact replay, and the remaining event materialization cost.
+normalization, fact replay, and event materialization cost.
