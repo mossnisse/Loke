@@ -33,6 +33,14 @@ normalization_graph :: proc(t: ^testing.T, k: ^Checker, p: ^Checked, name: strin
 	return build_flow_graph(k, body, .Prov_Diagnose)
 }
 
+// The parameter facts a body starts from, before any of its operations.
+@(private = "file")
+normalization_parameter_seed :: proc(k: ^Checker, graph: ^Flow_Graph, program: ^Prov_Effect_Program) -> ^Flow_Graph {
+	entry := new_flow_graph(k, graph.literal, graph.alloc, graph.mode, normalized_input = program.input)
+	prov_bind_parameters(entry, graph.literal)
+	return entry
+}
+
 @(private = "file")
 normalization_symbol :: proc(t: ^testing.T, p: ^Checked, name: string) -> Symbol_Id {
 	for sym, index in p.c.symbols {
@@ -737,14 +745,15 @@ main :: proc() {}`) { return }
 	defer p.c.result_summaries[hook] = original
 	growing: Proc_Summary
 	p.c.result_summaries[hook] = &growing
+	entry := normalization_parameter_seed(&k, graph, program)
 	before_graph := prov_fact_graph(&k, graph.literal, .Prov_Summary, program, graph.alloc)
-	prov_seed_regions(before_graph, program.entry)
+	prov_seed_regions(before_graph, entry)
 	prov_replay_fact_operations(before_graph, program)
 	before := prov_region_for_symbol(before_graph, normalization_symbol(t, &p, "output"))
 	params := [2]bool{true, true}
 	growing.result.region = Region_Set{params = params[:]}
 	after_graph := prov_fact_graph(&k, graph.literal, .Prov_Summary, program, graph.alloc)
-	prov_seed_regions(after_graph, program.entry)
+	prov_seed_regions(after_graph, entry)
 	prov_replay_fact_operations(after_graph, program)
 	after := prov_region_for_symbol(after_graph, normalization_symbol(t, &p, "output"))
 	testing.expect(t, !before.default && (len(before.params) == 0 || !before.params[0]), "an empty hook summary supplied dependencies")

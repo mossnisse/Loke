@@ -30,11 +30,9 @@ Prov_Effect_Borrow_Owner :: struct { value: Value_Id }
 Prov_Fact_Operation :: union {
 	Prov_Effect_Declare, Prov_Effect_Element, Prov_Effect_Case,
 	Prov_Effect_Targets, Prov_Effect_Call, Prov_Effect_Store,
-	Prov_Effect_Define, Prov_Effect_Parent, Prov_Effect_Move_Provider,
-	Prov_Effect_Forget_Binding,
-	Prov_Effect_Assign,
-	Prov_Effect_Spread, Prov_Effect_Map_Key,
-	Prov_Effect_Borrow_Owner,
+	Prov_Effect_Spread, Prov_Effect_Map_Key, Prov_Effect_Define,
+	Prov_Effect_Parent, Prov_Effect_Assign, Prov_Effect_Move_Provider,
+	Prov_Effect_Forget_Binding, Prov_Effect_Borrow_Owner,
 }
 
 Prov_Effect_Site :: struct {
@@ -49,7 +47,7 @@ Prov_Effect_Program :: struct {
 	// Materialized owner views already recorded by a query.
 	borrowed_owners: map[Value_Id]bool,
 	input: ^Prov_Input,
-	entry: ^Flow_Graph,
+	param_count: int,
 	// Storage metadata and topology do not depend on the carried facts.
 	roots: []Prov_Root,
 	root_by_symbol: map[Symbol_Id]Root_Id,
@@ -79,6 +77,7 @@ build_provenance_replay :: proc(k: ^Checker, literal: ^Expr_Proc, mode: Flow_Mod
 	reported := len(k.c.diagnostics)
 	initial := build_flow_pass(k, literal, allocator, mode, nil, program)
 	initial.effect_program = nil
+	program.param_count = initial.param_count
 	weight := prov_region_weight(initial)
 	if weight == 0 {
 		// No carried fact changed: the construction graph is already final, as
@@ -106,17 +105,15 @@ build_provenance_replay :: proc(k: ^Checker, literal: ^Expr_Proc, mode: Flow_Mod
 		prov_replay_fact_operations(graph, program)
 		truncate_diagnostics(k.c, replayed_diagnostics)
 		current_weight := prov_region_weight(graph)
-		if current_weight == seeded {
-			program.peak_used_bytes = max(program.peak_used_bytes,
-			                             k.c.analysis_arena.total_used - initial_bytes + carry_arena.total_used + replay_arena.total_used)
-			free_all(virtual.arena_allocator(&replay_arena))
-			break
+		settled := current_weight == seeded
+		if !settled {
+			free_all(virtual.arena_allocator(&carry_arena))
+			carry = prov_carry_regions(graph, virtual.arena_allocator(&carry_arena), copy_input = false)
 		}
-		free_all(virtual.arena_allocator(&carry_arena))
-		carry = prov_carry_regions(graph, virtual.arena_allocator(&carry_arena), copy_input = false)
 		program.peak_used_bytes = max(program.peak_used_bytes,
 		                             k.c.analysis_arena.total_used - initial_bytes + carry_arena.total_used + replay_arena.total_used)
 		free_all(virtual.arena_allocator(&replay_arena))
+		if settled { break }
 		seeded = current_weight
 	}
 	program.replay_time = time.tick_since(replay_started)
@@ -147,7 +144,8 @@ prov_note_replay_statistics :: proc(c: ^Compiler, program: ^Prov_Effect_Program)
 prov_finish_effect_program :: proc(program: ^Prov_Effect_Program, graph: ^Flow_Graph) {
 	// Prepare all captured representations before reclaiming construction scratch.
 	// No later fact round may add values, storage, or checked call descriptions.
-	graph.effect_program = nil
+	expansion := graph.expansion
+	defer graph.expansion = expansion
 	for index := 1; index < len(graph.input.values); index += 1 {
 		id := Value_Id(index)
 		graph.expansion = graph.input.values[index].expansion
@@ -160,7 +158,6 @@ prov_finish_effect_program :: proc(program: ^Prov_Effect_Program, graph: ^Flow_G
 	// Reuse that metadata instead of retaining a second copy of every table.
 	program.input = graph.input
 	program.input.frozen = true
-	program.entry.input = program.input
 	program.roots = graph.roots[:]
 	program.root_by_symbol = graph.root_by_symbol
 	program.root_by_storage = graph.root_by_storage
@@ -173,32 +170,14 @@ prov_finish_effect_program :: proc(program: ^Prov_Effect_Program, graph: ^Flow_G
 	program.blocks = len(graph.blocks)
 }
 
+// A replay round starts from the ordinary constructor, so every fact map exists;
+// its loan, lifecycle, and event buffers stay empty.
 @(private)
 prov_fact_graph :: proc(k: ^Checker, literal: ^Expr_Proc, mode: Flow_Mode, program: ^Prov_Effect_Program, allocator: mem.Allocator) -> ^Flow_Graph {
-	graph := new(Flow_Graph, allocator)
-	graph.k, graph.literal, graph.mode, graph.alloc = k, literal, mode, allocator
-	graph.prov = new(Prov_State, allocator)
+	graph := new_flow_graph(k, literal, allocator, mode, normalized_input = program.input)
 	graph.replaying_facts = true
-	graph.input, graph.param_count = program.input, program.entry.param_count
-	graph.blocks = make([dynamic]^Flow_Block, allocator)
-	graph.roots = make([dynamic]Prov_Root, len(program.roots), allocator)
-	graph.root_by_symbol = make(map[Symbol_Id]Root_Id, len(program.root_by_symbol), allocator)
-	graph.root_by_storage = make(map[Storage_Id]Root_Id, len(program.root_by_storage), allocator)
-	graph.region_of = make(map[Symbol_Id]Region_Set, 8, allocator)
-	graph.region_content = make(map[Storage_Id][]Prov_Region_Content, 8, allocator)
-	graph.region_aliases = make(map[Symbol_Id][]Prov_Region_Alias, 4, allocator)
-	graph.provider_parents = make(map[Symbol_Id]Region_Set, 4, allocator)
-	graph.provider_bits = make(map[Symbol_Id]u64, len(program.provider_bits), allocator)
-	graph.provider_symbols = make([dynamic]Symbol_Id, allocator)
-	graph.provider_paths = make(map[Symbol_Id][]Provider_Path, len(program.provider_paths), allocator)
-	graph.provider_moved = make(map[Symbol_Id]u64, 4, allocator)
-	graph.temp_provider_bits = make(map[^Expr_Call]u64, len(program.temp_provider_bits), allocator)
-	graph.operator_calls = make(map[rawptr]^Expr_Call, len(program.operator_calls), allocator)
-	graph.lent_locals = make(map[Symbol_Id]bool, len(program.lent_locals), allocator)
-	graph.written_aliases = make(map[Storage_Id][]Written_Alias, 4, allocator)
-	graph.call_results = make(map[^Expr_Call]Prov_Call_Result, 8, allocator)
-	graph.summary_callees = make([dynamic]Symbol_Id, allocator)
-	copy(graph.roots[:], program.roots)
+	graph.param_count = program.param_count
+	append(&graph.roots, ..program.roots)
 	for key, value in program.root_by_symbol { graph.root_by_symbol[key] = value }
 	for key, value in program.root_by_storage { graph.root_by_storage[key] = value }
 	for key, value in program.provider_bits { graph.provider_bits[key] = value }
@@ -222,11 +201,10 @@ prov_effect_symbol_relevant :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> bool {
 	return sym != nil && prov_type_has_region(graph.k.c, sym.type)
 }
 
-prov_effect_begin :: proc(graph: ^Flow_Graph, operation: Prov_Fact_Operation) -> bool {
-	if graph.effect_program == nil || graph.effect_depth != 0 { return false }
+// The record helpers below run only while prov_effect_active holds.
+prov_effect_begin :: proc(graph: ^Flow_Graph, operation: Prov_Fact_Operation) {
 	append(&graph.effect_program.operations, Prov_Effect_Site{operation, graph.current, graph.expansion})
 	graph.effect_depth += 1
-	return true
 }
 
 prov_effect_end :: proc(graph: ^Flow_Graph, recorded: bool) {
@@ -234,32 +212,27 @@ prov_effect_end :: proc(graph: ^Flow_Graph, recorded: bool) {
 }
 
 prov_effect_value :: proc(graph: ^Flow_Graph, value: Expr) -> Value_Id {
-	if graph.effect_program == nil || graph.effect_depth != 0 || value == nil { return 0 }
+	if value == nil { return 0 }
 	id := prov_input_value(graph, value)
 	_ = prov_input_transfer(graph, value)
 	return id
 }
 
 prov_effect_path :: proc(graph: ^Flow_Graph, path: []Proj_Step) -> []Proj_Step {
-	if graph.effect_program == nil || graph.effect_depth != 0 { return nil }
 	return slice.clone(path, graph.effect_program.alloc)
 }
 
 // Borrowed bindings are rebound independently for each case/defer expansion.
 prov_forget_region_binding :: proc(graph: ^Flow_Graph, symbol: Symbol_Id) {
-	recorded := false
-	if prov_effect_active(graph) {
-		recorded = prov_effect_begin(graph, Prov_Effect_Forget_Binding{symbol})
-	}
+	recorded := prov_effect_active(graph)
+	if recorded { prov_effect_begin(graph, Prov_Effect_Forget_Binding{symbol}) }
 	defer prov_effect_end(graph, recorded)
 	delete_key(&graph.region_aliases, symbol)
 }
 
 prov_merge_provider_parent :: proc(graph: ^Flow_Graph, symbol: Symbol_Id, value: Expr, source: []Proj_Step = nil, storage := false) {
-	recorded := false
-	if prov_effect_active(graph) {
-		recorded = prov_effect_begin(graph, Prov_Effect_Parent{symbol, prov_effect_value(graph, value), prov_effect_path(graph, source), storage})
-	}
+	recorded := prov_effect_active(graph)
+	if recorded { prov_effect_begin(graph, Prov_Effect_Parent{symbol, prov_effect_value(graph, value), prov_effect_path(graph, source), storage}) }
 	defer prov_effect_end(graph, recorded)
 	if value == nil { return }
 	region := storage ? prov_storage_region(graph, value) : prov_result_region_at(graph, value, source)
@@ -269,10 +242,8 @@ prov_merge_provider_parent :: proc(graph: ^Flow_Graph, symbol: Symbol_Id, value:
 }
 
 prov_assign_value_region :: proc(graph: ^Flow_Graph, symbol: Symbol_Id, value: Expr, source: []Proj_Step, storage: bool) {
-	recorded := false
-	if prov_effect_active(graph) {
-		recorded = prov_effect_begin(graph, Prov_Effect_Assign{symbol, prov_effect_value(graph, value), prov_effect_path(graph, source), storage})
-	}
+	recorded := prov_effect_active(graph)
+	if recorded { prov_effect_begin(graph, Prov_Effect_Assign{symbol, prov_effect_value(graph, value), prov_effect_path(graph, source), storage}) }
 	defer prov_effect_end(graph, recorded)
 	if value == nil { return }
 	region := storage ? prov_storage_region(graph, value) : prov_result_region_at(graph, value, source)
@@ -280,20 +251,16 @@ prov_assign_value_region :: proc(graph: ^Flow_Graph, symbol: Symbol_Id, value: E
 }
 
 prov_store_spread_region :: proc(graph: ^Flow_Graph, destination, value: Expr) {
-	recorded := false
-	if prov_effect_active(graph) {
-		recorded = prov_effect_begin(graph, Prov_Effect_Spread{prov_effect_value(graph, destination), prov_effect_value(graph, value)})
-	}
+	recorded := prov_effect_active(graph)
+	if recorded { prov_effect_begin(graph, Prov_Effect_Spread{prov_effect_value(graph, destination), prov_effect_value(graph, value)}) }
 	defer prov_effect_end(graph, recorded)
 	region := prov_storage_region(graph, value)
 	prov_store_region_set(graph, destination, region, region, prov_owner_name(graph, value), element = true)
 }
 
 prov_store_map_key_region :: proc(graph: ^Flow_Graph, destination, value: Expr) {
-	recorded := false
-	if prov_effect_active(graph) {
-		recorded = prov_effect_begin(graph, Prov_Effect_Map_Key{prov_effect_value(graph, destination), prov_effect_value(graph, value)})
-	}
+	recorded := prov_effect_active(graph)
+	if recorded { prov_effect_begin(graph, Prov_Effect_Map_Key{prov_effect_value(graph, destination), prov_effect_value(graph, value)}) }
 	defer prov_effect_end(graph, recorded)
 	region := prov_result_region(graph, value)
 	owned := prov_result_region_at(graph, value, nil, .Owners)
@@ -308,27 +275,33 @@ prov_replay_fact_operations :: proc(graph: ^Flow_Graph, program: ^Prov_Effect_Pr
 	program.replays += 1
 }
 
+// The values whose checked origins an operation's helper reads. A borrowed
+// owner's facts come from normalized transfers, so it opens none.
+@(private = "file")
+prov_effect_sources :: proc(op: Prov_Fact_Operation) -> (first, second: Value_Id) {
+	switch input in op {
+	case Prov_Effect_Declare: return input.value, 0
+	case Prov_Effect_Element: return input.value, 0
+	case Prov_Effect_Case: return input.value, 0
+	case Prov_Effect_Targets: return input.value, 0
+	case Prov_Effect_Call: return input.value, 0
+	case Prov_Effect_Store: return input.destination, input.value
+	case Prov_Effect_Spread: return input.destination, input.value
+	case Prov_Effect_Map_Key: return input.destination, input.value
+	case Prov_Effect_Define: return input.value, 0
+	case Prov_Effect_Parent: return input.value, 0
+	case Prov_Effect_Assign: return input.value, 0
+	case Prov_Effect_Move_Provider: return input.value, 0
+	case Prov_Effect_Forget_Binding, Prov_Effect_Borrow_Owner: return 0, 0
+	}
+	unreachable()
+}
+
 @(private = "file")
 prov_replay_fact_operation :: proc(graph: ^Flow_Graph, op: Prov_Fact_Operation) {
 	// Each source keeps the checked representation at its operation point,
 	// including the raw owner beneath a temporary view.
-	first, second: Value_Id
-	switch input in op {
-	case Prov_Effect_Declare: first = input.value
-	case Prov_Effect_Element: first = input.value
-	case Prov_Effect_Case: first = input.value
-	case Prov_Effect_Targets: first = input.value
-	case Prov_Effect_Call: first = input.value
-	case Prov_Effect_Store: first, second = input.destination, input.value
-	case Prov_Effect_Spread: first, second = input.destination, input.value
-	case Prov_Effect_Map_Key: first, second = input.destination, input.value
-	case Prov_Effect_Define: first = input.value
-	case Prov_Effect_Parent: first = input.value
-	case Prov_Effect_Move_Provider: first = input.value
-	case Prov_Effect_Assign: first = input.value
-	case Prov_Effect_Forget_Binding, Prov_Effect_Borrow_Owner:
-	case: unreachable()
-	}
+	first, second := prov_effect_sources(op)
 	saved_first, saved_second: Prov_Value_Origin
 	if first != 0 { saved_first = prov_open_value(graph, first) }
 	defer if first != 0 { prov_close_value(saved_first) }

@@ -212,8 +212,9 @@ the ordered operations. The same frozen input is shared by all rounds and the
 final event bridge; its paths and descriptions are no longer copied with every carry.
 Aliases and hook/callee result summaries are read anew. No replay invokes
 `walk_flow_expr`, and assertions reject discovery of new storage, values, call
-contracts, copy operations, transfer descriptions, or leaf alias reads. The
-small fact state omits lifecycle tracking and loan-solving buffers. Recording
+contracts, copy operations, transfer descriptions, or leaf alias reads. A
+replay round uses the ordinary graph constructor but leaves its lifecycle,
+loan, and event buffers empty. Recording
 also omits scalar operands and operations that cannot change provenance facts,
 while retaining their source evaluation slots and effects.
 

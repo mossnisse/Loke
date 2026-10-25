@@ -448,7 +448,6 @@ build_flow_pass :: proc(
 		track_move_parameters(graph, literal)
 	} else {
 		prov_bind_parameters(graph, literal)
-		if program != nil { program.entry = prov_carry_regions(graph, program.alloc, copy_input = false) }
 		if seed != nil {
 			prov_seed_regions(graph, seed)
 		}

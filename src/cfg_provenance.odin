@@ -269,10 +269,8 @@ prov_subject_view :: proc(graph: ^Flow_Graph, subject: Expr, mutable: bool, slot
 // separation (design.md "Inspecting a union").
 @(private)
 prov_bind_case_region :: proc(graph: ^Flow_Graph, id: Symbol_Id, subject: Expr, variants: []int, slot: int) {
-	recorded := false
-	if prov_effect_active(graph) && prov_effect_symbol_relevant(graph, id) {
-		recorded = prov_effect_begin(graph, Prov_Effect_Case{id, prov_effect_value(graph, subject), graph.effect_program != nil ? slice.clone(variants, graph.effect_program.alloc) : nil, slot})
-	}
+	recorded := prov_effect_active(graph) && prov_effect_symbol_relevant(graph, id)
+	if recorded { prov_effect_begin(graph, Prov_Effect_Case{id, prov_effect_value(graph, subject), slice.clone(variants, graph.effect_program.alloc), slot}) }
 	defer prov_effect_end(graph, recorded)
 	if id == INVALID_SYMBOL || subject == nil {
 		return
@@ -2068,10 +2066,8 @@ prov_define_value_regions :: proc(
 	graph: ^Flow_Graph, root: Root_Id, path: []Proj_Step, value: Expr, source: []Proj_Step = nil,
 	copies := false, allocated_by := INVALID_SYMBOL,
 ) {
-	recorded := false
-	if prov_effect_active(graph) && value != nil && prov_type_has_region(graph.k.c, expr_base(value).type) {
-		recorded = prov_effect_begin(graph, Prov_Effect_Define{prov_storage_for_root(graph, root), prov_effect_path(graph, path), prov_effect_value(graph, value), prov_effect_path(graph, source), copies, allocated_by})
-	}
+	recorded := prov_effect_active(graph) && value != nil && prov_type_has_region(graph.k.c, expr_base(value).type)
+	if recorded { prov_effect_begin(graph, Prov_Effect_Define{prov_storage_for_root(graph, root), prov_effect_path(graph, path), prov_effect_value(graph, value), prov_effect_path(graph, source), copies, allocated_by}) }
 	defer prov_effect_end(graph, recorded)
 	allocator := prov_destination_allocator(graph, allocated_by)
 	fields := prov_result_region_fields(graph, value, expr_base(value).type, source, copies, allocator)
@@ -2319,10 +2315,8 @@ prov_moved_bits :: proc(graph: ^Flow_Graph, e: Expr) -> u64 {
 // A provider moved into a local's existing storage joins that local's tokens.
 @(private)
 prov_merge_moved_bits :: proc(graph: ^Flow_Graph, root: Symbol_Id, value: Expr) {
-	recorded := false
-	if prov_effect_active(graph) {
-		recorded = prov_effect_begin(graph, Prov_Effect_Move_Provider{root, prov_effect_value(graph, value)})
-	}
+	recorded := prov_effect_active(graph)
+	if recorded { prov_effect_begin(graph, Prov_Effect_Move_Provider{root, prov_effect_value(graph, value)}) }
 	defer prov_effect_end(graph, recorded)
 	bits := prov_moved_bits(graph, value)
 	if bits == 0 {
@@ -2599,10 +2593,8 @@ prov_read_region :: proc(graph: ^Flow_Graph, e: Expr) -> Region_Set {
 // A loop element is in the storage of what the loop iterates.
 @(private)
 prov_bind_element_region :: proc(graph: ^Flow_Graph, id: Symbol_Id, iterable: Expr) {
-	recorded := false
-	if prov_effect_active(graph) && prov_effect_symbol_relevant(graph, id) {
-		recorded = prov_effect_begin(graph, Prov_Effect_Element{id, prov_effect_value(graph, iterable)})
-	}
+	recorded := prov_effect_active(graph) && prov_effect_symbol_relevant(graph, id)
+	if recorded { prov_effect_begin(graph, Prov_Effect_Element{id, prov_effect_value(graph, iterable)}) }
 	defer prov_effect_end(graph, recorded)
 	sym := symbol_of(graph.k.c, id)
 	if sym == nil || !(type_is_managed(graph.k.c, sym.type) || type_is_carrier(graph.k.c, sym.type)) {
@@ -3399,10 +3391,8 @@ prov_store_loans :: proc(graph: ^Flow_Graph, target: Expr, sources: []int, span:
 // written through one. `element` stores into a container's elements.
 @(private)
 prov_store_region :: proc(graph: ^Flow_Graph, destination: Expr, value: Expr, element := false) {
-	recorded := false
-	if prov_effect_active(graph) {
-		recorded = prov_effect_begin(graph, Prov_Effect_Store{prov_effect_value(graph, destination), prov_effect_value(graph, value), element})
-	}
+	recorded := prov_effect_active(graph)
+	if recorded { prov_effect_begin(graph, Prov_Effect_Store{prov_effect_value(graph, destination), prov_effect_value(graph, value), element}) }
 	defer prov_effect_end(graph, recorded)
 	if value == nil {
 		return
@@ -3720,10 +3710,8 @@ prov_note_written_alias :: proc(graph: ^Flow_Graph, local: Symbol_Id, value: Exp
 // another's (design.md "Minimum provenance precision").
 @(private)
 prov_note_alias_source :: proc(graph: ^Flow_Graph, local: Storage_Id, value: Expr, prefix: []Proj_Step) {
-	recorded := false
-	if prov_effect_active(graph) && value != nil && (type_is_carrier(graph.k.c, expr_base(value).type) || type_carries_borrow(graph.k.c, expr_base(value).type).any) {
-		recorded = prov_effect_begin(graph, Prov_Effect_Targets{local, prov_effect_value(graph, value), prov_effect_path(graph, prefix)})
-	}
+	recorded := prov_effect_active(graph) && value != nil && (type_is_carrier(graph.k.c, expr_base(value).type) || type_carries_borrow(graph.k.c, expr_base(value).type).any)
+	if recorded { prov_effect_begin(graph, Prov_Effect_Targets{local, prov_effect_value(graph, value), prov_effect_path(graph, prefix)}) }
 	defer prov_effect_end(graph, recorded)
 	if value == nil { return }
 	_ = prov_input_transfer(graph, value)
@@ -3778,10 +3766,8 @@ prov_add_written_alias :: proc(graph: ^Flow_Graph, local: Storage_Id, alias: Wri
 // carriers (design.md "Allocator regions and region provenance").
 @(private)
 prov_call_written_aliases :: proc(graph: ^Flow_Graph, call: ^Expr_Call) {
-	recorded := false
-	if prov_effect_active(graph) && prov_input_call(graph, call).writes_facts {
-		recorded = prov_effect_begin(graph, Prov_Effect_Call{prov_effect_value(graph, call), .Invalidate})
-	}
+	recorded := prov_effect_active(graph) && prov_input_call(graph, call).writes_facts
+	if recorded { prov_effect_begin(graph, Prov_Effect_Call{prov_effect_value(graph, call), .Invalidate}) }
 	defer prov_effect_end(graph, recorded)
 	c := graph.k.c
 	info := underlying_info(c, call_proc_type(c, call))
@@ -3879,10 +3865,8 @@ prov_forget_storage_aliases :: proc(
 // moved-owner argument may land in every such argument.
 @(private)
 prov_call_written_regions :: proc(graph: ^Flow_Graph, v: ^Expr_Call, proc_type: Type_Id) {
-	recorded := false
-	if prov_effect_active(graph) && prov_input_call(graph, v).writes_facts {
-		recorded = prov_effect_begin(graph, Prov_Effect_Call{prov_effect_value(graph, v), .Write})
-	}
+	recorded := prov_effect_active(graph) && prov_input_call(graph, v).writes_facts
+	if recorded { prov_effect_begin(graph, Prov_Effect_Call{prov_effect_value(graph, v), .Write}) }
 	defer prov_effect_end(graph, recorded)
 	c := graph.k.c
 	info := underlying_info(c, proc_type)
@@ -4644,10 +4628,8 @@ prov_declare_region :: proc(
 	projected: int = -1,
 	copies := false,
 ) {
-	recorded := false
-	if prov_effect_active(graph) && prov_effect_symbol_relevant(graph, id) {
-		recorded = prov_effect_begin(graph, Prov_Effect_Declare{id, prov_effect_value(graph, initializer), projected, copies})
-	}
+	recorded := prov_effect_active(graph) && prov_effect_symbol_relevant(graph, id)
+	if recorded { prov_effect_begin(graph, Prov_Effect_Declare{id, prov_effect_value(graph, initializer), projected, copies}) }
 	defer prov_effect_end(graph, recorded)
 	initializer_region := Region_Set{}
 	if initializer != nil && type_is_carrier(graph.k.c, sym.type) && !type_is_region_provider(graph.k.c, sym.type) {
@@ -6511,10 +6493,8 @@ prov_carries_borrow :: proc(c: ^Compiler, type: Type_Id) -> bool {
 
 @(private)
 prov_store_call_results :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]int) -> []int {
-	recorded := false
-	if prov_effect_active(graph) && prov_type_has_region(graph.k.c, v.type) {
-		recorded = prov_effect_begin(graph, Prov_Effect_Call{prov_effect_value(graph, v), .Result})
-	}
+	recorded := prov_effect_active(graph) && prov_type_has_region(graph.k.c, v.type)
+	if recorded { prov_effect_begin(graph, Prov_Effect_Call{prov_effect_value(graph, v), .Result}) }
 	defer prov_effect_end(graph, recorded)
 	// A diverging call's value is never produced (design.md "Diverging
 	// procedures"), so it contributes no sources.

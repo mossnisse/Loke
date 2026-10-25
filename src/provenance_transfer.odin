@@ -80,12 +80,11 @@ prov_input_transfer :: proc(graph: ^Flow_Graph, e: Expr) -> Prov_Transfer {
 	// Plain symbol queries include transient stack nodes made by reset analysis.
 	if _, named := e.(^Expr_Ident); named && base.view_from == INVALID_TYPE && base.widened_from == INVALID_TYPE { return nil }
 	id := prov_input_value(graph, e)
+	// A nil entry records that the value is no transfer, so it is described once.
 	if transfer, found := graph.input.transfers[id]; found { return transfer }
 	transfer := prov_describe_transfer(graph, e)
-	if transfer != nil {
-		prov_writable_input(graph)
-		graph.input.transfers[id] = transfer
-	}
+	prov_writable_input(graph)
+	graph.input.transfers[id] = transfer
 	return transfer
 }
 

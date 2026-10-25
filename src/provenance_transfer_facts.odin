@@ -97,10 +97,10 @@ prov_value_aliases :: proc(graph: ^Flow_Graph, id: Value_Id) -> []Written_Alias 
 prov_note_borrowed_owner :: proc(graph: ^Flow_Graph, id: Value_Id) {
 	borrow, ok := graph.input.transfers[id].(Prov_Transfer_Borrow)
 	if !ok || !borrow.materialized { return }
-	recorded := false
-	if prov_effect_active(graph) && !graph.effect_program.borrowed_owners[id] {
+	recorded := prov_effect_active(graph) && !graph.effect_program.borrowed_owners[id]
+	if recorded {
 		graph.effect_program.borrowed_owners[id] = true
-		recorded = prov_effect_begin(graph, Prov_Effect_Borrow_Owner{id})
+		prov_effect_begin(graph, Prov_Effect_Borrow_Owner{id})
 	}
 	defer prov_effect_end(graph, recorded)
 	for alias in prov_value_aliases(graph, borrow.owner) { prov_add_written_alias(graph, borrow.storage, alias) }
