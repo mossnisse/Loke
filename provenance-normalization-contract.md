@@ -50,7 +50,9 @@ order from unrelated CFG blocks.
 [provenance_input.odin](src/provenance_input.odin) owns the normalized
 descriptions. `Storage_Id` and `Value_Id` are small body-local IDs, with zero
 reserved for unresolved storage or an absent value. `Prov_Storage` records its
-checked type, source span, storage kind, and lifetime category. A
+checked type, source span, and storage kind; anonymous storage receives its kind
+when it is created. Cleanup timing still comes from the settled lifecycle
+annotations, such as temporary extension, not from a copied category. A
 `Written_Storage` key provides correspondence: named storage keeps its symbol;
 anonymous storage keeps its source identity, storage type, and defer expansion.
 Named locals keep one abstract identity across exits, while evaluations inside
@@ -127,8 +129,10 @@ the same target recipe; invalidation applies the effective parameter capability
 to its result. The former constructor-payload helper, unwrap-depth adjustments,
 and duplicate transfer cases in target/region visitors are removed.
 
-Checked copy operations retain hook identity and consult the checked-body
-registry, including inherent member bodies. Generated copies recurse by type
+Checked copy operations retain hook identity. A hook member's declaration is
+not a procedure declaration, so `prov_has_direct_body` consults the checked-body
+registry for it; copy operations and call summaries share that one answer.
+Generated copies recurse by type
 until they reach a custom hook, register its summary dependency, and substitute
 its current successful result regions. Operations cache no summary or region
 facts. Inspection tests check nested dependencies and replay one unchanged
@@ -182,7 +186,14 @@ result regions and writes, and carrier-target invalidation. Each operation owns
 its checked value IDs, paths, block, and defer expansion. A high-level operation
 owns its nested writes, so the recording does not also capture resolved target
 sets or intermediate region facts. Rebinding a borrowed name is explicit for
-each case and defer expansion.
+each case and defer expansion. A view of a materialized owner records its own
+operation the first time any query reaches it, moving the owner's carrier
+targets into the hidden storage it borrows; a view of a named place adds none,
+because that place already holds them at their own paths. A store records the
+symbol whose destination allocator a copy uses instead of deriving it from the
+destination storage, which differs for a map key inserted through indexing.
+Every insertion into the input tables, including constant map-key entries, goes
+through the frozen-input check and is owned by the input's allocator.
 
 The construction graph supplies the first round's facts and owns shared input
 metadata in the body's analysis arena. A zero-weight construction graph is
@@ -252,6 +263,14 @@ tests, 43 LSP unit tests, and 60 integration checks after rebuilding both
 binaries. All 2205 spec citations resolve. The performance workflow completed
 all 24 records and checked benchmark output; the baseline notes record the
 remaining time and memory overhead alongside the initial stage 4 capture.
+
+A review of stage 4 on 2026-10-25 added
+`normalization_named_owner_view_contract`, which failed before its fix: viewing
+a record's field re-recorded that field's carrier targets at the record's root.
+`normalization_define_allocator_contract` pins the recorded copy allocator for a
+declaration and for a map key inserted into a map with its own allocator. The
+quick gate then passed all 165 compiler unit tests, 43 LSP unit tests, and 60
+integration checks with both binaries rebuilt; all 2208 spec citations resolve.
 
 ## AST-sensitive construction inventory
 

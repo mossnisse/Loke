@@ -281,6 +281,9 @@ Compiler :: struct {
 	// two provenance analyses run after the program settles, so a forward or
 	// mutually recursive callee already has its result summary.
 	checked_bodies: [dynamic]Checked_Body,
+	// The procedures in `checked_bodies`, including inherent members whose
+	// symbols have neither a literal nor a declaration.
+	checked_body_symbols: map[Symbol_Id]bool,
 	// Compile-time declaration metadata for cross-package checking; it does not
 	// change the runtime ABI (design.md "Temporaries and procedure boundaries").
 	// Keyed per declaration or instance, so two instances may differ.

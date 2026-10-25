@@ -234,7 +234,7 @@ Last_Use :: struct {
 
 // The state only the provenance modes build.
 Prov_State :: struct {
-	using input: ^Prov_Input,
+	input: ^Prov_Input,
 	roots:          [dynamic]Prov_Root,
 	loans:          [dynamic]Prov_Loan,
 	prov_slots:     [dynamic]Prov_Slot,

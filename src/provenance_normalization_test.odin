@@ -327,8 +327,8 @@ main :: proc() {}`) { return }
 	base := expr_base(view.values[0])
 	borrow, borrows := prov_input_transfer(graph, view.values[0]).(Prov_Transfer_Borrow)
 	if testing.expect(t, borrows, "an owner view must normalize as a borrow") {
-		testing.expect(t, borrow.storage != 0 && graph.input.values[int(borrow.owner)].type == base.view_from && !borrow.writable,
-		               "the view must retain its original owner and read-only capability")
+		testing.expect(t, borrow.storage != 0 && graph.input.values[int(borrow.owner)].type == base.view_from,
+		               "the view must retain its original owner")
 	}
 	testing.expect(t, underlying_kind(&p.c, base.view_from) == .Dynamic_Array && underlying_kind(&p.c, base.type) == .Slice,
 	               "an implicit view must retain the original owner type")
@@ -502,7 +502,7 @@ main :: proc() {}`) { return }
 	for entry, index in graph.input.storages {
 		if entry.key.temporary == nil || underlying_kind(&p.c, entry.type) != .Dynamic_Array { continue }
 		if entry.key.expansion.deferred == nil { continue }
-		testing.expect(t, entry.lifetime == .Scope, "an extended deferred owner needs scope cleanup")
+		testing.expect(t, graph.extended[entry.key.temporary], "an extended deferred owner needs scope cleanup")
 		if entry.key.expansion.exit == nil { normal = Storage_Id(index) } else { abrupt = Storage_Id(index) }
 	}
 	testing.expect(t, normal != 0 && abrupt != 0 && normal != abrupt, "evaluations in different defer expansions need separate storage")
@@ -539,18 +539,17 @@ main :: proc() {}`) { return }
 	graph := normalization_graph(t, &k, &p, "capture")
 	if graph == nil { return }
 	rebound := normalization_symbol(t, &p, "rebound")
-	found := false
-	for id, slots in graph.captured_values {
-		value := graph.input.values[int(id)]
-		if !testing.expect(t, value.captured_from != 0 && value.captured_from != id && len(slots) > 0,
-		                   "a capture must have an evaluated source and independent fact slots") { continue }
-		source := graph.input.values[int(value.captured_from)]
-		storage, direct := source.place.base.(Storage_Id)
-		if !testing.expect(t, direct && prov_storage(graph, storage).key.symbol == rebound, "the capture lost its original source binding") { continue }
-		testing.expect(t, source.type == value.type && value.place.base == source.place.base, "capture metadata must retain its checked carrier type and source")
-		found = true
-	}
-	testing.expect(t, found, "the split must record the receiver capture before later arguments run")
+	halves := normalization_decl(t, &p, graph.literal, "halves")
+	if halves == nil { return }
+	call := halves.values[0].(^Expr_Call)
+	capture := prov_input_call(graph, call).capture
+	from := prov_input_value(graph, call.bound[0])
+	if !testing.expect(t, capture != 0 && capture != from && len(graph.captured_values[capture]) > 0,
+	                   "the split must record the receiver capture, with independent fact slots, before later arguments run") { return }
+	value, source := graph.input.values[int(capture)], graph.input.values[int(from)]
+	storage, direct := source.place.base.(Storage_Id)
+	testing.expect(t, direct && prov_storage(graph, storage).key.symbol == rebound, "the capture lost its original source binding")
+	testing.expect(t, source.type == value.type && value.place.base == source.place.base, "capture metadata must retain its checked carrier type and source")
 }
 
 // design.md "Allocator regions and region provenance", "Widening by label".
@@ -621,7 +620,7 @@ main :: proc() {}`) { return }
 	transfer := prov_input_transfer(graph, ret.value.expr)
 	held := symbol_of(&p.c, normalization_symbol(t, &p, "Held")).type
 	operation := prov_input_copy_operation(graph, held)
-	if !testing.expect(t, operation.hook != INVALID_SYMBOL && operation.checked_body) { return }
+	if !testing.expect(t, operation.hook != INVALID_SYMBOL && prov_has_direct_body(&p.c, operation.hook)) { return }
 	original := p.c.result_summaries[operation.hook]
 	defer p.c.result_summaries[operation.hook] = original
 	growing: Proc_Summary
@@ -700,9 +699,10 @@ main :: proc() {}`) { return }
 	if named == nil || halves == nil { return }
 	call := prov_input_call(graph, named.values[0].(^Expr_Call))
 	testing.expect(t, len(call.order) == 2 && call.order[0] == 1 && call.order[1] == 0, "named arguments lost their written order")
-	testing.expect(t, call.direct && len(call.arguments) == 2 && call.arguments[0].type == TYPE_INT, "checked parameter metadata was reconstructed incorrectly")
-	split := prov_input_call(graph, halves.values[0].(^Expr_Call))
-	testing.expect(t, split.capture != 0 && graph.input.values[int(split.capture)].captured_from != 0,
+	testing.expect(t, len(call.arguments) == 2 && call.arguments[0].type == TYPE_INT, "checked parameter metadata was reconstructed incorrectly")
+	split_call := halves.values[0].(^Expr_Call)
+	split := prov_input_call(graph, split_call)
+	testing.expect(t, split.capture != 0 && split.capture != prov_input_value(graph, split_call.bound[0]),
 	               "the checked split call lost its evaluated receiver capture")
 }
 
@@ -780,4 +780,66 @@ main :: proc() { write(); }`) { return }
 		}
 	}
 	testing.expect(t, written, "skipping fact replay discarded the global write event")
+}
+
+// design.md "Minimum provenance precision": a view of a named owner's field
+// borrows that place; its carriers keep their paths below the field.
+@(test)
+normalization_named_owner_view_contract :: proc(t: ^testing.T) {
+	p: Checked
+	defer destroy_checked(&p)
+	if !normalization_checked(t, &p, `package main;
+Pair :: struct { items: [1]^mut int, other: int }
+count :: proc(values: []^mut int) -> int { return values.len(); }
+viewed :: proc() -> int {
+    target := 1;
+    pair := Pair{{&mut target}, 2};
+    return count(pair.items);
+}
+main :: proc() {}`) { return }
+	k: Checker
+	graph := normalization_graph(t, &k, &p, "viewed")
+	if graph == nil { return }
+	storage := prov_storage_id(graph, Written_Storage{symbol = normalization_symbol(t, &p, "pair")})
+	aliases := graph.written_aliases[storage]
+	testing.expect(t, len(aliases) > 0, "the record must retain its field's carrier target")
+	for alias in aliases {
+		testing.expectf(t, len(alias.path) > 0 && alias.path[0].kind == .Field,
+		                "a viewed field's carrier was re-recorded outside that field: %v", alias.path)
+	}
+}
+
+// design.md "Allocator regions and region provenance": a recorded store keeps
+// the destination whose allocator a copy uses, rather than its storage's symbol.
+@(test)
+normalization_define_allocator_contract :: proc(t: ^testing.T) {
+	p: Checked
+	defer destroy_checked(&p)
+	if !normalization_checked(t, &p, `package main;
+copied :: proc(allocator: Allocator, source: ^[dynamic]int) -> int {
+    owners: [dynamic]int via allocator = {};
+    owners = source^;
+    table: map[string]int via allocator = {};
+    table["key"] = owners.len();
+    return table.len();
+}
+main :: proc() {}`) { return }
+	k: Checker
+	graph := normalization_graph(t, &k, &p, "copied")
+	if graph == nil || !testing.expect(t, graph.normalized_effects != nil, "the body lost its recorded operations") { return }
+	owners, table := normalization_symbol(t, &p, "owners"), normalization_symbol(t, &p, "table")
+	copied, keyed := false, false
+	for site in graph.normalized_effects.operations {
+		define := site.operation.(Prov_Effect_Define) or_continue
+		destination := prov_storage(graph, define.storage).key.symbol
+		if destination == owners && define.copies {
+			copied = true
+			testing.expect_value(t, define.allocated_by, owners)
+		}
+		if destination == table {
+			keyed = true
+			testing.expect_value(t, define.allocated_by, INVALID_SYMBOL)
+		}
+	}
+	testing.expect(t, copied && keyed, "the copy and the map key insertion must each record a store")
 }

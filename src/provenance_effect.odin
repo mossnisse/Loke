@@ -21,11 +21,12 @@ Prov_Effect_Call :: struct { value: Value_Id, kind: enum { Result, Write, Invali
 Prov_Effect_Store :: struct { destination, value: Value_Id, element: bool }
 Prov_Effect_Spread :: struct { destination, value: Value_Id }
 Prov_Effect_Map_Key :: struct { destination, value: Value_Id }
-Prov_Effect_Define :: struct { storage: Storage_Id, path: []Proj_Step, value: Value_Id, source: []Proj_Step, copies: bool }
+Prov_Effect_Define :: struct { storage: Storage_Id, path: []Proj_Step, value: Value_Id, source: []Proj_Step, copies: bool, allocated_by: Symbol_Id }
 Prov_Effect_Parent :: struct { symbol: Symbol_Id, value: Value_Id, source: []Proj_Step, storage: bool }
 Prov_Effect_Assign :: struct { symbol: Symbol_Id, value: Value_Id, source: []Proj_Step, storage: bool }
 Prov_Effect_Move_Provider :: struct { symbol: Symbol_Id, value: Value_Id }
 Prov_Effect_Forget_Binding :: struct { symbol: Symbol_Id }
+Prov_Effect_Borrow_Owner :: struct { value: Value_Id }
 Prov_Fact_Operation :: union {
 	Prov_Effect_Declare, Prov_Effect_Element, Prov_Effect_Case,
 	Prov_Effect_Targets, Prov_Effect_Call, Prov_Effect_Store,
@@ -33,6 +34,7 @@ Prov_Fact_Operation :: union {
 	Prov_Effect_Forget_Binding,
 	Prov_Effect_Assign,
 	Prov_Effect_Spread, Prov_Effect_Map_Key,
+	Prov_Effect_Borrow_Owner,
 }
 
 Prov_Effect_Site :: struct {
@@ -44,6 +46,8 @@ Prov_Effect_Site :: struct {
 Prov_Effect_Program :: struct {
 	alloc: mem.Allocator,
 	operations: [dynamic]Prov_Effect_Site,
+	// Materialized owner views already recorded by a query.
+	borrowed_owners: map[Value_Id]bool,
 	input: ^Prov_Input,
 	entry: ^Flow_Graph,
 	// Storage metadata and topology do not depend on the carried facts.
@@ -71,6 +75,7 @@ build_provenance_replay :: proc(k: ^Checker, literal: ^Expr_Proc, mode: Flow_Mod
 	program := new(Prov_Effect_Program, allocator)
 	program.alloc = allocator
 	program.operations = make([dynamic]Prov_Effect_Site, allocator)
+	program.borrowed_owners = make(map[Value_Id]bool, 4, allocator)
 	reported := len(k.c.diagnostics)
 	initial := build_flow_pass(k, literal, allocator, mode, nil, program)
 	initial.effect_program = nil
@@ -321,7 +326,7 @@ prov_replay_fact_operation :: proc(graph: ^Flow_Graph, op: Prov_Fact_Operation) 
 	case Prov_Effect_Parent: first = input.value
 	case Prov_Effect_Move_Provider: first = input.value
 	case Prov_Effect_Assign: first = input.value
-	case Prov_Effect_Forget_Binding:
+	case Prov_Effect_Forget_Binding, Prov_Effect_Borrow_Owner:
 	case: unreachable()
 	}
 	saved_first, saved_second: Prov_Value_Origin
@@ -357,8 +362,7 @@ prov_replay_fact_operation :: proc(graph: ^Flow_Graph, op: Prov_Fact_Operation) 
 		prov_store_map_key_region(graph, graph.input.values[int(operation.destination)].origin, graph.input.values[int(operation.value)].origin)
 	case Prov_Effect_Define:
 		root := prov_root_for_storage(graph, operation.storage)
-		allocator := prov_destination_allocator(graph, prov_storage(graph, operation.storage).key.symbol)
-		prov_define_value_regions(graph, root, operation.path, graph.input.values[int(operation.value)].origin, operation.source, operation.copies, allocator)
+		prov_define_value_regions(graph, root, operation.path, graph.input.values[int(operation.value)].origin, operation.source, operation.copies, operation.allocated_by)
 	case Prov_Effect_Parent:
 		prov_merge_provider_parent(graph, operation.symbol, graph.input.values[int(operation.value)].origin, operation.source, operation.storage)
 	case Prov_Effect_Move_Provider:
@@ -367,6 +371,8 @@ prov_replay_fact_operation :: proc(graph: ^Flow_Graph, op: Prov_Fact_Operation) 
 		prov_assign_value_region(graph, operation.symbol, graph.input.values[int(operation.value)].origin, operation.source, operation.storage)
 	case Prov_Effect_Forget_Binding:
 		prov_forget_region_binding(graph, operation.symbol)
+	case Prov_Effect_Borrow_Owner:
+		prov_note_borrowed_owner(graph, operation.value)
 	case:
 		unreachable()
 	}

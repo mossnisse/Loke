@@ -18,14 +18,11 @@ Written_Storage :: struct {
 	expansion: Defer_Expansion,
 }
 
-Storage_Lifetime :: enum { Expression, Scope, Process, Thread, Caller }
-
 Prov_Storage :: struct {
 	key: Written_Storage,
 	type: Type_Id,
 	span: Span,
 	kind: Root_Kind,
-	lifetime: Storage_Lifetime,
 }
 
 // A direct place starts at storage; an indirect place starts at an evaluated
@@ -41,9 +38,8 @@ Prov_Value :: struct {
 	type: Type_Id,
 	expansion: Defer_Expansion,
 	view_from, erased_from, widened_from: Type_Id,
+	// A captured value copies its source's place but is not a later reload of it.
 	place: Prov_Place,
-	// A captured value keeps its source binding but is not a later reload of it.
-	captured_from: Value_Id,
 }
 
 Prov_Input_Key :: struct {
@@ -55,6 +51,8 @@ Prov_Input_Key :: struct {
 }
 
 Prov_Input :: struct {
+	// Owns every table and inserted key; writes go through prov_writable_input.
+	alloc: mem.Allocator,
 	frozen: bool,
 	storages: [dynamic]Prov_Storage,
 	storage_ids: map[Written_Storage]Storage_Id,
@@ -83,6 +81,7 @@ prov_writable_input :: proc(graph: ^Flow_Graph) {
 // cannot point into a discarded construction pass or the carry arena.
 new_prov_input :: proc(allocator: mem.Allocator, seed: ^Prov_Input = nil) -> ^Prov_Input {
 	input := new(Prov_Input, allocator)
+	input.alloc = allocator
 	input.storages = make([dynamic]Prov_Storage, allocator)
 	input.storage_ids = make(map[Written_Storage]Storage_Id, 8, allocator)
 	input.values = make([dynamic]Prov_Value, allocator)
@@ -119,26 +118,27 @@ new_prov_input :: proc(allocator: mem.Allocator, seed: ^Prov_Input = nil) -> ^Pr
 }
 
 // design.md "Storage roots and borrow carriers", "Temporaries and procedure boundaries".
-prov_storage_id :: proc(graph: ^Flow_Graph, source: Written_Storage) -> Storage_Id {
+// `kind` classifies newly created anonymous storage; symbols carry their own.
+prov_storage_id :: proc(graph: ^Flow_Graph, source: Written_Storage, kind := Root_Kind.Temporary) -> Storage_Id {
 	key := source
 	if key == (Written_Storage{}) { return 0 }
 	if key.temporary != nil { key.expansion = graph.expansion }
 	if id, found := graph.input.storage_ids[key]; found { return id }
-	entry := Prov_Storage{key = key, type = key.type, kind = .Temporary, lifetime = .Expression}
+	entry := Prov_Storage{key = key, type = key.type, kind = kind}
 	if key.temporary != nil {
 		entry.span = key.temporary.span
 	} else {
 		sym := symbol_of(graph.k.c, key.symbol)
 		if sym == nil { return 0 }
-		entry.type, entry.span, entry.kind, entry.lifetime = sym.type, sym.span, .Local, .Scope
+		entry.type, entry.span, entry.kind = sym.type, sym.span, .Local
 		#partial switch sym.kind {
 		case .Var:
-			if sym.duration == .Thread_Local { entry.kind, entry.lifetime = .Thread_Local, .Thread
-			} else if symbol_outlives_bodies(sym) { entry.kind, entry.lifetime = .Static, .Process }
+			if sym.duration == .Thread_Local { entry.kind = .Thread_Local
+			} else if symbol_outlives_bodies(sym) { entry.kind = .Static }
 		case .Parameter:
-			if param_mode_is_pointer(sym.mode) { entry.kind, entry.lifetime = .Param, .Caller }
+			if param_mode_is_pointer(sym.mode) { entry.kind = .Param }
 		case .Const:
-			entry.kind, entry.lifetime = .Materialized, .Process
+			entry.kind = .Materialized
 		case:
 			return 0
 		}
@@ -183,7 +183,6 @@ prov_input_capture :: proc(graph: ^Flow_Graph, call: ^Expr_Call, source: Expr) -
 	prov_writable_input(graph)
 	from := prov_input_value(graph, source)
 	value := graph.input.values[int(from)]
-	value.captured_from = from
 	id := Value_Id(len(graph.input.values))
 	append(&graph.input.values, value)
 	graph.input.value_ids[key] = id

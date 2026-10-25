@@ -873,6 +873,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.package_by_dir = make(map[string]Package_Id, c.semantic_allocator)
 	c.map_keyed = make(map[Type_Id]bool, c.semantic_allocator)
 	c.checked_bodies = make([dynamic]Checked_Body, 0, 16, c.semantic_allocator)
+	c.checked_body_symbols = make(map[Symbol_Id]bool, c.semantic_allocator)
 	c.result_summaries = make(map[Symbol_Id]^Proc_Summary, c.semantic_allocator)
 	c.receiver_contracts = make(map[Symbol_Id]Symbol_Id, c.semantic_allocator)
 	c.receiver_contract_of = make(map[Symbol_Id]Symbol_Id, c.semantic_allocator)

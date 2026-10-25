@@ -44,8 +44,9 @@ copy-hook symbol can have a checked body while both `proc_literal` and
 `decl_proc` are nil. Direct-body discovery omitted the dependency despite
 reading the hook's summary.
 
-Normalized copy operations now resolve hook bodies through the checked-body
-registry. `normalization_summary_and_custom_copy_contract` asserts the nested
+Direct-body discovery (`prov_has_direct_body`) now consults the checked-body
+registry for hook members, so copy operations and call summaries agree.
+`normalization_summary_and_custom_copy_contract` asserts the nested
 dependency, and `normalization_copy_summary_replay_contract` grows a hook's
 summary after constructing its caller's transfer and checks that replay reads
 the new source and allocator dependencies without changing operation identity.

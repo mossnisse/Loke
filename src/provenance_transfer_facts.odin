@@ -53,7 +53,7 @@ prov_value_aliases :: proc(graph: ^Flow_Graph, id: Value_Id) -> []Written_Alias 
 	case Prov_Transfer_Aggregate:
 		parts = operation.components
 	case Prov_Transfer_Borrow:
-		for alias in prov_value_aliases(graph, operation.owner) { prov_add_written_alias(graph, operation.storage, alias) }
+		prov_note_borrowed_owner(graph, id)
 		return slice.clone([]Written_Alias{{target = operation.storage, at = operation.path}}, graph.alloc)
 	case Prov_Transfer_Address:
 		source := graph.input.values[int(operation.source)]
@@ -89,6 +89,21 @@ prov_value_aliases :: proc(graph: ^Flow_Graph, id: Value_Id) -> []Written_Alias 
 		}
 	}
 	return out[:]
+}
+
+// design.md "Temporaries and procedure boundaries": a view of a materialized
+// owner names the hidden storage holding that owner's carriers. Queries can
+// discover the view first, so record that fact once for every replay round.
+prov_note_borrowed_owner :: proc(graph: ^Flow_Graph, id: Value_Id) {
+	borrow, ok := graph.input.transfers[id].(Prov_Transfer_Borrow)
+	if !ok || !borrow.materialized { return }
+	recorded := false
+	if prov_effect_active(graph) && !graph.effect_program.borrowed_owners[id] {
+		graph.effect_program.borrowed_owners[id] = true
+		recorded = prov_effect_begin(graph, Prov_Effect_Borrow_Owner{id})
+	}
+	defer prov_effect_end(graph, recorded)
+	for alias in prov_value_aliases(graph, borrow.owner) { prov_add_written_alias(graph, borrow.storage, alias) }
 }
 
 prov_value_region :: proc(graph: ^Flow_Graph, id: Value_Id, path: []Proj_Step, query: Region_Query) -> Region_Set {

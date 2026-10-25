@@ -14,18 +14,13 @@ Prov_Synthetic_Call_Key :: struct {
 }
 
 Prov_Call_Argument :: struct {
-	value: Value_Id,
 	type: Type_Id,
 	mode: Param_Mode,
 	place: bool,
-	packed: bool,
 }
 
 Prov_Call_Input :: struct {
-	callee: Symbol_Id,
-	direct: bool,
 	signature: Type_Id,
-	result: Type_Id,
 	result_inout: bool,
 	writes_facts: bool,
 	arguments: []Prov_Call_Argument,
@@ -44,8 +39,7 @@ prov_input_call :: proc(graph: ^Flow_Graph, call: ^Expr_Call) -> Prov_Call_Input
 	if input, found := graph.input.calls[key]; found { return input }
 	prov_writable_input(graph)
 	c := graph.k.c
-	input := Prov_Call_Input{callee = call_contract_declaration(c, call), signature = call_proc_type(c, call), result = call.type}
-	input.direct = prov_has_direct_body(c, input.callee)
+	input := Prov_Call_Input{signature = call_proc_type(c, call)}
 	if member := symbol_of(c, call.resolution.chosen_overload); member != nil && member.has_receiver {
 		input.receiver, input.has_receiver = member.receiver, true
 		if member.synth == .Container_Op { input.container = member.container_op }
@@ -55,11 +49,11 @@ prov_input_call :: proc(graph: ^Flow_Graph, call: ^Expr_Call) -> Prov_Call_Input
 	input.arguments = make([]Prov_Call_Argument, len(call.bound), graph.alloc)
 	input.order = make([]int, len(call.bound), graph.alloc)
 	for argument, index in call.bound {
-		part := Prov_Call_Argument{packed = call_packs(call, index)}
-		// Scalar computations keep their evaluation slot but carry no target or
-		// region facts. Their calls/effects are still visited in source order.
+		part: Prov_Call_Argument
+		// Freeze region-carrying operands before replay reads their facts. Scalar
+		// computations keep their evaluation slot; their effects stay in source order.
 		if argument != nil && prov_type_has_region(c, expr_base(argument).type) {
-			part.value = prov_input_value(graph, argument)
+			_ = prov_input_value(graph, argument)
 		}
 		if info != nil && index < len(info.parameters) { part.type = info.parameters[index] }
 		if info != nil && index < len(info.param_modes) { part.mode = info.param_modes[index] }

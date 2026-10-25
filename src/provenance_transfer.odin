@@ -10,7 +10,6 @@ Prov_Transfer_Mode :: enum { Read, Copy, Clone, Move }
 Prov_Copy_Operation :: struct {
 	type: Type_Id,
 	hook: Symbol_Id,
-	checked_body: bool,
 }
 
 Prov_Component :: struct {
@@ -30,7 +29,9 @@ Prov_Backing :: struct { path: []Proj_Step, allocator: Value_Id }
 Prov_Transfer_Forward :: struct { component: Prov_Component }
 Prov_Transfer_Join :: struct { alternatives: []Prov_Component }
 Prov_Transfer_Aggregate :: struct { components: []Prov_Component, backing: []Prov_Backing }
-Prov_Transfer_Borrow :: struct { storage: Storage_Id, path: []Proj_Step, owner: Value_Id, writable: bool }
+// A materialized owner's carriers move into the hidden storage the view borrows;
+// a named owner's place already holds them.
+Prov_Transfer_Borrow :: struct { storage: Storage_Id, path: []Proj_Step, owner: Value_Id, materialized: bool }
 Prov_Transfer_Address :: struct { source: Value_Id, storage: bool }
 Prov_Transfer :: union {
 	Prov_Transfer_Forward,
@@ -44,13 +45,6 @@ prov_input_copy_operation :: proc(graph: ^Flow_Graph, type: Type_Id) -> Prov_Cop
 	if operation, found := graph.input.copy_operations[type]; found { return operation }
 	prov_writable_input(graph)
 	operation := Prov_Copy_Operation{type = type, hook = lifecycle_of(graph.k.c, type).custom_try_clone}
-	if operation.hook != INVALID_SYMBOL {
-		// Inherent member symbols need not have proc_literal or a procedure
-		// declaration. The checked-body registry is authoritative for hooks.
-		for body in graph.k.c.checked_bodies {
-			if body.clean && body.literal.symbol == operation.hook { operation.checked_body = true; break }
-		}
-	}
 	graph.input.copy_operations[type] = operation
 	return operation
 }
@@ -110,7 +104,7 @@ prov_describe_transfer :: proc(graph: ^Flow_Graph, e: Expr) -> Prov_Transfer {
 		if type_is_box(c, owner) { path = prov_extend(graph, path, proj_wild()) }
 		source := prov_input_value(graph, e)
 		_ = prov_input_transfer(graph, e)
-		return Prov_Transfer_Borrow{storage, path, source, false}
+		return Prov_Transfer_Borrow{storage, path, source, !direct}
 	}
 	if from := base.widened_from; union_widens_to(c, from, base.type) {
 		to := base.type
@@ -154,12 +148,10 @@ prov_describe_transfer :: proc(graph: ^Flow_Graph, e: Expr) -> Prov_Transfer {
 			viewed := v.type
 			v.type, v.backing = backing, INVALID_TYPE
 			defer v.type, v.backing = viewed, backing
-			storage := prov_storage_id(graph, Written_Storage{temporary = &v.base, type = backing})
-			graph.input.storages[int(storage)].kind = .Slice_Literal
-			graph.input.storages[int(storage)].lifetime = .Scope
+			storage := prov_storage_id(graph, Written_Storage{temporary = &v.base, type = backing}, .Slice_Literal)
 			owner := prov_input_value(graph, v)
 			_ = prov_input_transfer(graph, v)
-			return Prov_Transfer_Borrow{storage = storage, owner = owner, writable = carrier_is_mutable(c, viewed)}
+			return Prov_Transfer_Borrow{storage = storage, owner = owner, materialized = true}
 		}
 		parts := make([dynamic]Prov_Component, graph.alloc)
 		kind := underlying_kind(c, v.type)

@@ -2730,6 +2730,7 @@ check_proc_body :: proc(k: ^Checker, literal: ^Expr_Proc) {
 	// is not part of the program, as its literal is not hoisted.
 	if committing(k.c) {
 		append(&k.c.checked_bodies, Checked_Body{literal = literal, clean = k.c.error_count == errors_before})
+		k.c.checked_body_symbols[literal.symbol] = true
 	}
 	literal.defer_count = k.defer_slots
 	if symbol.result != INVALID_TYPE && flow.can_fall_through {
