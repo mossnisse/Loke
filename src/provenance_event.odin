@@ -99,9 +99,21 @@ Prov_Event_Received_Region :: struct {
 	owner: string,
 }
 
+// A carrier written through a borrowed binding, published into the storage
+// its region aliases name (design.md "Values that contain borrows").
+Prov_Event_View_Publish :: struct {
+	symbol:  Symbol_Id,
+	path:    []Proj_Step,
+	sources: []int,
+	span:    Span,
+	type:    Type_Id,
+	through: []int,
+}
+
 Prov_Event_Operation :: union {
 	Prov_Event_Reset, Prov_Event_Escape, Prov_Event_Region_Escape, Prov_Event_Static_Escape, Prov_Event_Key_Escape,
 	Prov_Event_Allocator_Use, Prov_Event_Call_Allocator_Use, Prov_Event_Effect_Use, Prov_Event_Received_Region,
+	Prov_Event_View_Publish,
 }
 
 // An allocator control block's root, whose region is its provider's.
@@ -197,6 +209,8 @@ prov_materialize_event :: proc(graph: ^Flow_Graph, operation: Prov_Event_Operati
 		prov_call_allocator_use(graph, op.call)
 	case Prov_Event_Effect_Use:
 		prov_materialize_effect_use(graph, op)
+	case Prov_Event_View_Publish:
+		prov_materialize_view_publish(graph, op)
 	case Prov_Event_Received_Region:
 		if prov_has_received_region(graph, prov_result_region(graph, op.value)) {
 			errorf(

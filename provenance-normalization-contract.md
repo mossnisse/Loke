@@ -347,6 +347,7 @@ construction has, and again once they settle.
 | `Prov_Event_Allocator_Use`, `Prov_Event_Call_Allocator_Use` | `free_all`, clones, drops, fresh container literals, calls no summary follows | `Region_Use` window events, task reservations, the allocator-use summary |
 | `Prov_Event_Effect_Use` | Call and drop effects | The regions an effect call's parameters are given, and its window allocator use |
 | `Prov_Event_Received_Region` | `@(cross_thread)` arguments | `L0726` |
+| `Prov_Event_View_Publish` | Carrier writes through a borrowed payload binding | The storage the binding's region aliases name, and whether the write replaces its old content or keeps it |
 
 The resetting walk state (held operands, temporary roots, the value a `return`
 hands back) becomes values: `Prov_Returning` now names the returned value or
@@ -383,6 +384,15 @@ before its facts settle, so
 widens an allocator handle later in a loop than a task reservation, an
 allocator-use summary, and a crossing owner that read it; the construction
 graph alone accepts all three.
+
+A review of the stage 5b commit found a site that comparison missed. A carrier
+written through a borrowed payload binding is published into the storage the
+binding's region aliases name, and a later loop iteration can give its subject
+another target. Those `Def` events name construction slots but depend on the
+facts, so `Prov_Event_View_Publish` materializes the write in the construction
+graph with the aliases the replay has at its site; with several targets, each
+keeps its old content. The same test drops a source after such a write and
+writes to another; the construction graph alone accepted both.
 
 Materialization allocates only in the body's analysis arena, which
 `normalization_materialization_allocator_contract` checks, since a language

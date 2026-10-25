@@ -1,9 +1,15 @@
 L0732
-@24:4
+@25:4
 which a running task reserves until this `parallel` block joins
 L0732
-@48:3
+@49:3
 which a running task reserves until this `parallel` block joins
 L0726
-@61:39
+@62:39
 `numbers` is backed by an allocator region this procedure received
+L0512
+@82:2
+`source` cannot be dropped here: a read-only slice of it is still in use
+L0511
+@98:2
+this write of `source` is not compatible with the read-only slice of it

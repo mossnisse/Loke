@@ -1320,9 +1320,33 @@ prov_define_one_content :: proc(
 	}
 	prov_emit(graph, Prov_Event{kind = .Def, slot = slot, loan = NO_LOAN, sources = sources, span = span, precision = precision})
 	if len(graph.region_aliases[entry.symbol]) > 0 {
-		prov_publish_view_content(graph, prov_root_for_symbol(graph, entry.symbol), nil, entry.path,
-		                          sources, span, type, graph.view_loans[entry.symbol])
+		prov_event(graph, Prov_Event_View_Publish {
+			symbol = entry.symbol, path = entry.path, sources = sources, span = span,
+			type = type, through = graph.view_loans[entry.symbol],
+		})
 	}
+}
+
+// The storage a borrowed binding names can grow as the facts settle, so its
+// write is published into the construction graph's slots with the aliases
+// `graph` has at the site.
+@(private)
+prov_materialize_view_publish :: proc(graph: ^Flow_Graph, op: Prov_Event_View_Publish) {
+	output := prov_output(graph)
+	if output == graph {
+		prov_publish_view_content(graph, prov_root_for_symbol(graph, op.symbol), nil, op.path, op.sources, op.span, op.type, op.through)
+		return
+	}
+	aliases, current, expansion := output.region_aliases, output.current, output.expansion
+	output.region_aliases, output.current, output.expansion = graph.region_aliases, graph.current, graph.expansion
+	defer output.region_aliases, output.current, output.expansion = aliases, current, expansion
+	first := graph.current == NO_BLOCK ? 0 : len(output.blocks[graph.current].prov)
+	prov_publish_view_content(output, prov_root_for_symbol(output, op.symbol), nil, op.path, op.sources, op.span, op.type, op.through)
+	if graph.current == NO_BLOCK { return }
+	// The events are the materialization's, which replaces the site's.
+	emitted := &output.blocks[graph.current].prov
+	append(&graph.blocks[graph.current].prov, ..emitted[first:])
+	resize(emitted, first)
 }
 
 // A borrowed case binding is a name for the subject's payload. Keep its
