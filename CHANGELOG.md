@@ -10,6 +10,14 @@ checklist.
 
 ### Breaking changes
 
+- Borrowed switch payloads in anonymous storage now preserve callee writes,
+  and payloads extracted with `unbox` or `as` retain their carrier targets.
+  Unsafe arena-backed owner escapes report `L0536`. Owners written into slice
+  literal backing arrays also retain allocator dependencies, so premature
+  resets report `L0537`, including after copying an owner out. Upgrade by
+  allocating retained owners from a region that outlives their destination,
+  and resetting it after dependent owners have been cleaned up.
+
 - Stored success payloads, owner-to-view conversions, and copies of slice
   literals now preserve carrier storage identity when invalidating targets
   after writable calls. Unsafe arena-backed owners escaping through these

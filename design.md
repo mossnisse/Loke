@@ -5509,11 +5509,20 @@ capabilities.
 
 A stored success selected by `or_else` or `or_return` keeps the payload's
 carrier paths without its former variant step, just as a directly used success
-does. An owner-to-view conversion names the owner's backing storage, separately
+does. Unboxing preserves the payload's carrier targets, and checked variant
+extraction with `as` preserves them below the checked result's success step.
+An owner-to-view conversion names the owner's backing storage, separately
 from the targets of carriers stored inside it. Copies and reslices of a view,
 including a slice literal's hidden array, share that storage: a call that can
 replace its carriers cannot leave another view's earlier target facts as proof
 of their contents.
+
+Borrowing a switch payload in anonymous storage retains that storage identity
+for subsequent reads, writes, and callee effects. Owners written into a slice
+literal's hidden array retain their allocator dependencies until their actual
+cleanup; extracting or copying an owner out keeps any dependencies retained by
+the extracted or copied value. Region queries still distinguish allocator
+handles from owners in sibling fields.
 
 A user record contains carriers but is not itself a new carrier. A record of `rawptr` or `[^]T` fields carries no checked provenance; a checked carrier rebuilt from untracked storage has unknown provenance.
 

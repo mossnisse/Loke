@@ -4,6 +4,35 @@ Decisions that are deliberately not yet made are recorded here rather than left 
 
 Design rationale and differences from Odin are recorded in [comments.md](comments.md).
 
+## Normalized input for provenance analysis
+
+The [normalization proposal](provenance-normalization-proposal.md#recommendation)
+describes a typed operation layer between the checked AST and provenance fact
+construction. It is a draft internal refactor, with no proposed language change.
+Review whether the shared storage and transfer representation removes enough
+duplicated interpretation to justify the new layer. The proposed first
+deliverable is storage and transfer normalization within the existing flow graph.
+
+Two later decisions remain open: whether measurements justify retaining
+normalized bodies across whole-program summary rounds, and whether lifecycle
+analysis should consume the same representation. The draft starts by rebuilding
+one body per analysis invocation and consuming settled lifecycle annotations;
+neither later decision blocks that first deliverable. See the proposal's
+[migration plan](provenance-normalization-proposal.md#migration-plan) and
+[validation criteria](provenance-normalization-proposal.md#validation-and-completion-criteria).
+
+### Normalization proposal review (2026-10-25)
+
+Both review findings are addressed in the draft: transfers reference checked
+lifecycle operations and consult current summaries for
+[custom copy hooks](provenance-normalization-proposal.md#custom-copy-hooks),
+and the representation distinguishes a captured receiver from its source binding
+for a [delayed reborrow](provenance-normalization-proposal.md#delayed-reborrow-of-a-captured-receiver).
+The migration and validation criteria now cover nested hooks, summary changes,
+and receiver reassignment during later argument evaluation. Implementation and
+validation remain pending; these findings concerned missing proposal contracts,
+not established compiler divergences.
+
 ## Package and import versioning
 
 Should import paths encode package versions? And should a package declaration remain mandatory in every file, when every file in a directory must name the same package anyway, or is it ceremony? The current version requires the declaration and leaves dependency versions to the build system or package manager. A future package design may need reproducible version selection without making source imports depend on a particular registry.

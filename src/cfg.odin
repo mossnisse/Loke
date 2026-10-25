@@ -237,6 +237,7 @@ Prov_State :: struct {
 	reborrows:      [dynamic]Prov_Reborrow,
 	entry_defs:     [dynamic]Prov_Entry_Def,
 	root_by_symbol: map[Symbol_Id]Root_Id,
+	root_by_storage: map[Written_Storage]Root_Id,
 	slot_by_symbol: map[Symbol_Id]int,
 	// What a non-owning binding (a loop element, a switch payload over a place)
 	// views: every access and borrow through it also uses the source.
@@ -302,7 +303,7 @@ Prov_State :: struct {
 	callee_expr:   Expr,
 	// design.md "Allocator regions and region provenance".
 	region_of:       map[Symbol_Id]Region_Set,
-	region_content:  map[Symbol_Id][]Prov_Region_Content,
+	region_content:  map[Written_Storage][]Prov_Region_Content,
 	// Borrowed payload bindings name storage in their switch subject.
 	region_aliases:  map[Symbol_Id][]Prov_Region_Alias,
 	// Owned operands held while later operands are evaluated.
@@ -411,6 +412,7 @@ build_flow_pass :: proc(
 		graph.prov_slots = make([dynamic]Prov_Slot, allocator)
 		graph.entry_defs = make([dynamic]Prov_Entry_Def, allocator)
 		graph.root_by_symbol = make(map[Symbol_Id]Root_Id, 8, allocator)
+		graph.root_by_storage = make(map[Written_Storage]Root_Id, 4, allocator)
 		graph.slot_by_symbol = make(map[Symbol_Id]int, 8, allocator)
 		graph.view_loans = make(map[Symbol_Id][]int, 8, allocator)
 		graph.step_views = make(map[Symbol_Id]bool, 8, allocator)
@@ -427,7 +429,7 @@ build_flow_pass :: proc(
 		graph.effect_stores = make([dynamic]Effect_Store, allocator)
 		graph.thread_spawns = make([dynamic]Thread_Spawn, allocator)
 		graph.region_of = make(map[Symbol_Id]Region_Set, 8, allocator)
-		graph.region_content = make(map[Symbol_Id][]Prov_Region_Content, 8, allocator)
+		graph.region_content = make(map[Written_Storage][]Prov_Region_Content, 8, allocator)
 		graph.region_aliases = make(map[Symbol_Id][]Prov_Region_Alias, 4, allocator)
 		graph.held_owners = make([dynamic]Expr, allocator)
 		graph.provider_parents = make(map[Symbol_Id]Region_Set, 4, allocator)
@@ -2386,7 +2388,7 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 			if content := prov_temp_content(graph, v.type); len(content) > 0 {
 				content = prov_composite_content(graph, v, content)
 				if v.backing != INVALID_TYPE {
-					return prov_slice_literal(graph, v.span, carrier_is_mutable(graph.k.c, v.type), content)
+					return prov_slice_literal(graph, v, carrier_is_mutable(graph.k.c, v.type), content)
 				}
 				return content
 			}

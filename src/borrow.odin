@@ -84,6 +84,8 @@ root_kind_text :: proc(kind: Root_Kind) -> string {
 Prov_Root :: struct {
 	kind:   Root_Kind,
 	symbol: Symbol_Id,
+	// Anonymous backing storage, keyed independently of this pass's root ID.
+	storage: Written_Storage,
 	span:   Span,
 	name:   string,
 	// `Param`: which borrowed parameter, for substitution at a direct call.

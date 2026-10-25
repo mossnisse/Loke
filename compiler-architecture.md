@@ -248,6 +248,9 @@ through locals and results. Union field steps identify variant indices, so
 success and error payloads have independent facts. Widening remaps region paths
 by variant label, including through explicit conversions. Queries follow temporary
 field projections, constructors, success unwrapping, and switch bindings.
+Stored region content is keyed by `Written_Storage`, including anonymous backing
+arrays. Known indirect reads query the selected target path instead of joining
+unrelated fields; unresolved alternatives retain the conservative fallback.
 Result contracts compare corresponding paths and fact kinds, keeping backing
 dependencies separate from payload dependencies. `Region_Query` selects
 all regions, owner regions, or the value's own backing dependency. Shapes stop
@@ -288,7 +291,11 @@ targets. Borrowed payload aliases retain the known destinations and an optional
 final `NO_ROOT` alternative. Region reads and writes follow the known aliases
 and also retain a local snapshot for unresolved storage. Escape checks enforce
 both the known destinations' lifetime constraints and the unresolved fallback.
-A source capable of holding writable carriers contributes an unknown alternative
+Anonymous destinations resolve to provenance roots through `root_by_storage`;
+borrowed payload aliases retain those roots, and reads of binding targets follow
+the same chain as region writes and callee invalidation.
+Read-only carriers also retain targets so region reads can follow their storage.
+A source capable of holding checked carriers contributes an unknown alternative
 when it has no target facts, including a global carrier read. Indirect loads
 apply this rule per possible source, so one known source cannot hide another
 source's missing facts. `prov_constructor_alias_payload` identifies union and
@@ -313,6 +320,11 @@ element targets in that storage. An implicit view records the address of its
 owner storage; a box view adds the payload step. Copies and reslices therefore
 follow the same storage facts, including unresolved alternatives introduced by
 a call through another view. Anonymous storage identities survive graph passes.
+`prov_borrowed_storage` shares storage discovery between target lookup,
+source-target recording, and call invalidation. Unboxing removes its source
+payload step; checked variant extraction replaces the source variant step with
+the result's success step, retaining an unresolved alternative for a copied
+mutable payload. Both stored values and direct arguments use these projections.
 Call processing (`prov_call_written_aliases`) adds unresolved alternatives to
 carrier storage the writable parameter contract may replace. It follows known
 nested targets and borrowed payload aliases, distinguishes read-only storage
@@ -336,8 +348,12 @@ the actual destination.
 Temporary-provider queries allocate an identity;
 only walking the handle call registers an evaluated provider to end at the
 statement boundary. A borrowed temporary root also records its managed owner
-and original type, so views and erasure retain its regions. Cleanup traversal
-pops registrations as they run and restores them for other exits; an earlier
+and original type, so views and erasure retain its regions. Anonymous storage
+shares the real temporary root and installs its initial regions, including a
+slice literal's element regions. Later stored owners remain live until that
+storage's cleanup. Reset checks merge those stored dependencies with the
+temporary's original owner dependencies, preserving the allocator-handle filter.
+Cleanup traversal pops registrations as they run and restores them for other exits; an earlier
 reset therefore sees only owners whose cleanup is still pending. Alternative
 expression branches keep their temporary registrations apart and merge only
 continuing branches. `emit_return_cleanups` excludes discarded expression

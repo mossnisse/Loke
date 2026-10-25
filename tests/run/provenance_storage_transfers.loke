@@ -1,0 +1,195 @@
+// design.md "Allocator regions and region provenance": anonymous storage preserves
+// owner lifetimes without conflating allocator handles or read-only sibling carriers.
+package main;
+import "core:mem";
+import "core:fmt";
+
+kept: Option([dynamic]string);
+kept_items: [dynamic]string;
+Wrapper :: struct { pointer: ^mut ^mut Option([dynamic]string) }
+Read_Only :: struct { pointer: ^ ^mut Option([dynamic]string) }
+Mixed :: struct { first: ^ ^mut Option([dynamic]string), second: ^mut ^mut Option([dynamic]string) }
+Outer :: struct { payload: Option(Wrapper) }
+retarget_mut :: proc(wrapper: ^mut Wrapper) { wrapper.pointer^ = &mut kept; }
+retarget_read :: proc(wrapper: ^Wrapper) { wrapper.pointer^ = &mut kept; }
+retarget_value :: proc(wrapper: Wrapper) { wrapper.pointer^ = &mut kept; }
+inspect_read :: proc(wrapper: ^mut Read_Only) {}
+inspect_mixed :: proc(wrapper: Mixed) {}
+append_default :: proc(pointer: ^mut Option([dynamic]string), mark: int) {
+	switch (pointer^) {
+	case .some(&mut values): values.append(fmt.to_string(mem.default_allocator(), mark));
+	case .none:
+	}
+}
+
+borrowed_mut :: proc() {
+	local: Option([dynamic]string) = .none;
+	pointer := &mut local;
+	holders := []mut Option(Wrapper){.some(Wrapper{&mut pointer})};
+	switch (holders[0]) { case .some(&mut wrapper): retarget_mut(&mut wrapper); case .none: }
+	append_default(pointer, 1);
+}
+
+borrowed_read :: proc() {
+	local: Option([dynamic]string) = .none;
+	pointer := &mut local;
+	holders := []mut Option(Wrapper){.some(Wrapper{&mut pointer})};
+	switch (holders[0]) { case .some(&mut wrapper): retarget_read(&wrapper); case .none: }
+	append_default(pointer, 2);
+}
+
+borrowed_value :: proc() {
+	local: Option([dynamic]string) = .none;
+	pointer := &mut local;
+	holders := []mut Option(Wrapper){.some(Wrapper{&mut pointer})};
+	switch (holders[0]) { case .some(&mut wrapper): retarget_value(wrapper); case .none: }
+	append_default(pointer, 3);
+}
+
+borrowed_nested :: proc() {
+	local: Option([dynamic]string) = .none;
+	pointer := &mut local;
+	holders := []mut Option(Outer){.some(Outer{.some(Wrapper{&mut pointer})})};
+	switch (holders[0]) {
+	case .some(&mut outer):
+		switch (outer.payload) { case .some(&mut wrapper): retarget_mut(&mut wrapper); case .none: }
+	case .none:
+	}
+	append_default(pointer, 4);
+}
+
+unboxed_stored :: proc() {
+	local: Option([dynamic]string) = .none;
+	pointer := &mut local;
+	boxed := box(Wrapper{&mut pointer});
+	wrapper := move(boxed).unbox();
+	retarget_value(wrapper);
+	append_default(pointer, 5);
+}
+
+unboxed_inline :: proc() {
+	local: Option([dynamic]string) = .none;
+	pointer := &mut local;
+	boxed := box(Wrapper{&mut pointer});
+	retarget_value(move(boxed).unbox());
+	append_default(pointer, 6);
+}
+
+checked_stored :: proc() {
+	local: Option([dynamic]string) = .none;
+	pointer := &mut local;
+	optional: Option(Wrapper) = .some(Wrapper{&mut pointer});
+	wrapper := optional.as(.some) or_else return;
+	retarget_value(wrapper);
+	append_default(pointer, 7);
+}
+
+checked_inline :: proc() {
+	local: Option([dynamic]string) = .none;
+	pointer := &mut local;
+	optional: Option(Wrapper) = .some(Wrapper{&mut pointer});
+	retarget_value(optional.as(.some) or_else return);
+	append_default(pointer, 8);
+}
+
+borrowed_read_only :: proc() {
+	arena := mem.Arena.init();
+	local: Option([dynamic]string) = .some(make([dynamic]string));
+	pointer := &mut local;
+	holders := []mut Option(Read_Only){.some(Read_Only{&pointer})};
+	switch (holders[0]) { case .some(&mut wrapper): inspect_read(&mut wrapper); case .none: }
+	switch (pointer^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 20));
+	case .none:
+	}
+	fmt.println(local);
+	drop(local);
+	free_all(arena.allocator());
+}
+extracted_read_only :: proc(checked: bool, mark: int) {
+	arena := mem.Arena.init();
+	local: Option([dynamic]string) = .some(make([dynamic]string));
+	other: Option([dynamic]string) = .none;
+	first := &mut local;
+	second := &mut other;
+	if (checked) {
+		optional: Option(Mixed) = .some(Mixed{&first, &mut second});
+		value := optional.as(.some) or_else return;
+		inspect_mixed(value);
+	} else {
+		boxed := box(Mixed{&first, &mut second});
+		value := move(boxed).unbox();
+		inspect_mixed(value);
+	}
+	switch (first^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), mark));
+	case .none:
+	}
+	fmt.println(local);
+	drop(local);
+	free_all(arena.allocator());
+}
+fill :: proc(allocator: Allocator, values: []mut Option([dynamic]string)) {
+	values[0] = .some([dynamic]string{fmt.to_string(allocator, 43)});
+}
+ended_storage :: proc(@(allocator_reset) allocator: Allocator) {
+	{
+		values := []mut Option([dynamic]string){.none};
+		fill(allocator, values);
+		fmt.println(values);
+	}
+	free_all(allocator);
+}
+build :: proc(allocator: Allocator) -> [dynamic]string {
+	values := []mut Option([dynamic]string){.none};
+	fill(allocator, values);
+	return values[0] or_else [dynamic]string{};
+}
+dropped_result :: proc() {
+	arena := mem.Arena.init();
+	value := build(arena.allocator());
+	fmt.println(value);
+	drop(value);
+	free_all(arena.allocator());
+}
+Data :: struct { allocator: Allocator, items: [dynamic]string }
+independent_handle :: proc() {
+	arena := mem.Arena.init();
+	values := []Data{Data{arena.allocator(), [dynamic]string{"stable"}}};
+	free_all(arena.allocator());
+	kept_items = values[0].items;
+	fmt.println(kept_items);
+}
+initial_view_copy :: proc(allocator: Allocator) -> [dynamic]string {
+	view: ^[dynamic]string = box([dynamic]string{fmt.to_string(allocator, 45)});
+	return view^;
+}
+dropped_initial_view_copy :: proc() {
+	arena := mem.Arena.init();
+	value := initial_view_copy(arena.allocator());
+	fmt.println(value);
+	drop(value);
+	free_all(arena.allocator());
+}
+main :: proc() {
+	kept = .some(make([dynamic]string));
+	borrowed_mut();
+	borrowed_read();
+	borrowed_value();
+	borrowed_nested();
+	unboxed_stored();
+	unboxed_inline();
+	checked_stored();
+	checked_inline();
+	fmt.println(kept);
+	borrowed_read_only();
+	extracted_read_only(false, 21);
+	extracted_read_only(true, 22);
+	{
+		arena := mem.Arena.init();
+		ended_storage(arena.allocator());
+	}
+	dropped_result();
+	dropped_initial_view_copy();
+	independent_handle();
+}

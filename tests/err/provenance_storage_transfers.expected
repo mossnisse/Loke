@@ -1,0 +1,39 @@
+L0536
+@21:27
+storage reached through a pointer or slice
+L0536
+@34:27
+storage reached through a pointer or slice
+L0536
+@47:27
+storage reached through a pointer or slice
+L0536
+@64:27
+storage reached through a pointer or slice
+L0536
+@78:27
+storage reached through a pointer or slice
+L0536
+@91:27
+storage reached through a pointer or slice
+L0536
+@105:27
+storage reached through a pointer or slice
+L0536
+@118:27
+storage reached through a pointer or slice
+L0537
+@130:2
+`this slice literal`
+L0537
+@136:2
+`this slice literal`
+L0537
+@147:2
+`values`
+L0537
+@153:2
+`this slice literal`
+L0537
+@163:2
+`values`
