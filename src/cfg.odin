@@ -7,7 +7,6 @@ package lokec
 
 import "core:fmt"
 import "core:mem"
-import "core:mem/virtual"
 import "core:slice"
 
 Block_Id :: distinct int
@@ -160,6 +159,10 @@ Flow_Graph :: struct {
 	by_symbol: map[Symbol_Id]int,
 	alloc:     mem.Allocator,
 	mode:      Flow_Mode,
+	effect_program: ^Prov_Effect_Program,
+	effect_depth: int,
+	replaying_facts: bool,
+	normalized_effects: ^Prov_Effect_Program,
 
 	// Nil in lifecycle mode, so a lifecycle walk cannot read what only the
 	// provenance walks build.
@@ -345,46 +348,14 @@ NO_BLOCK :: Block_Id(-1)
 // Built in the analysis arena, which the caller frees. Lifecycle mode returns
 // nil for a body with nothing to track; a provenance mode always builds one.
 build_flow_graph :: proc(k: ^Checker, literal: ^Expr_Proc, mode := Flow_Mode.Lifecycle) -> ^Flow_Graph {
-	allocator := k.c.analysis_allocator
 	if mode == .Lifecycle || literal == nil || literal.body == nil {
-		return build_flow_pass(k, literal, allocator, mode, nil)
+		return build_flow_pass(k, literal, k.c.analysis_allocator, mode, nil)
 	}
-	// design.md "Allocator regions and region provenance": region facts are
-	// flow-insensitive, but a pass reads them while it walks, so a fact written
-	// later in a loop body reaches an earlier read only on the next pass. Facts
-	// only grow, so the passes stop. A pass that added facts is reclaimed once
-	// they are copied out, so scratch holds one graph, not one per pass, and
-	// what it reported while walking is dropped, since the next pass reports it
-	// again.
-	carry_arena: virtual.Arena
-	defer virtual.arena_destroy(&carry_arena)
-	carry: ^Flow_Graph
-	seeded := 0
-	for {
-		temp := virtual.arena_temp_begin(&k.c.analysis_arena)
-		reported := len(k.c.diagnostics)
-		graph := build_flow_pass(k, literal, allocator, mode, carry)
-		weight := prov_region_weight(graph)
-		if weight == seeded {
-			virtual.arena_temp_ignore(temp)
-			return graph
-		}
-		truncate_diagnostics(k.c, reported)
-		free_all(virtual.arena_allocator(&carry_arena))
-		carry = prov_carry_regions(graph, virtual.arena_allocator(&carry_arena))
-		virtual.arena_temp_end(temp)
-		seeded = weight
-	}
+	return build_provenance_replay(k, literal, mode)
 }
 
-@(private = "file")
-build_flow_pass :: proc(
-	k: ^Checker,
-	literal: ^Expr_Proc,
-	allocator: mem.Allocator,
-	mode: Flow_Mode,
-	seed: ^Flow_Graph,
-) -> ^Flow_Graph {
+@(private)
+new_flow_graph :: proc(k: ^Checker, literal: ^Expr_Proc, allocator: mem.Allocator, mode: Flow_Mode, seed: ^Flow_Graph = nil, normalized_input: ^Prov_Input = nil) -> ^Flow_Graph {
 	if literal == nil || literal.body == nil {
 		return nil
 	}
@@ -408,7 +379,7 @@ build_flow_pass :: proc(
 	graph.propagated_errors = make(map[^Expr_Postfix][]int, 4, allocator)
 	if mode != .Lifecycle {
 		graph.prov = new(Prov_State, allocator)
-		graph.input = new_prov_input(allocator, seed != nil ? seed.input : nil)
+		graph.input = normalized_input != nil ? normalized_input : new_prov_input(allocator, seed != nil ? seed.input : nil)
 		graph.roots = make([dynamic]Prov_Root, allocator)
 		graph.loans = make([dynamic]Prov_Loan, allocator)
 		graph.prov_slots = make([dynamic]Prov_Slot, allocator)
@@ -449,6 +420,27 @@ build_flow_pass :: proc(
 	graph.break_block, graph.continue_block = NO_BLOCK, NO_BLOCK
 	graph.current = new_flow_block(graph)
 
+	return graph
+}
+
+@(private)
+build_flow_pass :: proc(
+	k: ^Checker,
+	literal: ^Expr_Proc,
+	allocator: mem.Allocator,
+	mode: Flow_Mode,
+	seed: ^Flow_Graph,
+	program: ^Prov_Effect_Program = nil,
+	normalized: ^Prov_Effect_Program = nil,
+) -> ^Flow_Graph {
+	graph := new_flow_graph(k, literal, allocator, mode, seed, normalized != nil ? normalized.input : nil)
+	if graph == nil { return nil }
+	graph.effect_program = program
+	graph.normalized_effects = normalized
+	if normalized != nil {
+		for key, value in normalized.operator_calls { graph.operator_calls[key] = value }
+	}
+
 	// Parameters live in a scope outside the body's, so a `move` parameter's
 	// cleanup is the outermost.
 	enter_flow_scope(graph)
@@ -456,6 +448,7 @@ build_flow_pass :: proc(
 		track_move_parameters(graph, literal)
 	} else {
 		prov_bind_parameters(graph, literal)
+		if program != nil { program.entry = prov_carry_regions(graph, program.alloc, copy_input = false) }
 		if seed != nil {
 			prov_seed_regions(graph, seed)
 		}
@@ -469,7 +462,7 @@ build_flow_pass :: proc(
 	return len(graph.tracked) == 0 ? nil : graph
 }
 
-@(private = "file")
+@(private)
 new_flow_block :: proc(graph: ^Flow_Graph) -> Block_Id {
 	block := new(Flow_Block, graph.alloc)
 	block.events = make([dynamic]Flow_Event, graph.alloc)
@@ -2077,7 +2070,7 @@ prov_bind_case_name :: proc(
 ) {
 	// Over a place, the binding is the stored payload, not a copy of it.
 	// A deferred switch can be expanded more than once in the same graph.
-	delete_key(&graph.region_aliases, symbol)
+	prov_forget_region_binding(graph, symbol)
 	prov_bind_value(graph, symbol, sources, span, copies = consumes)
 	prov_bind_case_region(graph, symbol, s.subject, variants, slot)
 	// A place subject keeps its payload, so the binding views its storage;
@@ -2113,6 +2106,7 @@ track_case_binding :: proc(graph: ^Flow_Graph, symbol: Symbol_Id, consumes: bool
 // carrier slots holding the loans its value carries.
 @(private)
 walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
+	assert(!graph.replaying_facts, "fact replay evaluated source syntax")
 	prov := graph.mode != .Lifecycle
 	if prov {
 		prov_note_proc_value(graph, e)

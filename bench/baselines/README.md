@@ -127,3 +127,74 @@ outputs matched. These measurements include timing noise and cover the complete
 front end rather than provenance alone. Stage 3 still copies normalized input
 between graph passes; stage 4 must measure the complete replay boundary against
 all three records before making performance claims.
+
+### Fact replay (stage 4)
+
+[provenance-normalization-stage4.json](provenance-normalization-stage4.json)
+records the stage 4 working tree following `d957b5c`, measured on 2026-10-25
+with the same machine, tools, repeat count, and unchanged workload source hashes
+as the preceding records. No test suite or other compiler workload ran during
+capture. Compiler and LSP SHA-256 values were:
+
+- `lokec.exe`:
+  `c147692ef85191c7fa692f6fa7e532c799b32b6df7cf48a317d848b22ea0f563`.
+- `loke-lsp.exe`:
+  `1b04c7a3429d2b461f9b6b6b8f7fa49e5424ef8681ae2c5e85f08a59dd63df33`.
+
+```powershell
+.\perf.ps1 -Baseline bench/baselines/provenance-normalization-stage3.json -Out bench/baselines/provenance-normalization-stage4.json
+```
+
+| Workload | Initial / stage 3 / stage 4 front end (ms) | Stage 3 / stage 4 compiler peak (MB) |
+| --- | ---: | ---: |
+| `bench/provenance.loke` | 36 / 41 / 41 | 12.3 / 12.6 |
+| `bench/workspace` | 404 / 439 / 461 | 63.6 / 65.4 |
+| `examples/corpus_runner.loke` | 648 / 760 / 813 | 98.3 / 101.5 |
+
+The selected front-end changes versus stage 3 are 0%, +5%, and +7%; compiler
+peak working set increases by 2–3%. Workspace LSP measurements were open 620 ms,
+root edit 463 ms, library edit 550 ms, completion 449 ms, and peak working set
+108.5 MB. Open time was unchanged; the other operations increased by 6–11%.
+All 24 records completed, executable sizes stayed unchanged, and benchmark
+outputs matched. These observations include timing noise. The remaining final
+event bridge is still included in the cost; this record establishes the next
+migration stage's comparison point, rather than demonstrating a general speedup.
+
+The [first stage 4 capture](provenance-normalization-stage4-initial.json) is kept
+as evidence of a performance problem found during this work. It recorded selected
+front-end times of 50, 667, and 1048 ms, respectively, and workspace LSP root-edit
+time of 642 ms. That build used compiler SHA-256
+`e5d561194d101879a481ff5711c59d3f4067b8e1370f7effecf693a451d880bd`
+and LSP SHA-256
+`667cab4e4e4f333d668488773be3344eb7bd9db3ec180d575812fede91e8c55d`.
+Recording was trimmed to provenance-relevant values and writes. Replay now starts
+from construction facts, zero-weight graphs reuse their initial events, and
+the event bridge shares normalized metadata until it needs a private extension.
+Those changes remove a redundant fact round per body and most of the initial
+overhead without changing the regression corpus.
+
+The [profiling probe](../provenance_profile/main.odin) records whole-check costs
+across all summary visits, using fresh sessions and keeping all phase figures
+from the fastest of three complete checks. Capture command:
+
+```powershell
+odin run bench/provenance_profile -- bench/provenance.loke bench/workspace examples/corpus_runner.loke > bench/baselines/provenance-normalization-stage4-profile.json
+```
+
+| Workload | Body builds | Fact replays | Normalize / replay / materialize (ms) | Peak sampled build arena bytes |
+| --- | ---: | ---: | ---: | ---: |
+| `bench/provenance.loke` | 109 | 97 | 6.1 / 3.2 / 4.1 | 263593 |
+| `bench/workspace` | 1554 | 726 | 122.8 / 26.9 / 59.6 | 421614 |
+| `examples/corpus_runner.loke` | 1965 | 1111 | 196.8 / 44.5 / 110.3 | 1450578 |
+
+The [final probe record](provenance-normalization-stage4-profile.json) also keeps
+total checking time, excluding LLVM emission. It is therefore a different
+measurement from `perf.ps1`'s front-end column. Arena figures include construction,
+carry, replay, and final graph storage sampled at phase boundaries; they exclude
+the subsequent borrow solver and are neither committed virtual memory nor process
+working set. The construction graph remains allocated for the body's build to
+share its metadata. The
+[initial probe](provenance-normalization-stage4-initial-profile.json) recorded
+206 / 2280 / 3076 fact replays and checking times of 36.5 / 560.0 / 901.2 ms for
+the same workloads; the final probe records 27.9 / 364.2 / 647.8 ms. These counters
+locate the costs still paid by normalization and final event materialization.

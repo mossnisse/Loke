@@ -10,7 +10,7 @@ Prov_Value_Origin :: struct {
 	type, view, erased, widened: Type_Id,
 }
 
-@(private = "file")
+@(private)
 prov_open_value :: proc(graph: ^Flow_Graph, id: Value_Id) -> Prov_Value_Origin {
 	value := graph.input.values[int(id)]
 	base := expr_base(value.origin)
@@ -19,7 +19,7 @@ prov_open_value :: proc(graph: ^Flow_Graph, id: Value_Id) -> Prov_Value_Origin {
 	return saved
 }
 
-@(private = "file")
+@(private)
 prov_close_value :: proc(saved: Prov_Value_Origin) {
 	saved.base.type, saved.base.view_from, saved.base.erased_from, saved.base.widened_from = saved.type, saved.view, saved.erased, saved.widened
 }
@@ -40,13 +40,7 @@ prov_value_aliases :: proc(graph: ^Flow_Graph, id: Value_Id) -> []Written_Alias 
 	value := graph.input.values[int(id)]
 	transfer := graph.input.transfers[id]
 	if transfer == nil {
-		saved := prov_open_value(graph, id)
-		defer prov_close_value(saved)
-		aliases := prov_written_aliases_at(graph, value.origin)
-		if len(aliases) == 0 && prov_alias_source_is_unknown(graph.k.c, value.origin) {
-			return slice.clone([]Written_Alias{{}}, graph.alloc)
-		}
-		return aliases
+		return prov_read_value_aliases(graph, id)
 	}
 	parts: []Prov_Component
 	single: [1]Prov_Component

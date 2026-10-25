@@ -470,6 +470,11 @@ checklist.
 
 ### Changed
 
+- Compiler provenance now saturates target and allocator-region facts by
+  replaying frozen per-body operations. Checked call inputs retain argument
+  order and delayed receiver captures; final borrow, reset, cleanup, and task
+  events are built once after those facts settle.
+
 - Edited the [language specification](design.md#contents) for clarity and
   concision, separating rules from exceptions and consolidating repeated
   explanations. Language behavior, section headings, and examples are unchanged.

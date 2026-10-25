@@ -607,6 +607,8 @@ impl Held {
         return .ok(Held{self.values.clone(allocator), self.view});
     }
 }
+
+
 Nested :: struct { held: Held }
 hooked :: proc(input: Nested) -> Nested { return input.clone(); }
 main :: proc() {}`) { return }
@@ -635,4 +637,147 @@ main :: proc() {}`) { return }
 	again := prov_input_transfer(graph, ret.value.expr)
 	testing.expect(t, len(graph.input.transfers) == count && again.(Prov_Transfer_Forward).component.source == transfer.(Prov_Transfer_Forward).component.source,
 	               "summary growth changed the normalized transfer or its source identity")
+}
+
+// design.md "Allocator regions and region provenance": an earlier read sees
+// allocator facts written later, through arbitrarily many local forwarding steps.
+@(test)
+normalization_effect_fixed_point_contract :: proc(t: ^testing.T) {
+	source :: `package main;
+chain :: proc(allocator: Allocator) {
+    first: Allocator = {};
+    second: Allocator = {};
+    third: Allocator = {};
+    contents: [dynamic]int = {};
+    for (i := 0; i < 2; i += 1) {
+        contents = make([dynamic]int, 1, first);
+        first = second;
+        second = third;
+        third = allocator;
+    }
+    assert(contents.len() == 1);
+}
+main :: proc() {}`
+	p, baseline: Checked
+	defer destroy_checked(&p)
+	defer destroy_checked(&baseline)
+	if !normalization_checked(t, &p, source) || !normalization_checked(t, &baseline, source) { return }
+	k, old_k: Checker
+	graph := normalization_graph(t, &k, &p, "chain")
+	body := normalization_body(t, &baseline, "chain")
+	if graph == nil || body == nil { return }
+	old_k.c = &baseline.c
+	old := normalization_legacy_graph(&old_k, body, .Prov_Diagnose)
+	current := prov_region_for_symbol(graph, normalization_symbol(t, &p, "contents"))
+	previous := prov_region_for_symbol(old, normalization_symbol(t, &baseline, "contents"))
+	testing.expect(t, len(current.params) > 0 && current.params[0], "the replay stopped before the forwarding chain reached the owner")
+	testing.expect_value(t, current.default, previous.default)
+	testing.expect_value(t, current.unknown, previous.unknown)
+	testing.expect(t, slice.equal(current.params, previous.params), "operation replay disagrees with the independent AST fixed point")
+	program := graph.normalized_effects
+	testing.expect(t, program != nil && program.input.frozen && program.replays >= 4, "the loop did not saturate one frozen operation program")
+}
+
+// design.md "Evaluation order", "Splitting a mutable slice": checked call
+// descriptions retain source ordering and an independent receiver capture.
+@(test)
+normalization_call_input_contract :: proc(t: ^testing.T) {
+	p: Checked
+	defer destroy_checked(&p)
+	if !normalization_checked(t, &p, `package main;
+sum :: proc(left: int, right: int) -> int { return left + right; }
+calls :: proc(receiver: []mut int) -> int {
+    named := sum(right = 2, left = 1);
+    halves := receiver.split_at_mut(receiver.len() / 2);
+    return named + halves.left.len() + halves.right.len();
+}
+main :: proc() {}`) { return }
+	k: Checker
+	graph := normalization_graph(t, &k, &p, "calls")
+	if graph == nil { return }
+	named := normalization_decl(t, &p, graph.literal, "named")
+	halves := normalization_decl(t, &p, graph.literal, "halves")
+	if named == nil || halves == nil { return }
+	call := prov_input_call(graph, named.values[0].(^Expr_Call))
+	testing.expect(t, len(call.order) == 2 && call.order[0] == 1 && call.order[1] == 0, "named arguments lost their written order")
+	testing.expect(t, call.direct && len(call.arguments) == 2 && call.arguments[0].type == TYPE_INT, "checked parameter metadata was reconstructed incorrectly")
+	split := prov_input_call(graph, halves.values[0].(^Expr_Call))
+	testing.expect(t, split.capture != 0 && graph.input.values[int(split.capture)].captured_from != 0,
+	               "the checked split call lost its evaluated receiver capture")
+}
+
+// design.md "Allocator regions and region provenance": program replay reads
+// a nested hook's current summary without extending its checked input tables.
+@(test)
+normalization_effect_summary_growth_contract :: proc(t: ^testing.T) {
+	p: Checked
+	defer destroy_checked(&p)
+	if !normalization_checked(t, &p, `package main;
+Held :: struct { values: [dynamic]int, view: []int }
+impl Held {
+    copy_held :: hook(copy) proc(self, allocator: Allocator) -> Result(Held, Allocator_Error) {
+        return .ok(Held{self.values.clone(allocator), self.view});
+    }
+}
+Nested :: struct { held: Held }
+hooked :: proc(input: Nested) -> Nested {
+    output := input.clone();
+    return move(output);
+}
+main :: proc() {}`) { return }
+	k: Checker
+	graph := normalization_graph(t, &k, &p, "hooked")
+	if graph == nil { return }
+	program := graph.normalized_effects
+	if !testing.expect(t, program != nil) { return }
+	values, storage, calls := len(program.input.values), len(program.input.storages), len(program.input.calls)
+	held := symbol_of(&p.c, normalization_symbol(t, &p, "Held")).type
+	hook := prov_input_copy_operation(graph, held).hook
+	original := p.c.result_summaries[hook]
+	defer p.c.result_summaries[hook] = original
+	growing: Proc_Summary
+	p.c.result_summaries[hook] = &growing
+	before_graph := prov_fact_graph(&k, graph.literal, .Prov_Summary, program, graph.alloc)
+	prov_seed_regions(before_graph, program.entry)
+	prov_replay_fact_operations(before_graph, program)
+	before := prov_region_for_symbol(before_graph, normalization_symbol(t, &p, "output"))
+	params := [2]bool{true, true}
+	growing.result.region = Region_Set{params = params[:]}
+	after_graph := prov_fact_graph(&k, graph.literal, .Prov_Summary, program, graph.alloc)
+	prov_seed_regions(after_graph, program.entry)
+	prov_replay_fact_operations(after_graph, program)
+	after := prov_region_for_symbol(after_graph, normalization_symbol(t, &p, "output"))
+	testing.expect(t, !before.default && (len(before.params) == 0 || !before.params[0]), "an empty hook summary supplied dependencies")
+	testing.expect(t, after.default && len(after.params) > 0 && after.params[0], "the replay did not read the grown hook summary")
+	testing.expect_value(t, len(program.input.values), values)
+	testing.expect_value(t, len(program.input.storages), storage)
+	testing.expect_value(t, len(program.input.calls), calls)
+	testing.expect(t, slice.contains(after_graph.summary_callees[:], hook), "replay lost the nested hook's dependency")
+}
+
+// design.md "Global write effects": an empty region fixed point still keeps
+// the construction graph's accesses and global effects.
+@(test)
+normalization_effect_empty_fixed_point_contract :: proc(t: ^testing.T) {
+	p: Checked
+	defer destroy_checked(&p)
+	if !normalization_checked(t, &p, `package main;
+global_value: int;
+write :: proc() { global_value = 3; }
+main :: proc() { write(); }`) { return }
+	k: Checker
+	graph := normalization_graph(t, &k, &p, "write")
+	if graph == nil { return }
+	program := graph.normalized_effects
+	if !testing.expect(t, program != nil && program.replays == 0, "a zero-weight construction graph should already be final") { return }
+	global_value := normalization_symbol(t, &p, "global_value")
+	written := false
+	for block in graph.blocks {
+		for event in block.prov {
+			if event.kind == .Access && event.root != NO_ROOT {
+				written ||= graph.roots[int(event.root)].symbol == global_value && event.access != .Read
+			}
+		}
+	}
+	testing.expect(t, written, "skipping fact replay discarded the global write event")
 }

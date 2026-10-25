@@ -42,6 +42,7 @@ Prov_Transfer :: union {
 
 prov_input_copy_operation :: proc(graph: ^Flow_Graph, type: Type_Id) -> Prov_Copy_Operation {
 	if operation, found := graph.input.copy_operations[type]; found { return operation }
+	prov_writable_input(graph)
 	operation := Prov_Copy_Operation{type = type, hook = lifecycle_of(graph.k.c, type).custom_try_clone}
 	if operation.hook != INVALID_SYMBOL {
 		// Inherent member symbols need not have proc_literal or a procedure
@@ -87,7 +88,10 @@ prov_input_transfer :: proc(graph: ^Flow_Graph, e: Expr) -> Prov_Transfer {
 	id := prov_input_value(graph, e)
 	if transfer, found := graph.input.transfers[id]; found { return transfer }
 	transfer := prov_describe_transfer(graph, e)
-	if transfer != nil { graph.input.transfers[id] = transfer }
+	if transfer != nil {
+		prov_writable_input(graph)
+		graph.input.transfers[id] = transfer
+	}
 	return transfer
 }
 

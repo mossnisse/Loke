@@ -1,0 +1,218 @@
+[
+  {
+    "program": "examples/aliasing.loke",
+    "input": "4e1c4480a8b03e0a",
+    "check_ms": 55.0,
+    "build_ms": 354.0,
+    "peak_mb": 13.0,
+    "exe_kb": 232.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/arena_pipeline.loke",
+    "input": "3ec9aa5d562f76c2",
+    "check_ms": 57.0,
+    "build_ms": 478.0,
+    "peak_mb": 16.1,
+    "exe_kb": 234.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/compile_time.loke",
+    "input": "a6e2eeb29e371a43",
+    "check_ms": 57.0,
+    "build_ms": 370.0,
+    "peak_mb": 13.5,
+    "exe_kb": 234.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/config_parser.loke",
+    "input": "9aa797aa91fa3501",
+    "check_ms": 115.0,
+    "build_ms": 461.0,
+    "peak_mb": 19.6,
+    "exe_kb": 238.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/corpus_runner.loke",
+    "input": "c2fdd371f8e9cf08",
+    "check_ms": 1048.0,
+    "build_ms": 5361.0,
+    "peak_mb": 107.6,
+    "exe_kb": 436.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/dice.loke",
+    "input": "a003f9c05b030684",
+    "check_ms": 375.0,
+    "build_ms": 937.0,
+    "peak_mb": 42.7,
+    "exe_kb": 247.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/game_of_life.loke",
+    "input": "8c01605cb4eaac42",
+    "check_ms": 49.0,
+    "build_ms": 1201.0,
+    "peak_mb": 12.6,
+    "exe_kb": 334.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/greeting.loke",
+    "input": "f4f618d566e22c95",
+    "check_ms": 625.0,
+    "build_ms": 1985.0,
+    "peak_mb": 67.2,
+    "exe_kb": 260.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/hello.loke",
+    "input": "c4cf66af675af63c",
+    "check_ms": 36.0,
+    "build_ms": 298.0,
+    "peak_mb": 11.5,
+    "exe_kb": 230.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/keys.loke",
+    "input": "82b245a9dfd929a5",
+    "check_ms": 236.0,
+    "build_ms": 636.0,
+    "peak_mb": 29.8,
+    "exe_kb": 240.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/lexer.loke",
+    "input": "dd3de8cb03f7786f",
+    "check_ms": 666.0,
+    "build_ms": 3690.0,
+    "peak_mb": 70.6,
+    "exe_kb": 364.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/orders.loke",
+    "input": "b462638f542f7b29",
+    "check_ms": 176.0,
+    "build_ms": 626.0,
+    "peak_mb": 23.8,
+    "exe_kb": 244.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/parallel.loke",
+    "input": "026dc2baa81cfa8d",
+    "check_ms": 96.0,
+    "build_ms": 430.0,
+    "peak_mb": 17.1,
+    "exe_kb": 236.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/shapes.loke",
+    "input": "bd0f06a20d9e2f1e",
+    "check_ms": 45.0,
+    "build_ms": 324.0,
+    "peak_mb": 12.5,
+    "exe_kb": 232.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/streaming.loke",
+    "input": "ecf2f82a5287c191",
+    "check_ms": 679.0,
+    "build_ms": 2380.0,
+    "peak_mb": 74.9,
+    "exe_kb": 250.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/timestamps.loke",
+    "input": "87004fd51e43a90e",
+    "check_ms": 446.0,
+    "build_ms": 1168.0,
+    "peak_mb": 48.5,
+    "exe_kb": 273.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/tokens.loke",
+    "input": "43992d785f9d8062",
+    "check_ms": 50.0,
+    "build_ms": 358.0,
+    "peak_mb": 13.3,
+    "exe_kb": 234.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/tour.loke",
+    "input": "24d31b9eca4c4e85",
+    "check_ms": 44.0,
+    "build_ms": 324.0,
+    "peak_mb": 12.6,
+    "exe_kb": 232.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/word_frequency.loke",
+    "input": "e8c6a407e03a5794",
+    "check_ms": 46.0,
+    "build_ms": 342.0,
+    "peak_mb": 13.4,
+    "exe_kb": 234.0,
+    "run_ms": null
+  },
+  {
+    "program": "bench/collections.loke",
+    "input": "0b71e7b40d82c23f",
+    "check_ms": 140.0,
+    "build_ms": 465.0,
+    "peak_mb": 20.8,
+    "exe_kb": 235.0,
+    "run_ms": 441.0
+  },
+  {
+    "program": "bench/nbody.loke",
+    "input": "8bfa0afb9954b1cd",
+    "check_ms": 100.0,
+    "build_ms": 398.0,
+    "peak_mb": 17.1,
+    "exe_kb": 233.0,
+    "run_ms": 355.0
+  },
+  {
+    "program": "bench/provenance.loke",
+    "input": "aea29dc98bf06986",
+    "check_ms": 50.0,
+    "build_ms": 320.0,
+    "peak_mb": 12.6,
+    "exe_kb": 230.0,
+    "run_ms": 6.0
+  },
+  {
+    "program": "bench/workspace",
+    "input": "089b94b6cd2099a1",
+    "check_ms": 667.0,
+    "build_ms": 1383.0,
+    "peak_mb": 69.7,
+    "exe_kb": 251.0,
+    "run_ms": 5.0
+  },
+  {
+    "program": "bench/workspace (loke-lsp)",
+    "input": "089b94b6cd2099a1",
+    "open_ms": 827.0,
+    "edit_ms": 642.0,
+    "library_edit_ms": 745.0,
+    "completion_ms": 647.0,
+    "server_peak_mb": 112.0
+  }
+]

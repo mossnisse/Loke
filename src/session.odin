@@ -110,6 +110,7 @@ check_session_incremental :: proc(s: ^Compilation_Session, input: string, docume
 @(private = "file")
 check_session_impl :: proc(s: ^Compilation_Session, input: string, documentation, incremental: bool) -> bool {
 	if !s.initialized || !s.configured { return false }
+	s.compiler.provenance_stats = {}
 	context.allocator = s.allocator
 	// Input may itself be borrowed from the preceding snapshot.
 	input_copy := strings.clone(input)

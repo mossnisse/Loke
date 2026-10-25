@@ -375,6 +375,7 @@ Compiler :: struct {
 	// Per-procedure ownership-analysis scratch, reserved once and reset after
 	// each body. Nothing built in it outlives `analyze_ownership`.
 	analysis_arena:       virtual.Arena,
+	provenance_stats: Prov_Replay_Statistics,
 	analysis_allocator:   mem.Allocator,
 	// Everything LLVM emission and the toolchain allocate: the backend builds its
 	// module from many short-lived strings and frees none of them individually.

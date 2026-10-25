@@ -1,0 +1,35 @@
+[
+  {
+    "program": "bench/provenance.loke",
+    "repeat": 3,
+    "check_ms": 36.4836000000000027,
+    "body_builds": 109,
+    "replay_passes": 206,
+    "normalization_ms": 10.4681999999999995,
+    "replay_ms": 5.0113000000000003,
+    "materialization_ms": 5.1848000000000001,
+    "peak_build_used_bytes": 197520
+  },
+  {
+    "program": "bench/workspace",
+    "repeat": 3,
+    "check_ms": 559.9583000000000084,
+    "body_builds": 1554,
+    "replay_passes": 2280,
+    "normalization_ms": 211.2785000000000082,
+    "replay_ms": 70.2347000000000037,
+    "materialization_ms": 105.9481999999999999,
+    "peak_build_used_bytes": 538000
+  },
+  {
+    "program": "examples/corpus_runner.loke",
+    "repeat": 3,
+    "check_ms": 901.2341999999999871,
+    "body_builds": 1965,
+    "replay_passes": 3076,
+    "normalization_ms": 314.4126999999999725,
+    "replay_ms": 107.4240999999999957,
+    "materialization_ms": 166.2709999999999866,
+    "peak_build_used_bytes": 1250512
+  }
+]

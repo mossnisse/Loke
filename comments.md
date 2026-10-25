@@ -1756,3 +1756,20 @@ instead of a universal child traversal. Each avoids duplicating facts or visitin
 positions that a particular analysis should ignore. Implementation details belong
 with the [semantic architecture](compiler-architecture.md#semantic-architecture);
 historical fix lists and test counts are available in Git history.
+
+## Provenance replay and precise publication
+
+The [normalization migration](provenance-normalization-proposal.md#migration-plan)
+separates checked operations from growing target and allocator-region facts.
+Stage 4 first saturates the fact-changing operations, then builds the final loan,
+reset, cleanup, and task events with settled destinations. Borrowed payload
+publication can resolve more destinations on a later fact round; freezing its
+first loan-event expansion would preserve an incomplete set or the wrong
+replacement precision. Keeping a final event bridge preserves the existing
+solver behavior while that event vocabulary migrates in stage 5.
+
+The frozen input is shared within one concrete body build. Whole-program summary
+visits still rebuild the body, so retaining normalized bodies across those visits
+remains a measured later decision. The
+[profiling records](bench/baselines/README.md#fact-replay-stage-4) distinguish
+normalization, fact replay, and the remaining event materialization cost.

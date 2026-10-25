@@ -124,10 +124,13 @@ effects. Graphs serve analysis; LLVM still walks the AST directly.
 Each body/mode/summary round gets a fresh graph. Provenance construction preserves
 settled lifecycle annotations and makes no lasting compiler mutations; the only
 diagnostics it emits are a spawn's transfer checks (`prov_spawn_transfers`).
-Allocator-region facts are accumulated to a fixed point, so later writes can
-reach earlier reads. Copy retained facts before reclaiming each pass, and drop
-what a superseded pass reported, so each diagnostic appears once; only one
-graph needs to remain allocated at a time.
+Allocator-region and target facts are accumulated to a fixed point, so later
+writes can reach earlier reads. A construction walk records ordered fact
+operations; subsequent rounds replay those operations in disposable fact state.
+Only carried facts are copied between rounds. A final walk builds loan, reset,
+cleanup, and task events with settled destinations and regions. Construction and
+superseded-round diagnostics are discarded, so each diagnostic appears once.
+This final event bridge remains until stage 5 removes the remaining AST adapters.
 
 The [provenance normalization contract](provenance-normalization-contract.md#initial-operation-contracts)
 records the operation invariants, current AST-sensitive helper inventory,
@@ -141,9 +144,17 @@ constructors, views, payload extraction, widening, and checked copy/move modes.
 [provenance_transfer_facts.odin](src/provenance_transfer_facts.odin) applies those
 shared source/destination paths to current target and region facts. Copy
 operations retain checked hook identity and register dependencies on its current
-result summary, including hooks nested in generated copies. Graph construction
-still walks the AST for evaluation and effects; leaf call/place adapters expose
-and restore captured checked representations until stage 4 completes replay.
+result summary, including hooks nested in generated copies.
+[provenance_call.odin](src/provenance_call.odin) records checked parameter modes,
+result type, argument evaluation order, and a split receiver's independent
+capture. [provenance_read.odin](src/provenance_read.odin) classifies leaf alias
+reads before replay. [provenance_effect.odin](src/provenance_effect.odin) records
+and replays declarations, stores, borrowed bindings, provider transfers, call
+results/writes, and target invalidation. Replay uses frozen input tables and
+cannot walk source operands; checked leaf adapters still expose and restore a
+value's captured representation. See the
+[stage 4 contract](provenance-normalization-contract.md#stage-4-fact-replay-and-call-inputs)
+for that remaining boundary and the profiling tool.
 
 ### Allocation domains
 
@@ -338,10 +349,11 @@ type and record their element targets in that storage. An implicit view records 
 owner storage; a box view adds the payload step. Copies and reslices therefore
 follow the same storage facts, including unresolved alternatives introduced by
 a call through another view. Storage IDs and their normalized descriptions
-survive graph passes. Until operation replay replaces graph reconstruction,
-descriptions are copied with carried facts into the next pass, including owned
-paths and map-key strings; no description points into a reclaimed graph or
-carry arena.
+survive graph passes. Replay shares the frozen input instead of copying it with
+carried facts. The final event bridge copies it privately only if it creates
+additional implicit temporaries. Copies own their paths and map-key strings;
+no description points into a disposable fact or carry arena. Construction
+metadata and synthetic calls remain in the body's analysis arena.
 `prov_borrowed_storage` reads a normalized borrow's storage identity for target
 lookup, source-target recording, and call invalidation. Unboxing removes its source
 payload step; checked variant extraction replaces the source variant step with

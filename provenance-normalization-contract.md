@@ -4,7 +4,8 @@ Stage 1 of the [migration plan](provenance-normalization-proposal.md#migration-p
 established the semantic boundary and baseline. Stage 2 introduces shared
 storage IDs and canonical typed places in production. Stage 3 shares typed
 transfers between target and region construction. Evaluation and effect
-construction still walk the checked AST until stage 4 introduces operation replay.
+construction now record ordered fact operations for replay. A final loan/event
+walk and checked leaf adapters remain until stage 5 removes that bridge.
 
 The [language specification](design.md#borrows-and-lifetimes) remains
 authoritative. The baseline records current behavior, with an explicit
@@ -165,6 +166,93 @@ the default allocator without an unknown dependency. Citation and local-link
 checks also pass. Performance observations are recorded with the
 [baselines](bench/baselines/README.md#transfer-normalization-stage-3).
 
+## Stage 4: fact replay and call inputs
+
+[provenance_call.odin](src/provenance_call.odin) owns checked call descriptions:
+the selected contract, signature, parameter types/modes, result type, argument
+slots in source evaluation order, and receiver mode. A lending slice operation
+also references its captured receiver value. Capturing the receiver still occurs
+at its argument point; the reborrow begins after later operands have run.
+Parameter-order substitution and source-order evaluation remain distinct.
+
+[provenance_effect.odin](src/provenance_effect.odin) records a per-body sequence
+of fact-changing operations. These cover declarations, field stores, spread and
+map-key stores, borrowed case/element bindings, provider transfers/parents, call
+result regions and writes, and carrier-target invalidation. Each operation owns
+its checked value IDs, paths, block, and defer expansion. A high-level operation
+owns its nested writes, so the recording does not also capture resolved target
+sets or intermediate region facts. Rebinding a borrowed name is explicit for
+each case and defer expansion.
+
+The construction graph supplies the first round's facts and owns shared input
+metadata in the body's analysis arena. A zero-weight construction graph is
+already final, as in the former fixed point, so it needs neither replay nor
+another event walk. Otherwise replay starts from the construction facts instead
+of recomputing that first round. Synthetic operator calls are keyed by checked
+callee, result type, span, defer expansion, and evaluation mode, so the final
+event bridge can reuse their identities.
+Captured values retain their own defer expansion as well as their checked
+representation; preparing deferred reads in the wrong expansion would construct
+a different call or storage identity during replay.
+
+Input tables are frozen before replay. Each round starts fresh fact maps,
+stable storage metadata, and the previous round's carried facts, then applies
+the ordered operations. The same frozen input is shared by all rounds and the
+final event bridge; its paths and descriptions are no longer copied with every carry.
+Aliases and hook/callee result summaries are read anew. No replay invokes
+`walk_flow_expr`, and assertions reject discovery of new storage, values, call
+contracts, copy operations, transfer descriptions, or leaf alias reads. The
+small fact state omits lifecycle tracking and loan-solving buffers. Recording
+also omits scalar operands and operations that cannot change provenance facts,
+while retaining their source evaluation slots and effects.
+
+Once the monotone fact weight stops growing, a final graph walk materializes
+loan, reset, cleanup, global, and task events with those settled facts. This
+preserves precise publication through borrowed payloads, ordered held operands,
+normal/unwind cleanup, and the existing reset and task worklists. It is an
+explicit stage 5 bridge: checked leaf queries still read source metadata and
+temporarily expose captured representations. This stage removes repeated
+control-flow/source evaluation from the inner fixed point; it does not yet make
+all event construction independent of the checked AST. Whole-program summary
+visits continue to build one body at a time.
+The final bridge can create additional implicit hook temporaries; on its first
+such addition it takes a private copy of the input tables, preserving the frozen
+program. Fact replay cannot take that escape path or walk source operands.
+The [publication rationale](comments.md#provenance-replay-and-precise-publication)
+explains why the final event expansion follows settled destinations.
+
+Four inspection tests cover a forwarding chain requiring several fact rounds,
+named-argument order and delayed receiver capture, and replay after a nested
+hook summary grows without extending input tables, plus retention of global
+write events when a zero-weight graph skips replay. The forwarding test compares
+an independent checked program with the former AST fixed point, kept only in
+[provenance_replay_test.odin](src/provenance_replay_test.odin). Existing runtime
+and rejection suites remain the behavioral controls; no language behavior
+change is intended by this stage.
+
+The [profiling probe](bench/provenance_profile/main.odin) measures full checking,
+including repeated whole-program body visits. It reports body builds, fact
+replay passes, time in normalization/replay/final materialization, and the
+largest sampled arena usage during provenance graph construction. This is
+arena bytes used, including construction/carry/replay scratch, rather than
+process working set, committed virtual memory, or the borrow solver's later
+peak. Run from the repository root:
+
+```powershell
+odin run bench/provenance_profile -- bench/provenance.loke bench/workspace examples/corpus_runner.loke
+```
+
+Each workload is checked three times in fresh sessions; the probe keeps all
+phase figures from the fastest complete check. The process-level comparison
+continues to use `perf.ps1`; the
+[baseline notes](bench/baselines/README.md#fact-replay-stage-4) record both views.
+
+Stage 4 validation on 2026-10-25: the quick gate passed all 163 compiler unit
+tests, 43 LSP unit tests, and 60 integration checks after rebuilding both
+binaries. All 2205 spec citations resolve. The performance workflow completed
+all 24 records and checked benchmark output; the baseline notes record the
+remaining time and memory overhead alongside the initial stage 4 capture.
+
 ## AST-sensitive construction inventory
 
 This stage 1 inventory identifies the boundaries that stages 2–4 migrate.
@@ -223,9 +311,9 @@ The [measurement record](bench/baselines/provenance-normalization-before.json)
 and [measurement conditions](bench/baselines/README.md#provenance-normalization)
 make the baseline reproducible. The existing script records process wall time
 and peak working set, not isolated analysis time or arena high-water usage.
-Normalization time and replay counts are not yet available; collect them when
-the replay boundary exists rather than treating whole-process figures as
-analysis-only measurements.
+The initial record has no normalization timings or replay counts. Stage 4 adds
+those figures through the separate profiling probe above; whole-process figures
+remain distinct from analysis-only measurements.
 
 ## Verification and stage boundary
 

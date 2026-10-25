@@ -39,6 +39,7 @@ Prov_Place :: struct {
 Prov_Value :: struct {
 	origin: Expr,
 	type: Type_Id,
+	expansion: Defer_Expansion,
 	view_from, erased_from, widened_from: Type_Id,
 	place: Prov_Place,
 	// A captured value keeps its source binding but is not a later reload of it.
@@ -54,6 +55,7 @@ Prov_Input_Key :: struct {
 }
 
 Prov_Input :: struct {
+	frozen: bool,
 	storages: [dynamic]Prov_Storage,
 	storage_ids: map[Written_Storage]Storage_Id,
 	values: [dynamic]Prov_Value,
@@ -61,13 +63,24 @@ Prov_Input :: struct {
 	places: map[Prov_Input_Key]Prov_Place,
 	transfers: map[Value_Id]Prov_Transfer,
 	copy_operations: map[Type_Id]Prov_Copy_Operation,
+	calls: map[Prov_Input_Key]Prov_Call_Input,
+	synthetic_calls: map[Prov_Synthetic_Call_Key]^Expr_Call,
+	read_inputs: map[Value_Id]Prov_Read_Input,
 	// Preserve the bounded constant-map-key assignment along with cached paths.
 	map_key_entries: map[string]int,
 }
 
-// Metadata travels with the existing carried facts until stage 4 can build a
-// complete immutable operation body before replay. Clone every owned slice:
-// no input may point into a discarded pass or the disposable carry arena.
+// Replay has a fixed vocabulary. The final event bridge can still materialize
+// implicit hook temporaries; give it a private copy on the first such addition.
+prov_writable_input :: proc(graph: ^Flow_Graph) {
+	if !graph.input.frozen { return }
+	assert(!graph.replaying_facts, "fact replay discovered input absent from normalization")
+	graph.input = new_prov_input(graph.alloc, graph.input)
+}
+
+// Graph materialization and the test-only AST comparison clone input metadata;
+// fact replay shares one frozen body input. Clone every owned slice so copies
+// cannot point into a discarded construction pass or the carry arena.
 new_prov_input :: proc(allocator: mem.Allocator, seed: ^Prov_Input = nil) -> ^Prov_Input {
 	input := new(Prov_Input, allocator)
 	input.storages = make([dynamic]Prov_Storage, allocator)
@@ -77,6 +90,9 @@ new_prov_input :: proc(allocator: mem.Allocator, seed: ^Prov_Input = nil) -> ^Pr
 	input.places = make(map[Prov_Input_Key]Prov_Place, 8, allocator)
 	input.transfers = make(map[Value_Id]Prov_Transfer, 8, allocator)
 	input.copy_operations = make(map[Type_Id]Prov_Copy_Operation, 4, allocator)
+	input.calls = make(map[Prov_Input_Key]Prov_Call_Input, 4, allocator)
+	input.synthetic_calls = make(map[Prov_Synthetic_Call_Key]^Expr_Call, 2, allocator)
+	input.read_inputs = make(map[Value_Id]Prov_Read_Input, 4, allocator)
 	input.map_key_entries = make(map[string]int, 4, allocator)
 	if seed == nil {
 		append(&input.storages, Prov_Storage{})
@@ -95,6 +111,9 @@ new_prov_input :: proc(allocator: mem.Allocator, seed: ^Prov_Input = nil) -> ^Pr
 	}
 	for id, transfer in seed.transfers { input.transfers[id] = prov_clone_transfer(transfer, allocator) }
 	for type, operation in seed.copy_operations { input.copy_operations[type] = operation }
+	for key, input_call in seed.calls { input.calls[key] = prov_clone_call_input(input_call, allocator) }
+	for key, call in seed.synthetic_calls { input.synthetic_calls[key] = call }
+	for id, read in seed.read_inputs { input.read_inputs[id] = read }
 	for key, entry in seed.map_key_entries { input.map_key_entries[strings.clone(key, allocator)] = entry }
 	return input
 }
@@ -124,6 +143,7 @@ prov_storage_id :: proc(graph: ^Flow_Graph, source: Written_Storage) -> Storage_
 			return 0
 		}
 	}
+	prov_writable_input(graph)
 	id := Storage_Id(len(graph.input.storages))
 	append(&graph.input.storages, entry)
 	graph.input.storage_ids[key] = id
@@ -134,7 +154,7 @@ prov_storage :: proc(graph: ^Flow_Graph, id: Storage_Id) -> Prov_Storage {
 	return graph.input.storages[int(id)]
 }
 
-@(private = "file")
+@(private)
 prov_input_key :: proc(graph: ^Flow_Graph, e: Expr) -> Prov_Input_Key {
 	base := expr_base(e)
 	if base == nil { return {} }
@@ -146,8 +166,9 @@ prov_input_value :: proc(graph: ^Flow_Graph, e: Expr) -> Value_Id {
 	key := prov_input_key(graph, e)
 	if key.node == nil { return 0 }
 	if id, found := graph.input.value_ids[key]; found { return id }
+	prov_writable_input(graph)
 	id := Value_Id(len(graph.input.values))
-	append(&graph.input.values, Prov_Value{origin = e, type = key.type, view_from = key.view_from,
+	append(&graph.input.values, Prov_Value{origin = e, type = key.type, expansion = key.expansion, view_from = key.view_from,
 	                                    erased_from = key.erased_from, widened_from = key.widened_from})
 	graph.input.value_ids[key] = id
 	place := prov_input_place(graph, e)
@@ -159,6 +180,7 @@ prov_input_capture :: proc(graph: ^Flow_Graph, call: ^Expr_Call, source: Expr) -
 	key := prov_input_key(graph, call)
 	key.capture = true
 	if id, found := graph.input.value_ids[key]; found { return id }
+	prov_writable_input(graph)
 	from := prov_input_value(graph, source)
 	value := graph.input.values[int(from)]
 	value.captured_from = from
@@ -183,7 +205,10 @@ prov_input_place :: proc(graph: ^Flow_Graph, e: Expr) -> Prov_Place {
 	if place, found := graph.input.places[key]; found { return place }
 	place := prov_describe_place(graph, e)
 	place.type = key.type
-	if place.base != nil { graph.input.places[key] = place }
+	if place.base != nil {
+		prov_writable_input(graph)
+		graph.input.places[key] = place
+	}
 	return place
 }
 

@@ -31,7 +31,8 @@ for a [delayed reborrow](provenance-normalization-proposal.md#delayed-reborrow-o
 The migration and validation criteria now cover nested hooks, summary changes,
 and receiver reassignment during later argument evaluation. Stages 2–3 now cover
 capture identities, nested hook dependencies, and transfer replay after summary
-growth. Full call/effect replay remains stage 4; the separate
+growth. Stage 4 now freezes checked call inputs and replays fact-changing effects;
+the final loan/event and checked-metadata bridge remains for stage 5. The separate
 [receiver emission divergence](known-gaps.md#mutable-slice-splitting-reloads-a-rebound-receiver-during-emission)
 remains open.
 

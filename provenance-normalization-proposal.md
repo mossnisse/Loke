@@ -1,13 +1,15 @@
 # Proposal: normalized input for provenance and borrow analysis
 
-**Status:** stages 1–3 implemented, 2026-10-25. This proposes an internal compiler
+**Status:** stages 1–3 and stage 4's fact replay implemented, 2026-10-25. This proposes an internal compiler
 refactor; it does not change the language contract. The rules in
 [design.md](design.md#borrows-and-lifetimes) remain authoritative. The
 [stage 1 contract and baseline](provenance-normalization-contract.md#initial-operation-contracts)
 are recorded; [stage 2](provenance-normalization-contract.md#stage-2-storage-and-places)
 provides shared storage IDs and typed places. [Stage 3](provenance-normalization-contract.md#stage-3-transfers)
 shares typed transfer operations between target and region construction.
-Complete operation replay remains stage 4. Pending architectural decisions are tracked in
+[Stage 4](provenance-normalization-contract.md#stage-4-fact-replay-and-call-inputs)
+replays fact-changing effects over frozen input; the final loan/event bridge
+remains for stage 5. Pending architectural decisions are tracked in
 [Open questions](open-questions.md#normalized-input-for-provenance-analysis).
 
 ## Recommendation
@@ -353,7 +355,16 @@ copies/moves into shared component paths. Target recording and region propagatio
 consume those descriptions for stored values and direct arguments. The
 [implementation notes](provenance-normalization-contract.md#stage-3-transfers)
 record the remaining call/evaluation bridge and two separately reproduced reset
-checking fixes; full effect replay remains the next stage.
+checking fixes.
+
+Stage 4 records checked call inputs and ordered fact-changing operations once,
+then replays them as targets and regions grow. The input tables are frozen;
+replay cannot evaluate source operands or construct new values, storage, calls,
+or transfer descriptions. Reset, cleanup, task, and loan events are materialized
+once with settled facts through the remaining event bridge. The
+[stage 4 notes](provenance-normalization-contract.md#stage-4-fact-replay-and-call-inputs)
+state that boundary explicitly; removing the final walk and checked leaf adapters
+remains stage 5 work.
 
 | Stage | Change | Exit criterion |
 | --- | --- | --- |
