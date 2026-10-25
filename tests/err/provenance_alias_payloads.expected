@@ -1,0 +1,33 @@
+L0536
+@25:27
+`kept` (file-scope storage)
+L0536
+@36:27
+storage reached through a pointer or slice
+L0536
+@48:27
+storage reached through a pointer or slice
+L0536
+@61:27
+storage reached through a pointer or slice
+L0536
+@73:27
+storage reached through a pointer or slice
+L0536
+@85:27
+storage reached through a pointer or slice
+L0536
+@98:27
+storage reached through a pointer or slice
+L0536
+@111:27
+storage reached through a pointer or slice
+L0536
+@124:27
+storage reached through a pointer or slice
+L0536
+@137:27
+storage reached through a pointer or slice
+L0537
+@151:2
+region backing `local`

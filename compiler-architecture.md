@@ -284,12 +284,17 @@ the callee. Borrowed switch bindings alias their subject's payload paths for
 region reads, writes, and escape checks, including through nested bindings
 and known carrier targets. Carrier targets include an explicit unknown alternative
 (`Written_Alias.target == INVALID_SYMBOL`), which survives alongside known
-targets and prevents an incomplete set from becoming a resolved payload alias.
+targets. Borrowed payload aliases retain the known destinations and an optional
+final `NO_ROOT` alternative. Region reads and writes follow the known aliases
+and also retain a local snapshot for unresolved storage. Escape checks enforce
+both the known destinations' lifetime constraints and the unresolved fallback.
 A source capable of holding writable carriers contributes an unknown alternative
 when it has no target facts, including a global carrier read. Indirect loads
 apply this rule per possible source, so one known source cannot hide another
-source's missing facts. Union constructors forward their payload's carrier
-targets; copied payloads also retain an unresolved alternative. A known address
+source's missing facts. `prov_constructor_alias_payload` identifies union and
+box payloads for both source-target recording and call invalidation, including
+fallible boxes. Copied payloads also retain an unresolved alternative. Map
+literal keys and values keep separate target paths. A known address
 records only the storage it names, not the targets of carriers inside that
 storage. `prov_place_carrier` identifies the last carrier crossed to reach a
 place; alias reads load the carriers held in that storage separately. Targets
@@ -306,9 +311,12 @@ carrier storage the writable parameter contract may replace. It follows known
 nested targets and borrowed payload aliases, distinguishes read-only storage
 from writable carriers inside it, and handles literal payloads, optional
 payloads, pack elements, and spreads. A visited set distinguishes storage paths
-and write capabilities to terminate cycles. Literal fields and variants use
-their declared capabilities, including weakening, when following targets. Unknown and cyclic cursor targets
-retain an unresolved alias for the owner-escape check. Borrowed payload carrier
+and write capabilities to terminate cycles. Literal elements use
+`prov_element_type` for their declared capabilities. Selecting an `or_else`
+success payload strips its source variant steps while retaining the effective
+parameter capability; the fallback is checked with that capability too. Unknown
+and cyclic cursor targets retain an unresolved alias for the owner-escape check
+alongside any acyclic known targets. Borrowed payload carrier
 writes also publish into the subject's slots, resolving alias prefixes and translating union tag steps into
 carrier-shape wildcards; unknown storage uses the solver's `Publish` event.
 Publication preserves previous content at possible destinations. Uniqueness

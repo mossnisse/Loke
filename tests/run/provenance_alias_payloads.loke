@@ -1,0 +1,150 @@
+// design.md "Weakening and reborrows" and "Allocator regions and region provenance":
+// read-only success payloads keep their targets; writable payloads allow default owners.
+package main;
+import "core:mem";
+import "core:fmt";
+
+kept: Option([dynamic]string);
+Wrapper :: struct { pointer: ^mut ^mut Option([dynamic]string) }
+Read_Only :: struct { pointer: ^ ^mut Option([dynamic]string) }
+Mixed :: struct { first: ^ ^mut Option([dynamic]string), second: ^mut ^mut Option([dynamic]string) }
+inspect :: proc(pointer: ^ ^mut Option([dynamic]string)) {}
+inspect_mixed :: proc(wrapper: Mixed) {}
+inspect_box :: proc(wrapper: Box(Read_Only)) {}
+inspect_keys :: proc(pointers: map[^ ^mut Option([dynamic]string)]int) {}
+read_only_success :: proc() {
+	arena := mem.Arena.init();
+	value: Option([dynamic]string) = .some(make([dynamic]string));
+	pointer := &mut value;
+	maybe: Option(^mut ^mut Option([dynamic]string)) = .some(&mut pointer);
+	inspect(maybe or_else return);
+	inspect(Option(^mut ^mut Option([dynamic]string)).some(&mut pointer) or_else return);
+	nested: Option(Option(^mut ^mut Option([dynamic]string))) = .some(.some(&mut pointer));
+	inspect((nested or_else return) or_else return);
+	switch (pointer^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 10));
+	case .none:
+	}
+	fmt.println(value);
+	drop(value);
+	free_all(arena.allocator());
+}
+read_only_fallback :: proc() {
+	arena := mem.Arena.init();
+	value: Option([dynamic]string) = .some(make([dynamic]string));
+	pointer := &mut value;
+	maybe: Option(^mut ^mut Option([dynamic]string)) = .none;
+	inspect(maybe or_else &mut pointer);
+	switch (pointer^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 11));
+	case .none:
+	}
+	fmt.println(value);
+	drop(value);
+	free_all(arena.allocator());
+}
+read_only_fields :: proc() {
+	arena := mem.Arena.init();
+	value: Option([dynamic]string) = .some(make([dynamic]string));
+	other: Option([dynamic]string) = .none;
+	first := &mut value;
+	second := &mut other;
+	maybe: Option(Mixed) = .some(Mixed{&first, &mut second});
+	inspect_mixed(maybe or_else return);
+	switch (first^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 12));
+	case .none:
+	}
+	fmt.println(value);
+	drop(value);
+	free_all(arena.allocator());
+}
+read_only_containers :: proc() {
+	arena := mem.Arena.init();
+	value: Option([dynamic]string) = .some(make([dynamic]string));
+	pointer := &mut value;
+	wrapper := box(Read_Only{&pointer});
+	inspect_box(wrapper);
+	pointers := map[^ ^mut Option([dynamic]string)]int{&pointer = 0};
+	inspect_keys(pointers);
+	switch (pointer^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 13));
+	case .none:
+	}
+	fmt.println(value);
+	drop(value);
+	free_all(arena.allocator());
+}
+retarget_box :: proc(wrapper: Box(Wrapper)) { wrapper.pointer^ = &mut kept; }
+retarget_slice :: proc(pointers: []^mut ^mut Option([dynamic]string)) {
+	if (pointers.len() > 0) { pointers[0]^ = &mut kept; }
+}
+retarget_keys :: proc(pointers: map[^mut ^mut Option([dynamic]string)]int) {
+	foreach (pointer, _ in pointers) { pointer^ = &mut kept; break; }
+}
+append_default :: proc(pointer: ^mut Option([dynamic]string), value: int) {
+	switch (pointer^) {
+	case .some(&mut values): values.append(fmt.to_string(mem.default_allocator(), value));
+	case .none:
+	}
+}
+
+literal_slice :: proc() {
+	local: Option([dynamic]string) = .none;
+	pointer := &mut local;
+	retarget_slice([]^mut ^mut Option([dynamic]string){&mut pointer});
+	append_default(pointer, 1);
+}
+
+literal_dynamic :: proc() {
+	local: Option([dynamic]string) = .none;
+	pointer := &mut local;
+	retarget_slice([dynamic]^mut ^mut Option([dynamic]string){&mut pointer});
+	append_default(pointer, 2);
+}
+
+stored_box :: proc() {
+	local: Option([dynamic]string) = .none;
+	pointer := &mut local;
+	wrapper := box(Wrapper{&mut pointer});
+	retarget_box(wrapper);
+	append_default(pointer, 3);
+}
+
+inline_box :: proc() {
+	local: Option([dynamic]string) = .none;
+	pointer := &mut local;
+	retarget_box(box(Wrapper{&mut pointer}));
+	append_default(pointer, 4);
+}
+
+fallible_box :: proc() {
+	local: Option([dynamic]string) = .none;
+	pointer := &mut local;
+	maybe := try_box(Wrapper{&mut pointer});
+	retarget_box(maybe or_else return);
+	append_default(pointer, 5);
+}
+
+stored_map_key :: proc() {
+	local: Option([dynamic]string) = .none;
+	pointer := &mut local;
+	pointers := map[^mut ^mut Option([dynamic]string)]int{&mut pointer = 0};
+	retarget_keys(pointers);
+	append_default(pointer, 6);
+}
+
+main :: proc() {
+	read_only_success();
+	read_only_fallback();
+	read_only_fields();
+	read_only_containers();
+	kept = .some(make([dynamic]string));
+	literal_slice();
+	literal_dynamic();
+	stored_box();
+	inline_box();
+	fallible_box();
+	stored_map_key();
+	fmt.println(kept);
+}

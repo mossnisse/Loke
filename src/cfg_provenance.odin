@@ -293,11 +293,10 @@ prov_bind_case_region :: proc(graph: ^Flow_Graph, id: Symbol_Id, subject: Expr, 
 			}
 		}
 		aliases := make([dynamic]Prov_Region_Alias, graph.alloc)
-		cyclic := false
 		for place in places {
 			if prov_region_alias_reaches(graph, place.root, id) {
-				cyclic = true
-				break
+				uncertain = true
+				continue
 			}
 			for variant in variants {
 				path := prov_extend(graph, place.path, proj_field(variant))
@@ -305,13 +304,14 @@ prov_bind_case_region :: proc(graph: ^Flow_Graph, id: Symbol_Id, subject: Expr, 
 				append(&aliases, Prov_Region_Alias{place.root, path})
 			}
 		}
-		if len(aliases) > 0 && !cyclic && !uncertain {
-			graph.region_aliases[id] = aliases[:]
-			return
-		}
 		// Unknown storage, including a recursive cursor's next node, retains
-		// the escape restriction and a snapshot for reads. NO_ROOT marks it.
-		graph.region_aliases[id] = slice.clone([]Prov_Region_Alias{{root = NO_ROOT}}, graph.alloc)
+		// the escape restriction and a snapshot for reads. Keep known targets
+		// too: uncertainty cannot remove their lifetime constraints (design.md
+		// "Allocator regions and region provenance"). NO_ROOT is always last.
+		uncertain ||= len(aliases) == 0
+		if uncertain { append(&aliases, Prov_Region_Alias{root = NO_ROOT}) }
+		graph.region_aliases[id] = aliases[:]
+		if !uncertain { return }
 	}
 	if underlying_kind(graph.k.c, expr_base(subject).type) == .Union && len(variants) == 1 {
 		path := prov_extend(graph, nil, proj_field(variants[0]))
@@ -1982,12 +1982,12 @@ prov_empty_region :: proc(graph: ^Flow_Graph) -> Region_Set {
 // Region facts only grow, within a pass and from one pass to the next.
 @(private)
 prov_merge_region_of :: proc(graph: ^Flow_Graph, id: Symbol_Id, set: Region_Set) {
-	if aliases := graph.region_aliases[id]; len(aliases) > 0 && aliases[0].root != NO_ROOT {
+	if aliases := graph.region_aliases[id]; len(aliases) > 0 {
 		sym := symbol_of(graph.k.c, id)
 		for alias in aliases {
 			prov_define_region_content(graph, alias.root, alias.path, set, handle = !type_is_managed(graph.k.c, sym.type))
 		}
-		return
+		if aliases[len(aliases) - 1].root != NO_ROOT { return }
 	}
 	existing, found := graph.region_of[id]
 	if !found {
@@ -2080,11 +2080,11 @@ region_weight :: proc(set: Region_Set) -> int {
 @(private)
 prov_region_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id, viewed := false, owners := false) -> Region_Set {
 	out := prov_empty_region(graph)
-	if aliases := graph.region_aliases[id]; len(aliases) > 0 && aliases[0].root != NO_ROOT {
+	if aliases := graph.region_aliases[id]; len(aliases) > 0 {
 		for alias in aliases {
 			region_merge(&out, prov_region_content_at(graph, alias.root, alias.path, owners ? .Owners : .All))
 		}
-		return out
+		if aliases[len(aliases) - 1].root != NO_ROOT { return out }
 	}
 	sym := symbol_of(graph.k.c, id)
 	carrier := sym != nil && type_is_carrier(graph.k.c, sym.type) && !type_is_region_provider(graph.k.c, sym.type) && type_underlying(graph.k.c, sym.type) != TYPE_ALLOCATOR
@@ -2108,11 +2108,11 @@ prov_region_content_at :: proc(graph: ^Flow_Graph, root: Root_Id, path: []Proj_S
 		return out
 	}
 	id := graph.roots[int(root)].symbol
-	if aliases := graph.region_aliases[id]; len(aliases) > 0 && aliases[0].root != NO_ROOT {
+	if aliases := graph.region_aliases[id]; len(aliases) > 0 {
 		for alias in aliases {
 			region_merge(&out, prov_region_content_at(graph, alias.root, prov_concat_path(graph, alias.path, path), query))
 		}
-		return out
+		if aliases[len(aliases) - 1].root != NO_ROOT { return out }
 	}
 	if direct, found := graph.region_of[id]; found {
 		region_merge(&out, direct)
@@ -2179,7 +2179,8 @@ prov_destination_allocator :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> Region_
 }
 
 // A borrowed binding's region facts live at its subject's payload path.
-// NO_ROOT denotes unresolved carrier storage; its reads keep local snapshots.
+// An optional final NO_ROOT denotes unresolved carrier storage alongside the
+// known targets; its reads and writes also keep local snapshots.
 Prov_Region_Alias :: struct {
 	root: Root_Id,
 	path: []Proj_Step,
@@ -2202,11 +2203,11 @@ prov_define_region_content :: proc(
 	if id == INVALID_SYMBOL {
 		return
 	}
-	if aliases := graph.region_aliases[id]; len(aliases) > 0 && aliases[0].root != NO_ROOT {
+	if aliases := graph.region_aliases[id]; len(aliases) > 0 {
 		for alias in aliases {
 			prov_define_region_content(graph, alias.root, prov_concat_path(graph, alias.path, path), region, handle, own)
 		}
-		return
+		if aliases[len(aliases) - 1].root != NO_ROOT { return }
 	}
 	// A handle's entry stays apart from an owner's at the same path, so what
 	// backs an owner is still told from it (design.md "Allocator regions and
@@ -3490,9 +3491,8 @@ prov_type_at :: proc(c: ^Compiler, type: Type_Id, path: []Proj_Step) -> Type_Id 
 prov_region_escape_into :: proc(graph: ^Flow_Graph, span: Span, id: Symbol_Id, region: Region_Set, owner: string) -> bool {
 	for alias in graph.region_aliases[id] {
 		if alias.root == NO_ROOT {
-			return prov_region_escape_through(graph, span, region, owner)
-		}
-		if prov_region_escape_into(graph, span, graph.roots[int(alias.root)].symbol, region, owner) {
+			if prov_region_escape_through(graph, span, region, owner) { return true }
+		} else if prov_region_escape_into(graph, span, graph.roots[int(alias.root)].symbol, region, owner) {
 			return true
 		}
 	}
@@ -3871,24 +3871,27 @@ prov_note_alias_source :: proc(graph: ^Flow_Graph, local: Symbol_Id, value: Expr
 		prov_note_alias_source(graph, local, v.value, prefix)
 		return
 	case ^Expr_Call:
-		if construction, ok := v.operation.(Call_Union_Construct); ok {
-			if len(v.bound) > 0 && v.bound[0] != nil {
-				payload := prov_extend(graph, prefix, proj_wild())
-				prov_note_alias_source(graph, local, v.bound[0], payload)
-				if construction.clone && prov_type_reaches_mutable(graph.k.c, expr_base(v.bound[0]).type) {
-					prov_add_written_alias(graph, local, Written_Alias{target = INVALID_SYMBOL, path = payload})
-				}
+		if payload_value, _, depth, clones := prov_constructor_alias_payload(graph, v); payload_value != nil {
+			payload := prefix
+			for _ in 0 ..< depth { payload = prov_extend(graph, payload, proj_wild()) }
+			prov_note_alias_source(graph, local, payload_value, payload)
+			if clones && prov_type_reaches_mutable(graph.k.c, expr_base(payload_value).type) {
+				prov_add_written_alias(graph, local, Written_Alias{target = INVALID_SYMBOL, path = payload})
 			}
 			return
 		}
 	case ^Expr_Composite:
 		kind := underlying_kind(graph.k.c, v.type)
 		for element, index in v.elements {
+			if kind == .Map && element.key != nil {
+				entry := prov_extend(graph, prefix, prov_map_entry_step(graph, v.type, element.key))
+				prov_note_alias_source(graph, local, element.key, prov_extend(graph, entry, proj_field(PROJ_MAP_KEY)))
+			}
 			if element.value == nil {
 				continue
 			}
 			at := prefix
-			if kind == .Struct || kind == .Array {
+			if kind == .Struct || kind == .Array || kind == .Map {
 				if step, known := prov_element_prefix(graph, v, index); known {
 					at = prov_concat_path(graph, prefix, step)
 				}
@@ -3930,13 +3933,37 @@ prov_note_alias_source :: proc(graph: ^Flow_Graph, local: Symbol_Id, value: Expr
 	}
 }
 
+// Constructors retain payload targets below their owner/variant steps. Share
+// this with call invalidation so storing a constructor does not hide targets
+// that passing it inline exposes (design.md "Minimum provenance precision").
+@(private = "file")
+prov_constructor_alias_payload :: proc(graph: ^Flow_Graph, call: ^Expr_Call) -> (value: Expr, payload_type: Type_Id, depth: int, clones: bool) {
+	if len(call.bound) == 0 || call.bound[0] == nil { return }
+	c := graph.k.c
+	#partial switch operation in call.operation {
+	case Call_Union_Construct:
+		type := call.widened_from == INVALID_TYPE ? call.type : call.widened_from
+		if call.erased_from != INVALID_TYPE { type = call.erased_from }
+		payload := expr_base(call.bound[0]).type
+		if info := underlying_info(c, type); info != nil && info.kind == .Union && operation.index < len(info.variants) {
+			payload = info.variants[operation.index]
+		}
+		return call.bound[0], payload, 1, operation.clone
+	case Call_Allocation:
+		if sym := symbol_of(c, call.resolution.symbol); sym != nil && (sym.builtin == .Box_New || sym.builtin == .Try_Box) {
+			return call.bound[0], operation.type, operation.fallible ? 2 : 1, expression_is_borrowed_place(call.bound[0])
+		}
+	}
+	return
+}
+
 @(private = "file")
 prov_alias_source_is_unknown :: proc(c: ^Compiler, value: Expr) -> bool {
 	type := expr_base(value).type
 	if !carrier_is_mutable(c, type) && !prov_type_reaches_mutable(c, type) { return false }
 	// make's zero elements contain no incoming writable carriers.
 	if call, ok := value.(^Expr_Call); ok {
-		if allocation, allocates := call.operation.(Call_Allocation); allocates && !type_is_box(c, allocation.type) { return false }
+		if sym := symbol_of(c, call.resolution.symbol); sym != nil && (sym.builtin == .Make || sym.builtin == .Try_Make) { return false }
 	}
 	return true
 }
@@ -3992,9 +4019,12 @@ prov_call_written_aliases :: proc(graph: ^Flow_Graph, call: ^Expr_Call) {
 	}
 }
 
+// `unwrap` selects success-payload layers in the source while `parameter`
+// describes the selected value's effective capability, including weakening.
 @(private = "file")
 prov_forget_argument_aliases :: proc(
 	graph: ^Flow_Graph, argument: Expr, parameter: Type_Id, inout: bool, seen: ^[dynamic]Written_Alias_Visit,
+	unwrap := 0,
 ) {
 	if argument == nil { return }
 	c := graph.k.c
@@ -4010,34 +4040,30 @@ prov_forget_argument_aliases :: proc(
 				prov_forget_argument_aliases(graph, element.key, underlying_info(c, value.type).key, false, seen)
 			}
 			if element.value == nil { continue }
-			type := expr_base(element.value).type
-			if prefix, known := prov_element_prefix(graph, value, index); known { type = prov_type_at(c, value.type, prefix) }
-			prov_forget_argument_aliases(graph, element.value, type, false, seen)
+			prov_forget_argument_aliases(graph, element.value, prov_element_type(graph, value, index), false, seen)
 		}
 		return
 	case ^Expr_Call:
-		if construction, constructs := value.operation.(Call_Union_Construct); constructs {
-			if len(value.bound) > 0 && value.bound[0] != nil {
-				type := value.widened_from == INVALID_TYPE ? value.type : value.widened_from
-				if value.erased_from != INVALID_TYPE { type = value.erased_from }
-				payload := expr_base(value.bound[0]).type
-				if union_info := underlying_info(c, type); union_info != nil && union_info.kind == .Union && construction.index < len(union_info.variants) {
-					payload = union_info.variants[construction.index]
-				}
-				prov_forget_argument_aliases(graph, value.bound[0], payload, false, seen)
+		if payload, type, depth, _ := prov_constructor_alias_payload(graph, value); payload != nil {
+			if unwrap > 0 {
+				type = parameter
+				for _ in unwrap ..< depth { type = prov_type_at(c, type, {proj_wild()}) }
 			}
+			prov_forget_argument_aliases(graph, payload, type, false, seen, max(0, unwrap - depth))
 			return
 		}
 	case ^Expr_Cond:
-		prov_forget_argument_aliases(graph, value.then, parameter, false, seen)
-		prov_forget_argument_aliases(graph, value.otherwise, parameter, false, seen)
+		prov_forget_argument_aliases(graph, value.then, parameter, false, seen, unwrap)
+		prov_forget_argument_aliases(graph, value.otherwise, parameter, false, seen, unwrap)
 		return
 	case ^Expr_Move:
-		prov_forget_argument_aliases(graph, value.value, parameter, false, seen)
+		prov_forget_argument_aliases(graph, value.value, parameter, false, seen, unwrap)
 		return
 	case ^Expr_Or_Else:
-		prov_forget_argument_aliases(graph, value.value, expr_base(value.value).type, false, seen)
-		prov_forget_argument_aliases(graph, value.fallback, parameter, false, seen)
+		// Select the success payload while retaining the parameter's weakened
+		// capability (design.md "Weakening and reborrows").
+		prov_forget_argument_aliases(graph, value.value, parameter, false, seen, unwrap + 1)
+		prov_forget_argument_aliases(graph, value.fallback, parameter, false, seen, unwrap)
 		return
 	}
 	if address, ok := argument.(^Expr_Unary); ok && address.op == .Amp {
@@ -4055,7 +4081,7 @@ prov_forget_argument_aliases :: proc(
 	aliases := prov_written_aliases_at(graph, source)
 	for carrier in carrier_shape(c, parameter) {
 		for alias in aliases {
-			if paths_overlap(alias.path, carrier.steps) {
+			if paths_overlap(alias.path[min(unwrap, len(alias.path)):], carrier.steps) {
 				prov_forget_storage_aliases(graph, alias.target, alias.at, carrier.mutable, seen)
 			}
 		}

@@ -1,0 +1,155 @@
+// design.md "Allocator regions and region provenance" and "Minimum provenance precision":
+// uncertainty preserves known destinations; payload carriers invalidate old targets.
+package main;
+import "core:mem";
+import "core:fmt";
+
+kept: Option([dynamic]string);
+Wrapper :: struct { pointer: ^mut ^mut Option([dynamic]string) }
+touch :: proc(pointer: ^mut ^mut Option([dynamic]string)) {}
+retarget :: proc(pointer: ^mut ^mut Option([dynamic]string)) { pointer^ = &mut kept; }
+retarget_box :: proc(wrapper: Box(Wrapper)) { wrapper.pointer^ = &mut kept; }
+retarget_slice :: proc(pointers: []^mut ^mut Option([dynamic]string)) {
+	if (pointers.len() > 0) { pointers[0]^ = &mut kept; }
+}
+retarget_keys :: proc(pointers: map[^mut ^mut Option([dynamic]string)]int) {
+	foreach (pointer, _ in pointers) { pointer^ = &mut kept; break; }
+}
+retarget_values :: proc(pointers: map[int]^mut ^mut Option([dynamic]string)) {
+	foreach (_, pointer in pointers) { pointer^ = &mut kept; break; }
+}
+received_global :: proc(allocator: Allocator) {
+	pointer := &mut kept;
+	touch(&mut pointer);
+	switch (pointer^) {
+	case .some(&mut values): values.append(fmt.to_string(allocator, 42));
+	case .none:
+	}
+}
+
+literal_slice :: proc() {
+	arena := mem.Arena.init();
+	local: Option([dynamic]string) = .some(make([dynamic]string));
+	pointer := &mut local;
+	retarget_slice([]^mut ^mut Option([dynamic]string){&mut pointer});
+	switch (pointer^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 42));
+	case .none:
+	}
+	drop(local);
+}
+
+literal_dynamic :: proc() {
+	arena := mem.Arena.init();
+	local: Option([dynamic]string) = .some(make([dynamic]string));
+	pointer := &mut local;
+	retarget_slice([dynamic]^mut ^mut Option([dynamic]string){&mut pointer});
+	switch (pointer^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 42));
+	case .none:
+	}
+	drop(local);
+}
+
+stored_box :: proc() {
+	arena := mem.Arena.init();
+	local: Option([dynamic]string) = .some(make([dynamic]string));
+	pointer := &mut local;
+	wrapper := box(Wrapper{&mut pointer});
+	retarget_box(wrapper);
+	switch (pointer^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 42));
+	case .none:
+	}
+	drop(local);
+}
+
+inline_box :: proc() {
+	arena := mem.Arena.init();
+	local: Option([dynamic]string) = .some(make([dynamic]string));
+	pointer := &mut local;
+	retarget_box(box(Wrapper{&mut pointer}));
+	switch (pointer^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 42));
+	case .none:
+	}
+	drop(local);
+}
+
+fallible_box :: proc() {
+	arena := mem.Arena.init();
+	local: Option([dynamic]string) = .some(make([dynamic]string));
+	pointer := &mut local;
+	retarget_box(try_box(Wrapper{&mut pointer}) or_else return);
+	switch (pointer^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 42));
+	case .none:
+	}
+	drop(local);
+}
+
+stored_map_key :: proc() {
+	arena := mem.Arena.init();
+	local: Option([dynamic]string) = .some(make([dynamic]string));
+	pointer := &mut local;
+	pointers := map[^mut ^mut Option([dynamic]string)]int{&mut pointer = 0};
+	retarget_keys(pointers);
+	switch (pointer^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 42));
+	case .none:
+	}
+	drop(local);
+}
+
+stored_map_value :: proc() {
+	arena := mem.Arena.init();
+	local: Option([dynamic]string) = .some(make([dynamic]string));
+	pointer := &mut local;
+	pointers := map[int]^mut ^mut Option([dynamic]string){0 = &mut pointer};
+	retarget_values(pointers);
+	switch (pointer^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 42));
+	case .none:
+	}
+	drop(local);
+}
+
+or_else_success :: proc() {
+	arena := mem.Arena.init();
+	local: Option([dynamic]string) = .some(make([dynamic]string));
+	pointer := &mut local;
+	maybe: Option(^mut ^mut Option([dynamic]string)) = .some(&mut pointer);
+	retarget(maybe or_else return);
+	switch (pointer^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 42));
+	case .none:
+	}
+	drop(local);
+}
+
+or_else_fallback :: proc() {
+	arena := mem.Arena.init();
+	local: Option([dynamic]string) = .some(make([dynamic]string));
+	pointer := &mut local;
+	maybe: Option(^mut ^mut Option([dynamic]string)) = .none;
+	retarget(maybe or_else &mut pointer);
+	switch (pointer^) {
+	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 42));
+	case .none:
+	}
+	drop(local);
+}
+
+mixed_target_reset :: proc(@(allocator_reset) allocator: Allocator) {
+	local: Option([dynamic]string) = .some(make([dynamic]string));
+	pointer := &mut local;
+	touch(&mut pointer);
+	switch (pointer^) {
+	case .some(&mut values): values.append(fmt.to_string(allocator, 43));
+	case .none:
+	}
+	free_all(allocator);
+	fmt.println(local);
+}
+
+main :: proc() {}

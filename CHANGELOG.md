@@ -10,6 +10,13 @@ checklist.
 
 ### Breaking changes
 
+- Writable-call target invalidation now follows box payloads, map keys and
+  values, and literal slice and dynamic-array elements. Unresolved payload
+  targets also preserve known destinations' lifetime constraints, so owners
+  backed by received allocators cannot escape to globals through those paths.
+  Unsafe stores report `L0536`. Upgrade by allocating retained owners from a
+  region that outlives their destination.
+
 - Indirect carrier loads now retain unresolved alternatives from every possible
   source. Calls that may overwrite carrier-valued storage also invalidate stale
   target facts, including through nested wrappers and variadic arguments.
@@ -523,6 +530,10 @@ checklist.
   for any count.
 
 ### Fixed
+
+- Read-only calls receiving an `or_else` success payload now preserve the
+  parameter's weakened capability, avoiding spurious `L0536` errors on later
+  writes to local storage. Fallbacks retain the same capability checks.
 
 - Recursive owning containers containing carriers no longer make analysis grow
   unbounded carrier-position paths when repeatedly wrapping a moved value.
