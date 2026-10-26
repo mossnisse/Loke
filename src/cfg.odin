@@ -319,6 +319,8 @@ Prov_State :: struct {
 	// The allocator use this body's own operations make, while the thread
 	// summaries collect (`prov_note_allocator_use`).
 	allocator_use: Allocator_Use,
+	// A direct call's callee, which `prov_note_proc_value` does not count as
+	// a procedure used as a value.
 	callee_expr:   Expr,
 	// The facts the fixed point carries between rounds.
 	using facts: Prov_Facts,

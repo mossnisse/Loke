@@ -5858,7 +5858,7 @@ reset();                        // ERROR: a read-only slice of `cache` is still 
 fmt.println(view[0]);
 ```
 
-The effect covers a value parameter, whose managed storage is shared with the caller for the call, as much as a view. A call through a procedure value may run any procedure of a compatible type, and a `dyn` call any witness the program builds for that slot, so each takes the union of their effects. Effects are whole-program and need no annotation; a procedure's effect is not part of its type. Since no variable is [public](#public), a caller borrows another package's storage only through a procedure's result, whose [result contract](#procedure-result-contracts) shows the static provenance.
+The effect covers a value parameter, whose managed storage is shared with the caller for the call, as much as a view. A call through a procedure value, a procedure literal called where it is written among them, may run any procedure of a compatible type, and a `dyn` call any witness the program builds for that slot, so each takes the union of their effects. Effects are whole-program and need no annotation; a procedure's effect is not part of its type. Since no variable is [public](#public), a caller borrows another package's storage only through a procedure's result, whose [result contract](#procedure-result-contracts) shows the static provenance.
 
 The same effect warns about likely data races. Passing a named procedure that
 may write file-scope or `static` storage to a

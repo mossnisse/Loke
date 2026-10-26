@@ -1516,6 +1516,44 @@ callee input belongs in the first implementation step; richer erased-value
 facts can accompany erased callable support without delaying plain procedure
 values or requiring public effect contracts.
 
+### Procedure-value spawn implementation review (2026-10-26)
+
+Review of `bf1cd43`, [milestone 10's first step](concurrency-proposal.md#milestone-10-indirect-spawned-calls).
+The extension fits the existing task machinery: the frame stores the callee,
+the parent evaluates it once before the arguments, and the generated ordinary
+run procedure supplies its effects. It does not introduce a second target
+analysis or scheduler. Tests cover callee reassignment, evaluation order,
+pooled tasks, result loans, transfer checks, and argument-preparation cleanup.
+The compiler unit suite and the run, trap, and diagnostic corpora pass; extra
+runtime probes of procedure-value calls with packed, spread, mixed, and empty
+variadic arguments and an `inout` parameter also pass.
+
+One correctness issue was found and is fixed: an immediately spawned
+procedure literal lost its write effects. The new value-call classification
+and the older direct-callee exclusion in effect collection disagreed on it, so
+the literal was left out of the procedures used as values. The exclusion now
+applies only to calls `call_through_value` does not classify as through a
+value, and the helper sits with the ordinary call metadata in
+`src/check_calls.odin`. The omission predated `bf1cd43` for an ordinary call:
+a borrow of a global kept across a literal called in place that writes it was
+accepted as well. `tests/err/parallel_procedure_values.loke` covers the bare
+and pooled spawns beside an accepted pure literal, and
+`tests/err/global_effects.loke` the ordinary call.
+
+Two small simplifications were available, and both are applied:
+
+- `src/parallel.odin`, `Spawn_Task.proc_type`: **shrink** the stored metadata.
+  The checked call already supplies this through `call_proc_type`; emission
+  can query it once and use that local for the signature and callee store.
+  Remove the field and its assignment, and shorten the accompanying comment.
+- `src/borrow.odin`, `note_value_targets`: **stdlib** membership in
+  `c.global_writes[target]` is `slice.contains`, which this file already uses;
+  replace the manual loop in the writes branch.
+
+Net: four lines removed with those two local changes. The existing frame
+layout helpers and the extension of the common run procedure are appropriate;
+a broader checker or capture rewrite is not warranted by this implementation.
+
 ### Parameters a join check cannot tell apart (2026-10-26)
 
 Writing `examples/mixer.loke` for milestone 9 found that the

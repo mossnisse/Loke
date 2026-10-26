@@ -1,46 +1,56 @@
 L0731
-@25:13
+@27:13
 `f` may write `hits`, which every task and the parent share
 `f` may be `record_hit`, which writes `hits`
 
 L0731
-@31:13
+@33:13
 `f` reaches through `view`, which every task and the parent share: `view` holds `[]mut int`, through which another thread may write as well
 `f` may be `increment`, which reaches through `view`
 
 L0731
-@40:13
+@42:13
 `g` may write `hits`, which every task and the parent share
 `g` may be `dirty_u16`, which writes `hits`
 
+L0731
+@47:13
+`proc() -> int` may write `hits`, which every task and the parent share
+`proc() -> int` may be the procedure literal here, which writes `hits`
+
+L0731
+@53:21
+`proc() -> i8` may write `hits`, which every task and the parent share
+`proc() -> i8` may be the procedure literal here, which writes `hits`
+
 L0730
-@47:21
+@66:21
 this task's call may leave a borrow of `counter` in this argument, but it is the worker's own `thread_local` storage, so it cannot cross to the parent
 
 L0730
-@55:23
+@74:23
 this task's result holds a pointer of `counter`, which is the worker's own `thread_local` storage, so it cannot cross to the parent
 
 L0732
-@66:3
+@85:3
 this task may use `arena`'s allocator, which a task started earlier reserves until the join
 
 L0511
-@76:3
+@95:3
 this write of `total` is not compatible with the mutable pointer of it that is still in use
 
 L0512
-@85:2
+@104:2
 `buffer` cannot be modified by `f`, which this join may run on this thread, here: a read-only slice of it is still in use
 
 L0728
-@92:19
+@111:19
 `spawn` starts a procedure, a method, or a procedure value; a `dyn` view, a built-in, or a conversion cannot be spawned yet
 
 L0728
-@96:19
+@115:19
 `spawn` starts a Loke procedure; call a foreign one from a Loke procedure the task runs
 
 L0728
-@105:19
+@124:19
 a task cannot hand back an `inout` result, which is a place of the worker's call

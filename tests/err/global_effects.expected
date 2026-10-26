@@ -25,3 +25,6 @@ L0512
 L0512
 @72:8
 `cache` cannot be modified by `add_assign` here
+L0512
+@78:2
+`cache` cannot be modified by a procedure this call may reach here

@@ -10,6 +10,22 @@ call_slot_at :: proc(v: ^Expr_Call, step: int) -> int {
 	return step < len(v.bound_order) ? v.bound_order[step] : step
 }
 
+// design.md "Procedure type", "Evaluation order": a call through a procedure
+// value rather than to a named procedure, method, or callable record's `call`.
+call_through_value :: proc(c: ^Compiler, v: ^Expr_Call) -> bool {
+	if _, procedure := v.operation.(Call_Procedure); !procedure {
+		return false
+	}
+	if sym := symbol_of(c, v.resolution.chosen_overload); sym != nil && sym.kind == .Proc {
+		return false
+	}
+	if sym := symbol_of(c, v.resolution.symbol); sym != nil && sym.kind == .Proc {
+		return false
+	}
+	base := expr_base(v.callee)
+	return base != nil && underlying_kind(c, base.type) == .Proc
+}
+
 @(private)
 check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 	if check_union_argument_expansion(k, v, expected) {

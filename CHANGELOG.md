@@ -670,6 +670,12 @@ checklist.
 
 ### Fixed
 
+- A procedure literal called where it is written, as in
+  `(proc() { cache.clear(); })()`, now counts its global writes like any
+  call through a procedure value: a borrow of the global kept across the
+  call is rejected (`L0512`), and so is spawning it while tasks run
+  (`L0731`). Its writes were missed, so both were accepted.
+
 - An exit from a `parallel` block that a loop reaches before a `spawn` written
   below it now joins the tasks an earlier iteration started, as the checks
   see it: what those tasks borrow is still lent there, and a pooled block's

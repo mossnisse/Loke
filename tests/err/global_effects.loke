@@ -2,7 +2,7 @@ package main; import "core:fmt";
 
 // design.md "Global write effects": a call writes whatever globals its callee
 // may write, directly or through its callees, so a borrow of one that is live
-// across the call conflicts.
+// across the call conflicts, the call of a literal in place included.
 
 cache: [dynamic]int;
 
@@ -70,6 +70,12 @@ across_a_compound_operator :: proc() -> int {
 	value := Value{1};
 	view: []int = cache;
 	value += Value{2};
+	return view[0];
+}
+// A literal called in place is a call through its value.
+across_a_literal_call :: proc() -> int {
+	view: []int = cache;
+	(proc() { cache.clear(); })();
 	return view[0];
 }
 

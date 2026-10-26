@@ -151,7 +151,8 @@ emit_spawn :: proc(e: ^Emitter, s: ^Stmt_Spawn) {
 	frame_info := type_of(e.c, task.frame)
 	// A procedure value has no declaration: its call supplies every argument.
 	callee := task.through_value ? nil : symbol_of(e.c, call.resolution.symbol)
-	callee_type := underlying_info(e.c, task.proc_type)
+	proc_type := call_proc_type(e.c, call)
+	callee_type := underlying_info(e.c, proc_type)
 	if frame_info == nil || callee_type == nil {
 		backend_fail(e, "a `spawn` has no frame")
 		return
@@ -179,7 +180,7 @@ emit_spawn :: proc(e: ^Emitter, s: ^Stmt_Spawn) {
 	unclaimed := begin_frame_release(e, task.frame, frame)
 	if task.through_value {
 		field := field_address(e, frame_info, frame_type, frame, spawn_callee_field(task))
-		store(e, task.proc_type, emit_expr(e, call.callee), field)
+		store(e, proc_type, emit_expr(e, call.callee), field)
 	}
 
 	// A default reads the parameters bound to its left, as at a call.

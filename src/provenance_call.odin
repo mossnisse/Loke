@@ -35,22 +35,6 @@ Prov_Call_Input :: struct {
 	callee: Value_Id,
 }
 
-// design.md "Procedure type", "Evaluation order": a call through a procedure
-// value rather than to a named procedure, method, or callable record's `call`.
-call_through_value :: proc(c: ^Compiler, v: ^Expr_Call) -> bool {
-	if _, procedure := v.operation.(Call_Procedure); !procedure {
-		return false
-	}
-	if sym := symbol_of(c, v.resolution.chosen_overload); sym != nil && sym.kind == .Proc {
-		return false
-	}
-	if sym := symbol_of(c, v.resolution.symbol); sym != nil && sym.kind == .Proc {
-		return false
-	}
-	base := expr_base(v.callee)
-	return base != nil && underlying_kind(c, base.type) == .Proc
-}
-
 // design.md "Evaluation order", "Parameter semantics and ABI lowering",
 // "Splitting a mutable slice".
 // Keyed by the call node alone, as its capture is (`prov_input_capture`).

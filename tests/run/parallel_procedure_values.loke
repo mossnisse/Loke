@@ -1,9 +1,10 @@
 // design.md "Spawn statements": a spawned call may go through a procedure
 // value, which the parent evaluates before the arguments and the task keeps:
-// a parameter, a local chosen at runtime, a field, a call's result, and a
-// generic callable instantiated with a procedure type, on bare and pooled
-// blocks. Assigning the local after the spawn does not change what the task
-// calls, and a result that borrows an argument keeps its loan past the join.
+// a parameter, a local chosen at runtime, a field, a call's result, a
+// literal called in place, and a generic callable instantiated with a
+// procedure type, on bare and pooled blocks. Assigning the local after the
+// spawn does not change what the task calls, and a result that borrows an
+// argument keeps its loan past the join.
 package main;
 
 import "base:interfaces";
@@ -61,6 +62,12 @@ ordered :: proc() -> int {
 	return r;
 }
 
+in_place :: proc() -> int {
+	r: int;
+	parallel { spawn r = (proc(n: int) -> int { return n + 1; })(41); }
+	return r;
+}
+
 generic :: proc(f: $C, n: int) -> int where interfaces.Callable(C, proc(n: int) -> int) {
 	r: int;
 	parallel { spawn r = f(n); }
@@ -98,6 +105,7 @@ main :: proc() {
 	job := Job{run = double, input = 21};
 	fmt.println("field", through_field(&job));
 	fmt.println("ordered", ordered());
+	fmt.println("in place", in_place());
 	fmt.println("generic", generic(double, 4));
 	fmt.println("pooled", pooled(triple));
 	fmt.println("borrowed", borrowed(false), borrowed(true));

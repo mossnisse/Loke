@@ -1,7 +1,9 @@
 // design.md "Spawn statements": a spawned procedure value may run any body of
 // its type the program uses as a value (design.md "Global write effects"), so
 // each task check takes their union, and a rejection names the bodies that
-// cause it. Adding one that writes a global to a selection rejects the spawn.
+// cause it. Adding one that writes a global to a selection rejects the spawn,
+// and so does a literal called in place that writes one, on a bare or a
+// pooled block; one that writes none is accepted.
 // A `thread_local` borrow left in an argument or returned, an allocator two
 // tasks use, an argument the parent writes while a task borrows it, and a
 // pooled task's `thread_local` write are rejected as for a named callee. A
@@ -38,6 +40,23 @@ selected :: proc(by_dirty: bool) {
 	g := clean_u16;
 	if (by_dirty) { g = dirty_u16; }
 	parallel { spawn g(1); }
+}
+
+literal_writes :: proc() {
+	answer: int;
+	parallel { spawn answer = (proc() -> int { hits += 1; return hits; })(); }
+}
+
+literal_writes_pooled :: proc() {
+	pool := thread.Pool.init(2);
+	answer: i8;
+	parallel (&pool) { spawn answer = (proc() -> i8 { hits += 1; return 1; })(); }
+}
+
+literal_clean :: proc() -> i16 {
+	answer: i16;
+	parallel { spawn answer = (proc() -> i16 { return 7; })(); }
+	return answer;
 }
 
 put_tls :: proc(out: ^mut ^int) { out^ = &counter; }
@@ -110,6 +129,9 @@ main :: proc() {
 	writes(record_hit);
 	reaches(increment);
 	selected(false);
+	literal_writes();
+	literal_writes_pooled();
+	fmt.println(literal_clean());
 	leaves_tls(put_tls);
 	returns_tls(borrow_tls);
 	one_arena(allocate);

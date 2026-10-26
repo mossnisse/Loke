@@ -5531,7 +5531,11 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 			// The selector reads its view, which the call dispatches through.
 			callee = walk_flow_expr(graph, sel.operand)
 		} else {
-			graph.callee_expr = v.callee
+			// A procedure the call names is not used as a value; one an
+			// immediately called literal or other expression evaluates is.
+			if !call_through_value(c, v) {
+				graph.callee_expr = v.callee
+			}
 			callee = walk_flow_expr(graph, v.callee)
 		}
 	}

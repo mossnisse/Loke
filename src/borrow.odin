@@ -3752,9 +3752,7 @@ note_value_targets :: proc(c: ^Compiler, call: ^Expr_Call, global: Symbol_Id, wr
 	for target in targets {
 		found := false
 		if writes {
-			for written in c.global_writes[target] {
-				found ||= written == global
-			}
+			found = slice.contains(c.global_writes[target], global)
 		} else {
 			for reached in c.reach_effects[target] {
 				found ||= reached.global == global
@@ -3764,12 +3762,12 @@ note_value_targets :: proc(c: ^Compiler, call: ^Expr_Call, global: Symbol_Id, wr
 		if !found || sym == nil {
 			continue
 		}
-		name := identifier_text(c, sym.name)
-		if name == "" {
-			name = "this procedure"
+		target_name := fmt.tprintf("`%s`", identifier_text(c, sym.name))
+		if sym.proc_literal != nil {
+			target_name = "the procedure literal here"
 		}
 		add_notef(
-			c, sym.span, "`%s` may be `%s`, which %s `%s`", spawn_callee_name(c, call), name,
+			c, sym.span, "`%s` may be %s, which %s `%s`", spawn_callee_name(c, call), target_name,
 			writes ? "writes" : "reaches through", identifier_text(c, symbol_of(c, global).name),
 		)
 	}

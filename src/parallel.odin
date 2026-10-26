@@ -35,9 +35,7 @@ Spawn_Task :: struct {
 	// calls.
 	frame:  Type_Id,
 	run:    Symbol_Id,
-	// The procedure type the call goes through, and whether its callee is a
-	// value the frame holds rather than a procedure `run` names.
-	proc_type: Type_Id,
+	// The callee is a value the frame holds, not a procedure `run` names.
 	through_value: bool,
 	// The enclosing block's hidden `Task_Scope` local, and its `start`.
 	scope:  Symbol_Id,
@@ -65,8 +63,8 @@ spawn_callee_field :: proc(task: ^Spawn_Task) -> int {
 	return len(task.kinds) + (task.result != INVALID_SYMBOL ? 2 : 1)
 }
 
-// How diagnostics name what a spawn starts: the procedure, or the procedure
-// value as written.
+// How diagnostics name what a spawn starts: the procedure, the procedure
+// value as written, or a literal called in place by its signature.
 spawn_callee_name :: proc(c: ^Compiler, call: ^Expr_Call) -> string {
 	if !call_through_value(c, call) {
 		if sym := symbol_of(c, call.resolution.symbol); sym != nil {
@@ -74,6 +72,9 @@ spawn_callee_name :: proc(c: ^Compiler, call: ^Expr_Call) -> string {
 		}
 	}
 	span := expr_span(call.callee)
+	if literal, is_literal := call.callee.(^Expr_Proc); is_literal && literal.signature != nil {
+		span = literal.signature.span
+	}
 	return c.sources[span.file].text[span.lo:span.hi]
 }
 
@@ -377,7 +378,6 @@ lower_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn, block: ^Stmt_Parallel, proc_typ
 		return
 	}
 	task.result = result
-	task.proc_type = proc_type
 	task.through_value = call_through_value(c, call)
 
 	outer := k.scope

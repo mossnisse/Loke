@@ -159,7 +159,7 @@ checked AST + settled lifecycle annotations
 | [provenance_input.odin](src/provenance_input.odin) | `Prov_Input`: body-local `Storage_Id` and `Value_Id` tables, zero meaning unresolved storage or no value; canonical typed places (`Prov_Place`). |
 | [provenance_form.odin](src/provenance_form.odin) | Each value's checked form (`Prov_Form`), with its operands, a call's argument and pack values, and the call a user operator stands for, all as values. |
 | [provenance_transfer.odin](src/provenance_transfer.odin), [provenance_transfer_facts.odin](src/provenance_transfer_facts.odin) | Typed transfers (constructors, owner views, payload extraction, widening, copies and moves) and how they apply to targets and regions. |
-| [provenance_call.odin](src/provenance_call.odin) | Checked call inputs: contract, signature, parameter modes, result type, argument slots in source evaluation order, a lending call's captured receiver, and the evaluated callee of a call through a procedure value (`call_through_value`). |
+| [provenance_call.odin](src/provenance_call.odin) | Checked call inputs: contract, signature, parameter modes, result type, argument slots in source evaluation order, a lending call's captured receiver, and the evaluated callee of a call through a procedure value, as `call_through_value` in `check_calls.odin` classifies it. |
 | [provenance_read.odin](src/provenance_read.odin) | A leaf alias read, derived from a value and its form. |
 | [provenance_effect.odin](src/provenance_effect.odin) | Fact operations, their replay, and freezing. |
 | [provenance_event.odin](src/provenance_event.odin) | Event operations and their materialization. |
