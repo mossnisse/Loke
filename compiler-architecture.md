@@ -696,7 +696,9 @@ procedures' `thread_local` writes as invalidations
 (`prov_pool_join_effects`). The checker lists each block's spawns in
 `Stmt_Parallel.spawns`, and `prov_enter_parallel` registers them, with the
 slots a join uses, as the walk enters the block, since a loop may reach an
-exit written above its first spawn; those summaries include their own pooled
+exit written above its first spawn. Every exit then carries the join's
+writes, tagged with the block, and `settle_pool_joins` drops them where the
+task window shows no task of the block may have started; those summaries include their own pooled
 descendants and exclude bare ones, which is exactly what a helping join may
 run.
 

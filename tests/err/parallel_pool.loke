@@ -146,4 +146,21 @@ exit_before_spawn :: proc(pool: ^thread.Pool) -> []int {
 	}
 }
 
+// Accepted: an exit no started task reaches joins nothing that can run here.
+exit_without_task :: proc(pool: ^thread.Pool, skip: bool) -> []int {
+	parallel (pool) {
+		if (skip) { return buffer[:]; }
+		spawn invalidate();
+	}
+	return buffer[:];
+}
+
+// Accepted: the spawn below the return never runs.
+unreachable_spawn :: proc(pool: ^thread.Pool) -> []int {
+	parallel (pool) {
+		return buffer[:];
+		spawn invalidate();
+	}
+}
+
 main :: proc() {}

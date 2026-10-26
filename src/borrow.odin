@@ -2559,6 +2559,7 @@ prepare_state :: proc(state: ^Prov_State) -> bool {
 	state.live = make([]bool, max(state.slots, 1), graph.alloc)
 	state.uses = make([]Span, max(state.slots, 1), graph.alloc)
 	state.merged = make([]u8, max(state.row_bytes, 1), graph.alloc)
+	settle_pool_joins(state)
 	return true
 }
 
@@ -3118,7 +3119,11 @@ report_provenance :: proc(state: ^Prov_State) {
 	// One expression gets one borrow diagnostic: a receiver and the call it
 	// starts, or two rules meeting the same mistake, report once.
 	reported := make(map[[2]u32]bool, 8, graph.alloc)
-	window_entry := solve_window(state)
+	visited := make([]bool, len(graph.blocks), graph.alloc)
+	for block, id in graph.blocks {
+		visited[id] = block.prov_visited
+	}
+	window_entry := solve_window(state, visited)
 	shared := Shared_Reports{
 		seen   = make(map[Shared_Report]bool, 4, graph.alloc),
 		scopes = make(map[int]bool, 2, graph.alloc),
@@ -3179,7 +3184,7 @@ report_provenance :: proc(state: ^Prov_State) {
 // bit set. Past 64 sites, the last bit is shared and never cleared, which
 // keeps the window open to the end of the body.
 @(private = "file")
-solve_window :: proc(state: ^Prov_State) -> []u64 {
+solve_window :: proc(state: ^Prov_State, reached: []bool) -> []u64 {
 	graph := state.graph
 	entry := make([]u64, len(graph.blocks), graph.alloc)
 	if !graph.has_window_event {
@@ -3189,7 +3194,7 @@ solve_window :: proc(state: ^Prov_State) -> []u64 {
 	for changed := true; changed; {
 		changed = false
 		for block, id in graph.blocks {
-			if !block.prov_visited {
+			if !reached[id] {
 				continue
 			}
 			mask := u64(0)
@@ -3207,6 +3212,57 @@ solve_window :: proc(state: ^Prov_State) -> []u64 {
 		}
 	}
 	return entry
+}
+
+// design.md "Parallel blocks": a pooled join may run, on the joining thread,
+// only tasks started on a path that reaches it. The walk emits the join's
+// `thread_local` writes at every exit of the block, since a loop's back edge
+// may start a task before an exit written above its spawn; here, before any
+// solver reads them, those writes are dropped where no task of the block may
+// have started.
+@(private = "file")
+settle_pool_joins :: proc(state: ^Prov_State) {
+	graph := state.graph
+	if len(graph.pool_tasks) == 0 {
+		return
+	}
+	reached := make([]bool, len(graph.blocks), graph.alloc)
+	queue := make([dynamic]Block_Id, 0, len(graph.blocks), graph.alloc)
+	append(&queue, Block_Id(0))
+	reached[0] = true
+	for head := 0; head < len(queue); head += 1 {
+		for successor in graph.blocks[int(queue[head])].succs {
+			if !reached[int(successor)] {
+				reached[int(successor)] = true
+				append(&queue, successor)
+			}
+		}
+	}
+	window_entry := solve_window(state, reached)
+	for block, id in graph.blocks {
+		mask := window_entry[id]
+		kept := 0
+		for event in block.prov {
+			if event.joins == 0 || block_running(graph, mask, event.joins - 1) {
+				block.prov[kept] = event
+				kept += 1
+			}
+			mask = window_step(graph, mask, event)
+		}
+		resize(&block.prov, kept)
+	}
+}
+
+// Whether a task of the `parallel` block with window bit `index` may be
+// running, by `mask`.
+@(private = "file")
+block_running :: proc(graph: ^Flow_Graph, mask: u64, index: int) -> bool {
+	for site in running_sites(graph, mask) {
+		if graph.task_sites[site].block == index {
+			return true
+		}
+	}
+	return false
 }
 
 @(private = "file")

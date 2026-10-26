@@ -1320,6 +1320,25 @@ the hidden `Task_Scope` owns each join, and the compiler applies helped TLS
 effects through the existing provenance checks. No additional scheduler or
 executor abstraction is needed for this milestone.
 
+### Pool-fix follow-up review (2026-10-26)
+
+Review of `7df2f25` confirmed the original loop-exit, immutable ancestry,
+and `Thread` ownership fixes. Generic pooled calls and repeated blocks also
+compile and run correctly, and the AST cloner leaves the new semantic spawn
+list empty for rechecking. Registering task metadata on entry keeps its
+ownership clear; no additional abstraction or deletion is justified here.
+
+The pre-registration introduced one false positive, now fixed: every exit
+of a pooled block applied the `thread_local` writes of every task the block
+registered, so a return reached before any task started, or one followed by
+an unreachable spawn, was rejected with `L0512`. The join's writes are now
+tagged with their block (`Prov_Event.joins`), and `settle_pool_joins` drops
+them, before any solver reads them, where the task window shows no task of
+that block may have started. A loop's back edge still carries an earlier
+iteration's start to an exit written above the spawn, so that exit stays
+rejected; [parallel_pool.loke](tests/err/parallel_pool.loke) accepts the
+no-task branch and the unreachable spawn beside it.
+
 ### Parameters a join check cannot tell apart (2026-10-26)
 
 Writing `examples/mixer.loke` for milestone 9 found that the

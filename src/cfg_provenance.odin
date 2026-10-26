@@ -130,6 +130,10 @@ Prov_Event :: struct {
 	reads_only:    bool,
 	// `Task_Start`, `Shared_Effect`: see `Prov_Kind`.
 	symbol:        Symbol_Id,
+	// One more than the window bit of the pooled block whose join this
+	// `thread_local` write is, or 0: it applies only where a task of that
+	// block may have started (`settle_pool_joins`).
+	joins:         int,
 }
 
 // A borrowed parameter arrives holding the caller's storage, which the entry
@@ -1184,10 +1188,17 @@ prov_drop_use :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span, at_scope_ex
 			sources = prov_join(graph, sources, holds[:])
 		}
 		prov_emit(graph, Prov_Event{kind = .Live, sources = sources, span = span})
-		prov_emit(graph, Prov_Event{kind = .Task_Join, slot = prov_window_bit(graph, id), span = span})
-		if tasks, pooled := graph.pool_tasks[id]; pooled {
+		bit := prov_window_bit(graph, id)
+		if tasks, pooled := graph.pool_tasks[id]; pooled && graph.current != NO_BLOCK {
+			// Before the join closes the window, which decides where they apply.
+			events := &graph.blocks[graph.current].prov
+			first := len(events)
 			prov_pool_join_effects(graph, tasks[:], span)
+			for &event in events[first:] {
+				event.joins = bit + 1
+			}
 		}
+		prov_emit(graph, Prov_Event{kind = .Task_Join, slot = bit, span = span})
 		// The tasks are done, so a block entered again, as a loop body's is,
 		// starts holding nothing.
 		for slot in sources {
