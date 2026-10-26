@@ -1,0 +1,9 @@
+// standard-library "Channels": a channel's capacity must be positive; zero
+// panics.
+package main;
+
+import "core:thread";
+
+main :: proc() {
+	channel := thread.Channel(int).init(0);
+}

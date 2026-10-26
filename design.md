@@ -6702,7 +6702,7 @@ The `try_` forms of allocating operations, `try_box`, `try_make`, and `unsafe.tr
 
 ## Concurrency and the memory model
 
-Threads, mutexes, monitors, channels, and thread pools are library facilities, and a [`parallel` block](#structured-concurrency) runs calls as tasks the language joins; reads and writes performed by any of them obey one language memory model. `core:thread` provides the first three; see [standard-library.md](standard-library.md) "`core:thread`".
+Threads, mutexes, monitors, channels, and thread pools are library facilities, and a [`parallel` block](#structured-concurrency) runs calls as tasks the language joins; reads and writes performed by any of them obey one language memory model. `core:thread` provides the first four; see [standard-library.md](standard-library.md) "`core:thread`".
 
 The **happens-before** relation combines ordinary
 [evaluation order](#evaluation-order), atomic synchronization (below), and these
@@ -6714,6 +6714,8 @@ thread synchronization rules:
 - A mutex unlock happens before the next successful lock of that mutex. A
   monitor's lock is a mutex in this sense, and a wait in its `lock_when`
   unlocks it on sleeping and locks it again on waking.
+- A channel's send that commits an item happens before the receive that takes
+  it, since both run under the channel's lock.
 - A [`spawn`](#spawn-statements)'s callee, receiver, and arguments are evaluated
   before its task starts. Every task operation, including result assignment,
   argument cleanup, and TLS destruction, happens before the block's join completes.
@@ -6919,6 +6921,58 @@ parallel {
 }
 ```
 
+#### Releasing before the join
+
+The join waits for every task, and a task may be waiting for the parent to
+release something: a guard on the lock it needs, or the last endpoint on a
+side of its channel. A type marked [`@(wakes_on_drop)`](#wakes_on_drop) is one
+whose drop may wake threads waiting on the storage it borrows;
+`thread.Guard(T)`, `thread.Monitor_Guard(T)`, and the channel endpoints
+`thread.Sender(T)` and `thread.Receiver(T)` are marked.
+
+At each exit from a block, after its own cleanup and before its join, a value
+the parent keeps past the join must not be or reach a marked value whose
+borrowed storage may overlap storage a task of that block borrows. The parent
+keeps:
+
+- a local declared outside the block that is still in use or still to be
+  dropped, including a local of an enclosing block at a nested block's own
+  join;
+- a task's result local, and a local a task writes through an `inout`
+  argument, though the parent cannot read either until the join;
+- every parameter: the caller keeps what a borrowed parameter reaches, and
+  ending this procedure's borrow of it does not drop it.
+
+A marked value is found through fields, variants, container elements,
+pointees, owned and shared payloads, and a generic record's type arguments.
+What it borrows is its root provenance. One root with overlapping paths may
+overlap; so may unknown storage and anything, and a parameter's storage and
+another parameter's or a global's, which the caller may have made the same.
+A local of the procedure overlaps no other root. A value moved into a task's
+argument, or dropped before the join, is not kept, unless a result or
+writeback can hand it back. Every exit is checked: a drop at the normal end of
+the block does not cover an earlier `return` or `or_return`. Closing a channel
+does not release an endpoint the parent keeps.
+
+```loke
+jobs := thread.Channel(Job).init(16);
+send, receive := jobs.split();
+parallel {
+	spawn consume(move(receive));
+	foreach (job in make_jobs()) { send.send(move(job)) or_return; }
+}   // ERROR: `send` keeps `jobs` open past the join, and `consume` may wait on it
+```
+
+Splitting inside the block fixes it: the block's locals are cleaned up before
+its join. Moving the sender to a producer task fixes it too.
+
+The check is conservative. It does not prove that a task waits on the storage
+a kept value borrows, that an endpoint is the last on its side, or that two
+roots the analysis cannot tell apart are the same. Raw pointers and foreign
+code stay trust boundaries. It does not detect a general wait cycle, a parent
+that blocks before its cleanup runs, or a monitor whose controller never ends
+the wait.
+
 #### Task failure and cleanup
 
 A task returns failure as a value. The join waits for every task without
@@ -7060,6 +7114,8 @@ fan_out :: proc(allocator: Allocator) {
 #### What the task checks cover
 
 With the checks above, conflicting unsynchronized accesses through checked roots and known allocator regions are compile-time errors within a block's tasks. Raw pointers, unknown provenance, foreign code, build-selected providers, and threads started some other way stay trust boundaries (see [What is not checked](#what-is-not-checked)).
+
+The [join check](#releasing-before-the-join) rejects a kept guard or endpoint that may hold up a join; it does not prove that the tasks finish.
 
 Each task runs on a thread of its own, started for it, so its `thread_local` storage starts fresh and is destroyed when the task's thread exits, before the join returns. Running the tasks one after another on one thread is not the same program: two fresh threads each incrementing a zero-initialized `thread_local` counter return `(1, 1)`, where two calls on one thread return `(1, 2)`. Blocking tasks may also deadlock when run in sequence.
 
@@ -7275,6 +7331,7 @@ An attribute specifies a property of a declaration, parameter, statement, block,
 | `@(initialized=<field>)` | a fixed array field of a struct | [only a counted prefix holds values](#initializedfield) |
 | `@(synchronized)` | struct fields, and file-scope and `static` variables | [its package synchronizes every access](#synchronized) |
 | `@(thread_affine)` | struct and union types | [values stay on the thread that made them](#thread_affine) |
+| `@(wakes_on_drop)` | struct and union types | [a drop may wake threads waiting on what the value borrows](#wakes_on_drop) |
 | `@(cross_thread)` | `move` parameters that are also `@(escape=static)`, and parameters of procedure type | [the argument goes to another thread](#cross_thread) |
 | `@(packed)`, `@(align=N)` | struct types; `align` also union types | [record layout](#packed) |
 | `@(allocator_reset)` | `Allocator` parameters | [a call may reset the region](#allocator_reset) |
@@ -7471,6 +7528,10 @@ Written after `struct` or `union`, before its body, as [`@(packed)`](#packed) is
 
 A thread-affine value cannot be moved, copied, or borrowed into another thread: it may not reach an argument for a [`@(cross_thread)`](#cross_thread) parameter (see [Concurrency and the memory model](#concurrency-and-the-memory-model)), nor cross between a task and its parent (see [Borrows crossing between tasks](#borrows-crossing-between-tasks)). A thread may create, use, and drop its own thread-affine values. Ordinary types need no annotation. `thread.Guard(T)` and `thread.Monitor_Guard(T)` are thread-affine, since a lock is released by the thread that took it.
 
+#### `@(wakes_on_drop)`
+
+Written after `struct` or `union`, before its body, as [`@(thread_affine)`](#thread_affine) is. Dropping a value of the type may wake threads waiting on the storage the value borrows, as releasing a lock or the last endpoint on a side of a channel does. It takes no value. A value that is, holds, or reaches one is checked at a `parallel` block's join (see [Releasing before the join](#releasing-before-the-join)). Ordinary types need no annotation.
+
 #### `@(cross_thread)`
 
 Marks a parameter whose argument goes to another thread, so that every call is checked as a call of `core:thread`'s `spawn` is. It takes no value, and it is part of the procedure type, as [`@(escape=<level>)`](#escapelevel) is: a procedure converts to a type that marks more parameters `@(cross_thread)`, whose calls check more, but not to one that marks fewer.
@@ -7634,6 +7695,7 @@ collects those requirements for conformance checking; omitting one is a defect.
 | An unchecked pointer operation is written in a file that does not import `core:unsafe` | the operation, and the missing import ([§](#the-unsafe-package)) |
 | Integer arithmetic overflows at compile time | the mathematical result, and the type it does not fit ([§](#integer-overflow)) |
 | Two `@(export)` declarations use one symbol name | both declarations ([§](#export)) |
+| A value kept past a join may hold up a task | the kept value, the storage it and a task may share, and the joining block ([§](#releasing-before-the-join)) |
 
 [`@(require_results)`](#require_results) also requires a diagnostic for a result that is neither read nor explicitly discarded. [Copy-cost diagnostics](#copy-cost-diagnostics) are optional; when enabled, their warning policy applies to all applicable copy contexts.
 

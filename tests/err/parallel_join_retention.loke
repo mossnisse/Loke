@@ -1,0 +1,193 @@
+// design.md "Releasing before the join": a value the parent keeps past a
+// block's join that is or reaches an `@(wakes_on_drop)` type, here a channel
+// endpoint or a lock guard, may borrow no storage a task of the block
+// borrows. Retention through an enclosing local, a parameter, a wrapper, a
+// container, a task result, a writeback, an outer block's local at a nested
+// join, and an early exit is rejected, and so is a retained endpoint the
+// parent closed, and a library's own marked type, with a drop hook or not. Moving endpoints to tasks, splitting inside the block,
+// dropping before the join, and a guard on unrelated storage are accepted.
+package main;
+
+import "core:thread";
+
+consume :: proc(jobs: move thread.Receiver(int)) {
+	foreach (job in jobs) {}
+}
+
+borrow_channel :: proc(jobs: ^thread.Channel(int)) {}
+
+lock_and_add :: proc(total: ^thread.Mutex(int)) {
+	sum := total.lock();
+	sum.get() += 1;
+}
+
+Unsent :: thread.Unsent(int);
+
+enclosing_local :: proc() -> Status(Unsent) {
+	jobs := thread.Channel(int).init(16);
+	send, receive := jobs.split();
+	parallel {
+		spawn consume(move(receive));
+		foreach (i in 0..<4) { send.send(move(i)) or_return; }
+	}
+	return .ok;
+}
+
+guard_before_block :: proc() {
+	total: thread.Mutex(int) = {};
+	held := total.lock();
+	parallel {
+		spawn lock_and_add(&total);
+	}
+}
+
+parameter :: proc(jobs: ^thread.Channel(int), send: ^thread.Sender(int)) {
+	parallel {
+		spawn borrow_channel(jobs);
+	}
+}
+
+Wrapper :: struct { send: thread.Sender(int) }
+
+wrapper :: proc() {
+	jobs := thread.Channel(int).init(4);
+	send, receive := jobs.split();
+	kept := Wrapper{send.fork()};
+	parallel {
+		spawn consume(move(receive));
+		drop(send);
+	}
+}
+
+container :: proc() {
+	jobs := thread.Channel(int).init(4);
+	send, receive := jobs.split();
+	senders: [dynamic]thread.Sender(int) = {};
+	senders.append(send.fork());
+	parallel {
+		spawn consume(move(receive));
+		drop(send);
+	}
+}
+
+make_sender :: proc(jobs: ^thread.Channel(int)) -> thread.Sender(int) {
+	send, receive := jobs.split();
+	return move(send);
+}
+
+task_result :: proc() {
+	jobs := thread.Channel(int).init(4);
+	kept: thread.Sender(int);
+	parallel {
+		spawn kept = make_sender(&jobs);
+	}
+}
+
+store_sender :: proc(slot: inout Option(thread.Sender(int)), @(escape=stored) jobs: ^thread.Channel(int)) {
+	send, receive := jobs.split();
+	slot = .some(move(send));
+}
+
+writeback :: proc() {
+	jobs := thread.Channel(int).init(4);
+	slot: Option(thread.Sender(int)) = .none;
+	parallel {
+		spawn store_sender(inout slot, &jobs);
+	}
+}
+
+nested :: proc() {
+	jobs := thread.Channel(int).init(4);
+	parallel {
+		send, receive := jobs.split();
+		parallel {
+			spawn consume(move(receive));
+		}
+		drop(send);
+	}
+}
+
+early_exit :: proc(fail: bool) -> Status(Unsent) {
+	jobs := thread.Channel(int).init(4);
+	send, receive := jobs.split();
+	parallel {
+		spawn consume(move(receive));
+		if (fail) { return .ok; }
+		drop(send);
+	}
+	return .ok;
+}
+
+closed_but_kept :: proc() {
+	jobs := thread.Channel(int).init(4);
+	send, receive := jobs.split();
+	parallel {
+		spawn consume(move(receive));
+		jobs.close();
+	}
+}
+
+// A type of the program's own, marked as the library's are.
+Ticket :: struct @(wakes_on_drop) { gate: ^thread.Monitor(int) }
+
+wait_on :: proc(gate: ^thread.Monitor(int)) {}
+
+own_marked_type :: proc() {
+	gate: thread.Monitor(int) = {};
+	ticket := Ticket{&gate};
+	parallel {
+		spawn wait_on(&gate);
+	}
+}
+
+// Accepted: endpoints moved to tasks, split inside the block, a drop before
+// the join on every path, and a guard on storage no task borrows.
+
+produce :: proc(jobs: move thread.Sender(int)) {
+	foreach (i in 0..<4) {
+		switch (jobs.send(move(i))) {
+		case .ok:
+		case .err(_): return;
+		}
+	}
+}
+
+moved_to_tasks :: proc() {
+	jobs := thread.Channel(int).init(4);
+	send, receive := jobs.split();
+	parallel {
+		spawn consume(move(receive));
+		spawn produce(move(send));
+	}
+}
+
+split_inside :: proc() -> Status(Unsent) {
+	jobs := thread.Channel(int).init(16);
+	parallel {
+		send, receive := jobs.split();
+		spawn consume(receive.fork());
+		drop(receive);
+		foreach (i in 0..<4) { send.send(move(i)) or_return; }
+	}
+	return .ok;
+}
+
+dropped_first :: proc() {
+	jobs := thread.Channel(int).init(4);
+	send, receive := jobs.split();
+	parallel {
+		spawn consume(move(receive));
+		drop(send);
+	}
+}
+
+unrelated_guard :: proc() {
+	total: thread.Mutex(int) = {};
+	other: thread.Mutex(int) = {};
+	held := total.lock();
+	parallel {
+		spawn lock_and_add(&other);
+	}
+}
+
+main :: proc() {}

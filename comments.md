@@ -112,9 +112,8 @@ which also hid an entry the wrapper named itself.
 before spawning or after joining, pays for no synchronization.
 [`@(synchronized)`](design.md#synchronized) keeps that access from reaching a
 borrowed one, where an atomic operation through another read-only loan may be
-writing it. It is an attribute, not a list of types, so `Monitor` and the
-channel state planned for [structured concurrency](concurrency-proposal.md)
-need no compiler change.
+writing it. It is an attribute, not a list of types, so `Monitor` and
+`Channel` needed no compiler change.
 
 ### Waiting on a condition, not a signal
 
@@ -196,6 +195,40 @@ conversion on the worker, and no rule for dropping a value it replaces, and the
 existing definite-initialization analysis says where it holds a value after
 the join. Fields, indices, and conversions can be added if a program needs
 them.
+
+### Channels end by ownership
+
+An earlier design passed a stop token to every blocking call, so each failure
+path had to request a stop explicitly, and a forgotten request was a hang at
+the join. A [channel](standard-library.md#channels) endpoint's drop says
+instead that a participant has gone: a task's arguments drop when its call
+returns, on every path, and the parent's block cleanup runs before the join,
+so a pipeline needs no stop code of its own. Ownership does not infer that a
+monitor's condition has become impossible, interrupt a foreign wait, or cancel
+a group of tasks using several objects; those need explicit protocols, and
+selective or group cancellation tokens remain a
+[later extension](concurrency-proposal.md#later-extensions).
+
+**Paired setup and explicit duplication.** Separate factories for each side
+let a receiver start before any sender existed, leaving no sender to drop when
+setup failed early. One `split` makes both sides together. A setup endpoint
+keeps its side open while the workers start, and the parent drops it before
+blocking work. Move-only endpoints make each transfer visible, and `fork` adds
+a participant explicitly rather than changing what a generated `clone` means.
+A spare endpoint can still hide a peer's loss, so the documented setup shape
+and the join check are both needed.
+
+**A join check over marked types.** A value the parent keeps past a join can
+hold up a task the join waits for: a guard on the lock a task needs, or a
+sender keeping a draining task's channel open. The check rejects such a value
+when its borrowed storage may overlap a task's, using the borrow checker's
+root provenance; it cannot know which waits a task makes, so it is
+conservative rather than a termination proof. Which types matter is an
+attribute, [`@(wakes_on_drop)`](design.md#wakes_on_drop), not a list in the
+compiler, so a library's own waiting types get the same check, as with
+`@(synchronized)`. A guard kept over a block whose tasks borrow its mutex
+compiled before the check and is rejected now; it was a deadlock whenever a
+task took that lock.
 
 ### Child processes
 

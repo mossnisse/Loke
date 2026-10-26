@@ -1216,8 +1216,11 @@ Still open:
   calls through a plain procedure type instead, whose result derives from
   every borrowed argument ([Procedure result contracts](design.md#procedure-result-contracts)),
   so the borrow ends with the guard. Whether a declaration should state such a
-  contract, and replace the `Shared` special case, is open; the channel
-  endpoints of milestone 7 may need the same.
+  contract, and replace the `Shared` special case, is open. Milestone 7 met
+  the opposite case: an item taken out of a channel's queue through a guard
+  looked like a borrow of the guard, though items carry only process-lifetime
+  borrows, so `Channel` reaches its queue through a `rawptr` cast
+  (`queue_of`) to drop that provenance. A declared contract could say both.
 
 ### Monitor implementation review (2026-10-26)
 

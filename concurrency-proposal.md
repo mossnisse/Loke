@@ -1,14 +1,16 @@
 # Structured concurrency: the library additions
 
-Status: **milestones 1 to 6 are done**. `parallel` blocks and `spawn`
+Status: **milestones 1 to 7 are done**. `parallel` blocks and `spawn`
 statements are part of the language: [design.md](design.md) defines them
 under [Structured concurrency](design.md#structured-concurrency),
 [grammar.md](grammar.md#control-flow) parses them, and
 [comments.md](comments.md#tasks-that-borrow-joined-by-their-block) gives the
-reasons for their shape. `Monitor(T)` is in `core:thread`, specified under
-[Monitors](standard-library.md#monitors) in standard-library.md. What remains
-here is proposed, not accepted: the other library additions for tasks that
-wait for each other, the
+reasons for their shape. `Monitor(T)` and `Channel(T)` are in `core:thread`,
+specified under [Monitors](standard-library.md#monitors) and
+[Channels](standard-library.md#channels) in standard-library.md, and the join
+check under [Releasing before the join](design.md#releasing-before-the-join)
+in design.md. What remains here is proposed, not accepted: the real-time ring
+and pools, the
 [later extensions](#later-extensions) still undecided, and the milestones that
 add them. Each milestone moves its part of this text into design.md and
 standard-library.md in the same commit as the compiler change, as
@@ -86,114 +88,13 @@ change its state again: a monitor needs an explicit termination transition or
 
 ### Channels
 
-`Channel(T)` is a bounded queue between tasks. It is move-only and owns its
-queued items. The first version uses the concurrent default allocator and
-requires a positive capacity; zero or negative capacity is a programmer error
-and panics. A task reaches a channel through an **endpoint** that borrows it:
-a `Sender(T)` sends and a `Receiver(T)` receives.
-
-```text
-Channel(T).init(capacity: int) -> Channel(T)
-Channel(T).split(self: ^) -> (sender: Sender(T), receiver: Receiver(T))
-Channel(T).close(self: ^)
-Sender(T).fork(self: ^) -> Sender(T)
-Receiver(T).fork(self: ^) -> Receiver(T)
-Sender(T).send(self: ^, @(cross_thread, escape=static) value: move T) -> Status(Unsent(T))
-Sender(T).try_send(self: ^, @(cross_thread, escape=static) value: move T) -> Status(Unsent(T))
-Receiver(T).receive(self: ^) -> Option(T)
-Receiver(T).try_receive(self: ^) -> Received(T)
-
-Unsent   :: union($T: type) { closed: T, full: T }
-Received :: union($T: type) { item: T, empty, closed }
-```
-
-`Channel`, `Sender`, and `Receiver` have no zero value. The endpoints are
-move-only: ordinary assignment transfers them only under the ordinary move
-rules, and implicit copying and generated `clone` are unavailable. `fork`
-explicitly creates an additional endpoint of the same side, incrementing its
-count without allocating. Its result borrows the channel, not the source
-endpoint, so it can outlive that endpoint. Endpoints may be shared through
-read-only borrows: queue operations serialize under the channel's lock.
-
-`split` is a one-time operation that creates both initial endpoints together,
-under the same lock. There is no state in which a task has an endpoint but
-the opposite side has never had one. Calling `split` again, or after `close`,
-is a programmer error and panics. A channel's lifecycle is:
-
-| Event | Sending side | Receiving side | Queue and waiters |
-| --- | --- | --- | --- |
-| `init` | not established | not established | empty; no endpoint operations possible |
-| first `split` | open, one sender | open, one receiver | both endpoints become owned together |
-| `fork` | increments sender count if a sender | increments receiver count if a receiver | no change to closure or items |
-| last sender drops | permanently closed | unchanged | wake receivers; drain committed items, then end-of-stream |
-| last receiver drops | unchanged | permanently closed | wake senders; all subsequent sends fail |
-| `close` | permanently closed | permanently closed | wake all waiters; sends fail, existing receivers may drain |
-| channel drops | no endpoints remain | no endpoints remain | drop all remaining items and free the queue |
-
-A closed side never reopens. Forking a still-owned endpoint after explicit
-closure is allowed, but produces another closed endpoint and does not restore
-communication. Count updates, closure, and queue operations share the lock;
-count overflow panics before changing the count. `close` before `split` is
-allowed and permanently prevents splitting. Moves do not change counts.
-
-The operations:
-
-- `send` waits while the queue is full and both sides are open. On
-  success the queue owns the item; on failure `Unsent(T)` owns it, and
-  dropping the error drops the item, so no failure loses ownership. `try_send`
-  never waits for capacity, and returns the item of a send to a full open
-  queue as `.full`. Closure takes precedence over fullness: either closed
-  side means `.closed`. Blocking `send` never returns `.full`.
-- `receive` waits while the queue is empty and the sending side is open, then
-  transfers one item. `try_receive` never waits for an item; `.empty` means
-  more may come. Both `try_` operations still acquire the channel's lock.
-- Items are FIFO in send-commit order. Each item is transferred to at most
-  one receiver; several receivers share work, not copies. Sequential sends
-  preserve their order. Concurrent calls have no promised ordering until
-  they commit, and neither waiters nor lock acquisition have a fairness or
-  bounded-latency guarantee.
-- A send racing with closure either commits before it, and is then received or
-  dropped with the channel, or returns its item. A successful enqueue and a
-  successful dequeue each commit under the lock. Receivers may report
-  end-of-stream only when the queue is empty and the sending side is closed;
-  items committed before closure remain available for draining.
-- `Receiver(T)` is iterable: `foreach (job in jobs)` receives until the
-  sending side has closed and the queue is empty.
-- Endpoint drop and `close` do not destroy queued items. Dropping the channel
-  drops remaining items on the channel owner's thread. An unsent item is
-  dropped by whoever drops its error, and a received item by its new owner.
-  Ordinary borrow checks require every endpoint to end before the channel.
-
-Split inside the `parallel` block, before any participant is started. Early
-return then drops every endpoint that has not been transferred to a task.
-For multiple workers, retain a receiver only during setup, fork worker
-endpoints from it, and drop it before the parent starts blocking sends:
-
-```loke
-jobs := thread.Channel(Job).init(16);
-parallel {
-	send, receive := jobs.split();
-	foreach (i in 0..<worker_count) { spawn consume(receive.fork()); }
-	drop(receive);   // setup is complete; no spare receiver masks worker failure
-	foreach (job in make_jobs()) { send.send(move(job)) or_return; }
-}   // the parent's sender drops before the join
-```
-
-The application supplies `Job`, `consume`, and `make_jobs`; the enclosing
-procedure handles `Unsent(Job)`. If `worker_count` is zero, dropping `receive`
-closes its side and the first send fails. A worker exiting during setup cannot
-close that side while the setup receiver remains. Once setup ends, failure
-of every worker wakes a blocked sender. A spare receiver held during blocking
-sends can still cause a deadlock, even if it would drop before the join; the
-join check does not prove the parent's body makes progress.
-
-Items carry no borrow of storage shorter than the process
-(`@(escape=static)`, as `thread.spawn`'s argument), and both send operations mark
-the item `@(cross_thread)`, so it is checked as an argument crossing to another thread
-is: no `thread_local` borrow, nothing thread-affine, no owner backed by an
-allocator the sending procedure received. Shared borrowed data reaches workers
-through spawn arguments; the channel carries indices or owned jobs. Queue
-synchronization does not make an item's allocator thread-safe.
+Built with [milestone 7](#milestone-7-channels-and-the-join-check):
+[Channels](standard-library.md#channels) in standard-library.md specifies
+`Channel(T)`, its `Sender(T)` and `Receiver(T)` endpoints, `Unsent` and
+`Received`, the lifecycle table, the setup shape for several workers, and
+what an item may carry, and `examples/channels.loke` builds the worker
+pipeline. [comments.md](comments.md#channels-end-by-ownership) gives the
+reasons.
 
 ### Real-time handoff
 
@@ -248,92 +149,18 @@ added; a kernel wake on the real-time side would need a separate timing claim.
 
 ### Shutdown
 
-Shutdown is a protocol over the objects the participants actually use:
-
-| Event | Mechanism | Effect and limit |
-| --- | --- | --- |
-| A channel participant returns | its owned endpoints drop on the worker | closing the last endpoint on a side wakes its peers; other endpoints keep that side live |
-| The parent leaves the block | locals and defers run before the join | block-local endpoints drop and installed monitor cleanup runs |
-| A monitor controller ends | explicit termination state or `close` | guard drop alone is insufficient; a true predicate may still proceed after close |
-| A channel is cancelled | `Channel.close` | sends fail and receivers drain; a task blocked elsewhere is unaffected |
-| A polling loop is cancelled | a flag it checks, such as an `Atomic(bool)` | the loop must check and act on it |
-
-The parent then handles results after the join, in the order it chooses, as
-[Task failure and cleanup](design.md#task-failure-and-cleanup) describes. A
-receiver cannot tell a sending side closed by a producer's failure from one
-closed by its completion; the parent can, from the producer's result, and a
-protocol that must tell them apart sends a final item.
-
-Closing a channel is end-of-stream, not an error result or cancellation of a
-whole task group. For a group spanning several objects, the application must
-close or transition each one whose wait needs to end. Task failure does not
-automatically stop unrelated siblings. A foreign blocking call, such as
-a device wait or a terminal read, a lock-order cycle, and a protocol whose live
-participants all wait on each other are not ended by any of this. No join
-promises bounded shutdown for them.
+Built with monitors and channels: [Shutdown](standard-library.md#shutdown)
+in standard-library.md lists what ends each kind of wait, and what nothing
+ends.
 
 ### Releasing before the join
 
-The join waits for every task, and a task may be waiting for the parent to
-release something: a guard on the lock it needs, or the last endpoint on a
-side of its channel. A value declared before the block is dropped only after
-the join, so if the parent still holds one there, the task and the join wait
-for each other forever:
-
-```loke
-jobs := thread.Channel(Job).init(16);
-send, receive := jobs.split();
-parallel {
-	spawn consume(move(receive));
-	foreach (job in make_jobs()) { send.send(move(job)) or_return; }
-}   // ERROR: `send` keeps `jobs` open past the join, and `consume` may wait on it
-```
-
-Splitting inside the block fixes it: the block's locals are cleaned up before
-its join. Moving the sender to a producer task fixes it too, provided that
-task ends rather than retaining or returning the endpoint.
-
-A type marked `@(wakes_on_drop)` is one whose drop may wake threads waiting on
-the storage it borrows. It takes no value and is permitted on struct and union
-types. `Mutex`'s `Guard`, `Monitor_Guard`, and channel endpoints carry it; the
-polling-only ring has no waiters and does not need it. It is an attribute rather
-than a list of types, as
-[`@(synchronized)`](design.md#synchronized) is, so a library's own waiting
-types get the same check.
-
-At each block exit, after its locals and defers have been accounted for but
-before joining, reject a value retained by the parent if it is or reaches a
-marked value whose borrowed storage may overlap a root borrowed by any task
-of that block. In particular:
-
-- Follow fields, active or possible union variants, array and container
-  elements, owned and shared payloads, and checked pointers or views to
-  marked values. Use the existing provenance and call-result summaries to
-  find their borrowed roots. Unknown overlap is treated as possible overlap;
-  raw pointers and foreign code remain trust boundaries.
-- Include enclosing locals, parameters, and values reached through borrowed
-  parameters. A borrowed endpoint parameter does not own the caller's endpoint
-  and cannot release it by ending the borrow. Each nested block applies the
-  check at its own join; cleanup at an outer join is too late for an inner one.
-- Include task result destinations and writebacks that can retain a marked
-  value after the join. Returning a sender into a parent result slot is
-  rejected when a task of that block borrows its channel, including when a
-  sibling is draining it. Result provenance must participate even though the
-  parent cannot read the result yet.
-- Moves into task-owned arguments cease to count as parent retention, unless
-  a result or writeback can return the value to the parent. A block-local
-  endpoint dropped before the join is allowed, subject to ordinary borrow
-  checks. An outstanding borrow that prevents that drop is still an error.
-- Check every exit path. A drop at the normal end does not cover an earlier
-  `or_return`. Explicit `close` does not discharge this check: retain no such
-  endpoint at the join, even if runtime closure would make it harmless.
-
-This intentionally rejects some terminating programs: it does not prove that
-the task waits on the retained root, that an endpoint is the last on its side,
-or that two aliases refer to different queue instances when provenance cannot
-show that. Diagnostics name the retained value, the possibly shared root, and
-the joining block, suggesting an earlier drop or transfer. It does not detect
-general wait cycles, a parent stuck before cleanup, or missing monitor shutdown.
+Built with [milestone 7](#milestone-7-channels-and-the-join-check):
+[Releasing before the join](design.md#releasing-before-the-join) in design.md
+specifies the check, and [`@(wakes_on_drop)`](design.md#wakes_on_drop) the
+attribute that marks `Guard`, `Monitor_Guard`, and the channel endpoints. It is
+conservative: it does not prove that a task waits on what a kept value
+borrows, and detects no general wait cycle.
 
 ### Pools
 
@@ -462,24 +289,9 @@ foreign wait. Device latency is an assumption of this example's binding.
 
 Each part of this rationale moves to comments.md with the milestone that
 builds it. The case for predicate waits moved with monitors, to
-[Waiting on a condition, not a signal](comments.md#waiting-on-a-condition-not-a-signal).
-
-**Endpoint ownership.** The earlier token design required explicit stop
-requests on each failure path. Endpoint drop naturally expresses completion
-and peer loss for a channel, using task argument cleanup and block cleanup
-before the join. That removes boilerplate for a pipeline. It does not infer
-that a monitor predicate has become impossible, interrupt foreign waits, or
-cancel an entire group using several objects. Those need explicit protocols;
-selective or group cancellation tokens remain a possible extension.
-
-**Paired setup and explicit duplication.** Independent factories allowed a
-receiver to start before a sender ever existed, leaving no sender to drop
-on early failure. One `split` establishes both sides together. A setup endpoint
-also keeps a side alive while siblings are being started; the parent releases
-it before blocking work. Move-only endpoints make transfers visible, and
-`fork` adds a participant explicitly without altering Loke's generated `clone`
-semantics. Spare endpoints can still mask peer loss, so the setup example and
-the conservative [join check](#releasing-before-the-join) are both needed.
+[Waiting on a condition, not a signal](comments.md#waiting-on-a-condition-not-a-signal),
+and the case for endpoint ownership, paired setup, and the join check moved
+with channels, to [Channels end by ownership](comments.md#channels-end-by-ownership).
 
 **Separate compute and real-time work.** Pools amortize thread creation for
 independent computations. They do not make blocking pipelines safe on a fixed
@@ -554,11 +366,11 @@ Done: disjoint slice access (`split_at_mut` and `chunks_mut`); the
 their checks on `thread.spawn`; the reach, allocator-use, and thread-exit
 summaries; `parallel` blocks with `spawn`, checked and lowered to a thread
 per task (see [Lowering parallel blocks](compiler-architecture.md#lowering-parallel-blocks));
-and monitors.
+monitors; and channels with the join check.
 Where the compiler is narrower than design.md, [known-gaps.md](known-gaps.md)
 says so.
 
-Delivery order is milestone 7, then the independent compute pool in
+Delivery continues with the independent compute pool in
 milestone 9 when needed. Milestone 8 keeps its identifier for existing
 references, but is deferred and is not a prerequisite for milestone 9.
 Milestone 10 remains conditional on its callable-summary work.
@@ -584,32 +396,35 @@ obligations without claiming compiler-checked purity.
 
 ### Milestone 7: channels and the join check
 
-Add `Channel`, its endpoints, `Unsent`, and `Received`, written over
-`Monitor`, with both send operations' items `@(cross_thread, escape=static)`.
-Implement one-time `split`, move-only endpoints, and `fork`. Add
-`@(wakes_on_drop)` and its check, and mark `Guard`, `Monitor_Guard`, and the
-endpoints with it. The check rejects code that compiled before, a guard
-declared before a block whose tasks lock its mutex, so the commit adds an
-upgrade note. Test closure racing with send, ownership of unsent items,
-draining after close, every receiver failing while a sender waits, and the
-last sender ending while receivers wait. Cover every lifecycle-table
-transition: close before split, repeated split, fork after close, endpoint
-transfer, and both directions of closure. Check FIFO order, closed-over-full
-precedence, and that `try_` send applies the same item checks as `send`.
+Done. `Channel`, `Sender`, `Receiver`, `Unsent`, and `Received` are in
+`core:thread`, written over `Monitor`, with both send operations' items
+`@(cross_thread, escape=static)`. `@(wakes_on_drop)` marks `Guard`,
+`Monitor_Guard`, and the endpoints, and the join check (`L0733`) runs at each
+`Task_Join` in `borrow.odin`. It rejects a guard declared before a block whose
+tasks lock its mutex, which compiled before, so CHANGELOG.md carries an
+upgrade note.
 
-Add a producer/consumer example and the multi-worker pipeline to `examples/`.
-Test early return after split but before the first spawn, between spawns,
-and after setup, plus zero workers and a worker returning during setup.
-Verify that every committed, unsent, and abandoned queued item is dropped
-exactly once on the specified owner thread.
+- `tests/run/lib_thread_channel.loke` covers FIFO order, `try_send` on a full
+  queue, closure taking precedence over fullness, draining after `close`, a
+  fork after `close`, the last sender ending while receivers wait, the last
+  receiver ending while a sender waits, sends racing `close` with every item
+  committed or returned and dropped once, abandoned items dropped on the
+  channel owner's thread, and the worker setup with no workers, early returns
+  after the split, between spawns, and after setup, and a worker returning
+  during setup. A watchdog bounds every wait.
+- `tests/trap/channel_split_twice.loke`, `channel_split_after_close.loke`, and
+  `channel_capacity.loke` cover the panics.
+- `tests/err/lib_thread_channel_items.loke` checks that `try_send` applies
+  `send`'s item checks.
+- `tests/err/parallel_join_retention.loke` rejects guards and endpoints kept in
+  an enclosing local, a parameter, a wrapper, a container, a task result, a
+  writeback, at a nested join, on an early exit, and after an explicit
+  `close`, and accepts endpoints moved to tasks or dropped before the join.
+- `examples/channels.loke` is the producer/consumer and the worker pipeline.
 
-The join-check suite must reject retained guards and endpoints in enclosing
-locals, parameters, borrowed wrappers, containers, task results, and
-writebacks, including nested joins and early-exit paths. Check acceptance
-when endpoints move into tasks or drop during block cleanup. An explicit
-close without dropping a retained endpoint remains a documented rejection.
-Use bounded harnesses for runtime progress tests; no test may depend on a
-deadlock resolving.
+The parent's cleanup of an endpoint is checked by the join check, not by a
+runtime test of the endpoint's drop on each exit path; `pool` in the run test
+exercises those exits at runtime.
 
 ### Milestone 8: real-time handoff
 

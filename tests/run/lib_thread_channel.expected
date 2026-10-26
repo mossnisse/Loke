@@ -1,0 +1,28 @@
+send ok
+send ok
+send ok
+try_send full 4
+received 1 2 3
+try_receive empty
+try_send ok
+try_receive item 5
+after senders closed
+receive after senders -1
+send ok
+try_send after close closed 11
+send after close closed 12
+fork after close closed 13
+drained 10 -1
+drained total 5050
+blocked send closed 21
+race 600 true 600
+queued after the join 0
+abandoned 3 off main 0
+no workers failed
+fail at 0 failed
+fail at 1 failed
+fail at 2 failed
+pool of 3 55
+workers ok
+worker gone, setup receiver kept ok
+setup receiver dropped closed 31

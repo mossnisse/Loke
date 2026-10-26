@@ -1,0 +1,15 @@
+L0724
+@12:19
+`Window` is `@(thread_affine)`, so it cannot cross to another thread
+
+L0724
+@13:23
+`Window` is `@(thread_affine)`, so it cannot cross to another thread
+
+L0647
+@18:6
+this pointer borrows `local`, which does not outlive `value`, which `send` may keep: process-lifetime storage
+
+L0647
+@19:6
+this pointer borrows `local`, which does not outlive `value`, which `try_send` may keep: process-lifetime storage

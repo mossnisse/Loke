@@ -10,6 +10,14 @@ checklist.
 
 ### Breaking changes
 
+- A `thread.Mutex` guard kept past a `parallel` block's join, while a task of
+  the block borrows the mutex, is now rejected with `L0733`
+  ([Releasing before the join](design.md#releasing-before-the-join)): a task
+  locking that mutex could never finish, and the join would wait forever. For
+  example, `held := total.lock(); parallel { spawn add(&total); }` no longer
+  compiles. Upgrade by dropping the guard before the block, or by locking
+  inside a scope that ends before it.
+
 - `thread.Guard(T)`, the guard `Mutex.lock` returns, is now
   [`@(thread_affine)`](design.md#thread_affine), since Windows requires the
   thread that took the lock to release it. Moving or lending a guard to a
@@ -359,6 +367,23 @@ checklist.
   false, returning `.none`, while a closed monitor can still be drained.
   A `Monitor_Guard` is thread-affine, as a `Guard` is.
 
+- `thread.Channel(T)` is a bounded queue between tasks
+  ([Channels](standard-library.md#channels)). `channel.split()` makes the
+  first `Sender` and `Receiver` together, `fork` adds endpoints, and a side
+  closes when its last endpoint drops or at `close`. `send` waits for room and
+  `try_send` does not; both hand an item back in `Unsent` when they fail.
+  `receive` and `try_receive` take items in FIFO order, and
+  `foreach (item in receiver)` receives until the stream ends.
+  `examples/channels.loke` builds a worker pipeline.
+
+- [`@(wakes_on_drop)`](design.md#wakes_on_drop) marks a struct or union whose
+  drop may wake threads waiting on what it borrows; `thread.Guard`,
+  `thread.Monitor_Guard`, and the channel endpoints carry it. A value that is,
+  holds, or reaches one and is kept past a `parallel` block's join, while a
+  task of the block may borrow the same storage, is rejected with `L0733`:
+  for example, a sender declared before the block while a task drains its
+  channel ([Releasing before the join](design.md#releasing-before-the-join)).
+
 - Three attributes declare thread facts, so the compiler names no concurrency
   type or procedure. [`@(synchronized)`](design.md#synchronized) marks a field,
   or a file-scope or `static` variable, whose package synchronizes every access
@@ -601,6 +626,9 @@ checklist.
   for any count.
 
 ### Fixed
+
+- A `parallel` block directly inside another no longer reports `L0305` for
+  the hidden scope local both blocks declare, which no source can name.
 
 - Writing an allocator handle through a pointer, as in `pointer^ = arena.allocator();`,
   no longer reports `L0536`: a handle is not an owner, so only owners written

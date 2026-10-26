@@ -20,7 +20,7 @@ Examples use Loke syntax; the API summaries use Odin-style declaration sketches.
 | Call foreign text APIs | [`core:cstrings`](#corecstrings), [`core:encoding/utf16`](#coreencodingutf16) |
 | Store integers in a fixed byte order | [`core:endian`](#coreendian) |
 | Access process state or start a child | [`core:os`](#coreos-additions), [`core:process`](#coreprocess) |
-| Start threads, protect shared state, or wait for it to change | [`core:thread`](#corethread) |
+| Start threads, protect shared state, wait for it to change, or pass work between tasks | [`core:thread`](#corethread) |
 | Use numeric functions and types | [`core:math`](#coremath) |
 | Draw random numbers, shuffle, sample, or get secret bytes | [`core:random`](#corerandom) |
 | Read clocks, work with dates, or print and parse ISO 8601 times | [`core:time`](#coretime) |
@@ -130,7 +130,7 @@ core:mem              allocators and regions                  *
 core:unsafe           explicit trust boundary                 *
 core:sync             atomics, fences, once                   *
 core:simd             cross-lane SIMD operations              *
-core:thread           threads, the mutex, and the monitor
+core:thread           threads, mutexes, monitors, and channels
 core:fmt              value formatting and process diagnostics
 core:strconv          scalar parsing
 core:strings          UTF-8 algorithms and String_Builder
@@ -331,8 +331,8 @@ the remaining arguments. For another sink, format in memory and call
 
 ## `core:thread`
 
-`core:thread` starts threads, guards what they share, and lets one wait for
-another to change it. It supplies the thread start, join, and unlock edges of
+`core:thread` starts threads, guards what they share, lets one wait for
+another to change it, and carries work between them. It supplies the thread start, join, and unlock edges of
 design.md "Concurrency and the memory model".
 
 For work that ends before its caller continues, a `parallel` block is usually
@@ -354,6 +354,15 @@ Monitor(T).lock_when(self: ^, ready: $C) -> Option(Monitor_Guard(T))
 Monitor(T).close(self: ^)
 Monitor_Guard(T).get(self: inout) -> inout T
 Monitor_Guard(T).read(self: ^) -> ^T
+Channel(T).init(capacity: int) -> Channel(T)
+Channel(T).split(self: ^) -> (sender: Sender(T), receiver: Receiver(T))
+Channel(T).close(self: ^)
+Sender(T).fork(self: ^) -> Sender(T)
+Receiver(T).fork(self: ^) -> Receiver(T)
+Sender(T).send(self: ^, @(cross_thread, escape=static) value: move T) -> Status(Unsent(T))
+Sender(T).try_send(self: ^, @(cross_thread, escape=static) value: move T) -> Status(Unsent(T))
+Receiver(T).receive(self: ^) -> Option(T)
+Receiver(T).try_receive(self: ^) -> Received(T)
 processor_count() -> int
 ```
 
@@ -385,7 +394,9 @@ or `inout`, and not while the mutex is lent (design.md "@(synchronized)"). Locki
 already holds never returns. `Mutex` is move-only. A `Guard` is
 `@(thread_affine)`: the lock is released by the thread that took it, as an
 SRWLOCK requires, so a guard does not move, or lend its borrow, to another
-thread or task (design.md "@(thread_affine)").
+thread or task (design.md "@(thread_affine)"). It is also `@(wakes_on_drop)`:
+a guard the parent keeps past a `parallel` block's join while a task of the
+block borrows its mutex is an error (design.md "Releasing before the join").
 
 `processor_count` is how many threads can run at once: the machine's logical
 processors, at least one. A program that divides work among threads, such as a
@@ -499,6 +510,131 @@ controller running as another task needs its own termination cleanup when it
 must stop peers before the parent exits. A monitor makes no fairness or
 bounded-wakeup-latency guarantee. On Windows the lock is an SRWLOCK, as
 `Mutex`'s is, and the sleep a condition variable over it.
+
+### Channels
+
+`Channel(T)` is a bounded queue between tasks, written over `Monitor`. It is
+move-only, owns its queued items, and has no zero value. `init` takes the
+capacity, which must be positive: a smaller one panics. The queue's slots come
+from the default allocator, which accepts concurrent use. A task reaches a
+channel through an **endpoint** that borrows it: a `Sender(T)` sends and a
+`Receiver(T)` receives.
+
+```loke
+Unsent   :: union($T: type) { closed: T, full: T }
+Received :: union($T: type) { item: T, empty, closed }
+```
+
+The endpoints have no zero value and are move-only: a move transfers one, and
+there is no implicit copy or generated `clone`. `fork` makes another endpoint
+of the same side, counting it without allocating. Its result borrows the
+channel, not the endpoint it was forked from, so it can outlive that one.
+Endpoints may be shared through read-only borrows: queue operations take the
+channel's lock. Both endpoints are
+[`@(wakes_on_drop)`](design.md#wakes_on_drop), as `Guard` and `Monitor_Guard`
+are.
+
+`split` makes the first sender and receiver together, under the lock, so no
+task holds an endpoint while the other side has never had one. Calling `split`
+again, or after `close`, panics. The lifecycle:
+
+| Event | Sending side | Receiving side | Queue and waiters |
+| --- | --- | --- | --- |
+| `init` | not established | not established | empty; no endpoint operations possible |
+| first `split` | open, one sender | open, one receiver | both endpoints owned together |
+| `fork` | one more sender, if a sender | one more receiver, if a receiver | no change to closure or items |
+| last sender drops | closed for good | unchanged | wakes receivers, which drain the committed items and then see the end |
+| last receiver drops | unchanged | closed for good | wakes senders; every later send fails |
+| `close` | closed for good | closed for good | wakes every waiter; sends fail, and receivers still drain |
+| channel drops | no endpoints remain | no endpoints remain | drops the remaining items and frees the queue |
+
+A closed side never reopens. Forking an endpoint after `close` is allowed and
+makes another closed endpoint. Count updates, closure, and queue operations
+share the lock; a count that would overflow panics first. `close` before
+`split` is allowed and prevents splitting for good. Moves do not change counts.
+
+- `send` waits while the queue is full and both sides are open. On success the
+  queue owns the item; on failure `Unsent(T)` owns it, and dropping the error
+  drops the item, so no failure loses it. `try_send` never waits for room, and
+  returns an item sent to a full, open queue as `.full`. Closure takes
+  precedence: if either side has closed, the result is `.closed`. `send` never
+  returns `.full`.
+- `receive` waits while the queue is empty and the sending side is open, then
+  takes one item; `.none` is the end of the stream. `try_receive` never waits
+  for an item: `.empty` means more may come. Both `try_` operations still take
+  the lock.
+- Items arrive in the order their sends committed, each at one receiver only:
+  several receivers share the work, not copies. Sequential sends keep their
+  order. Concurrent sends are ordered only as they commit, and neither waiters
+  nor the lock make a fairness or bounded-latency guarantee.
+- A send racing `close` either commits first, and its item is then received or
+  dropped with the channel, or returns its item. Receivers report the end only
+  once the queue is empty and the sending side has closed, so items committed
+  before closure can be drained.
+- `Receiver(T)` is iterable: `foreach (job in jobs)` receives until the stream
+  ends.
+- Dropping an endpoint or closing does not drop queued items. Dropping the
+  channel drops the rest on the thread that drops it. An unsent item is dropped
+  by whoever drops its error, and a received one by the receiver. Every
+  endpoint borrows the channel, so the borrow checks end them before it.
+
+Split inside the `parallel` block, before any participant is started: an
+early exit then drops every endpoint not yet moved to a task, and the
+[join check](design.md#releasing-before-the-join) rejects an endpoint kept
+past the join while a task borrows its channel. For several workers, keep a
+receiver only while setting up, fork the workers' endpoints from it, and drop
+it before the parent starts sending:
+
+```loke
+jobs := thread.Channel(Job).init(16);
+parallel {
+	send, receive := jobs.split();
+	foreach (i in 0..<worker_count) { spawn consume(receive.fork()); }
+	drop(receive);   // setup is complete; no spare receiver masks worker failure
+	foreach (job in make_jobs()) { send.send(move(job)) or_return; }
+}   // the parent's sender drops before the join
+```
+
+The application supplies `Job`, `consume`, and `make_jobs`; the enclosing
+procedure handles `Unsent(Job)`. With no workers, dropping `receive` closes
+its side and the first send fails. A worker returning during setup cannot
+close the side while the setup receiver remains; once setup ends, the failure
+of every worker wakes a blocked sender. A spare receiver held during blocking
+sends can still deadlock even if it drops before the join: the join check does
+not prove that the parent's body makes progress. `examples/channels.loke`
+builds this pipeline.
+
+An item carries no borrow of storage shorter than the process
+(`@(escape=static)`, as `spawn`'s argument does), and both send operations
+mark it `@(cross_thread)`, so it is checked as an argument crossing to another
+thread is: no `thread_local` borrow, nothing thread-affine, and no owner backed
+by an allocator the sending procedure received. Shared borrowed data reaches
+workers through spawn arguments; a channel carries indices or owned jobs.
+The queue's lock does not make an item's allocator thread-safe.
+
+### Shutdown
+
+Shutdown is a protocol over the objects the tasks use:
+
+| Event | Mechanism | Effect and limit |
+| --- | --- | --- |
+| A channel participant returns | its owned endpoints drop on its thread | dropping the last endpoint on a side wakes its peers; other endpoints keep that side open |
+| The parent leaves the block | its locals and defers run before the join | block-local endpoints drop, and installed monitor cleanup runs |
+| A monitor's controller ends | an explicit termination state or `close` | a guard's drop alone does not end a wait; a true condition still proceeds after `close` |
+| A channel is cancelled | `Channel.close` | sends fail and receivers drain; a task blocked elsewhere is unaffected |
+| A polling loop is cancelled | a flag it checks, such as an `Atomic(bool)` | the loop must check it and act |
+
+The parent handles the tasks' results after the join, in the order it
+chooses (design.md "Task failure and cleanup"). A receiver cannot tell a side
+closed by a producer's failure from one closed by its completion; the parent
+can, from the producer's result, and a protocol that must tell them apart
+sends a final item. Closing a channel ends a stream; it is not an error result
+or the cancellation of a group of tasks. For a group spanning several objects,
+the application closes or changes each one whose wait must end. A task's
+failure does not stop its siblings. A foreign blocking call, such as a device
+wait or a terminal read, a lock-order cycle, and a protocol whose live tasks
+all wait on each other are ended by none of this, and no join promises bounded
+shutdown for them.
 
 ## `core:fmt`
 

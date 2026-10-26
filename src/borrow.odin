@@ -3138,7 +3138,7 @@ report_provenance :: proc(state: ^Prov_State) {
 		copy(uses, block.use_exit)
 		for index := count - 1; index >= 0; index -= 1 {
 			#partial switch block.prov[index].kind {
-			case .Access, .Root_End, .Reset, .Live, .Load:
+			case .Access, .Root_End, .Reset, .Live, .Load, .Task_Join:
 				live_after[index] = slice.clone(live, graph.alloc)
 				use_after[index] = slice.clone(uses, graph.alloc)
 			}
@@ -3314,6 +3314,144 @@ shared_hazard_text :: proc(c: ^Compiler, global: Symbol_Id, hazard: Type_Id, era
 		return fmt.tprintf("`%s` holds `%s`, which hides what it reaches", name, type_name(c, hazard))
 	}
 	return fmt.tprintf("`%s` holds `%s`, through which another thread may write as well", name, type_name(c, hazard))
+}
+
+// ----------------------------------------------------- join retention --
+// design.md "Releasing before the join": a task may be waiting for the parent
+// to drop a guard or endpoint, and the join waits for the task. At the join,
+// after the block's own cleanup, a value the parent still holds that is or
+// reaches an `@(wakes_on_drop)` type must borrow no storage a task of the block
+// may borrow. The parent holds a local or result that is used or dropped
+// later, and every parameter, which the caller holds past the join. This does
+// not prove the task waits on that storage: it is conservative.
+@(private = "file")
+check_join_retention :: proc(state: ^Prov_State, event: Prov_Event, live: []bool) {
+	graph := state.graph
+	c := state.k.c
+	if event.slot < 0 || event.slot >= len(graph.parallel_scopes) {
+		return
+	}
+	scope := graph.parallel_scopes[event.slot]
+	held := make([dynamic]int, 0, 4, graph.alloc)
+	if slot, found := graph.task_slots[scope]; found {
+		append(&held, slot)
+	}
+	if holds, found := graph.task_holds[scope]; found {
+		append(&held, ..holds[:])
+	}
+	if len(held) == 0 {
+		return
+	}
+	is_task_slot := make(map[int]bool, len(held), graph.alloc)
+	for slot in held {
+		is_task_slot[slot] = true
+	}
+	reported := make(map[Symbol_Id]bool, 2, graph.alloc)
+	wakers := make(map[Symbol_Id]Type_Id, 8, graph.alloc)
+	for slot in 0 ..< min(state.slots, len(graph.prov_slots)) {
+		info := graph.prov_slots[slot]
+		sym := symbol_of(c, info.symbol)
+		if sym == nil || is_task_slot[slot] || reported[info.symbol] {
+			continue
+		}
+		if !live[slot] && sym.kind != .Parameter {
+			continue
+		}
+		waker, cached := wakers[info.symbol]
+		if !cached {
+			waker = type_reaches_waker(c, sym.type)
+			wakers[info.symbol] = waker
+		}
+		if waker == INVALID_TYPE {
+			continue
+		}
+		row := reach_row(state, state.reach, slot)
+		for index in 0 ..< state.loans {
+			if !bit_get(row, index) || state.ended[index] {
+				continue
+			}
+			if task, shared := task_loan_overlapping(state, held[:], graph.loans[index]); shared {
+				report_join_retention(state, event, sym, waker, graph.loans[index], task)
+				reported[info.symbol] = true
+				break
+			}
+		}
+	}
+}
+
+// A loan a task of the block holds whose storage may overlap `retained`'s.
+@(private = "file")
+task_loan_overlapping :: proc(state: ^Prov_State, held: []int, retained: Prov_Loan) -> (Prov_Loan, bool) {
+	graph := state.graph
+	for slot in held {
+		row := reach_row(state, state.reach, slot)
+		for index in 0 ..< state.loans {
+			if !bit_get(row, index) || state.ended[index] {
+				continue
+			}
+			task := graph.loans[index]
+			if loans_may_share_storage(graph, retained, task) {
+				return task, true
+			}
+		}
+	}
+	return {}, false
+}
+
+// Two loans may borrow overlapping storage: one root and overlapping paths,
+// or roots the body cannot tell apart. Unknown storage may be anything, and a
+// parameter's may be the caller's storage another parameter or a global names;
+// a local of this body is neither.
+@(private = "file")
+loans_may_share_storage :: proc(graph: ^Flow_Graph, a, b: Prov_Loan) -> bool {
+	if a.root == b.root {
+		return paths_overlap(a.path, b.path)
+	}
+	first, second := graph.roots[int(a.root)].kind, graph.roots[int(b.root)].kind
+	if first == .Unknown || second == .Unknown {
+		return true
+	}
+	external :: proc(kind: Root_Kind) -> bool {
+		#partial switch kind {
+		case .Param, .Static, .Thread_Local, .Materialized:
+			return true
+		}
+		return false
+	}
+	return (first == .Param && external(second)) || (second == .Param && external(first))
+}
+
+@(private = "file")
+report_join_retention :: proc(state: ^Prov_State, event: Prov_Event, sym: ^Symbol, waker: Type_Id, retained, task: Prov_Loan) {
+	c := state.k.c
+	graph := state.graph
+	name := identifier_text(c, sym.name)
+	root := graph.roots[int(retained.root)]
+	if sym.kind == .Parameter {
+		errorf(
+			c, event.span, "L0733",
+			"the caller keeps `%s` past this join, and it may borrow storage a task of the block borrows too; dropping it may be what the task waits for",
+			name,
+		)
+		if sym.span.file != NO_FILE {
+			add_notef(c, sym.span, "`%s` is a parameter, so ending this procedure's borrow of it does not drop it", name)
+		}
+	} else {
+		errorf(
+			c, event.span, "L0733",
+			"`%s` is kept past this join while it borrows %s, which a task of the block borrows too; dropping it may be what the task waits for",
+			name, root_phrase(root),
+		)
+		if sym.span.file != NO_FILE {
+			add_notef(c, sym.span, "`%s` is declared here, outside the block; drop it or move it to a task before the join", name)
+		}
+	}
+	if waker != sym.type {
+		add_notef(c, sym.span, "it holds or reaches `%s`, which is `@(wakes_on_drop)`", type_name(c, waker))
+	}
+	if task.span.file != NO_FILE {
+		add_notef(c, task.span, "a task borrows it here")
+	}
 }
 
 // The span of the innermost `parallel` keyword whose tasks may be running.
@@ -3677,6 +3815,8 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 			report_borrow_conflict(state, event, loan, uses[slot])
 			return
 		}
+	case .Task_Join:
+		check_join_retention(state, event, live)
 	case .Live, .Load:
 		// A reborrow suspends its source until its own last use, and the last use
 		// of whatever was reborrowed from it in turn.

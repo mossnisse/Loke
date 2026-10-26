@@ -85,7 +85,7 @@ attribute_spec :: proc(name: string) -> (Attr_Spec, bool) {
 	case "synchronized":
 		// Which variables may carry it is `validate_decl_attributes`'.
 		return {{.Struct_Field, .Var_Decl}, .None, false}, true
-	case "thread_affine":
+	case "thread_affine", "wakes_on_drop":
 		return {{.Struct_Literal, .Union_Literal}, .None, false}, true
 	case "cross_thread":
 		// What the parameter must be is `check_cross_thread_attribute`'.

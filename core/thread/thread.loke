@@ -1,7 +1,8 @@
-/// Threads, and the mutexes and monitors that guard what they share.
+/// Threads, the mutexes and monitors that guard what they share, and the
+/// channels that carry work between them.
 ///
 /// `spawn` and `join` supply the thread start and join edges of happens-before,
-/// and `Mutex` and `Monitor` the unlock-to-lock edge.
+/// and `Mutex` and `Monitor` the unlock-to-lock edge, which `Channel` uses.
 // standard-library "`core:thread`", design.md "Concurrency and the memory
 // model".
 //
@@ -231,7 +232,7 @@ impl Mutex($T) {
 /// guard stays on the thread that locked, which is the one that must unlock.
 // Thread-affine because Windows requires an SRWLOCK to be released by the
 // thread that acquired it.
-Guard :: move_only struct($T: type) @(thread_affine) {
+Guard :: move_only struct($T: type) @(thread_affine, wakes_on_drop) {
 	@(private) mutex: ^Mutex(T),
 }
 
@@ -327,7 +328,7 @@ impl Monitor($T) {
 /// The pointer borrows the monitor, so it cannot move or end while locked. A
 /// guard stays on the thread that locked, which is the one that must unlock.
 // Thread-affine for the reason `Guard` is.
-Monitor_Guard :: move_only struct($T: type) @(thread_affine) {
+Monitor_Guard :: move_only struct($T: type) @(thread_affine, wakes_on_drop) {
 	@(private) monitor: ^Monitor(T),
 	// Whether `get` was called, so dropping the guard wakes the waiters.
 	@(private) changed: bool,

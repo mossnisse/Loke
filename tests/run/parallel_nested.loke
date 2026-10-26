@@ -1,0 +1,23 @@
+// design.md "Parallel blocks": a block directly inside another joins its own
+// tasks first, and each block's hidden scope is its own, so the inner one
+// hides the outer one's without complaint.
+package main;
+
+import "core:fmt";
+
+square :: proc(n: int) -> int {
+	return n * n;
+}
+
+main :: proc() {
+	a, b, c: int;
+	parallel {
+		spawn a = square(2);
+		parallel {
+			spawn b = square(3);
+			spawn c = square(4);
+		}
+		fmt.println("inner", b + c);
+	}
+	fmt.println("outer", a + b + c);
+}

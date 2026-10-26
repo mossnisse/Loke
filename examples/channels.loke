@@ -1,0 +1,98 @@
+package main;
+import "core:fmt";
+import "core:thread";
+
+// Tasks that hand work to each other over channels, and a pipeline of workers
+// sharing a queue.
+//
+// A `thread.Channel` is a bounded queue; a task reaches it through an endpoint
+// that borrows it (standard-library.md "Channels"). Each side closes when its
+// last endpoint drops, so a task's return ends the waits on its side, and the
+// block splits the channel inside itself, so its own endpoints drop before it
+// joins on every way out (design.md "Releasing before the join").
+
+// Sends the first `count` Fibonacci numbers, then returns, which closes the
+// sending side: the receiver drains the queue and sees the end.
+fibonacci :: proc(out: move thread.Sender(int), count: int) {
+	a, b := 0, 1;
+	foreach (_ in 0 ..< count) {
+		next := a;   // `send` takes its item by `move`
+		switch (out.send(move(next))) {
+		case .ok:
+		case .err(_): return;   // the receiver has gone
+		}
+		a, b = b, a + b;
+	}
+}
+
+// One producer, and the parent as the consumer.
+producer_consumer :: proc() {
+	numbers := thread.Channel(int).init(4);
+	parallel {
+		send, receive := numbers.split();
+		spawn fibonacci(move(send), 15);
+		received: [dynamic]int = {};
+		foreach (n in receive) {
+			received.append(n);
+		}
+		fmt.println(received[:]);
+	}
+}
+
+Job :: struct { id: int, value: int }
+Result :: struct { id: int, square: int }
+
+// A worker: squares each job it receives until the jobs end. Its endpoints
+// drop when it returns.
+square_all :: proc(jobs: move thread.Receiver(Job), results: move thread.Sender(Result)) {
+	foreach (job in jobs) {
+		switch (results.send(Result{job.id, job.value * job.value})) {
+		case .ok:
+		case .err(_): return;
+		}
+	}
+}
+
+// Puts each result in its job's place, whichever worker finished it first.
+collect :: proc(results: move thread.Receiver(Result), count: int) -> [dynamic]int {
+	squares: [dynamic]int = {};
+	squares.resize(count);
+	foreach (result in results) {
+		squares[result.id] = result.square;
+	}
+	return squares;
+}
+
+// Jobs from the parent, squared by `workers` tasks sharing one queue, and
+// gathered by a collector. Setup forks each worker's endpoints, then drops the
+// spares before the parent starts sending, so no spare endpoint keeps a side
+// open: when the parent's sender drops, the workers finish and return, and
+// their result senders' drops end the collector.
+pipeline :: proc(count: int, workers: int) -> Status(thread.Unsent(Job)) {
+	jobs := thread.Channel(Job).init(8);
+	results := thread.Channel(Result).init(8);
+	squares: [dynamic]int;
+	parallel {
+		send_jobs, receive_jobs := jobs.split();
+		send_results, receive_results := results.split();
+		spawn squares = collect(move(receive_results), count);
+		foreach (_ in 0 ..< workers) {
+			spawn square_all(receive_jobs.fork(), send_results.fork());
+		}
+		drop(receive_jobs);
+		drop(send_results);
+		foreach (id in 0 ..< count) {
+			send_jobs.send(Job{id, id + 1}) or_return;
+		}
+	}
+	fmt.println(squares[:]);
+	return .ok;
+}
+
+main :: proc() {
+	producer_consumer();
+	switch (pipeline(12, 3)) {
+	case .ok: fmt.println("pipeline done");
+	case .err(_): fmt.println("a job was not sent");
+	}
+}

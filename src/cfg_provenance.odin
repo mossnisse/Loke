@@ -1159,11 +1159,16 @@ prov_consume :: proc(graph: ^Flow_Graph, place: Expr, span: Span, verb: string) 
 
 // design.md "Owners and `drop`": dropping a local runs its `drop` hooks, which
 // may read what it borrows, so the drop uses those borrows. A container's own
-// drop reads none, so a local without a hand-written hook is not asked.
+// drop reads none, so a local without a hand-written hook is not asked. One
+// that is or reaches an `@(wakes_on_drop)` type is, hook or not: its drop is
+// what the join check asks about (design.md "Releasing before the join").
 @(private)
 prov_drop_reads :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> bool {
 	sym := symbol_of(graph.k.c, id)
-	return sym != nil && type_drop_runs_hook(graph.k.c, sym.type) && len(prov_content_slots(graph, id)) > 0
+	if sym == nil || len(prov_content_slots(graph, id)) == 0 {
+		return false
+	}
+	return type_drop_runs_hook(graph.k.c, sym.type) || type_reaches_waker(graph.k.c, sym.type) != INVALID_TYPE
 }
 
 @(private)

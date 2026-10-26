@@ -1,0 +1,293 @@
+// standard-library "Channels": items arrive in FIFO order; `try_send` reports
+// a full queue apart from a closed one, and closure takes precedence; a closed
+// channel drains before its end; the last sender's drop wakes waiting
+// receivers, and the last receiver's drop fails a waiting send; a fork after
+// `close` is closed; a send racing `close` commits or returns its item; setup
+// follows the split-inside-the-block shape on every exit; and every item is
+// dropped once, an abandoned one on the channel owner's thread.
+//
+// A watchdog ends the program if a wait never ends, so a lost wakeup fails
+// the test instead of hanging the suite.
+package main;
+
+import "core:fmt";
+import "core:os";
+import "core:sync";
+import "core:thread";
+import "core:time";
+
+finished: sync.Atomic(bool);
+drops: sync.Atomic(int);
+drops_off_main: sync.Atomic(int);
+on_main: thread_local bool;
+
+watch :: proc(seconds: move int) {
+	foreach (_ in 0..<seconds * 100) {
+		if (finished.load()) { return; }
+		time.sleep(10 * time.MILLISECOND);
+	}
+	fmt.println("timed out");
+	os.exit(1);
+}
+
+// Counts its drops, and those on a thread other than `main`'s.
+Item :: move_only struct { id: int }
+
+impl Item {
+	release :: hook(drop) proc(self: inout) {
+		if (self.id == 0) { return; }
+		drops.add(1);
+		if (!on_main) { drops_off_main.add(1); }
+	}
+}
+
+show :: proc(label: string, result: Status(thread.Unsent(Item))) {
+	switch (result) {
+	case .ok: fmt.println(label, "ok");
+	case .err(unsent):
+		switch (unsent) {
+		case .closed(item): fmt.println(label, "closed", item.id);
+		case .full(item): fmt.println(label, "full", item.id);
+		}
+	}
+}
+
+// Whether a send succeeded; a failed one's item drops here.
+sent :: proc(result: Status(thread.Unsent(Item))) -> bool {
+	switch (result) {
+	case .ok: return true;
+	case .err(_): return false;
+	}
+	return false;
+}
+
+show_received :: proc(label: string, received: thread.Received(Item)) {
+	switch (received) {
+	case .item(item): fmt.println(label, "item", item.id);
+	case .empty: fmt.println(label, "empty");
+	case .closed: fmt.println(label, "closed");
+	}
+}
+
+received_id :: proc(item: Option(Item)) -> int {
+	switch (item) {
+	case .some(got): return got.id;
+	case .none: return -1;
+	}
+	return -1;
+}
+
+// Sequential sends arrive in order; a full queue hands the item back.
+in_order :: proc() {
+	channel := thread.Channel(Item).init(3);
+	send, receive := channel.split();
+	foreach (id in 1..=3) { show("send", send.send(Item{id})); }
+	show("try_send", send.try_send(Item{4}));
+	fmt.println("received", received_id(receive.receive()), received_id(receive.receive()), received_id(receive.receive()));
+	show_received("try_receive", receive.try_receive());
+	show("try_send", send.try_send(Item{5}));
+	show_received("try_receive", receive.try_receive());
+	drop(send);
+	show_received("after senders", receive.try_receive());
+	fmt.println("receive after senders", received_id(receive.receive()));
+}
+
+// `close` fails every later send, closure taking precedence over fullness,
+// while what was queued drains; a fork after it is closed too.
+closing :: proc() {
+	channel := thread.Channel(Item).init(1);
+	send, receive := channel.split();
+	show("send", send.send(Item{10}));
+	channel.close();
+	channel.close();
+	show("try_send after close", send.try_send(Item{11}));
+	show("send after close", send.send(Item{12}));
+	late := send.fork();
+	show("fork after close", late.send(Item{13}));
+	fmt.println("drained", received_id(receive.receive()), received_id(receive.receive()));
+}
+
+drain :: proc(items: move thread.Receiver(Item)) -> int {
+	count := 0;
+	foreach (item in items) {
+		count += item.id;
+	}
+	return count;
+}
+
+produce :: proc(items: move thread.Sender(Item), from: int, to: int) {
+	foreach (id in from..=to) {
+		if (!sent(items.send(Item{id}))) { return; }
+	}
+}
+
+// The last sender to return closes its side: the waiting receiver drains and
+// ends. Two senders, one forked, each keep the side open.
+last_sender_ends :: proc() {
+	channel := thread.Channel(Item).init(2);
+	total: int;
+	parallel {
+		send, receive := channel.split();
+		spawn total = drain(move(receive));
+		spawn produce(send.fork(), 1, 50);
+		spawn produce(move(send), 51, 100);
+	}
+	fmt.println("drained total", total);
+}
+
+quit :: proc(items: move thread.Receiver(Item)) {
+	time.sleep(20 * time.MILLISECOND);
+}
+
+// The only receiver returns while a send waits for room, which ends the send
+// with its item handed back.
+last_receiver_ends :: proc() {
+	channel := thread.Channel(Item).init(1);
+	parallel {
+		send, receive := channel.split();
+		spawn quit(move(receive));
+		// Whether the first send waits or not, the second does, or finds the
+		// side already closed.
+		_ = sent(send.send(Item{20}));
+		show("blocked send", send.send(Item{21}));
+	}
+}
+
+Tally :: struct { committed: int, returned: int }
+
+race :: proc(items: move thread.Sender(Item), base: int) -> Tally {
+	tally := Tally{};
+	foreach (id in 1..=200) {
+		if (sent(items.send(Item{base + id}))) {
+			tally.committed += 1;
+		} else {
+			tally.returned += 1;
+		}
+	}
+	return tally;
+}
+
+count_items :: proc(items: move thread.Receiver(Item)) -> int {
+	count := 0;
+	foreach (item in items) { count += 1; }
+	return count;
+}
+
+// Sends racing `close` each commit, and are received, or hand their item
+// back; none is lost or dropped twice.
+racing_close :: proc() {
+	drops.store(0);
+	channel := thread.Channel(Item).init(4);
+	first, second, third: Tally;
+	received: int;
+	parallel {
+		send, receive := channel.split();
+		spawn received = count_items(move(receive));
+		spawn first = race(send.fork(), 1000);
+		spawn second = race(send.fork(), 2000);
+		spawn third = race(move(send), 3000);
+		time.sleep(2 * time.MILLISECOND);
+		channel.close();
+	}
+	committed := first.committed + second.committed + third.committed;
+	returned := first.returned + second.returned + third.returned;
+	fmt.println("race", committed + returned, committed == received, drops.load());
+}
+
+// Queues three items and returns, dropping both endpoints on its thread.
+fill :: proc(items: move thread.Sender(Item), unread: move thread.Receiver(Item)) {
+	produce(move(items), 1, 3);
+}
+
+// Items still queued when the channel drops are dropped with it, on the
+// thread that owns it, though another thread queued them and dropped every
+// endpoint.
+abandoned :: proc() {
+	drops.store(0);
+	drops_off_main.store(0);
+	{
+		channel := thread.Channel(Item).init(4);
+		parallel {
+			send, receive := channel.split();
+			spawn fill(move(send), move(receive));
+		}
+		fmt.println("queued after the join", drops.load());
+	}
+	fmt.println("abandoned", drops.load(), "off main", drops_off_main.load());
+}
+
+Setup_Error :: enum { Failed }
+
+// Adds what the worker drained to the shared total, which a mutex guards.
+// The parent reads it after the join.
+worker :: proc(jobs: move thread.Receiver(Item), total: ^thread.Mutex(int)) {
+	drained := drain(move(jobs));
+	sum := total.lock();
+	sum.get() += drained;
+}
+
+// The setup of the proposal's worker pool, leaving at `fail_at`: after the
+// split, between the spawns, or after setup. Every exit drops the endpoints
+// the parent kept before the join.
+pool :: proc(workers: int, fail_at: int) -> Status(Setup_Error) {
+	channel := thread.Channel(Item).init(2);
+	total: thread.Mutex(int) = {};
+	parallel {
+		send, receive := channel.split();
+		if (fail_at == 0) { return .err(.Failed); }
+		foreach (i in 0..<workers) {
+			if (fail_at == 1 && i == 1) { return .err(.Failed); }
+			spawn worker(receive.fork(), &total);
+		}
+		drop(receive);
+		if (fail_at == 2) { return .err(.Failed); }
+		foreach (id in 1..=10) {
+			if (!sent(send.send(Item{id}))) { return .err(.Failed); }
+		}
+	}
+	fmt.println("pool of", workers, total.value);
+	return .ok;
+}
+
+describe_setup :: proc(result: Status(Setup_Error)) -> string {
+	switch (result) {
+	case .ok: return "ok";
+	case .err(_): return "failed";
+	}
+	return "";
+}
+
+returns_at_once :: proc(jobs: move thread.Receiver(Item)) {}
+
+// A worker returning during setup cannot close the side while the setup
+// receiver remains; once it drops, nothing keeps the side open.
+early_worker :: proc() {
+	channel := thread.Channel(Item).init(2);
+	parallel {
+		send, receive := channel.split();
+		spawn returns_at_once(receive.fork());
+		time.sleep(10 * time.MILLISECOND);
+		show("worker gone, setup receiver kept", send.try_send(Item{30}));
+		drop(receive);
+		show("setup receiver dropped", send.send(Item{31}));
+	}
+}
+
+main :: proc() {
+	on_main = true;
+	dog := thread.spawn(watch, 60);
+	in_order();
+	closing();
+	last_sender_ends();
+	last_receiver_ends();
+	racing_close();
+	abandoned();
+	fmt.println("no workers", describe_setup(pool(0, 3)));
+	foreach (fail_at in 0..=2) {
+		fmt.println("fail at", fail_at, describe_setup(pool(2, fail_at)));
+	}
+	fmt.println("workers", describe_setup(pool(3, 3)));
+	early_worker();
+	finished.store(true);
+	dog.join();
+}

@@ -181,6 +181,10 @@ Type_Info :: struct {
 	// them. Only the declaring type is marked; `transfer_facts` finds what holds
 	// or reaches one when it crosses a thread boundary.
 	thread_affine: bool,
+	// design.md "@(wakes_on_drop)": dropping a value may wake threads waiting
+	// on the storage it borrows. Only the declaring type is marked;
+	// `type_reaches_waker` finds what holds or reaches one.
+	wakes_on_drop: bool,
 	// Inherent members written by `impl`. `extend` never writes here — its
 	// members are package-scoped and live in `Package.extensions`.
 	members:    []Symbol_Id,

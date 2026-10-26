@@ -430,6 +430,62 @@ transfer_facts_walk :: proc(c: ^Compiler, type: Type_Id, facts: ^Transfer_Facts,
 	}
 }
 
+// design.md "@(wakes_on_drop)": a marked type a value of `type` is, holds, or
+// reaches, so keeping the value may keep a waiter asleep; INVALID_TYPE if none.
+// It follows what `transfer_facts` follows: fields and variants, pointees,
+// owned and shared payloads, container elements, and a generic record's type
+// arguments.
+type_reaches_waker :: proc(c: ^Compiler, type: Type_Id) -> Type_Id {
+	visited := make(map[Type_Id]bool, 8, context.temp_allocator)
+	return waker_walk(c, type, &visited)
+}
+
+@(private = "file")
+waker_walk :: proc(c: ^Compiler, type: Type_Id, visited: ^map[Type_Id]bool) -> Type_Id {
+	if type == INVALID_TYPE || visited[type] {
+		return INVALID_TYPE
+	}
+	visited[type] = true
+	info := type_of(c, type)
+	if info == nil {
+		return INVALID_TYPE
+	}
+	if info.wakes_on_drop {
+		return type
+	}
+	#partial switch info.kind {
+	case .Distinct, .Pointer, .Slice, .Dynamic_Array, .Box, .Array, .Simd:
+		return waker_walk(c, info.element, visited)
+	case .Map:
+		if found := waker_walk(c, info.key, visited); found != INVALID_TYPE {
+			return found
+		}
+		return waker_walk(c, info.element, visited)
+	case .Struct:
+		for field in info.fields {
+			if sym := symbol_of(c, field); sym != nil {
+				if found := waker_walk(c, sym.type, visited); found != INVALID_TYPE {
+					return found
+				}
+			}
+		}
+		for arg in info.instance_args {
+			if arg.is_type {
+				if found := waker_walk(c, arg.type, visited); found != INVALID_TYPE {
+					return found
+				}
+			}
+		}
+	case .Union:
+		for variant in info.variants {
+			if found := waker_walk(c, variant, visited); found != INVALID_TYPE {
+				return found
+			}
+		}
+	}
+	return INVALID_TYPE
+}
+
 // ------------------------------------------------- generated copy members --
 
 // Contributed only when `clone`/`try_clone` is looked up: `lifecycle_of` caches,

@@ -37,6 +37,7 @@ resolve_union_variants :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) 
 	info.variant_names = names[:]
 	info.written_align = record_written_alignment(k, value)
 	info.thread_affine = has_attribute(value.attributes, "thread_affine")
+	info.wakes_on_drop = has_attribute(value.attributes, "wakes_on_drop")
 	resolve_union_zero(k, info, value)
 	resolve_union_failure(k, info, value)
 }

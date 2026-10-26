@@ -671,6 +671,19 @@ parent's allocator use as `Region_Use` events, and the solver reports both
 against the tasks that may be running. The emission contract validates each
 recorded spawn.
 
+The join check ([Releasing before the join](design.md#releasing-before-the-join))
+runs at each `Task_Join` in the same replay (`check_join_retention`), which
+records liveness after the event for it. The values the parent keeps are the
+slots of a symbol live after the join, and every parameter's slots; a slot
+counts when its symbol's type is, holds, or reaches an `@(wakes_on_drop)` type
+(`type_reaches_waker` in `hooks.odin`). Its reaching loans are compared with
+those in the block's `task_slots` and `task_holds` slots by root: one root
+with overlapping paths, unknown roots, or a parameter's root against another
+external one (`loans_may_share_storage`). Such a value's drop counts as a use
+of what it borrows, hook or not (`prov_drop_reads`), so a local dropped in the
+block's cleanup is not live at the join, and one dropped later, on any exit
+path, is.
+
 ### Closed semantic registries
 
 Before emission, the checked program must contain exact map/order policies,

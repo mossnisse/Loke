@@ -1,0 +1,22 @@
+// standard-library "Channels": both send operations take their item as
+// `@(cross_thread, escape=static)`, so `try_send` checks an item as `send`
+// does: nothing thread-affine crosses, and no borrow of storage shorter than
+// the process travels.
+package main;
+
+import "core:thread";
+
+Window :: struct @(thread_affine) { handle: int }
+
+affine :: proc(windows: ^thread.Sender(Window)) {
+	_ = windows.send(Window{1});
+	_ = windows.try_send(Window{2});
+}
+
+borrowed :: proc(views: ^thread.Sender(^int)) {
+	local := 5;
+	_ = views.send(&local);
+	_ = views.try_send(&local);
+}
+
+main :: proc() {}
