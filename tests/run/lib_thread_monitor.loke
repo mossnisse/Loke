@@ -1,11 +1,12 @@
 // standard-library "Monitors": a `Monitor`'s waiter sleeps until its
-// condition holds and sees every change made through a guard's `get`, a guard
-// used only through `read` wakes no one, a wakeup that changes nothing only
-// repeats the question, and `close` ends the waits whose condition is false
-// while a closed monitor can still be drained.
+// condition holds and sees every change made through a guard's `get`, a wakeup
+// that changes nothing only repeats the question, and `close` ends the waits
+// whose condition is false while a closed monitor can still be drained.
 //
 // The conditions count their questions in `checks`, which a real condition
-// must not do; the count shows when a waiter has asked and gone to sleep. A
+// must not do; the count shows when a waiter has asked and gone to sleep. The
+// sleep may also end spuriously, so the count is only ever a lower bound, and
+// that a guard used only through `read` wakes no one is not observable here. A
 // watchdog ends the program if a wait never ends, so a lost wakeup fails the
 // test instead of hanging the suite.
 package main;
@@ -72,7 +73,7 @@ reach_three :: proc(counter: ^thread.Monitor(int)) -> int {
 
 // Every change through `get` makes the waiter ask again, and a `get` that
 // writes nothing wakes it as a spurious wakeup does: it asks, answers `false`,
-// and sleeps again. A guard used only through `read` wakes no one.
+// and sleeps again. A guard used only through `read` leaves it waiting.
 asking_again :: proc() {
 	checks.store(0);
 	counter: thread.Monitor(int) = {};
@@ -84,8 +85,6 @@ asking_again :: proc() {
 			state := counter.lock();
 			fmt.println("read", state.read()^);
 		}
-		time.sleep(50 * time.MILLISECOND);
-		fmt.println("after read", checks.load());
 		{
 			state := counter.lock();
 			state.get() += 1;

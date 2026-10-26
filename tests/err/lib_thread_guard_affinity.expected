@@ -1,0 +1,15 @@
+L0724
+@21:42
+`Monitor_Guard(int)` is `@(thread_affine)`, so it cannot cross to another thread
+
+L0724
+@23:39
+`Guard(int)` is `@(thread_affine)`, so it cannot cross to another thread
+
+L0724
+@29:25
+`Monitor_Guard(int)` is `@(thread_affine)`, so it cannot cross to another thread
+
+L0724
+@36:17
+`Monitor_Guard(int)` is `@(thread_affine)`, so it cannot cross to another thread

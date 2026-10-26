@@ -1,0 +1,40 @@
+// standard-library "`core:thread`" and "Monitors", design.md
+// "@(thread_affine)": a `Guard` or `Monitor_Guard` unlocks on the thread that
+// locked, as Windows requires of an SRWLOCK, so neither moves to a thread
+// `spawn` starts, into a task, or back from a task to its parent.
+package main;
+
+import "core:thread";
+
+gate: thread.Monitor(int);
+total: thread.Mutex(int);
+
+release_monitor :: proc(guard: move thread.Monitor_Guard(int)) {}
+release_mutex :: proc(guard: move thread.Guard(int)) {}
+
+lock_gate :: proc() -> thread.Monitor_Guard(int) {
+	return gate.lock();
+}
+
+to_spawned_thread :: proc() {
+	guard := gate.lock();
+	worker := thread.spawn(release_monitor, move(guard));
+	held := total.lock();
+	other := thread.spawn(release_mutex, move(held));
+}
+
+into_a_task :: proc() {
+	guard := gate.lock();
+	parallel {
+		spawn release_monitor(move(guard));
+	}
+}
+
+back_from_a_task :: proc() {
+	guard: thread.Monitor_Guard(int);
+	parallel {
+		spawn guard = lock_gate();
+	}
+}
+
+main :: proc() {}

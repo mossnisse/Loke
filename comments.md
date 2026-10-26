@@ -81,6 +81,8 @@ arguments travel as one record, avoiding untyped callback state.
 
 `Mutex(T)` owns its protected value, and its guard lends an `inout` result.
 Keeping lock and data together makes the borrow follow the lock's lifetime.
+The guard is `@(thread_affine)` because the system lock must be released by
+the thread that took it; a guard handed to another thread would unlock there.
 Dropping an unjoined thread joins it, so the thread cannot outlive its handle.
 
 The global-write warning catches spawned entries that write shared globals.

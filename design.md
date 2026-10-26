@@ -7469,7 +7469,7 @@ On a variable it says that the package vouches for every access to the variable 
 
 Written after `struct` or `union`, before its body, as [`@(packed)`](#packed) is. A value of the type must stay on the thread that created it, as a handle to a window or another foreign resource tied to its thread must, or a value whose `hook(drop)` must run there. It takes no value. The property propagates structurally: a record, union, array, or container holding one, and a pointer, slice, box, or `Shared(T)` reaching one, is restricted too.
 
-A thread-affine value cannot be moved, copied, or borrowed into another thread: it may not reach an argument for a [`@(cross_thread)`](#cross_thread) parameter (see [Concurrency and the memory model](#concurrency-and-the-memory-model)), nor cross between a task and its parent (see [Borrows crossing between tasks](#borrows-crossing-between-tasks)). A thread may create, use, and drop its own thread-affine values. Ordinary types need no annotation.
+A thread-affine value cannot be moved, copied, or borrowed into another thread: it may not reach an argument for a [`@(cross_thread)`](#cross_thread) parameter (see [Concurrency and the memory model](#concurrency-and-the-memory-model)), nor cross between a task and its parent (see [Borrows crossing between tasks](#borrows-crossing-between-tasks)). A thread may create, use, and drop its own thread-affine values. Ordinary types need no annotation. `thread.Guard(T)` and `thread.Monitor_Guard(T)` are thread-affine, since a lock is released by the thread that took it.
 
 #### `@(cross_thread)`
 

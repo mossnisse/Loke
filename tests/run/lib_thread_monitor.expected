@@ -1,7 +1,6 @@
 zero 1 4
 turns 40000 0
 read 0
-after read 1
 seen 3 asked true
 closed true true true
 drained 7 0

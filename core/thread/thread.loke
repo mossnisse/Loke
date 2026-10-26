@@ -227,8 +227,11 @@ impl Mutex($T) {
 	}
 }
 
-/// The pointer borrows the mutex, so it cannot move or end while locked.
-Guard :: move_only struct($T: type) {
+/// The pointer borrows the mutex, so it cannot move or end while locked. A
+/// guard stays on the thread that locked, which is the one that must unlock.
+// Thread-affine because Windows requires an SRWLOCK to be released by the
+// thread that acquired it.
+Guard :: move_only struct($T: type) @(thread_affine) {
 	@(private) mutex: ^Mutex(T),
 }
 
@@ -321,8 +324,10 @@ impl Monitor($T) {
 	}
 }
 
-/// The pointer borrows the monitor, so it cannot move or end while locked.
-Monitor_Guard :: move_only struct($T: type) {
+/// The pointer borrows the monitor, so it cannot move or end while locked. A
+/// guard stays on the thread that locked, which is the one that must unlock.
+// Thread-affine for the reason `Guard` is.
+Monitor_Guard :: move_only struct($T: type) @(thread_affine) {
 	@(private) monitor: ^Monitor(T),
 	// Whether `get` was called, so dropping the guard wakes the waiters.
 	@(private) changed: bool,

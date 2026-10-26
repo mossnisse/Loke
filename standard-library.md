@@ -382,7 +382,10 @@ storage still locks. The field `value` is public for a caller that owns the
 mutex outright, before spawning or after joining. It is `@(synchronized)`, as
 `Atomic`'s `value` is: it is reached only through the owner or through `^mut`
 or `inout`, and not while the mutex is lent (design.md "@(synchronized)"). Locking a mutex the thread
-already holds never returns. `Mutex` is move-only.
+already holds never returns. `Mutex` is move-only. A `Guard` is
+`@(thread_affine)`: the lock is released by the thread that took it, as an
+SRWLOCK requires, so a guard does not move, or lend its borrow, to another
+thread or task (design.md "@(thread_affine)").
 
 `processor_count` is how many threads can run at once: the machine's logical
 processors, at least one. A program that divides work among threads, such as a
@@ -404,7 +407,8 @@ state: a worker waiting for a job, a render loop waiting to be unpaused. As
 storage and behind a `Shared(T)`; its `value` field is `@(synchronized)`; and
 it is move-only. `lock`, and `get` on its guard, work as `Mutex`'s do. A
 `Mutex` stays the choice where no one waits for a state, since it keeps no
-wakeup bookkeeping.
+wakeup bookkeeping. A `Monitor_Guard` is `@(thread_affine)`, as a `Guard` is,
+and so is the `Option` `lock_when` returns.
 
 - `lock_when` locks and calls `ready` with the lock held. While `ready`
   answers `false` and the monitor is open, the thread releases the lock and

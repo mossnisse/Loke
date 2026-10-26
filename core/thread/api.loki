@@ -54,8 +54,9 @@ impl Mutex($T) {
 	lock :: proc(self: ^) -> Guard(T) ---;
 }
 
-// The pointer borrows the mutex, so it cannot move or end while locked.
-Guard :: move_only struct($T: type) {
+// The pointer borrows the mutex, so it cannot move or end while locked. A
+// guard stays on the thread that locked, which is the one that must unlock.
+Guard :: move_only struct($T: type) @(thread_affine) {
 	// and fields private to the package
 }
 
@@ -113,8 +114,9 @@ impl Monitor($T) {
 	close :: proc(self: ^) ---;
 }
 
-// The pointer borrows the monitor, so it cannot move or end while locked.
-Monitor_Guard :: move_only struct($T: type) {
+// The pointer borrows the monitor, so it cannot move or end while locked. A
+// guard stays on the thread that locked, which is the one that must unlock.
+Monitor_Guard :: move_only struct($T: type) @(thread_affine) {
 	// and fields private to the package
 }
 

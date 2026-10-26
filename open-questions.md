@@ -1219,6 +1219,36 @@ Still open:
   contract, and replace the `Shared` special case, is open; the channel
   endpoints of milestone 7 may need the same.
 
+### Monitor implementation review (2026-10-26)
+
+Review of `84a9691`. Both findings are fixed:
+
+- `Monitor_Guard`, and `Mutex`'s `Guard`, which had the same omission, were not
+  [`@(thread_affine)`](design.md#thread_affine), so checked code could move a
+  guard to another thread and release an SRWLOCK there, which Windows
+  forbids. Both are thread-affine now;
+  [lib_thread_guard_affinity.loke](tests/err/lib_thread_guard_affinity.loke)
+  rejects argument transfer to `thread.spawn`, a move into a task, and a task
+  returning a guard to its parent.
+- The `asking_again` case in
+  [lib_thread_monitor.loke](tests/run/lib_thread_monitor.loke) required an
+  exact predicate-call count after a read-only guard dropped. A condition
+  variable permits
+  [spurious wakeups](https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-sleepconditionvariablesrw),
+  so it could fail with no notification sent. The assertion is gone; the
+  remaining counts are lower bounds used only for sequencing. Core packages
+  have no in-package tests, so the guard's private notification flag is not
+  checked directly.
+
+The implementation's structure is otherwise compact: acquisition and waiting
+belong to `Monitor`, while access and release belong to `Monitor_Guard`.
+Keep the plain-procedure indirection in `read` until the
+[borrow-contract question](#waiting-and-ownership-review-2026-10-26) is resolved.
+Replacing it with `return &self.monitor.value` in an isolated package copy
+made the compiler accept the existing `read_after_unlock` error case; the
+direct pointer follows the monitor borrow rather than the guard's lifetime.
+No further abstraction or deletion is justified by this review.
+
 ## Error handling (2026-10-13)
 
 The error handling proposal of this date is adopted. design.md defines it under

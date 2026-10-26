@@ -10,6 +10,13 @@ checklist.
 
 ### Breaking changes
 
+- `thread.Guard(T)`, the guard `Mutex.lock` returns, is now
+  [`@(thread_affine)`](design.md#thread_affine), since Windows requires the
+  thread that took the lock to release it. Moving or lending a guard to a
+  thread `thread.spawn` starts, or across a `parallel` block's task boundary,
+  reports `L0724`; for example, `thread.spawn(release, move(guard))`. Upgrade
+  by locking on the thread that uses the guard and dropping it there.
+
 - `exchange` now returns the previous owner with its allocator region instead
   of an unknown one. Returning an arena-backed owner extracted with `exchange`
   from a procedure that ends the arena reports `L0592`; for example,
@@ -350,6 +357,7 @@ checklist.
   which `get` was called wakes the waiters to ask again, and one used only
   through `read` wakes no one. `close` ends every wait whose condition is
   false, returning `.none`, while a closed monitor can still be drained.
+  A `Monitor_Guard` is thread-affine, as a `Guard` is.
 
 - Three attributes declare thread facts, so the compiler names no concurrency
   type or procedure. [`@(synchronized)`](design.md#synchronized) marks a field,
