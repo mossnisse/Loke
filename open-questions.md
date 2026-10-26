@@ -1035,7 +1035,13 @@ Still open:
 - The [later extensions](concurrency-proposal.md#later-extensions):
   indirect spawned calls, recoverable submission, richer result destinations,
   channel items carrying borrows, blocking-aware pools, provider and allocator
-  thread contracts, and checked lazy initialization.
+  thread contracts, checked lazy initialization, timed waits, selective
+  cancellation, unscoped channels, and targeted wakeups.
+- Whether the [waiting design](concurrency-proposal.md#waiting-for-work),
+  revised on 2026-10-26 to end waits by re-checked conditions and endpoint
+  drops instead of stop tokens and notification, holds up once built: its
+  costs are a wakeup of every monitor waiter per change, and a channel side
+  that closes for good when its endpoint count first falls to zero.
 
 ### Structured concurrency proposal review (2026-10-22)
 

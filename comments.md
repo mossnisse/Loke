@@ -110,9 +110,9 @@ which also hid an entry the wrapper named itself.
 before spawning or after joining, pays for no synchronization.
 [`@(synchronized)`](design.md#synchronized) keeps that access from reaching a
 borrowed one, where an atomic operation through another read-only loan may be
-writing it. It is an attribute, not a list of types, so the channel and stop
-state planned for [structured concurrency](concurrency-proposal.md) need no
-compiler change.
+writing it. It is an attribute, not a list of types, so the channel and
+monitor state planned for [structured concurrency](concurrency-proposal.md)
+need no compiler change.
 
 ### Tasks that borrow, joined by their block
 
