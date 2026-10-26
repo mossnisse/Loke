@@ -26,6 +26,45 @@ annotations. Three decisions remain open:
   [current records](bench/baselines/README.md#completed-migration-stage-5).
   Whether to accept that cost or reduce it is open.
 
+### Checker architecture review (2026-10-26)
+
+The separation between normalized input, monotone fact replay, and the loan
+solvers is useful. Keep that boundary and its semantic inspection tests.
+The `exchange` result that had no transfer of its own, now described with the
+other checked transfers, showed that their coverage needs attention; it did not
+justify introducing a general-purpose intermediate representation.
+
+Three small simplifications are available without replacing the architecture:
+
+- **Share leaf alias traversal.** `prov_written_aliases_at` in
+  [cfg_provenance.odin](src/cfg_provenance.odin) repeats the storage lookup,
+  indirect load, and fallback traversal in `prov_read_value_aliases` in
+  [provenance_read.odin](src/provenance_read.odin). They already differ in when
+  an empty lookup becomes an unresolved alternative. Share the traversal and
+  preserve each caller's treatment of uncertainty explicitly; do not simply
+  delete one implementation without checking known-plus-unknown targets.
+- **Remove redundant materialization ordering.**
+  `prov_materialize_events` in
+  [provenance_event.odin](src/provenance_event.odin) merges fact and event sites
+  by increasing sequence and appends each replacement to its block in that
+  order, then sorts the replacements by the same sequence. The sort and the
+  replacement's retained `sequence` field can be removed. A local assertion can
+  protect the ordering invariant if needed.
+- **Share change-reporting region merges.** `region_merge_grows` in
+  [cfg_provenance.odin](src/cfg_provenance.odin) also duplicates the existing
+  change-reporting `merge_region_provenance` in [borrow.odin](src/borrow.odin);
+  share the latter instead of counting both sets before and after a merge.
+
+The main structural follow-up is to give carried facts a small explicit state
+type. `prov_carry_regions` currently returns a partly initialized `Flow_Graph`,
+and `prov_fact_graph` constructs another full graph and copies topology metadata
+for each replay. An explicit fact state would document which maps must be
+seeded and counted for convergence, and which state belongs only to construction
+or solving. Make that change only with the existing replay and arena-allocation
+tests, and measure it against the recorded profiling workloads. Retaining
+normalized bodies across whole-program visits remains the separate decision
+above.
+
 ## Package and import versioning
 
 Should import paths encode package versions? And should a package declaration remain mandatory in every file, when every file in a directory must name the same package anyway, or is it ceremony? The current version requires the declaration and leaves dependency versions to the build system or package manager. A future package design may need reproducible version selection without making source imports depend on a particular registry.

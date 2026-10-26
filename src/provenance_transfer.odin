@@ -176,6 +176,11 @@ prov_describe_transfer :: proc(graph: ^Flow_Graph, id: Value_Id) -> Prov_Transfe
 			if _, variant := v.operation.(Call_Union_Construct); variant { return Prov_Transfer_Aggregate{} }
 			if _, allocation := v.operation.(Call_Allocation); !allocation { return nil }
 		}
+		// design.md "Exchange": the destination's previous value is moved out,
+		// keeping its regions and targets.
+		if sym := symbol_of(c, v.resolution.symbol); sym != nil && sym.builtin == .Exchange && len(v.bound) == 2 {
+			return Prov_Transfer_Forward{prov_component(graph, prov_input_value(graph, v.bound[0]), mode = .Move)}
+		}
 		allocator := prov_transfer_allocator(v)
 		#partial switch operation in v.operation {
 		case Call_Box_Unbox:

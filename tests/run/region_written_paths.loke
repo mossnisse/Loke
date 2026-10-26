@@ -1,0 +1,60 @@
+// design.md "Allocator regions and region provenance": an allocator handle is
+// not an owner, a call leaves owners only at the fields it writes, and
+// `exchange` keeps the previous value's own allocator.
+package main;
+
+import "core:fmt";
+import "core:mem";
+
+State :: struct { local, stable: string }
+
+fill :: proc(state: inout State, allocator: Allocator) {
+	state.local = fmt.to_string(allocator, 42);
+}
+
+fill_through :: proc(state: ^mut State, allocator: Allocator) {
+	state^.local = fmt.to_string(allocator, 7);
+}
+
+// A handle written through a pointer keeps its region without owning storage.
+handle_through_pointer :: proc() -> bool {
+	arena := mem.Arena.init();
+	handle: Allocator = {};
+	pointer := &mut handle;
+	pointer^ = arena.allocator();
+	text := fmt.to_string(handle, 1);
+	return text == "1";
+}
+
+// `fill` writes only `local`, so `stable` keeps its static region.
+stable_field :: proc() -> string {
+	arena := mem.Arena.init();
+	state := State{"", "stable"};
+	fill(inout state, arena.allocator());
+	fmt.println(state.local);
+	return state.stable;
+}
+
+stable_field_through :: proc() -> string {
+	arena := mem.Arena.init();
+	state := State{"", "through"};
+	fill_through(&mut state, arena.allocator());
+	fmt.println(state.local);
+	return state.stable;
+}
+
+// The extracted array is default-backed, so ending an unrelated arena is fine.
+exchanged_then_reset :: proc() -> int {
+	items := make([dynamic]int, 2);
+	taken := exchange(inout items, {});
+	arena := mem.Arena.init();
+	free_all(arena.allocator());
+	return taken.len() + items.len();
+}
+
+main :: proc() {
+	fmt.println(handle_through_pointer());
+	fmt.println(stable_field());
+	fmt.println(stable_field_through());
+	fmt.println(exchanged_then_reset());
+}

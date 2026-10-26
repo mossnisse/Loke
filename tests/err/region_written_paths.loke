@@ -1,0 +1,46 @@
+// design.md "Allocator regions and region provenance": `exchange` returns the
+// previous owner with its allocator, and a field a call writes, or the whole
+// record holding it, keeps the region the call left there.
+package main;
+
+import "core:fmt";
+import "core:mem";
+
+State :: struct { local, stable: string }
+
+fill :: proc(state: inout State, allocator: Allocator) {
+	state.local = fmt.to_string(allocator, 42);
+}
+
+fill_through :: proc(state: ^mut State, allocator: Allocator) {
+	state^.local = fmt.to_string(allocator, 7);
+}
+
+exchanged :: proc() -> [dynamic]int {
+	arena := mem.Arena.init();
+	items := make([dynamic]int, 1, arena.allocator());
+	return exchange(inout items, {});
+}
+
+written_field :: proc() -> string {
+	arena := mem.Arena.init();
+	state := State{"", "stable"};
+	fill(inout state, arena.allocator());
+	return state.local;
+}
+
+written_field_through :: proc() -> string {
+	arena := mem.Arena.init();
+	state := State{"", "stable"};
+	fill_through(&mut state, arena.allocator());
+	return state.local;
+}
+
+written_record :: proc() -> State {
+	arena := mem.Arena.init();
+	state := State{"", "stable"};
+	fill(inout state, arena.allocator());
+	return state;
+}
+
+main :: proc() {}

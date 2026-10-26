@@ -10,6 +10,13 @@ checklist.
 
 ### Breaking changes
 
+- `exchange` now returns the previous owner with its allocator region instead
+  of an unknown one. Returning an arena-backed owner extracted with `exchange`
+  from a procedure that ends the arena reports `L0592`; for example,
+  `return exchange(inout items, {});` where `items` came from a local arena.
+  Upgrade by allocating the returned owner from an allocator that outlives the
+  procedure, or by cloning it into one before returning.
+
 - Owners written through a mutable borrow of array storage, or through a
   stored read-only pointer that reaches a mutable carrier, now retain their
   destination's storage identity and allocator dependencies. Premature resets
@@ -557,6 +564,17 @@ checklist.
   for any count.
 
 ### Fixed
+
+- Writing an allocator handle through a pointer, as in `pointer^ = arena.allocator();`,
+  no longer reports `L0536`: a handle is not an owner, so only owners written
+  through a carrier are checked against storage the body cannot name.
+
+- A call that writes one field of a record argument now leaves its allocator
+  regions at that field alone, through `inout` and through a mutable pointer.
+  Returning another field afterwards no longer reports `L0592`.
+
+- An owner extracted with `exchange` keeps its own allocator, so resetting an
+  unrelated arena while it is live no longer reports `L0537`.
 
 - Unwrapping a fallible box into a local now preserves its payload's carrier
   field paths, so calls no longer confuse read-only and writable sibling fields

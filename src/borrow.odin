@@ -2145,6 +2145,11 @@ collect_written_regions :: proc(c: ^Compiler, graph: ^Flow_Graph, declaration: S
 		}
 		c.written_owner_regions[declaration] = owners
 	}
+	contents, contents_found := c.written_region_content[declaration]
+	if !contents_found {
+		contents = make([][]Prov_Region_Content, count, c.semantic_allocator)
+		c.written_region_content[declaration] = contents
+	}
 	changed := false
 	for id, index in sym.param_symbols {
 		if !param_writes_caller(c, symbol_of(c, id)) {
@@ -2152,6 +2157,37 @@ collect_written_regions :: proc(c: ^Compiler, graph: ^Flow_Graph, declaration: S
 		}
 		changed = merge_region_provenance(&written[index], written_parameter_region(graph, id, index, false)) || changed
 		changed = merge_region_provenance(&owners[index], written_parameter_region(graph, id, index, true)) || changed
+		changed = merge_written_content(c, &contents[index], prov_written_parameter_content(graph, id, index), count) || changed
+	}
+	return changed
+}
+
+// Merges a body's path-indexed content into a parameter's summary row. A
+// region reaching a new path is growth even when the row's union is unchanged.
+// Paths stop at the written-alias depth, as a recursive call can lengthen them
+// on every round; a cut entry reaches every path below it.
+@(private = "file")
+merge_written_content :: proc(c: ^Compiler, row: ^[]Prov_Region_Content, from: []Prov_Region_Content, count: int) -> bool {
+	changed := false
+	next: for entry in from {
+		entry := entry
+		if len(entry.path) > WRITTEN_ALIAS_DEPTH {
+			entry.path, entry.own = entry.path[:WRITTEN_ALIAS_DEPTH], false
+		}
+		for &existing in row^ {
+			if existing.handle == entry.handle && existing.own == entry.own && prov_same_path(existing.path, entry.path) {
+				changed = merge_region_provenance(&existing.region, entry.region) || changed
+				continue next
+			}
+		}
+		region := Region_Set{params = make([]bool, max(count, 1), c.semantic_allocator)}
+		region_merge(&region, entry.region)
+		grown := make([]Prov_Region_Content, len(row^) + 1, c.semantic_allocator)
+		copy(grown, row^)
+		grown[len(row^)] = Prov_Region_Content{path = slice.clone(entry.path, c.semantic_allocator), region = region,
+		                                       handle = entry.handle, own = entry.own}
+		row^ = grown
+		changed = true
 	}
 	return changed
 }
@@ -2166,6 +2202,32 @@ written_parameter_region :: proc(graph: ^Flow_Graph, id: Symbol_Id, index: int, 
 		set.params[index] = false
 	}
 	return set
+}
+
+// The path-indexed written content of a call's declaration, or not found for a
+// contract join, whose members a call takes together as whole regions.
+written_content_summary :: proc(c: ^Compiler, declaration: Symbol_Id) -> ([][]Prov_Region_Content, bool) {
+	if original, shifted := c.receiver_contract_of[declaration]; shifted {
+		rows, found := written_content_summary(c, original)
+		if !found {
+			return nil, false
+		}
+		out := make([][]Prov_Region_Content, len(rows) + 1, c.semantic_allocator)
+		for row, index in rows {
+			shifted_row := make([]Prov_Region_Content, len(row), c.semantic_allocator)
+			for entry, position in row {
+				shifted_row[position] = entry
+				shifted_row[position].region = receiver_region(c, entry.region)
+			}
+			out[index + 1] = shifted_row
+		}
+		return out, true
+	}
+	if is_contract_join(c, declaration) {
+		return nil, false
+	}
+	rows, found := c.written_region_content[declaration]
+	return rows, found
 }
 
 // The written regions of a call's declaration; a join's members are unioned.

@@ -350,7 +350,10 @@ any depth (`prov_type_reaches_mutable`), such as `..^mut T` or a `^Box` holding
 a `^mut T`. The part backing owners is kept apart (`written_owner_regions`):
 an allocator handle left there keeps its region for the owners later made from
 it, but only the owners' part is checked against the storage it lands in, as a
-store by name checks only an owner. A handle's region content entry is kept
+store by name checks only an owner. Both are also kept by path below what the
+argument names (`written_region_content`), so a call stores each part at the
+field the body wrote rather than at the whole argument; those paths stop at
+the written-alias depth so recursive calls converge. A handle's region content entry is kept
 apart from an owner's at the same path, and a write through a carrier is
 recorded at its path below the carrier (`prov_path_below_carrier`), so
 `dst^.alloc = handle` and `dst^.items = make(...)` stay distinct. Whole-record
