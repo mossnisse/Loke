@@ -266,13 +266,15 @@ prov_returning_region :: proc(graph: ^Flow_Graph, returning: Prov_Returning) -> 
 @(private)
 prov_materialize_events :: proc(graph, final: ^Flow_Graph, program: ^Prov_Effect_Program) {
 	Replacement :: struct {
-		first, count, sequence: int,
-		fact:                   bool,
-		events:                 []Prov_Event,
+		first, count: int,
+		fact:         bool,
+		events:       []Prov_Event,
 	}
 	// Interleaved in recorded order, so each event sees the flow-sensitive
 	// replay state, such as a borrowed binding's region aliases, of its site.
-	// Summary outputs read from facts are rebuilt into `graph`.
+	// Each block's replacements are therefore appended in recorded order too,
+	// which is the order of their ranges. Summary outputs read from facts are
+	// rebuilt into `graph`.
 	by_block := make([][dynamic]Replacement, len(graph.blocks), graph.alloc)
 	for &replacements in by_block { replacements = make([dynamic]Replacement, graph.alloc) }
 	final.materialized = graph
@@ -294,7 +296,7 @@ prov_materialize_events :: proc(graph, final: ^Flow_Graph, program: ^Prov_Effect
 			if site.block == NO_BLOCK { continue }
 			emitted := slice.clone(final.blocks[site.block].prov[first:], graph.alloc)
 			for event in emitted { assert(event.kind in PROV_FACT_EVENTS, "fact replay emitted an event the walk owns") }
-			append(&by_block[site.block], Replacement{site.first, site.count, site.sequence, true, emitted})
+			append(&by_block[site.block], Replacement{site.first, site.count, true, emitted})
 			continue
 		}
 		site := program.events[events]
@@ -304,7 +306,7 @@ prov_materialize_events :: proc(graph, final: ^Flow_Graph, program: ^Prov_Effect
 		first := site.block == NO_BLOCK ? 0 : len(final.blocks[site.block].prov)
 		prov_materialize_event(final, site.operation)
 		if site.block == NO_BLOCK { continue }
-		append(&by_block[site.block], Replacement{site.first, site.count, site.sequence, false, slice.clone(final.blocks[site.block].prov[first:], graph.alloc)})
+		append(&by_block[site.block], Replacement{site.first, site.count, false, slice.clone(final.blocks[site.block].prov[first:], graph.alloc)})
 	}
 	for entry in program.root_regions {
 		graph.roots[int(entry.root)].region, _ = prov_handle_region(final, entry.call, entry.receiver)
@@ -314,7 +316,6 @@ prov_materialize_events :: proc(graph, final: ^Flow_Graph, program: ^Prov_Effect
 	for &replacements, index in by_block {
 		block := graph.blocks[index]
 		if len(replacements) > 0 {
-			slice.sort_by(replacements[:], proc(a, b: Replacement) -> bool { return a.sequence < b.sequence })
 			old := block.prov
 			spliced := make([dynamic]Prov_Event, 0, len(old), graph.alloc)
 			cursor := 0

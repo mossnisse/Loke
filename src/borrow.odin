@@ -737,7 +737,8 @@ region_merge :: proc(into: ^Region_Set, from: Region_Set) {
 	into.crowded ||= from.crowded
 }
 
-@(private = "file")
+// Merges `from` into `into`, reporting whether `into` gained anything.
+@(private)
 merge_region_provenance :: proc(into: ^Region_Set, from: Region_Set) -> bool {
 	changed := (!into.default && from.default) || (!into.unknown && from.unknown) ||
 	           (from.locals & ~into.locals) != 0 || (!into.crowded && from.crowded)

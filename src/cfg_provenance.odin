@@ -2247,17 +2247,9 @@ prov_define_stored_content :: proc(graph: ^Flow_Graph, root: Root_Id, path: []Pr
 	prov_define_region_content(graph, root, path, owned, own = own)
 	handles := prov_empty_region(graph)
 	region_merge(&handles, owned)
-	if region_merge_grows(&handles, region) {
+	if merge_region_provenance(&handles, region) {
 		prov_define_region_content(graph, root, path, region, handle = true, own = own)
 	}
-}
-
-// Merges `from` into `into`, reporting whether `into` gained anything.
-@(private = "file")
-region_merge_grows :: proc(into: ^Region_Set, from: Region_Set) -> bool {
-	before := region_weight(into^)
-	region_merge(into, from)
-	return region_weight(into^) != before
 }
 
 // One provider position in a local: a field path its type fixes, or the path
@@ -3757,23 +3749,8 @@ prov_written_aliases_at :: proc(graph: ^Flow_Graph, id: Value_Id) -> []Written_A
 		return prov_written_aliases_of(graph, prov_storage_for_root(graph, root), path)
 	}
 	if carrier := prov_place_carrier(graph, id); carrier != 0 {
-		out := make([dynamic]Written_Alias, graph.alloc)
-		below := prov_path_below_carrier(graph, id)
-		for target in prov_written_aliases_at(graph, carrier) {
-			if target.target == 0 {
-				append(&out, target)
-			} else {
-				loaded := prov_written_aliases_of(graph, target.target, prov_concat_path(graph, target.at, below))
-				if len(loaded) == 0 && prov_input_read(graph, id).unknown_alias {
-					// Each source must contribute facts or uncertainty, even when
-					// another source of this load has known targets.
-					append(&out, Written_Alias{})
-				} else {
-					append(&out, ..loaded)
-				}
-			}
-		}
-		return out[:]
+		return prov_load_aliases(graph, prov_written_aliases_at(graph, carrier), prov_path_below_carrier(graph, id),
+		                         prov_input_read(graph, id).unknown_alias)
 	}
 	if symbol, named := value.form.(Prov_Form_Symbol); named {
 		return prov_written_aliases_of(graph, prov_storage_id(graph, Written_Storage{symbol = symbol.symbol}), nil)
