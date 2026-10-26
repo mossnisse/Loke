@@ -217,7 +217,9 @@ borrow at that task's join, which orders everything it did before the drop.
 So the ring's drop reads `head` and `tail` as plain values. Until they are
 equal, it saves the old `head`, advances `head` with `next`, then takes and
 drops the item in the saved slot, as containers shorten before they drop.
-It frees the storage after draining. Endpoint drop never touches the slots.
+If an item's drop panics, a deferred drain goes on from `head` while the
+unwind runs, so the rest still drop oldest first rather than in the slots'
+index order. It frees the storage after draining. Endpoint drop never touches the slots.
 
 Why each requirement holds:
 

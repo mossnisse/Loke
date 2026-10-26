@@ -669,7 +669,8 @@ case .closed: return;           // the interface has gone
   stop sooner checks a flag of its own.
 - **Ownership.** The ring owns an item from a committing send until the
   receive that takes it; dropping the ring drops the items still queued, in
-  queue order. An endpoint's drop leaves them in place. An item is checked as
+  queue order, and an item's drop that panics leaves the rest to drop in that
+  order as the unwind goes on. An endpoint's drop leaves them in place. An item is checked as
   a channel's is: it carries no borrow shorter than the process, and it
   crosses threads. A receiver that must not free memory takes non-owning
   items, or returns owned buffers through a second ring for reuse.

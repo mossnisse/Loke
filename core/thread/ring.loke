@@ -93,10 +93,21 @@ impl Ring($T) {
 	}
 
 	// Both endpoints are gone, and the joins that ended their borrows order
-	// everything they did before this. Shortens before each drop, so an
-	// unwinding drop leaves the rest to the slots' own.
+	// everything they did before this. An item's drop that panics leaves the
+	// rest queued, and the unwind goes on dropping them oldest first, before
+	// the slots' own drop would release them in index order.
 	@(private)
 	drain :: hook(drop) proc(self: inout) {
+		finished := false;
+		defer if (!finished) { self.drop_queued(); }
+		self.drop_queued();
+		finished = true;
+	}
+
+	// Drops the queued items, oldest first. Shortens before each drop, so a
+	// panicking one is not dropped again.
+	@(private)
+	drop_queued :: proc(self: inout) {
 		for (self.head.value != self.tail.value) {
 			at := self.head.value;
 			self.head.value = self.next(at);

@@ -1,0 +1,28 @@
+// standard-library "Rings": dropping the ring drops the queued items in
+// queue order, and an item's drop that panics leaves the rest to be dropped in
+// that order as the unwind goes on. The queued items wrap around the end of
+// the ring's slots.
+package main;
+
+import "core:fmt";
+import "core:thread";
+
+Item :: move_only struct { @(required) id: int }
+
+impl Item {
+	release :: hook(drop) proc(self: inout) {
+		fmt.println("drop", self.id);
+		if (self.id == 4) { panic("item 4's drop"); }
+	}
+}
+
+main :: proc() {
+	ring := thread.Ring(Item).init(4);
+	send, receive := ring.split();
+	foreach (id in 1 ..= 4) { _ = send.try_send(Item{id}); }
+	foreach (_ in 1 ..= 3) { _ = receive.try_receive(); }
+	foreach (id in 5 ..= 7) { _ = send.try_send(Item{id}); }
+	drop(receive);
+	drop(send);
+	drop(ring);
+}
