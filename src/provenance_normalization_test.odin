@@ -783,6 +783,52 @@ main :: proc() {}`) { return }
 	testing.expectf(t, len(tracking.allocation_map) == 0, "materialization left %d allocations outside the analysis arena", len(tracking.allocation_map))
 }
 
+// A round's carried facts are an independent copy of exactly what the next
+// round is seeded with and weighed by; the body's topology is not part of them.
+@(test)
+normalization_fact_carry_contract :: proc(t: ^testing.T) {
+	p: Checked
+	defer destroy_checked(&p)
+	if !normalization_checked(t, &p, `package main;
+forward :: proc(allocator: Allocator) {
+    first: Allocator = {};
+    second: Allocator = {};
+    contents: [dynamic]int = {};
+    for (i := 0; i < 2; i += 1) {
+        contents = make([dynamic]int, 1, first);
+        first = second;
+        second = allocator;
+    }
+    assert(contents.len() == 1);
+}
+main :: proc() {}`) { return }
+	k: Checker
+	graph := normalization_graph(t, &k, &p, "forward")
+	if graph == nil { return }
+	program := graph.normalized_effects
+	if !testing.expect(t, program != nil && program.replays > 0, "the body did not replay its recorded operations") { return }
+	weight := prov_fact_weight(&graph.facts)
+	carry := prov_carry_facts(graph, graph.alloc)
+	testing.expect_value(t, prov_fact_weight(carry), weight)
+	seeded := prov_fact_graph(&k, graph.literal, graph.mode, program, graph.alloc)
+	testing.expect_value(t, prov_fact_weight(&seeded.facts), 0)
+	prov_seed_regions(seeded, carry)
+	testing.expect_value(t, prov_fact_weight(&seeded.facts), weight)
+	testing.expect(t, len(seeded.roots) == len(graph.roots) && len(seeded.blocks) == len(graph.blocks),
+	               "a fact graph does not take the body's topology")
+	// Growing the round that was carried leaves the carry as it was.
+	for id, set in graph.region_of {
+		grown := set
+		grown.params = slice.clone(set.params, graph.alloc)
+		grown.unknown = true
+		graph.region_of[id] = grown
+		break
+	}
+	graph.lent_locals[INVALID_SYMBOL] = true
+	testing.expect(t, prov_fact_weight(&graph.facts) > weight, "the carried round did not grow")
+	testing.expect_value(t, prov_fact_weight(carry), weight)
+}
+
 // design.md "Evaluation order", "Splitting a mutable slice": checked call
 // descriptions retain source ordering and an independent receiver capture.
 @(test)
@@ -845,13 +891,13 @@ main :: proc() {}`) { return }
 	p.c.result_summaries[hook] = &growing
 	entry := normalization_parameter_seed(&k, graph, program)
 	before_graph := prov_fact_graph(&k, graph.literal, .Prov_Summary, program, graph.alloc)
-	prov_seed_regions(before_graph, entry)
+	prov_seed_regions(before_graph, &entry.facts)
 	prov_replay_fact_operations(before_graph, program)
 	before := prov_region_for_symbol(before_graph, normalization_symbol(t, &p, "output"))
 	params := [2]bool{true, true}
 	growing.result.region = Region_Set{params = params[:]}
 	after_graph := prov_fact_graph(&k, graph.literal, .Prov_Summary, program, graph.alloc)
-	prov_seed_regions(after_graph, entry)
+	prov_seed_regions(after_graph, &entry.facts)
 	prov_replay_fact_operations(after_graph, program)
 	after := prov_region_for_symbol(after_graph, normalization_symbol(t, &p, "output"))
 	testing.expect(t, !before.default && (len(before.params) == 0 || !before.params[0]), "an empty hook summary supplied dependencies")

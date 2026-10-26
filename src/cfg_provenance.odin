@@ -1966,10 +1966,10 @@ prov_merge_region_of :: proc(graph: ^Flow_Graph, id: Symbol_Id, set: Region_Set)
 	graph.region_of[id] = existing
 }
 
-// Starts a pass from the previous pass's region facts, copied so this pass's
-// merges leave them alone and the previous pass can be reclaimed.
+// Starts a pass from carried facts, copied so this pass's merges leave them
+// alone and the round that produced them can be reclaimed.
 @(private)
-prov_seed_regions :: proc(graph: ^Flow_Graph, seed: ^Flow_Graph) {
+prov_seed_regions :: proc(graph: ^Flow_Graph, seed: ^Prov_Facts) {
 	for id, set in seed.region_of {
 		prov_merge_region_of(graph, id, set)
 	}
@@ -1996,44 +1996,62 @@ prov_seed_regions :: proc(graph: ^Flow_Graph, seed: ^Flow_Graph) {
 	}
 }
 
-// A pass's region facts alone, in `allocator`, to seed the next pass after this
-// one's graph is reclaimed.
+// A round's facts alone, deep-copied into `allocator` to seed the next round
+// after this one's graph is reclaimed.
 @(private)
-prov_carry_regions :: proc(graph: ^Flow_Graph, allocator: mem.Allocator) -> ^Flow_Graph {
-	carry := new(Flow_Graph, allocator)
-	carry.alloc = allocator
-	carry.prov = new(Prov_State, allocator)
-	carry.input = graph.input
-	carry.param_count = graph.param_count
+prov_carry_facts :: proc(graph: ^Flow_Graph, allocator: mem.Allocator) -> ^Prov_Facts {
+	carry := new(Prov_Facts, allocator)
+	copied_region :: proc(set: Region_Set, params: int, allocator: mem.Allocator) -> Region_Set {
+		out := Region_Set{params = make([]bool, max(params, 1), allocator)}
+		region_merge(&out, set)
+		return out
+	}
 	carry.region_of = make(map[Symbol_Id]Region_Set, len(graph.region_of), allocator)
+	for id, set in graph.region_of { carry.region_of[id] = copied_region(set, graph.param_count, allocator) }
 	carry.provider_parents = make(map[Symbol_Id]Region_Set, len(graph.provider_parents), allocator)
+	for id, set in graph.provider_parents { carry.provider_parents[id] = copied_region(set, graph.param_count, allocator) }
 	carry.lent_locals = make(map[Symbol_Id]bool, len(graph.lent_locals), allocator)
+	for id in graph.lent_locals { carry.lent_locals[id] = true }
 	carry.written_aliases = make(map[Storage_Id][]Written_Alias, len(graph.written_aliases), allocator)
+	for id, aliases in graph.written_aliases {
+		copied := make([]Written_Alias, len(aliases), allocator)
+		for alias, index in aliases {
+			copied[index] = Written_Alias{target = alias.target, at = slice.clone(alias.at, allocator), path = slice.clone(alias.path, allocator)}
+		}
+		carry.written_aliases[id] = copied
+	}
 	carry.region_content = make(map[Storage_Id][]Prov_Region_Content, len(graph.region_content), allocator)
-	prov_seed_regions(carry, graph)
+	for id, content in graph.region_content {
+		copied := make([]Prov_Region_Content, len(content), allocator)
+		for entry, index in content {
+			copied[index] = Prov_Region_Content{path = slice.clone(entry.path, allocator), region = copied_region(entry.region, graph.param_count, allocator),
+			                                    handle = entry.handle, own = entry.own}
+		}
+		carry.region_content[id] = copied
+	}
 	return carry
 }
 
-// How many region facts a pass holds. They only grow, so a pass that ends with
-// as many as it was seeded with read every one at its final value.
+// How many facts a round holds. They only grow, so a round that ends with as
+// many as it was seeded with read every one at its final value.
 @(private)
-prov_region_weight :: proc(graph: ^Flow_Graph) -> int {
+prov_fact_weight :: proc(facts: ^Prov_Facts) -> int {
 	weight := 0
-	for _, set in graph.region_of {
+	for _, set in facts.region_of {
 		weight += region_weight(set)
 	}
-	for _, set in graph.provider_parents {
+	for _, set in facts.provider_parents {
 		weight += region_weight(set)
 	}
-	for _, content in graph.region_content {
+	for _, content in facts.region_content {
 		for entry in content {
 			weight += 1 + region_weight(entry.region)
 		}
 	}
-	for _, aliases in graph.written_aliases {
+	for _, aliases in facts.written_aliases {
 		weight += len(aliases)
 	}
-	return weight + len(graph.lent_locals)
+	return weight + len(facts.lent_locals)
 }
 
 @(private = "file")

@@ -312,15 +312,12 @@ Prov_State :: struct {
 	// summaries collect (`prov_note_allocator_use`).
 	allocator_use: Allocator_Use,
 	callee_expr:   Expr,
-	// design.md "Allocator regions and region provenance".
-	region_of:       map[Symbol_Id]Region_Set,
-	region_content:  map[Storage_Id][]Prov_Region_Content,
+	// The facts the fixed point carries between rounds.
+	using facts: Prov_Facts,
 	// Borrowed payload bindings name storage in their switch subject.
 	region_aliases:  map[Symbol_Id][]Prov_Region_Alias,
 	// Owned operands held while later operands are evaluated.
 	held_owners:     [dynamic]Expr,
-	// The parent allocator a provider depends on until it is dropped.
-	provider_parents: map[Symbol_Id]Region_Set,
 	param_count:     int,
 	// One bit per local `mem.Arena`/`mem.Scratch`.
 	provider_bits:    map[Symbol_Id]u64,
@@ -335,19 +332,31 @@ Prov_State :: struct {
 	// The value a `return` hands back while its deferred statements are walked.
 	returning: ^Prov_Returning,
 	temp_providers:     [dynamic]Temp_Provider,
-	// Locals a mutable loan was ever taken of: only these can be reached through
-	// a pointer or slice. Flow-insensitive, like the region facts.
-	lent_locals: map[Symbol_Id]bool,
-	// What each local's carriers were ever set to reach, at the path in the local
-	// holding them: a writable parameter's storage, so a write through it is a
-	// write the caller learns of, or a variable's place `&mut place` lent, so a
-	// reset sees an owner written there and static storage rejects one.
-	// Flow-insensitive too.
-	written_aliases: map[Storage_Id][]Written_Alias,
 	has_region_event: bool,
 	// The uses that are a local's `drop` at scope exit, for the note naming them.
 	scope_drops:      map[Span]bool,
 	has_content_load: bool,
+}
+
+// design.md "Allocator regions and region provenance": the flow-insensitive
+// facts a body's fixed point carries from one round to the next. They only
+// grow, and their weight (`prov_fact_weight`) tells when a round read every
+// one at its final value. A round rebuilds everything else it holds from the
+// frozen input and the body's topology (`Prov_Topology`).
+Prov_Facts :: struct {
+	// Each local's allocator regions, and the path-indexed regions of storage.
+	region_of:        map[Symbol_Id]Region_Set,
+	region_content:   map[Storage_Id][]Prov_Region_Content,
+	// The parent allocator a provider depends on until it is dropped.
+	provider_parents: map[Symbol_Id]Region_Set,
+	// Locals a mutable loan was ever taken of: only these can be reached through
+	// a pointer or slice.
+	lent_locals:      map[Symbol_Id]bool,
+	// What each local's carriers were ever set to reach, at the path in the local
+	// holding them: a writable parameter's storage, so a write through it is a
+	// write the caller learns of, or a variable's place `&mut place` lent, so a
+	// reset sees an owner written there and static storage rejects one.
+	written_aliases:  map[Storage_Id][]Written_Alias,
 }
 
 NO_BLOCK :: Block_Id(-1)

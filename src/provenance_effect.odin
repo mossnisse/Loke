@@ -48,6 +48,23 @@ Prov_Effect_Site :: struct {
 	task: int,
 }
 
+// What every round of one body reads and the facts do not change: its storage
+// roots, provider tokens, user-operator calls, and block count. The
+// construction graph owns these maps. Each fact graph takes its own copy, since
+// a query there may still number a temporary provider the walk never named.
+Prov_Topology :: struct {
+	param_count: int,
+	roots: []Prov_Root,
+	root_by_symbol: map[Symbol_Id]Root_Id,
+	root_by_storage: map[Storage_Id]Root_Id,
+	provider_bits: map[Symbol_Id]u64,
+	provider_symbols: []Symbol_Id,
+	provider_paths: map[Symbol_Id][]Provider_Path,
+	temp_provider_bits: map[^Expr_Call]u64,
+	operator_calls: map[rawptr]^Expr_Call,
+	blocks: int,
+}
+
 Prov_Effect_Program :: struct {
 	alloc: mem.Allocator,
 	operations: [dynamic]Prov_Effect_Site,
@@ -57,18 +74,7 @@ Prov_Effect_Program :: struct {
 	// Materialized owner views already recorded by a query.
 	borrowed_owners: map[Value_Id]bool,
 	input: ^Prov_Input,
-	param_count: int,
-	// Storage metadata and topology do not depend on the carried facts.
-	roots: []Prov_Root,
-	root_by_symbol: map[Symbol_Id]Root_Id,
-	root_by_storage: map[Storage_Id]Root_Id,
-	provider_bits: map[Symbol_Id]u64,
-	provider_symbols: []Symbol_Id,
-	provider_paths: map[Symbol_Id][]Provider_Path,
-	temp_provider_bits: map[^Expr_Call]u64,
-	operator_calls: map[rawptr]^Expr_Call,
-	lent_locals: map[Symbol_Id]bool,
-	blocks: int,
+	topology: Prov_Topology,
 	replays: int,
 	normalization_time, replay_time, materialization_time: time.Duration,
 	peak_used_bytes: uint,
@@ -88,8 +94,7 @@ build_provenance_replay :: proc(k: ^Checker, literal: ^Expr_Proc, mode: Flow_Mod
 	program.borrowed_owners = make(map[Value_Id]bool, 4, allocator)
 	initial := build_flow_pass(k, literal, allocator, mode, program)
 	initial.effect_program = nil
-	program.param_count = initial.param_count
-	weight := prov_region_weight(initial)
+	weight := prov_fact_weight(&initial.facts)
 	if weight == 0 {
 		// No carried fact changed: the construction graph is already final, as
 		// in the former fixed point. Keep its events and avoid another walk.
@@ -109,7 +114,7 @@ build_provenance_replay :: proc(k: ^Checker, literal: ^Expr_Proc, mode: Flow_Mod
 	carry_arena, replay_arena: virtual.Arena
 	defer virtual.arena_destroy(&carry_arena)
 	defer virtual.arena_destroy(&replay_arena)
-	carry := prov_carry_regions(initial, virtual.arena_allocator(&carry_arena))
+	carry := prov_carry_facts(initial, virtual.arena_allocator(&carry_arena))
 	seeded := weight
 	for {
 		graph := prov_fact_graph(k, literal, mode, program, virtual.arena_allocator(&replay_arena))
@@ -117,11 +122,11 @@ build_provenance_replay :: proc(k: ^Checker, literal: ^Expr_Proc, mode: Flow_Mod
 		replayed_diagnostics := len(k.c.diagnostics)
 		prov_replay_fact_operations(graph, program)
 		truncate_diagnostics(k.c, replayed_diagnostics)
-		current_weight := prov_region_weight(graph)
+		current_weight := prov_fact_weight(&graph.facts)
 		settled := current_weight == seeded
 		if !settled {
 			free_all(virtual.arena_allocator(&carry_arena))
-			carry = prov_carry_regions(graph, virtual.arena_allocator(&carry_arena))
+			carry = prov_carry_facts(graph, virtual.arena_allocator(&carry_arena))
 		}
 		program.peak_used_bytes = max(program.peak_used_bytes,
 		                             k.c.analysis_arena.total_used - initial_bytes + carry_arena.total_used + replay_arena.total_used)
@@ -172,35 +177,38 @@ prov_finish_effect_program :: proc(program: ^Prov_Effect_Program, graph: ^Flow_G
 	// Reuse that metadata instead of retaining a second copy of every table.
 	program.input = graph.input
 	program.input.frozen = true
-	program.roots = graph.roots[:]
-	program.root_by_symbol = graph.root_by_symbol
-	program.root_by_storage = graph.root_by_storage
-	program.provider_bits = graph.provider_bits
-	program.provider_symbols = graph.provider_symbols[:]
-	program.provider_paths = graph.provider_paths
-	program.temp_provider_bits = graph.temp_provider_bits
-	program.operator_calls = graph.operator_calls
-	program.lent_locals = graph.lent_locals
-	program.blocks = len(graph.blocks)
+	program.topology = Prov_Topology {
+		param_count        = graph.param_count,
+		roots              = graph.roots[:],
+		root_by_symbol     = graph.root_by_symbol,
+		root_by_storage    = graph.root_by_storage,
+		provider_bits      = graph.provider_bits,
+		provider_symbols   = graph.provider_symbols[:],
+		provider_paths     = graph.provider_paths,
+		temp_provider_bits = graph.temp_provider_bits,
+		operator_calls     = graph.operator_calls,
+		blocks             = len(graph.blocks),
+	}
 }
 
-// A replay round starts from the ordinary constructor, so every fact map exists;
-// its loan, lifecycle, and event buffers stay empty.
+// A replay round starts from the ordinary constructor, so every map exists, and
+// takes the body's topology; the caller seeds its facts. Its loan, lifecycle,
+// and event buffers stay empty.
 @(private)
 prov_fact_graph :: proc(k: ^Checker, literal: ^Expr_Proc, mode: Flow_Mode, program: ^Prov_Effect_Program, allocator: mem.Allocator) -> ^Flow_Graph {
 	graph := new_flow_graph(k, literal, allocator, mode, normalized_input = program.input)
 	graph.replaying_facts = true
-	graph.param_count = program.param_count
-	append(&graph.roots, ..program.roots)
-	for key, value in program.root_by_symbol { graph.root_by_symbol[key] = value }
-	for key, value in program.root_by_storage { graph.root_by_storage[key] = value }
-	for key, value in program.provider_bits { graph.provider_bits[key] = value }
-	append(&graph.provider_symbols, ..program.provider_symbols)
-	for key, value in program.provider_paths { graph.provider_paths[key] = value }
-	for key, value in program.temp_provider_bits { graph.temp_provider_bits[key] = value }
-	for key, value in program.operator_calls { graph.operator_calls[key] = value }
-	for key, value in program.lent_locals { graph.lent_locals[key] = value }
-	for len(graph.blocks) < program.blocks { _ = new_flow_block(graph) }
+	topology := &program.topology
+	graph.param_count = topology.param_count
+	append(&graph.roots, ..topology.roots)
+	for key, value in topology.root_by_symbol { graph.root_by_symbol[key] = value }
+	for key, value in topology.root_by_storage { graph.root_by_storage[key] = value }
+	for key, value in topology.provider_bits { graph.provider_bits[key] = value }
+	append(&graph.provider_symbols, ..topology.provider_symbols)
+	for key, value in topology.provider_paths { graph.provider_paths[key] = value }
+	for key, value in topology.temp_provider_bits { graph.temp_provider_bits[key] = value }
+	for key, value in topology.operator_calls { graph.operator_calls[key] = value }
+	for len(graph.blocks) < topology.blocks { _ = new_flow_block(graph) }
 	return graph
 }
 

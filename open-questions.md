@@ -44,13 +44,18 @@ a root for direct storage. The materialization no longer sorts replacements it
 already appends in recorded order. `region_merge_grows` is replaced by
 `merge_region_provenance`. Diagnostics match on all 1350 corpus inputs.
 
-Still open: the main structural follow-up is to give carried facts a small explicit state
-type. `prov_carry_regions` currently returns a partly initialized `Flow_Graph`,
-and `prov_fact_graph` constructs another full graph and copies topology metadata
-for each replay. An explicit fact state would document which maps must be
-seeded and counted for convergence, and which state belongs only to construction
-or solving. Make that change only with the existing replay and arena-allocation
-tests, and measure it against the recorded profiling workloads. Retaining
+The structural follow-up is done too (2026-10-26). The facts a round carries
+are an explicit `Prov_Facts`, embedded in each graph's state, and the
+body's topology is an explicit `Prov_Topology` in the program; see
+[Normalized provenance input](compiler-architecture.md#normalized-provenance-input).
+`prov_carry_facts` deep-copies only the facts, instead of returning a partly
+initialized `Flow_Graph`, and `prov_fact_weight` counts the same five maps.
+Fact graphs no longer copy `lent_locals` as topology, since seeding supplies
+them. Diagnostics match on all 1350 corpus inputs, and
+`normalization_fact_carry_contract` checks that a carry is an independent copy
+that seeds the same weight. Fact replay counts are unchanged. `perf.ps1`
+measured front-end time within 7% either way, and `-o:speed` builds of both
+compilers matched within 1% on `bench/workspace` and `corpus_runner`. Retaining
 normalized bodies across whole-program visits remains the separate decision
 above.
 
