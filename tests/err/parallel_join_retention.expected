@@ -1,47 +1,55 @@
 L0733
-@31:2
+@33:2
 `send` is kept past this join while it borrows `jobs`, which a task of the block borrows too; dropping it may be what the task waits for
 
 L0733
-@41:2
+@43:2
 `held` is kept past this join while it borrows `total`, which a task of the block borrows too; dropping it may be what the task waits for
 
 L0733
-@47:2
+@49:2
 the caller keeps `send` past this join, and it may borrow storage a task of the block borrows too; dropping it may be what the task waits for
 
 L0733
-@58:2
+@60:2
 `kept` is kept past this join while it borrows `jobs`, which a task of the block borrows too; dropping it may be what the task waits for
 
 L0733
-@69:2
+@71:2
 `senders` is kept past this join while it borrows `jobs`, which a task of the block borrows too; dropping it may be what the task waits for
 
 L0733
-@83:2
+@85:2
 `kept` is kept past this join while it borrows `jobs`, which a task of the block borrows too; dropping it may be what the task waits for
 
 L0733
-@96:2
+@98:2
 `slot` is kept past this join while it borrows `jobs`, which a task of the block borrows too; dropping it may be what the task waits for
 
 L0733
-@105:3
+@107:3
 `send` is kept past this join while it borrows `jobs`, which a task of the block borrows too; dropping it may be what the task waits for
 
 L0733
-@115:2
+@117:2
 `send` is kept past this join while it borrows `jobs`, which a task of the block borrows too; dropping it may be what the task waits for
 
 L0733
-@126:2
+@128:2
 `send` is kept past this join while it borrows `jobs`, which a task of the block borrows too; dropping it may be what the task waits for
 
 L0733
-@140:2
+@142:2
 `ticket` is kept past this join while it borrows `gate`, which a task of the block borrows too; dropping it may be what the task waits for
 
 L0733
-@211:2
+@213:2
 `kept` is kept past this join while it borrows `first`, which a task of the block borrows too; dropping it may be what the task waits for
+
+L0733
+@233:2
+`kept` is kept past this join while it borrows `first`, which a task of the block borrows too; dropping it may be what the task waits for
+
+L0733
+@243:2
+`kept` is kept past this join while it borrows `gate`, which a task of the block borrows too; dropping it may be what the task waits for

@@ -1011,12 +1011,16 @@ prov_temp_content :: proc(graph: ^Flow_Graph, type: Type_Id) -> []int {
 }
 
 // Sources describing this shape are selected by path; others reach every path.
+// A distinct type has its underlying type's carrier shape, so a conversion
+// between them keeps each carrier's own sources.
 @(private = "file")
 prov_select_content :: proc(graph: ^Flow_Graph, sources: []int, type: Type_Id, path: []Proj_Step) -> []int {
+	c := graph.k.c
 	selected: []int
 	for source in sources {
 		entry := graph.prov_slots[source]
-		if type == INVALID_TYPE || entry.content_shape != type || paths_overlap(entry.path, path) {
+		if type == INVALID_TYPE || entry.content_shape == INVALID_TYPE ||
+		   type_underlying(c, entry.content_shape) != type_underlying(c, type) || paths_overlap(entry.path, path) {
 			selected = prov_join(graph, selected, prov_one(graph, source))
 		}
 	}
@@ -7091,6 +7095,14 @@ prov_call_result :: proc(
 	// A result that is not itself a borrow can still hold one.
 	if !type_is_carrier(c, result_type) && !type_carries_borrow(c, result_type).any {
 		return nil
+	}
+	// A conversion's result is its operand, carrier by carrier: a distinct
+	// type and its underlying type share one carrier shape.
+	if _, conversion := v.operation.(Call_Conversion); conversion && len(v.bound) == 1 && v.bound[0] != nil {
+		if type_is_carrier(c, result_type) {
+			return actuals[0]
+		}
+		return prov_project_content(graph, actuals[0], expr_base(v.bound[0]).type, nil, result_type, v.span)
 	}
 	callee := call_contract_declaration(c, v)
 	direct := prov_has_direct_body(c, callee)

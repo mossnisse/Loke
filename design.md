@@ -6946,7 +6946,9 @@ keeps:
 A marked value is found through fields, variants, container elements,
 pointees, owned and shared payloads, and a generic record's type arguments.
 What it borrows is its root provenance; what a sibling field of a value
-holding it borrows is not. One root with overlapping paths may
+holding it borrows is not. A generic record whose type argument is or reaches
+a marked type may hold such a value where no field shows it, so everything the
+record borrows counts. One root with overlapping paths may
 overlap; so may unknown storage and anything, and a parameter's storage and
 another parameter's or a global's, which the caller may have made the same.
 A local of the procedure overlaps no other root. A value moved into a task's

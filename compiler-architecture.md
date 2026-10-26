@@ -677,8 +677,11 @@ records liveness after the event for it. The values the parent keeps are the
 slots of a symbol live after the join, and every parameter's slots; a slot
 counts when its symbol's type is, holds, or reaches an `@(wakes_on_drop)` type
 (the `waker` of `transfer_facts` in `hooks.odin`), and its carrier path passes
-through a marked type or ends at a carrier reaching one (`path_waker`), so a
-wrapper's other fields do not count. Its reaching loans are compared with
+through a marked type, or a generic record with a marked type argument, or
+ends at a carrier reaching one (`path_waker`), so a wrapper's other fields do
+not count. This relies on content slots keeping their paths apart: a
+conversion projects its operand's slots by path, and a distinct type selects
+sources by its underlying type's shape (`prov_select_content`). Its reaching loans are compared with
 those in the block's `task_slots` and `task_holds` slots by root: one root
 with overlapping paths, unknown roots, or a parameter's root against another
 external one (`loans_may_share_storage`). Such a value's drop counts as a use

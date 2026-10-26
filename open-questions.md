@@ -1254,7 +1254,8 @@ No further abstraction or deletion is justified by this review.
 
 ### Channel implementation and join-check review (2026-10-26)
 
-Review of `e8238f6`. All five findings are fixed:
+Review of `e8238f6`. Commit `1c0bae5` addresses the five original
+reproductions; the follow-up review below records two additional cases:
 
 - The channel iterator held a pointer to the channel rather than borrowing a
   `Receiver`, so its receiver could drop, closing the receiving side, while
@@ -1289,6 +1290,34 @@ counts. The join check belongs in the existing provenance replay, where
 cleanup and task holds are already available. Keep `queue_of` as the narrow
 trust boundary until the
 [borrow-contract question](#waiting-and-ownership-review-2026-10-26) is resolved.
+
+### Channel fix follow-up review (2026-10-26)
+
+Review of `1c0bae5`. All three findings are fixed:
+
+- The field-path filter in the [join check](design.md#releasing-before-the-join)
+  dropped wakers reached through a generic record's type arguments: a
+  `Ticket(thread.Guard(int))` whose only field points to the task's mutex was
+  accepted, though `e8238f6` rejected it and such a record may hold a guard
+  behind a `rawptr`. `path_waker` now counts every carrier of a record whose
+  type argument reaches a marked type.
+- A sibling field's borrow was still conflated with a guard's after a
+  conversion to a distinct type. A conversion's result reached every operand
+  slot from every path, and content selection compared shapes by exact type.
+  A conversion now projects its operand's slots by path, and selection
+  compares underlying types, which share one carrier shape.
+- The commit had no **Unreleased** entry in [CHANGELOG.md](CHANGELOG.md#unreleased).
+  It now records the `Receiver.iter` change under breaking changes, with the
+  upgrade of keeping the receiver alive until its iterator ends, and the
+  newly accepted wrapper case under fixes.
+
+[parallel_join_retention.loke](tests/err/parallel_join_retention.loke) covers
+the generic record, and the distinct conversion both accepted on the sibling's
+mutex and rejected on the guard's. The direct wrapper case, iterator lifetime
+check, and worker-completion handshake pass their regressions. Folding waker
+detection into the existing type walk, removing the redundant capacity field,
+and inlining `take` keep the implementation simpler; no additional abstraction
+is called for.
 
 ## Error handling (2026-10-13)
 

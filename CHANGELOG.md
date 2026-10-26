@@ -18,6 +18,14 @@ checklist.
   compiles. Upgrade by dropping the guard before the block, or by locking
   inside a scope that ends before it.
 
+- `thread.Receiver(T).iter` now borrows the receiver (`self: ^`), and the
+  iterator receives through it. Before, the iterator pointed at the channel
+  alone, so its receiver could drop, closing the receiving side, while the
+  iterator could still receive: a send then failed, or a receive waited
+  forever. Dropping a receiver while its iterator is still in use is now
+  rejected with `L0512`. Upgrade by keeping the receiver alive until its
+  iterator ends.
+
 - `thread.Guard(T)`, the guard `Mutex.lock` returns, is now
   [`@(thread_affine)`](design.md#thread_affine), since Windows requires the
   thread that took the lock to release it. Moving or lending a guard to a
@@ -626,6 +634,13 @@ checklist.
   for any count.
 
 ### Fixed
+
+- The join check (`L0733`) counts only what a marked value itself borrows, not
+  what a field beside it in an enclosing record borrows, also after the record
+  converts to a distinct type: `Pair{first.lock(), &second}` kept past a block
+  whose task locks `second` is accepted. A generic record whose type argument
+  is marked still counts everything it borrows, since it may hold such a value
+  where no field shows it.
 
 - A `parallel` block directly inside another no longer reports `L0305` for
   the hidden scope local both blocks declare, which no source can name.

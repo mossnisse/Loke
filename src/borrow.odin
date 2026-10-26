@@ -3390,8 +3390,11 @@ check_join_retention :: proc(state: ^Prov_State, event: Prov_Event, live: []bool
 // The `@(wakes_on_drop)` type the carrier at `path` in a `type` value belongs
 // to: a marked type the path passes through, or one the carrier, or a
 // truncated path's subtree, reaches. INVALID_TYPE for a carrier outside every
-// marked subvalue. A union's variants share one wildcard step, so any of them
-// may be the one; a step this does not recognize answers for the whole place.
+// marked subvalue. A generic record whose type argument reaches a marked type
+// may hold one where no field shows it, behind a `rawptr`, so each of its
+// carriers belongs to that type. A union's variants share one wildcard step,
+// so any of them may be the one; a step this does not recognize answers for
+// the whole place.
 @(private = "file")
 path_waker :: proc(c: ^Compiler, type: Type_Id, path: []Proj_Step) -> Type_Id {
 	info := type_of(c, type)
@@ -3412,6 +3415,13 @@ path_waker :: proc(c: ^Compiler, type: Type_Id, path: []Proj_Step) -> Type_Id {
 	case .Distinct:
 		return path_waker(c, info.element, path)
 	case .Struct:
+		for arg in info.instance_args {
+			if arg.is_type {
+				if found := type_reaches_waker(c, arg.type); found != INVALID_TYPE {
+					return found
+				}
+			}
+		}
 		if step.kind == .Field {
 			for field in info.fields {
 				if sym := symbol_of(c, field); sym != nil && i64(sym.index) == step.lo {

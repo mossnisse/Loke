@@ -7,7 +7,9 @@
 // parent closed, and a library's own marked type, with a drop hook or not.
 // Moving endpoints to tasks, splitting inside the block, dropping before the
 // join, and a guard on unrelated storage are accepted, even when a field
-// beside the guard borrows what a task borrows.
+// beside the guard borrows what a task borrows, also after a conversion to a
+// distinct type. A generic record whose type argument is marked may hold such
+// a value out of sight, so everything it borrows counts.
 package main;
 
 import "core:thread";
@@ -210,6 +212,36 @@ guard_in_wrapper :: proc() {
 	kept := Guard_And_Other{first.lock(), &second};
 	parallel {
 		spawn lock_and_add(&first);
+	}
+}
+
+Tagged_Guard :: distinct Guard_And_Other;
+
+guard_beside_task_storage_converted :: proc() {
+	first: thread.Mutex(int) = {};
+	second: thread.Mutex(int) = {};
+	kept := Tagged_Guard(Guard_And_Other{first.lock(), &second});
+	parallel {
+		spawn lock_and_add(&second);
+	}
+}
+
+guard_in_converted_wrapper :: proc() {
+	first: thread.Mutex(int) = {};
+	second: thread.Mutex(int) = {};
+	kept := Tagged_Guard(Guard_And_Other{first.lock(), &second});
+	parallel {
+		spawn lock_and_add(&first);
+	}
+}
+
+Owner :: struct($T: type) { gate: ^thread.Mutex(int) }
+
+marked_type_argument :: proc() {
+	gate: thread.Mutex(int) = {};
+	kept := Owner(thread.Guard(int)){&gate};
+	parallel {
+		spawn lock_and_add(&gate);
 	}
 }
 
