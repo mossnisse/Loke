@@ -8,8 +8,8 @@ figures are observations, not performance thresholds.
 ## Provenance normalization
 
 [provenance-normalization-before.json](provenance-normalization-before.json)
-was captured on 2026-10-25 for
-[stage 1](../../provenance-normalization-contract.md#behavioral-and-summary-baseline).
+was captured on 2026-10-25 for the first stage of the migration to
+[normalized provenance input](../../compiler-architecture.md#normalized-provenance-input).
 The compiler and LSP were built from commit
 `81d478b0823daf46499e597fdac8a018c0c3ca3c`; the additional
 [provenance workload](../provenance.loke) is part of stage 1 and its source hash
@@ -202,9 +202,8 @@ locate the costs still paid by normalization and final event materialization.
 ### Completed migration (stage 5)
 
 [provenance-normalization-stage5.json](provenance-normalization-stage5.json)
-records commit `7b83f4e20c367e0062c0185da9952bedace1f8aa`, after
-[stage 5e](../../provenance-normalization-contract.md#stage-5e-call-arguments)
-and its review cleanup, measured on 2026-10-26 with the same machine, tools,
+records commit `7b83f4e20c367e0062c0185da9952bedace1f8aa`, after its last stage, which moved call substitution onto recorded call
+arguments, and that stage's review cleanup, measured on 2026-10-26 with the same machine, tools,
 repeat count, and unchanged workload source hashes as the preceding records.
 No test suite or other compiler workload ran during capture. Compiler and LSP
 SHA-256 values were:

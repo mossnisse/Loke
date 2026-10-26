@@ -134,36 +134,115 @@ operations ([provenance_event.odin](src/provenance_event.odin)) and materialized
 again, interleaved with one more replay, once the facts settle. Superseded
 diagnostics are discarded, so each diagnostic appears once.
 
-The [provenance normalization contract](provenance-normalization-contract.md#initial-operation-contracts)
-records the operation invariants, current AST-sensitive helper inventory,
-inspection tests, and performance baseline for migrating this construction
-boundary. [provenance_input.odin](src/provenance_input.odin) supplies stage 2's
-body-local storage/value IDs and canonical typed places. Target and region
-facts share storage IDs; direct places name storage, while indirect places
-name the evaluated carrier and its selected path.
-[provenance_transfer.odin](src/provenance_transfer.odin) normalizes stage 3's
-constructors, views, payload extraction, widening, and checked copy/move modes.
-[provenance_transfer_facts.odin](src/provenance_transfer_facts.odin) applies those
-shared source/destination paths to current target and region facts. Copy
-operations retain checked hook identity and register dependencies on its current
-result summary, including hooks nested in generated copies.
-[provenance_call.odin](src/provenance_call.odin) records checked parameter modes,
-result type, argument evaluation order, and a split receiver's independent
-capture. [provenance_read.odin](src/provenance_read.odin) classifies leaf alias
-reads before replay. [provenance_effect.odin](src/provenance_effect.odin) records
-and replays declarations, stores, borrowed bindings, provider transfers, call
-results/writes, and target invalidation. Replay uses frozen input tables and
-cannot walk source operands. Leaf region and target queries read a value's
-recorded representation and its checked form
-([provenance_form.odin](src/provenance_form.odin)), which holds its operands
-and a call's arguments as values; the construction walk tracks open
-conversions without rewriting the checked AST. See the
-[stage 4 contract](provenance-normalization-contract.md#stage-4-fact-replay-and-call-inputs)
-for the profiling tool and the
-[stage 5b contract](provenance-normalization-contract.md#stage-5b-recorded-events)
-for event materialization, and the
-[stage 5e contract](provenance-normalization-contract.md#stage-5e-call-arguments)
-for what a query may still read from the AST.
+Provenance construction keeps what a body does apart from the facts that
+grow while it is analyzed; [normalized provenance input](#normalized-provenance-input)
+describes that boundary.
+
+### Normalized provenance input
+
+The construction walk (`walk_flow_expr` and the provenance helpers it calls) is
+the only provenance code that reads source syntax for its meaning. It consumes
+the checked AST and the settled lifecycle annotations, interns the body's
+input, records ordered operations, and builds the graph's control flow, loans,
+roots, and carrier slots:
+
+```text
+checked AST + settled lifecycle annotations
+    -> construction walk: input tables, fact operations, event operations
+    -> frozen input; fact replay rounds until the fact weight stops growing
+    -> one settled round that also materializes the event operations
+    -> borrow and region solvers, summaries, diagnostics
+```
+
+| File | Input it owns |
+| --- | --- |
+| [provenance_input.odin](src/provenance_input.odin) | `Prov_Input`: body-local `Storage_Id` and `Value_Id` tables, zero meaning unresolved storage or no value; canonical typed places (`Prov_Place`). |
+| [provenance_form.odin](src/provenance_form.odin) | Each value's checked form (`Prov_Form`), with its operands, a call's argument and pack values, and the call a user operator stands for, all as values. |
+| [provenance_transfer.odin](src/provenance_transfer.odin), [provenance_transfer_facts.odin](src/provenance_transfer_facts.odin) | Typed transfers (constructors, owner views, payload extraction, widening, copies and moves) and how they apply to targets and regions. |
+| [provenance_call.odin](src/provenance_call.odin) | Checked call inputs: contract, signature, parameter modes, result type, argument slots in source evaluation order, and a lending call's captured receiver. |
+| [provenance_read.odin](src/provenance_read.odin) | A leaf alias read, derived from a value and its form. |
+| [provenance_effect.odin](src/provenance_effect.odin) | Fact operations, their replay, and freezing. |
+| [provenance_event.odin](src/provenance_event.odin) | Event operations and their materialization. |
+
+A value is keyed by its node, its representation (`Prov_Repr`: type, view,
+erasure, widening, and composite backing), and its `Defer_Expansion`. The value
+beneath an implicit conversion is a distinct value (`prov_value_beneath`);
+construction never rewrites a node's annotations. Storage is keyed by
+`Written_Storage`: named storage by its symbol, anonymous storage by its source
+identity, type, and expansion. A local is therefore one storage across every
+exit, while temporaries evaluated in different defer expansions are distinct. A
+place starts at storage, or at a carrier value for an indirect place, and ends
+in a typed projection path. Interning a value also records its form. Its
+operands are interned at their checked representation in the value's own
+expansion, so construction, replay, and materialization read the same values.
+The value also records whether its storage ends with its statement, and whether
+a read through it may find targets no write named.
+
+Keep these phase rules:
+
+- **Operations hold no facts.** Input and operations store no alias sets,
+  region sets, loans, or call summaries. Replay reads current callee and copy
+  hook summaries each round, so a summary can grow without changing input or
+  identities. Body-local IDs never reach a summary; summaries name parameter and
+  result paths and symbols.
+- **Replay reads only recorded input.** Freezing describes every value's
+  transfer, then fixes the tables. `prov_writable_input` asserts that no fact
+  replay or materialization adds a value, storage, call input, copy operation,
+  or transfer; only a finished graph's later query takes a private copy first.
+  Fact operations (declarations, stores, borrowed bindings, provider transfers,
+  call results and writes, and target invalidation) each record their values,
+  paths, block, and defer expansion, and a high-level operation owns the nested
+  writes it performs.
+- **Fact-dependent output is an event operation.** A construction site whose
+  output depends on the facts, such as a reset, an escape, a region or key
+  escape, allocator use, a received region, or a write published through a
+  borrowed payload binding, records its fact-independent inputs. It is
+  materialized immediately with the construction facts, then again in the
+  settled round, interleaved in recorded order with the fact operations at
+  each operation's block and expansion. A graph whose facts never grow is
+  returned as built. The [rationale](comments.md#provenance-replay-and-precise-publication)
+  explains why events are materialized after the facts settle.
+- **Below the walk, queries read values.** A region or target query chooses
+  its rule from a value's form and follows operands as values. What it may
+  still read from the AST is a lookup key, a diagnostic span or name, or
+  checked metadata: constness, value category, resolution, how many arguments a
+  call binds, and a variadic pack's order. A few lookups are keyed by a node the
+  walk evaluated at the same site: an event's call input and argument values,
+  a declaration's `via` allocator, and a temporary root's owner. These work
+  because replay and materialization restore each site's block and expansion. A
+  new spelling of an existing transfer should change interning and its tests,
+  not the queries.
+- **Materialization allocates in the analysis arena.** The language server
+  checks the same bodies on every edit, and nothing reclaims process-heap
+  allocations made during a check.
+
+The representation keeps a place apart from its contents, and a borrow, a
+carrier copy, an owner clone, and a move apart from each other. It keeps an
+allocator handle's dependency apart from an owner's, a known alternative apart
+from an unresolved one, and a storage's cleanup apart from its last use. A
+lending call (`split_at_mut`, `chunks_mut`) captures its receiver as a value of
+its own before later arguments run, and reborrows the source binding only
+after them. A copy names its checked lifecycle operation, and custom copy
+hooks, including hooks nested in generated copies, substitute their current
+result summaries.
+
+[provenance_normalization_test.odin](src/provenance_normalization_test.odin)
+inspects the input by semantic property: shared storage identity, transfer
+modes, evaluation order, recorded forms, and replay after a summary grows. It
+deliberately avoids IDs, map order, and graph dumps. The `provenance_*` runtime
+and rejection cases in `tests/` are the behavioral controls. For a change to
+this boundary, also compare diagnostics over the test, example, tutorial,
+bench, and package inputs with the parent commit's compiler, each run from its
+own checkout. The [profiling probe](bench/provenance_profile/main.odin) reports
+body builds, fact replays, normalization, replay, and materialization time, and
+the largest sampled build arena:
+
+```powershell
+odin run bench/provenance_profile -- bench/provenance.loke bench/workspace examples/corpus_runner.loke
+```
+
+The [baseline records](bench/baselines/README.md#provenance-normalization) hold
+its results and the matching `perf.ps1` records.
 
 ### Allocation domains
 
@@ -296,7 +375,7 @@ at a bounded depth; their conservative leaves are queried without expanding
 them again, including for recursive container types.
 
 Copies compute regions recursively (`prov_copied_region_at`), with their source
-expression, source type, projected source prefix, and allocator kept in
+value, source type, projected source prefix, and allocator kept in
 `Prov_Region_Copy`. Destructuring reads `Destructure.clones` and starts copying
 at the field type; only source queries prepend the containing record's path.
 Explicit clones
@@ -418,7 +497,7 @@ through `pair.unused`. An alias set from `&mut place` or `place[:]` of a
 variable also records that place, so an owner written through `p := &mut out`
 lands in `out`'s region facts and a later reset sees it, and one written
 through a pointer to file-scope, `static`, or `thread_local` storage is
-checked as a store into it by name is (`prov_region_escape_into`). At the call it lands
+checked as a store into it by name would be (`prov_region_escape_into`). At the call it lands
 in the place `&mut place` or an `inout` argument names; any other carrier
 argument, each pack operand among them, is written through
 (`prov_leave_region`), as `p^ = owner` is. `content_loans` represent
@@ -617,6 +696,7 @@ Paths below are relative to `src/`.
 | Files | Responsibility |
 | --- | --- |
 | `main.odin`, `session.odin`, `build_config.odin`, `providers.odin` | CLI presentation, session orchestration, build configuration, and provider selection. |
+| `test_runner.odin` | The `-test` driver, which runs a built test executable once per test. |
 | `overlays.odin`, `queries.odin`, `query_index.odin` | Unsaved sources, snapshot APIs, and the read-only query index. |
 | `incremental.odin` | Bounded package checkpoints, input validation, dependency-prefix replay, reclamation, and checking statistics. |
 | `stack.odin` | 64 MiB compiler stack reservation and nesting budget. |
@@ -639,6 +719,7 @@ Paths below are relative to `src/`.
 | `enums.odin`, `union.odin`, `optional.odin`, `erased.odin` | Enums, unions, extraction/failure protocol, erased views, and witnesses. |
 | `slice.odin`, `container.odin`, `text.odin`, `simd.odin`, `atomics.odin` | The slice type, its shared ABI type and queries; managed-container, text, SIMD, and atomic semantics, and the member tables of the built-in carriers. |
 | `capture.odin` | Lower capture literals to ordinary records, `call` methods, and record literals. |
+| `test_procedures.odin` | `@(test)` declarations, checked in every build and called only by a test build's entry. |
 | `parallel.odin` | `parallel` blocks and `spawn` statements: placement, callee and result rules, and each spawn's frame record and run procedure ([Lowering parallel blocks](#lowering-parallel-blocks)). |
 | `box.odin` | Box types, construction, unboxing, dereference projections, and shared allocation layout. |
 | `hash.odin`, `format.odin`, `iterate.odin` | Contributed hashing, coherent formatting, ranges, `foreach`, and iteration protocol support. |
@@ -661,6 +742,8 @@ Paths below are relative to `src/`.
 | --- | --- |
 | `hooks.odin`, `lifecycle.odin` | Managed-type classification, lifecycle hooks, copy/move/drop checking, liveness, and cleanup slots. |
 | `cfg.odin`, `cfg_provenance.odin` | Disposable control-flow topology and lifecycle events; provenance event construction, carrier projections, allocator regions, and call effects. |
+| `provenance_input.odin`, `provenance_form.odin`, `provenance_transfer.odin`, `provenance_transfer_facts.odin`, `provenance_call.odin`, `provenance_read.odin` | Normalized provenance input: storage, values, places, value forms, transfers, call inputs, and leaf reads ([Normalized provenance input](#normalized-provenance-input)). |
+| `provenance_effect.odin`, `provenance_event.odin` | Recorded fact operations and their replay; recorded event operations and their materialization. |
 | `proc_contracts.odin` | Inferred callback result contracts, checked substitution bounds, and immutable borrow arguments. |
 | `precision.odin` | Diagnostic metadata explaining bounded provenance merges without changing acceptance. |
 | `borrow.odin` | Root loans, carrier paths, result summaries, escape contracts, allocator-region analysis, and diagnostics. |
@@ -1036,11 +1119,12 @@ payload, excluding metadata, other arenas, and OS overhead. These are accounting
 counters, not working-set measurements.
 
 On `bench/workspace`, five packages over twelve bundled ones, an edit to the
-root package rechecks one package of seventeen, and an optimized build checks
-in about 52 ms instead of 72 ms. Almost all of what remains is whole-program
+root package rechecks one package of seventeen. When incremental checking was
+introduced (2026-10-14), an optimized build checked in about 52 ms instead of
+72 ms. Almost all of what remained was whole-program
 provenance analysis, about 43 ms, which runs over every checked body,
-including the bundled library's. The checkpoint images take about 57 MiB, and
-the first check takes about 45 ms longer to capture them. Equivalence and cost
+including the bundled library's. The checkpoint images took about 57 MiB, and
+the first check about 45 ms longer to capture them. Equivalence and cost
 evaluation continues in [Compiler services](future-plans.md#compiler-services).
 
 ## Language server
@@ -1197,10 +1281,12 @@ formatting and documentation with `lokec.exe -fmt` and `-api`.
 `perf.ps1` times the built server editing `bench/workspace`, from each
 notification to its answer: opening it, edits to its root package and to a
 library package, and completion in an unfinished statement. Each figure
-includes the 150 ms pause the server waits for further edits. With incremental
-checking an edit is answered in about 295 ms instead of 340 ms, and completion
-in about 290 ms instead of 340 to 470 ms; the server's peak working set grows
-from about 33 MB to about 89 MB for the checkpoints.
+includes the 150 ms pause the server waits for further edits. When incremental
+checking was introduced (2026-10-14), it answered an edit in about 295 ms
+instead of 340 ms, and completion in about 290 ms instead of 340 to 470 ms,
+while the server's peak working set grew from about 33 MB to about 89 MB for
+the checkpoints. The [baseline records](bench/baselines/README.md) hold later
+measurements.
 
 ## Deliberate boundaries
 

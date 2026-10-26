@@ -1759,15 +1759,23 @@ historical fix lists and test counts are available in Git history.
 
 ## Provenance replay and precise publication
 
-The [normalization migration](provenance-normalization-proposal.md#migration-plan)
-separates checked operations from growing target and allocator-region facts.
-Stage 4 first saturates the fact-changing operations, then built the final loan,
-reset, cleanup, and task events with settled destinations. Borrowed payload
-publication can resolve more destinations on a later fact round; freezing its
-first loan-event expansion would preserve an incomplete set or the wrong
-replacement precision.
+Provenance analysis reads a
+[normalized body](compiler-architecture.md#normalized-provenance-input) rather
+than interpreting the checked AST in each fact visitor. Before that, every
+spelling of a transfer needed its own handling in each visitor: borrowed switch
+payloads in anonymous storage, `unbox`, checked `as`, and owner-to-view
+conversions each lost facts that another spelling kept, until it was fixed
+separately. Describing storage, places, and transfers once makes those rules
+shared. A durable general-purpose MIR would unify more consumers, but LLVM
+lowering still reads the checked AST, and no other consumer needs one yet.
 
-Stage 5b keeps the construction graph instead of walking the body again. Its
+The normalized operations are kept apart from the growing target and
+allocator-region facts. Fact-changing operations are replayed until the facts
+settle. Borrowed payload publication can resolve more destinations on a later
+fact round; freezing its first loan-event expansion would preserve an
+incomplete set or the wrong replacement precision.
+
+The analysis keeps the construction graph instead of walking the body again. Its
 loans, roots, slots, and event sequence do not depend on the carried facts, so
 only what does is recorded and materialized again from the settled facts. The
 materialization replays the fact operations once more, interleaved with the
@@ -1779,6 +1787,6 @@ changes.
 
 The frozen input is shared within one concrete body build. Whole-program summary
 visits still rebuild the body, so retaining normalized bodies across those visits
-remains a measured later decision. The
-[profiling records](bench/baselines/README.md#fact-replay-stage-4) distinguish
-normalization, fact replay, and event materialization cost.
+remains a [measured later decision](open-questions.md#normalized-input-for-provenance-analysis).
+The [profiling records](bench/baselines/README.md#provenance-normalization)
+distinguish normalization, fact replay, and event materialization cost.

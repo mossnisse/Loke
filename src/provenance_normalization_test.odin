@@ -5,9 +5,9 @@ import "core:slice"
 import "core:strings"
 import "core:testing"
 
-// These inspect the existing semantic boundary before normalization replaces
-// its AST queries. Assert identities, paths, and decisions, not temporary IDs
-// or complete graph dumps. See provenance-normalization-proposal.md.
+// These inspect normalized provenance input by semantic property
+// (compiler-architecture.md "Normalized provenance input"). Assert identities,
+// paths, and decisions, not temporary IDs or complete graph dumps.
 @(private = "file")
 normalization_checked :: proc(t: ^testing.T, p: ^Checked, source: string) -> bool {
 	check_source(p, source)

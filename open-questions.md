@@ -6,106 +6,25 @@ Design rationale and differences from Odin are recorded in [comments.md](comment
 
 ## Normalized input for provenance analysis
 
-The [normalization proposal](provenance-normalization-proposal.md#recommendation)
-describes a typed operation layer between the checked AST and provenance fact
-construction, an internal refactor with no language change. Its migration is
-complete ([migration completion](provenance-normalization-contract.md#migration-completion)).
+Provenance analysis reads a
+[normalized body](compiler-architecture.md#normalized-provenance-input) that it
+rebuilds once per analysis invocation, consuming settled lifecycle
+annotations. Three decisions remain open:
 
-Three later decisions remain open: whether measurements justify retaining
-normalized bodies across whole-program summary rounds, whether lifecycle
-analysis should consume the same representation, and whether the finished
-migration's cost is acceptable as it stands. Against the initial baseline it
-costs 7–14% front-end time on the selected workloads and 3–10% per workspace
-LSP operation, while lowering compiler peak working set by 5–10% on the larger
-workloads. Normalization is the largest provenance phase in the
-[stage 5 record](bench/baselines/README.md#completed-migration-stage-5).
-The implementation rebuilds one body per analysis invocation and consumes
-settled lifecycle annotations. See the proposal's
-[migration plan](provenance-normalization-proposal.md#migration-plan) and
-[validation criteria](provenance-normalization-proposal.md#validation-and-completion-criteria).
-
-### Normalization proposal review (2026-10-25)
-
-Both review findings are addressed in the draft: transfers reference checked
-lifecycle operations and consult current summaries for
-[custom copy hooks](provenance-normalization-proposal.md#custom-copy-hooks),
-and the representation distinguishes a captured receiver from its source binding
-for a [delayed reborrow](provenance-normalization-proposal.md#delayed-reborrow-of-a-captured-receiver).
-The migration and validation criteria now cover nested hooks, summary changes,
-and receiver reassignment during later argument evaluation. Stages 2–3 now cover
-capture identities, nested hook dependencies, and transfer replay after summary
-growth. Stage 4 now freezes checked call inputs and replays fact-changing effects,
-and stage 5b removed the final loan/event walk. Since
-[stage 5d](provenance-normalization-contract.md#stage-5d-value-forms) the leaf
-queries read recorded value forms, and since
-[stage 5e](provenance-normalization-contract.md#stage-5e-call-arguments) the
-call-substitution helpers read recorded call arguments. The separate
-[receiver emission divergence](known-gaps.md#mutable-slice-splitting-reloads-a-rebound-receiver-during-emission)
-remains open.
-
-### Value-form simplification review (2026-10-25)
-
-Resolved (2026-10-25). Review of `4751305` ("Record provenance value forms at
-interning") found no correctness regression and two optional simplifications,
-both applied:
-
-- **One call-argument value list.** `Prov_Call_Input` no longer stores its own
-  argument values. An event that names a call reads the form of the call's value
-  in the expansion of its site (`prov_call_values` in
-  [provenance_form.odin](src/provenance_form.odin)); a leaf query still reads the
-  original value's form, which keeps that value's expansion, as the
-  [stage 5d notes](provenance-normalization-contract.md#stage-5d-value-forms)
-  require.
-- **No read-input lookup table.** [prov_input_read](src/provenance_read.odin)
-  derives its fallback operand from the value's form and reads an
-  `unknown_alias` classification recorded when the value is interned, so it no
-  longer writes to the input. `read_inputs` and its freeze-time preparation are
-  gone.
-
-The diagnostics match `4751305` on all 1348 test, example, tutorial, bench, and
-package inputs.
-
-### Call-argument simplification review (2026-10-25)
-
-Resolved (2026-10-25): the cleanup below is applied. Both callers in
-`prov_region_of` now read an operator's call through `prov_result_region`, and
-`prov_operator_region` is deleted; diagnostics match `bfdf31a` on all 1348
-corpus inputs.
-
-Review of `bfdf31a` ("Read provenance call arguments from recorded value forms")
-found no correctness regression. The recorded argument values and operator-call
-values keep substitution within the value representation, including its defer
-expansion, and removing the operand pre-interning walk simplifies construction.
-
-One optional cleanup remains in [cfg_provenance.odin](src/cfg_provenance.odin):
-`prov_operator_region` repeats the cached-call-result lookup and fallback already
-provided by `prov_result_region`. An operator's recorded call is a
-`Prov_Form_Call` with its unconverted result type, so the two callers can use
-`prov_result_region` directly and the nine-line helper can be deleted.
-
-The current compiler passed all 168 unit tests, and acceptance and diagnostic
-messages matched its parent on 22 focused inputs covering providers, deferred
-calls, erasure, shared owners, user operators, and variadic writes. An isolated
-implementation of the cleanup passed the same 168 tests and matched the current
-compiler and its parent on 11 focused operator and variadic inputs.
-
-### Normalization baseline follow-up
-
-Resolved in stage 3 (2026-10-25). Stage 1's
-[inspection suite](src/provenance_normalization_test.odin) found that an `impl`
-copy-hook symbol can have a checked body while both `proc_literal` and
-`decl_proc` are nil. Direct-body discovery omitted the dependency despite
-reading the hook's summary.
-
-Direct-body discovery (`prov_has_direct_body`) now consults the checked-body
-registry for hook members, so copy operations and call summaries agree.
-`normalization_summary_and_custom_copy_contract` asserts the nested
-dependency, and `normalization_copy_summary_replay_contract` grows a hook's
-summary after constructing its caller's transfer and checks that replay reads
-the new source and allocator dependencies without changing operation identity.
-No source-level incorrect acceptance or rejection was established for the old
-discovery limitation; it remains distinct from the separately reproduced reset
-fixes in the [stage 3 notes](provenance-normalization-contract.md#stage-3-transfers).
+- **Retaining normalized bodies.** Whole-program summary visits rebuild each
+  body. Keeping the normalized input across visits would trade memory for the
+  repeated normalization; measure both before deciding.
+- **Lifecycle analysis on the same input.** Lifecycle analysis still walks the
+  checked AST, and provenance consumes its settled decisions. Moving it onto the
+  normalized input needs its own design for unresolved cleanup and last-use
+  decisions.
+- **The cost of normalization.** Against the measurements taken before the
+  normalized input was introduced, checking costs 7–14% more front-end time on
+  the selected workloads and 3–10% more per workspace LSP operation, while
+  compiler peak working set is 5–10% lower on the larger workloads.
+  Normalization is the largest provenance phase in the
+  [current records](bench/baselines/README.md#completed-migration-stage-5).
+  Whether to accept that cost or reduce it is open.
 
 ## Package and import versioning
 
