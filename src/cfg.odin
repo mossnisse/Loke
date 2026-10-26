@@ -270,6 +270,9 @@ Prov_State :: struct {
 	spawn_holds:    map[^Stmt_Spawn]int,
 	spawning:       ^Expr_Call,
 	spawn_held:     []int,
+	// Loans of the spawned call's temporaries, which its frame holds, so the
+	// task's use of them ends with the task (design.md "Spawn statements").
+	spawn_owned:    []int,
 	// The call being spawned belongs to a pooled block.
 	spawning_pooled: bool,
 	// design.md "Globals while tasks run": how many `parallel` blocks enclose

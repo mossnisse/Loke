@@ -266,11 +266,8 @@ check_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn) -> Flow_Info {
 @(private = "file")
 spawned_callee :: proc(k: ^Checker, call: ^Expr_Call) -> (Type_Id, bool) {
 	c := k.c
-	proc_type := INVALID_TYPE
 	_, slot := call.operation.(Call_Dyn_Slot)
-	if call_through_value(c, call) || slot {
-		proc_type = expr_base(call.callee).type
-	} else {
+	if !call_through_value(c, call) && !slot {
 		_, procedure := call.operation.(Call_Procedure)
 		sym := symbol_of(c, call.resolution.symbol)
 		if !procedure || call.dispatch != nil || sym == nil || sym.kind != .Proc ||
@@ -281,8 +278,8 @@ spawned_callee :: proc(k: ^Checker, call: ^Expr_Call) -> (Type_Id, bool) {
 			)
 			return INVALID_TYPE, false
 		}
-		proc_type = sym.proc_type
 	}
+	proc_type := call_proc_type(c, call)
 	info := underlying_info(c, proc_type)
 	if info == nil {
 		return INVALID_TYPE, false

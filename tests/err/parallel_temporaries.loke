@@ -1,0 +1,21 @@
+// design.md "Spawn statements": temporaries made for a spawn's arguments
+// belong to the task, so a result cannot borrow their storage. The task's own
+// use of a temporary receiver ends with the task, but a result pointing into
+// it is used after the temporary has ended.
+package main;
+
+import "core:fmt";
+
+Holder :: struct { n: int }
+
+impl Holder {
+	at :: proc(self: ^) -> ^int { return &self.n; }
+}
+
+make_holder :: proc() -> Holder { return Holder{5}; }
+
+main :: proc() {
+	p: ^int;
+	parallel { spawn p = make_holder().at(); }
+	fmt.println(p^);
+}

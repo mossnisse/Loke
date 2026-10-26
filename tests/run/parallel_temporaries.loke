@@ -1,0 +1,76 @@
+// design.md "Spawn statements": temporaries made for a spawn's arguments
+// belong to the task, which drops them on the worker when the call returns. A
+// managed temporary passed by value and a temporary receiver borrowed by a
+// `self: ^` method or slot are held in the task's frame rather than lent from
+// the parent's statement, on bare and pooled blocks. A result may still
+// borrow what the receiver views when that outlives the block.
+package main;
+
+import "core:fmt";
+import "core:thread";
+
+Bag :: struct { items: [dynamic]int }
+
+impl Bag {
+	size :: proc(self: ^) -> int { return self.items.len(); }
+}
+
+make_bag :: proc(n: int) -> Bag {
+	bag := Bag{};
+	foreach (i in 0..<n) { bag.items.append(i); }
+	return bag;
+}
+
+count :: proc(bag: Bag) -> int { return bag.items.len(); }
+
+Holder :: struct { n: int }
+
+Pointing :: interface($Self: type) {
+	slot at: proc(self: ^Self) -> ^int;
+	slot read: proc(self: ^Self) -> int;
+}
+
+impl Holder {
+	at :: proc(self: ^) -> ^int { return &self.n; }
+	read :: proc(self: ^) -> int { return self.n; }
+}
+
+bare :: proc() -> int {
+	a: int;
+	b: int;
+	parallel {
+		spawn a = count(make_bag(2));
+		spawn b = make_bag(3).size();
+	}
+	return a * 10 + b;
+}
+
+pooled :: proc() -> int {
+	pool := thread.Pool.init(2);
+	a: int;
+	b: int;
+	parallel (&pool) {
+		spawn a = count(make_bag(4));
+		spawn b = make_bag(1).size();
+	}
+	return a * 10 + b;
+}
+
+// Two tasks read through their own temporary views of one holder, and a
+// result borrows the holder, not the view.
+views :: proc() -> int {
+	h := Holder{6};
+	a: int;
+	p: ^int;
+	parallel {
+		spawn a = (dyn Pointing)(&h).read();
+		spawn p = (dyn Pointing)(&h).at();
+	}
+	return a + p^;
+}
+
+main :: proc() {
+	fmt.println("bare", bare());
+	fmt.println("pooled", pooled());
+	fmt.println("views", views());
+}

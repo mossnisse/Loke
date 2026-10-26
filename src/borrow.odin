@@ -2029,8 +2029,9 @@ returned_thread_local :: proc(c: ^Compiler, id: Symbol_Id, consulted: ^[dynamic]
 // What a call through a value or a `dyn` slot may return of a callback's
 // `thread_local` storage, which a call with no summary does not show: for each
 // value it may go through (`callee_values`), as `value_left` resolves it, or
-// with none resolved, what any procedure of the callee's type may return. `at`
-// is unused.
+// with none resolved, what any body the global-write effects found for the
+// call may return (`indirect_call_targets`), as for a write-back. `at` is
+// unused.
 call_callback_returns :: proc(
 	c: ^Compiler, call: ^Expr_Call, body: Symbol_Id, forward: bool, consulted: ^[dynamic]Symbol_Id,
 ) -> []Thread_Local_Left {
@@ -2047,12 +2048,21 @@ call_callback_returns :: proc(
 	if callable_arity(c, type) < 0 {
 		return nil
 	}
-	values, through := callee_values(c, call, body)
-	if !through {
-		values = []Effect_Arg{{}}
-	}
 	out: [dynamic]Thread_Local_Left
 	seen := make(map[[2]int]bool, context.temp_allocator)
+	values, through := callee_values(c, call, body)
+	if !through {
+		targets, _ := indirect_call_targets(c, call)
+		for target in targets {
+			if global := procedure_left_at(c, target, callable_arity(c, type), CALLBACK_RESULT, consulted, &seen); global != INVALID_SYMBOL {
+				if out == nil {
+					out = make([dynamic]Thread_Local_Left, 0, 2, context.temp_allocator)
+				}
+				append(&out, Thread_Local_Left{global = global, callback = INVALID_SYMBOL})
+			}
+		}
+		return out[:]
+	}
 	for value in values {
 		left := value_left(c, value, type, CALLBACK_RESULT, body, forward, consulted, &seen)
 		if left.global != INVALID_SYMBOL || left.callback != INVALID_SYMBOL {

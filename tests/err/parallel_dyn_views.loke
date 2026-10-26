@@ -7,9 +7,11 @@
 // storage that ends before the join, the parent writing what a task views,
 // two tasks viewing it mutably, an allocator region a captured allocator
 // reserves, a slot whose fills may write a global (each fill that does is
-// named), a pooled join's `thread_local` write, and an endpoint kept past the
-// join. A temporary `dyn mut` view cannot be a mutating slot's receiver, at a
-// spawn or anywhere.
+// named), a pooled join's `thread_local` write, an endpoint kept past the
+// join, and a slot returning the worker's `thread_local` storage, on a bare
+// or pooled block. A `self: ^` slot borrows what the view views until the
+// join, and a result borrowing it keeps that loan. A temporary `dyn mut` view
+// cannot be a mutating slot's receiver, at a spawn or anywhere.
 package main;
 
 import "core:fmt";
@@ -182,6 +184,52 @@ temporary_mutable :: proc() {
 	parallel { spawn r = (dyn mut Shape)(&mut s).grow(1); }
 }
 
+counter: thread_local int;
+
+Getter :: interface($Self: type) {
+	slot get: proc(self) -> ^int;
+	slot at: proc(self: ^Self) -> ^int;
+}
+
+Number :: struct { n: int }
+
+impl Number {
+	get :: proc(self) -> ^int { return &counter; }
+	at :: proc(self: ^) -> ^int { return &self.n; }
+}
+
+returns_tls :: proc() {
+	number := Number{42};
+	answer: ^int;
+	parallel { spawn answer = (dyn Getter)(&number).get(); }
+	fmt.println(answer^);
+}
+
+returns_tls_pooled :: proc() {
+	pool := thread.Pool.init(2);
+	number := Number{42};
+	answer: ^int;
+	parallel (&pool) { spawn answer = (dyn Getter)(&number).get(); }
+	fmt.println(answer^);
+}
+
+pointer_receiver_written :: proc() {
+	number := Number{42};
+	answer: ^int;
+	parallel {
+		spawn answer = (dyn Getter)(&number).at();
+		number.n = 1;
+	}
+}
+
+result_outlived :: proc() {
+	number := Number{42};
+	answer: ^int;
+	parallel { spawn answer = (dyn Getter)(&number).at(); }
+	number.n = 1;
+	fmt.println(answer^);
+}
+
 main :: proc() {
 	stored();
 	stored_mutable();
@@ -198,4 +246,8 @@ main :: proc() {
 	pooled_write();
 	sender_kept();
 	temporary_mutable();
+	returns_tls();
+	returns_tls_pooled();
+	pointer_receiver_written();
+	result_outlived();
 }

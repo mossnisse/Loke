@@ -1594,6 +1594,55 @@ tests found:
   known gap,
   [named arguments to a slot of a view converted in place](known-gaps.md#named-arguments-to-a-slot-of-a-view-converted-in-place).
 
+### Erased-callable spawn implementation review (2026-10-26)
+
+Review of `9e74033`. Representing the callable view as receiver argument 0
+keeps the implementation small: existing frame construction, checked run
+procedures, argument evaluation order, cleanup, transfer checks, and effect
+unions serve both concrete and erased calls. The target notes now reuse
+`indirect_call_targets`. No extra scheduler, callable environment container,
+or capture representation is needed.
+
+Two gaps at the boundary between those shared representations were found;
+both are fixed:
+
+- A spawned dyn slot could return a worker's thread-local borrow: `spawn
+  answer = (dyn Getter)(&number).get();`, where `get` returns `&counter`, was
+  accepted without L0730. Return provenance used a callable-type lookup where
+  an interface slot needs its actual target union. `call_callback_returns` now
+  reads, with no value resolved, the returns of every body
+  `indirect_call_targets` finds, as the write-back analysis does, and notes
+  each as a summary dependency.
+- A spawned read-only dyn slot borrowed its temporary view header: `spawn
+  answer = (dyn Reader)(&number).get();` with `get(self: ^Self)` was rejected
+  with L0513 at the join. The cause was broader than views. Any temporary
+  lent to a borrowing parameter of a spawned call was lent from the parent's
+  statement and held to the join, although the frame owns it, so `spawn a =
+  count(make_bag());` with a managed `bag: Bag` parameter, and `spawn b =
+  make_bag().size();` with `size(self: ^)`, were rejected too. Those loans are
+  now recorded (`Flow_Graph.spawn_owned`) and left out of what the task holds;
+  a result borrowing such a temporary still carries its loan and is rejected
+  when used after the join. Separately, a `dyn` slot call lent the view's
+  header even outside a spawn, so `p := (dyn Pointing)(&h).at(); p^` was
+  rejected though the slot is given the viewed value, never the header. Slot
+  dispatch now lends only what the view views.
+
+Extra probes accepted mixed, packed, spread, and empty callable-view
+variadic arguments, two read-only calls over arena-backed owned captures,
+and a callable view returning a borrow of a parent local. Mutating that
+local before the returned pointer's last use correctly rejects, as do
+thread-local results through procedure views and thread-local writeback
+through an ordinary interface slot. These checks distinguish the missing
+slot-return case from the paths already covered.
+
+One local simplification was available and is applied: `src/parallel.odin`,
+`spawned_callee`, **shrink** the repeated signature selection. After checking
+whether the call form is eligible, it obtains the type with `call_proc_type`
+instead of selecting between the callee expression's type and the resolved
+symbol's type again, which keeps the interpretation of checked calls in one
+helper. Broader work on preserving stored-view facts and per-call effect
+precision remains separate from these fixes.
+
 ### Parameters a join check cannot tell apart (2026-10-26)
 
 Writing `examples/mixer.loke` for milestone 9 found that the

@@ -685,6 +685,21 @@ checklist.
 
 ### Fixed
 
+- A spawned call through a `dyn` slot returning the worker's `thread_local`
+  storage, as in `spawn answer = (dyn Getter)(&number).get();` where `get`
+  returns `&counter`, is now rejected (`L0730`), as through a procedure value.
+
+- A spawned call's temporaries belong to its task, as
+  [Spawn statements](design.md#spawn-statements) says: `spawn a =
+  count(make_bag());` with a managed parameter, `spawn b = make_bag().size();`
+  with a `self: ^` receiver, and a `self: ^` slot of a view converted at the
+  spawn are no longer rejected (`L0513`) at the join. A result borrowing such a
+  temporary is still rejected.
+
+- A `dyn` slot taking `self: ^` is given the viewed value, so a result
+  borrowing it no longer borrows a view converted in place:
+  `p := (dyn Pointing)(&h).at(); p^` is accepted.
+
 - A procedure literal called where it is written, as in
   `(proc() { cache.clear(); })()`, now counts its global writes like any
   call through a procedure value: a borrow of the global kept across the

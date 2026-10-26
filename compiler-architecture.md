@@ -681,7 +681,9 @@ The checks run on the `Prov_Diagnose` graph. A block's tasks hold what they
 lend in one slot per block, `task_slots`, which the hidden local's drop uses,
 so every task loan is live until the join. Each spawn adds to it rather than
 replacing it, so a spawn in a loop keeps the earlier iterations' loans, and
-the join empties it for a block entered again. A spawn site that reborrows a
+the join empties it for a block entered again. A temporary the spawned call
+borrows is in the frame, so its loan (`spawn_owned`) is left out of what the
+task holds; a result that borrows it still carries the loan. A spawn site that reborrows a
 mutable carrier also holds a slot of its own, `task_holds`, derived from that
 carrier, so the carrier stays suspended until the join while a loop's fresh
 chunk binding is not. A spawn emits a `Task_Start` event naming its site in

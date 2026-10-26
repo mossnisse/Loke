@@ -5414,6 +5414,17 @@ prov_argument_borrows_caller :: proc(
 	)
 }
 
+// A call dispatching through the `dyn` view it takes as its receiver: a slot
+// call, or a view's forwarding member.
+@(private = "file")
+prov_dispatches_on_view :: proc(c: ^Compiler, v: ^Expr_Call) -> bool {
+	if _, slot := v.operation.(Call_Dyn_Slot); slot {
+		return true
+	}
+	sym := symbol_of(c, v.resolution.symbol)
+	return sym != nil && sym.synth == .Dyn_Forward
+}
+
 @(private)
 prov_parameter_type :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int) -> Type_Id {
 	input := prov_input_call(graph, v)
@@ -5636,13 +5647,19 @@ prov_spawn :: proc(graph: ^Flow_Graph, s: ^Stmt_Spawn) {
 	if !is_call {
 		return
 	}
-	outer, outer_held, outer_pooled := graph.spawning, graph.spawn_held, graph.spawning_pooled
-	graph.spawning, graph.spawn_held = call, nil
+	outer, outer_held, outer_owned, outer_pooled := graph.spawning, graph.spawn_held, graph.spawn_owned, graph.spawning_pooled
+	graph.spawning, graph.spawn_held, graph.spawn_owned = call, nil, nil
 	graph.spawning_pooled = s.task != nil && s.task.pooled
 	graph.task_reserve = {}
 	result := walk_flow_expr(graph, call)
-	held := graph.spawn_held
-	graph.spawning, graph.spawn_held, graph.spawning_pooled = outer, outer_held, outer_pooled
+	kept := make([dynamic]int, 0, len(graph.spawn_held), graph.alloc)
+	for slot in graph.spawn_held {
+		if !slice.contains(graph.spawn_owned, slot) {
+			append(&kept, slot)
+		}
+	}
+	held := kept[:]
+	graph.spawning, graph.spawn_held, graph.spawn_owned, graph.spawning_pooled = outer, outer_held, outer_owned, outer_pooled
 	task := s.task
 	if task == nil {
 		return
@@ -6087,8 +6104,17 @@ prov_call_argument :: proc(
 			loan = prov_borrow(graph, root, path, false, expr_span(argument), "borrow")
 		} else if carriers, _, through := prov_read_through_carrier(graph, argument); through {
 			loan = carriers // `Type.method(&value)`, or a place behind a pointer
+		} else if index == 0 && prov_dispatches_on_view(c, v) {
+			// design.md "Borrowed dynamic interface values": the slot is given the
+			// viewed value, never the view itself, so a temporary view lends only
+			// what it views, which walking it gave.
 		} else {
 			loan = prov_borrow(graph, prov_temp_root(graph, expr_span(argument)), nil, false, v.span, "borrow")
+			// design.md "Spawn statements": a spawn's temporary belongs to the
+			// task, so only a result borrowing it outlives the statement.
+			if v == graph.spawning {
+				graph.spawn_owned = prov_join(graph, graph.spawn_owned, loan)
+			}
 		}
 		// A `value: T` callee shares the owner's allocations only for the call
 		// (design.md "Parameter semantics and ABI lowering"): the argument stays
