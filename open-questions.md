@@ -1368,10 +1368,11 @@ last-slot transition; both endpoints are `@(wakes_on_drop)`, and the
 [join check](design.md#releasing-before-the-join) rejects a sender kept past a
 join whose task polls for closure; sharing an endpoint between tasks is
 rejected and moving it from task to task is accepted; the mixer polls a ring;
-the padding is 128 bytes on both targets; and the operations lower to native
-acquire loads and release stores. An exhaustive interleaving search under
-sequential consistency found no violation (see
-[The ring algorithm](concurrency-proposal.md#the-ring-algorithm)).
+the padding is 128 bytes on both targets; the operations lower to native
+acquire loads and release stores; and `tests/pkg/ring_allocation` runs them,
+both endpoints' drops, and the ring's with the default allocator exhausted.
+An exhaustive interleaving search under sequential consistency found no
+violation (see [The ring algorithm](concurrency-proposal.md#the-ring-algorithm)).
 
 Still open:
 
@@ -1379,9 +1380,6 @@ Still open:
   as sequentially consistent, so it cannot find a missing release or acquire.
   A C11 model check with GenMC or a tool like it, over the same capacities,
   laps, and drop placements, is still needed.
-- **Allocation-free operation as a test.** The IR shows no allocating call in
-  either operation, but no test counts allocations; one needs a counting
-  default allocator, which a test can only install from a package of its own.
 - **Measurements.** Measure the closure check on every send, with the flags
   separated from the indices, and latency and throughput on the intended
   target. The spare slot is for simpler arithmetic, not demonstrated higher

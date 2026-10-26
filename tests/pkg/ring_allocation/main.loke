@@ -1,0 +1,138 @@
+// standard-library "Rings": neither ring operation allocates, nor does an
+// endpoint's or the ring's drop. The rings are made first, then the default
+// allocator, a fixed arena, is filled with allocations never released, until
+// it refuses a single byte. A million sends and receives through every full
+// and empty boundary, closure by either endpoint, and the ring's drop of its
+// queued items follow, and any allocation among them would panic. Filling
+// matters because the arena takes back its newest allocation when it is
+// freed, so an allocation released within one operation would pass a
+// merely small arena.
+@(default_allocator = "./provider:allocator_factory")
+package main;
+
+import "core:fmt";
+import "core:sync";
+import "core:thread";
+import "core:unsafe";
+
+drops: sync.Atomic(int);
+
+// Counts its drops.
+Item :: move_only struct { id: int }
+
+impl Item {
+	release :: hook(drop) proc(self: inout) {
+		drops.add(1);
+	}
+}
+
+// Allocates `value`'s size until the default allocator refuses, never freeing,
+// and answers how many it made.
+fill :: proc(value: $T) -> int {
+	count := 0;
+	for (;;) {
+		switch (unsafe.try_new(value)) {
+		case .ok(_): count += 1;
+		case .err(_): return count;
+		}
+	}
+	return count;
+}
+
+// Whether the default allocator refuses a single byte.
+exhausted :: proc() -> bool {
+	switch (unsafe.try_new(u8(0))) {
+	case .ok(_): return false;
+	case .err(_): return true;
+	}
+	return false;
+}
+
+// Fills the ring and drains it until a million items have passed in order.
+cycle :: proc(send: ^mut thread.Ring_Sender(int), receive: ^mut thread.Ring_Receiver(int)) {
+	sent := 0;
+	got := 0;
+	ordered := true;
+	for (got < 1000000) {
+		for (;;) {
+			item := sent;
+			result := send.try_send(move(item));
+			switch (result) {
+			case .ok:
+				sent += 1;
+				continue;
+			case .err(_):
+			}
+			break;
+		}
+		for (;;) {
+			result := receive.try_receive();
+			switch (result) {
+			case .item(id):
+				ordered = ordered && id == got;
+				got += 1;
+				continue;
+			case .empty:
+			case .closed:
+			}
+			break;
+		}
+	}
+	fmt.println("received", got, "in order", ordered);
+}
+
+// "ok", "full", or "closed".
+describe :: proc(result: Status(thread.Unsent(Item))) -> string_view {
+	switch (result) {
+	case .ok: return "ok";
+	case .err(unsent):
+		switch (unsent) {
+		case .closed(_): return "closed";
+		case .full(_): return "full";
+		}
+	}
+	return "";
+}
+
+// The id received, or -1 for `.empty` and -2 for `.closed`.
+received :: proc(result: thread.Received(Item)) -> int {
+	switch (result) {
+	case .item(item): return item.id;
+	case .empty: return -1;
+	case .closed: return -2;
+	}
+	return 0;
+}
+
+main :: proc() {
+	numbers := thread.Ring(int).init(4);
+	items := thread.Ring(Item).init(2);
+	closing := thread.Ring(Item).init(2);
+	blocks := fill([256]u8{}) + fill([16]u8{}) + fill(u8(0));
+	fmt.println("filled", blocks > 0, "exhausted", exhausted());
+
+	{
+		send, receive := numbers.split();
+		cycle(&mut send, &mut receive);
+	}
+
+	// The sender's drop: the receiver drains, then sees `.closed`.
+	{
+		send, receive := items.split();
+		fmt.println("send", describe(send.try_send(Item{1})), describe(send.try_send(Item{2})), describe(send.try_send(Item{3})));
+		drop(send);
+		fmt.println("after sender", received(receive.try_receive()), received(receive.try_receive()), received(receive.try_receive()));
+	}
+
+	// The receiver's drop: a send hands its item back, and the queued items
+	// drop with the ring.
+	{
+		send, receive := closing.split();
+		fmt.println("send", describe(send.try_send(Item{4})), describe(send.try_send(Item{5})));
+		drop(receive);
+		fmt.println("after receiver", describe(send.try_send(Item{6})));
+	}
+	before := drops.load();
+	drop(closing);
+	fmt.println("dropped with the ring", drops.load() - before, "exhausted", exhausted());
+}

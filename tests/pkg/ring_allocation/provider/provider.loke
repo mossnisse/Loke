@@ -1,0 +1,17 @@
+@(public)
+package provider;
+
+import "core:mem";
+
+// The default allocator: a fixed arena, which the program fills so that any
+// later allocation fails (design.md "Build-selected providers").
+@(private)
+storage: static [16384]u8 = {};
+
+@(private)
+region: static mem.Arena = {};
+
+allocator_factory :: proc() -> Allocator {
+	region = mem.Arena.from_buffer(&mut storage[:]);
+	return region.allocator();
+}

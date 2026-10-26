@@ -313,8 +313,11 @@ Validation, as of milestone 8:
 4. **Target validation and measurement.** In the emitted LLVM IR, the
    operations' loads and stores are `load atomic` acquire and `store atomic`
    release on naturally aligned fields, which both targets lower to single
-   instructions, and they call nothing that locks or allocates. No test counts
-   allocations, and no latency or throughput has been measured on a target;
+   instructions, and they call nothing that locks or allocates.
+   `tests/pkg/ring_allocation` fills its default allocator, a fixed arena,
+   until it refuses a byte, then runs a million operations, closure by either
+   endpoint, and the ring's drop; an allocation seeded into either operation
+   panics there. No latency or throughput has been measured on a target;
    the spare slot is a simplicity choice, not an established speed
    improvement, and measurements would not establish a hard real-time
    bound.
@@ -519,7 +522,10 @@ The algorithm's validation, and what it still lacks, is listed there.
   from task to task; and sends racing the receiver's drop, every item dropped
   once. A watchdog bounds every polling loop.
 - `tests/trap/ring_split_twice.loke` and `ring_capacity.loke` cover the
+  panics, and `ring_drop_panic.loke` the queue order when an item's drop
   panics.
+- `tests/pkg/ring_allocation` runs the operations and drops with the default
+  allocator exhausted.
 - `tests/err/lib_thread_ring.loke` covers the endpoint and item checks.
 - `examples/mixer.loke` takes its commands from a ring.
 

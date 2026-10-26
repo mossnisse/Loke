@@ -1,0 +1,7 @@
+filled true exhausted true
+received 1000000 in order true
+send ok ok full
+after sender 1 2 -2
+send ok ok
+after receiver closed
+dropped with the ring 2 exhausted true
