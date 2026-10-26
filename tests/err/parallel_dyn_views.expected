@@ -44,6 +44,7 @@ this task may use an allocator region this procedure cannot tell apart from it, 
 L0731
 @142:13
 `(dyn Recorder)(&t).record` may write `hits`, which every task and the parent share
+`(dyn Recorder)(&t).record` may be `Tally.record`, which writes `hits`
 
 L0512
 @160:2

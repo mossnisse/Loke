@@ -598,7 +598,9 @@ checklist.
   `apply(tally, 1)` with a `tally` writing a global, and so is a borrow of
   that global kept across `apply(step, 1)`. A task rejected for a global now
   names the callback that writes or reaches it and the parameter it was
-  passed for, as in "`apply` may call `tally` for `f`".
+  passed for, as in "`apply` may call `tally` for `f`", and one through a
+  view converted at the spawn names the method or capture literal it runs.
+  A `dyn proc` parameter still takes every procedure of its signature.
 
 - Revised the deferred [ring proposal](concurrency-proposal.md#the-ring-algorithm)
   to recommend a spare-slot SPSC queue with bounded indices, separate closure

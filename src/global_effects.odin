@@ -1118,11 +1118,12 @@ callback_region :: proc(c: ^Compiler, part: Call_Part) -> Region_Set {
 
 // Adds `set`, in a callee's terms, to `into` in its caller's: each parameter
 // region as the region of the argument the call binds there, or an unknown one
-// when the call's regions are not known.
+// when the call's regions are not known. The callee's own local regions are
+// unknown to its caller, as `merge_allocator_use` counts them.
 @(private = "file")
 region_through :: proc(into: ^Region_Set, set: Region_Set, regions: []Region_Set) {
 	into.default ||= set.default
-	into.unknown ||= set.unknown
+	into.unknown ||= set.unknown || set.crowded || set.locals != 0
 	for wanted, parameter in set.params {
 		switch {
 		case !wanted:
@@ -1601,7 +1602,8 @@ Effect_Origin :: struct {
 }
 
 // Each origin of `global` at `call` in `body`, as the summaries resolve it
-// there, for a diagnostic to name.
+// there, for a diagnostic to name. A direct callee's own part is the call's
+// subject, except the concrete target of a view converted at the call.
 call_effect_origins :: proc(c: ^Compiler, body: Symbol_Id, call: ^Expr_Call, global: Symbol_Id, writes: bool) -> []Effect_Origin {
 	target, ok := call_effect(c, call)
 	if !ok {
@@ -1609,9 +1611,10 @@ call_effect_origins :: proc(c: ^Compiler, body: Symbol_Id, call: ^Expr_Call, glo
 	}
 	target.span = call.span
 	bodies := c.effect_program.bodies
+	converted := prov_dispatches_on_view(c, call)
 	out := make([dynamic]Effect_Origin, 0, 2, context.temp_allocator)
 	for part in call_parts(c, body, target, open = true) {
-		if !part.whole {
+		if !part.whole && !converted {
 			continue
 		}
 		found := false
@@ -1802,13 +1805,13 @@ compute_thread_summaries :: proc(k: ^Checker) {
 	for body, index in facts {
 		symbol := program.bodies[index].symbol
 		if len(body.whole_reach) > 0 {
-			c.reach_effects[symbol] = clone_effects(c, body.whole_reach[:])
+			c.reach_effects[symbol] = slice.clone(body.whole_reach[:], c.semantic_allocator)
 		}
 		if !allocator_use_is_empty(body.whole_use) {
 			c.allocator_uses[symbol] = clone_allocator_use(body.whole_use, c.semantic_allocator)
 		}
 		if summary := c.callback_summaries[symbol]; summary != nil {
-			summary.reach = clone_effects(c, body.reach[:])
+			summary.reach = slice.clone(body.reach[:], c.semantic_allocator)
 			summary.use = clone_allocator_use(body.use, c.semantic_allocator)
 			summary.regions = clone_regions(body.regions, c.semantic_allocator)
 		}
@@ -1850,7 +1853,7 @@ note_callback_regions :: proc(c: ^Compiler, facts: []Thread_Body, index: int, ca
 				}
 				given := Region_Set{params = make([]bool, len(body.regions[own].params), context.temp_allocator)}
 				region_through(&given, facts[target].regions[position], call.regions)
-				grew |= region_merge_grew(&body.regions[own], given)
+				grew |= merge_region_provenance(&body.regions[own], given)
 			}
 		}
 	} else if followed {
@@ -1860,10 +1863,10 @@ note_callback_regions :: proc(c: ^Compiler, facts: []Thread_Body, index: int, ca
 				continue
 			}
 			if call.regions == nil {
-				grew |= region_merge_grew(&body.regions[own], Region_Set{unknown = true})
+				grew |= merge_region_provenance(&body.regions[own], Region_Set{unknown = true})
 			}
 			for set in call.regions {
-				grew |= region_merge_grew(&body.regions[own], set)
+				grew |= merge_region_provenance(&body.regions[own], set)
 			}
 		}
 	}
@@ -2034,26 +2037,3 @@ merge_allocator_use_from :: proc(into: ^Allocator_Use, from: Allocator_Use) -> b
 	return grew
 }
 
-// Merges what a summary names of `from` into `into`, its parameters, the
-// default region, and an unknown one, reporting whether `into` gained
-// anything. A body's own local regions are its own, as in `Allocator_Use`.
-@(private = "file")
-region_merge_grew :: proc(into: ^Region_Set, from: Region_Set) -> bool {
-	grew := (from.default && !into.default) || (from.unknown && !into.unknown)
-	into.default ||= from.default
-	into.unknown ||= from.unknown
-	for value, index in from.params {
-		if value && index < len(into.params) && !into.params[index] {
-			into.params[index] = true
-			grew = true
-		}
-	}
-	return grew
-}
-
-@(private = "file")
-clone_effects :: proc(c: ^Compiler, effects: []Global_Effect) -> []Global_Effect {
-	out := make([]Global_Effect, len(effects), c.semantic_allocator)
-	copy(out, effects)
-	return out
-}

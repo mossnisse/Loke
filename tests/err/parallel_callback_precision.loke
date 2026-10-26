@@ -7,7 +7,10 @@
 // its type. A view converted at the spawn runs its concrete type's method.
 // The same holds for reach through a global, two tasks using one arena
 // through a callback, a pooled join a callback's `thread_local` write may
-// run, and a serial borrow live across a call given a dirty callback.
+// run, and a serial borrow live across a call given a dirty callback. A view
+// converted at the spawn names the capture literal it runs. A wrapper taking a
+// `dyn proc` view still takes the union for its signature, so it is rejected
+// though this spawn passes a clean procedure.
 package main;
 
 import "core:fmt";
@@ -114,6 +117,22 @@ kept :: proc() -> int {
 	return seen^ + result;
 }
 
+captured :: proc() {
+	base := 1;
+	count_up := proc(n: int) -> int capture(base) { hits += n; return base; };
+	r: int;
+	parallel { spawn r = (dyn proc(n: int) -> int)(count_up)(1); }
+}
+
+// A wrapper taking a `dyn proc` view calls it as a union over its signature,
+// since only procedure-typed parameters are followed.
+erased :: proc(f: dyn proc(n: int) -> int, n: int) -> int { return f(n); }
+
+erased_clean :: proc() {
+	r: int;
+	parallel { spawn r = erased(step, 1); }
+}
+
 main :: proc() {
 	wrappers();
 	either(true);
@@ -124,4 +143,7 @@ main :: proc() {
 	arena_shared();
 	pooled_write();
 	fmt.println(kept());
+	captured();
+	fmt.println(erased(tally, 1));
+	erased_clean();
 }

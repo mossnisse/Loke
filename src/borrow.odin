@@ -3771,6 +3771,8 @@ note_value_targets :: proc(state: ^Prov_State, call: ^Expr_Call, global: Symbol_
 		target_name := fmt.tprintf("`%s`", identifier_text(c, sym.name))
 		if sym.proc_literal != nil {
 			target_name = "the procedure literal here"
+		} else if type_is_capture_record(c, sym.owner_type) {
+			target_name = "the capture literal here"
 		} else if sym.owner_type != INVALID_TYPE {
 			target_name = fmt.tprintf("`%s.%s`", type_name(c, sym.owner_type), identifier_text(c, sym.name))
 		}

@@ -1,60 +1,73 @@
 L0731
-@40:3
+@43:3
 `apply` may write `hits`, which every task and the parent share
 `apply` may call `tally` for `f`, which writes `hits`
 
 L0731
-@41:3
+@44:3
 `twice` may write `hits`, which every task and the parent share
 `twice` may call `tally` for `f`, which writes `hits`
 
 L0731
-@42:3
+@45:3
 `repeat` may write `hits`, which every task and the parent share
 `repeat` may call `tally` for `f`, which writes `hits`
 
 L0731
-@52:13
+@55:13
 `f` may write `hits`, which every task and the parent share
 `f` may be `tally`, which writes `hits`
 
 L0731
-@57:13
+@60:13
 `g` may write `hits`, which every task and the parent share
 `g` may be `tally`, which writes `hits`
 
 L0731
-@57:13
+@60:13
 `g` reaches through `table`, which every task and the parent share
 `g` may be `peek`, which reaches through `table`
 
 L0731
-@66:13
+@69:13
 `apply` may write `hits`, which every task and the parent share
 `apply` may call `tally` for `f`, which writes `hits`
 
 L0731
-@66:13
+@69:13
 `apply` reaches through `table`, which every task and the parent share
 `apply` may call `peek` for `f`, which reaches through `table`
 
 L0731
-@82:13
+@85:13
 `(dyn Recorder)(&loud).record` may write `hits`, which every task and the parent share
 
 L0731
-@87:13
+@90:13
 `apply` reaches through `table`, which every task and the parent share
 `apply` may call `peek` for `f`, which reaches through `table`
 
 L0732
-@99:3
+@102:3
 this task may use `arena`'s allocator, which a task started earlier reserves until the join
 
 L0512
-@107:2
+@110:2
 `buffer` cannot be modified by `apply`, which this join may run on this thread, here
 
 L0512
-@113:12
+@116:12
 `hits` cannot be modified by `apply` here: a read-only pointer of it is still in use
+
+L0731
+@124:13
+`(dyn proc(n: int) -> int)(count_up)` may write `hits`, which every task and the parent share
+`(dyn proc(n: int) -> int)(count_up)` may be the capture literal here, which writes `hits`
+
+L0731
+@133:13
+`erased` may write `hits`, which every task and the parent share
+
+L0731
+@133:13
+`erased` reaches through `table`, which every task and the parent share

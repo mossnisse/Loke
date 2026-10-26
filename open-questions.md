@@ -1672,11 +1672,82 @@ concrete target. Writing it and its tests found:
   parameter-backed region, as any call through a value does, rather than the
   argument at that parameter. A capture literal's `call` and a converted
   slot are direct calls and bind by parameter.
+- **A `dyn proc` parameter keeps the union.** Only procedure-typed
+  parameters and locals are followed (`effect_variable`, `effect_value`), so
+  `apply :: proc(f: dyn proc(n: int) -> int, n: int)` takes every procedure
+  of the signature, and `spawn r = apply(quiet, 1)` is rejected when another
+  call passes it one writing a global; a `proc` parameter accepts it. The
+  spawn passes a concrete procedure, and the wrapper makes the erased call
+  on its worker, so this is separate from rejecting a stored view at the
+  thread boundary. Following a received view would extend `Effect_Arg` to
+  views and their conversions. `tests/err/parallel_callback_precision.loke`
+  covers the limit.
 - **The `run` procedure's call resolves at its spawn.** Its frame fields name
   no procedure, so before this step a task through a wrapper took the union
   even where the parent passed a named procedure. The worker's call now
   resolves its callbacks and callee value where the `spawn` is; a parameter
   there is not `run`'s, so it stays the union.
+
+### Per-call effect implementation review (2026-10-26)
+
+Review of `0533623`. The shared `Call_Part` representation is a useful
+boundary: the write, reach, and allocator-use analyses consume the same
+selection of a body's own effects and its callback effects. `values_from`
+preserves the connection between a generated worker call and its source
+spawn without attempting to infer callback identity from frame fields. Keep
+that structure; a generic fixed-point framework or a second target resolver
+would add little here.
+
+The 170 compiler unit tests and the run, trap, and diagnostic corpora pass.
+Extra probes correctly reject two tasks using one arena through a forwarding
+wrapper and through mutually recursive wrappers. No new unsafe acceptance was
+found in the cases checked. One diagnostic regression was found and is
+fixed: a task through a view converted at the spawn no longer named the
+concrete target, since `call_effect_origins` skipped every callee's own
+part. It now keeps that part for a call dispatching on a view, so the note
+names `Tally.record`, or the capture literal a callable view runs; an
+ordinary call still names only its callbacks.
+
+**Erased callback parameters still take the union.** The new precision does
+not extend to this non-generic callback API:
+
+```loke
+package main;
+hits: int;
+quiet :: proc(n: int) -> int { return n; }
+dirty :: proc(n: int) -> int { hits += n; return n; }
+apply :: proc(f: dyn proc(n: int) -> int, n: int) -> int { return f(n); }
+serial :: proc() { _ = apply(dirty, 1); }
+main :: proc() {
+    answer: int;
+    parallel { spawn answer = apply(quiet, 1); } // L0731
+}
+```
+
+Changing `apply`'s parameter from `dyn proc` to `proc` accepts the spawn.
+`effect_variable` and `effect_value` follow only procedure types; a received
+callable view consequently contributes the full signature union to the
+body's own effects. This is a conservative limitation, separate from
+rejecting a stored view at the thread boundary: this spawn passes a concrete
+procedure and the wrapper makes the erased call on its worker. Record and
+test this limit alongside the other per-call precision limits before
+extending the shared callback representation to erased parameters. Recorded
+and tested under the [per-call findings](#per-call-effect-precision-2026-10-26).
+
+Two local simplifications were available, and both are applied:
+
+- `src/global_effects.odin`, `region_merge_grew`: **shrink** the duplicate
+  merge helper. Its summary sets have only parameter, default, and unknown
+  regions, and the existing `merge_region_provenance` handles those and
+  reports growth already. Replace its three uses and delete the helper,
+  including its comment and annotation: seventeen lines. It also kept a
+  body's local regions, which `region_through` now maps to an unknown region,
+  as `merge_allocator_use` does, where the removed helper dropped them.
+- `src/global_effects.odin`, `clone_effects`: **stdlib** cloning an effects
+  slice is `slice.clone(effects, c.semantic_allocator)`. Replace its two
+  calls and remove the six-line wrapper. `core:slice` is already imported.
+
+Net: twenty-three lines removable without changing the analysis structure.
 
 ### Parameters a join check cannot tell apart (2026-10-26)
 
