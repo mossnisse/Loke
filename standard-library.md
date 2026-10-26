@@ -20,7 +20,7 @@ Examples use Loke syntax; the API summaries use Odin-style declaration sketches.
 | Call foreign text APIs | [`core:cstrings`](#corecstrings), [`core:encoding/utf16`](#coreencodingutf16) |
 | Store integers in a fixed byte order | [`core:endian`](#coreendian) |
 | Access process state or start a child | [`core:os`](#coreos-additions), [`core:process`](#coreprocess) |
-| Start threads, protect shared state, wait for it to change, pass work between tasks, or run tasks on a pool | [`core:thread`](#corethread) |
+| Start threads, protect shared state, wait for it to change, pass work between tasks, with or without waiting, or run tasks on a pool | [`core:thread`](#corethread) |
 | Use numeric functions and types | [`core:math`](#coremath) |
 | Draw random numbers, shuffle, sample, or get secret bytes | [`core:random`](#corerandom) |
 | Read clocks, work with dates, or print and parse ISO 8601 times | [`core:time`](#coretime) |
@@ -130,7 +130,7 @@ core:mem              allocators and regions                  *
 core:unsafe           explicit trust boundary                 *
 core:sync             atomics, fences, once                   *
 core:simd             cross-lane SIMD operations              *
-core:thread           threads, mutexes, monitors, channels, and pools
+core:thread           threads, mutexes, monitors, channels, rings, and pools
 core:fmt              value formatting and process diagnostics
 core:strconv          scalar parsing
 core:strings          UTF-8 algorithms and String_Builder
@@ -365,6 +365,10 @@ Sender(T).send(self: ^, @(cross_thread, escape=static) value: move T) -> Status(
 Sender(T).try_send(self: ^, @(cross_thread, escape=static) value: move T) -> Status(Unsent(T))
 Receiver(T).receive(self: ^) -> Option(T)
 Receiver(T).try_receive(self: ^) -> Received(T)
+Ring(T).init(capacity: int) -> Ring(T)
+Ring(T).split(self: ^) -> (sender: Ring_Sender(T), receiver: Ring_Receiver(T))
+Ring_Sender(T).try_send(self: inout, @(cross_thread, escape=static) value: move T) -> Status(Unsent(T))
+Ring_Receiver(T).try_receive(self: inout) -> Received(T)
 Pool.init(workers: int) -> Pool
 processor_count() -> int
 ```
@@ -616,6 +620,69 @@ by an allocator the sending procedure received. Shared borrowed data reaches
 workers through spawn arguments; a channel carries indices or owned jobs.
 The queue's lock does not make an item's allocator thread-safe.
 
+### Rings
+
+`Ring(T)` is a bounded queue from one sender to one receiver for a thread that
+must not wait, such as an audio loop taking commands once per buffer. Its
+operations poll: `try_send` and `try_receive` never wait, take no lock, and
+allocate nothing. It is move-only, owns its queued items, and has no zero
+value. `init` takes the capacity, which must be positive: a smaller one, or
+one too large to allocate, panics. It allocates one slot more than the
+capacity from the default allocator, which accepts concurrent use.
+
+```loke
+commands := thread.Ring(Command).init(64);
+parallel {
+	send, receive := commands.split();
+	spawn audio_loop(&mut device, move(receive));
+	user_interface(move(send));   // drops the sender on return
+}
+```
+
+The audio loop polls once per buffer and moves on whatever it finds:
+
+```loke
+switch (receive.try_receive()) {
+case .item(command): apply(command);
+case .empty:                    // nothing new this period
+case .closed: return;           // the interface has gone
+}
+```
+
+- **One sender and one receiver.** `split` makes the only pair, and splitting
+  again panics. Both borrow the ring, which therefore cannot move or drop
+  while either lives. There is no `fork`, and each operation needs its
+  endpoint `inout`, so two tasks never operate on one endpoint at once; an
+  endpoint moves from task to task in sequence, as any owner does. It is not
+  thread-affine.
+- **Results.** `try_send` and `try_receive` answer as a channel's do, with
+  `Unsent(T)` and `Received(T)`: `.full` hands an item back from a full ring,
+  `.empty` means more may come, and `.closed` that a side has closed, which
+  takes precedence over fullness once a send observes it.
+- **Closure.** Dropping the sender closes the sending side: the receiver
+  drains what is queued, then sees `.closed`. Dropping the receiver closes the
+  receiving side: later sends hand their items back as `.closed`. A send racing
+  that drop commits its item or hands it back. Nothing wakes, since nothing
+  waits, but a task polling until a side closes waits for the drop all the
+  same, so both endpoints are [`@(wakes_on_drop)`](design.md#wakes_on_drop)
+  and the join check covers them. There is no `close`: a polling loop that must
+  stop sooner checks a flag of its own.
+- **Ownership.** The ring owns an item from a committing send until the
+  receive that takes it; dropping the ring drops the items still queued, in
+  queue order. An endpoint's drop leaves them in place. An item is checked as
+  a channel's is: it carries no borrow shorter than the process, and it
+  crosses threads. A receiver that must not free memory takes non-owning
+  items, or returns owned buffers through a second ring for reuse.
+- **Bounds.** Each operation runs a fixed number of steps: at most three
+  atomic loads and one atomic store, and no loop. That bounds the ring's own
+  work, not its time: preemption, page faults, and cache misses are outside
+  it, and so is dropping a returned item. It is not a real-time guarantee.
+
+A committing send happens before the receive that takes its item, and an
+endpoint's drop happens before its peer observes the side closed
+(design.md "Concurrency and the memory model"). The algorithm, and why it
+meets these, is in [concurrency-proposal.md](concurrency-proposal.md#the-ring-algorithm).
+
 ### Shutdown
 
 Shutdown is a protocol over the objects the tasks use:
@@ -626,6 +693,7 @@ Shutdown is a protocol over the objects the tasks use:
 | The parent leaves the block | its locals and defers run before the join | block-local endpoints drop, and installed monitor cleanup runs |
 | A monitor's controller ends | an explicit termination state or `close` | a guard's drop alone does not end a wait; a true condition still proceeds after `close` |
 | A channel is cancelled | `Channel.close` | sends fail and receivers drain; a task blocked elsewhere is unaffected |
+| A ring endpoint drops | its owner returns or drops it | the peer sees `.closed`: a receiver once it has drained, a sender at once; nothing waits, so nothing wakes |
 | A polling loop is cancelled | a flag it checks, such as an `Atomic(bool)` | the loop must check it and act |
 
 The parent handles the tasks' results after the join, in the order it

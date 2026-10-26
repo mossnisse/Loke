@@ -3,15 +3,16 @@ import "core:fmt";
 import "core:thread";
 import "core:time";
 
-// An audio mixer: a user interface sends commands over a channel to an audio
+// An audio mixer: a user interface sends commands over a ring to an audio
 // loop, which renders its voices on a pool once per buffer and hands the mix
 // to the device.
 //
 // `parallel (pool)` opens a block per buffer (standard-library.md "Pools").
 // Its tasks borrow this period's voices mutably, one group each, and after the
 // join the loop has them all back to mix down. The pool's workers persist, so
-// a block starts no thread. The audio loop takes commands with `try_receive`,
-// so it never waits for one, and it ends when the interface's sender drops.
+// a block starts no thread. The audio loop takes commands with `try_receive`
+// from a ring (standard-library.md "Rings"), which takes no lock, so it never
+// waits for one, and it ends when the interface's sender drops.
 // `Device` stands in for a binding to the platform's audio API.
 
 FRAMES :: 64;
@@ -78,7 +79,7 @@ apply :: proc(command: Command, voices: []mut Voice) {
 
 // Applies every command already sent without waiting; `false` once the
 // interface has ended.
-apply_commands :: proc(commands: ^thread.Receiver(Command), voices: []mut Voice) -> bool {
+apply_commands :: proc(commands: ^mut thread.Ring_Receiver(Command), voices: []mut Voice) -> bool {
 	for (;;) {
 		switch (commands.try_receive()) {
 		case .item(command): apply(command, voices);
@@ -93,12 +94,12 @@ apply_commands :: proc(commands: ^thread.Receiver(Command), voices: []mut Voice)
 // interface has ended.
 audio_loop :: proc(
 	device: ^mut Device, pool: ^thread.Pool,
-	commands: move thread.Receiver(Command), voices: move [dynamic]Voice,
+	commands: move thread.Ring_Receiver(Command), voices: move [dynamic]Voice,
 ) -> Status(Audio_Error) {
 	mix: [dynamic]f32 = {};
 	mix.resize(FRAMES);
 	for (;;) {
-		if (!apply_commands(&commands, &mut voices[:])) {   // the interface has ended
+		if (!apply_commands(&mut commands, &mut voices[:])) {   // the interface has ended
 			report(voices[:]);
 			return .ok;
 		}
@@ -117,24 +118,33 @@ report :: proc(voices: []Voice) {
 	}
 }
 
-// Sends one command; `false` once the audio loop has gone.
-tell :: proc(commands: ^thread.Sender(Command), command: move Command) -> bool {
-	switch (commands.send(move(command))) {
-	case .ok: return true;
-	case .err(_): return false;
+// Sends one command, retrying while the ring is full; `false` once the audio
+// loop has gone.
+tell :: proc(commands: ^mut thread.Ring_Sender(Command), command: move Command) -> bool {
+	pending := move(command);
+	for (;;) {
+		switch (commands.try_send(move(pending))) {
+		case .ok: return true;
+		case .err(unsent):
+			switch (unsent) {
+			case .full(back): pending = back;
+			case .closed(_): return false;
+			}
+		}
+		time.sleep(time.MILLISECOND);
 	}
 }
 
 // Stands in for a user: a few commands, a moment apart, then quitting, which
 // drops the sender and ends the audio loop.
-user_interface :: proc(commands: move thread.Sender(Command)) {
+user_interface :: proc(commands: move thread.Ring_Sender(Command)) {
 	script := [6]Command{
 		.play(0), .play(3), .gain({voice = 3, gain = 0.5}),
 		.play(7), .stop(0), .gain({voice = 7, gain = 0.25}),
 	};
 	foreach (i in 0 ..< script.len()) {
 		command := script[i];
-		if (!tell(&commands, move(command))) { return; }   // the audio loop failed
+		if (!tell(&mut commands, move(command))) { return; }   // the audio loop failed
 		time.sleep(2 * time.MILLISECOND);
 	}
 }
@@ -147,7 +157,7 @@ main :: proc() {
 		voices[i].gain = 1;
 		voices[i].step = i + 1;
 	}
-	commands := thread.Channel(Command).init(64);
+	commands := thread.Ring(Command).init(64);
 	pool := thread.Pool.init(3);
 	audio: Status(Audio_Error);
 	parallel {

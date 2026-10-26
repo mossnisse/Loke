@@ -1,0 +1,18 @@
+L0511
+@25:18
+this write of `send` is not compatible with the mutable pointer of it that is still in use
+L0511
+@34:21
+this write of `receive` is not compatible with the mutable pointer of it that is still in use
+L0640
+@43:6
+this place is reached through a read-only `^T` and cannot be the receiver of a mutating method; borrow it with `&mut` for a `^mut T`
+L0733
+@60:2
+`send` is kept past this join while it borrows `ring`, which a task of the block borrows too; dropping it may be what the task waits for
+L0512
+@69:2
+`ring` cannot be dropped here: a read-only borrow of it is still in use
+L0647
+@76:6
+this pointer borrows `value`, which does not outlive `value`, which `try_send` may keep: process-lifetime storage

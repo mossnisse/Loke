@@ -1,0 +1,245 @@
+// standard-library "Rings": items arrive in FIFO order through repeated laps
+// at capacities 1 to 3, including every last-slot transition; `try_send`
+// reports a full ring apart from a closed one, and closure takes precedence;
+// a ring drains before its end once the sender drops; a send after the
+// receiver drops hands its item back; queued items drop with the ring; a
+// producer and a consumer on two threads keep FIFO order; the sender moves
+// from task to task in sequence; and sends racing the receiver's drop each
+// commit or come back, every item dropped once.
+//
+// A watchdog ends the program if a polling loop never ends.
+package main;
+
+import "core:fmt";
+import "core:os";
+import "core:sync";
+import "core:thread";
+import "core:time";
+
+finished: sync.Atomic(bool);
+drops: sync.Atomic(int);
+
+watch :: proc(seconds: move int) {
+	foreach (_ in 0 ..< seconds * 100) {
+		if (finished.load()) { return; }
+		time.sleep(10 * time.MILLISECOND);
+	}
+	fmt.println("timed out");
+	os.exit(1);
+}
+
+// Counts its drops.
+Item :: move_only struct { id: int }
+
+impl Item {
+	release :: hook(drop) proc(self: inout) {
+		if (self.id == 0) { return; }
+		drops.add(1);
+	}
+}
+
+describe :: proc(result: Status(thread.Unsent(Item))) -> string {
+	switch (result) {
+	case .ok: return "ok";
+	case .err(unsent):
+		switch (unsent) {
+		case .closed(_): return "closed";
+		case .full(_): return "full";
+		}
+	}
+	return "";
+}
+
+// The id received, or -1 for `.empty` and -2 for `.closed`.
+received :: proc(result: thread.Received(Item)) -> int {
+	switch (result) {
+	case .item(item): return item.id;
+	case .empty: return -1;
+	case .closed: return -2;
+	}
+	return 0;
+}
+
+// Fills the ring, drains it, and repeats over several laps of its slots,
+// checking each item and each boundary.
+laps :: proc(capacity: int) {
+	ring := thread.Ring(Item).init(capacity);
+	send, receive := ring.split();
+	next_send := 1;
+	next_receive := 1;
+	ordered := true;
+	boundaries := true;
+	foreach (_ in 0 ..< 3 * capacity + 2) {
+		foreach (_ in 0 ..< capacity) {
+			ordered = ordered && describe(send.try_send(Item{next_send})) == "ok";
+			next_send += 1;
+		}
+		boundaries = boundaries && describe(send.try_send(Item{1000})) == "full";
+		foreach (_ in 0 ..< capacity) {
+			ordered = ordered && received(receive.try_receive()) == next_receive;
+			next_receive += 1;
+		}
+		boundaries = boundaries && received(receive.try_receive()) == -1;
+	}
+	// Half full across the end of the slots.
+	foreach (_ in 0 ..< 2 * capacity + 1) {
+		ordered = ordered && describe(send.try_send(Item{next_send})) == "ok";
+		next_send += 1;
+		ordered = ordered && received(receive.try_receive()) == next_receive;
+		next_receive += 1;
+	}
+	fmt.println("capacity", capacity, "items", next_receive - 1, "in order", ordered, "boundaries", boundaries);
+}
+
+// The sender's drop closes its side: what is queued drains, then `.closed`.
+sender_closes :: proc() {
+	ring := thread.Ring(Item).init(2);
+	send, receive := ring.split();
+	fmt.println("send", describe(send.try_send(Item{1})), describe(send.try_send(Item{2})));
+	drop(send);
+	fmt.println("after sender", received(receive.try_receive()), received(receive.try_receive()), received(receive.try_receive()), received(receive.try_receive()));
+}
+
+// The receiver's drop closes its side: a send hands its item back as
+// `.closed`, on a full ring too, and the queued items drop with the ring.
+receiver_closes :: proc() {
+	drops.store(0);
+	{
+		ring := thread.Ring(Item).init(1);
+		send, receive := ring.split();
+		fmt.println("send", describe(send.try_send(Item{1})), describe(send.try_send(Item{2})));
+		drop(receive);
+		fmt.println("after receiver", describe(send.try_send(Item{3})));
+		fmt.println("dropped before the ring", drops.load());
+	}
+	fmt.println("dropped with the ring", drops.load());
+}
+
+// Sends `from` to `to`, retrying while the ring is full, then drops the
+// sender.
+produce :: proc(items: move thread.Ring_Sender(Item), from: int, to: int) {
+	foreach (id in from ..= to) {
+		for (;;) {
+			result := items.try_send(Item{id});
+			switch (result) {
+			case .ok: break;
+			case .err(unsent):
+				switch (unsent) {
+				case .full(_): continue;
+				case .closed(_): return;
+				}
+			}
+			break;
+		}
+	}
+}
+
+Consumed :: struct { count: int, ordered: bool }
+
+// Polls until the sender has dropped and the ring is drained.
+consume :: proc(items: move thread.Ring_Receiver(Item)) -> Consumed {
+	result := Consumed{ordered = true};
+	for (;;) {
+		got := received(items.try_receive());
+		if (got == -2) { return result; }
+		if (got == -1) { continue; }
+		result.count += 1;
+		result.ordered = result.ordered && got == result.count;
+	}
+	return result;
+}
+
+// One producer and one consumer on two threads, polling both ways.
+threads :: proc(capacity: int) {
+	ring := thread.Ring(Item).init(capacity);
+	consumed: Consumed;
+	parallel {
+		send, receive := ring.split();
+		spawn consumed = consume(move(receive));
+		spawn produce(move(send), 1, 100000);
+	}
+	fmt.println("threads capacity", capacity, "received", consumed.count, "in order", consumed.ordered);
+}
+
+// Sends 1 to 4, then hands the sender to a task of its own for 5 to 8: the
+// join of the block it opens orders this thread's sends before that task's.
+relay :: proc(items: move thread.Ring_Sender(Item)) {
+	foreach (id in 1 ..= 4) {
+		_ = describe(items.try_send(Item{id}));
+	}
+	parallel {
+		spawn produce(move(items), 5, 8);
+	}
+}
+
+// The sender moves from task to task in sequence while another task polls.
+sequential :: proc() {
+	ring := thread.Ring(Item).init(8);
+	consumed: Consumed;
+	parallel {
+		send, receive := ring.split();
+		spawn consumed = consume(move(receive));
+		spawn relay(move(send));
+	}
+	fmt.println("sequential received", consumed.count, "in order", consumed.ordered);
+}
+
+Tally :: struct { committed: int, full: int, returned: int }
+
+// Sends until the receiver has gone, counting each outcome.
+race :: proc(items: move thread.Ring_Sender(Item)) -> Tally {
+	tally := Tally{};
+	id := 1;
+	for (tally.returned == 0) {
+		result := items.try_send(Item{id});
+		id += 1;
+		switch (result) {
+		case .ok: tally.committed += 1;
+		case .err(unsent):
+			switch (unsent) {
+			case .full(_): tally.full += 1;
+			case .closed(_): tally.returned += 1;
+			}
+		}
+	}
+	return tally;
+}
+
+// Takes a few items, then drops the receiver.
+leave :: proc(items: move thread.Ring_Receiver(Item)) -> int {
+	taken := 0;
+	for (taken < 50) {
+		if (received(items.try_receive()) > 0) { taken += 1; }
+	}
+	return taken;
+}
+
+// Sends racing the receiver's drop each commit or come back with `.closed`:
+// every item made is dropped once, received, returned, or left in the ring.
+racing_drop :: proc() {
+	drops.store(0);
+	tally: Tally;
+	taken: int;
+	{
+		ring := thread.Ring(Item).init(4);
+		parallel {
+			send, receive := ring.split();
+			spawn tally = race(move(send));
+			spawn taken = leave(move(receive));
+		}
+	}
+	fmt.println("race taken", taken, "every item dropped once", drops.load() == tally.committed + tally.full + tally.returned);
+}
+
+main :: proc() {
+	dog := thread.spawn(watch, 60);
+	foreach (capacity in 1 ..= 3) { laps(capacity); }
+	sender_closes();
+	receiver_closes();
+	threads(1);
+	threads(3);
+	sequential();
+	racing_drop();
+	finished.store(true);
+	dog.join();
+}

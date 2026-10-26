@@ -1,0 +1,13 @@
+capacity 1 items 8 in order true boundaries true
+capacity 2 items 21 in order true boundaries true
+capacity 3 items 40 in order true boundaries true
+send ok ok
+after sender 1 2 -2 -2
+send ok full
+after receiver closed
+dropped before the ring 2
+dropped with the ring 3
+threads capacity 1 received 100000 in order true
+threads capacity 3 received 100000 in order true
+sequential received 8 in order true
+race taken 50 every item dropped once true

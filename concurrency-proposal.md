@@ -1,16 +1,16 @@
 # Structured concurrency: the library additions
 
-Status: **milestones 1 to 7 and 9 are done**. `parallel` blocks and `spawn`
+Status: **milestones 1 to 9 are done**. `parallel` blocks and `spawn`
 statements are part of the language: [design.md](design.md) defines them
 under [Structured concurrency](design.md#structured-concurrency),
 [grammar.md](grammar.md#control-flow) parses them, and
 [comments.md](comments.md#tasks-that-borrow-joined-by-their-block) gives the
-reasons for their shape. `Monitor(T)`, `Channel(T)`, and `Pool` are in
-`core:thread`, specified under [Monitors](standard-library.md#monitors),
-[Channels](standard-library.md#channels), and [Pools](standard-library.md#pools)
-in standard-library.md, and the join check under
-[Releasing before the join](design.md#releasing-before-the-join) in design.md.
-What remains here is proposed, not accepted: the real-time ring, the
+reasons for their shape. `Monitor(T)`, `Channel(T)`, `Ring(T)`, and `Pool`
+are in `core:thread`, specified under [Monitors](standard-library.md#monitors),
+[Channels](standard-library.md#channels), [Rings](standard-library.md#rings),
+and [Pools](standard-library.md#pools) in standard-library.md, and the join
+check under [Releasing before the join](design.md#releasing-before-the-join)
+in design.md. What remains here is proposed, not accepted: the
 [later extensions](#later-extensions) still undecided, and the milestones that
 add them. Each milestone moves its part of this text into design.md and
 standard-library.md in the same commit as the compiler change, as
@@ -98,105 +98,97 @@ reasons.
 
 ### Real-time handoff
 
-Deferred until a concrete application needs it; it does not gate monitors,
-channels, or pools. `Ring(T)` is a bounded single-producer/single-consumer
-queue. Its first API has only `try_` operations, with no parking, wake calls,
-or blocking adapters. Queue operations take no locks and allocate no memory.
-This is an algorithmic constraint, not a hard real-time bound on a general
-operating system or on application code handling the returned item.
-
-```text
-Ring(T).init(capacity: int) -> Ring(T)
-Ring(T).split(self: ^) -> (sender: Ring_Sender(T), receiver: Ring_Receiver(T))
-Ring_Sender(T).try_send(self: inout, @(cross_thread, escape=static) value: move T) -> Status(Unsent(T))
-Ring_Receiver(T).try_receive(self: inout) -> Received(T)
-```
-
-- The ring and endpoints have no zero value and are move-only. Capacity is
-  positive and allocated from the concurrent default allocator. `split` runs
-  once; repeating it panics. Its endpoints borrow the ring's storage; the
-  package synchronizes their access to its private state. They cannot be forked.
-- An operation requires exclusive access to its endpoint, so two tasks cannot
-  operate on that endpoint concurrently. A task can move it to another thread
-  sequentially; it is not thread-affine. Merely counting endpoint creation
-  would not provide this exclusion. Compile-fail tests must cover sharing
-  either endpoint between two tasks.
-- Dropping the sender closes the sending side; the receiver drains then sees
-  `.closed`. Dropping the receiver closes the receiving side; later sends
-  return `.closed` with their item. Closure wins over fullness when observed.
-  A send concurrent with receiver drop may commit or return its item; committed
-  items remain owned by the ring until received or dropped with the ring.
-  There is no public `close` operation in this first API: cancellation of a
-  polling loop uses its application's checked flag or termination protocol.
-- Slot publication uses release/acquire synchronization before the receiver
-  reads an item; slot reclamation uses it before the sender reuses that slot.
-  Observing sender closure must also make its final publications visible:
-  a receiver rechecks the published tail after observing closure before it
-  reports `.closed`. Counters must remain correct through wraparound.
-  [The ring algorithm](#the-ring-algorithm) gives the atomic layout and the
-  progress bound; it still needs the validation that section lists before
-  this deferred milestone begins.
-- The ring retains ownership on enqueue and transfers it on dequeue, as the
-  channel does. Endpoint drop does not destroy buffered items. An unsent item
-  stays in its error; remaining queued items drop with the ring after both
-  endpoint borrows end. A real-time receiver that must not free memory uses
-  non-owning items or returns owned buffers through a second ring for reuse.
+Built with [milestone 8](#milestone-8-real-time-handoff): `Ring(T)` is
+specified under [Rings](standard-library.md#rings) in standard-library.md, and
+[comments.md](comments.md#a-spare-slot-in-the-ring) gives the reasons for its
+shape. Its algorithm, and why it is correct, follows.
 
 #### The ring algorithm
 
-Written 2026-10-26 for review; nothing here is built. It is Lamport's
-single-producer/single-consumer queue over two monotonic position counters,
-with a cached copy of the other side's counter in each endpoint, and closure
-as two flags. The orderings are those of
+Built in `core/thread/ring.loke`. It is a single-producer/single-consumer
+ring with one spare slot, bounded indices, a cached copy of the other side's
+index in each endpoint, and closure as two flags. This replaced the earlier
+draft's power-of-two storage and machine-word position counters;
+[A spare slot in the ring](comments.md#a-spare-slot-in-the-ring) records the
+tradeoff. The orderings are those of
 [Concurrency and the memory model](design.md#concurrency-and-the-memory-model),
 which adopts C++20's.
 
 ```text
 Ring(T) :: move_only struct               // no zero value; cannot move while split
-    storage:       rawptr                 // `size` slots of T; capacity outside [head, tail)
-    size:          uint                   // capacity rounded up to a power of two
-    capacity:      uint
-    tail:          sync.Atomic(uint)      // positions published; stored by the sender only
-    pad:           [64]u8                 // keeps `tail` and `head` off one cache line
-    head:          sync.Atomic(uint)      // positions taken; stored by the receiver only
+    slots:         [dynamic]Ring_Slot(T)  // `size` slots; only queued ones hold an item
+    size:          uint                   // requested capacity + 1; immutable after init
+    pad_metadata:  [CACHE_LINE_BYTES]u8
+    tail:          sync.Atomic(uint)      // next write index; stored by the sender only
+    pad_tail:      [CACHE_LINE_BYTES]u8
+    head:          sync.Atomic(uint)      // next read index; stored by the receiver only
+    pad_head:      [CACHE_LINE_BYTES]u8
     sender_gone:   sync.Atomic(bool)
     receiver_gone: sync.Atomic(bool)
     split_done:    sync.Atomic(bool)
+    pad_flags:     [CACHE_LINE_BYTES]u8
 
+@(wakes_on_drop)
 Ring_Sender(T)   :: move_only struct { ring: ^Ring(T), tail: uint, head_seen: uint }
+@(wakes_on_drop)
 Ring_Receiver(T) :: move_only struct { ring: ^Ring(T), head: uint, tail_seen: uint }
 ```
 
-A position is a `uint` counting every item ever sent or taken. Positions are
-compared only through the difference `tail - head`, the number of items
-queued, which never exceeds `capacity`; position `p` lives in slot
-`p & (size - 1)`. Both counters start at `0 - size`, so every ring's first lap
-crosses the counter's wrap and every test exercises it.
+A `Ring_Slot(T)` is one item of [uninitialized capacity](design.md#uninitialized-capacity)
+with a count of zero or one, so no slot needs `T`'s zero, and the slots' own
+drop releases only queued items. `CACHE_LINE_BYTES` is a target-specific
+separation distance, not a universal 64-byte assumption: 128 on both
+supported targets, since x86-64 fetches lines in adjacent pairs and some
+Arm64 cores have 128-byte lines. Padding by that distance keeps `tail`,
+`head`, and the flag group on disjoint cache lines whatever the ring's own
+alignment. The gaps also separate these groups from adjacent
+metadata or allocations. In particular, `receiver_gone` must not share
+`head`'s line: every send reads the flag. Endpoint-local indices must also be
+placed so different tasks do not write the same cache line in measurements.
 
-- **`init(capacity)`** panics unless `1 <= capacity <= 1 << (bits - 2)`, for
-  the bit width of `uint`, then allocates `size` slots from the default
-  allocator and stores the starting position in both counters, with nothing
-  shared yet.
+An index is a `uint` in `[0, size)`, directly naming a slot. `next(p)` is:
+
+```text
+n := p + 1
+return 0 if n == size else n
+```
+
+There is always one spare slot: empty is `head == tail`, full is
+`next(tail) == head`, and usable capacity is `size - 1`. Both indices start
+at zero. Incrementing a valid index produces at most `size`, which fits
+the type; neither subtraction nor machine-word overflow is needed. Ordinary
+unsigned arithmetic in Loke is checked, as
+[Integer overflow](design.md#integer-overflow) specifies.
+
+- **`init(capacity)`** panics unless capacity is positive and both
+  `capacity + 1` and the storage byte size fit the allocator's size range.
+  It checks these before allocating or publishing state, allocates exactly
+  `size = capacity + 1` slots from the concurrent default allocator, and
+  initializes both indices to zero and all three flags to false. No slot
+  contains a live `T` yet. Storage must satisfy `T`'s alignment.
 - **`split(self: ^)`** panics if `split_done.exchange(true, .Relaxed)` answers
   `true`, so two tasks splitting at once get one pair. Each endpoint starts
-  with both of its counters at the starting position.
+  with both of its indices at zero. The endpoint annotations bring polling
+  for closure under the [join check](design.md#releasing-before-the-join),
+  just as for the channel endpoints.
 
 `try_send(self: inout, value)`:
 
 ```text
 1   if ring.receiver_gone.load(.Acquire)          return .err(.closed(value))
 2   t := self.tail
-3   if t - self.head_seen == ring.capacity {
-4       self.head_seen = ring.head.load(.Acquire)
-5       if t - self.head_seen == ring.capacity {
-6           if ring.receiver_gone.load(.Acquire)  return .err(.closed(value))
-7           return .err(.full(value))
-8       }
-9   }
-10  unsafe.write(slot(t), move(value))
-11  ring.tail.store(t + 1, .Release)
-12  self.tail = t + 1
-13  return .ok
+3   n := next(t)
+4   if n == self.head_seen {
+5       self.head_seen = ring.head.load(.Acquire)
+6       if n == self.head_seen {
+7           if ring.receiver_gone.load(.Acquire)  return .err(.closed(value))
+8           return .err(.full(value))
+9       }
+10  }
+11  unsafe.write(slot(t), move(value))
+12  ring.tail.store(n, .Release)
+13  self.tail = n
+14  return .ok
 ```
 
 `try_receive(self: inout)`:
@@ -211,41 +203,50 @@ crosses the counter's wrap and every test exercises it.
 7           if h == self.tail_seen                return .closed
 8       }
 9   }
-10  item := unsafe.take(slot(h))
-11  ring.head.store(h + 1, .Release)
-12  self.head = h + 1
-13  return .item(item)
+10  n := next(h)
+11  item := unsafe.take(slot(h))
+12  ring.head.store(n, .Release)
+13  self.head = n
+14  return .item(item)
 ```
 
 Dropping the sender is `sender_gone.store(true, .Release)`, and dropping the
 receiver is `receiver_gone.store(true, .Release)`. Dropping the ring needs
 both endpoint borrows ended: an endpoint dropped on another thread ended its
 borrow at that task's join, which orders everything it did before the drop.
-So the ring's drop reads `head` and `tail` as plain values, and for each
-queued position advances `head` before taking and dropping the item there,
-as containers shorten before they drop, then frees the storage.
+So the ring's drop reads `head` and `tail` as plain values. Until they are
+equal, it saves the old `head`, advances `head` with `next`, then takes and
+drops the item in the saved slot, as containers shorten before they drop.
+It frees the storage after draining. Endpoint drop never touches the slots.
 
 Why each requirement holds:
 
-- **One writer per counter.** Only the sender stores `tail` and only the
+- **One writer per index.** Only the sender stores `tail` and only the
   receiver stores `head`, and an operation needs its endpoint `inout`, so two
-  tasks never run one side at once. Each endpoint's own copy is therefore the
-  latest value of its counter, and the copy of the other counter is an
-  earlier value of it.
-- **Bounds.** A stale `head_seen` is behind the real `head`, so
-  `t - head_seen` overstates the queue: the sender never fills more than
-  `capacity`. A stale `tail_seen` is behind the real `tail`, so the receiver
-  never takes a position not yet published. The queued positions are at most
-  `capacity <= size` consecutive ones, so they occupy distinct slots.
-- **Publication.** The write of position `p` (line 10 of `try_send`) is
-  sequenced before the release store of `p + 1`. The receiver takes `p` only
+  tasks never run one side at once. Sequential transfers between threads must
+  order the old user's operations before the new user's, as scoped task
+  transfer and join do. Each endpoint's own index is current, and atomic
+  coherence prevents its peer observations from going backward in modification
+  order, even when a numeric index repeats on a later lap.
+- **Bounds.** For the proof only, let `T` and `H` count all sends and receives
+  as unbounded integers, and `Hs` and `Ts` name the counts whose stores the
+  cached indices observed. Maintain `0 <= T - Hs <= size - 1` and
+  `0 <= Ts - H <= size - 1`, with `Hs <= H <= T` and `Ts <= T`.
+  The sender refreshes at `next(tail) == head_seen`, which within these
+  bounds means `T - Hs == size - 1`, and advances only with room. The
+  receiver refreshes at `head == tail_seen`, which means `H == Ts`, and
+  advances only with a published item. A stale cache can withhold progress
+  but cannot permit overwriting or taking an unpublished item. The live
+  positions are at most `size - 1` consecutive ones, so occupy distinct slots.
+- **Publication.** The write of an item (line 11 of `try_send`) is
+  sequenced before the release store publishing its successor index. The
+  receiver takes that item only
   after an acquire load that read that store or a later one, each a release
   store sequenced after it, so the write happens before the take.
-- **Reclamation.** The sender writes position `t` only once it has seen
-  `t - head_seen < capacity <= size`, so `head_seen > t - size`: position
-  `t - size`, in the same slot, was taken, and its take is sequenced before
-  the release store of `head` the acquire load read, or before an earlier
-  one. The take happens before the write that reuses the slot.
+- **Reclamation.** In those conceptual counts, a send at `T` requires
+  `T - Hs < size - 1`. Thus `Hs > T - size`, so any previous item in that
+  slot, at `T - size`, was taken before the head publication the sender
+  acquired. Its take happens before the write that reuses the slot.
 - **Closure after the final send.** The sender's last `tail` store is
   sequenced before its release store of `sender_gone`. A receiver whose
   acquire load reads `true` there then loads `tail` again (line 6), and by
@@ -256,45 +257,65 @@ Why each requirement holds:
   its item, or committed it; a committed item stays in the ring until the
   ring drops it.
 - **Closure over fullness.** A send checks `receiver_gone` before it reports
-  `.full` (line 6) as well as first, so once it observes closure it never
+  `.full` (line 7) as well as first, so once it observes closure it never
   reports fullness.
-- **Wraparound.** Unsigned arithmetic is modulo `2^bits`, so the difference
-  is exact while the true count stays below `2^(bits - 1)`, which the bound
-  on `capacity` keeps. `size` divides `2^bits`, so `p & (size - 1)` runs on
-  through the wrap without a jump.
+- **Repeated laps.** `next` resets `size - 1` to zero without overflowing.
+  The bounds above prevent either endpoint from lapping its cached peer
+  position, so equal indices cannot confuse a full queue with an empty one.
+  This holds for arbitrary capacities; no power-of-two allocation is needed.
 - **Ownership.** An item belongs to exactly one of the sender's caller, an
-  `Unsent` error (it was never written), the ring (from line 10 of
-  `try_send` to line 10 of `try_receive`), or the receiver's caller. Neither
-  operation can panic between taking ownership and publishing it.
+  `Unsent` error (it was never written), the ring (from line 11 of
+  `try_send` to line 11 of `try_receive`), or the receiver's caller. Successor
+  indices are computed before moving an item. Valid slot addressing and
+  moves invoke no user hooks, and neither operation can panic between
+  taking ownership and publishing it.
 
-**Progress.** Both operations are wait-free: neither loops, `try_send` makes
+**Progress.** In the abstract algorithm neither operation loops: `try_send` makes
 at most three atomic loads and one atomic store, and `try_receive` at most
-three loads and one store. Neither locks, allocates, or calls the system.
+three loads and one store. Calling the implementation wait-free requires
+bounded native loads/stores for `Atomic(uint)` and `Atomic(bool)` on the
+intended target, without lock, retry-loop, or system-call fallbacks. Atomic
+ordering alone does not establish this; verify the lowering before claiming
+it. With that requirement met, neither queue operation locks, allocates, or
+calls the system.
 Moving the item copies `size_of(T)` bytes and runs no hook. That bounds the
 ring's own steps, not their time: preemption, page faults, and cache misses
-are outside it, and dropping a returned item is the caller's code. The
-padding keeps each side's store from invalidating the line the other side
-stores to; the cached counters keep each side from reading the other's line
-except when the queue looks full or empty.
+are outside it, and dropping a returned item is the caller's code. With the
+verified layout above, cached indices avoid reading the peer's index line
+except when the queue looks full or empty. Every send still loads the
+separate flag line; endpoint drop invalidates it. Slots carrying items also
+cause cache traffic, so this is no claim of eliminating all sharing.
 
-Before any code, the milestone needs:
+Validation, as of milestone 8:
 
-1. **Model checking.** Transliterate both operations and the three drops to
-   C11 atomics and check them with a model checker for that memory model,
-   such as GenMC, over one producer and one consumer, capacities 1 and 2,
-   counters starting just below the wrap, and every placement of either
-   endpoint's drop. Stress tests on hardware add evidence, not proof.
-2. **The exclusive-endpoint API under the borrow checker.** Compile-fail
-   tests that two tasks cannot share either endpoint, and a run test that
-   moves one from task to task in sequence, written against a stub of the
-   API before the algorithm is.
-3. **A concrete application.** The [mixer](#a-mixer-end-to-end)'s command
-   path, with the audio loop polling a ring where it now calls a channel's
-   `try_receive`, which takes the channel's lock. A foreign audio callback
-   cannot hold an endpoint, since endpoints borrow the ring
+1. **Model checking.** An exhaustive search of the interleavings under
+   sequential consistency, with every shared access one step, found no
+   violation over one producer and one consumer, capacities 1, 2, and 3,
+   repeated index laps, stale peer caches, retries on a full ring, and every
+   placement of either endpoint's drop. It checked FIFO, no overwrite or read
+   of an empty slot, drain-before-closed, and exactly-once item ownership
+   including the ring's drop, and it fails on two seeded mutants: without the
+   final-tail reload, and without the fullness check. It does not cover
+   weak-memory reorderings; a C11 model check, with GenMC or a tool like it,
+   is still open.
+2. **The exclusive-endpoint API under the borrow checker.**
+   `tests/err/lib_thread_ring.loke` rejects sharing either endpoint between
+   two tasks, sending through a read-only endpoint, keeping the sender past a
+   join whose task polls for closure, dropping the ring while split, and a
+   borrowing item. `tests/run/lib_thread_ring.loke` moves the sender from a
+   task to a task it starts, while another polls.
+3. **A concrete application.** The [mixer](#a-mixer-end-to-end)'s audio loop
+   polls a ring for its commands. A foreign audio callback cannot hold an
+   endpoint, since endpoints borrow the ring
    ([later extension](#later-extensions) 10).
-4. **Measurement** on the intended target, without claiming a hard real-time
-   bound from it.
+4. **Target validation and measurement.** In the emitted LLVM IR, the
+   operations' loads and stores are `load atomic` acquire and `store atomic`
+   release on naturally aligned fields, which both targets lower to single
+   instructions, and they call nothing that locks or allocates. No test counts
+   allocations, and no latency or throughput has been measured on a target;
+   the spare slot is a simplicity choice, not an established speed
+   improvement, and measurements would not establish a hard real-time
+   bound.
 
 The points this leaves for review are in
 [open-questions.md](open-questions.md#ring-algorithm-review-points-2026-10-26).
@@ -424,11 +445,10 @@ Done: disjoint slice access (`split_at_mut` and `chunks_mut`); the
 their checks on `thread.spawn`; the reach, allocator-use, and thread-exit
 summaries; `parallel` blocks with `spawn`, checked and lowered to a thread
 per task (see [Lowering parallel blocks](compiler-architecture.md#lowering-parallel-blocks));
-monitors; channels with the join check; and pools.
+monitors; channels with the join check; the polling ring; and pools.
 Where the compiler is narrower than design.md, [known-gaps.md](known-gaps.md)
 says so.
 
-Milestone 8 keeps its identifier for existing references, but is deferred.
 Milestone 10 remains conditional on its callable-summary work.
 
 ### Milestone 6: monitors
@@ -484,16 +504,25 @@ exercises those exits at runtime.
 
 ### Milestone 8: real-time handoff
 
-Deferred. The atomic algorithm, including publication and reclamation
-ordering, closure observation after the final enqueue, and wraparound, is
-written under [The ring algorithm](#the-ring-algorithm) and awaits review.
-Before implementation, model-check it as that section describes. Validate the exclusive-endpoint API with the borrow
-checker and a concrete application. Then add only the polling API over
-`Atomic` indices. Test FIFO and wraparound, repeated split, endpoint sharing
-rejections, sequential endpoint transfer, producer/consumer drop races, item
-ownership, and allocation-free operation. Measure its cost on the intended
-target; do not claim a hard real-time bound from throughput measurements.
-Blocking adapters require a separate proposal and are not part of this milestone.
+Done. `Ring`, `Ring_Sender`, and `Ring_Receiver` are in `core:thread`, written
+as [The ring algorithm](#the-ring-algorithm) gives, with both endpoints
+`@(wakes_on_drop)` and `try_send`'s item `@(cross_thread, escape=static)`.
+The algorithm's validation, and what it still lacks, is listed there.
+
+- `tests/run/lib_thread_ring.loke` covers FIFO order through repeated laps at
+  capacities 1 to 3, with every full and empty boundary; closure by either
+  endpoint, closure taking precedence over fullness, and draining before
+  `.closed`; queued items dropped with the ring; a producer and a consumer on
+  two threads, polling both ways, at capacities 1 and 3; the sender moving
+  from task to task; and sends racing the receiver's drop, every item dropped
+  once. A watchdog bounds every polling loop.
+- `tests/trap/ring_split_twice.loke` and `ring_capacity.loke` cover the
+  panics.
+- `tests/err/lib_thread_ring.loke` covers the endpoint and item checks.
+- `examples/mixer.loke` takes its commands from a ring.
+
+Blocking adapters require a separate proposal and are not part of this
+milestone.
 
 ### Milestone 9: pools
 

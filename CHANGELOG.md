@@ -375,6 +375,13 @@ checklist.
   false, returning `.none`, while a closed monitor can still be drained.
   A `Monitor_Guard` is thread-affine, as a `Guard` is.
 
+- `thread.Ring(T)` is a bounded queue from one sender to one receiver whose
+  `try_send` and `try_receive` poll without locking or allocating, for a
+  thread that must not wait ([Rings](standard-library.md#rings)). `split` makes
+  its only `Ring_Sender` and `Ring_Receiver`; each operation needs its
+  endpoint `inout`, so two tasks cannot share one, and both endpoints are
+  `@(wakes_on_drop)`. `examples/mixer.loke` takes its commands from a ring.
+
 - `parallel (&pool) { ... }` runs a block's tasks on a `thread.Pool`, a fixed
   set of persistent workers, instead of a thread each
   ([Parallel blocks](design.md#parallel-blocks),
@@ -551,6 +558,11 @@ checklist.
   which case was slowest.
 
 ### Changed
+
+- Revised the deferred [ring proposal](concurrency-proposal.md#the-ring-algorithm)
+  to recommend a spare-slot SPSC queue with bounded indices, separate closure
+  flags from hot index cache lines, and require target validation before a
+  wait-free claim.
 
 - Revised the unimplemented [concurrency proposal](concurrency-proposal.md#waiting-for-work):
   paired channel setup and explicit endpoint duplication, monitor shutdown

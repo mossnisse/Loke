@@ -277,6 +277,44 @@ compiler, so a library's own waiting types get the same check, as with
 compiled before the check and is rejected now; it was a deadlock whenever a
 task took that lock.
 
+### A spare slot in the ring
+
+The [ring](standard-library.md#rings) is a cached-index SPSC ring with one
+spare slot, a shape also used by
+[Rigtorp's SPSCQueue](https://github.com/rigtorp/SPSCQueue#implementation).
+One producer and one consumer need only index loads and stores; the ring
+keeps that structure and its release/acquire publication and reclamation.
+[The ring algorithm](concurrency-proposal.md#the-ring-algorithm) gives the
+algorithm and why it is correct.
+
+The spare slot makes empty `head == tail` and full `next(tail) == head`.
+Indices stay inside the allocation and reset explicitly at its end. This
+avoids machine-word overflow arithmetic and allocates exactly `capacity + 1`
+slots, excluding padding, for arbitrary requested capacities. The earlier
+proposal rounded storage to a power of two, used a mask for indexing, and
+needed explicit wrapping operators for its position counters: ordinary
+unsigned addition and subtraction in Loke can panic. At power-of-two
+capacities that scheme saves one slot; the revised scheme adds an end-of-array
+comparison on each operation. The choice favors simpler arithmetic, not an
+unmeasured performance advantage.
+
+A latest-value handoff is a different contract. A triple buffer can suit
+settings snapshots when a newer value supersedes intermediate updates;
+[Boost's SPSC value](https://www.boost.org/doc/libs/1_92_0/doc/html/lockfree.html)
+is such a structure. The mixer's command queue must preserve every accepted
+command in order, so the ring is a FIFO. Batching remains a possible later
+optimization if measurements justify its publication-latency tradeoff.
+
+**Endpoints that wake nothing, marked anyway.** No ring operation blocks, so
+dropping an endpoint wakes no thread. But a task that polls `try_receive`
+until `.closed` waits for the sender's drop as surely as a blocked `receive`
+does, and a parent holding the sender across that task's join would spin
+forever. Marking both endpoints `@(wakes_on_drop)` brings the
+[join check](design.md#releasing-before-the-join) to polling loops. Its cost is
+rejecting a parent that holds an endpoint across a join whose tasks never poll
+for closure, which moving the endpoint into a task, or dropping it first,
+answers.
+
 ### Child processes
 
 A child process needs explicit choices about argument quoting, handle

@@ -1,0 +1,8 @@
+// standard-library "Rings": a ring's capacity must be positive; zero panics.
+package main;
+
+import "core:thread";
+
+main :: proc() {
+	ring := thread.Ring(int).init(0);
+}

@@ -6702,7 +6702,7 @@ The `try_` forms of allocating operations, `try_box`, `try_make`, and `unsafe.tr
 
 ## Concurrency and the memory model
 
-Threads, mutexes, monitors, channels, and thread pools are library facilities, and a [`parallel` block](#structured-concurrency) runs calls as tasks the language joins; reads and writes performed by any of them obey one language memory model. `core:thread` provides all five; see [standard-library.md](standard-library.md) "`core:thread`".
+Threads, mutexes, monitors, channels, rings, and thread pools are library facilities, and a [`parallel` block](#structured-concurrency) runs calls as tasks the language joins; reads and writes performed by any of them obey one language memory model. `core:thread` provides all six; see [standard-library.md](standard-library.md) "`core:thread`".
 
 The **happens-before** relation combines ordinary
 [evaluation order](#evaluation-order), atomic synchronization (below), and these
@@ -6714,6 +6714,9 @@ thread synchronization rules:
 - A mutex unlock happens before the next successful lock of that mutex. A
   monitor's lock is a mutex in this sense, and a wait in its `lock_when`
   unlocks it on sleeping and locks it again on waking.
+- A ring's send that commits an item happens before the receive that takes
+  it, through a release store and an acquire load of the ring's index, and a
+  ring endpoint's drop happens before its peer observes that side closed.
 - A channel's send that commits an item happens before the receive that takes
   it, since both run under the channel's lock.
 - A [`spawn`](#spawn-statements)'s callee, receiver, and arguments are evaluated
@@ -6945,8 +6948,11 @@ The join waits for every task, and a task may be waiting for the parent to
 release something: a guard on the lock it needs, or the last endpoint on a
 side of its channel. A type marked [`@(wakes_on_drop)`](#wakes_on_drop) is one
 whose drop may wake threads waiting on the storage it borrows;
-`thread.Guard(T)`, `thread.Monitor_Guard(T)`, and the channel endpoints
-`thread.Sender(T)` and `thread.Receiver(T)` are marked.
+`thread.Guard(T)`, `thread.Monitor_Guard(T)`, the channel endpoints
+`thread.Sender(T)` and `thread.Receiver(T)`, and the ring endpoints
+`thread.Ring_Sender(T)` and `thread.Ring_Receiver(T)` are marked. Nothing
+blocks on a ring, but a task polling one until its side closes waits for the
+peer's drop all the same.
 
 At each exit from a block, after its own cleanup and before its join, a value
 the parent keeps past the join must not be or reach a marked value whose

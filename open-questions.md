@@ -1342,27 +1342,50 @@ no-task branch and the unreachable spawn beside it.
 ### Ring algorithm review points (2026-10-26)
 
 [The ring algorithm](concurrency-proposal.md#the-ring-algorithm) in the
-concurrency proposal settles the layout, orderings, and progress bound for
-milestone 8, but leaves these for review before it is model-checked:
+concurrency proposal was revised after review to recommend a spare-slot SPSC
+queue. [A spare slot in the ring](comments.md#a-spare-slot-in-the-ring)
+records the algorithm choice. Milestone 8 built it as written.
 
-- **Whether the endpoints are `@(wakes_on_drop)`.** No ring operation blocks,
-  but a task polling `try_receive` until `.closed` waits for the sender's
-  drop as surely as a blocked `receive` does, and a parent holding the sender
-  across that task's join spins forever. Marking both endpoints brings the
-  [join check](design.md#releasing-before-the-join) to polling loops, at the
-  cost of rejecting a parent that holds an endpoint across a join whose tasks
-  never poll for closure. The draft marks them.
-- **A closure check on every send.** `try_send` loads `receiver_gone` before
-  each send, one acquire load more than Lamport's queue, so a send after the
-  receiver's drop reports `.closed` at once rather than once the queue is
-  full. The alternative checks only when the queue looks full.
-- **Power-of-two storage.** Rounding the storage up to a power of two keeps
-  slot selection a mask that runs on through the counter's wrap, at the cost
-  of up to twice the slots. Counters kept below `2 * capacity`, wrapped by
-  hand, avoid the extra slots and add a branch to each operation.
-- **Padding by a field.** The draft separates `tail` from `head` with a
-  64-byte array, since no attribute aligns a field. Whether the language
-  should have one, and whether 64 bytes fits every target, is open.
+Two findings were addressed in the draft, and the implementation follows it:
+
+- **P1: Checked arithmetic after ownership transfer.** The earlier draft
+  assumed ordinary unsigned arithmetic wrapped, contrary to
+  [Integer overflow](design.md#integer-overflow). With capacity 1,
+  `uint(0) - size` underflowed at initialization. Correcting only that left
+  the first send writing an item before `t + 1` panicked at publication;
+  receive had the analogous problem after taking an item. The revised draft
+  uses bounded indices, an explicit reset at the allocation's end, and
+  computes successor indices before ownership transfer. No machine-word
+  wrapping arithmetic is needed.
+- **P2: Closure checks defeated index caching.** The earlier layout placed
+  `receiver_gone` beside `head`, so a receive could invalidate the cache line
+  every send loaded for closure, even with cached room. The revised layout
+  separates the flags from both hot index lines and qualifies its cache
+  traffic claim. Target-specific separation and alignment still need checks.
+
+Settled by the implementation: the Loke tests cover capacity 1 and every
+last-slot transition; both endpoints are `@(wakes_on_drop)`, and the
+[join check](design.md#releasing-before-the-join) rejects a sender kept past a
+join whose task polls for closure; sharing an endpoint between tasks is
+rejected and moving it from task to task is accepted; the mixer polls a ring;
+the padding is 128 bytes on both targets; and the operations lower to native
+acquire loads and release stores. An exhaustive interleaving search under
+sequential consistency found no violation (see
+[The ring algorithm](concurrency-proposal.md#the-ring-algorithm)).
+
+Still open:
+
+- **Weak-memory model checking.** The interleaving search treats every access
+  as sequentially consistent, so it cannot find a missing release or acquire.
+  A C11 model check with GenMC or a tool like it, over the same capacities,
+  laps, and drop placements, is still needed.
+- **Allocation-free operation as a test.** The IR shows no allocating call in
+  either operation, but no test counts allocations; one needs a counting
+  default allocator, which a test can only install from a package of its own.
+- **Measurements.** Measure the closure check on every send, with the flags
+  separated from the indices, and latency and throughput on the intended
+  target. The spare slot is for simpler arithmetic, not demonstrated higher
+  speed.
 
 ### Parameters a join check cannot tell apart (2026-10-26)
 

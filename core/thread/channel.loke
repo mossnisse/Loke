@@ -61,8 +61,8 @@ impl Channel_State($T) {
 	}
 }
 
-/// Why a send handed its item back: a side of the channel has closed, or, for
-/// `try_send` alone, the queue is full. Dropping it drops the item.
+/// Why a send handed its item back: a side of the channel or ring has closed,
+/// or, for `try_send` alone, the queue is full. Dropping it drops the item.
 Unsent :: union($T: type) { closed: T, full: T }
 
 /// What `try_receive` found: an item, an empty queue that more may reach, or

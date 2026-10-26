@@ -1,0 +1,180 @@
+// standard-library "Rings": a bounded single-producer/single-consumer queue
+// polled without locks, the spare-slot algorithm of concurrency-proposal.md
+// "The ring algorithm".
+@(public)
+package thread;
+
+import "core:sync";
+import "core:unsafe";
+
+/// A bounded queue from one sender to one receiver that neither locks nor
+/// allocates once made, for a thread that must not wait, such as an audio
+/// loop. `split` makes its one `Ring_Sender` and one `Ring_Receiver`, which
+/// borrow it and operate only by polling: `try_send` and `try_receive` never
+/// wait.
+///
+/// Dropping an endpoint closes its side. Dropping the ring drops the items
+/// still queued. It is move-only and has no zero value.
+Ring :: struct($T: type) {
+	// `size` slots, one more than the capacity: the spare slot tells a full
+	// ring from an empty one. Only queued slots hold an item.
+	@(private, required) slots: [dynamic]Ring_Slot(T),
+	@(private) size: uint,
+	// Keeps the read-only fields above, and whatever precedes the ring, off the
+	// line `tail` is on.
+	@(private) pad_metadata: [CACHE_LINE_BYTES]u8,
+	// The next slot to write: stored by the sender only.
+	@(private) tail: sync.Atomic(uint),
+	@(private) pad_tail: [CACHE_LINE_BYTES]u8,
+	// The next slot to read: stored by the receiver only.
+	@(private) head: sync.Atomic(uint),
+	@(private) pad_head: [CACHE_LINE_BYTES]u8,
+	// Every send reads `receiver_gone`, so the flags keep off `head`'s line.
+	@(private) sender_gone: sync.Atomic(bool),
+	@(private) receiver_gone: sync.Atomic(bool),
+	@(private) split_done: sync.Atomic(bool),
+	@(private) pad_flags: [CACHE_LINE_BYTES]u8,
+}
+
+// The distance that keeps two fields off one cache line. 128 bytes on both
+// targets: x86-64 fetches lines in adjacent pairs, and some Arm64 cores have
+// 128-byte lines.
+@(private)
+CACHE_LINE_BYTES :: 128;
+
+@(private)
+MAX_INT :: 0x7FFF_FFFF_FFFF_FFFF;
+
+// One slot: capacity unless `live`, so no slot needs `T`'s zero.
+@(private)
+Ring_Slot :: struct($T: type) {
+	@(initialized = live) item: [1]T,
+	live: int,
+}
+
+/// Sends into the ring it borrows. Move-only, and the only sender.
+Ring_Sender :: move_only struct($T: type) @(wakes_on_drop) {
+	@(private) ring: ^Ring(T),
+	// This side's index, and the receiver's as last read.
+	@(private) tail: uint,
+	@(private) head_seen: uint,
+}
+
+/// Receives from the ring it borrows. Move-only, and the only receiver.
+Ring_Receiver :: move_only struct($T: type) @(wakes_on_drop) {
+	@(private) ring: ^Ring(T),
+	// This side's index, and the sender's as last read.
+	@(private) head: uint,
+	@(private) tail_seen: uint,
+}
+
+impl Ring($T) {
+	/// A ring holding at most `capacity` items, from the default allocator. A
+	/// capacity below one, or one too large to allocate, panics.
+	init :: proc(capacity: int) -> Ring(T) {
+		if (capacity < 1) { panic("thread.Ring capacity must be positive"); }
+		if (capacity == MAX_INT) { panic("thread.Ring capacity is too large"); }
+		ring := Ring(T){slots = {}, size = uint(capacity + 1)};
+		ring.slots.resize(capacity + 1);
+		return ring;
+	}
+
+	/// The sender and the receiver. Splitting again panics.
+	split :: proc(self: ^) -> (sender: Ring_Sender(T), receiver: Ring_Receiver(T)) {
+		if (self.split_done.exchange(true, sync.Memory_Order.Relaxed)) { panic("thread.Ring is already split"); }
+		return {Ring_Sender(T){ring = self}, Ring_Receiver(T){ring = self}};
+	}
+
+	// The index after `index`, back to the first slot after the last.
+	@(private)
+	next :: proc(self: ^, index: uint) -> uint {
+		after := index + 1;
+		return 0 if after == self.size else after;
+	}
+
+	// Both endpoints are gone, and the joins that ended their borrows order
+	// everything they did before this. Shortens before each drop, so an
+	// unwinding drop leaves the rest to the slots' own.
+	@(private)
+	drain :: hook(drop) proc(self: inout) {
+		for (self.head.value != self.tail.value) {
+			at := self.head.value;
+			self.head.value = self.next(at);
+			slot := &mut self.slots[int(at)];
+			slot.live = 0;
+			dropped := unsafe.take(slot.item[0]);
+		}
+	}
+}
+
+// Slot `index`, which one endpoint alone may write while the indices say so.
+// Through a `rawptr`, so an item taken out borrows nothing of the ring: an item
+// carries no borrow shorter than the process, as `try_send`'s
+// `@(escape=static)` says.
+@(private)
+slot_at :: proc(ring: ^Ring($T), index: uint) -> ^mut Ring_Slot(T) {
+	return (^mut Ring_Slot(T))(rawptr(&ring.slots[int(index)]));
+}
+
+impl Ring_Sender($T) {
+	/// Commits the item without waiting: `.full` hands it back from a full
+	/// ring whose receiver lives, and `.closed` once the receiver has
+	/// dropped, which takes precedence.
+	try_send :: proc(self: inout, @(cross_thread, escape=static) value: move T) -> Status(Unsent(T)) {
+		ring := self.ring;
+		if (ring.receiver_gone.load(sync.Memory_Order.Acquire)) { return .err(.closed(move(value))); }
+		at := self.tail;
+		after := ring.next(at);
+		if (after == self.head_seen) {
+			self.head_seen = ring.head.load(sync.Memory_Order.Acquire);
+			if (after == self.head_seen) {
+				if (ring.receiver_gone.load(sync.Memory_Order.Acquire)) { return .err(.closed(move(value))); }
+				return .err(.full(move(value)));
+			}
+		}
+		slot := slot_at(ring, at);
+		unsafe.write(slot^.item[0], move(value));
+		slot^.live = 1;
+		ring.tail.store(after, sync.Memory_Order.Release);
+		self.tail = after;
+		return .ok;
+	}
+
+	// Closes the sending side: the receiver drains what is queued, then sees
+	// `.closed`.
+	@(private)
+	release :: hook(drop) proc(self: inout) {
+		self.ring.sender_gone.store(true, sync.Memory_Order.Release);
+	}
+}
+
+impl Ring_Receiver($T) {
+	/// Takes the oldest item without waiting: `.empty` means more may come,
+	/// and `.closed` that the sender has dropped and nothing is queued.
+	try_receive :: proc(self: inout) -> Received(T) {
+		ring := self.ring;
+		at := self.head;
+		if (at == self.tail_seen) {
+			self.tail_seen = ring.tail.load(sync.Memory_Order.Acquire);
+			if (at == self.tail_seen) {
+				if (!ring.sender_gone.load(sync.Memory_Order.Acquire)) { return .empty; }
+				// The sender's last sends, which its drop orders before.
+				self.tail_seen = ring.tail.load(sync.Memory_Order.Acquire);
+				if (at == self.tail_seen) { return .closed; }
+			}
+		}
+		after := ring.next(at);
+		slot := slot_at(ring, at);
+		slot^.live = 0;
+		item := unsafe.take(slot^.item[0]);
+		ring.head.store(after, sync.Memory_Order.Release);
+		self.head = after;
+		return .item(move(item));
+	}
+
+	// Closes the receiving side: later sends hand their items back.
+	@(private)
+	release :: hook(drop) proc(self: inout) {
+		self.ring.receiver_gone.store(true, sync.Memory_Order.Release);
+	}
+}

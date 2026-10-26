@@ -1,10 +1,11 @@
 /// Threads, the mutexes and monitors that guard what they share, the
-/// channels that carry work between them, and pools of workers for
+/// channels and rings that carry work between them, and pools of workers for
 /// `parallel (pool)` blocks.
 ///
 /// `spawn` and `join` supply the thread start and join edges of happens-before,
 /// and `Mutex` and `Monitor` the unlock-to-lock edge, which `Channel` and
-/// `Pool` use.
+/// `Pool` use. A `Ring` orders each item's send before its receive through its
+/// own atomic indices.
 // standard-library "`core:thread`", design.md "Concurrency and the memory
 // model".
 //

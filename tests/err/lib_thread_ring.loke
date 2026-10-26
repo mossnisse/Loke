@@ -1,0 +1,89 @@
+// standard-library "Rings": an operation needs its endpoint `inout`, so two
+// tasks cannot share either endpoint, and a read-only endpoint cannot send or
+// receive. The endpoints are `@(wakes_on_drop)`: a task polling for `.closed`
+// waits for the sender's drop, so keeping either endpoint past a join whose
+// task holds the other is rejected (design.md "Releasing before the join").
+// The ring cannot drop while split, and a sent item borrows nothing shorter
+// than the process.
+package main;
+
+import "core:thread";
+
+send_one :: proc(items: ^mut thread.Ring_Sender(int)) {
+	_ = items.try_send(1);
+}
+
+receive_one :: proc(items: ^mut thread.Ring_Receiver(int)) {
+	_ = items.try_receive();
+}
+
+shared_sender :: proc() {
+	ring := thread.Ring(int).init(4);
+	send, receive := ring.split();
+	parallel {
+		spawn send_one(&mut send);
+		spawn send_one(&mut send);
+	}
+}
+
+shared_receiver :: proc() {
+	ring := thread.Ring(int).init(4);
+	send, receive := ring.split();
+	parallel {
+		spawn receive_one(&mut receive);
+		spawn receive_one(&mut receive);
+	}
+}
+
+send_last :: proc(items: move thread.Ring_Sender(int)) {
+	_ = items.try_send(1);
+}
+
+read_only :: proc(items: ^thread.Ring_Sender(int)) {
+	_ = items.try_send(1);
+}
+
+// Polls until the sender drops.
+poll :: proc(items: move thread.Ring_Receiver(int)) {
+	for (;;) {
+		switch (items.try_receive()) {
+		case .closed: return;
+		case .empty:
+		case .item(_):
+		}
+	}
+}
+
+kept_sender :: proc() {
+	ring := thread.Ring(int).init(4);
+	send, receive := ring.split();
+	parallel {
+		spawn poll(move(receive));
+	}
+	_ = send.try_send(1);
+}
+
+dropped_while_split :: proc() {
+	ring := thread.Ring(int).init(4);
+	send, receive := ring.split();
+	drop(ring);
+}
+
+borrowing_item :: proc() {
+	value := 5;
+	ring := thread.Ring(^int).init(1);
+	send, receive := ring.split();
+	_ = send.try_send(&value);
+}
+
+// Accepted: each endpoint moves to one task.
+moved :: proc() {
+	ring := thread.Ring(int).init(4);
+	parallel {
+		send, receive := ring.split();
+		spawn poll(move(receive));
+		spawn send_last(move(send));
+	}
+}
+
+main :: proc() {}
