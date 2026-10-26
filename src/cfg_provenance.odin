@@ -5681,14 +5681,16 @@ prov_spawn :: proc(graph: ^Flow_Graph, s: ^Stmt_Spawn) {
 	prov_spawn_reborrows(graph, hold, held, s.span, join)
 }
 
-// The procedure a spawn's task runs: its `run` wrapper, or the callee when
-// the effect analysis has no body for the wrapper.
+// The procedure a spawn's task runs: its `run` wrapper, or the declared
+// callee when the effect analysis has no body for the wrapper.
 @(private = "file")
 spawn_runs :: proc(graph: ^Flow_Graph, s: ^Stmt_Spawn) -> Symbol_Id {
-	if s.task.run in graph.k.c.effect_program.index_of || s.task.through_value {
+	callee := s.call.(^Expr_Call).resolution.symbol
+	sym := symbol_of(graph.k.c, callee)
+	if s.task.run in graph.k.c.effect_program.index_of || s.task.through_value || sym == nil || sym.synth != .None {
 		return s.task.run
 	}
-	return s.call.(^Expr_Call).resolution.symbol
+	return callee
 }
 
 // design.md "Task borrows and the join": every exit of a `parallel` block
@@ -7064,20 +7066,27 @@ prov_transfer_argument :: proc(c: ^Compiler, argument: Expr, shared: bool) {
 	span := expr_span(argument)
 	transferred := prov_transferred_type(c, argument)
 	facts := transfer_facts(c, transferred)
+	// A task may share an erased value only as its own, and moving one would
+	// still not show that it may cross (design.md "Sharing with tasks").
 	if shared && base.erased_from == INVALID_TYPE && (base.type == facts.erased && !carrier_is_mutable(c, base.type)) {
-		errorf(
-			c, span, "L0729",
-			"`%s` hides what it captures, so a task may share it only as its own: move it into the task",
-			type_name(c, base.type),
-		)
+		errorf(c, span, "L0729", "`%s` hides what it captures, so a task cannot share it", type_name(c, base.type))
+		add_notef(c, span, "pass the concrete value instead, or convert it to the view at this call")
 		return
 	}
 	report_transfer_facts(c, base.type, facts, span)
 	if shared && facts.mutable != INVALID_TYPE && !carrier_is_mutable(c, transferred) {
+		// A view made at this call only borrows what it converts, so moving the
+		// view gives the task nothing of its own.
+		advice := ": move it into the task, or pass the mutable borrow itself"
+		if transferred != base.type {
+			advice = "; the view only borrows what it converts: pass the mutable borrow itself instead"
+			if dyn_proc_signature(c, base.type) != INVALID_TYPE {
+				advice = "; the view only borrows the callable: move the callable into the task through a generic `Callable` parameter instead"
+			}
+		}
 		errorf(
-			c, span, "L0729",
-			"`%s` reaches `%s`, so a task sharing it could write what the parent reaches too: move it into the task, or pass the mutable borrow itself",
-			type_name(c, base.type), type_name(c, facts.mutable),
+			c, span, "L0729", "`%s` reaches `%s`, so a task sharing it could write what the parent reaches too%s",
+			type_name(c, base.type), type_name(c, facts.mutable), advice,
 		)
 	}
 }

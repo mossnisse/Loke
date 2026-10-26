@@ -397,8 +397,8 @@ open; none blocks monitors, channels, the polling ring, or the compute pool.
    [allocator use](design.md#allocators-and-tasks), and the other task checks.
    Public callable-effect contracts need a separate demonstrated requirement;
    they are not a prerequisite for the first step. A spawned call may now go
-   through a procedure value; a `dyn` view or method is still wrapped in a
-   procedure the task calls.
+   through a procedure value, or through a `dyn` view converted at the spawn;
+   a view that arrives erased is still rejected.
 2. **Recoverable submission.** How to return arguments after failure to
    start a task, without confusing submission failure with worker failure.
 3. **Richer result destinations.** Whether live replacement, fields, indices,
@@ -457,9 +457,9 @@ monitors; channels with the join check; the polling ring; and pools.
 Where the compiler is narrower than design.md, [known-gaps.md](known-gaps.md)
 says so.
 
-Milestone 10's first step, procedure values under the existing analyses, is
-done; support for erased callable data and improvements to effect precision
-follow separately.
+Milestone 10's first two steps, procedure values under the existing analyses
+and `dyn` views checked as receiver arguments, are done; improvements to
+effect precision follow separately.
 
 ### Milestone 6: monitors
 
@@ -570,7 +570,7 @@ same.
 
 ### Milestone 10: indirect spawned calls
 
-Step 1 is done; steps 2 and 3 are proposed. Extend the existing task machinery
+Steps 1 and 2 are done; step 3 is proposed. Extend the existing task machinery
 in small steps, beginning with runtime-selected Loke procedure values. Each step must preserve every task
 check, with conservative rejection where the analysis cannot establish safety.
 Public effect annotations and owning erased callables are separate questions.
@@ -605,12 +605,25 @@ separate receiver-mode question under
    `tests/run/parallel_procedure_values.loke`,
    `tests/err/parallel_procedure_values.loke`, and
    `tests/trap/parallel_value_frame_release.loke` cover it.
-2. **Erased callable data.** Extend to borrowed `dyn proc` views and `dyn`
-   methods only with checks on the callable's own storage: its lifetime to
-   the join, sharing or exclusive access, thread affinity, and allocator
-   dependencies. Moving a view does not transfer ownership of its payload.
-   Unknown captures must remain conservative. Use the same task machinery
-   rather than a second scheduler or an owning-erasure feature.
+2. **Erased callable data.** Done. A spawned `dyn` slot call or callable
+   view's `call` takes its view as the receiver, bound argument 0, so the
+   frame copies it like any argument and the run procedure selects the slot
+   on it or calls the view type's forwarding member. No frame field or
+   provenance input of its own is needed. The argument checks cover the
+   callable's own storage: its lifetime to the join, read-only sharing or a
+   `dyn mut` view's exclusive loan, thread affinity, captured allocators, and
+   the join check. A view converted at the spawn is checked through what it
+   views; one that arrives erased, as a parameter or stored local, is
+   rejected (L0729, or L0725 for a `dyn mut` view lent to a mutating slot),
+   and moving a view gives the task nothing of its own. L0731 names each
+   slot fill or held procedure that writes or reaches the global. L0729's
+   advice now names what a view can follow: the concrete value or a
+   conversion at the call, or for a view reaching a `&mut` capture, a generic
+   `Callable` parameter taking the callable by `move`.
+   `tests/run/parallel_dyn_views.loke`, `tests/err/parallel_dyn_views.loke`,
+   and `tests/trap/parallel_view_frame_release.loke` cover it; the
+   [erased-callable findings](open-questions.md#erased-callable-spawns-2026-10-26)
+   record what it leaves.
 3. **Per-call effect precision.** In a separate change, summarize a body's
    own effects plus its dependencies on callbacks, substituting the actual
    callbacks at each call. Build on the existing callback-effect and

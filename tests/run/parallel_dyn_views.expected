@@ -1,0 +1,10 @@
+procedure 42
+captured 83
+owning 33
+shared 27
+exclusive 22
+view first
+argument 5
+ordered 20
+pooled 26
+moved callable 2

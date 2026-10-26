@@ -1415,13 +1415,17 @@ conclusion and proposes the next steps. The spike also found:
   union, that body may be in another package. A spawned procedure value's
   rejection now names each target that writes or reaches the global; a
   wrapper's still does not.
-- **L0729's advice cannot be followed for a `dyn proc` parameter.** For a
-  view reaching a `&mut` capture it says to move the callable into the
+- **L0729's advice could not be followed for a `dyn proc` parameter.** For
+  a view reaching a `&mut` capture it said to move the callable into the
   task, but `spawn run(move(bump))` with `run :: proc(f: dyn proc())` then
   views a temporary, which [Spawn statements](design.md#spawn-statements)
   rejects (L0513). Only a generic callable parameter takes the moved
   literal. A writing capture literal reaches a task through a `dyn proc`
   only once a [mutable callable view](#a-mutable-callable-view) exists.
+  Fixed with [milestone 10's second step](#erased-callable-spawns-2026-10-26):
+  for a view made at the call, the advice is now that generic parameter,
+  and for a view that arrived erased, where moving it would still hide its
+  captures (L0725), the concrete value or a conversion at the call.
 
 ### Milestone 10 scope and next step (2026-10-26)
 
@@ -1553,6 +1557,42 @@ Two small simplifications were available, and both are applied:
 Net: four lines removed with those two local changes. The existing frame
 layout helpers and the extension of the common run procedure are appropriate;
 a broader checker or capture rewrite is not warranted by this implementation.
+
+### Erased-callable spawns (2026-10-26)
+
+[Milestone 10's second step](concurrency-proposal.md#milestone-10-indirect-spawned-calls)
+lets a spawned call go through a `dyn` view. The view is the call's receiver
+argument, so the existing argument checks apply to it unchanged. Writing the
+tests found:
+
+- **Only a view converted at the spawn is accepted.** A view that arrives
+  erased, as a parameter or a stored local, hides its captures, so
+  [Sharing with tasks](design.md#sharing-with-tasks) rejects it. Where the
+  view is converted at the spawn, the program could usually spawn the
+  concrete call instead, so the step mainly makes `dyn` calls consistent
+  with other calls; it does not yet let a library spawn the callbacks it
+  receives. Two directions remain open. One keeps the concrete type through
+  a stored local view, the loss recorded under the
+  [scope review](#milestone-10-scope-and-next-step-2026-10-26), and helps
+  only locals. The other is a view type that promises its target may be
+  shared with a task, which is a language extension with a public contract
+  and needs a demonstrated requirement.
+- **A slot union is per slot, not per conversion.** Where the spawn converts
+  `&q` to `dyn Recorder`, the task's write effects are still those of every
+  type that fills `record`. So `Quiet`'s view is rejected because `Tally`
+  writes `hits`. The concrete fill is known at the conversion, which makes
+  this an easy case for [step 3](concurrency-proposal.md#milestone-10-indirect-spawned-calls).
+- **A bare spawn cannot start with a parenthesized callee.** `spawn` starts a
+  statement only before an identifier, so a `dyn` conversion or procedure
+  literal called in place needs a result name. [grammar.md](grammar.md#control-flow)
+  now says so; its earlier wording allowed only a name or selector there.
+- **No `dyn mut` mutating slot can be spawned.** A temporary `dyn mut` view
+  cannot be a mutating receiver anywhere (L0359), and a stored one is erased
+  (L0725). A slot that takes `self` by value through a `dyn mut` view is
+  spawnable and lends the viewed value exclusively.
+- **Named arguments fail on a view converted in place.** This is a separate
+  known gap,
+  [named arguments to a slot of a view converted in place](known-gaps.md#named-arguments-to-a-slot-of-a-view-converted-in-place).
 
 ### Parameters a join check cannot tell apart (2026-10-26)
 

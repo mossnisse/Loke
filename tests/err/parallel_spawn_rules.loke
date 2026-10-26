@@ -55,13 +55,12 @@ main :: proc() {
 	both: int;
 	small: i32;
 	nothing_back: int;
-	viewed: dyn proc() -> int = compute;
 	place := 0;
 	parallel {
 		spawn both = pair();
 		spawn small = compute();
 		spawn nothing_back = nothing();
-		spawn viewed();
+		spawn i32(place);
 		spawn abs(1);
 		spawn sum(1, 2); // a variadic pack is the task's own
 		spawn pick(inout place);

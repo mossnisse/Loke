@@ -597,10 +597,10 @@ carriers they touch; the allocator-use effect, per parameter, from the region
 facts at each allocating operation; and the drops every thread runs at exit.
 Both effects settle over the calls the write effects found, so a call through
 a value or a `dyn` slot takes every target's, and each part keeps the call or
-hook it came through for diagnostics. A spawned procedure value's task runs its
-`run` procedure, whose call through the frame's value takes that union; each
-`Task_Site` keeps its spawned call, so a rejection names the targets that write
-or reach the global (`note_value_targets`). The facts are recorded only while
+hook it came through for diagnostics. A task spawned through a procedure value
+or a `dyn` view runs its `run` procedure, whose indirect call takes that union;
+each `Task_Site` keeps its spawned call, so a rejection names the targets that
+write or reach the global (`note_value_targets`). The facts are recorded only while
 `thread_facts_pending` is set, so the other passes do not pay for them, and the
 pass runs only when `thread_summaries_wanted` is set, which checking a
 `parallel` block does: it adds 10 to 20 percent to the front end, which only a
@@ -643,7 +643,11 @@ hook(drop) on Task_Scope                // joins every started thread,
   that value, which the parent evaluates before the arguments. The run
   procedure takes the owned arguments out of the frame, makes the call, by
   name or through the frame's value, writes the result through the address
-  with `unsafe.write`, since the local is dead, and frees the frame. A variadic pack's field is a record of
+  with `unsafe.write`, since the local is dead, and frees the frame. A call
+  through a `dyn` view needs no field of its own: its view is the receiver,
+  bound argument 0, so `run` selects the slot on that argument, and a
+  callable view's `call` is the view type's forwarding member, called by
+  name. The view gets every argument check, including the transfer checks. A variadic pack's field is a record of
   its operands in written order (`Spawn_Task.pack`): the parent fills it as
   `emit_variadic_pack` would copy each element, and `run` packs them again,
   moving owned elements in and passing each spread on as `..s`. A lone spread

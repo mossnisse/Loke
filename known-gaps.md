@@ -7,6 +7,31 @@ compiler, unless the rewording is the intended fix.
 
 ## Gaps
 
+### Named arguments to a slot of a view converted in place
+
+A [`dyn` slot call](design.md#borrowed-dynamic-interface-values) binds named
+arguments by the slot's parameter names, as any call does, and does so through
+a stored view. Through a view converted in place, the call is resolved as a
+method instead, against the view type's forwarding member, which records no
+parameter names:
+
+```loke
+package main;
+import "core:fmt";
+Shape :: interface($Self: type) { slot area: proc(self, scale: int) -> int; }
+Square :: struct { side: int }
+impl Square { area :: proc(self, scale: int) -> int { return self.side * scale; } }
+main :: proc() {
+    s := Square{3};
+    view := (dyn Shape)(&s);
+    fmt.println(view.area(scale = 2));               // 6
+    fmt.println((dyn Shape)(&s).area(scale = 2));    // L0392
+}
+```
+
+The second call is rejected: "no overload of method `area` applies to these
+arguments", "it has no parameter named `scale`". Positional arguments work.
+
 ### Mutable-slice splitting reloads a rebound receiver during emission
 
 [Splitting a mutable slice](design.md#splitting-a-mutable-slice) captures the

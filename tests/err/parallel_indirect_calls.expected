@@ -32,15 +32,16 @@ this task may use an allocator region this procedure cannot tell apart from it, 
 
 L0729
 @142:18
-`dyn proc(i16)` reaches `^mut int`, so a task sharing it could write what the parent reaches too: move it into the task, or pass the mutable borrow itself
+`dyn proc(i16)` reaches `^mut int`, so a task sharing it could write what the parent reaches too; the view only borrows the callable: move the callable into the task through a generic `Callable` parameter instead
 
 L0729
 @143:18
-`dyn proc(i16)` reaches `^mut int`, so a task sharing it could write what the parent reaches too: move it into the task, or pass the mutable borrow itself
+`dyn proc(i16)` reaches `^mut int`, so a task sharing it could write what the parent reaches too; the view only borrows the callable: move the callable into the task through a generic `Callable` parameter instead
 
 L0729
 @159:28
-`dyn proc(i64)` hides what it captures, so a task may share it only as its own: move it into the task
+`dyn proc(i64)` hides what it captures, so a task cannot share it
+pass the concrete value instead, or convert it to the view at this call
 
 L0724
 @172:28

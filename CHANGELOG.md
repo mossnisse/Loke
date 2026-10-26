@@ -371,8 +371,17 @@ checklist.
   ([Spawn statements](design.md#spawn-statements)). The parent evaluates the
   value before the arguments and the task keeps it. The task checks take the
   effects of every procedure of its type the program uses as a value, and a
-  rejection names the ones that cause it. A `dyn` view or method, and a
-  foreign procedure value, are still not spawned (`L0728`).
+  rejection names the ones that cause it. A foreign procedure value is still
+  not spawned (`L0728`).
+
+- `spawn` may call through a `dyn` view converted at the spawn, as in
+  `spawn r = (dyn Shape)(&s).area(2);` or through a callable view's `call`
+  ([Spawn statements](design.md#spawn-statements)). The view is checked as
+  the call's receiver argument, so what it views is borrowed until the join,
+  shared read-only or lent exclusively by a `dyn mut` view, and must be able
+  to cross to the task. A view that arrives erased, as a parameter or stored
+  local, is rejected (`L0729`). A rejection for a global names each type
+  filling the slot that writes or reaches it.
 
 - `thread.Monitor(T)` is a mutex whose holder can wait for the guarded value
   to reach a state ([Monitors](standard-library.md#monitors)).
@@ -571,6 +580,12 @@ checklist.
   to start with procedure values using the existing task machinery, followed
   by erased callable data and per-call effect precision. Clarified the spike's
   coverage and the validation required before each step ships.
+
+- `L0729` for a view that arrived erased no longer says to move it into the
+  task, which hides its captures just the same (`L0725`): it suggests the
+  concrete value or a conversion at the call. For a callable view made at
+  the call that reaches a `&mut` capture, it suggests moving the callable
+  through a generic `Callable` parameter, since the view only borrows it.
 
 - Revised the deferred [ring proposal](concurrency-proposal.md#the-ring-algorithm)
   to recommend a spare-slot SPSC queue with bounded indices, separate closure

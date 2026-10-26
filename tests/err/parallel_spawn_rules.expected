@@ -17,23 +17,23 @@ L0728
 @52:9
 a task's result goes to a local variable declared before the `parallel` block, and `inner` is not one
 L0728
-@61:16
+@60:16
 this call has several results, so a task has nowhere to put them; return one record from the procedure the task runs
 L0728
-@62:17
+@61:17
 this call returns `int`, and `small` is a `i32`; the worker assigns the result without converting it
 L0728
-@63:24
+@62:24
 this call has no result to assign to `nothing_back`
 L0728
-@64:9
-`spawn` starts a procedure, a method, or a procedure value; a `dyn` view, a built-in, or a conversion cannot be spawned yet
+@63:9
+`spawn` starts a procedure, a method, a procedure value, or a call through a `dyn` view; a built-in or a conversion cannot be spawned yet
 L0728
-@65:9
+@64:9
 `spawn` starts a Loke procedure; call a foreign one from a Loke procedure the task runs
 L0728
-@67:9
+@66:9
 a task cannot hand back an `inout` result, which is a place of the worker's call
 L0612
-@68:9
+@67:9
 this call produces `Result(int, string)`, which must be used or discarded with `_ = ...`

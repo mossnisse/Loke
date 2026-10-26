@@ -3741,14 +3741,18 @@ report_shared_reach :: proc(
 }
 
 // design.md "Spawn statements", "Global write effects": a task that calls a
-// procedure value may run any body of its type the program uses as a value,
-// so each that writes, or reaches through, the reported global is named.
+// procedure value or through a `dyn` view may run any body the union for its
+// type or slot holds, so each that writes, or reaches through, the reported
+// global is named.
 @(private = "file")
 note_value_targets :: proc(c: ^Compiler, call: ^Expr_Call, global: Symbol_Id, writes: bool) {
-	if call == nil || !call_through_value(c, call) {
+	if call == nil {
 		return
 	}
-	targets, _ := indirect_call_targets(c, call)
+	targets, indirect := indirect_call_targets(c, call)
+	if !indirect {
+		return
+	}
 	for target in targets {
 		found := false
 		if writes {
@@ -3765,6 +3769,8 @@ note_value_targets :: proc(c: ^Compiler, call: ^Expr_Call, global: Symbol_Id, wr
 		target_name := fmt.tprintf("`%s`", identifier_text(c, sym.name))
 		if sym.proc_literal != nil {
 			target_name = "the procedure literal here"
+		} else if sym.owner_type != INVALID_TYPE {
+			target_name = fmt.tprintf("`%s.%s`", type_name(c, sym.owner_type), identifier_text(c, sym.name))
 		}
 		add_notef(
 			c, sym.span, "`%s` may be %s, which %s `%s`", spawn_callee_name(c, call), target_name,

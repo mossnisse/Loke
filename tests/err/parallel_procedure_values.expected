@@ -45,12 +45,8 @@ L0512
 
 L0728
 @111:19
-`spawn` starts a procedure, a method, or a procedure value; a `dyn` view, a built-in, or a conversion cannot be spawned yet
-
-L0728
-@115:19
 `spawn` starts a Loke procedure; call a foreign one from a Loke procedure the task runs
 
 L0728
-@124:19
+@120:19
 a task cannot hand back an `inout` result, which is a place of the worker's call

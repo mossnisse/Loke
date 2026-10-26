@@ -7,8 +7,8 @@
 // A `thread_local` borrow left in an argument or returned, an allocator two
 // tasks use, an argument the parent writes while a task borrows it, and a
 // pooled task's `thread_local` write are rejected as for a named callee. A
-// `dyn proc` view, a foreign procedure value, and an `inout` result are not
-// spawned.
+// foreign procedure value and an `inout` result are not spawned; `dyn` views
+// are in parallel_dyn_views.loke.
 package main;
 
 import "core:fmt";
@@ -105,10 +105,6 @@ pooled :: proc(f: proc(x: f32)) {
 		spawn f(1);
 	}
 	fmt.println(seen.len());
-}
-
-viewed :: proc(f: dyn proc(n: i64)) {
-	parallel { spawn f(1); }
 }
 
 foreign_value :: proc(f: proc "c" (n: i32)) {

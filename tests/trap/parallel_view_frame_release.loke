@@ -1,0 +1,56 @@
+// design.md "Spawn statements", "Failure to start a task": a spawned call
+// through a `dyn` view evaluates its view first, and a panic preparing a
+// later argument still releases the frame and drops the argument the task
+// would have owned. What the view borrows stays the parent's and is dropped
+// as the parent unwinds. The default allocator is an arena, which takes back
+// its newest block when that is freed: the probe after the unwind finds the
+// frame's address free again.
+@(default_allocator = "frame_provider:allocator_factory")
+package main;
+
+import "core:fmt";
+import "core:unsafe";
+
+Tracked :: move_only struct { id: int }
+
+impl Tracked {
+	release :: hook(drop) proc(self: inout) {
+		fmt.println("drop", self.id);
+	}
+}
+
+Worker :: interface($Self: type) {
+	slot run: proc(self, item: move Tracked, n: int) -> int;
+}
+
+Crew :: struct { kept: Tracked }
+
+impl Crew {
+	run :: proc(self, item: move Tracked, n: int) -> int { return n; }
+}
+
+chosen :: proc(crew: ^Crew) -> ^Crew {
+	fmt.println("view evaluated");
+	return crew;
+}
+
+explode :: proc() -> int {
+	panic("an argument failed");
+}
+
+probe :: proc() -> rawptr {
+	block := unsafe.new(0);
+	address := rawptr(block);
+	unsafe.free(block);
+	return address;
+}
+
+main :: proc() {
+	before := probe();
+	defer fmt.println("frame released", probe() == before);
+	crew := Crew{Tracked{2}};
+	r: int;
+	parallel {
+		spawn r = (dyn Worker)(chosen(&crew)).run(Tracked{1}, explode());
+	}
+}

@@ -1,0 +1,133 @@
+// design.md "Spawn statements": a spawned call may go through a `dyn` view
+// converted at the spawn: a callable view's `call` or a `dyn` slot, whose view
+// is the receiver argument. The parent evaluates the view with the arguments,
+// in order, and copies it into the task. What it views is borrowed until the
+// join: read-only by a `dyn` view, so two tasks may share it, and exclusively
+// by a `dyn mut` one. A viewed capture literal owning its storage stays the
+// parent's to drop. This works on bare and pooled blocks. A procedure
+// occupies the view's data word, so its view borrows nothing. A callable view
+// only borrows the callable, so a capture literal writing through a `&mut`
+// capture reaches a task moved through a generic `Callable` parameter instead.
+package main;
+
+import "base:interfaces";
+import "core:fmt";
+import "core:thread";
+
+double :: proc(n: int) -> int { return n * 2; }
+
+Shape :: interface($Self: type) {
+	slot area: proc(self, scale: int) -> int;
+}
+
+Square :: struct { side: int }
+
+impl Square {
+	area :: proc(self, scale: int) -> int { return self.side * self.side * scale; }
+}
+
+procedure :: proc() -> int {
+	r: int;
+	parallel { spawn r = (dyn proc(n: int) -> int)(double)(21); }
+	return r;
+}
+
+captured :: proc() -> int {
+	offset := 40;
+	add := proc(n: int) -> int capture(offset) { return offset + n; };
+	a: int;
+	b: int;
+	parallel {
+		spawn a = (dyn proc(n: int) -> int)(add)(1);
+		spawn b = (dyn proc(n: int) -> int)(add)(2);
+	}
+	return a + b;
+}
+
+// The literal owns its list; the tasks borrow it, and the parent drops it.
+owning :: proc() -> int {
+	xs: [dynamic]int = {};
+	xs.append(1);
+	xs.append(2);
+	total := proc(scale: int) -> int capture(move(xs)) {
+		sum := 0;
+		foreach (x in xs) { sum += x * scale; }
+		return sum;
+	};
+	a: int;
+	b: int;
+	parallel {
+		spawn a = (dyn proc(scale: int) -> int)(total)(1);
+		spawn b = (dyn proc(scale: int) -> int)(total)(10);
+	}
+	return a + b;
+}
+
+shared :: proc() -> int {
+	s := Square{3};
+	a: int;
+	b: int;
+	parallel {
+		spawn a = (dyn Shape)(&s).area(1);
+		spawn b = (dyn Shape)(&s).area(2);
+	}
+	return a + b;
+}
+
+exclusive :: proc() -> int {
+	s := Square{3};
+	r: int;
+	parallel { spawn r = (dyn mut Shape)(&mut s).area(2); }
+	s.side += 1;
+	return r + s.side;
+}
+
+pick :: proc(s: ^Square, name: string) -> ^Square {
+	fmt.println("view", name);
+	return s;
+}
+
+argument :: proc(n: int) -> int {
+	fmt.println("argument", n);
+	return n;
+}
+
+ordered :: proc() -> int {
+	s := Square{2};
+	r: int;
+	parallel { spawn r = (dyn Shape)(pick(&s, "first")).area(argument(5)); }
+	return r;
+}
+
+pooled :: proc() -> int {
+	pool := thread.Pool.init(2);
+	s := Square{4};
+	a: int;
+	b: int;
+	parallel (&pool) {
+		spawn a = (dyn Shape)(&s).area(1);
+		spawn b = (dyn proc(n: int) -> int)(double)(5);
+	}
+	return a + b;
+}
+
+call_moved :: proc(f: move $C) -> int where interfaces.Callable(C, proc() -> int) { return f(); }
+
+moved_callable :: proc() -> int {
+	n := 0;
+	bump := proc() -> int capture(&mut n) { n += 1; return n; };
+	r: int;
+	parallel { spawn r = call_moved(move(bump)); }
+	return r + n;
+}
+
+main :: proc() {
+	fmt.println("procedure", procedure());
+	fmt.println("captured", captured());
+	fmt.println("owning", owning());
+	fmt.println("shared", shared());
+	fmt.println("exclusive", exclusive());
+	fmt.println("ordered", ordered());
+	fmt.println("pooled", pooled());
+	fmt.println("moved callable", moved_callable());
+}

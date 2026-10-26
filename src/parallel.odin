@@ -63,13 +63,12 @@ spawn_callee_field :: proc(task: ^Spawn_Task) -> int {
 	return len(task.kinds) + (task.result != INVALID_SYMBOL ? 2 : 1)
 }
 
-// How diagnostics name what a spawn starts: the procedure, the procedure
-// value as written, or a literal called in place by its signature.
+// How diagnostics name what a spawn starts: the procedure or method, the
+// procedure value or `dyn` call as written, or a literal called in place by
+// its signature.
 spawn_callee_name :: proc(c: ^Compiler, call: ^Expr_Call) -> string {
-	if !call_through_value(c, call) {
-		if sym := symbol_of(c, call.resolution.symbol); sym != nil {
-			return identifier_text(c, sym.name)
-		}
+	if sym := symbol_of(c, call.resolution.symbol); sym != nil && sym.kind == .Proc && sym.synth == .None {
+		return identifier_text(c, sym.name)
 	}
 	span := expr_span(call.callee)
 	if literal, is_literal := call.callee.(^Expr_Proc); is_literal && literal.signature != nil {
@@ -261,22 +260,24 @@ check_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn) -> Flow_Info {
 }
 
 // design.md "Spawn statements": the spawned call is a procedure or method
-// declared in Loke, including a generic instance, or a procedure value.
-// Answers the procedure type the call goes through.
+// declared in Loke, including a generic instance, a procedure value, or a
+// `dyn` method or callable view, whose view is the receiver argument. Answers
+// the procedure type the call goes through.
 @(private = "file")
 spawned_callee :: proc(k: ^Checker, call: ^Expr_Call) -> (Type_Id, bool) {
 	c := k.c
 	proc_type := INVALID_TYPE
-	if call_through_value(c, call) {
+	_, slot := call.operation.(Call_Dyn_Slot)
+	if call_through_value(c, call) || slot {
 		proc_type = expr_base(call.callee).type
 	} else {
 		_, procedure := call.operation.(Call_Procedure)
 		sym := symbol_of(c, call.resolution.symbol)
-		if !procedure || call.dispatch != nil || sym == nil || sym.kind != .Proc || sym.synth != .None ||
-		   sym.delegated {
+		if !procedure || call.dispatch != nil || sym == nil || sym.kind != .Proc ||
+		   (sym.synth != .None && sym.synth != .Dyn_Forward) || sym.delegated {
 			errorf(
 				c, expr_span(call.callee), "L0728",
-				"`spawn` starts a procedure, a method, or a procedure value; a `dyn` view, a built-in, or a conversion cannot be spawned yet",
+				"`spawn` starts a procedure, a method, a procedure value, or a call through a `dyn` view; a built-in or a conversion cannot be spawned yet",
 			)
 			return INVALID_TYPE, false
 		}
@@ -476,12 +477,16 @@ lower_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn, block: ^Stmt_Parallel, proc_typ
 	}
 	inner := new(Expr_Call, c.semantic_allocator)
 	inner.span = span
+	inner.args = args[:]
 	if task.through_value {
 		inner.callee = synth_selector(c, frame_of(k, frame_param, span), frame_field_name(c, task, spawn_callee_field(task)), span)
+	} else if _, slot := call.operation.(Call_Dyn_Slot); slot {
+		// The view is the receiver argument, which the slot is selected on.
+		inner.callee = synth_selector(c, args[0].value, call.callee.(^Expr_Selector).name.text, span)
+		inner.args = args[1:]
 	} else {
 		inner.callee = synth_ident(k, "spawn$callee", callee_alias, span)
 	}
-	inner.args = args[:]
 	made: Expr = inner
 	if result != INVALID_SYMBOL {
 		destination := synth_deref(c, synth_selector(c, frame_of(k, frame_param, span), frame_field_name(c, task, spawn_result_field(task)), span), span)

@@ -1,0 +1,63 @@
+L0729
+@38:23
+`dyn proc(i64) -> int` hides what it captures, so a task cannot share it
+pass the concrete value instead, or convert it to the view at this call
+
+L0729
+@46:23
+`dyn proc(i64) -> int` hides what it captures, so a task cannot share it
+pass the concrete value instead, or convert it to the view at this call
+
+L0725
+@53:23
+`dyn mut Shape` hides the type it erased, so nothing shows that it may cross to another thread
+pass the concrete value instead, or convert it to the view at this call
+
+L0724
+@71:23
+`dyn Handle` holds or reaches `Window`, which is `@(thread_affine)`, so it cannot cross to another thread
+
+L0724
+@78:23
+`dyn proc() -> int` holds or reaches `Window`, which is `@(thread_affine)`, so it cannot cross to another thread
+
+L0729
+@85:23
+`dyn proc(i16) -> int` reaches `^mut int`, so a task sharing it could write what the parent reaches too; the view only borrows the callable: move the callable into the task through a generic `Callable` parameter instead
+
+L0513
+@90:2
+this pointer is used after `s`, the local it borrows, has ended
+
+L0511
+@101:3
+this write of `s` is not compatible with the read-only pointer of it that is still in use
+
+L0511
+@111:29
+this write of `s` is not compatible with the mutable pointer of it that is still in use
+
+L0732
+@123:3
+this task may use an allocator region this procedure cannot tell apart from it, which a task started earlier reserves until the join
+
+L0731
+@146:13
+`(dyn Recorder)(&q).record` may write `hits`, which every task and the parent share
+`(dyn Recorder)(&q).record` may be `Tally.record`, which writes `hits`
+
+L0512
+@164:2
+`buffer` cannot be modified by `(dyn Growing)(&g).grow_buffer`, which this join may run on this thread, here: a read-only slice of it is still in use
+
+L0733
+@175:2
+`send` is kept past this join while it borrows `jobs`, which a task of the block borrows too; dropping it may be what the task waits for
+
+L0733
+@175:2
+`drain` is kept past this join while it borrows `jobs`, which a task of the block borrows too; dropping it may be what the task waits for
+
+L0359
+@182:23
+this expression cannot be the receiver of a mutating method

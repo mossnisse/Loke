@@ -553,10 +553,13 @@ Parallel_Statement = Attributes? "parallel" ("(" Expression ")")? Block
 Spawn_Statement    = Attributes? "spawn" (Identifier "=")? Postfix_Expression ";"
 ```
 
-A `Spawn_Statement`'s expression is one call: an identifier, optionally
-qualified or a method selector, ending in a call suffix. A conversion, an
-`or_return`, an operator applied to the call, and a field or index before the
-`=` are syntax errors. `spawn` is a statement, never an expression, so
+A `Spawn_Statement`'s expression is one call: a postfix expression ending in
+a call suffix, such as `work(x)`, `item.method(x)`, or `pick()(x)`. Without a
+result name, `spawn` begins the statement only when an identifier follows it,
+so a callee written in parentheses, such as a procedure literal or a `dyn`
+conversion called in place, needs one: `spawn r = (dyn Shape)(&s).area(2);`.
+An `or_return`, an operator applied to the call, and a field or index before
+the `=` are syntax errors. `spawn` is a statement, never an expression, so
 `x := spawn f();` does not parse as a spawn.
 
 Their meaning is under

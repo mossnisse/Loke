@@ -1,0 +1,201 @@
+// design.md "Spawn statements", "Sharing with tasks": a spawned call through a
+// `dyn` view is checked on its view, the receiver argument, as any argument
+// is. A view that arrives erased, as a parameter or a stored local, hides its
+// captures, so a task cannot share it, and a stored `dyn mut` view lent to a
+// mutating slot still hides the type it erased. A view converted at the spawn
+// is checked through what it views: thread affinity, a `&mut` capture,
+// storage that ends before the join, the parent writing what a task views,
+// two tasks viewing it mutably, an allocator region a captured allocator
+// reserves, a slot whose fills may write a global (each fill that does is
+// named), a pooled join's `thread_local` write, and an endpoint kept past the
+// join. A temporary `dyn mut` view cannot be a mutating slot's receiver, at a
+// spawn or anywhere.
+package main;
+
+import "core:fmt";
+import "core:mem";
+import "core:thread";
+
+hits: int;
+buffer: thread_local [dynamic]int;
+
+Shape :: interface($Self: type) {
+	slot area: proc(self, scale: int) -> int;
+	slot grow: proc(self: inout Self, by: int) -> int;
+}
+
+Square :: struct { side: int }
+
+impl Square {
+	area :: proc(self, scale: int) -> int { return self.side * scale; }
+	grow :: proc(self: inout, by: int) -> int { self.side += by; return self.side; }
+}
+
+// Erased views.
+
+parameter :: proc(f: dyn proc(n: i64) -> int) {
+	r: int;
+	parallel { spawn r = f(1); }
+}
+
+stored :: proc() {
+	k := 1;
+	look := proc(n: i64) -> int capture(k) { return k + int(n); };
+	saved: dyn proc(n: i64) -> int = look;
+	r: int;
+	parallel { spawn r = saved(1); }
+}
+
+stored_mutable :: proc() {
+	s := Square{1};
+	view := (dyn mut Shape)(&mut s);
+	r: int;
+	parallel { spawn r = view.grow(1); }
+}
+
+// What a view converted at the spawn views.
+
+Window :: struct @(thread_affine) { handle: int }
+
+Handle :: interface($Self: type) {
+	slot id: proc(self) -> int;
+}
+
+impl Window {
+	id :: proc(self) -> int { return self.handle; }
+}
+
+affine_slot :: proc() {
+	w := Window{1};
+	r: int;
+	parallel { spawn r = (dyn Handle)(&w).id(); }
+}
+
+affine_capture :: proc() {
+	w := Window{1};
+	show := proc() -> int capture(&w) { return w.handle; };
+	r: int;
+	parallel { spawn r = (dyn proc() -> int)(show)(); }
+}
+
+mutable_capture :: proc() {
+	n := 0;
+	bump := proc(m: i16) -> int capture(&mut n) { n += int(m); return n; };
+	r: int;
+	parallel { spawn r = (dyn proc(m: i16) -> int)(bump)(1); }
+}
+
+ends_first :: proc() {
+	r: int;
+	parallel {
+		s := Square{1};
+		spawn r = (dyn Shape)(&s).area(1);
+	}
+}
+
+parent_writes :: proc() {
+	s := Square{1};
+	r: int;
+	parallel {
+		spawn r = (dyn Shape)(&s).area(1);
+		s.side = 2;
+	}
+}
+
+both_mutable :: proc() {
+	s := Square{1};
+	a: int;
+	b: int;
+	parallel {
+		spawn a = (dyn mut Shape)(&mut s).area(1);
+		spawn b = (dyn mut Shape)(&mut s).area(2);
+	}
+}
+
+captured_arena :: proc() {
+	arena := mem.Arena.init();
+	a := arena.allocator();
+	make_list := proc(n: i32) -> int capture(a) { xs: [dynamic]int via a = {}; xs.append(int(n)); return xs.len(); };
+	x: int;
+	y: int;
+	parallel {
+		spawn x = (dyn proc(n: i32) -> int)(make_list)(1);
+		spawn y = (dyn proc(n: i32) -> int)(make_list)(2);
+	}
+}
+
+Recorder :: interface($Self: type) {
+	slot record: proc(self, n: int) -> int;
+}
+
+Tally :: struct { base: int }
+
+impl Tally {
+	record :: proc(self, n: int) -> int { hits += n; return self.base; }
+}
+
+Quiet :: struct { base: int }
+
+impl Quiet {
+	record :: proc(self, n: int) -> int { return self.base + n; }
+}
+
+writes_global :: proc() {
+	q := Quiet{1};
+	r: int;
+	parallel { spawn r = (dyn Recorder)(&q).record(1); }
+}
+
+Grower :: struct { step: int }
+
+Growing :: interface($Self: type) {
+	slot grow_buffer: proc(self, n: int) -> int;
+}
+
+impl Grower {
+	grow_buffer :: proc(self, n: int) -> int { buffer.append(n); return n; }
+}
+
+pooled_write :: proc() {
+	pool := thread.Pool.init(2);
+	g := Grower{1};
+	seen := buffer[:];
+	r: int;
+	parallel (&pool) {
+		spawn r = (dyn Growing)(&g).grow_buffer(1);
+	}
+	fmt.println(seen.len());
+}
+
+sender_kept :: proc() {
+	jobs := thread.Channel(int).init(4);
+	send, receive := jobs.split();
+	drain := proc() -> int capture(move(receive)) { foreach (job in receive) {} return 0; };
+	r: int;
+	parallel { spawn r = (dyn proc() -> int)(drain)(); }
+	_ = send.send(1);
+}
+
+temporary_mutable :: proc() {
+	s := Square{1};
+	r: int;
+	parallel { spawn r = (dyn mut Shape)(&mut s).grow(1); }
+}
+
+main :: proc() {
+	stored();
+	stored_mutable();
+	affine_slot();
+	affine_capture();
+	mutable_capture();
+	ends_first();
+	parent_writes();
+	both_mutable();
+	captured_arena();
+	t := Tally{0};
+	fmt.println((dyn Recorder)(&t).record(1));
+	writes_global();
+	pooled_write();
+	sender_kept();
+	temporary_mutable();
+}
