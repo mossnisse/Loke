@@ -343,6 +343,14 @@ checklist.
   sorts and sums with them. A program with a `parallel` block depends on
   `core:thread` without importing it.
 
+- `thread.Monitor(T)` is a mutex whose holder can wait for the guarded value
+  to reach a state ([Monitors](standard-library.md#monitors)).
+  `monitor.lock_when(ready)` sleeps until `ready` answers `true` for the
+  value and returns the guard still holding the lock; dropping a guard on
+  which `get` was called wakes the waiters to ask again, and one used only
+  through `read` wakes no one. `close` ends every wait whose condition is
+  false, returning `.none`, while a closed monitor can still be drained.
+
 - Three attributes declare thread facts, so the compiler names no concurrency
   type or procedure. [`@(synchronized)`](design.md#synchronized) marks a field,
   or a file-scope or `static` variable, whose package synchronizes every access

@@ -1,12 +1,14 @@
 # Structured concurrency: the library additions
 
-Status: **milestones 1 to 5 are done**. `parallel` blocks and `spawn`
+Status: **milestones 1 to 6 are done**. `parallel` blocks and `spawn`
 statements are part of the language: [design.md](design.md) defines them
 under [Structured concurrency](design.md#structured-concurrency),
 [grammar.md](grammar.md#control-flow) parses them, and
 [comments.md](comments.md#tasks-that-borrow-joined-by-their-block) gives the
-reasons for their shape. What remains here is proposed, not accepted: the
-library additions for tasks that wait for each other, the
+reasons for their shape. `Monitor(T)` is in `core:thread`, specified under
+[Monitors](standard-library.md#monitors) in standard-library.md. What remains
+here is proposed, not accepted: the other library additions for tasks that
+wait for each other, the
 [later extensions](#later-extensions) still undecided, and the milestones that
 add them. Each milestone moves its part of this text into design.md and
 standard-library.md in the same commit as the compiler change, as
@@ -55,8 +57,9 @@ make common protocols easier to get right:
 
 - **A waiter checks a condition, not a signal.** A monitor wait names a
   predicate over the guarded value, and dropping a guard used for mutation
-  wakes the waiters to check it again. Under the predicate contract below,
-  there is no separate notification to forget.
+  wakes the waiters to check it again. Under the
+  [condition's obligations](standard-library.md#monitors), there is no
+  separate notification to forget.
 - **A participant's end is an ownership event.** A task's arguments are
   dropped when its call returns, on every path, and the parent's block locals
   and defers are cleaned up before the join
@@ -71,105 +74,15 @@ termination or a mechanism for cancelling a group of tasks.
 
 ### Monitors
 
-`Monitor(T)` is a mutex whose holder can wait for the guarded value to reach a
-state. As `Mutex(T)` does, it owns its `T`; its zero value is unlocked and
-open and holds `T`'s zero when `T` has one; its operations take a read-only
-receiver, so it works in file-scope storage and behind a `Shared(T)`; its `value` field is
-`@(synchronized)`; and it is move-only. A `Mutex` stays the choice where no
-one waits for a state, since it keeps no wakeup bookkeeping.
-
-```text
-Monitor(T).lock(self: ^) -> Monitor_Guard(T)
-Monitor(T).lock_when(self: ^, ready: $C) -> Option(Monitor_Guard(T))
-    where interfaces.Callable(C, proc(value: ^T) -> bool)
-Monitor(T).close(self: ^)
-Monitor_Guard(T).get(self: inout) -> inout T
-Monitor_Guard(T).read(self: ^) -> ^T
-```
-
-- `lock_when` locks and calls `ready` with the lock held. While `ready`
-  answers `false` and the monitor is open, the thread releases the lock and
-  sleeps in one step, then relocks and asks again when woken. Once `ready`
-  answers `true`, it returns the guard still holding the lock, so the state
-  `ready` saw is the state the guard reaches. Spurious wakeups only repeat the
-  check.
-- A guard on which `get` was called is marked **changed**, even if the caller
-  makes no change. Dropping a changed guard wakes every thread sleeping in
-  `lock_when` on that monitor, so
-  a change made under the lock happens before every waiter's next check, and
-  none is missed when the protocol below is followed. Dropping a guard used
-  only through `read` wakes no one.
-- `close` is idempotent and wakes every waiter. From then on, a `lock_when`
-  whose `ready` answers `false` returns `.none` instead of sleeping; one whose
-  `ready` answers `true` still returns its guard, so a closed monitor can be
-  drained. `lock`, `get`, and `read` keep working, so cleanup can read what the
-  protocol left. `close` acquires the monitor's lock; calling it while holding
-  that lock never returns. Closure does not force a loop whose predicate stays
-  true to stop, so that loop must also follow its termination protocol.
-- `ready` runs on the waiting thread with the lock held. It must be repeatable
-  for unchanged state, must not block, and must not mutate state or perform
-  externally visible actions. It may use immutable captures. Every mutable
-  dependency of its answer must be protected by this monitor and changed
-  through a guard on which `get` has been called. Reading an independently
-  updated atomic or the current time does not arrange a wakeup.
-- These are programmer obligations, not a new purity effect checked by the
-  compiler. A `^T` still permits synchronized operations. Updating an atomic
-  nested in `T` through `read`, or changing an external dependency, violates
-  the notification protocol and may leave a waiter asleep. Ordinary callback
-  borrow and effect checks still apply; they do not prove this protocol.
-- There is no wait on a guard already held. A waiter that changes the value
-  drops its guard and then calls `lock_when`, whose first check sees any change
-  made in between. The only release is a guard's drop, which ends every borrow
-  `get` and `read` handed out, so no borrow of the value survives the lock.
-
-```loke
-Transport :: struct { playing: bool, stopping: bool }
-
-can_render :: proc(transport: ^Transport) -> bool {
-	return transport.playing || transport.stopping;
-}
-
-render_loop :: proc(transport: ^thread.Monitor(Transport)) {
-	for (;;) {
-		state := transport.lock_when(can_render) or_else return;   // sleeps while paused
-		if (state.read().stopping) { return; }
-		drop(state);
-		render_block();
-	}
-}
-
-set_playing :: proc(transport: ^thread.Monitor(Transport), playing: bool) {
-	state := transport.lock();
-	state.get().playing = playing;   // dropping the changed guard wakes the loop
-}
-
-stop_render :: proc(transport: ^thread.Monitor(Transport)) {
-	{
-		state := transport.lock();
-		state.get().stopping = true;
-	}
-	transport.close();   // the guard has already released the lock
-}
-```
-
-The controller must arrange termination before starting a waiter. For a
-controller running in the parent, the scope has this shape (the application
-supplies `user_controls` and `render_block`):
-
-```loke
-transport: thread.Monitor(Transport) = {};
-parallel {
-	defer stop_render(&transport);
-	spawn render_loop(&transport);
-	user_controls(&transport);   // termination cleanup runs before join on every exit
-}
-```
-
-The helper sets `stopping` as well as closing: closure alone only ends waits
-whose predicate is false. A controller running as another task needs its
-own termination cleanup when it must stop peers before the parent exits.
-Dropping a borrow of the monitor does not close it. There is no fairness or
-bounded-wakeup-latency guarantee.
+Built with [milestone 6](#milestone-6-monitors):
+[Monitors](standard-library.md#monitors) in standard-library.md specifies
+`Monitor(T)`, `Monitor_Guard(T)`, `lock_when`, and `close`, the obligations on
+a condition, and the controller shutdown of a render loop, and
+[comments.md](comments.md#waiting-on-a-condition-not-a-signal) gives the
+reasons. The channels below are written over it. Dropping a borrow of a
+monitor does not close it, and a guard's drop does not say that no one will
+change its state again: a monitor needs an explicit termination transition or
+`close`, as [Shutdown](#shutdown) lists.
 
 ### Channels
 
@@ -547,15 +460,9 @@ foreign wait. Device latency is an assumption of this example's binding.
 
 ### Why waits end by ownership
 
-This rationale moves to comments.md with the milestone that builds it.
-
-**Predicate waits.** A condition variable requires a predicate loop, atomic
-unlock-and-wait, and notification after relevant state changes. The monitor
-packages those operations and wakes every waiter when a guard used for mutation
-drops. The caller still owns the predicate and shutdown protocols; read-only
-access does not prove purity. Waking unrelated waiters is the initial cost.
-Targeted wakeups are a later optimization that must preserve progress for all
-affected predicates ([later extension](#later-extensions) 11).
+Each part of this rationale moves to comments.md with the milestone that
+builds it. The case for predicate waits moved with monitors, to
+[Waiting on a condition, not a signal](comments.md#waiting-on-a-condition-not-a-signal).
 
 **Endpoint ownership.** The earlier token design required explicit stop
 requests on each failure path. Endpoint drop naturally expresses completion
@@ -645,28 +552,35 @@ behavior. File names follow the
 Done: disjoint slice access (`split_at_mut` and `chunks_mut`); the
 `@(synchronized)`, `@(cross_thread)`, and `@(thread_affine)` declarations and
 their checks on `thread.spawn`; the reach, allocator-use, and thread-exit
-summaries; and `parallel` blocks with `spawn`, checked and lowered to a thread
-per task (see [Lowering parallel blocks](compiler-architecture.md#lowering-parallel-blocks)).
+summaries; `parallel` blocks with `spawn`, checked and lowered to a thread
+per task (see [Lowering parallel blocks](compiler-architecture.md#lowering-parallel-blocks));
+and monitors.
 Where the compiler is narrower than design.md, [known-gaps.md](known-gaps.md)
 says so.
 
-Delivery order is milestones 6 and 7, then the independent compute pool in
+Delivery order is milestone 7, then the independent compute pool in
 milestone 9 when needed. Milestone 8 keeps its identifier for existing
 references, but is deferred and is not a prerequisite for milestone 9.
 Milestone 10 remains conditional on its callable-summary work.
 
 ### Milestone 6: monitors
 
-Add `Monitor`, `Monitor_Guard`, `lock_when`, and `close` to `core:thread`,
-marking the value `@(synchronized)`. On Windows the lock is an SRWLOCK, as
-`Mutex`'s is, and the sleep a condition variable over it. Test a change made
-between a waiter's check and its sleep, spurious wakeups, `close` while
-threads wait, a `ready` that holds after `close`, a guard used only through
-`read`, which wakes no one, and an unwind out of `ready`, which releases the
-lock. Add the controller shutdown example with a stand-in renderer: cover
-early parent exit, a paused renderer, and a playing renderer that must see
-`stopping`. Document predicate obligations without claiming compiler-checked
-purity. Use a bounded harness for negative liveness tests.
+Done. `Monitor`, `Monitor_Guard`, `lock_when`, and `close` are in
+`core:thread`, with the value `@(synchronized)`; on Windows the lock is an
+SRWLOCK, as `Mutex`'s is, and the sleep a condition variable over it.
+`tests/run/lib_thread_monitor.loke` covers turns handed back and forth, each
+depending on a wakeup, so a change racing a waiter's check and its sleep would
+hang; a `get` that writes nothing, which wakes a waiter as a spurious wakeup
+does; `close` while threads wait; a `ready` that holds after `close`; and a
+guard used only through `read`, which wakes no one.
+`tests/trap/monitor_ready_unwind.loke` covers an unwind out of `ready`, which
+releases the lock. `tests/run/lib_thread_monitor_transport.loke` is the
+controller shutdown example with a stand-in renderer, covering early parent
+exit, a paused renderer, and a playing renderer that must see `stopping`.
+Each carries a watchdog thread that ends the program if a wait never ends.
+`tests/err/lib_thread_monitor.loke` checks that no borrow `get` or `read`
+handed out outlives the guard. standard-library.md documents the condition's
+obligations without claiming compiler-checked purity.
 
 ### Milestone 7: channels and the join check
 

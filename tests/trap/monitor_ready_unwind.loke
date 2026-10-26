@@ -1,0 +1,55 @@
+// standard-library "Monitors" and design.md "What the unwind runs, and
+// what it does not": a panic out of a `Monitor`'s `ready` condition unwinds
+// through `lock_when`, whose guard's drop releases the lock, so cleanup further
+// out can lock again. Here the condition panics when it is asked again after a
+// wakeup, once `lock_when` has relocked from its sleep.
+//
+// Were the lock kept, relocking on the same thread would never return; the
+// watchdog then ends the program with output the test does not expect.
+package main;
+
+import "core:fmt";
+import "core:os";
+import "core:sync";
+import "core:thread";
+import "core:time";
+
+gate: thread.Monitor(int);
+checks: sync.Atomic(int);
+finished: sync.Atomic(bool);
+
+watch :: proc(seconds: move int) {
+	foreach (_ in 0..<seconds * 100) {
+		if (finished.load()) { return; }
+		time.sleep(10 * time.MILLISECOND);
+	}
+	fmt.println("timed out");
+	os.exit(1);
+}
+
+fragile :: proc(value: ^int) -> bool {
+	checks.add(1);
+	if (value^ == 1) { panic("ready failed"); }
+	return false;
+}
+
+// Changes the value once the waiter is asleep, which wakes it.
+change :: proc() {
+	for (checks.load() < 1) {
+		time.sleep(time.MILLISECOND);
+	}
+	state := gate.lock();
+	state.get() = 1;
+}
+
+main :: proc() {
+	dog := thread.spawn(watch, 30);
+	changer := thread.spawn(change);
+	defer {
+		state := gate.lock();
+		fmt.println("relocked", state.read()^);
+		finished.store(true);
+	}
+	held := gate.lock_when(fragile);
+	fmt.println("not reached");
+}

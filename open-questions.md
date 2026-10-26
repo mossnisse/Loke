@@ -1167,7 +1167,7 @@ Incorporated into the revised [waiting proposal](concurrency-proposal.md#waiting
 which remains unimplemented. The review kept scoped joins, predicate waits,
 bounded channels, and endpoint destruction, and resolved these design findings:
 
-- [Monitors](concurrency-proposal.md#monitors) now require an explicit
+- [Monitors](standard-library.md#monitors) now require an explicit
   termination protocol. The controller example installs cleanup before spawn
   and handles both paused and playing states. Predicate repeatability,
   mutation, and wakeup dependencies are programmer obligations; read-only
@@ -1209,6 +1209,15 @@ Still open:
 - Selective cancellation, multi-object group cancellation, and multi-channel
   choice remain [later extensions](concurrency-proposal.md#later-extensions).
   Endpoint closure alone does not provide them or interrupt foreign waits.
+- A library getter whose `^T` result is rebuilt from untracked storage has no
+  declarative way to say that the result borrows its receiver: the rebuilt
+  pointer has unknown provenance, which proves nothing. The compiler asserts
+  it for `Shared(T).get` alone. `Monitor_Guard.read`, built with milestone 6,
+  calls through a plain procedure type instead, whose result derives from
+  every borrowed argument ([Procedure result contracts](design.md#procedure-result-contracts)),
+  so the borrow ends with the guard. Whether a declaration should state such a
+  contract, and replace the `Shared` special case, is open; the channel
+  endpoints of milestone 7 may need the same.
 
 ## Error handling (2026-10-13)
 

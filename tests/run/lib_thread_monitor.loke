@@ -1,0 +1,192 @@
+// standard-library "Monitors": a `Monitor`'s waiter sleeps until its
+// condition holds and sees every change made through a guard's `get`, a guard
+// used only through `read` wakes no one, a wakeup that changes nothing only
+// repeats the question, and `close` ends the waits whose condition is false
+// while a closed monitor can still be drained.
+//
+// The conditions count their questions in `checks`, which a real condition
+// must not do; the count shows when a waiter has asked and gone to sleep. A
+// watchdog ends the program if a wait never ends, so a lost wakeup fails the
+// test instead of hanging the suite.
+package main;
+
+import "core:fmt";
+import "core:os";
+import "core:sync";
+import "core:thread";
+import "core:time";
+
+checks: sync.Atomic(int);
+finished: sync.Atomic(bool);
+
+watch :: proc(seconds: move int) {
+	foreach (_ in 0..<seconds * 100) {
+		if (finished.load()) { return; }
+		time.sleep(10 * time.MILLISECOND);
+	}
+	fmt.println("timed out");
+	os.exit(1);
+}
+
+// Returns once `count` questions have been asked. Each is asked with the lock
+// held, and the waiter then sleeps, releasing it, or returns, so the next
+// `lock` finds it asleep or gone.
+await_checks :: proc(count: int) {
+	for (checks.load() < count) {
+		time.sleep(time.MILLISECOND);
+	}
+}
+
+// Two players take turns: each waits for its turn and hands it over, so every
+// round depends on a wakeup. A change racing a waiter's question would leave
+// both asleep.
+Table :: struct { next: int, rounds: int }
+
+play :: proc(table: ^thread.Monitor(Table), me: int, rounds: int) {
+	mine := proc(state: ^Table) -> bool capture(me) { return state.next == me; };
+	foreach (_ in 0..<rounds) {
+		state := table.lock_when(mine) or_else return;
+		state.get().next = 1 - me;
+		state.get().rounds += 1;
+	}
+}
+
+taking_turns :: proc() {
+	table: thread.Monitor(Table) = {};
+	parallel {
+		spawn play(&table, 0, 20000);
+		spawn play(&table, 1, 20000);
+	}
+	fmt.println("turns", table.value.rounds, table.value.next);
+}
+
+// Waits for the value to reach 3 and answers what it saw.
+reach_three :: proc(counter: ^thread.Monitor(int)) -> int {
+	three := proc(value: ^int) -> bool {
+		checks.add(1);
+		return value^ >= 3;
+	};
+	state := counter.lock_when(three) or_else return -1;
+	return state.read()^;
+}
+
+// Every change through `get` makes the waiter ask again, and a `get` that
+// writes nothing wakes it as a spurious wakeup does: it asks, answers `false`,
+// and sleeps again. A guard used only through `read` wakes no one.
+asking_again :: proc() {
+	checks.store(0);
+	counter: thread.Monitor(int) = {};
+	seen: int;
+	parallel {
+		spawn seen = reach_three(&counter);
+		await_checks(1);
+		{
+			state := counter.lock();
+			fmt.println("read", state.read()^);
+		}
+		time.sleep(50 * time.MILLISECOND);
+		fmt.println("after read", checks.load());
+		{
+			state := counter.lock();
+			state.get() += 1;
+		}
+		await_checks(2);
+		{
+			state := counter.lock();
+			_ = state.get();
+		}
+		await_checks(3);
+		{
+			state := counter.lock();
+			state.get() += 2;
+		}
+	}
+	fmt.println("seen", seen, "asked", checks.load() >= 4);
+}
+
+never :: proc(value: ^int) -> bool {
+	checks.add(1);
+	return false;
+}
+
+always :: proc(value: ^int) -> bool {
+	return true;
+}
+
+// Answers whether the wait ended in `.none`.
+wait_never :: proc(gate: ^thread.Monitor(int)) -> bool {
+	state := gate.lock_when(never);
+	switch (state) {
+	case .none: return true;
+	case .some(_): return false;
+	}
+}
+
+// `close` wakes every waiter whose condition is false and ends its wait; a
+// condition that holds still gets its guard, so what is left can be drained.
+closing :: proc() {
+	checks.store(0);
+	gate: thread.Monitor(int) = {};
+	first, second, third: bool;
+	parallel {
+		spawn first = wait_never(&gate);
+		spawn second = wait_never(&gate);
+		spawn third = wait_never(&gate);
+		await_checks(3);
+		{
+			state := gate.lock();
+			state.get() = 7;
+		}
+		gate.close();
+	}
+	fmt.println("closed", first, second, third);
+
+	gate.close();
+	drained := 0;
+	for (;;) {
+		positive := proc(value: ^int) -> bool { return value^ > 0; };
+		state := gate.lock_when(positive) or_else break;
+		state.get() -= 1;
+		drained += 1;
+	}
+	fmt.println("drained", drained, gate.value);
+	{
+		held := gate.lock_when(always);
+		switch (held) {
+		case .none: fmt.println("ready after close: none");
+		case .some(state): fmt.println("ready after close:", state.read()^);
+		}
+	}
+	{
+		state := gate.lock();
+		state.get() = 1;
+	}
+	fmt.println("lock after close", gate.value);
+}
+
+idle: thread.Monitor(int);
+
+// A zero monitor is open and holds the zero value, so it needs no initializer
+// at file scope; a condition that already holds answers at once.
+zero_value :: proc() {
+	{
+		state := idle.lock_when(proc(value: ^int) -> bool { return value^ == 0; }) or_else return;
+		state.get() = 4;
+	}
+	list: thread.Monitor([dynamic]int) = {};
+	{
+		state := list.lock();
+		state.get().append(idle.lock().read()^);
+	}
+	fmt.println("zero", list.value.len(), list.value[0]);
+}
+
+main :: proc() {
+	dog := thread.spawn(watch, 60);
+	zero_value();
+	taking_turns();
+	asking_again();
+	closing();
+	finished.store(true);
+	dog.join();
+}

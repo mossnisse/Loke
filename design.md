@@ -5880,7 +5880,7 @@ Callback effects are attributed as follows:
   procedure values obtained by any other means.
 
 The warning excludes `thread_local` storage, atomic operations, storage reached
-through a `thread.Mutex` guard, and [`@(synchronized)`](#synchronized) variables,
+through a `thread.Mutex` or `thread.Monitor` guard, and [`@(synchronized)`](#synchronized) variables,
 whose package vouches for every access. It cannot detect races outside the
 effect analysis, such as writes through pointers or views. In a `parallel`
 block, shared global writes are errors, and access through stored pointers and
@@ -6702,7 +6702,7 @@ The `try_` forms of allocating operations, `try_box`, `try_make`, and `unsafe.tr
 
 ## Concurrency and the memory model
 
-Threads, mutexes, channels, and thread pools are library facilities, and a [`parallel` block](#structured-concurrency) runs calls as tasks the language joins; reads and writes performed by any of them obey one language memory model. `core:thread` provides the first two; see [standard-library.md](standard-library.md) "`core:thread`".
+Threads, mutexes, monitors, channels, and thread pools are library facilities, and a [`parallel` block](#structured-concurrency) runs calls as tasks the language joins; reads and writes performed by any of them obey one language memory model. `core:thread` provides the first three; see [standard-library.md](standard-library.md) "`core:thread`".
 
 The **happens-before** relation combines ordinary
 [evaluation order](#evaluation-order), atomic synchronization (below), and these
@@ -6711,7 +6711,9 @@ thread synchronization rules:
 - A new thread's arguments are evaluated and transferred before its first operation.
 - At normal thread return, TLS destruction precedes the thread's final operation,
   which happens before a successful join returns.
-- A mutex unlock happens before the next successful lock of that mutex.
+- A mutex unlock happens before the next successful lock of that mutex. A
+  monitor's lock is a mutex in this sense, and a wait in its `lock_when`
+  unlocks it on sleeping and locks it again on waking.
 - A [`spawn`](#spawn-statements)'s callee, receiver, and arguments are evaluated
   before its task starts. Every task operation, including result assignment,
   argument cleanup, and TLS destruction, happens before the block's join completes.
@@ -6731,8 +6733,8 @@ The `core:sync` package provides `Atomic(T)` for booleans, integers, enums with 
   `core:sync`, reading, writing, or borrowing it requires exclusive access through
   an owner, `^mut`, `[]mut`, or `inout`. Read-only borrows cannot access it.
   Even an owner's read of `value` conflicts with a live read-only loan of the
-  atomic: another thread may write through that loan. `thread.Mutex(T)` applies
-  the same rule to its `value` field.
+  atomic: another thread may write through that loan. `thread.Mutex(T)` and
+  `thread.Monitor(T)` apply the same rule to their `value` fields.
 - `Atomic(T)` is move-only, because copying one is a non-atomic read that yields a second, unrelated atomic. `Once` holds an `Atomic` and is move-only by the same structural rule.
 
 Loke adopts the C++20 atomic ordering model, excluding dependency-ordered `consume`, as the normative model for atomics. The relevant rules are restated here so ordinary code does not need another language specification:
@@ -6963,7 +6965,7 @@ bump := proc() capture(&mut n) { n += 1; };
 parallel { spawn run(bump); }           // ERROR: a shared callable writes `n`; pass move(bump)
 ```
 
-Checked code writes through a read-only borrow only by an atomic operation or through a lock, and those reach [`@(synchronized)`](#synchronized) fields, whose plain access needs exclusive access to their record. So a task sharing an `Atomic(T)` or a `thread.Mutex(T)` through `^` may update it, and the parent may not read its `value` while it is lent:
+Checked code writes through a read-only borrow only by an atomic operation or through a lock, and those reach [`@(synchronized)`](#synchronized) fields, whose plain access needs exclusive access to their record. So a task sharing an `Atomic(T)`, a `thread.Mutex(T)`, or a `thread.Monitor(T)` through `^` may update it, and the parent may not read its `value` while it is lent:
 
 ```loke
 hits: sync.Atomic(int) = {};
@@ -7461,7 +7463,7 @@ The declaring package's own code is trusted to synchronize its accesses, as the 
 
 On a variable it says that the package vouches for every access to the variable and through the carriers stored in it, so a spawned entry's write to it is not reported as a likely race (see [Global write effects](#global-write-effects)), and a `parallel` block's tasks may use it (see [Globals while tasks run](#globals-while-tasks-run)). Since no variable is [public](#public), only the declaring package reaches one directly.
 
-`sync.Atomic(T).value` and `thread.Mutex(T).value` are synchronized, and so is the variable through which `core:log` publishes the selected logging provider.
+`sync.Atomic(T).value`, `thread.Mutex(T).value`, and `thread.Monitor(T).value` are synchronized, and so is the variable through which `core:log` publishes the selected logging provider.
 
 #### `@(thread_affine)`
 

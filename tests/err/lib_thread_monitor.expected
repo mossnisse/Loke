@@ -1,0 +1,19 @@
+L0512
+@12:2
+`state` cannot be dropped here: a read-only borrow of it is still in use
+
+L0512
+@19:2
+`state` cannot be dropped here: a mutable borrow of it is still in use
+
+L0511
+@26:9
+this access through a synchronized field of `gate` is not compatible with the read-only borrow of it that is still in use
+
+L0444
+@32:11
+does not satisfy `Callable(proc(^int) -> int, proc(^int) -> bool)`
+
+L0503
+@37:11
+`Monitor(int)` is move-only, so this binding cannot copy it

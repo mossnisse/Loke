@@ -20,7 +20,7 @@ Examples use Loke syntax; the API summaries use Odin-style declaration sketches.
 | Call foreign text APIs | [`core:cstrings`](#corecstrings), [`core:encoding/utf16`](#coreencodingutf16) |
 | Store integers in a fixed byte order | [`core:endian`](#coreendian) |
 | Access process state or start a child | [`core:os`](#coreos-additions), [`core:process`](#coreprocess) |
-| Start threads or protect shared state | [`core:thread`](#corethread) |
+| Start threads, protect shared state, or wait for it to change | [`core:thread`](#corethread) |
 | Use numeric functions and types | [`core:math`](#coremath) |
 | Draw random numbers, shuffle, sample, or get secret bytes | [`core:random`](#corerandom) |
 | Read clocks, work with dates, or print and parse ISO 8601 times | [`core:time`](#coretime) |
@@ -130,7 +130,7 @@ core:mem              allocators and regions                  *
 core:unsafe           explicit trust boundary                 *
 core:sync             atomics, fences, once                   *
 core:simd             cross-lane SIMD operations              *
-core:thread           threads and the mutex
+core:thread           threads, the mutex, and the monitor
 core:fmt              value formatting and process diagnostics
 core:strconv          scalar parsing
 core:strings          UTF-8 algorithms and String_Builder
@@ -331,9 +331,9 @@ the remaining arguments. For another sink, format in memory and call
 
 ## `core:thread`
 
-`core:thread` starts threads and guards what they share. It supplies the
-thread start, join, and unlock edges of design.md "Concurrency and the memory
-model".
+`core:thread` starts threads, guards what they share, and lets one wait for
+another to change it. It supplies the thread start, join, and unlock edges of
+design.md "Concurrency and the memory model".
 
 For work that ends before its caller continues, a `parallel` block is usually
 the better tool: its tasks may borrow the caller's locals, and the compiler
@@ -348,6 +348,12 @@ spawn(entry: proc()) -> Thread
 Thread.join(self: inout)
 Mutex(T).lock(self: ^) -> Guard(T)
 Guard(T).get(self: inout) -> inout T
+Monitor(T).lock(self: ^) -> Monitor_Guard(T)
+Monitor(T).lock_when(self: ^, ready: $C) -> Option(Monitor_Guard(T))
+    where interfaces.Callable(C, proc(value: ^T) -> bool)
+Monitor(T).close(self: ^)
+Monitor_Guard(T).get(self: inout) -> inout T
+Monitor_Guard(T).read(self: ^) -> ^T
 processor_count() -> int
 ```
 
@@ -383,11 +389,112 @@ processors, at least one. A program that divides work among threads, such as a
 test harness running a case per thread, sizes its pool by it.
 
 The compiler warns when a spawned entry writes file-scope or `static` storage
-(design.md "Global write effects"). Storage behind a `Mutex` or an `Atomic`,
+(design.md "Global write effects"). Storage behind a `Mutex`, a `Monitor`, or an `Atomic`,
 `thread_local` storage, and a `@(synchronized)` variable do not count. A wrapper
 whose own parameters are `@(cross_thread)` is checked and warned about as
 `spawn` is. A task of a `parallel` block that writes such storage is an error
 instead (design.md "Globals while tasks run").
+
+### Monitors
+
+`Monitor(T)` is a mutex whose holder can wait for the guarded value to reach a
+state: a worker waiting for a job, a render loop waiting to be unpaused. As
+`Mutex(T)` does, it owns its `T`; its zero value is unlocked and open and holds
+`T`'s zero; its operations take a read-only receiver, so it works in file-scope
+storage and behind a `Shared(T)`; its `value` field is `@(synchronized)`; and
+it is move-only. `lock`, and `get` on its guard, work as `Mutex`'s do. A
+`Mutex` stays the choice where no one waits for a state, since it keeps no
+wakeup bookkeeping.
+
+- `lock_when` locks and calls `ready` with the lock held. While `ready`
+  answers `false` and the monitor is open, the thread releases the lock and
+  sleeps in one step, then relocks and asks again when woken. Once `ready`
+  answers `true`, it returns the guard still holding the lock, so the state
+  `ready` saw is the state the guard reaches. Spurious wakeups only repeat the
+  question.
+- A guard on which `get` was called is marked **changed**, even if the caller
+  makes no change. Dropping a changed guard wakes every thread sleeping in
+  `lock_when` on that monitor, so a change made under the lock happens before
+  every waiter's next question, and none is missed when the obligations below
+  are kept. `read` answers the value read-only and leaves the guard unchanged;
+  dropping a guard used only through `read` wakes no one.
+- `close` is idempotent and wakes every waiter. From then on, a `lock_when`
+  whose `ready` answers `false` returns `.none` instead of sleeping; one whose
+  `ready` answers `true` still returns its guard, so a closed monitor can be
+  drained. `lock`, `get`, and `read` keep working, so cleanup can read what the
+  protocol left. `close` acquires the monitor's lock; calling it while holding
+  that lock never returns. Closing does not stop a loop whose condition stays
+  true, so that loop must also follow its termination protocol.
+- There is no wait on a guard already held. A waiter that changes the value
+  drops its guard and then calls `lock_when`, whose first question sees any
+  change made in between. The only release is a guard's drop, which ends every
+  borrow `get` and `read` handed out, so no borrow of the value survives the
+  lock.
+
+`ready` runs on the waiting thread with the lock held. It must answer the same
+for unchanged state, must not block, and must not change state or perform
+externally visible actions. It may use immutable captures. Every mutable
+dependency of its answer must be guarded by this monitor and changed through a
+guard on which `get` has been called. Reading an independently updated atomic
+or the current time does not arrange a wakeup, and neither does updating an
+atomic nested in `T` through `read`: either may leave a waiter asleep. These
+are the caller's obligations, not a purity effect the compiler checks. The
+ordinary checks on a callable argument still apply; they do not prove this
+protocol. A panic out of `ready` unwinds through `lock_when`, whose guard's
+drop releases the lock.
+
+```loke
+Transport :: struct { playing: bool, stopping: bool }
+
+can_render :: proc(transport: ^Transport) -> bool {
+	return transport.playing || transport.stopping;
+}
+
+render_loop :: proc(transport: ^thread.Monitor(Transport)) {
+	for (;;) {
+		state := transport.lock_when(can_render) or_else return;   // sleeps while paused
+		if (state.read().stopping) { return; }
+		drop(state);
+		render_block();
+	}
+}
+
+set_playing :: proc(transport: ^thread.Monitor(Transport), playing: bool) {
+	state := transport.lock();
+	state.get().playing = playing;   // dropping the changed guard wakes the loop
+}
+
+stop_render :: proc(transport: ^thread.Monitor(Transport)) {
+	{
+		state := transport.lock();
+		state.get().stopping = true;
+	}
+	transport.close();   // the guard has already released the lock
+}
+```
+
+A structured block keeps the monitor alive until its tasks finish, but the
+application's protocol must let them finish: dropping a borrow of the monitor
+does not close it, and a guard's drop does not say that no one will change its
+state again. The controller arranges termination before starting a waiter. For
+a controller running in the parent, the scope has this shape (the application
+supplies `user_controls` and `render_block`):
+
+```loke
+transport: thread.Monitor(Transport) = {};
+parallel {
+	defer stop_render(&transport);
+	spawn render_loop(&transport);
+	user_controls(&transport);   // termination cleanup runs before join on every exit
+}
+```
+
+The helper sets `stopping` as well as closing: closure alone only ends waits
+whose condition is false, and a playing loop's condition is already true. A
+controller running as another task needs its own termination cleanup when it
+must stop peers before the parent exits. A monitor makes no fairness or
+bounded-wakeup-latency guarantee. On Windows the lock is an SRWLOCK, as
+`Mutex`'s is, and the sleep a condition variable over it.
 
 ## `core:fmt`
 

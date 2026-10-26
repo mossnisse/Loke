@@ -1,0 +1,40 @@
+// standard-library "Monitors": what a `Monitor`'s guard hands out ends
+// with the guard, so no borrow of the value survives the lock; `value` is
+// synchronized, so it is not read while a guard borrows the monitor; a
+// condition must take a `^T` and answer a `bool`; and a monitor is move-only.
+package main;
+
+import "core:thread";
+
+read_after_unlock :: proc(gate: ^thread.Monitor(int)) -> int {
+	state := gate.lock();
+	seen := state.read();
+	drop(state);
+	return seen^;
+}
+
+get_after_unlock :: proc(gate: ^thread.Monitor([dynamic]int)) {
+	state := gate.lock();
+	list := &mut state.get();
+	drop(state);
+	list.append(1);
+}
+
+value_while_locked :: proc() -> int {
+	gate: thread.Monitor(int) = {};
+	state := gate.lock();
+	return gate.value;
+}
+
+wrong_result :: proc(value: ^int) -> int { return value^; }
+
+wrong_condition :: proc(gate: ^thread.Monitor(int)) {
+	state := gate.lock_when(wrong_result);
+}
+
+copied :: proc() {
+	gate: thread.Monitor(int) = {};
+	other := gate;
+}
+
+main :: proc() {}

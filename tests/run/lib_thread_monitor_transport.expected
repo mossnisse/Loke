@@ -1,0 +1,11 @@
+Fail_At_Once
+renderer: stopping
+session: Device_Lost
+Pause
+paused: true
+renderer: stopping
+session: ok
+Keep_Playing
+playing: true
+renderer: stopping
+session: ok

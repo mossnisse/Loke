@@ -1,7 +1,7 @@
-/// Threads, and the mutex that guards what they share.
+/// Threads, and the mutexes and monitors that guard what they share.
 ///
 /// `spawn` and `join` supply the thread start and join edges of happens-before,
-/// and `Mutex` the unlock-to-lock edge.
+/// and `Mutex` and `Monitor` the unlock-to-lock edge.
 // standard-library "`core:thread`", design.md "Concurrency and the memory
 // model".
 //
@@ -10,6 +10,7 @@
 @(public)
 package thread;
 
+import "base:interfaces";
 import "core:sync";
 import "core:unsafe";
 
@@ -34,6 +35,10 @@ foreign kernel32 {
 	rt_lock :: proc "stdcall" (lock: rawptr) ---;
 	@(link_name="ReleaseSRWLockExclusive")
 	rt_unlock :: proc "stdcall" (lock: rawptr) ---;
+	@(link_name="SleepConditionVariableSRW")
+	rt_sleep :: proc "stdcall" (condition: rawptr, lock: rawptr, milliseconds: u32, flags: u32) -> i32 ---;
+	@(link_name="WakeAllConditionVariable")
+	rt_wake_all :: proc "stdcall" (condition: rawptr) ---;
 	@(link_name="GetActiveProcessorCount")
 	rt_processor_count :: proc "stdcall" (group: u16) -> u32 ---;
 }
@@ -237,5 +242,126 @@ impl Guard($T) {
 	@(private)
 	unlock :: hook(drop) proc(self: inout) {
 		rt_unlock(rawptr(&self.mutex.word.value));
+	}
+}
+
+/// A `T` that one thread at a time may reach, whose holder can wait for it to
+/// reach a state. `lock` and the guard work as `Mutex`'s do; `lock_when` waits
+/// until `ready` answers `true` for the value, and `close` ends every such wait.
+///
+/// Dropping a guard on which `get` was called wakes every thread waiting in
+/// `lock_when`, so a waiter checks its condition again after every change made
+/// under the lock. A guard used only through `read` wakes no one. A `Mutex` is
+/// the choice where no one waits for a state.
+///
+/// Its zero value is unlocked and open and holds `T`'s zero. Every operation
+/// takes a read-only `^` receiver, so a `Monitor` works in file-scope storage
+/// and behind a `Shared(T)`. It is move-only.
+// standard-library "Monitors". Move-only, as `Mutex` is, because its lock
+// and condition words are `Atomic`s.
+Monitor :: struct($T: type) {
+	// A Windows SRWLOCK, as `Mutex`'s is.
+	@(private) word: sync.Atomic(uintptr),
+	// A Windows CONDITION_VARIABLE over `word`: one pointer, ready at zero,
+	// written only by the system's own atomic operations.
+	@(private) wake: sync.Atomic(uintptr),
+	// Written by `close` and read by `lock_when`, both under the lock; atomic
+	// only because they reach it through `^`.
+	@(private) closed: sync.Atomic(bool),
+	/// For a caller that owns the monitor outright, before spawning or after
+	/// joining, which needs no lock. Synchronized, as `Mutex`'s `value` is.
+	@(synchronized) value: T,
+}
+
+impl Monitor($T) {
+	/// Locking a monitor this thread already holds never returns.
+	lock :: proc(self: ^) -> Monitor_Guard(T) {
+		rt_lock(rawptr(&self.word.value));
+		return Monitor_Guard(T){monitor = self};
+	}
+
+	/// Locks once `ready` answers `true` for the value, and answers the guard
+	/// still holding the lock, so the state `ready` saw is the state the guard
+	/// reaches. While `ready` answers `false` and the monitor is open, the
+	/// thread releases the lock and sleeps in one step, then relocks and asks
+	/// again when woken; a spurious wakeup only repeats the question. Once the
+	/// monitor is closed, a `false` answer returns `.none` instead of sleeping.
+	///
+	/// `ready` runs on this thread with the lock held. It must answer the same
+	/// for unchanged state, must not block, and must change nothing. Every
+	/// mutable input to its answer must be guarded by this monitor and changed
+	/// through a guard's `get`: nothing else wakes a waiter. The compiler does
+	/// not check this.
+	// The question and the sleep both happen with the lock held, and the sleep
+	// releases it atomically, so a change made between them is impossible: it
+	// waits for the lock until this thread is asleep and registered to be woken.
+	lock_when :: proc(self: ^, ready: $C) -> Option(Monitor_Guard(T))
+		where interfaces.Callable(C, proc(value: ^T) -> bool) {
+		// A panic out of `ready` drops the guard on the unwind, unlocking.
+		guard := self.lock();
+		for (;;) {
+			if (ready(guard.read())) { return .some(move(guard)); }
+			if (self.closed.load()) { return .none; }
+			rt_sleep(rawptr(&self.wake.value), rawptr(&self.word.value), INFINITE, 0);
+		}
+	}
+
+	/// Closes the monitor and wakes every waiter. From then on a `lock_when`
+	/// whose `ready` answers `false` returns `.none`; one whose `ready` answers
+	/// `true` still returns its guard, so a closed monitor can be drained.
+	/// `lock` and the guards keep working. Closing again does nothing more.
+	///
+	/// `close` takes the lock: calling it while this thread holds it never
+	/// returns. Closing does not stop a waiter whose `ready` stays `true`.
+	close :: proc(self: ^) {
+		rt_lock(rawptr(&self.word.value));
+		self.closed.store(true);
+		rt_unlock(rawptr(&self.word.value));
+		rt_wake_all(rawptr(&self.wake.value));
+	}
+}
+
+/// The pointer borrows the monitor, so it cannot move or end while locked.
+Monitor_Guard :: move_only struct($T: type) {
+	@(private) monitor: ^Monitor(T),
+	// Whether `get` was called, so dropping the guard wakes the waiters.
+	@(private) changed: bool,
+}
+
+impl Monitor_Guard($T) {
+	/// The guarded value, for as long as this guard holds the lock, as
+	/// `Guard.get` answers it. Calling it marks the guard changed, whether or
+	/// not the caller writes, so dropping the guard wakes every waiter.
+	get :: proc(self: inout) -> inout T {
+		self.changed = true;
+		return inout (^mut T)(rawptr(&self.monitor.value))^;
+	}
+
+	/// The guarded value, read-only, for as long as this guard holds the lock.
+	/// It leaves the guard unchanged, so dropping it wakes no one; an atomic
+	/// updated through it wakes no one either.
+	read :: proc(self: ^) -> ^T {
+		// A pointer rebuilt from a `rawptr` has no checked provenance, so the
+		// call goes through a plain procedure type, whose result derives from
+		// its borrowed argument (design.md "Procedure result contracts"): the
+		// result borrows this guard and cannot outlive the lock.
+		reach: proc(guard: ^Monitor_Guard(T)) -> ^T = Monitor_Guard(T).value_of;
+		return reach(self);
+	}
+
+	@(private)
+	value_of :: proc(guard: ^Monitor_Guard(T)) -> ^T {
+		return (^T)(rawptr(&guard.monitor.value));
+	}
+
+	// The waiters are woken after the unlock, so each can take the lock at
+	// once. None is missed: a sleeping waiter registered before it released
+	// the lock this guard then took.
+	@(private)
+	unlock :: hook(drop) proc(self: inout) {
+		rt_unlock(rawptr(&self.monitor.word.value));
+		if (self.changed) {
+			rt_wake_all(rawptr(&self.monitor.wake.value));
+		}
 	}
 }

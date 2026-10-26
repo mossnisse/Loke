@@ -1,0 +1,129 @@
+// standard-library "Monitors": the controller shutdown of a render loop
+// waiting on a `Monitor`, with a stand-in renderer. The parent installs the
+// termination cleanup before starting the waiter, so the loop ends on every
+// exit: when the controls fail at once while it is paused, when they return
+// while it is paused, and when they return while it plays, which it learns
+// only from `stopping`, since its condition already holds.
+//
+// The condition counts its refusals, which a real condition must not do; the
+// count shows when the loop has gone to sleep. A watchdog ends the program if
+// a wait never ends.
+package main;
+
+import "core:fmt";
+import "core:os";
+import "core:sync";
+import "core:thread";
+import "core:time";
+
+finished: sync.Atomic(bool);
+rendered: sync.Atomic(int);
+refusals: sync.Atomic(int);
+
+watch :: proc(seconds: move int) {
+	foreach (_ in 0..<seconds * 100) {
+		if (finished.load()) { return; }
+		time.sleep(10 * time.MILLISECOND);
+	}
+	fmt.println("timed out");
+	os.exit(1);
+}
+
+await_count :: proc(count: ^sync.Atomic(int), target: int) {
+	for (count.load() < target) {
+		time.sleep(time.MILLISECOND);
+	}
+}
+
+Transport :: struct { playing: bool, stopping: bool }
+
+can_render :: proc(transport: ^Transport) -> bool {
+	ready := transport.playing || transport.stopping;
+	if (!ready) { refusals.add(1); }
+	return ready;
+}
+
+render_block :: proc() {
+	rendered.add(1);
+}
+
+render_loop :: proc(transport: ^thread.Monitor(Transport)) {
+	for (;;) {
+		// Closed with the condition false; `stopping` makes it true first.
+		state := transport.lock_when(can_render) or_else return;
+		if (state.read().stopping) {
+			fmt.println("renderer: stopping");
+			return;
+		}
+		drop(state);
+		render_block();
+	}
+}
+
+set_playing :: proc(transport: ^thread.Monitor(Transport), playing: bool) {
+	state := transport.lock();
+	state.get().playing = playing;
+}
+
+stop_render :: proc(transport: ^thread.Monitor(Transport)) {
+	{
+		state := transport.lock();
+		state.get().stopping = true;
+	}
+	transport.close();
+}
+
+Control_Error :: enum { Device_Lost }
+
+Plan :: enum { Fail_At_Once, Pause, Keep_Playing }
+
+user_controls :: proc(transport: ^thread.Monitor(Transport), plan: Plan) -> Status(Control_Error) {
+	switch (plan) {
+	case .Fail_At_Once:
+		// The renderer starts paused; fail once it is asleep.
+		await_count(&refusals, 1);
+		return .err(.Device_Lost);
+	case .Pause:
+		set_playing(transport, true);
+		await_count(&rendered, 100);
+		// No refusal happens while playing, so the next one is the loop seeing
+		// the pause; it then sleeps, and nothing more is rendered.
+		before := refusals.load();
+		set_playing(transport, false);
+		await_count(&refusals, before + 1);
+		blocks := rendered.load();
+		time.sleep(20 * time.MILLISECOND);
+		fmt.println("paused:", rendered.load() == blocks);
+	case .Keep_Playing:
+		set_playing(transport, true);
+		await_count(&rendered, 100);
+		fmt.println("playing:", rendered.load() >= 100);
+	}
+	return .ok;
+}
+
+run_session :: proc(plan: Plan) -> Status(Control_Error) {
+	rendered.store(0);
+	refusals.store(0);
+	transport: thread.Monitor(Transport) = {};
+	parallel {
+		defer stop_render(&transport);
+		spawn render_loop(&transport);
+		user_controls(&transport, plan) or_return;   // cleanup runs before the join on every exit
+	}
+	return .ok;
+}
+
+main :: proc() {
+	dog := thread.spawn(watch, 60);
+	foreach (plan in [?]Plan{.Fail_At_Once, .Pause, .Keep_Playing}) {
+		fmt.println(plan);
+		result := run_session(plan);
+		switch (result) {
+		case .ok: fmt.println("session: ok");
+		case .err(error): fmt.println("session:", error);
+		}
+	}
+	finished.store(true);
+	dog.join();
+}

@@ -110,9 +110,38 @@ which also hid an entry the wrapper named itself.
 before spawning or after joining, pays for no synchronization.
 [`@(synchronized)`](design.md#synchronized) keeps that access from reaching a
 borrowed one, where an atomic operation through another read-only loan may be
-writing it. It is an attribute, not a list of types, so the channel and
-monitor state planned for [structured concurrency](concurrency-proposal.md)
+writing it. It is an attribute, not a list of types, so `Monitor` and the
+channel state planned for [structured concurrency](concurrency-proposal.md)
 need no compiler change.
+
+### Waiting on a condition, not a signal
+
+A condition variable asks for three things at every use: a loop around the
+wait that checks the condition again, an unlock and sleep that happen as one
+step, and a notification after every change the condition depends on.
+Forgetting the loop acts on a spurious wakeup, and forgetting a notification
+leaves a waiter asleep, often only under load.
+[`Monitor(T)`](standard-library.md#monitors) packages all three: `lock_when`
+takes the condition and owns the loop and the sleep, and dropping a guard on
+which `get` was called notifies. There is no notification to forget, only the
+condition's own obligations, which stay the caller's: read-only access does
+not prove that the condition is repeatable or that every input to it changes
+under the lock, and a purity effect to prove it is not justified without
+evidence.
+
+`get` marks the guard changed whether or not the caller writes, because the
+`inout` result it lends can be written anywhere. Waking every waiter on each
+change is the initial cost: each checks its condition and most sleep again.
+Targeted wakeups are a [later extension](concurrency-proposal.md#later-extensions)
+that must still wake every waiter whose condition may have become true.
+
+A guard's drop releases the lock, but it does not say that no one will change
+the state again, so a monitor needs an explicit termination transition or
+`close`. That keeps the monitor apart from channels, where dropping the last
+endpoint on a side does say a peer has gone. `close` ends only waits whose
+condition is false: a waiter whose condition still holds gets its guard, so a
+closed monitor can be drained, and a loop that must stop also reads a state
+such as `stopping`.
 
 ### Tasks that borrow, joined by their block
 
