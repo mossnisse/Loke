@@ -1,0 +1,59 @@
+L0731
+@36:13
+`call_plain` may write `hits`, which every task and the parent share
+
+L0731
+@44:13
+`call_u16` may write `hits`, which every task and the parent share
+
+L0731
+@61:13
+`call_slot` may write `hits`, which every task and the parent share
+
+L0731
+@70:13
+`call_field` may write `hits`, which every task and the parent share
+
+L0731
+@77:13
+`call_i8` reaches through `view`, which every task and the parent share: `view` holds `[]mut int`, through which another thread may write as well
+
+L0731
+@94:13
+`call_u8` may write `hits`, which every task and the parent share
+
+L0732
+@109:3
+this task may use `arena`'s allocator, which a task started earlier reserves until the join
+
+L0732
+@130:3
+this task may use an allocator region this procedure cannot tell apart from it, which a task started earlier reserves until the join
+
+L0729
+@142:18
+`dyn proc(i16)` reaches `^mut int`, so a task sharing it could write what the parent reaches too: move it into the task, or pass the mutable borrow itself
+
+L0729
+@143:18
+`dyn proc(i16)` reaches `^mut int`, so a task sharing it could write what the parent reaches too: move it into the task, or pass the mutable borrow itself
+
+L0729
+@159:28
+`dyn proc(i64)` hides what it captures, so a task may share it only as its own: move it into the task
+
+L0724
+@172:28
+`dyn proc(f32)` holds or reaches `Window`, which is `@(thread_affine)`, so it cannot cross to another thread
+
+L0724
+@178:30
+`proc() capture(&w)` holds or reaches `Window`, which is `@(thread_affine)`, so it cannot cross to another thread
+
+L0733
+@187:2
+`send` is kept past this join while it borrows `jobs`, which a task of the block borrows too; dropping it may be what the task waits for
+
+L0512
+@211:2
+`buffer` cannot be modified by `call_f64`, which this join may run on this thread, here: a read-only slice of it is still in use

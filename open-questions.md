@@ -1385,6 +1385,39 @@ Still open:
   target. The spare slot is for simpler arithmetic, not demonstrated higher
   speed.
 
+### Indirect calls inside tasks (2026-10-26)
+
+Before letting a spawned call itself be indirect
+([milestone 10](concurrency-proposal.md#milestone-10-indirect-spawned-calls)),
+`tests/err/parallel_indirect_calls.loke` spawns hand-written wrappers that
+call a procedure value, a `dyn proc` view, a capture literal, a `dyn` slot,
+or a procedure read from a field, one case per task check;
+`tests/err/parallel_written_back.loke` already covered a `thread_local`
+borrow a callback leaves or returns. Every check rejects through every one
+of them: global writes and reach, allocator reservation, sharing, thread
+affinity, the join check, and a pooled task's `thread_local` writes. So the
+whole-program unions already lose no fact a task check needs. What the spike
+found instead:
+
+- **The write and reach unions are per parameter, not per call.** A
+  wrapper's parameter may hold any procedure passed to it anywhere in the
+  program, so a spawn passing a procedure that writes nothing is rejected
+  when an unrelated serial call passes the same wrapper one that writes a
+  global. The `thread_local` borrow a callback leaves is substituted per
+  call instead, so the two analyses differ in precision. A spawned call
+  that is itself indirect would inherit the coarser one.
+- **A rejection does not name the body responsible.** L0731 says that
+  `call_plain` may write `hits`, but not that it is `record_hit`, passed
+  as `f`, that writes it; a direct helper gets a "through" note. Under a
+  union, that body may be in another package.
+- **L0729's advice cannot be followed for a `dyn proc` parameter.** For a
+  view reaching a `&mut` capture it says to move the callable into the
+  task, but `spawn run(move(bump))` with `run :: proc(f: dyn proc())` then
+  views a temporary, which [Spawn statements](design.md#spawn-statements)
+  rejects (L0513). Only a generic callable parameter takes the moved
+  literal. A writing capture literal reaches a task through a `dyn proc`
+  only once a [mutable callable view](#a-mutable-callable-view) exists.
+
 ### Parameters a join check cannot tell apart (2026-10-26)
 
 Writing `examples/mixer.loke` for milestone 9 found that the

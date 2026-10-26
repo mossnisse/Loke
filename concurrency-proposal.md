@@ -568,6 +568,14 @@ same.
 Extend callable support only after summaries preserve every needed fact
 ([later extension](#later-extensions) 1).
 
+A spike for this, `tests/err/parallel_indirect_calls.loke`, spawns
+hand-written wrappers that make the indirect call themselves, one case per
+task check. Every check already rejects through procedure values, `dyn proc`
+views, capture literals, `dyn` slots, and procedures read from fields.
+[Indirect calls inside tasks](open-questions.md#indirect-calls-inside-tasks-2026-10-26)
+records what that means for this milestone, and the precision and diagnostic
+gaps it found.
+
 Once callable summaries are supported, scoped spawning can also accommodate
 the thread worker named under
 [What a capture literal's `call` cannot do](open-questions.md#what-a-capture-literals-call-cannot-do):
