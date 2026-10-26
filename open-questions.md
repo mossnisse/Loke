@@ -1038,10 +1038,10 @@ Still open:
   thread contracts, checked lazy initialization, timed waits, selective
   cancellation, unscoped channels, and targeted wakeups.
 - Whether the [waiting design](concurrency-proposal.md#waiting-for-work),
-  revised on 2026-10-26 to end waits by re-checked conditions and endpoint
-  drops instead of stop tokens and notification, holds up once built: its
-  costs are a wakeup of every monitor waiter per change, and a channel side
-  that closes for good when its endpoint count first falls to zero.
+  revised on 2026-10-26 with paired channel setup and explicit monitor
+  termination, holds up once built: measure wake-all costs and conservative
+  join-check rejections. The [waiting review](#waiting-and-ownership-review-2026-10-26)
+  records the incorporated findings and remaining validation work.
 
 ### Structured concurrency proposal review (2026-10-22)
 
@@ -1160,6 +1160,55 @@ Open, to settle with evidence during the milestones:
 - The reach effect rejects a `dyn` or `any_view` stored in a global even when
   only read, since an erased value hides captures that may write. Whether the
   witness union could accept read-only `dyn` registries is open.
+
+### Waiting and ownership review (2026-10-26)
+
+Incorporated into the revised [waiting proposal](concurrency-proposal.md#waiting-for-work),
+which remains unimplemented. The review kept scoped joins, predicate waits,
+bounded channels, and endpoint destruction, and resolved these design findings:
+
+- [Monitors](concurrency-proposal.md#monitors) now require an explicit
+  termination protocol. The controller example installs cleanup before spawn
+  and handles both paused and playing states. Predicate repeatability,
+  mutation, and wakeup dependencies are programmer obligations; read-only
+  access is not claimed to prove purity.
+- [Channels](concurrency-proposal.md#channels) establish both initial endpoints
+  with one `split`. Move-only endpoints use explicit `fork` to add participants,
+  keeping generated `clone` semantics unchanged. The lifecycle table decides
+  closure, draining, zero values, FIFO ordering, error precedence, and item
+  destruction. The worker example drops its setup receiver before sending.
+- The [join check](concurrency-proposal.md#releasing-before-the-join) covers
+  parameters, wrappers, containers, nested blocks, result slots, and writebacks.
+  Closing a retained endpoint is not a static exemption. This is a conservative
+  check for values retained across a join, not a general termination proof.
+- The deferred [ring](concurrency-proposal.md#real-time-handoff) has exclusive
+  endpoint operations and only a polling API. It has no public close or
+  blocking wakeup path in its initial form. Moving an endpoint sequentially
+  between threads remains possible.
+- [Pools](concurrency-proposal.md#pools) remain a separate compute feature.
+  Helping is limited to workers of the selected pool and the subtree of the
+  block they are joining, matching the permitted TLS effects. The mixer is
+  explicitly a paced worker, not a hard real-time callback.
+
+The [implementation plan](concurrency-proposal.md#implementation-plan) adds
+startup/early-exit coverage, ownership checks, and bounded liveness harnesses.
+Delivery proceeds through monitors and channels, then compute pools; the ring
+is not a prerequisite. No compiler or runtime behavior changed with this
+proposal revision.
+
+Still open:
+
+- Before the deferred ring milestone, write and validate the exact atomic
+  algorithm, progress bound, final-publication/closure ordering, and counter
+  wraparound. Prove its endpoint API is expressible with existing borrow
+  rules before implementing the queue. Blocking adaptation needs a separate
+  registration/recheck protocol and timing contract.
+- Measure the monitor's wake-all cost and the join check's conservative
+  rejections on real pipelines. Neither justifies a purity effect system or
+  interprocedural closed-state analysis without evidence.
+- Selective cancellation, multi-object group cancellation, and multi-channel
+  choice remain [later extensions](concurrency-proposal.md#later-extensions).
+  Endpoint closure alone does not provide them or interrupt foreign waits.
 
 ## Error handling (2026-10-13)
 

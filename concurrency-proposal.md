@@ -14,9 +14,11 @@ standard-library.md in the same commit as the compiler change, as
 
 The reviews that shaped the design are recorded in open-questions.md, from
 [Thread transfer needs a visible contract](open-questions.md#thread-transfer-needs-a-visible-contract)
-on. The waiting design was revised on 2026-10-26, before any of it was built:
-an earlier draft passed a stop token to every blocking call and woke waiters
-by explicit notification.
+on. The [waiting review](open-questions.md#waiting-and-ownership-review-2026-10-26)
+was incorporated on 2026-10-26, before any of these additions were built.
+The first delivery is monitors and channels, followed independently by compute
+pools. The ring is deferred. Earlier drafts used stop tokens for every wait,
+then independent endpoint factories and a stronger automatic-shutdown claim.
 [Why waits end by ownership](#why-waits-end-by-ownership) says what changed
 and why.
 
@@ -47,33 +49,32 @@ room, an audio loop taking the commands a user interface sends it. Each
 addition is checked as
 [Structured concurrency](design.md#structured-concurrency) checks a task.
 
-One rule governs every wait here: **a wait ends when what it waits for holds,
-or when nothing remains that could make it hold.** Two properties give that
-rule without the programmer's help:
+**Structured concurrency keeps borrowed storage alive until tasks finish;
+the application's protocol must let those tasks finish.** The waiting types
+make common protocols easier to get right:
 
 - **A waiter checks a condition, not a signal.** A monitor wait names a
-  predicate over the guarded value, and every change made under the lock
-  wakes the waiters to check it again. There is no notification to forget, or
-  to send before the waiter sleeps.
+  predicate over the guarded value, and dropping a guard used for mutation
+  wakes the waiters to check it again. Under the predicate contract below,
+  there is no separate notification to forget.
 - **A participant's end is an ownership event.** A task's arguments are
   dropped when its call returns, on every path, and the parent's block locals
   and defers are cleaned up before the join
-  ([Parallel blocks](design.md#parallel-blocks)). A channel endpoint or a
-  guard dropped there releases the threads waiting on it. A producer that
-  finishes, a consumer that fails, and a parent that leaves early by
-  `or_return` all end the waits on them the same way, with no token to pass
-  and no `errdefer` to write.
+  ([Parallel blocks](design.md#parallel-blocks)). Dropping the last channel
+  endpoint on a side closes that side and wakes its peers. A monitor guard's
+  drop releases its lock, but does not say that no one will change its state
+  again: a monitor needs an explicit termination transition or `close`.
 
-The compiler checks the one case ownership cannot settle: a value released
-only after the join that waits for its waiters
-([Releasing before the join](#releasing-before-the-join)).
+The [join check](#releasing-before-the-join) rejects retained guards and
+endpoints that may prevent a join. It is conservative, not a proof of
+termination or a mechanism for cancelling a group of tasks.
 
 ### Monitors
 
 `Monitor(T)` is a mutex whose holder can wait for the guarded value to reach a
 state. As `Mutex(T)` does, it owns its `T`; its zero value is unlocked and
-open and holds `T`'s zero; its operations take a read-only receiver, so it
-works in file-scope storage and behind a `Shared(T)`; its `value` field is
+open and holds `T`'s zero when `T` has one; its operations take a read-only
+receiver, so it works in file-scope storage and behind a `Shared(T)`; its `value` field is
 `@(synchronized)`; and it is move-only. A `Mutex` stays the choice where no
 one waits for a state, since it keeps no wakeup bookkeeping.
 
@@ -92,20 +93,30 @@ Monitor_Guard(T).read(self: ^) -> ^T
   answers `true`, it returns the guard still holding the lock, so the state
   `ready` saw is the state the guard reaches. Spurious wakeups only repeat the
   check.
-- A guard on which `get` was called has **changed** the value. Dropping a
-  changed guard wakes every thread sleeping in `lock_when` on that monitor, so
+- A guard on which `get` was called is marked **changed**, even if the caller
+  makes no change. Dropping a changed guard wakes every thread sleeping in
+  `lock_when` on that monitor, so
   a change made under the lock happens before every waiter's next check, and
-  none is missed. `read` reaches the value without changing it, and dropping
-  a guard used only through `read` wakes no one.
+  none is missed when the protocol below is followed. Dropping a guard used
+  only through `read` wakes no one.
 - `close` is idempotent and wakes every waiter. From then on, a `lock_when`
   whose `ready` answers `false` returns `.none` instead of sleeping; one whose
   `ready` answers `true` still returns its guard, so a closed monitor can be
   drained. `lock`, `get`, and `read` keep working, so cleanup can read what the
-  protocol left.
-- `ready` reaches the value only through `^T`, and its effects are checked as
-  other callbacks' are. It runs on the waiting thread with the lock held, so it
-  must not lock the same monitor: as with `Mutex`, relocking from the holding
-  thread never returns.
+  protocol left. `close` acquires the monitor's lock; calling it while holding
+  that lock never returns. Closure does not force a loop whose predicate stays
+  true to stop, so that loop must also follow its termination protocol.
+- `ready` runs on the waiting thread with the lock held. It must be repeatable
+  for unchanged state, must not block, and must not mutate state or perform
+  externally visible actions. It may use immutable captures. Every mutable
+  dependency of its answer must be protected by this monitor and changed
+  through a guard on which `get` has been called. Reading an independently
+  updated atomic or the current time does not arrange a wakeup.
+- These are programmer obligations, not a new purity effect checked by the
+  compiler. A `^T` still permits synchronized operations. Updating an atomic
+  nested in `T` through `read`, or changing an external dependency, violates
+  the notification protocol and may leave a waiter asleep. Ordinary callback
+  borrow and effect checks still apply; they do not prove this protocol.
 - There is no wait on a guard already held. A waiter that changes the value
   drops its guard and then calls `lock_when`, whose first check sees any change
   made in between. The only release is a guard's drop, which ends every borrow
@@ -131,7 +142,34 @@ set_playing :: proc(transport: ^thread.Monitor(Transport), playing: bool) {
 	state := transport.lock();
 	state.get().playing = playing;   // dropping the changed guard wakes the loop
 }
+
+stop_render :: proc(transport: ^thread.Monitor(Transport)) {
+	{
+		state := transport.lock();
+		state.get().stopping = true;
+	}
+	transport.close();   // the guard has already released the lock
+}
 ```
+
+The controller must arrange termination before starting a waiter. For a
+controller running in the parent, the scope has this shape (the application
+supplies `user_controls` and `render_block`):
+
+```loke
+transport: thread.Monitor(Transport) = {};
+parallel {
+	defer stop_render(&transport);
+	spawn render_loop(&transport);
+	user_controls(&transport);   // termination cleanup runs before join on every exit
+}
+```
+
+The helper sets `stopping` as well as closing: closure alone only ends waits
+whose predicate is false. A controller running as another task needs its
+own termination cleanup when it must stop peers before the parent exits.
+Dropping a borrow of the monitor does not close it. There is no fairness or
+bounded-wakeup-latency guarantee.
 
 ### Channels
 
@@ -143,11 +181,12 @@ a `Sender(T)` sends and a `Receiver(T)` receives.
 
 ```text
 Channel(T).init(capacity: int) -> Channel(T)
-Channel(T).sender(self: ^) -> Sender(T)
-Channel(T).receiver(self: ^) -> Receiver(T)
+Channel(T).split(self: ^) -> (sender: Sender(T), receiver: Receiver(T))
 Channel(T).close(self: ^)
-Sender(T).send(self: ^, value: move T) -> Status(Unsent(T))
-Sender(T).try_send(self: ^, value: move T) -> Status(Unsent(T))
+Sender(T).fork(self: ^) -> Sender(T)
+Receiver(T).fork(self: ^) -> Receiver(T)
+Sender(T).send(self: ^, @(cross_thread, escape=static) value: move T) -> Status(Unsent(T))
+Sender(T).try_send(self: ^, @(cross_thread, escape=static) value: move T) -> Status(Unsent(T))
 Receiver(T).receive(self: ^) -> Option(T)
 Receiver(T).try_receive(self: ^) -> Received(T)
 
@@ -155,42 +194,89 @@ Unsent   :: union($T: type) { closed: T, full: T }
 Received :: union($T: type) { item: T, empty, closed }
 ```
 
-Each side of a channel is open until it **closes**, and a closed side never
-reopens:
+`Channel`, `Sender`, and `Receiver` have no zero value. The endpoints are
+move-only: ordinary assignment transfers them only under the ordinary move
+rules, and implicit copying and generated `clone` are unavailable. `fork`
+explicitly creates an additional endpoint of the same side, incrementing its
+count without allocating. Its result borrows the channel, not the source
+endpoint, so it can outlive that endpoint. Endpoints may be shared through
+read-only borrows: queue operations serialize under the channel's lock.
 
-- The receiving side closes when its last receiver ends, once one has been
-  made, or when `close` is called. From then on no send succeeds. Items
-  already queued stay until the channel is dropped.
-- The sending side closes when its last sender ends, once one has been made,
-  or when `close` is called. Receivers then take what is queued; once it is
-  empty, `receive` returns `.none` and `try_receive` returns `.closed`.
+`split` is a one-time operation that creates both initial endpoints together,
+under the same lock. There is no state in which a task has an endpoint but
+the opposite side has never had one. Calling `split` again, or after `close`,
+is a programmer error and panics. A channel's lifecycle is:
+
+| Event | Sending side | Receiving side | Queue and waiters |
+| --- | --- | --- | --- |
+| `init` | not established | not established | empty; no endpoint operations possible |
+| first `split` | open, one sender | open, one receiver | both endpoints become owned together |
+| `fork` | increments sender count if a sender | increments receiver count if a receiver | no change to closure or items |
+| last sender drops | permanently closed | unchanged | wake receivers; drain committed items, then end-of-stream |
+| last receiver drops | unchanged | permanently closed | wake senders; all subsequent sends fail |
+| `close` | permanently closed | permanently closed | wake all waiters; sends fail, existing receivers may drain |
+| channel drops | no endpoints remain | no endpoints remain | drop all remaining items and free the queue |
+
+A closed side never reopens. Forking a still-owned endpoint after explicit
+closure is allowed, but produces another closed endpoint and does not restore
+communication. Count updates, closure, and queue operations share the lock;
+count overflow panics before changing the count. `close` before `split` is
+allowed and permanently prevents splitting. Moves do not change counts.
 
 The operations:
 
-- `send` waits while the queue is full and the receiving side is open. On
+- `send` waits while the queue is full and both sides are open. On
   success the queue owns the item; on failure `Unsent(T)` owns it, and
   dropping the error drops the item, so no failure loses ownership. `try_send`
-  never waits, and returns the item of a send to a full queue as `.full`.
+  never waits for capacity, and returns the item of a send to a full open
+  queue as `.full`. Closure takes precedence over fullness: either closed
+  side means `.closed`. Blocking `send` never returns `.full`.
 - `receive` waits while the queue is empty and the sending side is open, then
-  transfers one item. `try_receive` never waits; `.empty` means more may come.
+  transfers one item. `try_receive` never waits for an item; `.empty` means
+  more may come. Both `try_` operations still acquire the channel's lock.
+- Items are FIFO in send-commit order. Each item is transferred to at most
+  one receiver; several receivers share work, not copies. Sequential sends
+  preserve their order. Concurrent calls have no promised ordering until
+  they commit, and neither waiters nor lock acquisition have a fairness or
+  bounded-latency guarantee.
 - A send racing with closure either commits before it, and is then received or
-  dropped with the channel, or returns its item. A receive racing with the
-  last sender's end takes every item committed before that end.
+  dropped with the channel, or returns its item. A successful enqueue and a
+  successful dequeue each commit under the lock. Receivers may report
+  end-of-stream only when the queue is empty and the sending side is closed;
+  items committed before closure remain available for draining.
 - `Receiver(T)` is iterable: `foreach (job in jobs)` receives until the
   sending side has closed and the queue is empty.
-- Dropping the channel drops its queued items. Ordinary borrow checks require
-  every endpoint to have ended first.
+- Endpoint drop and `close` do not destroy queued items. Dropping the channel
+  drops remaining items on the channel owner's thread. An unsent item is
+  dropped by whoever drops its error, and a received item by its new owner.
+  Ordinary borrow checks require every endpoint to end before the channel.
 
-Every endpoint counts until it ends, so make one where it is needed and keep
-it: a sender made for one statement, `jobs.sender().send(job)`, closes the
-sending side when that statement ends, and the next one made cannot send. A
-consumer that fails while a loop is still spawning its siblings closes the
-receiving side early in the same way; the senders then see `.closed`, as they
-would once every consumer had failed.
+Split inside the `parallel` block, before any participant is started. Early
+return then drops every endpoint that has not been transferred to a task.
+For multiple workers, retain a receiver only during setup, fork worker
+endpoints from it, and drop it before the parent starts blocking sends:
+
+```loke
+jobs := thread.Channel(Job).init(16);
+parallel {
+	send, receive := jobs.split();
+	foreach (i in 0..<worker_count) { spawn consume(receive.fork()); }
+	drop(receive);   // setup is complete; no spare receiver masks worker failure
+	foreach (job in make_jobs()) { send.send(move(job)) or_return; }
+}   // the parent's sender drops before the join
+```
+
+The application supplies `Job`, `consume`, and `make_jobs`; the enclosing
+procedure handles `Unsent(Job)`. If `worker_count` is zero, dropping `receive`
+closes its side and the first send fails. A worker exiting during setup cannot
+close that side while the setup receiver remains. Once setup ends, failure
+of every worker wakes a blocked sender. A spare receiver held during blocking
+sends can still cause a deadlock, even if it would drop before the join; the
+join check does not prove the parent's body makes progress.
 
 Items carry no borrow of storage shorter than the process
-(`@(escape=static)`, as `thread.spawn`'s argument), and `send`'s item is
-`@(cross_thread)`, so it is checked as an argument crossing to another thread
+(`@(escape=static)`, as `thread.spawn`'s argument), and both send operations mark
+the item `@(cross_thread)`, so it is checked as an argument crossing to another thread
 is: no `thread_local` borrow, nothing thread-affine, no owner backed by an
 allocator the sending procedure received. Shared borrowed data reaches workers
 through spawn arguments; the channel carries indices or owned jobs. Queue
@@ -198,46 +284,66 @@ synchronization does not make an item's allocator thread-safe.
 
 ### Real-time handoff
 
-An audio callback, or any loop with a deadline, must not wait for a lock
-another thread may hold. `Ring(T)` is a channel with one sender and one
-receiver whose `try_` operations take no lock and never allocate: each is a few
-atomic operations on the ring's indices. It uses the channel's words, so a
-program can start with a `Channel` and change the type.
+Deferred until a concrete application needs it; it does not gate monitors,
+channels, or pools. `Ring(T)` is a bounded single-producer/single-consumer
+queue. Its first API has only `try_` operations, with no parking, wake calls,
+or blocking adapters. Queue operations take no locks and allocate no memory.
+This is an algorithmic constraint, not a hard real-time bound on a general
+operating system or on application code handling the returned item.
 
 ```text
 Ring(T).init(capacity: int) -> Ring(T)
-Ring(T).sender(self: ^) -> Ring_Sender(T)
-Ring(T).receiver(self: ^) -> Ring_Receiver(T)
-Ring(T).close(self: ^)
-Ring_Sender(T).send(self: ^, value: move T) -> Status(Unsent(T))
-Ring_Sender(T).try_send(self: ^, value: move T) -> Status(Unsent(T))
-Ring_Receiver(T).receive(self: ^) -> Option(T)
-Ring_Receiver(T).try_receive(self: ^) -> Received(T)
+Ring(T).split(self: ^) -> (sender: Ring_Sender(T), receiver: Ring_Receiver(T))
+Ring_Sender(T).try_send(self: inout, @(cross_thread, escape=static) value: move T) -> Status(Unsent(T))
+Ring_Receiver(T).try_receive(self: inout) -> Received(T)
 ```
 
-- Each endpoint is made at most once; making a second sender or receiver is a
-  programmer error and panics. With one thread on each side, no slot is
-  reached by two threads at once.
-- Its sides close as a channel's do: by the end of their endpoint, or by
-  `close`.
-- `send` and `receive` may wait, for the side that can afford to, such as a
-  decoder waiting for room. A `try_` operation on the other side wakes a
-  waiting peer: one atomic read when the peer is not waiting, one kernel call
-  when it is.
-- An item's drop runs on the thread that drops it. A real-time receiver that
-  must not free memory takes items that own none, or sends owned buffers back
-  through a second ring to be reused.
+- The ring and endpoints have no zero value and are move-only. Capacity is
+  positive and allocated from the concurrent default allocator. `split` runs
+  once; repeating it panics. Its endpoints borrow the ring's storage; the
+  package synchronizes their access to its private state. They cannot be forked.
+- An operation requires exclusive access to its endpoint, so two tasks cannot
+  operate on that endpoint concurrently. A task can move it to another thread
+  sequentially; it is not thread-affine. Merely counting endpoint creation
+  would not provide this exclusion. Compile-fail tests must cover sharing
+  either endpoint between two tasks.
+- Dropping the sender closes the sending side; the receiver drains then sees
+  `.closed`. Dropping the receiver closes the receiving side; later sends
+  return `.closed` with their item. Closure wins over fullness when observed.
+  A send concurrent with receiver drop may commit or return its item; committed
+  items remain owned by the ring until received or dropped with the ring.
+  There is no public `close` operation in this first API: cancellation of a
+  polling loop uses its application's checked flag or termination protocol.
+- Slot publication uses release/acquire synchronization before the receiver
+  reads an item; slot reclamation uses it before the sender reuses that slot.
+  Observing sender closure must also make its final publications visible:
+  a receiver rechecks the published tail after observing closure before it
+  reports `.closed`. Counters must remain correct through wraparound. The
+  exact atomic layout and progress bound require a written algorithm and
+  validation before this deferred milestone begins.
+- The ring retains ownership on enqueue and transfers it on dequeue, as the
+  channel does. Endpoint drop does not destroy buffered items. An unsent item
+  stays in its error; remaining queued items drop with the ring after both
+  endpoint borrows end. A real-time receiver that must not free memory uses
+  non-owning items or returns owned buffers through a second ring for reuse.
+
+The item checks, FIFO ordering, and result variants match the channel, but
+changing a channel to a ring also requires exclusive endpoint access and a
+polling protocol. A future blocking adapter must specify its waiter
+registration and recheck handshake and test wake/close races before it is
+added; a kernel wake on the real-time side would need a separate timing claim.
 
 ### Shutdown
 
-Every way a participant leaves ends the waits on it:
+Shutdown is a protocol over the objects the participants actually use:
 
-| Who leaves | How | What ends the waits on it |
+| Event | Mechanism | Effect and limit |
 | --- | --- | --- |
-| A task | its call returns, with success or failure | its endpoints and guards, dropped with its arguments on the worker |
-| The parent | any exit from the block, unwinding included | the block's locals and defers, cleaned up before the join |
-| Anyone, cancelling the rest | `close` on the channel, ring, or monitor | every waiter wakes; sends fail and receives drain |
-| A loop that never waits | none | a flag it checks, such as an `Atomic(bool)` |
+| A channel participant returns | its owned endpoints drop on the worker | closing the last endpoint on a side wakes its peers; other endpoints keep that side live |
+| The parent leaves the block | locals and defers run before the join | block-local endpoints drop and installed monitor cleanup runs |
+| A monitor controller ends | explicit termination state or `close` | guard drop alone is insufficient; a true predicate may still proceed after close |
+| A channel is cancelled | `Channel.close` | sends fail and receivers drain; a task blocked elsewhere is unaffected |
+| A polling loop is cancelled | a flag it checks, such as an `Atomic(bool)` | the loop must check and act on it |
 
 The parent then handles results after the join, in the order it chooses, as
 [Task failure and cleanup](design.md#task-failure-and-cleanup) describes. A
@@ -245,7 +351,10 @@ receiver cannot tell a sending side closed by a producer's failure from one
 closed by its completion; the parent can, from the producer's result, and a
 protocol that must tell them apart sends a final item.
 
-Ownership ends only the waits on these types. A foreign blocking call, such as
+Closing a channel is end-of-stream, not an error result or cancellation of a
+whole task group. For a group spanning several objects, the application must
+close or transition each one whose wait needs to end. Task failure does not
+automatically stop unrelated siblings. A foreign blocking call, such as
 a device wait or a terminal read, a lock-order cycle, and a protocol whose live
 participants all wait on each other are not ended by any of this. No join
 promises bounded shutdown for them.
@@ -260,25 +369,58 @@ for each other forever:
 
 ```loke
 jobs := thread.Channel(Job).init(16);
-send := jobs.sender();
+send, receive := jobs.split();
 parallel {
-	spawn consume(jobs.receiver());
-	foreach (job in make_jobs()) { send.send(job) or_return; }
+	spawn consume(move(receive));
+	foreach (job in make_jobs()) { send.send(move(job)) or_return; }
 }   // ERROR: `send` keeps `jobs` open past the join, and `consume` may wait on it
 ```
 
-Declaring `send` inside the block fixes it: the block's locals are cleaned up
-before its join. So does passing it to a task.
+Splitting inside the block fixes it: the block's locals are cleaned up before
+its join. Moving the sender to a producer task fixes it too, provided that
+task ends rather than retaining or returning the endpoint.
 
 A type marked `@(wakes_on_drop)` is one whose drop may wake threads waiting on
-the storage it borrows. A value that is or holds one, declared before a
-`parallel` block and live at its join on any path, is an error when it borrows
-a root that a task of the block also borrows. The check is per path: dropping
-the value at the block's end does not cover an `or_return` taken before it.
-`Mutex`'s `Guard`, `Monitor_Guard`, and the channel and ring endpoints carry
-the attribute. It is an attribute rather than a list of types, as
+the storage it borrows. It takes no value and is permitted on struct and union
+types. `Mutex`'s `Guard`, `Monitor_Guard`, and channel endpoints carry it; the
+polling-only ring has no waiters and does not need it. It is an attribute rather
+than a list of types, as
 [`@(synchronized)`](design.md#synchronized) is, so a library's own waiting
 types get the same check.
+
+At each block exit, after its locals and defers have been accounted for but
+before joining, reject a value retained by the parent if it is or reaches a
+marked value whose borrowed storage may overlap a root borrowed by any task
+of that block. In particular:
+
+- Follow fields, active or possible union variants, array and container
+  elements, owned and shared payloads, and checked pointers or views to
+  marked values. Use the existing provenance and call-result summaries to
+  find their borrowed roots. Unknown overlap is treated as possible overlap;
+  raw pointers and foreign code remain trust boundaries.
+- Include enclosing locals, parameters, and values reached through borrowed
+  parameters. A borrowed endpoint parameter does not own the caller's endpoint
+  and cannot release it by ending the borrow. Each nested block applies the
+  check at its own join; cleanup at an outer join is too late for an inner one.
+- Include task result destinations and writebacks that can retain a marked
+  value after the join. Returning a sender into a parent result slot is
+  rejected when a task of that block borrows its channel, including when a
+  sibling is draining it. Result provenance must participate even though the
+  parent cannot read the result yet.
+- Moves into task-owned arguments cease to count as parent retention, unless
+  a result or writeback can return the value to the parent. A block-local
+  endpoint dropped before the join is allowed, subject to ordinary borrow
+  checks. An outstanding borrow that prevents that drop is still an error.
+- Check every exit path. A drop at the normal end does not cover an earlier
+  `or_return`. Explicit `close` does not discharge this check: retain no such
+  endpoint at the join, even if runtime closure would make it harmless.
+
+This intentionally rejects some terminating programs: it does not prove that
+the task waits on the retained root, that an endpoint is the last on its side,
+or that two aliases refer to different queue instances when provenance cannot
+show that. Diagnostics name the retained value, the possibly shared root, and
+the joining block, suggesting an earlier drop or transfer. It does not detect
+general wait cycles, a parent stuck before cleanup, or missing monitor shutdown.
 
 ### Pools
 
@@ -295,7 +437,11 @@ on entry and borrows it through the join. Dropping the pool stops submission
 and joins its workers after all borrowing scopes have ended.
 
 A worker joining a block submitted to its own pool may execute queued tasks
-of that block, including descendants submitted to the same pool. This permits
+of that block, including descendants submitted to the same pool. It may not
+help an unrelated block or a sibling of the task that owns its current join.
+A joining thread that is not a worker of that pool only waits; it does not
+execute queued work. This exact helping set is also the set summarized by the
+compiler's TLS effects below. This permits
 finite, independent nested fork/join computations to finish even with one
 worker. Such a child may execute on its spawning worker while that worker
 joins; a fresh thread or distinct thread identity is not promised by a pool.
@@ -345,8 +491,9 @@ main :: proc() -> Status(Audio_Error) {
 	pool := thread.Pool.init(3);
 	audio: Status(Audio_Error);
 	parallel {
-		spawn audio = audio_loop(&mut device, &pool, commands.receiver(), move(voices));
-		user_interface(commands.sender());     // the sender ends when this returns
+		send, receive := commands.split();
+		spawn audio = audio_loop(&mut device, &pool, move(receive), move(voices));
+		user_interface(move(send));     // takes an owned Sender; drops it on return
 	}
 	audio or_return;
 }
@@ -383,59 +530,63 @@ apply_commands :: proc(commands: ^thread.Receiver(Command), voices: []mut Voice)
 The pool makes a block per buffer cheap. Its tasks borrow this period's voices
 mutably, one group each, and after the join the loop reads them all to mix
 down. Commands cross by channel, and the audio loop takes them with
-`try_receive`, so it never sleeps on the user interface. `try_receive` still
-takes the channel's lock for a moment; a strict real-time loop takes its
-commands from a `Ring` instead.
+`try_receive`, so it never waits for a command. This is a paced audio worker,
+not a hard real-time callback: channel lock acquisition, draining commands,
+pool submission and joining, and device I/O have no hard deadline guarantee.
+Replacing the channel with a ring would not make that entire loop real-time.
 
-Each way out ends the other side. When the user quits, `user_interface`
+The channel protocol covers these exits. When the user quits, `user_interface`
 returns and its sender ends; the audio loop's next `apply_commands` sees
 `.closed`, the loop returns, and the join completes. When the device fails,
 the audio loop returns its error and its receiver ends, so the interface's
 next `send` returns `.closed` and the interface can report it and return. When
-the parent unwinds, the unwind drops the sender, as quitting would.
+the parent unwinds, the unwind drops whichever scope owns the sender, as
+quitting would. A user interface blocked in terminal input still needs its
+own way to observe device failure; channel closure does not interrupt that
+foreign wait. Device latency is an assumption of this example's binding.
 
 ### Why waits end by ownership
 
 This rationale moves to comments.md with the milestone that builds it.
 
-**Conditions, not notifications.** A condition variable is two halves the
-compiler cannot relate: a wait in one place and a `notify` in another. A
-notification sent before the waiter sleeps, or never sent, is a hang that no
-check finds. Waking every waiter on every change, and letting each check its
-own condition, removes both mistakes, as Ada's protected entries do by
-re-checking their barriers. The cost is waking waiters that a change does not
-concern, which a monitor with many waiters pays; a hint to narrow the wakeups
-can come later without changing what a waiter observes
-([later extension](#later-extensions) 11). A waiter's check reads through
-`^T` and changes nothing, so waiters checking again never wake one another
-into a loop.
+**Predicate waits.** A condition variable requires a predicate loop, atomic
+unlock-and-wait, and notification after relevant state changes. The monitor
+packages those operations and wakes every waiter when a guard used for mutation
+drops. The caller still owns the predicate and shutdown protocols; read-only
+access does not prove purity. Waking unrelated waiters is the initial cost.
+Targeted wakeups are a later optimization that must preserve progress for all
+affected predicates ([later extension](#later-extensions) 11).
 
-**Ownership, not tokens.** The earlier draft passed a `Stop_Token` to every
-blocking call and asked every participant to request a stop before leaving:
-an `errdefer` in each worker, and the same in the parent for its own
-failures. Each forgotten request was a hang at the join. But Loke already ends
-every participant at a point the compiler knows, and the drop there can be the
-wakeup: a task's arguments at its return, the parent's block locals before the
-join. Closing what others wait on covers cancelling them, and a loop that
-never waits needs only a flag. What a token adds beyond that is cancelling one
-waiter among several on the same object, which no program has needed yet
-([later extension](#later-extensions) 9).
+**Endpoint ownership.** The earlier token design required explicit stop
+requests on each failure path. Endpoint drop naturally expresses completion
+and peer loss for a channel, using task argument cleanup and block cleanup
+before the join. That removes boilerplate for a pipeline. It does not infer
+that a monitor predicate has become impossible, interrupt foreign waits, or
+cancel an entire group using several objects. Those need explicit protocols;
+selective or group cancellation tokens remain a possible extension.
 
-**Endpoints made from the channel.** Rust makes a sender and a receiver as a
-pair and clones them. The parent then holds originals it must remember to
-drop, and a parent blocked in `send` while still holding a receiver never
-closes the receiving side. Making each endpoint from the channel, where it is
-needed, leaves the parent holding none unless it asks, and the
-[join check](#releasing-before-the-join) rejects one held past the join. The
-price is that a side closes for good when its count first falls to zero, so an
-endpoint made for a single statement closes its side.
+**Paired setup and explicit duplication.** Independent factories allowed a
+receiver to start before a sender ever existed, leaving no sender to drop
+on early failure. One `split` establishes both sides together. A setup endpoint
+also keeps a side alive while siblings are being started; the parent releases
+it before blocking work. Move-only endpoints make transfers visible, and
+`fork` adds a participant explicitly without altering Loke's generated `clone`
+semantics. Spare endpoints can still mask peer loss, so the setup example and
+the conservative [join check](#releasing-before-the-join) are both needed.
+
+**Separate compute and real-time work.** Pools amortize thread creation for
+independent computations. They do not make blocking pipelines safe on a fixed
+worker count. A ring removes the channel lock for one producer and one consumer,
+but does not establish a deadline for a whole audio application. Keeping its
+first API polling-only avoids coupling that algorithm to a parking protocol.
 
 ## Later extensions
 
 The initial spelling, thread-per-spawn default, panic-on-submission-failure
 policy, join during parent unwinding, and the `@(synchronized)` and
 `@(cross_thread)` declarations are decided and in design.md. These remain
-open, and none blocks milestones 6 to 9:
+open; none blocks monitors, channels, or the compute pool. The deferred ring
+has its own readiness requirements under milestone 8:
 
 1. **Indirect call contracts.** How to encode and expose the procedure
    summaries, the [reach](design.md#globals-while-tasks-run) and
@@ -453,8 +604,9 @@ open, and none blocks milestones 6 to 9:
    contract. Also defer rendezvous channels and nondefault queue allocators.
 5. **Blocking-aware pools.** Whether to compensate for waits or provide a
    separate executor. Fixed pools initially make only the limited progress
-   guarantee above. A pool's scoped submission also needs a crossing rule for
-   borrowed arguments, which `@(cross_thread)` does not give.
+   guarantee above. Its scoped submission is compiler lowering under the
+   existing spawn borrow checks, not a public `@(cross_thread)` submission API
+   for borrowed arguments.
 6. **Provider and allocator thread contracts.** Whether a build-selected
    allocator or logging provider must declare that it accepts concurrent use,
    so the compiler checks it instead of trusting it. Whether an `Allocator`
@@ -467,9 +619,9 @@ open, and none blocks milestones 6 to 9:
    `core:time`, reporting a timeout apart from closure. An audio loop that must
    play silence when a decoder falls behind needs them.
 9. **Selective cancellation and choice.** A stop token that ends one waiter
-   among several on the same object, and a wait on whichever of several
-   channels is ready first. Closing the object, and a channel per consumer,
-   cover the programs so far.
+   among several on the same object or coordinates cancellation across several
+   objects, and a wait on whichever of several channels is ready first. The
+   initial library requires explicit shutdown protocols for those groups.
 10. **Unscoped channels.** Endpoints that own shared channel state instead of
     borrowing a local, for a thread `core:thread`'s `spawn` starts or a
     foreign audio callback, which only `@(escape=static)` values reach. The
@@ -478,6 +630,10 @@ open, and none blocks milestones 6 to 9:
 11. **Targeted wakeups.** A hint that wakes fewer of a monitor's waiters,
     where waking all of them costs more than their checks. It would narrow
     which waiters wake, not which changes they see.
+12. **Blocking ring adapters.** Parking one endpoint and waking it from the
+    other requires a proven registration/recheck handshake, closure-race
+    handling, and an explicit account of kernel calls on the deadline-bound
+    side. It is outside the polling ring's initial API.
 
 ## Implementation plan
 
@@ -494,6 +650,11 @@ per task (see [Lowering parallel blocks](compiler-architecture.md#lowering-paral
 Where the compiler is narrower than design.md, [known-gaps.md](known-gaps.md)
 says so.
 
+Delivery order is milestones 6 and 7, then the independent compute pool in
+milestone 9 when needed. Milestone 8 keeps its identifier for existing
+references, but is deferred and is not a prerequisite for milestone 9.
+Milestone 10 remains conditional on its callable-summary work.
+
 ### Milestone 6: monitors
 
 Add `Monitor`, `Monitor_Guard`, `lock_when`, and `close` to `core:thread`,
@@ -502,33 +663,58 @@ marking the value `@(synchronized)`. On Windows the lock is an SRWLOCK, as
 between a waiter's check and its sleep, spurious wakeups, `close` while
 threads wait, a `ready` that holds after `close`, a guard used only through
 `read`, which wakes no one, and an unwind out of `ready`, which releases the
-lock.
+lock. Add the controller shutdown example with a stand-in renderer: cover
+early parent exit, a paused renderer, and a playing renderer that must see
+`stopping`. Document predicate obligations without claiming compiler-checked
+purity. Use a bounded harness for negative liveness tests.
 
 ### Milestone 7: channels and the join check
 
 Add `Channel`, its endpoints, `Unsent`, and `Received`, written over
-`Monitor`, with `send`'s item `@(cross_thread, escape=static)`. Add
+`Monitor`, with both send operations' items `@(cross_thread, escape=static)`.
+Implement one-time `split`, move-only endpoints, and `fork`. Add
 `@(wakes_on_drop)` and its check, and mark `Guard`, `Monitor_Guard`, and the
 endpoints with it. The check rejects code that compiled before, a guard
 declared before a block whose tasks lock its mutex, so the commit adds an
 upgrade note. Test closure racing with send, ownership of unsent items,
-draining after close, every receiver failing while a sender waits, the last
-sender ending while receivers wait, an endpoint made after its side closed,
-and the join check's rejections: an endpoint or guard declared before the
-block, live on an `or_return` path, or held in a record. Verify that an
-operation reports success exactly when it committed and cleans up exactly
-once. Add the channel-fed worker pipeline to `examples/`.
+draining after close, every receiver failing while a sender waits, and the
+last sender ending while receivers wait. Cover every lifecycle-table
+transition: close before split, repeated split, fork after close, endpoint
+transfer, and both directions of closure. Check FIFO order, closed-over-full
+precedence, and that `try_` send applies the same item checks as `send`.
+
+Add a producer/consumer example and the multi-worker pipeline to `examples/`.
+Test early return after split but before the first spawn, between spawns,
+and after setup, plus zero workers and a worker returning during setup.
+Verify that every committed, unsent, and abandoned queued item is dropped
+exactly once on the specified owner thread.
+
+The join-check suite must reject retained guards and endpoints in enclosing
+locals, parameters, borrowed wrappers, containers, task results, and
+writebacks, including nested joins and early-exit paths. Check acceptance
+when endpoints move into tasks or drop during block cleanup. An explicit
+close without dropping a retained endpoint remains a documented rejection.
+Use bounded harnesses for runtime progress tests; no test may depend on a
+deadlock resolving.
 
 ### Milestone 8: real-time handoff
 
-Add `Ring` and its endpoints over `Atomic` indices. Test wraparound at
-capacity, the second endpoint's panic, a `try_` operation waking a waiting
-peer, and closure from either side.
+Deferred. Before implementation, write the atomic algorithm, including
+publication and reclamation ordering, closure observation after the final
+enqueue, and wraparound. Validate the exclusive-endpoint API with the borrow
+checker and a concrete application. Then add only the polling API over
+`Atomic` indices. Test FIFO and wraparound, repeated split, endpoint sharing
+rejections, sequential endpoint transfer, producer/consumer drop races, item
+ownership, and allocation-free operation. Measure its cost on the intended
+target; do not claim a hard real-time bound from throughput measurements.
+Blocking adapters require a separate proposal and are not part of this milestone.
 
 ### Milestone 9: pools
 
 Add `Pool` and the executor header. Test independent nested work with one
 worker, explicit recursive executor selection, TLS reuse, and pool lifetime.
+Verify that only workers of that pool help, only within their current joining
+block's subtree, and that the TLS-effect summary covers exactly that permission.
 Reject a parent TLS borrow live across a pool join whose tasks write that
 storage. Check documented blocking limits with bounded test harnesses; do
 not make the suite depend on a deadlock resolving. Serial execution is not

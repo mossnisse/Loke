@@ -493,6 +493,11 @@ checklist.
 
 ### Changed
 
+- Revised the unimplemented [concurrency proposal](concurrency-proposal.md#waiting-for-work):
+  paired channel setup and explicit endpoint duplication, monitor shutdown
+  contracts, a bounded join-check specification, and a deferred polling-only
+  ring. The delivery plan separates compute pools from real-time handoff.
+
 - Compiler provenance now saturates target and allocator-region facts by
   replaying frozen per-body operations. Checked call inputs retain argument
   order and delayed receiver captures; final borrow, reset, cleanup, and task
