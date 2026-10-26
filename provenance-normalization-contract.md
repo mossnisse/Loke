@@ -10,6 +10,8 @@ fact-dependent events from recorded operations instead of a final walk. Stage 5c
 removes the migration's comparison code and lists the queries that still read
 source forms, stage 5d records each value's form so those queries read it, and
 stage 5e moves the call-substitution helpers onto the recorded call arguments.
+[Migration completion](#migration-completion) checks the finished migration
+against the proposal's completion criteria.
 
 The [language specification](design.md#borrows-and-lifetimes) remains
 authoritative. The baseline records current behavior, with an explicit
@@ -581,6 +583,28 @@ on the same machine, `perf.ps1` measured front-end time from 5% lower to 5%
 higher, compiler peak working set within 1%, and the workspace language server
 within 2% per operation with a 102.9 MB peak, unchanged. Executable sizes were
 unchanged and every benchmark output matched.
+
+## Migration completion
+
+The migration is complete as of `7b83f4e`, checked against the proposal's
+[completion criteria](provenance-normalization-proposal.md#validation-and-completion-criteria):
+
+| Criterion | Where it is met |
+| --- | --- |
+| Target and region transfers consume explicit operations and paths | [Stage 3](#stage-3-transfers) shares typed transfers between target and region construction; stages [5a](#stage-5a-value-based-leaf-queries), [5d](#stage-5d-value-forms), and [5e](#stage-5e-call-arguments) make the leaf queries and call substitution read values, forms, and recorded arguments, so a new spelling of a transfer changes only interning and its tests. |
+| Anonymous and named storage share one identity and lifetime contract | [Stage 2](#stage-2-storage-and-places)'s storage IDs and typed places. |
+| Call summaries grow without changing topology or identities | [Stage 4](#stage-4-fact-replay-and-call-inputs) replays recorded fact operations over frozen input, and [stage 5b](#stage-5b-recorded-events) materializes events from recorded operations; `prov_writable_input` asserts that no replay round adds input. |
+| Behavior is preserved except for documented fixes | Each stage compared diagnostics with its parent over the test, example, tutorial, bench, and package corpus. One regression was found: after stage 5b, borrowed-payload writes to targets discovered later were lost. It was recorded in [known-gaps.md](known-gaps.md) and fixed before stage 5c, with [a regression test](tests/err/provenance_settled_events.loke). |
+| Replaced AST code and migration machinery are removed | [Stage 5c](#stage-5c-migration-scaffolding) removed the comparison code and seeded graphs; stages 5d and 5e removed the remaining syntax dispatch from queries and the freeze-time operand walk. |
+| Compile-time and memory effects are measured | The [stage 5 record](bench/baselines/README.md#completed-migration-stage-5) compares the finished migration with the initial and stage 4 records. |
+
+Against the initial record, the finished migration costs 7–14% front-end time
+on the selected workloads and 3–10% per workspace LSP operation, and lowers
+compiler peak working set by 5–10% on the two larger workloads. In the probe
+record, normalization, which now also records value forms and events, is the
+largest provenance phase. Whether that cost is acceptable, or worth reducing, is tracked with the
+proposal's later decisions in
+[open questions](open-questions.md#normalized-input-for-provenance-analysis).
 
 ## AST-sensitive construction inventory
 

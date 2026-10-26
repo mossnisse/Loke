@@ -198,3 +198,58 @@ share its metadata. The
 206 / 2280 / 3076 fact replays and checking times of 36.5 / 560.0 / 901.2 ms for
 the same workloads; the final probe records 27.9 / 364.2 / 647.8 ms. These counters
 locate the costs still paid by normalization and final event materialization.
+
+### Completed migration (stage 5)
+
+[provenance-normalization-stage5.json](provenance-normalization-stage5.json)
+records commit `7b83f4e20c367e0062c0185da9952bedace1f8aa`, after
+[stage 5e](../../provenance-normalization-contract.md#stage-5e-call-arguments)
+and its review cleanup, measured on 2026-10-26 with the same machine, tools,
+repeat count, and unchanged workload source hashes as the preceding records.
+No test suite or other compiler workload ran during capture. Compiler and LSP
+SHA-256 values were:
+
+- `lokec.exe`:
+  `5b6ae671cbb9b2a5ba89b0706b306ac8b096475adadb7eaa7b24fe0ff34a7e65`.
+- `loke-lsp.exe`:
+  `f8783ee504d23107a5355dddebb1d1c26910c819fd500e8c3cc892d2fbc0c575`.
+
+```powershell
+.\perf.ps1 -Baseline bench/baselines/provenance-normalization-before.json -Out bench/baselines/provenance-normalization-stage5.json
+```
+
+Three consecutive captures agreed within 1 ms on `bench/provenance.loke` and
+`bench/workspace`, but measured 712, 739, and 799 ms front end on
+`examples/corpus_runner.loke`; the record keeps the median capture.
+
+| Workload | Initial / stage 4 / stage 5 front end (ms) | Initial / stage 4 / stage 5 compiler peak (MB) |
+| --- | ---: | ---: |
+| `bench/provenance.loke` | 36 / 41 / 39 | 12.3 / 12.6 / 12.4 |
+| `bench/workspace` | 404 / 461 / 433 | 63.5 / 65.4 / 60.2 |
+| `examples/corpus_runner.loke` | 648 / 813 / 739 | 98.4 / 101.5 / 89.1 |
+
+Against the initial record, the migration costs 7–14% front-end time on the
+selected workloads (10–23% on `corpus_runner` across the three captures) and
+lowers compiler peak working set by 5–10% on the two larger ones. Against
+stage 4, front-end time falls 5–9% and peak working set 2–12%. Workspace LSP
+measurements were open 595 ms, root edit 427 ms, library edit 531 ms,
+completion 420 ms, and peak working set 102.6 MB: 3–10% slower than the
+initial record per operation, with a 4% lower peak. All 24 records completed,
+executable sizes stayed unchanged, and benchmark outputs matched.
+
+The [stage 5 probe record](provenance-normalization-stage5-profile.json) was
+captured with the same probe command, writing to
+`bench/baselines/provenance-normalization-stage5-profile.json`:
+
+| Workload | Check (ms) | Normalize / replay / materialize (ms) | Peak sampled build arena bytes |
+| --- | ---: | ---: | ---: |
+| `bench/provenance.loke` | 26.9 | 6.6 / 3.7 / 2.0 | 244626 |
+| `bench/workspace` | 373.1 | 156.0 / 31.6 / 20.7 | 432611 |
+| `examples/corpus_runner.loke` | 607.6 | 210.5 / 51.5 / 38.4 | 1463724 |
+
+Body build and fact replay counts are unchanged from stage 4. Recording events
+and value forms during construction moves cost from materialization, now
+52–65% cheaper, into normalization, now 7–27% dearer; replay costs 16–17% more.
+Checking time is 3% lower on `bench/provenance.loke` and 6% lower on
+`corpus_runner`, and 2% higher on `bench/workspace`; the sampled arena peak
+changed by −7% to +3%.

@@ -1,7 +1,8 @@
 # Proposal: normalized input for provenance and borrow analysis
 
-**Status:** stages 1–3 and stage 4's fact replay implemented, 2026-10-25. This proposes an internal compiler
-refactor; it does not change the language contract. The rules in
+**Status:** implemented; all five migration stages were complete on 2026-10-26
+(see [migration completion](provenance-normalization-contract.md#migration-completion)).
+This proposes an internal compiler refactor; it does not change the language contract. The rules in
 [design.md](design.md#borrows-and-lifetimes) remain authoritative. The
 [stage 1 contract and baseline](provenance-normalization-contract.md#initial-operation-contracts)
 are recorded; [stage 2](provenance-normalization-contract.md#stage-2-storage-and-places)

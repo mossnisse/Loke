@@ -8,16 +8,19 @@ Design rationale and differences from Odin are recorded in [comments.md](comment
 
 The [normalization proposal](provenance-normalization-proposal.md#recommendation)
 describes a typed operation layer between the checked AST and provenance fact
-construction. It is a draft internal refactor, with no proposed language change.
-Review whether the shared storage and transfer representation removes enough
-duplicated interpretation to justify the new layer. The proposed first
-deliverable is storage and transfer normalization within the existing flow graph.
+construction, an internal refactor with no language change. Its migration is
+complete ([migration completion](provenance-normalization-contract.md#migration-completion)).
 
-Two later decisions remain open: whether measurements justify retaining
-normalized bodies across whole-program summary rounds, and whether lifecycle
-analysis should consume the same representation. The draft starts by rebuilding
-one body per analysis invocation and consuming settled lifecycle annotations;
-neither later decision blocks that first deliverable. See the proposal's
+Three later decisions remain open: whether measurements justify retaining
+normalized bodies across whole-program summary rounds, whether lifecycle
+analysis should consume the same representation, and whether the finished
+migration's cost is acceptable as it stands. Against the initial baseline it
+costs 7–14% front-end time on the selected workloads and 3–10% per workspace
+LSP operation, while lowering compiler peak working set by 5–10% on the larger
+workloads. Normalization is the largest provenance phase in the
+[stage 5 record](bench/baselines/README.md#completed-migration-stage-5).
+The implementation rebuilds one body per analysis invocation and consumes
+settled lifecycle annotations. See the proposal's
 [migration plan](provenance-normalization-proposal.md#migration-plan) and
 [validation criteria](provenance-normalization-proposal.md#validation-and-completion-criteria).
 
