@@ -42,38 +42,37 @@ L0732
 this task may use an allocator region this procedure cannot tell apart from it, which a task started earlier reserves until the join
 
 L0731
-@148:13
-`(dyn Recorder)(&q).record` may write `hits`, which every task and the parent share
-`(dyn Recorder)(&q).record` may be `Tally.record`, which writes `hits`
+@142:13
+`(dyn Recorder)(&t).record` may write `hits`, which every task and the parent share
 
 L0512
-@166:2
+@160:2
 `buffer` cannot be modified by `(dyn Growing)(&g).grow_buffer`, which this join may run on this thread, here: a read-only slice of it is still in use
 
 L0733
-@177:2
+@171:2
 `send` is kept past this join while it borrows `jobs`, which a task of the block borrows too; dropping it may be what the task waits for
 
 L0733
-@177:2
+@171:2
 `drain` is kept past this join while it borrows `jobs`, which a task of the block borrows too; dropping it may be what the task waits for
 
 L0359
-@184:23
+@178:23
 this expression cannot be the receiver of a mutating method
 
 L0730
-@204:28
+@198:28
 this task's result holds a pointer of `counter`, which is the worker's own `thread_local` storage, so it cannot cross to the parent
 
 L0730
-@212:36
+@206:36
 this task's result holds a pointer of `counter`, which is the worker's own `thread_local` storage, so it cannot cross to the parent
 
 L0511
-@221:3
+@215:3
 this write of `number` is not compatible with the read-only pointer of it that is still in use
 
 L0511
-@229:2
+@223:2
 this write of `number` is not compatible with the read-only pointer of it that is still in use

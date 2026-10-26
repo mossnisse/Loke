@@ -397,8 +397,9 @@ open; none blocks monitors, channels, the polling ring, or the compute pool.
    [allocator use](design.md#allocators-and-tasks), and the other task checks.
    Public callable-effect contracts need a separate demonstrated requirement;
    they are not a prerequisite for the first step. A spawned call may now go
-   through a procedure value, or through a `dyn` view converted at the spawn;
-   a view that arrives erased is still rejected.
+   through a procedure value, or through a `dyn` view converted at the spawn,
+   and the effects follow the callbacks each call passes; a view that arrives
+   erased is still rejected.
 2. **Recoverable submission.** How to return arguments after failure to
    start a task, without confusing submission failure with worker failure.
 3. **Richer result destinations.** Whether live replacement, fields, indices,
@@ -457,9 +458,8 @@ monitors; channels with the join check; the polling ring; and pools.
 Where the compiler is narrower than design.md, [known-gaps.md](known-gaps.md)
 says so.
 
-Milestone 10's first two steps, procedure values under the existing analyses
-and `dyn` views checked as receiver arguments, are done; improvements to
-effect precision follow separately.
+Milestone 10, procedure values under the existing analyses, `dyn` views
+checked as receiver arguments, and per-call effect precision, is done.
 
 ### Milestone 6: monitors
 
@@ -570,7 +570,7 @@ same.
 
 ### Milestone 10: indirect spawned calls
 
-Steps 1 and 2 are done; step 3 is proposed. Extend the existing task machinery
+Steps 1 to 3 are done. Extend the existing task machinery
 in small steps, beginning with runtime-selected Loke procedure values. Each step must preserve every task
 check, with conservative rejection where the analysis cannot establish safety.
 Public effect annotations and owning erased callables are separate questions.
@@ -624,14 +624,20 @@ separate receiver-mode question under
    and `tests/trap/parallel_view_frame_release.loke` cover it; the
    [erased-callable findings](open-questions.md#erased-callable-spawns-2026-10-26)
    record what it leaves.
-3. **Per-call effect precision.** In a separate change, summarize a body's
-   own effects plus its dependencies on callbacks, substituting the actual
-   callbacks at each call. Build on the existing callback-effect and
-   thread-local provenance machinery described in the scope review. Extend
-   write, reach, and allocator effects consistently, retaining union
-   fallbacks for unknown targets and naming the responsible target in
-   diagnostics. This improves acceptance of safe programs; it does not gate
-   the first step's conservative implementation.
+3. **Per-call effect precision.** Done. The write effects first settle which
+   parameters each body calls, then keep each such body's write, reach, and
+   allocator-use effects apart from those callbacks, and a call takes in
+   what it passes there, as the `thread_local` write-back already did; a
+   call through a local takes what the local may hold, and a view converted
+   at the call its concrete target. A callback is given the regions its
+   callee passes it. Values nothing followed, and a body's own calls of its
+   parameters, keep the type union. A task's `run` procedure resolves its
+   call where the `spawn` is, and a rejection names the callback with the
+   parameter it was passed for. `tests/run/parallel_callback_precision.loke`,
+   `tests/err/parallel_callback_precision.loke`, and the
+   `reach_and_allocator_use_substitute_callbacks` unit test cover it; the
+   [per-call precision findings](open-questions.md#per-call-effect-precision-2026-10-26)
+   record what it leaves.
 
 Each step pairs accepted run cases with rejected cases. For procedure values,
 cover runtime target selection, parent evaluation order, changing the callee

@@ -5416,7 +5416,7 @@ prov_argument_borrows_caller :: proc(
 
 // A call dispatching through the `dyn` view it takes as its receiver: a slot
 // call, or a view's forwarding member.
-@(private = "file")
+@(private)
 prov_dispatches_on_view :: proc(c: ^Compiler, v: ^Expr_Call) -> bool {
 	if _, slot := v.operation.(Call_Dyn_Slot); slot {
 		return true

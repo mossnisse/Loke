@@ -1408,13 +1408,16 @@ conclusion and proposes the next steps. The spike also found:
   that writes a global anywhere, such as to the same wrapper in an
   unrelated serial call. The `thread_local` borrow a callback leaves is
   substituted per call instead, so the two analyses differ in precision. A
-  spawned procedure value has the coarser one.
+  spawned procedure value has the coarser one. Fixed with
+  [milestone 10's third step](#per-call-effect-precision-2026-10-26): the
+  write, reach, and allocator-use effects substitute callbacks per call too.
 - **A rejection does not name the body responsible.** L0731 says that
   `call_plain` may write `hits`, but not that it is `record_hit`, passed
   as `f`, that writes it; a direct helper gets a "through" note. Under a
   union, that body may be in another package. A spawned procedure value's
-  rejection now names each target that writes or reaches the global; a
-  wrapper's still does not.
+  rejection now names each target that writes or reaches the global, and
+  since the [third step](#per-call-effect-precision-2026-10-26) a wrapper's
+  names the callback with the parameter it was passed for.
 - **L0729's advice could not be followed for a `dyn proc` parameter.** For
   a view reaching a `&mut` capture it said to move the callable into the
   task, but `spawn run(move(bump))` with `run :: proc(f: dyn proc())` then
@@ -1582,6 +1585,8 @@ tests found:
   type that fills `record`. So `Quiet`'s view is rejected because `Tally`
   writes `hits`. The concrete fill is known at the conversion, which makes
   this an easy case for [step 3](concurrency-proposal.md#milestone-10-indirect-spawned-calls).
+  Fixed there: a view converted where it is called runs its concrete
+  target.
 - **A bare spawn cannot start with a parenthesized callee.** `spawn` starts a
   statement only before an identifier, so a `dyn` conversion or procedure
   literal called in place needs a result name. [grammar.md](grammar.md#control-flow)
@@ -1642,6 +1647,36 @@ instead of selecting between the callee expression's type and the resolved
 symbol's type again, which keeps the interpretation of checked calls in one
 helper. Broader work on preserving stored-view facts and per-call effect
 precision remains separate from these fixes.
+
+### Per-call effect precision (2026-10-26)
+
+[Milestone 10's third step](concurrency-proposal.md#milestone-10-indirect-spawned-calls)
+makes the write, reach, and allocator-use effects per call: a call takes in
+the callbacks it passes, a local's possible values, and a converted view's
+concrete target. Writing it and its tests found:
+
+- **A body's own calls of its parameters keep the type union.** A wrapper
+  that spawns a callback it received, `spawn r = g(1)` with `g` a parameter,
+  is checked inside the wrapper, where any procedure of `g`'s type may be
+  passed, so it is rejected when any procedure of that type writes a global,
+  whatever its callers pass. Following the spawn to each caller would need
+  the task checks themselves to become a summary a call substitutes, as the
+  `thread_local` write-back is; nothing yet shows a program needing it.
+- **What a local may hold is flow-insensitive.** `f := tally; f = step;
+  spawn r = f(1);` takes `tally`'s effects, since every value stored into a
+  local counts wherever it is called. This is the existing resolution the
+  `thread_local` write-back shares, and is conservative.
+- **A held procedure binds its arguments as a union does.** A callable view
+  converted at the call from a named procedure takes that procedure's whole
+  effect, but its allocator use takes every argument's region for each
+  parameter-backed region, as any call through a value does, rather than the
+  argument at that parameter. A capture literal's `call` and a converted
+  slot are direct calls and bind by parameter.
+- **The `run` procedure's call resolves at its spawn.** Its frame fields name
+  no procedure, so before this step a task through a wrapper took the union
+  even where the parent passed a named procedure. The worker's call now
+  resolves its callbacks and callee value where the `spawn` is; a parameter
+  there is not `run`'s, so it stays the union.
 
 ### Parameters a join check cannot tell apart (2026-10-26)
 

@@ -1,0 +1,127 @@
+// design.md "Global write effects", "Globals while tasks run", "Allocators
+// and tasks": a call takes in the callbacks it passes, so a task given a
+// dirty one is rejected and the note names the callback and the parameter it
+// was passed for: through a wrapper, a wrapper forwarding to another, and a
+// recursive one. A local that may hold a dirty procedure, a value received as
+// a parameter, and a variable written through `&mut` may run any procedure of
+// its type. A view converted at the spawn runs its concrete type's method.
+// The same holds for reach through a global, two tasks using one arena
+// through a callback, a pooled join a callback's `thread_local` write may
+// run, and a serial borrow live across a call given a dirty callback.
+package main;
+
+import "core:fmt";
+import "core:mem";
+import "core:thread";
+
+hits: int;
+table: []mut int;
+buffer: thread_local [dynamic]int;
+
+apply :: proc(f: proc(n: int) -> int, n: int) -> int { return f(n); }
+twice :: proc(f: proc(n: int) -> int, n: int) -> int { return apply(f, apply(f, n)); }
+repeat :: proc(f: proc(n: int) -> int, n: int, times: int) -> int {
+	if (times == 0) {
+		return n;
+	}
+	return repeat(f, f(n), times - 1);
+}
+
+step :: proc(n: int) -> int { return n + 1; }
+tally :: proc(n: int) -> int { hits += n; return n; }
+peek :: proc(n: int) -> int { return table[0] + n; }
+grow :: proc(n: int) -> int { buffer.append(n); return n; }
+
+wrappers :: proc() {
+	a: int;
+	b: int;
+	c: int;
+	parallel {
+		spawn a = apply(tally, 1);
+		spawn b = twice(tally, 1);
+		spawn c = repeat(tally, 1, 2);
+	}
+}
+
+either :: proc(pick: bool) {
+	f := step;
+	if (pick) {
+		f = tally;
+	}
+	r: int;
+	parallel { spawn r = f(1); }
+}
+
+received :: proc(g: proc(n: int) -> int) {
+	r: int;
+	parallel { spawn r = g(1); }
+}
+
+set :: proc(target: inout proc(n: int) -> int) { target = step; }
+
+written :: proc() {
+	f := step;
+	set(inout f);
+	r: int;
+	parallel { spawn r = apply(f, 1); }
+}
+
+Recorder :: interface($Self: type) {
+	slot record: proc(self, n: int) -> int;
+}
+
+Loud :: struct { base: int }
+
+impl Loud {
+	record :: proc(self, n: int) -> int { hits += n; return self.base; }
+}
+
+converted :: proc() {
+	loud := Loud{1};
+	r: int;
+	parallel { spawn r = (dyn Recorder)(&loud).record(1); }
+}
+
+reaches :: proc() {
+	r: int;
+	parallel { spawn r = apply(peek, 1); }
+}
+
+fill :: proc(a: Allocator, n: int) -> int { xs := make([dynamic]int, 0, 4, a); xs.append(n); return xs.len(); }
+build :: proc(f: proc(a: Allocator, n: int) -> int, a: Allocator, n: int) -> int { return f(a, n); }
+
+arena_shared :: proc() {
+	arena := mem.Arena.init();
+	x: int;
+	y: int;
+	parallel {
+		spawn x = build(fill, arena.allocator(), 1);
+		spawn y = build(fill, arena.allocator(), 2);
+	}
+}
+
+pooled_write :: proc() {
+	pool := thread.Pool.init(2);
+	seen := buffer[:];
+	r: int;
+	parallel (&pool) { spawn r = apply(grow, 1); }
+	fmt.println(seen.len());
+}
+
+kept :: proc() -> int {
+	seen := &hits;
+	result := apply(tally, 1);
+	return seen^ + result;
+}
+
+main :: proc() {
+	wrappers();
+	either(true);
+	received(step);
+	written();
+	converted();
+	reaches();
+	arena_shared();
+	pooled_write();
+	fmt.println(kept());
+}

@@ -6,9 +6,9 @@
 // is checked through what it views: thread affinity, a `&mut` capture,
 // storage that ends before the join, the parent writing what a task views,
 // two tasks viewing it mutably, an allocator region a captured allocator
-// reserves, a slot whose fills may write a global (each fill that does is
-// named), a pooled join's `thread_local` write, an endpoint kept past the
-// join, and a slot returning the worker's `thread_local` storage, on a bare
+// reserves, a slot the converted type's own method fills writing a global,
+// a pooled join's `thread_local` write, an endpoint kept past the join, and
+// a slot returning the worker's `thread_local` storage, on a bare
 // or pooled block. A `self: ^` slot borrows what the view views until the
 // join, and a result borrowing it keeps that loan. A temporary `dyn mut` view
 // cannot be a mutating slot's receiver, at a spawn or anywhere.
@@ -136,16 +136,10 @@ impl Tally {
 	record :: proc(self, n: int) -> int { hits += n; return self.base; }
 }
 
-Quiet :: struct { base: int }
-
-impl Quiet {
-	record :: proc(self, n: int) -> int { return self.base + n; }
-}
-
 writes_global :: proc() {
-	q := Quiet{1};
+	t := Tally{1};
 	r: int;
-	parallel { spawn r = (dyn Recorder)(&q).record(1); }
+	parallel { spawn r = (dyn Recorder)(&t).record(1); }
 }
 
 Grower :: struct { step: int }

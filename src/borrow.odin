@@ -3751,29 +3751,21 @@ report_shared_reach :: proc(
 }
 
 // design.md "Spawn statements", "Global write effects": a task that calls a
-// procedure value or through a `dyn` view may run any body the union for its
-// type or slot holds, so each that writes, or reaches through, the reported
-// global is named.
+// procedure value or through a `dyn` view may run any body its values or
+// union hold, and a callee runs what the task passes for each callback it
+// calls, so each body that writes, or reaches through, the reported global is
+// named, a callback with the parameter it was passed for.
 @(private = "file")
-note_value_targets :: proc(c: ^Compiler, call: ^Expr_Call, global: Symbol_Id, writes: bool) {
-	if call == nil {
+note_value_targets :: proc(state: ^Prov_State, call: ^Expr_Call, global: Symbol_Id, writes: bool) {
+	c := state.k.c
+	if call == nil || state.graph.literal == nil {
 		return
 	}
-	targets, indirect := indirect_call_targets(c, call)
-	if !indirect {
-		return
-	}
-	for target in targets {
-		found := false
-		if writes {
-			found = slice.contains(c.global_writes[target], global)
-		} else {
-			for reached in c.reach_effects[target] {
-				found ||= reached.global == global
-			}
-		}
-		sym := symbol_of(c, target)
-		if !found || sym == nil {
+	verb := "writes" if writes else "reaches through"
+	global_name := identifier_text(c, symbol_of(c, global).name)
+	for origin in call_effect_origins(c, state.graph.literal.symbol, call, global, writes) {
+		sym := symbol_of(c, origin.target)
+		if sym == nil {
 			continue
 		}
 		target_name := fmt.tprintf("`%s`", identifier_text(c, sym.name))
@@ -3782,9 +3774,15 @@ note_value_targets :: proc(c: ^Compiler, call: ^Expr_Call, global: Symbol_Id, wr
 		} else if sym.owner_type != INVALID_TYPE {
 			target_name = fmt.tprintf("`%s.%s`", type_name(c, sym.owner_type), identifier_text(c, sym.name))
 		}
+		callee := symbol_of(c, origin.callee)
+		if callee == nil || origin.parameter >= len(callee.param_symbols) {
+			add_notef(c, sym.span, "`%s` may be %s, which %s `%s`", spawn_callee_name(c, call), target_name, verb, global_name)
+			continue
+		}
+		parameter := symbol_of(c, callee.param_symbols[origin.parameter])
 		add_notef(
-			c, sym.span, "`%s` may be %s, which %s `%s`", spawn_callee_name(c, call), target_name,
-			writes ? "writes" : "reaches through", identifier_text(c, symbol_of(c, global).name),
+			c, sym.span, "`%s` may call %s for `%s`, which %s `%s`", identifier_text(c, callee.name), target_name,
+			identifier_text(c, parameter.name), verb, global_name,
 		)
 	}
 }
@@ -3807,7 +3805,7 @@ check_task_globals :: proc(state: ^Prov_State, event: Prov_Event, shared: ^Share
 			event.name, identifier_text(c, sym.name),
 		)
 		add_notef(c, sym.span, "declared here; return what the task computes, or make it an `Atomic` or a `thread.Mutex`")
-		note_value_targets(c, call, global, true)
+		note_value_targets(state, call, global, true)
 	}
 	for reached in c.reach_effects[event.symbol] {
 		hazard, erased := shared_carrier_hazard(c, reached.global)
@@ -3821,7 +3819,7 @@ check_task_globals :: proc(state: ^Prov_State, event: Prov_Event, shared: ^Share
 			shared_hazard_text(c, reached.global, hazard, erased),
 		)
 		note_reach_chain(c, reached)
-		note_value_targets(c, call, reached.global, false)
+		note_value_targets(state, call, reached.global, false)
 	}
 	given := make([dynamic]Global_Effect, 0, 2, state.graph.alloc)
 	for slot in event.sources {

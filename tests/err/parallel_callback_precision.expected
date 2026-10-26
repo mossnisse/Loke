@@ -1,0 +1,60 @@
+L0731
+@40:3
+`apply` may write `hits`, which every task and the parent share
+`apply` may call `tally` for `f`, which writes `hits`
+
+L0731
+@41:3
+`twice` may write `hits`, which every task and the parent share
+`twice` may call `tally` for `f`, which writes `hits`
+
+L0731
+@42:3
+`repeat` may write `hits`, which every task and the parent share
+`repeat` may call `tally` for `f`, which writes `hits`
+
+L0731
+@52:13
+`f` may write `hits`, which every task and the parent share
+`f` may be `tally`, which writes `hits`
+
+L0731
+@57:13
+`g` may write `hits`, which every task and the parent share
+`g` may be `tally`, which writes `hits`
+
+L0731
+@57:13
+`g` reaches through `table`, which every task and the parent share
+`g` may be `peek`, which reaches through `table`
+
+L0731
+@66:13
+`apply` may write `hits`, which every task and the parent share
+`apply` may call `tally` for `f`, which writes `hits`
+
+L0731
+@66:13
+`apply` reaches through `table`, which every task and the parent share
+`apply` may call `peek` for `f`, which reaches through `table`
+
+L0731
+@82:13
+`(dyn Recorder)(&loud).record` may write `hits`, which every task and the parent share
+
+L0731
+@87:13
+`apply` reaches through `table`, which every task and the parent share
+`apply` may call `peek` for `f`, which reaches through `table`
+
+L0732
+@99:3
+this task may use `arena`'s allocator, which a task started earlier reserves until the join
+
+L0512
+@107:2
+`buffer` cannot be modified by `apply`, which this join may run on this thread, here
+
+L0512
+@113:12
+`hits` cannot be modified by `apply` here: a read-only pointer of it is still in use

@@ -10,11 +10,12 @@
 // may call does any of those. A borrow of `thread_local` storage a callback
 // leaves or returns is in parallel_written_back.loke.
 //
-// The union is over every procedure of the type the program uses as a value,
-// so a spawn passing a clean procedure is rejected when another call passes
-// the wrapper a procedure of that type that writes a global.
-// Each case has a callback type of its own to keep the others out of its
-// union.
+// A wrapper's call takes in the procedure it is passed, so a spawn passing a
+// clean procedure is accepted though another call passes the wrapper a
+// procedure of that type that writes a global; a callback the program cannot
+// follow takes the union over every procedure of its type the program uses
+// as a value. Each case has a callback type of its own to keep the others out
+// of its union.
 package main;
 
 import "base:interfaces";

@@ -595,12 +595,28 @@ graph once more to collect the summaries a `parallel` block's checks read
 the reach effect, from `Reach` events resolved to the globals whose stored
 carriers they touch; the allocator-use effect, per parameter, from the region
 facts at each allocating operation; and the drops every thread runs at exit.
-Both effects settle over the calls the write effects found, so a call through
-a value or a `dyn` slot takes every target's, and each part keeps the call or
-hook it came through for diagnostics. A task spawned through a procedure value
-or a `dyn` view runs its `run` procedure, whose indirect call takes that union;
-each `Task_Site` keeps its spawned call, so a rejection names the targets that
-write or reach the global (`note_value_targets`). The facts are recorded only while
+All three effects settle per call, not per procedure type
+([Global write effects](design.md#global-write-effects)).
+`compute_global_writes` first settles which parameters each body calls
+(`Called_Parameter`), through a variable that may hold one or by passing one
+where a callee calls its own, and keeps each such body's effects apart from
+those callbacks in a `Callback_Summary`. A call then takes in `Call_Part`s
+(`call_parts`): a direct callee's own part, and for each callback it calls,
+the whole summary of what this call passes there, as
+`Compiler.argument_values` resolved it; a call through a followed variable,
+each value's; and any other, every body of its union. A value the calling body
+received itself is its caller's while the summaries settle, and any procedure
+of its type at the body's own calls (`open`). A body's whole summary, which
+`global_writes`, `reach_effects`, and `allocator_uses` hold, adds that union
+for each parameter it calls. A callback is given the regions its callee passes
+it (`Callback_Summary.regions`), substituted through the outer call's. A view
+converted at the call resolves to its concrete target (`converted_view_call`),
+and a task's call on its worker resolves its values where its `spawn` is
+(`Compiler.spawn_calls`, `Effect_Call.values_from`), so its `run` procedure's
+summary is per spawn. Each part keeps the call or hook it came through for
+diagnostics, and each `Task_Site` keeps its spawned call, so a rejection names
+the procedure value, callback, or union member that writes or reaches the
+global (`call_effect_origins`, `note_value_targets`). The facts are recorded only while
 `thread_facts_pending` is set, so the other passes do not pay for them, and the
 pass runs only when `thread_summaries_wanted` is set, which checking a
 `parallel` block does: it adds 10 to 20 percent to the front end, which only a

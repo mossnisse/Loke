@@ -587,6 +587,19 @@ checklist.
   the call that reaches a `&mut` capture, it suggests moving the callable
   through a generic `Callable` parameter, since the view only borrows it.
 
+- Global write, reach, and allocator-use effects are now per call
+  ([Global write effects](design.md#global-write-effects)). A call passing a
+  procedure for a parameter its callee calls, directly or through another
+  helper, takes that procedure's effects instead of those of every procedure
+  of its type the program uses as a value; so does a call through a local
+  that may hold only some procedures, and a `dyn` view converted where it is
+  called runs only its concrete type's method or the procedure it holds. So
+  `spawn r = apply(step, 1);` is accepted while the program elsewhere calls
+  `apply(tally, 1)` with a `tally` writing a global, and so is a borrow of
+  that global kept across `apply(step, 1)`. A task rejected for a global now
+  names the callback that writes or reaches it and the parameter it was
+  passed for, as in "`apply` may call `tally` for `f`".
+
 - Revised the deferred [ring proposal](concurrency-proposal.md#the-ring-algorithm)
   to recommend a spare-slot SPSC queue with bounded indices, separate closure
   flags from hot index cache lines, and require target validation before a

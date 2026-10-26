@@ -154,6 +154,40 @@ build :: proc() { r := Real{1}; use_view((dyn Poker)(&r)); }
 	expect_reach(t, &p, "build", "shared", via = "use_view")
 }
 
+// design.md "Global write effects": a call takes in the callback it passes,
+// through a wrapper and one forwarding to it; only the wrapper's own summary,
+// whose caller is unknown, takes every procedure of the parameter's type.
+@(test)
+reach_and_allocator_use_substitute_callbacks :: proc(t: ^testing.T) {
+	p: Checked
+	defer destroy_checked(&p)
+	if !summarized(t, &p, `
+shared: []mut int;
+touch :: proc() { shared[0] = 1; }
+quiet :: proc() {}
+run :: proc(action: proc()) { action(); }
+forward :: proc(action: proc()) { run(action); }
+calm :: proc() { run(quiet); forward(quiet); }
+busy :: proc() { forward(touch); }
+fill :: proc(a: Allocator) { xs := make([dynamic]int, 0, 4, a); }
+idle :: proc(a: Allocator) {}
+apply :: proc(f: proc(a: Allocator), a: Allocator) { f(a); }
+lazy :: proc(unused: int, a: Allocator) { apply(idle, a); }
+eager :: proc(unused: int, a: Allocator) { apply(fill, a); }
+`) {
+		return
+	}
+	expect_reach(t, &p, "run", "shared", via = "touch")
+	expect_reach(t, &p, "forward", "shared", via = "touch")
+	expect_no_reach(t, &p, "calm", "shared")
+	expect_reach(t, &p, "busy", "shared", via = "touch")
+	testing.expect(t, uses_param(use_of(t, &p, "apply"), 1), "`apply` alone may be given `fill`")
+	testing.expect(t, allocator_use_is_empty(use_of(t, &p, "lazy")), "`idle` uses no allocator")
+	eager := use_of(t, &p, "eager")
+	testing.expect(t, uses_param(eager, 1) && !uses_param(eager, 0), "`fill` uses what `apply` passes it, `eager`'s allocator")
+	testing.expectf(t, eager.param_sources[1].via == symbol_named(t, &p, "fill", .Proc), "`eager` names `fill`")
+}
+
 @(test)
 reach_includes_hooks_and_cleanup :: proc(t: ^testing.T) {
 	p: Checked

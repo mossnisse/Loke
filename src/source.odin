@@ -223,6 +223,8 @@ Compiler :: struct {
 	// procedures the emitter reads (compiler-architecture.md "Lowering parallel
 	// blocks").
 	spawn_tasks: [dynamic]^Spawn_Task,
+	// Each committed task's call on its worker, the one `run` makes.
+	spawn_calls: map[^Expr_Call]^Spawn_Task,
 
 	// Lifecycle classification (`src/hooks.odin`), cached per nominal type.
 	lifecycles: map[Type_Id]^Lifecycle,
@@ -325,6 +327,11 @@ Compiler :: struct {
 	// an indirect call may reach, settled before provenance runs.
 	global_writes:       map[Symbol_Id][]Symbol_Id,
 	indirect_writes:     map[string][]Symbol_Id,
+	// Per body that calls a procedure value it received, its summaries apart
+	// from that value, which each call substitutes; and every body of a
+	// procedure type used as a value, once that is settled.
+	callback_summaries:  map[Symbol_Id]^Callback_Summary,
+	type_unions:         map[Type_Id][]int,
 	global_writes_ready: bool,
 	thread_spawns:       [dynamic]Thread_Spawn,
 	// The bodies the write effects settled over, for the summaries after them.

@@ -48,6 +48,10 @@ Spawn_Task :: struct {
 	// The block runs on a pool, so a worker of it joining the block may run
 	// the task on the joining thread (design.md "Parallel blocks").
 	pooled: bool,
+	// The spawned call and the procedure it is in, where the effects resolve
+	// what `run`'s own call of it passes (`Compiler.spawn_calls`).
+	call:   ^Expr_Call,
+	parent: Symbol_Id,
 }
 
 // The frame field holding bound argument `index`, and the result's address.
@@ -377,6 +381,10 @@ lower_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn, block: ^Stmt_Parallel, proc_typ
 	}
 	task.result = result
 	task.through_value = call_through_value(c, call)
+	task.call = call
+	if k.proc_literal != nil {
+		task.parent = k.proc_literal.symbol
+	}
 
 	outer := k.scope
 	k.scope = new_scope(c, outer, .Local)
@@ -522,6 +530,7 @@ lower_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn, block: ^Stmt_Parallel, proc_typ
 		s.task = task
 		append(&c.spawn_tasks, task)
 		append(&block.spawns, s)
+		c.spawn_calls[inner] = task
 	}
 }
 

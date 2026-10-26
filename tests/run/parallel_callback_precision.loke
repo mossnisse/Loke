@@ -1,0 +1,121 @@
+// design.md "Global write effects", "Globals while tasks run", "Allocators
+// and tasks": a call takes in the callbacks it passes, not every procedure of
+// their type. The program passes `tally`, which writes `hits`, to the same
+// wrappers in serial calls, fills the same slot with `Loud`, and passes
+// `fill` an arena elsewhere, yet tasks given only clean callbacks run: through
+// a wrapper, a wrapper forwarding to another, a recursive wrapper, a local
+// holding either of two clean procedures, a view converted at the spawn of a
+// clean type, a procedure, or a capture literal, and a wrapper given an arena
+// it does not touch, on bare and pooled blocks. A borrow of `hits` also stays
+// live across a serial call given a clean callback.
+package main;
+
+import "core:fmt";
+import "core:mem";
+import "core:thread";
+
+hits: int;
+cells: [3]int;
+table: []mut int;
+
+apply :: proc(f: proc(n: int) -> int, n: int) -> int { return f(n); }
+twice :: proc(f: proc(n: int) -> int, n: int) -> int { return apply(f, apply(f, n)); }
+repeat :: proc(f: proc(n: int) -> int, n: int, times: int) -> int {
+	if (times == 0) {
+		return n;
+	}
+	return repeat(f, f(n), times - 1);
+}
+
+step :: proc(n: int) -> int { return n + 1; }
+double :: proc(n: int) -> int { return n * 2; }
+tally :: proc(n: int) -> int { hits += n; return n; }
+peek :: proc(n: int) -> int { return table[0] + n; }
+
+Recorder :: interface($Self: type) {
+	slot record: proc(self, n: int) -> int;
+}
+
+Loud :: struct { base: int }
+
+impl Loud {
+	record :: proc(self, n: int) -> int { hits += n; return self.base; }
+}
+
+Quiet :: struct { base: int }
+
+impl Quiet {
+	record :: proc(self, n: int) -> int { return self.base + n; }
+}
+
+fill :: proc(a: Allocator, n: int) -> int { xs := make([dynamic]int, 0, 4, a); xs.append(n); return xs.len(); }
+count :: proc(a: Allocator, n: int) -> int { return n; }
+build :: proc(f: proc(a: Allocator, n: int) -> int, a: Allocator, n: int) -> int { return f(a, n); }
+
+// The dirty callbacks, each used where no task runs.
+serial :: proc() -> int {
+	cells = [3]int{1, 2, 3};
+	table = &mut cells[:];
+	loud := Loud{1};
+	arena := mem.Arena.init();
+	a := apply(tally, 1) + twice(tally, 1) + repeat(tally, 1, 2) + apply(peek, 1);
+	b := (dyn Recorder)(&loud).record(1) + build(fill, arena.allocator(), 1);
+	return a + b;
+}
+
+bare :: proc(pick: bool) -> int {
+	f := step;
+	if (pick) {
+		f = double;
+	}
+	quiet := Quiet{10};
+	offset := 100;
+	shift := proc(n: int) -> int capture(offset) { return n + offset; };
+	a: int;
+	b: int;
+	c: int;
+	d: int;
+	e: int;
+	g: int;
+	h: int;
+	parallel {
+		spawn a = apply(step, 1);
+		spawn b = twice(double, 3);
+		spawn c = repeat(step, 0, 4);
+		spawn d = f(5);
+		spawn e = (dyn Recorder)(&quiet).record(1);
+		spawn g = (dyn proc(n: int) -> int)(double)(7);
+		spawn h = (dyn proc(n: int) -> int)(shift)(1);
+	}
+	return a + b + c + d + e + g + h;
+}
+
+pooled :: proc() -> int {
+	pool := thread.Pool.init(2);
+	arena := mem.Arena.init();
+	quiet := Quiet{20};
+	a: int;
+	b: int;
+	c: int;
+	d: int;
+	parallel (&pool) {
+		spawn a = apply(double, 4);
+		spawn b = (dyn Recorder)(&quiet).record(2);
+		spawn c = build(count, arena.allocator(), 3);
+		spawn d = build(count, arena.allocator(), 4);
+	}
+	return a + b + c + d;
+}
+
+kept :: proc() -> int {
+	seen := &hits;
+	result := apply(step, 1);
+	return seen^ + result;
+}
+
+main :: proc() {
+	fmt.println("serial", serial());
+	fmt.println("bare", bare(false), bare(true));
+	fmt.println("pooled", pooled());
+	fmt.println("kept", kept(), hits);
+}
