@@ -368,14 +368,17 @@ has_excluded_copy_hook :: proc(c: ^Compiler, info: ^Type_Info) -> bool {
 // one cross without proving anything about what it reaches. `mutable` is a
 // mutable carrier it holds or reaches, `^mut`, `[]mut`, or `dyn mut`, through
 // which a task sharing it could write (design.md "Sharing with tasks").
+// `waker` is an `@(wakes_on_drop)` type it is, holds, or reaches, so keeping
+// the value may keep a waiter asleep (design.md "Releasing before the join").
 Transfer_Facts :: struct {
 	affine:  Type_Id,
 	erased:  Type_Id,
 	mutable: Type_Id,
+	waker:   Type_Id,
 }
 
 transfer_facts :: proc(c: ^Compiler, type: Type_Id) -> Transfer_Facts {
-	facts := Transfer_Facts{affine = INVALID_TYPE, erased = INVALID_TYPE, mutable = INVALID_TYPE}
+	facts := Transfer_Facts{affine = INVALID_TYPE, erased = INVALID_TYPE, mutable = INVALID_TYPE, waker = INVALID_TYPE}
 	visited := make(map[Type_Id]bool, 8, context.temp_allocator)
 	transfer_facts_walk(c, type, &facts, &visited)
 	return facts
@@ -384,7 +387,8 @@ transfer_facts :: proc(c: ^Compiler, type: Type_Id) -> Transfer_Facts {
 @(private = "file")
 transfer_facts_walk :: proc(c: ^Compiler, type: Type_Id, facts: ^Transfer_Facts, visited: ^map[Type_Id]bool) {
 	if type == INVALID_TYPE || visited[type] ||
-	   (facts.affine != INVALID_TYPE && facts.erased != INVALID_TYPE && facts.mutable != INVALID_TYPE) {
+	   (facts.affine != INVALID_TYPE && facts.erased != INVALID_TYPE &&
+	    facts.mutable != INVALID_TYPE && facts.waker != INVALID_TYPE) {
 		return
 	}
 	visited[type] = true
@@ -394,6 +398,9 @@ transfer_facts_walk :: proc(c: ^Compiler, type: Type_Id, facts: ^Transfer_Facts,
 	}
 	if info.thread_affine && facts.affine == INVALID_TYPE {
 		facts.affine = type
+	}
+	if info.wakes_on_drop && facts.waker == INVALID_TYPE {
+		facts.waker = type
 	}
 	#partial switch info.kind {
 	case .Pointer, .Slice, .Dyn:
@@ -430,60 +437,9 @@ transfer_facts_walk :: proc(c: ^Compiler, type: Type_Id, facts: ^Transfer_Facts,
 	}
 }
 
-// design.md "@(wakes_on_drop)": a marked type a value of `type` is, holds, or
-// reaches, so keeping the value may keep a waiter asleep; INVALID_TYPE if none.
-// It follows what `transfer_facts` follows: fields and variants, pointees,
-// owned and shared payloads, container elements, and a generic record's type
-// arguments.
+// design.md "@(wakes_on_drop)": the `waker` of `transfer_facts`.
 type_reaches_waker :: proc(c: ^Compiler, type: Type_Id) -> Type_Id {
-	visited := make(map[Type_Id]bool, 8, context.temp_allocator)
-	return waker_walk(c, type, &visited)
-}
-
-@(private = "file")
-waker_walk :: proc(c: ^Compiler, type: Type_Id, visited: ^map[Type_Id]bool) -> Type_Id {
-	if type == INVALID_TYPE || visited[type] {
-		return INVALID_TYPE
-	}
-	visited[type] = true
-	info := type_of(c, type)
-	if info == nil {
-		return INVALID_TYPE
-	}
-	if info.wakes_on_drop {
-		return type
-	}
-	#partial switch info.kind {
-	case .Distinct, .Pointer, .Slice, .Dynamic_Array, .Box, .Array, .Simd:
-		return waker_walk(c, info.element, visited)
-	case .Map:
-		if found := waker_walk(c, info.key, visited); found != INVALID_TYPE {
-			return found
-		}
-		return waker_walk(c, info.element, visited)
-	case .Struct:
-		for field in info.fields {
-			if sym := symbol_of(c, field); sym != nil {
-				if found := waker_walk(c, sym.type, visited); found != INVALID_TYPE {
-					return found
-				}
-			}
-		}
-		for arg in info.instance_args {
-			if arg.is_type {
-				if found := waker_walk(c, arg.type, visited); found != INVALID_TYPE {
-					return found
-				}
-			}
-		}
-	case .Union:
-		for variant in info.variants {
-			if found := waker_walk(c, variant, visited); found != INVALID_TYPE {
-				return found
-			}
-		}
-	}
-	return INVALID_TYPE
+	return transfer_facts(c, type).waker
 }
 
 // ------------------------------------------------- generated copy members --

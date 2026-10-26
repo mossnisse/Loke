@@ -19,6 +19,7 @@ import "core:time";
 finished: sync.Atomic(bool);
 drops: sync.Atomic(int);
 drops_off_main: sync.Atomic(int);
+worker_gone: sync.Atomic(bool);
 on_main: thread_local bool;
 
 watch :: proc(seconds: move int) {
@@ -257,7 +258,12 @@ describe_setup :: proc(result: Status(Setup_Error)) -> string {
 	return "";
 }
 
-returns_at_once :: proc(jobs: move thread.Receiver(Item)) {}
+// Drops its receiver, then says so, so the parent knows the side's count no
+// longer includes it.
+returns_at_once :: proc(jobs: move thread.Receiver(Item)) {
+	drop(jobs);
+	worker_gone.store(true);
+}
 
 // A worker returning during setup cannot close the side while the setup
 // receiver remains; once it drops, nothing keeps the side open.
@@ -266,7 +272,7 @@ early_worker :: proc() {
 	parallel {
 		send, receive := channel.split();
 		spawn returns_at_once(receive.fork());
-		time.sleep(10 * time.MILLISECOND);
+		for (!worker_gone.load()) { time.sleep(time.MILLISECOND); }
 		show("worker gone, setup receiver kept", send.try_send(Item{30}));
 		drop(receive);
 		show("setup receiver dropped", send.send(Item{31}));

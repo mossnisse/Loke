@@ -1,0 +1,16 @@
+// standard-library "Channels": an iterator over a `Receiver` borrows it, so
+// the receiver cannot drop, closing the receiving side, while the iterator can
+// still receive.
+package main;
+
+import "core:thread";
+
+main :: proc() {
+	channel := thread.Channel(int).init(1);
+	send, receive := channel.split();
+	iterator := receive.iter();
+	drop(receive);
+	_ = send.try_send(1);
+	drop(send);
+	_ = iterator.next();
+}

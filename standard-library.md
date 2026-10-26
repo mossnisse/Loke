@@ -572,7 +572,8 @@ share the lock; a count that would overflow panics first. `close` before
   once the queue is empty and the sending side has closed, so items committed
   before closure can be drained.
 - `Receiver(T)` is iterable: `foreach (job in jobs)` receives until the stream
-  ends.
+  ends. The iterator borrows the receiver, so the receiving side stays open
+  while it can receive.
 - Dropping an endpoint or closing does not drop queued items. Dropping the
   channel drops the rest on the thread that drops it. An unsent item is dropped
   by whoever drops its error, and a received one by the receiver. Every

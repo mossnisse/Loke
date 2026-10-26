@@ -39,7 +39,8 @@ Receiver :: move_only struct($T: type) @(wakes_on_drop) {
 	// and fields private to the package
 }
 
-// What `foreach` over a `Receiver` steps with.
+// What `foreach` over a `Receiver` steps with. It borrows the receiver, so
+// the receiving side stays open while it can still receive.
 Receiver_Iterator :: struct($T: type) {
 	// and fields private to the package
 }
@@ -91,7 +92,7 @@ impl Receiver($T) {
 
 	// Receives item by item: each step waits as `receive` does, and the
 	// loop ends with the stream.
-	iter :: proc(self) -> Receiver_Iterator(T) ---;
+	iter :: proc(self: ^) -> Receiver_Iterator(T) ---;
 }
 
 impl Receiver_Iterator($T) {

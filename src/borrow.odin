@@ -3365,6 +3365,14 @@ check_join_retention :: proc(state: ^Prov_State, event: Prov_Event, live: []bool
 		if waker == INVALID_TYPE {
 			continue
 		}
+		// Only the marked subvalue's carriers count: a wrapper's sibling field
+		// may borrow what a task borrows without holding up its wait.
+		if info.content_shape == sym.type {
+			waker = path_waker(c, sym.type, info.path)
+			if waker == INVALID_TYPE {
+				continue
+			}
+		}
 		row := reach_row(state, state.reach, slot)
 		for index in 0 ..< state.loans {
 			if !bit_get(row, index) || state.ended[index] {
@@ -3377,6 +3385,55 @@ check_join_retention :: proc(state: ^Prov_State, event: Prov_Event, live: []bool
 			}
 		}
 	}
+}
+
+// The `@(wakes_on_drop)` type the carrier at `path` in a `type` value belongs
+// to: a marked type the path passes through, or one the carrier, or a
+// truncated path's subtree, reaches. INVALID_TYPE for a carrier outside every
+// marked subvalue. A union's variants share one wildcard step, so any of them
+// may be the one; a step this does not recognize answers for the whole place.
+@(private = "file")
+path_waker :: proc(c: ^Compiler, type: Type_Id, path: []Proj_Step) -> Type_Id {
+	info := type_of(c, type)
+	if info == nil {
+		return INVALID_TYPE
+	}
+	if info.wakes_on_drop {
+		return type
+	}
+	if len(path) == 0 || type_is_carrier(c, type) {
+		return type_reaches_waker(c, type)
+	}
+	step, rest := path[0], path[1:]
+	if payload := shared_payload_type(c, type); payload != INVALID_TYPE {
+		return path_waker(c, payload, rest)
+	}
+	#partial switch info.kind {
+	case .Distinct:
+		return path_waker(c, info.element, path)
+	case .Struct:
+		if step.kind == .Field {
+			for field in info.fields {
+				if sym := symbol_of(c, field); sym != nil && i64(sym.index) == step.lo {
+					return path_waker(c, sym.type, rest)
+				}
+			}
+		}
+	case .Union:
+		for variant in info.variants {
+			if found := path_waker(c, variant, rest); found != INVALID_TYPE {
+				return found
+			}
+		}
+		return INVALID_TYPE
+	case .Array, .Dynamic_Array, .Box:
+		return path_waker(c, info.element, rest)
+	case .Map:
+		if len(rest) > 0 && rest[0].kind == .Field {
+			return path_waker(c, rest[0].lo == PROJ_MAP_KEY ? info.key : info.element, rest[1:])
+		}
+	}
+	return type_reaches_waker(c, type)
 }
 
 // A loan a task of the block holds whose storage may overlap `retained`'s.

@@ -1252,6 +1252,44 @@ made the compiler accept the existing `read_after_unlock` error case; the
 direct pointer follows the monitor borrow rather than the guard's lifetime.
 No further abstraction or deletion is justified by this review.
 
+### Channel implementation and join-check review (2026-10-26)
+
+Review of `e8238f6`. All five findings are fixed:
+
+- The channel iterator held a pointer to the channel rather than borrowing a
+  `Receiver`, so its receiver could drop, closing the receiving side, while
+  the iterator could still receive: a send then failed, and a receive before
+  the last sender dropped waited forever. The iterator borrows its receiver
+  now, and `next` forwards to `receive`;
+  [lib_thread_channel_iterator.loke](tests/err/lib_thread_channel_iterator.loke)
+  rejects the premature drop with `L0512`.
+- The [join check](design.md#releasing-before-the-join) found the marked type
+  in the whole symbol's type, then attributed every carrier slot of the symbol
+  to it, so a guard on one mutex was rejected because a sibling field pointed
+  to another a task locks. Only slots whose carrier path passes through a
+  marked type, or ends at a carrier reaching one, count now (`path_waker` in
+  `borrow.odin`); [parallel_join_retention.loke](tests/err/parallel_join_retention.loke)
+  accepts the wrapper case and still rejects a wrapper whose guard locks the
+  task's mutex.
+- The `early_worker` case in
+  [lib_thread_channel.loke](tests/run/lib_thread_channel.loke) assumed its
+  worker had returned after sleeping 10 ms. The worker now drops its receiver
+  explicitly and then publishes a flag the parent waits for.
+- `waker_walk` repeated the traversal of `transfer_facts_walk` in
+  [hooks.odin](src/hooks.odin). The first marked type is now the `waker` fact,
+  and `type_reaches_waker` reads it.
+- `Channel`'s `capacity` field existed only to make the type lack a zero value.
+  The private `state` field is `required` instead, and `init` sets it
+  explicitly. With the iterator forwarding to `receive`, the private `take`
+  had one caller and is inlined there.
+
+The main boundaries are useful: `Channel_State` owns the ring operations,
+`Monitor` supplies synchronization, and the endpoints own the participant
+counts. The join check belongs in the existing provenance replay, where
+cleanup and task holds are already available. Keep `queue_of` as the narrow
+trust boundary until the
+[borrow-contract question](#waiting-and-ownership-review-2026-10-26) is resolved.
+
 ## Error handling (2026-10-13)
 
 The error handling proposal of this date is adopted. design.md defines it under

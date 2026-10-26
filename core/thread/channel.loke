@@ -13,12 +13,11 @@ import "core:unsafe";
 /// `close`. Dropping the channel drops the items still queued. It is
 /// move-only and has no zero value.
 Channel :: struct($T: type) {
-	@(private) state: Monitor(Channel_State(T)),
 	// Required, so a channel has no zero value: `init` makes one.
-	@(private, required) capacity: int,
+	@(private, required) state: Monitor(Channel_State(T)),
 }
 
-// The queue is a ring over `capacity` slots, each `.none` unless it holds a
+// The queue is a ring over the capacity's slots, each `.none` unless it holds a
 // committed item, so no slot needs `T`'s zero.
 @(private)
 Channel_State :: struct($T: type) {
@@ -81,9 +80,10 @@ Receiver :: move_only struct($T: type) @(wakes_on_drop) {
 	@(private) channel: ^Channel(T),
 }
 
-/// What `foreach` over a `Receiver` steps with.
+/// What `foreach` over a `Receiver` steps with. It borrows the receiver, so
+/// the receiving side stays open while it can still receive.
 Receiver_Iterator :: struct($T: type) {
-	@(private) channel: ^Channel(T),
+	@(private) receiver: ^Receiver(T),
 }
 
 impl Channel($T) {
@@ -91,7 +91,7 @@ impl Channel($T) {
 	/// A capacity below one panics.
 	init :: proc(capacity: int) -> Channel(T) {
 		if (capacity < 1) { panic("thread.Channel capacity must be positive"); }
-		channel := Channel(T){capacity = capacity};
+		channel := Channel(T){state = {}};
 		channel.state.value.slots.resize(capacity);
 		return channel;
 	}
@@ -119,13 +119,6 @@ impl Channel($T) {
 		closing := &mut state.get();
 		closing.sending_closed = true;
 		closing.receiving_closed = true;
-	}
-
-	// The receive of `Receiver.receive` and of iteration.
-	@(private)
-	take :: proc(self: ^) -> Option(T) {
-		state := self.state.lock_when(Channel_State(T).can_receive) or_else return .none;
-		return queue_of(&mut state.get()).pop();
 	}
 }
 
@@ -202,7 +195,8 @@ impl Receiver($T) {
 	/// the oldest item; `.none` once the sending side has closed and the queue
 	/// is empty.
 	receive :: proc(self: ^) -> Option(T) {
-		return self.channel.take();
+		state := self.channel.state.lock_when(Channel_State(T).can_receive) or_else return .none;
+		return queue_of(&mut state.get()).pop();
 	}
 
 	/// Takes the oldest item without waiting: `.empty` means more may come,
@@ -219,8 +213,8 @@ impl Receiver($T) {
 
 	/// Receives item by item: each step waits as `receive` does, and the
 	/// loop ends with the stream.
-	iter :: proc(self) -> Receiver_Iterator(T) {
-		return Receiver_Iterator(T){self.channel};
+	iter :: proc(self: ^) -> Receiver_Iterator(T) {
+		return Receiver_Iterator(T){self};
 	}
 
 	// The last receiver to drop closes the receiving side, and the changed
@@ -237,6 +231,6 @@ impl Receiver($T) {
 impl Receiver_Iterator($T) {
 	/// The next item, as `receive` answers it.
 	next :: proc(self: inout) -> Option(T) {
-		return self.channel.take();
+		return self.receiver.receive();
 	}
 }

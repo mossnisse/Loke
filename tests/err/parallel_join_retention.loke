@@ -4,8 +4,10 @@
 // borrows. Retention through an enclosing local, a parameter, a wrapper, a
 // container, a task result, a writeback, an outer block's local at a nested
 // join, and an early exit is rejected, and so is a retained endpoint the
-// parent closed, and a library's own marked type, with a drop hook or not. Moving endpoints to tasks, splitting inside the block,
-// dropping before the join, and a guard on unrelated storage are accepted.
+// parent closed, and a library's own marked type, with a drop hook or not.
+// Moving endpoints to tasks, splitting inside the block, dropping before the
+// join, and a guard on unrelated storage are accepted, even when a field
+// beside the guard borrows what a task borrows.
 package main;
 
 import "core:thread";
@@ -187,6 +189,27 @@ unrelated_guard :: proc() {
 	held := total.lock();
 	parallel {
 		spawn lock_and_add(&other);
+	}
+}
+
+Guard_And_Other :: struct { guard: thread.Guard(int), other: ^thread.Mutex(int) }
+
+// Only the guard's own borrow counts, not its sibling field's.
+guard_beside_task_storage :: proc() {
+	first: thread.Mutex(int) = {};
+	second: thread.Mutex(int) = {};
+	kept := Guard_And_Other{first.lock(), &second};
+	parallel {
+		spawn lock_and_add(&second);
+	}
+}
+
+guard_in_wrapper :: proc() {
+	first: thread.Mutex(int) = {};
+	second: thread.Mutex(int) = {};
+	kept := Guard_And_Other{first.lock(), &second};
+	parallel {
+		spawn lock_and_add(&first);
 	}
 }
 
