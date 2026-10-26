@@ -366,6 +366,14 @@ checklist.
   sorts and sums with them. A program with a `parallel` block depends on
   `core:thread` without importing it.
 
+- `spawn` may call a procedure value, as in `spawn result = f(x);` where `f`
+  is a parameter, a local chosen at runtime, or a field
+  ([Spawn statements](design.md#spawn-statements)). The parent evaluates the
+  value before the arguments and the task keeps it. The task checks take the
+  effects of every procedure of its type the program uses as a value, and a
+  rejection names the ones that cause it. A `dyn` view or method, and a
+  foreign procedure value, are still not spawned (`L0728`).
+
 - `thread.Monitor(T)` is a mutex whose holder can wait for the guarded value
   to reach a state ([Monitors](standard-library.md#monitors)).
   `monitor.lock_when(ready)` sleeps until `ready` answers `true` for the
@@ -558,6 +566,11 @@ checklist.
   which case was slowest.
 
 ### Changed
+
+- Narrowed [concurrency milestone 10](concurrency-proposal.md#milestone-10-indirect-spawned-calls)
+  to start with procedure values using the existing task machinery, followed
+  by erased callable data and per-call effect precision. Clarified the spike's
+  coverage and the validation required before each step ships.
 
 - Revised the deferred [ring proposal](concurrency-proposal.md#the-ring-algorithm)
   to recommend a spare-slot SPSC queue with bounded indices, separate closure

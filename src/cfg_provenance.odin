@@ -71,6 +71,9 @@ Task_Site :: struct {
 	block:   int,
 	reserve: Region_Set,
 	span:    Span,
+	// The spawned call, whose procedure value diagnostics resolve to the
+	// bodies it may be.
+	call:    ^Expr_Call,
 }
 
 // design.md "Capabilities and the one rule": a read is compatible with a
@@ -5532,6 +5535,11 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 			callee = walk_flow_expr(graph, v.callee)
 		}
 	}
+	// design.md "Spawn statements": a procedure value a task calls is evaluated
+	// on the parent, before the arguments, and held with them until the join.
+	if v == graph.spawning && input.callee != 0 {
+		graph.spawn_held = callee
+	}
 	if len(v.bound) == 0 {
 		actuals := make([][]int, max(len(v.args), 1), graph.alloc)
 		borrowed: []int
@@ -5604,7 +5612,7 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	// use of it while the stored copy lives.
 	prov_container_content(graph, v, container_op, actuals)
 	if v == graph.spawning {
-		graph.spawn_held = borrowed
+		graph.spawn_held = prov_join(graph, graph.spawn_held, borrowed)
 		for actual in actuals {
 			graph.spawn_held = prov_join(graph, graph.spawn_held, actual)
 		}
@@ -5651,10 +5659,10 @@ prov_spawn :: proc(graph: ^Flow_Graph, s: ^Stmt_Spawn) {
 	if graph.task_sites == nil {
 		graph.task_sites = make([dynamic]Task_Site, 0, 2, graph.alloc)
 	}
-	append(&graph.task_sites, Task_Site{block = prov_window_bit(graph, task.scope), reserve = graph.task_reserve, span = s.span})
+	append(&graph.task_sites, Task_Site{block = prov_window_bit(graph, task.scope), reserve = graph.task_reserve, span = s.span, call = call})
 	prov_emit(graph, Prov_Event{
 		kind = .Task_Start, slot = len(graph.task_sites) - 1, symbol = runs, sources = held, span = s.span,
-		name = identifier_text(graph.k.c, symbol_of(graph.k.c, call.resolution.symbol).name),
+		name = spawn_callee_name(graph.k.c, call),
 	})
 	slot, found := graph.task_slots[task.scope]
 	hold, has_hold := graph.spawn_holds[s]
@@ -5673,7 +5681,7 @@ prov_spawn :: proc(graph: ^Flow_Graph, s: ^Stmt_Spawn) {
 // the effect analysis has no body for the wrapper.
 @(private = "file")
 spawn_runs :: proc(graph: ^Flow_Graph, s: ^Stmt_Spawn) -> Symbol_Id {
-	if s.task.run in graph.k.c.effect_program.index_of {
+	if s.task.run in graph.k.c.effect_program.index_of || s.task.through_value {
 		return s.task.run
 	}
 	return s.call.(^Expr_Call).resolution.symbol
@@ -5706,7 +5714,7 @@ prov_enter_parallel :: proc(graph: ^Flow_Graph, s: ^Stmt_Parallel) {
 			if tasks == nil {
 				tasks = make([dynamic]Pool_Task, 0, len(s.spawns), graph.alloc)
 			}
-			append(&tasks, Pool_Task{runs = spawn_runs(graph, spawn), callee = spawn.call.(^Expr_Call).resolution.symbol})
+			append(&tasks, Pool_Task{runs = spawn_runs(graph, spawn), name = spawn_callee_name(graph.k.c, spawn.call.(^Expr_Call))})
 		}
 	}
 	graph.task_holds[s.scope] = holds

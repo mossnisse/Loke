@@ -134,9 +134,10 @@ emit_stmt :: proc(e: ^Emitter, stmt: Stmt, lends := false) {
 	}
 }
 
-// compiler-architecture.md "Lowering parallel blocks": the parent evaluates the
-// callee's arguments in their order into a frame from the default allocator,
-// which the task's `run` takes apart and frees. A value the task owns is held
+// compiler-architecture.md "Lowering parallel blocks": the parent evaluates a
+// procedure value it calls, then the callee's arguments in their order, into a
+// frame from the default allocator, which the task's `run` takes apart and
+// frees. A value the task owns is held
 // for the unwind until `start` has handed the frame to a thread, so a failure
 // to start drops it on the parent.
 @(private = "file")
@@ -148,8 +149,9 @@ emit_spawn :: proc(e: ^Emitter, s: ^Stmt_Spawn) {
 		return
 	}
 	frame_info := type_of(e.c, task.frame)
-	callee := symbol_of(e.c, call.resolution.symbol)
-	callee_type := callee == nil ? nil : underlying_info(e.c, callee.proc_type)
+	// A procedure value has no declaration: its call supplies every argument.
+	callee := task.through_value ? nil : symbol_of(e.c, call.resolution.symbol)
+	callee_type := underlying_info(e.c, task.proc_type)
 	if frame_info == nil || callee_type == nil {
 		backend_fail(e, "a `spawn` has no frame")
 		return
@@ -175,6 +177,10 @@ emit_spawn :: proc(e: ^Emitter, s: ^Stmt_Spawn) {
 	place_label(e, ok_label)
 	e.terminated = false
 	unclaimed := begin_frame_release(e, task.frame, frame)
+	if task.through_value {
+		field := field_address(e, frame_info, frame_type, frame, spawn_callee_field(task))
+		store(e, task.proc_type, emit_expr(e, call.callee), field)
+	}
 
 	// A default reads the parameters bound to its left, as at a call.
 	outer_params := e.param_values
@@ -189,7 +195,7 @@ emit_spawn :: proc(e: ^Emitter, s: ^Stmt_Spawn) {
 		index := call_slot_at(call, step)
 		argument := call.bound[index]
 		type := callee_type.parameters[index]
-		is_default := index < len(callee.param_defaults) && argument == callee.param_defaults[index]
+		is_default := callee != nil && index < len(callee.param_defaults) && argument == callee.param_defaults[index]
 		e.param_values = is_default ? own_params : outer_params
 		field := field_address(e, frame_info, frame_type, frame, spawn_argument_field(index))
 		if call_packs(call, index) {
@@ -212,7 +218,7 @@ emit_spawn :: proc(e: ^Emitter, s: ^Stmt_Spawn) {
 			append(&owned, hold_temporary_value(e, type, bound))
 			store(e, type, bound, field)
 		}
-		if index < len(callee.param_symbols) && callee.param_symbols[index] != INVALID_SYMBOL {
+		if callee != nil && index < len(callee.param_symbols) && callee.param_symbols[index] != INVALID_SYMBOL {
 			own_params[callee.param_symbols[index]] = bound
 		}
 	}

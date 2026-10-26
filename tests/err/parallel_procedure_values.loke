@@ -1,0 +1,119 @@
+// design.md "Spawn statements": a spawned procedure value may run any body of
+// its type the program uses as a value (design.md "Global write effects"), so
+// each task check takes their union, and a rejection names the bodies that
+// cause it. Adding one that writes a global to a selection rejects the spawn.
+// A `thread_local` borrow left in an argument or returned, an allocator two
+// tasks use, an argument the parent writes while a task borrows it, and a
+// pooled task's `thread_local` write are rejected as for a named callee. A
+// `dyn proc` view, a foreign procedure value, and an `inout` result are not
+// spawned.
+package main;
+
+import "core:fmt";
+import "core:mem";
+import "core:thread";
+
+hits: int;
+values: [1]int;
+view: []mut int;
+counter: thread_local int;
+buffer: thread_local [dynamic]int;
+
+record_hit :: proc(n: u8) { hits += int(n); }
+
+writes :: proc(f: proc(n: u8)) {
+	parallel { spawn f(1); }
+}
+
+increment :: proc(n: i8) { view[0] += int(n); }
+
+reaches :: proc(f: proc(n: i8)) {
+	parallel { spawn f(1); }
+}
+
+clean_u16 :: proc(n: u16) {}
+dirty_u16 :: proc(n: u16) { hits += int(n); }
+
+selected :: proc(by_dirty: bool) {
+	g := clean_u16;
+	if (by_dirty) { g = dirty_u16; }
+	parallel { spawn g(1); }
+}
+
+put_tls :: proc(out: ^mut ^int) { out^ = &counter; }
+
+leaves_tls :: proc(f: proc(out: ^mut ^int)) {
+	p := &values[0];
+	parallel { spawn f(&mut p); }
+	fmt.println(p^);
+}
+
+borrow_tls :: proc() -> ^int { return &counter; }
+
+returns_tls :: proc(f: proc() -> ^int) {
+	r: ^int;
+	parallel { spawn r = f(); }
+	fmt.println(r^);
+}
+
+allocate :: proc(a: Allocator) { xs: [dynamic]int via a = {}; xs.append(1); }
+
+one_arena :: proc(f: proc(a: Allocator)) {
+	arena := mem.Arena.init();
+	a := arena.allocator();
+	parallel {
+		spawn f(a);
+		spawn f(a);
+	}
+}
+
+add_one :: proc(total: ^mut int) { total^ += 1; }
+
+lent :: proc(f: proc(total: ^mut int)) {
+	total := 0;
+	parallel {
+		spawn f(&mut total);
+		total += 1;
+	}
+}
+
+grow :: proc(x: f32) { buffer.append(int(x)); }
+
+pooled :: proc(f: proc(x: f32)) {
+	pool := thread.Pool.init(2);
+	seen := buffer[:];
+	parallel (&pool) {
+		spawn f(1);
+	}
+	fmt.println(seen.len());
+}
+
+viewed :: proc(f: dyn proc(n: i64)) {
+	parallel { spawn f(1); }
+}
+
+foreign_value :: proc(f: proc "c" (n: i32)) {
+	parallel { spawn f(1); }
+}
+
+Cell :: struct { value: int }
+
+place :: proc(cell: ^mut Cell) -> inout int { return inout cell.value; }
+
+inout_result :: proc(f: proc(cell: ^mut Cell) -> inout int) {
+	cell := Cell{0};
+	parallel { spawn f(&mut cell); }
+}
+
+main :: proc() {
+	view = &mut values[:];
+	writes(record_hit);
+	reaches(increment);
+	selected(false);
+	leaves_tls(put_tls);
+	returns_tls(borrow_tls);
+	one_arena(allocate);
+	lent(add_one);
+	pooled(grow);
+	inout_result(place);
+}

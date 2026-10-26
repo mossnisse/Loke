@@ -159,7 +159,7 @@ checked AST + settled lifecycle annotations
 | [provenance_input.odin](src/provenance_input.odin) | `Prov_Input`: body-local `Storage_Id` and `Value_Id` tables, zero meaning unresolved storage or no value; canonical typed places (`Prov_Place`). |
 | [provenance_form.odin](src/provenance_form.odin) | Each value's checked form (`Prov_Form`), with its operands, a call's argument and pack values, and the call a user operator stands for, all as values. |
 | [provenance_transfer.odin](src/provenance_transfer.odin), [provenance_transfer_facts.odin](src/provenance_transfer_facts.odin) | Typed transfers (constructors, owner views, payload extraction, widening, copies and moves) and how they apply to targets and regions. |
-| [provenance_call.odin](src/provenance_call.odin) | Checked call inputs: contract, signature, parameter modes, result type, argument slots in source evaluation order, and a lending call's captured receiver. |
+| [provenance_call.odin](src/provenance_call.odin) | Checked call inputs: contract, signature, parameter modes, result type, argument slots in source evaluation order, a lending call's captured receiver, and the evaluated callee of a call through a procedure value (`call_through_value`). |
 | [provenance_read.odin](src/provenance_read.odin) | A leaf alias read, derived from a value and its form. |
 | [provenance_effect.odin](src/provenance_effect.odin) | Fact operations, their replay, and freezing. |
 | [provenance_event.odin](src/provenance_event.odin) | Event operations and their materialization. |
@@ -597,7 +597,10 @@ carriers they touch; the allocator-use effect, per parameter, from the region
 facts at each allocating operation; and the drops every thread runs at exit.
 Both effects settle over the calls the write effects found, so a call through
 a value or a `dyn` slot takes every target's, and each part keeps the call or
-hook it came through for diagnostics. The facts are recorded only while
+hook it came through for diagnostics. A spawned procedure value's task runs its
+`run` procedure, whose call through the frame's value takes that union; each
+`Task_Site` keeps its spawned call, so a rejection names the targets that write
+or reach the global (`note_value_targets`). The facts are recorded only while
 `thread_facts_pending` is set, so the other passes do not pay for them, and the
 pass runs only when `thread_summaries_wanted` is set, which checking a
 `parallel` block does: it adds 10 to 20 percent to the front end, which only a
@@ -635,10 +638,12 @@ hook(drop) on Task_Scope                // joins every started thread,
 - **Each spawn site.** Checking a spawn synthesizes a frame record and a run
   procedure, as `capture.odin` does for capture literals, and records them in
   `Compiler.spawn_tasks`. The frame holds a leading slot for `run`, each bound
-  argument (copied, owned, or as an address), and the result local's address.
-  The run procedure takes the owned arguments out of the frame, makes the
-  call, writes the result through the address with `unsafe.write`, since the
-  local is dead, and frees the frame. A variadic pack's field is a record of
+  argument (copied, owned, or as an address), the result local's address,
+  and, for a call through a procedure value (`Spawn_Task.through_value`),
+  that value, which the parent evaluates before the arguments. The run
+  procedure takes the owned arguments out of the frame, makes the call, by
+  name or through the frame's value, writes the result through the address
+  with `unsafe.write`, since the local is dead, and frees the frame. A variadic pack's field is a record of
   its operands in written order (`Spawn_Task.pack`): the parent fills it as
   `emit_variadic_pack` would copy each element, and `run` packs them again,
   moving owned elements in and passing each spread on as `..s`. A lone spread

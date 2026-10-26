@@ -27,7 +27,7 @@ L0728
 this call has no result to assign to `nothing_back`
 L0728
 @64:9
-`spawn` starts a procedure or method named directly; a procedure value, a built-in, or a conversion cannot be spawned yet
+`spawn` starts a procedure, a method, or a procedure value; a `dyn` view, a built-in, or a conversion cannot be spawned yet
 L0728
 @65:9
 `spawn` starts a Loke procedure; call a foreign one from a Loke procedure the task runs

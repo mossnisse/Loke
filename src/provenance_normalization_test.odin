@@ -857,18 +857,20 @@ main :: proc() {}`) { return }
 	testing.expect(t, shared_paths, "the copy within `pair` was not carried")
 }
 
-// design.md "Evaluation order", "Splitting a mutable slice": checked call
-// descriptions retain source ordering and an independent receiver capture.
+// design.md "Evaluation order", "Splitting a mutable slice", "Procedure
+// type": checked call descriptions retain source ordering, an independent
+// receiver capture, and the procedure value a call through one evaluates.
 @(test)
 normalization_call_input_contract :: proc(t: ^testing.T) {
 	p: Checked
 	defer destroy_checked(&p)
 	if !normalization_checked(t, &p, `package main;
 sum :: proc(left: int, right: int) -> int { return left + right; }
-calls :: proc(receiver: []mut int) -> int {
+calls :: proc(receiver: []mut int, f: proc(n: int) -> int) -> int {
     named := sum(right = 2, left = 1);
     halves := receiver.split_at_mut(receiver.len() / 2);
-    return named + halves.left.len() + halves.right.len();
+    through := f(3);
+    return named + halves.left.len() + halves.right.len() + through;
 }
 main :: proc() {}`) { return }
 	k: Checker
@@ -876,10 +878,16 @@ main :: proc() {}`) { return }
 	if graph == nil { return }
 	named := normalization_decl(t, &p, graph.literal, "named")
 	halves := normalization_decl(t, &p, graph.literal, "halves")
-	if named == nil || halves == nil { return }
+	through := normalization_decl(t, &p, graph.literal, "through")
+	if named == nil || halves == nil || through == nil { return }
 	call := prov_input_call(graph, named.values[0].(^Expr_Call))
 	testing.expect(t, len(call.order) == 2 && call.order[0] == 1 && call.order[1] == 0, "named arguments lost their written order")
 	testing.expect(t, len(call.arguments) == 2 && call.arguments[0].type == TYPE_INT, "checked parameter metadata was reconstructed incorrectly")
+	testing.expect(t, call.callee == 0, "a call to a named procedure recorded a callee value")
+	indirect_call := through.values[0].(^Expr_Call)
+	indirect := prov_input_call(graph, indirect_call)
+	testing.expect(t, indirect.callee != 0 && indirect.callee == prov_input_value(graph, indirect_call.callee),
+	               "a call through a procedure value lost its evaluated callee")
 	split_call := halves.values[0].(^Expr_Call)
 	split := prov_input_call(graph, split_call)
 	testing.expect(t, split.capture != 0 && split.capture != prov_input_value(graph, split_call.bound[0]),

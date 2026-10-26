@@ -30,6 +30,25 @@ Prov_Call_Input :: struct {
 	container: Container_Op,
 	// The receiver is loaded at its argument point and lent after all operands.
 	capture: Value_Id,
+	// The procedure value a call through one evaluates before its arguments;
+	// zero for a call to a named procedure or method.
+	callee: Value_Id,
+}
+
+// design.md "Procedure type", "Evaluation order": a call through a procedure
+// value rather than to a named procedure, method, or callable record's `call`.
+call_through_value :: proc(c: ^Compiler, v: ^Expr_Call) -> bool {
+	if _, procedure := v.operation.(Call_Procedure); !procedure {
+		return false
+	}
+	if sym := symbol_of(c, v.resolution.chosen_overload); sym != nil && sym.kind == .Proc {
+		return false
+	}
+	if sym := symbol_of(c, v.resolution.symbol); sym != nil && sym.kind == .Proc {
+		return false
+	}
+	base := expr_base(v.callee)
+	return base != nil && underlying_kind(c, base.type) == .Proc
 }
 
 // design.md "Evaluation order", "Parameter semantics and ABI lowering",
@@ -47,6 +66,7 @@ prov_input_call :: proc(graph: ^Flow_Graph, call: ^Expr_Call) -> Prov_Call_Input
 	}
 	info := underlying_info(c, input.signature)
 	if info != nil { input.result_inout = info.result_inout }
+	if call_through_value(c, call) { input.callee = prov_input_value(graph, call.callee) }
 	input.arguments = make([]Prov_Call_Argument, len(call.bound), graph.alloc)
 	input.order = make([]int, len(call.bound), graph.alloc)
 	for argument, index in call.bound {

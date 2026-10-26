@@ -31,9 +31,14 @@ Spawn_Field_Kind :: enum u8 {
 Spawn_Task :: struct {
 	// The frame: a leading `rawptr` slot `Task_Scope.start` fills with `run`,
 	// one field per bound argument in parameter order, then the result's
-	// address when there is one.
+	// address when there is one, then the procedure value a call through one
+	// calls.
 	frame:  Type_Id,
 	run:    Symbol_Id,
+	// The procedure type the call goes through, and whether its callee is a
+	// value the frame holds rather than a procedure `run` names.
+	proc_type: Type_Id,
+	through_value: bool,
 	// The enclosing block's hidden `Task_Scope` local, and its `start`.
 	scope:  Symbol_Id,
 	start:  Symbol_Id,
@@ -54,6 +59,22 @@ spawn_argument_field :: proc(index: int) -> int {
 
 spawn_result_field :: proc(task: ^Spawn_Task) -> int {
 	return len(task.kinds) + 1
+}
+
+spawn_callee_field :: proc(task: ^Spawn_Task) -> int {
+	return len(task.kinds) + (task.result != INVALID_SYMBOL ? 2 : 1)
+}
+
+// How diagnostics name what a spawn starts: the procedure, or the procedure
+// value as written.
+spawn_callee_name :: proc(c: ^Compiler, call: ^Expr_Call) -> string {
+	if !call_through_value(c, call) {
+		if sym := symbol_of(c, call.resolution.symbol); sym != nil {
+			return identifier_text(c, sym.name)
+		}
+	}
+	span := expr_span(call.callee)
+	return c.sources[span.file].text[span.lo:span.hi]
 }
 
 // The names the synthesized code binds in scopes of its own. None can be
@@ -229,43 +250,50 @@ check_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn) -> Flow_Info {
 	   type == INVALID_TYPE || (s.result != nil && result_type == INVALID_TYPE) {
 		return FLOWS
 	}
-	callee, callee_ok := spawned_callee(k, call)
+	proc_type, callee_ok := spawned_callee(k, call)
 	result, result_ok := spawn_result_symbol(k, s, block, type)
 	if !callee_ok || !result_ok {
 		return FLOWS
 	}
-	lower_spawn(k, s, block, callee, result)
+	lower_spawn(k, s, block, proc_type, result)
 	return FLOWS
 }
 
-// design.md "Spawn statements": the spawned call resolves statically to a
-// procedure or method declared in Loke, including a generic instance.
+// design.md "Spawn statements": the spawned call is a procedure or method
+// declared in Loke, including a generic instance, or a procedure value.
+// Answers the procedure type the call goes through.
 @(private = "file")
-spawned_callee :: proc(k: ^Checker, call: ^Expr_Call) -> (^Symbol, bool) {
+spawned_callee :: proc(k: ^Checker, call: ^Expr_Call) -> (Type_Id, bool) {
 	c := k.c
-	_, procedure := call.operation.(Call_Procedure)
-	sym := symbol_of(c, call.resolution.symbol)
-	if !procedure || call.dispatch != nil || sym == nil || sym.kind != .Proc || sym.synth != .None ||
-	   sym.delegated {
-		errorf(
-			c, expr_span(call.callee), "L0728",
-			"`spawn` starts a procedure or method named directly; a procedure value, a built-in, or a conversion cannot be spawned yet",
-		)
-		return nil, false
+	proc_type := INVALID_TYPE
+	if call_through_value(c, call) {
+		proc_type = expr_base(call.callee).type
+	} else {
+		_, procedure := call.operation.(Call_Procedure)
+		sym := symbol_of(c, call.resolution.symbol)
+		if !procedure || call.dispatch != nil || sym == nil || sym.kind != .Proc || sym.synth != .None ||
+		   sym.delegated {
+			errorf(
+				c, expr_span(call.callee), "L0728",
+				"`spawn` starts a procedure, a method, or a procedure value; a `dyn` view, a built-in, or a conversion cannot be spawned yet",
+			)
+			return INVALID_TYPE, false
+		}
+		proc_type = sym.proc_type
 	}
-	info := underlying_info(c, sym.proc_type)
+	info := underlying_info(c, proc_type)
 	if info == nil {
-		return nil, false
+		return INVALID_TYPE, false
 	}
 	if convention_is_foreign(info.convention) {
 		errorf(c, expr_span(call.callee), "L0728", "`spawn` starts a Loke procedure; call a foreign one from a Loke procedure the task runs")
-		return nil, false
+		return INVALID_TYPE, false
 	}
 	if info.result_inout {
 		errorf(c, call.span, "L0728", "a task cannot hand back an `inout` result, which is a place of the worker's call")
-		return nil, false
+		return INVALID_TYPE, false
 	}
-	return sym, true
+	return proc_type, true
 }
 
 // design.md "Spawn statements": `result` names a lexical local declared
@@ -329,10 +357,10 @@ spawn_result_symbol :: proc(k: ^Checker, s: ^Stmt_Spawn, block: ^Stmt_Parallel, 
 // operands, `pack :: struct { p0: T, p1: []T }`, and `run` packs them again:
 // `callee(..., move(pack$owned$0), ..frame.arg$2.p1)`.
 @(private = "file")
-lower_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn, block: ^Stmt_Parallel, callee: ^Symbol, result: Symbol_Id) {
+lower_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn, block: ^Stmt_Parallel, proc_type: Type_Id, result: Symbol_Id) {
 	c := k.c
 	call := s.call.(^Expr_Call)
-	info := underlying_info(c, callee.proc_type)
+	info := underlying_info(c, proc_type)
 	builtins, found := unsafe_builtins(k)
 	if !found {
 		return
@@ -349,13 +377,15 @@ lower_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn, block: ^Stmt_Parallel, callee: 
 		return
 	}
 	task.result = result
+	task.proc_type = proc_type
+	task.through_value = call_through_value(c, call)
 
 	outer := k.scope
 	k.scope = new_scope(c, outer, .Local)
 	defer k.scope = outer
 
 	task.kinds = make([]Spawn_Field_Kind, len(call.bound), c.semantic_allocator)
-	field_types := make([]Type_Id, len(call.bound) + 2, c.semantic_allocator)
+	field_types := make([]Type_Id, len(call.bound) + 3, c.semantic_allocator)
 	field_types[0] = TYPE_RAWPTR
 	for argument, index in call.bound {
 		type := index < len(info.parameters) ? info.parameters[index] : INVALID_TYPE
@@ -374,11 +404,15 @@ lower_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn, block: ^Stmt_Parallel, callee: 
 		task.kinds[index] = kind
 		field_types[spawn_argument_field(index)] = kind == .Address ? pointer_to(c, type, mode == .Inout) : type
 	}
-	fields := field_types[:len(call.bound) + 1]
 	if result != INVALID_SYMBOL {
 		field_types[spawn_result_field(task)] = pointer_to(c, symbol_of(c, result).type, true)
-		fields = field_types
 	}
+	// design.md "Spawn statements": a procedure value is evaluated on the
+	// parent, and copied into the task as a value argument would be.
+	if task.through_value {
+		field_types[spawn_callee_field(task)] = proc_type
+	}
+	fields := field_types[:spawn_callee_field(task) + (task.through_value ? 1 : 0)]
 
 	field_names := make([]string, len(fields), c.semantic_allocator)
 	for &name, index in field_names {
@@ -391,7 +425,9 @@ lower_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn, block: ^Stmt_Parallel, callee: 
 	}
 
 	callee_alias := intern_identifier(c, "spawn$callee")
-	k.scope.names[callee_alias] = call.resolution.symbol
+	if !task.through_value {
+		k.scope.names[callee_alias] = call.resolution.symbol
+	}
 	for name, index in ([]string{"spawn$take", "spawn$write", "spawn$free"}) {
 		k.scope.names[intern_identifier(c, name)] = builtins[index]
 	}
@@ -440,7 +476,11 @@ lower_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn, block: ^Stmt_Parallel, callee: 
 	}
 	inner := new(Expr_Call, c.semantic_allocator)
 	inner.span = span
-	inner.callee = synth_ident(k, "spawn$callee", callee_alias, span)
+	if task.through_value {
+		inner.callee = synth_selector(c, frame_of(k, frame_param, span), frame_field_name(c, task, spawn_callee_field(task)), span)
+	} else {
+		inner.callee = synth_ident(k, "spawn$callee", callee_alias, span)
+	}
 	inner.args = args[:]
 	made: Expr = inner
 	if result != INVALID_SYMBOL {
@@ -564,6 +604,9 @@ frame_field_name :: proc(c: ^Compiler, task: ^Spawn_Task, field: int) -> string 
 	}
 	if task.result != INVALID_SYMBOL && field == spawn_result_field(task) {
 		return "result"
+	}
+	if task.through_value && field == spawn_callee_field(task) {
+		return "callee"
 	}
 	return fmt.aprintf("arg%d", field - 1, allocator = c.semantic_allocator)
 }

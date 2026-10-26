@@ -802,11 +802,11 @@ global_is_thread_local :: proc(c: ^Compiler, global: Symbol_Id) -> bool {
 	return sym != nil && sym.duration == .Thread_Local
 }
 
-// A task of a pooled block: the procedure that runs it, and the procedure it
-// calls, which diagnostics name.
+// A task of a pooled block: the procedure that runs it, and how diagnostics
+// name what it calls.
 Pool_Task :: struct {
-	runs:   Symbol_Id,
-	callee: Symbol_Id,
+	runs: Symbol_Id,
+	name: string,
 }
 
 // design.md "Parallel blocks": a pool worker joining a pooled block may run
@@ -822,10 +822,7 @@ prov_pool_join_effects :: proc(graph: ^Flow_Graph, tasks: []Pool_Task, span: Spa
 		return
 	}
 	for task in tasks {
-		name := "modified by a task this join may run on this thread,"
-		if sym := symbol_of(c, task.callee); sym != nil {
-			name = fmt.tprintf("modified by `%s`, which this join may run on this thread,", identifier_text(c, sym.name))
-		}
+		name := fmt.tprintf("modified by `%s`, which this join may run on this thread,", task.name)
 		for global in effect_call_writes(c, Effect_Call{callee = task.runs}) {
 			if global_is_thread_local(c, global) {
 				prov_access(graph, prov_root_for_symbol(graph, global), nil, .Invalidate, span, name)

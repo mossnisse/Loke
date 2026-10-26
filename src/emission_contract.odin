@@ -161,11 +161,12 @@ validate_emission_dependencies :: proc(c: ^Compiler) -> bool {
 		}
 	}
 	// compiler-architecture.md "Lowering parallel blocks": a spawn's frame
-	// leads with the run slot, then one field per bound argument and the
-	// result's address, and its run and start procedures are checked.
+	// leads with the run slot, then one field per bound argument, the result's
+	// address, and a procedure value it calls, and its run and start
+	// procedures are checked.
 	for task in c.spawn_tasks {
 		frame := underlying_info(c, task.frame)
-		fields := len(task.kinds) + 1 + (task.result != INVALID_SYMBOL ? 1 : 0)
+		fields := spawn_callee_field(task) + (task.through_value ? 1 : 0)
 		if frame == nil || frame.kind != .Struct || len(frame.fields) != fields {
 			return emission_contract_error(c, "a spawn has no registered frame")
 		}

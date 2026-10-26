@@ -3740,12 +3740,48 @@ report_shared_reach :: proc(
 	add_notef(c, window_block_span(state, window), "a task runs from its `spawn` until this block ends")
 }
 
+// design.md "Spawn statements", "Global write effects": a task that calls a
+// procedure value may run any body of its type the program uses as a value,
+// so each that writes, or reaches through, the reported global is named.
+@(private = "file")
+note_value_targets :: proc(c: ^Compiler, call: ^Expr_Call, global: Symbol_Id, writes: bool) {
+	if call == nil || !call_through_value(c, call) {
+		return
+	}
+	targets, _ := indirect_call_targets(c, call)
+	for target in targets {
+		found := false
+		if writes {
+			for written in c.global_writes[target] {
+				found ||= written == global
+			}
+		} else {
+			for reached in c.reach_effects[target] {
+				found ||= reached.global == global
+			}
+		}
+		sym := symbol_of(c, target)
+		if !found || sym == nil {
+			continue
+		}
+		name := identifier_text(c, sym.name)
+		if name == "" {
+			name = "this procedure"
+		}
+		add_notef(
+			c, sym.span, "`%s` may be `%s`, which %s `%s`", spawn_callee_name(c, call), name,
+			writes ? "writes" : "reaches through", identifier_text(c, symbol_of(c, global).name),
+		)
+	}
+}
+
 // A task does what its procedure's settled summaries say, and reaches through
 // what it is given; every task also runs each `thread_local` owner's drop when
 // its thread exits, reported once per block.
 @(private = "file")
 check_task_globals :: proc(state: ^Prov_State, event: Prov_Event, shared: ^Shared_Reports) {
 	c := state.k.c
+	call := state.graph.task_sites[event.slot].call
 	for global in c.global_writes[event.symbol] {
 		sym := symbol_of(c, global)
 		if sym == nil || sym.duration == .Thread_Local || sym.synchronized || !first_report(shared, event.span, global) {
@@ -3757,6 +3793,7 @@ check_task_globals :: proc(state: ^Prov_State, event: Prov_Event, shared: ^Share
 			event.name, identifier_text(c, sym.name),
 		)
 		add_notef(c, sym.span, "declared here; return what the task computes, or make it an `Atomic` or a `thread.Mutex`")
+		note_value_targets(c, call, global, true)
 	}
 	for reached in c.reach_effects[event.symbol] {
 		hazard, erased := shared_carrier_hazard(c, reached.global)
@@ -3770,6 +3807,7 @@ check_task_globals :: proc(state: ^Prov_State, event: Prov_Event, shared: ^Share
 			shared_hazard_text(c, reached.global, hazard, erased),
 		)
 		note_reach_chain(c, reached)
+		note_value_targets(c, call, reached.global, false)
 	}
 	given := make([dynamic]Global_Effect, 0, 2, state.graph.alloc)
 	for slot in event.sources {

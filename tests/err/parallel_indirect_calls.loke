@@ -1,7 +1,7 @@
-// design.md "Spawn statements": a spawned call names its procedure directly,
-// but the calls a task makes in turn may be indirect, and each task check
-// takes the union of every body such a call may reach (design.md "Global
-// write effects"). A hand-written wrapper calling a procedure value, a
+// design.md "Spawn statements": the calls a task makes in turn may be
+// indirect, and each task check takes the union of every body such a call
+// may reach (design.md "Global write effects"); a spawned procedure value is
+// in parallel_procedure_values.loke. A hand-written wrapper calling a procedure value, a
 // `dyn proc` view, a capture literal, a `dyn` slot, or a procedure read from
 // a field is rejected for a global write or global reach, a reserved
 // allocator region, a mutable capture shared between tasks or a view that
@@ -10,9 +10,9 @@
 // may call does any of those. A borrow of `thread_local` storage a callback
 // leaves or returns is in parallel_written_back.loke.
 //
-// The union is over every procedure passed to a wrapper's parameter anywhere
-// in the program, so a spawn passing a clean procedure is rejected when
-// another call passes the wrapper a procedure that writes a global.
+// The union is over every procedure of the type the program uses as a value,
+// so a spawn passing a clean procedure is rejected when another call passes
+// the wrapper a procedure of that type that writes a global.
 // Each case has a callback type of its own to keep the others out of its
 // union.
 package main;

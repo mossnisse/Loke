@@ -1393,23 +1393,28 @@ Before letting a spawned call itself be indirect
 call a procedure value, a `dyn proc` view, a capture literal, a `dyn` slot,
 or a procedure read from a field, one case per task check;
 `tests/err/parallel_written_back.loke` already covered a `thread_local`
-borrow a callback leaves or returns. Every check rejects through every one
-of them: global writes and reach, allocator reservation, sharing, thread
-affinity, the join check, and a pooled task's `thread_local` writes. So the
-whole-program unions already lose no fact a task check needs. What the spike
-found instead:
+borrow a callback leaves or returns. The selected cases exercise global writes
+and reach, allocator reservation, sharing, thread affinity, the join check,
+and a pooled task's `thread_local` writes. They found no lost fact in those
+cases; they do not cover every callable form against every check or the
+lowering of an indirect spawned callee itself. The
+[scope review](#milestone-10-scope-and-next-step-2026-10-26) narrows the
+conclusion and proposes the next steps. The spike also found:
 
-- **The write and reach unions are per parameter, not per call.** A
-  wrapper's parameter may hold any procedure passed to it anywhere in the
-  program, so a spawn passing a procedure that writes nothing is rejected
-  when an unrelated serial call passes the same wrapper one that writes a
-  global. The `thread_local` borrow a callback leaves is substituted per
-  call instead, so the two analyses differ in precision. A spawned call
-  that is itself indirect would inherit the coarser one.
+- **The write and reach unions are per procedure type, not per call.** A
+  call through a procedure value may run any procedure of its type the
+  program uses as a value, so a spawn passing a procedure that writes
+  nothing is rejected when the program passes a procedure of the same type
+  that writes a global anywhere, such as to the same wrapper in an
+  unrelated serial call. The `thread_local` borrow a callback leaves is
+  substituted per call instead, so the two analyses differ in precision. A
+  spawned procedure value has the coarser one.
 - **A rejection does not name the body responsible.** L0731 says that
   `call_plain` may write `hits`, but not that it is `record_hit`, passed
   as `f`, that writes it; a direct helper gets a "through" note. Under a
-  union, that body may be in another package.
+  union, that body may be in another package. A spawned procedure value's
+  rejection now names each target that writes or reaches the global; a
+  wrapper's still does not.
 - **L0729's advice cannot be followed for a `dyn proc` parameter.** For a
   view reaching a `&mut` capture it says to move the callable into the
   task, but `spawn run(move(bump))` with `run :: proc(f: dyn proc())` then
@@ -1417,6 +1422,99 @@ found instead:
   rejects (L0513). Only a generic callable parameter takes the moved
   literal. A writing capture literal reaches a task through a `dyn proc`
   only once a [mutable callable view](#a-mutable-callable-view) exists.
+
+### Milestone 10 scope and next step (2026-10-26)
+
+Review of [milestone 10](concurrency-proposal.md#milestone-10-indirect-spawned-calls)
+and the [indirect-call spike](#indirect-calls-inside-tasks-2026-10-26): the
+spike is useful regression coverage, but its conclusion needs narrowing.
+It exercises selected combinations of callable forms and task checks, not
+every form against every check. Its named wrappers also make the callable
+an ordinary task argument; they do not exercise an indirect callee's own
+evaluation, capture in a task frame, or cleanup. Passing these cases gives
+evidence for reusing the existing analyses, not a proof that any indirect
+spawn lowering preserves them.
+
+Some callable task support already works. A runtime check on `0c1e729`
+accepted a moved mutable capture through the generic `call_moved` shape in
+the spike, and a direct `spawn result = calculate()` where `calculate` is a
+capture literal with a read-only capture. The latter resolves statically to
+the record's `call` method under [Calling a value](design.md#calling-a-value).
+Making a literal consume its captures when called remains a separate receiver
+mode question under [What a capture literal's call cannot do](#what-a-capture-literals-call-cannot-do).
+Neither a new owning erased callable nor public effect annotations are
+established prerequisites for the scoped cases already expressible through
+wrappers.
+
+Recommended sequence; the first step is done:
+
+1. **A narrow implementation of indirect spawning.** Start with ordinary
+   Loke procedure values, including runtime selection between targets. Extend
+   the existing [task frame and checked run procedure](compiler-architecture.md#lowering-parallel-blocks)
+   to hold the callee evaluated once on the parent, before its arguments.
+   Reuse ordinary parameter modes, result provenance, cleanup, and task
+   checks. Retain conservative target unions wherever exact targets are
+   unknown. Do not simply remove the direct-callee check: the current frame
+   holds arguments and refers to a static callee symbol, and analysis paths
+   also assume that symbol exists.
+2. **Tests of the new boundary.** Pair accepted run cases with rejected
+   cases. Cover parent evaluation order, changing a procedure variable after
+   submission, argument borrows and results through the join, cleanup when
+   argument preparation fails, and both bare and pooled tasks. Check that
+   adding a reachable unsafe target to a selection makes the spawn fail.
+   Then consider borrowed callable views and `dyn` methods, with the callable
+   data itself checked for lifetime, exclusive access, and thread affinity.
+   Unknown captures must remain conservative; moving a borrowed view does
+   not confer ownership of its payload.
+3. **Per-call effect precision as a separate change.** A body can record its
+   own effects plus dependencies on callbacks it invokes, then substitute
+   the callbacks at each call. The compiler already uses related machinery:
+   `callback_effects` in `src/global_effects.odin` separates writes from called
+   parameters for thread warnings, and `Callback_Read`/`Callback_Write`
+   substitute callback provenance for thread-local borrows. Reuse those
+   representations and fixed-point patterns where appropriate, extending
+   write, reach, and allocator effects consistently rather than adding a
+   spawn-only analysis. Keep a union fallback for unknown values and carry
+   the responsible target into diagnostics. A clean callback passed beside
+   an unrelated serial dirty call is the acceptance case; recursion,
+   forwarding, and same-signature target mixtures guard the fallback.
+
+The first step can be sound with conservative rejections; the third improves
+which safe programs it accepts. A public effect-contract design would change
+the current [global-write model](design.md#global-write-effects), whose effects
+are not part of procedure types. It needs a separate demonstrated requirement
+rather than serving as an open-ended gate on this milestone.
+
+Further review found a separate loss of callable information at erasure. On
+`0c1e729`, a read-only capture `calculate := proc() -> int capture(value) {
+return value + 1; };` can cross into a task through `spawn result =
+run(calculate)`, where `run` takes `dyn proc() -> int`. Introducing a local
+`saved: dyn proc() -> int = calculate;` and passing `saved` instead rejects
+with L0729. Both variants keep the concrete closure alive through the join.
+`prov_transferred_type` in `src/cfg_provenance.odin` recovers the concrete
+type from an immediate conversion, but not from the stored view. This is a
+conservative limitation consistent with the current
+[sharing rules](design.md#sharing-with-tasks), not an unsafe acceptance.
+
+Prefer a focused extension of the existing
+[normalized provenance input](compiler-architecture.md#normalized-provenance-input)
+over a checker rewrite: represent the evaluated callee alongside call
+arguments, and preserve known callable/environment facts through value
+transfers. Keep facts and summaries out of frozen input; merge alternatives
+conservatively and invalidate facts on replacement. Target identity, captured
+storage loans, and transfer eligibility are distinct facts. Knowing a target
+does not prove its environment can cross a thread boundary. Accepting stored
+views on this basis would also require a deliberate update to the sharing
+rules and paired acceptance/rejection tests.
+
+The current capture representation as ordinary records with a `call` method
+can stay. Mutating owned capture fields or consuming captures on invocation
+would require explicit call receiver capabilities and compatible view types;
+neither follows from more precise provenance. Keep that language extension
+under [capture call modes](#what-a-capture-literals-call-cannot-do). Shared
+callee input belongs in the first implementation step; richer erased-value
+facts can accompany erased callable support without delaying plain procedure
+values or requiring public effect contracts.
 
 ### Parameters a join check cannot tell apart (2026-10-26)
 

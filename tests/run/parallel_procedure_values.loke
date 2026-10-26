@@ -1,0 +1,104 @@
+// design.md "Spawn statements": a spawned call may go through a procedure
+// value, which the parent evaluates before the arguments and the task keeps:
+// a parameter, a local chosen at runtime, a field, a call's result, and a
+// generic callable instantiated with a procedure type, on bare and pooled
+// blocks. Assigning the local after the spawn does not change what the task
+// calls, and a result that borrows an argument keeps its loan past the join.
+package main;
+
+import "base:interfaces";
+import "core:fmt";
+import "core:thread";
+
+double :: proc(n: int) -> int { return n * 2; }
+triple :: proc(n: int) -> int { return n * 3; }
+
+// Every task of the block calls what the caller passed.
+both :: proc(f: proc(n: int) -> int, xs: []int) -> int {
+	a: int;
+	b: int;
+	parallel {
+		spawn a = f(xs[0]);
+		spawn b = f(xs[1]);
+	}
+	return a + b;
+}
+
+// The value is copied into the task when it starts.
+chosen :: proc(by_three: bool) -> int {
+	g := double;
+	if (by_three) { g = triple; }
+	r: int;
+	parallel {
+		spawn r = g(5);
+		g = triple if g == double else double;
+	}
+	return r;
+}
+
+Job :: struct { run: proc(n: int) -> int, input: int }
+
+through_field :: proc(job: ^Job) -> int {
+	r: int;
+	parallel { spawn r = job.run(job.input); }
+	return r;
+}
+
+// The callee runs before the argument.
+pick :: proc(name: string) -> proc(n: int) -> int {
+	fmt.println("callee", name);
+	return triple;
+}
+
+argument :: proc(n: int) -> int {
+	fmt.println("argument", n);
+	return n;
+}
+
+ordered :: proc() -> int {
+	r: int;
+	parallel { spawn r = pick("first")(argument(7)); }
+	return r;
+}
+
+generic :: proc(f: $C, n: int) -> int where interfaces.Callable(C, proc(n: int) -> int) {
+	r: int;
+	parallel { spawn r = f(n); }
+	return r;
+}
+
+pooled :: proc(f: proc(n: int) -> int) -> int {
+	pool := thread.Pool.init(2);
+	a: int;
+	b: int;
+	parallel (&pool) {
+		spawn a = f(10);
+		spawn b = f(20);
+	}
+	return a + b;
+}
+
+first :: proc(xs: []int) -> ^int { return &xs[0]; }
+last :: proc(xs: []int) -> ^int { return &xs[xs.len() - 1]; }
+
+// The result borrows the argument, and keeps that loan after the join.
+borrowed :: proc(at_end: bool) -> int {
+	xs := [3]int{4, 5, 6};
+	f := first;
+	if (at_end) { f = last; }
+	found: ^int;
+	parallel { spawn found = f(xs[:]); }
+	return found^;
+}
+
+main :: proc() {
+	xs := [2]int{1, 2};
+	fmt.println("both", both(double, xs[:]), both(triple, xs[:]));
+	fmt.println("chosen", chosen(false), chosen(true));
+	job := Job{run = double, input = 21};
+	fmt.println("field", through_field(&job));
+	fmt.println("ordered", ordered());
+	fmt.println("generic", generic(double, 4));
+	fmt.println("pooled", pooled(triple));
+	fmt.println("borrowed", borrowed(false), borrowed(true));
+}

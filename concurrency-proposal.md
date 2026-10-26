@@ -388,14 +388,17 @@ first API polling-only avoids coupling that algorithm to a parking protocol.
 The initial spelling, thread-per-spawn default, panic-on-submission-failure
 policy, join during parent unwinding, and the `@(synchronized)` and
 `@(cross_thread)` declarations are decided and in design.md. These remain
-open; none blocks monitors, channels, or the compute pool. The deferred ring
-has its own readiness requirements under milestone 8:
+open; none blocks monitors, channels, the polling ring, or the compute pool.
 
-1. **Indirect call contracts.** How to encode and expose the procedure
-   summaries, the [reach](design.md#globals-while-tasks-run) and
-   [allocator-use](design.md#allocators-and-tasks) effects among them, without
-   losing facts through erasure, so the spawned call itself may be indirect. Until then it must
-   resolve statically; calls it makes in turn use the whole-program union.
+1. **Indirect spawned calls.** [Milestone 10](#milestone-10-indirect-spawned-calls)
+   starts with ordinary Loke procedure values, using the existing task frame
+   and conservative effect unions. It then addresses erased callable data
+   and per-call precision for [reach](design.md#globals-while-tasks-run),
+   [allocator use](design.md#allocators-and-tasks), and the other task checks.
+   Public callable-effect contracts need a separate demonstrated requirement;
+   they are not a prerequisite for the first step. A spawned call may now go
+   through a procedure value; a `dyn` view or method is still wrapped in a
+   procedure the task calls.
 2. **Recoverable submission.** How to return arguments after failure to
    start a task, without confusing submission failure with worker failure.
 3. **Richer result destinations.** Whether live replacement, fields, indices,
@@ -454,7 +457,9 @@ monitors; channels with the join check; the polling ring; and pools.
 Where the compiler is narrower than design.md, [known-gaps.md](known-gaps.md)
 says so.
 
-Milestone 10 remains conditional on its callable-summary work.
+Milestone 10's first step, procedure values under the existing analyses, is
+done; support for erased callable data and improvements to effect precision
+follow separately.
 
 ### Milestone 6: monitors
 
@@ -565,23 +570,62 @@ same.
 
 ### Milestone 10: indirect spawned calls
 
-Extend callable support only after summaries preserve every needed fact
-([later extension](#later-extensions) 1).
+Step 1 is done; steps 2 and 3 are proposed. Extend the existing task machinery
+in small steps, beginning with runtime-selected Loke procedure values. Each step must preserve every task
+check, with conservative rejection where the analysis cannot establish safety.
+Public effect annotations and owning erased callables are separate questions.
 
-A spike for this, `tests/err/parallel_indirect_calls.loke`, spawns
-hand-written wrappers that make the indirect call themselves, one case per
-task check. Every check already rejects through procedure values, `dyn proc`
-views, capture literals, `dyn` slots, and procedures read from fields.
+The spike, `tests/err/parallel_indirect_calls.loke`, remains regression
+coverage. Its hand-written wrappers exercise selected combinations of task
+checks and procedure values, `dyn proc` views, capture literals, `dyn` slots,
+and procedures read from fields. The wrappers transport each callable as an
+ordinary argument. They do not test evaluating an indirect callee, holding it
+in the task frame, or cleaning it up, and do not establish every combination
+of callable form and task check.
 [Indirect calls inside tasks](open-questions.md#indirect-calls-inside-tasks-2026-10-26)
-records what that means for this milestone, and the precision and diagnostic
-gaps it found.
+records its precision and diagnostic findings; the
+[scope review](open-questions.md#milestone-10-scope-and-next-step-2026-10-26)
+records the implementation recommendation.
 
-Once callable summaries are supported, scoped spawning can also accommodate
-the thread worker named under
-[What a capture literal's `call` cannot do](open-questions.md#what-a-capture-literals-call-cannot-do):
-its callable need not outlive the joining scope. The first implementation
-uses a named entry and explicit arguments instead.
+Some callable tasks already work: a moved mutable capture passed to a generic
+wrapper, and `spawn result = calculate()` for a capture literal whose `call`
+resolves statically. A literal consuming its captures when called remains the
+separate receiver-mode question under
+[What a capture literal's `call` cannot do](open-questions.md#what-a-capture-literals-call-cannot-do).
 
-The concrete programs open-questions names are part of the plan: the sort
-and the numeric kernel are in `examples/parallel.loke`, and the worker pool
-fed by a channel comes with milestone 7.
+1. **Ordinary procedure values.** Done. The provenance call input records
+   the callee a call through a procedure value evaluates, and the
+   [task frame and checked run procedure](compiler-architecture.md#lowering-parallel-blocks)
+   hold that value, evaluated once on the parent before the arguments; the
+   worker invokes the saved value. Parameter modes, result provenance,
+   cleanup, and the task checks are reused, with the union over every
+   procedure of the type used as a value, and an L0731 rejection names the
+   targets that write or reach the global. Foreign calling conventions and
+   `inout` results keep their restrictions.
+   `tests/run/parallel_procedure_values.loke`,
+   `tests/err/parallel_procedure_values.loke`, and
+   `tests/trap/parallel_value_frame_release.loke` cover it.
+2. **Erased callable data.** Extend to borrowed `dyn proc` views and `dyn`
+   methods only with checks on the callable's own storage: its lifetime to
+   the join, sharing or exclusive access, thread affinity, and allocator
+   dependencies. Moving a view does not transfer ownership of its payload.
+   Unknown captures must remain conservative. Use the same task machinery
+   rather than a second scheduler or an owning-erasure feature.
+3. **Per-call effect precision.** In a separate change, summarize a body's
+   own effects plus its dependencies on callbacks, substituting the actual
+   callbacks at each call. Build on the existing callback-effect and
+   thread-local provenance machinery described in the scope review. Extend
+   write, reach, and allocator effects consistently, retaining union
+   fallbacks for unknown targets and naming the responsible target in
+   diagnostics. This improves acceptance of safe programs; it does not gate
+   the first step's conservative implementation.
+
+Each step pairs accepted run cases with rejected cases. For procedure values,
+cover runtime target selection, parent evaluation order, changing the callee
+variable after submission, argument borrows and results through the join,
+cleanup when argument preparation fails, and both bare and pooled tasks.
+Adding a reachable target that violates a task check must reject the spawn.
+For erased callables, additionally cover captured storage and its cleanup.
+For per-call precision, accept a clean callback even when the program uses
+a dirty procedure of the same type as a value elsewhere; test recursion, forwarding, and
+mixtures of targets with the same signature to preserve conservative fallbacks.

@@ -1,0 +1,45 @@
+// design.md "Spawn statements", "Failure to start a task": a spawned
+// procedure value is evaluated first, and a panic preparing a later argument
+// still releases the frame and drops the argument the task would have owned.
+// The default allocator is an arena, which takes back its newest block when
+// that is freed: the probe after the unwind finds the frame's address free
+// again.
+@(default_allocator = "frame_provider:allocator_factory")
+package main;
+
+import "core:fmt";
+import "core:unsafe";
+
+Tracked :: move_only struct { id: int }
+
+impl Tracked {
+	release :: hook(drop) proc(self: inout) {
+		fmt.println("drop", self.id);
+	}
+}
+
+chosen :: proc() -> proc(item: move Tracked, n: int) {
+	fmt.println("callee evaluated");
+	return work;
+}
+
+explode :: proc() -> int {
+	panic("an argument failed");
+}
+
+work :: proc(item: move Tracked, n: int) {}
+
+probe :: proc() -> rawptr {
+	block := unsafe.new(0);
+	address := rawptr(block);
+	unsafe.free(block);
+	return address;
+}
+
+main :: proc() {
+	before := probe();
+	defer fmt.println("frame released", probe() == before);
+	parallel {
+		spawn chosen()(Tracked{1}, explode());
+	}
+}
