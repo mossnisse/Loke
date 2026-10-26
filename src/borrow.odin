@@ -2156,9 +2156,10 @@ collect_written_regions :: proc(c: ^Compiler, graph: ^Flow_Graph, declaration: S
 		if !param_writes_caller(c, symbol_of(c, id)) {
 			continue
 		}
-		changed = merge_region_provenance(&written[index], written_parameter_region(graph, id, index, false)) || changed
-		changed = merge_region_provenance(&owners[index], written_parameter_region(graph, id, index, true)) || changed
-		changed = merge_written_content(c, &contents[index], prov_written_parameter_content(graph, id, index), count) || changed
+		content := prov_written_parameter_content(graph, id, index)
+		changed = merge_region_provenance(&written[index], written_parameter_region(graph, content, false)) || changed
+		changed = merge_region_provenance(&owners[index], written_parameter_region(graph, content, true)) || changed
+		changed = merge_written_content(c, &contents[index], content, count) || changed
 	}
 	return changed
 }
@@ -2194,13 +2195,15 @@ merge_written_content :: proc(c: ^Compiler, row: ^[]Prov_Region_Content, from: [
 }
 
 // What a body leaves in a parameter, or with `owners` only what backs an owner
-// there. What the argument already was says nothing new about it.
+// there: its path-indexed content joined, so a summary taken whole agrees with
+// the one taken by path.
 @(private = "file")
-written_parameter_region :: proc(graph: ^Flow_Graph, id: Symbol_Id, index: int, owners: bool) -> Region_Set {
-	set := prov_region_for_symbol(graph, id, owners = owners)
-	set.locals, set.crowded = 0, false
-	if index < len(set.params) {
-		set.params[index] = false
+written_parameter_region :: proc(graph: ^Flow_Graph, content: []Prov_Region_Content, owners: bool) -> Region_Set {
+	set := prov_empty_region(graph)
+	for entry in content {
+		if !owners || !entry.handle {
+			region_merge(&set, entry.region)
+		}
 	}
 	return set
 }

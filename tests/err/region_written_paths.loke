@@ -1,6 +1,7 @@
 // design.md "Allocator regions and region provenance": `exchange` returns the
 // previous owner with its allocator, and a field a call writes, or the whole
-// record holding it, keeps the region the call left there.
+// record holding it, keeps the region the call left there, including an owner
+// the call copies there from another field.
 package main;
 
 import "core:fmt";
@@ -10,6 +11,17 @@ State :: struct { local, stable: string }
 
 fill :: proc(state: inout State, allocator: Allocator) {
 	state.local = fmt.to_string(allocator, 42);
+}
+
+Copied :: struct { source, destination, scratch: string }
+
+copy_and_fill :: proc(copied: inout Copied, allocator: Allocator) {
+	copied.destination = copied.source;
+	copied.scratch = fmt.to_string(allocator, 42);
+}
+
+copy_only :: proc(copied: inout Copied) {
+	copied.destination = copied.source;
 }
 
 fill_through :: proc(state: ^mut State, allocator: Allocator) {
@@ -41,6 +53,20 @@ written_record :: proc() -> State {
 	state := State{"", "stable"};
 	fill(inout state, arena.allocator());
 	return state;
+}
+
+copied_field :: proc() -> string {
+	arena := mem.Arena.init();
+	copied := Copied{fmt.to_string(arena.allocator(), 7), "", ""};
+	copy_and_fill(inout copied, arena.allocator());
+	return copied.destination;
+}
+
+copied_only :: proc() -> string {
+	arena := mem.Arena.init();
+	copied := Copied{fmt.to_string(arena.allocator(), 7), "", ""};
+	copy_only(inout copied);
+	return copied.destination;
 }
 
 main :: proc() {}

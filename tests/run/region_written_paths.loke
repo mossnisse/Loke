@@ -1,6 +1,7 @@
 // design.md "Allocator regions and region provenance": an allocator handle is
-// not an owner, a call leaves owners only at the fields it writes, and
-// `exchange` keeps the previous value's own allocator.
+// not an owner, a call leaves owners only at the fields it writes, a
+// container's backing allocation does not back its elements, and `exchange`
+// keeps the previous value's own allocator.
 package main;
 
 import "core:fmt";
@@ -10,6 +11,16 @@ State :: struct { local, stable: string }
 
 fill :: proc(state: inout State, allocator: Allocator) {
 	state.local = fmt.to_string(allocator, 42);
+}
+
+Backed :: struct { items: [dynamic]string, table: map[int]string, boxed: Box(string) }
+
+fill_backed :: proc(backed: inout Backed, allocator: Allocator) {
+	backed.items = make([dynamic]string, 1, allocator);
+	backed.items[0] = "element";
+	backed.table = make(map[int]string, allocator);
+	backed.table[1] = "value";
+	backed.boxed = box("payload", allocator);
 }
 
 fill_through :: proc(state: ^mut State, allocator: Allocator) {
@@ -43,6 +54,15 @@ stable_field_through :: proc() -> string {
 	return state.stable;
 }
 
+// `fill_backed` allocates each container in the arena but stores static
+// strings in them, so what they hold outlives the arena.
+stable_contents :: proc() -> [3]string {
+	arena := mem.Arena.init();
+	backed := Backed{make([dynamic]string), {}, box("")};
+	fill_backed(inout backed, arena.allocator());
+	return {backed.items[0], backed.table[1], backed.boxed^};
+}
+
 // The extracted array is default-backed, so ending an unrelated arena is fine.
 exchanged_then_reset :: proc() -> int {
 	items := make([dynamic]int, 2);
@@ -57,4 +77,6 @@ main :: proc() {
 	fmt.println(stable_field());
 	fmt.println(stable_field_through());
 	fmt.println(exchanged_then_reset());
+	contents := stable_contents();
+	fmt.println(contents[0], contents[1], contents[2]);
 }

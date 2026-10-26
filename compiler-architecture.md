@@ -363,7 +363,13 @@ it, but only the owners' part is checked against the storage it lands in, as a
 store by name checks only an owner. Both are also kept by path below what the
 argument names (`written_region_content`), so a call stores each part at the
 field the body wrote rather than at the whole argument; those paths stop at
-the written-alias depth so recursive calls converge. A handle's region content entry is kept
+the written-alias depth so recursive calls converge. Only the parameter's
+incoming fact is dropped from its own row: a field the body wrote from
+another field of the same argument keeps that dependency, which the call
+substitutes with the whole argument's region. The whole-argument summaries
+are joined from these rows, and each row entry keeps its `own` flag when the
+call stores it, so a container's backing allocation stays apart from its
+elements. A handle's region content entry is kept
 apart from an owner's at the same path, and a write through a carrier is
 recorded at its path below the carrier (`prov_path_below_carrier`), so
 `dst^.alloc = handle` and `dst^.items = make(...)` stay distinct. Whole-record

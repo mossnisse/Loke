@@ -2098,13 +2098,15 @@ prov_region_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id, viewed := fals
 // names: the region `prov_region_for_symbol` joins, kept apart by field. A
 // direct fact and a borrowed binding's aliases reach the whole argument. What
 // the argument already was, and the body's own regions, say nothing new.
+// Field entries are the body's writes, so one that copies from the argument
+// keeps its dependency, which the caller substitutes with the whole argument.
 @(private)
 prov_written_parameter_content :: proc(graph: ^Flow_Graph, id: Symbol_Id, index: int) -> []Prov_Region_Content {
 	out := make([dynamic]Prov_Region_Content, graph.alloc)
-	add :: proc(out: ^[dynamic]Prov_Region_Content, index: int, content: Prov_Region_Content) {
+	add :: proc(out: ^[dynamic]Prov_Region_Content, index: int, content: Prov_Region_Content, written := false) {
 		content := content
 		content.region.locals, content.region.crowded = 0, false
-		if index < len(content.region.params) { content.region.params[index] = false }
+		if !written && index < len(content.region.params) { content.region.params[index] = false }
 		if !region_is_empty(content.region) { append(out, content) }
 	}
 	whole, owned := prov_empty_region(graph), prov_empty_region(graph)
@@ -2125,7 +2127,7 @@ prov_written_parameter_content :: proc(graph: ^Flow_Graph, id: Symbol_Id, index:
 			copied := content
 			copied.region = prov_empty_region(graph)
 			region_merge(&copied.region, content.region)
-			add(&out, index, copied)
+			add(&out, index, copied, written = true)
 		}
 	}
 	add(&out, index, Prov_Region_Content{region = owned})
@@ -3582,7 +3584,7 @@ prov_define_stored_contents :: proc(graph: ^Flow_Graph, root: Root_Id, path: []P
 	}
 	for content in contents {
 		prov_define_stored_content(graph, root, prov_concat_path(graph, path, content.path), content.region,
-		                           content.handle ? prov_empty_region(graph) : content.region)
+		                           content.handle ? prov_empty_region(graph) : content.region, own = content.own)
 	}
 }
 

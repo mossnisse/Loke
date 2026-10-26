@@ -573,6 +573,11 @@ checklist.
   regions at that field alone, through `inout` and through a mutable pointer.
   Returning another field afterwards no longer reports `L0592`.
 
+- A container a call allocates into a record argument no longer lends its
+  allocator region to the elements stored in it. Returning a static string
+  from a `[dynamic]string`, map, or `Box` field that the call made from an
+  arena no longer reports `L0592`.
+
 - An owner extracted with `exchange` keeps its own allocator, so resetting an
   unrelated arena while it is live no longer reports `L0537`.
 
