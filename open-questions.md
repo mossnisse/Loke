@@ -1339,6 +1339,31 @@ iteration's start to an exit written above the spawn, so that exit stays
 rejected; [parallel_pool.loke](tests/err/parallel_pool.loke) accepts the
 no-task branch and the unreachable spawn beside it.
 
+### Ring algorithm review points (2026-10-26)
+
+[The ring algorithm](concurrency-proposal.md#the-ring-algorithm) in the
+concurrency proposal settles the layout, orderings, and progress bound for
+milestone 8, but leaves these for review before it is model-checked:
+
+- **Whether the endpoints are `@(wakes_on_drop)`.** No ring operation blocks,
+  but a task polling `try_receive` until `.closed` waits for the sender's
+  drop as surely as a blocked `receive` does, and a parent holding the sender
+  across that task's join spins forever. Marking both endpoints brings the
+  [join check](design.md#releasing-before-the-join) to polling loops, at the
+  cost of rejecting a parent that holds an endpoint across a join whose tasks
+  never poll for closure. The draft marks them.
+- **A closure check on every send.** `try_send` loads `receiver_gone` before
+  each send, one acquire load more than Lamport's queue, so a send after the
+  receiver's drop reports `.closed` at once rather than once the queue is
+  full. The alternative checks only when the queue looks full.
+- **Power-of-two storage.** Rounding the storage up to a power of two keeps
+  slot selection a mask that runs on through the counter's wrap, at the cost
+  of up to twice the slots. Counters kept below `2 * capacity`, wrapped by
+  hand, avoid the extra slots and add a branch to each operation.
+- **Padding by a field.** The draft separates `tail` from `head` with a
+  64-byte array, since no attribute aligns a field. Whether the language
+  should have one, and whether 64 bytes fits every target, is open.
+
 ### Parameters a join check cannot tell apart (2026-10-26)
 
 Writing `examples/mixer.loke` for milestone 9 found that the
