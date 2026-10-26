@@ -645,6 +645,13 @@ checklist.
 
 ### Fixed
 
+- An exit from a `parallel` block that a loop reaches before a `spawn` written
+  below it now joins the tasks an earlier iteration started, as the checks
+  see it: what those tasks borrow is still lent there, and a pooled block's
+  `thread_local` effect applies there. `if (i == 1) { x = 5; return; } spawn
+  read(&x);` in a loop is rejected with `L0512`, as it is with the exit below
+  the spawn.
+
 - A task's `thread_local` writes are no longer treated as the parent's: a
   borrow of a `thread_local` variable the parent holds across a `spawn`, or
   across the join of a block without a header, whose task writes that

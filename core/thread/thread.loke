@@ -180,7 +180,7 @@ spawn :: proc{spawn_with, spawn_plain};
 // either. Dropping the scope is the block's join.
 @(private)
 Task_Scope :: move_only struct {
-	threads: [dynamic]int,
+	threads: [dynamic]Thread,
 	// The pool the block runs its tasks on, borrowed until the join; `.none`
 	// for a thread per task.
 	pool: Option(^Pool),
@@ -189,7 +189,8 @@ Task_Scope :: move_only struct {
 	pending: sync.Atomic(int),
 	// The scope whose task the block's thread runs, or nil: a pool worker
 	// joining this block may run its tasks and their descendants alone
-	// (standard-library.md "Pools").
+	// (standard-library.md "Pools"). Set once, before any task is queued, so
+	// a worker searching the queue reads it unchanged.
 	parent: rawptr,
 }
 
@@ -197,7 +198,7 @@ impl Task_Scope {
 	// The scope of `parallel (pool)`, whose result borrows the pool until the
 	// join, so the pool cannot drop while the block's tasks may run on it.
 	pooled :: proc(pool: ^Pool) -> Task_Scope {
-		return Task_Scope{pool = .some(pool)};
+		return Task_Scope{pool = .some(pool), parent = running_in};
 	}
 
 	// Starts the task `frame` holds, on a new thread or on the pool. A frame
@@ -221,19 +222,16 @@ impl Task_Scope {
 		if (handle == 0) {
 			panic("thread creation failed");
 		}
-		self.threads.append(handle);
+		self.threads.append(Thread{handle});
 	}
 
-	// Joins every task, in start order for threads: each one's writes, and a
-	// thread's `thread_local` drops, happen before the block is left. A pooled
-	// block waits until its tasks have finished; a worker of that pool runs
-	// the block's queued tasks meanwhile.
+	// Joins every task: each one's writes, and a thread's `thread_local`
+	// drops, happen before the block is left. Dropping a `Thread` joins it. A
+	// pooled block waits until its tasks have finished; a worker of that pool
+	// runs the block's queued tasks meanwhile.
 	@(private)
 	join :: hook(drop) proc(self: inout) {
-		foreach (handle in self.threads) {
-			rt_wait(handle, INFINITE);
-			rt_close(handle);
-		}
+		self.threads.clear();
 		switch (self.pool) {
 		case .some(pool): pool.wait_for(rawptr(&mut self));
 		case .none:

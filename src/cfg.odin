@@ -258,13 +258,16 @@ Prov_State :: struct {
 	lent_aliases:   map[int][]int,
 	// Per `parallel` block's hidden scope, the slot holding what its tasks
 	// lend (`prov_spawn`), and each task's reborrows of mutable carriers, one
-	// slot per spawn site; `spawning` is the call whose lending is collected
-	// into `spawn_held`.
+	// slot per spawn site, all registered as the block is entered
+	// (`prov_enter_parallel`); `spawning` is the call whose lending is
+	// collected into `spawn_held`.
 	task_slots:     map[Symbol_Id]int,
 	task_holds:     map[Symbol_Id][dynamic]int,
 	// design.md "Parallel blocks": a pooled block's tasks, by its hidden scope,
 	// which its join may run on the joining thread.
 	pool_tasks:     map[Symbol_Id][dynamic]Pool_Task,
+	// Each spawn site's slot in `task_holds`.
+	spawn_holds:    map[^Stmt_Spawn]int,
 	spawning:       ^Expr_Call,
 	spawn_held:     []int,
 	// The call being spawned belongs to a pooled block.
@@ -1441,6 +1444,9 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false, lends :=
 		depth := graph.prov != nil ? &graph.parallel_depth : nil
 		if depth != nil {
 			depth^ += 1
+		}
+		if graph.mode != .Lifecycle {
+			prov_enter_parallel(graph, s)
 		}
 		walk_flow_block(graph, s.lowered != nil ? s.lowered : s.body)
 		if depth != nil {

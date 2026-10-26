@@ -105,6 +105,9 @@ check_parallel :: proc(k: ^Checker, s: ^Stmt_Parallel) -> Flow_Info {
 		s.scope = scope.symbols[0]
 	}
 	k.parallel_block = s
+	if committing(k.c) {
+		s.spawns = make([dynamic]^Stmt_Spawn, 0, 2, k.c.semantic_allocator)
+	}
 	flow := check_scoped_block(k, s.body)
 
 	lowered := new(Block, k.c.semantic_allocator)
@@ -476,6 +479,7 @@ lower_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn, block: ^Stmt_Parallel, callee: 
 	if committing(c) {
 		s.task = task
 		append(&c.spawn_tasks, task)
+		append(&block.spawns, s)
 	}
 }
 

@@ -21,3 +21,7 @@ L0512
 L0512
 @70:2
 `buffer` cannot be modified by `pooled_grow`, which this join may run on this thread, here: a read-only slice of it is still in use
+
+L0512
+@139:2
+`buffer` cannot be modified by `invalidate`, which this join may run on this thread, here: a read-only slice of it is still in use

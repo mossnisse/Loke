@@ -90,3 +90,28 @@ bump_each_step :: proc() {
 		}
 	}
 }
+
+// An exit the walk reaches before the spawn joins the tasks an earlier
+// iteration started, so what they hold is still lent there.
+write_before_spawn :: proc() -> int {
+	x := 0;
+	parallel {
+		i := 0;
+		for (;;) {
+			if (i == 1) { x = 5; return x; }
+			spawn read(&x);
+			i += 1;
+		}
+	}
+}
+
+reborrow_before_spawn :: proc(values: []mut int) {
+	parallel {
+		i := 0;
+		for (;;) {
+			if (i == 1) { values[0] = 5; return; }
+			spawn add(values);
+			i += 1;
+		}
+	}
+}

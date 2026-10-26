@@ -5632,16 +5632,10 @@ prov_spawn :: proc(graph: ^Flow_Graph, s: ^Stmt_Spawn) {
 			held = prov_join(graph, held, prov_borrow(graph, root, path, true, s.result.span, "task result"))
 		}
 	}
-	if graph.task_slots == nil {
-		graph.task_slots = make(map[Symbol_Id]int, 4, graph.alloc)
-	}
 	// The task runs from here: what it reaches, and what the parent does
 	// until the join, are checked against the globals (design.md "Globals while
 	// tasks run").
-	runs := task.run
-	if runs not_in graph.k.c.effect_program.index_of {
-		runs = call.resolution.symbol
-	}
+	runs := spawn_runs(graph, s)
 	graph.has_window_event = true
 	if graph.task_sites == nil {
 		graph.task_sites = make([dynamic]Task_Site, 0, 2, graph.alloc)
@@ -5652,26 +5646,64 @@ prov_spawn :: proc(graph: ^Flow_Graph, s: ^Stmt_Spawn) {
 		name = identifier_text(graph.k.c, symbol_of(graph.k.c, call.resolution.symbol).name),
 	})
 	slot, found := graph.task_slots[task.scope]
-	if !found {
-		slot = prov_temp_slot(graph)
-		graph.task_slots[task.scope] = slot
+	hold, has_hold := graph.spawn_holds[s]
+	if !found || !has_hold {
+		return // registered by `prov_enter_parallel` unless its block failed to lower
 	}
 	join := s.span
 	if scope := symbol_of(graph.k.c, task.scope); scope != nil {
 		join = scope.span
 	}
 	prov_hold_until_join(graph, slot, held, s.span, join)
-	prov_spawn_reborrows(graph, task.scope, held, s.span, join)
-	if task.pooled {
+	prov_spawn_reborrows(graph, hold, held, s.span, join)
+}
+
+// The procedure a spawn's task runs: its `run` wrapper, or the callee when
+// the effect analysis has no body for the wrapper.
+@(private = "file")
+spawn_runs :: proc(graph: ^Flow_Graph, s: ^Stmt_Spawn) -> Symbol_Id {
+	if s.task.run in graph.k.c.effect_program.index_of {
+		return s.task.run
+	}
+	return s.call.(^Expr_Call).resolution.symbol
+}
+
+// design.md "Task borrows and the join": every exit of a `parallel` block
+// joins its tasks, including an exit the walk reaches before a spawn that a
+// loop's back edge runs earlier. So the slot of what the block's tasks lend,
+// each spawn site's reborrow slot, and a pooled block's tasks are registered
+// as the block is entered, before the walk reaches any exit.
+@(private)
+prov_enter_parallel :: proc(graph: ^Flow_Graph, s: ^Stmt_Parallel) {
+	if len(s.spawns) == 0 {
+		return
+	}
+	prov_window_bit(graph, s.scope)
+	if graph.task_slots == nil {
+		graph.task_slots = make(map[Symbol_Id]int, 4, graph.alloc)
+		graph.task_holds = make(map[Symbol_Id][dynamic]int, 4, graph.alloc)
+		graph.spawn_holds = make(map[^Stmt_Spawn]int, 4, graph.alloc)
+	}
+	graph.task_slots[s.scope] = prov_temp_slot(graph)
+	holds := make([dynamic]int, 0, len(s.spawns), graph.alloc)
+	tasks: [dynamic]Pool_Task
+	for spawn in s.spawns {
+		hold := prov_temp_slot(graph)
+		append(&holds, hold)
+		graph.spawn_holds[spawn] = hold
+		if spawn.task.pooled {
+			if tasks == nil {
+				tasks = make([dynamic]Pool_Task, 0, len(s.spawns), graph.alloc)
+			}
+			append(&tasks, Pool_Task{runs = spawn_runs(graph, spawn), callee = spawn.call.(^Expr_Call).resolution.symbol})
+		}
+	}
+	graph.task_holds[s.scope] = holds
+	if tasks != nil {
 		if graph.pool_tasks == nil {
 			graph.pool_tasks = make(map[Symbol_Id][dynamic]Pool_Task, 2, graph.alloc)
 		}
-		tasks := graph.pool_tasks[task.scope]
-		if tasks == nil {
-			tasks = make([dynamic]Pool_Task, 0, 2, graph.alloc)
-		}
-		append(&tasks, Pool_Task{runs = runs, callee = call.resolution.symbol})
-		graph.pool_tasks[task.scope] = tasks
+		graph.pool_tasks[s.scope] = tasks
 	}
 }
 
@@ -5692,8 +5724,8 @@ prov_hold_until_join :: proc(graph: ^Flow_Graph, slot: int, held: []int, span, j
 // spawn's argument is not mistaken for what an earlier task holds, and a loop's
 // chunk binding, fresh on each step, may be lent again on the next.
 @(private = "file")
-prov_spawn_reborrows :: proc(graph: ^Flow_Graph, scope: Symbol_Id, held: []int, span, join: Span) {
-	hold := -1
+prov_spawn_reborrows :: proc(graph: ^Flow_Graph, hold: int, held: []int, span, join: Span) {
+	reborrows := false
 	existing := len(graph.reborrows)
 	for lent in held {
 		for index in 0 ..< existing {
@@ -5701,28 +5733,16 @@ prov_spawn_reborrows :: proc(graph: ^Flow_Graph, scope: Symbol_Id, held: []int, 
 			if reborrow.derived != lent || !reborrow.mutable {
 				continue
 			}
-			if hold < 0 {
-				hold = prov_temp_slot(graph)
-			}
+			reborrows = true
 			append(&graph.reborrows, Prov_Reborrow{source = reborrow.source, derived = hold, span = span, mutable = true})
 		}
 	}
-	if hold < 0 {
-		return
+	if reborrows {
+		prov_hold_until_join(graph, hold, held, span, join)
 	}
-	prov_hold_until_join(graph, hold, held, span, join)
-	if graph.task_holds == nil {
-		graph.task_holds = make(map[Symbol_Id][dynamic]int, 4, graph.alloc)
-	}
-	holds := graph.task_holds[scope]
-	if holds == nil {
-		holds = make([dynamic]int, 0, 2, graph.alloc)
-	}
-	append(&holds, hold)
-	graph.task_holds[scope] = holds
 }
 
-// A `parallel` block's index, in the order its first spawn is walked.
+// A `parallel` block's index, in the order the walk enters it.
 @(private)
 prov_window_bit :: proc(graph: ^Flow_Graph, scope: Symbol_Id) -> int {
 	for existing, index in graph.parallel_scopes {

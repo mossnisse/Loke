@@ -1071,6 +1071,8 @@ Stmt_Parallel :: struct {
 	// statement, which declares the hidden scope local before `body`.
 	lowered:    ^Block,
 	scope:      Symbol_Id,
+	// The lowered spawns whose task this block joins, in source order.
+	spawns:     [dynamic]^Stmt_Spawn,
 }
 
 // `spawn call;` or `spawn result = call;`, directly inside a `parallel` block

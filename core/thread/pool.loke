@@ -33,7 +33,7 @@ Pool_State :: struct {
 	head: rawptr,
 	tail: rawptr,
 	stopping: bool,
-	workers: [dynamic]int,
+	workers: [dynamic]Thread,
 }
 
 // One queued task: its frame, and the `Task_Scope` of the block it belongs to.
@@ -62,7 +62,7 @@ impl Pool {
 		foreach (_ in 0 ..< workers) {
 			handle := rt_create_thread(nil, 0, pool_worker, rawptr(state), 0, nil);
 			if (handle == 0) { panic("thread creation failed"); }
-			state^.workers.append(handle);
+			state^.workers.append(Thread{handle});
 		}
 		return pool;
 	}
@@ -74,7 +74,6 @@ impl Pool {
 	submit :: proc(self: ^, scope: rawptr, frame: rawptr) {
 		node := rawptr(unsafe.new(Pool_Node{frame = frame, scope = scope}));
 		owner := (^mut Task_Scope)(scope);
-		owner^.parent = running_in;
 		state := state_of(self);
 		rt_lock(rawptr(&state^.word.value));
 		push(state, node);
@@ -109,7 +108,8 @@ impl Pool {
 	}
 
 	// Every block that used the pool has joined, so the queue is empty: the
-	// workers see `stopping`, return, and are joined.
+	// workers see `stopping`, return, and are joined, while the state they
+	// read is still alive.
 	@(private)
 	stop :: hook(drop) proc(self: inout) {
 		state := state_of(&self);
@@ -117,10 +117,7 @@ impl Pool {
 		state^.stopping = true;
 		rt_unlock(rawptr(&state^.word.value));
 		rt_wake_all(rawptr(&state^.wake.value));
-		foreach (handle in state^.workers) {
-			rt_wait(handle, INFINITE);
-			rt_close(handle);
-		}
+		state^.workers.clear();
 		retired := unsafe.take(state^);
 		unsafe.free(state);
 	}

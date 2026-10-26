@@ -27,3 +27,15 @@ L0511
 @89:15
 this write of `total` is not compatible with the mutable pointer of it that is still in use
 a task holds it until this `parallel` block joins
+L0512
+@101:18
+`x` cannot be assigned here: a read-only pointer of it is still in use
+a task holds it until this `parallel` block joins
+L0641
+@112:18
+`values` cannot be used here: a mutable reborrow of it is still in use
+a task holds it until this `parallel` block joins
+L0641
+@113:14
+`values` cannot be used here: a mutable reborrow of it is still in use
+a task holds it until this `parallel` block joins

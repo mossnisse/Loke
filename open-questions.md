@@ -1291,6 +1291,35 @@ cleanup and task holds are already available. Keep `queue_of` as the narrow
 trust boundary until the
 [borrow-contract question](#waiting-and-ownership-review-2026-10-26) is resolved.
 
+### Pool implementation review (2026-10-26)
+
+Review of `d684700`; all three findings are fixed. Argument and unused result
+drop hooks correctly contribute TLS effects, and a helped child's panic
+unwinds and terminates without hanging.
+
+- A pooled join on a loop exit the walk reached before the block's first
+  spawn emitted no `thread_local` effect, so a view of a buffer an earlier
+  iteration's task freed could be returned. The same order hid what plain
+  tasks borrow and reborrow from that exit, so a write to a variable a task
+  was still reading was accepted. The checker now records each block's
+  spawns (`Stmt_Parallel.spawns`), and `prov_enter_parallel` registers the
+  block's task slot, one reborrow slot per spawn site, and its pooled tasks
+  when the walk enters the block;
+  [parallel_pool.loke](tests/err/parallel_pool.loke) and
+  [parallel_task_loans.loke](tests/err/parallel_task_loans.loke) cover the
+  exits.
+- `Pool.submit` stored `Task_Scope.parent` on every spawn, outside the lock,
+  while a helper searching the queue could read it. `Task_Scope.pooled` sets
+  it once, before any task of the block is queued.
+- `Pool_State.workers` and `Task_Scope.threads` held raw handles and repeated
+  `Thread`'s join. They hold `Thread`s now and are cleared where the loops
+  were; the pool clears its workers before freeing the state they read.
+
+The main boundaries are useful: queue operations stay private to the pool,
+the hidden `Task_Scope` owns each join, and the compiler applies helped TLS
+effects through the existing provenance checks. No additional scheduler or
+executor abstraction is needed for this milestone.
+
 ### Parameters a join check cannot tell apart (2026-10-26)
 
 Writing `examples/mixer.loke` for milestone 9 found that the

@@ -620,7 +620,7 @@ Task_Scope.pooled(pool: ^Pool) -> Task_Scope
 Task_Scope.start(self: inout, run: proc(frame: rawptr), frame: rawptr)
                                         // reserves a slot, then creates the thread,
                                         // or queues the task on the pool
-hook(drop) on Task_Scope                // joins every started thread, in start order,
+hook(drop) on Task_Scope                // joins every started thread,
                                         // then waits for the pooled tasks
 ```
 
@@ -693,7 +693,10 @@ is recorded `elsewhere`, so the fixed point in `compute_global_writes` leaves
 its `thread_local` writes out of the enclosing procedure's. A pooled block's
 spawns are kept in `pool_tasks` by scope, and its join applies their run
 procedures' `thread_local` writes as invalidations
-(`prov_pool_join_effects`); those summaries include their own pooled
+(`prov_pool_join_effects`). The checker lists each block's spawns in
+`Stmt_Parallel.spawns`, and `prov_enter_parallel` registers them, with the
+slots a join uses, as the walk enters the block, since a loop may reach an
+exit written above its first spawn; those summaries include their own pooled
 descendants and exclude bare ones, which is exactly what a helping join may
 run.
 

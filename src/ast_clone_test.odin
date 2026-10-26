@@ -71,7 +71,7 @@ ast_clone_classifies_every_node_field :: proc(t: ^testing.T) {
 		{Stmt_Defer, "stmt on_failure", "slot"},
 		{Stmt_Return, "value", ""},
 		{Stmt_Branch, "kind", ""},
-		{Stmt_Parallel, "keyword executor body", "lowered scope"},
+		{Stmt_Parallel, "keyword executor body", "lowered scope spawns"},
 		{Stmt_Spawn, "keyword result call", "task"},
 
 		{Item_Error, "", ""},

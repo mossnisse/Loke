@@ -127,4 +127,23 @@ shared_pool :: proc() {
 	drop(pool);
 }
 
+invalidate :: proc() {
+	buffer = {};
+}
+
+// Rejected: an exit the walk reaches before the spawn is still a join that
+// may run an earlier iteration's task.
+exit_before_spawn :: proc(pool: ^thread.Pool) -> []int {
+	buffer.append(7);
+	view := buffer[:];
+	parallel (pool) {
+		i := 0;
+		for (;;) {
+			if (i == 1) { return view; }
+			spawn invalidate();
+			i += 1;
+		}
+	}
+}
+
 main :: proc() {}
