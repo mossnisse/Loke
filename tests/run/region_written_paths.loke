@@ -1,7 +1,8 @@
 // design.md "Allocator regions and region provenance": an allocator handle is
 // not an owner, a call leaves owners only at the fields it writes, a
-// container's backing allocation does not back its elements, and `exchange`
-// keeps the previous value's own allocator.
+// container's backing allocation does not back its elements, a field copied
+// from another field of the same argument takes only that field's regions,
+// and `exchange` keeps the previous value's own allocator.
 package main;
 
 import "core:fmt";
@@ -21,6 +22,21 @@ fill_backed :: proc(backed: inout Backed, allocator: Allocator) {
 	backed.table = make(map[int]string, allocator);
 	backed.table[1] = "value";
 	backed.boxed = box("payload", allocator);
+}
+
+Handled :: struct { allocator: Allocator, source, destination, third: string }
+
+copy_handled :: proc(handled: inout Handled) {
+	handled.destination = handled.source;
+	handled.third = handled.destination;
+}
+
+forward_handled :: proc(handled: inout Handled) {
+	copy_handled(inout handled);
+}
+
+copy_handled_through :: proc(handled: ^mut Handled) {
+	handled^.destination = handled^.source;
 }
 
 fill_through :: proc(state: ^mut State, allocator: Allocator) {
@@ -63,6 +79,22 @@ stable_contents :: proc() -> [3]string {
 	return {backed.items[0], backed.table[1], backed.boxed^};
 }
 
+// The copied fields hold static strings; the arena handle beside them backs
+// neither, directly, through a forwarding call, or through a pointer.
+copied_beside_handle :: proc() -> string {
+	arena := mem.Arena.init();
+	handled := Handled{arena.allocator(), "copied", "", ""};
+	forward_handled(inout handled);
+	return handled.third;
+}
+
+copied_through_pointer :: proc() -> string {
+	arena := mem.Arena.init();
+	handled := Handled{arena.allocator(), "pointed", "", ""};
+	copy_handled_through(&mut handled);
+	return handled.destination;
+}
+
 // The extracted array is default-backed, so ending an unrelated arena is fine.
 exchanged_then_reset :: proc() -> int {
 	items := make([dynamic]int, 2);
@@ -77,6 +109,8 @@ main :: proc() {
 	fmt.println(stable_field());
 	fmt.println(stable_field_through());
 	fmt.println(exchanged_then_reset());
+	fmt.println(copied_beside_handle());
+	fmt.println(copied_through_pointer());
 	contents := stable_contents();
 	fmt.println(contents[0], contents[1], contents[2]);
 }

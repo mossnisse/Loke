@@ -790,7 +790,8 @@ normalization_fact_carry_contract :: proc(t: ^testing.T) {
 	p: Checked
 	defer destroy_checked(&p)
 	if !normalization_checked(t, &p, `package main;
-forward :: proc(allocator: Allocator) {
+Pair :: struct { a, b: string }
+forward :: proc(allocator: Allocator, pair: inout Pair) {
     first: Allocator = {};
     second: Allocator = {};
     contents: [dynamic]int = {};
@@ -800,6 +801,7 @@ forward :: proc(allocator: Allocator) {
         second = allocator;
     }
     assert(contents.len() == 1);
+    pair.b = pair.a;
 }
 main :: proc() {}`) { return }
 	k: Checker
@@ -827,6 +829,32 @@ main :: proc() {}`) { return }
 	graph.lent_locals[INVALID_SYMBOL] = true
 	testing.expect(t, prov_fact_weight(&graph.facts) > weight, "the carried round did not grow")
 	testing.expect_value(t, prov_fact_weight(carry), weight)
+	// So does changing its buffers in place: a parameter bit, and the paths
+	// of the copy `pair.b = pair.a` records.
+	shared_bit := false
+	for id, set in graph.region_of {
+		if len(set.params) == 0 || !set.params[0] { continue }
+		set.params[0] = false
+		testing.expect(t, carry.region_of[id].params[0], "a carried region shares its parameter buffer")
+		shared_bit = true
+		break
+	}
+	testing.expect(t, shared_bit, "no local's region holds the allocator parameter")
+	shared_paths := false
+	for storage, content in graph.region_content {
+		for entry, index in content {
+			from, copied := entry.from.?
+			if !copied || len(entry.path) == 0 || len(from.path) == 0 { continue }
+			entry.path[0].lo += 1
+			from.path[0].lo += 1
+			kept := carry.region_content[storage][index]
+			kept_from := kept.from.?
+			testing.expect(t, kept.path[0] != entry.path[0] && kept_from.path[0] != from.path[0],
+			               "a carried content entry shares its paths")
+			shared_paths = true
+		}
+	}
+	testing.expect(t, shared_paths, "the copy within `pair` was not carried")
 }
 
 // design.md "Evaluation order", "Splitting a mutable slice": checked call

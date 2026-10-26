@@ -364,12 +364,19 @@ store by name checks only an owner. Both are also kept by path below what the
 argument names (`written_region_content`), so a call stores each part at the
 field the body wrote rather than at the whole argument; those paths stop at
 the written-alias depth so recursive calls converge. Only the parameter's
-incoming fact is dropped from its own row: a field the body wrote from
-another field of the same argument keeps that dependency, which the call
-substitutes with the whole argument's region. The whole-argument summaries
-are joined from these rows, and each row entry keeps its `own` flag when the
-call stores it, so a container's backing allocation stays apart from its
-elements. A handle's region content entry is kept
+incoming fact is dropped from its own row. A field the body wrote from
+another field of the same argument keeps that dependency: while a store into
+the parameter reads its regions (`Prov_Self_Reads`), reads of the incoming
+value leave out the parameter's own region and record where they read, and
+the store records a copy entry (`Prov_Region_Content.from`). The call
+resolves a copy entry against the caller's content at that field, so an
+unrelated allocator handle beside it is not taken along; a copy within the
+caller's own writable parameter is recorded as a copy again. A dependency
+the parameter's region reached any other way still stands for the whole
+argument. The whole-argument summaries are joined from these rows, with a
+copy entry standing for the whole argument, and each row entry keeps its
+`own` flag when the call stores it, so a container's backing allocation
+stays apart from its elements. A handle's region content entry is kept
 apart from an owner's at the same path, and a write through a carrier is
 recorded at its path below the carrier (`prov_path_below_carrier`), so
 `dst^.alloc = handle` and `dst^.items = make(...)` stay distinct. Whole-record

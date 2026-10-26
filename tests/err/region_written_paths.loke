@@ -1,7 +1,9 @@
 // design.md "Allocator regions and region provenance": `exchange` returns the
 // previous owner with its allocator, and a field a call writes, or the whole
 // record holding it, keeps the region the call left there, including an owner
-// the call copies there from another field.
+// the call copies there from another field, directly, through another field,
+// through a forwarding call, or through a pointer, and one it allocates with a handle the
+// argument holds.
 package main;
 
 import "core:fmt";
@@ -22,6 +24,25 @@ copy_and_fill :: proc(copied: inout Copied, allocator: Allocator) {
 
 copy_only :: proc(copied: inout Copied) {
 	copied.destination = copied.source;
+}
+
+forward_copy :: proc(copied: inout Copied) {
+	copy_only(inout copied);
+}
+
+copy_twice :: proc(copied: inout Copied) {
+	copied.destination = copied.source;
+	copied.scratch = copied.destination;
+}
+
+copy_through :: proc(copied: ^mut Copied) {
+	copied^.destination = copied^.source;
+}
+
+Handled :: struct { allocator: Allocator, text: string }
+
+allocate_with :: proc(handled: inout Handled) {
+	handled.text = fmt.to_string(handled.allocator, 7);
 }
 
 fill_through :: proc(state: ^mut State, allocator: Allocator) {
@@ -66,6 +87,34 @@ copied_only :: proc() -> string {
 	arena := mem.Arena.init();
 	copied := Copied{fmt.to_string(arena.allocator(), 7), "", ""};
 	copy_only(inout copied);
+	return copied.destination;
+}
+
+copied_forwarded :: proc() -> string {
+	arena := mem.Arena.init();
+	copied := Copied{fmt.to_string(arena.allocator(), 7), "", ""};
+	forward_copy(inout copied);
+	return copied.destination;
+}
+
+copied_twice :: proc() -> string {
+	arena := mem.Arena.init();
+	copied := Copied{fmt.to_string(arena.allocator(), 7), "", ""};
+	copy_twice(inout copied);
+	return copied.scratch;
+}
+
+allocated_with_handle :: proc() -> string {
+	arena := mem.Arena.init();
+	handled := Handled{arena.allocator(), ""};
+	allocate_with(inout handled);
+	return handled.text;
+}
+
+copied_through :: proc() -> string {
+	arena := mem.Arena.init();
+	copied := Copied{fmt.to_string(arena.allocator(), 7), "", ""};
+	copy_through(&mut copied);
 	return copied.destination;
 }
 

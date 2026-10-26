@@ -160,6 +160,25 @@ Prov_Region_Content :: struct {
 	// The value's own backing allocation or moved-parameter dependency at
 	// `path`, separate from its fields and elements.
 	own: bool,
+	// A copy within one writable parameter: `path` holds what the argument
+	// itself held at `from`, which a call resolves in its caller instead of
+	// taking the whole argument's regions. `region` is empty.
+	from: Maybe(Prov_Region_Source),
+}
+
+// A read of a writable parameter's incoming value at `path`.
+Prov_Region_Source :: struct {
+	path:  []Proj_Step,
+	query: Region_Query,
+}
+
+// While set, reads of `symbol`'s incoming value leave out its own parameter
+// region and are listed in `sources`, so a store into the parameter can say
+// which of its fields it copied (`prov_take_self_sources`).
+Prov_Self_Reads :: struct {
+	symbol:  Symbol_Id,
+	index:   int,
+	sources: [dynamic]Prov_Region_Source,
 }
 
 // The payload under a union's wildcard alternative: unwrapping keeps every borrow
@@ -1989,7 +2008,7 @@ prov_seed_regions :: proc(graph: ^Flow_Graph, seed: ^Prov_Facts) {
 	for id, content in seed.region_content {
 		copied := make([]Prov_Region_Content, len(content), graph.alloc)
 		for entry, index in content {
-			copied[index] = Prov_Region_Content{path = slice.clone(entry.path, graph.alloc), region = prov_empty_region(graph), handle = entry.handle, own = entry.own}
+			copied[index] = prov_clone_region_content(entry, prov_empty_region(graph), graph.alloc)
 			region_merge(&copied[index].region, entry.region)
 		}
 		graph.region_content[id] = copied
@@ -2024,8 +2043,7 @@ prov_carry_facts :: proc(graph: ^Flow_Graph, allocator: mem.Allocator) -> ^Prov_
 	for id, content in graph.region_content {
 		copied := make([]Prov_Region_Content, len(content), allocator)
 		for entry, index in content {
-			copied[index] = Prov_Region_Content{path = slice.clone(entry.path, allocator), region = copied_region(entry.region, graph.param_count, allocator),
-			                                    handle = entry.handle, own = entry.own}
+			copied[index] = prov_clone_region_content(entry, copied_region(entry.region, graph.param_count, allocator), allocator)
 		}
 		carry.region_content[id] = copied
 	}
@@ -2099,7 +2117,8 @@ prov_region_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id, viewed := fals
 // direct fact and a borrowed binding's aliases reach the whole argument. What
 // the argument already was, and the body's own regions, say nothing new.
 // Field entries are the body's writes, so one that copies from the argument
-// keeps its dependency, which the caller substitutes with the whole argument.
+// keeps its dependency: by path where the copy named the field it read
+// (`Prov_Region_Content.from`), otherwise for the whole argument.
 @(private)
 prov_written_parameter_content :: proc(graph: ^Flow_Graph, id: Symbol_Id, index: int) -> []Prov_Region_Content {
 	out := make([dynamic]Prov_Region_Content, graph.alloc)
@@ -2107,7 +2126,7 @@ prov_written_parameter_content :: proc(graph: ^Flow_Graph, id: Symbol_Id, index:
 		content := content
 		content.region.locals, content.region.crowded = 0, false
 		if !written && index < len(content.region.params) { content.region.params[index] = false }
-		if !region_is_empty(content.region) { append(out, content) }
+		if content.from != nil || !region_is_empty(content.region) { append(out, content) }
 	}
 	whole, owned := prov_empty_region(graph), prov_empty_region(graph)
 	if aliases := graph.region_aliases[id]; len(aliases) > 0 {
@@ -2150,8 +2169,17 @@ prov_region_content_at :: proc(graph: ^Flow_Graph, root: Root_Id, path: []Proj_S
 		}
 		if aliases[len(aliases) - 1].root != NO_ROOT { return out }
 	}
-	if direct, found := graph.region_of[id]; found {
+	reads := graph.self_reads
+	if reads != nil && reads.symbol != id { reads = nil }
+	if direct, found := graph.region_of[id]; found && reads == nil {
 		region_merge(&out, direct)
+	} else if found {
+		// The parameter's own region here is what the argument held at `path`.
+		rest := prov_empty_region(graph)
+		region_merge(&rest, direct)
+		if reads.index < len(rest.params) { rest.params[reads.index] = false }
+		region_merge(&out, rest)
+		append(&reads.sources, Prov_Region_Source{slice.clone(path, graph.alloc), query})
 	}
 	for content in graph.region_content[storage] {
 		// Own backing facts stay at their value's path. In particular, a
@@ -2162,7 +2190,27 @@ prov_region_content_at :: proc(graph: ^Flow_Graph, root: Root_Id, path: []Proj_S
 		if content.own && len(content.path) < len(path) { continue }
 		if (query == .All || !content.handle) && (len(path) == 0 || len(content.path) == 0 || paths_overlap(content.path, path)) {
 			region_merge(&out, content.region)
+			if from, copied := content.from.?; copied && reads != nil {
+				append(&reads.sources, prov_copied_source(graph, from, content.path, path, query))
+			}
 		}
+	}
+	return out
+}
+
+// What a read at `path` takes from a copy at `at` of the argument's content at
+// `from`: the same place below `from`, or all of `from` when the read covers
+// the copy. The wider query keeps both reads' regions.
+@(private = "file")
+prov_copied_source :: proc(graph: ^Flow_Graph, from: Prov_Region_Source, at, path: []Proj_Step, query: Region_Query) -> Prov_Region_Source {
+	out := Prov_Region_Source{path = from.path, query = from.query}
+	if len(path) > len(at) {
+		out.path = prov_concat_path(graph, from.path, path[len(at):])
+	}
+	if query == .All || from.query == .All {
+		out.query = .All
+	} else if query == .Owners || from.query == .Owners {
+		out.query = .Owners
 	}
 	return out
 }
@@ -2179,18 +2227,71 @@ prov_define_value_regions :: proc(
 	if recorded { prov_effect_begin(graph, Prov_Effect_Define{prov_storage_for_root(graph, root), prov_effect_path(graph, path), prov_effect_value(graph, value), prov_effect_path(graph, source), copies, allocated_by}) }
 	defer prov_effect_end(graph, recorded)
 	allocator := prov_destination_allocator(graph, allocated_by)
-	fields := prov_result_region_fields(graph, value, prov_value(graph, value).type, source, copies, allocator)
+	type := prov_value(graph, value).type
+	reads := prov_self_reads_begin(graph, root)
+	defer prov_self_reads_end(graph, reads)
+	fields := region_field_shape(graph.k.c, prov_type_at(graph.k.c, type, source), graph.alloc)
 	if len(fields) == 0 {
 		region := prov_stored_region_at(graph, value, source, .All, copies, allocator, copy_from = source)
+		copied := prov_take_self_sources(graph, reads, region, path, handle = true)
 		owned := prov_stored_region_at(graph, value, source, .Owners, copies, allocator, copy_from = source)
+		copied_owners := prov_take_self_sources(graph, reads, owned, path)
 		prov_define_stored_content(graph, root, path, region, owned)
+		prov_define_copied_content(graph, root, copied)
+		prov_define_copied_content(graph, root, copied_owners)
 		return
 	}
 	for field in fields {
-		region := field.region
+		at := prov_concat_path(graph, path, field.path)
+		region := prov_stored_region_at(graph, value, prov_concat_path(graph, source, field.path), field.own ? .Own : .All, copies, allocator, type, source)
+		copied := prov_take_self_sources(graph, reads, region, at, field.handle, field.own)
 		owned := field.handle ? prov_empty_region(graph) : region
-		prov_define_stored_content(graph, root, prov_concat_path(graph, path, field.path), region, owned, own = field.own)
+		prov_define_stored_content(graph, root, at, region, owned, own = field.own)
+		prov_define_copied_content(graph, root, copied)
 	}
+}
+
+// Starts listing the reads of the writable parameter `root` names, so a store
+// into it can say which of the argument's own fields it copied. Nil for any
+// other root.
+@(private = "file")
+prov_self_reads_begin :: proc(graph: ^Flow_Graph, root: Root_Id) -> ^Prov_Self_Reads {
+	if root == NO_ROOT || graph.self_reads != nil || graph.literal.signature == nil { return nil }
+	// A pointer parameter's storage is the pointee's, which is not a `.Param` root.
+	id := graph.roots[int(root)].symbol
+	sym := symbol_of(graph.k.c, id)
+	if sym == nil || sym.kind != .Parameter || !param_writes_caller(graph.k.c, sym) { return nil }
+	index := 0
+	for parameter in graph.literal.signature.params {
+		for symbol in parameter.symbols {
+			if symbol == id {
+				graph.self_reads = new_clone(Prov_Self_Reads{symbol = id, index = index, sources = make([dynamic]Prov_Region_Source, graph.alloc)}, graph.alloc)
+				return graph.self_reads
+			}
+			index += 1
+		}
+	}
+	return nil
+}
+
+@(private = "file")
+prov_self_reads_end :: proc(graph: ^Flow_Graph, reads: ^Prov_Self_Reads) {
+	if reads != nil { graph.self_reads = nil }
+}
+
+// The copies at `path` that `region`, read since the last call, made from the
+// parameter's own fields. None when its own region reached `region` some other
+// way: that dependency then stands for the whole argument.
+@(private = "file")
+prov_take_self_sources :: proc(graph: ^Flow_Graph, reads: ^Prov_Self_Reads, region: Region_Set, path: []Proj_Step, handle := false, own := false) -> []Prov_Region_Content {
+	if reads == nil { return nil }
+	defer clear(&reads.sources)
+	if len(reads.sources) == 0 || reads.index < len(region.params) && region.params[reads.index] { return nil }
+	out := make([]Prov_Region_Content, len(reads.sources), graph.alloc)
+	for source, index in reads.sources {
+		out[index] = Prov_Region_Content{path = path, region = prov_empty_region(graph), handle = handle, own = own, from = source}
+	}
+	return out
 }
 
 // A stored copy allocates in its destination's allocator before widening
@@ -2246,7 +2347,7 @@ prov_define_region_content :: proc(
 	// region provenance").
 	content := graph.region_content[storage]
 	for &entry in content {
-		if entry.handle == handle && entry.own == own && len(entry.path) == len(path) && path_has_exact_prefix(entry.path, path) {
+		if entry.from == nil && entry.handle == handle && entry.own == own && len(entry.path) == len(path) && path_has_exact_prefix(entry.path, path) {
 			region_merge(&entry.region, region)
 			graph.region_content[storage] = content
 			return
@@ -3543,9 +3644,33 @@ prov_store_region :: proc(graph: ^Flow_Graph, destination: Value_Id, value: Valu
 	// design.md "Allocator regions and region provenance": an allocator handle
 	// is not an owner, so only the owners made from it are checked against the
 	// storage it lands in.
+	root, at, reads := prov_self_reads_into(graph, destination, element)
 	region := prov_result_region(graph, value)
+	copied := prov_take_self_sources(graph, reads, region, at, handle = true)
 	owned := prov_result_region_at(graph, value, nil, .Owners)
+	copied_owners := prov_take_self_sources(graph, reads, owned, at)
+	prov_self_reads_end(graph, reads)
 	prov_store_region_set(graph, destination, region, owned, prov_owner_name(graph, prov_value(graph, value).origin), element)
+	prov_define_copied_content(graph, root, copied)
+	prov_define_copied_content(graph, root, copied_owners)
+}
+
+// Starts listing reads for a store through `destination` when the only storage
+// it can land in is this body's writable parameter, as `state^.field` does
+// for a `state: ^mut T` parameter; `at` is where in that parameter.
+@(private = "file")
+prov_self_reads_into :: proc(graph: ^Flow_Graph, destination: Value_Id, element: bool) -> (root: Root_Id, at: []Proj_Step, reads: ^Prov_Self_Reads) {
+	if element { return NO_ROOT, nil, nil }
+	if place_root, path, ok := prov_value_place_of(graph, destination); ok {
+		root, at = place_root, path
+	} else {
+		targets := prov_written_targets(graph, destination)
+		if len(targets) != 1 || targets[0].target == 0 { return NO_ROOT, nil, nil }
+		root = prov_root_for_storage(graph, targets[0].target)
+		at = prov_concat_path(graph, targets[0].at, prov_path_below_carrier(graph, destination))
+	}
+	reads = prov_self_reads_begin(graph, root)
+	return
 }
 
 // `region` is every region the stored value is in, and `owned` the part that
@@ -3583,9 +3708,63 @@ prov_define_stored_contents :: proc(graph: ^Flow_Graph, root: Root_Id, path: []P
 		return
 	}
 	for content in contents {
-		prov_define_stored_content(graph, root, prov_concat_path(graph, path, content.path), content.region,
-		                           content.handle ? prov_empty_region(graph) : content.region, own = content.own)
+		at := prov_concat_path(graph, path, content.path)
+		if from, copied := content.from.?; copied {
+			prov_define_copied_region(graph, root, at, prov_concat_path(graph, path, from.path), from.query, content.handle, content.own)
+			continue
+		}
+		prov_define_stored_content(graph, root, at, content.region, content.handle ? prov_empty_region(graph) : content.region, own = content.own)
 	}
+}
+
+// A call's copy within one argument: `at` takes what `root` holds at `from`,
+// recorded again as a copy when `root` is this body's own writable parameter.
+@(private = "file")
+prov_define_copied_region :: proc(graph: ^Flow_Graph, root: Root_Id, at, from: []Proj_Step, query: Region_Query, handle, own: bool) {
+	reads := prov_self_reads_begin(graph, root)
+	region := prov_region_content_at(graph, root, from, query)
+	copied := prov_take_self_sources(graph, reads, region, at, handle, own)
+	prov_self_reads_end(graph, reads)
+	prov_define_stored_content(graph, root, at, region, handle ? prov_empty_region(graph) : region, own = own)
+	prov_define_copied_content(graph, root, copied)
+}
+
+// Records copies within a writable parameter (`Prov_Region_Content.from`).
+// Flow-insensitive, as other content is.
+@(private = "file")
+prov_define_copied_content :: proc(graph: ^Flow_Graph, root: Root_Id, contents: []Prov_Region_Content) {
+	storage := prov_storage_for_root(graph, root)
+	if storage == 0 { return }
+	next: for content in contents {
+		existing := graph.region_content[storage]
+		for entry in existing {
+			if prov_same_region_content(entry, content) { continue next }
+		}
+		grown := make([]Prov_Region_Content, len(existing) + 1, graph.alloc)
+		copy(grown, existing)
+		grown[len(existing)] = prov_clone_region_content(content, prov_empty_region(graph), graph.alloc)
+		graph.region_content[storage] = grown
+	}
+}
+
+// Whether two entries record the same kind of fact at the same path, so one
+// merges into the other.
+prov_same_region_content :: proc(a, b: Prov_Region_Content) -> bool {
+	if a.handle != b.handle || a.own != b.own || !prov_same_path(a.path, b.path) { return false }
+	from_a, copied_a := a.from.?
+	from_b, copied_b := b.from.?
+	return copied_a == copied_b && (!copied_a || from_a.query == from_b.query && prov_same_path(from_a.path, from_b.path))
+}
+
+// `entry` with its paths in `allocator` and `region` in place of its own.
+prov_clone_region_content :: proc(entry: Prov_Region_Content, region: Region_Set, allocator: mem.Allocator) -> Prov_Region_Content {
+	out := entry
+	out.path = slice.clone(entry.path, allocator)
+	out.region = region
+	if from, copied := entry.from.?; copied {
+		out.from = Prov_Region_Source{slice.clone(from.path, allocator), from.query}
+	}
+	return out
 }
 
 // An owner written through the carriers `destination` reaches, into storage
@@ -3612,8 +3791,7 @@ prov_store_region_through :: proc(graph: ^Flow_Graph, destination: Value_Id, reg
 	for alias in prov_written_targets(graph, destination) {
 		at := prov_concat_path(graph, alias.at, below)
 		prov_define_stored_contents(graph, prov_root_for_storage(graph, alias.target), at, region, owned, contents)
-		if owner == CALL_LEFT_OWNER && !carrier_is_mutable(graph.k.c, destination_type) &&
-		   prov_type_reaches_mutable(graph.k.c, destination_type) {
+		if owner == CALL_LEFT_OWNER && prov_type_reaches_mutable(graph.k.c, destination_type) {
 			prov_store_reachable_regions(graph, alias.target, at, false, region, owned, &seen)
 		}
 		sym := symbol_of(graph.k.c, prov_storage(graph, alias.target).key.symbol)
@@ -3631,9 +3809,9 @@ prov_store_region_through :: proc(graph: ^Flow_Graph, destination: Value_Id, reg
 	prov_region_escape_through(graph, span, owned, owner)
 }
 
-// A read-only outer carrier can still reach writable carriers in its contents.
-// Normalized addresses keep the descriptor and its contents separate, so a
-// callee's aggregate write summary must follow those nested destinations.
+// An outer carrier, mutable or read-only, can reach writable carriers in its
+// contents. Normalized addresses keep the descriptor and its contents separate,
+// so a callee's aggregate write summary must follow those nested destinations.
 @(private = "file")
 prov_store_reachable_regions :: proc(graph: ^Flow_Graph, storage: Storage_Id, path: []Proj_Step,
                                       writable: bool, region, owned: Region_Set, seen: ^[dynamic]Written_Alias_Visit) {
@@ -5017,9 +5195,11 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 			}
 		}
 		if place_ok {
+			// As for a whole local: a record holding only handles keeps their
+			// regions too (design.md "Allocator regions and region provenance").
 			if value != nil && s.op == .Assign &&
-			   (type_is_managed(graph.k.c, prov_type(graph, target)) ||
-			    type_underlying(graph.k.c, prov_type(graph, target)) == TYPE_ALLOCATOR) {
+			   (type_is_managed(graph.k.c, target_type) || type_underlying(graph.k.c, target_type) == TYPE_ALLOCATOR ||
+			    prov_type_has_region(graph.k.c, target_type) && !type_is_carrier(graph.k.c, target_type)) {
 				prov_define_value_regions(graph, root, path, prov_input_value(graph, value), source, copies, place_root_symbol(target))
 			}
 			prov_walk_subscripts(graph, target, s.op == .Assign)

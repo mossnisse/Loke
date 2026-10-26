@@ -311,6 +311,22 @@ checklist.
   (parallel{1}).run();
   ```
 
+- Assigning a record that holds an allocator handle but no owner to a field
+  now keeps the handle's allocator region, as assigning the handle itself
+  does. An owner allocated with it can no longer outlive that region; for
+  example, `state.handle = Handle{arena.allocator()};` followed by
+  `return make([dynamic]int, 1, state.handle.allocator);` reports `L0592`.
+  Upgrade by allocating the returned owner from an allocator that outlives
+  the procedure.
+
+- An owner a call leaves through a `^mut` pointer stored in a record now keeps
+  its region when the call receives that record through a held `^mut`
+  pointer, as it does when the argument is `&mut record`. Resetting the region
+  while the owner is live reports `L0537`; for example,
+  `pointer := &mut outer; fill(pointer, allocator); free_all(allocator);`
+  followed by a use of what `outer.pointer` points at. Upgrade by finishing
+  with the owner before the reset.
+
 ### Added
 
 - [Structured concurrency](design.md#structured-concurrency): a
@@ -577,6 +593,11 @@ checklist.
   allocator region to the elements stored in it. Returning a static string
   from a `[dynamic]string`, map, or `Box` field that the call made from an
   arena no longer reports `L0592`.
+
+- A call that copies one field of a record argument into another, through
+  `inout` or a mutable pointer, now gives the copy only that field's
+  allocator regions. Returning the copied field no longer reports `L0592`
+  when the record also holds an unrelated arena handle.
 
 - An owner extracted with `exchange` keeps its own allocator, so resetting an
   unrelated arena while it is live no longer reports `L0537`.

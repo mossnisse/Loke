@@ -2156,9 +2156,21 @@ collect_written_regions :: proc(c: ^Compiler, graph: ^Flow_Graph, declaration: S
 		if !param_writes_caller(c, symbol_of(c, id)) {
 			continue
 		}
+		// The whole-argument unions join the path-indexed row; there a copy
+		// within the argument stands for the whole argument, and only what is
+		// not an allocator handle backs an owner.
 		content := prov_written_parameter_content(graph, id, index)
-		changed = merge_region_provenance(&written[index], written_parameter_region(graph, content, false)) || changed
-		changed = merge_region_provenance(&owners[index], written_parameter_region(graph, content, true)) || changed
+		for entry in content {
+			region := entry.region
+			if entry.from != nil {
+				region = prov_empty_region(graph)
+				region.params[index] = true
+			}
+			changed = merge_region_provenance(&written[index], region) || changed
+			if !entry.handle {
+				changed = merge_region_provenance(&owners[index], region) || changed
+			}
+		}
 		changed = merge_written_content(c, &contents[index], content, count) || changed
 	}
 	return changed
@@ -2176,8 +2188,11 @@ merge_written_content :: proc(c: ^Compiler, row: ^[]Prov_Region_Content, from: [
 		if len(entry.path) > WRITTEN_ALIAS_DEPTH {
 			entry.path, entry.own = entry.path[:WRITTEN_ALIAS_DEPTH], false
 		}
+		if from, copied := entry.from.?; copied && len(from.path) > WRITTEN_ALIAS_DEPTH {
+			entry.from = Prov_Region_Source{from.path[:WRITTEN_ALIAS_DEPTH], .All}
+		}
 		for &existing in row^ {
-			if existing.handle == entry.handle && existing.own == entry.own && prov_same_path(existing.path, entry.path) {
+			if prov_same_region_content(existing, entry) {
 				changed = merge_region_provenance(&existing.region, entry.region) || changed
 				continue next
 			}
@@ -2186,26 +2201,11 @@ merge_written_content :: proc(c: ^Compiler, row: ^[]Prov_Region_Content, from: [
 		region_merge(&region, entry.region)
 		grown := make([]Prov_Region_Content, len(row^) + 1, c.semantic_allocator)
 		copy(grown, row^)
-		grown[len(row^)] = Prov_Region_Content{path = slice.clone(entry.path, c.semantic_allocator), region = region,
-		                                       handle = entry.handle, own = entry.own}
+		grown[len(row^)] = prov_clone_region_content(entry, region, c.semantic_allocator)
 		row^ = grown
 		changed = true
 	}
 	return changed
-}
-
-// What a body leaves in a parameter, or with `owners` only what backs an owner
-// there: its path-indexed content joined, so a summary taken whole agrees with
-// the one taken by path.
-@(private = "file")
-written_parameter_region :: proc(graph: ^Flow_Graph, content: []Prov_Region_Content, owners: bool) -> Region_Set {
-	set := prov_empty_region(graph)
-	for entry in content {
-		if !owners || !entry.handle {
-			region_merge(&set, entry.region)
-		}
-	}
-	return set
 }
 
 // The path-indexed written content of a call's declaration, or not found for a

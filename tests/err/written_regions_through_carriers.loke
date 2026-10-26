@@ -9,7 +9,9 @@
 // conditional supplies it and whichever field of a local holds it. An owner
 // written through a pointer the caller holds, or a record holding one, lands
 // in the place `&mut place` lent it, so a later reset of that region is an
-// error there too, from a received allocator as from a local arena.
+// error there too, from a received allocator as from a local arena. So does an
+// owner written through a mutable pointer held in a record a held mutable
+// pointer reaches.
 package main;
 
 import "core:mem";
@@ -170,6 +172,22 @@ held_body_reset :: proc(@(allocator_reset) allocator: Allocator) {
 	q^ = make([dynamic]int, 2, allocator);
 	free_all(allocator);
 	fmt.println(out[0]);
+}
+
+Inner :: struct { text: string }
+Outer :: struct { pointer: ^mut Inner }
+
+fill_nested :: proc(outer: ^mut Outer, allocator: Allocator) {
+	outer.pointer^.text = fmt.to_string(allocator, 7);
+}
+
+held_nested_reset :: proc(@(allocator_reset) allocator: Allocator) -> string {
+	inner := Inner{""};
+	outer := Outer{&mut inner};
+	pointer := &mut outer;
+	fill_nested(pointer, allocator);
+	free_all(allocator);
+	return inner.text;
 }
 
 main :: proc() {}

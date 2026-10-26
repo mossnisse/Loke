@@ -316,6 +316,8 @@ Prov_State :: struct {
 	using facts: Prov_Facts,
 	// Borrowed payload bindings name storage in their switch subject.
 	region_aliases:  map[Symbol_Id][]Prov_Region_Alias,
+	// Set while a store into a writable parameter reads its regions.
+	self_reads:      ^Prov_Self_Reads,
 	// Owned operands held while later operands are evaluated.
 	held_owners:     [dynamic]Expr,
 	param_count:     int,
