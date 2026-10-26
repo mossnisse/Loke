@@ -1,0 +1,259 @@
+// standard-library "Pools": `parallel (pool)` runs its tasks on the pool's
+// persistent workers. Nested work finishes with one worker, the executor is
+// chosen at every block, a worker keeps its `thread_local` storage between
+// tasks and drops it when the pool drops, only a worker of the block's own
+// pool runs the block's tasks while joining, and only those of its subtree,
+// and a task waiting on a queued sibling is not helped.
+//
+// With one worker, queued tasks run oldest first, and a joining thread that is
+// not a worker runs none, so each case's output is fixed. A watchdog ends the
+// program if a wait never ends.
+package main;
+
+import "core:fmt";
+import "core:os";
+import "core:sync";
+import "core:thread";
+import "core:time";
+
+finished: sync.Atomic(bool);
+retired: sync.Atomic(int);
+runs: thread_local int;
+on_main: thread_local bool;
+inside_first: thread_local bool;
+
+watch :: proc(seconds: move int) {
+	foreach (_ in 0 ..< seconds * 100) {
+		if (finished.load()) { return; }
+		time.sleep(10 * time.MILLISECOND);
+	}
+	fmt.println("timed out");
+	os.exit(1);
+}
+
+// Sums `xs`, halving it into two tasks on `pool` at every level.
+sum :: proc(pool: ^thread.Pool, xs: []int) -> int {
+	if (xs.len() <= 4) {
+		total := 0;
+		foreach (x in xs) { total += x; }
+		return total;
+	}
+	mid := xs.len() / 2;
+	low: int;
+	high: int;
+	parallel (pool) {
+		spawn low = sum(pool, xs[:mid]);
+		spawn high = sum(pool, xs[mid:]);
+	}
+	return low + high;
+}
+
+// A worker that joins a block of its own pool runs the block's tasks, so
+// nested blocks finish with one worker.
+nested_on_one_worker :: proc() {
+	pool := thread.Pool.init(1);
+	xs: [dynamic]int = {};
+	foreach (i in 1 ..= 1000) { xs.append(i); }
+	total: int;
+	parallel (&pool) {
+		spawn total = sum(&pool, xs[:]);
+	}
+	fmt.println("nested sum", total);
+}
+
+double_all :: proc(chunk: []mut int) {
+	foreach (i in 0 ..< chunk.len()) { chunk[i] *= 2; }
+}
+
+// Many rounds on one pool, each borrowing that round's data mutably.
+rounds :: proc() {
+	pool := thread.Pool.init(3);
+	values: [dynamic]int = {};
+	foreach (i in 0 ..< 64) { values.append(i); }
+	foreach (_ in 0 ..< 100) {
+		all := &mut values[:];
+		parallel (&pool) {
+			foreach (chunk in all.chunks_mut(8)) { spawn double_all(chunk); }
+		}
+		foreach (i in 0 ..< values.len()) { values[i] /= 2; }
+	}
+	same := true;
+	foreach (i in 0 ..< values.len()) { if (values[i] != i) { same = false; } }
+	fmt.println("rounds unchanged", same);
+}
+
+count_run :: proc() -> int {
+	runs += 1;
+	return runs;
+}
+
+fresh_runs :: proc() -> int {
+	return runs;
+}
+
+// A bare block inside a pool task starts a thread of its own, whose
+// `thread_local` storage is fresh.
+inner_bare_block :: proc() -> int {
+	count_run();
+	inner: int;
+	parallel {
+		spawn inner = fresh_runs();
+	}
+	return inner;
+}
+
+// The worker keeps its `thread_local` storage from one block's task to the
+// next; the executor is the one each block names.
+tls_reuse :: proc() {
+	pool := thread.Pool.init(1);
+	foreach (round in 1 ..= 3) {
+		seen: int;
+		parallel (&pool) {
+			spawn seen = count_run();
+		}
+		fmt.println("round", round, "worker runs", seen);
+	}
+	inner: int;
+	parallel (&pool) {
+		spawn inner = inner_bare_block();
+	}
+	fmt.println("bare block inside a pool task sees runs", inner);
+}
+
+where :: proc() -> bool {
+	return on_main;
+}
+
+// The main thread joins without being a worker, so it only waits.
+non_worker_waits :: proc() {
+	pool := thread.Pool.init(1);
+	ran_on_main := false;
+	foreach (_ in 0 ..< 20) {
+		here: bool;
+		there: bool;
+		parallel (&pool) {
+			spawn here = where();
+			spawn there = where();
+		}
+		if (here || there) { ran_on_main = true; }
+	}
+	fmt.println("a task ran on the joining main thread", ran_on_main);
+}
+
+descendant_ran_here :: proc() -> bool {
+	return inside_first;
+}
+
+// Opens a block on `pool` and joins it while `inside_first` is set on this
+// thread: a child that runs here, inside the join, sees it.
+first :: proc(pool: ^thread.Pool) -> bool {
+	inside_first = true;
+	child: bool;
+	parallel (pool) {
+		spawn child = descendant_ran_here();
+	}
+	inside_first = false;
+	return child;
+}
+
+// With one worker, `first` runs before its queued sibling; joining its own
+// block, the worker runs `first`'s child but not the sibling, which runs
+// after `first` returns.
+subtree_only :: proc() {
+	pool := thread.Pool.init(1);
+	child: bool;
+	sibling: bool;
+	parallel (&pool) {
+		spawn child = first(&pool);
+		spawn sibling = descendant_ran_here();
+	}
+	fmt.println("descendant ran inside the join", child, "sibling did", sibling);
+}
+
+// A worker of one pool joining a block of another only waits: the child runs
+// on the other pool's worker.
+other_pool :: proc() {
+	outer := thread.Pool.init(1);
+	inner := thread.Pool.init(1);
+	child: bool;
+	parallel (&outer) {
+		spawn child = first(&inner);
+	}
+	fmt.println("another pool's task ran inside the join", child);
+}
+
+Marker :: struct { used: bool }
+
+impl Marker {
+	release :: hook(drop) proc(self: inout) {
+		if (self.used) { retired.add(1); }
+	}
+}
+
+marker: thread_local Marker;
+
+mark :: proc() {
+	marker.used = true;
+}
+
+// A worker's `thread_local` storage is dropped when the pool drops and joins
+// it, not after each task.
+lifetime :: proc() {
+	{
+		pool := thread.Pool.init(1);
+		foreach (_ in 0 ..< 3) {
+			parallel (&pool) {
+				spawn mark();
+			}
+		}
+		fmt.println("worker storage dropped before the pool", retired.load());
+	}
+	fmt.println("worker storage dropped with the pool", retired.load());
+}
+
+// Waits up to 200 ms for an item, without blocking.
+poll_for_sibling :: proc(items: move thread.Receiver(int)) -> bool {
+	foreach (_ in 0 ..< 20) {
+		switch (items.try_receive()) {
+		case .item(_): return true;
+		case .empty:
+		case .closed: return false;
+		}
+		time.sleep(10 * time.MILLISECOND);
+	}
+	return false;
+}
+
+send_one :: proc(out: move thread.Sender(int)) {
+	_ = out.try_send(1);
+}
+
+// standard-library "Pools": helping at joins does not make up for other
+// waits. With one worker, a task waiting for its queued sibling waits in
+// vain: the sibling runs only once the waiter returns. Polling bounds the
+// wait that would otherwise never end.
+blocking_limit :: proc() {
+	pool := thread.Pool.init(1);
+	items := thread.Channel(int).init(1);
+	arrived: bool;
+	parallel (&pool) {
+		send, receive := items.split();
+		spawn arrived = poll_for_sibling(move(receive));
+		spawn send_one(move(send));
+	}
+	fmt.println("the queued sibling's item arrived", arrived);
+}
+
+main :: proc() {
+	on_main = true;
+	dog := thread.spawn(watch, 60);
+	nested_on_one_worker();
+	rounds();
+	tls_reuse();
+	non_worker_waits();
+	subtree_only();
+	other_pool();
+	lifetime();
+	blocking_limit();
+	finished.store(true);
+}

@@ -375,6 +375,16 @@ checklist.
   false, returning `.none`, while a closed monitor can still be drained.
   A `Monitor_Guard` is thread-affine, as a `Guard` is.
 
+- `parallel (&pool) { ... }` runs a block's tasks on a `thread.Pool`, a fixed
+  set of persistent workers, instead of a thread each
+  ([Parallel blocks](design.md#parallel-blocks),
+  [Pools](standard-library.md#pools)). A worker joining a block of its pool
+  runs the block's queued tasks, and their pooled descendants, meanwhile, so
+  nested fork/join work finishes even with one worker. Such a join counts as
+  writing the `thread_local` storage those tasks write, so a borrow of it the
+  parent holds across the join is rejected with `L0512`.
+  `examples/mixer.loke` opens a pooled block per audio buffer.
+
 - `thread.Channel(T)` is a bounded queue between tasks
   ([Channels](standard-library.md#channels)). `channel.split()` makes the
   first `Sender` and `Receiver` together, `fork` adds endpoints, and a side
@@ -634,6 +644,13 @@ checklist.
   for any count.
 
 ### Fixed
+
+- A task's `thread_local` writes are no longer treated as the parent's: a
+  borrow of a `thread_local` variable the parent holds across a `spawn`, or
+  across the join of a block without a header, whose task writes that
+  variable is accepted. The task writes its own thread's copy. A procedure
+  whose bare block's task writes `thread_local` storage no longer counts as
+  writing it either.
 
 - The join check (`L0733`) counts only what a marked value itself borrows, not
   what a field beside it in an enclosing record borrows, also after the record

@@ -1,0 +1,162 @@
+package main;
+import "core:fmt";
+import "core:thread";
+import "core:time";
+
+// An audio mixer: a user interface sends commands over a channel to an audio
+// loop, which renders its voices on a pool once per buffer and hands the mix
+// to the device.
+//
+// `parallel (pool)` opens a block per buffer (standard-library.md "Pools").
+// Its tasks borrow this period's voices mutably, one group each, and after the
+// join the loop has them all back to mix down. The pool's workers persist, so
+// a block starts no thread. The audio loop takes commands with `try_receive`,
+// so it never waits for one, and it ends when the interface's sender drops.
+// `Device` stands in for a binding to the platform's audio API.
+
+FRAMES :: 64;
+VOICES :: 16;
+GROUP :: 4;
+
+Audio_Error :: enum { Unplugged }
+
+// Stands in for an audio device: `write` takes one period's buffer, waiting as
+// a device paces its caller. A binding would return `.Unplugged` when the
+// device goes away.
+Device :: struct { periods: int, peak: f32 }
+
+impl Device {
+	write :: proc(self: inout, mix: []f32) -> Status(Audio_Error) {
+		foreach (sample in mix) {
+			if (sample > self.peak) { self.peak = sample; }
+		}
+		self.periods += 1;
+		time.sleep(time.MILLISECOND);
+		return .ok;
+	}
+}
+
+Voice :: struct {
+	playing: bool,
+	gain: f32,
+	step: int,
+	phase: int,
+	out: [FRAMES]f32,
+}
+
+Command :: union { play: int, stop: int, gain: (voice: int, gain: f32) }
+
+// One task's share of a period: a sawtooth for each playing voice of its group.
+render :: proc(group: []mut Voice) {
+	foreach (i in 0 ..< group.len()) {
+		foreach (frame in 0 ..< FRAMES) {
+			sample: f32 = 0;
+			if (group[i].playing) {
+				group[i].phase = (group[i].phase + group[i].step) % 100;
+				sample = group[i].gain * (f32(group[i].phase) / 50 - 1);
+			}
+			group[i].out[frame] = sample;
+		}
+	}
+}
+
+mix_down :: proc(voices: []Voice, mix: []mut f32) {
+	foreach (frame in 0 ..< FRAMES) {
+		total: f32 = 0;
+		foreach (voice in voices) { total += voice.out[frame]; }
+		mix[frame] = total;
+	}
+}
+
+apply :: proc(command: Command, voices: []mut Voice) {
+	switch (command) {
+	case .play(voice): voices[voice].playing = true;
+	case .stop(voice): voices[voice].playing = false;
+	case .gain(change): voices[change.voice].gain = change.gain;
+	}
+}
+
+// Applies every command already sent without waiting; `false` once the
+// interface has ended.
+apply_commands :: proc(commands: ^thread.Receiver(Command), voices: []mut Voice) -> bool {
+	for (;;) {
+		switch (commands.try_receive()) {
+		case .item(command): apply(command, voices);
+		case .empty: return true;
+		case .closed: return false;
+		}
+	}
+}
+
+// The paced audio worker: per buffer, apply the commands, render on the pool,
+// mix down, and write. It owns the voices, and reports them when the
+// interface has ended.
+audio_loop :: proc(
+	device: ^mut Device, pool: ^thread.Pool,
+	commands: move thread.Receiver(Command), voices: move [dynamic]Voice,
+) -> Status(Audio_Error) {
+	mix: [dynamic]f32 = {};
+	mix.resize(FRAMES);
+	for (;;) {
+		if (!apply_commands(&commands, &mut voices[:])) {   // the interface has ended
+			report(voices[:]);
+			return .ok;
+		}
+		all := &mut voices[:];
+		parallel (pool) {
+			foreach (group in all.chunks_mut(GROUP)) { spawn render(group); }
+		}
+		mix_down(voices[:], &mut mix[:]);   // the voices are this loop's again
+		device.write(mix[:]) or_return;     // waits one period at most
+	}
+}
+
+report :: proc(voices: []Voice) {
+	foreach (i in 0 ..< voices.len()) {
+		if (voices[i].playing) { fmt.println("voice", i, "plays at gain", voices[i].gain); }
+	}
+}
+
+// Sends one command; `false` once the audio loop has gone.
+tell :: proc(commands: ^thread.Sender(Command), command: move Command) -> bool {
+	switch (commands.send(move(command))) {
+	case .ok: return true;
+	case .err(_): return false;
+	}
+}
+
+// Stands in for a user: a few commands, a moment apart, then quitting, which
+// drops the sender and ends the audio loop.
+user_interface :: proc(commands: move thread.Sender(Command)) {
+	script := [6]Command{
+		.play(0), .play(3), .gain({voice = 3, gain = 0.5}),
+		.play(7), .stop(0), .gain({voice = 7, gain = 0.25}),
+	};
+	foreach (i in 0 ..< script.len()) {
+		command := script[i];
+		if (!tell(&commands, move(command))) { return; }   // the audio loop failed
+		time.sleep(2 * time.MILLISECOND);
+	}
+}
+
+main :: proc() {
+	device := Device{};
+	voices: [dynamic]Voice = {};
+	voices.resize(VOICES);
+	foreach (i in 0 ..< voices.len()) {
+		voices[i].gain = 1;
+		voices[i].step = i + 1;
+	}
+	commands := thread.Channel(Command).init(64);
+	pool := thread.Pool.init(3);
+	audio: Status(Audio_Error);
+	parallel {
+		send, receive := commands.split();
+		spawn audio = audio_loop(&mut device, &pool, move(receive), move(voices));
+		user_interface(move(send));   // drops its sender on return
+	}
+	switch (audio) {
+	case .ok: fmt.println("the interface quit, so the audio loop returned");
+	case .err(error): fmt.println("the device failed:", error);
+	}
+}

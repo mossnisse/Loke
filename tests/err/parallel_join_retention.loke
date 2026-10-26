@@ -9,7 +9,8 @@
 // join, and a guard on unrelated storage are accepted, even when a field
 // beside the guard borrows what a task borrows, also after a conversion to a
 // distinct type. A generic record whose type argument is marked may hold such
-// a value out of sight, so everything it borrows counts.
+// a value out of sight, so everything it borrows counts. An owned (`move`)
+// parameter is kept only while it is live, as a local is.
 package main;
 
 import "core:thread";
@@ -243,6 +244,26 @@ marked_type_argument :: proc() {
 	parallel {
 		spawn lock_and_add(&gate);
 	}
+}
+
+owned_parameter_handed_on :: proc(jobs: move thread.Receiver(int)) {
+	parallel {
+		spawn consume(move(jobs));
+	}
+}
+
+owned_parameter_dropped :: proc(jobs: move thread.Receiver(int), channel: ^thread.Channel(int)) {
+	parallel {
+		drop(jobs);
+		spawn borrow_channel(channel);
+	}
+}
+
+owned_parameter_kept :: proc(jobs: move thread.Receiver(int), channel: ^thread.Channel(int)) {
+	parallel {
+		spawn borrow_channel(channel);
+	}
+	_ = jobs.try_receive();
 }
 
 main :: proc() {}

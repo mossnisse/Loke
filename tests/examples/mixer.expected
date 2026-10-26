@@ -1,0 +1,3 @@
+voice 3 plays at gain 0.5
+voice 7 plays at gain 0.25
+the interface quit, so the audio loop returned

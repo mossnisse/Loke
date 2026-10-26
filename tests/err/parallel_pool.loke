@@ -1,0 +1,130 @@
+// design.md "Parallel blocks": `parallel (pool)` takes a `^thread.Pool`,
+// evaluated once on entry and borrowed until the join, so the pool cannot be
+// dropped or lent mutably inside the block. A pool worker joining the block
+// may run its tasks, and their descendants on a pool, on the joining thread,
+// so a `thread_local` borrow live across the join conflicts with what those
+// tasks write there. A bare block's tasks run on threads of their own: their
+// `thread_local` writes conflict with nothing of the parent's, at the spawn or
+// at the join, and neither do a pooled task's at its spawn.
+package main;
+
+import "core:fmt";
+import "core:thread";
+
+buffer: thread_local [dynamic]int;
+
+work :: proc() {}
+
+grow :: proc() {
+	buffer.append(1);
+}
+
+replace :: proc(pool: ^mut thread.Pool) {}
+
+wrong_type :: proc() {
+	count := 3;
+	parallel (&count) {
+		spawn work();
+	}
+}
+
+by_value :: proc() {
+	pool := thread.Pool.init(2);
+	parallel (pool) {
+		spawn work();
+	}
+}
+
+dropped_inside :: proc() {
+	pool := thread.Pool.init(2);
+	parallel (&pool) {
+		spawn work();
+		drop(pool);
+	}
+}
+
+lent_mutably :: proc() {
+	pool := thread.Pool.init(2);
+	parallel (&pool) {
+		spawn replace(&mut pool);
+	}
+}
+
+view_across_join :: proc(pool: ^thread.Pool) {
+	view: []int;
+	parallel (pool) {
+		spawn grow();
+		view = buffer[:];
+	}
+	fmt.println(view.len());
+}
+
+pooled_grow :: proc(pool: ^thread.Pool) {
+	parallel (pool) {
+		spawn grow();
+	}
+}
+
+pooled_descendant :: proc(pool: ^thread.Pool) {
+	view: []int;
+	parallel (pool) {
+		spawn pooled_grow(pool);
+		view = buffer[:];
+	}
+	fmt.println(view.len());
+}
+
+bare_grow :: proc() {
+	parallel {
+		spawn grow();
+	}
+}
+
+// Accepted: the view ends before the join.
+view_before_join :: proc(pool: ^thread.Pool) {
+	parallel (pool) {
+		spawn grow();
+		view := buffer[:];
+		fmt.println(view.len());
+	}
+}
+
+// Accepted: the spawn starts `grow` on a worker, not here.
+view_across_spawn :: proc(pool: ^thread.Pool) {
+	view := buffer[:];
+	parallel (pool) {
+		spawn grow();
+		fmt.println(view.len());
+	}
+}
+
+// Accepted: a bare block's descendant runs on a thread of its own.
+bare_descendant :: proc(pool: ^thread.Pool) {
+	view: []int;
+	parallel (pool) {
+		spawn bare_grow();
+		view = buffer[:];
+	}
+	fmt.println(view.len());
+}
+
+// Accepted: a bare block's task never runs on the parent's thread.
+bare_block :: proc() {
+	view := buffer[:];
+	parallel {
+		spawn grow();
+	}
+	fmt.println(view.len());
+}
+
+// Accepted: the pool is borrowed read-only by the block and its tasks.
+shared_pool :: proc() {
+	pool := thread.Pool.init(2);
+	parallel (&pool) {
+		spawn pooled_grow(&pool);
+		spawn pooled_grow(&pool);
+	}
+	drop(pool);
+}
+
+main :: proc() {}

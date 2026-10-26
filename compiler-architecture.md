@@ -615,16 +615,23 @@ block reports `L0329` where no collection provides it.
 
 ```text
 Task_Scope :: move_only struct          // private to core:thread
+Task_Scope.pooled(pool: ^Pool) -> Task_Scope
+                                        // the scope of `parallel (pool)`, borrowing it
 Task_Scope.start(self: inout, run: proc(frame: rawptr), frame: rawptr)
-                                        // reserves a slot, then creates the thread
-hook(drop) on Task_Scope                // joins every started thread, in start order
+                                        // reserves a slot, then creates the thread,
+                                        // or queues the task on the pool
+hook(drop) on Task_Scope                // joins every started thread, in start order,
+                                        // then waits for the pooled tasks
 ```
 
 - **The block.** `parallel.odin` checks a block as the block a programmer
   would write with a hidden `Task_Scope` local declared first, zero until its
   first spawn, and records that block as `Stmt_Parallel.lowered`. The local's
   drop is the join, so the ordinary cleanup order runs the block's own
-  cleanup first.
+  cleanup first. An executor header adds `parallel$pool: ^Pool = executor;`
+  before it, so a wrong executor is reported as that initializer, and the
+  scope is `Task_Scope.pooled(parallel$pool)`, whose result borrows the pool
+  until the join. `Spawn_Task.pooled` marks the spawns of such a block.
 - **Each spawn site.** Checking a spawn synthesizes a frame record and a run
   procedure, as `capture.odin` does for capture literals, and records them in
   `Compiler.spawn_tasks`. The frame holds a leading slot for `run`, each bound
@@ -652,6 +659,14 @@ hook(drop) on Task_Scope                // joins every started thread, in start 
   attaches to the runtime's panic state and runs the thread's `thread_local`
   drops before exit, so waiting for the thread orders its TLS destruction
   before the join returns.
+- **Pools.** `core:thread`'s `Pool` keeps a queue of nodes, each a frame and
+  its block's scope, under one SRWLOCK and condition variable. A scope counts
+  its unfinished tasks and records the scope whose task its thread was running
+  (the thread-local `running_in`), so a joining worker can tell its block's
+  descendants. A worker runs a task through `loke_rt_v1_run_task`, a C
+  trampoline in `runtime/panic.c`: an indirect call in Loke would make the
+  effect analysis follow every procedure of the run procedure's type into the
+  join hook, which every block shares.
 
 The checks run on the `Prov_Diagnose` graph. A block's tasks hold what they
 lend in one slot per block, `task_slots`, which the hidden local's drop uses,
@@ -671,10 +686,22 @@ parent's allocator use as `Region_Use` events, and the solver reports both
 against the tasks that may be running. The emission contract validates each
 recorded spawn.
 
+Effects on `thread_local` storage depend on the executor. A spawned call's
+effects are recorded with `task_effects` set, and none of its `thread_local`
+writes become accesses at the spawn (`prov_effect_call`). A bare block's call
+is recorded `elsewhere`, so the fixed point in `compute_global_writes` leaves
+its `thread_local` writes out of the enclosing procedure's. A pooled block's
+spawns are kept in `pool_tasks` by scope, and its join applies their run
+procedures' `thread_local` writes as invalidations
+(`prov_pool_join_effects`); those summaries include their own pooled
+descendants and exclude bare ones, which is exactly what a helping join may
+run.
+
 The join check ([Releasing before the join](design.md#releasing-before-the-join))
 runs at each `Task_Join` in the same replay (`check_join_retention`), which
 records liveness after the event for it. The values the parent keeps are the
-slots of a symbol live after the join, and every parameter's slots; a slot
+slots of a symbol live after the join, and every borrowed parameter's slots,
+while a `move` parameter counts as a local does; a slot
 counts when its symbol's type is, holds, or reaches an `@(wakes_on_drop)` type
 (the `waker` of `transfer_facts` in `hooks.odin`), and its carrier path passes
 through a marked type, or a generic record with a marked type argument, or

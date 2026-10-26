@@ -1291,6 +1291,18 @@ cleanup and task holds are already available. Keep `queue_of` as the narrow
 trust boundary until the
 [borrow-contract question](#waiting-and-ownership-review-2026-10-26) is resolved.
 
+### Parameters a join check cannot tell apart (2026-10-26)
+
+Writing `examples/mixer.loke` for milestone 9 found that the
+[join check](design.md#releasing-before-the-join) rejects an audio loop that
+takes its command receiver by `move` and its voices as a borrowed
+`[]mut Voice`: two parameters' storage may be the same, so the receiver's
+channel may be what a render task borrows. The types say otherwise, since a
+`Voice` holds no channel, but the check compares roots, not types. Moving the
+voices into the loop, as the proposal's sketch does, is accepted. Whether the
+check should prove disjointness from the types a borrow reaches, as it already
+does for fields of one root, is open.
+
 ### Channel fix follow-up review (2026-10-26)
 
 Review of `1c0bae5`. All three findings are fixed:

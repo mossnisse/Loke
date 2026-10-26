@@ -37,6 +37,3 @@ a task cannot hand back an `inout` result, which is a place of the worker's call
 L0612
 @68:9
 this call produces `Result(int, string)`, which must be used or discarded with `_ = ...`
-L0727
-@71:12
-an executor header is the later pool form; a `parallel` block runs each task on a thread of its own, so write `parallel { ... }`

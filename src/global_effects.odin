@@ -27,6 +27,11 @@ Effect_Call :: struct {
 	// each argument by callee parameter, nil when no argument has one.
 	span:          Span,
 	regions:       []Region_Set,
+	// The call is a bare block's task, which runs on a thread of its own: its
+	// `thread_local` writes are that thread's, not the caller's (design.md
+	// "Globals while tasks run"). A pooled block's task may run on the thread
+	// joining it, so its writes count, at that join.
+	elsewhere:     bool,
 }
 
 // A call in one body; a generic's instances share its spans.
@@ -88,6 +93,9 @@ Body_Effects :: struct {
 	direct:  int, // how many of `writes` the body makes itself
 	calls:   []Effect_Call,
 	targets: [dynamic]int, // the bodies those calls may run
+	// Per target: reached through an `elsewhere` call, so its `thread_local`
+	// writes stay out of this body's.
+	elsewhere: [dynamic]bool,
 }
 
 // A write, invalidation, or mutable borrow of a global's storage.
@@ -746,6 +754,7 @@ prov_effect_call :: proc(
 	effect := -1
 	if !c.global_writes_ready || c.thread_facts_pending {
 		recorded := target
+		recorded.elsewhere = graph.task_effects && !graph.spawning_pooled
 		recorded.span = span
 		effect = len(graph.effect_calls)
 		append(&graph.effect_calls, recorded)
@@ -777,8 +786,51 @@ prov_effect_call :: proc(
 	graph.effect_name = name
 	defer graph.effect_name = ""
 	for global in effect_call_writes(c, target) {
+		// A task's `thread_local` writes are never the parent's at its spawn:
+		// a bare block's task has a thread of its own, and a pooled one runs
+		// on the parent's thread only at the join, which counts them there.
+		if graph.task_effects && global_is_thread_local(c, global) {
+			continue
+		}
 		root := prov_root_for_symbol(graph, global)
 		prov_access(graph, root, nil, .Invalidate, span, name)
+	}
+}
+
+global_is_thread_local :: proc(c: ^Compiler, global: Symbol_Id) -> bool {
+	sym := symbol_of(c, global)
+	return sym != nil && sym.duration == .Thread_Local
+}
+
+// A task of a pooled block: the procedure that runs it, and the procedure it
+// calls, which diagnostics name.
+Pool_Task :: struct {
+	runs:   Symbol_Id,
+	callee: Symbol_Id,
+}
+
+// design.md "Parallel blocks": a pool worker joining a pooled block may run
+// the block's tasks on the joining thread, and their descendants on the same
+// pool, so the join writes the `thread_local` storage they may write. A
+// spawned call's summary counts what it calls and the pooled tasks it spawns
+// in turn, but not a bare block's, which never run on this thread: exactly
+// the tasks a helping join may run. Their other writes are the window's
+// concern, wherever they run.
+prov_pool_join_effects :: proc(graph: ^Flow_Graph, tasks: []Pool_Task, span: Span) {
+	c := graph.k.c
+	if !c.global_writes_ready || c.thread_facts_pending {
+		return
+	}
+	for task in tasks {
+		name := "modified by a task this join may run on this thread,"
+		if sym := symbol_of(c, task.callee); sym != nil {
+			name = fmt.tprintf("modified by `%s`, which this join may run on this thread,", identifier_text(c, sym.name))
+		}
+		for global in effect_call_writes(c, Effect_Call{callee = task.runs}) {
+			if global_is_thread_local(c, global) {
+				prov_access(graph, prov_root_for_symbol(graph, global), nil, .Invalidate, span, name)
+			}
+		}
 	}
 }
 
@@ -952,8 +1004,13 @@ compute_global_writes :: proc(k: ^Checker) {
 	}
 	for &body in bodies {
 		body.targets = make([dynamic]int, 0, len(body.calls), context.temp_allocator)
+		body.elsewhere = make([dynamic]bool, 0, len(body.calls), context.temp_allocator)
 		for call in body.calls {
-			append(&body.targets, ..effect_targets(c, call, program))
+			reached := effect_targets(c, call, program)
+			append(&body.targets, ..reached)
+			for _ in reached {
+				append(&body.elsewhere, call.elsewhere)
+			}
 		}
 	}
 	// A body's set grows only when a callee's does, so only the callers of a
@@ -977,8 +1034,12 @@ compute_global_writes :: proc(k: ^Checker) {
 		index := pop(&pending)
 		queued[index] = false
 		grew := false
-		for target in bodies[index].targets {
+		for target, position in bodies[index].targets {
+			elsewhere := bodies[index].elsewhere[position]
 			for global in bodies[target].writes {
+				if elsewhere && global_is_thread_local(c, global) {
+					continue
+				}
 				grew |= add_global_write(&bodies[index].writes, global)
 			}
 		}

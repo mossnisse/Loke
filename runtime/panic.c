@@ -27,6 +27,10 @@ void loke_rt_v1_thread_detach(void) {
 	}
 }
 
+void loke_rt_v1_run_task(loke_rt_task_entry_v1 run, void *frame) {
+	run(frame);
+}
+
 void loke_rt_v1_frame_push(loke_rt_frame_v1 *frame, loke_rt_cleanup_v1 cleanup, void *context) {
 	frame->previous = frames;
 	frame->cleanup = cleanup;

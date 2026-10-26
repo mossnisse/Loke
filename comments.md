@@ -185,8 +185,8 @@ another would be cheaper, but it is a different program: `thread_local`
 storage starts fresh on each task's thread, and blocking tasks that wait for
 each other would deadlock in sequence. The first executor starts a thread per
 spawn and makes a failure to start one panic, so a spawn has no result to
-handle. Pools, and an executor named in the block's header, are planned as
-library additions under the same checks.
+handle. A [pool](#pools-that-help-at-joins), named in the block's header, is
+the cheaper executor, under the same checks.
 
 **Results only to dead outer locals.** A task's result is written on the
 worker, so the destination cannot be read, replaced, or dropped until the
@@ -195,6 +195,53 @@ conversion on the worker, and no rule for dropping a value it replaces, and the
 existing definite-initialization analysis says where it holds a value after
 the join. Fields, indices, and conversions can be added if a program needs
 them.
+
+### Pools that help at joins
+
+A loop that wakes the same workers for every round of work and waits for them
+to finish, as a mixer does once per buffer, could keep its workers alive and
+signal them each round. It would then lose what a `parallel` block gives: the
+round's tasks borrow that round's inputs and outputs, and after the join the
+parent has every one of them back, which no wait between rounds proves. What
+made a block per round too slow was a thread started per spawn, and a pool
+removes only that.
+
+**Helping, and only within the subtree.** A worker that waits at a join while
+its block's tasks sit in the queue would hold up the pool, and with one worker
+a nested block would never finish. So a joining worker runs queued tasks of
+the block it joins, and of the blocks those tasks open on the same pool. It
+runs nothing else: a sibling of its own task might wait for that task, and an
+unrelated block's task might block for longer than the join it was meant to
+speed up. A thread that is not a worker of that pool waits instead, so a
+`main` thread never runs a task, and a worker of one pool never runs
+another's.
+
+**The join's thread-local effect.** Helping runs a task on the joining
+thread, where the parent may hold a borrow of `thread_local` storage: a view of
+a thread-local buffer that a helped child grows would be left dangling. A
+task's own `thread_local` writes are its thread's, which is why a bare block
+needs no rule here, but a pooled block's join may be that thread. Treating the
+join as a call that writes what its tasks may write puts the case under the
+existing write-effect check instead of a new rule. The tasks a join may run
+are only known at run time, so the effect counts every pooled descendant, and
+no task of a bare block, which never runs on its parent's thread. A spawn has
+no such effect: a pooled task runs on the parent's thread only at the join.
+
+**Lexical selection, persistent storage.** A block names its executor, so a
+library procedure's bare `parallel` keeps starting threads of its own wherever
+it is called from, and its `thread_local` storage starts fresh as its author
+expected. Passing a pool explicitly makes the choice visible where it matters.
+Workers keep their `thread_local` storage between tasks, as any thread that
+runs several calls does; resetting it would make a pool a different program
+from the same calls made in sequence.
+
+**No compensation for blocking.** Helping only covers joins. A task that
+waits on a queued sibling, or on a lock a child needs, can exhaust a fixed
+pool. Starting extra threads when workers block, as some schedulers do, needs
+to know which waits are blocking, including foreign ones; that and a separate
+executor for blocking work remain a
+[later extension](concurrency-proposal.md#later-extensions). A pool is for
+independent compute work.
 
 ### Channels end by ownership
 

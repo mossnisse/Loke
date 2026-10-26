@@ -6702,7 +6702,7 @@ The `try_` forms of allocating operations, `try_box`, `try_make`, and `unsafe.tr
 
 ## Concurrency and the memory model
 
-Threads, mutexes, monitors, channels, and thread pools are library facilities, and a [`parallel` block](#structured-concurrency) runs calls as tasks the language joins; reads and writes performed by any of them obey one language memory model. `core:thread` provides the first four; see [standard-library.md](standard-library.md) "`core:thread`".
+Threads, mutexes, monitors, channels, and thread pools are library facilities, and a [`parallel` block](#structured-concurrency) runs calls as tasks the language joins; reads and writes performed by any of them obey one language memory model. `core:thread` provides all five; see [standard-library.md](standard-library.md) "`core:thread`".
 
 The **happens-before** relation combines ordinary
 [evaluation order](#evaluation-order), atomic synchronization (below), and these
@@ -6717,8 +6717,10 @@ thread synchronization rules:
 - A channel's send that commits an item happens before the receive that takes
   it, since both run under the channel's lock.
 - A [`spawn`](#spawn-statements)'s callee, receiver, and arguments are evaluated
-  before its task starts. Every task operation, including result assignment,
-  argument cleanup, and TLS destruction, happens before the block's join completes.
+  before its task starts. Every task operation, including result assignment
+  and argument cleanup, happens before the block's join completes, and for a
+  task with a thread of its own, so does that thread's TLS destruction. A pool
+  worker's TLS destruction happens before the pool's drop returns.
 
 Two accesses conflict when they touch overlapping bytes and at least one is a
 write. Conflicting non-atomic accesses from different threads that are not ordered
@@ -6810,7 +6812,7 @@ control block alive without retaining the payload. Its `upgrade` returns
 
 ### Structured concurrency
 
-A `parallel` block runs calls as **tasks**, each on a thread of its own, and waits for every one of them before control leaves the block. A task is a call that lasts until that **join**: what its arguments borrow stays lent to it until then, so [the one rule](#capabilities-and-the-one-rule) keeps the parent and other tasks off storage a task may write. The checks below cover what a lasting call does not: storage every thread shares, `thread_local` storage, thread-affine values, and allocator state.
+A `parallel` block runs calls as **tasks**, each on a thread of its own or on a pool's workers, and waits for every one of them before control leaves the block. A task is a call that lasts until that **join**: what its arguments borrow stays lent to it until then, so [the one rule](#capabilities-and-the-one-rule) keeps the parent and other tasks off storage a task may write. The checks below cover what a lasting call does not: storage every thread shares, `thread_local` storage, thread-affine values, and allocator state.
 
 ```loke
 sort :: proc(xs: []mut int, depth := 0) {
@@ -6848,15 +6850,31 @@ for the tasks it wakes.
 
 The hidden local is not a value. It cannot be named, moved, returned, stored, or passed to [`unsafe.forget`](#unsafeforget), so every exit joins.
 
-`parallel (executor) { ... }` is reserved for running the tasks on an executor such as a thread pool. It parses, and checking rejects it.
+`parallel (pool) { ... }` runs the block's tasks on the persistent workers of a [`thread.Pool`](standard-library.md#pools) instead of a thread each. The executor is a `^thread.Pool`, such as `&pool`, evaluated once on entry, before the block's first statement; the block borrows it read-only until the join, as a hidden local declared first would. Every rule of this section applies to the tasks as written. Executor selection is lexical: a block without a header inside a pool task starts threads of its own.
+
+The join of a pooled block waits as any join does, but a worker of that pool that joins it may meanwhile run the block's queued tasks, and the tasks they spawn in pooled blocks, at any depth, on the joining thread. Such a join therefore counts as a call that writes, invalidates, or mutably borrows the `thread_local` storage those tasks may: under [Global write effects](#global-write-effects), a borrow of it the parent holds across the join is an error. Which pool a nested block names is known only when it runs, so the effect counts every task spawned in a pooled block below, whichever pool it names:
+
+```loke
+buffer: thread_local [dynamic]int;
+grow :: proc() { buffer.append(1); }
+// In a procedure given `pool: ^thread.Pool`:
+view: []int;
+parallel (pool) {
+	spawn grow();
+	view = buffer[:];
+}
+fmt.println(view.len());   // ERROR: the join may run `grow` here, which may grow `buffer`
+```
+
+A task of a block without a header never runs on its parent's thread, so neither its spawn nor its join writes the parent's `thread_local` storage, and a procedure's write effect leaves out what such a task writes there. A pooled task's spawn has no such effect either; only the join does.
 
 A block cannot run during [compile-time procedure evaluation](#compile-time-procedure-evaluation): reaching one there is a compile-time evaluation error, as calling a foreign procedure is. Running the tasks one after another on the evaluating thread would not be the same program (see [What the task checks cover](#what-the-task-checks-cover)).
 
 #### Spawn statements
 
-`spawn call;` starts a task, and `spawn result = call;` starts one whose call's result goes to `result`. The callee, receiver, and arguments are evaluated on the parent, at the statement, in ordinary [evaluation order](#evaluation-order); borrows are taken and moves happen there. The prepared call then runs on a new thread.
+`spawn call;` starts a task, and `spawn result = call;` starts one whose call's result goes to `result`. The callee, receiver, and arguments are evaluated on the parent, at the statement, in ordinary [evaluation order](#evaluation-order); borrows are taken and moves happen there. The prepared call then runs on a new thread, or on a worker of the block's pool.
 
-- `spawn` appears only lexically inside a `parallel` block of the same procedure. It cannot appear in a procedure the block calls, in a [capture literal](#capture-literals)'s body, which is a procedure of its own, or in a `defer` or `errdefer` statement, where a task would start during cleanup, perhaps while unwinding. Each nested block joins its own tasks.
+- `spawn` appears only lexically inside a `parallel` block of the same procedure, and starts its task on that block's executor. It cannot appear in a procedure the block calls, in a [capture literal](#capture-literals)'s body, which is a procedure of its own, or in a `defer` or `errdefer` statement, where a task would start during cleanup, perhaps while unwinding. Each nested block joins its own tasks.
 - The call names a procedure or method written in Loke, including a generic instance, directly: not a procedure value, a `dyn` method, a built-in procedure, a conversion, or a foreign procedure. Wrap any of those in a procedure the task calls. Calls the task makes in turn may be indirect; their effects are the unions under [Global write effects](#global-write-effects).
 - The whole statement is one call. `spawn call or_return;` is not supported, and a task cannot hand back an [`inout` result](#inout-results), which is a place of the worker's own call. `spawn` is a statement, not an expression.
 - A bare spawn follows the ordinary rules for an unused result: a fallible result cannot be discarded, and a nonfallible one the call returns is dropped on the worker.
@@ -7007,7 +7025,7 @@ A panic on a task's thread ends the program, as a panic on any thread does (see 
 
 #### Failure to start a task
 
-Failing to allocate a task's bookkeeping or to create its thread panics. A spawn has no recoverable failure; that is distinct from the task's call returning a failure value.
+Failing to allocate a task's bookkeeping or to create its thread panics; a pooled task's bookkeeping is allocated before it is queued. A spawn has no recoverable failure; that is distinct from the task's call returning a failure value.
 
 Either a task is owned by its block and will be joined, or it never runs and the parent still owns its prepared arguments. Under `unwind`, a panic while preparing the arguments drops the initialized temporaries, and a failure to start drops the prepared arguments on the parent; values explicitly moved into the call stay moved, and the spawn's result local stays dead. The tasks already started stay registered: the block's cleanup runs and they join before enclosing storage is released. Under `abort` the ordinary immediate termination applies.
 

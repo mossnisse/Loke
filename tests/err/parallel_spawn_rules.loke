@@ -67,8 +67,4 @@ main :: proc() {
 		spawn pick(inout place);
 		spawn work(1);
 	}
-
-	parallel (1) {
-		spawn nothing();
-	}
 }

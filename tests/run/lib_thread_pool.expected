@@ -1,0 +1,12 @@
+nested sum 500500
+rounds unchanged true
+round 1 worker runs 1
+round 2 worker runs 2
+round 3 worker runs 3
+bare block inside a pool task sees runs 0
+a task ran on the joining main thread false
+descendant ran inside the join true sibling did false
+another pool's task ran inside the join false
+worker storage dropped before the pool 0
+worker storage dropped with the pool 1
+the queued sibling's item arrived false

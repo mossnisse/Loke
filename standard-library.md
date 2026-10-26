@@ -20,7 +20,7 @@ Examples use Loke syntax; the API summaries use Odin-style declaration sketches.
 | Call foreign text APIs | [`core:cstrings`](#corecstrings), [`core:encoding/utf16`](#coreencodingutf16) |
 | Store integers in a fixed byte order | [`core:endian`](#coreendian) |
 | Access process state or start a child | [`core:os`](#coreos-additions), [`core:process`](#coreprocess) |
-| Start threads, protect shared state, wait for it to change, or pass work between tasks | [`core:thread`](#corethread) |
+| Start threads, protect shared state, wait for it to change, pass work between tasks, or run tasks on a pool | [`core:thread`](#corethread) |
 | Use numeric functions and types | [`core:math`](#coremath) |
 | Draw random numbers, shuffle, sample, or get secret bytes | [`core:random`](#corerandom) |
 | Read clocks, work with dates, or print and parse ISO 8601 times | [`core:time`](#coretime) |
@@ -130,7 +130,7 @@ core:mem              allocators and regions                  *
 core:unsafe           explicit trust boundary                 *
 core:sync             atomics, fences, once                   *
 core:simd             cross-lane SIMD operations              *
-core:thread           threads, mutexes, monitors, and channels
+core:thread           threads, mutexes, monitors, channels, and pools
 core:fmt              value formatting and process diagnostics
 core:strconv          scalar parsing
 core:strings          UTF-8 algorithms and String_Builder
@@ -332,14 +332,16 @@ the remaining arguments. For another sink, format in memory and call
 ## `core:thread`
 
 `core:thread` starts threads, guards what they share, lets one wait for
-another to change it, and carries work between them. It supplies the thread start, join, and unlock edges of
-design.md "Concurrency and the memory model".
+another to change it, carries work between them, and keeps workers for
+`parallel (pool)` blocks. It supplies the thread start, join, and unlock edges
+of design.md "Concurrency and the memory model".
 
 For work that ends before its caller continues, a `parallel` block is usually
 the better tool: its tasks may borrow the caller's locals, and the compiler
 checks what they share (design.md "Structured concurrency"). The block starts
-each task on a thread of its own through a private part of this package, so a
-program with a `parallel` block depends on `core:thread` without importing it.
+each task on a thread of its own, or on a [pool](#pools)'s workers, through a
+private part of this package, so a program with a `parallel` block depends on
+`core:thread` without importing it.
 `spawn` below is for a thread that outlives the procedure starting it.
 
 ```loke
@@ -363,6 +365,7 @@ Sender(T).send(self: ^, @(cross_thread, escape=static) value: move T) -> Status(
 Sender(T).try_send(self: ^, @(cross_thread, escape=static) value: move T) -> Status(Unsent(T))
 Receiver(T).receive(self: ^) -> Option(T)
 Receiver(T).try_receive(self: ^) -> Received(T)
+Pool.init(workers: int) -> Pool
 processor_count() -> int
 ```
 
@@ -636,6 +639,62 @@ failure does not stop its siblings. A foreign blocking call, such as a device
 wait or a terminal read, a lock-order cycle, and a protocol whose live tasks
 all wait on each other are ended by none of this, and no join promises bounded
 shutdown for them.
+
+### Pools
+
+`Pool` is a fixed set of persistent worker threads that run the tasks of the
+`parallel (&pool)` blocks naming it (design.md "Parallel blocks"). A loop that
+opens a block for every round of work, as an audio mixer does once per buffer,
+then starts no thread per spawn. Its tasks still borrow that round's inputs
+and outputs, and after the join the parent has all of them back:
+
+```loke
+pool := thread.Pool.init(thread.processor_count());
+foreach (_ in 0..<frames) {
+	all := &mut particles[:];
+	parallel (&pool) {
+		foreach (group in all.chunks_mut(256)) { spawn step(group); }
+	}
+	draw(particles[:]);
+}
+```
+
+`init` starts `workers` threads, which wait for tasks until the pool drops.
+Fewer than one worker panics, as does failing to start a thread. The pool is
+move-only and has no zero value. A block borrows it read-only from its entry
+to its join, so a pool cannot be dropped, moved, or lent mutably while a block
+uses it, and tasks may borrow it to open blocks of their own. Dropping it lets
+the workers finish and joins them; their `thread_local` drops happen then, and
+before the drop returns.
+
+- **Helping.** Tasks queue in the order they are spawned, and an idle worker
+  takes the oldest. A worker of the pool that joins a block of that pool runs,
+  while it waits, the oldest queued task of that block, or of a block that one
+  of those tasks opened on the same pool, at any depth. It runs no sibling of
+  the task it is running and no unrelated block's task. A joining thread that
+  is not a worker of the block's pool only waits. So finite, independent
+  nested fork/join work finishes even with one worker. A task may run on the
+  thread that spawned it while that thread joins: a pool promises no fresh
+  thread or distinct thread identity.
+- **Thread-local storage.** A worker keeps its `thread_local` storage from one
+  task to the next; neither nesting nor joining resets it. A helping join runs
+  tasks on the joining thread, so it writes the `thread_local` storage they
+  write, which design.md "Parallel blocks" checks.
+- **Lexical selection.** Each block names its own executor: a bare `parallel`
+  inside a pool task starts threads of its own. A recursive algorithm passes
+  the pool and names it in every block.
+- **Ordering.** Spawning a task happens before it runs, and its return,
+  including its argument cleanup and result, happens before its block's join
+  completes, through the pool's lock.
+
+Helping at joins does not make up for other waits. With one worker, a task
+waiting for an item from a queued sibling waits forever: the sibling runs only
+once the waiter returns. A lock a child needs, taken inside a task and held
+across a nested join, deadlocks the same way, though one declared before the
+block is rejected (design.md "Releasing before the join"). Waits across pools
+have no progress guarantee, and closing what a task waits on does not by
+itself free a worker another wait holds. A pool is for independent compute
+work; it does not compensate for blocking.
 
 ## `core:fmt`
 

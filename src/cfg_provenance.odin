@@ -1185,6 +1185,9 @@ prov_drop_use :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span, at_scope_ex
 		}
 		prov_emit(graph, Prov_Event{kind = .Live, sources = sources, span = span})
 		prov_emit(graph, Prov_Event{kind = .Task_Join, slot = prov_window_bit(graph, id), span = span})
+		if tasks, pooled := graph.pool_tasks[id]; pooled {
+			prov_pool_join_effects(graph, tasks[:], span)
+		}
 		// The tasks are done, so a block entered again, as a loop body's is,
 		// starts holding nothing.
 		for slot in sources {
@@ -5610,12 +5613,13 @@ prov_spawn :: proc(graph: ^Flow_Graph, s: ^Stmt_Spawn) {
 	if !is_call {
 		return
 	}
-	outer, outer_held := graph.spawning, graph.spawn_held
+	outer, outer_held, outer_pooled := graph.spawning, graph.spawn_held, graph.spawning_pooled
 	graph.spawning, graph.spawn_held = call, nil
+	graph.spawning_pooled = s.task != nil && s.task.pooled
 	graph.task_reserve = {}
 	result := walk_flow_expr(graph, call)
 	held := graph.spawn_held
-	graph.spawning, graph.spawn_held = outer, outer_held
+	graph.spawning, graph.spawn_held, graph.spawning_pooled = outer, outer_held, outer_pooled
 	task := s.task
 	if task == nil {
 		return
@@ -5658,6 +5662,17 @@ prov_spawn :: proc(graph: ^Flow_Graph, s: ^Stmt_Spawn) {
 	}
 	prov_hold_until_join(graph, slot, held, s.span, join)
 	prov_spawn_reborrows(graph, task.scope, held, s.span, join)
+	if task.pooled {
+		if graph.pool_tasks == nil {
+			graph.pool_tasks = make(map[Symbol_Id][dynamic]Pool_Task, 2, graph.alloc)
+		}
+		tasks := graph.pool_tasks[task.scope]
+		if tasks == nil {
+			tasks = make([dynamic]Pool_Task, 0, 2, graph.alloc)
+		}
+		append(&tasks, Pool_Task{runs = runs, callee = call.resolution.symbol})
+		graph.pool_tasks[task.scope] = tasks
+	}
 }
 
 // Adds what a task holds to `slot`. Earlier tasks, of another spawn or of this

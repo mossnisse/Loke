@@ -1,0 +1,8 @@
+// standard-library "Pools": a pool needs at least one worker; zero panics.
+package main;
+
+import "core:thread";
+
+main :: proc() {
+	pool := thread.Pool.init(0);
+}

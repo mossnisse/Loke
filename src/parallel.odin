@@ -3,7 +3,8 @@
 //
 // A block is checked as the block a programmer would write with a hidden local
 // declared first: a `core:thread` `Task_Scope`, whose drop joins every task
-// (design.md "Parallel blocks"). Later phases run that block,
+// (design.md "Parallel blocks"). `parallel (pool)` declares the executor
+// first, as a `^thread.Pool` local, and its scope borrows it until the join. Later phases run that block,
 // `Stmt_Parallel.lowered`, instead of the statement. A spawn is checked as the
 // call it starts. Its arguments are prepared on the parent into a frame record,
 // and a synthesized `run` procedure, checked as ordinary code, makes the call
@@ -41,6 +42,9 @@ Spawn_Task :: struct {
 	// A call with a variadic pack: its slot's field is a record holding each
 	// element and spread in `variadic_order`, with how each reaches the task.
 	pack:   []Spawn_Field_Kind,
+	// The block runs on a pool, so a worker of it joining the block may run
+	// the task on the joining thread (design.md "Parallel blocks").
+	pooled: bool,
 }
 
 // The frame field holding bound argument `index`, and the result's address.
@@ -56,6 +60,8 @@ spawn_result_field :: proc(task: ^Spawn_Task) -> int {
 // written, so none collides with the source.
 @(private = "file")
 PARALLEL_SCOPE :: "parallel$scope"
+@(private = "file")
+PARALLEL_POOL :: "parallel$pool"
 
 check_parallel :: proc(k: ^Checker, s: ^Stmt_Parallel) -> Flow_Info {
 	outer_block := k.parallel_block
@@ -63,17 +69,15 @@ check_parallel :: proc(k: ^Checker, s: ^Stmt_Parallel) -> Flow_Info {
 	// The window checks read the thread summaries (design.md "Globals while
 	// tasks run").
 	k.c.thread_summaries_wanted = true
-	// design.md "Parallel blocks": the header is reserved for pools.
-	if s.executor != nil {
-		check_expr(k, s.executor)
-		errorf(
-			k.c, expr_span(s.executor), "L0727",
-			"an executor header is the later pool form; a `parallel` block runs each task on a thread of its own, so write `%s`",
-			"parallel { ... }",
-		)
+	scope_type := thread_type(k, s.keyword, "Task_Scope")
+	pool_type := INVALID_TYPE
+	if s.executor != nil && scope_type != INVALID_TYPE {
+		pool_type = thread_type(k, s.keyword, "Pool")
 	}
-	scope_type := task_scope_type(k, s.keyword)
-	if scope_type == INVALID_TYPE {
+	if scope_type == INVALID_TYPE || (s.executor != nil && pool_type == INVALID_TYPE) {
+		if s.executor != nil {
+			check_expr(k, s.executor)
+		}
 		k.parallel_block = s
 		return check_scoped_block(k, s.body)
 	}
@@ -81,48 +85,88 @@ check_parallel :: proc(k: ^Checker, s: ^Stmt_Parallel) -> Flow_Info {
 	outer := k.scope
 	k.scope = new_scope(k.c, outer, .Local)
 	defer k.scope = outer
-	hidden := hidden_scope_declaration(k, s, scope_type)
-	check_local_declaration(k, hidden)
-	if len(hidden.symbols) == 1 {
-		s.scope = hidden.symbols[0]
+	hidden := make([dynamic]Stmt, 0, 3, k.c.semantic_allocator)
+	// design.md "Parallel blocks": the executor is evaluated once, on entry,
+	// and the scope borrows it until the join.
+	pool: ^Decl
+	if s.executor != nil {
+		pool = hidden_pool_declaration(k, s, pool_type)
+		errors := len(k.c.diagnostics)
+		check_local_declaration(k, pool)
+		if len(k.c.diagnostics) > errors {
+			add_notef(k.c, expr_span(s.executor), "a `parallel` block's executor is a `^thread.Pool`, such as `&pool`")
+		}
+		append(&hidden, pool)
+	}
+	scope := hidden_scope_declaration(k, s, scope_type, pool)
+	check_local_declaration(k, scope)
+	append(&hidden, scope)
+	if len(scope.symbols) == 1 {
+		s.scope = scope.symbols[0]
 	}
 	k.parallel_block = s
 	flow := check_scoped_block(k, s.body)
 
 	lowered := new(Block, k.c.semantic_allocator)
 	lowered.span = s.span
-	lowered.stmts = make([]Stmt, 2, k.c.semantic_allocator)
-	lowered.stmts[0] = hidden
-	lowered.stmts[1] = s.body
+	append(&hidden, s.body)
+	lowered.stmts = hidden[:]
 	s.lowered = lowered
 	return flow
 }
 
-// `parallel$scope: Task_Scope = {};`, its type bound to a name only the
-// block's own scope has.
+// `parallel$pool: ^Pool = executor;`, so an executor of another type is
+// reported as the initializer it is.
 @(private = "file")
-hidden_scope_declaration :: proc(k: ^Checker, s: ^Stmt_Parallel, scope_type: Type_Id) -> ^Decl {
+hidden_pool_declaration :: proc(k: ^Checker, s: ^Stmt_Parallel, pool_type: Type_Id) -> ^Decl {
+	span := expr_span(s.executor)
+	alias := intern_identifier(k.c, "parallel$pool$type")
+	k.scope.names[alias] = new_associated_type(k.c, "Pool", pool_type, INVALID_TYPE)
+	pointer := new(Type_Pointer, k.c.semantic_allocator)
+	pointer.span = span
+	pointer.elem = synth_ident(k, "Pool", alias, span)
+	return hidden_declaration(k, PARALLEL_POOL, pointer, s.executor, span)
+}
+
+// `parallel$scope: Task_Scope = {};`, or `Task_Scope.pooled(parallel$pool)`
+// after an executor, its type bound to a name only the block's own scope has.
+@(private = "file")
+hidden_scope_declaration :: proc(k: ^Checker, s: ^Stmt_Parallel, scope_type: Type_Id, pool: ^Decl) -> ^Decl {
 	span := s.keyword
 	alias := intern_identifier(k.c, "parallel$scope$type")
 	k.scope.names[alias] = new_associated_type(k.c, "Task_Scope", scope_type, INVALID_TYPE)
 	type := synth_ident(k, "Task_Scope", alias, span)
-	value := new(Expr_Composite, k.c.semantic_allocator)
-	value.span = span
+	value: Expr
+	if pool != nil {
+		pooled := synth_selector(k.c, synth_ident(k, "Task_Scope", alias, span), "pooled", span)
+		executor := synth_ident(k, PARALLEL_POOL, intern_identifier(k.c, PARALLEL_POOL), span)
+		value = synth_call(k.c, pooled, {executor}, span)
+	} else {
+		composite := new(Expr_Composite, k.c.semantic_allocator)
+		composite.span = span
+		value = composite
+	}
+	return hidden_declaration(k, PARALLEL_SCOPE, type, value, span)
+}
+
+@(private = "file")
+hidden_declaration :: proc(k: ^Checker, name: string, type: Expr, value: Expr, span: Span) -> ^Decl {
 	d := new(Decl, k.c.semantic_allocator)
 	d.span = span
 	d.kind = .Var
 	d.names = make([]Name, 1, k.c.semantic_allocator)
-	d.names[0] = Name{text = PARALLEL_SCOPE, span = span, id = intern_identifier(k.c, PARALLEL_SCOPE)}
+	d.names[0] = Name{text = name, span = span, id = intern_identifier(k.c, name)}
 	d.declared_type = type
 	d.values = make([]Expr, 1, k.c.semantic_allocator)
 	d.values[0] = value
 	return d
 }
 
-// `core:thread`'s `Task_Scope`, which import discovery loaded for a program
-// with a `parallel` block where a collection provides it, and its `start`.
+// A type `core:thread` declares for `parallel` blocks: `Task_Scope`, or
+// `Pool` for an executor. Import discovery loaded the package for a program
+// with a block where a collection provides it.
 @(private = "file")
-task_scope_type :: proc(k: ^Checker, keyword: Span) -> Type_Id {
+thread_type :: proc(k: ^Checker, keyword: Span, name: string) -> Type_Id {
 	pkg := standard_package(k.c, STD_THREAD)
 	if pkg == nil {
 		errorf(k.c, keyword, "L0329", "a `parallel` block needs `%s`, which no collection provides", STD_THREAD)
@@ -131,9 +175,9 @@ task_scope_type :: proc(k: ^Checker, keyword: Span) -> Type_Id {
 	if pkg.scope == nil {
 		return INVALID_TYPE
 	}
-	sym := symbol_of(k.c, pkg.scope.names[intern_identifier(k.c, "Task_Scope")] or_else INVALID_SYMBOL)
+	sym := symbol_of(k.c, pkg.scope.names[intern_identifier(k.c, name)] or_else INVALID_SYMBOL)
 	if sym == nil || sym.kind != .Type || sym.type == INVALID_TYPE {
-		errorf(k.c, no_span(), "L0727", "`%s` declares no `Task_Scope`, which a `parallel` block needs", STD_THREAD)
+		errorf(k.c, no_span(), "L0727", "`%s` declares no `%s`, which a `parallel` block needs", STD_THREAD, name)
 		return INVALID_TYPE
 	}
 	return sym.type
@@ -294,6 +338,7 @@ lower_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn, block: ^Stmt_Parallel, callee: 
 
 	task := new(Spawn_Task, c.semantic_allocator)
 	task.scope = block.scope
+	task.pooled = block.executor != nil
 	if scope := symbol_of(c, block.scope); scope != nil {
 		task.start = task_scope_start(c, scope.type)
 	}

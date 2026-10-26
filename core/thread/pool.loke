@@ -1,0 +1,230 @@
+// standard-library "Pools": persistent workers that run the tasks of the
+// `parallel (pool)` blocks naming them (design.md "Parallel blocks").
+@(public)
+package thread;
+
+import "core:sync";
+import "core:unsafe";
+
+/// A fixed set of persistent worker threads that run the tasks of the
+/// `parallel (&pool)` blocks naming it, so a block opened once per round of
+/// work starts no thread. A block borrows the pool until its join, so the pool
+/// outlives every block that uses it.
+///
+/// A worker joining a block of its own pool runs that block's queued tasks,
+/// and their descendants on the same pool, while it waits; any other joining
+/// thread only waits. A worker keeps its `thread_local` storage from one task
+/// to the next. Dropping the pool lets its workers finish and joins them.
+/// It is move-only and has no zero value.
+Pool :: move_only struct {
+	// The `Pool_State` its workers share, on the heap, so the pool can move
+	// while they run.
+	@(private, required) state: rawptr,
+}
+
+// Guarded by `word`; `wake` wakes the workers when a task arrives or the pool
+// stops, and a joining thread when one of its tasks finishes.
+@(private)
+Pool_State :: struct {
+	// A Windows SRWLOCK and a CONDITION_VARIABLE over it, as `Monitor`'s are.
+	word: sync.Atomic(uintptr),
+	wake: sync.Atomic(uintptr),
+	// The queue of `Pool_Node`s, oldest first; nil when empty.
+	head: rawptr,
+	tail: rawptr,
+	stopping: bool,
+	workers: [dynamic]int,
+}
+
+// One queued task: its frame, and the `Task_Scope` of the block it belongs to.
+@(private)
+Pool_Node :: struct {
+	next: rawptr,
+	frame: rawptr,
+	scope: rawptr,
+}
+
+// The pool this thread works for, and the scope of the task it is running,
+// each nil when there is none.
+@(private) worker_of: thread_local rawptr;
+@(private) running_in: thread_local rawptr;
+
+impl Pool {
+	/// A pool of `workers` threads, which wait for tasks until it drops. Fewer
+	/// than one worker panics, as does failing to start a thread.
+	init :: proc(workers: int) -> Pool {
+		if (workers < 1) { panic("thread.Pool needs at least one worker"); }
+		state := (^mut Pool_State)(unsafe.new(Pool_State{}));
+		state^.workers.reserve(workers);
+		// From here a failure unwinds through this pool's drop, which joins
+		// the workers already started.
+		pool := Pool{state = rawptr(state)};
+		foreach (_ in 0 ..< workers) {
+			handle := rt_create_thread(nil, 0, pool_worker, rawptr(state), 0, nil);
+			if (handle == 0) { panic("thread creation failed"); }
+			state^.workers.append(handle);
+		}
+		return pool;
+	}
+
+	// Queues the task `frame` holds for the block whose scope is `scope`. The
+	// node is allocated before the task is registered, so a failure leaves
+	// the frame the caller's.
+	@(private)
+	submit :: proc(self: ^, scope: rawptr, frame: rawptr) {
+		node := rawptr(unsafe.new(Pool_Node{frame = frame, scope = scope}));
+		owner := (^mut Task_Scope)(scope);
+		owner^.parent = running_in;
+		state := state_of(self);
+		rt_lock(rawptr(&state^.word.value));
+		push(state, node);
+		owner^.pending.store(owner^.pending.load() + 1);
+		rt_unlock(rawptr(&state^.word.value));
+		rt_wake_all(rawptr(&state^.wake.value));
+	}
+
+	// Waits until the block whose scope is `scope` has no task left. A worker
+	// of this pool runs the block's queued tasks, and their descendants,
+	// meanwhile; no other task, so a sibling of the task it is running waits
+	// for a worker of its own.
+	@(private)
+	wait_for :: proc(self: ^, scope: rawptr) {
+		state := state_of(self);
+		owner := (^mut Task_Scope)(scope);
+		helps := worker_of == rawptr(state);
+		rt_lock(rawptr(&state^.word.value));
+		for (owner^.pending.load() > 0) {
+			if (helps) {
+				node := take(state, scope);
+				if (node != nil) {
+					rt_unlock(rawptr(&state^.word.value));
+					run_node(state, node);
+					rt_lock(rawptr(&state^.word.value));
+					continue;
+				}
+			}
+			rt_sleep(rawptr(&state^.wake.value), rawptr(&state^.word.value), INFINITE, 0);
+		}
+		rt_unlock(rawptr(&state^.word.value));
+	}
+
+	// Every block that used the pool has joined, so the queue is empty: the
+	// workers see `stopping`, return, and are joined.
+	@(private)
+	stop :: hook(drop) proc(self: inout) {
+		state := state_of(&self);
+		rt_lock(rawptr(&state^.word.value));
+		state^.stopping = true;
+		rt_unlock(rawptr(&state^.word.value));
+		rt_wake_all(rawptr(&state^.wake.value));
+		foreach (handle in state^.workers) {
+			rt_wait(handle, INFINITE);
+			rt_close(handle);
+		}
+		retired := unsafe.take(state^);
+		unsafe.free(state);
+	}
+}
+
+@(private)
+state_of :: proc(pool: ^Pool) -> ^mut Pool_State {
+	return (^mut Pool_State)(pool.state);
+}
+
+// Appends `node` to the queue; the lock is held.
+@(private)
+push :: proc(state: ^mut Pool_State, node: rawptr) {
+	if (state^.tail == nil) {
+		state^.head = node;
+	} else {
+		(^mut Pool_Node)(state^.tail)^.next = node;
+	}
+	state^.tail = node;
+}
+
+// Unlinks and answers the oldest queued node a thread may run, or nil: any
+// node for a worker looking for work (`within` nil), else one of the block
+// whose scope is `within` or of a block one of its tasks opened, at any depth.
+// The lock is held.
+@(private)
+take :: proc(state: ^mut Pool_State, within: rawptr) -> rawptr {
+	previous: rawptr = nil;
+	current := state^.head;
+	for (current != nil) {
+		node := (^mut Pool_Node)(current);
+		if (within == nil || descends(node^.scope, within)) {
+			if (previous == nil) {
+				state^.head = node^.next;
+			} else {
+				(^mut Pool_Node)(previous)^.next = node^.next;
+			}
+			if (state^.tail == current) { state^.tail = previous; }
+			return current;
+		}
+		previous = current;
+		current = node^.next;
+	}
+	return nil;
+}
+
+// Whether the block whose scope is `scope` is `ancestor`'s or was opened by
+// a task of it, at any depth. Every scope on the chain is still joining a
+// task that leads here, so each is alive; the lock is held.
+@(private)
+descends :: proc(scope: rawptr, ancestor: rawptr) -> bool {
+	at := scope;
+	for (at != nil) {
+		if (at == ancestor) { return true; }
+		at = (^Task_Scope)(at)^.parent;
+	}
+	return false;
+}
+
+// Runs a node taken from the queue, without the lock, then counts its task
+// finished, waking the block's joiner when it was the last.
+@(private)
+run_node :: proc(state: ^mut Pool_State, node: rawptr) {
+	frame := (^Pool_Node)(node)^.frame;
+	scope := (^Pool_Node)(node)^.scope;
+	unsafe.free((^mut Pool_Node)(node));
+	outer := running_in;
+	running_in = scope;
+	rt_run_task(run_frame, frame);
+	running_in = outer;
+	owner := (^mut Task_Scope)(scope);
+	rt_lock(rawptr(&state^.word.value));
+	left := owner^.pending.load() - 1;
+	owner^.pending.store(left);
+	rt_unlock(rawptr(&state^.word.value));
+	if (left == 0) { rt_wake_all(rawptr(&state^.wake.value)); }
+}
+
+// What `rt_run_task` calls: the procedure the frame leads with.
+@(private)
+run_frame :: proc "stdcall" (frame: rawptr) -> u32 {
+	(^Start_Header)(frame)^.run(frame);
+	return 0;
+}
+
+// A worker: runs queued tasks, oldest first, until the pool stops.
+@(private)
+pool_worker :: proc "stdcall" (raw: rawptr) -> u32 {
+	rt_attach();
+	worker_of = raw;
+	state := (^mut Pool_State)(raw);
+	rt_lock(rawptr(&state^.word.value));
+	for (;;) {
+		node := take(state, nil);
+		if (node != nil) {
+			rt_unlock(rawptr(&state^.word.value));
+			run_node(state, node);
+			rt_lock(rawptr(&state^.word.value));
+			continue;
+		}
+		if (state^.stopping) { break; }
+		rt_sleep(rawptr(&state^.wake.value), rawptr(&state^.word.value), INFINITE, 0);
+	}
+	rt_unlock(rawptr(&state^.word.value));
+	rt_detach();
+	return 0;
+}

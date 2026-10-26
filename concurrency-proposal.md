@@ -1,16 +1,16 @@
 # Structured concurrency: the library additions
 
-Status: **milestones 1 to 7 are done**. `parallel` blocks and `spawn`
+Status: **milestones 1 to 7 and 9 are done**. `parallel` blocks and `spawn`
 statements are part of the language: [design.md](design.md) defines them
 under [Structured concurrency](design.md#structured-concurrency),
 [grammar.md](grammar.md#control-flow) parses them, and
 [comments.md](comments.md#tasks-that-borrow-joined-by-their-block) gives the
-reasons for their shape. `Monitor(T)` and `Channel(T)` are in `core:thread`,
-specified under [Monitors](standard-library.md#monitors) and
-[Channels](standard-library.md#channels) in standard-library.md, and the join
-check under [Releasing before the join](design.md#releasing-before-the-join)
-in design.md. What remains here is proposed, not accepted: the real-time ring
-and pools, the
+reasons for their shape. `Monitor(T)`, `Channel(T)`, and `Pool` are in
+`core:thread`, specified under [Monitors](standard-library.md#monitors),
+[Channels](standard-library.md#channels), and [Pools](standard-library.md#pools)
+in standard-library.md, and the join check under
+[Releasing before the join](design.md#releasing-before-the-join) in design.md.
+What remains here is proposed, not accepted: the real-time ring, the
 [later extensions](#later-extensions) still undecided, and the milestones that
 add them. Each milestone moves its part of this text into design.md and
 standard-library.md in the same commit as the compiler change, as
@@ -164,126 +164,26 @@ borrows, and detects no general wait cycle.
 
 ### Pools
 
-A loop that wakes the same workers for every round of work and waits for them
-to finish, as a mixer does once per buffer, is a `parallel` block opened once
-per round. Its tasks borrow that round's inputs and outputs, and after the join
-the parent has all of them back, which no wait between rounds can give it.
-What makes that too slow today is a thread started per spawn; a pool removes
-it.
-
-`thread.Pool` has a fixed positive number of persistent workers and is opt-in
-for independent compute work. `parallel (&pool)` evaluates the executor once
-on entry and borrows it through the join. Dropping the pool stops submission
-and joins its workers after all borrowing scopes have ended.
-
-A worker joining a block submitted to its own pool may execute queued tasks
-of that block, including descendants submitted to the same pool. It may not
-help an unrelated block or a sibling of the task that owns its current join.
-A joining thread that is not a worker of that pool only waits; it does not
-execute queued work. This exact helping set is also the set summarized by the
-compiler's TLS effects below. This permits
-finite, independent nested fork/join computations to finish even with one
-worker. Such a child may execute on its spawning worker while that worker
-joins; a fresh thread or distinct thread identity is not promised by a pool.
-The thread-per-spawn executor still creates a fresh thread for each task.
-
-Helping makes the join act on the joining thread's TLS.
-[Globals while tasks run](design.md#globals-while-tasks-run) lets a task write
-its own thread's TLS, and
-[Borrows crossing between tasks](design.md#borrows-crossing-between-tasks)
-stops TLS borrows only from crossing threads; neither covers a child that runs on its parent's thread while the
-parent waits. A parent holding `view := tls_buffer[:]` across the join could
-have a helped child append to `tls_buffer` and reallocate it under the view.
-So a join under a helping executor counts as a call whose effect includes the
-`thread_local` writes, invalidations, and mutable borrows of every task it
-may run: the block's tasks and their descendants submitted to the same pool.
-[Global write effects](design.md#global-write-effects) then rejects a parent
-TLS borrow that is still live across that join, as it rejects one live across
-a call that writes the same storage. The thread-per-spawn join needs no such
-effect, because a child never runs on its parent's thread.
-
-Helping at joins does not compensate for arbitrary blocking. With one worker,
-a task receiving from a queued sibling can block before reaching a join; a
-lock a child needs, taken inside a task and held across a nested join, can
-also deadlock, though one declared before the block is rejected by
-[Releasing before the join](#releasing-before-the-join). Cross-pool wait
-cycles get no progress guarantee. Initially there is no blocking
-compensation, and ending a wait by closing what it waits on does not by itself
-free a pool worker.
-
-Executor selection stays lexical. A bare `parallel` inside `sort` uses fresh
-threads even if its caller used `parallel (&pool)`. A recursive pool algorithm
-passes the pool explicitly and selects it in every recursive block. Persistent
-workers retain TLS between tasks; neither nesting nor joining resets it.
+Built with [milestone 9](#milestone-9-pools): `parallel (pool)` is specified
+under [Parallel blocks](design.md#parallel-blocks) in design.md, `thread.Pool`
+and its helping rule under [Pools](standard-library.md#pools) in
+standard-library.md, and [comments.md](comments.md#pools-that-help-at-joins)
+gives the reasons. The join's `thread_local` effect counts every task spawned
+in a pooled block below, on any pool, since which pool a nested block names is
+known only when it runs; a bare block's tasks never count.
 
 ### A mixer, end to end
 
-An audio mixer uses the pieces together. `Device` stands for a binding to the
-platform's audio API, whose `write` waits until the device takes a buffer.
-
-```loke
-Command :: union { play: int, stop: int, gain: (voice: int, gain: f32) }
-
-main :: proc() -> Status(Audio_Error) {
-	device := open_device(48000, FRAMES) or_return;
-	voices := load_voices() or_return;
-	commands := thread.Channel(Command).init(64);
-	pool := thread.Pool.init(3);
-	audio: Status(Audio_Error);
-	parallel {
-		send, receive := commands.split();
-		spawn audio = audio_loop(&mut device, &pool, move(receive), move(voices));
-		user_interface(move(send));     // takes an owned Sender; drops it on return
-	}
-	audio or_return;
-}
-
-audio_loop :: proc(
-	device: ^mut Device, pool: ^thread.Pool,
-	commands: move thread.Receiver(Command), voices: move [dynamic]Voice,
-) -> Status(Audio_Error) {
-	mix := make([dynamic]f32, 2 * FRAMES);
-	for (;;) {
-		if (!apply_commands(&commands, &mut voices[:])) { return; }   // the interface has ended
-		all := &mut voices[:];
-		parallel (pool) {
-			foreach (group in all.chunks_mut(8)) { spawn render(group); }
-		}
-		mix_down(voices[:], &mut mix[:]);      // the voices are this loop's again
-		device.write(mix[:]) or_return;        // waits one period at most
-	}
-}
-
-// Applies every command already sent without waiting; `false` once the
-// interface has ended.
-apply_commands :: proc(commands: ^thread.Receiver(Command), voices: []mut Voice) -> bool {
-	for (;;) {
-		switch (commands.try_receive()) {
-		case .item(command): apply(command, voices);
-		case .empty: return true;
-		case .closed: return false;
-		}
-	}
-}
-```
-
-The pool makes a block per buffer cheap. Its tasks borrow this period's voices
-mutably, one group each, and after the join the loop reads them all to mix
-down. Commands cross by channel, and the audio loop takes them with
-`try_receive`, so it never waits for a command. This is a paced audio worker,
-not a hard real-time callback: channel lock acquisition, draining commands,
-pool submission and joining, and device I/O have no hard deadline guarantee.
-Replacing the channel with a ring would not make that entire loop real-time.
-
-The channel protocol covers these exits. When the user quits, `user_interface`
-returns and its sender ends; the audio loop's next `apply_commands` sees
-`.closed`, the loop returns, and the join completes. When the device fails,
-the audio loop returns its error and its receiver ends, so the interface's
-next `send` returns `.closed` and the interface can report it and return. When
-the parent unwinds, the unwind drops whichever scope owns the sender, as
-quitting would. A user interface blocked in terminal input still needs its
-own way to observe device failure; channel closure does not interrupt that
-foreign wait. Device latency is an assumption of this example's binding.
+Built with [milestone 9](#milestone-9-pools): `examples/mixer.loke` is the
+audio loop with a stand-in device. A user interface sends commands over a
+channel, the loop takes them with `try_receive` so it never waits for one, and
+it renders its voices in a `parallel (pool)` block per buffer, then mixes them
+down. When the interface quits, its sender drops and the loop returns; when the
+device fails, the loop returns its error, its receiver drops, and the
+interface's next send fails. This is a paced audio worker, not a hard
+real-time callback: the channel's lock, pool submission and joining, and device
+I/O have no deadline guarantee. A user interface blocked in terminal input
+still needs its own way to observe device failure.
 
 ### Why waits end by ownership
 
@@ -366,13 +266,11 @@ Done: disjoint slice access (`split_at_mut` and `chunks_mut`); the
 their checks on `thread.spawn`; the reach, allocator-use, and thread-exit
 summaries; `parallel` blocks with `spawn`, checked and lowered to a thread
 per task (see [Lowering parallel blocks](compiler-architecture.md#lowering-parallel-blocks));
-monitors; and channels with the join check.
+monitors; channels with the join check; and pools.
 Where the compiler is narrower than design.md, [known-gaps.md](known-gaps.md)
 says so.
 
-Delivery continues with the independent compute pool in
-milestone 9 when needed. Milestone 8 keeps its identifier for existing
-references, but is deferred and is not a prerequisite for milestone 9.
+Milestone 8 keeps its identifier for existing references, but is deferred.
 Milestone 10 remains conditional on its callable-summary work.
 
 ### Milestone 6: monitors
@@ -440,15 +338,34 @@ Blocking adapters require a separate proposal and are not part of this milestone
 
 ### Milestone 9: pools
 
-Add `Pool` and the executor header. Test independent nested work with one
-worker, explicit recursive executor selection, TLS reuse, and pool lifetime.
-Verify that only workers of that pool help, only within their current joining
-block's subtree, and that the TLS-effect summary covers exactly that permission.
-Reject a parent TLS borrow live across a pool join whose tasks write that
-storage. Check documented blocking limits with bounded test harnesses; do
-not make the suite depend on a deadlock resolving. Serial execution is not
-a correctness oracle for thread-dependent tasks. Add the mixer's per-buffer
-block, with a stand-in device, to `examples/`.
+Done. `Pool` is in `core:thread`, and `parallel (pool)` lowers to a hidden
+`^thread.Pool` local and a `Task_Scope` that borrows it until the join. A
+joining worker runs a queued task through `loke_rt_v1_run_task`, so the effect
+analysis does not take the join for a call to every task in the program; the
+join of a pooled block carries its own tasks' `thread_local` writes instead,
+and a bare block's tasks' `thread_local` writes leave the spawn site and the
+enclosing procedure's write effect.
+
+- `tests/run/lib_thread_pool.loke` covers nested work with one worker, many
+  rounds borrowing chunks of one array, a worker's `thread_local` storage kept
+  between tasks and dropped with the pool, a bare block inside a pool task
+  starting a fresh thread, a joining thread that is not a worker running no
+  task, a joining worker running its block's descendant but not its own
+  task's sibling, a worker of another pool only waiting, and a task waiting on
+  a queued sibling, bounded by polling. A watchdog bounds every wait.
+- `tests/trap/pool_workers.loke` covers a pool with no workers.
+- `tests/err/parallel_pool.loke` rejects an executor of another type, a pool
+  dropped or lent mutably inside its block, and a `thread_local` view live
+  across a pool join whose task or pooled descendant writes it. It accepts a
+  view that ends before the join or spans only the spawn, a bare descendant's
+  write, and a bare block's task writing the parent's `thread_local` variable.
+- `examples/mixer.loke` is the mixer's per-buffer block, with a stand-in
+  device.
+
+The example keeps the proposal's shape, moving the voices into the audio loop.
+With the voices passed as a borrowed `[]mut Voice` beside the `move` receiver,
+the join check rejects the receiver, since two parameters' storage may be the
+same.
 
 ### Milestone 10: indirect spawned calls
 

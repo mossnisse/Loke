@@ -262,8 +262,13 @@ Prov_State :: struct {
 	// into `spawn_held`.
 	task_slots:     map[Symbol_Id]int,
 	task_holds:     map[Symbol_Id][dynamic]int,
+	// design.md "Parallel blocks": a pooled block's tasks, by its hidden scope,
+	// which its join may run on the joining thread.
+	pool_tasks:     map[Symbol_Id][dynamic]Pool_Task,
 	spawning:       ^Expr_Call,
 	spawn_held:     []int,
+	// The call being spawned belongs to a pooled block.
+	spawning_pooled: bool,
 	// design.md "Globals while tasks run": how many `parallel` blocks enclose
 	// the statement being walked, and each block's hidden scope by its index.
 	parallel_depth:   int,

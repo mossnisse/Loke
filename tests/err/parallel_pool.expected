@@ -1,0 +1,23 @@
+L0310
+@26:12
+cannot initialise `^Pool` with `^int`
+
+L0310
+@33:12
+cannot initialise `^Pool` with `Pool`
+
+L0512
+@42:3
+`pool` cannot be dropped here: a read-only pointer of it is still in use
+
+L0511
+@49:17
+this write of `pool` is not compatible with the read-only pointer of it that is still in use
+
+L0512
+@55:2
+`buffer` cannot be modified by `grow`, which this join may run on this thread, here: a read-only slice of it is still in use
+
+L0512
+@70:2
+`buffer` cannot be modified by `pooled_grow`, which this join may run on this thread, here: a read-only slice of it is still in use

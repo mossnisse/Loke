@@ -551,6 +551,13 @@ LOKE_RT_STATIC_ASSERT(sizeof(loke_rt_frame_v1) == 24, frame_record_size);
 
 void loke_rt_v1_thread_attach(void);
 void loke_rt_v1_thread_detach(void);
+/* Calls `run(frame)` on this thread. core:thread's pool runs a queued task this
+ * way when a joining worker helps, so the compiler's effect analysis does not
+ * follow the call to every task the program could start; the join carries the
+ * effects of its own block's tasks instead. `run` is a `proc "stdcall"`, which
+ * is the C convention on x64. */
+typedef uint32_t (__stdcall *loke_rt_task_entry_v1)(void *frame);
+void loke_rt_v1_run_task(loke_rt_task_entry_v1 run, void *frame);
 /* Supplied by every generated module. Detach invokes it on the current thread,
  * whose thread-local globals are therefore the ones the thunk addresses. */
 void loke_rt_v1_program_tls_cleanup(void);

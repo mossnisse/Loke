@@ -561,7 +561,8 @@ qualified or a method selector, ending in a call suffix. A conversion, an
 
 Their meaning is under
 [Structured concurrency](design.md#structured-concurrency). The parenthesized
-executor header is reserved for a later form, and the checker rejects it.
+executor header names the pool the block's tasks run on
+([Parallel blocks](design.md#parallel-blocks)).
 
 `for (;;)` is the three-part header with every part empty. `for (cond)` is the
 condition-only form.

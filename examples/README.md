@@ -18,6 +18,7 @@ different part of the language:
 - `shapes.loke` — interfaces dispatched two ways: specialized generics and erased `dyn`.
 - `parallel.loke` — `parallel` blocks: a quicksort whose halves sort on separate threads, a sum whose tasks hand back their results, and chunks of one array scaled by a task each.
 - `channels.loke` — `thread.Channel`: a producer task feeding the parent, and a pipeline of workers sharing a job queue and feeding a collector, with endpoints split inside the block and spares dropped after setup.
+- `mixer.loke` — `thread.Pool`: an audio loop that renders its voices on a pool in a `parallel (pool)` block once per buffer, taking a user interface's commands from a channel without waiting, and ending when the interface's sender drops.
 - `config_parser.loke` — unions, `or_return`, optional-ok, `or_else`, `defer`, lifecycle hooks, and `indexed()`.
 - `tokens.loke` — declaring a union, variant switches, and `case` lists that match ranges.
 - `orders.loke` — anonymous unions: a union written in a signature with no declaration, labels that keep equal payload types apart, an error set per helper that a bare `or_return` widens by label into the caller's, a wrapping label that keeps a layer, and success returns.
@@ -49,7 +50,7 @@ automatically, so no collection flags are needed.
 
 ## How these are checked
 
-`odin test tests` compiles all twenty from these sources — not from copies — and
+`odin test tests` compiles all twenty-one from these sources — not from copies — and
 compares the output of the ones that produce a fixed result. `greeting` is run
 twice in a scratch directory with supplied input, so the second run has to find
 what the first wrote; `streaming` is run against a real file, a missing one, and
