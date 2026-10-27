@@ -69,6 +69,10 @@ impl File {
 
 	seek :: proc(self: inout File, offset: i64, origin: Seek_Origin) -> Result(u64, io.Error) ---;
 
+	// Returns once the file's written data and metadata have been handed to the
+	// storage device, so they survive a crash or power loss as far as the device
+	// honors the request. `File` keeps no buffer of its own, so there is nothing
+	// weaker for `flush` to mean.
 	flush :: proc(self: inout File) -> Status(io.Error) ---;
 }
 
@@ -102,7 +106,7 @@ read_text :: proc(
 ) -> Result(string, io.Error) ---;
 
 // Truncates an existing file only after the target has been opened. This is
-// not an atomic replacement.
+// not an atomic replacement: `replace_atomic` is.
 write_bytes :: proc(path: string_view, data: []u8) -> Status(io.Error) ---;
 
 write_text :: proc(path: string_view, text: string_view) -> Status(io.Error) ---;
@@ -110,6 +114,20 @@ write_text :: proc(path: string_view, text: string_view) -> Status(io.Error) ---
 append_bytes :: proc(path: string_view, data: []u8) -> Status(io.Error) ---;
 
 append_text :: proc(path: string_view, text: string_view) -> Status(io.Error) ---;
+
+// Makes `path` hold exactly `data`, whether or not it existed. A reader, or
+// the program after a crash or power loss, sees either the whole previous file
+// or the whole new one, never a mixture. On `.ok` the new content and the name
+// switch are durable, as far as the device honors flush requests. On `.err`
+// the target is as it was before the call, unless the switch was made but
+// could not be made durable, in which case it holds the new content.
+//
+// The data goes first into a new file beside the target, named after it with a
+// `.tmp` suffix, which then takes the target's name. A failure removes it; a
+// crash before the switch can leave it behind.
+replace_atomic :: proc(path: string_view, data: []u8) -> Status(io.Error) ---;
+
+replace_atomic_text :: proc(path: string_view, text: string_view) -> Status(io.Error) ---;
 
 metadata :: proc(path: string_view) -> Result(Metadata, io.Error) ---;
 
@@ -120,6 +138,9 @@ exists :: proc(path: string_view) -> Result(bool, io.Error) ---;
 
 remove :: proc(path: string_view) -> Status(io.Error) ---;
 
+// Replaces an existing file at `new_path`. Within one volume the switch is
+// atomic, and on `.ok` it is durable as far as the device honors flush
+// requests. A rename across volumes is refused rather than performed as a copy.
 rename :: proc(old_path: string_view, new_path: string_view) -> Status(io.Error) ---;
 
 create_directory :: proc(path: string_view) -> Status(io.Error) ---;

@@ -265,6 +265,48 @@ main :: proc() {
 	fmt.println(count_entries(path.volume(directory)) or_else -1);
 	fmt.println(succeeded(os.set_working_directory(previous)));
 
+	// Renaming replaces an existing file.
+	fmt.println(succeeded(fs.write_text(file, "ersatt")));
+	fmt.println(succeeded(fs.rename(file, renamed)));
+	fmt.println(fs.read_text(renamed) or_else panic("a file the test just wrote could not be read"));
+	fmt.println(fs.exists(file) or_else true);
+
+	// Atomic replacement creates a missing file, replaces an existing one, and
+	// leaves no temporary file behind either way.
+	before := count_entries(directory) or_else -1;
+	saved := in_root(directory, "manifest.txt");
+	fmt.println(succeeded(fs.replace_atomic_text(saved, "generation 1")));
+	fmt.println(fs.read_text(saved) or_else panic("a file the test just wrote could not be read"));
+	fmt.println(succeeded(fs.replace_atomic_text(saved, "generation 2, longer")));
+	fmt.println(fs.read_text(saved) or_else panic("a file the test just wrote could not be read"));
+	fmt.println(succeeded(fs.replace_atomic(saved, data[0:0])));
+	fmt.println((fs.read_bytes(saved) or_else panic("a file the test just wrote could not be read")).len());
+	fmt.println((count_entries(directory) or_else -1) == before + 1);
+	// A Unicode name, and a name relative to the working directory.
+	fmt.println(succeeded(fs.replace_atomic_text(unicode, "ersatt")));
+	fmt.println(fs.read_text(unicode) or_else panic("a file the test just wrote could not be read"));
+	fmt.println(succeeded(os.set_working_directory(directory)));
+	fmt.println(succeeded(fs.replace_atomic_text("manifest.txt", "relative")));
+	fmt.println(succeeded(os.set_working_directory(previous)));
+	fmt.println(fs.read_text(saved) or_else panic("a file the test just wrote could not be read"));
+	// A missing directory fails before anything is written.
+	switch (fs.replace_atomic_text(in_root(directory, "missing\\manifest.txt"), "no")) {
+	case .ok:  fmt.println(false);
+	case .err(missing_directory): fmt.println(io.is(missing_directory, .Not_Found));
+	}
+	// A directory cannot be replaced by a file: the switch fails, the directory
+	// stays, and the temporary file is removed.
+	nested := in_root(directory, "nested");
+	switch (fs.replace_atomic_text(nested, "no")) {
+	case .ok:  fmt.println(false);
+	case .err(refused): fmt.println(io.operation_of(refused) == .Rename);
+	}
+	switch (fs.metadata(nested)) {
+	case .ok(nested_info): fmt.println(nested_info.kind == .Directory);
+	case .err: fmt.println(false);
+	}
+	fmt.println((count_entries(directory) or_else -1) == before + 1);
+
 	clean_up(directory);
 	fmt.println(fs.exists(directory) or_else true);
 }

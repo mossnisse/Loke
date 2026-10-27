@@ -118,6 +118,10 @@ impl File {
 		return seek_handle(self.handle, offset, origin);
 	}
 
+	/// Returns once the file's written data and metadata have been handed to the
+	/// storage device, so they survive a crash or power loss as far as the device
+	/// honors the request. `File` keeps no buffer of its own, so there is nothing
+	/// weaker for `flush` to mean.
 	flush :: proc(self: inout File) -> Status(io.Error) {
 		if (self.handle == NO_HANDLE) { return .ok; }
 		return flush_handle(self.handle);
@@ -188,9 +192,7 @@ read_text :: proc(
 }
 
 /// Truncates an existing file only after the target has been opened. This is
-/// not an atomic replacement.
-// A `replace_atomic` with documented same-filesystem and durability guarantees
-// can be added later.
+/// not an atomic replacement: `replace_atomic` is.
 write_bytes :: proc(path: string_view, data: []u8) -> Status(io.Error) {
 	file := create(path) or_return;
 	written := io.write_all(inout file, data);
@@ -215,6 +217,26 @@ append_text :: proc(path: string_view, text: string_view) -> Status(io.Error) {
 	return append_bytes(path, text.bytes());
 }
 
+/// Makes `path` hold exactly `data`, whether or not it existed. A reader, or
+/// the program after a crash or power loss, sees either the whole previous file
+/// or the whole new one, never a mixture. On `.ok` the new content and the name
+/// switch are durable, as far as the device honors flush requests. On `.err`
+/// the target is as it was before the call, unless the switch was made but
+/// could not be made durable, in which case it holds the new content.
+///
+/// The data goes first into a new file beside the target, named after it with a
+/// `.tmp` suffix, which then takes the target's name. A failure removes it; a
+/// crash before the switch can leave it behind.
+// standard-library "Atomic replacement". Beside the target, not in a temporary
+// directory: only a rename within one volume can be atomic.
+replace_atomic :: proc(path: string_view, data: []u8) -> Status(io.Error) {
+	return replace_atomic_native(path, data);
+}
+
+replace_atomic_text :: proc(path: string_view, text: string_view) -> Status(io.Error) {
+	return replace_atomic(path, text.bytes());
+}
+
 // ---------------------------------------------------------- the filesystem --
 
 metadata :: proc(path: string_view) -> Result(Metadata, io.Error) {
@@ -235,6 +257,9 @@ exists :: proc(path: string_view) -> Result(bool, io.Error) {
 
 remove :: proc(path: string_view) -> Status(io.Error) { return remove_native(path); }
 
+/// Replaces an existing file at `new_path`. Within one volume the switch is
+/// atomic, and on `.ok` it is durable as far as the device honors flush
+/// requests. A rename across volumes is refused rather than performed as a copy.
 rename :: proc(old_path: string_view, new_path: string_view) -> Status(io.Error) {
 	return rename_native(old_path, new_path);
 }
@@ -351,7 +376,11 @@ foreign import kernel32 "system:kernel32.lib";
 @(private) TRUNCATE_EXISTING :: 5;
 @(private) FILE_ATTRIBUTE_NORMAL :: 0x80;
 @(private) FILE_ATTRIBUTE_DIRECTORY :: 0x10;
+@(private) DELETE :: 0x00010000;
 @(private) MOVEFILE_REPLACE_EXISTING :: 0x1;
+@(private) MOVEFILE_WRITE_THROUGH :: 0x8;
+// `FILE_INFO_BY_HANDLE_CLASS`'s `FileRenameInfo`.
+@(private) FILE_RENAME_INFO_CLASS :: 3;
 
 // The 100-nanosecond ticks between 1601-01-01 and 1970-01-01.
 @(private) FILETIME_UNIX_EPOCH :: 116444736000000000;
@@ -385,6 +414,12 @@ foreign kernel32 {
 	rt_delete_file :: proc "stdcall" (path: [^]u16) -> i32 ---;
 	@(link_name="MoveFileExW")
 	rt_move_file :: proc "stdcall" (from: [^]u16, to: [^]u16, flags: u32) -> i32 ---;
+	@(link_name="SetFileInformationByHandle")
+	rt_set_file_information :: proc "stdcall" (
+		handle: int, class: u32, information: [^]u16, size: u32,
+	) -> i32 ---;
+	@(link_name="GetCurrentProcessId")
+	rt_current_process_id :: proc "stdcall" () -> u32 ---;
 	@(link_name="CreateDirectoryW")
 	rt_create_directory :: proc "stdcall" (path: [^]u16, security: rawptr) -> i32 ---;
 	@(link_name="RemoveDirectoryW")
@@ -593,8 +628,115 @@ remove_native :: proc(path: string_view) -> Status(io.Error) {
 rename_native :: proc(old_path: string_view, new_path: string_view) -> Status(io.Error) {
 	from := wide_path(old_path, .Rename) or_return;
 	to := wide_path(new_path, .Rename) or_return;
-	if (rt_move_file(unsafe.raw_data(from), unsafe.raw_data(to), u32(MOVEFILE_REPLACE_EXISTING)) == 0) {
+	// Without `MOVEFILE_COPY_ALLOWED` a move across volumes is refused, which is
+	// what keeps every rename atomic.
+	flags := u32(MOVEFILE_REPLACE_EXISTING) | u32(MOVEFILE_WRITE_THROUGH);
+	if (rt_move_file(unsafe.raw_data(from), unsafe.raw_data(to), flags) == 0) {
 		return .err(from_last_error(.Rename));
+	}
+}
+
+// standard-library "Atomic replacement". The temporary file is renamed through
+// its own open handle, so nothing can take its place between the last write
+// and the switch, and flushing that handle once more commits the rename itself:
+// `MOVEFILE_WRITE_THROUGH` documents that promise only for a move done as a copy.
+@(private)
+replace_atomic_native :: proc(path: string_view, data: []u8) -> Status(io.Error) {
+	information := rename_information(path) or_return;
+	for (attempt := 0; ; attempt += 1) {
+		temporary := temporary_name(path, attempt) or_return;
+		wide := wide_path(temporary, .Open) or_return;
+		handle := rt_create_file(
+			unsafe.raw_data(wide), u32(GENERIC_WRITE) | u32(DELETE), u32(SHARE_ALL), nil,
+			u32(CREATE_NEW), u32(FILE_ATTRIBUTE_NORMAL), 0,
+		);
+		if (handle == INVALID_HANDLE) {
+			error := from_last_error(.Open);
+			// Another writer's temporary file, or one a crash left: try the next name.
+			if (io.is(error, .Already_Exists) && attempt + 1 < TEMPORARY_ATTEMPTS) { continue; }
+			return .err(error);
+		}
+		file := File{handle, .Write};
+		prepared := io.write_all(inout file, data);
+		switch (prepared) {
+		case .ok: prepared = file.flush();
+		case .err:
+		}
+		if (succeeded(prepared) && rt_set_file_information(
+			handle, u32(FILE_RENAME_INFO_CLASS), unsafe.raw_data(information),
+			u32(information.len() * 2),
+		) == 0) {
+			prepared = .err(from_last_error(.Rename));
+		}
+		switch (prepared) {
+		case .ok:
+		case .err:
+			_ = file.close();
+			_ = rt_delete_file(unsafe.raw_data(wide));
+			return prepared;
+		}
+		// The target now holds the new content. A failed flush withdraws only the
+		// durability promise, and a failed close cannot undo a durable switch, so
+		// it is not reported as a failed replacement.
+		committed := file.flush();
+		_ = file.close();
+		return committed;
+	}
+}
+
+@(private)
+succeeded :: proc(outcome: Status(io.Error)) -> bool {
+	switch (outcome) {
+	case .ok:  return true;
+	case .err: return false;
+	}
+}
+
+// How many names `replace_atomic` tries before reporting `Already_Exists`.
+@(private) TEMPORARY_ATTEMPTS :: 16;
+
+// `<path>.<process>-<attempt>.tmp`, in hexadecimal: the process id keeps two
+// programs apart, and the attempt steps past a name already taken.
+@(private)
+temporary_name :: proc(path: string_view, attempt: int) -> Result(string, io.Error) {
+	process: [8]u8 = {};
+	step: [8]u8 = {};
+	return scratch_join([]string_view{
+		path, ".", hexadecimal(&mut process[:], u64(rt_current_process_id())), "-",
+		hexadecimal(&mut step[:], u64(attempt)), ".tmp",
+	}, .Open);
+}
+
+// `value` in lowercase hexadecimal, written at the end of `buffer` and viewed
+// from there. Eight digits hold any `u32`.
+@(private)
+hexadecimal :: proc(buffer: []mut u8, value: u64) -> string_view {
+	at := buffer.len();
+	rest := value;
+	for (;;) {
+		at -= 1;
+		digit := u8(rest & 0xF);
+		buffer[at] = digit + u8('0') if digit < 10 else digit - 10 + u8('a');
+		rest = rest >> 4;
+		if (rest == 0) { break; }
+	}
+	return string_view.from_utf8(buffer[at:buffer.len()]) or_else "";
+}
+
+// `FILE_RENAME_INFO` as 64-bit Windows lays it out, in UTF-16 units: the
+// replace flag in a `DWORD` padded to eight bytes, a null root-directory handle,
+// the name's length in bytes without its terminator, then the name.
+@(private)
+rename_information :: proc(path: string_view) -> Result([dynamic]u16, io.Error) {
+	name := wide_path(path, .Rename) or_return;
+	switch (try_make([dynamic]u16, 0, 10 + name.len(), mem.default_allocator())) {
+	case .ok(information):
+		length := u32((name.len() - 1) * 2);
+		information.append(1, 0, 0, 0, 0, 0, 0, 0, u16(length & 0xFFFF), u16(length >> 16));
+		information.append(..name[:]);
+		return move(information);
+	case .err:
+		return .err(io.from_allocator_error(.Rename));
 	}
 }
 

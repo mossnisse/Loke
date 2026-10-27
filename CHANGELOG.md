@@ -8,6 +8,19 @@ checklist.
 
 ## [Unreleased]
 
+### Added
+
+- `fs.replace_atomic` and `fs.replace_atomic_text` replace a file so that a
+  reader, or the program after a crash or power loss, sees either the whole
+  previous file or the whole new one, and on success the new one is durable
+  ([Atomic replacement](standard-library.md#atomic-replacement)).
+
+### Changed
+
+- `fs.rename` now returns only once the rename is durable, and
+  `fs.File.flush` is documented as making written data durable, which it
+  already did.
+
 ## [0.9.0] - 2026-10-27
 
 ### Breaking changes

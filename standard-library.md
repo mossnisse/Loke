@@ -1474,6 +1474,11 @@ without touching the file. Append mode guarantees
 that each underlying write begins at the current end of file; it does not make
 multiple writes from multiple processes into one atomic transaction.
 
+`flush` returns once the file's written data and metadata have been handed to
+the storage device, so they survive a crash or power loss as far as the device
+honors the request. `File` keeps no buffer of its own, so there is no weaker
+meaning for `flush` to have.
+
 ### Whole-file convenience
 
 ```loke
@@ -1488,7 +1493,8 @@ append_text(path, text: string_view) -> Status(io.Error)
 ```
 
 `read_text` validates UTF-8. `write_*` truncates an existing file only after it
-has successfully opened the target. It does not promise atomic replacement.
+has successfully opened the target. It does not promise atomic replacement;
+[`replace_atomic`](#atomic-replacement) does.
 `read_bytes` and `read_text` use the same `limit` contract as `io.read_to_end`:
 exceeding a positive limit answers `.err(Limit_Exceeded)` and destroys partial
 storage.
@@ -1504,6 +1510,35 @@ read_notes :: proc(path: string_view) -> Result(string, io.Error) {
 This bounds the input at 1 MiB and returns UTF-8 validation, allocation, and
 filesystem failures to the caller. For formatted stream output, use
 `io.write_formatted` and explicitly close an owning file when close errors matter.
+
+### Atomic replacement
+
+```loke
+replace_atomic(path, data: []u8) -> Status(io.Error)
+replace_atomic_text(path, text: string_view) -> Status(io.Error)
+```
+
+`replace_atomic` makes `path` hold exactly `data`, whether or not it existed. A
+reader, or the program after a crash or power loss, sees either the whole
+previous file or the whole new one, never a mixture. On `.ok` the new content
+and the name switch are both durable, as far as the device honors flush
+requests. On `.err` the target is as it was before the call, unless the switch
+was made but could not be made durable, in which case it holds the new content.
+
+The data is first written and flushed to a new file in the target's directory,
+named after the target with a `.tmp` suffix, and that file then takes the
+target's name; only a rename within one volume can be atomic. A failure removes
+the temporary file, but a crash before the switch can leave it behind. Each
+call writes the whole file, so a program that keeps large state in several
+files replaces a small manifest naming them last.
+
+Example (imports `core:fs` and `core:io`):
+
+```loke
+save :: proc(generation: string_view) -> Status(io.Error) {
+    return fs.replace_atomic_text("save/manifest.txt", generation);
+}
+```
 
 ### Filesystem operations
 
@@ -1541,6 +1576,10 @@ list_names :: proc(path: string_view) -> Status(io.Error) {
 ```
 
 The name is consumed before the next step, and `or_return` propagates errors.
+
+`rename` replaces an existing file at the new path. It refuses a move across
+volumes rather than copying, so a rename that succeeds is atomic, and on `.ok`
+it is durable as far as the device honors flush requests.
 
 `create_directories` succeeds when the path ends up naming a directory, so an
 existing directory and a volume root such as `C:\` are not failures, while an
