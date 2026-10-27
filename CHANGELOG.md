@@ -8,6 +8,14 @@ checklist.
 
 ## [Unreleased]
 
+### Added
+
+- `math.floor_div` and `math.floor_mod` divide any integer type rounding the
+  quotient toward negative infinity, where `/` and `%` truncate toward zero,
+  so `math.floor_div(-1, 16)` is `-1` and `math.floor_mod(-1, 16)` is `15`.
+  For a power-of-two divisor, `x >> n` and `x & (2^n - 1)` already give the
+  same results ([Integer operators](design.md#integer-operators)).
+
 ## [0.9.0] - 2026-10-27
 
 ### Breaking changes

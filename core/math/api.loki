@@ -269,6 +269,17 @@ checked_sub :: proc(a: $T, b: T) -> Option(T) where interfaces.Integral(T), inte
 // `a * b`, or `.none` when the product does not fit in `T`.
 checked_mul :: proc(a: $T, b: T) -> Option(T) where interfaces.Integral(T), interfaces.Ordered(T) ---;
 
+// `x / y` rounded toward negative infinity, where `/` truncates toward zero:
+// `floor_div(-1, 16)` is `-1`, not `0`. A zero divisor panics, and so does
+// `floor_div(MIN, -1)`, whose quotient does not fit, as for `/`.
+floor_div :: proc(x: $T, y: T) -> T where interfaces.Integral(T), interfaces.Ordered(T) ---;
+
+// The remainder that goes with `floor_div`, so that
+// `x == floor_div(x, y)*y + floor_mod(x, y)`. A non-zero result has `y`'s
+// sign, so for a positive `y` it lies in `[0, y)`: `floor_mod(-1, 16)` is
+// `15`. A zero divisor panics; `floor_mod(MIN, -1)` is `0`, as for `%`.
+floor_mod :: proc(x: $T, y: T) -> T where interfaces.Integral(T), interfaces.Ordered(T) ---;
+
 // The largest integral value not greater than `x`.
 floor :: proc(x: f64) -> f64 ---;
 

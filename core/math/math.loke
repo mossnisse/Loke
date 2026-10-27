@@ -211,7 +211,8 @@ to :: proc($To: type, value: $From) -> Option(To)
 // `+`, `-`, and `*` panic on overflow (design.md "Integer overflow"). The
 // `wrapping_` forms keep the low bits instead, as `+%`, `-%`, and `*%` do, and
 // the `checked_` forms answer `.none` where the operator would panic. They are
-// for generic code and procedure values.
+// for generic code and procedure values. `floor_div` and `floor_mod` are the
+// floored counterparts of the truncating `/` and `%`.
 //
 // `interfaces.Integral` does not require the wrapping operators, so a distinct
 // integer that satisfies it may have none. The low bits of a sum, difference,
@@ -282,6 +283,31 @@ checked_mul :: proc(a: $T, b: T) -> Option(T) where interfaces.Integral(T), inte
 	}
 	if (product / a != b) { return .none; }
 	return product;
+}
+
+/// `x / y` rounded toward negative infinity, where `/` truncates toward zero:
+/// `floor_div(-1, 16)` is `-1`, not `0`. A zero divisor panics, and so does
+/// `floor_div(MIN, -1)`, whose quotient does not fit, as for `/`.
+// design.md "Integer operators". The truncated quotient is one too large
+// exactly when the division is inexact and the operands' signs differ. The
+// correction cannot overflow: an inexact division has `|y| >= 2`, so the
+// truncated quotient is at most half of `T`'s range.
+floor_div :: proc(x: $T, y: T) -> T where interfaces.Integral(T), interfaces.Ordered(T) {
+	quotient := x / y;
+	if (x % y != T(0) && (x < T(0)) != (y < T(0))) { quotient = quotient - T(1); }
+	return quotient;
+}
+
+/// The remainder that goes with `floor_div`, so that
+/// `x == floor_div(x, y)*y + floor_mod(x, y)`. A non-zero result has `y`'s
+/// sign, so for a positive `y` it lies in `[0, y)`: `floor_mod(-1, 16)` is
+/// `15`. A zero divisor panics; `floor_mod(MIN, -1)` is `0`, as for `%`.
+// The truncated remainder has `x`'s sign. Where that is not `y`'s, adding `y`
+// brings it into range, and cannot overflow, since the two signs differ.
+floor_mod :: proc(x: $T, y: T) -> T where interfaces.Integral(T), interfaces.Ordered(T) {
+	remainder := x % y;
+	if (remainder != T(0) && (remainder < T(0)) != (y < T(0))) { remainder = remainder + y; }
+	return remainder;
 }
 
 // ------------------------------------------------ platform math bindings --

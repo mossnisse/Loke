@@ -1,0 +1,89 @@
+@(public)
+package main;
+
+import "base:interfaces";
+import "core:fmt";
+import "core:math";
+
+// design.md "Integer operators": `math.floor_div` rounds the quotient toward
+// negative infinity, and `math.floor_mod` is the remainder that goes with it,
+// with the divisor's sign.
+
+// A distinct integer meets `interfaces.Integral` through its delegated
+// operators, so the floored forms take it as they take any integer.
+Word :: distinct i32;
+
+impl Word {
+	delegate(+, -, *, /, %, |, ~, &, &~, ==, <);
+	left :: operator(<<) proc(a: Word, count: uint) -> Word { return Word(i32(a) << count); }
+	right :: operator(>>) proc(a: Word, count: uint) -> Word { return Word(i32(a) >> count); }
+}
+static_assert(interfaces.Integral(Word));
+
+// Folded at compile time.
+CHUNK :: math.floor_div(-17, 16);
+LOCAL :: math.floor_mod(-17, 16);
+
+main :: proc() {
+	// Every sign combination, inexact and exact.
+	fmt.println(math.floor_div(7, 2), math.floor_mod(7, 2));
+	fmt.println(math.floor_div(-7, 2), math.floor_mod(-7, 2));
+	fmt.println(math.floor_div(7, -2), math.floor_mod(7, -2));
+	fmt.println(math.floor_div(-7, -2), math.floor_mod(-7, -2));
+	fmt.println(math.floor_div(-8, 2), math.floor_mod(-8, 2));
+	fmt.println(math.floor_div(8, -2), math.floor_mod(8, -2));
+	fmt.println(math.floor_div(0, -3), math.floor_mod(0, -3));
+
+	// Chunk coordinates: -1 is in chunk -1 at offset 15, not chunk 0.
+	fmt.println(math.floor_div(-1, 16), math.floor_mod(-1, 16), CHUNK, LOCAL);
+
+	// The ends of the type. `MIN % -1` is 0, and so is its floored form.
+	minimum: i32 = -2147483647 - 1;
+	maximum: i32 = 2147483647;
+	fmt.println(math.floor_div(minimum, 2), math.floor_mod(minimum, 2));
+	fmt.println(math.floor_div(minimum, 3), math.floor_mod(minimum, 3));
+	fmt.println(math.floor_div(maximum, -2), math.floor_mod(maximum, -2));
+	fmt.println(math.floor_div(minimum, maximum), math.floor_mod(minimum, maximum));
+	fmt.println(math.floor_div(maximum, minimum), math.floor_mod(maximum, minimum));
+	fmt.println(math.floor_mod(minimum, i32(-1)));
+
+	// Unsigned values have nothing to round: the floored forms are `/` and `%`.
+	fmt.println(math.floor_div(u8(250), u8(7)), math.floor_mod(u8(250), u8(7)));
+
+	fmt.println(i32(math.floor_div(Word(-7), Word(2))), i32(math.floor_mod(Word(-7), Word(2))));
+
+	fmt.println(every_i8_pair());
+	fmt.println(shifts_agree());
+}
+
+// Every `i8` pair but a zero divisor and `MIN / -1`, against the floor of the
+// exact quotient. An `f64` holds each quotient of two `i8`s closely enough that
+// a non-integral one never rounds onto an integer.
+every_i8_pair :: proc() -> int {
+	checked := 0;
+	for (x := -128; x <= 127; x += 1) {
+		for (y := -128; y <= 127; y += 1) {
+			if (y == 0 || (x == -128 && y == -1)) { continue; }
+			quotient := math.floor_div(i8(x), i8(y));
+			remainder := math.floor_mod(i8(x), i8(y));
+			if (int(quotient) != int(math.floor(f64(x) / f64(y)))) { return -1; }
+			if (int(quotient)*y + int(remainder) != x) { return -2; }
+			// In `[0, y)` for a positive divisor, `(y, 0]` for a negative one.
+			if (y > 0 && (remainder < 0 || int(remainder) >= y)) { return -3; }
+			if (y < 0 && (remainder > 0 || int(remainder) <= y)) { return -4; }
+			checked += 1;
+		}
+	}
+	return checked;
+}
+
+// For a power-of-two divisor, an arithmetic shift and a mask are already the
+// floored quotient and remainder.
+shifts_agree :: proc() -> bool {
+	for (x: i32 = -1000; x <= 1000; x += 1) {
+		if (x >> 4 != math.floor_div(x, 16) || x & 15 != math.floor_mod(x, 16)) {
+			return false;
+		}
+	}
+	return true;
+}
