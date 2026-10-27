@@ -2,7 +2,7 @@
 # its bundle is installed and used from outside any checkout, and only then is
 # it published. A release is lokec.exe and loke-lsp.exe with the `base/`,
 # `core/` and `runtime/` trees they discover beside themselves (releasing.md
-# "Version policy").
+# "Version policy"), and the `editors/` extensions that start loke-lsp.
 name: Release
 
 on:
@@ -55,7 +55,7 @@ jobs:
           New-Item -ItemType Directory $stage | Out-Null
           Copy-Item lokec.exe, loke-lsp.exe, LICENSE $stage
           Get-ChildItem -File *.md | Copy-Item -Destination $stage
-          Copy-Item base, core, runtime, examples, tutorials $stage -Recurse
+          Copy-Item base, core, editors, runtime, examples, tutorials $stage -Recurse
           # A compile cache lokec rebuilds on demand, never shipped.
           Remove-Item "$stage\runtime\prebuilt" -Recurse -Force -ErrorAction SilentlyContinue
           Compress-Archive $stage "$name.zip"

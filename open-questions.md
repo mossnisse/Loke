@@ -22,8 +22,9 @@ annotations. Three decisions remain open:
   normalized input was introduced, checking costs 7–14% more front-end time on
   the selected workloads and 3–10% more per workspace LSP operation, while
   compiler peak working set is 5–10% lower on the larger workloads.
-  Normalization is the largest provenance phase in the
-  [current records](bench/baselines/README.md#completed-migration-stage-5).
+  Normalization is the largest provenance phase in the current records, under
+  "Completed migration (stage 5)" in the repository's
+  `bench/baselines/README.md`.
   Whether to accept that cost or reduce it is open.
 
 ## Package and import versioning

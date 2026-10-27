@@ -251,8 +251,9 @@ the largest sampled build arena:
 odin run bench/provenance_profile -- bench/provenance.loke bench/workspace examples/corpus_runner.loke
 ```
 
-The [baseline records](bench/baselines/README.md#provenance-normalization) hold
-its results and the matching `perf.ps1` records.
+The baseline records in the repository's `bench/baselines/README.md`, under
+"Provenance normalization", hold its results and the matching `perf.ps1`
+records.
 
 ### Allocation domains
 
@@ -1401,8 +1402,8 @@ includes the 150 ms pause the server waits for further edits. When incremental
 checking was introduced (2026-10-14), it answered an edit in about 295 ms
 instead of 340 ms, and completion in about 290 ms instead of 340 to 470 ms,
 while the server's peak working set grew from about 33 MB to about 89 MB for
-the checkpoints. The [baseline records](bench/baselines/README.md) hold later
-measurements.
+the checkpoints. The baseline records in the repository's
+`bench/baselines/README.md` hold later measurements.
 
 ## Deliberate boundaries
 

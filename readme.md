@@ -26,7 +26,8 @@ and adding the compiler to `PATH`.
 Keep `lokec.exe`, `base/`, `core/`, and `runtime/` together. The compiler finds
 these directories beside its executable, so you can invoke it from any working
 directory. The bundle also includes `loke-lsp.exe`, the
-[language server](compiler-guide.md#language-server) for editors. In
+[language server](compiler-guide.md#language-server) for editors, and the
+[VS Code extension](editors/vscode/README.md) that starts it. In
 PowerShell, check the installation:
 
 ```powershell

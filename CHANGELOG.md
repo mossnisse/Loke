@@ -361,6 +361,8 @@ checklist.
 
 ### Added
 
+- The release zip includes `editors/`, so the VS Code extension that starts
+  `loke-lsp` can be built from the bundle.
 - [`@(intrinsic)`](design.md#intrinsic) declares a name the compiler supplies
   to a bundled package in that package's source, with a `---` body, so its
   signature and doc comment appear in `-doc` and `api.loki`. `core:mem`,

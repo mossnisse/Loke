@@ -2033,5 +2033,5 @@ changes.
 The frozen input is shared within one concrete body build. Whole-program summary
 visits still rebuild the body, so retaining normalized bodies across those visits
 remains a [measured later decision](open-questions.md#normalized-input-for-provenance-analysis).
-The [profiling records](bench/baselines/README.md#provenance-normalization)
-distinguish normalization, fact replay, and event materialization cost.
+The profiling records in the repository's `bench/baselines/README.md`, under
+"Provenance normalization", distinguish normalization, fact replay, and event materialization cost.
