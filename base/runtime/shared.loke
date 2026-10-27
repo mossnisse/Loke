@@ -198,7 +198,7 @@ impl Shared($T) {
 		// "What the unwind runs, and what it does not").
 		block^.live = 0;
 		retired := unsafe_take(block^.payload[0]);
-		defer release_block(block);
+		defer release_block(block, block^.allocator);
 		drop(retired);
 	}
 }
@@ -245,18 +245,18 @@ impl Weak($T) {
 		if (self.block == nil) { return; }
 		block := (^mut Shared_Block(T))(self.block);
 		self.block = nil;
-		release_block(block);
+		release_block(block, block^.allocator);
 	}
 }
 
 // One weak reference given back. The block is released when the last one goes,
 // which is after the payload has already been dropped by the final strong
-// handle.
+// handle. `allocator` is the one the block stores, read by the handle operation
+// calling this, which is where the compiler takes it as that handle's region.
 @(private)
-release_block :: proc(block: ^mut Shared_Block($T)) {
+release_block :: proc(block: ^mut Shared_Block($T), allocator: Allocator) {
 	if (atomic_sub(&mut block^.weak, 1, Memory_Order.Release) != 1) { return; }
 	fence(Memory_Order.Acquire);
-	allocator := block^.allocator;
 	// The unchecked release. The block travels as a `rawptr` so a handle carries
 	// no borrow, which is also why the compiler cannot follow this pointer back
 	// to the `new` that made it — design.md's own answer for a case like this.

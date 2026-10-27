@@ -910,6 +910,7 @@ generic_value_text :: proc(c: ^Compiler, value: Const_Value, depth := 0) -> stri
 }
 
 // Keep the beginning and end of deep instance names without cutting UTF-8.
+@(private = "file")
 short_instantiation_name :: proc(c: ^Compiler, name: string) -> string {
 	if len(name) <= 80 { return name }
 	end, start := 64, len(name) - 12

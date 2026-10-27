@@ -745,7 +745,7 @@ checklist.
   free in an unknown region, since the handle frees through the allocator it
   reads back from its control block, so a second such task was rejected
   (`L0732`). A handle now frees in its own region, and one an arena backs
-  still reserves that arena.
+  still reserves that arena, as does what its payload's drop hook allocates.
 - A case binding over a subject reached through a pointer, as in
   `switch (p^)` or `switch (holder.slot)` on a `^Holder`, names the subject's
   storage, so `return &value` from such a case is accepted when the subject is

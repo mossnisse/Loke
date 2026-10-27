@@ -1964,6 +1964,29 @@ also tells a cycle apart from two sibling fields of the same type; replacing
 it with a visited set that treats every revisit as unknown would reject
 unrelated storage unnecessarily.
 
+### Lazy publication and shared-handle review (2026-10-27)
+
+Review of `e498a75f`. The previous `Lazy.get` local-borrow, thread-local, and
+local-arena cases are rejected. The isolated diagnostic corpus, lazy and
+shared-handle runtime cases, existing shared-ownership runtime case, and
+`core:sync` interface check pass.
+
+Two regressions in the shared-handle allocator summary were recorded as
+known gaps and are fixed (2026-10-27): a user's extension of `Shared(T)` lost
+its callees' allocator use, and a payload's drop hook lost its own. The
+exemption now covers only the runtime's own handle methods, and settles no
+method's use. In those bodies an unknown region, the body's own or an
+argument's, including a call whose arguments carry none, is the receiver's
+control block; callees' summaries propagate as for any body. `release_block`
+takes the allocator the block stores as a parameter, so the free is charged
+through that substitution. `tests/err/parallel_shared_handles.loke` covers
+both reproductions.
+
+The simplification is applied: `note_instance_sites` in
+[borrow.odin](src/borrow.odin) pushes a frame for the selecting call and calls
+`note_instantiation_stack(k, first)`, and `short_instantiation_name` is
+private to its file again.
+
 ### Lazy setup review (2026-10-27)
 
 `sync.Lazy(T)` answers the seventh

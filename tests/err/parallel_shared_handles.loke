@@ -1,15 +1,36 @@
 // design.md "Allocators and tasks": dropping a `Shared(T)` frees in the
 // allocator that made its control block and its payload, so a task dropping
 // one backed by an arena reserves that arena until the join, as does dropping
-// a handle a `Weak` upgrades to.
+// a handle a `Weak` upgrades to. A payload's own drop hook, and a procedure a
+// user's extension of `Shared(T)` calls, keep their allocator use.
 package main;
 
 import "core:fmt";
 import "core:mem";
 
+global_arena: mem.Arena;
+
+Item :: struct { n: int }
+
+impl Item {
+	release :: hook(drop) proc(self: inout) { _ = fill(global_arena.allocator()); }
+}
+
+impl Shared(int) {
+	fill_here :: proc(self: ^, allocator: Allocator) -> int { return fill(allocator); }
+}
+
+fill :: proc(allocator: Allocator) -> int {
+	xs := make([dynamic]int, 0, 4, allocator);
+	xs.append(1);
+	return xs.len();
+}
+
 take :: proc(handle: move Shared(int)) -> int { return handle.get()^; }
 
 take_list :: proc(handle: move Shared([dynamic]int)) -> int { return handle.get().len(); }
+
+take_item :: proc(handle: move Shared(Item)) -> int { return handle.get().n; }
 
 upgraded :: proc(weak: Weak(int)) -> bool {
 	strong := weak.upgrade();
@@ -39,5 +60,19 @@ main :: proc() {
 		spawn e = upgraded(kept.downgrade());
 		spawn f = upgraded(kept.downgrade());
 	}
-	fmt.println(a, b, c, d, e, f);
+	global_arena = mem.Arena.init();
+	one := shared(Item{1});
+	two := shared(Item{2});
+	g, h: int;
+	parallel {
+		spawn g = take_item(move(one));
+		spawn h = take_item(move(two));
+	}
+	handle := shared(7);
+	i, j: int;
+	parallel {
+		spawn i = handle.fill_here(allocator);
+		spawn j = handle.fill_here(allocator);
+	}
+	fmt.println(a, b, c, d, e, f, g, h, i, j);
 }
