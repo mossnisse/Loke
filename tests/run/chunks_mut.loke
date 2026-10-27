@@ -10,6 +10,13 @@ fill :: proc(rows: []mut int, value: int) {
 	foreach (&mut x in rows) { x = value; }
 }
 
+// The receiver is evaluated before the chunk length, so a length that rebinds
+// it does not change which slice is reborrowed.
+replace :: proc(receiver: inout []mut int, @(escape=stored) replacement: []mut int) -> int {
+	receiver = replacement;
+	return 1;
+}
+
 main :: proc() {
 	values := [dynamic]int{1, 2, 3, 4, 5, 6, 7};
 	xs := &mut values[:];
@@ -56,4 +63,13 @@ main :: proc() {
 		rows[0] = rows.len();
 	}
 	fmt.println(held.len(), xs);
+
+	// The view is of the receiver as evaluated before the chunk length.
+	first_pair := [2]int{1, 2};
+	second_pair := [2]int{3, 4};
+	receiver := &mut first_pair[:];
+	foreach (rows in receiver.chunks_mut(replace(inout receiver, &mut second_pair[:]))) {
+		rows[0] = 9;
+	}
+	fmt.println(first_pair, second_pair);
 }

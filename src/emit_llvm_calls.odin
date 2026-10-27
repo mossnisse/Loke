@@ -1209,7 +1209,13 @@ emit_bound_call :: proc(
 			continue
 		}
 		mode := index < len(callee_type.param_modes) ? callee_type.param_modes[index] : Param_Mode.Value
-		if param_mode_is_pointer(mode) {
+		if index == 0 && param_mode_is_pointer(mode) && symbol != nil && prov_op_lends_receiver(symbol.container_op) {
+			// design.md "Splitting a mutable slice": the receiver is evaluated
+			// before the index, which may rebind it, and the reborrow is taken of
+			// that value, so the callee reads a snapshot rather than the place.
+			operands[0] = temporary_slot(e, callee_type.parameters[0])
+			store(e, callee_type.parameters[0], emit_expr(e, argument), operands[0])
+		} else if param_mode_is_pointer(mode) {
 			operands[index] = emit_address(e, argument)
 			if _, composite := argument.(^Expr_Composite); mode == .Borrow && composite {
 				// A directly borrowed composite belongs to the complete expression.

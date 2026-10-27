@@ -737,6 +737,12 @@ checklist.
 
 ### Fixed
 
+- `xs.split_at_mut(mid)` and `xs.chunks_mut(n)` reborrow `xs` as it was
+  evaluated before the argument
+  ([Splitting a mutable slice](design.md#splitting-a-mutable-slice)). An
+  argument that rebinds `xs`, as `replace(inout xs, other)` may, made the
+  compiled program split the new slice instead; compile-time evaluation was
+  already right.
 - A `dyn` slot call through a view that is not a named local, such as
   `(dyn Shape)(&s).area(scale = 2)`, a field, a call's result, or a generic
   receiver, is checked as one through a local is

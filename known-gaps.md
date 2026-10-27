@@ -7,38 +7,6 @@ compiler, unless the rewording is the intended fix.
 
 ## Gaps
 
-### Mutable-slice splitting reloads a rebound receiver during emission
-
-[Splitting a mutable slice](design.md#splitting-a-mutable-slice) captures the
-receiver before evaluating the index and takes its reborrow afterward. The
-provenance graph models that capture, but LLVM emission reloads the receiver
-after the index expression has rebound it. This reproduces with the baseline
-compiler from `81d478b`, before storage normalization:
-
-```loke
-package main;
-import "core:fmt";
-replace :: proc(receiver: inout []mut int, @(escape=stored) replacement: []mut int) -> int {
-    receiver = replacement;
-    return 1;
-}
-main :: proc() {
-    first := [2]int{1, 2};
-    second := [2]int{3, 4};
-    receiver := &mut first[:];
-    halves := receiver.split_at_mut(replace(inout receiver, &mut second[:]));
-    halves.left[0] = 9;
-    fmt.println(first, second);
-}
-```
-
-Expected output is `[9, 2] [3, 4]`; actual output is `[1, 2] [9, 4]`.
-The emitter must preserve the evaluated receiver across later argument
-evaluation, matching the analysis capture. The stage 2 inspection test
-`normalization_captured_reassignment_contract` in
-[provenance_normalization_test.odin](src/provenance_normalization_test.odin)
-checks the analysis identity; it does not establish correct runtime emission.
-
 ### `-doc` omits compiler-contributed declarations
 
 [`-doc`](compiler-guide.md#common-options) prints "each public declaration's
