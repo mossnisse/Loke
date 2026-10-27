@@ -224,9 +224,9 @@ append_text :: proc(path: string_view, text: string_view) -> Status(io.Error) {
 /// the target is as it was before the call, unless the switch was made but
 /// could not be made durable, in which case it holds the new content.
 ///
-/// The data goes first into a new file beside the target, named after it with a
-/// `.tmp` suffix, which then takes the target's name. A failure removes it; a
-/// crash before the switch can leave it behind.
+/// The data goes first into a new file in the target's directory, named
+/// `.replace-<process>-<attempt>.tmp`, which then takes the target's name. A
+/// failure removes it; a crash before the switch can leave it behind.
 // standard-library "Atomic replacement". Beside the target, not in a temporary
 // directory: only a rename within one volume can be atomic.
 replace_atomic :: proc(path: string_view, data: []u8) -> Status(io.Error) {
@@ -657,52 +657,46 @@ replace_atomic_native :: proc(path: string_view, data: []u8) -> Status(io.Error)
 			return .err(error);
 		}
 		file := File{handle, .Write};
-		prepared := io.write_all(inout file, data);
-		switch (prepared) {
-		case .ok: prepared = file.flush();
-		case .err:
-		}
-		if (succeeded(prepared) && rt_set_file_information(
+		renamed := false;
+		// Cleanup runs in reverse: the handle closes, then a temporary that never
+		// took the target's name is deleted. Once it has, the old name may already
+		// be another writer's temporary file.
+		defer if (!renamed) { _ = rt_delete_file(unsafe.raw_data(wide)); }
+		defer { _ = file.close(); }
+		io.write_all(inout file, data) or_return;
+		file.flush() or_return;
+		if (rt_set_file_information(
 			handle, u32(FILE_RENAME_INFO_CLASS), unsafe.raw_data(information),
 			u32(information.len() * 2),
 		) == 0) {
-			prepared = .err(from_last_error(.Rename));
+			return .err(from_last_error(.Rename));
 		}
-		switch (prepared) {
-		case .ok:
-		case .err:
-			_ = file.close();
-			_ = rt_delete_file(unsafe.raw_data(wide));
-			return prepared;
-		}
+		renamed = true;
 		// The target now holds the new content. A failed flush withdraws only the
 		// durability promise, and a failed close cannot undo a durable switch, so
 		// it is not reported as a failed replacement.
-		committed := file.flush();
-		_ = file.close();
-		return committed;
-	}
-}
-
-@(private)
-succeeded :: proc(outcome: Status(io.Error)) -> bool {
-	switch (outcome) {
-	case .ok:  return true;
-	case .err: return false;
+		return file.flush();
 	}
 }
 
 // How many names `replace_atomic` tries before reporting `Already_Exists`.
 @(private) TEMPORARY_ATTEMPTS :: 16;
 
-// `<path>.<process>-<attempt>.tmp`, in hexadecimal: the process id keeps two
-// programs apart, and the attempt steps past a name already taken.
+// `.replace-<process>-<attempt>.tmp` in the target's directory, in
+// hexadecimal: the process id keeps two programs apart, and the attempt steps
+// past a name already taken. The name is short and independent of the target's,
+// since a target near the filesystem's limit on one name's length leaves no
+// room for a suffix.
 @(private)
 temporary_name :: proc(path: string_view, attempt: int) -> Result(string, io.Error) {
+	bytes := path.bytes();
+	floor := lexical.volume(path).len();
+	at := bytes.len();
+	for (; at > floor && !is_separator(bytes[at - 1]); at -= 1) {}
 	process: [8]u8 = {};
 	step: [8]u8 = {};
 	return scratch_join([]string_view{
-		path, ".", hexadecimal(&mut process[:], u64(rt_current_process_id())), "-",
+		path[0:at], ".replace-", hexadecimal(&mut process[:], u64(rt_current_process_id())), "-",
 		hexadecimal(&mut step[:], u64(attempt)), ".tmp",
 	}, .Open);
 }

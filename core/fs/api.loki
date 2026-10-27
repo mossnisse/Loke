@@ -122,9 +122,9 @@ append_text :: proc(path: string_view, text: string_view) -> Status(io.Error) --
 // the target is as it was before the call, unless the switch was made but
 // could not be made durable, in which case it holds the new content.
 //
-// The data goes first into a new file beside the target, named after it with a
-// `.tmp` suffix, which then takes the target's name. A failure removes it; a
-// crash before the switch can leave it behind.
+// The data goes first into a new file in the target's directory, named
+// `.replace-<process>-<attempt>.tmp`, which then takes the target's name. A
+// failure removes it; a crash before the switch can leave it behind.
 replace_atomic :: proc(path: string_view, data: []u8) -> Status(io.Error) ---;
 
 replace_atomic_text :: proc(path: string_view, text: string_view) -> Status(io.Error) ---;

@@ -306,6 +306,15 @@ main :: proc() {
 	case .err: fmt.println(false);
 	}
 	fmt.println((count_entries(directory) or_else -1) == before + 1);
+	// A name near the filesystem's 255-unit limit on one name leaves no room for
+	// a suffix, so the temporary name must not be built from it. The whole path
+	// passes 260 units, hence the extended-length prefix.
+	long_name := strings.join([]string_view{"\\\\?\\", directory, "\\", strings.repeat("a", 250)}, "");
+	fmt.println(succeeded(fs.write_text(long_name, "old")));
+	fmt.println(succeeded(fs.replace_atomic_text(long_name, "new")));
+	fmt.println(fs.read_text(long_name) or_else panic("a file the test just wrote could not be read"));
+	fmt.println(succeeded(fs.remove(long_name)));
+	fmt.println((count_entries(directory) or_else -1) == before + 1);
 
 	clean_up(directory);
 	fmt.println(fs.exists(directory) or_else true);

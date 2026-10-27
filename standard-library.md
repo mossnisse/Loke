@@ -1526,8 +1526,9 @@ requests. On `.err` the target is as it was before the call, unless the switch
 was made but could not be made durable, in which case it holds the new content.
 
 The data is first written and flushed to a new file in the target's directory,
-named after the target with a `.tmp` suffix, and that file then takes the
-target's name; only a rename within one volume can be atomic. A failure removes
+named `.replace-<process>-<attempt>.tmp` so that a target name of any valid
+length leaves room for it, and that file then takes the target's name; only a
+rename within one volume can be atomic. A failure removes
 the temporary file, but a crash before the switch can leave it behind. Each
 call writes the whole file, so a program that keeps large state in several
 files replaces a small manifest naming them last.
