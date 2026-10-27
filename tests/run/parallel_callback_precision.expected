@@ -1,4 +1,4 @@
-serial 9
-bare 253 257
+serial 10
+bare 255 259
 pooled 49
-kept 9 7
+kept 10 8

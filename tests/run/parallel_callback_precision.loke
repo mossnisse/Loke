@@ -8,8 +8,9 @@
 // clean type, a procedure, or a capture literal, and a wrapper given an arena
 // it does not touch, on bare and pooled blocks. Wrappers taking a `dyn proc`
 // view, given `tally` and `fill` serially, run clean procedures and capture
-// literals in tasks, directly and forwarded. A borrow of `hits` also stays
-// live across a serial call given a clean callback.
+// literals in tasks, directly and forwarded, and a view stored in a local
+// and copied to another holds only what was stored. A borrow of `hits` also
+// stays live across a serial call given a clean callback.
 package main;
 
 import "core:fmt";
@@ -57,6 +58,8 @@ build :: proc(f: proc(a: Allocator, n: int) -> int, a: Allocator, n: int) -> int
 erased :: proc(f: dyn proc(n: int) -> int, n: int) -> int { return f(n); }
 relay :: proc(f: dyn proc(n: int) -> int, n: int) -> int { return erased(f, n); }
 build_erased :: proc(f: dyn proc(a: Allocator, n: int) -> int, a: Allocator, n: int) -> int { return f(a, n); }
+stored :: proc(f: dyn proc(n: int) -> int, n: int) -> int { g := f; return g.call(n); }
+work :: proc() -> int { f: dyn proc(n: int) -> int = step; return stored(f, 1); }
 
 // The dirty callbacks, each used where no task runs.
 serial :: proc() -> int {
@@ -66,7 +69,7 @@ serial :: proc() -> int {
 	arena := mem.Arena.init();
 	a := apply(tally, 1) + twice(tally, 1) + repeat(tally, 1, 2) + apply(peek, 1);
 	b := (dyn Recorder)(&loud).record(1) + build(fill, arena.allocator(), 1);
-	c := erased(tally, 1) + build_erased(fill, arena.allocator(), 1);
+	c := erased(tally, 1) + build_erased(fill, arena.allocator(), 1) + stored(tally, 1);
 	return a + b + c;
 }
 
@@ -87,6 +90,7 @@ bare :: proc(pick: bool) -> int {
 	h: int;
 	i: int;
 	j: int;
+	k: int;
 	parallel {
 		spawn a = apply(step, 1);
 		spawn b = twice(double, 3);
@@ -97,8 +101,9 @@ bare :: proc(pick: bool) -> int {
 		spawn h = (dyn proc(n: int) -> int)(shift)(1);
 		spawn i = erased(step, 1);
 		spawn j = relay(shift, 1);
+		spawn k = work();
 	}
-	return a + b + c + d + e + g + h + i + j;
+	return a + b + c + d + e + g + h + i + j + k;
 }
 
 pooled :: proc() -> int {

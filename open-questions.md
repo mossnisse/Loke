@@ -1767,6 +1767,47 @@ Two local simplifications were available, and both are applied:
 
 Net: twenty-three lines removable without changing the analysis structure.
 
+### Dyn proc per-call review (2026-10-27)
+
+Review of `32cf095`. No correctness regression reproduced. The isolated
+diagnostic corpus, callback reach/allocator-use unit test, and
+[runtime precision case](tests/run/parallel_callback_precision.loke) pass.
+Additional cases accept a clean stored view and reject a dirty one, an
+`inout` reassignment, an unknown view holding a writing capture literal, and
+a pooled callback invalidating a live borrow of thread-local storage.
+
+Both non-blocking follow-ups are applied:
+
+- **Simplification:** `effect_value` in
+  [global_effects.odin](src/global_effects.odin) classifies the same identifier
+  through `effect_variable` once in the new view branch and again in the
+  existing procedure branch. Check that the expression has either callable
+  type once, return early for a converted view's concrete target, then share
+  the symbol switch and procedure/variable classification. This removes five
+  lines and keeps one path for parameters and locals; no new helper is needed.
+- **Regression coverage:** the new accepted cases pass named procedures and
+  capture literals directly, while the stored-view case only checks rejection.
+  That rejection also holds with the old type union, so it does not protect
+  precision for locals. Add an accepted stored-view case, for example:
+
+  ```loke
+  package main;
+  hits: int;
+  quiet :: proc(n: int) -> int { return n; }
+  dirty :: proc(n: int) -> int { hits += n; return n; }
+  apply :: proc(f: dyn proc(n: int) -> int, n: int) -> int { g := f; return g.call(n); }
+  work :: proc() -> int { f: dyn proc(n: int) -> int = quiet; return apply(f, 1); }
+  main :: proc() { _ = apply(dirty, 1); r: int; parallel { spawn r = work(); } }
+  ```
+
+  This is rejected with `L0731` by `9d3da3c` and accepted by `32cf095`.
+
+`effect_value` now checks for either callable type once, returns a converted
+view's target early, and shares the symbol classification.
+[parallel_callback_precision.loke](tests/run/parallel_callback_precision.loke)
+runs a task through a view stored in a local and copied in the wrapper, beside
+a serial call passing a dirty procedure.
+
 ### Parameters a join check cannot tell apart (2026-10-26)
 
 Writing `examples/mixer.loke` for milestone 9 found that the

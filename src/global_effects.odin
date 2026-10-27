@@ -330,13 +330,15 @@ effect_value :: proc(c: ^Compiler, e: Expr) -> Effect_Arg {
 	if moved, is_move := value.(^Expr_Move); is_move {
 		value = moved.value
 	}
-	if base := expr_base(value); base != nil && dyn_proc_signature(c, base.type) != INVALID_TYPE {
+	base := expr_base(value)
+	if base == nil {
+		return {}
+	}
+	if dyn_proc_signature(c, base.type) != INVALID_TYPE {
 		if converted, found := converted_view_call(c, value, 0); found {
 			return Effect_Arg{kind = .Procedure, symbol = converted.held if converted.held != INVALID_SYMBOL else converted.callee}
 		}
-		if ident, is_ident := value.(^Expr_Ident); is_ident && effect_variable(c, ident.symbol) {
-			return Effect_Arg{kind = .Variable, symbol = ident.symbol}
-		}
+	} else if underlying_kind(c, base.type) != .Proc {
 		return {}
 	}
 	id := INVALID_SYMBOL
@@ -348,9 +350,6 @@ effect_value :: proc(c: ^Compiler, e: Expr) -> Effect_Arg {
 	case ^Expr_Proc:
 		id = v.symbol
 	case:
-		return {}
-	}
-	if underlying_kind(c, expr_base(value).type) != .Proc {
 		return {}
 	}
 	if sym := symbol_of(c, id); sym != nil && sym.kind == .Proc {
