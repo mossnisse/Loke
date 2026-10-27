@@ -370,22 +370,39 @@ has_excluded_copy_hook :: proc(c: ^Compiler, info: ^Type_Info) -> bool {
 // which a task sharing it could write (design.md "Sharing with tasks").
 // `waker` is an `@(wakes_on_drop)` type it is, holds, or reaches, so keeping
 // the value may keep a waiter asleep (design.md "Releasing before the join").
+//
+// With `through_views`, a read-only `dyn` view is followed into every type the
+// program converts to its interface application instead of counting as
+// erased (design.md "Globals while tasks run"); `mutable_via` and
+// `erased_via` then name the outermost view and witness the hazard came
+// through, if one did.
 Transfer_Facts :: struct {
-	affine:  Type_Id,
-	erased:  Type_Id,
-	mutable: Type_Id,
-	waker:   Type_Id,
+	affine:      Type_Id,
+	erased:      Type_Id,
+	mutable:     Type_Id,
+	waker:       Type_Id,
+	mutable_via: Transfer_Via,
+	erased_via:  Transfer_Via,
 }
 
-transfer_facts :: proc(c: ^Compiler, type: Type_Id) -> Transfer_Facts {
-	facts := Transfer_Facts{affine = INVALID_TYPE, erased = INVALID_TYPE, mutable = INVALID_TYPE, waker = INVALID_TYPE}
+Transfer_Via :: struct {
+	view, witness: Type_Id,
+}
+
+transfer_facts :: proc(c: ^Compiler, type: Type_Id, through_views := false) -> Transfer_Facts {
+	facts := Transfer_Facts {
+		affine = INVALID_TYPE, erased = INVALID_TYPE, mutable = INVALID_TYPE, waker = INVALID_TYPE,
+		mutable_via = {INVALID_TYPE, INVALID_TYPE}, erased_via = {INVALID_TYPE, INVALID_TYPE},
+	}
 	visited := make(map[Type_Id]bool, 8, context.temp_allocator)
-	transfer_facts_walk(c, type, &facts, &visited)
+	transfer_facts_walk(c, type, &facts, &visited, through_views, {INVALID_TYPE, INVALID_TYPE})
 	return facts
 }
 
 @(private = "file")
-transfer_facts_walk :: proc(c: ^Compiler, type: Type_Id, facts: ^Transfer_Facts, visited: ^map[Type_Id]bool) {
+transfer_facts_walk :: proc(
+	c: ^Compiler, type: Type_Id, facts: ^Transfer_Facts, visited: ^map[Type_Id]bool, through_views: bool, via: Transfer_Via,
+) {
 	if type == INVALID_TYPE || visited[type] ||
 	   (facts.affine != INVALID_TYPE && facts.erased != INVALID_TYPE &&
 	    facts.mutable != INVALID_TYPE && facts.waker != INVALID_TYPE) {
@@ -405,36 +422,50 @@ transfer_facts_walk :: proc(c: ^Compiler, type: Type_Id, facts: ^Transfer_Facts,
 	#partial switch info.kind {
 	case .Pointer, .Slice, .Dyn:
 		if info.mutable && facts.mutable == INVALID_TYPE {
-			facts.mutable = type
+			facts.mutable, facts.mutable_via = type, via
 		}
 	}
 	#partial switch info.kind {
 	case .Dyn, .Any_View:
-		if facts.erased == INVALID_TYPE {
-			facts.erased = type
+		if through_views && info.kind == .Dyn && !info.mutable && !view_is_printing(c, info) {
+			for witness in view_witness_types(c, info) {
+				inner := via if via.view != INVALID_TYPE else Transfer_Via{type, witness}
+				transfer_facts_walk(c, witness, facts, visited, through_views, inner)
+			}
+		} else if facts.erased == INVALID_TYPE {
+			facts.erased, facts.erased_via = type, via
 		}
 	case .Distinct, .Pointer, .Slice, .Dynamic_Array, .Box, .Array, .Simd:
-		transfer_facts_walk(c, info.element, facts, visited)
+		transfer_facts_walk(c, info.element, facts, visited, through_views, via)
 	case .Map:
-		transfer_facts_walk(c, info.key, facts, visited)
-		transfer_facts_walk(c, info.element, facts, visited)
+		transfer_facts_walk(c, info.key, facts, visited, through_views, via)
+		transfer_facts_walk(c, info.element, facts, visited, through_views, via)
 	case .Struct:
 		for field in info.fields {
 			if sym := symbol_of(c, field); sym != nil {
-				transfer_facts_walk(c, sym.type, facts, visited)
+				transfer_facts_walk(c, sym.type, facts, visited, through_views, via)
 			}
 		}
 		// A `Shared(T)` holds its payload behind a `rawptr`, as a view may.
 		for arg in info.instance_args {
 			if arg.is_type {
-				transfer_facts_walk(c, arg.type, facts, visited)
+				transfer_facts_walk(c, arg.type, facts, visited, through_views, via)
 			}
 		}
 	case .Union:
 		for variant in info.variants {
-			transfer_facts_walk(c, variant, facts, visited)
+			transfer_facts_walk(c, variant, facts, visited, through_views, via)
 		}
 	}
+}
+
+// design.md "String format printing": printing converts each printed type to
+// `dyn fmt.Formattable` in a pass after the effects, so its witnesses are not
+// all known while they are checked.
+@(private = "file")
+view_is_printing :: proc(c: ^Compiler, view: ^Type_Info) -> bool {
+	format, found := c.runtime_types["Format_View"]
+	return found && underlying_info(c, format).dyn_interface == view.dyn_interface
 }
 
 // design.md "@(wakes_on_drop)": the `waker` of `transfer_facts`.

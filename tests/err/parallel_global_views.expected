@@ -1,0 +1,18 @@
+L0731
+@105:3
+`recorders` holds `dyn Recorder`, which may view a `Loud`, which reaches `^mut int`, through which another thread may write as well
+L0731
+@106:3
+`shapes` holds `dyn Shape`, which may view a `Labeled`, which reaches `dyn Formattable`, which hides what it reaches
+L0731
+@107:3
+`tags` holds `dyn Tagged`, which may view a `dyn mut Tagged`, through which another thread may write as well
+L0731
+@108:3
+`adder` holds `dyn proc(int) -> int`, which may view a `proc(n: int) -> int capture(&mut total)`, which reaches `^mut int`, through which another thread may write as well
+L0731
+@109:3
+`printed` holds `dyn Formattable`, which hides what it reaches
+L0731
+@110:3
+`ticks` holds `dyn Source(f64)`, which may view a `Counter`, which reaches `^mut f64`, through which another thread may write as well

@@ -3357,29 +3357,51 @@ check_shared_event :: proc(state: ^Prov_State, event: Prov_Event, window: u64, s
 
 // What a global stores that a task sharing it could race on: a mutable
 // carrier, through which any thread may write, or an erased one, which hides
-// what it reaches. An allocator's operations are reserved instead
+// what it reaches. A read-only `dyn` view reaches what each type converted to
+// it reaches. An allocator's operations are reserved instead
 // (design.md "Allocators and tasks").
 @(private = "file")
-shared_carrier_hazard :: proc(c: ^Compiler, global: Symbol_Id) -> (hazard: Type_Id, erased: bool) {
-	sym := symbol_of(c, global)
-	if sym == nil || sym.synchronized || type_underlying(c, sym.type) == TYPE_ALLOCATOR ||
-	   type_is_region_provider(c, sym.type) {
-		return INVALID_TYPE, false
-	}
-	facts := transfer_facts(c, sym.type)
-	if facts.mutable != INVALID_TYPE {
-		return facts.mutable, false
-	}
-	return facts.erased, facts.erased != INVALID_TYPE
+Shared_Hazard :: struct {
+	type:   Type_Id,
+	erased: bool,
+	via:    Transfer_Via,
 }
 
 @(private = "file")
-shared_hazard_text :: proc(c: ^Compiler, global: Symbol_Id, hazard: Type_Id, erased: bool) -> string {
-	name := identifier_text(c, symbol_of(c, global).name)
-	if erased {
-		return fmt.tprintf("`%s` holds `%s`, which hides what it reaches", name, type_name(c, hazard))
+shared_carrier_hazard :: proc(c: ^Compiler, global: Symbol_Id) -> Shared_Hazard {
+	none := Shared_Hazard{INVALID_TYPE, false, {INVALID_TYPE, INVALID_TYPE}}
+	sym := symbol_of(c, global)
+	if sym == nil || sym.synchronized || type_underlying(c, sym.type) == TYPE_ALLOCATOR ||
+	   type_is_region_provider(c, sym.type) {
+		return none
 	}
-	return fmt.tprintf("`%s` holds `%s`, through which another thread may write as well", name, type_name(c, hazard))
+	facts := transfer_facts(c, sym.type, through_views = true)
+	if facts.mutable != INVALID_TYPE {
+		return {facts.mutable, false, facts.mutable_via}
+	}
+	if facts.erased != INVALID_TYPE {
+		return {facts.erased, true, facts.erased_via}
+	}
+	return none
+}
+
+@(private = "file")
+shared_hazard_text :: proc(c: ^Compiler, global: Symbol_Id, hazard: Shared_Hazard) -> string {
+	name := identifier_text(c, symbol_of(c, global).name)
+	consequence := hazard.erased ? "which hides what it reaches" : "through which another thread may write as well"
+	if hazard.via.view == INVALID_TYPE {
+		return fmt.tprintf("`%s` holds `%s`, %s", name, type_name(c, hazard.type), consequence)
+	}
+	if hazard.via.witness == hazard.type {
+		return fmt.tprintf(
+			"`%s` holds `%s`, which may view a `%s`, %s",
+			name, type_name(c, hazard.via.view), type_name(c, hazard.type), consequence,
+		)
+	}
+	return fmt.tprintf(
+		"`%s` holds `%s`, which may view a `%s`, which reaches `%s`, %s",
+		name, type_name(c, hazard.via.view), type_name(c, hazard.via.witness), type_name(c, hazard.type), consequence,
+	)
 }
 
 // ----------------------------------------------------- join retention --
@@ -3892,15 +3914,15 @@ report_shared_reach :: proc(
 	state: ^Prov_State, global: Symbol_Id, span: Span, window: u64, shared: ^Shared_Reports, callee := "",
 ) {
 	c := state.k.c
-	hazard, erased := shared_carrier_hazard(c, global)
-	if hazard == INVALID_TYPE || !first_report(shared, span, global) {
+	hazard := shared_carrier_hazard(c, global)
+	if hazard.type == INVALID_TYPE || !first_report(shared, span, global) {
 		return
 	}
 	who := "this" if callee == "" else callee
 	errorf(
 		c, span, "L0731",
 		"%s reaches through `%s` while this `parallel` block's tasks may be running: %s",
-		who, identifier_text(c, symbol_of(c, global).name), shared_hazard_text(c, global, hazard, erased),
+		who, identifier_text(c, symbol_of(c, global).name), shared_hazard_text(c, global, hazard),
 	)
 	add_notef(c, window_block_span(state, window), "a task runs from its `spawn` until this block ends")
 }
@@ -3965,15 +3987,15 @@ check_task_globals :: proc(state: ^Prov_State, event: Prov_Event, shared: ^Share
 		note_value_targets(state, call, global, true)
 	}
 	for reached in c.reach_effects[event.symbol] {
-		hazard, erased := shared_carrier_hazard(c, reached.global)
-		if hazard == INVALID_TYPE || !first_report(shared, event.span, reached.global) {
+		hazard := shared_carrier_hazard(c, reached.global)
+		if hazard.type == INVALID_TYPE || !first_report(shared, event.span, reached.global) {
 			continue
 		}
 		errorf(
 			c, event.span, "L0731",
 			"`%s` reaches through `%s`, which every task and the parent share: %s",
 			event.name, identifier_text(c, symbol_of(c, reached.global).name),
-			shared_hazard_text(c, reached.global, hazard, erased),
+			shared_hazard_text(c, reached.global, hazard),
 		)
 		note_reach_chain(c, reached)
 		note_value_targets(state, call, reached.global, false)
@@ -3983,14 +4005,14 @@ check_task_globals :: proc(state: ^Prov_State, event: Prov_Event, shared: ^Share
 		note_reached_globals(state, slot, event.span, &given)
 	}
 	for reached in given {
-		hazard, erased := shared_carrier_hazard(c, reached.global)
-		if hazard == INVALID_TYPE || !first_report(shared, event.span, reached.global) {
+		hazard := shared_carrier_hazard(c, reached.global)
+		if hazard.type == INVALID_TYPE || !first_report(shared, event.span, reached.global) {
 			continue
 		}
 		errorf(
 			c, event.span, "L0731",
 			"this task is given what `%s` stores, which every task and the parent share: %s",
-			identifier_text(c, symbol_of(c, reached.global).name), shared_hazard_text(c, reached.global, hazard, erased),
+			identifier_text(c, symbol_of(c, reached.global).name), shared_hazard_text(c, reached.global, hazard),
 		)
 	}
 	index := state.graph.task_sites[event.slot].block
@@ -4022,15 +4044,15 @@ check_task_globals :: proc(state: ^Prov_State, event: Prov_Event, shared: ^Share
 			add_notef(c, hook.span, "`%s` is declared here", identifier_text(c, hook.name))
 		}
 		for reached in drop.reach {
-			hazard, erased := shared_carrier_hazard(c, reached.global)
-			if hazard == INVALID_TYPE {
+			hazard := shared_carrier_hazard(c, reached.global)
+			if hazard.type == INVALID_TYPE {
 				continue
 			}
 			errorf(
 				c, block, "L0731",
 				"each task of this block drops `%s` when its thread exits, and its hook `%s` reaches through `%s`: %s",
 				identifier_text(c, owner.name), identifier_text(c, hook.name),
-				identifier_text(c, symbol_of(c, reached.global).name), shared_hazard_text(c, reached.global, hazard, erased),
+				identifier_text(c, symbol_of(c, reached.global).name), shared_hazard_text(c, reached.global, hazard),
 			)
 			add_notef(c, owner.span, "`%s` is declared here", identifier_text(c, owner.name))
 		}

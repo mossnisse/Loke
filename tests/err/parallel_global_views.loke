@@ -1,0 +1,113 @@
+// design.md "Globals while tasks run": a read-only `dyn` view stored in a global
+// reaches what each type converted to its interface application reaches, even
+// where the conversion runs with no task. Tasks are rejected through views that
+// may view a mutable carrier, a capture literal with a `&mut` capture, a
+// `dyn mut` view, or a value reaching a `dyn fmt.Formattable`, whose witnesses
+// printing builds later, and through a `dyn fmt.Formattable` itself.
+package main;
+
+import "core:fmt";
+
+Recorder :: interface($Self: type) {
+	slot record: proc(self, n: int) -> int;
+}
+
+Shape :: interface($Self: type) {
+	slot area: proc(self) -> int;
+}
+
+Tagged :: interface($Self: type) {
+	slot tag: proc(self) -> int;
+}
+
+Source :: interface($Self: type, $T: type) {
+	slot next: proc(self) -> T;
+}
+
+Quiet :: struct { base: int }
+impl Quiet { record :: proc(self, n: int) -> int { return self.base + n; } }
+
+Loud :: struct { count: ^mut int }
+impl Loud { record :: proc(self, n: int) -> int { self.count^ += n; return n; } }
+
+Square :: struct { side: int }
+impl Square { area :: proc(self) -> int { return self.side * self.side; } }
+
+Labeled :: struct { label: dyn fmt.Formattable }
+impl Labeled { area :: proc(self) -> int { return 1; } }
+
+Plain :: struct { id: int }
+impl Plain { tag :: proc(self) -> int { return self.id; } }
+
+Counter :: struct { count: ^mut f64 }
+impl Counter { next :: proc(self) -> f64 { self.count^ += 1.0; return self.count^; } }
+
+quiet: Quiet;
+square: Square;
+plain: Plain;
+counter: int;
+recorders: Option(dyn Recorder);
+shapes: Option(dyn Shape);
+tags: Option(dyn Tagged);
+adder: Option(dyn proc(n: int) -> int);
+printed: Option(dyn fmt.Formattable);
+ticks: Option(dyn Source(f64));
+
+record_all :: proc(n: int) -> int {
+	switch (recorders) { case .some(r): return r.record(n); case .none: return 0; }
+}
+area_all :: proc() -> int {
+	switch (shapes) { case .some(s): return s.area(); case .none: return 0; }
+}
+tag_all :: proc() -> int {
+	switch (tags) { case .some(t): return t.tag(); case .none: return 0; }
+}
+add_all :: proc(n: int) -> int {
+	switch (adder) { case .some(f): return f(n); case .none: return 0; }
+}
+print_all :: proc() {
+	switch (printed) { case .some(v): fmt.println(v); case .none: }
+}
+tick_all :: proc() -> f64 {
+	switch (ticks) { case .some(s): return s.next(); case .none: return 0.0; }
+}
+
+// The mutable and erased witnesses, each converted where no task runs.
+serial :: proc() -> int {
+	count := 0;
+	loud := Loud{&mut count};
+	other := 2;
+	labeled := Labeled{(dyn fmt.Formattable)(&other)};
+	plain_view := (dyn mut Tagged)(&mut plain);
+	total := 0;
+	bump := proc(n: int) -> int capture(&mut total) { total += n; return total; };
+	elapsed := 0.0;
+	clock := Counter{&mut elapsed};
+	r := (dyn Recorder)(&loud);
+	s := (dyn Shape)(&labeled);
+	t := (dyn Tagged)(&plain_view);
+	f: dyn proc(n: int) -> int = bump;
+	g := (dyn Source(f64))(&clock);
+	return r.record(1) + s.area() + t.tag() + f(1) + int(g.next());
+}
+
+main :: proc() {
+	recorders = .some((dyn Recorder)(&quiet));
+	shapes = .some((dyn Shape)(&square));
+	tags = .some((dyn Tagged)(&plain));
+	printed = .some((dyn fmt.Formattable)(&counter));
+	a: int;
+	b: int;
+	c: int;
+	d: int;
+	e: f64;
+	parallel {
+		spawn a = record_all(1);
+		spawn b = area_all();
+		spawn c = tag_all();
+		spawn d = add_all(1);
+		spawn print_all();
+		spawn e = tick_all();
+	}
+	fmt.println(a, b, c, d, e, serial());
+}

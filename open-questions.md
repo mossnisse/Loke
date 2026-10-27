@@ -1215,9 +1215,19 @@ Open, to settle with evidence during the milestones:
   `Mutex.lock`'s `rawptr(&self.word.value)` is covered by the raw-address
   exception. Whether outside code relies on the rejected form is still
   unknown.
-- The reach effect rejects a `dyn` or `any_view` stored in a global even when
-  only read, since an erased value hides captures that may write. Whether the
-  witness union could accept read-only `dyn` registries is open.
+- Answered (2026-10-27): the reach effect rejected a `dyn` stored in a global
+  even when only read, since an erased value hides captures that may write.
+  A read-only view now reaches what each type converted to its interface
+  application reaches; see
+  [Globals while tasks run](design.md#globals-while-tasks-run) and the
+  [rationale](comments.md#tasks-that-borrow-joined-by-their-block). An
+  `any_view` cannot be stored in a global at all. Two limits remain: a
+  `dyn fmt.Formattable` stays unknown, since printing builds its witnesses
+  after the effects, and the union is per application, so one conversion of a
+  mutable record anywhere rejects every registry of that interface. The same
+  union could let a task share a view that arrives erased, the first
+  [later extension](#later-concurrency-extensions), as far as data goes; a
+  call through it would still take its slot's whole effect union.
 
 ### Waiting and ownership review (2026-10-26)
 

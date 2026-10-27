@@ -576,6 +576,15 @@ checklist.
 
 ### Changed
 
+- A read-only `dyn` view stored in a global no longer rejects every task that
+  reads through it ([Globals while tasks run](design.md#globals-while-tasks-run)).
+  It reaches what each type the program converts to its interface application
+  reaches, so a registry of views of plain records, or a callable view
+  holding a procedure, may be read while tasks run. A view that may view a
+  mutable carrier, a `dyn mut` view, or a capture literal with a `&mut`
+  capture is still rejected with `L0731`, which now names that type, as is a
+  `dyn fmt.Formattable`, whose witnesses printing builds later.
+
 - Removed `concurrency-proposal.md`, since structured concurrency is built.
   The ring algorithm and its validation moved to
   [The ring algorithm](standard-library.md#the-ring-algorithm), and the

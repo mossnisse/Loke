@@ -478,6 +478,25 @@ dyn_same_application :: proc(c: ^Compiler, a, b: ^Type_Info) -> bool {
 	return true
 }
 
+// design.md "Globals while tasks run": the concrete types the program converts
+// to `view`'s interface application, under either capability. A procedure a
+// callable view holds directly has no witness, and reaches nothing.
+view_witness_types :: proc(c: ^Compiler, view: ^Type_Info) -> []Type_Id {
+	out := make([dynamic]Type_Id, 0, 4, context.temp_allocator)
+	outer: for witness in c.witness_order {
+		if witness.interface_symbol != view.dyn_interface || len(witness.args) != len(view.dyn_args) {
+			continue
+		}
+		for arg, index in witness.args {
+			if !generic_arg_equal(c, arg, view.dyn_args[index]) {
+				continue outer
+			}
+		}
+		append(&out, witness.concrete)
+	}
+	return out[:]
+}
+
 // design.md's five rules, computed once per declaration.
 dyn_compatible :: proc(k: ^Checker, info: ^Interface_Info) -> bool {
 	if info.dyn_computed {

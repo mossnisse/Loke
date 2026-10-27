@@ -1,0 +1,96 @@
+// design.md "Globals while tasks run": a read-only `dyn` view stored in a global
+// reaches what each type converted to its interface application reaches. Tasks
+// read through a registry of views, and a callable view, whose witnesses hold
+// no mutable or erased carrier: a capture literal copying its capture is one
+// of them, and a mutable carrier converted to the same interface with other
+// arguments is not.
+package main;
+
+import "core:fmt";
+
+Recorder :: interface($Self: type) {
+	slot record: proc(self, n: int) -> int;
+}
+
+Source :: interface($Self: type, $T: type) {
+	slot next: proc(self) -> T;
+}
+
+Quiet :: struct { base: int }
+
+impl Quiet {
+	record :: proc(self, n: int) -> int { return self.base + n; }
+}
+
+Scaled :: struct { factor: int }
+
+impl Scaled {
+	record :: proc(self, n: int) -> int { return self.factor * n; }
+}
+
+Constant :: struct { value: int }
+
+impl Constant {
+	next :: proc(self) -> int { return self.value; }
+}
+
+Counter :: struct { count: ^mut f64 }
+
+impl Counter {
+	next :: proc(self) -> f64 { self.count^ += 1.0; return self.count^; }
+}
+
+quiet: Quiet;
+scaled: Scaled;
+constant: Constant;
+registry: [2]Option(dyn Recorder);
+source: Option(dyn Source(int));
+handler: Option(dyn proc(n: int) -> int);
+
+step :: proc(n: int) -> int { return n + 1; }
+
+total :: proc(n: int) -> int {
+	sum := 0;
+	foreach (entry in registry) {
+		switch (entry) {
+		case .some(view): sum += view.record(n);
+		case .none:
+		}
+	}
+	switch (source) {
+	case .some(view): sum += view.next();
+	case .none:
+	}
+	switch (handler) {
+	case .some(f): sum += f(n);
+	case .none:
+	}
+	return sum;
+}
+
+// The other witnesses, each converted where no task runs.
+serial :: proc() -> int {
+	offset := 5;
+	shift := proc(n: int) -> int capture(offset) { return n + offset; };
+	f: dyn proc(n: int) -> int = shift;
+	ticks := 0.0;
+	counter := Counter{&mut ticks};
+	g := (dyn Source(f64))(&counter);
+	return f(1) + int(g.next());
+}
+
+main :: proc() {
+	quiet = {10};
+	scaled = {3};
+	constant = {100};
+	registry = {.some((dyn Recorder)(&quiet)), .some((dyn Recorder)(&scaled))};
+	source = .some((dyn Source(int))(&constant));
+	handler = .some(step);
+	a: int;
+	b: int;
+	parallel {
+		spawn a = total(1);
+		spawn b = total(2);
+	}
+	fmt.println(a, b, serial());
+}
