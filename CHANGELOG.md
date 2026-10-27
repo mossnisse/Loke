@@ -28,6 +28,25 @@ checklist.
   Upgrade by finishing with the view before changing the source, or by
   keeping a copy, such as `kept_copy := strings.copy(item);`.
 
+- A pointer to a lent `foreach` element over a source reached through a
+  pointer now borrows that source even when the element holds borrows of its
+  own, as a `string_view` does. Returning it past the source's end is now
+  rejected with `L0526`; before, it compiled and the pointer dangled:
+
+  ```loke
+  first_slot :: proc(items: ^[1]string_view) -> ^string_view {
+      foreach (item in items^) { return &item; }
+      panic("empty");
+  }
+  escaped :: proc() -> ^string_view {
+      values := [1]string_view{"hello"};
+      return first_slot(&values);   // now L0526
+  }
+  ```
+
+  Upgrade by returning a copy of the element, or by keeping the source alive
+  for as long as the pointer is used.
+
 ### Added
 
 - `fs.replace_atomic` and `fs.replace_atomic_text` replace a file so that a
@@ -70,6 +89,13 @@ checklist.
   `foreach (item in d.items) { return item; }` with `d: ^Doc`, or over a
   `[]string` parameter. Both were rejected with `L0526`
   ([Borrowing iteration](design.md#borrowing-iteration)).
+
+- A copy of a lent `foreach` element of a slice, as
+  `foreach (item in values) { return item; }` with `values: []string_view`,
+  now keeps only the element's own borrow, as `values[0]` does
+  ([Procedure result contracts](design.md#procedure-result-contracts)). Using
+  such a copy after the sliced array ended, or after changing the slice, was
+  rejected even when the view was of static text.
 
 ## [0.9.0] - 2026-10-27
 

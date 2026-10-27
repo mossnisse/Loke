@@ -1,6 +1,7 @@
 // design.md "Borrowing iteration": a lent element borrows its source, so a
 // view of it cannot outlive a local or temporary source, and the source
 // cannot be changed while the traversal or a view of an element is in use.
+// `&item` borrows the source even when the element holds borrows of its own.
 package main;
 
 import "core:fmt";
@@ -37,6 +38,29 @@ grown_under_view :: proc(items: ^mut [dynamic]string) {
 	foreach (item in items^) { kept = item; }
 	items.append(strings.copy("more"));
 	fmt.println(kept);
+}
+
+first_slot :: proc(items: ^[1]string_view) -> ^string_view {
+	foreach (item in items^) { return &item; }
+	panic("empty");
+}
+
+array_slot_escapes :: proc() -> ^string_view {
+	values := [1]string_view{"hello"};
+	return first_slot(&values);
+}
+
+Views :: struct { items: [dynamic]string_view }
+
+first_view_slot :: proc(views: ^Views) -> ^string_view {
+	foreach (item in views.items) { return &item; }
+	panic("empty");
+}
+
+dynamic_slot_escapes :: proc() -> ^string_view {
+	views := Views{make([dynamic]string_view, 0, 1)};
+	views.items.append("hello");
+	return first_view_slot(&views);
 }
 
 main :: proc() {}

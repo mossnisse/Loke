@@ -1,6 +1,8 @@
 // design.md "Borrowing iteration": a lent element names the source's own
 // storage and carries its provenance, so a view of it, or `&item`, borrows the
-// source. Through a borrowed parameter, that view may be returned.
+// source. Through a borrowed parameter, that view may be returned. A copy of
+// a view element keeps only the element's own borrow (design.md "Procedure
+// result contracts").
 package main;
 
 import "core:fmt";
@@ -54,7 +56,39 @@ last_through_mutable :: proc(items: ^mut [dynamic]string) -> string_view {
 	return kept;
 }
 
+first_view :: proc(values: []string_view) -> string_view {
+	foreach (value in values) { return value; }
+	return "";
+}
+
+Labeled :: struct { label: string_view, count: int }
+
+first_label :: proc(values: []Labeled) -> string_view {
+	foreach (value in values) { return value.label; }
+	return "";
+}
+
+// A copy kept after the loop does not hold the slice.
+last_then_changed :: proc(values: []mut string_view) -> string_view {
+	kept: string_view = "";
+	foreach (value in values) { kept = value; }
+	values[0] = "changed";
+	return kept;
+}
+
 main :: proc() {
+	// The copies view static text, so they outlive the arrays they came from.
+	copied: string_view = "";
+	label: string_view = "";
+	{
+		values := [2]string_view{"static", "text"};
+		labeled := [1]Labeled{{"label", 1}};
+		copied = first_view(values[:]);
+		label = first_label(labeled[:]);
+		fmt.println(last_then_changed(&mut values[:]));
+		fmt.println(values[0]);
+	}
+	fmt.println(copied, label);
 	doc := Doc{make([dynamic]string, 0, 2), make([dynamic]Entry, 0, 2)};
 	doc.items.append(strings.copy("ab"), strings.copy("second"));
 	doc.entries.append(Entry{strings.copy("one"), 1}, Entry{strings.copy("two"), 2});

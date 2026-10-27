@@ -1,12 +1,18 @@
 L0526
-@18:35
+@19:35
 this iterator cannot be returned: `items` ends when this procedure returns
 L0526
-@23:42
+@24:42
 this iterator cannot be returned: the temporary it borrows ends when this procedure returns
 L0512
-@30:3
+@31:3
 `view` cannot be assigned here: a read-only iterator of it is still in use
 L0641
-@38:2
+@39:2
 `items` cannot be used here: a read-only reborrow of it is still in use
+L0526
+@50:9
+this pointer cannot be returned: `values` ends when this procedure returns
+L0526
+@63:9
+this pointer cannot be returned: `views` ends when this procedure returns

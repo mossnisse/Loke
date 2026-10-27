@@ -1905,6 +1905,17 @@ walk_foreach_binding_provenance :: proc(
 		// reading it reads that carrier, which the iterator loan already guards.
 		sym := symbol_of(graph.k.c, binding.symbol)
 		lent := sym != nil && sym.borrowed_binding != .None && !binding.is_ref
+		carrier := s.kind != .Protocol && len(elements) > 0 && type_is_carrier(graph.k.c, prov_type(graph, s.iterable))
+		// design.md "Procedure result contracts": the value of a carrier's lent
+		// element is what `values[i]` would load through the carrier, so a copy
+		// of it keeps only the element's own borrows; reading the binding still
+		// uses the carrier through the view below.
+		if lent && carrier {
+			loans = prov_load_content(
+				graph, elements, nil, sym.type, expr_span(s.iterable),
+				reads_only = prov_read_is_reads_only(graph.k.c, sym.type),
+			)
+		}
 		prov_bind_value(graph, binding.symbol, loans, expr_span(s.iterable), copies = !lent)
 		prov_bind_element_region(graph, binding.symbol, prov_input_value(graph, s.iterable))
 		// A lent or mutable element is the source's storage, not a copy
@@ -1912,15 +1923,15 @@ walk_foreach_binding_provenance :: proc(
 		// it views: the iterator loan on the variable guards it for the loop,
 		// but is not the element's provenance. A source reached through a
 		// pointer, as `d.items` with `d: ^Doc`, is storage that pointer names,
-		// so its elements borrow what `&iterable` would; only the binding takes
-		// that borrow, since the loop's own reads of the source are already its.
+		// so its elements borrow what `&iterable` would, whatever borrows the
+		// elements hold themselves; only the binding takes that borrow, since
+		// the loop's own reads of the source are already its.
 		if sym != nil && sym.borrowed_binding != .None {
 			viewed := iterated
-			if s.kind != .Protocol && len(elements) > 0 && type_is_carrier(graph.k.c, prov_type(graph, s.iterable)) {
+			if carrier {
 				viewed = elements
-			}
-			if s.kind != .Protocol && len(viewed) == 0 {
-				if carriers, _, through := prov_read_through_carrier(graph, s.iterable); through {
+			} else if s.kind != .Protocol {
+				if carriers, _, through := prov_read_through_carrier(graph, s.iterable); through && len(carriers) > 0 {
 					viewed = carriers
 				}
 			}
