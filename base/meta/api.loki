@@ -8,3 +8,30 @@
 // They remain compile-time-only: naming a descriptor type does not make a
 // descriptor storable at run time.
 package meta;
+
+// A record field, as `fields_of` produces it: its name, its declared type,
+// and its declaration index.
+@(intrinsic)
+Field :: struct {
+	name: string_view,
+	type: type,
+	index: int,
+}
+
+// An enum member, as `enum_values_of` produces it: its name, its value in the
+// enum's backing type, and its declaration index.
+@(intrinsic)
+Enum_Value :: struct {
+	name: string_view,
+	value: int,
+	index: int,
+}
+
+// A union variant, as `variants_of` produces it: its label, its payload type
+// (`Unit` when it has none), and its declaration index.
+@(intrinsic)
+Variant :: struct {
+	name: string_view,
+	type: type,
+	index: int,
+}

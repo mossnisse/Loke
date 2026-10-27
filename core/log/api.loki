@@ -12,6 +12,12 @@
 // takes a `Logger` parameter or keeps one in a state object.
 package log;
 
+// The severity of a message, which is also `LOKE_LOG_LEVEL`'s type. `Off` is a
+// threshold only, since nothing logs at it, and it is last so that
+// `LOKE_LOG_LEVEL <= .Error` is false when logging is compiled out entirely.
+@(intrinsic)
+Level :: enum { Debug, Info, Warning, Error, Off }
+
 // One logging sink. Any record with this `write` is one; the message carries no
 // line ending.
 Sink :: interface($Self: type) {

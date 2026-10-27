@@ -90,6 +90,10 @@ attribute_spec :: proc(name: string) -> (Attr_Spec, bool) {
 	case "cross_thread":
 		// What the parameter must be is `check_cross_thread_attribute`'.
 		return {{.Parameter}, .None, false}, true
+	case "intrinsic":
+		// Bound by `src/intrinsic.odin`, which validates the declaration's other
+		// attributes; one reaching the ordinary pass is misplaced.
+		return {{.Proc_Decl, .Type_Decl, .Const_Decl}, .None, true}, true
 	case "zero", "failure":
 		// A variant name, checked in `src/union.odin`.
 		return {{.Union_Literal}, .Deferred, false}, true
@@ -169,6 +173,13 @@ validate_attribute_list :: proc(
 			continue
 		}
 		seen[name] = true
+		if name == "intrinsic" {
+			errorf(
+				k.c, attribute.span, "L0734",
+				"`@(intrinsic)` describes a name the compiler supplies, so it belongs at file scope, outside `when`, in a bundled package",
+			)
+			continue
+		}
 		if pos not_in spec.positions {
 			errorf(k.c, attribute.span, "L0607", "`@(%s)` cannot appear on %s", name, attr_pos_name(pos))
 			continue

@@ -775,7 +775,12 @@ failure returns no partial module.
 
 Prefer Loke source when it can express the feature. `stdlib.odin` contributes
 compiler-owned primitives such as atomic operations, erased formatting,
-allocator-aware string allocation, and provider access.
+allocator-aware string allocation, and provider access. Each public one is
+declared in its package's source with
+[`@(intrinsic)`](design.md#intrinsic), which `intrinsic.odin` binds to the
+contributed symbol and checks; the declaration never reaches the selected view,
+so no other pass sees it. A new public contribution needs such a declaration,
+or every program importing the package reports `L0737`.
 
 Package-private `allocate_string` bridges `core:strings` and `core:fmt` to the
 runtime, returning `Result(string, Allocator_Error)`. `allocation_failed` applies
@@ -845,6 +850,7 @@ Paths below are relative to `src/`.
 | `expand.odin`, `reflect.odin` | Static `foreach`, expanded switch cases and union argument expansion, reflection descriptors, `type_of`, `typeid_of`, and type-ID freezing. |
 | `materialize.odin` | Read-only storage for address-requiring constants. |
 | `bootstrap.odin`, `stdlib.odin` | Binding ordinary bootstrap declarations and contributing compiler-owned standard members without duplicating type identity. |
+| `intrinsic.odin` | Binding each `@(intrinsic)` declaration to the member it describes, checking what it states, and reporting a public contribution nothing describes. |
 
 ### Ownership and memory safety
 

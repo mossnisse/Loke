@@ -1,0 +1,3 @@
+L0262
+@5:11
+a constant needs a value; `Name :: ---;` describes a type the compiler supplies, with `@(intrinsic)`

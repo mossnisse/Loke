@@ -1,0 +1,43 @@
+// A `core:mem` whose `@(intrinsic)` declarations disagree with what the
+// compiler supplies, in each way design.md "`@(intrinsic)`" checks.
+@(public)
+package mem;
+
+@(intrinsic)
+Allocator :: ---;
+
+@(intrinsic)
+Allocator :: ---;
+
+@(intrinsic)
+Allocator_Error :: ---;
+
+@(intrinsic)
+default_allocator :: ---;
+
+@(intrinsic)
+Failure_Policy :: enum { Trap, Panic }
+
+@(intrinsic)
+Arena :: ---;
+
+impl Arena {
+	@(intrinsic)
+	from_buffer :: proc(buffer: []mut u8, policy: Failure_Policy) -> Arena ---;
+
+	@(intrinsic)
+	init :: proc(source: Allocator = default_allocator(), policy: Failure_Policy = .Panic) -> Arena ---;
+
+	helper :: proc() {}
+}
+
+@(intrinsic)
+try_arena :: proc(parent: Allocator = default_allocator(), policy: Failure_Policy = .Panic) -> Arena ---;
+
+@(intrinsic)
+Bogus :: ---;
+
+when (true) {
+	@(intrinsic)
+	try_scratch :: proc(parent: Allocator = default_allocator(), policy: Failure_Policy = .Panic) -> Result(Scratch, Allocator_Error) ---;
+}

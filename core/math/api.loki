@@ -221,10 +221,22 @@ max :: proc(a, b: $T) -> T where interfaces.Numeric(T), interfaces.Ordered(T) --
 // everything and so does not clamp on that side.
 clamp :: proc(value, low, high: $T) -> T where interfaces.Numeric(T), interfaces.Ordered(T) ---;
 
+// `value` as a `To`, keeping the low bits of its two's-complement
+// representation, as the wrapping operators do, where `To(value)` would panic.
+//
+// `value` is an integer, rune, or enum, and `To` an integer or rune type; a
+// SIMD vector converts lane by lane to one of the same lane count. A constant
+// folds.
+//
+//     count := 300;
+//     low := math.wrap(u8, count);   // 44
+@(intrinsic)
+wrap :: proc($To: type, value: $From) -> To ---;
+
 // `value` as a `To`, or `.none` when `To` cannot represent it exactly.
 //
-// `To(value)` panics when the value does not fit, and the compiler-contributed
-// `wrap(To, value)` keeps its low bits instead. This asks, which is what
+// `To(value)` panics when the value does not fit, and `wrap(To, value)` keeps
+// its low bits instead. This asks, which is what
 // validating input wants. It is the scalar twin of `Enum.from_int`: it neither
 // traps nor silently narrows.
 to :: proc($To: type, value: $From) -> Option(To)

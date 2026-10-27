@@ -38,6 +38,7 @@ contribute_standard_members :: proc(k: ^Checker, pkg: ^Package) {
 		return
 	}
 	pkg.contributed = true
+	pkg.contributions = make([dynamic]Identifier_Id, 0, 8, c.semantic_allocator)
 	switch pkg.key {
 	case STD_RUNTIME:
 		contribute_allocator_surface(c, pkg)
@@ -200,6 +201,7 @@ contribute_atomic_intrinsics :: proc(c: ^Compiler, pkg: ^Package) {
 @(private = "file")
 contribute_builtin :: proc(c: ^Compiler, pkg: ^Package, name: string, kind: Builtin_Kind, public := true) {
 	ident := intern_identifier(c, name)
+	append(&pkg.contributions, ident)
 	pkg.scope.names[ident] = new_symbol(c, Symbol {
 		name      = ident,
 		span      = no_span(),
@@ -220,6 +222,7 @@ contribute_type :: proc(c: ^Compiler, pkg: ^Package, name: string, type: Type_Id
 		return
 	}
 	ident := intern_identifier(c, name)
+	append(&pkg.contributions, ident)
 	pkg.scope.names[ident] = new_symbol(c, Symbol {
 		name   = ident,
 		span   = no_span(),
@@ -240,5 +243,7 @@ contribute_symbol :: proc(c: ^Compiler, pkg: ^Package, name: string, symbol_id: 
 	if symbol := symbol_of(c, symbol_id); symbol != nil {
 		symbol.public = true
 	}
-	pkg.scope.names[intern_identifier(c, name)] = symbol_id
+	ident := intern_identifier(c, name)
+	append(&pkg.contributions, ident)
+	pkg.scope.names[ident] = symbol_id
 }

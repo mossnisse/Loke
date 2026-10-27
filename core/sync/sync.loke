@@ -21,7 +21,7 @@ import "base:interfaces";
 import "core:unsafe";
 
 // The compiler contributes `Memory_Order`, the `base:runtime` enum, publicly as
-// `sync.Memory_Order`, and, package-privately:
+// `sync.Memory_Order` (described below), and, package-privately:
 //
 //   atomic_load, atomic_store, atomic_exchange, atomic_compare_exchange
 //   atomic_add, atomic_sub, atomic_and, atomic_or, atomic_xor
@@ -30,6 +30,11 @@ import "core:unsafe";
 // The fence intrinsic is `atomic_fence` and the public wrapper is `fence`,
 // because a contributed name and a source declaration share one package scope
 // and two `fence`s would be a redeclaration.
+
+/// The ordering an atomic operation asks for: `base:runtime`'s enum, so an
+/// ordering forwarded through a `$` parameter keeps meaning what it meant.
+@(intrinsic)
+Memory_Order :: enum { Relaxed, Acquire, Release, Acquire_Release, Sequentially_Consistent }
 
 /// The atomic types are `bool`, the integer and rune types, an enum over a
 /// supported integer, and any pointer. The arithmetic operations are integers

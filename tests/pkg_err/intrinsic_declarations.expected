@@ -1,0 +1,43 @@
+L0734
+@8:1
+`@(intrinsic)` describes a name the compiler supplies, and it supplies none in this package
+L0734
+@11:4
+so it belongs at file scope, outside `when`, in a bundled package
+L0737
+@4:9
+the compiler supplies `default_allocator` in this package, and no `@(intrinsic)` declaration describes it
+L0737
+the compiler supplies `Scratch` in this package
+L0737
+the compiler supplies `try_scratch` in this package
+L0735
+@10:1
+`Allocator` is already described by an `@(intrinsic)` declaration
+L0735
+@16:1
+the compiler supplies `default_allocator` as a procedure, declared `proc(...) ---`
+L0736
+@19:26
+the compiler supplies `Failure_Policy` with the members `Panic`, `Trap`
+L0737
+@22:1
+the compiler supplies `Arena.allocator`, and no `@(intrinsic)` declaration in an `impl Arena` block describes it
+L0736
+@26:40
+the compiler supplies `from_buffer`'s parameter `policy` with a default
+L0736
+@29:15
+the compiler supplies this parameter of `init` as `parent`
+L0734
+@31:2
+an `impl` block of `@(intrinsic)` members holds nothing else
+L0736
+@35:1
+the compiler supplies `try_arena` as `proc(Allocator, mem.Failure_Policy) -> Result(mem.Arena, Allocator_Error)`
+L0735
+@38:1
+the compiler supplies no `Bogus` in this package
+L0734
+@42:2
+an `@(intrinsic)` declaration is not inside `when`

@@ -75,3 +75,7 @@ shared :: proc{shared_stub};
 
 @(public)
 try_shared :: proc{shared_stub};
+
+// design.md "`@(intrinsic)`": what the compiler supplies to any `base:runtime`.
+@(intrinsic) Allocator :: ---;
+@(intrinsic) Allocator_Error :: ---;

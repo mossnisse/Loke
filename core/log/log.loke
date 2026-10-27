@@ -17,17 +17,16 @@ import "core:mem";
 import "core:thread";
 import "core:unsafe";
 
-// The compiler contributes:
-//
-//   Level   the severity enumeration, which is also `LOKE_LOG_LEVEL`'s type
-//
-// It is contributed rather than declared so the two are one type: a `when` over
-// `LOKE_LOG_LEVEL <= .Info` compares two values of the same enum, and a second
-// nominal type here would make that comparison impossible to write.
-//
-// Its members, in order, are `Debug`, `Info`, `Warning`, `Error`, and `Off`.
-// `Off` is a threshold only — nothing logs at it — and it is last so that
-// `LOKE_LOG_LEVEL <= .Error` is false when logging is compiled out entirely.
+// `Level` is contributed by the compiler rather than declared, so it and
+// `LOKE_LOG_LEVEL` are one type: a `when` over `LOKE_LOG_LEVEL <= .Info`
+// compares two values of the same enum, and a second nominal type here would
+// make that comparison impossible to write.
+
+/// The severity of a message, which is also `LOKE_LOG_LEVEL`'s type. `Off` is a
+/// threshold only, since nothing logs at it, and it is last so that
+/// `LOKE_LOG_LEVEL <= .Error` is false when logging is compiled out entirely.
+@(intrinsic)
+Level :: enum { Debug, Info, Warning, Error, Off }
 
 /// One logging sink. Any record with this `write` is one; the message carries no
 /// line ending.

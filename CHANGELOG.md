@@ -10,6 +10,13 @@ checklist.
 
 ### Breaking changes
 
+- A replacement for a bundled package given with `-collection`, such as a
+  `core:mem` of a project's own, must now declare each public name the
+  compiler supplies to that package with
+  [`@(intrinsic)`](design.md#intrinsic); one it leaves out is `L0737`. Upgrade
+  by copying those declarations from the bundled package's source, or from its
+  `api.loki`.
+
 - A `thread.Mutex` guard kept past a `parallel` block's join, while a task of
   the block borrows the mutex, is now rejected with `L0733`
   ([Releasing before the join](design.md#releasing-before-the-join)): a task
@@ -352,6 +359,15 @@ checklist.
 
 ### Added
 
+- [`@(intrinsic)`](design.md#intrinsic) declares a name the compiler supplies
+  to a bundled package in that package's source, with a `---` body, so its
+  signature and doc comment appear in `-doc` and `api.loki`. `core:mem`,
+  `core:unsafe`, `core:sync`, `core:log`, `core:math`, `base:runtime`, and
+  `base:meta` now declare every public name the compiler gives them: `mem.Arena`
+  and its constructors, `unsafe.transmute`, `math.wrap`, `log.Level`, and the
+  rest, which `-doc` and the interface files used to leave out. The compiler
+  checks each declaration against what it supplies (`L0734` to `L0737`).
+  `Name :: ---;` without the attribute is `L0262`.
 - `sync.Lazy(T)` makes a value on the first `get` and shares it with every
   later caller, on any thread. Its value is synchronized storage, so tasks may
   make it on first use where a `Once` action writing a global is rejected;

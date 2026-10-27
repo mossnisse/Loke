@@ -102,6 +102,7 @@ prepare_package :: proc(k: ^Checker, package_id: Package_Id) {
 	}
 	// First, so a declaration colliding with a contributed name is a redeclaration.
 	contribute_standard_members(k, pkg)
+	bind_intrinsic_declarations(k, pkg)
 	k.pkg = package_id
 	k.lookup_pkg = package_id
 	k.scope = pkg.scope
@@ -228,6 +229,7 @@ check_package_bodies :: proc(k: ^Checker, package_id: Package_Id) {
 	// kind is known.
 	validate_attributes(k, pkg)
 	check_test_procedures(k, pkg)
+	check_intrinsic_declarations(k, pkg)
 
 	// Every record has its fields now.
 	check_deferred_foreign_signatures(k)
@@ -3054,6 +3056,17 @@ check_stmt :: proc(k: ^Checker, stmt: Stmt) -> Flow_Info {
 		return FLOWS
 
 	case ^Decl:
+		// design.md "`@(intrinsic)`": a local one describes nothing, and a type
+		// written `---` has no value to check.
+		if decl_is_intrinsic(s) {
+			if attribute, found := find_attribute(s.attributes, "intrinsic"); found {
+				errorf(
+					k.c, attribute.span, "L0734",
+					"`@(intrinsic)` describes a name the compiler supplies, so it belongs at file scope, outside `when`, in a bundled package",
+				)
+			}
+			return FLOWS
+		}
 		check_local_declaration(k, s)
 		return FLOWS
 

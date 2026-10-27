@@ -1953,6 +1953,36 @@ boundaries and API shapes follow a few common choices:
   that console misprints every non-ASCII string, and the parser accepts `us`
   and the Greek `μ` alike, so an ASCII-only writer loses nothing.
 
+### Compiler-supplied names are declared in source
+
+Some names in the bundled packages cannot be ordinary Loke: `mem.Arena` is a
+type the region checker recognizes, `mem.Allocator` must be the predeclared
+`Allocator` and not a second nominal type, and `unsafe.transmute` takes a type
+and a value of any shape. The compiler supplies them (`src/stdlib.odin`), and
+before [`@(intrinsic)`](design.md#intrinsic) their signatures lived in
+comments nothing checked, while `-doc` and the interface file left them out.
+
+Declaring each one in its package's source, as Rust declares its intrinsics,
+writes the signature once, where readers already look, and puts its doc comment
+on a declaration like any other. The compiler checks what it can: that the name
+is one it supplies, that a procedure's parameter types, modes, names, and
+defaults and its result are its own, and that an enum's members and a
+descriptor's fields match. Requiring a declaration for every public name keeps
+a new contribution from going undocumented.
+
+A generated description was the alternative: the compiler could render its own
+symbols into `-doc` and `api.loki`. That keeps no doc comment beside the
+package's other declarations, and an operation the compiler types itself would
+still need a signature kept as text in the compiler. Declaring the name in
+source has the same limit for those operations, `raw_data`'s five operand forms
+among them: their written signature is for readers, checked only for its name,
+and the specification defines their typing. Such an operation is still
+documented where its package is, which a generated table would not do.
+
+The declaration adds no symbol. It never reaches the selected view the checker
+walks, so no other pass treats a `---` body as a foreign procedure or a missing
+definition, and the name keeps the one identity the compiler gave it.
+
 ## Compiler architecture audit (2026-09-28)
 
 The audit of `b2cc712` and its follow-up favored enforcing existing phase

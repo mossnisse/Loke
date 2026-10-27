@@ -5,3 +5,22 @@ package mem;
 // won over the bundled root.
 @(public)
 marker :: proc() -> int { return 1; }
+
+// design.md "`@(intrinsic)`": what the compiler supplies to any `core:mem`.
+@(intrinsic) Allocator :: ---;
+@(intrinsic) Allocator_Error :: ---;
+@(intrinsic) default_allocator :: proc() -> Allocator ---;
+@(intrinsic) Failure_Policy :: enum { Panic, Trap }
+@(intrinsic) Arena :: ---;
+impl Arena {
+	@(intrinsic) from_buffer :: proc(buffer: []mut u8, policy: Failure_Policy = .Panic) -> Arena ---;
+	@(intrinsic) init :: proc(parent: Allocator = default_allocator(), policy: Failure_Policy = .Panic) -> Arena ---;
+	@(intrinsic) allocator :: proc(self) -> Allocator ---;
+}
+@(intrinsic) Scratch :: ---;
+impl Scratch {
+	@(intrinsic) init :: proc(parent: Allocator = default_allocator(), policy: Failure_Policy = .Panic) -> Scratch ---;
+	@(intrinsic) allocator :: proc(self) -> Allocator ---;
+}
+@(intrinsic) try_arena :: proc(parent: Allocator = default_allocator(), policy: Failure_Policy = .Panic) -> Result(Arena, Allocator_Error) ---;
+@(intrinsic) try_scratch :: proc(parent: Allocator = default_allocator(), policy: Failure_Policy = .Panic) -> Result(Scratch, Allocator_Error) ---;

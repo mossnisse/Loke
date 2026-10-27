@@ -12,7 +12,7 @@
 // declarations against the layouts it writes, field names, order, and types,
 // and the enums member by member, so the two cannot drift apart silently.
 // `Allocator` and `Allocator_Error` are contributed by the compiler
-// (`src/stdlib.odin`).
+// (`src/stdlib.odin`) and described below with `@(intrinsic)`.
 //
 // Adding a field, or an enum member, requires a runtime ABI version bump:
 // generated metadata tables are written against exactly this field order.
@@ -20,6 +20,16 @@
 package runtime;
 
 import "base:interfaces";
+
+/// The pointer-sized handle to an allocation provider: the predeclared
+/// `Allocator`, under this package's name.
+@(intrinsic)
+Allocator :: ---;
+
+/// What a fallible allocation reports: the predeclared `Allocator_Error`,
+/// under this package's name.
+@(intrinsic)
+Allocator_Error :: ---;
 
 /// Every kind a `typeid` can describe. `Invalid` is the zero value, which is
 /// what an unknown or forged id resolves to.

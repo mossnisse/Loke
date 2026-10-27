@@ -147,6 +147,11 @@ directory listing, a search, and a code review. To use a package, read its
 .\lokec.exe shapes -api-check    # list the stale ones, and exit 1 if there are any
 ```
 
+A name the compiler supplies to a bundled package, such as `mem.Arena` or
+`unsafe.transmute`, is declared in the package's source with
+[`@(intrinsic)`](design.md#intrinsic), so its interface file and `-doc` show it
+like any other declaration.
+
 Every package in `core/` and `base/` has one, and the test suite runs
 `-api-check` on each, so a change to a bundled package's public API shows up
 as a diff of its `api.loki` in the same commit. A project can run

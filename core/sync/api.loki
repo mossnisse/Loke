@@ -11,6 +11,11 @@ package sync;
 
 import "base:interfaces";
 
+// The ordering an atomic operation asks for: `base:runtime`'s enum, so an
+// ordering forwarded through a `$` parameter keeps meaning what it meant.
+@(intrinsic)
+Memory_Order :: enum { Relaxed, Acquire, Release, Acquire_Release, Sequentially_Consistent }
+
 // The atomic types are `bool`, the integer and rune types, an enum over a
 // supported integer, and any pointer. The arithmetic operations are integers
 // only.

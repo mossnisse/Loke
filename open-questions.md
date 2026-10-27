@@ -100,12 +100,15 @@ and explicit update boundary are already covered by
 Hand-written documentation goes stale, because nothing checks it. The
 proposal: what a package tells its users is generated from its source, checked
 by the compiler, or run by the test runner, and prose is kept for intent, which
-goes stale slowest. Its first two steps are built:
+goes stale slowest. Its first two steps and its seventh are built:
 [`///` doc comments](design.md#comments), whose reasons are in
-[comments.md](comments.md#doc-comments-start-with-), and a checked-in
+[comments.md](comments.md#doc-comments-start-with-), a checked-in
 [interface file](compiler-guide.md#interface-files), `api.loki`, generated and
 never read for the reasons in
-[Hand-written package header files](comments.md#hand-written-package-header-files).
+[Hand-written package header files](comments.md#hand-written-package-header-files),
+and [`@(intrinsic)`](design.md#intrinsic) declarations of the names the
+compiler supplies, whose reasons are in
+[comments.md](comments.md#compiler-supplied-names-are-declared-in-source).
 The rest is a proposal for review, not yet a plan of record: once accepted, its
 plan moves to [future-plans.md](future-plans.md) and the language rules to
 [design.md](design.md).
@@ -117,7 +120,7 @@ allocator it comes (the [result contract](design.md#procedure-result-contracts))
 and whether a call writes package state (the
 [write effect](design.md#global-write-effects)). Neither `-doc`, hover, nor the
 interface file shows them, so a reader opens the body to learn them. The
-proposal continues at step 3; steps 1 and 2 are the built ones above.
+proposal continues at step 3; steps 1, 2, and 7 are the built ones above.
 
 **3. Inferred facts are shown, one line each.** The interface file and hover
 add an `// inferred:` line to a public procedure for its result contract and
@@ -228,12 +231,7 @@ steps are in priority order; each is usable without the next.
    - [compiler-guide.md](compiler-guide.md): `-doc` and the comment subset.
      CHANGELOG: Changed, with an upgrade note for scripts that read `-doc`'s
      Markdown.
-7. **Compiler-contributed declarations**, which fixes
-   [`-doc` omits compiler-contributed declarations](known-gaps.md#-doc-omits-compiler-contributed-declarations).
-   Declare each name that `src/stdlib.odin` contributes, such as all of
-   `core:mem`'s, in its package's source with a `---` body and an attribute
-   binding it to the compiler's implementation, as Rust declares its
-   intrinsics, so its signature is written once, checked, and shown.
+7. **Compiler-contributed declarations** — done on 2026-10-27.
 
 ### Still open
 
@@ -241,9 +239,11 @@ steps are in priority order; each is usable without the next.
   arena or a hot loop most wants to know, and the result contract does not
   answer it. It needs its own inferred effect, and then an `inferred:`
   phrasing.
-- **Signatures Loke cannot state.** Step 7 leaves operations such as
-  `unsafe.transmute`, whose typing no Loke signature expresses, without a
-  declaration.
+- **Signatures Loke cannot state.** An operation the compiler types itself,
+  such as `unsafe.transmute` or `unsafe.raw_data` with its five operand forms,
+  has an `@(intrinsic)` signature written for readers and checked only for its
+  name. Checking more needs a signature form that states such typing, or a
+  rule for which written forms an operation's typing must accept.
 - **Interface files outside the repository.** Whether a project's own
   packages get `api.loki` by default, and whether `loke.project` should name
   the packages `-api-check` covers.

@@ -1,0 +1,14 @@
+// design.md "`@(intrinsic)`": only a bundled package the compiler contributes to
+// describes a name with it, at file scope.
+package main;
+
+import "core:mem";
+
+@(intrinsic)
+helper :: proc() ---;
+
+main :: proc() {
+	@(intrinsic)
+	Local :: ---;
+	_ = mem.Arena{};
+}

@@ -30,6 +30,16 @@ package runtime;
 
 import "base:interfaces";
 
+// The pointer-sized handle to an allocation provider: the predeclared
+// `Allocator`, under this package's name.
+@(intrinsic)
+Allocator :: ---;
+
+// What a fallible allocation reports: the predeclared `Allocator_Error`,
+// under this package's name.
+@(intrinsic)
+Allocator_Error :: ---;
+
 // Every kind a `typeid` can describe. `Invalid` is the zero value, which is
 // what an unknown or forged id resolves to.
 Type_Kind :: enum u8 {

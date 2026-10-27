@@ -6163,7 +6163,7 @@ true  // unfixed boolean constant equivalent to the expression 0==0
 nil   // unfixed nil value used for certain values
 ```
 
-`---` is declaration syntax with two roles: the [unspecified-contents marker](#zero-values) in `x: T = ---`, and the body marker for a [foreign procedure](#foreign-system). It is not an expression and cannot be assigned, passed, or used as `x := ---`.
+`---` is declaration syntax with three roles: the [unspecified-contents marker](#zero-values) in `x: T = ---`, the body marker for a [foreign procedure](#foreign-system), and the definition marker of an [intrinsic declaration](#intrinsic), as in `Arena :: ---;`. It is not an expression and cannot be assigned, passed, or used as `x := ---`.
 
 As an initializer, `---` is an **unsafe assertion**, valid only in a file that imports [`core:unsafe`](#the-unsafe-package). The variable starts dead, but reads, borrows, and address-taking are accepted even though its contents are unspecified. Use it for storage another party will fill, such as a foreign out-parameter reached through `&mut x`.
 
@@ -7377,6 +7377,7 @@ An attribute specifies a property of a declaration, parameter, statement, block,
 | `@(deprecated=<string>)` | procedure declarations | [reports the message at each use](#deprecatedstring) |
 | `@(require_results)` | procedure declarations, procedure groups, foreign blocks, and type declarations | [results must be used or discarded](#require_results) |
 | `@(test)` | file-scope procedure declarations | [a test, which only a test build calls](#test) |
+| `@(intrinsic)` | file-scope procedure and type declarations, and members of an `impl` block, in a bundled package | [describes a name the compiler supplies](#intrinsic) |
 | `@(default_calling_convention=<string>)` | foreign blocks | [the block's default calling convention](#default_calling_conventionstring) |
 | `@(default_allocator=<string>)`, `@(default_logger=<string>)` | the root package clause | [select the program's providers](#default_allocatorstring-and-default_loggerstring) |
 | `@(zero=<variant>)`, `@(failure=<variant>)` | union types | [designate the zero and failure variants](#zerovariant-and-failurevariant) |
@@ -7426,6 +7427,31 @@ open :: proc() {
 Exported procedures must declare a [foreign calling convention](#calling-conventions) and a [foreign-ABI-safe](#foreign-abi-safe-types) signature. Exported variables must also have foreign-ABI-safe types. [Generic](#generics) declarations cannot be exported.
 
 The exported name is the declaration's name or its [`@(link_name)`](#link_namestring). Names are program-wide: duplicates produce a compile-time error identifying both declarations. The `loke_rt_` prefix is reserved for the runtime. A declaration in a [foreign block](#foreign-system) may bind an exported name; it then refers to the exported definition and must declare the same kind and type, as two foreign declarations of one symbol must.
+
+#### `@(intrinsic)`
+
+A few names in the bundled packages are the compiler's own: a type the region checker has to recognize, such as `mem.Arena`, one that must be the same type as a predeclared name, such as `mem.Allocator`, or an operation no signature can type, such as `unsafe.transmute`. `@(intrinsic)` declares such a name in its package's source without defining it, so that its signature and doc comment are written once, beside the package's other declarations, and appear in [`-doc` and the interface file](compiler-guide.md#interface-files):
+
+```loke
+/// What a region does when one of its own allocations fails.
+@(intrinsic)
+Failure_Policy :: enum { Panic, Trap }
+
+/// A local bump region, provider-backed or laid over a caller's buffer.
+@(intrinsic)
+Arena :: ---;
+
+impl Arena {
+	@(intrinsic)
+	init :: proc(parent: Allocator = default_allocator(), policy: Failure_Policy = .Panic) -> Arena ---;
+}
+```
+
+The declaration describes what the compiler supplies and adds nothing: importers and the package's own code see the name exactly as the compiler defines it. A procedure ends with `---`, as a foreign one does. A type is written `---`, or spelled out as an `enum` with its members and no values, or as a `struct` with its public fields. Members the compiler supplies to such a type are declared in an `impl` block of the type that holds only `@(intrinsic)` members.
+
+What a declaration states is checked against what it describes (`L0736`). A procedure's parameter types, modes, and result must be the compiler's, each written parameter name must be the compiler's name for that parameter, since a named argument binds by it, and a parameter has a default exactly when the compiler's does. A default's value is the compiler's, so it is written for readers. An enum's members must be the compiler's, in order, and a struct's fields its public fields, in order and with their types. An operation the compiler types itself, such as `raw_data` with its five operand forms, has a signature written for readers and checked only for its name; its section of this specification defines its typing.
+
+The attribute is valid only at file scope or in such an `impl` block, outside `when`, in a package the compiler supplies names to (`L0734`). It must name one of those names, or a member the compiler supplies to one of those types, describe it as the kind of declaration it is, and describe it once (`L0735`). Every public name the compiler supplies to the package, and every member it supplies to `mem.Arena` and `mem.Scratch`, has an intrinsic declaration (`L0737`), so none is missing from the package's documentation. A constant written `Name :: ---;` without the attribute is a syntax error (`L0262`).
 
 #### `@(link_name=<string>)`
 

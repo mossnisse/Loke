@@ -806,6 +806,11 @@ Package :: struct {
 	// Whether the compiler already bound its own members into this package's
 	// scope (`src/stdlib.odin`). Discovery re-runs; contribution must not.
 	contributed:    bool,
+	// The names contributed, in contribution order, and the `@(intrinsic)`
+	// declarations that describe them (`src/intrinsic.odin`), bound once.
+	contributions:  [dynamic]Identifier_Id,
+	intrinsics:     [dynamic]Intrinsic_Decl,
+	intrinsics_bound: bool,
 }
 
 init_semantic_stores :: proc(c: ^Compiler) {

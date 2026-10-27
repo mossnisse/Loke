@@ -1072,6 +1072,27 @@ finish_constant :: proc(p: ^Parser, d: ^Decl, start: Token) -> (^Decl, bool) {
 		)
 	}
 
+	// design.md "`@(intrinsic)`": `Name :: ---;` describes a type the compiler
+	// supplies, so it has no value; nothing else may leave a constant without one.
+	if at(p, .Uninit) {
+		marker := advance(p)
+		if !has_attribute(d.attributes, "intrinsic") {
+			parse_error(
+				p,
+				span_of(p, marker),
+				"L0262",
+				"no value",
+				"a constant needs a value; `Name :: ---;` describes a type the compiler supplies, with `@(intrinsic)`",
+			)
+			d.has_error = true
+		}
+		d.values = make([]Expr, 1, p.allocator)
+		_, terminated := expect(p, .Semicolon, "L0209", "`;` after the declaration")
+		d.span = span_to_here(p, start)
+		d.has_error ||= !terminated
+		return d, true
+	}
+
 	value := parse_constant_value(p)
 	values := make([]Expr, 1, p.allocator)
 	values[0] = value

@@ -241,6 +241,7 @@ Storage_Modifier = "static" | "thread_local"
 
 Constant_Initializer = Braced_Constant_Value
                      | Semicolon_Constant_Value ";"
+                     | "---" ";"                      // only with @(intrinsic)
 
 Braced_Constant_Value = Type_Definition
                       | Interface_Definition
@@ -258,7 +259,9 @@ Semicolon_Constant_Value = Operator_Declaration
 and static-duration storage starts at its zero value. `x: T = e;`, `x: = e;`,
 and `x := e;` add an initializer, and `x: T: e;` declares a constant. The
 uninitialized-storage marker `---` is not an expression, so `x: T = ---;` needs
-its written type. The two `Variable_Decl` alternatives differ in whether a
+its written type. `Name :: ---;` describes a type the compiler supplies, and is
+accepted only on a declaration with
+[`@(intrinsic)`](design.md#intrinsic). The two `Variable_Decl` alternatives differ in whether a
 `Type` follows; the second also covers a modifier with an inferred type,
 `x: static = 0;`.
 

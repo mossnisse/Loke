@@ -8,3 +8,6 @@ Logger :: struct {
 
 @(private)
 selected: int = 0;
+
+// design.md "`@(intrinsic)`": what the compiler supplies to any `core:log`.
+@(intrinsic) Level :: enum { Debug, Info, Warning, Error, Off }

@@ -20,3 +20,6 @@ both :: proc() {
 	cell: i32 = 0;
 	atomic_store(cell, 1, Memory_Order.Acquire);
 }
+
+// design.md "`@(intrinsic)`": what the compiler supplies to any `core:sync`.
+@(intrinsic) Memory_Order :: enum { Relaxed, Acquire, Release, Acquire_Release, Sequentially_Consistent }

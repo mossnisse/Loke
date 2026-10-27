@@ -1,0 +1,10 @@
+// design.md "`@(intrinsic)`": `Name :: ---;` describes a type the compiler
+// supplies, so a constant without the attribute still needs a value.
+package main;
+
+Opaque :: ---;
+
+@(intrinsic)
+Described :: ---;
+
+sentinel :: proc() { }

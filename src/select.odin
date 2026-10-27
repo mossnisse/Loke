@@ -51,6 +51,16 @@ flatten_item :: proc(item: Item, out: ^[dynamic]Item) {
 			flatten_item(v.otherwise, out)
 		}
 		return
+	case ^Decl:
+		// design.md "`@(intrinsic)`": a description of what the compiler supplies,
+		// which `src/intrinsic.odin` binds; no other pass declares or checks it.
+		if decl_is_intrinsic(v) {
+			return
+		}
+	case ^Item_Impl:
+		if impl_is_intrinsic(v) {
+			return
+		}
 	}
 	append(out, item)
 }
