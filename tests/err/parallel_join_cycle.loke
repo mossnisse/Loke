@@ -1,0 +1,19 @@
+// design.md "Releasing before the join": telling two parameters apart by the
+// types they reach must not recurse into a record already diagnosed as
+// holding itself by value (L0364). Such a record may hold anything, so the
+// kept sender is still rejected beside a task borrowing one.
+package main;
+
+import "core:thread";
+
+Cycle :: struct { again: Cycle }
+
+borrow :: proc(value: ^Cycle) {}
+
+check :: proc(send: ^thread.Sender(int), value: ^Cycle) {
+	parallel {
+		spawn borrow(value);
+	}
+}
+
+main :: proc() {}

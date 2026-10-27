@@ -1,0 +1,7 @@
+L0364
+@9:1
+`Cycle` contains itself by value: Cycle -> Cycle
+
+L0733
+@14:2
+the caller keeps `send` past this join, and it may borrow storage a task of the block borrows too; dropping it may be what the task waits for

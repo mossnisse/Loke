@@ -3585,9 +3585,10 @@ roots_may_share_storage :: proc(graph: ^Flow_Graph, a, b: Root_Id, reached: ^map
 	if first.unknown || second.unknown {
 		return true
 	}
+	inside := make([dynamic]Type_Id, 0, 8, context.temp_allocator)
 	for outer in first.objects {
 		for inner in second.objects {
-			if type_holds_inline(c, outer, inner) || type_holds_inline(c, inner, outer) {
+			if type_holds_inline(c, outer, inner, &inside) || type_holds_inline(c, inner, outer, &inside) {
 				return true
 			}
 		}
@@ -3604,8 +3605,9 @@ root_reached_storage :: proc(graph: ^Flow_Graph, root: Root_Id, reached: ^map[Ro
 	result := Reached_Storage{objects = make([dynamic]Type_Id, 0, 8, graph.alloc)}
 	if sym := symbol_of(c, graph.roots[int(root)].symbol); sym != nil && sym.type != INVALID_TYPE {
 		append(&result.objects, sym.type)
+		inside := make([dynamic]Type_Id, 0, 8, context.temp_allocator)
 		for index := 0; index < len(result.objects) && !result.unknown; index += 1 {
-			result.unknown = !collect_pointees(c, result.objects[index], &result.objects)
+			result.unknown = !collect_pointees(c, result.objects[index], &result.objects, &inside)
 		}
 	} else {
 		result.unknown = true
@@ -3617,23 +3619,27 @@ root_reached_storage :: proc(graph: ^Flow_Graph, root: Root_Id, reached: ^map[Ro
 // Appends to `objects` the type of each object a value of `type` points to,
 // owns out of line, or views; false when it holds a raw or foreign pointer or
 // an erased view, whose target may be storage of any type. An allocator's
-// state is its own, and a procedure value holds no state.
+// state is its own, and a procedure value holds no state. `inside` holds the
+// types the walk is within, so a record already diagnosed as holding itself
+// by value counts as unknown storage rather than recursing forever.
 @(private = "file")
-collect_pointees :: proc(c: ^Compiler, type: Type_Id, objects: ^[dynamic]Type_Id) -> bool {
+collect_pointees :: proc(c: ^Compiler, type: Type_Id, objects: ^[dynamic]Type_Id, inside: ^[dynamic]Type_Id) -> bool {
 	add :: proc(objects: ^[dynamic]Type_Id, type: Type_Id) {
 		if !slice.contains(objects[:], type) {
 			append(objects, type)
 		}
 	}
 	info := type_of(c, type)
-	if info == nil {
+	if info == nil || slice.contains(inside[:], type) {
 		return false
 	}
+	append(inside, type)
+	defer pop(inside)
 	#partial switch info.kind {
 	case .Raw_Pointer, .C_Pointer, .Any_View, .Dyn, .Interface, .Type, .Invalid:
 		return false
 	case .Distinct, .Array, .Simd:
-		return collect_pointees(c, info.element, objects)
+		return collect_pointees(c, info.element, objects, inside)
 	case .Pointer, .Slice, .Dynamic_Array, .Box:
 		add(objects, info.element)
 	case .Map:
@@ -3643,13 +3649,13 @@ collect_pointees :: proc(c: ^Compiler, type: Type_Id, objects: ^[dynamic]Type_Id
 		add(objects, TYPE_U8)
 	case .Struct:
 		for field in info.fields {
-			if sym := symbol_of(c, field); sym != nil && !collect_pointees(c, sym.type, objects) {
+			if sym := symbol_of(c, field); sym != nil && !collect_pointees(c, sym.type, objects, inside) {
 				return false
 			}
 		}
 	case .Union:
 		for variant in info.variants {
-			if !collect_pointees(c, variant, objects) {
+			if !collect_pointees(c, variant, objects, inside) {
 				return false
 			}
 		}
@@ -3660,28 +3666,31 @@ collect_pointees :: proc(c: ^Compiler, type: Type_Id, objects: ^[dynamic]Type_Id
 // Whether storage of type `outer` holds storage of type `inner` within its own
 // bytes: itself, or a field, element, or variant, at any depth. A distinct type
 // shares its storage with what it wraps, and a view's mutability is not part
-// of its storage.
+// of its storage. A record holding itself by value, already diagnosed, may
+// hold anything.
 @(private = "file")
-type_holds_inline :: proc(c: ^Compiler, outer, inner: Type_Id) -> bool {
+type_holds_inline :: proc(c: ^Compiler, outer, inner: Type_Id, inside: ^[dynamic]Type_Id) -> bool {
 	if same_storage_type(c, outer, inner) {
 		return true
 	}
 	info := type_of(c, outer)
-	if info == nil {
+	if info == nil || slice.contains(inside[:], outer) {
 		return true
 	}
+	append(inside, outer)
+	defer pop(inside)
 	#partial switch info.kind {
 	case .Distinct, .Array, .Simd:
-		return type_holds_inline(c, info.element, inner)
+		return type_holds_inline(c, info.element, inner, inside)
 	case .Struct:
 		for field in info.fields {
-			if sym := symbol_of(c, field); sym != nil && type_holds_inline(c, sym.type, inner) {
+			if sym := symbol_of(c, field); sym != nil && type_holds_inline(c, sym.type, inner, inside) {
 				return true
 			}
 		}
 	case .Union:
 		for variant in info.variants {
-			if type_holds_inline(c, variant, inner) {
+			if type_holds_inline(c, variant, inner, inside) {
 				return true
 			}
 		}
@@ -3689,21 +3698,24 @@ type_holds_inline :: proc(c: ^Compiler, outer, inner: Type_Id) -> bool {
 	return false
 }
 
+// Two types share one storage layout: the same underlying type, or pointers or
+// views of such. A distinct pointer to itself bounds the walk as
+// `type_underlying` bounds its own.
 @(private = "file")
 same_storage_type :: proc(c: ^Compiler, a, b: Type_Id) -> bool {
-	first, second := type_underlying(c, a), type_underlying(c, b)
-	if first == second {
-		return true
+	first, second := a, b
+	for _ in 0 ..< len(c.types) + 1 {
+		first, second = type_underlying(c, first), type_underlying(c, second)
+		if first == second {
+			return true
+		}
+		x, y := type_of(c, first), type_of(c, second)
+		if x == nil || y == nil || x.kind != y.kind || x.kind != .Pointer && x.kind != .Slice {
+			return false
+		}
+		first, second = x.element, y.element
 	}
-	x, y := type_of(c, first), type_of(c, second)
-	if x == nil || y == nil || x.kind != y.kind {
-		return false
-	}
-	#partial switch x.kind {
-	case .Pointer, .Slice:
-		return same_storage_type(c, x.element, y.element)
-	}
-	return false
+	return true
 }
 
 @(private = "file")
