@@ -6975,7 +6975,7 @@ prov_call_cross_thread :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 		if base == nil || base.type == INVALID_TYPE {
 			continue
 		}
-		facts := transfer_facts(c, prov_transferred_type(c, argument))
+		facts := transfer_facts(c, prov_transferred_type(c, argument), through_views = true)
 		span := expr_span(argument)
 		report_transfer_facts(c, base.type, facts, span)
 		prov_event(graph, Prov_Event_Received_Region{prov_input_value(graph, argument), span, prov_owner_name(graph, argument)})
@@ -6984,11 +6984,19 @@ prov_call_cross_thread :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 
 // design.md "@(thread_affine)": a value crossing to another thread holds or
 // reaches nothing thread-affine, and no erased value whose eligibility the
-// compiler cannot see.
+// compiler cannot see. A `dyn` view shows it through each type converted to it.
 @(private = "file")
 report_transfer_facts :: proc(c: ^Compiler, type: Type_Id, facts: Transfer_Facts, span: Span) {
 		base_type := type
 		switch {
+		case facts.affine != INVALID_TYPE && facts.affine_via.view != INVALID_TYPE:
+			errorf(
+				c, span, "L0724", "%s, which is `@(thread_affine)`, so it cannot cross to another thread",
+				viewed_subject(c, base_type, facts.affine, facts.affine_via),
+			)
+			if declared := symbol_of(c, type_of(c, facts.affine).symbol); declared != nil {
+				add_notef(c, declared.span, "`%s` is declared here", type_name(c, facts.affine))
+			}
 		case facts.affine != INVALID_TYPE:
 			if facts.affine == base_type {
 				errorf(c, span, "L0724", "`%s` is `@(thread_affine)`, so it cannot cross to another thread", type_name(c, base_type))
@@ -7002,6 +7010,12 @@ report_transfer_facts :: proc(c: ^Compiler, type: Type_Id, facts: Transfer_Facts
 			if declared := symbol_of(c, type_of(c, facts.affine).symbol); declared != nil {
 				add_notef(c, declared.span, "`%s` is declared here", type_name(c, facts.affine))
 			}
+		case facts.erased != INVALID_TYPE && facts.erased_via.view != INVALID_TYPE:
+			errorf(
+				c, span, "L0725", "%s, which hides the type it erased, so nothing shows that it may cross to another thread",
+				viewed_subject(c, base_type, facts.erased, facts.erased_via),
+			)
+			add_notef(c, span, "pass the concrete value instead, or convert it to the view at this call")
 		case facts.erased == base_type:
 			errorf(
 				c, span, "L0725",
@@ -7065,7 +7079,7 @@ prov_spawn_transfers :: proc(graph: ^Flow_Graph, s: ^Stmt_Spawn, call: ^Expr_Cal
 	}
 	if s.result != nil {
 		if sym := symbol_of(c, task.result); sym != nil {
-			report_transfer_facts(c, sym.type, transfer_facts(c, sym.type), call.span)
+			report_transfer_facts(c, sym.type, transfer_facts(c, sym.type, through_views = true), call.span)
 		}
 	}
 	report_thread_local_writes(c, call, graph.literal.symbol)
@@ -7091,7 +7105,7 @@ prov_transfer_argument :: proc(c: ^Compiler, argument: Expr, shared: bool) {
 	}
 	span := expr_span(argument)
 	transferred := prov_transferred_type(c, argument)
-	facts := transfer_facts(c, transferred)
+	facts := transfer_facts(c, transferred, through_views = true)
 	// A task may share an erased value only as its own, and moving one would
 	// still not show that it may cross (design.md "Sharing with tasks").
 	if shared && base.erased_from == INVALID_TYPE && (base.type == facts.erased && !carrier_is_mutable(c, base.type)) {
@@ -7100,6 +7114,15 @@ prov_transfer_argument :: proc(c: ^Compiler, argument: Expr, shared: bool) {
 		return
 	}
 	report_transfer_facts(c, base.type, facts, span)
+	// What a read-only view may view is shared however the view is passed:
+	// moving the view gives the task nothing of its own.
+	if facts.viewed != INVALID_TYPE {
+		errorf(
+			c, span, "L0729", "%s, so a task sharing it could write what the parent reaches too",
+			viewed_subject(c, base.type, facts.viewed, facts.viewed_via),
+		)
+		add_notef(c, span, "pass the concrete value instead, or convert it to the view at this call")
+	}
 	if shared && facts.mutable != INVALID_TYPE && !carrier_is_mutable(c, transferred) {
 		// A view made at this call only borrows what it converts, so moving the
 		// view gives the task nothing of its own.
@@ -7115,6 +7138,17 @@ prov_transfer_argument :: proc(c: ^Compiler, argument: Expr, shared: bool) {
 			type_name(c, base.type), type_name(c, facts.mutable), advice,
 		)
 	}
+}
+
+// A fact reached through a read-only view, said of the value that holds it:
+// "`dyn I`, which may view ..." or "`Holder` reaches `dyn I`, which may view ...".
+@(private = "file")
+viewed_subject :: proc(c: ^Compiler, base, reached: Type_Id, via: Transfer_Via) -> string {
+	chain := view_chain_text(c, reached, via)
+	if via.view == base {
+		return chain
+	}
+	return fmt.tprintf("`%s` reaches %s", type_name(c, base), chain)
 }
 
 // What an argument takes across: a `dyn` or `any_view` made at the call is

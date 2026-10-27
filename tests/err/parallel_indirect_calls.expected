@@ -37,7 +37,7 @@ L0729
 
 L0729
 @160:28
-`dyn proc(i64)` hides what it captures, so a task cannot share it
+`dyn proc(i64)`, which may view a `proc(n: i64) capture(&mut count)`, which reaches `^mut int`, so a task sharing it could write what the parent reaches too
 pass the concrete value instead, or convert it to the view at this call
 
 L0724

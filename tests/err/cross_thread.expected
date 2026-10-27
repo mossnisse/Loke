@@ -26,12 +26,12 @@ L0724
 L0724
 @73:34
 `Choice` is `@(thread_affine)`
-L0725
+L0724
 @74:34
-`Erased` reaches `dyn Sized`
-L0725
+`Erased` reaches `dyn Sized`, which may view a `Window_Counter`, which is `@(thread_affine)`
+L0724
 @76:32
-`dyn Sized` hides the type it erased
+`dyn Sized`, which may view a `Window_Counter`, which is `@(thread_affine)`
 L0724
 @78:32
 reaches `Window_Counter`

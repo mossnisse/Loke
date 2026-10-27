@@ -1,0 +1,84 @@
+// design.md "Sharing with tasks", "Borrows crossing between tasks": a `dyn`
+// view that arrives erased is checked through every type the program converts
+// to its interface application. Tasks share a view parameter, a callable view
+// parameter holding a procedure or a copying capture literal, a stored local
+// view, and a record holding a view, and are lent a stored `dyn mut` view for
+// a mutating slot, on bare and pooled blocks; a callable view passed on to a
+// wrapper runs there too.
+package main;
+
+import "core:fmt";
+import "core:thread";
+
+Shape :: interface($Self: type) {
+	slot area: proc(self, scale: int) -> int;
+	slot grow: proc(self: inout Self, by: int) -> int;
+}
+
+Square :: struct { side: int }
+
+impl Square {
+	area :: proc(self, scale: int) -> int { return self.side * scale; }
+	grow :: proc(self: inout, by: int) -> int { self.side += by; return self.side; }
+}
+
+Circle :: struct { radius: int }
+
+impl Circle {
+	area :: proc(self, scale: int) -> int { return 3 * self.radius * self.radius * scale; }
+	grow :: proc(self: inout, by: int) -> int { self.radius += by; return self.radius; }
+}
+
+Job :: struct { shape: dyn Shape, scale: int }
+
+measure :: proc(job: Job) -> int { return job.shape.area(job.scale); }
+apply :: proc(f: dyn proc(n: int) -> int, n: int) -> int { return f(n); }
+step :: proc(n: int) -> int { return n + 1; }
+
+shared_view :: proc(shape: dyn Shape) -> int {
+	a: int;
+	b: int;
+	c: int;
+	parallel {
+		spawn a = shape.area(1);
+		spawn b = shape.area(2);
+		spawn c = measure(Job{shape, 3});
+	}
+	return a + b + c;
+}
+
+callable :: proc(f: dyn proc(n: int) -> int) -> int {
+	pool := thread.Pool.init(2);
+	a: int;
+	b: int;
+	parallel (&pool) {
+		spawn a = f(1);
+		spawn b = apply(f, 2);
+	}
+	return a + b;
+}
+
+stored :: proc() -> int {
+	square := Square{2};
+	view := (dyn Shape)(&square);
+	copy := view;
+	grown: int;
+	area: int;
+	circle := Circle{1};
+	growing := (dyn mut Shape)(&mut circle);
+	parallel {
+		spawn area = copy.area(5);
+		spawn grown = growing.grow(2);
+	}
+	return area + grown + circle.radius;
+}
+
+main :: proc() {
+	square := Square{3};
+	circle := Circle{1};
+	offset := 10;
+	shift := proc(n: int) -> int capture(offset) { return n + offset; };
+	fmt.println("shared", shared_view((dyn Shape)(&square)), shared_view((dyn Shape)(&circle)));
+	fmt.println("callable", callable(step), callable(shift));
+	fmt.println("stored", stored());
+}

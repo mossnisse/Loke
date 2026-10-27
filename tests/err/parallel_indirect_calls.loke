@@ -5,7 +5,7 @@
 // `dyn proc` view, a capture literal, a `dyn` slot, or a procedure read from
 // a field is rejected for a global write or global reach, a reserved
 // allocator region, a mutable capture shared between tasks or a view that
-// hides its captures, a `@(thread_affine)` capture, an endpoint kept past
+// arrived erased and may view one, a `@(thread_affine)` capture, an endpoint kept past
 // the join, and a pooled `thread_local` write, and accepted where no body it
 // may call does any of those. A borrow of `thread_local` storage a callback
 // leaves or returns is in parallel_written_back.loke.
@@ -238,4 +238,13 @@ main :: proc() {
 	sender_kept();
 	sender_dropped();
 	pooled_write();
+}
+
+// The witness that keeps `already_erased` rejected, converted where no task
+// runs.
+bumped :: proc() {
+	count := 0;
+	bump := proc(n: i64) capture(&mut count) { count += int(n); };
+	f: dyn proc(n: i64) = bump;
+	f(1);
 }

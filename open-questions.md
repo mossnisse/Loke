@@ -1050,10 +1050,15 @@ milestones of `concurrency-proposal.md`, which was removed once they were
 done; git history keeps it.
 
 1. **Erased callables at a spawn.** A spawned call may go through a procedure
-   value, or a `dyn` view converted at the spawn, and the effects follow the
-   callbacks each call passes; a view that arrives erased, as a parameter or
-   stored local, is still rejected. Public callable-effect contracts need a
-   separate demonstrated requirement.
+   value or a `dyn` view, and the effects follow the callbacks each call
+   passes. A view that arrives erased, as a parameter or stored local, is
+   checked through every type converted to its interface application
+   (answered 2026-10-27; see [Sharing with tasks](design.md#sharing-with-tasks)),
+   and a call through it takes its slot's whole effect union. What remains is
+   precision: one conversion of a mutable or thread-affine type anywhere
+   rejects every erased view of that application, and one fill writing a
+   global rejects every call through it. Public callable-effect contracts,
+   which would bound both, need a separate demonstrated requirement.
 2. **Recoverable submission.** How to return arguments after failure to
    start a task, without confusing submission failure with worker failure.
 3. **Richer result destinations.** Whether live replacement, fields, indices,
@@ -1225,9 +1230,8 @@ Open, to settle with evidence during the milestones:
   `dyn fmt.Formattable` stays unknown, since printing builds its witnesses
   after the effects, and the union is per application, so one conversion of a
   mutable record anywhere rejects every registry of that interface. The same
-  union could let a task share a view that arrives erased, the first
-  [later extension](#later-concurrency-extensions), as far as data goes; a
-  call through it would still take its slot's whole effect union.
+  union now lets a task share a view that arrives erased, the first
+  [later extension](#later-concurrency-extensions).
 
 ### Waiting and ownership review (2026-10-26)
 
@@ -1639,9 +1643,12 @@ lets a spawned call go through a `dyn` view. The view is the call's receiver
 argument, so the existing argument checks apply to it unchanged. Writing the
 tests found:
 
-- **Only a view converted at the spawn is accepted.** A view that arrives
-  erased, as a parameter or a stored local, hides its captures, so
-  [Sharing with tasks](design.md#sharing-with-tasks) rejects it. Where the
+- **Only a view converted at the spawn is accepted.** Answered
+  (2026-10-27): a view that arrives erased, as a parameter or a stored local,
+  is now checked through every type converted to it, as under
+  [Sharing with tasks](design.md#sharing-with-tasks); the two directions below
+  remain more precise alternatives. Before, it hid its captures, so
+  [Sharing with tasks](design.md#sharing-with-tasks) rejected it. Where the
   view is converted at the spawn, the program could usually spawn the
   concrete call instead, so the step mainly makes `dyn` calls consistent
   with other calls; it does not yet let a library spawn the callbacks it
@@ -1663,9 +1670,11 @@ tests found:
   literal called in place needs a result name. [grammar.md](grammar.md#control-flow)
   now says so; its earlier wording allowed only a name or selector there.
 - **No `dyn mut` mutating slot can be spawned.** A temporary `dyn mut` view
-  cannot be a mutating receiver anywhere (L0359), and a stored one is erased
+  cannot be a mutating receiver anywhere (L0359), and a stored one was erased
   (L0725). A slot that takes `self` by value through a `dyn mut` view is
-  spawnable and lends the viewed value exclusively.
+  spawnable and lends the viewed value exclusively. Since 2026-10-27 a stored
+  `dyn mut` view is lent to a mutating slot too, when no type converted to it
+  is thread-affine.
 - **Named arguments fail on a view converted in place.** This is a separate
   known gap,
   [named arguments to a slot of a view converted in place](known-gaps.md#named-arguments-to-a-slot-of-a-view-converted-in-place).

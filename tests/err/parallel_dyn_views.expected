@@ -1,17 +1,16 @@
 L0729
 @40:23
-`dyn proc(i64) -> int` hides what it captures, so a task cannot share it
+`dyn proc(i64) -> int`, which may view a `proc(n: i64) -> int capture(&mut count)`, which reaches `^mut int`, so a task sharing it could write what the parent reaches too
 pass the concrete value instead, or convert it to the view at this call
 
 L0729
 @48:23
-`dyn proc(i64) -> int` hides what it captures, so a task cannot share it
+`dyn proc(i64) -> int`, which may view a `proc(n: i64) -> int capture(&mut count)`, which reaches `^mut int`, so a task sharing it could write what the parent reaches too
 pass the concrete value instead, or convert it to the view at this call
 
-L0725
+L0724
 @55:23
-`dyn mut Shape` hides the type it erased, so nothing shows that it may cross to another thread
-pass the concrete value instead, or convert it to the view at this call
+`dyn mut Shape` holds or reaches `Dial`, which is `@(thread_affine)`, so it cannot cross to another thread
 
 L0724
 @73:23
@@ -77,3 +76,15 @@ this write of `number` is not compatible with the read-only pointer of it that i
 L0511
 @223:2
 this write of `number` is not compatible with the read-only pointer of it that is still in use
+
+L0731
+@272:13
+`view.record` may write `hits`, which every task and the parent share
+
+L0729
+@283:28
+`dyn proc(i64) -> int`, which may view a `proc(n: i64) -> int capture(&mut count)`, which reaches `^mut int`, so a task sharing it could write what the parent reaches too
+
+L0725
+@294:29
+`dyn Formattable` hides the type it erased, so nothing shows that it may cross to another thread

@@ -576,6 +576,17 @@ checklist.
 
 ### Changed
 
+- A `dyn` view that arrives erased, as a parameter or a stored local, may now
+  be passed to a task or go through a spawned call
+  ([Sharing with tasks](design.md#sharing-with-tasks)), and so may a value
+  holding one passed to `thread.spawn`. It is checked through every type the
+  program converts to its interface application: a read-only view is
+  rejected with `L0729` if one of them reaches a mutable carrier, however the
+  view is passed, and any view with `L0724` if one is thread-affine, and
+  both diagnostics name that type. A call through it takes the effects of
+  every type filling its slot. An `any_view` or `dyn fmt.Formattable` that
+  arrives erased is still rejected.
+
 - A read-only `dyn` view stored in a global no longer rejects every task that
   reads through it ([Globals while tasks run](design.md#globals-while-tasks-run)).
   It reaches what each type the program converts to its interface application

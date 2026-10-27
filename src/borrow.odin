@@ -3377,7 +3377,10 @@ shared_carrier_hazard :: proc(c: ^Compiler, global: Symbol_Id) -> Shared_Hazard 
 	}
 	facts := transfer_facts(c, sym.type, through_views = true)
 	if facts.mutable != INVALID_TYPE {
-		return {facts.mutable, false, facts.mutable_via}
+		return {facts.mutable, false, {INVALID_TYPE, INVALID_TYPE}}
+	}
+	if facts.viewed != INVALID_TYPE {
+		return {facts.viewed, false, facts.viewed_via}
 	}
 	if facts.erased != INVALID_TYPE {
 		return {facts.erased, true, facts.erased_via}
@@ -3389,18 +3392,21 @@ shared_carrier_hazard :: proc(c: ^Compiler, global: Symbol_Id) -> Shared_Hazard 
 shared_hazard_text :: proc(c: ^Compiler, global: Symbol_Id, hazard: Shared_Hazard) -> string {
 	name := identifier_text(c, symbol_of(c, global).name)
 	consequence := hazard.erased ? "which hides what it reaches" : "through which another thread may write as well"
-	if hazard.via.view == INVALID_TYPE {
-		return fmt.tprintf("`%s` holds `%s`, %s", name, type_name(c, hazard.type), consequence)
+	return fmt.tprintf("`%s` holds %s, %s", name, view_chain_text(c, hazard.type, hazard.via), consequence)
+}
+
+// How a transfer fact is reached: "`dyn I`, which may view a `W`, which
+// reaches `T`" through the read-only view `via` names, or "`T`" without one.
+view_chain_text :: proc(c: ^Compiler, reached: Type_Id, via: Transfer_Via) -> string {
+	if via.view == INVALID_TYPE {
+		return fmt.tprintf("`%s`", type_name(c, reached))
 	}
-	if hazard.via.witness == hazard.type {
-		return fmt.tprintf(
-			"`%s` holds `%s`, which may view a `%s`, %s",
-			name, type_name(c, hazard.via.view), type_name(c, hazard.type), consequence,
-		)
+	if via.witness == reached {
+		return fmt.tprintf("`%s`, which may view a `%s`", type_name(c, via.view), type_name(c, reached))
 	}
 	return fmt.tprintf(
-		"`%s` holds `%s`, which may view a `%s`, which reaches `%s`, %s",
-		name, type_name(c, hazard.via.view), type_name(c, hazard.via.witness), type_name(c, hazard.type), consequence,
+		"`%s`, which may view a `%s`, which reaches `%s`",
+		type_name(c, via.view), type_name(c, via.witness), type_name(c, reached),
 	)
 }
 

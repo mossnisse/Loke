@@ -180,7 +180,7 @@ until any later point, so a write to a global there is only a likely race. A
 task runs between its spawn and the join, which the compiler sees, so the same
 write while a task may be running is an error.
 
-**A global view by its conversions.** A `dyn` view stored in a global hides
+**An erased view by its conversions.** A `dyn` view stored in a global hides
 what it views, yet a registry of handlers is a common reason to store one.
 [Globals while tasks run](design.md#globals-while-tasks-run) takes every type
 the program converts to the view's interface application, wherever that
@@ -190,7 +190,10 @@ registry of the interface. In exchange it needs no tracking of stores, which
 any procedure may make, and it reads the witnesses calls through the view
 already dispatch to. Printing is the exception: it converts every printed type
 to `dyn fmt.Formattable` after the effects are computed, so that view stays
-unknown.
+unknown. A view a task receives already erased is judged the same way, so a
+library can spawn the callbacks it is handed. A read-only view's targets stay
+shared however the view is passed: moving the view does not move what it
+views.
 
 **A thread per task, with no serial fallback.** Running the tasks one after
 another would be cheaper, but it is a different program: `thread_local`

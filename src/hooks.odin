@@ -371,65 +371,87 @@ has_excluded_copy_hook :: proc(c: ^Compiler, info: ^Type_Info) -> bool {
 // `waker` is an `@(wakes_on_drop)` type it is, holds, or reaches, so keeping
 // the value may keep a waiter asleep (design.md "Releasing before the join").
 //
-// With `through_views`, a read-only `dyn` view is followed into every type the
-// program converts to its interface application instead of counting as
-// erased (design.md "Globals while tasks run"); `mutable_via` and
-// `erased_via` then name the outermost view and witness the hazard came
+// With `through_views`, a `dyn` view is followed into every type the program
+// converts to its interface application instead of counting as erased
+// (design.md "Globals while tasks run", "Sharing with tasks"). A mutable
+// carrier reached through a read-only view is then `viewed` rather than
+// `mutable`, since moving the view gives a task nothing of its own; the `_via`
+// fields name the outermost read-only view and witness each fact came
 // through, if one did.
 Transfer_Facts :: struct {
-	affine:      Type_Id,
-	erased:      Type_Id,
-	mutable:     Type_Id,
-	waker:       Type_Id,
-	mutable_via: Transfer_Via,
-	erased_via:  Transfer_Via,
+	affine:     Type_Id,
+	erased:     Type_Id,
+	mutable:    Type_Id,
+	waker:      Type_Id,
+	viewed:     Type_Id,
+	affine_via: Transfer_Via,
+	erased_via: Transfer_Via,
+	viewed_via: Transfer_Via,
 }
 
 Transfer_Via :: struct {
 	view, witness: Type_Id,
 }
 
+// A type is walked once outside any read-only view and once inside one.
+@(private = "file")
+Transfer_Visit :: struct {
+	type:   Type_Id,
+	viewed: bool,
+}
+
 transfer_facts :: proc(c: ^Compiler, type: Type_Id, through_views := false) -> Transfer_Facts {
+	none := Transfer_Via{INVALID_TYPE, INVALID_TYPE}
 	facts := Transfer_Facts {
-		affine = INVALID_TYPE, erased = INVALID_TYPE, mutable = INVALID_TYPE, waker = INVALID_TYPE,
-		mutable_via = {INVALID_TYPE, INVALID_TYPE}, erased_via = {INVALID_TYPE, INVALID_TYPE},
+		affine = INVALID_TYPE, erased = INVALID_TYPE, mutable = INVALID_TYPE, waker = INVALID_TYPE, viewed = INVALID_TYPE,
+		affine_via = none, erased_via = none, viewed_via = none,
 	}
-	visited := make(map[Type_Id]bool, 8, context.temp_allocator)
-	transfer_facts_walk(c, type, &facts, &visited, through_views, {INVALID_TYPE, INVALID_TYPE})
+	visited := make(map[Transfer_Visit]bool, 8, context.temp_allocator)
+	transfer_facts_walk(c, type, &facts, &visited, through_views, none)
 	return facts
 }
 
 @(private = "file")
 transfer_facts_walk :: proc(
-	c: ^Compiler, type: Type_Id, facts: ^Transfer_Facts, visited: ^map[Type_Id]bool, through_views: bool, via: Transfer_Via,
+	c: ^Compiler, type: Type_Id, facts: ^Transfer_Facts, visited: ^map[Transfer_Visit]bool, through_views: bool,
+	via: Transfer_Via,
 ) {
-	if type == INVALID_TYPE || visited[type] ||
-	   (facts.affine != INVALID_TYPE && facts.erased != INVALID_TYPE &&
-	    facts.mutable != INVALID_TYPE && facts.waker != INVALID_TYPE) {
+	visit := Transfer_Visit{type, via.view != INVALID_TYPE}
+	if type == INVALID_TYPE || visited[visit] ||
+	   (facts.affine != INVALID_TYPE && facts.erased != INVALID_TYPE && facts.mutable != INVALID_TYPE &&
+	    facts.waker != INVALID_TYPE && (facts.viewed != INVALID_TYPE || !through_views)) {
 		return
 	}
-	visited[type] = true
+	visited[visit] = true
 	info := type_of(c, type)
 	if info == nil {
 		return
 	}
 	if info.thread_affine && facts.affine == INVALID_TYPE {
-		facts.affine = type
+		facts.affine, facts.affine_via = type, via
 	}
 	if info.wakes_on_drop && facts.waker == INVALID_TYPE {
 		facts.waker = type
 	}
 	#partial switch info.kind {
 	case .Pointer, .Slice, .Dyn:
-		if info.mutable && facts.mutable == INVALID_TYPE {
-			facts.mutable, facts.mutable_via = type, via
+		if !info.mutable {
+			break
+		}
+		if visit.viewed && facts.viewed == INVALID_TYPE {
+			facts.viewed, facts.viewed_via = type, via
+		} else if !visit.viewed && facts.mutable == INVALID_TYPE {
+			facts.mutable = type
 		}
 	}
 	#partial switch info.kind {
 	case .Dyn, .Any_View:
-		if through_views && info.kind == .Dyn && !info.mutable && !view_is_printing(c, info) {
+		if through_views && info.kind == .Dyn && !view_is_printing(c, info) {
 			for witness in view_witness_types(c, info) {
-				inner := via if via.view != INVALID_TYPE else Transfer_Via{type, witness}
+				inner := via
+				if inner.view == INVALID_TYPE && !info.mutable {
+					inner = {type, witness}
+				}
 				transfer_facts_walk(c, witness, facts, visited, through_views, inner)
 			}
 		} else if facts.erased == INVALID_TYPE {

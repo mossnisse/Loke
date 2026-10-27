@@ -1,8 +1,8 @@
 // design.md "Spawn statements", "Sharing with tasks": a spawned call through a
 // `dyn` view is checked on its view, the receiver argument, as any argument
-// is. A view that arrives erased, as a parameter or a stored local, hides its
-// captures, so a task cannot share it, and a stored `dyn mut` view lent to a
-// mutating slot still hides the type it erased. A view converted at the spawn
+// is. A view that arrives erased, as a parameter or a stored local, is checked
+// through every type it may view: a `&mut` capture, or a thread-affine record
+// for a `dyn mut` view lent to a mutating slot. A view converted at the spawn
 // is checked through what it views: thread affinity, a `&mut` capture,
 // storage that ends before the join, the parent writing what a task views,
 // two tasks viewing it mutably, an allocator region a captured allocator
@@ -244,4 +244,52 @@ main :: proc() {
 	returns_tls_pooled();
 	pointer_receiver_written();
 	result_outlived();
+}
+
+// The witnesses that keep the erased views above rejected, each converted
+// where no task runs.
+Dial :: struct @(thread_affine) { side: int }
+
+impl Dial {
+	area :: proc(self, scale: int) -> int { return self.side * scale; }
+	grow :: proc(self: inout, by: int) -> int { self.side += by; return self.side; }
+}
+
+witnesses :: proc() -> int {
+	count := 0;
+	tally := proc(n: i64) -> int capture(&mut count) { count += int(n); return count; };
+	f: dyn proc(n: i64) -> int = tally;
+	dial := Dial{1};
+	view := (dyn mut Shape)(&mut dial);
+	return f(1) + view.area(1);
+}
+
+// A view that arrives erased takes its slot's whole union: `Tally` fills
+// `record` and writes `hits`. Moving a read-only view shares what it views all
+// the same.
+erased_writes :: proc(view: dyn Recorder) -> int {
+	r: int;
+	parallel { spawn r = view.record(1); }
+	return r;
+}
+
+take :: proc(f: move dyn proc(n: i64) -> int) -> int { return f(1); }
+
+moved_view :: proc() -> int {
+	k := 1;
+	look := proc(n: i64) -> int capture(k) { return k + int(n); };
+	saved: dyn proc(n: i64) -> int = look;
+	r: int;
+	parallel { spawn r = take(move(saved)); }
+	return r;
+}
+
+// Printing builds `dyn fmt.Formattable`'s witnesses later, so one that arrives
+// erased hides the type it erased even when moved.
+print_one :: proc(v: move dyn fmt.Formattable) { fmt.println(v); }
+
+moved_printable :: proc() {
+	k := 1;
+	view := (dyn fmt.Formattable)(&k);
+	parallel { spawn print_one(move(view)); }
 }
