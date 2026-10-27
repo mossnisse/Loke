@@ -1942,13 +1942,26 @@ widening and no `f16` variant.
 
 The procedures backed by the C library promise the classifications, signs,
 poles, and domain results documented on each one. They do not promise correctly
-rounded results, identical last bits across platforms, a particular NaN
-payload, or `errno` contents, and they never turn a floating-point exception
-into a panic. `fma(a, b, c)` is not one of them: it computes `a*b + c` with a
-single rounding, correctly rounded, since `design.md` "Floating-point
-operators" never fuses the written expression. Its result does not depend on
-the C library, and the product's exponent is not bounded, so a finite product
-too large for the format still meets the addend.
+rounded results, a particular NaN payload, or `errno` contents, and they never
+turn a floating-point exception into a panic. `fma(a, b, c)` is not one of
+them: it computes `a*b + c` with a single rounding, correctly rounded, since
+`design.md` "Floating-point operators" never fuses the written expression. Its
+result does not depend on the C library, and the product's exponent is not
+bounded, so a finite product too large for the format still meets the addend.
+
+The transcendental functions are not deterministic: `pow`, `exp`, `log`,
+`log2`, `log10`, `hypot`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, and
+`atan2`, in both widths, and the `abs` of `Complex` and `Quaternion`, which uses
+`hypot`, can give different last bits for the same arguments. The C library
+chooses its algorithm by the processor's features, so one executable can
+disagree with itself on another machine; an optimized build can evaluate a
+call with constant arguments using the compiling machine's library; and
+another platform has another library. Code whose results must agree bit for
+bit everywhere, such as a lockstep simulation or content generated from a
+shared seed, should not use them. The remaining procedures, `sqrt` and `mod`
+included, are exact or correctly rounded, so their results are the same
+everywhere. See
+[Deterministic math functions](open-questions.md#deterministic-math-functions).
 
 ## `core:random`
 
@@ -2165,7 +2178,8 @@ standard `z` or `x`.
 The tables are constants in the source, and the common path uses no
 `core:math` call. A wedge or tail value depends on `core:math.exp` and `log`,
 and the other distributions call `exp`, `log`, `pow`, or `sqrt` on every value.
-Those functions do not promise identical last bits across platforms; see
+`exp`, `log`, and `pow` are not deterministic across machines (see
+[`core:math`](#coremath)), so neither are the values that use them; see
 [Random distributions across platforms](open-questions.md#random-distributions-across-platforms).
 
 ### Sampling
