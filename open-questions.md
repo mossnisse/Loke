@@ -1728,6 +1728,24 @@ symbol's type again, which keeps the interpretation of checked calls in one
 helper. Broader work on preserving stored-view facts and per-call effect
 precision remains separate from these fixes.
 
+### Erased-spawn witness review (2026-10-27)
+
+Review of `0d763e0a`. No correctness regression reproduced. The isolated
+diagnostic corpus and both erased-view and global-view runtime cases pass.
+Additional cases preserve exclusive loans of a stored mutable view, reject
+thread-local views in argument and result positions, and accept a returned
+view of static storage and a clean view passed through `thread.spawn`.
+
+Both of its follow-ups are applied (2026-10-27). `report_transfer_facts` in
+[cfg_provenance.odin](src/cfg_provenance.odin) handles affinity in one case,
+choosing the witness or direct wording inside it and adding the declaration
+note once; the wording and priority are unchanged. The moved-wrapper case in
+[parallel_dyn_views.loke](tests/err/parallel_dyn_views.loke) moves a `Holder`
+that reaches `^mut int` directly and again through a read-only `dyn Read`
+view, and is rejected with `L0729` for the viewed one. It protects the
+context bit in `Transfer_Visit`: visiting `^mut int` outside a view must not
+suppress its visit inside one.
+
 ### Per-call effect precision (2026-10-26)
 
 Milestone 10's third step

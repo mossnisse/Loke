@@ -88,3 +88,7 @@ L0729
 L0725
 @294:29
 `dyn Formattable` hides the type it erased, so nothing shows that it may cross to another thread
+
+L0729
+@312:35
+`Holder` reaches `dyn Read`, which may view a `Bumping`, which reaches `^mut int`, so a task sharing it could write what the parent reaches too

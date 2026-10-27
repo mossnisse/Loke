@@ -293,3 +293,22 @@ moved_printable :: proc() {
 	view := (dyn fmt.Formattable)(&k);
 	parallel { spawn print_one(move(view)); }
 }
+
+// A moved record may take its own mutable carrier, but one of the same type
+// it reaches through a read-only view stays shared.
+Read :: interface($Self: type) { slot get: proc(self) -> int; }
+Bumping :: struct { at: ^mut int }
+impl Bumping { get :: proc(self) -> int { self.at^ += 1; return self.at^; } }
+Holder :: struct { direct: ^mut int, erased: dyn Read }
+
+take_holder :: proc(h: move Holder) -> int { return h.erased.get(); }
+
+moved_holder :: proc() -> int {
+	first := 1;
+	second := 2;
+	bumping := Bumping{&mut second};
+	holder := Holder{&mut first, (dyn Read)(&bumping)};
+	r: int;
+	parallel { spawn r = take_holder(move(holder)); }
+	return r;
+}

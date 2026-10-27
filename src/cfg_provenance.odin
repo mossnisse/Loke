@@ -6989,16 +6989,13 @@ prov_call_cross_thread :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 report_transfer_facts :: proc(c: ^Compiler, type: Type_Id, facts: Transfer_Facts, span: Span) {
 		base_type := type
 		switch {
-		case facts.affine != INVALID_TYPE && facts.affine_via.view != INVALID_TYPE:
-			errorf(
-				c, span, "L0724", "%s, which is `@(thread_affine)`, so it cannot cross to another thread",
-				viewed_subject(c, base_type, facts.affine, facts.affine_via),
-			)
-			if declared := symbol_of(c, type_of(c, facts.affine).symbol); declared != nil {
-				add_notef(c, declared.span, "`%s` is declared here", type_name(c, facts.affine))
-			}
 		case facts.affine != INVALID_TYPE:
-			if facts.affine == base_type {
+			if facts.affine_via.view != INVALID_TYPE {
+				errorf(
+					c, span, "L0724", "%s, which is `@(thread_affine)`, so it cannot cross to another thread",
+					viewed_subject(c, base_type, facts.affine, facts.affine_via),
+				)
+			} else if facts.affine == base_type {
 				errorf(c, span, "L0724", "`%s` is `@(thread_affine)`, so it cannot cross to another thread", type_name(c, base_type))
 			} else {
 				errorf(
