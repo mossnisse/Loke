@@ -6,7 +6,9 @@
 // a wrapper, a wrapper forwarding to another, a recursive wrapper, a local
 // holding either of two clean procedures, a view converted at the spawn of a
 // clean type, a procedure, or a capture literal, and a wrapper given an arena
-// it does not touch, on bare and pooled blocks. A borrow of `hits` also stays
+// it does not touch, on bare and pooled blocks. Wrappers taking a `dyn proc`
+// view, given `tally` and `fill` serially, run clean procedures and capture
+// literals in tasks, directly and forwarded. A borrow of `hits` also stays
 // live across a serial call given a clean callback.
 package main;
 
@@ -52,6 +54,10 @@ fill :: proc(a: Allocator, n: int) -> int { xs := make([dynamic]int, 0, 4, a); x
 count :: proc(a: Allocator, n: int) -> int { return n; }
 build :: proc(f: proc(a: Allocator, n: int) -> int, a: Allocator, n: int) -> int { return f(a, n); }
 
+erased :: proc(f: dyn proc(n: int) -> int, n: int) -> int { return f(n); }
+relay :: proc(f: dyn proc(n: int) -> int, n: int) -> int { return erased(f, n); }
+build_erased :: proc(f: dyn proc(a: Allocator, n: int) -> int, a: Allocator, n: int) -> int { return f(a, n); }
+
 // The dirty callbacks, each used where no task runs.
 serial :: proc() -> int {
 	cells = [3]int{1, 2, 3};
@@ -60,7 +66,8 @@ serial :: proc() -> int {
 	arena := mem.Arena.init();
 	a := apply(tally, 1) + twice(tally, 1) + repeat(tally, 1, 2) + apply(peek, 1);
 	b := (dyn Recorder)(&loud).record(1) + build(fill, arena.allocator(), 1);
-	return a + b;
+	c := erased(tally, 1) + build_erased(fill, arena.allocator(), 1);
+	return a + b + c;
 }
 
 bare :: proc(pick: bool) -> int {
@@ -78,6 +85,8 @@ bare :: proc(pick: bool) -> int {
 	e: int;
 	g: int;
 	h: int;
+	i: int;
+	j: int;
 	parallel {
 		spawn a = apply(step, 1);
 		spawn b = twice(double, 3);
@@ -86,8 +95,10 @@ bare :: proc(pick: bool) -> int {
 		spawn e = (dyn Recorder)(&quiet).record(1);
 		spawn g = (dyn proc(n: int) -> int)(double)(7);
 		spawn h = (dyn proc(n: int) -> int)(shift)(1);
+		spawn i = erased(step, 1);
+		spawn j = relay(shift, 1);
 	}
-	return a + b + c + d + e + g + h;
+	return a + b + c + d + e + g + h + i + j;
 }
 
 pooled :: proc() -> int {
@@ -98,13 +109,17 @@ pooled :: proc() -> int {
 	b: int;
 	c: int;
 	d: int;
+	e: int;
+	f: int;
 	parallel (&pool) {
 		spawn a = apply(double, 4);
 		spawn b = (dyn Recorder)(&quiet).record(2);
 		spawn c = build(count, arena.allocator(), 3);
 		spawn d = build(count, arena.allocator(), 4);
+		spawn e = build_erased(count, arena.allocator(), 5);
+		spawn f = erased(step, 6);
 	}
-	return a + b + c + d;
+	return a + b + c + d + e + f;
 }
 
 kept :: proc() -> int {

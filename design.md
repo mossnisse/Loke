@@ -5858,7 +5858,7 @@ reset();                        // ERROR: a read-only slice of `cache` is still 
 fmt.println(view[0]);
 ```
 
-The effect covers a value parameter, whose managed storage is shared with the caller for the call, as much as a view. A procedure value a procedure received as a parameter runs what its caller passes, so a call passing a named procedure for a parameter its callee calls, directly or by passing it on, takes that procedure's effect, and one passing a local takes the effect of each procedure the local may hold. Any other call through a procedure value, a procedure literal called where it is written among them, may run any procedure of a compatible type, and a `dyn` call any witness the program builds for that slot, so each takes the union of their effects. A `dyn` view converted where it is called runs what its concrete value supplies: its type's method, the procedure a callable view holds, or a capture literal's `call`. Effects are whole-program and need no annotation; a procedure's effect is not part of its type. Since no variable is [public](#public), a caller borrows another package's storage only through a procedure's result, whose [result contract](#procedure-result-contracts) shows the static provenance.
+The effect covers a value parameter, whose managed storage is shared with the caller for the call, as much as a view. A procedure value or [`dyn proc` view](#borrowed-callable-views) a procedure received as a parameter runs what its caller passes, so a call passing a named procedure for a parameter its callee calls, directly or by passing it on, takes that procedure's effect, as does one passing a view converted there from a named procedure or a capture literal, which runs that procedure or the literal's `call`; one passing a local takes the effect of each procedure or view the local may hold. Any other call through a procedure value, a procedure literal called where it is written among them, may run any procedure of a compatible type, and a `dyn` call any witness the program builds for that slot, so each takes the union of their effects. A `dyn` view converted where it is called runs what its concrete value supplies: its type's method, the procedure a callable view holds, or a capture literal's `call`. Effects are whole-program and need no annotation; a procedure's effect is not part of its type. Since no variable is [public](#public), a caller borrows another package's storage only through a procedure's result, whose [result contract](#procedure-result-contracts) shows the static provenance.
 
 The same effect warns about likely data races. Passing a named procedure that
 may write file-scope or `static` storage to a
@@ -5872,8 +5872,9 @@ Callback effects are attributed as follows:
   thread boundary. Calling it, copying it to a local, or forwarding it to a
   helper does not add its writes to the entry's warning. A wrapper's trampoline
   is therefore reported only for its own writes.
-- Assigning a named procedure to a parameter or local adds that procedure's
-  possible effects.
+- Assigning a named procedure, or a `dyn proc` view converted from one or from
+  a capture literal, to a parameter or local adds that procedure's possible
+  effects.
 - A value written another way, such as through `&mut` or `inout`, may call any
   procedure of its type. The same conservative rule applies to bindings not
   introduced by a declaration in the body, such as loop bindings, and to

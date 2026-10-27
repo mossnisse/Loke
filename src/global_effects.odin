@@ -190,6 +190,10 @@ call_effect :: proc(c: ^Compiler, v: ^Expr_Call) -> (Effect_Call, bool) {
 					converted.type = forwarded.type
 					return converted, true
 				}
+				// A `dyn proc` view this body holds runs what the view may hold.
+				if ident, is_ident := v.bound[0].(^Expr_Ident); is_ident && effect_variable(c, ident.symbol) {
+					forwarded.variable = ident.symbol
+				}
 			}
 			return forwarded, true
 		}
@@ -306,22 +310,34 @@ effect_args :: proc(c: ^Compiler, v: ^Expr_Call, allocator: mem.Allocator) -> []
 	return args[:]
 }
 
-// A parameter, or a local, whose procedure value is followed through the body.
+// A parameter, or a local, whose procedure value or `dyn proc` view is
+// followed through the body.
 @(private = "file")
 effect_variable :: proc(c: ^Compiler, id: Symbol_Id) -> bool {
 	sym := symbol_of(c, id)
-	if sym == nil || underlying_kind(c, sym.type) != .Proc {
+	if sym == nil || underlying_kind(c, sym.type) != .Proc && dyn_proc_signature(c, sym.type) == INVALID_TYPE {
 		return false
 	}
 	return sym.kind == .Parameter || (sym.kind == .Var && sym.duration == .None)
 }
 
-// What a procedure-valued expression may be.
+// What a procedure-valued expression, or a `dyn proc` view, may be. A view
+// converted from a named procedure or a capture literal runs that procedure or
+// the literal's `call`.
 @(private = "file")
 effect_value :: proc(c: ^Compiler, e: Expr) -> Effect_Arg {
 	value := e
 	if moved, is_move := value.(^Expr_Move); is_move {
 		value = moved.value
+	}
+	if base := expr_base(value); base != nil && dyn_proc_signature(c, base.type) != INVALID_TYPE {
+		if converted, found := converted_view_call(c, value, 0); found {
+			return Effect_Arg{kind = .Procedure, symbol = converted.held if converted.held != INVALID_SYMBOL else converted.callee}
+		}
+		if ident, is_ident := value.(^Expr_Ident); is_ident && effect_variable(c, ident.symbol) {
+			return Effect_Arg{kind = .Variable, symbol = ident.symbol}
+		}
+		return {}
 	}
 	id := INVALID_SYMBOL
 	#partial switch v in value {
@@ -739,16 +755,17 @@ call_parts :: proc(c: ^Compiler, body: Symbol_Id, call: Effect_Call, open: bool)
 			for arg in args {
 				if arg.binding == called.parameter {
 					bound = true
-					value_parts(c, &out, arg, type, part, open)
+					value_parts(c, &out, arg, any_value_call(c, type), part, open)
 				}
 			}
 			if !bound {
-				value_parts(c, &out, Effect_Arg{}, type, part, open)
+				value_parts(c, &out, Effect_Arg{}, any_value_call(c, type), part, open)
 			}
 		}
 	case followed:
+		any := Effect_Call{type = call.type, dyn_interface = call.dyn_interface, dyn_index = call.dyn_index}
 		for value in values {
-			value_parts(c, &out, value, call.type, whole, open)
+			value_parts(c, &out, value, any, whole, open)
 		}
 	case:
 		for reached in effect_targets(c, call, program) {
@@ -760,8 +777,9 @@ call_parts :: proc(c: ^Compiler, body: Symbol_Id, call: Effect_Call, open: bool)
 	return out[:]
 }
 
+// The parts one value contributes; `any` reaches every value it may be.
 @(private = "file")
-value_parts :: proc(c: ^Compiler, out: ^[dynamic]Call_Part, value: Effect_Arg, type: Type_Id, part: Call_Part, open: bool) {
+value_parts :: proc(c: ^Compiler, out: ^[dynamic]Call_Part, value: Effect_Arg, any: Effect_Call, part: Call_Part, open: bool) {
 	program := &c.effect_program
 	#partial switch value.kind {
 	case .Procedure:
@@ -778,11 +796,21 @@ value_parts :: proc(c: ^Compiler, out: ^[dynamic]Call_Part, value: Effect_Arg, t
 			return
 		}
 	}
-	for reached in effect_targets(c, Effect_Call{type = type}, program) {
+	for reached in effect_targets(c, any, program) {
 		member := part
 		member.body = reached
 		append(out, member)
 	}
+}
+
+// A call reaching any value of `type`: any procedure of a procedure type, or
+// whatever a `dyn proc` view of its signature may run.
+@(private = "file")
+any_value_call :: proc(c: ^Compiler, type: Type_Id) -> Effect_Call {
+	if signature := dyn_proc_signature(c, type); signature != INVALID_TYPE {
+		return Effect_Call{dyn_interface = underlying_info(c, type).dyn_interface, type = signature}
+	}
+	return Effect_Call{type = type}
 }
 
 // What a body's whole summary adds to its own part: every procedure of each
@@ -798,7 +826,7 @@ closing_parts :: proc(c: ^Compiler, index: int) -> []Call_Part {
 	for called, position in summary.called {
 		type := proc_parameter_type(c, program.bodies[index].type, called.parameter)
 		part := Call_Part{whole = true, elsewhere = called.elsewhere, via = index, callback = position}
-		value_parts(c, &out, Effect_Arg{}, type, part, true)
+		value_parts(c, &out, Effect_Arg{}, any_value_call(c, type), part, true)
 	}
 	return out[:]
 }

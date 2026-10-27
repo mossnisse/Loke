@@ -9,8 +9,10 @@
 // through a callback, a pooled join a callback's `thread_local` write may
 // run, and a serial borrow live across a call given a dirty callback. A view
 // converted at the spawn names the capture literal it runs. A wrapper taking a
-// `dyn proc` view still takes the union for its signature, so it is rejected
-// though this spawn passes a clean procedure.
+// `dyn proc` view follows what each call passes as well: a clean procedure or
+// a reading capture literal is accepted beside a dirty call elsewhere, and a
+// dirty procedure, a writing literal, a forwarded view, a reaching callback, a
+// shared arena, and a local view that may hold a dirty procedure are rejected.
 package main;
 
 import "core:fmt";
@@ -124,13 +126,60 @@ captured :: proc() {
 	parallel { spawn r = (dyn proc(n: int) -> int)(count_up)(1); }
 }
 
-// A wrapper taking a `dyn proc` view calls it as a union over its signature,
-// since only procedure-typed parameters are followed.
+// A wrapper taking a `dyn proc` view runs what each call converts for it.
 erased :: proc(f: dyn proc(n: int) -> int, n: int) -> int { return f(n); }
+relay :: proc(f: dyn proc(n: int) -> int, n: int) -> int { return erased(f, n); }
+build_erased :: proc(f: dyn proc(a: Allocator, n: int) -> int, a: Allocator, n: int) -> int { return f(a, n); }
 
 erased_clean :: proc() {
+	base := 2;
+	times := proc(n: int) -> int capture(base) { return n * base; };
 	r: int;
-	parallel { spawn r = erased(step, 1); }
+	s: int;
+	t: int;
+	parallel {
+		spawn r = erased(step, 1);
+		spawn s = relay(step, 1);
+		spawn t = erased(times, 1);
+	}
+}
+
+erased_dirty :: proc() {
+	base := 1;
+	count_up := proc(n: int) -> int capture(base) { hits += n; return base; };
+	r: int;
+	s: int;
+	t: int;
+	u: int;
+	parallel {
+		spawn r = erased(tally, 1);
+		spawn s = relay(tally, 1);
+		spawn t = erased(count_up, 1);
+		spawn u = erased(peek, 1);
+	}
+}
+
+erased_arena :: proc() {
+	arena := mem.Arena.init();
+	x: int;
+	y: int;
+	parallel {
+		spawn x = build_erased(fill, arena.allocator(), 1);
+		spawn y = build_erased(fill, arena.allocator(), 2);
+	}
+}
+
+either_view :: proc(pick: bool) -> int {
+	f: dyn proc(n: int) -> int = step;
+	if (pick) {
+		f = tally;
+	}
+	return f(1);
+}
+
+erased_local :: proc() {
+	r: int;
+	parallel { spawn r = either_view(false); }
 }
 
 main :: proc() {
@@ -146,4 +195,7 @@ main :: proc() {
 	captured();
 	fmt.println(erased(tally, 1));
 	erased_clean();
+	erased_dirty();
+	erased_arena();
+	erased_local();
 }

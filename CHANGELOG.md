@@ -600,7 +600,11 @@ checklist.
   names the callback that writes or reaches it and the parameter it was
   passed for, as in "`apply` may call `tally` for `f`", and one through a
   view converted at the spawn names the method or capture literal it runs.
-  A `dyn proc` parameter still takes every procedure of its signature.
+  A `dyn proc` parameter or local is followed the same way: given a view
+  converted from a named procedure or a capture literal, a call takes only
+  that procedure's or the literal's effects, so `apply(step, 1)` with
+  `apply :: proc(f: dyn proc(n: int) -> int, n: int)` is accepted as a task
+  beside a serial `apply(tally, 1)`.
 
 - Revised the deferred [ring proposal](concurrency-proposal.md#the-ring-algorithm)
   to recommend a spare-slot SPSC queue with bounded indices, separate closure

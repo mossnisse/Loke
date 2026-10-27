@@ -599,7 +599,9 @@ All three effects settle per call, not per procedure type
 ([Global write effects](design.md#global-write-effects)).
 `compute_global_writes` first settles which parameters each body calls
 (`Called_Parameter`), through a variable that may hold one or by passing one
-where a callee calls its own, and keeps each such body's effects apart from
+where a callee calls its own; a procedure-typed or `dyn proc` parameter or
+local is such a variable (`effect_variable`), and a view converted from a
+named procedure or capture literal is a value naming its target (`effect_value`), and keeps each such body's effects apart from
 those callbacks in a `Callback_Summary`. A call then takes in `Call_Part`s
 (`call_parts`): a direct callee's own part, and for each callback it calls,
 the whole summary of what this call passes there, as

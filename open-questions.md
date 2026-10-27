@@ -1129,8 +1129,7 @@ Still open; the first three are among the proposal's
   replaced it where it can: a call
   takes in the callbacks it passes, so an unrelated procedure of the same type
   no longer affects it. The union remains for a body's own calls of its
-  parameters, for `dyn proc` parameters, and for values nothing follows; those
-  limits are recorded there.
+  parameters and for values nothing follows; those limits are recorded there.
 
 ### Structured concurrency implementation readiness (2026-10-22)
 
@@ -1683,16 +1682,23 @@ concrete target. Writing it and its tests found:
   parameter-backed region, as any call through a value does, rather than the
   argument at that parameter. A capture literal's `call` and a converted
   slot are direct calls and bind by parameter.
-- **A `dyn proc` parameter keeps the union.** Only procedure-typed
-  parameters and locals are followed (`effect_variable`, `effect_value`), so
-  `apply :: proc(f: dyn proc(n: int) -> int, n: int)` takes every procedure
-  of the signature, and `spawn r = apply(quiet, 1)` is rejected when another
-  call passes it one writing a global; a `proc` parameter accepts it. The
-  spawn passes a concrete procedure, and the wrapper makes the erased call
-  on its worker, so this is separate from rejecting a stored view at the
-  thread boundary. Following a received view would extend `Effect_Arg` to
-  views and their conversions. `tests/err/parallel_callback_precision.loke`
-  covers the limit.
+- **A `dyn proc` parameter kept the union.** Only procedure-typed
+  parameters and locals were followed (`effect_variable`, `effect_value`), so
+  `apply :: proc(f: dyn proc(n: int) -> int, n: int)` took every procedure
+  of the signature, and `spawn r = apply(quiet, 1)` was rejected when another
+  call passed it one writing a global; a `proc` parameter accepted it.
+  Resolved (2026-10-27): a `dyn proc` parameter or local is followed as a
+  procedure-typed one is, and a view converted from a named procedure or a
+  capture literal is a value naming that procedure or the literal's `call`.
+  An unknown view still takes the view's own union: every slot fill and held
+  procedure of its signature. The `thread_local` write-back reads the same
+  resolved values and lines a held procedure up by parameter count, as it
+  already did. `tests/run/parallel_callback_precision.loke` and
+  `tests/err/parallel_callback_precision.loke` pair accepted clean callbacks
+  and capture literals, directly and forwarded, with rejected dirty ones,
+  reach, a shared arena, and a local view that may hold a dirty procedure.
+  This is separate from spawning a received view at the thread boundary,
+  which [Sharing with tasks](design.md#sharing-with-tasks) still rejects.
 - **The `run` procedure's call resolves at its spawn.** Its frame fields name
   no procedure, so before this step a task through a wrapper took the union
   even where the parent passed a named procedure. The worker's call now
@@ -1743,7 +1749,8 @@ rejecting a stored view at the thread boundary: this spawn passes a concrete
 procedure and the wrapper makes the erased call on its worker. Record and
 test this limit alongside the other per-call precision limits before
 extending the shared callback representation to erased parameters. Recorded
-and tested under the [per-call findings](#per-call-effect-precision-2026-10-26).
+and tested under the [per-call findings](#per-call-effect-precision-2026-10-26),
+and resolved there on 2026-10-27: this program now compiles.
 
 Two local simplifications were available, and both are applied:
 

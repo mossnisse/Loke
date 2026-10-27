@@ -1,73 +1,93 @@
 L0731
-@43:3
+@45:3
 `apply` may write `hits`, which every task and the parent share
 `apply` may call `tally` for `f`, which writes `hits`
 
 L0731
-@44:3
+@46:3
 `twice` may write `hits`, which every task and the parent share
 `twice` may call `tally` for `f`, which writes `hits`
 
 L0731
-@45:3
+@47:3
 `repeat` may write `hits`, which every task and the parent share
 `repeat` may call `tally` for `f`, which writes `hits`
 
 L0731
-@55:13
+@57:13
 `f` may write `hits`, which every task and the parent share
 `f` may be `tally`, which writes `hits`
 
 L0731
-@60:13
+@62:13
 `g` may write `hits`, which every task and the parent share
 `g` may be `tally`, which writes `hits`
 
 L0731
-@60:13
+@62:13
 `g` reaches through `table`, which every task and the parent share
 `g` may be `peek`, which reaches through `table`
 
 L0731
-@69:13
+@71:13
 `apply` may write `hits`, which every task and the parent share
 `apply` may call `tally` for `f`, which writes `hits`
 
 L0731
-@69:13
+@71:13
 `apply` reaches through `table`, which every task and the parent share
 `apply` may call `peek` for `f`, which reaches through `table`
 
 L0731
-@85:13
+@87:13
 `(dyn Recorder)(&loud).record` may write `hits`, which every task and the parent share
 
 L0731
-@90:13
+@92:13
 `apply` reaches through `table`, which every task and the parent share
 `apply` may call `peek` for `f`, which reaches through `table`
 
 L0732
-@102:3
+@104:3
 this task may use `arena`'s allocator, which a task started earlier reserves until the join
 
 L0512
-@110:2
+@112:2
 `buffer` cannot be modified by `apply`, which this join may run on this thread, here
 
 L0512
-@116:12
+@118:12
 `hits` cannot be modified by `apply` here: a read-only pointer of it is still in use
 
 L0731
-@124:13
+@126:13
 `(dyn proc(n: int) -> int)(count_up)` may write `hits`, which every task and the parent share
 `(dyn proc(n: int) -> int)(count_up)` may be the capture literal here, which writes `hits`
 
 L0731
-@133:13
+@155:3
 `erased` may write `hits`, which every task and the parent share
+`erased` may call `tally` for `f`, which writes `hits`
 
 L0731
-@133:13
+@156:3
+`relay` may write `hits`, which every task and the parent share
+`relay` may call `tally` for `f`, which writes `hits`
+
+L0731
+@157:3
+`erased` may write `hits`, which every task and the parent share
+`erased` may call the capture literal here for `f`, which writes `hits`
+
+L0731
+@158:3
 `erased` reaches through `table`, which every task and the parent share
+`erased` may call `peek` for `f`, which reaches through `table`
+
+L0732
+@168:3
+this task may use `arena`'s allocator, which a task started earlier reserves until the join
+
+L0731
+@182:13
+`either_view` may write `hits`, which every task and the parent share

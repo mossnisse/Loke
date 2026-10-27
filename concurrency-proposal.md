@@ -630,8 +630,9 @@ separate receiver-mode question under
    what it passes there, as the `thread_local` write-back already did; a
    call through a local takes what the local may hold, and a view converted
    at the call its concrete target. A callback is given the regions its
-   callee passes it. Values nothing followed, and a body's own calls of its
-   parameters, keep the type union. A task's `run` procedure resolves its
+   callee passes it. A `dyn proc` parameter or local is followed as a
+   procedure-typed one is. Values nothing followed, and a body's own calls of
+   its parameters, keep the type union. A task's `run` procedure resolves its
    call where the `spawn` is, and a rejection names the callback with the
    parameter it was passed for. `tests/run/parallel_callback_precision.loke`,
    `tests/err/parallel_callback_precision.loke`, and the
