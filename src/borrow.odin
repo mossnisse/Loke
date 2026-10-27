@@ -3667,7 +3667,10 @@ root_reached_storage :: proc(graph: ^Flow_Graph, root: Root_Id, reached: ^map[Ro
 // an erased view, whose target may be storage of any type. An allocator's
 // state is its own, and a procedure value holds no state. `inside` holds the
 // types the walk is within, so a record already diagnosed as holding itself
-// by value counts as unknown storage rather than recursing forever.
+// by value counts as unknown storage rather than recursing forever. A
+// body-local type skips the package's finite-size phase, so `size_state`
+// alone would miss its cycle, and a path rather than a visited set keeps two
+// sibling fields of one type from looking like a cycle.
 @(private = "file")
 collect_pointees :: proc(c: ^Compiler, type: Type_Id, objects: ^[dynamic]Type_Id, inside: ^[dynamic]Type_Id) -> bool {
 	add :: proc(objects: ^[dynamic]Type_Id, type: Type_Id) {

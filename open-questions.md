@@ -26,39 +26,6 @@ annotations. Three decisions remain open:
   [current records](bench/baselines/README.md#completed-migration-stage-5).
   Whether to accept that cost or reduce it is open.
 
-### Checker architecture review (2026-10-26)
-
-The separation between normalized input, monotone fact replay, and the loan
-solvers is useful. Keep that boundary and its semantic inspection tests.
-The `exchange` result that had no transfer of its own, now described with the
-other checked transfers, showed that their coverage needs attention; it did not
-justify introducing a general-purpose intermediate representation.
-
-Its three small simplifications are applied (2026-10-26). The indirect load
-that `prov_written_aliases_at` and `prov_read_value_aliases` both repeated is
-one procedure, `prov_load_aliases` in
-[provenance_read.odin](src/provenance_read.odin). Each caller keeps its own
-storage lookup and its own treatment of uncertainty. A read that finds nothing
-at all is unresolved when it may find unnamed storage; a write's lookup needs
-a root for direct storage. The materialization no longer sorts replacements it
-already appends in recorded order. `region_merge_grows` is replaced by
-`merge_region_provenance`. Diagnostics match on all 1350 corpus inputs.
-
-The structural follow-up is done too (2026-10-26). The facts a round carries
-are an explicit `Prov_Facts`, embedded in each graph's state, and the
-body's topology is an explicit `Prov_Topology` in the program; see
-[Normalized provenance input](compiler-architecture.md#normalized-provenance-input).
-`prov_carry_facts` deep-copies only the facts, instead of returning a partly
-initialized `Flow_Graph`, and `prov_fact_weight` counts the same five maps.
-Fact graphs no longer copy `lent_locals` as topology, since seeding supplies
-them. Diagnostics match on all 1350 corpus inputs, and
-`normalization_fact_carry_contract` checks that a carry is an independent copy
-that seeds the same weight. Fact replay counts are unchanged. `perf.ps1`
-measured front-end time within 7% either way, and `-o:speed` builds of both
-compilers matched within 1% on `bench/workspace` and `corpus_runner`. Retaining
-normalized bodies across whole-program visits remains the separate decision
-above.
-
 ## Package and import versioning
 
 Should import paths encode package versions? And should a package declaration remain mandatory in every file, when every file in a directory must name the same package anyway, or is it ceremony? The current version requires the declaration and leaves dependency versions to the build system or package manager. A future package design may need reproducible version selection without making source imports depend on a particular registry.
@@ -84,7 +51,7 @@ Decided so far, and built as `loke.project` (compiler-guide.md "Projects"):
   version, immutable commit ID, and content checksum for every dependency, as
   planned in [Packages and dependencies](future-plans.md#packages-and-dependencies).
 
-### Review (2026-10-21)
+### Before versioned sources
 
 The local-directory workflow is implemented; versioned resolution is still a
 direction. These findings concern the choices needed before extending it, not
@@ -130,126 +97,27 @@ and explicit update boundary are already covered by
 
 ## Using a package without reading its code (proposal, 2026-10-21)
 
-To use a package today you read its source. Hand-written documentation does
-not fix that, because nothing checks it and it goes stale. The proposal: what a
-package tells its users is generated from its source, checked by the compiler,
-or run by the test runner, and prose is kept for intent, which goes stale
-slowest. It is a proposal for review, not yet a plan of record: once accepted,
-the implementation plan below moves to [future-plans.md](future-plans.md) and
-the language rules to [design.md](design.md).
+Hand-written documentation goes stale, because nothing checks it. The
+proposal: what a package tells its users is generated from its source, checked
+by the compiler, or run by the test runner, and prose is kept for intent, which
+goes stale slowest. Its first two steps are built:
+[`///` doc comments](design.md#comments), whose reasons are in
+[comments.md](comments.md#doc-comments-start-with-), and a checked-in
+[interface file](compiler-guide.md#interface-files), `api.loki`, generated and
+never read for the reasons in
+[Hand-written package header files](comments.md#hand-written-package-header-files).
+The rest is a proposal for review, not yet a plan of record: once accepted, its
+plan moves to [future-plans.md](future-plans.md) and the language rules to
+[design.md](design.md).
 
-### What exists and what is missing
+### Proposed steps
 
-[`lokec -doc`](compiler-guide.md#common-options) prints each public
-declaration's signature, derived from source, with the comments directly above
-it, and hover shows the same ([Language server](compiler-guide.md#language-server)).
-A signature already says how to call a procedure and, through its
-[fallible union](design.md#typed-fallibility), how it fails. Four problems
-remain, measured on the bundled packages on 2026-10-20:
-
-- **Nobody runs `-doc`.** People and agents open the package's folder and read
-  what is there, and a command they must first learn about loses to that.
-- **The comments serve two audiences.** Comments are 53% of `-doc`'s output
-  over 14 `core` packages, and about 40% of that prose is for maintainers:
-  spec citations, how an operation is implemented, why an overflow cannot
-  happen. `core:strings`'s `index`, for example, is documented only by a note
-  on its search algorithm. The rest says what no signature can, such as that
-  `core:strings` counts bytes or that `sort` is not stable.
-- **The format costs tokens.** The Markdown headings and code fences are 11%
-  (`core:fmt`) to 20% (`core:container`) of a page, and the heading repeats the
-  name the signature starts with.
-- **Inferred facts are hidden.** The compiler infers whether a result borrows
-  an argument and from which allocator it comes (the
-  [result contract](design.md#procedure-result-contracts)), and whether a call
-  writes package state (the [write effect](design.md#global-write-effects)).
-  Neither `-doc` nor hover shows them, so a reader opens the body to learn
-  them.
-
-### Proposal
-
-**1. `///` marks a doc comment.** A line comment that starts with `///`, but
-not `////`, is a doc comment. It documents the declaration, field, enum
-member, or `package` clause directly below it, with no blank line between, and
-is the only comment that `-doc`, hover, and the interface file show. `//` is
-for maintainers and is never shown. A doc comment is still whitespace to the
-grammar, so it changes no program's meaning. A `///` that documents nothing,
-such as one inside a body or above a blank line, is a warning. Block comments
-are never doc comments.
-
-The author decides the audience once, where the comment is written. Neither an
-attribute such as `@(doc="…")`, which needs escaping and long strings, nor a
-prefix such as `// doc:`, which a typo silently drops, does this as cheaply.
-The package overview is the `///` above a `package` clause, so no second
-marker such as Rust's `//!` is needed. There is no transition period: the
-bundled packages are converted in the same change, and in them a spec citation
-belongs in a `//` comment, which `check-citations.ps1` enforces.
-
-**2. Each package directory holds a checked-in interface file, `api.loki`.**
-`lokec <dir> -api` writes it: Loke source with every public declaration and no
-bodies, in the order of the package's file names and then source order. For
-example (shortened, and with illustrative contracts):
-
-```loke
-// Generated by `lokec -api` from this directory's .loke files. Do not edit.
-
-// UTF-8 algorithms and efficient construction. Every index and length here
-// is a **byte offset**; nothing in this package counts graphemes.
-package strings;
-
-import "core:mem";
-
-// A growing buffer finished as one immutable `string`. The zero value is a
-// usable, empty builder that allocates from the default provider.
-String_Builder :: struct {
-	// and fields private to the package
-}
-
-// A builder whose buffer and finished string come from `allocator`.
-// inferred: result is backed by `allocator`
-init :: proc(allocator: Allocator = mem.default_allocator()) -> String_Builder ---;
-
-// Every part between occurrences of `separator`, left to right.
-// inferred: result borrows `text` and `separator`
-split :: proc(text: string_view, separator: string_view) -> Split_Iterator ---;
-```
-
-- **Found without a command.** Listing the folder, the editor's file tree,
-  grep, and a code host all show it. An agent reads or greps it, so `-doc`
-  needs no index or single-entry form for agents.
-- **Checked, so it cannot go stale.** `lokec <dir> -api-check` writes nothing,
-  names the file if it differs from what `-api` would write, and exits 1, as
-  `-fmt-check` does. The gate runs it for every bundled package, as Kotlin's
-  API dumps and Android's `api/current.txt` are checked.
-- **Reviewed.** A change to the public API, or to an inferred fact, shows as a
-  diff of `api.loki` in the commit that makes it.
-- **Output only.** The compiler never reads it, so the source stays the one
-  authority and Loke does not get C's two copies of every signature, which
-  [Hand-written package header files](comments.md#hand-written-package-header-files)
-  rejects. The `.loki` extension keeps it out of the package, whose files are
-  its `.loke` files.
-- **Parses and is formatted.** It is valid Loke syntax that `-fmt` leaves
-  unchanged, though it is never checked. Its comments are written `//`: every
-  comment in the file is for the package's users, so `///` would mark
-  nothing. In it, a procedure ends in `---`, the existing
-  [bodiless form](grammar.md#procedures). A struct shows its public fields and
-  notes that private ones exist; enums and unions show their
-  members. An `impl`'s public members appear inside `impl Type { … }` and a
-  foreign block's as plain declarations. The file imports exactly the packages
-  its signatures name.
-- **Target-independent.** A public declaration inside a file-scope `when` is
-  written inside the same `when`, with its condition as written, so the file
-  does not depend on the target or the defines that generate it. In the
-  bundled packages, `core:fs`'s `Directory_Reader` and its members are the
-  only public declarations inside a top-level `when` today.
-- **Private types only where an importer meets them.** A public-default file
-  makes an `impl` member public even when its type is package-private, so
-  `-doc` used to list members no importer can reach, such as the 28 of
-  `core:time`'s `Text` and `Scanner`. Hiding every member of a private type
-  would also hide the methods of a private type that a public procedure
-  returns, which an importer does call. So an `impl` of a private type is
-  shown, after a comment saying the type is private, only once a shown
-  declaration names the type, and `-doc` follows the same rule. No bundled
-  package returns a private type today.
+The compiler infers whether a result borrows an argument and from which
+allocator it comes (the [result contract](design.md#procedure-result-contracts)),
+and whether a call writes package state (the
+[write effect](design.md#global-write-effects)). Neither `-doc`, hover, nor the
+interface file shows them, so a reader opens the body to learn them. The
+proposal continues at step 3; steps 1 and 2 are the built ones above.
 
 **3. Inferred facts are shown, one line each.** The interface file and hover
 add an `// inferred:` line to a public procedure for its result contract and
@@ -319,51 +187,7 @@ citing comments, and CHANGELOG together, and passes `.\test-all.ps1`. The
 steps are in priority order; each is usable without the next.
 
 1. **`///` doc comments** — done on 2026-10-21.
-   - [design.md "Comments"](design.md#comments): define a doc comment and what
-     it documents, and the warning for one that documents nothing.
-   - `src/doc.odin` `doc_comment`: take only `///` lines and strip `/// `.
-     Hover (`query_documentation` in `src/queries.odin`) uses the same
-     procedure, so it follows.
-   - A warning, with a new diagnostic code, for a `///` that documents
-     nothing.
-   - Convert `core/` and `base/` by hand, one commit per few packages: usage
-     prose becomes `///`; implementation notes, spec citations, and to-do notes
-     stay `//`, below the doc comment or in the body.
-   - `check-citations.ps1`: report a spec citation in a `///` comment in
-     `core/` or `base/`.
-   - Tests: `tests/doc/` cases in `///`, plus cases for `////`, block
-     comments, and a misplaced `///`; an LSP hover test.
-   - [compiler-guide.md](compiler-guide.md): `-doc` and hover say `///`.
-     CHANGELOG: a Changed line and an upgrade note, since existing `//` doc
-     comments stop being shown.
-2. **The interface file** — done on 2026-10-21. Cases are directories under
-   `tests/api/` whose checked-in `api.loki` files are the goldens, so
-   `-api-check` is the comparison. `loke-lsp` already ignored every document
-   that is not a `.loke` file, and the extension now sends it only those.
-   - `src/doc.odin`: an interface writer beside the Markdown one, sharing
-     visibility and the struct view: package clause and overview, the imports
-     its signatures name, `---` bodies, `impl` blocks, enum and union members
-     with their `///` comments only, and `when` blocks as written, whose
-     declarations take their visibility from written attributes as a generic
-     record's fields do.
-   - `src/main.odin`: `-api` writes `api.loki` in the root's directory and in
-     each project package's; `-api-check` writes nothing and exits 1 on a
-     difference.
-   - Generate and check in `api.loki` for every package in `core/` and
-     `base/`, subpackages such as `core/encoding/json` included.
-   - Tests: `tests/api/*.loke` cases with `.loki` goldens; a corpus test that
-     runs `-api-check` on every bundled package; a check that every
-     `api.loki` parses and that `-fmt-check` accepts it.
-   - Editor: `editors/vscode/package.json` maps `.loki` to the `loke`
-     language, and `loke-lsp` ignores `.loki` documents rather than checking
-     them. `loke.documentation` answers the interface text, and
-     `extension.js` opens it as a `loke` document.
-   - AGENTS.md: to use a package, read its `api.loki`; read its source only
-     to change it, and regenerate the file with `-api` after a public change.
-   - [compiler-guide.md](compiler-guide.md) documents `-api` and `-api-check`,
-     [compiler-architecture.md](compiler-architecture.md) the writer, and
-     [comments.md "Hand-written package header files"](comments.md#hand-written-package-header-files)
-     why the file is generated and never read. CHANGELOG: Added.
+2. **The interface file** — done on 2026-10-21.
 3. **Inferred lines.**
    - `src/doc.odin`: the result contract from `result_summary`
      (`src/borrow.odin`) and the write effect from `c.global_writes`
@@ -424,19 +248,7 @@ steps are in priority order; each is usable without the next.
   packages get `api.loki` by default, and whether `loke.project` should name
   the packages `-api-check` covers.
 
-### Interface-generator review (2026-10-21)
-
-A review of `7cc087d`, "Generate a checked-in interface file, api.loki, for
-each package", found five correctness problems whose original reproductions
-were fixed in `1eef98d`:
-comment filtering that joined tokens, imports moved out of their `when`
-branch, foreign members that lost the block's convention and result
-requirement, public overload groups whose private members were not shown, and
-private-type reachability decided by spelling. As the review recommended, a
-reference is now followed to the declaration the checker resolved it to, and
-by written name only in syntax the checker never resolved. Imports are the
-exception: the checker rewrites `mem.default_allocator()` into a reference to
-the procedure, so the imports the written text needs are found in that text.
+### Public declarations that name private ones
 
 **Should a public declaration be allowed to name a private one?**
 [Exported names](design.md#exported-names) does not forbid it, and following
@@ -460,19 +272,6 @@ now; to warn when a public signature or public field names a private type, or
 a public `where` clause a private procedure, but not for a group's members;
 or to make that an error. The warning would make `fmt.Fill` public and keep
 the interface writer's private notes for groups only.
-
-### Follow-up review of interface fixes (2026-10-21)
-
-A review of `1eef98d`, "Fix the interface writer's five review findings",
-found three more cases, fixed in the commit after it: in syntax the checker
-never resolved, a parameter or `$` name was taken for a private declaration
-spelled the same, which also made an interface generated without `-debug`
-stale under it; a private member selected through its type, as
-`Boxed.DEFAULT` in a default value, was not followed; and a constant in
-`@(align=N)` was not followed. The review's simplification, reading
-`@(test)` directly instead of through a helper, is applied too. Each case is
-in `tests/api/bindings`, and every case and bundled package is now checked
-with and without `-debug`.
 
 ## The `op`/`try_op` pair
 
@@ -623,8 +422,10 @@ procedure rerun when a variable it reads changes. Each needs a use of its own;
 already rules them out as the answer to borrowing across a join.
 
 `Once` in `core:sync` spins without yielding while another thread runs its
-action. A blocking address wait would suit slow, contended initialization if
-that turns out to be a real workload; no contention benchmark has been run.
+action, and `sync.Lazy(T)`'s `get` spins the same way while another task runs
+its `init`. A blocking address wait would serve both if slow, contended
+initialization turns out to be a real workload; no contention benchmark has
+been run.
 
 ## Thread-affine strings
 
@@ -858,8 +659,12 @@ fewer exceptions, rather than shortening keywords.
 | Next | Compiler-selected ordinary union layout | Compact nested results | Representation contract |
 | Next | Stable written borrow contracts | Public signatures do not depend on implementation bodies | Procedure types |
 | Later | Localize unchecked operations | Unsafe obligations are visible where introduced | Syntax and APIs |
-| Later | Checked disjoint access | Hand mutable halves to parallel workers | One compiler-known slice operation |
-| Later | Checked thread transfer and scoped workers | Reduce races and permit borrowed parallel work | Thread APIs and capabilities |
+| Later | Checked thread transfer | Fewer races outside scoped tasks | Thread APIs and capabilities |
+
+Checked disjoint access was adopted (2026-10-22) as
+[Splitting a mutable slice](design.md#splitting-a-mutable-slice), for the
+reasons in [comments.md](comments.md#splitting-a-mutable-slice-is-compiler-known),
+and scoped workers as [Structured concurrency](design.md#structured-concurrency).
 
 Try each on concrete programs before deciding: a parser, a resource container,
 a sorting or partitioning algorithm, and a parallel numeric kernel.
@@ -888,52 +693,14 @@ strengthen capability. It would change every foreign signature in `core`, and
 foreign pointer use would still require lifetime and bounds obligations;
 constness alone does not establish either.
 
-### Provide checked disjoint access
+### Self-referential storage
 
-**Adopted (2026-10-22)** as
-[Splitting a mutable slice](design.md#splitting-a-mutable-slice), with
-[Chunks of a mutable slice](design.md#chunks-of-a-mutable-slice) for the
-data-parallel case. Implementing it showed that the claim below about a
-checked-slicing body was false until then: one record literal could hold two
-mutable reborrows of a carrier, `{&mut xs[:mid], &mut xs[mid:]}`, so a
-library procedure could return two overlapping mutable views. That is now
-`L0641`, and the claim holds. What follows is the original question.
-
-Two runtime slice ranges conservatively overlap, so two *mutable* halves of
-one sequence cannot be live at once: after `left := &mut xs[:mid]`, the
-reborrow suspends `xs`, and `&mut xs[mid:]` is `L0641`.
-
-Most algorithms do not need that. A recursive merge sort compiles today:
-recursing on one half and then the other (`sort(&mut xs[:mid]);
-sort(&mut xs[mid:]);`) ends each reborrow before the next, the merge reads
-both halves at once as read-only views (allowed since
-[Weakening and reborrows](design.md#weakening-and-reborrows) lets reads of a
-carrier coexist), and a swap across the halves is `xs.swap(i, j)`. What
-remains impossible is handing each half to its own worker, which needs
-[scoped workers](#thread-transfer-needs-a-visible-contract) first. Do this
-together with them.
-
-**Proposal:** a compiler-known `xs.split_at_mut(mid)` on `[]mut T`, built like
-`swap`: one bounds check, two slice headers, and a result whose two fields are
-one mutable reborrow of `xs`. No disjointness relation needs tracking. The one
-reborrow keeps `xs` suspended until both halves are finished, so the source
-can be neither written nor reallocated meanwhile; writes through the two
-halves do not conflict, because suspension constrains uses of the source and
-not of its reborrows; and copying one half twice is already rejected, as a
-second reborrow of the same field. Acceptance tests should reject a write
-through `xs`, reallocation of its owner, and a half retained beyond `xs`.
-
-A library function cannot provide this. Written with `unsafe.raw_data`, a
-`split_at_mut` compiles and works, but its halves carry no provenance, so
-`values.append(5)` and `xs[0] = 9` are accepted while they are live: a
-use-after-reallocation the compiler cannot see. Written with checked slicing,
-its body needs the two simultaneous reborrows it is meant to provide.
-
-Related expressiveness limits are real but need different tools. A graph or
-arena can use stable integer/generational handles without pervasive pointers.
-A record owning a buffer and views into itself needs address stability and an
-internal-borrow contract; non-null pointers do not solve it. Prefer offsets
-and handles before introducing general pinning or self-referential types.
+Graphs, arenas, and records that view their own storage need tools other than
+disjoint access. A graph or arena can use stable integer or generational
+handles without pervasive pointers. A record owning a buffer and views into
+itself needs address stability and an internal-borrow contract; non-null
+pointers do not solve it. Prefer offsets and handles before introducing general
+pinning or self-referential types.
 
 ### Performance opportunities and actual semantic limits
 
@@ -1014,6 +781,18 @@ the limit, add acceptance tests just beyond each boundary, and make written
 contracts/disjoint primitives reduce dependence on inferred shape. Raising
 numeric limits alone does not solve this architectural issue.
 
+A library getter whose result is rebuilt from untracked storage meets the same
+gap from the other side. The rebuilt pointer has unknown provenance, which
+proves nothing, so no declaration says that the result borrows its receiver.
+The compiler asserts it for `Shared(T).get` alone; `Monitor_Guard.read` calls
+through a plain procedure type instead, whose result derives from every
+borrowed argument, so the borrow ends with the guard. A channel meets the
+opposite case: an item taken out of its queue through a guard would look like a
+borrow of the guard, though items carry only process-lifetime borrows, so
+`Channel` reaches its queue through a `rawptr` cast (`queue_of`) to drop that
+provenance. A written contract could say both, and replace the `Shared` special
+case.
+
 ### Thread transfer needs a visible contract
 
 Answered for work joined before its caller continues.
@@ -1034,20 +813,22 @@ Still open:
   [What is not checked](design.md#what-is-not-checked).
 - The [later concurrency extensions](#later-concurrency-extensions).
 - Whether the [waiting design](standard-library.md#corethread), with paired
-  channel setup and explicit monitor termination, holds up in use: measure
-  wake-all costs and conservative join-check rejections. The
-  [waiting review](#waiting-and-ownership-review-2026-10-26) records the
-  incorporated findings and remaining validation work.
+  channel setup and explicit monitor termination, holds up in use. Measure the
+  monitor's wake-all cost and the join check's conservative rejections on real
+  pipelines; neither justifies a purity effect system or interprocedural
+  closed-state analysis without evidence. The join check tells two parameters
+  apart by the object types they reach, which is coarse at primitive fields: a
+  `[]mut int` parameter still conflicts with a kept sender, since a channel's
+  state holds `int` fields. Whether a finer rule, for example one using field
+  privacy, would accept enough real programs to pay for itself is unmeasured.
 
 ### Later concurrency extensions
 
 `parallel` blocks, `spawn`, monitors, channels, the join check, the polling
-ring, pools, and indirect spawned calls are built: design.md specifies them
-under [Structured concurrency](design.md#structured-concurrency), and
-standard-library.md under [`core:thread`](standard-library.md#corethread).
-These questions remain; none blocks what is built. The reviews below name the
-milestones of `concurrency-proposal.md`, which was removed once they were
-done; git history keeps it.
+ring, pools, indirect spawned calls, and `sync.Lazy(T)` are built: design.md
+specifies them under [Structured concurrency](design.md#structured-concurrency),
+and standard-library.md under [`core:thread`](standard-library.md#corethread).
+These questions remain; none blocks what is built.
 
 1. **Erased callables at a spawn.** A spawned call may go through a procedure
    value or a `dyn` view, and the effects follow the callbacks each call
@@ -1059,6 +840,14 @@ done; git history keeps it.
    rejects every erased view of that application, and one fill writing a
    global rejects every call through it. Public callable-effect contracts,
    which would bound both, need a separate demonstrated requirement.
+
+   The same union lets a task read through a `dyn` stored in a global, except
+   a `dyn fmt.Formattable`, which stays unknown since printing builds its
+   witnesses after the effects. Two more precise directions are open: keeping
+   the concrete type through a view stored in a local, which helps only
+   locals, and a view type that promises its target may be shared with a
+   task, a language extension with a public contract that needs a
+   demonstrated requirement.
 2. **Recoverable submission.** How to return arguments after failure to
    start a task, without confusing submission failure with worker failure.
 3. **Richer result destinations.** Whether live replacement, fields, indices,
@@ -1078,682 +867,39 @@ done; git history keeps it.
    so the compiler checks it instead of trusting it. Whether an `Allocator`
    parameter can promise a concurrent region, so a library can share a
    caller's allocator among tasks.
-7. **Checked lazy initialization.** Answered (2026-10-27): `sync.Lazy(T)`
-   owns its value in a `@(synchronized)` field, so tasks may make it on first
-   use; see [Atomic operations and Once](design.md#atomic-operations-and-once)
-   and the [lazy setup review](#lazy-setup-review-2026-10-27). `Once` stays
-   for setup that has no single value.
-8. **Timed waits.** `lock_when`, `send`, and `receive` with a deadline from
+7. **Timed waits.** `lock_when`, `send`, and `receive` with a deadline from
    `core:time`, reporting a timeout apart from closure. An audio loop that must
    play silence when a decoder falls behind needs them.
-9. **Selective cancellation and choice.** A stop token that ends one waiter
+8. **Selective cancellation and choice.** A stop token that ends one waiter
    among several on the same object or coordinates cancellation across several
    objects, and a wait on whichever of several channels is ready first. The
    library requires explicit shutdown protocols for those groups.
-10. **Unscoped channels.** Endpoints that own shared channel state instead of
-    borrowing a local, for a thread `core:thread`'s `spawn` starts or a
-    foreign audio callback, which only `@(escape=static)` values reach. The
-    [join check](design.md#releasing-before-the-join) cannot follow them, since
-    they borrow no root.
-11. **Targeted wakeups.** A hint that wakes fewer of a monitor's waiters,
+9. **Unscoped channels.** Endpoints that own shared channel state instead of
+   borrowing a local, for a thread `core:thread`'s `spawn` starts or a
+   foreign audio callback, which only `@(escape=static)` values reach. The
+   [join check](design.md#releasing-before-the-join) cannot follow them, since
+   they borrow no root.
+10. **Targeted wakeups.** A hint that wakes fewer of a monitor's waiters,
     where waking all of them costs more than their checks. It would narrow
     which waiters wake, not which changes they see.
-12. **Blocking ring adapters.** Parking one endpoint and waking it from the
+11. **Blocking ring adapters.** Parking one endpoint and waking it from the
     other requires a proven registration/recheck handshake, closure-race
     handling, and an explicit account of kernel calls on the deadline-bound
     side. It is outside the polling ring's API; see
     [The ring algorithm](standard-library.md#the-ring-algorithm).
-
-### Structured concurrency proposal review (2026-10-22)
-
-The review was incorporated into the revised proposal, which is now
-[Structured concurrency](design.md#structured-concurrency). It now chooses `spawn result = call;` with
-only dead outer locals as result destinations, keeps cleanup before joining,
-and specifies [task-start failure](design.md#failure-to-start-a-task).
-Its later library stages define explicit cancellation with wakeable waits,
-channel close and failed-send ownership, and limited pool progress.
-
-The first implementation must enforce every applicable safety check for
-statically known calls; unknown indirect effects are rejected. The remaining
-questions are the [extensions](#later-concurrency-extensions):
-
-- How public and erased procedure contracts preserve all sharing, transfer,
-  global-access, allocator, and result-provenance facts.
-- How recoverable submission returns prepared arguments on failure.
-- Whether richer result destinations justify their extra lifetime and
-  cleanup rules.
-- How channels retain borrowed items, support rendezvous, and use nondefault
-  queue allocators.
-- How an executor can support blocking work beyond the fixed pool's limited
-  progress guarantee.
-
-These extensions do not prevent the smaller initial feature. Validate its
-acceptance and rejection cases before
-adding library concurrency: a scope-owned join guarantees storage lifetime,
-but does not itself guarantee termination or wake a blocked participant.
-
-### Structured concurrency follow-up review (2026-10-22)
-
-A second review checked the revised proposal against design.md, grammar.md,
-and the bundled packages. Its fixes are in
-[Structured concurrency](design.md#structured-concurrency):
-
-- A pool worker that helps at a join could run a child on the parent's thread
-  while the parent held a borrow of that thread's TLS. The join under a helping
-  executor now carries its tasks' `thread_local` effects.
-- A plain read of a shared `Atomic` or `Mutex` field raced with a task's
-  synchronized write. Synchronizing operations now conflict with every other
-  access, reads included.
-- Under the ordinary parameter rule, `spawn work(i)` borrowed a loop index past
-  its iteration. Arguments that copy without a hook or allocation are now
-  copied into the task.
-- `chunks_mut` was described as existing and attributed to
-  [Provide checked disjoint access](#provide-checked-disjoint-access), which
-  proposes only `split_at_mut`. Existing iteration rules forbid it; the
-  proposal now specifies it.
-- Rejecting every indirect call a task reaches would have barred printing,
-  `once.do`, and `slice.sort_by`. Calls a task makes now use the whole-program
-  union of [Global write effects](design.md#global-write-effects); only the
-  spawned call must resolve statically.
-- Check 6 rejected every task that logs. Build-selected providers are now a
-  stated trust boundary, required to accept concurrent use.
-- A received allocator could be read as either a possibly shared region or an
-  unknown one. It is now a possibly non-concurrent region.
-- The proposal now states that applying its checks to `thread.spawn` is a
-  breaking change, that a `thread_local` drop hook writing a global rejects
-  every block, and that a statement-initial `parallel` literal must be
-  parenthesized. `spawn` is rejected in deferred statements, the grammar takes
-  attributes, the flagship sort bounds its depth, and rule 2 cites the one rule.
-
-How a library declares an argument that crosses threads, and its own
-synchronized state, was open after this review and is now decided:
-`@(cross_thread)` on a parameter and `@(synchronized)` on a field or variable,
-so the compiler recognizes no concurrency type or procedure by name. See
-[Preparing for implementation](#structured-concurrency-implementation-readiness-2026-10-22)
-below.
-
-Still open; the first three are among the proposal's
-[later extensions](#later-concurrency-extensions):
-
-- Whether build-selected allocator and logging providers must declare that
-  they accept concurrent use, so it is checked rather than trusted. Today a
-  build can select an arena-backed default allocator and race silently.
-- Whether an `Allocator` parameter can promise a concurrent region, so a
-  library can share a caller's allocator among tasks.
-- Answered (2026-10-27): `sync.Lazy(T)` gives tasks checked lazy setup; a
-  task that may run a `Once` action writing a global is still rejected.
-- Answered: the whole-program union was conservative, so one compatible
-  procedure anywhere that wrote a global affected every indirect call of its
-  type. [Per-call effect precision](#per-call-effect-precision-2026-10-26)
-  replaced it where it can: a call
-  takes in the callbacks it passes, so an unrelated procedure of the same type
-  no longer affects it. The union remains for a body's own calls of its
-  parameters and for values nothing follows; those limits are recorded there.
-
-### Structured concurrency implementation readiness (2026-10-22)
-
-A third pass made the proposal
-ready to implement. It decided what the first implementation needed:
-
-- `@(synchronized)` marks a field, or a file-scope or `static` variable, whose
-  declaring package synchronizes every access to it. Outside that package,
-  access to a synchronized field needs exclusive access to its record, and a
-  synchronized variable's stored carriers are exempt from the global-carrier
-  check. `Atomic(T).value`, `Mutex(T).value`, and `log.selected` carry it,
-  which replaces the provider exemption inferred from names.
-- `@(cross_thread)` marks a `move` parameter, which must also be
-  `@(escape=static)`, or a procedure-typed parameter that runs on another
-  thread. `thread.spawn` carries it, and the existing race warning keys on it.
-- The new summaries are defined: a reach effect for globals' stored carriers,
-  an allocator-use effect, per-type transfer facts, and a block's window.
-- Lowering is ordinary Loke in `core:thread`; a result local's
-  initialization flag is set when its task registers, since a registered task
-  completes unless the program ends.
-- A result destination must have the call's exact type; a `parallel` block is
-  a compile-time evaluation error; the executor header parses and is rejected.
-- The first five milestones shipped; the library milestones followed, and
-  [Later concurrency extensions](#later-concurrency-extensions) lists what remains.
-
-Open, to settle with evidence during the milestones:
-
-- `@(synchronized)` rejects a plain read of `value` through `^Atomic(T)`,
-  which used to compile. Milestone 2 shipped it with an upgrade note; no
-  bundled package, test, example, or tutorial needed changing, and
-  `Mutex.lock`'s `rawptr(&self.word.value)` is covered by the raw-address
-  exception. Whether outside code relies on the rejected form is still
-  unknown.
-- Answered (2026-10-27): the reach effect rejected a `dyn` stored in a global
-  even when only read, since an erased value hides captures that may write.
-  A read-only view now reaches what each type converted to its interface
-  application reaches; see
-  [Globals while tasks run](design.md#globals-while-tasks-run) and the
-  [rationale](comments.md#tasks-that-borrow-joined-by-their-block). An
-  `any_view` cannot be stored in a global at all. Two limits remain: a
-  `dyn fmt.Formattable` stays unknown, since printing builds its witnesses
-  after the effects, and the union is per application, so one conversion of a
-  mutable record anywhere rejects every registry of that interface. The same
-  union now lets a task share a view that arrives erased, the first
-  [later extension](#later-concurrency-extensions).
-
-### Waiting and ownership review (2026-10-26)
-
-Incorporated into the revised [waiting proposal](standard-library.md#corethread),
-which remains unimplemented. The review kept scoped joins, predicate waits,
-bounded channels, and endpoint destruction, and resolved these design findings:
-
-- [Monitors](standard-library.md#monitors) now require an explicit
-  termination protocol. The controller example installs cleanup before spawn
-  and handles both paused and playing states. Predicate repeatability,
-  mutation, and wakeup dependencies are programmer obligations; read-only
-  access is not claimed to prove purity.
-- [Channels](standard-library.md#channels) establish both initial endpoints
-  with one `split`. Move-only endpoints use explicit `fork` to add participants,
-  keeping generated `clone` semantics unchanged. The lifecycle table decides
-  closure, draining, zero values, FIFO ordering, error precedence, and item
-  destruction. The worker example drops its setup receiver before sending.
-- The [join check](design.md#releasing-before-the-join) covers
-  parameters, wrappers, containers, nested blocks, result slots, and writebacks.
-  Closing a retained endpoint is not a static exemption. This is a conservative
-  check for values retained across a join, not a general termination proof.
-- The deferred [ring](standard-library.md#rings) has exclusive
-  endpoint operations and only a polling API. It has no public close or
-  blocking wakeup path in its initial form. Moving an endpoint sequentially
-  between threads remains possible.
-- [Pools](standard-library.md#pools) remain a separate compute feature.
-  Helping is limited to workers of the selected pool and the subtree of the
-  block they are joining, matching the permitted TLS effects. The mixer is
-  explicitly a paced worker, not a hard real-time callback.
-
-The implementation plan adds
-startup/early-exit coverage, ownership checks, and bounded liveness harnesses.
-Delivery proceeds through monitors and channels, then compute pools; the ring
-is not a prerequisite. No compiler or runtime behavior changed with this
-proposal revision.
-
-Still open:
-
-- Answered by milestone 8: the ring's atomic algorithm, progress bound,
-  closure ordering, and bounded indices are written and built, and its
-  endpoint API compiles under the existing borrow rules. Weak-memory model
-  checking and measurements remain under
-  [Ring algorithm review points](#ring-algorithm-review-points-2026-10-26).
-  Blocking adaptation still needs a separate registration/recheck protocol
-  and timing contract.
-- Measure the monitor's wake-all cost and the join check's conservative
-  rejections on real pipelines. Neither justifies a purity effect system or
-  interprocedural closed-state analysis without evidence. The one such
-  rejection met so far, two parameters of unrelated types, is
-  [resolved](#parameters-a-join-check-cannot-tell-apart-2026-10-26).
-- Selective cancellation, multi-object group cancellation, and multi-channel
-  choice remain [later extensions](#later-concurrency-extensions).
-  Endpoint closure alone does not provide them or interrupt foreign waits.
-- A library getter whose `^T` result is rebuilt from untracked storage has no
-  declarative way to say that the result borrows its receiver: the rebuilt
-  pointer has unknown provenance, which proves nothing. The compiler asserts
-  it for `Shared(T).get` alone. `Monitor_Guard.read`, built with milestone 6,
-  calls through a plain procedure type instead, whose result derives from
-  every borrowed argument ([Procedure result contracts](design.md#procedure-result-contracts)),
-  so the borrow ends with the guard. Whether a declaration should state such a
-  contract, and replace the `Shared` special case, is open. Milestone 7 met
-  the opposite case: an item taken out of a channel's queue through a guard
-  looked like a borrow of the guard, though items carry only process-lifetime
-  borrows, so `Channel` reaches its queue through a `rawptr` cast
-  (`queue_of`) to drop that provenance. A declared contract could say both.
-
-### Monitor implementation review (2026-10-26)
-
-Review of `84a9691`. Both findings are fixed:
-
-- `Monitor_Guard`, and `Mutex`'s `Guard`, which had the same omission, were not
-  [`@(thread_affine)`](design.md#thread_affine), so checked code could move a
-  guard to another thread and release an SRWLOCK there, which Windows
-  forbids. Both are thread-affine now;
-  [lib_thread_guard_affinity.loke](tests/err/lib_thread_guard_affinity.loke)
-  rejects argument transfer to `thread.spawn`, a move into a task, and a task
-  returning a guard to its parent.
-- The `asking_again` case in
-  [lib_thread_monitor.loke](tests/run/lib_thread_monitor.loke) required an
-  exact predicate-call count after a read-only guard dropped. A condition
-  variable permits
-  [spurious wakeups](https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-sleepconditionvariablesrw),
-  so it could fail with no notification sent. The assertion is gone; the
-  remaining counts are lower bounds used only for sequencing. Core packages
-  have no in-package tests, so the guard's private notification flag is not
-  checked directly.
-
-The implementation's structure is otherwise compact: acquisition and waiting
-belong to `Monitor`, while access and release belong to `Monitor_Guard`.
-Keep the plain-procedure indirection in `read` until the
-[borrow-contract question](#waiting-and-ownership-review-2026-10-26) is resolved.
-Replacing it with `return &self.monitor.value` in an isolated package copy
-made the compiler accept the existing `read_after_unlock` error case; the
-direct pointer follows the monitor borrow rather than the guard's lifetime.
-No further abstraction or deletion is justified by this review.
-
-### Channel implementation and join-check review (2026-10-26)
-
-Review of `e8238f6`. Commit `1c0bae5` addresses the five original
-reproductions; the follow-up review below records two additional cases:
-
-- The channel iterator held a pointer to the channel rather than borrowing a
-  `Receiver`, so its receiver could drop, closing the receiving side, while
-  the iterator could still receive: a send then failed, and a receive before
-  the last sender dropped waited forever. The iterator borrows its receiver
-  now, and `next` forwards to `receive`;
-  [lib_thread_channel_iterator.loke](tests/err/lib_thread_channel_iterator.loke)
-  rejects the premature drop with `L0512`.
-- The [join check](design.md#releasing-before-the-join) found the marked type
-  in the whole symbol's type, then attributed every carrier slot of the symbol
-  to it, so a guard on one mutex was rejected because a sibling field pointed
-  to another a task locks. Only slots whose carrier path passes through a
-  marked type, or ends at a carrier reaching one, count now (`path_waker` in
-  `borrow.odin`); [parallel_join_retention.loke](tests/err/parallel_join_retention.loke)
-  accepts the wrapper case and still rejects a wrapper whose guard locks the
-  task's mutex.
-- The `early_worker` case in
-  [lib_thread_channel.loke](tests/run/lib_thread_channel.loke) assumed its
-  worker had returned after sleeping 10 ms. The worker now drops its receiver
-  explicitly and then publishes a flag the parent waits for.
-- `waker_walk` repeated the traversal of `transfer_facts_walk` in
-  [hooks.odin](src/hooks.odin). The first marked type is now the `waker` fact,
-  and `type_reaches_waker` reads it.
-- `Channel`'s `capacity` field existed only to make the type lack a zero value.
-  The private `state` field is `required` instead, and `init` sets it
-  explicitly. With the iterator forwarding to `receive`, the private `take`
-  had one caller and is inlined there.
-
-The main boundaries are useful: `Channel_State` owns the ring operations,
-`Monitor` supplies synchronization, and the endpoints own the participant
-counts. The join check belongs in the existing provenance replay, where
-cleanup and task holds are already available. Keep `queue_of` as the narrow
-trust boundary until the
-[borrow-contract question](#waiting-and-ownership-review-2026-10-26) is resolved.
-
-### Pool implementation review (2026-10-26)
-
-Review of `d684700`; all three findings are fixed. Argument and unused result
-drop hooks correctly contribute TLS effects, and a helped child's panic
-unwinds and terminates without hanging.
-
-- A pooled join on a loop exit the walk reached before the block's first
-  spawn emitted no `thread_local` effect, so a view of a buffer an earlier
-  iteration's task freed could be returned. The same order hid what plain
-  tasks borrow and reborrow from that exit, so a write to a variable a task
-  was still reading was accepted. The checker now records each block's
-  spawns (`Stmt_Parallel.spawns`), and `prov_enter_parallel` registers the
-  block's task slot, one reborrow slot per spawn site, and its pooled tasks
-  when the walk enters the block;
-  [parallel_pool.loke](tests/err/parallel_pool.loke) and
-  [parallel_task_loans.loke](tests/err/parallel_task_loans.loke) cover the
-  exits.
-- `Pool.submit` stored `Task_Scope.parent` on every spawn, outside the lock,
-  while a helper searching the queue could read it. `Task_Scope.pooled` sets
-  it once, before any task of the block is queued.
-- `Pool_State.workers` and `Task_Scope.threads` held raw handles and repeated
-  `Thread`'s join. They hold `Thread`s now and are cleared where the loops
-  were; the pool clears its workers before freeing the state they read.
-
-The main boundaries are useful: queue operations stay private to the pool,
-the hidden `Task_Scope` owns each join, and the compiler applies helped TLS
-effects through the existing provenance checks. No additional scheduler or
-executor abstraction is needed for this milestone.
-
-### Pool-fix follow-up review (2026-10-26)
-
-Review of `7df2f25` confirmed the original loop-exit, immutable ancestry,
-and `Thread` ownership fixes. Generic pooled calls and repeated blocks also
-compile and run correctly, and the AST cloner leaves the new semantic spawn
-list empty for rechecking. Registering task metadata on entry keeps its
-ownership clear; no additional abstraction or deletion is justified here.
-
-The pre-registration introduced one false positive, now fixed: every exit
-of a pooled block applied the `thread_local` writes of every task the block
-registered, so a return reached before any task started, or one followed by
-an unreachable spawn, was rejected with `L0512`. The join's writes are now
-tagged with their block (`Prov_Event.joins`), and `settle_pool_joins` drops
-them, before any solver reads them, where the task window shows no task of
-that block may have started. A loop's back edge still carries an earlier
-iteration's start to an exit written above the spawn, so that exit stays
-rejected; [parallel_pool.loke](tests/err/parallel_pool.loke) accepts the
-no-task branch and the unreachable spawn beside it.
-
-### Ring algorithm review points (2026-10-26)
-
-[The ring algorithm](standard-library.md#the-ring-algorithm) was revised after review to recommend a spare-slot SPSC
-queue. [A spare slot in the ring](comments.md#a-spare-slot-in-the-ring)
-records the algorithm choice. Milestone 8 built it as written.
-
-Two findings were addressed in the draft, and the implementation follows it:
-
-- **P1: Checked arithmetic after ownership transfer.** The earlier draft
-  assumed ordinary unsigned arithmetic wrapped, contrary to
-  [Integer overflow](design.md#integer-overflow). With capacity 1,
-  `uint(0) - size` underflowed at initialization. Correcting only that left
-  the first send writing an item before `t + 1` panicked at publication;
-  receive had the analogous problem after taking an item. The revised draft
-  uses bounded indices, an explicit reset at the allocation's end, and
-  computes successor indices before ownership transfer. No machine-word
-  wrapping arithmetic is needed.
-- **P2: Closure checks defeated index caching.** The earlier layout placed
-  `receiver_gone` beside `head`, so a receive could invalidate the cache line
-  every send loaded for closure, even with cached room. The revised layout
-  separates the flags from both hot index lines and qualifies its cache
-  traffic claim. Target-specific separation and alignment still need checks.
-
-Settled by the implementation: the Loke tests cover capacity 1 and every
-last-slot transition; both endpoints are `@(wakes_on_drop)`, and the
-[join check](design.md#releasing-before-the-join) rejects a sender kept past a
-join whose task polls for closure; sharing an endpoint between tasks is
-rejected and moving it from task to task is accepted; the mixer polls a ring;
-the padding is 128 bytes on both targets; the operations lower to native
-acquire loads and release stores; and `tests/pkg/ring_allocation` runs them,
-both endpoints' drops, and the ring's with the default allocator exhausted.
-An exhaustive interleaving search under sequential consistency found no
-violation (see [The ring algorithm](standard-library.md#the-ring-algorithm)).
-
-Still open:
-
-- **Weak-memory model checking.** The interleaving search treats every access
-  as sequentially consistent, so it cannot find a missing release or acquire.
-  A C11 model check with GenMC or a tool like it, over the same capacities,
-  laps, and drop placements, is still needed.
-- **Measurements.** Measure the closure check on every send, with the flags
-  separated from the indices, and latency and throughput on the intended
-  target. The spare slot is for simpler arithmetic, not demonstrated higher
-  speed.
-
-### Indirect calls inside tasks (2026-10-26)
-
-Before letting a spawned call itself be indirect
-(milestone 10),
-`tests/err/parallel_indirect_calls.loke` spawns hand-written wrappers that
-call a procedure value, a `dyn proc` view, a capture literal, a `dyn` slot,
-or a procedure read from a field, one case per task check;
-`tests/err/parallel_written_back.loke` already covered a `thread_local`
-borrow a callback leaves or returns. The selected cases exercise global writes
-and reach, allocator reservation, sharing, thread affinity, the join check,
-and a pooled task's `thread_local` writes. They found no lost fact in those
-cases; they do not cover every callable form against every check or the
-lowering of an indirect spawned callee itself. The
-[scope review](#milestone-10-scope-and-next-step-2026-10-26) narrows the
-conclusion and proposes the next steps. The spike also found:
-
-- **The write and reach unions are per procedure type, not per call.** A
-  call through a procedure value may run any procedure of its type the
-  program uses as a value, so a spawn passing a procedure that writes
-  nothing is rejected when the program passes a procedure of the same type
-  that writes a global anywhere, such as to the same wrapper in an
-  unrelated serial call. The `thread_local` borrow a callback leaves is
-  substituted per call instead, so the two analyses differ in precision. A
-  spawned procedure value has the coarser one. Fixed with
-  [milestone 10's third step](#per-call-effect-precision-2026-10-26): the
-  write, reach, and allocator-use effects substitute callbacks per call too.
-- **A rejection does not name the body responsible.** L0731 says that
-  `call_plain` may write `hits`, but not that it is `record_hit`, passed
-  as `f`, that writes it; a direct helper gets a "through" note. Under a
-  union, that body may be in another package. A spawned procedure value's
-  rejection now names each target that writes or reaches the global, and
-  since the [third step](#per-call-effect-precision-2026-10-26) a wrapper's
-  names the callback with the parameter it was passed for.
-- **L0729's advice could not be followed for a `dyn proc` parameter.** For
-  a view reaching a `&mut` capture it said to move the callable into the
-  task, but `spawn run(move(bump))` with `run :: proc(f: dyn proc())` then
-  views a temporary, which [Spawn statements](design.md#spawn-statements)
-  rejects (L0513). Only a generic callable parameter takes the moved
-  literal. A writing capture literal reaches a task through a `dyn proc`
-  only once a [mutable callable view](#a-mutable-callable-view) exists.
-  Fixed with [milestone 10's second step](#erased-callable-spawns-2026-10-26):
-  for a view made at the call, the advice is now that generic parameter,
-  and for a view that arrived erased, where moving it would still hide its
-  captures (L0725), the concrete value or a conversion at the call.
-
-### Milestone 10 scope and next step (2026-10-26)
-
-Review of milestone 10
-and the [indirect-call spike](#indirect-calls-inside-tasks-2026-10-26): the
-spike is useful regression coverage, but its conclusion needs narrowing.
-It exercises selected combinations of callable forms and task checks, not
-every form against every check. Its named wrappers also make the callable
-an ordinary task argument; they do not exercise an indirect callee's own
-evaluation, capture in a task frame, or cleanup. Passing these cases gives
-evidence for reusing the existing analyses, not a proof that any indirect
-spawn lowering preserves them.
-
-Some callable task support already works. A runtime check on `0c1e729`
-accepted a moved mutable capture through the generic `call_moved` shape in
-the spike, and a direct `spawn result = calculate()` where `calculate` is a
-capture literal with a read-only capture. The latter resolves statically to
-the record's `call` method under [Calling a value](design.md#calling-a-value).
-Making a literal consume its captures when called remains a separate receiver
-mode question under [What a capture literal's call cannot do](#what-a-capture-literals-call-cannot-do).
-Neither a new owning erased callable nor public effect annotations are
-established prerequisites for the scoped cases already expressible through
-wrappers.
-
-Recommended sequence; all three steps are done:
-
-1. **A narrow implementation of indirect spawning.** Start with ordinary
-   Loke procedure values, including runtime selection between targets. Extend
-   the existing [task frame and checked run procedure](compiler-architecture.md#lowering-parallel-blocks)
-   to hold the callee evaluated once on the parent, before its arguments.
-   Reuse ordinary parameter modes, result provenance, cleanup, and task
-   checks. Retain conservative target unions wherever exact targets are
-   unknown. Do not simply remove the direct-callee check: the current frame
-   holds arguments and refers to a static callee symbol, and analysis paths
-   also assume that symbol exists.
-2. **Tests of the new boundary.** Pair accepted run cases with rejected
-   cases. Cover parent evaluation order, changing a procedure variable after
-   submission, argument borrows and results through the join, cleanup when
-   argument preparation fails, and both bare and pooled tasks. Check that
-   adding a reachable unsafe target to a selection makes the spawn fail.
-   Then consider borrowed callable views and `dyn` methods, with the callable
-   data itself checked for lifetime, exclusive access, and thread affinity.
-   Unknown captures must remain conservative; moving a borrowed view does
-   not confer ownership of its payload.
-3. **Per-call effect precision as a separate change.** A body can record its
-   own effects plus dependencies on callbacks it invokes, then substitute
-   the callbacks at each call. The compiler already uses related machinery:
-   `callback_effects` in `src/global_effects.odin` separates writes from called
-   parameters for thread warnings, and `Callback_Read`/`Callback_Write`
-   substitute callback provenance for thread-local borrows. Reuse those
-   representations and fixed-point patterns where appropriate, extending
-   write, reach, and allocator effects consistently rather than adding a
-   spawn-only analysis. Keep a union fallback for unknown values and carry
-   the responsible target into diagnostics. A clean callback passed beside
-   an unrelated serial dirty call is the acceptance case; recursion,
-   forwarding, and same-signature target mixtures guard the fallback.
-
-The first step can be sound with conservative rejections; the third improves
-which safe programs it accepts. A public effect-contract design would change
-the current [global-write model](design.md#global-write-effects), whose effects
-are not part of procedure types. It needs a separate demonstrated requirement
-rather than serving as an open-ended gate on this milestone.
-
-Further review found a separate loss of callable information at erasure. On
-`0c1e729`, a read-only capture `calculate := proc() -> int capture(value) {
-return value + 1; };` can cross into a task through `spawn result =
-run(calculate)`, where `run` takes `dyn proc() -> int`. Introducing a local
-`saved: dyn proc() -> int = calculate;` and passing `saved` instead rejects
-with L0729. Both variants keep the concrete closure alive through the join.
-`prov_transferred_type` in `src/cfg_provenance.odin` recovers the concrete
-type from an immediate conversion, but not from the stored view. This is a
-conservative limitation consistent with the current
-[sharing rules](design.md#sharing-with-tasks), not an unsafe acceptance.
-
-Prefer a focused extension of the existing
-[normalized provenance input](compiler-architecture.md#normalized-provenance-input)
-over a checker rewrite: represent the evaluated callee alongside call
-arguments, and preserve known callable/environment facts through value
-transfers. Keep facts and summaries out of frozen input; merge alternatives
-conservatively and invalidate facts on replacement. Target identity, captured
-storage loans, and transfer eligibility are distinct facts. Knowing a target
-does not prove its environment can cross a thread boundary. Accepting stored
-views on this basis would also require a deliberate update to the sharing
-rules and paired acceptance/rejection tests.
-
-The current capture representation as ordinary records with a `call` method
-can stay. Mutating owned capture fields or consuming captures on invocation
-would require explicit call receiver capabilities and compatible view types;
-neither follows from more precise provenance. Keep that language extension
-under [capture call modes](#what-a-capture-literals-call-cannot-do). Shared
-callee input belongs in the first implementation step; richer erased-value
-facts can accompany erased callable support without delaying plain procedure
-values or requiring public effect contracts.
-
-### Procedure-value spawn implementation review (2026-10-26)
-
-Review of `bf1cd43`, milestone 10's first step.
-The extension fits the existing task machinery: the frame stores the callee,
-the parent evaluates it once before the arguments, and the generated ordinary
-run procedure supplies its effects. It does not introduce a second target
-analysis or scheduler. Tests cover callee reassignment, evaluation order,
-pooled tasks, result loans, transfer checks, and argument-preparation cleanup.
-The compiler unit suite and the run, trap, and diagnostic corpora pass; extra
-runtime probes of procedure-value calls with packed, spread, mixed, and empty
-variadic arguments and an `inout` parameter also pass.
-
-One correctness issue was found and is fixed: an immediately spawned
-procedure literal lost its write effects. The new value-call classification
-and the older direct-callee exclusion in effect collection disagreed on it, so
-the literal was left out of the procedures used as values. The exclusion now
-applies only to calls `call_through_value` does not classify as through a
-value, and the helper sits with the ordinary call metadata in
-`src/check_calls.odin`. The omission predated `bf1cd43` for an ordinary call:
-a borrow of a global kept across a literal called in place that writes it was
-accepted as well. `tests/err/parallel_procedure_values.loke` covers the bare
-and pooled spawns beside an accepted pure literal, and
-`tests/err/global_effects.loke` the ordinary call.
-
-Two small simplifications were available, and both are applied:
-
-- `src/parallel.odin`, `Spawn_Task.proc_type`: **shrink** the stored metadata.
-  The checked call already supplies this through `call_proc_type`; emission
-  can query it once and use that local for the signature and callee store.
-  Remove the field and its assignment, and shorten the accompanying comment.
-- `src/borrow.odin`, `note_value_targets`: **stdlib** membership in
-  `c.global_writes[target]` is `slice.contains`, which this file already uses;
-  replace the manual loop in the writes branch.
-
-Net: four lines removed with those two local changes. The existing frame
-layout helpers and the extension of the common run procedure are appropriate;
-a broader checker or capture rewrite is not warranted by this implementation.
-
-### Erased-callable spawns (2026-10-26)
-
-Milestone 10's second step
-lets a spawned call go through a `dyn` view. The view is the call's receiver
-argument, so the existing argument checks apply to it unchanged. Writing the
-tests found:
-
-- **Only a view converted at the spawn is accepted.** Answered
-  (2026-10-27): a view that arrives erased, as a parameter or a stored local,
-  is now checked through every type converted to it, as under
-  [Sharing with tasks](design.md#sharing-with-tasks); the two directions below
-  remain more precise alternatives. Before, it hid its captures, so
-  [Sharing with tasks](design.md#sharing-with-tasks) rejected it. Where the
-  view is converted at the spawn, the program could usually spawn the
-  concrete call instead, so the step mainly makes `dyn` calls consistent
-  with other calls; it does not yet let a library spawn the callbacks it
-  receives. Two directions remain open. One keeps the concrete type through
-  a stored local view, the loss recorded under the
-  [scope review](#milestone-10-scope-and-next-step-2026-10-26), and helps
-  only locals. The other is a view type that promises its target may be
-  shared with a task, which is a language extension with a public contract
-  and needs a demonstrated requirement.
-- **A slot union is per slot, not per conversion.** Where the spawn converts
-  `&q` to `dyn Recorder`, the task's write effects are still those of every
-  type that fills `record`. So `Quiet`'s view is rejected because `Tally`
-  writes `hits`. The concrete fill is known at the conversion, which makes
-  this an easy case for step 3.
-  Fixed there: a view converted where it is called runs its concrete
-  target.
-- **A bare spawn cannot start with a parenthesized callee.** `spawn` starts a
-  statement only before an identifier, so a `dyn` conversion or procedure
-  literal called in place needs a result name. [grammar.md](grammar.md#control-flow)
-  now says so; its earlier wording allowed only a name or selector there.
-- **No `dyn mut` mutating slot can be spawned.** A temporary `dyn mut` view
-  cannot be a mutating receiver anywhere (L0359), and a stored one was erased
-  (L0725). A slot that takes `self` by value through a `dyn mut` view is
-  spawnable and lends the viewed value exclusively. Since 2026-10-27 a stored
-  `dyn mut` view is lent to a mutating slot too, when no type converted to it
-  is thread-affine.
-- **Named arguments fail on a view converted in place.** This is a separate
-  known gap,
-  [named arguments to a slot of a view converted in place](known-gaps.md#named-arguments-to-a-slot-of-a-view-converted-in-place).
-
-### Erased-callable spawn implementation review (2026-10-26)
-
-Review of `9e74033`. Representing the callable view as receiver argument 0
-keeps the implementation small: existing frame construction, checked run
-procedures, argument evaluation order, cleanup, transfer checks, and effect
-unions serve both concrete and erased calls. The target notes now reuse
-`indirect_call_targets`. No extra scheduler, callable environment container,
-or capture representation is needed.
-
-Two gaps at the boundary between those shared representations were found;
-both are fixed:
-
-- A spawned dyn slot could return a worker's thread-local borrow: `spawn
-  answer = (dyn Getter)(&number).get();`, where `get` returns `&counter`, was
-  accepted without L0730. Return provenance used a callable-type lookup where
-  an interface slot needs its actual target union. `call_callback_returns` now
-  reads, with no value resolved, the returns of every body
-  `indirect_call_targets` finds, as the write-back analysis does, and notes
-  each as a summary dependency.
-- A spawned read-only dyn slot borrowed its temporary view header: `spawn
-  answer = (dyn Reader)(&number).get();` with `get(self: ^Self)` was rejected
-  with L0513 at the join. The cause was broader than views. Any temporary
-  lent to a borrowing parameter of a spawned call was lent from the parent's
-  statement and held to the join, although the frame owns it, so `spawn a =
-  count(make_bag());` with a managed `bag: Bag` parameter, and `spawn b =
-  make_bag().size();` with `size(self: ^)`, were rejected too. Those loans are
-  now recorded (`Flow_Graph.spawn_owned`) and left out of what the task holds;
-  a result borrowing such a temporary still carries its loan and is rejected
-  when used after the join. Separately, a `dyn` slot call lent the view's
-  header even outside a spawn, so `p := (dyn Pointing)(&h).at(); p^` was
-  rejected though the slot is given the viewed value, never the header. Slot
-  dispatch now lends only what the view views.
-
-Extra probes accepted mixed, packed, spread, and empty callable-view
-variadic arguments, two read-only calls over arena-backed owned captures,
-and a callable view returning a borrow of a parent local. Mutating that
-local before the returned pointer's last use correctly rejects, as do
-thread-local results through procedure views and thread-local writeback
-through an ordinary interface slot. These checks distinguish the missing
-slot-return case from the paths already covered.
-
-One local simplification was available and is applied: `src/parallel.odin`,
-`spawned_callee`, **shrink** the repeated signature selection. After checking
-whether the call form is eligible, it obtains the type with `call_proc_type`
-instead of selecting between the callee expression's type and the resolved
-symbol's type again, which keeps the interpretation of checked calls in one
-helper. Broader work on preserving stored-view facts and per-call effect
-precision remains separate from these fixes.
-
-### Erased-spawn witness review (2026-10-27)
-
-Review of `0d763e0a`. No correctness regression reproduced. The isolated
-diagnostic corpus and both erased-view and global-view runtime cases pass.
-Additional cases preserve exclusive loans of a stored mutable view, reject
-thread-local views in argument and result positions, and accept a returned
-view of static storage and a clean view passed through `thread.spawn`.
-
-Both of its follow-ups are applied (2026-10-27). `report_transfer_facts` in
-[cfg_provenance.odin](src/cfg_provenance.odin) handles affinity in one case,
-choosing the witness or direct wording inside it and adding the declaration
-note once; the wording and priority are unchanged. The moved-wrapper case in
-[parallel_dyn_views.loke](tests/err/parallel_dyn_views.loke) moves a `Holder`
-that reaches `^mut int` directly and again through a read-only `dyn Read`
-view, and is rejected with `L0729` for the viewed one. It protects the
-context bit in `Transfer_Visit`: visiting `^mut int` outside a view must not
-suppress its visit inside one.
-
-### Per-call effect precision (2026-10-26)
-
-Milestone 10's third step
-makes the write, reach, and allocator-use effects per call: a call takes in
-the callbacks it passes, a local's possible values, and a converted view's
-concrete target. Writing it and its tests found:
+12. **Thread-affine values in globals.** A task may borrow a
+    `@(thread_affine)` value stored in a plain global, as `window.handle` reads
+    one. [Sharing with tasks](design.md#sharing-with-tasks) follows arguments,
+    receivers, captures, and results, not globals, so this is not a divergence.
+    Closing it needs a read effect over globals, or a rule that rejects a
+    global of a type that is or reaches one. A `Lazy` cannot hold one.
+
+### Per-call effect precision
+
+The write, reach, and allocator-use effects the task checks read are per call:
+a call takes in the callbacks it passes, a local's possible values, and a
+converted view's concrete target, and a `dyn proc` parameter or local is
+followed as a procedure-typed one is. Three conservative limits remain:
 
 - **A body's own calls of its parameters keep the type union.** A wrapper
   that spawns a callback it received, `spawn r = g(1)` with `g` a parameter,
@@ -1772,285 +918,21 @@ concrete target. Writing it and its tests found:
   parameter-backed region, as any call through a value does, rather than the
   argument at that parameter. A capture literal's `call` and a converted
   slot are direct calls and bind by parameter.
-- **A `dyn proc` parameter kept the union.** Only procedure-typed
-  parameters and locals were followed (`effect_variable`, `effect_value`), so
-  `apply :: proc(f: dyn proc(n: int) -> int, n: int)` took every procedure
-  of the signature, and `spawn r = apply(quiet, 1)` was rejected when another
-  call passed it one writing a global; a `proc` parameter accepted it.
-  Resolved (2026-10-27): a `dyn proc` parameter or local is followed as a
-  procedure-typed one is, and a view converted from a named procedure or a
-  capture literal is a value naming that procedure or the literal's `call`.
-  An unknown view still takes the view's own union: every slot fill and held
-  procedure of its signature. The `thread_local` write-back reads the same
-  resolved values and lines a held procedure up by parameter count, as it
-  already did. `tests/run/parallel_callback_precision.loke` and
-  `tests/err/parallel_callback_precision.loke` pair accepted clean callbacks
-  and capture literals, directly and forwarded, with rejected dirty ones,
-  reach, a shared arena, and a local view that may hold a dirty procedure.
-  This is separate from spawning a received view at the thread boundary,
-  which [Sharing with tasks](design.md#sharing-with-tasks) still rejects.
-- **The `run` procedure's call resolves at its spawn.** Its frame fields name
-  no procedure, so before this step a task through a wrapper took the union
-  even where the parent passed a named procedure. The worker's call now
-  resolves its callbacks and callee value where the `spawn` is; a parameter
-  there is not `run`'s, so it stays the union.
 
-### Per-call effect implementation review (2026-10-26)
+### Ring algorithm validation
 
-Review of `0533623`. The shared `Call_Part` representation is a useful
-boundary: the write, reach, and allocator-use analyses consume the same
-selection of a body's own effects and its callback effects. `values_from`
-preserves the connection between a generated worker call and its source
-spawn without attempting to infer callback identity from frame fields. Keep
-that structure; a generic fixed-point framework or a second target resolver
-would add little here.
+[The ring algorithm](standard-library.md#the-ring-algorithm) is built as
+written, and an exhaustive interleaving search under sequential consistency
+found no violation. Two checks remain:
 
-The 170 compiler unit tests and the run, trap, and diagnostic corpora pass.
-Extra probes correctly reject two tasks using one arena through a forwarding
-wrapper and through mutually recursive wrappers. No new unsafe acceptance was
-found in the cases checked. One diagnostic regression was found and is
-fixed: a task through a view converted at the spawn no longer named the
-concrete target, since `call_effect_origins` skipped every callee's own
-part. It now keeps that part for a call dispatching on a view, so the note
-names `Tally.record`, or the capture literal a callable view runs; an
-ordinary call still names only its callbacks.
-
-**Erased callback parameters still take the union.** The new precision does
-not extend to this non-generic callback API:
-
-```loke
-package main;
-hits: int;
-quiet :: proc(n: int) -> int { return n; }
-dirty :: proc(n: int) -> int { hits += n; return n; }
-apply :: proc(f: dyn proc(n: int) -> int, n: int) -> int { return f(n); }
-serial :: proc() { _ = apply(dirty, 1); }
-main :: proc() {
-    answer: int;
-    parallel { spawn answer = apply(quiet, 1); } // L0731
-}
-```
-
-Changing `apply`'s parameter from `dyn proc` to `proc` accepts the spawn.
-`effect_variable` and `effect_value` follow only procedure types; a received
-callable view consequently contributes the full signature union to the
-body's own effects. This is a conservative limitation, separate from
-rejecting a stored view at the thread boundary: this spawn passes a concrete
-procedure and the wrapper makes the erased call on its worker. Record and
-test this limit alongside the other per-call precision limits before
-extending the shared callback representation to erased parameters. Recorded
-and tested under the [per-call findings](#per-call-effect-precision-2026-10-26),
-and resolved there on 2026-10-27: this program now compiles.
-
-Two local simplifications were available, and both are applied:
-
-- `src/global_effects.odin`, `region_merge_grew`: **shrink** the duplicate
-  merge helper. Its summary sets have only parameter, default, and unknown
-  regions, and the existing `merge_region_provenance` handles those and
-  reports growth already. Replace its three uses and delete the helper,
-  including its comment and annotation: seventeen lines. It also kept a
-  body's local regions, which `region_through` now maps to an unknown region,
-  as `merge_allocator_use` does, where the removed helper dropped them.
-- `src/global_effects.odin`, `clone_effects`: **stdlib** cloning an effects
-  slice is `slice.clone(effects, c.semantic_allocator)`. Replace its two
-  calls and remove the six-line wrapper. `core:slice` is already imported.
-
-Net: twenty-three lines removable without changing the analysis structure.
-
-### Dyn proc per-call review (2026-10-27)
-
-Review of `32cf095`. No correctness regression reproduced. The isolated
-diagnostic corpus, callback reach/allocator-use unit test, and
-[runtime precision case](tests/run/parallel_callback_precision.loke) pass.
-Additional cases accept a clean stored view and reject a dirty one, an
-`inout` reassignment, an unknown view holding a writing capture literal, and
-a pooled callback invalidating a live borrow of thread-local storage.
-
-Both non-blocking follow-ups are applied:
-
-- **Simplification:** `effect_value` in
-  [global_effects.odin](src/global_effects.odin) classifies the same identifier
-  through `effect_variable` once in the new view branch and again in the
-  existing procedure branch. Check that the expression has either callable
-  type once, return early for a converted view's concrete target, then share
-  the symbol switch and procedure/variable classification. This removes five
-  lines and keeps one path for parameters and locals; no new helper is needed.
-- **Regression coverage:** the new accepted cases pass named procedures and
-  capture literals directly, while the stored-view case only checks rejection.
-  That rejection also holds with the old type union, so it does not protect
-  precision for locals. Add an accepted stored-view case, for example:
-
-  ```loke
-  package main;
-  hits: int;
-  quiet :: proc(n: int) -> int { return n; }
-  dirty :: proc(n: int) -> int { hits += n; return n; }
-  apply :: proc(f: dyn proc(n: int) -> int, n: int) -> int { g := f; return g.call(n); }
-  work :: proc() -> int { f: dyn proc(n: int) -> int = quiet; return apply(f, 1); }
-  main :: proc() { _ = apply(dirty, 1); r: int; parallel { spawn r = work(); } }
-  ```
-
-  This is rejected with `L0731` by `9d3da3c` and accepted by `32cf095`.
-
-`effect_value` now checks for either callable type once, returns a converted
-view's target early, and shares the symbol classification.
-[parallel_callback_precision.loke](tests/run/parallel_callback_precision.loke)
-runs a task through a view stored in a local and copied in the wrapper, beside
-a serial call passing a dirty procedure.
-
-### Parameters a join check cannot tell apart (2026-10-26)
-
-Writing `examples/mixer.loke` for milestone 9 found that the
-[join check](design.md#releasing-before-the-join) rejects an audio loop that
-takes its command receiver by `move` and its voices as a borrowed
-`[]mut Voice`: two parameters' storage may be the same, so the receiver's
-channel may be what a render task borrows. The types say otherwise, since a
-`Voice` holds no channel, but the check compares roots, not types. Moving the
-voices into the loop, as the proposal's sketch does, is accepted.
-
-Resolved (2026-10-27): the check now tells two parameters, or a parameter and
-a global, apart by the object types their roots reach. Typed storage overlaps
-only by nesting, so the two may share storage only where an object one
-reaches is, holds, or lies within one the other reaches; a raw or foreign
-pointer, an erased view, or a type parameter still reaches anything. See
-[Releasing before the join](design.md#releasing-before-the-join) and
-[Channels end by ownership](comments.md#channels-end-by-ownership);
-[parallel_join_retention.loke](tests/err/parallel_join_retention.loke)
-accepts the audio-loop shape and rejects a parameter that holds, reaches, or
-may view the channel. The test is coarse at primitive fields: a `[]mut int`
-parameter still conflicts with a kept sender, since a channel's state holds
-`int` fields. Whether a finer rule, for example one using field privacy,
-would accept enough real programs to pay for itself is unmeasured.
-
-### Join-check cycle traversal review (2026-10-27)
-
-Review of `9d3da3c`. The reported by-value-cycle crash is fixed; the isolated
-diagnostic corpus passes. Both non-blocking follow-ups are applied:
-
-- **Simplification:** `roots_may_share_storage` can drop its `inside` array
-  and `type_holds_inline` its stack parameter and push/pop. The only caller
-  first collects both roots completely and returns on unknown storage;
-  `collect_pointees` rejects a cycle over every inline edge that
-  `type_holds_inline` follows. Keep that precondition explicit on the latter
-  helper. This removes three executable lines and the argument plumbing.
-- **Regression coverage:**
-  [parallel_join_cycle.loke](tests/err/parallel_join_cycle.loke) reaches the
-  cycle guard in `collect_pointees`, then returns through unknown storage
-  before calling `same_storage_type`. The latter's bounded loop fixes an
-  independent crash through valid recursive pointer types. Add a case like:
-
-  ```loke
-  package main;
-  P :: distinct ^P;
-  Q :: distinct ^Q;
-  Ticket :: struct @(wakes_on_drop) { held: P }
-  borrow :: proc(value: Q) {}
-  check :: proc(ticket: ^Ticket, value: Q) {
-      parallel { spawn borrow(value); }
-  }
-  main :: proc() {}
-  ```
-
-  This exits with `L0733` in `9d3da3c`; its parent overflows the stack
-  (`0xC00000FD` on Windows). Keep the bounded comparison loop.
-
-`type_holds_inline` no longer takes a stack, and its comment states the
-precondition; `parallel_join_cycle.loke` adds the self-pointer case.
-
-The root collector's independent cycle guard is useful: body-local type
-declarations do not run through the package's finite-size phase, so checking
-only `size_state == .Cyclic` would not cover every input. A recursion path
-also tells a cycle apart from two sibling fields of the same type; replacing
-it with a visited set that treats every revisit as unknown would reject
-unrelated storage unnecessarily.
-
-### Lazy publication and shared-handle review (2026-10-27)
-
-Review of `e498a75f`. The previous `Lazy.get` local-borrow, thread-local, and
-local-arena cases are rejected. The isolated diagnostic corpus, lazy and
-shared-handle runtime cases, existing shared-ownership runtime case, and
-`core:sync` interface check pass.
-
-Two regressions in the shared-handle allocator summary were recorded as
-known gaps and are fixed (2026-10-27): a user's extension of `Shared(T)` lost
-its callees' allocator use, and a payload's drop hook lost its own. The
-exemption now covers only the runtime's own handle methods, and settles no
-method's use. In those bodies an unknown region, the body's own or an
-argument's, including a call whose arguments carry none, is the receiver's
-control block; callees' summaries propagate as for any body. `release_block`
-takes the allocator the block stores as a parameter, so the free is charged
-through that substitution. `tests/err/parallel_shared_handles.loke` covers
-both reproductions.
-
-The simplification is applied: `note_instance_sites` in
-[borrow.odin](src/borrow.odin) pushes a frame for the selecting call and calls
-`note_instantiation_stack(k, first)`, and `short_instantiation_name` is
-private to its file again.
-
-### Lazy setup review (2026-10-27)
-
-`sync.Lazy(T)` answers the seventh
-[later extension](#later-concurrency-extensions). It shares `Once`'s state
-machine, holds its value as `Option(T)`, so it has a zero value whatever `T`
-is, and answers a `^T` borrowed through a case binding, so the result carries
-the `Lazy`'s provenance rather than an unchecked address. Building it found
-that a case binding over a subject reached through a pointer, as in
-`switch (p^)` or `switch (holder.slot)` on a `^Holder`, viewed nothing, so
-`return &value` was rejected though
-[Switch ownership](design.md#switch-ownership) says the binding names the
-subject's storage. That is fixed, with `tests/run/case_binding_returned.loke`
-and `tests/err/case_binding_returned.loke`.
-
-Still open:
-
-- Answered (2026-10-27): **initializer-result retention.** The unchecked
-  publication in `Lazy.get` lost the value's borrow and allocator-region
-  retention, so a global `Lazy` could keep a pointer to a local or to a
-  worker's `thread_local` storage, or an owner backed by an arena that had
-  ended. `init` is now `@(escape=static)`, and the value passes through a
-  private `@(cross_thread, escape=static)` parameter before it is published,
-  the contract a channel item has. A `Lazy` of a `@(thread_affine)` type is
-  rejected by the same check. An error found in the instance's body, such as
-  the value borrowing `thread_local` storage, names the `get` call that
-  selected it, as provenance errors in any generic instance now do.
-- **Thread-affine values in globals.** A task may borrow a
-  `@(thread_affine)` value stored in a plain global, as `window.handle` reads
-  one. [Sharing with tasks](design.md#sharing-with-tasks) follows arguments,
-  receivers, captures, and results, not globals, so this is not a divergence.
-  Closing it needs a read effect over globals, or a rule that rejects a global
-  of a type that is or reaches one. A `Lazy` cannot hold one.
-- **Waiting.** A `get` that finds `init` running spins as `Once.do` does, so
-  slow setup contended by many tasks burns their threads; the platform wait
-  [Concurrency refinements](#concurrency-refinements) mentions would serve
-  both.
-
-### Channel fix follow-up review (2026-10-26)
-
-Review of `1c0bae5`. All three findings are fixed:
-
-- The field-path filter in the [join check](design.md#releasing-before-the-join)
-  dropped wakers reached through a generic record's type arguments: a
-  `Ticket(thread.Guard(int))` whose only field points to the task's mutex was
-  accepted, though `e8238f6` rejected it and such a record may hold a guard
-  behind a `rawptr`. `path_waker` now counts every carrier of a record whose
-  type argument reaches a marked type.
-- A sibling field's borrow was still conflated with a guard's after a
-  conversion to a distinct type. A conversion's result reached every operand
-  slot from every path, and content selection compared shapes by exact type.
-  A conversion now projects its operand's slots by path, and selection
-  compares underlying types, which share one carrier shape.
-- The commit had no **Unreleased** entry in [CHANGELOG.md](CHANGELOG.md#unreleased).
-  It now records the `Receiver.iter` change under breaking changes, with the
-  upgrade of keeping the receiver alive until its iterator ends, and the
-  newly accepted wrapper case under fixes.
-
-[parallel_join_retention.loke](tests/err/parallel_join_retention.loke) covers
-the generic record, and the distinct conversion both accepted on the sibling's
-mutex and rejected on the guard's. The direct wrapper case, iterator lifetime
-check, and worker-completion handshake pass their regressions. Folding waker
-detection into the existing type walk, removing the redundant capacity field,
-and inlining `take` keep the implementation simpler; no additional abstraction
-is called for.
+- **Weak-memory model checking.** The interleaving search treats every access
+  as sequentially consistent, so it cannot find a missing release or acquire.
+  A C11 model check with GenMC or a tool like it, over the same capacities,
+  laps, and drop placements, is still needed.
+- **Measurements.** Measure the closure check on every send, with the flags
+  separated from the indices, and latency and throughput on the intended
+  target. The spare slot is for simpler arithmetic, not demonstrated higher
+  speed.
 
 ## Error handling (2026-10-13)
 

@@ -45,6 +45,28 @@ allocator without its callers changing, but it rejects programs that are
 safe, and the checker already infers the rest of the result contract from the
 body. A call it cannot follow keeps the signature reading.
 
+### Splitting a mutable slice is compiler-known
+
+Two runtime slice ranges conservatively overlap, so after
+`left := &mut xs[:mid]` the source is suspended and `&mut xs[mid:]` is
+rejected. Most algorithms never need both halves at once: a recursive merge
+sort ends each half's reborrow before the next, and its merge reads both
+halves through read-only views. Handing each half to its own task does need
+both.
+
+[Splitting a mutable slice](design.md#splitting-a-mutable-slice) is built into
+the compiler, as `swap` is, because a library cannot write it. Written with
+`unsafe.raw_data`, its halves carry no provenance, so appending to the owner or
+writing through `xs` while they are live is accepted: a use after reallocation
+the checker cannot see. Written with checked slicing, its body needs the two
+simultaneous reborrows it is meant to provide. The compiler's form is one bounds
+check, two slice headers, and a result whose two fields are one mutable
+reborrow of `xs`, so no disjointness relation needs tracking: that reborrow
+keeps `xs` suspended until both halves are finished, and writes through the
+halves do not conflict, since suspension constrains uses of the source and not
+of its reborrows. [Chunks of a mutable slice](design.md#chunks-of-a-mutable-slice)
+extends this to the data-parallel case.
+
 ### One temporary-lifetime rule
 
 How long a temporary lives once depended on what viewed it: a slice literal's

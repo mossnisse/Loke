@@ -667,7 +667,7 @@ checklist.
   This remains a design proposal; accepted language behavior is unchanged.
 
 - Revised the structured concurrency proposal again after a
-  [follow-up review](open-questions.md#structured-concurrency-follow-up-review-2026-10-22).
+  follow-up review.
   It closes two race holes (pool helping against thread-local borrows, and
   plain reads of shared atomics), copies plain arguments into tasks, specifies
   `chunks_mut`, lets tasks log and print, and records the open

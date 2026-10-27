@@ -904,7 +904,7 @@ Validation:
    bound.
 
 The points this leaves for review are in
-[open-questions.md](open-questions.md#ring-algorithm-review-points-2026-10-26).
+[open-questions.md](open-questions.md#ring-algorithm-validation).
 
 The item checks, FIFO ordering, and result variants match the channel, but
 changing a channel to a ring also requires exclusive endpoint access and a
