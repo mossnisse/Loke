@@ -256,6 +256,47 @@ applied_typeids_do_not_key_on_display_names :: proc(t: ^testing.T) {
 	)
 }
 
+// A structural key wraps each nested type's own key in braces, so types that
+// differ only inside differ in their keys, and no brace is read as a
+// formatting placeholder.
+@(test)
+nested_typeid_keys_are_well_formed_and_distinct :: proc(t: ^testing.T) {
+	c: Compiler
+	defer destroy_compilation(&c)
+	init_semantic_stores(&c)
+
+	slice_of :: proc(c: ^Compiler, element: Type_Id) -> Type_Id {
+		return new_type(c, Type_Info{kind = .Slice, element = element})
+	}
+	map_of :: proc(c: ^Compiler, key, element: Type_Id) -> Type_Id {
+		return new_type(c, Type_Info{kind = .Map, key = key, element = element})
+	}
+	proc_of :: proc(c: ^Compiler, parameter, result: Type_Id) -> Type_Id {
+		parameters := make([]Type_Id, 1, c.semantic_allocator)
+		parameters[0] = parameter
+		return new_type(c, Type_Info{kind = .Proc, parameters = parameters, result = result, convention = "c"})
+	}
+	pairs := [?][2]Type_Id {
+		{slice_of(&c, TYPE_INT), slice_of(&c, TYPE_F64)},
+		{slice_of(&c, slice_of(&c, TYPE_INT)), slice_of(&c, slice_of(&c, TYPE_F64))},
+		{map_of(&c, TYPE_INT, TYPE_F64), map_of(&c, TYPE_F64, TYPE_INT)},
+		{proc_of(&c, TYPE_INT, TYPE_F64), proc_of(&c, TYPE_F64, TYPE_INT)},
+	}
+	for pair in pairs {
+		first, second := typeid_sort_key(&c, pair[0]), typeid_sort_key(&c, pair[1])
+		testing.expectf(t, first != second, "two types differing only inside share the key %q", first)
+		for key in ([]string{first, second}) {
+			testing.expectf(t, !strings.contains(key, "%!"), "the key %q holds a formatting error", key)
+		}
+	}
+	inner := typeid_sort_key(&c, TYPE_INT)
+	outer := typeid_sort_key(&c, slice_of(&c, TYPE_INT))
+	testing.expectf(
+		t, strings.contains(outer, fmt.tprintf(":e{{%s}}", inner)),
+		"the slice key %q does not wrap its element's key %q", outer, inner,
+	)
+}
+
 @(test)
 written_signatures_agree_on_parameter_shapes :: proc(t: ^testing.T) {
 	source := `package main;

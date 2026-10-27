@@ -431,9 +431,9 @@ write_applied_args :: proc(
 ) {
 	for arg in args {
 		if arg.is_type {
-			fmt.sbprintf(b, ":t{%s}", typeid_sort_key_walk(c, arg.type, memo, visiting))
+			fmt.sbprintf(b, ":t{{%s}}", typeid_sort_key_walk(c, arg.type, memo, visiting))
 		} else {
-			fmt.sbprintf(b, ":v{%s}", const_key_text(c, arg.value))
+			fmt.sbprintf(b, ":v{{%s}}", const_key_text(c, arg.value))
 		}
 	}
 }
@@ -453,7 +453,7 @@ write_instance_identity :: proc(
 	// templates of every other block on the same owner.
 	if template := symbol_of(c, template_symbol);
 	   template != nil && template.owner_type != INVALID_TYPE {
-		fmt.sbprintf(b, ":o{%s}", typeid_sort_key_walk(c, template.owner_type, memo, visiting))
+		fmt.sbprintf(b, ":o{{%s}}", typeid_sort_key_walk(c, template.owner_type, memo, visiting))
 	}
 	write_applied_args(c, b, args, memo, visiting)
 }
@@ -556,7 +556,7 @@ typeid_sort_key_walk :: proc(
 				continue
 			}
 			fmt.sbprintf(
-				&b, ":f%s{%s}", identifier_text(c, member.name),
+				&b, ":f%s{{%s}}", identifier_text(c, member.name),
 				typeid_sort_key_walk(c, member.type, memo, visiting),
 			)
 		}
@@ -570,7 +570,7 @@ typeid_sort_key_walk :: proc(
 		for payload, index in info.variants {
 			fmt.sbprintf(&b, ":v%s", identifier_text(c, info.variant_names[index]))
 			if payload != TYPE_VOID {
-				fmt.sbprintf(&b, "{%s}", typeid_sort_key_walk(c, payload, memo, visiting))
+				fmt.sbprintf(&b, "{{%s}}", typeid_sort_key_walk(c, payload, memo, visiting))
 			}
 		}
 		return strings.to_string(b)
@@ -596,10 +596,10 @@ typeid_sort_key_walk :: proc(
 		info.signed, info.mutable, info.written_align,
 	)
 	if info.element != INVALID_TYPE {
-		fmt.sbprintf(&b, ":e{%s}", typeid_sort_key_walk(c, info.element, memo, visiting))
+		fmt.sbprintf(&b, ":e{{%s}}", typeid_sort_key_walk(c, info.element, memo, visiting))
 	}
 	if info.key != INVALID_TYPE {
-		fmt.sbprintf(&b, ":k{%s}", typeid_sort_key_walk(c, info.key, memo, visiting))
+		fmt.sbprintf(&b, ":k{{%s}}", typeid_sort_key_walk(c, info.key, memo, visiting))
 	}
 	if info.count != 0 {
 		fmt.sbprintf(&b, ":n%d", info.count)
@@ -609,18 +609,18 @@ typeid_sort_key_walk :: proc(
 		reset := index < len(info.param_resets) && info.param_resets[index]
 		by_ptr := index < len(info.param_by_ptr) && info.param_by_ptr[index]
 		fmt.sbprintf(
-			&b, ":p%d:%t:%t{%s}", mode, reset, by_ptr,
+			&b, ":p%d:%t:%t{{%s}}", mode, reset, by_ptr,
 			typeid_sort_key_walk(c, parameter, memo, visiting),
 		)
 	}
 	if info.result != INVALID_TYPE {
 		fmt.sbprintf(
-			&b, ":r%t{%s}", info.result_inout,
+			&b, ":r%t{{%s}}", info.result_inout,
 			typeid_sort_key_walk(c, info.result, memo, visiting),
 		)
 	}
 	if info.convention != "" {
-		fmt.sbprintf(&b, ":c{%s}", info.convention)
+		fmt.sbprintf(&b, ":c{{%s}}", info.convention)
 	}
 	if info.c_vararg {
 		fmt.sbprint(&b, ":cvararg")
@@ -628,7 +628,7 @@ typeid_sort_key_walk :: proc(
 	if sym := symbol_of(c, info.proc_contract); sym != nil {
 		pkg := package_of(c, sym.pkg)
 		path := int(sym.span.file) < len(c.sources) ? c.sources[sym.span.file].path : ""
-		fmt.sbprintf(&b, ":contract{%s:%s:%s:%d}", pkg == nil ? "" : pkg.key, path, identifier_text(c, sym.name), sym.span.lo)
+		fmt.sbprintf(&b, ":contract{{%s:%s:%s:%d}}", pkg == nil ? "" : pkg.key, path, identifier_text(c, sym.name), sym.span.lo)
 	}
 	return strings.to_string(b)
 }
