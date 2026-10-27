@@ -1,0 +1,9 @@
+L0371
+@24:35
+no parameter named `size`
+L0371
+@26:42
+`scale` is given twice
+L0643
+@27:2
+slot `grow` mutates its subject, so it needs `dyn mut Shape`

@@ -737,6 +737,16 @@ checklist.
 
 ### Fixed
 
+- A `dyn` slot call through a view that is not a named local, such as
+  `(dyn Shape)(&s).area(scale = 2)`, a field, a call's result, or a generic
+  receiver, is checked as one through a local is
+  ([Borrowed dynamic interface values](design.md#borrowed-dynamic-interface-values)).
+  Named arguments bind by the slot's parameter names, as they do in
+  `(dyn Shape).area(view, scale = 2)`; they were rejected (`L0392`, `L0371`). A mutating slot may be called on a `dyn mut` view converted in
+  place, so a task may call one, as in
+  `spawn r = (dyn mut Shape)(&mut s).grow(1);`; it was `L0359`. Naming a
+  mutating slot through a read-only view is the capability error `L0643`, not
+  a missing member (`L0363`).
 - A borrow or region error found in the body of a generic instance, such as
   a library's, names the call that selected the instance
   (`while instantiating ...`), as the checker's errors there already did.

@@ -901,6 +901,10 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id, positi
 				}
 			}
 		}
+		if report_hidden_dyn_slot(k, v.span, operand, v.name.text) {
+			v.type = INVALID_TYPE
+			return
+		}
 		errorf(k.c, v.span, "L0363", "`%s` has no field or member `%s`", type_name(k.c, operand), v.name.text)
 		note_excluded_member(k, operand, v.name.text)
 		v.type = INVALID_TYPE

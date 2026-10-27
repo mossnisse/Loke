@@ -213,6 +213,16 @@ install_dyn_forwarding_slots :: proc(k: ^Checker, info: ^Interface_Info, args: [
 		if !dyn_mutable && len(modes) > 0 && modes[0] == .Inout {
 			continue
 		}
+		// The slot's parameter names, so `(dyn I).slot(view, name = ...)` binds
+		// named arguments as `check_dyn_slot_call` does.
+		param_symbols := make([]Symbol_Id, len(params), k.c.semantic_allocator)
+		for written, position in slot_parameter_names(k, entry) {
+			if written != INVALID_IDENTIFIER && position < len(params) {
+				param_symbols[position] = new_symbol(k.c, Symbol {
+					name = written, kind = .Parameter, type = params[position], mode = modes[position],
+				})
+			}
+		}
 		id := new_symbol(k.c, Symbol {
 			name           = entry.name,
 			span           = entry.span,
@@ -222,7 +232,7 @@ install_dyn_forwarding_slots :: proc(k: ^Checker, info: ^Interface_Info, args: [
 			params         = params,
 			result         = result_type,
 			result_inout   = result_inout,
-			param_symbols  = make([]Symbol_Id, len(params), k.c.semantic_allocator),
+			param_symbols  = param_symbols,
 			param_defaults = make([]Expr, len(params), k.c.semantic_allocator),
 			proc_type      = intern_proc_type(k.c, params, modes, result_type, result_inout, ""),
 			synth          = .Dyn_Forward,
@@ -857,6 +867,22 @@ slot_signature_for :: proc(
 	return slot_signature(k, entry.type, receiver)
 }
 
+// The name each of a slot's parameters is written with, aligned with
+// `slot_signature`'s parameters; an unnamed one is INVALID_IDENTIFIER.
+@(private = "file")
+slot_parameter_names :: proc(k: ^Checker, entry: Interface_Slot) -> []Identifier_Id {
+	names := make([dynamic]Identifier_Id, 0, len(entry.type.params), context.temp_allocator)
+	for parameter in entry.type.params {
+		if len(parameter.names) == 0 {
+			append(&names, INVALID_IDENTIFIER)
+		}
+		for written in parameter.names {
+			append(&names, intern_identifier(k.c, written.name.text))
+		}
+	}
+	return names[:]
+}
+
 @(private = "file")
 find_witness_slot :: proc(
 	k: ^Checker,
@@ -1151,6 +1177,33 @@ check_any_view_extract :: proc(k: ^Checker, v: ^Expr_Checked_Extract) {
 	request_typeid(k.c, target)
 }
 
+// design.md "Borrowed dynamic interface values": a `dyn I` hides the slots
+// that mutate their subject, and naming one is a capability error naming
+// `dyn mut I`, never a missing member, however the view is held.
+report_hidden_dyn_slot :: proc(k: ^Checker, span: Span, dyn: Type_Id, name: string) -> bool {
+	if !type_is_dyn(k.c, dyn) || dyn_is_mutable(k.c, dyn) {
+		return false
+	}
+	_, entry, found := dyn_slot_index(k, dyn, intern_identifier(k.c, name))
+	if !found {
+		return false
+	}
+	owner := interface_info_for(k, entry.owner)
+	_, modes, _, _, ok := slot_signature_for(k, owner, entry, dyn)
+	if !ok || len(modes) == 0 || modes[0] != .Inout {
+		return false
+	}
+	errorf(
+		k.c,
+		span,
+		"L0643",
+		"slot `%s` mutates its subject, so it needs `dyn mut %s`",
+		name,
+		identifier_text(k.c, symbol_of(k.c, owner.symbol).name),
+	)
+	return true
+}
+
 // `view.draw(inout canvas)`: an indirect call through the witness.
 check_dyn_slot_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, dyn: Type_Id) -> bool {
 	name := intern_identifier(k.c, sel.name.text)
@@ -1158,22 +1211,13 @@ check_dyn_slot_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, dyn
 	if !found {
 		return false
 	}
-	owner := interface_info_for(k, entry.owner)
-	params, modes, result_type, result_inout, ok := slot_signature_for(k, owner, entry, dyn)
-	if !ok {
-		errorf(k.c, v.span, "L0467", "`%s`'s signature does not resolve here", sel.name.text)
+	if report_hidden_dyn_slot(k, v.span, dyn, sel.name.text) {
 		v.type = INVALID_TYPE
 		return true
 	}
-	if !dyn_is_mutable(k.c, dyn) && len(modes) > 0 && modes[0] == .Inout {
-		errorf(
-			k.c,
-			v.span,
-			"L0643",
-			"slot `%s` mutates its subject, so it needs `dyn mut %s`",
-			sel.name.text,
-			identifier_text(k.c, symbol_of(k.c, owner.symbol).name),
-		)
+	params, modes, result_type, result_inout, ok := slot_signature_for(k, interface_info_for(k, entry.owner), entry, dyn)
+	if !ok {
+		errorf(k.c, v.span, "L0467", "`%s`'s signature does not resolve here", sel.name.text)
 		v.type = INVALID_TYPE
 		return true
 	}
@@ -1206,16 +1250,11 @@ check_dyn_slot_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, dyn
 			named = true
 			slot = -1
 			target := intern_identifier(k.c, arg.name.text)
-			flat := 0
-			for parameter in entry.type.params {
-				for parameter_name in parameter.names {
-					if intern_identifier(k.c, parameter_name.name.text) == target {
-						slot = flat
-						break
-					}
-					flat += 1
+			for written, flat in slot_parameter_names(k, entry) {
+				if written == target {
+					slot = flat
+					break
 				}
-				if slot >= 0 { break }
 			}
 			if slot < 0 {
 				errorf(k.c, arg.span, "L0371", "no parameter named `%s`", arg.name.text)

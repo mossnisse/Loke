@@ -404,6 +404,13 @@ associated_group :: proc(k: ^Checker, callee: Expr) -> Symbol_Id {
 check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) {
 	receiver := sel.operand
 	receiver_base := expr_base(receiver)
+	// design.md "Borrowed dynamic interface values": a slot call through a view
+	// that is not a named local, such as one converted in place, dispatches as
+	// one through a local does, however the view is held.
+	if type_is_dyn(k.c, receiver_base.type) && dyn_proc_signature(k.c, receiver_base.type) == INVALID_TYPE &&
+	   check_dyn_slot_call(k, v, sel, receiver_base.type) {
+		return
+	}
 	candidates := method_candidates(k, receiver_base.type, intern_identifier(k.c, sel.name.text))
 	written, args_ok := collect_call_arguments(k, v.args, candidates, 1)
 	if !args_ok {

@@ -10,8 +10,8 @@
 // a pooled join's `thread_local` write, an endpoint kept past the join, and
 // a slot returning the worker's `thread_local` storage, on a bare
 // or pooled block. A `self: ^` slot borrows what the view views until the
-// join, and a result borrowing it keeps that loan. A temporary `dyn mut` view
-// cannot be a mutating slot's receiver, at a spawn or anywhere.
+// join, and a result borrowing it keeps that loan. A mutating slot through a
+// converted `dyn mut` view lends what it views exclusively until the join.
 package main;
 
 import "core:fmt";
@@ -172,10 +172,13 @@ sender_kept :: proc() {
 	_ = send.send(1);
 }
 
-temporary_mutable :: proc() {
+parent_reads_grown :: proc() {
 	s := Square{1};
 	r: int;
-	parallel { spawn r = (dyn mut Shape)(&mut s).grow(1); }
+	parallel {
+		spawn r = (dyn mut Shape)(&mut s).grow(by = 1);
+		fmt.println(s.side);
+	}
 }
 
 counter: thread_local int;
@@ -239,7 +242,7 @@ main :: proc() {
 	writes_global();
 	pooled_write();
 	sender_kept();
-	temporary_mutable();
+	parent_reads_grown();
 	returns_tls();
 	returns_tls_pooled();
 	pointer_receiver_written();

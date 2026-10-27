@@ -3,11 +3,13 @@
 // is the receiver argument. The parent evaluates the view with the arguments,
 // in order, and copies it into the task. What it views is borrowed until the
 // join: read-only by a `dyn` view, so two tasks may share it, and exclusively
-// by a `dyn mut` one. A viewed capture literal owning its storage stays the
-// parent's to drop. This works on bare and pooled blocks. A procedure
-// occupies the view's data word, so its view borrows nothing. A callable view
-// only borrows the callable, so a capture literal writing through a `&mut`
-// capture reaches a task moved through a generic `Callable` parameter instead.
+// by a `dyn mut` one, which may call a mutating slot. Named arguments bind by
+// the slot's parameter names. A viewed capture literal owning its storage
+// stays the parent's to drop. This works on bare and pooled blocks. A
+// procedure occupies the view's data word, so its view borrows nothing. A
+// callable view only borrows the callable, so a capture literal writing
+// through a `&mut` capture reaches a task moved through a generic `Callable`
+// parameter instead.
 package main;
 
 import "base:interfaces";
@@ -18,12 +20,14 @@ double :: proc(n: int) -> int { return n * 2; }
 
 Shape :: interface($Self: type) {
 	slot area: proc(self, scale: int) -> int;
+	slot grow: proc(self: inout Self, by: int) -> int;
 }
 
 Square :: struct { side: int }
 
 impl Square {
 	area :: proc(self, scale: int) -> int { return self.side * self.side * scale; }
+	grow :: proc(self: inout Square, by: int) -> int { self.side += by; return self.side; }
 }
 
 procedure :: proc() -> int {
@@ -82,6 +86,18 @@ exclusive :: proc() -> int {
 	return r + s.side;
 }
 
+grown :: proc() -> int {
+	s := Square{3};
+	t := Square{10};
+	a: int;
+	b: int;
+	parallel {
+		spawn a = (dyn mut Shape)(&mut s).grow(by = 2);
+		spawn b = (dyn mut Shape)(&mut t).grow(1);
+	}
+	return a * 100 + b + s.side;
+}
+
 pick :: proc(s: ^Square, name: string) -> ^Square {
 	fmt.println("view", name);
 	return s;
@@ -127,6 +143,7 @@ main :: proc() {
 	fmt.println("owning", owning());
 	fmt.println("shared", shared());
 	fmt.println("exclusive", exclusive());
+	fmt.println("grown", grown());
 	fmt.println("ordered", ordered());
 	fmt.println("pooled", pooled());
 	fmt.println("moved callable", moved_callable());

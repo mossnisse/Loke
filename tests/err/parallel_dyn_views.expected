@@ -57,38 +57,38 @@ L0733
 @171:2
 `drain` is kept past this join while it borrows `jobs`, which a task of the block borrows too; dropping it may be what the task waits for
 
-L0359
-@178:23
-this expression cannot be the receiver of a mutating method
+L0511
+@180:15
+this read of `s` is not compatible with the mutable pointer of it that is still in use
 
 L0730
-@198:28
+@201:28
 this task's result holds a pointer of `counter`, which is the worker's own `thread_local` storage, so it cannot cross to the parent
 
 L0730
-@206:36
+@209:36
 this task's result holds a pointer of `counter`, which is the worker's own `thread_local` storage, so it cannot cross to the parent
 
 L0511
-@215:3
+@218:3
 this write of `number` is not compatible with the read-only pointer of it that is still in use
 
 L0511
-@223:2
+@226:2
 this write of `number` is not compatible with the read-only pointer of it that is still in use
 
 L0731
-@272:13
+@275:13
 `view.record` may write `hits`, which every task and the parent share
 
 L0729
-@283:28
+@286:28
 `dyn proc(i64) -> int`, which may view a `proc(n: i64) -> int capture(&mut count)`, which reaches `^mut int`, so a task sharing it could write what the parent reaches too
 
 L0725
-@294:29
+@297:29
 `dyn Formattable` hides the type it erased, so nothing shows that it may cross to another thread
 
 L0729
-@312:35
+@315:35
 `Holder` reaches `dyn Read`, which may view a `Bumping`, which reaches `^mut int`, so a task sharing it could write what the parent reaches too
