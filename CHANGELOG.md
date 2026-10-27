@@ -47,6 +47,39 @@ checklist.
   Upgrade by returning a copy of the element, or by keeping the source alive
   for as long as the pointer is used.
 
+- Changing a container reached through a mutable pointer during its own
+  `foreach`, as `items.append(item)` inside `foreach (item in items^)` with
+  `items: ^mut [dynamic]int`, is now rejected with `L0641`, as it already was
+  for a local container
+  ([Borrowing iteration](design.md#borrowing-iteration)). Before, it
+  compiled, and growing the container could leave the loop reading freed
+  memory. Reading the container and changing its other fields in the loop
+  still compile. Upgrade by collecting the changes in the loop and applying
+  them after it, or by iterating over indices.
+
+- Indexing through a pointer to a fixed array, as `p[0].a.x` with
+  `p: ^[1]Outer`, now tracks the element and fields it reads. Before, the read
+  could be matched to a different field of the array's element type, so using
+  a view of a local after it ended could compile:
+
+  ```loke
+  Inner :: struct { x: string_view, y: string_view }
+  Outer :: struct { b: string_view, a: Inner }
+  main :: proc() {
+      kept: string_view = "";
+      {
+          source := strings.copy("dangling");
+          arr := [1]Outer{{"static", {source, "y"}}};
+          p := &arr;
+          kept = p[0].a.x;
+      }
+      fmt.println(kept);   // now L0513
+  }
+  ```
+
+  Upgrade by keeping the viewed storage alive for as long as the view is
+  used, or by keeping a copy.
+
 ### Added
 
 - `fs.replace_atomic` and `fs.replace_atomic_text` replace a file so that a
@@ -96,6 +129,20 @@ checklist.
   ([Procedure result contracts](design.md#procedure-result-contracts)). Using
   such a copy after the sliced array ended, or after changing the slice, was
   rejected even when the view was of static text.
+
+- A result read through a pointer or slice parameter now depends only on the
+  fields it reads, as
+  [Procedure result contracts](design.md#procedure-result-contracts)
+  requires. With `Pair :: struct { a: string_view, b: string_view }`, the
+  result of `return values[0].a;` over `values: []Pair`, or of `return p.a;`
+  over `p: ^Pair`, no longer counts as depending on `b`, also when the
+  procedure only forwards to another one that reads `a`. Using it after
+  storage only `b` viewed had ended was rejected with `L0513`.
+
+- Calling a read-only method through a mutable pointer, as `items.len()` with
+  `items: ^mut [dynamic]int`, is no longer rejected with `L0641` while a
+  read-only reborrow of the pointer is in use: such a call only reads, which
+  [Weakening and reborrows](design.md#weakening-and-reborrows) allows.
 
 ## [0.9.0] - 2026-10-27
 

@@ -1,0 +1,48 @@
+// design.md "Procedure result contracts": a result read through a pointer or
+// slice parameter depends only on the fields it reads, so a view of the static
+// `a` outlives storage that only `b` viewed. design.md "Minimum provenance
+// precision": an element of a fixed array behind a pointer is told apart by
+// its constant index.
+package main;
+
+import "core:fmt";
+import "core:strings";
+
+Pair :: struct { a: string_view, b: string_view }
+
+from_slice :: proc(values: []Pair) -> string_view { return values[0].a; }
+
+from_element :: proc(values: []Pair) -> string_view {
+	foreach (value in values) { return value.a; }
+	return "";
+}
+
+from_copy :: proc(values: []Pair) -> string_view {
+	value := values[0];
+	return value.a;
+}
+
+from_pointer :: proc(p: ^Pair) -> string_view { return p.a; }
+
+from_array :: proc(p: ^[2]Pair) -> string_view { return p[1].a; }
+
+whole :: proc(p: ^Pair) -> Pair { return p^; }
+
+forwarded :: proc(values: []Pair) -> string_view { return from_slice(values); }
+
+main :: proc() {
+	kept := [7]string_view{"", "", "", "", "", "", ""};
+	{
+		source := strings.copy("ended");
+		values := [2]Pair{{"slice", source}, {"array", "static"}};
+		kept[0] = from_slice(values[:]);
+		kept[1] = from_element(values[:]);
+		kept[2] = from_copy(values[:]);
+		kept[3] = from_pointer(&values[0]);
+		kept[4] = from_array(&values);
+		kept[5] = whole(&values[0]).a;
+		callback := forwarded;
+		kept[6] = callback(values[:]);
+	}
+	fmt.println(kept[0], kept[1], kept[2], kept[3], kept[4], kept[5], kept[6]);
+}

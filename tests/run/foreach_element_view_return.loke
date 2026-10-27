@@ -76,7 +76,24 @@ last_then_changed :: proc(values: []mut string_view) -> string_view {
 	return kept;
 }
 
+// design.md "Weakening and reborrows": a traversal through a mutable pointer
+// reborrows it read-only, which still allows reading the source and changing
+// another field; a mutable traversal still allows changing the element.
+Counts :: struct { values: [dynamic]int, total: int }
+
+read_during_traversal :: proc(counts: ^mut Counts) -> int {
+	foreach (value in counts.values) {
+		counts.total += value * counts.values.len();
+	}
+	foreach (&mut value in counts.values) { value += 1; }
+	counts.values.append(counts.total);
+	return counts.total;
+}
+
 main :: proc() {
+	counts := Counts{make([dynamic]int, 0, 3), 0};
+	counts.values.append(1, 2);
+	fmt.println(read_during_traversal(&mut counts), counts.values[0], counts.values[1], counts.values[2]);
 	// The copies view static text, so they outlive the arrays they came from.
 	copied: string_view = "";
 	label: string_view = "";

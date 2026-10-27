@@ -110,6 +110,11 @@ Prov_Root :: struct {
 	// standing for what that many loads through it read. The last stands for
 	// every depth from its own on.
 	content_loans: []Loan_Id,
+	// A carrier `Param` whose pointee has carrier paths: per path of
+	// `carrier_pointee_shape`, the depth-1 `content` loan standing for what one
+	// load along that path reads, so a result copied out of one field does not
+	// name its siblings (design.md "Procedure result contracts").
+	pointee_loans: []Loan_Id,
 	// A `Static` stand-in, while a body is summarized, for what the callback in
 	// parameter `param_index` may leave in its argument `argument`. Only the
 	// `Callback_Write` and `Callback_Read` summaries read it; it constrains
@@ -213,6 +218,9 @@ Prov_Loan :: struct {
 	content: bool,
 	// A `content_loans` entry: how many loads below the parameter it stands for.
 	depth: int,
+	// A `pointee_loans` entry: its position in `carrier_pointee_shape`, plus
+	// one; zero for every other loan.
+	pointee: int,
 }
 
 // A carrier value the analysis follows: a variable, parameter or expression
@@ -553,6 +561,16 @@ load_depth :: proc(c: ^Compiler, type: Type_Id, depth := 0) -> int {
 	return min(most, CARRIER_DEPTH)
 }
 
+// The carrier paths of what one load through a pointer or slice reads, as
+// `[a]` and `[b]` for `[]Pair`; nil for any other carrier.
+carrier_pointee_shape :: proc(c: ^Compiler, type: Type_Id) -> []Carrier_Path {
+	info := underlying_info(c, type)
+	if info == nil || (info.kind != .Pointer && info.kind != .Slice) {
+		return nil
+	}
+	return carrier_shape(c, info.element)
+}
+
 // Every place inside a value of this type that can hold a borrow.
 carrier_shape :: proc(c: ^Compiler, type: Type_Id) -> []Carrier_Path {
 	if type == INVALID_TYPE {
@@ -829,6 +847,9 @@ Result_Dependencies :: struct {
 	// Per parameter, a bit per load depth at which the result may hold what is
 	// read through it: bit 0 for an element copied out of a slice, not the slice.
 	param_loads:  []u8,
+	// Per parameter with bit 0 of `param_loads`, which paths of its
+	// `carrier_pointee_shape` that load may read. Nil means all of them.
+	param_load_paths: [][]bool,
 	static:       bool,
 	thread:       bool,
 	// The globals the result may borrow, so a caller's write to one, or a call
@@ -871,6 +892,7 @@ new_result_dependencies :: proc(c: ^Compiler, param_count: int) -> Result_Depend
 		params      = make([]bool, param_count, c.semantic_allocator),
 		param_paths = make([][]bool, param_count, c.semantic_allocator),
 		param_loads = make([]u8, param_count, c.semantic_allocator),
+		param_load_paths = make([][]bool, param_count, c.semantic_allocator),
 	}
 }
 
@@ -1104,9 +1126,11 @@ receiver_dependencies :: proc(c: ^Compiler, from: Result_Dependencies) -> Result
 	out.params = make([]bool, count, c.semantic_allocator)
 	out.param_paths = make([][]bool, count, c.semantic_allocator)
 	out.param_loads = make([]u8, count, c.semantic_allocator)
+	out.param_load_paths = make([][]bool, count, c.semantic_allocator)
 	copy(out.params[1:], from.params)
 	copy(out.param_paths[1:], from.param_paths)
 	copy(out.param_loads[1:], from.param_loads)
+	copy(out.param_load_paths[1:], from.param_load_paths)
 	return out
 }
 
@@ -1152,9 +1176,27 @@ merge_result_dependencies :: proc(c: ^Compiler, into: ^Result_Dependencies, from
 	merge_provenance(c, into, from)
 	merge_precision(&into.precision, from.precision)
 	for depths, index in from.param_loads {
-		if index < len(into.param_loads) {
-			into.param_loads[index] |= depths
+		if index >= len(into.param_loads) {
+			continue
 		}
+		if depths & 1 != 0 && index < len(into.param_load_paths) {
+			paths := index < len(from.param_load_paths) ? from.param_load_paths[index] : nil
+			if into.param_loads[index] & 1 == 0 {
+				if paths != nil {
+					into.param_load_paths[index] = make([]bool, len(paths), c.semantic_allocator)
+					copy(into.param_load_paths[index], paths)
+				}
+			} else if into.param_load_paths[index] != nil {
+				if paths == nil || len(paths) != len(into.param_load_paths[index]) {
+					into.param_load_paths[index] = nil
+				} else {
+					for used, path in paths {
+						into.param_load_paths[index][path] ||= used
+					}
+				}
+			}
+		}
+		into.param_loads[index] |= depths
 	}
 	for wanted, index in from.params {
 		if !wanted || index >= len(into.params) {
@@ -2374,6 +2416,9 @@ merge_loan_provenance :: proc(state: ^Prov_State, into: ^Result_Dependencies, in
 		if loan.depth > 0 && root.param_index < len(into.param_loads) {
 			bit := u8(1) << u8(loan.depth - 1)
 			changed := into.param_loads[root.param_index] & bit == 0
+			if loan.depth == 1 {
+				changed = merge_param_load_paths(state, into, root, loan) || changed
+			}
 			into.param_loads[root.param_index] |= bit
 			return changed
 		}
@@ -2457,6 +2502,42 @@ merge_param_paths :: proc(
 		return true
 	}
 	return changed
+}
+
+// Narrows a depth-1 load dependency to the pointee paths the loan stands for,
+// so a caller loads only those fields. Nil means every path. Runs before the
+// load's bit is set, which is how a first narrowing tells itself apart from a
+// dependency already widened to the whole pointee.
+@(private = "file")
+merge_param_load_paths :: proc(
+	state: ^Prov_State,
+	into: ^Result_Dependencies,
+	root: Prov_Root,
+	loan: Prov_Loan,
+) -> bool {
+	index := root.param_index
+	if index >= len(into.param_load_paths) {
+		return false
+	}
+	first := into.param_loads[index] & 1 == 0
+	sym := symbol_of(state.k.c, root.symbol)
+	shape := sym == nil ? nil : carrier_pointee_shape(state.k.c, sym.type)
+	if loan.pointee == 0 || loan.pointee > len(shape) {
+		changed := len(into.param_load_paths[index]) > 0
+		into.param_load_paths[index] = nil
+		return changed
+	}
+	if into.param_load_paths[index] == nil {
+		if !first {
+			return false // already widened to the whole pointee
+		}
+		into.param_load_paths[index] = make([]bool, len(shape), state.k.c.semantic_allocator)
+	}
+	if into.param_load_paths[index][loan.pointee - 1] {
+		return false
+	}
+	into.param_load_paths[index][loan.pointee - 1] = true
+	return true
 }
 
 // One concrete body's root and region diagnostics.
@@ -3034,13 +3115,38 @@ load_through_loan :: proc(
 	}
 	if !found {
 		loss^ |= path_precision(loan.path)
+		if root.kind == .Param && !loan.content && load_pointee_paths(state, root, path) {
+			return found
+		}
+		// A pointee loan already stands for every depth the last content loan
+		// would, without widening to the pointee's other paths.
 		deeper := loan_index
-		if count := len(root.content_loans); count > 0 {
+		if count := len(root.content_loans); count > 0 && !(loan.pointee > 0 && min(loan.depth, count - 1) == 0) {
 			deeper = int(root.content_loans[min(loan.depth, count - 1)])
 		}
 		bit_mark(state.merged, deeper)
 	}
 	return found
+}
+
+// A load along `path` through a carrier parameter's own loan reads only the
+// pointee paths it overlaps. False when it names none of them, as a load of
+// the whole pointee or of storage beside its carriers does.
+@(private = "file")
+load_pointee_paths :: proc(state: ^Prov_State, root: Prov_Root, path: []Proj_Step) -> bool {
+	if len(path) == 0 || len(root.pointee_loans) == 0 {
+		return false
+	}
+	graph := state.graph
+	shape := carrier_pointee_shape(graph.k.c, symbol_of(graph.k.c, root.symbol).type)
+	marked := false
+	for loan, position in root.pointee_loans {
+		if paths_overlap(shape[position].steps, path) {
+			bit_mark(state.merged, int(loan))
+			marked = true
+		}
+	}
+	return marked
 }
 
 // Records which slots each indirect read uses before the backward pass, so a

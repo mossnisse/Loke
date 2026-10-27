@@ -1867,6 +1867,22 @@ prov_bind_parameters :: proc(graph: ^Flow_Graph, literal: ^Expr_Proc) {
 			}
 			loan := prov_new_loan(graph, root, nil, carrier_is_mutable(graph.k.c, sym.type), sym.span, carrier_noun(graph.k.c, sym.type))
 			append(&graph.entry_defs, Prov_Entry_Def{slot = slot, loan = loan})
+			// design.md "Procedure result contracts": a load along one path of the
+			// pointee reads only that path, so a field copied out of `[]Pair` names
+			// none of its siblings. One path tells nothing apart.
+			if pointee := carrier_pointee_shape(graph.k.c, sym.type); len(pointee) > 1 {
+				paths := make([]Loan_Id, len(pointee), graph.alloc)
+				for path, at in pointee {
+					paths[at] = prov_new_loan(
+						graph, root, nil, path.mutable, sym.span,
+						path.truncated ? "borrow" : carrier_noun(graph.k.c, path.type),
+					)
+					graph.loans[int(paths[at])].content = true
+					graph.loans[int(paths[at])].depth = 1
+					graph.loans[int(paths[at])].pointee = at + 1
+				}
+				graph.roots[int(root)].pointee_loans = paths
+			}
 		}
 	}
 }
@@ -4381,7 +4397,12 @@ prov_field_step :: proc(graph: ^Flow_Graph, v: ^Expr_Selector) -> Proj_Step {
 
 @(private)
 prov_index_path :: proc(graph: ^Flow_Graph, v: ^Expr_Index) -> []Proj_Step {
-	type := prov_type(graph, v.operand)
+	return prov_index_path_in(graph, v, prov_type(graph, v.operand))
+}
+
+// The projection `v` selects in a value of `type`.
+@(private = "file")
+prov_index_path_in :: proc(graph: ^Flow_Graph, v: ^Expr_Index, type: Type_Id) -> []Proj_Step {
 	#partial switch underlying_kind(graph.k.c, type) {
 	case .Array:
 		return prov_extend(graph, nil, prov_index_step(graph, v.indices))
@@ -4443,7 +4464,14 @@ prov_read_through_carrier :: proc(graph: ^Flow_Graph, place: Expr, reads_only :=
 			for index in v.indices {
 				walk_flow_expr(graph, index)
 			}
-			return prov_reach(graph, carriers, v.span), nil, true
+			// A slice's loans name its elements, but a pointer's name its whole
+			// pointee: `p[0].a` with `p: ^[2]Pair` is `[0, a]` below `p`, not
+			// `[a]`, which would line up with the wrong steps of the pointee.
+			path: []Proj_Step
+			if info := underlying_info(graph.k.c, prov_type(graph, v.operand)); kind == .Pointer && info != nil {
+				path = prov_index_path_in(graph, v, info.element)
+			}
+			return prov_reach(graph, carriers, v.span), path, true
 		}
 		if carriers, path, ok := prov_read_through_carrier(graph, v.operand, reads_only && !prov_indices_may_write(v.indices)); ok {
 			if prov_indices_may_write(v.indices) {
@@ -5363,8 +5391,9 @@ prov_escaping_actuals :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]in
 
 // What is stored behind `carriers`, `from` loads down and at every depth below:
 // what a callee may hand back or keep from the storage an argument reaches.
+// `path` narrows the first load to one place in what `carriers` name.
 @(private)
-prov_load_deep :: proc(graph: ^Flow_Graph, carriers: []int, span: Span, from := 1) -> []int {
+prov_load_deep :: proc(graph: ^Flow_Graph, carriers: []int, span: Span, from := 1, path: []Proj_Step = nil) -> []int {
 	if len(carriers) == 0 {
 		return nil
 	}
@@ -5372,7 +5401,9 @@ prov_load_deep :: proc(graph: ^Flow_Graph, carriers: []int, span: Span, from := 
 	through := carriers
 	for depth in 1 ..= from {
 		slot := prov_temp_slot(graph)
-		prov_emit(graph, Prov_Event{kind = .Load, slot = slot, into = through, deep = depth == from, span = span})
+		prov_emit(graph, Prov_Event{
+			kind = .Load, slot = slot, into = through, path = depth == 1 ? path : nil, deep = depth == from, span = span,
+		})
 		through = prov_one(graph, slot)
 	}
 	return through
@@ -6101,8 +6132,13 @@ prov_call_argument :: proc(
 		// Walking the argument above already read the place.
 		if root, path, ok := prov_place_of(graph, argument); ok && !expression_converts_storage(argument) {
 			loan = prov_borrow(graph, root, path, false, expr_span(argument), "borrow")
-		} else if carriers, _, through := prov_read_through_carrier(graph, argument); through {
-			loan = carriers // `Type.method(&value)`, or a place behind a pointer
+		} else if carriers, _, through := prov_read_through_carrier(graph, argument, reads_only = true); through {
+			// `Type.method(&value)`, or a place behind a pointer. The borrow is
+			// read-only, so a mutable carrier is reborrowed read-only for the
+			// call, as one passed to a read-only parameter is, which another
+			// read-only reborrow of it allows (design.md "Weakening and
+			// reborrows").
+			loan = prov_reborrow_traversal(graph, carriers, expr_span(argument), false)
 		} else if index == 0 && prov_dispatches_on_view(c, v) {
 			// design.md "Borrowed dynamic interface values": the slot is given the
 			// viewed value, never the view itself, so a temporary view lends only
@@ -7356,8 +7392,20 @@ prov_substitute_result :: proc(
 	out: []int
 	for depths, index in dependencies.param_loads {
 		for depth in 1 ..= 8 {
-			if index < len(actuals) && depths & (u8(1) << u8(depth - 1)) != 0 {
+			if index >= len(actuals) || depths & (u8(1) << u8(depth - 1)) == 0 {
+				continue
+			}
+			// A load narrowed to some of the pointee's paths reads only those.
+			paths := depth == 1 && index < len(dependencies.param_load_paths) ? dependencies.param_load_paths[index] : nil
+			shape := prov_parameter_pointee_shape(graph, v, index)
+			if len(paths) == 0 || len(paths) != len(shape) {
 				out = prov_join(graph, out, prov_load_deep(graph, actuals[index], v.span, depth))
+				continue
+			}
+			for named, position in paths {
+				if named {
+					out = prov_join(graph, out, prov_load_deep(graph, actuals[index], v.span, depth, shape[position].steps))
+				}
 			}
 		}
 	}
@@ -7410,6 +7458,17 @@ prov_substitute_result :: proc(
 		return prov_one(graph, slot)
 	}
 	return out
+}
+
+// The carrier paths of what one load through parameter `index` reads. A
+// `self: ^` receiver's signature type is the pointee itself.
+@(private = "file")
+prov_parameter_pointee_shape :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int) -> []Carrier_Path {
+	type := prov_parameter_type(graph, v, index)
+	if input := prov_input_call(graph, v); index == 0 && input.has_receiver && input.receiver == .Borrow {
+		return carrier_shape(graph.k.c, type)
+	}
+	return carrier_pointee_shape(graph.k.c, type)
 }
 
 @(private = "file")

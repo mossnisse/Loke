@@ -225,6 +225,12 @@ dependency_contract_within :: proc(a, b: Result_Dependencies) -> bool {
 	}
 	for depths, index in a.param_loads {
 		if depths != 0 && (index >= len(b.param_loads) || depths & ~b.param_loads[index] != 0) { return false }
+		if depths & 1 == 0 { continue }
+		bl := index < len(b.param_load_paths) ? b.param_load_paths[index] : nil
+		if len(bl) == 0 { continue }
+		al := index < len(a.param_load_paths) ? a.param_load_paths[index] : nil
+		if len(al) != len(bl) { return false }
+		for used, path in al { if used && !bl[path] { return false } }
 	}
 	for wanted, index in a.params {
 		if !wanted { continue }

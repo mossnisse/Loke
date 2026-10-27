@@ -1,0 +1,78 @@
+// design.md "Procedure result contracts": a result read through a pointer or
+// slice parameter still depends on every field it reads, at every depth and
+// through every call that forwards it.
+package main;
+
+import "core:fmt";
+import "core:strings";
+
+Pair :: struct { a: string_view, b: string_view }
+Inner :: struct { x: string_view, y: string_view }
+Outer :: struct { b: string_view, a: Inner }
+
+first_a :: proc(values: []Pair) -> string_view { return values[0].a; }
+first_b :: proc(values: []Pair) -> string_view { return values[0].b; }
+forwarded :: proc(values: []Pair) -> string_view { return first_a(values); }
+deep :: proc(p: []^Pair) -> string_view { return p[0].a; }
+nested :: proc(p: ^[1]Outer) -> string_view { return p[0].a.x; }
+whole :: proc(p: ^Pair) -> Pair { return p^; }
+
+read_field :: proc() {
+	kept: string_view = "";
+	{
+		source := strings.copy("ended");
+		values := [1]Pair{{source, "static"}};
+		kept = forwarded(values[:]);
+	}
+	fmt.println(kept);
+}
+
+read_through_pointer :: proc() {
+	kept: string_view = "";
+	{
+		source := strings.copy("ended");
+		values := [1]Pair{{source, "static"}};
+		pointers := [1]^Pair{&values[0]};
+		kept = deep(pointers[:]);
+	}
+	fmt.println(kept);
+}
+
+read_nested_field :: proc() {
+	kept: string_view = "";
+	{
+		source := strings.copy("ended");
+		values := [1]Outer{{"static", {source, "y"}}};
+		kept = nested(&values);
+	}
+	fmt.println(kept);
+}
+
+read_local_nested_field :: proc() {
+	kept: string_view = "";
+	{
+		source := strings.copy("ended");
+		values := [1]Outer{{"static", {source, "y"}}};
+		p := &values;
+		kept = p[0].a.x;
+	}
+	fmt.println(kept);
+}
+
+read_whole :: proc() {
+	kept: string_view = "";
+	{
+		source := strings.copy("ended");
+		values := [1]Pair{{"static", source}};
+		kept = whole(&values[0]).b;
+	}
+	fmt.println(kept);
+}
+
+widened_contract :: proc(values: []Pair) -> string_view {
+	callback := first_a;
+	callback = first_b;
+	return callback(values);
+}
+
+main :: proc() {}

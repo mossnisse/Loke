@@ -2,6 +2,7 @@
 // view of it cannot outlive a local or temporary source, and the source
 // cannot be changed while the traversal or a view of an element is in use.
 // `&item` borrows the source even when the element holds borrows of its own.
+// A source reached through a pointer cannot be grown during its traversal.
 package main;
 
 import "core:fmt";
@@ -61,6 +62,20 @@ dynamic_slot_escapes :: proc() -> ^string_view {
 	views := Views{make([dynamic]string_view, 0, 1)};
 	views.items.append("hello");
 	return first_view_slot(&views);
+}
+
+grown_during_traversal :: proc(items: ^mut [dynamic]int) {
+	foreach (item in items^) { items.append(item); }
+}
+
+grown_during_mutable_traversal :: proc(items: ^mut [dynamic]int) {
+	foreach (&mut item in items^) { items.append(item); }
+}
+
+Counts :: struct { values: [dynamic]int, total: int }
+
+field_grown_during_traversal :: proc(counts: ^mut Counts) {
+	foreach (value in counts.values) { counts.values.append(value); }
 }
 
 main :: proc() {}

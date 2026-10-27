@@ -1835,8 +1835,10 @@ walk_flow_foreach :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach) {
 	}
 	// A copied element keeps its own borrows without borrowing the container.
 	elements := iterated
+	through: []int
 	if graph.mode != .Lifecycle {
 		iterated = prov_iterate(graph, s, iterated)
+		through = foreach_reborrow_through_carrier(graph, s, place_loop)
 	}
 	head := new_flow_block(graph)
 	link(graph, graph.current, head)
@@ -1862,6 +1864,13 @@ walk_flow_foreach :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach) {
 			kind = .Live, sources = head_reads, span = expr_span(s.iterable), revives = true,
 		})
 	}
+	// Each step reads the source through the traversal's reborrow, which a
+	// read-only one kept from an earlier step's element does not conflict with.
+	if len(through) > 0 {
+		prov_emit(graph, Prov_Event{
+			kind = .Live, sources = through, span = expr_span(s.iterable), revives = true, reads_only = !place_loop,
+		})
+	}
 
 	body := new_flow_block(graph)
 	link(graph, head, body)
@@ -1872,7 +1881,7 @@ walk_flow_foreach :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach) {
 		})
 	}
 	if graph.mode != .Lifecycle {
-		walk_foreach_binding_provenance(graph, s, s.bindings, iterated, elements)
+		walk_foreach_binding_provenance(graph, s, s.bindings, iterated, elements, through)
 	}
 	// design.md "By-reference iteration": a `&mut` binding's loan ends with its
 	// step, and a copied element is a local of its step.
@@ -1881,13 +1890,40 @@ walk_flow_foreach :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach) {
 	graph.current = done
 }
 
+// design.md "Borrowing iteration": the source cannot change while the
+// traversal is live. A source reached through a mutable pointer, as `items^`,
+// has no place for the iterator loan, so the traversal reborrows the pointer
+// instead, mutably for a place loop: changing the source through it, as
+// `items.append(x)`, conflicts until the loop ends.
+@(private = "file")
+foreach_reborrow_through_carrier :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach, place_loop: bool) -> []int {
+	if s.kind == .Protocol || type_is_carrier(graph.k.c, prov_type(graph, s.iterable)) {
+		return nil
+	}
+	if _, _, ok := prov_place_of(graph, s.iterable); ok {
+		return nil
+	}
+	carriers, _, through := prov_read_through_carrier(graph, s.iterable, reads_only = true)
+	if !through {
+		return nil
+	}
+	reborrowed := prov_reborrow_traversal(graph, carriers, expr_span(s.iterable), place_loop)
+	out := make([dynamic]int, 0, len(reborrowed), graph.alloc)
+	for slot in reborrowed {
+		if !slice.contains(carriers, slot) {
+			append(&out, slot)
+		}
+	}
+	return out[:]
+}
+
 @(private = "file")
 walk_foreach_binding_provenance :: proc(
-	graph: ^Flow_Graph, s: ^Stmt_Foreach, bindings: []Foreach_Binding, iterated, elements: []int,
+	graph: ^Flow_Graph, s: ^Stmt_Foreach, bindings: []Foreach_Binding, iterated, elements, through: []int,
 ) {
 	for binding in bindings {
 		if len(binding.group) > 0 {
-			walk_foreach_binding_provenance(graph, s, binding.group, iterated, elements)
+			walk_foreach_binding_provenance(graph, s, binding.group, iterated, elements, through)
 			continue
 		}
 		loans := iterated
@@ -1925,13 +1961,17 @@ walk_foreach_binding_provenance :: proc(
 		// pointer, as `d.items` with `d: ^Doc`, is storage that pointer names,
 		// so its elements borrow what `&iterable` would, whatever borrows the
 		// elements hold themselves; only the binding takes that borrow, since
-		// the loop's own reads of the source are already its.
+		// the loop's own reads of the source are already its. Through a mutable
+		// pointer, that borrow is the traversal's reborrow of it, which reading
+		// the element does not conflict with.
 		if sym != nil && sym.borrowed_binding != .None {
 			viewed := iterated
 			if carrier {
 				viewed = elements
+			} else if len(through) > 0 {
+				viewed = through
 			} else if s.kind != .Protocol {
-				if carriers, _, through := prov_read_through_carrier(graph, s.iterable); through && len(carriers) > 0 {
+				if carriers, _, reached := prov_read_through_carrier(graph, s.iterable); reached && len(carriers) > 0 {
 					viewed = carriers
 				}
 			}
