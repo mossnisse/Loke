@@ -1032,18 +1032,70 @@ Still open:
   takes only `@(escape=static)` arguments, and keeping a `thread_local` borrow
   past the end of its thread is still unchecked; see
   [What is not checked](design.md#what-is-not-checked).
-- The [later extensions](concurrency-proposal.md#later-extensions):
-  spawning a callable view that arrives erased (the rest of indirect spawned
-  calls is [milestone 10](concurrency-proposal.md#milestone-10-indirect-spawned-calls)),
-  recoverable submission, richer result destinations,
-  channel items carrying borrows, blocking-aware pools, provider and allocator
-  thread contracts, checked lazy initialization, timed waits, selective
-  cancellation, unscoped channels, and targeted wakeups.
-- Whether the [waiting design](concurrency-proposal.md#waiting-for-work),
-  revised on 2026-10-26 with paired channel setup and explicit monitor
-  termination, holds up once built: measure wake-all costs and conservative
-  join-check rejections. The [waiting review](#waiting-and-ownership-review-2026-10-26)
-  records the incorporated findings and remaining validation work.
+- The [later concurrency extensions](#later-concurrency-extensions).
+- Whether the [waiting design](standard-library.md#corethread), with paired
+  channel setup and explicit monitor termination, holds up in use: measure
+  wake-all costs and conservative join-check rejections. The
+  [waiting review](#waiting-and-ownership-review-2026-10-26) records the
+  incorporated findings and remaining validation work.
+
+### Later concurrency extensions
+
+`parallel` blocks, `spawn`, monitors, channels, the join check, the polling
+ring, pools, and indirect spawned calls are built: design.md specifies them
+under [Structured concurrency](design.md#structured-concurrency), and
+standard-library.md under [`core:thread`](standard-library.md#corethread).
+These questions remain; none blocks what is built. The reviews below name the
+milestones of `concurrency-proposal.md`, which was removed once they were
+done; git history keeps it.
+
+1. **Erased callables at a spawn.** A spawned call may go through a procedure
+   value, or a `dyn` view converted at the spawn, and the effects follow the
+   callbacks each call passes; a view that arrives erased, as a parameter or
+   stored local, is still rejected. Public callable-effect contracts need a
+   separate demonstrated requirement.
+2. **Recoverable submission.** How to return arguments after failure to
+   start a task, without confusing submission failure with worker failure.
+3. **Richer result destinations.** Whether live replacement, fields, indices,
+   destructuring, or an implicit conversion on the worker justify their
+   evaluation, initialization, and cleanup rules. The initial form supports
+   only dead outer locals of the call's exact result type.
+4. **Channel items carrying borrows.** A later retention rule for the
+   read-only `send` receiver; process-duration retention remains the initial
+   contract. Also rendezvous channels and nondefault queue allocators.
+5. **Blocking-aware pools.** Whether to compensate for waits or provide a
+   separate executor. Fixed pools make only the limited progress guarantee
+   [Pools](standard-library.md#pools) gives. Scoped submission is compiler
+   lowering under the existing spawn borrow checks, not a public
+   `@(cross_thread)` submission API for borrowed arguments.
+6. **Provider and allocator thread contracts.** Whether a build-selected
+   allocator or logging provider must declare that it accepts concurrent use,
+   so the compiler checks it instead of trusting it. Whether an `Allocator`
+   parameter can promise a concurrent region, so a library can share a
+   caller's allocator among tasks.
+7. **Checked lazy initialization.** Whether a `sync.Once(T)` or similar that
+   owns its value, as `Mutex(T)` does, should replace `Once` guarding separate
+   file-scope storage, so tasks can run lazy setup.
+8. **Timed waits.** `lock_when`, `send`, and `receive` with a deadline from
+   `core:time`, reporting a timeout apart from closure. An audio loop that must
+   play silence when a decoder falls behind needs them.
+9. **Selective cancellation and choice.** A stop token that ends one waiter
+   among several on the same object or coordinates cancellation across several
+   objects, and a wait on whichever of several channels is ready first. The
+   library requires explicit shutdown protocols for those groups.
+10. **Unscoped channels.** Endpoints that own shared channel state instead of
+    borrowing a local, for a thread `core:thread`'s `spawn` starts or a
+    foreign audio callback, which only `@(escape=static)` values reach. The
+    [join check](design.md#releasing-before-the-join) cannot follow them, since
+    they borrow no root.
+11. **Targeted wakeups.** A hint that wakes fewer of a monitor's waiters,
+    where waking all of them costs more than their checks. It would narrow
+    which waiters wake, not which changes they see.
+12. **Blocking ring adapters.** Parking one endpoint and waking it from the
+    other requires a proven registration/recheck handshake, closure-race
+    handling, and an explicit account of kernel calls on the deadline-bound
+    side. It is outside the polling ring's API; see
+    [The ring algorithm](standard-library.md#the-ring-algorithm).
 
 ### Structured concurrency proposal review (2026-10-22)
 
@@ -1056,7 +1108,7 @@ channel close and failed-send ownership, and limited pool progress.
 
 The first implementation must enforce every applicable safety check for
 statically known calls; unknown indirect effects are rejected. The remaining
-questions are the [extensions](concurrency-proposal.md#later-extensions):
+questions are the [extensions](#later-concurrency-extensions):
 
 - How public and erased procedure contracts preserve all sharing, transfer,
   global-access, allocator, and result-provenance facts.
@@ -1069,7 +1121,7 @@ questions are the [extensions](concurrency-proposal.md#later-extensions):
   progress guarantee.
 
 These extensions do not prevent the smaller initial feature. Validate its
-[acceptance and rejection cases](concurrency-proposal.md#implementation-plan) before
+acceptance and rejection cases before
 adding library concurrency: a scope-owned join guarantees storage lifetime,
 but does not itself guarantee termination or wake a blocked participant.
 
@@ -1114,7 +1166,7 @@ so the compiler recognizes no concurrency type or procedure by name. See
 below.
 
 Still open; the first three are among the proposal's
-[later extensions](concurrency-proposal.md#later-extensions):
+[later extensions](#later-concurrency-extensions):
 
 - Whether build-selected allocator and logging providers must declare that
   they accept concurrent use, so it is checked rather than trusted. Today a
@@ -1133,7 +1185,7 @@ Still open; the first three are among the proposal's
 
 ### Structured concurrency implementation readiness (2026-10-22)
 
-A third pass made [the proposal](concurrency-proposal.md#implementation-plan)
+A third pass made the proposal
 ready to implement. It decided what the first implementation needed:
 
 - `@(synchronized)` marks a field, or a file-scope or `static` variable, whose
@@ -1152,8 +1204,8 @@ ready to implement. It decided what the first implementation needed:
   completes unless the program ends.
 - A result destination must have the call's exact type; a `parallel` block is
   a compile-time evaluation error; the executor header parses and is rejected.
-- The first five milestones shipped; the remaining library work is in the
-  [implementation plan](concurrency-proposal.md#implementation-plan).
+- The first five milestones shipped; the library milestones followed, and
+  [Later concurrency extensions](#later-concurrency-extensions) lists what remains.
 
 Open, to settle with evidence during the milestones:
 
@@ -1169,7 +1221,7 @@ Open, to settle with evidence during the milestones:
 
 ### Waiting and ownership review (2026-10-26)
 
-Incorporated into the revised [waiting proposal](concurrency-proposal.md#waiting-for-work),
+Incorporated into the revised [waiting proposal](standard-library.md#corethread),
 which remains unimplemented. The review kept scoped joins, predicate waits,
 bounded channels, and endpoint destruction, and resolved these design findings:
 
@@ -1178,25 +1230,25 @@ bounded channels, and endpoint destruction, and resolved these design findings:
   and handles both paused and playing states. Predicate repeatability,
   mutation, and wakeup dependencies are programmer obligations; read-only
   access is not claimed to prove purity.
-- [Channels](concurrency-proposal.md#channels) establish both initial endpoints
+- [Channels](standard-library.md#channels) establish both initial endpoints
   with one `split`. Move-only endpoints use explicit `fork` to add participants,
   keeping generated `clone` semantics unchanged. The lifecycle table decides
   closure, draining, zero values, FIFO ordering, error precedence, and item
   destruction. The worker example drops its setup receiver before sending.
-- The [join check](concurrency-proposal.md#releasing-before-the-join) covers
+- The [join check](design.md#releasing-before-the-join) covers
   parameters, wrappers, containers, nested blocks, result slots, and writebacks.
   Closing a retained endpoint is not a static exemption. This is a conservative
   check for values retained across a join, not a general termination proof.
-- The deferred [ring](concurrency-proposal.md#real-time-handoff) has exclusive
+- The deferred [ring](standard-library.md#rings) has exclusive
   endpoint operations and only a polling API. It has no public close or
   blocking wakeup path in its initial form. Moving an endpoint sequentially
   between threads remains possible.
-- [Pools](concurrency-proposal.md#pools) remain a separate compute feature.
+- [Pools](standard-library.md#pools) remain a separate compute feature.
   Helping is limited to workers of the selected pool and the subtree of the
   block they are joining, matching the permitted TLS effects. The mixer is
   explicitly a paced worker, not a hard real-time callback.
 
-The [implementation plan](concurrency-proposal.md#implementation-plan) adds
+The implementation plan adds
 startup/early-exit coverage, ownership checks, and bounded liveness harnesses.
 Delivery proceeds through monitors and channels, then compute pools; the ring
 is not a prerequisite. No compiler or runtime behavior changed with this
@@ -1217,7 +1269,7 @@ Still open:
   rejection met so far, two parameters of unrelated types, is
   [resolved](#parameters-a-join-check-cannot-tell-apart-2026-10-26).
 - Selective cancellation, multi-object group cancellation, and multi-channel
-  choice remain [later extensions](concurrency-proposal.md#later-extensions).
+  choice remain [later extensions](#later-concurrency-extensions).
   Endpoint closure alone does not provide them or interrupt foreign waits.
 - A library getter whose `^T` result is rebuilt from untracked storage has no
   declarative way to say that the result borrows its receiver: the rebuilt
@@ -1351,8 +1403,7 @@ no-task branch and the unreachable spawn beside it.
 
 ### Ring algorithm review points (2026-10-26)
 
-[The ring algorithm](concurrency-proposal.md#the-ring-algorithm) in the
-concurrency proposal was revised after review to recommend a spare-slot SPSC
+[The ring algorithm](standard-library.md#the-ring-algorithm) was revised after review to recommend a spare-slot SPSC
 queue. [A spare slot in the ring](comments.md#a-spare-slot-in-the-ring)
 records the algorithm choice. Milestone 8 built it as written.
 
@@ -1382,7 +1433,7 @@ the padding is 128 bytes on both targets; the operations lower to native
 acquire loads and release stores; and `tests/pkg/ring_allocation` runs them,
 both endpoints' drops, and the ring's with the default allocator exhausted.
 An exhaustive interleaving search under sequential consistency found no
-violation (see [The ring algorithm](concurrency-proposal.md#the-ring-algorithm)).
+violation (see [The ring algorithm](standard-library.md#the-ring-algorithm)).
 
 Still open:
 
@@ -1398,7 +1449,7 @@ Still open:
 ### Indirect calls inside tasks (2026-10-26)
 
 Before letting a spawned call itself be indirect
-([milestone 10](concurrency-proposal.md#milestone-10-indirect-spawned-calls)),
+(milestone 10),
 `tests/err/parallel_indirect_calls.loke` spawns hand-written wrappers that
 call a procedure value, a `dyn proc` view, a capture literal, a `dyn` slot,
 or a procedure read from a field, one case per task check;
@@ -1442,7 +1493,7 @@ conclusion and proposes the next steps. The spike also found:
 
 ### Milestone 10 scope and next step (2026-10-26)
 
-Review of [milestone 10](concurrency-proposal.md#milestone-10-indirect-spawned-calls)
+Review of milestone 10
 and the [indirect-call spike](#indirect-calls-inside-tasks-2026-10-26): the
 spike is useful regression coverage, but its conclusion needs narrowing.
 It exercises selected combinations of callable forms and task checks, not
@@ -1535,7 +1586,7 @@ values or requiring public effect contracts.
 
 ### Procedure-value spawn implementation review (2026-10-26)
 
-Review of `bf1cd43`, [milestone 10's first step](concurrency-proposal.md#milestone-10-indirect-spawned-calls).
+Review of `bf1cd43`, milestone 10's first step.
 The extension fits the existing task machinery: the frame stores the callee,
 the parent evaluates it once before the arguments, and the generated ordinary
 run procedure supplies its effects. It does not introduce a second target
@@ -1573,7 +1624,7 @@ a broader checker or capture rewrite is not warranted by this implementation.
 
 ### Erased-callable spawns (2026-10-26)
 
-[Milestone 10's second step](concurrency-proposal.md#milestone-10-indirect-spawned-calls)
+Milestone 10's second step
 lets a spawned call go through a `dyn` view. The view is the call's receiver
 argument, so the existing argument checks apply to it unchanged. Writing the
 tests found:
@@ -1594,7 +1645,7 @@ tests found:
   `&q` to `dyn Recorder`, the task's write effects are still those of every
   type that fills `record`. So `Quiet`'s view is rejected because `Tally`
   writes `hits`. The concrete fill is known at the conversion, which makes
-  this an easy case for [step 3](concurrency-proposal.md#milestone-10-indirect-spawned-calls).
+  this an easy case for step 3.
   Fixed there: a view converted where it is called runs its concrete
   target.
 - **A bare spawn cannot start with a parenthesized callee.** `spawn` starts a
@@ -1660,7 +1711,7 @@ precision remains separate from these fixes.
 
 ### Per-call effect precision (2026-10-26)
 
-[Milestone 10's third step](concurrency-proposal.md#milestone-10-indirect-spawned-calls)
+Milestone 10's third step
 makes the write, reach, and allocator-use effects per call: a call takes in
 the callbacks it passes, a local's possible values, and a converted view's
 concrete target. Writing it and its tests found:

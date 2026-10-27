@@ -1,5 +1,5 @@
 // standard-library "Rings": a bounded single-producer/single-consumer queue
-// polled without locks, the spare-slot algorithm of concurrency-proposal.md
+// polled without locks, the spare-slot algorithm of standard-library.md
 // "The ring algorithm".
 @(public)
 package thread;

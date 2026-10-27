@@ -227,7 +227,7 @@ worker :: proc(jobs: move thread.Receiver(Item), total: ^thread.Mutex(int)) {
 	sum.get() += drained;
 }
 
-// The setup of the proposal's worker pool, leaving at `fail_at`: after the
+// The worker setup of standard-library.md "Channels", leaving at `fail_at`: after the
 // split, between the spawns, or after setup. Every exit drops the endpoints
 // the parent kept before the join.
 pool :: proc(workers: int, fail_at: int) -> Status(Setup_Error) {

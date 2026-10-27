@@ -576,7 +576,13 @@ checklist.
 
 ### Changed
 
-- Narrowed [concurrency milestone 10](concurrency-proposal.md#milestone-10-indirect-spawned-calls)
+- Removed `concurrency-proposal.md`, since structured concurrency is built.
+  The ring algorithm and its validation moved to
+  [The ring algorithm](standard-library.md#the-ring-algorithm), and the
+  undecided extensions to
+  [Later concurrency extensions](open-questions.md#later-concurrency-extensions).
+
+- Narrowed concurrency milestone 10
   to start with procedure values using the existing task machinery, followed
   by erased callable data and per-call effect precision. Clarified the spike's
   coverage and the validation required before each step ships.
@@ -606,12 +612,12 @@ checklist.
   `apply :: proc(f: dyn proc(n: int) -> int, n: int)` is accepted as a task
   beside a serial `apply(tally, 1)`.
 
-- Revised the deferred [ring proposal](concurrency-proposal.md#the-ring-algorithm)
+- Revised the deferred [ring proposal](standard-library.md#the-ring-algorithm)
   to recommend a spare-slot SPSC queue with bounded indices, separate closure
   flags from hot index cache lines, and require target validation before a
   wait-free claim.
 
-- Revised the unimplemented [concurrency proposal](concurrency-proposal.md#waiting-for-work):
+- Revised the unimplemented [concurrency proposal](standard-library.md#corethread):
   paired channel setup and explicit endpoint duplication, monitor shutdown
   contracts, a bounded join-check specification, and a deferred polling-only
   ring. The delivery plan separates compute pools from real-time handoff.
@@ -625,7 +631,7 @@ checklist.
   concision, separating rules from exceptions and consolidating repeated
   explanations. Language behavior, section headings, and examples are unchanged.
 
-- Revised the [structured concurrency proposal](concurrency-proposal.md)
+- Revised the structured concurrency proposal
   to check transfers in both directions, global aliases, and allocator cleanup,
   and to handle worker failures explicitly after joining. The proposed syntax
   is now `spawn result = call;`, initially limited to dead outer locals and
@@ -641,7 +647,7 @@ checklist.
   thread-contract questions. Still a proposal only.
 
 - Made the structured concurrency proposal
-  [ready for implementation](concurrency-proposal.md#implementation-plan).
+  ready for implementation.
   It declares synchronized state with `@(synchronized)` and thread-crossing
   parameters with `@(cross_thread)` instead of recognizing names, defines the
   new effect summaries and the lowering onto `core:thread`, and plans five

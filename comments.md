@@ -133,7 +133,7 @@ evidence.
 `get` marks the guard changed whether or not the caller writes, because the
 `inout` result it lends can be written anywhere. Waking every waiter on each
 change is the initial cost: each checks its condition and most sleep again.
-Targeted wakeups are a [later extension](concurrency-proposal.md#later-extensions)
+Targeted wakeups are a [later extension](open-questions.md#later-concurrency-extensions)
 that must still wake every waiter whose condition may have become true.
 
 A guard's drop releases the lock, but it does not say that no one will change
@@ -240,7 +240,7 @@ waits on a queued sibling, or on a lock a child needs, can exhaust a fixed
 pool. Starting extra threads when workers block, as some schedulers do, needs
 to know which waits are blocking, including foreign ones; that and a separate
 executor for blocking work remain a
-[later extension](concurrency-proposal.md#later-extensions). A pool is for
+[later extension](open-questions.md#later-concurrency-extensions). A pool is for
 independent compute work.
 
 ### Channels end by ownership
@@ -254,7 +254,7 @@ so a pipeline needs no stop code of its own. Ownership does not infer that a
 monitor's condition has become impossible, interrupt a foreign wait, or cancel
 a group of tasks using several objects; those need explicit protocols, and
 selective or group cancellation tokens remain a
-[later extension](concurrency-proposal.md#later-extensions).
+[later extension](open-questions.md#later-concurrency-extensions).
 
 **Paired setup and explicit duplication.** Separate factories for each side
 let a receiver start before any sender existed, leaving no sender to drop when
@@ -294,7 +294,7 @@ spare slot, a shape also used by
 [Rigtorp's SPSCQueue](https://github.com/rigtorp/SPSCQueue#implementation).
 One producer and one consumer need only index loads and stores; the ring
 keeps that structure and its release/acquire publication and reclamation.
-[The ring algorithm](concurrency-proposal.md#the-ring-algorithm) gives the
+[The ring algorithm](standard-library.md#the-ring-algorithm) gives the
 algorithm and why it is correct.
 
 The spare slot makes empty `head == tail` and full `next(tail) == head`.
