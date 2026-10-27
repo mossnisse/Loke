@@ -1,0 +1,13 @@
+package main;
+
+import "core:fmt";
+import "core:math";
+
+// design.md "Integer operators": the floored quotient of `MIN / -1` does not
+// fit, so `math.floor_div` panics as `/` does, while `math.floor_mod` is 0.
+main :: proc() {
+	minimum: i64 = -9223372036854775807 - 1;
+	divisor: i64 = -1;
+	fmt.println(math.floor_mod(minimum, divisor));
+	fmt.println(math.floor_div(minimum, divisor));
+}

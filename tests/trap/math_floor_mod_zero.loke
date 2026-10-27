@@ -1,0 +1,12 @@
+package main;
+
+import "core:fmt";
+import "core:math";
+
+// design.md "Integer operators": a zero divisor panics for the floored forms
+// as it does for `/` and `%`.
+main :: proc() {
+	zero := 0;
+	fmt.println(math.floor_mod(-1, 16));
+	fmt.println(math.floor_mod(1, zero));
+}

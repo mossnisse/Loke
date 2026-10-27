@@ -1910,7 +1910,9 @@ ordinary records. `design.md` "Type conversion" specifies `math.wrap(T, value)`,
 which keeps an integer's low bits, and `math.to(T, value)`, which returns
 `Option(T)`; `design.md` "Integer overflow" specifies `wrapping_add`,
 `wrapping_sub`, and `wrapping_mul`, the procedure forms of `+%`, `-%`, and
-`*%`, and `checked_add`, `checked_sub`, and `checked_mul`.
+`*%`, and `checked_add`, `checked_sub`, and `checked_mul`; `design.md`
+"Integer operators" specifies `floor_div` and `floor_mod`, the floored
+counterparts of `/` and `%`.
 
 For any `interfaces.Numeric(T)`, `Complex(T)` has the fields `real` and
 `imaginary`, and `Quaternion(T)` has `real`, `i`, `j`, and `k`. Both have

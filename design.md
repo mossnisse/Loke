@@ -4181,7 +4181,25 @@ x = q*y + r   and |r| < |y|;
 
 with x/y truncated towards zero (truncated division).
 
-There is no floored-remainder operator; `%` is the truncated one.
+The remainder therefore has the dividend's sign: `-7/2` is `-3` and `-7%2` is
+`-1`. There is no floored operator. [`core:math`](standard-library.md#coremath)
+provides the floored forms as procedures for every integer type:
+`math.floor_div(x, y)` rounds the quotient toward negative infinity, and
+`math.floor_mod(x, y)` is the remainder that goes with it, so
+`x == floor_div(x, y)*y + floor_mod(x, y)` and a non-zero `floor_mod` has the
+divisor's sign. They panic where `/` and `%` do: on a zero divisor, and
+`floor_div(MIN, -1)` overflows while `floor_mod(MIN, -1)` is `0`. For an
+unsigned type they equal `/` and `%`.
+
+For a divisor that is a power of two, `2^n`, a shift and a mask are already the
+floored quotient and remainder, because `>>` on a signed value is arithmetic:
+
+```loke
+CHUNK_BITS :: 4;                               // chunks 16 wide
+x: i32 = -1;
+chunk := x >> CHUNK_BITS;                      // -1, as math.floor_div(x, 16)
+local := x & ((1 << CHUNK_BITS) - 1);          // 15, as math.floor_mod(x, 16)
+```
 
 The exception to these rules is when the dividend x is the most negative value for the signed integer type of x and the divisor is -1. The quotient does not fit, so it [overflows](#integer-overflow) and panics; the remainder is 0.
 

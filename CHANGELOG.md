@@ -15,6 +15,12 @@ checklist.
   previous file or the whole new one, and on success the new one is durable
   ([Atomic replacement](standard-library.md#atomic-replacement)).
 
+- `math.floor_div` and `math.floor_mod` divide any integer type rounding the
+  quotient toward negative infinity, where `/` and `%` truncate toward zero,
+  so `math.floor_div(-1, 16)` is `-1` and `math.floor_mod(-1, 16)` is `15`.
+  For a power-of-two divisor, `x >> n` and `x & (2^n - 1)` already give the
+  same results ([Integer operators](design.md#integer-operators)).
+
 ### Changed
 
 - `fs.rename` now returns only once the rename is durable, and
