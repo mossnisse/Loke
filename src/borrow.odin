@@ -3414,6 +3414,7 @@ check_join_retention :: proc(state: ^Prov_State, event: Prov_Event, live: []bool
 	}
 	reported := make(map[Symbol_Id]bool, 2, graph.alloc)
 	wakers := make(map[Symbol_Id]Type_Id, 8, graph.alloc)
+	reached := make(map[Root_Id]Reached_Storage, 4, graph.alloc)
 	for slot in 0 ..< min(state.slots, len(graph.prov_slots)) {
 		info := graph.prov_slots[slot]
 		sym := symbol_of(c, info.symbol)
@@ -3444,7 +3445,7 @@ check_join_retention :: proc(state: ^Prov_State, event: Prov_Event, live: []bool
 			if !bit_get(row, index) || state.ended[index] {
 				continue
 			}
-			if task, shared := task_loan_overlapping(state, held[:], graph.loans[index]); shared {
+			if task, shared := task_loan_overlapping(state, held[:], graph.loans[index], &reached); shared {
 				report_join_retention(state, event, sym, waker, graph.loans[index], task)
 				reported[info.symbol] = true
 				break
@@ -3521,7 +3522,7 @@ kept_by_caller :: proc(sym: ^Symbol) -> bool {
 
 // A loan a task of the block holds whose storage may overlap `retained`'s.
 @(private = "file")
-task_loan_overlapping :: proc(state: ^Prov_State, held: []int, retained: Prov_Loan) -> (Prov_Loan, bool) {
+task_loan_overlapping :: proc(state: ^Prov_State, held: []int, retained: Prov_Loan, reached: ^map[Root_Id]Reached_Storage) -> (Prov_Loan, bool) {
 	graph := state.graph
 	for slot in held {
 		row := reach_row(state, state.reach, slot)
@@ -3530,7 +3531,7 @@ task_loan_overlapping :: proc(state: ^Prov_State, held: []int, retained: Prov_Lo
 				continue
 			}
 			task := graph.loans[index]
-			if loans_may_share_storage(graph, retained, task) {
+			if loans_may_share_storage(graph, retained, task, reached) {
 				return task, true
 			}
 		}
@@ -3540,10 +3541,10 @@ task_loan_overlapping :: proc(state: ^Prov_State, held: []int, retained: Prov_Lo
 
 // Two loans may borrow overlapping storage: one root and overlapping paths,
 // or roots the body cannot tell apart. Unknown storage may be anything, and a
-// parameter's may be the caller's storage another parameter or a global names;
-// a local of this body is neither.
+// parameter's may be the caller's storage another parameter or a global names,
+// unless their types rule it out; a local of this body is neither.
 @(private = "file")
-loans_may_share_storage :: proc(graph: ^Flow_Graph, a, b: Prov_Loan) -> bool {
+loans_may_share_storage :: proc(graph: ^Flow_Graph, a, b: Prov_Loan, reached: ^map[Root_Id]Reached_Storage) -> bool {
 	if a.root == b.root {
 		return paths_overlap(a.path, b.path)
 	}
@@ -3558,7 +3559,151 @@ loans_may_share_storage :: proc(graph: ^Flow_Graph, a, b: Prov_Loan) -> bool {
 		}
 		return false
 	}
-	return (first == .Param && external(second)) || (second == .Param && external(first))
+	if !((first == .Param && external(second)) || (second == .Param && external(first))) {
+		return false
+	}
+	return roots_may_share_storage(graph, a.root, b.root, reached)
+}
+
+// What storage a root's symbol may borrow, by object type: `objects` holds the
+// symbol's own type and the type of everything it reaches, `unknown` that it
+// reaches storage of no known type.
+@(private = "file")
+Reached_Storage :: struct {
+	objects: [dynamic]Type_Id,
+	unknown: bool,
+}
+
+// design.md "Releasing before the join": two external roots share no storage
+// when no object one reaches holds, inline, an object the other reaches, or
+// is held by one. Storage of one type lies within storage of another only as a
+// field, element, or variant, so two objects that overlap are nested.
+@(private = "file")
+roots_may_share_storage :: proc(graph: ^Flow_Graph, a, b: Root_Id, reached: ^map[Root_Id]Reached_Storage) -> bool {
+	c := graph.k.c
+	first, second := root_reached_storage(graph, a, reached), root_reached_storage(graph, b, reached)
+	if first.unknown || second.unknown {
+		return true
+	}
+	for outer in first.objects {
+		for inner in second.objects {
+			if type_holds_inline(c, outer, inner) || type_holds_inline(c, inner, outer) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+@(private = "file")
+root_reached_storage :: proc(graph: ^Flow_Graph, root: Root_Id, reached: ^map[Root_Id]Reached_Storage) -> Reached_Storage {
+	if found, cached := reached[root]; cached {
+		return found
+	}
+	c := graph.k.c
+	result := Reached_Storage{objects = make([dynamic]Type_Id, 0, 8, graph.alloc)}
+	if sym := symbol_of(c, graph.roots[int(root)].symbol); sym != nil && sym.type != INVALID_TYPE {
+		append(&result.objects, sym.type)
+		for index := 0; index < len(result.objects) && !result.unknown; index += 1 {
+			result.unknown = !collect_pointees(c, result.objects[index], &result.objects)
+		}
+	} else {
+		result.unknown = true
+	}
+	reached[root] = result
+	return result
+}
+
+// Appends to `objects` the type of each object a value of `type` points to,
+// owns out of line, or views; false when it holds a raw or foreign pointer or
+// an erased view, whose target may be storage of any type. An allocator's
+// state is its own, and a procedure value holds no state.
+@(private = "file")
+collect_pointees :: proc(c: ^Compiler, type: Type_Id, objects: ^[dynamic]Type_Id) -> bool {
+	add :: proc(objects: ^[dynamic]Type_Id, type: Type_Id) {
+		if !slice.contains(objects[:], type) {
+			append(objects, type)
+		}
+	}
+	info := type_of(c, type)
+	if info == nil {
+		return false
+	}
+	#partial switch info.kind {
+	case .Raw_Pointer, .C_Pointer, .Any_View, .Dyn, .Interface, .Type, .Invalid:
+		return false
+	case .Distinct, .Array, .Simd:
+		return collect_pointees(c, info.element, objects)
+	case .Pointer, .Slice, .Dynamic_Array, .Box:
+		add(objects, info.element)
+	case .Map:
+		add(objects, info.key)
+		add(objects, info.element)
+	case .String, .String_View, .CString_View:
+		add(objects, TYPE_U8)
+	case .Struct:
+		for field in info.fields {
+			if sym := symbol_of(c, field); sym != nil && !collect_pointees(c, sym.type, objects) {
+				return false
+			}
+		}
+	case .Union:
+		for variant in info.variants {
+			if !collect_pointees(c, variant, objects) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// Whether storage of type `outer` holds storage of type `inner` within its own
+// bytes: itself, or a field, element, or variant, at any depth. A distinct type
+// shares its storage with what it wraps, and a view's mutability is not part
+// of its storage.
+@(private = "file")
+type_holds_inline :: proc(c: ^Compiler, outer, inner: Type_Id) -> bool {
+	if same_storage_type(c, outer, inner) {
+		return true
+	}
+	info := type_of(c, outer)
+	if info == nil {
+		return true
+	}
+	#partial switch info.kind {
+	case .Distinct, .Array, .Simd:
+		return type_holds_inline(c, info.element, inner)
+	case .Struct:
+		for field in info.fields {
+			if sym := symbol_of(c, field); sym != nil && type_holds_inline(c, sym.type, inner) {
+				return true
+			}
+		}
+	case .Union:
+		for variant in info.variants {
+			if type_holds_inline(c, variant, inner) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+@(private = "file")
+same_storage_type :: proc(c: ^Compiler, a, b: Type_Id) -> bool {
+	first, second := type_underlying(c, a), type_underlying(c, b)
+	if first == second {
+		return true
+	}
+	x, y := type_of(c, first), type_of(c, second)
+	if x == nil || y == nil || x.kind != y.kind {
+		return false
+	}
+	#partial switch x.kind {
+	case .Pointer, .Slice:
+		return same_storage_type(c, x.element, y.element)
+	}
+	return false
 }
 
 @(private = "file")

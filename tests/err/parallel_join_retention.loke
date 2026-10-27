@@ -10,7 +10,10 @@
 // beside the guard borrows what a task borrows, also after a conversion to a
 // distinct type. A generic record whose type argument is marked may hold such
 // a value out of sight, so everything it borrows counts. An owned (`move`)
-// parameter is kept only while it is live, as a local is.
+// parameter is kept only while it is live, as a local is. Two parameters, or a
+// parameter and a global, are told apart by type: one whose storage may hold,
+// lie within, or reach the channel is rejected, and a raw pointer may reach
+// it; one of an unrelated type is accepted.
 package main;
 
 import "core:thread";
@@ -264,6 +267,78 @@ owned_parameter_kept :: proc(jobs: move thread.Receiver(int), channel: ^thread.C
 		spawn borrow_channel(channel);
 	}
 	_ = jobs.try_receive();
+}
+
+// The caller may have made two parameters', or a parameter's and a global's,
+// storage the same only where an object one reaches can hold, or lie within,
+// an object the other reaches. A raw pointer may reach anything.
+
+Hub :: struct { jobs: thread.Channel(int), count: int }
+
+borrow_hub :: proc(hub: ^Hub) {}
+
+parameter_holding_the_channel :: proc(send: ^thread.Sender(int), hub: ^Hub) {
+	parallel {
+		spawn borrow_hub(hub);
+	}
+}
+
+Route :: struct { jobs: ^thread.Channel(int) }
+
+borrow_route :: proc(route: ^Route) {}
+
+parameter_reaching_the_channel :: proc(send: ^thread.Sender(int), route: ^Route) {
+	parallel {
+		spawn borrow_route(route);
+	}
+}
+
+add_up :: proc(values: []mut int) {}
+
+// A channel's state holds `int` fields, which `values` may view.
+parameter_viewing_what_the_channel_holds :: proc(send: ^thread.Sender(int), values: []mut int) {
+	parallel {
+		spawn add_up(values);
+	}
+}
+
+Opaque :: struct { at: rawptr }
+
+borrow_opaque :: proc(opaque: ^Opaque) {}
+
+parameter_with_a_raw_pointer :: proc(send: ^thread.Sender(int), opaque: ^Opaque) {
+	parallel {
+		spawn borrow_opaque(opaque);
+	}
+}
+
+// Accepted: no `Voice` holds, lies within, or reaches a channel.
+
+Voice :: struct { gain: f32, out: [4]f32 }
+
+render :: proc(group: []mut Voice) {}
+
+inspect :: proc(group: []Voice) {}
+
+VOICES: [4]Voice;
+
+owned_and_borrowed_parameters_of_unrelated_types :: proc(jobs: move thread.Receiver(int), voices: []mut Voice) {
+	parallel {
+		foreach (group in voices.chunks_mut(2)) { spawn render(group); }
+	}
+	_ = jobs.try_receive();
+}
+
+borrowed_parameters_of_unrelated_types :: proc(send: ^thread.Sender(int), voices: []mut Voice) {
+	parallel {
+		spawn render(voices);
+	}
+}
+
+global_of_an_unrelated_type :: proc(send: ^thread.Sender(int)) {
+	parallel {
+		spawn inspect(VOICES[:]);
+	}
 }
 
 main :: proc() {}

@@ -6976,8 +6976,14 @@ holding it borrows is not. A generic record whose type argument is or reaches
 a marked type may hold such a value where no field shows it, so everything the
 record borrows counts. One root with overlapping paths may
 overlap; so may unknown storage and anything, and a parameter's storage and
-another parameter's or a global's, which the caller may have made the same.
-A local of the procedure overlaps no other root. A value moved into a task's
+another parameter's or a global's, which the caller may have made the same,
+unless their types rule it out. Two such roots may overlap only where an
+object one's type reaches is, holds, or lies within an object the other's
+reaches: the root's own type, and what its pointers, views, and owned payloads
+point to, at any depth. Holding counts fields, fixed-array elements, and
+variants, through `distinct`. A raw or foreign pointer, a `dyn` or
+`any_view` value, or a type parameter reaches storage of any type. A local of
+the procedure overlaps no other root. A value moved into a task's
 argument, or dropped before the join, is not kept, unless a result or
 writeback can hand it back. Every exit is checked: a drop at the normal end of
 the block does not cover an earlier `return` or `or_return`. Closing a channel
@@ -6994,6 +7000,16 @@ parallel {
 
 Splitting inside the block fixes it: the block's locals are cleaned up before
 its join. Moving the sender to a producer task fixes it too.
+
+```loke
+render :: proc(group: []mut Voice) { ... }   // `Voice` holds no channel or pointer
+
+play :: proc(commands: ^thread.Receiver(Command), voices: []mut Voice) {
+	parallel {
+		foreach (group in voices.chunks_mut(4)) { spawn render(group); }
+	}   // accepted: no `Voice` is, holds, or lies within the channel
+}
+```
 
 The check is conservative. It does not prove that a task waits on the storage
 a kept value borrows, that an endpoint is the last on its side, or that two

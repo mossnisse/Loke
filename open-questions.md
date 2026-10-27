@@ -1033,7 +1033,9 @@ Still open:
   past the end of its thread is still unchecked; see
   [What is not checked](design.md#what-is-not-checked).
 - The [later extensions](concurrency-proposal.md#later-extensions):
-  indirect spawned calls, recoverable submission, richer result destinations,
+  spawning a callable view that arrives erased (the rest of indirect spawned
+  calls is [milestone 10](concurrency-proposal.md#milestone-10-indirect-spawned-calls)),
+  recoverable submission, richer result destinations,
   channel items carrying borrows, blocking-aware pools, provider and allocator
   thread contracts, checked lazy initialization, timed waits, selective
   cancellation, unscoped channels, and targeted wakeups.
@@ -1121,9 +1123,14 @@ Still open; the first three are among the proposal's
   library can share a caller's allocator among tasks.
 - Whether a value-owning `Once(T)` should give tasks checked lazy setup; until
   then a task that may run a `Once` action writing a global is rejected.
-- The whole-program union is conservative: one compatible procedure anywhere
-  that writes a global affects every indirect call of its type. Measure how
-  often that rejects real programs before relying on it.
+- Answered: the whole-program union was conservative, so one compatible
+  procedure anywhere that wrote a global affected every indirect call of its
+  type. [Per-call effect precision](#per-call-effect-precision-2026-10-26)
+  replaced it where it can: a call
+  takes in the callbacks it passes, so an unrelated procedure of the same type
+  no longer affects it. The union remains for a body's own calls of its
+  parameters, for `dyn proc` parameters, and for values nothing follows; those
+  limits are recorded there.
 
 ### Structured concurrency implementation readiness (2026-10-22)
 
@@ -1198,14 +1205,18 @@ proposal revision.
 
 Still open:
 
-- Before the deferred ring milestone, write and validate the exact atomic
-  algorithm, progress bound, final-publication/closure ordering, and counter
-  wraparound. Prove its endpoint API is expressible with existing borrow
-  rules before implementing the queue. Blocking adaptation needs a separate
-  registration/recheck protocol and timing contract.
+- Answered by milestone 8: the ring's atomic algorithm, progress bound,
+  closure ordering, and bounded indices are written and built, and its
+  endpoint API compiles under the existing borrow rules. Weak-memory model
+  checking and measurements remain under
+  [Ring algorithm review points](#ring-algorithm-review-points-2026-10-26).
+  Blocking adaptation still needs a separate registration/recheck protocol
+  and timing contract.
 - Measure the monitor's wake-all cost and the join check's conservative
   rejections on real pipelines. Neither justifies a purity effect system or
-  interprocedural closed-state analysis without evidence.
+  interprocedural closed-state analysis without evidence. The one such
+  rejection met so far, two parameters of unrelated types, is
+  [resolved](#parameters-a-join-check-cannot-tell-apart-2026-10-26).
 - Selective cancellation, multi-object group cancellation, and multi-channel
   choice remain [later extensions](concurrency-proposal.md#later-extensions).
   Endpoint closure alone does not provide them or interrupt foreign waits.
@@ -1453,7 +1464,7 @@ Neither a new owning erased callable nor public effect annotations are
 established prerequisites for the scoped cases already expressible through
 wrappers.
 
-Recommended sequence; the first step is done:
+Recommended sequence; all three steps are done:
 
 1. **A narrow implementation of indirect spawning.** Start with ordinary
    Loke procedure values, including runtime selection between targets. Extend
@@ -1757,9 +1768,21 @@ takes its command receiver by `move` and its voices as a borrowed
 `[]mut Voice`: two parameters' storage may be the same, so the receiver's
 channel may be what a render task borrows. The types say otherwise, since a
 `Voice` holds no channel, but the check compares roots, not types. Moving the
-voices into the loop, as the proposal's sketch does, is accepted. Whether the
-check should prove disjointness from the types a borrow reaches, as it already
-does for fields of one root, is open.
+voices into the loop, as the proposal's sketch does, is accepted.
+
+Resolved (2026-10-27): the check now tells two parameters, or a parameter and
+a global, apart by the object types their roots reach. Typed storage overlaps
+only by nesting, so the two may share storage only where an object one
+reaches is, holds, or lies within one the other reaches; a raw or foreign
+pointer, an erased view, or a type parameter still reaches anything. See
+[Releasing before the join](design.md#releasing-before-the-join) and
+[Channels end by ownership](comments.md#channels-end-by-ownership);
+[parallel_join_retention.loke](tests/err/parallel_join_retention.loke)
+accepts the audio-loop shape and rejects a parameter that holds, reaches, or
+may view the channel. The test is coarse at primitive fields: a `[]mut int`
+parameter still conflicts with a kept sender, since a channel's state holds
+`int` fields. Whether a finer rule, for example one using field privacy,
+would accept enough real programs to pay for itself is unmeasured.
 
 ### Channel fix follow-up review (2026-10-26)
 

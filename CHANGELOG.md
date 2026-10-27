@@ -700,6 +700,14 @@ checklist.
 
 ### Fixed
 
+- The join check (`L0733`) tells two parameters, or a parameter and a global,
+  apart by type: a kept channel or ring endpoint, or a guard, no longer
+  conflicts with a task borrowing a parameter whose storage cannot hold, lie
+  within, or reach what it borrows. An audio loop taking
+  `commands: move thread.Ring_Receiver(Command)` beside
+  `voices: []mut Voice` and rendering `voices` in tasks is accepted
+  ([Releasing before the join](design.md#releasing-before-the-join)).
+
 - A spawned call through a `dyn` slot returning the worker's `thread_local`
   storage, as in `spawn answer = (dyn Getter)(&number).get();` where `get`
   returns `&counter`, is now rejected (`L0730`), as through a procedure value.

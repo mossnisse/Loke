@@ -277,6 +277,16 @@ compiler, so a library's own waiting types get the same check, as with
 compiled before the check and is rejected now; it was a deadlock whenever a
 task took that lock.
 
+Two parameters are told apart by type rather than assumed to alias. An audio
+loop taking its command receiver and a borrowed `[]mut Voice` was rejected
+because the caller could, in principle, have made the two the same storage,
+though no `Voice` holds or reaches a channel. Typed storage overlaps only by
+nesting, so comparing the object types each root reaches decides it without
+tracking the caller. Primitive fields make the test coarse (a `[]mut int`
+may view a channel's counters, so it still conflicts with a sender), and a raw
+pointer or erased view keeps the old answer. Moving the voices in, which the
+check already accepted, stays the stronger shape when the loop owns them.
+
 ### A spare slot in the ring
 
 The [ring](standard-library.md#rings) is a cached-index SPSC ring with one

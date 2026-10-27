@@ -743,7 +743,12 @@ conversion projects its operand's slots by path, and a distinct type selects
 sources by its underlying type's shape (`prov_select_content`). Its reaching loans are compared with
 those in the block's `task_slots` and `task_holds` slots by root: one root
 with overlapping paths, unknown roots, or a parameter's root against another
-external one (`loans_may_share_storage`). Such a value's drop counts as a use
+external one (`loans_may_share_storage`). Two external roots overlap only
+when an object type one root's symbol reaches holds, inline, one the other
+reaches, either way (`roots_may_share_storage`): `collect_pointees` gathers
+each root's object types once per join and reports a raw pointer or erased
+view as reaching anything, and `type_holds_inline` follows fields,
+fixed-array elements, variants, and `distinct`. Such a value's drop counts as a use
 of what it borrows, hook or not (`prov_drop_reads`), so a local dropped in the
 block's cleanup is not live at the join, and one dropped later, on any exit
 path, is.
