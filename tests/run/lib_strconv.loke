@@ -152,6 +152,12 @@ main :: proc() {
 	show_f64("0." + strings.repeat("0", 1000) + "15e1001");
 	show_f64("1e99999999999999999999");
 	show_f64("-1e-99999999999999999999");
+	// An exponent too long for a double still cancels a scale that long: each
+	// of these is exactly one. Before, the exponent stopped growing past 100000,
+	// so the first read as 0.0 and the second overflowed.
+	zeros := strings.repeat("0", 10000000);
+	show_f64("0." + zeros + "1e10000001");
+	show_f64("1" + zeros + "e-10000000");
 
 	// The fallible form answers the same, with the failure it can add beside
 	// the text's own.

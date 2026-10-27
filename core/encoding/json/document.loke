@@ -26,10 +26,9 @@ import "core:strings";
 // into its source and its decoded text, never views of its own storage, so an
 // accessor computes each view from wherever the document now is.
 Document :: move_only struct {
-	@(private) nodes:     [dynamic]Node,
-	@(private) decoded:   strings.String_Builder,
-	@(private) source:    Source,
-	@(private) allocator: Allocator,
+	@(private) nodes:   [dynamic]Node,
+	@(private) decoded: strings.String_Builder,
+	@(private) source:  Source,
 }
 
 /// One value in a document: a pointer to it and the value's index. Copying one
@@ -108,7 +107,6 @@ impl Document {
 		return Document{
 			nodes = make([dynamic]Node, 0, 0, allocator),
 			decoded = strings.init(allocator),
-			allocator = allocator,
 		};
 	}
 

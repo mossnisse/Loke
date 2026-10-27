@@ -62,4 +62,6 @@ true
 1.5
 2
 -0.0
+1.0
+1.0
 .ok(2.5) .err(.parse(Overflow))

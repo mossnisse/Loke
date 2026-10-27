@@ -112,6 +112,7 @@ Out_Of_Range 32
 9007199254740994.0 918
 1e99999999999999999999 i64 Not_Integer u64 Not_Integer f64 Out_Of_Range
 1e-99999999999999999999 i64 Not_Integer u64 Not_Integer f64 0.0
+1.0
 Unexpected_End 0 Invalid_Number 0 Invalid_Number 0 Invalid_Number 0 Invalid_Number 0 Unexpected_End 2 Invalid_Number 0 Unexpected_End 2 Invalid_Number 0 Invalid_Number 0 Unexpected_End 1 Invalid_Number 0 
 1 Not_Integer 4 Not_Integer 9 
 Out_Of_Range 9

@@ -191,7 +191,7 @@ NUMERIC_UNAVAILABLE :: 3;
 KEPT_DIGITS :: 767;
 
 // Past this many powers of ten every kept mantissa overflows or underflows
-// whatever its digits, so a longer exponent saturates here.
+// whatever its digits, so the combined exponent saturates here.
 @(private)
 EXPONENT_LIMIT :: 100000;
 
@@ -254,6 +254,12 @@ normalize_float :: proc(bytes: []u8, spelled: ^mut [SPELLED]u8) {
 		spelled[used] = u8('1');
 		used += 1;
 	}
+	// The written exponent saturates only past `ceiling`. `scale` is at most the
+	// text's length either way, so an exponent beyond that and the limit leaves
+	// the total beyond the limit, in its own direction, whatever `scale`
+	// cancels; one below it is read exactly. Both stay far from overflowing,
+	// since no text in memory is within a tenth of the largest `int`.
+	ceiling := bytes.len() + EXPONENT_LIMIT;
 	exponent := 0;
 	negative := false;
 	if (at < bytes.len()) {
@@ -264,13 +270,12 @@ normalize_float :: proc(bytes: []u8, spelled: ^mut [SPELLED]u8) {
 		}
 		for (; at < bytes.len(); at += 1) {
 			if (bytes[at] == u8('_')) { continue; }
-			if (exponent <= EXPONENT_LIMIT) {
+			if (exponent <= ceiling) {
 				exponent = exponent * 10 + int(bytes[at] - u8('0'));
 			}
 		}
 	}
 	if (negative) { exponent = -exponent; }
-	// `scale` is bounded by the text's length, so the sum cannot overflow.
 	total := scale + exponent;
 	if (total > EXPONENT_LIMIT) { total = EXPONENT_LIMIT; }
 	if (total < -EXPONENT_LIMIT) { total = -EXPONENT_LIMIT; }
