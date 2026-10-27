@@ -8,6 +8,17 @@ checklist.
 
 ## [Unreleased]
 
+### Changed
+
+- `core:math` now documents that its transcendental functions (`pow`, `exp`,
+  `log`, `log2`, `log10`, `hypot`, the trigonometric functions, and their
+  `_f32` twins) are not deterministic: one executable can give different last
+  bits on another machine, because the C library picks its algorithm by the
+  processor's features, and an optimized build can fold a constant call with
+  the compiling machine's library. Avoid them where results must agree bit for
+  bit, as in lockstep simulation
+  ([`core:math`](standard-library.md#coremath)).
+
 ## [0.9.0] - 2026-10-27
 
 ### Breaking changes

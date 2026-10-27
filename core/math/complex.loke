@@ -199,7 +199,7 @@ join :: proc(writer: fmt.Writer, options: fmt.Options, component: $T, unit: stri
 impl Complex(f64) {
 	/// The magnitude. It avoids the overflow and underflow that squaring the
 	/// components would cause; a magnitude beyond `f64`'s range is still
-	/// infinity.
+	/// infinity. Not deterministic, since `hypot` is not.
 	// `hypot`, not `sqrt(norm_squared())`: the magnitude of a complex number
 	// whose components are large is representable long after the sum of their
 	// squares is not.
@@ -319,7 +319,7 @@ impl Complex(f32) {
 impl Quaternion(f64) {
 	/// The magnitude, without the overflow or underflow of the sum of four
 	/// squares. The extra rounding is within the libm accuracy this package
-	/// promises.
+	/// promises. Not deterministic, since `hypot` is not.
 	// Nested `hypot` rather than the root of the sum of four squares: the same
 	// overflow and underflow argument, one level deeper.
 	abs :: proc(self) -> f64 {

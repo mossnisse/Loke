@@ -510,19 +510,100 @@ profiles contain.
   (Eisel-Lemire with a big-decimal fallback) would make the parser usable in
   constants. Is that worth that much code?
 
+## Open questions in `core:math`
+
+### Deterministic math functions
+
+[`core:math`](standard-library.md#coremath)'s transcendental functions bind
+the C library, and are documented as not deterministic. Two causes were
+measured on 2026-10-27:
+
+- **The processor.** The statically linked UCRT chooses between an FMA3 and a
+  legacy implementation at run time. One executable, run over 200,000 seeded
+  arguments per function with each path forced through `_set_FMA3_enable`,
+  disagreed with itself on `tan` 5,319 times, `asin` 2,596, `sin` 2,124, `cos`
+  2,092, `acos` 1,012, `exp` 295, `pow` 63, `atan` 57, and `atan2` 15; on
+  `asin_f32` 1,761, `acos_f32` 463, and `log10_f32` 22. `log`, `log2`,
+  `hypot`, and the other `f32` functions did not differ, which is an
+  observation, not a promise. A processor without FMA3, such as an Intel one
+  before Haswell, a budget Pentium or Celeron from before about 2021, or a
+  virtual machine that hides AVX, takes the legacy path.
+- **The optimizer.** The bindings are plain `sin`, `pow`, ... declarations
+  with no `nobuiltin`, so LLVM constant-folds a call with constant arguments
+  using the compiling machine's library: at `-opt=speed`, `math.sin(0.5)`
+  becomes a constant.
+
+The proposed fix implements the functions in Loke, **correctly rounded**,
+porting CORE-MATH (MIT licence). They would use only the `+ - * /` that
+design.md "Floating-point operators" already pins, with exact two-part
+products where those algorithms use `fma`. A correctly rounded result is
+defined by the arithmetic alone, so it is the same on every machine,
+optimization level, and platform, and at compile time; it would also settle
+[Random distributions across platforms](#random-distributions-across-platforms).
+Hardware FMA could be used where present without changing a bit, since a fused
+multiply-add is itself correctly rounded. Porting fdlibm or musl instead would
+also be deterministic, but it would freeze one algorithm's bits, so a bug fix
+would be a breaking change, and it would match no other implementation.
+
+The cost is code and time. On the measuring machine the UCRT takes about
+8.4 ns per `sin` or `cos`, 7.2 ns per `exp` or `log`, and 17 ns per `pow` on
+its FMA3 path, and 10.5, 8.2, and 24 ns on its legacy path. The estimate,
+without hardware FMA, is 1.5–2× that for `exp`, `log`, `sin`, and `cos` and
+2–3× for `pow`, and close to today's speed with it; a prototype `exp` would
+measure it. Open:
+
+- Is cross-machine identity worth the code and the slowdown?
+- Which functions come first? `exp`, `log`, `sin`, `cos`, and `pow`, in both
+  widths, cover the common uses and the random distributions.
+- Should the C library's versions stay available under other names for
+  callers who prefer speed to identity?
+
+### Targeting x86-64 levels
+
+`lokec` gives clang no CPU level, so programs target baseline x86-64 (SSE2),
+which every 64-bit x86 processor runs. The higher levels are:
+
+| Level | Adds | Processors |
+| --- | --- | --- |
+| v2 | SSE4.2, POPCNT | Intel from 2008, AMD from 2011; Windows 11 24H2 itself requires SSE4.2 and POPCNT |
+| v3 | AVX2, FMA, BMI, LZCNT | Intel Core from Haswell (2013), AMD from Excavator (2015) |
+| v4 | AVX-512 | AMD Zen 4 and later, Intel server and workstation parts; not Intel consumer parts since Alder Lake |
+
+Steam's survey, as quoted in the Flax Engine's
+[commits](https://git.flaxengine.com/Flax/FlaxEngine/commit/d1774cac28988b46bd1de87aec26745ae71fcb48),
+put SSE4.2 at 99.78% (September 2025) and AVX2 at 94.48% (May 2025). Windows
+on Arm emulates AVX2 and FMA for x64 programs from Windows 11 24H2.
+
+A level does not change determinism: `+ - * /` and `sqrt` give the same bits on
+every level, and LLVM fuses an operation only where the IR allows it, which
+Loke's never does (design.md "Floating-point operators"); a level option would
+need a test of that. It changes speed: v2 adds POPCNT and, if `floor` and its
+kin were bound to LLVM intrinsics instead of the C library, inline rounding;
+v3 adds 256-bit vectorization, hardware FMA, and BMI. A program built for a
+level crashes with an illegal instruction on a processor without it, unless
+the runtime checks first and reports it. Open:
+
+- Should the default move to v2, which costs almost nothing?
+- Should `lokec` offer an opt-in level, such as `-cpu=x86-64-v3`, with that
+  startup check?
+- Or should the standard library choose at run time where it matters, as the
+  correctly rounded functions could with FMA, leaving one baseline?
+
 ## Open questions in `core:random`
 
 ### Random distributions across platforms
 
-The distributions return the same bits on every release of one platform, but
-they call the C library's `exp`, `log`, `pow`, or `sqrt`, which
-[`core:math`](standard-library.md#coremath) does not promise to the last bit;
-`normal` and `exponential` do so only for a wedge or tail value. Once a second
-platform ships, a seeded sequence could differ there: rarely for those two,
-often for the others, and a different count from `poisson` or `binomial`
-shifts every later draw. Correctly rounded functions in Loke would close this,
-and would also let the distributions run at compile time. Is cross-platform
-identity worth that code, or is per-platform reproducibility the contract?
+The distributions call `core:math`'s `exp`, `log`, or `pow`, which are not
+deterministic even on one platform: the C library picks its algorithm by the
+processor's features (see
+[Deterministic math functions](#deterministic-math-functions)). `normal` and
+`exponential` do so only for a wedge or tail value. A seeded sequence can
+therefore differ between two machines running the same executable: rarely for
+those two, often for the others, and a different count from `poisson` or
+`binomial` shifts every later draw. Correctly rounded functions in Loke would
+close this, and would also let the distributions run at compile time. Is
+identity across machines worth that code, or should the contract say that only
+the generators and the integer and `unit` mappings are reproducible?
 
 ### More generators and distributions
 

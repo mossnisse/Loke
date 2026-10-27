@@ -17,9 +17,21 @@
 //
 // The CRT-backed procedures promise the classifications, signs, poles, and
 // domain results documented on each one. They do not promise correctly rounded
-// transcendental results, identical last bits across platforms, a particular
-// NaN payload, or portable `errno` contents. They never turn a floating-point
-// exception or an `errno` value into a panic.
+// transcendental results, a particular NaN payload, or portable `errno`
+// contents. They never turn a floating-point exception or an `errno` value
+// into a panic.
+//
+// The transcendental procedures are **not deterministic**: `pow`, `exp`, `log`,
+// `log2`, `log10`, `hypot`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, and
+// `atan2`, in both widths, can give different last bits for the same
+// arguments. The C library chooses its algorithm by the processor's features,
+// so one executable can disagree with itself on another machine; an optimized
+// build can evaluate a call with constant arguments using the compiling
+// machine's library; and another platform has another library. Code whose
+// results must agree bit for bit everywhere, such as a lockstep simulation or
+// content generated from a shared seed, should not use them. Everything else
+// here is exact or correctly rounded, and so deterministic, except the `abs`
+// of `Complex` and `Quaternion`, which uses `hypot`.
 package math;
 
 import "base:interfaces";
@@ -95,7 +107,7 @@ impl Quaternion($T) {
 impl Complex(f64) {
 	// The magnitude. It avoids the overflow and underflow that squaring the
 	// components would cause; a magnitude beyond `f64`'s range is still
-	// infinity.
+	// infinity. Not deterministic, since `hypot` is not.
 	abs :: proc(self) -> f64 ---;
 
 	// Division that does not overflow merely because the squares of finite,
@@ -118,7 +130,7 @@ impl Complex(f32) {
 impl Quaternion(f64) {
 	// The magnitude, without the overflow or underflow of the sum of four
 	// squares. The extra rounding is within the libm accuracy this package
-	// promises.
+	// promises. Not deterministic, since `hypot` is not.
 	abs :: proc(self) -> f64 ---;
 
 	// `1/self`, with no avoidable overflow whatever the input scale. A zero
@@ -315,6 +327,7 @@ sqrt_f32 :: proc(x: f32) -> f32 ---;
 // `sqrt(a*a + b*b)`, computed without the intermediate overflow or underflow
 // that spelling causes. Always non-negative, and an infinite operand wins over
 // a NaN operand: `hypot(infinity, NaN)` is `+infinity`.
+// Not deterministic: see the package documentation.
 hypot :: proc(a: f64, b: f64) -> f64 ---;
 
 hypot_f32 :: proc(a: f32, b: f32) -> f32 ---;
@@ -354,11 +367,14 @@ fma_f32 :: proc(a: f32, b: f32, c: f32) -> f32 ---;
 //   pow(-infinity, y)                    -> pow(-0, -y)
 //   pow(+infinity, y < 0)                -> +0
 //   pow(+infinity, y > 0)                -> +infinity
+//
+// Not deterministic: see the package documentation.
 pow :: proc(base: f64, exponent: f64) -> f64 ---;
 
 pow_f32 :: proc(base: f32, exponent: f32) -> f32 ---;
 
 // `e` raised to `x`. Overflow gives `+infinity` and underflow `+0`.
+// Not deterministic: see the package documentation.
 exp :: proc(x: f64) -> f64 ---;
 
 exp_f32 :: proc(x: f32) -> f32 ---;
@@ -368,41 +384,51 @@ exp_f32 :: proc(x: f32) -> f32 ---;
 //   x < 0           -> NaN
 //   +-0             -> -infinity
 //   +infinity       -> +infinity
+//
+// Not deterministic: see the package documentation.
 log :: proc(x: f64) -> f64 ---;
 
 log_f32 :: proc(x: f32) -> f32 ---;
 
+// Not deterministic: see the package documentation.
 log2 :: proc(x: f64) -> f64 ---;
 
 log2_f32 :: proc(x: f32) -> f32 ---;
 
+// Not deterministic: see the package documentation.
 log10 :: proc(x: f64) -> f64 ---;
 
 log10_f32 :: proc(x: f32) -> f32 ---;
 
+// Not deterministic: see the package documentation.
 sin :: proc(x: f64) -> f64 ---;
 
 sin_f32 :: proc(x: f32) -> f32 ---;
 
+// Not deterministic: see the package documentation.
 cos :: proc(x: f64) -> f64 ---;
 
 cos_f32 :: proc(x: f32) -> f32 ---;
 
+// Not deterministic: see the package documentation.
 tan :: proc(x: f64) -> f64 ---;
 
 tan_f32 :: proc(x: f32) -> f32 ---;
 
 // The inverse sine, in `[-PI/2, PI/2]`. Outside `[-1, 1]` the result is a NaN.
+// Not deterministic: see the package documentation.
 asin :: proc(x: f64) -> f64 ---;
 
 asin_f32 :: proc(x: f32) -> f32 ---;
 
 // The inverse cosine, in `[0, PI]`. Outside `[-1, 1]` the result is a NaN.
+// Not deterministic: see the package documentation.
 acos :: proc(x: f64) -> f64 ---;
 
 acos_f32 :: proc(x: f32) -> f32 ---;
 
 // The inverse tangent of one operand, in `[-PI/2, PI/2]`.
+// Not deterministic: see the package documentation.
 atan :: proc(x: f64) -> f64 ---;
 
 atan_f32 :: proc(x: f32) -> f32 ---;
@@ -411,6 +437,7 @@ atan_f32 :: proc(x: f32) -> f32 ---;
 // the correct quadrant, in `[-PI, PI]`. The signed-zero and infinity cases are
 // the ones IEC 60559 defines, so `atan2(+0, -0)` is `+PI` and `atan2(-0, +0)`
 // is `-0`.
+// Not deterministic: see the package documentation.
 atan2 :: proc(y: f64, x: f64) -> f64 ---;
 
 atan2_f32 :: proc(y: f32, x: f32) -> f32 ---;
