@@ -1,0 +1,82 @@
+// design.md "Switch ownership": a payload bound over a place names the
+// subject's storage, so a view of it borrows the subject. Through a borrowed
+// receiver or parameter, that view may be returned.
+package main;
+
+import "core:fmt";
+import "core:strings";
+
+Source :: union { owned: string }
+Pair :: struct { name: string, count: int }
+Document :: struct {
+	source: Source,
+	label:  Option(string),
+	pair:   Option(Pair),
+}
+
+impl Document {
+	text :: proc(self: ^) -> string_view {
+		switch (self.source) {
+		case .owned(text): return text;
+		}
+	}
+}
+
+through_deref :: proc(document: ^Document) -> string_view {
+	switch (document^.source) {
+	case .owned(text): return text;
+	}
+}
+
+through_union_pointer :: proc(source: ^Source) -> string_view {
+	switch (source^) {
+	case .owned(text): return text;
+	}
+}
+
+option_payload :: proc(document: ^Document) -> string_view {
+	switch (document.label) {
+	case .some(label): return label;
+	case .none:        return "";
+	}
+}
+
+field_of_payload :: proc(document: ^Document) -> string_view {
+	switch (document.pair) {
+	case .some(pair): return pair.name;
+	case .none:       return "";
+	}
+}
+
+assigned_first :: proc(document: ^Document) -> string_view {
+	result: string_view = "";
+	switch (document.source) {
+	case .owned(text): result = text;
+	}
+	return result;
+}
+
+// A mutable payload binding is the subject's storage too.
+replaced :: proc(document: ^mut Document) -> string_view {
+	switch (document.source) {
+	case .owned(&mut text):
+		text = strings.copy("replaced");
+		return text;
+	}
+}
+
+main :: proc() {
+	document := Document{
+		.owned(strings.copy("owned")),
+		.some(strings.copy("label")),
+		.some(Pair{strings.copy("pair"), 1}),
+	};
+	fmt.println(document.text());
+	fmt.println(through_deref(&document));
+	fmt.println(through_union_pointer(&document.source));
+	fmt.println(option_payload(&document));
+	fmt.println(field_of_payload(&document));
+	fmt.println(assigned_first(&document));
+	fmt.println(replaced(&mut document));
+	fmt.println(document.text());
+}

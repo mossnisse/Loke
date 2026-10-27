@@ -1,0 +1,42 @@
+// design.md "Switch ownership": a view of a payload bound over a place borrows
+// the subject, so it cannot outlive a local subject. A consumed payload is the
+// case's own local, and a mutable binding cannot be written while a view of it
+// is in use.
+package main;
+
+import "core:fmt";
+import "core:strings";
+
+Source :: union { owned: string }
+
+make_source :: proc() -> Source { return .owned(strings.copy("temporary")); }
+
+local_subject :: proc() -> string_view {
+	source: Source = .owned(strings.copy("local"));
+	switch (source) {
+	case .owned(text): return text;
+	}
+}
+
+temporary_subject :: proc() -> string_view {
+	switch (make_source()) {
+	case .owned(text): return text;
+	}
+}
+
+moved_subject :: proc(source: move Source) -> string_view {
+	switch (move(source)) {
+	case .owned(text): return text;
+	}
+}
+
+written_under_view :: proc(source: ^mut Source) {
+	switch (source^) {
+	case .owned(&mut text):
+		view: string_view = text;
+		text = strings.copy("new");
+		fmt.println(view);
+	}
+}
+
+main :: proc() {}

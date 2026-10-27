@@ -1008,10 +1008,13 @@ emit_return_values :: proc(e: ^Emitter, s: ^Stmt_Return) {
 		} else {
 			store(e, e.result_type, operand, e.result_slot)
 		}
-		// A returned local transferred out, so cleanup must not drop it.
-		if !value.clone_on_return {
+		// A returned local transferred out, so cleanup must not drop it. A view
+		// of it transfers nothing, and a borrowed binding names storage its
+		// subject still owns (design.md "Switch ownership").
+		if !value.clone_on_return && emit_lifecycle(e, e.result_type).managed {
 			if ident, is_ident := value.expr.(^Expr_Ident); is_ident {
-				if sym := symbol_of(e.c, ident.symbol); sym != nil && emit_lifecycle(e, sym.type).managed {
+				if sym := symbol_of(e.c, ident.symbol); sym != nil && sym.borrowed_binding == .None &&
+				   emit_lifecycle(e, sym.type).managed {
 					kill_place(e, ident.symbol)
 				}
 			}

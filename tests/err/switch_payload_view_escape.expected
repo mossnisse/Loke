@@ -1,0 +1,12 @@
+L0526
+@17:28
+this payload cannot be returned: `source` ends when this procedure returns
+L0526
+@23:28
+this string view cannot be returned: `text` ends when this procedure returns
+L0526
+@29:28
+this string view cannot be returned: `text` ends when this procedure returns
+L0641
+@37:3
+`source` cannot be used here: a read-only reborrow of it is still in use

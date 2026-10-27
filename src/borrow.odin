@@ -43,6 +43,19 @@ root_outlives_body :: proc(kind: Root_Kind) -> bool {
 	return true
 }
 
+// Whether a root is a binding that names another owner's storage rather than
+// a frame slot of its own, such as a switch payload bound over a place
+// (design.md "Switch ownership"). A borrow of it also holds the source's loans
+// (`prov_borrow`), and those decide where it may go. A binding whose loans end
+// with its step, or whose source is unknown, stays a local.
+root_names_source :: proc(graph: ^Flow_Graph, root: Prov_Root) -> bool {
+	if root.kind != .Local || root.symbol == INVALID_SYMBOL {
+		return false
+	}
+	loans, viewed := graph.view_loans[root.symbol]
+	return viewed && len(loans) > 0 && !graph.step_views[root.symbol]
+}
+
 // How a diagnostic names a root: quoted source text, or the root's own
 // description when the reader wrote no name.
 root_label :: proc(root: Prov_Root) -> string {
@@ -4264,7 +4277,7 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 				}
 				loan := graph.loans[index]
 				root := graph.roots[int(loan.root)]
-				if root_outlives_body(root.kind) {
+				if root_outlives_body(root.kind) || root_names_source(graph, root) {
 					continue
 				}
 				// The same hedge: with element provenance merged, the compiler
@@ -4742,7 +4755,7 @@ report_retention :: proc(
 					stored,
 				)
 			} else {
-				if root_satisfies_retention(root.kind, into) {
+				if root_satisfies_retention(root.kind, into) || root_names_source(graph, root) {
 					continue
 				}
 				errorf(

@@ -36,6 +36,15 @@ checklist.
   bit, as in lockstep simulation
   ([`core:math`](standard-library.md#coremath)).
 
+### Fixed
+
+- Returning a view of a switch payload bound over a place, as in
+  `case .owned(text): return text;` with a `string_view` result through a
+  borrowed receiver, is no longer rejected with `L0526`: the binding names
+  the subject's storage ([Switch ownership](design.md#switch-ownership)).
+  Returning such a view also no longer clears the payload the subject still
+  owns.
+
 ## [0.9.0] - 2026-10-27
 
 ### Breaking changes
