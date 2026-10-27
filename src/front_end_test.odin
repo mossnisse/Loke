@@ -1900,7 +1900,7 @@ static_assert(LOKE_OPTIMIZATION_MODE == .Speed);
 static_assert(LOKE_BUILD_MODE == .Obj);
 static_assert(LOKE_LOG_LEVEL == .Warning);
 static_assert(LOKE_VENDOR == .Loke);
-static_assert(LOKE_VERSION == "0.8.0");
+static_assert(LOKE_VERSION == "0.9.0");
 static_assert(LOKE_OPTIMIZATION_MODE == .None);
 main :: proc() {}`
 	parse_source(&p, source)

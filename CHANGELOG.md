@@ -8,6 +8,8 @@ checklist.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-27
+
 ### Breaking changes
 
 - A replacement for a bundled package given with `-collection`, such as a

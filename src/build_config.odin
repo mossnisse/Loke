@@ -32,7 +32,7 @@ opt_clang_flag :: proc(mode: Opt_Mode) -> string {
 	return "-O0"
 }
 
-LOKE_VERSION_STRING :: "0.8.0"
+LOKE_VERSION_STRING :: "0.9.0"
 
 // One cached enum type per constant; `.None` stays `INVALID_TYPE`.
 Build_Config :: struct {

@@ -27,7 +27,7 @@ them together: the compiler finds its library next to itself, so a copy of
 Put that directory on your `PATH`. For the current PowerShell window:
 
 ```powershell
-$env:PATH += ";C:\loke\loke-v0.8.0-windows-amd64"
+$env:PATH += ";C:\loke\loke-v0.9.0-windows-amd64"
 ```
 
 To keep it for new windows as well, add the same directory to the user `Path`
