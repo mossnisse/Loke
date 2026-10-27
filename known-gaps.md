@@ -7,6 +7,24 @@ compiler, unless the rewording is the intended fix.
 
 ## Gaps
 
+### A task making a `Shared(T)`
+
+[Allocators and tasks](design.md#allocators-and-tasks) lets every task use the
+default provider, which reserves nothing. A task that calls `shared` with the
+default allocator is still rejected as using a region the parent cannot tell
+apart from another task's, while `box` is accepted:
+
+```loke
+package main;
+import "core:fmt";
+peek :: proc() -> int { h := shared(40); return h.get()^; }
+main :: proc() {
+    a, b: int;
+    parallel { spawn a = peek(); spawn b = peek(); }   // L0732 on the second
+    fmt.println(a, b);
+}
+```
+
 ### Named arguments to a slot of a view converted in place
 
 A [`dyn` slot call](design.md#borrowed-dynamic-interface-values) binds named

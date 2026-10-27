@@ -6020,7 +6020,7 @@ Program startup has this order:
 1. Runtime initialization, including the build-selected allocator and logging providers.
 2. `main`.
 
-Importing a package does not run package code. A package that needs runtime initialization must expose a procedure, and the application must call it explicitly, or guard lazy setup with a `Once` from `core:sync`. The application owns the returned state or explicitly shuts the package down.
+Importing a package does not run package code. A package that needs runtime initialization must expose a procedure, and the application must call it explicitly, or make that state on first use with `core:sync`'s `Lazy(T)` or `Once`. The application owns the returned state or explicitly shuts the package down.
 
 Normal return from `main` runs its scope-exit actions before the process ends. Managed values at file scope are [not dropped](#values-that-outlive-every-scope). `os.exit` terminates immediately. It does not run `defer`, automatic `drop`, or thread-local cleanup. A [panic](#panics-and-unwinding) follows its selected panic strategy.
 
@@ -6791,8 +6791,10 @@ Threads and retained tasks receive only the arguments explicitly moved or copied
 | `sync.fence(order)` | nothing; every ordering but `.Relaxed` |
 | `once.do(action: proc())` | runs `action` exactly once across every thread that reaches `once`. A call that finds the action running waits for it, so a return means the action has completed and its writes are visible. An action that reaches its own `Once` never returns. If `action` panics, the `Once` is poisoned: every later call, and every call waiting on it, panics |
 | `once.is_done()` | whether the action has completed; `false` may be stale when it is read |
+| `lazy.get(init)` | a `^T` to the value of a `Lazy(T)`, made by calling `init`, a callable answering `T`, if no thread has yet. It runs as `once.do` runs an action: a call that finds `init` running waits, `init` must not reach its own `Lazy`, and a panic in `init` poisons it. The result borrows `lazy` |
+| `lazy.is_done()` | whether the value has been made; `false` may be stale when it is read |
 
-`Once`, and `Atomic(T)` for a `T` with a zero value, have usable zero values, so either may live in `static` storage with no initializer. An atomic pointer that starts empty is an `Atomic(Option(^T))`.
+`Once`, `Lazy(T)` for any `T`, and `Atomic(T)` for a `T` with a zero value, have usable zero values, so each may live in `static` storage with no initializer. A `Lazy(T)` holds a `Once`, so it is move-only, and its value is `@(synchronized)`: `core:sync` writes it once, before `get` publishes it, and only reads it after. An atomic pointer that starts empty is an `Atomic(Option(^T))`.
 
 ### Shared ownership
 
@@ -7104,7 +7106,10 @@ These rules also cover initialization and teardown:
 
 - A [`Once`](#atomic-operations-and-once) action contributes its writes. A task
   calling `once.do(load)` is rejected if `load` writes a file-scope value;
-  initialize before the first spawn or pass the value instead.
+  initialize before the first spawn, pass the value instead, or keep it in a
+  `sync.Lazy(T)`. Its `get` writes only its own synchronized value, so tasks
+  may make it on first use, while what `init` writes still counts and a
+  carrier the value stores is held to the reach rule above.
 - Every task drops managed `thread_local` owners at thread exit, so it carries
   all their drop effects. A single TLS owner's drop hook that writes a global,
   in any package, rejects every block. The diagnostic names the declaration and hook.

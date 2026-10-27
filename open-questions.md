@@ -1078,9 +1078,11 @@ done; git history keeps it.
    so the compiler checks it instead of trusting it. Whether an `Allocator`
    parameter can promise a concurrent region, so a library can share a
    caller's allocator among tasks.
-7. **Checked lazy initialization.** Whether a `sync.Once(T)` or similar that
-   owns its value, as `Mutex(T)` does, should replace `Once` guarding separate
-   file-scope storage, so tasks can run lazy setup.
+7. **Checked lazy initialization.** Answered (2026-10-27): `sync.Lazy(T)`
+   owns its value in a `@(synchronized)` field, so tasks may make it on first
+   use; see [Atomic operations and Once](design.md#atomic-operations-and-once)
+   and the [lazy setup review](#lazy-setup-review-2026-10-27). `Once` stays
+   for setup that has no single value.
 8. **Timed waits.** `lock_when`, `send`, and `receive` with a deadline from
    `core:time`, reporting a timeout apart from closure. An audio loop that must
    play silence when a decoder falls behind needs them.
@@ -1178,8 +1180,8 @@ Still open; the first three are among the proposal's
   build can select an arena-backed default allocator and race silently.
 - Whether an `Allocator` parameter can promise a concurrent region, so a
   library can share a caller's allocator among tasks.
-- Whether a value-owning `Once(T)` should give tasks checked lazy setup; until
-  then a task that may run a `Once` action writing a global is rejected.
+- Answered (2026-10-27): `sync.Lazy(T)` gives tasks checked lazy setup; a
+  task that may run a `Once` action writing a global is still rejected.
 - Answered: the whole-program union was conservative, so one compatible
   procedure anywhere that wrote a global affected every indirect call of its
   type. [Per-call effect precision](#per-call-effect-precision-2026-10-26)
@@ -1961,6 +1963,34 @@ only `size_state == .Cyclic` would not cover every input. A recursion path
 also tells a cycle apart from two sibling fields of the same type; replacing
 it with a visited set that treats every revisit as unknown would reject
 unrelated storage unnecessarily.
+
+### Lazy setup review (2026-10-27)
+
+`sync.Lazy(T)` answers the seventh
+[later extension](#later-concurrency-extensions). It shares `Once`'s state
+machine, holds its value as `Option(T)`, so it has a zero value whatever `T`
+is, and answers a `^T` borrowed through a case binding, so the result carries
+the `Lazy`'s provenance rather than an unchecked address. Building it found
+that a case binding over a subject reached through a pointer, as in
+`switch (p^)` or `switch (holder.slot)` on a `^Holder`, viewed nothing, so
+`return &value` was rejected though
+[Switch ownership](design.md#switch-ownership) says the binding names the
+subject's storage. That is fixed, with `tests/run/case_binding_returned.loke`
+and `tests/err/case_binding_returned.loke`.
+
+Still open:
+
+- **Thread-affine values in globals.** A task may borrow a
+  `@(thread_affine)` value stored in a global, as `window.handle` reads one,
+  and with `Lazy` a task may make one that the parent then uses.
+  [Sharing with tasks](design.md#sharing-with-tasks) follows arguments,
+  receivers, captures, and results, not globals, so this is not a divergence.
+  Closing it needs a read effect over globals, or a rule that rejects a global
+  of a type that is or reaches one.
+- **Waiting.** A `get` that finds `init` running spins as `Once.do` does, so
+  slow setup contended by many tasks burns their threads; the platform wait
+  [Concurrency refinements](#concurrency-refinements) mentions would serve
+  both.
 
 ### Channel fix follow-up review (2026-10-26)
 

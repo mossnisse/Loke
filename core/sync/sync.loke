@@ -1,4 +1,4 @@
-/// `Atomic(T)`, `fence`, and `Once`.
+/// `Atomic(T)`, `fence`, `Once`, and `Lazy(T)`.
 ///
 /// **Ordering arguments are `$` parameters throughout**, so an ordering must
 /// be a constant at the call.
@@ -16,6 +16,9 @@
 // boundary. The compiler lowers the memory model rather than verifying it.
 @(public)
 package sync;
+
+import "base:interfaces";
+import "core:unsafe";
 
 // The compiler contributes `Memory_Order`, the `base:runtime` enum, publicly as
 // `sync.Memory_Order`, and, package-privately:
@@ -180,18 +183,30 @@ impl Once {
 	// re-entry needs a thread identity, which the library does not expose, so it
 	// is a rule rather than a diagnostic.
 	do :: proc(self: ^Once, action: proc()) {
-		if (self.state.load(Memory_Order.Acquire) == ONCE_DONE) { return; }
+		if (!self.claim()) { return; }
+		// Runs on the way out whether `action` returned or panicked.
+		finished := false;
+		defer self.settle(finished);
+		action();
+		finished = true;
+	}
+
+	/// Has the action completed? A `false` may be stale the moment it is read;
+	/// only `true` is a durable answer.
+	is_done :: proc(self: ^) -> bool {
+		return self.state.load(Memory_Order.Acquire) == ONCE_DONE;
+	}
+
+	// Whether this caller won the right to run the action, which it must then
+	// `settle`. A caller that lost returns once the winner has finished, and
+	// panics if the winner panicked.
+	@(private)
+	claim :: proc(self: ^) -> bool {
+		if (self.state.load(Memory_Order.Acquire) == ONCE_DONE) { return false; }
 		observed, won := self.state.compare_exchange(
 			ONCE_IDLE, ONCE_RUNNING, Memory_Order.Acquire, Memory_Order.Acquire,
 		);
-		if (won) {
-			// Runs on the way out whether `action` returned or panicked.
-			finished := false;
-			defer self.state.store(ONCE_DONE if finished else ONCE_POISONED, Memory_Order.Release);
-			action();
-			finished = true;
-			return;
-		}
+		if (won) { return true; }
 		// Another thread is running it. Spin on the acquire load rather than
 		// blocking: this implementation has no blocking wait for an atomic
 		// state change.
@@ -201,11 +216,59 @@ impl Once {
 		// distinguish "running" from "done", which is what such a wait needs.
 		for (; observed == ONCE_RUNNING; observed = self.state.load(Memory_Order.Acquire)) { }
 		if (observed == ONCE_POISONED) { panic("a `Once` action panicked"); }
+		return false;
 	}
 
-	/// Has the action completed? A `false` may be stale the moment it is read;
+	@(private)
+	settle :: proc(self: ^, finished: bool) {
+		self.state.store(ONCE_DONE if finished else ONCE_POISONED, Memory_Order.Release);
+	}
+}
+
+/// A `T` made on first use, by whichever thread asks first, and then shared by
+/// every thread that asks. It is a `Once` holding the value it guards, so lazy
+/// setup writes no file-scope storage of its own and a task may run it.
+///
+/// The zero value is empty, whatever `T` is, so a `Lazy` may live in `static`
+/// storage with no initializer. Like `Once`, it works behind the `^T` a
+/// `Shared(T)` hands out, and it is move-only.
+// design.md "Atomic operations and Once". The value is synchronized: this
+// package writes it once, before publishing it, and only reads it after, so a
+// task that calls `get` on a global `Lazy` writes no global
+// (design.md "Globals while tasks run").
+Lazy :: struct($T: type) {
+	@(private) once: Once,
+	@(private, synchronized) slot: Option(T),
+}
+
+impl Lazy($T) {
+	/// The value, made by calling `init` if no thread has yet. A caller that
+	/// arrives while another thread is still making it waits, so the value is
+	/// always complete. If `init` panics, the `Lazy` is poisoned as a `Once`
+	/// is: every later call, and every call waiting on it, panics.
+	///
+	/// `init` must not reach this `Lazy`: a re-entrant `get` waits for itself
+	/// and never returns, and nothing reports it.
+	// The result borrows the receiver through the payload binding below, which
+	// carries the receiver's provenance; only the one write goes through an
+	// unchecked address, as `Mutex`'s guard does.
+	get :: proc(self: ^, init: $F) -> ^T where interfaces.Callable(F, proc() -> T) {
+		if (self.once.claim()) {
+			finished := false;
+			defer self.once.settle(finished);
+			made: Option(T) = .some(init());
+			(^mut Option(T))(rawptr(&self.slot))^ = move(made);
+			finished = true;
+		}
+		switch (self.slot) {
+		case .some(value): return &value;
+		case .none: panic("a `Lazy` was read before it was made");
+		}
+	}
+
+	/// Has the value been made? A `false` may be stale the moment it is read;
 	/// only `true` is a durable answer.
 	is_done :: proc(self: ^) -> bool {
-		return self.state.load(Memory_Order.Acquire) == ONCE_DONE;
+		return self.once.is_done();
 	}
 }

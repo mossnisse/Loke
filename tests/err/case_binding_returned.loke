@@ -1,0 +1,36 @@
+// design.md "Switch ownership": a pointer to a case binding over a place
+// borrows the subject, so it cannot outlive a local subject, and the subject
+// cannot be written while the pointer is in use, however the subject was
+// reached.
+package main;
+
+import "core:fmt";
+
+Holder :: struct { slot: Option(string) }
+
+through_field :: proc(holder: ^Holder) -> ^string {
+	switch (holder.slot) {
+	case .some(value): return &value;
+	case .none:        panic("empty");
+	}
+}
+
+local_subject :: proc() -> ^string {
+	option: Option(string) = .some("local");
+	switch (option) {
+	case .some(value): return &value;
+	case .none:        panic("empty");
+	}
+}
+
+escapes :: proc() -> ^string {
+	holder := Holder{.some("local")};
+	return through_field(&holder);
+}
+
+main :: proc() {
+	holder := Holder{.some("held")};
+	value := through_field(&holder);
+	holder.slot = .none;
+	fmt.println(value^, local_subject()^, escapes()^);
+}

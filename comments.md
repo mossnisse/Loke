@@ -195,6 +195,19 @@ library can spawn the callbacks it is handed. A read-only view's targets stay
 shared however the view is passed: moving the view does not move what it
 views.
 
+**Lazy setup that owns its value.** A `Once` guards storage declared
+elsewhere, so the action writes a global and a task calling it is rejected,
+though the write happens once and is published before any reader sees it.
+`sync.Lazy(T)` keeps the value inside the guard instead, in a field
+`@(synchronized)` already exempts, so the compiler checks lazy setup with the
+rules it has rather than a special case for `Once`. What `init` writes and
+what the value stores are still checked, since they are the parts the library
+cannot vouch for. It is a separate type, not `Once(T)`, because `Once` is
+already a type without parameters. Its `init` is any callable answering `T`,
+so a setup step can capture what it needs, and `get` answers a `^T` that
+borrows the `Lazy` through its payload binding, so a local one cannot hand out
+its value past its end.
+
 **A thread per task, with no serial fallback.** Running the tasks one after
 another would be cheaper, but it is a different program: `thread_local`
 storage starts fresh on each task's thread, and blocking tasks that wait for

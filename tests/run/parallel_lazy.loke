@@ -1,0 +1,41 @@
+// design.md "Atomic operations and Once": a `sync.Lazy(T)` makes its value on
+// the first `get` and every later `get` shares it. design.md "Globals while
+// tasks run": the value is synchronized storage, so tasks may make it on first
+// use. The value may have no zero value, and a `Lazy` behind a `Shared(T)`
+// works as one in a global does.
+package main;
+
+import "core:fmt";
+import "core:sync";
+
+Settings :: struct { name: string, limit: int }
+
+settings: sync.Lazy(Settings);
+loads: sync.Atomic(int);
+
+load :: proc() -> Settings {
+	loads.add(1);
+	return Settings{name = "default", limit = 7};
+}
+
+work :: proc(n: int) -> int {
+	return settings.get(load).limit * n;
+}
+
+main :: proc() {
+	fmt.println(settings.is_done());
+	a, b, c: int;
+	parallel {
+		spawn a = work(1);
+		spawn b = work(2);
+		spawn c = work(3);
+	}
+	fmt.println(a, b, c, loads.load(), settings.get(load).name, settings.is_done());
+
+	// A literal capturing what it needs is a callable `init` too.
+	base := 5;
+	local := shared(sync.Lazy(int){});
+	first := local.get().get(proc() -> int capture(base) { return base * 2; })^;
+	again := local.get().get(proc() -> int capture(base) { return base * 3; })^;
+	fmt.println(first, again);
+}

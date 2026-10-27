@@ -1,0 +1,34 @@
+// design.md "Switch ownership": a case binding over a place names the payload
+// where the subject stores it, so a pointer to it may be returned when the
+// subject is the caller's, reached through a pointer or a field of one.
+package main;
+
+import "core:fmt";
+
+Holder :: struct { slot: Option(string) }
+
+through_field :: proc(holder: ^Holder) -> ^string {
+	switch (holder.slot) {
+	case .some(value): return &value;
+	case .none:        panic("empty");
+	}
+}
+
+through_pointer :: proc(option: ^Option(string)) -> ^string {
+	switch (option^) {
+	case .some(value): return &value;
+	case .none:        panic("empty");
+	}
+}
+
+main :: proc() {
+	holder := Holder{.some("held")};
+	option: Option(string) = .some("pointed");
+	field := through_field(&holder);
+	pointed := through_pointer(&option);
+	fmt.println(field^, pointed^);
+	switch (holder.slot) {
+	case .some(value): fmt.println(field == &value);
+	case .none:
+	}
+}

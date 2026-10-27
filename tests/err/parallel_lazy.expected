@@ -1,0 +1,12 @@
+L0526
+@24:9
+this borrow cannot be returned: `local` ends when this procedure returns
+L0731
+@30:3
+`writes_global` may write `counter`, which every task and the parent share
+L0731
+@31:3
+`writes_through` may write `values`, which every task and the parent share
+L0731
+@31:3
+`writes_through` reaches through `views`, which every task and the parent share: `views` holds `[]mut int`

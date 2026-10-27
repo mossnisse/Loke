@@ -1,0 +1,34 @@
+// design.md "Globals while tasks run": a `sync.Lazy(T)`'s `get` writes only
+// synchronized storage, but what its `init` writes still counts, and a carrier
+// it stores is held to the reach rule. design.md "Procedure result contracts":
+// the value `get` answers borrows the `Lazy`.
+package main;
+
+import "core:fmt";
+import "core:sync";
+
+counter: int;
+values: [2]int;
+plain: sync.Lazy(int);
+views: sync.Lazy([]mut int);
+
+counting :: proc() -> int { counter += 1; return 3; }
+view_of :: proc() -> []mut int { return &mut values[:]; }
+three :: proc() -> int { return 3; }
+
+writes_global :: proc() -> int { return plain.get(counting)^; }
+writes_through :: proc() { views.get(view_of)^[0] = 1; }
+
+escapes :: proc() -> ^int {
+	local := sync.Lazy(int){};
+	return local.get(three);
+}
+
+main :: proc() {
+	a: int;
+	parallel {
+		spawn a = writes_global();
+		spawn writes_through();
+	}
+	fmt.println(a, escapes()^);
+}

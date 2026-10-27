@@ -1,0 +1,9 @@
+L0526
+@21:28
+this payload cannot be returned: `option` ends when this procedure returns
+L0526
+@28:9
+this pointer cannot be returned: `holder` ends when this procedure returns
+L0511
+@34:2
+this write of `holder` is not compatible with the read-only pointer of it that is still in use

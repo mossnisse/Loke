@@ -286,6 +286,12 @@ prov_subject_view :: proc(graph: ^Flow_Graph, subject: Expr, mutable: bool, slot
 		return prov_borrow_place(graph, subject, true, expr_span(subject), "payload")
 	}
 	if !ok {
+		// A subject reached through a pointer or view, as in `switch (p^)`, is
+		// storage that carrier names, so the binding views what `&subject`
+		// would borrow.
+		if carriers, _, through := prov_read_through_carrier(graph, subject); through {
+			return carriers
+		}
 		return nil
 	}
 	return prov_borrow(graph, root, path, false, expr_span(subject), "payload")

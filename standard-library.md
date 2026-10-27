@@ -128,7 +128,7 @@ base:interfaces       structural interface catalogue
 
 core:mem              allocators and regions                  *
 core:unsafe           explicit trust boundary                 *
-core:sync             atomics, fences, once                   *
+core:sync             atomics, fences, once, lazy values      *
 core:simd             cross-lane SIMD operations              *
 core:thread           threads, mutexes, monitors, channels, rings, and pools
 core:fmt              value formatting and process diagnostics

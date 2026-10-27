@@ -352,6 +352,11 @@ checklist.
 
 ### Added
 
+- `sync.Lazy(T)` makes a value on the first `get` and shares it with every
+  later caller, on any thread. Its value is synchronized storage, so tasks may
+  make it on first use where a `Once` action writing a global is rejected;
+  what `init` writes is still checked. See
+  [Atomic operations and Once](design.md#atomic-operations-and-once).
 - [Structured concurrency](design.md#structured-concurrency): a
   `parallel { ... }` block runs each `spawn`ed call on a thread of its own and
   waits for all of them on every way out of the block, a panic included. A
@@ -730,6 +735,11 @@ checklist.
 
 ### Fixed
 
+- A case binding over a subject reached through a pointer, as in
+  `switch (p^)` or `switch (holder.slot)` on a `^Holder`, names the subject's
+  storage, so `return &value` from such a case is accepted when the subject is
+  the caller's, as [Switch ownership](design.md#switch-ownership) specifies.
+  It was rejected as a borrow of the binding (`L0526`).
 - The join check (`L0733`) tells two parameters, or a parameter and a global,
   apart by type: a kept channel or ring endpoint, or a guard, no longer
   conflicts with a task borrowing a parameter whose storage cannot hold, lie
