@@ -1,0 +1,9 @@
+// design.md "`@(intrinsic)`": a declaration states only what the compiler
+// supplies, so it is checked against that and not accepted on its word.
+package main;
+
+import "core:mem";
+
+main :: proc() {
+	_ = mem.Arena{};
+}

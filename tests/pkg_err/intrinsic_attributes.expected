@@ -1,0 +1,27 @@
+L0737
+@5:9
+the compiler supplies `try_scratch` in this package, and no `@(intrinsic)` declaration describes it
+L0609
+@7:14
+`@(intrinsic)` is written more than once here
+L0734
+@13:14
+`@(test)` cannot be written on an `@(intrinsic)` declaration: the compiler supplies what it would say
+L0736
+@20:1
+the compiler supplies `Arena` with no generic parameters
+L0606
+@24:24
+unknown attribute `@(misspelled)`
+L0734
+@27:17
+`@(by_ptr)` cannot be written on a parameter of an `@(intrinsic)` procedure
+L0736
+@34:21
+an `@(intrinsic)` struct lists the public fields the compiler supplies to `Scratch`, so each is public and not `using`
+L0736
+@45:1
+the compiler supplies `try_arena` with the Loke calling convention
+L0736
+@48:1
+the compiler supplies `try_scratch` as public, so its declaration is too

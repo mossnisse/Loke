@@ -171,6 +171,14 @@ bind_intrinsic :: proc(k: ^Checker, pkg: ^Package, file: ^File, d: ^Decl, subjec
 		)
 		return
 	}
+	// The declaration is what `-doc` shows, so it says what an importer sees.
+	if public := declaration_is_public(k, d); public != sym.public {
+		errorf(
+			c, d.names[0].span, "L0736", "the compiler supplies `%s` as %s, so its declaration is too",
+			d.names[0].text, sym.public ? "public" : "package-private",
+		)
+		return
+	}
 	for entry in pkg.intrinsics {
 		if entry.symbol == symbol_id {
 			errorf(c, d.names[0].span, "L0735", "`%s` is already described by an `@(intrinsic)` declaration", d.names[0].text)
@@ -189,20 +197,68 @@ bind_intrinsic :: proc(k: ^Checker, pkg: ^Package, file: ^File, d: ^Decl, subjec
 	append(&pkg.intrinsics, Intrinsic_Decl{decl = d, symbol = symbol_id, subject = subject, file = file})
 }
 
-// The declaration's other attributes, which the package pass never reaches
-// because the declaration is not in the selected view.
+// The attributes the package pass would check, which it never reaches because
+// the declaration is not in the selected view. Only visibility may be written
+// beside `@(intrinsic)`: the compiler supplies everything else an attribute
+// could say, so another one would describe what is not there.
 @(private = "file")
 validate_intrinsic_attributes :: proc(k: ^Checker, d: ^Decl) {
 	rest := make([dynamic]Attribute, 0, len(d.attributes), context.temp_allocator)
+	seen := false
 	for attribute in d.attributes {
-		if len(attribute.path) != 1 || attribute.path[0].text != "intrinsic" {
+		is_intrinsic := len(attribute.path) == 1 && attribute.path[0].text == "intrinsic"
+		switch {
+		case !is_intrinsic:
 			append(&rest, attribute)
-		} else if attribute.value != nil {
+		case seen:
+			errorf(k.c, attribute.span, "L0609", "`@(intrinsic)` is written more than once here")
+		case attribute.value != nil:
 			errorf(k.c, attribute.span, "L0608", "`@(intrinsic)` takes no value")
 		}
+		seen ||= is_intrinsic
 	}
-	position := decl_proc_literal(d) != nil ? Attr_Pos.Proc_Decl : Attr_Pos.Type_Decl
+	literal := decl_proc_literal(d)
+	position := literal != nil ? Attr_Pos.Proc_Decl : Attr_Pos.Type_Decl
 	validate_attribute_list(k, rest[:], position)
+	reject_described_attributes(k, rest[:], true, "an `@(intrinsic)` declaration")
+	if literal != nil {
+		validate_param_attributes(k, literal.signature.params)
+		for parameter in literal.signature.params {
+			reject_described_attributes(k, parameter.attributes, false, "a parameter of an `@(intrinsic)` procedure")
+		}
+	}
+	if len(d.values) == 1 {
+		if record, is_record := d.values[0].(^Type_Record); is_record {
+			validate_record_attributes(k, record)
+			reject_described_attributes(k, record.attributes, false, "an `@(intrinsic)` struct")
+			for field in record.fields {
+				reject_described_attributes(k, field.attributes, true, "a field of an `@(intrinsic)` struct")
+			}
+		}
+	}
+}
+
+// Each known attribute other than visibility, which the validator above has
+// already checked for spelling and position.
+@(private = "file")
+reject_described_attributes :: proc(k: ^Checker, attributes: []Attribute, visibility: bool, what: string) {
+	for attribute in attributes {
+		if len(attribute.path) != 1 {
+			continue
+		}
+		name := attribute.path[0].text
+		if _, known := attribute_spec(name); !known || name == "intrinsic" {
+			continue
+		}
+		if visibility && (name == "public" || name == "private") {
+			continue
+		}
+		errorf(
+			k.c, attribute.span, "L0734",
+			"`@(%s)` cannot be written on %s: the compiler supplies what it would say",
+			name, what,
+		)
+	}
 }
 
 @(private = "file")
@@ -311,6 +367,19 @@ check_intrinsic :: proc(k: ^Checker, entry: Intrinsic_Decl) {
 	sym := symbol_of(c, entry.symbol)
 	d := entry.decl
 	if literal := decl_proc_literal(d); literal != nil {
+		// Every supplied procedure has the convention it was made with, and a
+		// built-in operation the Loke one.
+		supplied := ""
+		if info := type_of(c, sym.proc_type); sym.kind == .Proc && info != nil {
+			supplied = info.convention
+		}
+		if literal.signature.convention != supplied {
+			errorf(
+				c, d.names[0].span, "L0736", "the compiler supplies `%s` with the %s calling convention",
+				d.names[0].text, supplied == "" ? "Loke" : supplied,
+			)
+			return
+		}
 		// An operation the compiler types itself has a signature written for
 		// readers; its section of design.md defines its typing.
 		if sym.kind == .Proc {
@@ -423,6 +492,10 @@ check_intrinsic_struct :: proc(k: ^Checker, d: ^Decl, written: ^Type_Record, typ
 		errorf(c, d.names[0].span, "L0736", "the compiler supplies `%s`, which is not a struct", d.names[0].text)
 		return
 	}
+	if len(written.generic_params) > 0 || len(written.where_clauses) > 0 {
+		errorf(c, d.names[0].span, "L0736", "the compiler supplies `%s` with no generic parameters", d.names[0].text)
+		return
+	}
 	public := make([dynamic]^Symbol, 0, len(info.fields), context.temp_allocator)
 	for field in info.fields {
 		if sym := symbol_of(c, field); sym != nil && sym.public {
@@ -430,7 +503,14 @@ check_intrinsic_struct :: proc(k: ^Checker, d: ^Decl, written: ^Type_Record, typ
 		}
 	}
 	index := 0
-	for field in written.fields {
+	for &field in written.fields {
+		if field.is_using || !field_is_public(k, &field) {
+			errorf(
+				c, field.span, "L0736", "an `@(intrinsic)` struct lists the public fields the compiler supplies to `%s`, so each is public and not `using`",
+				d.names[0].text,
+			)
+			return
+		}
 		field_type := resolve_type_syntax(k, field.type)
 		for field_name in field.names {
 			expected := index < len(public) ? public[index] : nil

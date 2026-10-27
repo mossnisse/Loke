@@ -590,7 +590,6 @@ delegation_is_public :: proc(k: ^Checker) -> bool {
 // names": nothing imports a `package main`, so its fields are public by
 // default, which is what reflection and printing see. Its declarations keep the
 // package default: a public extension would export a name.
-@(private = "file")
 field_is_public :: proc(k: ^Checker, field: ^Field) -> bool {
 	in_main := k.file_node != nil && k.file_node.package_name == "main"
 	return attributes_are_public(k, field.attributes, field.span, "field", in_main)

@@ -1,0 +1,48 @@
+// A `core:mem` whose `@(intrinsic)` declarations write what only the compiler
+// may say: attributes beside visibility, a convention, generic parameters, or
+// a visibility the supplied name does not have.
+@(public)
+package mem;
+
+@(intrinsic, intrinsic)
+Allocator :: ---;
+
+@(intrinsic)
+Allocator_Error :: ---;
+
+@(intrinsic, test)
+default_allocator :: proc() -> Allocator ---;
+
+@(intrinsic)
+Failure_Policy :: enum { Panic, Trap }
+
+@(intrinsic)
+Arena :: struct($T: type) {}
+
+impl Arena {
+	@(intrinsic)
+	from_buffer :: proc(@(misspelled) buffer: []mut u8, policy: Failure_Policy = .Panic) -> Arena ---;
+
+	@(intrinsic)
+	init :: proc(@(by_ptr) parent: Allocator = default_allocator(), policy: Failure_Policy = .Panic) -> Arena ---;
+
+	@(intrinsic)
+	allocator :: proc(self) -> Allocator ---;
+}
+
+@(intrinsic)
+Scratch :: struct { @(private) control: rawptr }
+
+impl Scratch {
+	@(intrinsic)
+	init :: proc(parent: Allocator = default_allocator(), policy: Failure_Policy = .Panic) -> Scratch ---;
+
+	@(intrinsic)
+	allocator :: proc(self) -> Allocator ---;
+}
+
+@(intrinsic)
+try_arena :: proc "c" (parent: Allocator = default_allocator(), policy: Failure_Policy = .Panic) -> Result(Arena, Allocator_Error) ---;
+
+@(intrinsic, private)
+try_scratch :: proc(parent: Allocator = default_allocator(), policy: Failure_Policy = .Panic) -> Result(Scratch, Allocator_Error) ---;
