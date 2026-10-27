@@ -287,11 +287,49 @@ impl Unsigned {
 	}
 }
 
+// ------------------------------------------------------ fallible spelling --
+
+/// What can stop `try_spell_f64`: the "C" numeric locale every float spelling
+/// goes through could not be made. `Out_Of_Memory` when that was an allocation
+/// failure, `Unavailable` otherwise. Printing panics instead, because a sink
+/// has no way to report it.
+// `core:strconv` has the same two answers for reading a float, as its own type
+// because neither package imports the other.
+@(public)
+Backend_Error :: enum { Out_Of_Memory, Unavailable }
+
+/// The most bytes `try_spell_f64` writes.
+@(public)
+FLOAT_SPELLING_MAX :: 32;
+
+/// `value` as `print` spells it, written to the start of `destination`,
+/// answering how many bytes it took: the shortest text that reads back as the
+/// same value, or `nan`, `inf`, and `-inf`. It neither allocates nor writes
+/// through a sink, so a writer that must report every failure can spell a
+/// float without one.
+// standard-library "`core:fmt`": the shared fallible primitive
+// `core:encoding/json` writes floats with.
+@(public)
+try_spell_f64 :: proc(
+	value: f64, destination: ^mut [FLOAT_SPELLING_MAX]u8,
+) -> Result(int, Backend_Error) {
+	used := rt_try_spell_f64(destination, value);
+	if (used == -NUMERIC_OUT_OF_MEMORY) { return .err(.Out_Of_Memory); }
+	if (used < 0) { return .err(.Unavailable); }
+	return used;
+}
+
+// `loke_rt.h`'s answer for a locale that failed to allocate.
+@(private)
+NUMERIC_OUT_OF_MEMORY :: 2;
+
 // The seed runtime is part of every link, and a `Writer` has its writer record's
-// layout. Private, or the file-wide `@(public)` would export it as
-// `fmt.rt_fmt_fixed`.
+// layout. Private, or the file-wide `@(public)` would export them as
+// `fmt.rt_fmt_fixed` and `fmt.rt_try_spell_f64`.
 @(private)
 foreign loke_runtime {
 	@(link_name="loke_rt_v1_fmt_fixed")
 	rt_fmt_fixed :: proc "c" (writer: ^Writer, value: f64, digits: int) ---;
+	@(link_name="loke_rt_v1_try_spell_f64")
+	rt_try_spell_f64 :: proc "c" (out: ^mut [FLOAT_SPELLING_MAX]u8, value: f64) -> int ---;
 }

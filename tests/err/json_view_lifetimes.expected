@@ -1,0 +1,18 @@
+L0512
+@15:2
+`input` cannot be dropped here: a read-only string view of it is still in use
+L0512
+@22:2
+`document` cannot be modified here: a read-only borrow of it is still in use
+L0512
+@29:10
+`document` cannot be modified here: a read-only borrow of it is still in use
+L0512
+@39:11
+`document` cannot be moved here: a read-only borrow of it is still in use
+L0513
+@49:10
+this borrow is used after `document`, the local it borrows, has ended
+L0526
+@57:9
+this string view cannot be returned: `text` ends when this procedure returns

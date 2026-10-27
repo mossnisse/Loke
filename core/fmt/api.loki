@@ -112,3 +112,21 @@ Fill :: enum { Left, Right, Zero }
 impl Padded($T) {
 	format :: proc(self, writer: Writer, options: Options) ---;
 }
+
+// What can stop `try_spell_f64`: the "C" numeric locale every float spelling
+// goes through could not be made. `Out_Of_Memory` when that was an allocation
+// failure, `Unavailable` otherwise. Printing panics instead, because a sink
+// has no way to report it.
+Backend_Error :: enum { Out_Of_Memory, Unavailable }
+
+// The most bytes `try_spell_f64` writes.
+FLOAT_SPELLING_MAX :: 32;
+
+// `value` as `print` spells it, written to the start of `destination`,
+// answering how many bytes it took: the shortest text that reads back as the
+// same value, or `nan`, `inf`, and `-inf`. It neither allocates nor writes
+// through a sink, so a writer that must report every failure can spell a
+// float without one.
+try_spell_f64 :: proc(
+	value: f64, destination: ^mut [FLOAT_SPELLING_MAX]u8,
+) -> Result(int, Backend_Error) ---;

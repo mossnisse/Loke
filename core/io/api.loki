@@ -175,6 +175,36 @@ read_line :: proc(
 	options: Line_Options = {},
 ) -> Result(string, Error) where Reader(R) ---;
 
+// An owning, growing byte sink: a `Writer` whose bytes land in memory, to be
+// read back with `bytes` or taken with `into_bytes`. A write either appends
+// all of its bytes or fails with `Out_Of_Memory` and appends none.
+//
+// **The zero value is a usable, empty, allocator-unbound buffer**: the first
+// growth binds the default provider. `init` selects another one up front.
+Buffer_Writer :: struct {
+	// and fields private to the package
+}
+
+impl Buffer_Writer {
+	// An empty buffer whose storage comes from `allocator`. Nothing is
+	// allocated until the first write.
+	init :: proc(allocator: Allocator = mem.default_allocator()) -> Buffer_Writer ---;
+
+	write :: proc(self: inout, source: []u8) -> Result(int, Error) ---;
+
+	// Everything written so far, borrowed: a write while the view is in use is
+	// rejected.
+	bytes :: proc(self: ^) -> []u8 ---;
+
+	len :: proc(self) -> int ---;
+
+	// Forgets the contents and keeps the allocation, for the next document.
+	clear :: proc(self: inout) ---;
+
+	// The contents as owned bytes, without a copy.
+	into_bytes :: proc(self: move) -> [dynamic]u8 ---;
+}
+
 // A `fmt.Sink` cannot report a failure, which is fine for a diagnostic sink and
 // wrong for a file. These two format through a sink that writes into an
 // `io.Writer`, latch the first `Error`, make every later write a no-op, and

@@ -1,0 +1,752 @@
+package main;
+
+import "core:fmt";
+import "core:fs";
+import "core:io";
+import "core:mem";
+import "core:os";
+import "core:path";
+import "core:strings";
+import "core:encoding/json";
+
+// `core:encoding/json` end to end (standard-library "`core:encoding/json`").
+
+// ------------------------------------------------------------- reporting --
+
+show :: proc(text: string_view, options: json.Parse_Options = {}) {
+	switch (json.parse_text(text, options = options)) {
+	case .ok(document): fmt.println("ok", compact(&document));
+	case .err(error):   fmt.println(error.code, error.offset);
+	}
+}
+
+show_bytes :: proc(bytes: []u8, options: json.Parse_Options = {}) {
+	switch (json.parse(bytes, options = options)) {
+	case .ok(document): fmt.println("ok", compact(&document));
+	case .err(error):   fmt.println(error.code, error.offset);
+	}
+}
+
+compact :: proc(document: ^json.Document) -> string {
+	return json.stringify(document.root() or_else panic("no root")) or_else panic("stringify failed");
+}
+
+root_of :: proc(document: ^json.Document) -> json.Value {
+	return document.root() or_else panic("no root");
+}
+
+show_access :: proc(error: json.Access_Error) {
+	if (error.code == .Wrong_Kind) {
+		fmt.println(error.code, error.offset, error.expected, error.actual);
+	} else {
+		fmt.println(error.code, error.offset);
+	}
+}
+
+show_number :: proc(text: string_view) {
+	number := json.number(text) or_else panic("not a JSON number");
+	switch (number.to_i64()) {
+	case .ok(value):  fmt.print(text, "i64", value);
+	case .err(error): fmt.print(text, "i64", error.code);
+	}
+	switch (number.to_u64()) {
+	case .ok(value):  fmt.print(" u64", value);
+	case .err(error): fmt.print(" u64", error.code);
+	}
+	switch (number.to_f64()) {
+	case .ok(value):  fmt.println(" f64", value);
+	case .err(error): fmt.println(" f64", error.code);
+	}
+}
+
+// ---------------------------------------------------------------- parsing --
+
+syntax :: proc() {
+	fmt.println("-- syntax");
+	show(`{"a": [1, 2.5e3, -0, true, false, null, {}, []], "b": {"c": "x"}}`);
+	// Any value may be the root, with whitespace around it.
+	show(" \t\r\n 42 \n");
+	show(`"text"`);
+	show("null");
+	// Every extension is an error.
+	show(`[1,]`);
+	show(`{"a": 1,}`);
+	show(`// comment` + "\n1");
+	show(`+1`);
+	show(`0x10`);
+	show(`NaN`);
+	show(`Infinity`);
+	show(`'single'`);
+	show(`{a: 1}`);
+	show(`01`);
+	show(`1.`);
+	show(`.5`);
+	show(`1e`);
+	show(`-`);
+	show(`1.5.2`);
+	show(`[1 2]`);
+	show(`{"a" 1}`);
+	show(`{"a": 1 "b": 2}`);
+	show(`[1] [2]`);
+	show(`tru`);
+	show(`trUe`);
+	show(`nul`);
+	show("");
+	show("   ");
+	show(`[`);
+	show(`{"a":`);
+	// A byte order mark is not whitespace.
+	show("﻿1");
+	// A raw control character inside a string, and one outside.
+	show("\"a\tb\"");
+	show("\u00011");
+}
+
+strings_and_escapes :: proc() {
+	fmt.println("-- strings");
+	show(`"\" \\ \/ \b \f \n \r \t"`);
+	show(`"é€"`);
+	// A surrogate pair is one scalar value; either half alone is not.
+	show(`"😀"`);
+	show(`"\ud83d"`);
+	show(`"\ud83dx"`);
+	show(`"\ud83d\n"`);
+	show(`"\ud83dA"`);
+	show(`"\ude00"`);
+	show(`"\x41"`);
+	show(`"\u12"`);
+	show(`"\u12G4"`);
+	show(`"unterminated`);
+	show(`"\`);
+	// An escaped NUL is ordinary text.
+	document := json.parse_text(`"a\u0000b"`) or_else panic("parse failed");
+	text := root_of(&document).string() or_else panic("not a string");
+	fmt.println(text.len(), text.bytes()[1]);
+	// Unescaped text keeps its UTF-8 as it is.
+	show(`"räksmörgås 😀"`);
+}
+
+utf8 :: proc() {
+	fmt.println("-- utf8");
+	// Invalid UTF-8 is reported at its first bad sequence, before any syntax
+	// error elsewhere in the input.
+	show_bytes([]u8{u8('['), u8(','), u8(' '), 0xFF, u8(']')});
+	show_bytes([]u8{u8('"'), 0xC3, u8('"')});
+	// Overlong, surrogate, and out-of-range encodings.
+	show_bytes([]u8{u8('"'), 0xC0, 0xAF, u8('"')});
+	show_bytes([]u8{u8('"'), 0xED, 0xA0, 0x80, u8('"')});
+	show_bytes([]u8{u8('"'), 0xF4, 0x90, 0x80, 0x80, u8('"')});
+	// A sequence cut off by the end of input.
+	show_bytes([]u8{u8('"'), 0xE2, 0x82});
+	show_bytes([]u8{u8('"'), 0xE2, 0x82, 0xAC, u8('"')});
+}
+
+truncation :: proc() {
+	fmt.println("-- truncation");
+	// Every proper prefix of an object is an error, and never a panic.
+	text: string_view = `{"kéy": [1.5e-3, "s\"t", {"n": null}, true, false], "z": -12}`;
+	rejected := 0;
+	for (cut := 0; cut < text.len(); cut += 1) {
+		switch (json.parse(text.bytes()[:cut])) {
+		case .ok: fmt.println("accepted a prefix of", cut, "bytes");
+		case .err: rejected += 1;
+		}
+	}
+	fmt.println(rejected, text.len());
+	show(text);
+}
+
+// ----------------------------------------------------------------- access --
+
+access :: proc() {
+	fmt.println("-- access");
+	text: string_view = `{"name": "Ada", "age": 36, "tags": ["x", "y"], "none": null, "a": 1, "a": 2}`;
+	document := json.parse_text(text) or_else panic("parse failed");
+	root := root_of(&document);
+	fmt.println(root.kind());
+	object := root.object() or_else panic("not an object");
+	fmt.println(object.len());
+
+	name := object.require("name") or_else panic("no name");
+	fmt.println(name.string() or_else "?");
+	fmt.println((object.require("age") or_else panic("no age")).to_i64() or_else -1);
+
+	// Absent, null, and the wrong kind are three different answers.
+	switch (object.find("missing")) {
+	case .ok(found): fmt.println(found == .none);
+	case .err(error): show_access(error);
+	}
+	switch (object.require("missing")) {
+	case .ok: fmt.println("found");
+	case .err(error): show_access(error);
+	}
+	none := object.require("none") or_else panic("no none");
+	fmt.println(none.kind());
+	switch (none.to_i64()) {
+	case .ok: fmt.println("converted null");
+	case .err(error): show_access(error);
+	}
+	switch (name.number()) {
+	case .ok: fmt.println("converted a string");
+	case .err(error): show_access(error);
+	}
+	switch (name.array()) {
+	case .ok: fmt.println("an array");
+	case .err(error): show_access(error);
+	}
+	switch (root.boolean()) {
+	case .ok: fmt.println("a boolean");
+	case .err(error): show_access(error);
+	}
+
+	// `"a"` and `"a"` are the same key once decoded, so neither is the
+	// answer; the error points at the second one's quote.
+	switch (object.find("a")) {
+	case .ok: fmt.println("found one a");
+	case .err(error): show_access(error);
+	}
+
+	// Arrays: length, indexing, and traversal.
+	tags := (object.require("tags") or_else panic("no tags")).array() or_else panic("not an array");
+	fmt.println(tags.len());
+	fmt.println((tags.at(1) or_else panic("no element")).string() or_else "?");
+	fmt.println(tags.at(2) == .none, tags.at(-1) == .none);
+	foreach (tag in tags) { fmt.print(tag.string() or_else "?", ""); }
+	fmt.println();
+
+	// Members, in order, repeated keys included.
+	foreach (key, value in object) { fmt.print(key, value.kind(), ""); }
+	fmt.println();
+
+	// Iteration skips whole subtrees.
+	nested := json.parse_text(`[[1, [2, 3]], {"a": [4]}, 5]`) or_else panic("parse failed");
+	outer := root_of(&nested).array() or_else panic("not an array");
+	foreach (element in outer) { fmt.print(element.kind(), ""); }
+	fmt.println();
+	fmt.println((outer.at(2) or_else panic("no element")).to_i64() or_else -1);
+
+	// A view is a value: copied and read again, it reads the same document.
+	again := name;
+	fmt.println(again.string() or_else "?");
+}
+
+// A complete load: required and optional fields, an array, and views that
+// borrow the document.
+Settings :: struct {
+	name:       string_view,
+	generation: u64,
+	scale:      Option(f64),
+	tags:       [dynamic]string_view,
+}
+
+load_settings :: proc(document: ^json.Document) -> Result(Settings, json.Access_Error) {
+	settings := Settings{};
+	root := document.root() or_else panic("no root");
+	object := root.object() or_return;
+	settings.name = (object.require("name") or_return).string() or_return;
+	settings.generation = (object.require("generation") or_return).to_u64() or_return;
+	switch (object.find("scale") or_return) {
+	case .some(scale): settings.scale = .some(scale.to_f64() or_return);
+	case .none:
+	}
+	foreach (tag in (object.require("tags") or_return).array() or_return) {
+		settings.tags.append(tag.string() or_return);
+	}
+	return settings;
+}
+
+load :: proc() {
+	fmt.println("-- load");
+	input := strings.copy(`{"name": "state", "generation": 7, "tags": ["a", "b"]}`);
+	document := json.parse_text(input) or_else panic("parse failed");
+	settings := load_settings(&document) or_else panic("load failed");
+	fmt.println(settings.name, settings.generation, settings.scale == .none, settings.tags.len());
+
+	broken := json.parse_text(`{"name": "state", "generation": -1, "tags": []}`) or_else panic("parse failed");
+	switch (load_settings(&broken)) {
+	case .ok: fmt.println("loaded");
+	case .err(error): show_access(error);
+	}
+}
+
+// ---------------------------------------------------------------- numbers --
+
+numbers :: proc() {
+	fmt.println("-- numbers");
+	show_number("0");
+	show_number("-0");
+	show_number("42");
+	show_number("-42");
+	show_number("9223372036854775807");
+	show_number("-9223372036854775808");
+	show_number("9223372036854775808");
+	show_number("-9223372036854775809");
+	show_number("18446744073709551615");
+	show_number("18446744073709551616");
+	show_number("1.0");
+	show_number("1e0");
+	show_number("1E2");
+	show_number("-0.0");
+	show_number("0.1");
+	show_number("2.5e-3");
+	show_number("1e400");
+	show_number("-1e400");
+	show_number("1e-400");
+	show_number("-1e-400");
+	show_number("4.9e-324");
+	show_number("2.2250738585072011e-308");
+	show_number("1.7976931348623157e308");
+	show_number("1.7976931348623159e308");
+	// Precision is lost converting, and kept in the spelling.
+	show_number("9007199254740993");
+	// Past every kept digit, a nonzero one still breaks the tie upwards.
+	long := "9007199254740993." + strings.repeat("0", 900) + "1";
+	number := json.number(long) or_else panic("not a number");
+	fmt.println(number.to_f64() or_else 0.0, number.text().len());
+	// A huge exponent is not read into a machine integer.
+	show_number("1e99999999999999999999");
+	show_number("1e-99999999999999999999");
+
+	// `number` takes exactly one JSON number.
+	invalid := []string_view{"", " 1", "1 ", "+1", "01", "1.", ".1", "1e", "0x1", "1_0", "-", "NaN"};
+	foreach (text in invalid) {
+		switch (json.number(text)) {
+		case .ok: fmt.println("accepted", text);
+		case .err(error): fmt.print(error.code, error.offset, "");
+		}
+	}
+	fmt.println();
+
+	// A conversion error from a document points at the number.
+	document := json.parse_text(`[1, 1.5, 1e999]`) or_else panic("parse failed");
+	values := root_of(&document).array() or_else panic("not an array");
+	foreach (value in values) {
+		switch (value.to_i64()) {
+		case .ok(converted): fmt.print(converted, "");
+		case .err(error): fmt.print(error.code, error.offset, "");
+		}
+	}
+	fmt.println();
+	switch ((values.at(2) or_else panic("no element")).to_f64()) {
+	case .ok: fmt.println("converted 1e999");
+	case .err(error): show_access(error);
+	}
+	// The spelling survives a round trip exactly.
+	exact := json.parse_text(`[9007199254740993, 1e400, -0, 0.10000000000000000001]`) or_else panic("parse failed");
+	fmt.println(compact(&exact));
+}
+
+// ----------------------------------------------------------------- limits --
+
+limits :: proc() {
+	fmt.println("-- limits");
+	// Options are checked first, then the input's size, then its UTF-8.
+	bad := []u8{u8('['), 0xFF, u8(']')};
+	show_bytes(bad, json.Parse_Options{max_depth = -1});
+	show_bytes(bad, json.Parse_Options{max_depth = json.MAX_DEPTH + 1});
+	show_bytes(bad, json.Parse_Options{max_nodes = -1});
+	show_bytes(bad, json.Parse_Options{max_bytes = -1});
+	show_bytes(bad, json.Parse_Options{max_bytes = 2});
+	show_bytes(bad, json.Parse_Options{max_bytes = 3});
+
+	show("[1, 2, 3]", json.Parse_Options{max_nodes = 4});
+	show("[1, 2, 3]", json.Parse_Options{max_nodes = 3});
+	// Keys count as values.
+	show(`{"a": 1}`, json.Parse_Options{max_nodes = 2});
+	show(`{"a": 1}`, json.Parse_Options{max_nodes = 3});
+	show("[[[1]]]", json.Parse_Options{max_depth = 3});
+	show("[[[1]]]", json.Parse_Options{max_depth = 2});
+	show("1", json.Parse_Options{max_depth = 1});
+
+	// The default depth is the most there is.
+	deep := strings.repeat("[", json.MAX_DEPTH) + strings.repeat("]", json.MAX_DEPTH);
+	switch (json.parse_text(deep)) {
+	case .ok: fmt.println("ok", json.MAX_DEPTH);
+	case .err(error): fmt.println(error.code, error.offset);
+	}
+	deeper := strings.repeat("[", json.MAX_DEPTH + 1) + strings.repeat("]", json.MAX_DEPTH + 1);
+	switch (json.parse_text(deeper)) {
+	case .ok: fmt.println("ok", json.MAX_DEPTH + 1);
+	case .err(error): fmt.println(error.code, error.offset);
+	}
+
+	// Line and column, computed from the caller's text.
+	text: string_view = "{\n  \"a\": [1,\n    2,,\n]}";
+	switch (json.parse_text(text)) {
+	case .ok: fmt.println("accepted");
+	case .err(error):
+		where := json.position(text.bytes(), error.offset);
+		fmt.println(error.code, error.offset, where.line, where.column);
+	}
+}
+
+// -------------------------------------------------------------- documents --
+
+documents :: proc() {
+	fmt.println("-- documents");
+	// The zero document is empty.
+	document: json.Document = {};
+	fmt.println(document.root() == .none);
+
+	// Reuse: large, then small, then a failure, which leaves it empty.
+	large := "[" + strings.repeat("1, ", 1000) + "1]";
+	fmt.println(succeeded_parse(document.reparse_text(large)));
+	fmt.println((root_of(&document).array() or_else panic("not an array")).len());
+	fmt.println(succeeded_parse(document.reparse_text(`{"small": true}`)));
+	fmt.println(compact(&document));
+	fmt.println(succeeded_parse(document.reparse_text(`{"small": `)));
+	fmt.println(document.root() == .none);
+
+	// Owned input, consumed whether or not the parse succeeds.
+	fmt.println(succeeded_parse(document.reparse_owned(strings.copy(`["owned", "é"]`))));
+	fmt.println(compact(&document));
+	fmt.println(succeeded_parse(document.reparse_owned(strings.copy(`["owned",`))));
+	fmt.println(document.root() == .none);
+
+	// Back to borrowed bytes, and failure on invalid options too.
+	bytes := []u8{u8('['), u8('2'), u8(']')};
+	fmt.println(succeeded_parse(document.reparse(bytes)));
+	fmt.println(compact(&document));
+	fmt.println(succeeded_parse(document.reparse(bytes, json.Parse_Options{max_depth = -1})));
+	fmt.println(document.root() == .none);
+
+	// Clearing keeps nothing readable.
+	fmt.println(succeeded_parse(document.reparse_text("null")));
+	fmt.println(root_of(&document).kind());
+	document.clear();
+	fmt.println(document.root() == .none);
+
+	// The free owning form.
+	owned := json.parse_owned(strings.copy(`{"k": "v"}`)) or_else panic("parse failed");
+	fmt.println(compact(&owned));
+}
+
+succeeded_parse :: proc(outcome: Status(json.Parse_Error)) -> bool {
+	switch (outcome) {
+	case .ok:  return true;
+	case .err: return false;
+	}
+}
+
+// Every allocation comes from the caller's allocator, and running out of it is
+// reported rather than applying a failure policy, wherever growth happens.
+allocation :: proc() {
+	fmt.println("-- allocation");
+	text: string_view = `{"a\nb": ["x\ty", 1, 2, 3, 4, 5, 6, 7, 8, 9, {"cé": [true, false, null]}], "z": "€"}`;
+	failed := 0;
+	succeeded := 0;
+	other := 0;
+	for (size := 256; size <= 4096; size += 8) {
+		room: [4096]u8 = {};
+		arena := mem.Arena.from_buffer(&mut room[:size]);
+		switch (json.parse_text(text, arena.allocator())) {
+		case .ok(document):
+			succeeded += 1;
+			if (succeeded == 1) { fmt.println(compact(&document)); }
+		case .err(error):
+			if (error.code == .Out_Of_Memory) { failed += 1; } else { other += 1; }
+		}
+	}
+	fmt.println(failed > 0, succeeded > 0, other);
+
+	// `stringify` reports exhaustion too, of its buffer or of the string.
+	document := json.parse_text(text) or_else panic("parse failed");
+	failed = 0;
+	succeeded = 0;
+	other = 0;
+	for (size := 256; size <= 4096; size += 8) {
+		room: [4096]u8 = {};
+		arena := mem.Arena.from_buffer(&mut room[:size]);
+		switch (json.stringify(root_of(&document), arena.allocator())) {
+		case .ok: succeeded += 1;
+		case .err(error):
+			if (error.code == .Out_Of_Memory) { failed += 1; } else { other += 1; }
+		}
+	}
+	fmt.println(failed > 0, succeeded > 0, other);
+}
+
+// ---------------------------------------------------------------- writing --
+
+// A stream that accepts at most `chunk` bytes per write and fails once
+// `limit` bytes have arrived.
+Sink :: struct {
+	data:  [dynamic]u8,
+	limit: int,
+	chunk: int,
+}
+
+impl Sink {
+	write :: proc(self: inout, source: []u8) -> Result(int, io.Error) {
+		if (source.len() == 0) { return 0; }
+		room := self.limit - self.data.len();
+		if (room <= 0) { return .err(io.make_error(.Broken_Pipe, .Write)); }
+		count := source.len();
+		if (count > self.chunk) { count = self.chunk; }
+		if (count > room) { count = room; }
+		self.data.append(..source[:count]);
+		return count;
+	}
+
+	text :: proc(self: ^) -> string_view {
+		return string_view.from_utf8(self.data[:]) or_else panic("not UTF-8");
+	}
+}
+
+sample :: proc(out: inout json.Writer(Sink)) -> Status(json.Write_Error) {
+	out.begin_object() or_return;
+	out.key("name") or_return;
+	out.string("tab\there \"quoted\" \\ \u0001 é") or_return;
+	out.key("values") or_return;
+	out.begin_array() or_return;
+	out.i64(-9223372036854775807 - 1) or_return;
+	out.u64(18446744073709551615) or_return;
+	out.f64(0.1) or_return;
+	out.f64(-0.0) or_return;
+	out.f64(1e300 * 10.0) or_return;
+	out.boolean(false) or_return;
+	out.null() or_return;
+	out.begin_object() or_return;
+	out.end_object() or_return;
+	out.begin_array() or_return;
+	out.end_array() or_return;
+	out.end_array() or_return;
+	out.key("exact") or_return;
+	out.number(json.number("1.000e+400") or_else panic("not a number")) or_return;
+	out.end_object() or_return;
+	return out.finish();
+}
+
+write_sample :: proc(sink: ^mut Sink, buffer: []mut u8, options: json.Write_Options = {}) -> Status(json.Write_Error) {
+	out := json.writer(sink, buffer, options) or_return;
+	return sample(inout out);
+}
+
+writing :: proc() {
+	fmt.println("-- writing");
+	buffer: [8]u8 = {};
+	compact_sink := Sink{limit = 1 << 20, chunk = 1 << 20};
+	fmt.println(write_status(write_sample(&mut compact_sink, &mut buffer[:])));
+	fmt.println(compact_sink.text());
+
+	pretty_sink := Sink{limit = 1 << 20, chunk = 1 << 20};
+	fmt.println(write_status(write_sample(&mut pretty_sink, &mut buffer[:], json.Write_Options{pretty = true})));
+	fmt.println(pretty_sink.text());
+
+	// Short writes are completed, and a one-byte buffer works too.
+	one: [1]u8 = {};
+	trickle := Sink{limit = 1 << 20, chunk = 1};
+	fmt.println(write_status(write_sample(&mut trickle, &mut one[:])));
+	fmt.println(trickle.text() == compact_sink.text());
+
+	// Failing at every output offset is an `Io` error, and only the complete
+	// output succeeds.
+	total := compact_sink.data.len();
+	io_failures := 0;
+	for (limit := 0; limit < total; limit += 1) {
+		failing := Sink{limit = limit, chunk = 3};
+		switch (write_sample(&mut failing, &mut buffer[:])) {
+		case .ok: fmt.println("succeeded with", limit, "bytes");
+		case .err(error): if (error.code == .Io) { io_failures += 1; }
+		}
+	}
+	exact := Sink{limit = total, chunk = 3};
+	fmt.println(io_failures == total, write_status(write_sample(&mut exact, &mut buffer[:])));
+
+	// The output limit is checked before each span.
+	limited := Sink{limit = 1 << 20, chunk = 1 << 20};
+	fmt.println(write_status(write_sample(&mut limited, &mut buffer[:], json.Write_Options{max_bytes = 20})));
+	fmt.println(limited.data.len() <= 20);
+
+	// Invalid options.
+	empty: [0]u8 = {};
+	options := []json.Write_Options{
+		json.Write_Options{max_depth = -1},
+		json.Write_Options{max_depth = json.MAX_DEPTH + 1},
+		json.Write_Options{max_bytes = -1},
+	};
+	foreach (option in options) {
+		switch (json.writer(&mut compact_sink, &mut buffer[:], option)) {
+		case .ok: fmt.println("accepted options");
+		case .err(error): fmt.print(error.code, "");
+		}
+	}
+	switch (json.writer(&mut compact_sink, &mut empty[:])) {
+	case .ok: fmt.println("accepted an empty buffer");
+	case .err(error): fmt.println(error.code);
+	}
+}
+
+write_status :: proc(outcome: Status(json.Write_Error)) -> string_view {
+	switch (outcome) {
+	case .ok: return "ok";
+	case .err(error):
+		switch (error.code) {
+		case .Invalid_State:   return "Invalid_State";
+		case .Invalid_Options: return "Invalid_Options";
+		case .Limit_Exceeded:  return "Limit_Exceeded";
+		case .Non_Finite:      return "Non_Finite";
+		case .Out_Of_Memory:   return "Out_Of_Memory";
+		case .Backend_Failure: return "Backend_Failure";
+		case .Io:              return "Io";
+		}
+	}
+}
+
+// Each sequence ends in the call that should fail, followed by `finish`, which
+// must report the same latched error.
+states :: proc() {
+	fmt.println("-- states");
+	buffer: [16]u8 = {};
+
+	// A second root.
+	{
+		sink := Sink{limit = 1 << 20, chunk = 1 << 20};
+		out := json.writer(&mut sink, &mut buffer[:]) or_else panic("writer");
+		fmt.print(write_status(out.null()), write_status(out.null()), write_status(out.finish()), "");
+	}
+	// A close with nothing open, and one that does not match.
+	{
+		sink := Sink{limit = 1 << 20, chunk = 1 << 20};
+		out := json.writer(&mut sink, &mut buffer[:]) or_else panic("writer");
+		fmt.print(write_status(out.end_array()), write_status(out.finish()), "");
+	}
+	{
+		sink := Sink{limit = 1 << 20, chunk = 1 << 20};
+		out := json.writer(&mut sink, &mut buffer[:]) or_else panic("writer");
+		fmt.print(write_status(out.begin_array()), write_status(out.end_object()), "");
+	}
+	// A value where a key is due, a key in an array, and a close after a key.
+	{
+		sink := Sink{limit = 1 << 20, chunk = 1 << 20};
+		out := json.writer(&mut sink, &mut buffer[:]) or_else panic("writer");
+		fmt.print(write_status(out.begin_object()), write_status(out.i64(1)), "");
+	}
+	{
+		sink := Sink{limit = 1 << 20, chunk = 1 << 20};
+		out := json.writer(&mut sink, &mut buffer[:]) or_else panic("writer");
+		fmt.print(write_status(out.begin_array()), write_status(out.key("k")), "");
+	}
+	{
+		sink := Sink{limit = 1 << 20, chunk = 1 << 20};
+		out := json.writer(&mut sink, &mut buffer[:]) or_else panic("writer");
+		fmt.print(write_status(out.begin_object()), write_status(out.key("k")), write_status(out.end_object()), "");
+	}
+	// `finish` before the root is complete.
+	{
+		sink := Sink{limit = 1 << 20, chunk = 1 << 20};
+		out := json.writer(&mut sink, &mut buffer[:]) or_else panic("writer");
+		fmt.print(write_status(out.finish()), "");
+		sink2 := Sink{limit = 1 << 20, chunk = 1 << 20};
+		out2 := json.writer(&mut sink2, &mut buffer[:]) or_else panic("writer");
+		fmt.println(write_status(out2.begin_array()), write_status(out2.finish()));
+	}
+	// Repeated `finish` succeeds without writing; anything else after it is
+	// `Invalid_State`, and so is every later `finish`.
+	{
+		sink := Sink{limit = 1 << 20, chunk = 1 << 20};
+		out := json.writer(&mut sink, &mut buffer[:]) or_else panic("writer");
+		fmt.print(write_status(out.boolean(true)), write_status(out.finish()), write_status(out.finish()), "");
+		fmt.print(write_status(out.null()), write_status(out.finish()), "");
+		fmt.println(sink.text());
+	}
+	// A non-finite float is refused before anything is written for it, its
+	// separator included. A one-byte buffer sends everything after the first
+	// byte straight through, so the sink shows what was written.
+	{
+		one: [1]u8 = {};
+		sink := Sink{limit = 1 << 20, chunk = 1 << 20};
+		out := json.writer(&mut sink, &mut one[:]) or_else panic("writer");
+		zero := 0.0;
+		fmt.print(write_status(out.begin_array()), write_status(out.i64(1)), "");
+		fmt.print(write_status(out.f64(zero / zero)), write_status(out.finish()), "");
+		fmt.println(sink.text());
+		sink2 := Sink{limit = 1 << 20, chunk = 1 << 20};
+		out2 := json.writer(&mut sink2, &mut buffer[:]) or_else panic("writer");
+		fmt.println(write_status(out2.f64(-1.0 / zero)), sink2.data.len());
+	}
+	// Depth: written containers, and a value's containers on top of them.
+	{
+		sink := Sink{limit = 1 << 20, chunk = 1 << 20};
+		out := json.writer(&mut sink, &mut buffer[:], json.Write_Options{max_depth = 2}) or_else panic("writer");
+		fmt.print(write_status(out.begin_array()), write_status(out.begin_array()), write_status(out.begin_array()), "");
+		document := json.parse_text("[[1]]") or_else panic("parse failed");
+		sink2 := Sink{limit = 1 << 20, chunk = 1 << 20};
+		out2 := json.writer(&mut sink2, &mut buffer[:], json.Write_Options{max_depth = 2}) or_else panic("writer");
+		fmt.print(write_status(out2.value(root_of(&document))), write_status(out2.finish()), sink2.text(), "");
+		sink3 := Sink{limit = 1 << 20, chunk = 1 << 20};
+		out3 := json.writer(&mut sink3, &mut buffer[:], json.Write_Options{max_depth = 2}) or_else panic("writer");
+		fmt.println(write_status(out3.begin_array()), write_status(out3.value(root_of(&document))));
+	}
+}
+
+// A document written out reads back as the same document, member order,
+// repeated keys, and number spellings included.
+round_trip :: proc() {
+	fmt.println("-- round trip");
+	text: string_view = `{"b": [1, -0, 1.5E+3, 12345678901234567890123], "a": {"x": "é\n\"", "x": null}, "e": [], "o": {}}`;
+	document := json.parse_text(text) or_else panic("parse failed");
+	compact_text := compact(&document);
+	fmt.println(compact_text);
+	pretty := json.stringify(root_of(&document), options = json.Write_Options{pretty = true}) or_else panic("stringify");
+	fmt.println(pretty);
+	again := json.parse_text(pretty) or_else panic("reparse failed");
+	fmt.println(compact(&again) == compact_text);
+	// A subtree is written on its own.
+	object := root_of(&document).object() or_else panic("not an object");
+	fmt.println(json.stringify(object.require("a") or_else panic("no a")) or_else panic("stringify"));
+}
+
+// The save sequence: write into memory, finish, then replace the file.
+save_generation :: proc(
+	path: string_view, generation: u64, allocator: Allocator,
+) -> Status((json: json.Write_Error | file: io.Error)) {
+	bytes := io.Buffer_Writer.init(allocator);
+	scratch: [8192]u8 = {};
+	out := json.writer(&mut bytes, &mut scratch[:]) or_return .json;
+	out.begin_object() or_return .json;
+	out.key("generation") or_return .json;
+	out.u64(generation) or_return .json;
+	out.end_object() or_return .json;
+	out.finish() or_return .json;
+	fs.replace_atomic(path, bytes.bytes()) or_return .file;
+}
+
+saving :: proc() {
+	fmt.println("-- saving");
+	file := strings.copy("loke_json_case.json");
+	switch (os.get_environment("TEMP")) {
+	case .ok(found):
+		switch (found) {
+		case .some(base): file = path.join([]string_view{base, "loke_json_case.json"});
+		case .none:
+		}
+	case .err:
+	}
+	switch (save_generation(file, 12, mem.default_allocator())) {
+	case .ok: fmt.println("saved");
+	case .err: fmt.println("not saved");
+	}
+	loaded := fs.read_bytes(file) or_else panic("read failed");
+	document := json.parse(loaded[:]) or_else panic("parse failed");
+	object := root_of(&document).object() or_else panic("not an object");
+	fmt.println((object.require("generation") or_else panic("no generation")).to_u64() or_else 0);
+	_ = fs.remove(file);
+}
+
+main :: proc() {
+	syntax();
+	strings_and_escapes();
+	utf8();
+	truncation();
+	access();
+	load();
+	numbers();
+	limits();
+	documents();
+	allocation();
+	writing();
+	states();
+	round_trip();
+	saving();
+}

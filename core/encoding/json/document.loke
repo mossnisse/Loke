@@ -1,0 +1,438 @@
+// The parsed document and the views that read it.
+// standard-library "Documents and values".
+@(public)
+package json;
+
+import "core:mem";
+import "core:strconv";
+import "core:strings";
+
+/// One parsed JSON text: every value in source order, in flat storage it owns.
+///
+/// **The zero value is an empty, allocator-unbound document**: `root` is
+/// `.none`, and its first growth binds the default provider. `init` selects
+/// another allocator without allocating anything.
+///
+/// A document either borrows its input (`parse`, `parse_text`, and their
+/// `reparse` forms) or owns it (`parse_owned`, `reparse_owned`); either way a
+/// borrowed input must outlive it. Views read it through a pointer, so while a
+/// `Value`, a string, or a `Number` from it is in use, the document cannot be
+/// cleared, reparsed, moved, or dropped.
+///
+/// `clear` and every `reparse` keep the allocator and the allocated capacity,
+/// which is what makes a document cheap to reuse. A failed reparse leaves it
+/// empty, with that capacity and no input. Drop the document to release it.
+// open-questions.md "Self-referential storage": the document stores offsets
+// into its source and its decoded text, never views of its own storage, so an
+// accessor computes each view from wherever the document now is.
+Document :: move_only struct {
+	@(private) nodes:     [dynamic]Node,
+	@(private) decoded:   strings.String_Builder,
+	@(private) source:    Source,
+	@(private) allocator: Allocator,
+}
+
+/// One value in a document: a pointer to it and the value's index. Copying one
+/// copies those two words; nothing it returns allocates.
+Value :: struct {
+	@(private) document: ^Document,
+	@(private) index:    u32,
+}
+
+/// An array value. Its length is immediate; `at` walks from the start, so a
+/// complete traversal is a `foreach`, not a loop over `at`.
+Array :: struct {
+	@(private) document: ^Document,
+	@(private) index:    u32,
+}
+
+/// An object value: its members in source order, every occurrence of a key
+/// included. Lookup is linear in the member count.
+Object :: struct {
+	@(private) document: ^Document,
+	@(private) index:    u32,
+}
+
+/// One object member. A `foreach (key, value in object)` takes it apart.
+Member :: (key: string_view, value: Value);
+
+/// A number as it was spelled: exact, whatever its size, until a conversion is
+/// asked for. Only a document or `number` makes one, so its text is always a
+/// valid JSON number.
+Number :: struct {
+	@(private, required) spelling: string_view,
+	@(private) offset: int,
+}
+
+/// A borrowing document of `input`, which must be UTF-8. Invalid UTF-8 is
+/// reported, at its first bad byte, in preference to any other error. Every
+/// allocation, the document's own included, comes from `allocator`, and a
+/// failed parse releases all of it.
+parse :: proc(
+	input: []u8,
+	allocator: Allocator = mem.default_allocator(),
+	options: Parse_Options = {},
+) -> Result(Document, Parse_Error) {
+	document := Document.init(allocator);
+	document.reparse(input, options) or_return;
+	return move(document);
+}
+
+/// The same for text already known to be UTF-8, which skips that validation.
+parse_text :: proc(
+	input: string_view,
+	allocator: Allocator = mem.default_allocator(),
+	options: Parse_Options = {},
+) -> Result(Document, Parse_Error) {
+	document := Document.init(allocator);
+	document.reparse_text(input, options) or_return;
+	return move(document);
+}
+
+/// A document that owns `input`, taken without copying its bytes. `allocator`
+/// selects the document's own storage; the string keeps the allocator it has.
+/// The string is consumed whether or not the parse succeeds.
+parse_owned :: proc(
+	input: move string,
+	allocator: Allocator = mem.default_allocator(),
+	options: Parse_Options = {},
+) -> Result(Document, Parse_Error) {
+	document := Document.init(allocator);
+	document.reparse_owned(move(input), options) or_return;
+	return move(document);
+}
+
+impl Document {
+	/// An empty document whose storage will come from `allocator`.
+	init :: proc(allocator: Allocator = mem.default_allocator()) -> Document {
+		return Document{
+			nodes = make([dynamic]Node, 0, 0, allocator),
+			decoded = strings.init(allocator),
+			allocator = allocator,
+		};
+	}
+
+	/// The root value, or `.none` for an empty, cleared, or failed document. A
+	/// successful parse always has one, `null` included.
+	root :: proc(self: ^) -> Option(Value) {
+		if (self.nodes.len() == 0) { return .none; }
+		return Value{self, 0};
+	}
+
+	/// Parses `input` into this document in place of what it held, reusing its
+	/// allocator and capacity. `input` must be UTF-8, as for `parse`.
+	reparse :: proc(
+		self: inout, @(escape=stored) input: []u8, options: Parse_Options = {},
+	) -> Status(Parse_Error) {
+		self.clear();
+		limits := resolve_limits(options, input.len()) or_return;
+		switch (string_view.from_utf8(input)) {
+		case .some(text):
+			scan(inout self.nodes, inout self.decoded, text, limits) or_return;
+			self.source = .borrowed(text);
+		case .none:
+			return .err(Parse_Error{.Invalid_Utf8, first_invalid_utf8(input)});
+		}
+	}
+
+	reparse_text :: proc(
+		self: inout, @(escape=stored) input: string_view, options: Parse_Options = {},
+	) -> Status(Parse_Error) {
+		self.clear();
+		limits := resolve_limits(options, input.len()) or_return;
+		scan(inout self.nodes, inout self.decoded, input, limits) or_return;
+		self.source = .borrowed(input);
+	}
+
+	/// Takes ownership of `input`, which is consumed whether or not the parse
+	/// succeeds.
+	reparse_owned :: proc(
+		self: inout, @(escape=stored) input: move string, options: Parse_Options = {},
+	) -> Status(Parse_Error) {
+		self.clear();
+		limits := resolve_limits(options, input.len()) or_return;
+		// The nodes hold offsets, so the text can move into the document after
+		// it has been read.
+		scan(inout self.nodes, inout self.decoded, input, limits) or_return;
+		self.source = .owned(move(input));
+	}
+
+	/// Empties the document and releases its input, keeping its allocator and
+	/// capacity.
+	clear :: proc(self: inout) {
+		self.nodes.clear();
+		self.decoded.clear();
+		self.source = .borrowed("");
+	}
+}
+
+impl Value {
+	kind :: proc(self) -> Kind { return kind_of(self.node()); }
+
+	boolean :: proc(self) -> Result(bool, Access_Error) {
+		node := self.expect(.Boolean) or_return;
+		return (node.info & TRUE_FLAG) != 0;
+	}
+
+	/// The decoded text, borrowed from the input when it had no escapes and from
+	/// the document otherwise.
+	string :: proc(self) -> Result(string_view, Access_Error) {
+		node := self.expect(.String) or_return;
+		return string_of(self.document, node);
+	}
+
+	number :: proc(self) -> Result(Number, Access_Error) {
+		node := self.expect(.Number) or_return;
+		return number_of(self.document, node);
+	}
+
+	/// `number()` and its conversion, with either's error.
+	to_i64 :: proc(self) -> Result(i64, Access_Error) { return (self.number() or_return).to_i64(); }
+	to_u64 :: proc(self) -> Result(u64, Access_Error) { return (self.number() or_return).to_u64(); }
+	to_f64 :: proc(self) -> Result(f64, Access_Error) { return (self.number() or_return).to_f64(); }
+
+	array :: proc(self) -> Result(Array, Access_Error) {
+		self.expect(.Array) or_return;
+		return Array{self.document, self.index};
+	}
+
+	object :: proc(self) -> Result(Object, Access_Error) {
+		self.expect(.Object) or_return;
+		return Object{self.document, self.index};
+	}
+
+	@(private)
+	node :: proc(self) -> Node { return self.document.nodes[int(self.index)]; }
+
+	@(private)
+	expect :: proc(self, kind: Kind) -> Result(Node, Access_Error) {
+		node := self.node();
+		actual := kind_of(node);
+		if (actual != kind) { return .err(wrong_kind(kind, actual, int(node.start))); }
+		return node;
+	}
+}
+
+impl Array {
+	Element :: Value;
+
+	len :: proc(self) -> int { return int(self.document.nodes[int(self.index)].count); }
+
+	/// The element at `index`, found by walking the elements before it.
+	at :: proc(self, index: int) -> Option(Value) {
+		if (index < 0 || index >= self.len()) { return .none; }
+		at := self.index + 1;
+		for (i := 0; i < index; i += 1) { at = next_sibling(self.document, at); }
+		return Value{self.document, at};
+	}
+
+	iter :: proc(self) -> Array_Iterator {
+		return Array_Iterator{self.document, self.index + 1, self.document.nodes[int(self.index)].count};
+	}
+}
+
+Array_Iterator :: struct {
+	@(private) document:  ^Document,
+	@(private) at:        u32,
+	@(private) remaining: u32,
+}
+
+impl Array_Iterator {
+	next :: proc(self: inout Array_Iterator) -> Option(Value) {
+		if (self.remaining == 0) { return .none; }
+		value := Value{self.document, self.at};
+		self.at = next_sibling(self.document, self.at);
+		self.remaining -= 1;
+		return value;
+	}
+}
+
+impl Object {
+	Element :: Member;
+
+	len :: proc(self) -> int { return int(self.document.nodes[int(self.index)].count); }
+
+	/// The value of the one member whose decoded key is `key`, compared byte
+	/// for byte, or `.none` when there is none. Two or more such members are
+	/// `Duplicate_Key`, never the first or last of them. A successful lookup
+	/// says nothing about whether other keys repeat.
+	find :: proc(self, key: string_view) -> Result(Option(Value), Access_Error) {
+		// A match must still scan the rest, to find a second one.
+		found: u32 = 0;
+		matched := false;
+		at := self.index + 1;
+		count := self.document.nodes[int(self.index)].count;
+		for (i: u32 = 0; i < count; i += 1) {
+			name := self.document.nodes[int(at)];
+			if (string_of(self.document, name) == key) {
+				if (matched) {
+					return .err(access_error(.Duplicate_Key, int(name.start)));
+				}
+				matched = true;
+				found = at + 1;
+			}
+			at = next_sibling(self.document, at + 1);
+		}
+		if (!matched) { return Option(Value).none; }
+		return Option(Value).some(Value{self.document, found});
+	}
+
+	/// `find`, with no member at all reported as `Missing_Key`.
+	require :: proc(self, key: string_view) -> Result(Value, Access_Error) {
+		switch (self.find(key) or_return) {
+		case .some(value): return value;
+		case .none:
+			return .err(access_error(.Missing_Key, int(self.document.nodes[int(self.index)].start)));
+		}
+	}
+
+	iter :: proc(self) -> Member_Iterator {
+		return Member_Iterator{self.document, self.index + 1, self.document.nodes[int(self.index)].count};
+	}
+}
+
+Member_Iterator :: struct {
+	@(private) document:  ^Document,
+	@(private) at:        u32,
+	@(private) remaining: u32,
+}
+
+impl Member_Iterator {
+	next :: proc(self: inout Member_Iterator) -> Option(Member) {
+		if (self.remaining == 0) { return .none; }
+		key := string_of(self.document, self.document.nodes[int(self.at)]);
+		member := Member{key, Value{self.document, self.at + 1}};
+		self.at = next_sibling(self.document, self.at + 1);
+		self.remaining -= 1;
+		return member;
+	}
+}
+
+/// A number made from `text`, which must be exactly one JSON number with no
+/// whitespace around it. It borrows `text`, so an exact decimal can be written
+/// without building a document.
+number :: proc(text: string_view) -> Result(Number, Parse_Error) {
+	end := scan_number(text.bytes(), 0) or_return;
+	if (end != text.len()) { return .err(Parse_Error{.Invalid_Number, 0}); }
+	return Number{spelling = text};
+}
+
+impl Number {
+	/// The spelling, exactly as written.
+	text :: proc(self) -> string_view { return self.spelling; }
+
+	/// The integer, for a spelling with neither a point nor an exponent: `1.0`
+	/// is `Not_Integer` however integral its value.
+	to_i64 :: proc(self) -> Result(i64, Access_Error) {
+		self.require_integer() or_return;
+		switch (strconv.parse_i64(self.spelling, 10)) {
+		case .ok(value): return value;
+		case .err: return .err(access_error(.Out_Of_Range, self.offset));
+		}
+	}
+
+	/// As `to_i64`; `-0` is zero, and any other negative integer is out of range.
+	to_u64 :: proc(self) -> Result(u64, Access_Error) {
+		self.require_integer() or_return;
+		if (self.spelling == "-0") { return 0; }
+		switch (strconv.parse_u64(self.spelling, 10)) {
+		case .ok(value): return value;
+		case .err: return .err(access_error(.Out_Of_Range, self.offset));
+		}
+	}
+
+	/// The nearest `f64`. Integer precision may be lost, a magnitude too small
+	/// rounds to a signed zero, and one too large is `Out_Of_Range`: the result
+	/// is never an infinity or a NaN.
+	to_f64 :: proc(self) -> Result(f64, Access_Error) {
+		switch (strconv.try_parse_f64(self.spelling)) {
+		case .ok(value): return value;
+		case .err(failure):
+			switch (failure) {
+			case .parse: return .err(access_error(.Out_Of_Range, self.offset));
+			case .backend(error):
+				code := Access_Code.Backend_Failure;
+				if (error == .Out_Of_Memory) { code = .Out_Of_Memory; }
+				return .err(access_error(code, self.offset));
+			}
+		}
+	}
+
+	@(private)
+	require_integer :: proc(self) -> Status(Access_Error) {
+		foreach (byte in self.spelling.bytes()) {
+			if (byte == u8('.') || byte == u8('e') || byte == u8('E')) {
+				return .err(access_error(.Not_Integer, self.offset));
+			}
+		}
+	}
+}
+
+// ---------------------------------------------------------------- private --
+
+// Each value is one node, in source order; an object's key is a string node
+// just before its value. Sixteen bytes:
+//
+//   info     the `Kind` in the low byte, and the flags below
+//   start    where the value's token starts in the source
+//   payload  a string's offset into the source, or into the decoded text with
+//            `DECODED_FLAG`; a container's index just past its last
+//            descendant
+//   count    a string's decoded length, a number's spelled length, or a
+//            container's direct element or member count
+@(private)
+Node :: struct {
+	info:    u32,
+	start:   u32,
+	payload: u32,
+	count:   u32,
+}
+
+@(private)
+TRUE_FLAG :: 0x100;
+
+@(private)
+DECODED_FLAG :: 0x200;
+
+// Where the document's text lives; nothing until a parse succeeds.
+@(private)
+Source :: union @(zero=borrowed) {
+	borrowed: string_view,
+	owned:    string,
+}
+
+@(private)
+kind_of :: proc(node: Node) -> Kind {
+	return Kind.from_int(node.info & 0xFF) or_else panic("a JSON node holds no kind");
+}
+
+@(private)
+source_text :: proc(document: ^Document) -> string_view {
+	switch (document.source) {
+	case .borrowed(text): return text;
+	case .owned(text):    return text;
+	}
+}
+
+@(private)
+string_of :: proc(document: ^Document, node: Node) -> string_view {
+	start := int(node.payload);
+	end := start + int(node.count);
+	if ((node.info & DECODED_FLAG) != 0) { return document.decoded.view()[start:end]; }
+	return source_text(document)[start:end];
+}
+
+@(private)
+number_of :: proc(document: ^Document, node: Node) -> Number {
+	start := int(node.start);
+	return Number{source_text(document)[start:start + int(node.count)], start};
+}
+
+// The index just past the value at `index` and everything inside it.
+@(private)
+next_sibling :: proc(document: ^Document, index: u32) -> u32 {
+	node := document.nodes[int(index)];
+	kind := kind_of(node);
+	if (kind == .Array || kind == .Object) { return node.payload; }
+	return index + 1;
+}

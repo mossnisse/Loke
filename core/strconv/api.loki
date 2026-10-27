@@ -48,8 +48,25 @@ parse_uint :: proc(text: string_view, base: int = 0) -> Result(uint, Parse_Error
 // The result is correctly rounded, and what `fmt` prints this parses to the
 // same value. Parsing is in the "C" numeric locale, so a program that sets a
 // decimal-comma locale for its own C code still parses `1.5` as one and a
-// half.
+// half. It allocates nothing, however long the text.
 //
 // Infinities and NaNs are not spellable; a caller that needs them tests for the
-// words itself.
+// words itself. A finite spelling past the largest `f64` is `Overflow`; one
+// too small for the smallest subnormal rounds to a signed zero.
+//
+// Making that locale can fail, which panics here; `try_parse_f64` reports it.
 parse_f64 :: proc(text: string_view) -> Result(f64, Parse_Error) ---;
+
+// What can stop a float conversion other than its text: the "C" numeric
+// locale it runs in could not be made. `Out_Of_Memory` when that was an
+// allocation failure, `Unavailable` otherwise.
+Backend_Error :: enum {
+	Out_Of_Memory,
+	Unavailable,
+}
+
+// `parse_f64`, answering a `Backend_Error` where that panics. Every other
+// answer is the same.
+try_parse_f64 :: proc(
+	text: string_view,
+) -> Result(f64, (parse: Parse_Error | backend: Backend_Error)) ---;

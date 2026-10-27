@@ -1,0 +1,419 @@
+// The writer: JSON text from a sequence of calls, batched through a caller's
+// buffer into any `io.Writer`.
+// standard-library "Writing".
+@(public)
+package json;
+
+import "core:fmt";
+import "core:io";
+import "core:mem";
+import "core:strings";
+
+/// A streaming writer into `W`. It borrows the output and the caller's buffer,
+/// and keeps its nesting inline, so it allocates nothing of its own.
+///
+/// It checks every call against the document's shape: one root value, a key
+/// before each member's value, and closes that match what is open. The first
+/// failure of any kind, the output's included, is latched: every later call
+/// writes nothing and returns it. `finish` completes the document and flushes
+/// the buffer; after it, `finish` succeeds again without writing, and anything
+/// else is `Invalid_State`. Dropping a writer writes nothing, so an unfinished
+/// document can be left with bytes still in the buffer.
+///
+/// A failed write may leave part of a document in the output; nothing is
+/// rolled back.
+Writer :: struct($W: type) {
+	@(private) output:    ^mut W,
+	@(private) buffer:    []mut u8,
+	@(private) used:      int,
+	@(private) written:   int,
+	@(private) max_bytes: int,
+	@(private) max_depth: int,
+	@(private) pretty:    bool,
+	@(private) depth:     int,
+	@(private) frames:    [MAX_DEPTH]u8,
+	@(private) rooted:    bool,
+	@(private) sealed:    bool,
+	@(private) failure:   Option(Write_Error),
+}
+
+/// A writer into `output`, through `buffer`, which must not be empty. Bytes
+/// reach `output` when the buffer fills and at `finish`; a span longer than the
+/// buffer goes straight through.
+writer :: proc(
+	output: ^mut $W, buffer: []mut u8, options: Write_Options = {},
+) -> Result(Writer(W), Write_Error) where io.Writer(W) {
+	limits := options.max_depth < 0 || options.max_depth > MAX_DEPTH || options.max_bytes < 0;
+	if (buffer.len() == 0 || limits) { return .err(Write_Error{code = .Invalid_Options}); }
+	return .ok(Writer(W){
+		output = output,
+		buffer = buffer,
+		max_bytes = options.max_bytes if options.max_bytes > 0 else DEFAULT_MAX_OUTPUT,
+		max_depth = options.max_depth if options.max_depth > 0 else MAX_DEPTH,
+		pretty = options.pretty,
+	});
+}
+
+/// The JSON text of `value` as an owned string from `allocator`: compact
+/// unless the options say otherwise. The output is assembled in memory and
+/// copied once into the string.
+stringify :: proc(
+	value: Value,
+	allocator: Allocator = mem.default_allocator(),
+	options: Write_Options = {},
+) -> Result(string, Write_Error) {
+	bytes := io.Buffer_Writer.init(allocator);
+	scratch: [1024]u8 = {};
+	switch (write_value(&mut bytes, &mut scratch[:], value, options)) {
+	case .ok:
+	case .err(error):
+		// The output is memory, so its only failure is an allocation.
+		if (error.code == .Io) { return .err(Write_Error{code = .Out_Of_Memory}); }
+		return .err(error);
+	}
+	text := string_view.from_utf8(bytes.bytes()) or_else panic("JSON output is not UTF-8");
+	switch (strings.try_copy(text, allocator)) {
+	case .ok(copied): return copied;
+	case .err: return .err(Write_Error{code = .Out_Of_Memory});
+	}
+}
+
+impl Writer($W) {
+	begin_object :: proc(self: inout) -> Status(Write_Error) where io.Writer(W) {
+		return self.open(OBJECT, "{");
+	}
+
+	end_object :: proc(self: inout) -> Status(Write_Error) where io.Writer(W) {
+		return self.close(OBJECT);
+	}
+
+	begin_array :: proc(self: inout) -> Status(Write_Error) where io.Writer(W) {
+		return self.open(0, "[");
+	}
+
+	end_array :: proc(self: inout) -> Status(Write_Error) where io.Writer(W) {
+		return self.close(0);
+	}
+
+	/// The next member's key, inside an object, before its value.
+	key :: proc(self: inout, key: string_view) -> Status(Write_Error) where io.Writer(W) {
+		self.check() or_return;
+		if (self.depth == 0) { return self.fail(.Invalid_State); }
+		frame := self.frames[self.depth - 1];
+		if ((frame & OBJECT) == 0 || (frame & KEYED) != 0) { return self.fail(.Invalid_State); }
+		if ((frame & FILLED) != 0) { self.emit(",") or_return; }
+		self.frames[self.depth - 1] = frame | FILLED | KEYED;
+		self.newline() or_return;
+		self.quoted(key) or_return;
+		colon: string_view = ": " if self.pretty else ":";
+		return self.emit(colon);
+	}
+
+	/// Quoted, with `"`, `\`, and the control characters escaped; every other
+	/// character is written as UTF-8.
+	string :: proc(self: inout, text: string_view) -> Status(Write_Error) where io.Writer(W) {
+		self.start_value() or_return;
+		self.quoted(text) or_return;
+		self.end_value();
+	}
+
+	boolean :: proc(self: inout, value: bool) -> Status(Write_Error) where io.Writer(W) {
+		self.start_value() or_return;
+		self.emit("true" if value else "false") or_return;
+		self.end_value();
+	}
+
+	null :: proc(self: inout) -> Status(Write_Error) where io.Writer(W) {
+		self.start_value() or_return;
+		self.emit("null") or_return;
+		self.end_value();
+	}
+
+	i64 :: proc(self: inout, value: i64) -> Status(Write_Error) where io.Writer(W) {
+		spelled := Spelling{};
+		fmt.format_to((fmt.Writer)(&mut spelled), value);
+		return self.scalar(spelled.bytes[:spelled.used]);
+	}
+
+	u64 :: proc(self: inout, value: u64) -> Status(Write_Error) where io.Writer(W) {
+		spelled := Spelling{};
+		fmt.format_to((fmt.Writer)(&mut spelled), value);
+		return self.scalar(spelled.bytes[:spelled.used]);
+	}
+
+	/// The shortest spelling that reads back as `value`, as `fmt` prints it,
+	/// with negative zero kept. A NaN or an infinity is `Non_Finite`, and is
+	/// refused before anything is written.
+	f64 :: proc(self: inout, value: f64) -> Status(Write_Error) where io.Writer(W) {
+		self.check() or_return;
+		if (value != value || value > 1.7976931348623157e308 || value < -1.7976931348623157e308) {
+			return self.fail(.Non_Finite);
+		}
+		spelled: [fmt.FLOAT_SPELLING_MAX]u8 = {};
+		used := 0;
+		switch (fmt.try_spell_f64(value, &mut spelled)) {
+		case .ok(count): used = count;
+		case .err(error):
+			return self.fail(Write_Code.Out_Of_Memory if error == .Out_Of_Memory else Write_Code.Backend_Failure);
+		}
+		return self.scalar(spelled[:used]);
+	}
+
+	/// The number exactly as it is spelled.
+	number :: proc(self: inout, value: Number) -> Status(Write_Error) where io.Writer(W) {
+		return self.scalar(value.spelling.bytes());
+	}
+
+	/// `value` and everything inside it, in order, repeated keys and number
+	/// spellings kept. Its containers count toward the depth limit on top of
+	/// those already open here.
+	value :: proc(self: inout, value: Value) -> Status(Write_Error) where io.Writer(W) {
+		document := value.document;
+		// Where each container this call opened ends, innermost last.
+		ends: [MAX_DEPTH]u32 = {};
+		open := 0;
+		at := value.index;
+		stop := next_sibling(document, at);
+		for (;;) {
+			for (; open > 0 && ends[open - 1] == at; open -= 1) {
+				kind := self.frames[self.depth - 1] & OBJECT;
+				self.close(kind) or_return;
+			}
+			if (at >= stop) { break; }
+			node := document.nodes[int(at)];
+			at += 1;
+			if (open > 0 && self.wants_key()) {
+				self.key(string_of(document, node)) or_return;
+				continue;
+			}
+			switch (kind_of(node)) {
+			case .Null:    self.null() or_return;
+			case .Boolean: self.boolean((node.info & TRUE_FLAG) != 0) or_return;
+			case .Number:  self.number(number_of(document, node)) or_return;
+			case .String:  self.string(string_of(document, node)) or_return;
+			case .Array, .Object:
+				object := kind_of(node) == .Object;
+				self.open(OBJECT if object else 0, "{" if object else "[") or_return;
+				ends[open] = node.payload;
+				open += 1;
+			}
+		}
+	}
+
+	/// Completes the document: the root must be written and every container
+	/// closed. Flushes the buffer to the output, and seals the writer.
+	finish :: proc(self: inout) -> Status(Write_Error) where io.Writer(W) {
+		switch (self.failure) {
+		case .some(error): return .err(error);
+		case .none:
+		}
+		if (self.sealed) { return .ok; }
+		if (!self.rooted) { return self.fail(.Invalid_State); }
+		self.drain() or_return;
+		self.sealed = true;
+	}
+
+	// The latched failure, or `Invalid_State` once sealed.
+	@(private)
+	check :: proc(self: inout) -> Status(Write_Error) {
+		switch (self.failure) {
+		case .some(error): return .err(error);
+		case .none:
+		}
+		if (self.sealed) { return self.fail(.Invalid_State); }
+	}
+
+	@(private)
+	fail :: proc(self: inout, code: Write_Code) -> Status(Write_Error) {
+		return self.latch(Write_Error{code = code});
+	}
+
+	@(private)
+	latch :: proc(self: inout, error: Write_Error) -> Status(Write_Error) {
+		self.failure = .some(error);
+		return .err(error);
+	}
+
+	@(private)
+	wants_key :: proc(self) -> bool {
+		frame := self.frames[self.depth - 1];
+		return (frame & OBJECT) != 0 && (frame & KEYED) == 0;
+	}
+
+	// The separator and layout a value needs where it is, after checking that
+	// a value may go there.
+	@(private)
+	start_value :: proc(self: inout) -> Status(Write_Error) where io.Writer(W) {
+		self.check() or_return;
+		if (self.depth == 0) {
+			if (self.rooted) { return self.fail(.Invalid_State); }
+			return .ok;
+		}
+		frame := self.frames[self.depth - 1];
+		if ((frame & OBJECT) != 0) {
+			if ((frame & KEYED) == 0) { return self.fail(.Invalid_State); }
+			self.frames[self.depth - 1] = frame ~ KEYED;
+			return .ok;
+		}
+		if ((frame & FILLED) != 0) { self.emit(",") or_return; }
+		self.frames[self.depth - 1] = frame | FILLED;
+		return self.newline();
+	}
+
+	@(private)
+	end_value :: proc(self: inout) {
+		if (self.depth == 0) { self.rooted = true; }
+	}
+
+	@(private)
+	scalar :: proc(self: inout, spelled: []u8) -> Status(Write_Error) where io.Writer(W) {
+		self.start_value() or_return;
+		self.emit_bytes(spelled) or_return;
+		self.end_value();
+	}
+
+	@(private)
+	open :: proc(self: inout, kind: u8, bracket: string_view) -> Status(Write_Error) where io.Writer(W) {
+		self.start_value() or_return;
+		if (self.depth >= self.max_depth) { return self.fail(.Limit_Exceeded); }
+		self.emit(bracket) or_return;
+		self.frames[self.depth] = kind;
+		self.depth += 1;
+	}
+
+	@(private)
+	close :: proc(self: inout, kind: u8) -> Status(Write_Error) where io.Writer(W) {
+		self.check() or_return;
+		if (self.depth == 0) { return self.fail(.Invalid_State); }
+		frame := self.frames[self.depth - 1];
+		if ((frame & OBJECT) != kind || (frame & KEYED) != 0) { return self.fail(.Invalid_State); }
+		self.depth -= 1;
+		if ((frame & FILLED) != 0) { self.newline() or_return; }
+		self.emit("}" if kind == OBJECT else "]") or_return;
+		self.end_value();
+	}
+
+	// A line break and the indentation of the current depth, in pretty output.
+	@(private)
+	newline :: proc(self: inout) -> Status(Write_Error) where io.Writer(W) {
+		if (!self.pretty) { return .ok; }
+		self.emit("\n") or_return;
+		spaces: string_view = SPACES;
+		for (indent := 2 * self.depth; indent > 0; ) {
+			step := indent if indent < spaces.len() else spaces.len();
+			self.emit(spaces[:step]) or_return;
+			indent -= step;
+		}
+	}
+
+	@(private)
+	quoted :: proc(self: inout, text: string_view) -> Status(Write_Error) where io.Writer(W) {
+		self.emit("\"") or_return;
+		bytes := text.bytes();
+		run := 0;
+		for (at := 0; at < bytes.len(); at += 1) {
+			byte := bytes[at];
+			if (byte >= 0x20 && byte != u8('"') && byte != u8('\\')) { continue; }
+			self.emit_bytes(bytes[run:at]) or_return;
+			run = at + 1;
+			if (byte == u8('"')) { self.emit("\\\"") or_return; }
+			else if (byte == u8('\\')) { self.emit("\\\\") or_return; }
+			else if (byte == 0x0A) { self.emit("\\n") or_return; }
+			else if (byte == 0x0D) { self.emit("\\r") or_return; }
+			else if (byte == 0x09) { self.emit("\\t") or_return; }
+			else if (byte == 0x08) { self.emit("\\b") or_return; }
+			else if (byte == 0x0C) { self.emit("\\f") or_return; }
+			else {
+				hex: string_view = HEX;
+				digits := hex.bytes();
+				escape := [6]u8{u8('\\'), u8('u'), u8('0'), u8('0'), digits[int(byte >> 4)], digits[int(byte & 0xF)]};
+				self.emit_bytes(escape[:]) or_return;
+			}
+		}
+		self.emit_bytes(bytes[run:]) or_return;
+		return self.emit("\"");
+	}
+
+	@(private)
+	emit :: proc(self: inout, text: string_view) -> Status(Write_Error) where io.Writer(W) {
+		return self.emit_bytes(text.bytes());
+	}
+
+	// Checks the output limit before anything of `bytes` is written.
+	@(private)
+	emit_bytes :: proc(self: inout, bytes: []u8) -> Status(Write_Error) where io.Writer(W) {
+		count := bytes.len();
+		if (count > self.max_bytes - self.written) { return self.fail(.Limit_Exceeded); }
+		self.written += count;
+		if (count > self.buffer.len() - self.used) {
+			self.drain() or_return;
+			if (count >= self.buffer.len()) { return self.send(bytes); }
+		}
+		for (i := 0; i < count; i += 1) { self.buffer[self.used + i] = bytes[i]; }
+		self.used += count;
+	}
+
+	@(private)
+	drain :: proc(self: inout) -> Status(Write_Error) where io.Writer(W) {
+		if (self.used == 0) { return .ok; }
+		switch (io.write_all(inout self.output^, self.buffer[:self.used])) {
+		case .ok: self.used = 0;
+		case .err(error): return self.latch(Write_Error{.Io, error});
+		}
+	}
+
+	@(private)
+	send :: proc(self: inout, bytes: []u8) -> Status(Write_Error) where io.Writer(W) {
+		switch (io.write_all(inout self.output^, bytes)) {
+		case .ok: return .ok;
+		case .err(error): return self.latch(Write_Error{.Io, error});
+		}
+	}
+}
+
+// ---------------------------------------------------------------- private --
+
+// A frame's flags: an object rather than an array, at least one member or
+// element written, and a key written whose value has not been.
+@(private)
+OBJECT :: u8(1);
+@(private)
+FILLED :: u8(2);
+@(private)
+KEYED :: u8(4);
+
+@(private)
+SPACES :: "                                ";
+
+@(private)
+HEX :: "0123456789abcdef";
+
+// An integer's spelling from `fmt`, held inline; 20 digits and a sign is the
+// longest.
+@(private)
+Spelling :: struct {
+	bytes: [24]u8,
+	used:  int,
+}
+
+impl Spelling {
+	write :: proc(self: inout, bytes: []u8) {
+		foreach (byte in bytes) {
+			if (self.used < 24) {
+				self.bytes[self.used] = byte;
+				self.used += 1;
+			}
+		}
+	}
+}
+
+// `stringify`'s writer, in a procedure of its own so its borrows of the
+// output end before the output is read.
+@(private)
+write_value :: proc(
+	output: ^mut io.Buffer_Writer, buffer: []mut u8, value: Value, options: Write_Options,
+) -> Status(Write_Error) {
+	out := writer(output, buffer, options) or_return;
+	out.value(value) or_return;
+	return out.finish();
+}

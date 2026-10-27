@@ -11,6 +11,7 @@
  */
 #include "loke_rt.h"
 
+#include <errno.h>
 #include <locale.h>
 #include <math.h>
 #include <stdio.h>
@@ -23,18 +24,21 @@
  * float here and in `core:strconv` goes through this locale instead.
  *
  * Two threads racing to make it both succeed, and the loser frees its copy.
- * Failing to make it panics. The `_l` functions read a null locale as the
- * current one, so carrying on would quietly bring back the comma it exists to
- * rule out; a later call tries again. */
-static _locale_t c_numeric(void) {
+ * Failing to make it answers 0 with `*failure` set to `LOKE_RT_NUMERIC_*`: the
+ * `_l` functions read a null locale as the current one, so carrying on would
+ * quietly bring back the comma it exists to rule out. A later call tries
+ * again. */
+static _locale_t try_c_numeric(int32_t *failure) {
 	static _locale_t cached;
 	_locale_t found = __atomic_load_n(&cached, __ATOMIC_ACQUIRE);
 	if (found != 0) {
 		return found;
 	}
+	errno = 0;
 	_locale_t made = _create_locale(LC_NUMERIC, "C");
 	if (made == 0) {
-		loke_rt_v1_panic("cannot create the \"C\" numeric locale for float text");
+		*failure = errno == ENOMEM ? LOKE_RT_NUMERIC_OUT_OF_MEMORY : LOKE_RT_NUMERIC_UNAVAILABLE;
+		return 0;
 	}
 	_locale_t expected = 0;
 	if (!__atomic_compare_exchange_n(&cached, &expected, made, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
@@ -44,13 +48,29 @@ static _locale_t c_numeric(void) {
 	return made;
 }
 
-/* `core:strconv.parse_f64`'s conversion. The caller has already checked the
- * spelling, so a correct conversion consumes all of it; one that does not is
- * reported as NaN, which no accepted spelling produces. */
-double loke_rt_v1_parse_f64(const char *text) {
+/* The same, for printing, whose sink has no way to report a failure. */
+static _locale_t c_numeric(void) {
+	int32_t failure = 0;
+	_locale_t made = try_c_numeric(&failure);
+	if (made == 0) {
+		loke_rt_v1_panic("cannot create the \"C\" numeric locale for float text");
+	}
+	return made;
+}
+
+/* `core:strconv`'s float conversion. The caller has already checked the
+ * spelling, so a correct conversion consumes all of it; one that does not
+ * answers `LOKE_RT_NUMERIC_REJECTED`, and a locale that cannot be made answers
+ * its failure. Otherwise it stores the value and answers 0. */
+int32_t loke_rt_v1_try_parse_f64(const char *text, double *value) {
+	int32_t failure = 0;
+	_locale_t locale = try_c_numeric(&failure);
+	if (locale == 0) {
+		return failure;
+	}
 	char *end = 0;
-	double value = _strtod_l(text, &end, c_numeric());
-	return *end == 0 ? value : NAN;
+	*value = _strtod_l(text, &end, locale);
+	return *end == 0 ? 0 : LOKE_RT_NUMERIC_REJECTED;
 }
 
 void loke_rt_v1_write_std(void *state, const uint8_t *bytes, int64_t count) {
@@ -230,8 +250,8 @@ static int spell_general(char *out, const char *sci) {
 	return used;
 }
 
-static int reads_back(const char *sci, double value, int single) {
-	double back = _strtod_l(sci, 0, c_numeric());
+static int reads_back(const char *sci, double value, int single, _locale_t locale) {
+	double back = _strtod_l(sci, 0, locale);
 	return single ? (float)back == (float)value : back == value;
 }
 
@@ -251,36 +271,57 @@ static int reads_back(const char *sci, double value, int single) {
  *
  * ponytail: up to 17 `snprintf`/`strtod` pairs per value rather than Ryu or
  * Grisu. Formatting is not a hot path; swap in one of those if it becomes one. */
-static void fmt_float(const loke_rt_writer_v1 *w, double value, int single) {
+static int64_t spell_float(uint8_t *out, double value, int single, _locale_t locale) {
 	if (isnan(value)) {
-		loke_rt_v1_fmt_bytes(w, (const uint8_t *)"nan", 3);
-		return;
+		memcpy(out, "nan", 3);
+		return 3;
 	}
 	if (isinf(value)) {
 		if (value < 0) {
-			loke_rt_v1_fmt_bytes(w, (const uint8_t *)"-inf", 4);
-		} else {
-			loke_rt_v1_fmt_bytes(w, (const uint8_t *)"inf", 3);
+			memcpy(out, "-inf", 4);
+			return 4;
 		}
-		return;
+		memcpy(out, "inf", 3);
+		return 3;
 	}
 	/* The longest spelling, `-2.2250738585072014e-308`, is 24 bytes; the
 	 * longest fixed one, `-0.00012345678901234567`, is 23. */
 	char sci[32];
-	char out[32];
 	int widest = single ? 9 : 17;
 	for (int precision = 1;; precision++) {
-		_snprintf_s_l(sci, sizeof(sci), _TRUNCATE, "%.*e", c_numeric(), precision - 1, value);
-		if (precision == widest || reads_back(sci, value, single)) {
+		_snprintf_s_l(sci, sizeof(sci), _TRUNCATE, "%.*e", locale, precision - 1, value);
+		if (precision == widest || reads_back(sci, value, single, locale)) {
 			break;
 		}
 		spell_up(sci);
-		if (reads_back(sci, value, single)) {
+		if (reads_back(sci, value, single, locale)) {
 			break;
 		}
 	}
-	int used = spell_general(out, sci);
-	loke_rt_v1_fmt_bytes(w, (const uint8_t *)out, used);
+	return spell_general((char *)out, sci);
+}
+
+static void fmt_float(const loke_rt_writer_v1 *w, double value, int single) {
+	/* NaN and the infinities need no locale, so printing them cannot panic. */
+	_locale_t locale = isnan(value) || isinf(value) ? 0 : c_numeric();
+	uint8_t out[LOKE_RT_FLOAT_SPELLING_MAX];
+	int64_t used = spell_float(out, value, single, locale);
+	loke_rt_v1_fmt_bytes(w, out, used);
+}
+
+/* `fmt.try_spell_f64`: `fmt_float`'s bytes into `out`, which holds
+ * `LOKE_RT_FLOAT_SPELLING_MAX` of them, answering their count, or the negated
+ * locale failure where printing panics. */
+int64_t loke_rt_v1_try_spell_f64(uint8_t *out, double value) {
+	_locale_t locale = 0;
+	if (!isnan(value) && !isinf(value)) {
+		int32_t failure = 0;
+		locale = try_c_numeric(&failure);
+		if (locale == 0) {
+			return -(int64_t)failure;
+		}
+	}
+	return spell_float(out, value, 0, locale);
 }
 
 void loke_rt_v1_fmt_f64(const loke_rt_writer_v1 *w, double value) {

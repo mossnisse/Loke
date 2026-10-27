@@ -98,7 +98,7 @@ Implementation order:
 
 Current optional gaps, to add only when a caller establishes their contract:
 `core:bytes`, `core:unicode`,
-`core:encoding/base64`, `core:encoding/json`, and `core:testing`; in
+`core:encoding/base64`, and `core:testing`; in
 `core:time`, the local and named time zones (see
 [Open questions in `core:time`](open-questions.md#open-questions-in-coretime));
 in `core:random`, `f32` distributions,
@@ -113,6 +113,34 @@ and thread identity. Math gaps include hyperbolics,
 `cbrt`/`ldexp`/`frexp`/`modf`, `erf`, `gamma`, lane-wise SIMD math, and
 integer bit helpers. `core:simd`'s remaining gaps are specified in
 [What SIMD does not do](design.md#what-simd-does-not-do).
+
+[`core:encoding/json`](standard-library.md#coreencodingjson) still needs this
+evidence, in this order; its open design questions are in
+[JSON follow-ups](open-questions.md#json-follow-ups):
+
+1. Run the [JSONTestSuite](https://github.com/nst/JSONTestSuite), pinned to a
+   revision: accept its required-valid cases within the documented limits,
+   reject its required-invalid cases, and record the result of every
+   implementation-defined case.
+2. Fuzz scanner and document agreement and writer call sequences, and check
+   writer output with an independent parser. The locale fault host in
+   `tests/obj` checks the runtime's fallible numeric entry points; carry an
+   injected locale failure through `strconv`, `fmt`, and the JSON errors too.
+3. Keep a benchmark corpus: state files of 2–64 KiB, large numeric arrays, many
+   small objects, long ASCII strings, non-ASCII text, and dense escapes of
+   1–64 MiB, plus tiny tokens and large-then-small document reuse. Report time,
+   throughput, allocation count and bytes, peak memory including growth, and
+   retained capacity, separating cold and reused parses, a complete walk with
+   conversions, field extraction, repeated lookup against one traversal,
+   output to memory, and durable file I/O. Compare the 16-byte node layout
+   with the 24-byte one, and compare like-for-like full validation against
+   pinned reference parsers, disclosing flags, hardware, allocator, input
+   copies, and raised limits ([simdjson's guidance](https://github.com/simdjson/simdjson/blob/master/doc/performance.md)
+   lists the usual pitfalls).
+4. Optimize from that baseline: byte runs, bulk copies into the writer's buffer
+   (it copies byte by byte today), escaping, and number conversion first; SIMD
+   string scanning or UTF-8 validation on full blocks after, with short tails
+   kept in bounds. No throughput claim is made until then.
 
 **Completion check:** the lexer, parser, and test harness run on the shared
 library without private substitutes for foundational services. Further library

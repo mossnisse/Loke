@@ -17,6 +17,7 @@ Examples use Loke syntax; the API summaries use Odin-style declaration sketches.
 | Format values or log messages | [`core:fmt`](#corefmt), [`core:log`](#corelog) |
 | Search and build UTF-8 text | [`core:strings`](#corestrings) |
 | Parse scalar values | [`core:strconv`](#corestrconv) |
+| Read or write JSON | [`core:encoding/json`](#coreencodingjson) |
 | Call foreign text APIs | [`core:cstrings`](#corecstrings), [`core:encoding/utf16`](#coreencodingutf16) |
 | Store integers in a fixed byte order | [`core:endian`](#coreendian) |
 | Access process state or start a child | [`core:os`](#coreos-additions), [`core:process`](#coreprocess) |
@@ -136,6 +137,7 @@ core:strconv          scalar parsing
 core:strings          UTF-8 algorithms and String_Builder
 core:cstrings         owned zero-terminated buffers
 core:encoding/utf16   UTF-8 to UTF-16 and back
+core:encoding/json    JSON documents, values, and a streaming writer
 core:endian           fixed byte-order storage wrappers
 core:math             elementary functions, Complex, Quaternion
 core:random           seeded generators, entropy, distributions
@@ -306,6 +308,28 @@ final line is returned successfully. End of input before any bytes returns
 `End_Of_Input`.
 
 There are no buffered wrappers yet. See [Standard-library maturity](future-plans.md#standard-library-maturity).
+
+### Byte buffer
+
+```loke
+Buffer_Writer :: struct { /* private */ }
+Buffer_Writer.init(allocator: Allocator = mem.default_allocator()) -> Buffer_Writer
+Buffer_Writer.write(self: inout, source: []u8) -> Result(int, Error)
+Buffer_Writer.bytes(self: ^) -> []u8
+Buffer_Writer.len(self) -> int
+Buffer_Writer.clear(self: inout)
+Buffer_Writer.into_bytes(self: move) -> [dynamic]u8
+```
+
+`Buffer_Writer` is an owning, growable byte sink that satisfies `Writer`, for
+output assembled in memory before it is published, such as a document passed
+to `fs.replace_atomic`. A write appends all of its bytes or none: an allocation
+failure is `Out_Of_Memory` with operation `Write`, and the buffer is unchanged.
+`bytes` borrows the contents, so a write while that view is in use is rejected.
+`clear` keeps the capacity for reuse, and `into_bytes` transfers the storage
+without a copy. **The zero value is usable**: empty and allocator-unbound, its
+first growth binding the default allocator; `init` selects another without
+allocating.
 
 ### Formatting bridge
 
@@ -1024,6 +1048,11 @@ fixed(value: f64, digits: int) -> Fixed
 pad_left(value: $T, width: int) -> Padded(T)
 pad_right(value: $T, width: int) -> Padded(T)
 zero_pad(value: $T, width: int) -> Padded(T) where interfaces.Integral(T), T != rune
+
+Backend_Error :: enum { Out_Of_Memory, Unavailable }
+FLOAT_SPELLING_MAX :: 32
+try_spell_f64(value: f64, destination: ^mut [FLOAT_SPELLING_MAX]u8)
+	-> Result(int, Backend_Error)
 ```
 
 A `Writer` borrows its sink: any record with a `write(self: inout, bytes:
@@ -1055,6 +1084,14 @@ library cannot create its "C" numeric locale for this, printing a float panics.
 design.md "String format printing" gives
 every generated form, including floats and the quoting of strings inside
 aggregates.
+
+`try_spell_f64` writes the bytes printing would write for an `f64`, `nan`,
+`inf`, and `-inf` included, to the start of a caller's fixed buffer and
+answers their count. It neither allocates nor writes through a sink, and it
+reports the numeric locale failure as a `Backend_Error` instead of panicking:
+`Out_Of_Memory` when creating the locale failed to allocate, `Unavailable`
+otherwise. A writer that must report every failure, such as
+[`core:encoding/json`'s](#writing), spells floats with it.
 
 Width and precision belong to one value, not to a call, so they are spelled
 by wrapping it: nothing nested and no type's own `format` has to interpret
@@ -1305,6 +1342,278 @@ it is given, zeros included, and an unpaired surrogate is `Invalid_Data` rather
 than U+FFFD. `length_of` counts the units before the first zero, for an API that
 returns a terminated buffer.
 
+## `core:encoding/json`
+
+JSON text: a fully validating parser into an immutable document, borrowed views
+of its values, and a buffered writer over any `io.Writer`. It is ordinary Loke
+with no compiler support; the reasons for its shape are in
+[Standard-library API choices](comments.md#standard-library-api-choices).
+
+Input is [RFC 8259](https://www.rfc-editor.org/rfc/rfc8259.txt) JSON, with an
+explicit Unicode and object-lookup policy:
+
+| Case | Behavior |
+| --- | --- |
+| Root | Exactly one value, a scalar included; JSON whitespace (space, tab, LF, CR) may surround it. |
+| Extra input | Anything but whitespace after the root value is `Trailing_Input`. |
+| Extensions | Comments, trailing commas, leading zeros, a leading `+`, hexadecimal, `NaN`, and `Infinity` are errors. |
+| Text | UTF-8. A byte order mark, invalid UTF-8, a raw control character in a string, and an unpaired escaped surrogate are errors: every string is a Unicode scalar sequence, as Loke's string types require. |
+| Object members | Kept in order, every occurrence of a key included. Keys compare byte for byte once decoded, without Unicode normalization, so `"a"` and `"a"` are the same key. |
+| Numbers | Validated as JSON spells them and kept exactly as written; parsing never requires a number to fit a machine type. |
+
+### Documents and values
+
+```loke
+Kind :: enum { Null, Boolean, Number, String, Array, Object }
+
+parse(input: []u8, allocator := mem.default_allocator(), options: Parse_Options = {})
+	-> Result(Document, Parse_Error)
+parse_text(input: string_view, allocator := mem.default_allocator(),
+	options: Parse_Options = {}) -> Result(Document, Parse_Error)
+parse_owned(input: move string, allocator := mem.default_allocator(),
+	options: Parse_Options = {}) -> Result(Document, Parse_Error)
+
+Document :: move_only struct { /* private */ }
+Document.init(allocator := mem.default_allocator()) -> Document
+Document.root(self: ^) -> Option(Value)
+Document.reparse(self: inout, input: []u8, options: Parse_Options = {}) -> Status(Parse_Error)
+Document.reparse_text(self: inout, input: string_view, options: Parse_Options = {})
+	-> Status(Parse_Error)
+Document.reparse_owned(self: inout, input: move string, options: Parse_Options = {})
+	-> Status(Parse_Error)
+Document.clear(self: inout)
+
+Value.kind(self) -> Kind
+Value.boolean(self) -> Result(bool, Access_Error)
+Value.string(self) -> Result(string_view, Access_Error)
+Value.number(self) -> Result(Number, Access_Error)
+Value.to_i64(self) -> Result(i64, Access_Error)
+Value.to_u64(self) -> Result(u64, Access_Error)
+Value.to_f64(self) -> Result(f64, Access_Error)
+Value.array(self) -> Result(Array, Access_Error)
+Value.object(self) -> Result(Object, Access_Error)
+
+Array.Element :: Value
+Array.len(self) -> int
+Array.at(self, index: int) -> Option(Value)
+Object.Element :: Member
+Object.len(self) -> int
+Object.find(self, key: string_view) -> Result(Option(Value), Access_Error)
+Object.require(self, key: string_view) -> Result(Value, Access_Error)
+Member :: (key: string_view, value: Value)
+```
+
+`parse` and `parse_text` borrow their input; `parse` first validates it as
+UTF-8, which `parse_text` skips. `parse_owned` takes ownership of a string
+without copying its bytes: its allocator selects the document's own storage,
+and the string keeps its allocator. So `fs.read_bytes` followed by `parse`, and
+`fs.read_text` followed by `parse_owned`, both work; the second still copies
+the file once while loading it (see [Whole-file convenience](#whole-file-convenience)).
+
+A `Document` owns its value storage and decoded text, and its input when owned.
+It is move-only. **Its zero value is empty and allocator-unbound**: `root` is
+`.none`, and its first growth binds the default allocator. `init` selects an
+allocator without allocating. A successful parse always has a root, `.some` of a
+null value included. `clear` releases the input and contents but keeps the
+allocator and capacity; dropping the document releases the capacity. The three
+`reparse` forms reuse that allocator and capacity, and may switch between
+borrowed and owned input. Any failed reparse leaves the document empty, with its
+capacity and no input, even for invalid options; an owned string is consumed on
+failure too. A failed free-function parse releases every partial allocation.
+
+`Value`, `Array`, and `Object` are small read-only views: a pointer to the
+document and an index. A string or `Number` from them borrows the input or the
+document. Ordinary borrow checking therefore keeps both alive and rejects
+clearing, reparsing, moving, or dropping a document while a view of it is in
+use. No accessor allocates.
+
+`null`, an absent member, and a value of another kind are distinct, and no
+accessor converts one kind to another. `find` returns `.none` for no matching
+member and `Duplicate_Key` for more than one, never choosing the first or last;
+`require` reports no match as `Missing_Key` instead. A successful lookup says
+nothing about whether other keys repeat. `Array` and `Object` implement the
+[iteration protocol](design.md#iteration-protocol), so
+`foreach (key, value in object)` takes each member apart.
+
+Array length is immediate. Iteration steps over a whole subtree at once, but
+`at` walks from the first element and lookup is linear in the member count,
+scanning past a match to detect a duplicate. Reading every field with its own
+lookup, or an array with repeated `at`, is therefore quadratic; a complete
+traversal is a `foreach`. A schema-shaped reader can switch on each key in one
+traversal and reject repeated known fields with flags of its own.
+
+```loke
+Access_Code :: enum {
+	Wrong_Kind, Missing_Key, Duplicate_Key, Not_Integer, Out_Of_Range,
+	Out_Of_Memory, Backend_Failure,
+}
+Access_Error :: struct { code: Access_Code, offset: int, expected: Kind, actual: Kind }
+```
+
+An `Access_Error` owns its data: a code, a zero-based byte offset in the input,
+and for `Wrong_Kind` the expected and actual kinds. A wrong kind or a conversion
+points at the value's first byte; a missing key at the opening brace of the
+object searched; a duplicate at the opening quote of the second matching key.
+No error borrows a key or allocates a path.
+
+### Numbers
+
+```loke
+Number :: struct { /* private, required */ }
+Number.text(self) -> string_view
+Number.to_i64(self) -> Result(i64, Access_Error)
+Number.to_u64(self) -> Result(u64, Access_Error)
+Number.to_f64(self) -> Result(f64, Access_Error)
+number(text: string_view) -> Result(Number, Parse_Error)
+```
+
+A number keeps its spelling: `9007199254740993`, `1e400`, and `-0` are written
+back as they were read, so rewriting a document neither rounds an identifier
+nor erases a negative zero. `Number` has a required private field, so it has no
+zero value: only a document or `number` makes one. `number` accepts exactly one
+JSON number with no surrounding whitespace, borrowing the text, so a caller can
+write an exact decimal without a document; its conversion errors have offset
+zero.
+
+The integer conversions require integer spelling: `1.0` and `1e0` are
+`Not_Integer`. They check the whole range, signed minimum and unsigned maximum
+included; `to_u64` reads `-0` as zero and any other negative integer is
+`Out_Of_Range`. `to_f64` is [`strconv.try_parse_f64`](#corestrconv): correctly
+rounded, losing integer precision past 2^53, rounding a magnitude too small to
+a signed zero, and reporting one too large as `Out_Of_Range` rather than an
+infinity. A valid number can therefore fail a requested conversion. The
+`Value` conversions are `number()` and its conversion, with either error.
+
+### Parsing
+
+```loke
+Parse_Code :: enum {
+	Invalid_Syntax, Unexpected_End, Invalid_Utf8, Invalid_Escape, Invalid_Number,
+	Trailing_Input, Limit_Exceeded, Invalid_Options, Out_Of_Memory,
+}
+Parse_Error :: struct { code: Parse_Code, offset: int }
+Parse_Options :: struct { max_bytes: int, max_nodes: int, max_depth: int }
+MAX_DEPTH :: 256
+
+Position :: struct { line: int, column: int }
+position(source: []u8, offset: int) -> Position
+```
+
+The parser is one iterative pass with an inline stack of open containers, so
+nesting cannot overflow the call stack. Every allocation uses a fallible
+operation on the selected allocator: malformed or oversized input reports an
+error and never invokes a failure policy. Each value is a 16-byte node in
+source order. Text without escapes stays in the input; escaped text is decoded
+once into one buffer the document owns.
+
+Limits default to 64 MiB of input, four million nodes, and `MAX_DEPTH`. A zero
+field selects its default; a positive one lowers or raises the byte and node
+limits and lowers the depth limit. An object's key is a node, and depth counts
+open arrays and objects, so a scalar is at depth zero. A negative field or a
+depth above `MAX_DEPTH` is `Invalid_Options`. Offsets are 32-bit, so input of
+4 GiB or more is `Limit_Exceeded` whatever the options say. The limits bound the
+document's logical contents, not peak memory: growing storage and capacity a
+reused document keeps come on top. An array of single digits reaches four
+million nodes at only 8 MB of input.
+
+Options and the input's size are checked before the input is validated or any
+storage reserved, and both report offset zero. Invalid UTF-8 given to `parse`
+is reported at the first byte of its first invalid sequence, in preference to
+any JSON error anywhere in the input; otherwise the first error the scanner
+meets is reported. An input that ends inside a value reports `Unexpected_End`
+at its length. A node or depth limit points at the token that would exceed it,
+and an allocation failure at the token being stored. A malformed number is
+reported at its first byte. `position` computes a one-based line and byte column
+from the caller's text, outside the parser.
+
+### Writing
+
+```loke
+Write_Code :: enum {
+	Invalid_State, Invalid_Options, Limit_Exceeded, Non_Finite, Out_Of_Memory,
+	Backend_Failure, Io,
+}
+Write_Error :: struct { code: Write_Code, io: io.Error }
+Write_Options :: struct { pretty: bool, max_depth: int, max_bytes: int }
+
+writer(output: ^mut $W, buffer: []mut u8, options: Write_Options = {})
+	-> Result(Writer(W), Write_Error) where io.Writer(W)
+
+Writer.begin_object(self: inout) -> Status(Write_Error)
+Writer.end_object(self: inout) -> Status(Write_Error)
+Writer.begin_array(self: inout) -> Status(Write_Error)
+Writer.end_array(self: inout) -> Status(Write_Error)
+Writer.key(self: inout, key: string_view) -> Status(Write_Error)
+Writer.string(self: inout, text: string_view) -> Status(Write_Error)
+Writer.boolean(self: inout, value: bool) -> Status(Write_Error)
+Writer.null(self: inout) -> Status(Write_Error)
+Writer.i64(self: inout, value: i64) -> Status(Write_Error)
+Writer.u64(self: inout, value: u64) -> Status(Write_Error)
+Writer.f64(self: inout, value: f64) -> Status(Write_Error)
+Writer.number(self: inout, value: Number) -> Status(Write_Error)
+Writer.value(self: inout, value: Value) -> Status(Write_Error)
+Writer.finish(self: inout) -> Status(Write_Error)
+
+stringify(value: Value, allocator := mem.default_allocator(),
+	options: Write_Options = {}) -> Result(string, Write_Error)
+```
+
+A `Writer(W)` borrows its output and the caller's nonempty buffer, and keeps its
+open containers inline, so it allocates nothing for structure or buffering.
+Bytes reach the output with `io.write_all` when the buffer fills and at
+`finish`; a span longer than the buffer goes straight through after the
+buffered bytes. Integers are spelled by `core:fmt` into a local buffer, and
+floats by [`fmt.try_spell_f64`](#corefmt), so numeric output cannot panic.
+
+The writer accepts one root value, a `key` before each member's value, and
+closes that match what is open. The first failure of any kind is latched:
+invalid ordering, an unmatched close, a depth or output limit, a non-finite
+float, an allocation or numeric backend failure, and an `io.Error` from the
+output, which `Write_Error.io` keeps. Every later call writes nothing and
+returns that error. `finish` requires a complete root, flushes the buffer, and
+seals the writer; a repeated `finish` succeeds without I/O, and any other call
+after it latches `Invalid_State`. Dropping a writer performs no I/O, and the
+caller remains responsible for flushing or closing a file, or for choosing
+[atomic replacement](#atomic-replacement). A failed write may leave part of a
+document in the output; nothing is rolled back.
+
+Options select compact output (the default) or a pretty layout with two-space
+indentation, one member or element per line, LF line breaks, and a space after
+each key's colon; neither adds a final newline. The depth limit is at most
+`MAX_DEPTH` and the output limit defaults to 64 MiB; a zero limit selects its
+default, and a negative limit, a depth above `MAX_DEPTH`, or an empty buffer is
+`Invalid_Options`. The output limit is checked before each span is written.
+
+Strings escape `"`, `\`, and the control characters, with the short escapes
+where JSON has them, and leave every other scalar as UTF-8. A float is written
+as `fmt` prints it, the shortest spelling that reads back, with negative zero
+kept; a NaN or infinity is `Non_Finite`, refused before anything is written
+for it. `number` writes a spelling exactly. `value` writes a subtree in one
+iterative pass, keeping member order, repeated keys, and number spellings; its
+containers count toward the depth limit on top of those already open, so a
+parsed value cannot bypass the writer's limits. Re-encoding keeps values and
+number spellings, not the original whitespace or string escapes.
+
+`stringify` writes a value into an [`io.Buffer_Writer`](#byte-buffer) and
+copies the finished bytes into one string from `allocator`; the copy is part of
+its cost. To write a file, emit into a buffer and replace the file only once
+the document is finished, so a failed write never publishes part of one:
+
+```loke
+save_generation :: proc(path: string_view, generation: u64, allocator: Allocator)
+	-> Status((json: json.Write_Error | file: io.Error)) {
+	bytes := io.Buffer_Writer.init(allocator);
+	scratch: [8192]u8 = {};
+	out := json.writer(&mut bytes, &mut scratch[:]) or_return .json;
+	out.begin_object() or_return .json;
+	out.key("generation") or_return .json;
+	out.u64(generation) or_return .json;
+	out.end_object() or_return .json;
+	out.finish() or_return .json;
+	fs.replace_atomic(path, bytes.bytes()) or_return .file;
+}
+```
+
 ## `core:endian`
 
 A binary format fixes each field's byte order; these wrappers put that order in
@@ -1347,6 +1656,10 @@ parse_u64(text: string_view, base := 0) -> Result(u64, Parse_Error)
 parse_int(text: string_view, base := 0) -> Result(int, Parse_Error)
 parse_uint(text: string_view, base := 0) -> Result(uint, Parse_Error)
 parse_f64(text: string_view) -> Result(f64, Parse_Error)
+
+Backend_Error :: enum { Out_Of_Memory, Unavailable }
+try_parse_f64(text: string_view)
+	-> Result(f64, (parse: Parse_Error | backend: Backend_Error))
 ```
 
 `Parse_Error` distinguishes invalid syntax, invalid base, overflow, and trailing
@@ -1368,9 +1681,15 @@ correctly rounded `f64`, so every finite `f64` printed by the default
 `core:fmt` format parses back to itself. Precision wrappers such as `fmt.fixed`
 may round the value before printing.
 A finite spelling beyond the largest `f64` is `Overflow`; one below the smallest
-subnormal rounds to zero. `inf` and `nan` are not accepted. The point is
-always `.`, whatever numeric locale foreign code has set for the C library. As
-with formatting, failing to create the "C" numeric locale for it panics.
+subnormal rounds to a signed zero. `inf` and `nan` are not accepted. The point is
+always `.`, whatever numeric locale foreign code has set for the C library.
+Parsing allocates nothing, however long the text: digits past the 767th
+significant one are reduced to whether any of them is nonzero, which is all
+that can change the rounding. As with formatting, failing to create the "C"
+numeric locale panics. `try_parse_f64` gives every other answer `parse_f64`
+gives and reports that failure as a `Backend_Error` instead: `Out_Of_Memory`
+when creating the locale failed to allocate, `Unavailable` otherwise.
+[`core:encoding/json`](#numbers) converts numbers with it.
 
 Formatting scalars remains in `core:fmt`; `strconv` should not grow a second
 formatting system.

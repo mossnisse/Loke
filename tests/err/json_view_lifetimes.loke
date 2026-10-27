@@ -1,0 +1,60 @@
+// standard-library "Documents and values": a value, string, or number from a
+// document borrows both the document and a borrowed input, so neither can be
+// dropped, cleared, reparsed, or moved while one is in use, and a document of
+// a local input cannot leave the procedure.
+package main;
+
+import "core:fmt";
+import "core:strings";
+import "core:encoding/json";
+
+input_dropped :: proc() {
+	input := strings.copy(`["text"]`);
+	document := json.parse_text(input) or_else panic("parse failed");
+	value := document.root() or_else panic("no root");
+	drop(input);
+	fmt.println(value.kind());
+}
+
+document_cleared :: proc() {
+	document := json.parse_text(`"text"`) or_else panic("parse failed");
+	text := (document.root() or_else panic("no root")).string() or_else "";
+	document.clear();
+	fmt.println(text);
+}
+
+document_reparsed :: proc() {
+	document := json.parse_owned(strings.copy(`[1]`)) or_else panic("parse failed");
+	number := (document.root() or_else panic("no root")).number() or_else panic("no number");
+	switch (document.reparse_text("2")) {
+	case .ok:
+	case .err: return;
+	}
+	fmt.println(number.text());
+}
+
+document_moved :: proc() {
+	document := json.parse_owned(strings.copy(`{"a": 1}`)) or_else panic("parse failed");
+	object := (document.root() or_else panic("no root")).object() or_else panic("no object");
+	moved := move(document);
+	fmt.println(object.len(), moved.root() == .none);
+}
+
+document_dropped :: proc() {
+	kept: Option(json.Value) = .none;
+	{
+		document := json.parse_text("null") or_else panic("parse failed");
+		kept = document.root();
+	}
+	switch (kept) {
+	case .some(value): fmt.println(value.kind());
+	case .none:
+	}
+}
+
+local_input :: proc() -> json.Document {
+	text := strings.copy("[]");
+	return json.parse_text(text) or_else panic("parse failed");
+}
+
+main :: proc() {}

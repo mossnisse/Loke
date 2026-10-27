@@ -92,6 +92,19 @@ checklist.
   so `math.floor_div(-1, 16)` is `-1` and `math.floor_mod(-1, 16)` is `15`.
   For a power-of-two divisor, `x >> n` and `x & (2^n - 1)` already give the
   same results ([Integer operators](design.md#integer-operators)).
+- `core:encoding/json` parses strict RFC 8259 JSON into an immutable document
+  of borrowed views, keeping member order, repeated keys, and exact number
+  spellings, and writes JSON through a caller's buffer into any `io.Writer`,
+  compact or pretty. Every failure is a returned error with a byte offset,
+  including malformed, oversized, or deeply nested input and running out of
+  memory ([`core:encoding/json`](standard-library.md#coreencodingjson)).
+- `io.Buffer_Writer` is an owning, growable byte sink that satisfies
+  `io.Writer`, for output assembled in memory before it is published
+  ([Byte buffer](standard-library.md#byte-buffer)).
+- `strconv.try_parse_f64` and `fmt.try_spell_f64` report a failure to create
+  the "C" numeric locale as a `Backend_Error` where `parse_f64` and printing
+  panic, and `fmt.try_spell_f64` spells a float into a fixed buffer without a
+  sink or an allocation.
 
 ### Changed
 
@@ -110,6 +123,10 @@ checklist.
 
 ### Fixed
 
+- `strconv.parse_f64` now rounds a spelling with more than 768 significant
+  digits correctly: the C library ignored every digit past the 768th, so
+  `"9007199254740993." + 760 zeros + "1"` read as 2^53 instead of 2^53 + 2.
+  It also no longer allocates a copy of the text.
 - Returning a view of a switch payload bound over a place, as in
   `case .owned(text): return text;` with a `string_view` result through a
   borrowed receiver, is no longer rejected with `L0526`: the binding names

@@ -4,6 +4,45 @@ Decisions that are deliberately not yet made are recorded here rather than left 
 
 Design rationale and differences from Odin are recorded in [comments.md](comments.md).
 
+## JSON follow-ups
+
+[`core:encoding/json`](standard-library.md#coreencodingjson) implements the
+fully validating document parser and streaming writer; its remaining work is in
+[Standard-library maturity](future-plans.md#standard-library-maturity). These
+design questions stay open until a caller or a measurement settles them:
+
+- **An event decoder.** When a caller needs one, it would share the scanner's
+  token recognition and grammar transitions over contiguous input, with
+  `next -> Result(Option(Event), Parse_Error)` and a `skip_value` that
+  validates what it skips, consumed through a
+  [fallible-source loop](design.md#streaming-a-fallible-source). Borrowed
+  decoded text would last until the next step, and a successful decode would
+  require consuming the end or calling a `finish` that validates the rest: a
+  valid prefix alone is not a validated document.
+- **An on-demand cursor or a SIMD structural index.** Either may beat the
+  scalar scanner on large input, but their navigation and validation
+  guarantees differ ([simdjson's paper](https://arxiv.org/abs/1902.08318),
+  [on-demand design constraints](https://simdjson.org/api/3.0.0/md_doc_ondemand_design.html)).
+  Neither is established as better for 2–64 KiB state files, and either would
+  stay separate from fully validating document parsing.
+- **Avoiding repeated validation and copies.** `parse` validates UTF-8 and then
+  scans; a fused scanner would need a trusted validated-view operation and a
+  decision about keeping invalid UTF-8 ahead of every other error.
+  `stringify` validates and copies its finished bytes; a consuming
+  bytes-to-string conversion could avoid that, as retained owned bytes could
+  avoid the copy in an owning file load. Any such operation must preserve
+  [borrow provenance](design.md#procedure-result-contracts), allocator
+  ownership, and [string invariants](design.md#string-type); `unsafe.string_view`
+  still validates. Evaluate one only if profiling makes the cost material.
+- **Typed record codecs.** Reflection-based encoding and decoding need explicit
+  contracts for field names, missing versus null members, duplicates, numeric
+  ranges, and union mappings before an API is chosen. A mutable document,
+  automatic object indexes, and chunked input likewise wait for callers.
+- **Faster repeated access.** A direct child index or an explicit object index
+  pays only if repeated random access outweighs its build time and memory, and
+  `validate_unique_keys` waits for a protocol that requires globally unique
+  keys.
+
 ## Normalized input for provenance analysis
 
 Provenance analysis reads a

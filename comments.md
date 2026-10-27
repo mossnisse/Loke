@@ -1952,6 +1952,43 @@ boundaries and API shapes follow a few common choices:
   prints it. A console whose code page is not UTF-8 shows it wrongly, but
   that console misprints every non-ASCII string, and the parser accepts `us`
   and the Greek `μ` alike, so an ASCII-only writer loses nothing.
+- **A JSON document keeps every repeated key.** Rejecting or collapsing them
+  would build a hash table during every parse. Instead a lookup that matches
+  twice is an error rather than a silent choice of the first or last, and a
+  protocol that needs globally unique keys checks for them explicitly.
+- **A JSON document stores offsets, not views.** A record holding a buffer and
+  views into it would need address stability and an internal-borrow rule
+  ([Self-referential storage](open-questions.md#self-referential-storage)).
+  Node offsets into the source or the decoded text, with views computed by
+  accessors wherever the document now is, need no language feature, and the
+  document's input is a union of a borrowed view and an owned string.
+- **JSON numbers keep their spelling.** Converting eagerly would round 64-bit
+  identifiers through `f64`, lose negative zero and huge exponents on a
+  rewrite, and spend time on numbers nobody reads. A conversion is asked for,
+  and can fail even though the number is valid JSON.
+- **JSON nodes are 16 bytes.** Four `u32` fields hold a kind and flags, a token
+  offset, a payload, and a count; only a container needs its subtree's end, so
+  iteration skips a subtree in one step. Four million nodes take 64 MB rather
+  than the 96 MB of the 24-byte layout first considered. Smaller storage is
+  not itself a throughput measurement, and no comparison has been made yet.
+- **Root access is optional.** An empty, cleared, or failed document needs an
+  ordinary representation, and a second owner type only to remove one unwrap
+  would double the parser's surface.
+- **JSON recognition is not `strconv`'s.** `strconv` accepts whitespace, a
+  leading `+`, prefixes, and underscores, none of which JSON allows, so the
+  scanner checks the spelling and `strconv` only converts it.
+- **The numeric conversions have fallible forms.** Float text goes through the
+  C library's "C" numeric locale, whose creation can fail. Printing has no way
+  to report that and panics; a JSON writer or reader must report it, so
+  `fmt.try_spell_f64` and `strconv.try_parse_f64` expose the failure while the
+  conversion algorithms stay in those packages. A bounded output buffer would
+  not make the panic recoverable. Each package has its own two-member
+  `Backend_Error`, because neither imports the other.
+- **`strconv.parse_f64` reduces a long mantissa itself.** The UCRT's `strtod`
+  reads only the first 768 significant digits and ignores the rest without a
+  sticky digit, so a tie broken by a later digit rounded the wrong way. Keeping
+  767 digits and one standing for any nonzero remainder gives the correctly
+  rounded result for any length, from a fixed buffer.
 
 ### Compiler-supplied names are declared in source
 

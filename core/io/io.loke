@@ -356,6 +356,47 @@ read_line :: proc(
 	}
 }
 
+// ------------------------------------------------------------ byte buffer --
+
+/// An owning, growing byte sink: a `Writer` whose bytes land in memory, to be
+/// read back with `bytes` or taken with `into_bytes`. A write either appends
+/// all of its bytes or fails with `Out_Of_Memory` and appends none.
+///
+/// **The zero value is a usable, empty, allocator-unbound buffer**: the first
+/// growth binds the default provider. `init` selects another one up front.
+// standard-library "Byte buffer". A `[dynamic]u8` is not itself a `Writer`, and
+// an extension making it one would be visible only in the package declaring it.
+Buffer_Writer :: struct {
+	@(private) data: [dynamic]u8,
+}
+
+impl Buffer_Writer {
+	/// An empty buffer whose storage comes from `allocator`. Nothing is
+	/// allocated until the first write.
+	init :: proc(allocator: Allocator = mem.default_allocator()) -> Buffer_Writer {
+		return Buffer_Writer{make([dynamic]u8, 0, 0, allocator)};
+	}
+
+	write :: proc(self: inout, source: []u8) -> Result(int, Error) {
+		switch (self.data.try_append(..source)) {
+		case .ok:  return source.len();
+		case .err: return .err(from_allocator_error(.Write));
+		}
+	}
+
+	/// Everything written so far, borrowed: a write while the view is in use is
+	/// rejected.
+	bytes :: proc(self: ^) -> []u8 { return self.data[:]; }
+
+	len :: proc(self) -> int { return self.data.len(); }
+
+	/// Forgets the contents and keeps the allocation, for the next document.
+	clear :: proc(self: inout) { self.data.clear(); }
+
+	/// The contents as owned bytes, without a copy.
+	into_bytes :: proc(self: move) -> [dynamic]u8 { return exchange(inout self.data, {}); }
+}
+
 // ------------------------------------------------------- formatting bridge --
 
 /// A `fmt.Sink` cannot report a failure, which is fine for a diagnostic sink and

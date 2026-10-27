@@ -1,4 +1,4 @@
-package main; import "core:fmt"; import "core:io";
+package main; import "core:fmt"; import "core:io"; import "core:mem";
 
 // `core:io` end to end (standard-library "Shared I/O contract").
 //
@@ -219,6 +219,32 @@ main :: proc() {
 
 	// And propagates with `or_return`.
 	fmt.println(!succeeded(propagate()));
+
+	// A byte buffer is a writer that never writes short; clearing keeps its
+	// capacity, and its bytes can be taken without a copy.
+	buffered := io.Buffer_Writer.init();
+	fmt.println(succeeded(io.write_string(inout buffered, "first ")));
+	fmt.println(succeeded(io.write_formatted(inout buffered, "and", 2)));
+	fmt.println(text_of(buffered.bytes()), buffered.len());
+	held := buffered.bytes().len();
+	buffered.clear();
+	fmt.println(buffered.len(), held);
+	fmt.println(succeeded(io.write_string(inout buffered, "again")));
+	taken := move(buffered).into_bytes();
+	fmt.println(text_of(taken[:]));
+	// The zero value is usable too.
+	zero: io.Buffer_Writer = {};
+	fmt.println(succeeded(io.write_all(inout zero, []u8{1, 2, 3})), zero.len());
+	// An allocator that runs out is a write failure, and nothing of that write
+	// is kept.
+	room: [256]u8 = {};
+	cramped := mem.Arena.from_buffer(&mut room[:]);
+	starved := io.Buffer_Writer.init(cramped.allocator());
+	oversized: [1024]u8 = {};
+	switch (io.write_all(inout starved, oversized[:])) {
+	case .ok: fmt.println("wrote", starved.len());
+	case .err(error): fmt.println(io.code_of(error), io.operation_of(error), starved.len());
+	}
 }
 
 propagate :: proc() -> Status(io.Error) {

@@ -1,4 +1,4 @@
-package main; import "core:fmt"; import "core:strconv";
+package main; import "core:fmt"; import "core:strconv"; import "core:strings";
 
 // `core:strconv` end to end (standard-library "`core:strconv`").
 //
@@ -140,4 +140,20 @@ main :: proc() {
 	case .ok:  fmt.println(-1);
 	case .err(float_overflow): fmt.println(int(float_overflow));
 	}
+
+	// The C library reads only the first 768 significant digits. Past them, a
+	// nonzero digit still breaks a tie upwards: 2^53 + 1 is halfway between two
+	// doubles, and anything above it rounds up. Before, the final 1 was dropped
+	// once it was the 769th digit, and this read as 2^53.
+	tie := "9007199254740993." + strings.repeat("0", 760) + "1";
+	show_f64(tie);
+	// A long run of leading zeros is not significant, and a huge exponent is not
+	// read into a machine integer.
+	show_f64("0." + strings.repeat("0", 1000) + "15e1001");
+	show_f64("1e99999999999999999999");
+	show_f64("-1e-99999999999999999999");
+
+	// The fallible form answers the same, with the failure it can add beside
+	// the text's own.
+	fmt.println(strconv.try_parse_f64("2.5"), strconv.try_parse_f64("1e999"));
 }

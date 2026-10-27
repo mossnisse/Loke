@@ -1,0 +1,398 @@
+// The scanner: one iterative pass over the text, appending a node per value.
+// standard-library "Parsing". There is no recursion on the call stack: open
+// arrays and objects live in an inline frame stack bounded by `MAX_DEPTH`, so
+// nesting cannot overflow it.
+@(public)
+package json;
+
+import "core:strings";
+
+// ---------------------------------------------------------------- private --
+
+// The resolved limits of one parse; the byte limit has already been checked.
+@(private)
+Limits :: struct {
+	nodes: int,
+	depth: int,
+}
+
+// Options and input length are checked before any validation or reserve.
+@(private)
+resolve_limits :: proc(options: Parse_Options, length: int) -> Result(Limits, Parse_Error) {
+	negative := options.max_bytes < 0 || options.max_nodes < 0 || options.max_depth < 0;
+	if (negative || options.max_depth > MAX_DEPTH) { return .err(Parse_Error{.Invalid_Options, 0}); }
+	max_bytes := options.max_bytes if options.max_bytes > 0 else DEFAULT_MAX_BYTES;
+	if (length > max_bytes || length > U32_LIMIT) {
+		return .err(Parse_Error{.Limit_Exceeded, 0});
+	}
+	nodes := options.max_nodes if options.max_nodes > 0 else DEFAULT_MAX_NODES;
+	// A container records the index past its subtree, which must fit too.
+	if (nodes >= U32_LIMIT) { nodes = U32_LIMIT - 1; }
+	depth := options.max_depth if options.max_depth > 0 else MAX_DEPTH;
+	return Limits{nodes, depth};
+}
+
+// What the scanner needs next.
+@(private)
+State :: enum {
+	Value,
+	First_Element,
+	First_Key,
+	Key,
+	After_Value,
+}
+
+// The nodes of `text`, or an error with both buffers emptied: a failed parse
+// leaves no partial document behind.
+@(private)
+scan :: proc(
+	nodes: inout [dynamic]Node,
+	decoded: inout strings.String_Builder,
+	text: string_view,
+	limits: Limits,
+) -> Status(Parse_Error) {
+	switch (scan_values(inout nodes, inout decoded, text, limits)) {
+	case .ok: return .ok;
+	case .err(error):
+		nodes.clear();
+		decoded.clear();
+		return .err(error);
+	}
+}
+
+@(private)
+scan_values :: proc(
+	nodes: inout [dynamic]Node,
+	decoded: inout strings.String_Builder,
+	text: string_view,
+	limits: Limits,
+) -> Status(Parse_Error) {
+	bytes := text.bytes();
+	end := bytes.len();
+	// The node index of each open array or object, innermost last.
+	open: [MAX_DEPTH]u32 = {};
+	depth := 0;
+	state := State.Value;
+	at := 0;
+	for (;;) {
+		at = skip_space(bytes, at);
+		switch (state) {
+		case .First_Element:
+			if (at < end && bytes[at] == u8(']')) {
+				close(inout nodes, open[depth - 1]);
+				depth -= 1;
+				at += 1;
+				state = .After_Value;
+			} else {
+				state = .Value;
+			}
+
+		case .First_Key:
+			if (at < end && bytes[at] == u8('}')) {
+				close(inout nodes, open[depth - 1]);
+				depth -= 1;
+				at += 1;
+				state = .After_Value;
+			} else {
+				state = .Key;
+			}
+
+		case .Key:
+			if (at >= end) { return .err(Parse_Error{.Unexpected_End, end}); }
+			if (bytes[at] != u8('"')) { return .err(Parse_Error{.Invalid_Syntax, at}); }
+			reserve_node(nodes.len(), limits, at) or_return;
+			nodes[int(open[depth - 1])].count += 1;
+			at = scan_string(inout nodes, inout decoded, text, at) or_return;
+			at = skip_space(bytes, at);
+			if (at >= end) { return .err(Parse_Error{.Unexpected_End, end}); }
+			if (bytes[at] != u8(':')) { return .err(Parse_Error{.Invalid_Syntax, at}); }
+			at += 1;
+			state = .Value;
+
+		case .Value:
+			if (at >= end) { return .err(Parse_Error{.Unexpected_End, end}); }
+			reserve_node(nodes.len(), limits, at) or_return;
+			if (depth > 0) {
+				parent := int(open[depth - 1]);
+				if (kind_of(nodes[parent]) == .Array) { nodes[parent].count += 1; }
+			}
+			byte := bytes[at];
+			state = .After_Value;
+			if (byte == u8('{') || byte == u8('[')) {
+				if (depth >= limits.depth) { return .err(Parse_Error{.Limit_Exceeded, at}); }
+				object := byte == u8('{');
+				kind := Kind.Object if object else Kind.Array;
+				open[depth] = u32(nodes.len());
+				depth += 1;
+				push(inout nodes, Node{u32(kind), u32(at), 0, 0}) or_return;
+				at += 1;
+				state = State.First_Key if object else State.First_Element;
+			} else if (byte == u8('"')) {
+				at = scan_string(inout nodes, inout decoded, text, at) or_return;
+			} else if (byte == u8('t')) {
+				after := scan_literal(bytes, at, "true") or_return;
+				push(inout nodes, Node{u32(Kind.Boolean) | TRUE_FLAG, u32(at), 0, 0}) or_return;
+				at = after;
+			} else if (byte == u8('f')) {
+				after := scan_literal(bytes, at, "false") or_return;
+				push(inout nodes, Node{u32(Kind.Boolean), u32(at), 0, 0}) or_return;
+				at = after;
+			} else if (byte == u8('n')) {
+				after := scan_literal(bytes, at, "null") or_return;
+				push(inout nodes, Node{u32(Kind.Null), u32(at), 0, 0}) or_return;
+				at = after;
+			} else if (byte == u8('-') || is_digit(byte)) {
+				after := scan_number(bytes, at) or_return;
+				push(inout nodes, Node{u32(Kind.Number), u32(at), 0, u32(after - at)}) or_return;
+				at = after;
+			} else {
+				return .err(Parse_Error{.Invalid_Syntax, at});
+			}
+
+		case .After_Value:
+			if (depth == 0) {
+				if (at != end) { return .err(Parse_Error{.Trailing_Input, at}); }
+				return .ok;
+			}
+			if (at >= end) { return .err(Parse_Error{.Unexpected_End, end}); }
+			object := kind_of(nodes[int(open[depth - 1])]) == .Object;
+			byte := bytes[at];
+			if (byte == u8(',')) {
+				at += 1;
+				state = State.Key if object else State.Value;
+			} else if (byte == (u8('}') if object else u8(']'))) {
+				close(inout nodes, open[depth - 1]);
+				depth -= 1;
+				at += 1;
+			} else {
+				return .err(Parse_Error{.Invalid_Syntax, at});
+			}
+		}
+	}
+}
+
+// One more node, reported at the token that would add it.
+@(private)
+reserve_node :: proc(count: int, limits: Limits, at: int) -> Status(Parse_Error) {
+	if (count >= limits.nodes) { return .err(Parse_Error{.Limit_Exceeded, at}); }
+}
+
+@(private)
+push :: proc(nodes: inout [dynamic]Node, node: Node) -> Status(Parse_Error) {
+	switch (nodes.try_append(node)) {
+	case .ok:  return .ok;
+	case .err: return .err(Parse_Error{.Out_Of_Memory, int(node.start)});
+	}
+}
+
+@(private)
+close :: proc(nodes: inout [dynamic]Node, container: u32) {
+	nodes[int(container)].payload = u32(nodes.len());
+}
+
+@(private)
+skip_space :: proc(bytes: []u8, start: int) -> int {
+	at := start;
+	for (; at < bytes.len(); at += 1) {
+		byte := bytes[at];
+		if (byte != u8(' ') && byte != u8('\n') && byte != u8('\r') && byte != u8('\t')) { break; }
+	}
+	return at;
+}
+
+@(private)
+is_digit :: proc(byte: u8) -> bool { return byte >= u8('0') && byte <= u8('9'); }
+
+@(private)
+scan_literal :: proc(bytes: []u8, at: int, word: string_view) -> Result(int, Parse_Error) {
+	spelled := word.bytes();
+	for (i := 0; i < spelled.len(); i += 1) {
+		if (at + i >= bytes.len()) { return .err(Parse_Error{.Unexpected_End, bytes.len()}); }
+		if (bytes[at + i] != spelled[i]) { return .err(Parse_Error{.Invalid_Syntax, at}); }
+	}
+	return at + spelled.len();
+}
+
+// The end of the number starting at `start`. A malformed one is reported at
+// its start; one cut short by the end of input, at the end.
+@(private)
+scan_number :: proc(bytes: []u8, start: int) -> Result(int, Parse_Error) {
+	end := bytes.len();
+	at := start;
+	if (at < end && bytes[at] == u8('-')) { at += 1; }
+	if (at >= end) { return .err(Parse_Error{.Unexpected_End, end}); }
+	if (bytes[at] == u8('0')) {
+		at += 1;
+	} else if (is_digit(bytes[at])) {
+		for (; at < end && is_digit(bytes[at]); at += 1) {}
+	} else {
+		return .err(Parse_Error{.Invalid_Number, start});
+	}
+	if (at < end && bytes[at] == u8('.')) {
+		at += 1;
+		at = digits(bytes, at, start) or_return;
+	}
+	if (at < end && (bytes[at] == u8('e') || bytes[at] == u8('E'))) {
+		at += 1;
+		if (at < end && (bytes[at] == u8('+') || bytes[at] == u8('-'))) { at += 1; }
+		at = digits(bytes, at, start) or_return;
+	}
+	// `01`, `1.2.3`, and `1e2e3` are malformed numbers rather than a number
+	// followed by something else.
+	if (at < end) {
+		byte := bytes[at];
+		exponent := byte == u8('e') || byte == u8('E') || byte == u8('+') || byte == u8('-');
+		if (is_digit(byte) || byte == u8('.') || exponent) { return .err(Parse_Error{.Invalid_Number, start}); }
+	}
+	return at;
+}
+
+// A required run of digits from `at`.
+@(private)
+digits :: proc(bytes: []u8, at: int, start: int) -> Result(int, Parse_Error) {
+	if (at >= bytes.len()) { return .err(Parse_Error{.Unexpected_End, bytes.len()}); }
+	if (!is_digit(bytes[at])) { return .err(Parse_Error{.Invalid_Number, start}); }
+	end := at;
+	for (; end < bytes.len() && is_digit(bytes[end]); end += 1) {}
+	return end;
+}
+
+// The string whose opening quote is at `quote`, as a node, and the offset past
+// its closing quote. Text without escapes stays in the source; text with them
+// is decoded once into `decoded`, a run of unchanged bytes at a time.
+@(private)
+scan_string :: proc(
+	nodes: inout [dynamic]Node,
+	decoded: inout strings.String_Builder,
+	text: string_view,
+	quote: int,
+) -> Result(int, Parse_Error) {
+	bytes := text.bytes();
+	end := bytes.len();
+	at := quote + 1;
+	for (; at < end; at += 1) {
+		byte := bytes[at];
+		if (byte == u8('"')) {
+			push(inout nodes, Node{u32(Kind.String), u32(quote), u32(quote + 1), u32(at - quote - 1)}) or_return;
+			return at + 1;
+		}
+		if (byte == u8('\\')) { break; }
+		if (byte < 0x20) { return .err(Parse_Error{.Invalid_Syntax, at}); }
+	}
+	first := decoded.len();
+	run := quote + 1;
+	for (;;) {
+		if (at >= end) { return .err(Parse_Error{.Unexpected_End, end}); }
+		byte := bytes[at];
+		if (byte == u8('"')) {
+			append_text(inout decoded, text[run:at], quote) or_return;
+			info := u32(Kind.String) | DECODED_FLAG;
+			push(inout nodes, Node{info, u32(quote), u32(first), u32(decoded.len() - first)}) or_return;
+			return at + 1;
+		}
+		if (byte < 0x20) { return .err(Parse_Error{.Invalid_Syntax, at}); }
+		if (byte != u8('\\')) {
+			at += 1;
+			continue;
+		}
+		append_text(inout decoded, text[run:at], quote) or_return;
+		escape := at;
+		at += 1;
+		if (at >= end) { return .err(Parse_Error{.Unexpected_End, end}); }
+		letter := bytes[at];
+		at += 1;
+		value := 0;
+		if (letter == u8('"') || letter == u8('\\') || letter == u8('/')) { value = int(letter); }
+		else if (letter == u8('b')) { value = 0x08; }
+		else if (letter == u8('f')) { value = 0x0C; }
+		else if (letter == u8('n')) { value = 0x0A; }
+		else if (letter == u8('r')) { value = 0x0D; }
+		else if (letter == u8('t')) { value = 0x09; }
+		else if (letter == u8('u')) {
+			value = hex4(bytes, at, escape) or_return;
+			at += 4;
+			if (value >= 0xDC00 && value <= 0xDFFF) {
+				return .err(Parse_Error{.Invalid_Escape, escape});
+			}
+			if (value >= 0xD800 && value <= 0xDBFF) {
+				// Only a low surrogate escape may follow a high one.
+				if (at >= end) { return .err(Parse_Error{.Unexpected_End, end}); }
+				if (bytes[at] != u8('\\')) { return .err(Parse_Error{.Invalid_Escape, escape}); }
+				if (at + 1 >= end) { return .err(Parse_Error{.Unexpected_End, end}); }
+				if (bytes[at + 1] != u8('u')) { return .err(Parse_Error{.Invalid_Escape, escape}); }
+				low := hex4(bytes, at + 2, escape) or_return;
+				if (low < 0xDC00 || low > 0xDFFF) { return .err(Parse_Error{.Invalid_Escape, escape}); }
+				value = 0x10000 + ((value - 0xD800) << 10) + (low - 0xDC00);
+				at += 6;
+			}
+		} else {
+			return .err(Parse_Error{.Invalid_Escape, escape});
+		}
+		switch (decoded.try_append_rune(rune(value))) {
+		case .ok:
+		case .err: return .err(Parse_Error{.Out_Of_Memory, quote});
+		}
+		run = at;
+	}
+}
+
+@(private)
+append_text :: proc(
+	decoded: inout strings.String_Builder, text: string_view, quote: int,
+) -> Status(Parse_Error) {
+	switch (decoded.try_append_text(text)) {
+	case .ok:  return .ok;
+	case .err: return .err(Parse_Error{.Out_Of_Memory, quote});
+	}
+}
+
+// The four hex digits of a `\u` escape starting at `at`.
+@(private)
+hex4 :: proc(bytes: []u8, at: int, escape: int) -> Result(int, Parse_Error) {
+	value := 0;
+	for (i := 0; i < 4; i += 1) {
+		if (at + i >= bytes.len()) { return .err(Parse_Error{.Unexpected_End, bytes.len()}); }
+		byte := bytes[at + i];
+		digit := 0;
+		if (byte >= u8('0') && byte <= u8('9')) { digit = int(byte - u8('0')); }
+		else if (byte >= u8('a') && byte <= u8('f')) { digit = int(byte - u8('a')) + 10; }
+		else if (byte >= u8('A') && byte <= u8('F')) { digit = int(byte - u8('A')) + 10; }
+		else { return .err(Parse_Error{.Invalid_Escape, escape}); }
+		value = value * 16 + digit;
+	}
+	return value;
+}
+
+// The first byte of the first sequence in `bytes` that is not UTF-8: a stray
+// continuation byte, an overlong or surrogate encoding, a value past U+10FFFF,
+// or a sequence the input ends inside. Called only once validation has failed,
+// so the hot path validates once.
+@(private)
+first_invalid_utf8 :: proc(bytes: []u8) -> int {
+	at := 0;
+	for (; at < bytes.len(); ) {
+		lead := bytes[at];
+		if (lead < 0x80) {
+			at += 1;
+			continue;
+		}
+		width := 0;
+		low: u8 = 0x80;
+		high: u8 = 0xBF;
+		if (lead >= 0xC2 && lead <= 0xDF) { width = 2; }
+		else if (lead == 0xE0) { width = 3; low = 0xA0; }
+		else if (lead == 0xED) { width = 3; high = 0x9F; }
+		else if (lead >= 0xE1 && lead <= 0xEF) { width = 3; }
+		else if (lead == 0xF0) { width = 4; low = 0x90; }
+		else if (lead == 0xF4) { width = 4; high = 0x8F; }
+		else if (lead >= 0xF1 && lead <= 0xF3) { width = 4; }
+		else { return at; }
+		if (at + width > bytes.len()) { return at; }
+		if (bytes[at + 1] < low || bytes[at + 1] > high) { return at; }
+		for (i := 2; i < width; i += 1) {
+			if (bytes[at + i] < 0x80 || bytes[at + i] > 0xBF) { return at; }
+		}
+		at += width;
+	}
+	return at;
+}

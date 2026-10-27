@@ -1,0 +1,198 @@
+/// JSON text: a fully validating parser into an immutable document, borrowed
+/// views of its values, and a buffered writer over any `io.Writer`.
+///
+/// Input is [RFC 8259](https://www.rfc-editor.org/rfc/rfc8259.txt) JSON with no
+/// extensions: one root value of any kind, UTF-8 with no byte order mark, no
+/// comments, no trailing commas, and only Unicode scalar values in escapes.
+/// Object members keep their order and every occurrence of a key, and numbers
+/// keep their exact spelling until a conversion is asked for.
+///
+/// Every error is an owned value with a byte offset; nothing here borrows the
+/// input to report a failure, and nothing panics on malformed or oversized
+/// input.
+// standard-library "`core:encoding/json`".
+//
+// Nothing here is JSON-specific to the language: the document stores offsets
+// rather than views of its own storage (open-questions.md "Self-referential
+// storage"), so ordinary borrow checking keeps a view's document and input
+// alive.
+@(public)
+package json;
+
+import "core:io";
+
+/// What a value is. `null`, an absent member, and a value of another kind are
+/// three different answers, and no accessor turns one kind into another.
+Kind :: enum {
+	Null,
+	Boolean,
+	Number,
+	String,
+	Array,
+	Object,
+}
+
+// ----------------------------------------------------------------- errors --
+
+/// Why a parse failed.
+Parse_Code :: enum {
+	/// A byte that cannot start or continue the value it is in.
+	Invalid_Syntax,
+	/// The input ended inside a value.
+	Unexpected_End,
+	/// Bytes given to `parse` that are not UTF-8. This one is reported in
+	/// preference to any other error in the input.
+	Invalid_Utf8,
+	/// An escape that is not one of JSON's, or a `\u` escape that is not a
+	/// Unicode scalar value: an unpaired surrogate.
+	Invalid_Escape,
+	/// A number spelled other than JSON spells one: a leading zero, a `+`, a
+	/// point or exponent without digits.
+	Invalid_Number,
+	/// Something other than whitespace after the root value.
+	Trailing_Input,
+	/// More input, values, or nesting than the options allow.
+	Limit_Exceeded,
+	/// A negative limit, or a depth above `MAX_DEPTH`.
+	Invalid_Options,
+	Out_Of_Memory,
+}
+
+/// A parse failure and the zero-based byte offset it was found at. End of
+/// input is reported at the input's length; an input or options failure at
+/// zero. `position` turns the offset into a line and column.
+Parse_Error :: struct {
+	code:   Parse_Code,
+	offset: int,
+}
+
+/// Why reading a value failed.
+Access_Code :: enum {
+	/// The value is not the kind asked for; `expected` and `actual` say which.
+	Wrong_Kind,
+	/// `Object.require` found no member with that key.
+	Missing_Key,
+	/// More than one member has that key, so neither is the answer.
+	Duplicate_Key,
+	/// An integer conversion of a number spelled with a point or an exponent.
+	Not_Integer,
+	/// A number the requested type cannot hold.
+	Out_Of_Range,
+	Out_Of_Memory,
+	/// The numeric conversion could not be set up (`strconv.Backend_Error`).
+	Backend_Failure,
+}
+
+/// An access failure, its offset in the input, and for `Wrong_Kind` the two
+/// kinds. A wrong kind or a conversion points at the value; a missing key at
+/// the opening brace of the object searched; a duplicate at the opening quote
+/// of the second matching key. A number made by `number` has offset zero.
+Access_Error :: struct {
+	code:     Access_Code,
+	offset:   int,
+	expected: Kind,
+	actual:   Kind,
+}
+
+/// Why writing failed.
+Write_Code :: enum {
+	/// A call the document's shape does not allow at this point: a value where a
+	/// key is due, a close that matches nothing, a second root, `finish` before
+	/// the root is complete, or anything but `finish` after it.
+	Invalid_State,
+	/// An empty buffer, a negative limit, or a depth above `MAX_DEPTH`.
+	Invalid_Options,
+	/// More nesting or output than the options allow.
+	Limit_Exceeded,
+	/// A NaN or an infinity, which JSON cannot spell.
+	Non_Finite,
+	Out_Of_Memory,
+	/// The float spelling could not be set up (`fmt.Backend_Error`).
+	Backend_Failure,
+	/// The output stream failed; `io` holds its error.
+	Io,
+}
+
+/// A write failure. `io` is meaningful only when `code` is `Io`.
+Write_Error :: struct {
+	code: Write_Code,
+	io:   io.Error,
+}
+
+// ---------------------------------------------------------------- options --
+
+/// The deepest nesting a parser or writer accepts, counting open arrays and
+/// objects; a scalar is at depth zero.
+MAX_DEPTH :: 256;
+
+/// Limits on one parse. A zero field selects its default: 64 MiB of input, four
+/// million values (an object's keys count), and `MAX_DEPTH`. A positive field
+/// lowers or raises the byte and value limits, and lowers the depth limit.
+///
+/// The limits bound the document's logical contents, not peak memory: growing
+/// storage, and capacity a reused document keeps, come on top.
+Parse_Options :: struct {
+	max_bytes: int,
+	max_nodes: int,
+	max_depth: int,
+}
+
+/// How a writer lays its output out, and what it allows. A zero limit selects
+/// its default: `MAX_DEPTH` and 64 MiB of output.
+///
+/// Compact output has no whitespace at all. Pretty output puts every member and
+/// element on a line of its own, indented by two spaces per level, with `LF`
+/// line endings and a space after each key's colon. Neither adds a final newline.
+Write_Options :: struct {
+	pretty:    bool,
+	max_depth: int,
+	max_bytes: int,
+}
+
+/// Where an offset falls in its text, both counted from one. The column counts
+/// bytes, so it is the offset from the start of the line plus one.
+Position :: struct {
+	line:   int,
+	column: int,
+}
+
+/// The line and column of `offset` in `source`. Lines end at `\n`; an offset
+/// past the end is placed at the end.
+position :: proc(source: []u8, offset: int) -> Position {
+	line := 1;
+	start := 0;
+	end := offset if offset < source.len() else source.len();
+	for (at := 0; at < end; at += 1) {
+		if (source[at] == u8('\n')) {
+			line += 1;
+			start = at + 1;
+		}
+	}
+	return Position{line, end - start + 1};
+}
+
+// ---------------------------------------------------------------- private --
+
+@(private)
+DEFAULT_MAX_BYTES :: 64 * 1024 * 1024;
+
+@(private)
+DEFAULT_MAX_NODES :: 4000000;
+
+// Offsets and indices are stored as `u32`, so neither input nor a document can
+// reach this many.
+@(private)
+U32_LIMIT :: 0xFFFFFFFF;
+
+@(private)
+DEFAULT_MAX_OUTPUT :: 64 * 1024 * 1024;
+
+@(private)
+wrong_kind :: proc(expected: Kind, actual: Kind, offset: int) -> Access_Error {
+	return Access_Error{.Wrong_Kind, offset, expected, actual};
+}
+
+@(private)
+access_error :: proc(code: Access_Code, offset: int) -> Access_Error {
+	return Access_Error{code, offset, .Null, .Null};
+}

@@ -1,0 +1,211 @@
+-- syntax
+ok {"a":[1,2.5e3,-0,true,false,null,{},[]],"b":{"c":"x"}}
+ok 42
+ok "text"
+ok null
+Invalid_Syntax 3
+Invalid_Syntax 8
+Invalid_Syntax 0
+Invalid_Syntax 0
+Trailing_Input 1
+Invalid_Syntax 0
+Invalid_Syntax 0
+Invalid_Syntax 0
+Invalid_Syntax 1
+Invalid_Number 0
+Unexpected_End 2
+Invalid_Syntax 0
+Unexpected_End 2
+Unexpected_End 1
+Invalid_Number 0
+Invalid_Syntax 3
+Invalid_Syntax 5
+Invalid_Syntax 8
+Trailing_Input 4
+Unexpected_End 3
+Invalid_Syntax 0
+Unexpected_End 3
+Unexpected_End 0
+Unexpected_End 3
+Unexpected_End 1
+Unexpected_End 5
+Invalid_Syntax 0
+Invalid_Syntax 2
+Invalid_Syntax 0
+-- strings
+ok "\" \\ / \b \f \n \r \t"
+ok "é€"
+ok "😀"
+Invalid_Escape 1
+Invalid_Escape 1
+Invalid_Escape 1
+Invalid_Escape 1
+Invalid_Escape 1
+Invalid_Escape 1
+Invalid_Escape 1
+Invalid_Escape 1
+Unexpected_End 13
+Unexpected_End 2
+3 0
+ok "räksmörgås 😀"
+-- utf8
+Invalid_Utf8 3
+Invalid_Utf8 1
+Invalid_Utf8 1
+Invalid_Utf8 1
+Invalid_Utf8 1
+Invalid_Utf8 1
+ok "€"
+-- truncation
+62 62
+ok {"kéy":[1.5e-3,"s\"t",{"n":null},true,false],"z":-12}
+-- access
+Object
+6
+Ada
+36
+true
+Missing_Key 0
+Null
+Wrong_Kind 55 Number Null
+Wrong_Kind 9 Number String
+Wrong_Kind 9 Array String
+Wrong_Kind 0 Boolean Object
+Duplicate_Key 69
+2
+y
+true true
+x y 
+name String age Number tags Array none Null a Number a Number 
+Array Object Number 
+5
+Ada
+-- load
+state 7 true 2
+Out_Of_Range 32
+-- numbers
+0 i64 0 u64 0 f64 0.0
+-0 i64 0 u64 0 f64 -0.0
+42 i64 42 u64 42 f64 42.0
+-42 i64 -42 u64 Out_Of_Range f64 -42.0
+9223372036854775807 i64 9223372036854775807 u64 9223372036854775807 f64 9.223372036854776e18
+-9223372036854775808 i64 -9223372036854775808 u64 Out_Of_Range f64 -9.223372036854776e18
+9223372036854775808 i64 Out_Of_Range u64 9223372036854775808 f64 9.223372036854776e18
+-9223372036854775809 i64 Out_Of_Range u64 Out_Of_Range f64 -9.223372036854776e18
+18446744073709551615 i64 Out_Of_Range u64 18446744073709551615 f64 1.8446744073709552e19
+18446744073709551616 i64 Out_Of_Range u64 Out_Of_Range f64 1.8446744073709552e19
+1.0 i64 Not_Integer u64 Not_Integer f64 1.0
+1e0 i64 Not_Integer u64 Not_Integer f64 1.0
+1E2 i64 Not_Integer u64 Not_Integer f64 100.0
+-0.0 i64 Not_Integer u64 Not_Integer f64 -0.0
+0.1 i64 Not_Integer u64 Not_Integer f64 0.1
+2.5e-3 i64 Not_Integer u64 Not_Integer f64 0.0025
+1e400 i64 Not_Integer u64 Not_Integer f64 Out_Of_Range
+-1e400 i64 Not_Integer u64 Not_Integer f64 Out_Of_Range
+1e-400 i64 Not_Integer u64 Not_Integer f64 0.0
+-1e-400 i64 Not_Integer u64 Not_Integer f64 -0.0
+4.9e-324 i64 Not_Integer u64 Not_Integer f64 5e-324
+2.2250738585072011e-308 i64 Not_Integer u64 Not_Integer f64 2.225073858507201e-308
+1.7976931348623157e308 i64 Not_Integer u64 Not_Integer f64 1.7976931348623157e308
+1.7976931348623159e308 i64 Not_Integer u64 Not_Integer f64 Out_Of_Range
+9007199254740993 i64 9007199254740993 u64 9007199254740993 f64 9007199254740992.0
+9007199254740994.0 918
+1e99999999999999999999 i64 Not_Integer u64 Not_Integer f64 Out_Of_Range
+1e-99999999999999999999 i64 Not_Integer u64 Not_Integer f64 0.0
+Unexpected_End 0 Invalid_Number 0 Invalid_Number 0 Invalid_Number 0 Invalid_Number 0 Unexpected_End 2 Invalid_Number 0 Unexpected_End 2 Invalid_Number 0 Invalid_Number 0 Unexpected_End 1 Invalid_Number 0 
+1 Not_Integer 4 Not_Integer 9 
+Out_Of_Range 9
+[9007199254740993,1e400,-0,0.10000000000000000001]
+-- limits
+Invalid_Options 0
+Invalid_Options 0
+Invalid_Options 0
+Invalid_Options 0
+Limit_Exceeded 0
+Invalid_Utf8 1
+ok [1,2,3]
+Limit_Exceeded 7
+Limit_Exceeded 6
+ok {"a":1}
+ok [[[1]]]
+Limit_Exceeded 2
+ok 1
+ok 256
+Limit_Exceeded 256
+Invalid_Syntax 19 3 7
+-- documents
+true
+true
+1001
+true
+{"small":true}
+false
+true
+true
+["owned","é"]
+false
+true
+true
+[2]
+false
+true
+true
+Null
+true
+{"k":"v"}
+-- allocation
+{"a\nb":["x\ty",1,2,3,4,5,6,7,8,9,{"cé":[true,false,null]}],"z":"€"}
+true true 0
+true true 0
+-- writing
+ok
+{"name":"tab\there \"quoted\" \\ \u0001 é","values":[-9223372036854775808,18446744073709551615,0.1,-0.0,1e301,false,null,{},[]],"exact":1.000e+400}
+ok
+{
+  "name": "tab\there \"quoted\" \\ \u0001 é",
+  "values": [
+    -9223372036854775808,
+    18446744073709551615,
+    0.1,
+    -0.0,
+    1e301,
+    false,
+    null,
+    {},
+    []
+  ],
+  "exact": 1.000e+400
+}
+ok
+true
+true ok
+Limit_Exceeded
+true
+Invalid_Options Invalid_Options Invalid_Options Invalid_Options
+-- states
+ok Invalid_State Invalid_State Invalid_State Invalid_State ok Invalid_State ok Invalid_State ok Invalid_State ok ok Invalid_State Invalid_State ok Invalid_State
+ok ok ok Invalid_State Invalid_State true
+ok ok Non_Finite Non_Finite [1
+Non_Finite 0
+ok ok Limit_Exceeded ok ok [[1]] ok Limit_Exceeded
+-- round trip
+{"b":[1,-0,1.5E+3,12345678901234567890123],"a":{"x":"é\n\"","x":null},"e":[],"o":{}}
+{
+  "b": [
+    1,
+    -0,
+    1.5E+3,
+    12345678901234567890123
+  ],
+  "a": {
+    "x": "é\n\"",
+    "x": null
+  },
+  "e": [],
+  "o": {}
+}
+true
+{"x":"é\n\"","x":null}
+-- saving
+saved
+12

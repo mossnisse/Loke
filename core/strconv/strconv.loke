@@ -85,52 +85,82 @@ parse_uint :: proc(text: string_view, base: int = 0) -> Result(uint, Parse_Error
 /// The result is correctly rounded, and what `fmt` prints this parses to the
 /// same value. Parsing is in the "C" numeric locale, so a program that sets a
 /// decimal-comma locale for its own C code still parses `1.5` as one and a
-/// half.
+/// half. It allocates nothing, however long the text.
 ///
 /// Infinities and NaNs are not spellable; a caller that needs them tests for the
-/// words itself.
+/// words itself. A finite spelling past the largest `f64` is `Overflow`; one
+/// too small for the smallest subnormal rounds to a signed zero.
+///
+/// Making that locale can fail, which panics here; `try_parse_f64` reports it.
 // The lexer takes underscores in a written literal's mantissa but not its
 // exponent; that asymmetry carries no reason this package can see, so one rule
 // covers all three digit runs here.
+parse_f64 :: proc(text: string_view) -> Result(f64, Parse_Error) {
+	switch (try_parse_f64(text)) {
+	case .ok(value): return value;
+	case .err(failure):
+		switch (failure) {
+		case .parse(error): return .err(error);
+		case .backend: panic("cannot create the \"C\" numeric locale for float text");
+		}
+	}
+}
+
+/// What can stop a float conversion other than its text: the "C" numeric
+/// locale it runs in could not be made. `Out_Of_Memory` when that was an
+/// allocation failure, `Unavailable` otherwise.
+// `core:fmt` has the same two answers for spelling a float, as its own type
+// because neither package imports the other.
+Backend_Error :: enum {
+	Out_Of_Memory,
+	Unavailable,
+}
+
+/// `parse_f64`, answering a `Backend_Error` where that panics. Every other
+/// answer is the same.
+// standard-library "`core:strconv`": the shared fallible conversion that
+// `core:encoding/json` reads numbers with.
 //
 // The syntax is checked here and the rounding is the C library's `strtod`, the
 // same one `fmt` relies on to find the shortest spelling that reads back.
-parse_f64 :: proc(text: string_view) -> Result(f64, Parse_Error) {
+try_parse_f64 :: proc(
+	text: string_view,
+) -> Result(f64, (parse: Parse_Error | backend: Backend_Error)) {
 	bytes := trim_ascii_space(text).bytes();
 	at := 0;
 	if (at < bytes.len() && (bytes[at] == u8('+') || bytes[at] == u8('-'))) { at += 1; }
 	whole := digit_run(bytes, at);
 	fraction := whole;
 	if (whole < bytes.len() && bytes[whole] == u8('.')) { fraction = digit_run(bytes, whole + 1); }
-	if (whole == at && fraction <= whole + 1) { return .err(.Invalid_Syntax); }
+	if (whole == at && fraction <= whole + 1) { return .err(.parse(.Invalid_Syntax)); }
 	at = fraction;
 	if (at < bytes.len() && (bytes[at] == u8('e') || bytes[at] == u8('E'))) {
 		at += 1;
 		if (at < bytes.len() && (bytes[at] == u8('+') || bytes[at] == u8('-'))) { at += 1; }
 		exponent := digit_run(bytes, at);
-		if (exponent == at) { return .err(.Invalid_Syntax); }
+		if (exponent == at) { return .err(.parse(.Invalid_Syntax)); }
 		at = exponent;
 	}
-	if (at != bytes.len()) { return .err(.Trailing_Data); }
+	if (at != bytes.len()) { return .err(.parse(.Trailing_Data)); }
 
 	// `strtod` reads to a terminator, which a view does not have, and knows
 	// nothing of underscores.
-	// ponytail: allocates the spelling; a stack buffer for short numbers if parsing
-	// ever shows up in a profile.
-	spelled: [dynamic]u8 = {};
-	foreach (byte in bytes) {
-		if (byte != u8('_')) { spelled.append(byte); }
-	}
-	spelled.append(0);
-	value := rt_parse_f64(unsafe.cstring_view(unsafe.raw_data(spelled)));
+	spelled: [SPELLED]u8 = {};
+	normalize_float(bytes, &mut spelled);
+	value: f64 = 0;
+	switch (rt_try_parse_f64(unsafe.cstring_view(unsafe.raw_data(spelled[:])), &mut value)) {
+	case 0:
+	case NUMERIC_OUT_OF_MEMORY: return .err(.backend(.Out_Of_Memory));
+	case NUMERIC_UNAVAILABLE:   return .err(.backend(.Unavailable));
 	// The syntax was checked above, so this is the C library disagreeing with
 	// it. A short conversion is still not a value to return.
-	if (value != value) { return .err(.Invalid_Syntax); }
+	case: return .err(.parse(.Invalid_Syntax));
+	}
 	// A finite decimal outside f64's range must not quietly become an infinity:
 	// infinities are not accepted spellings, and `Parse_Error.Overflow` exists
 	// precisely for a value the destination cannot hold.
 	if (value > 1.7976931348623157e308 || value < -1.7976931348623157e308) {
-		return .err(.Overflow);
+		return .err(.parse(.Overflow));
 	}
 	return value;
 }
@@ -138,12 +168,132 @@ parse_f64 :: proc(text: string_view) -> Result(f64, Parse_Error) {
 // ---------------------------------------------------------------- private --
 
 // `strtod` in the runtime's "C" numeric locale, which also checks that it read
-// the whole spelling: NaN otherwise. Private, or the file-wide `@(public)` would
-// export it as `strconv.rt_parse_f64`.
+// the whole spelling. Private, or the file-wide `@(public)` would export it as
+// `strconv.rt_try_parse_f64`.
 @(private)
 foreign loke_runtime {
-	@(link_name="loke_rt_v1_parse_f64")
-	rt_parse_f64 :: proc "c" (text: cstring_view) -> f64 ---;
+	@(link_name="loke_rt_v1_try_parse_f64")
+	rt_try_parse_f64 :: proc "c" (text: cstring_view, value: ^mut f64) -> i32 ---;
+}
+
+// `loke_rt.h`'s answers besides 0 and `LOKE_RT_NUMERIC_REJECTED`.
+@(private)
+NUMERIC_OUT_OF_MEMORY :: 2;
+@(private)
+NUMERIC_UNAVAILABLE :: 3;
+
+// More significant digits than this cannot change how a double rounds, as long
+// as a nonzero digit past them is remembered: no double, and no point halfway
+// between two of them, has more. The UCRT's `strtod` reads only the first 768
+// and ignores the rest, so a longer spelling handed to it whole could round the
+// wrong way; this many and the sticky digit are exactly what it reads.
+@(private)
+KEPT_DIGITS :: 767;
+
+// Past this many powers of ten every kept mantissa overflows or underflows
+// whatever its digits, so a longer exponent saturates here.
+@(private)
+EXPONENT_LIMIT :: 100000;
+
+// `-0.`, the kept digits, a sticky digit, `e-100000`, and the terminator.
+@(private)
+SPELLED :: 3 + KEPT_DIGITS + 1 + 8 + 1;
+
+// The checked spelling in `bytes` as `[-]0.DIGITSe[-]N`, with no underscores,
+// no leading zeros, and at most `KEPT_DIGITS` significant digits, so that
+// `strtod` reads any length of text out of a fixed buffer. A one stands in for
+// the digits dropped past those when any of them is not zero.
+@(private)
+normalize_float :: proc(bytes: []u8, spelled: ^mut [SPELLED]u8) {
+	used := 0;
+	at := 0;
+	if (at < bytes.len() && (bytes[at] == u8('+') || bytes[at] == u8('-'))) {
+		if (bytes[at] == u8('-')) {
+			spelled[used] = u8('-');
+			used += 1;
+		}
+		at += 1;
+	}
+	spelled[used] = u8('0');
+	spelled[used + 1] = u8('.');
+	used += 2;
+	first := used;
+	// The value is 0.DIGITS times ten to `scale` plus the written exponent.
+	scale := 0;
+	significant := false;
+	dropped := false;
+	after_point := false;
+	for (; at < bytes.len(); at += 1) {
+		byte := bytes[at];
+		if (byte == u8('_')) { continue; }
+		if (byte == u8('.')) {
+			after_point = true;
+			continue;
+		}
+		if (!is_digit(byte)) { break; }
+		if (!significant && byte == u8('0')) {
+			if (after_point) { scale -= 1; }
+			continue;
+		}
+		significant = true;
+		if (!after_point) { scale += 1; }
+		if (used - first < KEPT_DIGITS) {
+			spelled[used] = byte;
+			used += 1;
+		} else if (byte != u8('0')) {
+			dropped = true;
+		}
+	}
+	if (!significant) {
+		// Every digit was zero, and `0.0` keeps the sign.
+		spelled[used] = u8('0');
+		spelled[used + 1] = 0;
+		return;
+	}
+	if (dropped) {
+		spelled[used] = u8('1');
+		used += 1;
+	}
+	exponent := 0;
+	negative := false;
+	if (at < bytes.len()) {
+		at += 1; // the `e`
+		if (bytes[at] == u8('+') || bytes[at] == u8('-')) {
+			negative = bytes[at] == u8('-');
+			at += 1;
+		}
+		for (; at < bytes.len(); at += 1) {
+			if (bytes[at] == u8('_')) { continue; }
+			if (exponent <= EXPONENT_LIMIT) {
+				exponent = exponent * 10 + int(bytes[at] - u8('0'));
+			}
+		}
+	}
+	if (negative) { exponent = -exponent; }
+	// `scale` is bounded by the text's length, so the sum cannot overflow.
+	total := scale + exponent;
+	if (total > EXPONENT_LIMIT) { total = EXPONENT_LIMIT; }
+	if (total < -EXPONENT_LIMIT) { total = -EXPONENT_LIMIT; }
+	spelled[used] = u8('e');
+	used += 1;
+	if (total < 0) {
+		spelled[used] = u8('-');
+		used += 1;
+		total = -total;
+	}
+	digits: [8]u8 = {};
+	count := 0;
+	for (;;) {
+		digits[count] = u8('0') + u8(total % 10);
+		count += 1;
+		total /= 10;
+		if (total == 0) { break; }
+	}
+	for (; count > 0; count -= 1) {
+		spelled[used] = digits[count - 1];
+		used += 1;
+	}
+	spelled[used] = 0;
 }
 
 // The end of the digits starting at `start`: nothing unless the first is a
