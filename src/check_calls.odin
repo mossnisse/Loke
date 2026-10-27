@@ -92,17 +92,6 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 		return
 	}
 	if sel, is_selector := v.callee.(^Expr_Selector); is_selector && sel.operand != nil {
-		// A `dyn` slot call dispatches through the witness. A callable view's
-		// `call` is its forwarding member, reached as any method is.
-		if operand := dyn_operand_type(k, sel.operand); operand != INVALID_TYPE &&
-		   dyn_proc_signature(k.c, operand) == INVALID_TYPE {
-			if check_dyn_slot_call(k, v, sel, operand) {
-				return
-			}
-			errorf(k.c, v.span, "L0467", "`%s` has no slot `%s`", type_name(k.c, operand), sel.name.text)
-			v.type = INVALID_TYPE
-			return
-		}
 		// Compiler-defined operations on unions, text, and enums.
 		if check_box_unbox(k, v, sel) ||
 		   check_any_view_as(k, v, sel) ||
@@ -345,21 +334,6 @@ qualify_builtin_callee :: proc(k: ^Checker, v: ^Expr_Call) -> ^Expr_Ident {
 	return ident
 }
 
-// The `dyn` type of a named receiver, or INVALID_TYPE.
-@(private = "file")
-dyn_operand_type :: proc(k: ^Checker, operand: Expr) -> Type_Id {
-	ident, is_ident := operand.(^Expr_Ident)
-	if !is_ident {
-		return INVALID_TYPE
-	}
-	sym := symbol_of(k.c, lookup_symbol(k.scope, identifier_of(k.c, ident)))
-	if sym == nil || !type_is_dyn(k.c, sym.type) {
-		return INVALID_TYPE
-	}
-	check_single_expr(k, operand)
-	return sym.type
-}
-
 // Does this operand name a reflection descriptor constant?
 @(private = "file")
 callee_is_descriptor :: proc(k: ^Checker, operand: Expr) -> bool {
@@ -404,9 +378,9 @@ associated_group :: proc(k: ^Checker, callee: Expr) -> Symbol_Id {
 check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) {
 	receiver := sel.operand
 	receiver_base := expr_base(receiver)
-	// design.md "Borrowed dynamic interface values": a slot call through a view
-	// that is not a named local, such as one converted in place, dispatches as
-	// one through a local does, however the view is held.
+	// design.md "Borrowed dynamic interface values": a `dyn` slot call
+	// dispatches through the witness, however the view is held. A callable
+	// view's `call` is its forwarding member, reached as any method is.
 	if type_is_dyn(k.c, receiver_base.type) && dyn_proc_signature(k.c, receiver_base.type) == INVALID_TYPE &&
 	   check_dyn_slot_call(k, v, sel, receiver_base.type) {
 		return

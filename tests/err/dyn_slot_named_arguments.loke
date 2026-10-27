@@ -4,8 +4,8 @@ import "core:fmt";
 
 // design.md "Borrowed dynamic interface values": a slot call through a view
 // converted in place, a field, or a result binds named arguments by the slot's
-// parameter names, as a call through a local does, and a mutating slot needs a
-// mutable view however the view is held.
+// parameter names, as a call through a local does, a mutating slot needs a
+// mutable view however the view is held, and a missing slot is reported as one.
 Shape :: interface($Self: type) {
 	slot area: proc(self, scale: int, offset: int) -> int;
 	slot grow: proc(self: inout Self, by: int);
@@ -25,4 +25,5 @@ main :: proc() {
 	holder := Holder{(dyn Shape)(&s)};
 	fmt.println(holder.view.area(scale = 2, scale = 3));
 	(dyn Shape)(&s).grow(by = 1);
+	_ = (dyn Shape)(&s).perimeter();
 }

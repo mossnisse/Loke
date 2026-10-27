@@ -2512,6 +2512,20 @@ walk_flow_operand :: proc(graph: ^Flow_Graph, operand: Expr, kind: Flow_Event_Ki
 	walk_flow_expr(graph, operand)
 }
 
+// design.md "Evaluation order": a method or `dyn` slot receiver is evaluated
+// once, as `bound[0]`, though it is also the callee's operand. A walk takes it
+// as the argument alone, so `move(value).method()` kills its source once.
+call_receiver_is_bound :: proc(c: ^Compiler, v: ^Expr_Call) -> bool {
+	if len(v.bound) == 0 {
+		return false
+	}
+	if _, slot := v.operation.(Call_Dyn_Slot); slot {
+		return true
+	}
+	sym := symbol_of(c, v.resolution.chosen_overload)
+	return sym != nil && sym.has_receiver
+}
+
 @(private = "file")
 walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	#partial switch operation in v.operation {
@@ -2588,9 +2602,7 @@ walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		}
 		return nil
 	}
-	// A method receiver is both `bound[0]` and the callee's operand; walk it once,
-	// as an argument, so `move(value).method()` kills its source once.
-	if sym := symbol_of(graph.k.c, v.resolution.chosen_overload); sym == nil || !sym.has_receiver {
+	if !call_receiver_is_bound(graph.k.c, v) {
 		walk_flow_expr(graph, v.callee)
 	}
 	stores := call_may_store(graph.k.c, v)

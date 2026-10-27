@@ -745,8 +745,9 @@ checklist.
   `(dyn Shape).area(view, scale = 2)`; they were rejected (`L0392`, `L0371`). A mutating slot may be called on a `dyn mut` view converted in
   place, so a task may call one, as in
   `spawn r = (dyn mut Shape)(&mut s).grow(1);`; it was `L0359`. Naming a
-  mutating slot through a read-only view is the capability error `L0643`, not
-  a missing member (`L0363`).
+  mutating slot through a read-only view is the capability error `L0643`, and
+  a name no slot has is `L0467`, as through a local; both were a missing
+  member (`L0363`).
 - A borrow or region error found in the body of a generic instance, such as
   a library's, names the call that selected the instance
   (`while instantiating ...`), as the checker's errors there already did.

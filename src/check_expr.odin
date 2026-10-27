@@ -901,7 +901,7 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id, positi
 				}
 			}
 		}
-		if report_hidden_dyn_slot(k, v.span, operand, v.name.text) {
+		if report_missing_dyn_slot(k, v.span, operand, v.name.text) {
 			v.type = INVALID_TYPE
 			return
 		}

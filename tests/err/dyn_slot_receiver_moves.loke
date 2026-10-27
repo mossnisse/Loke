@@ -1,0 +1,22 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Evaluation order": a `dyn` slot call's receiver is evaluated once,
+// so a value it moves is moved there, and a later use of it is reported.
+Read :: interface($Self: type) { slot get: proc(self) -> int; }
+
+Box :: struct { n: int }
+impl Box { get :: proc(self) -> int { return self.n; } }
+
+Token :: struct { n: int }
+impl Token { release :: hook(drop) proc(self: inout Token) {} }
+
+after :: proc(token: move Token, b: ^Box) -> dyn Read { return (dyn Read)(b); }
+
+main :: proc() {
+	b := Box{7};
+	token := Token{1};
+	fmt.println(after(move(token), &b).get());
+	fmt.println(token.n);
+}

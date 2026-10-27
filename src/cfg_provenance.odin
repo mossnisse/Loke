@@ -5540,21 +5540,14 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		return prov_value_content(graph, held, prov_type(graph, v), v.span)
 	}
 	receiver, has_receiver, container_op := input.receiver, input.has_receiver, input.container
-	// The receiver is `bound[0]`; don't walk it again through the callee.
 	callee: []int
-	if !(has_receiver && len(v.bound) > 0) {
-		sel, is_selector := v.callee.(^Expr_Selector)
-		if _, slot := v.operation.(Call_Dyn_Slot); slot && is_selector && sel.operand != nil {
-			// The selector reads its view, which the call dispatches through.
-			callee = walk_flow_expr(graph, sel.operand)
-		} else {
-			// A procedure the call names is not used as a value; one an
-			// immediately called literal or other expression evaluates is.
-			if !call_through_value(c, v) {
-				graph.callee_expr = v.callee
-			}
-			callee = walk_flow_expr(graph, v.callee)
+	if !call_receiver_is_bound(c, v) {
+		// A procedure the call names is not used as a value; one an
+		// immediately called literal or other expression evaluates is.
+		if !call_through_value(c, v) {
+			graph.callee_expr = v.callee
 		}
+		callee = walk_flow_expr(graph, v.callee)
 	}
 	// design.md "Spawn statements": a procedure value a task calls is evaluated
 	// on the parent, before the arguments, and held with them until the join.

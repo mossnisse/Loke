@@ -1177,15 +1177,20 @@ check_any_view_extract :: proc(k: ^Checker, v: ^Expr_Checked_Extract) {
 	request_typeid(k.c, target)
 }
 
-// design.md "Borrowed dynamic interface values": a `dyn I` hides the slots
-// that mutate their subject, and naming one is a capability error naming
-// `dyn mut I`, never a missing member, however the view is held.
-report_hidden_dyn_slot :: proc(k: ^Checker, span: Span, dyn: Type_Id, name: string) -> bool {
-	if !type_is_dyn(k.c, dyn) || dyn_is_mutable(k.c, dyn) {
+// A name a `dyn` view has no member for: a slot it has not, or, since
+// design.md "Borrowed dynamic interface values" says a `dyn I` hides the slots
+// that mutate their subject, a capability error naming `dyn mut I`, never a
+// missing member. A callable view's one member is not a slot.
+report_missing_dyn_slot :: proc(k: ^Checker, span: Span, dyn: Type_Id, name: string) -> bool {
+	if !type_is_dyn(k.c, dyn) || dyn_proc_signature(k.c, dyn) != INVALID_TYPE {
 		return false
 	}
 	_, entry, found := dyn_slot_index(k, dyn, intern_identifier(k.c, name))
 	if !found {
+		errorf(k.c, span, "L0467", "`%s` has no slot `%s`", type_name(k.c, dyn), name)
+		return true
+	}
+	if dyn_is_mutable(k.c, dyn) {
 		return false
 	}
 	owner := interface_info_for(k, entry.owner)
@@ -1211,7 +1216,7 @@ check_dyn_slot_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, dyn
 	if !found {
 		return false
 	}
-	if report_hidden_dyn_slot(k, v.span, dyn, sel.name.text) {
+	if report_missing_dyn_slot(k, v.span, dyn, sel.name.text) {
 		v.type = INVALID_TYPE
 		return true
 	}

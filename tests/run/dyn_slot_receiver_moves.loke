@@ -1,0 +1,39 @@
+package main; import "core:fmt";
+
+// design.md "Evaluation order": a `dyn` slot call evaluates its receiver once,
+// before its arguments, so a receiver that moves a value moves it once,
+// whether the view is a call's result, a field of one, mutable, or spawned.
+
+Shape :: interface($Self: type) {
+	slot get: proc(self, scale: int) -> int;
+	slot grow: proc(self: inout Self, by: int) -> int;
+}
+
+Box :: struct { n: int }
+impl Box {
+	get :: proc(self, scale: int) -> int { return self.n * scale; }
+	grow :: proc(self: inout Box, by: int) -> int { self.n += by; return self.n; }
+}
+
+Token :: struct { n: int }
+impl Token { release :: hook(drop) proc(self: inout Token) { fmt.println("drop", self.n); } }
+
+Holder :: struct { view: dyn Shape }
+
+after :: proc(token: move Token, b: ^Box) -> dyn Shape { return (dyn Shape)(b); }
+after_mut :: proc(token: move Token, b: ^mut Box) -> dyn mut Shape { return (dyn mut Shape)(b); }
+holder_of :: proc(token: move Token, b: ^Box) -> Holder { return Holder{(dyn Shape)(b)}; }
+
+main :: proc() {
+	b := Box{7};
+	t1 := Token{1};
+	fmt.println(after(move(t1), &b).get(scale = 2));
+	t2 := Token{2};
+	fmt.println(after_mut(move(t2), &mut b).grow(by = 1));
+	t3 := Token{3};
+	fmt.println(holder_of(move(t3), &b).view.get(1));
+	t4 := Token{4};
+	r: int;
+	parallel { spawn r = after(move(t4), &b).get(3); }
+	fmt.println(r);
+}

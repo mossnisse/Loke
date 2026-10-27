@@ -7,3 +7,6 @@ L0371
 L0643
 @27:2
 slot `grow` mutates its subject, so it needs `dyn mut Shape`
+L0467
+@28:6
+`dyn Shape` has no slot `perimeter`
