@@ -8,6 +8,26 @@ checklist.
 
 ## [Unreleased]
 
+### Breaking changes
+
+- A view of a lent `foreach` element over a source reached through a pointer
+  now borrows that source, as
+  [Borrowing iteration](design.md#borrowing-iteration) requires. Changing the
+  source while such a view is still in use is now rejected; before, it
+  compiled, and growing the container could leave the view dangling:
+
+  ```loke
+  grow :: proc(items: ^mut [dynamic]string) {
+      kept: string_view = "";
+      foreach (item in items^) { kept = item; }
+      items.append(strings.copy("more"));   // now L0641
+      fmt.println(kept);
+  }
+  ```
+
+  Upgrade by finishing with the view before changing the source, or by
+  keeping a copy, such as `kept_copy := strings.copy(item);`.
+
 ### Added
 
 - `fs.replace_atomic` and `fs.replace_atomic_text` replace a file so that a
@@ -44,6 +64,12 @@ checklist.
   the subject's storage ([Switch ownership](design.md#switch-ownership)).
   Returning such a view also no longer clears the payload the subject still
   owns.
+
+- A view of, or a pointer to, a lent `foreach` element can now be returned
+  through the borrowed parameter it came from, as in
+  `foreach (item in d.items) { return item; }` with `d: ^Doc`, or over a
+  `[]string` parameter. Both were rejected with `L0526`
+  ([Borrowing iteration](design.md#borrowing-iteration)).
 
 ## [0.9.0] - 2026-10-27
 

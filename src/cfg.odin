@@ -1907,9 +1907,24 @@ walk_foreach_binding_provenance :: proc(
 		lent := sym != nil && sym.borrowed_binding != .None && !binding.is_ref
 		prov_bind_value(graph, binding.symbol, loans, expr_span(s.iterable), copies = !lent)
 		prov_bind_element_region(graph, binding.symbol, prov_input_value(graph, s.iterable))
-		// A lent or mutable element is the source's storage, not a copy.
+		// A lent or mutable element is the source's storage, not a copy
+		// (design.md "Borrowing iteration"). A carrier's elements live in what
+		// it views: the iterator loan on the variable guards it for the loop,
+		// but is not the element's provenance. A source reached through a
+		// pointer, as `d.items` with `d: ^Doc`, is storage that pointer names,
+		// so its elements borrow what `&iterable` would; only the binding takes
+		// that borrow, since the loop's own reads of the source are already its.
 		if sym != nil && sym.borrowed_binding != .None {
-			prov_bind_view(graph, binding.symbol, iterated, lends = !foreach_is_place_loop(s))
+			viewed := iterated
+			if s.kind != .Protocol && len(elements) > 0 && type_is_carrier(graph.k.c, prov_type(graph, s.iterable)) {
+				viewed = elements
+			}
+			if s.kind != .Protocol && len(viewed) == 0 {
+				if carriers, _, through := prov_read_through_carrier(graph, s.iterable); through {
+					viewed = carriers
+				}
+			}
+			prov_bind_view(graph, binding.symbol, viewed, lends = !foreach_is_place_loop(s))
 		}
 	}
 }

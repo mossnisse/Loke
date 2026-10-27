@@ -1,0 +1,42 @@
+// design.md "Borrowing iteration": a lent element borrows its source, so a
+// view of it cannot outlive a local or temporary source, and the source
+// cannot be changed while the traversal or a view of an element is in use.
+package main;
+
+import "core:fmt";
+import "core:strings";
+
+make_items :: proc() -> [dynamic]string {
+	items := make([dynamic]string, 0, 1);
+	items.append(strings.copy("temporary"));
+	return items;
+}
+
+local_source :: proc() -> string_view {
+	items := make([dynamic]string, 0, 1);
+	items.append(strings.copy("local"));
+	foreach (item in items) { return item; }
+	return "";
+}
+
+temporary_source :: proc() -> string_view {
+	foreach (item in make_items()) { return item; }
+	return "";
+}
+
+slice_reassigned :: proc(items: []string, other: []string) {
+	view := items;
+	foreach (item in view) {
+		view = other;
+		fmt.println(item);
+	}
+}
+
+grown_under_view :: proc(items: ^mut [dynamic]string) {
+	kept: string_view = "";
+	foreach (item in items^) { kept = item; }
+	items.append(strings.copy("more"));
+	fmt.println(kept);
+}
+
+main :: proc() {}

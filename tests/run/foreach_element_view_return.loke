@@ -1,0 +1,69 @@
+// design.md "Borrowing iteration": a lent element names the source's own
+// storage and carries its provenance, so a view of it, or `&item`, borrows the
+// source. Through a borrowed parameter, that view may be returned.
+package main;
+
+import "core:fmt";
+import "core:strings";
+
+Entry :: struct { name: string, count: int }
+Doc :: struct {
+	items:   [dynamic]string,
+	entries: [dynamic]Entry,
+}
+
+impl Doc {
+	first_long :: proc(self: ^) -> string_view {
+		foreach (item in self.items) {
+			if (item.len() > 3) { return item; }
+		}
+		return "";
+	}
+}
+
+through_pointer :: proc(doc: ^Doc) -> string_view {
+	foreach (item in doc.items) { return item; }
+	return "";
+}
+
+// The elements live in what the slice views, not in the parameter's slot.
+through_slice :: proc(items: []string) -> string_view {
+	foreach (item in items) { return item; }
+	return "";
+}
+
+element_pointer :: proc(doc: ^Doc) -> ^string {
+	foreach (item in doc.items) {
+		if (item == "second") { return &item; }
+	}
+	return &doc.items[0];
+}
+
+field_of_element :: proc(doc: ^Doc) -> string_view {
+	foreach (entry in doc.entries) {
+		if (entry.count > 1) { return entry.name; }
+	}
+	return "";
+}
+
+// A view kept from an earlier step does not stop the loop reading its source
+// through the pointer again, as an indexed read would not.
+last_through_mutable :: proc(items: ^mut [dynamic]string) -> string_view {
+	kept: string_view = "";
+	foreach (item in items^) { kept = item; }
+	return kept;
+}
+
+main :: proc() {
+	doc := Doc{make([dynamic]string, 0, 2), make([dynamic]Entry, 0, 2)};
+	doc.items.append(strings.copy("ab"), strings.copy("second"));
+	doc.entries.append(Entry{strings.copy("one"), 1}, Entry{strings.copy("two"), 2});
+	fmt.println(doc.first_long());
+	fmt.println(through_pointer(&doc));
+	fmt.println(through_slice(doc.items[:]));
+	fmt.println(element_pointer(&doc)^);
+	fmt.println(field_of_element(&doc));
+	fmt.println(last_through_mutable(&mut doc.items));
+	// Returning a view left every element in place.
+	fmt.println(doc.items[0], doc.items[1], doc.entries[0].name, doc.entries[1].name);
+}
