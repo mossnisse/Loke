@@ -1791,6 +1791,48 @@ parameter still conflicts with a kept sender, since a channel's state holds
 `int` fields. Whether a finer rule, for example one using field privacy,
 would accept enough real programs to pay for itself is unmeasured.
 
+### Join-check cycle traversal review (2026-10-27)
+
+Review of `9d3da3c`. The reported by-value-cycle crash is fixed; the isolated
+diagnostic corpus passes. Both non-blocking follow-ups are applied:
+
+- **Simplification:** `roots_may_share_storage` can drop its `inside` array
+  and `type_holds_inline` its stack parameter and push/pop. The only caller
+  first collects both roots completely and returns on unknown storage;
+  `collect_pointees` rejects a cycle over every inline edge that
+  `type_holds_inline` follows. Keep that precondition explicit on the latter
+  helper. This removes three executable lines and the argument plumbing.
+- **Regression coverage:**
+  [parallel_join_cycle.loke](tests/err/parallel_join_cycle.loke) reaches the
+  cycle guard in `collect_pointees`, then returns through unknown storage
+  before calling `same_storage_type`. The latter's bounded loop fixes an
+  independent crash through valid recursive pointer types. Add a case like:
+
+  ```loke
+  package main;
+  P :: distinct ^P;
+  Q :: distinct ^Q;
+  Ticket :: struct @(wakes_on_drop) { held: P }
+  borrow :: proc(value: Q) {}
+  check :: proc(ticket: ^Ticket, value: Q) {
+      parallel { spawn borrow(value); }
+  }
+  main :: proc() {}
+  ```
+
+  This exits with `L0733` in `9d3da3c`; its parent overflows the stack
+  (`0xC00000FD` on Windows). Keep the bounded comparison loop.
+
+`type_holds_inline` no longer takes a stack, and its comment states the
+precondition; `parallel_join_cycle.loke` adds the self-pointer case.
+
+The root collector's independent cycle guard is useful: body-local type
+declarations do not run through the package's finite-size phase, so checking
+only `size_state == .Cyclic` would not cover every input. A recursion path
+also tells a cycle apart from two sibling fields of the same type; replacing
+it with a visited set that treats every revisit as unknown would reject
+unrelated storage unnecessarily.
+
 ### Channel fix follow-up review (2026-10-26)
 
 Review of `1c0bae5`. All three findings are fixed:

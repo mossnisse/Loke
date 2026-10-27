@@ -3585,10 +3585,9 @@ roots_may_share_storage :: proc(graph: ^Flow_Graph, a, b: Root_Id, reached: ^map
 	if first.unknown || second.unknown {
 		return true
 	}
-	inside := make([dynamic]Type_Id, 0, 8, context.temp_allocator)
 	for outer in first.objects {
 		for inner in second.objects {
-			if type_holds_inline(c, outer, inner, &inside) || type_holds_inline(c, inner, outer, &inside) {
+			if type_holds_inline(c, outer, inner) || type_holds_inline(c, inner, outer) {
 				return true
 			}
 		}
@@ -3666,31 +3665,30 @@ collect_pointees :: proc(c: ^Compiler, type: Type_Id, objects: ^[dynamic]Type_Id
 // Whether storage of type `outer` holds storage of type `inner` within its own
 // bytes: itself, or a field, element, or variant, at any depth. A distinct type
 // shares its storage with what it wraps, and a view's mutability is not part
-// of its storage. A record holding itself by value, already diagnosed, may
-// hold anything.
+// of its storage. `outer` must be one `collect_pointees` walked without finding
+// unknown storage, which rules out a record holding itself by value along the
+// same edges this follows.
 @(private = "file")
-type_holds_inline :: proc(c: ^Compiler, outer, inner: Type_Id, inside: ^[dynamic]Type_Id) -> bool {
+type_holds_inline :: proc(c: ^Compiler, outer, inner: Type_Id) -> bool {
 	if same_storage_type(c, outer, inner) {
 		return true
 	}
 	info := type_of(c, outer)
-	if info == nil || slice.contains(inside[:], outer) {
+	if info == nil {
 		return true
 	}
-	append(inside, outer)
-	defer pop(inside)
 	#partial switch info.kind {
 	case .Distinct, .Array, .Simd:
-		return type_holds_inline(c, info.element, inner, inside)
+		return type_holds_inline(c, info.element, inner)
 	case .Struct:
 		for field in info.fields {
-			if sym := symbol_of(c, field); sym != nil && type_holds_inline(c, sym.type, inner, inside) {
+			if sym := symbol_of(c, field); sym != nil && type_holds_inline(c, sym.type, inner) {
 				return true
 			}
 		}
 	case .Union:
 		for variant in info.variants {
-			if type_holds_inline(c, variant, inner, inside) {
+			if type_holds_inline(c, variant, inner) {
 				return true
 			}
 		}

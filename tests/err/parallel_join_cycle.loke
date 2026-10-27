@@ -1,7 +1,8 @@
 // design.md "Releasing before the join": telling two parameters apart by the
 // types they reach must not recurse into a record already diagnosed as
 // holding itself by value (L0364). Such a record may hold anything, so the
-// kept sender is still rejected beside a task borrowing one.
+// kept sender is still rejected beside a task borrowing one. Comparing two
+// distinct pointer types that each point to themselves must end too.
 package main;
 
 import "core:thread";
@@ -13,6 +14,18 @@ borrow :: proc(value: ^Cycle) {}
 check :: proc(send: ^thread.Sender(int), value: ^Cycle) {
 	parallel {
 		spawn borrow(value);
+	}
+}
+
+P :: distinct ^P;
+Q :: distinct ^Q;
+Ticket :: struct @(wakes_on_drop) { held: P }
+
+borrow_pointer :: proc(value: Q) {}
+
+self_pointers :: proc(ticket: ^Ticket, value: Q) {
+	parallel {
+		spawn borrow_pointer(value);
 	}
 }
 
