@@ -1,0 +1,9 @@
+L0732
+@27:3
+this task may use `arena`'s allocator, which a task started earlier reserves until the join
+L0732
+@34:3
+this task may use `arena`'s allocator, which a task started earlier reserves until the join
+L0732
+@40:3
+this task may use `arena`'s allocator, which a task started earlier reserves until the join

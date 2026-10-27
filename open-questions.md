@@ -1980,13 +1980,22 @@ and `tests/err/case_binding_returned.loke`.
 
 Still open:
 
+- Answered (2026-10-27): **initializer-result retention.** The unchecked
+  publication in `Lazy.get` lost the value's borrow and allocator-region
+  retention, so a global `Lazy` could keep a pointer to a local or to a
+  worker's `thread_local` storage, or an owner backed by an arena that had
+  ended. `init` is now `@(escape=static)`, and the value passes through a
+  private `@(cross_thread, escape=static)` parameter before it is published,
+  the contract a channel item has. A `Lazy` of a `@(thread_affine)` type is
+  rejected by the same check. An error found in the instance's body, such as
+  the value borrowing `thread_local` storage, names the `get` call that
+  selected it, as provenance errors in any generic instance now do.
 - **Thread-affine values in globals.** A task may borrow a
-  `@(thread_affine)` value stored in a global, as `window.handle` reads one,
-  and with `Lazy` a task may make one that the parent then uses.
-  [Sharing with tasks](design.md#sharing-with-tasks) follows arguments,
+  `@(thread_affine)` value stored in a plain global, as `window.handle` reads
+  one. [Sharing with tasks](design.md#sharing-with-tasks) follows arguments,
   receivers, captures, and results, not globals, so this is not a divergence.
   Closing it needs a read effect over globals, or a rule that rejects a global
-  of a type that is or reaches one.
+  of a type that is or reaches one. A `Lazy` cannot hold one.
 - **Waiting.** A `get` that finds `init` running spins as `Once.do` does, so
   slow setup contended by many tasks burns their threads; the platform wait
   [Concurrency refinements](#concurrency-refinements) mentions would serve

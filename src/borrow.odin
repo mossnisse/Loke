@@ -2449,11 +2449,32 @@ merge_param_paths :: proc(
 // One concrete body's root and region diagnostics.
 analyze_provenance :: proc(k: ^Checker, literal: ^Expr_Proc) {
 	defer free_all(k.c.analysis_allocator)
+	first := len(k.c.diagnostics)
+	defer note_instance_sites(k.c, literal, first)
 	graph := build_flow_graph(k, literal, .Prov_Diagnose)
 	if graph == nil {
 		return
 	}
 	solve_provenance(k, graph)
+}
+
+// An error in a generic instance's body names the call that selected it, as
+// the checker's do (`note_instantiation_stack`), which runs before this pass:
+// the body may be a library's, and the call the caller's.
+@(private = "file")
+note_instance_sites :: proc(c: ^Compiler, literal: ^Expr_Proc, first: int) {
+	instance := c.procedure_instances[literal.symbol]
+	if instance == nil || instance.selected_at.file == NO_FILE {
+		return
+	}
+	context.allocator = diagnostic_allocator(c)
+	for index in first ..< len(c.diagnostics) {
+		diagnostic := &c.diagnostics[index]
+		if diagnostic.severity != .Error { continue }
+		append(&diagnostic.notes, Note{span = instance.selected_at, message = fmt.aprintf(
+			"while instantiating `%s`", short_instantiation_name(c, identifier_text(c, symbol_of(c, literal.symbol).name)),
+		)})
+	}
 }
 
 // design.md "Globals while tasks run": the globals whose

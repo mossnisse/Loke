@@ -89,6 +89,9 @@ Instance :: struct {
 	// Deferred so an unselected overload never has its body diagnosed.
 	body_checked: bool,
 	span:         Span,
+	// The call that selected this instance for its body to be checked, which a
+	// later diagnostic in the body names (`note_instance_sites`).
+	selected_at:  Span,
 	// Why a silent probe rejected this cached instance, for a later request that
 	// reports.
 	rejection:    Instance_Rejection,
@@ -907,7 +910,6 @@ generic_value_text :: proc(c: ^Compiler, value: Const_Value, depth := 0) -> stri
 }
 
 // Keep the beginning and end of deep instance names without cutting UTF-8.
-@(private = "file")
 short_instantiation_name :: proc(c: ^Compiler, name: string) -> string {
 	if len(name) <= 80 { return name }
 	end, start := 64, len(name) - 12
@@ -2147,6 +2149,7 @@ promote_generic_instance :: proc(k: ^Checker, instance: ^Instance, span: Span) {
 	if !found || template.kind != .Procedure {
 		return
 	}
+	instance.selected_at = span.file == NO_FILE ? instance.span : span
 	literal := decl_proc_literal(instance.decl)
 	if literal == nil || literal.body == nil {
 		return
@@ -2158,7 +2161,7 @@ promote_generic_instance :: proc(k: ^Checker, instance: ^Instance, span: Span) {
 	// Diagnosed against the selecting call; a probe-created instance has none.
 	append(&k.c.instantiation_stack, Instantiation_Frame {
 		description = identifier_text(k.c, symbol_of(k.c, instance.symbol).name),
-		span        = span.file == NO_FILE ? instance.span : span,
+		span        = instance.selected_at,
 	})
 	defer pop(&k.c.instantiation_stack)
 

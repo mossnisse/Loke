@@ -130,7 +130,13 @@ impl Lazy($T) {
 	//
 	// `init` must not reach this `Lazy`: a re-entrant `get` waits for itself
 	// and never returns, and nothing reports it.
-	get :: proc(self: ^, init: $F) -> ^T where interfaces.Callable(F, proc() -> T) ---;
+	//
+	// Any thread may reach the value, as long as the process runs, so it is
+	// checked as an item a channel sends is: `init` borrows only what lasts
+	// that long, and the value it makes borrows no `thread_local` storage,
+	// holds nothing `@(thread_affine)`, and owns nothing in a region that ends
+	// sooner.
+	get :: proc(self: ^, @(escape=static) init: $F) -> ^T where interfaces.Callable(F, proc() -> T) ---;
 
 	// Has the value been made? A `false` may be stale the moment it is read;
 	// only `true` is a durable answer.

@@ -355,7 +355,9 @@ checklist.
 - `sync.Lazy(T)` makes a value on the first `get` and shares it with every
   later caller, on any thread. Its value is synchronized storage, so tasks may
   make it on first use where a `Once` action writing a global is rejected;
-  what `init` writes is still checked. See
+  what `init` writes is still checked, and the value is checked as a channel
+  item is: process-lifetime borrows, no `thread_local` borrow, nothing
+  `@(thread_affine)`. See
   [Atomic operations and Once](design.md#atomic-operations-and-once).
 - [Structured concurrency](design.md#structured-concurrency): a
   `parallel { ... }` block runs each `spawn`ed call on a thread of its own and
@@ -735,6 +737,15 @@ checklist.
 
 ### Fixed
 
+- A borrow or region error found in the body of a generic instance, such as
+  a library's, names the call that selected the instance
+  (`while instantiating ...`), as the checker's errors there already did.
+- A task may make, drop, and upgrade `Shared(T)` and `Weak(T)` handles the
+  default provider backs, as it may a `Box(T)`. Dropping a handle was taken to
+  free in an unknown region, since the handle frees through the allocator it
+  reads back from its control block, so a second such task was rejected
+  (`L0732`). A handle now frees in its own region, and one an arena backs
+  still reserves that arena.
 - A case binding over a subject reached through a pointer, as in
   `switch (p^)` or `switch (holder.slot)` on a `^Holder`, names the subject's
   storage, so `return &value` from such a case is accepted when the subject is

@@ -1,12 +1,27 @@
 L0526
-@24:9
+@36:9
 this borrow cannot be returned: `local` ends when this procedure returns
+L0647
+@41:6
+this pointer borrows `value`, which does not outlive `init`
+process-lifetime storage
+L0647
+@47:6
+this allocator handle borrows the allocator control block it borrows, which does not outlive `init`
 L0731
-@30:3
+@57:3
 `writes_global` may write `counter`, which every task and the parent share
 L0731
-@31:3
+@58:3
 `writes_through` may write `values`, which every task and the parent share
 L0731
-@31:3
+@58:3
 `writes_through` reaches through `views`, which every task and the parent share: `views` holds `[]mut int`
+L0647
+this pointer borrows `per_thread`, which does not outlive `value`, which `publish` may keep
+@50:46
+while instantiating `Lazy(^int).get(
+L0724
+`Window` is `@(thread_affine)`, so it cannot cross to another thread
+@52:41
+while instantiating `Lazy(Window).get(

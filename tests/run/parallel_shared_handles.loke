@@ -1,0 +1,29 @@
+// design.md "Allocators and tasks": the default provider's region is reserved
+// by no task, so tasks may make, take, and drop `Shared(T)` and `Weak(T)`
+// handles it backs. design.md "Shared ownership": dropping a handle frees in
+// the allocator that made it.
+package main;
+
+import "core:fmt";
+
+fresh :: proc(n: int) -> int {
+	handle := shared(n);
+	weak := handle.downgrade();
+	_ = weak.upgrade();
+	return handle.get()^ + handle.strong_count();
+}
+
+take :: proc(handle: move Shared(int)) -> int { return handle.get()^; }
+
+main :: proc() {
+	x := shared(10);
+	y := shared(20);
+	a, b, c, d: int;
+	parallel {
+		spawn a = fresh(1);
+		spawn b = fresh(2);
+		spawn c = take(move(x));
+		spawn d = take(move(y));
+	}
+	fmt.println(a, b, c, d);
+}

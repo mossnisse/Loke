@@ -1,20 +1,32 @@
 // design.md "Globals while tasks run": a `sync.Lazy(T)`'s `get` writes only
 // synchronized storage, but what its `init` writes still counts, and a carrier
 // it stores is held to the reach rule. design.md "Procedure result contracts":
-// the value `get` answers borrows the `Lazy`.
+// the value `get` answers borrows the `Lazy`. design.md "Atomic operations and
+// Once": every thread may reach the value for as long as the process runs, so
+// `init` and the value it makes are checked as a channel's item is.
 package main;
 
 import "core:fmt";
+import "core:mem";
 import "core:sync";
+
+Window :: struct @(thread_affine) { handle: int }
 
 counter: int;
 values: [2]int;
 plain: sync.Lazy(int);
 views: sync.Lazy([]mut int);
+saved: sync.Lazy(^int);
+boxes: sync.Lazy(Box(int));
+local_views: sync.Lazy(^int);
+windows: sync.Lazy(Window);
+per_thread: thread_local int;
 
 counting :: proc() -> int { counter += 1; return 3; }
 view_of :: proc() -> []mut int { return &mut values[:]; }
 three :: proc() -> int { return 3; }
+per_thread_view :: proc() -> ^int { return &per_thread; }
+open :: proc() -> Window { return Window{4}; }
 
 writes_global :: proc() -> int { return plain.get(counting)^; }
 writes_through :: proc() { views.get(view_of)^[0] = 1; }
@@ -24,11 +36,28 @@ escapes :: proc() -> ^int {
 	return local.get(three);
 }
 
+keeps_local :: proc() {
+	value := 123;
+	_ = saved.get(proc() -> ^int capture(&value) { return &value; });
+}
+
+keeps_arena :: proc() {
+	arena := mem.Arena.init();
+	allocator := arena.allocator();
+	_ = boxes.get(proc() -> Box(int) capture(allocator) { return box(1, allocator); });
+}
+
+keeps_thread_local :: proc() -> int { return local_views.get(per_thread_view)^^; }
+
+shares_window :: proc() -> int { return windows.get(open).handle; }
+
 main :: proc() {
 	a: int;
 	parallel {
 		spawn a = writes_global();
 		spawn writes_through();
 	}
-	fmt.println(a, escapes()^);
+	keeps_local();
+	keeps_arena();
+	fmt.println(a, escapes()^, keeps_thread_local(), shares_window());
 }

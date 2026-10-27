@@ -206,7 +206,13 @@ cannot vouch for. It is a separate type, not `Once(T)`, because `Once` is
 already a type without parameters. Its `init` is any callable answering `T`,
 so a setup step can capture what it needs, and `get` answers a `^T` that
 borrows the `Lazy` through its payload binding, so a local one cannot hand out
-its value past its end.
+its value past its end. The value itself is published through an unchecked
+address, as a channel's queue is, so it takes a channel item's contract:
+process-lifetime borrows, and the checks for crossing threads, since any
+thread may read what one thread made. That is stricter than a local `Lazy`
+needs, but a `Lazy` that one thread uses has little reason to exist, and a
+contract tied to the receiver's own lifetime would need a write through a
+read-only receiver that the borrow rules can follow.
 
 **A thread per task, with no serial fallback.** Running the tasks one after
 another would be cheaper, but it is a different program: `thread_local`

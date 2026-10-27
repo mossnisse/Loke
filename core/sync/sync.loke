@@ -249,15 +249,21 @@ impl Lazy($T) {
 	///
 	/// `init` must not reach this `Lazy`: a re-entrant `get` waits for itself
 	/// and never returns, and nothing reports it.
+	///
+	/// Any thread may reach the value, as long as the process runs, so it is
+	/// checked as an item a channel sends is: `init` borrows only what lasts
+	/// that long, and the value it makes borrows no `thread_local` storage,
+	/// holds nothing `@(thread_affine)`, and owns nothing in a region that ends
+	/// sooner.
 	// The result borrows the receiver through the payload binding below, which
 	// carries the receiver's provenance; only the one write goes through an
-	// unchecked address, as `Mutex`'s guard does.
-	get :: proc(self: ^, init: $F) -> ^T where interfaces.Callable(F, proc() -> T) {
+	// unchecked address, as `Mutex`'s guard does, after `publish`'s parameter
+	// has checked what it keeps.
+	get :: proc(self: ^, @(escape=static) init: $F) -> ^T where interfaces.Callable(F, proc() -> T) {
 		if (self.once.claim()) {
 			finished := false;
 			defer self.once.settle(finished);
-			made: Option(T) = .some(init());
-			(^mut Option(T))(rawptr(&self.slot))^ = move(made);
+			self.publish(init());
 			finished = true;
 		}
 		switch (self.slot) {
@@ -270,5 +276,13 @@ impl Lazy($T) {
 	/// only `true` is a durable answer.
 	is_done :: proc(self: ^) -> bool {
 		return self.once.is_done();
+	}
+
+	// Every thread that calls `get` may reach the value, for as long as this
+	// `Lazy` lasts, so it is checked as an item a channel sends is.
+	@(private)
+	publish :: proc(self: ^, @(cross_thread, escape=static) value: move T) {
+		made: Option(T) = .some(move(value));
+		(^mut Option(T))(rawptr(&self.slot))^ = move(made);
 	}
 }

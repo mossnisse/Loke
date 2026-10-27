@@ -1702,6 +1702,26 @@ Thread_Body :: struct {
 	regions:     []Region_Set,
 	calls:       []Effect_Call,
 	parts:       [][]Call_Part,
+	// The use is settled by the body's role, not by its calls
+	// (`shared_handle_operation`).
+	settled_use: bool,
+}
+
+// design.md "Shared ownership": a handle's operations work on its one control
+// block through a raw pointer, so what they call, and what they rebuild from
+// that pointer, has an unknown region, though the block is the handle's region
+// (`prov_call_region`). A handle operation keeps only its own use, and one that
+// frees, the drop hook releasing the block and the payload through the
+// allocator the constructor stored there, uses its receiver's region instead
+// (design.md "Allocators and tasks"). Reading, copying, or upgrading a handle
+// reserves nothing.
+@(private = "file")
+shared_handle_operation :: proc(c: ^Compiler, symbol: Symbol_Id, own: Allocator_Use) -> (handle, frees: bool) {
+	sym := symbol_of(c, symbol)
+	if sym == nil || !sym.has_receiver || !type_is_shared_handle(c, sym.owner_type) {
+		return false, false
+	}
+	return true, sym.hook == .Drop || own.regions.unknown
 }
 
 // Each clean body's graph is built once more, with the result summaries
@@ -1735,7 +1755,17 @@ compute_thread_summaries :: proc(k: ^Checker) {
 			continue
 		}
 		own := &facts[index]
-		if graph.allocator_use.regions.params != nil {
+		if handle, frees := shared_handle_operation(c, body.literal.symbol, graph.allocator_use); handle {
+			own.use = new_allocator_use(graph.param_count, context.temp_allocator)
+			if frees {
+				receiver := Region_Set{params = make([]bool, len(own.use.regions.params), context.temp_allocator)}
+				receiver.params[0] = true
+				merge_allocator_use(&own.use, receiver, Effect_Source{span = body.literal.span})
+			} else if graph.allocator_use.regions.params != nil {
+				merge_allocator_use_from(&own.use, graph.allocator_use)
+			}
+			own.settled_use = true
+		} else if graph.allocator_use.regions.params != nil {
 			resize_allocator_use(&own.use, graph.param_count)
 			merge_allocator_use_from(&own.use, graph.allocator_use)
 		}
@@ -1793,6 +1823,8 @@ compute_thread_summaries :: proc(k: ^Checker) {
 					source := Effect_Source{via = via, span = call.span, precision = reached.source.precision}
 					grew |= add_global_effect(&body.reach, reached.global, source)
 				}
+				// The receiver's region already covers what the calls free.
+				if body.settled_use { continue }
 				use := facts[part.body].whole_use if part.whole else facts[part.body].use
 				if part.callback >= 0 {
 					given := Region_Set{params = make([]bool, len(body.use.regions.params), context.temp_allocator)}
@@ -1816,6 +1848,7 @@ compute_thread_summaries :: proc(k: ^Checker) {
 				source := Effect_Source{via = via, span = span, precision = reached.source.precision}
 				grew |= add_global_effect(&body.whole_reach, reached.global, source)
 			}
+			if body.settled_use { continue }
 			given := callback_call(span, body.regions[part.callback])
 			grew |= substitute_allocator_use(&body.whole_use, facts[part.body].whole_use, given, false, via)
 		}

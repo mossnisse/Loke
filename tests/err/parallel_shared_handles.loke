@@ -1,0 +1,43 @@
+// design.md "Allocators and tasks": dropping a `Shared(T)` frees in the
+// allocator that made its control block and its payload, so a task dropping
+// one backed by an arena reserves that arena until the join, as does dropping
+// a handle a `Weak` upgrades to.
+package main;
+
+import "core:fmt";
+import "core:mem";
+
+take :: proc(handle: move Shared(int)) -> int { return handle.get()^; }
+
+take_list :: proc(handle: move Shared([dynamic]int)) -> int { return handle.get().len(); }
+
+upgraded :: proc(weak: Weak(int)) -> bool {
+	strong := weak.upgrade();
+	return strong != .none;
+}
+
+main :: proc() {
+	arena := mem.Arena.init();
+	allocator := arena.allocator();
+	x := shared(1, allocator);
+	y := shared(2, allocator);
+	a, b: int;
+	parallel {
+		spawn a = take(move(x));
+		spawn b = take(move(y));
+	}
+	first := shared(make([dynamic]int, 0, 4, allocator));
+	second := shared(make([dynamic]int, 0, 4, allocator));
+	c, d: int;
+	parallel {
+		spawn c = take_list(move(first));
+		spawn d = take_list(move(second));
+	}
+	kept := shared(3, allocator);
+	e, f: bool;
+	parallel {
+		spawn e = upgraded(kept.downgrade());
+		spawn f = upgraded(kept.downgrade());
+	}
+	fmt.println(a, b, c, d, e, f);
+}
