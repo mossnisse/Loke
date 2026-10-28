@@ -84,6 +84,8 @@ MATRIX_USES := [?]Matrix_Use {
 	{"pass_sibling", "bump(&mut $B.count);", ""},
 	{"pass_cells", "bump(&mut $B.cells[1]);", ""},
 	{"pass_read", "sink(look($P));", ""},
+	{"copy_pointer", "q := $P;", ""},
+	{"copy_pointer_read", "q: ^List = $P;", ""},
 }
 
 // Where the use and the later use stand. `Branch` makes the use one arm of an
@@ -100,13 +102,13 @@ Matrix_Shape :: enum { Straight, Branch, Branch_Later, Loop_Carried, Loop_Whole 
 // The rules, for what is taken out of a place and used again later
 // (design.md "Weakening and reborrows"): a copy is a mutable reborrow of the
 // stored carrier, which suspends every other use of it, a read or a copy
-// included, and handing a pointer to the place to a call lets the callee use
-// it. Storage beside it, and storing a new carrier into the place, are not
+// included, and handing a pointer to the place to a call, or copying one,
+// even read-only, lets the callee or the copy use it. Storage beside it, and storing a new carrier into the place, are not
 // uses of it. A switch payload binding is no copy but names the stored
 // carrier, so it is suspended in turn by a copy of that carrier still in use,
 // and the switch borrows the place, which a call given a mutable pointer to
-// it may write, as storing into the place does (design.md "Switch
-// ownership"). A borrow of `count`, or a slice of `cells` (design.md
+// it, or a mutable copy of one, may write, as storing into the place does
+// (design.md "Switch ownership"). A borrow of `count`, or a slice of `cells` (design.md
 // "Slices"), reborrows the carriers it goes through for that field only:
 // writing it, handing it on mutably, or handing the `List` to a call that may
 // write it, conflicts with the borrow, and a mutable borrow excludes reading
@@ -129,7 +131,7 @@ matrix_expected :: proc(place: Matrix_Place, take: Matrix_Take, use: Matrix_Use,
 	switch take {
 	case .Copy:
 		switch use.name {
-		case "store_through_same", "read_through_same", "copy_same", "pass_whole", "pass_read":
+		case "store_through_same", "read_through_same", "copy_same", "pass_whole", "copy_pointer", "pass_read", "copy_pointer_read":
 			return "L0641"
 		case "replace_head":
 			if shape == .Loop_Whole {
@@ -140,27 +142,27 @@ matrix_expected :: proc(place: Matrix_Place, take: Matrix_Take, use: Matrix_Use,
 		switch use.name {
 		case "copy_same_option":
 			return "L0641"
-		case "pass_whole", "replace_first":
+		case "pass_whole", "replace_first", "copy_pointer":
 			return "L0511"
 		}
 	case .Borrow:
 		switch use.name {
-		case "write_count", "pass_whole", "pass_sibling":
+		case "write_count", "pass_whole", "copy_pointer", "pass_sibling":
 			return conflict
 		}
 	case .Borrow_Mut:
 		switch use.name {
-		case "write_count", "pass_whole", "pass_sibling", "pass_read":
+		case "write_count", "pass_whole", "copy_pointer", "pass_sibling", "pass_read", "copy_pointer_read":
 			return conflict
 		}
 	case .Slice, .Foreach:
 		switch use.name {
-		case "write_cells", "pass_whole", "pass_cells":
+		case "write_cells", "pass_whole", "copy_pointer", "pass_cells":
 			return conflict
 		}
 	case .Slice_Mut, .Foreach_Mut:
 		switch use.name {
-		case "write_cells", "read_cells", "pass_whole", "pass_cells", "pass_read":
+		case "write_cells", "read_cells", "pass_whole", "copy_pointer", "pass_cells", "pass_read", "copy_pointer_read":
 			return conflict
 		}
 	}
@@ -212,7 +214,7 @@ matrix_applies :: proc(place: Matrix_Place, take: Matrix_Take, use: Matrix_Use, 
 		return false
 	}
 	switch use.name {
-	case "write_count", "write_cells", "replace_first", "pass_whole", "pass_sibling", "pass_cells":
+	case "write_count", "write_cells", "replace_first", "pass_whole", "pass_sibling", "pass_cells", "copy_pointer":
 		return !place.read_only
 	case "copy_same_option", "second_view":
 		return take != .Copy

@@ -234,9 +234,13 @@ the parent commit: holds as place loans, with no change in behavior (done:
 `Prov_Place_Loan` records its capability and what it lends); offsets
 on slots, with calls writing at an argument's offset and `prov_unsaid_writes`
 removed (done: `Prov_Slot.offset`, found from the marker slots until borrows
-are place loans too, which closed the conditional record gap); borrows, slices, and
-traversals as place loans, removing the placed reborrows, tags, and markers,
-with decision 1; then weakening as clearing a place loan's capability. Each
+are place loans too, which closed the conditional record gap); a place
+loan's liveness as a bit of the reach rows, carried to whatever derives from
+its snapshot (done: `place_bit`, `place_loan_use`); decision 1 (done: a copy
+into storage uses what the carrier reaches and a mutable one writes it, as a
+call argument does, `prov_use_copied`); borrows, slices, and
+traversals as place loans, removing the placed reborrows, tags, and markers;
+then weakening as clearing a place loan's capability. Each
 access now checks the live place loans, as writes check holds; measure the
 borrow phase with `perf.ps1` before and after the third step.
 

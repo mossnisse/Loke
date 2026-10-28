@@ -37,3 +37,12 @@ L0641
 L0641
 @94:2
 `pair` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@104:2
+`list` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@110:2
+`list` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@116:19
+`list` cannot be used here: a mutable reborrow of it is still in use

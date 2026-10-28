@@ -5,6 +5,9 @@ L0511
 @29:9
 this mutable argument is not compatible with the read-only payload of `h^.first` that is still in use
 L0511
+@39:3
+this mutable copy is not compatible with the read-only payload of `h^.first` that is still in use
+L0511
 @40:3
 this write is not compatible with the read-only payload of `h^.first` that is still in use
 L0511
@@ -37,3 +40,6 @@ this mutable borrow is not compatible with the read-only payload of `c^.first[0]
 L0511
 @265:9
 this mutable borrow is not compatible with the read-only payload of `o^.inner.first` that is still in use
+L0511
+@280:13
+this mutable copy is not compatible with the read-only payload of `h^.first` that is still in use

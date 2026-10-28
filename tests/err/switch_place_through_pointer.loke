@@ -269,4 +269,30 @@ enclosing_payload :: proc(o: ^mut Outer) -> int {
 	return 0;
 }
 
+// A mutable copy of the pointer may write the payload, as `&mut` of the
+// switched-over local would; a read-only copy and a copy once the binding is
+// done may not.
+Wrap :: struct { h: ^mut Holder }
+
+wrapped_copy :: proc(h: ^mut Holder) -> int {
+	switch (h^.first) {
+	case .some(node):
+		w := Wrap{h};
+		return node^.value;
+	case .none:
+	}
+	return 0;
+}
+
+read_only_copy :: proc(h: ^mut Holder) -> int {
+	switch (h^.first) {
+	case .some(node):
+		q: ^Holder = h;
+		return node^.value + q^.count;
+	case .none:
+	}
+	q := h;
+	return q^.count;
+}
+
 main :: proc() {}

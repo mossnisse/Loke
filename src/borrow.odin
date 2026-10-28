@@ -261,10 +261,10 @@ Prov_Slot :: struct {
 	// Loaded on the way to a switch subject, which a payload binding views
 	// through it (`prov_subject_view`).
 	viewed: bool,
-	// The `.Through` event of a mutable borrow through carriers, which this
-	// otherwise empty slot stands for, so a read-only destination can settle
-	// it as it does a fresh loan's access (`prov_reborrow`). The index is -1
-	// when there is none. `walk_reads` are the events reading the carriers the
+	// The `.Through` event of a borrow through carriers, which this otherwise
+	// empty slot stands for, so a read-only destination can settle it as it
+	// does a fresh loan's access (`prov_reborrow`). The index is -1 for a
+	// borrow that writes nothing. `walk_reads` are the events reading the carriers the
 	// borrow goes through, which that destination makes reads only; the
 	// subscripts on the way are not among them, as they may write.
 	through_block: Block_Id,
@@ -275,9 +275,6 @@ Prov_Slot :: struct {
 	// definition of it shares, set once `offset_set` (`prov_note_offset`).
 	offset:     []Proj_Step,
 	offset_set: bool,
-	// One more than the index of the place loan this slot carries, as its
-	// snapshot or a carrier copied from one; zero for none.
-	place_loan: int,
 }
 
 // A slot holding no fresh borrow. Zero would name loan 0 and event 0.
@@ -329,12 +326,12 @@ Prov_Place_Marker :: struct {
 }
 
 // A loan of `place`, reached through carriers, at `path` below their pointee.
-// Which storage the carriers name is known only to the solve, so the loan is
-// `slot`, a snapshot of them, and it lasts while the snapshot is live, or a
-// carrier in `derived` copied from it, as `kept := &binding`, still holds the
-// snapshot's loans. A switch over such a place takes a read-only one for its
-// payload bindings (design.md "Switch ownership"); `what` names what it
-// lends.
+// Which storage the carriers name is known only to the solve, so the storage
+// is `slot`'s, a snapshot of them. The snapshot's value carries a bit of its
+// own (`place_bit`), which every copy of it carries on, as `kept := &binding`
+// does, so the loan lasts while a slot holding the bit is live. A switch over
+// such a place takes a read-only one for its payload bindings (design.md
+// "Switch ownership"); `what` names what it lends.
 Prov_Place_Loan :: struct {
 	slot:    int,
 	path:    []Proj_Step,
@@ -342,7 +339,6 @@ Prov_Place_Loan :: struct {
 	what:    string,
 	span:    Span,
 	place:   string,
-	derived: [dynamic]int,
 }
 
 // design.md "Storage roots and borrow carriers". `rawptr` and `[^]T` carry no
@@ -1372,6 +1368,30 @@ Prov_State :: struct {
 @(private = "file")
 reach_row :: proc(state: ^Prov_State, buffer: []u8, slot: int) -> []u8 {
 	return buffer[slot * state.row_bytes:(slot + 1) * state.row_bytes]
+}
+
+// The bit a place loan's snapshot sets in its row, after every loan's two
+// (`Prov_Place_Loan`). Only rows are joined over it, so no loan's check sees it.
+@(private = "file")
+place_bit :: proc(state: ^Prov_State, place_loan: int) -> int {
+	return 2 * state.loans + place_loan
+}
+
+// The later use keeping a place loan lent: of its snapshot, or else of a live
+// slot carrying its bit. False when nothing live carries it.
+@(private = "file")
+place_loan_use :: proc(state: ^Prov_State, place_loan: int, live: []bool, uses: []Span) -> (Span, bool) {
+	snapshot := state.graph.place_loans[place_loan].slot
+	if live[snapshot] {
+		return uses[snapshot], true
+	}
+	bit := place_bit(state, place_loan)
+	for slot in 0 ..< state.slots {
+		if live[slot] && bit_get(reach_row(state, state.reach, slot), bit) {
+			return uses[slot], true
+		}
+	}
+	return {}, false
 }
 
 @(private = "file")
@@ -2751,7 +2771,9 @@ prepare_state :: proc(state: ^Prov_State) -> bool {
 	if state.loans == 0 && !graph.has_region_event && !graph.has_window_event {
 		return false
 	}
-	state.row_bytes = (2 * state.loans + 7) / 8
+	// A row holds each loan's bit, whether it was invalidated, and then a bit
+	// per place loan (`place_bit`).
+	state.row_bytes = (2 * state.loans + len(graph.place_loans) + 7) / 8
 	width := max(state.slots * state.row_bytes, 1)
 	for block in graph.blocks {
 		block.reach_entry = make([]u8, width, graph.alloc)
@@ -2905,6 +2927,9 @@ run_prov_event :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8, ended
 			loss |= path_precision(graph.loans[int(event.loan)].path)
 			bit_mark(state.merged, int(event.loan))
 			bit_clear(state.merged, state.loans + int(event.loan))
+		}
+		if event.place_loan > 0 {
+			bit_mark(state.merged, place_bit(state, event.place_loan - 1))
 		}
 		copy(reach_row(state, reach, event.slot), state.merged)
 		state.precision[event.slot] = loss
@@ -4638,16 +4663,11 @@ live_reborrow_of :: proc(state: ^Prov_State, source: int, live: []bool, use: Pro
 // views (design.md "Switch ownership").
 @(private = "file")
 check_place_loans :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, uses: []Span) {
-	for loan in state.graph.place_loans {
+	for loan, index in state.graph.place_loans {
 		if !paths_overlap(loan.path, event.path) {
 			continue
 		}
-		lent, later := live[loan.slot], uses[loan.slot]
-		for slot in loan.derived {
-			if !lent && live[slot] && prov_slots_overlap(state, loan.slot, slot) {
-				lent, later = true, uses[slot]
-			}
-		}
+		later, lent := place_loan_use(state, index, live, uses)
 		if !lent {
 			continue
 		}

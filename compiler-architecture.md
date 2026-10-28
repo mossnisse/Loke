@@ -378,7 +378,8 @@ as `cur = cur^.next`, replaces that carrier's value. A temporary loaded again
 also severs the reborrows taken from its previous value (`run_severing_event`).
 A switch payload binding over a place uses the carrier stored there whenever
 the binding is used (`prov_note_view_use`), and a carrier handed to a call
-uses every mutable carrier it reaches (`prov_use_reached`).
+uses every mutable carrier it reaches (`prov_use_reached`), as does one copied
+into storage, a temporary's copy aside (`prov_use_copied`).
 
 A borrow, slice, or `foreach` of a place reached through carriers reborrows
 each carrier it goes through for that place only: a placed reborrow (`Prov_Reborrow.placed`)
@@ -404,10 +405,13 @@ A switch over a place reached through carriers cannot borrow a root, since
 which storage they name is known only to the solve. It takes a place loan
 instead (`prov_place_loan`, `Prov_Place_Loan`): a snapshot slot of the
 carriers, at the path below their pointee, with its capability, which the
-binding's view joins so every use of the binding keeps it live, as does a
-carrier copied from it, as `kept := &node`, while it still holds the
-snapshot's loans. A store through carriers, a mutable borrow or `inout` argument
-through them, and a carrier argument a callee may write through emit a
+binding's view joins. A bit of the reach rows past the loans' own
+(`place_bit`) marks the snapshot and passes to whatever is defined from it, so
+every use of the binding keeps the place loan live, as does a carrier copied
+from it, as `kept := &node`, until it is redefined (`place_loan_use`). A store
+through carriers, a mutable borrow or `inout` argument through them, a
+mutable copy of a carrier into storage, and a carrier argument a callee may
+write through emit a
 `.Through` event, with the carriers and the path written, and a second one
 for the deep `Load` of what a call's argument reaches. The path is below
 where the carriers point (`Prov_Slot.offset`), which a place loan's path is
@@ -424,8 +428,11 @@ itself.
 `check_place_loans` rejects one whose carriers share a valid loan with a live
 place loan's snapshot at an overlapping path. A mutable borrow weakened to a
 read-only destination writes nothing, so its `.Through` is settled as a fresh
-loan's access is (`Prov_Slot.through_index`). The events are emitted only once
-the body has a place loan.
+loan's access is (`Prov_Slot.through_index`). Every borrow through carriers
+returns that slot, with no event for a read-only one
+(`prov_through_marker`), so storing the borrow is not taken for a copy of the
+carriers (`prov_value_borrows`). The events are emitted only once the body
+has a place loan.
 
 Result summaries, written-argument regions, and escape levels propagate these
 facts through direct, generic, and indirect calls. A written-argument region is

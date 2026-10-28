@@ -1862,7 +1862,7 @@ relink :: proc(cur: ^mut Node) {
 }
 ```
 
-A place reached through a pointer is borrowed the same way. While a payload binding is in use, the payload may not be written through any pointer to that place: storing into the place or its payload, borrowing it mutably, passing it on `inout`, and handing a mutable pointer that reaches it to a call, which may write it, are all rejected. Reading it, and writing beside it, are not:
+A place reached through a pointer is borrowed the same way. While a payload binding is in use, the payload may not be written through any pointer to that place: storing into the place or its payload, borrowing it mutably, passing it on `inout`, and handing a mutable pointer that reaches it to a call, which may write it, are all rejected. So is a mutable copy of such a pointer, as `q := h` or `Wrap{h}`, which may write all it points to, as `q := &mut l` beside a binding of `l.first` would. Reading it, writing beside it, and a read-only copy of the pointer are not:
 
 ```loke
 Holder :: struct { first: Option(^mut Node), count: int }
@@ -1874,6 +1874,7 @@ peek :: proc(h: ^mut Holder) -> int {
 	case .some(node):
 		h^.count += 1;       // beside the payload
 		clear(h);            // ERROR: `clear` may write `h^.first`
+		q := h;              // ERROR: `q` may write `h^.first`
 		return node^.value;
 	case .none:
 	}

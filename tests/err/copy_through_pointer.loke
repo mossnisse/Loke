@@ -95,4 +95,33 @@ stored_through_local_chain :: proc() {
 	node^.value = 4;
 }
 
+// Copying the pointer uses all of what it points to, as passing it does, even
+// into a read-only pointer or a record; a borrow of another field does not.
+Holder :: struct { list: ^mut List }
+
+pointer_copied_beside_copy :: proc(list: ^mut List) {
+	node := list^.head;
+	other := list;
+	node^.value = 1;
+}
+
+pointer_read_beside_copy :: proc(list: ^mut List) {
+	node := list^.head;
+	other: ^List = list;
+	node^.value = 1;
+}
+
+pointer_wrapped_beside_copy :: proc(list: ^mut List) {
+	node := list^.head;
+	holder := Holder{list};
+	node^.value = 1;
+}
+
+sibling_borrowed_beside_copy :: proc(list: ^List) -> int {
+	node := list^.tail;
+	head := &list^.head;
+	node^.value = 1;
+	return head^^.value;
+}
+
 main :: proc() {}
