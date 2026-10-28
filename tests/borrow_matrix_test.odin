@@ -21,10 +21,11 @@ import "core:testing"
 MATRIX_DIR :: TMP + "/borrow_matrix"
 
 // Where the `List` lives, and how the place is written: `base` is the `List`
-// itself, `pointer` a `^mut List` to it. A `read_only` place is reached
-// through a read-only pointer, so nothing writes the place itself, but the
-// mutable carriers stored in it keep their capability (design.md "Values that
-// contain borrows").
+// itself, `pointer` a `^mut List` to it, which `local_chosen` chooses between
+// two elements of an array, so it may point at either. A `read_only` place is
+// reached through a read-only pointer, so nothing writes the place itself,
+// but the mutable carriers stored in it keep their capability (design.md
+// "Values that contain borrows").
 @(private = "file")
 Matrix_Place :: struct {
 	name, params, setup, base, pointer: string,
@@ -46,6 +47,12 @@ MATRIX_PLACES := [?]Matrix_Place {
 	{"local_indexed", "", MATRIX_NODES + " lists := [1]List{" + MATRIX_LIST + "}; p := &mut lists;", "p[0]", "&mut p[0]", false},
 	{"param_indexed", "p: ^mut [1]List", "", "p[0]", "&mut p[0]", false},
 	{"param_slice", "s: []mut List", "", "s[0]", "&mut s[0]", false},
+	{
+		"local_chosen", "",
+		MATRIX_NODES + " d := Node{4, .none}; e := Node{5, .none}; f := Node{6, .none}; lists := [2]List{" + MATRIX_LIST +
+		", List{&mut d, &mut e, 2, .some(&mut f), [2]int{4, 5}}}; chosen := &mut lists[0] if cond() else &mut lists[1];",
+		"chosen^", "chosen", false,
+	},
 	{"param_read_only", "list: ^List", "", "list^", "list", true},
 	{"param_read_only_two_pointers", "p: ^^List", "", "p^^", "p^", true},
 }
@@ -174,7 +181,15 @@ matrix_expected :: proc(place: Matrix_Place, take: Matrix_Take, use: Matrix_Use,
 // cases until they are removed here.
 @(private = "file")
 matrix_known_gap :: proc(place: Matrix_Place, take: Matrix_Take, use: Matrix_Use, shape: Matrix_Shape, later: bool) -> (string, bool) {
-	if use.name != "replace_head" || shape != .Loop_Whole {
+	if use.name != "replace_head" {
+		return "", false
+	}
+	// "A repeated store through a pointer to one of several places keeps the
+	// copy it stored"
+	if place.name == "local_chosen" && (shape == .Loop_Carried || shape == .Loop_Whole || take == .Foreach || take == .Foreach_Mut) {
+		return "L0641", true
+	}
+	if shape != .Loop_Whole {
 		return "", false
 	}
 	// "A store through a pointer to a local joins what the place held"

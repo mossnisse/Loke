@@ -125,6 +125,25 @@ weakened_carrier_index_call :: proc(h: ^mut Holder, q: ^mut int) -> int {
 	return held^ + value;
 }
 
+// A pointer chosen between borrows of two fields may point at either.
+chosen_written :: proc(h: ^mut Holder, flag: bool) -> int {
+	count := &mut h^.count;
+	total := &mut h^.total;
+	q := count if flag else total;
+	value := &q^;
+	h^.total = 1;
+	return value^;
+}
+
+chosen_read :: proc(h: ^mut Holder, flag: bool) -> int {
+	count := &mut h^.count;
+	if (flag) { count = &mut h^.total; }
+	value := &mut count^;
+	total := look(h);
+	value^ = 1;
+	return total;
+}
+
 // Legal: other fields, read-only borrows beside each other, and uses after
 // the borrow is done.
 beside :: proc(h: ^mut Holder) -> int {
@@ -224,6 +243,27 @@ local_beside :: proc() -> int {
 	h^.total = 2;
 	count^ = 3;
 	return held.count;
+}
+
+// A pointer chosen between borrows of two fields points at one of them, so
+// the other fields stay usable beside a borrow through it.
+chosen_beside :: proc(h: ^mut Holder, flag: bool) -> int {
+	count := &mut h^.count;
+	total := &mut h^.total;
+	q := count if flag else total;
+	value := &mut q^;
+	h^.cells[0] = 1;
+	h^.other^.value = 2;
+	value^ = 3;
+	return peek(&mut q^) + h^.cells[0];
+}
+
+assigned_beside :: proc(h: ^mut Holder, flag: bool) -> int {
+	q := &mut h^.count;
+	if (flag) { q = &mut h^.total; }
+	value := &q^;
+	h^.cells[0] = 1;
+	return value^;
 }
 
 main :: proc() {}

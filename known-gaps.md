@@ -123,3 +123,37 @@ with what `&mut left^` reaches, where a recursive type makes that content
 indistinguishable from the subject, but it also exempts these writes. Telling
 them apart needs pointee storage the analysis can distinguish from the place
 it was read out of.
+
+### A repeated store through a pointer to one of several places keeps the copy it stored
+
+[Values that contain borrows](design.md#values-that-contain-borrows) has a
+store through a carrier that may name more than one place keep what each
+possible target held, since the write may reach another one. Storing a copy
+of `tail` into `head` through such a pointer compiles once, and twice in
+straight-line code, but a loop repeating it reports `L0641` at the copy,
+though nothing reads `head` again and the same loop through a pointer to one
+place compiles:
+
+```loke
+package main;
+Node :: struct { value: int }
+List :: struct { head: ^mut Node, tail: ^mut Node }
+cond :: proc() -> bool { return true; }
+chosen :: proc() {
+    a := Node{1}; b := Node{2}; d := Node{4}; e := Node{5};
+    l := List{&mut a, &mut b}; m := List{&mut d, &mut e};
+    p := &mut l if cond() else &mut m;
+    for (i := 0; i < 2; i += 1) {
+        p^.head = p^.tail; // L0641, should be allowed
+    }
+}
+main :: proc() {}
+```
+
+`prov_publish_view_content` in [src/cfg_provenance.odin](src/cfg_provenance.odin)
+defines `l.head` and `m.head` with `preserve_previous`, so each keeps the copy
+of `tail` an earlier iteration stored, where a pointer to one place replaces
+it. How that kept copy makes the next copy of `tail` conflict, when the
+straight-line repetition does not, is not yet pinned down.
+`matrix_known_gap` lists the matrix cases, from its `local_chosen` place
+form, where a traversal repeats the store too.

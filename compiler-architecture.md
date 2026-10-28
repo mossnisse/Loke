@@ -403,15 +403,18 @@ mutable borrow, slice, traversal, or `inout` argument, a mutable copy of a
 carrier into storage, and a carrier argument a callee may write through
 write it, and a read-only copy or argument reads all of it, with a second
 event for the deep `Load` of what a call's argument or a copy reaches. The
-path is below where the carriers point (`Prov_Slot.offset`), which a place
-loan's path is too: a borrow's snapshot points at the place it is of, as
+path is below where the carriers point (`Prov_Slot.offsets`), which a place
+loan's paths are too: a borrow's snapshot points at the place it is of, as
 `[count]` for `&mut h^.count`, and so does a copy of it, a record field
 holding it, or a reborrow lent from it, so a store through `count` or a call
 given `Side{&mut h^.count}` writes only there. `prov_note_offset` records it
-at each `Def`, keeping the prefix a slot's definitions share, so a borrow
-chosen by a condition keeps its path, and an access through carriers
-pointing at different places, as a record holding two field borrows, is one
-event per carrier. `check_place_loans` rejects an access whose carriers
+at each `Def`, adding each place a slot's definitions may point at, so a
+pointer chosen between `&mut h^.count` and `&mut h^.total` points at both,
+and a borrow through it is a place loan of both, leaving the other fields
+free. Past four places, the prefix they share stands for them. An access
+through carriers pointing at different places, as a record holding two
+field borrows, is one event per carrier, and one through a carrier that may
+point at several is one event per place. `check_place_loans` rejects an access whose carriers
 share a valid loan with a live place loan's snapshot at an overlapping path,
 a read only beside a mutable one, unless the carrier holds the loan's own
 bit, or one of a borrow of a place beside it (`accessed_beside`), as `left`
@@ -420,7 +423,7 @@ reported as the carrier's use while it is reborrowed (`L0641`), a switch's
 as an incompatible write (`L0511`). A mutable borrow weakened to a read-only
 destination takes a read-only place loan, and its write and its walk's reads
 of the carriers become reads; the slot standing for them
-(`prov_through_marker`, `Prov_Slot.through_index`, `Prov_Slot.walk_reads`)
+(`prov_through_marker`, `Prov_Slot.through_index`, `Prov_Slot.through_end`, `Prov_Slot.walk_reads`)
 lets `prov_reborrow` settle them, as it settles a fresh loan's access. The
 walk leaves out its subscripts, as a call in an index may write. A carrier
 loaded on the way to a place (`Prov_Event.walked`) still reborrows what it

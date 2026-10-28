@@ -102,7 +102,7 @@ parameter's caller storage slots of its own. It is described in
 Locals and parameters now behave alike. The through-reborrows, path-tagged uses,
 and kept-copy pass that parameters needed are gone, and so are the two
 reported gaps. A generated matrix,
-[borrow_matrix_test.odin](tests/borrow_matrix_test.odin), crosses ten place
+[borrow_matrix_test.odin](tests/borrow_matrix_test.odin), crosses eleven place
 forms with a copy, a payload binding, a read-only or mutable borrow, slice,
 or traversal, and sixteen uses beside each, in straight-line code, a branch,
 or a loop, against a model of the rules written apart from the compiler.
@@ -195,9 +195,10 @@ capability, and its span. It is live while the snapshot or anything derived
 from it is, as a hold is now. A slot also records the path below what its
 loans name (`Prov_Slot.offset`): a place loan's snapshot has the loan's path,
 a copy keeps its source's, and a slot defined from sources with different
-offsets keeps their common prefix, while an access through carriers pointing
-at different places, as a record holding two field borrows, is checked at
-each one's own. Every access through carriers then states
+offsets keeps each of them (`Prov_Slot.offsets`), so a borrow through a
+pointer chosen between two field borrows is a loan of both fields, not of
+their parent, while an access through carriers pointing at different places,
+as a record holding two field borrows, is checked at each one's own. Every access through carriers then states
 the carriers, the path below their pointee extended by their offset, and
 whether it reads, writes, or uses the carrier whole, which a copy or a
 call argument does with its destination's capability. The solve checks each

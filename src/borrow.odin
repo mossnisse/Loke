@@ -261,20 +261,23 @@ Prov_Slot :: struct {
 	// Loaded on the way to a switch subject, which a payload binding views
 	// through it (`prov_subject_view`).
 	viewed: bool,
-	// The `.Through` event of a borrow through carriers, which this otherwise
-	// empty slot stands for, so a read-only destination can settle it as it
-	// does a fresh loan's access (`prov_reborrow`). The index is -1 for a
-	// borrow that writes nothing. `walk_reads` are the events reading the carriers the
-	// borrow goes through, which that destination makes reads only; the
-	// subscripts on the way are not among them, as they may write.
+	// The `.Through` events of a borrow through carriers, which this otherwise
+	// empty slot stands for, so a read-only destination can settle them as it
+	// does a fresh loan's access (`prov_reborrow`): those from `through_index`
+	// up to `through_end`, none for a borrow that writes nothing.
+	// `walk_reads` are the events reading the carriers the borrow goes
+	// through, which that destination makes reads only; the subscripts on the
+	// way are not among them, as they may write.
 	through_block: Block_Id,
 	through_index: int,
+	through_end:   int,
 	walk_reads:    []Prov_Event_At,
-	// The path, below the storage this slot's loans name, that its value
-	// points at, as `[count]` for `&mut h^.count`: the longest prefix every
-	// definition of it shares, set once `offset_set` (`prov_note_offset`).
-	offset:     []Proj_Step,
-	offset_set: bool,
+	// The paths, below the storage this slot's loans name, that its value may
+	// point at, as `[count]` for `&mut h^.count`, and both `[count]` and
+	// `[total]` for a pointer chosen between borrows of the two
+	// (`prov_note_offset`). Nil until a definition names storage, and then
+	// taken to point at the whole of it.
+	offsets: [][]Proj_Step,
 }
 
 // A slot holding no fresh borrow. Zero would name loan 0 and event 0.
@@ -288,6 +291,7 @@ empty_prov_slot :: proc(symbol: Symbol_Id) -> Prov_Slot {
 		fresh_access_index = -1,
 		through_block      = NO_BLOCK,
 		through_index      = -1,
+		through_end        = -1,
 	}
 }
 
@@ -327,7 +331,7 @@ Prov_Reborrow :: struct {
 // "Weakening and reborrows").
 Prov_Place_Loan :: struct {
 	slot:    int,
-	path:    []Proj_Step,
+	paths:   [][]Proj_Step,
 	mutable: bool,
 	borrows: bool,
 	what:    string,
@@ -4677,7 +4681,7 @@ live_reborrow_of :: proc(state: ^Prov_State, source: int, live: []bool, use: Pro
 @(private = "file")
 check_place_loans :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, uses: []Span) {
 	for loan, index in state.graph.place_loans {
-		if (event.access == .Read && !loan.mutable) || !paths_overlap(loan.path, event.path) {
+		if (event.access == .Read && !loan.mutable) || !place_loan_overlaps(loan, event.path) {
 			continue
 		}
 		later, lent := place_loan_use(state, index, live, uses)
@@ -4716,8 +4720,29 @@ accessed_beside :: proc(state: ^Prov_State, index: int, carrier: int) -> bool {
 	loans := state.graph.place_loans
 	row := reach_row(state, state.reach, carrier)
 	for other, at in loans {
-		if at != index && other.borrows && bit_get(row, place_bit(state, at)) && !paths_overlap(other.path, loans[index].path) &&
+		if at != index && other.borrows && bit_get(row, place_bit(state, at)) && !place_loans_overlap(other, loans[index]) &&
 		   prov_slots_overlap(state, other.slot, loans[index].slot) {
+			return true
+		}
+	}
+	return false
+}
+
+// Whether any of the places `loan` may be of overlaps `path`.
+@(private = "file")
+place_loan_overlaps :: proc(loan: Prov_Place_Loan, path: []Proj_Step) -> bool {
+	for at in loan.paths {
+		if paths_overlap(at, path) {
+			return true
+		}
+	}
+	return false
+}
+
+@(private = "file")
+place_loans_overlap :: proc(a, b: Prov_Place_Loan) -> bool {
+	for at in a.paths {
+		if place_loan_overlaps(b, at) {
 			return true
 		}
 	}

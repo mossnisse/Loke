@@ -380,9 +380,13 @@ prov_place_loan :: proc(
 		return nil
 	}
 	span := expr_span(place)
-	offset, _ := prov_value_offset(graph, carriers)
+	offsets, _ := prov_value_offset(graph, carriers)
+	paths := make([][]Proj_Step, len(offsets), graph.alloc)
+	for at, index in offsets {
+		paths[index] = prov_concat_path(graph, at, path)
+	}
 	append(&graph.place_loans, Prov_Place_Loan {
-		path = prov_concat_path(graph, offset, path), mutable = mutable, borrows = borrows, what = what, span = span,
+		paths = paths, mutable = mutable, borrows = borrows, what = what, span = span,
 		place = graph.k.c.sources[span.file].text[span.lo:span.hi],
 	})
 	slot := prov_temp_slot(graph)
@@ -391,9 +395,9 @@ prov_place_loan :: proc(
 	prov_emit(graph, Prov_Event {
 		kind = .Def, slot = slot, loan = NO_LOAN, sources = carriers, span = span, place_loan = len(graph.place_loans),
 	})
-	// A borrow points at the place it is of (`Prov_Slot.offset`).
+	// A borrow points at the place it is of (`Prov_Slot.offsets`).
 	if borrows {
-		graph.prov_slots[slot].offset, graph.prov_slots[slot].offset_set = loan.path, true
+		graph.prov_slots[slot].offsets = loan.paths
 	}
 	return prov_one(graph, slot)
 }
@@ -416,19 +420,23 @@ prov_read_through :: proc(graph: ^Flow_Graph, carriers: []int, path: []Proj_Step
 }
 
 // Carriers pointing at different places, as a record holding `&mut h^.count`
-// and `&mut h^.total` does, are each accessed at their own. The index of the
-// first event emitted, or -1 when none is.
+// and `&mut h^.total` does, are each accessed at their own, and a carrier
+// that may point at either, as one chosen between the two, at both. The
+// events emitted are contiguous; the index of the first, or -1 when the
+// access names no carriers.
 @(private = "file")
 prov_access_through :: proc(graph: ^Flow_Graph, carriers: []int, path: []Proj_Step, span: Span, access: Access_Kind, verb: string) -> int {
 	if len(carriers) == 0 || graph.current == NO_BLOCK {
 		return -1
 	}
 	first := len(graph.blocks[graph.current].prov)
-	offset, _ := prov_value_offset(graph, carriers)
-	if prov_offsets_agree(graph, carriers, offset) {
-		prov_emit(graph, Prov_Event {
-			kind = .Through, into = carriers, path = prov_concat_path(graph, offset, path), span = span, verb = verb, access = access,
-		})
+	offsets, _ := prov_value_offset(graph, carriers)
+	if prov_offsets_agree(graph, carriers, offsets) {
+		for at in offsets {
+			prov_emit(graph, Prov_Event {
+				kind = .Through, into = carriers, path = prov_concat_path(graph, at, path), span = span, verb = verb, access = access,
+			})
+		}
 		return first
 	}
 	for carrier in carriers {
@@ -439,12 +447,15 @@ prov_access_through :: proc(graph: ^Flow_Graph, carriers: []int, path: []Proj_St
 	return first
 }
 
-// Whether every slot of `carriers` that names storage points at `offset`.
+// Whether every slot of `carriers` that names storage points at `offsets`.
 @(private = "file")
-prov_offsets_agree :: proc(graph: ^Flow_Graph, carriers: []int, offset: []Proj_Step) -> bool {
+prov_offsets_agree :: proc(graph: ^Flow_Graph, carriers: []int, offsets: [][]Proj_Step) -> bool {
 	for carrier in carriers {
-		if entry := graph.prov_slots[carrier]; entry.through_block == NO_BLOCK && !prov_same_path(entry.offset, offset) {
-			return false
+		if entry := graph.prov_slots[carrier]; entry.through_block == NO_BLOCK {
+			own := prov_slot_offsets(entry)
+			if !prov_offsets_cover(own, offsets) || !prov_offsets_cover(offsets, own) {
+				return false
+			}
 		}
 	}
 	return true
@@ -576,28 +587,29 @@ prov_emit :: proc(graph: ^Flow_Graph, event: Prov_Event) {
 	append(&graph.blocks[graph.current].prov, event)
 }
 
-// The path below the storage `slots` name that a value made of them points
-// at (`Prov_Slot.offset`): the prefix their offsets share, as a borrow's place
-// loan snapshot points at the place it is of. A slot standing for a borrow's
+// The paths below the storage `slots` name that a value made of them may
+// point at (`Prov_Slot.offsets`): any of theirs, as a borrow's place loan
+// snapshot points at the place it is of. A slot standing for a borrow's
 // access, which names no storage, takes no part. False when no slot names
 // storage.
 @(private)
-prov_value_offset :: proc(graph: ^Flow_Graph, slots: []int) -> ([]Proj_Step, bool) {
-	out: []Proj_Step
+prov_value_offset :: proc(graph: ^Flow_Graph, slots: []int) -> ([][]Proj_Step, bool) {
+	out: [][]Proj_Step
 	found := false
 	for slot in slots {
 		entry := graph.prov_slots[slot]
 		if entry.through_block != NO_BLOCK {
 			continue
 		}
-		out = found ? prov_common_prefix(out, entry.offset) : entry.offset
+		offsets := prov_slot_offsets(entry)
+		out = found ? prov_union_offsets(graph, out, offsets) : offsets
 		found = true
 	}
 	return out, found
 }
 
-// Records what a definition of `slot` from `sources` points at, keeping the
-// prefix it shares with the slot's earlier definitions.
+// Records what a definition of `slot` from `sources` may point at, besides
+// what the slot's earlier definitions may.
 @(private = "file")
 prov_note_offset :: proc(graph: ^Flow_Graph, slot: int, sources: []int) {
 	at, found := prov_value_offset(graph, sources)
@@ -605,8 +617,87 @@ prov_note_offset :: proc(graph: ^Flow_Graph, slot: int, sources: []int) {
 		return
 	}
 	entry := &graph.prov_slots[slot]
-	entry.offset = entry.offset_set ? prov_common_prefix(entry.offset, at) : at
-	entry.offset_set = true
+	entry.offsets = entry.offsets != nil ? prov_union_offsets(graph, entry.offsets, at) : at
+}
+
+// The most places a value is told apart at; more are merged into the prefix
+// they share.
+@(private = "file")
+PROV_OFFSET_LIMIT :: 4
+
+// A slot whose definitions name no storage points at the whole of it.
+@(private = "file")
+prov_whole_offset: [1][]Proj_Step
+
+@(private = "file")
+prov_slot_offsets :: proc(entry: Prov_Slot) -> [][]Proj_Step {
+	return entry.offsets if entry.offsets != nil else prov_whole_offset[:]
+}
+
+// The places of `a` and those of `b`, a place inside another taken as that
+// one.
+@(private = "file")
+prov_union_offsets :: proc(graph: ^Flow_Graph, a, b: [][]Proj_Step) -> [][]Proj_Step {
+	if prov_offsets_cover(a, b) {
+		return a
+	}
+	if prov_offsets_cover(b, a) {
+		return b
+	}
+	out := make([dynamic][]Proj_Step, 0, len(a) + len(b), graph.alloc)
+	for at in a {
+		prov_add_offset(&out, at)
+	}
+	for at in b {
+		prov_add_offset(&out, at)
+	}
+	if len(out) <= PROV_OFFSET_LIMIT {
+		return out[:]
+	}
+	shared := out[0]
+	for at in out[1:] {
+		shared = prov_common_prefix(shared, at)
+	}
+	resize(&out, 1)
+	out[0] = shared
+	return out[:]
+}
+
+@(private = "file")
+prov_add_offset :: proc(out: ^[dynamic][]Proj_Step, path: []Proj_Step) {
+	if prov_offset_covered(out[:], path) {
+		return
+	}
+	kept := 0
+	for at in out {
+		if !path_has_exact_prefix(at, path) {
+			out[kept] = at
+			kept += 1
+		}
+	}
+	resize(out, kept)
+	append(out, path)
+}
+
+// Whether every place of `inner` is inside one of `outer`.
+@(private = "file")
+prov_offsets_cover :: proc(outer, inner: [][]Proj_Step) -> bool {
+	for path in inner {
+		if !prov_offset_covered(outer, path) {
+			return false
+		}
+	}
+	return true
+}
+
+@(private = "file")
+prov_offset_covered :: proc(offsets: [][]Proj_Step, path: []Proj_Step) -> bool {
+	for at in offsets {
+		if path_has_exact_prefix(path, at) {
+			return true
+		}
+	}
+	return false
 }
 
 // The steps `a` and `b` start with alike.
@@ -1856,8 +1947,8 @@ prov_reborrow :: proc(graph: ^Flow_Graph, slots: []int, destination: Type_Id, in
 		if entry.through_block != NO_BLOCK {
 			if weakens {
 				// It still reads what it borrows.
-				if entry.through_index >= 0 {
-					graph.blocks[entry.through_block].prov[entry.through_index].access = .Read
+				for index in entry.through_index ..< entry.through_end {
+					graph.blocks[entry.through_block].prov[index].access = .Read
 				}
 				prov_weaken_walk(graph, entry)
 			}
@@ -5271,11 +5362,15 @@ prov_borrow_place :: proc(graph: ^Flow_Graph, operand: Expr, mutable: bool, span
 		// covers the read.
 		walk := make([dynamic]Prov_Event_At, 0, 0, graph.alloc)
 		if carriers, below, through := prov_read_through_carrier(graph, operand, reads_only = !mutable, walk = &walk, reads = !mutable); through {
-			at := mutable ? prov_write_through(graph, carriers, below, span, "mutable borrow") : -1
+			at, end := -1, -1
+			if mutable {
+				at = prov_write_through(graph, carriers, below, span, "mutable borrow")
+				end = at < 0 ? -1 : prov_next_event(graph)
+			}
 			held := prov_next_event(graph)
 			prov_use_held(graph, carriers, below, prov_type(graph, operand), span, !mutable)
 			prov_note_walk_reads(graph, &walk, held)
-			marker := prov_through_marker(graph, at, walk[:])
+			marker := prov_through_marker(graph, at, end, walk[:])
 			return prov_join(graph, prov_place_loan(graph, carriers, below, mutable, what, operand, borrows = true), marker)
 		}
 		if place, is_inout := prov_inout_result_place(graph, operand); is_inout {
@@ -5299,18 +5394,18 @@ prov_borrow_place :: proc(graph: ^Flow_Graph, operand: Expr, mutable: bool, span
 }
 
 // A slot standing for a borrow through carriers (`Prov_Slot.through_block`):
-// its `.Through` event `at`, -1 when it writes nothing, and the reads of the
-// carriers it went through. Weakened to a read-only destination, as
+// its `.Through` events from `at` up to `end`, -1 for both when it writes
+// nothing, and the reads of the carriers it went through. Weakened to a read-only destination, as
 // `look(&mut p[0])` passes it, the borrow writes nothing and only reads the
 // carriers, which the slot lets `prov_reborrow` settle.
 @(private = "file")
-prov_through_marker :: proc(graph: ^Flow_Graph, at: int, walk: []Prov_Event_At) -> []int {
+prov_through_marker :: proc(graph: ^Flow_Graph, at, end: int, walk: []Prov_Event_At) -> []int {
 	if graph.current == NO_BLOCK {
 		return nil
 	}
 	marker := prov_temp_slot(graph)
 	entry := &graph.prov_slots[marker]
-	entry.through_block, entry.through_index, entry.walk_reads = graph.current, at, walk
+	entry.through_block, entry.through_index, entry.through_end, entry.walk_reads = graph.current, at, end, walk
 	return prov_one(graph, marker)
 }
 
@@ -5364,7 +5459,7 @@ prov_slice :: proc(graph: ^Flow_Graph, v: ^Expr_Slice) -> []int {
 			}
 			return prov_join(graph, prov_place_loan(
 				graph, carriers, below, mutable, carrier_noun(graph.k.c, prov_type(graph, v)), v.operand, borrows = true,
-			), prov_through_marker(graph, -1, nil))
+			), prov_through_marker(graph, -1, -1, nil))
 		}
 	}
 	source: []int
