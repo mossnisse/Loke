@@ -3474,7 +3474,8 @@ publish_into_loan :: proc(
 @(private = "file")
 publish_replaces :: proc(slot: Prov_Slot, loan: Prov_Loan, path: []Proj_Step, stored: Type_Id) -> bool {
 	return stored != INVALID_TYPE && slot.content_type == stored && len(slot.path) == len(loan.path) + len(path) &&
-	       path_is_exact(slot.path) && path_is_exact(loan.path) && paths_overlap_joined(slot.path, loan.path, path)
+	       path_is_exact(slot.path) && path_is_exact(loan.path) && path_is_exact(path) &&
+	       paths_overlap_joined(slot.path, loan.path, path)
 }
 
 // Whether `path` names one place: no wildcard, range of several elements, or

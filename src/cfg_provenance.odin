@@ -5980,7 +5980,8 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 					// one place replace what it holds wherever they name one storage
 					// (`publish_into_loan`).
 					if offsets, found := prov_value_offset(graph, through); found && len(offsets) == 1 &&
-					   prov_offsets_agree(graph, through, offsets) && prov_path_names_one_place(below) {
+					   prov_offsets_agree(graph, through, offsets) && prov_path_names_one_place(offsets[0]) &&
+					   prov_path_names_one_place(below) {
 						publish.path, publish.stored = prov_concat_path(graph, offsets[0], below), stored
 						graph.has_replacing_store = true
 					}

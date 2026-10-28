@@ -7,6 +7,9 @@ this write of `b` is not compatible with the mutable pointer of it that is still
 L0511
 @44:7
 this write of `b` is not compatible with the mutable pointer of it that is still in use
+L0511
+@57:2
+this write of `b` is not compatible with the mutable pointer of it that is still in use
 L0641
-@57:7
+@70:7
 `l` cannot be used here: a mutable reborrow of it is still in use
