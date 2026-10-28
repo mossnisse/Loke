@@ -364,7 +364,9 @@ A view's leading element step is dropped, since a view's loans already name
 its elements. A load through a local's loan reads the local's content slots; a
 parameter's caller storage has no content here, so `prov_caller_slots` gives
 each parameter loan slots standing for what that storage holds, one per
-carrier path where the storage's type is known. A slot is a mutable carrier
+carrier path where the storage's type is known. Where that storage is one
+place, each of those slots holds a loan of its own, so what `p^^.head` and
+`p^^.tail` point at are told apart. A slot is a mutable carrier
 when what is stored there is one, whatever the loan reaching it allows, so
 `head: ^mut Node` behind `h: ^Holder` is reborrowed by a copy as it is behind
 `^mut Holder`. A load through a parameter
@@ -444,8 +446,16 @@ itself replaces it (design.md "Values that contain borrows"). Once reaching
 has settled, `resolve_content_reads` records the replaced slots on the event
 (`Prov_Event.replaces`), and liveness ends their earlier values there, as at
 a `Def`. A carrier with no loan on some path is unchecked, so one loan
-suffices. Through a parameter, the only slot of its storage is the parameter
-itself, which a store never replaces.
+suffices. Through a parameter's loan naming one storage reached through
+pointers (`Prov_Slot.caller_one`), the store lands in the caller slots of
+that storage instead (`publish_into_caller`), replacing them as a local's,
+and a load through the loan reads them (`read_caller_slots`), so the
+parameter itself holds nothing stored. The copy of a stored carrier is
+linked to those slots as to a local's (`prov_reborrow`). A slice
+parameter's slots stand for every element, so a store through one joins
+into the parameter itself, as one whose copies nothing links
+(`Prov_Event.linked`), such as a whole record's, also does; every later
+load through the parameter reads it there.
 
 Result summaries, written-argument regions, and escape levels propagate these
 facts through direct, generic, and indirect calls. A written-argument region is

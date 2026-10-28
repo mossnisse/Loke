@@ -150,6 +150,10 @@ Prov_Event :: struct {
 	// settled, whose earlier values it ends as a `Def` does.
 	stored:        Type_Id,
 	replaces:      []int,
+	// `Publish`: a store of one carrier, whose copy `prov_reborrow` links to
+	// every slot it may land in. Any other store through a parameter's loan
+	// also joins into the parameter itself (`publish_into_loan`).
+	linked:        bool,
 	// `Task_Start`, `Shared_Effect`: see `Prov_Kind`.
 	symbol:        Symbol_Id,
 	// One more than the window bit of the pooled block whose join this
@@ -2349,6 +2353,11 @@ prov_bind_parameters :: proc(graph: ^Flow_Graph, literal: ^Expr_Proc) {
 // in `h: ^Holder` with `head: ^mut Node` (design.md "Values that contain
 // borrows"), whatever the loan reaching it allows. Where the storage's type is
 // not known, it may be one when the parameter reaches any mutable carrier.
+// A store through a loan naming one storage, reached through pointers alone,
+// lands in these slots and replaces the one holding exactly the carrier
+// stored (`publish_into_caller`); one through a view, whose slots stand for
+// every element, joins into the parameter itself. Slots of different loans
+// are taken to name different storage.
 @(private = "file")
 prov_caller_slots :: proc(graph: ^Flow_Graph, root: Root_Id, first: int, name: string) {
 	c := graph.k.c
@@ -2360,11 +2369,13 @@ prov_caller_slots :: proc(graph: ^Flow_Graph, root: Root_Id, first: int, name: s
 	}
 	shape := carrier_shape(c, type)
 	reaches_mutable := type_carries_borrow(c, type).mutable
-	for index in first ..< len(graph.loans) {
+	last := len(graph.loans)
+	for index in first ..< last {
 		loan := graph.loans[index]
 		if !loan.content && len(pointee) > 0 {
+			one := prov_pointers_below(c, type, 0)
 			for loans, position in descriptor.pointee_loans {
-				prov_caller_slot(graph, Loan_Id(index), pointee[position].steps, loans[0], name, pointee[position].mutable)
+				prov_caller_slot(graph, Loan_Id(index), pointee[position], loans[0], name, pointee[position].mutable, one)
 			}
 			continue
 		}
@@ -2373,33 +2384,79 @@ prov_caller_slots :: proc(graph: ^Flow_Graph, root: Root_Id, first: int, name: s
 		// while each storage holds one carrier; the last content loan stands
 		// for every depth below it, so its storage is not one type.
 		holder := INVALID_TYPE
+		one := false
 		switch {
 		case loan.pointee > 0:
-			holder = prov_carrier_below(c, pointee[loan.pointee - 1].type, loan.depth - 1)
+			at := pointee[loan.pointee - 1]
+			holder = prov_carrier_below(c, at.type, loan.depth - 1)
+			one = prov_pointers_below(c, type, 0) && prov_path_names_one_place(at.steps) &&
+				prov_pointers_below(c, at.type, loan.depth - 1)
 		case !loan.content:
 			holder = type
+			one = prov_pointers_below(c, type, 0)
 		case loan.depth == 0:
 			for path in shape {
 				if slice.equal(path.steps, loan.path) && !path.truncated {
 					holder = path.type
 				}
 			}
+			one = holder != INVALID_TYPE && prov_path_names_one_place(loan.path) && prov_pointers_below(c, holder, 0)
 		case loan.depth < len(descriptor.content_loans):
 			holder = prov_carrier_below(c, type, loan.depth)
+			one = holder != INVALID_TYPE && prov_pointers_below(c, type, loan.depth)
 		}
 		paths: []Carrier_Path
 		if element := prov_pointee_type(c, holder); element != INVALID_TYPE {
 			paths = carrier_shape(c, element)
 		}
 		if len(paths) < 2 {
+			// One carrier path at the storage itself is the slot's whole content.
+			whole := Carrier_Path{type = INVALID_TYPE}
+			if len(paths) == 1 && len(paths[0].steps) == 0 {
+				whole = paths[0]
+			}
 			mutable := len(paths) == 1 ? paths[0].mutable : graph.loans[int(held)].mutable || reaches_mutable
-			prov_caller_slot(graph, Loan_Id(index), nil, held, name, mutable)
+			prov_caller_slot(graph, Loan_Id(index), whole, held, name, mutable, one)
 			continue
 		}
 		for path in paths {
-			prov_caller_slot(graph, Loan_Id(index), path.steps, held, name, path.mutable)
+			// Each carrier in one storage holds a loan of its own, as each
+			// pointee path's does, so what `p^^.head` and `p^^.tail` point at
+			// are told apart. Loads below it read what `held` stands for.
+			own := held
+			if one {
+				own = prov_new_loan(
+					graph, root, nil, path.mutable, descriptor.span, path.truncated ? "borrow" : carrier_noun(c, path.type),
+				)
+				graph.loans[int(own)].content = true
+				graph.loans[int(own)].depth = graph.loans[int(held)].depth
+				graph.loans[int(own)].pointee = graph.loans[int(held)].pointee
+			}
+			prov_caller_slot(graph, Loan_Id(index), path, own, name, path.mutable, one)
 		}
 	}
+}
+
+// Whether `depth` loads below a carrier of `type`, and the carrier itself,
+// name one storage: each carrier on the way is a pointer, not a view of
+// several elements, and each storage between holds one carrier.
+@(private = "file")
+prov_pointers_below :: proc(c: ^Compiler, type: Type_Id, depth: int) -> bool {
+	at := type
+	for step in 0 ..= depth {
+		if underlying_kind(c, at) != .Pointer {
+			return false
+		}
+		if step == depth {
+			break
+		}
+		inner := carrier_shape(c, prov_pointee_type(c, at))
+		if len(inner) != 1 || inner[0].truncated {
+			return false
+		}
+		at = inner[0].type
+	}
+	return true
 }
 
 // What a pointer or slice of `type` points at, or INVALID_TYPE.
@@ -2431,11 +2488,16 @@ prov_carrier_below :: proc(c: ^Compiler, type: Type_Id, depth: int) -> Type_Id {
 }
 
 @(private = "file")
-prov_caller_slot :: proc(graph: ^Flow_Graph, loan: Loan_Id, path: []Proj_Step, held: Loan_Id, name: string, mutable: bool) {
+prov_caller_slot :: proc(
+	graph: ^Flow_Graph, loan: Loan_Id, path: Carrier_Path, held: Loan_Id, name: string, mutable: bool, one: bool,
+) {
 	entry := empty_prov_slot(INVALID_SYMBOL)
 	entry.name = name
-	entry.path = path
+	entry.path = path.steps
+	entry.content_type = path.truncated ? INVALID_TYPE : path.type
+	entry.content_truncated = path.truncated
 	entry.caller_mutable = mutable
+	entry.caller_one = one
 	append(&graph.prov_slots, entry)
 	slot := len(graph.prov_slots) - 1
 	if loan not_in graph.caller_slots {
@@ -5976,15 +6038,20 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 					if len(sources) > 0 {
 						prov_reborrow(graph, sources, stored, span = expr_span(target), copies = true)
 						// Which storage `target` names is known only to the solve, so the
-						// carrier reborrows every named slot of its type; one stays
+						// carrier reborrows every named slot of its type, and every slot
+						// standing for one caller storage that may hold it; one stays
 						// suspended only while it holds the source's loan.
 						for entry, candidate in graph.prov_slots {
-							if entry.symbol != INVALID_SYMBOL && entry.content_type == stored {
+							if entry.symbol != INVALID_SYMBOL && entry.content_type == stored ||
+							   entry.caller_one && (entry.content_type == stored || entry.content_type == INVALID_TYPE) {
 								prov_reborrow(graph, sources, stored, candidate, expr_span(target))
 							}
 						}
 					}
-					publish := Prov_Event{kind = .Publish, span = expr_span(target), sources = sources, into = through}
+					publish := Prov_Event {
+						kind = .Publish, span = expr_span(target), sources = sources, into = through,
+						linked = type_is_carrier(graph.k.c, stored),
+					}
 					// design.md "Values that contain borrows": carriers pointing at
 					// one place replace what it holds wherever they name one storage
 					// (`publish_into_loan`).

@@ -135,14 +135,19 @@ Still open:
   went through (`Prov_Reborrow.via`), and reloading a temporary severs what was
   reborrowed from its previous value. Explicit reaching definitions would state
   them as one rule; evaluate that if another loop or branch form needs a fourth.
-- **Caller storage contents.** A store through a parameter does not replace
-  what its caller slot holds, so a later load still sees the incoming value's
-  loans. Storage below the second load is one slot unless every storage on the
-  way holds exactly one carrier. A store through carriers naming one local
-  place replaces what it held (`publish_into_loan`), but through a parameter
-  it joins into the parameter itself, which is how a later load through it
-  sees the stored carrier; [known-gaps.md](known-gaps.md) records a rejection
-  this causes.
+- **Caller storage contents.** A store through a parameter's loan lands in
+  the caller slots standing for the storage it names, and replaces what one
+  held where that storage is one place reached through pointers
+  (`publish_into_caller`); a later load reads them (`read_caller_slots`).
+  Caller slots of different loans are taken to name different storage, so a
+  store through one is not seen through another that a cyclic structure
+  makes the same. A view's slots stand for all of its elements, so a store
+  through a slice parameter still joins into the parameter itself, as does a
+  store whose copies no reborrow links to where it lands, such as a whole
+  record's; [known-gaps.md](known-gaps.md) records a rejection the first
+  causes. Storage below the second load gets a loan per carrier only where
+  the storage above it is one place; through a view or past the last load
+  depth it is one slot.
 - **Matrix coverage.** Slices and traversals are taken of a fixed array, so
   no use beside them reallocates storage, and nothing leaves a traversal or a
   loop early with `break` or `return`. A loop that takes afresh is the one

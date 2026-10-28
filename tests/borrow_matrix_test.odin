@@ -190,10 +190,9 @@ matrix_known_gap :: proc(place: Matrix_Place, take: Matrix_Take, use: Matrix_Use
 	if use.name != "replace_head" || shape != .Loop_Whole {
 		return "", false
 	}
-	// "A store through a carrier loaded from a parameter joins into the
-	// parameter"
+	// "A store through a slice parameter joins into the parameter"
 	switch place.name {
-	case "param", "param_indexed", "param_slice", "param_two_pointers":
+	case "param_slice":
 		switch take {
 		case .Borrow, .Borrow_Mut, .Slice, .Slice_Mut:
 			if later {

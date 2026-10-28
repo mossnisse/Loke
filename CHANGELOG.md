@@ -229,6 +229,36 @@ checklist.
   `list^.head` was rejected. Upgrade by finishing with the copy of
   `list^.head` before the call or copy, or by passing that copy instead.
 
+- A later load through a parameter now sees what the body stored through it,
+  as one through a pointer to a local does
+  ([Values that contain borrows](design.md#values-that-contain-borrows)).
+  Using a carrier while a copy of it the body stored through a parameter is
+  still in use is now rejected with `L0641`; before, it compiled, and could
+  build a cycle that a write through it then broke under a live payload
+  binding:
+
+  ```loke
+  Node :: struct { value: int, back: ^mut Holder }
+  Holder :: struct { first: Option(^mut Node), count: int }
+  make_cycle :: proc(@(escape=stored) h: ^mut Holder, @(escape=stored) n: ^mut Node) -> int {
+      n^.back = h;
+      h^.first = .some(n);       // now L0641: `n^.back` still holds a copy of `h`
+      switch (h^.first) {
+      case .some(node):
+          node^.back^.first = .none;
+          return node^.value;
+      case .none:
+      }
+      return 0;
+  }
+  ```
+
+  So is a borrow of a place a pointer the body stored through a parameter
+  points at, as `right := &p^.right` beside `left := &mut p^.left` after
+  `p^.left.next = &mut p^.right`. Upgrade by finishing with the stored copy
+  before using its source again, or by storing the carrier itself instead of
+  keeping a second one.
+
 - The fields of `fmt.Fixed` and `fmt.Padded` are now private, as
   [`core:fmt`](standard-library.md#corefmt) already documented them. Reading
   `p.value` or `p.width` or writing a `fmt.Fixed{...}` literal is rejected;
@@ -312,6 +342,16 @@ checklist.
   repeated in a loop through a pointer that may name either of two locals
   compiles as well, though such a store still keeps what each place held
   ([Values that contain borrows](design.md#values-that-contain-borrows)).
+
+- A store through a pointer parameter, or a pointer loaded out of one, as
+  `p^^.head = p^^.tail` with `p: ^mut ^mut List`, now lands in the caller
+  storage it names and replaces what that field held, instead of counting as
+  a store into `p` itself. Repeating it in a loop beside a borrow of another
+  field, as `count := &p^^.count`, now compiles, as does copying
+  `p^^.head` again after storing over it, and a borrow through `p^^.head`
+  no longer conflicts with a write through `p^^.tail`. A store through a
+  slice parameter still counts as one into the parameter
+  ([known-gaps.md](known-gaps.md)).
 
 - `return nil;` in a procedure returning an `Option(^T)` no longer suggests
   `.some(nil)`, which is an error of its own since `nil` is not a `^T`. The

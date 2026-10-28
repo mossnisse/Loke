@@ -255,9 +255,11 @@ Prov_Slot :: struct {
 	// Read out through a carrier, so what it copies is known only once the
 	// `Load` is resolved.
 	loaded: bool,
-	// Stands for what caller storage a parameter reaches holds at `path`, and
-	// that is a mutable carrier (`prov_caller_slots`).
+	// Stands for what caller storage a parameter reaches holds at `path`
+	// (`prov_caller_slots`), and that is a mutable carrier; `caller_one` when
+	// that storage is one place, so a store lands here (`publish_into_caller`).
 	caller_mutable: bool,
+	caller_one:     bool,
 	// Loaded on the way to a switch subject, which a payload binding views
 	// through it (`prov_subject_view`).
 	viewed: bool,
@@ -2958,7 +2960,7 @@ run_prov_event :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8, ended
 				if !bit_get(row, index) || ended[index] {
 					continue
 				}
-				publish_into_loan(state, reach, graph.loans[index], event.path, event.stored if index == one else INVALID_TYPE, state.precision[slot])
+				publish_into_loan(state, reach, index, event.path, event.stored if index == one else INVALID_TYPE, state.precision[slot], event.linked)
 			}
 		}
 	}
@@ -3233,8 +3235,20 @@ load_writable_through :: proc(
 		return
 	}
 	loss^ |= path_precision(loan.path)
-	note_caller_reads(state, loan_index, nil, reads)
-	bit_mark(state.merged, deeper_content_loan(root, loan, loan_index))
+	if !read_caller_slots(state, loan_index, nil, reach, loss, reads) {
+		bit_mark(state.merged, deeper_content_loan(root, loan, loan_index))
+		return
+	}
+	// A carrier stored there from elsewhere is followed as one in a local's
+	// storage is; what the parameter reached already stands for every depth.
+	for slot in state.graph.caller_slots[Loan_Id(loan_index)] {
+		row := reach_row(state, reach, slot)
+		for held in 0 ..< state.loans {
+			if bit_get(row, held) && graph.loans[held].root != loan.root {
+				pending[held] = true
+			}
+		}
+	}
 }
 
 // The `content` loan standing for what one more load through a parameter's
@@ -3296,7 +3310,9 @@ load_through_loan :: proc(
 	}
 	if !found {
 		loss^ |= path_precision(loan.path)
-		note_caller_reads(state, loan_index, path, reads)
+		if read_caller_slots(state, loan_index, path, reach, loss, reads) {
+			return found
+		}
 		if root.kind == .Param && !loan.content && load_pointee_paths(state, root, path) {
 			return found
 		}
@@ -3307,23 +3323,36 @@ load_through_loan :: proc(
 
 // A load through a parameter's loan reads the slots standing for the caller
 // storage it names, along `path`, as one through a local's loan reads its
-// content.
+// content: what was stored there, or what the storage held when the call
+// began. False when no slot lies along `path`.
 @(private = "file")
-note_caller_reads :: proc(state: ^Prov_State, loan_index: int, path: []Proj_Step, reads: ^[dynamic]int) {
-	if reads == nil {
-		return
-	}
+read_caller_slots :: proc(
+	state: ^Prov_State,
+	loan_index: int,
+	path: []Proj_Step,
+	reach: []u8,
+	loss: ^Precision_Loss,
+	reads: ^[dynamic]int,
+) -> bool {
 	// A loan with no caller slots has no entry, and ranging over
 	// `caller_slots[loan]` itself then crashes, so the list is looked up first.
 	slots, found := state.graph.caller_slots[Loan_Id(loan_index)]
 	if !found {
-		return
+		return false
 	}
+	read := false
 	for slot in slots {
-		if paths_overlap(state.graph.prov_slots[slot].path, path) && !slice.contains(reads[:], slot) {
+		if !paths_overlap(state.graph.prov_slots[slot].path, path) {
+			continue
+		}
+		read = true
+		loss^ |= state.precision[slot]
+		bytes_or(state.merged, reach_row(state, reach, slot))
+		if reads != nil && !slice.contains(reads[:], slot) {
 			append(reads, slot)
 		}
 	}
+	return read
 }
 
 // A load along `path` through a carrier parameter's own loan reads only the
@@ -3385,6 +3414,14 @@ publish_replaced_slots :: proc(state: ^Prov_State, event: Prov_Event, reach: []u
 	loan := graph.loans[one]
 	symbol := graph.roots[int(loan.root)].symbol
 	out := make([dynamic]int, 0, 1, graph.alloc)
+	if slots, caller := graph.caller_slots[Loan_Id(one)]; caller && graph.prov_slots[slots[0]].caller_one {
+		for index in slots {
+			if caller_replaces(graph.prov_slots[index], event.path, event.stored) {
+				append(&out, index)
+			}
+		}
+		return out[:]
+	}
 	for slot, index in graph.prov_slots {
 		if symbol != INVALID_SYMBOL && slot.symbol == symbol && publish_replaces(slot, loan, event.path, event.stored) {
 			append(&out, index)
@@ -3443,15 +3480,27 @@ solve_loan_liveness :: proc(state: ^Prov_State) {
 // storage the write never reaches, so what lands there carries the carrier's
 // precision as well. When the store's carriers name only this loan, a slot
 // of the `stored` type at exactly that place is replaced instead, as a store
-// to the place itself replaces it.
+// to the place itself replaces it. A parameter's caller storage is its loan's
+// caller slots (`publish_into_caller`).
 @(private = "file")
 publish_into_loan :: proc(
-	state: ^Prov_State, reach: []u8, loan: Prov_Loan, path: []Proj_Step, stored: Type_Id, carrier_loss: Precision_Loss,
+	state: ^Prov_State, reach: []u8, loan_index: int, path: []Proj_Step, stored: Type_Id, carrier_loss: Precision_Loss,
+	linked: bool,
 ) {
 	graph := state.graph
+	loan := graph.loans[loan_index]
 	root := graph.roots[int(loan.root)]
 	if root.symbol == INVALID_SYMBOL {
 		return
+	}
+	// A store whose copies no reborrow links to where it lands is still seen
+	// by every later load through the parameter, which then reborrows what
+	// it copied from.
+	if slots, caller := graph.caller_slots[Loan_Id(loan_index)]; caller && graph.prov_slots[slots[0]].caller_one {
+		publish_into_caller(state, reach, slots[:], loan, path, stored, carrier_loss)
+		if linked {
+			return
+		}
 	}
 	for slot, index in graph.prov_slots {
 		if slot.symbol != root.symbol || !paths_overlap_joined(slot.path, loan.path, path) {
@@ -3465,6 +3514,39 @@ publish_into_loan :: proc(
 		bytes_or(reach_row(state, reach, index), state.merged)
 		state.precision[index] |= state.merged_precision | carrier_loss | slot.precision | path_precision(loan.path)
 	}
+}
+
+// design.md "Values that contain borrows": a store through a parameter's
+// loan lands in the slots standing for the caller storage it names, at
+// `path`, which a later load through the loan reads (`read_caller_slots`).
+// Only a slot of one place is replaced (`caller_replaces`).
+@(private = "file")
+publish_into_caller :: proc(
+	state: ^Prov_State, reach: []u8, slots: []int, loan: Prov_Loan, path: []Proj_Step, stored: Type_Id,
+	carrier_loss: Precision_Loss,
+) {
+	for index in slots {
+		slot := state.graph.prov_slots[index]
+		if !paths_overlap(slot.path, path) {
+			continue
+		}
+		if caller_replaces(slot, path, stored) {
+			copy(reach_row(state, reach, index), state.merged)
+			state.precision[index] = state.merged_precision | carrier_loss | slot.precision
+			continue
+		}
+		bytes_or(reach_row(state, reach, index), state.merged)
+		state.precision[index] |= state.merged_precision | carrier_loss | slot.precision | path_precision(loan.path)
+	}
+}
+
+// Whether a store of `stored` at `path` below a parameter loan's caller
+// storage replaces `slot`, one of its caller slots: the storage is one place
+// and the slot holds exactly the carrier at `path` in it.
+@(private = "file")
+caller_replaces :: proc(slot: Prov_Slot, path: []Proj_Step, stored: Type_Id) -> bool {
+	return stored != INVALID_TYPE && slot.caller_one && slot.content_type == stored && len(slot.path) == len(path) &&
+	       path_is_exact(slot.path) && path_is_exact(path) && paths_overlap(slot.path, path)
 }
 
 // Whether a store of `stored` at `path` below `loan`'s storage replaces

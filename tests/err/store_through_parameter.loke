@@ -1,0 +1,111 @@
+// design.md "Values that contain borrows": a store through a parameter lands
+// in the caller storage it names, and a later load through the parameter
+// sees what was stored there, as through a pointer to a local. Storing `head`
+// is no store into the parameter itself, so a loop that repeats it beside a
+// borrow of `count` is legal (design.md "Weakening and reborrows").
+package main;
+
+Node :: struct { value: int }
+List :: struct { head: ^mut Node, tail: ^mut Node, count: int }
+sink :: proc(value: int) {}
+touch :: proc(list: ^mut List) {}
+cond :: proc() -> bool { return true; }
+
+// The copy of `tail` stored in `head` is still in use through `x`.
+copied_again :: proc(list: ^mut List) {
+	list^.head = list^.tail;
+	x := list^.head;
+	y := list^.tail;
+	x^.value = 1;
+	y^.value = 2;
+}
+
+loaded_copied_again :: proc(p: ^mut ^mut List) {
+	p^^.head = p^^.tail;
+	x := p^^.head;
+	y := p^^.tail;
+	x^.value = 1;
+	y^.value = 2;
+}
+
+// Through either parameter, so each keeps what it held.
+either :: proc(@(escape=stored) p: ^mut ^mut List, @(escape=stored) q: ^mut ^mut List) {
+	r := p if cond() else q;
+	r^^.head = r^^.tail;
+	x := p^^.head;
+	y := p^^.tail;
+	x^.value = 1;
+	y^.value = 2;
+}
+
+// A whole value stored through one parameter still holds the copies of the
+// other's carriers.
+whole :: proc(p: ^mut List, @(escape=stored) q: ^mut List) {
+	p^ = q^;
+	x := p^.head;
+	y := q^.head;
+	x^.value = 1;
+	y^.value = 2;
+}
+
+// Legal: `head` was replaced, so `old` is the only copy of what it held.
+replaced :: proc(p: ^mut ^mut List) {
+	old := p^^.head;
+	p^^.head = p^^.tail;
+	x := p^^.head;
+	old^.value = 1;
+	x^.value = 2;
+}
+
+replaced_before_call :: proc(p: ^mut ^mut List) {
+	old := p^^.head;
+	p^^.head = p^^.tail;
+	touch(p^);
+	old^.value = 1;
+}
+
+beside_count :: proc(p: ^mut ^mut List) {
+	for (round := 0; round < 2; round += 1) {
+		count := &p^^.count;
+		p^^.head = p^^.tail;
+		sink(count^);
+	}
+}
+
+// Legal: `head` and `tail` are different carriers below the second load.
+other_carrier :: proc(p: ^mut ^mut List) {
+	value := &p^^.head^.value;
+	p^^.tail^.value = 2;
+	sink(value^);
+}
+
+Holder :: struct { first: Option(^mut Back), count: int }
+Back :: struct { value: int, back: ^mut Holder }
+
+// A load through `h` sees the copy of `n` stored in `first`, and so does
+// one through the copy of `h` stored in `n^.back`.
+cycle :: proc(@(escape=stored) h: ^mut Holder, @(escape=stored) n: ^mut Back) -> int {
+	n^.back = h;
+	h^.first = .some(n);
+	switch (h^.first) {
+	case .some(node):
+		node^.back^.first = .none;
+		return node^.value;
+	case .none:
+	}
+	return 0;
+}
+
+Cell :: struct { next: ^mut Cell, value: int }
+Pair :: struct { left: Cell, right: Cell }
+
+// `left^.next` is `&mut p^.right`, which `left` reaches.
+through_borrow :: proc(@(escape=stored) p: ^mut Pair) -> int {
+	p^.left.next = &mut p^.right;
+	left := &mut p^.left;
+	right := &p^.right;
+	left^.next^.value = 1;
+	return right^.value;
+}
+
+main :: proc() {}
