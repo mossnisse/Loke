@@ -7,58 +7,31 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
-### A store through a chain of local pointers does not suspend a copy below it
+### A `switch` binding of a pointer payload does not suspend the subject
 
-[Weakening and reborrows](design.md#weakening-and-reborrows) says a mutable
-reborrow suspends all use of its source until its last use. A pointer copied
-out two pointers away from local storage still compiles beside a store through
-the place it was copied from, leaving two mutable paths to one value in use:
-
-```loke
-package main;
-Node :: struct { value: int }
-Pair :: struct { a: ^mut Node, b: ^mut Node }
-main :: proc() {
-    first := Node{1};
-    second := Node{2};
-    pair := Pair{&mut first, &mut second};
-    held := &mut pair;
-    p := &mut held;
-    node := p^^.a;
-    p^^.a^.value = 3; // should be rejected
-    node^.value = 4;
-}
-```
-
-The copy reborrows `pair.a`, the local storage its load resolved to, but the
-store reports a use of only `p`, the outermost carrier
-(`prov_retain_through_carrier` in
-[src/cfg_provenance.odin](src/cfg_provenance.odin)), and does not load
-`p^^.a` on the way. Reading the place, as `p^^.a^.value + 1`, is rejected, and
-so is the same store through a pointer parameter.
-
-### Walking a list through a `switch` binding is rejected
-
-[Switch ownership](design.md#switch-ownership) lets a binding over a place
-view the payload, so `cur = next` should move a cursor along a list. In a loop
-it is rejected with `L0641`, naming no variable:
+[Weakening and reborrows](design.md#weakening-and-reborrows) says a copy of a
+mutable carrier is a reborrow that suspends its source until its last use.
+Binding the `^mut` payload of a subject read through a pointer leaves the
+subject usable while the binding is, so two mutable pointers to one node are
+in use at once:
 
 ```loke
 package main;
 Node :: struct { value: int, next: Option(^mut Node) }
-walk :: proc(start: ^mut Node) {
-    cur := start;
-    for (i := 0; i < 3; i += 1) {
-        cur^.value += 1;
-        switch (cur^.next) {      // L0641: `` cannot be used here
-        case .some(next): cur = next;
-        case .none: return;
-        }
+twice :: proc(cur: ^mut Node) {
+    switch (cur^.next) {
+    case .some(a):
+        b := cur^.next; // should be rejected
+        a^.value = 1;
+        switch (b) { case .some(c): c^.value = 2; case .none: }
+    case .none:
     }
 }
 main :: proc() {}
 ```
 
-The subject's payload, a temporary loaded through `cur`, is reborrowed by
-`next` and so by `cur`, and the next pass's load of the same temporary meets
-that reborrow still in use. `cur = cur^.next` with `next: ^mut Node` compiles.
+Copying the subject instead, as `first := cur^.next;` before `b := cur^.next;`,
+is rejected with `L0641`. The binding takes its view from
+`prov_subject_view` in [src/cfg_provenance.odin](src/cfg_provenance.odin),
+which for a subject read through a carrier returns that carrier's slots
+without reborrowing them, as `prov_borrow_place` does for `&cur^.next`.

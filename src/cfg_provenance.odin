@@ -5511,6 +5511,14 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 						into    = through,
 					})
 				}
+				// design.md "Weakening and reborrows": a store through a carrier read
+				// out of another, as `p^^.a^.value = 3` goes through `p^^.a`, reads
+				// it on the way, which a copy of it, as `node := p^^.a`, suspends.
+				if carrier := prov_through_carrier_operand(graph, target); carrier != nil && is_effect_free_place(carrier) {
+					if _, _, named := prov_place_of(graph, carrier); !named {
+						walk_flow_expr(graph, carrier)
+					}
+				}
 				block := graph.current
 				first := block == NO_BLOCK ? 0 : len(graph.blocks[block].prov)
 				prov_emit(graph, Prov_Event{kind = .Live, sources = through, span = expr_span(target)})

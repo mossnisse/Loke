@@ -1,7 +1,9 @@
 // design.md "Weakening and reborrows": a mutable carrier copied out through a
 // pointer is a reborrow of the place it was copied from, so a use of that
 // place through the pointer, or of the whole pointer, waits for the copy's
-// last use, and so does a borrow of a variable holding a reborrowed carrier.
+// last use, and so does a borrow of a variable holding a reborrowed carrier
+// and a store through a chain of local pointers that goes through the copy's
+// place.
 package main;
 
 Node :: struct { value: int }
@@ -78,6 +80,19 @@ read_borrowed_beside_copy :: proc() {
 	copy := held;
 	other := &held;
 	copy.append(other^.len());
+}
+
+Pair :: struct { a: ^mut Node, b: ^mut Node }
+
+stored_through_local_chain :: proc() {
+	first := Node{1};
+	second := Node{2};
+	pair := Pair{&mut first, &mut second};
+	held := &mut pair;
+	p := &mut held;
+	node := p^^.a;
+	p^^.a^.value = 3;
+	node^.value = 4;
 }
 
 main :: proc() {}

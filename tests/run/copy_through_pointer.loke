@@ -1,7 +1,8 @@
 // design.md "Weakening and reborrows": a mutable carrier copied out through a
 // pointer suspends only the place it was copied from, so the pointer's other
 // fields stay usable, storing a new pointer into that place leaves the copy as
-// it was, and walking by `cur = cur^.next` reborrows nothing it still uses.
+// it was, and walking by `cur = cur^.next`, or by `cur = next` from a `switch`
+// over `cur^.next`, reborrows nothing it still uses.
 package main;
 
 import "core:fmt";
@@ -41,7 +42,27 @@ walk :: proc(start: ^mut Ring, steps: int) {
 	}
 }
 
+Link :: struct { value: int, next: Option(^mut Link) }
+
+walk_links :: proc(start: ^mut Link) -> int {
+	total := 0;
+	cur := start;
+	for (i := 0; i < 5; i += 1) {
+		cur^.value += 1;
+		total += cur^.value;
+		switch (cur^.next) {
+		case .some(next): cur = next;
+		case .none: return total;
+		}
+	}
+	return total;
+}
+
 main :: proc() {
+	third := Link{3, .none};
+	second := Link{2, .some(&mut third)};
+	head := Link{1, .some(&mut second)};
+	fmt.println(walk_links(&mut head));
 	first := Node{1};
 	last := Node{3};
 	{

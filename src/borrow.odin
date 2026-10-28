@@ -1301,6 +1301,8 @@ Prov_State :: struct {
 	// Sized before `resolve_content_reads` adds reborrows of loaded carriers,
 	// which are never severed.
 	severed: []bool,
+	// The reborrows a redefinition may sever, from a fresh or loaded source.
+	severable: []int,
 	// Scratch: the loans one event ends.
 	released: []bool,
 	live:    []bool,
@@ -2712,6 +2714,13 @@ prepare_state :: proc(state: ^Prov_State) -> bool {
 	state.released = make([]bool, state.loans, graph.alloc)
 	state.ended = make([]bool, state.loans, graph.alloc)
 	state.severed = make([]bool, len(graph.reborrows), graph.alloc)
+	severable := make([dynamic]int, 0, 4, graph.alloc)
+	for reborrow, index in graph.reborrows {
+		if graph.fresh_slots[reborrow.source] || prov_slot_is_loaded_temporary(graph, reborrow.source) {
+			append(&severable, index)
+		}
+	}
+	state.severable = severable[:]
 	state.live = make([]bool, max(state.slots, 1), graph.alloc)
 	state.uses = make([]Span, max(state.slots, 1), graph.alloc)
 	state.merged = make([]u8, max(state.row_bytes, 1), graph.alloc)
@@ -2800,17 +2809,17 @@ solve_reaching :: proc(state: ^Prov_State) {
 
 // design.md "Chunks of a mutable slice": redefining a fresh slot severs the
 // reborrows of its previous value, and redefining a reborrow's derived slot
-// takes it afresh.
+// takes it afresh. A temporary loaded through a carrier is fresh too: only its
+// own expression reads it, so loading it again, as a loop's `cur^.next` does,
+// leaves nothing to use its last value.
 @(private = "file")
 run_severing_event :: proc(state: ^Prov_State, event: Prov_Event) {
 	graph := state.graph
-	if event.kind != .Def || len(graph.fresh_slots) == 0 {
+	if event.kind != .Def && event.kind != .Load {
 		return
 	}
-	for reborrow, index in graph.reborrows[:len(state.severed)] {
-		if !graph.fresh_slots[reborrow.source] {
-			continue
-		}
+	for index in state.severable {
+		reborrow := graph.reborrows[index]
 		if reborrow.source == event.slot {
 			state.severed[index] = true
 		} else if reborrow.derived == event.slot {
@@ -4534,6 +4543,12 @@ live_reborrow_of :: proc(state: ^Prov_State, source: int, live: []bool, use: Pro
 // The source is suspended only while both slots' current values share a valid
 // loan, so overwriting either one ends the reborrow. Read `through` the source,
 // the derived slot holds a loan of the root the source's names instead.
+@(private = "file")
+prov_slot_is_loaded_temporary :: proc(graph: ^Flow_Graph, slot: int) -> bool {
+	entry := graph.prov_slots[slot]
+	return entry.loaded && entry.symbol == INVALID_SYMBOL
+}
+
 @(private = "file")
 prov_slots_overlap :: proc(state: ^Prov_State, source_slot, derived_slot: int, through := false) -> bool {
 	source := reach_row(state, state.reach, source_slot)

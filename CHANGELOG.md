@@ -124,6 +124,15 @@ checklist.
   they compiled, leaving two mutable paths to one container. Upgrade by
   passing the pointer once, or by finishing with the copy first.
 
+- A store through a pointer read out of another local pointer, as
+  `p^^.a^.value = 3` with `p := &mut held` and `held := &mut pair`, now reads
+  `p^^.a` on the way, so it waits for the last use of a copy of it, as
+  `node := p^^.a`, and is rejected with `L0641` while that copy is in use
+  ([Weakening and reborrows](design.md#weakening-and-reborrows)). Before, it
+  compiled, leaving two mutable paths to one value; reading the same place
+  was already rejected. Upgrade by finishing with the copy first, or by
+  storing through the copy.
+
 ### Added
 
 - `fs.replace_atomic` and `fs.replace_atomic_text` replace a file so that a
@@ -231,6 +240,12 @@ checklist.
   ([Procedure result contracts](design.md#procedure-result-contracts)). Using
   the result after storage only `other` or `pair.b` viewed had ended was
   rejected with `L0513`.
+
+- Walking a list over a `next: Option(^mut Node)` field in a loop, as
+  `switch (cur^.next) { case .some(next): cur = next; case .none: return; }`,
+  is no longer rejected with an `L0641` that named no variable: loading
+  `cur^.next` again leaves nothing reborrowed from the value the last pass
+  loaded ([Weakening and reborrows](design.md#weakening-and-reborrows)).
 
 ## [0.9.0] - 2026-10-27
 
