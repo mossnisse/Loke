@@ -90,6 +90,77 @@ annotations. Three decisions remain open:
   `bench/baselines/README.md`.
   Whether to accept that cost or reduce it is open.
 
+## Compositional loan construction
+
+The recent pointer-copy, traversal, and payload-binding fixes suggest a focused
+follow-up to [normalized input](#normalized-input-for-provenance-analysis).
+This is an architectural proposal, not a new language rule or a claim that the
+existing dataflow solvers need replacing.
+
+The compiler already normalizes places, values, transfers, targets, and regions.
+Loan construction still has separate paths for subject views, ordinary borrows,
+traversal, loaded carriers, and outer carriers in
+[cfg_provenance.odin](src/cfg_provenance.odin). Loaded-carrier reborrows are also
+added during `resolve_content_reads` in [borrow.odin](src/borrow.odin).
+The [pointer-payload switch gap](known-gaps.md#a-switch-binding-of-a-pointer-payload-does-not-suspend-the-subject)
+is a concrete disagreement between those paths: `prov_subject_view` forwards
+carrier slots where the corresponding borrow needs reborrow dependencies.
+The repetition is evidence for consolidating semantic operations, rather than
+just moving helpers into smaller files.
+
+**Proposal:** first make pointer loads and reborrows compose through the existing
+normalized representation. Record the accessed place, the evaluated carrier
+used to reach it, the projection at each dereference, the requested capability,
+and whether the operation loads a value, borrows storage, or replaces it.
+Resolve fact-dependent edges when targets are known. Route copies, addresses,
+switch bindings, and traversal through those shared operations while preserving
+their specified binding modes and lifetimes. Keep storage identity separate
+from its current contents, and root loans separate from allocator dependencies.
+Do not collapse them into one undifferentiated provenance set.
+
+The initial migration should cover a local, a field reached through one or
+several pointers, and a union payload. It must preserve these properties:
+
+- Taking a place's address and loading the carrier stored there have different
+  dependencies; an element's own borrows do not replace its storage lifetime.
+- Every required parent reborrow survives copies and nested dereferences until
+  its last dependent use. Read-only weakening permits the reads specified by
+  [Weakening and reborrows](design.md#weakening-and-reborrows).
+- Replacing a pointer slot is distinguished from mutating through its current
+  pointer. Repeated evaluation in a loop does not confuse a previous loaded
+  value with the next one. Evaluate explicit reaching-definition identities if
+  the current slot/severing representation cannot express this uniformly.
+- Unknown targets remain possible alongside known targets. A write replaces
+  old facts only when its destination is proven unique and precise; otherwise
+  it joins them. Precision limits never erase a safety obligation.
+
+Add a bounded semantic test matrix before expanding the migration: direct and
+indirect storage, read-only and mutable capability, address and value loads,
+copy and move, field and payload bindings, reassignment, branches, and loops.
+Each rule needs rejection cases and nearby legal controls, including disjoint
+fields and use after a reborrow ends. Equivalent source forms should agree
+only where evaluation order, ownership, and temporary lifetimes are unchanged.
+The existing [mutation fuzzer](tests/checker_fuzz_test.odin) detects crashes,
+hangs, and malformed diagnostics; it has no oracle for unsafe acceptance.
+A small generator with specified expected outcomes would complement it.
+
+Migrate one family at a time and remove its redundant construction paths.
+Compare diagnostics against the previous compiler, review every acceptance
+change against the spec, run the affected suites and quick gate, and measure
+with [the performance procedure](compiler-architecture.md#testing-and-verification).
+Success means the same rules handle another dereference or binding context
+without another context-specific repair, while legal controls remain accepted.
+Continue fixing demonstrated safety holes during this work.
+
+Language changes should be evaluated separately. The proposed
+[written public borrow contracts](#public-borrow-contracts-should-stand-on-their-own)
+could simplify call boundaries and library exceptions, but cannot repair local
+reborrow construction. Explicit reborrow syntax or move-only mutable carriers
+would change ergonomics and compatibility while leaving nested place access
+and implicit call reborrows to analyze. Do not adopt those changes solely to
+work around the current implementation. Revisit them only with concrete
+examples and a demonstrably smaller set of semantic rules.
+
 ## Package and import versioning
 
 Should import paths encode package versions? And should a package declaration remain mandatory in every file, when every file in a directory must name the same package anyway, or is it ceremony? The current version requires the declaration and leaves dependency versions to the build system or package manager. A future package design may need reproducible version selection without making source imports depend on a particular registry.
