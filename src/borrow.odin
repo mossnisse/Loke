@@ -311,18 +311,9 @@ Prov_Reborrow :: struct {
 	// back into one of them, as `cur = cur^.next` does, replaces that
 	// carrier's value rather than holding a second path to `source`.
 	via: []int,
-	// A borrow of one place reached through `source`, as `&h^.count`, at
-	// `path` below its pointee: a use of `source` for a place that does not
-	// overlap it is not suspended (design.md "Weakening and reborrows").
-	placed: bool,
-	path:   []Proj_Step,
-}
-
-// A borrow of the place at `path` below the pointee of `carrier`, which a
-// reborrow of `carrier` taken from the borrow is for (`prov_place_markers`).
-Prov_Place_Marker :: struct {
-	carrier: int,
-	path:    []Proj_Step,
+	// Loaded on the way to a place through `source` (`Prov_Event.walked`): the
+	// access to that place stands for the use, so it suspends nothing.
+	walked: bool,
 }
 
 // A loan of `place`, reached through carriers, at `path` below their pointee.
@@ -331,11 +322,14 @@ Prov_Place_Marker :: struct {
 // own (`place_bit`), which every copy of it carries on, as `kept := &binding`
 // does, so the loan lasts while a slot holding the bit is live. A switch over
 // such a place takes a read-only one for its payload bindings (design.md
-// "Switch ownership"); `what` names what it lends.
+// "Switch ownership"); `what` names what it lends. A borrow, slice, or
+// traversal of one `borrows` it, with the borrow's capability (design.md
+// "Weakening and reborrows").
 Prov_Place_Loan :: struct {
 	slot:    int,
 	path:    []Proj_Step,
 	mutable: bool,
+	borrows: bool,
 	what:    string,
 	span:    Span,
 	place:   string,
@@ -3084,8 +3078,25 @@ load_pointee_content :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8,
 			}
 		}
 	}
+	carry_place_bits(state, event, reach)
 	copy(reach_row(state, reach, event.slot), state.merged)
 	state.precision[event.slot] = loss
+}
+
+// What is loaded through a carrier holding a place loan's bit is read out
+// through that loan, so it carries the bit on (`place_loan_use`), and an
+// access through it is the loan's own: `&mut left^` for a `&mut left`
+// binding, or what a call given it reaches.
+@(private = "file")
+carry_place_bits :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8) {
+	for carrier in event.into {
+		row := reach_row(state, reach, carrier)
+		for index in 0 ..< len(state.graph.place_loans) {
+			if bit := place_bit(state, index); bit_get(row, bit) {
+				bit_mark(state.merged, bit)
+			}
+		}
+	}
 }
 
 // A `writable` load: the loans of every mutable carrier reached from
@@ -3117,6 +3128,7 @@ load_writable_content :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8
 			}
 		}
 	}
+	carry_place_bits(state, event, reach)
 	copy(reach_row(state, reach, event.slot), state.merged)
 	state.precision[event.slot] = loss
 }
@@ -4611,10 +4623,8 @@ live_reborrow_of :: proc(state: ^Prov_State, source: int, live: []bool, use: Pro
 		// Only a mutable reborrow excludes a read; what is derived from a
 		// read-only one is read-only too. A severed one was taken from an
 		// earlier value of a fresh source.
-		if reborrow.source != source || reborrow.passes_on || (use.reads_only && !reborrow.mutable) || (index < len(state.severed) && state.severed[index]) {
-			continue
-		}
-		if reborrow.placed && use.placed && !paths_overlap(reborrow.path, use.place) {
+		if reborrow.source != source || reborrow.passes_on || reborrow.walked || (use.reads_only && !reborrow.mutable) ||
+		   (index < len(state.severed) && state.severed[index]) {
 			continue
 		}
 		clear(&pending)
@@ -4658,24 +4668,33 @@ live_reborrow_of :: proc(state: ^Prov_State, source: int, live: []bool, use: Pro
 	return {}, -1, false
 }
 
-// A write through carriers that name storage a live place loan names, at an
-// overlapping path, as a store replacing the payload a switch binding still
-// views (design.md "Switch ownership").
+// An access through carriers that name storage a live place loan names, at
+// an overlapping path, as a store replacing the payload a switch binding
+// still views (design.md "Switch ownership"), or a read of a place a mutable
+// borrow through another carrier still holds (design.md "Weakening and
+// reborrows"). An access through the loan itself, a carrier holding its bit,
+// is its own.
 @(private = "file")
 check_place_loans :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, uses: []Span) {
 	for loan, index in state.graph.place_loans {
-		if !paths_overlap(loan.path, event.path) {
+		if (event.access == .Read && !loan.mutable) || !paths_overlap(loan.path, event.path) {
 			continue
 		}
 		later, lent := place_loan_use(state, index, live, uses)
 		if !lent {
 			continue
 		}
+		bit := place_bit(state, index)
 		for carrier in event.into {
-			if !prov_slots_overlap(state, loan.slot, carrier) {
+			if !prov_slots_overlap(state, loan.slot, carrier) || bit_get(reach_row(state, state.reach, carrier), bit) ||
+			   accessed_beside(state, index, carrier) {
 				continue
 			}
 			state.diagnostic_precision |= state.precision[loan.slot] | state.precision[carrier]
+			if loan.borrows {
+				report_place_borrowed(state, event, loan, carrier, later)
+				return
+			}
 			errorf(
 				state.k.c, event.span, "L0511",
 				"this %s is not compatible with the %s %s of `%s` that is still in use",
@@ -4686,6 +4705,23 @@ check_place_loans :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, u
 			return
 		}
 	}
+}
+
+// Whether `carrier` was read out through another place loan of the storage
+// place loan `index` names, at a place beside it, as `left` is for `right`
+// in `.add(&mut left, &mut right)`: what it reaches is inside that place, so
+// an access through it is beside this one too.
+@(private = "file")
+accessed_beside :: proc(state: ^Prov_State, index: int, carrier: int) -> bool {
+	loans := state.graph.place_loans
+	row := reach_row(state, state.reach, carrier)
+	for other, at in loans {
+		if at != index && other.borrows && bit_get(row, place_bit(state, at)) && !paths_overlap(other.path, loans[index].path) &&
+		   prov_slots_overlap(state, other.slot, loans[index].slot) {
+			return true
+		}
+	}
+	return false
 }
 
 // A temporary loaded through a carrier, which only its own expression reads.
@@ -4876,6 +4912,42 @@ report_suspended_reborrow :: proc(
 		add_notef(k.c, reborrow.span, "the %s reborrow is taken here", capability)
 	}
 	add_use_note(state, later)
+}
+
+// A carrier used for a place a borrow through another carrier still holds,
+// as `h` for `h^.count += 1` while `count := &mut h^.count` is in use.
+@(private = "file")
+report_place_borrowed :: proc(state: ^Prov_State, event: Prov_Event, loan: Prov_Place_Loan, carrier: int, later: Span) {
+	k := state.k
+	name := event.name if event.name != "" else carrier_name(state.graph, carrier)
+	capability := loan.mutable ? "mutable" : "read-only"
+	errorf(k.c, event.span, "L0641", "`%s` cannot be used here: a %s reborrow of it is still in use", name, capability)
+	add_notef(k.c, loan.span, "the %s reborrow of `%s` is taken here", capability, loan.place)
+	add_use_note(state, later)
+}
+
+// A carrier's name, or for a temporary reborrowed from one, as the read-only
+// reborrow of `p^` that `p^^[1]` reads through, the name of what it reborrows.
+@(private = "file")
+carrier_name :: proc(graph: ^Flow_Graph, carrier: int) -> string {
+	at := carrier
+	for _ in 0 ..< len(graph.reborrows) + 1 {
+		if graph.prov_slots[at].name != "" {
+			return graph.prov_slots[at].name
+		}
+		source := -1
+		for reborrow in graph.reborrows {
+			if reborrow.derived == at {
+				source = reborrow.source
+				break
+			}
+		}
+		if source < 0 {
+			break
+		}
+		at = source
+	}
+	return ""
 }
 
 @(private = "file")

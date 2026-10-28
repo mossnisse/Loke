@@ -7,6 +7,6 @@ this string view cannot be returned: `text` ends when this procedure returns
 L0526
 @29:28
 this string view cannot be returned: `text` ends when this procedure returns
-L0641
+L0512
 @37:3
-`text` cannot be used here: a read-only reborrow of it is still in use
+`text` cannot be assigned here: a read-only string view of it is still in use

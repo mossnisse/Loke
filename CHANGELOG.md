@@ -208,6 +208,16 @@ checklist.
   what the case needs out of the payload first, or by copying the pointer
   read-only, as `q: ^Holder = h`, when the copy only reads.
 
+- A `&mut` case binding over a place reached through a pointer now borrows
+  its payload exclusively while it is in use, as one over a local already did
+  ([Switch ownership](design.md#switch-ownership)). In
+  `switch (h^.first) { case .some(&mut m): ... }`, storing into `h^.first`,
+  reading it, or handing `h` to a call while `m` is still used is rejected
+  with `L0641`; before, nothing was checked, so `h^.first = .none` could
+  replace the payload `m` still named. Two `&mut` field bindings of one
+  payload stay separate places. Upgrade by finishing with the binding before
+  the access, or by making the access through the binding.
+
 - Handing a pointer to a call, or copying it into storage, now uses every
   mutable pointer reachable through it, so `touch(list)`, `q := list`,
   `q: ^List = list`, or `Holder{list}` while `node := list^.head` is still in
@@ -277,6 +287,12 @@ checklist.
   ([`core:math`](standard-library.md#coremath)).
 
 ### Fixed
+
+- A mutable borrow through a pointer passed to a read-only parameter is
+  checked as read-only even when an index on the way calls something that
+  writes, so `peek(&mut both[idx(&mut n)]^.count)` beside `&both[0]^.count`
+  compiles, as it does with `&`
+  ([Weakening and reborrows](design.md#weakening-and-reborrows)).
 
 - Three read-only uses through a pointer beside a borrow reached through it
   are now accepted, as they are for a local

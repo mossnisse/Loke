@@ -14,7 +14,7 @@ L0641
 @42:7
 `h` cannot be used here: a read-only reborrow of it is still in use
 L0641
-@49:14
+@49:9
 `h` cannot be used here: a read-only reborrow of it is still in use
 L0641
 @56:2
@@ -38,7 +38,7 @@ L0641
 @93:3
 `h` cannot be used here: a read-only reborrow of it is still in use
 L0641
-@98:31
+@98:26
 `h` cannot be used here: a mutable reborrow of it is still in use
 L0641
 @102:21

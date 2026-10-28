@@ -244,14 +244,6 @@ Prov_State :: struct {
 	reborrows:      [dynamic]Prov_Reborrow,
 	// The loans of places reached through carriers (`prov_place_loan`).
 	place_loans:    [dynamic]Prov_Place_Loan,
-	// Set for the one carrier `prov_read_ident` reads next: the path below its
-	// pointee of the one place an access goes on to (`prov_reach_hop`).
-	place_use:      bool,
-	place_use_path: []Proj_Step,
-	// Otherwise empty slots a borrow of one place returns beside the carriers
-	// it goes through, each naming one of them and the path below its pointee,
-	// so a reborrow of that carrier takes only the place (`prov_place_markers`).
-	place_markers:  map[int]Prov_Place_Marker,
 	entry_defs:     [dynamic]Prov_Entry_Def,
 	root_by_symbol: map[Symbol_Id]Root_Id,
 	root_by_storage: map[Storage_Id]Root_Id,
@@ -446,7 +438,6 @@ new_flow_graph :: proc(k: ^Checker, literal: ^Expr_Proc, allocator: mem.Allocato
 		graph.step_views = make(map[Symbol_Id]bool, 8, allocator)
 		graph.lent_aliases = make(map[int][]int, 8, allocator)
 		graph.caller_slots = make(map[Loan_Id][dynamic]int, 4, allocator)
-		graph.place_markers = make(map[int]Prov_Place_Marker, 4, allocator)
 		graph.receiver_content = make(map[^Expr_Call][]int, 2, allocator)
 		graph.fresh_slots = make(map[int]bool, 2, allocator)
 		graph.content_by_symbol = make(map[Symbol_Id][]int, 8, allocator)
@@ -1916,14 +1907,11 @@ walk_flow_foreach :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach) {
 }
 
 // design.md "Borrowing iteration": the source cannot change while the
-// traversal is live. A source reached through a mutable pointer, as `items^`,
-// has no place for the iterator loan, so the traversal reborrows the pointer
-// instead, mutably for a place loop: changing the source through it, as
-// `items.append(x)`, conflicts until the loop ends. A pointer itself read
-// through another, as `p^` in `p^^`, is a copy with no name to suspend, but the
-// source can still change through the pointer it came from, as
-// `p^.append(x)` does, so each carrier out to the first named place is
-// reborrowed too.
+// traversal is live. A source reached through a pointer, as `items^`, has no
+// root for the iterator loan, so the traversal takes a place loan of it
+// instead (`prov_place_loan`), mutable for a place loop: changing the source
+// through any pointer naming it, as `items.append(x)` or `p^.append(x)` for
+// `p^^`, conflicts until the loop ends.
 @(private = "file")
 foreach_reborrow_through_carrier :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach, place_loop: bool) -> []int {
 	if s.kind == .Protocol {
@@ -1939,7 +1927,14 @@ foreach_reborrow_through_carrier :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach, p
 		return nil
 	}
 	// Only the source is traversed, so another field beside it stays usable.
-	return prov_reborrow_outer_carriers(graph, source, expr_span(s.iterable), place_loop, placed = true)
+	carriers, below, through := prov_read_through_carrier(graph, source, reads_only = !place_loop)
+	if !through {
+		return nil
+	}
+	if place_loop {
+		prov_write_through(graph, carriers, below, expr_span(source), "mutable traversal")
+	}
+	return prov_place_loan(graph, carriers, below, place_loop, "element", source, borrows = true)
 }
 
 @(private = "file")

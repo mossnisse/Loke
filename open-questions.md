@@ -120,16 +120,13 @@ usable beside it, as it does beside a borrow of a local's field.
 
 Still open:
 
-- **Place loans through carriers.** Two mechanisms now answer one question:
-  a switch's hold is matched by shared loan against a write through any
-  carrier, and a borrow's placed reborrow by slot against uses of the
-  carriers it went through, so a copy of the carrier, as `q := h`, conflicts
-  with a borrow but not with a switch. One placed form for both would say
-  which is right. Only an identifier's read and an inner carrier's load are
-  placed, so a carrier read out of a local's field, as `s.h` for
-  `&s.h^.count`, is used whole beside the borrow. A view's elements are one
-  place: `&mut s[0]` suspends `s[1]`, and a write to `s[1].first` conflicts
-  with a switch over `s[0].first`.
+- **Place loans through carriers.** Done: a switch, a borrow, a slice, and a
+  traversal of a place reached through carriers each take one place loan,
+  which every access through a carrier naming that storage is checked
+  against ([One place loan through carriers](#one-place-loan-through-carriers-proposal-2026-10-28)).
+  A view's elements are still one place: `&mut s[0]` suspends `s[1]`, and a
+  write to `s[1].first` conflicts with a switch over `s[0].first`
+  (decision 2 there).
 - **Calls.** A carrier handed to a call uses every mutable carrier it reaches.
   A per-parameter summary of what a body uses through each parameter could
   narrow that, as written-argument regions already do for stores.
@@ -239,10 +236,17 @@ loan's liveness as a bit of the reach rows, carried to whatever derives from
 its snapshot (done: `place_bit`, `place_loan_use`); decision 1 (done: a copy
 into storage uses what the carrier reaches and a mutable one writes it, as a
 call argument does, `prov_use_copied`); borrows, slices, and
-traversals as place loans, removing the placed reborrows, tags, and markers;
-then weakening as clearing a place loan's capability. Each
-access now checks the live place loans, as writes check holds; measure the
-borrow phase with `perf.ps1` before and after the third step.
+traversals as place loans, removing the placed reborrows, tags, and markers,
+with weakening clearing a place loan's capability (done: every access
+through carriers is a `.Through` read or write, a borrow's value is its
+snapshot, and what is loaded through a borrow carries its bit,
+`carry_place_bits`, which also exempts the cyclic writes in a
+[known gap](known-gaps.md#a-write-through-a-pointer-read-out-of-a-borrowed-place-is-not-checked-against-it)).
+The walk bookkeeping for weakening stays: a weakened borrow still turns its
+walk's reads of the carriers into reads only, for the reborrows of carriers
+copied out of storage. A store in a loop beside a borrow through a parameter
+is rejected for more place forms than before
+([known gap](known-gaps.md#a-store-through-a-carrier-loaded-from-a-parameter-joins-into-the-parameter)).
 
 ## Package and import versioning
 

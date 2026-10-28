@@ -295,4 +295,58 @@ read_only_copy :: proc(h: ^mut Holder) -> int {
 	return q^.count;
 }
 
+// A `&mut` binding borrows its payload exclusively, through a pointer as over
+// a local.
+mutable_binding_written :: proc(h: ^mut Holder) {
+	switch (h^.first) {
+	case .some(&mut m):
+		h^.first = .none;
+		m^.value = 1;
+	case .none:
+	}
+}
+
+mutable_binding_read :: proc(h: ^mut Holder) -> int {
+	switch (h^.first) {
+	case .some(&mut m):
+		k := look(h);
+		m^.value = 1;
+		return k;
+	case .none:
+	}
+	return 0;
+}
+
+// A pointer copied beside a borrow taken in the same expression is still a
+// copy; copies and calls of borrows of other fields each write only theirs.
+conditional_copy :: proc(h: ^mut Holder, flag: bool) -> int {
+	n := Node{1};
+	other := Holder{.none, 0, .none, &mut n};
+	switch (h^.first) {
+	case .some(node):
+		q := &mut other if flag else h;
+		count := q^.count;
+		return node^.value + count;
+	case .none:
+	}
+	return 0;
+}
+
+Beside :: struct { count: ^mut int, pair: ^mut Value }
+clear_beside :: proc(b: Beside) { b.count^ = 0; b.pair^ = .none; }
+
+sibling_copies :: proc(h: ^mut Holder) -> int {
+	s := Beside{&mut h^.count, &mut h^.pair};
+	switch (h^.first) {
+	case .some(node):
+		t := s;
+		t.count^ += 1;
+		clear_beside(t);
+		clear_beside(Beside{&mut h^.count, &mut h^.pair});
+		return node^.value;
+	case .none:
+	}
+	return 0;
+}
+
 main :: proc() {}

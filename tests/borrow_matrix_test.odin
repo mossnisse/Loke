@@ -186,12 +186,17 @@ matrix_known_gap :: proc(place: Matrix_Place, take: Matrix_Take, use: Matrix_Use
 	}
 	// "A store through a carrier loaded from a parameter joins into the
 	// parameter"
-	switch take {
-	case .Borrow, .Borrow_Mut, .Slice, .Slice_Mut:
-		if place.name == "param_two_pointers" && later {
+	switch place.name {
+	case "param", "param_indexed", "param_slice", "param_two_pointers":
+		switch take {
+		case .Borrow, .Borrow_Mut, .Slice, .Slice_Mut:
+			if later {
+				return "L0641", true
+			}
+		case .Foreach, .Foreach_Mut:
 			return "L0641", true
+		case .Copy, .Binding:
 		}
-	case .Copy, .Binding, .Foreach, .Foreach_Mut:
 	}
 	return "", false
 }

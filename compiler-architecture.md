@@ -381,58 +381,51 @@ the binding is used (`prov_note_view_use`), and a carrier handed to a call
 uses every mutable carrier it reaches (`prov_use_reached`), as does one copied
 into storage, a temporary's copy aside (`prov_use_copied`).
 
-A borrow, slice, or `foreach` of a place reached through carriers reborrows
-each carrier it goes through for that place only: a placed reborrow (`Prov_Reborrow.placed`)
-records the path below the carrier's pointee, the carriers named or loaded on
-the way included (`prov_hops_path`). The reborrow of the carrier the place is
-in is taken where the borrow is stored or passed on, so the borrow returns,
-beside that carrier, an empty marker slot naming it and the path
-(`prov_place_markers`); a switch's `&mut` binding, which views the carrier
-rather than reborrowing it, ignores the marker. The place walk tags its read of
-the outermost named carrier, and each load of an inner one, with the path the
-access goes on to (`Prov_Event.placed`), and a placed use at a path disjoint
-from a placed reborrow's is not suspended by it. Every other use of the
-carrier, as copying it or passing it to a call, is untagged and conflicts as
-before. A use of a switch binding over such a place is placed at its payload. A
-compound assignment or `inout` receiver, which reads its place as a value,
-reads the carriers again as written through (`prov_write_through_place`), and a
-mutable borrow weakened to a read-only destination makes its reads of the
-carriers it goes through read-only, as it settles its `.Through`. The walk
-collects those events as it emits them (`Prov_Slot.walk_reads`), leaving out
-its subscripts, as a call in an index may write.
+A borrow, slice, `foreach`, or switch of a place reached through carriers
+cannot borrow a root, since which storage the carriers name is known only to
+the solve. It takes a place loan instead (`prov_place_loan`,
+`Prov_Place_Loan`): a snapshot slot of the carriers, at the path below their
+pointee, with its capability. A borrow, slice, or traversal `borrows` the
+place with its own capability, and its value is the snapshot alone, so
+nothing names the carriers it went through; a switch takes a read-only one
+for its payload bindings, which their views join, and a `&mut` field binding
+a mutable one of its field. A bit of the reach rows past the loans' own
+(`place_bit`) marks the snapshot and passes to whatever is defined from it,
+and to what is loaded through a slot holding it (`carry_place_bits`), so
+every use of the borrow or the binding keeps the place loan live, as does a
+carrier copied from it, as `kept := &node`, until it is redefined
+(`place_loan_use`).
 
-A switch over a place reached through carriers cannot borrow a root, since
-which storage they name is known only to the solve. It takes a place loan
-instead (`prov_place_loan`, `Prov_Place_Loan`): a snapshot slot of the
-carriers, at the path below their pointee, with its capability, which the
-binding's view joins. A bit of the reach rows past the loans' own
-(`place_bit`) marks the snapshot and passes to whatever is defined from it, so
-every use of the binding keeps the place loan live, as does a carrier copied
-from it, as `kept := &node`, until it is redefined (`place_loan_use`). A store
-through carriers, a mutable borrow or `inout` argument through them, a
-mutable copy of a carrier into storage, and a carrier argument a callee may
-write through emit a
-`.Through` event, with the carriers and the path written, and a second one
-for the deep `Load` of what a call's argument reaches. The path is below
-where the carriers point (`Prov_Slot.offset`), which a place loan's path is
-too: a borrow through carriers, as `&mut h^.count`, points at `[count]`
-below what they name, and so does a copy of it, a record field holding it, or
-a reborrow lent from it, so a store through `count` or a call given
-`Side{&mut h^.count}` writes only there. `prov_note_offset` records it at
-each `Def` from the marker slots beside the carriers (`prov_value_offset`),
-keeping the prefix a slot's definitions share, so a borrow chosen by a
-condition keeps its path, and a value mixing in the carrier itself points at
-the whole pointee. A carrier loaded on the way, as `p^` for
-`&mut p^^.count`, which only the borrow reads, takes the borrow's place
-itself.
-`check_place_loans` rejects one whose carriers share a valid loan with a live
-place loan's snapshot at an overlapping path. A mutable borrow weakened to a
-read-only destination writes nothing, so its `.Through` is settled as a fresh
-loan's access is (`Prov_Slot.through_index`). Every borrow through carriers
-returns that slot, with no event for a read-only one
-(`prov_through_marker`), so storing the borrow is not taken for a copy of the
-carriers (`prov_value_borrows`). The events are emitted only once the body
-has a place loan.
+Every access through carriers emits a `.Through` event with the carriers,
+the path accessed, and whether it reads or writes (`prov_access_through`).
+The place walk reads the place (`prov_read_through_carrier`); a store, a
+mutable borrow, slice, traversal, or `inout` argument, a mutable copy of a
+carrier into storage, and a carrier argument a callee may write through
+write it, and a read-only copy or argument reads all of it, with a second
+event for the deep `Load` of what a call's argument or a copy reaches. The
+path is below where the carriers point (`Prov_Slot.offset`), which a place
+loan's path is too: a borrow's snapshot points at the place it is of, as
+`[count]` for `&mut h^.count`, and so does a copy of it, a record field
+holding it, or a reborrow lent from it, so a store through `count` or a call
+given `Side{&mut h^.count}` writes only there. `prov_note_offset` records it
+at each `Def`, keeping the prefix a slot's definitions share, so a borrow
+chosen by a condition keeps its path, and an access through carriers
+pointing at different places, as a record holding two field borrows, is one
+event per carrier. `check_place_loans` rejects an access whose carriers
+share a valid loan with a live place loan's snapshot at an overlapping path,
+a read only beside a mutable one, unless the carrier holds the loan's own
+bit, or one of a borrow of a place beside it (`accessed_beside`), as `left`
+does for `right` in `.add(&mut left, &mut right)`. A borrow's conflict is
+reported as the carrier's use while it is reborrowed (`L0641`), a switch's
+as an incompatible write (`L0511`). A mutable borrow weakened to a read-only
+destination takes a read-only place loan, and its write and its walk's reads
+of the carriers become reads; the slot standing for them
+(`prov_through_marker`, `Prov_Slot.through_index`, `Prov_Slot.walk_reads`)
+lets `prov_reborrow` settle them, as it settles a fresh loan's access. The
+walk leaves out its subscripts, as a call in an index may write. A carrier
+loaded on the way to a place (`Prov_Event.walked`) still reborrows what it
+was loaded out of, but suspends nothing, as the access to the place stands
+for it.
 
 Result summaries, written-argument regions, and escape levels propagate these
 facts through direct, generic, and indirect calls. A written-argument region is
