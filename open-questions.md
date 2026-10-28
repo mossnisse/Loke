@@ -4,6 +4,30 @@ Decisions that are deliberately not yet made are recorded here rather than left 
 
 Design rationale and differences from Odin are recorded in [comments.md](comments.md).
 
+The current behavior inventory is in [Nondeterminism and undefined behavior audit](nondeterminism-audit.md).
+
+## Invalid representations at unsafe boundaries
+
+[Built-in values](design.md#built-in-values) allows `x: T = ---` for plain data
+and permits reads even though the storage has unspecified contents.
+[`unsafe.transmute`](design.md#unsafetransmute) requires a valid destination
+representation but says only that an invalid one at runtime is not diagnosed.
+Foreign enum results similarly promise a declared member. Specify the
+language-level result when a read or conversion yields bits that are not a
+value of the type, such as `bool` outside its representations, a missing enum
+member, or an invalid `rune`. Is it undefined behavior, or is there a bounded
+set of permitted outcomes? This should be stated independently of LLVM's
+current treatment of uninitialized loads and invalid scalar values.
+
+## Directory enumeration order and mutation
+
+[`fs.read_directory`](standard-library.md#filesystem-operations) streams the
+native enumeration. Its public contract describes entries and errors but
+does not state their order or what happens when the directory changes during
+the walk. Specify whether order is entirely unspecified, and whether a
+concurrent addition, removal, or rename can be seen, missed, or repeated.
+Callers needing a stable listing can then collect and sort a completed read.
+
 ## JSON follow-ups
 
 [`core:encoding/json`](standard-library.md#coreencodingjson) implements the
