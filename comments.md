@@ -1782,6 +1782,12 @@ added later, met the same test. The [keyword table](grammar.md#keywords) lists
 every contextual word and its position. Raw identifiers, Rust's `r#type`,
 would free every word but make the freed names ugly at every use.
 
+Odin's `#directive` tokens, `#load` or `#partial`, are a second lexical form
+that no declaration can shadow. Loke has none: `size_of`, `static_assert`, and
+every other built-in procedure is a predeclared identifier, shadowed like any
+other, and element counts are receiver members. One lexical form means one
+lookup rule, and a shadowed built-in reads as what it is.
+
 ## Features kept close to Odin
 
 ### Standard output is binary

@@ -11,13 +11,14 @@ name in `Title_Case` refers to another rule. Anything else is prose commentary
 after a `//`.
 
 The grammar is written to be parsed top-down with a small fixed lookahead. The
-rules that need more are listed under [Resolved ambiguities](#resolved-ambiguities).
+rules that need more are listed under [Resolved
+ambiguities](#resolved-ambiguities).
 
 A comma-separated list takes an optional trailing `","?` exactly when `)`, `]`,
 or `}` closes it; without a closing delimiter nothing would tell a trailing
 comma from a missing element. So `Expression_List`, `Identifier_List`,
 `Where_Clause`, a `foreach` binding list (which `in` ends) and a case list
-(which `:` ends) have none. The one exception is a parenthesised `foreach`
+(which `:` ends) have none. The one exception is a parenthesized `foreach`
 binding group, which takes none although `)` closes it.
 
 # Lexical structure
@@ -67,10 +68,11 @@ struct      switch     type       union      when
 
 A production writes any of them as `Keyword`. A reserved word is still a
 `Member_Name`: a field, an enum member, a union variant, a record type's label,
-an `impl` member, and an interface `slot` are reached through a value or a
-type, never by lookup, so any of them may be named `type`, `default`, `map`, or
-`union`, and `token.type`, `.default`, and `a.union(b)` select one. No reserved word names a binding a lookup reaches: a
-local, a parameter, a file-scope declaration, or a generic parameter.
+an `impl` member, and an interface `slot` are reached through a value or a type,
+never by lookup, so any of them may be named `type`, `default`, `map`, or
+`union`, and `token.type`, `.default`, and `a.union(b)` select one. No reserved
+word names a binding a lookup reaches: a local, a parameter, a file-scope
+declaration, or a generic parameter.
 
 Contextual keywords, reserved only in the positions given:
 
@@ -92,14 +94,14 @@ Contextual keywords, reserved only in the positions given:
 | `where` | directly after the signature, generic parameters, or attributes it constrains |
 
 `nil`, `true`, and `false` are predeclared identifiers, not keywords, but they
-are **reserved**: no name a lookup can reach may be one of them. A field or enum
-member is reached by a selector rather than by lookup, so those names stay free.
+are **reserved** in the same way: no name a lookup can reach may be one of them,
+while a `Member_Name` may.
 
 Every built-in procedure is an ordinary predeclared identifier that a
 declaration may shadow, including `drop`, `box`, `make`, `size_of`, `type_of`,
 and the compile-time `static_assert`, `build_config`, `source_location`, and
-`caller_location`. There is no `#name` lexical form. Element counts are
-receiver members, `x.len()` and `x.cap()`, not built-in procedures.
+`caller_location`. Element counts are receiver members, `x.len()` and
+`x.cap()`, not built-in procedures.
 
 ## Operators and punctuation
 
@@ -194,8 +196,8 @@ Top_Level_Block= Attributes? "{" Top_Level_Item* "}"
 ```
 
 `static_assert` followed by `(` is the only expression allowed at item position,
-and the checker resolves it as the predeclared built-in. Its `Attributes?` exists
-only so that a misplaced attribute can be reported.
+and the checker resolves it as the predeclared built-in. Its `Attributes?`
+exists only so that a misplaced attribute can be reported.
 
 ```
 Import_Decl   = Attributes? "import" Identifier? String_Literal ";"
@@ -203,20 +205,23 @@ Import_Decl   = Attributes? "import" Identifier? String_Literal ";"
 Foreign_Import_Decl = Attributes? "foreign" "import" Identifier String_Literal ";"
 
 Foreign_Block = Attributes? "foreign" Identifier "{" Foreign_Decl* "}"
-Foreign_Decl  = Attributes? Identifier ":" ( ":" Proc_Declaration | Type ) ";"
-              | ";"
+Foreign_Decl  = Declaration | ";"
 
 Impl_Block    = Attributes? "impl" Type "{" Impl_Member* "}"
 Impl_Member   = Declaration | Delegate_Decl | ";"
-Delegate_Decl = "delegate" "(" Operator_Symbol ("," Operator_Symbol)* ","? ")" ";"
+Delegate_Decl = Attributes? "delegate" "(" Operator_Symbol ("," Operator_Symbol)* ","? ")" ";"
 ```
+
+A `Foreign_Decl` is a procedure constant whose body is `---` or a variable with
+no initializer, `x: T;`. The checker enforces both forms (see
+[design.md](design.md#foreign-system)).
 
 An `Impl_Member` is reached through its type, so a `Declaration` there may be
 named with a reserved word: `union :: proc(self: Set, other: Set) -> Set`.
 Whether an `Impl_Block` is inherent or an extension follows from where its
-subject type is declared (see [design.md](design.md#methods-and-implementation-blocks)).
-An `Impl_Block` is also a `Statement`, when its subject is declared in the same
-procedure body.
+subject type is declared (see
+[design.md](design.md#methods-and-implementation-blocks)). An `Impl_Block` is
+also a `Statement`, when its subject is declared in the same procedure body.
 
 # Declarations
 
@@ -260,10 +265,9 @@ and static-duration storage starts at its zero value. `x: T = e;`, `x: = e;`,
 and `x := e;` add an initializer, and `x: T: e;` declares a constant. The
 uninitialized-storage marker `---` is not an expression, so `x: T = ---;` needs
 its written type. `Name :: ---;` describes a type the compiler supplies, and is
-accepted only on a declaration with
-[`@(intrinsic)`](design.md#intrinsic). The two `Variable_Decl` alternatives differ in whether a
-`Type` follows; the second also covers a modifier with an inferred type,
-`x: static = 0;`.
+accepted only on a declaration with [`@(intrinsic)`](design.md#intrinsic). The
+two `Variable_Decl` alternatives differ in whether a `Type` follows; the second
+also covers a modifier with an inferred type, `x: static = 0;`.
 
 `static` and `thread_local` are mutually exclusive (see
 [design.md](design.md#storage-modifiers)). File-scope and static-duration
@@ -299,8 +303,8 @@ Type = "^" "mut"? Type                                   // pointer
      | Type_Name Type_Arguments?
 
 Record_Type    = "(" Record_Field ("," Record_Field)* ","? ")"
-Record_Field   = Record_Label_List ":" Type              // labelled
-               | Type                                    // unlabelled
+Record_Field   = Record_Label_List ":" Type              // labeled
+               | Type                                    // unlabeled
 
 Record_Label_List = Member_Name ("," Member_Name)*
 
@@ -337,7 +341,7 @@ as in `S.Iterator.Item`.
 
 In `dyn Interface(arguments...)`, the interface's first parameter is the erased
 subject and is omitted from `arguments`. The conversion is written with a
-parenthesised type, `(dyn Interface)(&value)`. `dyn proc(...)` is the
+parenthesized type, `(dyn Interface)(&value)`. `dyn proc(...)` is the
 [callable view](design.md#borrowed-callable-views); its `mut` form parses and is
 rejected.
 
@@ -375,9 +379,10 @@ A `Where_Clause` expression is a compile-time boolean (see
 its top level (see [Resolved ambiguities](#resolved-ambiguities)).
 
 A field named `_` is an unnamed padding field. `Struct_Type` and
-`Move_Only_Struct_Type` parse wherever a `Type` does, but [design.md](design.md#structs)
-accepts one only as the value of a `Constant_Decl`, parentheses included; a
-nested record is written as a `Record_Type`.
+`Move_Only_Struct_Type` parse wherever a `Type` does, but
+[design.md](design.md#structs) accepts one only as the value of a
+`Constant_Decl`, parentheses included; a nested record is written as a
+`Record_Type`.
 
 ## Interfaces
 
@@ -407,7 +412,7 @@ are no `move` bindings.
 
 A `slot`'s procedure type may not introduce new generic parameters, and its
 first parameter must be the receiver `self`; dyn compatibility adds further
-rules — see [design.md](design.md#dyn-compatibility).
+rules; see [design.md](design.md#dyn-compatibility).
 
 # Procedures
 
@@ -522,7 +527,7 @@ empty statement, which is what makes `Foo :: struct {};` legal.
 
 ## Control flow
 
-Every control-flow header is parenthesised and every body is braced. There is no
+Every control-flow header is parenthesized and every body is braced. There is no
 single-statement body form.
 
 ```
@@ -565,7 +570,7 @@ An `or_return`, an operator applied to the call, and a field or index before
 the `=` are syntax errors. `spawn` is a statement, never an expression, so
 `x := spawn f();` does not parse as a spawn.
 
-Their meaning is under
+`parallel` and `spawn` are specified under
 [Structured concurrency](design.md#structured-concurrency). The parenthesized
 executor header names the pool the block's tasks run on
 ([Parallel blocks](design.md#parallel-blocks)).
@@ -575,9 +580,9 @@ condition-only form.
 
 A binding list has any length: it names the fields of the element the iterable
 yields, so its arity is a semantic property of that element's type. A
-parenthesised group is a nested pattern over a field that is itself a record;
-`$` and `&mut` mark a leaf, never a group. A `foreach` whose bindings carry `$` is
-a static expansion; both forms share one production so that a mixed header
+parenthesized group is a nested pattern over a field that is itself a record;
+`$` and `&mut` mark a leaf, never a group. A `foreach` whose bindings carry `$`
+is a static expansion; both forms share one production so that a mixed header
 parses and can be diagnosed (see
 [design.md](design.md#static-foreach-expansion)).
 
@@ -628,7 +633,7 @@ Binding_Leaf   = ("&" "mut")? Identifier
 may be ranges, since `..=` and `..<` are ordinary binary operators in the
 expression grammar. A case value may be a type, which only a switch over an
 `any_view` matches. A composite or pointer type in a `Branch_Pattern` is
-parenthesised, `([]u8)(bytes)`, as in a conversion.
+parenthesized, `([]u8)(bytes)`, as in a conversion.
 
 # Expressions
 
@@ -639,7 +644,7 @@ reads as, and `a or_else b or_else c` as `a or_else (b or_else c)`, which gives
 each `or_else` an unresolved [fallible expression](design.md#typed-fallibility)
 on its left. Level 4 is **non-associative**: `a == b == c` and
 `x in s == true` are syntax errors, and a comparison of a comparison's result
-is parenthesised. Level 5 is non-associative too: a range takes exactly two
+is parenthesized. Level 5 is non-associative too: a range takes exactly two
 endpoints, so `a ..< b ..< c` is a syntax error.
 
 After `or_else`, `break`, `continue`, and `return` begin an `Or_Else_Exit`, the
@@ -705,7 +710,7 @@ Primary_Expression =
      | Composite_Literal
      | Proc_Literal
      | "(" Expression ")"
-     | "(" Type ")"                                    // parenthesised type, as in (^u32)(&f)
+     | "(" Type ")"                                    // parenthesized type, as in (^u32)(&f)
 
 Composite_Literal = Composite_Type? "{" Element_List? "}"
 Composite_Type    = Identifier ("." Member_Name)? Type_Arguments?  // at most one selector
@@ -731,9 +736,9 @@ Argument_Value= Expression | Type                       // runtime value or comp
 A composite literal's type name takes at most one selector, so `a.b.c{}` is
 never a literal.
 
-A `Type` that begins with a token no other expression begins with — `^`, `[`,
+A `Type` that begins with a token no other expression begins with (`^`, `[`,
 `map`, `distinct`, `dyn`, `type`, `$`, `proc`, `struct`, `enum`, `union`,
-`interface`, or `move_only` — is a primary expression only as a call or generic
+`interface`, or `move_only`) is a primary expression only as a call or generic
 argument, as the value of a constant declaration, inside parentheses, or as the
 prefix of its own composite or procedure literal. Anywhere else it is an error,
 so a comparison is written `T == (^int)`. The type grammar would otherwise read
@@ -757,24 +762,22 @@ may not begin an expression statement, because `{` at statement position starts
 a block. A slice literal's type is the one written: `[]T{...}` is read-only and
 `[]mut T{...}` has mutable elements.
 
-A parenthesised group is a `Record_Type` when its first field group is
-labelled, found by a bounded `Record_Label_List ":"` scan like the one a
-`Variable_Decl` uses, or when it holds a `,` at its own bracket depth. An expression holds such
+A parenthesized group is a `Record_Type` when its first field group is labeled,
+found by a bounded `Record_Label_List ":"` scan like the one a `Variable_Decl`
+uses, or when it holds a `,` at its own bracket depth. An expression holds such
 a comma only between a definition's `Where_Clause` conditions, and that one does
-not count: the clause ends at the definition's `{` (see
-[Resolved ambiguities](#resolved-ambiguities)).
-The first field decides which kind it is: in a labelled record every field is
-`Identifier_List ":" Type`, and in an unlabelled one every field is a bare
-`Type` and there are at least two. `(T)` in expression position stays a
-parenthesised expression, `(int,)` is an error, and `Foo(x: int)` is an error
-rather than generic arguments. A
-`Record_Type` is never a `Composite_Type`: a record value comes from a
-contextually typed literal or from an alias used as a literal prefix, never
-`(field: T){...}`.
+not count: the clause ends at the definition's `{` (see [Resolved
+ambiguities](#resolved-ambiguities)). The first field decides which kind it is:
+in a labeled record every field is `Identifier_List ":" Type`, and in an
+unlabeled one every field is a bare `Type` and there are at least two. `(T)` in
+expression position stays a parenthesized expression, `(int,)` is an error, and
+`Foo(x: int)` is an error rather than generic arguments. A `Record_Type` is
+never a `Composite_Type`: a record value comes from a contextually typed literal
+or from an alias used as a literal prefix, never `(field: T){...}`.
 
-A labelled group is an `Anon_Union_Type` instead when it holds a `|` at its own
+A labeled group is an `Anon_Union_Type` instead when it holds a `|` at its own
 bracket depth. Each `Alternative` has exactly one label and its colon, so
-`(a | b)` stays a parenthesised expression, `(a, b: int | c:)` is an error, and
+`(a | b)` stays a parenthesized expression, `(a, b: int | c:)` is an error, and
 a group with one alternative, `(a: int |)`, is an error. A trailing `|` is
 accepted, as a trailing `,` is in a `Record_Type`, so a union written one
 alternative per line ends each with `|`; `(a: int | | b:)` is an error.
@@ -805,14 +808,14 @@ The productions above use the following deterministic parsing rules:
   `$` parses as an expanded case, so in `case $variant:` the `:` ends the case
   label rather than annotating the `$` name. A switch header binds
   nothing, so `switch (x in set)` switches on the membership test.
-- An `Init_Statement` is a `Variable_Decl` when the comma-separated list of names
-  that opens it is followed by `:`, and a `Simple_Statement` otherwise. This is
-  the same bounded scan `Declaration` performs at statement position.
+- An `Init_Statement` is a `Variable_Decl` when the comma-separated list of
+  names that opens it is followed by `:`, and a `Simple_Statement` otherwise.
+  This is the same bounded scan `Declaration` performs at statement position.
 - After the first `:` of a declaration, `static` and `thread_local` are storage
   modifiers only when followed by an identifier, by a type-start token, by a
-  labelled `(` that opens a `Record_Type`, or by `=`. Otherwise they are
+  labeled `(` that opens a `Record_Type`, or by `=`. Otherwise they are
   ordinary type names, so `static(int)` and `static(int, bool)` apply a type
-  named `static`; a `static` unlabelled record is written through an alias.
+  named `static`; a `static` unlabeled record is written through an alias.
 - After the `:` of a parameter, a `^` closed by `,` or `)` is the receiver form
   `self: ^`; followed by anything else it starts a pointer type.
 - At the start of an `impl` member, `delegate` is the contextual keyword only
@@ -825,7 +828,7 @@ The productions above use the following deterministic parsing rules:
 - `via` directly after a declared type is the keyword, since no name can follow
   a type there. It consumes one unary expression, so that
   `b: [dynamic]u8 via arena.allocator() = ...;` needs no backtracking. A larger
-  allocator expression is parenthesised.
+  allocator expression is parenthesized.
 - `where` directly after a signature, generic parameters, or a record's
   attributes is the keyword, since no name can follow those.
 - In a type, `[dynamic]` is the dynamic array even where a constant is named
@@ -849,21 +852,21 @@ The productions above use the following deterministic parsing rules:
 - A `Where_Clause` is followed immediately by the declaration's `{`, so an
   expression in the clause may not have a `Composite_Literal` at its top level:
   in `where Additive(T) {` the brace opens the body. A bound that needs a
-  composite literal parenthesises it. This is the only place where an
+  composite literal parenthesizes it. This is the only place where an
   expression abuts a body brace outside parentheses, which is why every
-  control-flow header is parenthesised.
+  control-flow header is parenthesized.
 - In an interface requirement, `(` followed by an identifier and then `,` or `:`
   begins `Bindings`; any other `(` begins the expression.
 - At the start of an interface requirement, `slot` is the contextual keyword
-  only when followed by an identifier, `:`, and `proc`; otherwise it is an
+  only when followed by a member name, `:`, and `proc`; otherwise it is an
   ordinary identifier beginning an expression requirement.
 - A type beginning with a type-only token is an expression only in the
   positions listed under [Primary expressions](#primary-expressions); a
-  comparison or other operand parenthesises it.
-- A bare identifier in a generic argument, or in parentheses by itself, is stored
-  as an unresolved name, and name resolution classifies it as a type, constant,
-  or value. This avoids consulting a partially built symbol table and permits
-  forward references.
+  comparison or other operand parenthesizes it.
+- A bare identifier in a generic argument, or in parentheses by itself, is
+  stored as an unresolved name, and name resolution classifies it as a type,
+  constant, or value. This avoids consulting a partially built symbol table and
+  permits forward references.
 
 These are parser decisions, not overload or type-checking rules. They require
 only bounded token lookahead except for the normal task of finding a matching
