@@ -1,0 +1,27 @@
+L0511
+@19:3
+this write is not compatible with the read-only payload of `h^.first` that is still in use
+L0511
+@29:9
+this mutable argument is not compatible with the read-only payload of `h^.first` that is still in use
+L0511
+@40:3
+this write is not compatible with the read-only payload of `h^.first` that is still in use
+L0511
+@50:3
+this write is not compatible with the read-only payload of `p^^.first` that is still in use
+L0511
+@62:3
+this write is not compatible with the read-only payload of `p^^.first` that is still in use
+L0511
+@76:9
+this mutable argument is not compatible with the read-only payload of `h^.first` that is still in use
+L0511
+@87:19
+this mutable argument is not compatible with the read-only payload of `h^.first` that is still in use
+L0511
+@97:11
+this mutable borrow is not compatible with the read-only payload of `h^.first` that is still in use
+L0511
+@108:3
+this write is not compatible with the read-only payload of `h^.pair` that is still in use

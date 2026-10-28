@@ -66,7 +66,9 @@ MATRIX_USES := [?]Matrix_Use {
 	{"store_through_sibling", "$T^.value = 2;", ""},
 	{"write_count", "$B.count += 1;", ""},
 	{"replace_head", "$H = $T;", ""},
+	{"replace_first", "$F = .none;", ""},
 	{"pass_whole", "touch($P);", ""},
+	{"pass_read", "sink(look($P));", ""},
 }
 
 // The rules, for a mutable carrier taken out of a place and used again later
@@ -77,8 +79,9 @@ MATRIX_USES := [?]Matrix_Use {
 // uses of it. A switch payload binding is no copy but names the stored
 // carrier, so it is suspended in turn by a copy of that carrier still in use,
 // and the switch borrows the place, which a call given a mutable pointer to
-// it may write (design.md "Switch ownership"). The code the rejection is
-// reported with, or "" when the case is legal.
+// it may write, as storing into the place does (design.md "Switch
+// ownership"). The code the rejection is reported with, or "" when the case is
+// legal.
 @(private = "file")
 matrix_expected :: proc(take: Matrix_Take, use: Matrix_Use, later: bool) -> string {
 	if !later {
@@ -87,14 +90,14 @@ matrix_expected :: proc(take: Matrix_Take, use: Matrix_Use, later: bool) -> stri
 	switch take {
 	case .Copy:
 		switch use.name {
-		case "store_through_same", "read_through_same", "copy_same", "pass_whole":
+		case "store_through_same", "read_through_same", "copy_same", "pass_whole", "pass_read":
 			return "L0641"
 		}
 	case .Binding:
 		switch use.name {
 		case "copy_same_option":
 			return "L0641"
-		case "pass_whole":
+		case "pass_whole", "replace_first":
 			return "L0511"
 		}
 	}
@@ -103,12 +106,9 @@ matrix_expected :: proc(take: Matrix_Take, use: Matrix_Use, later: bool) -> stri
 
 // Cases the compiler is known to get wrong, each with the known-gaps.md entry
 // that records it. A case listed here is expected to compile, and fails once
-// the gap is fixed, so the entry is removed with the gap.
+// the gap is fixed, so the entry is removed with the gap. None is known now.
 @(private = "file")
 matrix_known_gap :: proc(place: Matrix_Place, take: Matrix_Take, use: Matrix_Use, later: bool) -> string {
-	if take == .Binding && use.name == "pass_whole" && later && place.name != "local" {
-		return "A switch over a place reached through a pointer does not borrow the place"
-	}
 	return ""
 }
 
@@ -160,6 +160,7 @@ matrix_program :: proc(place: Matrix_Place, take: Matrix_Take, cases: ^[dynamic]
 	line(&b, &lines, "List :: struct { head: ^mut Node, tail: ^mut Node, count: int, first: Option(^mut Node) }")
 	line(&b, &lines, "sink :: proc(value: int) {}")
 	line(&b, &lines, "touch :: proc(list: ^mut List) { list^.head^.value += 1; }")
+	line(&b, &lines, "look :: proc(list: ^List) -> int { return list^.head^.value; }")
 	line(&b, &lines, "main :: proc() {}")
 	for use in MATRIX_USES {
 		if !matrix_applies(take, use) {

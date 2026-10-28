@@ -377,6 +377,21 @@ A switch payload binding over a place uses the carrier stored there whenever
 the binding is used (`prov_note_view_use`), and a carrier handed to a call
 uses every mutable carrier it reaches (`prov_use_reached`).
 
+A switch over a place reached through carriers cannot borrow a root, since
+which storage they name is known only to the solve. It holds the place
+instead (`prov_hold_place`): a snapshot slot of the carriers, at the path below
+their pointee, which the binding's view joins so every use of the binding keeps
+it live, as does a carrier copied from it, as `kept := &node`, while it still
+holds the snapshot's loans. A store through carriers, a mutable borrow or `inout` argument
+through them, and a carrier argument a callee may write through emit a
+`.Through` event, with the carriers and the path written (a call's path is the
+whole pointee, and its carriers include the deep `Load` of what it reaches).
+`check_held_place` rejects one whose carriers share a valid loan with a live
+hold's snapshot at an overlapping path. A mutable borrow weakened to a
+read-only destination writes nothing, so its `.Through` is settled as a fresh
+loan's access is (`Prov_Slot.through_index`). The events are emitted only once
+the body has a hold.
+
 Result summaries, written-argument regions, and escape levels propagate these
 facts through direct, generic, and indirect calls. A written-argument region is
 summarized for each parameter a body may write (`param_writes_caller`):

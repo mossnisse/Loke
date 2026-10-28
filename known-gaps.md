@@ -7,38 +7,34 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
-### A switch over a place reached through a pointer does not borrow the place
+### Mutable carrier in a read-only parameter can be copied twice
 
-[Switch ownership](design.md#switch-ownership) says a switch over a place
-borrows it while a payload binding is in use. Over a local the binding keeps
-that borrow, so writing the subject meanwhile is rejected with `L0511`; over a
-place reached through a pointer, a store into the subject or a call that may
-write it compiles, and the binding goes on reading a payload that is no longer
-there:
+[Values that contain borrows](design.md#values-that-contain-borrows) says
+writable carriers inside a read-only wrapper keep their own capabilities, and
+[Weakening and reborrows](design.md#weakening-and-reborrows) says copying a
+stored mutable carrier reborrows it. This program compiles, leaving two mutable
+copies of the same stored pointer live; changing `h` to `^mut Holder` rejects the
+second copy with `L0641`:
 
 ```loke
 package main;
 Node :: struct { value: int }
-Holder :: struct { first: Option(^mut Node) }
-clear :: proc(h: ^mut Holder) { h^.first = .none; }
-peek :: proc(h: ^mut Holder) -> int {
-    switch (h^.first) {
-    case .some(node):
-        clear(h);  // should be rejected, as is `h^.first = .none;`
-        return node^.value;
-    case .none:
-    }
-    return 0;
+Holder :: struct { head: ^mut Node }
+duplicate :: proc(h: ^Holder) {
+    a := h^.head;
+    b := h^.head; // should be L0641
+    a^.value = 1;
+    b^.value = 2;
 }
-main :: proc() {}
+main :: proc() {
+    n := Node{0};
+    holder := Holder{&mut n};
+    duplicate(&holder);
+}
 ```
 
-The binding views the subject through the carriers it was read through
-(`prov_subject_view` in [src/cfg_provenance.odin](src/cfg_provenance.odin)),
-which records no loan of the storage they name, and a store or call through a
-pointer checks no loan by path either. A read-only reborrow of `h`, as
-`&h^.first` takes, rejects both forms here, but also a second switch over
-`h^.first` and a store through a sibling pointer, as `h^.other^.value = 2`,
-beside the binding, and it reaches nothing through a pointer loaded on the
-way, as `p^` in `switch (p^^.first)`. The generated matrix in [tests/borrow_matrix_test.odin](tests/borrow_matrix_test.odin)
-pins the call form (`matrix_known_gap`).
+`prov_caller_slot` in [src/cfg_provenance.odin](src/cfg_provenance.odin) marks
+the caller slot mutable from the enclosing loan's capability. For `^Holder`
+that loan is read-only even though `head` itself is `^mut Node`, so
+`prov_reborrow_loaded` records no reborrow from the caller slot when it loads
+`head`.

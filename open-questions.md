@@ -103,20 +103,26 @@ Locals and parameters now behave alike. The through-reborrows, path-tagged uses,
 and kept-copy pass that parameters needed are gone, and so are the two
 reported gaps. A generated matrix,
 [borrow_matrix_test.odin](tests/borrow_matrix_test.odin), crosses eight place
-forms with a copy or a payload binding and ten uses beside it, against a model
-of the rules written apart from the compiler.
+forms with a copy or a payload binding and twelve uses beside it, against a
+model of the rules written apart from the compiler.
+
+The second migration gives a switch over a place reached through carriers a
+hold of that place, which a write through any carrier naming the same storage
+at an overlapping path conflicts with, resolved while solving
+(`prov_hold_place`, `.Through`). That closed the remaining gap, a store or
+call through the pointer replacing the payload a binding views.
 
 Still open:
 
-- **Place loans through carriers.** A switch over a place reached through a
-  pointer holds no loan of that place, so a store or call through the pointer
-  can replace the payload a binding views
-  ([known gap](known-gaps.md#a-switch-over-a-place-reached-through-a-pointer-does-not-borrow-the-place)).
-  Reborrows of a carrier carry no path, so a read-only reborrow of the
-  pointer, as `&h^.first` takes, would also reject a second switch over the
-  place and a store through a sibling pointer beside the binding. A borrow,
-  store, or call through carriers that resolves to the roots and paths they
-  name while solving would tell those apart, for `&` as well.
+- **Place loans through carriers.** Only a switch holds a place reached
+  through carriers. A borrow, as `&h^.first`, still reborrows the outermost
+  named carrier whole (`prov_reborrow_outer_carriers`), so beside it a store
+  through a sibling pointer, as `h^.other^.value = 2`, is rejected while one
+  through a pointer loaded on the way, as `p^` in `&p^^.first`, is checked
+  only by that load. A hold for `&` would tell those apart, but needs a
+  mutable form, which excludes reads too. Holds are matched by shared loan,
+  so a slice's elements are one place: a write to `s[1].first` conflicts with
+  a switch over `s[0].first`.
 - **Calls.** A carrier handed to a call uses every mutable carrier it reaches.
   A per-parameter summary of what a body uses through each parameter could
   narrow that, as written-argument regions already do for stores.
@@ -133,6 +139,12 @@ Still open:
   slices, and `foreach` traversal are not crossed yet. Each needs legal
   controls beside its rejections, and equivalent forms should agree only where
   evaluation order, ownership, and temporary lifetimes are unchanged.
+
+Implementation cleanup: `prov_caller_slot` in
+[cfg_provenance.odin](src/cfg_provenance.odin) allocates a new slice and copies
+every prior slot each time it adds a path to one loan. A caller loan can have
+up to 64 carrier paths. Keep one growable slot list per loan instead of
+rebuilding it for every path.
 
 Language changes should be evaluated separately. The proposed
 [written public borrow contracts](#public-borrow-contracts-should-stand-on-their-own)

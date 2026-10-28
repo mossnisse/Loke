@@ -1862,6 +1862,25 @@ relink :: proc(cur: ^mut Node) {
 }
 ```
 
+A place reached through a pointer is borrowed the same way. While a payload binding is in use, the payload may not be written through any pointer to that place: storing into the place or its payload, borrowing it mutably, passing it on `inout`, and handing a mutable pointer that reaches it to a call, which may write it, are all rejected. Reading it, and writing beside it, are not:
+
+```loke
+Holder :: struct { first: Option(^mut Node), count: int }
+
+clear :: proc(h: ^mut Holder) { h^.first = .none; }
+
+peek :: proc(h: ^mut Holder) -> int {
+	switch (h^.first) {
+	case .some(node):
+		h^.count += 1;       // beside the payload
+		clear(h);            // ERROR: `clear` may write `h^.first`
+		return node^.value;
+	case .none:
+	}
+	return 0;
+}
+```
+
 A switch over a **temporary** — or over `move(subject)` — consumes it. The active payload transfers into the case's own binding, which is an ordinary managed local from there on: it can be moved out, and it drops exactly once on every exit of its case. A case with no binding owns the whole union instead.
 
 Field bindings follow the same two rules field by field. Over a place each binding views its field of the stored payload. Over a temporary each retained field transfers into its binding without cloning and drops with it, and a `_` field drops when the case ends; as for any consuming destructure, the payload record must have neither a custom `hook(copy)` nor a custom `hook(drop)`.

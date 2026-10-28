@@ -1,0 +1,151 @@
+// design.md "Switch ownership": a switch over a place reached through a pointer
+// borrows the place while a payload binding is in use, as one over a local
+// does, so nothing may write the payload through any pointer to it meanwhile.
+package main;
+
+Node :: struct { value: int }
+Pair :: struct { a: int, b: int }
+Value :: union { pair: Pair, none }
+Holder :: struct { first: Option(^mut Node), count: int, pair: Value, other: ^mut Node }
+
+clear :: proc(h: ^mut Holder) { h^.first = .none; }
+look :: proc(h: ^Holder) -> int { return h^.count; }
+set_first :: proc(o: inout Option(^mut Node)) { o = .none; }
+bump :: proc(n: inout int) { n += 1; }
+
+stored :: proc(h: ^mut Holder) -> int {
+	switch (h^.first) {
+	case .some(node):
+		h^.first = .none;
+		return node^.value;
+	case .none:
+	}
+	return 0;
+}
+
+called :: proc(h: ^mut Holder) -> int {
+	switch (h^.first) {
+	case .some(node):
+		clear(h);
+		return node^.value;
+	case .none:
+	}
+	return 0;
+}
+
+copied :: proc(h: ^mut Holder) -> int {
+	switch (h^.first) {
+	case .some(node):
+		q := h;
+		q^.first = .none;
+		return node^.value;
+	case .none:
+	}
+	return 0;
+}
+
+two_pointers :: proc(p: ^mut ^mut Holder) -> int {
+	switch (p^^.first) {
+	case .some(node):
+		p^^.first = .none;
+		return node^.value;
+	case .none:
+	}
+	return 0;
+}
+
+// A pointer taken from the binding keeps the place borrowed.
+kept_pointer :: proc(p: ^mut ^mut Holder) -> int {
+	switch (p^^.first) {
+	case .some(node):
+		kept := &node;
+		p^^.first = .none;
+		return kept^^.value;
+	case .none:
+	}
+	return 0;
+}
+
+to_local :: proc() -> int {
+	n := Node{1};
+	m := Node{2};
+	held := Holder{.some(&mut n), 0, .none, &mut m};
+	h := &mut held;
+	switch (h^.first) {
+	case .some(node):
+		clear(h);
+		return node^.value;
+	case .none:
+	}
+	return 0;
+}
+
+passed_inout :: proc(h: ^mut Holder) -> int {
+	switch (h^.first) {
+	case .some(node):
+		bump(inout h^.count);
+		set_first(inout h^.first);
+		return node^.value;
+	case .none:
+	}
+	return 0;
+}
+
+nested_mutable :: proc(h: ^mut Holder) -> int {
+	switch (h^.first) {
+	case .some(node):
+		switch (h^.first) { case .some(&mut m): m = node; case .none: }
+		return node^.value;
+	case .none:
+	}
+	return 0;
+}
+
+field_binding :: proc(h: ^mut Holder) -> int {
+	switch (h^.pair) {
+	case .pair(a, _):
+		h^.count = a;
+		h^.pair = .none;
+		return a;
+	case .none:
+	}
+	return 0;
+}
+
+// Legal: reads, writes beside the payload, and writes once the binding is done.
+beside :: proc(h: ^mut Holder) -> int {
+	switch (h^.first) {
+	case .some(node):
+		h^.count += 1;
+		h^.other^.value = 2;
+		switch (h^.first) { case .some(again): node^.value = again^.value; case .none: }
+		return look(h) + node^.value;
+	case .none:
+	}
+	return 0;
+}
+
+done_first :: proc(h: ^mut Holder) {
+	for (i := 0; i < 3; i += 1) {
+		switch (h^.first) {
+		case .some(node):
+			node^.value += i;
+			clear(h);
+		case .none:
+		}
+	}
+}
+
+repointed :: proc(h: ^mut Holder, other: ^mut Holder) -> int {
+	cur := h;
+	switch (cur^.first) {
+	case .some(node):
+		cur = other;
+		cur^.first = .none;
+		return node^.value;
+	case .none:
+	}
+	return 0;
+}
+
+main :: proc() {}

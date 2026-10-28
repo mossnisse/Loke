@@ -43,6 +43,11 @@ Prov_Kind :: enum u8 {
 	Publish,
 	// A value read through a carrier; its content slots resolve while solving.
 	Load,
+	// Storage at `path` below the pointee of the carriers in `into` is written,
+	// or handed to a call that may write it, as `verb` says. Checked against the
+	// payload holds of switches over places reached through carriers
+	// (`prov_hold_place`), and emitted only once there is one.
+	Through,
 	// Storage reached through what the carriers in `sources` hold: read or
 	// written through them, or handed to a call that may. Only the thread
 	// summaries' reach effect reads it.
@@ -329,15 +334,64 @@ prov_subject_view :: proc(graph: ^Flow_Graph, subject: Expr, mutable: bool, slot
 		// would borrow. A carrier loaded on the way, as `p^` for `p^^.first`,
 		// only holds that storage's loans for the view: it no more suspends
 		// what it was loaded out of than `p` does for `p^.first`.
-		if carriers, _, through := prov_read_through_carrier(graph, subject); through {
+		if carriers, below, through := prov_read_through_carrier(graph, subject); through {
 			for carrier in carriers {
 				graph.prov_slots[carrier].viewed = graph.prov_slots[carrier].loaded
 			}
-			return carriers
+			if slot >= 0 {
+				below = prov_extend(graph, prov_extend(graph, below, proj_wild()), proj_field(slot))
+			}
+			return prov_join(graph, carriers, prov_hold_place(graph, carriers, below, subject))
 		}
 		return nil
 	}
 	return prov_borrow(graph, root, path, false, expr_span(subject), "payload")
+}
+
+// design.md "Switch ownership": a switch over a place reached through
+// carriers, as `h^.first`, borrows that place while a payload binding is in
+// use, as one over a local does. Which storage the carriers name is known only
+// to the solve, so the hold is a snapshot of them, at `path` below their
+// pointee, which each use of the binding keeps live; a write through a carrier
+// naming the same storage at an overlapping path conflicts with it
+// (`.Through`). The slot returned is the snapshot.
+@(private = "file")
+prov_hold_place :: proc(graph: ^Flow_Graph, carriers: []int, path: []Proj_Step, subject: Expr) -> []int {
+	if len(carriers) == 0 || graph.current == NO_BLOCK {
+		return nil
+	}
+	span := expr_span(subject)
+	slot := prov_temp_slot(graph)
+	prov_emit(graph, Prov_Event{kind = .Def, slot = slot, loan = NO_LOAN, sources = carriers, span = span})
+	place := graph.k.c.sources[span.file].text[span.lo:span.hi]
+	append(&graph.holds, Prov_Hold{slot = slot, path = path, span = span, place = place, derived = make([dynamic]int, graph.alloc)})
+	graph.prov_slots[slot].hold = len(graph.holds)
+	return prov_one(graph, slot)
+}
+
+// A write through `carriers` at `path` below their pointee, which a payload
+// hold over the same storage forbids (`prov_hold_place`). The event's index
+// in the current block, or -1 when none is emitted.
+@(private = "file")
+prov_write_through :: proc(graph: ^Flow_Graph, carriers: []int, path: []Proj_Step, span: Span, verb: string) -> int {
+	if len(graph.holds) == 0 || len(carriers) == 0 || graph.current == NO_BLOCK {
+		return -1
+	}
+	prov_emit(graph, Prov_Event{kind = .Through, into = carriers, path = path, span = span, verb = verb})
+	return len(graph.blocks[graph.current].prov) - 1
+}
+
+// `prov_write_through` for a place its caller walked as a value, as a
+// compound assignment or an `inout` receiver does: its carriers are read
+// again, only read.
+@(private = "file")
+prov_write_through_place :: proc(graph: ^Flow_Graph, place: Expr, span: Span) {
+	if len(graph.holds) == 0 {
+		return
+	}
+	if carriers, below, through := prov_read_through_carrier(graph, place, reads_only = true); through {
+		prov_write_through(graph, carriers, below, span, "write")
+	}
 }
 
 
@@ -1636,6 +1690,12 @@ prov_reborrow :: proc(graph: ^Flow_Graph, slots: []int, destination: Type_Id, in
 	weakens := !carrier_is_mutable(graph.k.c, destination)
 	for slot in slots {
 		entry := graph.prov_slots[slot]
+		if entry.through_index >= 0 {
+			if weakens {
+				graph.blocks[entry.through_block].prov[entry.through_index].into = nil
+			}
+			continue
+		}
 		if entry.fresh_loan != NO_LOAN {
 			if weakens && !path_is_synchronized(graph.loans[int(entry.fresh_loan)].path) {
 				graph.loans[int(entry.fresh_loan)].mutable = false
@@ -1649,6 +1709,12 @@ prov_reborrow :: proc(graph: ^Flow_Graph, slots: []int, destination: Type_Id, in
 		// reborrow passes on to its copies and to what is taken from its elements.
 		if into < 0 || into == slot {
 			continue
+		}
+		// A carrier copied from a payload hold's snapshot, as `kept := &node`,
+		// keeps the place held (`prov_hold_place`).
+		if entry.hold > 0 {
+			append(&graph.holds[entry.hold - 1].derived, into)
+			graph.prov_slots[into].hold = entry.hold
 		}
 		// A copy of a lent element reborrows the stored carrier it names.
 		if aliased, lent := graph.lent_aliases[slot]; lent {
@@ -4969,6 +5035,7 @@ prov_invalidate :: proc(graph: ^Flow_Graph, place: Expr, span: Span, verb: strin
 		return
 	}
 	walk_flow_expr(graph, place)
+	prov_write_through_place(graph, place, span)
 }
 
 @(private)
@@ -4991,10 +5058,20 @@ prov_borrow_place :: proc(graph: ^Flow_Graph, operand: Expr, mutable: bool, span
 		// another read-only reborrow of them allows (design.md "Weakening and
 		// reborrows").
 		if carriers, below, through := prov_read_through_carrier(graph, operand, reads_only = !mutable); through {
+			// Weakened to a read-only destination, as `look(&mut p[0])` passes it,
+			// the borrow writes nothing; the slot standing for its write lets
+			// `prov_reborrow` say so.
+			written: []int
+			if at := mutable ? prov_write_through(graph, carriers, below, span, "mutable borrow") : -1; at >= 0 {
+				marker := prov_temp_slot(graph)
+				graph.prov_slots[marker].through_block = graph.current
+				graph.prov_slots[marker].through_index = at
+				written = prov_one(graph, marker)
+			}
 			prov_use_held(graph, carriers, below, prov_type(graph, operand), span, !mutable)
-			return prov_join(graph, carriers, prov_reborrow_outer_carriers(
+			return prov_join(graph, prov_join(graph, carriers, prov_reborrow_outer_carriers(
 				graph, prov_place_carrier_expr(graph, operand), span, mutable,
-			))
+			)), written)
 		}
 		if place, is_inout := prov_inout_result_place(graph, operand); is_inout {
 			return place
@@ -5529,7 +5606,7 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 			// it goes through, so one read out of another, as `p^^.a` in
 			// `p^^.a^.value = 3`, uses what a copy of it, as `node := p^^.a`,
 			// suspends.
-			through, _, reached := prov_read_through_carrier(graph, target, store = true)
+			through, below, reached := prov_read_through_carrier(graph, target, store = true)
 			walked := false
 			if !reached {
 				through, walked = prov_inout_result_place(graph, target)
@@ -5539,6 +5616,9 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 				continue
 			}
 			if len(through) > 0 || walked {
+				if !walked {
+					prov_write_through(graph, through, below, expr_span(target), "write")
+				}
 				prov_store_region(graph, prov_input_value(graph, target), prov_input_value(graph, value))
 				if !walked {
 					prov_walk_subscripts(graph, target, true)
@@ -5585,6 +5665,9 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 			continue
 		}
 		walk_flow_expr(graph, target)
+		if !place_ok && s.op != .Assign {
+			prov_write_through_place(graph, target, expr_span(target))
+		}
 	}
 }
 
@@ -6401,7 +6484,8 @@ prov_call_argument :: proc(
 		}
 		// design.md "Weakening and reborrows": `inout p^` lends what `p` names,
 		// as `&mut p^` would, so `p` is suspended for the call.
-		if carriers, _, through := prov_read_through_carrier(graph, argument); through {
+		if carriers, below, through := prov_read_through_carrier(graph, argument); through {
+			prov_write_through(graph, carriers, below, expr_span(argument), "mutable argument")
 			actual = prov_lend_carrier(graph, carriers, borrowed^, expr_span(argument))
 			borrowed^ = prov_join(graph, borrowed^, actual)
 			return actual
@@ -6485,8 +6569,18 @@ prov_call_argument :: proc(
 		prov_use_reached(graph, actual, prov_parameter_type(graph, v, index), expr_span(argument))
 	} else {
 		actual = walk_flow_expr(graph, argument)
+		reached := -1
 		if !(index == 0 && has_receiver) {
-			prov_use_reached(graph, actual, prov_parameter_type(graph, v, index), expr_span(argument))
+			reached = prov_use_reached(graph, actual, prov_parameter_type(graph, v, index), expr_span(argument))
+		}
+		// A callee given a mutable carrier may write what it names, and through
+		// what that holds.
+		if type_carries_borrow(c, prov_parameter_type(graph, v, index)).mutable {
+			written := actual
+			if reached >= 0 {
+				written = prov_join(graph, written, prov_one(graph, reached))
+			}
+			prov_write_through(graph, written, nil, expr_span(argument), "mutable argument")
 		}
 	}
 	param_type := prov_parameter_type(graph, v, index)
@@ -6511,19 +6605,22 @@ prov_call_argument :: proc(
 // callee use the carriers stored where it points, so passing `list` uses
 // `list^.head`, which a mutable copy of it, as `node := list^.head`, suspends
 // until its last use. A read-only carrier lets it only read them.
+// The slot the load reads into, or -1 when there is none.
 @(private = "file")
-prov_use_reached :: proc(graph: ^Flow_Graph, slots: []int, parameter: Type_Id, span: Span) {
+prov_use_reached :: proc(graph: ^Flow_Graph, slots: []int, parameter: Type_Id, span: Span) -> int {
 	c := graph.k.c
 	info := underlying_info(c, parameter)
 	if len(slots) == 0 || info == nil || !type_is_carrier(c, parameter) || type_is_region_provider(c, parameter) ||
 	   !type_carries_borrow(c, info.element).mutable {
-		return
+		return -1
 	}
 	graph.has_content_load = true
+	slot := prov_temp_slot(graph)
 	prov_emit(graph, Prov_Event {
-		kind = .Load, slot = prov_temp_slot(graph), into = slots, deep = true, span = span,
+		kind = .Load, slot = slot, into = slots, deep = true, span = span,
 		reads_only = !carrier_is_mutable(c, parameter),
 	})
+	return slot
 }
 
 // design.md "Global write effects": a temporary lent to a value parameter is

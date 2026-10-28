@@ -261,6 +261,15 @@ Prov_Slot :: struct {
 	// Loaded on the way to a switch subject, which a payload binding views
 	// through it (`prov_subject_view`).
 	viewed: bool,
+	// The `.Through` event of a mutable borrow through carriers, which this
+	// otherwise empty slot stands for, so a read-only destination can settle
+	// it as it does a fresh loan's access (`prov_reborrow`). The index is -1
+	// when there is none.
+	through_block: Block_Id,
+	through_index: int,
+	// One more than the index of the payload hold this slot carries, as its
+	// snapshot or a carrier copied from one; zero for none.
+	hold: int,
 }
 
 // A slot holding no fresh borrow. Zero would name loan 0 and event 0.
@@ -272,6 +281,8 @@ empty_prov_slot :: proc(symbol: Symbol_Id) -> Prov_Slot {
 		fresh_loan         = NO_LOAN,
 		fresh_access_block = NO_BLOCK,
 		fresh_access_index = -1,
+		through_block      = NO_BLOCK,
+		through_index      = -1,
 	}
 }
 
@@ -289,6 +300,19 @@ Prov_Reborrow :: struct {
 	// back into one of them, as `cur = cur^.next` does, replaces that
 	// carrier's value rather than holding a second path to `source`.
 	via: []int,
+}
+
+// design.md "Switch ownership": a switch over `place`, reached through
+// carriers, holds it read-only at `path` below their pointee while `slot`, the
+// carriers' snapshot that each use of a payload binding reads, is live, or a
+// carrier in `derived` copied from it, as `kept := &binding`, still holds the
+// snapshot's loans.
+Prov_Hold :: struct {
+	slot:    int,
+	path:    []Proj_Step,
+	span:    Span,
+	place:   string,
+	derived: [dynamic]int,
 }
 
 // design.md "Storage roots and borrow carriers". `rawptr` and `[^]T` carry no
@@ -3361,7 +3385,7 @@ report_provenance :: proc(state: ^Prov_State) {
 		copy(uses, block.use_exit)
 		for index := count - 1; index >= 0; index -= 1 {
 			#partial switch block.prov[index].kind {
-			case .Access, .Root_End, .Reset, .Live, .Load, .Task_Join:
+			case .Access, .Root_End, .Reset, .Live, .Load, .Through, .Task_Join:
 				live_after[index] = slice.clone(live, graph.alloc)
 				use_after[index] = slice.clone(uses, graph.alloc)
 			}
@@ -4398,6 +4422,8 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 		}
 	case .Task_Join:
 		check_join_retention(state, event, live)
+	case .Through:
+		check_held_place(state, event, live, uses)
 	case .Live, .Load:
 		// A reborrow suspends its source until its own last use, and the last use
 		// of whatever was reborrowed from it in turn.
@@ -4566,6 +4592,41 @@ live_reborrow_of :: proc(state: ^Prov_State, source: int, live: []bool, use: Pro
 		}
 	}
 	return {}, -1, false
+}
+
+// design.md "Switch ownership": a write through carriers that name storage a
+// live payload hold names, at an overlapping path, would replace the payload
+// a binding still views.
+@(private = "file")
+check_held_place :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, uses: []Span) {
+	for hold in state.graph.holds {
+		if !paths_overlap(hold.path, event.path) {
+			continue
+		}
+		held, later := live[hold.slot], uses[hold.slot]
+		for slot in hold.derived {
+			if !held && live[slot] && prov_slots_overlap(state, hold.slot, slot) {
+				held, later = true, uses[slot]
+			}
+		}
+		if !held {
+			continue
+		}
+		for carrier in event.into {
+			if !prov_slots_overlap(state, hold.slot, carrier) {
+				continue
+			}
+			state.diagnostic_precision |= state.precision[hold.slot] | state.precision[carrier]
+			errorf(
+				state.k.c, event.span, "L0511",
+				"this %s is not compatible with the read-only payload of `%s` that is still in use",
+				event.verb, hold.place,
+			)
+			add_notef(state.k.c, hold.span, "the switch borrows the payload here")
+			add_use_note(state, later)
+			return
+		}
+	}
 }
 
 // A temporary loaded through a carrier, which only its own expression reads.

@@ -340,7 +340,7 @@ prov_materialize_events :: proc(graph, final: ^Flow_Graph, program: ^Prov_Effect
 				for content in event.region_content { graph.has_region_event ||= !region_is_empty(content.region) }
 			case .Region_Use:
 				window = true
-			case .Def, .Live, .Access, .Root_End, .Rebind, .Retain, .Publish, .Load, .Reach, .Cross,
+			case .Def, .Live, .Access, .Root_End, .Rebind, .Retain, .Publish, .Load, .Through, .Reach, .Cross,
 			     .Task_Start, .Task_Join, .Shared_Effect:
 			}
 		}

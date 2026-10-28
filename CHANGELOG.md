@@ -159,6 +159,29 @@ checklist.
   Upgrade by using the binding instead of a copy, or by finishing with the
   copy before using the binding again.
 
+- A `switch` over a place reached through a pointer now borrows the place
+  while a payload binding is in use, as one over a local already did
+  ([Switch ownership](design.md#switch-ownership)). Writing the payload
+  through any pointer to it meanwhile is rejected with `L0511`: a store, a
+  mutable borrow, an `inout` argument, or handing a mutable pointer that
+  reaches it to a call. Before, these compiled, and the binding went on
+  reading a payload that had been replaced:
+
+  ```loke
+  peek :: proc(h: ^mut Holder) -> int {
+      switch (h^.first) {
+      case .some(node):
+          clear(h);   // now L0511: `clear` may write `h^.first`
+          return node^.value;
+      case .none:
+      }
+      return 0;
+  }
+  ```
+
+  Upgrade by finishing with the binding before the write, or by copying what
+  the case needs out of the payload first.
+
 - Handing a pointer to a call now uses every mutable pointer reachable
   through it, so `touch(list)` while `node := list^.head` is still in use is
   rejected with `L0641`
