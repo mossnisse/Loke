@@ -7,43 +7,6 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
-### A store through a pointer to a local joins what the place held
-
-[Values that contain borrows](design.md#values-that-contain-borrows) says
-replacing a borrow through a carrier ends the previous borrow in the storage
-actually written, and that taking the address of a known place identifies
-that place. A store through `list := &mut l` instead keeps what `l.head` held
-beside the new value, so the copy of `tail` stored first is still in use when
-`tail` is copied again, and this reports `L0641`:
-
-```loke
-package main;
-Node :: struct { value: int }
-List :: struct { head: ^mut Node, tail: ^mut Node }
-through_pointer :: proc() {
-    a := Node{1}; b := Node{2};
-    l := List{&mut a, &mut b};
-    list := &mut l;
-    list^.head = list^.tail;
-    again := list^.head;
-    again^.value = 3;
-    list^.head = list^.tail; // should be allowed
-    last := list^.head;
-    last^.value = 4;
-}
-main :: proc() {}
-```
-
-The same statements through `l` itself compile. A store through a carrier is
-a `.Publish` event, which `publish_into_loan` in
-[src/borrow.odin](src/borrow.odin) joins into every content slot of the
-named root that overlaps the loan's path, never replacing one, so storing
-`head` also joins into what `tail` holds, and liveness runs through it. When
-the carrier holds one loan naming one place exactly, the store could replace
-that slot and end its liveness, as a store to `l.head` does. The cases in
-[tests/borrow_matrix_test.odin](tests/borrow_matrix_test.odin) that this
-rejects are listed in its `matrix_known_gap`.
-
 ### A store through a carrier loaded from a parameter joins into the parameter
 
 [Weakening and reborrows](design.md#weakening-and-reborrows) borrows a place
@@ -123,37 +86,3 @@ with what `&mut left^` reaches, where a recursive type makes that content
 indistinguishable from the subject, but it also exempts these writes. Telling
 them apart needs pointee storage the analysis can distinguish from the place
 it was read out of.
-
-### A repeated store through a pointer to one of several places keeps the copy it stored
-
-[Values that contain borrows](design.md#values-that-contain-borrows) has a
-store through a carrier that may name more than one place keep what each
-possible target held, since the write may reach another one. Storing a copy
-of `tail` into `head` through such a pointer compiles once, and twice in
-straight-line code, but a loop repeating it reports `L0641` at the copy,
-though nothing reads `head` again and the same loop through a pointer to one
-place compiles:
-
-```loke
-package main;
-Node :: struct { value: int }
-List :: struct { head: ^mut Node, tail: ^mut Node }
-cond :: proc() -> bool { return true; }
-chosen :: proc() {
-    a := Node{1}; b := Node{2}; d := Node{4}; e := Node{5};
-    l := List{&mut a, &mut b}; m := List{&mut d, &mut e};
-    p := &mut l if cond() else &mut m;
-    for (i := 0; i < 2; i += 1) {
-        p^.head = p^.tail; // L0641, should be allowed
-    }
-}
-main :: proc() {}
-```
-
-`prov_publish_view_content` in [src/cfg_provenance.odin](src/cfg_provenance.odin)
-defines `l.head` and `m.head` with `preserve_previous`, so each keeps the copy
-of `tail` an earlier iteration stored, where a pointer to one place replaces
-it. How that kept copy makes the next copy of `tail` conflict, when the
-straight-line repetition does not, is not yet pinned down.
-`matrix_known_gap` lists the matrix cases, from its `local_chosen` place
-form, where a traversal repeats the store too.

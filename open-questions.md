@@ -138,11 +138,11 @@ Still open:
 - **Caller storage contents.** A store through a parameter does not replace
   what its caller slot holds, so a later load still sees the incoming value's
   loans. Storage below the second load is one slot unless every storage on the
-  way holds exactly one carrier. A store through any carrier joins what it
-  stores rather than replacing it, even where the carrier names one known
-  place, and through a parameter it joins into the parameter itself, which is
-  how a later load through it sees the stored carrier;
-  [known-gaps.md](known-gaps.md) records two rejections these cause.
+  way holds exactly one carrier. A store through carriers naming one local
+  place replaces what it held (`publish_into_loan`), but through a parameter
+  it joins into the parameter itself, which is how a later load through it
+  sees the stored carrier; [known-gaps.md](known-gaps.md) records a rejection
+  this causes.
 - **Matrix coverage.** Slices and traversals are taken of a fixed array, so
   no use beside them reallocates storage, and nothing leaves a traversal or a
   loop early with `break` or `return`. A loop that takes afresh is the one

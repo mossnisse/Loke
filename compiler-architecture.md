@@ -414,8 +414,9 @@ and a borrow through it is a place loan of both, leaving the other fields
 free. Past four places, the prefix they share stands for them. An access
 through carriers pointing at different places, as a record holding two
 field borrows, is one event per carrier, and one through a carrier that may
-point at several is one event per place. `check_place_loans` rejects an access whose carriers
-share a valid loan with a live place loan's snapshot at an overlapping path,
+point at several is one event per place. `check_place_loans` rejects an
+access whose carriers share a valid loan with a live place loan's snapshot at
+an overlapping path,
 a read only beside a mutable one, unless the carrier holds the loan's own
 bit, or one of a borrow of a place beside it (`accessed_beside`), as `left`
 does for `right` in `.add(&mut left, &mut right)`. A borrow's conflict is
@@ -429,6 +430,19 @@ walk leaves out its subscripts, as a call in an index may write. A carrier
 loaded on the way to a place (`Prov_Event.walked`) still reborrows what it
 was loaded out of, but suspends nothing, as the access to the place stands
 for it.
+
+A store through carriers is a `Publish` event, which joins what is stored
+into the slots of each storage the carriers' loans name, at the path stored
+to (`publish_into_loan`). Where the carriers point at one place, by fields
+and constant elements, the event records that path and the type stored
+(`Prov_Event.stored`). Where they then hold one live loan, of exact path, the
+slot of that type at exactly that place is replaced, as a store to the place
+itself replaces it (design.md "Values that contain borrows"). Once reaching
+has settled, `resolve_content_reads` records the replaced slots on the event
+(`Prov_Event.replaces`), and liveness ends their earlier values there, as at
+a `Def`. A carrier with no loan on some path is unchecked, so one loan
+suffices. Through a parameter, the only slot of its storage is the parameter
+itself, which a store never replaces.
 
 Result summaries, written-argument regions, and escape levels propagate these
 facts through direct, generic, and indirect calls. A written-argument region is

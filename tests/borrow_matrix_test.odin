@@ -125,10 +125,16 @@ Matrix_Shape :: enum { Straight, Branch, Branch_Later, Loop_Carried, Loop_Whole 
 // element is used after it (design.md "foreach statement"). A loop that takes
 // afresh finds in `head` the copy of `tail` an earlier iteration's
 // `replace_head` stored there, so its copy out of `head` reborrows `tail`,
-// which copying `tail` again then uses.
+// which copying `tail` again then uses. A store through a pointer that may
+// name either of two places replaces neither (design.md "Values that contain
+// borrows"), so there `head` keeps every earlier iteration's copy of `tail`,
+// which the next copy out of `head` uses even without a later use.
 // The code the rejection is reported with, or "" when the case is legal.
 @(private = "file")
 matrix_expected :: proc(place: Matrix_Place, take: Matrix_Take, use: Matrix_Use, shape: Matrix_Shape, later: bool) -> string {
+	if place.name == "local_chosen" && take == .Copy && use.name == "replace_head" && shape == .Loop_Whole {
+		return "L0641"
+	}
 	if !later && take != .Foreach && take != .Foreach_Mut {
 		return ""
 	}
@@ -181,23 +187,8 @@ matrix_expected :: proc(place: Matrix_Place, take: Matrix_Take, use: Matrix_Use,
 // cases until they are removed here.
 @(private = "file")
 matrix_known_gap :: proc(place: Matrix_Place, take: Matrix_Take, use: Matrix_Use, shape: Matrix_Shape, later: bool) -> (string, bool) {
-	if use.name != "replace_head" {
+	if use.name != "replace_head" || shape != .Loop_Whole {
 		return "", false
-	}
-	// "A repeated store through a pointer to one of several places keeps the
-	// copy it stored"
-	if place.name == "local_chosen" && (shape == .Loop_Carried || shape == .Loop_Whole || take == .Foreach || take == .Foreach_Mut) {
-		return "L0641", true
-	}
-	if shape != .Loop_Whole {
-		return "", false
-	}
-	// "A store through a pointer to a local joins what the place held"
-	switch place.name {
-	case "local_pointer", "local_two_pointers", "local_indexed":
-		if take == .Copy && !later {
-			return "L0641", true
-		}
 	}
 	// "A store through a carrier loaded from a parameter joins into the
 	// parameter"

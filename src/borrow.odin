@@ -2951,16 +2951,42 @@ run_prov_event :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8, ended
 			state.merged_precision |= state.precision[source]
 			bytes_or(state.merged, reach_row(state, reach, source))
 		}
+		one := publish_one_loan(state, event, reach, ended)
 		for slot in event.into {
 			row := reach_row(state, reach, slot)
 			for index in 0 ..< state.loans {
 				if !bit_get(row, index) || ended[index] {
 					continue
 				}
-				publish_into_loan(state, reach, graph.loans[index], state.precision[slot])
+				publish_into_loan(state, reach, graph.loans[index], event.path, event.stored if index == one else INVALID_TYPE, state.precision[slot])
 			}
 		}
 	}
+}
+
+// The one loan a store's carriers name (`Prov_Event.stored`), or -1 when it
+// may land in more than one storage (design.md "Values that contain
+// borrows"). A pointer holding no loan on some path is unchecked, whose use
+// is the program's responsibility (design.md "What is not checked").
+@(private = "file")
+publish_one_loan :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8, ended: []bool) -> int {
+	if event.stored == INVALID_TYPE {
+		return -1
+	}
+	one := -1
+	for slot in event.into {
+		row := reach_row(state, reach, slot)
+		for index in 0 ..< state.loans {
+			if !bit_get(row, index) || ended[index] || index == one {
+				continue
+			}
+			if one >= 0 {
+				return -1
+			}
+			one = index
+		}
+	}
+	return one
 }
 
 // Marks the loans an event ends as released in every slot that may hold them,
@@ -3324,7 +3350,7 @@ load_pointee_paths :: proc(state: ^Prov_State, root: Prov_Root, path: []Proj_Ste
 // mutation before `p^.view` conflicts with the borrow held in the pointee.
 @(private = "file")
 resolve_content_reads :: proc(state: ^Prov_State) {
-	if !state.graph.has_content_load { return }
+	if !state.graph.has_content_load && !state.graph.has_replacing_store { return }
 	for block in state.graph.blocks {
 		if !block.prov_visited {
 			continue
@@ -3339,10 +3365,32 @@ resolve_content_reads :: proc(state: ^Prov_State) {
 				event.sources = reads[:]
 				prov_reborrow_loaded(state.graph, event)
 			} else {
+				if event.kind == .Publish {
+					event.replaces = publish_replaced_slots(state, event, state.reach, state.ended)
+				}
 				run_prov_event(state, event, state.reach, state.ended)
 			}
 		}
 	}
+}
+
+// The slots a store through carriers replaces (`publish_into_loan`).
+@(private = "file")
+publish_replaced_slots :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8, ended: []bool) -> []int {
+	one := publish_one_loan(state, event, reach, ended)
+	if one < 0 {
+		return nil
+	}
+	graph := state.graph
+	loan := graph.loans[one]
+	symbol := graph.roots[int(loan.root)].symbol
+	out := make([dynamic]int, 0, 1, graph.alloc)
+	for slot, index in graph.prov_slots {
+		if symbol != INVALID_SYMBOL && slot.symbol == symbol && publish_replaces(slot, loan, event.path, event.stored) {
+			append(&out, index)
+		}
+	}
+	return out[:]
 }
 
 // Backward: which slots have a later use, and where. A loan lives until the
@@ -3390,25 +3438,75 @@ solve_loan_liveness :: proc(state: ^Prov_State) {
 	}
 }
 
-// Joins `state.merged` into the slots holding what one loan's storage contains.
+// Joins `state.merged` into the slots holding what one loan's storage
+// contains at `path` below it. A carrier whose loans were merged may name
+// storage the write never reaches, so what lands there carries the carrier's
+// precision as well. When the store's carriers name only this loan, a slot
+// of the `stored` type at exactly that place is replaced instead, as a store
+// to the place itself replaces it.
 @(private = "file")
-// A carrier whose loans were merged may name storage the write never reaches,
-// so what lands there carries the carrier's precision as well.
-publish_into_loan :: proc(state: ^Prov_State, reach: []u8, loan: Prov_Loan, carrier_loss: Precision_Loss) {
+publish_into_loan :: proc(
+	state: ^Prov_State, reach: []u8, loan: Prov_Loan, path: []Proj_Step, stored: Type_Id, carrier_loss: Precision_Loss,
+) {
 	graph := state.graph
 	root := graph.roots[int(loan.root)]
 	if root.symbol == INVALID_SYMBOL {
 		return
 	}
 	for slot, index in graph.prov_slots {
-		if slot.symbol != root.symbol {
+		if slot.symbol != root.symbol || !paths_overlap_joined(slot.path, loan.path, path) {
 			continue
 		}
-		if paths_overlap(slot.path, loan.path) {
-			bytes_or(reach_row(state, reach, index), state.merged)
-			state.precision[index] |= state.merged_precision | carrier_loss | slot.precision | path_precision(loan.path)
+		if publish_replaces(slot, loan, path, stored) {
+			copy(reach_row(state, reach, index), state.merged)
+			state.precision[index] = state.merged_precision | carrier_loss | slot.precision
+			continue
+		}
+		bytes_or(reach_row(state, reach, index), state.merged)
+		state.precision[index] |= state.merged_precision | carrier_loss | slot.precision | path_precision(loan.path)
+	}
+}
+
+// Whether a store of `stored` at `path` below `loan`'s storage replaces
+// `slot`, of that storage: the slot holds exactly that one place. A view's
+// loan ends in the range it lends, so an element below it is one step longer
+// than any slot of its type.
+@(private = "file")
+publish_replaces :: proc(slot: Prov_Slot, loan: Prov_Loan, path: []Proj_Step, stored: Type_Id) -> bool {
+	return stored != INVALID_TYPE && slot.content_type == stored && len(slot.path) == len(loan.path) + len(path) &&
+	       path_is_exact(slot.path) && path_is_exact(loan.path) && paths_overlap_joined(slot.path, loan.path, path)
+}
+
+// Whether `path` names one place: no wildcard, range of several elements, or
+// merged step.
+@(private = "file")
+path_is_exact :: proc(path: []Proj_Step) -> bool {
+	for step in path {
+		if step.kind == .Wild || step.kind == .Range && step.hi != step.lo + 1 || step.precision != {} {
+			return false
 		}
 	}
+	return true
+}
+
+// `paths_overlap` of `a` and `prefix` followed by `rest`.
+@(private = "file")
+paths_overlap_joined :: proc(a, prefix, rest: []Proj_Step) -> bool {
+	for step, index in a {
+		other: Proj_Step
+		switch {
+		case index < len(prefix):
+			other = prefix[index]
+		case index - len(prefix) < len(rest):
+			other = rest[index - len(prefix)]
+		case:
+			return true
+		}
+		if !steps_overlap(step, other) {
+			return false
+		}
+	}
+	return true
 }
 
 @(private = "file")
@@ -3416,6 +3514,10 @@ run_live_event :: proc(event: Prov_Event, live: []bool, uses: []Span) {
 	#partial switch event.kind {
 	case .Def:
 		live[event.slot] = false
+	case .Publish:
+		for slot in event.replaces {
+			live[slot] = false
+		}
 	case .Load:
 		live[event.slot] = false
 		for source in event.sources {

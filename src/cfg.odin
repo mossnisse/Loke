@@ -363,6 +363,9 @@ Prov_State :: struct {
 	// The uses that are a local's `drop` at scope exit, for the note naming them.
 	scope_drops:      map[Span]bool,
 	has_content_load: bool,
+	// A store through carriers that may replace what one place held
+	// (`Prov_Event.stored`), which the solve settles once reaching has.
+	has_replacing_store: bool,
 }
 
 // design.md "Allocator regions and region provenance": the flow-insensitive

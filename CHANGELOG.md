@@ -303,6 +303,16 @@ checklist.
   still writes what it writes; and a pointer copied out to a read-only destination, as `look(p^)` or
   `held: ^Holder = p^` beside `&p^^.count`.
 
+- A store through a pointer to a local place, as `list^.head = list^.tail`
+  with `list := &mut l`, now replaces what that field held, as `l.head = ...`
+  does, so the pointer stored there before is no longer in use. Copying
+  `list^.tail` again after storing it into `head` now compiles, through two
+  pointers or a constant element too. A store into one field through a
+  pointer no longer counts as a store into the others, so the same store
+  repeated in a loop through a pointer that may name either of two locals
+  compiles as well, though such a store still keeps what each place held
+  ([Values that contain borrows](design.md#values-that-contain-borrows)).
+
 - `return nil;` in a procedure returning an `Option(^T)` no longer suggests
   `.some(nil)`, which is an error of its own since `nil` is not a `^T`. The
   diagnostic now says so and suggests `.none`.

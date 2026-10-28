@@ -143,6 +143,13 @@ Prov_Event :: struct {
 	// `Def`: one more than the index of the place loan the slot is the
 	// snapshot of, which its value then carries (`Prov_Place_Loan`), or 0.
 	place_loan:    int,
+	// `Publish`: for a store through carriers pointing at one place, `path`
+	// below their pointee, the type stored there, which replaces what that
+	// place held where they name one storage (`publish_into_loan`), or
+	// INVALID_TYPE. `replaces` are the slots it replaces once reaching has
+	// settled, whose earlier values it ends as a `Def` does.
+	stored:        Type_Id,
+	replaces:      []int,
 	// `Task_Start`, `Shared_Effect`: see `Prov_Kind`.
 	symbol:        Symbol_Id,
 	// One more than the window bit of the pooled block whose join this
@@ -1673,6 +1680,18 @@ path_is_indistinct :: proc(path: []Proj_Step) -> bool {
 		}
 	}
 	return false
+}
+
+// Whether `path` selects one place: fields and single constant elements,
+// none merged.
+@(private = "file")
+prov_path_names_one_place :: proc(path: []Proj_Step) -> bool {
+	for step in path {
+		if step.kind != .Field && !(step.kind == .Range && step.hi == step.lo + 1) || step.precision != {} {
+			return false
+		}
+	}
+	return true
 }
 
 @(private = "file")
@@ -5943,23 +5962,31 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 					prov_walk_subscripts(graph, target, true)
 				}
 				// design.md "Weakening and reborrows".
-				if len(sources) > 0 && len(through) > 0 {
+				if len(through) > 0 {
 					stored := prov_type(graph, target)
-					prov_reborrow(graph, sources, stored, span = expr_span(target), copies = true)
-					// Which storage `target` names is known only to the solve, so the
-					// carrier reborrows every named slot of its type; one stays
-					// suspended only while it holds the source's loan.
-					for entry, candidate in graph.prov_slots {
-						if entry.symbol != INVALID_SYMBOL && entry.content_type == stored {
-							prov_reborrow(graph, sources, stored, candidate, expr_span(target))
+					if len(sources) > 0 {
+						prov_reborrow(graph, sources, stored, span = expr_span(target), copies = true)
+						// Which storage `target` names is known only to the solve, so the
+						// carrier reborrows every named slot of its type; one stays
+						// suspended only while it holds the source's loan.
+						for entry, candidate in graph.prov_slots {
+							if entry.symbol != INVALID_SYMBOL && entry.content_type == stored {
+								prov_reborrow(graph, sources, stored, candidate, expr_span(target))
+							}
 						}
 					}
-					prov_emit(graph, Prov_Event {
-						kind    = .Publish,
-						span    = expr_span(target),
-						sources = sources,
-						into    = through,
-					})
+					publish := Prov_Event{kind = .Publish, span = expr_span(target), sources = sources, into = through}
+					// design.md "Values that contain borrows": carriers pointing at
+					// one place replace what it holds wherever they name one storage
+					// (`publish_into_loan`).
+					if offsets, found := prov_value_offset(graph, through); found && len(offsets) == 1 &&
+					   prov_offsets_agree(graph, through, offsets) && prov_path_names_one_place(below) {
+						publish.path, publish.stored = prov_concat_path(graph, offsets[0], below), stored
+						graph.has_replacing_store = true
+					}
+					if len(sources) > 0 || publish.stored != INVALID_TYPE {
+						prov_emit(graph, publish)
+					}
 				}
 				if walked {
 					prov_emit(graph, Prov_Event{kind = .Live, sources = through, span = expr_span(target)})
