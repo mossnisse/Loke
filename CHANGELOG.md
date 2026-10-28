@@ -201,6 +201,12 @@ checklist.
   `list^.head` while `node` still pointed at the same node. Upgrade by
   finishing with the copy before the call, or by passing the copy instead.
 
+- The fields of `fmt.Fixed` and `fmt.Padded` are now private, as
+  [`core:fmt`](standard-library.md#corefmt) already documented them. Reading
+  `p.value` or `p.width` or writing a `fmt.Fixed{...}` literal is rejected;
+  make the wrappers with `fmt.fixed`, `fmt.pad_left`, `fmt.pad_right`, and
+  `fmt.zero_pad`, and keep the wrapped value yourself if you need it again.
+
 ### Added
 
 - `fs.replace_atomic` and `fs.replace_atomic_text` replace a file so that a

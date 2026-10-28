@@ -78,8 +78,7 @@ to_string :: proc(allocator: Allocator, args: ..any_view) -> string ---;
 fixed :: proc(value: f64, digits: int) -> Fixed ---;
 
 Fixed :: struct {
-	value: f64,
-	digits: int,
+	// and fields private to the package
 }
 
 impl Fixed {
@@ -101,13 +100,8 @@ pad_right :: proc(value: $T, width: int) -> Padded(T) ---;
 zero_pad :: proc(value: $T, width: int) -> Padded(T) where interfaces.Integral(T), T != rune ---;
 
 Padded :: struct($T: type) {
-	value: T,
-	width: int,
-	fill: Fill,
+	// and fields private to the package
 }
-
-// Private to the package, but a public declaration names it.
-Fill :: enum { Left, Right, Zero }
 
 impl Padded($T) {
 	format :: proc(self, writer: Writer, options: Options) ---;

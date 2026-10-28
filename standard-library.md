@@ -164,7 +164,8 @@ Nested paths are taxonomy, not inheritance. For example,
 ### Files are in `core:fs`, not `core:os`
 
 Use `fs.open` for files and `core:os` for process state. There is no `os.open`
-alias. The package split is explained in [Standard-library API choices](comments.md#standard-library-api-choices).
+alias. The package split is explained in
+[Standard-library API choices](comments.md#standard-library-api-choices).
 
 ## Shared I/O contract
 
@@ -376,7 +377,7 @@ Mutex(T).lock(self: ^) -> Guard(T)
 Guard(T).get(self: inout) -> inout T
 Monitor(T).lock(self: ^) -> Monitor_Guard(T)
 Monitor(T).lock_when(self: ^, ready: $C) -> Option(Monitor_Guard(T))
-    where interfaces.Callable(C, proc(value: ^T) -> bool)
+	where interfaces.Callable(C, proc(value: ^T) -> bool)
 Monitor(T).close(self: ^)
 Monitor_Guard(T).get(self: inout) -> inout T
 Monitor_Guard(T).read(self: ^) -> ^T
@@ -421,13 +422,14 @@ unlock happens before the next lock. `lock` takes a read-only receiver, as the
 storage still locks. The field `value` is public for a caller that owns the
 mutex outright, before spawning or after joining. It is `@(synchronized)`, as
 `Atomic`'s `value` is: it is reached only through the owner or through `^mut`
-or `inout`, and not while the mutex is lent (design.md "@(synchronized)"). Locking a mutex the thread
-already holds never returns. `Mutex` is move-only. A `Guard` is
-`@(thread_affine)`: the lock is released by the thread that took it, as an
-SRWLOCK requires, so a guard does not move, or lend its borrow, to another
-thread or task (design.md "@(thread_affine)"). It is also `@(wakes_on_drop)`:
-a guard the parent keeps past a `parallel` block's join while a task of the
-block borrows its mutex is an error (design.md "Releasing before the join").
+or `inout`, and not while the mutex is lent (design.md "@(synchronized)").
+Locking a mutex the thread already holds never returns. `Mutex` is move-only.
+A `Guard` is `@(thread_affine)`: the lock is released by the thread that took
+it, as an SRWLOCK requires, so a guard does not move, or lend its borrow, to
+another thread or task (design.md "@(thread_affine)"). It is also
+`@(wakes_on_drop)`: a guard the parent keeps past a `parallel` block's join
+while a task of the block borrows its mutex is an error
+(design.md "Releasing before the join").
 
 `processor_count` is how many threads can run at once: the machine's logical
 processors, at least one. A program that divides work among threads, such as a
@@ -694,9 +696,9 @@ case .closed: return;           // the interface has gone
 - **Ownership.** The ring owns an item from a committing send until the
   receive that takes it; dropping the ring drops the items still queued, in
   queue order, and an item's drop that panics leaves the rest to drop in that
-  order as the unwind goes on. An endpoint's drop leaves them in place. An item is checked as
-  a channel's is: it carries no borrow shorter than the process, and it
-  crosses threads. A receiver that must not free memory takes non-owning
+  order as the unwind goes on. An endpoint's drop leaves them in place. An
+  item is checked as a channel's is: it carries no borrow shorter than the
+  process, and it crosses threads. A receiver that must not free memory takes non-owning
   items, or returns owned buffers through a second ring for reuse.
 - **Bounds.** Each operation runs a fixed number of steps: at most three
   atomic loads and one atomic store, and no loop. That bounds the ring's own
@@ -742,11 +744,11 @@ Ring_Receiver(T) :: move_only struct { ring: ^Ring(T), head: uint, tail_seen: ui
 A `Ring_Slot(T)` is one item of [uninitialized capacity](design.md#uninitialized-capacity)
 with a count of zero or one, so no slot needs `T`'s zero, and the slots' own
 drop releases only queued items. `CACHE_LINE_BYTES` is a target-specific
-separation distance, not a universal 64-byte assumption: 128 on both
-supported targets, since x86-64 fetches lines in adjacent pairs and some
-Arm64 cores have 128-byte lines. Padding by that distance keeps `tail`,
-`head`, and the flag group on disjoint cache lines whatever the ring's own
-alignment. The gaps also separate these groups from adjacent
+separation distance, not a universal 64-byte assumption: 128 on x86-64,
+which fetches lines in adjacent pairs, and 128 again on Arm64 should it become
+a target, since some Arm64 cores have 128-byte lines. Padding by that distance
+keeps `tail`, `head`, and the flag group on disjoint cache lines whatever the
+ring's own alignment. The gaps also separate these groups from adjacent
 metadata or allocations. In particular, `receiver_gone` must not share
 `head`'s line: every send reads the flag. Endpoint-local indices must also be
 placed so different tasks do not write the same cache line in measurements.
@@ -917,7 +919,7 @@ Validation:
    ([unscoped channels](open-questions.md#later-concurrency-extensions)).
 4. **Target validation and measurement.** In the emitted LLVM IR, the
    operations' loads and stores are `load atomic` acquire and `store atomic`
-   release on naturally aligned fields, which both targets lower to single
+   release on naturally aligned fields, which x86-64 lowers to single
    instructions, and they call nothing that locks or allocates.
    `tests/pkg/ring_allocation` fills its default allocator, a fixed arena,
    until it refuses a byte, then runs a million operations, closure by either
@@ -1132,11 +1134,13 @@ last_index(text, needle: string_view) -> Option(int)
 index_byte(text: string_view, value: u8) -> Option(int)
 index_rune(text: string_view, value: rune) -> Option(int)
 count(text, needle: string_view) -> int
+is_space(value: rune) -> bool
 ```
 
 An empty needle matches at byte offset zero; `last_index` answers
 `.some(text.len())` for it, and `count` returns `text.len() + 1`. `count` counts
-non-overlapping occurrences.
+non-overlapping occurrences. `is_space` is the whitespace test `trim_space` and
+`fields` use: Unicode White_Space, not only the five ASCII spaces.
 
 ### Borrowing transformations and iterators
 
@@ -1279,17 +1283,18 @@ result (as `path.join` does before `path.clean`) need not copy it.
 
 Arbitrary byte append is absent because it could break the UTF-8 invariant.
 Validate bytes before appending or use a byte buffer. Compiler support for
-string allocation is described in [Runtime and library boundary](compiler-architecture.md#runtime-and-library-boundary).
+string allocation is described in
+[Runtime and library boundary](compiler-architecture.md#runtime-and-library-boundary).
 
 Example (imports `core:strings`):
 
 ```loke
 greeting :: proc(name: string_view) -> string {
-    builder: strings.String_Builder = {};
-    builder.append("Hello, ");
-    builder.append(name);
-    builder.append('!');
-    return builder.finish();
+	builder: strings.String_Builder = {};
+	builder.append("Hello, ");
+	builder.append(name);
+	builder.append('!');
+	return builder.finish();
 }
 ```
 
@@ -1358,7 +1363,7 @@ explicit Unicode and object-lookup policy:
 | Extra input | Anything but whitespace after the root value is `Trailing_Input`. |
 | Extensions | Comments, trailing commas, leading zeros, a leading `+`, hexadecimal, `NaN`, and `Infinity` are errors. |
 | Text | UTF-8. A byte order mark, invalid UTF-8, a raw control character in a string, and an unpaired escaped surrogate are errors: every string is a Unicode scalar sequence, as Loke's string types require. |
-| Object members | Kept in order, every occurrence of a key included. Keys compare byte for byte once decoded, without Unicode normalization, so `"a"` and `"a"` are the same key. |
+| Object members | Kept in order, every occurrence of a key included. Keys compare byte for byte once decoded, without Unicode normalization, so `"\u0061"` and `"a"` are the same key. |
 | Numbers | Validated as JSON spells them and kept exactly as written; parsing never requires a number to fit a machine type. |
 
 ### Documents and values
@@ -1822,7 +1827,7 @@ Example (imports `core:fs` and `core:io`):
 
 ```loke
 read_notes :: proc(path: string_view) -> Result(string, io.Error) {
-    return fs.read_text(path, limit = 1_048_576);
+	return fs.read_text(path, limit = 1_048_576);
 }
 ```
 
@@ -1856,7 +1861,7 @@ Example (imports `core:fs` and `core:io`):
 
 ```loke
 save :: proc(generation: string_view) -> Status(io.Error) {
-    return fs.replace_atomic_text("save/manifest.txt", generation);
+	return fs.replace_atomic_text("save/manifest.txt", generation);
 }
 ```
 
@@ -1884,14 +1889,14 @@ Example (imports `core:fmt`, `core:fs`, and `core:io`):
 
 ```loke
 list_names :: proc(path: string_view) -> Status(io.Error) {
-    reader := fs.read_directory(path) or_return;
-    for (;;) {
-        entry := reader.next() or_return;
-        switch (entry) {
-        case .some(found): fmt.println(found.name);
-        case .none: return .ok;
-        }
-    }
+	reader := fs.read_directory(path) or_return;
+	for (;;) {
+		entry := reader.next() or_return;
+		switch (entry) {
+		case .some(found): fmt.println(found.name);
+		case .none: return .ok;
+		}
+	}
 }
 ```
 
@@ -1953,8 +1958,9 @@ kept as written.
 
 The result follows target-platform path rules. `clean` removes redundant
 separators and lexical `.`/`..` elements but does not resolve symlinks or access
-the filesystem. A later `fs.absolute` or `fs.canonicalize` performs actual
-filesystem resolution and returns an I/O error.
+the filesystem. Resolving a path against the filesystem is planned as
+`fs.absolute` and `fs.canonicalize`, which will return an I/O error; neither
+exists yet.
 
 `clean` returns an extended-length path unchanged because Windows uses it to
 bypass normalization. There is no automatic long-path prefixing.
@@ -2055,7 +2061,8 @@ Text input is `key == .Character` with the scalar value in `value`; a named key
 leaves `value` zero, and is preferred when a key such as Enter or Tab also
 carries a control character. A key the decoder has no name for is `.Unknown`.
 Modifiers are explicit flags, so Shift, Ctrl, or Alt pressed alone is no event.
-Key releases, mouse, focus, and resize records are skipped. A held key's repeat count becomes that many events, in order.
+Key releases, mouse, focus, and resize records are skipped. A held key's
+repeat count becomes that many events, in order.
 
 Ctrl+letter input uses the reported control character as `value`, with
 `control` set. With `interrupt_as_key`, Ctrl+C is `.Character` with `value == 3`.
@@ -2078,9 +2085,12 @@ UI are not provided.
 
 ## `core:os` additions
 
-Besides `os.args` and `os.exit`, `core:os` has these process-level operations:
+Besides `os.args` and `os.exit` ([Program entry and
+exit](design.md#program-entry-and-exit)), `core:os` has these process-level
+operations:
 
 ```loke
+view_at(index: int) -> string_view
 get_environment(name: string_view,
 	allocator := mem.default_allocator()) -> Result(Option(string), io.Error)
 set_environment(name, value: string_view) -> Status(io.Error)
@@ -2091,6 +2101,10 @@ set_working_directory(path: string_view) -> Status(io.Error)
 executable_path(allocator := mem.default_allocator())
 	-> Result(string, io.Error)
 ```
+
+`view_at(i)` borrows argument `i` instead of copying it as `os.args[i]` does.
+The arguments are cached for the life of the process, so the view has no owner
+to outlive. An index out of range panics.
 
 The `Option` from `get_environment` distinguishes a missing variable from a
 present empty value: a variable set to the empty string is present, and a value
@@ -2211,10 +2225,10 @@ Example (imports `core:process` and `core:io`):
 
 ```loke
 compiler_version :: proc(program: string_view) -> Result(process.Output, io.Error) {
-    return process.output(process.Command{
-        program = program,
-        arguments = []string_view{"-version"},
-    });
+	return process.output(process.Command{
+		program = program,
+		arguments = []string_view{"-version"},
+	});
 }
 ```
 
@@ -2366,7 +2380,7 @@ Example (imports `core:random`):
 
 ```loke
 roll :: proc(rng: inout random.Xoshiro256) -> int {
-    return random.in_range(inout rng, 1 ..= 6);
+	return random.in_range(inout rng, 1 ..= 6);
 }
 ```
 
@@ -2434,8 +2448,9 @@ it, and construct the generator with `from_seed`, as
 process ID: parallel runs started together share them.
 
 Seeded generators, the procedures that compute on integers and floats, and
-`fill`, `shuffle`, and `sample` can run during [compile-time evaluation](design.md#compile-time-procedure-evaluation),
-for example to build a table of random constants. `from_entropy`, a draw from an
+`fill`, `shuffle`, and `sample` can run during
+[compile-time evaluation](design.md#compile-time-procedure-evaluation), for
+example to build a table of random constants. `from_entropy`, a draw from an
 unseeded generator, `fill_secure`, and `secure_u64` cannot. Neither can the
 [distributions](#distributions), which call `core:math`, or
 `Weighted.from_weights`, which allocates from a runtime allocator.

@@ -36,9 +36,9 @@ Ring :: struct($T: type) {
 	@(private) pad_flags: [CACHE_LINE_BYTES]u8,
 }
 
-// The distance that keeps two fields off one cache line. 128 bytes on both
-// targets: x86-64 fetches lines in adjacent pairs, and some Arm64 cores have
-// 128-byte lines.
+// The distance that keeps two fields off one cache line. 128 bytes: x86-64
+// fetches lines in adjacent pairs, and some Arm64 cores, should Arm64 become a
+// target, have 128-byte lines.
 @(private)
 CACHE_LINE_BYTES :: 128;
 

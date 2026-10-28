@@ -188,7 +188,7 @@ fixed :: proc(value: f64, digits: int) -> Fixed {
 }
 
 @(public)
-Fixed :: struct { value: f64, digits: int }
+Fixed :: struct { @(private) value: f64, @(private) digits: int }
 
 impl Fixed {
 	format :: proc(self, writer: Writer, options: Options) {
@@ -220,7 +220,7 @@ zero_pad :: proc(value: $T, width: int) -> Padded(T) where interfaces.Integral(T
 }
 
 @(public)
-Padded :: struct($T: type) { value: T, width: int, fill: Fill }
+Padded :: struct($T: type) { @(private) value: T, @(private) width: int, @(private) fill: Fill }
 
 // Where `Padded` puts its fill: spaces before the value or after it, or zeros
 // between the sign and the digits.
