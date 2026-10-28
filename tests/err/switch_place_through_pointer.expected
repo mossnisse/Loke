@@ -25,3 +25,12 @@ this mutable borrow is not compatible with the read-only payload of `h^.first` t
 L0511
 @108:3
 this write is not compatible with the read-only payload of `h^.pair` that is still in use
+L0511
+@174:14
+this mutable argument is not compatible with the read-only payload of `h^.first` that is still in use
+L0641
+@174:34
+`h` cannot be used here: a mutable reborrow of it is still in use
+L0511
+@200:14
+this mutable borrow is not compatible with the read-only payload of `c^.first[0]` that is still in use

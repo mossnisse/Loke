@@ -2,10 +2,12 @@
 // the uses beside them (design.md "Weakening and reborrows", "Switch
 // ownership"). Each program takes a mutable carrier out of `head` or `first`
 // of a `List`, or borrows its `count`, reached through one of several place
-// forms, does one thing beside it, and maybe uses what it took again. Whether that is legal comes from `matrix_rejects`, a model of the
-// rules written apart from the compiler, never from its output, so a form the
+// forms, does one thing beside it, and maybe uses what it took again.
+// Whether that is legal comes from `matrix_expected`, a model of the rules
+// written apart from the compiler, never from its output, so a form the
 // compiler handles differently from the others shows up as a disagreement.
-// Every case is one procedure, and a compile checks a whole place form at once.
+// Every case is one procedure, and a compile checks a whole place form at
+// once.
 package tests
 
 import "core:fmt"
@@ -125,14 +127,6 @@ matrix_expected :: proc(place: Matrix_Place, take: Matrix_Take, use: Matrix_Use,
 			return conflict
 		}
 	}
-	return ""
-}
-
-// Cases the compiler is known to get wrong, each with the known-gaps.md entry
-// that records it. A case listed here is expected to compile, and fails once
-// the gap is fixed, so the entry is removed with the gap. None is known now.
-@(private = "file")
-matrix_known_gap :: proc(place: Matrix_Place, take: Matrix_Take, use: Matrix_Use, later: bool) -> string {
 	return ""
 }
 
@@ -308,10 +302,6 @@ borrow_matrix :: proc(t: ^testing.T) {
 		errors := matrix_errors(string(job.stderr))
 		for entry in program.cases {
 			expected := matrix_expected(program.place, program.take, entry.use, entry.later)
-			gap := matrix_known_gap(program.place, program.take, entry.use, entry.later)
-			if gap != "" {
-				expected = ""
-			}
 			code := ""
 			for e in errors {
 				if e.line >= entry.first_line && e.line <= entry.last_line {
@@ -321,11 +311,10 @@ borrow_matrix :: proc(t: ^testing.T) {
 			}
 			testing.expectf(
 				t, code == expected,
-				"%s (lines %d-%d): %v of a carrier from %s, then %s%s: expected %s, got %s%s",
+				"%s (lines %d-%d): %v of a carrier from %s, then %s%s: expected %s, got %s",
 				path, entry.first_line, entry.last_line, program.take, program.place.name, entry.use.name,
 				entry.later ? " and a later use" : "", expected if expected != "" else "no error",
 				code if code != "" else "no error",
-				gap != "" ? fmt.tprintf(" (known gap \"%s\": remove it from matrix_known_gap once fixed)", gap) : "",
 			)
 		}
 		// An error outside every case is a mistake in the generated program.

@@ -151,4 +151,57 @@ repointed :: proc(h: ^mut Holder, other: ^mut Holder) -> int {
 
 bump_pointer :: proc(n: ^mut int) { n^ += 1; }
 
+// A mutable borrow beside the payload stays beside it when a record carries
+// it to the call; the record's other pointers are handed on whole.
+Side :: struct { n: ^mut int }
+Both :: struct { n: ^mut int, h: ^mut Holder }
+bump_side :: proc(s: Side) { s.n^ += 1; }
+clear_both :: proc(b: Both) { b.h^.first = .none; }
+
+wrapped_beside :: proc(h: ^mut Holder) -> int {
+	switch (h^.first) {
+	case .some(node):
+		bump_side(Side{&mut h^.count});
+		return node^.value;
+	case .none:
+	}
+	return 0;
+}
+
+wrapped_with_whole :: proc(h: ^mut Holder) -> int {
+	switch (h^.first) {
+	case .some(node):
+		clear_both(Both{&mut h^.count, h});
+		return node^.value;
+	case .none:
+	}
+	return 0;
+}
+
+// A mutable borrow weakened to a read-only parameter writes nothing, though
+// a conditional index walks it through more than one block.
+Cells :: struct { first: [2]Option(^mut Node) }
+ignore_cell :: proc(p: ^Option(^mut Node)) {}
+clear_cell :: proc(p: ^mut Option(^mut Node)) { p^ = .none; }
+
+conditional_weakened :: proc(c: ^mut Cells, flag: bool) -> int {
+	switch (c^.first[0]) {
+	case .some(node):
+		ignore_cell(&mut c^.first[0 if flag else 0]);
+		return node^.value;
+	case .none:
+	}
+	return 0;
+}
+
+conditional_written :: proc(c: ^mut Cells, flag: bool) -> int {
+	switch (c^.first[0]) {
+	case .some(node):
+		clear_cell(&mut c^.first[0 if flag else 0]);
+		return node^.value;
+	case .none:
+	}
+	return 0;
+}
+
 main :: proc() {}

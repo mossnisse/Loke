@@ -396,7 +396,8 @@ before. A use of a switch binding over such a place is placed at its payload. A
 compound assignment or `inout` receiver, which reads its place as a value,
 reads the carriers again as written through (`prov_write_through_place`), and a
 mutable borrow weakened to a read-only destination makes its walk's reads
-read-only, as it settles its `.Through` (`Prov_Slot.walk_lo`).
+read-only, as it settles its `.Through`, across the blocks a conditional
+index adds (`Prov_Slot.walk_block`).
 
 A switch over a place reached through carriers cannot borrow a root, since
 which storage they name is known only to the solve. It holds the place
@@ -407,8 +408,10 @@ holds the snapshot's loans. A store through carriers, a mutable borrow or `inout
 through them, and a carrier argument a callee may write through emit a
 `.Through` event, with the carriers and the path written. A call's path is the
 whole pointee, and its carriers include the deep `Load` of what it reaches; an
-argument that is a mutable borrow through carriers, as `&mut h^.count`, adds
-only that load, since the borrow's own event gave its path.
+argument that is a mutable borrow through carriers, as `&mut h^.count`, or a
+value the argument builds out of one alone, as `Side{&mut h^.count}`, adds
+only that load, since the borrow's own event gave its path
+(`prov_unsaid_writes`).
 `check_held_place` rejects one whose carriers share a valid loan with a live
 hold's snapshot at an overlapping path. A mutable borrow weakened to a
 read-only destination writes nothing, so its `.Through` is settled as a fresh

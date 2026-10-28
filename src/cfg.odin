@@ -272,7 +272,7 @@ Prov_State :: struct {
 	lent_aliases:   map[int][]int,
 	// The slots standing for what the caller storage each parameter loan names
 	// holds (`prov_caller_slots`).
-	caller_slots:   map[Loan_Id][]int,
+	caller_slots:   map[Loan_Id][dynamic]int,
 	// Per call with a `self: ^` receiver, what the receiver's place holds, which
 	// the call's actual joins with its borrow of that place: a load through the
 	// receiver reads these at its path rather than through them.
@@ -446,7 +446,7 @@ new_flow_graph :: proc(k: ^Checker, literal: ^Expr_Proc, allocator: mem.Allocato
 		graph.view_uses = make(map[Symbol_Id]Prov_View_Use, 2, allocator)
 		graph.step_views = make(map[Symbol_Id]bool, 8, allocator)
 		graph.lent_aliases = make(map[int][]int, 8, allocator)
-		graph.caller_slots = make(map[Loan_Id][]int, 4, allocator)
+		graph.caller_slots = make(map[Loan_Id][dynamic]int, 4, allocator)
 		graph.place_markers = make(map[int]Prov_Place_Marker, 4, allocator)
 		graph.receiver_content = make(map[^Expr_Call][]int, 2, allocator)
 		graph.fresh_slots = make(map[int]bool, 2, allocator)

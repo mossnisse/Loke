@@ -147,22 +147,6 @@ Still open:
   controls beside its rejections, and equivalent forms should agree only where
   evaluation order, ownership, and temporary lifetimes are unchanged.
 
-Implementation cleanup: `prov_caller_slot` in
-[cfg_provenance.odin](src/cfg_provenance.odin) allocates a new slice and copies
-every prior slot each time it adds a path to one loan. A caller loan can have
-up to 64 carrier paths. Keep one growable slot list per loan instead of
-rebuilding it for every path. A first attempt (2026-10-28), storing
-`[dynamic]int` per loan in `Flow_Graph.caller_slots` and appending to it, made
-`lokec` crash without a message on
-[switch_place_through_pointer.loke](tests/err/switch_place_through_pointer.loke).
-The cause was not found, and no other code changed, so the crash may expose a
-stale read elsewhere; find it before trying again.
-
-The generated [borrow matrix](tests/borrow_matrix_test.odin) still calls
-`matrix_known_gap`, which now always returns `""`, and retains a conditional
-that cannot run. Remove the function and that branch; compare every case
-directly with `matrix_expected` until a real gap needs an explicit exception.
-
 Language changes should be evaluated separately. The proposed
 [written public borrow contracts](#public-borrow-contracts-should-stand-on-their-own)
 could simplify call boundaries and library exceptions, but cannot repair local

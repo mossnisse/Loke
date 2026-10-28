@@ -164,6 +164,11 @@ weakened :: proc(h: ^mut Holder, p: ^mut ^mut Holder) -> int {
 	return peek(&mut h^.count) + peek(&mut p^^.count) + count^ + inner^;
 }
 
+conditional_weakened :: proc(h: ^mut Holder, flag: bool) -> int {
+	cell := &h^.cells[0];
+	return peek(&mut h^.cells[0 if flag else 1]) + cell^;
+}
+
 read_only_copies :: proc(p: ^mut ^mut Holder) -> int {
 	count := &p^^.count;
 	held: ^Holder = p^;

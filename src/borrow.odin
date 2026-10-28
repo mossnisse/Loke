@@ -264,13 +264,20 @@ Prov_Slot :: struct {
 	// The `.Through` event of a mutable borrow through carriers, which this
 	// otherwise empty slot stands for, so a read-only destination can settle
 	// it as it does a fresh loan's access (`prov_reborrow`). The index is -1
-	// when there is none. The borrow's reads of the carriers it goes through
-	// are the events from `walk_lo` up to `walk_hi` in the same block, which
-	// that destination makes reads only.
+	// when there is none. The borrow's reads of the carriers it goes through,
+	// which that destination makes reads only, start at `walk_lo` in
+	// `walk_block`, fill every block from `walk_new` up to `walk_end` that the
+	// walk created, as a conditional index does, and end before `walk_hi` in
+	// `through_block`.
 	through_block: Block_Id,
 	through_index: int,
+	walk_block:    Block_Id,
 	walk_lo:       int,
+	walk_new:      int,
+	walk_end:      int,
 	walk_hi:       int,
+	// The carriers that borrow went through (`prov_unsaid_writes`).
+	through_carriers: []int,
 	// One more than the index of the payload hold this slot carries, as its
 	// snapshot or a carrier copied from one; zero for none.
 	hold: int,
@@ -287,6 +294,7 @@ empty_prov_slot :: proc(symbol: Symbol_Id) -> Prov_Slot {
 		fresh_access_index = -1,
 		through_block      = NO_BLOCK,
 		through_index      = -1,
+		walk_block         = NO_BLOCK,
 	}
 }
 
@@ -3232,7 +3240,13 @@ note_caller_reads :: proc(state: ^Prov_State, loan_index: int, path: []Proj_Step
 	if reads == nil {
 		return
 	}
-	for slot in state.graph.caller_slots[Loan_Id(loan_index)] {
+	// A loan with no caller slots has no entry, and ranging over
+	// `caller_slots[loan]` itself then crashes, so the list is looked up first.
+	slots, found := state.graph.caller_slots[Loan_Id(loan_index)]
+	if !found {
+		return
+	}
+	for slot in slots {
 		if paths_overlap(state.graph.prov_slots[slot].path, path) && !slice.contains(reads[:], slot) {
 			append(reads, slot)
 		}
