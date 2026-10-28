@@ -72,6 +72,36 @@ copy a store of one carrier makes to every slot it may land in
 instead is rejected. Through a parameter, such a store also joins into the
 parameter itself, which keeps the same body over parameters rejected.
 
+### A store through a one-pointer-field parameter keeps the old borrow
+
+[Values that contain borrows](design.md#values-that-contain-borrows) says
+replacing a carrier stored in a field ends the old borrow in that field.
+With a parameter whose record has one pointer field, the old borrow remains
+linked to the field, so copying the new value reports `L0641`:
+
+```loke
+package main;
+Node :: struct { value: int }
+One :: struct { head: ^mut Node, count: int }
+probe :: proc(p: ^mut One, @(escape=stored) replacement: ^mut Node) {
+    old := p^.head;
+    p^.head = replacement;
+    fresh := p^.head; // L0641, should be allowed
+    old^.value = 1;
+    fresh^.value = 2;
+}
+main :: proc() {}
+```
+
+The same sequence through a pointer to a local `One` compiles, as does a
+parameter whose record has two pointer fields. For one nonempty carrier
+path, `prov_caller_slots` in
+[src/cfg_provenance.odin](src/cfg_provenance.odin) creates an untyped slot for
+the whole record instead of a typed slot at `head`. `caller_replaces` in
+[src/borrow.odin](src/borrow.odin) cannot recognize that slot as the field
+replaced by the store, so it keeps the old borrow. Preserve the single
+carrier path and its type when constructing the caller slot.
+
 ### A pointer chosen among more than eight places covers their shared prefix
 
 [Weakening and reborrows](design.md#weakening-and-reborrows) lets a carrier be
