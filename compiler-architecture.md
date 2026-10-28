@@ -395,9 +395,10 @@ carrier, as copying it or passing it to a call, is untagged and conflicts as
 before. A use of a switch binding over such a place is placed at its payload. A
 compound assignment or `inout` receiver, which reads its place as a value,
 reads the carriers again as written through (`prov_write_through_place`), and a
-mutable borrow weakened to a read-only destination makes its walk's reads
-read-only, as it settles its `.Through`, across the blocks a conditional
-index adds (`Prov_Slot.walk_block`).
+mutable borrow weakened to a read-only destination makes its reads of the
+carriers it goes through read-only, as it settles its `.Through`. The walk
+collects those events as it emits them (`Prov_Slot.walk_reads`), leaving out
+its subscripts, as a call in an index may write.
 
 A switch over a place reached through carriers cannot borrow a root, since
 which storage they name is known only to the solve. It holds the place

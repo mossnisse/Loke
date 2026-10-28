@@ -264,18 +264,12 @@ Prov_Slot :: struct {
 	// The `.Through` event of a mutable borrow through carriers, which this
 	// otherwise empty slot stands for, so a read-only destination can settle
 	// it as it does a fresh loan's access (`prov_reborrow`). The index is -1
-	// when there is none. The borrow's reads of the carriers it goes through,
-	// which that destination makes reads only, start at `walk_lo` in
-	// `walk_block`, fill every block from `walk_new` up to `walk_end` that the
-	// walk created, as a conditional index does, and end before `walk_hi` in
-	// `through_block`.
+	// when there is none. `walk_reads` are the events reading the carriers the
+	// borrow goes through, which that destination makes reads only; the
+	// subscripts on the way are not among them, as they may write.
 	through_block: Block_Id,
 	through_index: int,
-	walk_block:    Block_Id,
-	walk_lo:       int,
-	walk_new:      int,
-	walk_end:      int,
-	walk_hi:       int,
+	walk_reads:    []Prov_Event_At,
 	// The carriers that borrow went through (`prov_unsaid_writes`).
 	through_carriers: []int,
 	// One more than the index of the payload hold this slot carries, as its
@@ -294,8 +288,13 @@ empty_prov_slot :: proc(symbol: Symbol_Id) -> Prov_Slot {
 		fresh_access_index = -1,
 		through_block      = NO_BLOCK,
 		through_index      = -1,
-		walk_block         = NO_BLOCK,
 	}
+}
+
+// One provenance event, by its block and its index there.
+Prov_Event_At :: struct {
+	block: Block_Id,
+	event: int,
 }
 
 // A carrier derived from an existing mutable carrier reborrows it, read-only or

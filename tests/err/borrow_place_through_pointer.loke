@@ -102,6 +102,29 @@ argument_read :: proc(h: ^mut Holder) {
 	add(&mut h^.count, h^.count);
 }
 
+// A weakened mutable borrow only reads the carriers it goes through, not what
+// a call in its index writes.
+bump_index :: proc(q: ^mut int) -> int { q^ += 1; return 0; }
+
+weakened_index_call :: proc(h: ^mut Holder, q: ^mut int) -> int {
+	held := &q^;
+	value := peek(&mut h^.cells[bump_index(q)]);
+	return held^ + value;
+}
+
+weakened_conditional_index_call :: proc(h: ^mut Holder, q: ^mut int, flag: bool) -> int {
+	held := &q^;
+	value := peek(&mut h^.cells[0 if flag else bump_index(q)]);
+	return held^ + value;
+}
+
+weakened_carrier_index_call :: proc(h: ^mut Holder, q: ^mut int) -> int {
+	both := [1]^mut Holder{h};
+	held := &q^;
+	value := peek(&mut both[bump_index(q)]^.count);
+	return held^ + value;
+}
+
 // Legal: other fields, read-only borrows beside each other, and uses after
 // the borrow is done.
 beside :: proc(h: ^mut Holder) -> int {
@@ -167,6 +190,12 @@ weakened :: proc(h: ^mut Holder, p: ^mut ^mut Holder) -> int {
 conditional_weakened :: proc(h: ^mut Holder, flag: bool) -> int {
 	cell := &h^.cells[0];
 	return peek(&mut h^.cells[0 if flag else 1]) + cell^;
+}
+
+indexed_carrier_weakened :: proc(h: ^mut Holder) -> int {
+	both := [1]^mut Holder{h};
+	count := &both[0]^.count;
+	return peek(&mut both[0]^.count) + count^;
 }
 
 read_only_copies :: proc(p: ^mut ^mut Holder) -> int {

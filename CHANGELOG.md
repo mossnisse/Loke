@@ -272,8 +272,9 @@ checklist.
   are now accepted, as they are for a local
   ([Weakening and reborrows](design.md#weakening-and-reborrows)): a `switch`
   binding of another field, as `switch (h^.first)` beside `&h^.count`; a
-  mutable borrow weakened to a read-only parameter, as `peek(&mut h^.count)`;
-  and a pointer copied out to a read-only destination, as `look(p^)` or
+  mutable borrow weakened to a read-only parameter, as `peek(&mut h^.count)`,
+  though a call in its index, as `bump(q)` in `peek(&mut h^.cells[bump(q)])`,
+  still writes what it writes; and a pointer copied out to a read-only destination, as `look(p^)` or
   `held: ^Holder = p^` beside `&p^^.count`.
 
 - `return nil;` in a procedure returning an `Option(^T)` no longer suggests

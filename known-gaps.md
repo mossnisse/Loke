@@ -38,34 +38,6 @@ though each branch borrows only `.count` and has already emitted the
 path-specific write. Carry the per-field borrow origin through branch merges,
 or trace the argument's events across the blocks it creates.
 
-### Weakening a borrow also weakens a mutable call in its index
-
-[Weakening and reborrows](design.md#weakening-and-reborrows) permits a fresh
-mutable borrow passed to a read-only parameter to act as read-only. It does
-not weaken the separate uses needed to calculate that borrow's index. This
-program compiles, although `idx(q)` mutates `q^` while `held` still borrows it
-read-only. Changing `&mut h^.cells[...]` to `&h^.cells[...]` correctly reports
-`L0641` at `idx(q)`:
-
-```loke
-package main;
-Holder :: struct { cells: [2]int }
-idx :: proc(q: ^mut int) -> int { q^ += 1; return 0; }
-read :: proc(p: ^int) -> int { return p^; }
-bad :: proc(h: ^mut Holder, q: ^mut int, flag: bool) -> int {
-    held := &q^;
-    value := read(&mut h^.cells[0 if flag else idx(q)]);
-    return held^ + value;
-}
-main :: proc() {}
-```
-
-`prov_weaken_walk` in [src/cfg_provenance.odin](src/cfg_provenance.odin)
-sets `reads_only` on every `.Live` and `.Load` event in the borrow's evaluation
-window, including events from the index call. That makes the mutable call's
-use of `q` appear read-only and hides the conflict. Record and weaken only
-the events that read the carriers the borrow itself goes through.
-
 ### A store through a pointer to a local joins what the place held
 
 [Values that contain borrows](design.md#values-that-contain-borrows) says
