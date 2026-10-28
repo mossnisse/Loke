@@ -103,9 +103,9 @@ Locals and parameters now behave alike. The through-reborrows, path-tagged uses,
 and kept-copy pass that parameters needed are gone, and so are the two
 reported gaps. A generated matrix,
 [borrow_matrix_test.odin](tests/borrow_matrix_test.odin), crosses ten place
-forms with a copy, a payload binding, or a read-only or mutable borrow, and
-twelve uses beside each, against a model of the rules written apart from the
-compiler.
+forms with a copy, a payload binding, a read-only or mutable borrow, slice,
+or traversal, and sixteen uses beside each, in straight-line code, a branch,
+or a loop, against a model of the rules written apart from the compiler.
 
 The second migration gives a switch over a place reached through carriers a
 hold of that place, which a write through any carrier naming the same storage
@@ -141,11 +141,16 @@ Still open:
 - **Caller storage contents.** A store through a parameter does not replace
   what its caller slot holds, so a later load still sees the incoming value's
   loans. Storage below the second load is one slot unless every storage on the
-  way holds exactly one carrier.
-- **Matrix coverage.** Loops, branches, slices taken through a place, and
-  `foreach` traversal are not crossed yet. Each needs legal
-  controls beside its rejections, and equivalent forms should agree only where
-  evaluation order, ownership, and temporary lifetimes are unchanged.
+  way holds exactly one carrier. A store through any carrier joins what it
+  stores rather than replacing it, even where the carrier names one known
+  place, and through a parameter it joins into the parameter itself, which is
+  how a later load through it sees the stored carrier;
+  [known-gaps.md](known-gaps.md) records two rejections these cause.
+- **Matrix coverage.** Slices and traversals are taken of a fixed array, so
+  no use beside them reallocates storage, and nothing leaves a traversal or a
+  loop early with `break` or `return`. A loop that takes afresh is the one
+  shape whose legality differs from straight-line code's: an earlier
+  iteration's store changes what the place holds.
 
 Language changes should be evaluated separately. The proposed
 [written public borrow contracts](#public-borrow-contracts-should-stand-on-their-own)

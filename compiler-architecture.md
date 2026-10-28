@@ -1034,7 +1034,7 @@ reclamation. The integration harness is in `tests/`:
 | `tutorial_test.odin` | Programs, auxiliary files, outputs, panics, and diagnostics extracted from tutorial fences. |
 | `runtime_test.odin` | Runtime-header ABI agreement and concurrent runtime-cache creation/reuse. |
 | `checker_fuzz_test.odin` | Deterministic source mutation; failures reduced and saved under `tests/tmp/fuzz/`. |
-| `borrow_matrix_test.odin` | Generated programs crossing place forms with mutable copies, payload bindings, and the uses beside them, judged against `matrix_expected`, a model of the reborrow rules written apart from the compiler. |
+| `borrow_matrix_test.odin` | Generated programs crossing place forms with mutable copies, payload bindings, borrows, slices, and traversals, and the uses beside them in straight-line code, branches, and loops, judged against `matrix_expected`, a model of the reborrow rules written apart from the compiler; `matrix_known_gap` lists the cases `known-gaps.md` records. |
 
 `every_diagnostic_code_is_pinned` requires each diagnostic to have a test or a
 reasoned entry in `UNPINNED` in `tests/corpus_test.odin`. Fuzzer failures become
