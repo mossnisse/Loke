@@ -20,8 +20,10 @@ may reject previously accepted code; include an upgrade note for that break.
 These rules apply to every release:
 
 - Keep `lokec.exe`, `loke-lsp.exe`, `base/`, `core/`, and `runtime/` from the
-  same release.
-  Do not mix compiled objects from different compiler releases.
+  same release. Do not mix compiled objects from different compiler releases.
+- The [VS Code extension](editors/vscode/README.md) ships in the bundle but is
+  not versioned with it: its `package.json` version stays `0.1.0`, which its
+  install commands name.
 - The platform C ABI is preserved. Generated code, non-C-ABI layout, runtime
   symbols, optimization results, diagnostic wording, and
   [inspection output](compiler-guide.md#inspecting-a-compilation) may change.
@@ -31,7 +33,10 @@ These rules apply to every release:
   [standard-library.md](standard-library.md); unspecified behavior is excluded.
 
 Only the latest release is supported; fixes ship as patches, with no backports.
-Record the required Odin version in [Building from source](readme.md#building-from-source).
+The required Odin version is recorded in three places that change together:
+[Building from source](readme.md#building-from-source), the Odin install step
+of [ci.yml](.github/workflows/ci.yml), and the same step of
+[release.yml](.github/workflows/release.yml).
 
 ## Upgrade notes
 
@@ -42,17 +47,19 @@ become the release's upgrade notes.
 
 ## Release checklist
 
-1. Confirm `main` is green in CI and [known-gaps.md](known-gaps.md) lists no gaps.
-   Choose `X.Y.Z` using the [version policy](#version-policy).
+1. Confirm `main` is green in CI and that the `## Gaps` section of
+   [known-gaps.md](known-gaps.md) reads exactly `None.`; the release workflow
+   checks that text and refuses anything else. Choose `X.Y.Z` using the
+   [version policy](#version-policy).
 2. Rename **Unreleased** in [CHANGELOG.md](CHANGELOG.md) to
    `[X.Y.Z] - YYYY-MM-DD`, add an empty **Unreleased** above it, and check the
    upgrade notes.
 3. Update `LOKE_VERSION_STRING` in [src/build_config.odin](src/build_config.odin)
    and the `static_assert(LOKE_VERSION == ...)` in
    [src/front_end_test.odin](src/front_end_test.odin) to `X.Y.Z`.
-4. Commit, push to `main`, and wait for CI. Review its Performance summary
-   against the previous release's `perf.json`: slowdowns do not fail CI, so
-   explain or fix regressions before tagging.
+4. Commit, push to `main`, and wait for CI. Its Performance summary compares
+   the run with the latest release's `perf.json`. Slowdowns do not fail CI, so
+   explain or fix any it shows before tagging.
 5. Tag the tested commit with `git tag -a vX.Y.Z -m "Loke X.Y.Z"`, then
    `git push origin vX.Y.Z`.
 6. Wait for the [Release workflow](.github/workflows/release.yml), then check
