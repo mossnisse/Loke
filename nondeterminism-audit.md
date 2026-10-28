@@ -161,14 +161,13 @@ call on another processor. That behavior is explicitly documented under
 
 ## Implementation gap and audit follow-ups
 
-1. **P1 — existing borrow-checker soundness gap.**
-   [known-gaps.md](known-gaps.md#growing-a-container-two-pointers-away-during-its-own-traversal-compiles)
-   contains a minimal program in which a `foreach` traverses a dynamic array
-   through one nested pointer while another nested pointer appends to it.
-   The compiler accepts it although the append may reallocate storage the loop
-   still traverses. Fix the provenance reborrow at the unnamed inner pointer
-   and add a regression rejection case. This audit did not execute the bad
-   program or observe a crash.
+1. **P1 — remaining borrow-checker soundness gap.** Commits `43a148bf` and
+   `3b283d13` reject the stored and traversal view cases found during this
+   audit, and suspend a stored copy of an inner pointer. Two temporary copies
+   of the same inner pointer can still be passed as mutable arguments to one
+   call; one may invalidate a view held through the other. See the minimal
+   reproduction in
+   [known-gaps.md](known-gaps.md#two-mutable-arguments-copied-through-one-pointer-can-alias).
 2. **P2 — invalid representations and `---`: resolved.**
    [Invalid representations](design.md#invalid-representations) makes a value
    whose bits are not a representation of its type, and a read of storage
