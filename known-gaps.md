@@ -7,6 +7,33 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
+### Removing a file link deletes the link, contrary to the filesystem contract
+
+[Filesystem operations](standard-library.md#filesystem-operations) says every
+operation except `metadata` and directory enumeration goes through a reparse
+point to its target, while also explicitly exempting `remove_directory` on a
+junction. `fs.remove` calls Windows `DeleteFileW`, which deletes a file
+symbolic link itself and leaves its target. On a Windows machine allowed to
+create a file link, this reproduces the difference:
+
+```powershell
+Set-Content target.txt original
+cmd /c mklink link.txt target.txt
+```
+
+```loke
+package main;
+import "core:fmt";
+import "core:fs";
+main :: proc() {
+    _ = fs.remove("link.txt");
+    fmt.println(fs.exists("target.txt") or_else false); // true: target remains
+}
+```
+
+Specify link behavior per operation, including `remove` and `rename`, rather
+than claiming that every remaining operation follows a link.
+
 ### A store through a slice parameter joins into the parameter
 
 [Weakening and reborrows](design.md#weakening-and-reborrows) borrows a place

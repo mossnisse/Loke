@@ -6,6 +6,18 @@ Design rationale and differences from Odin are recorded in [comments.md](comment
 
 The current behavior inventory is in [Nondeterminism and undefined behavior audit](nondeterminism-audit.md).
 
+## Invalid `typeid` representations
+
+[Invalid representations](design.md#invalid-representations) says a `typeid`
+identifying no program type is invalid and producing it is undefined behavior.
+But [Zero values](design.md#zero-values) makes the zero, invalid ID a safe
+`typeid{}`, and [`type` and `typeid`](design.md#type-and-typeid) promises that
+`type_info_of` returns the `Invalid` entry for both zero and an ID no type has.
+The existing `m6a_type_info` run case also forges ID 999999 and checks that
+result. Decide whether zero and out-of-range IDs are valid `typeid` values,
+or narrow the total lookup guarantee and its test. Zero must remain valid if
+`typeid{}` remains a safe zero value.
+
 ## JSON follow-ups
 
 [`core:encoding/json`](standard-library.md#coreencodingjson) implements the
