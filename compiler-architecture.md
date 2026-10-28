@@ -380,6 +380,24 @@ A switch payload binding over a place uses the carrier stored there whenever
 the binding is used (`prov_note_view_use`), and a carrier handed to a call
 uses every mutable carrier it reaches (`prov_use_reached`).
 
+A borrow, slice, or `foreach` of a place reached through carriers reborrows
+each carrier it goes through for that place only: a placed reborrow (`Prov_Reborrow.placed`)
+records the path below the carrier's pointee, the carriers named or loaded on
+the way included (`prov_hops_path`). The reborrow of the carrier the place is
+in is taken where the borrow is stored or passed on, so the borrow returns,
+beside that carrier, an empty marker slot naming it and the path
+(`prov_place_markers`); a switch's `&mut` binding, which views the carrier
+rather than reborrowing it, ignores the marker. The place walk tags its read of
+the outermost named carrier, and each load of an inner one, with the path the
+access goes on to (`Prov_Event.placed`), and a placed use at a path disjoint
+from a placed reborrow's is not suspended by it. Every other use of the
+carrier, as copying it or passing it to a call, is untagged and conflicts as
+before. A use of a switch binding over such a place is placed at its payload. A
+compound assignment or `inout` receiver, which reads its place as a value,
+reads the carriers again as written through (`prov_write_through_place`), and a
+mutable borrow weakened to a read-only destination makes its walk's reads
+read-only, as it settles its `.Through` (`Prov_Slot.walk_lo`).
+
 A switch over a place reached through carriers cannot borrow a root, since
 which storage they name is known only to the solve. It holds the place
 instead (`prov_hold_place`): a snapshot slot of the carriers, at the path below

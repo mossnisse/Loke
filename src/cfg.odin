@@ -245,6 +245,14 @@ Prov_State :: struct {
 	// The payload holds of switches over places reached through carriers
 	// (`prov_hold_place`).
 	holds:          [dynamic]Prov_Hold,
+	// Set for the one carrier `prov_read_ident` reads next: the path below its
+	// pointee of the one place an access goes on to (`prov_reach_hop`).
+	place_use:      bool,
+	place_use_path: []Proj_Step,
+	// Otherwise empty slots a borrow of one place returns beside the carriers
+	// it goes through, each naming one of them and the path below its pointee,
+	// so a reborrow of that carrier takes only the place (`prov_place_markers`).
+	place_markers:  map[int]Prov_Place_Marker,
 	entry_defs:     [dynamic]Prov_Entry_Def,
 	root_by_symbol: map[Symbol_Id]Root_Id,
 	root_by_storage: map[Storage_Id]Root_Id,
@@ -439,6 +447,7 @@ new_flow_graph :: proc(k: ^Checker, literal: ^Expr_Proc, allocator: mem.Allocato
 		graph.step_views = make(map[Symbol_Id]bool, 8, allocator)
 		graph.lent_aliases = make(map[int][]int, 8, allocator)
 		graph.caller_slots = make(map[Loan_Id][]int, 4, allocator)
+		graph.place_markers = make(map[int]Prov_Place_Marker, 4, allocator)
 		graph.receiver_content = make(map[^Expr_Call][]int, 2, allocator)
 		graph.fresh_slots = make(map[int]bool, 2, allocator)
 		graph.content_by_symbol = make(map[Symbol_Id][]int, 8, allocator)
@@ -1930,7 +1939,8 @@ foreach_reborrow_through_carrier :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach, p
 	if type_is_carrier(graph.k.c, prov_type(graph, source)) {
 		return nil
 	}
-	return prov_reborrow_outer_carriers(graph, source, expr_span(s.iterable), place_loop)
+	// Only the source is traversed, so another field beside it stays usable.
+	return prov_reborrow_outer_carriers(graph, source, expr_span(s.iterable), place_loop, placed = true)
 }
 
 @(private = "file")

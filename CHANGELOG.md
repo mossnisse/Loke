@@ -10,6 +10,14 @@ checklist.
 
 ### Breaking changes
 
+- A compound assignment through a pointer, as `h^.count += 1`, while a
+  borrow of the same place, as `count := &h^.count`, is still in use is now
+  rejected with `L0641`, as a plain store already was
+  ([Weakening and reborrows](design.md#weakening-and-reborrows)). Before, it
+  compiled, and the read-only borrow saw the place change. Upgrade by
+  finishing with the borrow first, or by updating through it when it is
+  mutable.
+
 - A view of a lent `foreach` element over a source reached through a pointer
   now borrows that source, as
   [Borrowing iteration](design.md#borrowing-iteration) requires. Changing the
@@ -235,6 +243,16 @@ checklist.
 
 ### Changed
 
+- A borrow of a place reached through a pointer, as `&mut h^.count` or
+  `h^.items[:]`, now reborrows the pointer for that place only, so another
+  field stays usable while the borrow is in use: `h^.total += 1` beside
+  `count := &mut h^.count` now compiles, as it does for a local. So does a
+  field reached through a pointer to that pointer, as `p^^.total` beside
+  `&p^^.count`, and another field inside a `foreach` over a field reached
+  through a pointer, as `h^.count = item` in `foreach (item in h^.items)`.
+  Copying the pointer, or passing it to a procedure, still conflicts with the
+  borrow ([Weakening and reborrows](design.md#weakening-and-reborrows)).
+
 - `fs.rename` now returns only once the rename is durable, and
   `fs.File.flush` is documented as making written data durable, which it
   already did.
@@ -249,6 +267,14 @@ checklist.
   ([`core:math`](standard-library.md#coremath)).
 
 ### Fixed
+
+- Three read-only uses through a pointer beside a borrow reached through it
+  are now accepted, as they are for a local
+  ([Weakening and reborrows](design.md#weakening-and-reborrows)): a `switch`
+  binding of another field, as `switch (h^.first)` beside `&h^.count`; a
+  mutable borrow weakened to a read-only parameter, as `peek(&mut h^.count)`;
+  and a pointer copied out to a read-only destination, as `look(p^)` or
+  `held: ^Holder = p^` beside `&p^^.count`.
 
 - `return nil;` in a procedure returning an `Option(^T)` no longer suggests
   `.some(nil)`, which is an error of its own since `nil` is not a `^T`. The

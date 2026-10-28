@@ -1,0 +1,195 @@
+// design.md "Weakening and reborrows": a borrow of a place reached through a
+// pointer reborrows the pointer, and each pointer loaded on the way, for that
+// place only, so other fields stay usable beside it. Copying the pointer, or
+// passing it to a procedure, uses all of what it points to.
+package main;
+
+Node :: struct { value: int }
+Holder :: struct { count: int, total: int, other: ^mut Node, items: [dynamic]int, cells: [2]int }
+
+look :: proc(h: ^Holder) -> int { return h^.total; }
+peek :: proc(n: ^int) -> int { return n^; }
+touch :: proc(h: ^mut Holder) { h^.total += 1; }
+add :: proc(to: ^mut int, n: int) { to^ += n; }
+add_from :: proc(to: ^mut int, from: ^mut int) { to^ += from^; }
+
+same_field :: proc(h: ^mut Holder) -> int {
+	count := &h^.count;
+	h^.count = 2;
+	return count^;
+}
+
+read_beside_mutable :: proc(h: ^mut Holder) {
+	count := &mut h^.count;
+	n := h^.count;
+	count^ = n;
+}
+
+call_beside_mutable :: proc(h: ^mut Holder) {
+	count := &mut h^.count;
+	n := look(h);
+	count^ = n;
+}
+
+call_may_write :: proc(h: ^mut Holder) -> int {
+	count := &h^.count;
+	touch(h);
+	return count^;
+}
+
+copied :: proc(h: ^mut Holder) -> int {
+	count := &h^.count;
+	q := h;
+	q^.total = 2;
+	return count^;
+}
+
+whole :: proc(h: ^mut Holder) -> int {
+	count := &h^.count;
+	all := &mut h^;
+	all^.total = 2;
+	return count^;
+}
+
+two_pointers :: proc(p: ^mut ^mut Holder) -> int {
+	count := &p^^.count;
+	p^^.count = 2;
+	return count^;
+}
+
+loaded_copy :: proc(p: ^mut ^mut Holder) -> int {
+	count := &p^^.count;
+	q := p^;
+	q^.total = 2;
+	return count^;
+}
+
+sliced :: proc(h: ^mut Holder) -> int {
+	items := h^.items[:];
+	h^.items.append(1);
+	return items[0];
+}
+
+dynamic_index :: proc(h: ^mut Holder, i: int) {
+	cell := &mut h^.cells[0];
+	h^.cells[i] = 2;
+	cell^ = 1;
+}
+
+compound :: proc(h: ^mut Holder) -> int {
+	count := &h^.count;
+	h^.count += 1;
+	return count^;
+}
+
+read_only_copy_then_write :: proc(p: ^mut ^mut Holder) -> int {
+	held: ^Holder = p^;
+	p^^.count = 2;
+	return held^.count;
+}
+
+replaced_during_traversal :: proc(h: ^mut Holder) {
+	foreach (item in h^.items) {
+		h^.items = [dynamic]int{item};
+	}
+}
+
+argument_twice :: proc(h: ^mut Holder) {
+	add_from(&mut h^.count, &mut h^.count);
+}
+
+argument_read :: proc(h: ^mut Holder) {
+	add(&mut h^.count, h^.count);
+}
+
+// Legal: other fields, read-only borrows beside each other, and uses after
+// the borrow is done.
+beside :: proc(h: ^mut Holder) -> int {
+	count := &mut h^.count;
+	h^.total += 1;
+	total := &mut h^.total;
+	total^ += 1;
+	h^.other^.value = 2;
+	cell := &mut h^.cells[0];
+	h^.cells[1] = 3;
+	cell^ = h^.cells[1];
+	count^ += h^.total;
+	return h^.count;
+}
+
+beside_read_only :: proc(h: ^mut Holder) -> int {
+	count := &h^.count;
+	again := &h^.count;
+	h^.total = look(h) + count^;
+	return again^;
+}
+
+beside_slice :: proc(h: ^mut Holder) -> int {
+	items := h^.items[:];
+	h^.count += 1;
+	return items[0] + h^.count;
+}
+
+two_pointers_beside :: proc(p: ^mut ^mut Holder) -> int {
+	count := &mut p^^.count;
+	p^^.total = 2;
+	p^^.other^.value = 3;
+	count^ += 1;
+	return p^^.count;
+}
+
+three_pointers_beside :: proc(p: ^mut ^mut ^mut Holder) -> int {
+	count := &mut p^^^.count;
+	p^^^.total = 2;
+	count^ += 1;
+	return p^^^.count;
+}
+
+arguments_beside :: proc(h: ^mut Holder) {
+	add(&mut h^.count, h^.total);
+	add_from(&mut h^.count, &mut h^.total);
+}
+
+compound_beside :: proc(h: ^mut Holder) -> int {
+	count := &h^.count;
+	h^.total += 1;
+	return count^;
+}
+
+// A mutable borrow weakened to a read-only parameter only reads, as one of a
+// local does, and so does a pointer copied out to a read-only destination.
+weakened :: proc(h: ^mut Holder, p: ^mut ^mut Holder) -> int {
+	count := &h^.count;
+	inner := &p^^.count;
+	return peek(&mut h^.count) + peek(&mut p^^.count) + count^ + inner^;
+}
+
+read_only_copies :: proc(p: ^mut ^mut Holder) -> int {
+	count := &p^^.count;
+	held: ^Holder = p^;
+	again: ^Holder = p^;
+	return look(p^) + held^.count + again^.total + count^;
+}
+
+// A traversal of one field leaves the others usable.
+traversal_beside :: proc(h: ^mut Holder) {
+	foreach (item in h^.items) {
+		h^.count = item;
+		h^.total += item;
+	}
+	foreach (&mut item in h^.items) {
+		item += h^.count;
+	}
+}
+
+local_beside :: proc() -> int {
+	n := Node{1};
+	held := Holder{0, 0, &mut n, [dynamic]int{}, [2]int{}};
+	h := &mut held;
+	count := &mut h^.count;
+	h^.total = 2;
+	count^ = 3;
+	return held.count;
+}
+
+main :: proc() {}

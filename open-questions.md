@@ -102,9 +102,10 @@ parameter's caller storage slots of its own. It is described in
 Locals and parameters now behave alike. The through-reborrows, path-tagged uses,
 and kept-copy pass that parameters needed are gone, and so are the two
 reported gaps. A generated matrix,
-[borrow_matrix_test.odin](tests/borrow_matrix_test.odin), crosses eight place
-forms with a copy or a payload binding and twelve uses beside it, against a
-model of the rules written apart from the compiler.
+[borrow_matrix_test.odin](tests/borrow_matrix_test.odin), crosses ten place
+forms with a copy, a payload binding, or a read-only or mutable borrow, and
+twelve uses beside each, against a model of the rules written apart from the
+compiler.
 
 The second migration gives a switch over a place reached through carriers a
 hold of that place, which a write through any carrier naming the same storage
@@ -112,17 +113,23 @@ at an overlapping path conflicts with, resolved while solving
 (`prov_hold_place`, `.Through`). That closed the remaining gap, a store or
 call through the pointer replacing the payload a binding views.
 
+The third makes a borrow, slice, or `foreach` of a place reached through
+carriers, as `&h^.count` or `p^^.items[:]`, reborrow each carrier it goes
+through for that place only (`Prov_Reborrow.placed`), so another field stays
+usable beside it, as it does beside a borrow of a local's field.
+
 Still open:
 
-- **Place loans through carriers.** Only a switch holds a place reached
-  through carriers. A borrow, as `&h^.first`, still reborrows the outermost
-  named carrier whole (`prov_reborrow_outer_carriers`), so beside it a store
-  through a sibling pointer, as `h^.other^.value = 2`, is rejected while one
-  through a pointer loaded on the way, as `p^` in `&p^^.first`, is checked
-  only by that load. A hold for `&` would tell those apart, but needs a
-  mutable form, which excludes reads too. Holds are matched by shared loan,
-  so a slice's elements are one place: a write to `s[1].first` conflicts with
-  a switch over `s[0].first`.
+- **Place loans through carriers.** Two mechanisms now answer one question:
+  a switch's hold is matched by shared loan against a write through any
+  carrier, and a borrow's placed reborrow by slot against uses of the
+  carriers it went through, so a copy of the carrier, as `q := h`, conflicts
+  with a borrow but not with a switch. One placed form for both would say
+  which is right. Only an identifier's read and an inner carrier's load are
+  placed, so a carrier read out of a local's field, as `s.h` for
+  `&s.h^.count`, is used whole beside the borrow. A view's elements are one
+  place: `&mut s[0]` suspends `s[1]`, and a write to `s[1].first` conflicts
+  with a switch over `s[0].first`.
 - **Calls.** A carrier handed to a call uses every mutable carrier it reaches.
   A per-parameter summary of what a body uses through each parameter could
   narrow that, as written-argument regions already do for stores.
@@ -135,8 +142,8 @@ Still open:
   what its caller slot holds, so a later load still sees the incoming value's
   loans. Storage below the second load is one slot unless every storage on the
   way holds exactly one carrier.
-- **Matrix coverage.** Loops, branches, read-only capability, `&` borrows,
-  slices, and `foreach` traversal are not crossed yet. Each needs legal
+- **Matrix coverage.** Loops, branches, slices taken through a place, and
+  `foreach` traversal are not crossed yet. Each needs legal
   controls beside its rejections, and equivalent forms should agree only where
   evaluation order, ownership, and temporary lifetimes are unchanged.
 
@@ -150,6 +157,11 @@ rebuilding it for every path. A first attempt (2026-10-28), storing
 [switch_place_through_pointer.loke](tests/err/switch_place_through_pointer.loke).
 The cause was not found, and no other code changed, so the crash may expose a
 stale read elsewhere; find it before trying again.
+
+The generated [borrow matrix](tests/borrow_matrix_test.odin) still calls
+`matrix_known_gap`, which now always returns `""`, and retains a conditional
+that cannot run. Remove the function and that branch; compare every case
+directly with `matrix_expected` until a real gap needs an explicit exception.
 
 Language changes should be evaluated separately. The proposed
 [written public borrow contracts](#public-borrow-contracts-should-stand-on-their-own)

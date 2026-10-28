@@ -264,9 +264,13 @@ Prov_Slot :: struct {
 	// The `.Through` event of a mutable borrow through carriers, which this
 	// otherwise empty slot stands for, so a read-only destination can settle
 	// it as it does a fresh loan's access (`prov_reborrow`). The index is -1
-	// when there is none.
+	// when there is none. The borrow's reads of the carriers it goes through
+	// are the events from `walk_lo` up to `walk_hi` in the same block, which
+	// that destination makes reads only.
 	through_block: Block_Id,
 	through_index: int,
+	walk_lo:       int,
+	walk_hi:       int,
 	// One more than the index of the payload hold this slot carries, as its
 	// snapshot or a carrier copied from one; zero for none.
 	hold: int,
@@ -300,6 +304,18 @@ Prov_Reborrow :: struct {
 	// back into one of them, as `cur = cur^.next` does, replaces that
 	// carrier's value rather than holding a second path to `source`.
 	via: []int,
+	// A borrow of one place reached through `source`, as `&h^.count`, at
+	// `path` below its pointee: a use of `source` for a place that does not
+	// overlap it is not suspended (design.md "Weakening and reborrows").
+	placed: bool,
+	path:   []Proj_Step,
+}
+
+// A borrow of the place at `path` below the pointee of `carrier`, which a
+// reborrow of `carrier` taken from the borrow is for (`prov_place_markers`).
+Prov_Place_Marker :: struct {
+	carrier: int,
+	path:    []Proj_Step,
 }
 
 // design.md "Switch ownership": a switch over `place`, reached through
@@ -4551,6 +4567,9 @@ live_reborrow_of :: proc(state: ^Prov_State, source: int, live: []bool, use: Pro
 		// read-only one is read-only too. A severed one was taken from an
 		// earlier value of a fresh source.
 		if reborrow.source != source || reborrow.passes_on || (use.reads_only && !reborrow.mutable) || (index < len(state.severed) && state.severed[index]) {
+			continue
+		}
+		if reborrow.placed && use.placed && !paths_overlap(reborrow.path, use.place) {
 			continue
 		}
 		clear(&pending)

@@ -5646,6 +5646,28 @@ bump :: proc(xs: []mut int) {
 }
 ```
 
+A borrow of a place reached through a carrier, as `&h^.count` or
+`h^.items[:]`, or a traversal of one, as `foreach (item in h^.items)`,
+reborrows that carrier, and each carrier loaded on the way, as `p^` for
+`&p^^.count`, for that place only. While the borrow is in
+use, the carrier may still be used for a place that does not
+[overlap](#places-and-overlap) it, such as another field. Copying the carrier,
+or passing it to a procedure, uses all of what it points to. A view's elements
+count as one place here, so `&mut xs[0]` still suspends `xs[1]`:
+
+```loke
+Counter :: struct { count: int, total: int }
+
+look :: proc(c: ^Counter) -> int { return c^.total; }
+
+tally :: proc(c: ^mut Counter) {
+	count := &mut c^.count;  // a mutable reborrow of `c` for `c^.count`
+	c^.total += 1;           // OK: another field
+	look(c);                 // ERROR: the call may read `c^.count`
+	count^ += 1;
+}
+```
+
 Storing a carrier into itself, as `xs = xs[1:]`, suspends nothing. Nor does storing a carrier copied out through another carrier back into that one, as `cur = cur^.next`: the copy becomes that carrier's value. An allocator or other region provider is not reborrowed by a copy: its copies share it by design.
 
 A carrier copied out of storage reborrows the carrier stored there, wherever that storage is: in a local, or reached through a pointer, a parameter included. Reading or writing through the stored carrier, copying it again, or borrowing the place that holds it is a use of it; another field beside it, and storing a new carrier into its place, are not. Passing a carrier to a procedure lets the callee use what is stored where it points, so the call uses each mutable carrier reachable through it:

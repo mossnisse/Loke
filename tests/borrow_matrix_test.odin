@@ -1,8 +1,8 @@
-// A generated matrix of mutable copies out of a place and the uses beside
-// them (design.md "Weakening and reborrows", "Switch ownership"). Each program
-// takes a mutable carrier out of `head` or `first` of a `List`, reached through
-// one of several place forms, does one thing beside it, and maybe uses the copy
-// again. Whether that is legal comes from `matrix_rejects`, a model of the
+// A generated matrix of mutable copies out of a place, borrows of one, and
+// the uses beside them (design.md "Weakening and reborrows", "Switch
+// ownership"). Each program takes a mutable carrier out of `head` or `first`
+// of a `List`, or borrows its `count`, reached through one of several place
+// forms, does one thing beside it, and maybe uses what it took again. Whether that is legal comes from `matrix_rejects`, a model of the
 // rules written apart from the compiler, never from its output, so a form the
 // compiler handles differently from the others shows up as a disagreement.
 // Every case is one procedure, and a compile checks a whole place form at once.
@@ -47,10 +47,11 @@ MATRIX_PLACES := [?]Matrix_Place {
 	{"param_read_only_two_pointers", "p: ^^List", "", "p^^", "p^", true},
 }
 
-// How the mutable carrier is taken: copied out of `head`, or bound as the
-// payload of `first` by a switch over the place.
+// What is taken: a mutable carrier copied out of `head`, or bound as the
+// payload of `first` by a switch over the place, or a read-only or mutable
+// borrow of `count`.
 @(private = "file")
-Matrix_Take :: enum { Copy, Binding }
+Matrix_Take :: enum { Copy, Binding, Borrow, Borrow_Mut }
 
 // What happens beside the carrier taken. `before` runs between its first use
 // and the later one; `after` runs after the later one, keeping anything
@@ -87,13 +88,19 @@ MATRIX_USES := [?]Matrix_Use {
 // carrier, so it is suspended in turn by a copy of that carrier still in use,
 // and the switch borrows the place, which a call given a mutable pointer to
 // it may write, as storing into the place does (design.md "Switch
-// ownership"). The code the rejection is reported with, or "" when the case is
-// legal.
+// ownership"). A borrow of `count` reborrows the carriers it goes through for
+// that field only: writing it, handing it on mutably, or handing the `List`
+// to a call that may write it, conflicts with the borrow, and a mutable
+// borrow excludes a call that may read it too; the other fields stay free.
+// The code the rejection is reported with, or "" when the case is legal.
 @(private = "file")
-matrix_expected :: proc(take: Matrix_Take, use: Matrix_Use, later: bool) -> string {
+matrix_expected :: proc(place: Matrix_Place, take: Matrix_Take, use: Matrix_Use, later: bool) -> string {
 	if !later {
 		return ""
 	}
+	// A local's own loan conflicts with an access to it; through a pointer, a
+	// reborrow of the pointer is what conflicts.
+	conflict := place.name == "local" ? "L0511" : "L0641"
 	switch take {
 	case .Copy:
 		switch use.name {
@@ -106,6 +113,16 @@ matrix_expected :: proc(take: Matrix_Take, use: Matrix_Use, later: bool) -> stri
 			return "L0641"
 		case "pass_whole", "replace_first":
 			return "L0511"
+		}
+	case .Borrow:
+		switch use.name {
+		case "write_count", "pass_whole", "pass_sibling":
+			return conflict
+		}
+	case .Borrow_Mut:
+		switch use.name {
+		case "write_count", "pass_whole", "pass_sibling", "pass_read":
+			return conflict
 		}
 	}
 	return ""
@@ -120,19 +137,23 @@ matrix_known_gap :: proc(place: Matrix_Place, take: Matrix_Take, use: Matrix_Use
 }
 
 // `replace_head` and the uses of `head` say nothing about a binding of
-// `first`, and the option copy and view say nothing about a copy of `head`.
-// A read-only place cannot be written or handed on as a mutable pointer.
+// `first`, and the option copy and view say nothing about a copy of `head`;
+// beside a borrow of `count`, both are other fields. A read-only place cannot
+// be written, borrowed mutably, or handed on as a mutable pointer.
 @(private = "file")
 matrix_applies :: proc(place: Matrix_Place, take: Matrix_Take, use: Matrix_Use) -> bool {
+	if take == .Borrow_Mut && place.read_only {
+		return false
+	}
 	switch use.name {
 	case "write_count", "replace_first", "pass_whole", "pass_sibling":
 		return !place.read_only
 	case "copy_same_option", "second_view":
-		return take == .Binding
+		return take != .Copy
 	case "store_through_same", "read_through_same", "copy_same":
-		return take == .Copy
+		return take != .Binding
 	case "replace_head":
-		return take == .Copy && !place.read_only
+		return take != .Binding && !place.read_only
 	}
 	return true
 }
@@ -185,11 +206,22 @@ matrix_program :: proc(place: Matrix_Place, take: Matrix_Take, cases: ^[dynamic]
 			if place.setup != "" {
 				line(&b, &lines, fmt.tprintf("\t%s", place.setup))
 			}
-			uses := fmt.tprintf("\tnode^.value = 0;\n\t%s\n\t%s\n\t%s",
-				matrix_expand(use.before, place), later ? "node^.value = 1;" : "", matrix_expand(use.after, place))
+			first, again := "node^.value = 0;", "node^.value = 1;"
+			#partial switch take {
+			case .Borrow:
+				first, again = "sink(taken^);", "sink(taken^);"
+			case .Borrow_Mut:
+				first, again = "taken^ = 0;", "taken^ = 1;"
+			}
+			uses := fmt.tprintf("\t%s\n\t%s\n\t%s\n\t%s",
+				first, matrix_expand(use.before, place), later ? again : "", matrix_expand(use.after, place))
 			switch take {
 			case .Copy:
 				line(&b, &lines, fmt.tprintf("\tnode := %s.head;", place.base))
+				line(&b, &lines, uses)
+				lines += 3
+			case .Borrow, .Borrow_Mut:
+				line(&b, &lines, fmt.tprintf("\ttaken := &%s%s.count;", take == .Borrow_Mut ? "mut " : "", place.base))
 				line(&b, &lines, uses)
 				lines += 3
 			case .Binding:
@@ -275,7 +307,7 @@ borrow_matrix :: proc(t: ^testing.T) {
 		}
 		errors := matrix_errors(string(job.stderr))
 		for entry in program.cases {
-			expected := matrix_expected(program.take, entry.use, entry.later)
+			expected := matrix_expected(program.place, program.take, entry.use, entry.later)
 			gap := matrix_known_gap(program.place, program.take, entry.use, entry.later)
 			if gap != "" {
 				expected = ""
