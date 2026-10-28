@@ -182,8 +182,8 @@ stand-in, and later fixes patched them:
   it is of. A call handed `&mut h^.count`, or a record holding it, would write
   all of `h^`, and `prov_unsaid_writes` reconstructs the borrow's path from
   the argument's `Def`s; `Prov_Slot.through_carriers` serves it. The
-  conditional record gap in [known-gaps.md](known-gaps.md) is a shape it does
-  not reconstruct.
+  [conditional record gap](known-gaps.md#a-conditional-record-argument-loses-its-borrows-own-path)
+  is a shape it does not reconstruct.
 - A mutable borrow weakened at its destination must retract its `.Through`
   and make its walk's reads read only (`through_block`, `through_index`,
   `walk_reads`).
@@ -205,7 +205,7 @@ the carriers, the path below their pointee extended by their offset, and
 whether it reads, writes, or uses the carrier whole, which a copy or a
 call argument does with its destination's capability. The solve checks each
 access against the live place loans sharing a loan with its carriers at an
-overlapping path, as `check_held_place` checks writes now, and skips the
+overlapping path, as `check_place_loans` checks writes now, and skips the
 place loan the accessing carriers derive from.
 
 It would remove the placed reborrows, the use tags, the marker slots, the
@@ -233,7 +233,8 @@ slot read.
 the parent commit: holds as place loans, with no change in behavior (done:
 `Prov_Place_Loan` records its capability and what it lends); offsets
 on slots, with calls writing at an argument's offset and `prov_unsaid_writes`
-removed, which should close the conditional record gap; borrows, slices, and
+removed (done: `Prov_Slot.offset`, found from the marker slots until borrows
+are place loans too, which closed the conditional record gap); borrows, slices, and
 traversals as place loans, removing the placed reborrows, tags, and markers,
 with decision 1; then weakening as clearing a place loan's capability. Each
 access now checks the live place loans, as writes check holds; measure the

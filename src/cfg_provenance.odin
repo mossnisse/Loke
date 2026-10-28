@@ -367,8 +367,9 @@ prov_place_loan :: proc(graph: ^Flow_Graph, carriers: []int, path: []Proj_Step, 
 	span := expr_span(place)
 	slot := prov_temp_slot(graph)
 	prov_emit(graph, Prov_Event{kind = .Def, slot = slot, loan = NO_LOAN, sources = carriers, span = span})
+	offset, _ := prov_value_offset(graph, carriers)
 	append(&graph.place_loans, Prov_Place_Loan {
-		slot = slot, path = path, mutable = mutable, what = what, span = span,
+		slot = slot, path = prov_concat_path(graph, offset, path), mutable = mutable, what = what, span = span,
 		place = graph.k.c.sources[span.file].text[span.lo:span.hi], derived = make([dynamic]int, graph.alloc),
 	})
 	graph.prov_slots[slot].place_loan = len(graph.place_loans)
@@ -376,14 +377,17 @@ prov_place_loan :: proc(graph: ^Flow_Graph, carriers: []int, path: []Proj_Step, 
 }
 
 // A write through `carriers` at `path` below their pointee, which a place
-// loan of the same storage forbids (`prov_place_loan`). The event's index in
-// the current block, or -1 when none is emitted.
+// loan of the same storage forbids (`prov_place_loan`). A carrier that is a
+// borrow of a place, as `count` for `count := &mut h^.count`, writes below
+// that place (`prov_value_offset`). The event's index in the current block,
+// or -1 when none is emitted.
 @(private = "file")
 prov_write_through :: proc(graph: ^Flow_Graph, carriers: []int, path: []Proj_Step, span: Span, verb: string) -> int {
 	if len(graph.place_loans) == 0 || len(carriers) == 0 || graph.current == NO_BLOCK {
 		return -1
 	}
-	prov_emit(graph, Prov_Event{kind = .Through, into = carriers, path = path, span = span, verb = verb})
+	offset, _ := prov_value_offset(graph, carriers)
+	prov_emit(graph, Prov_Event{kind = .Through, into = carriers, path = prov_concat_path(graph, offset, path), span = span, verb = verb})
 	return len(graph.blocks[graph.current].prov) - 1
 }
 
@@ -507,7 +511,62 @@ prov_emit :: proc(graph: ^Flow_Graph, event: Prov_Event) {
 			graph.has_region_event ||= !region_is_empty(content.region)
 		}
 	}
+	if event.kind == .Def {
+		prov_note_offset(graph, event.slot, event.sources)
+	}
 	append(&graph.blocks[graph.current].prov, event)
+}
+
+// The path below the storage `slots` name that a value made of them points
+// at (`Prov_Slot.offset`): a carrier with a marker beside it naming it, or a
+// reborrow of the carrier it names, as a lent argument or record field holds,
+// is at the marker's place below its own offset, and the slots standing for
+// no storage, the markers and a mutable borrow's write, take no part. False
+// when no slot names storage.
+@(private)
+prov_value_offset :: proc(graph: ^Flow_Graph, slots: []int) -> ([]Proj_Step, bool) {
+	out: []Proj_Step
+	found := false
+	for slot in slots {
+		entry := graph.prov_slots[slot]
+		if slot in graph.place_markers || entry.through_block != NO_BLOCK {
+			continue
+		}
+		at := entry.offset
+		path, placed := prov_marked_place(graph, slots, slot)
+		if !placed {
+			path, placed = prov_marked_reborrow(graph, slots, slot)
+		}
+		if placed {
+			at = prov_concat_path(graph, at, path)
+		}
+		out = found ? prov_common_prefix(out, at) : at
+		found = true
+	}
+	return out, found
+}
+
+// Records what a definition of `slot` from `sources` points at, keeping the
+// prefix it shares with the slot's earlier definitions.
+@(private = "file")
+prov_note_offset :: proc(graph: ^Flow_Graph, slot: int, sources: []int) {
+	at, found := prov_value_offset(graph, sources)
+	if !found {
+		return
+	}
+	entry := &graph.prov_slots[slot]
+	entry.offset = entry.offset_set ? prov_common_prefix(entry.offset, at) : at
+	entry.offset_set = true
+}
+
+// The steps `a` and `b` start with alike.
+@(private = "file")
+prov_common_prefix :: proc(a, b: []Proj_Step) -> []Proj_Step {
+	length := 0
+	for length < min(len(a), len(b)) && a[length] == b[length] {
+		length += 1
+	}
+	return a[:length]
 }
 
 @(private = "file")
@@ -4945,6 +5004,24 @@ prov_marked_place :: proc(graph: ^Flow_Graph, slots: []int, slot: int) -> (path:
 	return nil, false
 }
 
+// The place a marker among `slots` names, when `slot` is a reborrow of the
+// carrier it names, as lending the borrow to a call or a record field takes.
+@(private = "file")
+prov_marked_reborrow :: proc(graph: ^Flow_Graph, slots: []int, slot: int) -> (path: []Proj_Step, placed: bool) {
+	for other in slots {
+		marker, found := graph.place_markers[other]
+		if !found {
+			continue
+		}
+		for reborrow in graph.reborrows {
+			if reborrow.derived == slot && reborrow.source == marker.carrier {
+				return marker.path, true
+			}
+		}
+	}
+	return nil, false
+}
+
 // Each loaded mutable carrier in `slots` replaced by a read-only reborrow of it.
 @(private = "file")
 prov_reborrow_read_only :: proc(graph: ^Flow_Graph, slots: []int, span: Span) -> []int {
@@ -4996,8 +5073,15 @@ prov_reborrow_outer_carriers :: proc(
 	if placed && pointee {
 		path = prov_concat_path(graph, prov_extend(graph, path, Proj_Step{kind = .Deref}), below)
 	}
+	offset, _ := prov_value_offset(graph, held)
 	for slot in prov_reborrow_traversal(graph, held, span, mutable, placed, path) {
 		if !slice.contains(held, slot) {
+			// Kept only to suspend the outer carrier for the place, the reborrow
+			// points where the borrow does (`Prov_Slot.offset`).
+			if placed && pointee {
+				graph.prov_slots[slot].offset = prov_concat_path(graph, offset, below)
+				graph.prov_slots[slot].offset_set = true
+			}
 			append(&out, slot)
 		}
 	}
@@ -5248,8 +5332,15 @@ prov_borrow_place :: proc(graph: ^Flow_Graph, operand: Expr, mutable: bool, span
 				entry := &graph.prov_slots[marker]
 				entry.through_block, entry.through_index = graph.current, at
 				entry.walk_reads = walk[:]
-				entry.through_carriers = carriers
 				written = prov_one(graph, marker)
+			}
+			// A carrier loaded on the way, as `p^` for `&mut p^^.count`, which
+			// only this borrow reads, points where the borrow does
+			// (`Prov_Slot.offset`); a named one gets a marker instead.
+			for carrier in carriers {
+				if entry := &graph.prov_slots[carrier]; entry.loaded && entry.symbol == INVALID_SYMBOL {
+					entry.offset, entry.offset_set = prov_concat_path(graph, entry.offset, below), true
+				}
 			}
 			return prov_join(graph, prov_join(graph, prov_place_markers(graph, carriers, below), prov_reborrow_outer_carriers(
 				graph, prov_place_carrier_expr(graph, operand), span, mutable, true, true, below,
@@ -6750,21 +6841,19 @@ prov_call_argument :: proc(
 		actual = prov_read_carrier(graph, argument, true)
 		prov_use_reached(graph, actual, prov_parameter_type(graph, v, index), expr_span(argument))
 	} else {
-		walk_block := graph.current
-		walk_lo := walk_block == NO_BLOCK ? 0 : len(graph.blocks[walk_block].prov)
 		actual = walk_flow_expr(graph, argument)
 		reached := -1
 		if !(index == 0 && has_receiver) {
 			reached = prov_use_reached(graph, actual, prov_parameter_type(graph, v, index), expr_span(argument))
 		}
-		// A callee given a mutable carrier may write what it names, and through
-		// what that holds.
+		// A callee given a mutable carrier may write what it names, below where
+		// the argument points, as `[count]` for `&mut h^.count` or a record
+		// holding it, and through what that holds.
 		if type_carries_borrow(c, prov_parameter_type(graph, v, index)).mutable {
-			written := prov_unsaid_writes(graph, actual, walk_block, walk_lo)
+			prov_write_through(graph, actual, nil, expr_span(argument), "mutable argument")
 			if reached >= 0 {
-				written = prov_join(graph, written, prov_one(graph, reached))
+				prov_write_through(graph, prov_one(graph, reached), nil, expr_span(argument), "mutable argument")
 			}
-			prov_write_through(graph, written, nil, expr_span(argument), "mutable argument")
 		}
 	}
 	param_type := prov_parameter_type(graph, v, index)
@@ -6783,87 +6872,6 @@ prov_call_argument :: proc(
 	}
 	borrowed^ = prov_join(graph, borrowed^, actual)
 	return actual
-}
-
-// What a call given `actual` may write, at the whole of its pointee, beyond
-// what a mutable borrow through carriers made by the argument itself, as
-// `bump(&mut h^.count)` or `bump(Arg{&mut h^.count})`, has said already at
-// its own path (`Prov_Slot.through_carriers`). The argument's events start
-// at `lo` in `block`. A slot counts as said only when it was built there out
-// of such a borrow alone: its markers, the carriers it went through, and
-// copies of those; anything else may name storage the borrow does not. The
-// carriers themselves are said only beside the borrow's marker, as its own
-// value holds them: a record field holding a copy of one, as `h` in
-// `Pair{&mut h^.count, h}`, is the carrier handed on whole.
-@(private = "file")
-prov_unsaid_writes :: proc(graph: ^Flow_Graph, actual: []int, block: Block_Id, lo: int) -> []int {
-	if len(graph.place_loans) == 0 || block == NO_BLOCK || graph.current != block {
-		return actual
-	}
-	said := make(map[int]bool, 4, context.temp_allocator)
-	carrier := make(map[int]bool, 4, context.temp_allocator)
-	marker := proc(graph: ^Flow_Graph, said: map[int]bool, slot: int) -> bool {
-		return said[slot] || slot in graph.place_markers
-	}
-	consider := proc(graph: ^Flow_Graph, block: Block_Id, lo: int, said, carrier: ^map[int]bool, slot: int) {
-		entry := graph.prov_slots[slot]
-		if entry.through_index >= 0 && entry.through_block == block && entry.through_index >= lo {
-			said[slot] = true
-			for held in entry.through_carriers {
-				carrier[held] = true
-			}
-		}
-	}
-	events := graph.blocks[block].prov[lo:]
-	for event in events {
-		for source in event.sources {
-			consider(graph, block, lo, &said, &carrier, source)
-		}
-	}
-	for slot in actual {
-		consider(graph, block, lo, &said, &carrier, slot)
-	}
-	if len(said) == 0 {
-		return actual
-	}
-	// Built from said slots and the borrow's carriers only, in order.
-	built_from := proc(graph: ^Flow_Graph, said, carrier: map[int]bool, sources: []int) -> (from_said, only: bool) {
-		only = true
-		for source in sources {
-			if said[source] {
-				from_said = true
-			} else if !carrier[source] && !(source in graph.place_markers) {
-				only = false
-			}
-		}
-		return
-	}
-	for event in events {
-		if event.kind != .Def || len(event.sources) == 0 {
-			continue
-		}
-		from_said, only := built_from(graph, said, carrier, event.sources)
-		if !only {
-			continue
-		}
-		if from_said {
-			said[event.slot] = true
-		} else {
-			carrier[event.slot] = true
-		}
-	}
-	direct := false
-	for slot in actual {
-		entry := graph.prov_slots[slot]
-		direct ||= entry.through_index >= 0 && entry.through_block == block && entry.through_index >= lo
-	}
-	out := make([dynamic]int, 0, len(actual), graph.alloc)
-	for slot in actual {
-		if !marker(graph, said, slot) && !(direct && carrier[slot]) {
-			append(&out, slot)
-		}
-	}
-	return out[:]
 }
 
 // design.md "Weakening and reborrows": a carrier handed to a call lets the

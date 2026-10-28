@@ -408,12 +408,19 @@ binding's view joins so every use of the binding keeps it live, as does a
 carrier copied from it, as `kept := &node`, while it still holds the
 snapshot's loans. A store through carriers, a mutable borrow or `inout` argument
 through them, and a carrier argument a callee may write through emit a
-`.Through` event, with the carriers and the path written. A call's path is the
-whole pointee, and its carriers include the deep `Load` of what it reaches; an
-argument that is a mutable borrow through carriers, as `&mut h^.count`, or a
-value the argument builds out of one alone, as `Side{&mut h^.count}`, adds
-only that load, since the borrow's own event gave its path
-(`prov_unsaid_writes`).
+`.Through` event, with the carriers and the path written, and a second one
+for the deep `Load` of what a call's argument reaches. The path is below
+where the carriers point (`Prov_Slot.offset`), which a place loan's path is
+too: a borrow through carriers, as `&mut h^.count`, points at `[count]`
+below what they name, and so does a copy of it, a record field holding it, or
+a reborrow lent from it, so a store through `count` or a call given
+`Side{&mut h^.count}` writes only there. `prov_note_offset` records it at
+each `Def` from the marker slots beside the carriers (`prov_value_offset`),
+keeping the prefix a slot's definitions share, so a borrow chosen by a
+condition keeps its path, and a value mixing in the carrier itself points at
+the whole pointee. A carrier loaded on the way, as `p^` for
+`&mut p^^.count`, which only the borrow reads, takes the borrow's place
+itself.
 `check_place_loans` rejects one whose carriers share a valid loan with a live
 place loan's snapshot at an overlapping path. A mutable borrow weakened to a
 read-only destination writes nothing, so its `.Through` is settled as a fresh

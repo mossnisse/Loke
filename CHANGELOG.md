@@ -183,8 +183,12 @@ checklist.
   through any pointer to it meanwhile is rejected with `L0511`: a store, a
   mutable borrow, an `inout` argument, or handing a mutable pointer that
   reaches it to a call. Writing beside the payload still compiles, as
-  `h^.count += 1` or `bump(&mut h^.count)` does. Before, these compiled, and
-  the binding went on reading a payload that had been replaced:
+  `h^.count += 1` or `bump(&mut h^.count)` does, and so does writing through a
+  borrow of another field taken before the switch, held in a record, or chosen
+  by a condition, as `count^ = 1` for `count := &mut h^.count` or
+  `bump_side(Side{&mut h^.count if flag else &mut h^.count})`. Before, the
+  rejected writes compiled, and the binding went on reading a payload that
+  had been replaced:
 
   ```loke
   peek :: proc(h: ^mut Holder) -> int {

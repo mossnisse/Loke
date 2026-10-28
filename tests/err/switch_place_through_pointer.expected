@@ -34,3 +34,6 @@ L0641
 L0511
 @200:14
 this mutable borrow is not compatible with the read-only payload of `c^.first[0]` that is still in use
+L0511
+@265:9
+this mutable borrow is not compatible with the read-only payload of `o^.inner.first` that is still in use

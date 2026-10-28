@@ -204,4 +204,69 @@ conditional_written :: proc(c: ^mut Cells, flag: bool) -> int {
 	return 0;
 }
 
+// A borrow of another field, taken before the switch or chosen by a
+// condition, writes only that field, through itself or a call. A borrow of
+// the record holding the payload still conflicts.
+Outer :: struct { inner: Holder, total: int }
+clear_value :: proc(v: ^mut Value) { v^ = .none; }
+
+stored_beside :: proc(h: ^mut Holder) -> int {
+	count := &mut h^.count;
+	switch (h^.first) {
+	case .some(node):
+		count^ = 1;
+		bump_pointer(count);
+		return node^.value;
+	case .none:
+	}
+	return 0;
+}
+
+loaded_beside :: proc(p: ^mut ^mut Holder) -> int {
+	switch (p^^.first) {
+	case .some(node):
+		bump_pointer(&mut p^^.count);
+		bump_side(Side{&mut p^^.count});
+		return node^.value;
+	case .none:
+	}
+	return 0;
+}
+
+chosen_beside :: proc(h: ^mut Holder, flag: bool) -> int {
+	switch (h^.first) {
+	case .some(node):
+		bump_side(Side{&mut h^.count if flag else &mut h^.count});
+		return node^.value;
+	case .none:
+	}
+	return 0;
+}
+
+stored_payload :: proc(h: ^mut Holder) -> int {
+	pair := &mut h^.pair;
+	switch (h^.first) {
+	case .some(node):
+		clear_value(pair);
+		return node^.value;
+	case .none:
+	}
+	switch (h^.pair) {
+	case .pair(p):
+		return p.a;
+	case .none:
+	}
+	return 0;
+}
+
+enclosing_payload :: proc(o: ^mut Outer) -> int {
+	switch (o^.inner.first) {
+	case .some(node):
+		clear(&mut o^.inner);
+		return node^.value;
+	case .none:
+	}
+	return 0;
+}
+
 main :: proc() {}

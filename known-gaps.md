@@ -7,37 +7,6 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
-### A conditional record argument loses its borrow's own path
-
-[Switch ownership](design.md#switch-ownership) allows writing beside a
-payload binding. Passing a record containing `&mut h^.count` now compiles,
-but choosing between two identical borrows for that record reports `L0511`:
-
-```loke
-package main;
-Node :: struct { value: int }
-Holder :: struct { first: Option(^mut Node), count: int }
-Side :: struct { n: ^mut int }
-bump :: proc(s: Side) { s.n^ += 1; }
-peek :: proc(h: ^mut Holder, flag: bool) -> int {
-    switch (h^.first) {
-    case .some(node):
-        bump(Side{&mut h^.count if flag else &mut h^.count}); // should be allowed
-        return node^.value;
-    case .none:
-    }
-    return 0;
-}
-main :: proc() {}
-```
-
-`prov_unsaid_writes` in [src/cfg_provenance.odin](src/cfg_provenance.odin)
-returns the whole argument when expression evaluation ends in another CFG
-block. It therefore emits a pathless `.Through` write for the record even
-though each branch borrows only `.count` and has already emitted the
-path-specific write. Carry the per-field borrow origin through branch merges,
-or trace the argument's events across the blocks it creates.
-
 ### A store through a pointer to a local joins what the place held
 
 [Values that contain borrows](design.md#values-that-contain-borrows) says

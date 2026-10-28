@@ -270,8 +270,11 @@ Prov_Slot :: struct {
 	through_block: Block_Id,
 	through_index: int,
 	walk_reads:    []Prov_Event_At,
-	// The carriers that borrow went through (`prov_unsaid_writes`).
-	through_carriers: []int,
+	// The path, below the storage this slot's loans name, that its value
+	// points at, as `[count]` for `&mut h^.count`: the longest prefix every
+	// definition of it shares, set once `offset_set` (`prov_note_offset`).
+	offset:     []Proj_Step,
+	offset_set: bool,
 	// One more than the index of the place loan this slot carries, as its
 	// snapshot or a carrier copied from one; zero for none.
 	place_loan: int,
