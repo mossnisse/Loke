@@ -175,20 +175,18 @@ stand-in, and later fixes patched them:
   for the carrier holding the place waits for the destination through marker
   slots (`prov_place_markers`, `prov_marked_place`), and the outer carriers
   get theirs up front (`prov_reborrow_outer_carriers`).
-- A borrow's value is the carriers' own slots, so it does not say which place
-  it is of. A call handed `&mut h^.count`, or a record holding it, would write
-  all of `h^`, and `prov_unsaid_writes` reconstructs the borrow's path from
-  the argument's `Def`s; `Prov_Slot.through_carriers` serves it. The
-  [conditional record gap](known-gaps.md#a-conditional-record-argument-loses-its-borrows-own-path)
-  is a shape it does not reconstruct.
+- A borrow's value was the carriers' own slots, so it did not say which place
+  it was of, and a call handed `&mut h^.count`, or a record holding it, wrote
+  all of `h^` until `Prov_Slot.offset` recorded the place below their
+  pointee.
 - A mutable borrow weakened at its destination must retract its `.Through`
   and make its walk's reads read only (`through_block`, `through_index`,
   `walk_reads`).
 
-The two answer differently where they overlap. Beside `&h^.count`, `q := h`
-is rejected, as `q := &mut l` is beside `&l.count`; beside a switch binding of
-`h^.first`, it compiles, and only a write through `q` that reaches `first` is
-rejected, though `q := &mut l` beside a binding of `l.first` is rejected.
+The two used to answer differently where they overlapped. Beside
+`&h^.count`, `q := h` was rejected, as `q := &mut l` is beside `&l.count`;
+beside a switch binding of `h^.first`, it compiled. A mutable copy beside the
+switch is now rejected too.
 
 **Proposed model.** Every borrow of a place reached through carriers, a
 switch subject's view included, records one **place loan**: a snapshot slot
@@ -197,7 +195,9 @@ capability, and its span. It is live while the snapshot or anything derived
 from it is, as a hold is now. A slot also records the path below what its
 loans name (`Prov_Slot.offset`): a place loan's snapshot has the loan's path,
 a copy keeps its source's, and a slot defined from sources with different
-offsets keeps their common prefix. Every access through carriers then states
+offsets keeps their common prefix, while an access through carriers pointing
+at different places, as a record holding two field borrows, is checked at
+each one's own. Every access through carriers then states
 the carriers, the path below their pointee extended by their offset, and
 whether it reads, writes, or uses the carrier whole, which a copy or a
 call argument does with its destination's capability. The solve checks each
@@ -205,21 +205,23 @@ access against the live place loans sharing a loan with its carriers at an
 overlapping path, as `check_place_loans` checks writes now, and skips the
 place loan the accessing carriers derive from.
 
-It would remove the placed reborrows, the use tags, the marker slots, the
-outer-carrier placed reborrows, `prov_unsaid_writes` and `through_carriers`,
-since a call writes through an argument at that argument's offset, and the
-walk bookkeeping for weakening, since weakening a place loan clears its
-capability as it does a fresh loan's. Holds become place loans. Reborrows of
-carriers copied out of storage, as `node := h^.head`, stay as they are. A
+It removed the placed reborrows, the use tags, the marker slots, the
+outer-carrier placed reborrows, `prov_unsaid_writes`, and `through_carriers`,
+and switch holds became place loans. Weakening a place loan clears its
+capability as it does a fresh loan's, but the walk bookkeeping for weakening
+stays: a weakened borrow still makes its walk's reads of the carriers reads
+only, which the reborrows of carriers copied out of storage, as
+`node := h^.head`, are checked against, and those stay as they are. A
 carrier read out of a local's field, as `s.h` in `&s.h^.count`, needs nothing
 of its own, since a place loan is matched by the storage it names, not by the
 slot read.
 
 **Decisions.**
 
-1. Accepted: a copy of the carrier, or a call given it, beside a switch
-   binding over a place through it is rejected, as it is beside a borrow and
-   beside a binding of a local's field. Code that compiles today, as
+1. Accepted and implemented: a copy of the carrier, or a call given it,
+   beside a switch binding over a place through it is rejected, as it is
+   beside a borrow and beside a binding of a local's field. Code previously
+   accepted, as
    `switch (h^.first) { case .some(n): q := h; q^.total = 2; use(n) }`, is
    rejected: a breaking change with an upgrade note.
 2. Deferred: whether a view's constant element is its own place, so
