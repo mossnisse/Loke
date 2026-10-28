@@ -47,7 +47,8 @@ editor_grammar_follows_the_specification :: proc(t: ^testing.T) {
 	predeclared := make(map[string]bool, context.temp_allocator)
 	for name in ([]string{"true", "false", "nil"}) { predeclared[name] = true }
 	for line in strings.split_lines(section(string(design_md), "Predeclared names"), context.temp_allocator) {
-		if !strings.has_prefix(line, "- ") { continue }
+		// A bullet wraps at 80 columns; its continuation lines are indented.
+		if !strings.has_prefix(line, "- ") && !strings.has_prefix(line, "  ") { continue }
 		for name in backticked(line) { predeclared[name] = true }
 	}
 	testing.expect(t, len(predeclared) > 50, "design.md \"Predeclared names\" did not list the names")
