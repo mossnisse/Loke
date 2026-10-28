@@ -1,0 +1,33 @@
+L0641
+@14:2
+`p` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@20:11
+`p` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@26:2
+`p` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@32:2
+`list` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@38:15
+`list` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@45:8
+`list` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@51:2
+`nodes` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@63:13
+`held` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@70:11
+`held` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@79:11
+`held` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@80:14
+`held` cannot be used here: a mutable reborrow of it is still in use

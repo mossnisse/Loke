@@ -7,82 +7,58 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
-### A copy of a pointer read through another does not suspend that other
+### A store through a chain of local pointers does not suspend a copy below it
 
-[Weakening and reborrows](design.md#weakening-and-reborrows) says copying a
-mutable carrier reborrows it, and the source cannot be used while the copy is
-in use. Through one pointer, `copy := items; items.append(1); copy.append(2);`
-with `items: ^mut [dynamic]int` is L0641. A copy of the inner pointer two
-pointers away still compiles, leaving two mutable pointers to one container:
+[Weakening and reborrows](design.md#weakening-and-reborrows) says a mutable
+reborrow suspends all use of its source until its last use. A pointer copied
+out two pointers away from local storage still compiles beside a store through
+the place it was copied from, leaving two mutable paths to one value in use:
 
 ```loke
 package main;
-grow :: proc(p: ^mut ^mut [dynamic]int) {
-    copy := p^;
-    p^.append(1); // should be rejected
-    copy.append(2);
+Node :: struct { value: int }
+Pair :: struct { a: ^mut Node, b: ^mut Node }
+main :: proc() {
+    first := Node{1};
+    second := Node{2};
+    pair := Pair{&mut first, &mut second};
+    held := &mut pair;
+    p := &mut held;
+    node := p^^.a;
+    p^^.a^.value = 3; // should be rejected
+    node^.value = 4;
+}
+```
+
+The copy reborrows `pair.a`, the local storage its load resolved to, but the
+store reports a use of only `p`, the outermost carrier
+(`prov_retain_through_carrier` in
+[src/cfg_provenance.odin](src/cfg_provenance.odin)), and does not load
+`p^^.a` on the way. Reading the place, as `p^^.a^.value + 1`, is rejected, and
+so is the same store through a pointer parameter.
+
+### Walking a list through a `switch` binding is rejected
+
+[Switch ownership](design.md#switch-ownership) lets a binding over a place
+view the payload, so `cur = next` should move a cursor along a list. In a loop
+it is rejected with `L0641`, naming no variable:
+
+```loke
+package main;
+Node :: struct { value: int, next: Option(^mut Node) }
+walk :: proc(start: ^mut Node) {
+    cur := start;
+    for (i := 0; i < 3; i += 1) {
+        cur^.value += 1;
+        switch (cur^.next) {      // L0641: `` cannot be used here
+        case .some(next): cur = next;
+        case .none: return;
+        }
+    }
 }
 main :: proc() {}
 ```
 
-A view of, or pointer into, the storage, as `p^^[:]` or `&p^^[0]`, already
-reborrows `p` (`prov_reborrow_outer_carriers` in
-[src/cfg_provenance.odin](src/cfg_provenance.odin)). A copy of `p^` itself is
-a loaded slot, which `prov_reborrow_loaded` in [src/borrow.odin](src/borrow.odin)
-ties only to local storage the load resolved to, so nothing ties it to a
-pointer parameter. Tying every load to the pointer it went through would also
-tie `cur = cur^.next` to `cur` itself, since reborrows of loaded carriers are
-never severed.
-
-### One call may take a mutable pointer and a pointer to it
-
-[Weakening and reborrows](design.md#weakening-and-reborrows) says a mutable
-carrier passed on as one is reborrowed for the call, so no other argument may
-use it meanwhile. Passing a `^mut` and a mutable borrow of the variable
-holding it compiles, and the callee then holds two mutable paths to one
-container:
-
-```loke
-package main;
-both :: proc(a: ^mut [dynamic]int, b: ^mut ^mut [dynamic]int) {
-    a.append(1);
-    b^.append(2);
-}
-main :: proc() {
-    items := [dynamic]int{1};
-    held := &mut items;
-    both(held, &mut held); // should be rejected
-}
-```
-
-### A field read two loads below a parameter keeps its siblings' borrows
-
-[Procedure result contracts](design.md#procedure-result-contracts) says a
-helper returning one field of an argument substitutes only that field's root,
-at every nesting depth. One load below the parameter, `return p.a;` with
-`p: ^Pair` holds. Two loads below, the result also depends on what every field
-of the first pointee views:
-
-```loke
-package main;
-import "core:fmt";
-import "core:strings";
-Pair :: struct { a: string_view, b: string_view }
-Deep :: struct { pair: ^Pair, other: string_view }
-inner :: proc(d: ^Deep) -> string_view { return d.pair.a; }
-main :: proc() {
-    kept: string_view = "";
-    {
-        source := strings.copy("other");
-        pair := Pair{"static", "b"};
-        deep := Deep{&pair, source};
-        kept = inner(&deep);
-    }
-    fmt.println(kept); // should compile; currently L0513
-}
-```
-
-`Result_Dependencies.param_load_paths` in [src/borrow.odin](src/borrow.odin)
-narrows only the first load, so `prov_substitute_result` in
-[src/cfg_provenance.odin](src/cfg_provenance.odin) loads a deeper dependency
-through every path of the first pointee, `other` among them.
+The subject's payload, a temporary loaded through `cur`, is reborrowed by
+`next` and so by `cur`, and the next pass's load of the same temporary meets
+that reborrow still in use. `cur = cur^.next` with `next: ^mut Node` compiles.

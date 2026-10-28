@@ -2,8 +2,9 @@
 // slice parameter depends only on the fields it reads, so a view of the static
 // `a` outlives storage that only `b` viewed. design.md "Minimum provenance
 // precision": an element of a fixed array behind a pointer is told apart by
-// its constant index. The same holds for a `self: ^` method, and for a field
-// of an array or record literal's element while a later element is built.
+// its constant index. The same holds for a `self: ^` method, for a field
+// of an array or record literal's element while a later element is built, and
+// for a field read two loads below a parameter.
 package main;
 
 import "core:fmt";
@@ -40,9 +41,16 @@ make_pair :: proc(a, b: string_view) -> Pair { return {a, b}; }
 
 Two :: struct { left: Pair, right: Pair }
 
+Deep :: struct { pair: ^Pair, other: string_view }
+
+from_deep :: proc(d: ^Deep) -> string_view { return d.pair.a; }
+
+from_deep_call :: proc(d: ^Deep) -> string_view { return from_pointer(d.pair); }
+
 main :: proc() {
 	kept := [7]string_view{"", "", "", "", "", "", ""};
 	more := [6]string_view{"", "", "", "", "", ""};
+	deeper := [2]string_view{"", ""};
 	{
 		source := strings.copy("ended");
 		other := strings.copy("other");
@@ -64,7 +72,12 @@ main :: proc() {
 		more[4] = record.left.a;
 		pointer := &literal[0];
 		more[5] = pointer.first();
+		pair := Pair{"deep", "static"};
+		deep := Deep{&pair, source};
+		deeper[0] = from_deep(&deep);
+		deeper[1] = from_deep_call(&deep);
 	}
 	fmt.println(kept[0], kept[1], kept[2], kept[3], kept[4], kept[5], kept[6]);
 	fmt.println(more[0], more[1], more[2], more[3], more[4], more[5]);
+	fmt.println(deeper[0], deeper[1]);
 }

@@ -131,6 +131,13 @@ Prov_Event :: struct {
 	// `Live`: the carrier is only read, so a live read-only reborrow of it does
 	// not conflict (design.md "Weakening and reborrows").
 	reads_only:    bool,
+	// `Live`: the carrier is only gone through, to `through_path` below its
+	// pointee, so a copy read out of elsewhere in the pointee does not conflict.
+	// `stores` stores there and goes no further, which leaves a copy read out
+	// of there as it was.
+	through:       bool,
+	through_path:  []Proj_Step,
+	stores:        bool,
 	// `Task_Start`, `Shared_Effect`: see `Prov_Kind`.
 	symbol:        Symbol_Id,
 	// One more than the window bit of the pooled block whose join this
@@ -296,6 +303,7 @@ prov_subject_view :: proc(graph: ^Flow_Graph, subject: Expr, mutable: bool, slot
 	}
 	return prov_borrow(graph, root, path, false, expr_span(subject), "payload")
 }
+
 
 // A case binding keeps its selected payload's fields, including owner/handle
 // separation (design.md "Inspecting a union").
@@ -1653,6 +1661,38 @@ prov_reborrow_loaded :: proc(graph: ^Flow_Graph, event: Prov_Event) {
 	}
 }
 
+// design.md "Weakening and reborrows": a mutable carrier copied out of storage
+// no local holds, as a parameter's pointee, is reached only through the
+// carriers the load went through, so a copy that is kept reborrows those at
+// the path it was read from. One used only within its expression, as the
+// receiver of `p^.append(1)`, is not kept. The latest load goes first, so a
+// carrier loaded on the way, as `p^` in `p^^.head`, is kept by the time its
+// own load is reached.
+@(private)
+prov_reborrow_loaded_through :: proc(graph: ^Flow_Graph, loads: []Prov_Event) {
+	#reverse for event in loads {
+		if len(event.sources) > 0 || !prov_slot_is_loaded_mutable(graph, event.slot) {
+			continue
+		}
+		kept, mutable := false, true
+		for reborrow in graph.reborrows {
+			if reborrow.source == event.slot {
+				kept, mutable = true, reborrow.mutable
+			}
+		}
+		if !kept {
+			continue
+		}
+		for carrier in event.into {
+			if prov_slot_is_mutable_carrier(graph, carrier) || prov_slot_is_loaded_mutable(graph, carrier) {
+				append(&graph.reborrows, Prov_Reborrow{
+					source = carrier, derived = event.slot, span = event.span, mutable = mutable, through = true, path = event.path,
+				})
+			}
+		}
+	}
+}
+
 @(private = "file")
 prov_slot_is_loaded_mutable :: proc(graph: ^Flow_Graph, slot: int) -> bool {
 	entry := graph.prov_slots[slot]
@@ -1884,18 +1924,23 @@ prov_bind_parameters :: proc(graph: ^Flow_Graph, literal: ^Expr_Proc) {
 			loan := prov_new_loan(graph, root, nil, carrier_is_mutable(graph.k.c, sym.type), sym.span, carrier_noun(graph.k.c, sym.type))
 			append(&graph.entry_defs, Prov_Entry_Def{slot = slot, loan = loan})
 			// design.md "Procedure result contracts": a load along one path of the
-			// pointee reads only that path, so a field copied out of `[]Pair` names
-			// none of its siblings. One path tells nothing apart.
+			// pointee reads only that path, and so do the loads below it, so a
+			// field read out of `[]Pair` or `d.pair.a` names none of its siblings.
+			// One path tells nothing apart.
 			if pointee := carrier_pointee_shape(graph.k.c, sym.type); len(pointee) > 1 {
-				paths := make([]Loan_Id, len(pointee), graph.alloc)
+				paths := make([][]Loan_Id, len(pointee), graph.alloc)
 				for path, at in pointee {
-					paths[at] = prov_new_loan(
-						graph, root, nil, path.mutable, sym.span,
-						path.truncated ? "borrow" : carrier_noun(graph.k.c, path.type),
-					)
-					graph.loans[int(paths[at])].content = true
-					graph.loans[int(paths[at])].depth = 1
-					graph.loans[int(paths[at])].pointee = at + 1
+					paths[at] = make([]Loan_Id, len(depths), graph.alloc)
+					for &deeper, depth in paths[at] {
+						first := depth == 0
+						deeper = prov_new_loan(
+							graph, root, nil, first ? path.mutable : graph.loans[int(depths[depth])].mutable, sym.span,
+							first && path.truncated ? "borrow" : carrier_noun(graph.k.c, first ? path.type : sym.type),
+						)
+						graph.loans[int(deeper)].content = true
+						graph.loans[int(deeper)].depth = depth + 1
+						graph.loans[int(deeper)].pointee = at + 1
+					}
 				}
 				graph.roots[int(root)].pointee_loans = paths
 			}
@@ -4434,15 +4479,52 @@ prov_index_path_in :: proc(graph: ^Flow_Graph, v: ^Expr_Index, type: Type_Id) ->
 }
 
 // The carrier where a place leaves lexical storage and the projection below it,
-// so `p^.left` does not make `right` live.
+// so `p^.left` does not make `right` live. The carrier's uses say which path
+// below its pointee they go to.
 @(private)
 prov_read_through_carrier :: proc(graph: ^Flow_Graph, place: Expr, reads_only := false) -> ([]int, []Proj_Step, bool) {
+	block := graph.current
+	first := block == NO_BLOCK ? 0 : len(graph.blocks[block].prov)
+	carriers, path, ok := prov_read_place_through(graph, place, reads_only)
+	if ok {
+		prov_mark_through_uses(graph, block, first, carriers, path)
+	}
+	return carriers, path, ok
+}
+
+// design.md "Weakening and reborrows": a use of a carrier that only goes
+// through it to `path` does not suspend it for a copy read out of elsewhere
+// in its pointee, as `list^.count` beside a copy of `list^.head`, nor does
+// one that `stores` to `path` and goes no further. Only uses emitted since
+// `first`, in the same block, of nothing but `carriers`.
+@(private = "file")
+prov_mark_through_uses :: proc(graph: ^Flow_Graph, block: Block_Id, first: int, carriers: []int, path: []Proj_Step, stores := false) {
+	if block == NO_BLOCK || graph.current != block {
+		return
+	}
+	events := graph.blocks[block].prov[first:]
+	for &event in events {
+		if event.kind != .Live || event.through || len(event.sources) == 0 {
+			continue
+		}
+		only := true
+		for source in event.sources {
+			only &&= slice.contains(carriers, source)
+		}
+		if only {
+			event.through, event.through_path, event.stores = true, path, stores
+		}
+	}
+}
+
+@(private = "file")
+prov_read_place_through :: proc(graph: ^Flow_Graph, place: Expr, reads_only: bool) -> ([]int, []Proj_Step, bool) {
 	#partial switch v in place {
 	case ^Expr_Postfix:
 		// A box's payload is part of the box, so `b^` is a carrier read only when
 		// the box itself is reached through one (design.md "Owned values").
 		if v.op == .Caret && type_is_box(graph.k.c, prov_type(graph, v.operand)) {
-			if carriers, path, ok := prov_read_through_carrier(graph, v.operand, reads_only); ok {
+			if carriers, path, ok := prov_read_place_through(graph, v.operand, reads_only); ok {
 				return carriers, prov_extend(graph, path, proj_wild()), true
 			}
 			return nil, nil, false
@@ -4464,7 +4546,7 @@ prov_read_through_carrier :: proc(graph: ^Flow_Graph, place: Expr, reads_only :=
 			carriers := prov_reach(graph, prov_read_carrier_through(graph, v.operand, reads_only), v.span)
 			return carriers, prov_extend(graph, nil, step), true
 		}
-		if carriers, path, ok := prov_read_through_carrier(graph, v.operand, reads_only); ok {
+		if carriers, path, ok := prov_read_place_through(graph, v.operand, reads_only); ok {
 			return carriers, prov_extend(graph, path, step), true
 		}
 	case ^Expr_Index:
@@ -4489,7 +4571,7 @@ prov_read_through_carrier :: proc(graph: ^Flow_Graph, place: Expr, reads_only :=
 			}
 			return prov_reach(graph, carriers, v.span), path, true
 		}
-		if carriers, path, ok := prov_read_through_carrier(graph, v.operand, reads_only && !prov_indices_may_write(v.indices)); ok {
+		if carriers, path, ok := prov_read_place_through(graph, v.operand, reads_only && !prov_indices_may_write(v.indices)); ok {
 			if prov_indices_may_write(v.indices) {
 				carriers = prov_capture(graph, carriers, v.span)
 			}
@@ -4560,6 +4642,63 @@ prov_through_carrier_operand :: proc(graph: ^Flow_Graph, place: Expr) -> Expr {
 			return v.operand
 		}
 		return prov_through_carrier_operand(graph, v.operand)
+	}
+	return nil
+}
+
+// The path below the pointee of the named carrier a place is stored through,
+// when `through` holds exactly that carrier: `[head]` for `list^.head^.value`.
+// `direct` when the place is itself at that path, as `list^.head` is.
+@(private = "file")
+prov_path_below_named_carrier :: proc(graph: ^Flow_Graph, place: Expr, through: []int) -> (path: []Proj_Step, named, direct: bool) {
+	for at := place; at != nil; {
+		operand := prov_through_carrier_operand(graph, at)
+		if operand == nil {
+			return nil, false, false
+		}
+		if _, _, ok := prov_place_of(graph, operand); ok {
+			if !slice.equal(prov_carrier_slots(graph, operand), through) {
+				return nil, false, false
+			}
+			return prov_path_through_carrier(graph, at), true, at == place
+		}
+		at = operand
+	}
+	return nil, false, false
+}
+
+// The path `prov_read_through_carrier` finds below the pointee of the carrier
+// `place` is read through, without reading anything.
+@(private = "file")
+prov_path_through_carrier :: proc(graph: ^Flow_Graph, place: Expr) -> []Proj_Step {
+	#partial switch v in place {
+	case ^Expr_Postfix:
+		if v.op == .Caret && type_is_box(graph.k.c, prov_type(graph, v.operand)) {
+			return prov_extend(graph, prov_path_through_carrier(graph, v.operand), proj_wild())
+		}
+	case ^Expr_Selector:
+		if v.resolution.kind != .Field || v.operand == nil {
+			return nil
+		}
+		step := prov_field_step(graph, v)
+		if type_is_pointer(graph.k.c, prov_type(graph, v.operand)) {
+			return prov_extend(graph, nil, step)
+		}
+		return prov_extend(graph, prov_path_through_carrier(graph, v.operand), step)
+	case ^Expr_Index:
+		if len(v.bound) > 0 || v.operand == nil {
+			return nil
+		}
+		#partial switch underlying_kind(graph.k.c, prov_type(graph, v.operand)) {
+		case .Slice, .C_Pointer:
+			return nil
+		case .Pointer:
+			if info := underlying_info(graph.k.c, prov_type(graph, v.operand)); info != nil {
+				return prov_index_path_in(graph, v, info.element)
+			}
+			return nil
+		}
+		return prov_concat_path(graph, prov_path_through_carrier(graph, v.operand), prov_index_path(graph, v))
 	}
 	return nil
 }
@@ -4839,6 +4978,12 @@ prov_borrow_place :: proc(graph: ^Flow_Graph, operand: Expr, mutable: bool, span
 	}
 	prov_walk_subscripts(graph, operand)
 	access_block, access_index := prov_access(graph, root, path, mutable ? .Write : .Read, span)
+	// design.md "Weakening and reborrows": a borrow of a place reaches the
+	// carriers it holds, so it uses them, and `both(held, &mut held)` cannot
+	// hand on `held` while it is reborrowed for the call.
+	if held := prov_carrier_slots(graph, operand); len(held) > 0 {
+		prov_emit(graph, Prov_Event{kind = .Live, sources = held, span = span, reads_only = !mutable})
+	}
 	return prov_borrow(graph, root, path, mutable, span, what, access_block, access_index)
 }
 
@@ -5366,7 +5511,12 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 						into    = through,
 					})
 				}
+				block := graph.current
+				first := block == NO_BLOCK ? 0 : len(graph.blocks[block].prov)
 				prov_emit(graph, Prov_Event{kind = .Live, sources = through, span = expr_span(target)})
+				if below, named, direct := prov_path_below_named_carrier(graph, target, through); named {
+					prov_mark_through_uses(graph, block, first, through, below, stores = direct)
+				}
 				prov_reach(graph, through, expr_span(target))
 				continue
 			}
@@ -7530,8 +7680,9 @@ prov_substitute_result :: proc(
 			if depths & (u8(1) << u8(depth - 1)) == 0 {
 				continue
 			}
-			// A load narrowed to some of the pointee's paths reads only those.
-			paths := depth == 1 && index < len(dependencies.param_load_paths) ? dependencies.param_load_paths[index] : nil
+			// A load narrowed to some of the pointee's paths goes along only
+			// those, and so do the loads below it.
+			paths := result_load_paths(dependencies, index, depth)
 			shape := prov_parameter_pointee_shape(graph, v, index)
 			if len(paths) == 0 || len(paths) != len(shape) {
 				out = prov_join(graph, out, prov_load_deep(graph, through, v.span, depth))

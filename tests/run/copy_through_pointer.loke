@@ -1,0 +1,63 @@
+// design.md "Weakening and reborrows": a mutable carrier copied out through a
+// pointer suspends only the place it was copied from, so the pointer's other
+// fields stay usable, storing a new pointer into that place leaves the copy as
+// it was, and walking by `cur = cur^.next` reborrows nothing it still uses.
+package main;
+
+import "core:fmt";
+
+Node :: struct { value: int }
+List :: struct { head: ^mut Node, tail: ^mut Node, count: int }
+Ring :: struct { value: int, next: ^mut Ring }
+
+impl List { size :: proc(self: ^) -> int { return self.count; } }
+
+other_fields :: proc(list: ^mut List) {
+	size := list^.size();
+	node := list^.head;
+	list^.count += 1;
+	list^.tail^.value += 10;
+	node^.value += size + 1;
+}
+
+replaced :: proc(list: ^mut List, @(escape=stored) other: ^mut Node) {
+	node := list^.head;
+	list^.head = other;
+	node^.value += 100;
+}
+
+replaced_pointer :: proc(p: ^mut ^mut [dynamic]int, @(escape=stored) other: ^mut [dynamic]int) {
+	copy := p^;
+	p^ = other;
+	copy.append(7);
+	p^.append(8);
+}
+
+walk :: proc(start: ^mut Ring, steps: int) {
+	cur := start;
+	for (i := 0; i < steps; i += 1) {
+		cur^.value += 1;
+		cur = cur^.next;
+	}
+}
+
+main :: proc() {
+	first := Node{1};
+	last := Node{3};
+	{
+		spare := Node{50};
+		list := List{&mut first, &mut last, 0};
+		other_fields(&mut list);
+		fmt.println(list.count, list.head^.value, list.tail^.value);
+		replaced(&mut list, &mut spare);
+		fmt.println(list.head^.value);
+	}
+	fmt.println(first.value, last.value);
+	a := [dynamic]int{1};
+	b := [dynamic]int{2};
+	{
+		held := &mut a;
+		replaced_pointer(&mut held, &mut b);
+	}
+	fmt.println(a, b);
+}

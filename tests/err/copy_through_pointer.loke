@@ -1,0 +1,83 @@
+// design.md "Weakening and reborrows": a mutable carrier copied out through a
+// pointer is a reborrow of the place it was copied from, so a use of that
+// place through the pointer, or of the whole pointer, waits for the copy's
+// last use, and so does a borrow of a variable holding a reborrowed carrier.
+package main;
+
+Node :: struct { value: int }
+List :: struct { head: ^mut Node, tail: ^mut Node, count: int }
+
+touch :: proc(list: ^mut List) {}
+
+grown_beside_copy :: proc(p: ^mut ^mut [dynamic]int) {
+	copy := p^;
+	p^.append(1);
+	copy.append(2);
+}
+
+read_beside_copy :: proc(p: ^mut ^mut [dynamic]int) {
+	copy := p^;
+	count := p^.len();
+	copy.append(count);
+}
+
+replaced_through_copy :: proc(p: ^mut ^mut [dynamic]int) {
+	copy := p^;
+	p^^ = [dynamic]int{};
+	copy.append(1);
+}
+
+field_written_beside_copy :: proc(list: ^mut List) {
+	node := list^.head;
+	list^.head^.value = 2;
+	node^.value = 1;
+}
+
+field_borrowed_beside_copy :: proc(list: ^mut List) {
+	node := list^.head;
+	head := &mut list^.head;
+	head^^.value = 2;
+	node^.value = 1;
+}
+
+whole_passed_beside_copy :: proc(list: ^mut List) {
+	node := list^.head;
+	touch(list);
+	node^.value = 1;
+}
+
+element_written_beside_copy :: proc(nodes: ^mut [2]^mut Node) {
+	first := nodes[0];
+	nodes[0]^.value = 2;
+	first^.value = 1;
+}
+
+both :: proc(a: ^mut [dynamic]int, b: ^mut ^mut [dynamic]int) {
+	a.append(1);
+	b^.append(2);
+}
+
+pointer_and_pointer_to_it :: proc() {
+	items := [dynamic]int{1};
+	held := &mut items;
+	both(held, &mut held);
+}
+
+borrowed_beside_copy :: proc() {
+	items := [dynamic]int{1};
+	held := &mut items;
+	copy := held;
+	other := &mut held;
+	copy.append(1);
+	other^.append(2);
+}
+
+read_borrowed_beside_copy :: proc() {
+	items := [dynamic]int{1};
+	held := &mut items;
+	copy := held;
+	other := &held;
+	copy.append(other^.len());
+}
+
+main :: proc() {}

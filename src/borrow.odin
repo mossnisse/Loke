@@ -111,10 +111,11 @@ Prov_Root :: struct {
 	// every depth from its own on.
 	content_loans: []Loan_Id,
 	// A carrier `Param` whose pointee has carrier paths: per path of
-	// `carrier_pointee_shape`, the depth-1 `content` loan standing for what one
-	// load along that path reads, so a result copied out of one field does not
-	// name its siblings (design.md "Procedure result contracts").
-	pointee_loans: []Loan_Id,
+	// `carrier_pointee_shape`, and per load depth as `content_loans`, the
+	// `content` loan standing for what that many loads read when the first goes
+	// along that path, so a result read out of one field does not name its
+	// siblings (design.md "Procedure result contracts").
+	pointee_loans: [][]Loan_Id,
 	// A `Static` stand-in, while a body is summarized, for what the callback in
 	// parameter `param_index` may leave in its argument `argument`. Only the
 	// `Callback_Write` and `Callback_Read` summaries read it; it constrains
@@ -218,8 +219,8 @@ Prov_Loan :: struct {
 	content: bool,
 	// A `content_loans` entry: how many loads below the parameter it stands for.
 	depth: int,
-	// A `pointee_loans` entry: its position in `carrier_pointee_shape`, plus
-	// one; zero for every other loan.
+	// A `pointee_loans` entry: the position in `carrier_pointee_shape` of the
+	// path its first load goes along, plus one; zero for every other loan.
 	pointee: int,
 }
 
@@ -278,6 +279,11 @@ Prov_Reborrow :: struct {
 	mutable: bool,
 	// Only extends the reborrow `source` belongs to: its copies do not suspend it.
 	passes_on: bool,
+	// `derived` was read through `source` from storage no local holds, so they
+	// name the same root rather than share a loan, as a parameter and what is
+	// read through it do. `path` is where below the source's pointee.
+	through: bool,
+	path:    []Proj_Step,
 }
 
 // design.md "Storage roots and borrow carriers". `rawptr` and `[^]T` carry no
@@ -847,9 +853,9 @@ Result_Dependencies :: struct {
 	// Per parameter, a bit per load depth at which the result may hold what is
 	// read through it: bit 0 for an element copied out of a slice, not the slice.
 	param_loads:  []u8,
-	// Per parameter with bit 0 of `param_loads`, which paths of its
-	// `carrier_pointee_shape` that load may read. Nil means all of them.
-	param_load_paths: [][]bool,
+	// Per parameter and load depth, which paths of its `carrier_pointee_shape`
+	// the first of those loads may go along. Nil means all of them.
+	param_load_paths: [][][]bool,
 	static:       bool,
 	thread:       bool,
 	// The globals the result may borrow, so a caller's write to one, or a call
@@ -858,6 +864,16 @@ Result_Dependencies :: struct {
 	globals:      []Symbol_Id,
 	local:        bool, // already an error in the callee
 	unknown:      bool,
+}
+
+// The paths of parameter `index`'s pointee the first of `depth` loads through
+// it may go along; nil means every path.
+result_load_paths :: proc(dependencies: Result_Dependencies, index, depth: int) -> []bool {
+	if index >= len(dependencies.param_load_paths) {
+		return nil
+	}
+	depths := dependencies.param_load_paths[index]
+	return depth - 1 < len(depths) ? depths[depth - 1] : nil
 }
 
 // Whether a result may depend on a parameter: borrow it, or hold what its
@@ -892,7 +908,7 @@ new_result_dependencies :: proc(c: ^Compiler, param_count: int) -> Result_Depend
 		params      = make([]bool, param_count, c.semantic_allocator),
 		param_paths = make([][]bool, param_count, c.semantic_allocator),
 		param_loads = make([]u8, param_count, c.semantic_allocator),
-		param_load_paths = make([][]bool, param_count, c.semantic_allocator),
+		param_load_paths = make([][][]bool, param_count, c.semantic_allocator),
 	}
 }
 
@@ -1126,7 +1142,7 @@ receiver_dependencies :: proc(c: ^Compiler, from: Result_Dependencies) -> Result
 	out.params = make([]bool, count, c.semantic_allocator)
 	out.param_paths = make([][]bool, count, c.semantic_allocator)
 	out.param_loads = make([]u8, count, c.semantic_allocator)
-	out.param_load_paths = make([][]bool, count, c.semantic_allocator)
+	out.param_load_paths = make([][][]bool, count, c.semantic_allocator)
 	copy(out.params[1:], from.params)
 	copy(out.param_paths[1:], from.param_paths)
 	copy(out.param_loads[1:], from.param_loads)
@@ -1171,6 +1187,15 @@ joined_result_summary :: proc(c: ^Compiler, members: []Symbol_Id) -> (Result_Pro
 	return out, len(members) > 0
 }
 
+// Where parameter `index`'s paths at `depth` are kept, made on first use.
+@(private = "file")
+load_paths_at :: proc(c: ^Compiler, into: ^Result_Dependencies, index, depth: int) -> ^[]bool {
+	if into.param_load_paths[index] == nil {
+		into.param_load_paths[index] = make([][]bool, 8, c.semantic_allocator)
+	}
+	return &into.param_load_paths[index][depth - 1]
+}
+
 @(private = "file")
 merge_result_dependencies :: proc(c: ^Compiler, into: ^Result_Dependencies, from: Result_Dependencies) {
 	merge_provenance(c, into, from)
@@ -1179,19 +1204,24 @@ merge_result_dependencies :: proc(c: ^Compiler, into: ^Result_Dependencies, from
 		if index >= len(into.param_loads) {
 			continue
 		}
-		if depths & 1 != 0 && index < len(into.param_load_paths) {
-			paths := index < len(from.param_load_paths) ? from.param_load_paths[index] : nil
-			if into.param_loads[index] & 1 == 0 {
+		for depth in 1 ..= 8 {
+			bit := u8(1) << u8(depth - 1)
+			if depths & bit == 0 || index >= len(into.param_load_paths) {
+				continue
+			}
+			paths := result_load_paths(from, index, depth)
+			if into.param_loads[index] & bit == 0 {
 				if paths != nil {
-					into.param_load_paths[index] = make([]bool, len(paths), c.semantic_allocator)
-					copy(into.param_load_paths[index], paths)
+					into_paths := load_paths_at(c, into, index, depth)
+					into_paths^ = make([]bool, len(paths), c.semantic_allocator)
+					copy(into_paths^, paths)
 				}
-			} else if into.param_load_paths[index] != nil {
-				if paths == nil || len(paths) != len(into.param_load_paths[index]) {
-					into.param_load_paths[index] = nil
+			} else if into_paths := result_load_paths(into^, index, depth); into_paths != nil {
+				if paths == nil || len(paths) != len(into_paths) {
+					load_paths_at(c, into, index, depth)^ = nil
 				} else {
 					for used, path in paths {
-						into.param_load_paths[index][path] ||= used
+						into_paths[path] ||= used
 					}
 				}
 			}
@@ -2416,9 +2446,7 @@ merge_loan_provenance :: proc(state: ^Prov_State, into: ^Result_Dependencies, in
 		if loan.depth > 0 && root.param_index < len(into.param_loads) {
 			bit := u8(1) << u8(loan.depth - 1)
 			changed := into.param_loads[root.param_index] & bit == 0
-			if loan.depth == 1 {
-				changed = merge_param_load_paths(state, into, root, loan) || changed
-			}
+			changed = merge_param_load_paths(state, into, root, loan) || changed
 			into.param_loads[root.param_index] |= bit
 			return changed
 		}
@@ -2504,10 +2532,10 @@ merge_param_paths :: proc(
 	return changed
 }
 
-// Narrows a depth-1 load dependency to the pointee paths the loan stands for,
-// so a caller loads only those fields. Nil means every path. Runs before the
-// load's bit is set, which is how a first narrowing tells itself apart from a
-// dependency already widened to the whole pointee.
+// Narrows a load dependency to the pointee path the loan's first load goes
+// along, so a caller loads only through those fields. Nil means every path.
+// Runs before the load's bit is set, which is how a first narrowing tells
+// itself apart from a dependency already widened to the whole pointee.
 @(private = "file")
 merge_param_load_paths :: proc(
 	state: ^Prov_State,
@@ -2519,24 +2547,29 @@ merge_param_load_paths :: proc(
 	if index >= len(into.param_load_paths) {
 		return false
 	}
-	first := into.param_loads[index] & 1 == 0
-	sym := symbol_of(state.k.c, root.symbol)
-	shape := sym == nil ? nil : carrier_pointee_shape(state.k.c, sym.type)
+	c := state.k.c
+	first := into.param_loads[index] & (u8(1) << u8(loan.depth - 1)) == 0
+	sym := symbol_of(c, root.symbol)
+	shape := sym == nil ? nil : carrier_pointee_shape(c, sym.type)
+	paths := result_load_paths(into^, index, loan.depth)
 	if loan.pointee == 0 || loan.pointee > len(shape) {
-		changed := len(into.param_load_paths[index]) > 0
-		into.param_load_paths[index] = nil
-		return changed
+		if paths == nil {
+			return false
+		}
+		load_paths_at(c, into, index, loan.depth)^ = nil
+		return true
 	}
-	if into.param_load_paths[index] == nil {
+	if paths == nil {
 		if !first {
 			return false // already widened to the whole pointee
 		}
-		into.param_load_paths[index] = make([]bool, len(shape), state.k.c.semantic_allocator)
+		paths = make([]bool, len(shape), c.semantic_allocator)
+		load_paths_at(c, into, index, loan.depth)^ = paths
 	}
-	if into.param_load_paths[index][loan.pointee - 1] {
+	if paths[loan.pointee - 1] {
 		return false
 	}
-	into.param_load_paths[index][loan.pointee - 1] = true
+	paths[loan.pointee - 1] = true
 	return true
 }
 
@@ -3065,11 +3098,23 @@ load_writable_through :: proc(
 		return
 	}
 	loss^ |= path_precision(loan.path)
-	deeper := loan_index
-	if count := len(root.content_loans); count > 0 {
-		deeper = int(root.content_loans[min(loan.depth, count - 1)])
+	bit_mark(state.merged, deeper_content_loan(root, loan, loan_index))
+}
+
+// The `content` loan standing for what one more load through a parameter's
+// loan reads, the last standing for every depth from its own on. A pointee
+// loan's keeps the path its first load went along.
+@(private = "file")
+deeper_content_loan :: proc(root: Prov_Root, loan: Prov_Loan, loan_index: int) -> int {
+	count := len(root.content_loans)
+	if count == 0 {
+		return loan_index
 	}
-	bit_mark(state.merged, deeper)
+	next := min(loan.depth, count - 1)
+	if loan.pointee > 0 {
+		return int(root.pointee_loans[loan.pointee - 1][next])
+	}
+	return int(root.content_loans[next])
 }
 
 // Joins into `state.merged` what the storage one loan names holds at `path`;
@@ -3118,13 +3163,7 @@ load_through_loan :: proc(
 		if root.kind == .Param && !loan.content && load_pointee_paths(state, root, path) {
 			return found
 		}
-		// A pointee loan already stands for every depth the last content loan
-		// would, without widening to the pointee's other paths.
-		deeper := loan_index
-		if count := len(root.content_loans); count > 0 && !(loan.pointee > 0 && min(loan.depth, count - 1) == 0) {
-			deeper = int(root.content_loans[min(loan.depth, count - 1)])
-		}
-		bit_mark(state.merged, deeper)
+		bit_mark(state.merged, deeper_content_loan(root, loan, loan_index))
 	}
 	return found
 }
@@ -3140,9 +3179,9 @@ load_pointee_paths :: proc(state: ^Prov_State, root: Prov_Root, path: []Proj_Ste
 	graph := state.graph
 	shape := carrier_pointee_shape(graph.k.c, symbol_of(graph.k.c, root.symbol).type)
 	marked := false
-	for loan, position in root.pointee_loans {
+	for loans, position in root.pointee_loans {
 		if paths_overlap(shape[position].steps, path) {
-			bit_mark(state.merged, int(loan))
+			bit_mark(state.merged, int(loans[0]))
 			marked = true
 		}
 	}
@@ -3154,6 +3193,8 @@ load_pointee_paths :: proc(state: ^Prov_State, root: Prov_Root, path: []Proj_Ste
 @(private = "file")
 resolve_content_reads :: proc(state: ^Prov_State) {
 	if !state.graph.has_content_load { return }
+	loads := make([dynamic]Prov_Event, 0, 8, state.graph.alloc)
+	defer prov_reborrow_loaded_through(state.graph, loads[:])
 	for block in state.graph.blocks {
 		if !block.prov_visited {
 			continue
@@ -3167,6 +3208,7 @@ resolve_content_reads :: proc(state: ^Prov_State) {
 				load_pointee_content(state, event, state.reach, &reads)
 				event.sources = reads[:]
 				prov_reborrow_loaded(state.graph, event)
+				append(&loads, event)
 			} else {
 				run_prov_event(state, event, state.reach, state.ended)
 			}
@@ -4332,7 +4374,7 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 		// A reborrow suspends its source until its own last use, and the last use
 		// of whatever was reborrowed from it in turn.
 		for source in event.sources {
-			if reborrow, derived, found := live_reborrow_of(state, source, live, event.reads_only); found {
+			if reborrow, derived, found := live_reborrow_of(state, source, live, event); found {
 				report_suspended_reborrow(state, event, reborrow, uses[derived])
 				state.diagnostic_precision |= state.precision[derived]
 				return
@@ -4446,7 +4488,7 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 // The first reborrow of `source` that a live slot still depends on, directly or
 // through reborrows of the reborrow, and that live slot.
 @(private = "file")
-live_reborrow_of :: proc(state: ^Prov_State, source: int, live: []bool, reads_only: bool) -> (Prov_Reborrow, int, bool) {
+live_reborrow_of :: proc(state: ^Prov_State, source: int, live: []bool, use: Prov_Event) -> (Prov_Reborrow, int, bool) {
 	graph := state.graph
 	visited := make(map[int]bool, 8, context.temp_allocator)
 	pending := make([dynamic]int, 0, 8, context.temp_allocator)
@@ -4454,11 +4496,19 @@ live_reborrow_of :: proc(state: ^Prov_State, source: int, live: []bool, reads_on
 		// Only a mutable reborrow excludes a read; what is derived from a
 		// read-only one is read-only too. A severed one was taken from an
 		// earlier value of a fresh source.
-		if reborrow.source != source || reborrow.passes_on || (reads_only && !reborrow.mutable) || (index < len(state.severed) && state.severed[index]) {
+		if reborrow.source != source || reborrow.passes_on || (use.reads_only && !reborrow.mutable) || (index < len(state.severed) && state.severed[index]) {
+			continue
+		}
+		// A use going through the source elsewhere in its pointee, or replacing
+		// what was copied out.
+		if reborrow.through && use.kind == .Live && use.through && (use.stores || !paths_overlap(reborrow.path, use.through_path)) {
 			continue
 		}
 		clear(&pending)
 		clear(&visited)
+		// What was derived from `source` and stored back into it, as `cur =
+		// cur^.next`, is its current value, not a competing use.
+		visited[source] = true
 		append(&pending, reborrow.derived)
 		for len(pending) > 0 {
 			slot := pop(&pending)
@@ -4468,7 +4518,7 @@ live_reborrow_of :: proc(state: ^Prov_State, source: int, live: []bool, reads_on
 			visited[slot] = true
 			// An overwritten intermediate no longer overlaps `source`, but something
 			// derived from its previous value still can.
-			if live[slot] && prov_slots_overlap(state, source, slot) {
+			if live[slot] && prov_slots_overlap(state, source, slot, reborrow.through) {
 				return reborrow, slot, true
 			}
 			for next in graph.reborrows {
@@ -4482,14 +4532,27 @@ live_reborrow_of :: proc(state: ^Prov_State, source: int, live: []bool, reads_on
 }
 
 // The source is suspended only while both slots' current values share a valid
-// loan, so overwriting either one ends the reborrow.
+// loan, so overwriting either one ends the reborrow. Read `through` the source,
+// the derived slot holds a loan of the root the source's names instead.
 @(private = "file")
-prov_slots_overlap :: proc(state: ^Prov_State, source_slot, derived_slot: int) -> bool {
+prov_slots_overlap :: proc(state: ^Prov_State, source_slot, derived_slot: int, through := false) -> bool {
 	source := reach_row(state, state.reach, source_slot)
 	derived := reach_row(state, state.reach, derived_slot)
 	for index in 0 ..< state.loans {
-		if bit_get(source, index) && bit_get(derived, index) && !state.ended[index] {
+		if !bit_get(source, index) || state.ended[index] {
+			continue
+		}
+		if bit_get(derived, index) {
 			return true
+		}
+		if !through {
+			continue
+		}
+		root := state.graph.loans[index].root
+		for other in 0 ..< state.loans {
+			if bit_get(derived, other) && !state.ended[other] && state.graph.loans[other].root == root {
+				return true
+			}
 		}
 	}
 	return false

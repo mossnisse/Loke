@@ -1,6 +1,7 @@
 // design.md "Procedure result contracts": a result read through a pointer or
 // slice parameter still depends on every field it reads, at every depth and
-// through every call that forwards it, also through a `self: ^` receiver.
+// through every call that forwards it, also through a `self: ^` receiver and
+// two loads below a parameter.
 // design.md "Minimum provenance precision": a field of an array literal's
 // element keeps its own borrow while a later element is built.
 package main;
@@ -126,6 +127,21 @@ widened_contract :: proc(values: []Pair) -> string_view {
 	callback := first_a;
 	callback = first_b;
 	return callback(values);
+}
+
+Deep :: struct { pair: ^Pair, other: string_view }
+
+deep_b :: proc(d: ^Deep) -> string_view { return d.pair.b; }
+
+read_field_two_loads_below :: proc() {
+	kept: string_view = "";
+	{
+		source := strings.copy("ended");
+		pair := Pair{"static", source};
+		deep := Deep{&pair, "static"};
+		kept = deep_b(&deep);
+	}
+	fmt.println(kept);
 }
 
 main :: proc() {}

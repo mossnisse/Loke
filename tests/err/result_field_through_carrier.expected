@@ -1,30 +1,33 @@
 L0513
-@33:14
+@34:14
 this string view is used after `source`, the local it borrows, has ended
 L0513
-@44:14
+@45:14
 this string view is used after `source`, the local it borrows, has ended
 L0513
-@54:14
+@55:14
 this string view is used after `source`, the local it borrows, has ended
 L0513
-@65:14
+@66:14
 this string view is used after `source`, the local it borrows, has ended
 L0513
-@75:14
+@76:14
 this string view is used after `source`, the local it borrows, has ended
 L0513
-@85:14
+@86:14
 this string view is used after `source`, the local it borrows, has ended
 L0513
-@94:14
+@95:14
 this string view is used after `source`, the local it borrows, has ended
 L0513
-@105:14
+@106:14
 this string view is used after `source`, the local it borrows, has ended
 L0513
-@117:14
+@118:14
 this string view is used after `source`, the local it borrows, has ended
 L0645
-@127:13
+@128:13
 procedure result provenance does not satisfy the inferred contract of `first_a`
+L0513
+@144:14
+this string view is used after `source`, the local it borrows, has ended

@@ -94,6 +94,36 @@ checklist.
   Upgrade by keeping the viewed storage alive for as long as the view is
   used, or by keeping a copy.
 
+- A mutable pointer copied out through a pointer parameter now keeps the
+  place it was copied from suspended while the copy is in use
+  ([Weakening and reborrows](design.md#weakening-and-reborrows)). Using that
+  place, or the whole pointer, meanwhile is now rejected with `L0641`; before,
+  it compiled, leaving two mutable paths to one value, and growing a container
+  through one could leave the other reading freed memory:
+
+  ```loke
+  grow :: proc(p: ^mut ^mut [dynamic]int) {
+      copy := p^;
+      p^.append(1);   // now L0641
+      copy.append(2);
+  }
+  ```
+
+  So is `list^.head^.value = 2` beside `node := list^.head` with
+  `list: ^mut List`. The pointer's other fields, as `list^.count`, and
+  storing a new pointer into the place, as `list^.head = other`, still
+  compile. Upgrade by finishing with the copy before using the place again,
+  or by using the place instead of a copy.
+
+- Borrowing a variable that holds a mutable pointer, as `&mut held`, now uses
+  that pointer, so it waits for the last use of a mutable reborrow of it.
+  `both(held, &mut held)`, which hands a callee a pointer and a pointer to the
+  variable holding it, and `other := &mut held` while `copy := held` is still
+  in use, are now rejected with `L0641`
+  ([Weakening and reborrows](design.md#weakening-and-reborrows)); before,
+  they compiled, leaving two mutable paths to one container. Upgrade by
+  passing the pointer once, or by finishing with the copy first.
+
 ### Added
 
 - `fs.replace_atomic` and `fs.replace_atomic_text` replace a file so that a
@@ -194,6 +224,13 @@ checklist.
   what its sibling field borrows when a later element holds a borrow too
   ([Minimum provenance precision](design.md#minimum-provenance-precision)).
   Using it after `source` ended was rejected with `L0513`.
+
+- A field read two loads below a parameter, as `return d.pair.a;` with
+  `Deep :: struct { pair: ^Pair, other: string_view }` and `d: ^Deep`, now
+  depends only on that field, as one load below already did
+  ([Procedure result contracts](design.md#procedure-result-contracts)). Using
+  the result after storage only `other` or `pair.b` viewed had ended was
+  rejected with `L0513`.
 
 ## [0.9.0] - 2026-10-27
 
