@@ -15,15 +15,15 @@ as milestones ship, and keep implementation details in
 
 ## Suggested order
 
-| Phase | Deliverable | Prerequisite |
-| --- | --- | --- |
-| 0 | [Correctness and performance baseline](#ongoing-quality-engineering), maintained throughout | Existing compiler and test suites |
-| 1 | [Library support demonstrated by a parser and test harness in Loke](#standard-library-maturity) | Current lexer and corpus-runner examples |
-| 2 | [Reproducible dependency resolution and locked builds](#packages-and-dependencies) | Existing local `loke.project` workflow |
-| 3 | [Reusable compiler sessions, then incremental checking](#compiler-services) | Current phase contracts and baseline comparisons |
-| 4 | [Language server](#language-server) and [editor integration](#debugging-and-developer-tools) | Phase 3 sessions, overlays, and semantic queries |
-| 5 | [Linux, then macOS support](#more-platforms) | Target interfaces isolated while preserving Windows behavior |
-| 6 | [Self-hosted compiler and reproducible bootstrap](#self-hosting) | Stable compiler contracts, required libraries, locked inputs, and release checks |
+| Phase | Deliverable | Prerequisite | Status |
+| --- | --- | --- | --- |
+| 0 | [Correctness and performance baseline](#ongoing-quality-engineering), maintained throughout | Existing compiler and test suites | Ongoing |
+| 1 | [Library support demonstrated by a parser and test harness in Loke](#standard-library-maturity) | Current lexer and corpus-runner examples | Lexer and corpus runner done; parser not started |
+| 2 | [Reproducible dependency resolution and locked builds](#packages-and-dependencies) | Existing local `loke.project` workflow | Not started |
+| 3 | [Reusable compiler sessions, then incremental checking](#compiler-services) | Current phase contracts and baseline comparisons | Milestones 1–4 shipped; equivalence and cost open |
+| 4 | [Language server](#language-server) and [editor integration](#debugging-and-developer-tools) | Phase 3 sessions, overlays, and semantic queries | Language server shipped; debugger workflow open |
+| 5 | [Linux, then macOS support](#more-platforms) | Target interfaces isolated while preserving Windows behavior | Not started |
+| 6 | [Self-hosted compiler and reproducible bootstrap](#self-hosting) | Stable compiler contracts, required libraries, locked inputs, and release checks | Not started |
 
 Start with the highest-risk known correctness gaps and the parser example.
 Dependency work can proceed alongside library work. The first language-server
@@ -71,7 +71,8 @@ and performance evidence. This work continues throughout the roadmap.
 
 **Phase 1.** Establish library contracts through real command-line programs and
 compiler workloads. The API inventory is in
-[standard-library.md](standard-library.md); required coverage is in [Standard-library verification](compiler-architecture.md#standard-library-verification).
+[standard-library.md](standard-library.md); required coverage is in
+[Standard-library verification](compiler-architecture.md#standard-library-verification).
 
 Already available: [examples/lexer.loke](examples/lexer.loke) is checked against
 `lokec -dump-tokens`. [examples/corpus_runner.loke](examples/corpus_runner.loke)
@@ -90,8 +91,9 @@ Implementation order:
    allocation at repository scale. Record missing foundational operations
    before adding APIs; keep the program that demonstrates each need.
 3. Add the testing and binary/text facilities those programs actually require.
-   Introduce `core:bytes`, time, random, buffered I/O, or higher-level encodings
-   only when a caller establishes their contracts.
+   Introduce `core:bytes`, buffered I/O, or further encodings only when a
+   caller establishes their contracts, as `core:time`, `core:random`, and
+   `core:encoding/json` were.
 4. For every public API, add an example and the applicable allocator-failure,
    cleanup, Unicode, short-I/O, and platform-conformance cases from
    [Standard-library verification](compiler-architecture.md#standard-library-verification).
@@ -108,8 +110,10 @@ as the negative binomial, Cauchy, and Weibull; buffered streams,
 locking; fallible twins of
 allocating string transformations other than `copy`, Unicode case mapping,
 normalization, and grapheme segmentation; terminal colors, cursor movement,
-mouse and resize events; `thread.try_spawn`, `try_lock`, condition variables,
-and thread identity. Math gaps include hyperbolics,
+mouse and resize events; `thread.try_spawn`, `try_lock`, and thread identity
+(a bare condition variable is left out on purpose: `Monitor` replaces it, see
+[Waiting on a condition, not a signal](comments.md#waiting-on-a-condition-not-a-signal)).
+Math gaps include hyperbolics,
 `cbrt`/`ldexp`/`frexp`/`modf`, `erf`, `gamma`, lane-wise SIMD math, and
 integer bit helpers. `core:simd`'s remaining gaps are specified in
 [What SIMD does not do](design.md#what-simd-does-not-do).
@@ -149,10 +153,10 @@ requirement to finish every optional package before phase 2 or phase 3.
 
 ## Packages and dependencies
 
-**Phase 2.** Extend the existing [Projects](compiler-guide.md#projects) workflow while
-keeping imports independent of a registry. Today `loke.project` registers local
-dependency directories as collections, follows their manifests, and permits
-explicit `-collection` overrides.
+**Phase 2.** Extend the existing [Projects](compiler-guide.md#projects)
+workflow while keeping imports independent of a registry. Today
+`loke.project` registers local dependency directories as collections, follows
+their manifests, and permits explicit `-collection` overrides.
 
 Implementation order:
 
@@ -304,10 +308,11 @@ Implementation order:
 5. **Formatting and documentation — shipped.** `textDocument/formatting`
    answers the layout `lokec -fmt` writes for the unsaved text, as one edit
    over the changed lines, without waiting for a check. The
-   `loke.documentation` command answered the page `lokec -doc` prints for the
-   document's root, and since the interface file answers what `lokec -api`
-   writes for the document's package. Regressions compare both with the command-line tools in
-   process and over pipes, and cover repeated formatting, CRLF text, refusals,
+   `loke.documentation` command first answered the page `lokec -doc` prints for
+   the document's root; since the interface file was added, it answers what
+   `lokec -api` writes for the document's package. Regressions compare both
+   with the command-line tools in process and over pipes, and cover repeated
+   formatting, CRLF text, refusals,
    unsaved imports, a library rechecked after edits, and a program `lokec`
    would reject for its missing `main`. See
    [Debugging and developer tools](#debugging-and-developer-tools).
@@ -321,7 +326,9 @@ and each advertised editing operation has a protocol regression test.
 
 **Alongside phases 1-5, with editor integration in phase 4.** The command-line
 foundation already exists: `-fmt` formats source, `-doc` emits public API and
-declaration comments, and Windows `-g` emits CodeView/PDB information for
+declaration comments, `-api` writes each package's checked-in
+[interface file](compiler-guide.md#interface-files), and Windows `-g` emits
+CodeView/PDB information for
 procedures, scoped locals, and statement locations. Debug executables include
 Loke panic frames; natvis covers strings, maps, `any_view`, and `dyn` values.
 See [Common options](compiler-guide.md#common-options) and
@@ -330,14 +337,14 @@ See [Common options](compiler-guide.md#common-options) and
 Implementation order:
 
 1. Keep the existing formatter, documentation, and debugger regression coverage
-   green through compiler-service changes. Use the lexer's retained comment
-   spans for documentation and hover.
+   green through compiler-service changes.
 2. Add automatic column alignment when hand-maintained alignment becomes a
    demonstrated burden, settling the remaining
    [formatting questions](open-questions.md#formatting) with examples first.
 3. **Formatting and documentation in the editor — shipped.** `loke-lsp`
-   calls the procedures behind `-fmt` and `-doc` on unsaved text; formatting
-   the result again leaves it unchanged. See
+   calls the procedures behind `-fmt` and `-api` on unsaved text, and hover
+   shows doc comments as `-doc` does; formatting the result again leaves it
+   unchanged. See
    [Language server](compiler-guide.md#language-server).
 4. Document and test an editor/debugger workflow for each supported target:
    breakpoint, stepping, ordinary local inspection, and panic stack trace.
@@ -362,10 +369,14 @@ Implementation order:
    calling conventions, object formats, debug formats, and linker arguments.
    Add an explicit target-selection interface, keeping the current Windows x64
    target as the compatibility baseline. Distinguish host paths/processes from
-   target ABI and runtime choices throughout the driver. The
-   [deterministic math and CPU targeting plan](deterministic-math-and-targets-plan.md#user-facing-selection)
-   adds CPU levels to this boundary and defers a public `-target` option until
-   a second target exists.
+   target ABI and runtime choices throughout the driver. CPU levels belong to
+   this boundary too: baseline x86-64 stays the default, and a level such as
+   `x86-64-v3` is chosen separately from `-opt` and never relaxes a math
+   function's numerical contract. Do not add a public `-target` option while
+   Windows x64 is the only target, since an option that accepts one value
+   would fix triple spelling and normalization before a second target forces
+   those decisions. Add it with the first additional target; recognizing a
+   triple must not imply support for its ABI or runtime.
 2. **Supported configurations.** Name the initial Linux and macOS architectures
    and supported host/target pairs. Decide toolchain discovery, SDK/sysroot
    selection, foreign-library resolution, and artifact naming before promising
