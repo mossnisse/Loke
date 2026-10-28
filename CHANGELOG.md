@@ -210,6 +210,9 @@ checklist.
 
 ### Fixed
 
+- `return nil;` in a procedure returning an `Option(^T)` no longer suggests
+  `.some(nil)`, which is an error of its own since `nil` is not a `^T`. The
+  diagnostic now says so and suggests `.none`.
 - `strconv.parse_f64` now rounds a spelling with more than 768 significant
   digits correctly: the C library ignored every digit past the 768th, so
   `"9007199254740993." + 760 zeros + "1"` read as 2^53 instead of 2^53 + 2.

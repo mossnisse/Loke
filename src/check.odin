@@ -4417,11 +4417,22 @@ check_returned_value :: proc(k: ^Checker, value: ^Return_Value) -> bool {
 	if type == TYPE_UNTYPED_NIL {
 		// design.md "Success returns": `nil` is never an implicit success, so
 		// `return nil;` cannot be read as absence and silently be `.some(nil)`.
-		errorf(
-			k.c, expr_span(e), "L0310",
-			"`nil` does not build `.%s` implicitly: write `.%s(nil)` for a success, or `.%s` for the failure",
-			success, success, union_variant_name(k.c, result, shape.failure),
-		)
+		// Only an unchecked address takes `nil`, so only there is the success
+		// a fix to suggest.
+		failed := union_variant_name(k.c, result, shape.failure)
+		if type_accepts_nil(k.c, payload) {
+			errorf(
+				k.c, expr_span(e), "L0310",
+				"`nil` does not build `.%s` implicitly: write `.%s(nil)` for a success, or `.%s` for the failure",
+				success, success, failed,
+			)
+		} else {
+			errorf(
+				k.c, expr_span(e), "L0310",
+				"`nil` is not a value of `%s`, the `.%s` payload: write `.%s` for the failure",
+				type_name(k.c, payload), success, failed,
+			)
+		}
 		return false
 	}
 	if !untyped && !assignable(k.c, type, payload) {

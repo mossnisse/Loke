@@ -1,6 +1,7 @@
 # Differences from Odin and design motivations
 
-This non-normative document explains Loke's design decisions and tradeoffs.
+This non-normative document explains Loke's design decisions and tradeoffs,
+for the language, its standard library, and the compiler's internals.
 [design.md](design.md) defines the language, [grammar.md](grammar.md) its syntax,
 and [open-questions.md](open-questions.md) the unresolved choices. API contracts
 belong in [standard-library.md](standard-library.md); release history is in
@@ -11,11 +12,12 @@ belong in [standard-library.md](standard-library.md); release history is in
 | Ownership and cleanup | [Borrow checking](#local-borrow-checking), [assignment](#value-semantic-assignment), [panics](#panics-run-lexical-cleanup) |
 | Types and errors | [Zeros](#zeros-that-are-values), [records](#structs-declare-parentheses-describe), [fallibility](#typed-fallibility) |
 | Procedures and callbacks | [Methods](#methods-interfaces-and-operator-overloading), [captures](#capture-literals), [callable views](#borrowed-callable-views) |
+| Concurrency | [Threads](#threads-the-language-can-start), [`parallel` blocks](#tasks-that-borrow-joined-by-their-block), [pools](#pools-that-help-at-joins), [channels](#channels-end-by-ownership) |
 | Compilation and configuration | [Compile time](#one-language-at-compile-time), [providers](#build-selected-services-and-explicit-runtime-state) |
 | Simpler language surface | [Removed or narrowed features](#removed-or-narrowed-features) |
 | Values and operations | [Overflow](#integer-overflow-panics), [slicing](#mutable-slicing-is-written-mut-alohi), [text](#slicing-text-keeps-its-panic) |
 | Syntax and layout | [Syntax choices](#changed-syntax), [formatter](#formatting) |
-| Library and compiler decisions | [Library APIs](#standard-library-api-choices), [compiler audit](#compiler-architecture-audit-2026-09-28) |
+| Library and compiler decisions | [Library APIs](#standard-library-api-choices) (files, random numbers, time, JSON), [compiler design](#compiler-design-choices) |
 
 ## Added features compared to Odin
 
@@ -699,8 +701,8 @@ the name were rejected:
 The operand is a postfix expression after a postfix operator, so binary
 operators still apply to the payload: `f() or_return + 1` keeps its meaning. The
 cost is that a member of a bare `or_return`'s payload needs parentheses,
-`(f() or_return).len()`; nothing in the repository wrote the unparenthesised
-form, and the diagnostic suggests the parentheses.
+`(f() or_return).len()`. A member call on a propagated value is short enough
+to bind first or parenthesise, and the diagnostic suggests the parentheses.
 
 `Option.ok_or` stays after the failure operand took over propagation. A
 failure operand adapts an absence only where it returns. An `Option` that
@@ -748,9 +750,10 @@ type of their own; a Loke failure payload is an ordinary type that a success
 payload may share.
 
 `nil` is excluded because several languages spell an optional pointer's absence
-with it (Zig's `?*T`, Swift, Kotlin), while in Loke `nil` is a pointer value, not
-a failure. Wrapping it would silently turn `return nil;` from absence into
-`.some(nil)`.
+with it (Zig's `?*T`, Swift, Kotlin), while in Loke `nil` is the null unchecked
+address, not a failure. A checked reference cannot hold it, so in an
+`Option(^T)` `return nil;` is an error either way, but in an `Option(rawptr)`
+wrapping would silently turn it from absence into `.some(nil)`.
 
 A wrapped return takes its value as the plain statement does, so an owned
 local transfers. A written `.ok(x)` copies a place, as any construction does;
@@ -925,9 +928,9 @@ as the same alternative.
 A place is copied at its own type rather than at the destination's, so a
 source that is copyable widens into a destination with a move-only alternative
 it does not have. An argument to a value parameter is lent, as any argument
-is, so it is widened without a copy. The conversion does not reach through containers, since a
-`[dynamic]` of the wider union has a different element size; that rebuilds the
-container, which is a loop the program writes.
+is, so it is widened without a copy. The conversion does not reach through
+containers, since a `[dynamic]` of the wider union has a different element
+size; that rebuilds the container, which is a loop the program writes.
 
 ### Structural patterns
 
@@ -1145,8 +1148,9 @@ attach similar syntax to a different trigger and complicate initialization.
 ### Reflection beyond fields and enum values
 
 `fields_of`, `enum_values_of`, and `variants_of` cover data shape used by
-serialization, bindings, and expanded switch cases. Reflecting procedures, parameters, requirements, and attributes would
-need more descriptors and lookup rules without a demonstrated consumer.
+serialization, bindings, and expanded switch cases. Reflecting procedures,
+parameters, requirements, and attributes would need more descriptors and lookup
+rules without a demonstrated consumer.
 Additional reflection can be introduced when an actual tool needs it.
 
 ### Associated interface members use expressions
@@ -1418,8 +1422,8 @@ product and then the sum, and the compiler never fuses them. A fused result is
 usually more accurate but not always wanted. `a*b - a*b` stops being zero when
 one product is fused and the other rounded, and the sign of a discriminant
 `b*b - 4.0*a*c` can flip. If the compiler chose, the result would change
-with the optimization level and the target. C and Go let the implementation fuse; Rust and Java never do and offer the
-fused operation by name.
+with the optimization level and the target. C and Go let the implementation
+fuse; Rust and Java never do and offer the fused operation by name.
 
 `math.fma(a, b, c)` is that name. It rounds once on every target, so code that
 relies on the extra precision, such as an error-free product or a polynomial in
@@ -1656,7 +1660,7 @@ Odin's lexer skips a carriage return as whitespace wherever it stands. Loke
 accepts one only before a newline and rejects any other as `L0115`, inside
 comments and literals too. Every line table in the toolchain (diagnostics,
 the formatter, the language server) ends lines at `\n` alone, while the
-[LSP text-document rules](https://github.com/microsoft/language-server-protocol/blob/gh-pages/_specifications/specification-3-14.md#text-documents)
+[LSP text-document rules](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocuments)
 also end one at a lone `\r`. A file with one therefore had two line
 numberings: in `"abc\rdef"` an editor's line 1 was the compiler's line 0, and
 a line comment before the `\r` hid everything after it. Accepting lone `\r`
@@ -1712,7 +1716,7 @@ Switch has no competing traversal or header-binding form, so
 `switch (key in counts)` needs no extra parentheses. Payload bindings belong
 in its cases.
 
-### Keywords as member names, and five contextual keywords
+### Keywords as member names, and contextual keywords
 
 Loke is meant for general programs, whose data models and C bindings bring
 their own names: a JSON field `type` or `default`, a network type's
@@ -1724,8 +1728,9 @@ did this for `type`; it now does it for every reserved word.
 
 Of the words that begin a construct, `dynamic`, `hook`, `operator`, `via` and
 `where` each have one fixed position, decided by the tokens around it, much
-as `delegate` and `capture` are. Those five are contextual and otherwise
-ordinary names. Two of them need a rule that takes a meaning away from a name:
+as `delegate` and `capture` are. Those five became contextual and are
+otherwise ordinary names. Two of them need a rule that takes a meaning away
+from a name:
 - `[dynamic]` is always the dynamic array, so a length named `dynamic` is
   parenthesised.
 - `hook(...)` begins a hook only when `proc` follows, since `hook(drop)` is
@@ -1740,14 +1745,16 @@ covers:
 - `default`, a case label;
 - the words that begin a type in an expression.
 
-A reserved word also never names a local, a parameter or a file-scope
-declaration, so code always reads a keyword in statement and expression
-position as the keyword.
+A reserved word also never names a local, a parameter, a generic parameter, or
+a file-scope declaration, so code always reads a keyword in statement and
+expression position as the keyword.
 
 Each contextual word adds a disambiguation rule, and every tool that colours
-or formats Loke has to follow it. That cost is why the list stops at five.
-Raw identifiers, Rust's `r#type`, would free every word but make the freed
-names ugly at every use.
+or formats Loke has to follow it. That cost is why a word is contextual only
+when the tokens around it alone decide its meaning; `parallel` and `spawn`,
+added later, met the same test. The [keyword table](grammar.md#keywords) lists
+every contextual word and its position. Raw identifiers, Rust's `r#type`,
+would free every word but make the freed names ugly at every use.
 
 ## Features kept close to Odin
 
@@ -1804,8 +1811,9 @@ keeping the author's breaks leaves nothing for a tree printer to decide, and a
 token stream cannot lose or reorder syntax. The parser still runs, so a file
 that does not parse is refused, and each result is lexed again and must hold
 the input's tokens exactly, or the formatter reports an internal error instead
-of writing. tests/corpus_test.odin keeps `core/` and `base/` formatted and
-formats every program corpus to a layout that formats to itself.
+of writing. [tests/corpus_test.odin](tests/corpus_test.odin) keeps `core/` and
+`base/` formatted and formats every program corpus to a layout that formats to
+itself.
 
 Possible refinements are recorded in [open-questions.md "Formatting"](open-questions.md#formatting).
 
@@ -1990,6 +1998,8 @@ boundaries and API shapes follow a few common choices:
   767 digits and one standing for any nonzero remainder gives the correctly
   rounded result for any length, from a fixed buffer.
 
+## Compiler design choices
+
 ### Compiler-supplied names are declared in source
 
 Some names in the bundled packages cannot be ordinary Loke: `mem.Arena` is a
@@ -2020,7 +2030,7 @@ The declaration adds no symbol. It never reaches the selected view the checker
 walks, so no other pass treats a `---` body as a foreign procedure or a missing
 definition, and the name keeps the one identity the compiler gave it.
 
-## Compiler architecture audit (2026-09-28)
+### Compiler architecture audit (2026-09-28)
 
 The audit of `b2cc712` and its follow-up favored enforcing existing phase
 boundaries over introducing another IR or splitting the compiler into packages.
@@ -2039,7 +2049,7 @@ positions that a particular analysis should ignore. Implementation details belon
 with the [semantic architecture](compiler-architecture.md#semantic-architecture);
 historical fix lists and test counts are available in Git history.
 
-## Provenance replay and precise publication
+### Provenance replay and precise publication
 
 Provenance analysis reads a
 [normalized body](compiler-architecture.md#normalized-provenance-input) rather
@@ -2070,5 +2080,6 @@ changes.
 The frozen input is shared within one concrete body build. Whole-program summary
 visits still rebuild the body, so retaining normalized bodies across those visits
 remains a [measured later decision](open-questions.md#normalized-input-for-provenance-analysis).
-The profiling records in the repository's `bench/baselines/README.md`, under
-"Provenance normalization", distinguish normalization, fact replay, and event materialization cost.
+The profiling records under
+[Provenance normalization](bench/baselines/README.md#provenance-normalization)
+distinguish normalization, fact replay, and event materialization cost.

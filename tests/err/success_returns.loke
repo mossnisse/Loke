@@ -24,7 +24,11 @@ neither :: proc(s: string_view) -> Result(int, Parse_Error) {
 	return s;
 }
 
-absent :: proc() -> Option(^int) {
+absent :: proc() -> Option(rawptr) {
+	return nil;
+}
+
+absent_reference :: proc() -> Option(^int) {
 	return nil;
 }
 

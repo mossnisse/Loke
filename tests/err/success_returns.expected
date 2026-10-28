@@ -15,34 +15,37 @@ L0310
 `nil` does not build `.some` implicitly: write `.some(nil)` for a success, or `.none` for the failure
 L0310
 @32:9
-cannot return `Result(int, int)` with `int`
+`nil` is not a value of `^int`, the `.some` payload: write `.none` for the failure
 L0310
 @36:9
-cannot return `Result(int, string)` with `int`
-L0326
-@40:2
-this procedure returns `Result(Unit, Parse_Error)`, so `return` needs a value; a result is anonymous and has no local to fill
-L0310
-@44:9
-cannot return `Status(Parse_Error)` with `Parse_Error`
-L0310
-@49:9
-cannot return `Result([2]int, [2]int)` with `[2]int`
-L0310
-@54:9
 cannot return `Result(int, int)` with `int`
 L0310
-@59:9
-cannot return `Result([16]u8, [2]int)` with `[2]int`
+@40:9
+cannot return `Result(int, string)` with `int`
+L0326
+@44:2
+this procedure returns `Result(Unit, Parse_Error)`, so `return` needs a value; a result is anonymous and has no local to fill
 L0310
-@65:9
-cannot return `Result([16]u8, [16]u8)` with `[16]u8`
+@48:9
+cannot return `Status(Parse_Error)` with `Parse_Error`
+L0310
+@53:9
+cannot return `Result([2]int, [2]int)` with `[2]int`
+L0310
+@58:9
+cannot return `Result(int, int)` with `int`
+L0310
+@63:9
+cannot return `Result([16]u8, [2]int)` with `[2]int`
 L0310
 @69:9
 cannot return `Result([16]u8, [16]u8)` with `[16]u8`
-L0502
+L0310
 @73:9
+cannot return `Result([16]u8, [16]u8)` with `[16]u8`
+L0502
+@77:9
 `Connection` is move-only, so a borrowed value of it cannot be returned by value; return a `move` parameter or a local instead
 L0526
-@78:9
+@82:9
 this string view cannot be returned: `s` ends when this procedure returns
