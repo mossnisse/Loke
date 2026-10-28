@@ -411,7 +411,10 @@ given `Side{&mut h^.count}` writes only there. `prov_note_offset` records it
 at each `Def`, adding each place a slot's definitions may point at, so a
 pointer chosen between `&mut h^.count` and `&mut h^.total` points at both,
 and a borrow through it is a place loan of both, leaving the other fields
-free. Past four places, the prefix they share stands for them. An access
+free. Past eight places, the two sharing the longest prefix are merged into
+it until eight are left, so a pointer chosen among fields of `h^.left` and
+`h^.right` may come to point at all of `h^.left` while `h^.right`'s other
+fields stay free (`prov_union_offsets`). An access
 through carriers pointing at different places, as a record holding two
 field borrows, is one event per carrier, and one through a carrier that may
 point at several is one event per place. `check_place_loans` rejects an

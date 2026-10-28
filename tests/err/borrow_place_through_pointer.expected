@@ -1,60 +1,63 @@
 L0641
-@18:2
+@20:2
 `h` cannot be used here: a read-only reborrow of it is still in use
 L0641
-@24:7
+@26:7
 `h` cannot be used here: a mutable reborrow of it is still in use
 L0641
-@30:12
+@32:12
 `h` cannot be used here: a mutable reborrow of it is still in use
 L0641
-@36:8
+@38:8
 `h` cannot be used here: a read-only reborrow of it is still in use
 L0641
-@42:7
+@44:7
 `h` cannot be used here: a read-only reborrow of it is still in use
 L0641
-@49:9
+@51:9
 `h` cannot be used here: a read-only reborrow of it is still in use
 L0641
-@56:2
+@58:2
 `p` cannot be used here: a read-only reborrow of it is still in use
 L0641
-@62:7
+@64:7
 `p` cannot be used here: a read-only reborrow of it is still in use
 L0641
-@69:2
+@71:2
 `h` cannot be used here: a read-only reborrow of it is still in use
 L0641
-@75:2
+@77:2
 `h` cannot be used here: a mutable reborrow of it is still in use
 L0641
-@81:2
+@83:2
 `h` cannot be used here: a read-only reborrow of it is still in use
 L0641
-@87:2
+@89:2
 `p` cannot be used here: a read-only reborrow of it is still in use
 L0641
-@93:3
+@95:3
 `h` cannot be used here: a read-only reborrow of it is still in use
 L0641
-@98:26
+@100:26
 `h` cannot be used here: a mutable reborrow of it is still in use
 L0641
-@102:21
+@104:21
 `h` cannot be used here: a mutable reborrow of it is still in use
 L0641
-@111:41
+@113:41
 `q` cannot be used here: a read-only reborrow of it is still in use
 L0641
-@117:56
+@119:56
 `q` cannot be used here: a read-only reborrow of it is still in use
 L0641
-@124:37
+@126:37
 `q` cannot be used here: a read-only reborrow of it is still in use
 L0641
-@134:2
+@136:2
 `h` cannot be used here: a mutable reborrow of it is still in use
 L0641
-@142:16
+@144:16
 `h` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@165:2
+`s` cannot be used here: a read-only reborrow of it is still in use

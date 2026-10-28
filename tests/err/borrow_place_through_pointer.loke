@@ -6,6 +6,8 @@ package main;
 
 Node :: struct { value: int }
 Holder :: struct { count: int, total: int, other: ^mut Node, items: [dynamic]int, cells: [2]int }
+Wide :: struct { a: int, b: int, c: int, d: int, e: int, z: int }
+Sides :: struct { left: Wide, right: Wide, z: int }
 
 look :: proc(h: ^Holder) -> int { return h^.total; }
 peek :: proc(n: ^int) -> int { return n^; }
@@ -144,6 +146,26 @@ chosen_read :: proc(h: ^mut Holder, flag: bool) -> int {
 	return total;
 }
 
+// Past eight places, those sharing the longest prefix are taken as it: the
+// pointer may point at all of `left`, but only at four fields of `right`.
+// known-gaps.md records the conflict at `s^.left.z`.
+chosen_past_limit :: proc(s: ^mut Sides, i: int) -> int {
+	q := &mut s^.left.a;
+	if (i == 1) { q = &mut s^.left.b; }
+	if (i == 2) { q = &mut s^.left.c; }
+	if (i == 3) { q = &mut s^.left.d; }
+	if (i == 4) { q = &mut s^.left.e; }
+	if (i == 5) { q = &mut s^.right.a; }
+	if (i == 6) { q = &mut s^.right.b; }
+	if (i == 7) { q = &mut s^.right.c; }
+	if (i == 8) { q = &mut s^.right.d; }
+	value := &q^;
+	s^.z = 1;
+	s^.right.e = 2;
+	s^.left.z = 3;
+	return value^;
+}
+
 // Legal: other fields, read-only borrows beside each other, and uses after
 // the borrow is done.
 beside :: proc(h: ^mut Holder) -> int {
@@ -263,6 +285,18 @@ assigned_beside :: proc(h: ^mut Holder, flag: bool) -> int {
 	if (flag) { q = &mut h^.total; }
 	value := &q^;
 	h^.cells[0] = 1;
+	return value^;
+}
+
+chosen_among_five :: proc(w: ^mut Wide, x: bool, y: bool, u: bool, v: bool) -> int {
+	a := &mut w^.a;
+	b := &mut w^.b;
+	c := &mut w^.c;
+	d := &mut w^.d;
+	e := &mut w^.e;
+	q := a if x else b if y else c if u else d if v else e;
+	value := &q^;
+	w^.z = 1;
 	return value^;
 }
 

@@ -627,10 +627,10 @@ prov_note_offset :: proc(graph: ^Flow_Graph, slot: int, sources: []int) {
 	entry.offsets = entry.offsets != nil ? prov_union_offsets(graph, entry.offsets, at) : at
 }
 
-// The most places a value is told apart at; more are merged into the prefix
-// they share.
+// The most places a value is told apart at; past it, places are merged into a
+// prefix they share (`prov_union_offsets`).
 @(private = "file")
-PROV_OFFSET_LIMIT :: 4
+PROV_OFFSET_LIMIT :: 8
 
 // A slot whose definitions name no storage points at the whole of it.
 @(private = "file")
@@ -642,7 +642,11 @@ prov_slot_offsets :: proc(entry: Prov_Slot) -> [][]Proj_Step {
 }
 
 // The places of `a` and those of `b`, a place inside another taken as that
-// one.
+// one. Past the limit, the two places sharing the longest prefix, the first
+// such pair among equals, are taken as that prefix until few enough are left,
+// so `[inner, a]` and `[inner, b]` become `[inner]` while a place outside
+// `inner` stays apart. Each place of `a` and `b` stays inside one of the
+// result.
 @(private = "file")
 prov_union_offsets :: proc(graph: ^Flow_Graph, a, b: [][]Proj_Step) -> [][]Proj_Step {
 	if prov_offsets_cover(a, b) {
@@ -658,15 +662,20 @@ prov_union_offsets :: proc(graph: ^Flow_Graph, a, b: [][]Proj_Step) -> [][]Proj_
 	for at in b {
 		prov_add_offset(&out, at)
 	}
-	if len(out) <= PROV_OFFSET_LIMIT {
-		return out[:]
+	for len(out) > PROV_OFFSET_LIMIT {
+		first, second, longest := 0, 1, -1
+		for i in 0 ..< len(out) {
+			for j in i + 1 ..< len(out) {
+				if shared := len(prov_common_prefix(out[i], out[j])); shared > longest {
+					first, second, longest = i, j, shared
+				}
+			}
+		}
+		shared := prov_common_prefix(out[first], out[second])
+		ordered_remove(&out, second)
+		ordered_remove(&out, first)
+		prov_add_offset(&out, shared)
 	}
-	shared := out[0]
-	for at in out[1:] {
-		shared = prov_common_prefix(shared, at)
-	}
-	resize(&out, 1)
-	out[0] = shared
 	return out[:]
 }
 

@@ -87,28 +87,40 @@ indistinguishable from the subject, but it also exempts these writes. Telling
 them apart needs pointee storage the analysis can distinguish from the place
 it was read out of.
 
-### A fifth possible field makes a borrow cover unrelated fields
+### A pointer chosen among more than eight places covers their shared prefix
 
-[Weakening and reborrows](design.md#weakening-and-reborrows) lets a carrier
-be used for a place beside the one borrowed through it. In commit `5244cddd`,
-a pointer chosen among four sibling fields keeps `z` writable, but adding a
-fifth reports `L0641` at the write to `z`:
+[Weakening and reborrows](design.md#weakening-and-reborrows) lets a carrier be
+used for a place beside the one borrowed through it. A pointer chosen among
+nine fields of a nested record reports `L0641` at a write to a field of the
+record that none of the nine is:
 
 ```loke
 package main;
-Holder :: struct { a: int, b: int, c: int, d: int, e: int, z: int }
-probe :: proc(h: ^mut Holder, x: bool, y: bool, w: bool, v: bool) -> int {
-    a := &mut h^.a; b := &mut h^.b; c := &mut h^.c;
-    d := &mut h^.d; e := &mut h^.e;
-    q := a if x else b if y else c if w else d if v else e;
+Wide :: struct { a: int, b: int, c: int, d: int, e: int, z: int }
+Sides :: struct { left: Wide, right: Wide }
+probe :: proc(s: ^mut Sides, i: int) -> int {
+    q := &mut s^.left.a;
+    if (i == 1) { q = &mut s^.left.b; }
+    if (i == 2) { q = &mut s^.left.c; }
+    if (i == 3) { q = &mut s^.left.d; }
+    if (i == 4) { q = &mut s^.left.e; }
+    if (i == 5) { q = &mut s^.right.a; }
+    if (i == 6) { q = &mut s^.right.b; }
+    if (i == 7) { q = &mut s^.right.c; }
+    if (i == 8) { q = &mut s^.right.d; }
     value := &q^;
-    h^.z = 1; // should be allowed
+    s^.right.e = 2; // allowed
+    s^.left.z = 3;  // L0641, should be allowed
     return value^;
 }
 main :: proc() {}
 ```
 
 `prov_union_offsets` in [src/cfg_provenance.odin](src/cfg_provenance.odin)
-replaces all alternatives by their common prefix once there are more than
-four (`PROV_OFFSET_LIMIT`). Here the prefix names the whole `Holder`, so the
-place loan overlaps `z`. The four-choice version of the same program compiles.
+keeps at most eight places a value may point at (`PROV_OFFSET_LIMIT`), and past
+that merges the two sharing the longest prefix into it, here `s^.left`, so the
+place loan overlaps `s^.left.z`. Nine sibling fields of one record merge into
+the whole record. The bound keeps the place loans and `.Through` events a
+borrow makes few. The diagnostic also does not name the limit, which
+[Minimum provenance precision](design.md#minimum-provenance-precision)
+requires of a rejection an analysis budget causes.
