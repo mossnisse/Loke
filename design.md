@@ -189,8 +189,8 @@ record type labels, `impl` members, and interface slots. For example,
 Every other predeclared name may be shadowed by a declaration like any other name. They are:
 
 - types: `bool`, `int`, `i8`, `i16`, `i32`, `i64`, `i128`, `uint`, `u8`, `u16`, `u32`, `u64`, `u128`, `uintptr`, `byte`, `f16`, `f32`, `f64`, `rune`, `string`, `string_view`, `cstring_view`, `rawptr`, `typeid`, `any_view`, `Allocator`, and `Allocator_Error`;
-- generic and marker types: `Unit`, `Option`, `Result`, `Range`, `Simd`, `Box`, `Shared`, and `Weak`;
-- operations: `assert`, `panic`, `static_assert`, `build_config`, `source_location`, `caller_location`, `size_of`, `align_of`, `offset_of`, `is_copyable`, `is_union`, `type_of`, `typeid_of`, `type_info_of`, `fields_of`, `enum_values_of`, `variants_of`, `make`, `free_all`, `drop`, `exchange`, `box`, `try_box`, `shared`, and `try_shared`;
+- generic and marker types: `Unit`, `Option`, `Result`, `Status`, `Range`, `Simd`, `Box`, `Shared`, and `Weak`;
+- operations: `assert`, `panic`, `static_assert`, `build_config`, `source_location`, `caller_location`, `size_of`, `align_of`, `offset_of`, `is_copyable`, `is_union`, `type_of`, `typeid_of`, `type_info_of`, `fields_of`, `enum_values_of`, `variants_of`, `make`, `try_make`, `free_all`, `drop`, `exchange`, `box`, `try_box`, `shared`, and `try_shared`;
 - [build constants](#build-constants): `LOKE_ARCH`, `LOKE_OS`, `LOKE_ENDIAN`, `LOKE_BUILD_MODE`, `LOKE_DEBUG`, `LOKE_OPTIMIZATION_MODE`, `LOKE_LOG_LEVEL`, `LOKE_VENDOR`, and `LOKE_VERSION`.
 
 `type` and `move` are keywords, not predeclared names.
@@ -2210,7 +2210,7 @@ Procedure types are compatible only when the following match:
 - calling convention;
 - parameter and result types;
 - parameter modes and variadic shape;
-- type-level parameter effects, including `@(allocator_reset)` and [`@(escape=<level>)`](#escapelevel);
+- type-level parameter effects, including `@(allocator_reset)`, [`@(escape=<level>)`](#escapelevel), and [`@(cross_thread)`](#cross_thread);
 - any inferred [result contract](#procedure-result-contracts) required by the destination.
 
 A reset-capable procedure cannot be stored in a procedure value whose type hides that effect. The escape level likewise determines what an indirect call may keep of each argument.
@@ -5463,6 +5463,8 @@ static_assert(size_of(s) == (N+N-2)*size_of(T));
 
 # 8. Ownership & Lifetimes
 
+*Grammar: [Primary expressions](grammar.md#primary-expressions), [Operators and punctuation](grammar.md#operators-and-punctuation).*
+
 ## Borrows and lifetimes
 
 Loke checks the lifetime of locally visible borrows. The model is based on **storage roots**, not on whether cleanup is automatic.
@@ -7277,7 +7279,7 @@ With the checks above, conflicting unsynchronized accesses through checked roots
 
 The [join check](#releasing-before-the-join) rejects a kept guard or endpoint that may hold up a join; it does not prove that the tasks finish.
 
-Each task runs on a thread of its own, started for it, so its `thread_local` storage starts fresh and is destroyed when the task's thread exits, before the join returns. Running the tasks one after another on one thread is not the same program: two fresh threads each incrementing a zero-initialized `thread_local` counter return `(1, 1)`, where two calls on one thread return `(1, 2)`. Blocking tasks may also deadlock when run in sequence.
+A task of a block without an executor runs on a thread of its own, started for it, so its `thread_local` storage starts fresh and is destroyed when the task's thread exits, before the join returns; a pooled task runs on a worker of its pool, whose `thread_local` storage lasts as long as the worker, or on the joining thread (see [Parallel blocks](#parallel-blocks)). Running the tasks one after another on one thread is not the same program: two fresh threads each incrementing a zero-initialized `thread_local` counter return `(1, 1)`, where two calls on one thread return `(1, 2)`. Blocking tasks may also deadlock when run in sequence.
 
 ## Foreign system
 
@@ -7916,7 +7918,7 @@ Terms this specification gives a precise meaning, with the section that defines 
 | **slot** | A named method requirement in an interface, written `slot name: proc(...)`. A `dyn` view calls it through the witness. See [Interface bodies](#interface-bodies). |
 | **specialization binding** | A `$name` introducing a compile-time input or pattern name. `$` appears only where the name is bound. See [Compile-time phases](#compile-time-phases). |
 | **storage root** | A variable, value temporary, or allocation that owns storage, and the anchor for borrows of it. Cleanup policy does not decide what is a root. See [Storage roots and borrow carriers](#storage-roots-and-borrow-carriers). |
-| **task** | A call a `spawn` statement starts on a thread of its own, lasting until its block's join. See [Spawn statements](#spawn-statements). |
+| **task** | A call a `spawn` statement starts on a thread of its own or on a worker of its block's pool, lasting until its block's join. See [Spawn statements](#spawn-statements). |
 | **temporary** | A value not bound to a name. It lives until the end of its complete expression, or of the enclosing statement in a `foreach`, `switch`, or `if` header, or of its block when a local's value borrows it. A temporary transfers where a place would be copied. See [Temporaries and procedure boundaries](#temporaries-and-procedure-boundaries). |
 | **unfixed constant** | A constant with no fixed type until context converts it, such as the literal `42`. See [Unfixed constants](#unfixed-constants). |
 | **window** | The points of a `parallel` block reachable from an executed `spawn`, up to the join, where tasks may be running. See [Globals while tasks run](#globals-while-tasks-run). |
@@ -7935,12 +7937,15 @@ The specification uses these library declarations. Their complete APIs belong to
 | `C_String` | `core:cstrings` | [C string views](#c-string-views) |
 | `Small_Array(T, N)`, `Bit_Set(Enum)`, `Enum_Array(Enum, T)` | `core:container` | [fixed-capacity arrays](#fixed-capacity-arrays), [enum iteration](#iterating-an-enumeration) |
 | Standard interfaces | `base:interfaces` | [interface catalogue](#standard-interface-catalogue) |
-| `meta.Field`, `meta.Enum_Value` | `base:meta` | [compile-time reflection](#compile-time-reflection) |
+| `meta.Field`, `meta.Enum_Value`, `meta.Variant` | `base:meta` | [compile-time reflection](#compile-time-reflection) |
+| `Result.map_error`, `Status.map_error`, `Option.ok_or` | `base:runtime` | [changing error domains](#changing-error-domains) |
 | `Allocator_Error`, `Allocator`, `mem.Scratch`, `mem.Arena` | `base:runtime`, `core:mem` | [allocators](#allocators) |
 | `Logger` | `core:log` | [build-selected providers](#build-selected-providers) |
 | `Source_Code_Location` | `base:runtime` | [`caller_location`](#caller_location), [`source_location`](#source_location-or-source_locationentity) |
 | `Complex(T)`, `Quaternion(T)` | `core:math` | [library numeric types](#library-numeric-types) |
+| `math.wrap`, `math.to`, `math.checked_add`, `math.wrapping_add`, `math.floor_div`, `math.floor_mod`, `math.fma`, and their siblings | `core:math` | [type conversion](#type-conversion), [integer operators](#integer-operators), [floating-point operators](#floating-point-operators) |
 | `Shared(T)`, `Weak(T)` | `base:runtime` | [shared ownership](#shared-ownership) |
-| `Atomic(T)`, `Once`, `fence` | `core:sync` | [concurrency](#concurrency-and-the-memory-model) |
+| `Atomic(T)`, `Once`, `Lazy(T)`, `fence`, `Memory_Order` | `core:sync` | [concurrency](#concurrency-and-the-memory-model), [atomic operations and `Once`](#atomic-operations-and-once) |
+| `thread.spawn`, `thread.Mutex(T)`, `thread.Monitor(T)`, `thread.Guard(T)`, `thread.Monitor_Guard(T)`, `thread.Channel(T)`, `thread.Sender(T)`, `thread.Receiver(T)`, `thread.Ring_Sender(T)`, `thread.Ring_Receiver(T)`, `thread.Pool` | `core:thread` | [concurrency](#concurrency-and-the-memory-model), [structured concurrency](#structured-concurrency) |
 | Slice algorithms | `core:slice` | [sequence types](#sequence-types) |
 | SIMD operations | `core:simd` | [SIMD vectors](#simd-vectors) |

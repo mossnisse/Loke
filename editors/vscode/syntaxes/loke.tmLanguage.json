@@ -163,13 +163,13 @@
     "types": {
       "patterns": [
         { "name": "support.type.primitive.loke", "match": "\\b(?:bool|int|i8|i16|i32|i64|i128|uint|u8|u16|u32|u64|u128|uintptr|byte|f16|f32|f64|rune|string|string_view|cstring_view|rawptr|typeid|any_view)\\b" },
-        { "name": "support.type.loke", "match": "\\b(?:Allocator|Allocator_Error|Unit|Option|Result|Range|Simd|Box|Shared|Weak)\\b" },
+        { "name": "support.type.loke", "match": "\\b(?:Allocator|Allocator_Error|Unit|Option|Result|Status|Range|Simd|Box|Shared|Weak)\\b" },
         { "name": "entity.name.type.parameter.loke", "match": "\\$[A-Za-z_][A-Za-z0-9_]*" }
       ]
     },
     "builtins": {
       "name": "support.function.builtin.loke",
-      "match": "\\b(?:assert|panic|static_assert|build_config|source_location|caller_location|size_of|align_of|offset_of|is_copyable|is_union|type_of|typeid_of|type_info_of|fields_of|enum_values_of|variants_of|make|free_all|drop|exchange|box|try_box|shared|try_shared)\\b(?=\\s*\\()"
+      "match": "\\b(?:assert|panic|static_assert|build_config|source_location|caller_location|size_of|align_of|offset_of|is_copyable|is_union|type_of|typeid_of|type_info_of|fields_of|enum_values_of|variants_of|make|try_make|free_all|drop|exchange|box|try_box|shared|try_shared)\\b(?=\\s*\\()"
     },
     "calls": {
       "match": "\\b([A-Za-z_][A-Za-z0-9_]*)\\s*(?=\\()",

@@ -342,6 +342,7 @@ checklist.
 
 ### Fixed
 
+- `Status` and `try_make` are listed among the [predeclared names](design.md#predeclared-names), which they have always been, and the VS Code grammar now highlights them as such. The specification also records `@(cross_thread)` in [procedure-type compatibility](design.md#procedure-type) and that a pooled task runs on a worker rather than a thread of its own.
 - A mutable borrow through a pointer passed to a read-only parameter is
   checked as read-only even when an index on the way calls something that
   writes, so `peek(&mut both[idx(&mut n)]^.count)` beside `&both[0]^.count`
