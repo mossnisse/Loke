@@ -3,7 +3,7 @@
 // cannot be changed while the traversal or a view of an element is in use.
 // `&item` borrows the source even when the element holds borrows of its own.
 // A source reached through a pointer cannot be grown during its traversal, nor
-// through a pointer to that pointer.
+// through a pointer to that pointer, also when the header slices it.
 package main;
 
 import "core:fmt";
@@ -91,6 +91,14 @@ Holder :: struct { items: ^mut [dynamic]int }
 
 grown_through_held_pointer :: proc(holder: ^mut Holder) {
 	foreach (item in holder.items^) { holder.items.append(item); }
+}
+
+grown_during_sliced_traversal :: proc(p: ^mut ^mut [dynamic]int) {
+	foreach (item in p^^[1:]) { p^.append(item); }
+}
+
+grown_during_sliced_held_traversal :: proc(holder: ^mut Holder) {
+	foreach (item in holder.items^[:]) { holder.items.append(item); }
 }
 
 main :: proc() {}

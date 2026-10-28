@@ -53,11 +53,23 @@ checklist.
   for a local container
   ([Borrowing iteration](design.md#borrowing-iteration)). So is changing it
   through a pointer to that pointer, as `p^.append(item)` inside
-  `foreach (item in p^^)` with `p: ^mut ^mut [dynamic]int`. Before, both
-  compiled, and growing the container could leave the loop reading freed
-  memory. Reading the container and changing its other fields in the loop
-  still compile. Upgrade by collecting the changes in the loop and applying
-  them after it, or by iterating over indices.
+  `foreach (item in p^^)` with `p: ^mut ^mut [dynamic]int`, or inside
+  `foreach (item in p^^[:])`. Before, these compiled, and growing the
+  container could leave the loop reading freed memory. Reading the container
+  and changing its other fields in the loop still compile. Upgrade by
+  collecting the changes in the loop and applying them after it, or by
+  iterating over indices.
+
+- A view of, or pointer into, a container reached through a pointer copied
+  out of another, as `view: []int = p^^[:]` or `element := &p^^[0]` with
+  `p: ^mut ^mut [dynamic]int`, or `holder.items^[:]` with
+  `holder: ^mut Holder`, now keeps that outer pointer suspended while it is in
+  use, as a view through one pointer already did
+  ([Weakening and reborrows](design.md#weakening-and-reborrows)). Changing the
+  container through it, as `p^.append(1)`, is now rejected with `L0641`;
+  before, it compiled, and the view could be left reading freed memory.
+  Reading through the pointer still compiles beside a read-only view. Upgrade
+  by finishing with the view before changing the container.
 
 - Indexing through a pointer to a fixed array, as `p[0].a.x` with
   `p: ^[1]Outer`, now tracks the element and fields it reads. Before, the read
@@ -164,7 +176,9 @@ checklist.
   [Weakening and reborrows](design.md#weakening-and-reborrows) allows.
   Reading through a pointer to such a pointer, as `p^^[0]` or `p^.len()` with
   `p: ^mut ^mut [dynamic]int`, while a read-only reborrow of `p` is in use is
-  no longer rejected either.
+  no longer rejected either, nor is taking another read-only borrow through
+  the pointer, as `first, second := &items^[0], &items^[1];` or a second
+  `items^[:]`.
 
 - A field returned by a `self: ^` method, as
   `first :: proc(self: ^) -> string_view { return self.a; }`, now depends

@@ -1,0 +1,41 @@
+// design.md "Weakening and reborrows": a view of, or a pointer into, storage
+// reached through a pointer copied out of another keeps that other pointer
+// suspended while it is in use, read-only for a read-only borrow, so the
+// storage cannot be changed, or for a mutable borrow even read, through it.
+package main;
+
+import "core:fmt";
+
+Holder :: struct { items: ^mut [dynamic]int }
+
+grown_under_view :: proc(p: ^mut ^mut [dynamic]int) {
+	view: []int = p^^[:];
+	p^.append(1);
+	fmt.println(view[0]);
+}
+
+written_under_view :: proc(p: ^mut ^mut [dynamic]int) {
+	view := p^^[1:];
+	p^^[0] = 5;
+	fmt.println(view[0]);
+}
+
+grown_under_element_pointer :: proc(p: ^mut ^mut [dynamic]int) {
+	element := &p^^[0];
+	p^.append(1);
+	fmt.println(element^);
+}
+
+read_under_mutable_element_pointer :: proc(p: ^mut ^mut [dynamic]int) {
+	element := &mut p^^[0];
+	fmt.println(p^^[1]);
+	element^ = 2;
+}
+
+grown_under_held_view :: proc(holder: ^mut Holder) {
+	view: []int = holder.items^[:];
+	holder.items.append(1);
+	fmt.println(view[0]);
+}
+
+main :: proc() {}

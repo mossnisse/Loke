@@ -4502,6 +4502,34 @@ prov_read_through_carrier :: proc(graph: ^Flow_Graph, place: Expr, reads_only :=
 	return nil, nil, false
 }
 
+// design.md "Weakening and reborrows": a borrow of storage reached through a
+// pointer copied out of another, as `&p^^[0]` or `p^^[:]` reaches the
+// container through `p^`, holds that copy, which no later `p^` names, so the
+// storage could change through `p` while the borrow is in use. Each carrier
+// from `place` out to the first named place is reborrowed instead, with the
+// borrow's capability; the slots returned hold those reborrows. Nothing is
+// reborrowed when `place` is itself a named place, as `items` is for
+// `items^[:]`, whose carrier the borrow already holds.
+@(private)
+prov_reborrow_outer_carriers :: proc(graph: ^Flow_Graph, place: Expr, span: Span, mutable: bool) -> []int {
+	out := make([dynamic]int, 0, 2, graph.alloc)
+	for at := place; at != nil; at = prov_through_carrier_operand(graph, at) {
+		if _, _, ok := prov_place_of(graph, at); ok {
+			break
+		}
+		carriers, _, through := prov_read_through_carrier(graph, at, reads_only = true)
+		if !through {
+			break
+		}
+		for slot in prov_reborrow_traversal(graph, carriers, span, mutable) {
+			if !slice.contains(carriers, slot) {
+				append(&out, slot)
+			}
+		}
+	}
+	return out[:]
+}
+
 // The carrier expression `prov_read_through_carrier` reads `place` through,
 // as `p^` for `p^^.items`; nil when `place` is not reached through one it
 // names.
@@ -4789,8 +4817,13 @@ prov_borrow_place :: proc(graph: ^Flow_Graph, operand: Expr, mutable: bool, span
 	}
 	root, path, ok := prov_place_of(graph, operand)
 	if !ok {
-		if carriers, _, through := prov_read_through_carrier(graph, operand); through {
-			return carriers
+		// A read-only borrow only reads the carriers it goes through, which
+		// another read-only reborrow of them allows (design.md "Weakening and
+		// reborrows").
+		if carriers, _, through := prov_read_through_carrier(graph, operand, reads_only = !mutable); through {
+			return prov_join(graph, carriers, prov_reborrow_outer_carriers(
+				graph, prov_through_carrier_operand(graph, operand), span, mutable,
+			))
 		}
 		if place, is_inout := prov_inout_result_place(graph, operand); is_inout {
 			return place
@@ -4837,10 +4870,12 @@ prov_slice :: proc(graph: ^Flow_Graph, v: ^Expr_Slice) -> []int {
 	// Storage reached through a pointer or view borrows what that carrier names,
 	// as `&p.items` does.
 	if array {
-		if carriers, _, through := prov_read_through_carrier(graph, v.operand); through {
+		if carriers, _, through := prov_read_through_carrier(graph, v.operand, reads_only = !mutable); through {
 			if v.lo != nil { walk_flow_expr(graph, v.lo) }
 			if v.hi != nil { walk_flow_expr(graph, v.hi) }
-			return carriers
+			return prov_join(graph, carriers, prov_reborrow_outer_carriers(
+				graph, prov_through_carrier_operand(graph, v.operand), v.span, mutable,
+			))
 		}
 	}
 	source: []int

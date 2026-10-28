@@ -1906,26 +1906,19 @@ walk_flow_foreach :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach) {
 // reborrowed too.
 @(private = "file")
 foreach_reborrow_through_carrier :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach, place_loop: bool) -> []int {
-	if s.kind == .Protocol || type_is_carrier(graph.k.c, prov_type(graph, s.iterable)) {
+	if s.kind == .Protocol {
 		return nil
 	}
-	out := make([dynamic]int, 0, 2, graph.alloc)
-	for place := s.iterable; place != nil; place = prov_through_carrier_operand(graph, place) {
-		if _, _, ok := prov_place_of(graph, place); ok {
-			break
-		}
-		carriers, _, through := prov_read_through_carrier(graph, place, reads_only = true)
-		if !through {
-			break
-		}
-		reborrowed := prov_reborrow_traversal(graph, carriers, expr_span(s.iterable), place_loop)
-		for slot in reborrowed {
-			if !slice.contains(carriers, slot) {
-				append(&out, slot)
-			}
-		}
+	source := s.iterable
+	// A slice of the source taken in the header, as `p^^[:]`, is a view of
+	// the same storage, which the loop keeps reading at each step.
+	if view, is_slice := source.(^Expr_Slice); is_slice && view.resolution.kind != .User_Operator {
+		source = view.operand
 	}
-	return out[:]
+	if type_is_carrier(graph.k.c, prov_type(graph, source)) {
+		return nil
+	}
+	return prov_reborrow_outer_carriers(graph, source, expr_span(s.iterable), place_loop)
 }
 
 @(private = "file")

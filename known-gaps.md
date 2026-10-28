@@ -7,30 +7,53 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
-### A view through a copied pointer survives a write through the pointer it came from
+### A copy of a pointer read through another does not suspend that other
 
-[Weakening and reborrows](design.md#weakening-and-reborrows) says a carrier
-stored where a read-only one is wanted reborrows its source, which cannot be
-changed while the copy is in use. Through one pointer, as
-`view: []int = items^[:]; items.append(1);` with `items: ^mut [dynamic]int`,
-the append is L0641. Two pointers away it compiles, and the append can
-reallocate the buffer the view still reads:
+[Weakening and reborrows](design.md#weakening-and-reborrows) says copying a
+mutable carrier reborrows it, and the source cannot be used while the copy is
+in use. Through one pointer, `copy := items; items.append(1); copy.append(2);`
+with `items: ^mut [dynamic]int` is L0641. A copy of the inner pointer two
+pointers away still compiles, leaving two mutable pointers to one container:
 
 ```loke
 package main;
-import "core:fmt";
 grow :: proc(p: ^mut ^mut [dynamic]int) {
-    view: []int = p^^[:];
+    copy := p^;
     p^.append(1); // should be rejected
-    fmt.println(view[0]);
+    copy.append(2);
 }
 main :: proc() {}
 ```
 
-The inner `^mut` is loaded out of `p^` into an unnamed slot, so the view's
-reborrow suspends nothing a later `p^` names. A traversal of `p^^` already
-reborrows `p` itself (`foreach_reborrow_through_carrier` in
-[src/cfg.odin](src/cfg.odin)); a stored view needs the same.
+A view of, or pointer into, the storage, as `p^^[:]` or `&p^^[0]`, already
+reborrows `p` (`prov_reborrow_outer_carriers` in
+[src/cfg_provenance.odin](src/cfg_provenance.odin)). A copy of `p^` itself is
+a loaded slot, which `prov_reborrow_loaded` in [src/borrow.odin](src/borrow.odin)
+ties only to local storage the load resolved to, so nothing ties it to a
+pointer parameter. Tying every load to the pointer it went through would also
+tie `cur = cur^.next` to `cur` itself, since reborrows of loaded carriers are
+never severed.
+
+### One call may take a mutable pointer and a pointer to it
+
+[Weakening and reborrows](design.md#weakening-and-reborrows) says a mutable
+carrier passed on as one is reborrowed for the call, so no other argument may
+use it meanwhile. Passing a `^mut` and a mutable borrow of the variable
+holding it compiles, and the callee then holds two mutable paths to one
+container:
+
+```loke
+package main;
+both :: proc(a: ^mut [dynamic]int, b: ^mut ^mut [dynamic]int) {
+    a.append(1);
+    b^.append(2);
+}
+main :: proc() {
+    items := [dynamic]int{1};
+    held := &mut items;
+    both(held, &mut held); // should be rejected
+}
+```
 
 ### A field read two loads below a parameter keeps its siblings' borrows
 

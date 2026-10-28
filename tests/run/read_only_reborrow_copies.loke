@@ -33,6 +33,16 @@ records :: proc(xs: []mut int) {
 	fmt.println(r1.a[0], r2.a[1], both[0].a[0], both[1].a[1]);
 }
 
+// A read-only borrow of storage behind a mutable pointer only reads the
+// pointer, so several may be held at once, also two pointers away.
+through_pointer :: proc(items: ^mut [dynamic]int, p: ^mut ^mut [dynamic]int) {
+	first, second := &items^[0], &items^[1];
+	low: []int = items^[:1];
+	far: []int = p^^[1:];
+	near := &p^^[0];
+	fmt.println(first^, second^, low[0], far[0], near^);
+}
+
 replace :: proc(slot: inout []int, @(escape=stored) value: []int) -> int {
 	slot = value;
 	return 0;
@@ -55,4 +65,8 @@ main :: proc() {
 	assignments(xs);
 	records(xs);
 	fmt.println(weakened_field(xs, &mut other[:]));
+	near := [dynamic]int{4, 5};
+	far := [dynamic]int{6, 7};
+	held := &mut far;
+	through_pointer(&mut near, &mut held);
 }

@@ -90,14 +90,19 @@ read_during_traversal :: proc(counts: ^mut Counts) -> int {
 	return counts.total;
 }
 
-// The same holds two pointers away, and reading through the outer pointer
-// beside a read-only reborrow of it is still only a read.
+// The same holds two pointers away, also over a slice of the source, and
+// reading through the outer pointer beside a read-only reborrow of it, or
+// taking another read-only borrow through it, is still only a read.
 read_two_pointers_away :: proc(p: ^mut ^mut [dynamic]int) -> int {
 	total := 0;
 	foreach (value in p^^) { total += value * p^.len() + p^^[0]; }
+	foreach (value in p^^[1:]) { total += value + p^^[0]; }
 	foreach (&mut value in p^^) { value += 1; }
 	view: ^^mut [dynamic]int = p;
 	total += p^.len() + view^^[0];
+	first, second := &p^^[0], &p^^[1];
+	whole: []int = p^^[:];
+	total += first^ + second^ + whole[1];
 	p^.append(total);
 	return total;
 }

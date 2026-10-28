@@ -34,3 +34,9 @@ L0641
 L0641
 @93:36
 `holder` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@97:30
+`p` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@101:39
+`holder` cannot be used here: a read-only reborrow of it is still in use
