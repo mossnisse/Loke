@@ -137,8 +137,19 @@ require json vendor/json
 
 Source then imports `"shapes:area"` as if `-collection shapes=../shapes` had
 been passed. A dependency's own `loke.project` is read too, and one name must
-name one directory across all of them. A `-collection` for a name replaces the
-project's directory for it, which is how a dependency is patched or vendored.
+name one directory across all of them: two manifests requiring one name as
+different directories is `L0399`. A `-collection` for a name replaces every
+manifest's directory for it, which is how a dependency is patched or vendored.
+Moving or vendoring a dependency that only this manifest requires changes one
+line here and no source. Replacing one that another manifest also requires,
+as `require json vendor/json` above when `../shapes/loke.project` still says
+`require json ../json`, needs the `-collection` as well, since the manifests
+alone conflict:
+
+```powershell
+.\lokec.exe app -collection json=app\vendor\json -o app.exe
+```
+
 `base` and `core` cannot appear in a manifest; they default to the bundled
 library, but an explicit `-collection` can override either. Dependencies are
 local directories for now ([open-questions.md "Package and import versioning"](open-questions.md#package-and-import-versioning)).

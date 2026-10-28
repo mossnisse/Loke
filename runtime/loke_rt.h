@@ -174,8 +174,7 @@ void loke_rt_v1_restore_refusal(const loke_rt_allocator_v1 *a, uint64_t size);
 /* ----------------------------------------------------------------- text -- */
 
 /* design.md "string type": an immutable, owning UTF-8 value that "behaves like a
- * simple local variable". m6a-plan decision "Runtime string representation"
- * fixes the three words:
+ * simple local variable". Three words make up the value:
  *
  *   data         the bytes, always zero-terminated one past `byte_len`
  *   byte_len     O(1), which is what `len(text)` is shorthand for
@@ -194,10 +193,11 @@ typedef struct loke_rt_string_v1 {
 
 LOKE_RT_STATIC_ASSERT(sizeof(loke_rt_string_v1) == 24, string_value_size);
 
-/* The header of one runtime buffer. design.md: "If an implementation shares
- * backing storage between string values, its reference count must be atomic so
- * concurrent handle accounting cannot corrupt the storage. The last drop also
- * deallocates through the string's bound allocator." */
+/* The header of one runtime buffer. design.md "string type": copies may share
+ * immutable backing storage, cleanup uses the string's original allocator, and
+ * that allocator must allow deallocation on any thread receiving the string.
+ * The handle count is atomic because design.md "Concurrency and the memory
+ * model" makes no count implicitly atomic and a data race undefined. */
 typedef struct loke_rt_string_header_v1 {
 	int64_t handles;
 	const loke_rt_allocator_v1 *allocator;

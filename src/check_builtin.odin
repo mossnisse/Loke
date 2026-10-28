@@ -944,12 +944,8 @@ const_from_storage :: proc(c: ^Compiler, bytes: []u8, written: []bool, type: Typ
 		case .Int:
 			return integer_const(bi_wrap(c, raw, int(info.bits), info.signed)), .Folded
 		case .Rune:
-			// design.md: a `rune` excludes surrogates and anything above U+10FFFF.
-			point, fits := bi_to_i64(c, bi_wrap(c, raw, 32, true))
-			if !fits || point < 0 || point > 0x10ffff || (point >= 0xd800 && point <= 0xdfff) {
-				return {}, .Invalid
-			}
-			return rune_const(bi_from_i64(c, point)), .Folded
+			// design.md "Invalid representations": every 32-bit pattern is a `rune`.
+			return rune_const(bi_wrap(c, raw, 32, true)), .Folded
 		case .Enum:
 			candidate := integer_const(bi_wrap(c, raw, int(info.bits), info.signed))
 			if enum_member_by_value(c, type, candidate) == INVALID_SYMBOL {

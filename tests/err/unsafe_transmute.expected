@@ -29,9 +29,6 @@ L0688
 @35:13
 this bit pattern is not a valid `Colour`
 L0688
-@36:15
-this bit pattern is not a valid `rune`
-L0688
 @40:14
 `unsafe.transmute` takes a destination type and a value, found 1 argument
 L0688

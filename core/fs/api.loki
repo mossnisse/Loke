@@ -31,6 +31,8 @@ Open_Options :: struct {
 
 Seek_Origin :: enum {Start, Current, End}
 
+// `Other` is reserved; no operation produces it today. A reparse point reads
+// by its directory bit until links are supported as such.
 Kind :: enum {File, Directory, Other}
 
 Metadata :: struct {
@@ -193,7 +195,11 @@ impl Directory_Reader {
 	close :: proc(self: inout Directory_Reader) -> Status(io.Error) ---;
 
 	// The next entry, or `.none` at the end of the directory. `.` and `..` are
-	// skipped.
+	// skipped. Entries come in the filesystem's own order, which is
+	// unspecified; sort a collected listing for a stable one. The directory is
+	// not snapshotted: an entry added, removed, or renamed during the walk may
+	// be yielded, missed, or yielded under both names, and the walk does not
+	// fail because of it.
 	next :: proc(self: inout Directory_Reader) -> Result(Option(Directory_Entry), io.Error) ---;
 }
 

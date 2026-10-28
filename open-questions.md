@@ -6,28 +6,6 @@ Design rationale and differences from Odin are recorded in [comments.md](comment
 
 The current behavior inventory is in [Nondeterminism and undefined behavior audit](nondeterminism-audit.md).
 
-## Invalid representations at unsafe boundaries
-
-[Built-in values](design.md#built-in-values) allows `x: T = ---` for plain data
-and permits reads even though the storage has unspecified contents.
-[`unsafe.transmute`](design.md#unsafetransmute) requires a valid destination
-representation but says only that an invalid one at runtime is not diagnosed.
-Foreign enum results similarly promise a declared member. Specify the
-language-level result when a read or conversion yields bits that are not a
-value of the type, such as `bool` outside its representations, a missing enum
-member, or an invalid `rune`. Is it undefined behavior, or is there a bounded
-set of permitted outcomes? This should be stated independently of LLVM's
-current treatment of uninitialized loads and invalid scalar values.
-
-## Directory enumeration order and mutation
-
-[`fs.read_directory`](standard-library.md#filesystem-operations) streams the
-native enumeration. Its public contract describes entries and errors but
-does not state their order or what happens when the directory changes during
-the walk. Specify whether order is entirely unspecified, and whether a
-concurrent addition, removal, or rename can be seen, missed, or repeated.
-Callers needing a stable listing can then collect and sort a completed read.
-
 ## JSON follow-ups
 
 [`core:encoding/json`](standard-library.md#coreencodingjson) implements the
@@ -74,9 +52,22 @@ Provenance analysis reads a
 rebuilds once per analysis invocation, consuming settled lifecycle
 annotations. Three decisions remain open:
 
-- **Retaining normalized bodies.** Whole-program summary visits rebuild each
-  body. Keeping the normalized input across visits would trade memory for the
-  repeated normalization; measure both before deciding.
+- **Retaining normalized bodies.** Each clean body is normalized about four
+  times per compilation: once collecting global writes, once in the summary
+  discovery visit and once from the worklist (a body with no result and no
+  owner writes skips both, and one whose callee's summary grew is visited
+  again), and once for its own diagnostics. Measured on 2026-10-28 with a
+  temporary per-body counter on the `bench/baselines/README.md` workloads
+  (`bench/provenance.loke`, `bench/workspace`, `examples/corpus_runner.loke`),
+  bodies were built 3.9-4.0 times each (at most 6), and the normalizations
+  after each body's first cost 6 / 120 / 192 ms of 31 / 386 / 682 ms checking
+  time, 20-31%, the most retaining could save; repeat visits would still
+  replay and materialize. Retaining every construction graph until its
+  diagnostic pass would hold 1.6 / 27 / 38 MB of analysis arena (0.4 / 7 /
+  10 MB in table entries alone) against compiler peaks of 12 / 60 / 89 MB.
+  A retained input must also serve the diagnostic pass, whose construction
+  walk alone reports cross-thread calls and `spawn` transfers, and outlive
+  the per-body release of the analysis arena.
 - **Lifecycle analysis on the same input.** Lifecycle analysis still walks the
   checked AST, and provenance consumes its settled decisions. Moving it onto the
   normalized input needs its own design for unresolved cleanup and last-use
@@ -266,7 +257,10 @@ Decided so far, and built as `loke.project` (compiler-guide.md "Projects"):
 - Imports carry no version and no location. A project gives each dependency a
   name, and the name is a collection prefix: `import "json:parse";`. Where
   `json` comes from is the project's business, so moving or vendoring it
-  changes one manifest line and no source.
+  changes one manifest line and no source; when another manifest also
+  requires `json`, the line conflicts with it, and a `-collection` override
+  chooses the directory for the whole program
+  ([Projects](compiler-guide.md#projects)).
 - One name names one directory in the whole program, across every
   dependency's manifest. A conflict is an error rather than two copies of a
   package, because two copies would give one type two identities. The names
@@ -314,17 +308,6 @@ and explicit update boundary are already covered by
   [Version policy](releasing.md#version-policy) permits breaking minor
   releases. This decision belongs with dependency identity, before the
   versioned manifest syntax is fixed.
-- **Qualify the one-manifest-line vendoring claim.** A root manifest with
-  `require consumer ../consumer` and `require json vendor/json` conflicts with
-  a `consumer/loke.project` containing `require json ../json`: the vendored
-  and original directories differ. A compiler probe reports `L0399`; passing
-  `-collection json=<vendored-directory>` instead succeeds, as
-  [Projects](compiler-guide.md#projects) documents. Updating one manifest line
-  therefore works only when the remaining requirements still name the same
-  directory. If manifest-only vendoring must also replace a shared transitive
-  dependency, define a root replacement rule separately from ordinary
-  requirements. Otherwise document that the explicit collection override is
-  required for this case.
 
 ## Using a package without reading its code (proposal, 2026-10-21)
 
@@ -660,19 +643,30 @@ been run.
 
 ## Thread-affine strings
 
-`string` is an owning value that may share backing storage, and the current
-version requires atomic handle accounting in any sharing implementation. This is
-the most expensive rule in the language per line of ordinary code: every string
-copy is a potential atomic increment, and a freestanding target without atomics
-is left with copy-always as the only conforming strategy. Atomic accounting does
-not make an arbitrary allocator thread-safe; transferring the string still
-asserts that its bound allocator may deallocate on the receiving thread.
+`string` is an owning value whose copies share immutable backing storage, and
+a string may be dropped on any thread that received it, so the shared handle
+count is atomic: `runtime/text.c` retains with a relaxed atomic add and
+releases with an acquire-release atomic subtract, each behind an out-of-line
+runtime call. Nothing turns a `string` copy into a move, since copying it
+cannot allocate, so this is the most frequent hidden cost in ordinary code.
+Measured on 2026-10-28 at `-opt=speed` on an Intel i5-9600K, one uncontended
+copy and drop of a heap-backed string costs about 12.5 ns regardless of
+length, of which about 4 ns is the two calls and the owner check (a literal or
+empty string pays only that) and about 8.5 ns is the two atomic operations; a
+24-byte struct copy costs under 0.3 ns, and an allocating copy of 16 bytes
+about 65-70 ns. Contended counts, where cache-line traffic dominates, have not
+been measured. Atomic accounting does not make an arbitrary allocator
+thread-safe; a string that crosses threads still asserts that its bound
+allocator may deallocate on the receiving thread.
 
 A thread-affine string with a non-atomic count would be a distinct type rather
-than a silent weakening of the guarantee. Deciding whether it is needed requires
-measuring a real implementation; it is recorded here because the cost is
-structural rather than an implementation detail, and because the answer affects
-whether `string` is usable unchanged on embedded targets.
+than a silent weakening of the guarantee, and would save at most the atomic
+part of the cost above. It is not needed now: Windows x64 is the only target,
+so copy-always for a target without atomics is not a live constraint, and no
+workload in the repository is bound by string copies. Revisit when a profile
+shows `string` retain and release on a hot path, when contended counts are
+measured, or when a freestanding target is added, since that decides whether
+`string` is usable unchanged there.
 
 ## Compile-time code generation
 
@@ -716,19 +710,6 @@ Is it the programers responsibility to abstract ove the right thing or does the 
 token optimization, can the syntax be made to be token efficient?
 LLM readability and writability, how does that differ from humans? LLM's are trained on human data but works differently.
 Encapsulation and abstractions must still be important so they can work on an part of the code.
-
-## Symbolic links before `core:fs` supports them
-
-standard-library.md "`core:fs`" says symbolic links are unsupported and that
-their behavior, when it arrives, will be explicit rather than Windows's. Until
-then `fs.metadata` reports what `GetFileAttributesExW` says about the link
-itself. A junction reads as a `Directory`. A file link reads as the link, which
-Windows documents as describing the link rather than its target, though opening
-it reads the target. `Kind.Other` is never produced.
-
-Should a reparse point read as `Other` now? That would be explicit. It would
-also make `create_directories` fail through a junction, which ordinary Windows
-profiles contain.
 
 ## Open questions in `core:strconv`
 
@@ -1379,8 +1360,6 @@ implemented; comments.md records why. What is still open:
 - **More arguments.** The expanded union is a call's only written argument.
   Passing context beside it, as in `handle(context, ..event)`, needs a rule for
   how a label competes with positional arguments for a parameter.
-- **Code size.** Each expansion is compiled once per variant, and the backend
-  does not merge identical copies yet.
 
 ### Unordered type-based sums
 

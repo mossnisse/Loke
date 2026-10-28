@@ -293,6 +293,19 @@ checklist.
 
 ### Changed
 
+- A value whose bits are not a representation of its type, a `bool` other
+  than 0 or 1, an enum value naming no member, a null `^T`, or a union tag out
+  of range, and a read of storage that holds no value, such as an unwritten
+  part of `x: T = ---`, are now specified as undefined behavior by every
+  unchecked route, and the specification lists which types have such patterns
+  and which do not. Every 32-bit pattern is a `rune`, so a compile-time
+  `unsafe.transmute(rune, ...)` of a surrogate or out-of-range code point now
+  folds instead of being rejected
+  ([Invalid representations](design.md#invalid-representations)).
+- `L0399` for a dependency name that two manifests require as different
+  directories now says that a `-collection` for the name chooses one directory
+  for the whole program, which is how a shared dependency is vendored
+  ([Projects](compiler-guide.md#projects)).
 - A borrow of a place reached through a pointer, as `&mut h^.count` or
   `h^.items[:]`, now reborrows the pointer for that place only, so another
   field stays usable while the borrow is in use: `h^.total += 1` beside
@@ -303,6 +316,17 @@ checklist.
   Copying the pointer, or passing it to a procedure, still conflicts with the
   borrow ([Weakening and reborrows](design.md#weakening-and-reborrows)).
 
+- `fs.read_directory` now documents its contract: entries come in the
+  filesystem's own, unspecified order, `.` and `..` are never yielded, and a
+  directory changed during the walk is not snapshotted, so an entry added,
+  removed, or renamed meanwhile may be yielded, missed, or yielded under both
+  names, without failing the walk
+  ([Filesystem operations](standard-library.md#filesystem-operations)).
+- `core:fs` now documents how a reparse point reads until symbolic links are
+  supported: `metadata` and a directory entry classify a junction or a
+  directory link as a `Directory` and a file link as a `File`, every other
+  operation goes through the link, and `Kind.Other` is reserved
+  ([Filesystem operations](standard-library.md#filesystem-operations)).
 - `fs.rename` now returns only once the rename is durable, and
   `fs.File.flush` is documented as making written data durable, which it
   already did.

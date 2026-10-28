@@ -1,0 +1,6 @@
+package parse;
+
+@(public)
+origin :: proc() -> string {
+	return "vendored";
+}

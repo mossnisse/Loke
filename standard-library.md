@@ -1885,6 +1885,15 @@ reader yields one entry at a time and closes its search handle on `drop`.
 An entry's name borrows the reader's buffer until the next `next` call; copy it
 if it must be retained. A fallible reader uses an explicit loop, not `foreach`.
 
+The reader streams the native enumeration. Its order is unspecified: it is
+whatever the filesystem returns, which differs between NTFS and FAT and is
+promised by neither, so a caller that needs a stable listing collects the
+entries and sorts them. `.` and `..` are never yielded. The directory is not
+snapshotted: an entry added, removed, or renamed while the walk is in progress
+may be yielded, missed, or yielded under both names, and the walk does not
+fail because of the change. A yielded name is not a promise that the entry
+still exists: `metadata` on it can answer `Not_Found`.
+
 Example (imports `core:fmt`, `core:fs`, and `core:io`):
 
 ```loke
@@ -1918,9 +1927,18 @@ operation requires a directory and preserves the native error number.
 and I/O failures remain errors. `Metadata` holds `kind` (`File`, `Directory`,
 or `Other`), `size` in bytes, and `modified`, the last write as an
 `Option(time.Time)`: `.none` where the filesystem keeps no such time, and a
-time outside the range of `time.Time` saturating at its end. There is no
-symlink support; when it arrives its behavior is explicit, not inherited from
-what Windows does.
+time outside the range of `time.Time` saturating at its end. `Other` is
+reserved; no operation produces it today.
+
+There is no symbolic-link support: no operation creates, resolves, or
+identifies a link. Until it arrives, `metadata` and a directory entry describe
+a reparse point as Windows describes the link itself, by its directory bit: a
+junction or a directory link is a `Directory` and a file link is a `File`,
+whether or not the target exists. Every other operation goes through the link
+to its target, so `create_directories` succeeds through a junction and
+`remove_directory` on a junction removes the junction and leaves its target.
+When link support arrives its behavior is explicit, not inherited from what
+Windows does.
 
 ## `core:path`
 

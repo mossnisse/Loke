@@ -9,3 +9,4 @@ L0399
 `core` is the library bundled with the compiler
 L0399
 `shared` is already required as another directory
+`-collection shared=<path>` chooses it for the whole program

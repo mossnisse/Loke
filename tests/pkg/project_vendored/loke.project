@@ -1,0 +1,5 @@
+# `consumer` requires `json` as ../json; the root vendors it under vendor/json.
+# Two directories for one name conflict, so project_vendored.flags passes the
+# `-collection` that chooses the vendored copy for the whole program.
+require consumer consumer
+require json vendor/json

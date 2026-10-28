@@ -33,7 +33,7 @@ references :: proc(slice: []int) {
 invalid_constants :: proc() {
 	truthy := unsafe.transmute(bool, u8(2));
 	missing := unsafe.transmute(Colour, u8(7));
-	surrogate := unsafe.transmute(rune, i32(0xd800));
+	surrogate := unsafe.transmute(rune, i32(0xd800)); // a value: every 32-bit pattern is a rune
 }
 
 shapes :: proc() {

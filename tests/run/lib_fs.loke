@@ -5,6 +5,7 @@ import "core:fs";
 import "core:io";
 import "core:os";
 import "core:path";
+import "core:process";
 import "core:strings";
 import "core:time";
 
@@ -315,6 +316,31 @@ main :: proc() {
 	fmt.println(fs.read_text(long_name) or_else panic("a file the test just wrote could not be read"));
 	fmt.println(succeeded(fs.remove(long_name)));
 	fmt.println((count_entries(directory) or_else -1) == before + 1);
+	// A junction reads as a `Directory`, from `metadata` and from an enumeration
+	// alike, and `create_directories` goes through it into its target
+	// (standard-library "Filesystem operations"). `mklink /J` needs no
+	// privilege, which a symbolic link would. `remove_directory` removes the
+	// junction and leaves its target.
+	junction := in_root(directory, "junction");
+	made := process.run(process.Command{
+		program = "cmd", arguments = []string_view{"/c", "mklink", "/J", junction, nested},
+		stdout = .Null, stderr = .Null,
+	}) or_else -1;
+	fmt.println(made == 0);
+	switch (fs.metadata(junction)) {
+	case .ok(junction_info): fmt.println(int(junction_info.kind));
+	case .err: fmt.println(-1);
+	}
+	fmt.println(entry_kind(directory, "junction") or_else -2);
+	fmt.println(succeeded(fs.create_directories(in_root(junction, "through"))));
+	through := in_root(nested, "through");
+	switch (fs.metadata(through)) {
+	case .ok(through_info): fmt.println(through_info.kind == .Directory);
+	case .err: fmt.println(false);
+	}
+	fmt.println(succeeded(fs.remove_directory(through)));
+	fmt.println(succeeded(fs.remove_directory(junction)));
+	fmt.println(fs.exists(nested) or_else false);
 
 	clean_up(directory);
 	fmt.println(fs.exists(directory) or_else true);
@@ -339,6 +365,20 @@ count_entries :: proc(directory: string_view) -> Result(int, io.Error) {
 			total += 1;
 		case .none:
 			return .ok(total);
+		}
+	}
+}
+
+// The kind of the entry named `name` in `directory`, or -1 when it is absent.
+entry_kind :: proc(directory: string_view, name: string_view) -> Result(int, io.Error) {
+	reader := fs.read_directory(directory) or_return;
+	for (;;) {
+		entry := reader.next() or_return;
+		switch (entry) {
+		case .some(found):
+			if (found.name == name) { return .ok(int(found.kind)); }
+		case .none:
+			return .ok(-1);
 		}
 	}
 }
@@ -374,6 +414,7 @@ clean_up :: proc(directory: string_view) {
 			_ = fs.remove_directory(full);
 		}
 	}
+	_ = fs.remove_directory(in_root(in_root(directory, "nested"), "through"));
 	_ = fs.remove_directory(in_root(directory, "nested"));
 	_ = fs.remove_directory(directory);
 }

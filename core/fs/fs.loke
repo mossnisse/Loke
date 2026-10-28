@@ -48,6 +48,9 @@ Open_Options :: struct {
 
 Seek_Origin :: enum {Start, Current, End}
 
+/// `Other` is reserved; no operation produces it today. A reparse point reads
+/// by its directory bit until links are supported as such.
+// standard-library.md "Filesystem operations".
 Kind :: enum {File, Directory, Other}
 
 Metadata :: struct {
@@ -588,6 +591,10 @@ metadata_native :: proc(path: string_view) -> Result(Metadata, io.Error) {
 	};
 }
 
+// The directory bit alone: a junction or a directory link is a `Directory` and
+// a file link is a `File`, which is what lets `create_directories` settle a
+// failed creation through a profile junction (standard-library "Filesystem
+// operations"). `Other` has no producer until links are supported as such.
 @(private)
 kind_of :: proc(attributes: u32) -> Kind {
 	if ((attributes & u32(FILE_ATTRIBUTE_DIRECTORY)) != 0) { return .Directory; }
@@ -780,8 +787,13 @@ impl Directory_Reader {
 	}
 
 	/// The next entry, or `.none` at the end of the directory. `.` and `..` are
-	/// skipped.
-	// They are an artefact of the platform's enumeration, not entries a program
+	/// skipped. Entries come in the filesystem's own order, which is
+	/// unspecified; sort a collected listing for a stable one. The directory is
+	/// not snapshotted: an entry added, removed, or renamed during the walk may
+	/// be yielded, missed, or yielded under both names, and the walk does not
+	/// fail because of it.
+	// The contract is standard-library.md "Filesystem operations". `.` and `..`
+	// are an artefact of the platform's enumeration, not entries a program
 	// asked for.
 	//
 	// ponytail: one allocation per entry, because the name is decoded into an

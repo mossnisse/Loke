@@ -45,7 +45,7 @@ in [emit_llvm_stmt.odin](src/emit_llvm_stmt.odin) and
 | Defined order | Side-effect order is part of the program | Calls, literals, operators, assignments, defer/drop |
 | Unspecified result | The operation has a bounded contract but no single result or order | Map traversal, equal-key sort ties |
 | External or platform dependent | Different inputs or implementations can produce different valid results | Scheduling, addresses, clocks, C math library |
-| Undefined behavior | The language makes no useful guarantee after a violated safety obligation | A data race, invalid pointer dereference, invalid ownership |
+| Undefined behavior | The language makes no useful guarantee after a violated safety obligation | A data race, invalid pointer dereference, invalid ownership, invalid representation |
 | Diagnosed error or panic | A defined failure, **not** undefined behavior | Integer overflow, bounds error, negative shift count |
 
 The distinction matters: an unspecified map order still produces the map's
@@ -64,8 +64,8 @@ choice does not turn an unspecified result into a language guarantee.
 | Addresses and representation | Pointer ordering is a total address order within one run, but address-space randomization can change it between runs. C ABI layout depends on the target; union tag encoding is deliberately unspecified for `unsafe.transmute`. A NaN literal's payload is implementation-defined. | [Comparison operators](design.md#comparison-operators), [`unsafe.transmute`](design.md#unsafetransmute), [Foreign-ABI-safe types](design.md#foreign-abi-safe-types), [String and character literals](design.md#string-and-character-literals) |
 | `core:math` | The listed transcendental functions, including `sin`, `exp`, `pow`, and `hypot`, can differ in the last bits across processor paths, platforms, or optimization levels. Plain floating operations are evaluated and rounded separately, without contraction or reassociation, but that does not make calls into the C math library bitwise portable. | [`core:math`](standard-library.md#coremath), [Deterministic math functions](open-questions.md#deterministic-math-functions), [Floating-point operators](design.md#floating-point-operators) |
 | Randomness | An explicitly seeded generator and its integer/unit draw mappings are reproducible. Entropy-seeded state is not. Some distributions use the nondeterministic math functions; even a fixed seed can then produce different values or consume a different number of draws on another machine. | [`core:random` Reproducibility](standard-library.md#reproducibility), [Random distributions across platforms](open-questions.md#random-distributions-across-platforms) |
-| Process and system services | Clocks, entropy, environment, process I/O, filesystem contents, and concurrent changes to them are external inputs. `fs.read_directory` streams native enumeration without sorting; its documentation does not yet explicitly promise or disclaim an order. | [`core:time`](standard-library.md#coretime), [Filesystem operations](standard-library.md#filesystem-operations), [`core:random`](standard-library.md#corerandom), [`core:process`](standard-library.md#coreprocess) |
-| Unspecified storage | `x: T = ---` is an unsafe assertion for plain data. It suppresses initialization checks and allows reads even though the bytes are unspecified; a foreign out-parameter must fill every part read before use. Ordinary `x: T;` instead starts dead and is checked. The exact consequence of reading bytes that do not represent a valid `T` needs clarification below. | [Built-in values](design.md#built-in-values), [Variable declarations](design.md#variable-declarations) |
+| Process and system services | Clocks, entropy, environment, process I/O, filesystem contents, and concurrent changes to them are external inputs. `fs.read_directory` streams the native enumeration in an unspecified order and without a snapshot; a stable listing is collected and sorted. | [`core:time`](standard-library.md#coretime), [Filesystem operations](standard-library.md#filesystem-operations), [`core:random`](standard-library.md#corerandom), [`core:process`](standard-library.md#coreprocess) |
+| Unspecified storage | `x: T = ---` is an unsafe assertion for plain data. It suppresses initialization checks and allows reads, but a part nothing has written holds no value, and reading it is undefined behavior, not an unspecified value; a foreign out-parameter must fill every part read before use. Ordinary `x: T;` instead starts dead and is checked. | [Built-in values](design.md#built-in-values), [Invalid representations](design.md#invalid-representations), [Variable declarations](design.md#variable-declarations) |
 
 ## Undefined behavior and unchecked obligations
 
@@ -90,18 +90,23 @@ The spec explicitly calls these **undefined behavior**:
   value is explicitly undefined. The `@(initialized)` live count is a trusted
   assertion that its prefix actually contains values. See
   [Uninitialized capacity](design.md#uninitialized-capacity).
+- A value whose bits are not a representation of its type, a `bool` byte
+  other than 0 or 1, an enum value naming no member, a null non-null
+  reference, a union tag out of range, or a `string` that is not UTF-8, is
+  undefined from the point it is produced, whether by `unsafe.transmute`, a
+  foreign declaration, a raw write, or a read of storage holding no value
+  such as an unwritten part of `x: T = ---`. Integers, floats, `rune`,
+  `rawptr`, and C pointers have no invalid representation. See
+  [Invalid representations](design.md#invalid-representations).
 
-Other unsafe obligations are stated without always naming the failure
-"undefined behavior": a C pointer index or slice has no bounds check;
-`unsafe.free` checks neither allocation identity nor allocator; runtime
-`unsafe.transmute` does not diagnose an invalid destination representation;
-a foreign enum result promises a declared member; and raw pointers, unchecked
-views, or foreign code can hide lifetimes and aliases. Such violations can cause
-invalid loads, double frees, or corrupt values. Their exact language-level
-consequence should be specified rather than inferred from what LLVM happens to
-do. See [C pointers](design.md#c-pointers),
-[`unsafe.transmute`](design.md#unsafetransmute),
-[Integer conversion](design.md#integer-conversion), and
+Other unsafe obligations are stated without naming the failure "undefined
+behavior": a C pointer index or slice has no bounds check; `unsafe.free`
+checks neither allocation identity nor allocator; and raw pointers, unchecked
+views, or foreign code can hide lifetimes and aliases. Such violations can
+cause invalid loads, double frees, or corrupt values, each of which is one of
+the undefined cases above once it happens. See
+[C pointers](design.md#c-pointers),
+[The `unsafe` package](design.md#the-unsafe-package), and
 [What is not checked](design.md#what-is-not-checked).
 
 A broken `==`/`hash` coherence law is **not** itself undefined behavior: map
@@ -164,18 +169,12 @@ call on another processor. That behavior is explicitly documented under
    still traverses. Fix the provenance reborrow at the unnamed inner pointer
    and add a regression rejection case. This audit did not execute the bad
    program or observe a crash.
-2. **P2 — clarify invalid representations and `---`.** The spec permits an
-   unchecked read of unspecified plain storage and says a runtime transmute
-   with an invalid representation is not diagnosed, but does not explicitly
-   distinguish an arbitrary valid value from undefined behavior when the bits
-   are invalid for `bool`, an enum, or `rune`. Resolve this in
-   [Open questions](open-questions.md#invalid-representations-at-unsafe-boundaries).
-3. **P3 — state directory enumeration order.** The current implementation
-   forwards the native enumeration. State explicitly whether callers may rely
-   on any ordering and whether a directory modified during iteration has a
-   stable snapshot. See
-   [Open questions](open-questions.md#directory-enumeration-order-and-mutation).
-4. **P3 — continue cross-machine math work.** The behavior is already
+2. **P2 — invalid representations and `---`: resolved.**
+   [Invalid representations](design.md#invalid-representations) makes a value
+   whose bits are not a representation of its type, and a read of storage
+   that holds no value, undefined behavior by every unchecked route, and
+   lists which types have such patterns and which do not.
+3. **P3 — continue cross-machine math work.** The behavior is already
    documented and measured in
    [Deterministic math functions](open-questions.md#deterministic-math-functions)
    and [Random distributions across platforms](open-questions.md#random-distributions-across-platforms).

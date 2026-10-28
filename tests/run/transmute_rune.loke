@@ -1,0 +1,12 @@
+// design.md "Invalid representations": `rune` has no invalid representation,
+// so a surrogate folds at compile time as it is a value at run time.
+package main;
+
+import "core:fmt";
+import "core:unsafe";
+
+SURROGATE :: unsafe.transmute(rune, i32(0xd800));
+
+main :: proc() {
+	fmt.println(int(SURROGATE), int(unsafe.transmute(rune, i32(0x110000))));
+}

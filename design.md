@@ -2120,7 +2120,7 @@ assert(Http_Status.from_int(500) == .none);
 
 Direct numeric-to-enum conversions such as `Http_Status(code)` and numeric literals assigned to enums are errors, even when the number names a variant. Use `.Not_Found`, `Http_Status.Not_Found`, or the validating constructor. Conversion from an enum to its backing integer remains an ordinary explicit conversion.
 
-Foreign APIs and wire formats retain unknown numbers as integers or `distinct` integer wrappers until validation. A foreign binding that uses an enum directly promises that incoming values name declared variants; the ABI does not perform validation. Unsafe code likewise must preserve membership when constructing an enum representation. See [exhaustive switch](#exhaustive-switch).
+Foreign APIs and wire formats retain unknown numbers as integers or `distinct` integer wrappers until validation. A foreign binding that uses an enum directly promises that incoming values name declared variants; the ABI does not perform validation. Unsafe code likewise must preserve membership when constructing an enum representation; a value that names no member is an [invalid representation](#invalid-representations), and undefined behavior from the point it arrives. See [exhaustive switch](#exhaustive-switch).
 
 Compiler-provided enums such as `LOKE_ARCH` spell their members in `Capitalized_Snake_Case`, and the core library follows suit.
 
@@ -5989,6 +5989,7 @@ The analysis is local to one procedure body, together with the recorded summary 
 - which thread releases the last [`Shared(T)`](#shared-ownership) handle, and therefore which thread runs `T`'s `drop` and uses the control block's allocator;
 - everything [`unsafe.free`](#the-unsafe-package) releases.
 - a global written through a pointer or view to it that was itself stored in a global, or by foreign code, while a borrow of it is live.
+- the validity of bits an unchecked route hands back as a value, and whether storage declared with `---` has been written before it is read; see [Invalid representations](#invalid-representations).
 
 If a view has no locally provable lifetime, make an owned copy with `clone`, use `Shared(T)`, or keep the lifetime correct as an explicit unsafe obligation.
 
@@ -6041,7 +6042,7 @@ This is akin to C's `*(uint32_t *)&f`. Reinterpreting bits is not a safe, univer
 
 The compiler checks the shape of the conversion and nothing else. The source and destination must be the **same size**, and both must have a **trivial lifecycle**: no copy or drop hook, no managed owner, and recursively bitwise-copyable. Neither side may be or contain a reference — `^T`, a slice, a `string_view`, an `any_view`, or a `dyn` — because a bit cast would hand back a borrow the compiler never saw loaned. This prevents a bit cast from duplicating an owning representation or manufacturing a value whose cleanup invariant was never established.
 
-Producing a valid destination representation is the caller's obligation. During compile-time evaluation, a bit pattern that is not a value of the destination type is a compile-time error. The same invalid pattern at runtime is not diagnosed.
+Producing a valid destination representation is the caller's obligation. During compile-time evaluation, a bit pattern that is not a value of the destination type is a compile-time error. The same invalid pattern at runtime is not diagnosed: the result is undefined behavior, and [Invalid representations](#invalid-representations) lists which destination types have one.
 
 [Compile-time evaluation](#compile-time-procedure-evaluation) reads the source's storage byte by byte, little-endian, so a constant of any shape the checks admit — a scalar of any width, an array, a SIMD vector, or a struct of them — converts. Padding between or after fields holds no value, and a result that would read it is a compile-time error. A union, whose tag encoding is unspecified, and a record with an [`initialized`](#uninitialized-capacity) field, whose capacity holds no value, have no compile-time meaning on either side.
 
@@ -6080,6 +6081,24 @@ Both refuse a bare variable. A variable's liveness is tracked, so `move` takes i
 Neither operation adjusts the count. A container writes and then lengthens, because a cloning write can fail, and shortens before it drops what it took, because a drop hook can panic. That order is what keeps the count accurate at every point a panic can unwind from.
 
 Everything in `unsafe` is a promise by the programmer that the compiler cannot verify. It does not make the underlying storage owned or extend its lifetime.
+
+#### Invalid representations
+
+A type's **representations** are the bit patterns its storage holds when it holds a value. Some types also have bit patterns that are no value of the type. Checked code never produces one: a conversion validates its input or panics, a literal is checked, and a type's constructors establish its invariants. The unchecked routes are [`unsafe.transmute`](#unsafetransmute); a [foreign](#foreign-abi-safe-types) parameter, result, or variable; a write through `rawptr`, a C pointer, or foreign code; and reading storage that holds no value: a part of [`x: T = ---`](#built-in-values) that nothing has written, [capacity](#uninitialized-capacity), or a place after `unsafe.take`.
+
+Producing a value whose bits are not a representation of its type, or reading storage that holds no value, is **undefined behavior**, exactly as a [data race](#concurrency-and-the-memory-model) is, from the point the value is produced. It is not an unspecified value: no bounded set of outcomes is promised, two reads of the same storage need not agree, and a `switch` over such an enum need not run any arm. The obligation lies on the unchecked operation that let the bits in, the `transmute`, the foreign declaration, the `---` declaration, or the raw write, and the compiler may assume that every value it reads is a value of its type. That `---` storage has "unspecified contents" means that nothing is promised about it until another party writes it, not that a read yields some value. Where [compile-time evaluation](#compile-time-procedure-evaluation) can see the pattern it is a compile-time error; at runtime nothing is diagnosed.
+
+These types have invalid representations:
+
+- `bool`: every byte other than `0` and `1`;
+- an enum: every backing-integer value that is not a declared member, which is why an unknown value [stays an integer](#integer-conversion) until `Enum.from_int` validates it;
+- a [non-null type](#types-with-no-zero-value), `^T`, `^mut T`, a procedure value, `dyn I`, `dyn mut I`, `any_view`, `cstring_view`, `Box(T)`, and `Shared(T)`, with a null address word. An `Option` of one, which stores the payload alone (see [Representation](#representation)), adds no invalid representation of its own: its null word is `.none`;
+- a union: a tag outside `0 ..< variant_count`, or a payload region that is not a value of the variant the tag names;
+- `string` and `string_view`: bytes that are not valid UTF-8, or a pointer and length that do not describe that many readable bytes; `cstring_view`: an address with no zero terminator in readable storage; a slice, dynamic array, or map whose header does not describe its storage;
+- `typeid`: a number that identifies no type of the program;
+- a struct, fixed array, SIMD vector, or `distinct` type: an invalid representation in any part or lane.
+
+These have none, so every bit pattern is a value: integers; floats, every NaN payload included; `rune`, a distinct 32-bit integer type, so a value that is not a Unicode scalar value is a `rune` all the same, and the text operations that need a scalar value say what they do with one, as [`string.from_runes`](#string-type-conversions) returns `.none`; `rawptr` and C pointers, whose null and dangling addresses are values that may not be dereferenced (see [Address operator](#address-operator)); and plain structs, fixed arrays, and vectors of these. Reading storage that holds no value is undefined for these types too: that it would hold a value if it held anything does not make an unwritten part readable.
 
 # 9. Packages & Visibility
 
@@ -6254,7 +6273,7 @@ nil   // unfixed nil value used for certain values
 
 `---` is declaration syntax with three roles: the [unspecified-contents marker](#zero-values) in `x: T = ---`, the body marker for a [foreign procedure](#foreign-system), and the definition marker of an [intrinsic declaration](#intrinsic), as in `Arena :: ---;`. It is not an expression and cannot be assigned, passed, or used as `x := ---`.
 
-As an initializer, `---` is an **unsafe assertion**, valid only in a file that imports [`core:unsafe`](#the-unsafe-package). The variable starts dead, but reads, borrows, and address-taking are accepted even though its contents are unspecified. Use it for storage another party will fill, such as a foreign out-parameter reached through `&mut x`.
+As an initializer, `---` is an **unsafe assertion**, valid only in a file that imports [`core:unsafe`](#the-unsafe-package). The variable starts dead, but reads, borrows, and address-taking are accepted even though its contents are unspecified. Use it for storage another party will fill, such as a foreign out-parameter reached through `&mut x`; reading a part nothing has written is undefined behavior (see [Invalid representations](#invalid-representations)).
 
 `---` suppresses initialization checks, not lifecycle rules. The variable remains dead until a full assignment; `drop(x)` and `move(x)` are invalid before then.
 
@@ -7271,7 +7290,7 @@ A procedure using a foreign calling convention, a variable declared in a foreign
 - fixed-width integers, `int`, `uint`, `uintptr`, `bool`, `rune`, `f32`, and `f64`; their size and alignment follow their Loke definitions and their argument classification follows the target C ABI for a scalar of that representation. `bool` uses C `_Bool`, and `int` and `uint` use the ABI class matching their target-selected width. `f16`, 128-bit integers, and other target extensions are safe only when that target ABI defines their C-compatible classification;
 - `rawptr`, `^T`, and `[^]T`, lowered as C pointers; the pointed-to type need not be foreign-ABI-safe because the foreign function receives only an address. A binding that types a parameter or result `^T` promises it is never NULL, as one that uses an enum promises membership; where the C side may pass or return NULL, the binding uses `Option(^T)`;
 - procedure pointers whose declared calling convention and complete signature match the foreign declaration;
-- enums with an explicit foreign-ABI-safe integer backing type, provided the binding guarantees that incoming values name declared variants. Use the backing integer and `Enum.from_int` when unknown values are possible;
+- enums with an explicit foreign-ABI-safe integer backing type, provided the binding guarantees that incoming values name declared variants. Use the backing integer and `Enum.from_int` when unknown values are possible; a value naming no member, like a NULL `^T` or `cstring_view`, is an [invalid representation](#invalid-representations);
 - plain structs with a trivial lifecycle whose fields are recursively foreign-ABI-safe. Their field order, padding, alignment, and by-value argument classification follow the target C ABI for the equivalent C record. A fixed array is permitted as a record field and has the equivalent C array layout;
 - `cstring_view`, lowered to `char const *`. It may be used as a parameter or result and never claims ownership. It promises a non-NULL string, as `^T` promises a non-NULL pointer;
 - `Option` of `^T`, `^mut T`, a foreign procedure pointer, or `cstring_view`, lowered to the same C pointer, with `.none` as NULL (see [Representation](#representation)). `Option(cstring_view)` is C's optional `char const *`, and a record whose pointer field may be NULL holds an `Option` and so keeps a zero value.
@@ -7881,6 +7900,7 @@ Terms this specification gives a precise meaning, with the section that defines 
 | **fallible expression** | An expression whose type is a union of exactly two variants carrying `@(failure=name)`. This shape, not a privileged name, is what `or_else` and `or_return` recognize. See [Typed fallibility](#typed-fallibility). |
 | **inert** | A value on which dropping does nothing: the zero value of a type with a drop hook, or a lexical source after `move` or `drop`. See [Lifecycle hooks and resource types](#lifecycle-hooks-and-resource-types). |
 | **inherent member** | A member declared by an `impl` in the subject type's own package. Contrast an extension member. See [Methods and implementation blocks](#methods-and-implementation-blocks). |
+| **invalid representation** | A bit pattern that is no value of its type, such as a `bool` byte other than 0 or 1 or an enum value naming no member. Producing one is undefined behavior. See [Invalid representations](#invalid-representations). |
 | **join** | Where a `parallel` block waits for every task it started, after its own cleanup, on every exit. See [Parallel blocks](#parallel-blocks). |
 | **live / dead** | A local is *live* once fully assigned and *dead* before that, or after `move` or `drop`. Only a live local may be read, borrowed, addressed, moved, or dropped. See [Variable declarations](#variable-declarations). |
 | **managed value** | An owning value whose resources are released automatically when it leaves scope. See [Managed values and storage](#managed-values-and-storage). |

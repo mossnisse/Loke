@@ -981,6 +981,17 @@ label, since static expansion never synthesizes identifiers. `when` over
 is the same descriptor as an array, for generic code that walks a union's
 shape the way `fields_of` walks a record's.
 
+Each copy is a case of the same switch, so the copies are basic blocks of one
+procedure rather than procedures of their own, and the compiler does nothing to
+merge them: that is left to clang, which already does it. Measured on
+2026-10-28 with clang 22, at `-opt=size` identical copies are sunk into one
+block before code generation, and at `-opt=speed` and `-opt=aggressive` the
+machine-level tail merging folds them, so a body that ignores the payload costs
+one copy and a body with a `when` costs one copy per distinct branch;
+`-opt=none` and `-opt=minimal` keep every copy, as they keep any duplicate.
+LLVM's function-merging pass merges whole procedures and measured no effect, so
+it is not enabled.
+
 A generic subject can require a union with the bound `where is_union(E)`, so a
 wrong argument is reported at the call rather than inside the instance.
 Whether a type is a union is a fact about its kind, not something it can do, so
@@ -1305,6 +1316,21 @@ expression language. `base:` packages are exempt because they implement runtime
 facilities and cannot import `core:`. Generated traversal checks bound an
 initialized prefix, but cannot prove those slots contain valid values.
 
+An invalid representation is undefined behavior rather than a bounded outcome
+because a bound would be paid for everywhere and used nowhere. A `bool` is
+branched on, an enum switch is closed, and a `^T` is dereferenced without a
+test precisely because every value is assumed to be one; promising that an
+out-of-range enum runs no arm would need a range check at each switch, and a
+stable "some value" for unwritten `---` storage would need every such read
+pinned, in checked code that never produces either. The obligation sits where
+the bits enter, the `transmute`, the foreign declaration, or the `---`
+declaration, which is also the only place a review can see it, and the same
+place the import gate already marks. `rune` is deliberately on the other side
+of the line: it is a 32-bit integer type, `rune(x)` and rune arithmetic check
+only that width, so a surrogate or an out-of-range code point is a value that
+text operations reject or replace, not a representation the compiler may
+assume away.
+
 ### Formatting and logging sinks are `dyn` views
 
 `fmt.Writer` and `log.Logger` are borrowed `dyn mut` views. Records implement
@@ -1592,7 +1618,7 @@ Use `try_slice`, `floor_boundary`, or `ceil_boundary` for untrusted byte offsets
 
 ### String ownership and concurrency
 
-Immutable strings can share storage, so reference counting is atomic. The
+Immutable strings can share storage, so reference counting is atomic. The cost is measured under [Thread-affine strings](open-questions.md#thread-affine-strings). The
 allocator must separately support the thread performing the final drop; that
 transfer obligation remains with the programmer. A `string_view` borrows text
 without sharing ownership.
@@ -1833,6 +1859,22 @@ boundaries and API shapes follow a few common choices:
 - **Directory iteration streams borrowed names.** Walkers avoid allocating a
   name at every step; callers retaining entries copy them. An explicit loop
   distinguishes failure from end of input.
+- **Directory order is the filesystem's, and the walk is live.** Sorting in
+  the reader would buffer every name and pay the copy the streaming design
+  avoids, and a snapshot would be stale by the time a caller acted on it.
+  Windows promises neither an order nor isolation from concurrent changes:
+  NTFS usually enumerates by name and FAT in on-disk order, and a contract
+  that promised more would be a per-filesystem implementation inside `fs`.
+  The contract states the weak native behavior, and a caller that needs
+  stability collects and sorts, which pays only when wanted.
+- **A reparse point reads by its directory bit.** `Kind.Other` would be the
+  explicit answer for a link before links are supported, but a Windows
+  profile holds compatibility junctions (`Application Data`, `My Documents`),
+  and `create_directories` settles a failed creation by asking whether a
+  directory is there; `Other` would make it fail through every one. Every
+  other operation already goes through the link, so reporting the link's own
+  directory bit is consistent with them, costs nothing, and leaves `Other`
+  free for link support to give a meaning to.
 - **Joining takes a slice.** A variadic would absorb trailing allocator
   arguments or prevent a preceding default allocator from being omitted.
 - **Case conversion is ASCII-only.** Full Unicode mapping requires tables and

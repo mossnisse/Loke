@@ -73,7 +73,7 @@ register_project :: proc(c: ^Compiler, input: string) -> bool {
 				append(&pending, canonical_dir(c.collections[name]))
 			case name in required_by:
 				if dir_key(c.collections[name]) != dir_key(target) {
-					errorf(c, span, "L0399", "`%s` is already required as another directory; one name names one directory", name)
+					errorf(c, span, "L0399", "`%s` is already required as another directory; one name names one directory, and `-collection %s=<path>` chooses it for the whole program", name, name)
 					add_notef(c, required_by[name], "`%s` is first required here", name)
 				}
 			case !is_source_directory(c, target):

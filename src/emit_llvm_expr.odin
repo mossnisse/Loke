@@ -2403,7 +2403,8 @@ emit_transmute :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	to := to_bool ? "i8" : llvm_type(e, as_type)
 	result := reinterpret_bits(e, source, as_type, from, to, value)
 	if to_bool {
-		// Bit 0 is the `bool`; a valid pattern is the caller's obligation.
+		// Bit 0 is the `bool`; a valid pattern is the caller's obligation
+		// (design.md "Invalid representations").
 		narrowed := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = trunc i8 %s to i1", narrowed, result)
 		return narrowed

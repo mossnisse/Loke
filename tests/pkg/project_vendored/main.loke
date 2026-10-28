@@ -1,0 +1,8 @@
+package main;
+
+import "core:fmt";
+import "consumer:config";
+
+main :: proc() {
+	fmt.println(config.source());
+}
