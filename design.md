@@ -1846,7 +1846,21 @@ n := shape.as(.count) or_return;    // in a procedure returning an Option
 
 #### Switch ownership
 
-A switch over a **place** borrows it: a payload binding is immutable and non-owning, and the place keeps its value. The binding names the payload where the subject stores it, so `&binding` points into the subject, in compile-time evaluation too.
+A switch over a **place** borrows it: a payload binding is immutable and non-owning, and the place keeps its value. The binding names the payload where the subject stores it, so `&binding` points into the subject, in compile-time evaluation too. Using a binding of a carrier payload uses the carrier stored there, so a [mutable reborrow](#weakening-and-reborrows) of that carrier suspends the binding until the reborrow's last use:
+
+```loke
+Node :: struct { value: int, next: Option(^mut Node) }
+
+relink :: proc(cur: ^mut Node) {
+	switch (cur^.next) {
+	case .some(next):
+		copy := cur^.next;   // a mutable reborrow of the stored pointer
+		next^.value = 1;     // ERROR: `next` is suspended here
+		switch (copy) { case .some(c): c^.value = 2; case .none: }
+	case .none:
+	}
+}
+```
 
 A switch over a **temporary** — or over `move(subject)` — consumes it. The active payload transfers into the case's own binding, which is an ordinary managed local from there on: it can be moved out, and it drops exactly once on every exit of its case. A case with no binding owns the whole union instead.
 
@@ -5613,7 +5627,22 @@ bump :: proc(xs: []mut int) {
 }
 ```
 
-Storing a carrier into itself, as `xs = xs[1:]`, suspends nothing. An allocator or other region provider is not reborrowed by a copy: its copies share it by design.
+Storing a carrier into itself, as `xs = xs[1:]`, suspends nothing. Nor does storing a carrier copied out through another carrier back into that one, as `cur = cur^.next`: the copy becomes that carrier's value. An allocator or other region provider is not reborrowed by a copy: its copies share it by design.
+
+A carrier copied out of storage reborrows the carrier stored there, wherever that storage is: in a local, or reached through a pointer, a parameter included. Reading or writing through the stored carrier, copying it again, or borrowing the place that holds it is a use of it; another field beside it, and storing a new carrier into its place, are not. Passing a carrier to a procedure lets the callee use what is stored where it points, so the call uses each mutable carrier reachable through it:
+
+```loke
+List :: struct { head: ^mut Node, count: int }
+
+touch :: proc(list: ^mut List) { list^.head^.value += 1; }
+
+relink :: proc(list: ^mut List) {
+	node := list^.head;  // a mutable reborrow of `list^.head`
+	list^.count += 1;    // OK: another field
+	touch(list);         // ERROR: the call may use `list^.head`
+	node^.value = 2;
+}
+```
 
 #### Places and overlap
 

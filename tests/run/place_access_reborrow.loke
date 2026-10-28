@@ -1,0 +1,68 @@
+// design.md "Weakening and reborrows", "Switch ownership": what a mutable
+// copy of a stored carrier, or a payload binding naming one, leaves usable:
+// other fields beside it, the same copy taken again on each pass of a loop,
+// a list walked by storing a binding back into its cursor, and fields two
+// pointers away from a parameter.
+package main;
+
+import "core:fmt";
+
+Node :: struct { value: int, next: Option(^mut Node) }
+Link :: struct { value: int, next: Option(^mut Node), other: ^mut Node }
+List :: struct { head: ^mut Node, tail: ^mut Node, count: int }
+
+beside_binding :: proc(cur: ^mut Link) {
+	switch (cur^.next) {
+	case .some(next):
+		other := cur^.other;
+		cur^.value += 1;
+		next^.value += 10;
+		other^.value += 100;
+	case .none:
+	}
+}
+
+copied_each_pass :: proc(list: ^mut List) {
+	for (i := 0; i < 3; i += 1) {
+		node := list^.head;
+		node^.value += 1;
+	}
+}
+
+walk_local :: proc(start: ^mut Node) -> int {
+	cur := start;
+	total := 0;
+	for (i := 0; i < 3; i += 1) {
+		total += cur^.value;
+		switch (cur^.next) {
+		case .some(next): cur = next;
+		case .none: return total;
+		}
+	}
+	return total;
+}
+
+two_pointers :: proc(p: ^mut ^mut List) {
+	node := p^^.head;
+	p^^.tail^.value += 5;
+	p^^.count += 1;
+	node^.value += 5;
+}
+
+main :: proc() {
+	spare := Node{0, .none};
+	third := Node{3, .none};
+	second := Node{2, .some(&mut third)};
+	first := Node{1, .some(&mut second)};
+	link := Link{1, .some(&mut first), &mut spare};
+	beside_binding(&mut link);
+	fmt.println(link.value, first.value, spare.value);
+	fmt.println(walk_local(&mut first));
+	head := Node{0, .none};
+	tail := Node{0, .none};
+	list := List{&mut head, &mut tail, 0};
+	copied_each_pass(&mut list);
+	held := &mut list;
+	two_pointers(&mut held);
+	fmt.println(head.value, tail.value, list.count);
+}

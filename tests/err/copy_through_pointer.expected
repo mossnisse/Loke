@@ -11,7 +11,10 @@ L0641
 @34:2
 `list` cannot be used here: a mutable reborrow of it is still in use
 L0641
-@40:15
+@40:10
+`list` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@41:2
 `list` cannot be used here: a mutable reborrow of it is still in use
 L0641
 @47:8

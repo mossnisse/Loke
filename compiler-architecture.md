@@ -353,6 +353,30 @@ do not report lifecycle errors or add normal-path cleanup points.
   escape and reset. A clone may still retain its source's regions through
   shared strings, even when container storage uses the destination allocator.
 
+Every access to a place reached through carriers, whether it loads, borrows,
+stores, or is a switch subject, reads it through `prov_read_through_carrier`.
+That reads the place's hops off its normalized place (`prov_place_hops`): the
+carrier whose pointee holds the place, then each carrier that one is read out
+of, with the path below each pointee. The outermost carrier is read first and
+each inner one is loaded out of the one before it, so `p^^.a^.value = 3`
+loads `p^^.a` exactly as reading it does, and `p[0].a` is `[0, a]` below `p`.
+A view's leading element step is dropped, since a view's loans already name
+its elements. A load through a local's loan reads the local's content slots; a
+parameter's caller storage has no content here, so `prov_caller_slots` gives
+each parameter loan slots standing for what that storage holds, one per
+carrier path where the storage's type is known. A load through a parameter
+reads those slots, so a mutable copy out of either kind of storage reborrows
+the slot it was read from (`prov_reborrow_loaded`), and the same later uses
+suspend it. Two rules keep a repeated load from meeting its own past: a load
+defines its slot afresh, so a loop's next `list^.head` does not conflict with
+the copy the previous pass made, and a reborrow records the carriers its load
+went through (`Prov_Reborrow.via`), so storing the copy back into one of them,
+as `cur = cur^.next`, replaces that carrier's value. A temporary loaded again
+also severs the reborrows taken from its previous value (`run_severing_event`).
+A switch payload binding over a place uses the carrier stored there whenever
+the binding is used (`prov_note_view_use`), and a carrier handed to a call
+uses every mutable carrier it reaches (`prov_use_reached`).
+
 Result summaries, written-argument regions, and escape levels propagate these
 facts through direct, generic, and indirect calls. A written-argument region is
 summarized for each parameter a body may write (`param_writes_caller`):
@@ -969,6 +993,7 @@ reclamation. The integration harness is in `tests/`:
 | `tutorial_test.odin` | Programs, auxiliary files, outputs, panics, and diagnostics extracted from tutorial fences. |
 | `runtime_test.odin` | Runtime-header ABI agreement and concurrent runtime-cache creation/reuse. |
 | `checker_fuzz_test.odin` | Deterministic source mutation; failures reduced and saved under `tests/tmp/fuzz/`. |
+| `borrow_matrix_test.odin` | Generated programs crossing place forms with mutable copies, payload bindings, and the uses beside them, judged against `matrix_expected`, a model of the reborrow rules written apart from the compiler. |
 
 `every_diagnostic_code_is_pinned` requires each diagnostic to have a test or a
 reasoned entry in `UNPINNED` in `tests/corpus_test.odin`. Fuzzer failures become

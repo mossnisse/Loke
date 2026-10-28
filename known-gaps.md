@@ -7,31 +7,38 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
-### A `switch` binding of a pointer payload does not suspend the subject
+### A switch over a place reached through a pointer does not borrow the place
 
-[Weakening and reborrows](design.md#weakening-and-reborrows) says a copy of a
-mutable carrier is a reborrow that suspends its source until its last use.
-Binding the `^mut` payload of a subject read through a pointer leaves the
-subject usable while the binding is, so two mutable pointers to one node are
-in use at once:
+[Switch ownership](design.md#switch-ownership) says a switch over a place
+borrows it while a payload binding is in use. Over a local the binding keeps
+that borrow, so writing the subject meanwhile is rejected with `L0511`; over a
+place reached through a pointer, a store into the subject or a call that may
+write it compiles, and the binding goes on reading a payload that is no longer
+there:
 
 ```loke
 package main;
-Node :: struct { value: int, next: Option(^mut Node) }
-twice :: proc(cur: ^mut Node) {
-    switch (cur^.next) {
-    case .some(a):
-        b := cur^.next; // should be rejected
-        a^.value = 1;
-        switch (b) { case .some(c): c^.value = 2; case .none: }
+Node :: struct { value: int }
+Holder :: struct { first: Option(^mut Node) }
+clear :: proc(h: ^mut Holder) { h^.first = .none; }
+peek :: proc(h: ^mut Holder) -> int {
+    switch (h^.first) {
+    case .some(node):
+        clear(h);  // should be rejected, as is `h^.first = .none;`
+        return node^.value;
     case .none:
     }
+    return 0;
 }
 main :: proc() {}
 ```
 
-Copying the subject instead, as `first := cur^.next;` before `b := cur^.next;`,
-is rejected with `L0641`. The binding takes its view from
-`prov_subject_view` in [src/cfg_provenance.odin](src/cfg_provenance.odin),
-which for a subject read through a carrier returns that carrier's slots
-without reborrowing them, as `prov_borrow_place` does for `&cur^.next`.
+The binding views the subject through the carriers it was read through
+(`prov_subject_view` in [src/cfg_provenance.odin](src/cfg_provenance.odin)),
+which records no loan of the storage they name, and a store or call through a
+pointer checks no loan by path either. A read-only reborrow of `h`, as
+`&h^.first` takes, rejects both forms here, but also a second switch over
+`h^.first` and a store through a sibling pointer, as `h^.other^.value = 2`,
+beside the binding, and it reaches nothing through a pointer loaded on the
+way, as `p^` in `switch (p^^.first)`. The generated matrix in [tests/borrow_matrix_test.odin](tests/borrow_matrix_test.odin)
+pins the call form (`matrix_known_gap`).

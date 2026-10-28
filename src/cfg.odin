@@ -250,12 +250,18 @@ Prov_State :: struct {
 	// What a non-owning binding (a loop element, a switch payload over a place)
 	// views: every access and borrow through it also uses the source.
 	view_loans:     map[Symbol_Id][]int,
+	// The stored carrier a switch payload binding over a place names, which a
+	// use of the binding uses (`prov_note_view_use`).
+	view_uses:      map[Symbol_Id]Prov_View_Use,
 	// The view bindings whose own loans end with their step (design.md
 	// "By-reference iteration"), so `&binding` borrows the binding too.
 	step_views:     map[Symbol_Id]bool,
 	// The carrier slots of a lent loop element, which is the stored carrier
 	// rather than a copy: a copy taken from one reborrows these instead.
 	lent_aliases:   map[int][]int,
+	// The slots standing for what the caller storage each parameter loan names
+	// holds (`prov_caller_slots`).
+	caller_slots:   map[Loan_Id][]int,
 	// Per call with a `self: ^` receiver, what the receiver's place holds, which
 	// the call's actual joins with its borrow of that place: a load through the
 	// receiver reads these at its path rather than through them.
@@ -425,8 +431,10 @@ new_flow_graph :: proc(k: ^Checker, literal: ^Expr_Proc, allocator: mem.Allocato
 		graph.captured_values = make(map[Value_Id][]int, 2, allocator)
 		graph.slot_by_symbol = make(map[Symbol_Id]int, 8, allocator)
 		graph.view_loans = make(map[Symbol_Id][]int, 8, allocator)
+		graph.view_uses = make(map[Symbol_Id]Prov_View_Use, 2, allocator)
 		graph.step_views = make(map[Symbol_Id]bool, 8, allocator)
 		graph.lent_aliases = make(map[int][]int, 8, allocator)
+		graph.caller_slots = make(map[Loan_Id][]int, 4, allocator)
 		graph.receiver_content = make(map[^Expr_Call][]int, 2, allocator)
 		graph.fresh_slots = make(map[int]bool, 2, allocator)
 		graph.content_by_symbol = make(map[Symbol_Id][]int, 8, allocator)
@@ -2170,6 +2178,9 @@ prov_bind_case_name :: proc(
 			prov_emit(graph, Prov_Event{kind = .Rebind, root = prov_root_for_symbol(graph, symbol), span = span})
 		}
 		prov_bind_view(graph, symbol, prov_subject_view(graph, s.subject, is_ref, slot))
+		if !is_ref {
+			prov_note_view_use(graph, symbol, s.subject, slot)
+		}
 	} else if symbol != INVALID_SYMBOL {
 		root := prov_root_for_symbol(graph, symbol)
 		append(&graph.in_scope, Flow_Cleanup{kind = .Prov_Root, root = root, span = span})

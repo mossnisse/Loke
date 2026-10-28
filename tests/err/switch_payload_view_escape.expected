@@ -9,4 +9,4 @@ L0526
 this string view cannot be returned: `text` ends when this procedure returns
 L0641
 @37:3
-`source` cannot be used here: a read-only reborrow of it is still in use
+`text` cannot be used here: a read-only reborrow of it is still in use

@@ -337,15 +337,30 @@ prov_describe_place :: proc(graph: ^Flow_Graph, e: Expr) -> Prov_Place {
 		place.path = prov_extend(graph, place.path, proj_wild())
 		return place
 	case ^Expr_Index:
-		if len(v.bound) > 0 || v.operand == nil { return {} }
-		#partial switch underlying_kind(c, expr_base(v.operand).type) {
-		case .Array, .Dynamic_Array, .Map:
+		if len(v.bound) > 0 || v.operand == nil || v.resolution.kind == .User_Operator { return {} }
+		operand := expr_base(v.operand).type
+		#partial switch underlying_kind(c, operand) {
+		case .Array, .Dynamic_Array, .Map, .Simd:
 			place := prov_input_place(graph, v.operand)
 			if place.base == nil { return {} }
 			place.path = prov_concat_path(graph, place.path, prov_index_path(graph, v))
 			return place
+		case .Pointer:
+			// A pointer's loans name its whole pointee: `p[0].a` with
+			// `p: ^[2]Pair` is `[0, a]` below `p`.
+			path: []Proj_Step
+			if info := underlying_info(c, operand); info != nil {
+				path = prov_index_path_in(graph, v, info.element)
+			}
+			return Prov_Place{base = prov_input_value(graph, v.operand), path = path}
+		case .Slice, .C_Pointer, .String_View, .CString_View:
+			return Prov_Place{base = prov_input_value(graph, v.operand), path = prov_extend(graph, nil, proj_wild())}
 		}
-		return Prov_Place{base = prov_input_value(graph, v.operand), path = prov_extend(graph, nil, proj_wild())}
+	case ^Expr_Call:
+		// `field.get(value)` is `field.pointer(value)^`.
+		if reflect, ok := v.operation.(Call_Reflect); ok && reflect.op == .Field_Get && len(v.bound) > 0 {
+			return Prov_Place{base = prov_input_value(graph, v.bound[0])}
+		}
 	}
 	return {}
 }

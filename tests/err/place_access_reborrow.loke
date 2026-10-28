@@ -1,0 +1,55 @@
+// design.md "Weakening and reborrows", "Switch ownership": every access to a
+// place reached through carriers reads them the same way, so a mutable copy of
+// a stored carrier is suspended alike by a store through it reached by index,
+// by a call handed the pointer to it, and by a switch payload binding that
+// names the carrier the copy was taken from.
+package main;
+
+Node :: struct { value: int, next: Option(^mut Node) }
+Pair :: struct { a: ^mut Node, b: ^mut Node }
+List :: struct { head: ^mut Node, count: int }
+
+touch :: proc(list: ^mut List) { list^.head^.value += 1; }
+
+stored_through_index :: proc() {
+	first := Node{1, .none};
+	second := Node{2, .none};
+	pairs := [1]Pair{{&mut first, &mut second}};
+	p := &mut pairs;
+	node := p[0].a;
+	p[0].a^.value = 3;
+	node^.value = 4;
+}
+
+passed_beside_copy :: proc() {
+	first := Node{1, .none};
+	l := List{&mut first, 0};
+	list := &mut l;
+	node := list^.head;
+	touch(list);
+	node^.value = 2;
+}
+
+binding_beside_copy :: proc(cur: ^mut Node) {
+	switch (cur^.next) {
+	case .some(next):
+		copy := cur^.next;
+		next^.value = 1;
+		switch (copy) { case .some(c): c^.value = 2; case .none: }
+	case .none:
+	}
+}
+
+binding_of_local_beside_copy :: proc() {
+	n := Node{1, .none};
+	held: Option(^mut Node) = .some(&mut n);
+	switch (held) {
+	case .some(viewed):
+		copy := held;
+		viewed^.value = 1;
+		switch (copy) { case .some(c): c^.value = 2; case .none: }
+	case .none:
+	}
+}
+
+main :: proc() {}

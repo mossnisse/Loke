@@ -92,65 +92,47 @@ annotations. Three decisions remain open:
 
 ## Compositional loan construction
 
-The recent pointer-copy, traversal, and payload-binding fixes suggest a focused
-follow-up to [normalized input](#normalized-input-for-provenance-analysis).
-This is an architectural proposal, not a new language rule or a claim that the
-existing dataflow solvers need replacing.
+Loan construction had separate paths for subject views, ordinary borrows,
+traversal, loaded carriers, and outer carriers, and each pointer-copy fix
+added a context-specific repair. The first migration (2026-10-28) routes every
+access to a place reached through carriers, whether a load, borrow, store, or
+switch subject, through one walk of the normalized place, and gives a
+parameter's caller storage slots of its own. It is described in
+[Ownership, lifecycle, and provenance](compiler-architecture.md#ownership-lifecycle-and-provenance).
+Locals and parameters now behave alike. The through-reborrows, path-tagged uses,
+and kept-copy pass that parameters needed are gone, and so are the two
+reported gaps. A generated matrix,
+[borrow_matrix_test.odin](tests/borrow_matrix_test.odin), crosses eight place
+forms with a copy or a payload binding and ten uses beside it, against a model
+of the rules written apart from the compiler.
 
-The compiler already normalizes places, values, transfers, targets, and regions.
-Loan construction still has separate paths for subject views, ordinary borrows,
-traversal, loaded carriers, and outer carriers in
-[cfg_provenance.odin](src/cfg_provenance.odin). Loaded-carrier reborrows are also
-added during `resolve_content_reads` in [borrow.odin](src/borrow.odin).
-The [pointer-payload switch gap](known-gaps.md#a-switch-binding-of-a-pointer-payload-does-not-suspend-the-subject)
-is a concrete disagreement between those paths: `prov_subject_view` forwards
-carrier slots where the corresponding borrow needs reborrow dependencies.
-The repetition is evidence for consolidating semantic operations, rather than
-just moving helpers into smaller files.
+Still open:
 
-**Proposal:** first make pointer loads and reborrows compose through the existing
-normalized representation. Record the accessed place, the evaluated carrier
-used to reach it, the projection at each dereference, the requested capability,
-and whether the operation loads a value, borrows storage, or replaces it.
-Resolve fact-dependent edges when targets are known. Route copies, addresses,
-switch bindings, and traversal through those shared operations while preserving
-their specified binding modes and lifetimes. Keep storage identity separate
-from its current contents, and root loans separate from allocator dependencies.
-Do not collapse them into one undifferentiated provenance set.
-
-The initial migration should cover a local, a field reached through one or
-several pointers, and a union payload. It must preserve these properties:
-
-- Taking a place's address and loading the carrier stored there have different
-  dependencies; an element's own borrows do not replace its storage lifetime.
-- Every required parent reborrow survives copies and nested dereferences until
-  its last dependent use. Read-only weakening permits the reads specified by
-  [Weakening and reborrows](design.md#weakening-and-reborrows).
-- Replacing a pointer slot is distinguished from mutating through its current
-  pointer. Repeated evaluation in a loop does not confuse a previous loaded
-  value with the next one. Evaluate explicit reaching-definition identities if
-  the current slot/severing representation cannot express this uniformly.
-- Unknown targets remain possible alongside known targets. A write replaces
-  old facts only when its destination is proven unique and precise; otherwise
-  it joins them. Precision limits never erase a safety obligation.
-
-Add a bounded semantic test matrix before expanding the migration: direct and
-indirect storage, read-only and mutable capability, address and value loads,
-copy and move, field and payload bindings, reassignment, branches, and loops.
-Each rule needs rejection cases and nearby legal controls, including disjoint
-fields and use after a reborrow ends. Equivalent source forms should agree
-only where evaluation order, ownership, and temporary lifetimes are unchanged.
-The existing [mutation fuzzer](tests/checker_fuzz_test.odin) detects crashes,
-hangs, and malformed diagnostics; it has no oracle for unsafe acceptance.
-A small generator with specified expected outcomes would complement it.
-
-Migrate one family at a time and remove its redundant construction paths.
-Compare diagnostics against the previous compiler, review every acceptance
-change against the spec, run the affected suites and quick gate, and measure
-with [the performance procedure](compiler-architecture.md#testing-and-verification).
-Success means the same rules handle another dereference or binding context
-without another context-specific repair, while legal controls remain accepted.
-Continue fixing demonstrated safety holes during this work.
+- **Place loans through carriers.** A switch over a place reached through a
+  pointer holds no loan of that place, so a store or call through the pointer
+  can replace the payload a binding views
+  ([known gap](known-gaps.md#a-switch-over-a-place-reached-through-a-pointer-does-not-borrow-the-place)).
+  Reborrows of a carrier carry no path, so a read-only reborrow of the
+  pointer, as `&h^.first` takes, would also reject a second switch over the
+  place and a store through a sibling pointer beside the binding. A borrow,
+  store, or call through carriers that resolves to the roots and paths they
+  name while solving would tell those apart, for `&` as well.
+- **Calls.** A carrier handed to a call uses every mutable carrier it reaches.
+  A per-parameter summary of what a body uses through each parameter could
+  narrow that, as written-argument regions already do for stores.
+- **Value identity.** Three rules now say which definition a reborrow belongs
+  to: a load defines its slot afresh, a reborrow records the carriers its load
+  went through (`Prov_Reborrow.via`), and reloading a temporary severs what was
+  reborrowed from its previous value. Explicit reaching definitions would state
+  them as one rule; evaluate that if another loop or branch form needs a fourth.
+- **Caller storage contents.** A store through a parameter does not replace
+  what its caller slot holds, so a later load still sees the incoming value's
+  loans. Storage below the second load is one slot unless every storage on the
+  way holds exactly one carrier.
+- **Matrix coverage.** Loops, branches, read-only capability, `&` borrows,
+  slices, and `foreach` traversal are not crossed yet. Each needs legal
+  controls beside its rejections, and equivalent forms should agree only where
+  evaluation order, ownership, and temporary lifetimes are unchanged.
 
 Language changes should be evaluated separately. The proposed
 [written public borrow contracts](#public-borrow-contracts-should-stand-on-their-own)

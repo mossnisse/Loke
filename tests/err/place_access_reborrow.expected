@@ -1,0 +1,12 @@
+L0641
+@20:2
+`pairs` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@29:8
+`l` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@37:3
+`next` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@49:3
+`viewed` cannot be used here: a mutable reborrow of it is still in use

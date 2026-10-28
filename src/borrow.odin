@@ -255,6 +255,12 @@ Prov_Slot :: struct {
 	// Read out through a carrier, so what it copies is known only once the
 	// `Load` is resolved.
 	loaded: bool,
+	// Stands for what caller storage a parameter reaches holds at `path`, and
+	// that is a mutable carrier (`prov_caller_slots`).
+	caller_mutable: bool,
+	// Loaded on the way to a switch subject, which a payload binding views
+	// through it (`prov_subject_view`).
+	viewed: bool,
 }
 
 // A slot holding no fresh borrow. Zero would name loan 0 and event 0.
@@ -279,11 +285,10 @@ Prov_Reborrow :: struct {
 	mutable: bool,
 	// Only extends the reborrow `source` belongs to: its copies do not suspend it.
 	passes_on: bool,
-	// `derived` was read through `source` from storage no local holds, so they
-	// name the same root rather than share a loan, as a parameter and what is
-	// read through it do. `path` is where below the source's pointee.
-	through: bool,
-	path:    []Proj_Step,
+	// `derived` was loaded out of `source` through these carriers, so storing it
+	// back into one of them, as `cur = cur^.next` does, replaces that
+	// carrier's value rather than holding a second path to `source`.
+	via: []int,
 }
 
 // design.md "Storage roots and borrow carriers". `rawptr` and `[^]T` carry no
@@ -3107,13 +3112,14 @@ load_writable_through :: proc(
 		return
 	}
 	loss^ |= path_precision(loan.path)
+	note_caller_reads(state, loan_index, nil, reads)
 	bit_mark(state.merged, deeper_content_loan(root, loan, loan_index))
 }
 
 // The `content` loan standing for what one more load through a parameter's
 // loan reads, the last standing for every depth from its own on. A pointee
 // loan's keeps the path its first load went along.
-@(private = "file")
+@(private)
 deeper_content_loan :: proc(root: Prov_Root, loan: Prov_Loan, loan_index: int) -> int {
 	count := len(root.content_loans)
 	if count == 0 {
@@ -3169,12 +3175,28 @@ load_through_loan :: proc(
 	}
 	if !found {
 		loss^ |= path_precision(loan.path)
+		note_caller_reads(state, loan_index, path, reads)
 		if root.kind == .Param && !loan.content && load_pointee_paths(state, root, path) {
 			return found
 		}
 		bit_mark(state.merged, deeper_content_loan(root, loan, loan_index))
 	}
 	return found
+}
+
+// A load through a parameter's loan reads the slots standing for the caller
+// storage it names, along `path`, as one through a local's loan reads its
+// content.
+@(private = "file")
+note_caller_reads :: proc(state: ^Prov_State, loan_index: int, path: []Proj_Step, reads: ^[dynamic]int) {
+	if reads == nil {
+		return
+	}
+	for slot in state.graph.caller_slots[Loan_Id(loan_index)] {
+		if paths_overlap(state.graph.prov_slots[slot].path, path) && !slice.contains(reads[:], slot) {
+			append(reads, slot)
+		}
+	}
 }
 
 // A load along `path` through a carrier parameter's own loan reads only the
@@ -3202,8 +3224,6 @@ load_pointee_paths :: proc(state: ^Prov_State, root: Prov_Root, path: []Proj_Ste
 @(private = "file")
 resolve_content_reads :: proc(state: ^Prov_State) {
 	if !state.graph.has_content_load { return }
-	loads := make([dynamic]Prov_Event, 0, 8, state.graph.alloc)
-	defer prov_reborrow_loaded_through(state.graph, loads[:])
 	for block in state.graph.blocks {
 		if !block.prov_visited {
 			continue
@@ -3217,7 +3237,6 @@ resolve_content_reads :: proc(state: ^Prov_State) {
 				load_pointee_content(state, event, state.reach, &reads)
 				event.sources = reads[:]
 				prov_reborrow_loaded(state.graph, event)
-				append(&loads, event)
 			} else {
 				run_prov_event(state, event, state.reach, state.ended)
 			}
@@ -4508,16 +4527,22 @@ live_reborrow_of :: proc(state: ^Prov_State, source: int, live: []bool, use: Pro
 		if reborrow.source != source || reborrow.passes_on || (use.reads_only && !reborrow.mutable) || (index < len(state.severed) && state.severed[index]) {
 			continue
 		}
-		// A use going through the source elsewhere in its pointee, or replacing
-		// what was copied out.
-		if reborrow.through && use.kind == .Live && use.through && (use.stores || !paths_overlap(reborrow.path, use.through_path)) {
-			continue
-		}
 		clear(&pending)
 		clear(&visited)
-		// What was derived from `source` and stored back into it, as `cur =
-		// cur^.next`, is its current value, not a competing use.
+		// What was derived from `source` and stored back into it, or into the
+		// carrier it was loaded through, as `cur = cur^.next`, is that one's
+		// current value, not a competing use; nor is a carrier the use itself
+		// goes through, as a slice argument holding a reborrow of the elements
+		// a call reads through it.
 		visited[source] = true
+		for carrier in reborrow.via {
+			visited[carrier] = true
+		}
+		if use.kind == .Load {
+			for carrier in use.into {
+				visited[carrier] = true
+			}
+		}
 		append(&pending, reborrow.derived)
 		for len(pending) > 0 {
 			slot := pop(&pending)
@@ -4526,8 +4551,11 @@ live_reborrow_of :: proc(state: ^Prov_State, source: int, live: []bool, use: Pro
 			}
 			visited[slot] = true
 			// An overwritten intermediate no longer overlaps `source`, but something
-			// derived from its previous value still can.
-			if live[slot] && prov_slots_overlap(state, source, slot, reborrow.through) {
+			// derived from its previous value still can. A load defines its slot
+			// afresh, as a loop's `list^.head` loads its temporary again, so that
+			// slot's later uses are of the new value, not the one reborrowed here.
+			fresh := use.kind == .Load && slot == use.slot
+			if live[slot] && !fresh && prov_slots_overlap(state, source, slot) {
 				return reborrow, slot, true
 			}
 			for next in graph.reborrows {
@@ -4540,34 +4568,22 @@ live_reborrow_of :: proc(state: ^Prov_State, source: int, live: []bool, use: Pro
 	return {}, -1, false
 }
 
-// The source is suspended only while both slots' current values share a valid
-// loan, so overwriting either one ends the reborrow. Read `through` the source,
-// the derived slot holds a loan of the root the source's names instead.
+// A temporary loaded through a carrier, which only its own expression reads.
 @(private = "file")
 prov_slot_is_loaded_temporary :: proc(graph: ^Flow_Graph, slot: int) -> bool {
 	entry := graph.prov_slots[slot]
 	return entry.loaded && entry.symbol == INVALID_SYMBOL
 }
 
+// The source is suspended only while both slots' current values share a valid
+// loan, so overwriting either one ends the reborrow.
 @(private = "file")
-prov_slots_overlap :: proc(state: ^Prov_State, source_slot, derived_slot: int, through := false) -> bool {
+prov_slots_overlap :: proc(state: ^Prov_State, source_slot, derived_slot: int) -> bool {
 	source := reach_row(state, state.reach, source_slot)
 	derived := reach_row(state, state.reach, derived_slot)
 	for index in 0 ..< state.loans {
-		if !bit_get(source, index) || state.ended[index] {
-			continue
-		}
-		if bit_get(derived, index) {
+		if bit_get(source, index) && !state.ended[index] && bit_get(derived, index) {
 			return true
-		}
-		if !through {
-			continue
-		}
-		root := state.graph.loans[index].root
-		for other in 0 ..< state.loans {
-			if bit_get(derived, other) && !state.ended[other] && state.graph.loans[other].root == root {
-				return true
-			}
 		}
 	}
 	return false
@@ -4724,12 +4740,14 @@ report_suspended_reborrow :: proc(
 	source := state.graph.prov_slots[reborrow.source]
 	derived := state.graph.prov_slots[reborrow.derived]
 	capability := reborrow.mutable ? "mutable" : "read-only"
+	// A place, or a temporary, used through a binding that views it.
+	name := event.name if event.name != "" else source.name
 	errorf(
 		k.c,
 		event.span,
 		"L0641",
 		"`%s` cannot be used here: a %s reborrow of it is still in use",
-		source.name,
+		name,
 		capability,
 	)
 	if derived.name != "" {

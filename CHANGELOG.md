@@ -125,13 +125,47 @@ checklist.
   passing the pointer once, or by finishing with the copy first.
 
 - A store through a pointer read out of another local pointer, as
-  `p^^.a^.value = 3` with `p := &mut held` and `held := &mut pair`, now reads
-  `p^^.a` on the way, so it waits for the last use of a copy of it, as
-  `node := p^^.a`, and is rejected with `L0641` while that copy is in use
+  `p^^.a^.value = 3` with `p := &mut held` and `held := &mut pair`, or out of
+  an element reached through a pointer, as `p[0].a^.value = 3` with
+  `p := &mut pairs`, now reads `p^^.a` or `p[0].a` on the way, so it waits for
+  the last use of a copy of it, as `node := p^^.a`, and is rejected with
+  `L0641` while that copy is in use
   ([Weakening and reborrows](design.md#weakening-and-reborrows)). Before, it
   compiled, leaving two mutable paths to one value; reading the same place
   was already rejected. Upgrade by finishing with the copy first, or by
   storing through the copy.
+
+- A `switch` payload binding of a mutable pointer over a place now waits for
+  the last use of a mutable copy of the pointer stored there, as
+  [Switch ownership](design.md#switch-ownership) requires: the binding names
+  that pointer. Using `next` after `copy := cur^.next` beside
+  `case .some(next):`, while `copy` is still in use, is now rejected with
+  `L0641`, and so is the same over a local, as `copy := held` beside
+  `switch (held) { case .some(viewed): ... }`. Before, it compiled, leaving
+  two mutable pointers to one node in use:
+
+  ```loke
+  relink :: proc(cur: ^mut Node) {
+      switch (cur^.next) {
+      case .some(next):
+          copy := cur^.next;
+          next^.value = 1;   // now L0641
+          switch (copy) { case .some(c): c^.value = 2; case .none: }
+      case .none:
+      }
+  }
+  ```
+
+  Upgrade by using the binding instead of a copy, or by finishing with the
+  copy before using the binding again.
+
+- Handing a pointer to a call now uses every mutable pointer reachable
+  through it, so `touch(list)` while `node := list^.head` is still in use is
+  rejected with `L0641`
+  ([Weakening and reborrows](design.md#weakening-and-reborrows)). A pointer to
+  a local, as `list := &mut l`, was exempt, and `touch` could write through
+  `list^.head` while `node` still pointed at the same node. Upgrade by
+  finishing with the copy before the call, or by passing the copy instead.
 
 ### Added
 
@@ -246,6 +280,19 @@ checklist.
   is no longer rejected with an `L0641` that named no variable: loading
   `cur^.next` again leaves nothing reborrowed from the value the last pass
   loaded ([Weakening and reborrows](design.md#weakening-and-reborrows)).
+
+- A mutable pointer copied out of a place on each pass of a loop, as
+  `node := list^.head;` in a `for` body with `list := &mut l`, and the same
+  list walk through a pointer to a local, as `cur := &mut first`, are no
+  longer rejected with `L0641`: loading the place again starts afresh, so the
+  copy the last pass made no longer counts
+  ([Weakening and reborrows](design.md#weakening-and-reborrows)).
+
+- Fields two pointers away from a parameter are now told apart as a local's
+  are: `p^^.tail^.value += 5` and `p^^.count += 1` beside
+  `node := p^^.head`, with `p: ^mut ^mut List`, compile, and so does copying
+  another field, as `other := cur^.other`, beside a binding of
+  `case .some(next):` over `cur^.next`. Both were rejected with `L0641`.
 
 ## [0.9.0] - 2026-10-27
 
