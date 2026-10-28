@@ -256,6 +256,10 @@ Prov_State :: struct {
 	// The carrier slots of a lent loop element, which is the stored carrier
 	// rather than a copy: a copy taken from one reborrows these instead.
 	lent_aliases:   map[int][]int,
+	// Per call with a `self: ^` receiver, what the receiver's place holds, which
+	// the call's actual joins with its borrow of that place: a load through the
+	// receiver reads these at its path rather than through them.
+	receiver_content: map[^Expr_Call][]int,
 	// Per `parallel` block's hidden scope, the slot holding what its tasks
 	// lend (`prov_spawn`), and each task's reborrows of mutable carriers, one
 	// slot per spawn site, all registered as the block is entered
@@ -423,6 +427,7 @@ new_flow_graph :: proc(k: ^Checker, literal: ^Expr_Proc, allocator: mem.Allocato
 		graph.view_loans = make(map[Symbol_Id][]int, 8, allocator)
 		graph.step_views = make(map[Symbol_Id]bool, 8, allocator)
 		graph.lent_aliases = make(map[int][]int, 8, allocator)
+		graph.receiver_content = make(map[^Expr_Call][]int, 2, allocator)
 		graph.fresh_slots = make(map[int]bool, 2, allocator)
 		graph.content_by_symbol = make(map[Symbol_Id][]int, 8, allocator)
 		graph.call_results = make(map[^Expr_Call]Prov_Call_Result, 8, allocator)
@@ -1894,24 +1899,30 @@ walk_flow_foreach :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach) {
 // traversal is live. A source reached through a mutable pointer, as `items^`,
 // has no place for the iterator loan, so the traversal reborrows the pointer
 // instead, mutably for a place loop: changing the source through it, as
-// `items.append(x)`, conflicts until the loop ends.
+// `items.append(x)`, conflicts until the loop ends. A pointer itself read
+// through another, as `p^` in `p^^`, is a copy with no name to suspend, but the
+// source can still change through the pointer it came from, as
+// `p^.append(x)` does, so each carrier out to the first named place is
+// reborrowed too.
 @(private = "file")
 foreach_reborrow_through_carrier :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach, place_loop: bool) -> []int {
 	if s.kind == .Protocol || type_is_carrier(graph.k.c, prov_type(graph, s.iterable)) {
 		return nil
 	}
-	if _, _, ok := prov_place_of(graph, s.iterable); ok {
-		return nil
-	}
-	carriers, _, through := prov_read_through_carrier(graph, s.iterable, reads_only = true)
-	if !through {
-		return nil
-	}
-	reborrowed := prov_reborrow_traversal(graph, carriers, expr_span(s.iterable), place_loop)
-	out := make([dynamic]int, 0, len(reborrowed), graph.alloc)
-	for slot in reborrowed {
-		if !slice.contains(carriers, slot) {
-			append(&out, slot)
+	out := make([dynamic]int, 0, 2, graph.alloc)
+	for place := s.iterable; place != nil; place = prov_through_carrier_operand(graph, place) {
+		if _, _, ok := prov_place_of(graph, place); ok {
+			break
+		}
+		carriers, _, through := prov_read_through_carrier(graph, place, reads_only = true)
+		if !through {
+			break
+		}
+		reborrowed := prov_reborrow_traversal(graph, carriers, expr_span(s.iterable), place_loop)
+		for slot in reborrowed {
+			if !slice.contains(carriers, slot) {
+				append(&out, slot)
+			}
 		}
 	}
 	return out[:]

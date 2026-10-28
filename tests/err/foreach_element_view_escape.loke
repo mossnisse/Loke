@@ -2,7 +2,8 @@
 // view of it cannot outlive a local or temporary source, and the source
 // cannot be changed while the traversal or a view of an element is in use.
 // `&item` borrows the source even when the element holds borrows of its own.
-// A source reached through a pointer cannot be grown during its traversal.
+// A source reached through a pointer cannot be grown during its traversal, nor
+// through a pointer to that pointer.
 package main;
 
 import "core:fmt";
@@ -76,6 +77,20 @@ Counts :: struct { values: [dynamic]int, total: int }
 
 field_grown_during_traversal :: proc(counts: ^mut Counts) {
 	foreach (value in counts.values) { counts.values.append(value); }
+}
+
+grown_two_pointers_away :: proc(p: ^mut ^mut [dynamic]int) {
+	foreach (item in p^^) { p^.append(item); }
+}
+
+grown_two_pointers_away_mutably :: proc(p: ^mut ^mut [dynamic]int) {
+	foreach (&mut item in p^^) { p^.append(item); }
+}
+
+Holder :: struct { items: ^mut [dynamic]int }
+
+grown_through_held_pointer :: proc(holder: ^mut Holder) {
+	foreach (item in holder.items^) { holder.items.append(item); }
 }
 
 main :: proc() {}

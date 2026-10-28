@@ -2,7 +2,8 @@
 // slice parameter depends only on the fields it reads, so a view of the static
 // `a` outlives storage that only `b` viewed. design.md "Minimum provenance
 // precision": an element of a fixed array behind a pointer is told apart by
-// its constant index.
+// its constant index. The same holds for a `self: ^` method, and for a field
+// of an array or record literal's element while a later element is built.
 package main;
 
 import "core:fmt";
@@ -30,10 +31,21 @@ whole :: proc(p: ^Pair) -> Pair { return p^; }
 
 forwarded :: proc(values: []Pair) -> string_view { return from_slice(values); }
 
+impl Pair {
+	first :: proc(self: ^) -> string_view { return self.a; }
+	forward :: proc(self: ^) -> string_view { return self.first(); }
+}
+
+make_pair :: proc(a, b: string_view) -> Pair { return {a, b}; }
+
+Two :: struct { left: Pair, right: Pair }
+
 main :: proc() {
 	kept := [7]string_view{"", "", "", "", "", "", ""};
+	more := [6]string_view{"", "", "", "", "", ""};
 	{
 		source := strings.copy("ended");
+		other := strings.copy("other");
 		values := [2]Pair{{"slice", source}, {"array", "static"}};
 		kept[0] = from_slice(values[:]);
 		kept[1] = from_element(values[:]);
@@ -43,6 +55,16 @@ main :: proc() {
 		kept[5] = whole(&values[0]).a;
 		callback := forwarded;
 		kept[6] = callback(values[:]);
+		more[0] = values[0].first();
+		more[1] = values[0].forward();
+		more[2] = make_pair("temporary", source).first();
+		literal := [2]Pair{{"literal", source}, {"x", other}};
+		more[3] = literal[0].a;
+		record := Two{{"record", source}, {"x", other}};
+		more[4] = record.left.a;
+		pointer := &literal[0];
+		more[5] = pointer.first();
 	}
 	fmt.println(kept[0], kept[1], kept[2], kept[3], kept[4], kept[5], kept[6]);
+	fmt.println(more[0], more[1], more[2], more[3], more[4], more[5]);
 }

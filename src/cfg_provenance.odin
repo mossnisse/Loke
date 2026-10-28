@@ -1480,8 +1480,7 @@ prov_capture :: proc(graph: ^Flow_Graph, slots: []int, span: Span, keep_reborrow
 			append(&out, ..prov_reborrow_traversal(graph, prov_one(graph, slot), span, true))
 			continue
 		}
-		held := prov_temp_slot(graph)
-		prov_emit(graph, Prov_Event{kind = .Def, slot = held, loan = NO_LOAN, sources = prov_one(graph, slot), span = span})
+		held := prov_hold_slot(graph, slot, span)
 		for index in 0 ..< len(graph.reborrows) {
 			if reborrow := graph.reborrows[index]; reborrow.derived == slot {
 				reborrow.derived = held
@@ -1504,11 +1503,28 @@ prov_capture_slots :: proc(graph: ^Flow_Graph, slots: []int, rewritten: []int, s
 			append(&out, slot)
 			continue
 		}
-		held := prov_temp_slot(graph)
-		prov_emit(graph, Prov_Event{kind = .Def, slot = held, loan = NO_LOAN, sources = prov_one(graph, slot), span = span})
-		append(&out, held)
+		append(&out, prov_hold_slot(graph, slot, span))
 	}
 	return out[:]
+}
+
+// A temporary holding what `slot` holds now. It keeps the place in a value's
+// shape that `slot` stands for, so a later field selection still tells it
+// apart from its siblings (design.md "Minimum provenance precision"): the
+// first element of `[2]Pair{{"static", source}, {"x", other}}` is captured
+// while the second is built, and its `a` must not take `b`'s borrow.
+@(private = "file")
+prov_hold_slot :: proc(graph: ^Flow_Graph, slot: int, span: Span) -> int {
+	held := prov_temp_slot(graph)
+	source := graph.prov_slots[slot]
+	entry := &graph.prov_slots[held]
+	entry.path = source.path
+	entry.content_type = source.content_type
+	entry.content_shape = source.content_shape
+	entry.content_truncated = source.content_truncated
+	entry.precision = source.precision
+	prov_emit(graph, Prov_Event{kind = .Def, slot = held, loan = NO_LOAN, sources = prov_one(graph, slot), span = span})
+	return held
 }
 
 // A slice local whose elements are plain data, which reading cannot turn into
@@ -4432,7 +4448,7 @@ prov_read_through_carrier :: proc(graph: ^Flow_Graph, place: Expr, reads_only :=
 			return nil, nil, false
 		}
 		if v.op == .Caret {
-			return prov_reach(graph, prov_read_carrier(graph, v.operand, reads_only), v.span), nil, true
+			return prov_reach(graph, prov_read_carrier_through(graph, v.operand, reads_only), v.span), nil, true
 		}
 	case ^Expr_Call:
 		// `field.get(value)` is `field.pointer(value)^`.
@@ -4445,7 +4461,7 @@ prov_read_through_carrier :: proc(graph: ^Flow_Graph, place: Expr, reads_only :=
 		}
 		step := prov_field_step(graph, v)
 		if type_is_pointer(graph.k.c, prov_type(graph, v.operand)) {
-			carriers := prov_reach(graph, prov_read_carrier(graph, v.operand, reads_only), v.span)
+			carriers := prov_reach(graph, prov_read_carrier_through(graph, v.operand, reads_only), v.span)
 			return carriers, prov_extend(graph, nil, step), true
 		}
 		if carriers, path, ok := prov_read_through_carrier(graph, v.operand, reads_only); ok {
@@ -4457,7 +4473,7 @@ prov_read_through_carrier :: proc(graph: ^Flow_Graph, place: Expr, reads_only :=
 		}
 		kind := underlying_kind(graph.k.c, prov_type(graph, v.operand))
 		if kind == .Slice || kind == .Pointer || kind == .C_Pointer {
-			carriers := prov_read_carrier(graph, v.operand, reads_only && !prov_indices_may_write(v.indices))
+			carriers := prov_read_carrier_through(graph, v.operand, reads_only && !prov_indices_may_write(v.indices))
 			if prov_indices_may_write(v.indices) {
 				carriers = prov_capture(graph, carriers, v.span)
 			}
@@ -4484,6 +4500,72 @@ prov_read_through_carrier :: proc(graph: ^Flow_Graph, place: Expr, reads_only :=
 		}
 	}
 	return nil, nil, false
+}
+
+// The carrier expression `prov_read_through_carrier` reads `place` through,
+// as `p^` for `p^^.items`; nil when `place` is not reached through one it
+// names.
+@(private)
+prov_through_carrier_operand :: proc(graph: ^Flow_Graph, place: Expr) -> Expr {
+	#partial switch v in place {
+	case ^Expr_Postfix:
+		if v.op == .Caret && type_is_box(graph.k.c, prov_type(graph, v.operand)) {
+			return prov_through_carrier_operand(graph, v.operand)
+		}
+		if v.op == .Caret {
+			return v.operand
+		}
+	case ^Expr_Selector:
+		if v.resolution.kind != .Field || v.operand == nil {
+			return nil
+		}
+		if type_is_pointer(graph.k.c, prov_type(graph, v.operand)) {
+			return v.operand
+		}
+		return prov_through_carrier_operand(graph, v.operand)
+	case ^Expr_Index:
+		if len(v.bound) > 0 || v.operand == nil {
+			return nil
+		}
+		#partial switch underlying_kind(graph.k.c, prov_type(graph, v.operand)) {
+		case .Slice, .Pointer, .C_Pointer:
+			return v.operand
+		}
+		return prov_through_carrier_operand(graph, v.operand)
+	}
+	return nil
+}
+
+// The carriers `operand` holds, read through. Read only, a mutable carrier
+// copied out of another, as `p^` in `p^^[0]`, reborrows the carrier it came
+// from read-only, which another read-only reborrow of that one allows
+// (design.md "Weakening and reborrows"): a loop over `p^^` may still read
+// through `p`.
+@(private = "file")
+prov_read_carrier_through :: proc(graph: ^Flow_Graph, operand: Expr, reads_only: bool) -> []int {
+	if !reads_only {
+		return prov_read_carrier(graph, operand, false)
+	}
+	if _, _, ok := prov_place_of(graph, operand); ok {
+		return prov_read_carrier(graph, operand, true)
+	}
+	inner, path, through := prov_read_through_carrier(graph, operand, true)
+	if !through {
+		return prov_read_carrier(graph, operand, true)
+	}
+	carriers := prov_load_content(graph, inner, path, prov_type(graph, operand), expr_span(operand), reads_only = true)
+	out := make([dynamic]int, 0, len(carriers), graph.alloc)
+	for slot in carriers {
+		if !prov_slot_is_loaded_mutable(graph, slot) {
+			append(&out, slot)
+			continue
+		}
+		derived := prov_temp_slot(graph)
+		prov_emit(graph, Prov_Event{kind = .Def, slot = derived, loan = NO_LOAN, sources = prov_one(graph, slot), span = expr_span(operand)})
+		append(&graph.reborrows, Prov_Reborrow{source = slot, derived = derived, span = expr_span(operand), mutable = false})
+		append(&out, derived)
+	}
+	return out[:]
 }
 
 // An index that is not a constant or a plain read may call something that
@@ -6157,6 +6239,10 @@ prov_call_argument :: proc(
 		if !(index == 0 && has_receiver) && proc_parameter_mode(c, call_proc_type(c, v), index) == .Value {
 			borrowed^ = prov_join(graph, borrowed^, loan)
 		} else {
+			if index == 0 && has_receiver &&
+			   type_underlying(c, prov_type(graph, argument)) == type_underlying(c, prov_parameter_type(graph, v, index)) {
+				graph.receiver_content[v] = held
+			}
 			held = prov_join(graph, held, loan)
 		}
 		actual = held
@@ -7391,20 +7477,36 @@ prov_substitute_result :: proc(
 ) -> []int {
 	out: []int
 	for depths, index in dependencies.param_loads {
+		if index >= len(actuals) {
+			continue
+		}
+		// design.md "Procedure result contracts": a `self: ^` receiver's actual
+		// also holds what its place holds, which is what one load through the
+		// receiver reads, selected at the loaded path. Loading through those
+		// carriers instead would reach what every field views, and loading
+		// through the borrow of the place adds nothing but, for a temporary,
+		// the temporary itself.
+		through := actuals[index]
+		held: []int
+		if content, found := graph.receiver_content[v]; found && index == 0 {
+			through, held = nil, content
+		}
 		for depth in 1 ..= 8 {
-			if index >= len(actuals) || depths & (u8(1) << u8(depth - 1)) == 0 {
+			if depths & (u8(1) << u8(depth - 1)) == 0 {
 				continue
 			}
 			// A load narrowed to some of the pointee's paths reads only those.
 			paths := depth == 1 && index < len(dependencies.param_load_paths) ? dependencies.param_load_paths[index] : nil
 			shape := prov_parameter_pointee_shape(graph, v, index)
 			if len(paths) == 0 || len(paths) != len(shape) {
-				out = prov_join(graph, out, prov_load_deep(graph, actuals[index], v.span, depth))
+				out = prov_join(graph, out, prov_load_deep(graph, through, v.span, depth))
+				out = prov_join(graph, out, prov_load_held(graph, v, held, depth, nil))
 				continue
 			}
 			for named, position in paths {
 				if named {
-					out = prov_join(graph, out, prov_load_deep(graph, actuals[index], v.span, depth, shape[position].steps))
+					out = prov_join(graph, out, prov_load_deep(graph, through, v.span, depth, shape[position].steps))
+					out = prov_join(graph, out, prov_load_held(graph, v, held, depth, shape[position].steps))
 				}
 			}
 		}
@@ -7458,6 +7560,20 @@ prov_substitute_result :: proc(
 		return prov_one(graph, slot)
 	}
 	return out
+}
+
+// What `depth` loads through a `self: ^` receiver read of what its place holds,
+// `held`, with the first load along `path`: the first load is `held` itself.
+@(private = "file")
+prov_load_held :: proc(graph: ^Flow_Graph, v: ^Expr_Call, held: []int, depth: int, path: []Proj_Step) -> []int {
+	if len(held) == 0 {
+		return nil
+	}
+	selected := prov_select_content(graph, held, prov_parameter_type(graph, v, 0), path)
+	if depth == 1 {
+		return selected
+	}
+	return prov_load_deep(graph, selected, v.span, depth - 1)
 }
 
 // The carrier paths of what one load through parameter `index` reads. A

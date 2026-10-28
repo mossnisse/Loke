@@ -7,86 +7,59 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
-### Growing a container two pointers away during its own traversal compiles
+### A view through a copied pointer survives a write through the pointer it came from
 
-[Borrowing iteration](design.md#borrowing-iteration) says the source cannot be
-mutated or invalidated while the traversal is live. Through one pointer, as
-`foreach (item in items^)` with `items: ^mut [dynamic]int`, growing the source
-in the loop is L0641. Through a second pointer it still compiles, and the
-append can reallocate the buffer the loop is still reading:
+[Weakening and reborrows](design.md#weakening-and-reborrows) says a carrier
+stored where a read-only one is wanted reborrows its source, which cannot be
+changed while the copy is in use. Through one pointer, as
+`view: []int = items^[:]; items.append(1);` with `items: ^mut [dynamic]int`,
+the append is L0641. Two pointers away it compiles, and the append can
+reallocate the buffer the view still reads:
 
 ```loke
 package main;
+import "core:fmt";
 grow :: proc(p: ^mut ^mut [dynamic]int) {
-    foreach (item in p^^) {
-        p^.append(item); // should be rejected
-    }
+    view: []int = p^^[:];
+    p^.append(1); // should be rejected
+    fmt.println(view[0]);
 }
 main :: proc() {}
 ```
 
-`foreach_reborrow_through_carrier` in [src/cfg.odin](src/cfg.odin) reborrows
-the carriers `prov_read_through_carrier` reaches, but `prov_reborrow_traversal`
-reborrows only named mutable carriers. The inner `^mut` is loaded out of `p^`
-into an unnamed slot, so nothing guards it.
+The inner `^mut` is loaded out of `p^` into an unnamed slot, so the view's
+reborrow suspends nothing a later `p^` names. A traversal of `p^^` already
+reborrows `p` itself (`foreach_reborrow_through_carrier` in
+[src/cfg.odin](src/cfg.odin)); a stored view needs the same.
 
-### A field returned by a `self: ^` method keeps the receiver's other borrows
+### A field read two loads below a parameter keeps its siblings' borrows
 
 [Procedure result contracts](design.md#procedure-result-contracts) says a
-helper returning one field of an argument substitutes only that field's root.
-Through a pointer parameter that holds: `first(&values[0])` with
-`first :: proc(p: ^Pair) -> string_view { return p.a; }` compiles. As a
-`self: ^` method it is rejected with L0513, because `b` views a local that
-has ended:
+helper returning one field of an argument substitutes only that field's root,
+at every nesting depth. One load below the parameter, `return p.a;` with
+`p: ^Pair` holds. Two loads below, the result also depends on what every field
+of the first pointee views:
 
 ```loke
 package main;
 import "core:fmt";
 import "core:strings";
 Pair :: struct { a: string_view, b: string_view }
-impl Pair { first :: proc(self: ^) -> string_view { return self.a; } }
+Deep :: struct { pair: ^Pair, other: string_view }
+inner :: proc(d: ^Deep) -> string_view { return d.pair.a; }
 main :: proc() {
     kept: string_view = "";
     {
         source := strings.copy("other");
-        values := [1]Pair{{"static", source}};
-        kept = values[0].first();
+        pair := Pair{"static", "b"};
+        deep := Deep{&pair, source};
+        kept = inner(&deep);
     }
     fmt.println(kept); // should compile; currently L0513
 }
 ```
 
-The summary narrows the result to the receiver's `a` path, but
-`prov_call_argument` in [src/cfg_provenance.odin](src/cfg_provenance.odin)
-lends a `.Borrow` receiver as a borrow of the place joined with the carriers
-the receiver holds. The call loads the `a` path through both, and through
-those carriers it reaches every field's borrow.
-
-### A field of an array literal element keeps its sibling field's borrow
-
-[Minimum provenance precision](design.md#minimum-provenance-precision)
-requires distinct paths for each field and for each element of a fixed array
-of up to 8 elements. Here `values[0].a` is static, but using it after
-`source` ends is rejected with L0513. With `other` replaced by a static
-string, or with a one-element array, it compiles.
-
-```loke
-package main;
-import "core:fmt";
-import "core:strings";
-Pair :: struct { a: string_view, b: string_view }
-main :: proc() {
-    kept: string_view = "";
-    {
-        source := strings.copy("ended");
-        other := strings.copy("other");
-        values := [2]Pair{{"static", source}, {"x", other}};
-        kept = values[0].a;
-    }
-    fmt.println(kept); // should compile; currently L0513
-}
-```
-
-The loss is local: no call is involved. When more than one element of the
-literal holds a borrow, the read of `values[0].a` also takes `b`'s loan of
-`source`. The cause has not been traced yet.
+`Result_Dependencies.param_load_paths` in [src/borrow.odin](src/borrow.odin)
+narrows only the first load, so `prov_substitute_result` in
+[src/cfg_provenance.odin](src/cfg_provenance.odin) loads a deeper dependency
+through every path of the first pointee, `other` among them.

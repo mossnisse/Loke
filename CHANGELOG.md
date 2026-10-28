@@ -51,7 +51,9 @@ checklist.
   `foreach`, as `items.append(item)` inside `foreach (item in items^)` with
   `items: ^mut [dynamic]int`, is now rejected with `L0641`, as it already was
   for a local container
-  ([Borrowing iteration](design.md#borrowing-iteration)). Before, it
+  ([Borrowing iteration](design.md#borrowing-iteration)). So is changing it
+  through a pointer to that pointer, as `p^.append(item)` inside
+  `foreach (item in p^^)` with `p: ^mut ^mut [dynamic]int`. Before, both
   compiled, and growing the container could leave the loop reading freed
   memory. Reading the container and changing its other fields in the loop
   still compile. Upgrade by collecting the changes in the loop and applying
@@ -160,6 +162,24 @@ checklist.
   `items: ^mut [dynamic]int`, is no longer rejected with `L0641` while a
   read-only reborrow of the pointer is in use: such a call only reads, which
   [Weakening and reborrows](design.md#weakening-and-reborrows) allows.
+  Reading through a pointer to such a pointer, as `p^^[0]` or `p^.len()` with
+  `p: ^mut ^mut [dynamic]int`, while a read-only reborrow of `p` is in use is
+  no longer rejected either.
+
+- A field returned by a `self: ^` method, as
+  `first :: proc(self: ^) -> string_view { return self.a; }`, now depends
+  only on that field of the receiver, as it already did through a `p: ^Pair`
+  parameter
+  ([Procedure result contracts](design.md#procedure-result-contracts)).
+  Using `values[0].first()` after storage only `b` viewed had ended was
+  rejected with `L0513`, and so was using `make_pair(...).first()` after the
+  statement, even when `a` was static text.
+
+- A field of an element of an array or record literal, as `values[0].a` after
+  `values := [2]Pair{{"static", source}, {"x", other}}`, no longer depends on
+  what its sibling field borrows when a later element holds a borrow too
+  ([Minimum provenance precision](design.md#minimum-provenance-precision)).
+  Using it after `source` ended was rejected with `L0513`.
 
 ## [0.9.0] - 2026-10-27
 

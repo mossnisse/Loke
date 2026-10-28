@@ -90,7 +90,23 @@ read_during_traversal :: proc(counts: ^mut Counts) -> int {
 	return counts.total;
 }
 
+// The same holds two pointers away, and reading through the outer pointer
+// beside a read-only reborrow of it is still only a read.
+read_two_pointers_away :: proc(p: ^mut ^mut [dynamic]int) -> int {
+	total := 0;
+	foreach (value in p^^) { total += value * p^.len() + p^^[0]; }
+	foreach (&mut value in p^^) { value += 1; }
+	view: ^^mut [dynamic]int = p;
+	total += p^.len() + view^^[0];
+	p^.append(total);
+	return total;
+}
+
 main :: proc() {
+	numbers := make([dynamic]int, 0, 3);
+	numbers.append(1, 2);
+	pointer := &mut numbers;
+	fmt.println(read_two_pointers_away(&mut pointer), numbers[0], numbers[1], numbers[2]);
 	counts := Counts{make([dynamic]int, 0, 3), 0};
 	counts.values.append(1, 2);
 	fmt.println(read_during_traversal(&mut counts), counts.values[0], counts.values[1], counts.values[2]);
