@@ -401,11 +401,12 @@ collects those events as it emits them (`Prov_Slot.walk_reads`), leaving out
 its subscripts, as a call in an index may write.
 
 A switch over a place reached through carriers cannot borrow a root, since
-which storage they name is known only to the solve. It holds the place
-instead (`prov_hold_place`): a snapshot slot of the carriers, at the path below
-their pointee, which the binding's view joins so every use of the binding keeps
-it live, as does a carrier copied from it, as `kept := &node`, while it still
-holds the snapshot's loans. A store through carriers, a mutable borrow or `inout` argument
+which storage they name is known only to the solve. It takes a place loan
+instead (`prov_place_loan`, `Prov_Place_Loan`): a snapshot slot of the
+carriers, at the path below their pointee, with its capability, which the
+binding's view joins so every use of the binding keeps it live, as does a
+carrier copied from it, as `kept := &node`, while it still holds the
+snapshot's loans. A store through carriers, a mutable borrow or `inout` argument
 through them, and a carrier argument a callee may write through emit a
 `.Through` event, with the carriers and the path written. A call's path is the
 whole pointee, and its carriers include the deep `Load` of what it reaches; an
@@ -413,11 +414,11 @@ argument that is a mutable borrow through carriers, as `&mut h^.count`, or a
 value the argument builds out of one alone, as `Side{&mut h^.count}`, adds
 only that load, since the borrow's own event gave its path
 (`prov_unsaid_writes`).
-`check_held_place` rejects one whose carriers share a valid loan with a live
-hold's snapshot at an overlapping path. A mutable borrow weakened to a
+`check_place_loans` rejects one whose carriers share a valid loan with a live
+place loan's snapshot at an overlapping path. A mutable borrow weakened to a
 read-only destination writes nothing, so its `.Through` is settled as a fresh
 loan's access is (`Prov_Slot.through_index`). The events are emitted only once
-the body has a hold.
+the body has a place loan.
 
 Result summaries, written-argument regions, and escape levels propagate these
 facts through direct, generic, and indirect calls. A written-argument region is

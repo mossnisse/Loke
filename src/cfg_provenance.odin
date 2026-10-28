@@ -45,8 +45,8 @@ Prov_Kind :: enum u8 {
 	Load,
 	// Storage at `path` below the pointee of the carriers in `into` is written,
 	// or handed to a call that may write it, as `verb` says. Checked against the
-	// payload holds of switches over places reached through carriers
-	// (`prov_hold_place`), and emitted only once there is one.
+	// loans of places reached through carriers (`prov_place_loan`), and emitted
+	// only once there is one.
 	Through,
 	// Storage reached through what the carriers in `sources` hold: read or
 	// written through them, or handed to a call that may. Only the thread
@@ -345,40 +345,42 @@ prov_subject_view :: proc(graph: ^Flow_Graph, subject: Expr, mutable: bool, slot
 			if slot >= 0 {
 				below = prov_extend(graph, prov_extend(graph, below, proj_wild()), proj_field(slot))
 			}
-			return prov_join(graph, carriers, prov_hold_place(graph, carriers, below, subject))
+			return prov_join(graph, carriers, prov_place_loan(graph, carriers, below, false, "payload", subject))
 		}
 		return nil
 	}
 	return prov_borrow(graph, root, path, false, expr_span(subject), "payload")
 }
 
-// design.md "Switch ownership": a switch over a place reached through
-// carriers, as `h^.first`, borrows that place while a payload binding is in
-// use, as one over a local does. Which storage the carriers name is known only
-// to the solve, so the hold is a snapshot of them, at `path` below their
-// pointee, which each use of the binding keeps live; a write through a carrier
-// naming the same storage at an overlapping path conflicts with it
-// (`.Through`). The slot returned is the snapshot.
+// A loan of `place`, reached through `carriers`, at `path` below their
+// pointee (`Prov_Place_Loan`). A switch over such a place, as `h^.first`,
+// takes a read-only one while a payload binding is in use, as one over a
+// local borrows it (design.md "Switch ownership"); each use of the binding
+// keeps the snapshot live, and a write through a carrier naming the same
+// storage at an overlapping path conflicts with it (`.Through`). The slot
+// returned is the snapshot.
 @(private = "file")
-prov_hold_place :: proc(graph: ^Flow_Graph, carriers: []int, path: []Proj_Step, subject: Expr) -> []int {
+prov_place_loan :: proc(graph: ^Flow_Graph, carriers: []int, path: []Proj_Step, mutable: bool, what: string, place: Expr) -> []int {
 	if len(carriers) == 0 || graph.current == NO_BLOCK {
 		return nil
 	}
-	span := expr_span(subject)
+	span := expr_span(place)
 	slot := prov_temp_slot(graph)
 	prov_emit(graph, Prov_Event{kind = .Def, slot = slot, loan = NO_LOAN, sources = carriers, span = span})
-	place := graph.k.c.sources[span.file].text[span.lo:span.hi]
-	append(&graph.holds, Prov_Hold{slot = slot, path = path, span = span, place = place, derived = make([dynamic]int, graph.alloc)})
-	graph.prov_slots[slot].hold = len(graph.holds)
+	append(&graph.place_loans, Prov_Place_Loan {
+		slot = slot, path = path, mutable = mutable, what = what, span = span,
+		place = graph.k.c.sources[span.file].text[span.lo:span.hi], derived = make([dynamic]int, graph.alloc),
+	})
+	graph.prov_slots[slot].place_loan = len(graph.place_loans)
 	return prov_one(graph, slot)
 }
 
-// A write through `carriers` at `path` below their pointee, which a payload
-// hold over the same storage forbids (`prov_hold_place`). The event's index
-// in the current block, or -1 when none is emitted.
+// A write through `carriers` at `path` below their pointee, which a place
+// loan of the same storage forbids (`prov_place_loan`). The event's index in
+// the current block, or -1 when none is emitted.
 @(private = "file")
 prov_write_through :: proc(graph: ^Flow_Graph, carriers: []int, path: []Proj_Step, span: Span, verb: string) -> int {
-	if len(graph.holds) == 0 || len(carriers) == 0 || graph.current == NO_BLOCK {
+	if len(graph.place_loans) == 0 || len(carriers) == 0 || graph.current == NO_BLOCK {
 		return -1
 	}
 	prov_emit(graph, Prov_Event{kind = .Through, into = carriers, path = path, span = span, verb = verb})
@@ -1750,11 +1752,11 @@ prov_reborrow :: proc(graph: ^Flow_Graph, slots: []int, destination: Type_Id, in
 		if into < 0 || into == slot {
 			continue
 		}
-		// A carrier copied from a payload hold's snapshot, as `kept := &node`,
-		// keeps the place held (`prov_hold_place`).
-		if entry.hold > 0 {
-			append(&graph.holds[entry.hold - 1].derived, into)
-			graph.prov_slots[into].hold = entry.hold
+		// A carrier copied from a place loan's snapshot, as `kept := &node`,
+		// keeps the place lent (`prov_place_loan`).
+		if entry.place_loan > 0 {
+			append(&graph.place_loans[entry.place_loan - 1].derived, into)
+			graph.prov_slots[into].place_loan = entry.place_loan
 		}
 		// A copy of a lent element reborrows the stored carrier it names.
 		if aliased, lent := graph.lent_aliases[slot]; lent {
@@ -6795,7 +6797,7 @@ prov_call_argument :: proc(
 // `Pair{&mut h^.count, h}`, is the carrier handed on whole.
 @(private = "file")
 prov_unsaid_writes :: proc(graph: ^Flow_Graph, actual: []int, block: Block_Id, lo: int) -> []int {
-	if len(graph.holds) == 0 || block == NO_BLOCK || graph.current != block {
+	if len(graph.place_loans) == 0 || block == NO_BLOCK || graph.current != block {
 		return actual
 	}
 	said := make(map[int]bool, 4, context.temp_allocator)

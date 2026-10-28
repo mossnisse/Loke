@@ -242,9 +242,8 @@ Prov_State :: struct {
 	loans:          [dynamic]Prov_Loan,
 	prov_slots:     [dynamic]Prov_Slot,
 	reborrows:      [dynamic]Prov_Reborrow,
-	// The payload holds of switches over places reached through carriers
-	// (`prov_hold_place`).
-	holds:          [dynamic]Prov_Hold,
+	// The loans of places reached through carriers (`prov_place_loan`).
+	place_loans:    [dynamic]Prov_Place_Loan,
 	// Set for the one carrier `prov_read_ident` reads next: the path below its
 	// pointee of the one place an access goes on to (`prov_reach_hop`).
 	place_use:      bool,
@@ -436,7 +435,7 @@ new_flow_graph :: proc(k: ^Checker, literal: ^Expr_Proc, allocator: mem.Allocato
 		graph.roots = make([dynamic]Prov_Root, allocator)
 		graph.loans = make([dynamic]Prov_Loan, allocator)
 		graph.prov_slots = make([dynamic]Prov_Slot, allocator)
-		graph.holds = make([dynamic]Prov_Hold, allocator)
+		graph.place_loans = make([dynamic]Prov_Place_Loan, allocator)
 		graph.entry_defs = make([dynamic]Prov_Entry_Def, allocator)
 		graph.root_by_symbol = make(map[Symbol_Id]Root_Id, 8, allocator)
 		graph.root_by_storage = make(map[Storage_Id]Root_Id, 4, allocator)

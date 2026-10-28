@@ -110,7 +110,7 @@ or a loop, against a model of the rules written apart from the compiler.
 The second migration gives a switch over a place reached through carriers a
 hold of that place, which a write through any carrier naming the same storage
 at an overlapping path conflicts with, resolved while solving
-(`prov_hold_place`, `.Through`). That closed the remaining gap, a store or
+(`prov_place_loan`, `.Through`). That closed the remaining gap, a store or
 call through the pointer replacing the payload a binding views.
 
 The third makes a borrow, slice, or `foreach` of a place reached through
@@ -160,6 +160,84 @@ would change ergonomics and compatibility while leaving nested place access
 and implicit call reborrows to analyze. Do not adopt those changes solely to
 work around the current implementation. Revisit them only with concrete
 examples and a demonstrably smaller set of semantic rules.
+
+### One place loan through carriers (proposal, 2026-10-28)
+
+A borrow of a local's field is a loan of the root at that field's path, and
+everything else follows from the one rule. A borrow of a place reached
+through a carrier has no such loan, since which storage the carrier names is
+known only to the solve, so the second and third migrations each built a
+stand-in, and later fixes patched them:
+
+- A switch takes a hold, a snapshot of the carriers with the path below their
+  pointee, which `.Through` writes through any carrier sharing a loan with the
+  snapshot conflict with (now `prov_place_loan`, `check_place_loans`).
+- A borrow, slice, or `foreach` takes placed reborrows instead, of each
+  carrier on the way, matched by slot against uses tagged with a path
+  (`Prov_Reborrow.placed`, `Prov_Event.placed`, `graph.place_use`). The one
+  for the carrier holding the place waits for the destination through marker
+  slots (`prov_place_markers`, `prov_marked_place`), and the outer carriers
+  get theirs up front (`prov_reborrow_outer_carriers`).
+- A borrow's value is the carriers' own slots, so it does not say which place
+  it is of. A call handed `&mut h^.count`, or a record holding it, would write
+  all of `h^`, and `prov_unsaid_writes` reconstructs the borrow's path from
+  the argument's `Def`s; `Prov_Slot.through_carriers` serves it. The
+  conditional record gap in [known-gaps.md](known-gaps.md) is a shape it does
+  not reconstruct.
+- A mutable borrow weakened at its destination must retract its `.Through`
+  and make its walk's reads read only (`through_block`, `through_index`,
+  `walk_reads`).
+
+The two answer differently where they overlap. Beside `&h^.count`, `q := h`
+is rejected, as `q := &mut l` is beside `&l.count`; beside a switch binding of
+`h^.first`, it compiles, and only a write through `q` that reaches `first` is
+rejected, though `q := &mut l` beside a binding of `l.first` is rejected.
+
+**Proposed model.** Every borrow of a place reached through carriers, a
+switch subject's view included, records one **place loan**: a snapshot slot
+of the carriers holding the place, the path below their pointee, its
+capability, and its span. It is live while the snapshot or anything derived
+from it is, as a hold is now. A slot also records the path below what its
+loans name (`Prov_Slot.offset`): a place loan's snapshot has the loan's path,
+a copy keeps its source's, and a slot defined from sources with different
+offsets keeps their common prefix. Every access through carriers then states
+the carriers, the path below their pointee extended by their offset, and
+whether it reads, writes, or uses the carrier whole, which a copy or a
+call argument does with its destination's capability. The solve checks each
+access against the live place loans sharing a loan with its carriers at an
+overlapping path, as `check_held_place` checks writes now, and skips the
+place loan the accessing carriers derive from.
+
+It would remove the placed reborrows, the use tags, the marker slots, the
+outer-carrier placed reborrows, `prov_unsaid_writes` and `through_carriers`,
+since a call writes through an argument at that argument's offset, and the
+walk bookkeeping for weakening, since weakening a place loan clears its
+capability as it does a fresh loan's. Holds become place loans. Reborrows of
+carriers copied out of storage, as `node := h^.head`, stay as they are. A
+carrier read out of a local's field, as `s.h` in `&s.h^.count`, needs nothing
+of its own, since a place loan is matched by the storage it names, not by the
+slot read.
+
+**Decisions.**
+
+1. Accepted: a copy of the carrier, or a call given it, beside a switch
+   binding over a place through it is rejected, as it is beside a borrow and
+   beside a binding of a local's field. Code that compiles today, as
+   `switch (h^.first) { case .some(n): q := h; q^.total = 2; use(n) }`, is
+   rejected: a breaking change with an upgrade note.
+2. Deferred: whether a view's constant element is its own place, so
+   `&mut s[0]` leaves `s[1]` free. A view's loans name its elements with a
+   wildcard today, so this changes the path a view's access states.
+
+**Steps.** Each lands alone, gated against the matrix and a corpus diff with
+the parent commit: holds as place loans, with no change in behavior (done:
+`Prov_Place_Loan` records its capability and what it lends); offsets
+on slots, with calls writing at an argument's offset and `prov_unsaid_writes`
+removed, which should close the conditional record gap; borrows, slices, and
+traversals as place loans, removing the placed reborrows, tags, and markers,
+with decision 1; then weakening as clearing a place loan's capability. Each
+access now checks the live place loans, as writes check holds; measure the
+borrow phase with `perf.ps1` before and after the third step.
 
 ## Package and import versioning
 

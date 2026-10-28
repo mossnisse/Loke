@@ -272,9 +272,9 @@ Prov_Slot :: struct {
 	walk_reads:    []Prov_Event_At,
 	// The carriers that borrow went through (`prov_unsaid_writes`).
 	through_carriers: []int,
-	// One more than the index of the payload hold this slot carries, as its
+	// One more than the index of the place loan this slot carries, as its
 	// snapshot or a carrier copied from one; zero for none.
-	hold: int,
+	place_loan: int,
 }
 
 // A slot holding no fresh borrow. Zero would name loan 0 and event 0.
@@ -325,14 +325,18 @@ Prov_Place_Marker :: struct {
 	path:    []Proj_Step,
 }
 
-// design.md "Switch ownership": a switch over `place`, reached through
-// carriers, holds it read-only at `path` below their pointee while `slot`, the
-// carriers' snapshot that each use of a payload binding reads, is live, or a
+// A loan of `place`, reached through carriers, at `path` below their pointee.
+// Which storage the carriers name is known only to the solve, so the loan is
+// `slot`, a snapshot of them, and it lasts while the snapshot is live, or a
 // carrier in `derived` copied from it, as `kept := &binding`, still holds the
-// snapshot's loans.
-Prov_Hold :: struct {
+// snapshot's loans. A switch over such a place takes a read-only one for its
+// payload bindings (design.md "Switch ownership"); `what` names what it
+// lends.
+Prov_Place_Loan :: struct {
 	slot:    int,
 	path:    []Proj_Step,
+	mutable: bool,
+	what:    string,
 	span:    Span,
 	place:   string,
 	derived: [dynamic]int,
@@ -4452,7 +4456,7 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 	case .Task_Join:
 		check_join_retention(state, event, live)
 	case .Through:
-		check_held_place(state, event, live, uses)
+		check_place_loans(state, event, live, uses)
 	case .Live, .Load:
 		// A reborrow suspends its source until its own last use, and the last use
 		// of whatever was reborrowed from it in turn.
@@ -4626,35 +4630,35 @@ live_reborrow_of :: proc(state: ^Prov_State, source: int, live: []bool, use: Pro
 	return {}, -1, false
 }
 
-// design.md "Switch ownership": a write through carriers that name storage a
-// live payload hold names, at an overlapping path, would replace the payload
-// a binding still views.
+// A write through carriers that name storage a live place loan names, at an
+// overlapping path, as a store replacing the payload a switch binding still
+// views (design.md "Switch ownership").
 @(private = "file")
-check_held_place :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, uses: []Span) {
-	for hold in state.graph.holds {
-		if !paths_overlap(hold.path, event.path) {
+check_place_loans :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, uses: []Span) {
+	for loan in state.graph.place_loans {
+		if !paths_overlap(loan.path, event.path) {
 			continue
 		}
-		held, later := live[hold.slot], uses[hold.slot]
-		for slot in hold.derived {
-			if !held && live[slot] && prov_slots_overlap(state, hold.slot, slot) {
-				held, later = true, uses[slot]
+		lent, later := live[loan.slot], uses[loan.slot]
+		for slot in loan.derived {
+			if !lent && live[slot] && prov_slots_overlap(state, loan.slot, slot) {
+				lent, later = true, uses[slot]
 			}
 		}
-		if !held {
+		if !lent {
 			continue
 		}
 		for carrier in event.into {
-			if !prov_slots_overlap(state, hold.slot, carrier) {
+			if !prov_slots_overlap(state, loan.slot, carrier) {
 				continue
 			}
-			state.diagnostic_precision |= state.precision[hold.slot] | state.precision[carrier]
+			state.diagnostic_precision |= state.precision[loan.slot] | state.precision[carrier]
 			errorf(
 				state.k.c, event.span, "L0511",
-				"this %s is not compatible with the read-only payload of `%s` that is still in use",
-				event.verb, hold.place,
+				"this %s is not compatible with the %s %s of `%s` that is still in use",
+				event.verb, loan.mutable ? "mutable" : "read-only", loan.what, loan.place,
 			)
-			add_notef(state.k.c, hold.span, "the switch borrows the payload here")
+			add_notef(state.k.c, loan.span, "the switch borrows the %s here", loan.what)
 			add_use_note(state, later)
 			return
 		}
