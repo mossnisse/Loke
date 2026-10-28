@@ -668,12 +668,15 @@ measured on 2026-10-27:
   becomes a constant.
 
 The proposed fix implements the functions in Loke, **correctly rounded**,
-porting CORE-MATH (MIT licence). They would use only the `+ - * /` that
-design.md "Floating-point operators" already pins, with exact two-part
-products where those algorithms use `fma`. A correctly rounded result is
-defined by the arithmetic alone, so it is the same on every machine,
-optimization level, and platform, and at compile time; it would also settle
-[Random distributions across platforms](#random-distributions-across-platforms).
+porting CORE-MATH (MIT licence). They would use only the `+ - * /` and
+`math.fma` that design.md "Floating-point operators" already pins. Replacing an
+algorithm's `fma` with an exact two-part product is possible, but needs a
+correctness argument for that algorithm over its full range. A correctly
+rounded finite result is defined by the arithmetic alone, so it is the same on
+every machine, optimization level, and platform, and at compile time; special
+cases and NaNs need their own rules. It is necessary for
+[Random distributions across platforms](#random-distributions-across-platforms)
+but not sufficient.
 Hardware FMA could be used where present without changing a bit, since a fused
 multiply-add is itself correctly rounded. Porting fdlibm or musl instead would
 also be deterministic, but it would freeze one algorithm's bits, so a bug fix
@@ -692,6 +695,10 @@ measure it. Open:
 - Should the C library's versions stay available under other names for
   callers who prefer speed to identity?
 
+The [deterministic math and CPU targeting plan](deterministic-math-and-targets-plan.md)
+proposes answers: a separate correctly rounded package first, platform math
+kept, and a decision on the default after measurement.
+
 ### Targeting x86-64 levels
 
 `lokec` gives clang no CPU level, so programs target baseline x86-64 (SSE2),
@@ -709,9 +716,11 @@ put SSE4.2 at 99.78% (September 2025) and AVX2 at 94.48% (May 2025). Windows
 on Arm emulates AVX2 and FMA for x64 programs from Windows 11 24H2.
 
 A level does not change determinism: `+ - * /` and `sqrt` give the same bits on
-every level, and LLVM fuses an operation only where the IR allows it, which
-Loke's never does (design.md "Floating-point operators"); a level option would
-need a test of that. It changes speed: v2 adds POPCNT and, if `floor` and its
+every level, and Loke's IR never allows fusion (design.md "Floating-point
+operators"). The IR is not the only control, though: Clang's `-ffp-contract`
+also sets the backend's fusion mode, and the runtime's C sources get Clang's
+default, which fuses within an expression. A level option would need
+`-ffp-contract=off` on every Clang command and a test of that. It changes speed: v2 adds POPCNT and, if `floor` and its
 kin were bound to LLVM intrinsics instead of the C library, inline rounding;
 v3 adds 256-bit vectorization, hardware FMA, and BMI. A program built for a
 level crashes with an illegal instruction on a processor without it, unless
@@ -722,6 +731,10 @@ the runtime checks first and reports it. Open:
   startup check?
 - Or should the standard library choose at run time where it matters, as the
   correctly rounded functions could with FMA, leaving one baseline?
+
+The [deterministic math and CPU targeting plan](deterministic-math-and-targets-plan.md#cpu-targets-and-fma)
+proposes keeping baseline as the default, an opt-in `-cpu` level with a
+startup check, and run-time dispatch later only where measured.
 
 ## Open questions in `core:random`
 
@@ -735,7 +748,11 @@ processor's features (see
 therefore differ between two machines running the same executable: rarely for
 those two, often for the others, and a different count from `poisson` or
 `binomial` shifts every later draw. Correctly rounded functions in Loke would
-close this, and would also let the distributions run at compile time. Is
+remove the dependence on the processor and platform, and would also let the
+distributions run at compile time. Switching a distribution to them changes
+its sequence, though, so reproducible distributions also need a pinned,
+versioned algorithm and draw order
+([plan](deterministic-math-and-targets-plan.md#lockstep-integration-and-versioning)). Is
 identity across machines worth that code, or should the contract say that only
 the generators and the integer and `unit` mappings are reproducible?
 

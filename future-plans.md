@@ -362,7 +362,10 @@ Implementation order:
    calling conventions, object formats, debug formats, and linker arguments.
    Add an explicit target-selection interface, keeping the current Windows x64
    target as the compatibility baseline. Distinguish host paths/processes from
-   target ABI and runtime choices throughout the driver.
+   target ABI and runtime choices throughout the driver. The
+   [deterministic math and CPU targeting plan](deterministic-math-and-targets-plan.md#user-facing-selection)
+   adds CPU levels to this boundary and defers a public `-target` option until
+   a second target exists.
 2. **Supported configurations.** Name the initial Linux and macOS architectures
    and supported host/target pairs. Decide toolchain discovery, SDK/sysroot
    selection, foreign-library resolution, and artifact naming before promising

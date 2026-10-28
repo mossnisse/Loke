@@ -107,8 +107,8 @@ Specify this before implementing or porting functions:
   quiet NaN: `0x7fc00000` for `f32`, `0x7ff8000000000000` for `f64`.
   Specify signaling NaN inputs and canonicalize the result consistently.
 - Do not promise portable `errno`, exception flags, or traps. The portable
-  contract uses non-trapping arithmetic. Preserve the existing general-purpose
-  environment facilities outside that contract.
+  contract uses non-trapping arithmetic. Loke has no facility for changing the
+  rounding mode, flush-to-zero, or exception masks, and this contract adds none.
 - Publish an explicit list of certified functions and target combinations.
   An unimplemented function must not silently fall back to system `libm`.
 - For the same inputs and contract version, CPU level, compiler host,
@@ -155,10 +155,14 @@ as guaranteed faster or suitable for lockstep without evidence.
 
 ### User-facing selection
 
-Propose independent `-target=<triple>` and `-cpu=<level>` options, integrated
-with existing `-opt=<mode>`. Initially accept only the implemented Windows x64
-target; recognizing a triple must not imply support for its ABI or runtime.
-Use the existing Windows x64 triple as the default.
+Propose a `-cpu=<level>` option, independent of the existing `-opt=<mode>`.
+Do not add a public `-target` option while Windows x64 is the only target: an
+option that accepts one value would commit to triple spelling and
+normalization before a second target forces those decisions. Add it with the
+first additional target, as part of the
+[target boundary](future-plans.md#more-platforms); recognizing a triple must
+not imply support for its ABI or runtime. The internal target description
+below is needed now.
 
 | Proposed CPU value | Instruction-set policy | Rollout |
 | --- | --- | --- |
@@ -200,10 +204,17 @@ Report an unsupported CPU clearly. Object/library builds document the host's
 obligation to check before calling them.
 
 Keep ordinary LLVM operations free of contraction, reassociation, approximate
-function, and other value-changing fast-math permissions. For C math/runtime
-sources, set contraction explicitly off rather than assuming "precise" or
-`-fno-fast-math` disables it. Inspect the generated IR and machine code:
-frontend C flags alone do not define the semantics of Loke's emitted IR.
+function, and other value-changing fast-math permissions. The emitted IR
+carries no fast-math flags, but IR flags are not the only control: Clang's
+`-ffp-contract` also sets the backend's fusion mode for `.ll` input, and under
+`fast` the backend can fuse a plain `fmul` and `fadd`. Neither Clang command
+passes the option today. Object emission compiles the module with only an
+`-O` flag, and the runtime compile gets Clang's C default, `-ffp-contract=on`,
+which fuses `a*b + c` within an expression. That is harmless at baseline,
+which has no FMA instruction, but not once a CPU level with FMA reaches the
+runtime compile. Pass `-ffp-contract=off` on every Clang command rather than
+assume the default, "precise", or `-fno-fast-math` disables contraction, and
+inspect the generated IR and machine code at each CPU level.
 [Clang documents these distinct controls](https://clang.llvm.org/docs/UsersManual.html#controlling-floating-point-behavior).
 
 Lower explicit `math.fma` to hardware only when the selected target supports
@@ -238,8 +249,15 @@ notices and independently verify Loke's wrappers and port.
 Use the upstream C implementation as a prototype/reference when useful, then
 prefer Loke implementations that can share code with compile-time evaluation.
 Audit assumptions about FMA, wider integers, byte order, compiler extensions,
-and floating-point environment. Do not make compiler bootstrap depend on
-running target binaries. Start with `exp` in both widths to measure FMA versus
+and floating-point environment. Loke's integer `+`, `-`, and `*` panic on
+overflow at every optimization level ([Integer overflow](design.md#integer-overflow)),
+and built-in indexing is always bounds-checked. Upstream kernels rely on
+modular 64- and 128-bit arithmetic and table lookups: write each intentional
+wrap with `+%`, `-%`, or `*%`, since a missed one panics only on rare inputs
+that hard-case and exhaustive tests reach. The slowdown estimates in open
+questions do not include the remaining checks; measure them.
+
+Do not make compiler bootstrap depend on running target binaries. Start with `exp` in both widths to measure FMA versus
 software cost; include `sin` early because large-argument range reduction tests
 a different risk. Add `log`, `cos`, and `pow`, then the remaining currently
 nonreproducible functions, including `hypot` and inverse trigonometric functions.
@@ -267,17 +285,27 @@ Control constant evaluation explicitly:
 
 Define the reproducible execution environment as nearest-even rounding,
 gradual underflow for inputs and outputs, and masked floating exceptions.
-Document and implement setup for executable entry, every Loke-created thread,
-worker threads, and foreign-thread attachment. Provide a scoped entry mechanism
-for C hosts that establishes and restores this state. Foreign calls that change
-it must restore it before Loke arithmetic resumes; validate that boundary in
-debug builds. Setting it once in `main` is insufficient.
+Loke code cannot change this state: no library procedure sets the rounding
+mode, flush-to-zero, or exception masks, so a Loke program runs in whatever
+state the OS and C runtime establish. Only foreign code can change it: a C
+library Loke calls, a C host calling into a Loke library, or a module loaded
+into the process. Scope the work to those boundaries:
+
+- Record, by test, the state each supported OS gives a new process and a new
+  thread, rather than assume either. Add setup at executable entry or thread
+  start only where that state differs from the contract.
+- Provide a scoped entry mechanism for C hosts that establishes and restores
+  the state around calls into Loke, including from foreign-created threads.
+  A Loke library cannot otherwise rely on its caller's state.
+- A foreign call that changes the state must restore it before Loke arithmetic
+  resumes; validate that boundary in debug builds.
 
 For x64, account for MXCSR rounding, FTZ, and DAZ. For ARM64, account for FPCR
 and the chosen instruction semantics. LLVM environment attributes describe
 assumptions; they do not initialize hardware state. The first implementation
-milestone must turn these assumptions into a documented contract and tests,
-without silently redefining the existing general-purpose environment behavior.
+milestone must turn these assumptions into a documented contract and tests.
+A library that later adds environment control must define how it interacts
+with this contract.
 
 | Future target | Required adaptation before certification |
 | --- | --- |
@@ -364,7 +392,7 @@ Measure before and after using the repository's
 [performance workflow](compiler-architecture.md#testing-and-verification),
 extended with numerical workloads. Report dependent-call latency, independent
 throughput, batches/SIMD, worst observed hard-case latency, software-FMA cost,
-binary size, compile time, and simulation frame time. Cover ordinary and
+overflow- and bounds-check cost in ported kernels, binary size, compile time, and simulation frame time. Cover ordinary and
 adversarial input distributions on at least baseline-capable and v3 hardware.
 Record CPU, OS, toolchain, source revision, and options. Existing estimates in
 open questions are hypotheses, not release criteria or universal slowdowns.
@@ -379,7 +407,7 @@ in dedicated scheduled or release jobs. Wait for each suite to finish.
 | Phase | Deliverable | Completion gate |
 | --- | --- | --- |
 | 1. Contract and baseline | Specify special cases/environment; capture existing CPU/folding differences; add oracle vectors and benchmarks | Reproducible measurements and reviewed contracts; no unsupported whole-program determinism claim |
-| 2. Target plumbing | Central target descriptor, baseline/v2/v3 selection, object/cache metadata, startup compatibility check | CPU requirements propagate to every build path; baseline safety and unfused arithmetic verified |
+| 2. Target plumbing | Central target descriptor, baseline/v2/v3 `-cpu` selection, object/cache metadata, startup compatibility check | CPU requirements propagate to every build path; every Clang command passes `-ffp-contract=off`; baseline safety and unfused arithmetic verified at each CPU level |
 | 3. FMA and first kernels | Verify software/hardware FMA equivalence; prototype correctly rounded `exp` and `sin` in both widths | Exact corpus agreement and measured cost on FMA/non-FMA paths |
 | 4. Reproducible package | Port remaining kernels; special-value wrappers; deterministic folding/CTFE; thread/foreign entry support | Published supported-function list, oracle tests, and optimization/CPU matrix pass |
 | 5. Simulation support | Reproducible distributions and composite operations, version metadata, replay example | Same state hashes across Windows CPU levels and repeated runs |
