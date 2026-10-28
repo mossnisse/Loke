@@ -3318,7 +3318,7 @@ parse_proc :: proc(p: ^Parser) -> Expr {
 		return signature
 	}
 
-	// grammar.md "Procedure literals": `capture` is a keyword only here, before
+	// grammar.md "Resolved ambiguities": `capture` is a keyword only here, before
 	// `(`, where nothing else can follow a complete signature.
 	capture: ^Capture_Literal
 	if is_contextual(p, "capture") && peek_token(p, 1).kind == .Lparen {

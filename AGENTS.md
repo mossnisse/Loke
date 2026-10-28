@@ -21,9 +21,10 @@ short: link to detailed guidance rather than repeat it.
 | What each release changed | [CHANGELOG.md](CHANGELOG.md) |
 | What a version promises, and how to release | [releasing.md](releasing.md) |
 
-When the compiler and `design.md` disagree, the spec wins unless the spec is
-being deliberately changed. Record an unfixed divergence in `known-gaps.md` with
-a minimal reproduction; never reword the spec to match a bug.
+When the compiler and `design.md` or `grammar.md` disagree, the spec wins unless
+the spec is being deliberately changed. Record an unfixed divergence in
+`known-gaps.md` with a minimal reproduction; never reword the spec to match a
+bug.
 
 ## Rules
 
@@ -53,8 +54,9 @@ a minimal reproduction; never reword the spec to match a bug.
   Unit tests live in `src` and `lsp`; integration tests live in `tests`.
   Rebuild `lokec.exe` and `loke-lsp.exe` before direct integration runs after
   compiler changes.
-- For documentation-only changes, check links and heading citations, and run
-  any affected examples or tutorial tests. A full compiler gate is unnecessary.
+- For documentation-only changes, check links by hand (no script checks them),
+  run `check-citations.ps1`, and run any affected examples or tutorial tests. A
+  full compiler gate is unnecessary.
 - Run `.\test-all.ps1 -Full` locally only for changes targeting its additional
   coverage (optimization levels and the mutation fuzzer), or to investigate a
   CI failure. CI runs `-Full -RequireTools` on pushes to `main` and pull requests.

@@ -1,4 +1,4 @@
-# Source comments cite the spec documents by section name, roughly 700 times. A
+# Source comments cite the documents by section name, roughly 2,500 times. A
 # renamed heading breaks every citation silently, so the convention is only
 # worth having if it is checked. Exits non-zero and lists every citation with no
 # matching heading, and every citation in a doc comment of a bundled package.
@@ -7,7 +7,8 @@
 # case, which let three citations drift to a lower-case spelling of a real
 # heading and still pass.
 [CmdletBinding()]
-param([string[]]$Specs = @('design.md', 'standard-library.md', 'compiler-architecture.md'))
+param([string[]]$Specs = @('design.md', 'grammar.md', 'standard-library.md', 'compiler-architecture.md',
+    'compiler-guide.md', 'comments.md', 'open-questions.md', 'readme.md'))
 
 $repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Push-Location -LiteralPath $repoRoot
