@@ -5,16 +5,19 @@ annotated AST, analyzes ownership and provenance through disposable control-flow
 graphs, emits textual LLVM IR, and invokes clang with a versioned C runtime.
 
 This guide explains where to make changes and which phase contracts to preserve.
-[design.md](design.md) defines the language, [grammar.md](grammar.md) defines its
-syntax, and [compiler-guide.md](compiler-guide.md) covers the command line.
+[design.md](design.md) defines the language, [grammar.md](grammar.md) defines
+its syntax, and [compiler-guide.md](compiler-guide.md) covers the command line.
 
 - [Pipeline](#pipeline-at-a-glance) and [phase order](#driver-and-phase-order)
 - [Representations and ownership](#core-representations-and-ownership)
-- [Semantic architecture](#semantic-architecture) and [runtime boundary](#runtime-and-library-boundary)
+- [Semantic architecture](#semantic-architecture) and [runtime
+  boundary](#runtime-and-library-boundary)
 - [Source-code map](#source-code-map)
-- [Making changes](#how-to-make-a-compiler-change) and [testing](#testing-and-verification)
+- [Making changes](#how-to-make-a-compiler-change) and
+  [testing](#testing-and-verification)
 - [Sessions](#reusable-batch-sessions), [queries](#snapshots-and-queries),
-  [invalidation](#invalidation-rules), and [incremental checking](#incremental-checking)
+  [invalidation](#invalidation-rules), and [incremental
+  checking](#incremental-checking)
 - [Language server](#language-server)
 - [Deliberate boundaries](#deliberate-boundaries)
 
@@ -46,8 +49,8 @@ project collections through `register_project`, then follows this order:
 2. Discover imports and reject cycles. Static graphs prepare and check each
    dependency before its dependents. Graphs with file-scope `when` or providers
    repeat discovery, declaration preparation, and selection until stable, then
-   check bodies. Only `File.active_items` have semantic effect; inactive branches
-   are still parsed.
+   check bodies. Only `File.active_items` have semantic effect; inactive
+   branches are still parsed.
 3. Check concrete bodies and their ownership. Generic instances and pending
    generic `impl` bodies are checked when concrete uses commit them.
 4. `finish_program_analysis` runs whole-program provenance analysis, including
@@ -57,14 +60,14 @@ project collections through `register_project`, then follows this order:
 5. Validate entry and exports. `finalize_semantics` freezes `typeid` values,
    discovers `fmt.Formattable` witnesses, snapshots lifecycle operations, and
    installs `any_view` fields. These steps are idempotent.
-6. `emit_session` calls `emit_package`, then `emit_llvm_module`. Before allocating
-   an emitter, `validate_emission_dependencies` verifies the checked state. One
-   module contains every package in deterministic dependency order.
-7. Write `.ll`, compile a relocatable `.obj`, or link an executable with the
-   C runtime and foreign inputs. Object builds leave those references to the host.
+6. `emit_session` calls `emit_package`, then `emit_llvm_module`. Before
+   allocating an emitter, `validate_emission_dependencies` verifies the checked
+   state. One module contains every package in deterministic dependency order.
+7. Write `.ll`, compile a relocatable `.obj`, or link an executable with the C
+   runtime and foreign inputs. Object builds leave those references to the host.
 
-`-parse-only`, `-dump-ast`, and `-dump-tokens` take the single-file parsing path.
-`-check-layout` compares finalized compiler layout facts with LLVM.
+`-parse-only`, `-dump-ast`, and `-dump-tokens` take the single-file parsing
+path. `-check-layout` compares finalized compiler layout facts with LLVM.
 Documentation checking omits executable-entry validation and finalization.
 
 ## Core representations and ownership
@@ -72,32 +75,32 @@ Documentation checking omits executable-entry validation and finalization.
 ### Source and syntax
 
 `Span` is a byte range in a `Source`. Every AST node, including recovery nodes,
-has one. Comments are recorded separately on the source in lexical order.
-The parser retains explicit error nodes and resumes at synchronization points.
-A simple statement it cannot finish keeps what it parsed as `Stmt_Error.partial`.
-The checker checks that statement so queries see its names and types, then
-drops the diagnostics located inside it, and a missing name after `.` checks
-only the operand; flow analysis and emission skip the statement. A file with a
-syntax error cannot build, so that check commits like any other, and a
-report-once diagnostic first met there can stay unreported until the syntax
-error is fixed.
+has one. Comments are recorded separately on the source in lexical order. The
+parser retains explicit error nodes and resumes at synchronization points. A
+simple statement it cannot finish keeps what it parsed as `Stmt_Error.partial`.
+The checker checks that statement so queries see its names and types, then drops
+the diagnostics located inside it, and a missing name after `.` checks only the
+operand; flow analysis and emission skip the statement. A file with a syntax
+error cannot build, so that check commits like any other, and a report-once
+diagnostic first met there can stay unreported until the syntax error is fixed.
 Types and expressions share `Expr`, since syntax alone cannot distinguish all
 generic applications and calls.
 
 ### Stable semantic state
 
 `Compiler` owns compilation-wide state. AST annotations use `Identifier_Id`,
-`Symbol_Id`, `Type_Id`, and `Package_Id`. Symbol and type entries are individually
-allocated, so pointers from `symbol_of` and `type_of` survive store growth.
-Packages live in a dynamic array: retain a `Package_Id`, not a pointer, across
-operations that may load packages. These identities last only for the current
-checked result; external consumers use [snapshot handles](#snapshots-and-queries).
+`Symbol_Id`, `Type_Id`, and `Package_Id`. Symbol and type entries are
+individually allocated, so pointers from `symbol_of` and `type_of` survive store
+growth. Packages live in a dynamic array: retain a `Package_Id`, not a pointer,
+across operations that may load packages. These identities last only for the
+current checked result; external consumers use [snapshot
+handles](#snapshots-and-queries).
 
 ### One annotated AST
 
-Checking annotates parsed syntax with types, constants, places, resolved symbols,
-arguments, conversions, and lowering operations. `Expr_Call.operation` is a
-tagged `Call_Operation`; nil means unchecked. Symbol identity remains in
+Checking annotates parsed syntax with types, constants, places, resolved
+symbols, arguments, conversions, and lowering operations. `Expr_Call.operation`
+is a tagged `Call_Operation`; nil means unchecked. Symbol identity remains in
 `Expr_Base.resolution`, while argument binding and evaluation order stay on the
 call. LLVM dispatches on the recorded operation.
 
@@ -105,9 +108,10 @@ Struct literals record field indices in source order; entry validation records
 the entry symbol; extraction uses the checked union's failure metadata.
 Consumers must use these facts rather than reconstructing them.
 
-Generic specialization and static `foreach` clone syntax through `ast_clone.odin`,
-clear semantic annotations, then check each clone in its definition-site scope.
-An annotated template cannot serve as a fresh specialization.
+Generic specialization and static `foreach` clone syntax through
+`ast_clone.odin`, clear semantic annotations, then check each clone in its
+definition-site scope. An annotated template cannot serve as a fresh
+specialization.
 
 ### Disposable control-flow graphs
 
@@ -121,22 +125,23 @@ effects. Graphs serve analysis; LLVM still walks the AST directly.
 | `Prov_Summary` | Provenance events while cross-procedure summaries settle. |
 | `Prov_Diagnose` | Provenance events for checking each body's borrows and regions. |
 
-Each body/mode/summary round gets a fresh graph. Provenance construction preserves
-settled lifecycle annotations and makes no lasting compiler mutations; the only
-diagnostics it emits are a spawn's transfer checks (`prov_spawn_transfers`).
-Allocator-region and target facts are accumulated to a fixed point, so later
-writes can reach earlier reads. A construction walk records ordered fact
-operations; subsequent rounds replay those operations in disposable fact state.
-Only carried facts are copied between rounds. The construction graph's control
-flow, loans, roots, and carrier slots do not depend on the carried facts; the
-events, diagnostics, and summary outputs that do are recorded as event
-operations ([provenance_event.odin](src/provenance_event.odin)) and materialized
-again, interleaved with one more replay, once the facts settle. Superseded
-diagnostics are discarded, so each diagnostic appears once.
+Each body/mode/summary round gets a fresh graph. Provenance construction
+preserves settled lifecycle annotations and makes no lasting compiler mutations;
+the only diagnostics it emits are a spawn's transfer checks
+(`prov_spawn_transfers`). Allocator-region and target facts are accumulated to a
+fixed point, so later writes can reach earlier reads. A construction walk
+records ordered fact operations; subsequent rounds replay those operations in
+disposable fact state. Only carried facts are copied between rounds. The
+construction graph's control flow, loans, roots, and carrier slots do not depend
+on the carried facts; the events, diagnostics, and summary outputs that do are
+recorded as event operations
+([provenance_event.odin](src/provenance_event.odin)) and materialized again,
+interleaved with one more replay, once the facts settle. Superseded diagnostics
+are discarded, so each diagnostic appears once.
 
-Provenance construction keeps what a body does apart from the facts that
-grow while it is analyzed; [normalized provenance input](#normalized-provenance-input)
-describes that boundary.
+Provenance construction keeps what a body does apart from the facts that grow
+while it is analyzed; [normalized provenance
+input](#normalized-provenance-input) describes that boundary.
 
 ### Normalized provenance input
 
@@ -208,9 +213,9 @@ Keep these phase rules:
   escape, allocator use, a received region, or a write published through a
   borrowed payload binding, records its fact-independent inputs. It is
   materialized immediately with the construction facts, then again in the
-  settled round, interleaved in recorded order with the fact operations at
-  each operation's block and expansion. A graph whose facts never grow is
-  returned as built. The [rationale](comments.md#provenance-replay-and-precise-publication)
+  settled round, interleaved in recorded order with the fact operations at each
+  operation's block and expansion. A graph whose facts never grow is returned as
+  built. The [rationale](comments.md#provenance-replay-and-precise-publication)
   explains why events are materialized after the facts settle.
 - **Below the walk, queries read values.** A region or target query chooses
   its rule from a value's form and follows operands as values. What it may
@@ -280,8 +285,8 @@ post-order traversal. Conditional imports require discovery, preparation, and
 CTFE to cooperate until selection stabilizes.
 
 `bootstrap.odin` binds ordinary `base:runtime` declarations into the predeclared
-universe instead of synthesizing duplicate types. These include `Unit`, `Option`,
-`Result`, `Shared`, `Weak`, and the constructor groups `shared` and
+universe instead of synthesizing duplicate types. These include `Unit`,
+`Option`, `Result`, `Shared`, `Weak`, and the constructor groups `shared` and
 `try_shared`.
 
 ### Checking and overload resolution
@@ -398,43 +403,40 @@ every use of the borrow or the binding keeps the place loan live, as does a
 carrier copied from it, as `kept := &node`, until it is redefined
 (`place_loan_use`).
 
-Every access through carriers emits a `.Through` event with the carriers,
-the path accessed, and whether it reads or writes (`prov_access_through`).
-The place walk reads the place (`prov_read_through_carrier`); a store, a
-mutable borrow, slice, traversal, or `inout` argument, a mutable copy of a
-carrier into storage, and a carrier argument a callee may write through
-write it, and a read-only copy or argument reads all of it, with a second
-event for the deep `Load` of what a call's argument or a copy reaches. The
-path is below where the carriers point (`Prov_Slot.offsets`), which a place
-loan's paths are too: a borrow's snapshot points at the place it is of, as
-`[count]` for `&mut h^.count`, and so does a copy of it, a record field
-holding it, or a reborrow lent from it, so a store through `count` or a call
-given `Side{&mut h^.count}` writes only there. `prov_note_offset` records it
-at each `Def`, adding each place a slot's definitions may point at, so a
-pointer chosen between `&mut h^.count` and `&mut h^.total` points at both,
-and a borrow through it is a place loan of both, leaving the other fields
-free. Past eight places, the two sharing the longest prefix are merged into
-it until eight are left, so a pointer chosen among fields of `h^.left` and
-`h^.right` may come to point at all of `h^.left` while `h^.right`'s other
-fields stay free (`prov_union_offsets`). An access
-through carriers pointing at different places, as a record holding two
-field borrows, is one event per carrier, and one through a carrier that may
-point at several is one event per place. `check_place_loans` rejects an
-access whose carriers share a valid loan with a live place loan's snapshot at
-an overlapping path,
-a read only beside a mutable one, unless the carrier holds the loan's own
-bit, or one of a borrow of a place beside it (`accessed_beside`), as `left`
-does for `right` in `.add(&mut left, &mut right)`. A borrow's conflict is
-reported as the carrier's use while it is reborrowed (`L0641`), a switch's
-as an incompatible write (`L0511`). A mutable borrow weakened to a read-only
-destination takes a read-only place loan, and its write and its walk's reads
-of the carriers become reads; the slot standing for them
-(`prov_through_marker`, `Prov_Slot.through_index`, `Prov_Slot.through_end`, `Prov_Slot.walk_reads`)
-lets `prov_reborrow` settle them, as it settles a fresh loan's access. The
-walk leaves out its subscripts, as a call in an index may write. A carrier
-loaded on the way to a place (`Prov_Event.walked`) still reborrows what it
-was loaded out of, but suspends nothing, as the access to the place stands
-for it.
+Every access through carriers emits a `.Through` event with the carriers, the
+path accessed, and whether it reads or writes (`prov_access_through`). The place
+walk reads the place (`prov_read_through_carrier`); a store, a mutable borrow,
+slice, traversal, or `inout` argument, a mutable copy of a carrier into storage,
+and a carrier argument a callee may write through write it, and a read-only copy
+or argument reads all of it, with a second event for the deep `Load` of what a
+call's argument or a copy reaches. The path is below where the carriers point
+(`Prov_Slot.offsets`), which a place loan's paths are too: a borrow's snapshot
+points at the place it is of, as `[count]` for `&mut h^.count`, and so does a
+copy of it, a record field holding it, or a reborrow lent from it, so a store
+through `count` or a call given `Side{&mut h^.count}` writes only there.
+`prov_note_offset` records it at each `Def`, adding each place a slot's
+definitions may point at, so a pointer chosen between `&mut h^.count` and `&mut
+h^.total` points at both, and a borrow through it is a place loan of both,
+leaving the other fields free. Past eight places, the two sharing the longest
+prefix are merged into it until eight are left, so a pointer chosen among fields
+of `h^.left` and `h^.right` may come to point at all of `h^.left` while
+`h^.right`'s other fields stay free (`prov_union_offsets`). An access through
+carriers pointing at different places, as a record holding two field borrows, is
+one event per carrier, and one through a carrier that may point at several is
+one event per place. `check_place_loans` rejects an access whose carriers share
+a valid loan with a live place loan's snapshot at an overlapping path, a read
+only beside a mutable one, unless the carrier holds the loan's own bit, or one
+of a borrow of a place beside it (`accessed_beside`), as `left` does for `right`
+in `.add(&mut left, &mut right)`. A borrow's conflict is reported as the
+carrier's use while it is reborrowed (`L0641`), a switch's as an incompatible
+write (`L0511`). A mutable borrow weakened to a read-only destination takes a
+read-only place loan, and its write and its walk's reads of the carriers become
+reads; the slot standing for them (`prov_through_marker`,
+`Prov_Slot.through_index`, `Prov_Slot.through_end`, `Prov_Slot.walk_reads`) lets
+`prov_reborrow` settle them, as it settles a fresh loan's access. The walk
+leaves out its subscripts, as a call in an index may write. A carrier loaded on
+the way to a place (`Prov_Event.walked`) still reborrows what it was loaded out
+of, but suspends nothing, as the access to the place stands for it.
 
 A store through carriers is a `Publish` event, which joins what is stored
 into the slots of each storage the carriers' loans name, at the path stored
@@ -459,30 +461,30 @@ load through the parameter reads it there.
 
 Result summaries, written-argument regions, and escape levels propagate these
 facts through direct, generic, and indirect calls. A written-argument region is
-summarized for each parameter a body may write (`param_writes_caller`):
-`inout`, a mutable carrier, or a read-only one reaching a mutable carrier at
-any depth (`prov_type_reaches_mutable`), such as `..^mut T` or a `^Box` holding
-a `^mut T`. The part backing owners is kept apart (`written_owner_regions`):
-an allocator handle left there keeps its region for the owners later made from
-it, but only the owners' part is checked against the storage it lands in, as a
-store by name checks only an owner. Both are also kept by path below what the
-argument names (`written_region_content`), so a call stores each part at the
-field the body wrote rather than at the whole argument; those paths stop at
-the written-alias depth so recursive calls converge. Only the parameter's
-incoming fact is dropped from its own row. A field the body wrote from
-another field of the same argument keeps that dependency: while a store into
-the parameter reads its regions (`Prov_Self_Reads`), reads of the incoming
-value leave out the parameter's own region and record where they read, and
-the store records a copy entry (`Prov_Region_Content.from`). The call
-resolves a copy entry against the caller's content at that field, so an
-unrelated allocator handle beside it is not taken along; a copy within the
-caller's own writable parameter is recorded as a copy again. A dependency
-the parameter's region reached any other way still stands for the whole
-argument. The whole-argument summaries are joined from these rows, with a
-copy entry standing for the whole argument, and each row entry keeps its
-`own` flag when the call stores it, so a container's backing allocation
-stays apart from its elements. A handle's region content entry is kept
-apart from an owner's at the same path, and a write through a carrier is
+summarized for each parameter a body may write (`param_writes_caller`, which
+`parameter_writes_caller` restates for a signature's parameter by index):
+`inout`, a mutable carrier, or a read-only one reaching a mutable carrier at any
+depth (`prov_type_reaches_mutable`), such as `..^mut T` or a `^Box` holding a
+`^mut T`. The part backing owners is kept apart (`written_owner_regions`): an
+allocator handle left there keeps its region for the owners later made from it,
+but only the owners' part is checked against the storage it lands in, as a store
+by name checks only an owner. Both are also kept by path below what the argument
+names (`written_region_content`), so a call stores each part at the field the
+body wrote rather than at the whole argument; those paths stop at the
+written-alias depth so recursive calls converge. Only the parameter's incoming
+fact is dropped from its own row. A field the body wrote from another field of
+the same argument keeps that dependency: while a store into the parameter reads
+its regions (`Prov_Self_Reads`), reads of the incoming value leave out the
+parameter's own region and record where they read, and the store records a copy
+entry (`Prov_Region_Content.from`). The call resolves a copy entry against the
+caller's content at that field, so an unrelated allocator handle beside it is
+not taken along; a copy within the caller's own writable parameter is recorded
+as a copy again. A dependency the parameter's region reached any other way still
+stands for the whole argument. The whole-argument summaries are joined from
+these rows, with a copy entry standing for the whole argument, and each row
+entry keeps its `own` flag when the call stores it, so a container's backing
+allocation stays apart from its elements. A handle's region content entry is
+kept apart from an owner's at the same path, and a write through a carrier is
 recorded at its path below the carrier (`prov_path_below_carrier`), so
 `dst^.alloc = handle` and `dst^.items = make(...)` stay distinct. Whole-record
 stores use the same distinction: region facts for locals and procedure results
@@ -492,38 +494,38 @@ escape reads the fields holding owners and the record's own dependency
 path, so a scalar managed record keeps its moved-parameter escape contract
 through locals and results. Union field steps identify variant indices, so
 success and error payloads have independent facts. Widening remaps region paths
-by variant label, including through explicit conversions. Queries follow temporary
-field projections, constructors, success unwrapping, and switch bindings.
-Stored region content is keyed by `Storage_Id`, including anonymous backing
-arrays. `Prov_Input` interns the corresponding `Written_Storage` keys, keeping
-symbols for named storage and source/type/expansion identity for temporaries.
-Known indirect reads query the selected target path instead of joining
-unrelated fields; unresolved alternatives retain the conservative fallback.
-Result contracts compare corresponding paths and fact kinds, keeping backing
-dependencies separate from payload dependencies. `Region_Query` selects
+by variant label, including through explicit conversions. Queries follow
+temporary field projections, constructors, success unwrapping, and switch
+bindings. Stored region content is keyed by `Storage_Id`, including anonymous
+backing arrays. `Prov_Input` interns the corresponding `Written_Storage` keys,
+keeping symbols for named storage and source/type/expansion identity for
+temporaries. Known indirect reads query the selected target path instead of
+joining unrelated fields; unresolved alternatives retain the conservative
+fallback. Result contracts compare corresponding paths and fact kinds, keeping
+backing dependencies separate from payload dependencies. `Region_Query` selects
 all regions, owner regions, or the value's own backing dependency. Shapes stop
-at a bounded depth; their conservative leaves are queried without expanding
-them again, including for recursive container types.
+at a bounded depth; their conservative leaves are queried without expanding them
+again, including for recursive container types.
 
 Copies compute regions recursively (`prov_copied_region_at`), with their source
 value, source type, projected source prefix, and allocator kept in
 `Prov_Region_Copy`. Destructuring reads `Destructure.clones` and starts copying
 at the field type; only source queries prepend the containing record's path.
-Explicit clones
-select that context through `prov_clone_region_at`; copied declarations and
-assignments, implicit variant copies, and copied error payloads use the same
-rules. Widening remaps destination paths to the source type before querying
-the copy. `prov_result_region_fields` supplies the same copied field facts to
-stores and escape checks, including a projected source. Newly allocated storage
-uses the destination, while logical copies retain their source regions. Custom copy hooks use their result
-summaries. Container element facts use the same projected-place walk as record
-fields (`prov_define_value_regions`), so nested containers of static strings
-do not retain their old allocation. Shared and weak handles separate their
-control block's allocator from their payload's regions, and copies, downgrades,
-and upgrades keep both. An indirect result capable of sharing storage also
-conservatively retains borrowed input regions, including at a shape depth cut.
-Map index insertion records key regions alongside key loans, including through
-a mutable carrier; whole map-literal regions include their keys too.
+Explicit clones select that context through `prov_clone_region_at`; copied
+declarations and assignments, implicit variant copies, and copied error payloads
+use the same rules. Widening remaps destination paths to the source type before
+querying the copy. `prov_result_region_fields` supplies the same copied field
+facts to stores and escape checks, including a projected source. Newly allocated
+storage uses the destination, while logical copies retain their source regions.
+Custom copy hooks use their result summaries. Container element facts use the
+same projected-place walk as record fields (`prov_define_value_regions`), so
+nested containers of static strings do not retain their old allocation. Shared
+and weak handles separate their control block's allocator from their payload's
+regions, and copies, downgrades, and upgrades keep both. An indirect result
+capable of sharing storage also conservatively retains borrowed input regions,
+including at a shape depth cut. Map index insertion records key regions
+alongside key loans, including through a mutable carrier; whole map-literal
+regions include their keys too.
 
 Implicit failure returns record the error's region and per-field facts in the
 enclosing result's failure variant (`prov_error_region_fields`). A mapper reads
@@ -532,8 +534,8 @@ returned payload as well as owners lifecycle records at each reset or provider
 end, including consumed bindings and moved parameters. Evaluated owned operands
 are held while later operands run; moved arguments leave that set on entry to
 the callee. Borrowed switch bindings alias their subject's payload paths for
-region reads, writes, and escape checks, including through nested bindings
-and known carrier targets. Carrier targets include an explicit unknown alternative
+region reads, writes, and escape checks, including through nested bindings and
+known carrier targets. Carrier targets include an explicit unknown alternative
 (`Written_Alias.target == Written_Storage{}`), which survives alongside known
 targets. Borrowed payload aliases retain the known destinations and an optional
 final `NO_ROOT` alternative. Region reads and writes follow the known aliases
@@ -541,100 +543,98 @@ and also retain a local snapshot for unresolved storage. Escape checks enforce
 both the known destinations' lifetime constraints and the unresolved fallback.
 Anonymous destinations resolve to provenance roots through `root_by_storage`;
 borrowed payload aliases retain those roots, and reads of binding targets follow
-the same chain as region writes and callee invalidation.
-Read-only carriers also retain targets so region reads can follow their storage.
-A source capable of holding checked carriers contributes an unknown alternative
-when it has no target facts, including a global carrier read. Indirect loads
-apply this rule per possible source, so one known source cannot hide another
-source's missing facts. Normalized transfer components identify union and
-box payloads for source-target recording, call invalidation, and region queries,
-including fallible boxes. Copied payloads also retain an unresolved alternative. Map
-literal keys and values keep separate target paths. A known address
-records only the storage it names, not the targets of carriers inside that
-storage. `prov_place_carrier` identifies the last carrier crossed to reach a
-place; alias reads load the carriers held in that storage separately. Targets
-therefore follow successive dereferences and carrier fields without treating
-a pointer variable as its own pointee. Reslicing a carrier forwards its targets;
-slicing owned storage records its address. Both written target-storage paths
+the same chain as region writes and callee invalidation. Read-only carriers also
+retain targets so region reads can follow their storage. A source capable of
+holding checked carriers contributes an unknown alternative when it has no
+target facts, including a global carrier read. Indirect loads apply this rule
+per possible source, so one known source cannot hide another source's missing
+facts. Normalized transfer components identify union and box payloads for
+source-target recording, call invalidation, and region queries, including
+fallible boxes. Copied payloads also retain an unresolved alternative. Map
+literal keys and values keep separate target paths. A known address records only
+the storage it names, not the targets of carriers inside that storage.
+`prov_place_carrier` identifies the last carrier crossed to reach a place; alias
+reads load the carriers held in that storage separately. Targets therefore
+follow successive dereferences and carrier fields without treating a pointer
+variable as its own pointee. Reslicing a carrier forwards its targets; slicing
+owned storage records its address. Both written target-storage paths
 (`Written_Alias.at`) and carrier-position paths (`Written_Alias.path`) stop at
 eight projections and carry the depth precision marker. This bounds recursive
 cursor growth and repeated container wrapping; a truncated projection always
 joins previous content. `prov_place_of`, `prov_place_carrier`, and
 `prov_path_below_carrier` read one canonical `Prov_Place`, whose base is a
-storage ID or a carrier value ID and whose path ends below that base.
-Written storage is identified by a symbol, or by a temporary's AST identity,
-storage type, and defer expansion. Slice literals use their hidden array's
-type and record their element targets in that storage. An implicit view records the address of its
-owner storage; a box view adds the payload step. Copies and reslices therefore
-follow the same storage facts, including unresolved alternatives introduced by
-a call through another view. Storage IDs and their normalized descriptions
-survive graph passes. Replay and event materialization share the frozen input
-instead of copying it with carried facts. Copies own their paths and map-key strings;
-no description points into a disposable fact or carry arena. Construction
-metadata and synthetic calls remain in the body's analysis arena.
-A normalized borrow transfer (`Prov_Transfer_Borrow`) names its storage identity
-for target lookup, source-target recording, and call invalidation. Unboxing removes its source
-payload step; checked variant extraction replaces the source variant step with
-the result's success step, retaining an unresolved alternative for a copied
-mutable payload. Both stored values and direct arguments use these projections.
-Call processing (`prov_call_written_aliases`) adds unresolved alternatives to
-carrier storage the writable parameter contract may replace. It follows known
-nested targets and borrowed payload aliases, distinguishes read-only storage
-from writable carriers inside it, and handles literal payloads, optional
-payloads, pack elements, and spreads. A visited set distinguishes storage paths
-and write capabilities to terminate cycles. Literal components retain their
-checked destination types and paths. Shared transfer projections select the
-success payload for stored and direct `or_else`/`or_return` values, including
-the fallback alternative, before invalidation applies the effective parameter
-capability. View invalidation
+storage ID or a carrier value ID and whose path ends below that base. Written
+storage is identified by a symbol, or by a temporary's AST identity, storage
+type, and defer expansion. Slice literals use their hidden array's type and
+record their element targets in that storage. An implicit view records the
+address of its owner storage; a box view adds the payload step. Copies and
+reslices therefore follow the same storage facts, including unresolved
+alternatives introduced by a call through another view. Storage IDs and their
+normalized descriptions survive graph passes. Replay and event materialization
+share the frozen input instead of copying it with carried facts. Copies own
+their paths and map-key strings; no description points into a disposable fact or
+carry arena. Construction metadata and synthetic calls remain in the body's
+analysis arena. A normalized borrow transfer (`Prov_Transfer_Borrow`) names its
+storage identity for target lookup, source-target recording, and call
+invalidation. Unboxing removes its source payload step; checked variant
+extraction replaces the source variant step with the result's success step,
+retaining an unresolved alternative for a copied mutable payload. Both stored
+values and direct arguments use these projections. Call processing
+(`prov_call_written_aliases`) adds unresolved alternatives to carrier storage
+the writable parameter contract may replace. It follows known nested targets and
+borrowed payload aliases, distinguishes read-only storage from writable carriers
+inside it, and handles literal payloads, optional payloads, pack elements, and
+spreads. A visited set distinguishes storage paths and write capabilities to
+terminate cycles. Literal components retain their checked destination types and
+paths. Shared transfer projections select the success payload for stored and
+direct `or_else`/`or_return` values, including the fallback alternative, before
+invalidation applies the effective parameter capability. View invalidation
 follows the backing storage's carrier shape so a read-only outer view preserves
-the capabilities of mutable carriers inside it. Unknown
-and cyclic cursor targets retain an unresolved alias for the owner-escape check
-alongside any acyclic known targets. Borrowed payload carrier
-writes also publish into the subject's slots, resolving alias prefixes and translating union tag steps into
+the capabilities of mutable carriers inside it. Unknown and cyclic cursor
+targets retain an unresolved alias for the owner-escape check alongside any
+acyclic known targets. Borrowed payload carrier writes also publish into the
+subject's slots, resolving alias prefixes and translating union tag steps into
 carrier-shape wildcards; unknown storage uses the solver's `Publish` event.
-Publication preserves previous content at possible destinations. Uniqueness
-must survive every alias in a nested chain before a write can replace a
-subject's carrier slot. Borrow retention resolves the binding's view loans to
-the actual destination.
-Temporary-provider queries allocate an identity;
-only walking the handle call registers an evaluated provider to end at the
-statement boundary. A borrowed temporary root also records its managed owner
-and original type, so views and erasure retain its regions. Anonymous storage
-shares the real temporary root and installs its initial regions, including a
-slice literal's element regions. Later stored owners remain live until that
-storage's cleanup. Reset checks merge those stored dependencies with the
-temporary's original owner dependencies, preserving the allocator-handle filter.
-Cleanup traversal pops registrations as they run and restores them for other exits; an earlier
-reset therefore sees only owners whose cleanup is still pending. Alternative
+Publication preserves previous content at possible destinations. Uniqueness must
+survive every alias in a nested chain before a write can replace a subject's
+carrier slot. Borrow retention resolves the binding's view loans to the actual
+destination. Temporary-provider queries allocate an identity; only walking the
+handle call registers an evaluated provider to end at the statement boundary. A
+borrowed temporary root also records its managed owner and original type, so
+views and erasure retain its regions. Anonymous storage shares the real
+temporary root and installs its initial regions, including a slice literal's
+element regions. Later stored owners remain live until that storage's cleanup.
+Reset checks merge those stored dependencies with the temporary's original owner
+dependencies, preserving the allocator-handle filter. Cleanup traversal pops
+registrations as they run and restores them for other exits; an earlier reset
+therefore sees only owners whose cleanup is still pending. Alternative
 expression branches keep their temporary registrations apart and merge only
 continuing branches. `emit_return_cleanups` excludes discarded expression
 temporaries and staged operands while retaining the returned value's
 dependencies, for explicit returns and implicit `or_return` failures alike. The
 statement-end walk borrows the ending root tail as a slice after shrinking the
 registration stack; its queries and root-end events do not append to that stack.
-Reset queries exclude allocator
-handle fields while retaining owners and borrowed data; provider destruction
-still checks every control-block dependency.
+Reset queries exclude allocator handle fields while retaining owners and
+borrowed data; provider destruction still checks every control-block dependency.
 
 In the body, a write through a local set from such a parameter counts as one
 through the parameter (`written_aliases`): a carrier into its storage, a copy of
-a read-only carrier (`alias := outs`), or a value holding
-its carriers (`b := box^`, `b := Box{box^.out}`), from either operand of a
-conditional, `or_else`, or `move`. Each alias records the path in the local
-that holds the parameter's carriers (`Written_Alias`), from a literal's field
-or an assignment to `pair.unused`, so a write through `pair.local^` is not one
-through `pair.unused`. An alias set from `&mut place` or `place[:]` of a
-variable also records that place, so an owner written through `p := &mut out`
-lands in `out`'s region facts and a later reset sees it, and one written
-through a pointer to file-scope, `static`, or `thread_local` storage is
-checked as a store into it by name would be (`prov_region_escape_into`). At the call it lands
-in the place `&mut place` or an `inout` argument names; any other carrier
-argument, each pack operand among them, is written through
-(`prov_leave_region`), as `p^ = owner` is. `content_loans` represent
-loads through caller storage, substituted through the actual arguments.
-Whole-program global-write effects also apply at calls. Operators without an
-`Expr_Call` use synthesized call events for the selected procedure.
+a read-only carrier (`alias := outs`), or a value holding its carriers (`b :=
+box^`, `b := Box{box^.out}`), from either operand of a conditional, `or_else`,
+or `move`. Each alias records the path in the local that holds the parameter's
+carriers (`Written_Alias`), from a literal's field or an assignment to
+`pair.unused`, so a write through `pair.local^` is not one through
+`pair.unused`. An alias set from `&mut place` or `place[:]` of a variable also
+records that place, so an owner written through `p := &mut out` lands in `out`'s
+region facts and a later reset sees it, and one written through a pointer to
+file-scope, `static`, or `thread_local` storage is checked as a store into it by
+name would be (`prov_region_escape_into`). At the call it lands in the place
+`&mut place` or an `inout` argument names; any other carrier argument, each pack
+operand among them, is written through (`prov_leave_region`), as `p^ = owner`
+is. `content_loans` represent loads through caller storage, substituted through
+the actual arguments. Whole-program global-write effects also apply at calls.
+Operators without an `Expr_Call` use synthesized call events for the selected
+procedure.
 
 A body that writes caller storage and borrows `thread_local` storage is also
 solved for which `thread_local` global it may leave in each argument
@@ -682,7 +682,8 @@ read-only ones whose pointee reaches a destination, so a recursive
 precision; a write through a carrier passes that precision to the storage it
 lands in, and `L0646`, `L0647`, and `L0730` then say the borrow *may* be
 there. A parameter counts as written when it is `inout`, a mutable carrier, or
-a read-only one reaching a mutable carrier (`parameter_writes_caller`), such
+a read-only one reaching a mutable carrier (`parameter_writes_caller`, the same
+rule as `param_writes_caller`), such
 as `outs: []^mut ^int` or a variadic `..^mut ^int`. A slice also carries its
 elements' loans, so a slice path is walked at its element type as well, and
 the storage it views by its own carriers' types (`prov_load_writable`). A
@@ -695,35 +696,35 @@ would be.
 
 Once the result summaries settle, `compute_thread_summaries` builds each body's
 graph once more to collect the summaries a `parallel` block's checks read
-([Globals while tasks run](design.md#globals-while-tasks-run) and
-[Allocators and tasks](design.md#allocators-and-tasks)):
-the reach effect, from `Reach` events resolved to the globals whose stored
-carriers they touch; the allocator-use effect, per parameter, from the region
-facts at each allocating operation; and the drops every thread runs at exit.
-All three effects settle per call, not per procedure type
-([Global write effects](design.md#global-write-effects)).
-`compute_global_writes` first settles which parameters each body calls
-(`Called_Parameter`), through a variable that may hold one or by passing one
-where a callee calls its own; a procedure-typed or `dyn proc` parameter or
-local is such a variable (`effect_variable`), and a view converted from a
-named procedure or capture literal is a value naming its target (`effect_value`), and keeps each such body's effects apart from
-those callbacks in a `Callback_Summary`. A call then takes in `Call_Part`s
-(`call_parts`): a direct callee's own part, and for each callback it calls,
-the whole summary of what this call passes there, as
-`Compiler.argument_values` resolved it; a call through a followed variable,
-each value's; and any other, every body of its union. A value the calling body
-received itself is its caller's while the summaries settle, and any procedure
-of its type at the body's own calls (`open`). A body's whole summary, which
-`global_writes`, `reach_effects`, and `allocator_uses` hold, adds that union
-for each parameter it calls. A callback is given the regions its callee passes
-it (`Callback_Summary.regions`), substituted through the outer call's. A view
+([Globals while tasks run](design.md#globals-while-tasks-run) and [Allocators
+and tasks](design.md#allocators-and-tasks)): the reach effect, from `Reach`
+events resolved to the globals whose stored carriers they touch; the
+allocator-use effect, per parameter, from the region facts at each allocating
+operation; and the drops every thread runs at exit. All three effects settle per
+call, not per procedure type ([Global write
+effects](design.md#global-write-effects)). `compute_global_writes` first settles
+which parameters each body calls (`Called_Parameter`), through a variable that
+may hold one or by passing one where a callee calls its own; a procedure-typed
+or `dyn proc` parameter or local is such a variable (`effect_variable`), and a
+view converted from a named procedure or capture literal is a value naming its
+target (`effect_value`), and keeps each such body's effects apart from those
+callbacks in a `Callback_Summary`. A call then takes in `Call_Part`s
+(`call_parts`): a direct callee's own part, and for each callback it calls, the
+whole summary of what this call passes there, as `Compiler.argument_values`
+resolved it; a call through a followed variable, each value's; and any other,
+every body of its union. A value the calling body received itself is its
+caller's while the summaries settle, and any procedure of its type at the body's
+own calls (`open`). A body's whole summary, which `global_writes`,
+`reach_effects`, and `allocator_uses` hold, adds that union for each parameter
+it calls. A callback is given the regions its callee passes it
+(`Callback_Summary.regions`), substituted through the outer call's. A view
 converted at the call resolves to its concrete target (`converted_view_call`),
 and a task's call on its worker resolves its values where its `spawn` is
 (`Compiler.spawn_calls`, `Effect_Call.values_from`), so its `run` procedure's
 summary is per spawn. Each part keeps the call or hook it came through for
 diagnostics, and each `Task_Site` keeps its spawned call, so a rejection names
-the procedure value, callback, or union member that writes or reaches the
-global (`call_effect_origins`, `note_value_targets`). The facts are recorded only while
+the procedure value, callback, or union member that writes or reaches the global
+(`call_effect_origins`, `note_value_targets`). The facts are recorded only while
 `thread_facts_pending` is set, so the other passes do not pay for them, and the
 pass runs only when `thread_summaries_wanted` is set, which checking a
 `parallel` block does: it adds 10 to 20 percent to the front end, which only a
@@ -761,21 +762,21 @@ hook(drop) on Task_Scope                // joins every started thread,
 - **Each spawn site.** Checking a spawn synthesizes a frame record and a run
   procedure, as `capture.odin` does for capture literals, and records them in
   `Compiler.spawn_tasks`. The frame holds a leading slot for `run`, each bound
-  argument (copied, owned, or as an address), the result local's address,
-  and, for a call through a procedure value (`Spawn_Task.through_value`),
-  that value, which the parent evaluates before the arguments. The run
-  procedure takes the owned arguments out of the frame, makes the call, by
-  name or through the frame's value, writes the result through the address
-  with `unsafe.write`, since the local is dead, and frees the frame. A call
-  through a `dyn` view needs no field of its own: its view is the receiver,
-  bound argument 0, so `run` selects the slot on that argument, and a
-  callable view's `call` is the view type's forwarding member, called by
-  name. The view gets every argument check, including the transfer checks. A variadic pack's field is a record of
+  argument (copied, owned, or as an address), the result local's address, and,
+  for a call through a procedure value (`Spawn_Task.through_value`), that value,
+  which the parent evaluates before the arguments. The run procedure takes the
+  owned arguments out of the frame, makes the call, by name or through the
+  frame's value, writes the result through the address with `unsafe.write`,
+  since the local is dead, and frees the frame. A call through a `dyn` view
+  needs no field of its own: its view is the receiver, bound argument 0, so
+  `run` selects the slot on that argument, and a callable view's `call` is the
+  view type's forwarding member, called by name. The view gets every argument
+  check, including the transfer checks. A variadic pack's field is a record of
   its operands in written order (`Spawn_Task.pack`): the parent fills it as
   `emit_variadic_pack` would copy each element, and `run` packs them again,
-  moving owned elements in and passing each spread on as `..s`. A lone spread
-  is a copied slice the worker forwards. An element copied from a place the
-  parent keeps is shared with the task, as a copy of what that place reaches.
+  moving owned elements in and passing each spread on as `..s`. A lone spread is
+  a copied slice the worker forwards. An element copied from a place the parent
+  keeps is shared with the task, as a copy of what that place reaches.
 - **Registration.** `emit_llvm_stmt.odin` fills the frame on the parent from
   the default allocator, which accepts concurrent use. The parent registers
   the frame for the unwind until `start` returns, beside the guards that drop
@@ -800,65 +801,64 @@ hook(drop) on Task_Scope                // joins every started thread,
   effect analysis follow every procedure of the run procedure's type into the
   join hook, which every block shares.
 
-The checks run on the `Prov_Diagnose` graph. A block's tasks hold what they
-lend in one slot per block, `task_slots`, which the hidden local's drop uses,
-so every task loan is live until the join. Each spawn adds to it rather than
-replacing it, so a spawn in a loop keeps the earlier iterations' loans, and
-the join empties it for a block entered again. A temporary the spawned call
-borrows is in the frame, so its loan (`spawn_owned`) is left out of what the
-task holds; a result that borrows it still carries the loan. A spawn site that reborrows a
+The checks run on the `Prov_Diagnose` graph. A block's tasks hold what they lend
+in one slot per block, `task_slots`, which the hidden local's drop uses, so
+every task loan is live until the join. Each spawn adds to it rather than
+replacing it, so a spawn in a loop keeps the earlier iterations' loans, and the
+join empties it for a block entered again. A temporary the spawned call borrows
+is in the frame, so its loan (`spawn_owned`) is left out of what the task holds;
+a result that borrows it still carries the loan. A spawn site that reborrows a
 mutable carrier also holds a slot of its own, `task_holds`, derived from that
 carrier, so the carrier stays suspended until the join while a loop's fresh
 chunk binding is not. A spawn emits a `Task_Start` event naming its site in
 `task_sites`, with what its arguments hold and the regions its task reserves,
-and the hidden local's drop emits `Task_Join` for its block. The window solver in `borrow.odin` is a may-analysis over blocks
-with one bit per spawn site, so a branch that has not spawned is outside the
-window and a spawn in a loop holds it open around the back edge; past 64
-sites, the last bit is shared and never cleared. Writes and reaches inside a
-block are recorded as `Shared_Effect` events in `global_effects.odin`, and the
-parent's allocator use as `Region_Use` events, and the solver reports both
-against the tasks that may be running. The emission contract validates each
-recorded spawn.
+and the hidden local's drop emits `Task_Join` for its block. The window solver
+in `borrow.odin` is a may-analysis over blocks with one bit per spawn site, so a
+branch that has not spawned is outside the window and a spawn in a loop holds it
+open around the back edge; past 64 sites, the last bit is shared and never
+cleared. Writes and reaches inside a block are recorded as `Shared_Effect`
+events in `global_effects.odin`, and the parent's allocator use as `Region_Use`
+events, and the solver reports both against the tasks that may be running. The
+emission contract validates each recorded spawn.
 
 Effects on `thread_local` storage depend on the executor. A spawned call's
 effects are recorded with `task_effects` set, and none of its `thread_local`
-writes become accesses at the spawn (`prov_effect_call`). A bare block's call
-is recorded `elsewhere`, so the fixed point in `compute_global_writes` leaves
-its `thread_local` writes out of the enclosing procedure's. A pooled block's
-spawns are kept in `pool_tasks` by scope, and its join applies their run
-procedures' `thread_local` writes as invalidations
-(`prov_pool_join_effects`). The checker lists each block's spawns in
-`Stmt_Parallel.spawns`, and `prov_enter_parallel` registers them, with the
-slots a join uses, as the walk enters the block, since a loop may reach an
-exit written above its first spawn. Every exit then carries the join's
-writes, tagged with the block, and `settle_pool_joins` drops them where the
-task window shows no task of the block may have started; those summaries include their own pooled
-descendants and exclude bare ones, which is exactly what a helping join may
-run.
+writes become accesses at the spawn (`prov_effect_call`). A bare block's call is
+recorded `elsewhere`, so the fixed point in `compute_global_writes` leaves its
+`thread_local` writes out of the enclosing procedure's. A pooled block's spawns
+are kept in `pool_tasks` by scope, and its join applies their run procedures'
+`thread_local` writes as invalidations (`prov_pool_join_effects`). The checker
+lists each block's spawns in `Stmt_Parallel.spawns`, and `prov_enter_parallel`
+registers them, with the slots a join uses, as the walk enters the block, since
+a loop may reach an exit written above its first spawn. Every exit then carries
+the join's writes, tagged with the block, and `settle_pool_joins` drops them
+where the task window shows no task of the block may have started; those
+summaries include their own pooled descendants and exclude bare ones, which is
+exactly what a helping join may run.
 
-The join check ([Releasing before the join](design.md#releasing-before-the-join))
-runs at each `Task_Join` in the same replay (`check_join_retention`), which
-records liveness after the event for it. The values the parent keeps are the
-slots of a symbol live after the join, and every borrowed parameter's slots,
-while a `move` parameter counts as a local does; a slot
-counts when its symbol's type is, holds, or reaches an `@(wakes_on_drop)` type
-(the `waker` of `transfer_facts` in `hooks.odin`), and its carrier path passes
-through a marked type, or a generic record with a marked type argument, or
-ends at a carrier reaching one (`path_waker`), so a wrapper's other fields do
-not count. This relies on content slots keeping their paths apart: a
-conversion projects its operand's slots by path, and a distinct type selects
-sources by its underlying type's shape (`prov_select_content`). Its reaching loans are compared with
-those in the block's `task_slots` and `task_holds` slots by root: one root
-with overlapping paths, unknown roots, or a parameter's root against another
-external one (`loans_may_share_storage`). Two external roots overlap only
-when an object type one root's symbol reaches holds, inline, one the other
-reaches, either way (`roots_may_share_storage`): `collect_pointees` gathers
-each root's object types once per join and reports a raw pointer or erased
-view as reaching anything, and `type_holds_inline` follows fields,
-fixed-array elements, variants, and `distinct`. Such a value's drop counts as a use
-of what it borrows, hook or not (`prov_drop_reads`), so a local dropped in the
-block's cleanup is not live at the join, and one dropped later, on any exit
-path, is.
+The join check ([Releasing before the
+join](design.md#releasing-before-the-join)) runs at each `Task_Join` in the same
+replay (`check_join_retention`), which records liveness after the event for it.
+The values the parent keeps are the slots of a symbol live after the join, and
+every borrowed parameter's slots, while a `move` parameter counts as a local
+does; a slot counts when its symbol's type is, holds, or reaches an
+`@(wakes_on_drop)` type (the `waker` of `transfer_facts` in `hooks.odin`), and
+its carrier path passes through a marked type, or a generic record with a marked
+type argument, or ends at a carrier reaching one (`path_waker`), so a wrapper's
+other fields do not count. This relies on content slots keeping their paths
+apart: a conversion projects its operand's slots by path, and a distinct type
+selects sources by its underlying type's shape (`prov_select_content`). Its
+reaching loans are compared with those in the block's `task_slots` and
+`task_holds` slots by root: one root with overlapping paths, unknown roots, or a
+parameter's root against another external one (`loans_may_share_storage`). Two
+external roots overlap only when an object type one root's symbol reaches holds,
+inline, one the other reaches, either way (`roots_may_share_storage`):
+`collect_pointees` gathers each root's object types once per join and reports a
+raw pointer or erased view as reaching anything, and `type_holds_inline` follows
+fields, fixed-array elements, variants, and `distinct`. Such a value's drop
+counts as a use of what it borrows, hook or not (`prov_drop_reads`), so a local
+dropped in the block's cleanup is not live at the join, and one dropped later,
+on any exit path, is.
 
 ### Closed semantic registries
 
@@ -888,28 +888,28 @@ so no other pass sees it. A new public contribution needs such a declaration,
 or every program importing the package reports `L0737`.
 
 Package-private `allocate_string` bridges `core:strings` and `core:fmt` to the
-runtime, returning `Result(string, Allocator_Error)`. `allocation_failed` applies
-allocator policy, including non-unwinding `.Trap` failure. `String_Builder.finish`
-copies because raw dynamic-array storage cannot become a string's
-reference-counted allocation directly.
+runtime, returning `Result(string, Allocator_Error)`. `allocation_failed`
+applies allocator policy, including non-unwinding `.Trap` failure.
+`String_Builder.finish` copies because raw dynamic-array storage cannot become a
+string's reference-counted allocation directly.
 
 Platform declarations use `when (LOKE_OS == .Windows)`; filenames such as
 `_windows.loke` have no selection effect. Windows is currently the only target.
 
-`prebuilt_runtime_objects` caches C objects under `runtime/prebuilt/<mode>-<hash>/`.
-The key covers the clang path, flags, MSVC/SDK include roots, clang modification
-time, and runtime source/header names and contents. Installed sets are immutable
-for concurrent links; changed inputs create a new set. On cache build/install
-failure, the link compiles sources directly and records the reason in
-`runtime/prebuilt/last-failure.txt`.
+`prebuilt_runtime_objects` caches C objects under
+`runtime/prebuilt/<mode>-<hash>/`. The key covers the clang path, flags,
+MSVC/SDK include roots, clang modification time, and runtime source/header names
+and contents. Installed sets are immutable for concurrent links; changed inputs
+create a new set. On cache build/install failure, the link compiles sources
+directly and records the reason in `runtime/prebuilt/last-failure.txt`.
 
 ## Source-code map
 
 Files directly in `src/` form the `lokec` package; `src/subprocess/` is a
-separate package shared with the test harness. `lsp/` is the
-[language server](#language-server), a separate executable that imports `lokec`. Shared subsystem helpers are
-package-private; helpers used only within one file should be file-private.
-Paths below are relative to `src/`.
+separate package shared with the test harness. `lsp/` is the [language
+server](#language-server), a separate executable that imports `lokec`. Shared
+subsystem helpers are package-private; helpers used only within one file should
+be file-private. Paths below are relative to `src/`.
 
 ### Driver, source, and syntax
 
@@ -996,9 +996,9 @@ process operations. It creates no types, symbols, or registry entries; only the
 shared layout cache may change. `semantic_extent` checks this boundary. Backend
 names and temporaries belong to `Emitter`, not semantic symbols.
 
-Non-test backend files (`emit_llvm*.odin`, `emission_contract.odin`) must not name
-`Checker`. Front-end files other than `main.odin` and `session.odin` must not call
-emitter procedures. Shared helpers belong with their semantic owner;
+Non-test backend files (`emit_llvm*.odin`, `emission_contract.odin`) must not
+name `Checker`. Front-end files other than `main.odin` and `session.odin` must
+not call emitter procedures. Shared helpers belong with their semantic owner;
 `test-all.ps1` enforces both directions.
 
 Preserve these lowering rules:
@@ -1007,8 +1007,9 @@ Preserve these lowering rules:
   helpers without changing checked AST annotations.
 - Values above `LARGE_VALUE_BYTES` travel by address and return through `sret`,
   avoiding LLVM first-class aggregates that can crash clang. Route Loke values
-  through `load_place`, `store`, `temporary_slot`, `emit_call_result`, `emit_ret`,
-  and `sret_param`; reuse temporary storage between full expressions.
+  through `load_place`, `store`, `temporary_slot`, `emit_call_result`,
+  `emit_ret`, and `sret_param`; reuse temporary storage between full
+  expressions.
 - Fixed-array clone failures drop the built prefix in reverse order with a loop,
   keeping cleanup IR linear. `fixed_array_clone_ir_grows_linearly` guards this.
 - Debug locations follow statements, conditions, and switch subjects. Each
@@ -1018,20 +1019,21 @@ Preserve these lowering rules:
 
 1. Settle behavior in [design.md](design.md). For syntax changes, update
    [grammar.md](grammar.md), lexer/parser, AST, dump, clone rules, and recovery
-   fixtures together. Exhaustive walkers and `ast_clone_classifies_every_node_field`
-   help catch missing cases; place-path walkers deliberately remain partial.
-2. Implement the decision in its semantic owner and record the result on the
-   AST or in a registry. Comments cite exact headings, such as `design.md "Maps"`.
+   fixtures together. Exhaustive walkers and
+   `ast_clone_classifies_every_node_field` help catch missing cases; place-path
+   walkers deliberately remain partial.
+2. Implement the decision in its semantic owner and record the result on the AST
+   or in a registry. Comments cite exact headings, such as `design.md "Maps"`.
 3. Add compile-time value semantics to `const_ops.odin` or `eval.odin` when
    applicable. Ownership, borrowing, retention, and allocator changes belong in
    CFG events and their solvers.
 4. Register runtime dependencies during committed checking and extend the
    emission contract. Lower the recorded operation in its `emit_llvm_*` file;
    keep layout in `layout.odin` and foreign classification in `abi.odin`.
-5. Prefer `base/` or `core/` implementations over new compiler/runtime primitives
-   when the language can express them. Add a focused regression and run the
-   relevant checks below. Follow [AGENTS.md](AGENTS.md) for accompanying documents
-   and changelog entries.
+5. Prefer `base/` or `core/` implementations over new compiler/runtime
+   primitives when the language can express them. Add a focused regression and
+   run the relevant checks below. Follow [AGENTS.md](AGENTS.md) for accompanying
+   documents and changelog entries.
 
 For backend failures, trace the assertion back to the missing annotation or
 registry entry. Fix the phase responsible for that fact rather than adding a
@@ -1047,14 +1049,15 @@ From the repository root:
 ```
 
 The quick gate checks heading citations and layering, runs unit tests, rebuilds
-`lokec.exe`, and runs baseline integration tests. `-Full` adds the checker mutation
-fuzzer and reruns optimization-sensitive corpora at every supported level. Use
-it locally for that additional coverage or to investigate CI failures.
+`lokec.exe`, and runs baseline integration tests. `-Full` adds the checker
+mutation fuzzer and reruns optimization-sensitive corpora at every supported
+level. Use it locally for that additional coverage or to investigate CI
+failures.
 
-Some checks need external tools: NASM, clang with a C-host toolset, or cdb (WinDbg/
-Windows SDK, optionally selected by `LOKE_CDB`). Missing capabilities are reported
-as skips. `-RequireTools`, or `LOKE_TEST_REQUIRE_TOOLS=1`, turns those skips into
-failures; CI uses both switches.
+Some checks need external tools: NASM, clang with a C-host toolset, or cdb
+(WinDbg/ Windows SDK, optionally selected by `LOKE_CDB`). Missing capabilities
+are reported as skips. `-RequireTools`, or `LOKE_TEST_REQUIRE_TOOLS=1`, turns
+those skips into failures; CI uses both switches.
 
 Unit tests live beside the compiler implementation in `src/*_test.odin`.
 `session_test.odin` and `incremental_test.odin` compare diagnostics, semantic
@@ -1070,6 +1073,8 @@ reclamation. The integration harness is in `tests/`:
 | `pkg/`, `obj/`, `os/` | Multi-package programs, C-host linking, process arguments, and environment. |
 | `doc/`, `examples/` | Generated documentation and classified real example programs with expected output. |
 | `test/` | Test builds: the `-test` runner's report against `.expected`, exiting 1 when it lists a failure. |
+| `api/` | Interface files: `-api-check` against each case's checked-in `api.loki`, with and without `-debug`, and `-api` restoring them to a copy. |
+| `debugger/` | Debug information: cdb runs a `-g` build, stops in it, and shows the caller's locals through the Natvis rules. |
 | `tutorial_test.odin` | Programs, auxiliary files, outputs, panics, and diagnostics extracted from tutorial fences. |
 | `runtime_test.odin` | Runtime-header ABI agreement and concurrent runtime-cache creation/reuse. |
 | `checker_fuzz_test.odin` | Deterministic source mutation; failures reduced and saved under `tests/tmp/fuzz/`. |
@@ -1077,9 +1082,10 @@ reclamation. The integration harness is in `tests/`:
 
 `every_diagnostic_code_is_pinned` requires each diagnostic to have a test or a
 reasoned entry in `UNPINNED` in `tests/corpus_test.odin`. Fuzzer failures become
-regressions with their fixes; `LOKE_FUZZ_SEED` and `LOKE_FUZZ_MUTANTS` explore more
-cases. Harness workers collect results and assertions run on the test thread;
-child processes use the shared `subprocess` package without busy-waiting.
+regressions with their fixes; `LOKE_FUZZ_SEED` and `LOKE_FUZZ_MUTANTS` explore
+more cases. Harness workers collect results and assertions run on the test
+thread; child processes use the shared `subprocess` package without
+busy-waiting.
 
 For individual suites:
 
@@ -1099,17 +1105,18 @@ Add `-define:ODIN_TEST_NAMES=<name>` to select an Odin test procedure:
 selects tutorial programs, not a single source file.
 
 For direct optimization runs, set `$env:LOKE_TEST_FLAGS = "-opt=speed"`, then
-restore/remove it afterward. Run/trap, package, example, and tutorial compilations
-honor it; `test-all.ps1` manages it itself.
+restore/remove it afterward. Run/trap, package, example, and tutorial
+compilations honor it; `test-all.ps1` manages it itself.
 
 Unit tests track allocations. Build with `-define:LOKE_TRACK_MEMORY=true` to
-report whole-compilation leaks and bad frees. `-vet-packages` confines test vetting
-to the repository package. `test-all.ps1` judges each tool by its exit code
-alone, so it also runs under Windows PowerShell 5.1 with its output redirected
-(`*>`, `2>&1`, `Tee-Object`); there the first stderr line of a tool is shown as a
-`NativeCommandError` block, which is noise, not a failure. Running a suite
-directly in 5.1 with `2>&1` and `$ErrorActionPreference = 'Stop'` stops at that
-line; use PowerShell 7 (`pwsh`, as CI does) or check `$LASTEXITCODE` instead.
+report whole-compilation leaks and bad frees. `-vet-packages` confines test
+vetting to the repository package. `test-all.ps1` judges each tool by its exit
+code alone, so it also runs under Windows PowerShell 5.1 with its output
+redirected (`*>`, `2>&1`, `Tee-Object`); there the first stderr line of a tool
+is shown as a `NativeCommandError` block, which is noise, not a failure. Running
+a suite directly in 5.1 with `2>&1` and `$ErrorActionPreference = 'Stop'` stops
+at that line; use PowerShell 7 (`pwsh`, as CI does) or check `$LASTEXITCODE`
+instead.
 
 Test code deletes directories with `remove_tree` (`lokec.remove_tree` from the
 language server's tests, and its copy in `tests/corpus_test.odin`), never
@@ -1132,25 +1139,27 @@ For performance changes, build the baseline compiler and run:
 
 Use the same machine and workloads. The script measures front-end and full-build
 time, peak working set, executable size, and benchmark runtime, and times
-`loke-lsp.exe` editing `bench/workspace` (see [Language server](#language-server)).
-Timings use the fastest of three runs, and every run's benchmark output must
-match. A program or server operation slower than `-TimeoutSeconds` fails the
-run. Each record carries a hash of the program's own sources, not the standard
-library's, and a figure measured on other sources than its baseline's is shown
-as `(sources changed)` rather than compared. CI compares with the latest
-release's `perf.json`; releases attach their own record. The tests of
-`perf.ps1` itself drive it with `tests/perf/fake_compiler.loke` in place of
-`lokec`. For structural backend refactors, also compare emitted `.ll` using
-identical source paths and options to catch naming or ordering drift.
+`loke-lsp.exe` editing `bench/workspace` (see [Language
+server](#language-server)). Timings use the fastest of three runs, and every
+run's benchmark output must match. A program or server operation slower than
+`-TimeoutSeconds` fails the run. Each record carries a hash of the program's own
+sources, not the standard library's, and a figure measured on other sources than
+its baseline's is shown as `(sources changed)` rather than compared. CI compares
+with the latest release's `perf.json`; releases attach their own record. The
+tests of `perf.ps1` itself drive it with `tests/perf/fake_compiler.loke` in
+place of `lokec`. For structural backend refactors, also compare emitted `.ll`
+using identical source paths and options to catch naming or ordering drift.
 
 ### Standard-library verification
 
-Use `tests/run/lib_*.loke` and examples. Cover the boundaries relevant to the API:
+Use `tests/run/lib_*.loke` and examples. Cover the boundaries relevant to the
+API:
 
 - Empty/binary data, valid/invalid UTF-8, and rune offsets.
 - Unicode and long paths; missing, inaccessible, read-only, and existing paths.
 - Short reads/writes, EOF, interruption, broken pipes, and redirected handles.
-- Limits just below/at/above the boundary; `Limit_Exceeded` destroys partial owners.
+- Limits just below/at/above the boundary; `Limit_Exceeded` destroys partial
+  owners.
 - Allocation failure with unchanged destinations; a small `mem.Arena` makes it
   deterministic. Also check close followed by drop, double close, and unwind.
 - For `core:random`: known-answer vectors from each generator's reference
@@ -1199,18 +1208,19 @@ The allocator captured at initialization must outlive the session. Configuration
 is fixed; create a new session to change it. Operations require exclusive access
 except for the concurrent queries described below.
 
-`s.compiler` exposes borrowed sources, syntax, IDs, diagnostics, and emitted text.
-Their lifetime ends at invalidation, an overlay edit, the next check (even if it
-fails), or destruction. Copy anything needed longer. Batch/documentation checks
-discard checkpoints; batch checking remains the reference for incremental results.
+`s.compiler` exposes borrowed sources, syntax, IDs, diagnostics, and emitted
+text. Their lifetime ends at invalidation, an overlay edit, the next check (even
+if it fails), or destruction. Copy anything needed longer. Batch/documentation
+checks discard checkpoints; batch checking remains the reference for incremental
+results.
 
 ## Snapshots and queries
 
-`overlays.odin` supplies unsaved sources; `queries.odin` exposes recorded checking
-results; `query_index.odin` indexes checked syntax and committed generic/static-loop
-clones. The query arena and formatted type names are built lazily on the first
-snapshot. Queries never resolve names, check bodies, instantiate generics, or
-enroll artifacts.
+`overlays.odin` supplies unsaved sources; `queries.odin` exposes recorded
+checking results; `query_index.odin` indexes checked syntax and committed
+generic/static-loop clones. The query arena and formatted type names are built
+lazily on the first snapshot. Queries never resolve names, check bodies,
+instantiate generics, or enroll artifacts.
 
 All operations below return a success flag. Query handles carry a process-unique
 snapshot ID; entry points reject stale/foreign handles and out-of-range IDs,
@@ -1240,8 +1250,8 @@ arrays, returned strings/slices are borrowed, read-only, and expire on
 [invalidation](#invalidation-rules); snapshot tokens do not retain compilations.
 
 After the first `session_snapshot` builds views, later snapshot/query calls may
-run concurrently. Allocating queries use the calling thread's `context`.
-The first snapshot, invalidation, overlay edits, checks, emission, and destruction
+run concurrently. Allocating queries use the calling thread's `context`. The
+first snapshot, invalidation, overlay edits, checks, emission, and destruction
 all require exclusive access.
 
 Failed checks expose loaded sources, diagnostics, and whatever semantics were
@@ -1253,15 +1263,17 @@ when only types differ. References from failed checks are partial.
 
 ## Invalidation rules
 
-Invalidation expires the **whole compilation's public snapshot**, clears emission
-readiness, and releases query storage. Configuration, overlays, and package
-checkpoints remain. Overlay replacement/removal and each new check invalidate
-old views; a failed check replaces the preceding result and cannot emit.
+Invalidation expires the **whole compilation's public snapshot**, clears
+emission readiness, and releases query storage. Configuration, overlays, and
+package checkpoints remain. Overlay replacement/removal and each new check
+invalidate old views; a failed check replaces the preceding result and cannot
+emit.
 
 Disk changes do not update snapshots automatically. Call `invalidate_session`
 when notified, or check again directly. Notification performs no reads/checking;
-events may be batched. Do not filter solely by `query_file`: new or missing files,
-imports, package members, and nearer manifests may affect previously loaded code.
+events may be batched. Do not filter solely by `query_file`: new or missing
+files, imports, package members, and nearer manifests may affect previously
+loaded code.
 
 Batch checks rebuild everything. Incremental checks validate the full input set
 before reusing a prefix. Reuse depends on root identity/mode, working directory,
@@ -1280,18 +1292,20 @@ Foreign inputs, runtime sources, toolchain identity/environment, output paths,
 and artifact options are read during emission. There is no cache of complete
 program artifacts; the [runtime-object cache](#runtime-and-library-boundary) is
 separate. A future persistent cache must include compiler identity and all
-relevant inputs rather than treating version strings or signatures as sufficient.
+relevant inputs rather than treating version strings or signatures as
+sufficient.
 
 ## Incremental checking
 
-The CLI uses batch checking and allocates no package cache. The opt-in incremental
-API reuses only static graphs without selected providers. A graph is static when
-no `import` sits inside a file-scope `when`; then each package settles its own
-`when` selection, which reads only that package and what it imports, after
-preparing its declarations and before any dependent is prepared. Batch checks
-take the same path, and the bundled library's platform `when` blocks no longer
-force a full check. Whole-program provenance/provider analysis, entry/export
-validation, and finalization still run; LLVM emission remains whole-program.
+The CLI uses batch checking and allocates no package cache. The opt-in
+incremental API reuses only static graphs without selected providers. A graph is
+static when no `import` sits inside a file-scope `when`; then each package
+settles its own `when` selection, which reads only that package and what it
+imports, after preparing its declarations and before any dependent is prepared.
+Batch checks take the same path, and the bundled library's platform `when`
+blocks no longer force a full check. Whole-program provenance/provider analysis,
+entry/export validation, and finalization still run; LLVM emission remains
+whole-program.
 
 Before preparing each package, a checkpoint saves compiler fields, the semantic
 arena watermark, and its used bytes. Incremental sources, syntax, diagnostics,
@@ -1300,10 +1314,10 @@ as new allocations. Allocator pointers keep naming the same live `Compiler`;
 checkpoints cannot move between sessions. Restoration recreates disposable
 analysis/emission arenas.
 
-Before reuse, a temporary loader re-resolves manifests and collections, enumerates
-packages, and reads source bytes through overlays. It compares root/mode/current
-directory, manifests, roots, membership, package clauses, and ordered imports.
-Timestamps and hashes do not substitute for byte equality.
+Before reuse, a temporary loader re-resolves manifests and collections,
+enumerates packages, and reads source bytes through overlays. It compares
+root/mode/current directory, manifests, roots, membership, package clauses, and
+ordered imports. Timestamps and hashes do not substitute for byte equality.
 
 Restore the nearest checkpoint at or before the earliest changed package and
 recheck the entire suffix, including unrelated later packages. Checkpoints stop
@@ -1370,101 +1384,98 @@ The server never duplicates the front end: every result comes from the
 | `paths.odin` | `file:` URIs, path keys, and UTF-8/UTF-16 positions. |
 
 A reader thread frames stdin into an inbox. The main thread runs checks, so it
-has the compiler's [stack reservation](#driver-and-phase-order). It applies every
-queued message in order, then waits for edits to pause briefly, then performs one
-step of `run_pending_work`. A `$/cancelRequest` cancels a request queued in the
-same batch or still waiting for a check. A running check is not interrupted: its result is discarded if an
-edit arrives first. `shutdown` drops pending work; `exit` and the end of input
-stop the process.
+has the compiler's [stack reservation](#driver-and-phase-order). It applies
+every queued message in order, then waits for edits to pause briefly, then
+performs one step of `run_pending_work`. A `$/cancelRequest` cancels a request
+queued in the same batch or still waiting for a check. A running check is not
+interrupted: its result is discarded if an edit arrives first. `shutdown` drops
+pending work; `exit` and the end of input stop the process.
 
 Each root is one `lokec` input with its own `Compilation_Session` and the same
-fixed configuration. Every open document is an overlay in every session. An
-edit marks every root dirty because any root may import the edited file. A
-change that leaves the text as it was changes only the version its
-diagnostics are published with, so no root checks again and no waiting request
-becomes stale.
-A document's own root is its directory, or the file when two or more sibling
-files declare `main`. `refresh_roots` assigns a document to another root whose
-last check loaded its file, provided that root is some other open document's
-own root, so closing an application returns its imported packages to their
-own roots. If several roots qualify, it picks the outermost: the one whose own
+fixed configuration. Every open document is an overlay in every session. An edit
+marks every root dirty because any root may import the edited file. A change
+that leaves the text as it was changes only the version its diagnostics are
+published with, so no root checks again and no waiting request becomes stale. A
+document's own root is its directory, or the file when two or more sibling files
+declare `main`. `refresh_roots` assigns a document to another root whose last
+check loaded its file, provided that root is some other open document's own
+root, so closing an application returns its imported packages to their own
+roots. If several roots qualify, it picks the outermost: the one whose own
 package no other candidate loads. Otherwise the document gets its own root.
 `declares_entry` runs the compiler's lexer and looks for `main :` outside
 brackets, once per document revision; each refresh counts open entries by
 directory. Assignment runs again after every check, so it does not depend on the
-order documents were opened.
-Roots that no open document uses are destroyed. `check_root` uses
-`check_session_incremental`, rechecking once in documentation mode when the
-root package is not `main`, so a root reuses the packages before the first one
-an edit reached. A root no edit reached reruns only its last package. It
-records the paths of loaded sources and copies snapshot diagnostics into the
-root's result arena with client positions. Diagnostics with no source location are
-shown on that root's open documents.
+order documents were opened. Roots that no open document uses are destroyed.
+`check_root` uses `check_session_incremental`, rechecking once in documentation
+mode when the root package is not `main`, so a root reuses the packages before
+the first one an edit reached. A root no edit reached reruns only its last
+package. It records the paths of loaded sources and copies snapshot diagnostics
+into the root's result arena with client positions. Diagnostics with no source
+location are shown on that root's open documents.
 
-Diagnostics are published only after every root has been checked since the
-last edit. A file's list is the deduplicated union across roots, because
-an imported package is checked by each importer. Notes are part of a
-diagnostic's identity: two programs can report one error with different
-declarations behind it, and the client gets both. The server records what it sent
-for each file and sends only changes, including an empty list when a file has no
-diagnostics left. An open document keeps the client's URI spelling and
-receives its version.
+Diagnostics are published only after every root has been checked since the last
+edit. A file's list is the deduplicated union across roots, because an imported
+package is checked by each importer. Notes are part of a diagnostic's identity:
+two programs can report one error with different declarations behind it, and the
+client gets both. The server records what it sent for each file and sends only
+changes, including an empty list when a file has no diagnostics left. An open
+document keeps the client's URI spelling and receives its version.
 
 Position requests wait in `pending` until `refresh_roots` has run and their
 document's root is clean, so the root's snapshot was taken from the document's
-current text; references and rename also wait for every other root. `run_pending_work`
-answers them before anything else and checks a requested root before other
-dirty roots. Each document records the server's edit `revision`; a request
-whose document changed or closed while it waited is answered `ContentModified`,
-and a later `$/cancelRequest` or `shutdown` answers it as cancelled. Before
-answering, the server confirms the snapshot's text for the file equals the
-document's; otherwise, and whenever `query_at` records no binding, the result
-is `null`. Positions just past a name fall back to the name. Hover text and the
-outline come only from `Query_Symbol`, signatures, recorded type names, written
-declaration extents, and `query_documentation`. Document symbols omit anything
-whose `parent` chain reaches a procedure, which leaves package-level
-declarations with their fields and enum members as children. Kinds after
-`Array` are sent only to a client that lists them in `symbolKind.valueSet`;
-others get `Class` for a struct and `Constant` for an enum member.
+current text; references and rename also wait for every other root.
+`run_pending_work` answers them before anything else and checks a requested root
+before other dirty roots. Each document records the server's edit `revision`; a
+request whose document changed or closed while it waited is answered
+`ContentModified`, and a later `$/cancelRequest` or `shutdown` answers it as
+cancelled. Before answering, the server confirms the snapshot's text for the
+file equals the document's; otherwise, and whenever `query_at` records no
+binding, the result is `null`. Positions just past a name fall back to the name.
+Hover text and the outline come only from `Query_Symbol`, signatures, recorded
+type names, written declaration extents, and `query_documentation`. Document
+symbols omit anything whose `parent` chain reaches a procedure, which leaves
+package-level declarations with their fields and enum members as children. Kinds
+after `Array` are sent only to a client that lists them in
+`symbolKind.valueSet`; others get `Class` for a struct and `Constant` for an
+enum member.
 
-Completion and signature help lex the document with the compiler's lexer to
-find the cursor's context, then ask the snapshot. Neither answers inside a
-comment or a literal, including one the lexer rejected, which an unclosed
-literal holds to its end. After `operand.`, the
-operand's last byte goes to `query_at` and then `query_members`; elsewhere
-`query_visible` lists the names in scope, followed by the keywords. Signature
-help takes the innermost bracket open before the cursor, which must be a `(`
-after a name, and the procedure or group `query_at` records there; commas at
-that depth, a named argument, and a method call's implicit `self` choose the
-active parameter. A parameter's label offsets point at its name, never at a
-type spelled the same, and count UTF-16 units under either position encoding,
-as the protocol defines them. Completion kinds after `Reference` are negotiated like symbol
-kinds.
+Completion and signature help lex the document with the compiler's lexer to find
+the cursor's context, then ask the snapshot. Neither answers inside a comment or
+a literal, including one the lexer rejected, which an unclosed literal holds to
+its end. After `operand.`, the operand's last byte goes to `query_at` and then
+`query_members`; elsewhere `query_visible` lists the names in scope, followed by
+the keywords. Signature help takes the innermost bracket open before the cursor,
+which must be a `(` after a name, and the procedure or group `query_at` records
+there; commas at that depth, a named argument, and a method call's implicit
+`self` choose the active parameter. A parameter's label offsets point at its
+name, never at a type spelled the same, and count UTF-16 units under either
+position encoding, as the protocol defines them. Completion kinds after
+`Reference` are negotiated like symbol kinds.
 
 References and rename identify a binding by its written definition, so every
-root whose snapshot has the same binding at that place contributes its
-recorded uses. Rename refuses a predeclared binding, one defined in or used by
-a bundled file, an invalid new name, and any root that loads the binding's
-file and has errors, since references from a failed check are partial. It then lexes every
+root whose snapshot has the same binding at that place contributes its recorded
+uses. Rename refuses a predeclared binding, one defined in or used by a bundled
+file, an invalid new name, and any root that loads the binding's file and has
+errors, since references from a failed check are partial. It then lexes every
 non-bundled source of each such root. Each occurrence of the old name must have
 a recorded binding, so unchecked code such as an inactive `when` branch, or a
-name the index does not record, such as an interface slot, stops the rename.
-At an unqualified use or the declaration, the new name must not already be
-visible; a named argument names the callee's parameter instead, so the
-caller's scope is not consulted there. A local declared with the new name where the binding is visible must
-not share its `scope`, nor shadow it when the binding is a variable or
-parameter. These two rules also cover capture: a binding that would be shadowed
-at some use is visible at the declaration, or declared later where the renamed
-binding is visible. Fields, enum members, and `impl` or `extend` members are
-checked against their type's members and, at each selector, against the
+name the index does not record, such as an interface slot, stops the rename. At
+an unqualified use or the declaration, the new name must not already be visible;
+a named argument names the callee's parameter instead, so the caller's scope is
+not consulted there. A local declared with the new name where the binding is
+visible must not share its `scope`, nor shadow it when the binding is a variable
+or parameter. These two rules also cover capture: a binding that would be
+shadowed at some use is visible at the declaration, or declared later where the
+renamed binding is visible. Fields, enum members, and `impl` or `extend` members
+are checked against their type's members and, at each selector, against the
 members of the operand `query_selector_operand` records, promoted fields
 included; a selector whose operand or members it cannot name stops the rename. A
-selector already spelled with the new name must not select the renamed field,
-or become ambiguous, once it is renamed: each `using` branch is followed as the
-checker follows it, and only a field of that name declared along the same
-branch hides the renamed one. A public extension is also
-checked as a package name. A method may not be renamed to or from a name in
-`query_implicit_names`, and a parameter to or from `self`.
+selector already spelled with the new name must not select the renamed field, or
+become ambiguous, once it is renamed: each `using` branch is followed as the
+checker follows it, and only a field of that name declared along the same branch
+hides the renamed one. A public extension is also checked as a package name. A
+method may not be renamed to or from a name in `query_implicit_names`, and a
+parameter to or from `self`.
 
 Formatting and documentation call the procedures behind `-fmt` and `-api`
 rather than reimplementing them. `textDocument/formatting` needs no check, so
@@ -1507,8 +1518,8 @@ includes the 150 ms pause the server waits for further edits. When incremental
 checking was introduced (2026-10-14), it answered an edit in about 295 ms
 instead of 340 ms, and completion in about 290 ms instead of 340 to 470 ms,
 while the server's peak working set grew from about 33 MB to about 89 MB for
-the checkpoints. The baseline records in the repository's
-`bench/baselines/README.md` hold later measurements.
+the checkpoints. The provenance-normalization records in
+`bench/baselines/README.md` include later timings of the same operations.
 
 ## Deliberate boundaries
 
@@ -1520,7 +1531,8 @@ the checkpoints. The baseline records in the repository's
   future work.
 - Debug information covers source procedures, statements, scopes, and locals;
   compiler-contributed methods lack it. Natvis describes maps and erased values.
-  See [compiler options](compiler-guide.md#common-options) for debug limitations.
+  See [compiler options](compiler-guide.md#common-options) for debug
+  limitations.
 - Recoverable panic, macros, owning type erasure, and a GC allocator are absent.
 - Raw-pointer provenance, `core:unsafe`, foreign retention/aliasing, and
   cross-thread transfer remain trust boundaries.
