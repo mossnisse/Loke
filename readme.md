@@ -4,14 +4,16 @@ Loke is an experimental general-purpose programming language inspired by Odin.
 It combines higher-level types and abstractions with explicit control over
 memory allocation and C interoperability.
 
-- Strings and owning containers release their storage at scope exit.
+- Owning values clean up at scope exit: strings, containers, and boxes release
+  their storage, and an open file closes.
 - Local borrow checking tracks views and their lifetimes.
 - Generics, interfaces, and compile-time execution support reusable code.
 - `Option` and `Result` represent absence and failure as values.
 
-Loke does not provide complete memory safety. The compiler, `lokec`, is written
-in Odin and currently supports **Windows x64**. Releases are **pre-1.0** and
-minor releases may break compatibility; see the
+Loke does not provide complete memory safety; see
+[what is not checked](design.md#what-is-not-checked). The compiler, `lokec`, is
+written in Odin and currently supports **Windows x64**. Releases are
+**pre-1.0** and minor releases may break compatibility; see the
 [version policy](releasing.md#version-policy) and [changelog](CHANGELOG.md).
 Current implementation limits are in [known gaps](known-gaps.md).
 
@@ -99,9 +101,11 @@ To build the language server too, run `odin build lsp -out:loke-lsp.exe`.
 | Design rationale and differences from Odin | [Comments](comments.md) |
 | Open questions and planned work | [Open questions](open-questions.md) and [future plans](future-plans.md) |
 
-The library covers text, containers, files, processes, threads, synchronization,
-math, and allocators. Import the packages you use, such as `core:fmt` or
-`core:thread`; `base:` is reserved for language and runtime support.
+The library covers text, containers, files and paths, processes, threads,
+synchronization, time, random numbers, JSON, logging, terminal input, math, and
+allocators. Import the packages you use, such as `core:fmt` or `core:thread`.
+Packages under `base:` hold only what the language itself depends on, such as
+the interface catalogue in `base:interfaces`; import them like any other.
 
 ## Compiler development
 
