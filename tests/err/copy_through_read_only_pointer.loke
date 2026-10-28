@@ -1,0 +1,54 @@
+// design.md "Values that contain borrows": a mutable carrier stored in storage
+// reached through a read-only pointer keeps its capability, so copying it is a
+// mutable reborrow of it, as through a mutable pointer (design.md "Weakening and
+// reborrows"), and a second copy while the first is in use is rejected.
+package main;
+
+Node :: struct { value: int }
+Holder :: struct { head: ^mut Node }
+Pair :: struct { head: ^mut Node, tail: ^mut Node }
+View :: struct { head: ^Node }
+
+duplicate :: proc(h: ^Holder) {
+	a := h^.head;
+	b := h^.head;
+	a^.value = 1;
+	b^.value = 2;
+}
+
+two_pointers :: proc(p: ^^Holder) {
+	a := p^^.head;
+	b := p^^.head;
+	a^.value = 1;
+	b^.value = 2;
+}
+
+two_pointers_pair :: proc(p: ^^Pair) {
+	a := p^^.tail;
+	b := p^^.tail;
+	a^.value = 1;
+	b^.value = 2;
+}
+
+// Legal: read-only carriers, one copy at a time, and two different fields.
+read_only_copies :: proc(v: ^View) -> int {
+	a := v^.head;
+	b := v^.head;
+	return a^.value + b^.value;
+}
+
+sequential :: proc(h: ^Holder) {
+	a := h^.head;
+	a^.value = 1;
+	b := h^.head;
+	b^.value = 2;
+}
+
+siblings :: proc(p: ^^Pair) {
+	a := p^^.head;
+	b := p^^.tail;
+	a^.value = 1;
+	b^.value = 2;
+}
+
+main :: proc() {}

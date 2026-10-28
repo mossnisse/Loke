@@ -18,10 +18,14 @@ import "core:testing"
 MATRIX_DIR :: TMP + "/borrow_matrix"
 
 // Where the `List` lives, and how the place is written: `base` is the `List`
-// itself, `pointer` a `^mut List` to it.
+// itself, `pointer` a `^mut List` to it. A `read_only` place is reached
+// through a read-only pointer, so nothing writes the place itself, but the
+// mutable carriers stored in it keep their capability (design.md "Values that
+// contain borrows").
 @(private = "file")
 Matrix_Place :: struct {
 	name, params, setup, base, pointer: string,
+	read_only:                          bool,
 }
 
 @(private = "file")
@@ -31,14 +35,16 @@ MATRIX_LIST :: "List{&mut a, &mut b, 2, .some(&mut c)}"
 
 @(private = "file")
 MATRIX_PLACES := [?]Matrix_Place {
-	{"local", "", MATRIX_NODES + " l := " + MATRIX_LIST + ";", "l", "&mut l"},
-	{"local_pointer", "", MATRIX_NODES + " l := " + MATRIX_LIST + "; list := &mut l;", "list^", "list"},
-	{"param", "list: ^mut List", "", "list^", "list"},
-	{"local_two_pointers", "", MATRIX_NODES + " l := " + MATRIX_LIST + "; held := &mut l; p := &mut held;", "p^^", "p^"},
-	{"param_two_pointers", "p: ^mut ^mut List", "", "p^^", "p^"},
-	{"local_indexed", "", MATRIX_NODES + " lists := [1]List{" + MATRIX_LIST + "}; p := &mut lists;", "p[0]", "&mut p[0]"},
-	{"param_indexed", "p: ^mut [1]List", "", "p[0]", "&mut p[0]"},
-	{"param_slice", "s: []mut List", "", "s[0]", "&mut s[0]"},
+	{"local", "", MATRIX_NODES + " l := " + MATRIX_LIST + ";", "l", "&mut l", false},
+	{"local_pointer", "", MATRIX_NODES + " l := " + MATRIX_LIST + "; list := &mut l;", "list^", "list", false},
+	{"param", "list: ^mut List", "", "list^", "list", false},
+	{"local_two_pointers", "", MATRIX_NODES + " l := " + MATRIX_LIST + "; held := &mut l; p := &mut held;", "p^^", "p^", false},
+	{"param_two_pointers", "p: ^mut ^mut List", "", "p^^", "p^", false},
+	{"local_indexed", "", MATRIX_NODES + " lists := [1]List{" + MATRIX_LIST + "}; p := &mut lists;", "p[0]", "&mut p[0]", false},
+	{"param_indexed", "p: ^mut [1]List", "", "p[0]", "&mut p[0]", false},
+	{"param_slice", "s: []mut List", "", "s[0]", "&mut s[0]", false},
+	{"param_read_only", "list: ^List", "", "list^", "list", true},
+	{"param_read_only_two_pointers", "p: ^^List", "", "p^^", "p^", true},
 }
 
 // How the mutable carrier is taken: copied out of `head`, or bound as the
@@ -68,6 +74,7 @@ MATRIX_USES := [?]Matrix_Use {
 	{"replace_head", "$H = $T;", ""},
 	{"replace_first", "$F = .none;", ""},
 	{"pass_whole", "touch($P);", ""},
+	{"pass_sibling", "bump(&mut $B.count);", ""},
 	{"pass_read", "sink(look($P));", ""},
 }
 
@@ -114,13 +121,18 @@ matrix_known_gap :: proc(place: Matrix_Place, take: Matrix_Take, use: Matrix_Use
 
 // `replace_head` and the uses of `head` say nothing about a binding of
 // `first`, and the option copy and view say nothing about a copy of `head`.
+// A read-only place cannot be written or handed on as a mutable pointer.
 @(private = "file")
-matrix_applies :: proc(take: Matrix_Take, use: Matrix_Use) -> bool {
+matrix_applies :: proc(place: Matrix_Place, take: Matrix_Take, use: Matrix_Use) -> bool {
 	switch use.name {
+	case "write_count", "replace_first", "pass_whole", "pass_sibling":
+		return !place.read_only
 	case "copy_same_option", "second_view":
 		return take == .Binding
-	case "store_through_same", "read_through_same", "copy_same", "replace_head":
+	case "store_through_same", "read_through_same", "copy_same":
 		return take == .Copy
+	case "replace_head":
+		return take == .Copy && !place.read_only
 	}
 	return true
 }
@@ -161,9 +173,10 @@ matrix_program :: proc(place: Matrix_Place, take: Matrix_Take, cases: ^[dynamic]
 	line(&b, &lines, "sink :: proc(value: int) {}")
 	line(&b, &lines, "touch :: proc(list: ^mut List) { list^.head^.value += 1; }")
 	line(&b, &lines, "look :: proc(list: ^List) -> int { return list^.head^.value; }")
+	line(&b, &lines, "bump :: proc(n: ^mut int) { n^ += 1; }")
 	line(&b, &lines, "main :: proc() {}")
 	for use in MATRIX_USES {
-		if !matrix_applies(take, use) {
+		if !matrix_applies(place, take, use) {
 			continue
 		}
 		for later in ([2]bool{false, true}) {

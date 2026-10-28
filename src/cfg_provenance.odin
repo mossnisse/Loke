@@ -2046,6 +2046,10 @@ prov_bind_parameters :: proc(graph: ^Flow_Graph, literal: ^Expr_Proc) {
 // whose type is known holds a slot per carrier path in it, as `p^^.head` and
 // `p^^.tail` with `p: ^mut ^mut List`; the own loan of a parameter with more
 // than one pointee path has a slot per path holding that path's own loan.
+// A slot is a mutable carrier when what is stored there is one, as `head` is
+// in `h: ^Holder` with `head: ^mut Node` (design.md "Values that contain
+// borrows"), whatever the loan reaching it allows. Where the storage's type is
+// not known, it may be one when the parameter reaches any mutable carrier.
 @(private = "file")
 prov_caller_slots :: proc(graph: ^Flow_Graph, root: Root_Id, first: int, name: string) {
 	c := graph.k.c
@@ -2056,11 +2060,12 @@ prov_caller_slots :: proc(graph: ^Flow_Graph, root: Root_Id, first: int, name: s
 		pointee = carrier_pointee_shape(c, type)
 	}
 	shape := carrier_shape(c, type)
+	reaches_mutable := type_carries_borrow(c, type).mutable
 	for index in first ..< len(graph.loans) {
 		loan := graph.loans[index]
 		if !loan.content && len(pointee) > 0 {
 			for loans, position in descriptor.pointee_loans {
-				prov_caller_slot(graph, Loan_Id(index), pointee[position].steps, loans[0], name)
+				prov_caller_slot(graph, Loan_Id(index), pointee[position].steps, loans[0], name, pointee[position].mutable)
 			}
 			continue
 		}
@@ -2088,11 +2093,12 @@ prov_caller_slots :: proc(graph: ^Flow_Graph, root: Root_Id, first: int, name: s
 			paths = carrier_shape(c, element)
 		}
 		if len(paths) < 2 {
-			prov_caller_slot(graph, Loan_Id(index), nil, held, name)
+			mutable := len(paths) == 1 ? paths[0].mutable : graph.loans[int(held)].mutable || reaches_mutable
+			prov_caller_slot(graph, Loan_Id(index), nil, held, name, mutable)
 			continue
 		}
 		for path in paths {
-			prov_caller_slot(graph, Loan_Id(index), path.steps, held, name)
+			prov_caller_slot(graph, Loan_Id(index), path.steps, held, name, path.mutable)
 		}
 	}
 }
@@ -2126,11 +2132,11 @@ prov_carrier_below :: proc(c: ^Compiler, type: Type_Id, depth: int) -> Type_Id {
 }
 
 @(private = "file")
-prov_caller_slot :: proc(graph: ^Flow_Graph, loan: Loan_Id, path: []Proj_Step, held: Loan_Id, name: string) {
+prov_caller_slot :: proc(graph: ^Flow_Graph, loan: Loan_Id, path: []Proj_Step, held: Loan_Id, name: string, mutable: bool) {
 	entry := empty_prov_slot(INVALID_SYMBOL)
 	entry.name = name
 	entry.path = path
-	entry.caller_mutable = graph.loans[int(held)].mutable
+	entry.caller_mutable = mutable
 	append(&graph.prov_slots, entry)
 	slot := len(graph.prov_slots) - 1
 	slots := make([dynamic]int, 0, 1, graph.alloc)
@@ -6574,9 +6580,15 @@ prov_call_argument :: proc(
 			reached = prov_use_reached(graph, actual, prov_parameter_type(graph, v, index), expr_span(argument))
 		}
 		// A callee given a mutable carrier may write what it names, and through
-		// what that holds.
+		// what that holds. A mutable borrow through carriers, as
+		// `bump(&mut h^.count)`, has said already what it names, at its own path.
 		if type_carries_borrow(c, prov_parameter_type(graph, v, index)).mutable {
 			written := actual
+			for slot in actual {
+				if graph.prov_slots[slot].through_index >= 0 {
+					written = nil
+				}
+			}
 			if reached >= 0 {
 				written = prov_join(graph, written, prov_one(graph, reached))
 			}

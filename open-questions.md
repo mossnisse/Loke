@@ -144,7 +144,12 @@ Implementation cleanup: `prov_caller_slot` in
 [cfg_provenance.odin](src/cfg_provenance.odin) allocates a new slice and copies
 every prior slot each time it adds a path to one loan. A caller loan can have
 up to 64 carrier paths. Keep one growable slot list per loan instead of
-rebuilding it for every path.
+rebuilding it for every path. A first attempt (2026-10-28), storing
+`[dynamic]int` per loan in `Flow_Graph.caller_slots` and appending to it, made
+`lokec` crash without a message on
+[switch_place_through_pointer.loke](tests/err/switch_place_through_pointer.loke).
+The cause was not found, and no other code changed, so the crash may expose a
+stale read elsewhere; find it before trying again.
 
 Language changes should be evaluated separately. The proposed
 [written public borrow contracts](#public-borrow-contracts-should-stand-on-their-own)

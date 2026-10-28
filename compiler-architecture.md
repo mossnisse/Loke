@@ -364,7 +364,10 @@ A view's leading element step is dropped, since a view's loans already name
 its elements. A load through a local's loan reads the local's content slots; a
 parameter's caller storage has no content here, so `prov_caller_slots` gives
 each parameter loan slots standing for what that storage holds, one per
-carrier path where the storage's type is known. A load through a parameter
+carrier path where the storage's type is known. A slot is a mutable carrier
+when what is stored there is one, whatever the loan reaching it allows, so
+`head: ^mut Node` behind `h: ^Holder` is reborrowed by a copy as it is behind
+`^mut Holder`. A load through a parameter
 reads those slots, so a mutable copy out of either kind of storage reborrows
 the slot it was read from (`prov_reborrow_loaded`), and the same later uses
 suspend it. Two rules keep a repeated load from meeting its own past: a load
@@ -384,8 +387,10 @@ their pointee, which the binding's view joins so every use of the binding keeps
 it live, as does a carrier copied from it, as `kept := &node`, while it still
 holds the snapshot's loans. A store through carriers, a mutable borrow or `inout` argument
 through them, and a carrier argument a callee may write through emit a
-`.Through` event, with the carriers and the path written (a call's path is the
-whole pointee, and its carriers include the deep `Load` of what it reaches).
+`.Through` event, with the carriers and the path written. A call's path is the
+whole pointee, and its carriers include the deep `Load` of what it reaches; an
+argument that is a mutable borrow through carriers, as `&mut h^.count`, adds
+only that load, since the borrow's own event gave its path.
 `check_held_place` rejects one whose carriers share a valid loan with a live
 hold's snapshot at an overlapping path. A mutable borrow weakened to a
 read-only destination writes nothing, so its `.Through` is settled as a fresh

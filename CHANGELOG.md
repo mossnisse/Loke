@@ -159,13 +159,24 @@ checklist.
   Upgrade by using the binding instead of a copy, or by finishing with the
   copy before using the binding again.
 
+- A mutable pointer stored behind a read-only parameter, as `head` in
+  `Holder :: struct { head: ^mut Node }` read through `h: ^Holder` or
+  `p: ^^Holder`, is now reborrowed by a copy of it, as one behind a mutable
+  pointer already was
+  ([Weakening and reborrows](design.md#weakening-and-reborrows)). A second
+  copy while the first is in use, as `b := h^.head` after `a := h^.head`, is
+  now rejected with `L0641`; before, it compiled, leaving two mutable
+  pointers to one node in use. Upgrade by finishing with one copy before
+  taking the next, or by using one copy for both.
+
 - A `switch` over a place reached through a pointer now borrows the place
   while a payload binding is in use, as one over a local already did
   ([Switch ownership](design.md#switch-ownership)). Writing the payload
   through any pointer to it meanwhile is rejected with `L0511`: a store, a
   mutable borrow, an `inout` argument, or handing a mutable pointer that
-  reaches it to a call. Before, these compiled, and the binding went on
-  reading a payload that had been replaced:
+  reaches it to a call. Writing beside the payload still compiles, as
+  `h^.count += 1` or `bump(&mut h^.count)` does. Before, these compiled, and
+  the binding went on reading a payload that had been replaced:
 
   ```loke
   peek :: proc(h: ^mut Holder) -> int {

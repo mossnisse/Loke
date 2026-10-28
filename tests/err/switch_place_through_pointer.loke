@@ -117,6 +117,7 @@ beside :: proc(h: ^mut Holder) -> int {
 	switch (h^.first) {
 	case .some(node):
 		h^.count += 1;
+		bump_pointer(&mut h^.count);
 		h^.other^.value = 2;
 		switch (h^.first) { case .some(again): node^.value = again^.value; case .none: }
 		return look(h) + node^.value;
@@ -147,5 +148,7 @@ repointed :: proc(h: ^mut Holder, other: ^mut Holder) -> int {
 	}
 	return 0;
 }
+
+bump_pointer :: proc(n: ^mut int) { n^ += 1; }
 
 main :: proc() {}
