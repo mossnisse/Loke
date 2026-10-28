@@ -6,6 +6,8 @@ import "core:mem"
 import "core:slice"
 import "core:strings"
 
+// Body-local identities in `Prov_Input`; zero is unresolved storage or no
+// value.
 Storage_Id :: distinct int
 Value_Id :: distinct int
 

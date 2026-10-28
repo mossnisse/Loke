@@ -16,6 +16,8 @@ import "core:slice"
 Root_Id :: distinct int
 Loan_Id :: distinct int
 
+// The root of storage nothing names: a loan or alias alternative kept beside
+// known roots so unresolved storage stays unresolved.
 NO_ROOT :: Root_Id(-1)
 NO_LOAN :: Loan_Id(-1)
 

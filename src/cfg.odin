@@ -169,7 +169,14 @@ Flow_Graph :: struct {
 	// provenance walks build.
 	using prov: ^Prov_State,
 	// Walk state both modes keep.
-	// Temporaries ending with the current statement (design.md).
+	// Temporaries ending with the current statement (design.md). A borrowed
+	// temporary root also records its managed owner and original type, so views
+	// and erasure retain its regions, and anonymous storage shares the real root
+	// and installs its initial regions. A reset at the statement's end sees only
+	// the owners whose cleanup is still pending (`emit_cleanups`), merged with the
+	// temporary's original owner dependencies, without allocator handle fields;
+	// alternative branches keep their registrations apart and merge only the
+	// continuing ones.
 	temp_roots:     [dynamic]Root_Id,
 	// Lifecycle counts temporary providers until their statement boundary;
 	// provenance keeps their region tokens in `temp_providers` instead.
@@ -343,7 +350,10 @@ Prov_State :: struct {
 	region_aliases:  map[Symbol_Id][]Prov_Region_Alias,
 	// Set while a store into a writable parameter reads its regions.
 	self_reads:      ^Prov_Self_Reads,
-	// Owned operands held while later operands are evaluated.
+	// Owned operands held while later operands are evaluated. A moved argument
+	// leaves the set on entry to the callee, and `emit_return_cleanups` leaves
+	// out discarded temporaries and staged operands while keeping what the
+	// returned value depends on.
 	held_owners:     [dynamic]Expr,
 	param_count:     int,
 	// One bit per local `mem.Arena`/`mem.Scratch`.

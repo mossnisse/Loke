@@ -764,6 +764,16 @@ prov_result_region :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
 // The allocator region of one projected result field, without joining siblings.
 Region_Query :: enum { All, Owners, Own }
 
+// The regions of one projected field of value `id` at `path`. A record keeps
+// its fields apart, recursively (`region_field_shape`), and its own dependency
+// has an entry of its own at the record's path, so a scalar managed record
+// keeps a moved parameter's escape contract through locals and results.
+// Union steps name variant indices, so success and error payloads have
+// independent facts, and widening remaps paths by variant label, through
+// explicit conversions too. Temporary field projections, constructors,
+// success unwrapping, and switch bindings are followed to their source. A
+// shape's conservative leaves are queried without expanding them again,
+// including for recursive container types.
 @(private)
 prov_result_region_at :: proc(graph: ^Flow_Graph, id: Value_Id, path: []Proj_Step, query := Region_Query.All, as_type := INVALID_TYPE) -> Region_Set {
 	if id == 0 { return prov_empty_region(graph) }
@@ -838,6 +848,9 @@ prov_widened_region_path :: proc(graph: ^Flow_Graph, from, to: Type_Id, path: []
 	return nil, false // this alternative cannot be produced by the source
 }
 
+// The copied field facts of value `id` as `type`, which stores and escape
+// checks share: each field's regions read below `source`, the projected
+// source prefix, when one is given.
 @(private)
 prov_result_region_fields :: proc(
 	graph: ^Flow_Graph, id: Value_Id, type: Type_Id, source: []Proj_Step = nil,
@@ -871,6 +884,9 @@ prov_error_region_at :: proc(graph: ^Flow_Graph, error: Prov_Form_Error, path: [
 	return prov_result_region_at(graph, operand, path, query)
 }
 
+// An implicit failure return records the error's region and per-field facts
+// in the enclosing result's failure variant; a mapper reads the same facts
+// through `Expr_Propagated_Error`.
 @(private)
 prov_error_region_fields :: proc(graph: ^Flow_Graph, error: Prov_Form_Error, result_type: Type_Id) -> []Prov_Region_Content {
 	target, ok := fallible_of(graph.k, result_type)
@@ -3690,11 +3706,24 @@ prov_copy_source_region_at :: proc(graph: ^Flow_Graph, source: Prov_Region_Copy,
 	return prov_source_region_at(graph, source.value, prov_concat_path(graph, source.prefix, path), query, source.as_type)
 }
 
+// An explicit clone's regions: `bound[0]` copied into the allocator its other
+// operands name. Copied declarations and assignments, implicit variant
+// copies, and copied error payloads use the same rule through
+// `prov_copied_region_at`.
 @(private = "file")
 prov_clone_region_at :: proc(graph: ^Flow_Graph, bound: []Value_Id, type: Type_Id, path: []Proj_Step, query := Region_Query.All) -> Region_Set {
 	return prov_copied_region_at(graph, Prov_Region_Copy{value = bound[0], allocator = prov_allocation_region(graph, bound)}, type, path, query)
 }
 
+// The regions at `path` of a copy of `source` as `type`. Newly allocated
+// storage is in the copy's allocator, while logical copies keep the source's
+// regions, read at the projected source prefix. Destructuring starts at the
+// field type (`Destructure.clones`); only the source query prepends the
+// containing record's path. A widened destination path is remapped to the
+// source type before the query. Custom copy hooks, including hooks nested in
+// generated copies, substitute their result summaries. Shared and weak
+// handles keep the control block's allocator apart from the payload's
+// regions through copies, downgrades, and upgrades.
 @(private)
 prov_copied_region_at :: proc(graph: ^Flow_Graph, source: Prov_Region_Copy, type: Type_Id, path: []Proj_Step, query := Region_Query.All) -> Region_Set {
 	type := type
@@ -4554,7 +4583,14 @@ prov_written_storage_type :: proc(graph: ^Flow_Graph, storage: Storage_Id) -> Ty
 // What a local's carriers may reach: a writable parameter's storage, or a
 // variable's place, at `at` in it, that `&mut place` or `place[:]` lent. `path` is
 // where in the local those carriers are held; nil when the whole local may
-// hold them. A zero target is an unresolved alternative, not an empty set.
+// hold them. A zero target is an unresolved alternative, not an empty set,
+// and unknown or cyclic targets keep one beside any known ones. A target is
+// the storage it names, not the targets of carriers inside that storage:
+// alias reads load those separately (`prov_place_carrier`), so a pointer
+// variable is never its own pointee. Reslicing a carrier forwards its
+// targets; slicing owned storage records its address. `at` and `path` stop
+// at WRITTEN_ALIAS_DEPTH and carry the precision marker, and a truncated
+// projection joins the previous content.
 Written_Alias :: struct {
 	target: Storage_Id,
 	at:     []Proj_Step,

@@ -358,377 +358,102 @@ do not report lifecycle errors or add normal-path cleanup points.
   escape and reset. A clone may still retain its source's regions through
   shared strings, even when container storage uses the destination allocator.
 
-Every access to a place reached through carriers, whether it loads, borrows,
-stores, or is a switch subject, reads it through `prov_read_through_carrier`.
-That reads the place's hops off its normalized place (`prov_place_hops`): the
-carrier whose pointee holds the place, then each carrier that one is read out
-of, with the path below each pointee. The outermost carrier is read first and
-each inner one is loaded out of the one before it, so `p^^.a^.value = 3`
-loads `p^^.a` exactly as reading it does, and `p[0].a` is `[0, a]` below `p`.
-A view's leading element step is dropped, since a view's loans already name
-its elements. A load through a local's loan reads the local's content slots; a
-parameter's caller storage has no content here, so `prov_caller_slots` gives
-each parameter loan slots standing for what that storage holds, one per
-carrier path where the storage's type is known. Where that storage is one
-place, each of those slots holds a loan of its own, so what `p^^.head` and
-`p^^.tail` point at are told apart. A slot is a mutable carrier
-when what is stored there is one, whatever the loan reaching it allows, so
-`head: ^mut Node` behind `h: ^Holder` is reborrowed by a copy as it is behind
-`^mut Holder`. A load through a parameter
-reads those slots, so a mutable copy out of either kind of storage reborrows
-the slot it was read from (`prov_reborrow_loaded`), and the same later uses
-suspend it. Two rules keep a repeated load from meeting its own past: a load
-defines its slot afresh, so a loop's next `list^.head` does not conflict with
-the copy the previous pass made, and a reborrow records the carriers its load
-went through (`Prov_Reborrow.via`), so storing the copy back into one of them,
-as `cur = cur^.next`, replaces that carrier's value. A temporary loaded again
-also severs the reborrows taken from its previous value (`run_severing_event`).
-A switch payload binding over a place uses the carrier stored there whenever
-the binding is used (`prov_note_view_use`), and a carrier handed to a call
-uses every mutable carrier it reaches (`prov_use_reached`), as does one copied
-into storage, a temporary's copy aside (`prov_use_copied`).
+Both run over the [disposable graphs](#disposable-control-flow-graphs) built
+from the [normalized input](#normalized-provenance-input). The mechanism of
+each concept is described at its owner; the table says where to look. The
+`provenance_*` cases in `tests/` and `borrow_matrix_test.odin` are the
+behavioral controls for all of it.
 
-A borrow, slice, `foreach`, or switch of a place reached through carriers
-cannot borrow a root, since which storage the carriers name is known only to
-the solve. It takes a place loan instead (`prov_place_loan`,
-`Prov_Place_Loan`): a snapshot slot of the carriers, at the path below their
-pointee, with its capability. A borrow, slice, or traversal `borrows` the
-place with its own capability, and its value is the snapshot alone, so
-nothing names the carriers it went through; a switch takes a read-only one
-for its payload bindings, which their views join, and a `&mut` field binding
-a mutable one of its field. A bit of the reach rows past the loans' own
-(`place_bit`) marks the snapshot and passes to whatever is defined from it,
-and to what is loaded through a slot holding it (`carry_place_bits`), so
-every use of the borrow or the binding keeps the place loan live, as does a
-carrier copied from it, as `kept := &node`, until it is redefined
-(`place_loan_use`).
+| Concept | Owner |
+| --- | --- |
+| Access through carriers: the hops to a place, the caller slots a parameter's loan stands for, and the reborrow a loaded copy takes | `prov_read_through_carrier`, `prov_place_hops`, `prov_caller_slots`, `prov_reborrow_loaded` in `cfg_provenance.odin` |
+| Place loans, taken by a borrow, slice, traversal, or switch of a place reached through carriers | `Prov_Place_Loan`, `prov_place_loan`, `place_bit`, `check_place_loans` in `borrow.odin` |
+| Access events, the places a slot's definitions may point at, and their merging | `prov_access_through`, `Prov_Slot.offsets`, `prov_note_offset`, `prov_union_offsets` |
+| Publication: a store through carriers | `publish_into_loan`, `publish_into_caller`, `read_caller_slots`, `resolve_content_reads` in `borrow.odin` |
+| Written-argument regions, by parameter and by path | `param_writes_caller`, `Compiler.written_regions`, `written_owner_regions`, `written_region_content`, `Prov_Region_Content` |
+| Region shapes and queries of a value's fields | `region_field_shape`, `Region_Query`, `prov_result_region_at`, `prov_result_region_fields` |
+| Copies and clones | `Prov_Region_Copy`, `prov_copied_region_at`, `prov_clone_region_at`, `prov_define_value_regions` |
+| Implicit failure returns | `prov_error_region_fields`, `Expr_Propagated_Error` |
+| Temporaries, resets, and the cleanup walk | `Flow_Graph.temp_roots`, `Prov_State.held_owners`, `emit_cleanups`, `emit_return_cleanups` in `cfg.odin` |
+| Written aliases: what a local's carriers may reach | `Written_Alias`, `written_aliases`, `prov_written_targets`, `prov_call_written_aliases`, `WRITTEN_ALIAS_DEPTH` |
+| What a call leaves in its arguments | `prov_leave_region`, `prov_region_escape_into`, `content_loans`, `prov_mutable_reach`, `prov_load_writable` |
+| `thread_local` borrows crossing calls, and callbacks | `Compiler.thread_local_writes`, `Callback_Write`, `Callback_Read`, `CALLBACK_RESULT`, `prov_callback_result`, `prov_callback_returned` |
+| Global-write effects and the callbacks a call passes | `compute_global_writes`, `Called_Parameter`, `Callback_Summary`, `call_parts`, `indirect_call_targets`, `callable_type_targets` in `global_effects.odin` |
+| Thread summaries for `parallel` blocks | `compute_thread_summaries`, `Compiler.reach_effects`, `allocator_uses`, `thread_facts_pending`, `thread_summaries_wanted` |
+| Bounded merges and the diagnostics that say *may* | `precision.odin`, `Carrier_Path.cut`, `L0646`, `L0647`, `L0730` |
 
-Every access through carriers emits a `.Through` event with the carriers, the
-path accessed, and whether it reads or writes (`prov_access_through`). The place
-walk reads the place (`prov_read_through_carrier`); a store, a mutable borrow,
-slice, traversal, or `inout` argument, a mutable copy of a carrier into storage,
-and a carrier argument a callee may write through write it, and a read-only copy
-or argument reads all of it, with a second event for the deep `Load` of what a
-call's argument or a copy reaches. The path is below where the carriers point
-(`Prov_Slot.offsets`), which a place loan's paths are too: a borrow's snapshot
-points at the place it is of, as `[count]` for `&mut h^.count`, and so does a
-copy of it, a record field holding it, or a reborrow lent from it, so a store
-through `count` or a call given `Side{&mut h^.count}` writes only there.
-`prov_note_offset` records it at each `Def`, adding each place a slot's
-definitions may point at, so a pointer chosen between `&mut h^.count` and `&mut
-h^.total` points at both, and a borrow through it is a place loan of both,
-leaving the other fields free. Past eight places, the two sharing the longest
-prefix are merged into it until eight are left, so a pointer chosen among fields
-of `h^.left` and `h^.right` may come to point at all of `h^.left` while
-`h^.right`'s other fields stay free (`prov_union_offsets`). An access through
-carriers pointing at different places, as a record holding two field borrows, is
-one event per carrier, and one through a carrier that may point at several is
-one event per place. `check_place_loans` rejects an access whose carriers share
-a valid loan with a live place loan's snapshot at an overlapping path, a read
-only beside a mutable one, unless the carrier holds the loan's own bit, or one
-of a borrow of a place beside it (`accessed_beside`), as `left` does for `right`
-in `.add(&mut left, &mut right)`. A borrow's conflict is reported as the
-carrier's use while it is reborrowed (`L0641`), a switch's as an incompatible
-write (`L0511`). A mutable borrow weakened to a read-only destination takes a
-read-only place loan, and its write and its walk's reads of the carriers become
-reads; the slot standing for them (`prov_through_marker`,
-`Prov_Slot.through_index`, `Prov_Slot.through_end`, `Prov_Slot.walk_reads`) lets
-`prov_reborrow` settle them, as it settles a fresh loan's access. The walk
-leaves out its subscripts, as a call in an index may write. A carrier loaded on
-the way to a place (`Prov_Event.walked`) still reborrows what it was loaded out
-of, but suspends nothing, as the access to the place stands for it.
+Keep these contracts:
 
-A store through carriers is a `Publish` event, which joins what is stored
-into the slots of each storage the carriers' loans name, at the path stored
-to (`publish_into_loan`). Where the carriers point at one place, by fields
-and constant elements, the event records that path and the type stored
-(`Prov_Event.stored`). Where they then hold one live loan, of exact path, the
-slot of that type at exactly that place is replaced, as a store to the place
-itself replaces it (design.md "Values that contain borrows"). Once reaching
-has settled, `resolve_content_reads` records the replaced slots on the event
-(`Prov_Event.replaces`), and liveness ends their earlier values there, as at
-a `Def`. A carrier with no loan on some path is unchecked, so one loan
-suffices. Through a parameter's loan naming one storage reached through
-pointers (`Prov_Slot.caller_one`), the store lands in the caller slots of
-that storage instead (`publish_into_caller`), replacing them as a local's,
-and a load through the loan reads them (`read_caller_slots`), so the
-parameter itself holds nothing stored. The copy of a stored carrier is
-linked to those slots as to a local's (`prov_reborrow`). A slice
-parameter's slots stand for every element, so a store through one joins
-into the parameter itself, as one whose copies nothing links
-(`Prov_Event.linked`), such as a whole record's, also does; every later
-load through the parameter reads it there.
-
-Result summaries, written-argument regions, and escape levels propagate these
-facts through direct, generic, and indirect calls. A written-argument region is
-summarized for each parameter a body may write (`param_writes_caller`, which
-`parameter_writes_caller` restates for a signature's parameter by index):
-`inout`, a mutable carrier, or a read-only one reaching a mutable carrier at any
-depth (`prov_type_reaches_mutable`), such as `..^mut T` or a `^Box` holding a
-`^mut T`. The part backing owners is kept apart (`written_owner_regions`): an
-allocator handle left there keeps its region for the owners later made from it,
-but only the owners' part is checked against the storage it lands in, as a store
-by name checks only an owner. Both are also kept by path below what the argument
-names (`written_region_content`), so a call stores each part at the field the
-body wrote rather than at the whole argument; those paths stop at the
-written-alias depth so recursive calls converge. Only the parameter's incoming
-fact is dropped from its own row. A field the body wrote from another field of
-the same argument keeps that dependency: while a store into the parameter reads
-its regions (`Prov_Self_Reads`), reads of the incoming value leave out the
-parameter's own region and record where they read, and the store records a copy
-entry (`Prov_Region_Content.from`). The call resolves a copy entry against the
-caller's content at that field, so an unrelated allocator handle beside it is
-not taken along; a copy within the caller's own writable parameter is recorded
-as a copy again. A dependency the parameter's region reached any other way still
-stands for the whole argument. The whole-argument summaries are joined from
-these rows, with a copy entry standing for the whole argument, and each row
-entry keeps its `own` flag when the call stores it, so a container's backing
-allocation stays apart from its elements. A handle's region content entry is
-kept apart from an owner's at the same path, and a write through a carrier is
-recorded at its path below the carrier (`prov_path_below_carrier`), so
-`dst^.alloc = handle` and `dst^.items = make(...)` stay distinct. Whole-record
-stores use the same distinction: region facts for locals and procedure results
-keep record fields separate, recursively (`region_field_shape`), and owner
-escape reads the fields holding owners and the record's own dependency
-(`prov_result_region_at`). That dependency has its own entry at the record's
-path, so a scalar managed record keeps its moved-parameter escape contract
-through locals and results. Union field steps identify variant indices, so
-success and error payloads have independent facts. Widening remaps region paths
-by variant label, including through explicit conversions. Queries follow
-temporary field projections, constructors, success unwrapping, and switch
-bindings. Stored region content is keyed by `Storage_Id`, including anonymous
-backing arrays. `Prov_Input` interns the corresponding `Written_Storage` keys,
-keeping symbols for named storage and source/type/expansion identity for
-temporaries. Known indirect reads query the selected target path instead of
-joining unrelated fields; unresolved alternatives retain the conservative
-fallback. Result contracts compare corresponding paths and fact kinds, keeping
-backing dependencies separate from payload dependencies. `Region_Query` selects
-all regions, owner regions, or the value's own backing dependency. Shapes stop
-at a bounded depth; their conservative leaves are queried without expanding them
-again, including for recursive container types.
-
-Copies compute regions recursively (`prov_copied_region_at`), with their source
-value, source type, projected source prefix, and allocator kept in
-`Prov_Region_Copy`. Destructuring reads `Destructure.clones` and starts copying
-at the field type; only source queries prepend the containing record's path.
-Explicit clones select that context through `prov_clone_region_at`; copied
-declarations and assignments, implicit variant copies, and copied error payloads
-use the same rules. Widening remaps destination paths to the source type before
-querying the copy. `prov_result_region_fields` supplies the same copied field
-facts to stores and escape checks, including a projected source. Newly allocated
-storage uses the destination, while logical copies retain their source regions.
-Custom copy hooks use their result summaries. Container element facts use the
-same projected-place walk as record fields (`prov_define_value_regions`), so
-nested containers of static strings do not retain their old allocation. Shared
-and weak handles separate their control block's allocator from their payload's
-regions, and copies, downgrades, and upgrades keep both. An indirect result
-capable of sharing storage also conservatively retains borrowed input regions,
-including at a shape depth cut. Map index insertion records key regions
-alongside key loans, including through a mutable carrier; whole map-literal
-regions include their keys too.
-
-Implicit failure returns record the error's region and per-field facts in the
-enclosing result's failure variant (`prov_error_region_fields`). A mapper reads
-the same error facts through `Expr_Propagated_Error`. Deferred resets check the
-returned payload as well as owners lifecycle records at each reset or provider
-end, including consumed bindings and moved parameters. Evaluated owned operands
-are held while later operands run; moved arguments leave that set on entry to
-the callee. Borrowed switch bindings alias their subject's payload paths for
-region reads, writes, and escape checks, including through nested bindings and
-known carrier targets. Carrier targets include an explicit unknown alternative
-(`Written_Alias.target == Written_Storage{}`), which survives alongside known
-targets. Borrowed payload aliases retain the known destinations and an optional
-final `NO_ROOT` alternative. Region reads and writes follow the known aliases
-and also retain a local snapshot for unresolved storage. Escape checks enforce
-both the known destinations' lifetime constraints and the unresolved fallback.
-Anonymous destinations resolve to provenance roots through `root_by_storage`;
-borrowed payload aliases retain those roots, and reads of binding targets follow
-the same chain as region writes and callee invalidation. Read-only carriers also
-retain targets so region reads can follow their storage. A source capable of
-holding checked carriers contributes an unknown alternative when it has no
-target facts, including a global carrier read. Indirect loads apply this rule
-per possible source, so one known source cannot hide another source's missing
-facts. Normalized transfer components identify union and box payloads for
-source-target recording, call invalidation, and region queries, including
-fallible boxes. Copied payloads also retain an unresolved alternative. Map
-literal keys and values keep separate target paths. A known address records only
-the storage it names, not the targets of carriers inside that storage.
-`prov_place_carrier` identifies the last carrier crossed to reach a place; alias
-reads load the carriers held in that storage separately. Targets therefore
-follow successive dereferences and carrier fields without treating a pointer
-variable as its own pointee. Reslicing a carrier forwards its targets; slicing
-owned storage records its address. Both written target-storage paths
-(`Written_Alias.at`) and carrier-position paths (`Written_Alias.path`) stop at
-eight projections and carry the depth precision marker. This bounds recursive
-cursor growth and repeated container wrapping; a truncated projection always
-joins previous content. `prov_place_of`, `prov_place_carrier`, and
-`prov_path_below_carrier` read one canonical `Prov_Place`, whose base is a
-storage ID or a carrier value ID and whose path ends below that base. Written
-storage is identified by a symbol, or by a temporary's AST identity, storage
-type, and defer expansion. Slice literals use their hidden array's type and
-record their element targets in that storage. An implicit view records the
-address of its owner storage; a box view adds the payload step. Copies and
-reslices therefore follow the same storage facts, including unresolved
-alternatives introduced by a call through another view. Storage IDs and their
-normalized descriptions survive graph passes. Replay and event materialization
-share the frozen input instead of copying it with carried facts. Copies own
-their paths and map-key strings; no description points into a disposable fact or
-carry arena. Construction metadata and synthetic calls remain in the body's
-analysis arena. A normalized borrow transfer (`Prov_Transfer_Borrow`) names its
-storage identity for target lookup, source-target recording, and call
-invalidation. Unboxing removes its source payload step; checked variant
-extraction replaces the source variant step with the result's success step,
-retaining an unresolved alternative for a copied mutable payload. Both stored
-values and direct arguments use these projections. Call processing
-(`prov_call_written_aliases`) adds unresolved alternatives to carrier storage
-the writable parameter contract may replace. It follows known nested targets and
-borrowed payload aliases, distinguishes read-only storage from writable carriers
-inside it, and handles literal payloads, optional payloads, pack elements, and
-spreads. A visited set distinguishes storage paths and write capabilities to
-terminate cycles. Literal components retain their checked destination types and
-paths. Shared transfer projections select the success payload for stored and
-direct `or_else`/`or_return` values, including the fallback alternative, before
-invalidation applies the effective parameter capability. View invalidation
-follows the backing storage's carrier shape so a read-only outer view preserves
-the capabilities of mutable carriers inside it. Unknown and cyclic cursor
-targets retain an unresolved alias for the owner-escape check alongside any
-acyclic known targets. Borrowed payload carrier writes also publish into the
-subject's slots, resolving alias prefixes and translating union tag steps into
-carrier-shape wildcards; unknown storage uses the solver's `Publish` event.
-Publication preserves previous content at possible destinations. Uniqueness must
-survive every alias in a nested chain before a write can replace a subject's
-carrier slot. Borrow retention resolves the binding's view loans to the actual
-destination. Temporary-provider queries allocate an identity; only walking the
-handle call registers an evaluated provider to end at the statement boundary. A
-borrowed temporary root also records its managed owner and original type, so
-views and erasure retain its regions. Anonymous storage shares the real
-temporary root and installs its initial regions, including a slice literal's
-element regions. Later stored owners remain live until that storage's cleanup.
-Reset checks merge those stored dependencies with the temporary's original owner
-dependencies, preserving the allocator-handle filter. Cleanup traversal pops
-registrations as they run and restores them for other exits; an earlier reset
-therefore sees only owners whose cleanup is still pending. Alternative
-expression branches keep their temporary registrations apart and merge only
-continuing branches. `emit_return_cleanups` excludes discarded expression
-temporaries and staged operands while retaining the returned value's
-dependencies, for explicit returns and implicit `or_return` failures alike. The
-statement-end walk borrows the ending root tail as a slice after shrinking the
-registration stack; its queries and root-end events do not append to that stack.
-Reset queries exclude allocator handle fields while retaining owners and
-borrowed data; provider destruction still checks every control-block dependency.
-
-In the body, a write through a local set from such a parameter counts as one
-through the parameter (`written_aliases`): a carrier into its storage, a copy of
-a read-only carrier (`alias := outs`), or a value holding its carriers (`b :=
-box^`, `b := Box{box^.out}`), from either operand of a conditional, `or_else`,
-or `move`. Each alias records the path in the local that holds the parameter's
-carriers (`Written_Alias`), from a literal's field or an assignment to
-`pair.unused`, so a write through `pair.local^` is not one through
-`pair.unused`. An alias set from `&mut place` or `place[:]` of a variable also
-records that place, so an owner written through `p := &mut out` lands in `out`'s
-region facts and a later reset sees it, and one written through a pointer to
-file-scope, `static`, or `thread_local` storage is checked as a store into it by
-name would be (`prov_region_escape_into`). At the call it lands in the place
-`&mut place` or an `inout` argument names; any other carrier argument, each pack
-operand among them, is written through (`prov_leave_region`), as `p^ = owner`
-is. `content_loans` represent loads through caller storage, substituted through
-the actual arguments. Whole-program global-write effects also apply at calls.
-Operators without an `Expr_Call` use synthesized call events for the selected
-procedure.
-
-A body that writes caller storage and borrows `thread_local` storage is also
-solved for which `thread_local` global it may leave in each argument
-(`Compiler.thread_local_writes`), read off its stores into caller storage. A
-call leaves a borrow of that global in the matching argument, so a helper that
-forwards its parameter is summarized too, and a spawn reports any argument its
-call may write one into (`L0730`), since the worker's storage ends with its
-thread. A body that calls a callback it received records, as a `Callback_Write`,
-which parameter may receive what that callback leaves in which of its arguments;
-the summary reads a `Static` stand-in root for it, which nothing else
-constrains. A direct call substitutes the procedure it passes, or forwards the
-record when it passes its own callback parameter; any other value, and any call
-through a value or a `dyn` slot, may be any body the global-write effects found
-for its type (`indirect_call_targets`, `callable_type_targets`), whatever
-contract the type carries, since a contract bounds only the result. A stand-in
-that reaches a `return` is recorded as a `Callback_Read` instead of a result
-dependency, substituted the same way where the result is
-(`prov_callback_result`), and a contract's substitute may read no callback the
-contract does not. A callback's own result is one more argument
-(`CALLBACK_RESULT`): a call through a value with no summary may also return the
-`thread_local` borrow any body of its type may return, or its stand-in when the
-value is the body's own callback (`prov_callback_returned`), and a named
-procedure substitutes what its result summary names. What a procedure variable
-or argument may hold is what the global-write effects resolved for that call
-(`Compiler.called_values`, `Compiler.argument_values`), so a copy of a callback
-is still the callback. Each summary lines up with the call's arguments by its
-parameter count: a callable view passes itself before a held procedure's
-parameters, and a callable record's `call` takes the record the view hides. A
-callback resolved on a later round can add summary dependencies, which the
-worklist registers as they appear. The borrow a call leaves lands only where the
-argument's mutable carrier paths lead, level by level (`prov_mutable_reach`): a
-read-only carrier is walked through for the mutable ones in what it points at,
-but neither read-only storage the argument points at nor a read-only field
-beside a mutable one is a destination. The walk and the test for whether a type
-reaches a destination (`prov_type_reaches_destination`) visit each type once
-rather than stopping at a depth, so a long chain hides nothing, and a
-recursive type stands for every carrier below it. A carrier path cut at the
-depth or width budget names no carrier, so both search the value it cut
-(`Carrier_Path.cut`) for a read-only carrier that leads to a destination.
-Below a cut, and below a type already on the walk, the rest is left to the
-analysis: a `writable` deep `Load` (`prov_load_writable`) keeps what each
-mutable carrier reached names, going on through mutable carriers and through
-read-only ones whose pointee reaches a destination, so a recursive
-`view: ^int` names none. The slots loaded below a cut carry the path's
-precision; a write through a carrier passes that precision to the storage it
-lands in, and `L0646`, `L0647`, and `L0730` then say the borrow *may* be
-there. A parameter counts as written when it is `inout`, a mutable carrier, or
-a read-only one reaching a mutable carrier (`parameter_writes_caller`, the same
-rule as `param_writes_caller`), such
-as `outs: []^mut ^int` or a variadic `..^mut ^int`. A slice also carries its
-elements' loans, so a slice path is walked at its element type as well, and
-the storage it views by its own carriers' types (`prov_load_writable`). A
-variadic pack is a slice over its operands, so it takes the same walk, and
-each operand lends as one argument of its type would. Only the loan a spawned
-call leaves is exempt from
-the crossing check, which the spawn has reported; one a call on the parent
-leaves is checked when it reaches a later task, as a borrow taken there directly
-would be.
-
-Once the result summaries settle, `compute_thread_summaries` builds each body's
-graph once more to collect the summaries a `parallel` block's checks read
-([Globals while tasks run](design.md#globals-while-tasks-run) and [Allocators
-and tasks](design.md#allocators-and-tasks)): the reach effect, from `Reach`
-events resolved to the globals whose stored carriers they touch; the
-allocator-use effect, per parameter, from the region facts at each allocating
-operation; and the drops every thread runs at exit. All three effects settle per
-call, not per procedure type ([Global write
-effects](design.md#global-write-effects)). `compute_global_writes` first settles
-which parameters each body calls (`Called_Parameter`), through a variable that
-may hold one or by passing one where a callee calls its own; a procedure-typed
-or `dyn proc` parameter or local is such a variable (`effect_variable`), and a
-view converted from a named procedure or capture literal is a value naming its
-target (`effect_value`), and keeps each such body's effects apart from those
-callbacks in a `Callback_Summary`. A call then takes in `Call_Part`s
-(`call_parts`): a direct callee's own part, and for each callback it calls, the
-whole summary of what this call passes there, as `Compiler.argument_values`
-resolved it; a call through a followed variable, each value's; and any other,
-every body of its union. A value the calling body received itself is its
-caller's while the summaries settle, and any procedure of its type at the body's
-own calls (`open`). A body's whole summary, which `global_writes`,
-`reach_effects`, and `allocator_uses` hold, adds that union for each parameter
-it calls. A callback is given the regions its callee passes it
-(`Callback_Summary.regions`), substituted through the outer call's. A view
-converted at the call resolves to its concrete target (`converted_view_call`),
-and a task's call on its worker resolves its values where its `spawn` is
-(`Compiler.spawn_calls`, `Effect_Call.values_from`), so its `run` procedure's
-summary is per spawn. Each part keeps the call or hook it came through for
-diagnostics, and each `Task_Site` keeps its spawned call, so a rejection names
-the procedure value, callback, or union member that writes or reaches the global
-(`call_effect_origins`, `note_value_targets`). The facts are recorded only while
-`thread_facts_pending` is set, so the other passes do not pay for them, and the
-pass runs only when `thread_summaries_wanted` is set, which checking a
-`parallel` block does: it adds 10 to 20 percent to the front end, which only a
-program with a block should pay.
+- **One walk reads every carrier access.** A load, borrow, store, or switch
+  subject of a place reached through carriers goes through
+  `prov_read_through_carrier`, outermost carrier first, and emits a `.Through`
+  event with the carriers, the path below their pointee, and whether it reads
+  or writes. Locals and parameters behave alike: a parameter's caller storage
+  has no content of its own, so its loan gets caller slots standing for what
+  that storage holds. A new place form changes the walk and its tests, not
+  the solvers.
+- **A place reached through carriers takes a place loan, not a root loan.**
+  Which storage the carriers name is known only to the solve, so a borrow,
+  slice, traversal, or switch of such a place snapshots the carriers and is
+  checked against later accesses by path overlap (`check_place_loans`); a
+  borrow's conflict is `L0641`, a switch's `L0511`.
+- **Paths are below the pointee, and bounded.** Slot offsets, place-loan
+  paths, written-alias paths, and region content paths all start below where
+  the carriers point, so a write lands only where it names. Offsets merge past
+  eight places and alias paths stop at `WRITTEN_ALIAS_DEPTH`; a truncated
+  path carries the precision marker, so `L0646`, `L0647`, and `L0730` say the
+  borrow *may* be there, and recursive cursors converge.
+- **A store through carriers is a `Publish` event.** It joins what is stored
+  into the slots of each storage the carriers' loans name. Where they name one
+  place with one live loan of exact path, the slot of the stored type at that
+  place is replaced, as a store to the place itself replaces it (design.md
+  "Values that contain borrows"). A parameter's loan publishes into its caller
+  slots, so the parameter itself holds nothing stored.
+- **Owners, handles, and fields stay apart.** Region facts are kept by path,
+  and backing dependencies apart from payload dependencies: a record's fields,
+  a container's elements and backing, a shared handle's control block and
+  payload, and a union's variants each have an entry of their own.
+  Written-argument summaries keep the owners' part apart from allocator
+  handles (`written_owner_regions`) and keep each part at the path the body
+  wrote (`written_region_content`); a copy within one argument is a copy
+  entry the call resolves in its caller.
+- **Copies keep their source's regions unless they allocate.** Newly
+  allocated storage is in the destination; strings, shared handles, and
+  borrowed parts keep their source regions, recursively, and custom copy hooks
+  substitute their result summaries.
+- **Unknown stays unknown.** A set of carrier targets keeps an explicit
+  unresolved alternative beside its known targets, and a source with no target
+  facts contributes one per possible source, so one known source cannot hide
+  another's missing facts. Region reads, writes, and escape checks follow the
+  known aliases and keep the conservative fallback.
+- **Writes through parameters are summarized per written parameter.** A
+  parameter is written when it is `inout`, a mutable carrier, or a read-only
+  carrier reaching a mutable one (`param_writes_caller`), and a local set from
+  it counts as the parameter (`written_aliases`). The borrow a call leaves
+  lands only where the argument's mutable carrier paths lead
+  (`prov_mutable_reach`); that walk visits each type once, so a recursive type
+  stands for every carrier below it and a long chain hides nothing.
+- **Callbacks substitute per call.** What a callback leaves in its arguments
+  or returns is summarized against a stand-in root and substituted with what
+  each call passes. A call through a value may be any body of its type the
+  global-write effects found, whatever contract the type carries, since a
+  contract bounds only the result. Effects settle per call, not per procedure
+  type ([Global write effects](design.md#global-write-effects)), and each
+  summary part keeps the call or hook it came through, so a rejection names
+  its origin.
+- **Thread facts are opt-in.** Once the result summaries settle,
+  `compute_thread_summaries` builds each body's graph once more for the
+  summaries a `parallel` block's checks read ([Globals while tasks
+  run](design.md#globals-while-tasks-run), [Allocators and
+  tasks](design.md#allocators-and-tasks)). Those facts are recorded only while
+  `thread_facts_pending` is set, and the pass runs only when checking a block
+  set `thread_summaries_wanted`: it adds 10 to 20 percent to the front end,
+  which only a program with a block should pay.
+- **Temporaries end with their statement.** The statement-end walk runs
+  resets against only the owners whose cleanup is still pending, popping
+  registrations as they run and restoring them for other exits. Owned
+  operands are held while later operands run, and a moved argument leaves
+  that set on entry to the callee.
 
 ### Lowering parallel blocks
 
@@ -801,64 +526,51 @@ hook(drop) on Task_Scope                // joins every started thread,
   effect analysis follow every procedure of the run procedure's type into the
   join hook, which every block shares.
 
-The checks run on the `Prov_Diagnose` graph. A block's tasks hold what they lend
-in one slot per block, `task_slots`, which the hidden local's drop uses, so
-every task loan is live until the join. Each spawn adds to it rather than
-replacing it, so a spawn in a loop keeps the earlier iterations' loans, and the
-join empties it for a block entered again. A temporary the spawned call borrows
-is in the frame, so its loan (`spawn_owned`) is left out of what the task holds;
-a result that borrows it still carries the loan. A spawn site that reborrows a
-mutable carrier also holds a slot of its own, `task_holds`, derived from that
-carrier, so the carrier stays suspended until the join while a loop's fresh
-chunk binding is not. A spawn emits a `Task_Start` event naming its site in
-`task_sites`, with what its arguments hold and the regions its task reserves,
-and the hidden local's drop emits `Task_Join` for its block. The window solver
-in `borrow.odin` is a may-analysis over blocks with one bit per spawn site, so a
-branch that has not spawned is outside the window and a spawn in a loop holds it
-open around the back edge; past 64 sites, the last bit is shared and never
-cleared. Writes and reaches inside a block are recorded as `Shared_Effect`
-events in `global_effects.odin`, and the parent's allocator use as `Region_Use`
-events, and the solver reports both against the tasks that may be running. The
-emission contract validates each recorded spawn.
+The checks run on the `Prov_Diagnose` graph:
 
-Effects on `thread_local` storage depend on the executor. A spawned call's
-effects are recorded with `task_effects` set, and none of its `thread_local`
-writes become accesses at the spawn (`prov_effect_call`). A bare block's call is
-recorded `elsewhere`, so the fixed point in `compute_global_writes` leaves its
-`thread_local` writes out of the enclosing procedure's. A pooled block's spawns
-are kept in `pool_tasks` by scope, and its join applies their run procedures'
-`thread_local` writes as invalidations (`prov_pool_join_effects`). The checker
-lists each block's spawns in `Stmt_Parallel.spawns`, and `prov_enter_parallel`
-registers them, with the slots a join uses, as the walk enters the block, since
-a loop may reach an exit written above its first spawn. Every exit then carries
-the join's writes, tagged with the block, and `settle_pool_joins` drops them
-where the task window shows no task of the block may have started; those
-summaries include their own pooled descendants and exclude bare ones, which is
-exactly what a helping join may run.
-
-The join check ([Releasing before the
-join](design.md#releasing-before-the-join)) runs at each `Task_Join` in the same
-replay (`check_join_retention`), which records liveness after the event for it.
-The values the parent keeps are the slots of a symbol live after the join, and
-every borrowed parameter's slots, while a `move` parameter counts as a local
-does; a slot counts when its symbol's type is, holds, or reaches an
-`@(wakes_on_drop)` type (the `waker` of `transfer_facts` in `hooks.odin`), and
-its carrier path passes through a marked type, or a generic record with a marked
-type argument, or ends at a carrier reaching one (`path_waker`), so a wrapper's
-other fields do not count. This relies on content slots keeping their paths
-apart: a conversion projects its operand's slots by path, and a distinct type
-selects sources by its underlying type's shape (`prov_select_content`). Its
-reaching loans are compared with those in the block's `task_slots` and
-`task_holds` slots by root: one root with overlapping paths, unknown roots, or a
-parameter's root against another external one (`loans_may_share_storage`). Two
-external roots overlap only when an object type one root's symbol reaches holds,
-inline, one the other reaches, either way (`roots_may_share_storage`):
-`collect_pointees` gathers each root's object types once per join and reports a
-raw pointer or erased view as reaching anything, and `type_holds_inline` follows
-fields, fixed-array elements, variants, and `distinct`. Such a value's drop
-counts as a use of what it borrows, hook or not (`prov_drop_reads`), so a local
-dropped in the block's cleanup is not live at the join, and one dropped later,
-on any exit path, is.
+- **Task loans.** A block's tasks hold what they lend in one slot per block,
+  `task_slots`, which the hidden local's drop uses, so every task loan is live
+  until the join. Each spawn adds to it, so a spawn in a loop keeps the
+  earlier iterations' loans, and the join empties it for a block entered
+  again. A temporary the spawned call borrows is in the frame, so its loan
+  (`spawn_owned`) is left out of what the task holds; a result that borrows it
+  still carries the loan. A spawn site that reborrows a mutable carrier also
+  holds a slot of its own, `task_holds`, so the carrier stays suspended until
+  the join while a loop's fresh chunk binding is not.
+- **The task window.** A spawn emits a `Task_Start` event naming its site in
+  `task_sites`, with what its arguments hold and the regions its task
+  reserves, and the hidden local's drop emits `Task_Join` for its block. The
+  window solver in `borrow.odin` is a may-analysis over blocks with one bit
+  per spawn site, so a branch that has not spawned is outside the window and a
+  spawn in a loop holds it open around the back edge; past 64 sites, the last
+  bit is shared and never cleared. Writes and reaches inside a block are
+  `Shared_Effect` events in `global_effects.odin`, the parent's allocator use
+  `Region_Use` events, and the solver reports both against the tasks that may
+  be running. The emission contract validates each recorded spawn.
+- **`thread_local` effects depend on the executor.** A spawned call's effects
+  are recorded with `task_effects` set, and none of its `thread_local` writes
+  become accesses at the spawn (`prov_effect_call`). A bare block's call is
+  recorded `elsewhere`, so `compute_global_writes` leaves its `thread_local`
+  writes out of the enclosing procedure's. A pooled block's spawns are kept in
+  `pool_tasks` by scope, and its join applies their run procedures'
+  `thread_local` writes as invalidations (`prov_pool_join_effects`).
+  `prov_enter_parallel` registers the block's spawns (`Stmt_Parallel.spawns`)
+  as the walk enters it, since a loop may reach an exit written above the
+  first spawn; every exit then carries the join's writes, and
+  `settle_pool_joins` drops them where the window shows no task of the block
+  may have started.
+- **The join check** ([Releasing before the
+  join](design.md#releasing-before-the-join)) runs at each `Task_Join` in the
+  same replay (`check_join_retention`). The values the parent keeps are the
+  slots of a symbol live after the join and every borrowed parameter's slots;
+  a slot counts when its carrier path reaches an `@(wakes_on_drop)` type
+  (`path_waker`, from the `waker` of `transfer_facts` in `hooks.odin`), so a
+  wrapper's other fields do not count. Its loans are compared with the
+  block's `task_slots` and `task_holds` by root (`loans_may_share_storage`,
+  `roots_may_share_storage`); a raw pointer or erased view reaches anything.
+  A drop counts as a use of what the value borrows (`prov_drop_reads`), so a
+  local dropped in the block's cleanup is not live at the join, and one
+  dropped later, on any exit path, is.
 
 ### Closed semantic registries
 
@@ -1454,28 +1166,15 @@ position encoding, as the protocol defines them. Completion kinds after
 
 References and rename identify a binding by its written definition, so every
 root whose snapshot has the same binding at that place contributes its recorded
-uses. Rename refuses a predeclared binding, one defined in or used by a bundled
-file, an invalid new name, and any root that loads the binding's file and has
-errors, since references from a failed check are partial. It then lexes every
-non-bundled source of each such root. Each occurrence of the old name must have
-a recorded binding, so unchecked code such as an inactive `when` branch, or a
-name the index does not record, such as an interface slot, stops the rename. At
-an unqualified use or the declaration, the new name must not already be visible;
-a named argument names the callee's parameter instead, so the caller's scope is
-not consulted there. A local declared with the new name where the binding is
-visible must not share its `scope`, nor shadow it when the binding is a variable
-or parameter. These two rules also cover capture: a binding that would be
-shadowed at some use is visible at the declaration, or declared later where the
-renamed binding is visible. Fields, enum members, and `impl` or `extend` members
-are checked against their type's members and, at each selector, against the
-members of the operand `query_selector_operand` records, promoted fields
-included; a selector whose operand or members it cannot name stops the rename. A
-selector already spelled with the new name must not select the renamed field, or
-become ambiguous, once it is renamed: each `using` branch is followed as the
-checker follows it, and only a field of that name declared along the same branch
-hides the renamed one. A public extension is also checked as a package name. A
-method may not be renamed to or from a name in `query_implicit_names`, and a
-parameter to or from `self`.
+uses. Rename refuses rather than guesses: every root that loads the binding's
+file must check without errors, since references from a failed check are
+partial, and every occurrence of the old name in those roots' non-bundled
+sources must have a recorded binding, so an inactive `when` branch or an
+interface slot stops it. The new name may not capture or be captured, as
+`query_visible` and each binding's `scope` show, and a field or member rename
+is checked at every selector against the members `query_selector_operand`
+records, promoted fields included. [rename.odin](lsp/rename.odin) states each
+refusal beside the check that makes it.
 
 Formatting and documentation call the procedures behind `-fmt` and `-api`
 rather than reimplementing them. `textDocument/formatting` needs no check, so
