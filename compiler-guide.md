@@ -11,6 +11,7 @@ examples under `tests/` require a source checkout.
 - [Build configuration](#build-configuration)
 - [Import collections](#import-collections)
 - [Projects](#projects)
+- [Interface files](#interface-files)
 - [Running tests](#running-tests)
 - [Default allocator and logger](#default-allocator-and-logger)
 - [Inspecting a compilation](#inspecting-a-compilation)
@@ -26,17 +27,27 @@ lokec <file.loke | directory> [options]
 
 Each invocation accepts one root input:
 
-- A **file** compiles that file as the root package, plus its imports. Other `.loke` files beside it are not automatically included in the root package.
-- A **directory** compiles all `.loke` files directly inside it as one package, plus its imports. It does not recursively compile every subdirectory.
+- A **file** compiles that file as the root package, plus its imports. Other
+  `.loke` files beside it are not automatically included in the root package.
+- A **directory** compiles all `.loke` files directly inside it as one package,
+  plus its imports. It does not recursively compile every subdirectory.
 
-Executable builds require a root package named `main` with a `main :: proc()` entry point. For a multi-file package, pass its directory:
+Executable builds require a root package named `main` with a `main` procedure
+that takes no parameters. It may return nothing, an `i32` exit status, or a
+fallible result such as `Status(E)`, whose failure is reported after cleanup
+with exit status 1; see
+[Program entry and exit](design.md#program-entry-and-exit). For a multi-file
+package, pass its directory:
 
 ```powershell
 .\lokec.exe tests\pkg\diamond -o diamond.exe
 ```
 
-Use `-o <path>` to choose an output location. Without it, `examples\hello.loke` produces `examples\hello.exe`, and `tests\pkg\diamond` produces `tests\pkg\diamond.exe`. Object builds use `.obj` instead. Create the destination directory first if it does not exist,
-and quote paths containing spaces. Output files at the selected path can be overwritten.
+Use `-o <path>` to choose an output location. Without it, `examples\hello.loke`
+produces `examples\hello.exe`, and `tests\pkg\diamond` produces
+`tests\pkg\diamond.exe`. Object builds use `.obj` instead. Create the
+destination directory first if it does not exist, and quote paths containing
+spaces. Output files at the selected path can be overwritten.
 
 Compile examples individually: `examples/` contains separate programs, not one
 multi-file package. [Examples](examples/README.md) describes each one.
@@ -59,12 +70,12 @@ if ($LASTEXITCODE -eq 0) { .\args.exe first "two words" }
 | `-opt=<mode>` | Set optimization: `none` (default), `minimal`, `size`, `speed`, or `aggressive`. These map to Clang `-O0`, `-O1`, `-Os`, `-O2`, and `-O3`. |
 | `-panic=unwind\|abort` | Select whether a panic runs registered cleanup before termination. Default: `unwind`. |
 | `-define:NAME=VALUE` | Supply a project-wide `build_config` value. Repeat for different names. |
-| `-collection name=path` | Map an import prefix to a directory. Repeat for different prefixes. |
+| `-collection name=path` | Map an import prefix to a directory; `-collection:name=path` is the same. Repeat for different prefixes. |
 | `-copy-cost=N` | Warn about copies that may allocate, and about copies of at least `N` inline bytes. Default: `512`; use `-copy-cost=off` to disable both. |
 | `-build-mode=exe\|obj\|test` | Produce an executable (default), one relocatable object, or a test executable without running it. |
 | `-runtime=<dir>` | Override the C runtime source directory, normally `runtime/` beside the compiler. |
 | `-log-level=debug\|info\|warning\|error\|off` | Set the compiled `LOKE_LOG_LEVEL` used by `core:log`. Default: `debug`. |
-| `-fmt`, `-fmt-check` | Rewrite a file, or a directory's `.loke` files, in the canonical layout (comments.md "Formatting"); `-fmt-check` only lists the files that would change and exits 1 if there are any. Only whitespace changes. |
+| `-fmt`, `-fmt-check` | Rewrite a file, or a directory's `.loke` files, in the canonical layout (see [Formatting](comments.md#formatting)); `-fmt-check` only lists the files that would change and exits 1 if there are any. Only whitespace changes. |
 | `-doc` | Print the package's public API as Markdown and stop: the [doc comments](design.md#doc-comments) of its `package` clauses, then each public declaration's signature and public struct field, with its doc comment, then a page for each package of the project it imports. A doc comment starts with `///`; other comments are not shown. A standard-library directory works too: `lokec core\strings -doc`. |
 | `-api`, `-api-check` | Write the [interface file](#interface-files) `api.loki` in the directory of the root package and of each package of the project it imports, and stop; `-api-check` writes nothing, lists the interface files `-api` would change, and exits 1 if there are any. The input must be a directory. |
 | `-g` | Emit debug information at any `-opt` level: procedures, local variables and their types, and a line for each statement, loop update, and block's closing `}`. An executable gets a `.pdb` beside it, carrying natvis rules that show a string's text, a map's entries, and the value an `any_view` or `dyn` points at in Visual Studio and WinDbg, and a panic prints the Loke call stack after its report. |
@@ -137,10 +148,10 @@ local directories for now ([open-questions.md "Package and import versioning"](o
 A package's interface file, `api.loki`, is its public API as Loke source: what
 an importer can name, each declaration after its
 [doc comment](design.md#doc-comments), without bodies. Its comments are
-written `//`, since every comment in the file is for the package's users. It is generated from
-the package and checked in beside its `.loke` files, so it shows up in a
-directory listing, a search, and a code review. To use a package, read its
-`api.loki`; read its source only to change it.
+written `//`, since every comment in the file is for the package's users. It
+is generated from the package and checked in beside its `.loke` files, so it
+shows up in a directory listing, a search, and a code review. To use a
+package, read its `api.loki`; read its source only to change it.
 
 ```powershell
 .\lokec.exe shapes -api          # write shapes\api.loki, and one per project package
@@ -420,8 +431,8 @@ given:
   more than one such program exists, the outermost importer is used. When the
   importing documents close, the document is checked through its own root
   again.
-- Otherwise the root is the document's directory, so a package split across files
-  is checked as one package, together with everything it imports.
+- Otherwise the root is the document's directory, so a package split across
+  files is checked as one package, together with everything it imports.
 - If two or more files in that directory declare `main` outside any brackets,
   the directory holds separate programs, as `examples/` does, so each file is
   its own root. A `main` in a comment or a string does not count.
@@ -434,9 +445,10 @@ imported package updates its importers' diagnostics. After its first check, a
 root rechecks from the first package an edit reached and reuses the packages
 before it, the bundled library among them. Adding or removing files, or
 changing imports, manifests, or file attributes, checks the whole program
-again. Reuse costs memory: up to 64 MiB per root, about 57 MiB for a program of
-five packages. Errors found in files that are not open, such as an imported
+again. Reuse costs memory: up to 64 MiB per root, about 57 MiB for a program
+of five packages. Errors found in files that are not open, such as an imported
 package, are published for those files too.
+
 The nearest [`loke.project`](#projects) is read as `lokec` reads it. Changes
 made outside the editor are picked up when the editor reports changed files:
 the server asks to watch `**/*.loke` and `**/loke.project` when the editor
@@ -461,6 +473,10 @@ relative collection path is relative to the first workspace folder.
   Windows LLVM installation directories, then `PATH`. To select an installation
   for the current PowerShell session, set
   `$env:LOKE_CLANG = 'C:\Program Files\LLVM\bin\clang.exe'`.
+- **A `.asm` import cannot be assembled (`L0632`):** a foreign import of a
+  `.asm` file is assembled with NASM, which `lokec` finds through `LOKE_NASM`
+  and then `PATH`. Install NASM, or set `$env:LOKE_NASM` to its `nasm.exe`.
+  Clang assembles `.s` and `.S` files itself.
 - **C headers or runtime libraries cannot be found:** check that the MSVC C++
   toolset and Windows SDK are installed. An x64 Visual Studio developer shell
   can provide the required include and library environment.
