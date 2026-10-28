@@ -190,16 +190,17 @@ switch is now rejected too.
 
 **Proposed model.** Every borrow of a place reached through carriers, a
 switch subject's view included, records one **place loan**: a snapshot slot
-of the carriers holding the place, the path below their pointee, its
+of the carriers holding the place, the possible paths below their pointee, its
 capability, and its span. It is live while the snapshot or anything derived
-from it is, as a hold is now. A slot also records the path below what its
-loans name (`Prov_Slot.offset`): a place loan's snapshot has the loan's path,
+from it is, as a hold is now. A slot also records the paths below what its
+loans name (`Prov_Slot.offsets`): a place loan's snapshot has the loan's paths,
 a copy keeps its source's, and a slot defined from sources with different
-offsets keeps each of them (`Prov_Slot.offsets`), so a borrow through a
+offsets keeps each of them, so a borrow through a
 pointer chosen between two field borrows is a loan of both fields, not of
 their parent, while an access through carriers pointing at different places,
-as a record holding two field borrows, is checked at each one's own. Every access through carriers then states
-the carriers, the path below their pointee extended by their offset, and
+as a record holding two field borrows, is checked at each one's own. Every
+access through carriers then states the carriers, each path below their
+pointee extended by its offset, and
 whether it reads, writes, or uses the carrier whole, which a copy or a
 call argument does with its destination's capability. The solve checks each
 access against the live place loans sharing a loan with its carriers at an

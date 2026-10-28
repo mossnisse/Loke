@@ -86,3 +86,65 @@ with what `&mut left^` reaches, where a recursive type makes that content
 indistinguishable from the subject, but it also exempts these writes. Telling
 them apart needs pointee storage the analysis can distinguish from the place
 it was read out of.
+
+### A fifth possible field makes a borrow cover unrelated fields
+
+[Weakening and reborrows](design.md#weakening-and-reborrows) lets a carrier
+be used for a place beside the one borrowed through it. In commit `5244cddd`,
+a pointer chosen among four sibling fields keeps `z` writable, but adding a
+fifth reports `L0641` at the write to `z`:
+
+```loke
+package main;
+Holder :: struct { a: int, b: int, c: int, d: int, e: int, z: int }
+probe :: proc(h: ^mut Holder, x: bool, y: bool, w: bool, v: bool) -> int {
+    a := &mut h^.a; b := &mut h^.b; c := &mut h^.c;
+    d := &mut h^.d; e := &mut h^.e;
+    q := a if x else b if y else c if w else d if v else e;
+    value := &q^;
+    h^.z = 1; // should be allowed
+    return value^;
+}
+main :: proc() {}
+```
+
+`prov_union_offsets` in [src/cfg_provenance.odin](src/cfg_provenance.odin)
+replaces all alternatives by their common prefix once there are more than
+four (`PROV_OFFSET_LIMIT`). Here the prefix names the whole `Holder`, so the
+place loan overlaps `z`. The four-choice version of the same program compiles.
+
+### A store through a dynamically indexed pointer ends an untouched element's borrow
+
+[Values that contain borrows](design.md#values-that-contain-borrows) requires
+a store through a pointer to one of several places to preserve what every
+possible target held, since another place may be written. In commit
+`a74fb16a`, this program compiles, although `i` may be zero, leaving
+`lists[1].head` borrowing `b` when `b` is written. Its parent rejects that
+write with `L0511`:
+
+```loke
+package main;
+Node :: struct { value: int }
+List :: struct { head: ^mut Node }
+probe :: proc(flag: bool) {
+    a := Node{1}; b := Node{2}; c := Node{3};
+    lists := [2]List{List{&mut a}, List{&mut b}};
+    p := &mut lists;
+    i := 0 if flag else 1;
+    q := &mut p[i];
+    q^.head = &mut c;
+    b.value = 1; // should be rejected
+    k := lists[1].head;
+    k^.value = 2;
+}
+main :: proc() {}
+```
+
+`prov_assign` in [src/cfg_provenance.odin](src/cfg_provenance.odin)
+checks only the path below `q` for an exact place, although `q` itself came
+from a dynamic index. `publish_replaces` in [src/borrow.odin](src/borrow.odin)
+then treats the wildcard path as replacing the exact content slot for
+`lists[1].head` because their paths overlap, ending its old loan. A store
+through fixed index 0 still rejects the write, and through fixed index 1
+correctly allows it. Require the complete destination path to be exact
+before replacing a content slot.
