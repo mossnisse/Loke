@@ -313,8 +313,9 @@ checklist.
   microarchitecture level, for the program and the runtime alike, and the
   executable checks the processor at startup, exiting with status 3 on one
   without the level. `x86-64` stays the default. At `x86-64-v3`, `math.fma` is
-  one instruction, with the same result. A C host of an object build can call
-  `loke_rt_v1_require_cpu` or `loke_rt_v1_cpu_supports`
+  one instruction, with the same result. An object build makes the same check from a
+  static constructor, before its C host's `main`, and the host can check first
+  with `loke_rt_v1_cpu_supports`
   ([CPU levels](compiler-guide.md#cpu-levels)).
 
 ### Changed

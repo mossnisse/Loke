@@ -124,13 +124,19 @@ to standard error and exits with status 3. A program for distribution to
 machines you do not control is usually built for `x86-64`; `x86-64-v2` costs
 almost nothing on current hardware.
 
-An [object build](#building-an-object-for-a-c-host) has no entry, so its host
-checks. The runtime exports `int32_t loke_rt_v1_cpu_supports(int32_t level)`
-and `void loke_rt_v1_require_cpu(int32_t level)`, with `level` 0, 1, or 2 for
-the three levels in order; the second reports and exits as the executable
-does. Both are baseline code, so the host may call them first. The host also
-compiles the runtime sources for the object's level: `-print-toolchain
--cpu=<level>` prints the `-march` and `-ffp-contract=off` flags with the rest.
+An [object build](#building-an-object-for-a-c-host) has no entry, so above
+`x86-64` it carries a baseline static constructor that makes the same check,
+which the host's C runtime runs during its startup: before the host's `main`,
+or while a DLL loads. A host's own static constructor that calls an
+export may run first, so it checks for itself. The runtime exports
+`int32_t loke_rt_v1_cpu_supports(int32_t level)` and
+`void loke_rt_v1_require_cpu(int32_t level)`, with `level` 0, 1, or 2 for the
+three levels in order; the second reports and exits as the executable does.
+Both are baseline code, so a host may call them before anything else, for
+example to choose between a baseline and a `x86-64-v3` build of a DLL before
+loading one. The host also compiles the runtime sources for the object's
+level: `-print-toolchain -cpu=<level>` prints the `-march` and
+`-ffp-contract=off` flags with the rest.
 
 ## Build configuration
 
@@ -363,8 +369,8 @@ if ($LASTEXITCODE -eq 0) { .\widget-host.exe }
 
 The host exits with code `0` on success. `-rtlib=compiler-rt` supplies the
 128-bit arithmetic helpers the runtime needs. An object built with `-cpu` also
-needs the runtime compiled for its level, and a check before the first export;
-see [CPU levels](#cpu-levels).
+needs the runtime compiled for its level, and checks the processor before the
+host's `main`; see [CPU levels](#cpu-levels).
 
 Every host thread must attach to the runtime before calling a Loke export and
 detach before the thread exits:

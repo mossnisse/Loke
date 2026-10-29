@@ -127,6 +127,8 @@ emit_llvm_module :: proc(c: ^Compiler) -> (module: string, ok: bool) {
 		emit_entry(&e)
 	} else if c.build_mode == .Test {
 		emit_test_entry(&e)
+	} else if c.target.features != {} {
+		emit_object_cpu_check(&e)
 	}
 	emit_type_info_tables(&e)
 	emit_format_thunks(&e)
@@ -671,11 +673,29 @@ open_entry :: proc(e: ^Emitter) {
 		open_function(e, "define i32 @wmain(i32 %%argc, ptr %%argv)")
 		return
 	}
-	open_function(
-		e,
-		`define i32 @wmain(i32 %%argc, ptr %%argv) "target-cpu"="x86-64" "target-features"="+cmov,+cx8,+fxsr,+mmx,+sse,+sse2,+x87"`,
-	)
+	open_function(e, "define i32 @wmain(i32 %%argc, ptr %%argv) " + BASELINE_ATTRIBUTES)
 	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_require_cpu(i32 %d)", int(e.c.target.cpu))
+}
+
+// The attributes that make a function baseline x86-64 whatever `-march` says.
+@(private = "file")
+BASELINE_ATTRIBUTES :: `"target-cpu"="x86-64" "target-features"="+cmov,+cx8,+fxsr,+mmx,+sse,+sse2,+x87"`
+
+// compiler-guide.md "CPU levels": an object build has no entry to check from,
+// so above baseline it carries a baseline static constructor that does, which
+// the host's C runtime runs before the host's `main`.
+@(private = "file")
+emit_object_cpu_check :: proc(e: ^Emitter) {
+	function := begin_function_emission(e)
+	defer finish_function_emission(e, function)
+	open_function(e, "define internal void @loke.require_cpu() " + BASELINE_ATTRIBUTES)
+	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_require_cpu(i32 %d)", int(e.c.target.cpu))
+	fmt.sbprintln(&e.b, "  ret void")
+	fmt.sbprintln(&e.b, "}")
+	append(
+		&e.globals,
+		"@llvm.global_ctors = appending global [1 x { i32, ptr, ptr }] [{ i32, ptr, ptr } { i32 65535, ptr @loke.require_cpu, ptr null }]\n",
+	)
 }
 
 // design.md "Executable startup ABI": `wmain` initializes the arguments, the

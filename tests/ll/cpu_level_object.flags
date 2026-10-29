@@ -1,0 +1,2 @@
+-build-mode=obj
+-cpu=x86-64-v2

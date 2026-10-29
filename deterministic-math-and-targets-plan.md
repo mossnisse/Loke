@@ -22,14 +22,19 @@ Implemented, from phases 2 and 3:
   lives in `runtime/cpu.c`, compiled as baseline code under a Clang
   `target("arch=x86-64")` pragma. A `"target-cpu"` attribute alone was not
   enough: the command line's features still applied, and a v3 callee was
-  inlined into it. Object hosts call the same exported check; the object
-  carries no requirement metadata yet.
+  inlined into it.
+- Object builds enforce their level rather than describe it: above baseline
+  the object carries a baseline static constructor (`.CRT$XCU`) that calls the
+  same check before the host's `main`. Metadata alone would leave every host
+  to read and act on it; the constructor needs nothing from the host, which
+  can still check first through `loke_rt_v1_cpu_supports`, as one that
+  chooses between builds must.
 - `math.fma` as the FMA instruction at v3, through two `core:math`-private
   built-ins, and a compile-time evaluator for it that rounds the exact
   integer result once, independent of both the host and the software path.
 
 Not started: the reproducible math package and its contract (phases 1, 3's
-kernels, and 4), object metadata, NaN canonicalization, the environment entry
+kernels, and 4), NaN canonicalization, the environment entry
 contract, simulation support, dispatch, and other platforms.
 
 ## Recommended direction

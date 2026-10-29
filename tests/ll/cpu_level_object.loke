@@ -1,0 +1,20 @@
+package widget;
+
+// compiler-guide.md "CPU levels": an object build above baseline has no entry,
+// so a baseline static constructor makes the check, before the host's `main`.
+// The object's own binding of the check shares the constructor's declaration.
+
+foreign loke_runtime {
+	@(link_name="loke_rt_v1_require_cpu")
+	require_cpu :: proc "c" (level: i32) ---;
+}
+
+@(export)
+widget_require :: proc "c" (level: i32) {
+	require_cpu(level);
+}
+
+@(export)
+widget_scale :: proc "c" (x: f64) -> f64 {
+	return x*x;
+}

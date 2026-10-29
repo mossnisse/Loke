@@ -12,6 +12,7 @@ import "core:testing"
 // `math.fma` as an instruction, the bit operations v3 has instructions for,
 // vectors at twice the width, and the distributions over all of them. Each
 // keeps its one `.expected`, which the ordinary run corpus pins at baseline.
+// The trap case binds the check the entry also calls above baseline.
 @(private = "file")
 CPU_LEVEL_CASES :: []string {
 	"tests/run/float_contraction.loke",
@@ -20,6 +21,7 @@ CPU_LEVEL_CASES :: []string {
 	"tests/run/lib_simd.loke",
 	"tests/run/simd_byte_lanes.loke",
 	"tests/run/lib_random.loke",
+	"tests/trap/cpu_level_unknown.loke",
 }
 
 @(private = "file")
@@ -69,7 +71,25 @@ cpu_levels_compute_what_baseline_does :: proc(t: ^testing.T) {
 			skipped_capability(t, fmt.tprintf("this processor does not run %s", level))
 			continue
 		}
-		testing.expectf(t, run.err == nil && run.state.exit_code == 0, "%s at -cpu=%s exited %d", path, level, run.state.exit_code)
+		// The trap case's level is one no processor has, which exits 3 too.
+		trap := strings.has_prefix(path, "tests/trap/")
+		testing.expectf(
+			t,
+			run.err == nil && run.state.exit_code == (trap ? 3 : 0),
+			"%s at -cpu=%s exited %d",
+			path, level, run.state.exit_code,
+		)
+		if trap {
+			errors, errors_err := os.read_entire_file(fmt.tprintf("%s-err", expected_path(path)), context.temp_allocator)
+			if testing.expectf(t, errors_err == nil, "%s: missing .expected-err file", path) {
+				testing.expectf(
+					t,
+					normalise(string(run.stderr)) == normalise(string(errors)),
+					"%s at -cpu=%s: expected stderr %q, got %q",
+					path, level, normalise(string(errors)), normalise(string(run.stderr)),
+				)
+			}
+		}
 		expected, expected_err := os.read_entire_file(expected_path(path), context.temp_allocator)
 		if !testing.expectf(t, expected_err == nil, "%s: missing .expected file", path) {
 			continue
@@ -81,4 +101,68 @@ cpu_levels_compute_what_baseline_does :: proc(t: ^testing.T) {
 			path, level, normalise(string(expected)), normalise(string(run.stdout)),
 		)
 	}
+}
+
+// compiler-guide.md "CPU levels": an object build above baseline checks the
+// processor before its host's `main`, from a static constructor. One host
+// stands in for the check, to see it run once, first, for the object's level;
+// the other links the runtime's own check, which passes on any processor that
+// runs the level.
+@(test)
+object_checks_its_cpu_level_before_the_host :: proc(t: ^testing.T) {
+	clang, include_flags, found := host_toolchain()
+	if !found {
+		skipped_capability(t, "no clang or MSVC toolset, so no object build reaches a C host")
+		return
+	}
+	dir := fmt.tprintf("%s/cpu", TMP)
+	os.make_directory(TMP)
+	os.make_directory(dir)
+	obj := fmt.tprintf("%s/widget-v2.obj", dir)
+	state, _, stderr, err := exec(
+		os.Process_Desc {
+			command = []string{compiler_path(), "tests/obj/lib.loke", "-build-mode=obj", "-cpu=x86-64-v2", "-o", obj},
+		},
+		context.allocator,
+	)
+	if !testing.expectf(t, err == nil && state.exit_code == 0, "the v2 object build failed:\n%s", string(stderr)) {
+		return
+	}
+
+	// The stand-in replaces `runtime/cpu.c`, which defines nothing else.
+	stand_in := c_host_link_command(clang, "tests/obj/cpu_host.c", obj, fmt.tprintf("%s/cpu-host.exe", dir), include_flags)
+	command := make([dynamic]string, context.temp_allocator)
+	for word in stand_in {
+		if filepath.base(word) != "cpu.c" {
+			append(&command, word)
+		}
+	}
+	real := c_host_link_command(clang, "tests/obj/host.c", obj, fmt.tprintf("%s/widget-host-v2.exe", dir), include_flags)
+	links := []Exec{{command = command[:]}, {command = real}}
+	exec_all(links)
+	for link in links {
+		if !testing.expectf(t, link.err == nil && link.state.exit_code == 0, "%v failed:\n%s", link.command, string(link.stderr)) {
+			return
+		}
+	}
+
+	runs := []Exec{{command = []string{launch_path(command[4])}}, {command = []string{launch_path(real[4])}}}
+	exec_all(runs)
+	testing.expectf(
+		t,
+		runs[0].err == nil && runs[0].state.exit_code == 0,
+		"the object's constructor did not check level 1 exactly once before `main` (exit %d)",
+		runs[0].state.exit_code,
+	)
+	if runs[1].state.exit_code == 3 && strings.has_prefix(string(runs[1].stderr), UNSUPPORTED_CPU) {
+		skipped_capability(t, "this processor does not run x86-64-v2")
+		return
+	}
+	testing.expectf(
+		t,
+		runs[1].err == nil && runs[1].state.exit_code == 0,
+		"the v2 object's host exited %d:\n%s",
+		runs[1].state.exit_code,
+		string(runs[1].stderr),
+	)
 }

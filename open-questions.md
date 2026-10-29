@@ -771,8 +771,8 @@ floating-point cases at each level. It changes speed:
 v2 adds POPCNT and, if `floor` and its kin were bound to LLVM intrinsics instead
 of the C library, inline rounding; v3 adds 256-bit vectorization, hardware FMA,
 and BMI. A program built for a level crashes with an illegal instruction on a
-processor without it, which is why an executable built above baseline checks
-first and reports it. Open:
+processor without it, which is why an executable or object built above
+baseline checks first and reports it. Open:
 
 - Should the default move to v2, which costs almost nothing?
 - Should the standard library also choose at run time where it matters, as the
@@ -783,6 +783,21 @@ first and reports it. Open:
 The [deterministic math and CPU targeting
 plan](deterministic-math-and-targets-plan.md#cpu-targets-and-fma) keeps
 baseline as the default and adds run-time dispatch later only where measured.
+
+#### Reusing Clang's CPU detection
+
+Should [runtime/cpu.c](runtime/cpu.c) use Clang's
+[`__builtin_cpu_supports`](https://clang.llvm.org/docs/LanguageExtensions.html#builtin-cpu-supports)
+for `x86-64-v2` and `x86-64-v3`, with `__builtin_cpu_init` before querying,
+instead of maintaining CPUID assembly, XGETBV, and feature masks? The runtime
+already links compiler-rt, which supplies the detection. In the 2026-10-29
+review of `86c3a7a2`, a prototype replacing that machinery removed 76 lines,
+linked with Clang 22.1.8 at `-O3 -march=x86-64-v3`, and preserved the baseline,
+v2, v3, invalid-level results, report, and exit status on a v3 processor.
+Keep the baseline function attributes and reporting wrapper. Settle the
+supported Clang minimum before removing the manual implementation; an older
+toolchain would justify a fallback only if it remains supported. A processor
+missing a known level still needs coverage.
 
 ## Open questions in `core:random`
 

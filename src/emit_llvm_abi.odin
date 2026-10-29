@@ -37,6 +37,11 @@ emit_foreign_declarations :: proc(e: ^Emitter) {
 	seen["@loke_rt_v1_thread_attach"] = true
 	seen["@loke_rt_v1_thread_detach"] = true
 	seen["@loke_rt_v1_flush_stdout"] = true
+	// Declared above baseline, for the entry's or an object's check, which
+	// `tests/trap/cpu_level_unknown.loke` also binds.
+	if e.c.target.features != {} {
+		seen["@loke_rt_v1_require_cpu"] = true
+	}
 	for id in package_order(e.c) {
 		pkg := package_of(e.c, id)
 		if pkg == nil {

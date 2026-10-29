@@ -8866,7 +8866,9 @@ error and exits with status 3 before any of the steps above.
 
 An [object build](#build-configuration) has no entry or argument conversion, so
 `os.args` is empty. Its host owns startup and calls any provider initializer
-after attaching a thread and before using an export.
+after attaching a thread and before using an export. An object build that may
+use instructions beyond the baseline makes the processor check from a static
+constructor, which the host's C runtime runs during its own startup.
 
 #### `os.Args`
 

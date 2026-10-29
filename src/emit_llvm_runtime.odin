@@ -55,10 +55,10 @@ emit_runtime_declarations :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_thread_attach()")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_thread_detach()")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_flush_stdout()")
-	// Only where the entry calls it: a program may bind it in a foreign block
-	// of its own, as the trap corpus's test of the check does, and a second
-	// declaration is an LLVM error.
-	if e.c.target.features != {} && e.c.build_mode != .Obj {
+	// Only where the entry or an object's constructor calls it, so a baseline
+	// program's own binding is its only declaration; above baseline,
+	// `emit_foreign_declarations` skips that binding.
+	if e.c.target.features != {} {
 		fmt.sbprintln(&e.b, "declare void @loke_rt_v1_require_cpu(i32)")
 	}
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_args_init(i32, ptr)")
