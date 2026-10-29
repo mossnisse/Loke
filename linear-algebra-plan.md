@@ -1,7 +1,8 @@
 # Linear algebra library plan
 
-Status: milestone 1 implemented, 2026-10-29
-([Milestone 1 results](#milestone-1-results)); milestones 2 to 4 are
+Status: milestones 1 and 2 implemented, 2026-10-29
+([Milestone 1 results](#milestone-1-results),
+[Milestone 2 results](#milestone-2-results)); milestones 3 and 4 are
 proposals. This document specifies the `core:math/linalg` package and
 outlines a later dense-matrix package; it does not change the language
 contract, and
@@ -333,11 +334,11 @@ Vector2/3/4(T), any Numeric T:
   Vector3: cross; extend(w) -> Vector4; xy()
   Vector4: xyz()
   Vector2: extend(z) -> Vector3; perp() -> (-y, x); cross -> T   // the z of the 3D cross
+  project(onto_unit), reject(unit_normal), reflect(unit_normal)
 
 Real:
   length, distance, normalize -> Option(V), normalize_or(fallback)
   lerp(a, b, t), angle_between(a, b)     // atan2(|a x b|, a . b), stable near 0 and pi
-  project(onto_unit), reject(unit_normal), reflect(unit_normal)
   abs, floor, ceil, round                // component-wise
 ```
 
@@ -445,7 +446,8 @@ Ordered by how foundational each part is, not by a particular program:
    `from_quaternion`; `perspective` and `orthographic` in all three depth
    ranges and both handednesses; `look_at` and `look_to` and their `_lh`
    forms; and `approx_equal`.
-2. **Rotations and geometry helpers.** `quaternion_from_matrix`,
+2. **Rotations and geometry helpers.** Done
+   ([Milestone 2 results](#milestone-2-results)). `quaternion_from_matrix`,
    `quaternion_between`, `nlerp`, `slerp`, Euler sequences, rotation vectors,
    `angle_between`, `project`, `reject`, `reflect`, `normal_matrix`,
    `inverse_affine`, and `project_point`.
@@ -634,3 +636,64 @@ Compiler bugs found and fixed in the same change, each with a regression test
   checker had reached that block reported its own `where` clause as having
   nothing generic in scope, and a user operator reached through its
   resolution, such as an `inout` subscript, ran with an unchecked body.
+
+## Milestone 2 results
+
+Done 2026-10-29: the rest of [Proposed API](#proposed-api), with
+`tests/run/lib_linalg_rotations`. Its checks cover:
+
+- the `quaternion_from_matrix` round trip in each of Shepperd's four branches;
+- `to_euler` for every `Euler_Order` over five angle triples and at both
+  gimbal locks;
+- rotation vectors near zero, below the normal range, and near a half turn;
+- `quaternion_between` with opposite and nearly opposite vectors;
+- `slerp` at its ends, at constant speed, and between close and equal
+  rotations;
+- `angle_between` near 0 and pi;
+- the affine and projective helpers, with their `.none` cases;
+- a dual number through `slerp`.
+
+Its output, bit patterns included, is the same at every optimization level
+and at both CPU levels `tests/cpu_test.odin` runs, and
+`quaternion_from_euler`, `inverse_affine`, and `project_point` fold at compile
+time to the run-time bits.
+
+Decided while implementing:
+
+- **`project`, `reject`, and `reflect` need only `Numeric`.** They take a
+  unit vector and no square root, so integer vectors have them exactly.
+- **`angle_between` on `Vector4` is Kahan's formula**,
+  `2*atan2(|a*|b| - b*|a||, |a*|b| + b*|a||)`, since four dimensions have no
+  cross product; it is as stable near 0 and pi as `atan2(|a x b|, a . b)`.
+- **`quaternion_between` is an angle and an axis, not a halfway vector.** The
+  angle is `atan2(|u x v|, u . v)`, and the axis is `u x v` with its part
+  along `u` removed. `normalize(u + v)` and `1 + dot(u, v)` both cancel for
+  nearly opposite vectors: at `(1, 0, 0)` and `(-1, 1e-9, 0)` the halfway
+  vector turned `u` to `-u`, an error of `1e-9` radians, where this form is
+  within rounding. The optional fallback axis is a second group member, not
+  an `Option` parameter, because `.some(axis)` has no type before `T` is
+  inferred ([Implicit selectors in inferred parameter types](open-questions.md#implicit-selectors-in-inferred-parameter-types)).
+- **`quaternion_from_matrix` returns a non-negative real part**, so a
+  round trip is the same quaternion and not its negation.
+- **`to_euler` follows Bernardes and Viollet** (PLOS ONE, 2022), which
+  covers every sequence with one formula. The middle angle is taken from
+  `4*(w*q_j - sign*q_i*q_k)`, which does not cancel near 0, instead of from
+  `2*atan2(n, p) - pi/2`, which does. Gimbal lock is a pair within two ulps
+  of the other: at `f64(pi/2)`, the pair left by rounding is about one ulp,
+  which "below half an ulp" missed. A decomposition outside lock is accurate
+  anyway; the threshold only decides when the third angle is reported as 0.
+- **`nlerp` and `slerp` return a quaternion, not an `Option`.** For unit
+  inputs on the shorter arc, `nlerp`'s interpolant has norm at least
+  `1/sqrt(2)`, and `slerp` divides only by a sine it has checked is normal.
+  So neither has a degenerate case; a non-unit input is outside the contract,
+  as for `rotate`.
+- **`slerp` takes its angle as `2*atan2(|a - b|, |a + b|)`**, which is
+  accurate for close rotations, where `acos(dot)` is not. Only an angle
+  whose sine is not normal falls back to the linear form, with no tolerance
+  to choose.
+
+A compiler bug found and fixed in the same change, with a regression test
+(`tests/run/generic_implicit_selector_argument`): an implicit selector such
+as `.ZYX` passed to a generic procedure had no expected type, even for a
+parameter whose written type names none of the procedure's `$` parameters,
+so `quaternion_from_euler(.ZYX, yaw, pitch, roll)` did not compile.

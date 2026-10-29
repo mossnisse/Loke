@@ -1269,6 +1269,84 @@ Inference :: struct {
 	ok:           bool,
 }
 
+// design.md "Implicit selector expression": the type a generic procedure's
+// parameter gives an argument that needs one, such as `.ZYX`, before
+// inference. Only a parameter whose written type names none of the
+// procedure's `$` parameters has one then, as `order: Euler_Order` beside
+// `first: $T` does; `Option(T)` waits for `T`, and gives none.
+generic_parameter_context_type :: proc(k: ^Checker, template: ^Generic_Template, name: Identifier_Id, position: int) -> Type_Id {
+	literal := decl_proc_literal(template.decl)
+	if literal == nil || literal.signature == nil {
+		return INVALID_TYPE
+	}
+	poly := Poly_Names{names = make([dynamic]string, 0, 4, k.c.semantic_allocator)}
+	for parameter in literal.signature.params {
+		for entry in parameter.names {
+			if entry.is_poly {
+				append(&poly.names, entry.name.text)
+			}
+		}
+		type_syntax_any_name(parameter.type, &poly, collect_poly_name)
+	}
+	written: Expr
+	current := 0
+	search: for parameter in literal.signature.params {
+		for entry in parameter.names {
+			selected := current == position || (parameter.mode == .Variadic && current <= position)
+			if name != INVALID_IDENTIFIER {
+				selected = intern_identifier(k.c, entry.name.text) == name
+			}
+			if selected {
+				if entry.is_poly {
+					return INVALID_TYPE
+				}
+				written = parameter.type
+				break search
+			}
+			current += 1
+		}
+	}
+	if written == nil || type_syntax_any_name(written, &poly, names_poly_parameter) {
+		return INVALID_TYPE
+	}
+	saved := enter_instance(k, template, new_instance_scope(k, template))
+	defer restore_checker_location(k, saved)
+	return resolve_type_syntax(k, clone_expr(k.c, written))
+}
+
+@(private = "file")
+Poly_Names :: struct {
+	names: [dynamic]string,
+}
+
+// Records each `$name` and finds nothing, so the walk visits every node.
+@(private = "file")
+collect_poly_name :: proc(data: rawptr, node: Expr) -> bool {
+	poly := (^Poly_Names)(data)
+	if v, is_poly := node.(^Type_Poly); is_poly {
+		append(&poly.names, v.name.text)
+	}
+	return false
+}
+
+// A name bound by `$`, or an inline definition, which is not looked into.
+@(private = "file")
+names_poly_parameter :: proc(data: rawptr, node: Expr) -> bool {
+	poly := (^Poly_Names)(data)
+	#partial switch v in node {
+	case ^Expr_Ident:
+		for name in poly.names {
+			if name == v.name {
+				return true
+			}
+		}
+		return false
+	case ^Type_Poly:
+		return true
+	}
+	return true
+}
+
 // Walks a template's written signature left to right, binding every `$` name
 // as it goes, so a later parameter type may name an earlier binding. `$`
 // parameters are compile-time inputs and do not survive into the instance's

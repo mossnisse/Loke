@@ -2975,6 +2975,13 @@ case .Diamonds, .Hearts: fmt.println("red");
 }
 ```
 
+A call argument takes its type from the parameter it fills. A generic
+procedure's parameter supplies it as an ordinary one does when the
+parameter's written type names none of the procedure's `$` parameters:
+`pick :: proc(order: Order, a, b: $T)` takes `pick(.First, x, y)`. A
+parameter written `Option(T)` has no type until `T` is inferred, so an
+implicit selector cannot fill it.
+
 #### Iterating an enumeration
 
 Every enum type has a compiler-provided `values()`, a constant fixed array of

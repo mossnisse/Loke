@@ -18,6 +18,7 @@ CPU_LEVEL_CASES :: []string {
 	"tests/run/float_contraction.loke",
 	"tests/run/lib_math.loke",
 	"tests/run/lib_linalg.loke",
+	"tests/run/lib_linalg_rotations.loke",
 	"tests/run/lib_math_bits.loke",
 	"tests/run/lib_simd.loke",
 	"tests/run/simd_byte_lanes.loke",

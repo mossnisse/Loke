@@ -1,0 +1,380 @@
+// standard-library "`core:math/linalg`", milestone 2: the rotation and
+// geometry helpers. Round trips through `quaternion_from_matrix`, `to_euler`
+// for every `Euler_Order` with gimbal lock included, and rotation vectors;
+// `quaternion_between` with opposite vectors; `nlerp` and `slerp` at their ends
+// and midpoint; `angle_between` near 0 and pi; the affine and projective
+// helpers; and results as bit patterns, the same at every optimization and CPU
+// level and when folded at compile time.
+package main;
+
+import "core:fmt";
+import "core:math";
+import "core:math/linalg";
+import "core:math/repro";
+import "core:os";
+import "core:unsafe";
+
+check :: proc(name: string_view, ok: bool) {
+	if (ok) {
+		fmt.println("ok", name);
+	} else {
+		fmt.println("FAIL", name);
+	}
+}
+
+epsilon :: proc($T: type) -> T {
+	when (T == f32) {
+		return math.F32_EPSILON;
+	} else {
+		return math.F64_EPSILON;
+	}
+}
+
+// `wide` as an `f64`, or `narrow` as an `f32`.
+per_type :: proc($T: type, wide, narrow: f64) -> T {
+	when (T == f32) {
+		return T(narrow);
+	} else {
+		return T(wide);
+	}
+}
+
+// Whether `a` and `b` are the same rotation: `q` and `-q` are.
+same_rotation :: proc(a, b: math.Quaternion($T), tolerance: T) -> bool where linalg.Real(T) {
+	return linalg.approx_equal(a, b, tolerance, T(0)) || linalg.approx_equal(a, -b, tolerance, T(0));
+}
+
+ORDERS :: [6]linalg.Euler_Order{.XYZ, .XZY, .YXZ, .YZX, .ZXY, .ZYX};
+
+vector_helpers :: proc($T: type) where linalg.Real(T) {
+	tolerance := T(8)*epsilon(T);
+	pi := T(f64(math.PI));
+	X := linalg.Vector3(T).unit_x();
+	Y := linalg.Vector3(T).unit_y();
+	v := linalg.Vector3(T).from_components(T(1), -T(2), T(3));
+	check("angle_between perpendicular vectors is pi/2", linalg.approx_equal(X.angle_between(Y*T(5)), pi*T(0.5), tolerance, T(0)));
+	check("angle_between a vector and itself is 0", v.angle_between(v) == T(0) && v.angle_between(v*T(3)) == T(0));
+	check("angle_between opposite vectors is pi", linalg.approx_equal(v.angle_between(-v), pi, tolerance, T(0)));
+	check("angle_between the zero vector is 0", v.angle_between(linalg.Vector3(T){}) == T(0));
+	small := per_type(T, 1.0e-10, 1.0e-5);
+	near := linalg.Vector3(T).from_components(T(1), small, T(0));
+	check("angle_between is accurate near 0", linalg.approx_equal(X.angle_between(near), small, T(0), tolerance));
+	check("angle_between is accurate near pi", linalg.approx_equal((-X).angle_between(near), pi - small, T(0), tolerance));
+	check("Vector2 angle_between",
+		linalg.approx_equal(X.xy().angle_between(linalg.Vector2(T).from_components(-T(1), T(1))), pi*T(0.75), tolerance, T(0))
+		&& linalg.approx_equal(X.xy().angle_between(near.xy()), small, T(0), tolerance));
+	check("Vector4 angle_between",
+		linalg.approx_equal(X.extend(T(0)).angle_between(linalg.Vector4(T).unit_w()*T(2)), pi*T(0.5), tolerance, T(0))
+		&& linalg.approx_equal(X.extend(T(0)).angle_between(near.extend(T(0))), small, T(0), tolerance)
+		&& linalg.approx_equal((-X).extend(T(0)).angle_between(near.extend(T(0))), pi - small, T(0), tolerance)
+		&& v.extend(T(1)).angle_between(linalg.Vector4(T){}) == T(0));
+
+	n := linalg.Vector3(T).from_components(T(2), T(3), T(6))/T(7);
+	check("project + reject is the vector", linalg.approx_equal(v.project(n) + v.reject(n), v, tolerance, T(0)));
+	check("reject is across the normal", linalg.approx_equal(v.reject(n).dot(n), T(0), tolerance*T(4), T(0)));
+	check("reflect keeps the length and twice is the vector",
+		linalg.approx_equal(v.reflect(n).length(), v.length(), tolerance, T(0))
+		&& linalg.approx_equal(v.reflect(n).reflect(n), v, tolerance*T(4), T(0)));
+}
+
+matrix_helpers :: proc($T: type) where linalg.Real(T) {
+	tolerance := T(32)*epsilon(T);
+	axis := linalg.Vector3(T).from_components(T(1), T(2), T(3)).normalize() or_else linalg.Vector3(T).unit_z();
+	offset := linalg.Vector3(T).from_components(T(4), -T(5), T(0.5));
+	t := linalg.Matrix(T, 4, 4).translation(offset)
+		* linalg.Matrix(T, 4, 4).rotation(axis, T(0.7))
+		* linalg.Matrix(T, 4, 4).scaling(linalg.Vector3(T).from_components(T(2), T(3), T(0.5)));
+	identity := linalg.Matrix(T, 4, 4).identity();
+	switch (t.inverse_affine()) {
+	case .some(inverse):
+		check("inverse_affine inverts an affine transform", linalg.approx_equal(inverse * t, identity, tolerance, T(0)));
+		check("inverse_affine agrees with inverse", linalg.approx_equal(inverse, t.inverse() or_else identity, tolerance, T(0)));
+	case .none:
+		check("an affine transform inverts", false);
+	}
+	flat := linalg.Matrix(T, 4, 4).scaling(linalg.Vector3(T).from_components(T(1), T(0), T(1)));
+	check("inverse_affine of a singular linear part is .none", flat.inverse_affine() == .none);
+	check("normal_matrix of a singular linear part is .none", flat.normal_matrix() == .none);
+
+	// The normal of the plane through the tangents `a` and `b` stays
+	// perpendicular to them when non-uniform scaling moves the plane.
+	a := linalg.Vector3(T).from_components(T(1), T(1), T(0));
+	b := linalg.Vector3(T).from_components(T(0), T(1), T(1));
+	switch (t.normal_matrix()) {
+	case .some(normals):
+		normal := normals * a.cross(b);
+		check("normal_matrix keeps normals perpendicular",
+			linalg.approx_equal(normal.dot(t.transform_direction(a)), T(0), tolerance*T(4), T(0))
+			&& linalg.approx_equal(normal.dot(t.transform_direction(b)), T(0), tolerance*T(4), T(0)));
+		check("normal_matrix of a rotation is the rotation",
+			linalg.approx_equal(linalg.Matrix(T, 4, 4).rotation(axis, T(0.7)).normal_matrix() or_else normals,
+				linalg.Matrix(T, 3, 3).rotation(axis, T(0.7)), tolerance, T(0)));
+	case .none:
+		check("normal_matrix of an invertible transform", false);
+	}
+
+	projection := linalg.Matrix(T, 4, 4).perspective(T(1.2), T(1.5), T(0.5), T(50), .Zero_To_One);
+	near := linalg.Vector3(T).from_components(T(0), T(0), -T(0.5));
+	far := linalg.Vector3(T).from_components(T(0), T(0), -T(50));
+	check("project_point maps near and far to the depth range",
+		linalg.approx_equal(projection.project_point(near) or_else offset, linalg.Vector3(T){}, tolerance, T(0))
+		&& linalg.approx_equal(projection.project_point(far) or_else offset, linalg.Vector3(T).unit_z(), tolerance, T(0)));
+	check("project_point at w = 0 is .none", projection.project_point(linalg.Vector3(T).from_components(T(1), T(2), T(0))) == .none);
+	check("project_point of an affine transform is transform_point", (t.project_point(offset) or_else near) == t.transform_point(offset));
+	nan := T(f64(math.F64_NAN));
+	check("project_point to a NaN is .none", projection.project_point(linalg.Vector3(T).from_components(nan, T(0), -T(1))) == .none);
+}
+
+rotations :: proc($T: type) where linalg.Real(T) {
+	tolerance := T(16)*epsilon(T);
+	pi := T(f64(math.PI));
+	X := linalg.Vector3(T).unit_x();
+	Y := linalg.Vector3(T).unit_y();
+	Z := linalg.Vector3(T).unit_z();
+
+	// Each of Shepperd's four branches: a small angle, and angles near pi
+	// about each axis.
+	axes := [4]linalg.Vector3(T){
+		linalg.Vector3(T).from_components(T(1), T(2), T(3)).normalize() or_else Z,
+		linalg.Vector3(T).from_components(T(1), T(0.1), -T(0.2)).normalize() or_else Z,
+		linalg.Vector3(T).from_components(-T(0.2), T(1), T(0.1)).normalize() or_else Z,
+		linalg.Vector3(T).from_components(T(0.1), -T(0.2), T(1)).normalize() or_else Z,
+	};
+	angles := [4]T{T(0.4), T(3.0), -T(3.1), T(3.14)};
+	from_matrix := true;
+	foreach (i in 0 ..< 4) {
+		q := linalg.quaternion_from_axis_angle(axes[i], angles[i]);
+		back := linalg.quaternion_from_matrix(linalg.Matrix(T, 3, 3).from_quaternion(q));
+		wide := linalg.quaternion_from_matrix(linalg.Matrix(T, 4, 4).from_quaternion(q));
+		from_matrix = from_matrix && same_rotation(back, q, tolerance) && wide == back && !(back.real < T(0));
+	}
+	check("quaternion_from_matrix inverts from_quaternion in every branch", from_matrix);
+	check("quaternion_from_matrix of the identity", linalg.quaternion_from_matrix(linalg.Matrix(T, 3, 3).identity()) == math.Quaternion(T)(T(1)));
+	half_turn := linalg.quaternion_from_matrix(linalg.Matrix(T, 3, 3).rotation_y(pi));
+	check("quaternion_from_matrix of a half turn", same_rotation(half_turn, math.Quaternion(T).from_components(T(0), T(0), T(1), T(0)), tolerance) && !(half_turn.real < T(0)));
+
+	a := linalg.Vector3(T).from_components(T(1), T(2), T(3));
+	b := linalg.Vector3(T).from_components(-T(2), T(0.5), T(1));
+	switch (linalg.quaternion_between(a, b)) {
+	case .some(q):
+		check("quaternion_between turns a to b",
+			linalg.approx_equal(linalg.rotate(q, a.normalize() or_else Z), b.normalize() or_else Z, tolerance, T(0))
+			&& linalg.approx_equal(q.norm_squared(), T(1), tolerance, T(0)));
+	case .none:
+		check("quaternion_between", false);
+	}
+	check("quaternion_between a vector and itself is no rotation",
+		linalg.approx_equal(linalg.quaternion_between(a, a*T(2)) or_else -math.Quaternion(T)(T(1)), math.Quaternion(T)(T(1)), tolerance, T(0)));
+	check("quaternion_between opposite vectors is .none", linalg.quaternion_between(a, -a) == .none);
+	check("quaternion_between the zero vector is .none", linalg.quaternion_between(a, linalg.Vector3(T){}) == .none);
+	switch (linalg.quaternion_between(X, -X, linalg.Vector3(T).from_components(T(1), T(1), T(0)))) {
+	case .some(q):
+		check("quaternion_between opposite vectors with a fallback axis turns half about its part across",
+			q == math.Quaternion(T).from_components(T(0), T(0), T(1), T(0)));
+	case .none:
+		check("quaternion_between with a fallback axis", false);
+	}
+	check("quaternion_between with a fallback along the vectors is .none", linalg.quaternion_between(X, -X, X*T(2)) == .none);
+	small := per_type(T, 1.0e-9, 1.0e-4);
+	nearly := linalg.Vector3(T).from_components(-T(1), small, T(0));
+	switch (linalg.quaternion_between(X, nearly)) {
+	case .some(q): check("quaternion_between nearly opposite vectors", linalg.approx_equal(linalg.rotate(q, X), nearly.normalize() or_else X, tolerance, T(0)));
+	case .none:    check("quaternion_between nearly opposite vectors", false);
+	}
+	u := a.normalize() or_else X;
+	across := u.cross(Y).normalize() or_else Z;
+	away := -u + across*small;
+	switch (linalg.quaternion_between(u, away)) {
+	case .some(q): check("quaternion_between nearly opposite vectors in a general direction", linalg.approx_equal(linalg.rotate(q, u), away.normalize() or_else X, tolerance, T(0)));
+	case .none:    check("quaternion_between nearly opposite vectors in a general direction", false);
+	}
+
+	p := linalg.quaternion_from_axis_angle(axes[0], T(0.3));
+	q := linalg.quaternion_from_axis_angle(axes[0], T(1.5));
+	check("slerp is exact at both ends", linalg.slerp(p, q, T(0)) == p && linalg.slerp(p, q, T(1)) == q);
+	check("slerp takes the shorter arc", linalg.slerp(p, -q, T(1)) == q && linalg.slerp(p, -q, T(0.5)) == linalg.slerp(p, q, T(0.5)));
+	check("slerp has constant angular speed",
+		same_rotation(linalg.slerp(p, q, T(0.5)), linalg.quaternion_from_axis_angle(axes[0], T(0.9)), tolerance)
+		&& same_rotation(linalg.slerp(p, q, T(0.25)), linalg.quaternion_from_axis_angle(axes[0], T(0.6)), tolerance));
+	close := linalg.quaternion_from_axis_angle(axes[0], T(0.3) + small);
+	check("slerp between close rotations", same_rotation(linalg.slerp(p, close, T(0.5)), linalg.quaternion_from_axis_angle(axes[0], T(0.3) + small*T(0.5)), tolerance));
+	check("slerp between equal rotations", linalg.approx_equal(linalg.slerp(p, p, T(0.7)), p, tolerance, T(0)));
+	check("nlerp ends and shorter arc",
+		linalg.approx_equal(linalg.nlerp(p, q, T(0)), p, tolerance, T(0))
+		&& linalg.approx_equal(linalg.nlerp(p, -q, T(1)), q, tolerance, T(0))
+		&& linalg.nlerp(p, -q, T(0.3)) == linalg.nlerp(p, q, T(0.3)));
+	check("nlerp is a unit quaternion halfway along the arc",
+		same_rotation(linalg.nlerp(p, q, T(0.5)), linalg.quaternion_from_axis_angle(axes[0], T(0.9)), tolerance)
+		&& linalg.approx_equal(linalg.nlerp(p, q, T(0.3)).norm_squared(), T(1), tolerance, T(0)));
+
+	yaw, pitch, roll := T(0.5), -T(0.3), T(1.2);
+	check("quaternion_from_euler(.ZYX) is the product of axis rotations",
+		linalg.quaternion_from_euler(.ZYX, yaw, pitch, roll)
+		== linalg.quaternion_from_axis_angle(Z, yaw) * linalg.quaternion_from_axis_angle(Y, pitch) * linalg.quaternion_from_axis_angle(X, roll));
+	triples := [5][3]T{
+		{T(0.5), -T(0.3), T(1.2)},
+		{-T(2.9), T(1.4), T(3.0)},
+		{T(0), T(0), T(0)},
+		{T(3.1), -T(1.5), -T(0.1)},
+		{T(1e-3), T(1e-3), -T(1e-3)},
+	};
+	euler := true;
+	foreach (order in ORDERS) {
+		foreach (triple in triples) {
+			turned := linalg.quaternion_from_euler(order, triple[0], triple[1], triple[2]);
+			first, second, third := linalg.to_euler(turned, order);
+			ok := linalg.approx_equal(first, triple[0], tolerance, T(0))
+				&& linalg.approx_equal(second, triple[1], tolerance*T(4), T(0))
+				&& linalg.approx_equal(third, triple[2], tolerance, T(0));
+			scaled := turned*math.Quaternion(T)(T(3));
+			f2, s2, t2 := linalg.to_euler(scaled, order);
+			ok = ok && linalg.approx_equal(f2, first, tolerance, T(0)) && linalg.approx_equal(s2, second, tolerance, T(0)) && linalg.approx_equal(t2, third, tolerance, T(0));
+			if (!ok) { fmt.println("  to_euler", order, triple, "gave", first, second, third); }
+			euler = euler && ok;
+		}
+	}
+	check("to_euler inverts quaternion_from_euler for every order", euler);
+
+	locked := true;
+	foreach (order in ORDERS) {
+		foreach (middle in [2]T{pi*T(0.5), -pi*T(0.5)}) {
+			locking := linalg.quaternion_from_euler(order, T(0.4), middle, T(0.9));
+			first, second, third := linalg.to_euler(locking, order);
+			back := linalg.quaternion_from_euler(order, first, second, third);
+			ok := third == T(0) && linalg.approx_equal(second, middle, tolerance, T(0)) && same_rotation(back, locking, tolerance);
+			if (!ok) { fmt.println("  gimbal lock", order, middle, "gave", first, second, third); }
+			locked = locked && ok;
+		}
+	}
+	check("to_euler at gimbal lock puts the whole turn in the first angle", locked);
+
+	v := linalg.Vector3(T).from_components(T(0.3), -T(0.4), T(1.2));
+	turn := linalg.quaternion_from_rotation_vector(v);
+	check("quaternion_from_rotation_vector is the axis-angle rotation",
+		linalg.approx_equal(turn, linalg.quaternion_from_axis_angle(v.normalize() or_else Z, v.length()), tolerance, T(0)));
+	check("to_rotation_vector inverts it, for q and -q",
+		linalg.approx_equal(linalg.to_rotation_vector(turn), v, tolerance, T(0))
+		&& linalg.to_rotation_vector(-turn) == linalg.to_rotation_vector(turn));
+	wide := (v.normalize() or_else Z)*T(3.1);
+	check("a rotation vector near a half turn", linalg.approx_equal(linalg.to_rotation_vector(linalg.quaternion_from_rotation_vector(wide)), wide, tolerance*T(4), T(0)));
+	check("the zero rotation vector", linalg.quaternion_from_rotation_vector(linalg.Vector3(T){}) == math.Quaternion(T)(T(1))
+		&& linalg.to_rotation_vector(math.Quaternion(T)(T(1))) == linalg.Vector3(T){});
+	tiny := v*per_type(T, 1.0e-160, 1.0e-20);
+	check("a rotation vector below the normal range", linalg.approx_equal(linalg.to_rotation_vector(linalg.quaternion_from_rotation_vector(tiny)), tiny, T(0), tolerance));
+}
+
+// A forward-mode dual number, as in lib_linalg, for the derivative of `slerp`.
+Dual :: struct { value, derivative: f64 }
+
+impl Dual {
+	@(public) from_f64 :: hook(convert) proc(value: f64) -> Dual { return {value, 0}; }
+	@(public) add :: operator(+) proc(a, b: Dual) -> Dual { return {a.value + b.value, a.derivative + b.derivative}; }
+	@(public) subtract :: operator(-) proc(a, b: Dual) -> Dual { return {a.value - b.value, a.derivative - b.derivative}; }
+	@(public) negate :: operator(-) proc(a: Dual) -> Dual { return {-a.value, -a.derivative}; }
+	@(public) multiply :: operator(*) proc(a, b: Dual) -> Dual {
+		return {a.value*b.value, a.derivative*b.value + a.value*b.derivative};
+	}
+	@(public) divide :: operator(/) proc(a, b: Dual) -> Dual {
+		return {a.value/b.value, (a.derivative*b.value - a.value*b.derivative)/(b.value*b.value)};
+	}
+	@(public) equal :: operator(==) proc(a, b: Dual) -> bool { return a.value == b.value; }
+	@(public) less :: operator(<) proc(a, b: Dual) -> bool { return a.value < b.value; }
+
+	sqrt :: proc(self) -> Dual {
+		root := math.sqrt(self.value);
+		return {root, self.derivative/(root + root)};
+	}
+	sin :: proc(self) -> Dual { return {repro.sin(self.value), self.derivative*repro.cos(self.value)}; }
+	cos :: proc(self) -> Dual { return {repro.cos(self.value), -self.derivative*repro.sin(self.value)}; }
+	asin :: proc(self) -> Dual {
+		return {repro.asin(self.value), self.derivative/math.sqrt(1.0 - self.value*self.value)};
+	}
+	acos :: proc(self) -> Dual {
+		return {repro.acos(self.value), -self.derivative/math.sqrt(1.0 - self.value*self.value)};
+	}
+	atan2 :: proc(self, x: Dual) -> Dual {
+		squared := x.value*x.value + self.value*self.value;
+		return {repro.atan2(self.value, x.value), (x.value*self.derivative - self.value*x.derivative)/squared};
+	}
+	abs :: proc(self) -> Dual { return -self if self.value < 0.0 else self; }
+	floor :: proc(self) -> Dual { return {math.floor(self.value), 0}; }
+	ceil :: proc(self) -> Dual { return {math.ceil(self.value), 0}; }
+	round :: proc(self) -> Dual { return {math.round(self.value), 0}; }
+	is_finite :: proc(self) -> bool { return math.is_finite(self.value); }
+	is_normal :: proc(self) -> bool { return math.is_finite(self.value) && math.abs(self.value) >= math.F64_MIN_NORMAL; }
+}
+
+element_types :: proc() {
+	// The projections need no square root, so integers have them exactly.
+	v := linalg.Vector3(i32).from_components(1, -2, 3);
+	up := linalg.Vector3(i32).unit_y();
+	fmt.println(v.project(up), v.reject(up), v.reflect(up), linalg.Vector2(i64).from_components(5, 7).reflect(linalg.Vector2(i64).unit_x()));
+
+	// slerp from no rotation to 1.2 about Z at t is (cos(0.6t), 0, 0,
+	// sin(0.6t)), whose derivative at t = 0.25 is 0.6*(-sin(0.15), 0, 0, cos(0.15)).
+	one := math.Quaternion(Dual)(Dual{1, 0});
+	turn := linalg.quaternion_from_axis_angle(linalg.Vector3(Dual).unit_z(), Dual{1.2, 0});
+	moving := linalg.slerp(one, turn, Dual{0.25, 1});
+	check("the derivative of slerp is the analytic one",
+		linalg.approx_equal(moving.real.derivative, -0.6*repro.sin(0.15), 1.0e-15, 0.0)
+		&& linalg.approx_equal(moving.k.derivative, 0.6*repro.cos(0.15), 1.0e-15, 0.0));
+}
+
+bits64 :: proc(x: f64) -> u64 { return unsafe.transmute(u64, x); }
+bits32 :: proc(x: f32) -> u32 { return unsafe.transmute(u32, x); }
+
+FOLDED_EULER :: linalg.quaternion_from_euler(.YXZ, f32(0.7), f32(-1.1), f32(2.3));
+FOLDED_AFFINE :: linalg.Matrix(f64, 4, 4).translation(linalg.Vector3(f64).from_components(1, 2, 3)).inverse_affine();
+FOLDED_PROJECTION :: linalg.Matrix(f64, 4, 4).perspective(1.1, 1.75, 0.1, 100.0, .Negative_One_To_One).project_point(linalg.Vector3(f64).from_components(0.3, -0.2, -7));
+
+// The results, as bit patterns: these lines are the same at every
+// optimization and CPU level, and a folded constant equals its run-time call.
+// A member that reaches `math.sqrt`, a foreign procedure, cannot be folded.
+determinism :: proc() {
+	one := f64(os.args.len());
+	axis := linalg.Vector3(f64).from_components(0.0, 0.6, 0.8);
+	m := linalg.Matrix(f64, 3, 3).rotation(axis, 2.9*one);
+	q := linalg.quaternion_from_matrix(m);
+	fmt.println("from_matrix", bits64(q.real), bits64(q.i), bits64(q.j), bits64(q.k));
+	p := linalg.quaternion_from_axis_angle(axis, 0.2*one);
+	s := linalg.slerp(p, q, 0.3*one);
+	fmt.println("slerp", bits64(s.real), bits64(s.i), bits64(s.j), bits64(s.k));
+	first, second, third := linalg.to_euler(s, .ZYX);
+	fmt.println("to_euler", bits64(first), bits64(second), bits64(third));
+	between := linalg.quaternion_between(linalg.Vector3(f32).from_components(f32(one), 2, 3), linalg.Vector3(f32).from_components(-2, 0.5, 1))
+		or_else math.Quaternion(f32){};
+	fmt.println("between", bits32(between.real), bits32(between.i), bits32(between.j), bits32(between.k));
+	angle := linalg.Vector3(f64).from_components(one, 2, 3).angle_between(linalg.Vector3(f64).from_components(-2, 0.5, 1));
+	vector := linalg.to_rotation_vector(q);
+	fmt.println("angle", bits64(angle), bits64(vector.x), bits64(vector.y), bits64(vector.z));
+
+	euler := linalg.quaternion_from_euler(.YXZ, f32(0.7*one), f32(-1.1), f32(2.3));
+	fmt.println("from_euler", bits32(euler.real), bits32(euler.i), bits32(euler.j), bits32(euler.k));
+	check("a folded quaternion_from_euler equals the run-time one", FOLDED_EULER == euler);
+	affine := linalg.Matrix(f64, 4, 4).translation(linalg.Vector3(f64).from_components(one, 2, 3)).inverse_affine();
+	check("a folded inverse_affine equals the run-time one",
+		(FOLDED_AFFINE or_else linalg.Matrix(f64, 4, 4){}).to_array() == (affine or_else linalg.Matrix(f64, 4, 4){}).to_array());
+	projected := linalg.Matrix(f64, 4, 4).perspective(1.1*one, 1.75, 0.1, 100.0, .Negative_One_To_One).project_point(linalg.Vector3(f64).from_components(0.3, -0.2, -7));
+	point := projected or_else linalg.Vector3(f64){};
+	fmt.println("project_point", bits64(point.x), bits64(point.y), bits64(point.z));
+	check("a folded project_point equals the run-time one", (FOLDED_PROJECTION or_else linalg.Vector3(f64){}) == point);
+}
+
+main :: proc() {
+	fmt.println("-- vectors, f32");
+	vector_helpers(f32);
+	fmt.println("-- vectors, f64");
+	vector_helpers(f64);
+	fmt.println("-- matrices, f32");
+	matrix_helpers(f32);
+	fmt.println("-- matrices, f64");
+	matrix_helpers(f64);
+	fmt.println("-- rotations, f32");
+	rotations(f32);
+	fmt.println("-- rotations, f64");
+	rotations(f64);
+	fmt.println("-- element types");
+	element_types();
+	fmt.println("-- determinism");
+	determinism();
+}

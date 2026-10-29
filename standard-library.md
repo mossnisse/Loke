@@ -2419,7 +2419,9 @@ panics as for the scalar, and user number types get:
   `from_array` and `to_array`, `+`, `-`, unary `-`, component-wise `*` and
   `/`, `*` and `/` by a scalar and `*` of a scalar, exact `==`, `[]` with a
   runtime index that panics outside the components, `dot`,
-  `length_squared`, `distance_squared`, and component-wise `min` and `max`;
+  `length_squared`, `distance_squared`, component-wise `min` and `max`, and
+  `project(onto)`, `reject(normal)`, and `reflect(normal)` for a unit `onto`
+  or `normal`, which need no square root and are exact for integers;
   `Vector3` has `cross`, `extend(w)`, and `xy`; `Vector4` has `xyz`; and
   `Vector2` has `cross`, the z of the 3D cross product, `perp`, the quarter
   turn `(-y, x)`, and `extend(z)`;
@@ -2462,16 +2464,27 @@ members are:
 
 - on every vector: `length`, `distance`, `normalize`, `normalize_or`,
   `lerp(other, t)`, which is `self*(1 - t) + other*t` and exact at both ends,
-  and component-wise `abs`, `floor`, `ceil`, and `round`;
+  `angle_between(other)` in `[0, pi]`, and component-wise `abs`, `floor`,
+  `ceil`, and `round`. `angle_between` is `atan2(|cross|, dot)`, and Kahan's
+  `2*atan2(|a*|b| - b*|a||, |a*|b| + b*|a||)` for `Vector4`, so it stays
+  accurate near 0 and pi, where the `acos` of a normalized dot product does
+  not; it is 0 when either vector is zero;
 - on a square matrix: `solve(b)` for any `Matrix(T, R, K)` right-hand side,
   `inverse`, and `determinant` above 4 x 4. They use Gaussian elimination
   with partial pivoting, the pivot the first element of largest magnitude in
   its column, in a fixed order;
+- on `Matrix(T, 4, 4)`: `inverse_affine`, which inverts the linear part and
+  takes the last row as `(0, 0, 0, 1)` unchecked; `normal_matrix`, the
+  transpose of the inverse of the linear part, which keeps surface normals
+  perpendicular under non-uniform scaling; and `project_point(p)`, which
+  divides `self * (p, 1)` by its `w`;
 - the rotations: `rotation_x`, `rotation_y`, `rotation_z`, and
   `rotation(axis, angle)` at 3 x 3 and 4 x 4, `Matrix(T, 2, 2).rotation(angle)`,
   and `Matrix(T, 3, 3).rotation_2d(angle)`; and the free procedures
   `quaternion_from_axis_angle(axis, angle)`, which takes the axis as given,
-  and `quaternion_normalize`;
+  `quaternion_normalize`, `quaternion_from_matrix`, `quaternion_between`,
+  `nlerp`, `slerp`, `quaternion_from_euler`, `to_euler`,
+  `quaternion_from_rotation_vector`, and `to_rotation_vector`;
 - the cameras, on `Matrix(T, 4, 4)`: `perspective`, `orthographic`,
   `look_at`, `look_to`, and the `_lh` form of each.
 
@@ -2481,6 +2494,36 @@ positive end of the axis. A quaternion's `real` is its scalar part; a unit
 `q` rotates as `q v q*`, `q` and `-q` rotate alike, and `rotate(a * b, v)`
 rotates by `b` first, as `from_quaternion(a * b)` equals
 `from_quaternion(a) * from_quaternion(b)` up to rounding.
+
+The quaternion procedures:
+
+- `quaternion_from_matrix(m)` takes a rotation matrix, 3 x 3 or the linear
+  part of a 4 x 4, to its unit quaternion with a non-negative real part, by
+  Shepperd's method, which takes the square root of the largest of the four
+  squared components and stays accurate at every angle.
+- `quaternion_between(a, b)` is the shortest rotation turning the direction
+  of `a` to that of `b`, accurate even for nearly opposite vectors. It is
+  `.none` for a zero vector and for opposite ones, where every axis across
+  them is as short; `quaternion_between(a, b, fallback_axis)` turns those half
+  a turn about the part of `fallback_axis` across `a` instead.
+- `nlerp(a, b, t)` and `slerp(a, b, t)` interpolate from the unit `a` at
+  `t = 0` to the unit `b` at `t = 1` along the shorter arc, negating `b` when
+  `dot(a, b) < 0`. `nlerp` normalizes the component-wise `lerp`; `slerp`
+  turns at constant angular speed, is exact at both ends, and takes its
+  angle as `2*atan2(|a - b|, |a + b|)`, which stays accurate for close
+  rotations.
+- `Euler_Order` names the six intrinsic Tait-Bryan sequences, `.XYZ` to
+  `.ZYX`, and has no default. `quaternion_from_euler(.ZYX, yaw, pitch, roll)`
+  is `axis_angle(Z, yaw) * axis_angle(Y, pitch) * axis_angle(X, roll)`, which
+  is also the extrinsic sequence `X`, `Y`, `Z` about fixed axes.
+  `to_euler(q, order)` returns `(first, second, third)` with the middle angle
+  in `[-pi/2, pi/2]` and the others in `[-pi, pi]`. At gimbal lock, when the
+  middle angle is within rounding of `pi/2` or `-pi/2`, the third angle is 0
+  and the first takes the whole rotation about the shared axis.
+- `quaternion_from_rotation_vector(v)` turns `|v|` radians about the
+  direction of `v`, and `to_rotation_vector(q)` returns the axis times the
+  angle in `[0, pi]`, the same for `q` and `-q`; the zero vector is no
+  rotation.
 
 `perspective(fovy, aspect, near, far, depth)` and
 `orthographic(left, right, bottom, top, near, far, depth)` map a view space
@@ -2505,6 +2548,8 @@ Degenerate input is never a silent zero or NaN. `normalize` and
 NaN. `inverse` and `solve` return `.none` when a pivot is zero or NaN or a
 result element is not finite; a nearly singular matrix still inverts, with
 large elements, since no tolerance decides that it is singular.
+`inverse_affine` and `normal_matrix` return `.none` when the linear part has
+no inverse, and `project_point` when `w` is zero or the result is not finite.
 
 `approx_equal(a, b, absolute, relative)` compares two scalars, vectors,
 matrices, or quaternions with a `Real` element: every component pair has

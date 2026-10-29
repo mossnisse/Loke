@@ -24,10 +24,12 @@
 	run.
 
 	Nothing returns a silent zero or NaN for a degenerate input: `normalize`,
-	`inverse`, `solve`, `look_at`, and `quaternion_normalize` return `Option`,
-	and invalid projection parameters panic.
+	`inverse`, `solve`, `inverse_affine`, `normal_matrix`, `project_point`,
+	`look_at`, `quaternion_normalize`, and `quaternion_between` return
+	`Option`, and invalid projection parameters panic. Euler angles take an
+	explicit `Euler_Order`, since each field uses a different one.
 */
-// linear-algebra-plan.md is the design this package implements, milestone 1.
+// linear-algebra-plan.md is the design this package implements, milestones 1 and 2.
 @(public)
 package linalg;
 

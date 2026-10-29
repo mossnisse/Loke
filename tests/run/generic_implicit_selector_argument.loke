@@ -1,0 +1,45 @@
+// design.md "Implicit selector expression": a generic procedure's parameter
+// whose written type names none of its `$` parameters supplies the type of an
+// implicit selector argument, as an ordinary procedure's does: positionally,
+// by name, through a method, through a group of generic members, and as a
+// variant construction.
+package main;
+
+import "core:fmt";
+
+Order :: enum { First, Second }
+
+Shape :: union {
+	circle: f64,
+	square: f64,
+}
+
+pick :: proc(order: Order, a, b: $T) -> T {
+	return a if order == .First else b;
+}
+
+area :: proc(shape: Shape, scale: $T) -> T {
+	switch (shape) {
+	case .circle(r): return T(3.0*r*r)*scale;
+	case .square(s): return T(s*s)*scale;
+	}
+}
+
+Box :: struct($T: type) { value: T }
+
+impl Box($T) {
+	choose :: proc(self, order: Order, other: $U) -> string_view {
+		return "self" if order == .First else "other";
+	}
+}
+
+ints :: proc(order: Order, values: []$T) -> T { return values[0] if order == .First else values[1]; }
+floats :: proc(order: Order, value: $T, more: f64) -> T { return value if order == .First else T(more); }
+either :: proc{ints, floats};
+
+main :: proc() {
+	fmt.println(pick(.First, 1, 2), pick(.Second, "a", "b"), pick(b = 4.5, a = 3.5, order = .Second));
+	fmt.println(area(.square(2.0), 3), area(.circle(1.0), 0.5));
+	fmt.println(Box(int){7}.choose(.Second, 1.5));
+	fmt.println(either(.Second, []int{5, 6}), either(.Second, f32(1), 2.5));
+}

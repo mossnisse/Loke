@@ -170,7 +170,15 @@ common_argument_type :: proc(k: ^Checker, candidates: []Symbol_Id, name: Identif
 	common := INVALID_TYPE
 	for candidate in candidates {
 		sym := symbol_of(k.c, candidate)
-		if sym == nil || sym.generic { return INVALID_TYPE }
+		if sym == nil { return INVALID_TYPE }
+		if sym.generic {
+			template := generic_template_for(k, candidate)
+			if template == nil || template.kind != .Procedure { return INVALID_TYPE }
+			type := generic_parameter_context_type(k, template, name, position)
+			if type == INVALID_TYPE || (common != INVALID_TYPE && common != type) { return INVALID_TYPE }
+			common = type
+			continue
+		}
 		slot := position
 		if name != INVALID_IDENTIFIER {
 			slot = -1

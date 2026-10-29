@@ -100,6 +100,16 @@ impl Vector2($T) {
 	perp :: proc(self) -> Vector2(T) { return {-self.y, self.x}; }
 	extend :: proc(self, z: T) -> Vector3(T) { return {self.x, self.y, z}; }
 
+	/// The part of the vector along the unit vector `onto`: `onto * dot(self, onto)`.
+	project :: proc(self, onto: Vector2(T)) -> Vector2(T) { return onto*self.dot(onto); }
+	/// The part of the vector across the unit vector `normal`: `self - project(normal)`.
+	reject :: proc(self, normal: Vector2(T)) -> Vector2(T) { return self - self.project(normal); }
+	/// The mirror image across the line with unit normal `normal`: `self - 2*project(normal)`.
+	reflect :: proc(self, normal: Vector2(T)) -> Vector2(T) {
+		d := self.dot(normal);
+		return self - normal*(d + d);
+	}
+
 	/// Component-wise `math.min`.
 	min :: proc(self, other: Vector2(T)) -> Vector2(T) where interfaces.Ordered(T) {
 		return {math.min(self.x, other.x), math.min(self.y, other.y)};
@@ -131,6 +141,14 @@ impl Vector2($T) {
 	lerp :: proc(self, other: Vector2(T), t: T) -> Vector2(T) where Real(T) {
 		s := T(1) - t;
 		return {self.x*s + other.x*t, self.y*s + other.y*t};
+	}
+	/**
+		The angle between the vectors, in `[0, pi]`: `atan2(|cross|, dot)`,
+		accurate near 0 and pi, where the `acos` of a normalized dot product is
+		not. 0 when either vector is zero.
+	*/
+	angle_between :: proc(self, other: Vector2(T)) -> T where Real(T) {
+		return self.cross(other).abs().atan2(self.dot(other));
 	}
 	abs :: proc(self) -> Vector2(T) where Real(T) { return {self.x.abs(), self.y.abs()}; }
 	floor :: proc(self) -> Vector2(T) where Real(T) { return {self.x.floor(), self.y.floor()}; }
@@ -229,6 +247,16 @@ impl Vector3($T) {
 	extend :: proc(self, w: T) -> Vector4(T) { return {self.x, self.y, self.z, w}; }
 	xy :: proc(self) -> Vector2(T) { return {self.x, self.y}; }
 
+	/// The part of the vector along the unit vector `onto`: `onto * dot(self, onto)`.
+	project :: proc(self, onto: Vector3(T)) -> Vector3(T) { return onto*self.dot(onto); }
+	/// The part of the vector across the unit vector `normal`: `self - project(normal)`.
+	reject :: proc(self, normal: Vector3(T)) -> Vector3(T) { return self - self.project(normal); }
+	/// The mirror image across the plane with unit normal `normal`: `self - 2*project(normal)`.
+	reflect :: proc(self, normal: Vector3(T)) -> Vector3(T) {
+		d := self.dot(normal);
+		return self - normal*(d + d);
+	}
+
 	/// Component-wise `math.min`.
 	min :: proc(self, other: Vector3(T)) -> Vector3(T) where interfaces.Ordered(T) {
 		return {math.min(self.x, other.x), math.min(self.y, other.y), math.min(self.z, other.z)};
@@ -260,6 +288,14 @@ impl Vector3($T) {
 	lerp :: proc(self, other: Vector3(T), t: T) -> Vector3(T) where Real(T) {
 		s := T(1) - t;
 		return {self.x*s + other.x*t, self.y*s + other.y*t, self.z*s + other.z*t};
+	}
+	/**
+		The angle between the vectors, in `[0, pi]`: `atan2(|cross|, dot)`,
+		accurate near 0 and pi, where the `acos` of a normalized dot product is
+		not. 0 when either vector is zero.
+	*/
+	angle_between :: proc(self, other: Vector3(T)) -> T where Real(T) {
+		return self.cross(other).length().atan2(self.dot(other));
 	}
 	abs :: proc(self) -> Vector3(T) where Real(T) { return {self.x.abs(), self.y.abs(), self.z.abs()}; }
 	floor :: proc(self) -> Vector3(T) where Real(T) { return {self.x.floor(), self.y.floor(), self.z.floor()}; }
@@ -354,6 +390,16 @@ impl Vector4($T) {
 	distance_squared :: proc(self, other: Vector4(T)) -> T { return (self - other).length_squared(); }
 	xyz :: proc(self) -> Vector3(T) { return {self.x, self.y, self.z}; }
 
+	/// The part of the vector along the unit vector `onto`: `onto * dot(self, onto)`.
+	project :: proc(self, onto: Vector4(T)) -> Vector4(T) { return onto*self.dot(onto); }
+	/// The part of the vector across the unit vector `normal`: `self - project(normal)`.
+	reject :: proc(self, normal: Vector4(T)) -> Vector4(T) { return self - self.project(normal); }
+	/// The mirror image across the hyperplane with unit normal `normal`: `self - 2*project(normal)`.
+	reflect :: proc(self, normal: Vector4(T)) -> Vector4(T) {
+		d := self.dot(normal);
+		return self - normal*(d + d);
+	}
+
 	/// Component-wise `math.min`.
 	min :: proc(self, other: Vector4(T)) -> Vector4(T) where interfaces.Ordered(T) {
 		return {
@@ -394,6 +440,17 @@ impl Vector4($T) {
 			self.x*s + other.x*t, self.y*s + other.y*t,
 			self.z*s + other.z*t, self.w*s + other.w*t,
 		};
+	}
+	/**
+		The angle between the vectors, in `[0, pi]`, accurate near 0 and pi.
+		With no cross product in four dimensions it is Kahan's
+		`2*atan2(|a*|b| - b*|a||, |a*|b| + b*|a||)`. 0 when either vector is zero.
+	*/
+	angle_between :: proc(self, other: Vector4(T)) -> T where Real(T) {
+		a := self*other.length();
+		b := other*self.length();
+		half := (a - b).length().atan2((a + b).length());
+		return half + half;
 	}
 	abs :: proc(self) -> Vector4(T) where Real(T) {
 		return {self.x.abs(), self.y.abs(), self.z.abs(), self.w.abs()};

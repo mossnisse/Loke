@@ -40,3 +40,297 @@ quaternion_normalize :: proc(q: math.Quaternion($T)) -> Option(math.Quaternion(T
 	norm := squared.sqrt();
 	return math.Quaternion(T).from_components(q.real/norm, q.i/norm, q.j/norm, q.k/norm);
 }
+
+/**
+	The unit quaternion of a rotation matrix, 3 x 3 or the linear part of a
+	4 x 4, with a non-negative real part. Shepperd's method: it takes the
+	square root of the largest of `4*real^2`, `4*i^2`, `4*j^2`, and `4*k^2`,
+	the first on a tie, so it stays accurate at every angle. For a matrix that
+	is not a rotation the result is not meaningful.
+*/
+// With `m[r, c]` as `a[c][r]`, each component squared is one of
+// `(1 + trace)/4`, `(1 + m00 - m11 - m22)/4`, and its turns, and the others
+// follow from the off-diagonal sums and differences divided by `4*component`.
+quaternion_from_matrix :: proc(m: Matrix($T, $R, $C)) -> math.Quaternion(T) where R == C, R == 3 || R == 4, Real(T) {
+	a := m.columns;
+	one := T(1);
+	trace := a[0][0] + a[1][1] + a[2][2];
+	largest, which := trace, 0;
+	if (largest < a[0][0]) { largest, which = a[0][0], 1; }
+	if (largest < a[1][1]) { largest, which = a[1][1], 2; }
+	if (largest < a[2][2]) { largest, which = a[2][2], 3; }
+	w, x, y, z: T;
+	switch (which) {
+	case 0:
+		r := (one + trace).sqrt();
+		s := r + r;
+		w = r*T(0.5);
+		x = (a[1][2] - a[2][1])/s;
+		y = (a[2][0] - a[0][2])/s;
+		z = (a[0][1] - a[1][0])/s;
+	case 1:
+		r := (one + a[0][0] - a[1][1] - a[2][2]).sqrt();
+		s := r + r;
+		x = r*T(0.5);
+		w = (a[1][2] - a[2][1])/s;
+		y = (a[1][0] + a[0][1])/s;
+		z = (a[2][0] + a[0][2])/s;
+	case 2:
+		r := (one + a[1][1] - a[0][0] - a[2][2]).sqrt();
+		s := r + r;
+		y = r*T(0.5);
+		w = (a[2][0] - a[0][2])/s;
+		x = (a[1][0] + a[0][1])/s;
+		z = (a[2][1] + a[1][2])/s;
+	case:
+		r := (one + a[2][2] - a[0][0] - a[1][1]).sqrt();
+		s := r + r;
+		z = r*T(0.5);
+		w = (a[0][1] - a[1][0])/s;
+		x = (a[2][0] + a[0][2])/s;
+		y = (a[2][1] + a[1][2])/s;
+	}
+	if (w < T(0)) { return math.Quaternion(T).from_components(-w, -x, -y, -z); }
+	return math.Quaternion(T).from_components(w, x, y, z);
+}
+
+/**
+	The shortest rotation that turns the direction of `a` to the direction of
+	`b`: `quaternion_between(a, b)`, or `quaternion_between(a, b,
+	fallback_axis)`. `.none` when either is zero, as for `normalize`, and when
+	they point in opposite directions, where every axis across them is as
+	short, unless `fallback_axis` gives one: the result then turns half a turn
+	about its part across `a`, or is `.none` when it has none.
+*/
+quaternion_between :: proc{quaternion_between_directions, quaternion_between_or_half_turn};
+
+@(private)
+quaternion_between_directions :: proc(a, b: Vector3($T)) -> Option(math.Quaternion(T)) where Real(T) {
+	u := a.normalize() or_return;
+	v := b.normalize() or_return;
+	return turn_between(u, v);
+}
+
+@(private)
+quaternion_between_or_half_turn :: proc(a, b: Vector3($T), fallback_axis: Vector3(T)) -> Option(math.Quaternion(T)) where Real(T) {
+	u := a.normalize() or_return;
+	v := b.normalize() or_return;
+	switch (turn_between(u, v)) {
+	case .some(q): return q;
+	case .none:
+	}
+	n := fallback_axis.reject(u).normalize() or_return;
+	return math.Quaternion(T).from_components(T(0), n.x, n.y, n.z);
+}
+
+// The rotation from the unit `u` to the unit `v`, by the angle `atan2(|c|, d)`
+// about `c = u x v` with its part along `u` removed. Both stay accurate for
+// nearly opposite vectors, where `normalize(u + v)` and `1 + dot(u, v)` have
+// cancelled: the removed part is rounding, and an error left across `u`
+// moves the result only by the small sine of the angle. `.none` when `c` has
+// no direction and the vectors are opposite.
+@(private)
+turn_between :: proc(u, v: Vector3($T)) -> Option(math.Quaternion(T)) where Real(T) {
+	c := u.cross(v);
+	d := u.dot(v);
+	switch (c.reject(u).normalize()) {
+	case .some(axis):
+		half := c.length().atan2(d)*T(0.5);
+		s := half.sin();
+		return math.Quaternion(T).from_components(half.cos(), axis.x*s, axis.y*s, axis.z*s);
+	case .none:
+	}
+	if (d < T(0)) { return .none; }
+	return math.Quaternion(T).from_components(T(1), T(0), T(0), T(0));
+}
+
+/**
+	Normalized linear interpolation from the unit quaternion `a` at `t = 0` to
+	`b` at `t = 1`, along the shorter arc: `b` is negated when `dot(a, b) < 0`.
+	It is a unit quaternion at every `t`, but its angular speed is not
+	constant; `slerp`'s is.
+*/
+nlerp :: proc(a, b: math.Quaternion($T), t: T) -> math.Quaternion(T) where Real(T) {
+	e := shorter_arc(a, b);
+	s := T(1) - t;
+	r := math.Quaternion(T).from_components(a.real*s + e.real*t, a.i*s + e.i*t, a.j*s + e.j*t, a.k*s + e.k*t);
+	norm := r.norm_squared().sqrt();
+	return math.Quaternion(T).from_components(r.real/norm, r.i/norm, r.j/norm, r.k/norm);
+}
+
+/**
+	Spherical linear interpolation from the unit quaternion `a` at `t = 0` to
+	`b` at `t = 1`, along the shorter arc at constant angular speed. Exact at
+	both ends, where it returns `a`, and `b` or `-b`.
+*/
+// The angle between them as 4-vectors is `2*atan2(|a - b|, |a + b|)`, which
+// stays accurate for close quaternions, where `acos(dot)` does not, so only
+// an angle whose sine is not normal needs the linear form.
+slerp :: proc(a, b: math.Quaternion($T), t: T) -> math.Quaternion(T) where Real(T) {
+	e := shorter_arc(a, b);
+	half := (a - e).norm_squared().sqrt().atan2((a + e).norm_squared().sqrt());
+	angle := half + half;
+	sine := angle.sin();
+	wa, wb: T;
+	if (sine.is_normal()) {
+		wa = ((T(1) - t)*angle).sin()/sine;
+		wb = (t*angle).sin()/sine;
+	} else {
+		wa = T(1) - t;
+		wb = t;
+	}
+	return math.Quaternion(T).from_components(a.real*wa + e.real*wb, a.i*wa + e.i*wb, a.j*wa + e.j*wb, a.k*wa + e.k*wb);
+}
+
+// `b`, or `-b` when it is on the far side of `a`.
+@(private)
+shorter_arc :: proc(a, b: math.Quaternion($T)) -> math.Quaternion(T) where Real(T) {
+	if (a.real*b.real + a.i*b.i + a.j*b.j + a.k*b.k < T(0)) { return -b; }
+	return b;
+}
+
+/**
+	An intrinsic Tait-Bryan sequence: `.ZYX` turns about `Z`, then about the
+	turned `Y`, then about the twice-turned `X`, which is also the extrinsic
+	sequence `X`, `Y`, `Z` about the fixed axes. Aerospace yaw, pitch, and roll
+	are `.ZYX`. There is no default, because each field uses a different one.
+*/
+Euler_Order :: enum { XYZ, XZY, YXZ, YZX, ZXY, ZYX }
+
+/**
+	The rotation by the angles of `order`, each about its axis in turn:
+	`quaternion_from_euler(.ZYX, yaw, pitch, roll)` is
+	`axis_angle(Z, yaw) * axis_angle(Y, pitch) * axis_angle(X, roll)`.
+*/
+quaternion_from_euler :: proc(order: Euler_Order, first, second, third: $T) -> math.Quaternion(T) where Real(T) {
+	axes := euler_axes(order);
+	return axis_rotation(axes[0], first)*axis_rotation(axes[1], second)*axis_rotation(axes[2], third);
+}
+
+/**
+	The angles of `order` that `quaternion_from_euler` turns into the rotation
+	`q`: the middle one in `[-pi/2, pi/2]` and the others in `[-pi, pi]`. When
+	the middle angle is within rounding of `pi/2` or `-pi/2`, gimbal lock, the
+	first and third axes coincide; the third angle is then 0 and the first
+	takes the whole rotation about them. `q` need not be a unit quaternion.
+*/
+// Bernardes and Viollet, "Quaternion to Euler angles conversion: A direct,
+// general and computationally efficient method" (PLOS ONE, 2022), for an
+// intrinsic sequence. The quaternion is permuted so that the middle angle is
+// the angle between the pairs `(a, b)` and `(c, d)`, and the outer angles are
+// their half sum and half difference. The middle one is taken from
+// `n^2 - p^2 = 4*(w*q_j - sign*q_i*q_k)`, which does not cancel near 0.
+to_euler :: proc(q: math.Quaternion($T), order: Euler_Order) -> (first: T, second: T, third: T) where Real(T) {
+	axes := euler_axes(order);
+	i, j, k := axes[2], axes[1], axes[0];
+	sign := T(1) if (i - j)*(j - k)*(k - i) > 0 else -T(1);
+	w := q.real;
+	qi, qj, qk := quaternion_part(q, i), quaternion_part(q, j), quaternion_part(q, k)*sign;
+	a, b := w - qj, qi + qk;
+	c, d := qj + w, qk - qi;
+	p := (a*a + b*b).sqrt();
+	n := (c*c + d*d).sqrt();
+	cross := w*qj - qi*qk;
+	middle := (cross + cross).atan2(p*n);
+	half_sum := b.atan2(a);
+	half_diff := d.atan2(c);
+	// A pair within two ulps of the other's magnitude is the rounding left by
+	// computing it from the components, and gimbal lock: the outer angles are
+	// then one rotation, and putting it all in the first moves the result by
+	// about that pair.
+	quarter := T(0.25);
+	outer, inner: T;
+	if (p + n*quarter == p) {
+		outer, inner = half_sum + half_sum, T(0);
+	} else if (n + p*quarter == n) {
+		outer, inner = half_diff + half_diff, T(0);
+	} else {
+		outer, inner = half_sum + half_diff, half_sum - half_diff;
+	}
+	return {wrap_angle(outer*sign), middle, wrap_angle(inner)};
+}
+
+/**
+	The rotation of the rotation vector `v`: `|v|` radians about the
+	direction of `v`, and no rotation for the zero vector.
+*/
+// `(cos(|v|/2), v*sin(|v|/2)/|v|)`; below the smallest normal squared length
+// the quotient is 1/2 to rounding.
+quaternion_from_rotation_vector :: proc(v: Vector3($T)) -> math.Quaternion(T) where Real(T) {
+	squared := v.length_squared();
+	if (!squared.is_normal() && squared.is_finite()) {
+		h := v*T(0.5);
+		return math.Quaternion(T).from_components(T(1), h.x, h.y, h.z);
+	}
+	angle := squared.sqrt();
+	half := angle*T(0.5);
+	h := v*(half.sin()/angle);
+	return math.Quaternion(T).from_components(half.cos(), h.x, h.y, h.z);
+}
+
+/**
+	The rotation vector of the unit quaternion `q`: its axis times its angle,
+	in `[0, pi]`, so `q` and `-q` give the same vector. The zero vector for no
+	rotation.
+*/
+to_rotation_vector :: proc(q: math.Quaternion($T)) -> Vector3(T) where Real(T) {
+	w := q.real;
+	u := Vector3(T){q.i, q.j, q.k};
+	if (w < T(0)) {
+		w = -w;
+		u = -u;
+	}
+	squared := u.length_squared();
+	if (!squared.is_normal() && squared.is_finite()) { return u + u; }
+	norm := squared.sqrt();
+	half := norm.atan2(w);
+	return u*((half + half)/norm);
+}
+
+// The axis indices, 0 to 2 for `X` to `Z`, of `order` in its order.
+@(private)
+euler_axes :: proc(order: Euler_Order) -> [3]int {
+	switch (order) {
+	case .XYZ: return {0, 1, 2};
+	case .XZY: return {0, 2, 1};
+	case .YXZ: return {1, 0, 2};
+	case .YZX: return {1, 2, 0};
+	case .ZXY: return {2, 0, 1};
+	case .ZYX: return {2, 1, 0};
+	}
+}
+
+// The rotation by `angle` about the coordinate axis `axis`.
+@(private)
+axis_rotation :: proc(axis: int, angle: $T) -> math.Quaternion(T) where Real(T) {
+	half := angle*T(0.5);
+	c, s := half.cos(), half.sin();
+	zero := T(0);
+	switch (axis) {
+	case 0: return math.Quaternion(T).from_components(c, s, zero, zero);
+	case 1: return math.Quaternion(T).from_components(c, zero, s, zero);
+	case:
+	}
+	return math.Quaternion(T).from_components(c, zero, zero, s);
+}
+
+// The vector component of `q` along the coordinate axis `axis`.
+@(private)
+quaternion_part :: proc(q: math.Quaternion($T), axis: int) -> T where interfaces.Numeric(T) {
+	switch (axis) {
+	case 0: return q.i;
+	case 1: return q.j;
+	case:
+	}
+	return q.k;
+}
+
+// `angle` moved into `[-pi, pi]` by a whole turn, for a sum of two angles
+// already in that range.
+@(private)
+wrap_angle :: proc(angle: $T) -> T where Real(T) {
+	pi := T(f64(math.PI));
+	if (angle < -pi) { return angle + (pi + pi); }
+	if (pi < angle) { return angle - (pi + pi); }
+	return angle;
+}

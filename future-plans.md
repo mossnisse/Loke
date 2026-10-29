@@ -117,9 +117,9 @@ Math gaps include hyperbolics,
 `cbrt`/`ldexp`/`frexp`/`modf`, `erf`, `gamma`, lane-wise SIMD math, and
 integer bit helpers. `core:simd`'s remaining gaps are specified in
 [What SIMD does not do](design.md#what-simd-does-not-do).
-[`core:math/linalg`](standard-library.md#coremathlinalg) has its first
-milestone; the rotation and geometry helpers, a dense-matrix package, and
-measured SIMD paths follow, in the
+[`core:math/linalg`](standard-library.md#coremathlinalg) has its first two
+milestones, the core values and the rotation and geometry helpers; a
+dense-matrix package and measured SIMD paths follow, in the
 [linear algebra library plan](linear-algebra-plan.md#milestones).
 
 [`core:encoding/json`](standard-library.md#coreencodingjson) still needs this

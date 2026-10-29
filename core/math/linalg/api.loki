@@ -26,8 +26,10 @@
 	run.
 
 	Nothing returns a silent zero or NaN for a degenerate input: `normalize`,
-	`inverse`, `solve`, `look_at`, and `quaternion_normalize` return `Option`,
-	and invalid projection parameters panic.
+	`inverse`, `solve`, `inverse_affine`, `normal_matrix`, `project_point`,
+	`look_at`, `quaternion_normalize`, and `quaternion_between` return
+	`Option`, and invalid projection parameters panic. Euler angles take an
+	explicit `Euler_Order`, since each field uses a different one.
 */
 package linalg;
 
@@ -288,6 +290,83 @@ quaternion_from_axis_angle :: proc(axis: Vector3($T), angle: T) -> math.Quaterni
 */
 quaternion_normalize :: proc(q: math.Quaternion($T)) -> Option(math.Quaternion(T)) where Real(T) ---;
 
+/*
+	The unit quaternion of a rotation matrix, 3 x 3 or the linear part of a
+	4 x 4, with a non-negative real part. Shepperd's method: it takes the
+	square root of the largest of `4*real^2`, `4*i^2`, `4*j^2`, and `4*k^2`,
+	the first on a tie, so it stays accurate at every angle. For a matrix that
+	is not a rotation the result is not meaningful.
+*/
+quaternion_from_matrix :: proc(m: Matrix($T, $R, $C)) -> math.Quaternion(T) where R == C, R == 3 || R == 4, Real(T) ---;
+
+/*
+	The shortest rotation that turns the direction of `a` to the direction of
+	`b`: `quaternion_between(a, b)`, or `quaternion_between(a, b,
+	fallback_axis)`. `.none` when either is zero, as for `normalize`, and when
+	they point in opposite directions, where every axis across them is as
+	short, unless `fallback_axis` gives one: the result then turns half a turn
+	about its part across `a`, or is `.none` when it has none.
+*/
+quaternion_between :: proc{quaternion_between_directions, quaternion_between_or_half_turn};
+
+// Private to the package, but a public declaration names it.
+quaternion_between_directions :: proc(a, b: Vector3($T)) -> Option(math.Quaternion(T)) where Real(T) ---;
+
+// Private to the package, but a public declaration names it.
+quaternion_between_or_half_turn :: proc(a, b: Vector3($T), fallback_axis: Vector3(T)) -> Option(math.Quaternion(T)) where Real(T) ---;
+
+/*
+	Normalized linear interpolation from the unit quaternion `a` at `t = 0` to
+	`b` at `t = 1`, along the shorter arc: `b` is negated when `dot(a, b) < 0`.
+	It is a unit quaternion at every `t`, but its angular speed is not
+	constant; `slerp`'s is.
+*/
+nlerp :: proc(a, b: math.Quaternion($T), t: T) -> math.Quaternion(T) where Real(T) ---;
+
+/*
+	Spherical linear interpolation from the unit quaternion `a` at `t = 0` to
+	`b` at `t = 1`, along the shorter arc at constant angular speed. Exact at
+	both ends, where it returns `a`, and `b` or `-b`.
+*/
+slerp :: proc(a, b: math.Quaternion($T), t: T) -> math.Quaternion(T) where Real(T) ---;
+
+/*
+	An intrinsic Tait-Bryan sequence: `.ZYX` turns about `Z`, then about the
+	turned `Y`, then about the twice-turned `X`, which is also the extrinsic
+	sequence `X`, `Y`, `Z` about the fixed axes. Aerospace yaw, pitch, and roll
+	are `.ZYX`. There is no default, because each field uses a different one.
+*/
+Euler_Order :: enum { XYZ, XZY, YXZ, YZX, ZXY, ZYX }
+
+/*
+	The rotation by the angles of `order`, each about its axis in turn:
+	`quaternion_from_euler(.ZYX, yaw, pitch, roll)` is
+	`axis_angle(Z, yaw) * axis_angle(Y, pitch) * axis_angle(X, roll)`.
+*/
+quaternion_from_euler :: proc(order: Euler_Order, first, second, third: $T) -> math.Quaternion(T) where Real(T) ---;
+
+/*
+	The angles of `order` that `quaternion_from_euler` turns into the rotation
+	`q`: the middle one in `[-pi/2, pi/2]` and the others in `[-pi, pi]`. When
+	the middle angle is within rounding of `pi/2` or `-pi/2`, gimbal lock, the
+	first and third axes coincide; the third angle is then 0 and the first
+	takes the whole rotation about them. `q` need not be a unit quaternion.
+*/
+to_euler :: proc(q: math.Quaternion($T), order: Euler_Order) -> (first: T, second: T, third: T) where Real(T) ---;
+
+/*
+	The rotation of the rotation vector `v`: `|v|` radians about the
+	direction of `v`, and no rotation for the zero vector.
+*/
+quaternion_from_rotation_vector :: proc(v: Vector3($T)) -> math.Quaternion(T) where Real(T) ---;
+
+/*
+	The rotation vector of the unit quaternion `q`: its axis times its angle,
+	in `[0, pi]`, so `q` and `-q` give the same vector. The zero vector for no
+	rotation.
+*/
+to_rotation_vector :: proc(q: math.Quaternion($T)) -> Vector3(T) where Real(T) ---;
+
 impl Matrix($T, $R, $C) {
 	// The 4 x 4 transform that adds `offset` to a point.
 	translation :: proc(offset: Vector3(T)) -> Matrix(T, R, C) where R == 4, C == 4 ---;
@@ -332,6 +411,29 @@ impl Matrix($T, $R, $C) {
 		linear part is a rotation; for anything else the result is wrong.
 	*/
 	inverse_rigid :: proc(self) -> Matrix(T, R, C) where R == 4, C == 4 ---;
+
+	/*
+		The inverse of an affine transform, a linear part followed by a
+		translation: `(inverse(L), -inverse(L) * t)`. The last row is taken as
+		`(0, 0, 0, 1)` without checking. `.none` when the linear part has no
+		`inverse`.
+	*/
+	inverse_affine :: proc(self) -> Option(Matrix(T, R, C)) where R == 4, C == 4, Real(T) ---;
+
+	/*
+		The matrix that transforms surface normals as this transform moves the
+		surface: the transpose of the inverse of its linear part. It keeps
+		normals perpendicular under non-uniform scaling; normalize each result.
+		`.none` when the linear part has no `inverse`.
+	*/
+	normal_matrix :: proc(self) -> Option(Matrix(T, 3, 3)) where R == 4, C == 4, Real(T) ---;
+
+	/*
+		`self * (p, 1)` divided by its `w`: the point after a projection, in
+		normalized device coordinates. `.none` when `w` is zero or the result is
+		not finite, as for a point in the camera's plane.
+	*/
+	project_point :: proc(self, p: Vector3(T)) -> Option(Vector3(T)) where R == 4, C == 4, Real(T) ---;
 
 	// The rotation by `angle` about the x axis, 3 x 3 or 4 x 4.
 	rotation_x :: proc(angle: T) -> Matrix(T, R, C) where R == C, R == 3 || R == 4, Real(T) ---;
@@ -490,6 +592,15 @@ impl Vector2($T) {
 
 	extend :: proc(self, z: T) -> Vector3(T) ---;
 
+	// The part of the vector along the unit vector `onto`: `onto * dot(self, onto)`.
+	project :: proc(self, onto: Vector2(T)) -> Vector2(T) ---;
+
+	// The part of the vector across the unit vector `normal`: `self - project(normal)`.
+	reject :: proc(self, normal: Vector2(T)) -> Vector2(T) ---;
+
+	// The mirror image across the line with unit normal `normal`: `self - 2*project(normal)`.
+	reflect :: proc(self, normal: Vector2(T)) -> Vector2(T) ---;
+
 	// Component-wise `math.min`.
 	min :: proc(self, other: Vector2(T)) -> Vector2(T) where interfaces.Ordered(T) ---;
 
@@ -513,6 +624,13 @@ impl Vector2($T) {
 
 	// `self*(1 - t) + other*t` per component, exact at both ends.
 	lerp :: proc(self, other: Vector2(T), t: T) -> Vector2(T) where Real(T) ---;
+
+	/*
+		The angle between the vectors, in `[0, pi]`: `atan2(|cross|, dot)`,
+		accurate near 0 and pi, where the `acos` of a normalized dot product is
+		not. 0 when either vector is zero.
+	*/
+	angle_between :: proc(self, other: Vector2(T)) -> T where Real(T) ---;
 
 	abs :: proc(self) -> Vector2(T) where Real(T) ---;
 
@@ -584,6 +702,15 @@ impl Vector3($T) {
 
 	xy :: proc(self) -> Vector2(T) ---;
 
+	// The part of the vector along the unit vector `onto`: `onto * dot(self, onto)`.
+	project :: proc(self, onto: Vector3(T)) -> Vector3(T) ---;
+
+	// The part of the vector across the unit vector `normal`: `self - project(normal)`.
+	reject :: proc(self, normal: Vector3(T)) -> Vector3(T) ---;
+
+	// The mirror image across the plane with unit normal `normal`: `self - 2*project(normal)`.
+	reflect :: proc(self, normal: Vector3(T)) -> Vector3(T) ---;
+
 	// Component-wise `math.min`.
 	min :: proc(self, other: Vector3(T)) -> Vector3(T) where interfaces.Ordered(T) ---;
 
@@ -607,6 +734,13 @@ impl Vector3($T) {
 
 	// `self*(1 - t) + other*t` per component, exact at both ends.
 	lerp :: proc(self, other: Vector3(T), t: T) -> Vector3(T) where Real(T) ---;
+
+	/*
+		The angle between the vectors, in `[0, pi]`: `atan2(|cross|, dot)`,
+		accurate near 0 and pi, where the `acos` of a normalized dot product is
+		not. 0 when either vector is zero.
+	*/
+	angle_between :: proc(self, other: Vector3(T)) -> T where Real(T) ---;
 
 	abs :: proc(self) -> Vector3(T) where Real(T) ---;
 
@@ -675,6 +809,15 @@ impl Vector4($T) {
 
 	xyz :: proc(self) -> Vector3(T) ---;
 
+	// The part of the vector along the unit vector `onto`: `onto * dot(self, onto)`.
+	project :: proc(self, onto: Vector4(T)) -> Vector4(T) ---;
+
+	// The part of the vector across the unit vector `normal`: `self - project(normal)`.
+	reject :: proc(self, normal: Vector4(T)) -> Vector4(T) ---;
+
+	// The mirror image across the hyperplane with unit normal `normal`: `self - 2*project(normal)`.
+	reflect :: proc(self, normal: Vector4(T)) -> Vector4(T) ---;
+
 	// Component-wise `math.min`.
 	min :: proc(self, other: Vector4(T)) -> Vector4(T) where interfaces.Ordered(T) ---;
 
@@ -698,6 +841,13 @@ impl Vector4($T) {
 
 	// `self*(1 - t) + other*t` per component, exact at both ends.
 	lerp :: proc(self, other: Vector4(T), t: T) -> Vector4(T) where Real(T) ---;
+
+	/*
+		The angle between the vectors, in `[0, pi]`, accurate near 0 and pi.
+		With no cross product in four dimensions it is Kahan's
+		`2*atan2(|a*|b| - b*|a||, |a*|b| + b*|a||)`. 0 when either vector is zero.
+	*/
+	angle_between :: proc(self, other: Vector4(T)) -> T where Real(T) ---;
 
 	abs :: proc(self) -> Vector4(T) where Real(T) ---;
 

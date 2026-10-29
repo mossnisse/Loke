@@ -865,7 +865,7 @@ missing a known level still needs coverage.
 
 The [linear algebra library plan](linear-algebra-plan.md)'s first step tried
 its `Real` interface and generic matrix shapes against the compiler
-(`tests/pkg/real_interface`), and its first milestone built
+(`tests/pkg/real_interface`), and its first two milestones built
 [`core:math/linalg`](standard-library.md#coremathlinalg) on them. These
 language questions came out of it, and the library cannot settle them by
 itself.
@@ -906,6 +906,21 @@ evaluator could compute it and give the bits the program would; so are
 should implement that set, or `core:math` should implement them in Loke as
 `core:math/repro` does its functions, is open; a `when`-selected Loke body
 would keep the run-time instruction.
+
+### Implicit selectors in inferred parameter types
+
+An implicit selector argument takes the type of the parameter it fills, and a
+generic procedure's parameter supplies one only when its written type names
+none of the procedure's `$` parameters
+([Implicit selector expression](design.md#implicit-selector-expression)). So
+`f(x, .some(y))` against `f :: proc(x: $T, y: Option(T) = .none)` is rejected
+even though `x` alone settles `T`. That is why
+`linalg.quaternion_between(a, b, fallback_axis)` is a procedure group with a
+plain `Vector3(T)` parameter rather than one procedure with an
+`Option(Vector3(T))` default. Typing such arguments after inference from the
+others would allow the `Option` form. The open part is the order: whether an
+argument that needs a type may wait for inference, and what a call means when
+the waiting argument is also the only one that could bind `T`.
 
 ## Open questions in `core:random`
 

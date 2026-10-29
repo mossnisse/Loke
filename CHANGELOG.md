@@ -339,7 +339,12 @@ checklist.
   `perspective`, `orthographic`, `look_at`, and `look_to` with their `_lh`
   forms, for a `linalg.Real(T)` such as `f32`, `f64`, or a user type. Every
   projection takes its clip-space `Depth_Range`, degenerate input returns
-  `Option`, and `approx_equal` takes both tolerances
+  `Option`, and `approx_equal` takes both tolerances. The quaternion
+  procedures convert to and from matrices (`quaternion_from_matrix`), Euler
+  angles in an explicit `Euler_Order`, and rotation vectors, and add
+  `quaternion_between`, `nlerp`, and `slerp`. Vectors have `angle_between`,
+  `project`, `reject`, and `reflect`, and a 4 x 4 transform has
+  `inverse_affine`, `normal_matrix`, and `project_point`
   ([`core:math/linalg`](standard-library.md#coremathlinalg)).
 
 ### Changed
@@ -423,6 +428,11 @@ checklist.
   not `@(public)` now says so, as ordering already did, including when an
   interface requirement fails for a type declared in a package that exports
   nothing by default.
+- An implicit selector such as `.First` or `.circle(r)` passed to a generic
+  procedure takes its type from a parameter whose written type names none of
+  the procedure's `$` parameters, as it does for an ordinary procedure;
+  before, it reported `L0385`
+  ([Implicit selector expression](design.md#implicit-selector-expression)).
 - A procedure group declared before its members in a generic `impl` drops a
   member that a failed `where` bound excludes, as one declared after them
   always did; before, every call through it was ambiguous
