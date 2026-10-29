@@ -1,7 +1,7 @@
 // deterministic-math-and-targets-plan.md "Validation and performance gates": an
-// oracle for the correctly rounded `exp`, `log`, `sin`, `cos`, `pow`, and
-// `atan2` of `f64` and `f32`, with the special cases of the reproducible
-// contract.
+// oracle for the correctly rounded `exp`, `log`, `sin`, `cos`, `asin`, `acos`,
+// `pow`, and `atan2` of `f64` and `f32`, with the special cases of the
+// reproducible contract.
 //
 // Each result is an interval of integers at a scale of `2^-precision`, every
 // step rounded outward, so the true value is always inside it. When both ends
@@ -24,6 +24,8 @@ Oracle_Function :: enum {
 	Log,
 	Sin,
 	Cos,
+	Asin,
+	Acos,
 }
 
 // An IEEE-754 binary format, by its significand and exponent widths.
@@ -136,6 +138,12 @@ special_case :: proc(function: Oracle_Function, x: f64, format: Float_Format) ->
 	case .Cos:
 		if math.is_inf(x, 0) {return nan, true}
 		if x == 0 {return one, true}
+	case .Asin:
+		if abs(x) > 1 {return nan, true}
+		if x == 0 {return math.sign_bit(x) ? negative_zero : 0, true}
+	case .Acos:
+		if abs(x) > 1 {return nan, true}
+		if x == 1 {return 0, true}
 	}
 	return 0, false
 }
@@ -149,6 +157,8 @@ attempt :: proc(o: ^Oracle, function: Oracle_Function, x: f64, format: Float_For
 		return log_attempt(o, x, format, precision)
 	case .Sin, .Cos:
 		return trig_attempt(o, function, x, format, precision)
+	case .Asin, .Acos:
+		return arc_attempt(o, function, x, format, precision)
 	}
 	return 0, false
 }
@@ -494,6 +504,68 @@ atan_interval :: proc(p, q: ^big.Int, scale: int) -> Interval {
 			return Interval{sum.lo, plus(sum.hi, int_of(1))}
 		}
 	}
+}
+
+// asin x and acos x for |x| <= 1 other than the special cases, as atan2(x, w)
+// and atan2(w, x) with w = sqrt(1 - x^2), the base and sign of atan t chosen
+// as `oracle_atan2` chooses them. With a = |x| = s 2^e, 1 - a^2 = m 2^(2e)
+// for the integer m = 2^(-2e) - s^2, so at a scale of 2^(e - E), a is s 2^E
+// exactly and w lies between W = floor(sqrt(m 2^(2E))) and W + 1, with E
+// chosen so that W has a few more bits than the result's scale. atan is
+// monotone, so atan t lies between its values at the two quotients; a < w
+// exactly when 2 a^2 < 1, and then s 2^E <= W, else W + 1 <= s 2^E, so
+// each quotient is at most one. t is 0 at x = 0 for acos and |x| = 1, and
+// otherwise not a dyadic: w is irrational, or a and w are both rational and
+// t with them, and atan of a nonzero rational is not one.
+@(private = "file")
+arc_attempt :: proc(o: ^Oracle, function: Oracle_Function, x: f64, format: Float_Format, w: int) -> (u64, bool) {
+	s, e := dyadic(abs(x))
+	if x == 0 {
+		s, e = int_of(0), -1
+	}
+	m := minus(power_of_two(-2*e), times(s, s))
+	small := compare(times(times(s, s), int_of(2)), power_of_two(-2*e)) < 0
+	quarter, sign, negative := 0, 1, false
+	if function == .Asin {
+		negative = x < 0
+		if !small {
+			quarter, sign = 2, -1
+		}
+	} else if small {
+		quarter, sign = 2, x < 0 ? 1 : -1
+	} else if x < 0 {
+		quarter, sign = 4, -1
+	}
+	// With no base, the result is near t, at least s 2^e or 2^((bits(m) - 1)/2 + e),
+	// so it gets as many more bits as that is below one.
+	scale := w + 2
+	if quarter == 0 {
+		leading := small ? bit_count(s) - 1 + e : (bit_count(m) - 1)/2 + e
+		scale = w + max(0, 1 - leading)
+	}
+	quarter_pi := narrow(o.pi, CONSTANT_PRECISION + 2, scale)
+	value := Interval{times(quarter_pi.lo, int_of(quarter)), times(quarter_pi.hi, int_of(quarter))}
+	if sign_of(s) != 0 && sign_of(m) != 0 {
+		extra := max(0, scale + 6 - bit_count(m)/2)
+		a := shift_left(s, extra)
+		root := square_root(shift_left(m, 2*extra))
+		root_up := plus(root, int_of(1))
+		low, high: Interval
+		if small {
+			low, high = atan_interval(a, root_up, scale), atan_interval(a, root, scale)
+		} else {
+			low, high = atan_interval(root, a, scale), atan_interval(root_up, a, scale)
+		}
+		if sign > 0 {
+			value = Interval{plus(value.lo, low.lo), plus(value.hi, high.hi)}
+		} else {
+			value = Interval{minus(value.lo, high.hi), minus(value.hi, low.lo)}
+		}
+	}
+	if sign_of(value.lo) <= 0 {
+		return 0, false
+	}
+	return round_interval(value, -scale, negative, format)
 }
 
 // sin and cos of |x| = q pi/2 + r, |r| a little over pi/4 at most, from the

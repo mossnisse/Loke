@@ -153,20 +153,27 @@ atan2_kernel :: proc(n: f64, d: f64, part: int) -> (high: f64, low: f64) {
 		ph, pl := two_product(uh, dh);
 		ul = (((nh - ph) - pl) + (nl - uh*dl))/dh;
 	}
+	return atan2_finish(j, uh, ul, part);
+}
+
+// The result's magnitude as h + l from j and u = uh + ul as `atan2_kernel`
+// forms them, for its part.
+atan2_finish :: proc(j: int, uh: f64, ul: f64, part: int) -> (high: f64, low: f64) {
 	// atan u - uh, the cross term of u^3 included.
 	u2 := uh*uh;
 	tail := ul + (uh*u2*(-1.0/3.0 + u2*(0.2 + u2*(-1.0/7.0 + u2*(1.0/9.0)))) - u2*ul);
 	ah := from_bits(ATAN_TABLE[2*j]);
 	al := from_bits(ATAN_TABLE[2*j + 1]);
 	bh, bl, subtract := atan2_base(part);
+	vh := uh;
 	if (subtract) {
 		ah = 0.0 - ah;
 		al = 0.0 - al;
-		uh = 0.0 - uh;
+		vh = 0.0 - uh;
 		tail = 0.0 - tail;
 	}
 	s1, e1 := two_sum(bh, ah);
-	s2, e2 := two_sum(s1, uh);
+	s2, e2 := two_sum(s1, vh);
 	return fast_two_sum(s2, (e1 + e2) + (bl + (al + tail)));
 }
 
@@ -234,20 +241,32 @@ atan2_quick :: proc(n: f64, d: f64, part: int) -> f64 {
 // the reciprocals are within 2^-319, which leaves the result within 2^-305
 // relative.
 atan2_slow :: proc(n: f64, d: f64, part: int, layout: Float_Layout) -> u64 {
-	big_j := int((n/d*8.0 + ROUND_SHIFTER) - ROUND_SHIFTER);
-	value: Fixed = {};
+	big_j := atan_wide_index(n, d);
 	k := 0;
 	if (big_j == 0) {
 		e, _ := log_split(n);
 		k = 0 - e;
-		q := fixed_times(fixed_of(n*power_of_two(k)), fixed_reciprocal(fixed_of(d), d));
+	}
+	return atan_slow_of(fixed_of(n*power_of_two(k)), fixed_of(d), n, d, k, big_j, part, layout);
+}
+
+// J, the nearest integer to 8 t, from n and d's nearest `f64` values.
+atan_wide_index :: proc(n: f64, d: f64) -> int {
+	return int((n/d*8.0 + ROUND_SHIFTER) - ROUND_SHIFTER);
+}
+
+// `atan2_slow` from J and n and d in fixed point, n times 2^k for J = 0 and
+// k = 0 otherwise, with `f64` values n_near and d_near within 2^-52 of
+// them relative, n_near unscaled.
+atan_slow_of :: proc(n: Fixed, d: Fixed, n_near: f64, d_near: f64, k: int, big_j: int, part: int, layout: Float_Layout) -> u64 {
+	value: Fixed = {};
+	if (big_j == 0) {
+		q := fixed_times(n, fixed_reciprocal(d, d_near));
 		value = atan_series(q, fixed_scaled(fixed_times(q, q), 0 - 2*k));
 	} else {
 		// 8n - J d and 8d + J n over 8, which loses no bit of either.
-		scaled_n := fixed_of(n);
-		scaled_d := fixed_of(d);
-		a := fixed_times_small(scaled_n, 8);
-		b := fixed_times_small(scaled_d, u64(big_j));
+		a := fixed_times_small(n, 8);
+		b := fixed_times_small(d, u64(big_j));
 		below := fixed_less(a, b);
 		numerator: Fixed = {};
 		if (below) {
@@ -255,8 +274,8 @@ atan2_slow :: proc(n: f64, d: f64, part: int, layout: Float_Layout) -> u64 {
 		} else {
 			numerator = fixed_shift_down(fixed_minus(a, b), 3);
 		}
-		denominator := fixed_shift_down(fixed_plus(fixed_times_small(scaled_d, 8), fixed_times_small(scaled_n, u64(big_j))), 3);
-		u := fixed_times(numerator, fixed_reciprocal(denominator, d + f64(big_j)*0.125*n));
+		denominator := fixed_shift_down(fixed_plus(fixed_times_small(d, 8), fixed_times_small(n, u64(big_j))), 3);
+		u := fixed_times(numerator, fixed_reciprocal(denominator, d_near + f64(big_j)*0.125*n_near));
 		atan_u := atan_series(u, fixed_times(u, u));
 		if (below) {
 			value = fixed_minus(ATAN_WIDE[big_j], atan_u);

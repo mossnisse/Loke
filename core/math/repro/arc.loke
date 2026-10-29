@@ -1,0 +1,200 @@
+// deterministic-math-and-targets-plan.md "Reproducible result contract":
+// `asin` and `acos` in both widths, past their special cases.
+//
+// With a = |x| and w = sqrt(1 - a^2), asin x is atan2(a, w) with x's sign,
+// and acos x is atan2(w, x), so both take `atan2_kernel`'s parts for t = n/d,
+// n the smaller of a and w and d the larger: asin's magnitude is atan t for
+// a < w and pi/2 - atan t otherwise, and acos x is pi/2 - atan t or pi/2 +
+// atan t for a < w, as x is positive or negative, and atan t or pi - atan t
+// otherwise. a < w exactly when a is below 1/sqrt 2, which is irrational,
+// so comparing a with the `f64` above it decides that. d is then in
+// [1/sqrt 2, 1], and n is at least 2^-60, below which `acos` returns pi/2,
+// and `asin` returns x below 2^-27.
+//
+// 1 - a^2 is formed as a pair within 2^-104 relative: as (1 - a)(1 + a) for
+// a >= 1/2, 1 - a exact (Sterbenz) and 1 + a an exact pair, and from a^2's
+// exact pair (`two_product`) below. Nothing here may use a square root
+// instruction, which compile-time evaluation does not share, so w comes from
+// y, 1/sqrt r for r the pair's high part: an estimate from r's bit pattern,
+// within 0.0344 relative (Robertson, "A Brief History of InvSqrt", 2012), and
+// Newton's steps y (3/2 - r y^2/2), which take a relative error e to
+// 1.5 e^2 + e^3/2. Three steps leave 2^-34.7, and a fourth leaves the
+// rounding of its four operations, under 2^-51.4; wh = r y is within 2^-50.8
+// of w, and wl = (r - wh^2)/(2 wh), wh^2 an exact pair and r - wh^2 exact
+// in its high parts (Sterbenz), leaves wh + wl within 2^-101 of w relative.
+//
+// The fast path is `atan2_kernel`'s with n or d a pair. The low parts add
+// three roundings to u's numerator, which leave it within 2^-102.7 d of
+// n - c d, and u within 2^-102.5 absolute, under 2^-94 of a result with
+// j >= 1; w's error moves t by 2^-101 relative, and atan t by no more,
+// since t/(1 + t^2) <= atan t, which is at most the result. With the
+// kernel's own errors that is under 2^-68 relative. For `f32` arguments a
+// single-`f64` approximation comes first: w from three steps, within
+// 2^-34.6, and `atan2_quick`, whose sums with u's numerator and denominator
+// now round too, adding under 2^-44.9 relative for j >= 1, so the result is
+// within 2^18.5 ulps; when no `f32` midpoint is within 2^19 ulps of it,
+// narrowing it rounds correctly, and otherwise the double-`f64` result
+// decides, and then the slow path.
+//
+// The slow path takes 2a and 2w, so that d is in [sqrt 2, 2]. 1 - a^2 is
+// exact in fixed point, a^2 having no bit below 2^-224, and w comes from
+// `fixed_sqrt`, within 2^-316 relative, at a scale that keeps a small w's
+// bits; that leaves `atan2_slow`'s bound of 2^-305 relative. No result but
+// acos 1 = 0 is a midpoint or zero: if asin x or acos x were a nonzero
+// algebraic number y, x = sin y or cos y would be transcendental
+// (Lindemann and Weierstrass). But no exhaustive search covers binary64
+// asin and acos here, so nothing proves that no result comes within 2^-305
+// of a midpoint; `tests/repro_test.odin` checks both paths against an
+// independent oracle.
+package repro;
+
+import "core:unsafe";
+
+// The `f64` just above 1/sqrt 2.
+HALF_ROOT_ABOVE :: 0x3fe6a09e667f3bcd;
+// The bit-pattern estimate's constant for 1/sqrt r in `f64` (Robertson).
+ROOT_ESTIMATE :: 0x5fe6eb50c7b537a9;
+
+// Which of `atan2_kernel`'s parts the result takes, for a below 1/sqrt 2
+// or not, `acos` or `asin`, and x's sign.
+arc_part :: proc(a_small: bool, cosine: bool, x_negative: bool) -> int {
+	if (!cosine) {
+		if (a_small) { return 0; }
+		return 1;
+	}
+	if (a_small) {
+		if (x_negative) { return 2; }
+		return 1;
+	}
+	if (x_negative) { return 3; }
+	return 0;
+}
+
+// 1/sqrt r within 2^-34.7 relative, for a normal r > 0: the estimate and
+// three of Newton's steps.
+root_estimate :: proc(r: f64) -> f64 {
+	y := from_bits(ROOT_ESTIMATE - (unsafe.transmute(u64, r) >> 1));
+	h := 0.5*r;
+	foreach (_ in 0 ..< 3) {
+		y = y*(1.5 - h*(y*y));
+	}
+	return y;
+}
+
+// w = sqrt(1 - a^2) as a pair within 2^-101 relative, for a in [2^-60, 1).
+arc_root :: proc(a: f64) -> (high: f64, low: f64) {
+	rh := 0.0;
+	rl := 0.0;
+	if (a >= 0.5) {
+		m := 1.0 - a;
+		sh, sl := fast_two_sum(1.0, a);
+		ph, pl := two_product(m, sh);
+		rh, rl = fast_two_sum(ph, pl + m*sl);
+	} else {
+		ph, pl := two_product(a, a);
+		s, e := fast_two_sum(1.0, 0.0 - ph);
+		rh, rl = fast_two_sum(s, e - pl);
+	}
+	y := root_estimate(rh);
+	y = y*(1.5 - (0.5*rh)*(y*y));
+	wh := rh*y;
+	qh, ql := two_product(wh, wh);
+	return {wh, (((rh - qh) - ql) + rl)/(2.0*wh)};
+}
+
+// `atan2_kernel` for t = n/d with n and d pairs, d in [1/sqrt 2, 1] and n in
+// [2^-60, d].
+atan2_pair_kernel :: proc(nh: f64, nl: f64, dh: f64, dl: f64, part: int) -> (high: f64, low: f64) {
+	th := nh/dh;
+	j := atan_index(th);
+	uh := th;
+	ul := 0.0;
+	if (j == 0) {
+		ph, pl := two_product(th, dh);
+		ul = (((nh - ph) - pl) + (nl - th*dl))/dh;
+	} else {
+		c := f64(j)*(1.0/128.0);
+		ch, cl := two_product(c, dh);
+		s, e := two_sum(nh, 0.0 - ch);
+		numerator_h, numerator_l := two_sum(s, e + (nl - (cl + c*dl)));
+		qh, ql := two_product(c, nh);
+		sum, err := fast_two_sum(dh, qh);
+		denominator_h, denominator_l := fast_two_sum(sum, err + (ql + (dl + c*nl)));
+		uh = numerator_h/denominator_h;
+		ph, pl := two_product(uh, denominator_h);
+		ul = (((numerator_h - ph) - pl) + (numerator_l - uh*denominator_l))/denominator_h;
+	}
+	return atan2_finish(j, uh, ul, part);
+}
+
+// asin's or acos's magnitude for a = |x| in [2^-60, 1).
+arc_f64_of :: proc(a: f64, cosine: bool, x_negative: bool) -> f64 {
+	a_small := a < from_bits(HALF_ROOT_ABOVE);
+	part := arc_part(a_small, cosine, x_negative);
+	wh, wl := arc_root(a);
+	h := 0.0;
+	l := 0.0;
+	if (a_small) {
+		h, l = atan2_pair_kernel(a, 0.0, wh, wl, part);
+	} else {
+		h, l = atan2_pair_kernel(wh, wl, a, 0.0, part);
+	}
+	decided, v := f64_decided(h, l);
+	if (decided) { return v; }
+	return from_bits(arc_slow(a, wh + wl, a_small, part, F64_LAYOUT));
+}
+
+// The same for an `f32` argument, here exactly as an `f64`.
+arc_f32_of :: proc(a: f64, cosine: bool, x_negative: bool) -> f32 {
+	a_small := a < from_bits(HALF_ROOT_ABOVE);
+	part := arc_part(a_small, cosine, x_negative);
+	// a^2 is exact, and so 1 - a^2 for a >= 1/2 (Sterbenz).
+	r := 1.0 - a*a;
+	w := r*root_estimate(r);
+	quick := 0.0;
+	if (a_small) {
+		quick = atan2_quick(a, w, part);
+	} else {
+		quick = atan2_quick(w, a, part);
+	}
+	if (f32_decided(quick, 524288)) { return f32(quick); }
+
+	wh, wl := arc_root(a);
+	h := 0.0;
+	l := 0.0;
+	if (a_small) {
+		h, l = atan2_pair_kernel(a, 0.0, wh, wl, part);
+	} else {
+		h, l = atan2_pair_kernel(wh, wl, a, 0.0, part);
+	}
+	near := h + l;
+	if (f32_decided(near, 1)) { return f32(near); }
+	return unsafe.transmute(f32, u32(arc_slow(a, wh + wl, a_small, part, F32_LAYOUT)));
+}
+
+// asin's or acos's magnitude correctly rounded to `layout`, as its bit
+// pattern, by `atan_slow_of` with n and d doubled, from a, w's nearest
+// `f64`, and the part. A w below 2a is formed at the scale 2^s that puts
+// 2w 2^s in [1, 2), and kept there when J = 0.
+arc_slow :: proc(a: f64, w_near: f64, a_small: bool, part: int, layout: Float_Layout) -> u64 {
+	fa := fixed_of(a);
+	r := fixed_minus(FIXED_ONE, fixed_times(fa, fa));
+	two_a := 2.0*a;
+	two_w := 2.0*w_near;
+	if (a_small) {
+		// 2w is in [sqrt 2, 2], from 4r in (2, 4).
+		big_j := atan_wide_index(two_a, two_w);
+		k := 0;
+		if (big_j == 0) {
+			e, _ := log_split(two_a);
+			k = 0 - e;
+		}
+		return atan_slow_of(fixed_of(two_a*power_of_two(k)), fixed_sqrt(fixed_scaled(r, 2), two_w), two_a, two_w, k, big_j, part, layout);
+	}
+	big_j := atan_wide_index(two_w, two_a);
+	e, _ := log_split(two_w);
+	s := 0 - e;
+	root := fixed_sqrt(fixed_scaled(r, 2 + 2*s), two_w*power_of_two(s));
+	if (big_j == 0) { return atan_slow_of(root, fixed_of(two_a), two_w, two_a, s, 0, part, layout); }
+	return atan_slow_of(fixed_scaled(root, 0 - s), fixed_of(two_a), two_w, two_a, 0, big_j, part, layout);
+}

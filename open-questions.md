@@ -762,7 +762,14 @@ and 57 to 60 per dependent one against the UCRT's 15 to 16 and 24 to 25 on
 its FMA3 path and 18 and 26 to 28 on its legacy one, `atan2_f32` 29 to 31
 ns against 12 to 13 and 13 to 15, `atan` within ±20 44 to 53 ns against 5.1
 and 7.0, `atan_f32` 34 against 4.7 to 5.3 and 5.8 to 6.1, and its slow path
-4.2 to 4.6 µs; `atan` takes `atan2`'s path, three divisions included. Why
+4.2 to 4.6 µs; `atan` takes `atan2`'s path, three divisions included.
+`asin` and `acos`, over (-1, 1), take 67 to 68 ns per independent call and
+87 to 88 per dependent one against the UCRT's 5.1 to 5.6 and 13 to 17 on
+its FMA3 path and 7.2 to 7.6 and 19 to 21 on its legacy one, `asin_f32` and
+`acos_f32` 42 to 44 ns against 4.6 and 5.1 to 5.9, and their slow path 4.9
+µs. The difference from `atan2` is presumably the four Newton steps for
+1/sqrt, a dependent chain, which is unmeasured; a table for the first
+estimate would save two. Why
 the `f32` procedures before `atan` are slower than the `f64` ones that do
 the same work is not known. The estimate below was optimistic by
 two to three times: the time is in the dependent double-`f64` steps, not in
@@ -783,14 +790,16 @@ measure it. Open:
   widths, cover the common uses and the random distributions.
 - Should the C library's versions stay available under other names for
   callers who prefer speed to identity?
-- Can `core:math/repro`'s `pow` and `atan2` be proved correctly rounded?
-  `pow`'s slow path is within 2^-240 of x^y, and a value within 2^-230 of a
-  midpoint is tested for being exactly that midpoint, so it decides every
-  argument unless an x^y that is not a midpoint comes within 2^-230 of one;
-  `atan2`'s, within 2^-305, never meets a midpoint, but could meet a result
-  that close to one. For one-argument functions, exhaustive searches bound
-  that distance; no search covers two `f64` arguments, and no proof is
-  known to rule it out. Their results are the same everywhere either way.
+- Can `core:math/repro`'s `pow`, `atan2`, `asin`, and `acos` be proved
+  correctly rounded? `pow`'s slow path is within 2^-240 of x^y, and a value
+  within 2^-230 of a midpoint is tested for being exactly that midpoint, so
+  it decides every argument unless an x^y that is not a midpoint comes
+  within 2^-230 of one; the slow path of the others, within 2^-305, never
+  meets a midpoint, but could meet a result that close to one. For
+  one-argument functions, exhaustive searches bound that distance, but none
+  for binary64 `asin` or `acos` is relied on here; no search covers two
+  `f64` arguments, and no proof is known to rule it out. Their results are
+  the same everywhere either way.
 
 The [deterministic math and CPU targeting
 plan](deterministic-math-and-targets-plan.md) proposes answers: a separate

@@ -10,8 +10,9 @@
 	each function. No procedure here calls the C library.
 
 	The package holds only what has been implemented and checked: today `exp`,
-	`log`, `pow`, `sin`, `cos`, `atan`, and `atan2`, each in both widths. A
-	function missing here is not provided by falling back to `core:math`.
+	`log`, `pow`, `sin`, `cos`, `asin`, `acos`, `atan`, and `atan2`, each in
+	both widths. A function missing here is not provided by falling back to
+	`core:math`.
 */
 @(public)
 package repro;
@@ -203,6 +204,70 @@ cos_f32 :: proc(x: f32) -> f32 {
 	if (magnitude < 0x39000000) { return f32(1.0); }
 	if (magnitude >= 0x7f800000) { return unsafe.transmute(f32, u32(CANONICAL_NAN_F32)); }
 	return trig_f32(f64(x), true);
+}
+
+/**
+	The inverse sine of x, in radians from -pi/2 to pi/2. NaN, and any x
+	outside [-1, 1], ±Inf included, gives NaN; ±0 gives itself, and ±1 gives
+	±pi/2, correctly rounded.
+*/
+asin :: proc(x: f64) -> f64 {
+	bits := unsafe.transmute(u64, x);
+	magnitude := bits & 0x7fffffffffffffff;
+	sign := bits & 0x8000000000000000;
+	// Below 2^-27 in magnitude, asin x is within half an ulp of x.
+	if (magnitude < 0x3e40000000000000) { return x; }
+	if (magnitude >= 0x3ff0000000000000) {
+		if (magnitude > 0x3ff0000000000000) { return unsafe.transmute(f64, u64(CANONICAL_NAN_F64)); }
+		return unsafe.transmute(f64, QUARTER_TURNS[2] | sign);
+	}
+	return unsafe.transmute(f64, unsafe.transmute(u64, arc_f64_of(unsafe.transmute(f64, magnitude), false, false)) | sign);
+}
+
+/// The inverse sine for `f32`, with the special cases of `asin`.
+asin_f32 :: proc(x: f32) -> f32 {
+	bits := unsafe.transmute(u32, x);
+	magnitude := bits & 0x7fffffff;
+	sign := bits & 0x80000000;
+	// Below 2^-12 in magnitude, asin x is within half an ulp of x.
+	if (magnitude < 0x39800000) { return x; }
+	if (magnitude >= 0x3f800000) {
+		if (magnitude > 0x3f800000) { return unsafe.transmute(f32, u32(CANONICAL_NAN_F32)); }
+		return unsafe.transmute(f32, u32(QUARTER_TURNS_F32[2]) | sign);
+	}
+	return unsafe.transmute(f32, unsafe.transmute(u32, arc_f32_of(f64(unsafe.transmute(f32, magnitude)), false, false)) | sign);
+}
+
+/**
+	The inverse cosine of x, in radians from 0 to pi. NaN, and any x outside
+	[-1, 1], ±Inf included, gives NaN; 1 gives +0, -1 gives pi, and ±0 gives
+	pi/2, each multiple of pi correctly rounded.
+*/
+acos :: proc(x: f64) -> f64 {
+	bits := unsafe.transmute(u64, x);
+	magnitude := bits & 0x7fffffffffffffff;
+	if (magnitude >= 0x3ff0000000000000) {
+		if (bits == 0x3ff0000000000000) { return 0.0; }
+		if (bits == 0xbff0000000000000) { return unsafe.transmute(f64, QUARTER_TURNS[4]); }
+		return unsafe.transmute(f64, u64(CANONICAL_NAN_F64));
+	}
+	// Below 2^-60 in magnitude, acos x = pi/2 - asin x rounds as pi/2 does.
+	if (magnitude < 0x3c30000000000000) { return unsafe.transmute(f64, QUARTER_TURNS[2]); }
+	return arc_f64_of(unsafe.transmute(f64, magnitude), true, bits >> 63 != 0);
+}
+
+/// The inverse cosine for `f32`, with the special cases of `acos`.
+acos_f32 :: proc(x: f32) -> f32 {
+	bits := unsafe.transmute(u32, x);
+	magnitude := bits & 0x7fffffff;
+	if (magnitude >= 0x3f800000) {
+		if (bits == 0x3f800000) { return f32(0.0); }
+		if (bits == 0xbf800000) { return unsafe.transmute(f32, u32(QUARTER_TURNS_F32[4])); }
+		return unsafe.transmute(f32, u32(CANONICAL_NAN_F32));
+	}
+	// Below 2^-60 in magnitude, acos x rounds as pi/2 does.
+	if (magnitude < 0x21800000) { return unsafe.transmute(f32, u32(QUARTER_TURNS_F32[2])); }
+	return arc_f32_of(f64(unsafe.transmute(f32, magnitude)), true, bits >> 31 != 0);
 }
 
 /**

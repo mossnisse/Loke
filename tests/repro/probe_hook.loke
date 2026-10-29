@@ -113,6 +113,51 @@ slow_atan2_f32 :: proc(y: f32, x: f32) -> f32 {
 	return result;
 }
 
+// asin's and acos's slow paths past their tiny arguments and special
+// cases, below 2^-27 for asin, 2^-12 for asin_f32, and 2^-60 for acos;
+// there the public procedure is the whole answer.
+@(public)
+slow_asin :: proc(x: f64) -> f64 {
+	a := x;
+	if (x < 0.0) { a = 0.0 - x; }
+	if (!(a >= 7.450580596923828e-09 && a < 1.0)) { return asin(x); }
+	result := unsafe.transmute(f64, slow_arc(a, false, false, F64_LAYOUT));
+	if (x < 0.0) { return 0.0 - result; }
+	return result;
+}
+
+@(public)
+slow_asin_f32 :: proc(x: f32) -> f32 {
+	a := f64(x);
+	if (x < f32(0.0)) { a = 0.0 - f64(x); }
+	if (!(a >= 0.000244140625 && a < 1.0)) { return asin_f32(x); }
+	result := unsafe.transmute(f32, u32(slow_arc(a, false, false, F32_LAYOUT)));
+	if (x < f32(0.0)) { return f32(0.0) - result; }
+	return result;
+}
+
+@(public)
+slow_acos :: proc(x: f64) -> f64 {
+	a := x;
+	if (x < 0.0) { a = 0.0 - x; }
+	if (!(a >= 8.673617379884035e-19 && a < 1.0)) { return acos(x); }
+	return unsafe.transmute(f64, slow_arc(a, true, x < 0.0, F64_LAYOUT));
+}
+
+@(public)
+slow_acos_f32 :: proc(x: f32) -> f32 {
+	a := f64(x);
+	if (x < f32(0.0)) { a = 0.0 - f64(x); }
+	if (!(a >= 8.673617379884035e-19 && a < 1.0)) { return acos_f32(x); }
+	return unsafe.transmute(f32, u32(slow_arc(a, true, x < f32(0.0), F32_LAYOUT)));
+}
+
+slow_arc :: proc(a: f64, cosine: bool, x_negative: bool, layout: Float_Layout) -> u64 {
+	a_small := a < from_bits(HALF_ROOT_ABOVE);
+	wh, wl := arc_root(a);
+	return arc_slow(a, wh + wl, a_small, arc_part(a_small, cosine, x_negative), layout);
+}
+
 finite_nonzero :: proc(a: f64) -> bool {
 	return a > 0.0 && a <= 1.7976931348623157e308;
 }

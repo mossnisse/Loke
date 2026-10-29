@@ -2345,8 +2345,8 @@ call is evaluated at compile time. No procedure calls the C library or uses
 is the positive quiet NaN with no payload (`0x7ff8000000000000`,
 `0x7fc00000`), whatever NaN produced it.
 
-The package has `exp`, `log`, `pow`, `sin`, `cos`, `atan`, and `atan2`, each
-with the `f64` and `_f32` naming of `core:math`. A function missing here is
+The package has `exp`, `log`, `pow`, `sin`, `cos`, `asin`, `acos`, `atan`,
+and `atan2`, each with the `f64` and `_f32` naming of `core:math`. A function missing here is
 not provided by falling back to `core:math`. Each `_f32` procedure is rounded
 once to `f32`, not the `f64` one narrowed, which could round twice.
 
@@ -2369,6 +2369,10 @@ once to `f32`, not the `f64` one narrowed, which could round twice.
 - `sin` and `cos` take radians. Every finite argument is reduced by an exact
   multiple of pi/2, however large. NaN and ±Inf give NaN; `sin(±0)` is ±0 and
   `cos(±0)` is exactly 1, and `sin(-x)` is `-sin(x)`.
+- `asin` and `acos` give radians, from -pi/2 to pi/2 and from 0 to pi. NaN
+  and every argument outside [-1, 1], ±Inf included, give NaN. `asin(±0)`
+  is ±0 and `asin(±1)` is ±pi/2; `acos(1)` is +0, `acos(-1)` is pi, and
+  `acos(±0)` is pi/2, each multiple of pi correctly rounded.
 - `atan2(y, x)` is the angle from the positive x axis to the point (x, y),
   from -pi to pi with y's sign, with the special cases of IEC 60559 and
   C17's annex F but for NaN results: NaN gives NaN; y = ±0 gives ±pi for

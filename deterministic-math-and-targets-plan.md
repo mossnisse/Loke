@@ -152,6 +152,24 @@ Then `atan2` and `atan` in both widths, atan x being atan2(x, 1):
   quarter of its sample, where a separate computation by angle halving
   agrees with the oracle.
 
+Then `asin` and `acos` in both widths, as atan2(x, w) and atan2(w, x) with
+w = sqrt(1 - x^2):
+
+- No square root instruction is used, since compile-time evaluation does
+  not share one: w is a pair from Newton's steps for 1/sqrt from an
+  estimate in the bit pattern, and the `atan2` kernel takes it with one of
+  t's operands a pair. `asin_f32` and `acos_f32` put a single-`f64` path
+  first, with three steps and a bound of 2^18.5 ulps; an exhaustive pass
+  over (0, 1) found its error at most 2^18 and 5 arguments in 1.1 billion
+  that reach the slow path. The slow path forms 1 - x^2 exactly in fixed
+  point and its root by Newton's iteration there.
+- The oracle gains both, bracketing w between integer square roots and
+  summing Euler's series at both ends; asin 1/2 = pi/6, acos 1/2 = pi/3,
+  and acos -1/2 = 2 pi/3 pin it. Odin's `acos` is an ulp off in about 7% of
+  its sample, where Newton's method on cos agrees with the oracle.
+- No binary64 worst-case search is relied on, so as for `atan2` nothing
+  proves the slow path's 2^-305 enough.
+
 The rest of phase 4's functions are next.
 
 Not started: phase 1's benchmarks (the UCRT timings in open questions stand

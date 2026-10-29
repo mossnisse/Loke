@@ -4,9 +4,10 @@ import "core:math"
 import "core:testing"
 
 // Results fixed by other means: each constant's nearest float, which every
-// library that rounds these well gets, and sin(10^22), whose argument
-// reduction needs pi to well over a thousand bits (K. C. Ng, "Argument
-// reduction for huge arguments", 1992).
+// library that rounds these well gets, sin(10^22), whose argument reduction
+// needs pi to well over a thousand bits (K. C. Ng, "Argument reduction for
+// huge arguments", 1992), and asin 1/2 = pi/6, acos 1/2 = pi/3, and
+// acos -1/2 = 2 pi/3, rounded from pi by exact rational arithmetic.
 @(test)
 oracle_matches_known_results :: proc(t: ^testing.T) {
 	o: Oracle
@@ -28,6 +29,18 @@ oracle_matches_known_results :: proc(t: ^testing.T) {
 		{.Exp, 1, F32_FORMAT, 0x402df854},
 		{.Log, 2, F32_FORMAT, 0x3f317218},
 		{.Sin, 1, F32_FORMAT, 0x3f576aa4},
+		{.Asin, 0.5, F64_FORMAT, 0x3fe0c152382d7366},
+		{.Asin, -0.5, F64_FORMAT, 0xbfe0c152382d7366},
+		{.Acos, 0.5, F64_FORMAT, 0x3ff0c152382d7366},
+		{.Acos, -0.5, F64_FORMAT, 0x4000c152382d7366},
+		{.Asin, 0.5, F32_FORMAT, 0x3f060a92},
+		{.Acos, 0.5, F32_FORMAT, 0x3f860a92},
+		{.Acos, -0.5, F32_FORMAT, 0x40060a92},
+		{.Asin, 1, F64_FORMAT, 0x3ff921fb54442d18},
+		{.Asin, -1, F32_FORMAT, 0xbfc90fdb},
+		{.Acos, -1, F64_FORMAT, 0x400921fb54442d18},
+		{.Acos, 0, F64_FORMAT, 0x3ff921fb54442d18},
+		{.Acos, math.copy_sign(f64(0), -1), F32_FORMAT, 0x3fc90fdb},
 		// The contract's special cases.
 		{.Exp, math.inf_f64(-1), F64_FORMAT, 0},
 		{.Exp, -2000, F64_FORMAT, 0},
@@ -37,9 +50,14 @@ oracle_matches_known_results :: proc(t: ^testing.T) {
 		{.Log, -1, F32_FORMAT, 0x7fc00000},
 		{.Sin, math.copy_sign(f64(0), -1), F64_FORMAT, 0x8000000000000000},
 		{.Cos, math.inf_f64(1), F64_FORMAT, 0x7ff8000000000000},
-		// The smallest subnormal is its own sine, and exp of the most negative
-		// argument whose result is not zero rounds up to it.
+		{.Asin, math.copy_sign(f64(0), -1), F64_FORMAT, 0x8000000000000000},
+		{.Asin, 1.0000000000000002, F64_FORMAT, 0x7ff8000000000000},
+		{.Acos, 1, F64_FORMAT, 0},
+		{.Acos, math.inf_f64(-1), F32_FORMAT, 0x7fc00000},
+		// The smallest subnormal is its own sine and arcsine, and exp of the
+		// most negative argument whose result is not zero rounds up to it.
 		{.Sin, 4.9406564584124654e-324, F64_FORMAT, 1},
+		{.Asin, -4.9406564584124654e-324, F64_FORMAT, 0x8000000000000001},
 		{.Exp, -745.1332191019411, F64_FORMAT, 1},
 		{.Exp, -745.1332191019412, F64_FORMAT, 0},
 	}
@@ -69,6 +87,7 @@ oracle_agrees_with_a_library_almost_always :: proc(t: ^testing.T) {
 				case .Exp: x = f64(i64(state >> 11) % 1400000) / 1000 - 700
 				case .Log: x = transmute(f64)(u64(0x0010000000000000) + (state >> 2) % u64(0x7fd0000000000000))
 				case .Sin, .Cos: x = f64(i64(state >> 11) % 2000000) / 1000 - 1000
+				case .Asin, .Acos: x = f64(i64(state >> 11) % 2000000) / 1000000 - 1
 				}
 				library, got: u64
 				if format == F32_FORMAT {
@@ -81,6 +100,8 @@ oracle_agrees_with_a_library_almost_always :: proc(t: ^testing.T) {
 					case .Log: library = u64(transmute(u32)math.ln(x32))
 					case .Sin: library = u64(transmute(u32)math.sin(x32))
 					case .Cos: library = u64(transmute(u32)math.cos(x32))
+					case .Asin: library = u64(transmute(u32)math.asin(x32))
+					case .Acos: library = u64(transmute(u32)math.acos(x32))
 					}
 				} else {
 					switch function {
@@ -88,6 +109,8 @@ oracle_agrees_with_a_library_almost_always :: proc(t: ^testing.T) {
 					case .Log: library = transmute(u64)math.ln(x)
 					case .Sin: library = transmute(u64)math.sin(x)
 					case .Cos: library = transmute(u64)math.cos(x)
+					case .Asin: library = transmute(u64)math.asin(x)
+					case .Acos: library = transmute(u64)math.acos(x)
 					}
 				}
 				got = oracle_eval(&o, function, x, format)
@@ -103,7 +126,12 @@ oracle_agrees_with_a_library_almost_always :: proc(t: ^testing.T) {
 				}
 				testing.expectf(t, distance <= 1, "%v(%v) at %v: oracle %x, library %x", function, x, format, got, library)
 			}
-			testing.expectf(t, differ*20 <= CASES, "%v at %v: %d of %d differ from the library", function, format, differ, CASES)
+			// Odin's `f64` acos, FreeBSD's, is an ulp off in about 7% of these,
+			// where a separate computation by Newton's method on cos agrees with
+			// the oracle, so a tenth may differ there.
+			allowed := CASES/20
+			if function == .Acos && format == F64_FORMAT {allowed = CASES/10}
+			testing.expectf(t, differ <= allowed, "%v at %v: %d of %d differ from the library", function, format, differ, CASES)
 		}
 	}
 }

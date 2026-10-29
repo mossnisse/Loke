@@ -156,6 +156,35 @@ pow_argument_f32 :: proc(g: inout Generator, i: int) -> (x: f32, y: f32) {
 	}
 }
 
+// Arguments of asin and acos: over [-1, 1], small ones of every scale, down
+// past the tiny-argument cutoffs, ones within 2^-53 of ±1 and closer to
+// 1/sqrt 2, where the reduction swaps a and w.
+arc_argument :: proc(g: inout Generator, i: int) -> f64 {
+	u := unit(inout g);
+	v := 0.0;
+	switch (i % 4) {
+	case 0: v = u;
+	case 1: v = (1.0 + u)*inverse_power(next(inout g) % 70);
+	case 2: v = 1.0 - (1.0 + u)*inverse_power(1 + next(inout g) % 53);
+	default: v = 0.7071067811865476 + (u - 0.5)*inverse_power(3 + next(inout g) % 50);
+	}
+	if (next(inout g) % 2 == 0) { return 0.0 - v; }
+	return v;
+}
+
+arc_argument_f32 :: proc(g: inout Generator, i: int) -> f32 {
+	u := unit(inout g);
+	v := 0.0;
+	switch (i % 4) {
+	case 0: v = u;
+	case 1: v = (1.0 + u)*inverse_power(next(inout g) % 70);
+	case 2: v = 1.0 - (1.0 + u)*inverse_power(1 + next(inout g) % 24);
+	default: v = 0.7071067811865476 + (u - 0.5)*inverse_power(3 + next(inout g) % 22);
+	}
+	if (next(inout g) % 2 == 0) { return f32(0.0 - v); }
+	return f32(v);
+}
+
 // Arguments of atan2, in every quadrant: y and x up to 10; |y| near |x|,
 // on either side of the swap; magnitudes of every exponent, with quotients
 // from far past overflow to far past underflow; quotients within a few ulps
@@ -251,6 +280,22 @@ ATAN2_SPECIAL :: [10]u64{
 	0x0000000000000000, 0x8000000000000000, 0x7ff0000000000000, 0xfff0000000000000,
 	0x7ff8000000000001, 0x3ff0000000000000, 0xbff0000000000000, 0x0000000000000001,
 	0xffefffffffffffff, 0x4008000000000000,
+};
+
+// asin's and acos's special cases and cutoffs, in both widths: zeros, ±1,
+// infinities, NaN, just outside and inside ±1, either side of 2^-27 and
+// 2^-60, either side of 1/sqrt 2, ±1/2, and the smallest subnormal; then
+// the `f32` patterns that do not come from these.
+ARC_SPECIAL :: [20]u64{
+	0x0000000000000000, 0x8000000000000000, 0x3ff0000000000000, 0xbff0000000000000,
+	0x7ff0000000000000, 0xfff0000000000000, 0x7ff8000000000001, 0x3ff0000000000001,
+	0xbff0000000000001, 0x3fefffffffffffff, 0xbfefffffffffffff, 0x3e40000000000000,
+	0x3e3fffffffffffff, 0x3c30000000000000, 0xbc2fffffffffffff, 0x3fe6a09e667f3bcc,
+	0x3fe6a09e667f3bcd, 0x3fe0000000000000, 0xbfe0000000000000, 0x0000000000000001,
+};
+ARC_SPECIAL_F32 :: [8]u32{
+	0x3f800001, 0xbf800001, 0x3f7fffff, 0xbf7fffff,
+	0x39800000, 0xb97fffff, 0x21800000, 0xa17fffff,
 };
 
 bits :: proc(x: f64) -> u64 { return unsafe.transmute(u64, x); }
@@ -358,10 +403,32 @@ HARD_ATAN_F32 :: [2]u32{0x3a27ba3b, 0x3d8d6b23};
 HARD_ATAN_F32_0 :: repro.atan_f32(unsafe.transmute(f32, u32(0x3a27ba3b)));
 HARD_ATAN_F32_1 :: repro.atan_f32(unsafe.transmute(f32, u32(0x3d8d6b23)));
 CONSTANT_HARD_ATAN_F32 :: [2]f32{HARD_ATAN_F32_0, HARD_ATAN_F32_1};
+// asin and acos: `f64` arguments found by search that take the slow path,
+// asin's with J = 0, acos's with w the numerator and of a negative x; then
+// `f32` arguments of an exhaustive pass, two that reach the double-`f64`
+// step and three of the five that reach the slow path.
+HARD_ARC_F64 :: [3]u64{0x3f9a0df5999f3ba0, 0x3feb52120dd81edc, 0xbfd2f8d9f07ad576};
+HARD_ARC_FUNCTIONS_F64 :: [3]Function{.Asin, .Acos, .Acos};
+HARD_ARC_F64_0 :: repro.asin(unsafe.transmute(f64, u64(0x3f9a0df5999f3ba0)));
+HARD_ARC_F64_1 :: repro.acos(unsafe.transmute(f64, u64(0x3feb52120dd81edc)));
+HARD_ARC_F64_2 :: repro.acos(unsafe.transmute(f64, u64(0xbfd2f8d9f07ad576)));
+CONSTANT_HARD_ARC_F64 :: [3]f64{HARD_ARC_F64_0, HARD_ARC_F64_1, HARD_ARC_F64_2};
+HARD_ARC_F32 :: [5]u32{0x39e85fe5, 0x328785a3, 0x3de5fa1e, 0x328885a3, 0xbc406ccd};
+HARD_ARC_FUNCTIONS_F32 :: [5]Function{.Asin, .Acos, .Asin, .Acos, .Acos};
+HARD_ARC_F32_0 :: repro.asin_f32(unsafe.transmute(f32, u32(0x39e85fe5)));
+HARD_ARC_F32_1 :: repro.acos_f32(unsafe.transmute(f32, u32(0x328785a3)));
+HARD_ARC_F32_2 :: repro.asin_f32(unsafe.transmute(f32, u32(0x3de5fa1e)));
+HARD_ARC_F32_3 :: repro.acos_f32(unsafe.transmute(f32, u32(0x328885a3)));
+HARD_ARC_F32_4 :: repro.acos_f32(unsafe.transmute(f32, u32(0xbc406ccd)));
+CONSTANT_HARD_ARC_F32 :: [5]f32{HARD_ARC_F32_0, HARD_ARC_F32_1, HARD_ARC_F32_2, HARD_ARC_F32_3, HARD_ARC_F32_4};
+CONSTANT_ASIN :: repro.asin(0.25);
+CONSTANT_ACOS :: repro.acos(-0.75);
+CONSTANT_ASIN_F32 :: repro.asin_f32(f32(0.75));
+CONSTANT_ACOS_F32 :: repro.acos_f32(f32(0.25));
 CONSTANT_ATAN :: repro.atan(3.0);
 CONSTANT_ATAN_F32 :: repro.atan_f32(f32(-0.25));
 
-Function :: enum { Exp, Sin, Cos, Log }
+Function :: enum { Exp, Sin, Cos, Log, Asin, Acos }
 
 fast64 :: proc(f: Function, x: f64) -> f64 {
 	switch (f) {
@@ -369,6 +436,8 @@ fast64 :: proc(f: Function, x: f64) -> f64 {
 	case .Sin: return repro.sin(x);
 	case .Cos: return repro.cos(x);
 	case .Log: return repro.log(x);
+	case .Asin: return repro.asin(x);
+	case .Acos: return repro.acos(x);
 	}
 }
 
@@ -378,6 +447,8 @@ slow64 :: proc(f: Function, x: f64) -> f64 {
 	case .Sin: return repro.slow_sin(x);
 	case .Cos: return repro.slow_cos(x);
 	case .Log: return repro.slow_log(x);
+	case .Asin: return repro.slow_asin(x);
+	case .Acos: return repro.slow_acos(x);
 	}
 }
 
@@ -387,6 +458,8 @@ fast32 :: proc(f: Function, x: f32) -> f32 {
 	case .Sin: return repro.sin_f32(x);
 	case .Cos: return repro.cos_f32(x);
 	case .Log: return repro.log_f32(x);
+	case .Asin: return repro.asin_f32(x);
+	case .Acos: return repro.acos_f32(x);
 	}
 }
 
@@ -396,18 +469,22 @@ slow32 :: proc(f: Function, x: f32) -> f32 {
 	case .Sin: return repro.slow_sin_f32(x);
 	case .Cos: return repro.slow_cos_f32(x);
 	case .Log: return repro.slow_log_f32(x);
+	case .Asin: return repro.slow_asin_f32(x);
+	case .Acos: return repro.slow_acos_f32(x);
 	}
 }
 
 argument64 :: proc(f: Function, g: inout Generator, i: int) -> f64 {
 	if (f == .Exp) { return argument(inout g, i); }
 	if (f == .Log) { return log_argument(inout g, i); }
+	if (f == .Asin || f == .Acos) { return arc_argument(inout g, i); }
 	return trig_argument(inout g, i);
 }
 
 argument32 :: proc(f: Function, g: inout Generator, i: int) -> f32 {
 	if (f == .Exp) { return argument_f32(inout g, i); }
 	if (f == .Log) { return log_argument_f32(inout g, i); }
+	if (f == .Asin || f == .Acos) { return arc_argument_f32(inout g, i); }
 	return trig_argument_f32(inout g, i);
 }
 
@@ -433,7 +510,11 @@ main :: proc() {
 		bits(CONSTANT_LOG_SUBNORMAL) == bits(repro.log(5.0e-324*one)),
 		bits32(CONSTANT_LOG_F32) == bits32(repro.log_f32(f32(0.75*one))),
 		bits(CONSTANT_ATAN) == bits(repro.atan(3.0*one)),
-		bits32(CONSTANT_ATAN_F32) == bits32(repro.atan_f32(f32(-0.25*one))));
+		bits32(CONSTANT_ATAN_F32) == bits32(repro.atan_f32(f32(-0.25*one))),
+		bits(CONSTANT_ASIN) == bits(repro.asin(0.25*one)),
+		bits(CONSTANT_ACOS) == bits(repro.acos(-0.75*one)),
+		bits32(CONSTANT_ASIN_F32) == bits32(repro.asin_f32(f32(0.75*one))),
+		bits32(CONSTANT_ACOS_F32) == bits32(repro.acos_f32(f32(0.25*one))));
 
 	hard := HARD_F32;
 	functions := HARD_FUNCTIONS;
@@ -452,6 +533,24 @@ main :: proc() {
 		result := fast64(functions64[i], z);
 		fmt.println(functions64[i], 64, bits(z), bits(result));
 		fmt.println("constant", bits(constants64[i]) == bits(result));
+	}
+	hard_arc := HARD_ARC_F64;
+	functions_arc := HARD_ARC_FUNCTIONS_F64;
+	constants_arc := CONSTANT_HARD_ARC_F64;
+	foreach (i in 0 ..< 3) {
+		z := unsafe.transmute(f64, hard_arc[i])*one;
+		result := fast64(functions_arc[i], z);
+		fmt.println(functions_arc[i], 64, bits(z), bits(result));
+		fmt.println("constant", bits(constants_arc[i]) == bits(result));
+	}
+	hard_arc32 := HARD_ARC_F32;
+	functions_arc32 := HARD_ARC_FUNCTIONS_F32;
+	constants_arc32 := CONSTANT_HARD_ARC_F32;
+	foreach (i in 0 ..< 5) {
+		y := unsafe.transmute(f32, hard_arc32[i])*f32(one);
+		result := fast32(functions_arc32[i], y);
+		fmt.println(functions_arc32[i], 32, bits32(y), bits32(result));
+		fmt.println("constant", bits32(constants_arc32[i]) == bits32(result));
 	}
 	hard_pow := HARD_POW;
 	constants_pow := CONSTANT_HARD_POW;
@@ -508,6 +607,21 @@ main :: proc() {
 			fmt.println("Atan2", 32, bits32(f32(y)), bits32(f32(x)), bits32(repro.atan2_f32(f32(y)*f32(one), f32(x))));
 		}
 	}
+	arc_special := ARC_SPECIAL;
+	foreach (i in 0 ..< 20) {
+		x := unsafe.transmute(f64, arc_special[i]);
+		foreach (f in [2]Function{.Asin, .Acos}) {
+			fmt.println(f, 64, bits(x), bits(fast64(f, x*one)));
+			fmt.println(f, 32, bits32(f32(x)), bits32(fast32(f, f32(x)*f32(one))));
+		}
+	}
+	arc_special_32 := ARC_SPECIAL_F32;
+	foreach (i in 0 ..< 8) {
+		x := unsafe.transmute(f32, arc_special_32[i]);
+		foreach (f in [2]Function{.Asin, .Acos}) {
+			fmt.println(f, 32, bits32(x), bits32(fast32(f, x*f32(one))));
+		}
+	}
 	special_x := POW_SPECIAL_X;
 	special_y := POW_SPECIAL_Y;
 	foreach (i in 0 ..< 11) {
@@ -520,7 +634,7 @@ main :: proc() {
 	}
 
 	g := Generator{state = 0x9e3779b97f4a7c15};
-	foreach (f in [4]Function{.Exp, .Sin, .Cos, .Log}) {
+	foreach (f in [6]Function{.Exp, .Sin, .Cos, .Log, .Asin, .Acos}) {
 		differ := 0;
 		differ32 := 0;
 		foreach (i in 0 ..< compared(f)) {
@@ -539,7 +653,7 @@ main :: proc() {
 	}
 
 	CHECKED :: 1000;
-	foreach (f in [4]Function{.Exp, .Sin, .Cos, .Log}) {
+	foreach (f in [6]Function{.Exp, .Sin, .Cos, .Log, .Asin, .Acos}) {
 		foreach (i in 0 ..< CHECKED) {
 			x := argument64(f, inout g, i)*one;
 			fmt.println(f, 64, bits(x), bits(fast64(f, x)));
