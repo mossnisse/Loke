@@ -1,0 +1,10 @@
+// standard-library "`core:math/linalg`": an orthographic box with an infinite
+// side panics.
+package main;
+
+import "core:math";
+import "core:math/linalg";
+
+main :: proc() {
+	_ = linalg.Matrix(f64, 4, 4).orthographic(-1.0, 1.0, -1.0, math.F64_INFINITY, 0.0, 1.0, .Zero_To_One);
+}

@@ -1,0 +1,42 @@
+// linear-algebra-plan.md "Coordinates and rotations": rotations are
+// `math.Quaternion(T)`, and an extension block is visible only in its own
+// package, so the operations on them are free procedures.
+@(public)
+package linalg;
+
+import "base:interfaces";
+import "core:math";
+
+/**
+	`v` rotated by the unit quaternion `q`, `q v q*`, an active rotation. `q`
+	and `-q` rotate alike, and `rotate(a * b, v)` rotates by `b` first.
+*/
+// With `u` the vector part: `t = 2(u x v)`, then `v + real*t + u x t`.
+rotate :: proc(q: math.Quaternion($T), v: Vector3(T)) -> Vector3(T) where interfaces.Numeric(T) {
+	u := Vector3(T){q.i, q.j, q.k};
+	c := u.cross(v);
+	t := c + c;
+	return v + t*q.real + u.cross(t);
+}
+
+/**
+	The rotation by `angle` about `axis`: `(cos(angle/2), sin(angle/2)*axis)`.
+	The axis is taken as given, so it is a unit quaternion only for a unit
+	axis: `quaternion_from_axis_angle(axis.normalize() or_else ..., angle)`.
+*/
+quaternion_from_axis_angle :: proc(axis: Vector3($T), angle: T) -> math.Quaternion(T) where Real(T) {
+	half := angle*T(0.5);
+	s := half.sin();
+	return math.Quaternion(T).from_components(half.cos(), s*axis.x, s*axis.y, s*axis.z);
+}
+
+/**
+	`q` divided by its norm, or `.none` when its squared norm is not
+	`is_normal`, as for `normalize`.
+*/
+quaternion_normalize :: proc(q: math.Quaternion($T)) -> Option(math.Quaternion(T)) where Real(T) {
+	squared := q.norm_squared();
+	if (!squared.is_normal()) { return .none; }
+	norm := squared.sqrt();
+	return math.Quaternion(T).from_components(q.real/norm, q.i/norm, q.j/norm, q.k/norm);
+}

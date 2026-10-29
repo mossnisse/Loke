@@ -1,8 +1,12 @@
 # Linear algebra library plan
 
-Status: proposal, 2026-10-29, with its design questions settled and its compiler spike done the same day. The package itself is not implemented. This document
-proposes a `core:math/linalg` package and outlines a later dense-matrix
-package; it does not change the language contract. The authorities it builds
+Status: milestone 1 implemented, 2026-10-29
+([Milestone 1 results](#milestone-1-results)); milestones 2 to 4 are
+proposals. This document specifies the `core:math/linalg` package and
+outlines a later dense-matrix package; it does not change the language
+contract, and
+[`core:math/linalg`](standard-library.md#coremathlinalg) documents what has
+shipped. The authorities it builds
 on are [Library numeric types](design.md#library-numeric-types),
 [Generic data types](design.md#generic-data-types),
 [where clauses](design.md#where-clauses),
@@ -122,6 +126,7 @@ declares:
 Real :: interface($T: type) {
 	interfaces.Numeric(T);
 	interfaces.Ordered(T);
+	(value: T) -value -> T;
 	(value: f64) T(value) -> T;             // constants such as 0.5 and pi
 	slot sqrt:      proc(self) -> T;
 	slot sin:       proc(self) -> T;
@@ -357,7 +362,7 @@ geometric residuals land.
 
 ```text
 Matrix(T, R, C), any Numeric T:
-  identity()                                   where R == C
+  splat(value), identity()                     identity where R == C
   from_columns, from_rows, from_array, to_array
   [r, c] and [r, c]=, column(c) -> [R]T, row(r) -> [C]T
   conversion hook from Matrix(U, R, C) wherever T(u) converts
@@ -433,7 +438,7 @@ ships. That plan has to settle:
 
 Ordered by how foundational each part is, not by a particular program:
 
-1. **Core values.** The spike is done ([Spike results](#spike-results)).
+1. **Core values.** Done ([Milestone 1 results](#milestone-1-results)).
    The vector types; `Matrix(T, R, C)` with products, transpose, conversions, and
    determinants; `inverse` and `solve`; 2D and 3D transforms;
    `quaternion_from_axis_angle`, `rotate`, `quaternion_normalize`, and
@@ -582,3 +587,50 @@ What the package must allow for:
   met by private methods. The diagnostic now says so; the asymmetry is in
   [Visibility in slot and expression requirements](open-questions.md#visibility-in-slot-and-expression-requirements),
   and the documentation of `Real` shows the attribute.
+
+## Milestone 1 results
+
+Done 2026-10-29: `core/math/linalg`, with `tests/run/lib_linalg` and
+`tests/trap/linalg_*`. Every check in [Validation](#validation) is there
+except the rotation round trips, Euler sequences, `slerp`, and
+`project_point`, which are milestone 2. The output is the same at every
+optimization level and at both CPU levels `tests/cpu_test.odin` runs.
+
+Decided while implementing:
+
+- **`Real` requires unary `-`.** Rotations, `look_at`, and the projections
+  negate; `T(0) - x` would lose the sign of zero.
+- **Its bodies compare with `<` and `==` only.** `Ordered` requires no `<=`,
+  and `!(a < b)` holds for a NaN, so `a <= b` is written
+  `a < b || a == b`.
+- **`Matrix.splat`.** A zero-initialized record holds `T`'s zero value, which
+  for a user type such as a rational `{0, 0}` is not `T(0)`; `identity` and
+  the projections start from `splat(T(0))`.
+- **An infinity is approximately equal only to itself.** With a relative
+  tolerance, `relative * max(|a|, |b|)` is infinite for an infinite operand,
+  so the formula alone would call `+Inf` close to `F64_MAX` and to `-Inf`.
+- **Shape-restricted names are groups.** `determinant`, `rotation`,
+  `from_vector`, and `to_vector` each select one of several private members
+  by their bounds; `determinant` above 4 x 4 is elimination and needs `Real`.
+- **The `_lh` projections are their twins times `diag(1, 1, -1, 1)`**, bit
+  for bit, and `look_at_lh` takes `up x forward` as its side, so the
+  left-handed pipeline sees the `Z`-mirrored scene as the right-handed one
+  sees the scene.
+- **Compile-time evaluation stops at `sqrt`.** `math.sqrt` is a foreign
+  procedure, which a compile-time call cannot run
+  ([Compile-time procedure evaluation](design.md#compile-time-procedure-evaluation)),
+  so `length`, `normalize`, `look_at`, and the rest do not fold; the
+  projections, rotations, products, and `inverse` do. The question is in
+  [Correctly rounded procedures at compile time](open-questions.md#correctly-rounded-procedures-at-compile-time).
+
+Compiler bugs found and fixed in the same change, each with a regression test
+(`tests/run/generic_group_bound_order`,
+`tests/run/const_eval_generic_members`):
+
+- A procedure group declared before its members in a generic `impl` kept a
+  member whose `where` bound excluded it, so every call through the group was
+  ambiguous.
+- A member of an instantiated generic block called at compile time before the
+  checker had reached that block reported its own `where` clause as having
+  nothing generic in scope, and a user operator reached through its
+  resolution, such as an `inout` subscript, ran with an unchecked body.

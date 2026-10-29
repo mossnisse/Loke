@@ -141,6 +141,7 @@ core:encoding/json    JSON documents, values, and a streaming writer
 core:endian           fixed byte-order storage wrappers
 core:math             elementary functions, Complex, Quaternion
 core:math/repro       correctly rounded elementary functions
+core:math/linalg      fixed-size vectors, matrices, rotations, projections
 core:random           seeded generators, entropy, distributions
 core:time             clocks, durations, the calendar, ISO 8601 text
 core:slice            slice algorithms and sorting            *
@@ -2389,6 +2390,135 @@ once to `f32`, not the `f64` one narrowed, which could round twice.
 The plan for the rest of the package, and its special cases for further
 functions, is in the
 [deterministic math and CPU targeting plan](deterministic-math-and-targets-plan.md#special-cases).
+
+## `core:math/linalg`
+
+Small vectors and matrices as ordinary records that never allocate, so that
+two libraries can pass a point or a transform to each other as it is. The
+design and its later milestones are in the
+[linear algebra library plan](linear-algebra-plan.md).
+
+`Vector2(T)`, `Vector3(T)`, and `Vector4(T)` have the fields `x`, `y`, `z`,
+and `w` as their length allows, and the layout of `[N]T`.
+`Matrix(T, R, C)` is `R` rows by `C` columns of any fixed shape, stored
+column-major in `columns: [C][R]T`; `m[r, c]` reads `m.columns[c][r]`, and
+`Matrix(f32, 4, 4)` has the layout of `[16]f32`, the order OpenGL takes with
+`transpose = GL_FALSE` and Direct3D and Vulkan shaders read as
+`column_major`. Vectors are columns: `m * v` transforms `v`, there is no
+`v * m`, and `a * b` applies `b` first. Each element of a product is the dot
+product of a row and a column, summed in index order from the first product.
+A literal outside the package names its fields,
+`linalg.Vector3(f32){x = 1, y = 2, z = 3}`, or uses `from_components`. The
+package exports no short names; a program's own alias,
+`Vec3 :: linalg.Vector3(f32);`, is the same type.
+
+Arithmetic needs only `interfaces.Numeric(T)`, so integers, whose overflow
+panics as for the scalar, and user number types get:
+
+- on every vector: `from_components`, `splat`, `unit_x` to `unit_w`,
+  `from_array` and `to_array`, `+`, `-`, unary `-`, component-wise `*` and
+  `/`, `*` and `/` by a scalar and `*` of a scalar, exact `==`, `[]` with a
+  runtime index that panics outside the components, `dot`,
+  `length_squared`, `distance_squared`, and component-wise `min` and `max`;
+  `Vector3` has `cross`, `extend(w)`, and `xy`; `Vector4` has `xyz`; and
+  `Vector2` has `cross`, the z of the 3D cross product, `perp`, the quarter
+  turn `(-y, x)`, and `extend(z)`;
+- on every matrix: `splat`, `identity` where `R == C`, `from_columns`,
+  `from_rows`, which reads as it is printed, `from_array` and `to_array` in
+  storage order, `[r, c]`, `column`, `row`, `transpose`, `*` of
+  `Matrix(T, R, K)` and `Matrix(T, K, C)`, `+`, `-`, unary `-`, `*` by and of
+  a scalar, exact `==`, `trace`, `determinant` up to 4 x 4 by cofactor
+  expansion along the first row, which is exact for integers, and `m * v`
+  for a square matrix of the vector's length; `Matrix(T, N, 1).from_vector`
+  and `to_vector` convert a column for `N` from 2 to 4;
+- the transforms: `Matrix(T, 4, 4)` `translation`, `scaling`,
+  `transform_point` (`w` 1), `transform_direction` (`w` 0), which never
+  divide, `upper_left`, and `inverse_rigid`, which inverts a rotation plus a
+  translation by transposition without checking that it is one;
+  `Matrix(T, 3, 3)` `translation_2d`, `scaling_2d`, `transform_point_2d`,
+  `transform_direction_2d`, and `extend` to 4 x 4; and `from_quaternion` at
+  3 x 3 and 4 x 4;
+- `rotate(q, v)`, which rotates `v` by the unit `math.Quaternion(T)` `q`.
+
+A conversion hook converts each component as the scalar `T(value)` does, so
+`linalg.Vector3(f32)(v)` narrows a `Vector3(f64)` and widens an integer
+vector, and matrices of one shape convert the same way. `format` prints a
+vector as `(1, 2, 3)` and a matrix by rows, `[[1, 2], [3, 4]]`, each element
+with the caller's `fmt.Options`. A zero-initialized vector or matrix holds
+`T`'s zero value, which is `T(0)` for the built-in numbers but not for every
+user type; `splat(T(0))` is the zero matrix for any `T`.
+
+A member that needs a square root, trigonometry, or a test for a degenerate
+input needs `linalg.Real(T)`: `Numeric` and `Ordered`, unary `-`, a
+conversion from `f64`, and the slots `sqrt`, `sin`, `cos`, `asin`, `acos`,
+`atan2`, `abs`, `floor`, `ceil`, `round`, `is_finite`, and `is_normal`
+(finite, non-zero, and full precision). The package implements it for `f32`
+and `f64`, and a user type, such as a dual number for automatic
+differentiation, implements it with inherent methods. Its generic bodies
+compare with `<` and `==` alone, so a user type need not declare `<=`. A user
+type declared in `package main` marks its operators and conversion
+`@(public)`, since those requirements are checked in `linalg`. The `Real`
+members are:
+
+- on every vector: `length`, `distance`, `normalize`, `normalize_or`,
+  `lerp(other, t)`, which is `self*(1 - t) + other*t` and exact at both ends,
+  and component-wise `abs`, `floor`, `ceil`, and `round`;
+- on a square matrix: `solve(b)` for any `Matrix(T, R, K)` right-hand side,
+  `inverse`, and `determinant` above 4 x 4. They use Gaussian elimination
+  with partial pivoting, the pivot the first element of largest magnitude in
+  its column, in a fixed order;
+- the rotations: `rotation_x`, `rotation_y`, `rotation_z`, and
+  `rotation(axis, angle)` at 3 x 3 and 4 x 4, `Matrix(T, 2, 2).rotation(angle)`,
+  and `Matrix(T, 3, 3).rotation_2d(angle)`; and the free procedures
+  `quaternion_from_axis_angle(axis, angle)`, which takes the axis as given,
+  and `quaternion_normalize`;
+- the cameras, on `Matrix(T, 4, 4)`: `perspective`, `orthographic`,
+  `look_at`, `look_to`, and the `_lh` form of each.
+
+Angles are radians, and space is right-handed: `unit_x().cross(unit_y())` is
+`unit_z()`, and a positive angle turns counterclockwise seen from the
+positive end of the axis. A quaternion's `real` is its scalar part; a unit
+`q` rotates as `q v q*`, `q` and `-q` rotate alike, and `rotate(a * b, v)`
+rotates by `b` first, as `from_quaternion(a * b)` equals
+`from_quaternion(a) * from_quaternion(b)` up to rounding.
+
+`perspective(fovy, aspect, near, far, depth)` and
+`orthographic(left, right, bottom, top, near, far, depth)` map a view space
+looking down `-Z` with `+Y` up to clip space, with `x` and `y` in `[-1, 1]`,
+`+Y` up, and `z` in the range `depth` names, the near plane at its first
+value. `Depth_Range` has no default: `.Negative_One_To_One` is OpenGL's,
+`.Zero_To_One` Direct3D's, Vulkan's, Metal's, and WebGPU's, and
+`.One_To_Zero` reversed depth. A perspective's clip `w` is the view-space
+`-z`, and an infinite `far` gives the limit of the matrix as `far` grows. A
+field of view outside `(0, pi)`, a non-positive or infinite `aspect` or
+`near`, `far <= near`, and a NaN panic; an orthographic box needs finite,
+distinct bounds with `far` beyond `near`. Each `_lh` form takes the same
+parameters for a view space looking down `+Z`: the projection is its twin
+with the third column negated. `look_at(eye, target, up)` and
+`look_to(eye, forward, up)` return the view matrix whose rows are the side,
+up, and back directions (side, up, and forward for `_lh`), or `.none` when
+the direction is zero or parallel to `up`.
+
+Degenerate input is never a silent zero or NaN. `normalize` and
+`quaternion_normalize` return `.none` when the squared length is not
+`is_normal`: zero, underflowing or overflowing squares, an infinity, or a
+NaN. `inverse` and `solve` return `.none` when a pivot is zero or NaN or a
+result element is not finite; a nearly singular matrix still inverts, with
+large elements, since no tolerance decides that it is singular.
+
+`approx_equal(a, b, absolute, relative)` compares two scalars, vectors,
+matrices, or quaternions with a `Real` element: every component pair has
+`|a - b| <= max(absolute, relative * max(|a|, |b|))`. Both tolerances are
+required, and a negative or NaN one panics. A NaN component is never equal,
+and an infinity equals only itself, whatever the tolerances.
+
+Every operation is computed in the order documented on it, with no `fma` and
+no C library call: the `f32` and `f64` slots of `Real` are `math.sqrt`, which
+is correctly rounded, and [`core:math/repro`](#coremathrepro). Results are
+the same bits on every machine, [CPU level](compiler-guide.md#cpu-levels),
+and optimization level. A call that does not reach `sqrt` can also be
+evaluated at compile time with the same result; one that does cannot, since
+`math.sqrt` calls a foreign procedure.
 
 ## `core:random`
 

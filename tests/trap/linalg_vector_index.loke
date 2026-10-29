@@ -1,0 +1,14 @@
+// standard-library "`core:math/linalg`": a vector index outside its components
+// panics, as an array index does.
+package main;
+
+import "core:fmt";
+import "core:math/linalg";
+
+main :: proc() {
+	v := linalg.Vector3(f64).from_components(1, 2, 3);
+	index := 2;
+	fmt.println(v[index]);
+	index += 1;
+	fmt.println(v[index]);
+}

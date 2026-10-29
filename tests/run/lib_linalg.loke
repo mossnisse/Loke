@@ -1,0 +1,486 @@
+// standard-library "`core:math/linalg`": exact identities bit for bit, approximate
+// ones within a stated multiple of epsilon, degenerate inputs, the clip-space
+// conventions of every projection, approximate equality at its boundaries, the
+// element types (integers, a rational, and a dual number through `Real`), and
+// results as bit patterns, which must be the same at every optimization and
+// CPU level and when folded at compile time. Panics are in tests/trap/linalg_*.
+package main;
+
+import "core:fmt";
+import "core:math";
+import "core:math/linalg";
+import "core:math/repro";
+import "core:os";
+import "core:unsafe";
+
+check :: proc(name: string_view, ok: bool) {
+	if (ok) {
+		fmt.println("ok", name);
+	} else {
+		fmt.println("FAIL", name);
+	}
+}
+
+epsilon :: proc($T: type) -> T {
+	when (T == f32) {
+		return math.F32_EPSILON;
+	} else {
+		return math.F64_EPSILON;
+	}
+}
+
+// A diagonally dominant matrix of every size, with a zero first element so
+// that the first step has to pivot.
+conditioned :: proc($T: type, $N: int) -> linalg.Matrix(T, N, N) where linalg.Real(T) {
+	m: linalg.Matrix(T, N, N) = {};
+	foreach (r in 0 ..< N) {
+		foreach (c in 0 ..< N) {
+			distance := r - c if r > c else c - r;
+			m[r, c] = T(1)/T(f64(1 + distance + r));
+		}
+		m[r, r] = m[r, r] + T(f64(N));
+	}
+	m[0, 0] = T(0);
+	return m;
+}
+
+inverse_and_solve :: proc($T: type, $N: int) where linalg.Real(T) {
+	m := conditioned(T, N);
+	tolerance := T(f64(64*N))*epsilon(T);
+	identity := linalg.Matrix(T, N, N).identity();
+	switch (m.inverse()) {
+	case .some(inverse):
+		check("m * inverse(m) is the identity", linalg.approx_equal(m * inverse, identity, tolerance, T(0)));
+		check("inverse(m) * m is the identity", linalg.approx_equal(inverse * m, identity, tolerance, T(0)));
+	case .none:
+		check("a conditioned matrix inverts", false);
+	}
+	b: linalg.Matrix(T, N, 2) = {};
+	foreach (r in 0 ..< N) {
+		b[r, 0] = T(f64(r + 1));
+		b[r, 1] = T(f64(N - 2*r));
+	}
+	switch (m.solve(b)) {
+	case .some(x): check("solve leaves a small residual", linalg.approx_equal(m * x, b, tolerance*T(f64(N)), T(0)));
+	case .none:    check("a conditioned system solves", false);
+	}
+}
+
+// Every exact identity at one element type.
+exact_identities :: proc($T: type) where linalg.Real(T) {
+	X := linalg.Vector3(T).unit_x();
+	Y := linalg.Vector3(T).unit_y();
+	Z := linalg.Vector3(T).unit_z();
+	check("X x Y == Z, Y x Z == X, Z x X == Y", X.cross(Y) == Z && Y.cross(Z) == X && Z.cross(X) == Y);
+	check("Y x X == -Z", Y.cross(X) == -Z);
+
+	rows := [3][4]T{{1, 2, 3, 4}, {5, 6, 7, 8}, {9, 10, 11, 12}};
+	m := linalg.Matrix(T, 3, 4).from_rows(rows);
+	check("identity * m == m", linalg.Matrix(T, 3, 3).identity() * m == m);
+	check("m * identity == m", m * linalg.Matrix(T, 4, 4).identity() == m);
+	check("transpose(transpose(m)) == m", m.transpose().transpose() == m);
+	check("from_rows is from_columns of the transpose", linalg.Matrix(T, 4, 3).from_columns(rows).transpose() == m);
+	check("m[r, c] is columns[c][r]", m[1, 2] == T(7) && m.columns[2][1] == T(7));
+	values := m.to_array();
+	check("to_array is column-major", values[0] == T(1) && values[1] == T(5) && values[2] == T(9) && values[3] == T(2));
+	check("from_array inverts to_array", linalg.Matrix(T, 3, 4).from_array(values) == m);
+	check("row and column", m.row(1)[3] == T(8) && m.column(3)[2] == T(12));
+
+	none := T(0);
+	check("zero rotations are the identity",
+		linalg.Matrix(T, 3, 3).rotation_x(none) == linalg.Matrix(T, 3, 3).identity()
+		&& linalg.Matrix(T, 4, 4).rotation_z(none) == linalg.Matrix(T, 4, 4).identity()
+		&& linalg.Matrix(T, 2, 2).rotation(none) == linalg.Matrix(T, 2, 2).identity()
+		&& linalg.Matrix(T, 3, 3).rotation(Y, none) == linalg.Matrix(T, 3, 3).identity());
+	v := linalg.Vector3(T).from_components(T(3), -T(4), T(12));
+	check("the zero quaternion rotation keeps v", linalg.rotate(linalg.quaternion_from_axis_angle(Z, none), v) == v);
+	check("dot, length_squared, length", v.dot(X) == T(3) && v.length_squared() == T(169) && v.length() == T(13));
+	check("a translation moves points, not directions",
+		linalg.Matrix(T, 4, 4).translation(v).transform_point(X) == v + X
+		&& linalg.Matrix(T, 4, 4).translation(v).transform_direction(X) == X);
+	check("a 2D translation", linalg.Matrix(T, 3, 3).translation_2d(v.xy()).transform_point_2d(X.xy()) == (v + X).xy());
+	check("scaling", linalg.Matrix(T, 4, 4).scaling(v).transform_point(linalg.Vector3(T).splat(T(1))) == v
+		&& linalg.Matrix(T, 3, 3).scaling_2d(v.xy()) * linalg.Vector3(T).splat(T(1)) == v.xy().extend(T(1)));
+	check("lerp is exact at both ends", v.lerp(X, T(0)) == v && v.lerp(X, T(1)) == X);
+	check("upper_left and extend", linalg.Matrix(T, 4, 4).scaling(v).upper_left().extend() == linalg.Matrix(T, 4, 4).scaling(v));
+	check("inverse_rigid of a translation", linalg.Matrix(T, 4, 4).translation(v).inverse_rigid() == linalg.Matrix(T, 4, 4).translation(-v));
+	half := T(0.5);
+	check("abs, floor, ceil, round",
+		(-v).abs() == linalg.Vector3(T).from_components(T(3), T(4), T(12)) && (v*half).floor() == linalg.Vector3(T).from_components(T(1), -T(2), T(6))
+		&& (v*half).ceil() == linalg.Vector3(T).from_components(T(2), -T(2), T(6))
+		&& (v*half).round() == linalg.Vector3(T).from_components(T(2), -T(2), T(6)));
+}
+
+approximate_identities :: proc($T: type) where linalg.Real(T) {
+	tolerance := T(16)*epsilon(T);
+	axis := linalg.Vector3(T).from_components(T(1), T(2), T(3)).normalize() or_else linalg.Vector3(T).unit_z();
+	angle := T(0.7);
+	rotation := linalg.Matrix(T, 3, 3).rotation(axis, angle);
+	identity := linalg.Matrix(T, 3, 3).identity();
+	check("a rotation is orthonormal", linalg.approx_equal(rotation.transpose() * rotation, identity, tolerance, T(0)));
+	check("a rotation has determinant 1", linalg.approx_equal(rotation.determinant(), T(1), tolerance, T(0)));
+	foreach (i in 0 ..< 3) {
+		r := linalg.Matrix(T, 3, 3).rotation_x(angle) if i == 0
+			else linalg.Matrix(T, 3, 3).rotation_y(angle) if i == 1
+			else linalg.Matrix(T, 3, 3).rotation_z(angle);
+		check("an axis rotation is orthonormal", linalg.approx_equal(r.transpose() * r, identity, tolerance, T(0)));
+	}
+	quarter := T(f64(math.PI/2.0));
+	X := linalg.Vector3(T).unit_x();
+	Y := linalg.Vector3(T).unit_y();
+	Z := linalg.Vector3(T).unit_z();
+	check("positive angles turn counterclockwise",
+		linalg.approx_equal(linalg.Matrix(T, 3, 3).rotation_z(quarter) * X, Y, tolerance, T(0))
+		&& linalg.approx_equal(linalg.Matrix(T, 3, 3).rotation_x(quarter) * Y, Z, tolerance, T(0))
+		&& linalg.approx_equal(linalg.Matrix(T, 3, 3).rotation_y(quarter) * Z, X, tolerance, T(0))
+		&& linalg.approx_equal(linalg.Matrix(T, 2, 2).rotation(quarter) * X.xy(), Y.xy(), tolerance, T(0))
+		&& linalg.approx_equal(linalg.Matrix(T, 3, 3).rotation_2d(quarter).transform_direction_2d(X.xy()), Y.xy(), tolerance, T(0))
+		&& linalg.approx_equal(linalg.rotate(linalg.quaternion_from_axis_angle(Z, quarter), X), Y, tolerance, T(0)));
+	check("rotation_x is rotation about X",
+		linalg.approx_equal(linalg.Matrix(T, 4, 4).rotation_x(angle), linalg.Matrix(T, 4, 4).rotation(X, angle), tolerance, T(0)));
+
+	q := linalg.quaternion_from_axis_angle(axis, angle);
+	p := linalg.quaternion_from_axis_angle(linalg.Vector3(T).from_components(T(0.6), T(0), T(0.8)), -T(1.9));
+	v := linalg.Vector3(T).from_components(T(2), -T(1), T(0.5));
+	check("from_quaternion agrees with rotate", linalg.approx_equal(linalg.Matrix(T, 3, 3).from_quaternion(q) * v, linalg.rotate(q, v), tolerance*T(4), T(0)));
+	check("from_quaternion agrees with rotation", linalg.approx_equal(linalg.Matrix(T, 3, 3).from_quaternion(q), rotation, tolerance, T(0)));
+	check("from_quaternion 4 x 4 has no translation",
+		linalg.Matrix(T, 4, 4).from_quaternion(q).upper_left() == linalg.Matrix(T, 3, 3).from_quaternion(q)
+		&& linalg.Matrix(T, 4, 4).from_quaternion(q).transform_point(linalg.Vector3(T).splat(T(0))) == linalg.Vector3(T).splat(T(0)));
+	check("a quaternion product is a matrix product, b first",
+		linalg.approx_equal(linalg.Matrix(T, 3, 3).from_quaternion(q * p),
+			linalg.Matrix(T, 3, 3).from_quaternion(q) * linalg.Matrix(T, 3, 3).from_quaternion(p), tolerance*T(4), T(0))
+		&& linalg.approx_equal(linalg.rotate(q * p, v), linalg.rotate(q, linalg.rotate(p, v)), tolerance*T(8), T(0)));
+	check("q and -q rotate alike", linalg.rotate(-q, v) == linalg.rotate(q, v));
+	check("quaternion_from_axis_angle is a unit quaternion", linalg.approx_equal(q.norm_squared(), T(1), tolerance, T(0)));
+	switch (linalg.quaternion_normalize(q*math.Quaternion(T)(T(3)))) {
+	case .some(unit): check("quaternion_normalize", linalg.approx_equal(unit, q, tolerance, T(0)));
+	case .none:       check("quaternion_normalize", false);
+	}
+	t := linalg.Matrix(T, 4, 4).translation(v) * linalg.Matrix(T, 4, 4).rotation(axis, angle);
+	check("inverse_rigid inverts a rigid transform", linalg.approx_equal(t.inverse_rigid() * t, linalg.Matrix(T, 4, 4).identity(), tolerance*T(4), T(0)));
+	check("4 x 4 determinant agrees with elimination", linalg.approx_equal(t.determinant(), T(1), tolerance*T(4), T(0)));
+	check("normalize has unit length", linalg.approx_equal((v.normalize() or_else X).length(), T(1), tolerance, T(0)));
+
+	inverse_and_solve(T, 2);
+	inverse_and_solve(T, 3);
+	inverse_and_solve(T, 4);
+	inverse_and_solve(T, 5);
+	inverse_and_solve(T, 6);
+}
+
+degenerate_inputs :: proc($T: type, tiny: T, huge: T) where linalg.Real(T) {
+	V :: linalg.Vector3(T);
+	nan := T(f64(math.F64_NAN));
+	infinity := T(f64(math.F64_INFINITY));
+	check("normalize zero is none", V.splat(T(0)).normalize() == .none);
+	check("normalize with underflowing squares is none", V.from_components(tiny, T(0), T(0)).normalize() == .none);
+	check("normalize with overflowing squares is none", V.from_components(huge, T(0), T(0)).normalize() == .none);
+	check("normalize infinite is none", V.from_components(infinity, T(0), T(0)).normalize() == .none);
+	check("normalize NaN is none", V.from_components(T(1), nan, T(0)).normalize() == .none);
+	check("normalize_or falls back", V.splat(T(0)).normalize_or(V.unit_y()) == V.unit_y());
+	check("normalize a unit vector exactly", (V.unit_z().normalize() or_else V{}) == V.unit_z());
+	check("a 2 and 4 vector normalize too",
+		linalg.Vector2(T).splat(T(0)).normalize() == .none
+		&& (linalg.Vector4(T).unit_w().normalize() or_else linalg.Vector4(T){}) == linalg.Vector4(T).unit_w());
+	check("quaternion_normalize zero is none", linalg.quaternion_normalize(math.Quaternion(T).from_components(T(0), T(0), T(0), T(0))) == .none);
+
+	singular := linalg.Matrix(T, 3, 3).from_rows({{1, 2, 3}, {4, 5, 6}, {7, 8, 9}});
+	check("a singular matrix has no inverse", linalg.Matrix(T, 2, 2).from_rows({{1, 2}, {2, 4}}).inverse() == .none);
+	check("a zero matrix has no inverse", linalg.Matrix(T, 4, 4){}.inverse() == .none);
+	with_nan := linalg.Matrix(T, 3, 3).identity();
+	with_nan[1, 2] = nan;
+	check("a NaN matrix has no inverse", with_nan.inverse() == .none);
+	with_infinity := linalg.Matrix(T, 3, 3).identity();
+	with_infinity[0, 1] = infinity;
+	check("an infinite matrix has no inverse", with_infinity.inverse() == .none);
+	check("a singular system has no solution", linalg.Matrix(T, 2, 2).from_rows({{0, 0}, {1, 1}}).solve(linalg.Matrix(T, 2, 1).from_vector(linalg.Vector2(T).unit_x())) == .none);
+	check("an integer-valued singular 3 x 3", linalg.approx_equal(singular.determinant(), T(0), T(0), T(0)));
+	big := linalg.Matrix(T, 5, 5).identity();
+	big[3, 4] = T(1);
+	big[4, 3] = T(1);
+	check("a singular 5 x 5 has determinant 0", big.determinant() == T(0));
+	big[4, 4] = T(2);
+	check("a 5 x 5 determinant by elimination", big.determinant() == T(1));
+
+	eye := V.from_components(T(1), T(2), T(3));
+	M4 :: linalg.Matrix(T, 4, 4);
+	check("look_at with no direction is none", M4.look_at(eye, eye, V.unit_y()) == .none && M4.look_at_lh(eye, eye, V.unit_y()) == .none);
+	check("look_at along up is none", M4.look_at(eye, eye + V.unit_y(), V.unit_y()) == .none && M4.look_to_lh(eye, -V.unit_y(), V.unit_y()) == .none);
+	check("look_to with no up is none", M4.look_to(eye, V.unit_x(), V.splat(T(0))) == .none);
+}
+
+clip_conventions :: proc($T: type) where linalg.Real(T) {
+	tolerance := T(16)*epsilon(T);
+	near, far := T(0.5), T(50);
+	fovy, aspect := T(1.2), T(1.5);
+	infinity := T(f64(math.F64_INFINITY));
+	V4 :: linalg.Vector4(T);
+	M4 :: linalg.Matrix(T, 4, 4);
+	ranges := [3]linalg.Depth_Range{.Negative_One_To_One, .Zero_To_One, .One_To_Zero};
+	firsts := [3]T{-T(1), T(0), T(1)};
+	seconds := [3]T{T(1), T(1), T(0)};
+	foreach (i in 0 ..< 3) {
+		p := M4.perspective(fovy, aspect, near, far, ranges[i]);
+		on_near := p * V4.from_components(T(0), T(0), -near, T(1));
+		on_far := p * V4.from_components(T(0), T(0), -far, T(1));
+		check("perspective near and far planes",
+			linalg.approx_equal(on_near.z/on_near.w, firsts[i], tolerance, T(0))
+			&& linalg.approx_equal(on_far.z/on_far.w, seconds[i], tolerance, T(0)));
+		up := p * V4.from_components(T(0), T(1), -T(5), T(1));
+		check("clip w is the view-space -z, and +Y is up", up.w == T(5) && T(0) < up.y);
+		o := M4.orthographic(-T(2), T(4), -T(1), T(3), near, far, ranges[i]);
+		corner := o * V4.from_components(-T(2), -T(1), -near, T(1));
+		other := o * V4.from_components(T(4), T(3), -far, T(1));
+		check("orthographic box",
+			linalg.approx_equal(corner, V4.from_components(-T(1), -T(1), firsts[i], T(1)), tolerance, T(0))
+			&& linalg.approx_equal(other, V4.from_components(T(1), T(1), seconds[i], T(1)), tolerance, T(0)));
+
+		// The infinite far plane is the limit: near still maps exactly, and a
+		// distant point approaches the second value.
+		unbounded := M4.perspective(fovy, aspect, near, infinity, ranges[i]);
+		distant := unbounded * V4.from_components(T(0), T(0), -T(1.0e6), T(1));
+		check("an infinite far plane",
+			linalg.approx_equal((unbounded * V4.from_components(T(0), T(0), -near, T(1))).z/near, firsts[i], tolerance, T(0))
+			&& linalg.approx_equal(distant.z/distant.w, seconds[i], T(1.0e-5), T(0)));
+
+		// Each `_lh` form is its twin applied to the Z-mirrored view space.
+		mirror := M4.scaling(linalg.Vector3(T).from_components(T(1), T(1), -T(1)));
+		check("perspective_lh is perspective of the mirrored view", M4.perspective_lh(fovy, aspect, near, far, ranges[i]) == p * mirror);
+		check("orthographic_lh is orthographic of the mirrored view",
+			M4.orthographic_lh(-T(2), T(4), -T(1), T(3), near, far, ranges[i]) == o * mirror);
+	}
+
+	V3 :: linalg.Vector3(T);
+	from_z := M4.look_at(V3.from_components(T(0), T(0), T(5)), V3.splat(T(0)), V3.unit_y()) or_else M4{};
+	check("look_at from +Z toward the origin has the identity rotation", from_z.upper_left() == linalg.Matrix(T, 3, 3).identity());
+	check("look_at moves the eye to the origin", from_z.transform_point(V3.from_components(T(0), T(0), T(5))) == V3.splat(T(0)));
+	eye, target, up := V3.from_components(T(3), T(2), T(4)), V3.from_components(-T(1), T(0.5), T(1)), V3.from_components(T(0.2), T(1), T(0));
+	view := M4.look_at(eye, target, up) or_else M4{};
+	in_view := view.transform_point(target);
+	check("look_at puts the target down -Z", linalg.approx_equal(in_view.xy(), linalg.Vector2(T).splat(T(0)), tolerance*T(8), T(0)) && in_view.z < T(0));
+	check("look_to is look_at", M4.look_to(eye, target - eye, up) == M4.look_at(eye, target, up));
+	mirrored := V3.from_components(T(1), T(1), -T(1));
+	view_lh := M4.look_at_lh(eye*mirrored, target*mirrored, up*mirrored) or_else M4{};
+	point := V3.from_components(T(0.25), -T(3), T(2));
+	projection := M4.perspective(fovy, aspect, near, far, .Zero_To_One);
+	projection_lh := M4.perspective_lh(fovy, aspect, near, far, .Zero_To_One);
+	check("the left-handed pipeline sees the mirrored scene as the right-handed one sees the scene",
+		linalg.approx_equal(projection_lh * view_lh * (point*mirrored).extend(T(1)), projection * view * point.extend(T(1)), tolerance*T(8), T(0)));
+	check("look_at_lh puts the target down +Z", T(0) < view_lh.transform_point(target*mirrored).z);
+}
+
+approximate_equality :: proc() {
+	nan := math.F64_NAN;
+	infinity := math.F64_INFINITY;
+	check("absolute near zero", linalg.approx_equal(0.0, 1.0e-10, 1.0e-9, 0.0) && !linalg.approx_equal(0.0, 2.0e-9, 1.0e-9, 0.0));
+	check("absolute at the boundary", linalg.approx_equal(0.0, 0.25, 0.25, 0.0) && !linalg.approx_equal(0.0, 0.25 + math.F64_EPSILON/4.0, 0.25, 0.0));
+	check("relative elsewhere", linalg.approx_equal(1000.0, 1000.0000001, 1.0e-12, 1.0e-9) && !linalg.approx_equal(1000.0, 1000.001, 1.0e-12, 1.0e-9));
+	check("relative at the boundary, against the larger", linalg.approx_equal(4.0, 5.0, 0.0, 0.2) && !linalg.approx_equal(4.0, 5.0, 0.0, 0.19));
+	check("a relative tolerance means nothing at zero", !linalg.approx_equal(0.0, 1.0e-300, 0.0, 0.5));
+	check("the larger tolerance governs", linalg.approx_equal(1.0, 1.5, 0.5, 0.0) && linalg.approx_equal(1.0, 1.5, 0.0, 0.5));
+	check("NaN is never equal", !linalg.approx_equal(nan, nan, 1.0, 1.0) && !linalg.approx_equal(1.0, nan, infinity, 1.0));
+	check("equal infinities are", linalg.approx_equal(infinity, infinity, 0.0, 0.0) && linalg.approx_equal(-infinity, -infinity, 0.0, 0.0));
+	check("opposite or finite against infinite are not, whatever the tolerance",
+		!linalg.approx_equal(infinity, -infinity, infinity, 1.0) && !linalg.approx_equal(infinity, math.F64_MAX, 1.0, 1.0));
+	check("an infinite tolerance takes any finite pair", linalg.approx_equal(-math.F64_MAX, math.F64_MAX, infinity, 0.0));
+	a := linalg.Vector3(f32).from_components(1, 2, 3);
+	check("vectors compare per component",
+		linalg.approx_equal(a, a + linalg.Vector3(f32).unit_z()*f32(1.0e-7), f32(0), f32(1.0e-7))
+		&& !linalg.approx_equal(a, a + linalg.Vector3(f32).unit_x()*f32(1.0e-6), f32(0), f32(1.0e-7)));
+	with_nan := linalg.Vector2(f64).from_components(1, nan);
+	check("a NaN component is never equal", !linalg.approx_equal(with_nan, with_nan, 1.0, 1.0));
+	check("matrices and quaternions",
+		linalg.approx_equal(linalg.Matrix(f64, 2, 3){}, linalg.Matrix(f64, 2, 3){}, 0.0, 0.0)
+		&& !linalg.approx_equal(math.Quaternion(f64).from_components(1, 0, 0, 0), math.Quaternion(f64).from_components(-1, 0, 0, 0), 0.5, 0.0)
+		&& linalg.approx_equal(linalg.Vector4(f64).splat(1), linalg.Vector4(f64).splat(1.25), 0.25, 0.0));
+}
+
+// A rational number meets only `Numeric` (and `==`), so it gets the arithmetic
+// members and nothing bounded by `Real`.
+Rational :: struct { n, d: i64 }
+
+gcd :: proc(a, b: i64) -> i64 {
+	x, y := a if a >= 0 else -a, b if b >= 0 else -b;
+	for (y != 0) { x, y = y, x % y; }
+	return x;
+}
+
+reduced :: proc(n, d: i64) -> Rational {
+	g := gcd(n, d);
+	sign: i64 = -1 if d < 0 else 1;
+	return {sign*n/g, sign*d/g};
+}
+
+impl Rational {
+	@(public) from_int :: hook(convert) proc(value: int) -> Rational { return {i64(value), 1}; }
+	@(public) add :: operator(+) proc(a, b: Rational) -> Rational { return reduced(a.n*b.d + b.n*a.d, a.d*b.d); }
+	@(public) subtract :: operator(-) proc(a, b: Rational) -> Rational { return reduced(a.n*b.d - b.n*a.d, a.d*b.d); }
+	@(public) negate :: operator(-) proc(a: Rational) -> Rational { return {-a.n, a.d}; }
+	@(public) multiply :: operator(*) proc(a, b: Rational) -> Rational { return reduced(a.n*b.n, a.d*b.d); }
+	@(public) divide :: operator(/) proc(a, b: Rational) -> Rational { return reduced(a.n*b.d, a.d*b.n); }
+	@(public) equal :: operator(==) proc(a, b: Rational) -> bool { return a.n == b.n && a.d == b.d; }
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
+		fmt.format_to(writer, self.n);
+		fmt.format_to(writer, "/");
+		fmt.format_to(writer, self.d);
+	}
+}
+
+// A forward-mode dual number meets `Real` through its own methods, so the
+// bounded members differentiate through it. Its functions are `repro`'s, so
+// the derivatives printed are the same everywhere.
+Dual :: struct { value, derivative: f64 }
+
+impl Dual {
+	@(public) from_f64 :: hook(convert) proc(value: f64) -> Dual { return {value, 0}; }
+	@(public) add :: operator(+) proc(a, b: Dual) -> Dual { return {a.value + b.value, a.derivative + b.derivative}; }
+	@(public) subtract :: operator(-) proc(a, b: Dual) -> Dual { return {a.value - b.value, a.derivative - b.derivative}; }
+	@(public) negate :: operator(-) proc(a: Dual) -> Dual { return {-a.value, -a.derivative}; }
+	@(public) multiply :: operator(*) proc(a, b: Dual) -> Dual {
+		return {a.value*b.value, a.derivative*b.value + a.value*b.derivative};
+	}
+	@(public) divide :: operator(/) proc(a, b: Dual) -> Dual {
+		return {a.value/b.value, (a.derivative*b.value - a.value*b.derivative)/(b.value*b.value)};
+	}
+	@(public) equal :: operator(==) proc(a, b: Dual) -> bool { return a.value == b.value; }
+	@(public) less :: operator(<) proc(a, b: Dual) -> bool { return a.value < b.value; }
+
+	sqrt :: proc(self) -> Dual {
+		root := math.sqrt(self.value);
+		return {root, self.derivative/(root + root)};
+	}
+	sin :: proc(self) -> Dual { return {repro.sin(self.value), self.derivative*repro.cos(self.value)}; }
+	cos :: proc(self) -> Dual { return {repro.cos(self.value), -self.derivative*repro.sin(self.value)}; }
+	asin :: proc(self) -> Dual {
+		return {repro.asin(self.value), self.derivative/math.sqrt(1.0 - self.value*self.value)};
+	}
+	acos :: proc(self) -> Dual {
+		return {repro.acos(self.value), -self.derivative/math.sqrt(1.0 - self.value*self.value)};
+	}
+	atan2 :: proc(self, x: Dual) -> Dual {
+		squared := x.value*x.value + self.value*self.value;
+		return {repro.atan2(self.value, x.value), (x.value*self.derivative - self.value*x.derivative)/squared};
+	}
+	abs :: proc(self) -> Dual { return -self if self.value < 0.0 else self; }
+	floor :: proc(self) -> Dual { return {math.floor(self.value), 0}; }
+	ceil :: proc(self) -> Dual { return {math.ceil(self.value), 0}; }
+	round :: proc(self) -> Dual { return {math.round(self.value), 0}; }
+	is_finite :: proc(self) -> bool { return math.is_finite(self.value); }
+	is_normal :: proc(self) -> bool { return math.is_finite(self.value) && math.abs(self.value) >= math.F64_MIN_NORMAL; }
+}
+
+static_assert(linalg.Real(f32));
+static_assert(linalg.Real(f64));
+static_assert(linalg.Real(Dual));
+static_assert(!linalg.Real(i64));
+static_assert(!linalg.Real(Rational));
+
+element_types :: proc() {
+	// Integers keep the `Numeric` members, exactly.
+	a := linalg.Vector3(i32).from_components(1, -2, 3);
+	b := linalg.Vector3(i64).from_components(4, 5, -6);
+	fmt.println(a + a, a.dot(a), a.cross(linalg.Vector3(i32).unit_x()), b * 2, 3 * b, b / 2, b[2], a.min(-a), a.max(-a));
+	m := linalg.Matrix(i64, 3, 3).from_rows({{2, -1, 0}, {-1, 2, -1}, {0, -1, 2}});
+	n := linalg.Matrix(i64, 4, 4).from_rows({{1, 2, 3, 4}, {5, 6, 7, 8}, {2, 6, 4, 8}, {3, 1, 1, 2}});
+	fmt.println(m.determinant(), n.determinant(), linalg.Matrix(i32, 2, 2).from_rows({{3, 8}, {4, 6}}).determinant(), m.trace());
+	fmt.println(m * linalg.Vector3(i64).from_components(1, 2, 3), m * m, linalg.Matrix(i64, 1, 1).from_array({7}).determinant());
+	fmt.println(linalg.Matrix(i64, 2, 3).from_rows({{1, 2, 3}, {4, 5, 6}}) * linalg.Matrix(i64, 3, 1).from_vector(linalg.Vector3(i64).from_components(1, 0, -1)));
+
+	// Conversions between all of them, as the scalar ones convert.
+	wide := linalg.Vector3(f64)(a);
+	narrow := linalg.Vector3(f32)(wide*1.5);
+	back := linalg.Vector3(i64)(linalg.Vector3(f64).from_components(4, 5, -6));
+	fmt.println(wide, narrow, back == b, linalg.Vector2(i32)(linalg.Vector2(i64).from_components(9, -9)));
+	fmt.println(linalg.Matrix(f32, 3, 3)(m), linalg.Matrix(f64, 2, 2)(linalg.Matrix(f32, 2, 2).identity()) == linalg.Matrix(f64, 2, 2).identity());
+	fmt.println(linalg.Vector4(f64)(linalg.Vector4(i32).from_components(1, 2, 3, 4)), linalg.Vector3(Dual)(wide).z.value);
+
+	r := linalg.Vector3(Rational).from_components(Rational{1, 2}, Rational{1, 3}, Rational{-1, 6});
+	s := linalg.Vector3(Rational).from_components(Rational{2, 1}, Rational{3, 1}, Rational{6, 1});
+	fmt.println(r.dot(s), r.cross(s), r + s, -r, r == r, r == s);
+	h := linalg.Matrix(Rational, 3, 3).from_columns({
+		{Rational{1, 1}, Rational{1, 2}, Rational{1, 3}},
+		{Rational{1, 2}, Rational{1, 3}, Rational{1, 4}},
+		{Rational{1, 3}, Rational{1, 4}, Rational{1, 5}},
+	});
+	fmt.println(h.determinant(), h * linalg.Matrix(Rational, 3, 3).identity() == h, h.transpose() == h);
+	fmt.println(linalg.rotate(math.Quaternion(Rational).from_components(Rational{0, 1}, Rational{0, 1}, Rational{0, 1}, Rational{1, 1}), r));
+
+	// d/dx |(x, 4, 0)| at 3 is 3/5. d/dθ of x rotated by θ about z is
+	// (-sin θ, cos θ, 0).
+	length := linalg.Vector3(Dual).from_components({3, 1}, {4, 0}, {0, 0}).length();
+	fmt.println(length.value, length.derivative);
+	theta := Dual{0.8, 1};
+	turned := linalg.rotate(linalg.quaternion_from_axis_angle(linalg.Vector3(Dual).unit_z(), theta), linalg.Vector3(Dual).unit_x());
+	check("the derivative of rotate is the analytic one",
+		linalg.approx_equal(turned.x.derivative, -repro.sin(0.8), 1.0e-15, 0.0)
+		&& linalg.approx_equal(turned.y.derivative, repro.cos(0.8), 1.0e-15, 0.0)
+		&& turned.z.derivative == 0.0);
+	unit := linalg.Vector3(Dual).from_components({3, 1}, {4, 0}, {0, 0}).normalize() or_else linalg.Vector3(Dual){};
+	// d/dx x/|v| = (|v|^2 - x^2)/|v|^3 = 16/125.
+	check("the derivative of normalize", linalg.approx_equal(unit.x.derivative, 16.0/125.0, 1.0e-16, 0.0));
+}
+
+bits64 :: proc(x: f64) -> u64 { return unsafe.transmute(u64, x); }
+bits32 :: proc(x: f32) -> u32 { return unsafe.transmute(u32, x); }
+
+FOLDED_PERSPECTIVE :: linalg.Matrix(f64, 4, 4).perspective(1.1, 1.75, 0.1, 100.0, .Zero_To_One);
+FOLDED_ROTATION :: linalg.Matrix(f32, 3, 3).rotation(linalg.Vector3(f32).from_components(0.48, 0.6, 0.64), 2.5);
+FOLDED_INVERSE :: conditioned(f64, 4).inverse();
+
+// The results, as bit patterns: these lines are the same at every
+// optimization and CPU level, and a folded constant equals its run-time call.
+// A member that reaches `math.sqrt`, a foreign procedure, cannot be folded.
+determinism :: proc() {
+	one := f64(os.args.len());
+	p := linalg.Matrix(f64, 4, 4).perspective(1.1*one, 1.75, 0.1, 100.0, .Zero_To_One);
+	values := p.to_array();
+	fmt.println("perspective", bits64(values[0]), bits64(values[5]), bits64(values[10]), bits64(values[11]), bits64(values[14]));
+	axis := linalg.Vector3(f32).from_components(0.48, 0.6, 0.64);
+	r := linalg.Matrix(f32, 3, 3).rotation(axis, f32(2.5*one));
+	rotation := r.to_array();
+	rotation_bits: [9]u32 = {};
+	foreach (i in 0 ..< 9) { rotation_bits[i] = bits32(rotation[i]); }
+	fmt.println("rotation", rotation_bits);
+	q := linalg.quaternion_from_axis_angle(linalg.Vector3(f64).from_components(0.0, 0.6, 0.8), -1.3*one);
+	turned := linalg.rotate(q, linalg.Vector3(f64).from_components(1, 2, 3));
+	fmt.println("rotate", bits64(q.real), bits64(q.i), bits64(turned.x), bits64(turned.y), bits64(turned.z));
+	inverse := conditioned(f64, 4).inverse() or_else linalg.Matrix(f64, 4, 4){};
+	fmt.println("inverse", bits64(inverse[0, 0]), bits64(inverse[1, 2]), bits64(inverse[3, 3]), bits64(conditioned(f64, 6).determinant()));
+	unit := linalg.Vector3(f32).from_components(f32(1.0*one), 2, 3).normalize() or_else linalg.Vector3(f32){};
+	fmt.println("normalize", bits32(unit.x), bits32(unit.y), bits32(unit.z));
+	view := linalg.Matrix(f64, 4, 4).look_at(linalg.Vector3(f64).from_components(3, 2, 4*one), linalg.Vector3(f64){}, linalg.Vector3(f64).unit_y()) or_else linalg.Matrix(f64, 4, 4){};
+	fmt.println("look_at", bits64(view[0, 0]), bits64(view[1, 2]), bits64(view[2, 3]));
+	check("a folded perspective equals the run-time one", FOLDED_PERSPECTIVE.to_array() == values);
+	check("a folded rotation equals the run-time one", FOLDED_ROTATION.to_array() == rotation);
+	check("a folded inverse equals the run-time one", (FOLDED_INVERSE or_else linalg.Matrix(f64, 4, 4){}).to_array() == inverse.to_array());
+}
+
+main :: proc() {
+	check("Vector3(f32) is laid out as [3]f32", size_of(linalg.Vector3(f32)) == 12 && align_of(linalg.Vector3(f32)) == 4);
+	check("Matrix(f32, 4, 4) is laid out as [16]f32", size_of(linalg.Matrix(f32, 4, 4)) == 64 && align_of(linalg.Matrix(f32, 4, 4)) == 4);
+	fmt.println(linalg.Matrix(f64, 2, 3).from_rows({{1, 2, 3}, {4, 5, 6}}), linalg.Vector4(f32).unit_w(), linalg.Vector2(i32).from_array({7, 8}));
+
+	fmt.println("-- exact, f32");
+	exact_identities(f32);
+	fmt.println("-- exact, f64");
+	exact_identities(f64);
+	fmt.println("-- approximate, f32");
+	approximate_identities(f32);
+	fmt.println("-- approximate, f64");
+	approximate_identities(f64);
+	fmt.println("-- degenerate, f32");
+	degenerate_inputs(f32, 1.0e-25, 1.0e25);
+	fmt.println("-- degenerate, f64");
+	degenerate_inputs(f64, 1.0e-170, 1.0e170);
+	fmt.println("-- clip, f32");
+	clip_conventions(f32);
+	fmt.println("-- clip, f64");
+	clip_conventions(f64);
+	fmt.println("-- approximate equality");
+	approximate_equality();
+	fmt.println("-- element types");
+	element_types();
+	fmt.println("-- determinism");
+	determinism();
+}

@@ -1,0 +1,10 @@
+// standard-library "`core:math/linalg`": a field of view outside (0, pi) is no
+// projection, so it panics rather than returning one.
+package main;
+
+import "core:math";
+import "core:math/linalg";
+
+main :: proc() {
+	_ = linalg.Matrix(f64, 4, 4).perspective(math.PI, 1.0, 0.1, 10.0, .Zero_To_One);
+}

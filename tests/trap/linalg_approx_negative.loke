@@ -1,0 +1,10 @@
+// standard-library "`core:math/linalg`": a negative tolerance is a caller
+// mistake, so `approx_equal` panics rather than answering false.
+package main;
+
+import "core:math";
+import "core:math/linalg";
+
+main :: proc() {
+	_ = linalg.approx_equal(1.0, 1.0, -1.0e-9, 0.0);
+}

@@ -1,0 +1,11 @@
+// standard-library "`core:math/linalg`": a NaN tolerance panics, for a vector
+// as for a scalar.
+package main;
+
+import "core:math";
+import "core:math/linalg";
+
+main :: proc() {
+	v := linalg.Vector2(f32).splat(1);
+	_ = linalg.approx_equal(v, v, f32(0), math.F32_NAN);
+}

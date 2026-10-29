@@ -1,0 +1,241 @@
+ok Vector3(f32) is laid out as [3]f32
+ok Matrix(f32, 4, 4) is laid out as [16]f32
+[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]] (0.0, 0.0, 0.0, 1.0) (7, 8)
+-- exact, f32
+ok X x Y == Z, Y x Z == X, Z x X == Y
+ok Y x X == -Z
+ok identity * m == m
+ok m * identity == m
+ok transpose(transpose(m)) == m
+ok from_rows is from_columns of the transpose
+ok m[r, c] is columns[c][r]
+ok to_array is column-major
+ok from_array inverts to_array
+ok row and column
+ok zero rotations are the identity
+ok the zero quaternion rotation keeps v
+ok dot, length_squared, length
+ok a translation moves points, not directions
+ok a 2D translation
+ok scaling
+ok lerp is exact at both ends
+ok upper_left and extend
+ok inverse_rigid of a translation
+ok abs, floor, ceil, round
+-- exact, f64
+ok X x Y == Z, Y x Z == X, Z x X == Y
+ok Y x X == -Z
+ok identity * m == m
+ok m * identity == m
+ok transpose(transpose(m)) == m
+ok from_rows is from_columns of the transpose
+ok m[r, c] is columns[c][r]
+ok to_array is column-major
+ok from_array inverts to_array
+ok row and column
+ok zero rotations are the identity
+ok the zero quaternion rotation keeps v
+ok dot, length_squared, length
+ok a translation moves points, not directions
+ok a 2D translation
+ok scaling
+ok lerp is exact at both ends
+ok upper_left and extend
+ok inverse_rigid of a translation
+ok abs, floor, ceil, round
+-- approximate, f32
+ok a rotation is orthonormal
+ok a rotation has determinant 1
+ok an axis rotation is orthonormal
+ok an axis rotation is orthonormal
+ok an axis rotation is orthonormal
+ok positive angles turn counterclockwise
+ok rotation_x is rotation about X
+ok from_quaternion agrees with rotate
+ok from_quaternion agrees with rotation
+ok from_quaternion 4 x 4 has no translation
+ok a quaternion product is a matrix product, b first
+ok q and -q rotate alike
+ok quaternion_from_axis_angle is a unit quaternion
+ok quaternion_normalize
+ok inverse_rigid inverts a rigid transform
+ok 4 x 4 determinant agrees with elimination
+ok normalize has unit length
+ok m * inverse(m) is the identity
+ok inverse(m) * m is the identity
+ok solve leaves a small residual
+ok m * inverse(m) is the identity
+ok inverse(m) * m is the identity
+ok solve leaves a small residual
+ok m * inverse(m) is the identity
+ok inverse(m) * m is the identity
+ok solve leaves a small residual
+ok m * inverse(m) is the identity
+ok inverse(m) * m is the identity
+ok solve leaves a small residual
+ok m * inverse(m) is the identity
+ok inverse(m) * m is the identity
+ok solve leaves a small residual
+-- approximate, f64
+ok a rotation is orthonormal
+ok a rotation has determinant 1
+ok an axis rotation is orthonormal
+ok an axis rotation is orthonormal
+ok an axis rotation is orthonormal
+ok positive angles turn counterclockwise
+ok rotation_x is rotation about X
+ok from_quaternion agrees with rotate
+ok from_quaternion agrees with rotation
+ok from_quaternion 4 x 4 has no translation
+ok a quaternion product is a matrix product, b first
+ok q and -q rotate alike
+ok quaternion_from_axis_angle is a unit quaternion
+ok quaternion_normalize
+ok inverse_rigid inverts a rigid transform
+ok 4 x 4 determinant agrees with elimination
+ok normalize has unit length
+ok m * inverse(m) is the identity
+ok inverse(m) * m is the identity
+ok solve leaves a small residual
+ok m * inverse(m) is the identity
+ok inverse(m) * m is the identity
+ok solve leaves a small residual
+ok m * inverse(m) is the identity
+ok inverse(m) * m is the identity
+ok solve leaves a small residual
+ok m * inverse(m) is the identity
+ok inverse(m) * m is the identity
+ok solve leaves a small residual
+ok m * inverse(m) is the identity
+ok inverse(m) * m is the identity
+ok solve leaves a small residual
+-- degenerate, f32
+ok normalize zero is none
+ok normalize with underflowing squares is none
+ok normalize with overflowing squares is none
+ok normalize infinite is none
+ok normalize NaN is none
+ok normalize_or falls back
+ok normalize a unit vector exactly
+ok a 2 and 4 vector normalize too
+ok quaternion_normalize zero is none
+ok a singular matrix has no inverse
+ok a zero matrix has no inverse
+ok a NaN matrix has no inverse
+ok an infinite matrix has no inverse
+ok a singular system has no solution
+ok an integer-valued singular 3 x 3
+ok a singular 5 x 5 has determinant 0
+ok a 5 x 5 determinant by elimination
+ok look_at with no direction is none
+ok look_at along up is none
+ok look_to with no up is none
+-- degenerate, f64
+ok normalize zero is none
+ok normalize with underflowing squares is none
+ok normalize with overflowing squares is none
+ok normalize infinite is none
+ok normalize NaN is none
+ok normalize_or falls back
+ok normalize a unit vector exactly
+ok a 2 and 4 vector normalize too
+ok quaternion_normalize zero is none
+ok a singular matrix has no inverse
+ok a zero matrix has no inverse
+ok a NaN matrix has no inverse
+ok an infinite matrix has no inverse
+ok a singular system has no solution
+ok an integer-valued singular 3 x 3
+ok a singular 5 x 5 has determinant 0
+ok a 5 x 5 determinant by elimination
+ok look_at with no direction is none
+ok look_at along up is none
+ok look_to with no up is none
+-- clip, f32
+ok perspective near and far planes
+ok clip w is the view-space -z, and +Y is up
+ok orthographic box
+ok an infinite far plane
+ok perspective_lh is perspective of the mirrored view
+ok orthographic_lh is orthographic of the mirrored view
+ok perspective near and far planes
+ok clip w is the view-space -z, and +Y is up
+ok orthographic box
+ok an infinite far plane
+ok perspective_lh is perspective of the mirrored view
+ok orthographic_lh is orthographic of the mirrored view
+ok perspective near and far planes
+ok clip w is the view-space -z, and +Y is up
+ok orthographic box
+ok an infinite far plane
+ok perspective_lh is perspective of the mirrored view
+ok orthographic_lh is orthographic of the mirrored view
+ok look_at from +Z toward the origin has the identity rotation
+ok look_at moves the eye to the origin
+ok look_at puts the target down -Z
+ok look_to is look_at
+ok the left-handed pipeline sees the mirrored scene as the right-handed one sees the scene
+ok look_at_lh puts the target down +Z
+-- clip, f64
+ok perspective near and far planes
+ok clip w is the view-space -z, and +Y is up
+ok orthographic box
+ok an infinite far plane
+ok perspective_lh is perspective of the mirrored view
+ok orthographic_lh is orthographic of the mirrored view
+ok perspective near and far planes
+ok clip w is the view-space -z, and +Y is up
+ok orthographic box
+ok an infinite far plane
+ok perspective_lh is perspective of the mirrored view
+ok orthographic_lh is orthographic of the mirrored view
+ok perspective near and far planes
+ok clip w is the view-space -z, and +Y is up
+ok orthographic box
+ok an infinite far plane
+ok perspective_lh is perspective of the mirrored view
+ok orthographic_lh is orthographic of the mirrored view
+ok look_at from +Z toward the origin has the identity rotation
+ok look_at moves the eye to the origin
+ok look_at puts the target down -Z
+ok look_to is look_at
+ok the left-handed pipeline sees the mirrored scene as the right-handed one sees the scene
+ok look_at_lh puts the target down +Z
+-- approximate equality
+ok absolute near zero
+ok absolute at the boundary
+ok relative elsewhere
+ok relative at the boundary, against the larger
+ok a relative tolerance means nothing at zero
+ok the larger tolerance governs
+ok NaN is never equal
+ok equal infinities are
+ok opposite or finite against infinite are not, whatever the tolerance
+ok an infinite tolerance takes any finite pair
+ok vectors compare per component
+ok a NaN component is never equal
+ok matrices and quaternions
+-- element types
+(2, -4, 6) 14 (0, 3, 2) (8, 10, -12) (12, 15, -18) (2, 2, -3) -6 (-1, -2, -3) (1, 2, 3)
+4 72 -14 6
+(0, 0, 4) [[5, -4, 1], [-4, 6, -4], [1, -4, 5]] 7
+[[-2], [-2]]
+(1.0, -2.0, 3.0) (1.5, -3.0, 4.5) true (9, -9)
+[[2.0, -1.0, 0.0], [-1.0, 2.0, -1.0], [0.0, -1.0, 2.0]] true
+(1.0, 2.0, 3.0, 4.0) 3.0
+1/1 (5/2, -10/3, 5/6) (5/2, 10/3, 35/6) (-1/2, -1/3, 1/6) true false
+1/2160 true true
+(-1/2, -1/3, -1/6)
+5.0 0.6
+ok the derivative of rotate is the analytic one
+ok the derivative of normalize
+-- determinism
+perspective 4606570142457618806 4610024376720946503 13830558963762528321 13830554455654793216 13815249429894109698
+rotation [3200628423, 1063704880, 1044833204, 1040905942, 3189532092, 1064999314, 1063883441, 1053755884, 3179402584]
+rotate 4605345704942278850 9223372036854775808 4590053405750473776 4608742256919944936 4615041728806364264
+inverse 13849139584870305591 13815240836291654942 4596767761314026629 13869573378508158200
+normalize 1049155191 1057543799 1062027698
+look_at 4605380978949069210 13822395960489920826 13841121211836848627
+ok a folded perspective equals the run-time one
+ok a folded rotation equals the run-time one
+ok a folded inverse equals the run-time one

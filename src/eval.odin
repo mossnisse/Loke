@@ -171,7 +171,11 @@ ensure_proc_typed_for_eval :: proc(k: ^Checker, symbol_id: Symbol_Id) -> bool {
 
 	outer_location := save_checker_location(k)
 	defer restore_checker_location(k, outer_location)
-	enter_symbol_location(k, symbol)
+	// A member of an instantiated generic block is checked inside it, where its
+	// `where` clause has the block's parameters in scope.
+	if !enter_pending_impl_member(k, d) {
+		enter_symbol_location(k, symbol)
+	}
 	k.body = {}
 
 	resolve_declaration_signature(k, d)
@@ -2495,6 +2499,16 @@ eval_invoke :: proc(
 	result_place: ^^Eval_Value = nil,
 ) -> (out: Eval_Value, success: bool) {
 	defer { if !eval_memory_ok(ev) { success = false } }
+	// An operator is reached through its resolution, not by name, and a member
+	// of an instantiated generic block is checked only after its package, so
+	// the body may not have been checked yet.
+	if !ensure_proc_typed_for_eval(ev.k, symbol_id) {
+		eval_fail(
+			ev, site, "L0344", "`%s` cannot be called at compile time: its body is still being checked",
+			eval_proc_name(ev.k.c, symbol_id),
+		)
+		return Eval_Value{}, false
+	}
 	symbol := symbol_of(ev.k.c, symbol_id)
 	if symbol == nil {
 		return Eval_Value{}, false

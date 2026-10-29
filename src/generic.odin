@@ -2516,11 +2516,17 @@ install_one_generic_impl :: proc(k: ^Checker, template: ^Generic_Template, insta
 	k.impl_type = instance.type
 	conflicts := declare_instance_impl_members(k, clone, instance, block)
 	append(&instance.impls, block)
-	// Resolved here, in the block's own scope.
+	// Resolved here, in the block's own scope. Groups go last: a group declared
+	// before its members must not take one in before its bound has excluded it.
 	for member in clone.members {
-		if d, is_decl := member.(^Decl); is_decl {
+		if d, is_decl := member.(^Decl); is_decl && !decl_is_proc_group(d) {
 			resolve_declaration_signature(k, d)
 			exclude_member_on_failed_bound(k, d)
+		}
+	}
+	for member in clone.members {
+		if d, is_decl := member.(^Decl); is_decl && decl_is_proc_group(d) {
+			resolve_declaration_signature(k, d)
 		}
 	}
 	for member in clone.members {
@@ -2529,6 +2535,15 @@ install_one_generic_impl :: proc(k: ^Checker, template: ^Generic_Template, insta
 		}
 	}
 	append(&k.c.pending_impl_instances, Pending_Impl{item = clone, scope = scope, pkg = block.pkg, file = block.file, file_node = block.file_node, subject = instance.type, conflicts = conflicts})
+}
+
+@(private = "file")
+decl_is_proc_group :: proc(d: ^Decl) -> bool {
+	if len(d.values) != 1 {
+		return false
+	}
+	_, is_group := d.values[0].(^Expr_Proc_Group)
+	return is_group
 }
 
 // design.md "where clauses": a method whose bound fails is dropped from that
@@ -2806,6 +2821,23 @@ register_instance_extension_name :: proc(
 instance_template_of :: proc(c: ^Compiler, type: Type_Id) -> Symbol_Id {
 	info := type_of(c, type)
 	return info == nil ? INVALID_SYMBOL : info.instance_of
+}
+
+// Positions the checker in the instantiated block that declares `d`, as
+// `check_pending_impl_instances` will: a compile-time call can need a member's
+// body before that pass reaches it. The caller restores its own location.
+enter_pending_impl_member :: proc(k: ^Checker, d: ^Decl) -> bool {
+	for pending in k.c.pending_impl_instances {
+		for member in pending.item.members {
+			if member_decl, is_decl := member.(^Decl); is_decl && member_decl == d {
+				enter_generic_location(
+					k, pending.scope, pending.pkg, pending.pkg, pending.subject, pending.file, pending.file_node,
+				)
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // The block instances discovered so far are checked after the package that

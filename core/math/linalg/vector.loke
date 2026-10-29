@@ -1,0 +1,423 @@
+// linear-algebra-plan.md "Named vectors, generic matrices": named records, so a
+// component reads as `p.x`, with the layout of `[N]T`. The three types are the
+// same surface at three lengths, written out, since a record cannot be generic
+// over its field names.
+@(public)
+package linalg;
+
+import "base:interfaces";
+import "core:fmt";
+import "core:math";
+
+/// A 2-component column vector, laid out as `[2]T`.
+Vector2 :: struct($T: type) where interfaces.Numeric(T) {
+	x, y: T,
+}
+
+/// A 3-component column vector, laid out as `[3]T`.
+Vector3 :: struct($T: type) where interfaces.Numeric(T) {
+	x, y, z: T,
+}
+
+/// A 4-component column vector, laid out as `[4]T`.
+Vector4 :: struct($T: type) where interfaces.Numeric(T) {
+	x, y, z, w: T,
+}
+
+impl Vector2($T) {
+	from_components :: proc(x, y: T) -> Vector2(T) { return {x, y}; }
+	splat :: proc(value: T) -> Vector2(T) { return {value, value}; }
+	unit_x :: proc() -> Vector2(T) { return {T(1), T(0)}; }
+	unit_y :: proc() -> Vector2(T) { return {T(0), T(1)}; }
+	from_array :: proc(values: [2]T) -> Vector2(T) { return {values[0], values[1]}; }
+	to_array :: proc(self) -> [2]T { return {self.x, self.y}; }
+
+	/// Each component converted as the scalar `T(value)` is.
+	from_vector :: hook(convert) proc(v: Vector2($U)) -> Vector2(T) where Converts(U, T) {
+		return {T(v.x), T(v.y)};
+	}
+
+	add :: operator(+) proc(left, right: Vector2(T)) -> Vector2(T) {
+		return {left.x + right.x, left.y + right.y};
+	}
+	subtract :: operator(-) proc(left, right: Vector2(T)) -> Vector2(T) {
+		return {left.x - right.x, left.y - right.y};
+	}
+	negate :: operator(-) proc(self: Vector2(T)) -> Vector2(T) {
+		return {-self.x, -self.y};
+	}
+	/// Component-wise.
+	multiply :: operator(*) proc(left, right: Vector2(T)) -> Vector2(T) {
+		return {left.x*right.x, left.y*right.y};
+	}
+	scale :: operator(*) proc(left: Vector2(T), right: T) -> Vector2(T) {
+		return {left.x*right, left.y*right};
+	}
+	scale_left :: operator(*) proc(left: T, right: Vector2(T)) -> Vector2(T) {
+		return {left*right.x, left*right.y};
+	}
+	/// Component-wise.
+	divide :: operator(/) proc(left, right: Vector2(T)) -> Vector2(T) {
+		return {left.x/right.x, left.y/right.y};
+	}
+	divide_scalar :: operator(/) proc(left: Vector2(T), right: T) -> Vector2(T) {
+		return {left.x/right, left.y/right};
+	}
+	/// Exact and component-wise: a NaN component is unequal.
+	equal :: operator(==) proc(left, right: Vector2(T)) -> bool where interfaces.Equatable(T) {
+		return left.x == right.x && left.y == right.y;
+	}
+
+	/// The component at `index`, 0 for `x`; any other index panics.
+	get :: operator([]) proc(self, index: int) -> T {
+		switch (index) {
+		case 0: return self.x;
+		case 1: return self.y;
+		case:
+		}
+		panic("linalg.Vector2 index out of range:", index);
+	}
+	get_mut :: operator([]) proc(self: inout, index: int) -> inout T {
+		switch (index) {
+		case 0: return inout self.x;
+		case 1: return inout self.y;
+		case:
+		}
+		panic("linalg.Vector2 index out of range:", index);
+	}
+
+	/// `x*x' + y*y'`.
+	dot :: proc(self, other: Vector2(T)) -> T {
+		return self.x*other.x + self.y*other.y;
+	}
+	length_squared :: proc(self) -> T { return self.dot(self); }
+	distance_squared :: proc(self, other: Vector2(T)) -> T { return (self - other).length_squared(); }
+	/// The z component of the 3D cross product: `x*y' - y*x'`.
+	cross :: proc(self, other: Vector2(T)) -> T {
+		return self.x*other.y - self.y*other.x;
+	}
+	/// `(-y, x)`, the vector turned a quarter counterclockwise.
+	perp :: proc(self) -> Vector2(T) { return {-self.y, self.x}; }
+	extend :: proc(self, z: T) -> Vector3(T) { return {self.x, self.y, z}; }
+
+	/// Component-wise `math.min`.
+	min :: proc(self, other: Vector2(T)) -> Vector2(T) where interfaces.Ordered(T) {
+		return {math.min(self.x, other.x), math.min(self.y, other.y)};
+	}
+	/// Component-wise `math.max`.
+	max :: proc(self, other: Vector2(T)) -> Vector2(T) where interfaces.Ordered(T) {
+		return {math.max(self.x, other.x), math.max(self.y, other.y)};
+	}
+
+	/// The square root of `length_squared`.
+	length :: proc(self) -> T where Real(T) { return self.length_squared().sqrt(); }
+	distance :: proc(self, other: Vector2(T)) -> T where Real(T) { return (self - other).length(); }
+	/**
+		The vector divided by its length, or `.none` when its squared length is
+		not `is_normal`: zero, a vector whose squares underflow or overflow, or
+		one with a NaN or infinite component.
+	*/
+	normalize :: proc(self) -> Option(Vector2(T)) where Real(T) {
+		squared := self.length_squared();
+		if (!squared.is_normal()) { return .none; }
+		length := squared.sqrt();
+		return Vector2(T){self.x/length, self.y/length};
+	}
+	/// `normalize`, or `fallback` where it has no answer.
+	normalize_or :: proc(self, fallback: Vector2(T)) -> Vector2(T) where Real(T) {
+		return self.normalize() or_else fallback;
+	}
+	/// `self*(1 - t) + other*t` per component, exact at both ends.
+	lerp :: proc(self, other: Vector2(T), t: T) -> Vector2(T) where Real(T) {
+		s := T(1) - t;
+		return {self.x*s + other.x*t, self.y*s + other.y*t};
+	}
+	abs :: proc(self) -> Vector2(T) where Real(T) { return {self.x.abs(), self.y.abs()}; }
+	floor :: proc(self) -> Vector2(T) where Real(T) { return {self.x.floor(), self.y.floor()}; }
+	ceil :: proc(self) -> Vector2(T) where Real(T) { return {self.x.ceil(), self.y.ceil()}; }
+	round :: proc(self) -> Vector2(T) where Real(T) { return {self.x.round(), self.y.round()}; }
+
+	/// `(x, y)`, each component with the caller's options.
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
+		fmt.format_to(writer, "(");
+		fmt.format_to_with(writer, options, self.x);
+		fmt.format_to(writer, ", ");
+		fmt.format_to_with(writer, options, self.y);
+		fmt.format_to(writer, ")");
+	}
+}
+
+impl Vector3($T) {
+	from_components :: proc(x, y, z: T) -> Vector3(T) { return {x, y, z}; }
+	splat :: proc(value: T) -> Vector3(T) { return {value, value, value}; }
+	unit_x :: proc() -> Vector3(T) { return {T(1), T(0), T(0)}; }
+	unit_y :: proc() -> Vector3(T) { return {T(0), T(1), T(0)}; }
+	unit_z :: proc() -> Vector3(T) { return {T(0), T(0), T(1)}; }
+	from_array :: proc(values: [3]T) -> Vector3(T) { return {values[0], values[1], values[2]}; }
+	to_array :: proc(self) -> [3]T { return {self.x, self.y, self.z}; }
+
+	/// Each component converted as the scalar `T(value)` is.
+	from_vector :: hook(convert) proc(v: Vector3($U)) -> Vector3(T) where Converts(U, T) {
+		return {T(v.x), T(v.y), T(v.z)};
+	}
+
+	add :: operator(+) proc(left, right: Vector3(T)) -> Vector3(T) {
+		return {left.x + right.x, left.y + right.y, left.z + right.z};
+	}
+	subtract :: operator(-) proc(left, right: Vector3(T)) -> Vector3(T) {
+		return {left.x - right.x, left.y - right.y, left.z - right.z};
+	}
+	negate :: operator(-) proc(self: Vector3(T)) -> Vector3(T) {
+		return {-self.x, -self.y, -self.z};
+	}
+	/// Component-wise.
+	multiply :: operator(*) proc(left, right: Vector3(T)) -> Vector3(T) {
+		return {left.x*right.x, left.y*right.y, left.z*right.z};
+	}
+	scale :: operator(*) proc(left: Vector3(T), right: T) -> Vector3(T) {
+		return {left.x*right, left.y*right, left.z*right};
+	}
+	scale_left :: operator(*) proc(left: T, right: Vector3(T)) -> Vector3(T) {
+		return {left*right.x, left*right.y, left*right.z};
+	}
+	/// Component-wise.
+	divide :: operator(/) proc(left, right: Vector3(T)) -> Vector3(T) {
+		return {left.x/right.x, left.y/right.y, left.z/right.z};
+	}
+	divide_scalar :: operator(/) proc(left: Vector3(T), right: T) -> Vector3(T) {
+		return {left.x/right, left.y/right, left.z/right};
+	}
+	/// Exact and component-wise: a NaN component is unequal.
+	equal :: operator(==) proc(left, right: Vector3(T)) -> bool where interfaces.Equatable(T) {
+		return left.x == right.x && left.y == right.y && left.z == right.z;
+	}
+
+	/// The component at `index`, 0 for `x`; any other index panics.
+	get :: operator([]) proc(self, index: int) -> T {
+		switch (index) {
+		case 0: return self.x;
+		case 1: return self.y;
+		case 2: return self.z;
+		case:
+		}
+		panic("linalg.Vector3 index out of range:", index);
+	}
+	get_mut :: operator([]) proc(self: inout, index: int) -> inout T {
+		switch (index) {
+		case 0: return inout self.x;
+		case 1: return inout self.y;
+		case 2: return inout self.z;
+		case:
+		}
+		panic("linalg.Vector3 index out of range:", index);
+	}
+
+	/// `(x*x' + y*y') + z*z'`.
+	dot :: proc(self, other: Vector3(T)) -> T {
+		return self.x*other.x + self.y*other.y + self.z*other.z;
+	}
+	length_squared :: proc(self) -> T { return self.dot(self); }
+	distance_squared :: proc(self, other: Vector3(T)) -> T { return (self - other).length_squared(); }
+	/// The right-handed cross product: `unit_x().cross(unit_y()) == unit_z()`.
+	cross :: proc(self, other: Vector3(T)) -> Vector3(T) {
+		return {
+			self.y*other.z - self.z*other.y,
+			self.z*other.x - self.x*other.z,
+			self.x*other.y - self.y*other.x,
+		};
+	}
+	extend :: proc(self, w: T) -> Vector4(T) { return {self.x, self.y, self.z, w}; }
+	xy :: proc(self) -> Vector2(T) { return {self.x, self.y}; }
+
+	/// Component-wise `math.min`.
+	min :: proc(self, other: Vector3(T)) -> Vector3(T) where interfaces.Ordered(T) {
+		return {math.min(self.x, other.x), math.min(self.y, other.y), math.min(self.z, other.z)};
+	}
+	/// Component-wise `math.max`.
+	max :: proc(self, other: Vector3(T)) -> Vector3(T) where interfaces.Ordered(T) {
+		return {math.max(self.x, other.x), math.max(self.y, other.y), math.max(self.z, other.z)};
+	}
+
+	/// The square root of `length_squared`.
+	length :: proc(self) -> T where Real(T) { return self.length_squared().sqrt(); }
+	distance :: proc(self, other: Vector3(T)) -> T where Real(T) { return (self - other).length(); }
+	/**
+		The vector divided by its length, or `.none` when its squared length is
+		not `is_normal`: zero, a vector whose squares underflow or overflow, or
+		one with a NaN or infinite component.
+	*/
+	normalize :: proc(self) -> Option(Vector3(T)) where Real(T) {
+		squared := self.length_squared();
+		if (!squared.is_normal()) { return .none; }
+		length := squared.sqrt();
+		return Vector3(T){self.x/length, self.y/length, self.z/length};
+	}
+	/// `normalize`, or `fallback` where it has no answer.
+	normalize_or :: proc(self, fallback: Vector3(T)) -> Vector3(T) where Real(T) {
+		return self.normalize() or_else fallback;
+	}
+	/// `self*(1 - t) + other*t` per component, exact at both ends.
+	lerp :: proc(self, other: Vector3(T), t: T) -> Vector3(T) where Real(T) {
+		s := T(1) - t;
+		return {self.x*s + other.x*t, self.y*s + other.y*t, self.z*s + other.z*t};
+	}
+	abs :: proc(self) -> Vector3(T) where Real(T) { return {self.x.abs(), self.y.abs(), self.z.abs()}; }
+	floor :: proc(self) -> Vector3(T) where Real(T) { return {self.x.floor(), self.y.floor(), self.z.floor()}; }
+	ceil :: proc(self) -> Vector3(T) where Real(T) { return {self.x.ceil(), self.y.ceil(), self.z.ceil()}; }
+	round :: proc(self) -> Vector3(T) where Real(T) { return {self.x.round(), self.y.round(), self.z.round()}; }
+
+	/// `(x, y, z)`, each component with the caller's options.
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
+		fmt.format_to(writer, "(");
+		fmt.format_to_with(writer, options, self.x);
+		fmt.format_to(writer, ", ");
+		fmt.format_to_with(writer, options, self.y);
+		fmt.format_to(writer, ", ");
+		fmt.format_to_with(writer, options, self.z);
+		fmt.format_to(writer, ")");
+	}
+}
+
+impl Vector4($T) {
+	from_components :: proc(x, y, z, w: T) -> Vector4(T) { return {x, y, z, w}; }
+	splat :: proc(value: T) -> Vector4(T) { return {value, value, value, value}; }
+	unit_x :: proc() -> Vector4(T) { return {T(1), T(0), T(0), T(0)}; }
+	unit_y :: proc() -> Vector4(T) { return {T(0), T(1), T(0), T(0)}; }
+	unit_z :: proc() -> Vector4(T) { return {T(0), T(0), T(1), T(0)}; }
+	unit_w :: proc() -> Vector4(T) { return {T(0), T(0), T(0), T(1)}; }
+	from_array :: proc(values: [4]T) -> Vector4(T) { return {values[0], values[1], values[2], values[3]}; }
+	to_array :: proc(self) -> [4]T { return {self.x, self.y, self.z, self.w}; }
+
+	/// Each component converted as the scalar `T(value)` is.
+	from_vector :: hook(convert) proc(v: Vector4($U)) -> Vector4(T) where Converts(U, T) {
+		return {T(v.x), T(v.y), T(v.z), T(v.w)};
+	}
+
+	add :: operator(+) proc(left, right: Vector4(T)) -> Vector4(T) {
+		return {left.x + right.x, left.y + right.y, left.z + right.z, left.w + right.w};
+	}
+	subtract :: operator(-) proc(left, right: Vector4(T)) -> Vector4(T) {
+		return {left.x - right.x, left.y - right.y, left.z - right.z, left.w - right.w};
+	}
+	negate :: operator(-) proc(self: Vector4(T)) -> Vector4(T) {
+		return {-self.x, -self.y, -self.z, -self.w};
+	}
+	/// Component-wise.
+	multiply :: operator(*) proc(left, right: Vector4(T)) -> Vector4(T) {
+		return {left.x*right.x, left.y*right.y, left.z*right.z, left.w*right.w};
+	}
+	scale :: operator(*) proc(left: Vector4(T), right: T) -> Vector4(T) {
+		return {left.x*right, left.y*right, left.z*right, left.w*right};
+	}
+	scale_left :: operator(*) proc(left: T, right: Vector4(T)) -> Vector4(T) {
+		return {left*right.x, left*right.y, left*right.z, left*right.w};
+	}
+	/// Component-wise.
+	divide :: operator(/) proc(left, right: Vector4(T)) -> Vector4(T) {
+		return {left.x/right.x, left.y/right.y, left.z/right.z, left.w/right.w};
+	}
+	divide_scalar :: operator(/) proc(left: Vector4(T), right: T) -> Vector4(T) {
+		return {left.x/right, left.y/right, left.z/right, left.w/right};
+	}
+	/// Exact and component-wise: a NaN component is unequal.
+	equal :: operator(==) proc(left, right: Vector4(T)) -> bool where interfaces.Equatable(T) {
+		return left.x == right.x && left.y == right.y && left.z == right.z && left.w == right.w;
+	}
+
+	/// The component at `index`, 0 for `x`; any other index panics.
+	get :: operator([]) proc(self, index: int) -> T {
+		switch (index) {
+		case 0: return self.x;
+		case 1: return self.y;
+		case 2: return self.z;
+		case 3: return self.w;
+		case:
+		}
+		panic("linalg.Vector4 index out of range:", index);
+	}
+	get_mut :: operator([]) proc(self: inout, index: int) -> inout T {
+		switch (index) {
+		case 0: return inout self.x;
+		case 1: return inout self.y;
+		case 2: return inout self.z;
+		case 3: return inout self.w;
+		case:
+		}
+		panic("linalg.Vector4 index out of range:", index);
+	}
+
+	/// `((x*x' + y*y') + z*z') + w*w'`.
+	dot :: proc(self, other: Vector4(T)) -> T {
+		return self.x*other.x + self.y*other.y + self.z*other.z + self.w*other.w;
+	}
+	length_squared :: proc(self) -> T { return self.dot(self); }
+	distance_squared :: proc(self, other: Vector4(T)) -> T { return (self - other).length_squared(); }
+	xyz :: proc(self) -> Vector3(T) { return {self.x, self.y, self.z}; }
+
+	/// Component-wise `math.min`.
+	min :: proc(self, other: Vector4(T)) -> Vector4(T) where interfaces.Ordered(T) {
+		return {
+			math.min(self.x, other.x), math.min(self.y, other.y),
+			math.min(self.z, other.z), math.min(self.w, other.w),
+		};
+	}
+	/// Component-wise `math.max`.
+	max :: proc(self, other: Vector4(T)) -> Vector4(T) where interfaces.Ordered(T) {
+		return {
+			math.max(self.x, other.x), math.max(self.y, other.y),
+			math.max(self.z, other.z), math.max(self.w, other.w),
+		};
+	}
+
+	/// The square root of `length_squared`.
+	length :: proc(self) -> T where Real(T) { return self.length_squared().sqrt(); }
+	distance :: proc(self, other: Vector4(T)) -> T where Real(T) { return (self - other).length(); }
+	/**
+		The vector divided by its length, or `.none` when its squared length is
+		not `is_normal`: zero, a vector whose squares underflow or overflow, or
+		one with a NaN or infinite component.
+	*/
+	normalize :: proc(self) -> Option(Vector4(T)) where Real(T) {
+		squared := self.length_squared();
+		if (!squared.is_normal()) { return .none; }
+		length := squared.sqrt();
+		return Vector4(T){self.x/length, self.y/length, self.z/length, self.w/length};
+	}
+	/// `normalize`, or `fallback` where it has no answer.
+	normalize_or :: proc(self, fallback: Vector4(T)) -> Vector4(T) where Real(T) {
+		return self.normalize() or_else fallback;
+	}
+	/// `self*(1 - t) + other*t` per component, exact at both ends.
+	lerp :: proc(self, other: Vector4(T), t: T) -> Vector4(T) where Real(T) {
+		s := T(1) - t;
+		return {
+			self.x*s + other.x*t, self.y*s + other.y*t,
+			self.z*s + other.z*t, self.w*s + other.w*t,
+		};
+	}
+	abs :: proc(self) -> Vector4(T) where Real(T) {
+		return {self.x.abs(), self.y.abs(), self.z.abs(), self.w.abs()};
+	}
+	floor :: proc(self) -> Vector4(T) where Real(T) {
+		return {self.x.floor(), self.y.floor(), self.z.floor(), self.w.floor()};
+	}
+	ceil :: proc(self) -> Vector4(T) where Real(T) {
+		return {self.x.ceil(), self.y.ceil(), self.z.ceil(), self.w.ceil()};
+	}
+	round :: proc(self) -> Vector4(T) where Real(T) {
+		return {self.x.round(), self.y.round(), self.z.round(), self.w.round()};
+	}
+
+	/// `(x, y, z, w)`, each component with the caller's options.
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
+		fmt.format_to(writer, "(");
+		fmt.format_to_with(writer, options, self.x);
+		fmt.format_to(writer, ", ");
+		fmt.format_to_with(writer, options, self.y);
+		fmt.format_to(writer, ", ");
+		fmt.format_to_with(writer, options, self.z);
+		fmt.format_to(writer, ", ");
+		fmt.format_to_with(writer, options, self.w);
+		fmt.format_to(writer, ")");
+	}
+}

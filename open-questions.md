@@ -865,8 +865,10 @@ missing a known level still needs coverage.
 
 The [linear algebra library plan](linear-algebra-plan.md)'s first step tried
 its `Real` interface and generic matrix shapes against the compiler
-(`tests/pkg/real_interface`). Two language questions came out of it that the
-library cannot settle by itself.
+(`tests/pkg/real_interface`), and its first milestone built
+[`core:math/linalg`](standard-library.md#coremathlinalg) on them. These
+language questions came out of it, and the library cannot settle them by
+itself.
 
 ### Positional literals for vocabulary records
 
@@ -891,6 +893,19 @@ a `package main`, whose declarations are private by default, therefore meets
 `Real`'s `sqrt` slot but not `Numeric`'s `+` until its operators are marked
 `@(public)`. The diagnostic now names the cause; whether the two requirement
 forms should agree, and in which direction, is open.
+
+### Correctly rounded procedures at compile time
+
+[Compile-time procedure evaluation](design.md#compile-time-procedure-evaluation)
+cannot call foreign code, and `math.sqrt` is a call to the runtime's
+`rt_sqrt_f64`. So `core:math/linalg` folds a projection, a rotation, or an
+`inverse`, but not `length`, `normalize`, or `look_at`, and neither can any
+user constant that takes a distance. `sqrt` is correctly rounded, so the
+evaluator could compute it and give the bits the program would; so are
+`floor`, `ceil`, `round`, `trunc`, `fma`, and `mod`. Whether the evaluator
+should implement that set, or `core:math` should implement them in Loke as
+`core:math/repro` does its functions, is open; a `when`-selected Loke body
+would keep the run-time instruction.
 
 ## Open questions in `core:random`
 
