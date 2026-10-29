@@ -112,9 +112,16 @@ reduce :: proc(ax: f64) -> (quadrant: int, high: f64, low: f64) {
 	return {quadrant, h, l};
 }
 
+// The nearest integer to 256 ah, ties to even, for 0 <= ah < 1, so that
+// t = ah - j/256 is exact (Sterbenz) and |t| <= 2^-9. Adding 0.5 and
+// truncating would not do: below 2^-9, 256 ah + 0.5 can round up to 1.
+table_index :: proc(ah: f64) -> int {
+	return int((ah*256.0 + ROUND_SHIFTER) - ROUND_SHIFTER);
+}
+
 // sin(a) for a = ah + al, 0 <= ah <= pi/4 + 2^-40, as h + l.
 sin_kernel :: proc(ah: f64, al: f64) -> (high: f64, low: f64) {
-	j := int(ah*256.0 + 0.5);
+	j := table_index(ah);
 	th := ah - f64(j)*(1.0/256.0);
 	t2 := th*th;
 	// sin t - t without the cross terms of al, which are below 2^-70.
@@ -134,7 +141,7 @@ sin_kernel :: proc(ah: f64, al: f64) -> (high: f64, low: f64) {
 
 // cos(a) for a = ah + al, 0 <= ah <= pi/4 + 2^-40, as h + l.
 cos_kernel :: proc(ah: f64, al: f64) -> (high: f64, low: f64) {
-	j := int(ah*256.0 + 0.5);
+	j := table_index(ah);
 	th := ah - f64(j)*(1.0/256.0);
 	t2 := th*th;
 	c1 := t2*(-0.5 + t2*(1.0/24.0 + t2*(-1.0/720.0))) - th*al;

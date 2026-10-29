@@ -79,7 +79,9 @@ Phase 3, `exp`, `sin`, and `cos` in both widths in a new
   compile-time and run-time results. Four `f32` arguments found by search
   pin the retries seeded arguments almost never reach: `exp_f32`'s
   double-`f64` step and slow path, and those of `sin_f32` and `cos_f32`.
-  The probe's output is the same at every optimization and CPU level tried.
+  Fixed `f64` arguments at and beside 2^-9, the table's first half step,
+  pin its index, which once rounded up there. The probe's output is the
+  same at every optimization and CPU level tried.
 - Measured cost: about four to five times the UCRT's in throughput; see
   [Deterministic math functions](open-questions.md#deterministic-math-functions).
 

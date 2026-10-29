@@ -143,10 +143,30 @@ HARD_4 :: repro.log_f32(unsafe.transmute(f32, u32(0x022ae487)));
 HARD_5 :: repro.log_f32(unsafe.transmute(f32, u32(0x0dc8bba4)));
 CONSTANT_HARD :: [6]f32{HARD_0, HARD_1, HARD_2, HARD_3, HARD_4, HARD_5};
 
-// 1 + 6 2^-52, whose log, x - 1 - (x - 1)^2/2 + ..., is about 2^-100
-// relative above an `f64` midpoint, so it takes `log`'s slow path.
-HARD_LOG :: 0x3ff0000000000006;
-CONSTANT_HARD_LOG :: repro.log(unsafe.transmute(f64, u64(HARD_LOG)));
+// `f64` arguments, checked and folded the same way: sin and cos at 2^-9,
+// half the first step of their table, and either side of it, where the
+// table index once rounded up and lost a bit of the argument; sin below
+// the next half step; and 1 + 6 2^-52, whose log, x - 1 - (x - 1)^2/2 +
+// ..., is about 2^-100 relative above an `f64` midpoint, so it takes
+// `log`'s slow path.
+HARD_F64 :: [8]u64{
+	0x3f5fffffffffffff, 0x3f60000000000000, 0x3f60000000000001,
+	0x3f5fffffffffffff, 0x3f60000000000000, 0x3f60000000000001,
+	0x3f77ffffffffffff, 0x3ff0000000000006,
+};
+HARD_FUNCTIONS_F64 :: [8]Function{.Sin, .Sin, .Sin, .Cos, .Cos, .Cos, .Sin, .Log};
+HARD_F64_0 :: repro.sin(unsafe.transmute(f64, u64(0x3f5fffffffffffff)));
+HARD_F64_1 :: repro.sin(unsafe.transmute(f64, u64(0x3f60000000000000)));
+HARD_F64_2 :: repro.sin(unsafe.transmute(f64, u64(0x3f60000000000001)));
+HARD_F64_3 :: repro.cos(unsafe.transmute(f64, u64(0x3f5fffffffffffff)));
+HARD_F64_4 :: repro.cos(unsafe.transmute(f64, u64(0x3f60000000000000)));
+HARD_F64_5 :: repro.cos(unsafe.transmute(f64, u64(0x3f60000000000001)));
+HARD_F64_6 :: repro.sin(unsafe.transmute(f64, u64(0x3f77ffffffffffff)));
+HARD_F64_7 :: repro.log(unsafe.transmute(f64, u64(0x3ff0000000000006)));
+CONSTANT_HARD_F64 :: [8]f64{
+	HARD_F64_0, HARD_F64_1, HARD_F64_2, HARD_F64_3,
+	HARD_F64_4, HARD_F64_5, HARD_F64_6, HARD_F64_7,
+};
 
 Function :: enum { Exp, Sin, Cos, Log }
 
@@ -229,9 +249,15 @@ main :: proc() {
 		fmt.println(functions[i], 32, bits32(y), bits32(result));
 		fmt.println("constant", bits32(constants[i]) == bits32(result));
 	}
-	z := unsafe.transmute(f64, u64(HARD_LOG))*one;
-	fmt.println(Function.Log, 64, bits(z), bits(repro.log(z)));
-	fmt.println("constant", bits(CONSTANT_HARD_LOG) == bits(repro.log(z)));
+	hard64 := HARD_F64;
+	functions64 := HARD_FUNCTIONS_F64;
+	constants64 := CONSTANT_HARD_F64;
+	foreach (i in 0 ..< 8) {
+		z := unsafe.transmute(f64, hard64[i])*one;
+		result := fast64(functions64[i], z);
+		fmt.println(functions64[i], 64, bits(z), bits(result));
+		fmt.println("constant", bits(constants64[i]) == bits(result));
+	}
 
 	g := Generator{state = 0x9e3779b97f4a7c15};
 	foreach (f in [4]Function{.Exp, .Sin, .Cos, .Log}) {
