@@ -791,7 +791,7 @@ reclamation. The integration harness is in `tests/`:
 | `err/`, `pkg_err/` | Diagnostic counts, codes, fragments, optional spans, and source warnings. |
 | `syntax/`, `syntax_err/` | Valid syntax, AST goldens, and recovery with a surviving trailing sentinel. Valid syntax and parser fuzzing run in-process in `src/syntax_corpus_test.odin`. |
 | `ll/`, `layout/` | Required/forbidden LLVM shapes and LLVM acceptance; compiler/LLVM layout agreement. |
-| `pkg/`, `obj/`, `os/` | Multi-package programs, C-host linking, process arguments, and environment. |
+| `pkg/`, `obj/`, `os/` | Multi-package programs, C-host linking, process arguments, environment, and file links where the account may create one. |
 | `doc/`, `examples/` | Generated documentation and classified real example programs with expected output. |
 | `test/` | Test builds: the `-test` runner's report against `.expected`, exiting 1 when it lists a failure. |
 | `api/` | Interface files: `-api-check` against each case's checked-in `api.loki`, with and without `-debug`, and `-api` restoring them to a copy. |

@@ -1,0 +1,102 @@
+package main;
+
+import "core:fmt";
+import "core:fs";
+import "core:io";
+import "core:os";
+import "core:path";
+import "core:process";
+import "core:strings";
+
+// Reads and writes go through a file link to its target, while `remove`,
+// `rename`, and `replace_atomic` act on the link's name and leave the target
+// as it was (standard-library "Filesystem operations").
+//
+// Creating a file link needs a privilege a junction does not, so this is not a
+// `tests/run` case: `file_links_act_on_their_names` in `tests/os_test.odin`
+// first asks whether this machine may create one, and runs the case only then.
+// Here a link that cannot be made is a failure like any other.
+
+succeeded :: proc(outcome: Status(io.Error)) -> bool {
+	switch (outcome) {
+	case .ok:  return true;
+	case .err: return false;
+	}
+	return false;
+}
+
+// Whether `file` reads as exactly `text`.
+holds :: proc(file: string_view, text: string_view) -> bool {
+	switch (fs.read_text(file)) {
+	case .ok(found): return found == text;
+	case .err: return false;
+	}
+}
+
+make_file_link :: proc(link: string_view, target: string_view) -> bool {
+	made := process.run(process.Command{
+		program = "cmd", arguments = []string_view{"/c", "mklink", link, target},
+		stdout = .Null, stderr = .Null,
+	}) or_else -1;
+	return made == 0;
+}
+
+root :: proc() -> string {
+	switch (os.get_environment("TEMP")) {
+	case .ok(outcome):
+		switch (outcome) {
+		case .some(base): return path.join([]string_view{base, "loke_fs_links"});
+		case .none:
+		}
+	case .err:
+	}
+	return strings.copy("loke_fs_links");
+}
+
+in_root :: proc(directory: string_view, name: string_view) -> string {
+	return path.join([]string_view{directory, name});
+}
+
+main :: proc() {
+	directory := root();
+	target := in_root(directory, "target.txt");
+	link := in_root(directory, "link.txt");
+	renamed := in_root(directory, "renamed.txt");
+	other := in_root(directory, "other.txt");
+	// A leftover directory from an interrupted earlier run is not a failure.
+	_ = fs.remove(link);
+	_ = fs.remove(renamed);
+	_ = fs.remove(other);
+	_ = fs.remove(target);
+	_ = fs.remove_directory(directory);
+	fmt.println(succeeded(fs.create_directory(directory)));
+	fmt.println(succeeded(fs.write_text(target, "original")));
+
+	// A read goes through the link; `remove` deletes the link alone.
+	fmt.println(make_file_link(link, target));
+	fmt.println(holds(link, "original"));
+	fmt.println(succeeded(fs.remove(link)));
+	fmt.println(fs.exists(link) or_else true);
+	fmt.println(holds(target, "original"));
+
+	// A renamed link still leads to the target.
+	fmt.println(make_file_link(link, target));
+	fmt.println(succeeded(fs.rename(link, renamed)));
+	fmt.println(fs.exists(link) or_else true);
+	fmt.println(succeeded(fs.write_text(renamed, "written")));
+	fmt.println(holds(target, "written"));
+
+	// A rename onto a link replaces the link, not the target's content.
+	fmt.println(succeeded(fs.write_text(other, "other")));
+	fmt.println(succeeded(fs.rename(other, renamed)));
+	fmt.println(holds(renamed, "other"), holds(target, "written"));
+
+	// So does an atomic replacement, and the file it leaves is no link.
+	fmt.println(make_file_link(link, target));
+	fmt.println(succeeded(fs.replace_atomic_text(link, "replaced")));
+	fmt.println(holds(link, "replaced"), holds(target, "written"));
+	fmt.println(succeeded(fs.write_text(link, "again")), holds(target, "written"));
+
+	fmt.println(succeeded(fs.remove(link)), succeeded(fs.remove(renamed)), succeeded(fs.remove(target)));
+	fmt.println(succeeded(fs.remove_directory(directory)));
+}

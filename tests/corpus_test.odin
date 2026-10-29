@@ -36,6 +36,8 @@
 //   tests/os/environment.{loke,    a program run with an environment block the
 //     expected}                    program could not create for itself: a
 //                                  variable whose value is the empty string
+//   tests/os/file_links.{loke,     a program run only where this account may
+//     expected}                    create a file link (tests/os_test.odin)
 //   tests/obj/process_output_      a program linked with a C allocator that
 //     fault.{loke,c}               fails, run under a time limit
 //   tests/obj/numeric_locale_      a C host over its own copy of format.c
