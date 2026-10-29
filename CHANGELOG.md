@@ -335,7 +335,8 @@ checklist.
 - An export, or any procedure Loke defines with a foreign calling convention,
   runs in Loke's floating-point environment when a C host or library calls
   it with another rounding mode, flush-to-zero, or unmasked exceptions, and
-  restores the caller's on return. With `-debug`, a call into foreign code
+  restores the caller's on return; so do `loke_rt_v1_program_init` and the
+  thread-local drops `loke_rt_v1_thread_detach` runs. With `-debug`, a call into foreign code
   that returns with the environment changed panics, naming the procedure
   ([Floating-point operators](design.md#floating-point-operators)).
 

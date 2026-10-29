@@ -28,5 +28,6 @@ hostlib_report :: proc "c" () -> i32 {
 	// logger rather than the standard sink.
 	log.info("from the host");
 	if (provider.records() != 1) { return 5; }
+	if (!provider.rounded_to_nearest()) { return 6; }
 	return 0;
 }

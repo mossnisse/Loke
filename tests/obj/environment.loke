@@ -3,9 +3,10 @@
 // and gives the caller's back. `environment_host.c` calls these rounding
 // upward, with flush-to-zero, denormals-are-zero, and the invalid-operation
 // exception unmasked: from its main thread, through a C procedure that calls
-// back into Loke, and from a thread of its own. The object is built with
-// `-debug`, so the call to that C procedure, which restores Loke's
-// environment before returning, is checked too.
+// back into Loke, and from a thread of its own; and it detaches its main
+// thread in that environment, which drops a thread-local value in Loke. The
+// object is built with `-debug`, so the call to that C procedure, which
+// restores Loke's environment before returning, is checked too.
 package environment;
 
 import "core:unsafe";
@@ -46,4 +47,31 @@ env_probe :: proc "c" (one: f64) -> i32 {
 @(export)
 env_through :: proc "c" (visit: Visit, one: f64) -> i32 {
 	return visit(env_probe, one);
+}
+
+// The host's, so it can be read after the thread that wrote it detaches: 1
+// when the drop below rounded to nearest, and 2 when it did not.
+foreign import host "system:legacy_stdio_definitions.lib";
+foreign host {
+	env_dropped: i32;
+}
+
+Tracked :: struct { value: f64 }
+
+impl Tracked {
+	// Only a value the host set records, so the thread that never sets one
+	// records nothing as it detaches.
+	release :: hook(drop) proc(self: inout Tracked) {
+		if (self.value != 0.0) {
+			env_dropped = 2;
+			if (self.value + 1.1102230246251565e-16 == self.value) { env_dropped = 1; }
+		}
+	}
+}
+
+tracked: thread_local Tracked;
+
+@(export)
+env_track :: proc "c" (one: f64) {
+	tracked.value = one;
 }

@@ -387,9 +387,11 @@ int main(void) {
 }
 ```
 
-A host may call an export, or a callback Loke handed it, with its own
+A host may call an export, a callback Loke handed it,
+`loke_rt_v1_program_init`, or `loke_rt_v1_thread_detach` with its own
 floating-point environment, such as another rounding mode or flush-to-zero:
-the call runs in Loke's environment and gives the host its own back on
+the Loke code each runs, the providers' factories and the thread-local drops
+included, runs in Loke's environment, and the host gets its own back on
 return ([Floating-point operators](design.md#floating-point-operators)). A C
 function the object calls must return with Loke's environment intact; build
 the object with `-debug` to have each such call checked.

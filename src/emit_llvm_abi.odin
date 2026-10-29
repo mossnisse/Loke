@@ -725,17 +725,14 @@ proc_convention_of :: proc(e: ^Emitter, symbol: ^Symbol) -> string {
 	return info == nil ? "" : info.convention
 }
 
-// The `define` signature of a foreign-convention procedure under the Windows
-// x64 classification, with any function attributes. A result larger than one
-// register becomes a hidden leading `sret` pointer and a `void` return;
-// `e.abi_sret` records it.
+// The `define` signature of a foreign-convention procedure's body under the
+// Windows x64 classification, which no caller may inline
+// (`emit_entry_guard`). A result larger than one register becomes a hidden
+// leading `sret` pointer and a `void` return; `e.abi_sret` records it.
 @(private)
-emit_foreign_signature :: proc(e: ^Emitter, symbol: ^Symbol, llvm_name: string, attributes := "") {
+emit_foreign_signature :: proc(e: ^Emitter, symbol: ^Symbol, llvm_name: string) {
 	ret, params := foreign_signature(e, symbol)
-	fmt.sbprintf(&e.b, "define %s%s %s(%s)", llvm_linkage(llvm_name), ret, llvm_name, strings.join(params, ", "))
-	if attributes != "" {
-		fmt.sbprintf(&e.b, " %s", attributes)
-	}
+	fmt.sbprintf(&e.b, "define %s%s %s(%s) noinline", llvm_linkage(llvm_name), ret, llvm_name, strings.join(params, ", "))
 	fmt.sbprintln(&e.b, " {")
 }
 
@@ -783,19 +780,27 @@ MXCSR_LOKE :: 0x1f80
 @(private = "file")
 MXCSR_FLAGS :: 0x3f
 
-// The externally callable half of a Loke procedure with a foreign calling
-// convention, under its own name: foreign code may enter it in any
-// environment, so it sets Loke's when the caller's differs, calls `body` with
-// the same arguments, and restores the caller's control bits on return,
-// keeping the flags raised meanwhile. `body` is `noinline` (`emit_proc`), so
-// none of its arithmetic can be moved into this function and run before the
-// switch; this one does no floating-point arithmetic of its own.
+// The guard of a Loke procedure with a foreign calling convention, with its
+// signature.
 @(private)
 emit_foreign_entry_guard :: proc(e: ^Emitter, symbol: ^Symbol, llvm_name, body: string) {
 	// Between functions: the `sret` name this records belongs to none.
 	saved := e.abi_sret
 	defer e.abi_sret = saved
 	ret, params := foreign_signature(e, symbol)
+	emit_entry_guard(e, llvm_name, ret, params, body)
+}
+
+// The externally callable half of a function foreign code enters, a Loke
+// procedure with a foreign calling convention or a generated entry such as
+// `loke_rt_v1_program_init`, under its own name: foreign code may enter it in
+// any environment, so it sets Loke's when the caller's differs, calls `body`
+// with the same arguments, and restores the caller's control bits on return,
+// keeping the flags raised meanwhile. `body` is `noinline`, so none of its
+// arithmetic can be moved into this function and run before the switch; this
+// one does no floating-point arithmetic of its own.
+@(private)
+emit_entry_guard :: proc(e: ^Emitter, llvm_name, ret: string, params: []string, body: string) {
 	arguments := strings.join(params, ", ")
 	open_function(e, "define %s%s %s(%s)", llvm_linkage(llvm_name), ret, llvm_name, arguments)
 	fmt.sbprintln(&e.b, "  %mxcsr = alloca i32, align 4")

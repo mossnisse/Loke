@@ -266,13 +266,20 @@ emit_static_locals :: proc(e: ^Emitter) {
 }
 
 // Called by the runtime from `thread_detach` to drop the detaching thread's
-// thread-local values.
+// thread-local values. A host thread detaches in its own environment, so the
+// drops run behind a guard (design.md "Floating-point operators").
 @(private)
 emit_thread_local_teardown :: proc(e: ^Emitter) {
+	body := entry_body_name(e, "@loke_rt_v1_program_tls_cleanup")
+	emit_thread_local_drops(e, body)
+	emit_entry_guard(e, "@loke_rt_v1_program_tls_cleanup", "void", nil, body)
+}
+
+@(private = "file")
+emit_thread_local_drops :: proc(e: ^Emitter, name: string) {
 	function := begin_function_emission(e)
 	defer finish_function_emission(e, function)
-	fmt.sbprintln(&e.b, "define void @loke_rt_v1_program_tls_cleanup() {")
-	fmt.sbprintln(&e.b, "entry:")
+	open_function(e, "define internal void %s() noinline", name)
 	owners := thread_local_owners(e)
 	for index := len(owners) - 1; index >= 0; index -= 1 {
 		sym := symbol_of(e.c, owners[index].symbol)

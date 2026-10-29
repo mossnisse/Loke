@@ -6203,7 +6203,9 @@ it. A procedure Loke defines with a [foreign calling
 convention](#calling-conventions), such as an [export](#export) or a callback
 handed to C, may be called from foreign code in another environment: it then
 establishes Loke's for its body and restores its caller's rounding mode,
-treatment of subnormals, and exception handling when it returns. Which
+treatment of subnormals, and exception handling when it returns. So do the
+entries a build provides its host, `loke_rt_v1_program_init` and the
+thread-local cleanup `loke_rt_v1_thread_detach` runs. Which
 exception flags are raised afterwards is unspecified. Foreign code that Loke
 calls and that changes any of these must restore them before it returns to
 Loke; floating-point results computed in another environment are

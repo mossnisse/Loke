@@ -20,6 +20,9 @@ typedef int (*visit_fn)(probe_fn probe, double one);
 
 int env_probe(double one);
 int env_through(visit_fn visit, double one);
+void env_track(double one);
+
+int env_dropped;
 
 enum { ALL = 15 };
 
@@ -93,10 +96,27 @@ static int check(void) {
 	return thread_status;
 }
 
+/* Detaching drops the thread-local value `env_track` set, in Loke, though the
+ * host detaches in its own environment. */
 int main(void) {
 	int status;
+	unsigned saved = _mm_getcsr();
+	unsigned after;
 	loke_rt_v1_thread_attach();
 	status = check();
+	env_track(1.0);
+	_mm_setcsr(HOST);
 	loke_rt_v1_thread_detach();
-	return status;
+	after = _mm_getcsr();
+	_mm_setcsr(saved);
+	if (status != 0) {
+		return status;
+	}
+	if (env_dropped != 1) {
+		return 8;
+	}
+	if ((after & CONTROL) != (HOST & CONTROL)) {
+		return 9;
+	}
+	return 0;
 }

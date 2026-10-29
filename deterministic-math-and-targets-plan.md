@@ -229,7 +229,9 @@ asks for:
   calls the body, and restores the caller's; the body is a function no caller
   may inline, so none of its arithmetic runs before the switch. That covers
   exports, callbacks reached from a C library, and threads the host created,
-  and a host cannot forget it. See
+  and a host cannot forget it. The generated entries a host calls,
+  `loke_rt_v1_program_init` and the thread-local cleanup behind
+  `loke_rt_v1_thread_detach`, are guarded the same way. See
   [The floating-point environment is fixed](comments.md#the-floating-point-environment-is-fixed).
 - With `-debug`, each call to a foreign procedure, or through a foreign
   procedure value, reads MXCSR when it returns and panics, naming the

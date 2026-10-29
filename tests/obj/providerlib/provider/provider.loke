@@ -25,8 +25,20 @@ written: static int = 0;
 @(private)
 fallback: static Allocator = {};
 
+// design.md "Floating-point operators": the host calls the initializer while
+// rounding upward, and the factory must still round to nearest. The host
+// defines `provider_one`, 1, so nothing folds.
+foreign import host "system:legacy_stdio_definitions.lib";
+foreign host {
+	provider_one: f64;
+}
+
+@(private)
+nearest: static bool = false;
+
 allocator_factory :: proc() -> Allocator {
 	allocators += 1;
+	nearest = provider_one + 1.1102230246251565e-16 == provider_one;  // 2^-53
 	// Nothing is published yet, so this is the runtime's own fallback — kept so
 	// the host can check that publication actually replaced it.
 	fallback = mem.default_allocator();
@@ -50,6 +62,7 @@ impl Sink {
 }
 
 allocator_calls :: proc() -> int { return allocators; }
+rounded_to_nearest :: proc() -> bool { return nearest; }
 logger_calls :: proc() -> int { return loggers; }
 records :: proc() -> int { return written; }
 selected_allocator :: proc() -> Allocator { return region.allocator(); }

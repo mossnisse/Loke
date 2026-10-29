@@ -570,12 +570,19 @@ emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 		return
 	}
 	// design.md "Floating-point operators": foreign code may call it in another
-	// environment, so its name is the guard, and the body is apart. A quoted
-	// export name, such as a decorated C++ one, lends the body no spelling.
-	plain := llvm_plain_name(llvm_name[1:])
-	body := claim_name(e, plain ? strings.concatenate({"@loke.entry.", llvm_name[1:]}) : "@loke.entry")
+	// environment, so its name is the guard, and the body is apart.
+	body := entry_body_name(e, llvm_name)
 	emit_proc_definition(e, symbol_id, literal, body)
 	emit_foreign_entry_guard(e, symbol, llvm_name, body)
+}
+
+// The internal name of the body behind `emit_entry_guard`'s function
+// `llvm_name`. A quoted export name, such as a decorated C++ one, lends it no
+// spelling.
+@(private)
+entry_body_name :: proc(e: ^Emitter, llvm_name: string) -> string {
+	plain := llvm_plain_name(llvm_name[1:])
+	return claim_name(e, plain ? strings.concatenate({"@loke.entry.", llvm_name[1:]}) : "@loke.entry")
 }
 
 // The procedure's own function, under `llvm_name`; a foreign-convention one is
@@ -592,7 +599,7 @@ emit_proc_definition :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_P
 	begin_unwind_frame(e, llvm_name)
 
 	if e.abi_foreign {
-		emit_foreign_signature(e, symbol, llvm_name, "noinline")
+		emit_foreign_signature(e, symbol, llvm_name)
 	} else {
 		fmt.sbprintf(
 			&e.b, "define %s%s %s(",
@@ -880,11 +887,20 @@ emit_test_report :: proc(e: ^Emitter, index: int, test: string, result, failure:
 
 // design.md "Build-selected providers": run once, allocator first so the logger
 // factory already allocates through it. The runtime keeps the once-only state.
+// The host calls it, so it is guarded as a foreign entry is (design.md
+// "Floating-point operators").
 @(private = "file")
 emit_program_init :: proc(e: ^Emitter) {
+	body := entry_body_name(e, "@loke_rt_v1_program_init")
+	emit_program_init_body(e, body)
+	emit_entry_guard(e, "@loke_rt_v1_program_init", "void", nil, body)
+}
+
+@(private = "file")
+emit_program_init_body :: proc(e: ^Emitter, name: string) {
 	function := begin_function_emission(e)
 	defer finish_function_emission(e, function)
-	open_function(e, "define void @loke_rt_v1_program_init()")
+	open_function(e, "define internal void %s() noinline", name)
 	go, run := temp(e), temp(e)
 	fmt.sbprintfln(&e.b, "  %s = call i32 @loke_rt_v1_provider_init_begin()", go)
 	fmt.sbprintfln(&e.b, "  %s = icmp ne i32 %s, 0", run, go)
