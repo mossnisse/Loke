@@ -324,6 +324,13 @@ checklist.
   `-ffp-contract=off`, the runtime's C sources included, whose default let
   Clang fuse `a*b + c` once a level has FMA. `-print-toolchain` prints both
   flags, for a C host compiling the runtime itself.
+- The floating-point environment is specified: rounding to nearest, ties to
+  even, subnormals kept, and non-stop exceptions, on every thread a program
+  starts. Loke offers no way to change it, and foreign code that changes it
+  must restore it before Loke code runs again; results computed otherwise are
+  unspecified. The specification no longer suggests installing trapping
+  through the target's environment
+  ([Floating-point operators](design.md#floating-point-operators)).
 
 - A value whose bits are not a representation of its type, a `bool` other
   than 0 or 1, an enum value naming no member, a null `^T`, or a union tag out

@@ -703,6 +703,24 @@ measured on 2026-10-27:
   using the compiling machine's library: at `-opt=speed`, `math.sin(0.5)`
   becomes a constant.
 
+How far the UCRT is from correct rounding was measured on 2026-10-29 against
+[the oracle](tests/math_oracle.odin), over 200,000 seeded arguments per
+function and width on each path (exp over its finite-result range, log over
+every positive normal, sin and cos half within 2^20 and half over every
+magnitude). The results not correctly rounded, FMA3 path then legacy path:
+
+| Function | `f64` | `f32` |
+| --- | --- | --- |
+| `exp` | 992, 1,038 | 20, 20 |
+| `log` | 2, 2 | 18, 19 |
+| `sin` | 4,723, 5,096 | 129, 129 of 156,205 finite |
+| `cos` | 4,670, 5,031 | 133, 133 of 156,287 finite |
+
+None was more than one ulp away, which also cross-checks the oracle against an
+independent implementation over 1.5 million arguments. `sinf` and `cosf` of an
+infinity return `0xffc00000`, a negative NaN, where the reproducible contract
+returns the positive canonical one.
+
 The proposed fix implements the functions in Loke, **correctly rounded**,
 porting CORE-MATH (MIT license). They would use only the `+ - * /` and
 `math.fma` that design.md "Floating-point operators" already pins. Replacing an

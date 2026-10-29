@@ -1,0 +1,10 @@
+main nearest true true true true
+main nearest32 true true
+main subnormal 2251799813685248 40532396646334464 true
+main subnormal32 4194304 67108864 true
+main nonstop inf -inf true inf true
+thread nearest true true true true
+thread nearest32 true true
+thread subnormal 2251799813685248 40532396646334464 true
+thread subnormal32 4194304 67108864 true
+thread nonstop inf -inf true inf true

@@ -33,8 +33,29 @@ Implemented, from phases 2 and 3:
   built-ins, and a compile-time evaluator for it that rounds the exact
   integer result once, independent of both the host and the software path.
 
-Not started: the reproducible math package and its contract (phases 1, 3's
-kernels, and 4), NaN canonicalization, the environment entry
+From phase 1:
+
+- The environment is specified ([Floating-point operators](design.md#floating-point-operators)):
+  nearest-even rounding, subnormals kept, and non-stop exceptions on every
+  thread, with no Loke operation that changes them and a restore obligation on
+  foreign code. `tests/run/float_environment.loke` checks Windows gives it to
+  the main thread and to a started one. The entry mechanism for C hosts is not
+  done; the obligation covers them for now.
+- [Special cases](#special-cases) for `exp`, `log`, `sin`, `cos`, `pow`, and
+  `atan2`.
+- An oracle, `tests/math_oracle.odin`: outward-rounded interval arithmetic on
+  `core:math/big` integers, with Ziv's doubling of the precision, for `exp`,
+  `log`, `sin`, and `cos` in both widths, special cases included. It takes
+  about half a millisecond per argument, a large `sin` argument the most, and its constants (ln 2, and pi by Machin's
+  formula to 4,800 bits for `sin` of the largest `f64`) are built once per
+  oracle. Its tests pin known results and its agreement with Odin's library.
+  It replaces MPFR, which the Windows toolchain does not provide.
+- The UCRT's distance from correct rounding, measured with the oracle and
+  recorded in [Deterministic math functions](open-questions.md#deterministic-math-functions).
+
+Not started: phase 1's benchmarks (the UCRT timings in open questions stand
+until there is a kernel to compare), the kernels (phases 3 and 4), NaN
+canonicalization, the environment entry
 contract, simulation support, dispatch, and other platforms.
 
 ## Recommended direction
@@ -145,6 +166,78 @@ Specify this before implementing or porting functions:
 - For the same inputs and contract version, CPU level, compiler host,
   optimization level, and compile-time versus runtime evaluation must not
   change the output bits on certified targets.
+
+### Special cases
+
+These tables complete the contract for the first functions and for the two
+whose special cases are the hardest. Every entry not listed is the correctly
+rounded mathematical result, including overflow to infinity and gradual
+underflow to a subnormal or a zero of the result's sign. They follow the IEC
+60559 annex of C17 (F.10), except that every NaN result is the canonical one,
+whatever NaN produced it and whether or not it was signaling. `π`, `π/2`,
+`π/4`, and `3π/4` mean the correctly rounded constants of the result's width.
+`tests/math_oracle.odin` implements the first four tables.
+
+| Function | Argument | Result |
+| --- | --- | --- |
+| `exp` | NaN | NaN |
+| | +∞ | +∞ |
+| | −∞ | +0 |
+| | ±0 | 1, exactly |
+| `log` | NaN, or any x < 0 including −∞ | NaN |
+| | ±0 | −∞ |
+| | 1 | +0 |
+| | +∞ | +∞ |
+| `sin` | NaN, ±∞ | NaN |
+| | ±0 | ±0 |
+| `cos` | NaN, ±∞ | NaN |
+| | ±0 | 1, exactly |
+
+For finite nonzero arguments these functions have no exact or midpoint results
+(Lindemann–Weierstrass), so correct rounding needs no further rules, and
+`sin(-x)` is `-sin(x)` bit for bit.
+
+`pow(x, y)`, in the order the rules apply:
+
+| Arguments | Result |
+| --- | --- |
+| y is ±0, any x, NaN included | 1 |
+| x is +1, any y, NaN included | 1 |
+| x or y is NaN | NaN |
+| x is ±0, y an odd integer < 0 | ±∞, the sign of x |
+| x is ±0, y < 0 otherwise, −∞ included | +∞ |
+| x is ±0, y an odd integer > 0 | ±0, the sign of x |
+| x is ±0, y > 0 otherwise, +∞ included | +0 |
+| x is −1, y is ±∞ | 1 |
+| \|x\| < 1, y is −∞; \|x\| > 1, y is +∞ | +∞ |
+| \|x\| < 1, y is +∞; \|x\| > 1, y is −∞ | +0 |
+| x is −∞, y an odd integer < 0 | −0 |
+| x is −∞, y < 0 otherwise | +0 |
+| x is −∞, y an odd integer > 0 | −∞ |
+| x is −∞, y > 0 otherwise | +∞ |
+| x is +∞ | +0 for y < 0, +∞ for y > 0 |
+| x finite < 0, y finite and not an integer | NaN |
+| x finite < 0, y an integer | ±\|x\|^y, negative when y is odd |
+
+Unlike the others, `pow` has exact and midpoint results at finite arguments,
+such as `pow(4, 0.5)` and `pow(2, -1075)`. Correct rounding still decides
+them, ties to even, so `pow(2, -1075)` is +0; an implementation must detect
+them rather than rely on the search for a rounding to end.
+
+`atan2(y, x)`:
+
+| Arguments | Result |
+| --- | --- |
+| y or x is NaN | NaN |
+| y is ±0, x is −0 or x < 0 | ±π |
+| y is ±0, x is +0 or x > 0 | ±0 |
+| y < 0 finite, x is ±0 | −π/2 |
+| y > 0 finite, x is ±0 | π/2 |
+| y finite, ±, x is −∞ | ±π |
+| y finite, ±, x is +∞ | ±0 |
+| y is ±∞, x finite | ±π/2 |
+| y is ±∞, x is −∞ | ±3π/4 |
+| y is ±∞, x is +∞ | ±π/4 |
 
 Canonicalizing library outputs does not canonicalize every arithmetic NaN in
 a program. Initially define the lockstep recipe around finite simulation

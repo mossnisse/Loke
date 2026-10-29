@@ -1461,8 +1461,27 @@ It is computed in integer arithmetic, with the exact product in a `u128`,
 instead of calling the C library. Microsoft documents its `fma` as allowed to
 round incorrectly, and older versions did on processors without the
 instruction; the CRT is linked statically from whichever SDK a build finds.
-The baseline x86-64 target has no FMA instruction, so the software path is the
-only one today. It is slower than the instruction, and correct.
+The baseline x86-64 target has no FMA instruction, so the software path serves
+it; it is slower than the instruction, and correct. At `-cpu=x86-64-v3`,
+`math.fma` is the instruction, with the same results.
+
+### The floating-point environment is fixed
+
+Loke code always runs with rounding to nearest, subnormals kept, and
+exceptions non-stop ([Floating-point operators](design.md#floating-point-operators)),
+and offers no way to change that. Every result the language pins depends on
+it: constant folding, compile-time evaluation, and the optimizer all assume
+the default environment, as LLVM does for code without `strictfp`. Under
+another rounding mode, a sum of two `f64` constants folded at compile time and
+the same sum computed at run time would differ, and with an exception unmasked an operation the optimizer
+hoisted out of a branch could trap on a path the source never took. A
+directed-rounding or interval facility belongs in a library whose operations
+name their rounding, not in a mode that changes the meaning of `+`.
+
+Foreign code can still change the state, so the contract is a rule for it:
+restore before Loke runs again. Windows starts every process and thread in
+this environment, which `tests/run/float_environment.loke` checks on the main
+thread and on a started one.
 
 ### SIMD lanes follow the scalar rule
 

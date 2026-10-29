@@ -6193,9 +6193,15 @@ For floating-point types:
 
 Floating-point division by zero follows IEEE-754 and does not panic: a non-zero
 dividend produces `+Inf` or `-Inf` according to the signs of the operands, and
-`0.0/0.0` produces a NaN. Integer division by zero panics. Default
-floating-point exception handling is non-stop; a program that wants trapping
-behavior installs it through the target's floating-point environment.
+`0.0/0.0` produces a NaN. Integer division by zero panics.
+
+Arithmetic rounds to nearest, ties to even, keeps subnormal operands and
+results rather than flushing them to zero, and handles every floating-point
+exception without stopping. A program runs in that environment on its main
+thread and on every thread it starts, and Loke has no operation that changes
+it. Foreign code that changes the rounding mode, the treatment of subnormals,
+or an exception's handling must restore it before Loke code runs again;
+floating-point results computed in another environment are unspecified.
 
 Floating-point operations are not contracted or reassociated. Each operation the
 source writes is evaluated and rounded on its own, so `a*b + c` is a

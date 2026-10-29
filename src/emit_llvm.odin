@@ -686,15 +686,26 @@ BASELINE_ATTRIBUTES :: `"target-cpu"="x86-64" "target-features"="+cmov,+cx8,+fxs
 // the host's C runtime runs before the host's `main`.
 @(private = "file")
 emit_object_cpu_check :: proc(e: ^Emitter) {
+	// Clear of every link name the program gives, exported or foreign, which
+	// may spell `loke.` too.
+	for sym in e.c.symbols {
+		if sym != nil && sym.link_name != "" {
+			e.taken_names[llvm_external_name(sym.link_name)] = true
+		}
+	}
+	name := claim_name(e, "@loke.require_cpu")
 	function := begin_function_emission(e)
 	defer finish_function_emission(e, function)
-	open_function(e, "define internal void @loke.require_cpu() " + BASELINE_ATTRIBUTES)
+	open_function(e, "define internal void %s() %s", name, BASELINE_ATTRIBUTES)
 	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_require_cpu(i32 %d)", int(e.c.target.cpu))
 	fmt.sbprintln(&e.b, "  ret void")
 	fmt.sbprintln(&e.b, "}")
 	append(
 		&e.globals,
-		"@llvm.global_ctors = appending global [1 x { i32, ptr, ptr }] [{ i32, ptr, ptr } { i32 65535, ptr @loke.require_cpu, ptr null }]\n",
+		fmt.aprintf(
+			"@llvm.global_ctors = appending global [1 x {{ i32, ptr, ptr }}] [{{ i32, ptr, ptr }} {{ i32 65535, ptr %s, ptr null }}]\n",
+			name,
+		),
 	)
 }
 

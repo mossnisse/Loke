@@ -1,0 +1,58 @@
+// design.md "Floating-point operators": arithmetic rounds to nearest, ties to
+// even, keeps subnormal operands and results, and does not trap, on the thread
+// that runs `main` and on every thread it starts. Each line below changes
+// under another rounding mode, flush-to-zero, denormals-are-zero, or an
+// unmasked exception, which would stop the program instead.
+package main;
+
+import "core:fmt";
+import "core:os";
+import "core:thread";
+import "core:unsafe";
+
+// One with no constant value, so nothing below folds.
+runtime_one :: proc() -> f64 { return f64(os.args.len()); }
+
+bits64 :: proc(x: f64) -> u64 { return unsafe.transmute(u64, x); }
+bits32 :: proc(x: f32) -> u32 { return unsafe.transmute(u32, x); }
+
+probe :: proc(where: string) {
+	one := runtime_one();
+	half_ulp := 1.1102230246251565e-16;  // 2^-53
+	// A tie goes to even, above and below one; just over it goes up. Upward,
+	// downward, and toward-zero rounding each change one of these.
+	fmt.println(where, "nearest",
+		bits64(one + half_ulp) == bits64(1.0),
+		bits64(one + 3.0*half_ulp) == bits64(1.0000000000000004),
+		bits64((0.0 - one) - half_ulp) == bits64(-1.0),
+		bits64(one + 1.25*2.0*half_ulp) == bits64(1.0000000000000002));
+	one32 := f32(one);
+	fmt.println(where, "nearest32",
+		bits32(one32 + f32(5.9604644775390625e-08)) == bits32(f32(1.0)),
+		bits32(one32 + f32(1.7881393432617188e-07)) == bits32(f32(1.0000002)));
+
+	// Gradual underflow: a subnormal result is kept (no flush-to-zero), and a
+	// subnormal operand is not read as zero (no denormals-are-zero).
+	tiny := 4.9406564584124654e-324*one;  // 2^-1074
+	fmt.println(where, "subnormal",
+		bits64(2.2250738585072014e-308*one*0.5),
+		bits64(tiny*1152921504606846976.0),  // 2^-1014
+		tiny > 0.0);
+	tiny32 := f32(1.401298464324817e-45)*one32;  // 2^-149
+	fmt.println(where, "subnormal32",
+		bits32(f32(1.1754943508222875e-38)*one32*f32(0.5)),
+		bits32(tiny32*f32(1073741824.0)),
+		tiny32 > f32(0.0));
+
+	// Non-stop exceptions: each of these raises a flag and goes on.
+	zero := one - one;
+	fmt.println(where, "nonstop",
+		one/zero, (0.0 - one)/zero, zero/zero != zero/zero,
+		1.0e308*one*10.0, (one*3.0)/7.0 > 0.0);
+}
+
+main :: proc() {
+	probe("main");
+	child := thread.spawn(proc() { probe("thread"); });
+	child.join();
+}

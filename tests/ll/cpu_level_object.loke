@@ -2,7 +2,11 @@ package widget;
 
 // compiler-guide.md "CPU levels": an object build above baseline has no entry,
 // so a baseline static constructor makes the check, before the host's `main`.
-// The object's own binding of the check shares the constructor's declaration.
+// The object's own binding of the check shares the constructor's declaration,
+// and an export that takes the constructor's usual name moves it aside.
+
+@(export, link_name="loke.require_cpu")
+value: i32 = 7;
 
 foreign loke_runtime {
 	@(link_name="loke_rt_v1_require_cpu")

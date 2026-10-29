@@ -1,5 +1,5 @@
-define internal void @loke.require_cpu() "target-cpu"="x86-64" "target-features"="+cmov,+cx8,+fxsr,+mmx,+sse,+sse2,+x87" {
+define internal void @loke.require_cpu.1() "target-cpu"="x86-64" "target-features"="+cmov,+cx8,+fxsr,+mmx,+sse,+sse2,+x87" {
 call void @loke_rt_v1_require_cpu(i32 1)
 declare void @loke_rt_v1_require_cpu(i32)
-@llvm.global_ctors = appending global [1 x { i32, ptr, ptr }] [{ i32, ptr, ptr } { i32 65535, ptr @loke.require_cpu, ptr null }]
+@llvm.global_ctors = appending global [1 x { i32, ptr, ptr }] [{ i32, ptr, ptr } { i32 65535, ptr @loke.require_cpu.1, ptr null }]
 not @wmain
