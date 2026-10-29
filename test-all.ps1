@@ -119,7 +119,7 @@ try {
         'examples_compile_and_run', 'example_greeting_appends_to_its_file',
         'example_streaming_reads_its_input', 'example_dice_replays_its_seed',
         'tutorials_compile_and_run', 'cpu_levels_compute_what_baseline_does',
-        'repro_exp_rounds_correctly'
+        'repro_functions_round_correctly'
     ) -join ','
     if ($Full) {
         foreach ($mode in @('minimal', 'size', 'speed', 'aggressive')) {

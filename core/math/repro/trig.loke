@@ -1,0 +1,482 @@
+// deterministic-math-and-targets-plan.md "Reproducible result contract": `sin`
+// and `cos` in both widths.
+//
+// |x| = q pi/2 + r, |r| at most a little over pi/4, and sin or cos of |r| by
+// q's low two bits. The reduction gives r as an `f64` pair within 2^-130 of
+// it, which is relative 2^-68 even for the r nearest zero any `f64` gives,
+// about 2^-61 (Kahan and McDonald):
+//
+// - Below pi/4, r is the argument.
+// - Below 2^20 pi/2, Cody and Waite's: pi/2 in four parts, the first three of
+//   33 bits so q times each is exact for q < 2^20. |x| - q P1 is exact (both
+//   are multiples of 2^-53 and the difference is under 1), `two_sum` keeps the
+//   next two subtractions exact, and the fourth part is within 2^-152 of the
+//   rest of pi/2, its product rounded by under 2^-132.
+// - Above, Payne and Hanek's: x 2/pi modulo 4 from 448 bits of 2/pi at x's
+//   scale, in integers, which leaves q and a 320-bit fraction exact to
+//   2^-390. Its top 106 bits times pi/2 as an `f64` pair give r.
+//
+// sin and cos of r come from a table of both at j/256, j the nearest integer
+// to 256 |r|, with t = |r| - j/256, |t| <= 2^-9, and their series in t: the
+// table entries are within 2^-106, the series are cut off below 2^-75
+// relative, and sin t - t and cos t - 1 are below 2^-19 relative to the
+// result and evaluated within a few ulps of it, with every leading product
+// exact (`two_product`). For j = 0, sin r is its series in r. The relative
+// error of h + l stays under 2^-68.
+//
+// The fast path returns h + l when it is decided within twice 2^-67; the
+// slow path recomputes the reduction and the series in 320-bit fixed point
+// and rounds that, its error under 2^-300 relative to any result.
+package repro;
+
+import "core:unsafe";
+
+// 2/pi, to choose q; any rounding of it works, since the reduction itself
+// uses the split constants.
+TWO_OVER_PI_F64 :: 0.6366197723675814;
+// The `f64` below pi/4, under which the argument is its own reduction.
+QUARTER_PI :: 0.7853981633974483;
+// Under 2^20 pi/2, so q < 2^20 in Cody and Waite's reduction.
+CODY_WAITE_LIMIT :: 1647099.0;
+
+// 64 bits of 2/pi from bit `start`, counted from 1 after the binary point.
+two_over_pi_word :: proc(start: int) -> u64 {
+	index := start - 1;
+	word := index / 64;
+	offset := index % 64;
+	if (offset == 0) { return TWO_OVER_PI[word]; }
+	return (TWO_OVER_PI[word] << offset) | (TWO_OVER_PI[word + 1] >> (64 - offset));
+}
+
+// For a finite x above pi/4: x 2/pi modulo 4 as the nearest quadrant q and
+// the fraction f, |f| <= 1/2, with f's sign apart and |f| in fixed point.
+// For x = m 2^e, the bits of 2/pi before bit e - 1 contribute multiples of 4,
+// and the 448 from there on leave an error under 2^(53 - 446) in f.
+payne_hanek :: proc(x: f64) -> (quadrant: int, negative: bool, fraction: Fixed) {
+	pattern := unsafe.transmute(u64, x);
+	e := int(pattern >> 52) - 1075;
+	m := (pattern & 0x000fffffffffffff) | 0x0010000000000000;
+	first := e - 1;
+	if (first < 1) { first = 1; }
+	// m times the window W = the 448 bits from `first`, the most significant
+	// limb of W holding bits first ..< first + 64.
+	product: [8]u64 = {};
+	carry: u128 = 0;
+	foreach (i in 0 ..< 7) {
+		t := u128(two_over_pi_word(first + 384 - 64*i)) *% u128(m) +% carry;
+		product[i] = u64(t & LOW_64);
+		carry = t >> 64;
+	}
+	product[7] = u64(carry);
+	// x 2/pi = product 2^-point, modulo 4.
+	point := first + 447 - e;
+	f: Fixed = {};
+	foreach (i in 0 ..< 5) { f[i] = product_field(product, point - 320 + 64*i); }
+	q := int(product_field(product, point) & 3);
+	if ((f[4] >> 63) != 0) {
+		return {(q + 1) & 3, true, fixed_minus(FIXED_ONE, f)};
+	}
+	return {q, false, f};
+}
+
+// The 64 bits of p from `position` up.
+product_field :: proc(p: [8]u64, position: int) -> u64 {
+	word := position / 64;
+	offset := position % 64;
+	low := p[word] >> offset;
+	if (offset == 0 || word == 7) { return low; }
+	return low | (p[word + 1] << (64 - offset));
+}
+
+// |x| = quadrant pi/2 + (high + low), for a finite x at least 2^-27 in
+// magnitude. A quadrant of -1 asks for the slow path, for an r too close to
+// zero for the pair, which no `f64` gives.
+reduce :: proc(ax: f64) -> (quadrant: int, high: f64, low: f64) {
+	if (ax <= QUARTER_PI) { return {0, ax, 0.0}; }
+	if (ax < CODY_WAITE_LIMIT) {
+		qf := (ax*TWO_OVER_PI_F64 + ROUND_SHIFTER) - ROUND_SHIFTER;
+		a := ax - qf*from_bits(PIO2_1);
+		rh, rl := two_sum(a, 0.0 - qf*from_bits(PIO2_2));
+		rh2, e := two_sum(rh, 0.0 - qf*from_bits(PIO2_3));
+		h, l := fast_two_sum(rh2, (rl + e) - qf*from_bits(PIO2_4));
+		return {int(qf) & 3, h, l};
+	}
+	quadrant, negative, fraction := payne_hanek(ax);
+	top := fixed_top_bit(fraction);
+	if (top < 200) { return {-1, 0.0, 0.0}; }
+	fh := f64(fixed_field(fraction, top - 52, 53))*power_of_two(top - 52 - FRACTION_BITS);
+	fl := f64(fixed_field(fraction, top - 105, 53))*power_of_two(top - 105 - FRACTION_BITS);
+	ph, pl := two_product(fh, from_bits(PIO2_HI));
+	h, l := fast_two_sum(ph, pl + (fh*from_bits(PIO2_LO) + fl*from_bits(PIO2_HI)));
+	if (negative) { return {quadrant, 0.0 - h, 0.0 - l}; }
+	return {quadrant, h, l};
+}
+
+// sin(a) for a = ah + al, 0 <= ah <= pi/4 + 2^-40, as h + l.
+sin_kernel :: proc(ah: f64, al: f64) -> (high: f64, low: f64) {
+	j := int(ah*256.0 + 0.5);
+	th := ah - f64(j)*(1.0/256.0);
+	t2 := th*th;
+	// sin t - t without the cross terms of al, which are below 2^-70.
+	s1 := th*t2*(-1.0/6.0 + t2*(1.0/120.0 + t2*(-1.0/5040.0)));
+	if (j == 0) { return fast_two_sum(th, al + s1); }
+	// cos t - 1, with t^2's cross term.
+	c1 := t2*(-0.5 + t2*(1.0/24.0 + t2*(-1.0/720.0))) - th*al;
+	sa := from_bits(SIN_COS_TABLE[4*j]);
+	sal := from_bits(SIN_COS_TABLE[4*j + 1]);
+	ca := from_bits(SIN_COS_TABLE[4*j + 2]);
+	cal := from_bits(SIN_COS_TABLE[4*j + 3]);
+	// sa cos t + ca sin t = sa + ca th, exactly, and the rest.
+	ph, pl := two_product(ca, th);
+	s, e := fast_two_sum(sa, ph);
+	return fast_two_sum(s, e + (pl + (sal + ((ca*al + cal*th) + (sa*c1 + ca*s1)))));
+}
+
+// cos(a) for a = ah + al, 0 <= ah <= pi/4 + 2^-40, as h + l.
+cos_kernel :: proc(ah: f64, al: f64) -> (high: f64, low: f64) {
+	j := int(ah*256.0 + 0.5);
+	th := ah - f64(j)*(1.0/256.0);
+	t2 := th*th;
+	c1 := t2*(-0.5 + t2*(1.0/24.0 + t2*(-1.0/720.0))) - th*al;
+	if (j == 0) { return fast_two_sum(1.0, c1); }
+	s1 := th*t2*(-1.0/6.0 + t2*(1.0/120.0 + t2*(-1.0/5040.0)));
+	sa := from_bits(SIN_COS_TABLE[4*j]);
+	sal := from_bits(SIN_COS_TABLE[4*j + 1]);
+	ca := from_bits(SIN_COS_TABLE[4*j + 2]);
+	cal := from_bits(SIN_COS_TABLE[4*j + 3]);
+	// ca cos t - sa sin t = ca - sa th, exactly, and the rest.
+	ph, pl := two_product(sa, th);
+	s, e := fast_two_sum(ca, 0.0 - ph);
+	return fast_two_sum(s, e + ((cal - pl) + ((ca*c1 - sa*s1) - (sa*al + sal*th))));
+}
+
+// Whether the result for this quadrant and sign of r is negative, given
+// whether it is sin r's magnitude or cos r's, before x's own sign.
+trig_negative :: proc(want_cos: bool, quadrant: int, use_sin: bool, r_negative: bool) -> bool {
+	negative := quadrant >= 2;
+	if (want_cos) { negative = quadrant == 1 || quadrant == 2; }
+	if (use_sin && r_negative) { negative = !negative; }
+	return negative;
+}
+
+// The result's magnitude for |x| as h + l, and whether it is negative, or
+// a quadrant of -1 for the slow path.
+trig_kernel :: proc(ax: f64, want_cos: bool) -> (decidable: bool, negative: bool, high: f64, low: f64) {
+	quadrant, rh, rl := reduce(ax);
+	if (quadrant < 0) { return {false, false, 0.0, 0.0}; }
+	r_negative := rh < 0.0;
+	if (r_negative) {
+		rh = 0.0 - rh;
+		rl = 0.0 - rl;
+	}
+	use_sin := (quadrant % 2 == 0) != want_cos;
+	h := 0.0;
+	l := 0.0;
+	if (use_sin) {
+		h, l = sin_kernel(rh, rl);
+	} else {
+		h, l = cos_kernel(rh, rl);
+	}
+	return {true, trig_negative(want_cos, quadrant, use_sin, r_negative), h, l};
+}
+
+// sin or cos of a finite x at least 2^-27 in magnitude.
+trig_f64 :: proc(x: f64, want_cos: bool) -> f64 {
+	ax := x;
+	if (x < 0.0) { ax = 0.0 - x; }
+	flip := !want_cos && x < 0.0;
+	decidable, negative, h, l := trig_kernel(ax, want_cos);
+	if (decidable) {
+		decided, y := f64_decided(h, l);
+		if (decided) {
+			if (negative != flip) { return 0.0 - y; }
+			return y;
+		}
+	}
+	return unsafe.transmute(f64, trig_slow(ax, want_cos, flip, F64_LAYOUT));
+}
+
+// The same for an `f32` argument: h + l, within an `f64` ulp of the result,
+// narrows to it unless an `f32` midpoint is that close. No result here is
+// subnormal.
+trig_f32 :: proc(x: f64, want_cos: bool) -> f32 {
+	ax := x;
+	if (x < 0.0) { ax = 0.0 - x; }
+	flip := !want_cos && x < 0.0;
+	decidable, negative, h, l := trig_kernel(ax, want_cos);
+	if (decidable) {
+		y := h + l;
+		if (f32_decided(y, 1)) {
+			if (negative != flip) { return f32(0.0 - y); }
+			return f32(y);
+		}
+	}
+	return unsafe.transmute(f32, u32(trig_slow(ax, want_cos, flip, F32_LAYOUT)));
+}
+
+// sin or cos of |x| correctly rounded to `layout`, as its bit pattern, negated
+// when `flip`: the reduction in fixed point, r = f pi/2 for the fraction
+// Payne and Hanek's leaves, and the series in r, alternating and decreasing
+// from its first term, so every partial sum stays positive.
+trig_slow :: proc(ax: f64, want_cos: bool, flip: bool, layout: Float_Layout) -> u64 {
+	quadrant := 0;
+	r_negative := false;
+	r: Fixed = {};
+	if (ax > QUARTER_PI) {
+		q, negative, fraction := payne_hanek(ax);
+		quadrant = q;
+		r_negative = negative;
+		r = fixed_times(fraction, PIO2_WIDE);
+	} else {
+		r = fixed_of(ax);
+	}
+	use_sin := (quadrant % 2 == 0) != want_cos;
+	r2 := fixed_times(r, r);
+	sum := FIXED_ONE;
+	a: u64 = 1;
+	if (use_sin) {
+		sum = r;
+		a = 2;
+	}
+	term := sum;
+	subtract := true;
+	for (;; a += 2) {
+		term = fixed_divided_small(fixed_times(term, r2), a*(a + 1));
+		if (fixed_is_zero(term)) { break; }
+		if (subtract) {
+			sum = fixed_minus(sum, term);
+		} else {
+			sum = fixed_plus(sum, term);
+		}
+		subtract = !subtract;
+	}
+	pattern := fixed_round(sum, 0 - FRACTION_BITS, layout);
+	if (trig_negative(want_cos, quadrant, use_sin, r_negative) != flip) {
+		pattern |= u64(1) << (layout.width - 1);
+	}
+	return pattern;
+}
+
+// Generated by `trig_constants_source` in tests/math_oracle.odin, which
+// `tests/repro_test.odin` checks this block against.
+// BEGIN GENERATED
+SIN_COS_TABLE :: [808]u64{
+	0x0000000000000000, 0x0000000000000000, 0x3ff0000000000000, 0x0000000000000000,
+	0x3f6ffffaaaaaeeef, 0xbbe2b12b0ce9b237, 0x3feffff000015555, 0x3c827d27df7df7bb,
+	0x3f7fffeaaaaeeeef, 0xbc1e45e2ec67b77c, 0x3fefffc000155552, 0x3c8f4a01a0196dae,
+	0x3f87ffdc00103330, 0xbc215efa2be503db, 0x3fefff70006bffe0, 0xbc89984c57e6cfb8,
+	0x3f8fffaaaaeeeed5, 0xbc02ab639a9f0776, 0x3fefff000155549f, 0x3c828a28a03a5ef3,
+	0x3f93ffacab12d517, 0x3c3519b3218acccf, 0x3feffe700341529f, 0xbc6b3bc25e3e4cb3,
+	0x3f97ff7001033255, 0x3bfefe2b51527336, 0x3feffdc006bff7e6, 0x3c8ae6dae86977bd,
+	0x3f9bff1b57858e83, 0x3c3df20c232a4f03, 0x3feffcf00c8140e9, 0xbc8c3e3e857e2d30,
+	0x3f9ffeaaaeeee86f, 0xbc3cd406fb224ae2, 0x3feffc00155527d3, 0xbc83b54492d89b5b,
+	0x3fa1ff0d03d81efc, 0x3c4b74e4aa1f4c7f, 0x3feffaf0222ba3bd, 0xbc6426013ff0feb7,
+	0x3fa3feb2b12d45d5, 0x3c34ec54203d1c11, 0x3feff9c03414a7ba, 0x3c6991f4be6c59bf,
+	0x3fa5fe445fd1660f, 0x3c4d7a6e37a23793, 0x3feff8704c4021c8, 0xbc6d80c59264b631,
+	0x3fa7fdc01032fba9, 0xbc4599bdf46e997a, 0x3feff7006bfdf99f, 0xbc78b3b560648d5f,
+	0x3fa9fd23c2d680df, 0xbc370b1a2ba5f590, 0x3feff57094be0f62, 0x3c8780a6d6b9aac9,
+	0x3fabfc6d78586dac, 0x3c18e4fd03dbf236, 0x3feff3c0c8103a31, 0x3c74856dbddc0e66,
+	0x3fadfb9b316f372a, 0xbc2b3adb2cd8fe77, 0x3feff1f107a44695, 0x3c52552d1d5613d6,
+	0x3faffaaaeeed4edb, 0xbc42d16d32684b69, 0x3feff0015549f4d3, 0x3c8328387b99426f,
+	0x3fb0fccd58e190ec, 0xbc5ef54e5b79b73c, 0x3fefedf1b2f0f71d, 0xbc5358030423989e,
+	0x3fb1fc343d808bef, 0xbc5f3d32e6f3be4f, 0x3fefebc222a8ef9f, 0x3c57934934f54c77,
+	0x3fb2fb8925ecc920, 0xbc31aceeb6944bb7, 0x3fefe972a6a16e73, 0xbc59b4127ab3d548,
+	0x3fb3facb12d1755b, 0xbc5921915299468b, 0x3fefe7034129ef6f, 0xbc6cbf4337c96f97,
+	0x3fb4f9f904ecb8ff, 0x3c56fdd8bf8cda76, 0x3fefe473f4b1d7d6, 0x3c8a001dd2227ed4,
+	0x3fb5f911fd10b737, 0xbc50184f02be9102, 0x3fefe1c4c3c873eb, 0xbc35a9c9057c4a02,
+	0x3fb6f814fc248d1f, 0xbc41e7a14e279b6a, 0x3fefdef5b11cf45d, 0xbc7e833a08634830,
+	0x3fb7f701032550e4, 0x3c3afc2d1800501a, 0x3fefdc06bf7e6b9b, 0x3c831902b535f8db,
+	0x3fb8f5d5132710c4, 0x3c2ae29046de7c88, 0x3fefd8f7f1dbcb07, 0xbc8c752ecfaa985b,
+	0x3fb9f4902d55d1f9, 0x3c52696d7eac1dc1, 0x3fefd5c94b43e000, 0xbc62e768cb4f92f9,
+	0x3fbaf33152f68f8f, 0x3c53f7698bdd23f1, 0x3fefd27acee550db, 0x3c8c3f64be936b41,
+	0x3fbbf1b78568391d, 0x3c5e91841dea4cc8, 0x3fefcf0c800e99b1, 0x3c6ea3d786d186ac,
+	0x3fbcf021c624b168, 0xbc1f6aedf73fb13f, 0x3fefcb7e622e090e, 0x3c8efee620ded043,
+	0x3fbdee6f16c1cce6, 0xbc450f8e2fb71673, 0x3fefc7d078d1bc88, 0x3c8075d2447db685,
+	0x3fbeec9e78f2502b, 0x3c33535175887f66, 0x3fefc402c7a79d2c, 0x3c7f515d61e3b7d1,
+	0x3fbfeaaeee86ee36, 0xbc4afcb2bcc6f03b, 0x3fefc015527d5bd3, 0x3c8b68f35094efb8,
+	0x3fc0744fbcb7a34f, 0xbc635f080b446e47, 0x3fefbc081d406d54, 0x3c819ca5c619c114,
+	0x3fc0f3378ddd71d1, 0x3c6d8468724f0f9e, 0x3fefb7db2bfe0695, 0x3c821dadf4f65ab1,
+	0x3fc1720e6bcd1c11, 0xbc6370a768c28cc9, 0x3fefb38e82e31880, 0xbc7cd45c28dde5cf,
+	0x3fc1f0d3d7afceaf, 0xbc66ef95099769a5, 0x3fefaf22263c4bd3, 0xbc552ace133a2769,
+	0x3fc26f8752c02859, 0x3c399d3f99560e16, 0x3fefaa961a75fcd7, 0x3c8154aedc530b90,
+	0x3fc2ee285e4ab88f, 0xbc6e4d0f05dee058, 0x3fefa5ea641c36f2, 0x3c404da6ed17cc7c,
+	0x3fc36cb67bae7e52, 0xbc42b58c9385fe0d, 0x3fefa11f07dab019, 0x3c84c36f0cfac1a2,
+	0x3fc3eb312c5d66cb, 0x3c647d666b66cb91, 0x3fef9c340a7cc428, 0x3c8c5b6b063b7462,
+	0x3fc46997f1dccbd6, 0x3c25772779edaa4c, 0x3fef972970ed7014, 0x3c882d46ff943b09,
+	0x3fc4e7ea4dc5f27b, 0x3c5949db2ac072fc, 0x3fef91ff40374d01, 0xbc67d03f4d3a9e4c,
+	0x3fc56627c1c68959, 0xbc6c1a626f9f35f9, 0x3fef8cb57d848b36, 0xbc3e28ca6524cc98,
+	0x3fc5e44fcfa126f3, 0xbc66f443063f89b6, 0x3fef874c2e1eecf6, 0xbc8c6514e1332b16,
+	0x3fc66261f92dc7f2, 0x3c54732388b03388, 0x3fef81c3576fc132, 0xbc7a210f729d0428,
+	0x3fc6e05dc05a4d4c, 0xbbd32c5c8b81c919, 0x3fef7c1afeffde24, 0xbc78f55bc47540b1,
+	0x3fc75e42a72afa53, 0x3c625101dbbe3de1, 0x3fef76532a779bc3, 0xbc7cc2b661f73e17,
+	0x3fc7dc102fbaf2b5, 0x3c45ab50e23c97c3, 0x3fef706bdf9ece1c, 0xbc8698c80c36dcb4,
+	0x3fc859c5dc3cb85d, 0x3c5bdacb1bb1532a, 0x3fef6a65245cbf89, 0x3c821006d1ee0324,
+	0x3fc8d7632efaa944, 0xbc620fa262cbb953, 0x3fef643efeb82acd, 0x3c76b00ac1fe28ac,
+	0x3fc954e7aa577d22, 0x3c6add11e2b03481, 0x3fef5df974d73509, 0xbc81041b91c41e29,
+	0x3fc9d252d0cec312, 0x3c59c43d80b1137d, 0x3fef57948cff6797, 0x3c6e3a0d3e03b1d4,
+	0x3fca4fa424f55f0f, 0x3c688fc2611aa255, 0x3fef51104d95a9c8, 0xbc81bc67d4243730,
+	0x3fcaccdb297a0765, 0xbc59883b57d6cdea, 0x3fef4a6cbd1e3a79, 0x3c813df0edaebb57,
+	0x3fcb49f76125c1fd, 0x3c3697d0c986b191, 0x3fef43a9e23ca996, 0xbc8c057991f742e7,
+	0x3fcbc6f84edc6199, 0x3c69c1a56a7b0cab, 0x3fef3cc7c3b3d16e, 0xbc621a3ad28a3494,
+	0x3fcc43dd759d02ee, 0xbc05bcc2e3046626, 0x3fef35c66865cff8, 0x3c87cda41f3feef8,
+	0x3fccc0a6588289a3, 0xbc6868d09bc87c6b, 0x3fef2ea5d753ffed, 0x3c8cc4215f56d583,
+	0x3fcd3d527ac41d38, 0xbc56fa59a447a134, 0x3fef2766179ef1c7, 0xbc62932f8987bcb6,
+	0x3fcdb9e15fb5a5d0, 0xbc632e20d6cc6fc2, 0x3fef20073086649f, 0x3c7b940416c1984b,
+	0x3fce36528ac848da, 0xbc3240b73f3963fe, 0x3fef188929693ef2, 0xbc881f656ea94ccf,
+	0x3fceb2a57f8ae5a3, 0xbc60be06af572ceb, 0x3fef10ec09c5873b, 0x3c8d9072762c1283,
+	0x3fcf2ed9c1aa91c4, 0xbc66142de810c2b7, 0x3fef092fd9385c7e, 0x3c4750563a9bed86,
+	0x3fcfaaeed4f31577, 0xbc615d88508e32b8, 0x3fef01549f7deea1, 0x3c8d3c1e99e5cafd,
+	0x3fd013721ea7b3e5, 0x3c710fa1d5106315, 0x3feef95a647176b9, 0xbc8a2aefc066f251,
+	0x3fd0515cbf65155c, 0xbc79b8c29dfd8ec7, 0x3feef141300d2f26, 0xbc82aa1b08ded372,
+	0x3fd08f370ec7138a, 0xbc6183d7d425e7ec, 0x3feee9090a6a4ba0, 0x3c848d59a9171632,
+	0x3fd0cd00cef36436, 0xbc79fb0a0c93e2b4, 0x3feee0b1fbc0f11c, 0xbc4bfd2380bbc3b1,
+	0x3fd10ab9c2204c59, 0xbc7843c6295a07bf, 0x3feed83c0c682d90, 0x3c68605a9115beae,
+	0x3fd14861aa94ddeb, 0xbc6be881b5b615a4, 0x3feecfa744d5efa1, 0xbc556d0a4af541d0,
+	0x3fd185f84aa9359b, 0xbc65486ede74dbb2, 0x3feec6f3ad9efe2a, 0xbc80bc0bfbb6aeaa,
+	0x3fd1c37d64c6b876, 0x3c746076fe0dcff4, 0x3feebe214f76efa8, 0xbc802f9f12ba543e,
+	0x3fd200f0bb685180, 0x3c631bdc968ef588, 0x3feeb53033302187, 0xbc740e3e817e1641,
+	0x3fd23e52111aaf36, 0xbc74f080334eff18, 0x3feeac2061bbaf4f, 0x3c62c1d53e94658d,
+	0x3fd27ba1287c8102, 0xbc40fb418a5581b0, 0x3feea2f1e42969b4, 0xbc8bd66b6627d017,
+	0x3fd2b8ddc43eb49f, 0x3c61553899f2d807, 0x3fee99a4c3a7cd83, 0xbc82264b1bc53ce8,
+	0x3fd2f607a724b365, 0x3c770f6b47bd3fc4, 0x3fee90390983fa78, 0xbc828954c7f8dd8f,
+	0x3fd3331e94049f87, 0x3c7e0cb6b40c302c, 0x3fee86aebf29a9ed, 0x3c89397afdbb58a7,
+	0x3fd370224dc7913d, 0xbc6badca2c0c47d0, 0x3fee7d05ee232573, 0xbc8c4621b65d22fb,
+	0x3fd3ad129769d3d8, 0x3c003d550487839a, 0x3fee733ea0193d40, 0xbc86428b3546ce13,
+	0x3fd3e9ef33fb22cb, 0xbc5cd85ab33f11b4, 0x3fee6958ded33e8e, 0xbc4a2d4a62b00c99,
+	0x3fd426b7e69ee697, 0xbc7f09c75705c59f, 0x3fee5f54b436e9d0, 0x3c87eb0fd02fc8bc,
+	0x3fd4636c728c71a8, 0xbc63e9c8df9261a7, 0x3fee55322a4868ce, 0xbc8ff59bf4b08084,
+	0x3fd4a00c9b0f3d20, 0x3c7823ba6bb08ead, 0x3fee4af14b2a449c, 0xbc868ca02e8a6833,
+	0x3fd4dc982387258b, 0xbc757b6fc37e14d8, 0x3fee4092211d5b7e, 0x3c7bc7573acc79e9,
+	0x3fd5190ecf68a77a, 0x3c7b357155eef0f3, 0x3fee3614b680d6a5, 0xbc727793aa015237,
+	0x3fd55570623d1c18, 0x3c44cdaa70975dbe, 0x3fee2b7915d21fcc, 0x3c83149be81a8fd3,
+	0x3fd591bc9fa2f597, 0x3c67c74bac3fe0cb, 0x3fee20bf49acd6c1, 0xbc5660aec7ef636b,
+	0x3fd5cdf34b4dfb98, 0x3c77458b493a1d20, 0x3fee15e75ccac6c3, 0x3c83261811c2a8d6,
+	0x3fd60a1429078775, 0x3c5b1fd80ba89133, 0x3fee0af15a03dbce, 0x3c5fe8e702771ae6,
+	0x3fd6461efcaec077, 0xbc794dc7178bd734, 0x3fedffdd4c4e17be, 0x3c851415af290396,
+	0x3fd682138a38d7f7, 0xbc7d889202444aad, 0x3fedf4ab3ebd875e, 0xbc8e2d8a7e6736c4,
+	0x3fd6bdf195b1456a, 0xbc61c05d4d4179b8, 0x3fede95b3c84374d, 0x3c88b4bf71c7de42,
+	0x3fd6f9b8e33a0255, 0x3c742bc14ee9da0d, 0x3feddded50f228d6, 0xbc6e80c8d42ba2bf,
+	0x3fd73569370bc62b, 0x3c7bf3442bdd527e, 0x3fedd26187754695, 0x3c7f16517d83bbca,
+	0x3fd7710255764214, 0xbc66ead7314bb6ce, 0x3fedc6b7eb995912, 0x3c54b364776dcd35,
+	0x3fd7ac8402e05c9b, 0x3c7a39e39ea9f25c, 0x3fedbaf08907fb2f, 0x3c89a5395924f2ff,
+	0x3fd7e7ee03c86d4e, 0xbc7b63bcdabf5af2, 0x3fedaf0b6b888e83, 0x3c8a249e2b5e5cea,
+	0x3fd823401cc47836, 0xbc708091b8d964c7, 0x3feda3089f002f90, 0xbc815b9a62d60141,
+	0x3fd85e7a12826949, 0x3c78a40e9b5face0, 0x3fed96e82f71a9dc, 0x3c8ff61bd5d2039d,
+	0x3fd8999ba9c84fba, 0x3c4c1fef1753c7bf, 0x3fed8aaa28fd6bf6, 0xbc8d74eb5f28a765,
+	0x3fd8d4a4a774992f, 0x3c744a02ea766326, 0x3fed7e4e97e17b4a, 0xbc63b770352bed94,
+	0x3fd90f94d07e4ce8, 0x3c732c8fb2f2ea25, 0x3fed71d5887967ee, 0xbc5516e003d9dd64,
+	0x3fd94a6be9f546c5, 0xbc769ce13e683f58, 0x3fed653f073e4040, 0xbc876236434bec37,
+	0x3fd98529b9027235, 0xbc770c0c231d4808, 0x3fed588b20c6846e, 0xbc8bef54b0f32a77,
+	0x3fd9bfce02e80510, 0x3c709e39a320b0a4, 0x3fed4bb9e1c619e0, 0x3c8f34bb77858f61,
+	0x3fd9fa588d01ba55, 0xbc46aa35ae5de16a, 0x3fed3ecb570e3e87, 0x3c88b4d9843b2bf5,
+	0x3fda34c91cc50cca, 0xbc5a310e3b50cecd, 0x3fed31bf8d8d7c06, 0x3c7e60dd3089cbdd,
+	0x3fda6f1f77c1718a, 0x3c7e7b0a3486494f, 0x3fed2496924f9ac7, 0x3c8f17673d6927ff,
+	0x3fdaa95b63a09277, 0xbc66293eb13c0381, 0x3fed1750727d94f0, 0x3c80d52b1ec1a48e,
+	0x3fdae37ca626888a, 0x3c62d294cf918262, 0x3fed09ed3b5d8937, 0x3c8a8d847bc2c5bb,
+	0x3fdb1d8305321617, 0xbc7ae242cb99f519, 0x3fecfc6cfa52ad9f, 0x3c88b5b5508f2a0d,
+	0x3fdb576e46bce0e6, 0x3c7beb8a2f9cde89, 0x3feceecfbcdd4213, 0x3c3b682a76d7e904,
+	0x3fdb913e30dbac43, 0xbc7e38ad2f6c3ff1, 0x3fece115909a82e5, 0x3c81f139bb31109a,
+	0x3fdbcaf289be92dd, 0x3c78b06e5fb8daac, 0x3fecd33e83449b34, 0x3c661068cd16da9f,
+	0x3fdc048b17b140a3, 0x3c619fe6757e9fa7, 0x3fecc54aa2b2972e, 0x3c64ee162ba83a98,
+	0x3fdc3e07a11b2c6e, 0xbc676c26153de447, 0x3fecb739fcd8563c, 0xbc87e793b55ea6a2,
+	0x3fdc7767ec7fd19e, 0xbc5eb14d1a3d5826, 0x3feca90c9fc67d0b, 0xbc646a81485e3462,
+	0x3fdcb0abc07ee997, 0xbc72d6ebfce7c050, 0x3fec9ac299aa677f, 0x3c87560844703578,
+	0x3fdce9d2e3d4a51f, 0xbc62fc8a12dae298, 0x3fec8c5bf8ce1a84, 0x3c7ab3d1a1590123,
+	0x3fdd22dd1d59e5a4, 0xbc63a439e78d5440, 0x3fec7dd8cb9835c3, 0xbc8dd23c3aa785f7,
+	0x3fdd5bca34047661, 0x3c728a44a75fc29c, 0x3fec6f39208be53b, 0xbc8741dbfbaadb42,
+	0x3fdd9499eee7456b, 0x3c440792a7dee83d, 0x3fec607d0648d2c1, 0xbc72169fa0e8ce47,
+	0x3fddcd4c15329c9a, 0x3c70d4c6e171fd9a, 0x3fec51a48b8b175e, 0xbc61bbb43b9aa880,
+	0x3fde05e06e345a5d, 0x3c60f838535e3a93, 0x3fec42afbf2b2c93, 0xbc6f2a77b07f14e6,
+	0x3fde3e56c1582a69, 0xbc50a4821099f88f, 0x3fec339eb01ddd81, 0xbc8caaf5ee82c5c0,
+	0x3fde76aed627be4e, 0x3c78937d7fe3f57f, 0x3fec24716d7437f3, 0xbc74874850e5d927,
+	0x3fdeaee8744b05f0, 0xbc5789b43c9b027d, 0x3fec1528065b7d50, 0xbc8892111312e828,
+	0x3fdee703638867da, 0xbc73872f1aaf5cbd, 0x3fec05c28a1d1369, 0x3c8f9a1ac93aee95,
+	0x3fdf1eff6bc4f97b, 0x3c717212f8a7525c, 0x3febf641081e7536, 0x3c8b7bd71628a9a1,
+	0x3fdf56dc5504b742, 0x3c7a18434fc65e81, 0x3febe6a38fe1236a, 0x3c7fdab7587b02ac,
+	0x3fdf8e99e76abc97, 0x3c59d950af2d00a3, 0x3febd6ea310294f5, 0x3c731bbcc88c109d,
+	0x3fdfc637eb397bb8, 0x3c7d8f507b2ea243, 0x3febc714fb3c2766, 0x3c7eb19c8a06c310,
+	0x3fdffdb628d2f57a, 0x3c6f4a992e905b6a, 0x3febb723fe630f32, 0x3c772bd2452d0a39,
+	0x3fe01a8a345c7871, 0x3c8a6deb08435ee0, 0x3feba7174a6847de, 0xbc3defb28953f677,
+	0x3fe0362939c69955, 0xbc82d8cd78397b01, 0x3feb96eeef58840e, 0x3c545a3cc78fade0,
+	0x3fe051b80908da4a, 0x3c6f7686b96f8f0e, 0x3feb86aafd5c1d79, 0x3c8a6cc07549db15,
+	0x3fe06d3686946e5b, 0x3c83f5ae4538ff1b, 0x3feb764b84b704c2, 0xbc8f5848c21b389b,
+	0x3fe088a496eada47, 0x3c7e07780127666d, 0x3feb65d095c8b12e, 0x3c71d33cb4db26bd,
+	0x3fe0a4021e9e1001, 0xbc86f643a13914f6, 0x3feb553a410c104e, 0x3c58ff7947027a15,
+	0x3fe0bf4f02508a1c, 0x3c6da0ced695fe43, 0x3feb44889717757c, 0x3c2b17c0070c2815,
+	0x3fe0da8b26b5672e, 0xbc8a58def0bee909, 0x3feb33bba89c8948, 0x3c8ea6a51d1f6ca9,
+	0x3fe0f5b670908515, 0x3c7a7ed13e5fbb05, 0x3feb22d3866838c8, 0xbc46e9a5f4ff5b7d,
+	0x3fe110d0c4b69c3b, 0x3c8d918998809981, 0x3feb11d04162a4c6, 0x3c71dd561efbc0c2,
+	0x3fe12bda080d5abc, 0x3c8d3a97fee7e959, 0x3feb00b1ea8f10de, 0xbc8958d71955fb3f,
+	0x3fe146d21f8b7f82, 0x3c7bf9535e2739a8, 0x3feaef78930bd275, 0xbc7f836279746f94,
+	0x3fe161b8f038f54e, 0xbc5c5ee5cde48178, 0x3feade244c123f9f, 0x3c88d3fc4dfa0f9c,
+	0x3fe17c8e5f2eedb0, 0x3c635e57102e2488, 0x3feaccb526f69de5, 0x3c88fb6a8dd6b6cc,
+	0x3fe197525197fbef, 0x3c6810a2d8e3468a, 0x3feabb2b352810ee, 0x3c8db59f6f843f91,
+	0x3fe1b204acb02fdd, 0xbc5f190c70cbb5fe, 0x3feaa98688308913, 0xbc0b83d607cd5072,
+	0x3fe1cca555c5309b, 0xbc5fc53db3120a83, 0x3fea97c731b4b1d2, 0x3c71245d6144e0cd,
+	0x3fe1e7343236574c, 0x3c722a3fa4f41d5a, 0x3fea85ed4373e02d, 0x3c69be06385ec792,
+	0x3fe201b12774c9b6, 0xbc4d31fe293d1034, 0x3fea73f8cf4800e8, 0xbc6c372ed4bdefbf,
+	0x3fe21c1c1b0394cf, 0x3c5e5b324b23aa31, 0x3fea61e9e72586af, 0x3c858330e2fd453f,
+	0x3fe23674f277c73c, 0x3c787167f61285ff, 0x3fea4fc09d1b5825, 0xbc84cce741fb33a5,
+	0x3fe250bb93788bbb, 0x3c7ea3d02457bcce, 0x3fea3d7d0352bdcf, 0xbc868dbaeca19669,
+	0x3fe26aefe3bf437c, 0xbc3657b40100c3a6, 0x3fea2b1f2c0f4ff0, 0x3c7c9fe748eedc9c,
+	0x3fe28511c917a067, 0xbc801df1d9a16b70, 0x3fea18a729aee445, 0x3c395e25736c0357,
+	0x3fe29f21295fbf51, 0xbc86bd333b0b0cbb, 0x3fea06150ea97ba3, 0x3c8bc4a6cdcbf214,
+	0x3fe2b91dea88421e, 0xbc8fa371db216ab0, 0x3fe9f368ed912f85, 0xbc81d200c5791606,
+	0x3fe2d307f29469cf, 0x3c7ba5fe5f921e0b, 0x3fe9e0a2d9121f73, 0xbc75e7ba2bd64f0a,
+	0x3fe2ecdf279a3082, 0x3c8d3557e0e7e37e, 0x3fe9cdc2e3f25e5c, 0x3c83f99112993f62,
+	0x3fe306a36fc26359, 0xbc821305ba6473ab, 0x3fe9bac92111dfce, 0x3c80ce9c6f353e9a,
+	0x3fe32054b148bc4f, 0x3c8f6b42095a135b, 0x3fe9a7b5a36a6514, 0x3c8722cfcc9fa7a9,
+	0x3fe339f2d27bfc05, 0xbc8ddf4717254e6f, 0x3fe994887e0f6a3f, 0x3c70be6cea471d02,
+	0x3fe3537db9be0367, 0x3c6b327e7af040f0, 0x3fe98141c42e1310, 0x3c8d1ff80488f08d,
+	0x3fe36cf54d83ed56, 0x3c66e1f20c8b5b7d, 0x3fe96de1890d17ce, 0x3c8caa25dc8e6991,
+	0x3fe386597456282b, 0xbc710fada93b07a8, 0x3fe95a67e00cb1fd, 0xbc80befda21f862d,
+	0x3fe39faa14d08f31, 0xbc6cd164b88ce902, 0x3fe946d4dca688fc, 0x3c802c6f2978af1d,
+	0x3fe3b8e715a2840a, 0xbc797653a7d2f07a, 0x3fe93328926d9e92, 0xbc8bb77003600cda,
+	0x3fe3d2105d8f07fe, 0x3c61602a42d4b3d4, 0x3fe91f63150e3b52, 0xbc680bd33fb3df2e,
+	0x3fe3eb25d36cd53a, 0xbc5be570e1570fc0, 0x3fe90b84784ddaf7, 0xbc70feb10ab93b87,
+	0x3fe404275e2677f7, 0xbc7f859aade89fd2, 0x3fe8f78cd00b1899, 0xbc5d5d3da9ac3dd3,
+	0x3fe41d14e4ba6790, 0x3c84608fd287ecf5, 0x3fe8e37c303d9ad1, 0xbc6463a4b53d4bf8,
+	0x3fe435ee4e3b1f86, 0x3c8fd05667361565, 0x3fe8cf52acf5ffc0, 0x3c7eb45b71ac7cc5,
+	0x3fe44eb381cf386b, 0xbc83ed6c1e6a5505, 0x3fe8bb105a5dc900, 0x3c8863e03e9474c1,
+	0x3fe4676466b180b9, 0x3c7d4f2a623cabd3, 0x3fe8a6b54cb74779, 0x3c8754938eccac38,
+	0x3fe48000e431159f, 0xbc8b194a7463ed10, 0x3fe89241985d871f, 0x3c8c48d9c413ed84,
+	0x3fe49888e1b17ba8, 0x3c785f236b9ef692, 0x3fe87db551c43a98, 0x3c5cc790421e159a,
+	0x3fe4b0fc46aab761, 0x3c20da05738cc59c, 0x3fe869108d77a6c6, 0x3c7338ffe2bfe9dd,
+	0x3fe4c95afaa965d9, 0x3c899f87b905eef7, 0x3fe85453601c8e3e, 0xbc68826853e7560a,
+	0x3fe4e1a4e54ed51b, 0xbc8a492f89b7c76a, 0x3fe83f7dde701ca0, 0xbc4152cf609bc6e8,
+	0x3fe4f9d9ee511c85, 0x3c82ed6c74c625f7, 0x3fe82a901d47d1dc, 0x3c87cbb4128c4c1e,
+	0x3fe511f9fd7b351c, 0xbc85c0e861c48831, 0x3fe8158a31916d5d, 0xbc6de8b90b8228de,
+	0x3fe52a04faad11b6, 0x3c807d7bd78bcb9c, 0x3fe8006c3052d917, 0x3c8aa8fb560a8d95,
+	0x3fe541facddbb724, 0x3c7232c28520d391, 0x3fe7eb362eaa1488, 0x3c5a1d65a4a5959f,
+	0x3fe559db5f115436, 0xbc77229f7edd6050, 0x3fe7d5e841cd1f93, 0x3c5ba5492fa6d189,
+	0x3fe571a6966d59b3, 0x3c5c843b4d0fb197, 0x3fe7c0827f09e54f, 0xbc6c73d6d72aee68,
+	0x3fe5895c5c24923b, 0x3c8b97f22c957c4f, 0x3fe7ab04fbc626b6, 0x3c836a41f9c8150a,
+	0x3fe5a0fc98813a12, 0xbc8d82e2b7d4227b, 0x3fe7956fcd7f6543, 0xbc8ab276e9d45ae4,
+	0x3fe5b88733e316d1, 0xbc8077c33cd5e751, 0x3fe77fc309cacd6e, 0x3c5a61550088db65,
+	0x3fe5cffc16bf8f0d, 0x3c896cb370eb578a, 0x3fe769fec655211f, 0xbc6827d5cf8c68c5,
+	0x3fe5e75b29a1c1df, 0x3c8c266e6544ba29, 0x3fe7542318e2a1fa, 0x3c8da5b28e9eb3b9,
+	0x3fe5fea4552a9e57, 0x3c80b6cef7ee20b7, 0x3fe73e30174efba1, 0xbc65d3ae3d94ad5f,
+	0x3fe615d78210fadd, 0xbc7e3827d0c03315, 0x3fe72825d78d2dd2, 0xbc85c7ee90b400a9,
+	0x3fe62cf49921ac79, 0xbc8edd9855b6241a, 0x3fe712046fa77678, 0x3c8425b0a5029c81,
+	0x3fe643fb833f9e07, 0xbc64a1c5cd0442cd, 0x3fe6fbcbf5bf3ba2, 0x3c8eaec3811b3b5d,
+	0x3fe65aec2963e755, 0x3c8126f96b71053c, 0x3fe6e57c800cf55e, 0x3c860286dedbd0a6,
+	0x3fe671c6749de429, 0xbc857b95de1e1fdf, 0x3fe6cf1624e01782, 0x3c7d2f32a51e82e8,
+	0x3fe6888a4e134b2f, 0xbc86b7d37644d5e6, 0x3fe6b898fa9efb5d, 0x3c715ac786ccf4b2,
+	0x3fe69f379f0044d7, 0x3c8d89d29f8584f8, 0x3fe6a20517c6c950, 0x3c8a6fd059b9724c,
+};
+PIO2_1 :: 0x3ff921fb54400000;
+PIO2_2 :: 0x3dd0b4611a600000;
+PIO2_3 :: 0x3ba3198a2e000000;
+PIO2_4 :: 0x397b839a252049c1;
+PIO2_HI :: 0x3ff921fb54442d18;
+PIO2_LO :: 0x3c91a62633145c07;
+TWO_OVER_PI :: [24]u64{
+	0xa2f9836e4e441529, 0xfc2757d1f534ddc0, 0xdb6295993c439041, 0xfe5163abdebbc561,
+	0xb7246e3a424dd2e0, 0x06492eea09d1921c, 0xfe1deb1cb129a73e, 0xe88235f52ebb4484,
+	0xe99c7026b45f7e41, 0x3991d639835339f4, 0x9c845f8bbdf9283b, 0x1ff897ffde05980f,
+	0xef2f118b5a0a6d1f, 0x6d367ecf27cb09b7, 0x4f463f669e5fea2d, 0x7527bac7ebe5f17b,
+	0x3d0739f78a5292ea, 0x6bfb5fb11f8d5d08, 0x56033046fc7b6bab, 0xf0cfbc209af4361d,
+	0xa9e391615ee61b08, 0x6599855f14a06840, 0x8dffd8804d732731, 0x06061556ca73a8c9,
+};
+PIO2_WIDE :: [6]u64{0xa29410f31c6809bb, 0x04177d4c76273644, 0x52049c1114cf98e8, 0x898cc51701b839a2, 0x921fb54442d18469, 0x0000000000000001};
+// END GENERATED

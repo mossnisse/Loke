@@ -1,6 +1,7 @@
-// tests/repro_test.odin: `core:math/repro`'s `exp` against its own slow path
-// over many seeded arguments, and the arguments and results it checks against
-// the oracle. `probe:repro` is a copy of the package with `probe_hook.loke`.
+// tests/repro_test.odin: `core:math/repro`'s functions against their own slow
+// paths over many seeded arguments, and the arguments and results it checks
+// against the oracle. `probe:repro` is a copy of the package with
+// `probe_hook.loke`.
 package main;
 
 import "core:fmt";
@@ -52,15 +53,120 @@ argument_f32 :: proc(g: inout Generator, i: int) -> f32 {
 	}
 }
 
+// Arguments of sin and cos: within pi/4, below 2^20 pi/2, of every magnitude
+// up to 2^1023, and within a few ulps of a multiple of pi/2, where the
+// reduction cancels most of the argument.
+trig_argument :: proc(g: inout Generator, i: int) -> f64 {
+	u := unit(inout g);
+	v := 0.0;
+	switch (i % 5) {
+	case 0: v = (u*2.0 - 1.0)*0.79;
+	case 1: v = (u*2.0 - 1.0)*1600000.0;
+	case 2: v = (1.0 + u)*unsafe.transmute(f64, (1023 + next(inout g) % 1024) << 52);
+	case 3:
+		// A multiple of pi/2 rounded, then moved by up to 4 ulps.
+		k := f64(1 + next(inout g) % 100000);
+		near := k*1.5707963267948966;
+		v = unsafe.transmute(f64, unsafe.transmute(u64, near) + next(inout g) % 9 - 4);
+	default: v = (1.0 + u)*inverse_power(1 + next(inout g) % 27);
+	}
+	if (next(inout g) % 2 == 0) { return 0.0 - v; }
+	return v;
+}
+
+trig_argument_f32 :: proc(g: inout Generator, i: int) -> f32 {
+	u := unit(inout g);
+	v := f32(0.0);
+	switch (i % 5) {
+	case 0: v = f32((u*2.0 - 1.0)*0.79);
+	case 1: v = f32((u*2.0 - 1.0)*100000.0);
+	case 2: v = f32((1.0 + u)*unsafe.transmute(f64, (1023 + next(inout g) % 127) << 52));
+	case 3:
+		k := f64(1 + next(inout g) % 10000);
+		near := f32(k*1.5707963267948966);
+		v = unsafe.transmute(f32, unsafe.transmute(u32, near) + u32(next(inout g) % 9) - 4);
+	default: v = f32((1.0 + u)*inverse_power(1 + next(inout g) % 12));
+	}
+	if (next(inout g) % 2 == 0) { return f32(0.0) - v; }
+	return v;
+}
+
 bits :: proc(x: f64) -> u64 { return unsafe.transmute(u64, x); }
 bits32 :: proc(x: f32) -> u64 { return u64(unsafe.transmute(u32, x)); }
 
-// Evaluated at compile time: the fast path, the slow path for a subnormal
-// result, and both for `f32`.
+// Evaluated at compile time: fast paths, the slow path for a subnormal
+// result, and reductions by each method.
 CONSTANT_ONE :: repro.exp(1.0);
 CONSTANT_SUBNORMAL :: repro.exp(-745.0);
 CONSTANT_ONE_F32 :: repro.exp_f32(1.0);
 CONSTANT_SUBNORMAL_F32 :: repro.exp_f32(-100.5);
+CONSTANT_SIN :: repro.sin(0.5);
+CONSTANT_COS_MEDIUM :: repro.cos(1000.0);
+CONSTANT_SIN_HUGE :: repro.sin(1.0e22);
+CONSTANT_SIN_F32 :: repro.sin_f32(100.0);
+
+// `f32` arguments that reach the rare retries, found by search: `exp_f32`'s
+// double-`f64` step and its slow path, and the slow paths of `sin_f32` and
+// `cos_f32`. Each is checked against the oracle at run time and folded.
+HARD_F32 :: [4]u32{0xc16912cd, 0x4371ade3, 0x46199998, 0x3c107fe6};
+HARD_FUNCTIONS :: [4]Function{.Exp, .Sin, .Sin, .Cos};
+CONSTANT_HARD :: [4]f32{
+	repro.exp_f32(unsafe.transmute(f32, u32(0xc16912cd))),
+	repro.sin_f32(unsafe.transmute(f32, u32(0x4371ade3))),
+	repro.sin_f32(unsafe.transmute(f32, u32(0x46199998))),
+	repro.cos_f32(unsafe.transmute(f32, u32(0x3c107fe6))),
+};
+
+Function :: enum { Exp, Sin, Cos }
+
+fast64 :: proc(f: Function, x: f64) -> f64 {
+	switch (f) {
+	case .Exp: return repro.exp(x);
+	case .Sin: return repro.sin(x);
+	case .Cos: return repro.cos(x);
+	}
+}
+
+slow64 :: proc(f: Function, x: f64) -> f64 {
+	switch (f) {
+	case .Exp: return repro.slow_exp(x);
+	case .Sin: return repro.slow_sin(x);
+	case .Cos: return repro.slow_cos(x);
+	}
+}
+
+fast32 :: proc(f: Function, x: f32) -> f32 {
+	switch (f) {
+	case .Exp: return repro.exp_f32(x);
+	case .Sin: return repro.sin_f32(x);
+	case .Cos: return repro.cos_f32(x);
+	}
+}
+
+slow32 :: proc(f: Function, x: f32) -> f32 {
+	switch (f) {
+	case .Exp: return repro.slow_exp_f32(x);
+	case .Sin: return repro.slow_sin_f32(x);
+	case .Cos: return repro.slow_cos_f32(x);
+	}
+}
+
+argument64 :: proc(f: Function, g: inout Generator, i: int) -> f64 {
+	if (f == .Exp) { return argument(inout g, i); }
+	return trig_argument(inout g, i);
+}
+
+argument32 :: proc(f: Function, g: inout Generator, i: int) -> f32 {
+	if (f == .Exp) { return argument_f32(inout g, i); }
+	return trig_argument_f32(inout g, i);
+}
+
+// The slow paths are the reference, and the trigonometric ones take about
+// ten microseconds a call, so they meet fewer arguments.
+compared :: proc(f: Function) -> int {
+	if (f == .Exp) { return 50000; }
+	return 20000;
+}
 
 main :: proc() {
 	one := f64(os.args.len());
@@ -68,38 +174,53 @@ main :: proc() {
 		bits(CONSTANT_ONE) == bits(repro.exp(one)),
 		bits(CONSTANT_SUBNORMAL) == bits(repro.exp(-745.0*one)),
 		bits32(CONSTANT_ONE_F32) == bits32(repro.exp_f32(f32(one))),
-		bits32(CONSTANT_SUBNORMAL_F32) == bits32(repro.exp_f32(f32(-100.5*one))));
+		bits32(CONSTANT_SUBNORMAL_F32) == bits32(repro.exp_f32(f32(-100.5*one))),
+		bits(CONSTANT_SIN) == bits(repro.sin(0.5*one)),
+		bits(CONSTANT_COS_MEDIUM) == bits(repro.cos(1000.0*one)),
+		bits(CONSTANT_SIN_HUGE) == bits(repro.sin(1.0e22*one)),
+		bits32(CONSTANT_SIN_F32) == bits32(repro.sin_f32(f32(100.0*one))));
 
-	COMPARED :: 50000;
+	hard := HARD_F32;
+	functions := HARD_FUNCTIONS;
+	constants := CONSTANT_HARD;
+	foreach (i in 0 ..< 4) {
+		y := unsafe.transmute(f32, hard[i])*f32(one);
+		result := fast32(functions[i], y);
+		fmt.println(functions[i], 32, bits32(y), bits32(result));
+		fmt.println("constant", bits32(constants[i]) == bits32(result));
+	}
+
 	g := Generator{state = 0x9e3779b97f4a7c15};
-	differ := 0;
-	foreach (i in 0 ..< COMPARED) {
-		x := argument(inout g, i)*one;
-		if (bits(repro.exp(x)) != bits(repro.slow_exp(x))) {
-			differ += 1;
-			if (differ <= 5) { fmt.println("differs64", bits(x)); }
+	foreach (f in [3]Function{.Exp, .Sin, .Cos}) {
+		differ := 0;
+		differ32 := 0;
+		foreach (i in 0 ..< compared(f)) {
+			x := argument64(f, inout g, i)*one;
+			if (bits(fast64(f, x)) != bits(slow64(f, x))) {
+				differ += 1;
+				if (differ <= 5) { fmt.println("differs64", f, bits(x)); }
+			}
+			y := argument32(f, inout g, i)*f32(one);
+			if (bits32(fast32(f, y)) != bits32(slow32(f, y))) {
+				differ32 += 1;
+				if (differ32 <= 5) { fmt.println("differs32", f, bits32(y)); }
+			}
 		}
+		fmt.println("compared", f, compared(f), differ, differ32);
 	}
-	differ32 := 0;
-	foreach (i in 0 ..< COMPARED) {
-		x := argument_f32(inout g, i)*f32(one);
-		if (bits32(repro.exp_f32(x)) != bits32(repro.slow_exp_f32(x))) {
-			differ32 += 1;
-			if (differ32 <= 5) { fmt.println("differs32", bits32(x)); }
-		}
-	}
-	fmt.println("compared", COMPARED, differ, differ32);
 
-	CHECKED :: 2000;
-	foreach (i in 0 ..< CHECKED) {
-		x := argument(inout g, i)*one;
-		fmt.println("64", bits(x), bits(repro.exp(x)));
-		y := argument_f32(inout g, i)*f32(one);
-		fmt.println("32", bits32(y), bits32(repro.exp_f32(y)));
-		// The slow path on its own, normal results included.
-		if (i % 4 == 0) {
-			fmt.println("64", bits(x), bits(repro.slow_exp(x)));
-			fmt.println("32", bits32(y), bits32(repro.slow_exp_f32(y)));
+	CHECKED :: 1000;
+	foreach (f in [3]Function{.Exp, .Sin, .Cos}) {
+		foreach (i in 0 ..< CHECKED) {
+			x := argument64(f, inout g, i)*one;
+			fmt.println(f, 64, bits(x), bits(fast64(f, x)));
+			y := argument32(f, inout g, i)*f32(one);
+			fmt.println(f, 32, bits32(y), bits32(fast32(f, y)));
+			// The slow path on its own, normal results included.
+			if (i % 4 == 0) {
+				fmt.println(f, 64, bits(x), bits(slow64(f, x)));
+				fmt.println(f, 32, bits32(y), bits32(slow32(f, y)));
+			}
 		}
 	}
 }

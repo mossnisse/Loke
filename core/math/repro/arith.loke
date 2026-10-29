@@ -1,0 +1,84 @@
+// The double-`f64` arithmetic and the rounding decisions every function here
+// shares. Nothing here uses `fma`, so every CPU level computes the same bits
+// without software emulation; deterministic-math-and-targets-plan.md "CPU
+// targets and FMA".
+package repro;
+
+import "core:unsafe";
+
+CANONICAL_NAN_F64 :: 0x7ff8000000000000;
+CANONICAL_NAN_F32 :: 0x7fc00000;
+
+// 1.5 * 2^52: adding and subtracting it rounds a value under 2^51 to an
+// integer, ties to even.
+ROUND_SHIFTER :: 6755399441055744.0;
+// 2^27 + 1, Veltkamp's splitting constant for `f64`.
+SPLITTER :: 134217729.0;
+// 2^-66, twice the relative error the fast paths are bounded by: a result is
+// returned when both ends of h + l ± 2^-66 h round alike, which also covers
+// rounding l ± the margin itself.
+MARGIN :: 1.3552527156068805e-20;
+
+// The `f64` a constant bit pattern encodes.
+from_bits :: proc(pattern: u64) -> f64 {
+	return unsafe.transmute(f64, pattern);
+}
+
+// a + b exactly as a sum and its rounding error (Knuth).
+two_sum :: proc(a: f64, b: f64) -> (high: f64, low: f64) {
+	s := a + b;
+	bb := s - a;
+	return {s, (a - (s - bb)) + (b - bb)};
+}
+
+// The same, given |a| >= |b| (Dekker).
+fast_two_sum :: proc(a: f64, b: f64) -> (high: f64, low: f64) {
+	s := a + b;
+	return {s, b - (s - a)};
+}
+
+// a * b exactly as a product and its rounding error (Dekker), for operands
+// whose product neither overflows nor has an error below the normal range;
+// every operand here is between 2^-200 and 4.
+two_product :: proc(a: f64, b: f64) -> (high: f64, low: f64) {
+	p := a*b;
+	ta := SPLITTER*a;
+	ah := ta - (ta - a);
+	al := a - ah;
+	tb := SPLITTER*b;
+	bh := tb - (tb - b);
+	bl := b - bh;
+	return {p, ((ah*bh - p) + ah*bl + al*bh) + al*bl};
+}
+
+// 2^n for n in -1022 ..= 1023.
+power_of_two :: proc(n: int) -> f64 {
+	return unsafe.transmute(f64, u64(n + 1023) << 52);
+}
+
+abs_int :: proc(n: int) -> int {
+	if (n < 0) { return 0 - n; }
+	return n;
+}
+
+// Whether the nearest `f64` to h + l is decided within the margin, and that
+// `f64`, given h > 0 and |l| <= ulp(h).
+f64_decided :: proc(h: f64, l: f64) -> (decided: bool, value: f64) {
+	margin := h*MARGIN;
+	low := h + (l - margin);
+	return {low == h + (l + margin), low};
+}
+
+// Whether every `f64` within `ulps` of the normal y narrows to the `f32` y
+// narrows to: whether no `f32` midpoint is that close. The bits of |y| below
+// its `f32` unit, which is coarser for a subnormal result, show the distance.
+f32_decided :: proc(y: f64, ulps: u64) -> bool {
+	pattern := unsafe.transmute(u64, y) & 0x7fffffffffffffff;
+	exponent := int(pattern >> 52) - 1023;
+	significand := (pattern & 0x000fffffffffffff) | 0x0010000000000000;
+	drop := 29;
+	if (exponent < -126) { drop = 29 + (-126 - exponent); }
+	below := significand & ((u64(1) << drop) - 1);
+	half := u64(1) << (drop - 1);
+	return below + ulps < half || below > half + ulps;
+}

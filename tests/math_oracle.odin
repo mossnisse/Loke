@@ -568,7 +568,7 @@ low_bits :: proc(a: ^big.Int, count: int) -> u64 {
 // between its generated-block markers: 2^(i/128) as a pair of `f64`, the high
 // one correctly rounded and the low one the correctly rounded rest; ln 2/128
 // in three parts, the first two of 35 significant bits so a multiple by an
-// integer below 2^18 is exact; and ln 2 * 2^192, floored, as four limbs.
+// integer below 2^18 is exact; and ln 2 * 2^320, floored, as six limbs.
 exp_constants_source :: proc(o: ^Oracle) -> string {
 	context.allocator = virtual.arena_allocator(&o.arena)
 	P :: 400
@@ -609,9 +609,9 @@ exp_constants_source :: proc(o: ^Oracle) -> string {
 	fmt.sbprintf(&b, "LN2_128_HI :: 0x%016x;\n", transmute(u64)parts[0])
 	fmt.sbprintf(&b, "LN2_128_MID :: 0x%016x;\n", transmute(u64)parts[1])
 	fmt.sbprintf(&b, "LN2_128_LO :: 0x%016x;\n", transmute(u64)parts[2])
-	fixed := floor_shift(ln2.lo, P - 192)
-	strings.write_string(&b, "LN2_FIXED :: [4]u64{")
-	for limb in 0 ..< 4 {
+	fixed := floor_shift(ln2.lo, P - 320)
+	strings.write_string(&b, "LN2_FIXED :: [6]u64{")
+	for limb in 0 ..< 6 {
 		fmt.sbprintf(&b, "%s0x%016x", limb == 0 ? "" : ", ", low_bits(shift_down(fixed, 64*limb), 64))
 	}
 	strings.write_string(&b, "};\n")
@@ -663,18 +663,87 @@ rest_round :: proc(n: ^big.Int, scale: int) -> f64 {
 // An `f64` as an integer at `2^-scale`, exactly.
 @(private = "file")
 scaled_value :: proc(x: f64, scale: int) -> ^big.Int {
-	v := shift_left(int_of(significand_of(x)), scale + exponent_of(x))
+	significand, exponent := dyadic(abs(x))
+	v := shift_left(significand, scale + exponent)
 	return x < 0 ? negated(v) : v
 }
 
-@(private = "file")
-significand_of :: proc(x: f64) -> u64 {
-	significand, _ := dyadic(abs(x))
-	return low_bits(significand, 64)
+// The constants `core:math/repro`'s `sin` and `cos` are built from, as the
+// Loke source between trig.loke's generated-block markers: sin and cos of
+// j/256 for j in 0 ..= 201 as `f64` pairs, each the correctly rounded value
+// and the correctly rounded rest; pi/2 in four parts for Cody and Waite's
+// reduction, the first three of 33 bits so a multiple by an integer below
+// 2^20 is exact, and as an `f64` pair; the first 1,536 bits of 2/pi, the
+// most significant first; and pi/2 * 2^320, floored, as six limbs.
+trig_constants_source :: proc(o: ^Oracle) -> string {
+	context.allocator = virtual.arena_allocator(&o.arena)
+	P :: 2000
+	b: strings.Builder
+	strings.builder_init(&b)
+
+	strings.write_string(&b, "SIN_COS_TABLE :: [808]u64{\n")
+	r2_of :: proc(a: ^big.Int) -> Interval {
+		return Interval{shift_down(times(a, a), P), shift_up(times(a, a), P)}
+	}
+	for j in 0 ..< 202 {
+		pairs: [2][2]f64 = {{0, 0}, {1, 0}}
+		if j > 0 {
+			a := shift_left(int_of(j), P - 8)
+			r2 := r2_of(a)
+			sine := alternating_series(Interval{a, a}, r2, 2, P)
+			cosine := alternating_series(Interval{power_of_two(P), power_of_two(P)}, r2, 1, P)
+			pairs = {exact_pair(sine, P), exact_pair(cosine, P)}
+		}
+		fmt.sbprintf(
+			&b, "\t0x%016x, 0x%016x, 0x%016x, 0x%016x,\n",
+			transmute(u64)pairs[0][0], transmute(u64)pairs[0][1],
+			transmute(u64)pairs[1][0], transmute(u64)pairs[1][1],
+		)
+	}
+	strings.write_string(&b, "};\n")
+
+	half_pi := narrow(o.pi, CONSTANT_PRECISION + 1, P)
+	part := half_pi.lo
+	for index in 0 ..< 4 {
+		value := index < 3 ? split_round(part, P, 33) : split_round(part, P, 53)
+		fmt.sbprintf(&b, "PIO2_%d :: 0x%016x;\n", index + 1, transmute(u64)value)
+		part = minus(part, scaled_value(value, P))
+	}
+	pair := exact_pair(half_pi, P)
+	fmt.sbprintf(&b, "PIO2_HI :: 0x%016x;\n", transmute(u64)pair[0])
+	fmt.sbprintf(&b, "PIO2_LO :: 0x%016x;\n", transmute(u64)pair[1])
+
+	// floor(2/pi * 2^1536) from both ends of pi's interval, which agree.
+	pi := narrow(o.pi, CONSTANT_PRECISION, P)
+	numerator := power_of_two(1537 + P)
+	two_over_pi := divide_down(numerator, pi.hi)
+	if compare(two_over_pi, divide_down(numerator, pi.lo)) != 0 {
+		panic("2/pi needs more bits of pi")
+	}
+	strings.write_string(&b, "TWO_OVER_PI :: [24]u64{\n")
+	for word in 0 ..< 24 {
+		fmt.sbprintf(&b, "%s0x%016x,%s", word % 4 == 0 ? "\t" : " ", low_bits(shift_down(two_over_pi, 1536 - 64*(word + 1)), 64), word % 4 == 3 ? "\n" : "")
+	}
+	strings.write_string(&b, "};\n")
+
+	wide := narrow(half_pi, P, 320)
+	if compare(wide.lo, wide.hi) != 0 && compare(plus(wide.lo, int_of(1)), wide.hi) != 0 {
+		panic("pi/2 needs more bits")
+	}
+	strings.write_string(&b, "PIO2_WIDE :: [6]u64{")
+	for limb in 0 ..< 6 {
+		fmt.sbprintf(&b, "%s0x%016x", limb == 0 ? "" : ", ", low_bits(shift_down(wide.lo, 64*limb), 64))
+	}
+	strings.write_string(&b, "};\n")
+	return strings.to_string(b)
 }
 
+// An interval's value as an `f64` pair, which both ends must give.
 @(private = "file")
-exponent_of :: proc(x: f64) -> int {
-	_, exponent := dyadic(abs(x))
-	return exponent
+exact_pair :: proc(v: Interval, scale: int) -> [2]f64 {
+	low_end, high_end := split_pair(v.lo, scale), split_pair(v.hi, scale)
+	if low_end != high_end {
+		panic("a constant needs more bits to round")
+	}
+	return low_end
 }

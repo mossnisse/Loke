@@ -1,6 +1,5 @@
 // deterministic-math-and-targets-plan.md "Reproducible result contract": `exp`
-// in both widths, from `+ - * /` alone, with no `fma`, so every CPU level
-// computes the same bits without software emulation.
+// in both widths.
 //
 // The fast path writes x = (128m + i) ln 2/128 + r with |r| <= ln 2/256, and
 // e^x = 2^m 2^(i/128) e^r, with 2^(i/128) from a table of `f64` pairs and e^r
@@ -25,61 +24,19 @@
 // A result is returned when both ends of h + l ± 2^-66 h round alike, twice
 // the bound, which also covers rounding l ± the bound itself. Otherwise, and
 // for the results that could be subnormal, the slow path recomputes e^x in
-// 192-bit fixed point and rounds that. No binary64 argument of exp is known
+// 320-bit fixed point and rounds that. No binary64 argument of exp is known
 // to need more than about 2^-120 relative accuracy to round correctly
 // (Lefèvre and Muller's exhaustive searches), and the slow path's error is
-// under 2^-175, so it rounds every argument correctly; `tests/repro_test.odin`
+// under 2^-300, so it rounds every argument correctly; `tests/repro_test.odin`
 // checks both paths against an independent oracle.
 package repro;
 
 import "core:unsafe";
 
-CANONICAL_NAN_F64 :: 0x7ff8000000000000;
-CANONICAL_NAN_F32 :: 0x7fc00000;
-
 // 128/ln 2 and 1/ln 2, to choose k; any rounding of them works, since the
 // reduction itself uses the split constants.
 INV_LN2_128 :: 184.6649652337873;
 INV_LN2     :: 1.4426950408889634;
-// 1.5 * 2^52: adding and subtracting it rounds a value under 2^51 to an
-// integer, ties to even.
-ROUND_SHIFTER :: 6755399441055744.0;
-// 2^27 + 1, Veltkamp's splitting constant for `f64`.
-SPLITTER :: 134217729.0;
-// 2^-66, the fast path's decision margin.
-MARGIN :: 1.3552527156068805e-20;
-
-// a + b exactly as a sum and its rounding error (Knuth).
-two_sum :: proc(a: f64, b: f64) -> (sum: f64, error: f64) {
-	s := a + b;
-	bb := s - a;
-	return {s, (a - (s - bb)) + (b - bb)};
-}
-
-// The same, given |a| >= |b| (Dekker).
-fast_two_sum :: proc(a: f64, b: f64) -> (sum: f64, error: f64) {
-	s := a + b;
-	return {s, b - (s - a)};
-}
-
-// a * b exactly as a product and its rounding error (Dekker), for operands
-// whose product neither overflows nor has an error below the normal range;
-// every operand here is between 2^-80 and 4.
-two_product :: proc(a: f64, b: f64) -> (product: f64, error: f64) {
-	p := a*b;
-	ta := SPLITTER*a;
-	ah := ta - (ta - a);
-	al := a - ah;
-	tb := SPLITTER*b;
-	bh := tb - (tb - b);
-	bl := b - bh;
-	return {p, ((ah*bh - p) + ah*bl + al*bh) + al*bl};
-}
-
-// 2^n for n in -1022 ..= 1023.
-power_of_two :: proc(n: int) -> f64 {
-	return unsafe.transmute(f64, u64(n + 1023) << 52);
-}
 
 // x = k ln 2/128 + r, and 2^(i/128) e^r as h + l, |l| <= ulp(h)/2, for |x|
 // under 746, where i is k's low seven bits.
@@ -108,12 +65,11 @@ exp_kernel :: proc(x: f64) -> (k: int, high: f64, low: f64) {
 exp_f64_of :: proc(x: f64) -> f64 {
 	k, h, l := exp_kernel(x);
 	m := k >> 7;
-	margin := h*MARGIN;
-	low := h + (l - margin);
-	if (m >= -1021 && low == h + (l + margin)) {
+	decided, y := f64_decided(h, l);
+	if (decided && m >= -1021) {
 		// Exact scalings: the result is normal, and h + l is in [0.99, 2.01).
-		if (m <= 1023) { return low*power_of_two(m); }
-		return low*power_of_two(1023)*2.0;
+		if (m <= 1023) { return y*power_of_two(m); }
+		return y*power_of_two(1023)*2.0;
 	}
 	return unsafe.transmute(f64, exp_slow(x, F64_LAYOUT));
 }
@@ -142,36 +98,11 @@ exp_f32_of :: proc(x: f64) -> f32 {
 	return unsafe.transmute(f32, u32(exp_slow(x, F32_LAYOUT)));
 }
 
-// Whether every `f64` within `ulps` of the normal y narrows to the `f32` y
-// narrows to: whether no `f32` midpoint is that close. The bits of y below
-// its `f32` unit, which is coarser for a subnormal result, show the distance.
-f32_decided :: proc(y: f64, ulps: u64) -> bool {
-	pattern := unsafe.transmute(u64, y);
-	exponent := int(pattern >> 52) - 1023;
-	significand := (pattern & 0x000fffffffffffff) | 0x0010000000000000;
-	drop := 29;
-	if (exponent < -126) { drop = 29 + (-126 - exponent); }
-	below := significand & ((u64(1) << drop) - 1);
-	half := u64(1) << (drop - 1);
-	return below + ulps < half || below > half + ulps;
-}
-
-// A binary format's significand bits, the leading one included, and its
-// smallest normal exponent and bias.
-Float_Layout :: struct {
-	precision:    int,
-	min_exponent: int,
-	bias:         int,
-}
-
-F64_LAYOUT :: Float_Layout{precision = 53, min_exponent = -1022, bias = 1023};
-F32_LAYOUT :: Float_Layout{precision = 24, min_exponent = -126, bias = 127};
-
 // e^x correctly rounded to `layout`, as its bit pattern, from fixed-point
-// arithmetic with 192 fraction bits: x = k ln 2 + r with r in [ln 2/2, 3 ln
-// 2/2], e^r = (e^(r/256))^256, and e^(r/256) from its Taylor series. Each
-// operation truncates, by under 2^-192; the 256th power multiplies the
-// relative error by 256, which leaves it under 2^-175.
+// arithmetic: x = k ln 2 + r with r in [ln 2/2, 3 ln 2/2], e^r =
+// (e^(r/256))^256, and e^(r/256) from its Taylor series. Each operation
+// truncates, by under 2^-320; the 256th power multiplies the relative error by
+// 256, which leaves it under 2^-300.
 exp_slow :: proc(x: f64, layout: Float_Layout) -> u64 {
 	k := int((x*INV_LN2 + ROUND_SHIFTER) - ROUND_SHIFTER) - 1;
 	ax := x;
@@ -187,173 +118,15 @@ exp_slow :: proc(x: f64, layout: Float_Layout) -> u64 {
 		r = fixed_minus(scaled, multiple);
 	}
 	small := fixed_shift_down(r, 8);
-	sum: Fixed = {0, 0, 0, 1};
-	term: Fixed = {0, 0, 0, 1};
+	sum := FIXED_ONE;
+	term := FIXED_ONE;
 	for (n: u64 = 1; ; n += 1) {
 		term = fixed_divided_small(fixed_times(term, small), n);
 		if (fixed_is_zero(term)) { break; }
 		sum = fixed_plus(sum, term);
 	}
 	foreach (_ in 0 ..< 8) { sum = fixed_times(sum, sum); }
-	return fixed_round(sum, k - 192, layout);
-}
-
-abs_int :: proc(n: int) -> int {
-	if (n < 0) { return 0 - n; }
-	return n;
-}
-
-// A non-negative fixed-point value: limbs, least significant first, of an
-// integer that is the value times 2^192, so the last limb is the integer part.
-Fixed :: [4]u64;
-
-// A positive finite `f64` times 2^192, truncated.
-fixed_of :: proc(x: f64) -> Fixed {
-	pattern := unsafe.transmute(u64, x);
-	biased := int(pattern >> 52);
-	significand := pattern & 0x000fffffffffffff;
-	exponent := -1074;
-	if (biased != 0) {
-		significand |= 0x0010000000000000;
-		exponent = biased - 1075;
-	}
-	result: Fixed = {};
-	position := exponent + 192;
-	if (position < 0) {
-		if (position > -64) { result[0] = significand >> (0 - position); }
-		return result;
-	}
-	limb := position / 64;
-	bit := position % 64;
-	result[limb] = significand << bit;
-	if (bit != 0 && limb < 3) { result[limb + 1] = significand >> (64 - bit); }
-	return result;
-}
-
-fixed_plus :: proc(a: Fixed, b: Fixed) -> Fixed {
-	result: Fixed = {};
-	carry: u128 = 0;
-	foreach (i in 0 ..< 4) {
-		t := u128(a[i]) + u128(b[i]) + carry;
-		result[i] = u64(t & 0xffffffffffffffff);
-		carry = t >> 64;
-	}
-	return result;
-}
-
-// a - b for a >= b.
-fixed_minus :: proc(a: Fixed, b: Fixed) -> Fixed {
-	result: Fixed = {};
-	borrow: u128 = 0;
-	foreach (i in 0 ..< 4) {
-		t := (u128(a[i]) | (u128(1) << 64)) - u128(b[i]) - borrow;
-		result[i] = u64(t & 0xffffffffffffffff);
-		borrow = 1 - (t >> 64);
-	}
-	return result;
-}
-
-// a * b / 2^192, truncated, for a and b below 2^32 (16 here); no partial
-// sum overflows, (2^64 - 1)^2 + 2 (2^64 - 1) being 2^128 - 1.
-fixed_times :: proc(a: Fixed, b: Fixed) -> Fixed {
-	p: [8]u64 = {};
-	foreach (i in 0 ..< 4) {
-		carry: u128 = 0;
-		foreach (j in 0 ..< 4) {
-			t := u128(a[i]) *% u128(b[j]) +% u128(p[i + j]) +% carry;
-			p[i + j] = u64(t & 0xffffffffffffffff);
-			carry = t >> 64;
-		}
-		p[i + 4] = u64(carry);
-	}
-	return {p[3], p[4], p[5], p[6]};
-}
-
-fixed_times_small :: proc(a: Fixed, n: u64) -> Fixed {
-	result: Fixed = {};
-	carry: u128 = 0;
-	foreach (i in 0 ..< 4) {
-		t := u128(a[i]) *% u128(n) +% carry;
-		result[i] = u64(t & 0xffffffffffffffff);
-		carry = t >> 64;
-	}
-	return result;
-}
-
-// a / n, truncated, for n > 0.
-fixed_divided_small :: proc(a: Fixed, n: u64) -> Fixed {
-	result: Fixed = {};
-	rest: u128 = 0;
-	foreach (step in 0 ..< 4) {
-		i := 3 - step;
-		current := (rest << 64) | u128(a[i]);
-		result[i] = u64(current / u128(n));
-		rest = current % u128(n);
-	}
-	return result;
-}
-
-// a / 2^count, truncated, for count in 1 ..< 64.
-fixed_shift_down :: proc(a: Fixed, count: int) -> Fixed {
-	result: Fixed = {};
-	foreach (i in 0 ..< 3) {
-		result[i] = (a[i] >> count) | (a[i + 1] << (64 - count));
-	}
-	result[3] = a[3] >> count;
-	return result;
-}
-
-fixed_is_zero :: proc(a: Fixed) -> bool {
-	return (a[0] | a[1] | a[2] | a[3]) == 0;
-}
-
-// The bit at `position` of the integer a.
-fixed_bit :: proc(a: Fixed, position: int) -> u64 {
-	if (position < 0 || position >= 256) { return 0; }
-	return (a[position / 64] >> (position % 64)) & 1;
-}
-
-// Whether any bit of a below `position` is set.
-fixed_any_below :: proc(a: Fixed, position: int) -> bool {
-	foreach (i in 0 ..< 4) {
-		if (64*i + 64 <= position) {
-			if (a[i] != 0) { return true; }
-		} else if (64*i < position) {
-			if (a[i] & ((u64(1) << (position - 64*i)) - 1) != 0) { return true; }
-		}
-	}
-	return false;
-}
-
-// The pattern of the float of `layout` nearest a * 2^exponent, for a > 0,
-// ties to even, rounded once at its own last place; past the largest finite
-// value, infinity.
-fixed_round :: proc(a: Fixed, exponent: int, layout: Float_Layout) -> u64 {
-	top := 255;
-	for (fixed_bit(a, top) == 0) { top -= 1; }
-	leading := top + exponent;
-	unit := leading;
-	if (unit < layout.min_exponent) { unit = layout.min_exponent; }
-	unit -= layout.precision - 1;
-	// Every bit of a below `drop` goes; `drop` is over 100 here.
-	drop := unit - exponent;
-	kept: u64 = 0;
-	foreach (i in 0 ..< layout.precision + 1) {
-		kept |= fixed_bit(a, drop + i) << i;
-	}
-	if (fixed_bit(a, drop - 1) == 1 && (fixed_any_below(a, drop - 1) || kept & 1 == 1)) {
-		kept += 1;
-	}
-	if (kept == u64(1) << layout.precision) {
-		kept >>= 1;
-		unit += 1;
-	}
-	if (kept < u64(1) << (layout.precision - 1)) { return kept; }
-	biased := unit + layout.precision - 1 + layout.bias;
-	if (biased >= 2*layout.bias + 1) {
-		return u64(2*layout.bias + 1) << (layout.precision - 1);
-	}
-	return (u64(biased) << (layout.precision - 1)) | (kept - (u64(1) << (layout.precision - 1)));
+	return fixed_round(sum, k - FRACTION_BITS, layout);
 }
 
 // Generated by `exp_constants_source` in tests/math_oracle.odin, which
@@ -492,5 +265,5 @@ EXP_TABLE :: [256]u64{
 LN2_128_HI :: 0x3f762e42fefc0000;
 LN2_128_MID :: 0xbd3c610ca86c0000;
 LN2_128_LO :: 0xbacc4c67fc0d0951;
-LN2_FIXED :: [4]u64{0x40f343267298b62d, 0xc9e3b39803f2f6af, 0xb17217f7d1cf79ab, 0x0000000000000000};
+LN2_FIXED :: [6]u64{0xe7b876206debac98, 0x8a0d175b8baafa2b, 0x40f343267298b62d, 0xc9e3b39803f2f6af, 0xb17217f7d1cf79ab, 0x0000000000000000};
 // END GENERATED

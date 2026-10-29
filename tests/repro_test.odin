@@ -9,38 +9,44 @@ import "core:strconv"
 import "core:strings"
 import "core:testing"
 
-// The constants in core/math/repro/exp.loke are what the oracle derives.
+// The constants in core/math/repro are what the oracle derives.
 @(test)
 repro_constants_match_their_derivation :: proc(t: ^testing.T) {
 	o: Oracle
 	oracle_init(&o)
 	defer oracle_destroy(&o)
-	source, err := os.read_entire_file("core/math/repro/exp.loke", context.allocator)
-	if !testing.expect(t, err == nil, "cannot read core/math/repro/exp.loke") {
+	check_generated_block(t, "core/math/repro/exp.loke", exp_constants_source(&o))
+	check_generated_block(t, "core/math/repro/trig.loke", trig_constants_source(&o))
+}
+
+@(private = "file")
+check_generated_block :: proc(t: ^testing.T, path: string, expected: string) {
+	source, err := os.read_entire_file(path, context.allocator)
+	if !testing.expectf(t, err == nil, "cannot read %s", path) {
 		return
 	}
 	text := strings.replace_all(string(source), "\r\n", "\n") or_else string(source)
 	BEGIN :: "// BEGIN GENERATED\n"
 	start := strings.index(text, BEGIN)
 	end := strings.index(text, "// END GENERATED")
-	if !testing.expect(t, start >= 0 && end > start, "core/math/repro/exp.loke has no generated block") {
+	if !testing.expectf(t, start >= 0 && end > start, "%s has no generated block", path) {
 		return
 	}
-	expected := exp_constants_source(&o)
 	testing.expectf(
 		t,
 		text[start + len(BEGIN):end] == expected,
-		"core/math/repro/exp.loke's generated block is stale; it should read:\n%s",
+		"%s's generated block is stale; it should read:\n%s",
+		path,
 		expected,
 	)
 }
 
-// The package's `exp` and `exp_f32` agree with their slow path, which the
-// probe reaches through a copy of the package with tests/repro/probe_hook.loke
+// The package's functions agree with their slow paths, which the probe
+// reaches through a copy of the package with tests/repro/probe_hook.loke
 // added, over seeded arguments, and with the oracle over a sample of them.
 // The constants the probe folds agree with the same calls at run time.
 @(test)
-repro_exp_rounds_correctly :: proc(t: ^testing.T) {
+repro_functions_round_correctly :: proc(t: ^testing.T) {
 	root := fmt.tprintf("%s/repro_probe", TMP)
 	dir := fmt.tprintf("%s/repro", root)
 	os.make_directory(TMP)
@@ -73,7 +79,7 @@ repro_exp_rounds_correctly :: proc(t: ^testing.T) {
 	o: Oracle
 	oracle_init(&o)
 	defer oracle_destroy(&o)
-	checked := 0
+	checked, constants := 0, 0
 	text := string(stdout)
 	for line in strings.split_lines_iterator(&text) {
 		fields := strings.fields(strings.trim_space(line), context.temp_allocator)
@@ -82,24 +88,28 @@ repro_exp_rounds_correctly :: proc(t: ^testing.T) {
 		}
 		switch fields[0] {
 		case "constant":
-			testing.expectf(t, strings.trim_space(line) == "constant true true true true", "a folded exp differs from the run-time call: %s", line)
+			testing.expectf(t, !strings.contains(line, "false"), "a folded call differs from the run-time call: %s", line)
+			constants += len(fields) - 1
 		case "compared":
-			testing.expectf(t, len(fields) == 4 && fields[2] == "0" && fields[3] == "0", "the fast path differs from the slow path: %s", line)
+			testing.expectf(t, len(fields) == 5 && fields[3] == "0" && fields[4] == "0", "a fast path differs from its slow path: %s", line)
 		case "differs64", "differs32":
-			testing.expectf(t, false, "the fast path differs from the slow path at %s", line)
-		case "64", "32":
-			x, _ := strconv.parse_u64(fields[1])
-			got, _ := strconv.parse_u64(fields[2])
+			testing.expectf(t, false, "a fast path differs from its slow path at %s", line)
+		case "Exp", "Sin", "Cos":
+			function := Oracle_Function.Exp
+			if fields[0] == "Sin" {function = .Sin}
+			if fields[0] == "Cos" {function = .Cos}
+			x, _ := strconv.parse_u64(fields[2])
+			got, _ := strconv.parse_u64(fields[3])
 			argument := transmute(f64)x
 			format := F64_FORMAT
-			if fields[0] == "32" {
+			if fields[1] == "32" {
 				argument = f64(transmute(f32)u32(x))
 				format = F32_FORMAT
 			}
-			want := oracle_eval(&o, .Exp, argument, format)
-			testing.expectf(t, got == want, "exp at f%s of %v: got %x, the oracle %x", fields[0], argument, got, want)
+			want := oracle_eval(&o, function, argument, format)
+			testing.expectf(t, got == want, "%s at f%s of %v: got %x, the oracle %x", fields[0], fields[1], argument, got, want)
 			checked += 1
 		}
 	}
-	testing.expectf(t, checked == 5000, "the probe printed %d checked results", checked)
+	testing.expectf(t, checked == 7504 && constants == 12, "the probe printed %d checked results and %d constants", checked, constants)
 }

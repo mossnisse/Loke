@@ -738,11 +738,17 @@ call and 36 ns per dependent one for `f64`, against the UCRT's 4.9 and 16 ns
 on its FMA3 path and 6.3 and 18 ns on its legacy path, the same at
 `-cpu=x86-64-v3`; `exp_f32` 18 ns against 4.1 and 4.5. It uses no `fma`: the
 one exact product it needs is Dekker's, which gives the instruction's bits.
-By its margin, about one argument in 4,000 takes the 192-bit fixed-point slow
-path, 1.4 µs, as does every argument whose result could be subnormal. The estimate below
-was optimistic by about two: the time is in the dependent double-`f64` steps,
-not in calls or checks, once the frame pops a returning procedure made are
-gone (they took a third of it). A table twice as large, a lower-degree
+By its margin, about one argument in 4,000 takes the fixed-point slow path,
+4 µs at 320 bits, as does every argument whose result could be subnormal.
+`sin` and `cos`, measured the same way over arguments within ±700, take 36
+ns per independent call against the UCRT's 7.0 to 7.4 on its FMA3 path and
+9.7 on its legacy one, and 30 ns per dependent call against 9 to 11;
+`sin_f32` takes 49 ns against 6.7 and 8.2. Their slow path also takes 4 µs:
+on a grid of 1,024 `f32` values, the 2 that went there added 8 ns to `sin`'s
+average. The estimate below was optimistic by two to three times: the time
+is in the dependent double-`f64` steps, not in calls or checks, once the
+frame pops a returning procedure made are gone (they took a third of `exp`'s
+time). A table twice as large, a lower-degree
 polynomial, and Estrin's scheme are the next things to try, and `fma` where
 the CPU level has it.
 

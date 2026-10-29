@@ -1,0 +1,189 @@
+// The slow paths' fixed-point arithmetic: a non-negative value as six 64-bit
+// limbs, least significant first, of an integer that is the value times
+// 2^320, so the last limb is the integer part. Each operation truncates, by
+// under 2^-320.
+package repro;
+
+import "core:unsafe";
+
+Fixed :: [6]u64;
+
+FRACTION_BITS :: 320;
+
+FIXED_ONE :: Fixed{0, 0, 0, 0, 0, 1};
+
+LOW_64 :: u128(0xffffffffffffffff);
+
+// A binary format's width, its significand bits, the leading one included,
+// and its smallest normal exponent and bias.
+Float_Layout :: struct {
+	width:        int,
+	precision:    int,
+	min_exponent: int,
+	bias:         int,
+}
+
+F64_LAYOUT :: Float_Layout{width = 64, precision = 53, min_exponent = -1022, bias = 1023};
+F32_LAYOUT :: Float_Layout{width = 32, precision = 24, min_exponent = -126, bias = 127};
+
+// A positive finite `f64` times 2^320, truncated.
+fixed_of :: proc(x: f64) -> Fixed {
+	pattern := unsafe.transmute(u64, x);
+	biased := int(pattern >> 52);
+	significand := pattern & 0x000fffffffffffff;
+	exponent := -1074;
+	if (biased != 0) {
+		significand |= 0x0010000000000000;
+		exponent = biased - 1075;
+	}
+	result: Fixed = {};
+	position := exponent + FRACTION_BITS;
+	if (position < 0) {
+		if (position > -64) { result[0] = significand >> (0 - position); }
+		return result;
+	}
+	limb := position / 64;
+	bit := position % 64;
+	result[limb] = significand << bit;
+	if (bit != 0 && limb < 5) { result[limb + 1] = significand >> (64 - bit); }
+	return result;
+}
+
+fixed_plus :: proc(a: Fixed, b: Fixed) -> Fixed {
+	result: Fixed = {};
+	carry: u128 = 0;
+	foreach (i in 0 ..< 6) {
+		t := u128(a[i]) + u128(b[i]) + carry;
+		result[i] = u64(t & LOW_64);
+		carry = t >> 64;
+	}
+	return result;
+}
+
+// a - b for a >= b.
+fixed_minus :: proc(a: Fixed, b: Fixed) -> Fixed {
+	result: Fixed = {};
+	borrow: u128 = 0;
+	foreach (i in 0 ..< 6) {
+		t := (u128(a[i]) | (u128(1) << 64)) - u128(b[i]) - borrow;
+		result[i] = u64(t & LOW_64);
+		borrow = 1 - (t >> 64);
+	}
+	return result;
+}
+
+// a * b / 2^320, truncated, for a and b below 2^32 (16 here); no partial
+// sum overflows, (2^64 - 1)^2 + 2 (2^64 - 1) being 2^128 - 1.
+fixed_times :: proc(a: Fixed, b: Fixed) -> Fixed {
+	p: [12]u64 = {};
+	foreach (i in 0 ..< 6) {
+		carry: u128 = 0;
+		foreach (j in 0 ..< 6) {
+			t := u128(a[i]) *% u128(b[j]) +% u128(p[i + j]) +% carry;
+			p[i + j] = u64(t & LOW_64);
+			carry = t >> 64;
+		}
+		p[i + 6] = u64(carry);
+	}
+	return {p[5], p[6], p[7], p[8], p[9], p[10]};
+}
+
+fixed_times_small :: proc(a: Fixed, n: u64) -> Fixed {
+	result: Fixed = {};
+	carry: u128 = 0;
+	foreach (i in 0 ..< 6) {
+		t := u128(a[i]) *% u128(n) +% carry;
+		result[i] = u64(t & LOW_64);
+		carry = t >> 64;
+	}
+	return result;
+}
+
+// a / n, truncated, for n > 0.
+fixed_divided_small :: proc(a: Fixed, n: u64) -> Fixed {
+	result: Fixed = {};
+	rest: u128 = 0;
+	foreach (step in 0 ..< 6) {
+		i := 5 - step;
+		current := (rest << 64) | u128(a[i]);
+		result[i] = u64(current / u128(n));
+		rest = current % u128(n);
+	}
+	return result;
+}
+
+// a / 2^count, truncated, for count in 1 ..< 64.
+fixed_shift_down :: proc(a: Fixed, count: int) -> Fixed {
+	result: Fixed = {};
+	foreach (i in 0 ..< 5) {
+		result[i] = (a[i] >> count) | (a[i + 1] << (64 - count));
+	}
+	result[5] = a[5] >> count;
+	return result;
+}
+
+fixed_is_zero :: proc(a: Fixed) -> bool {
+	return (a[0] | a[1] | a[2] | a[3] | a[4] | a[5]) == 0;
+}
+
+// The `count` bits of the integer a from `position` up, count <= 64; bits
+// below 0 or above the top are zero.
+fixed_field :: proc(a: Fixed, position: int, count: int) -> u64 {
+	result: u64 = 0;
+	foreach (i in 0 ..< count) {
+		p := position + i;
+		if (p >= 0 && p < 384) { result |= ((a[p / 64] >> (p % 64)) & 1) << i; }
+	}
+	return result;
+}
+
+// The position of a's highest set bit, or -1 for zero.
+fixed_top_bit :: proc(a: Fixed) -> int {
+	foreach (step in 0 ..< 6) {
+		i := 5 - step;
+		if (a[i] != 0) {
+			top := 63;
+			for ((a[i] >> top) == 0) { top -= 1; }
+			return 64*i + top;
+		}
+	}
+	return -1;
+}
+
+// Whether any bit of a below `position` is set.
+fixed_any_below :: proc(a: Fixed, position: int) -> bool {
+	foreach (i in 0 ..< 6) {
+		if (64*i + 64 <= position) {
+			if (a[i] != 0) { return true; }
+		} else if (64*i < position) {
+			if (a[i] & ((u64(1) << (position - 64*i)) - 1) != 0) { return true; }
+		}
+	}
+	return false;
+}
+
+// The pattern of the float of `layout` nearest a * 2^exponent, for a > 0,
+// ties to even, rounded once at its own last place; past the largest finite
+// value, infinity.
+fixed_round :: proc(a: Fixed, exponent: int, layout: Float_Layout) -> u64 {
+	leading := fixed_top_bit(a) + exponent;
+	unit := leading;
+	if (unit < layout.min_exponent) { unit = layout.min_exponent; }
+	unit -= layout.precision - 1;
+	// Every bit of a below `drop` goes; `drop` is over 100 here.
+	drop := unit - exponent;
+	kept := fixed_field(a, drop, layout.precision + 1);
+	if (fixed_field(a, drop - 1, 1) == 1 && (fixed_any_below(a, drop - 1) || kept & 1 == 1)) {
+		kept += 1;
+	}
+	if (kept == u64(1) << layout.precision) {
+		kept >>= 1;
+		unit += 1;
+	}
+	if (kept < u64(1) << (layout.precision - 1)) { return kept; }
+	biased := unit + layout.precision - 1 + layout.bias;
+	if (biased >= 2*layout.bias + 1) {
+		return u64(2*layout.bias + 1) << (layout.precision - 1);
+	}
+	return (u64(biased) << (layout.precision - 1)) | (kept - (u64(1) << (layout.precision - 1)));
+}

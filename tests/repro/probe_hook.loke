@@ -13,3 +13,29 @@ slow_exp :: proc(x: f64) -> f64 {
 slow_exp_f32 :: proc(x: f32) -> f32 {
 	return unsafe.transmute(f32, u32(exp_slow(f64(x), F32_LAYOUT)));
 }
+
+@(public)
+slow_sin :: proc(x: f64) -> f64 { return slow_trig(x, false); }
+
+@(public)
+slow_cos :: proc(x: f64) -> f64 { return slow_trig(x, true); }
+
+@(public)
+slow_sin_f32 :: proc(x: f32) -> f32 { return slow_trig_f32(x, false); }
+
+@(public)
+slow_cos_f32 :: proc(x: f32) -> f32 { return slow_trig_f32(x, true); }
+
+// The public procedures' tiny-argument and special cases come first; past
+// them the slow path is the whole answer.
+slow_trig :: proc(x: f64, want_cos: bool) -> f64 {
+	ax := x;
+	if (x < 0.0) { ax = 0.0 - x; }
+	return unsafe.transmute(f64, trig_slow(ax, want_cos, !want_cos && x < 0.0, F64_LAYOUT));
+}
+
+slow_trig_f32 :: proc(x: f32, want_cos: bool) -> f32 {
+	ax := f64(x);
+	if (x < f32(0.0)) { ax = 0.0 - f64(x); }
+	return unsafe.transmute(f32, u32(trig_slow(ax, want_cos, !want_cos && x < f32(0.0), F32_LAYOUT)));
+}

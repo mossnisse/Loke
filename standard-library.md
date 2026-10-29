@@ -2345,11 +2345,16 @@ call is evaluated at compile time. No procedure calls the C library or uses
 is the positive quiet NaN with no payload (`0x7ff8000000000000`,
 `0x7fc00000`), whatever NaN produced it.
 
-The package has `exp` and `exp_f32`, with the `f64` and `_f32` naming of
-`core:math`. A function missing here is not provided by falling back to
-`core:math`. `exp` of NaN is NaN, of +Inf is +Inf, of -Inf is +0, and of ±0
-is exactly 1. `exp_f32` is rounded once to `f32`, not `exp` narrowed, which
-could round twice.
+The package has `exp`, `sin`, and `cos`, each with the `f64` and `_f32`
+naming of `core:math`. A function missing here is not provided by falling
+back to `core:math`. Each `_f32` procedure is rounded once to `f32`, not the
+`f64` one narrowed, which could round twice.
+
+- `exp` of NaN is NaN, of +Inf is +Inf, of -Inf is +0, and of ±0 is exactly
+  1.
+- `sin` and `cos` take radians. Every finite argument is reduced by an exact
+  multiple of pi/2, however large. NaN and ±Inf give NaN; `sin(±0)` is ±0 and
+  `cos(±0)` is exactly 1, and `sin(-x)` is `-sin(x)`.
 
 The plan for the rest of the package, and its special cases for further
 functions, is in the
