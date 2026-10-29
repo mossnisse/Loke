@@ -375,3 +375,75 @@ oracle_atan2_agrees_with_a_library_almost_always :: proc(t: ^testing.T) {
 		testing.expectf(t, differ <= allowed, "atan2 at %v: %d of %d differ from the library", format, differ, CASES)
 	}
 }
+
+// hypot's results fixed by other means: exact ones, among them Pythagorean
+// triples whose hypotenuse, 54 or 25 bits and odd, is a midpoint that
+// rounds to even; one far below the larger argument, which it rounds to;
+// subnormal ones; overflow; and the special cases.
+@(test)
+oracle_hypot_matches_known_results :: proc(t: ^testing.T) {
+	Known :: struct {
+		x, y:    f64,
+		format:  Float_Format,
+		pattern: u64,
+	}
+	nan := math.nan_f64()
+	inf := math.inf_f64(1)
+	smallest := 4.9406564584124654e-324
+	known := []Known {
+		{3, 4, F64_FORMAT, transmute(u64)f64(5)},
+		{-3, 4, F32_FORMAT, u64(transmute(u32)f32(5))},
+		{7006394575843381, 7006394850613860, F64_FORMAT, transmute(u64)f64(9908538426787068)},
+		{7006395311559277, -7006395155357364, F64_FORMAT, transmute(u64)f64(9908539162502964)},
+		{13013847, 13025704, F32_FORMAT, u64(transmute(u32)f32(18412744))},
+		{1e300, 1, F64_FORMAT, transmute(u64)f64(1e300)},
+		{3*smallest, 4*smallest, F64_FORMAT, 5},
+		{smallest, smallest, F64_FORMAT, 1},
+		{1.7976931348623157e308, 1.7976931348623157e308, F64_FORMAT, 0x7ff0000000000000},
+		{2, 0, F64_FORMAT, transmute(u64)f64(2)},
+		{0, math.copy_sign(f64(0), -1), F64_FORMAT, 0},
+		{inf, nan, F64_FORMAT, 0x7ff0000000000000},
+		{nan, math.inf_f64(-1), F32_FORMAT, 0x7f800000},
+		{nan, 1, F64_FORMAT, 0x7ff8000000000000},
+		{0, nan, F32_FORMAT, 0x7fc00000},
+	}
+	for k in known {
+		got := oracle_hypot(k.x, k.y, k.format)
+		testing.expectf(t, got == k.pattern, "hypot(%v, %v) at %v: expected %x, got %x", k.x, k.y, k.format, k.pattern, got)
+	}
+}
+
+// hypot against the C library's, which is within an ulp, over arguments of
+// every relative scale. The UCRT's `f64` hypot is an ulp off in about an
+// eighth of these, where an exact integer square root in Python and Python's
+// own `math.hypot` agree with the oracle, so a fifth may differ there.
+@(test)
+oracle_hypot_agrees_with_a_library_almost_always :: proc(t: ^testing.T) {
+	state: u64 = 0x3c6ef372fe94f82b
+	for format in ([]Float_Format{F64_FORMAT, F32_FORMAT}) {
+		differ := 0
+		CASES :: 400
+		for _ in 0 ..< CASES {
+			state = state*6364136223846793005 + 1442695040888963407
+			x := math.ldexp(f64(i64(state >> 11) % 2000000) / 1000 - 1000, int(state % 61) - 30)
+			state = state*6364136223846793005 + 1442695040888963407
+			y := math.ldexp(f64(i64(state >> 11) % 2000000) / 1000 - 1000, int(state % 61) - 30)
+			library, got: u64
+			if format == F32_FORMAT {
+				x32, y32 := f32(x), f32(y)
+				x, y = f64(x32), f64(y32)
+				library = u64(transmute(u32)libc.hypotf(x32, y32))
+			} else {
+				library = transmute(u64)libc.hypot(x, y)
+			}
+			got = oracle_hypot(x, y, format)
+			distance := got > library ? got - library : library - got
+			if distance != 0 {
+				differ += 1
+			}
+			testing.expectf(t, distance <= 1, "hypot(%v, %v) at %v: oracle %x, library %x", x, y, format, got, library)
+		}
+		allowed := format == F64_FORMAT ? CASES/5 : CASES/20
+		testing.expectf(t, differ <= allowed, "hypot at %v: %d of %d differ from the library", format, differ, CASES)
+	}
+}

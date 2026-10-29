@@ -778,7 +778,10 @@ same reduction. `log2` and `log10`, over arguments from 2^-32 to 2^32,
 take 38 to 39 ns per independent call and 54 per dependent one against the
 UCRT's 8.9 and 27 for `log2` and 5.9 and 14 for `log10` on its FMA3 path,
 and 9.9 and 26 and 6.0 and 16 on its legacy one, `log2_f32` and `log10_f32`
-17 and 20 ns against 3.2 to 4.6, and their slow path 6.7 µs. Why
+17 and 20 ns against 3.2 to 4.6, and their slow path 6.7 µs. `hypot`, over
+x and y within ±1000, takes 29 to 31 ns per independent call and 53 to 54
+per dependent one against the UCRT's 4.4 and 8.7 to 9.2, `hypot_f32` 20 ns
+against 3.4 to 3.5, and its slow path 0.74 to 0.77 µs. Why
 the `f32` procedures before `atan` are slower than the `f64` ones that do
 the same work is not known. The estimate below was optimistic by
 two to three times: the time is in the dependent double-`f64` steps, not in

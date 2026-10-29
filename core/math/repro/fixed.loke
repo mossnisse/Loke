@@ -183,6 +183,13 @@ fixed_is_zero :: proc(a: Fixed) -> bool {
 	return (a[0] | a[1] | a[2] | a[3] | a[4] | a[5]) == 0;
 }
 
+fixed_equal :: proc(a: Fixed, b: Fixed) -> bool {
+	foreach (i in 0 ..< 6) {
+		if (a[i] != b[i]) { return false; }
+	}
+	return true;
+}
+
 fixed_less :: proc(a: Fixed, b: Fixed) -> bool {
 	foreach (step in 0 ..< 6) {
 		i := 5 - step;

@@ -200,6 +200,40 @@ slow_arc :: proc(a: f64, cosine: bool, x_negative: bool, layout: Float_Layout) -
 	return arc_slow(a, wh + wl, a_small, arc_part(a_small, cosine, x_negative), layout);
 }
 
+// hypot's slow path wherever `hypot` would reach its general case;
+// elsewhere `hypot` itself, whose special cases and far smaller second
+// argument are the whole answer there.
+@(public)
+slow_hypot :: proc(x: f64, y: f64) -> f64 {
+	return unsafe.transmute(f64, slow_hypot_bits(x, y, F64_LAYOUT, unsafe.transmute(u64, hypot(x, y))));
+}
+
+@(public)
+slow_hypot_f32 :: proc(x: f32, y: f32) -> f32 {
+	return unsafe.transmute(f32, u32(slow_hypot_bits(f64(x), f64(y), F32_LAYOUT, u64(unsafe.transmute(u32, hypot_f32(x, y))))));
+}
+
+slow_hypot_bits :: proc(x: f64, y: f64, layout: Float_Layout, public: u64) -> u64 {
+	a := x;
+	if (x < 0.0) { a = 0.0 - x; }
+	b := y;
+	if (y < 0.0) { b = 0.0 - y; }
+	if (b > a) {
+		t := a;
+		a = b;
+		b = t;
+	}
+	if (!finite_nonzero(a) || !finite_nonzero(b)) { return public; }
+	near, a2, b2, ea := hypot_parts(a, b);
+	if (!near) { return public; }
+	ph, pl := two_product(a2, a2);
+	qh, ql := two_product(b2, b2);
+	s, e := two_sum(ph, qh);
+	sh, sl := fast_two_sum(s, e + (pl + ql));
+	wh, wl := pair_root(sh, sl);
+	return hypot_slow(a2, b2, ea, wh + wl, layout);
+}
+
 finite_nonzero :: proc(a: f64) -> bool {
 	return a > 0.0 && a <= 1.7976931348623157e308;
 }

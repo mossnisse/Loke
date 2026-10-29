@@ -1,7 +1,7 @@
 // deterministic-math-and-targets-plan.md "Validation and performance gates": an
 // oracle for the correctly rounded `exp`, `log`, `log2`, `log10`, `sin`, `cos`,
-// `tan`, `asin`, `acos`, `pow`, and `atan2` of `f64` and `f32`, with the
-// special cases of the reproducible contract.
+// `tan`, `asin`, `acos`, `pow`, `atan2`, and `hypot` of `f64` and `f32`, with
+// the special cases of the reproducible contract.
 //
 // Each result is an interval of integers at a scale of `2^-precision`, every
 // step rounded outward, so the true value is always inside it. When both ends
@@ -464,6 +464,50 @@ oracle_atan2 :: proc(o: ^Oracle, y, x: f64, format: Float_Format) -> u64 {
 		free_all(context.allocator)
 	}
 	panic("the oracle could not decide a rounding of atan2")
+}
+
+// The correctly rounded hypot(x, y)'s bit pattern, sqrt(x^2 + y^2), for
+// arguments of `format`, which `x` and `y` hold exactly. An infinite argument
+// gives +Inf, even with a NaN, and otherwise a NaN gives NaN (C17 F.10.4.3).
+// x^2 + y^2 is an exact integer S times 2^(2 low), and its root at w more
+// bits is floor(sqrt(S 2^(2w))) or exactly that; an exact root is rounded
+// as it is, a midpoint to even. Otherwise the root is irrational, so the
+// search ends.
+oracle_hypot :: proc(x, y: f64, format: Float_Format) -> u64 {
+	if math.is_inf(x, 0) || math.is_inf(y, 0) {
+		return infinity_bits(format)
+	}
+	if math.is_nan(x) || math.is_nan(y) {
+		return canonical_nan(format)
+	}
+	if x == 0 && y == 0 {
+		return 0
+	}
+	scratch: virtual.Arena
+	_ = virtual.arena_init_growing(&scratch)
+	context.allocator = virtual.arena_allocator(&scratch)
+	// A zero argument contributes nothing at the other's exponent.
+	sx, ex := int_of(0), 0
+	sy, ey := int_of(0), 0
+	if x != 0 {sx, ex = dyadic(abs(x))}
+	if y != 0 {sy, ey = dyadic(abs(y))}
+	if x == 0 {ex = ey}
+	if y == 0 {ey = ex}
+	low := min(ex, ey)
+	sum := plus(shift_left(times(sx, sx), 2*(ex - low)), shift_left(times(sy, sy), 2*(ey - low)))
+	for w := START_PRECISION; w <= MAX_PRECISION; w *= 2 {
+		n := shift_left(sum, 2*w)
+		root := square_root(n)
+		value := Interval{root, root}
+		if compare(times(root, root), n) != 0 {
+			value.hi = plus(root, int_of(1))
+		}
+		if pattern, decided := round_interval(value, low - w, false, format); decided {
+			virtual.arena_destroy(&scratch)
+			return pattern
+		}
+	}
+	panic("the oracle could not decide a rounding of hypot")
 }
 
 // t = n/d as integers p/q, for 0 <= n <= d, or nil for t = 0: 1/1 when both

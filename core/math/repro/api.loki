@@ -13,8 +13,8 @@
 
 	The package holds only what has been implemented and checked: today `exp`,
 	`log`, `log2`, `log10`, `pow`, `sin`, `cos`, `tan`, `asin`, `acos`,
-	`atan`, and `atan2`, each in both widths. A function missing here is not
-	provided by falling back to `core:math`.
+	`atan`, `atan2`, and `hypot`, each in both widths. A function missing here
+	is not provided by falling back to `core:math`.
 */
 package repro;
 
@@ -103,6 +103,18 @@ tan :: proc(x: f64) -> f64 ---;
 
 // The tangent for `f32`, with the special cases of `tan`.
 tan_f32 :: proc(x: f32) -> f32 ---;
+
+/*
+	sqrt(x^2 + y^2), without overflow or underflow on the way. ±Inf in either
+	argument gives +Inf, even with a NaN in the other; otherwise NaN gives
+	NaN. hypot(x, ±0) is |x|, and a result too large for `f64` is +Inf. An
+	exact result is exact, and one exactly halfway between two floats rounds
+	to even.
+*/
+hypot :: proc(x: f64, y: f64) -> f64 ---;
+
+// hypot for `f32`, with the special cases of `hypot`.
+hypot_f32 :: proc(x: f32, y: f32) -> f32 ---;
 
 /*
 	The inverse sine of x, in radians from -pi/2 to pi/2. NaN, and any x

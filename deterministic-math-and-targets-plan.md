@@ -197,12 +197,26 @@ Then `log2` and `log10` in both widths:
   divides its log by ln 2 or ln 10 and also generates the constants; the
   library test compares with the C library's.
 
-The rest of phase 4's functions are next: `hypot`.
+Then `hypot` in both widths, which completes the transcendental functions
+of [`core:math`](standard-library.md#coremath):
+
+- x^2 + y^2 is formed with both squares exact, after scaling the larger
+  argument into [1, 2), and its root comes from the same software square
+  root as `asin`'s. The fast path is within 2^-100, so it decides at 2^-99
+  and leaves the slow path to exact midpoints, results that could be
+  subnormal, and about one random `f32` pair in 10^7.
+- Unlike the others, `hypot` has midpoint results, Pythagorean triples whose
+  hypotenuse has one bit too many and is odd. The slow path forms x^2 + y^2
+  exactly in fixed point and tests a root near a midpoint by squaring the
+  midpoint. A root that is not a midpoint is at least 2^-229 from one, so
+  `hypot` is proved correctly rounded, needing no search.
+- The oracle takes exact integer square roots. The UCRT's `hypot` is an ulp
+  off in an eighth of its sample, where an exact computation in Python
+  agrees with the oracle.
 
 Not started: phase 1's benchmarks (the UCRT timings in open questions stand
-until there is a kernel to compare), the rest of phase 4's kernels, NaN
-canonicalization, the environment entry
-contract, simulation support, dispatch, and other platforms.
+until there is a kernel to compare), NaN canonicalization, the environment
+entry contract, simulation support, dispatch, and other platforms.
 
 ## Recommended direction
 

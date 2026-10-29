@@ -2346,8 +2346,8 @@ is the positive quiet NaN with no payload (`0x7ff8000000000000`,
 `0x7fc00000`), whatever NaN produced it.
 
 The package has `exp`, `log`, `log2`, `log10`, `pow`, `sin`, `cos`, `tan`,
-`asin`, `acos`, `atan`, and `atan2`, each with the `f64` and `_f32` naming of
-`core:math`. A function missing here is
+`asin`, `acos`, `atan`, `atan2`, and `hypot`, each with the `f64` and `_f32`
+naming of `core:math`. A function missing here is
 not provided by falling back to `core:math`. Each `_f32` procedure is rounded
 once to `f32`, not the `f64` one narrowed, which could round twice.
 
@@ -2389,6 +2389,12 @@ once to `f32`, not the `f64` one narrowed, which could round twice.
   `atan2(3*2^-1074, 2)` is 2^-1074.
 - `atan(x)` is `atan2(x, 1)`: NaN gives NaN, ±0 gives itself, and ±Inf gives
   ±pi/2.
+- `hypot(x, y)` is sqrt(x^2 + y^2), without overflow or underflow on the
+  way. As in C17's annex F, ±Inf in either argument gives +Inf, even with a
+  NaN in the other; otherwise NaN gives NaN. `hypot(x, ±0)` is |x|. An exact
+  result is exact, and one exactly halfway between two floats, such as
+  `hypot_f32(13013847, 13025704)`, whose exact value is 18412745, rounds to
+  even.
 
 The plan for the rest of the package, and its special cases for further
 functions, is in the

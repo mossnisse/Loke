@@ -95,6 +95,13 @@ arc_root :: proc(a: f64) -> (high: f64, low: f64) {
 		s, e := fast_two_sum(1.0, 0.0 - ph);
 		rh, rl = fast_two_sum(s, e - pl);
 	}
+	return pair_root(rh, rl);
+}
+
+// sqrt(rh + rl) as a pair, within 2^-101 relative for a pair within 2^-104
+// of its value, rh normal: y from `root_estimate` and a fourth step, wh =
+// rh y, and wl = (r - wh^2)/(2 wh), as the file's head describes.
+pair_root :: proc(rh: f64, rl: f64) -> (high: f64, low: f64) {
 	y := root_estimate(rh);
 	y = y*(1.5 - (0.5*rh)*(y*y));
 	wh := rh*y;
