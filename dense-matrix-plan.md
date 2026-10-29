@@ -1,6 +1,7 @@
 # Dense matrix library plan
 
-Status: proposal, 2026-10-29. It is milestone 3 of the
+Status: proposal, 2026-10-29, with its design questions settled the same day
+([Settled questions](#settled-questions)). It is milestone 3 of the
 [linear algebra library plan](linear-algebra-plan.md#milestones), which left
 this package [its own plan](linear-algebra-plan.md#dense-matrices-a-later-package)
 and the questions it has to settle. Nothing here changes the language
@@ -211,7 +212,7 @@ column-major product and `A * x` never need and only a long `dot` would.
 Right-looking blocked LU and Cholesky keep the unblocked order by the update
 rule above. Blocked Householder QR in the compact WY form does not: it reorders
 the reflector updates, so QR's first implementation is unblocked
-([Questions to settle](#questions-to-settle)).
+([Settled questions](#settled-questions)).
 
 A foreign BLAS is faster still, and its results differ by machine, library,
 and thread count. It belongs in a separate package that binds one, with that
@@ -347,36 +348,37 @@ the tests below.
 - **Determinism**: results as bit patterns, the same at every optimization and
   [CPU level](compiler-guide.md#cpu-levels), with a pool and without.
 
-## Questions to settle
+## Settled questions
 
-Each has a recommendation; the sections above assume it.
+Settled on 2026-10-29, each as recommended; the sections above carry the
+decisions.
 
-1. **The package's name.** `core:math/dense` with `dense.Matrix(T)`,
-   `dense.View(T)`, and `dense.lu`, beside `linalg.Matrix(T, R, C)`.
-   Alternatives: `core:math/linalg/dense`, which says the relation but
-   stutters as `dense.Dense` if the type keeps the old plan's name `Dense(T)`;
-   and `core:math/matrix`, which reads as the home of every matrix.
-   Recommended: `core:math/dense`.
-2. **Copyable or move-only `Matrix(T)`.** Recommended: copyable, a clone as
-   [Copying is a clone](#copying-is-a-clone) says.
-3. **Operators on `Matrix(T)`.** Recommended: none
-   ([Named procedures, not operators](#named-procedures-not-operators)).
-   The alternative is `*` and `+` allocating from the default allocator, as
-   NumPy and Eigen read, at the cost of hidden allocation.
-4. **One error type or one per factorization.** Recommended: one
-   `dense.Error`, so `or_return` chains across factorizations.
-5. **`try_` forms for allocation failure.** Recommended: not in the first
-   milestone; the `_into` forms are the non-allocating path.
-6. **Unblocked QR.** Blocked QR in the WY form, LAPACK's choice, is faster on
-   large matrices because its updates are matrix products, and it changes the
-   bits. Recommended: unblocked only, keeping one
-   result everywhere; a blocked `qr_fast` is decided with the benchmarks of
-   milestone 4.
-7. **SVD method.** Golub-Reinsch, recommended, is the standard and is fast.
-   One-sided Jacobi is simpler and more accurate for tiny singular values, and
-   several times slower. Recommended: Golub-Reinsch first, Jacobi later.
-8. **Interop with fixed-size matrices.** `from_fixed` and `to_fixed` copy.
-   A view of a `linalg.Matrix` without a copy needs its `[C][R]T` storage as
-   a flat `[]T`, which the language has no safe spelling for
-   ([Flat views of nested fixed arrays](open-questions.md#flat-views-of-nested-fixed-arrays)).
-   Recommended: copies now, a view if the language adds the flattening.
+- **The package's name**: `core:math/dense`, with `dense.Matrix(T)`,
+  `dense.View(T)`, and `dense.lu`, beside `linalg.Matrix(T, R, C)`.
+  `core:math/linalg/dense` was rejected: it says the relation at the cost of
+  a longer import, and would have stuttered as `dense.Dense` had the type kept
+  the earlier name `Dense(T)`. `core:math/matrix` was rejected because it
+  reads as the home of every matrix, the fixed-size ones included.
+- **Copying**: `Matrix(T)` is copyable, and a copy is a clone
+  ([Copying is a clone](#copying-is-a-clone)). `move_only` was rejected
+  because a copy is sometimes what an algorithm wants, and the copy-cost
+  diagnostic already reports one.
+- **Operators**: none on `Matrix(T)`
+  ([Named procedures, not operators](#named-procedures-not-operators)). `*`
+  and `+` allocating from the default allocator, as NumPy and Eigen read, were
+  rejected for the hidden allocation and the temporary per operator.
+- **Errors**: one `dense.Error` for every numerical failure, so `or_return`
+  chains across factorizations; each procedure documents its variants. A type
+  per factorization would say more in each signature and break those chains.
+- **Allocation failure**: no `try_` forms in the first milestone. Allocation
+  follows the allocator's policy, and the `_into` forms are the path that
+  never allocates.
+- **QR**: unblocked Householder only, so QR has one result everywhere. The
+  blocked WY form, LAPACK's choice, is faster on large matrices because its
+  updates are matrix products, and it changes the bits; a separate `qr_fast`
+  is decided with milestone 4's benchmarks.
+- **SVD**: Golub-Reinsch first. One-sided Jacobi, simpler and more accurate
+  for tiny singular values but several times slower, is a later addition.
+- **Fixed-size matrices**: `from_fixed` and `to_fixed` copy. A view without a
+  copy waits for a flattening borrow
+  ([Flat views of nested fixed arrays](open-questions.md#flat-views-of-nested-fixed-arrays)).
