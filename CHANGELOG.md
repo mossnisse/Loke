@@ -15,11 +15,10 @@ checklist.
   starts ([Floating-point operators](design.md#floating-point-operators)).
   The specification used to suggest installing trapping through the target's
   environment; floating-point results computed in any other environment are
-  now unspecified. Upgrade foreign code that changes the rounding mode,
-  flush-to-zero, or exception masks, a C host that calls Loke exports
-  included, by restoring the default before it returns to Loke or calls back
-  into it, for example with `fesetenv(FE_DFL_ENV)` or by saving the state
-  with `fegetenv` and restoring it with `fesetenv`.
+  now unspecified. Upgrade foreign code that Loke calls and that changes the
+  rounding mode, flush-to-zero, or exception masks by restoring them before
+  it returns to Loke, for example by saving the state with `fegetenv` and
+  restoring it with `fesetenv`. A C host calling into Loke needs no change.
 
 - A compound assignment through a pointer, as `h^.count += 1`, while a
   borrow of the same place, as `count := &h^.count`, is still in use is now
@@ -333,6 +332,12 @@ checklist.
   level, and at compile time: `exp`, `log`, `log2`, `log10`, `pow`, `sin`,
   `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, and `hypot` in both
   widths ([`core:math/repro`](standard-library.md#coremathrepro)).
+- An export, or any procedure Loke defines with a foreign calling convention,
+  runs in Loke's floating-point environment when a C host or library calls
+  it with another rounding mode, flush-to-zero, or unmasked exceptions, and
+  restores the caller's on return. With `-debug`, a call into foreign code
+  that returns with the environment changed panics, naming the procedure
+  ([Floating-point operators](design.md#floating-point-operators)).
 
 ### Changed
 

@@ -39,8 +39,8 @@ From phase 1:
   nearest-even rounding, subnormals kept, and non-stop exceptions on every
   thread, with no Loke operation that changes them and a restore obligation on
   foreign code. `tests/run/float_environment.loke` checks Windows gives it to
-  the main thread and to a started one. The entry mechanism for C hosts is not
-  done; the obligation covers them for now.
+  the main thread and to a started one. Phase 4 adds the entry from C hosts;
+  see below.
 - [Special cases](#special-cases) for `exp`, `log`, `sin`, `cos`, `pow`, and
   `atan2`.
 - An oracle, `tests/math_oracle.odin`: outward-rounded interval arithmetic on
@@ -219,9 +219,30 @@ arguments included, as [Reproducible result contract](#reproducible-result-contr
 asks; a whole-program canonicalization mode is separate work, as
 [Special cases](#special-cases) says.
 
+Then the entry from foreign code, which
+[Execution environment and future platforms](#execution-environment-and-future-platforms)
+asks for:
+
+- Instead of a scoped call each host makes, every procedure Loke defines with
+  a foreign calling convention guards its own entry. Under its own name it
+  reads MXCSR, and only when the control bits differ from Loke's sets them,
+  calls the body, and restores the caller's; the body is a function no caller
+  may inline, so none of its arithmetic runs before the switch. That covers
+  exports, callbacks reached from a C library, and threads the host created,
+  and a host cannot forget it. See
+  [The floating-point environment is fixed](comments.md#the-floating-point-environment-is-fixed).
+- With `-debug`, each call to a foreign procedure, or through a foreign
+  procedure value, reads MXCSR when it returns and panics, naming the
+  procedure, when Loke's environment changed. A release build does not check.
+- `tests/obj/environment_host.c` calls into Loke rounding upward, with
+  flush-to-zero, denormals-are-zero, and the invalid-operation exception
+  unmasked, from its main thread, through a callback, and from a thread of
+  its own; built without the guard, its second call stops on that exception.
+  `tests/trap/foreign_float_environment.loke` is the `-debug` check's.
+
 Not started: phase 1's benchmarks (the UCRT timings in open questions stand
-until there is a kernel to compare), the environment entry contract,
-simulation support, dispatch, and other platforms.
+until there is a kernel to compare), simulation support, dispatch, and other
+platforms.
 
 ## Recommended direction
 

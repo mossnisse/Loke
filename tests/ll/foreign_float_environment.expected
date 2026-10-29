@@ -1,0 +1,17 @@
+define internal double @loke.entry.scaled(double %arg0) noinline {
+define double @scaled(double %arg0) {
+call void @llvm.x86.sse.stmxcsr(ptr %mxcsr)
+%mxcsr.control = and i32 %mxcsr.caller, 65472
+%mxcsr.ours = icmp eq i32 %mxcsr.control, 8064
+br i1 %mxcsr.ours, label %same, label %switched
+%result = call double @loke.entry.scaled(double %arg0)
+%mxcsr.loke = or i32 %mxcsr.held, 8064
+call void @llvm.x86.sse.ldmxcsr(ptr %mxcsr)
+%switched.result = call double @loke.entry.scaled(double %arg0)
+%mxcsr.back = or i32 %mxcsr.control, %mxcsr.raised
+call i32 @abs(i32 -1)
+label %fenv.kept.*, label %fenv.changed.*
+c"the foreign call to `abs` returned with the floating-point environment changed\00"
+c"a foreign call through a procedure value returned with the floating-point environment changed\00"
+not the foreign call to `scaled`
+call double @scaled(double 0x3FF0000000000000)

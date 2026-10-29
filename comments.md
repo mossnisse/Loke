@@ -1494,6 +1494,29 @@ restore before Loke runs again. Windows starts every process and thread in
 this environment, which `tests/run/float_environment.loke` checks on the main
 thread and on a started one.
 
+A C host is the exception the rule cannot reasonably cover: a library is
+called by code it did not write, which may run with flush-to-zero for its own
+graphics or an exception unmasked for its own debugging. So each procedure
+Loke defines with a foreign calling convention guards its own entry, rather
+than leaving a scoped enter-and-leave call to every host. The plan proposed
+such a call; a guard cannot be forgotten, and it covers what the call would
+miss: a callback reached from a C library that changed the state, and a
+thread the host created. When the caller's control bits already match, which
+is every call from Loke and from a well-behaved host, the guard costs one
+read of MXCSR and a branch; it writes MXCSR only when they differ. The body is
+a function no caller may inline, because LLVM assumes the default
+environment everywhere in a function without `strictfp` and may move
+arithmetic above the switch, where it would run in the caller's environment,
+and with an exception unmasked could trap. The flags the call raised are left
+raised, as they would be had the host computed the same thing, but nothing
+promises them.
+
+The other direction, a call from Loke into foreign code, keeps the rule, since
+checking every call would cost every program. A `-debug` build checks it:
+after each call to a foreign procedure it reads MXCSR and panics, naming the
+procedure, when the control bits changed. That turns a silent wrong result
+far from its cause into a report at the call that caused it.
+
 ### SIMD lanes follow the scalar rule
 
 Replacing a scalar kernel with SIMD should not change overflow behavior.

@@ -108,6 +108,7 @@ emit_llvm_module :: proc(c: ^Compiler) -> (module: string, ok: bool) {
 	}
 	name_synth_procs(&e)
 	name_witnesses(&e)
+	reserve_link_names(&e)
 	emit_foreign_declarations(&e)
 	emit_static_locals(&e)
 	for id in order {
@@ -386,6 +387,18 @@ claim_name :: proc(e: ^Emitter, base: string) -> string {
 	return name
 }
 
+// A name claimed while bodies are written, such as an object's CPU check or a
+// guard's body, stays clear of every link name the program gives, exported or
+// foreign, which may spell `loke.` too.
+@(private = "file")
+reserve_link_names :: proc(e: ^Emitter) {
+	for sym in e.c.symbols {
+		if sym != nil && sym.link_name != "" {
+			e.taken_names[llvm_external_name(sym.link_name)] = true
+		}
+	}
+}
+
 // Compiler-contributed members belong to no package.
 @(private = "file")
 name_synth_procs :: proc(e: ^Emitter) {
@@ -552,6 +565,24 @@ emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 		backend_fail(e, "a procedure has no mangled name")
 		return
 	}
+	if !convention_is_foreign(proc_convention_of(e, symbol)) {
+		emit_proc_definition(e, symbol_id, literal, llvm_name)
+		return
+	}
+	// design.md "Floating-point operators": foreign code may call it in another
+	// environment, so its name is the guard, and the body is apart. A quoted
+	// export name, such as a decorated C++ one, lends the body no spelling.
+	plain := llvm_plain_name(llvm_name[1:])
+	body := claim_name(e, plain ? strings.concatenate({"@loke.entry.", llvm_name[1:]}) : "@loke.entry")
+	emit_proc_definition(e, symbol_id, literal, body)
+	emit_foreign_entry_guard(e, symbol, llvm_name, body)
+}
+
+// The procedure's own function, under `llvm_name`; a foreign-convention one is
+// a guard's body, which no caller may inline (`emit_foreign_entry_guard`).
+@(private = "file")
+emit_proc_definition :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc, llvm_name: string) {
+	symbol := symbol_of(e.c, symbol_id)
 	function := begin_function_emission(e)
 	defer finish_function_emission(e, function)
 
@@ -561,7 +592,7 @@ emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 	begin_unwind_frame(e, llvm_name)
 
 	if e.abi_foreign {
-		emit_foreign_signature(e, symbol, llvm_name)
+		emit_foreign_signature(e, symbol, llvm_name, "noinline")
 	} else {
 		fmt.sbprintf(
 			&e.b, "define %s%s %s(",
@@ -686,13 +717,6 @@ BASELINE_ATTRIBUTES :: `"target-cpu"="x86-64" "target-features"="+cmov,+cx8,+fxs
 // the host's C runtime runs before the host's `main`.
 @(private = "file")
 emit_object_cpu_check :: proc(e: ^Emitter) {
-	// Clear of every link name the program gives, exported or foreign, which
-	// may spell `loke.` too.
-	for sym in e.c.symbols {
-		if sym != nil && sym.link_name != "" {
-			e.taken_names[llvm_external_name(sym.link_name)] = true
-		}
-	}
 	name := claim_name(e, "@loke.require_cpu")
 	function := begin_function_emission(e)
 	defer finish_function_emission(e, function)

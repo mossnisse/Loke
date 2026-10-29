@@ -69,6 +69,10 @@ emit_runtime_declarations :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)")
 	fmt.sbprintln(&e.b, "declare ptr @llvm.stacksave.p0()")
 	fmt.sbprintln(&e.b, "declare void @llvm.stackrestore.p0(ptr)")
+	// A foreign entry's guard and `-debug`'s check after a foreign call
+	// (design.md "Floating-point operators").
+	fmt.sbprintln(&e.b, "declare void @llvm.x86.sse.stmxcsr(ptr)")
+	fmt.sbprintln(&e.b, "declare void @llvm.x86.sse.ldmxcsr(ptr)")
 	for bits in ([]int{8, 16, 32, 64, 128}) {
 		for operation in ([]string{"sadd", "ssub", "smul", "uadd", "usub", "umul"}) {
 			fmt.sbprintfln(&e.b, "declare {{ i%d, i1 }} @llvm.%s.with.overflow.i%d(i%d, i%d)", bits, operation, bits, bits, bits)

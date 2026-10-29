@@ -698,7 +698,7 @@ be file-private. Paths below are relative to `src/`.
 | --- | --- |
 | `emission_contract.odin` | Read-only validation of the checked-program boundary. |
 | `emit_llvm.odin` | Module orchestration, emitter state, symbol names, procedures, globals, and instruction plumbing. |
-| `emit_llvm_abi.odin` | LLVM type spelling and foreign signatures, arguments, and returns. |
+| `emit_llvm_abi.odin` | LLVM type spelling and foreign signatures, arguments, and returns; a foreign entry's floating-point guard and `-debug`'s check after a foreign call. |
 | `emit_llvm_stmt.odin` | Statements, control flow, local bindings, assignment, and returns. |
 | `emit_llvm_expr.odin` | Constants, places, scalar expressions, comparisons, and text operations. |
 | `emit_llvm_calls.odin` | Resolved calls, argument packing, conversions, allocation built-ins, and erased dispatch. |
