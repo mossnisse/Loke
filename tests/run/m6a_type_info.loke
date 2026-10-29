@@ -49,6 +49,9 @@ main :: proc() {
 	fmt.println(int(type_info_of(empty).kind), type_info_of(empty).size);
 	forged := forge(999999);
 	fmt.println(int(type_info_of(forged).kind), type_info_of(forged).name.len());
+	// Every id is a value (design.md "Invalid representations"): a forged one
+	// equals no real id and prints as its number.
+	fmt.println(forged == typeid_of(Point), forged == empty, forged == forge(999999), forged);
 	c := type_info_of(typeid_of(Colour));
 	fmt.println(c.members.len());
 	wide := type_info_of(typeid_of(Huge));

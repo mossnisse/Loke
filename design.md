@@ -8764,13 +8764,14 @@ These types have invalid representations:
   `Shared(T)`, with a null address word. An `Option` of one, which stores the
   payload alone (see [Representation](#representation)), adds no invalid
   representation of its own: its null word is `.none`;
+- an [`any_view`](#any_view-type) whose `typeid` names no type of the program,
+  or whose address does not point to a value of the type it names;
 - a union: a tag outside `0 ..< variant_count`, or a payload region that is not
   a value of the variant the tag names;
 - `string` and `string_view`: bytes that are not valid UTF-8, or a pointer and
   length that do not describe that many readable bytes; `cstring_view`: an
   address with no zero terminator in readable storage; a slice, dynamic array,
   or map whose header does not describe its storage;
-- `typeid`: a number that identifies no type of the program;
 - a struct, fixed array, SIMD vector, or `distinct` type: an invalid
   representation in any part or lane.
 
@@ -8778,7 +8779,9 @@ These have none, so every bit pattern is a value: integers; floats, every NaN
 payload included; `rune`, a distinct 32-bit integer type, so a value that is not
 a Unicode scalar value is a `rune` all the same, and the text operations that
 need a scalar value say what they do with one, as
-[`string.from_runes`](#string-type-conversions) returns `.none`; `rawptr` and C
+[`string.from_runes`](#string-type-conversions) returns `.none`; `typeid`, whose
+zero and every id no type of the program has are values that
+[`type_info_of`](#type-and-typeid) answers with its `Invalid` entry; `rawptr` and C
 pointers, whose null and dangling addresses are values that may not be
 dereferenced (see [Address operator](#address-operator)); and plain structs,
 fixed arrays, and vectors of these. Reading storage that holds no value is

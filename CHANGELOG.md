@@ -339,7 +339,10 @@ checklist.
   unchecked route, and the specification lists which types have such patterns
   and which do not. Every 32-bit pattern is a `rune`, so a compile-time
   `unsafe.transmute(rune, ...)` of a surrogate or out-of-range code point now
-  folds instead of being rejected
+  folds instead of being rejected. Every pattern is also a `typeid`: an id no
+  type has compares unequal to every real one, prints as its number, and
+  answers the `Invalid` entry from `type_info_of`, while an `any_view` whose
+  id names no type is invalid
   ([Invalid representations](design.md#invalid-representations)).
 - `L0399` for a dependency name that two manifests require as different
   directories now says that a `-collection` for the name chooses one directory

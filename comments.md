@@ -1331,6 +1331,17 @@ only that width, so a surrogate or an out-of-range code point is a value that
 text operations reject or replace, not a representation the compiler may
 assume away.
 
+`typeid` is on the same side. Its zero must be a value for `typeid{}` to be a
+safe zero, and its one consumer, the `type_info_of` lookup, already checks the
+range: the reflection table is indexed by an id that comes from data, not from
+a branch the compiler controls, so the check costs one compare and a select
+and spares every reflection caller an obligation. A forged id therefore reads
+as the `Invalid` entry rather than past the table, compares unequal to every
+real id, and prints as its number. An `any_view` is different: it promises a
+value of the type its id names, as a slice header promises its storage, so
+formatting dispatches through it unchecked, and one whose id names no type is
+an invalid `any_view` though the id alone is a valid `typeid`.
+
 ### Formatting and logging sinks are `dyn` views
 
 `fmt.Writer` and `log.Logger` are borrowed `dyn mut` views. Records implement
