@@ -142,7 +142,7 @@ core:endian           fixed byte-order storage wrappers
 core:math             elementary functions, Complex, Quaternion
 core:math/repro       correctly rounded elementary functions
 core:math/linalg      fixed-size vectors, matrices, rotations, projections
-core:math/dense       run-time-sized matrices, views, LU and Cholesky
+core:math/dense       run-time-sized matrices, views, LU, Cholesky, QR
 core:random           seeded generators, entropy, distributions
 core:time             clocks, durations, the calendar, ISO 8601 text
 core:slice            slice algorithms and sorting            *
@@ -2569,9 +2569,9 @@ evaluated at compile time with the same result; one that does cannot, since
 ## `core:math/dense`
 
 Matrices whose size is known only at run time: an owner, views of it and of
-foreign buffers, products, and the LU and Cholesky factorizations. The design
-and its later milestones, QR, the eigensolvers, the SVD, and measured
-performance, are in the [dense matrix plan](dense-matrix-plan.md).
+foreign buffers, products, the LU, Cholesky, and QR factorizations, and least
+squares. The design and its later milestones, the eigensolvers, the SVD, and
+measured performance, are in the [dense matrix plan](dense-matrix-plan.md).
 
 `Matrix(T)` owns `rows x columns` elements stored column-major in one
 allocation, the order LAPACK and `linalg.Matrix` use, from the allocator it was
@@ -2638,12 +2638,22 @@ With `linalg.Real(T)`:
 - `cholesky(a)` and `cholesky_in_place(a)`, the `L L^T` factor of a symmetric
   positive definite matrix from its lower triangle, by columns. `Cholesky`
   has `solve`, `solve_into`, `determinant`, and `lower()`;
-- `solve(a, b)` and `inverse(a)`, which factor and solve in one call.
+- `qr(a)` and `qr_in_place(a, tau)`, for `rows >= columns`, by unblocked
+  Householder reflectors in LAPACK's `geqrf` form. `Qr` has `q()`, the first
+  `n` columns of `Q`, `r()`, `apply_q_into(b)` and
+  `apply_q_transpose_into(b)`, which apply `Q` and `Q^T` without forming it,
+  `least_squares(b)`, and `least_squares_into(b)`, which leaves the
+  minimizer in `b`'s first `n` rows and the residual's components, whose norm
+  is the residual's, in the rest, as LAPACK's `gels` does; and `factors()`
+  and `tau()`;
+- `solve(a, b)`, `inverse(a)`, and `least_squares(a, b)`, which factor and
+  solve in one call. `least_squares` assumes full column rank.
 
 A numerical failure is a `dense.Error`, one type for the package so that
 `or_return` chains across factorizations: `.Singular` for an exact zero pivot
-or a factor that is not finite, and `.Not_Positive_Definite` for a Cholesky
-pivot that is not positive and finite. A nearly singular matrix factors, with
+or zero on `R`'s diagonal, or a factor that is not finite, and
+`.Not_Positive_Definite` for a Cholesky pivot that is not positive and
+finite. A nearly singular matrix factors, with
 large elements, since no tolerance decides that it is singular;
 `reciprocal_condition` says how near it is. Each update in a factorization is
 one subtraction per term into the running element, in increasing order, and

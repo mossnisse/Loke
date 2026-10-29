@@ -2,8 +2,8 @@
 
 /*
 	Matrices whose size is known at run time: an owning `Matrix(T)`, views of
-	it and of foreign buffers, products, and the LU and Cholesky
-	factorizations, with the same bits everywhere.
+	it and of foreign buffers, products, the LU, Cholesky, and QR
+	factorizations, and least squares, with the same bits everywhere.
 
 	`Matrix(T)` owns `rows x columns` elements stored column-major in one
 	allocation. `View(T)` reads, and `View_Mut(T)` writes, elements somewhere
@@ -27,11 +27,11 @@
 
 	A shape mismatch, an index outside a view, and a view whose strides reach
 	past its data are programmer errors and panic. A numerical failure is an
-	`Error`: an exact zero pivot or a factor that is not finite is
-	`.Singular`, and a Cholesky pivot that is not positive is
-	`.Not_Positive_Definite`. Nothing decides with a tolerance the caller did
-	not give; `Lu.reciprocal_condition` estimates how near singular a matrix
-	is, and the caller chooses the threshold.
+	`Error`: an exact zero pivot, an exact zero on `R`'s diagonal, or a factor
+	that is not finite is `.Singular`, and a Cholesky pivot that is not
+	positive is `.Not_Positive_Definite`. Nothing decides with a tolerance the
+	caller did not give; `Lu.reciprocal_condition` estimates how near
+	singular a matrix is, and the caller chooses the threshold.
 
 	Each operation is computed in the order its documentation gives, with no
 	`fma`, so it gives the same bits on every machine, CPU level, and
@@ -46,7 +46,7 @@ import "core:mem";
 
 // The numerical failures. Each procedure that returns one says which.
 Error :: enum {
-	// An exact zero pivot, or a factor or solution that is not finite.
+	// An exact zero pivot or zero on `R`'s diagonal, or a factor that is not finite.
 	Singular,
 	// A Cholesky pivot that is not positive, or not finite.
 	Not_Positive_Definite,
@@ -321,6 +321,90 @@ solve_lower_into :: proc(l: View($T), b: View_Mut(T), unit_diagonal: bool) -> St
 	terms in decreasing order. Otherwise as `solve_lower_into`.
 */
 solve_upper_into :: proc(u: View($T), b: View_Mut(T), unit_diagonal: bool) -> Status(Error) where linalg.Real(T) ---;
+
+/*
+	The factors of `A = Q R` for an `m x n` matrix `A` with `m >= n`: `Q` a
+	product of `n` Householder reflectors `H_k = I - tau[k] v_k v_k^T`, and
+	`R` upper triangular `n x n`. `qr(a)` makes one.
+*/
+Qr :: struct($T: type) where linalg.Real(T) {
+	// and fields private to the package
+}
+
+/*
+	Overwrites the `m x n` matrix `a`, `m >= n`, with its QR factors as
+	LAPACK's `geqrf` does: `R` on and above the diagonal, and below it each
+	reflector's vector `v_k`, whose element `k` is 1 and not stored; `tau[k]`
+	is reflector `k`'s scale.
+
+	Step `k` takes the column `x = a[k:m, k]`, with `alpha = x[0]` and `s` the
+	norm of `x[1:]` by `norm_frobenius`'s running scale. If `s` is 0 the
+	reflector is the identity, `tau[k] = 0`, and `R`'s diagonal is `alpha`.
+	Otherwise `beta = -sign(alpha) * hypot(alpha, s)` (negative for an
+	`alpha` of zero), `tau[k] = (beta - alpha) / beta`, each `v_k[i] = x[i] /
+	(alpha - beta)`, and `R`'s diagonal is `beta`. The reflector is then
+	applied to each later column `y = a[k:m, j]` as
+	`w = (y[0] + v[1]*y[1]) + ...`, the terms in increasing order, and
+	`y[i] = y[i] - (tau*w)*v[i]`.
+
+	`.Singular`, with `a` and `tau` then unspecified, for an exact zero on
+	`R`'s diagonal or a factor that is not finite: the matrix does not have
+	full column rank. A wide matrix, or a `tau` of the wrong length, panics.
+*/
+qr_in_place :: proc(a: View_Mut($T), tau: []mut T) -> Status(Error) where linalg.Real(T) ---;
+
+// The QR factors of the `m x n` matrix `a`, `m >= n`, allocated from `allocator`, or `.Singular` as `qr_in_place` decides it.
+qr :: proc(a: View($T), allocator: Allocator = mem.default_allocator()) -> Result(Qr(T), Error) where linalg.Real(T) ---;
+
+impl Qr($T) {
+	rows :: proc(self) -> int ---;
+
+	columns :: proc(self) -> int ---;
+
+	// Both factors in one view, as `qr_in_place` leaves them.
+	factors :: proc(self: ^) -> View(T) ---;
+
+	// `tau()[k]` is the scale of reflector `k`.
+	tau :: proc(self: ^) -> []T ---;
+
+	// `R`, `n x n` with zeros below the diagonal, allocated from `allocator`.
+	r :: proc(self, allocator: Allocator = mem.default_allocator()) -> Matrix(T) ---;
+
+	/*
+		The first `n` columns of `Q`, `m x n` with orthonormal columns:
+		`apply_q_into` of the first `n` columns of the identity. The whole
+		`m x m` `Q` is `apply_q_into` of the whole identity.
+	*/
+	q :: proc(self, allocator: Allocator = mem.default_allocator()) -> Matrix(T) ---;
+
+	/*
+		Overwrites the `m`-row `b` with `Q b`: the reflectors from the last to
+		the first, each applied to each column as `qr_in_place` applies it.
+	*/
+	apply_q_into :: proc(self, b: View_Mut(T)) ---;
+
+	// Overwrites the `m`-row `b` with `Q^T b`: the reflectors from the first to the last.
+	apply_q_transpose_into :: proc(self, b: View_Mut(T)) ---;
+
+	/*
+		Overwrites the `m`-row `b` as LAPACK's `gels` does: its first `n` rows
+		become the `x` that minimizes `|A x - b|` in the 2-norm, for each
+		column, and the other `m - n` rows the residual's components in `Q`'s
+		basis, so their norm is `|A x - b|`. That is `Q^T b`, then `R x = c` for
+		its first `n` rows in `solve_upper_into`'s order.
+	*/
+	least_squares_into :: proc(self, b: View_Mut(T)) ---;
+
+	// The `n`-row `x` that minimizes `|A x - b|`, allocated, with a copy of `b` to work in, from `allocator`.
+	least_squares :: proc(self, b: View(T), allocator: Allocator = mem.default_allocator()) -> Matrix(T) ---;
+}
+
+/*
+	The `x` that minimizes `|A x - b|` in the 2-norm for the `m x n` matrix
+	`a`, `m >= n`, by `qr`; `.Singular` as `qr` decides it. For a square `a`
+	it is the solution of `A x = b`.
+*/
+least_squares :: proc(a, b: View($T), allocator: Allocator = mem.default_allocator()) -> Result(Matrix(T), Error) where linalg.Real(T) ---;
 
 /*
 	A read-only view of `rows x columns` elements somewhere else: element

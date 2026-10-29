@@ -1,0 +1,16 @@
+// standard-library "`core:math/dense`": `qr` needs at least as many rows as
+// columns, so a wide matrix panics. A square one factors.
+package main;
+
+import "core:fmt";
+import "core:math/dense";
+
+main :: proc() {
+	square := dense.Matrix(f64).identity(3);
+	switch (dense.qr(square.view())) {
+	case .ok(f):  fmt.println(f.rows(), f.columns());
+	case .err(e): fmt.println(e);
+	}
+	wide := dense.Matrix(f64).zeros(2, 3);
+	_ = dense.qr(wide.view());
+}

@@ -1,0 +1,374 @@
+// standard-library "`core:math/dense`", milestone 2: Householder QR and least
+// squares. LAPACK's test ratios for `Q R`, `Q^T Q`, and the least-squares
+// residual over random, Hilbert, graded, and nearly rank-deficient matrices
+// from 1 x 1 to 200 x 200 at `f32` and `f64`; exact factors and an exact fit;
+// `Q` applied both ways and built whole; each failure; a dual number through
+// `least_squares`; and results as bit patterns, the same at every
+// optimization and CPU level.
+package main;
+
+import "core:fmt";
+import "core:math";
+import "core:math/dense";
+import "core:math/linalg";
+import "core:unsafe";
+
+check :: proc(name: string_view, ok: bool) {
+	if (ok) {
+		fmt.println("ok", name);
+	} else {
+		fmt.println("FAIL", name);
+	}
+}
+
+bits64 :: proc(x: f64) -> u64 { return unsafe.transmute(u64, x); }
+bits32 :: proc(x: f32) -> u32 { return unsafe.transmute(u32, x); }
+
+epsilon :: proc($T: type) -> T {
+	when (T == f32) {
+		return math.F32_EPSILON;
+	} else {
+		return math.F64_EPSILON;
+	}
+}
+
+// A 64-bit linear congruential generator, so the matrices are the same on
+// every machine.
+Random :: struct { state: u64 }
+
+impl Random {
+	// Uniform in [-1, 1).
+	next :: proc(self: inout) -> f64 {
+		self.state = self.state*%6364136223846793005 +% 1442695040888963407;
+		return f64(self.state >> 11)/9007199254740992.0*2.0 - 1.0;
+	}
+}
+
+Family :: enum { Random, Hilbert, Graded, Nearly_Deficient }
+
+make_matrix :: proc($T: type, family: Family, rows, columns: int, seed: u64) -> dense.Matrix(T) {
+	random := Random{seed};
+	m := dense.Matrix(T).zeros(rows, columns);
+	switch (family) {
+	case .Random:
+		foreach (c in 0 ..< columns) {
+			foreach (r in 0 ..< rows) { m[r, c] = T(random.next()); }
+		}
+	case .Hilbert:
+		foreach (c in 0 ..< columns) {
+			foreach (r in 0 ..< rows) { m[r, c] = T(1.0/f64(r + c + 1)); }
+		}
+	case .Graded:
+		// Columns scaled from 1 down to 2^-40.
+		foreach (c in 0 ..< columns) {
+			foreach (r in 0 ..< rows) {
+				m[r, c] = T(random.next()*math.pow(2.0, -40.0*f64(c)/f64(columns)));
+			}
+		}
+	case .Nearly_Deficient:
+		// The last column is the sum of the others plus a perturbation of
+		// 1e-10 at f64 and 1e-3 at f32, where 1e-10 would round away.
+		small := 1e-10;
+		when (T == f32) { small = 1e-3; }
+		foreach (r in 0 ..< rows) {
+			total := 0.0;
+			foreach (c in 0 ..< columns - 1) {
+				value := random.next();
+				m[r, c] = T(value);
+				total += value;
+			}
+			m[r, columns - 1] = T(total + small*random.next());
+		}
+	}
+	return m;
+}
+
+// The largest of LAPACK's ratios for one matrix, each of which should be a
+// small multiple of 1, in the 1-norm: `|A - Q R| / (m |A| eps)`,
+// `|Q^T Q - I| / (m eps)`, and, for the least-squares residual `r = b - A x`,
+// `|A^T r| / (m |A| (|A| |x| + |b|) eps)`, which is 0 at the exact minimizer.
+qr_ratio :: proc(a: dense.View($T)) -> T {
+	m := a.rows();
+	n := a.columns();
+	eps := epsilon(T);
+	scale := dense.norm_one(a);
+	switch (dense.qr(a)) {
+	case .ok(factors):
+		q := factors.q();
+		r := factors.r();
+		product := dense.multiply(q.view(), r.view());
+		ratio := dense.norm_one(dense.subtract(a, product.view()).view())/(T(f64(m))*scale*eps);
+
+		gram := dense.multiply(q.view().transpose(), q.view());
+		identity := dense.Matrix(T).identity(n);
+		orthogonal := dense.norm_one(dense.subtract(gram.view(), identity.view()).view())/(T(f64(m))*eps);
+		if (ratio < orthogonal) { ratio = orthogonal; }
+
+		b := make_matrix(T, .Random, m, 2, u64(m*n) + 3);
+		x := factors.least_squares(b.view());
+		residual := dense.multiply(a, x.view());
+		residual.view_mut().add_scaled(-T(1), b.view());
+		normal := dense.multiply(a.transpose(), residual.view());
+		size := scale*(scale*dense.norm_one(x.view()) + dense.norm_one(b.view()));
+		fit := dense.norm_one(normal.view())/(T(f64(m))*size*eps);
+		if (ratio < fit) { ratio = fit; }
+		return ratio;
+	case .err(e):
+		fmt.println("FAIL qr", e);
+		return T(1e30);
+	}
+}
+
+Shape :: struct { rows, columns: int }
+
+SHAPES :: [?]Shape{{1, 1}, {3, 1}, {5, 3}, {10, 10}, {31, 7}, {64, 64}, {200, 50}, {200, 200}};
+
+residuals :: proc($T: type, name: string_view, largest: int) {
+	families := [?]Family{.Random, .Hilbert, .Graded, .Nearly_Deficient};
+	foreach (family in families) {
+		worst := T(0);
+		foreach (shape in SHAPES) {
+			if (shape.rows > largest) { continue; }
+			// The Hilbert matrix loses full rank in floating point past about
+			// 10 columns at f64 and 6 at f32; a one-column matrix cannot be
+			// nearly deficient.
+			if (family == .Hilbert && shape.columns > 10) { continue; }
+			if (family == .Hilbert && T == f32 && shape.columns > 6) { continue; }
+			if (family == .Nearly_Deficient && shape.columns < 2) { continue; }
+			a := make_matrix(T, family, shape.rows, shape.columns, u64(shape.rows*7 + shape.columns));
+			ratio := qr_ratio(a.view());
+			if (worst < ratio) { worst = ratio; }
+		}
+		fmt.println("qr", name, family, worst < T(30));
+	}
+}
+
+exact :: proc() {
+	// Orthogonal columns: every step is exact but the 1.6.
+	a := dense.Matrix(f64).from_rows([3][2]f64{{3, 0}, {4, 0}, {0, 2}});
+	switch (dense.qr(a.view())) {
+	case .ok(f):
+		r := f.r();
+		check("the factors of orthogonal columns",
+			dense.equal(r.view(), dense.Matrix(f64).from_rows([2][2]f64{{-5, 0}, {0, -2}}).view())
+			&& f.tau()[0] == 1.6 && f.tau()[1] == 1.0 && f.factors()[1, 0] == 0.5 && f.factors()[2, 1] == 1.0);
+		check("rows and columns", f.rows() == 3 && f.columns() == 2);
+	case .err(_):
+		check("the factors of orthogonal columns", false);
+	}
+
+	// The line through (0, 0), (1, 1), (2, 3) fitted as y = a + b t:
+	// a = -1/6, b = 3/2, and the residual (1/6, -1/3, 1/6) has norm
+	// sqrt(1/6).
+	design := dense.Matrix(f64).from_rows([3][2]f64{{1, 0}, {1, 1}, {1, 2}});
+	y := dense.Matrix(f64).from_rows([3][1]f64{{0}, {1}, {3}});
+	switch (dense.qr(design.view())) {
+	case .ok(f):
+		work := y.clone();
+		f.least_squares_into(work.view_mut());
+		fit := dense.approx_equal(work.view().block(0, 0, 2, 1),
+			dense.Matrix(f64).from_rows([2][1]f64{{-1.0/6.0}, {1.5}}).view(), 1e-14, 0.0);
+		check("a least-squares line", fit);
+		check("the rest of b holds the residual", linalg.approx_equal(math.abs(work[2, 0]), math.sqrt(1.0/6.0), 0.0, 8.0*math.F64_EPSILON));
+	case .err(_):
+		check("a least-squares line", false);
+	}
+
+	// An exact fit leaves no residual.
+	t := dense.Matrix(f64).zeros(5, 2);
+	values := dense.Matrix(f64).zeros(5, 1);
+	foreach (i in 0 ..< 5) {
+		t[i, 0] = 1.0;
+		t[i, 1] = f64(i);
+		values[i, 0] = 1.0 + 2.0*f64(i);
+	}
+	x := dense.least_squares(t.view(), values.view()) or_else dense.Matrix(f64).zeros(2, 1);
+	check("an exact fit", x.rows() == 2 && linalg.approx_equal(x[0, 0], 1.0, 1e-14, 0.0) && linalg.approx_equal(x[1, 0], 2.0, 0.0, 1e-14));
+
+	// A square system: least squares is the solution.
+	square := make_matrix(f64, .Random, 8, 8, 21);
+	rhs := make_matrix(f64, .Random, 8, 1, 22);
+	by_qr := dense.least_squares(square.view(), rhs.view()) or_else dense.Matrix(f64).zeros(8, 1);
+	by_lu := dense.solve(square.view(), rhs.view()) or_else dense.Matrix(f64).zeros(8, 1);
+	check("least squares of a square system is its solution", dense.approx_equal(by_qr.view(), by_lu.view(), 1e-12, 1e-12));
+}
+
+q_forms :: proc() {
+	a := make_matrix(f64, .Random, 9, 4, 31);
+	switch (dense.qr(a.view())) {
+	case .ok(f):
+		b := make_matrix(f64, .Random, 9, 3, 32);
+		round := b.clone();
+		f.apply_q_into(round.view_mut());
+		f.apply_q_transpose_into(round.view_mut());
+		check("Q^T Q b is b", dense.approx_equal(round.view(), b.view(), 1e-15, 1e-14));
+		full := dense.Matrix(f64).identity(9);
+		f.apply_q_into(full.view_mut());
+		gram := dense.multiply(full.view().transpose(), full.view());
+		check("the whole Q is orthogonal", dense.approx_equal(gram.view(), dense.Matrix(f64).identity(9).view(), 1e-15, 0.0));
+		check("its first columns are q() bit for bit", dense.equal(full.view().block(0, 0, 9, 4), f.q().view()));
+		// Q^T A is R above m - n zero rows, up to rounding.
+		qa := a.clone();
+		f.apply_q_transpose_into(qa.view_mut());
+		check("Q^T A is R", dense.approx_equal(qa.view().block(0, 0, 4, 4), f.r().view(), 1e-14, 1e-14)
+			&& dense.norm_one(qa.view().block(4, 0, 5, 4)) < 1e-14);
+	case .err(_):
+		check("Q^T Q b is b", false);
+	}
+	// A view in another order factors as its copy does.
+	row_major := [?]f64{1, 2, 3, 4, 5, 6, 7, 8, 10, 1, 0, 1};
+	v := dense.View(f64).from_row_major(row_major[:], 4, 3);
+	copy := dense.Matrix(f64).from_view(v);
+	same := false;
+	switch (dense.qr(v)) {
+	case .ok(from_view):
+		switch (dense.qr(copy.view())) {
+		case .ok(from_copy): same = dense.equal(from_view.factors(), from_copy.factors());
+		case .err(_):
+		}
+	case .err(_):
+	}
+	check("a row-major view factors as its copy", same);
+}
+
+failures :: proc() {
+	zero_column := dense.Matrix(f64).from_rows([3][2]f64{{1, 0}, {2, 0}, {3, 0}});
+	switch (dense.qr(zero_column.view())) {
+	case .ok(_):  check("a zero column is singular", false);
+	case .err(e): check("a zero column is singular", e == .Singular);
+	}
+	switch (dense.least_squares(zero_column.view(), dense.Matrix(f64).zeros(3, 1).view())) {
+	case .ok(_):  check("least_squares reports it", false);
+	case .err(e): check("least_squares reports it", e == .Singular);
+	}
+	nan := make_matrix(f64, .Random, 4, 3, 41);
+	nan[3, 2] = math.F64_NAN;
+	switch (dense.qr(nan.view())) {
+	case .ok(_):  check("a NaN is singular", false);
+	case .err(e): check("a NaN is singular", e == .Singular);
+	}
+	infinite := make_matrix(f64, .Random, 4, 3, 42);
+	infinite[0, 0] = math.F64_INFINITY;
+	switch (dense.qr(infinite.view())) {
+	case .ok(_):  check("an infinity is singular", false);
+	case .err(e): check("an infinity is singular", e == .Singular);
+	}
+	tau := [dynamic]f64{0, 0};
+	failed := false;
+	switch (dense.qr_in_place(zero_column.view_mut(), &mut tau[:])) {
+	case .ok:      failed = false;
+	case .err(e):  failed = e == .Singular;
+	}
+	check("qr_in_place reports it", failed);
+
+	// No columns: an empty R, and a solution with no rows.
+	empty := dense.Matrix(f64).zeros(4, 0);
+	switch (dense.qr(empty.view())) {
+	case .ok(f):
+		x := f.least_squares(dense.Matrix(f64).filled(4, 2, 1.0).view());
+		check("a matrix with no columns", f.r().rows() == 0 && f.q().columns() == 0 && x.rows() == 0 && x.columns() == 2);
+	case .err(_):
+		check("a matrix with no columns", false);
+	}
+}
+
+// A forward-mode dual number, so `qr` and `least_squares` differentiate.
+Dual :: struct { value, derivative: f64 }
+
+impl Dual {
+	@(public) from_f64 :: hook(convert) proc(value: f64) -> Dual { return {value, 0}; }
+	@(public) from_int :: hook(convert) proc(value: int) -> Dual { return {f64(value), 0}; }
+	@(public) add :: operator(+) proc(a, b: Dual) -> Dual { return {a.value + b.value, a.derivative + b.derivative}; }
+	@(public) subtract :: operator(-) proc(a, b: Dual) -> Dual { return {a.value - b.value, a.derivative - b.derivative}; }
+	@(public) negate :: operator(-) proc(a: Dual) -> Dual { return {-a.value, -a.derivative}; }
+	@(public) multiply :: operator(*) proc(a, b: Dual) -> Dual {
+		return {a.value*b.value, a.derivative*b.value + a.value*b.derivative};
+	}
+	@(public) divide :: operator(/) proc(a, b: Dual) -> Dual {
+		return {a.value/b.value, (a.derivative*b.value - a.value*b.derivative)/(b.value*b.value)};
+	}
+	@(public) equal :: operator(==) proc(a, b: Dual) -> bool { return a.value == b.value; }
+	@(public) less :: operator(<) proc(a, b: Dual) -> bool { return a.value < b.value; }
+
+	sqrt :: proc(self) -> Dual {
+		root := math.sqrt(self.value);
+		return {root, self.derivative/(root + root)};
+	}
+	sin :: proc(self) -> Dual { return {math.sin(self.value), self.derivative*math.cos(self.value)}; }
+	cos :: proc(self) -> Dual { return {math.cos(self.value), -self.derivative*math.sin(self.value)}; }
+	asin :: proc(self) -> Dual { return {math.asin(self.value), 0}; }
+	acos :: proc(self) -> Dual { return {math.acos(self.value), 0}; }
+	atan2 :: proc(self, x: Dual) -> Dual { return {math.atan2(self.value, x.value), 0}; }
+	abs :: proc(self) -> Dual { return -self if self.value < 0.0 else self; }
+	floor :: proc(self) -> Dual { return {math.floor(self.value), 0}; }
+	ceil :: proc(self) -> Dual { return {math.ceil(self.value), 0}; }
+	round :: proc(self) -> Dual { return {math.round(self.value), 0}; }
+	is_finite :: proc(self) -> bool { return math.is_finite(self.value); }
+	is_normal :: proc(self) -> bool { return math.is_finite(self.value) && math.abs(self.value) >= math.F64_MIN_NORMAL; }
+}
+
+dual :: proc() {
+	// The minimizer of |(A + t E) x - b| has the derivative
+	// (A^T A)^-1 (E^T r - A^T E x) at t = 0, for the residual r = b - A x.
+	m := 7;
+	n := 3;
+	a := make_matrix(f64, .Random, m, n, 51);
+	e := make_matrix(f64, .Random, m, n, 52);
+	b := make_matrix(f64, .Random, m, 1, 53);
+	d := dense.Matrix(Dual).zeros(m, n);
+	rhs := dense.Matrix(Dual).zeros(m, 1);
+	foreach (c in 0 ..< n) {
+		foreach (r in 0 ..< m) { d[r, c] = Dual{a[r, c], e[r, c]}; }
+	}
+	foreach (r in 0 ..< m) { rhs[r, 0] = Dual{b[r, 0], 0}; }
+	switch (dense.least_squares(d.view(), rhs.view())) {
+	case .ok(x):
+		value := dense.Matrix(f64).zeros(n, 1);
+		derivative := dense.Matrix(f64).zeros(n, 1);
+		foreach (r in 0 ..< n) {
+			value[r, 0] = x[r, 0].value;
+			derivative[r, 0] = x[r, 0].derivative;
+		}
+		residual := b.clone();
+		residual.view_mut().add_scaled(-1.0, dense.multiply(a.view(), value.view()).view());
+		right := dense.multiply(e.view().transpose(), residual.view());
+		ex := dense.multiply(e.view(), value.view());
+		right.view_mut().add_scaled(-1.0, dense.multiply(a.view().transpose(), ex.view()).view());
+		normal := dense.multiply(a.view().transpose(), a.view());
+		expected := dense.solve(normal.view(), right.view()) or_else dense.Matrix(f64).zeros(n, 1);
+		check("a dual number through least_squares gives the analytic derivative", dense.approx_equal(derivative.view(), expected.view(), 1e-12, 1e-10));
+		plain := dense.least_squares(a.view(), b.view()) or_else dense.Matrix(f64).zeros(n, 1);
+		check("and the same value as at f64, bit for bit", dense.equal(value.view(), plain.view()));
+	case .err(error):
+		fmt.println("FAIL dual least_squares", error);
+	}
+}
+
+determinism :: proc() {
+	a := make_matrix(f64, .Random, 60, 40, 61);
+	b := make_matrix(f64, .Random, 60, 1, 62);
+	switch (dense.qr(a.view())) {
+	case .ok(f):
+		x := f.least_squares(b.view());
+		fmt.println("f64 qr", bits64(f.factors()[0, 0]), bits64(f.factors()[39, 39]), bits64(f.tau()[17]),
+			bits64(x[0, 0]), bits64(x[39, 0]));
+	case .err(e):
+		fmt.println("FAIL determinism", e);
+	}
+	a32 := make_matrix(f32, .Random, 31, 20, 63);
+	b32 := make_matrix(f32, .Random, 31, 1, 64);
+	switch (dense.least_squares(a32.view(), b32.view())) {
+	case .ok(x): fmt.println("f32 least_squares", bits32(x[0, 0]), bits32(x[19, 0]));
+	case .err(e): fmt.println("FAIL determinism", e);
+	}
+}
+
+main :: proc() {
+	residuals(f64, "f64", 200);
+	residuals(f32, "f32", 64);
+	exact();
+	q_forms();
+	failures();
+	dual();
+	determinism();
+}

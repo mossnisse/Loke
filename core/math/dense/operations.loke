@@ -220,32 +220,57 @@ approx_equal :: proc(a, b: View($T), absolute, relative: T) -> bool where linalg
 	element gives NaN, and an infinity otherwise gives infinity.
 */
 norm_frobenius :: proc(a: View($T)) -> T where linalg.Real(T) {
-	scale := T(0);
-	sum := T(1);
-	infinite := false;
-	infinity := T(0);
+	sum := Sum_Of_Squares(T).init();
 	foreach (c in 0 ..< a.column_count) {
-		foreach (r in 0 ..< a.row_count) {
-			x := a[r, c].abs();
-			if (!(x == x)) { return x; }
-			if (x == T(0)) { continue; }
-			if (!x.is_finite()) {
-				infinite = true;
-				infinity = x;
-				continue;
+		foreach (r in 0 ..< a.row_count) { sum.add(a[r, c]); }
+	}
+	return sum.root();
+}
+
+// The running scale behind `norm_frobenius`, and the column norms of `qr`,
+// one element at a time. A NaN wins over an infinity, which wins over every
+// finite value.
+@(private)
+Sum_Of_Squares :: struct($T: type) where linalg.Real(T) {
+	scale:    T,
+	sum:      T,
+	special:  T,
+	infinite: bool,
+	nan:      bool,
+}
+
+impl Sum_Of_Squares($T) {
+	init :: proc() -> Sum_Of_Squares(T) { return {T(0), T(1), T(0), false, false}; }
+
+	add :: proc(self: inout, value: T) where linalg.Real(T) {
+		x := value.abs();
+		if (!(x == x)) {
+			self.nan = true;
+			self.special = x;
+			return;
+		}
+		if (x == T(0)) { return; }
+		if (!x.is_finite()) {
+			if (!self.nan) {
+				self.infinite = true;
+				self.special = x;
 			}
-			if (scale < x) {
-				ratio := scale/x;
-				sum = T(1) + sum*(ratio*ratio);
-				scale = x;
-			} else {
-				ratio := x/scale;
-				sum = sum + ratio*ratio;
-			}
+			return;
+		}
+		if (self.scale < x) {
+			ratio := self.scale/x;
+			self.sum = T(1) + self.sum*(ratio*ratio);
+			self.scale = x;
+		} else {
+			ratio := x/self.scale;
+			self.sum = self.sum + ratio*ratio;
 		}
 	}
-	if (infinite) { return infinity; }
-	return scale*sum.sqrt();
+
+	root :: proc(self) -> T where linalg.Real(T) {
+		if (self.nan || self.infinite) { return self.special; }
+		return self.scale*self.sum.sqrt();
+	}
 }
 
 /**

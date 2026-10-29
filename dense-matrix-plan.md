@@ -1,10 +1,11 @@
 # Dense matrix library plan
 
-Status: milestone 1 implemented, 2026-10-29, as
+Status: milestones 1 and 2 implemented, 2026-10-29, as
 [`core:math/dense`](standard-library.md#coremathdense)
-([Milestone 1 results](#milestone-1-results)), after its design questions were
+([Milestone 1 results](#milestone-1-results),
+[Milestone 2 results](#milestone-2-results)), after its design questions were
 settled and its spike run the same day ([Settled questions](#settled-questions),
-[Spike results](#spike-results)); milestones 2 to 5 are proposals. It is
+[Spike results](#spike-results)); milestones 3 to 5 are proposals. It is
 milestone 3 of the
 [linear algebra library plan](linear-algebra-plan.md#milestones), which left
 this package [its own plan](linear-algebra-plan.md#dense-matrices-a-later-package)
@@ -295,7 +296,9 @@ Real:
   cholesky_in_place(a) -> Status(Error)
     Cholesky: solve(b), solve_into(b), determinant(), lower(), size()
   qr(a) -> Result(Qr(T), Error)                // rows >= columns
-    Qr: least_squares(b), q(), r(), apply_q_into(b), apply_q_transpose_into(b)
+  qr_in_place(a, tau) -> Status(Error)
+    Qr: least_squares(b), least_squares_into(b), q(), r(),
+        apply_q_into(b), apply_q_transpose_into(b), factors(), tau(), rows(), columns()
   solve_lower_into(l, b, unit_diagonal), solve_upper_into(u, b, unit_diagonal)
   solve(a, b), inverse(a), least_squares(a, b) // factor, then solve, in one call
   symmetric_eigen(a) -> Result(Symmetric_Eigen(T), Error)
@@ -318,8 +321,9 @@ merely the same subspaces.
    triangular solves, `lu`, `cholesky`, `solve`, `inverse`, `determinant`,
    `reciprocal_condition`, and the norms. The spike before it is done
    ([Spike results](#spike-results)).
-2. **QR and least squares.** `qr`, `least_squares`, and the `Q` application
-   forms.
+2. **QR and least squares.** Done
+   ([Milestone 2 results](#milestone-2-results)). `qr`, `least_squares`, and
+   the `Q` application forms.
 3. **Eigenvalues and singular values.** `symmetric_eigen` and `svd`, with
    `Svd.solve`.
 4. **Measured performance.** Benchmarks against hand-written loops and a
@@ -524,3 +528,47 @@ The kernels, the products, the element-wise operations, the factorizations,
 and the substitutions index through `unsafe.raw_data` with wrapping index
 arithmetic, which the spike found they need to vectorize. Their speed is
 measured in milestone 4.
+
+## Milestone 2 results
+
+Done 2026-10-29: `qr`, `qr_in_place`, `Qr`, and `least_squares` in
+[`core:math/dense`](standard-library.md#coremathdense).
+`tests/run/lib_dense_qr.loke` checks them, in the CPU-level corpus with the
+same output at every optimization and CPU level tried, and
+`tests/trap/dense_qr_wide.loke` the panic for a wide matrix.
+
+- **LAPACK's test ratios**, `|A - Q R| / (m |A| eps)`, `|Q^T Q - I| / (m eps)`,
+  and for the least-squares residual `r`,
+  `|A^T r| / (m |A| (|A| |x| + |b|) eps)`, stay below 30 for random, Hilbert
+  (to 10 columns at `f64`, 6 at `f32`), column-graded, and nearly
+  rank-deficient matrices from 1 x 1 to 200 x 200 at `f64` and to 64 x 64 at
+  `f32`.
+- **Exact cases**: orthogonal columns give their exact `R` and reflectors, a
+  fitted line its coefficients and residual norm, and an exact fit no
+  residual.
+- **`Q`** applied and then transposed returns `b`; the whole `Q`, built by
+  applying it to the identity, is orthogonal, and its first columns are
+  `q()` bit for bit; `Q^T A` is `R` above zero rows.
+- **A dual number** through `least_squares` gives the analytic derivative
+  `(A^T A)^-1 (E^T r - A^T E x)`, and its value parts are the `f64`
+  minimizer bit for bit.
+
+Decided while implementing:
+
+- **The reflectors are LAPACK's.** `beta = -sign(alpha) hypot(alpha, s)`,
+  so `R`'s diagonal may be negative, as `geqrf`'s is; the column norm uses
+  `norm_frobenius`'s running scale and `hypot` scales too, so neither
+  overflows. `v` is computed by dividing by `alpha - beta`, not by
+  multiplying by its reciprocal, which could overflow where the quotient
+  cannot. A zero below the diagonal gives the identity reflector, `tau = 0`,
+  which `apply_q_into` skips as `larf` does.
+- **Full rank is decided by an exact zero on `R`'s diagonal**, as the plan
+  says. A nearly rank-deficient matrix factors, and its least-squares
+  solution is large; the rank decision belongs to `Svd.solve` in milestone 3.
+- **`least_squares_into(b)`** is the form that does not allocate. It leaves
+  the residual's components in `b`'s last `m - n` rows, as `gels` does, so
+  the residual norm costs nothing more; `least_squares` copies the first `n`
+  rows out.
+- **`q()` is the thin `Q`**, `m x n`. The whole `Q` is `apply_q_into` of the
+  identity, which most uses never need, since `apply_q_into` and
+  `apply_q_transpose_into` apply it without forming it.

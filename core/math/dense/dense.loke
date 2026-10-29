@@ -1,7 +1,7 @@
 /**
 	Matrices whose size is known at run time: an owning `Matrix(T)`, views of
-	it and of foreign buffers, products, and the LU and Cholesky
-	factorizations, with the same bits everywhere.
+	it and of foreign buffers, products, the LU, Cholesky, and QR
+	factorizations, and least squares, with the same bits everywhere.
 
 	`Matrix(T)` owns `rows x columns` elements stored column-major in one
 	allocation. `View(T)` reads, and `View_Mut(T)` writes, elements somewhere
@@ -25,17 +25,17 @@
 
 	A shape mismatch, an index outside a view, and a view whose strides reach
 	past its data are programmer errors and panic. A numerical failure is an
-	`Error`: an exact zero pivot or a factor that is not finite is
-	`.Singular`, and a Cholesky pivot that is not positive is
-	`.Not_Positive_Definite`. Nothing decides with a tolerance the caller did
-	not give; `Lu.reciprocal_condition` estimates how near singular a matrix
-	is, and the caller chooses the threshold.
+	`Error`: an exact zero pivot, an exact zero on `R`'s diagonal, or a factor
+	that is not finite is `.Singular`, and a Cholesky pivot that is not
+	positive is `.Not_Positive_Definite`. Nothing decides with a tolerance the
+	caller did not give; `Lu.reciprocal_condition` estimates how near
+	singular a matrix is, and the caller chooses the threshold.
 
 	Each operation is computed in the order its documentation gives, with no
 	`fma`, so it gives the same bits on every machine, CPU level, and
 	optimization level.
 */
-// dense-matrix-plan.md is the design this package implements, milestone 1.
+// dense-matrix-plan.md is the design this package implements, milestones 1 and 2.
 @(public)
 package dense;
 
@@ -46,7 +46,7 @@ import "core:mem";
 
 /// The numerical failures. Each procedure that returns one says which.
 Error :: enum {
-	/// An exact zero pivot, or a factor or solution that is not finite.
+	/// An exact zero pivot or zero on `R`'s diagonal, or a factor that is not finite.
 	Singular,
 	/// A Cholesky pivot that is not positive, or not finite.
 	Not_Positive_Definite,
