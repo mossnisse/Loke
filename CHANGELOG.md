@@ -350,6 +350,16 @@ checklist.
   `math.Complex` and `math.Quaternion`, the second rounded once where
   `q.abs()` rounds three times
   ([`core:math/repro`](standard-library.md#coremathrepro)).
+- `repro.RESULTS_VERSION` and `random.SEQUENCE_VERSION` name the versions of
+  `core:math/repro`'s results and of the values a seeded `core:random`
+  generator gives; each changes with any of them, so a replay or a lockstep
+  peer can record them and refuse a recording that would diverge
+  ([Version policy](releasing.md#version-policy)).
+- `examples/lockstep.loke` is a lockstep simulation: a fixed timestep, an
+  input log, `core:math/repro` and `core:random`, and a hash of a canonical
+  serialization that is the same on every CPU level and optimization level,
+  with a replay from the seed and from a snapshot and the versions a
+  recording carries ([Examples](examples/README.md)).
 - An export, or any procedure Loke defines with a foreign calling convention,
   runs in Loke's floating-point environment when a C host or library calls
   it with another rounding mode, flush-to-zero, or unmasked exceptions, and
@@ -432,6 +442,9 @@ checklist.
 
 ### Fixed
 
+- `examples/lexer.loke` lexes the wrapping operators `+%`, `-%`, `*%`, and
+  their compound assignments, which it read as two tokens each, so it agrees
+  with `lokec -dump-tokens` again on a source that uses them.
 - `Status` and `try_make` are listed among the [predeclared names](design.md#predeclared-names), which they have always been, and the VS Code grammar now highlights them as such. The specification also records `@(cross_thread)` in [procedure-type compatibility](design.md#procedure-type) and that a pooled task runs on a worker rather than a thread of its own.
 - A mutable borrow through a pointer passed to a read-only parameter is
   checked as read-only even when an index on the way calls something that

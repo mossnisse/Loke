@@ -18,10 +18,11 @@ Kind :: enum {
 	Mut, Operator, Or_Else, Or_Return, Package, Proc, Return, Struct, Switch, Type,
 	Union, Via, When, Where,
 	// operators and punctuation
-	Plus, Minus, Star, Slash, Percent, Amp, Amp_Tilde, Pipe, Tilde, Shl, Shr, And_And,
-	Or_Or, Not, Eq_Eq, Not_Eq, Lt, Lt_Eq, Gt, Gt_Eq, Assign, Plus_Eq, Minus_Eq,
-	Star_Eq, Slash_Eq, Percent_Eq, Pipe_Eq, Tilde_Eq, Amp_Eq, Amp_Tilde_Eq, Shl_Eq,
-	Shr_Eq, Colon, Semicolon, Comma, Period, Range, Range_Incl, Range_Excl, Arrow,
+	Plus, Minus, Star, Plus_Wrap, Minus_Wrap, Star_Wrap, Slash, Percent, Amp,
+	Amp_Tilde, Pipe, Tilde, Shl, Shr, And_And, Or_Or, Not, Eq_Eq, Not_Eq, Lt, Lt_Eq,
+	Gt, Gt_Eq, Assign, Plus_Eq, Minus_Eq, Star_Eq, Plus_Wrap_Eq, Minus_Wrap_Eq,
+	Star_Wrap_Eq, Slash_Eq, Percent_Eq, Pipe_Eq, Tilde_Eq, Amp_Eq, Amp_Tilde_Eq,
+	Shl_Eq, Shr_Eq, Colon, Semicolon, Comma, Period, Range, Range_Incl, Range_Excl, Arrow,
 	Uninit, Question, Dollar, Caret, At, Lparen, Rparen, Lbracket, Rbracket, Lbrace,
 	Rbrace,
 }
@@ -425,8 +426,10 @@ Spelling :: struct { text: string_view, kind: Kind }
 // First match wins, so longer operators must precede their prefixes. `:` stays
 // separate because `::` and `:=` are token pairs.
 OPERATORS :: [?]Spelling{
-	{"&~=", .Amp_Tilde_Eq}, {"..=", .Range_Incl}, {"..<", .Range_Excl}, {"<<=", .Shl_Eq},
-	{">>=", .Shr_Eq}, {"---", .Uninit}, {"&~", .Amp_Tilde}, {"&&", .And_And},
+	{"&~=", .Amp_Tilde_Eq}, {"+%=", .Plus_Wrap_Eq}, {"-%=", .Minus_Wrap_Eq},
+	{"*%=", .Star_Wrap_Eq}, {"..=", .Range_Incl}, {"..<", .Range_Excl}, {"<<=", .Shl_Eq},
+	{">>=", .Shr_Eq}, {"---", .Uninit}, {"&~", .Amp_Tilde}, {"+%", .Plus_Wrap},
+	{"-%", .Minus_Wrap}, {"*%", .Star_Wrap}, {"&&", .And_And},
 	{"||", .Or_Or}, {"==", .Eq_Eq}, {"!=", .Not_Eq}, {"<=", .Lt_Eq}, {">=", .Gt_Eq},
 	{"<<", .Shl}, {">>", .Shr}, {"+=", .Plus_Eq}, {"-=", .Minus_Eq}, {"*=", .Star_Eq},
 	{"/=", .Slash_Eq}, {"%=", .Percent_Eq}, {"|=", .Pipe_Eq}, {"~=", .Tilde_Eq},

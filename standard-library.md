@@ -2417,6 +2417,13 @@ not the `f64` one narrowed, which could round twice.
   rounds to even, so `quaternion_abs_f32` of 13013847, 13025704, 0, and 0 is
   18412744, and with a fourth component of the smallest subnormal, 18412746.
 
+`RESULTS_VERSION`, a `u32`, is the version of these results. It changes
+whenever any procedure's result for any argument does: the results are
+correctly rounded, so only a fix changes one, and the
+[CHANGELOG](CHANGELOG.md) says which. A replay or a lockstep peer records it
+with the other versions its values depend on and refuses a recording with
+another, as [examples/lockstep.loke](examples/lockstep.loke) does.
+
 The plan for the rest of the package, and its special cases for further
 functions, is in the
 [deterministic math and CPU targeting plan](deterministic-math-and-targets-plan.md#special-cases).
@@ -2431,6 +2438,8 @@ from the operating system. Every procedure takes the generator `inout`, as
 Source :: interface($Self: type) {
 	slot next_u64: proc(self: inout Self) -> u64;
 }
+
+SEQUENCE_VERSION :: u32(1)
 
 Xoshiro256 :: move_only struct { /* private state */ }
 
@@ -2599,8 +2608,13 @@ from draws to values is part of each procedure's contract:
 | `Weighted.pick` | One `in_range(0 ..< len)` picks a column, then one `unit` draw keeps it or takes its alias. |
 | The distributions | See [Distributions](#distributions). |
 
-Changing a generator's output or any of these mappings is a breaking change.
-An unseeded generator is not reproducible.
+Changing a generator's output or any of these mappings is a breaking change,
+and so is a [`core:math/repro`](#coremathrepro) fix that changes a
+distribution's value. Each increments `SEQUENCE_VERSION`, the version of every
+value a seeded or restored generator gives here, which a replay or a lockstep
+peer records with `repro.RESULTS_VERSION`, `LOKE_VERSION`, and its own
+version; [examples/lockstep.loke](examples/lockstep.loke) refuses a recording
+whose versions differ. An unseeded generator is not reproducible.
 
 ### Distributions
 

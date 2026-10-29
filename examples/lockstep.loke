@@ -1,0 +1,239 @@
+// A lockstep simulation: twelve bodies drifting under a pull toward the
+// middle, a turning wind, and random gusts, stepped at a fixed 60 Hz from a
+// seed and a log of inputs, with a hash of the whole state printed once a
+// simulated second. Every machine, CPU level, and optimization level prints
+// the same hashes, which is what lets peers run one game by exchanging only
+// their inputs, and lets a replay be a seed and an input log.
+//
+// What keeps the state the same everywhere:
+//
+// - Each function of a float is correctly rounded, so defined by the
+//   arithmetic alone: `core:math/repro`'s `sin`, `cos`, `atan2`, `hypot`,
+//   and `exp` (standard-library "`core:math/repro`"). `core:math`'s are the C
+//   library's, which can differ in the last bit on another machine. Loke
+//   never fuses or reorders the arithmetic itself (design.md
+//   "Floating-point operators").
+// - Every random value comes from one seeded generator, in a fixed order,
+//   and `core:random`'s distributions give the same values on every machine
+//   (standard-library "Reproducibility").
+// - A fixed timestep, and inputs applied in the order of the log. Nothing in
+//   a step reads a clock or entropy, or depends on map order, an address, or
+//   which thread finishes first.
+// - The hash is of a canonical serialization: each field's bits,
+//   little-endian, in a fixed order, the generator's state included.
+//
+// A replay records what produced it, the simulation's own version and the
+// versions of the results it depends on, and a peer or a player refuses one
+// recorded with others.
+package main;
+
+import "core:fmt";
+import "core:math";
+import "core:math/repro";
+import "core:random";
+import "core:unsafe";
+
+SEED :: u64(2026);
+BODIES :: 12;
+TICKS :: 600;
+STEP :: 1.0/60.0;
+WALL :: 20.0;
+MAX_SPEED :: 8.0;
+// Folded at compile time to the same bits a run computes.
+DRAG :: repro.exp(-0.1*STEP);
+
+// This program's own version: a change to `step` that changes any state is a
+// new one.
+SIMULATION_VERSION :: u32(1);
+
+Header :: struct {
+	simulation: u32,
+	results:    u32,
+	sequence:   u32,
+	compiler:   string_view,
+	seed:       u64,
+}
+
+// What this build would record.
+current_header :: proc(seed: u64) -> Header {
+	return {SIMULATION_VERSION, repro.RESULTS_VERSION, random.SEQUENCE_VERSION, LOKE_VERSION, seed};
+}
+
+// A recording replays only on a build that computes what recorded it.
+replays :: proc(recorded: Header) -> bool {
+	here := current_header(recorded.seed);
+	return recorded.simulation == here.simulation && recorded.results == here.results &&
+		recorded.sequence == here.sequence && recorded.compiler == here.compiler;
+}
+
+Body :: struct { x, y, vx, vy: f64 }
+
+// One player's push on one body, at the start of a tick.
+Input :: struct { tick: u64, body: int, push_x, push_y: f64 }
+
+INPUTS :: [5]Input{
+	{tick = 45, body = 3, push_x = 6.0, push_y = -2.0},
+	{tick = 45, body = 4, push_x = -6.0, push_y = 2.0},
+	{tick = 170, body = 9, push_x = 0.0, push_y = 9.5},
+	{tick = 333, body = 3, push_x = -4.25, push_y = -4.25},
+	{tick = 512, body = 11, push_x = 3.0, push_y = 0.5},
+};
+
+// The generator is move-only, so a world is too; `Snapshot` is its copyable
+// record.
+World :: move_only struct {
+	tick:   u64,
+	bodies: [BODIES]Body,
+	rng:    random.Pcg64,
+}
+
+Snapshot :: struct {
+	tick:      u64,
+	bodies:    [BODIES]Body,
+	state:     u128,
+	increment: u128,
+}
+
+new_world :: proc(seed: u64) -> World {
+	world := World{tick = 0, bodies = {}, rng = random.Pcg64.from_seed(seed)};
+	foreach (i in 0 ..< BODIES) {
+		world.bodies[i] = Body{
+			x = random.uniform(inout world.rng, -10.0, 10.0),
+			y = random.uniform(inout world.rng, -10.0, 10.0),
+			vx = random.normal(inout world.rng),
+			vy = random.normal(inout world.rng),
+		};
+	}
+	return world;
+}
+
+snapshot :: proc(world: ^World) -> Snapshot {
+	state, increment := world.rng.state();
+	return {world.tick, world.bodies, state, increment};
+}
+
+restore :: proc(saved: Snapshot) -> World {
+	return World{tick = saved.tick, bodies = saved.bodies, rng = random.Pcg64.from_state(saved.state, saved.increment)};
+}
+
+step :: proc(world: inout World, inputs: []Input) {
+	foreach (input in inputs) {
+		if (input.tick == world.tick) {
+			world.bodies[input.body].vx += input.push_x;
+			world.bodies[input.body].vy += input.push_y;
+		}
+	}
+	// Twice a second a gust strikes one body, of an exponentially distributed
+	// strength, in a uniformly random direction.
+	if (world.tick % 30 == 0) {
+		struck := random.in_range(inout world.rng, 0 ..< BODIES);
+		strength := random.exponential(inout world.rng, 0.5);
+		angle := random.uniform(inout world.rng, 0.0, math.TAU);
+		world.bodies[struck].vx += strength*repro.cos(angle);
+		world.bodies[struck].vy += strength*repro.sin(angle);
+	}
+	wind := 0.25*f64(world.tick)*STEP;
+	wind_x := 0.5*repro.cos(wind);
+	wind_y := 0.5*repro.sin(wind);
+	foreach (i in 0 ..< BODIES) {
+		b := world.bodies[i];
+		r := repro.hypot(b.x, b.y);
+		ax := wind_x;
+		ay := wind_y;
+		if (r > 0.0) {
+			pull := 4.0/((r*r + 1.0)*r);
+			ax -= pull*b.x;
+			ay -= pull*b.y;
+		}
+		b.vx = (b.vx + ax*STEP)*DRAG;
+		b.vy = (b.vy + ay*STEP)*DRAG;
+		// A body faster than the limit keeps its heading at the limit.
+		speed := repro.hypot(b.vx, b.vy);
+		if (speed > MAX_SPEED) {
+			heading := repro.atan2(b.vy, b.vx);
+			b.vx = MAX_SPEED*repro.cos(heading);
+			b.vy = MAX_SPEED*repro.sin(heading);
+		}
+		b.x += b.vx*STEP;
+		b.y += b.vy*STEP;
+		if (math.abs(b.x) > WALL) {
+			b.x = math.copy_sign(WALL, b.x);
+			b.vx = 0.0 - b.vx;
+		}
+		if (math.abs(b.y) > WALL) {
+			b.y = math.copy_sign(WALL, b.y);
+			b.vy = 0.0 - b.vy;
+		}
+		world.bodies[i] = b;
+	}
+	world.tick += 1;
+}
+
+// FNV-1a over the canonical serialization.
+Hash :: struct { value: u64 }
+
+impl Hash {
+	add :: proc(self: inout, word: u64) {
+		foreach (k in 0 ..< 8) {
+			self.value = (self.value ~ ((word >> u64(8*k)) & 0xff)) *% 0x100000001b3;
+		}
+	}
+}
+
+state_hash :: proc(world: ^World) -> u64 {
+	h := Hash{0xcbf29ce484222325};
+	h.add(world.tick);
+	foreach (b in world.bodies) {
+		h.add(unsafe.transmute(u64, b.x));
+		h.add(unsafe.transmute(u64, b.y));
+		h.add(unsafe.transmute(u64, b.vx));
+		h.add(unsafe.transmute(u64, b.vy));
+	}
+	state, increment := world.rng.state();
+	h.add(u64(state & 0xffffffffffffffff));
+	h.add(u64(state >> 64));
+	h.add(u64(increment & 0xffffffffffffffff));
+	h.add(u64(increment >> 64));
+	return h.value;
+}
+
+// Steps `world` up to `ticks`, printing the hash each simulated second when
+// `report` is set.
+run :: proc(world: inout World, ticks: u64, report: bool) {
+	inputs := INPUTS;
+	for (world.tick < ticks) {
+		step(inout world, inputs[:]);
+		if (report && world.tick % 60 == 0) {
+			fmt.println("tick", world.tick, "hash", state_hash(&world));
+		}
+	}
+}
+
+main :: proc() -> i32 {
+	header := current_header(SEED);
+	fmt.println("seed", header.seed, "simulation", header.simulation, "results", header.results,
+		"sequence", header.sequence);
+
+	world := new_world(SEED);
+	run(inout world, 300, true);
+	halfway := snapshot(&world);
+	run(inout world, TICKS, true);
+	final := state_hash(&world);
+
+	// The same seed and inputs again, and the rest of the run from the
+	// snapshot, reach the same state.
+	again := new_world(SEED);
+	run(inout again, TICKS, false);
+	fmt.println("replayed from the seed:", state_hash(&again) == final);
+	resumed := restore(move(halfway));
+	run(inout resumed, TICKS, false);
+	fmt.println("resumed from tick 300:", state_hash(&resumed) == final);
+
+	// A recording from a build whose random sequence differs would diverge,
+	// so it is refused rather than replayed wrong.
+	older := header;
+	older.sequence -= 1;
+	fmt.println("this build's recording replays:", replays(header));
+	fmt.println("a recording from random sequence", older.sequence, "replays:", replays(older));
+	return 0;
+}

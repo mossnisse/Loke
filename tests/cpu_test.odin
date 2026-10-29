@@ -11,8 +11,10 @@ import "core:testing"
 // The run cases whose output a level could move: fused or unfused arithmetic,
 // `math.fma` and the rounding to an integral value as instructions, the bit
 // operations v3 has instructions for, vectors at twice the width, and the
-// distributions over all of them, `core:math/repro`'s functions included. Each
-// keeps its one `.expected`, which the ordinary run corpus pins at baseline.
+// distributions over all of them, `core:math/repro`'s functions included, and
+// the lockstep example, whose state hashes are the plan's phase 5 gate. Each
+// keeps its one `.expected`, which the ordinary run corpus, or the examples
+// test for the example, pins at baseline.
 // The trap case binds the check the entry also calls above baseline.
 @(private = "file")
 CPU_LEVEL_CASES :: []string {
@@ -24,6 +26,7 @@ CPU_LEVEL_CASES :: []string {
 	"tests/run/lib_random.loke",
 	"tests/run/lib_random_distributions.loke",
 	"tests/run/lib_random_ziggurat.loke",
+	"examples/lockstep.loke",
 	"tests/trap/cpu_level_unknown.loke",
 }
 
@@ -93,7 +96,11 @@ cpu_levels_compute_what_baseline_does :: proc(t: ^testing.T) {
 				)
 			}
 		}
-		expected, expected_err := os.read_entire_file(expected_path(path), context.temp_allocator)
+		expected_file := expected_path(path)
+		if strings.has_prefix(path, "examples/") {
+			expected_file = fmt.tprintf("tests/examples/%s.expected", filepath.stem(path))
+		}
+		expected, expected_err := os.read_entire_file(expected_file, context.temp_allocator)
 		if !testing.expectf(t, expected_err == nil, "%s: missing .expected file", path) {
 			continue
 		}

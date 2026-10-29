@@ -23,6 +23,14 @@ package repro;
 import "core:math";
 
 /*
+	The version of the results: it changes whenever any procedure's result for
+	any argument does. The results are correctly rounded, so only a fix changes
+	one, and its release says which. A replay or a lockstep peer records it
+	beside the other versions its values depend on, and refuses another.
+*/
+RESULTS_VERSION :: u32(1);
+
+/*
 	e^x. NaN gives NaN, +Inf gives +Inf, -Inf gives +0, and ±0 gives exactly 1;
 	a finite result too large for `f64` is +Inf, and one too small is a
 	subnormal or +0.

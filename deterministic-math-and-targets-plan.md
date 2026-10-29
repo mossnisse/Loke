@@ -334,9 +334,29 @@ library, and `core:math/repro` adds the entry points the plan asks for:
   takes 48 ns and `quaternion_abs_f32` 37 ns, against 11 ns for `q.abs()`'s
   three UCRT `hypot` calls.
 
+Then the replay example and version metadata, which complete phase 5:
+
+- `repro.RESULTS_VERSION` and `random.SEQUENCE_VERSION`, both 1, change with
+  any result of their package, a distribution's through `core:math/repro`
+  included, as [Version policy](releasing.md#version-policy) now requires. A
+  recording carries them with `LOKE_VERSION` and the simulation's own
+  version. A build-configuration field is not needed: no CPU or optimization
+  level changes a value, which is what this plan's earlier phases made true.
+- [examples/lockstep.loke](examples/lockstep.loke) steps twelve bodies at
+  60 Hz from a seed and an input log, with `core:math/repro`'s `sin`, `cos`,
+  `atan2`, `hypot`, and a folded `exp`, and `core:random`'s `uniform`,
+  `normal`, `exponential`, and `in_range`, and prints a hash of a canonical
+  serialization, the generator's state included, each simulated second. A
+  second run from the seed and a run resumed from a snapshot at tick 300
+  reach the same final hash, and a recording with another random sequence
+  version is refused.
+- Phase 5's gate is met: the examples test pins its output, the CPU level
+  test requires the same at `x86-64-v2` and `x86-64-v3`, and
+  `test-all.ps1 -Full` reruns both at every optimization level.
+
 Not started: phase 1's benchmarks (the UCRT timings in open questions stand
-until there is a kernel to compare), simulation support, dispatch, and other
-platforms.
+until there is a kernel to compare), phase 6's faster kernels and dispatch,
+and other platforms.
 
 ## Recommended direction
 

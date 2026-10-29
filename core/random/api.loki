@@ -196,6 +196,16 @@ impl Pcg64 {
 }
 
 /*
+	The version of the values a seeded or restored generator gives: it changes
+	whenever a generator's output, or any procedure's mapping from draws to
+	values, does, including a distribution's value through a
+	`core:math/repro` fix, which changes `repro.RESULTS_VERSION` too. A replay
+	or a lockstep peer records it beside the other versions its values depend
+	on, and refuses another.
+*/
+SEQUENCE_VERSION :: u32(1);
+
+/*
 	64 uniformly random bits per call. The one slot every procedure here builds
 	on, and a `slot`, so `dyn mut random.Source` is a view of any generator.
 */

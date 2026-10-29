@@ -2510,6 +2510,7 @@ examples_compile_and_run :: proc(t: ^testing.T) {
 		{"hello",          .Output},
 		{"keys",           .Interactive},
 		{"lexer",          .Driven},
+		{"lockstep",       .Output},
 		{"mixer",          .Output},
 		{"orders",         .Output},
 		{"parallel",       .Output},
@@ -2912,6 +2913,14 @@ example_lexer_agrees_with_lokec :: proc(t: ^testing.T) {
 		return
 	}
 	append(&files, keyword_file)
+	keyword_index := len(files) - 1
+	// And every wrapping operator, which an example uses only when it needs one.
+	wrapping_file := fmt.tprintf("%s/example-lexer-wrapping.loke", TMP)
+	wrapping_text := "a +% b -% c *% d; a +%= b; a -%= b; a *%= b;"
+	if !testing.expectf(t, os.write_entire_file(wrapping_file, transmute([]u8)wrapping_text) == nil, "cannot write %s", wrapping_file) {
+		return
+	}
+	append(&files, wrapping_file)
 	// Encoding failures happen before lexing; assert their offsets as well as
 	// comparing codes, including a BOM whose remaining bytes are invalid.
 	encoding_cases := []struct { name, input, stderr: string }{
@@ -2974,7 +2983,7 @@ example_lexer_agrees_with_lokec :: proc(t: ^testing.T) {
 		"the lexer over core/: %s%s", string(library.stdout), string(library.stderr),
 	)
 	// Agreement alone would pass if both lexers missed the same keyword.
-	keyword_tokens := string(jobs[2 * (encoding_start - 1)].stdout)
+	keyword_tokens := string(jobs[2 * keyword_index].stdout)
 	testing.expectf(t, !strings.contains(keyword_tokens, "Ident"), "lokec lexes a reserved keyword as an identifier:\n%s", keyword_tokens)
 
 	// bench/workspace's lexer package is a copy of the example, which

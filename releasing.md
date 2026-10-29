@@ -31,6 +31,13 @@ These rules apply to every release:
   turns a warning into an error.
 - Compatibility covers behavior specified by [design.md](design.md) and
   [standard-library.md](standard-library.md); unspecified behavior is excluded.
+- A change to any result of [`core:math/repro`](standard-library.md#coremathrepro)
+  increments its `RESULTS_VERSION`, and a change to any value a seeded
+  [`core:random`](standard-library.md#reproducibility) generator gives, a
+  distribution's through `core:math/repro` included, increments
+  `random.SEQUENCE_VERSION`, each in the commit that makes the change, with an
+  upgrade note. A replay records both, so a release that changes neither
+  replays the last one's recordings.
 
 Only the latest release is supported; fixes ship as patches, with no backports.
 The required Odin version is recorded in three places that change together:
