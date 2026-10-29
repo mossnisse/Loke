@@ -1,0 +1,242 @@
+package main;
+
+import "core:fmt";
+import "core:math/dense";
+import "core:os";
+import "core:thread";
+import "core:time";
+import "core:unsafe";
+
+// The kernels of core:math/dense: products, LU, Cholesky, QR, the symmetric
+// eigensolver, and the SVD, at sizes where cache and memory bandwidth matter
+// (dense-matrix-plan.md "Milestone 4 results"). Run as it is, it computes each
+// once and prints bit patterns of the results, which bench/dense.expected
+// holds, so perf.ps1 times the whole and checks that no result changed: the
+// `_Pool` cases, which use a pool of one worker per processor, and the
+// hand-written product print the same bits as their plain cases. Run with
+// `-times`, it prints the fastest of several runs of each operation instead,
+// the inputs built and the checksum taken outside the timing, in milliseconds
+// and in floating-point operations per nanosecond.
+
+// A 64-bit linear congruential generator, so the matrices are the same on
+// every machine.
+Random :: struct { state: u64 }
+
+impl Random {
+	// Uniform in [-1, 1).
+	next :: proc(self: inout) -> f64 {
+		self.state = self.state*%6364136223846793005 +% 1442695040888963407;
+		return f64(self.state >> 11)/9007199254740992.0*2.0 - 1.0;
+	}
+}
+
+random_matrix :: proc($T: type, rows, columns: int, seed: u64) -> dense.Matrix(T) {
+	random := Random{seed};
+	m := dense.Matrix(T).zeros(rows, columns);
+	foreach (c in 0 ..< columns) {
+		foreach (r in 0 ..< rows) { m[r, c] = T(random.next()); }
+	}
+	return m;
+}
+
+// A symmetric positive definite matrix: B^T B + n I.
+spd_matrix :: proc(n: int, seed: u64) -> dense.Matrix(f64) {
+	b := random_matrix(f64, n, n, seed);
+	a := dense.multiply(b.view().transpose(), b.view());
+	foreach (i in 0 ..< n) { a[i, i] = a[i, i] + f64(n); }
+	return a;
+}
+
+symmetric_matrix :: proc(n: int, seed: u64) -> dense.Matrix(f64) {
+	a := random_matrix(f64, n, n, seed);
+	foreach (c in 0 ..< n) {
+		foreach (r in 0 ..< c) { a[r, c] = a[c, r]; }
+	}
+	return a;
+}
+
+bits :: proc(x: f64) -> u64 { return unsafe.transmute(u64, x); }
+
+// The product as a caller might write it over plain slices, column-major:
+// the same order as dense.multiply_into, with checked indexing.
+hand_multiply :: proc(out: []mut f64, a, b: []f64, n: int) {
+	foreach (j in 0 ..< n) {
+		foreach (i in 0 ..< n) { out[i + j*n] = a[i]*b[j*n]; }
+		foreach (k in 1 ..< n) {
+			factor := b[k + j*n];
+			foreach (i in 0 ..< n) { out[i + j*n] = out[i + j*n] + a[i + k*n]*factor; }
+		}
+	}
+}
+
+Operation :: enum { Multiply, Multiply_Pool, Multiply_Transposed, Multiply_F32, Hand_Multiply, Lu, Lu_Pool, Cholesky, Cholesky_Pool, Qr, Symmetric_Eigen, Svd }
+
+// The result of one run: a value that depends on the whole result, so that
+// nothing is optimized away and a change shows, and the seconds the
+// operation took, its inputs built outside the timing.
+Outcome :: struct { checksum: u64, seconds: f64 }
+
+timed :: proc(start, stop: time.Tick, checksum: u64) -> Outcome {
+	return {checksum, (stop - start).seconds_f64()};
+}
+
+run :: proc(operation: Operation, n: int, pool: ^thread.Pool) -> Outcome {
+	switch (operation) {
+	case .Multiply:
+		a := random_matrix(f64, n, n, 1);
+		b := random_matrix(f64, n, n, 2);
+		out := dense.Matrix(f64).zeros(n, n);
+		start := time.tick_now();
+		dense.multiply_into(out.view_mut(), a.view(), b.view());
+		stop := time.tick_now();
+		return timed(start, stop, bits(out[0, 0]) ~ bits(out[n - 1, n - 1]) ~ bits(dense.norm_frobenius(out.view())));
+	case .Multiply_Pool:
+		a := random_matrix(f64, n, n, 1);
+		b := random_matrix(f64, n, n, 2);
+		out := dense.Matrix(f64).zeros(n, n);
+		start := time.tick_now();
+		dense.multiply_into(out.view_mut(), a.view(), b.view(), .some(pool));
+		stop := time.tick_now();
+		return timed(start, stop, bits(out[0, 0]) ~ bits(out[n - 1, n - 1]) ~ bits(dense.norm_frobenius(out.view())));
+	case .Multiply_Transposed:
+		a := random_matrix(f64, n, n, 1);
+		b := random_matrix(f64, n, n, 2);
+		out := dense.Matrix(f64).zeros(n, n);
+		start := time.tick_now();
+		dense.multiply_into(out.view_mut(), a.view(), b.view().transpose());
+		stop := time.tick_now();
+		return timed(start, stop, bits(out[0, 0]) ~ bits(out[n - 1, n - 1]) ~ bits(dense.norm_frobenius(out.view())));
+	case .Multiply_F32:
+		a := random_matrix(f32, n, n, 1);
+		b := random_matrix(f32, n, n, 2);
+		out := dense.Matrix(f32).zeros(n, n);
+		start := time.tick_now();
+		dense.multiply_into(out.view_mut(), a.view(), b.view());
+		stop := time.tick_now();
+		return timed(start, stop, bits(f64(out[0, 0])) ~ bits(f64(out[n - 1, n - 1])) ~ bits(f64(dense.norm_frobenius(out.view()))));
+	case .Hand_Multiply:
+		random := Random{1};
+		a := make([dynamic]f64, 0, n*n);
+		foreach (_ in 0 ..< n*n) { a.append(random.next()); }
+		random = Random{2};
+		b := make([dynamic]f64, 0, n*n);
+		foreach (_ in 0 ..< n*n) { b.append(random.next()); }
+		out := make([dynamic]f64, 0, n*n);
+		foreach (_ in 0 ..< n*n) { out.append(0.0); }
+		start := time.tick_now();
+		hand_multiply(&mut out[:], a[:], b[:], n);
+		stop := time.tick_now();
+		// The same checksum as `.Multiply`'s, which it matches bit for bit.
+		result := dense.View(f64).from_column_major(out[:], n, n);
+		return timed(start, stop, bits(out[0]) ~ bits(out[n*n - 1]) ~ bits(dense.norm_frobenius(result)));
+	case .Lu:
+		a := random_matrix(f64, n, n, 3);
+		start := time.tick_now();
+		result := dense.lu(a.view());
+		stop := time.tick_now();
+		switch (result) {
+		case .ok(f):  return timed(start, stop, bits(f.determinant()) ~ bits(f.factors()[n - 1, n - 1]));
+		case .err(_): return {};
+		}
+	case .Lu_Pool:
+		a := random_matrix(f64, n, n, 3);
+		start := time.tick_now();
+		result := dense.lu(a.view(), pool = .some(pool));
+		stop := time.tick_now();
+		switch (result) {
+		case .ok(f):  return timed(start, stop, bits(f.determinant()) ~ bits(f.factors()[n - 1, n - 1]));
+		case .err(_): return {};
+		}
+	case .Cholesky:
+		a := spd_matrix(n, 4);
+		start := time.tick_now();
+		result := dense.cholesky(a.view());
+		stop := time.tick_now();
+		switch (result) {
+		case .ok(f):  return timed(start, stop, bits(f.lower()[n - 1, n - 1]) ~ bits(f.lower()[n - 1, 0]));
+		case .err(_): return {};
+		}
+	case .Cholesky_Pool:
+		a := spd_matrix(n, 4);
+		start := time.tick_now();
+		result := dense.cholesky(a.view(), pool = .some(pool));
+		stop := time.tick_now();
+		switch (result) {
+		case .ok(f):  return timed(start, stop, bits(f.lower()[n - 1, n - 1]) ~ bits(f.lower()[n - 1, 0]));
+		case .err(_): return {};
+		}
+	case .Qr:
+		a := random_matrix(f64, n, n/2, 5);
+		start := time.tick_now();
+		result := dense.qr(a.view());
+		stop := time.tick_now();
+		switch (result) {
+		case .ok(f):  return timed(start, stop, bits(f.factors()[n/2 - 1, n/2 - 1]) ~ bits(f.tau()[0]));
+		case .err(_): return {};
+		}
+	case .Symmetric_Eigen:
+		a := symmetric_matrix(n, 6);
+		start := time.tick_now();
+		result := dense.symmetric_eigen(a.view());
+		stop := time.tick_now();
+		switch (result) {
+		case .ok(e):  return timed(start, stop, bits(e.values()[0]) ~ bits(e.values()[n - 1]) ~ bits(e.vectors()[n - 1, n/2]));
+		case .err(_): return {};
+		}
+	case .Svd:
+		a := random_matrix(f64, n, n/2, 7);
+		start := time.tick_now();
+		result := dense.svd(a.view());
+		stop := time.tick_now();
+		switch (result) {
+		case .ok(s):  return timed(start, stop, bits(s.singular_values()[0]) ~ bits(s.singular_values()[n/2 - 1]) ~ bits(s.v()[n/2 - 1, 0]));
+		case .err(_): return {};
+		}
+	}
+}
+
+// The floating-point operations of one run, for a rate: the usual counts.
+operations :: proc(operation: Operation, n: int) -> f64 {
+	x := f64(n);
+	switch (operation) {
+	case .Multiply, .Multiply_Pool, .Multiply_Transposed, .Multiply_F32, .Hand_Multiply: return 2.0*x*x*x;
+	case .Lu, .Lu_Pool:     return 2.0*x*x*x/3.0;
+	case .Cholesky, .Cholesky_Pool: return x*x*x/3.0;
+	case .Qr:              return 2.0*x*(x/2.0)*(x/2.0) - 2.0*(x/2.0)*(x/2.0)*(x/2.0)/3.0;
+	case .Symmetric_Eigen: return 9.0*x*x*x;
+	case .Svd:             return 4.0*x*(x/2.0)*(x/2.0) + 8.0*(x/2.0)*(x/2.0)*(x/2.0) + 12.0*x*(x/2.0)*(x/2.0);
+	}
+}
+
+Case :: struct { operation: Operation, n: int }
+
+CASES :: [?]Case{
+	{.Multiply, 64}, {.Multiply, 256}, {.Multiply, 512}, {.Multiply, 1024},
+	{.Multiply_Pool, 256}, {.Multiply_Pool, 1024},
+	{.Multiply_Transposed, 1024}, {.Multiply_F32, 512}, {.Hand_Multiply, 512},
+	{.Lu, 256}, {.Lu, 1024}, {.Lu_Pool, 1024}, {.Cholesky, 1024}, {.Cholesky_Pool, 1024}, {.Qr, 1024},
+	{.Symmetric_Eigen, 256}, {.Svd, 512},
+};
+
+// The fastest of `repeat` runs, in seconds.
+fastest :: proc(c: Case, repeat: int, pool: ^thread.Pool) -> f64 {
+	best := 0.0;
+	foreach (i in 0 ..< repeat) {
+		seconds := run(c.operation, c.n, pool).seconds;
+		if (i == 0 || seconds < best) { best = seconds; }
+	}
+	return best;
+}
+
+main :: proc() {
+	pool := thread.Pool.init(thread.processor_count());
+	if (os.args.len() > 1 && os.args[1] == "-times") {
+		foreach (c in CASES) {
+			repeat := 3 if c.n >= 512 else 10;
+			seconds := fastest(c, repeat, &pool);
+			fmt.println(c.operation, c.n, seconds*1e3, "ms", operations(c.operation, c.n)/(seconds*1e9), "flop/ns");
+		}
+		return;
+	}
+	foreach (c in CASES) { fmt.println(c.operation, c.n, run(c.operation, c.n, &pool).checksum); }
+}

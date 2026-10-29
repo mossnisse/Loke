@@ -8,6 +8,7 @@ package dense;
 
 import "core:math/linalg";
 import "core:mem";
+import "core:thread";
 import "core:unsafe";
 
 /**
@@ -29,14 +30,39 @@ Lu :: struct($T: type) where linalg.Real(T) {
 	and each trailing element is `((a - l[r, 0]*u[0, c]) - l[r, 1]*u[1, c]) -
 	...`. `.Singular` for an exact zero pivot or a factor that is not finite,
 	with `a` and `pivots` then unspecified. A shape mismatch panics.
+
+	With a `pool`, the trailing columns of each block of steps are updated
+	as tasks on its workers, each element in the same order, so the result
+	is the same bits.
 */
-lu_in_place :: proc(a: View_Mut($T), pivots: []mut int) -> Status(Error) where linalg.Real(T) {
+lu_in_place :: proc(a: View_Mut($T), pivots: []mut int, pool: Option(^thread.Pool) = .none) -> Status(Error) where linalg.Real(T) {
 	n := a.row_count;
 	assert(a.column_count == n && pivots.len() == n, "dense.lu_in_place needs a square matrix and one pivot per row");
 	m := unsafe.raw_data(a.data);
 	rs := a.row_stride;
 	cs := a.column_stride;
-	foreach (k in 0 ..< n) {
+	switch (blocked_lu(a, pivots, pool)) {
+	case .Done:
+	case .Singular:
+		return .err(.Singular);
+	case .Not_Run:
+		if (!eliminate(m, rs, cs, n, 0, n, 0, n, pivots)) { return .err(.Singular); }
+	}
+	foreach (c in 0 ..< n) {
+		foreach (r in 0 ..< n) {
+			if (!m[offset(r, c, rs, cs)].is_finite()) { return .err(.Singular); }
+		}
+	}
+	return .ok;
+}
+
+// Steps `k0 ..< k1` of `lu_in_place`'s elimination on the `n x n` storage
+// `m`: the pivot search in column `k`, the row swap on columns
+// `first ..< last`, the multipliers, and the update of columns
+// `k + 1 ..< last`. False at a zero pivot.
+@(private)
+eliminate :: proc(m: [^]$T, rs, cs, n, k0, k1, first, last: int, pivots: []mut int) -> bool where linalg.Real(T) {
+	foreach (k in k0 ..< k1) {
 		pivot := k;
 		largest := m[offset(k, k, rs, cs)].abs();
 		foreach (r in k + 1 ..< n) {
@@ -46,10 +72,10 @@ lu_in_place :: proc(a: View_Mut($T), pivots: []mut int) -> Status(Error) where l
 				largest = candidate;
 			}
 		}
-		if (!(T(0) < largest)) { return .err(.Singular); }
+		if (!(T(0) < largest)) { return false; }
 		pivots[k] = pivot;
 		if (pivot != k) {
-			foreach (c in 0 ..< n) {
+			foreach (c in first ..< last) {
 				held := m[offset(k, c, rs, cs)];
 				m[offset(k, c, rs, cs)] = m[offset(pivot, c, rs, cs)];
 				m[offset(pivot, c, rs, cs)] = held;
@@ -60,7 +86,7 @@ lu_in_place :: proc(a: View_Mut($T), pivots: []mut int) -> Status(Error) where l
 			at := offset(r, k, rs, cs);
 			m[at] = m[at]/diagonal;
 		}
-		foreach (c in k + 1 ..< n) {
+		foreach (c in k + 1 ..< last) {
 			factor := m[offset(k, c, rs, cs)];
 			foreach (r in k + 1 ..< n) {
 				at := offset(r, c, rs, cs);
@@ -68,20 +94,127 @@ lu_in_place :: proc(a: View_Mut($T), pivots: []mut int) -> Status(Error) where l
 			}
 		}
 	}
-	foreach (c in 0 ..< n) {
-		foreach (r in 0 ..< n) {
-			if (!m[offset(r, c, rs, cs)].is_finite()) { return .err(.Singular); }
-		}
-	}
-	return .ok;
+	return true;
 }
 
-/// The LU factors of the square `a`, allocated from `allocator`, or `.Singular` as `lu_in_place` decides it.
-lu :: proc(a: View($T), allocator: Allocator = mem.default_allocator()) -> Result(Lu(T), Error) where linalg.Real(T) {
+// The columns of one panel of the blocked LU.
+@(private) LU_PANEL :: 64;
+
+@(private)
+Blocked :: enum { Not_Run, Done, Singular }
+
+// `lu_in_place` by blocks of `LU_PANEL` columns, for `f32` and `f64` with
+// contiguous columns, the work right of each panel shared among `pool`'s
+// tasks by columns when there is one: `.Not_Run`, with nothing done, for any other matrix,
+// and `.Singular` at the zero pivot `eliminate` would stop at. Each element receives the same
+// updates in the same order as from `eliminate` over the whole matrix:
+// the panel's steps on its own columns; its row swaps, in order, on the
+// other columns, which gives the same values because a row's updates use
+// multipliers that move with it; the rows of `U` right of the panel,
+// `((a - l0*u0) - l1*u1) - ...` in increasing `k`; and the trailing block
+// `A22 - L21 U12` by `fast_product`, one subtraction per term in increasing
+// `k`.
+@(private)
+blocked_lu :: proc(a: View_Mut($T), pivots: []mut int, pool: Option(^thread.Pool)) -> Blocked where linalg.Real(T) {
+	n := a.row_count;
+	when (T != f64 && T != f32) { return .Not_Run; }
+	if (a.row_stride != 1 || n <= LU_PANEL) { return .Not_Run; }
+	m := unsafe.raw_data(a.data);
+	cs := a.column_stride;
+	whole := a;
+	k0 := 0;
+	for (k0 < n) {
+		k1 := k0 + LU_PANEL if k0 + LU_PANEL < n else n;
+		if (!eliminate(m, 1, cs, n, k0, k1, k0, k1, pivots)) { return .Singular; }
+		// The swaps left of the panel, column by column so that each column
+		// is read once.
+		foreach (c in 0 ..< k0) {
+			column := c*%cs;
+			foreach (k in k0 ..< k1) {
+				p := pivots[k];
+				if (p != k) { swap_elements(m, k +% column, p +% column); }
+			}
+		}
+		if (k1 < n) {
+			left, right := whole.split_columns(k1);
+			panel := left.as_view().block(k0, k0, n - k0, k1 - k0);
+			switch (pool) {
+			case .none:    update_columns(move(right), panel, pivots[k0:k1], k0);
+			case .some(p): parallel_update(move(right), panel, pivots[k0:k1], k0, p);
+			}
+		}
+		k0 = k1;
+	}
+	return .Done;
+}
+
+// The columns right of a panel of `blocked_lu`, rows `0 ..< n`, given the
+// panel's rows `k0 ..< n` and its pivots: the panel's swaps, in order, column
+// by column; the rows of `U` the panel covers,
+// `((a - l0*u0) - l1*u1) - ...` in increasing `k`; and the rows below by
+// `fast_product`, one subtraction per term in increasing `k`.
+@(private)
+update_columns :: proc(right: View_Mut($T), panel: View(T), swaps: []int, k0: int) where linalg.Real(T) {
+	m := unsafe.raw_data(right.data);
+	l := unsafe.raw_data(panel.data);
+	cs := right.column_stride;
+	lc := panel.column_stride;
+	n := right.row_count;
+	w := panel.column_count;
+	k1 := k0 + w;
+	foreach (c in 0 ..< right.column_count) {
+		column := c*%cs;
+		top := k0 +% column;
+		foreach (t in 0 ..< w) {
+			p := swaps[t];
+			if (p != k0 +% t) { swap_elements(m, top +% t, p +% column); }
+		}
+		foreach (t in 0 ..< w) {
+			factor := m[top +% t];
+			source := t*%lc;
+			foreach (i in t + 1 ..< w) { m[top +% i] = m[top +% i] - l[i +% source]*factor; }
+		}
+	}
+	when (T == f64) {
+		fast_product(m[k1:], cs, l[w:], lc, m[k0:], 1, cs, n - k1, right.column_count, w, true, true, 4);
+	}
+	when (T == f32) {
+		fast_product(m[k1:], cs, l[w:], lc, m[k0:], 1, cs, n - k1, right.column_count, w, true, true, 8);
+	}
+}
+
+// `update_columns` on blocks of the columns, in `pool`'s tasks, until each is
+// about a task's worth. Each column is updated as `update_columns` updates
+// it, so the blocks change no bit.
+@(private)
+parallel_update :: proc(right: View_Mut($T), panel: View(T), swaps: []int, k0: int, pool: ^thread.Pool) where linalg.Real(T) {
+	n := right.column_count;
+	if (n < 2*COLUMNS || right.row_count*n*panel.column_count < 2*TASK_WORK) {
+		update_columns(right, panel, swaps, k0);
+		return;
+	}
+	half := n/2/COLUMNS*COLUMNS;
+	whole := right;
+	first, second := move(whole).split_columns(half);
+	parallel (pool) {
+		spawn parallel_update(move(first), panel, swaps, k0, pool);
+		parallel_update(move(second), panel, swaps, k0, pool);
+	}
+}
+
+@(private)
+swap_elements :: proc(m: [^]$T, i, j: int) {
+	held := m[i];
+	m[i] = m[j];
+	m[j] = held;
+}
+
+/// The LU factors of the square `a`, allocated from `allocator`, or `.Singular` as `lu_in_place` decides it, with its use of a `pool`.
+lu :: proc(a: View($T), allocator: Allocator = mem.default_allocator(), pool: Option(^thread.Pool) = .none) -> Result(Lu(T), Error) where linalg.Real(T) {
 	assert(a.row_count == a.column_count, "dense.lu needs a square matrix");
 	factors := Matrix(T).from_view(a, allocator);
 	pivots := make([dynamic]int, a.row_count, allocator);
-	lu_in_place(factors.view_mut(), &mut pivots[:]) or_return;
+	lu_in_place(factors.view_mut(), &mut pivots[:], pool) or_return;
 	return .ok(Lu(T){move(factors), move(pivots), norm_one(a)});
 }
 
@@ -274,15 +407,31 @@ Cholesky :: struct($T: type) where linalg.Real(T) {
 	square root, and the elements below it divided by that.
 	`.Not_Positive_Definite`, with `a` unspecified, for a diagonal that is
 	not positive and finite before its square root. A shape mismatch panics.
+
+	With a `pool`, the columns right of each block of columns are updated as
+	tasks on its workers, each element in the same order, so the result is
+	the same bits.
 */
-cholesky_in_place :: proc(a: View_Mut($T)) -> Status(Error) where linalg.Real(T) {
+cholesky_in_place :: proc(a: View_Mut($T), pool: Option(^thread.Pool) = .none) -> Status(Error) where linalg.Real(T) {
 	n := a.row_count;
 	assert(a.column_count == n, "dense.cholesky_in_place needs a square matrix");
+	switch (blocked_cholesky(a, pool)) {
+	case .Done:     return .ok;
+	case .Singular: return .err(.Not_Positive_Definite);
+	case .Not_Run:
+	}
 	m := unsafe.raw_data(a.data);
-	rs := a.row_stride;
-	cs := a.column_stride;
-	foreach (j in 0 ..< n) {
-		foreach (k in 0 ..< j) {
+	if (!cholesky_columns(m, a.row_stride, a.column_stride, n, 0, n, 0)) { return .err(.Not_Positive_Definite); }
+	return .ok;
+}
+
+// Columns `j0 ..< j1` of `cholesky_in_place`, each with its terms from
+// `first` on, the earlier ones already subtracted. False at a diagonal that
+// is not positive and finite.
+@(private)
+cholesky_columns :: proc(m: [^]$T, rs, cs, n, j0, j1, first: int) -> bool where linalg.Real(T) {
+	foreach (j in j0 ..< j1) {
+		foreach (k in first ..< j) {
 			factor := m[offset(j, k, rs, cs)];
 			foreach (i in j ..< n) {
 				at := offset(i, j, rs, cs);
@@ -292,7 +441,7 @@ cholesky_in_place :: proc(a: View_Mut($T)) -> Status(Error) where linalg.Real(T)
 		// Every element below the diagonal reaches a later diagonal through
 		// its square, so this test also rejects a factor that is not finite.
 		d := m[offset(j, j, rs, cs)];
-		if (!(T(0) < d && d.is_finite())) { return .err(.Not_Positive_Definite); }
+		if (!(T(0) < d && d.is_finite())) { return false; }
 		root := d.sqrt();
 		m[offset(j, j, rs, cs)] = root;
 		foreach (i in j + 1 ..< n) {
@@ -300,18 +449,160 @@ cholesky_in_place :: proc(a: View_Mut($T)) -> Status(Error) where linalg.Real(T)
 			m[at] = m[at]/root;
 		}
 	}
-	return .ok;
+	return true;
 }
 
-/// The Cholesky factor of the square `a`, from its lower triangle, allocated from `allocator`.
-cholesky :: proc(a: View($T), allocator: Allocator = mem.default_allocator()) -> Result(Cholesky(T), Error) where linalg.Real(T) {
+// The columns of one panel of the blocked Cholesky.
+@(private) CHOLESKY_PANEL :: 32;
+
+// `cholesky_in_place` by blocks of `CHOLESKY_PANEL` columns, for `f32` and
+// `f64` with contiguous columns: `.Not_Run`, with nothing done, for any other
+// matrix, and `.Singular` where `cholesky_columns` would fail. Each element
+// receives its terms in the same order as from `cholesky_columns` over the
+// whole matrix. On the calling thread the blocks are left-looking, which
+// moves less memory; with a `pool` they are right-looking, whose updates can
+// be shared out by columns.
+@(private)
+blocked_cholesky :: proc(a: View_Mut($T), pool: Option(^thread.Pool)) -> Blocked where linalg.Real(T) {
+	when (T != f64 && T != f32) { return .Not_Run; }
+	if (a.row_stride != 1 || a.row_count <= CHOLESKY_PANEL) { return .Not_Run; }
+	switch (pool) {
+	case .none:    return left_looking(a);
+	case .some(p): return right_looking(a, p);
+	}
+}
+
+// Each panel's terms from the earlier columns by `fast_product`, one
+// subtraction each in increasing `k`, then its own by `cholesky_columns`. The
+// diagonal block is computed whole in a copy, and only its lower triangle
+// written back, so nothing above the diagonal is read or written.
+@(private)
+left_looking :: proc(a: View_Mut($T)) -> Blocked where linalg.Real(T) {
+	n := a.row_count;
+	m := unsafe.raw_data(a.data);
+	cs := a.column_stride;
+	square: [CHOLESKY_PANEL*CHOLESKY_PANEL]T = {};
+	block := unsafe.raw_data(&square);
+	j0 := 0;
+	for (j0 < n) {
+		j1 := j0 + CHOLESKY_PANEL if j0 + CHOLESKY_PANEL < n else n;
+		w := j1 - j0;
+		if (j0 > 0) {
+			foreach (c in 0 ..< w) {
+				foreach (r in 0 ..< w) { block[r +% c*%w] = m[(j0 + r) +% (j0 + c)*%cs] if c <= r else T(0); }
+			}
+			// L[J, 0:j0] times its transpose, and L[j1:n, 0:j0] times it.
+			when (T == f64) {
+				fast_product(block, w, m[j0:], cs, m[j0:], cs, 1, w, w, j0, true, true, 4);
+				if (j1 < n) { fast_product(m[j1 + j0*cs:], cs, m[j1:], cs, m[j0:], cs, 1, n - j1, w, j0, true, true, 4); }
+			}
+			when (T == f32) {
+				fast_product(block, w, m[j0:], cs, m[j0:], cs, 1, w, w, j0, true, true, 8);
+				if (j1 < n) { fast_product(m[j1 + j0*cs:], cs, m[j1:], cs, m[j0:], cs, 1, n - j1, w, j0, true, true, 8); }
+			}
+			foreach (c in 0 ..< w) {
+				foreach (r in c ..< w) { m[(j0 + r) +% (j0 + c)*%cs] = block[r +% c*%w]; }
+			}
+		}
+		if (!cholesky_columns(m, 1, cs, n, j0, j1, j0)) { return .Singular; }
+		j0 = j1;
+	}
+	return .Done;
+}
+
+// Each panel by `cholesky_columns`, then its terms subtracted from every
+// later column, those columns shared among `pool`'s tasks.
+@(private)
+right_looking :: proc(a: View_Mut($T), pool: ^thread.Pool) -> Blocked where linalg.Real(T) {
+	n := a.row_count;
+	m := unsafe.raw_data(a.data);
+	cs := a.column_stride;
+	whole := a;
+	j0 := 0;
+	for (j0 < n) {
+		j1 := j0 + CHOLESKY_PANEL if j0 + CHOLESKY_PANEL < n else n;
+		if (!cholesky_columns(m, 1, cs, n, j0, j1, j0)) { return .Singular; }
+		if (j1 < n) {
+			left, right := whole.split_columns(j1);
+			panel := left.as_view().block(0, j0, n, j1 - j0);
+			parallel_trailing(move(right), panel, j1, pool);
+		}
+		j0 = j1;
+	}
+	return .Done;
+}
+
+// Subtracts a factored panel's terms from the lower triangle of the columns
+// `right` holds, rows `0 ..< n`, the first of them column `g0` of the matrix:
+// `CHOLESKY_PANEL` columns at a time, the diagonal block computed whole in a
+// copy and only its lower triangle written back, so nothing above the
+// diagonal is read or written, and the rows below it by `fast_product`, one
+// subtraction per term in increasing `k`.
+@(private)
+trailing_update :: proc(right: View_Mut($T), panel: View(T), g0: int) where linalg.Real(T) {
+	m := unsafe.raw_data(right.data);
+	l := unsafe.raw_data(panel.data);
+	cs := right.column_stride;
+	lc := panel.column_stride;
+	n := right.row_count;
+	w := panel.column_count;
+	count := right.column_count;
+	square: [CHOLESKY_PANEL*CHOLESKY_PANEL]T = {};
+	block := unsafe.raw_data(&square);
+	c0 := 0;
+	for (c0 < count) {
+		c1 := c0 + CHOLESKY_PANEL if c0 + CHOLESKY_PANEL < count else count;
+		width := c1 - c0;
+		g := g0 + c0;
+		below := g + width;
+		foreach (c in 0 ..< width) {
+			foreach (r in 0 ..< width) { block[r +% c*%width] = m[(g + r) +% (c0 + c)*%cs] if c <= r else T(0); }
+		}
+		when (T == f64) {
+			fast_product(block, width, l[g:], lc, l[g:], lc, 1, width, width, w, true, true, 4);
+			if (below < n) { fast_product(m[below + c0*cs:], cs, l[below:], lc, l[g:], lc, 1, n - below, width, w, true, true, 4); }
+		}
+		when (T == f32) {
+			fast_product(block, width, l[g:], lc, l[g:], lc, 1, width, width, w, true, true, 8);
+			if (below < n) { fast_product(m[below + c0*cs:], cs, l[below:], lc, l[g:], lc, 1, n - below, width, w, true, true, 8); }
+		}
+		foreach (c in 0 ..< width) {
+			foreach (r in c ..< width) { m[(g + r) +% (c0 + c)*%cs] = block[r +% c*%width]; }
+		}
+		c0 = c1;
+	}
+}
+
+// `trailing_update` on blocks of the columns, in `pool`'s tasks, until each
+// is about a task's worth. Each column is updated as `trailing_update`
+// updates it, so the blocks change no bit.
+@(private)
+parallel_trailing :: proc(right: View_Mut($T), panel: View(T), g0: int, pool: ^thread.Pool) where linalg.Real(T) {
+	n := right.column_count;
+	rows := right.row_count - g0;
+	if (n < 2*COLUMNS || rows*n*panel.column_count < 2*TASK_WORK) {
+		trailing_update(right, panel, g0);
+		return;
+	}
+	// The columns on the left reach further down, so they take less than half.
+	half := n/3/COLUMNS*COLUMNS if n >= 3*COLUMNS else COLUMNS;
+	whole := right;
+	first, second := move(whole).split_columns(half);
+	parallel (pool) {
+		spawn parallel_trailing(move(first), panel, g0, pool);
+		parallel_trailing(move(second), panel, g0 + half, pool);
+	}
+}
+
+/// The Cholesky factor of the square `a`, from its lower triangle, allocated from `allocator`, with `cholesky_in_place`'s use of a `pool`.
+cholesky :: proc(a: View($T), allocator: Allocator = mem.default_allocator(), pool: Option(^thread.Pool) = .none) -> Result(Cholesky(T), Error) where linalg.Real(T) {
 	n := a.row_count;
 	assert(a.column_count == n, "dense.cholesky needs a square matrix");
 	factor := Matrix(T).zeros(n, n, allocator);
 	foreach (c in 0 ..< n) {
 		foreach (r in c ..< n) { factor[r, c] = a[r, c]; }
 	}
-	cholesky_in_place(factor.view_mut()) or_return;
+	cholesky_in_place(factor.view_mut(), pool) or_return;
 	return .ok(Cholesky(T){move(factor)});
 }
 

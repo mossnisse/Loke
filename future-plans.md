@@ -119,11 +119,12 @@ integer bit helpers. `core:simd`'s remaining gaps are specified in
 [What SIMD does not do](design.md#what-simd-does-not-do).
 [`core:math/linalg`](standard-library.md#coremathlinalg) has its first two
 milestones, the core values and the rotation and geometry helpers, and
-[`core:math/dense`](standard-library.md#coremathdense) the first three
+[`core:math/dense`](standard-library.md#coremathdense) the first four
 milestones of the [dense matrix plan](dense-matrix-plan.md#milestones):
 storage, views, products, LU, Cholesky, QR, least squares, the symmetric
-eigensolver, and the SVD. Measured SIMD paths and complex elements follow, in
-those plans' milestones.
+eigensolver, the SVD, and measured `Simd`, blocked, and pooled kernels.
+`linalg`'s measured SIMD paths and dense complex elements follow, in those
+plans' milestones.
 
 [`core:encoding/json`](standard-library.md#coreencodingjson) still needs this
 evidence, in this order; its open design questions are in

@@ -47,6 +47,7 @@ import "base:interfaces";
 import "core:fmt";
 import "core:math/linalg";
 import "core:mem";
+import "core:thread";
 
 // The numerical failures. Each procedure that returns one says which.
 Error :: enum {
@@ -179,11 +180,15 @@ Lu :: struct($T: type) where linalg.Real(T) {
 	and each trailing element is `((a - l[r, 0]*u[0, c]) - l[r, 1]*u[1, c]) -
 	...`. `.Singular` for an exact zero pivot or a factor that is not finite,
 	with `a` and `pivots` then unspecified. A shape mismatch panics.
-*/
-lu_in_place :: proc(a: View_Mut($T), pivots: []mut int) -> Status(Error) where linalg.Real(T) ---;
 
-// The LU factors of the square `a`, allocated from `allocator`, or `.Singular` as `lu_in_place` decides it.
-lu :: proc(a: View($T), allocator: Allocator = mem.default_allocator()) -> Result(Lu(T), Error) where linalg.Real(T) ---;
+	With a `pool`, the trailing columns of each block of steps are updated
+	as tasks on its workers, each element in the same order, so the result
+	is the same bits.
+*/
+lu_in_place :: proc(a: View_Mut($T), pivots: []mut int, pool: Option(^thread.Pool) = .none) -> Status(Error) where linalg.Real(T) ---;
+
+// The LU factors of the square `a`, allocated from `allocator`, or `.Singular` as `lu_in_place` decides it, with its use of a `pool`.
+lu :: proc(a: View($T), allocator: Allocator = mem.default_allocator(), pool: Option(^thread.Pool) = .none) -> Result(Lu(T), Error) where linalg.Real(T) ---;
 
 impl Lu($T) {
 	// The order of the factored matrix.
@@ -242,11 +247,15 @@ Cholesky :: struct($T: type) where linalg.Real(T) {
 	square root, and the elements below it divided by that.
 	`.Not_Positive_Definite`, with `a` unspecified, for a diagonal that is
 	not positive and finite before its square root. A shape mismatch panics.
-*/
-cholesky_in_place :: proc(a: View_Mut($T)) -> Status(Error) where linalg.Real(T) ---;
 
-// The Cholesky factor of the square `a`, from its lower triangle, allocated from `allocator`.
-cholesky :: proc(a: View($T), allocator: Allocator = mem.default_allocator()) -> Result(Cholesky(T), Error) where linalg.Real(T) ---;
+	With a `pool`, the columns right of each block of columns are updated as
+	tasks on its workers, each element in the same order, so the result is
+	the same bits.
+*/
+cholesky_in_place :: proc(a: View_Mut($T), pool: Option(^thread.Pool) = .none) -> Status(Error) where linalg.Real(T) ---;
+
+// The Cholesky factor of the square `a`, from its lower triangle, allocated from `allocator`, with `cholesky_in_place`'s use of a `pool`.
+cholesky :: proc(a: View($T), allocator: Allocator = mem.default_allocator(), pool: Option(^thread.Pool) = .none) -> Result(Cholesky(T), Error) where linalg.Real(T) ---;
 
 impl Cholesky($T) {
 	// The order of the factored matrix.
@@ -276,18 +285,23 @@ inverse :: proc(a: View($T), allocator: Allocator = mem.default_allocator()) -> 
 	the terms in increasing `k` from the first product, the order
 	`linalg.Matrix` uses, so the two agree bit for bit. An inner dimension of
 	zero gives `T(0)`. A shape mismatch panics.
-*/
-multiply_into :: proc(out: View_Mut($T), a, b: View(T)) ---;
 
-// `a * b`, allocated from `allocator`.
-multiply :: proc(a, b: View($T), allocator: Allocator = mem.default_allocator()) -> Matrix(T) ---;
+	With a `pool`, blocks of `out` are computed as tasks on its workers, each
+	element in the same order, so the result is the same bits; a product too
+	small to share is computed on the calling thread.
+*/
+multiply_into :: proc(out: View_Mut($T), a, b: View(T), pool: Option(^thread.Pool) = .none) ---;
+
+// `a * b`, allocated from `allocator`, with `multiply_into`'s use of a `pool`.
+multiply :: proc(a, b: View($T), allocator: Allocator = mem.default_allocator(), pool: Option(^thread.Pool) = .none) -> Matrix(T) ---;
 
 /*
 	`out = out + a * b`: each element of `out` has `a[i, k]*b[k, j]` added to
 	it one term at a time, in increasing `k`. That is not always the bits of
-	`out + (a * b)`, which sums the products first.
+	`out + (a * b)`, which sums the products first. A `pool` is used as
+	`multiply_into` uses it.
 */
-multiply_add_into :: proc(out: View_Mut($T), a, b: View(T)) ---;
+multiply_add_into :: proc(out: View_Mut($T), a, b: View(T), pool: Option(^thread.Pool) = .none) ---;
 
 // `out = a + b`, element by element. A shape mismatch panics.
 add_into :: proc(out: View_Mut($T), a, b: View(T)) ---;

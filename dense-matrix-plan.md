@@ -1,12 +1,13 @@
 # Dense matrix library plan
 
-Status: milestones 1 to 3 implemented, 2026-10-29, as
+Status: milestones 1 to 4 implemented, 2026-10-29, as
 [`core:math/dense`](standard-library.md#coremathdense)
 ([Milestone 1 results](#milestone-1-results),
 [Milestone 2 results](#milestone-2-results),
-[Milestone 3 results](#milestone-3-results)), after its design questions were
+[Milestone 3 results](#milestone-3-results),
+[Milestone 4 results](#milestone-4-results)), after its design questions were
 settled and its spike run the same day ([Settled questions](#settled-questions),
-[Spike results](#spike-results)); milestones 4 and 5 are proposals. It is
+[Spike results](#spike-results)); milestone 5 is a proposal. It is
 milestone 3 of the
 [linear algebra library plan](linear-algebra-plan.md#milestones), which left
 this package [its own plan](linear-algebra-plan.md#dense-matrices-a-later-package)
@@ -219,9 +220,11 @@ a `Simd` kernel that computes several outputs side by side (the columns of a
 column-major `a`) performs the same scalar operations in each lane. The one
 thing ruled out is splitting a single sum into several accumulators, which a
 column-major product and `A * x` never need and only a long `dot` would.
-Right-looking blocked LU and Cholesky keep the unblocked order by the update
-rule above. Blocked Householder QR in the compact WY form does not: it reorders
-the reflector updates, so QR's first implementation is unblocked
+Blocked LU and Cholesky keep the unblocked order by the update rule above, and
+are what `lu` and `cholesky` run ([Milestone 4 results](#milestone-4-results)).
+Blocked Householder QR in the compact WY form does not: it reorders the
+reflector updates, so QR stays unblocked, its reflectors applied to a panel of
+columns at a time with each column's order unchanged
 ([Settled questions](#settled-questions)).
 
 A foreign BLAS is faster still, and its results differ by machine, library,
@@ -229,18 +232,19 @@ and thread count. It belongs in a separate package that binds one, with that
 contract stated, not behind a flag in this one.
 
 Threads take a `^thread.Pool` ([Pools](standard-library.md#pools)) as an
-optional argument to the operations that use one, run under a
-[`parallel (pool)`](design.md#parallel-blocks) block, and split the output, so
-a threaded result is bit-identical to a sequential one. They come with the
-measured-performance milestone.
+optional `pool: Option(^thread.Pool) = .none` argument to the operations that
+use one, run under a [`parallel (pool)`](design.md#parallel-blocks) block, and
+split the output, so a threaded result is bit-identical to a sequential one.
+The products, `lu`, and `cholesky` take one
+([Milestone 4 results](#milestone-4-results)).
 
 ### Algorithms
 
 | Operation | Method | Fails with |
 | --- | --- | --- |
-| `lu`, `solve` | Gaussian elimination, partial pivoting, the first largest magnitude on a tie | `Singular` |
-| `cholesky` | the `L L^T` factor, by columns | `Not_Positive_Definite` |
-| `qr`, `least_squares` | Householder reflectors, unblocked; full column rank assumed | `Singular` for an exact zero on `R`'s diagonal |
+| `lu`, `solve` | Gaussian elimination, partial pivoting, the first largest magnitude on a tie; blocked, right-looking | `Singular` |
+| `cholesky` | the `L L^T` factor, by columns; blocked, left-looking, or right-looking with a pool | `Not_Positive_Definite` |
+| `qr`, `least_squares` | Householder reflectors, unblocked, applied a panel at a time; full column rank assumed | `Singular` for an exact zero on `R`'s diagonal |
 | `symmetric_eigen` | Householder tridiagonalization, then implicit QL with Wilkinson shifts | `No_Convergence` |
 | `svd` | Golub-Kahan bidiagonalization, then implicit-shift QR (Golub-Reinsch) | `No_Convergence` |
 | `reciprocal_condition` | Hager and Higham's 1-norm estimator on an `Lu` | |
@@ -267,7 +271,9 @@ for `relative`.
 
 Sketches in the [standard-library](standard-library.md) style; constraints,
 receiver modes, and the `allocator := mem.default_allocator()` parameters are
-omitted. "Real" means members bounded by `linalg.Real(T)`.
+omitted, and so are the `pool := .none` parameters of `multiply`,
+`multiply_into`, `multiply_add_into`, `lu`, `lu_in_place`, `cholesky`, and
+`cholesky_in_place`. "Real" means members bounded by `linalg.Real(T)`.
 
 ```text
 Matrix(T), any Numeric T:
@@ -332,9 +338,11 @@ merely the same subspaces.
 3. **Eigenvalues and singular values.** Done
    ([Milestone 3 results](#milestone-3-results)). `symmetric_eigen` and
    `svd`, with `Svd.solve`.
-4. **Measured performance.** Benchmarks against hand-written loops and a
-   reference BLAS for scale, then blocking, `Simd` kernels across outputs, and
-   the optional pool, each kept only where it wins without changing a bit.
+4. **Measured performance.** Done
+   ([Milestone 4 results](#milestone-4-results)). Benchmarks against
+   hand-written loops and a reference BLAS for scale, then blocking, `Simd`
+   kernels across outputs, and the optional pool, each kept only where it wins
+   without changing a bit.
 5. **Complex elements.** A conjugate-aware interface, Hermitian products,
    complex LU and QR, and the Hermitian eigensolver.
 
@@ -396,7 +404,8 @@ decisions.
 - **QR**: unblocked Householder only, so QR has one result everywhere. The
   blocked WY form, LAPACK's choice, is faster on large matrices because its
   updates are matrix products, and it changes the bits; a separate `qr_fast`
-  is decided with milestone 4's benchmarks.
+  was to be decided with milestone 4's benchmarks, and waits for a caller
+  ([Milestone 4 results](#milestone-4-results)).
 - **SVD**: Golub-Reinsch first. One-sided Jacobi, simpler and more accurate
   for tiny singular values but several times slower, is a later addition.
 - **Fixed-size matrices**: `from_fixed` and `to_fixed` copy. A view without a
@@ -533,7 +542,7 @@ What changed from the plan:
 The kernels, the products, the element-wise operations, the factorizations,
 and the substitutions index through `unsafe.raw_data` with wrapping index
 arithmetic, which the spike found they need to vectorize. Their speed is
-measured in milestone 4.
+measured in [milestone 4](#milestone-4-results).
 
 ## Milestone 2 results
 
@@ -646,3 +655,115 @@ Decided while implementing:
 - **Values-only forms**, cheaper because they skip the vectors, are a later
   addition with a caller. They would give the same values bit for bit, since
   the vectors never feed back into the values.
+
+## Milestone 4 results
+
+Done 2026-10-29. `bench/dense.loke` times each kernel, and its checksums, in
+`bench/dense.expected`, are the same at both CPU levels, so `perf.ps1` checks
+on every run that no result changed. `tests/run/lib_dense_kernels.loke`, in
+the CPU-level corpus, checks the new paths against the plain kernels bit for
+bit: products of every shape around the tile and block edges, with strided
+operands and blocks of `out`; blocked LU and Cholesky around their panel
+widths, and failing in a later panel; and products, LU, and Cholesky with a
+pool. Every earlier `lib_dense` test gives the same output as before at every
+optimization and CPU level tried, so no result changed.
+
+What each kernel became:
+
+- **Products** of `f32` and `f64` whose `a` and `out` have contiguous columns
+  take a `Simd` kernel. It packs a panel of `2W` rows of `a` and groups of four
+  columns of `b`, 256 terms at a time, and computes a `2W x 4` tile of `out` in
+  eight `Simd(T, W)` accumulators, `W` being 4 for `f64` and 8 for `f32`.
+  Each lane is one element of `out`, its terms added in increasing `k` and the
+  blocks of terms visited in increasing order, so the bits are the scalar
+  kernel's. Every other case, integer and dual-number elements and a strided
+  `a`, keeps the scalar kernel.
+- **LU** is right-looking and blocked, 64 columns to a panel, for `f32` and
+  `f64` with contiguous columns and more than 64 rows. Each panel is
+  eliminated unblocked, its swaps applied to the other columns, the rows of
+  `U` to its right solved, and the trailing matrix updated through the product
+  kernel, with the panel's multipliers packed negated: `x + (-l u)` is
+  `x - l u` bit for bit, so each element still has its terms subtracted one at
+  a time in increasing `k`. A row's multipliers move with it, so applying the
+  swaps a panel late changes nothing.
+- **Cholesky** is blocked, 32 columns to a panel, under the same conditions.
+  Without a pool it is left-looking: each panel's elements first have every
+  earlier column's terms subtracted through the product kernel, the diagonal
+  block in a copy so that nothing above the diagonal is read or written, and
+  then the panel is factored by columns. With a pool it is right-looking, the
+  columns right of each panel updated as tasks. Both subtract each element's
+  terms in increasing `k`, the unblocked order.
+- **QR** stays unblocked. Each reflector is applied to the rest of its
+  16-column panel, and then the panel's reflectors, in order, to the later
+  columns, four at a time, so a column is read from memory once a panel rather
+  than once a reflector. Each column's sum and update are the same operations
+  as before. The bidiagonalization, `Q`'s application, and the forming of `Q`,
+  `U`, and `V` apply reflectors four columns at a time the same way.
+- **With a pool**, a product is halved by columns or by rows until each task
+  has one to two million terms; LU's trailing update and Cholesky's
+  right-looking update are halved by columns. Each task writes its own part of
+  the output, each element in the same order, so the result is the same bits.
+- `zeros`, `filled`, `from_view`, and the 1-norm and infinity norm read and
+  write through raw pointers.
+
+The best of several runs, in floating-point operations per nanosecond (the
+usual counts: `2 n^3` for a product, `2 n^3 / 3` for LU, `n^3 / 3` for
+Cholesky), at `-opt=speed` on the development machine, a six-core Intel
+processor shared with other work while measuring. "Before" is the package of
+milestone 3 under the same benchmark. OpenBLAS 0.3.33 through NumPy, on one
+thread, uses its Haswell kernels, with fused multiply-adds, which Loke's
+contract rules out ([Floating-point operators](design.md#floating-point-operators)),
+and blocked WY QR.
+
+| Operation | Size | `x86-64` before | `x86-64` after | `x86-64-v3` before | `x86-64-v3` after | OpenBLAS |
+| --- | --- | --- | --- | --- | --- | --- |
+| product | 64 | 9.8 | 13.1 | 14.4 | 26.3 | 35 |
+| product | 256 | 9.1 | 13.6 | 14.1 | 28.7 | 59 |
+| product | 512 | 8.6 | 13.5 | 15.2 | 27.5 | 56 |
+| product | 1024 | 6.3 | 14.3 | 9.3 | 28.7 | 58 |
+| product, `b` transposed | 1024 | | | 8.0 | 28.9 | |
+| product, `f32` | 512 | 17.7 | 25.3 | 26.5 | 58.8 | 111 |
+| `lu` | 256 | 4.6 | 9.0 | 5.1 | 12.7 | 23 |
+| `lu` | 1024 | 5.8 | 10.8 | 7.0 | 18.9 | 39 |
+| `cholesky` | 1024 | 6.5 | 11.1 | 8.6 | 19.9 | 20.6 |
+| `qr` | 1024 x 512 | 3.6 | 8.5 | 3.9 | 10.2 | 27 |
+| `symmetric_eigen` | 256 | 6.6 | 8.4 | 8.2 | 10.7 | 28.6 |
+| `svd` | 512 x 256 | 3.8 | 7.2 | 3.9 | 8.0 | 37.2 |
+
+A hand-written triple loop over slices, checked indexing, in the same order,
+gives the same bits as the product at 1.5 to 2.3. The `x86-64-v3` product
+kernel runs near the processor's peak without fused multiply-adds, about 32
+to 36 operations a nanosecond, and half OpenBLAS's rate, which is the cost of
+the separate multiply and add. With a pool of six workers:
+
+| Operation | Size | `x86-64` | `x86-64-v3` | OpenBLAS, six threads |
+| --- | --- | --- | --- | --- |
+| product | 256 | | 74.7 | |
+| product | 1024 | 69.6 | 137.1 | 222 |
+| `lu` | 1024 | 29.5 | 39.1 | |
+| `cholesky` | 1024 | 18.6 | 27.5 | |
+
+Decided while measuring:
+
+- **Cholesky without a pool is left-looking.** Right-looking, as with a pool,
+  ran at 14.4 against 18.6 for left-looking at `n = 1024`: left-looking
+  reads each earlier column once a panel and writes only the panel. With a
+  pool the right-looking update is the one that splits into independent tasks.
+- **The rotations of the eigensolver and the SVD stay one at a time.**
+  Recording a sweep's rotations and applying them to the vectors in blocks of
+  rows kept the bits and was 45 % slower: applied at once, each rotation's
+  vector update overlaps the serial computation of the next.
+- **No `qr_fast`.** The fused panels bring QR to 10 operations a nanosecond;
+  the WY form would gain more, but with other bits, and a separate entry
+  point waits for a caller who needs that speed with that contract.
+
+Not done, for later milestones or callers:
+
+- the tridiagonalization's symmetric product, which reads by rows and is now
+  the eigensolver's largest cost;
+- a pool for `qr`, `symmetric_eigen`, and `svd`, and on the one-call
+  `solve`, `inverse`, and `least_squares`;
+- products with a strided `a`, which keep the scalar kernel; packing makes a
+  fast path possible but none of the factorizations needs one;
+- small products, where packing `b` costs a few percent against the
+  unpacked kernel.

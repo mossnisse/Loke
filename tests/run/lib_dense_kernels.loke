@@ -1,0 +1,275 @@
+// standard-library "`core:math/dense`", milestone 4: the product's fast path
+// for `f32` and `f64` gives the scalar kernel's bits. For shapes on each side
+// of every tile and block boundary (rows around 2W, columns around 4 and
+// 64, terms around 256), with `b` in either order and `out` and `a` as
+// blocks of larger matrices, `multiply_into` and `multiply_add_into` through
+// contiguous columns, which take the fast path, are compared bit for bit
+// with the same products written through a row-major `out`, which does not.
+package main;
+
+import "core:fmt";
+import "core:math/dense";
+import "core:thread";
+
+check :: proc(name: string_view, ok: bool) {
+	if (ok) {
+		fmt.println("ok", name);
+	} else {
+		fmt.println("FAIL", name);
+	}
+}
+
+// A 64-bit linear congruential generator, so the matrices are the same on
+// every machine.
+Random :: struct { state: u64 }
+
+impl Random {
+	// Uniform in [-1, 1).
+	next :: proc(self: inout) -> f64 {
+		self.state = self.state*%6364136223846793005 +% 1442695040888963407;
+		return f64(self.state >> 11)/9007199254740992.0*2.0 - 1.0;
+	}
+}
+
+random_matrix :: proc($T: type, rows, columns: int, seed: u64) -> dense.Matrix(T) {
+	random := Random{seed};
+	m := dense.Matrix(T).zeros(rows, columns);
+	foreach (c in 0 ..< columns) {
+		foreach (r in 0 ..< rows) { m[r, c] = T(random.next()); }
+	}
+	return m;
+}
+
+ROWS :: [?]int{1, 7, 8, 9, 15, 16, 17, 33};
+COLUMNS :: [?]int{1, 3, 4, 5, 63, 64, 65, 70};
+TERMS :: [?]int{1, 2, 255, 256, 257, 520};
+
+// The shapes the longer products are tried at: an exact tile, rows and
+// columns either side of a tile, and a block of columns and one more.
+Shape :: struct { rows, columns: int }
+LONG :: [?]Shape{{8, 4}, {16, 4}, {17, 65}, {33, 5}, {1, 64}, {15, 63}};
+
+long :: proc(m, n: int) -> bool {
+	foreach (shape in LONG) {
+		if (shape.rows == m && shape.columns == n) { return true; }
+	}
+	return false;
+}
+
+// Whether every product of every shape agrees with the scalar kernel's.
+products :: proc($T: type) -> bool {
+	same := true;
+	seed: u64 = 1;
+	foreach (m in ROWS) {
+		foreach (n in COLUMNS) {
+			foreach (k in TERMS) {
+				if (k > 2 && !long(m, n)) { continue; }
+				seed += 3;
+				a := random_matrix(T, m, k, seed);
+				b := random_matrix(T, k, n, seed + 1);
+				start := random_matrix(T, m, n, seed + 2);
+
+				fast := dense.Matrix(T).zeros(m, n);
+				dense.multiply_into(fast.view_mut(), a.view(), b.view());
+				storage := make([dynamic]T, 0, m*(n + 1));
+				foreach (_ in 0 ..< m*(n + 1)) { storage.append(T(0)); }
+				slow := dense.View_Mut(T).from_row_major(&mut storage[:], m, n, n + 1);
+				dense.multiply_into(slow, a.view(), b.view());
+				if (!dense.equal(fast.view(), slow.as_view())) { same = false; }
+
+				fast_sum := start.clone();
+				dense.multiply_add_into(fast_sum.view_mut(), a.view(), b.view());
+				slow.copy_from(start.view());
+				dense.multiply_add_into(slow, a.view(), b.view());
+				if (!dense.equal(fast_sum.view(), slow.as_view())) { same = false; }
+			}
+		}
+	}
+	return same;
+}
+
+// `b` row-major, and `out` and `a` blocks of larger matrices, so that every
+// stride differs from the shape.
+strided :: proc($T: type) -> bool {
+	m := 37;
+	n := 70;
+	k := 300;
+	big_a := random_matrix(T, m + 5, k + 2, 101);
+	a := big_a.view().block(3, 1, m, k);
+	b_rows := random_matrix(T, n, k, 102);
+	b := b_rows.view().transpose();
+	big_out := dense.Matrix(T).zeros(m + 4, n + 3);
+	whole := big_out.view_mut();
+	dense.multiply_into(whole.block(2, 1, m, n), a, b);
+	storage := make([dynamic]T, 0, m*n);
+	foreach (_ in 0 ..< m*n) { storage.append(T(0)); }
+	slow := dense.View_Mut(T).from_row_major(&mut storage[:], m, n);
+	dense.multiply_into(slow, a, b);
+	same := dense.equal(big_out.view().block(2, 1, m, n), slow.as_view());
+	// The block wrote nothing outside itself.
+	untouched := dense.norm_one(big_out.view().block(0, 0, 2, n + 3)) == T(0)
+		&& dense.norm_one(big_out.view().block(m + 2, 0, 2, n + 3)) == T(0)
+		&& dense.norm_one(big_out.view().block(0, 0, m + 4, 1)) == T(0)
+		&& dense.norm_one(big_out.view().block(0, n + 1, m + 4, 2)) == T(0);
+	return same && untouched;
+}
+
+// A row-major copy of `m`, whose rows are contiguous, so the factorizations
+// take their unblocked paths on it.
+row_major :: proc(m: ^dense.Matrix($T), storage: []mut T) -> dense.View_Mut(T) {
+	view := dense.View_Mut(T).from_row_major(storage, m.rows(), m.columns());
+	view.copy_from(m.view());
+	return view;
+}
+
+SIZES :: [?]int{65, 100, 128, 129, 200};
+
+// lu_in_place by blocks, on contiguous columns, against the unblocked
+// elimination on a row-major copy: the same factors and pivots, bit for
+// bit, and the same zero pivot in a later panel.
+blocked_lu :: proc($T: type) -> bool {
+	same := true;
+	foreach (n in SIZES) {
+		foreach (zero_column in [?]int{-1, 70}) {
+			if (zero_column >= n) { continue; }
+			a := random_matrix(T, n, n, u64(n) + 200);
+			if (zero_column >= 0) {
+				foreach (r in 0 ..< n) { a[r, zero_column] = T(0); }
+			}
+			storage := make([dynamic]T, 0, n*n);
+			foreach (_ in 0 ..< n*n) { storage.append(T(0)); }
+			slow := row_major(&a, &mut storage[:]);
+			pivots := make([dynamic]int, n);
+			slow_pivots := make([dynamic]int, n);
+			blocked := dense.lu_in_place(a.view_mut(), &mut pivots[:]);
+			unblocked := dense.lu_in_place(slow, &mut slow_pivots[:]);
+			switch (blocked) {
+			case .ok:
+				switch (unblocked) {
+				case .ok:
+					if (zero_column >= 0 || !dense.equal(a.view(), slow.as_view())) { same = false; }
+					foreach (i in 0 ..< n) {
+						if (pivots[i] != slow_pivots[i]) { same = false; }
+					}
+				case .err(_): same = false;
+				}
+			case .err(_):
+				switch (unblocked) {
+				case .ok:     same = false;
+				case .err(_): if (zero_column < 0) { same = false; }
+				}
+			}
+		}
+	}
+	return same;
+}
+
+// cholesky_in_place by blocks against the unblocked columns, the same way,
+// with NaN above the diagonal, which neither may read or write, and a
+// diagonal made negative in a later panel.
+blocked_cholesky :: proc($T: type) -> bool {
+	same := true;
+	foreach (n in SIZES) {
+		foreach (bad in [?]int{-1, 70}) {
+			if (bad >= n) { continue; }
+			b := random_matrix(T, n, n, u64(n) + 300);
+			a := dense.multiply(b.view().transpose(), b.view());
+			foreach (i in 0 ..< n) { a[i, i] = a[i, i] + T(f64(n)); }
+			if (bad >= 0) { a[bad, bad] = -T(f64(n*n)); }
+			foreach (c in 1 ..< n) {
+				foreach (r in 0 ..< c) { a[r, c] = T(0)/T(0); }
+			}
+			storage := make([dynamic]T, 0, n*n);
+			foreach (_ in 0 ..< n*n) { storage.append(T(0)); }
+			slow := row_major(&a, &mut storage[:]);
+			blocked := dense.cholesky_in_place(a.view_mut());
+			unblocked := dense.cholesky_in_place(slow);
+			switch (blocked) {
+			case .ok:
+				switch (unblocked) {
+				case .ok:
+					if (bad >= 0) { same = false; }
+					foreach (c in 0 ..< n) {
+						foreach (r in 0 ..< n) {
+							x := a[r, c];
+							y := slow[r, c];
+							if (r >= c && !(x == y)) { same = false; }
+							if (r < c && (x == x || y == y)) { same = false; }
+						}
+					}
+				case .err(_): same = false;
+				}
+			case .err(_):
+				switch (unblocked) {
+				case .ok:     same = false;
+				case .err(_): if (bad < 0) { same = false; }
+				}
+			}
+		}
+	}
+	return same;
+}
+
+// With a pool, the product's halves and the column blocks of LU and of
+// Cholesky, which is then right-looking, are tasks; the results are the bits
+// of the calling thread's.
+pooled :: proc($T: type, pool: ^thread.Pool) -> bool {
+	same := true;
+	// Split by columns, then, for a row-major `out`, by rows.
+	a := random_matrix(T, 130, 140, 401);
+	b := random_matrix(T, 140, 130, 402);
+	alone := dense.multiply(a.view(), b.view());
+	shared := dense.multiply(a.view(), b.view(), pool = .some(pool));
+	if (!dense.equal(alone.view(), shared.view())) { same = false; }
+	storage := make([dynamic]T, 0, 130*130);
+	foreach (_ in 0 ..< 130*130) { storage.append(T(0)); }
+	rows := dense.View_Mut(T).from_row_major(&mut storage[:], 130, 130);
+	dense.multiply_into(rows, a.view(), b.view(), .some(pool));
+	if (!dense.equal(alone.view(), rows.as_view())) { same = false; }
+	sum := alone.clone();
+	dense.multiply_add_into(sum.view_mut(), a.view(), b.view());
+	shared_sum := alone.clone();
+	dense.multiply_add_into(shared_sum.view_mut(), a.view(), b.view(), .some(pool));
+	if (!dense.equal(sum.view(), shared_sum.view())) { same = false; }
+
+	b_spd := random_matrix(T, 300, 300, 404);
+	spd := dense.multiply(b_spd.view().transpose(), b_spd.view());
+	foreach (i in 0 ..< 300) { spd[i, i] = spd[i, i] + T(300); }
+	switch (dense.cholesky(spd.view())) {
+	case .ok(plain):
+		switch (dense.cholesky(spd.view(), pool = .some(pool))) {
+		case .ok(threaded): if (!dense.equal(plain.lower(), threaded.lower())) { same = false; }
+		case .err(_):       same = false;
+		}
+	case .err(_): same = false;
+	}
+
+	square := random_matrix(T, 300, 300, 403);
+	switch (dense.lu(square.view())) {
+	case .ok(plain):
+		switch (dense.lu(square.view(), pool = .some(pool))) {
+		case .ok(threaded):
+			if (!dense.equal(plain.factors(), threaded.factors())) { same = false; }
+			foreach (i in 0 ..< 300) {
+				if (plain.pivots()[i] != threaded.pivots()[i]) { same = false; }
+			}
+		case .err(_): same = false;
+		}
+	case .err(_): same = false;
+	}
+	return same;
+}
+
+main :: proc() {
+	pool := thread.Pool.init(3);
+	check("f64 products through the fast path give the scalar kernel's bits", products(f64));
+	check("f32 products through the fast path give the scalar kernel's bits", products(f32));
+	check("f64 strided operands", strided(f64));
+	check("f32 strided operands", strided(f32));
+	check("f64 blocked LU gives the unblocked bits", blocked_lu(f64));
+	check("f32 blocked LU gives the unblocked bits", blocked_lu(f32));
+	check("f64 blocked Cholesky gives the unblocked bits", blocked_cholesky(f64));
+	check("f32 blocked Cholesky gives the unblocked bits", blocked_cholesky(f32));
+	check("f64 products, LU, and Cholesky with a pool give the same bits", pooled(f64, &pool));
+	check("f32 products, LU, and Cholesky with a pool give the same bits", pooled(f32, &pool));
+}

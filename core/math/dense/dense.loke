@@ -47,6 +47,7 @@ import "base:interfaces";
 import "core:fmt";
 import "core:math/linalg";
 import "core:mem";
+import "core:unsafe";
 
 /// The numerical failures. Each procedure that returns one says which.
 Error :: enum {
@@ -73,6 +74,23 @@ Matrix :: struct($T: type) where interfaces.Numeric(T) {
 	@(private) data:         [dynamic]T,
 }
 
+// `count` elements, each `value`. A `f32` or `f64` matrix is made at its
+// length, zero-filled, and then written through a raw pointer; any other
+// element type, which need not have a zero value, by appending.
+@(private)
+storage :: proc($T: type, count: int, value: T, allocator: Allocator) -> [dynamic]T {
+	when (T == f64 || T == f32) {
+		data := make([dynamic]T, count, allocator);
+		p := unsafe.raw_data(data);
+		foreach (i in 0 ..< count) { p[i] = value; }
+		return data;
+	} else {
+		data := make([dynamic]T, 0, count, allocator);
+		foreach (_ in 0 ..< count) { data.append(value); }
+		return data;
+	}
+}
+
 impl Matrix($T) {
 	/**
 		A `rows x columns` matrix of `T(0)`, which is not always `T`'s zero
@@ -85,8 +103,7 @@ impl Matrix($T) {
 	/// A `rows x columns` matrix with every element `value`.
 	filled :: proc(rows, columns: int, value: T, allocator: Allocator = mem.default_allocator()) -> Matrix(T) {
 		assert(rows >= 0 && columns >= 0, "dense.Matrix needs a non-negative shape");
-		data := make([dynamic]T, 0, rows*columns, allocator);
-		foreach (_ in 0 ..< rows*columns) { data.append(value); }
+		data := storage(T, rows*columns, value, allocator);
 		return {rows, columns, move(data)};
 	}
 
@@ -99,11 +116,14 @@ impl Matrix($T) {
 
 	/// A copy of the elements `view` reaches.
 	from_view :: proc(view: View(T), allocator: Allocator = mem.default_allocator()) -> Matrix(T) {
-		data := make([dynamic]T, 0, view.row_count*view.column_count, allocator);
+		rows := view.row_count;
+		data := storage(T, rows*view.column_count, T(0), allocator);
+		p := unsafe.raw_data(data);
+		x := unsafe.raw_data(view.data);
 		foreach (c in 0 ..< view.column_count) {
-			foreach (r in 0 ..< view.row_count) { data.append(view[r, c]); }
+			foreach (r in 0 ..< rows) { p[r +% c*%rows] = x[offset(r, c, view.row_stride, view.column_stride)]; }
 		}
-		return {view.row_count, view.column_count, move(data)};
+		return {rows, view.column_count, move(data)};
 	}
 
 	/// A copy of `rows*columns` column-major elements; `data` must hold exactly that many.

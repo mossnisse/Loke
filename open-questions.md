@@ -867,7 +867,7 @@ The [linear algebra library plan](linear-algebra-plan.md)'s first step tried
 its `Real` interface and generic matrix shapes against the compiler
 (`tests/pkg/real_interface`), its first two milestones built
 [`core:math/linalg`](standard-library.md#coremathlinalg) on them, and its third
-is the [dense matrix plan](dense-matrix-plan.md), whose first three
+is the [dense matrix plan](dense-matrix-plan.md), whose first four
 milestones are [`core:math/dense`](standard-library.md#coremathdense). These
 language questions came out of it, and the library cannot settle them by
 itself.

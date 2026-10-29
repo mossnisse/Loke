@@ -282,13 +282,13 @@ bidiagonalize :: proc(a: View_Mut($T), d, e, tauq, taup: []mut T) where linalg.R
 		scale := householder(x, rs, cs, k, k, m);
 		tauq[k] = scale;
 		d[k] = x[offset(k, k, rs, cs)];
-		foreach (j in k + 1 ..< n) { reflect_column(x, rs, cs, k, k, m, scale, j); }
+		reflect_columns(x, rs, cs, k, k, m, scale, k + 1, n);
 		if (k + 1 < n) {
 			// Row k is a column of the transpose, whose strides are exchanged.
 			row_scale := householder(x, cs, rs, k + 1, k, n);
 			taup[k] = row_scale;
 			e[k] = x[offset(k, k + 1, rs, cs)];
-			foreach (i in k + 1 ..< m) { reflect_column(x, cs, rs, k + 1, k, n, row_scale, i); }
+			reflect_columns(x, cs, rs, k + 1, k, n, row_scale, k + 1, m);
 		} else {
 			taup[k] = T(0);
 			e[k] = T(0);

@@ -2571,7 +2571,7 @@ evaluated at compile time with the same result; one that does cannot, since
 Matrices whose size is known only at run time: an owner, views of it and of
 foreign buffers, products, the LU, Cholesky, and QR factorizations, least
 squares, the symmetric eigendecomposition, and the singular value
-decomposition. The design and its later milestones, measured performance and
+decomposition. The design, its measured performance, and its later milestone,
 complex elements, are in the [dense matrix plan](dense-matrix-plan.md).
 
 `Matrix(T)` owns `rows x columns` elements stored column-major in one
@@ -2637,10 +2637,11 @@ With `linalg.Real(T)`:
   `pivots()` in LAPACK's `getrf` form, and `reciprocal_condition()`, LAPACK's
   `gecon` estimate of `1 / (|A|_1 |A^-1|_1)`;
 - `cholesky(a)` and `cholesky_in_place(a)`, the `L L^T` factor of a symmetric
-  positive definite matrix from its lower triangle, by columns. `Cholesky`
+  positive definite matrix from its lower triangle. `Cholesky`
   has `solve`, `solve_into`, `determinant`, and `lower()`;
 - `qr(a)` and `qr_in_place(a, tau)`, for `rows >= columns`, by unblocked
-  Householder reflectors in LAPACK's `geqrf` form. `Qr` has `q()`, the first
+  Householder reflectors, applied a panel of columns at a time, in LAPACK's
+  `geqrf` form. `Qr` has `q()`, the first
   `n` columns of `Q`, `r()`, `apply_q_into(b)` and
   `apply_q_transpose_into(b)`, which apply `Q` and `Q^T` without forming it,
   `least_squares(b)`, and `least_squares_into(b)`, which leaves the
@@ -2681,6 +2682,17 @@ one subtraction per term into the running element, in increasing order, and
 every operation is computed in the order its documentation gives, with no
 `fma`, so results are the same bits on every machine,
 [CPU level](compiler-guide.md#cpu-levels), and optimization level.
+
+Products of `f32` and `f64` with contiguous columns run a `Simd` kernel that
+computes a tile of the output across lanes, each lane one element in its
+documented order, and `lu` and `cholesky` are blocked around it, so a large
+product runs at about half a reference BLAS's speed, which uses `fma`, and
+gives the bits of the plain loop. `multiply`, `multiply_into`,
+`multiply_add_into`, `lu`, `lu_in_place`, `cholesky`, and `cholesky_in_place`
+take an optional `pool: Option(^thread.Pool)` ([Pools](#pools)): with one,
+blocks of the output are computed as tasks on its workers, each element in
+the same order, so the result is the same bits as without; a product too small
+to share runs on the calling thread.
 
 ## `core:random`
 

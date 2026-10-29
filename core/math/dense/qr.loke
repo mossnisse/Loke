@@ -47,10 +47,25 @@ qr_in_place :: proc(a: View_Mut($T), tau: []mut T) -> Status(Error) where linalg
 	p := unsafe.raw_data(a.data);
 	rs := a.row_stride;
 	cs := a.column_stride;
-	foreach (k in 0 ..< n) {
-		scale := householder(p, rs, cs, k, k, m);
-		tau[k] = scale;
-		foreach (j in k + 1 ..< n) { reflect_column(p, rs, cs, k, k, m, scale, j); }
+	// `QR_PANEL` reflectors at a time: each built and applied to the rest of
+	// its panel, then all of them, in order, to each later column while that
+	// column is in cache. Every column receives the same reflectors in the
+	// same order as one reflector at a time across the whole matrix.
+	k0 := 0;
+	for (k0 < n) {
+		k1 := k0 + QR_PANEL if k0 + QR_PANEL < n else n;
+		foreach (k in k0 ..< k1) {
+			scale := householder(p, rs, cs, k, k, m);
+			tau[k] = scale;
+			reflect_columns(p, rs, cs, k, k, m, scale, k + 1, k1);
+		}
+		j := k1;
+		for (j < n) {
+			last := j + 4 if j + 4 < n else n;
+			foreach (k in k0 ..< k1) { reflect_columns(p, rs, cs, k, k, m, tau[k], j, last); }
+			j = last;
+		}
+		k0 = k1;
 	}
 	foreach (c in 0 ..< n) {
 		if (p[offset(c, c, rs, cs)] == T(0)) { return .err(.Singular); }
@@ -84,6 +99,58 @@ householder :: proc(p: [^]$T, rs, cs, head, column, end: int) -> T where linalg.
 	}
 	p[offset(head, column, rs, cs)] = beta;
 	return (beta - alpha)/beta;
+}
+
+// The reflectors `qr_in_place` builds before applying them to the columns
+// beyond.
+@(private) QR_PANEL :: 16;
+
+// `reflect_column` on the columns `first ..< last`, four at a time, so that
+// four sums run side by side; each column's own sum and update are
+// `reflect_column`'s, term for term.
+@(private)
+reflect_columns :: proc(p: [^]$T, rs, cs, head, column, end: int, scale: T, first, last: int) where linalg.Real(T) {
+	if (scale == T(0)) { return; }
+	j := first;
+	for (j + 4 <= last) {
+		t0 := offset(head, j, rs, cs);
+		t1 := t0 +% cs;
+		t2 := t1 +% cs;
+		t3 := t2 +% cs;
+		w0 := p[t0];
+		w1 := p[t1];
+		w2 := p[t2];
+		w3 := p[t3];
+		foreach (i in head + 1 ..< end) {
+			v := p[offset(i, column, rs, cs)];
+			at := offset(i, j, rs, cs);
+			w0 = w0 + v*p[at];
+			w1 = w1 + v*p[at +% cs];
+			w2 = w2 + v*p[at +% 2*%cs];
+			w3 = w3 + v*p[at +% 3*%cs];
+		}
+		f0 := scale*w0;
+		f1 := scale*w1;
+		f2 := scale*w2;
+		f3 := scale*w3;
+		p[t0] = p[t0] - f0;
+		p[t1] = p[t1] - f1;
+		p[t2] = p[t2] - f2;
+		p[t3] = p[t3] - f3;
+		foreach (i in head + 1 ..< end) {
+			v := p[offset(i, column, rs, cs)];
+			at := offset(i, j, rs, cs);
+			p[at] = p[at] - f0*v;
+			p[at +% cs] = p[at +% cs] - f1*v;
+			p[at +% 2*%cs] = p[at +% 2*%cs] - f2*v;
+			p[at +% 3*%cs] = p[at +% 3*%cs] - f3*v;
+		}
+		j += 4;
+	}
+	for (j < last) {
+		reflect_column(p, rs, cs, head, column, end, scale, j);
+		j += 1;
+	}
 }
 
 // Applies the reflector `householder` left in `column` to column `target`
@@ -218,7 +285,48 @@ reflect :: proc(f: View($T), head, column: int, scale: T, b: View_Mut(T)) where 
 	v := unsafe.raw_data(f.data);
 	x := unsafe.raw_data(b.data);
 	source := column*%f.column_stride;
-	foreach (j in 0 ..< b.column_count) {
+	fr := f.row_stride;
+	br := b.row_stride;
+	bc := b.column_stride;
+	// Four columns at a time, so that four sums run side by side, each
+	// column's own sum and update term for term as below.
+	j := 0;
+	for (j + 4 <= b.column_count) {
+		t0 := head*%br +% j*%bc;
+		t1 := t0 +% bc;
+		t2 := t1 +% bc;
+		t3 := t2 +% bc;
+		w0 := x[t0];
+		w1 := x[t1];
+		w2 := x[t2];
+		w3 := x[t3];
+		foreach (i in head + 1 ..< m) {
+			e := v[i*%fr +% source];
+			at := i*%br +% j*%bc;
+			w0 = w0 + e*x[at];
+			w1 = w1 + e*x[at +% bc];
+			w2 = w2 + e*x[at +% 2*%bc];
+			w3 = w3 + e*x[at +% 3*%bc];
+		}
+		f0 := scale*w0;
+		f1 := scale*w1;
+		f2 := scale*w2;
+		f3 := scale*w3;
+		x[t0] = x[t0] - f0;
+		x[t1] = x[t1] - f1;
+		x[t2] = x[t2] - f2;
+		x[t3] = x[t3] - f3;
+		foreach (i in head + 1 ..< m) {
+			e := v[i*%fr +% source];
+			at := i*%br +% j*%bc;
+			x[at] = x[at] - f0*e;
+			x[at +% bc] = x[at +% bc] - f1*e;
+			x[at +% 2*%bc] = x[at +% 2*%bc] - f2*e;
+			x[at +% 3*%bc] = x[at +% 3*%bc] - f3*e;
+		}
+		j += 4;
+	}
+	for (j < b.column_count) {
 		base := j*%b.column_stride;
 		top := head*%b.row_stride +% base;
 		w := x[top];
@@ -229,6 +337,7 @@ reflect :: proc(f: View($T), head, column: int, scale: T, b: View_Mut(T)) where 
 			at := i*%b.row_stride +% base;
 			x[at] = x[at] - factor*v[i*%f.row_stride +% source];
 		}
+		j += 1;
 	}
 }
 

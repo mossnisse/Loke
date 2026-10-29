@@ -356,8 +356,11 @@ checklist.
   `solve`, `inverse`, `least_squares`, `symmetric_eigen`, `svd` with a
   minimum-norm `solve` and `rank`, and the Frobenius, 1-, and infinity
   norms. Eigenvectors and singular vectors have a fixed sign, so two
-  machines give the same vectors. Numerical failures are one `dense.Error`
-  ([`core:math/dense`](standard-library.md#coremathdense)).
+  machines give the same vectors. Numerical failures are one `dense.Error`.
+  `f32` and `f64` products run a `Simd` kernel and `lu` and `cholesky` are
+  blocked around it, and the products, `lu`, and `cholesky` take an optional
+  thread pool, with the same bits either way; `bench/dense.loke` measures
+  them ([`core:math/dense`](standard-library.md#coremathdense)).
 
 ### Changed
 
