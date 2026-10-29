@@ -713,10 +713,18 @@ every machine, optimization level, and platform, and at compile time; special
 cases and NaNs need their own rules. It is necessary for
 [Random distributions across platforms](#random-distributions-across-platforms)
 but not sufficient.
-Hardware FMA could be used where present without changing a bit, since a fused
-multiply-add is itself correctly rounded. Porting fdlibm or musl instead would
+Hardware FMA is used where the [CPU level](compiler-guide.md#cpu-levels) has
+it without changing a finite bit, since a fused multiply-add is itself
+correctly rounded: at `-cpu=x86-64-v3`, `math.fma` is already the instruction. Porting fdlibm or musl instead would
 also be deterministic, but it would freeze one algorithm's bits, so a bug fix
 would be a breaking change, and it would match no other implementation.
+
+Compile-time evaluation has a cost of its own. Measured on 2026-10-29,
+`core:math`'s integer `fma` takes about 250 KB of evaluator scratch per call at
+compile time, so one constant whose evaluation makes about 250 calls exceeds
+the 64 MB budget (`L0342`); at `-cpu=x86-64-v3` the instruction's exact
+evaluator takes a small fraction of that. Kernels ported to Loke and folded at
+compile time would meet this budget long before a fast loop would.
 
 The cost is code and time. On the measuring machine the UCRT takes about 8.4 ns
 per `sin` or `cos`, 7.2 ns per `exp` or `log`, and 17 ns per `pow` on its FMA3
@@ -738,8 +746,9 @@ default after measurement.
 
 ### Targeting x86-64 levels
 
-`lokec` gives clang no CPU level, so programs target baseline x86-64 (SSE2),
-which every 64-bit x86 processor runs. The higher levels are:
+Programs target baseline x86-64 (SSE2), which every 64-bit x86 processor runs,
+unless built with [`-cpu`](compiler-guide.md#cpu-levels), which offers v2 and
+v3 with a startup check. The levels are:
 
 | Level | Adds | Processors |
 | --- | --- | --- |
@@ -755,24 +764,25 @@ Arm emulates AVX2 and FMA for x64 programs from Windows 11 24H2.
 A level does not change determinism: `+ - * /` and `sqrt` give the same bits on
 every level, and Loke's IR never allows fusion (design.md "Floating-point
 operators"). The IR is not the only control, though: Clang's `-ffp-contract`
-also sets the backend's fusion mode, and the runtime's C sources get Clang's
-default, which fuses within an expression. A level option would need
-`-ffp-contract=off` on every Clang command and a test of that. It changes speed:
+also sets the backend's fusion mode, and the runtime's C sources would get
+Clang's default, which fuses within an expression, so every Clang command
+passes `-ffp-contract=off`, and `tests/cpu_test.odin` rebuilds the
+floating-point cases at each level. It changes speed:
 v2 adds POPCNT and, if `floor` and its kin were bound to LLVM intrinsics instead
 of the C library, inline rounding; v3 adds 256-bit vectorization, hardware FMA,
 and BMI. A program built for a level crashes with an illegal instruction on a
-processor without it, unless the runtime checks first and reports it. Open:
+processor without it, which is why an executable built above baseline checks
+first and reports it. Open:
 
 - Should the default move to v2, which costs almost nothing?
-- Should `lokec` offer an opt-in level, such as `-cpu=x86-64-v3`, with that
-  startup check?
-- Or should the standard library choose at run time where it matters, as the
-  correctly rounded functions could with FMA, leaving one baseline?
+- Should the standard library also choose at run time where it matters, as the
+  correctly rounded functions could with FMA, for baseline builds?
+- Should v4 and `native` follow? v4 needs AVX-512 hardware to test on, and
+  `native` resolves to a feature set of its own rather than a level.
 
 The [deterministic math and CPU targeting
-plan](deterministic-math-and-targets-plan.md#cpu-targets-and-fma) proposes
-keeping baseline as the default, an opt-in `-cpu` level with a startup check,
-and run-time dispatch later only where measured.
+plan](deterministic-math-and-targets-plan.md#cpu-targets-and-fma) keeps
+baseline as the default and adds run-time dispatch later only where measured.
 
 ## Open questions in `core:random`
 

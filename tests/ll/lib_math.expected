@@ -19,3 +19,4 @@ call double @fmod(double
 call float @fmodf(float
 not @fma(
 not @fmaf(
+not @llvm.fma

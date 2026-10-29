@@ -83,8 +83,11 @@ compile_object :: proc(c: ^Compiler, ll_path: string, obj_path: string) -> int {
 	}
 
 	clang := find_clang()
-	command := []string{clang, "-c", ll_path, "-o", obj_path, opt_clang_flag(c.opt_mode), "-Wno-override-module"}
-	state, _, stderr, err := subprocess.run(os.Process_Desc{command = command}, context.allocator)
+	command := make([dynamic]string)
+	append(&command, clang, "-c", ll_path, "-o", obj_path)
+	append_codegen_flags(&command, c.target, c.opt_mode)
+	append(&command, "-Wno-override-module")
+	state, _, stderr, err := subprocess.run(os.Process_Desc{command = command[:]}, context.allocator)
 	if err != nil {
 		errorf(c, no_span(), "L0402", CLANG_MISSING, clang)
 		return 2
@@ -94,6 +97,18 @@ compile_object :: proc(c: ^Compiler, ll_path: string, obj_path: string) -> int {
 		return 2
 	}
 	return 0
+}
+
+// What every clang command that generates code passes, the module's and the
+// runtime's alike, so the two cannot disagree on the instruction set.
+// `-ffp-contract=off` is not a default: for C, clang's is `on`, which fuses
+// `a*b + c` within an expression, and for IR input the option still sets the
+// backend's fusion mode (design.md "Floating-point operators").
+@(private = "file")
+append_codegen_flags :: proc(command: ^[dynamic]string, target: Target_Info, opt_mode: Opt_Mode) {
+	append(command, opt_clang_flag(opt_mode))
+	append(command, strings.concatenate({"-march=", cpu_level_name(target.cpu)}, context.temp_allocator))
+	append(command, "-ffp-contract=off")
 }
 
 @(private = "file")
@@ -264,8 +279,8 @@ replace_ext :: proc(path: string, ext: string) -> string {
 	return strings.concatenate({path, ext})
 }
 
-// The bundled runtime's objects, compiled once per C build (the host is the
-// only target) and reused by later links. A custom `-runtime=<dir>` is never
+// The bundled runtime's objects, compiled once per C build, CPU level, and
+// optimization mode, and reused by later links. A custom `-runtime=<dir>` is never
 // written to. Each set lives in a directory named by a hash of everything that
 // decides it, so a changed input makes a new set instead of replacing one a
 // concurrent link may be reading. A set is compiled in a private staging
@@ -275,16 +290,23 @@ replace_ext :: proc(path: string, ext: string) -> string {
 // ponytail: superseded sets are left behind (about 100 KB each); a sweep
 // would need to know no link still reads them.
 @(private = "file")
-prebuilt_runtime_objects :: proc(runtime_dir: string, sources: []string, opt_mode: Opt_Mode, custom_runtime: bool) -> []string {
+prebuilt_runtime_objects :: proc(
+	runtime_dir: string,
+	sources: []string,
+	target: Target_Info,
+	opt_mode: Opt_Mode,
+	custom_runtime: bool,
+) -> []string {
 	if custom_runtime {
 		return nil
 	}
-	command := runtime_compile_command(runtime_dir, sources, opt_mode)
+	command := runtime_compile_command(runtime_dir, sources, target, opt_mode)
 	manifest, identified := runtime_build_manifest(runtime_dir, command)
 	if !identified {
 		return runtime_cache_failed(runtime_dir, "cannot read the runtime sources in `%s`", runtime_dir)
 	}
-	name := fmt.tprintf("%v-%16x", opt_mode, hash.fnv64a(transmute([]byte)manifest))
+	// The manifest decides; the level and mode in the name are for a reader.
+	name := fmt.tprintf("%s-%v-%16x", cpu_level_name(target.cpu), opt_mode, hash.fnv64a(transmute([]byte)manifest))
 	dir := join_path({runtime_dir, "prebuilt", name})
 	objects := make([]string, len(sources))
 	for source, index in sources {
@@ -397,13 +419,13 @@ prebuilt_current :: proc(dir: string, objects: []string, manifest: string) -> bo
 // One clang process; `-c` with several inputs writes each object into the
 // working directory.
 @(private = "file")
-runtime_compile_command :: proc(runtime_dir: string, sources: []string, opt_mode: Opt_Mode) -> []string {
+runtime_compile_command :: proc(runtime_dir: string, sources: []string, target: Target_Info, opt_mode: Opt_Mode) -> []string {
 	command := make([dynamic]string, context.temp_allocator)
 	append(&command, find_clang(), "-c")
 	for source in sources {
 		append(&command, source)
 	}
-	append(&command, opt_clang_flag(opt_mode))
+	append_codegen_flags(&command, target, opt_mode)
 	append_c_includes(&command, runtime_dir)
 	return command[:]
 }
@@ -461,7 +483,7 @@ link :: proc(c: ^Compiler, ll_path, natvis_path, exe_path: string, opts: Emissio
 
 	command := make([dynamic]string)
 	append(&command, clang, ll_path, "-o", exe_path)
-	append(&command, opt_clang_flag(c.opt_mode))
+	append_codegen_flags(&command, c.target, c.opt_mode)
 	// The module carries its own debug information; `-g` has the linker write
 	// the PDB.
 	if c.debug_info {
@@ -471,7 +493,7 @@ link :: proc(c: ^Compiler, ll_path, natvis_path, exe_path: string, opts: Emissio
 		append(&command, fmt.aprintf("-Wl,/NATVIS:%s", natvis_path))
 	}
 	runtime_inputs := sources
-	if prebuilt := prebuilt_runtime_objects(runtime_dir, sources, c.opt_mode, opts.runtime_dir != ""); prebuilt != nil {
+	if prebuilt := prebuilt_runtime_objects(runtime_dir, sources, c.target, c.opt_mode, opts.runtime_dir != ""); prebuilt != nil {
 		runtime_inputs = prebuilt
 	}
 	for input in runtime_inputs {
@@ -639,9 +661,11 @@ assembly_object_path :: proc(source, exe_path: string) -> string {
 }
 
 // `-print-toolchain`: the clang, MSVC toolset, and extra flags a link would use,
-// one `flag=` line each in command order. `ready=no` means a link cannot run
-// here. The test harness reads this instead of repeating the discovery.
-print_toolchain :: proc() -> int {
+// one `flag=` line each in command order: the CPU level's and contraction's,
+// which a C host compiling the runtime needs too, then the MSVC discovery's.
+// `ready=no` means a link cannot run here. The test harness reads this instead
+// of repeating the discovery.
+print_toolchain :: proc(cpu: Cpu_Level) -> int {
 	context.allocator = context.temp_allocator
 	clang := find_clang()
 	// A bare `clang` is only known to exist once it runs.
@@ -652,6 +676,8 @@ print_toolchain :: proc() -> int {
 	fmt.printfln("clang=%s", clang)
 	fmt.printfln("msvc=%s", msvc_tools_dir())
 
+	fmt.printfln("flag=-march=%s", cpu_level_name(cpu))
+	fmt.println("flag=-ffp-contract=off")
 	includes, includes_complete := msvc_include_dirs()
 	for include in includes {
 		fmt.println("flag=-isystem")

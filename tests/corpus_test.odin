@@ -384,6 +384,18 @@ driver_rejects_invalid_modes :: proc(t: ^testing.T) {
 		"missing build-mode conflict diagnostic",
 	)
 
+	// compiler-guide.md "CPU levels": a level spelled any other way, or one
+	// not offered yet, is a usage error rather than a guess.
+	for cpu in ([]string{"-cpu=x86-64-v4", "-cpu=native", "-cpu=", "-cpu=X86-64-V3"}) {
+		state, _, stderr, err := exec(
+			os.Process_Desc{command = []string{compiler_path(), "examples/hello.loke", "-parse-only", cpu}},
+			context.allocator,
+		)
+		testing.expectf(t, err == nil, "cannot validate %s", cpu)
+		testing.expectf(t, state.exit_code == 2, "%s did not exit 2", cpu)
+		testing.expectf(t, strings.contains(string(stderr), "-cpu needs"), "%s was not rejected", cpu)
+	}
+
 	for collection in ([]string{"-collection:foo=", "-collection:foo:bar=tests"}) {
 		state, _, stderr, err := exec(
 			os.Process_Desc {
@@ -761,6 +773,9 @@ UNPINNED :: []string {
 	"L0601",
 	// A `base:runtime` without `Type_Info`/`Member_Info`; the runtime is always loaded.
 	"L0575",
+	// `core:math`'s package-private FMA built-ins, which no other package can
+	// name and `core:math` calls correctly.
+	"L0738",
 }
 
 @(test)

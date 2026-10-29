@@ -68,6 +68,7 @@ if ($LASTEXITCODE -eq 0) { .\args.exe first "two words" }
 | `-o <path>` | Set the executable or object output path. Defaults to the input path with `.exe`, `.obj`, or, for a test build, `.test.exe`. |
 | `-test` | Build the root package's tests and run each in its own process; see [Running tests](#running-tests). |
 | `-opt=<mode>` | Set optimization: `none` (default), `minimal`, `size`, `speed`, or `aggressive`. These map to Clang `-O0`, `-O1`, `-Os`, `-O2`, and `-O3`. |
+| `-cpu=<level>` | Set the instruction set the build may use: `x86-64` (default), `x86-64-v2`, or `x86-64-v3`; see [CPU levels](#cpu-levels). |
 | `-panic=unwind\|abort` | Select whether a panic runs registered cleanup before termination. Default: `unwind`. |
 | `-define:NAME=VALUE` | Supply a project-wide `build_config` value. Repeat for different names. |
 | `-collection name=path` | Map an import prefix to a directory; `-collection:name=path` is the same. Repeat for different prefixes. |
@@ -90,6 +91,46 @@ For an optimized executable:
 ```powershell
 .\lokec.exe examples\word_frequency.loke -opt=speed -o word_frequency.exe
 ```
+
+## CPU levels
+
+`-cpu` selects one of the standard x86-64 microarchitecture levels. Each adds
+to the one before it:
+
+| Level | The processor needs |
+| --- | --- |
+| `x86-64` | SSE2, which every 64-bit x86 processor has. The default. |
+| `x86-64-v2` | SSE3, SSSE3, SSE4.1, SSE4.2, POPCNT, CMPXCHG16B, and LAHF/SAHF |
+| `x86-64-v3` | AVX, AVX2, BMI1, BMI2, F16C, FMA, LZCNT, and MOVBE, with an operating system that saves the AVX registers |
+
+The level reaches Clang as `-march` for the generated module and the runtime
+alike, and the runtime's [prebuilt objects](compiler-architecture.md#runtime-and-library-boundary)
+are kept per level. A level changes speed, never results: `a*b + c` is not
+fused at any level ([Floating-point operators](design.md#floating-point-operators)),
+since every Clang command also passes `-ffp-contract=off`. At `x86-64-v3`,
+`math.fma` is a single instruction, with the result the integer arithmetic of
+the other levels computes; a constant `math.fma` has that result too.
+
+A program built for a level runs only on a processor that has it. An
+executable built above `x86-64` therefore checks the processor before any
+other code runs: its entry is baseline code whose first act is the check. On a
+processor without the level it writes, for example,
+
+```text
+loke: this processor does not support x86-64-v3, which the program was built for
+```
+
+to standard error and exits with status 3. A program for distribution to
+machines you do not control is usually built for `x86-64`; `x86-64-v2` costs
+almost nothing on current hardware.
+
+An [object build](#building-an-object-for-a-c-host) has no entry, so its host
+checks. The runtime exports `int32_t loke_rt_v1_cpu_supports(int32_t level)`
+and `void loke_rt_v1_require_cpu(int32_t level)`, with `level` 0, 1, or 2 for
+the three levels in order; the second reports and exits as the executable
+does. Both are baseline code, so the host may call them first. The host also
+compiles the runtime sources for the object's level: `-print-toolchain
+-cpu=<level>` prints the `-march` and `-ffp-contract=off` flags with the rest.
 
 ## Build configuration
 
@@ -321,7 +362,9 @@ if ($LASTEXITCODE -eq 0) { .\widget-host.exe }
 ```
 
 The host exits with code `0` on success. `-rtlib=compiler-rt` supplies the
-128-bit arithmetic helpers the runtime needs.
+128-bit arithmetic helpers the runtime needs. An object built with `-cpu` also
+needs the runtime compiled for its level, and a check before the first export;
+see [CPU levels](#cpu-levels).
 
 Every host thread must attach to the runtime before calling a Loke export and
 detach before the thread exits:

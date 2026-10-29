@@ -257,6 +257,8 @@ Compiler :: struct {
 	// predeclared constants take their value from these.
 	opt_mode:            Opt_Mode,
 	build_mode:          Build_Mode,
+	// `-cpu`, which `target` is resolved at.
+	cpu:                 Cpu_Level,
 	// `-g`: emit debug information (`emit_llvm_debug.odin`).
 	debug_info:          bool,
 	// Under `-g`, the natvis rules emission wrote for the linker to put in the PDB.

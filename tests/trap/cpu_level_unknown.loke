@@ -1,0 +1,22 @@
+// compiler-guide.md "CPU levels": the startup check's report and status, which
+// a build can only reach on a processor older than its level. A level the
+// runtime does not know takes the same path on any processor.
+package main;
+
+import "core:fmt";
+
+foreign loke_runtime {
+	@(link_name="loke_rt_v1_cpu_supports")
+	cpu_supports :: proc "c" (level: i32) -> i32 ---;
+	@(link_name="loke_rt_v1_require_cpu")
+	require_cpu :: proc "c" (level: i32) ---;
+}
+
+main :: proc() {
+	// Baseline is every x86-64 processor; a level out of range is none.
+	fmt.println(cpu_supports(0), cpu_supports(-1), cpu_supports(3));
+	require_cpu(0);
+	fmt.println("baseline passes");
+	require_cpu(3);
+	fmt.println("unreachable");
+}

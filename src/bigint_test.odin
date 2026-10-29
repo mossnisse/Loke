@@ -1,6 +1,7 @@
 // Boundary checks for `src/bigint.odin`, where a wrong fold would go unnoticed.
 package lokec
 
+import "core:math"
 import "core:mem"
 import "core:testing"
 
@@ -271,4 +272,56 @@ bigint_from_float_truncation :: proc(t: ^testing.T) {
 
 	_, _, ok = bi_from_f64_trunc(&c, 0h7ff0000000000000)
 	testing.expect(t, !ok, "infinity is not an integer constant")
+}
+
+// `exact_fma`, the compile-time value of `core:math`'s FMA instruction, at the
+// boundaries where rounding once differs from rounding twice or from the
+// host's arithmetic: a product that is itself a tie, results below the normal
+// range, overflow, and cancellation. Each expectation is an encoding.
+@(test)
+exact_fma_rounds_once :: proc(t: ^testing.T) {
+	c: Compiler
+	defer destroy_compilation(&c)
+
+	p2 :: proc(exponent: int) -> f64 { return math.ldexp(1.0, exponent) }
+	a := 1.0 + p2(-27)
+	b := 1.0 + p2(-26)
+	min_subnormal := transmute(f64)u64(1)
+	min_normal := transmute(f64)u64(1 << 52)
+	Case :: struct {
+		a, b, c:  f64,
+		bits:     u16,
+		expected: u64,
+	}
+	cases := []Case {
+		// `a*a` is `1 + 2^-26 + 2^-54`; the fused remainder keeps the last term.
+		{a, a, -(a*a), 64, transmute(u64)p2(-54)},
+		// A tie at the product's last place goes to even, unless an addend far
+		// below it says which way.
+		{a, b, 0, 64, transmute(u64)(1.0 + p2(-26) + p2(-27))},
+		{a, b, min_subnormal, 64, transmute(u64)(1.0 + p2(-26) + p2(-27) + p2(-52))},
+		// Gradual underflow, rounded at the subnormal's own last place.
+		{min_normal, 0.5, 0, 64, 1 << 51},
+		{min_subnormal, 0.75, 0, 64, 1},
+		{min_subnormal, 0.5, 0, 64, 0},
+		{min_subnormal, 0.5, min_subnormal, 64, 2},
+		{-min_subnormal, 0.5, 0, 64, 1 << 63},
+		// The product never overflows on its own, and the sum may.
+		{1.0e308, 2.0, -1.0e308, 64, transmute(u64)f64(1.0e308)},
+		{1.0e308, 2.0, 0, 64, transmute(u64)math.INF_F64},
+		{1.0e308, 2.0, math.NEG_INF_F64, 64, transmute(u64)math.NEG_INF_F64},
+		// Exact cancellation is +0 under rounding to nearest.
+		{1.5, 2.0, -3.0, 64, 0},
+		// `f32` rounds once at its own width, not at `f64`'s first.
+		{f64(f32(1.0 + p2(-12))), f64(f32(1.0 - p2(-13))), -1.0, 32, u64(transmute(u32)f32(p2(-13) - p2(-25)))},
+		// Half the smallest `f32` subnormal ties to even, and more rounds up.
+		{p2(-75), p2(-75), 0, 32, 0},
+		{p2(-75), 1.5*p2(-75), 0, 32, 1},
+		{p2(100), p2(28), 0, 32, u64(transmute(u32)math.INF_F32)},
+	}
+	for k in cases {
+		got := exact_fma(&c, k.a, k.b, k.c, k.bits)
+		pattern := k.bits == 32 ? u64(transmute(u32)f32(got)) : transmute(u64)got
+		testing.expectf(t, pattern == k.expected, "fma(%v, %v, %v) at %d bits: expected %x, got %x", k.a, k.b, k.c, k.bits, k.expected, pattern)
+	}
 }

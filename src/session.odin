@@ -14,6 +14,7 @@ Compilation_Config :: struct {
 	panic_unwind:      bool,
 	opt_mode:          Opt_Mode,
 	build_mode:        Build_Mode,
+	cpu:               Cpu_Level,
 	debug_info:        bool,
 	debug:             bool,
 	log_level:         Log_Level,
@@ -86,6 +87,7 @@ configure_session :: proc(s: ^Compilation_Session) -> bool {
 	c.copy_cost_threshold, c.copy_cost_enabled = config.copy_cost, config.copy_cost_enabled
 	c.panic_unwind = config.panic_unwind
 	c.opt_mode, c.build_mode = config.opt_mode, config.build_mode
+	c.cpu, c.target = config.cpu, windows_x64_target(config.cpu)
 	c.debug_info, c.debug = config.debug_info, config.debug
 	c.log_level = config.log_level
 	configured := seed_defines(c, config.defines) && register_collections(c, config.collections)

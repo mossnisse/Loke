@@ -1,0 +1,14 @@
+package main;
+
+// compiler-guide.md "CPU levels": above baseline the entry is baseline code,
+// so no instruction of the level runs before the check that it may, and
+// `math.fma` is the instruction rather than `core:math`'s integer arithmetic.
+
+import "core:fmt";
+import "core:math";
+import "core:os";
+
+main :: proc() {
+	x := f64(os.args.len());
+	fmt.println(math.fma(x, x, x), math.fma_f32(f32(x), f32(x), f32(x)));
+}

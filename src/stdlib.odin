@@ -158,6 +158,11 @@ contribute_standard_members :: proc(k: ^Checker, pkg: ^Package) {
 		// design.md "Type conversion": a checked `T(value)` cannot keep the low
 		// bits, so the conversion that does is compiler-known.
 		contribute_builtin(c, pkg, "wrap", .Math_Wrap)
+		// A target with FMA computes `fma` in one instruction instead of the
+		// integer arithmetic every other target uses. The instruction cannot be
+		// written in Loke, and neither can the question of whether it exists.
+		contribute_builtin(c, pkg, "fma_instruction_available", .Math_Fma_Available, public = false)
+		contribute_builtin(c, pkg, "fma_instruction", .Math_Fma_Instruction, public = false)
 	case STD_LOG:
 		// design.md "Compiled log level": `LOKE_LOG_LEVEL` and `core:log`'s own
 		// `Level` must be one type, or a caller could not compare them. Allocated

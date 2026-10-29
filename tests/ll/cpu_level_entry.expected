@@ -1,0 +1,7 @@
+define i32 @wmain(i32 %argc, ptr %argv) "target-cpu"="x86-64" "target-features"="+cmov,+cx8,+fxsr,+mmx,+sse,+sse2,+x87" {
+call void @loke_rt_v1_require_cpu(i32 2)
+call void @loke_rt_v1_args_init(i32 %argc, ptr %argv)
+declare void @loke_rt_v1_require_cpu(i32)
+call double @llvm.fma.f64(double
+call float @llvm.fma.f32(float
+declare double @llvm.fma.f64(double, double, double)

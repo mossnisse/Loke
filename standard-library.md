@@ -2301,6 +2301,9 @@ them: it computes `a*b + c` with a single rounding, correctly rounded, since
 `design.md` "Floating-point operators" never fuses the written expression. Its
 result does not depend on the C library, and the product's exponent is not
 bounded, so a finite product too large for the format still meets the addend.
+On a [CPU level](compiler-guide.md#cpu-levels) with an FMA instruction it is
+that instruction, and elsewhere integer arithmetic; the results agree, except
+which NaN a NaN operand yields, which neither promises.
 
 The transcendental functions are not deterministic: `pow`, `exp`, `log`,
 `log2`, `log10`, `hypot`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, and

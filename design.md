@@ -8859,6 +8859,11 @@ to process-lifetime UTF-8, attaches the initial thread, initializes providers,
 and then calls `main`, in that order. On Windows, unpaired UTF-16 surrogates
 become U+FFFD.
 
+A build that may use instructions beyond its target's baseline, such as one
+for a higher [CPU level](compiler-guide.md#cpu-levels), first checks that the
+processor has them. On one that does not, the entry reports it on standard
+error and exits with status 3 before any of the steps above.
+
 An [object build](#build-configuration) has no entry or argument conversion, so
 `os.args` is empty. Its host owns startup and calls any provider initializer
 after attaching a thread and before using an export.

@@ -591,6 +591,18 @@ void loke_rt_v1_panic_trace(void);
  * runtime's own records, and the end of every panic once its cleanup has run. */
 void loke_rt_v1_abort(const char *what);
 
+/* ------------------------------------------------------------ CPU level -- */
+
+/* compiler-guide.md "CPU levels": 0 is x86-64, 1 x86-64-v2, 2 x86-64-v3, the
+ * order of `-cpu`'s values. Both are baseline code at every level, so they are
+ * safe to call before anything else. The generated `wmain` of a build above
+ * baseline calls `loke_rt_v1_require_cpu` first; a C host of such an object
+ * build calls it, or tests `loke_rt_v1_cpu_supports`, before any export. An
+ * unsupported level is reported on stderr and ends the process with status 3,
+ * as `loke_rt_v1_abort` does. */
+int32_t loke_rt_v1_cpu_supports(int32_t level);
+void loke_rt_v1_require_cpu(int32_t level);
+
 /* --------------------------------------------------- process arguments -- */
 
 /* design.md "Program entry and exit". The generated `wmain`

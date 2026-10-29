@@ -49,6 +49,8 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 		check_transmute_builtin(k, v, ident)
 	case .Math_Wrap:
 		check_wrap_builtin(k, v)
+	case .Math_Fma_Available, .Math_Fma_Instruction:
+		check_fma_builtin(k, v, ident, sym.builtin)
 	case .Type_Info_Of:
 		check_type_info_of(k, v)
 	case .Strings_Allocate:
@@ -754,6 +756,63 @@ check_wrap_builtin :: proc(k: ^Checker, v: ^Expr_Call) {
 		v.const_value.integer = wrap_to_type(k.c, base.const_value.integer, target)
 		v.bound = nil
 	}
+}
+
+// `fma_instruction_available()` folds to whether the target has the
+// instruction; `fma_instruction(a, b, c)` takes three operands of one float
+// type the instruction has a form for, and needs the instruction, so that a
+// call reached on a target without it is an error rather than LLVM's libcall.
+@(private = "file")
+check_fma_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind) {
+	v.value_category = .Value
+	v.type = INVALID_TYPE
+	wanted := kind == .Math_Fma_Available ? 0 : 3
+	if len(v.args) != wanted {
+		errorf(
+			k.c, v.span, "L0738", "`%s` takes %d argument%s, found %d",
+			ident.name, wanted, wanted == 1 ? "" : "s", len(v.args),
+		)
+		return
+	}
+	if !builtin_arguments_ok(k, v) {
+		return
+	}
+	available := .FMA in k.c.target.features
+	if kind == .Math_Fma_Available {
+		v.type = TYPE_BOOL
+		v.is_const = true
+		v.const_value = bool_const(available)
+		return
+	}
+	if !available {
+		errorf(k.c, v.span, "L0738", "`%s` needs a CPU level with FMA, such as `-cpu=x86-64-v3`", ident.name)
+		return
+	}
+	operand := INVALID_TYPE
+	for arg in v.args {
+		type := check_single_expr(k, arg.value)
+		if type == INVALID_TYPE || !materialize(k, arg.value, default_type(k.c, type)) {
+			return
+		}
+		type = expr_base(arg.value).type
+		if operand == INVALID_TYPE {
+			operand = type
+		}
+		if type != operand || (operand != TYPE_F32 && operand != TYPE_F64) {
+			errorf(
+				k.c, expr_span(arg.value), "L0738",
+				"`%s` takes three `f32` or three `f64` operands; found `%s`",
+				ident.name, type_name(k.c, type),
+			)
+			return
+		}
+	}
+	bound := make([]Expr, 3, k.c.semantic_allocator)
+	for arg, index in v.args {
+		bound[index] = arg.value
+	}
+	v.bound = bound
+	v.type = operand
 }
 
 // An enum source wraps its backing value; a destination is a plain integer.

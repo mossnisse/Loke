@@ -1,10 +1,36 @@
 # Deterministic math and CPU targeting plan
 
-Status: proposal, 2026-10-28. This document proposes implementation work; it
-does not change the language contract or describe options already available.
-The current authorities remain [Floating-point operators](design.md#floating-point-operators),
-[`core:math`](standard-library.md#coremath), and the
-[compiler options](compiler-guide.md#common-options).
+Status: proposal, 2026-10-28; partly implemented, 2026-10-29. This document
+proposes implementation work; it does not change the language contract. The
+current authorities remain [Floating-point operators](design.md#floating-point-operators),
+[`core:math`](standard-library.md#coremath), the
+[compiler options](compiler-guide.md#common-options), and
+[CPU levels](compiler-guide.md#cpu-levels).
+
+## Progress
+
+Implemented, from phases 2 and 3:
+
+- `-cpu=x86-64|x86-64-v2|x86-64-v3`, resolved into `Target_Info`'s CPU level
+  and feature set, and passed as `-march` to the module, object, and runtime
+  compiles. The runtime's prebuilt objects are kept per level.
+- `-ffp-contract=off` on every Clang command. `tests/cpu_test.odin` rebuilds
+  the floating-point run cases at v2 and v3 against their baseline output, at
+  every `-opt` level under `test-all.ps1 -Full`.
+- The startup check. `wmain` above baseline carries an explicit baseline
+  `"target-features"` list and first calls `loke_rt_v1_require_cpu`, which
+  lives in `runtime/cpu.c`, compiled as baseline code under a Clang
+  `target("arch=x86-64")` pragma. A `"target-cpu"` attribute alone was not
+  enough: the command line's features still applied, and a v3 callee was
+  inlined into it. Object hosts call the same exported check; the object
+  carries no requirement metadata yet.
+- `math.fma` as the FMA instruction at v3, through two `core:math`-private
+  built-ins, and a compile-time evaluator for it that rounds the exact
+  integer result once, independent of both the host and the software path.
+
+Not started: the reproducible math package and its contract (phases 1, 3's
+kernels, and 4), object metadata, NaN canonicalization, the environment entry
+contract, simulation support, dispatch, and other platforms.
 
 ## Recommended direction
 

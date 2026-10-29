@@ -511,9 +511,12 @@ hypot_f32 :: proc(a: f32, b: f32) -> f32 { return rt_hypot_f32(a, b); }
 */
 // design.md "Floating-point operators".
 //
-// Computed in integer arithmetic rather than by the C library, whose `fma` is
-// not correctly rounded in every version a toolchain may link.
+// One instruction on a CPU level that has it (compiler-guide.md "CPU levels"),
+// and otherwise integer arithmetic rather than the C library, whose `fma` is
+// not correctly rounded in every version a toolchain may link. Both round once,
+// so they agree on every finite result.
 fma :: proc(a: f64, b: f64, c: f64) -> f64 {
+	when (fma_instruction_available()) { return fma_instruction(a, b, c); }
 	if (!is_finite(a) || !is_finite(b) || a == 0.0 || b == 0.0) {
 		// The product is exact: an infinity, a NaN, or a signed zero.
 		return a*b + c;
@@ -525,6 +528,7 @@ fma :: proc(a: f64, b: f64, c: f64) -> f64 {
 }
 
 fma_f32 :: proc(a: f32, b: f32, c: f32) -> f32 {
+	when (fma_instruction_available()) { return fma_instruction(a, b, c); }
 	if (!is_finite_f32(a) || !is_finite_f32(b) || a == f32(0.0) || b == f32(0.0)) {
 		return a*b + c;
 	}
@@ -533,6 +537,19 @@ fma_f32 :: proc(a: f32, b: f32, c: f32) -> f32 {
 		u64(unsafe.transmute(u32, c)), 24, 127);
 	return unsafe.transmute(f32, u32(bits));
 }
+
+/// Whether the CPU level has a fused multiply-add instruction.
+@(intrinsic)
+@(private)
+fma_instruction_available :: proc() -> bool ---;
+
+/**
+	`a*b + c` in one instruction, for three `f32` or three `f64` operands, on a
+	CPU level that has it. Evaluated at compile time from the exact result.
+*/
+@(intrinsic)
+@(private)
+fma_instruction :: proc(a: $T, b: T, c: T) -> T ---;
 
 // One finite operand of `fused_multiply_add`: `significand * 2^exponent`.
 @(private)

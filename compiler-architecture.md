@@ -607,11 +607,18 @@ string's reference-counted allocation directly.
 
 Platform declarations use `when (LOKE_OS == .Windows)`; filenames such as
 `_windows.loke` have no selection effect. Windows is currently the only target.
+`Target_Info` (`src/semantic.odin`) describes it: the triple, the layout widths,
+and the [CPU level](compiler-guide.md#cpu-levels) with the features it adds.
+Every Clang command takes its code-generation flags from
+`append_codegen_flags`, so the module and the runtime cannot disagree on the
+level or on `-ffp-contract=off`. `runtime/cpu.c` is the one runtime file
+compiled as baseline code whatever the level, because the startup check runs
+before anything the level permits.
 
 `prebuilt_runtime_objects` caches C objects under
-`runtime/prebuilt/<mode>-<hash>/`. The key covers the clang path, flags,
-MSVC/SDK include roots, clang modification time, and runtime source/header names
-and contents. Installed sets are immutable for concurrent links; changed inputs
+`runtime/prebuilt/<cpu>-<mode>-<hash>/`. The key covers the clang path, flags
+(including the CPU level's `-march`), MSVC/SDK include roots, clang
+modification time, and runtime source/header names and contents. Installed sets are immutable for concurrent links; changed inputs
 create a new set. On cache build/install failure, the link compiles sources
 directly and records the reason in `runtime/prebuilt/last-failure.txt`.
 

@@ -309,8 +309,20 @@ checklist.
   the "C" numeric locale as a `Backend_Error` where `parse_f64` and printing
   panic, and `fmt.try_spell_f64` spells a float into a fixed buffer without a
   sink or an allocation.
+- `-cpu=x86-64-v2` and `-cpu=x86-64-v3` build for a higher x86-64
+  microarchitecture level, for the program and the runtime alike, and the
+  executable checks the processor at startup, exiting with status 3 on one
+  without the level. `x86-64` stays the default. At `x86-64-v3`, `math.fma` is
+  one instruction, with the same result. A C host of an object build can call
+  `loke_rt_v1_require_cpu` or `loke_rt_v1_cpu_supports`
+  ([CPU levels](compiler-guide.md#cpu-levels)).
 
 ### Changed
+
+- Every Clang command now passes the CPU level's `-march` and
+  `-ffp-contract=off`, the runtime's C sources included, whose default let
+  Clang fuse `a*b + c` once a level has FMA. `-print-toolchain` prints both
+  flags, for a C host compiling the runtime itself.
 
 - A value whose bits are not a representation of its type, a `bool` other
   than 0 or 1, an enum value naming no member, a null `^T`, or a union tag out

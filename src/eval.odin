@@ -2895,6 +2895,21 @@ eval_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (Eval_Va
 		wrapped.integer = wrap_to_type(ev.k.c, wrapped.integer, v.type, ev.alloc)
 		return scalar(wrapped, v.type), true
 
+	// Rounded once from the exact value, as the instruction does, rather than
+	// by the host's arithmetic or its C library.
+	case .Math_Fma_Instruction:
+		operands: [3]Eval_Value
+		for &operand, index in operands {
+			value, ok := eval_expr(ev, v.bound[index])
+			if !ok {
+				return Eval_Value{}, false
+			}
+			operand = value
+		}
+		bits := operands[0].float_bits
+		fused := exact_fma(ev.alloc, operands[0].float, operands[1].float, operands[2].float, bits)
+		return scalar(float_const(fused, bits), v.type), true
+
 	case .Unsafe_Transmute:
 		// The checker's fold, for an operand that is a local.
 		operand, ok := eval_expr(ev, v.bound[0])

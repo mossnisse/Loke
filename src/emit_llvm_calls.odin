@@ -105,6 +105,8 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 		case .Math_Wrap:
 			source := expr_base(v.bound[0]).type
 			return emit_value_conversion(e, emit_expr(e, v.bound[0]), source, as_type, checked = false)
+		case .Math_Fma_Instruction:
+			return emit_fma_instruction(e, v)
 		case .Unsafe_Take:
 			return load_place(e, as_type, emit_address(e, v.bound[0]))
 		case .Unsafe_Write:
@@ -141,7 +143,7 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 		case .Free_All:
 			emit_region_reset(e, v)
 			return "0"
-		case .None, .Size_Of, .Align_Of, .Offset_Of, .Is_Copyable, .Is_Union,
+		case .None, .Size_Of, .Align_Of, .Offset_Of, .Is_Copyable, .Is_Union, .Math_Fma_Available,
 		     .Static_Assert, .Build_Config, .Source_Location, .Caller_Location,
 		     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Variants_Of:
 			backend_fail(e, "an unfrozen compile-time built-in reached emission")
@@ -150,6 +152,22 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	}
 	backend_fail(e, "an intrinsic call has no builtin symbol")
 	return "0"
+}
+
+// The checker admits the call only on a target with the instruction, where
+// `llvm.fma` lowers to it rather than to the C library's `fma`.
+@(private = "file")
+emit_fma_instruction :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
+	llvm := llvm_type(e, expr_base(v.bound[0]).type)
+	key := fmt.aprintf("llvm.fma.%s", llvm == "float" ? "f32" : "f64")
+	if key not_in e.simd_intrinsics {
+		e.simd_intrinsics[key] = true
+		append(&e.globals, fmt.aprintf("declare %s @%s(%s, %s, %s)\n", llvm, key, llvm, llvm, llvm))
+	}
+	a, b, c := emit_expr(e, v.bound[0]), emit_expr(e, v.bound[1]), emit_expr(e, v.bound[2])
+	out := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = call %s @%s(%s %s, %s %s, %s %s)", out, llvm, key, llvm, a, llvm, b, llvm, c)
+	return out
 }
 
 // `field.pointer(value)` is the field's address, and so is the place

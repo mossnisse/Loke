@@ -66,6 +66,9 @@ options:
     -opt=none|minimal|size|speed|aggressive
                   optimization level, mapped to clang -O0/-O1/-Os/-O2/-O3
                   (default: none)
+    -cpu=x86-64|x86-64-v2|x86-64-v3
+                  the instruction set the build may use; an executable checks
+                  at startup that the processor has it (default: x86-64)
     -g            emit debug information, at any -opt level: an executable
                   gets a .pdb beside it
     -debug        set LOKE_DEBUG to true
@@ -103,6 +106,7 @@ Options :: struct {
 	panic_unwind: bool,
 	opt_mode:   Opt_Mode,
 	build_mode: Build_Mode,
+	cpu:        Cpu_Level,
 	debug_info: bool,
 	debug:      bool,
 	log_level:  Log_Level,
@@ -154,7 +158,7 @@ run :: proc() -> int {
 		return 2
 	}
 	if opts.print_toolchain {
-		return print_toolchain()
+		return print_toolchain(opts.cpu)
 	}
 
 	s: Compilation_Session
@@ -164,7 +168,7 @@ run :: proc() -> int {
 		defines = opts.defines[:], collections = opts.collections[:],
 		copy_cost = opts.copy_cost, copy_cost_enabled = opts.copy_cost_enabled,
 		panic_unwind = opts.panic_unwind, opt_mode = opts.opt_mode,
-		build_mode = opts.build_mode, debug_info = opts.debug_info,
+		build_mode = opts.build_mode, cpu = opts.cpu, debug_info = opts.debug_info,
 		debug = opts.debug, log_level = opts.log_level,
 	}) {
 		report(c)
@@ -329,6 +333,15 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
 			case "aggressive": opts.opt_mode = .Aggressive
 			case:
 				fmt.eprintln("error: -opt needs `none`, `minimal`, `size`, `speed`, or `aggressive`")
+				return opts, false
+			}
+		case strings.has_prefix(arg, "-cpu="):
+			switch arg[len("-cpu="):] {
+			case "x86-64":    opts.cpu = .X86_64
+			case "x86-64-v2": opts.cpu = .X86_64_V2
+			case "x86-64-v3": opts.cpu = .X86_64_V3
+			case:
+				fmt.eprintln("error: -cpu needs `x86-64`, `x86-64-v2`, or `x86-64-v3`")
 				return opts, false
 			}
 		case strings.has_prefix(arg, "-log-level="):

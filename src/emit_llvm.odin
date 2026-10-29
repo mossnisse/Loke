@@ -54,6 +54,7 @@ Emitter :: struct {
 	container_thunks: map[string]bool,
 	messages: map[string]string,
 	literals: map[string]string,
+	// The LLVM intrinsics a call has declared, by name.
 	simd_intrinsics: map[string]bool,
 	globals:  [dynamic]string,
 }
@@ -659,6 +660,24 @@ emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 	clear(&e.pending)
 }
 
+// compiler-guide.md "CPU levels": above baseline, `wmain` itself is baseline
+// code and first asks the runtime whether the processor runs the build's level.
+// The explicit feature list is what makes it baseline: a `target-cpu` alone
+// keeps the command line's features. A callee compiled for the level is then
+// never inlined into it, so nothing of the level's runs before the check.
+@(private = "file")
+open_entry :: proc(e: ^Emitter) {
+	if e.c.target.features == {} {
+		open_function(e, "define i32 @wmain(i32 %%argc, ptr %%argv)")
+		return
+	}
+	open_function(
+		e,
+		`define i32 @wmain(i32 %%argc, ptr %%argv) "target-cpu"="x86-64" "target-features"="+cmov,+cx8,+fxsr,+mmx,+sse,+sse2,+x87"`,
+	)
+	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_require_cpu(i32 %d)", int(e.c.target.cpu))
+}
+
 // design.md "Executable startup ABI": `wmain` initializes the arguments, the
 // thread, and the providers, in that order, then calls `main`.
 @(private = "file")
@@ -670,7 +689,7 @@ emit_entry :: proc(e: ^Emitter) {
 	}
 	function := begin_function_emission(e)
 	defer finish_function_emission(e, function)
-	open_function(e, "define i32 @wmain(i32 %%argc, ptr %%argv)")
+	open_entry(e)
 	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_args_init(i32 %argc, ptr %argv)")
 	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_thread_attach()")
 	if e.c.debug_info {
@@ -748,7 +767,7 @@ emit_test_entry :: proc(e: ^Emitter) {
 
 	function := begin_function_emission(e)
 	defer finish_function_emission(e, function)
-	open_function(e, "define i32 @wmain(i32 %%argc, ptr %%argv)")
+	open_entry(e)
 	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_args_init(i32 %argc, ptr %argv)")
 	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_thread_attach()")
 	if e.c.debug_info {

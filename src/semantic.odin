@@ -283,8 +283,9 @@ Type_Key :: struct {
 	mutable: bool,
 }
 
-// The one target M2 compiles for. Checker and emitter read the same widths, so
-// `int` cannot mean 64 bits in one and 32 in the other.
+// The one target M2 compiles for, at the CPU level the driver selected. Checker
+// and emitter read the same widths, so `int` cannot mean 64 bits in one and 32
+// in the other.
 Target_Info :: struct {
 	triple:       string,
 	pointer_bits: u16,
@@ -293,13 +294,56 @@ Target_Info :: struct {
 	// 16-aligned and nothing is wider, which is what LLVM's own data layout for
 	// this triple says.
 	max_align:    u16,
+	// compiler-guide.md "CPU levels": the level the code generator may use,
+	// and the features it adds to the triple's baseline. A level changes no
+	// result: arithmetic is never contracted at any of them (design.md
+	// "Floating-point operators").
+	cpu:          Cpu_Level,
+	features:     Cpu_Features,
 }
 
-WINDOWS_X64 :: Target_Info {
-	triple       = "x86_64-pc-windows-msvc",
-	pointer_bits = 64,
-	int_bits     = 64,
-	max_align    = 16,
+// Instruction-set extensions beyond baseline x86-64 (SSE2), as the x86-64
+// microarchitecture levels group them. An AVX feature also needs the operating
+// system to save the AVX registers, which the startup check tests with it.
+Cpu_Feature :: enum {
+	// x86-64-v2
+	CX16,
+	LAHF_SAHF,
+	POPCNT,
+	SSE3,
+	SSE4_1,
+	SSE4_2,
+	SSSE3,
+	// x86-64-v3
+	AVX,
+	AVX2,
+	BMI1,
+	BMI2,
+	F16C,
+	FMA,
+	LZCNT,
+	MOVBE,
+}
+
+Cpu_Features :: bit_set[Cpu_Feature]
+
+X86_64_V2_FEATURES :: Cpu_Features{.CX16, .LAHF_SAHF, .POPCNT, .SSE3, .SSE4_1, .SSE4_2, .SSSE3}
+X86_64_V3_FEATURES :: X86_64_V2_FEATURES + {.AVX, .AVX2, .BMI1, .BMI2, .F16C, .FMA, .LZCNT, .MOVBE}
+
+windows_x64_target :: proc(cpu: Cpu_Level) -> Target_Info {
+	target := Target_Info {
+		triple       = "x86_64-pc-windows-msvc",
+		pointer_bits = 64,
+		int_bits     = 64,
+		max_align    = 16,
+		cpu          = cpu,
+	}
+	switch cpu {
+	case .X86_64:
+	case .X86_64_V2: target.features = X86_64_V2_FEATURES
+	case .X86_64_V3: target.features = X86_64_V3_FEATURES
+	}
+	return target
 }
 
 Resolution_Kind :: enum {
@@ -459,6 +503,12 @@ Builtin_Kind :: enum {
 	// design.md "Type conversion": `math.wrap(T, value)` keeps the low bits of an
 	// integer, the one integer conversion that may change the value.
 	Math_Wrap,
+	// compiler-guide.md "CPU levels": whether the target has a fused multiply-add
+	// instruction, a constant `core:math` selects with `when`, and the
+	// instruction itself, which rounds once exactly as `math.fma` promises.
+	// Package-private to `core:math`.
+	Math_Fma_Available,
+	Math_Fma_Instruction,
 	// design.md "SIMD vectors": the `core:simd` operations a constant lane index
 	// makes unwritable as a loop. `Simd_Reduce` takes the fold as a constant
 	// parameter, exactly as an atomic takes its ordering.
@@ -818,7 +868,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 		return
 	}
 	c.semantic_initialized = true
-	c.target = WINDOWS_X64
+	c.target = windows_x64_target(c.cpu)
 	// A growing virtual arena, not `mem.Dynamic_Arena`: the latter rejects any
 	// allocation over its block size with `.Invalid_Argument`, which
 	// `append`/`make` swallow — the symbol store crossing that threshold kept its

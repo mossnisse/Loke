@@ -104,6 +104,92 @@ round_float :: proc(value: f64, bits: u16) -> f64 {
 	return value
 }
 
+// `a*b + c` rounded once to `bits` (32 or 64), the compile-time value of the
+// FMA instruction `core:math` uses. Computed exactly in integers, so it owes
+// nothing to the compiling machine's arithmetic beyond the special cases.
+exact_fma :: proc(storage: Value_Storage, a, b, c: f64, bits: u16) -> f64 {
+	finite :: proc(x: f64) -> bool { return !math.is_nan(x) && !math.is_inf(x, 0) }
+	if !finite(a) || !finite(b) || a == 0 || b == 0 {
+		// The product is exact: an infinity, a NaN, or a signed zero.
+		return round_float(a*b + c, bits)
+	}
+	if !finite(c) {
+		// A finite product never overflows on its way to the sum.
+		return c
+	}
+	x, y, z := dyadic_of(storage, a), dyadic_of(storage, b), dyadic_of(storage, c)
+	product := Dyadic{bi_mul(storage, x.significand, y.significand), x.exponent + y.exponent}
+	exponent := min(product.exponent, z.exponent)
+	sum := bi_add(
+		storage,
+		bi_shl(storage, product.significand, product.exponent - exponent),
+		bi_shl(storage, z.significand, z.exponent - exponent),
+	)
+	return dyadic_to_float(storage, sum, exponent, bits)
+}
+
+// `significand * 2^exponent`, exactly.
+@(private = "file")
+Dyadic :: struct {
+	significand: Big_Int,
+	exponent:    int,
+}
+
+// A finite `f64`, which also holds every narrower float exactly.
+@(private = "file")
+dyadic_of :: proc(storage: Value_Storage, value: f64) -> Dyadic {
+	pattern := transmute(u64)value
+	biased := int(pattern >> 52) & 0x7ff
+	fraction := pattern & (1 << 52 - 1)
+	result := Dyadic{exponent = -1074}
+	if biased != 0 {
+		fraction |= 1 << 52
+		result.exponent = biased - 1075
+	}
+	result.significand = bi_from_u64(storage, fraction)
+	if value < 0 {
+		result.significand = bi_neg(storage, result.significand)
+	}
+	return result
+}
+
+// The nearest float of `bits` width to `n * 2^exponent`, ties to even, with
+// gradual underflow; an exact zero is `+0`. The rounding happens once, at the
+// result's own last place, so a subnormal is not rounded twice.
+@(private = "file")
+dyadic_to_float :: proc(storage: Value_Storage, n: Big_Int, exponent: int, bits: u16) -> f64 {
+	if bi_is_zero(n) {
+		return 0
+	}
+	precision, min_exponent := 53, -1022
+	switch bits {
+	case 16: precision, min_exponent = 11, -14
+	case 32: precision, min_exponent = 24, -126
+	}
+	negative := bi_sign(n) < 0
+	magnitude := negative ? bi_neg(storage, n) : n
+	leading := bi_magnitude_bits(storage, magnitude) - 1 + exponent
+	// The exponent of the result's last place: `precision` bits below its
+	// leading one, and never below the smallest subnormal's.
+	unit := max(leading, min_exponent) - (precision - 1)
+	shift := unit - exponent
+	kept: u64
+	if shift <= 0 {
+		kept, _ = bi_to_u64(storage, bi_shl(storage, magnitude, -shift))
+	} else {
+		top := bi_shr(storage, magnitude, shift)
+		kept, _ = bi_to_u64(storage, top)
+		order := bi_cmp(storage, bi_sub(storage, magnitude, bi_shl(storage, top, shift)), bi_pow2(storage, shift - 1))
+		if order > 0 || (order == 0 && kept & 1 == 1) {
+			kept += 1
+		}
+	}
+	// Exact in `f64`, which holds every narrower format's values and range, so
+	// only an overflow changes it: to the infinity rounding to nearest gives.
+	result := round_float(math.ldexp(f64(kept), unit), bits)
+	return negative ? -result : result
+}
+
 // The IEEE-754 encoding of a value already rounded to `bits`, and its inverse.
 float_pattern :: proc(value: f64, bits: u16) -> u64 {
 	switch bits {

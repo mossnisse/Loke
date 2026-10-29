@@ -20,6 +20,24 @@ Build_Mode :: enum {
 	Test,
 }
 
+// compiler-guide.md "CPU levels": the instruction set a build may use. Each
+// level adds to the one before it.
+Cpu_Level :: enum {
+	X86_64,
+	X86_64_V2,
+	X86_64_V3,
+}
+
+// The `-cpu` spelling, which is also clang's `-march` name.
+cpu_level_name :: proc(cpu: Cpu_Level) -> string {
+	switch cpu {
+	case .X86_64:    return "x86-64"
+	case .X86_64_V2: return "x86-64-v2"
+	case .X86_64_V3: return "x86-64-v3"
+	}
+	return "x86-64"
+}
+
 // `-Ofast` is deliberately absent: it changes floating-point semantics.
 opt_clang_flag :: proc(mode: Opt_Mode) -> string {
 	switch mode {
