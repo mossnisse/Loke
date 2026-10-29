@@ -304,6 +304,19 @@ emit_unwind_pop :: proc(e: ^Emitter) {
 	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_frame_pop(ptr %s)", e.unwind.frame)
 }
 
+// A procedure that registered nothing pushed nothing, so the pops its body
+// wrote, which would only find a zeroed record, go: a call into the runtime is
+// one the optimizer cannot remove, and every return would pay for it.
+@(private)
+without_unpushed_pops :: proc(e: ^Emitter, body: string) -> string {
+	if e.unwind.frame == "" || len(e.unwind.actions) != 0 {
+		return body
+	}
+	pop := fmt.tprintf("  call void @loke_rt_v1_frame_pop(ptr %s)\n", e.unwind.frame)
+	stripped, _ := strings.replace_all(body, pop, "")
+	return stripped
+}
+
 // design.md "What the unwind runs, and what it does not": a generated body that
 // holds owners registers them as a procedure does. It starts the frame while
 // still in its entry block; what it emits next is written aside, since the
@@ -319,7 +332,7 @@ begin_generated_frame :: proc(e: ^Emitter, name: string) -> strings.Builder {
 // Called once the body's closing brace is written.
 @(private)
 end_generated_frame :: proc(e: ^Emitter, header: strings.Builder) {
-	body := strings.to_string(e.b)
+	body := without_unpushed_pops(e, strings.to_string(e.b))
 	e.b = header
 	emit_unwind_prologue(e)
 	strings.write_string(&e.b, body)

@@ -1,0 +1,105 @@
+// tests/repro_test.odin: `core:math/repro`'s `exp` against its own slow path
+// over many seeded arguments, and the arguments and results it checks against
+// the oracle. `probe:repro` is a copy of the package with `probe_hook.loke`.
+package main;
+
+import "core:fmt";
+import "core:os";
+import "core:unsafe";
+import "probe:repro";
+
+Generator :: struct { state: u64 }
+
+next :: proc(g: inout Generator) -> u64 {
+	g.state = g.state *% 6364136223846793005 +% 1442695040888963407;
+	return g.state >> 11;
+}
+
+unit :: proc(g: inout Generator) -> f64 {
+	return f64(next(inout g)) / 9007199254740992.0;
+}
+
+// 2^-e for e in 0 ..= 1000.
+inverse_power :: proc(e: u64) -> f64 {
+	return unsafe.transmute(f64, (1023 - e) << 52);
+}
+
+// Arguments over the whole range, subnormal results included; small ones of
+// every scale; and arguments near overflow and near the bottom of the range.
+argument :: proc(g: inout Generator, i: int) -> f64 {
+	u := unit(inout g);
+	switch (i % 4) {
+	case 0: return u*1456.0 - 746.0;
+	case 1:
+		v := (1.0 + u)*inverse_power(next(inout g) % 61);
+		if (next(inout g) % 2 == 0) { return 0.0 - v; }
+		return v;
+	case 2: return 709.775 + u*0.015;
+	default: return u*0.4 - 745.3;
+	}
+}
+
+argument_f32 :: proc(g: inout Generator, i: int) -> f32 {
+	u := unit(inout g);
+	switch (i % 4) {
+	case 0: return f32(u*193.0 - 104.0);
+	case 1:
+		v := f32((1.0 + u)*inverse_power(next(inout g) % 30));
+		if (next(inout g) % 2 == 0) { return f32(0.0) - v; }
+		return v;
+	case 2: return f32(88.70 + u*0.05);
+	default: return f32(u*0.5 - 104.0);
+	}
+}
+
+bits :: proc(x: f64) -> u64 { return unsafe.transmute(u64, x); }
+bits32 :: proc(x: f32) -> u64 { return u64(unsafe.transmute(u32, x)); }
+
+// Evaluated at compile time: the fast path, the slow path for a subnormal
+// result, and both for `f32`.
+CONSTANT_ONE :: repro.exp(1.0);
+CONSTANT_SUBNORMAL :: repro.exp(-745.0);
+CONSTANT_ONE_F32 :: repro.exp_f32(1.0);
+CONSTANT_SUBNORMAL_F32 :: repro.exp_f32(-100.5);
+
+main :: proc() {
+	one := f64(os.args.len());
+	fmt.println("constant",
+		bits(CONSTANT_ONE) == bits(repro.exp(one)),
+		bits(CONSTANT_SUBNORMAL) == bits(repro.exp(-745.0*one)),
+		bits32(CONSTANT_ONE_F32) == bits32(repro.exp_f32(f32(one))),
+		bits32(CONSTANT_SUBNORMAL_F32) == bits32(repro.exp_f32(f32(-100.5*one))));
+
+	COMPARED :: 50000;
+	g := Generator{state = 0x9e3779b97f4a7c15};
+	differ := 0;
+	foreach (i in 0 ..< COMPARED) {
+		x := argument(inout g, i)*one;
+		if (bits(repro.exp(x)) != bits(repro.slow_exp(x))) {
+			differ += 1;
+			if (differ <= 5) { fmt.println("differs64", bits(x)); }
+		}
+	}
+	differ32 := 0;
+	foreach (i in 0 ..< COMPARED) {
+		x := argument_f32(inout g, i)*f32(one);
+		if (bits32(repro.exp_f32(x)) != bits32(repro.slow_exp_f32(x))) {
+			differ32 += 1;
+			if (differ32 <= 5) { fmt.println("differs32", bits32(x)); }
+		}
+	}
+	fmt.println("compared", COMPARED, differ, differ32);
+
+	CHECKED :: 2000;
+	foreach (i in 0 ..< CHECKED) {
+		x := argument(inout g, i)*one;
+		fmt.println("64", bits(x), bits(repro.exp(x)));
+		y := argument_f32(inout g, i)*f32(one);
+		fmt.println("32", bits32(y), bits32(repro.exp_f32(y)));
+		// The slow path on its own, normal results included.
+		if (i % 4 == 0) {
+			fmt.println("64", bits(x), bits(repro.slow_exp(x)));
+			fmt.println("32", bits32(y), bits32(repro.slow_exp_f32(y)));
+		}
+	}
+}

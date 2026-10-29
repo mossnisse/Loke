@@ -11,9 +11,11 @@
 // midpoint. Host `libm` is never consulted.
 package tests
 
+import "core:fmt"
 import "core:math"
 import "core:math/big"
 import "core:mem/virtual"
+import "core:strings"
 
 Oracle_Function :: enum {
 	Exp,
@@ -44,14 +46,6 @@ infinity_bits :: proc(format: Float_Format) -> u64 {
 @(private = "file")
 sign_bit :: proc(format: Float_Format) -> u64 {
 	return u64(1) << uint(format.precision + format.exponent_bits - 1)
-}
-
-@(private = "file")
-pattern_value :: proc(pattern: u64, format: Float_Format) -> f64 {
-	if format == F32_FORMAT {
-		return f64(transmute(f32)u32(pattern))
-	}
-	return transmute(f64)pattern
 }
 
 // The precision the search starts at and the one it gives up at. No `f64`
@@ -559,9 +553,7 @@ sign_of :: proc(a: ^big.Int) -> int {
 // The bits of a magnitude, from its leading one.
 @(private = "file")
 bit_count :: proc(a: ^big.Int) -> int {
-	m := new(big.Int)
-	_ = big.int_abs(m, a)
-	count, _ := big.count_bits(m)
+	count, _ := big.count_bits(a)
 	return count
 }
 
@@ -570,4 +562,119 @@ bit_count :: proc(a: ^big.Int) -> int {
 low_bits :: proc(a: ^big.Int, count: int) -> u64 {
 	result, _ := big.int_get_u64(minus(a, shift_left(shift_down(a, count), count)))
 	return result
+}
+
+// The constants `core:math/repro`'s `exp` is built from, as the Loke source
+// between its generated-block markers: 2^(i/128) as a pair of `f64`, the high
+// one correctly rounded and the low one the correctly rounded rest; ln 2/128
+// in three parts, the first two of 35 significant bits so a multiple by an
+// integer below 2^18 is exact; and ln 2 * 2^192, floored, as four limbs.
+exp_constants_source :: proc(o: ^Oracle) -> string {
+	context.allocator = virtual.arena_allocator(&o.arena)
+	P :: 400
+	b: strings.Builder
+	strings.builder_init(&b)
+	strings.write_string(&b, "EXP_TABLE :: [256]u64{\n")
+	// 2^(2^-j) for j in 1 ..= 7, each the square root of the one before, and
+	// 2^(i/128) the product of those its bits select, all as intervals.
+	roots: [8]Interval
+	roots[0] = Interval{power_of_two(P + 1), power_of_two(P + 1)}
+	for j in 1 ..= 7 {
+		roots[j] = Interval {
+			square_root(shift_left(roots[j - 1].lo, P)),
+			plus(square_root(shift_left(roots[j - 1].hi, P)), int_of(1)),
+		}
+	}
+	for i in 0 ..< 128 {
+		v := Interval{power_of_two(P), power_of_two(P)}
+		for j in 1 ..= 7 {
+			if i & (1 << uint(7 - j)) != 0 {
+				v = Interval{shift_down(times(v.lo, roots[j].lo), P), shift_up(times(v.hi, roots[j].hi), P)}
+			}
+		}
+		low_end, high_end := split_pair(v.lo, P), split_pair(v.hi, P)
+		if low_end != high_end {
+			panic("2^(i/128) needs more bits to round")
+		}
+		fmt.sbprintf(&b, "\t0x%016x, 0x%016x,\n", transmute(u64)low_end[0], transmute(u64)low_end[1])
+	}
+	strings.write_string(&b, "};\n")
+	ln2 := narrow(o.ln2, CONSTANT_PRECISION, P)
+	part := divide_down(ln2.lo, int_of(128))
+	parts: [3]f64
+	for index in 0 ..< 3 {
+		parts[index] = index < 2 ? split_round(part, P, 35) : split_round(part, P, 53)
+		part = minus(part, scaled_value(parts[index], P))
+	}
+	fmt.sbprintf(&b, "LN2_128_HI :: 0x%016x;\n", transmute(u64)parts[0])
+	fmt.sbprintf(&b, "LN2_128_MID :: 0x%016x;\n", transmute(u64)parts[1])
+	fmt.sbprintf(&b, "LN2_128_LO :: 0x%016x;\n", transmute(u64)parts[2])
+	fixed := floor_shift(ln2.lo, P - 192)
+	strings.write_string(&b, "LN2_FIXED :: [4]u64{")
+	for limb in 0 ..< 4 {
+		fmt.sbprintf(&b, "%s0x%016x", limb == 0 ? "" : ", ", low_bits(shift_down(fixed, 64*limb), 64))
+	}
+	strings.write_string(&b, "};\n")
+	return strings.to_string(b)
+}
+
+// floor(sqrt(n)) for n >= 0.
+@(private = "file")
+square_root :: proc(n: ^big.Int) -> ^big.Int {
+	r := new(big.Int)
+	_ = big.int_sqrt(r, n)
+	return r
+}
+
+// `n * 2^-scale` as its nearest `f64` and the nearest `f64` to the rest.
+@(private = "file")
+split_pair :: proc(n: ^big.Int, scale: int) -> [2]f64 {
+	hi := split_round(n, scale, 53)
+	return {hi, rest_round(minus(n, scaled_value(hi, scale)), scale)}
+}
+
+// A positive `n * 2^-scale` rounded to `bits` significant bits, as an `f64`;
+// `n` is a floor of the value with more than enough bits below the rounding
+// that the floor cannot move it.
+@(private = "file")
+split_round :: proc(n: ^big.Int, scale: int, bits: int) -> f64 {
+	negative := sign_of(n) < 0
+	m := negative ? negated(n) : n
+	drop := bit_count(m) - bits
+	kept := shift_down(m, drop)
+	order := compare(minus(m, shift_left(kept, drop)), power_of_two(drop - 1))
+	k := low_bits(kept, 64)
+	if order > 0 || (order == 0 && k & 1 == 1) {
+		k += 1
+	}
+	value := math.ldexp(f64(k), drop - scale)
+	return negative ? -value : value
+}
+
+// The nearest `f64` to a signed `n * 2^-scale`.
+@(private = "file")
+rest_round :: proc(n: ^big.Int, scale: int) -> f64 {
+	if sign_of(n) == 0 {
+		return 0
+	}
+	return split_round(n, scale, 53)
+}
+
+// An `f64` as an integer at `2^-scale`, exactly.
+@(private = "file")
+scaled_value :: proc(x: f64, scale: int) -> ^big.Int {
+	v := shift_left(int_of(significand_of(x)), scale + exponent_of(x))
+	return x < 0 ? negated(v) : v
+}
+
+@(private = "file")
+significand_of :: proc(x: f64) -> u64 {
+	significand, _ := dyadic(abs(x))
+	return low_bits(significand, 64)
+}
+
+@(private = "file")
+exponent_of :: proc(x: f64) -> int {
+	_, exponent := dyadic(abs(x))
+	return exponent
 }

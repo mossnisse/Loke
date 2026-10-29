@@ -53,6 +53,28 @@ From phase 1:
 - The UCRT's distance from correct rounding, measured with the oracle and
   recorded in [Deterministic math functions](open-questions.md#deterministic-math-functions).
 
+From phase 3, `exp` and `exp_f32` in a new
+[`core:math/repro`](standard-library.md#coremathrepro):
+
+- A double-`f64` fast path over a 128-entry table of 2^(i/128), with a
+  bound of 2^-67 and a decision margin of twice that, and a 192-bit
+  fixed-point slow path for the rest and for every result that could be
+  subnormal. `exp_f32` puts a single-`f64` path first, whose window of four
+  ulps leaves roughly one argument in 10^7 to the rest.
+- No `fma`: the one exact product is Dekker's, whose bits are the
+  instruction's, so the CPU levels need no dispatch. Using the instruction
+  at `x86-64-v3` is a measured speed question, not a correctness one.
+- `tests/repro_test.odin` checks the table and constants against the
+  oracle's derivation, compares the fast and slow paths over 100,000 seeded
+  arguments and the oracle over 5,000 of them, the slow path's own results
+  included through a copy of the package that exports it, and compares
+  compile-time and run-time results. The probe's output is the same at every
+  optimization and CPU level tried.
+- Measured cost: about four times the UCRT's in throughput and twice in
+  latency; see
+  [Deterministic math functions](open-questions.md#deterministic-math-functions).
+  `sin` is next.
+
 Not started: phase 1's benchmarks (the UCRT timings in open questions stand
 until there is a kernel to compare), the kernels (phases 3 and 4), NaN
 canonicalization, the environment entry

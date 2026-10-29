@@ -1,0 +1,3 @@
+declare void @loke_rt_v1_frame_pop(ptr)
+not call void @loke_rt_v1_frame_pop
+not call void @loke_rt_v1_frame_push

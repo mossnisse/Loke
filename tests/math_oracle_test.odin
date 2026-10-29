@@ -91,7 +91,13 @@ oracle_agrees_with_a_library_almost_always :: proc(t: ^testing.T) {
 					}
 				}
 				got = oracle_eval(&o, function, x, format)
-				distance := abs(i64(got) - i64(library))
+				// Patterns of opposite signs are never an ulp apart; subtracting
+				// them as integers would wrap to a small distance.
+				sign := format == F32_FORMAT ? u64(1) << 31 : u64(1) << 63
+				distance := got > library ? got - library : library - got
+				if got & sign != library & sign {
+					distance = max(u64)
+				}
 				if distance != 0 {
 					differ += 1
 				}

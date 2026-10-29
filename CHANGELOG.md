@@ -10,6 +10,17 @@ checklist.
 
 ### Breaking changes
 
+- The floating-point environment is specified: rounding to nearest, ties to
+  even, subnormals kept, and non-stop exceptions, on every thread a program
+  starts ([Floating-point operators](design.md#floating-point-operators)).
+  The specification used to suggest installing trapping through the target's
+  environment; floating-point results computed in any other environment are
+  now unspecified. Upgrade foreign code that changes the rounding mode,
+  flush-to-zero, or exception masks, a C host that calls Loke exports
+  included, by restoring the default before it returns to Loke or calls back
+  into it, for example with `fesetenv(FE_DFL_ENV)` or by saving the state
+  with `fegetenv` and restoring it with `fesetenv`.
+
 - A compound assignment through a pointer, as `h^.count += 1`, while a
   borrow of the same place, as `count := &h^.count`, is still in use is now
   rejected with `L0641`, as a plain store already was
@@ -317,6 +328,10 @@ checklist.
   static constructor, before its C host's `main`, and the host can check first
   with `loke_rt_v1_cpu_supports`
   ([CPU levels](compiler-guide.md#cpu-levels)).
+- `core:math/repro` holds correctly rounded elementary functions, whose
+  results are the same bits on every machine, CPU level, and optimization
+  level, and at compile time, starting with `exp` and `exp_f32`
+  ([`core:math/repro`](standard-library.md#coremathrepro)).
 
 ### Changed
 
@@ -324,13 +339,10 @@ checklist.
   `-ffp-contract=off`, the runtime's C sources included, whose default let
   Clang fuse `a*b + c` once a level has FMA. `-print-toolchain` prints both
   flags, for a C host compiling the runtime itself.
-- The floating-point environment is specified: rounding to nearest, ties to
-  even, subnormals kept, and non-stop exceptions, on every thread a program
-  starts. Loke offers no way to change it, and foreign code that changes it
-  must restore it before Loke code runs again; results computed otherwise are
-  unspecified. The specification no longer suggests installing trapping
-  through the target's environment
-  ([Floating-point operators](design.md#floating-point-operators)).
+- A procedure that registers no cleanup no longer calls the runtime to pop an
+  unwind frame it never pushed each time it returns. The call survived
+  optimization and inlining, so every such procedure paid for it; a small
+  floating-point kernel ran about a third faster without it.
 
 - A value whose bits are not a representation of its type, a `bool` other
   than 0 or 1, an enum value naming no member, a null `^T`, or a union tag out

@@ -1,0 +1,496 @@
+// deterministic-math-and-targets-plan.md "Reproducible result contract": `exp`
+// in both widths, from `+ - * /` alone, with no `fma`, so every CPU level
+// computes the same bits without software emulation.
+//
+// The fast path writes x = (128m + i) ln 2/128 + r with |r| <= ln 2/256, and
+// e^x = 2^m 2^(i/128) e^r, with 2^(i/128) from a table of `f64` pairs and e^r
+// from its Taylor series, both in double-`f64` arithmetic. Its result h + l has
+// a relative error under 2^-67:
+//
+// - r = rh + rl is exact to about 2^-114: k ln 2/128 is split into three
+//   parts, the first two of 35 bits so k times each is exact for |k| < 2^18,
+//   x - k HI is exact (both are multiples of 2^-61 and the difference is under
+//   2^-8, and k is 0 below that), and `two_sum` keeps the next subtraction
+//   exact.
+// - The series stops at r^6/720; the rest is under |r|^7/7! < 2^-72. Its
+//   terms past 1 + r sum to under 2^-18 and are evaluated with a relative
+//   error under 2.5 ulps, under 2^-69.7 absolute; the r^2 term's cross part
+//   rh rl is added, and the others are below 2^-78.
+// - Each table pair is within 2^-106 of 2^(i/128). Its product with e^r is
+//   th + th rh, exact (`two_product`, `fast_two_sum`), plus terms below
+//   2^-17 th, whose products and sums round by under 2^-69.9 and 2^-70.
+//
+// These sum to under 2^-68.2.
+//
+// A result is returned when both ends of h + l ± 2^-66 h round alike, twice
+// the bound, which also covers rounding l ± the bound itself. Otherwise, and
+// for the results that could be subnormal, the slow path recomputes e^x in
+// 192-bit fixed point and rounds that. No binary64 argument of exp is known
+// to need more than about 2^-120 relative accuracy to round correctly
+// (Lefèvre and Muller's exhaustive searches), and the slow path's error is
+// under 2^-175, so it rounds every argument correctly; `tests/repro_test.odin`
+// checks both paths against an independent oracle.
+package repro;
+
+import "core:unsafe";
+
+CANONICAL_NAN_F64 :: 0x7ff8000000000000;
+CANONICAL_NAN_F32 :: 0x7fc00000;
+
+// 128/ln 2 and 1/ln 2, to choose k; any rounding of them works, since the
+// reduction itself uses the split constants.
+INV_LN2_128 :: 184.6649652337873;
+INV_LN2     :: 1.4426950408889634;
+// 1.5 * 2^52: adding and subtracting it rounds a value under 2^51 to an
+// integer, ties to even.
+ROUND_SHIFTER :: 6755399441055744.0;
+// 2^27 + 1, Veltkamp's splitting constant for `f64`.
+SPLITTER :: 134217729.0;
+// 2^-66, the fast path's decision margin.
+MARGIN :: 1.3552527156068805e-20;
+
+// a + b exactly as a sum and its rounding error (Knuth).
+two_sum :: proc(a: f64, b: f64) -> (sum: f64, error: f64) {
+	s := a + b;
+	bb := s - a;
+	return {s, (a - (s - bb)) + (b - bb)};
+}
+
+// The same, given |a| >= |b| (Dekker).
+fast_two_sum :: proc(a: f64, b: f64) -> (sum: f64, error: f64) {
+	s := a + b;
+	return {s, b - (s - a)};
+}
+
+// a * b exactly as a product and its rounding error (Dekker), for operands
+// whose product neither overflows nor has an error below the normal range;
+// every operand here is between 2^-80 and 4.
+two_product :: proc(a: f64, b: f64) -> (product: f64, error: f64) {
+	p := a*b;
+	ta := SPLITTER*a;
+	ah := ta - (ta - a);
+	al := a - ah;
+	tb := SPLITTER*b;
+	bh := tb - (tb - b);
+	bl := b - bh;
+	return {p, ((ah*bh - p) + ah*bl + al*bh) + al*bl};
+}
+
+// 2^n for n in -1022 ..= 1023.
+power_of_two :: proc(n: int) -> f64 {
+	return unsafe.transmute(f64, u64(n + 1023) << 52);
+}
+
+// x = k ln 2/128 + r, and 2^(i/128) e^r as h + l, |l| <= ulp(h)/2, for |x|
+// under 746, where i is k's low seven bits.
+exp_kernel :: proc(x: f64) -> (k: int, high: f64, low: f64) {
+	kf := (x*INV_LN2_128 + ROUND_SHIFTER) - ROUND_SHIFTER;
+	k := int(kf);
+	r1 := x - kf*unsafe.transmute(f64, u64(LN2_128_HI));
+	rh, rl := two_sum(r1, 0.0 - kf*unsafe.transmute(f64, u64(LN2_128_MID)));
+	rl = rl - kf*unsafe.transmute(f64, u64(LN2_128_LO));
+	rh, rl = fast_two_sum(rh, rl);
+
+	// e^r - 1 - rh, the cross term of r^2 included.
+	q := rl + (rh*rh*(0.5 + rh*(1.0/6.0 + rh*(1.0/24.0 + rh*(1.0/120.0 + rh*(1.0/720.0))))) + rh*rl);
+
+	// T e^r = th + th rh + th q + tl (1 + rh + q): th rh exactly, the others
+	// below 2^-17 th and rounded.
+	i := k & 127;
+	th := unsafe.transmute(f64, EXP_TABLE[2*i]);
+	tl := unsafe.transmute(f64, EXP_TABLE[2*i + 1]);
+	ph, pl := two_product(th, rh);
+	s, e := fast_two_sum(th, ph);
+	h, l := fast_two_sum(s, e + (pl + (th*q + (tl + tl*rh))));
+	return {k, h, l};
+}
+
+exp_f64_of :: proc(x: f64) -> f64 {
+	k, h, l := exp_kernel(x);
+	m := k >> 7;
+	margin := h*MARGIN;
+	low := h + (l - margin);
+	if (m >= -1021 && low == h + (l + margin)) {
+		// Exact scalings: the result is normal, and h + l is in [0.99, 2.01).
+		if (m <= 1023) { return low*power_of_two(m); }
+		return low*power_of_two(1023)*2.0;
+	}
+	return unsafe.transmute(f64, exp_slow(x, F64_LAYOUT));
+}
+
+// For an `f32` argument, |x| < 104, so the results here, scaled by 2^m, are
+// normal `f64` values. A single-`f64` approximation comes first: th (1 + p),
+// p the series of e^r - 1 to r^5/120 (the rest under 2^-60), with r from
+// two of the three parts of ln 2/128 (the third, times k < 2^15, is under
+// 2^-68), is within 1.1 ulps of e^x, tl's omission and the last rounding
+// being half an ulp each. Narrowing it rounds e^x correctly unless an `f32`
+// midpoint is within 4 ulps, which its low bits show; then the double-`f64`
+// result, within one ulp, decides, and the slow path if that does not.
+exp_f32_of :: proc(x: f64) -> f32 {
+	kf := (x*INV_LN2_128 + ROUND_SHIFTER) - ROUND_SHIFTER;
+	k := int(kf);
+	r := (x - kf*unsafe.transmute(f64, u64(LN2_128_HI))) - kf*unsafe.transmute(f64, u64(LN2_128_MID));
+	p := r*(1.0 + r*(0.5 + r*(1.0/6.0 + r*(1.0/24.0 + r*(1.0/120.0)))));
+	th := unsafe.transmute(f64, EXP_TABLE[2*(k & 127)]);
+	scale := power_of_two(k >> 7);
+	quick := (th + th*p)*scale;
+	if (f32_decided(quick, 4)) { return f32(quick); }
+
+	_, h, l := exp_kernel(x);
+	y := h*scale + l*scale;
+	if (f32_decided(y, 1)) { return f32(y); }
+	return unsafe.transmute(f32, u32(exp_slow(x, F32_LAYOUT)));
+}
+
+// Whether every `f64` within `ulps` of the normal y narrows to the `f32` y
+// narrows to: whether no `f32` midpoint is that close. The bits of y below
+// its `f32` unit, which is coarser for a subnormal result, show the distance.
+f32_decided :: proc(y: f64, ulps: u64) -> bool {
+	pattern := unsafe.transmute(u64, y);
+	exponent := int(pattern >> 52) - 1023;
+	significand := (pattern & 0x000fffffffffffff) | 0x0010000000000000;
+	drop := 29;
+	if (exponent < -126) { drop = 29 + (-126 - exponent); }
+	below := significand & ((u64(1) << drop) - 1);
+	half := u64(1) << (drop - 1);
+	return below + ulps < half || below > half + ulps;
+}
+
+// A binary format's significand bits, the leading one included, and its
+// smallest normal exponent and bias.
+Float_Layout :: struct {
+	precision:    int,
+	min_exponent: int,
+	bias:         int,
+}
+
+F64_LAYOUT :: Float_Layout{precision = 53, min_exponent = -1022, bias = 1023};
+F32_LAYOUT :: Float_Layout{precision = 24, min_exponent = -126, bias = 127};
+
+// e^x correctly rounded to `layout`, as its bit pattern, from fixed-point
+// arithmetic with 192 fraction bits: x = k ln 2 + r with r in [ln 2/2, 3 ln
+// 2/2], e^r = (e^(r/256))^256, and e^(r/256) from its Taylor series. Each
+// operation truncates, by under 2^-192; the 256th power multiplies the
+// relative error by 256, which leaves it under 2^-175.
+exp_slow :: proc(x: f64, layout: Float_Layout) -> u64 {
+	k := int((x*INV_LN2 + ROUND_SHIFTER) - ROUND_SHIFTER) - 1;
+	ax := x;
+	if (x < 0.0) { ax = 0.0 - x; }
+	scaled := fixed_of(ax);
+	multiple := fixed_times_small(LN2_FIXED, u64(abs_int(k)));
+	r: Fixed = {};
+	if (x < 0.0) {
+		r = fixed_minus(multiple, scaled);
+	} else if (k < 0) {
+		r = fixed_plus(scaled, multiple);
+	} else {
+		r = fixed_minus(scaled, multiple);
+	}
+	small := fixed_shift_down(r, 8);
+	sum: Fixed = {0, 0, 0, 1};
+	term: Fixed = {0, 0, 0, 1};
+	for (n: u64 = 1; ; n += 1) {
+		term = fixed_divided_small(fixed_times(term, small), n);
+		if (fixed_is_zero(term)) { break; }
+		sum = fixed_plus(sum, term);
+	}
+	foreach (_ in 0 ..< 8) { sum = fixed_times(sum, sum); }
+	return fixed_round(sum, k - 192, layout);
+}
+
+abs_int :: proc(n: int) -> int {
+	if (n < 0) { return 0 - n; }
+	return n;
+}
+
+// A non-negative fixed-point value: limbs, least significant first, of an
+// integer that is the value times 2^192, so the last limb is the integer part.
+Fixed :: [4]u64;
+
+// A positive finite `f64` times 2^192, truncated.
+fixed_of :: proc(x: f64) -> Fixed {
+	pattern := unsafe.transmute(u64, x);
+	biased := int(pattern >> 52);
+	significand := pattern & 0x000fffffffffffff;
+	exponent := -1074;
+	if (biased != 0) {
+		significand |= 0x0010000000000000;
+		exponent = biased - 1075;
+	}
+	result: Fixed = {};
+	position := exponent + 192;
+	if (position < 0) {
+		if (position > -64) { result[0] = significand >> (0 - position); }
+		return result;
+	}
+	limb := position / 64;
+	bit := position % 64;
+	result[limb] = significand << bit;
+	if (bit != 0 && limb < 3) { result[limb + 1] = significand >> (64 - bit); }
+	return result;
+}
+
+fixed_plus :: proc(a: Fixed, b: Fixed) -> Fixed {
+	result: Fixed = {};
+	carry: u128 = 0;
+	foreach (i in 0 ..< 4) {
+		t := u128(a[i]) + u128(b[i]) + carry;
+		result[i] = u64(t & 0xffffffffffffffff);
+		carry = t >> 64;
+	}
+	return result;
+}
+
+// a - b for a >= b.
+fixed_minus :: proc(a: Fixed, b: Fixed) -> Fixed {
+	result: Fixed = {};
+	borrow: u128 = 0;
+	foreach (i in 0 ..< 4) {
+		t := (u128(a[i]) | (u128(1) << 64)) - u128(b[i]) - borrow;
+		result[i] = u64(t & 0xffffffffffffffff);
+		borrow = 1 - (t >> 64);
+	}
+	return result;
+}
+
+// a * b / 2^192, truncated, for a and b below 2^32 (16 here); no partial
+// sum overflows, (2^64 - 1)^2 + 2 (2^64 - 1) being 2^128 - 1.
+fixed_times :: proc(a: Fixed, b: Fixed) -> Fixed {
+	p: [8]u64 = {};
+	foreach (i in 0 ..< 4) {
+		carry: u128 = 0;
+		foreach (j in 0 ..< 4) {
+			t := u128(a[i]) *% u128(b[j]) +% u128(p[i + j]) +% carry;
+			p[i + j] = u64(t & 0xffffffffffffffff);
+			carry = t >> 64;
+		}
+		p[i + 4] = u64(carry);
+	}
+	return {p[3], p[4], p[5], p[6]};
+}
+
+fixed_times_small :: proc(a: Fixed, n: u64) -> Fixed {
+	result: Fixed = {};
+	carry: u128 = 0;
+	foreach (i in 0 ..< 4) {
+		t := u128(a[i]) *% u128(n) +% carry;
+		result[i] = u64(t & 0xffffffffffffffff);
+		carry = t >> 64;
+	}
+	return result;
+}
+
+// a / n, truncated, for n > 0.
+fixed_divided_small :: proc(a: Fixed, n: u64) -> Fixed {
+	result: Fixed = {};
+	rest: u128 = 0;
+	foreach (step in 0 ..< 4) {
+		i := 3 - step;
+		current := (rest << 64) | u128(a[i]);
+		result[i] = u64(current / u128(n));
+		rest = current % u128(n);
+	}
+	return result;
+}
+
+// a / 2^count, truncated, for count in 1 ..< 64.
+fixed_shift_down :: proc(a: Fixed, count: int) -> Fixed {
+	result: Fixed = {};
+	foreach (i in 0 ..< 3) {
+		result[i] = (a[i] >> count) | (a[i + 1] << (64 - count));
+	}
+	result[3] = a[3] >> count;
+	return result;
+}
+
+fixed_is_zero :: proc(a: Fixed) -> bool {
+	return (a[0] | a[1] | a[2] | a[3]) == 0;
+}
+
+// The bit at `position` of the integer a.
+fixed_bit :: proc(a: Fixed, position: int) -> u64 {
+	if (position < 0 || position >= 256) { return 0; }
+	return (a[position / 64] >> (position % 64)) & 1;
+}
+
+// Whether any bit of a below `position` is set.
+fixed_any_below :: proc(a: Fixed, position: int) -> bool {
+	foreach (i in 0 ..< 4) {
+		if (64*i + 64 <= position) {
+			if (a[i] != 0) { return true; }
+		} else if (64*i < position) {
+			if (a[i] & ((u64(1) << (position - 64*i)) - 1) != 0) { return true; }
+		}
+	}
+	return false;
+}
+
+// The pattern of the float of `layout` nearest a * 2^exponent, for a > 0,
+// ties to even, rounded once at its own last place; past the largest finite
+// value, infinity.
+fixed_round :: proc(a: Fixed, exponent: int, layout: Float_Layout) -> u64 {
+	top := 255;
+	for (fixed_bit(a, top) == 0) { top -= 1; }
+	leading := top + exponent;
+	unit := leading;
+	if (unit < layout.min_exponent) { unit = layout.min_exponent; }
+	unit -= layout.precision - 1;
+	// Every bit of a below `drop` goes; `drop` is over 100 here.
+	drop := unit - exponent;
+	kept: u64 = 0;
+	foreach (i in 0 ..< layout.precision + 1) {
+		kept |= fixed_bit(a, drop + i) << i;
+	}
+	if (fixed_bit(a, drop - 1) == 1 && (fixed_any_below(a, drop - 1) || kept & 1 == 1)) {
+		kept += 1;
+	}
+	if (kept == u64(1) << layout.precision) {
+		kept >>= 1;
+		unit += 1;
+	}
+	if (kept < u64(1) << (layout.precision - 1)) { return kept; }
+	biased := unit + layout.precision - 1 + layout.bias;
+	if (biased >= 2*layout.bias + 1) {
+		return u64(2*layout.bias + 1) << (layout.precision - 1);
+	}
+	return (u64(biased) << (layout.precision - 1)) | (kept - (u64(1) << (layout.precision - 1)));
+}
+
+// Generated by `exp_constants_source` in tests/math_oracle.odin, which
+// `tests/repro_test.odin` checks this block against.
+// BEGIN GENERATED
+EXP_TABLE :: [256]u64{
+	0x3ff0000000000000, 0x0000000000000000,
+	0x3ff0163da9fb3335, 0x3c9b61299ab8cdb7,
+	0x3ff02c9a3e778061, 0xbc719083535b085d,
+	0x3ff04315e86e7f85, 0xbc90a31c1977c96e,
+	0x3ff059b0d3158574, 0x3c8d73e2a475b465,
+	0x3ff0706b29ddf6de, 0xbc8c91dfe2b13c27,
+	0x3ff0874518759bc8, 0x3c6186be4bb284ff,
+	0x3ff09e3ecac6f383, 0x3c91487818316136,
+	0x3ff0b5586cf9890f, 0x3c98a62e4adc610b,
+	0x3ff0cc922b7247f7, 0x3c901edc16e24f71,
+	0x3ff0e3ec32d3d1a2, 0x3c403a1727c57b53,
+	0x3ff0fb66affed31b, 0xbc6b9bedc44ebd7b,
+	0x3ff11301d0125b51, 0xbc96c51039449b3a,
+	0x3ff12abdc06c31cc, 0xbc51b514b36ca5c7,
+	0x3ff1429aaea92de0, 0xbc932fbf9af1369e,
+	0x3ff15a98c8a58e51, 0x3c82406ab9eeab0a,
+	0x3ff172b83c7d517b, 0xbc819041b9d78a76,
+	0x3ff18af9388c8dea, 0xbc911023d1970f6c,
+	0x3ff1a35beb6fcb75, 0x3c8e5b4c7b4968e4,
+	0x3ff1bbe084045cd4, 0xbc995386352ef607,
+	0x3ff1d4873168b9aa, 0x3c9e016e00a2643c,
+	0x3ff1ed5022fcd91d, 0xbc91df98027bb78c,
+	0x3ff2063b88628cd6, 0x3c8dc775814a8495,
+	0x3ff21f49917ddc96, 0x3c82a97e9494a5ee,
+	0x3ff2387a6e756238, 0x3c99b07eb6c70573,
+	0x3ff251ce4fb2a63f, 0x3c8ac155bef4f4a4,
+	0x3ff26b4565e27cdd, 0x3c82bd339940e9d9,
+	0x3ff284dfe1f56381, 0xbc9a4c3a8c3f0d7e,
+	0x3ff29e9df51fdee1, 0x3c8612e8afad1255,
+	0x3ff2b87fd0dad990, 0xbc410adcd6381aa4,
+	0x3ff2d285a6e4030b, 0x3c90024754db41d5,
+	0x3ff2ecafa93e2f56, 0x3c71ca0f45d52383,
+	0x3ff306fe0a31b715, 0x3c86f46ad23182e4,
+	0x3ff32170fc4cd831, 0x3c8a9ce78e18047c,
+	0x3ff33c08b26416ff, 0x3c932721843659a6,
+	0x3ff356c55f929ff1, 0xbc8b5cee5c4e4628,
+	0x3ff371a7373aa9cb, 0xbc963aeabf42eae2,
+	0x3ff38cae6d05d866, 0xbc9e958d3c9904bd,
+	0x3ff3a7db34e59ff7, 0xbc75e436d661f5e3,
+	0x3ff3c32dc313a8e5, 0xbc9efff8375d29c3,
+	0x3ff3dea64c123422, 0x3c8ada0911f09ebc,
+	0x3ff3fa4504ac801c, 0xbc97d023f956f9f3,
+	0x3ff4160a21f72e2a, 0xbc5ef3691c309278,
+	0x3ff431f5d950a897, 0xbc81c7dde35f7999,
+	0x3ff44e086061892d, 0x3c489b7a04ef80d0,
+	0x3ff46a41ed1d0057, 0x3c9c944bd1648a76,
+	0x3ff486a2b5c13cd0, 0x3c73c1a3b69062f0,
+	0x3ff4a32af0d7d3de, 0x3c99cb62f3d1be56,
+	0x3ff4bfdad5362a27, 0x3c7d4397afec42e2,
+	0x3ff4dcb299fddd0d, 0x3c98ecdbbc6a7833,
+	0x3ff4f9b2769d2ca7, 0xbc94b309d25957e3,
+	0x3ff516daa2cf6642, 0xbc8f768569bd93ef,
+	0x3ff5342b569d4f82, 0xbc807abe1db13cad,
+	0x3ff551a4ca5d920f, 0xbc8d689cefede59b,
+	0x3ff56f4736b527da, 0x3c99bb2c011d93ad,
+	0x3ff58d12d497c7fd, 0x3c8295e15b9a1de8,
+	0x3ff5ab07dd485429, 0x3c96324c054647ad,
+	0x3ff5c9268a5946b7, 0x3c3c4b1b816986a2,
+	0x3ff5e76f15ad2148, 0x3c9ba6f93080e65e,
+	0x3ff605e1b976dc09, 0xbc93e2429b56de47,
+	0x3ff6247eb03a5585, 0xbc9383c17e40b497,
+	0x3ff6434634ccc320, 0xbc8c483c759d8933,
+	0x3ff6623882552225, 0xbc9bb60987591c34,
+	0x3ff68155d44ca973, 0x3c6038ae44f73e65,
+	0x3ff6a09e667f3bcd, 0xbc9bdd3413b26456,
+	0x3ff6c012750bdabf, 0xbc72895667ff0b0d,
+	0x3ff6dfb23c651a2f, 0xbc6bbe3a683c88ab,
+	0x3ff6ff7df9519484, 0xbc883c0f25860ef6,
+	0x3ff71f75e8ec5f74, 0xbc816e4786887a99,
+	0x3ff73f9a48a58174, 0xbc90a8d96c65d53c,
+	0x3ff75feb564267c9, 0xbc90245957316dd3,
+	0x3ff780694fde5d3f, 0x3c9866b80a02162d,
+	0x3ff7a11473eb0187, 0xbc841577ee04992f,
+	0x3ff7c1ed0130c132, 0x3c9f124cd1164dd6,
+	0x3ff7e2f336cf4e62, 0x3c705d02ba15797e,
+	0x3ff80427543e1a12, 0xbc927c86626d972b,
+	0x3ff82589994cce13, 0xbc9d4c1dd41532d8,
+	0x3ff8471a4623c7ad, 0xbc88d684a341cdfb,
+	0x3ff868d99b4492ed, 0xbc9fc6f89bd4f6ba,
+	0x3ff88ac7d98a6699, 0x3c9994c2f37cb53a,
+	0x3ff8ace5422aa0db, 0x3c96e9f156864b27,
+	0x3ff8cf3216b5448c, 0xbc70d55e32e9e3aa,
+	0x3ff8f1ae99157736, 0x3c85cc13a2e3976c,
+	0x3ff9145b0b91ffc6, 0xbc9dd6792e582524,
+	0x3ff93737b0cdc5e5, 0xbc675fc781b57ebc,
+	0x3ff95a44cbc8520f, 0xbc764b7c96a5f039,
+	0x3ff97d829fde4e50, 0xbc9d185b7c1b85d1,
+	0x3ff9a0f170ca07ba, 0xbc9173bd91cee632,
+	0x3ff9c49182a3f090, 0x3c7c7c46b071f2be,
+	0x3ff9e86319e32323, 0x3c7824ca78e64c6e,
+	0x3ffa0c667b5de565, 0xbc9359495d1cd533,
+	0x3ffa309bec4a2d33, 0x3c96305c7ddc36ab,
+	0x3ffa5503b23e255d, 0xbc9d2f6edb8d41e1,
+	0x3ffa799e1330b358, 0x3c9bcb7ecac563c7,
+	0x3ffa9e6b5579fdbf, 0x3c90fac90ef7fd31,
+	0x3ffac36bbfd3f37a, 0xbc8f9234cae76cd0,
+	0x3ffae89f995ad3ad, 0x3c97a1cd345dcc81,
+	0x3ffb0e07298db666, 0xbc9bdef54c80e425,
+	0x3ffb33a2b84f15fb, 0xbc62805e3084d708,
+	0x3ffb59728de5593a, 0xbc9c71dfbbba6de3,
+	0x3ffb7f76f2fb5e47, 0xbc75584f7e54ac3b,
+	0x3ffba5b030a1064a, 0xbc9efcd30e54292e,
+	0x3ffbcc1e904bc1d2, 0x3c823dd07a2d9e84,
+	0x3ffbf2c25bd71e09, 0xbc9efdca3f6b9c73,
+	0x3ffc199bdd85529c, 0x3c811065895048dd,
+	0x3ffc40ab5fffd07a, 0x3c9b4537e083c60a,
+	0x3ffc67f12e57d14b, 0x3c92884dff483cad,
+	0x3ffc8f6d9406e7b5, 0x3c71acbc48805c44,
+	0x3ffcb720dcef9069, 0x3c7503cbd1e949db,
+	0x3ffcdf0b555dc3fa, 0xbc8dd83b53829d72,
+	0x3ffd072d4a07897c, 0xbc9cbc3743797a9c,
+	0x3ffd2f87080d89f2, 0xbc9d487b719d8578,
+	0x3ffd5818dcfba487, 0x3c82ed02d75b3707,
+	0x3ffd80e316c98398, 0xbc911ec18beddfe8,
+	0x3ffda9e603db3285, 0x3c9c2300696db532,
+	0x3ffdd321f301b460, 0x3c92da5778f018c3,
+	0x3ffdfc97337b9b5f, 0xbc91a5cd4f184b5c,
+	0x3ffe264614f5a129, 0xbc97b627817a1496,
+	0x3ffe502ee78b3ff6, 0x3c839e8980a9cc8f,
+	0x3ffe7a51fbc74c83, 0x3c92d522ca0c8de2,
+	0x3ffea4afa2a490da, 0xbc9e9c23179c2893,
+	0x3ffecf482d8e67f1, 0xbc9c93f3b411ad8c,
+	0x3ffefa1bee615a27, 0x3c9dc7f486a4b6b0,
+	0x3fff252b376bba97, 0x3c93a1a5bf0d8e43,
+	0x3fff50765b6e4540, 0x3c99d3e12dd8a18b,
+	0x3fff7bfdad9cbe14, 0xbc9dbb12d006350a,
+	0x3fffa7c1819e90d8, 0x3c874853f3a5931e,
+	0x3fffd3c22b8f71f1, 0x3c62eb74966579e7,
+};
+LN2_128_HI :: 0x3f762e42fefc0000;
+LN2_128_MID :: 0xbd3c610ca86c0000;
+LN2_128_LO :: 0xbacc4c67fc0d0951;
+LN2_FIXED :: [4]u64{0x40f343267298b62d, 0xc9e3b39803f2f6af, 0xb17217f7d1cf79ab, 0x0000000000000000};
+// END GENERATED

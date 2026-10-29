@@ -1,0 +1,15 @@
+// tests/repro_test.odin copies this beside `core:math/repro`'s own files, so
+// the probe can call the slow path, which the package does not export.
+package repro;
+
+import "core:unsafe";
+
+@(public)
+slow_exp :: proc(x: f64) -> f64 {
+	return unsafe.transmute(f64, exp_slow(x, F64_LAYOUT));
+}
+
+@(public)
+slow_exp_f32 :: proc(x: f32) -> f32 {
+	return unsafe.transmute(f32, u32(exp_slow(f64(x), F32_LAYOUT)));
+}

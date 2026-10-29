@@ -1,0 +1,20 @@
+package main;
+
+// A procedure that registers no cleanup pushes no unwind frame, so it pops
+// none either: the pop is a call into the runtime, which the optimizer cannot
+// remove from a return, inlined or not.
+
+Pair :: struct { a: int, b: int }
+
+swap :: proc(p: Pair) -> (first: int, second: int) {
+	return {p.b, p.a};
+}
+
+add :: proc(a: int, b: int) -> int {
+	x, y := swap(Pair{a, b});
+	return x + y;
+}
+
+main :: proc() {
+	_ = add(1, 2);
+}

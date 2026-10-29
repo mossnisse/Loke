@@ -140,6 +140,7 @@ core:encoding/utf16   UTF-8 to UTF-16 and back
 core:encoding/json    JSON documents, values, and a streaming writer
 core:endian           fixed byte-order storage wrappers
 core:math             elementary functions, Complex, Quaternion
+core:math/repro       correctly rounded elementary functions
 core:random           seeded generators, entropy, distributions
 core:time             clocks, durations, the calendar, ISO 8601 text
 core:slice            slice algorithms and sorting            *
@@ -2327,10 +2328,32 @@ disagree with itself on another machine; an optimized build can evaluate a
 call with constant arguments using the compiling machine's library; and
 another platform has another library. Code whose results must agree bit for
 bit everywhere, such as a lockstep simulation or content generated from a
-shared seed, should not use them. The remaining procedures, `sqrt` and `mod`
-included, are exact or correctly rounded, so their results are the same
-everywhere. See
+shared seed, should not use them; [`core:math/repro`](#coremathrepro) has
+the functions it implements with results that agree. The remaining
+procedures, `sqrt` and `mod` included, are exact or correctly rounded, so
+their results are the same everywhere. See
 [Deterministic math functions](open-questions.md#deterministic-math-functions).
+
+## `core:math/repro`
+
+Each procedure returns its exact mathematical result rounded once to the
+result's width, to nearest with ties to even, with gradual underflow and
+overflow to infinity. The result is therefore the same bits on every machine,
+[CPU level](compiler-guide.md#cpu-levels), and optimization level, and when a
+call is evaluated at compile time. No procedure calls the C library or uses
+`math.fma`, so none depends on the processor's FMA either. Every NaN result
+is the positive quiet NaN with no payload (`0x7ff8000000000000`,
+`0x7fc00000`), whatever NaN produced it.
+
+The package has `exp` and `exp_f32`, with the `f64` and `_f32` naming of
+`core:math`. A function missing here is not provided by falling back to
+`core:math`. `exp` of NaN is NaN, of +Inf is +Inf, of -Inf is +0, and of ±0
+is exactly 1. `exp_f32` is rounded once to `f32`, not `exp` narrowed, which
+could round twice.
+
+The plan for the rest of the package, and its special cases for further
+functions, is in the
+[deterministic math and CPU targeting plan](deterministic-math-and-targets-plan.md#special-cases).
 
 ## `core:random`
 

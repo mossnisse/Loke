@@ -732,6 +732,20 @@ the 64 MB budget (`L0342`); at `-cpu=x86-64-v3` the instruction's exact
 evaluator takes a small fraction of that. Kernels ported to Loke and folded at
 compile time would meet this budget long before a fast loop would.
 
+The first port, `core:math/repro`'s `exp`, measured on 2026-10-29 at
+`-opt=speed` over 4 million calls on the same machine: 21 ns per independent
+call and 36 ns per dependent one for `f64`, against the UCRT's 4.9 and 16 ns
+on its FMA3 path and 6.3 and 18 ns on its legacy path, the same at
+`-cpu=x86-64-v3`; `exp_f32` 18 ns against 4.1 and 4.5. It uses no `fma`: the
+one exact product it needs is Dekker's, which gives the instruction's bits.
+By its margin, about one argument in 4,000 takes the 192-bit fixed-point slow
+path, 1.4 µs, as does every argument whose result could be subnormal. The estimate below
+was optimistic by about two: the time is in the dependent double-`f64` steps,
+not in calls or checks, once the frame pops a returning procedure made are
+gone (they took a third of it). A table twice as large, a lower-degree
+polynomial, and Estrin's scheme are the next things to try, and `fma` where
+the CPU level has it.
+
 The cost is code and time. On the measuring machine the UCRT takes about 8.4 ns
 per `sin` or `cos`, 7.2 ns per `exp` or `log`, and 17 ns per `pow` on its FMA3
 path, and 10.5, 8.2, and 24 ns on its legacy path. The estimate, without

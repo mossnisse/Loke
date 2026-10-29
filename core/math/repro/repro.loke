@@ -1,0 +1,61 @@
+/**
+	Correctly rounded elementary functions, with the same bits everywhere.
+
+	Each function returns its exact mathematical result rounded once to the
+	result's width, to nearest with ties to even, with gradual underflow and
+	overflow to infinity. That result is defined by the arithmetic alone, so it
+	is the same on every machine, CPU level, and optimization level, and when a
+	call is evaluated at compile time. Special cases, including every NaN
+	result, which is the positive quiet NaN with no payload, follow the table on
+	each function. No procedure here calls the C library.
+
+	The package holds only what has been implemented and checked: today `exp`
+	and `exp_f32`. A function missing here is not provided by falling back to
+	`core:math`.
+*/
+@(public)
+package repro;
+
+import "core:unsafe";
+
+/**
+	e^x. NaN gives NaN, +Inf gives +Inf, -Inf gives +0, and ±0 gives exactly 1;
+	a finite result too large for `f64` is +Inf, and one too small is a
+	subnormal or +0.
+*/
+exp :: proc(x: f64) -> f64 {
+	bits := unsafe.transmute(u64, x);
+	magnitude := bits & 0x7fffffffffffffff;
+	// Below 2^-54 in magnitude, e^x is within half an ulp of 1 on either side;
+	// this also takes both zeros.
+	if (magnitude < 0x3c90000000000000) { return 1.0; }
+	if (magnitude >= 0x7ff0000000000000) {
+		if (magnitude > 0x7ff0000000000000) { return unsafe.transmute(f64, u64(CANONICAL_NAN_F64)); }
+		if (bits >> 63 != 0) { return 0.0; }
+		return x;
+	}
+	// e^710 overflows and e^-746 is below half the smallest subnormal.
+	if (x > 710.0) { return unsafe.transmute(f64, u64(0x7ff0000000000000)); }
+	if (x < -746.0) { return 0.0; }
+	return exp_f64_of(x);
+}
+
+/**
+	e^x for `f32`, with the special cases of `exp`. It is not `exp` narrowed,
+	which could round twice.
+*/
+exp_f32 :: proc(x: f32) -> f32 {
+	bits := unsafe.transmute(u32, x);
+	magnitude := bits & 0x7fffffff;
+	// Below 2^-25 in magnitude, e^x rounds to 1.
+	if (magnitude < 0x33000000) { return f32(1.0); }
+	if (magnitude >= 0x7f800000) {
+		if (magnitude > 0x7f800000) { return unsafe.transmute(f32, u32(CANONICAL_NAN_F32)); }
+		if (bits >> 31 != 0) { return f32(0.0); }
+		return x;
+	}
+	// e^89 overflows `f32` and e^-104 is below half its smallest subnormal.
+	if (x > f32(89.0)) { return unsafe.transmute(f32, u32(0x7f800000)); }
+	if (x < f32(-104.0)) { return f32(0.0); }
+	return exp_f32_of(f64(x));
+}

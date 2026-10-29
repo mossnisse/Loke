@@ -651,7 +651,7 @@ emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 	fmt.sbprintln(&e.b, "}")
 	fmt.sbprintln(&e.b, "")
 
-	body := strings.to_string(e.b)
+	body := without_unpushed_pops(e, strings.to_string(e.b))
 	e.b = module
 	emit_unwind_prologue(e)
 	strings.write_string(&e.b, body)
