@@ -15,6 +15,16 @@ slow_exp_f32 :: proc(x: f32) -> f32 {
 }
 
 @(public)
+slow_log :: proc(x: f64) -> f64 {
+	return unsafe.transmute(f64, log_slow(x, F64_LAYOUT));
+}
+
+@(public)
+slow_log_f32 :: proc(x: f32) -> f32 {
+	return unsafe.transmute(f32, u32(log_slow(f64(x), F32_LAYOUT)));
+}
+
+@(public)
 slow_sin :: proc(x: f64) -> f64 { return slow_trig(x, false); }
 
 @(public)

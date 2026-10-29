@@ -91,6 +91,26 @@ trig_argument_f32 :: proc(g: inout Generator, i: int) -> f32 {
 	return v;
 }
 
+// Positive arguments of log: of every exponent, near 1 on either side,
+// subnormal, and between 1/2 and 2.
+log_argument :: proc(g: inout Generator, i: int) -> f64 {
+	switch (i % 4) {
+	case 0: return unsafe.transmute(f64, ((1 + next(inout g) % 2046) << 52) | (next(inout g) & 0x000fffffffffffff));
+	case 1: return 1.0 + (unit(inout g)*2.0 - 1.0)*inverse_power(next(inout g) % 53);
+	case 2: return unsafe.transmute(f64, 1 + next(inout g) % 0x000fffffffffffff);
+	default: return 0.5 + unit(inout g)*1.5;
+	}
+}
+
+log_argument_f32 :: proc(g: inout Generator, i: int) -> f32 {
+	switch (i % 4) {
+	case 0: return unsafe.transmute(f32, u32(((1 + next(inout g) % 254) << 23) | (next(inout g) & 0x7fffff)));
+	case 1: return f32(1.0 + (unit(inout g)*2.0 - 1.0)*inverse_power(next(inout g) % 24));
+	case 2: return unsafe.transmute(f32, u32(1 + next(inout g) % 0x7fffff));
+	default: return f32(0.5 + unit(inout g)*1.5);
+	}
+}
+
 bits :: proc(x: f64) -> u64 { return unsafe.transmute(u64, x); }
 bits32 :: proc(x: f32) -> u64 { return u64(unsafe.transmute(u32, x)); }
 
@@ -104,26 +124,38 @@ CONSTANT_SIN :: repro.sin(0.5);
 CONSTANT_COS_MEDIUM :: repro.cos(1000.0);
 CONSTANT_SIN_HUGE :: repro.sin(1.0e22);
 CONSTANT_SIN_F32 :: repro.sin_f32(100.0);
+CONSTANT_LOG :: repro.log(10.0);
+CONSTANT_LOG_SUBNORMAL :: repro.log(5.0e-324);
+CONSTANT_LOG_F32 :: repro.log_f32(0.75);
 
 // `f32` arguments that reach the rare retries, found by search: `exp_f32`'s
-// double-`f64` step and its slow path, and the slow paths of `sin_f32` and
-// `cos_f32`. Each is checked against the oracle at run time and folded.
-HARD_F32 :: [4]u32{0xc16912cd, 0x4371ade3, 0x46199998, 0x3c107fe6};
-HARD_FUNCTIONS :: [4]Function{.Exp, .Sin, .Sin, .Cos};
-CONSTANT_HARD :: [4]f32{
-	repro.exp_f32(unsafe.transmute(f32, u32(0xc16912cd))),
-	repro.sin_f32(unsafe.transmute(f32, u32(0x4371ade3))),
-	repro.sin_f32(unsafe.transmute(f32, u32(0x46199998))),
-	repro.cos_f32(unsafe.transmute(f32, u32(0x3c107fe6))),
-};
+// double-`f64` step and its slow path, the slow paths of `sin_f32` and
+// `cos_f32`, and `log_f32`'s double-`f64` step and its slow path. Each is
+// checked against the oracle at run time and folded, each in a constant of
+// its own: a folded slow path takes up to 16 MB of the evaluator's 64.
+HARD_F32 :: [6]u32{0xc16912cd, 0x4371ade3, 0x46199998, 0x3c107fe6, 0x022ae487, 0x0dc8bba4};
+HARD_FUNCTIONS :: [6]Function{.Exp, .Sin, .Sin, .Cos, .Log, .Log};
+HARD_0 :: repro.exp_f32(unsafe.transmute(f32, u32(0xc16912cd)));
+HARD_1 :: repro.sin_f32(unsafe.transmute(f32, u32(0x4371ade3)));
+HARD_2 :: repro.sin_f32(unsafe.transmute(f32, u32(0x46199998)));
+HARD_3 :: repro.cos_f32(unsafe.transmute(f32, u32(0x3c107fe6)));
+HARD_4 :: repro.log_f32(unsafe.transmute(f32, u32(0x022ae487)));
+HARD_5 :: repro.log_f32(unsafe.transmute(f32, u32(0x0dc8bba4)));
+CONSTANT_HARD :: [6]f32{HARD_0, HARD_1, HARD_2, HARD_3, HARD_4, HARD_5};
 
-Function :: enum { Exp, Sin, Cos }
+// 1 + 6 2^-52, whose log, x - 1 - (x - 1)^2/2 + ..., is about 2^-100
+// relative above an `f64` midpoint, so it takes `log`'s slow path.
+HARD_LOG :: 0x3ff0000000000006;
+CONSTANT_HARD_LOG :: repro.log(unsafe.transmute(f64, u64(HARD_LOG)));
+
+Function :: enum { Exp, Sin, Cos, Log }
 
 fast64 :: proc(f: Function, x: f64) -> f64 {
 	switch (f) {
 	case .Exp: return repro.exp(x);
 	case .Sin: return repro.sin(x);
 	case .Cos: return repro.cos(x);
+	case .Log: return repro.log(x);
 	}
 }
 
@@ -132,6 +164,7 @@ slow64 :: proc(f: Function, x: f64) -> f64 {
 	case .Exp: return repro.slow_exp(x);
 	case .Sin: return repro.slow_sin(x);
 	case .Cos: return repro.slow_cos(x);
+	case .Log: return repro.slow_log(x);
 	}
 }
 
@@ -140,6 +173,7 @@ fast32 :: proc(f: Function, x: f32) -> f32 {
 	case .Exp: return repro.exp_f32(x);
 	case .Sin: return repro.sin_f32(x);
 	case .Cos: return repro.cos_f32(x);
+	case .Log: return repro.log_f32(x);
 	}
 }
 
@@ -148,16 +182,19 @@ slow32 :: proc(f: Function, x: f32) -> f32 {
 	case .Exp: return repro.slow_exp_f32(x);
 	case .Sin: return repro.slow_sin_f32(x);
 	case .Cos: return repro.slow_cos_f32(x);
+	case .Log: return repro.slow_log_f32(x);
 	}
 }
 
 argument64 :: proc(f: Function, g: inout Generator, i: int) -> f64 {
 	if (f == .Exp) { return argument(inout g, i); }
+	if (f == .Log) { return log_argument(inout g, i); }
 	return trig_argument(inout g, i);
 }
 
 argument32 :: proc(f: Function, g: inout Generator, i: int) -> f32 {
 	if (f == .Exp) { return argument_f32(inout g, i); }
+	if (f == .Log) { return log_argument_f32(inout g, i); }
 	return trig_argument_f32(inout g, i);
 }
 
@@ -178,20 +215,26 @@ main :: proc() {
 		bits(CONSTANT_SIN) == bits(repro.sin(0.5*one)),
 		bits(CONSTANT_COS_MEDIUM) == bits(repro.cos(1000.0*one)),
 		bits(CONSTANT_SIN_HUGE) == bits(repro.sin(1.0e22*one)),
-		bits32(CONSTANT_SIN_F32) == bits32(repro.sin_f32(f32(100.0*one))));
+		bits32(CONSTANT_SIN_F32) == bits32(repro.sin_f32(f32(100.0*one))),
+		bits(CONSTANT_LOG) == bits(repro.log(10.0*one)),
+		bits(CONSTANT_LOG_SUBNORMAL) == bits(repro.log(5.0e-324*one)),
+		bits32(CONSTANT_LOG_F32) == bits32(repro.log_f32(f32(0.75*one))));
 
 	hard := HARD_F32;
 	functions := HARD_FUNCTIONS;
 	constants := CONSTANT_HARD;
-	foreach (i in 0 ..< 4) {
+	foreach (i in 0 ..< 6) {
 		y := unsafe.transmute(f32, hard[i])*f32(one);
 		result := fast32(functions[i], y);
 		fmt.println(functions[i], 32, bits32(y), bits32(result));
 		fmt.println("constant", bits32(constants[i]) == bits32(result));
 	}
+	z := unsafe.transmute(f64, u64(HARD_LOG))*one;
+	fmt.println(Function.Log, 64, bits(z), bits(repro.log(z)));
+	fmt.println("constant", bits(CONSTANT_HARD_LOG) == bits(repro.log(z)));
 
 	g := Generator{state = 0x9e3779b97f4a7c15};
-	foreach (f in [3]Function{.Exp, .Sin, .Cos}) {
+	foreach (f in [4]Function{.Exp, .Sin, .Cos, .Log}) {
 		differ := 0;
 		differ32 := 0;
 		foreach (i in 0 ..< compared(f)) {
@@ -210,7 +253,7 @@ main :: proc() {
 	}
 
 	CHECKED :: 1000;
-	foreach (f in [3]Function{.Exp, .Sin, .Cos}) {
+	foreach (f in [4]Function{.Exp, .Sin, .Cos, .Log}) {
 		foreach (i in 0 ..< CHECKED) {
 			x := argument64(f, inout g, i)*one;
 			fmt.println(f, 64, bits(x), bits(fast64(f, x)));

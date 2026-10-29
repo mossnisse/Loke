@@ -730,7 +730,11 @@ Compile-time evaluation has a cost of its own. Measured on 2026-10-29,
 compile time, so one constant whose evaluation makes about 250 calls exceeds
 the 64 MB budget (`L0342`); at `-cpu=x86-64-v3` the instruction's exact
 evaluator takes a small fraction of that. Kernels ported to Loke and folded at
-compile time would meet this budget long before a fast loop would.
+compile time would meet this budget long before a fast loop would. They do:
+a call to `core:math/repro` that takes its fixed-point slow path takes 8 to
+16 MB of it, since the evaluator reclaims nothing a call frees, so one
+constant can fold four such calls but not eight; a call its fast path
+decides takes far less.
 
 The first port, `core:math/repro`'s `exp`, measured on 2026-10-29 at
 `-opt=speed` over 4 million calls on the same machine: 21 ns per independent
@@ -745,10 +749,13 @@ ns per independent call against the UCRT's 7.0 to 7.4 on its FMA3 path and
 9.7 on its legacy one, and 30 ns per dependent call against 9 to 11;
 `sin_f32` takes 49 ns against 6.7 and 8.2. Their slow path also takes 4 µs:
 on a grid of 1,024 `f32` values, the 2 that went there added 8 ns to `sin`'s
-average. The estimate below was optimistic by two to three times: the time
-is in the dependent double-`f64` steps, not in calls or checks, once the
-frame pops a returning procedure made are gone (they took a third of `exp`'s
-time). A table twice as large, a lower-degree
+average. `log`, over arguments from 2^-32 to 2^32, takes 26 ns per
+independent call and 43 per dependent one against the UCRT's 5.0 and 12 on
+its FMA3 path and 5.8 and 14.5 on its legacy one, `log_f32` 16 ns against 3.6
+and 4.1, and its slow path 4 to 6 µs. The estimate below was optimistic by
+two to three times: the time is in the dependent double-`f64` steps, not in
+calls or checks, once the frame pops a returning procedure made are gone
+(they took a third of `exp`'s time). A table twice as large, a lower-degree
 polynomial, and Estrin's scheme are the next things to try, and `fma` where
 the CPU level has it.
 

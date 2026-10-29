@@ -10,7 +10,7 @@
 	each function. No procedure here calls the C library.
 
 	The package holds only what has been implemented and checked: today `exp`,
-	`sin`, and `cos`, each in both widths. A function missing here is not
+	`log`, `sin`, and `cos`, each in both widths. A function missing here is not
 	provided by falling back to `core:math`.
 */
 @(public)
@@ -58,6 +58,36 @@ exp_f32 :: proc(x: f32) -> f32 {
 	if (x > f32(89.0)) { return unsafe.transmute(f32, u32(0x7f800000)); }
 	if (x < f32(-104.0)) { return f32(0.0); }
 	return exp_f32_of(f64(x));
+}
+
+/**
+	The natural logarithm of x. NaN and every x < 0, -Inf included, give NaN,
+	±0 gives -Inf, 1 gives +0, and +Inf gives +Inf.
+*/
+log :: proc(x: f64) -> f64 {
+	bits := unsafe.transmute(u64, x);
+	// Every negative argument and every NaN is at or above +Inf's pattern.
+	if (bits >= 0x7ff0000000000000) {
+		if (bits == 0x7ff0000000000000) { return x; }
+		if (bits == 0x8000000000000000) { return unsafe.transmute(f64, u64(0xfff0000000000000)); }
+		return unsafe.transmute(f64, u64(CANONICAL_NAN_F64));
+	}
+	if (bits == 0) { return unsafe.transmute(f64, u64(0xfff0000000000000)); }
+	if (bits == 0x3ff0000000000000) { return 0.0; }
+	return log_f64_of(x);
+}
+
+/// The natural logarithm for `f32`, with the special cases of `log`.
+log_f32 :: proc(x: f32) -> f32 {
+	bits := unsafe.transmute(u32, x);
+	if (bits >= 0x7f800000) {
+		if (bits == 0x7f800000) { return x; }
+		if (bits == 0x80000000) { return unsafe.transmute(f32, u32(0xff800000)); }
+		return unsafe.transmute(f32, u32(CANONICAL_NAN_F32));
+	}
+	if (bits == 0) { return unsafe.transmute(f32, u32(0xff800000)); }
+	if (bits == 0x3f800000) { return f32(0.0); }
+	return log_f32_of(f64(x));
 }
 
 /**

@@ -78,18 +78,41 @@ Phase 3, `exp`, `sin`, and `cos` in both widths in a new
   included through a copy of the package that exports them, and compares
   compile-time and run-time results. Four `f32` arguments found by search
   pin the retries seeded arguments almost never reach: `exp_f32`'s
-  double-`f64` step and slow path, and those of `sin_f32` and `cos_f32`. The probe's output is the same at every
-  optimization and CPU level tried.
+  double-`f64` step and slow path, and those of `sin_f32` and `cos_f32`.
+  The probe's output is the same at every optimization and CPU level tried.
 - Measured cost: about four to five times the UCRT's in throughput; see
   [Deterministic math functions](open-questions.md#deterministic-math-functions).
 
 Phase 3's gate is met: exact agreement with the oracle, and the cost
 measured, with and without FMA in the UCRT's paths (`core:math/repro` uses
-none). The next functions are `log` and `pow` (phase 4), and the cost is
-phase 6's question.
+none). The cost is phase 6's question.
+
+Phase 4, begun with `log` in both widths:
+
+- The fast path takes x = 2^e y and, from a 129-entry table indexed by y's
+  top seven fraction bits, d near 1/y and -log d as an `f64` pair, so that
+  r = y d - 1 is exact and under 2^-8, and log(1 + r) is a short series. The
+  buckets either side of x = 1 have d exactly 1 and 1/2, so near 1 nothing
+  cancels; from about sqrt 2 on, y is halved, so E ln 2 and the table's part
+  never nearly cancel either. d has 29 bits, which makes r exact in one
+  `f64` for an `f32` argument, so `log_f32`'s first approximation needs no
+  pair arithmetic.
+- The slow path is E ln 2 + 2 atanh((y - 1)/(y + 1)) in 320-bit fixed
+  point, the quotient from Newton's iteration for the reciprocal. A
+  bit-by-bit division was simpler, but folding it at compile time took more
+  than the evaluator's 64 MB; see
+  [Deterministic math functions](open-questions.md#deterministic-math-functions).
+- An exhaustive pass over every positive `f32` found 138 arguments that
+  leave `log_f32`'s first approximation and 16 of them that reach its slow
+  path; one of each is pinned, with 1 + 6 2^-52, whose `f64` log is about
+  2^-100 from a midpoint. About one seeded `f64` argument in 4,000 takes the
+  slow path, as the margin predicts. With `log`, the probe compares the fast
+  and slow paths over 220,000 arguments and the oracle over 10,000.
+
+`pow` is next.
 
 Not started: phase 1's benchmarks (the UCRT timings in open questions stand
-until there is a kernel to compare), the rest of the kernels (phase 4), NaN
+until there is a kernel to compare), the rest of phase 4's kernels, NaN
 canonicalization, the environment entry
 contract, simulation support, dispatch, and other platforms.
 

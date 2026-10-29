@@ -12,7 +12,7 @@
 	each function. No procedure here calls the C library.
 
 	The package holds only what has been implemented and checked: today `exp`,
-	`sin`, and `cos`, each in both widths. A function missing here is not
+	`log`, `sin`, and `cos`, each in both widths. A function missing here is not
 	provided by falling back to `core:math`.
 */
 package repro;
@@ -29,6 +29,15 @@ exp :: proc(x: f64) -> f64 ---;
 	which could round twice.
 */
 exp_f32 :: proc(x: f32) -> f32 ---;
+
+/*
+	The natural logarithm of x. NaN and every x < 0, -Inf included, give NaN,
+	±0 gives -Inf, 1 gives +0, and +Inf gives +Inf.
+*/
+log :: proc(x: f64) -> f64 ---;
+
+// The natural logarithm for `f32`, with the special cases of `log`.
+log_f32 :: proc(x: f32) -> f32 ---;
 
 /*
 	The sine of x radians. NaN and ±Inf give NaN, and ±0 gives itself; every

@@ -1,0 +1,303 @@
+// deterministic-math-and-targets-plan.md "Reproducible result contract": `log`
+// in both widths.
+//
+// The fast path writes x = 2^e y, y in [1, 2), takes i, the nearest integer
+// to 128 (y - 1), and from a table d near 1/y and L = -log d, with
+// log x = E ln 2 + L + log(1 + r), r = y d - 1, |r| <= 2^-8. From i = 53 on,
+// y is above about sqrt 2, and the table's L is -log 2d with E = e + 1, so
+// E ln 2 + L is never near zero unless both are zero: d is exactly 1 at
+// i = 0 and 1/2 at i = 128, the two buckets either side of x = 1, where
+// log x is log(1 + r) alone. Elsewhere |log x| is over 2^-9, and over 1/3
+// when E is not zero. Its result h + l has a relative error under 2^-67:
+//
+// - r = rh + rl exactly: d has 29 bits, y d is exact as `two_product`'s
+//   pair, its high part minus 1 is exact (Sterbenz), and `two_sum` adds the
+//   low part exactly.
+// - log(1 + r) is r - r^2/2 + c, c the series from r^3/3 to r^9/9, the rest
+//   under |r|^9/10 < 2^-75 relative to r. rh^2 is exact (`two_product`),
+//   halving it is exact, and rh - rh^2/2 is exact as a pair; the parts of r^2
+//   and r^3 with rl that matter, -rh rl and rh^2 rl, are added, and those
+//   left out are below 2^-77 relative. c is under 2^-17.5 relative to r and
+//   evaluated within 5.1 ulps of itself, under 2^-68.2 of r, and |r| is at
+//   most |log x| where the table's part is not zero.
+// - E ln 2 is E times a 42-bit part, exactly for |E| <= 1075, plus E times
+//   the rest, both within 2^-85 absolute; each L is within 2^-106 of itself;
+//   and every sum is exact as a pair (`two_sum`) but for the low parts, which
+//   are under 2^-50 of the result and round by under 2^-103.
+//
+// These sum to under 2^-68.1. A result is returned when both ends of h + l
+// ± 2^-66 h round alike. Otherwise the slow path recomputes log x in 320-bit
+// fixed point as E ln 2 + 2 atanh((y' - 1)/(y' + 1)), y' = y or y/2 as E
+// above, and rounds that; its error is under 2^-300 absolute, and |log x|
+// is over 2^-54 for every `f64` x other than 1. No binary64 argument of log
+// is known to need more than about 2^-120 relative accuracy to round
+// correctly (Lefèvre and Muller's exhaustive searches), so it rounds every
+// argument correctly; `tests/repro_test.odin` checks both paths against an
+// independent oracle. No result is subnormal or overflows.
+package repro;
+
+import "core:unsafe";
+
+// The table's index, its multiplier, and the exponent with log x =
+// E ln 2 + L + log(y d), for a positive normal x with fraction bits
+// `fraction` and unbiased exponent e.
+log_bucket :: proc(fraction: u64, e: int) -> (i: int, big_e: int) {
+	i := int((fraction + (u64(1) << 44)) >> 45);
+	if (i >= 53) { return {i, e + 1}; }
+	return {i, e};
+}
+
+// x's unbiased exponent and fraction bits, for a positive finite x,
+// normalizing a subnormal one.
+log_split :: proc(x: f64) -> (e: int, fraction: u64) {
+	pattern := unsafe.transmute(u64, x);
+	if (pattern >> 52 == 0) {
+		// Exact: x 2^54 is normal.
+		normal := unsafe.transmute(u64, x*18014398509481984.0);
+		return {int(normal >> 52) - 1077, normal & 0x000fffffffffffff};
+	}
+	return {int(pattern >> 52) - 1023, pattern & 0x000fffffffffffff};
+}
+
+// log x as h + l, |l| <= ulp(h)/2, for a positive finite x other than 1.
+log_kernel :: proc(x: f64) -> (high: f64, low: f64) {
+	e, fraction := log_split(x);
+	i, big_e := log_bucket(fraction, e);
+	y := unsafe.transmute(f64, fraction | 0x3ff0000000000000);
+	d := unsafe.transmute(f64, LOG_TABLE[3*i]);
+	ph, pl := two_product(y, d);
+	rh, rl := two_sum(ph - 1.0, pl);
+
+	// log(1 + r) = (rh - rh^2/2) + the rest.
+	sh, sl := two_product(rh, rh);
+	t1, t2 := two_sum(rh, 0.0 - 0.5*sh);
+	c := sh*rh*(1.0/3.0 - rh*(0.25 - rh*(0.2 - rh*(1.0/6.0 - rh*(1.0/7.0 - rh*(0.125 - rh*(1.0/9.0)))))));
+	tail := t2 + ((rl - 0.5*sl) + (c + (sh*rl - rh*rl)));
+
+	ef := f64(big_e);
+	s1, e1 := two_sum(ef*unsafe.transmute(f64, u64(LN2_HI)), unsafe.transmute(f64, LOG_TABLE[3*i + 1]));
+	s2, e2 := two_sum(s1, t1);
+	rest := (e1 + e2) + (tail + (unsafe.transmute(f64, LOG_TABLE[3*i + 2]) + ef*unsafe.transmute(f64, u64(LN2_LO))));
+	h, l := fast_two_sum(s2, rest);
+	return {h, l};
+}
+
+log_f64_of :: proc(x: f64) -> f64 {
+	h, l := log_kernel(x);
+	decided, y := f64_decided(h, l);
+	if (decided) { return y; }
+	return unsafe.transmute(f64, log_slow(x, F64_LAYOUT));
+}
+
+// For an `f32` argument, a positive normal `f64` other than 1, y has 24
+// bits, so r = y d - 1 is exact in one `f64`, and |E| <= 150. A single-`f64`
+// approximation comes first: E ln 2's two parts and L's pair, with log(1 + r)
+// as its series to r^7/7, the rest under 2^-59 relative, is within 6 ulps of
+// log x, and within 12 ulps of its own value if that is in the binade below.
+// Narrowing it rounds log x correctly unless an `f32` midpoint is within 16
+// ulps, which its low bits show; then the double-`f64` result, within one
+// ulp, decides, and the slow path if that does not.
+log_f32_of :: proc(x: f64) -> f32 {
+	e, fraction := log_split(x);
+	i, big_e := log_bucket(fraction, e);
+	y := unsafe.transmute(f64, fraction | 0x3ff0000000000000);
+	r := y*unsafe.transmute(f64, LOG_TABLE[3*i]) - 1.0;
+	p := r - r*r*(0.5 - r*(1.0/3.0 - r*(0.25 - r*(0.2 - r*(1.0/6.0 - r*(1.0/7.0))))));
+	ef := f64(big_e);
+	quick := (ef*unsafe.transmute(f64, u64(LN2_HI)) + unsafe.transmute(f64, LOG_TABLE[3*i + 1]))
+		+ (p + (unsafe.transmute(f64, LOG_TABLE[3*i + 2]) + ef*unsafe.transmute(f64, u64(LN2_LO))));
+	if (f32_decided(quick, 16)) { return f32(quick); }
+
+	h, l := log_kernel(x);
+	near := h + l;
+	if (f32_decided(near, 1)) { return f32(near); }
+	return unsafe.transmute(f32, u32(log_slow(x, F32_LAYOUT)));
+}
+
+// log x correctly rounded to `layout`, as its bit pattern, for a positive
+// finite x other than 1, from fixed-point arithmetic: E ln 2 + 2 atanh z,
+// z = |y' - 1|/(y' + 1) < 0.18 and its sign apart, with y' = y, or y/2 when
+// E = e + 1, which is in [0.70, 1.42). z is within 2^-318, from the
+// reciprocal of y' + 1; each term of the series truncates by under 2^-320,
+// and the terms fall by over 5 bits each; E ln 2 is within 1075 2^-320, so
+// the error is under 2^-305.
+log_slow :: proc(x: f64, layout: Float_Layout) -> u64 {
+	e, fraction := log_split(x);
+	_, big_e := log_bucket(fraction, e);
+	y := unsafe.transmute(f64, fraction | 0x3ff0000000000000);
+	if (big_e != e) { y = 0.5*y; }
+	scaled := fixed_of(y);
+	below_one := y < 1.0;
+	difference: Fixed = {};
+	if (below_one) {
+		difference = fixed_minus(FIXED_ONE, scaled);
+	} else {
+		difference = fixed_minus(scaled, FIXED_ONE);
+	}
+	z := fixed_times(difference, fixed_reciprocal(fixed_plus(scaled, FIXED_ONE), y + 1.0));
+	z2 := fixed_times(z, z);
+	sum := z;
+	power := z;
+	for (n: u64 = 3; ; n += 2) {
+		power = fixed_times(power, z2);
+		term := fixed_divided_small(power, n);
+		if (fixed_is_zero(term)) { break; }
+		sum = fixed_plus(sum, term);
+	}
+	part := fixed_plus(sum, sum);
+
+	// |E| ln 2 is at least ln 2, over |log y'|, so a difference of the two
+	// takes the sign of E.
+	value := part;
+	negative := below_one;
+	if (big_e != 0) {
+		multiple := fixed_times_small(LN2_FIXED, u64(abs_int(big_e)));
+		negative = big_e < 0;
+		if (negative == below_one) {
+			value = fixed_plus(multiple, part);
+		} else {
+			value = fixed_minus(multiple, part);
+		}
+	}
+	pattern := fixed_round(value, 0 - FRACTION_BITS, layout);
+	if (negative) { return pattern | (u64(1) << (layout.width - 1)); }
+	return pattern;
+}
+
+// Generated by `log_constants_source` in tests/math_oracle.odin, which
+// `tests/repro_test.odin` checks this block against.
+// BEGIN GENERATED
+LOG_TABLE :: [387]u64{
+	0x3ff0000000000000, 0x0000000000000000, 0x0000000000000000,
+	0x3fefc07f02000000, 0x3f7fe02a69106789, 0xbbcd44b7e3713414,
+	0x3fef81f820000000, 0x3f8fc0a890fc03e4, 0x3bff3db4e851a025,
+	0x3fef44659e000000, 0x3f97b91b1155b11b, 0xbc32e402acdf2de5,
+	0x3fef07c1f0000000, 0x3f9f829b1e783300, 0x3c3b3e3f05074478,
+	0x3feecc07b3000000, 0x3fa39e87ba1ebd60, 0xbc45bf6937f551b8,
+	0x3fee9131ac000000, 0x3fa77458f532dcfc, 0x3c419d3ca87b8d41,
+	0x3fee573ac9000000, 0x3fab42dd713971bf, 0xbc3eb8f59c130494,
+	0x3fee1e1e1e000000, 0x3faf0a30c21162a6, 0x3c489f325c5be577,
+	0x3fede5d6e4000000, 0x3fb16536ee637ae1, 0xbc3795a3e8c22e2f,
+	0x3fedae6077000000, 0x3fb341d793bbd1d1, 0xbc5aa51f227d0a86,
+	0x3fed77b655000000, 0x3fb51b073c96183f, 0x3c5b08039a1956f0,
+	0x3fed41d41d000000, 0x3fb6f0d28d256b4c, 0xbc5864d99183c692,
+	0x3fed0cb58f000000, 0x3fb8c345da019b21, 0xbc08765eac3ccc7b,
+	0x3fecd85689000000, 0x3fba926d3a6ad563, 0x3c5943748aa70eb4,
+	0x3feca4b305000000, 0x3fbc5e5492abc743, 0x3c3b5297ef8d7f4c,
+	0x3fec71c71c000000, 0x3fbe2707722af2e6, 0xbc2c2af000115819,
+	0x3fec3f8f02000000, 0x3fbfec912fbbeabb, 0xbc54e3eb99828022,
+	0x3fec0e0704000000, 0x3fc0d77e7a908e59, 0x3c6ae9dc5e8c64ac,
+	0x3febdd2b8a000000, 0x3fc1b72ad33f67a0, 0x3c566382346df429,
+	0x3febacf915000000, 0x3fc29552f6fff523, 0x3c6352771c40043f,
+	0x3feb7d6c3e000000, 0x3fc371fc1f6e8f74, 0x3c5e234b62aee12a,
+	0x3feb4e81b5000000, 0x3fc44d2b6c5b7d1e, 0x3c6a0136543e1862,
+	0x3feb203640000000, 0x3fc526e5e5a1b438, 0xbc6646ff8a44628f,
+	0x3feaf286bd000000, 0x3fc5ff306ee793d4, 0xbc5a3e0efb000219,
+	0x3feac5701b000000, 0x3fc6d60fe601d21d, 0xbc6c5e5268ed4120,
+	0x3fea98ef60000000, 0x3fc7ab890410d909, 0x3c4fe36b2d74b0b3,
+	0x3fea6d01a7000000, 0x3fc87fa06438c911, 0xbc6bc36dbfa0cd1d,
+	0x3fea41a41a000000, 0x3fc9525a9e3456b4, 0x3c6df44c1d4ed4d0,
+	0x3fea16d3f9000000, 0x3fca23bc223ab563, 0x3c4eb551b08bc414,
+	0x3fe9ec8e95000000, 0x3fcaf3c94ed0bff3, 0xbc538c4ff3641450,
+	0x3fe9c2d14f000000, 0x3fcbc28673a58cd6, 0x3c5521074486f5be,
+	0x3fe999999a000000, 0x3fcc8ff7c59a9a22, 0xbc63f689f845eabc,
+	0x3fe970e4f8000000, 0x3fcd5c216b8fbb91, 0x3c66e843597e4e95,
+	0x3fe948b0fd000000, 0x3fce27076d5af2e6, 0xbc456c78001eb877,
+	0x3fe920fb4a000000, 0x3fcef0adcaec5936, 0x3c64be77950d7bbd,
+	0x3fe8f9c190000000, 0x3fcfb9186b5e3e2b, 0xbc6baaae64f4c576,
+	0x3fe8d3018d000000, 0x3fd040259530d041, 0xbc6252b217a4b499,
+	0x3fe8acb90f000000, 0x3fd0a324e38b90e3, 0x3c78761de807daa0,
+	0x3fe886e5f1000000, 0x3fd1058bf8d24ad5, 0x3c5a19c0ab495094,
+	0x3fe8618618000000, 0x3fd1675cacaba60e, 0x3c36731f55d970e1,
+	0x3fe83c977b000000, 0x3fd1c898c09d99fb, 0xbc27a28c5613cfa8,
+	0x3fe8181818000000, 0x3fd22941fc0f7966, 0xbc77675eb096235a,
+	0x3fe7f405fd000000, 0x3fd2895a13e286a3, 0x3c77ad2cc13f040f,
+	0x3fe7d05f41000000, 0x3fd2e8e2bc311d31, 0xbc78184db95bba39,
+	0x3fe7ad2209000000, 0x3fd347dd9a447d55, 0xbc64c1bc58093216,
+	0x3fe78a4c81000000, 0x3fd3a64c56b145ea, 0xbc6ac42519405da1,
+	0x3fe767dce4000000, 0x3fd404308716a7e4, 0xbc70947b608291ad,
+	0x3fe745d174000000, 0x3fd4618bc31c5ec2, 0x3c7fc2decdee2472,
+	0x3fe724287f000000, 0x3fd4be5f963b78a1, 0xbc61c3a35b034edc,
+	0x3fe702e05c000000, 0x3fd51aad874df82d, 0x3c43a27ac19f5b38,
+	0x3fe6e1f76b000000, 0x3fd5767718015a6c, 0x3c756bb5b283ed3b,
+	0x3fe6c16c17000000, 0x3fd5d1bdbea809ca, 0x3c745fe383dc10f6,
+	0x3fe6a13cd1000000, 0xbfd630030a4eac49, 0xbc6ce7fce51de8c2,
+	0x3fe6816817000000, 0xbfd5d5bde0c15f30, 0x3c77513148c8036a,
+	0x3fe661ec6a000000, 0xbfd57bf752e0d1fb, 0x3c6162cd15fa877e,
+	0x3fe642c859000000, 0xbfd522ae0718a3d8, 0x3c68fbe9b38a6acf,
+	0x3fe623fa77000000, 0xbfd4c9e09e132c3c, 0x3c5123815b147a5f,
+	0x3fe6058160000000, 0xbfd4718dc171c41b, 0xbc30fb4c14b01999,
+	0x3fe5e75bb9000000, 0xbfd419b42461e8c7, 0xbc608f224382e339,
+	0x3fe5c9882c000000, 0xbfd3c25278733184, 0x3c737527e507f41c,
+	0x3fe5ac056b000000, 0xbfd36b6776ba1117, 0x3c532510e883858f,
+	0x3fe58ed231000000, 0xbfd314f1e34b5ce4, 0x3c74eab909e18a5f,
+	0x3fe571ed3c000000, 0xbfd2bef07bec9354, 0x3c789e2d7fd979c8,
+	0x3fe5555555000000, 0xbfd269621034db92, 0xbc7d8efadd9c5ad5,
+	0x3fe5390949000000, 0xbfd214456d32b8d4, 0xbc6f75d91aeba7f0,
+	0x3fe51d07eb000000, 0xbfd1bf9963b26b95, 0x3c61492b84247669,
+	0x3fe5015015000000, 0xbfd16b5ccba8fb73, 0xbc766fb528b40935,
+	0x3fe4e5e0a7000000, 0xbfd1178e8197e47c, 0x3c61373a5f024011,
+	0x3fe4cab887000000, 0xbfd0c42d66ed62e3, 0xbc50f9a79d5c92e8,
+	0x3fe4afd6a0000000, 0xbfd071385f4d5862, 0xbc7c5b16ed4d3be3,
+	0x3fe49539e4000000, 0xbfd01eae5716c691, 0x3c450690bd2068e2,
+	0x3fe47ae148000000, 0xbfcf991c6eb3b379, 0xbc6e665066fc2b4c,
+	0x3fe460cbc8000000, 0xbfcef5ade51cffe6, 0x3c5092b2ddc705f6,
+	0x3fe446f865000000, 0xbfce530efd771012, 0xbc386cc083c1c203,
+	0x3fe42d6626000000, 0xbfcdb13db1e48940, 0xbc5a109d49fa396e,
+	0x3fe4141414000000, 0xbfcd1037f1e55e7b, 0xbc65f629242466f7,
+	0x3fe3fb0140000000, 0xbfcc6ffbc8f00f71, 0x3c69e58b2c54f9fa,
+	0x3fe3e22cbd000000, 0xbfcbd08738ebd8ad, 0xbc3ce155f6a5f4ad,
+	0x3fe3c995a4000000, 0xbfcb31d8543bce3d, 0x3c68a63ab390d578,
+	0x3fe3b13b14000000, 0xbfca93ed3e8ad9e3, 0xbc6acafa9dec1cae,
+	0x3fe3991c2c000000, 0xbfc9f6c406689664, 0xbc42f619605e149a,
+	0x3fe3813814000000, 0xbfc95a5ae037017f, 0xbc47f58a1024b9cf,
+	0x3fe3698df4000000, 0xbfc8beafec18fe8c, 0xbc54f8a8b699ec96,
+	0x3fe3521cfb000000, 0xbfc823c16431a3c2, 0x3c61742ce70c6101,
+	0x3fe33ae45b000000, 0xbfc7898d82fc4c73, 0xbc5c5ed6ebc7c7e0,
+	0x3fe323e34a000000, 0xbfc6f0128a556abc, 0x3c692f59c21e8fec,
+	0x3fe30d1901000000, 0xbfc6574ebd44133a, 0x3c403eb87a33dbe4,
+	0x3fe2f684be000000, 0xbfc5bf406dd43db2, 0x3c357ada25dd5149,
+	0x3fe2e025c0000000, 0xbfc527e5e2a1b58d, 0x3c338d4b41320354,
+	0x3fe2c9fb4e000000, 0xbfc4913d8693b561, 0x3c56876049175035,
+	0x3fe2b404ad000000, 0xbfc3fb45a59128cc, 0x3c6d87f6a354d057,
+	0x3fe29e412a000000, 0xbfc365fcb0d59016, 0xbc578c11a5b98cad,
+	0x3fe288b013000000, 0xbfc2d1610fbe813a, 0x3c59c7c3f244be16,
+	0x3fe27350b9000000, 0xbfc23d712db9c202, 0x3c69d7c160f79344,
+	0x3fe25e2271000000, 0xbfc1aa2b819bf72a, 0x3c543b98ecbda4ab,
+	0x3fe2492492000000, 0xbfc1178e8027e47c, 0x3c52e63a5f071be6,
+	0x3fe2345679000000, 0xbfc08598b8663a07, 0x3c6fc61098fb9357,
+	0x3fe21fb781000000, 0xbfbfe89137fbd566, 0x3c5b3a7421602033,
+	0x3fe20b470c000000, 0xbfbec7397d4a1120, 0x3c5137fcc8cbde4a,
+	0x3fe1f7047e000000, 0xbfbda727670446a2, 0xbc5279fa7176c2c3,
+	0x3fe1e2ef3b000000, 0xbfbc8857fe2c4b23, 0xbc58a2ab5596a27a,
+	0x3fe1cf06ae000000, 0xbfbb6ac892ed5b1c, 0x3c46e97eed04879f,
+	0x3fe1bb4a40000000, 0xbfba4e763cb1bc38, 0x3c57b5ca204397af,
+	0x3fe1a7b961000000, 0xbfb9335e5bd94989, 0x3c54c0a8570514b7,
+	0x3fe1945381000000, 0xbfb8197e35d0e3f0, 0xbc185ab8007489ca,
+	0x3fe1811812000000, 0xbfb700d3122ac0e1, 0x3c42ed59880bb3ec,
+	0x3fe16e0689000000, 0xbfb5e95a49c791cb, 0xbc5d67545c57a6d9,
+	0x3fe15b1e5f000000, 0xbfb4d31156607eac, 0xbc51b7f42c5ea1cc,
+	0x3fe1485f0e000000, 0xbfb3bdf5a731ee64, 0xbc479076d3b5a9f5,
+	0x3fe135c811000000, 0xbfb2aa04a12717a5, 0x3c5e4e538d322f02,
+	0x3fe12358e7000000, 0xbfb1973bcbd65567, 0x3c4eb9c367c1785e,
+	0x3fe1111111000000, 0xbfb08598b49e3a07, 0x3c5df7009902d488,
+	0x3fe0fef011000000, 0xbfaeea31c026b87c, 0x3c43e53c93b7b66a,
+	0x3fe0ecf56c000000, 0xbfaccb73d0ddb2cc, 0x3c4ed8fb05005fd4,
+	0x3fe0db20a9000000, 0xbfaaaef2de5b10fc, 0x3c2283c44b0a91ae,
+	0x3fe0c97150000000, 0xbfa894aa1c9fb343, 0xbc328be97675f792,
+	0x3fe0b7e6ec000000, 0xbfa67c94ee54bb58, 0xbc3dfa7cca080007,
+	0x3fe0a6810a000000, 0xbfa466aec7ade3e9, 0xbc495e90808d3bd8,
+	0x3fe0953f39000000, 0xbfa252f32f6d183f, 0x3c49483792615919,
+	0x3fe0842108000000, 0xbfa0415d81e74444, 0xbc4805cf1d6a8b77,
+	0x3fe073260a000000, 0xbf9c63d2da94aaf1, 0xbc398dcf595d58a4,
+	0x3fe0624dd3000000, 0xbf9849252c48cabf, 0x3c3d7b2d0619c13c,
+	0x3fe05197f8000000, 0xbf9432a92f980cc1, 0x3c3bedaf38fb0c3d,
+	0x3fe0410410000000, 0xbf90205648935847, 0xbc24f91d08032393,
+	0x3fe03091b5000000, 0xbf8824489408a2aa, 0xbc01922c26eaae15,
+	0x3fe0204081000000, 0xbf8010157488de71, 0xbc145e62d417ce25,
+	0x3fe0101010000000, 0xbf70080549588b35, 0xbc1d96638cf4e121,
+	0x3fe0000000000000, 0x0000000000000000, 0x0000000000000000,
+};
+LN2_HI :: 0x3fe62e42fefa3800;
+LN2_LO :: 0x3d2ef35793c76730;
+// END GENERATED

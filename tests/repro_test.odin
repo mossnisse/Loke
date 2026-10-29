@@ -16,6 +16,7 @@ repro_constants_match_their_derivation :: proc(t: ^testing.T) {
 	oracle_init(&o)
 	defer oracle_destroy(&o)
 	check_generated_block(t, "core/math/repro/exp.loke", exp_constants_source(&o))
+	check_generated_block(t, "core/math/repro/log.loke", log_constants_source(&o))
 	check_generated_block(t, "core/math/repro/trig.loke", trig_constants_source(&o))
 }
 
@@ -94,10 +95,11 @@ repro_functions_round_correctly :: proc(t: ^testing.T) {
 			testing.expectf(t, len(fields) == 5 && fields[3] == "0" && fields[4] == "0", "a fast path differs from its slow path: %s", line)
 		case "differs64", "differs32":
 			testing.expectf(t, false, "a fast path differs from its slow path at %s", line)
-		case "Exp", "Sin", "Cos":
+		case "Exp", "Sin", "Cos", "Log":
 			function := Oracle_Function.Exp
 			if fields[0] == "Sin" {function = .Sin}
 			if fields[0] == "Cos" {function = .Cos}
+			if fields[0] == "Log" {function = .Log}
 			x, _ := strconv.parse_u64(fields[2])
 			got, _ := strconv.parse_u64(fields[3])
 			argument := transmute(f64)x
@@ -111,5 +113,5 @@ repro_functions_round_correctly :: proc(t: ^testing.T) {
 			checked += 1
 		}
 	}
-	testing.expectf(t, checked == 7504 && constants == 12, "the probe printed %d checked results and %d constants", checked, constants)
+	testing.expectf(t, checked == 10007 && constants == 18, "the probe printed %d checked results and %d constants", checked, constants)
 }

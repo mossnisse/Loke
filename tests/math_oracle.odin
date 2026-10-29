@@ -185,10 +185,16 @@ exp_attempt :: proc(o: ^Oracle, x: f64, format: Float_Format, w: int) -> (u64, b
 	return round_interval(sum, k - w, false, format)
 }
 
-// log(x) = e ln 2 + 2 atanh(t), t = (m - 1)/(m + 1), with x = m 2^e and m in
-// [3/4, 3/2), so |t| <= 1/5.
 @(private = "file")
 log_attempt :: proc(o: ^Oracle, x: f64, format: Float_Format, w: int) -> (u64, bool) {
+	return round_signed(log_interval(o, x, w), -w, format)
+}
+
+// log x for a positive finite x other than 1, at a scale of 2^-w: e ln 2 +
+// 2 atanh(t), t = (m - 1)/(m + 1), with x = m 2^e and m in [3/4, 3/2), so
+// |t| <= 1/5.
+@(private = "file")
+log_interval :: proc(o: ^Oracle, x: f64, w: int) -> Interval {
 	significand, exponent := dyadic(x)
 	e := bit_count(significand) - 1 + exponent
 	// m = significand / 2^(e - exponent); move it below 3/2.
@@ -222,7 +228,7 @@ log_attempt :: proc(o: ^Oracle, x: f64, format: Float_Format, w: int) -> (u64, b
 	}
 	ln2 := narrow(o.ln2, CONSTANT_PRECISION, w)
 	el := e >= 0 ? Interval{times(ln2.lo, int_of(e)), times(ln2.hi, int_of(e))} : Interval{times(ln2.hi, int_of(e)), times(ln2.lo, int_of(e))}
-	return round_signed(Interval{plus(el.lo, part.lo), plus(el.hi, part.hi)}, -w, format)
+	return Interval{plus(el.lo, part.lo), plus(el.hi, part.hi)}
 }
 
 // sin and cos of |x| = q pi/2 + r, |r| a little over pi/4 at most, from the
@@ -735,6 +741,46 @@ trig_constants_source :: proc(o: ^Oracle) -> string {
 		fmt.sbprintf(&b, "%s0x%016x", limb == 0 ? "" : ", ", low_bits(shift_down(wide.lo, 64*limb), 64))
 	}
 	strings.write_string(&b, "};\n")
+	return strings.to_string(b)
+}
+
+// The constants `core:math/repro`'s `log` is built from, as the Loke source
+// between log.loke's generated-block markers. For i in 0 ..= 128, d near
+// 1/(1 + i/128), of 29 bits so its product with an `f32` significand is
+// exact, and exactly 1 and 1/2 at the ends; then L = -log d, or -log 2d from
+// i = 53 on, as an `f64` pair, which is 0 at both ends. Then ln 2 as a part
+// of 42 bits, so a multiple by an exponent is exact, and the nearest `f64`
+// to the rest.
+log_constants_source :: proc(o: ^Oracle) -> string {
+	context.allocator = virtual.arena_allocator(&o.arena)
+	P :: 400
+	b: strings.Builder
+	strings.builder_init(&b)
+	strings.write_string(&b, "LOG_TABLE :: [387]u64{\n")
+	for i in 0 ..= 128 {
+		d := 1.0
+		pair := [2]f64{0, 0}
+		if i == 128 {
+			d = 0.5
+		} else if i > 0 {
+			d = split_round(divide_down(power_of_two(P + 7), int_of(128 + i)), P, 29)
+			v := log_interval(o, i >= 53 ? 2*d : d, P)
+			pair = exact_pair(Interval{negated(v.hi), negated(v.lo)}, P)
+		}
+		fmt.sbprintf(&b, "\t0x%016x, 0x%016x, 0x%016x,\n", transmute(u64)d, transmute(u64)pair[0], transmute(u64)pair[1])
+	}
+	strings.write_string(&b, "};\n")
+	ln2 := narrow(o.ln2, CONSTANT_PRECISION, P)
+	parts: [2][2]f64
+	for end, index in ([2]^big.Int{ln2.lo, ln2.hi}) {
+		parts[index][0] = split_round(end, P, 42)
+		parts[index][1] = rest_round(minus(end, scaled_value(parts[index][0], P)), P)
+	}
+	if parts[0] != parts[1] {
+		panic("ln 2 needs more bits to split")
+	}
+	fmt.sbprintf(&b, "LN2_HI :: 0x%016x;\n", transmute(u64)parts[0][0])
+	fmt.sbprintf(&b, "LN2_LO :: 0x%016x;\n", transmute(u64)parts[0][1])
 	return strings.to_string(b)
 }
 

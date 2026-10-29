@@ -11,6 +11,7 @@ Fixed :: [6]u64;
 FRACTION_BITS :: 320;
 
 FIXED_ONE :: Fixed{0, 0, 0, 0, 0, 1};
+FIXED_TWO :: Fixed{0, 0, 0, 0, 0, 2};
 
 LOW_64 :: u128(0xffffffffffffffff);
 
@@ -120,6 +121,18 @@ fixed_shift_down :: proc(a: Fixed, count: int) -> Fixed {
 	}
 	result[5] = a[5] >> count;
 	return result;
+}
+
+// 1/b within 2^-319, for b in [1, 4) whose nearest `f64` is `near`, by
+// Newton's iteration x (2 - b x) from near's reciprocal, within 2^-52.5 of
+// 1/b. A step takes an error e to b e^2 and adds under 1.5 2^-320 of
+// truncation, so three leave under 2^-319.
+fixed_reciprocal :: proc(b: Fixed, near: f64) -> Fixed {
+	x := fixed_of(1.0/near);
+	foreach (_ in 0 ..< 3) {
+		x = fixed_times(x, fixed_minus(FIXED_TWO, fixed_times(b, x)));
+	}
+	return x;
 }
 
 fixed_is_zero :: proc(a: Fixed) -> bool {
