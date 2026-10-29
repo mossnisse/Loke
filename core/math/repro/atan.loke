@@ -24,10 +24,11 @@
 //   2^-105 absolute (`two_sum`) and d + c n within 2^-105 relative; their
 //   quotient as a pair, its low part from the exact remainder of the high
 //   one's division, is within 2^-104 of u, and 2^-96 of the result.
-// - atan u is u - u^3/3 + ... + u^9/9, the rest under 2^-91 |u|. The part
-//   past u, with u^3's cross term in u's low part, is under 2^-17.5 |u| and
-//   evaluated within 5.1 ulps of itself, under 2^-68.2 |u|, and |u| is at
-//   most the result: at j = 1, both are about 2^-8, and from there on, or
+// - atan u is u - u^3/3 + ... + u^9/9, the rest, from u^11/11, under
+//   |u|^10/11 relative, 2^-83.4 for the largest u. The part past u, with
+//   u^3's cross term in u's low part, is under 2^-17.5 |u| and evaluated
+//   within 5.1 ulps of itself, under 2^-68.2 |u|, and |u| is at most the
+//   result: at j = 1, both are about 2^-8, and from there on, or
 //   with a base, the result is the larger. For j = 0, u is t's pair.
 // - Each table pair, and pi/2's, is within 2^-106 relative of its value;
 //   the high parts are summed exactly as pairs (`two_sum`), and the low

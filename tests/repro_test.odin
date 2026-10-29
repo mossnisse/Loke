@@ -152,5 +152,5 @@ repro_functions_round_correctly :: proc(t: ^testing.T) {
 			checked += 1
 		}
 	}
-	testing.expectf(t, checked == 32974 && constants == 79, "the probe printed %d checked results and %d constants", checked, constants)
+	testing.expectf(t, checked == 33214 && constants == 89, "the probe printed %d checked results and %d constants", checked, constants)
 }

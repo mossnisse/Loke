@@ -55,7 +55,7 @@ hypot_f64_of :: proc(a: f64, b: f64) -> f64 {
 	sh, sl := fast_two_sum(s, e + (pl + ql));
 	wh, wl := pair_root(sh, sl);
 	if (ea >= -1022) {
-		decided, v := f64_decided_within(wh, wl, HYPOT_MARGIN);
+		decided, v := f64_decided(wh, wl, HYPOT_MARGIN);
 		// Scaling back is exact, or overflows exactly when the result does.
 		if (decided) { return v*power_of_two(ea); }
 	}
@@ -105,7 +105,7 @@ hypot_slow :: proc(a: f64, b: f64, ea: int, near: f64, layout: Float_Layout) -> 
 	} else {
 		distance = fixed_minus(w, midpoint);
 	}
-	if (fixed_less(distance, Fixed{0x100000, 0, 0, 0, 0, 0}) && fixed_equal(fixed_times(midpoint, midpoint), s)) {
+	if (fixed_less(distance, Fixed{0x100000, 0, 0, 0, 0, 0}) && fixed_times(midpoint, midpoint) == s) {
 		if (kept & 1 == 1) { kept += 1; }
 		return fixed_round_finish(kept, unit, layout);
 	}

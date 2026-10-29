@@ -2,19 +2,25 @@
 // and `cos` in both widths.
 //
 // |x| = q pi/2 + r, |r| at most a little over pi/4, and sin or cos of |r| by
-// q's low two bits. The reduction gives r as an `f64` pair within 2^-130 of
-// it, which is relative 2^-68 even for the r nearest zero any `f64` gives,
+// q's low two bits. The reduction gives r as an `f64` pair within 2^-103 of
+// it relative, and within 2^-134 absolute besides for Cody and Waite's,
+// which is under 2^-72 relative even for the r nearest zero any `f64` gives,
 // about 2^-61 (Kahan and McDonald):
 //
 // - Below pi/4, r is the argument.
 // - Below 2^20 pi/2, Cody and Waite's: pi/2 in four parts, the first three of
 //   33 bits so q times each is exact for q < 2^20. |x| - q P1 is exact (both
-//   are multiples of 2^-53 and the difference is under 1), `two_sum` keeps the
-//   next two subtractions exact, and the fourth part is within 2^-152 of the
-//   rest of pi/2, its product rounded by under 2^-132.
+//   are multiples of 2^-53 and the difference is under 1), and `two_sum`
+//   keeps the next two subtractions exact. What rounds is the sum of their
+//   errors, q times the fourth part, which is about 2^-103, so the product is
+//   at most 2^-83, and the difference of the two, each by under 2^-53 of
+//   itself: under 2^-104 |r| and 2^-135 together. The fourth part is within 2^-159 of the rest of
+//   pi/2, so q times its error is under 2^-139.
 // - Above, Payne and Hanek's: x 2/pi modulo 4 from 448 bits of 2/pi at x's
-//   scale, in integers, which leaves q and a 320-bit fraction exact to
-//   2^-390. Its top 106 bits times pi/2 as an `f64` pair give r.
+//   scale, in integers, which leaves q exact and the fraction within 2^-393,
+//   truncated to 320 bits, so within 2^-319. The fraction is at least 2^-120
+//   here, the rest taking the slow path, and its top 106 bits, within 2^-105
+//   relative, times pi/2 as an `f64` pair give r within 2^-103.
 //
 // sin and cos of r come from a table of both at j/256, j the nearest integer
 // to 256 |r|, with t = |r| - j/256, |t| <= 2^-9, and their series in t: the
@@ -26,7 +32,11 @@
 //
 // The fast path returns h + l when it is decided within twice 2^-67; the
 // slow path recomputes the reduction and the series in 320-bit fixed point
-// and rounds that, its error under 2^-300 relative to any result.
+// and rounds that. There r is within 2^-318, the fraction's error times
+// pi/2 and two truncations, and the series, under 40 terms that each
+// truncate by under 2^-319, within 2^-313 absolute: under 2^-252 relative
+// to the smallest sine, about 2^-61, and far less to a cosine, at least
+// 0.7.
 package repro;
 
 import "core:unsafe";

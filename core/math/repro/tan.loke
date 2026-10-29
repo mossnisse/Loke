@@ -65,7 +65,7 @@ tan_f64 :: proc(x: f64) -> f64 {
 	if (x < 0.0) { ax = 0.0 - x; }
 	decidable, negative, h, l := tan_kernel(ax);
 	if (decidable) {
-		decided, y := f64_decided_within(h, l, TAN_MARGIN);
+		decided, y := f64_decided(h, l, TAN_MARGIN);
 		if (decided) {
 			if (negative != (x < 0.0)) { return 0.0 - y; }
 			return y;

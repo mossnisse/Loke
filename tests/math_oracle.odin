@@ -1106,14 +1106,12 @@ trig_constants_source :: proc(o: ^Oracle) -> string {
 	strings.builder_init(&b)
 
 	strings.write_string(&b, "SIN_COS_TABLE :: [808]u64{\n")
-	r2_of :: proc(a: ^big.Int) -> Interval {
-		return Interval{shift_down(times(a, a), P), shift_up(times(a, a), P)}
-	}
 	for j in 0 ..< 202 {
 		pairs: [2][2]f64 = {{0, 0}, {1, 0}}
 		if j > 0 {
 			a := shift_left(int_of(j), P - 8)
-			r2 := r2_of(a)
+			square := times(a, a)
+			r2 := Interval{shift_down(square, P), shift_up(square, P)}
 			sine := alternating_series(Interval{a, a}, r2, 2, P)
 			cosine := alternating_series(Interval{power_of_two(P), power_of_two(P)}, r2, 1, P)
 			pairs = {exact_pair(sine, P), exact_pair(cosine, P)}

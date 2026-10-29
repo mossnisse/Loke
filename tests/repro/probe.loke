@@ -382,6 +382,37 @@ LOG_SPECIAL :: [20]u64{
 	0x4480f0cf064dd592, 0x4480f0cf064dd593, 0x44b52d02c7e14af6, 0x3fb999999999999a,
 };
 
+// Every one-argument function's special arguments in each width: both
+// zeros, both infinities, quiet and signaling NaNs of both signs, and
+// negative finite values, -1, -1/2, the most negative, and the smallest
+// subnormal's negation. At run time each pattern is or'd with a zero the
+// compiler cannot see, so a signaling NaN arrives unquieted.
+UNARY_SPECIAL :: [12]u64{
+	0x0000000000000000, 0x8000000000000000, 0x7ff0000000000000, 0xfff0000000000000,
+	0x7ff8000000000000, 0xfff8000000000000, 0x7ff0000000000001, 0xfff4000000000000,
+	0xbff0000000000000, 0xbfe0000000000000, 0xffefffffffffffff, 0x8000000000000001,
+};
+UNARY_SPECIAL_F32 :: [12]u32{
+	0x00000000, 0x80000000, 0x7f800000, 0xff800000,
+	0x7fc00000, 0xffc00000, 0x7f800001, 0xffa00000,
+	0xbf800000, 0xbf000000, 0xff7fffff, 0x80000001,
+};
+// Some of them folded, against the same calls at run time.
+FOLDED_SPECIAL :: [7]f64{
+	repro.log(unsafe.transmute(f64, u64(0x8000000000000000))),
+	repro.log(-1.0),
+	repro.log10(unsafe.transmute(f64, u64(0xfff0000000000000))),
+	repro.exp(unsafe.transmute(f64, u64(0xfff0000000000000))),
+	repro.sin(unsafe.transmute(f64, u64(0x7ff0000000000001))),
+	repro.atan(unsafe.transmute(f64, u64(0xfff0000000000000))),
+	repro.tan(unsafe.transmute(f64, u64(0x8000000000000000))),
+};
+FOLDED_SPECIAL_F32 :: [3]f32{
+	repro.log_f32(unsafe.transmute(f32, u32(0x80000000))),
+	repro.acos_f32(unsafe.transmute(f32, u32(0xff800000))),
+	repro.log2_f32(unsafe.transmute(f32, u32(0x7f800000))),
+};
+
 bits :: proc(x: f64) -> u64 { return unsafe.transmute(u64, x); }
 bits32 :: proc(x: f32) -> u64 { return u64(unsafe.transmute(u32, x)); }
 
@@ -815,6 +846,37 @@ main :: proc() {
 			fmt.println("Hypot", 32, bits32(f32(y)), bits32(f32(x)), bits32(repro.hypot_f32(f32(y)*f32(one), f32(x))));
 		}
 	}
+	noise := u64(os.args.len()) - 1;
+	unary_special := UNARY_SPECIAL;
+	unary_special_32 := UNARY_SPECIAL_F32;
+	foreach (i in 0 ..< 12) {
+		x := unsafe.transmute(f64, unary_special[i] | noise);
+		y := unsafe.transmute(f32, unary_special_32[i] | u32(noise));
+		foreach (f in [9]Function{.Exp, .Sin, .Cos, .Tan, .Log, .Log2, .Log10, .Asin, .Acos}) {
+			fmt.println(f, 64, unary_special[i], bits(fast64(f, x)));
+			fmt.println(f, 32, unary_special_32[i], bits32(fast32(f, y)));
+		}
+		fmt.println("Atan", 64, unary_special[i], bits(repro.atan(x)));
+		fmt.println("Atan", 32, unary_special_32[i], bits32(repro.atan_f32(y)));
+	}
+	folded := FOLDED_SPECIAL;
+	folded_32 := FOLDED_SPECIAL_F32;
+	runtime := [7]f64{
+		repro.log(unsafe.transmute(f64, u64(0x8000000000000000) | noise)),
+		repro.log(unsafe.transmute(f64, u64(0xbff0000000000000) | noise)),
+		repro.log10(unsafe.transmute(f64, u64(0xfff0000000000000) | noise)),
+		repro.exp(unsafe.transmute(f64, u64(0xfff0000000000000) | noise)),
+		repro.sin(unsafe.transmute(f64, u64(0x7ff0000000000001) | noise)),
+		repro.atan(unsafe.transmute(f64, u64(0xfff0000000000000) | noise)),
+		repro.tan(unsafe.transmute(f64, u64(0x8000000000000000) | noise)),
+	};
+	runtime_32 := [3]f32{
+		repro.log_f32(unsafe.transmute(f32, u32(0x80000000) | u32(noise))),
+		repro.acos_f32(unsafe.transmute(f32, u32(0xff800000) | u32(noise))),
+		repro.log2_f32(unsafe.transmute(f32, u32(0x7f800000) | u32(noise))),
+	};
+	foreach (i in 0 ..< 7) { fmt.println("constant", bits(folded[i]) == bits(runtime[i])); }
+	foreach (i in 0 ..< 3) { fmt.println("constant", bits32(folded_32[i]) == bits32(runtime_32[i])); }
 	log_special := LOG_SPECIAL;
 	foreach (i in 0 ..< 20) {
 		x := unsafe.transmute(f64, log_special[i]);

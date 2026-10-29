@@ -26,29 +26,18 @@ package repro;
 
 import "core:unsafe";
 
-// `log2` or `log10` by `base`, 0 or 1: `log`'s special cases, then the
-// general one.
+// `log2` or `log10` by `base`, 0 or 1: `log`'s special cases, which give
+// the same results here, through `log`, then the general one. Every
+// negative argument and every NaN is at or above +Inf's pattern.
 log_base :: proc(x: f64, base: int) -> f64 {
 	bits := unsafe.transmute(u64, x);
-	if (bits >= 0x7ff0000000000000) {
-		if (bits == 0x7ff0000000000000) { return x; }
-		if (bits == 0x8000000000000000) { return unsafe.transmute(f64, u64(0xfff0000000000000)); }
-		return unsafe.transmute(f64, u64(CANONICAL_NAN_F64));
-	}
-	if (bits == 0) { return unsafe.transmute(f64, u64(0xfff0000000000000)); }
-	if (bits == 0x3ff0000000000000) { return 0.0; }
+	if (bits == 0 || bits >= 0x7ff0000000000000 || bits == 0x3ff0000000000000) { return log(x); }
 	return log_base_f64_of(x, base);
 }
 
 log_base_f32 :: proc(x: f32, base: int) -> f32 {
 	bits := unsafe.transmute(u32, x);
-	if (bits >= 0x7f800000) {
-		if (bits == 0x7f800000) { return x; }
-		if (bits == 0x80000000) { return unsafe.transmute(f32, u32(0xff800000)); }
-		return unsafe.transmute(f32, u32(CANONICAL_NAN_F32));
-	}
-	if (bits == 0) { return unsafe.transmute(f32, u32(0xff800000)); }
-	if (bits == 0x3f800000) { return f32(0.0); }
+	if (bits == 0 || bits >= 0x7f800000 || bits == 0x3f800000) { return log_f32(x); }
 	return log_base_f32_of(f64(x), base);
 }
 

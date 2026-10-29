@@ -198,9 +198,9 @@ arc_slow :: proc(a: f64, w_near: f64, a_small: bool, part: int, layout: Float_La
 		}
 		return atan_slow_of(fixed_of(two_a*power_of_two(k)), fixed_sqrt(fixed_scaled(r, 2), two_w), two_a, two_w, k, big_j, part, layout);
 	}
+	// r < 1/2 here, and its top bit puts 4 r 2^(2s) in [1, 4) exactly.
 	big_j := atan_wide_index(two_w, two_a);
-	e, _ := log_split(two_w);
-	s := 0 - e;
+	s := (FRACTION_BITS - fixed_top_bit(r) - 1)/2;
 	root := fixed_sqrt(fixed_scaled(r, 2 + 2*s), two_w*power_of_two(s));
 	if (big_j == 0) { return atan_slow_of(root, fixed_of(two_a), two_w, two_a, s, 0, part, layout); }
 	return atan_slow_of(fixed_scaled(root, 0 - s), fixed_of(two_a), two_w, two_a, 0, big_j, part, layout);
