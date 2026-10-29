@@ -1,6 +1,6 @@
 # Linear algebra library plan
 
-Status: proposal, 2026-10-29. Nothing here is implemented. This document
+Status: proposal, 2026-10-29, with its design questions settled the same day. Nothing here is implemented. This document
 proposes a `core:math/linalg` package and outlines a later dense-matrix
 package; it does not change the language contract. The authorities it builds
 on are [Library numeric types](design.md#library-numeric-types),
@@ -82,7 +82,9 @@ is the existing reason these are library types.
 Vectors of 2 to 4 components are the common case in every domain above, and
 named fields read as the mathematics does (`p.x`); a fixed array has no `.x`
 selectors and the language has no swizzles. `operator([])` adds a runtime
-index for axis loops, panicking outside `0 ..< N` as array indexing does.
+index for axis loops, `v[i]`, and a matrix takes two,
+`m[r, c]` ([Indexing and slicing](design.md#indexing-and-slicing)); both
+panic outside the shape, as array indexing does.
 
 Matrices have one generic type for every shape. `R` and `C` are value
 parameters, so `Matrix(f64, 6, 6)` and `Matrix(f32, 3, 4)` need nothing new,
@@ -113,26 +115,59 @@ numeric types alike; integer overflow panics as for the scalar.
 
 Members that need a square root, a trigonometric function, or a degenerate
 input check (`length`, `normalize`, `inverse`, `solve`, rotation and
-projection constructors) exist for `f32` and `f64`. Methods need no `_f32`
-suffix, because the receiver's type selects the member; constructors that take
-only scalars are members of the specialized type
-(`Matrix(f32, 4, 4).perspective(...)`), so an unfixed literal never has to
-choose a width.
+projection constructors) are generic too, bounded by an interface the package
+declares:
 
-Extending those members to a user scalar type needs an interface for
-`sqrt`, `sin`, `cos`, and friends that `f32` and `f64` satisfy too; see
-[Questions](#questions-to-settle-before-implementing).
+```loke
+Real :: interface($T: type) {
+	interfaces.Numeric(T);
+	interfaces.Ordered(T);
+	(value: f64) T(value) -> T;             // constants such as 0.5 and pi
+	slot sqrt:      proc(self) -> T;
+	slot sin:       proc(self) -> T;
+	slot cos:       proc(self) -> T;
+	slot asin:      proc(self) -> T;
+	slot acos:      proc(self) -> T;
+	slot atan2:     proc(self, x: T) -> T;  // self is y
+	slot abs:       proc(self) -> T;
+	slot floor:     proc(self) -> T;
+	slot ceil:      proc(self) -> T;
+	slot round:     proc(self) -> T;
+	slot is_finite: proc(self) -> bool;
+	slot is_normal: proc(self) -> bool;     // finite, non-zero, full precision
+}
+```
 
-There is no implicit widening or narrowing. Conversion hooks give
-`Vector3(f32)(v)` between the float widths and from `i32` and `i64`
-vectors, each component converting as the scalar does.
+A slot implementation may be inherent to the type or declared in the
+interface's own package ([Runtime polymorphism](design.md#runtime-polymorphism)),
+so `linalg` implements the slots for `f32` and `f64` itself, with `math.sqrt`
+and `core:math/repro`, and a user type such as a dual number, a fixed-point
+value, or an interval supplies inherent methods. Automatic differentiation
+through a transform then needs nothing from this package, which is how
+Eigen's scalar-type genericity is used in practice. There is one generic
+implementation; a specialized `f32` or `f64` block may replace a member later
+for speed, as `Complex` does, without changing its result.
+
+Methods need no `_f32` suffix, because the receiver's type selects the
+member; constructors that take only scalars are members of the instantiated
+type (`Matrix(f32, 4, 4).perspective(...)`), so an unfixed literal never has
+to choose a width.
+
+There is no implicit widening or narrowing. One conversion hook,
+`from_vector :: hook(convert) proc(v: Vector3($U)) -> Vector3(T)`, bounded by
+the requirement `(value: U) T(value) -> T`, converts each component as the
+scalar `T(x)` does, so `Vector3(f32)(v)` narrows a `Vector3(f64)`, widens an
+integer vector, or reaches a user type through its own hook. A same-type
+conversion is the built-in identity, which takes precedence
+([Resolving `T(...)`](design.md#resolving-t)). Matrices and their shapes
+follow the same rule.
 
 ### Storage and multiplication order
 
 - Vectors are column vectors: `m * v` transforms `v`. There is no `v * m`;
   `transpose(m) * v` says it.
 - Storage is column-major: `m.columns[c][r]` is row `r`, column `c`, and
-  `m.at(r, c)` reads it in the usual subscript order. `to_array` gives the
+  `m[r, c]` reads it in the usual subscript order. `to_array` gives the
   same order flat, which is what OpenGL takes with `transpose = GL_FALSE`,
   what Direct3D and Vulkan shaders read as `column_major`, and what LAPACK
   expects. Row-major consumers transpose once at the boundary.
@@ -146,11 +181,14 @@ vectors, each component converting as the scalar does.
 
 - Angles are radians.
 - Right-handed: `cross(X, Y) == Z`, and a positive angle rotates
-  counterclockwise when seen from the positive end of the axis. The
-  constructors that depend on handedness are the camera ones, which build a
-  right-handed view space; a left-handed convention composes them with
-  `scaling({1, 1, -1})`, as the documentation shows. Separate left-handed
-  names are a [question](#questions-to-settle-before-implementing).
+  counterclockwise when seen from the positive end of the axis. Only the
+  camera constructors depend on handedness. The unsuffixed ones build a
+  right-handed view space, the convention of mathematics, OpenGL, glTF, and
+  robotics; `perspective_lh`, `orthographic_lh`, `look_at_lh`, and
+  `look_to_lh` build a left-handed one, looking down `+Z`, for Direct3D's
+  traditional convention and engines that follow it. Composing a right-handed
+  constructor with a `Z` flip would also work, but the flip goes after the
+  view matrix and before the projection, which is easy to get backward.
 - Rotations in 3D are `math.Quaternion(T)` with `real` as the scalar part
   (often called `w`). A unit `q` rotates `v` as `q v q*`, an active rotation;
   `q` and `-q` are the same rotation. `a * b` rotates by `b` first, so
@@ -210,7 +248,12 @@ Depth_Range :: enum {
   `.One_To_Zero` it is the usual infinite reversed projection.
 - Invalid parameters are programmer errors and panic, as `math.clamp` does
   for reversed bounds: `fovy` outside `(0, pi)`, a non-positive `aspect` or
-  `near`, `far <= near`, or a NaN.
+  `near`, `far <= near`, or a NaN. No such parameters describe a projection,
+  and a value from runtime settings (a field-of-view slider) is bounded where
+  it is read; an `Option` would push a check that cannot fail usefully onto
+  every caller.
+- The `_lh` constructors take the same parameters and `Depth_Range`, and
+  differ from the right-handed ones only in the sign of the view-space `z`.
 - `look_at(eye, target, up)` and `look_to(eye, forward, up)` build the
   right-handed view matrix whose rows are the side, up, and back vectors.
   Both return `Option`: `.none` when the direction is zero or parallel to
@@ -218,8 +261,8 @@ Depth_Range :: enum {
 
 ### Degenerate inputs are explicit
 
-- `normalize` returns `Option(V)`: `.none` when the squared length is below
-  the format's smallest normal, infinite, or NaN. That covers the zero
+- `normalize` returns `Option(V)`: `.none` when the squared length is not
+  `is_normal`: below the format's smallest normal, infinite, or NaN. That covers the zero
   vector, vectors whose squares underflow or overflow, and NaN, and leaves
   every other vector within a few ulps of length 1. `normalize_or(v, fallback)`
   spells the common pattern once. Nothing silently returns zero or NaN.
@@ -253,8 +296,9 @@ optimization level, and at compile time:
   largest magnitude in the column, the first on a tie, so the elimination
   order is fixed. At 2 x 2 to 4 x 4, `determinant` is the cofactor expansion
   in a fixed order, which is exact for integers.
-- `length` uses `math.sqrt`, which is correctly rounded. `sin`, `cos`,
-  `asin`, `acos`, and `atan2` come from `core:math/repro`. Constructors run
+- For `f32` and `f64`, the `Real` slots are `math.sqrt`, which is correctly
+  rounded, and `core:math/repro`'s `sin`, `cos`, `asin`, `acos`, and `atan2`.
+  A user scalar type's determinism is its own. Constructors run
   per object or per frame, not per element, so its roughly fourfold cost
   ([Deterministic math functions](open-questions.md#deterministic-math-functions))
   is not on the hot path. `perspective` takes `cot(fovy/2)` as `cos/sin`.
@@ -267,7 +311,7 @@ a general library would otherwise have to document as a warning.
 ## Proposed API
 
 Sketches in the [standard-library](standard-library.md) style; constraints and
-receiver modes are omitted. "Float" means members for `f32` and `f64`.
+receiver modes are omitted. "Real" means members bounded by `Real(T)`.
 
 ### Vectors
 
@@ -279,17 +323,34 @@ Vector2/3/4(T), any Numeric T:
   dot, length_squared, distance_squared
   min, max                               // component-wise math.min, math.max
   to_array, from_array, format
+  conversion hook from VectorN(U) wherever T(u) converts
   Vector3: cross; extend(w) -> Vector4; xy()
   Vector4: xyz()
   Vector2: extend(z) -> Vector3; perp() -> (-y, x); cross -> T   // the z of the 3D cross
 
-Float:
+Real:
   length, distance, normalize -> Option(V), normalize_or(fallback)
   lerp(a, b, t), angle_between(a, b)     // atan2(|a x b|, a . b), stable near 0 and pi
   project(onto_unit), reject(unit_normal), reflect(unit_normal)
   abs, floor, ceil, round                // component-wise
-  conversion hooks from the other width and from i32 and i64 vectors
 ```
+
+### Approximate equality
+
+```text
+approx_equal(a, b, absolute: T, relative: T) -> bool
+```
+
+A procedure group over `T` itself and every vector, matrix, and quaternion
+type with a `Real` element. It holds when every component pair satisfies
+`|a - b| <= max(absolute, relative * max(|a|, |b|))`: the absolute tolerance
+governs near zero, where a relative one means nothing, and the relative one
+elsewhere. Both tolerances are required, because no default suits both
+metres and nanometres; a negative or NaN tolerance panics; a NaN component is
+never equal; equal infinities are. Comparing two rotations, where `q` and
+`-q` agree, is written `approx_equal(a, b, ...) || approx_equal(a, -b, ...)`.
+An ulp-distance model was left out: it breaks down at zero, which is where
+geometric residuals land.
 
 ### Matrices
 
@@ -297,7 +358,8 @@ Float:
 Matrix(T, R, C), any Numeric T:
   identity()                                   where R == C
   from_columns, from_rows, from_array, to_array
-  at(r, c), column(c) -> [R]T, row(r) -> [C]T
+  [r, c] and [r, c]=, column(c) -> [R]T, row(r) -> [C]T
+  conversion hook from Matrix(U, R, C) wherever T(u) converts
   transpose -> Matrix(T, C, R)
   * (Matrix(T, R, K), Matrix(T, K, C)) -> Matrix(T, R, C)
   * (Matrix, T), * (T, Matrix), +, -, ==
@@ -315,27 +377,27 @@ Square transforms, any Numeric T:
                    translation_2d(Vector2), scaling_2d(Vector2),
                    transform_point_2d, transform_direction_2d
 
-Float:
+Real:
   inverse -> Option, solve(b: Matrix(T, N, K)) -> Option(Matrix(T, N, K))
   determinant                                  any square size, through LU
   Matrix(T, 4, 4): inverse_affine, normal_matrix -> Option(Matrix(T, 3, 3)),
                    project_point -> Option(Vector3),
                    rotation_x/y/z(angle), rotation(axis, angle),
-                   perspective, orthographic, look_at, look_to
+                   perspective, orthographic, look_at, look_to,
+                   and the _lh form of each of those four
   Matrix(T, 3, 3): rotation_x/y/z, rotation(axis, angle), rotation_2d(angle)
   Matrix(T, 2, 2): rotation(angle)
 ```
 
 ### Rotations over `math.Quaternion(T)`
 
-Free procedures; each float one is a group of an `f32` and an `f64` member,
-selected by its typed argument.
+Free procedures, generic over the element type of their typed arguments.
 
 ```text
 any Numeric T:
   rotate(q, v: Vector3(T)) -> Vector3(T)
       // t := 2*cross(u, v); v + real*t + cross(u, t), for u the vector part
-Float:
+Real:
   quaternion_from_axis_angle(axis, angle)      // (cos(angle/2), sin(angle/2) * axis)
   quaternion_normalize -> Option
   quaternion_from_matrix(Matrix(T, 3, 3))      // Shepperd's method
@@ -370,11 +432,17 @@ ships. That plan has to settle:
 
 Ordered by how foundational each part is, not by a particular program:
 
-1. **Core values.** The vector types; `Matrix(T, R, C)` with products,
-   transpose, conversions, and determinants; float `inverse` and `solve`;
-   2D and 3D transforms; `quaternion_from_axis_angle`, `rotate`,
-   `quaternion_normalize`, and `from_quaternion`; `perspective` and
-   `orthographic` in all three depth ranges; `look_at` and `look_to`.
+1. **Core values.** First, a spike that confirms the compiler accepts `Real`
+   with slots implemented in `linalg` for the built-in floats, called from a
+   generic body, and inlines them; a divergence from
+   [Runtime polymorphism](design.md#runtime-polymorphism) goes in
+   `known-gaps.md` and is fixed before the package depends on it. Then the
+   vector types; `Matrix(T, R, C)` with products, transpose, conversions, and
+   determinants; `inverse` and `solve`; 2D and 3D transforms;
+   `quaternion_from_axis_angle`, `rotate`, `quaternion_normalize`, and
+   `from_quaternion`; `perspective` and `orthographic` in all three depth
+   ranges and both handednesses; `look_at` and `look_to` and their `_lh`
+   forms; and `approx_equal`.
 2. **Rotations and geometry helpers.** `quaternion_from_matrix`,
    `quaternion_between`, `nlerp`, `slerp`, Euler sequences, rotation vectors,
    `angle_between`, `project`, `reject`, `reflect`, `normal_matrix`,
@@ -412,11 +480,17 @@ section and package-layout line, a `CHANGELOG.md` line, and the tests below.
 - **Clip conventions**: for each `Depth_Range`, a point on the view axis at
   the near plane maps to the range's first value and at the far plane to its
   second; clip `w` is `-z_view`; `+Y` maps to positive NDC `y`; `look_at`
-  from `+Z` toward the origin has the identity rotation.
+  from `+Z` toward the origin has the identity rotation. Each `_lh` form
+  agrees with its right-handed twin applied to the `Z`-mirrored scene.
+- **Approximate equality**: each tolerance governing its own regime, at and
+  beside the boundary; NaN components; equal and opposite infinities; the
+  panics for negative and NaN tolerances.
 - **Element types**: every test at `f32` and `f64`; `i32` and `i64` vectors
-  and matrices, with an overflowing `dot` panicking; and a small user numeric
-  type in the test (a rational or fixed-point record), to show the generic
-  members accept one.
+  and matrices, with an overflowing `dot` panicking; conversions between all
+  of them; and two user types in the test, a rational record through the
+  `Numeric` members and a dual number through the `Real` ones, whose
+  derivative part of `length` and `rotate` is checked against the analytic
+  derivative.
 - **Determinism**: results printed as bit patterns, the same at every
   optimization and [CPU level](compiler-guide.md#cpu-levels) and when folded
   at compile time, as `tests/repro_test.odin` checks for `core:math/repro`.
@@ -430,28 +504,37 @@ section and package-layout line, a `CHANGELOG.md` line, and the tests below.
   benchmarks.
 - Proper Euler sequences, dual quaternions, and a condition-number estimate.
 
-## Questions to settle before implementing
+## Settled questions
 
-- **User scalar types beyond `Numeric`.** `length`, `normalize`, and the
-  rotation constructors could accept a fixed-point or dual-number `T` through
-  an interface for `sqrt` and the trigonometric functions. `f32` and `f64`
-  have no such methods, and an extension giving them some would be invisible
-  to callers ([Methods and implementation blocks](design.md#methods-and-implementation-blocks)),
-  so this needs either inherent members on the built-in floats or a
-  witness-style interface. Until then those members are `f32` and `f64` only.
-- **Complex elements.** `Complex(T)` satisfies `Numeric`, so `Vector3(Complex(f64))`
-  works; `dot` is the bilinear product, and a conjugating `inner` would be a
-  separate name.
-- **Left-handed constructors**: names of their own, or composition with a `Z`
-  flip, as proposed.
-- **Generic conversion hooks**: whether `Vector3(T)` from `Vector3($U)` can be
-  constrained to convertible pairs, or the hooks stay a fixed list.
-- **Short names**: whether the package exports aliases such as
-  `Matrix4f :: Matrix(f32, 4, 4)`, or leaves them to programs. The proposal
-  leaves them out.
-- **Approximate equality** in the public API or only in tests, and with which
-  tolerance model (absolute, relative, ulps). The proposal keeps it in tests.
-- **Projection validation**: panics, as proposed, or `Option`, since a field
-  of view from runtime settings is plausible input.
-- **Two-index subscripts**: whether `operator([])` may take two indices, which
-  would let `m[r, c]` replace `m.at(r, c)`.
+Settled on 2026-10-29; the sections above carry the decisions.
+
+- **User scalar types beyond `Numeric`**: the members that need `sqrt` or
+  trigonometry are generic over `linalg.Real(T)`, whose slots `linalg`
+  implements for `f32` and `f64` ([Element types](#element-types)).
+  Specialized `f32`-and-`f64`-only blocks were the alternative; they would
+  have left dual numbers and fixed point with arithmetic alone.
+- **Complex elements**: `dot` is the bilinear product for every `T`, as
+  `Numeric` defines it. Hermitian products need a conjugate, which `Numeric`
+  does not have, and belong with the dense package, where complex matrices
+  are used.
+- **Handedness**: right-handed unsuffixed names, plus `_lh` forms of the four
+  camera constructors ([Coordinates and rotations](#coordinates-and-rotations)).
+  A required handedness argument was rejected as noise for the right-handed
+  majority; right-handed only was rejected because the hand-composed flip is
+  easy to place wrongly.
+- **Conversion hooks**: one generic hook per type, bounded by the expression
+  requirement `(value: U) T(value) -> T`.
+- **Short names**: none exported. An alias is the same type, so a program's
+  own `Vec3 :: linalg.Vector3(f32);` costs no interoperability, and the
+  package avoids a grid of names such as `Vector3f`, `Vector3d`, and
+  `Vector3i`.
+- **Approximate equality**: public, with both tolerances required
+  ([Approximate equality](#approximate-equality)).
+- **Projection validation**: panics ([Projections and clip depth](#projections-and-clip-depth)).
+- **Two-index subscripts**: the language has them
+  ([Indexing and slicing](design.md#indexing-and-slicing)), so `m[r, c]`
+  replaces the proposed `m.at(r, c)`.
+
+What remains open is implementation risk, not design: whether the compiler
+handles interface-package slots for built-in types as the specification says,
+which milestone 1's spike settles first.
