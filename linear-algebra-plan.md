@@ -1,6 +1,6 @@
 # Linear algebra library plan
 
-Status: proposal, 2026-10-29, with its design questions settled the same day. Nothing here is implemented. This document
+Status: proposal, 2026-10-29, with its design questions settled and its compiler spike done the same day. The package itself is not implemented. This document
 proposes a `core:math/linalg` package and outlines a later dense-matrix
 package; it does not change the language contract. The authorities it builds
 on are [Library numeric types](design.md#library-numeric-types),
@@ -317,7 +317,8 @@ receiver modes are omitted. "Real" means members bounded by `Real(T)`.
 
 ```text
 Vector2/3/4(T), any Numeric T:
-  splat(value: T); unit_x(), unit_y(), unit_z(), unit_w()   // as the length allows
+  from_components(x, y, ...); splat(value: T)
+  unit_x(), unit_y(), unit_z(), unit_w()   // as the length allows
   + - (binary), - (unary), * / (component-wise); * (V, T), * (T, V), / (V, T)
   ==, exact and component-wise; [] and []= with a runtime index
   dot, length_squared, distance_squared
@@ -432,12 +433,8 @@ ships. That plan has to settle:
 
 Ordered by how foundational each part is, not by a particular program:
 
-1. **Core values.** First, a spike that confirms the compiler accepts `Real`
-   with slots implemented in `linalg` for the built-in floats, called from a
-   generic body, and inlines them; a divergence from
-   [Runtime polymorphism](design.md#runtime-polymorphism) goes in
-   `known-gaps.md` and is fixed before the package depends on it. Then the
-   vector types; `Matrix(T, R, C)` with products, transpose, conversions, and
+1. **Core values.** The spike is done ([Spike results](#spike-results)).
+   The vector types; `Matrix(T, R, C)` with products, transpose, conversions, and
    determinants; `inverse` and `solve`; 2D and 3D transforms;
    `quaternion_from_axis_angle`, `rotate`, `quaternion_normalize`, and
    `from_quaternion`; `perspective` and `orthographic` in all three depth
@@ -535,6 +532,53 @@ Settled on 2026-10-29; the sections above carry the decisions.
   ([Indexing and slicing](design.md#indexing-and-slicing)), so `m[r, c]`
   replaces the proposed `m.at(r, c)`.
 
-What remains open is implementation risk, not design: whether the compiler
-handles interface-package slots for built-in types as the specification says,
-which milestone 1's spike settles first.
+## Spike results
+
+Done 2026-10-29. `tests/pkg/real_interface` is a cut-down package with `Real`,
+`Vector3`, and `Matrix(T, R, C)`, used from a program with `f32`, `f64`,
+`i64`, and a forward-mode dual number. It runs, and in optimized IR
+`Vector3(f32).length()` through the `sqrt` slot is three multiplies, two adds,
+and `llvm.sqrt.f32`, with no call left.
+
+What held as specified:
+
+- A slot implemented by a package-private extension on `f32` and `f64` in the
+  interface's package is met for every importer and reached from a generic
+  body ([Interface bodies](design.md#interface-bodies)); a user type meets it
+  with inherent methods.
+- Method bounds by shape (`where R == C`), two-index subscripts, the
+  `(value: f64) T(value) -> T` requirement, and degenerate input through
+  `is_normal`.
+
+Compiler bugs found and fixed in the same change, each with a regression test
+(`tests/run/generic_member_parameters`,
+`tests/err/generic_operator_hook_roles`):
+
+- A record's value parameters did not bind in a procedure's parameter pattern,
+  so `proc(m: M($R, $C))` could not be called at all.
+- An operator or conversion hook with generic parameters of its own was never
+  found, and a malformed one went unreported; a generic member could not be
+  called through its type (`M(2, 3).times(a, b)`). This blocked the matrix
+  product `Matrix(T, R, C) * Matrix(T, C, $K)` and the generic conversion hook,
+  which [Conversion hooks](design.md#conversion-hooks) now specifies.
+
+What the package must allow for:
+
+- **Extensions on the floats are `@(private)`.** A public extension is exported
+  under the package's name, so `sqrt` on both `f32` and `f64` would be two
+  exports of one name. Private ones still meet the slot.
+- **Literals from another package name their fields**
+  ([Struct literals](design.md#struct-literals)):
+  `linalg.Vector3(f32){x = 1, y = 2, z = 3}`. Each vector type gets
+  `from_components(x, y, z)` as `Complex` has, and the question of a
+  positional opt-in is in
+  [Positional literals for vocabulary records](open-questions.md#positional-literals-for-vocabulary-records).
+- **A program's alias names an instantiation**, `Vec3 :: linalg.Vector3(f32);`;
+  a generic one, `Vec :: linalg.Vector3;`, is rejected, which is
+  [Parametric aliases](open-questions.md#parametric-aliases).
+- **A user scalar declared in `package main` marks its operators `@(public)`.**
+  `Numeric`'s expression requirements are checked in the interface's package,
+  so a private inherent `+` does not meet them there, while `Real`'s slots are
+  met by private methods. The diagnostic now says so; the asymmetry is in
+  [Visibility in slot and expression requirements](open-questions.md#visibility-in-slot-and-expression-requirements),
+  and the documentation of `Real` shows the attribute.

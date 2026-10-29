@@ -2264,7 +2264,18 @@ check_binary :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id) {
 	}
 
 	if !builtin_operator_applies(k.c, v.op, operand_type) {
-		operator_mismatch2(k, v.op_span, v.op, lhs, rhs)
+		// Said in the message, as for ordering: an interface requirement keeps
+		// only the message, and a hidden inherent operator is the likely cause of
+		// a requirement that holds in the type's own package and nowhere else.
+		if hidden_inherent_operator(k, operator_text(v.op), []Type_Id{lhs, rhs}) {
+			errorf(
+				k.c, v.op_span, "L0318",
+				"`%s` does not apply to `%s` here: its inherent `%s` is not `@(public)`",
+				operator_text(v.op), type_name(k.c, lhs), operator_text(v.op),
+			)
+		} else {
+			operator_mismatch2(k, v.op_span, v.op, lhs, rhs)
+		}
 		v.type = INVALID_TYPE
 		return
 	}

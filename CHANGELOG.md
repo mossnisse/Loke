@@ -399,6 +399,21 @@ checklist.
 
 ### Fixed
 
+- A generic record's value parameters bind in a procedure's parameter pattern
+  as its type parameters do, so `rows :: proc(m: M($R, $C)) -> int` compiles;
+  before, every call reported `` `$R` is not bound here ``
+  ([Specialization](design.md#specialization)).
+- A member of a generic `impl` that adds generic parameters of its own works
+  as an operator, as `operator(*) proc(left: M(R, C), right: M(C, $K))`, as a
+  conversion hook generic over its source, now specified in
+  [Conversion hooks](design.md#conversion-hooks), and when called through its
+  type, as `M(2, 3).times(a, b)`. File-scope generic operators are found too.
+  Before, such operators and hooks were never found, and a malformed one
+  went unreported; it now gets the concrete declaration's `L0416` or `L0488`.
+- An arithmetic operator that does not apply because the type's inherent one is
+  not `@(public)` now says so, as ordering already did, including when an
+  interface requirement fails for a type declared in a package that exports
+  nothing by default.
 - `Status` and `try_make` are listed among the [predeclared names](design.md#predeclared-names), which they have always been, and the VS Code grammar now highlights them as such. The specification also records `@(cross_thread)` in [procedure-type compatibility](design.md#procedure-type) and that a pooled task runs on a worker rather than a thread of its own.
 - A mutable borrow through a pointer passed to a read-only parameter is
   checked as read-only even when an index on the way calls something that

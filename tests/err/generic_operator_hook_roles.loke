@@ -1,0 +1,17 @@
+// design.md "Operator declarations" and "Conversion hooks": a generic operator
+// or hook is checked for its role where it is declared, as a concrete one is.
+package main;
+
+P :: struct($T: type) { x: T }
+
+too_many :: operator(+) proc(a: P($U), b: P(U), c: int) -> P(U) { return a; }
+
+convert_outside :: hook(convert) proc(other: P($U)) -> P(int) { return {}; }
+
+Owned :: struct { n: int }
+
+impl Owned {
+	drop_with :: hook(drop) proc(self: inout, $N: int) {}
+}
+
+main :: proc() {}

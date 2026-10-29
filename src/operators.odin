@@ -76,20 +76,62 @@ resolve_operator_declaration :: proc(k: ^Checker, d: ^Decl, value: ^Expr_Operato
 		}
 	}
 
-	// Every operator declaration outside a procedure also joins its package's
-	// set, which is what an extension block and a file-scope declaration are
-	// found through. A local one is found through its scope.
+	join_package_operators(k, value.symbol, symbol_id)
+}
+
+// The operator a generic template declares, recorded as
+// `resolve_operator_declaration` records a concrete one, so lookup finds it
+// before it is instantiated. Each instance's shape is checked when it is made.
+mark_template_operator :: proc(k: ^Checker, d: ^Decl) {
+	if d.kind != .Const || len(d.values) != 1 {
+		return
+	}
+	value, is_operator := d.values[0].(^Expr_Operator)
+	if !is_operator || value.hook != .None {
+		return
+	}
+	literal, is_proc := value.value.(^Expr_Proc)
+	if !is_proc {
+		return
+	}
+	shape, overloadable := operator_shape(value.symbol)
+	if !overloadable {
+		errorf(k.c, value.symbol_span, "L0416", "`%s` is not an overloadable operator", value.symbol)
+		return
+	}
+	// The arity is in the syntax; the parameter types wait for an instance.
+	if literal.signature != nil {
+		count := 0
+		for parameter in literal.signature.params {
+			count += max(len(parameter.names), 1)
+		}
+		if count < shape.min || (shape.max >= 0 && count > shape.max) {
+			errorf(k.c, value.symbol_span, "L0416", "`operator(%s)` takes %s, found %d", value.symbol, arity_text(shape), count)
+			return
+		}
+	}
+	if sym := symbol_of(k.c, d.symbols[0]); sym != nil {
+		sym.operator = value.symbol
+		join_package_operators(k, value.symbol, d.symbols[0])
+	}
+}
+
+// Every operator declaration outside a procedure also joins its package's set,
+// which is what an extension block and a file-scope declaration are found
+// through. A local one is found through its scope.
+@(private = "file")
+join_package_operators :: proc(k: ^Checker, symbol: string, symbol_id: Symbol_Id) {
 	if in_local_scope(k.scope) {
 		return
 	}
 	pkg := package_of(k.c, k.pkg)
-	set, found := pkg.operators[value.symbol]
+	set, found := pkg.operators[symbol]
 	if !found {
 		set = new([dynamic]Symbol_Id, k.c.semantic_allocator)
 		set^ = make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
-		pkg.operators[value.symbol] = set
+		pkg.operators[symbol] = set
 	}
-	append(set, symbol_id)
+	append_unique(set, symbol_id)
 }
 
 @(private = "file")

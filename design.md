@@ -4340,6 +4340,20 @@ source/target pair has at most one hook. Built-in conversions cannot be
 replaced. Call a conversion as `Target(value)`, not by the hook declaration's
 name.
 
+A hook may be generic over its source, with the bounds a generic procedure
+takes; each source it is instantiated for is one pair. Lifecycle hooks cannot
+be generic, since their subject fixes their signature.
+
+```loke
+impl Vector3($T) {
+	from_vector :: hook(convert) proc(v: Vector3($U)) -> Vector3(T) where U != T {
+		return {T(v.x), T(v.y), T(v.z)};
+	}
+}
+
+narrow := Vector3(f32)(Vector3(f64){1, 2, 3});
+```
+
 #### Resolving `T(...)`
 
 `T(value)` is a one-argument conversion to `T`. A built-in conversion takes

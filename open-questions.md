@@ -861,6 +861,37 @@ supported Clang minimum before removing the manual implementation; an older
 toolchain would justify a fallback only if it remains supported. A processor
 missing a known level still needs coverage.
 
+## Open questions from the linear algebra spike
+
+The [linear algebra library plan](linear-algebra-plan.md)'s first step tried
+its `Real` interface and generic matrix shapes against the compiler
+(`tests/pkg/real_interface`). Two language questions came out of it that the
+library cannot settle by itself.
+
+### Positional literals for vocabulary records
+
+[Struct literals](design.md#struct-literals) allow positional elements only in
+the package that declares the fields, so a reordering cannot silently move a
+value. For a vector that rule turns `Vector3(f32){1, 2, 3}` into
+`linalg.Vector3(f32){x = 1, y = 2, z = 3}` in every program that uses it, or
+into a named constructor such as `Complex`'s `from_components`. The order of
+`x`, `y`, `z` is part of such a type's meaning, its layout is promised to
+foreign code, and it will never be reordered. A declaration-level opt-in,
+an attribute promising the field order as part of the public API, would let
+positional literals cross packages for exactly those records. Without it the
+library offers `from_components` and named literals, and the cost is
+verbosity at every call site.
+
+### Visibility in slot and expression requirements
+
+A named slot is met by an inherent method whatever its visibility, while an
+expression requirement such as `(a, b: T) a + b -> T` is checked where the
+interface writes it and so needs the operator to be visible there. A type in
+a `package main`, whose declarations are private by default, therefore meets
+`Real`'s `sqrt` slot but not `Numeric`'s `+` until its operators are marked
+`@(public)`. The diagnostic now names the cause; whether the two requirement
+forms should agree, and in which direction, is open.
+
 ## Open questions in `core:random`
 
 ### Random distributions across platforms

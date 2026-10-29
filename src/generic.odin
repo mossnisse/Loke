@@ -2047,6 +2047,22 @@ bind_record_argument :: proc(
 		}
 		return "", true
 	}
+	// `M($R, $C)` re-read inside the instance that bound them, as `[$N]E` and
+	// `Simd($T, $N)` are: the `$` name stands for its constant.
+	if poly, is_poly := arg.value.(^Type_Poly); is_poly {
+		sym := symbol_of(k.c, lookup_symbol(k.scope, name_identifier(k.c, poly.name)))
+		if sym == nil || sym.kind != .Const {
+			return "", false
+		}
+		converted, problem := convert_generic_value(k, sym.const_value, sym.type, wanted)
+		if problem != "" {
+			return problem, false
+		}
+		if !bind_pattern_name(k, name, Generic_Arg{value = converted, value_type = wanted}, scope, out) {
+			return "this generic argument disagrees with an earlier one", false
+		}
+		return "", true
+	}
 	if check_single_expr(k, arg.value, wanted) == INVALID_TYPE {
 		return "", false // already reported
 	}

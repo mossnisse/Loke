@@ -18,7 +18,7 @@ L0335
 package `adapter` has no declaration `init`
 L0318
 @24:21
-`+` does not apply to `Vector2` and `Vector2`
+`+` does not apply to `Vector2` here: its inherent `+` is not `@(public)`
 L0318
 @26:34
 `+` does not apply to `Count` and `Count`

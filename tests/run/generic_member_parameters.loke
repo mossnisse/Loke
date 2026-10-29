@@ -1,0 +1,69 @@
+// design.md "Specialization", "Generic types", "Operator declarations", and
+// "Conversion hooks": a record's value parameters bind in a procedure's
+// parameter pattern as its type parameters do, and a member of a generic
+// `impl` may add generic parameters of its own, as a method, an operator, a
+// conversion hook, or a type-qualified call.
+package main;
+import "core:fmt";
+
+M :: struct($R, $C: int) { cells: [C][R]int }
+
+impl M($R, $C) {
+	product :: operator(*) proc(left: M(R, C), right: M(C, $K)) -> M(R, K) {
+		result: M(R, K) = {};
+		foreach (k in 0..<K) {
+			foreach (r in 0..<R) {
+				foreach (c in 0..<C) {
+					result.cells[k][r] += left.cells[c][r]*right.cells[k][c];
+				}
+			}
+		}
+		return result;
+	}
+
+	times :: proc(self, right: M(C, $K)) -> M(R, K) { return self * right; }
+	chained :: proc(left: M(R, C), right: M(C, $K)) -> M(R, K) { return left * right; }
+}
+
+rows :: proc(m: M($R, $C)) -> int { return R; }
+flip :: proc(m: M($R, $C)) -> M(C, R) { return {}; }
+shape :: proc(a: M($R, $C), b: M(C, $K)) -> int { return R*100 + C*10 + K; }
+
+P :: struct($T: type) { x: T }
+
+impl P($T) {
+	pair :: operator(*) proc(left: P(T), right: P($U)) -> U { return right.x; }
+
+	from_other :: hook(convert) proc(other: P($U)) -> P(T) where U != T {
+		return {T(other.x)};
+	}
+}
+
+// A file-scope generic operator joins the package's set the same way.
+Q :: struct($N: int) { n: int }
+combine :: operator(+) proc(left: Q($A), right: Q($B)) -> Q(A + B) { return {left.n + right.n}; }
+
+main :: proc() {
+	a := M(2, 3){};
+	b := M(3, 4){};
+	foreach (c in 0..<3) {
+		foreach (r in 0..<2) {
+			a.cells[c][r] = r*3 + c + 1;
+		}
+		foreach (k in 0..<4) {
+			b.cells[k][c] = 1 if c == k else 0;
+		}
+	}
+	fmt.println(rows(a), flip(a).cells.len(), shape(a, b));
+	p := a * b;
+	fmt.println(p.cells.len(), p.cells[0][0], p.cells[2][1], p.cells[3][1]);
+	fmt.println(a.times(b).cells[2][1], M(2, 3).chained(a, b).cells[1][0]);
+
+	fmt.println(P(int){1} * P(f64){2.5});
+	narrowed := P(f32)(P(f64){1.5});
+	widened := P(f64)(P(int){7});
+	fmt.println(narrowed.x, widened.x);
+
+	q := Q(2){3} + Q(5){4};
+	fmt.println(q.n, size_of(type_of(q)) > 0);
+}

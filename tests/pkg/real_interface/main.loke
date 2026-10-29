@@ -1,0 +1,98 @@
+package main;
+
+import "core:fmt";
+import "core:math";
+import "./scalar";
+
+// A forward-mode dual number: a user type that meets `scalar.Real` through
+// inherent methods, so the generic members differentiate through it. Its
+// operators and conversion are `@(public)`, since an expression requirement is
+// checked where `scalar` writes it and this package exports nothing by default.
+Dual :: struct {
+	value:      f64,
+	derivative: f64,
+}
+
+impl Dual {
+	@(public) from_f64 :: hook(convert) proc(value: f64) -> Dual { return {value, 0}; }
+
+	@(public) add :: operator(+) proc(a, b: Dual) -> Dual { return {a.value + b.value, a.derivative + b.derivative}; }
+	@(public) subtract :: operator(-) proc(a, b: Dual) -> Dual { return {a.value - b.value, a.derivative - b.derivative}; }
+	@(public) multiply :: operator(*) proc(a, b: Dual) -> Dual {
+		return {a.value*b.value, a.derivative*b.value + a.value*b.derivative};
+	}
+	@(public) divide :: operator(/) proc(a, b: Dual) -> Dual {
+		return {a.value/b.value, (a.derivative*b.value - a.value*b.derivative)/(b.value*b.value)};
+	}
+	@(public) equal :: operator(==) proc(a, b: Dual) -> bool { return a.value == b.value; }
+	@(public) less :: operator(<) proc(a, b: Dual) -> bool { return a.value < b.value; }
+
+	sqrt :: proc(self) -> Dual {
+		root := math.sqrt(self.value);
+		return {root, self.derivative/(2*root)};
+	}
+	sin :: proc(self) -> Dual {
+		return {math.sin(self.value), self.derivative*math.cos(self.value)};
+	}
+	atan2 :: proc(self, x: Dual) -> Dual {
+		squared := x.value*x.value + self.value*self.value;
+		return {math.atan2(self.value, x.value),
+			(x.value*self.derivative - self.value*x.derivative)/squared};
+	}
+	is_normal :: proc(self) -> bool { return math.abs(self.value) >= math.F64_MIN_NORMAL && math.is_finite(self.value); }
+}
+
+static_assert(scalar.Real(f32));
+static_assert(scalar.Real(f64));
+static_assert(scalar.Real(Dual));
+// `Numeric` alone: the bounded members are absent for it.
+static_assert(!scalar.Real(int));
+
+main :: proc() {
+	a := scalar.Vector3(f32){x = 3, y = 4, z = 0};
+	fmt.println(a.length());
+	b := scalar.Vector3(f64){x = 1, y = 2, z = 2};
+	fmt.println(b.length(), scalar.distance(b, scalar.Vector3(f64){x = 1, y = 2, z = 0}));
+
+	// Integer vectors keep the generic arithmetic.
+	cells := scalar.Vector3(i64){x = 1, y = 2, z = 3} + scalar.Vector3(i64){x = 4, y = 5, z = 6};
+	fmt.println(cells.x, cells.y, cells.z, scalar.Vector3(i64).dot(cells, cells));
+
+	// Degenerate input through the `is_normal` slot.
+	zero := scalar.Vector3(f32){x = 0, y = 0, z = 0};
+	switch (zero.normalize()) {
+	case .some(unit): fmt.println("unexpected", unit.x);
+	case .none: fmt.println("zero has no direction");
+	}
+	tiny := scalar.Vector3(f32){x = 1.0e-30, y = 0, z = 0};
+	switch (tiny.normalize()) {
+	case .some(unit): fmt.println("unexpected", unit.x);
+	case .none: fmt.println("underflowing squares have no direction");
+	}
+	switch (b.normalize()) {
+	case .some(unit): fmt.println(unit.x, unit.y, unit.z);
+	case .none: fmt.println("unexpected none");
+	}
+
+	// d/dx |(x, 4, 0)| at x = 3 is 3/5.
+	d := scalar.Vector3(Dual){x = {3, 1}, y = {4, 0}, z = {0, 0}};
+	length := d.length();
+	fmt.println(length.value, length.derivative);
+	fmt.println(scalar.Vector3(f64){x = 1, y = 1, z = 0}.half_turn_sine());
+
+	// The generic conversion hook, both directions and from integers.
+	narrow := scalar.Vector3(f32)(b);
+	wide := scalar.Vector3(f64)(cells);
+	lifted := scalar.Vector3(Dual)(b);
+	fmt.println(narrow.z, wide.z, lifted.z.value);
+
+	// Value-parameter shapes, two-index subscripts, and shape-bounded members.
+	m := scalar.Matrix(f64, 2, 3){};
+	m[0, 0] = 1; m[0, 1] = 2; m[0, 2] = 3;
+	m[1, 0] = 4; m[1, 1] = 5; m[1, 2] = 6;
+	t := m.transpose();
+	p := m * t;
+	fmt.println(p[0, 0], p[0, 1], p[1, 0], p[1, 1], p.determinant());
+	i := scalar.Matrix(f32, 3, 3).identity();
+	fmt.println(i[0, 0], i[0, 1], i[2, 2]);
+}
