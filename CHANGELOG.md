@@ -344,19 +344,23 @@ checklist.
   angles in an explicit `Euler_Order`, and rotation vectors, and add
   `quaternion_between`, `nlerp`, and `slerp`. Vectors have `angle_between`,
   `project`, `reject`, and `reflect`, and a 4 x 4 transform has
-  `inverse_affine`, `normal_matrix`, and `project_point`
+  `inverse_affine`, `normal_matrix`, and `project_point`. `linalg.Scalar(T)`
+  is a real or complex number type, with an associated `T.Real`, which
+  `f32`, `f64`, and `math.Complex` of any `Real` meet
   ([`core:math/linalg`](standard-library.md#coremathlinalg)).
-- `core:math/dense` has matrices whose size is known at run time, with the
-  same bits everywhere: an owning column-major `Matrix(T)`, `View(T)` and
-  `View_Mut(T)` over a matrix or a foreign buffer in either order, with
-  blocks, transposes, and column and row splits that the borrow checker keeps
+- `core:math/dense` has matrices whose size is known at run time, of real or
+  complex elements, with the same bits everywhere: an owning column-major
+  `Matrix(T)`, `View(T)` and `View_Mut(T)` over a matrix or a foreign buffer
+  in either order, with blocks, transposes, conjugate transposes
+  (`adjoint()`), and column and row splits that the borrow checker keeps
   apart; products and element-wise operations, each with an `_into` form that
   never allocates; triangular solves, `lu` with `reciprocal_condition`,
-  `cholesky`, Householder `qr` with `Q` applied without forming it,
-  `solve`, `inverse`, `least_squares`, `symmetric_eigen`, `svd` with a
-  minimum-norm `solve` and `rank`, and the Frobenius, 1-, and infinity
-  norms. Eigenvectors and singular vectors have a fixed sign, so two
-  machines give the same vectors. Numerical failures are one `dense.Error`.
+  `cholesky`, Householder `qr` with `Q` applied without forming it, `solve`,
+  `inverse`, `least_squares`, `symmetric_eigen` for symmetric and Hermitian
+  matrices, `svd` with a minimum-norm `solve` and `rank`, and the Frobenius,
+  1-, and infinity norms, for any `linalg.Scalar` element. Eigenvectors and
+  singular vectors have a fixed sign, so two machines give the same vectors.
+  Numerical failures are one `dense.Error`.
   `f32` and `f64` products run a `Simd` kernel and `lu` and `cholesky` are
   blocked around it, and the products, `lu`, and `cholesky` take an optional
   thread pool, with the same bits either way; `bench/dense.loke` measures

@@ -3,8 +3,9 @@
 /*
 	Matrices whose size is known at run time: an owning `Matrix(T)`, views of
 	it and of foreign buffers, products, the LU, Cholesky, and QR
-	factorizations, least squares, the symmetric eigendecomposition, and the
-	singular value decomposition, with the same bits everywhere.
+	factorizations, least squares, the symmetric and Hermitian
+	eigendecomposition, and the singular value decomposition, of real or
+	complex elements, with the same bits everywhere.
 
 	`Matrix(T)` owns `rows x columns` elements stored column-major in one
 	allocation. `View(T)` reads, and `View_Mut(T)` writes, elements somewhere
@@ -22,9 +23,13 @@
 
 	Storage, views, products, and the element-wise operations need only
 	`interfaces.Numeric(T)`. The norms, the comparisons with a tolerance, and
-	the factorizations need `linalg.Real(T)`, so a user number type, such as a
-	dual number, goes through `lu` and `solve` as it goes through
-	`linalg.inverse`.
+	the factorizations need `linalg.Scalar(T)`, which `f32`, `f64`, and
+	`math.Complex` of either meet, and a user real type, such as a dual
+	number, with four more members than `linalg.Real` asks. For a complex
+	`T`, a transpose in a factorization is the conjugate transpose: `L L^H`,
+	unitary `Q`, `A = U S V^H`, and `View.adjoint()` reads `A^H` without a
+	copy. A norm, a tolerance, a singular value, and an eigenvalue of a
+	Hermitian matrix are `T.Real`, which is `T` for a real `T`.
 
 	A shape mismatch, an index outside a view, and a view whose strides reach
 	past its data are programmer errors and panic. A numerical failure is an
@@ -116,24 +121,27 @@ impl Matrix($T) {
 }
 
 /*
-	The eigendecomposition `A = V D V^T` of a symmetric `A`: the eigenvalues
-	in ascending order, and `V` orthogonal with eigenvector `i` as column
-	`i`. `symmetric_eigen(a)` makes one.
+	The eigendecomposition `A = V D V^H` of a Hermitian `A`, which for a real
+	`T` is `A = V D V^T` of a symmetric one: the eigenvalues, which are real,
+	in ascending order, and `V` orthogonal, or unitary, with eigenvector `i`
+	as column `i`. `symmetric_eigen(a)` makes one.
 */
-Symmetric_Eigen :: struct($T: type) where linalg.Real(T) {
+Symmetric_Eigen :: struct($T: type) where linalg.Scalar(T) {
 	// and fields private to the package
 }
 
 /*
-	The eigenvalues and eigenvectors of the symmetric `a`, from its lower
-	triangle: the elements above the diagonal are not read, so `A` is taken
-	as symmetric without a check. Allocated from `allocator`.
+	The eigenvalues and eigenvectors of the symmetric `a`, or Hermitian for a
+	complex `T`, from its lower triangle: the elements above the diagonal are
+	not read, and nor is the imaginary part of the diagonal, so `A` is taken
+	as symmetric, or Hermitian, without a check. Allocated from `allocator`.
 
-	`A` is reduced to a tridiagonal `T = Q^T A Q` by `n - 2` Householder
+	`A` is reduced to a real tridiagonal `T = Q^H A Q` by `n - 2` Householder
 	reflectors built as `qr_in_place` builds them, each applied to the lower
-	triangle of the trailing block as `A = (A - v w^T) - w v^T` with
-	`w = p - (tau (p^T v) / 2) v` and `p = tau A v`, each sum in increasing
-	order. Then implicit QL with Wilkinson shifts reduces `T` to a diagonal,
+	triangle of the trailing block as `A = (A - v w^H) - w v^H` with
+	`w = p - (tau (p^H v) / 2) v` and `p = tau A v`, each sum in increasing
+	order and the diagonal kept real; `^H` is `^T` for a real `T`. Then
+	implicit QL with Wilkinson shifts reduces `T` to a diagonal,
 	the rotations accumulated into `Q`, in at most `30 n` sweeps in all, a
 	limit pooled as `svd`'s is rather than 30 for each eigenvalue. An
 	off-diagonal element `e` beside the diagonal elements `d0` and `d1` is
@@ -141,25 +149,28 @@ Symmetric_Eigen :: struct($T: type) where linalg.Real(T) {
 
 	The eigenvalues are sorted ascending, by a selection sort that takes the
 	first of equal ones, and each eigenvector is signed so that its first
-	component of largest magnitude is positive, so the vectors and not only
-	the subspaces are the same on every machine. The results are only as
-	unique as the problem: for equal eigenvalues, any orthonormal basis of
-	their subspace is a solution, and this is the one the method finds.
+	component of largest magnitude is positive: for a complex `T`, it is
+	multiplied by the unit `conj(z) / |z|` for that component `z`, the
+	magnitude being the modulus, and the component is then exactly `|z|`.
+	So the vectors and not only the subspaces are the same on every machine.
+	The results are only as unique as the problem: for equal eigenvalues,
+	any orthonormal basis of their subspace is a solution, and this is the
+	one the method finds.
 
 	`.No_Convergence` past the iteration limit, which for a finite matrix is
 	a bug to report, or for an element that is not finite, which the
 	iteration cannot reduce. A non-square matrix panics.
 */
-symmetric_eigen :: proc(a: View($T), allocator: Allocator = mem.default_allocator()) -> Result(Symmetric_Eigen(T), Error) where linalg.Real(T) ---;
+symmetric_eigen :: proc(a: View($T), allocator: Allocator = mem.default_allocator()) -> Result(Symmetric_Eigen(T), Error) where linalg.Scalar(T) ---;
 
 impl Symmetric_Eigen($T) {
 	// The order of the matrix.
 	size :: proc(self) -> int ---;
 
 	// The eigenvalues, ascending.
-	values :: proc(self: ^) -> []T ---;
+	values :: proc(self: ^) -> []T.Real ---;
 
-	// The eigenvectors as the columns of an orthogonal matrix, column `i` for `values()[i]`.
+	// The eigenvectors as the columns of an orthogonal, or unitary, matrix, column `i` for `values()[i]`.
 	vectors :: proc(self: ^) -> View(T) ---;
 }
 
@@ -168,7 +179,7 @@ impl Symmetric_Eigen($T) {
 	`U` upper triangular, and `P` the row swaps partial pivoting chose.
 	`lu(a)` makes one.
 */
-Lu :: struct($T: type) where linalg.Real(T) {
+Lu :: struct($T: type) where linalg.Scalar(T) {
 	// and fields private to the package
 }
 
@@ -176,7 +187,8 @@ Lu :: struct($T: type) where linalg.Real(T) {
 	Overwrites the square `a` with its LU factors, `L` below the diagonal and
 	`U` on and above it, and `pivots[k]` with the row swapped with row `k` at
 	step `k`, as LAPACK's `getrf` does. The pivot is the first element of
-	largest magnitude in its column, the multipliers are `a[r, k] / a[k, k]`,
+	largest magnitude in its column, a complex element's magnitude being
+	`|re| + |im|` as in LAPACK, the multipliers are `a[r, k] / a[k, k]`,
 	and each trailing element is `((a - l[r, 0]*u[0, c]) - l[r, 1]*u[1, c]) -
 	...`. `.Singular` for an exact zero pivot or a factor that is not finite,
 	with `a` and `pivots` then unspecified. A shape mismatch panics.
@@ -185,10 +197,10 @@ Lu :: struct($T: type) where linalg.Real(T) {
 	as tasks on its workers, each element in the same order, so the result
 	is the same bits.
 */
-lu_in_place :: proc(a: View_Mut($T), pivots: []mut int, pool: Option(^thread.Pool) = .none) -> Status(Error) where linalg.Real(T) ---;
+lu_in_place :: proc(a: View_Mut($T), pivots: []mut int, pool: Option(^thread.Pool) = .none) -> Status(Error) where linalg.Scalar(T) ---;
 
 // The LU factors of the square `a`, allocated from `allocator`, or `.Singular` as `lu_in_place` decides it, with its use of a `pool`.
-lu :: proc(a: View($T), allocator: Allocator = mem.default_allocator(), pool: Option(^thread.Pool) = .none) -> Result(Lu(T), Error) where linalg.Real(T) ---;
+lu :: proc(a: View($T), allocator: Allocator = mem.default_allocator(), pool: Option(^thread.Pool) = .none) -> Result(Lu(T), Error) where linalg.Scalar(T) ---;
 
 impl Lu($T) {
 	// The order of the factored matrix.
@@ -225,37 +237,41 @@ impl Lu($T) {
 		`|A^-1|_1` is estimated as LAPACK's `gecon` does, by Hager's method
 		with Higham's refinements (at most five iterations, then an
 		alternating-sign test vector), which is a lower bound and rarely low
-		by more than a factor of 3. 1 for a 0 x 0 matrix. Its scratch vector
-		is allocated from `allocator`.
+		by more than a factor of 3; for a complex `T` as `zgecon` does, the
+		signs being the units `x / |x|`. 1 for a 0 x 0 matrix. Its scratch
+		vector is allocated from `allocator`.
 	*/
-	reciprocal_condition :: proc(self, allocator: Allocator = mem.default_allocator()) -> T ---;
+	reciprocal_condition :: proc(self, allocator: Allocator = mem.default_allocator()) -> T.Real ---;
 }
 
 /*
-	The factor `L` of `A = L L^T` for a symmetric positive definite `A`, with
-	`L` lower triangular and a positive diagonal. `cholesky(a)` makes one.
+	The factor `L` of `A = L L^H` for a Hermitian positive definite `A`, with
+	`L` lower triangular and a positive real diagonal; for a real `T`,
+	`A = L L^T` for a symmetric `A`. `cholesky(a)` makes one.
 */
-Cholesky :: struct($T: type) where linalg.Real(T) {
+Cholesky :: struct($T: type) where linalg.Scalar(T) {
 	// and fields private to the package
 }
 
 /*
 	Overwrites the lower triangle of the square `a` with `L`, column by
 	column; the elements above the diagonal are neither read nor written, so
-	`A` is taken as symmetric without a check. Each element of column `j` is
-	`((a - l[i, 0]*l[j, 0]) - l[i, 1]*l[j, 1]) - ...`, then the diagonal's
-	square root, and the elements below it divided by that.
-	`.Not_Positive_Definite`, with `a` unspecified, for a diagonal that is
-	not positive and finite before its square root. A shape mismatch panics.
+	`A` is taken as Hermitian without a check. Each element of column `j` is
+	`((a - l[i, 0]*conj(l[j, 0])) - l[i, 1]*conj(l[j, 1])) - ...`, `conj`
+	being nothing for a real `T`; then the square root of the diagonal's real
+	part, its imaginary part dropped, and the elements below it divided by
+	that. `.Not_Positive_Definite`, with `a` unspecified, for a diagonal
+	whose real part is not positive and finite before its square root. A
+	shape mismatch panics.
 
 	With a `pool`, the columns right of each block of columns are updated as
 	tasks on its workers, each element in the same order, so the result is
 	the same bits.
 */
-cholesky_in_place :: proc(a: View_Mut($T), pool: Option(^thread.Pool) = .none) -> Status(Error) where linalg.Real(T) ---;
+cholesky_in_place :: proc(a: View_Mut($T), pool: Option(^thread.Pool) = .none) -> Status(Error) where linalg.Scalar(T) ---;
 
 // The Cholesky factor of the square `a`, from its lower triangle, allocated from `allocator`, with `cholesky_in_place`'s use of a `pool`.
-cholesky :: proc(a: View($T), allocator: Allocator = mem.default_allocator(), pool: Option(^thread.Pool) = .none) -> Result(Cholesky(T), Error) where linalg.Real(T) ---;
+cholesky :: proc(a: View($T), allocator: Allocator = mem.default_allocator(), pool: Option(^thread.Pool) = .none) -> Result(Cholesky(T), Error) where linalg.Scalar(T) ---;
 
 impl Cholesky($T) {
 	// The order of the factored matrix.
@@ -264,21 +280,21 @@ impl Cholesky($T) {
 	// `L`, with zeros above the diagonal, borrowed from the factorization.
 	lower :: proc(self: ^) -> View(T) ---;
 
-	// Overwrites `b` with the solution of `A x = b`: `L y = b`, then `L^T x = y`, in the triangular solves' orders.
+	// Overwrites `b` with the solution of `A x = b`: `L y = b`, then `L^H x = y`, in the triangular solves' orders.
 	solve_into :: proc(self, b: View_Mut(T)) ---;
 
 	// The solution of `A x = b`, allocated from `allocator`.
 	solve :: proc(self, b: View(T), allocator: Allocator = mem.default_allocator()) -> Matrix(T) ---;
 
-	// The determinant, `p*p` for `p` the product of `L`'s diagonal in order.
+	// The determinant, `p*p` for `p` the product of `L`'s diagonal in order, which is real.
 	determinant :: proc(self) -> T ---;
 }
 
 // The solution of `A x = b` for the square `a`, by `lu`; `.Singular` as `lu` decides it.
-solve :: proc(a, b: View($T), allocator: Allocator = mem.default_allocator()) -> Result(Matrix(T), Error) where linalg.Real(T) ---;
+solve :: proc(a, b: View($T), allocator: Allocator = mem.default_allocator()) -> Result(Matrix(T), Error) where linalg.Scalar(T) ---;
 
 // `a^-1` for the square `a`, by `lu`; `.Singular` as `lu` decides it.
-inverse :: proc(a: View($T), allocator: Allocator = mem.default_allocator()) -> Result(Matrix(T), Error) where linalg.Real(T) ---;
+inverse :: proc(a: View($T), allocator: Allocator = mem.default_allocator()) -> Result(Matrix(T), Error) where linalg.Scalar(T) ---;
 
 /*
 	`out = a * b`. Each element is `(a[i, 0]*b[0, j] + a[i, 1]*b[1, j]) + ...`,
@@ -330,8 +346,9 @@ transpose :: proc(a: View($T), allocator: Allocator = mem.default_allocator()) -
 /*
 	The sum of `x[r, c]*y[r, c]` over every element, column by column and
 	down each column from the first product; for two column vectors, the dot
-	product in index order. A shape mismatch panics, and an empty view gives
-	`T(0)`.
+	product in index order. Nothing is conjugated: for complex vectors,
+	`x^H y` is `dot(x.adjoint().transpose(), y)`. A shape mismatch panics,
+	and an empty view gives `T(0)`.
 */
 dot :: proc(x, y: View($T)) -> T ---;
 
@@ -345,9 +362,10 @@ equal :: proc(a, b: View($T)) -> bool ---;
 	Whether `a` and `b` have the same shape and every element pair agrees by
 	`linalg.approx_equal`'s rule: `|x - y| <= max(absolute, relative *
 	max(|x|, |y|))`, a NaN never equal and an infinity equal only to itself.
-	A negative or NaN tolerance panics.
+	For a complex `T`, `|z|` is the modulus, and an element is a NaN or an
+	infinity when either part is. A negative or NaN tolerance panics.
 */
-approx_equal :: proc(a, b: View($T), absolute, relative: T) -> bool where linalg.Real(T) ---;
+approx_equal :: proc(a, b: View($T), absolute, relative: T.Real) -> bool where linalg.Scalar(T) ---;
 
 /*
 	The Frobenius norm, the square root of the sum of the squared elements,
@@ -355,19 +373,21 @@ approx_equal :: proc(a, b: View($T), absolute, relative: T) -> bool where linalg
 	underflows where the result does not: for each non-zero element `x` in
 	column order, with `scale` the largest `|x|` so far and `sum` the sum of
 	`(|x| / scale)^2`, a new largest rescales `sum` as `1 + sum*(scale/|x|)^2`
-	and any other adds `(|x|/scale)^2`; the result is `scale*sqrt(sum)`. A NaN
+	and any other adds `(|x|/scale)^2`; the result is `scale*sqrt(sum)`. A
+	complex element is its real part and then its imaginary part. A NaN
 	element gives NaN, and an infinity otherwise gives infinity.
 */
-norm_frobenius :: proc(a: View($T)) -> T where linalg.Real(T) ---;
+norm_frobenius :: proc(a: View($T)) -> T.Real where linalg.Scalar(T) ---;
 
 /*
 	The 1-norm, the largest column sum of `|a[r, c]|`, each summed down the
-	column; `T(0)` for an empty matrix, and NaN when any sum is NaN.
+	column, `|z|` being the modulus of a complex element; `0` for an empty
+	matrix, and NaN when any sum is NaN.
 */
-norm_one :: proc(a: View($T)) -> T where linalg.Real(T) ---;
+norm_one :: proc(a: View($T)) -> T.Real where linalg.Scalar(T) ---;
 
 // The infinity norm, the largest row sum of `|a[r, c]|`, each summed along the row.
-norm_infinity :: proc(a: View($T)) -> T where linalg.Real(T) ---;
+norm_infinity :: proc(a: View($T)) -> T.Real where linalg.Scalar(T) ---;
 
 /*
 	Overwrites `b` with the solution `x` of `L x = b` for each column, where
@@ -378,7 +398,7 @@ norm_infinity :: proc(a: View($T)) -> T where linalg.Real(T) ---;
 	increasing order. `.Singular`, with `b` unchanged, for an exact zero on a
 	diagonal that is read. A shape mismatch panics.
 */
-solve_lower_into :: proc(l: View($T), b: View_Mut(T), unit_diagonal: bool) -> Status(Error) where linalg.Real(T) ---;
+solve_lower_into :: proc(l: View($T), b: View_Mut(T), unit_diagonal: bool) -> Status(Error) where linalg.Scalar(T) ---;
 
 /*
 	Overwrites `b` with the solution `x` of `U x = b` for each column, where
@@ -386,14 +406,15 @@ solve_lower_into :: proc(l: View($T), b: View_Mut(T), unit_diagonal: bool) -> St
 	`(((b[r] - u[r, n-1]*x[n-1]) - u[r, n-2]*x[n-2]) - ...) / u[r, r]`, the
 	terms in decreasing order. Otherwise as `solve_lower_into`.
 */
-solve_upper_into :: proc(u: View($T), b: View_Mut(T), unit_diagonal: bool) -> Status(Error) where linalg.Real(T) ---;
+solve_upper_into :: proc(u: View($T), b: View_Mut(T), unit_diagonal: bool) -> Status(Error) where linalg.Scalar(T) ---;
 
 /*
 	The factors of `A = Q R` for an `m x n` matrix `A` with `m >= n`: `Q` a
-	product of `n` Householder reflectors `H_k = I - tau[k] v_k v_k^T`, and
-	`R` upper triangular `n x n`. `qr(a)` makes one.
+	product of `n` Householder reflectors `H_k = I - tau[k] v_k v_k^H`, which
+	is orthogonal, or unitary for a complex `T`, and `R` upper triangular
+	`n x n` with a real diagonal. `qr(a)` makes one.
 */
-Qr :: struct($T: type) where linalg.Real(T) {
+Qr :: struct($T: type) where linalg.Scalar(T) {
 	// and fields private to the package
 }
 
@@ -404,23 +425,25 @@ Qr :: struct($T: type) where linalg.Real(T) {
 	is reflector `k`'s scale.
 
 	Step `k` takes the column `x = a[k:m, k]`, with `alpha = x[0]` and `s` the
-	norm of `x[1:]` by `norm_frobenius`'s running scale. If `s` is 0 the
-	reflector is the identity, `tau[k] = 0`, and `R`'s diagonal is `alpha`.
-	Otherwise `beta = -sign(alpha) * hypot(alpha, s)` (negative for an
-	`alpha` of zero), `tau[k] = (beta - alpha) / beta`, each `v_k[i] = x[i] /
-	(alpha - beta)`, and `R`'s diagonal is `beta`. The reflector is then
+	norm of `x[1:]` by `norm_frobenius`'s running scale. If `s` is 0, and
+	`alpha` is real, the reflector is the identity, `tau[k] = 0`, and `R`'s
+	diagonal is `alpha`. Otherwise `beta = -sign(re alpha) * h`, with `h`
+	`hypot(alpha, s)` for a real `T` and `hypot(hypot(re alpha, im alpha), s)`
+	for a complex one (negative for a real part of zero), `tau[k] = (beta -
+	alpha) / beta`, each `v_k[i] = x[i] / (alpha - beta)`, and `R`'s diagonal
+	is the real `beta`, as LAPACK's `larfg` makes them. `H_k^H` is then
 	applied to each later column `y = a[k:m, j]` as
-	`w = (y[0] + v[1]*y[1]) + ...`, the terms in increasing order, and
-	`y[i] = y[i] - (tau*w)*v[i]`.
+	`w = (y[0] + conj(v[1])*y[1]) + ...`, the terms in increasing order, and
+	`y[i] = y[i] - (conj(tau)*w)*v[i]`; `conj` is nothing for a real `T`.
 
 	`.Singular`, with `a` and `tau` then unspecified, for an exact zero on
 	`R`'s diagonal or a factor that is not finite: the matrix does not have
 	full column rank. A wide matrix, or a `tau` of the wrong length, panics.
 */
-qr_in_place :: proc(a: View_Mut($T), tau: []mut T) -> Status(Error) where linalg.Real(T) ---;
+qr_in_place :: proc(a: View_Mut($T), tau: []mut T) -> Status(Error) where linalg.Scalar(T) ---;
 
 // The QR factors of the `m x n` matrix `a`, `m >= n`, allocated from `allocator`, or `.Singular` as `qr_in_place` decides it.
-qr :: proc(a: View($T), allocator: Allocator = mem.default_allocator()) -> Result(Qr(T), Error) where linalg.Real(T) ---;
+qr :: proc(a: View($T), allocator: Allocator = mem.default_allocator()) -> Result(Qr(T), Error) where linalg.Scalar(T) ---;
 
 impl Qr($T) {
 	// The number of rows of the factored matrix.
@@ -439,7 +462,8 @@ impl Qr($T) {
 	r :: proc(self, allocator: Allocator = mem.default_allocator()) -> Matrix(T) ---;
 
 	/*
-		The first `n` columns of `Q`, `m x n` with orthonormal columns:
+		The first `n` columns of `Q`, `m x n` with orthonormal columns (in the
+		complex inner product for a complex `T`):
 		`apply_q_into` of the first `n` columns of the identity. The whole
 		`m x m` `Q` is `apply_q_into` of the whole identity.
 	*/
@@ -451,14 +475,18 @@ impl Qr($T) {
 	*/
 	apply_q_into :: proc(self, b: View_Mut(T)) ---;
 
-	// Overwrites the `m`-row `b` with `Q^T b`: the reflectors from the first to the last.
-	apply_q_transpose_into :: proc(self, b: View_Mut(T)) ---;
+	/*
+		Overwrites the `m`-row `b` with `Q^H b`, which is `Q^T b` for a real
+		`T`: the reflectors from the first to the last, each as `H_k^H`, with
+		the scale `conj(tau[k])`.
+	*/
+	apply_q_adjoint_into :: proc(self, b: View_Mut(T)) ---;
 
 	/*
 		Overwrites the `m`-row `b` as LAPACK's `gels` does: its first `n` rows
 		become the `x` that minimizes `|A x - b|` in the 2-norm, for each
 		column, and the other `m - n` rows the residual's components in `Q`'s
-		basis, so their norm is `|A x - b|`. That is `Q^T b`, then `R x = c` for
+		basis, so their norm is `|A x - b|`. That is `Q^H b`, then `R x = c` for
 		its first `n` rows in `solve_upper_into`'s order.
 	*/
 	least_squares_into :: proc(self, b: View_Mut(T)) ---;
@@ -472,27 +500,31 @@ impl Qr($T) {
 	`a`, `m >= n`, by `qr`; `.Singular` as `qr` decides it. For a square `a`
 	it is the solution of `A x = b`.
 */
-least_squares :: proc(a, b: View($T), allocator: Allocator = mem.default_allocator()) -> Result(Matrix(T), Error) where linalg.Real(T) ---;
+least_squares :: proc(a, b: View($T), allocator: Allocator = mem.default_allocator()) -> Result(Matrix(T), Error) where linalg.Scalar(T) ---;
 
 /*
-	The thin singular value decomposition `A = U S V^T` of an `m x n` `A`,
-	with `k = min(m, n)`: `U` is `m x k` and `V` is `n x k`, each with
-	orthonormal columns, and `S` the `k` singular values, descending and not
-	negative. `svd(a)` makes one.
+	The thin singular value decomposition `A = U S V^H` of an `m x n` `A`,
+	which is `A = U S V^T` for a real `T`, with `k = min(m, n)`: `U` is
+	`m x k` and `V` is `n x k`, each with orthonormal columns, and `S` the
+	`k` singular values, real, descending, and not negative. `svd(a)` makes
+	one.
 */
-Svd :: struct($T: type) where linalg.Real(T) {
+Svd :: struct($T: type) where linalg.Scalar(T) {
 	// and fields private to the package
 }
 
 /*
 	The singular value decomposition of the `m x n` `a`, allocated from
-	`allocator`. A wide `a` is decomposed as its transpose, with `U` and `V`
-	exchanged, so the method below always sees `m >= n`.
+	`allocator`. A wide `a` is decomposed as its adjoint, which is its
+	transpose for a real `T`, with `U` and `V` exchanged, so the method below
+	always sees `m >= n`.
 
-	`A` is reduced to an upper bidiagonal `B = Q^T A P` by alternating
+	`A` is reduced to a real upper bidiagonal `B = Q^H A P` by alternating
 	Householder reflectors built and applied as `qr_in_place` builds and
 	applies them: reflector `k` from the left zeros column `k` below the
-	diagonal, then one from the right zeros row `k` past the superdiagonal.
+	diagonal, then one from the right zeros row `k` past the superdiagonal,
+	built from the row as it stands and applied to the transpose's columns
+	as `H^H`, which is `A G` for `G` its conjugate.
 	`U` and `V` start as `Q` and `P`. Then LINPACK's `dsvdc` iteration
 	reduces `B` to a diagonal, each rotation accumulated into `U` or `V`, in
 	at most `30 n` shifted QR sweeps in all. The limit is pooled, unlike
@@ -508,14 +540,16 @@ Svd :: struct($T: type) where linalg.Real(T) {
 	Each singular value is made non-negative as it converges, by negating its
 	column of `V`, and sorted into place, and finally each pair of columns
 	is signed so that the first component of largest magnitude in `V`'s
-	column is positive, so the vectors and not only the subspaces are the
-	same on every machine. For equal singular values the vectors are the
-	basis the method finds.
+	column is positive: for a complex `T`, both columns are multiplied by the
+	unit `conj(z) / |z|` for that component `z`, by modulus, which is then
+	exactly `|z|`. So the vectors and not only the subspaces are the same on
+	every machine. For equal singular values the vectors are the basis the
+	method finds.
 
 	`.No_Convergence` past the iteration limit, which for a finite matrix is
 	a bug to report, or for an element that is not finite.
 */
-svd :: proc(a: View($T), allocator: Allocator = mem.default_allocator()) -> Result(Svd(T), Error) where linalg.Real(T) ---;
+svd :: proc(a: View($T), allocator: Allocator = mem.default_allocator()) -> Result(Svd(T), Error) where linalg.Scalar(T) ---;
 
 impl Svd($T) {
 	// The number of rows of the decomposed matrix, `m`.
@@ -528,9 +562,9 @@ impl Svd($T) {
 	u :: proc(self: ^) -> View(T) ---;
 
 	// The `k` singular values, descending.
-	singular_values :: proc(self: ^) -> []T ---;
+	singular_values :: proc(self: ^) -> []T.Real ---;
 
-	// `V`, `n x k`, borrowed from the decomposition; `A = U S V^T`.
+	// `V`, `n x k`, borrowed from the decomposition; `A = U S V^H`.
 	v :: proc(self: ^) -> View(T) ---;
 
 	/*
@@ -538,28 +572,29 @@ impl Svd($T) {
 		largest. `relative` has no default, since the right one depends on
 		the data's accuracy; a negative or NaN one panics.
 	*/
-	rank :: proc(self, relative: T) -> int ---;
+	rank :: proc(self, relative: T.Real) -> int ---;
 
 	/*
 		Overwrites the `n`-row `out` with the minimum-norm `x` that minimizes
 		`|A x - b|` in the 2-norm, for each column of the `m`-row `b`,
 		treating the singular values not greater than `relative` times the
 		largest as zero, as `rank` counts them: `x = sum of
-		(u_i^T b / s_i) v_i` over the others, in increasing `i`, with each
-		`u_i^T b` summed in increasing row order. `relative = 0` keeps every
+		(u_i^H b / s_i) v_i` over the others, in increasing `i`, with each
+		`u_i^H b` summed in increasing row order. `relative = 0` keeps every
 		singular value that is not zero. A negative or NaN `relative`, or a
 		shape mismatch, panics.
 	*/
-	solve_into :: proc(self, out: View_Mut(T), b: View(T), relative: T) ---;
+	solve_into :: proc(self, out: View_Mut(T), b: View(T), relative: T.Real) ---;
 
 	// The minimum-norm least-squares solution of `solve_into`, `n` rows, allocated from `allocator`.
-	solve :: proc(self, b: View(T), relative: T, allocator: Allocator = mem.default_allocator()) -> Matrix(T) ---;
+	solve :: proc(self, b: View(T), relative: T.Real, allocator: Allocator = mem.default_allocator()) -> Matrix(T) ---;
 }
 
 /*
 	A read-only view of `rows x columns` elements somewhere else: element
-	`(r, c)` is `data[r*row_stride + c*column_stride]`. It borrows its slice,
-	so it cannot outlive the storage.
+	`(r, c)` is `data[r*row_stride + c*column_stride]`, or its conjugate in a
+	view made by `adjoint`. It borrows its slice, so it cannot outlive the
+	storage.
 */
 View :: struct($T: type) where interfaces.Numeric(T) {
 	// and fields private to the package
@@ -599,6 +634,13 @@ impl View($T) {
 
 	// The transpose, with no copy: the strides swapped.
 	transpose :: proc(self) -> View(T) ---;
+
+	/*
+		The conjugate transpose `A^H`, with no copy: the strides swapped, and
+		each element read as its conjugate. For a real `T` it is the
+		transpose.
+	*/
+	adjoint :: proc(self) -> View(T) where linalg.Scalar(T) ---;
 
 	// Row `r` as a `1 x columns` view.
 	row :: proc(self, r: int) -> View(T) ---;

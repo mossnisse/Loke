@@ -119,6 +119,62 @@ impl f64 {
 	}
 }
 
+/**
+	A real or complex number type: what the factorizations of
+	`core:math/dense` need of an element. `T.Real` is the type of its real and
+	imaginary parts, a `Real` type, and `T(x)` makes a `T` from one.
+	`conjugate` is the complex conjugate.
+
+	`f32` and `f64` meet it through this package, as their own `Real`, with
+	`conjugate` and `real_part` the value itself and `imaginary_part` zero, and
+	so does `math.Complex(R)` for every `Real(R)`. A user real type meets it
+	with those members inherent:
+
+	    impl Dual {
+	        @(public) Real :: Dual;
+	        conjugate :: proc(self) -> Dual { return self; }
+	        real_part :: proc(self) -> Dual { return self; }
+	        imaginary_part :: proc(self) -> Dual { return Dual{}; }
+	    }
+*/
+// dense-matrix-plan.md "Complex elements". A real `T` is recognised in
+// generic code as `T == T.Real`, which lets an algorithm keep the real form
+// of each step; every requirement agrees with it for a real type, so the
+// two forms give the same bits.
+Scalar :: interface($T: type) {
+	interfaces.Numeric(T);
+	T.Real -> type;
+	Real(T.Real);
+	(value: T.Real) T(value) -> T;
+	(a, b: T) a == b -> bool;
+	(value: T) - value -> T;
+	slot conjugate:      proc(self) -> T;
+	slot real_part:      proc(self) -> T.Real;
+	slot imaginary_part: proc(self) -> T.Real;
+}
+
+// `Scalar` for the built-in floats and for `math.Complex`, private as the
+// `Real` slots are; `math.Complex` has its own `conjugate`.
+impl f32 {
+	@(private) Real :: f32;
+	@(private) conjugate :: proc(self) -> f32 { return self; }
+	@(private) real_part :: proc(self) -> f32 { return self; }
+	@(private) imaginary_part :: proc(self) -> f32 { return 0; }
+}
+
+impl f64 {
+	@(private) Real :: f64;
+	@(private) conjugate :: proc(self) -> f64 { return self; }
+	@(private) real_part :: proc(self) -> f64 { return self; }
+	@(private) imaginary_part :: proc(self) -> f64 { return 0; }
+}
+
+impl math.Complex($R) {
+	@(private) Real :: R;
+	@(private) real_part :: proc(self) -> R { return self.real; }
+	@(private) imaginary_part :: proc(self) -> R { return self.imaginary; }
+}
+
 // The bound of the conversion hooks: each component converts as the scalar
 // `To(value)` does.
 @(private)

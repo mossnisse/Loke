@@ -1,0 +1,114 @@
+// dense-matrix-plan.md "Complex elements": the arithmetic on the parts of a
+// `linalg.Scalar` that the algorithms share. For a real `T`, `T == T.Real`,
+// each helper is the real step itself, so a real result keeps the bits it had
+// before complex elements. A real number's own operations are reached through
+// a parameter bounded by `linalg.Real` rather than through `T.Real`
+// (open-questions.md "Slots through an associated type's bound").
+@(public)
+package dense;
+
+import "base:interfaces";
+import "core:math";
+import "core:math/linalg";
+
+// `T.Real` for the types `linalg` makes `Scalar`. A bound grants this package
+// the slots of `linalg`'s private extensions but not their constants
+// (design.md "Interface bodies"), so the generic code here names its own
+// (open-questions.md "Associated constants through a bound").
+impl f32 {
+	@(private) Real :: f32;
+}
+
+impl f64 {
+	@(private) Real :: f64;
+}
+
+impl math.Complex($R) {
+	@(private) Real :: R;
+}
+
+// `|z|`: for a real `T` its `abs`, otherwise `hypot` of the parts.
+@(private)
+modulus :: proc(z: $T) -> T.Real where linalg.Scalar(T) {
+	when (T == T.Real) {
+		return real_abs(z);
+	} else {
+		return hypot(z.real_part(), z.imaginary_part());
+	}
+}
+
+// `|re| + |im|`, LAPACK's `cabs1`, which chooses a pivot: `|z|` for a real
+// `T`.
+@(private)
+magnitude1 :: proc(z: $T) -> T.Real where linalg.Scalar(T) {
+	when (T == T.Real) {
+		return real_abs(z);
+	} else {
+		return real_abs(z.real_part()) + real_abs(z.imaginary_part());
+	}
+}
+
+// Whether both parts are finite.
+@(private)
+finite :: proc(z: $T) -> bool where linalg.Scalar(T) {
+	when (T == T.Real) {
+		return real_finite(z);
+	} else {
+		return real_finite(z.real_part()) && real_finite(z.imaginary_part());
+	}
+}
+
+// The conjugate; the value itself for a real `T`.
+@(private)
+conj :: proc(z: $T) -> T where linalg.Scalar(T) {
+	when (T == T.Real) {
+		return z;
+	} else {
+		return z.conjugate();
+	}
+}
+
+// The real part as a `T`, the imaginary part dropped: the diagonal of a
+// Hermitian matrix. The value itself for a real `T`.
+@(private)
+real_only :: proc(z: $T) -> T where linalg.Scalar(T) {
+	when (T == T.Real) {
+		return z;
+	} else {
+		return T(z.real_part());
+	}
+}
+
+// `z` times the real `s`, as `T(s)*z`, which is `s*z` for a real `T`.
+@(private)
+times_real :: proc(s: $R, z: $T) -> T where linalg.Scalar(T), R == T.Real {
+	when (T == T.Real) {
+		return s*z;
+	} else {
+		return T(s)*z;
+	}
+}
+
+// The unit `conj(z) / |z|`, which turns `z` into the real `|z|`, for a
+// non-zero `z`.
+@(private)
+unphase :: proc(z: $T) -> T where linalg.Scalar(T) {
+	return conj(z)/T(modulus(z));
+}
+
+@(private)
+real_abs :: proc(x: $R) -> R where linalg.Real(R) { return x.abs(); }
+
+@(private)
+real_sqrt :: proc(x: $R) -> R where linalg.Real(R) { return x.sqrt(); }
+
+@(private)
+real_finite :: proc(x: $R) -> bool where linalg.Real(R) { return x.is_finite(); }
+
+// `n` zeros, allocated from `allocator`.
+@(private)
+zeros_of :: proc($T: type, n: int, allocator: Allocator) -> [dynamic]T where interfaces.Numeric(T) {
+	result := make([dynamic]T, 0, n, allocator);
+	foreach (_ in 0 ..< n) { result.append(T(0)); }
+	return result;
+}

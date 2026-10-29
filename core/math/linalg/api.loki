@@ -78,6 +78,36 @@ Real :: interface($T: type) {
 	slot is_normal: proc(self) -> bool;
 }
 
+/*
+	A real or complex number type: what the factorizations of
+	`core:math/dense` need of an element. `T.Real` is the type of its real and
+	imaginary parts, a `Real` type, and `T(x)` makes a `T` from one.
+	`conjugate` is the complex conjugate.
+
+	`f32` and `f64` meet it through this package, as their own `Real`, with
+	`conjugate` and `real_part` the value itself and `imaginary_part` zero, and
+	so does `math.Complex(R)` for every `Real(R)`. A user real type meets it
+	with those members inherent:
+
+	    impl Dual {
+	        @(public) Real :: Dual;
+	        conjugate :: proc(self) -> Dual { return self; }
+	        real_part :: proc(self) -> Dual { return self; }
+	        imaginary_part :: proc(self) -> Dual { return Dual{}; }
+	    }
+*/
+Scalar :: interface($T: type) {
+	interfaces.Numeric(T);
+	T.Real -> type;
+	Real(T.Real);
+	(value: T.Real) T(value) -> T;
+	(a, b: T) a == b -> bool;
+	(value: T) - value -> T;
+	slot conjugate:      proc(self) -> T;
+	slot real_part:      proc(self) -> T.Real;
+	slot imaginary_part: proc(self) -> T.Real;
+}
+
 // Private to the package, but a public declaration names it.
 Converts :: interface($From, $To: type) {
 	(value: From) To(value) -> To;

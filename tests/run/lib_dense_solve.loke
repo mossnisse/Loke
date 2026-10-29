@@ -444,6 +444,12 @@ impl Dual {
 	round :: proc(self) -> Dual { return {math.round(self.value), 0}; }
 	is_finite :: proc(self) -> bool { return math.is_finite(self.value); }
 	is_normal :: proc(self) -> bool { return math.is_finite(self.value) && math.abs(self.value) >= math.F64_MIN_NORMAL; }
+	// linalg.Scalar, which the factorizations need: a real type is its own
+	// real part, with no imaginary part.
+	@(public) Real :: Dual;
+	conjugate :: proc(self) -> Dual { return self; }
+	real_part :: proc(self) -> Dual { return self; }
+	imaginary_part :: proc(self) -> Dual { return {0, 0}; }
 }
 
 dual :: proc() {

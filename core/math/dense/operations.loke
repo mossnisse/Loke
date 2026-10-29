@@ -77,18 +77,18 @@ product_into :: proc(out: View_Mut($T), a, b: View(T), accumulate: bool) {
 		column := j*%out.column_stride;
 		k := 0;
 		if (!accumulate) {
-			first := y[offset(0, j, b.row_stride, b.column_stride)];
+			first := conjugate_if(y[offset(0, j, b.row_stride, b.column_stride)], b.conjugated);
 			foreach (i in 0 ..< out.row_count) {
-				o[i*%out.row_stride +% column] = x[i*%a.row_stride]*first;
+				o[i*%out.row_stride +% column] = conjugate_if(x[i*%a.row_stride], a.conjugated)*first;
 			}
 			k = 1;
 		}
 		for (k < a.column_count) {
-			factor := y[offset(k, j, b.row_stride, b.column_stride)];
+			factor := conjugate_if(y[offset(k, j, b.row_stride, b.column_stride)], b.conjugated);
 			source := k*%a.column_stride;
 			foreach (i in 0 ..< out.row_count) {
 				at := i*%out.row_stride +% column;
-				o[at] = o[at] + x[i*%a.row_stride +% source]*factor;
+				o[at] = o[at] + conjugate_if(x[i*%a.row_stride +% source], a.conjugated)*factor;
 			}
 			k += 1;
 		}
@@ -147,8 +147,8 @@ elementwise_into :: proc(out: View_Mut($T), a, b: View(T), which: Elementwise, n
 	y := unsafe.raw_data(b.data);
 	foreach (c in 0 ..< out.column_count) {
 		foreach (r in 0 ..< out.row_count) {
-			left := x[offset(r, c, a.row_stride, a.column_stride)];
-			right := y[offset(r, c, b.row_stride, b.column_stride)];
+			left := conjugate_if(x[offset(r, c, a.row_stride, a.column_stride)], a.conjugated);
+			right := conjugate_if(y[offset(r, c, b.row_stride, b.column_stride)], b.conjugated);
 			at := offset(r, c, out.row_stride, out.column_stride);
 			switch (which) {
 			case .Add:      o[at] = left + right;
@@ -202,8 +202,9 @@ transpose :: proc(a: View($T), allocator: Allocator = mem.default_allocator()) -
 /**
 	The sum of `x[r, c]*y[r, c]` over every element, column by column and
 	down each column from the first product; for two column vectors, the dot
-	product in index order. A shape mismatch panics, and an empty view gives
-	`T(0)`.
+	product in index order. Nothing is conjugated: for complex vectors,
+	`x^H y` is `dot(x.adjoint().transpose(), y)`. A shape mismatch panics,
+	and an empty view gives `T(0)`.
 */
 dot :: proc(x, y: View($T)) -> T {
 	check_same_shape(x.row_count, x.column_count, y.row_count, y.column_count, "dense.dot");
@@ -247,19 +248,44 @@ equal :: proc(a, b: View($T)) -> bool {
 	Whether `a` and `b` have the same shape and every element pair agrees by
 	`linalg.approx_equal`'s rule: `|x - y| <= max(absolute, relative *
 	max(|x|, |y|))`, a NaN never equal and an infinity equal only to itself.
-	A negative or NaN tolerance panics.
+	For a complex `T`, `|z|` is the modulus, and an element is a NaN or an
+	infinity when either part is. A negative or NaN tolerance panics.
 */
 // `0 <= t` written with `<`, so a NaN tolerance fails it too, as in `linalg`.
-approx_equal :: proc(a, b: View($T), absolute, relative: T) -> bool where linalg.Real(T) {
-	assert(T(0) < absolute || absolute == T(0), "dense.approx_equal needs a non-negative absolute tolerance");
-	assert(T(0) < relative || relative == T(0), "dense.approx_equal needs a non-negative relative tolerance");
+approx_equal :: proc(a, b: View($T), absolute, relative: T.Real) -> bool where linalg.Scalar(T) {
+	assert(T.Real(0) < absolute || absolute == T.Real(0), "dense.approx_equal needs a non-negative absolute tolerance");
+	assert(T.Real(0) < relative || relative == T.Real(0), "dense.approx_equal needs a non-negative relative tolerance");
 	if (a.row_count != b.row_count || a.column_count != b.column_count) { return false; }
 	foreach (c in 0 ..< a.column_count) {
 		foreach (r in 0 ..< a.row_count) {
-			if (!linalg.approx_equal(a[r, c], b[r, c], absolute, relative)) { return false; }
+			if (!close(a[r, c], b[r, c], absolute, relative)) { return false; }
 		}
 	}
 	return true;
+}
+
+// `linalg.approx_equal`'s rule for one pair, with the modulus for a complex
+// `T`: equal values first, since two equal infinities differ by NaN.
+@(private)
+close :: proc(x, y: $T, absolute, relative: T.Real) -> bool where linalg.Scalar(T) {
+	when (T == T.Real) {
+		return real_close(x, y, absolute, relative);
+	} else {
+		if (x == y) { return true; }
+		if (!finite(x) || !finite(y)) { return false; }
+		difference := modulus(x - y);
+		magnitude := modulus(x);
+		other := modulus(y);
+		if (magnitude < other) { magnitude = other; }
+		allowed := relative*magnitude;
+		if (allowed < absolute) { allowed = absolute; }
+		return difference < allowed || difference == allowed;
+	}
+}
+
+@(private)
+real_close :: proc(x, y, absolute, relative: $R) -> bool where linalg.Real(R) {
+	return linalg.approx_equal(x, y, absolute, relative);
 }
 
 /**
@@ -268,13 +294,14 @@ approx_equal :: proc(a, b: View($T), absolute, relative: T) -> bool where linalg
 	underflows where the result does not: for each non-zero element `x` in
 	column order, with `scale` the largest `|x|` so far and `sum` the sum of
 	`(|x| / scale)^2`, a new largest rescales `sum` as `1 + sum*(scale/|x|)^2`
-	and any other adds `(|x|/scale)^2`; the result is `scale*sqrt(sum)`. A NaN
+	and any other adds `(|x|/scale)^2`; the result is `scale*sqrt(sum)`. A
+	complex element is its real part and then its imaginary part. A NaN
 	element gives NaN, and an infinity otherwise gives infinity.
 */
-norm_frobenius :: proc(a: View($T)) -> T where linalg.Real(T) {
-	sum := Sum_Of_Squares(T).init();
+norm_frobenius :: proc(a: View($T)) -> T.Real where linalg.Scalar(T) {
+	sum := Sum_Of_Squares(T.Real).init();
 	foreach (c in 0 ..< a.column_count) {
-		foreach (r in 0 ..< a.row_count) { sum.add(a[r, c]); }
+		foreach (r in 0 ..< a.row_count) { sum.add_parts(a[r, c]); }
 	}
 	return sum.root();
 }
@@ -319,6 +346,16 @@ impl Sum_Of_Squares($T) {
 		}
 	}
 
+	// A real element whole, a complex one as its two parts.
+	add_parts :: proc(self: inout, z: $S) where linalg.Real(T), linalg.Scalar(S), S.Real == T {
+		when (S == T) {
+			self.add(z);
+		} else {
+			self.add(z.real_part());
+			self.add(z.imaginary_part());
+		}
+	}
+
 	root :: proc(self) -> T where linalg.Real(T) {
 		if (self.nan || self.infinite) { return self.special; }
 		return self.scale*self.sum.sqrt();
@@ -327,24 +364,26 @@ impl Sum_Of_Squares($T) {
 
 /**
 	The 1-norm, the largest column sum of `|a[r, c]|`, each summed down the
-	column; `T(0)` for an empty matrix, and NaN when any sum is NaN.
+	column, `|z|` being the modulus of a complex element; `0` for an empty
+	matrix, and NaN when any sum is NaN.
 */
-norm_one :: proc(a: View($T)) -> T where linalg.Real(T) {
+norm_one :: proc(a: View($T)) -> T.Real where linalg.Scalar(T) {
 	return largest_line_sum(a);
 }
 
 /// The infinity norm, the largest row sum of `|a[r, c]|`, each summed along the row.
-norm_infinity :: proc(a: View($T)) -> T where linalg.Real(T) {
+norm_infinity :: proc(a: View($T)) -> T.Real where linalg.Scalar(T) {
 	return largest_line_sum(a.transpose());
 }
 
+// A conjugate has its element's modulus, so an adjoint's flag changes nothing here.
 @(private)
-largest_line_sum :: proc(a: View($T)) -> T where linalg.Real(T) {
-	best := T(0);
+largest_line_sum :: proc(a: View($T)) -> T.Real where linalg.Scalar(T) {
+	best := T.Real(0);
 	x := unsafe.raw_data(a.data);
 	foreach (c in 0 ..< a.column_count) {
-		sum := T(0);
-		foreach (r in 0 ..< a.row_count) { sum = sum + x[offset(r, c, a.row_stride, a.column_stride)].abs(); }
+		sum := T.Real(0);
+		foreach (r in 0 ..< a.row_count) { sum = sum + modulus(x[offset(r, c, a.row_stride, a.column_stride)]); }
 		if (!(sum == sum)) { return sum; }
 		if (best < sum) { best = sum; }
 	}
@@ -360,7 +399,7 @@ largest_line_sum :: proc(a: View($T)) -> T where linalg.Real(T) {
 	increasing order. `.Singular`, with `b` unchanged, for an exact zero on a
 	diagonal that is read. A shape mismatch panics.
 */
-solve_lower_into :: proc(l: View($T), b: View_Mut(T), unit_diagonal: bool) -> Status(Error) where linalg.Real(T) {
+solve_lower_into :: proc(l: View($T), b: View_Mut(T), unit_diagonal: bool) -> Status(Error) where linalg.Scalar(T) {
 	check_triangular_shapes(l, b.row_count, "dense.solve_lower_into");
 	if (!unit_diagonal) { check_diagonal(l) or_return; }
 	lower_solve(l, b, unit_diagonal);
@@ -373,7 +412,7 @@ solve_lower_into :: proc(l: View($T), b: View_Mut(T), unit_diagonal: bool) -> St
 	`(((b[r] - u[r, n-1]*x[n-1]) - u[r, n-2]*x[n-2]) - ...) / u[r, r]`, the
 	terms in decreasing order. Otherwise as `solve_lower_into`.
 */
-solve_upper_into :: proc(u: View($T), b: View_Mut(T), unit_diagonal: bool) -> Status(Error) where linalg.Real(T) {
+solve_upper_into :: proc(u: View($T), b: View_Mut(T), unit_diagonal: bool) -> Status(Error) where linalg.Scalar(T) {
 	check_triangular_shapes(u, b.row_count, "dense.solve_upper_into");
 	if (!unit_diagonal) { check_diagonal(u) or_return; }
 	upper_solve(u, b, unit_diagonal);
@@ -388,7 +427,7 @@ check_triangular_shapes :: proc(t: View($T), rows: int, name: string_view) {
 }
 
 @(private)
-check_diagonal :: proc(t: View($T)) -> Status(Error) where linalg.Real(T) {
+check_diagonal :: proc(t: View($T)) -> Status(Error) where linalg.Scalar(T) {
 	foreach (i in 0 ..< t.row_count) {
 		if (t[i, i] == T(0)) { return .err(.Singular); }
 	}
@@ -400,40 +439,42 @@ check_diagonal :: proc(t: View($T)) -> Status(Error) where linalg.Real(T) {
 // `b` at a time, subtracting the solved element's multiple from the rest of
 // the column, which updates each element in the documented order.
 @(private)
-lower_solve :: proc(l: View($T), b: View_Mut(T), unit_diagonal: bool) where linalg.Real(T) {
+lower_solve :: proc(l: View($T), b: View_Mut(T), unit_diagonal: bool) where linalg.Scalar(T) {
 	n := l.row_count;
 	f := unsafe.raw_data(l.data);
 	x := unsafe.raw_data(b.data);
+	flag := l.conjugated;
 	foreach (j in 0 ..< b.column_count) {
 		column := j*%b.column_stride;
 		foreach (k in 0 ..< n) {
 			at := k*%b.row_stride +% column;
-			if (!unit_diagonal) { x[at] = x[at]/f[offset(k, k, l.row_stride, l.column_stride)]; }
+			if (!unit_diagonal) { x[at] = x[at]/conjugate_if(f[offset(k, k, l.row_stride, l.column_stride)], flag); }
 			solved := x[at];
 			source := k*%l.column_stride;
 			foreach (r in k + 1 ..< n) {
 				target := r*%b.row_stride +% column;
-				x[target] = x[target] - f[r*%l.row_stride +% source]*solved;
+				x[target] = x[target] - conjugate_if(f[r*%l.row_stride +% source], flag)*solved;
 			}
 		}
 	}
 }
 
 @(private)
-upper_solve :: proc(u: View($T), b: View_Mut(T), unit_diagonal: bool) where linalg.Real(T) {
+upper_solve :: proc(u: View($T), b: View_Mut(T), unit_diagonal: bool) where linalg.Scalar(T) {
 	n := u.row_count;
 	f := unsafe.raw_data(u.data);
 	x := unsafe.raw_data(b.data);
+	flag := u.conjugated;
 	foreach (j in 0 ..< b.column_count) {
 		column := j*%b.column_stride;
 		for (k := n - 1; k >= 0; k -= 1) {
 			at := k*%b.row_stride +% column;
-			if (!unit_diagonal) { x[at] = x[at]/f[offset(k, k, u.row_stride, u.column_stride)]; }
+			if (!unit_diagonal) { x[at] = x[at]/conjugate_if(f[offset(k, k, u.row_stride, u.column_stride)], flag); }
 			solved := x[at];
 			source := k*%u.column_stride;
 			foreach (r in 0 ..< k) {
 				target := r*%b.row_stride +% column;
-				x[target] = x[target] - f[r*%u.row_stride +% source]*solved;
+				x[target] = x[target] - conjugate_if(f[r*%u.row_stride +% source], flag)*solved;
 			}
 		}
 	}

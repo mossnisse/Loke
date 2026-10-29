@@ -200,7 +200,7 @@ q_forms :: proc() {
 		b := make_matrix(f64, .Random, 9, 3, 32);
 		round := b.clone();
 		f.apply_q_into(round.view_mut());
-		f.apply_q_transpose_into(round.view_mut());
+		f.apply_q_adjoint_into(round.view_mut());
 		check("Q^T Q b is b", dense.approx_equal(round.view(), b.view(), 1e-15, 1e-14));
 		full := dense.Matrix(f64).identity(9);
 		f.apply_q_into(full.view_mut());
@@ -209,7 +209,7 @@ q_forms :: proc() {
 		check("its first columns are q() bit for bit", dense.equal(full.view().block(0, 0, 9, 4), f.q().view()));
 		// Q^T A is R above m - n zero rows, up to rounding.
 		qa := a.clone();
-		f.apply_q_transpose_into(qa.view_mut());
+		f.apply_q_adjoint_into(qa.view_mut());
 		check("Q^T A is R", dense.approx_equal(qa.view().block(0, 0, 4, 4), f.r().view(), 1e-14, 1e-14)
 			&& dense.norm_one(qa.view().block(4, 0, 5, 4)) < 1e-14);
 	case .err(_):
@@ -305,6 +305,12 @@ impl Dual {
 	round :: proc(self) -> Dual { return {math.round(self.value), 0}; }
 	is_finite :: proc(self) -> bool { return math.is_finite(self.value); }
 	is_normal :: proc(self) -> bool { return math.is_finite(self.value) && math.abs(self.value) >= math.F64_MIN_NORMAL; }
+	// linalg.Scalar, which the factorizations need: a real type is its own
+	// real part, with no imaginary part.
+	@(public) Real :: Dual;
+	conjugate :: proc(self) -> Dual { return self; }
+	real_part :: proc(self) -> Dual { return self; }
+	imaginary_part :: proc(self) -> Dual { return {0, 0}; }
 }
 
 dual :: proc() {

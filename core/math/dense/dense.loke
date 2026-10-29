@@ -1,8 +1,9 @@
 /**
 	Matrices whose size is known at run time: an owning `Matrix(T)`, views of
 	it and of foreign buffers, products, the LU, Cholesky, and QR
-	factorizations, least squares, the symmetric eigendecomposition, and the
-	singular value decomposition, with the same bits everywhere.
+	factorizations, least squares, the symmetric and Hermitian
+	eigendecomposition, and the singular value decomposition, of real or
+	complex elements, with the same bits everywhere.
 
 	`Matrix(T)` owns `rows x columns` elements stored column-major in one
 	allocation. `View(T)` reads, and `View_Mut(T)` writes, elements somewhere
@@ -20,9 +21,13 @@
 
 	Storage, views, products, and the element-wise operations need only
 	`interfaces.Numeric(T)`. The norms, the comparisons with a tolerance, and
-	the factorizations need `linalg.Real(T)`, so a user number type, such as a
-	dual number, goes through `lu` and `solve` as it goes through
-	`linalg.inverse`.
+	the factorizations need `linalg.Scalar(T)`, which `f32`, `f64`, and
+	`math.Complex` of either meet, and a user real type, such as a dual
+	number, with four more members than `linalg.Real` asks. For a complex
+	`T`, a transpose in a factorization is the conjugate transpose: `L L^H`,
+	unitary `Q`, `A = U S V^H`, and `View.adjoint()` reads `A^H` without a
+	copy. A norm, a tolerance, a singular value, and an eigenvalue of a
+	Hermitian matrix are `T.Real`, which is `T` for a real `T`.
 
 	A shape mismatch, an index outside a view, and a view whose strides reach
 	past its data are programmer errors and panic. A numerical failure is an
@@ -39,7 +44,7 @@
 	`fma`, so it gives the same bits on every machine, CPU level, and
 	optimization level.
 */
-// dense-matrix-plan.md is the design this package implements, milestones 1 to 3.
+// dense-matrix-plan.md is the design this package implements, milestones 1 to 5.
 @(public)
 package dense;
 
@@ -121,7 +126,7 @@ impl Matrix($T) {
 		p := unsafe.raw_data(data);
 		x := unsafe.raw_data(view.data);
 		foreach (c in 0 ..< view.column_count) {
-			foreach (r in 0 ..< rows) { p[r +% c*%rows] = x[offset(r, c, view.row_stride, view.column_stride)]; }
+			foreach (r in 0 ..< rows) { p[r +% c*%rows] = conjugate_if(x[offset(r, c, view.row_stride, view.column_stride)], view.conjugated); }
 		}
 		return {rows, view.column_count, move(data)};
 	}
@@ -167,7 +172,7 @@ impl Matrix($T) {
 
 	/// The whole matrix as a read-only view, which borrows it.
 	view :: proc(self: ^) -> View(T) {
-		return {self.data[:], self.row_count, self.column_count, 1, self.row_count};
+		return {self.data[:], self.row_count, self.column_count, 1, self.row_count, false};
 	}
 
 	/// The whole matrix as a mutable view, which borrows it exclusively.

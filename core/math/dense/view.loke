@@ -12,8 +12,9 @@ import "core:unsafe";
 
 /**
 	A read-only view of `rows x columns` elements somewhere else: element
-	`(r, c)` is `data[r*row_stride + c*column_stride]`. It borrows its slice,
-	so it cannot outlive the storage.
+	`(r, c)` is `data[r*row_stride + c*column_stride]`, or its conjugate in a
+	view made by `adjoint`. It borrows its slice, so it cannot outlive the
+	storage.
 */
 View :: struct($T: type) where interfaces.Numeric(T) {
 	@(private) data:          []T,
@@ -21,6 +22,7 @@ View :: struct($T: type) where interfaces.Numeric(T) {
 	@(private) column_count:  int,
 	@(private) row_stride:    int,
 	@(private) column_stride: int,
+	@(private) conjugated:    bool,   // only ever set for a complex T
 }
 
 /**
@@ -68,6 +70,29 @@ offset :: proc(row, column, row_stride, column_stride: int) -> int {
 	return row*%row_stride +% column*%column_stride;
 }
 
+// An element as a view reads it: conjugated in an adjoint. Only a complex
+// `T` is ever conjugated, so for any other the test folds away.
+@(private)
+conjugate_if :: proc(value: $T, conjugated: bool) -> T where interfaces.Numeric(T) {
+	when (linalg.Scalar(T)) {
+		when (T != T.Real) {
+			if (conjugated) { return value.conjugate(); }
+		}
+	}
+	return value;
+}
+
+// The flag an adjoint gets: `conjugated`, except for a real `T`, whose
+// adjoint is its transpose.
+@(private)
+conjugated_unless_real :: proc($T: type, conjugated: bool) -> bool where linalg.Scalar(T) {
+	when (T == T.Real) {
+		return false;
+	} else {
+		return conjugated;
+	}
+}
+
 impl View($T) {
 	/**
 		`rows x columns` column-major elements of `data`, column `c` starting
@@ -77,19 +102,19 @@ impl View($T) {
 	from_column_major :: proc(data: []T, rows, columns: int, leading := rows) -> View(T) {
 		check_leading(leading, rows);
 		check_extent(data.len(), rows, columns, 1, leading);
-		return {data, rows, columns, 1, leading};
+		return {data, rows, columns, 1, leading, false};
 	}
 
 	/// `rows x columns` row-major elements of `data`, row `r` starting at `r*leading`.
 	from_row_major :: proc(data: []T, rows, columns: int, leading := columns) -> View(T) {
 		check_leading(leading, columns);
 		check_extent(data.len(), rows, columns, leading, 1);
-		return {data, rows, columns, leading, 1};
+		return {data, rows, columns, leading, 1, false};
 	}
 
 	/// `values` as a column vector, `values.len() x 1`.
 	from_column :: proc(values: []T) -> View(T) {
-		return {values, values.len(), 1, 1, values.len()};
+		return {values, values.len(), 1, 1, values.len(), false};
 	}
 
 	rows :: proc(self) -> int { return self.row_count; }
@@ -98,20 +123,29 @@ impl View($T) {
 	/// Element `(row, column)`; an index outside the view panics.
 	get :: operator([]) proc(self, row, column: int) -> T {
 		check_index(row, column, self.row_count, self.column_count);
-		return self.data[row*self.row_stride + column*self.column_stride];
+		return conjugate_if(self.data[row*self.row_stride + column*self.column_stride], self.conjugated);
 	}
 
 	/// The `rows x columns` block whose first element is `(row, column)`.
 	block :: proc(self, row, column, rows, columns: int) -> View(T) {
 		check_block(row, column, rows, columns, self.row_count, self.column_count);
-		if (rows == 0 || columns == 0) { return {self.data[:0], rows, columns, self.row_stride, self.column_stride}; }
+		if (rows == 0 || columns == 0) { return {self.data[:0], rows, columns, self.row_stride, self.column_stride, self.conjugated}; }
 		start := row*self.row_stride + column*self.column_stride;
-		return {self.data[start:], rows, columns, self.row_stride, self.column_stride};
+		return {self.data[start:], rows, columns, self.row_stride, self.column_stride, self.conjugated};
 	}
 
 	/// The transpose, with no copy: the strides swapped.
 	transpose :: proc(self) -> View(T) {
-		return {self.data, self.column_count, self.row_count, self.column_stride, self.row_stride};
+		return {self.data, self.column_count, self.row_count, self.column_stride, self.row_stride, self.conjugated};
+	}
+
+	/**
+		The conjugate transpose `A^H`, with no copy: the strides swapped, and
+		each element read as its conjugate. For a real `T` it is the
+		transpose.
+	*/
+	adjoint :: proc(self) -> View(T) where linalg.Scalar(T) {
+		return {self.data, self.column_count, self.row_count, self.column_stride, self.row_stride, conjugated_unless_real(T, !self.conjugated)};
 	}
 
 	/// Row `r` as a `1 x columns` view.
@@ -176,7 +210,7 @@ impl View_Mut($T) {
 
 	/// The same elements, read-only, borrowed from this view.
 	as_view :: proc(self: ^) -> View(T) {
-		return {self.data[:], self.row_count, self.column_count, self.row_stride, self.column_stride};
+		return {self.data[:], self.row_count, self.column_count, self.row_stride, self.column_stride, false};
 	}
 
 	/// As `View.block`, writable. A temporary or `move(view)` is consumed, and a named view is borrowed.
@@ -264,7 +298,7 @@ impl View_Mut($T) {
 		x := unsafe.raw_data(source.data);
 		foreach (c in 0 ..< self.column_count) {
 			foreach (r in 0 ..< self.row_count) {
-				out[offset(r, c, self.row_stride, self.column_stride)] = x[offset(r, c, source.row_stride, source.column_stride)];
+				out[offset(r, c, self.row_stride, self.column_stride)] = conjugate_if(x[offset(r, c, source.row_stride, source.column_stride)], source.conjugated);
 			}
 		}
 	}
@@ -288,7 +322,7 @@ impl View_Mut($T) {
 		foreach (c in 0 ..< self.column_count) {
 			foreach (r in 0 ..< self.row_count) {
 				at := offset(r, c, self.row_stride, self.column_stride);
-				out[at] = out[at] + s*x[offset(r, c, a.row_stride, a.column_stride)];
+				out[at] = out[at] + s*conjugate_if(x[offset(r, c, a.row_stride, a.column_stride)], a.conjugated);
 			}
 		}
 	}

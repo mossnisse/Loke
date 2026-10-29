@@ -1,0 +1,577 @@
+// standard-library "`core:math/dense`", milestone 5: complex elements.
+// `View.adjoint` against copies; a real matrix as `math.Complex` giving the
+// real factorizations' bits in its real parts and zero imaginary parts;
+// LAPACK's test ratios for LU, Cholesky, QR, the Hermitian eigensolver, and
+// the SVD of random complex matrices at `f32` and `f64`, with the order and
+// signs the contract gives; the parts the factorizations do not read; each
+// failure; and results as bit patterns, the same at every optimization and
+// CPU level.
+package main;
+
+import "core:fmt";
+import "core:math";
+import "core:math/dense";
+import "core:math/linalg";
+import "core:unsafe";
+
+check :: proc(name: string_view, ok: bool) {
+	if (ok) {
+		fmt.println("ok", name);
+	} else {
+		fmt.println("FAIL", name);
+	}
+}
+
+epsilon :: proc($R: type) -> R {
+	when (R == f32) {
+		return math.F32_EPSILON;
+	} else {
+		return math.F64_EPSILON;
+	}
+}
+
+// A 64-bit linear congruential generator, so the matrices are the same on
+// every machine.
+Random :: struct { state: u64 }
+
+impl Random {
+	// Uniform in [-1, 1).
+	next :: proc(self: inout) -> f64 {
+		self.state = self.state*%6364136223846793005 +% 1442695040888963407;
+		return f64(self.state >> 11)/9007199254740992.0*2.0 - 1.0;
+	}
+}
+
+cx :: proc(re, im: $R) -> math.Complex(R) where linalg.Real(R) {
+	return math.Complex(R).from_components(re, im);
+}
+
+complex_matrix :: proc($R: type, rows, columns: int, seed: u64) -> dense.Matrix(math.Complex(R)) where linalg.Real(R) {
+	random := Random{seed};
+	m := dense.Matrix(math.Complex(R)).zeros(rows, columns);
+	foreach (c in 0 ..< columns) {
+		foreach (r in 0 ..< rows) {
+			re := R(random.next());
+			m[r, c] = cx(re, R(random.next()));
+		}
+	}
+	return m;
+}
+
+real_matrix :: proc($R: type, rows, columns: int, seed: u64) -> dense.Matrix(R) where linalg.Real(R) {
+	random := Random{seed};
+	m := dense.Matrix(R).zeros(rows, columns);
+	foreach (c in 0 ..< columns) {
+		foreach (r in 0 ..< rows) { m[r, c] = R(random.next()); }
+	}
+	return m;
+}
+
+// The real matrix with zero imaginary parts.
+embed :: proc(a: dense.View($R)) -> dense.Matrix(math.Complex(R)) where linalg.Real(R) {
+	m := dense.Matrix(math.Complex(R)).zeros(a.rows(), a.columns());
+	foreach (c in 0 ..< a.columns()) {
+		foreach (r in 0 ..< a.rows()) { m[r, c] = cx(a[r, c], R(0)); }
+	}
+	return m;
+}
+
+// Whether each element of `z` has the real part `x[r, c]` and a zero
+// imaginary part, by `==`, so a zero's sign is not compared.
+same_real :: proc(z: dense.View(math.Complex($R)), x: dense.View(R)) -> bool where linalg.Real(R) {
+	if (z.rows() != x.rows() || z.columns() != x.columns()) { return false; }
+	foreach (c in 0 ..< x.columns()) {
+		foreach (r in 0 ..< x.rows()) {
+			if (!(z[r, c].real == x[r, c]) || !(z[r, c].imaginary == R(0))) { return false; }
+		}
+	}
+	return true;
+}
+
+same_values :: proc(a, b: []$R) -> bool where linalg.Real(R) {
+	if (a.len() != b.len()) { return false; }
+	foreach (i in 0 ..< a.len()) {
+		if (!(a[i] == b[i])) { return false; }
+	}
+	return true;
+}
+
+// `|a - b|_1 / (count scale eps)`, a small multiple of 1 for a result
+// correct to rounding.
+ratio :: proc(a, b: dense.View(math.Complex($R)), scale: R, count: int) -> R where linalg.Real(R) {
+	difference := dense.subtract(a, b);
+	return dense.norm_one(difference.view())/(R(f64(count))*scale*epsilon(R));
+}
+
+// `|Q^H Q - I|_1 / (count eps)`.
+orthonormality :: proc(q: dense.View(math.Complex($R)), count: int) -> R where linalg.Real(R) {
+	product := dense.multiply(q.adjoint(), q);
+	identity := dense.Matrix(math.Complex(R)).identity(q.columns());
+	return ratio(product.view(), identity.view(), R(1), count);
+}
+
+// Whether each column's first component of largest modulus is real and
+// positive.
+leads_positive :: proc(v: dense.View(math.Complex($R))) -> bool where linalg.Real(R) {
+	foreach (c in 0 ..< v.columns()) {
+		best := v[0, c];
+		largest := modulus(best);
+		foreach (r in 1 ..< v.rows()) {
+			candidate := modulus(v[r, c]);
+			if (largest < candidate) {
+				best = v[r, c];
+				largest = candidate;
+			}
+		}
+		if (!(best.imaginary == R(0)) || !(R(0) < best.real)) { return false; }
+	}
+	return true;
+}
+
+modulus :: proc(z: math.Complex($R)) -> R where linalg.Real(R) {
+	return (z.real*z.real + z.imaginary*z.imaginary).sqrt();
+}
+
+adjoint_views :: proc() {
+	C :: math.Complex(f64);
+	a := complex_matrix(f64, 5, 3, 1);
+	h := a.view().adjoint();
+	elements := h.rows() == 3 && h.columns() == 5;
+	foreach (c in 0 ..< 5) {
+		foreach (r in 0 ..< 3) {
+			if (!(h[r, c] == a[c, r].conjugate())) { elements = false; }
+		}
+	}
+	check("an adjoint reads the conjugate transpose", elements);
+	check("the adjoint of an adjoint is the view", dense.equal(h.adjoint(), a.view()));
+	copy := dense.Matrix(C).from_view(h);
+	check("a copy of an adjoint is conjugated", dense.equal(copy.view(), h));
+	check("a block of an adjoint is conjugated", dense.equal(h.block(1, 1, 2, 3), copy.view().block(1, 1, 2, 3)));
+	check("a transpose of an adjoint is the conjugate", dense.equal(h.transpose().transpose(), copy.view()));
+
+	b := complex_matrix(f64, 5, 4, 2);
+	check("a product with an adjoint is a product with its copy",
+		dense.equal(dense.multiply(h, b.view()).view(), dense.multiply(copy.view(), b.view()).view()));
+	c := complex_matrix(f64, 4, 3, 3);
+	right := dense.Matrix(C).from_view(c.view().adjoint());
+	check("an adjoint on the right too",
+		dense.equal(dense.multiply(a.view(), c.view().adjoint()).view(), dense.multiply(a.view(), right.view()).view()));
+	sum := dense.add(h, copy.view());
+	twice := dense.scale(copy.view(), cx(2.0, 0.0));
+	check("element-wise operations read an adjoint", dense.equal(sum.view(), twice.view()));
+
+	// A lower-triangular L, solved against through L^H, an upper triangle.
+	l := complex_matrix(f64, 4, 4, 4);
+	foreach (i in 0 ..< 4) { l[i, i] = l[i, i] + cx(3.0, 0.0); }
+	upper := dense.Matrix(C).from_view(l.view().adjoint());
+	x := complex_matrix(f64, 4, 2, 5);
+	y := dense.Matrix(C).from_view(x.view());
+	through := dense.solve_upper_into(l.view().adjoint(), x.view_mut(), false);
+	copied := dense.solve_upper_into(upper.view(), y.view_mut(), false);
+	check("a triangular solve reads an adjoint", through == .ok && copied == .ok && dense.equal(x.view(), y.view()));
+
+	u := complex_matrix(f64, 6, 1, 6);
+	w := complex_matrix(f64, 6, 1, 7);
+	expected := cx(0.0, 0.0);
+	foreach (i in 0 ..< 6) { expected = expected + u[i, 0].conjugate()*w[i, 0]; }
+	check("x^H y is dot of the adjoint's transpose", dense.dot(u.view().adjoint().transpose(), w.view()) == expected);
+
+	r := real_matrix(f64, 4, 3, 8);
+	q := real_matrix(f64, 4, 2, 9);
+	check("a real adjoint is the transpose",
+		dense.equal(r.view().adjoint(), r.view().transpose())
+		&& dense.equal(dense.multiply(r.view().adjoint(), q.view()).view(), dense.multiply(r.view().transpose(), q.view()).view()));
+}
+
+// A real matrix as complex: every factorization gives the real one's bits in
+// the real parts and zero imaginary parts, since each complex step on zero
+// imaginary parts is the real step.
+embedded :: proc($R: type, name: string_view) where linalg.Real(R) {
+	C :: math.Complex(R);
+	ok := true;
+	foreach (n in [?]int{1, 2, 7, 33, 70}) {
+		a := real_matrix(R, n, n, u64(n));
+		z := embed(a.view());
+		switch (dense.lu(a.view())) {
+		case .ok(f):
+			switch (dense.lu(z.view())) {
+			case .ok(g):
+				pivots := true;
+				foreach (k in 0 ..< n) {
+					if (f.pivots()[k] != g.pivots()[k]) { pivots = false; }
+				}
+				if (!pivots || !same_real(g.factors(), f.factors()) || !(g.determinant().real == f.determinant())) { ok = false; }
+				b := real_matrix(R, n, 2, u64(n) + 100);
+				if (!same_real(g.solve(embed(b.view()).view()).view(), f.solve(b.view()).view())) { ok = false; }
+			case .err(_): ok = false;
+			}
+		case .err(_): ok = false;
+		}
+
+		spd := dense.multiply(a.view().transpose(), a.view());
+		foreach (i in 0 ..< n) { spd[i, i] = spd[i, i] + R(f64(n)); }
+		switch (dense.cholesky(spd.view())) {
+		case .ok(f):
+			switch (dense.cholesky(embed(spd.view()).view())) {
+			case .ok(g): if (!same_real(g.lower(), f.lower())) { ok = false; }
+			case .err(_): ok = false;
+			}
+		case .err(_): ok = false;
+		}
+
+		tall := real_matrix(R, n + 3, n, u64(n) + 200);
+		switch (dense.qr(tall.view())) {
+		case .ok(f):
+			switch (dense.qr(embed(tall.view()).view())) {
+			case .ok(g):
+				scales := true;
+				foreach (k in 0 ..< n) {
+					if (!(g.tau()[k].real == f.tau()[k]) || !(g.tau()[k].imaginary == R(0))) { scales = false; }
+				}
+				if (!scales || !same_real(g.factors(), f.factors())) { ok = false; }
+			case .err(_): ok = false;
+			}
+		case .err(_): ok = false;
+		}
+
+		symmetric := dense.add(a.view(), a.view().transpose());
+		switch (dense.symmetric_eigen(symmetric.view())) {
+		case .ok(f):
+			switch (dense.symmetric_eigen(embed(symmetric.view()).view())) {
+			case .ok(g): if (!same_values(g.values(), f.values()) || !same_real(g.vectors(), f.vectors())) { ok = false; }
+			case .err(_): ok = false;
+			}
+		case .err(_): ok = false;
+		}
+
+		switch (dense.svd(tall.view())) {
+		case .ok(f):
+			switch (dense.svd(embed(tall.view()).view())) {
+			case .ok(g):
+				if (!same_values(g.singular_values(), f.singular_values()) || !same_real(g.u(), f.u()) || !same_real(g.v(), f.v())) { ok = false; }
+			case .err(_): ok = false;
+			}
+		case .err(_): ok = false;
+		}
+	}
+	check(name, ok);
+}
+
+// LU of random complex matrices: `|P A - L U| / (n |A| eps)`, the solve's
+// residual, the inverse's, and the condition estimate.
+complex_lu :: proc($R: type, sizes: []int, name: string_view) where linalg.Real(R) {
+	C :: math.Complex(R);
+	worst := R(0);
+	estimates := true;
+	foreach (n in sizes) {
+		a := complex_matrix(R, n, n, u64(n) + 10);
+		norm := dense.norm_one(a.view());
+		switch (dense.lu(a.view())) {
+		case .ok(f):
+			factors := f.factors();
+			l := dense.Matrix(C).identity(n);
+			u := dense.Matrix(C).zeros(n, n);
+			foreach (c in 0 ..< n) {
+				foreach (r in 0 ..< n) {
+					if (r > c) { l[r, c] = factors[r, c]; } else { u[r, c] = factors[r, c]; }
+				}
+			}
+			pa := dense.Matrix(C).from_view(a.view());
+			foreach (k in 0 ..< n) {
+				p := f.pivots()[k];
+				foreach (c in 0 ..< n) {
+					held := pa[k, c];
+					pa[k, c] = pa[p, c];
+					pa[p, c] = held;
+				}
+			}
+			lu_ratio := ratio(pa.view(), dense.multiply(l.view(), u.view()).view(), norm, n);
+			b := complex_matrix(R, n, 2, u64(n) + 20);
+			x := f.solve(b.view());
+			residual := ratio(dense.multiply(a.view(), x.view()).view(), b.view(), norm*dense.norm_one(x.view()), n);
+			inverse := f.inverse();
+			identity := dense.Matrix(C).identity(n);
+			inverse_norm := dense.norm_one(inverse.view());
+			inverse_ratio := ratio(dense.multiply(a.view(), inverse.view()).view(), identity.view(), norm*inverse_norm, n);
+			foreach (value in [?]R{lu_ratio, residual, inverse_ratio}) {
+				if (worst < value) { worst = value; }
+			}
+			// The estimate bounds |A^-1| from below, and is rarely low by more
+			// than a factor of 3.
+			exact := (R(1)/norm)/inverse_norm;
+			estimate := f.reciprocal_condition();
+			if (estimate < exact*R(0.999) || exact*R(3) < estimate) { estimates = false; }
+			check_determinant := f.determinant();
+			if (!(check_determinant == check_determinant)) { estimates = false; }
+		case .err(_): worst = R(1e30);
+		}
+	}
+	check(name, worst < R(30) && estimates);
+}
+
+// Cholesky of B^H B + n I: `|A - L L^H| / (n |A| eps)`, a real positive
+// diagonal, the solve, and the parts of `A` it does not read.
+complex_cholesky :: proc($R: type, sizes: []int, name: string_view) where linalg.Real(R) {
+	C :: math.Complex(R);
+	worst := R(0);
+	ok := true;
+	foreach (n in sizes) {
+		b := complex_matrix(R, n, n, u64(n) + 30);
+		a := dense.multiply(b.view().adjoint(), b.view());
+		foreach (i in 0 ..< n) { a[i, i] = cx(a[i, i].real + R(f64(n)), R(0)); }
+		norm := dense.norm_one(a.view());
+		switch (dense.cholesky(a.view())) {
+		case .ok(f):
+			l := f.lower();
+			product := dense.multiply(l, l.adjoint());
+			value := ratio(a.view(), product.view(), norm, n);
+			if (worst < value) { worst = value; }
+			foreach (i in 0 ..< n) {
+				if (!(l[i, i].imaginary == R(0)) || !(R(0) < l[i, i].real)) { ok = false; }
+			}
+			rhs := complex_matrix(R, n, 2, u64(n) + 40);
+			x := f.solve(rhs.view());
+			residual := ratio(dense.multiply(a.view(), x.view()).view(), rhs.view(), norm*dense.norm_one(x.view()), n);
+			if (worst < residual) { worst = residual; }
+			// NaN above the diagonal and an imaginary part on it are not read.
+			marked := dense.Matrix(C).from_view(a.view());
+			foreach (c in 0 ..< n) {
+				marked[c, c] = cx(marked[c, c].real, R(5));
+				foreach (r in 0 ..< c) { marked[r, c] = cx(R(math.F64_NAN), R(0)); }
+			}
+			switch (dense.cholesky(marked.view())) {
+			case .ok(g): if (!dense.equal(g.lower(), l)) { ok = false; }
+			case .err(_): ok = false;
+			}
+		case .err(_): worst = R(1e30);
+		}
+	}
+	minus := dense.Matrix(C).identity(3);
+	minus[1, 1] = cx(R(-1), R(0));
+	switch (dense.cholesky(minus.view())) {
+	case .ok(_):  ok = false;
+	case .err(e): if (e != .Not_Positive_Definite) { ok = false; }
+	}
+	check(name, worst < R(30) && ok);
+}
+
+// QR of tall random complex matrices: `|A - Q R| / (m |A| eps)`,
+// `|Q^H Q - I| / (m eps)`, a real diagonal on `R`, `Q` and `Q^H` applied in
+// turn, and the least-squares residual orthogonal to the columns.
+complex_qr :: proc($R: type, shapes: [][2]int, name: string_view) where linalg.Real(R) {
+	C :: math.Complex(R);
+	worst := R(0);
+	ok := true;
+	foreach (shape in shapes) {
+		m := shape[0];
+		n := shape[1];
+		a := complex_matrix(R, m, n, u64(m*n) + 50);
+		norm := dense.norm_one(a.view());
+		switch (dense.qr(a.view())) {
+		case .ok(f):
+			q := f.q();
+			r := f.r();
+			foreach (value in [?]R{ratio(a.view(), dense.multiply(q.view(), r.view()).view(), norm, m), orthonormality(q.view(), m)}) {
+				if (worst < value) { worst = value; }
+			}
+			foreach (i in 0 ..< n) {
+				if (!(r[i, i].imaginary == R(0))) { ok = false; }
+			}
+			b := complex_matrix(R, m, 2, u64(m*n) + 60);
+			round := dense.Matrix(C).from_view(b.view());
+			f.apply_q_adjoint_into(round.view_mut());
+			f.apply_q_into(round.view_mut());
+			back := ratio(round.view(), b.view(), dense.norm_one(b.view()), m);
+			if (worst < back) { worst = back; }
+			x := f.least_squares(b.view());
+			residual := dense.subtract(b.view(), dense.multiply(a.view(), x.view()).view());
+			normal := dense.multiply(a.view().adjoint(), residual.view());
+			zero := dense.Matrix(C).zeros(n, 2);
+			scale := norm*(norm*dense.norm_one(x.view()) + dense.norm_one(b.view()));
+			value := ratio(normal.view(), zero.view(), scale, m);
+			if (worst < value) { worst = value; }
+		case .err(_): worst = R(1e30);
+		}
+	}
+	check(name, worst < R(30) && ok);
+}
+
+// The Hermitian eigensolver on B + B^H, read from the lower triangle:
+// `|A V - V D| / (n |A| eps)`, `|V^H V - I| / (n eps)`, ascending values,
+// each vector led by a real positive component, and NaN above the diagonal
+// and an imaginary part on it not read.
+complex_eigen :: proc($R: type, sizes: []int, name: string_view) where linalg.Real(R) {
+	C :: math.Complex(R);
+	worst := R(0);
+	ok := true;
+	foreach (n in sizes) {
+		b := complex_matrix(R, n, n, u64(n) + 70);
+		a := dense.add(b.view(), b.view().adjoint());
+		foreach (i in 0 ..< n) { a[i, i] = cx(a[i, i].real, R(0)); }
+		marked := dense.Matrix(C).from_view(a.view());
+		foreach (c in 0 ..< n) {
+			marked[c, c] = cx(marked[c, c].real, R(7));
+			foreach (r in 0 ..< c) { marked[r, c] = cx(R(math.F64_NAN), R(math.F64_NAN)); }
+		}
+		norm := dense.norm_one(a.view());
+		switch (dense.symmetric_eigen(marked.view())) {
+		case .ok(e):
+			v := e.vectors();
+			values := e.values();
+			vd := dense.Matrix(C).from_view(v);
+			foreach (c in 0 ..< n) {
+				foreach (r in 0 ..< n) { vd[r, c] = vd[r, c]*cx(values[c], R(0)); }
+			}
+			foreach (value in [?]R{ratio(dense.multiply(a.view(), v).view(), vd.view(), norm, n), orthonormality(v, n)}) {
+				if (worst < value) { worst = value; }
+			}
+			foreach (i in 1 ..< n) {
+				if (values[i] < values[i - 1]) { ok = false; }
+			}
+			if (!leads_positive(v)) { ok = false; }
+		case .err(_): worst = R(1e30);
+		}
+	}
+	infinite := dense.Matrix(C).identity(2);
+	infinite[1, 0] = cx(R(0), R(math.F64_INFINITY));
+	switch (dense.symmetric_eigen(infinite.view())) {
+	case .ok(_):  ok = false;
+	case .err(e): if (e != .No_Convergence) { ok = false; }
+	}
+	check(name, worst < R(30) && ok);
+}
+
+// The SVD of random complex matrices, tall and wide: `|A - U S V^H| /
+// (max(m, n) |A| eps)`, `|U^H U - I|`, `|V^H V - I|`, descending values that
+// are not negative, each column of `V` led by a real positive component,
+// and the adjoint's decomposition, `U` and `V` exchanged, bit for bit.
+complex_svd :: proc($R: type, shapes: [][2]int, name: string_view) where linalg.Real(R) {
+	C :: math.Complex(R);
+	worst := R(0);
+	ok := true;
+	foreach (shape in shapes) {
+		m := shape[0];
+		n := shape[1];
+		larger := m if n < m else n;
+		a := complex_matrix(R, m, n, u64(m*n) + 80);
+		norm := dense.norm_one(a.view());
+		switch (dense.svd(a.view())) {
+		case .ok(s):
+			values := s.singular_values();
+			scaled := dense.Matrix(C).from_view(s.u());
+			foreach (c in 0 ..< scaled.columns()) {
+				foreach (r in 0 ..< scaled.rows()) { scaled[r, c] = scaled[r, c]*cx(values[c], R(0)); }
+			}
+			product := dense.multiply(scaled.view(), s.v().adjoint());
+			foreach (value in [?]R{ratio(a.view(), product.view(), norm, larger), orthonormality(s.u(), m), orthonormality(s.v(), n)}) {
+				if (worst < value) { worst = value; }
+			}
+			foreach (i in 0 ..< values.len()) {
+				if (values[i] < R(0) || (i > 0 && values[i - 1] < values[i])) { ok = false; }
+			}
+			if (!leads_positive(s.v())) { ok = false; }
+			// A tall or wide matrix's adjoint is decomposed through the same
+			// iteration, so its values are the same bits; its vectors are `V`
+			// and `U`, each column times the unit its own sign convention
+			// chose.
+			if (m != n) {
+				switch (dense.svd(a.view().adjoint())) {
+				case .ok(t):
+					if (!same_values(t.singular_values(), values)) { ok = false; }
+					aligned := dense.multiply(t.u().adjoint(), s.v());
+					foreach (c in 0 ..< aligned.columns()) {
+						if (R(1e3)*epsilon(R) < (modulus(aligned[c, c]) - R(1)).abs()) { ok = false; }
+					}
+				case .err(_): ok = false;
+				}
+			}
+		case .err(_): worst = R(1e30);
+		}
+	}
+	// Svd.solve of a full-rank tall system is least_squares's solution.
+	a := complex_matrix(R, 9, 4, 90);
+	b := complex_matrix(R, 9, 2, 91);
+	switch (dense.svd(a.view())) {
+	case .ok(s):
+		switch (dense.least_squares(a.view(), b.view())) {
+		case .ok(x):
+			y := s.solve(b.view(), R(0));
+			if (!dense.approx_equal(y.view(), x.view(), R(1e3)*epsilon(R), R(1e3)*epsilon(R))) { ok = false; }
+		case .err(_): ok = false;
+		}
+	case .err(_): ok = false;
+	}
+	check(name, worst < R(30) && ok);
+}
+
+norms :: proc() {
+	a := complex_matrix(f64, 6, 4, 100);
+	// The same sequence of parts as a real matrix, real and imaginary parts
+	// in consecutive rows, gives the same bits.
+	parts := dense.Matrix(f64).zeros(12, 4);
+	foreach (c in 0 ..< 4) {
+		foreach (r in 0 ..< 6) {
+			parts[2*r, c] = a[r, c].real;
+			parts[2*r + 1, c] = a[r, c].imaginary;
+		}
+	}
+	check("norm_frobenius sums the parts in order", dense.norm_frobenius(a.view()) == dense.norm_frobenius(parts.view()));
+	largest := 0.0;
+	foreach (c in 0 ..< 4) {
+		sum := 0.0;
+		foreach (r in 0 ..< 6) { sum = sum + math.hypot(a[r, c].real, a[r, c].imaginary); }
+		if (largest < sum) { largest = sum; }
+	}
+	check("norm_one sums the moduli", math.abs(dense.norm_one(a.view()) - largest) < 1e-14*largest);
+	check("norm_infinity of the adjoint is norm_one", dense.norm_infinity(a.view().adjoint()) == dense.norm_one(a.view()));
+	b := dense.Matrix(math.Complex(f64)).from_view(a.view());
+	b[2, 1] = b[2, 1] + cx(0.0, 1e-12);
+	check("approx_equal by modulus", dense.approx_equal(a.view(), b.view(), 1e-11, 0.0) && !dense.approx_equal(a.view(), b.view(), 1e-13, 0.0));
+	b[2, 1] = cx(b[2, 1].real, math.F64_NAN);
+	check("a NaN part is never approximately equal", !dense.approx_equal(b.view(), b.view(), 1.0, 1.0));
+}
+
+bits :: proc(x: f64) -> u64 { return unsafe.transmute(u64, x); }
+
+// Bit patterns of complex results, which must not change with the
+// optimization or CPU level.
+patterns :: proc() {
+	a := complex_matrix(f64, 40, 40, 110);
+	sum: u64 = 0;
+	switch (dense.lu(a.view())) {
+	case .ok(f):  sum = sum ~ bits(f.determinant().real) ~ bits(f.determinant().imaginary);
+	case .err(_):
+	}
+	switch (dense.qr(a.view())) {
+	case .ok(f):  sum = sum ~ bits(f.factors()[39, 39].real) ~ bits(f.tau()[0].imaginary);
+	case .err(_):
+	}
+	h := dense.add(a.view(), a.view().adjoint());
+	switch (dense.symmetric_eigen(h.view())) {
+	case .ok(e):  sum = sum ~ bits(e.values()[0]) ~ bits(e.vectors()[39, 20].imaginary);
+	case .err(_):
+	}
+	switch (dense.svd(a.view().block(0, 0, 40, 25))) {
+	case .ok(s):  sum = sum ~ bits(s.singular_values()[24]) ~ bits(s.u()[10, 3].real);
+	case .err(_):
+	}
+	fmt.println("complex bits", sum);
+}
+
+main :: proc() {
+	adjoint_views();
+	embedded(f64, "a real matrix as complex gives the real bits, f64");
+	embedded(f32, "a real matrix as complex gives the real bits, f32");
+	complex_lu(f64, [?]int{1, 2, 7, 33, 100}[:], "complex LU ratios below 30, f64");
+	complex_lu(f32, [?]int{1, 2, 7, 33}[:], "complex LU ratios below 30, f32");
+	complex_cholesky(f64, [?]int{1, 2, 7, 33, 100}[:], "complex Cholesky ratios below 30, f64");
+	complex_cholesky(f32, [?]int{1, 2, 7, 33}[:], "complex Cholesky ratios below 30, f32");
+	complex_qr(f64, [?][2]int{{1, 1}, {7, 3}, {33, 33}, {100, 40}}[:], "complex QR ratios below 30, f64");
+	complex_qr(f32, [?][2]int{{1, 1}, {7, 3}, {33, 20}}[:], "complex QR ratios below 30, f32");
+	complex_eigen(f64, [?]int{1, 2, 7, 33, 100}[:], "Hermitian eigen ratios below 30, f64");
+	complex_eigen(f32, [?]int{1, 2, 7, 33}[:], "Hermitian eigen ratios below 30, f32");
+	complex_svd(f64, [?][2]int{{1, 1}, {7, 3}, {3, 7}, {33, 33}, {60, 25}, {25, 60}}[:], "complex SVD ratios below 30, f64");
+	complex_svd(f32, [?][2]int{{1, 1}, {7, 3}, {3, 7}, {33, 20}}[:], "complex SVD ratios below 30, f32");
+	norms();
+	patterns();
+}

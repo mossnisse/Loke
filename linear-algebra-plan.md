@@ -453,7 +453,7 @@ Ordered by how foundational each part is, not by a particular program:
    `angle_between`, `project`, `reject`, `reflect`, `normal_matrix`,
    `inverse_affine`, and `project_point`.
 3. **Dense matrices**, under their own plan, the
-   [dense matrix plan](dense-matrix-plan.md), whose first four milestones,
+   [dense matrix plan](dense-matrix-plan.md), whose five milestones,
    [`core:math/dense`](standard-library.md#coremathdense), are done.
 4. **Measured performance.** Benchmarks of products, `rotate`, and batch
    transforms against hand-written loops, then `Simd` inside the operations
@@ -523,7 +523,9 @@ Settled on 2026-10-29; the sections above carry the decisions.
 - **Complex elements**: `dot` is the bilinear product for every `T`, as
   `Numeric` defines it. Hermitian products need a conjugate, which `Numeric`
   does not have, and belong with the dense package, where complex matrices
-  are used.
+  are used; its fifth milestone added `Scalar`, the conjugate-aware interface,
+  here beside `Real`
+  ([Milestone 5 results](dense-matrix-plan.md#milestone-5-results)).
 - **Handedness**: right-handed unsuffixed names, plus `_lh` forms of the four
   camera constructors ([Coordinates and rotations](#coordinates-and-rotations)).
   A required handedness argument was rejected as noise for the right-handed

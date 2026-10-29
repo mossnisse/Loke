@@ -2566,13 +2566,22 @@ and optimization level. A call that does not reach `sqrt` can also be
 evaluated at compile time with the same result; one that does cannot, since
 `math.sqrt` calls a foreign procedure.
 
+`linalg.Scalar(T)` is a real or complex number type, the element type of
+[`core:math/dense`](#coremathdense)'s factorizations: `Numeric`, `==`, unary
+`-`, an associated type `T.Real` that is `Real`, a conversion `T(x)` from a
+`T.Real`, and the slots `conjugate`, `real_part`, and `imaginary_part`. The
+package implements it for `f32` and `f64`, each its own `Real` with no
+imaginary part, and for `math.Complex(R)` of any `Real(R)`. A user real type
+implements it with an inherent `Real` constant naming itself, `conjugate` and
+`real_part` returning the value, and `imaginary_part` returning zero.
+
 ## `core:math/dense`
 
 Matrices whose size is known only at run time: an owner, views of it and of
 foreign buffers, products, the LU, Cholesky, and QR factorizations, least
-squares, the symmetric eigendecomposition, and the singular value
-decomposition. The design, its measured performance, and its later milestone,
-complex elements, are in the [dense matrix plan](dense-matrix-plan.md).
+squares, the symmetric and Hermitian eigendecomposition, and the singular
+value decomposition, of real or complex elements. The design and its measured
+performance are in the [dense matrix plan](dense-matrix-plan.md).
 
 `Matrix(T)` owns `rows x columns` elements stored column-major in one
 allocation, the order LAPACK and `linalg.Matrix` use, from the allocator it was
@@ -2594,7 +2603,9 @@ columns)`, and `from_column(values)` view a foreign buffer. Every constructor
 checks once that the elements are inside the slice and that the leading
 dimension covers a whole column or row, so no two elements share a place;
 either failure panics. `block(row, column, rows, columns)`, `transpose()`,
-`row(r)`, and `column(c)` make smaller views without a copy. A view borrows
+`row(r)`, and `column(c)` make smaller views without a copy, and so does
+`adjoint()`, for a `linalg.Scalar(T)`, which reads the conjugate transpose and
+is the transpose for a real `T`. A view borrows
 its slice, so the [checker](design.md#capabilities-and-the-one-rule) keeps it
 from outliving the storage and rejects `multiply_into(m.view_mut(), m.view(),
 b)` where it is written; nothing is checked at run time.
@@ -2616,45 +2627,54 @@ With `interfaces.Numeric(T)`, so for integers and user number types too:
   `multiply_add_into(out, a, b)`, which adds each term into `out` in turn;
 - `add`, `subtract`, `scale(a, s)`, and `transpose`, each with an `_into`
   form;
-- `dot(x, y)`, the sum of the element products in column order; `trace`; and
+- `dot(x, y)`, the sum of the element products in column order, conjugating
+  nothing, so `x^H y` is `dot(x.adjoint().transpose(), y)`; `trace`; and
   `equal`, exact and false for different shapes.
 
 Each `_into` form writes caller storage and never allocates; the other form
 allocates its result. A shape mismatch panics.
 
-With `linalg.Real(T)`:
+With [`linalg.Scalar(T)`](#coremathlinalg), so for `f32`, `f64`,
+`math.Complex` of either, and user number types, a transpose below being the
+conjugate transpose for a complex `T`, and a norm, a tolerance, an
+eigenvalue, and a singular value being `T.Real`:
 
 - `approx_equal(a, b, absolute, relative)` by `linalg.approx_equal`'s rule,
-  element by element, false for different shapes;
+  element by element and by modulus, false for different shapes;
 - `norm_frobenius`, in one pass with a running scale so that it neither
-  overflows nor underflows where the result does not; `norm_one`, the largest
-  column sum; and `norm_infinity`, the largest row sum;
+  overflows nor underflows where the result does not, a complex element as
+  its two parts; `norm_one`, the largest column sum of moduli; and
+  `norm_infinity`, the largest row sum;
 - `solve_lower_into(l, b, unit_diagonal)` and `solve_upper_into(u, b,
   unit_diagonal)`, which overwrite `b` and read only their triangle;
 - `lu(a)` and `lu_in_place(a, pivots)`, Gaussian elimination with partial
-  pivoting, the pivot the first element of largest magnitude in its column.
+  pivoting, the pivot the first element of largest magnitude in its column,
+  `|re| + |im|` for a complex one as in LAPACK.
   `Lu` has `solve`, `solve_into`, `inverse`, `determinant`, `factors()` and
   `pivots()` in LAPACK's `getrf` form, and `reciprocal_condition()`, LAPACK's
   `gecon` estimate of `1 / (|A|_1 |A^-1|_1)`;
-- `cholesky(a)` and `cholesky_in_place(a)`, the `L L^T` factor of a symmetric
-  positive definite matrix from its lower triangle. `Cholesky`
+- `cholesky(a)` and `cholesky_in_place(a)`, the `L L^H` factor of a Hermitian
+  positive definite matrix from its lower triangle, with a real diagonal.
+  `Cholesky`
   has `solve`, `solve_into`, `determinant`, and `lower()`;
 - `qr(a)` and `qr_in_place(a, tau)`, for `rows >= columns`, by unblocked
   Householder reflectors, applied a panel of columns at a time, in LAPACK's
-  `geqrf` form. `Qr` has `q()`, the first
+  `geqrf` form, `R`'s diagonal real. `Qr` has `q()`, the first
   `n` columns of `Q`, `r()`, `apply_q_into(b)` and
-  `apply_q_transpose_into(b)`, which apply `Q` and `Q^T` without forming it,
+  `apply_q_adjoint_into(b)`, which apply `Q` and `Q^H` without forming it,
   `least_squares(b)`, and `least_squares_into(b)`, which leaves the
   minimizer in `b`'s first `n` rows and the residual's components, whose norm
   is the residual's, in the rest, as LAPACK's `gels` does; and `factors()`
   and `tau()`;
 - `solve(a, b)`, `inverse(a)`, and `least_squares(a, b)`, which factor and
   solve in one call. `least_squares` assumes full column rank;
-- `symmetric_eigen(a)`, the eigenvalues and eigenvectors of a symmetric matrix
-  from its lower triangle, by Householder tridiagonalization and implicit QL
-  with Wilkinson shifts. `Symmetric_Eigen` has `values()`, ascending, and
-  `vectors()`, an orthogonal matrix with eigenvector `i` as column `i`;
-- `svd(a)`, the thin singular value decomposition `A = U S V^T` of any
+- `symmetric_eigen(a)`, the eigenvalues and eigenvectors of a symmetric
+  matrix, or a Hermitian one for a complex `T`, from its lower triangle, the
+  diagonal's imaginary parts not read, by Householder reduction to a real
+  tridiagonal and implicit QL with Wilkinson shifts. `Symmetric_Eigen` has
+  `values()`, real and ascending, and `vectors()`, an orthogonal, or unitary,
+  matrix with eigenvector `i` as column `i`;
+- `svd(a)`, the thin singular value decomposition `A = U S V^H` of any
   `m x n` matrix, by Golub and Reinsch's method as LINPACK's `dsvdc` has it.
   `Svd` has `u()` (`m x k`, `k = min(m, n)`), `singular_values()`,
   descending and not negative, `v()` (`n x k`), `rank(relative)`, and
@@ -2665,7 +2685,7 @@ With `linalg.Real(T)`:
 The signs of the vectors are part of the contract, so that two machines give
 the same vectors and not only the same subspaces: each eigenvector, and each
 column of `V` with its column of `U`, has its first component of largest
-magnitude positive. The iterations decide convergence by rounding rather than
+magnitude positive, for a complex `T` by multiplying it by a unit. The iterations decide convergence by rounding rather than
 by a tolerance: an off-diagonal element is negligible when adding it to its
 two diagonal neighbours' magnitudes changes nothing.
 

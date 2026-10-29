@@ -1,13 +1,14 @@
 # Dense matrix library plan
 
-Status: milestones 1 to 4 implemented, 2026-10-29, as
+Status: milestones 1 to 5 implemented, 2026-10-29, as
 [`core:math/dense`](standard-library.md#coremathdense)
 ([Milestone 1 results](#milestone-1-results),
 [Milestone 2 results](#milestone-2-results),
 [Milestone 3 results](#milestone-3-results),
-[Milestone 4 results](#milestone-4-results)), after its design questions were
+[Milestone 4 results](#milestone-4-results),
+[Milestone 5 results](#milestone-5-results)), after its design questions were
 settled and its spike run the same day ([Settled questions](#settled-questions),
-[Spike results](#spike-results)); milestone 5 is a proposal. It is
+[Spike results](#spike-results)). It is
 milestone 3 of the
 [linear algebra library plan](linear-algebra-plan.md#milestones), which left
 this package [its own plan](linear-algebra-plan.md#dense-matrices-a-later-package)
@@ -145,11 +146,13 @@ factorization. The fused forms that avoid a temporary are separate names:
 ### Element types
 
 Storage, views, and products need `interfaces.Numeric(T)`, so integer and
-rational matrices work. The factorizations need `linalg.Real(T)`, the same
-interface the fixed-size package uses, so a dual number differentiates through
-`solve` as it does through `linalg.inverse`. Complex elements need a conjugate
-for Hermitian products, which neither interface has; they are a later milestone
-with an interface of their own ([Milestones](#milestones)).
+rational matrices work. The factorizations need `linalg.Scalar(T)`, a real or
+complex number type: `T.Real` names the type of its parts, which is
+`linalg.Real`, and `conjugate`, `real_part`, and `imaginary_part` give the
+rest. `f32`, `f64`, and `math.Complex(R)` for any `Real(R)` meet it, and a
+user real type, such as a dual number, meets it with four members beside
+`linalg.Real`'s, so a dual number differentiates through `solve` as it does
+through `linalg.inverse` ([Milestone 5 results](#milestone-5-results)).
 
 ### Shapes and errors
 
@@ -242,11 +245,11 @@ The products, `lu`, and `cholesky` take one
 
 | Operation | Method | Fails with |
 | --- | --- | --- |
-| `lu`, `solve` | Gaussian elimination, partial pivoting, the first largest magnitude on a tie; blocked, right-looking | `Singular` |
-| `cholesky` | the `L L^T` factor, by columns; blocked, left-looking, or right-looking with a pool | `Not_Positive_Definite` |
+| `lu`, `solve` | Gaussian elimination, partial pivoting, the first largest magnitude on a tie, a complex element's being the sum of its parts' magnitudes; blocked, right-looking | `Singular` |
+| `cholesky` | the `L L^H` factor, by columns; blocked, left-looking, or right-looking with a pool | `Not_Positive_Definite` |
 | `qr`, `least_squares` | Householder reflectors, unblocked, applied a panel at a time; full column rank assumed | `Singular` for an exact zero on `R`'s diagonal |
-| `symmetric_eigen` | Householder tridiagonalization, then implicit QL with Wilkinson shifts | `No_Convergence` |
-| `svd` | Golub-Kahan bidiagonalization, then implicit-shift QR (Golub-Reinsch) | `No_Convergence` |
+| `symmetric_eigen` | Householder reduction to a real tridiagonal, then implicit QL with Wilkinson shifts; Hermitian for a complex `T` | `No_Convergence` |
+| `svd` | Golub-Kahan reduction to a real bidiagonal, then implicit-shift QR (Golub-Reinsch) | `No_Convergence` |
 | `reciprocal_condition` | Hager and Higham's 1-norm estimator on an `Lu` | |
 | `norm_frobenius` | one pass with a running scale, so it does not overflow | |
 
@@ -273,7 +276,9 @@ Sketches in the [standard-library](standard-library.md) style; constraints,
 receiver modes, and the `allocator := mem.default_allocator()` parameters are
 omitted, and so are the `pool := .none` parameters of `multiply`,
 `multiply_into`, `multiply_add_into`, `lu`, `lu_in_place`, `cholesky`, and
-`cholesky_in_place`. "Real" means members bounded by `linalg.Real(T)`.
+`cholesky_in_place`. "Scalar" means members bounded by `linalg.Scalar(T)`; a
+norm, a tolerance, an eigenvalue, and a singular value are `T.Real`, and a
+transpose in a factorization is the conjugate transpose.
 
 ```text
 Matrix(T), any Numeric T:
@@ -289,6 +294,7 @@ View(T) and View_Mut(T), any Numeric T:
   from_column(values) -> rows x 1
   rows(), columns(), [r, c] (and [r, c]= on View_Mut)
   block(row, column, rows, columns), transpose(), row(r), column(c), to_fixed($R, $C)
+  View, Scalar T: adjoint()                    // conjugated, no copy
   View_Mut: as_view(), fill(value), copy_from(View), scale_by(s), add_scaled(s, View),
             split_columns(k), split_rows(k)   // panic for the interleaved direction
 
@@ -296,8 +302,8 @@ Operations, any Numeric T, each with an `_into` form:
   multiply(a, b), multiply_add_into(out, a, b), add(a, b), subtract(a, b),
   scale(a, s), transpose(a), dot(x, y), trace(a), equal(a, b)
 
-Real:
-  approx_equal(a, b, absolute, relative)       // linalg's rule, element-wise
+Scalar:
+  approx_equal(a, b, absolute, relative)       // linalg's rule, element-wise, by modulus
   norm_frobenius(a), norm_one(a), norm_infinity(a)
   lu(a) -> Result(Lu(T), Error); lu_in_place(a, pivots) -> Status(Error)
     Lu: solve(b), solve_into(b), determinant(), inverse(), reciprocal_condition(),
@@ -308,7 +314,7 @@ Real:
   qr(a) -> Result(Qr(T), Error)                // rows >= columns
   qr_in_place(a, tau) -> Status(Error)
     Qr: least_squares(b), least_squares_into(b), q(), r(),
-        apply_q_into(b), apply_q_transpose_into(b), factors(), tau(), rows(), columns()
+        apply_q_into(b), apply_q_adjoint_into(b), factors(), tau(), rows(), columns()
   solve_lower_into(l, b, unit_diagonal), solve_upper_into(u, b, unit_diagonal)
   solve(a, b), inverse(a), least_squares(a, b) // factor, then solve, in one call
   symmetric_eigen(a) -> Result(Symmetric_Eigen(T), Error)   // reads the lower triangle
@@ -343,8 +349,10 @@ merely the same subspaces.
    hand-written loops and a reference BLAS for scale, then blocking, `Simd`
    kernels across outputs, and the optional pool, each kept only where it wins
    without changing a bit.
-5. **Complex elements.** A conjugate-aware interface, Hermitian products,
-   complex LU and QR, and the Hermitian eigensolver.
+5. **Complex elements.** Done
+   ([Milestone 5 results](#milestone-5-results)). A conjugate-aware
+   interface, Hermitian products, complex LU and QR, and the Hermitian
+   eigensolver, and complex Cholesky and SVD with them.
 
 Each milestone ships its `api.loki`, a [`standard-library.md`](standard-library.md)
 section (the first one with a package-layout line), a `CHANGELOG.md` line, and
@@ -370,9 +378,10 @@ the tests below.
   fewer than, equal to, and more than columns where the operation allows.
 - **Failures**: an exact singular matrix, a NaN, an indefinite matrix through
   `cholesky`, and a rank-deficient `least_squares` against `Svd.solve`.
-- **Element types**: `f32` and `f64` throughout, integers through the
-  `Numeric` operations, and a dual number through `lu` and `solve`, whose
-  derivative is checked against `-A^{-1} (dA) A^{-1} b` for a constant `b`.
+- **Element types**: `f32` and `f64` throughout, `math.Complex` of each,
+  integers through the `Numeric` operations, and a dual number through `lu`
+  and `solve`, whose derivative is checked against `-A^{-1} (dA) A^{-1} b` for
+  a constant `b`.
 - **Determinism**: results as bit patterns, the same at every optimization and
   [CPU level](compiler-guide.md#cpu-levels), with a pool and without.
 
@@ -767,3 +776,97 @@ Not done, for later milestones or callers:
   fast path possible but none of the factorizations needs one;
 - small products, where packing `b` costs a few percent against the
   unpacked kernel.
+
+## Milestone 5 results
+
+Done 2026-10-29: `linalg.Scalar`, `View.adjoint`, and every factorization for
+`math.Complex` elements, in [`core:math/linalg`](standard-library.md#coremathlinalg)
+and [`core:math/dense`](standard-library.md#coremathdense). Settled the same
+day: one conjugate-aware interface rather than a second implementation of each
+algorithm for `math.Complex`; the interface in `core:math/linalg`, beside
+`Real`; and the conjugate transpose as a view. Cholesky and the SVD take
+complex elements too, since one generic implementation leaves no reason to
+except them. `tests/run/lib_dense_complex.loke`, in the CPU-level corpus,
+checks them, with the same output at every optimization and CPU level tried,
+and every earlier `lib_dense` test gives the output it gave before, so no real
+result changed.
+
+- **A real matrix as complex** gives, through `lu`, `solve`, `cholesky`, `qr`,
+  `symmetric_eigen`, and `svd`, the real factorization's bits in the real parts
+  and zero imaginary parts, at `f32` and `f64` from 1 x 1 to 70 x 70: on zero
+  imaginary parts every complex step is the real one, Smith's division
+  included.
+- **LAPACK's test ratios** for `P A - L U`, the solve and the inverse,
+  `A - L L^H`, `A - Q R` and `Q^H Q - I` with the least-squares residual's
+  `A^H r`, `A V - V D` and `V^H V - I`, and `A - U S V^H` with both
+  orthonormality ratios, stay below 30 for random complex matrices from
+  1 x 1 to 100 x 100 at `f64`, and to 33 x 33 at `f32`, tall and wide for the
+  SVD. `R`'s diagonal, `L`'s, the eigenvalues, and the singular values are
+  real, with the order and signs the contract gives.
+- **What is not read**: NaN above the diagonal and an imaginary part on it
+  change nothing in `cholesky` or `symmetric_eigen`.
+- **The adjoint** reads the conjugate transpose, its adjoint is the view, and
+  a copy, a block, a product, an element-wise operation, and a triangular
+  solve through one equal the same on a conjugated copy bit for bit. A real
+  adjoint is the transpose.
+- **Planted bugs** are caught: an unconjugated sum in either reflector kernel,
+  a reflector skipped for a complex `alpha`, an unconjugated element above the
+  diagonal in the tridiagonalization or update in Cholesky, an unconjugated
+  row reflector or `V` formed through the transpose in the SVD, the adjoint's
+  flag ignored, and an eigenvector's leading component left inexact.
+
+Decided while implementing:
+
+- **`linalg.Scalar(T)`** requires `interfaces.Numeric(T)`, `==`, unary `-`,
+  an associated type `T.Real` that is `linalg.Real`, a conversion `T(x)` from
+  a `T.Real`, and the slots `conjugate`, `real_part`, and `imaginary_part`.
+  Generic code recognises a real `T` as `T == T.Real` and keeps the real form
+  of each step there, which is why no real result changed; for a complex one
+  it conjugates where the complex algorithm does. A user real type, such as
+  the tests' dual number, adds `Real`, `conjugate`, `real_part`, and
+  `imaginary_part` to what `linalg.Real` asks, and `math.Complex` of it then
+  works too.
+- **`View.adjoint()`** sets a private flag that every kernel reading a view
+  honours, and is the transpose for a real `T`, so the flag is never set on
+  the real fast paths. `View_Mut` has no adjoint: a write through a conjugated
+  view would have to conjugate on the way in, and nothing needs it.
+- **`dot` conjugates nothing**, as its order was documented; `x^H y` is
+  `dot(x.adjoint().transpose(), y)`. A conjugating `dot` is added with a caller
+  who wants a name for it.
+- **`Qr.apply_q_transpose_into` is now `apply_q_adjoint_into`**, since for a
+  complex `T` it applies `Q^H`. The package has not been released, so the
+  rename needs no upgrade note.
+- **`symmetric_eigen` keeps its name** for a Hermitian matrix: a complex
+  symmetric one, `A = A^T`, is not what it computes, and its documentation
+  says it reads the lower triangle as Hermitian. `Symmetric_Eigen.values()`
+  are `T.Real`.
+- **A pivot's magnitude is `|re| + |im|`**, LAPACK's `cabs1`, which needs no
+  square root and is `|x|` for a real element. The condition estimate follows
+  `zlacn2`, whose signs are the units `x / |x|` and which does not test for
+  repeated signs.
+- **The reflectors are `zlarfg`'s**: `beta` is real, so `R`'s diagonal and the
+  reduced tridiagonal and bidiagonal are real, and the real iterations of
+  milestone 3 run on them unchanged, their rotations applied to complex
+  vectors. A column whose part below the diagonal is zero still gets a
+  reflector when its leading element is not real. The row reflectors of the
+  SVD are built from the row as it stands and applied to the transpose's
+  columns as `H^H`, which is the row-side `A G` for `G` its conjugate.
+- **A complex vector's sign** is a unit: each eigenvector, and each column of
+  `V` with its column of `U`, is multiplied by `conj(z) / |z|` for its first
+  component `z` of largest modulus, which is then set to `|z|` exactly. For a
+  real `T` that unit is `-1` or `1`, the negation milestone 3 applied.
+- **`T.Real` in `core:math/dense`** is declared again for `f32`, `f64`, and
+  `math.Complex`, privately, because a bound grants a package the slots of
+  `linalg`'s private extensions but not their associated constant; and a
+  `Real` slot on a complex `T`'s parts is reached through a helper bounded by
+  `linalg.Real`. Both are open language questions
+  ([Associated constants through a bound](open-questions.md#associated-constants-through-a-bound),
+  [Slots through an associated type's bound](open-questions.md#slots-through-an-associated-types-bound)).
+
+Complex elements use the scalar kernels. At `-opt=speed` on `x86-64-v3`,
+counting real operations, a 256 x 256 complex product runs at about 8 a
+nanosecond, against 28 for the real `Simd` kernel; `lu` at about 9, the
+Hermitian eigensolver at 11, and a 512 x 256 SVD at 14. A complex `Simd`
+kernel, its parts in separate lanes, is later work with a caller who needs
+the speed; it would have to keep `math.Complex`'s order, `ac - bd` and
+`ad + bc`, in each lane.

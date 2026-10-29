@@ -1,0 +1,29 @@
+ok an adjoint reads the conjugate transpose
+ok the adjoint of an adjoint is the view
+ok a copy of an adjoint is conjugated
+ok a block of an adjoint is conjugated
+ok a transpose of an adjoint is the conjugate
+ok a product with an adjoint is a product with its copy
+ok an adjoint on the right too
+ok element-wise operations read an adjoint
+ok a triangular solve reads an adjoint
+ok x^H y is dot of the adjoint's transpose
+ok a real adjoint is the transpose
+ok a real matrix as complex gives the real bits, f64
+ok a real matrix as complex gives the real bits, f32
+ok complex LU ratios below 30, f64
+ok complex LU ratios below 30, f32
+ok complex Cholesky ratios below 30, f64
+ok complex Cholesky ratios below 30, f32
+ok complex QR ratios below 30, f64
+ok complex QR ratios below 30, f32
+ok Hermitian eigen ratios below 30, f64
+ok Hermitian eigen ratios below 30, f32
+ok complex SVD ratios below 30, f64
+ok complex SVD ratios below 30, f32
+ok norm_frobenius sums the parts in order
+ok norm_one sums the moduli
+ok norm_infinity of the adjoint is norm_one
+ok approx_equal by modulus
+ok a NaN part is never approximately equal
+complex bits 18445180870961733046
