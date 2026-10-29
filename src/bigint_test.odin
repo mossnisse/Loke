@@ -325,3 +325,54 @@ exact_fma_rounds_once :: proc(t: ^testing.T) {
 		testing.expectf(t, pattern == k.expected, "fma(%v, %v, %v) at %d bits: expected %x, got %x", k.a, k.b, k.c, k.bits, k.expected, pattern)
 	}
 }
+
+// `exact_sqrt`, the compile-time value of `core:math`'s square root
+// instruction, against the compiling machine's, which IEEE 754 makes
+// correctly rounded too: the arguments whose roots come nearest a midpoint,
+// 1 - 2^-53 and 1 + 2^-52 and their `f32` counterparts, where narrowing the
+// `f64` root comes closest to rounding twice; the smallest subnormals; the
+// largest values; and seeded patterns of every magnitude. The special cases
+// are the x86-64 instruction's.
+@(test)
+exact_sqrt_matches_the_instruction :: proc(t: ^testing.T) {
+	check64 :: proc(t: ^testing.T, x: f64) {
+		got := exact_sqrt(float_const(x, 64))
+		want := transmute(u64)math.sqrt(x)
+		testing.expectf(t, got.float_raw == want, "sqrt(%x): expected %x, got %x", transmute(u64)x, want, got.float_raw)
+	}
+	check32 :: proc(t: ^testing.T, x: f32) {
+		got := exact_sqrt(float_const(f64(x), 32))
+		want := u64(transmute(u32)math.sqrt(x))
+		testing.expectf(t, got.float_raw == want, "sqrt_f32(%x): expected %x, got %x", transmute(u32)x, want, got.float_raw)
+	}
+	for pattern in ([]u64{1, 2, 3, 4, 0x000fffffffffffff, 0x0010000000000000, 0x3fefffffffffffff, 0x3ff0000000000001, 0x4002000000000000, 0x7fefffffffffffff}) {
+		check64(t, transmute(f64)pattern)
+	}
+	for pattern in ([]u32{1, 2, 4, 0x007fffff, 0x3f7fffff, 0x3f800001, 0x40100000, 0x7f7fffff}) {
+		check32(t, transmute(f32)pattern)
+	}
+	state: u64 = 0x6a09e667f3bcc908
+	for i in 0 ..< 20000 {
+		state = state*6364136223846793005 + 1442695040888963407
+		pattern := (state >> 1) & 0x7fefffffffffffff
+		if i % 4 == 0 {
+			pattern &= 0x000fffffffffffff
+		}
+		if pattern != 0 {
+			check64(t, transmute(f64)pattern)
+		}
+		pattern32 := u32(state >> 33) & 0x7f7fffff
+		if pattern32 != 0 {
+			check32(t, transmute(f32)pattern32)
+		}
+	}
+
+	negative_zero := exact_sqrt(float_const(math.copy_sign(f64(0), -1), 64))
+	testing.expectf(t, negative_zero.float_raw == 0x8000000000000000, "sqrt(-0) is %x", negative_zero.float_raw)
+	infinity := exact_sqrt(float_const(math.INF_F64, 64))
+	testing.expectf(t, infinity.float_raw == 0x7ff0000000000000, "sqrt(+Inf) is %x", infinity.float_raw)
+	negative := exact_sqrt(float_const(-1, 32))
+	testing.expectf(t, negative.float_raw == 0xffc00000, "sqrt_f32(-1) is %x", negative.float_raw)
+	signaling := exact_sqrt(float_bits_const(0x7ff0000000000001, 64))
+	testing.expectf(t, signaling.float_raw == 0x7ff8000000000001, "sqrt(sNaN) is %x", signaling.float_raw)
+}

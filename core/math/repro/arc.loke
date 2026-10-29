@@ -13,15 +13,16 @@
 //
 // 1 - a^2 is formed as a pair within 2^-104 relative: as (1 - a)(1 + a) for
 // a >= 1/2, 1 - a exact (Sterbenz) and 1 + a an exact pair, and from a^2's
-// exact pair (`two_product`) below. Nothing here may use a square root
-// instruction, which compile-time evaluation does not share, so w comes from
-// y, 1/sqrt r for r the pair's high part: an estimate from r's bit pattern,
-// within 0.0344 relative (Robertson, "A Brief History of InvSqrt", 2012), and
-// Newton's steps y (3/2 - r y^2/2), which take a relative error e to
-// 1.5 e^2 + e^3/2. Three steps leave 2^-34.7, and a fourth leaves the
-// rounding of its four operations, under 2^-51.4; wh = r y is within 2^-50.8
-// of w, and wl = (r - wh^2)/(2 wh), wh^2 an exact pair and r - wh^2 exact
-// in its high parts (Sterbenz), leaves wh + wl within 2^-101 of w relative.
+// exact pair (`two_product`) below. w comes from y, 1/sqrt r for r the pair's
+// high part, as it did before `math.sqrt` was the instruction and had a
+// compile-time value (the plan's progress lists starting from it instead): an
+// estimate from r's bit pattern, within 0.0344 relative (Robertson, "A Brief
+// History of InvSqrt", 2012), and Newton's steps y (3/2 - r y^2/2), which
+// take a relative error e to 1.5 e^2 + e^3/2. Three steps leave 2^-34.7, and
+// a fourth leaves the rounding of its four operations, under 2^-51.4; wh = r y
+// is within 2^-50.8 of w, and wl = (r - wh^2)/(2 wh), wh^2 an exact pair and
+// r - wh^2 exact in its high parts (Sterbenz), leaves wh + wl within 2^-101 of
+// w relative.
 //
 // The fast path is `atan2_kernel`'s with n or d a pair. The low parts add
 // three roundings to u's numerator, which leave it within 2^-102.7 d of

@@ -329,8 +329,8 @@ checklist.
   ([CPU levels](compiler-guide.md#cpu-levels)).
 - `core:math/repro` holds correctly rounded elementary functions, whose
   results are the same bits on every machine, CPU level, and optimization
-  level, and at compile time: `exp`, `log`, `log2`, `log10`, `pow`, `sin`,
-  `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, and `hypot` in both
+  level, and at compile time: `exp`, `log`, `log2`, `log10`, `pow`, `sqrt`,
+  `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, and `hypot` in both
   widths ([`core:math/repro`](standard-library.md#coremathrepro)).
 - An export, or any procedure Loke defines with a foreign calling convention,
   runs in Loke's floating-point environment when a C host or library calls
@@ -341,6 +341,10 @@ checklist.
 
 ### Changed
 
+- `math.sqrt` and `math.sqrt_f32` are the processor's square root instruction
+  rather than a call to the C library: as correctly rounded, about as fast,
+  and with a compile-time value, so `ROOT :: math.sqrt(2.0)` is a constant
+  ([`core:math`](standard-library.md#coremath)).
 - Every Clang command now passes the CPU level's `-march` and
   `-ffp-contract=off`, the runtime's C sources included, whose default let
   Clang fuse `a*b + c` once a level has FMA. `-print-toolchain` prints both

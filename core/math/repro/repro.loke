@@ -10,13 +10,14 @@
 	each function. No procedure here calls the C library.
 
 	The package holds only what has been implemented and checked: today `exp`,
-	`log`, `log2`, `log10`, `pow`, `sin`, `cos`, `tan`, `asin`, `acos`,
+	`log`, `log2`, `log10`, `pow`, `sqrt`, `sin`, `cos`, `tan`, `asin`, `acos`,
 	`atan`, `atan2`, and `hypot`, each in both widths. A function missing here
 	is not provided by falling back to `core:math`.
 */
 @(public)
 package repro;
 
+import "core:math";
 import "core:unsafe";
 
 /**
@@ -243,6 +244,30 @@ tan_f32 :: proc(x: f32) -> f32 {
 	if (magnitude < 0x39800000) { return x; }
 	if (magnitude >= 0x7f800000) { return unsafe.transmute(f32, u32(CANONICAL_NAN_F32)); }
 	return tan_f32_of(f64(x));
+}
+
+/**
+	The square root of x. NaN, and any x below zero, -Inf included, gives
+	NaN; ±0 gives itself, and +Inf gives +Inf. An exact square root, such as
+	`sqrt(2.25)`, is exact.
+*/
+// Past its special cases, `core:math`'s, which is the processor's square root
+// instruction: IEEE 754 makes it correctly rounded on every machine, and
+// compile-time evaluation rounds it exactly as well.
+sqrt :: proc(x: f64) -> f64 {
+	bits := unsafe.transmute(u64, x);
+	if (bits == 0 || bits == 0x8000000000000000 || bits == 0x7ff0000000000000) { return x; }
+	// Every NaN and negative argument is above +Inf's pattern.
+	if (bits > 0x7ff0000000000000) { return unsafe.transmute(f64, u64(CANONICAL_NAN_F64)); }
+	return math.sqrt(x);
+}
+
+/// sqrt for `f32`, with the special cases of `sqrt`.
+sqrt_f32 :: proc(x: f32) -> f32 {
+	bits := unsafe.transmute(u32, x);
+	if (bits == 0 || bits == 0x80000000 || bits == 0x7f800000) { return x; }
+	if (bits > 0x7f800000) { return unsafe.transmute(f32, u32(CANONICAL_NAN_F32)); }
+	return math.sqrt_f32(x);
 }
 
 /**

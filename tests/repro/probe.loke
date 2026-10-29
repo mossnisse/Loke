@@ -255,6 +255,20 @@ atan2_argument_f32 :: proc(g: inout Generator, i: int) -> (y: f32, x: f32) {
 	return {y, x};
 }
 
+// Arguments of sqrt: any finite positive pattern, a quarter of them
+// subnormal.
+sqrt_argument :: proc(g: inout Generator, i: int) -> f64 {
+	pattern := ((next(inout g) << 11) | (next(inout g) & 0x7ff)) & 0x7fefffffffffffff;
+	if (i % 4 == 0) { pattern &= 0x000fffffffffffff; }
+	return unsafe.transmute(f64, pattern);
+}
+
+sqrt_argument_f32 :: proc(g: inout Generator, i: int) -> f32 {
+	pattern := u32(next(inout g) & 0x7f7fffff);
+	if (i % 4 == 0) { pattern &= 0x007fffff; }
+	return unsafe.transmute(f32, pattern);
+}
+
 // Arguments of hypot: both up to 1000; of scales up to 2^70 apart, either
 // side of the 2^-61 cutoff; subnormal, so the result may be; near overflow;
 // and Pythagorean triples scaled by a power of two, with generators p near
@@ -537,6 +551,27 @@ HARD_HYPOT_F32_0 :: repro.hypot_f32(f32(13013847.0), f32(13025704.0));
 HARD_HYPOT_F32_1 :: repro.hypot_f32(unsafe.transmute(f32, u32(0x6ff49f6b)), unsafe.transmute(f32, u32(0x6fb7778f)));
 HARD_HYPOT_F32_2 :: repro.hypot_f32(unsafe.transmute(f32, u32(0x5eacdb0e)), unsafe.transmute(f32, u32(0x5e100be1)));
 CONSTANT_HARD_HYPOT_F32 :: [3]f32{HARD_HYPOT_F32_0, HARD_HYPOT_F32_1, HARD_HYPOT_F32_2};
+
+// sqrt: exact squares, 2.25 and the smallest subnormal and four times it;
+// the largest finite value; and the two arguments whose roots come nearest a
+// midpoint, 1 - 2^-53 and 1 + 2^-52, for which N is q^2 + q at q = 2^53 - 1
+// and 2^52 (`sqrt_rounded` in src/const_ops.odin). Folded, they test the
+// compiler's exact rounding against the instruction; their `f32` counterparts
+// are where narrowing the `f64` root comes closest to rounding twice.
+HARD_SQRT :: [6]u64{
+	0x4002000000000000, 0x0000000000000001, 0x0000000000000004,
+	0x7fefffffffffffff, 0x3fefffffffffffff, 0x3ff0000000000001,
+};
+CONSTANT_HARD_SQRT :: [6]f64{
+	repro.sqrt(2.25), repro.sqrt(unsafe.transmute(f64, u64(1))), repro.sqrt(unsafe.transmute(f64, u64(4))),
+	repro.sqrt(unsafe.transmute(f64, u64(0x7fefffffffffffff))), repro.sqrt(unsafe.transmute(f64, u64(0x3fefffffffffffff))),
+	repro.sqrt(unsafe.transmute(f64, u64(0x3ff0000000000001))),
+};
+HARD_SQRT_F32 :: [5]u32{0x40100000, 0x00000001, 0x7f7fffff, 0x3f7fffff, 0x3f800001};
+CONSTANT_HARD_SQRT_F32 :: [5]f32{
+	repro.sqrt_f32(f32(2.25)), repro.sqrt_f32(unsafe.transmute(f32, u32(1))), repro.sqrt_f32(unsafe.transmute(f32, u32(0x7f7fffff))),
+	repro.sqrt_f32(unsafe.transmute(f32, u32(0x3f7fffff))), repro.sqrt_f32(unsafe.transmute(f32, u32(0x3f800001))),
+};
 
 // log2 and log10: an `f64` argument of each, found by search, that takes
 // the slow path; then `f32` ones of an exhaustive pass, log2's and log10's
@@ -858,6 +893,8 @@ main :: proc() {
 		}
 		fmt.println("Atan", 64, unary_special[i], bits(repro.atan(x)));
 		fmt.println("Atan", 32, unary_special_32[i], bits32(repro.atan_f32(y)));
+		fmt.println("Sqrt", 64, unary_special[i], bits(repro.sqrt(x)));
+		fmt.println("Sqrt", 32, unary_special_32[i], bits32(repro.sqrt_f32(y)));
 	}
 	folded := FOLDED_SPECIAL;
 	folded_32 := FOLDED_SPECIAL_F32;
@@ -1033,5 +1070,31 @@ main :: proc() {
 			fmt.println("Hypot", 64, bits(x), bits(y), bits(repro.slow_hypot(x*one, y)));
 			fmt.println("Hypot", 32, bits32(x32), bits32(y32), bits32(repro.slow_hypot_f32(x32*f32(one), y32)));
 		}
+	}
+
+	hard_sqrt := HARD_SQRT;
+	constants_sqrt := CONSTANT_HARD_SQRT;
+	foreach (i in 0 ..< 6) {
+		x := unsafe.transmute(f64, hard_sqrt[i])*one;
+		result := repro.sqrt(x);
+		fmt.println("Sqrt", 64, bits(x), bits(result));
+		fmt.println("constant", bits(constants_sqrt[i]) == bits(result));
+	}
+	hard_sqrt32 := HARD_SQRT_F32;
+	constants_sqrt32 := CONSTANT_HARD_SQRT_F32;
+	foreach (i in 0 ..< 5) {
+		x := unsafe.transmute(f32, hard_sqrt32[i])*f32(one);
+		result := repro.sqrt_f32(x);
+		fmt.println("Sqrt", 32, bits32(x), bits32(result));
+		fmt.println("constant", bits32(constants_sqrt32[i]) == bits32(result));
+	}
+	// sqrt is the processor's instruction, with no slow path to compare, so
+	// its results meet the oracle, and the constants above the compiler's
+	// exact evaluation of it.
+	foreach (i in 0 ..< CHECKED) {
+		x := sqrt_argument(inout g, i)*one;
+		fmt.println("Sqrt", 64, bits(x), bits(repro.sqrt(x)));
+		x32 := sqrt_argument_f32(inout g, i)*f32(one);
+		fmt.println("Sqrt", 32, bits32(x32), bits32(repro.sqrt_f32(x32)));
 	}
 }

@@ -371,7 +371,8 @@ mod :: proc(x: f64, y: f64) -> f64 ---;
 mod_f32 :: proc(x: f32, y: f32) -> f32 ---;
 
 /*
-	The non-negative square root.
+	The non-negative square root, correctly rounded, so the same everywhere,
+	and evaluated at compile time when its argument is constant.
 
 	  -0.0            -> -0.0   (the sign of zero is preserved)
 	  x < 0           -> NaN

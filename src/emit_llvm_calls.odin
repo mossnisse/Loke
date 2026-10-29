@@ -107,6 +107,8 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 			return emit_value_conversion(e, emit_expr(e, v.bound[0]), source, as_type, checked = false)
 		case .Math_Fma_Instruction:
 			return emit_fma_instruction(e, v)
+		case .Math_Sqrt_Instruction:
+			return emit_sqrt_instruction(e, v)
 		case .Unsafe_Take:
 			return load_place(e, as_type, emit_address(e, v.bound[0]))
 		case .Unsafe_Write:
@@ -167,6 +169,22 @@ emit_fma_instruction :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 	a, b, c := emit_expr(e, v.bound[0]), emit_expr(e, v.bound[1]), emit_expr(e, v.bound[2])
 	out := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = call %s @%s(%s %s, %s %s, %s %s)", out, llvm, key, llvm, a, llvm, b, llvm, c)
+	return out
+}
+
+// `llvm.sqrt` is the instruction on every x86-64 level, correctly rounded as
+// IEEE 754 requires.
+@(private = "file")
+emit_sqrt_instruction :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
+	llvm := llvm_type(e, expr_base(v.bound[0]).type)
+	key := fmt.aprintf("llvm.sqrt.%s", llvm == "float" ? "f32" : "f64")
+	if key not_in e.simd_intrinsics {
+		e.simd_intrinsics[key] = true
+		append(&e.globals, fmt.aprintf("declare %s @%s(%s)\n", llvm, key, llvm))
+	}
+	x := emit_expr(e, v.bound[0])
+	out := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = call %s @%s(%s %s)", out, llvm, key, llvm, x)
 	return out
 }
 

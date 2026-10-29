@@ -371,10 +371,6 @@ foreign platform_math {
 	rt_trunc_f64 :: proc "c" (x: f64) -> f64 ---;
 	@(link_name="truncf")
 	rt_trunc_f32 :: proc "c" (x: f32) -> f32 ---;
-	@(link_name="sqrt")
-	rt_sqrt_f64 :: proc "c" (x: f64) -> f64 ---;
-	@(link_name="sqrtf")
-	rt_sqrt_f32 :: proc "c" (x: f32) -> f32 ---;
 	@(link_name="exp")
 	rt_exp_f64 :: proc "c" (x: f64) -> f64 ---;
 	@(link_name="expf")
@@ -477,14 +473,23 @@ mod_f32 :: proc(x: f32, y: f32) -> f32 { return rt_mod_f32(x, y); }
 // an infinity, which is what the type can already represent.
 
 /**
-	The non-negative square root.
+	The non-negative square root, correctly rounded, so the same everywhere,
+	and evaluated at compile time when its argument is constant.
 
 	  -0.0            -> -0.0   (the sign of zero is preserved)
 	  x < 0           -> NaN
 	  +infinity       -> +infinity
 */
-sqrt :: proc(x: f64) -> f64 { return rt_sqrt_f64(x); }
-sqrt_f32 :: proc(x: f32) -> f32 { return rt_sqrt_f32(x); }
+sqrt :: proc(x: f64) -> f64 { return sqrt_instruction(x); }
+sqrt_f32 :: proc(x: f32) -> f32 { return sqrt_instruction(x); }
+
+/**
+	The square root instruction, for an `f32` or `f64` operand, which IEEE 754
+	makes correctly rounded. Evaluated at compile time from the exact result.
+*/
+@(intrinsic)
+@(private)
+sqrt_instruction :: proc(x: $T) -> T ---;
 
 /**
 	`sqrt(a*a + b*b)`, computed without the intermediate overflow or underflow

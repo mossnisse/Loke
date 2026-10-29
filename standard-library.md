@@ -2317,7 +2317,11 @@ result does not depend on the C library, and the product's exponent is not
 bounded, so a finite product too large for the format still meets the addend.
 On a [CPU level](compiler-guide.md#cpu-levels) with an FMA instruction it is
 that instruction, and elsewhere integer arithmetic; the results agree, except
-which NaN a NaN operand yields, which neither promises.
+which NaN a NaN operand yields, which neither promises. `sqrt` is not backed
+by the C library either: it is the processor's square root instruction, which
+IEEE 754 makes correctly rounded, and a call with a constant argument has a
+compile-time value, rounded exactly as the instruction rounds. Which NaN it
+gives below zero is not promised.
 
 The transcendental functions are not deterministic: `pow`, `exp`, `log`,
 `log2`, `log10`, `hypot`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, and
@@ -2345,11 +2349,11 @@ call is evaluated at compile time. No procedure calls the C library or uses
 is the positive quiet NaN with no payload (`0x7ff8000000000000`,
 `0x7fc00000`), whatever NaN produced it.
 
-The package has `exp`, `log`, `log2`, `log10`, `pow`, `sin`, `cos`, `tan`,
-`asin`, `acos`, `atan`, `atan2`, and `hypot`, each with the `f64` and `_f32`
-naming of `core:math`. A function missing here is
-not provided by falling back to `core:math`. Each `_f32` procedure is rounded
-once to `f32`, not the `f64` one narrowed, which could round twice.
+The package has `exp`, `log`, `log2`, `log10`, `pow`, `sqrt`, `sin`, `cos`,
+`tan`, `asin`, `acos`, `atan`, `atan2`, and `hypot`, each with the `f64` and
+`_f32` naming of `core:math`. A function missing here is not provided by
+falling back to `core:math`. Each `_f32` procedure is rounded once to `f32`,
+not the `f64` one narrowed, which could round twice.
 
 - `exp` of NaN is NaN, of +Inf is +Inf, of -Inf is +0, and of ±0 is exactly
   1.
@@ -2369,6 +2373,9 @@ once to `f32`, not the `f64` one narrowed, which could round twice.
   integer, and -|x|^y when y is odd. An exact result, such as `pow(4, 0.5)`,
   is exact, and one exactly halfway between two floats, such as
   `pow_f32(1 + 2^-12, 2)`, rounds to even.
+- `sqrt` is the square root. NaN and every argument below zero, -Inf
+  included, give NaN; ±0 gives itself, and +Inf gives +Inf. An exact root,
+  such as `sqrt(2.25)`, is exact; no root is ever halfway between two floats.
 - `sin`, `cos`, and `tan` take radians. Every finite argument is reduced by
   an exact multiple of pi/2, however large. NaN and ±Inf give NaN; `sin(±0)`
   and `tan(±0)` are ±0 and `cos(±0)` is exactly 1, and `sin(-x)` and

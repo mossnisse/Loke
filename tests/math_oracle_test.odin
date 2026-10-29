@@ -447,3 +447,67 @@ oracle_hypot_agrees_with_a_library_almost_always :: proc(t: ^testing.T) {
 		testing.expectf(t, differ <= allowed, "hypot at %v: %d of %d differ from the library", format, differ, CASES)
 	}
 }
+
+// sqrt's results fixed by other means: exact squares, among them the
+// smallest subnormal's, 2^-1074 having an even exponent; sqrt 2 and the
+// largest `f64`'s; and the special cases, -0 keeping its sign.
+@(test)
+oracle_sqrt_matches_known_results :: proc(t: ^testing.T) {
+	Known :: struct {
+		x:       f64,
+		format:  Float_Format,
+		pattern: u64,
+	}
+	smallest := 4.9406564584124654e-324
+	known := []Known {
+		{4, F64_FORMAT, transmute(u64)f64(2)},
+		{0.25, F32_FORMAT, u64(transmute(u32)f32(0.5))},
+		{smallest, F64_FORMAT, transmute(u64)f64(2.2227587494850775e-162)},
+		{4*smallest, F64_FORMAT, transmute(u64)f64(4.445517498970155e-162)},
+		{2, F64_FORMAT, transmute(u64)f64(1.4142135623730951)},
+		{2, F32_FORMAT, u64(transmute(u32)f32(1.4142135))},
+		{1.7976931348623157e308, F64_FORMAT, transmute(u64)f64(1.3407807929942596e154)},
+		{0, F64_FORMAT, 0},
+		{math.copy_sign(f64(0), -1), F64_FORMAT, 0x8000000000000000},
+		{math.copy_sign(f64(0), -1), F32_FORMAT, 0x80000000},
+		{math.inf_f64(1), F32_FORMAT, 0x7f800000},
+		{math.inf_f64(-1), F64_FORMAT, 0x7ff8000000000000},
+		{-1, F32_FORMAT, 0x7fc00000},
+		{math.nan_f64(), F64_FORMAT, 0x7ff8000000000000},
+	}
+	for k in known {
+		got := oracle_sqrt(k.x, k.format)
+		testing.expectf(t, got == k.pattern, "sqrt(%v) at %v: expected %x, got %x", k.x, k.format, k.pattern, got)
+	}
+}
+
+// sqrt against the processor's, which IEEE 754 requires to be correctly
+// rounded, so every result must agree, over arguments of every magnitude,
+// subnormal ones included.
+@(test)
+oracle_sqrt_agrees_with_the_processor :: proc(t: ^testing.T) {
+	state: u64 = 0x510e527fade682d1
+	for format in ([]Float_Format{F64_FORMAT, F32_FORMAT}) {
+		CASES :: 2000
+		for _ in 0 ..< CASES {
+			state = state*6364136223846793005 + 1442695040888963407
+			x := transmute(f64)(state >> 1)
+			if math.is_nan(x) || math.is_inf(x, 0) {
+				continue
+			}
+			want: u64
+			if format == F32_FORMAT {
+				x32 := transmute(f32)u32(state >> 33)
+				if math.is_nan(x32) || math.is_inf(x32, 0) {
+					continue
+				}
+				x = f64(x32)
+				want = u64(transmute(u32)math.sqrt(x32))
+			} else {
+				want = transmute(u64)math.sqrt(x)
+			}
+			got := oracle_sqrt(x, format)
+			testing.expectf(t, got == want, "sqrt(%v) at %v: oracle %x, processor %x", x, format, got, want)
+		}
+	}
+}

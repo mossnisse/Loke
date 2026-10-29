@@ -127,6 +127,18 @@ repro_functions_round_correctly :: proc(t: ^testing.T) {
 			want := oracle_atan2(&o, y, x, format)
 			testing.expectf(t, got == want, "%s at f%s of %v and %v: got %x, the oracle %x", fields[0], fields[1], y, x, got, want)
 			checked += 1
+		case "Sqrt":
+			x, _ := strconv.parse_u64(fields[2])
+			got, _ := strconv.parse_u64(fields[3])
+			argument := transmute(f64)x
+			format := F64_FORMAT
+			if fields[1] == "32" {
+				argument = f64(transmute(f32)u32(x))
+				format = F32_FORMAT
+			}
+			want := oracle_sqrt(argument, format)
+			testing.expectf(t, got == want, "Sqrt at f%s of %v: got %x, the oracle %x", fields[1], argument, got, want)
+			checked += 1
 		case "differs64", "differs32":
 			testing.expectf(t, false, "a fast path differs from its slow path at %s", line)
 		case "Exp", "Sin", "Cos", "Tan", "Log", "Log2", "Log10", "Asin", "Acos":
@@ -152,5 +164,5 @@ repro_functions_round_correctly :: proc(t: ^testing.T) {
 			checked += 1
 		}
 	}
-	testing.expectf(t, checked == 33214 && constants == 89, "the probe printed %d checked results and %d constants", checked, constants)
+	testing.expectf(t, checked == 35249 && constants == 100, "the probe printed %d checked results and %d constants", checked, constants)
 }

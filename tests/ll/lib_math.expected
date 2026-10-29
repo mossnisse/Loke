@@ -1,5 +1,5 @@
-declare double @sqrt(double)
-declare float @sqrtf(float)
+declare double @llvm.sqrt.f64(double)
+declare float @llvm.sqrt.f32(float)
 declare double @hypot(double, double)
 declare float @hypotf(float, float)
 declare double @pow(double, double)
@@ -11,8 +11,10 @@ declare float @fmodf(float, float)
 declare float @expf(float)
 declare float @tanf(float)
 declare float @acosf(float)
-call double @sqrt(double
-call float @sqrtf(float
+call double @llvm.sqrt.f64(double
+call float @llvm.sqrt.f32(float
+not @sqrt(
+not @sqrtf(
 call double @hypot(double
 call float @hypotf(float
 call double @fmod(double

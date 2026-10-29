@@ -128,6 +128,69 @@ exact_fma :: proc(storage: Value_Storage, a, b, c: f64, bits: u16) -> f64 {
 	return dyadic_to_float(storage, sum, exponent, bits)
 }
 
+// The square root of `x`, an `f32` or `f64` constant, rounded once to its
+// width: the compile-time value of the instruction `core:math.sqrt` is, which
+// IEEE 754 makes correctly rounded. Computed exactly in integers. A NaN result
+// is the x86-64 instruction's, the operand quieted or, below zero, the default
+// NaN, which is negative; nothing promises it.
+exact_sqrt :: proc(x: Const_Value) -> Const_Value {
+	bits := x.float_bits
+	if math.is_nan(x.float) {
+		return float_bits_const(x.float_raw | (bits == 32 ? 1 << 22 : 1 << 51), bits)
+	}
+	if x.float == 0 || math.is_inf(x.float, 1) {
+		return x
+	}
+	if x.float < 0 {
+		return float_bits_const(bits == 32 ? 0xffc00000 : 0xfff8000000000000, bits)
+	}
+	// An `f32` operand is exact as an `f64`, and narrowing its `f64` root rounds
+	// correctly: rounding twice is innocuous for a square root when the wider
+	// format has at least 2p + 2 bits for the narrower's p, here 53 >= 50
+	// (Figueroa, "When is double rounding innocuous?", 1995).
+	return float_const(sqrt_rounded(x.float), bits)
+}
+
+// For a positive finite x = M 2^E, M an integer shifted into [2^52, 2^54) with
+// E even, sqrt x is sqrt(N) 2^((E - 52)/2) for the integer N = M 2^52, so the
+// result's significand is sqrt N rounded to an integer. With q = floor(sqrt N),
+// found a bit at a time, that is q + 1 exactly when N - q^2 > q, and never a
+// tie, since (q + 1/2)^2 is not an integer. It carries to 2^53 at most.
+@(private = "file")
+sqrt_rounded :: proc(x: f64) -> f64 {
+	pattern := transmute(u64)x
+	m := pattern & (1 << 52 - 1)
+	e := -1074
+	if pattern >> 52 != 0 {
+		m |= 1 << 52
+		e = int(pattern >> 52) - 1075
+	}
+	for m < 1 << 52 {
+		m <<= 1
+		e -= 1
+	}
+	if e & 1 != 0 {
+		m <<= 1
+		e -= 1
+	}
+	n := u128(m) << 52
+	q: u128 = 0
+	for bit := u128(1) << 52; bit != 0; bit >>= 1 {
+		if (q | bit) * (q | bit) <= n {
+			q |= bit
+		}
+	}
+	if n - q * q > q {
+		q += 1
+	}
+	biased := (e - 52) / 2 + 52 + 1023
+	if q == 1 << 53 {
+		q >>= 1
+		biased += 1
+	}
+	return transmute(f64)(u64(biased) << 52 | (u64(q) - 1 << 52))
+}
+
 // `significand * 2^exponent`, exactly.
 @(private = "file")
 Dyadic :: struct {

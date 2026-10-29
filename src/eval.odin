@@ -2910,6 +2910,14 @@ eval_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (Eval_Va
 		fused := exact_fma(ev.alloc, operands[0].float, operands[1].float, operands[2].float, bits)
 		return scalar(float_const(fused, bits), v.type), true
 
+	// Rounded exactly, as the instruction is, rather than by the host.
+	case .Math_Sqrt_Instruction:
+		operand, ok := eval_expr(ev, v.bound[0])
+		if !ok {
+			return Eval_Value{}, false
+		}
+		return scalar(exact_sqrt(const_of(operand)), v.type), true
+
 	case .Unsafe_Transmute:
 		// The checker's fold, for an operand that is a local.
 		operand, ok := eval_expr(ev, v.bound[0])

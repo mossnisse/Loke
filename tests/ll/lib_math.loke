@@ -3,6 +3,7 @@ package main;
 // `core:math` binds the platform C math symbols directly, with a separate
 // entry point for each width. Widening an f32 call through double can still
 // print the right answer, so check the generated IR as well as runtime output.
+// `sqrt` is the instruction in each width, not the C library's.
 
 import "core:math";
 

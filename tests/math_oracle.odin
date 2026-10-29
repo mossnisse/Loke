@@ -1,16 +1,17 @@
 // deterministic-math-and-targets-plan.md "Validation and performance gates": an
 // oracle for the correctly rounded `exp`, `log`, `log2`, `log10`, `sin`, `cos`,
-// `tan`, `asin`, `acos`, `pow`, `atan2`, and `hypot` of `f64` and `f32`, with
-// the special cases of the reproducible contract.
+// `tan`, `asin`, `acos`, `pow`, `atan2`, `hypot`, and `sqrt` of `f64` and
+// `f32`, with the special cases of the reproducible contract.
 //
 // Each result is an interval of integers at a scale of `2^-precision`, every
 // step rounded outward, so the true value is always inside it. When both ends
 // round to the same float, so does the true value, since rounding to nearest
 // is monotone; otherwise the precision doubles (Ziv's strategy). The search
-// ends because none of these functions has a dyadic value at a dyadic
-// argument other than the special cases handled first, so no result is a
-// midpoint; pow, which has, rounds its dyadic results exactly first. Host
-// `libm` is never consulted.
+// ends because none of the transcendental functions has a dyadic value at a
+// dyadic argument other than the special cases handled first, so no result is
+// a midpoint; pow, which has, rounds its dyadic results exactly first, and
+// hypot and sqrt bracket an exact integer square root, a single point when
+// the root is exact. Host `libm` is never consulted.
 package tests
 
 import "core:fmt"
@@ -508,6 +509,43 @@ oracle_hypot :: proc(x, y: f64, format: Float_Format) -> u64 {
 		}
 	}
 	panic("the oracle could not decide a rounding of hypot")
+}
+
+// sqrt x, in `format`, for an `f64` holding the argument exactly: ±0 gives
+// itself, +Inf gives +Inf, and NaN or a negative x the canonical NaN. The root
+// is an exact integer square root, bracketed as `oracle_hypot`'s is.
+oracle_sqrt :: proc(x: f64, format: Float_Format) -> u64 {
+	if math.is_nan(x) || x < 0 {
+		return canonical_nan(format)
+	}
+	if x == 0 {
+		return math.sign_bit(x) ? sign_bit(format) : 0
+	}
+	if math.is_inf(x, 1) {
+		return infinity_bits(format)
+	}
+	scratch: virtual.Arena
+	_ = virtual.arena_init_growing(&scratch)
+	context.allocator = virtual.arena_allocator(&scratch)
+	significand, exponent := dyadic(x)
+	// An even exponent halves exactly.
+	if exponent & 1 != 0 {
+		significand = shift_left(significand, 1)
+		exponent -= 1
+	}
+	for w := START_PRECISION; w <= MAX_PRECISION; w *= 2 {
+		n := shift_left(significand, 2*w)
+		root := square_root(n)
+		value := Interval{root, root}
+		if compare(times(root, root), n) != 0 {
+			value.hi = plus(root, int_of(1))
+		}
+		if pattern, decided := round_interval(value, exponent/2 - w, false, format); decided {
+			virtual.arena_destroy(&scratch)
+			return pattern
+		}
+	}
+	panic("the oracle could not decide a rounding of sqrt")
 }
 
 // t = n/d as integers p/q, for 0 <= n <= d, or nil for t = 0: 1/1 when both

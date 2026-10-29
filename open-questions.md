@@ -769,8 +769,11 @@ its FMA3 path and 7.2 to 7.6 and 19 to 21 on its legacy one, `asin_f32` and
 `acos_f32` 42 to 44 ns against 4.6 and 5.1 to 5.9, and their slow path 4.9
 µs. The difference from `atan2` is presumably the four Newton steps for
 1/sqrt, a dependent chain, which is unmeasured; a table for the first
-estimate would save two. `tan`, over arguments within ±700, takes 60 ns
-per independent call and 64 per dependent one against the UCRT's 11 and 12
+estimate would save two, and `math.sqrt`, which is now the instruction and
+has a compile-time value, all of them. `sqrt` itself takes 1.5 ns, the
+instruction's time; a software version from the same steps took 42. `tan`,
+over arguments within ±700, takes 60 ns per independent call and 64 per
+dependent one against the UCRT's 11 and 12
 on its FMA3 path and 16 and 18 on its legacy one, `tan_f32` 81 ns against
 6.5 and 8.4, and its slow path 8.6 µs. Payne and Hanek's reduction, from
 2^20 pi/2 up, adds about 170 ns to `tan_f32`, and `sin` and `cos` take the

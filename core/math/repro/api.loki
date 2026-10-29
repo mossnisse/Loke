@@ -12,7 +12,7 @@
 	each function. No procedure here calls the C library.
 
 	The package holds only what has been implemented and checked: today `exp`,
-	`log`, `log2`, `log10`, `pow`, `sin`, `cos`, `tan`, `asin`, `acos`,
+	`log`, `log2`, `log10`, `pow`, `sqrt`, `sin`, `cos`, `tan`, `asin`, `acos`,
 	`atan`, `atan2`, and `hypot`, each in both widths. A function missing here
 	is not provided by falling back to `core:math`.
 */
@@ -103,6 +103,16 @@ tan :: proc(x: f64) -> f64 ---;
 
 // The tangent for `f32`, with the special cases of `tan`.
 tan_f32 :: proc(x: f32) -> f32 ---;
+
+/*
+	The square root of x. NaN, and any x below zero, -Inf included, gives
+	NaN; ±0 gives itself, and +Inf gives +Inf. An exact square root, such as
+	`sqrt(2.25)`, is exact.
+*/
+sqrt :: proc(x: f64) -> f64 ---;
+
+// sqrt for `f32`, with the special cases of `sqrt`.
+sqrt_f32 :: proc(x: f32) -> f32 ---;
 
 /*
 	sqrt(x^2 + y^2), without overflow or underflow on the way. ±Inf in either

@@ -155,8 +155,8 @@ Then `atan2` and `atan` in both widths, atan x being atan2(x, 1):
 Then `asin` and `acos` in both widths, as atan2(x, w) and atan2(w, x) with
 w = sqrt(1 - x^2):
 
-- No square root instruction is used, since compile-time evaluation does
-  not share one: w is a pair from Newton's steps for 1/sqrt from an
+- No square root instruction is used, since compile-time evaluation did
+  not then share one: w is a pair from Newton's steps for 1/sqrt from an
   estimate in the bit pattern, and the `atan2` kernel takes it with one of
   t's operands a pair. `asin_f32` and `acos_f32` put a single-`f64` path
   first, with three steps and a bound of 2^18.5 ulps; an exhaustive pass
@@ -239,6 +239,41 @@ asks for:
   unmasked, from its main thread, through a callback, and from a thread of
   its own; built without the guard, its second call stops on that exception.
   `tests/trap/foreign_float_environment.loke` is the `-debug` check's.
+
+Phase 4's gate is met: the supported functions are listed in
+[`core:math/repro`](standard-library.md#coremathrepro), each is checked
+against the oracle, and `test-all.ps1 -Full` passes locally and in CI,
+the probe at every optimization level and the floating-point cases at every
+CPU level.
+
+Phase 5, begun with `sqrt` in both widths, which reproducible distributions
+need and `core:math/repro` lacked:
+
+- IEEE 754 requires the square root instruction to be correctly rounded, so
+  it already gives the result `core:math/repro` promises, on every x86-64
+  level and on the architectures after it. It was kept out only because a C
+  library call has no compile-time value. `core:math.sqrt` is now the
+  instruction, through a package-private built-in, and the compile-time
+  evaluator rounds it exactly in integers: for x = M 2^E, M shifted into
+  [2^52, 2^54) with E even, the significand is sqrt(M 2^52) rounded to an
+  integer, q = floor of the root rounding up exactly when M 2^52 - q^2 > q,
+  never a tie. An `f32` root is the `f64` one narrowed, which rounds
+  correctly because 53 is at least twice 24 plus 2 (Figueroa, "When is
+  double rounding innocuous?", 1995). `repro.sqrt` adds the canonical NaN.
+- It takes 1.5 ns, as the instruction does. A software version from
+  `asin`'s root and that integer rounding was correct, agreeing with the
+  instruction on every positive `f32` and 200 million seeded `f64`
+  patterns, but took 42 ns.
+- The evaluator's result is checked against the compiling machine's
+  instruction at the arguments whose roots come nearest a midpoint, 1 - 2^-53
+  and 1 + 2^-52 and their `f32` counterparts, at subnormals, and at 20,000
+  seeded patterns in each width; the probe checks those arguments folded and
+  at run time, and 2,000 more against the oracle, which takes an exact
+  integer square root.
+- `pair_root`, behind `hypot`, `asin`, and `acos`, and their `f32` first
+  approximations still start from the bit-pattern estimate and Newton's
+  steps. Starting them from the instruction would be faster and closer;
+  their error bounds and searches would need redoing.
 
 Not started: phase 1's benchmarks (the UCRT timings in open questions stand
 until there is a kernel to compare), simulation support, dispatch, and other

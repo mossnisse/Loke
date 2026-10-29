@@ -51,6 +51,8 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 		check_wrap_builtin(k, v)
 	case .Math_Fma_Available, .Math_Fma_Instruction:
 		check_fma_builtin(k, v, ident, sym.builtin)
+	case .Math_Sqrt_Instruction:
+		check_sqrt_builtin(k, v, ident)
 	case .Type_Info_Of:
 		check_type_info_of(k, v)
 	case .Strings_Allocate:
@@ -813,6 +815,34 @@ check_fma_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: 
 	}
 	v.bound = bound
 	v.type = operand
+}
+
+// `sqrt_instruction(x)` takes one `f32` or `f64` operand, of the result's type.
+@(private = "file")
+check_sqrt_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
+	v.value_category = .Value
+	v.type = INVALID_TYPE
+	if len(v.args) != 1 {
+		errorf(k.c, v.span, "L0738", "`%s` takes 1 argument, found %d", ident.name, len(v.args))
+		return
+	}
+	if !builtin_arguments_ok(k, v) {
+		return
+	}
+	arg := v.args[0].value
+	type := check_single_expr(k, arg)
+	if type == INVALID_TYPE || !materialize(k, arg, default_type(k.c, type)) {
+		return
+	}
+	type = expr_base(arg).type
+	if type != TYPE_F32 && type != TYPE_F64 {
+		errorf(k.c, expr_span(arg), "L0738", "`%s` takes an `f32` or `f64` operand; found `%s`", ident.name, type_name(k.c, type))
+		return
+	}
+	bound := make([]Expr, 1, k.c.semantic_allocator)
+	bound[0] = arg
+	v.bound = bound
+	v.type = type
 }
 
 // An enum source wraps its backing value; a destination is a plain integer.
