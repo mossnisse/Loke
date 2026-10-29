@@ -14,7 +14,10 @@ import "core:unsafe";
 // `u * X[i]`, so a wrong entry in either `X` table changes the output; the `F`
 // tables steer the wedge tests, which a quarter of a million draws reach in
 // every layer, though an `F` entry off in its last bit changes a decision too
-// rarely to show.
+// rarely to show. So two scripted draws pin the two entries the recomputation
+// moved, `NORMAL_F[94]` and `EXPONENTIAL_F[87]`: each puts a position at its
+// strip's outer edge and the height at the entry, where the corrected entry
+// accepts on the second draw and the one before it rejects and draws again.
 
 NORMAL_R :: 3.6541528853610088;
 NORMAL_V :: 0.00492867323399;
@@ -85,6 +88,18 @@ reference_exponential :: proc(rng: inout random.Xoshiro256, t: ^Tables) -> f64 {
 	}
 }
 
+// Two given words, then 2^63 for every later draw.
+Script :: struct { first: u64, second: u64, used: int }
+
+impl Script {
+	next_u64 :: proc(self: inout) -> u64 {
+		self.used += 1;
+		if (self.used == 1) { return self.first; }
+		if (self.used == 2) { return self.second; }
+		return u64(1) << 63;
+	}
+}
+
 same_bits :: proc(a, b: f64) -> bool {
 	return unsafe.transmute(u64, a) == unsafe.transmute(u64, b);
 }
@@ -119,4 +134,13 @@ main :: proc() {
 		}
 	}
 	fmt.println("exponential mismatches", mismatches, library.state() == reference.state());
+
+	// Layer 94's wedge, a position at its edge and a unit draw just below 1.
+	edge := Script{0xfffffffffffff05e, 0xffffffffffedb800, 0};
+	z := random.normal(inout edge);
+	fmt.println("normal at layer 94", same_bits(z, unsafe.transmute(f64, u64(4610679304012718259))), edge.used);
+	// Layer 87's, for the exponential.
+	edge = Script{0xfffffffffffff057, 0xfffffffffff83000, 0};
+	x := random.exponential(inout edge);
+	fmt.println("exponential at layer 87", same_bits(x, unsafe.transmute(f64, u64(4612262104872842401))), edge.used);
 }

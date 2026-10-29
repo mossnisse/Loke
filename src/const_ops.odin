@@ -155,35 +155,23 @@ exact_sqrt :: proc(x: Const_Value) -> Const_Value {
 // (one of the rounding instructions) rounds it: the compile-time value of
 // `core:math.floor`, `ceil`, `trunc`, and `round`, which is exact and so the
 // same on every machine. A NaN gives the operand quieted, as the instruction
-// does; nothing promises it.
+// does; nothing promises it. Odin's procedures are exact too, `round` taking
+// halves away from zero by its bits rather than by adding a half, and an
+// `f32` operand's integral value is an `f32`, so the `f64` ones serve both.
 exact_integral :: proc(x: Const_Value, builtin: Builtin_Kind) -> Const_Value {
 	bits := x.float_bits
 	if math.is_nan(x.float) {
 		return float_bits_const(x.float_raw | (bits == 32 ? 1 << 22 : 1 << 51), bits)
 	}
-	// Zeros, infinities, and every float from 2^52 up, `f32` operands included,
-	// are already integral.
-	if x.float == 0 || !(abs(x.float) < 1 << 52) {
-		return x
-	}
-	// Truncation is exact below 2^52, and so is the fraction `x - t`.
-	t := math.copy_sign(f64(i64(x.float)), x.float)
 	#partial switch builtin {
 	case .Math_Floor_Instruction:
-		if t > x.float {
-			t -= 1
-		}
+		return float_const(math.floor(x.float), bits)
 	case .Math_Ceil_Instruction:
-		if t < x.float {
-			t += 1
-		}
+		return float_const(math.ceil(x.float), bits)
 	case .Math_Round_Instruction:
-		// Halfway cases go away from zero.
-		if abs(x.float - t) >= 0.5 {
-			t += math.copy_sign(1.0, x.float)
-		}
+		return float_const(math.round(x.float), bits)
 	}
-	return float_const(t, bits)
+	return float_const(math.trunc(x.float), bits)
 }
 
 // For a positive finite x = M 2^E, M an integer shifted into [2^52, 2^54) with
