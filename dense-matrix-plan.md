@@ -1,11 +1,12 @@
 # Dense matrix library plan
 
-Status: milestones 1 and 2 implemented, 2026-10-29, as
+Status: milestones 1 to 3 implemented, 2026-10-29, as
 [`core:math/dense`](standard-library.md#coremathdense)
 ([Milestone 1 results](#milestone-1-results),
-[Milestone 2 results](#milestone-2-results)), after its design questions were
+[Milestone 2 results](#milestone-2-results),
+[Milestone 3 results](#milestone-3-results)), after its design questions were
 settled and its spike run the same day ([Settled questions](#settled-questions),
-[Spike results](#spike-results)); milestones 3 to 5 are proposals. It is
+[Spike results](#spike-results)); milestones 4 and 5 are proposals. It is
 milestone 3 of the
 [linear algebra library plan](linear-algebra-plan.md#milestones), which left
 this package [its own plan](linear-algebra-plan.md#dense-matrices-a-later-package)
@@ -196,8 +197,9 @@ Lu :: struct($T: type) where linalg.Real(T) {
 factors and pivots in `getrf`'s form. The
 in-place form `lu_in_place(a: View_Mut(T), pivots: []mut int) -> Status(Error)`
 overwrites `a` with the factors as LAPACK's `getrf` does, for a caller who owns
-the storage. Cholesky, QR, the symmetric eigendecomposition, and the SVD follow
-the same pattern.
+the storage. Cholesky and QR follow the same pattern. The symmetric
+eigendecomposition and the SVD are records too, without an in-place form
+([Milestone 3 results](#milestone-3-results)).
 
 ### Determinism and speed
 
@@ -245,14 +247,16 @@ measured-performance milestone.
 | `norm_frobenius` | one pass with a running scale, so it does not overflow | |
 
 The iterative methods test convergence by rounding rather than by a
-tolerance, as EISPACK's `tql2` does: an off-diagonal element `e` is negligible
-when `t + |e| == t` for the neighbouring diagonal magnitude `t`. That needs no
-epsilon in `linalg.Real`, works for any element type, and is the same test at
-every precision. Each has a fixed iteration limit per eigenvalue or singular
-value, 30 as in EISPACK and LINPACK, and returns `No_Convergence` past it, which
-for these methods is a bug report rather than an expected outcome. Jacobi
-methods, slower and more accurate for small singular values, are a later
-addition.
+tolerance, as EISPACK's `imtql2` and LINPACK's `dsvdc` do: an off-diagonal
+element `e` is negligible when `t + |e| == t` for the sum `t` of its two
+diagonal neighbours' magnitudes. That needs no epsilon in `linalg.Real`, works
+for any element type, and is the same test at every precision. Each has a
+fixed iteration limit, 30 sweeps for each eigenvalue or singular value as in
+EISPACK and LINPACK but pooled over the matrix
+([Milestone 3 results](#milestone-3-results)), and returns `No_Convergence`
+past it, which for these methods is a bug report rather than an expected
+outcome. Jacobi methods, slower and more accurate for small singular values,
+are a later addition.
 
 `least_squares` assumes full column rank. A rank-deficient problem needs a
 rank decision, so its minimum-norm solution is `Svd.solve(b, relative)`, which
@@ -301,12 +305,13 @@ Real:
         apply_q_into(b), apply_q_transpose_into(b), factors(), tau(), rows(), columns()
   solve_lower_into(l, b, unit_diagonal), solve_upper_into(u, b, unit_diagonal)
   solve(a, b), inverse(a), least_squares(a, b) // factor, then solve, in one call
-  symmetric_eigen(a) -> Result(Symmetric_Eigen(T), Error)
-    values ascending; vectors as columns, each with its largest-magnitude
-    component positive, the first on a tie
-  svd(a) -> Result(Svd(T), Error)
-    u, singular values descending, v, each pair signed as an eigenvector is by
-    its column of v; solve(b, relative)
+  symmetric_eigen(a) -> Result(Symmetric_Eigen(T), Error)   // reads the lower triangle
+    Symmetric_Eigen: values() ascending; vectors() as columns, each with its
+        largest-magnitude component positive, the first on a tie; size()
+  svd(a) -> Result(Svd(T), Error)              // thin, any shape
+    Svd: u(), singular_values() descending, v(), each pair signed as an
+        eigenvector is by its column of v; rank(relative),
+        solve(b, relative), solve_into(out, b, relative), rows(), columns()
 ```
 
 The sign conventions in `symmetric_eigen` and `svd` are part of the contract,
@@ -324,8 +329,9 @@ merely the same subspaces.
 2. **QR and least squares.** Done
    ([Milestone 2 results](#milestone-2-results)). `qr`, `least_squares`, and
    the `Q` application forms.
-3. **Eigenvalues and singular values.** `symmetric_eigen` and `svd`, with
-   `Svd.solve`.
+3. **Eigenvalues and singular values.** Done
+   ([Milestone 3 results](#milestone-3-results)). `symmetric_eigen` and
+   `svd`, with `Svd.solve`.
 4. **Measured performance.** Benchmarks against hand-written loops and a
    reference BLAS for scale, then blocking, `Simd` kernels across outputs, and
    the optional pool, each kept only where it wins without changing a bit.
@@ -572,3 +578,71 @@ Decided while implementing:
 - **`q()` is the thin `Q`**, `m x n`. The whole `Q` is `apply_q_into` of the
   identity, which most uses never need, since `apply_q_into` and
   `apply_q_transpose_into` apply it without forming it.
+
+## Milestone 3 results
+
+Done 2026-10-29: `symmetric_eigen`, `Symmetric_Eigen`, `svd`, and `Svd` in
+[`core:math/dense`](standard-library.md#coremathdense).
+`tests/run/lib_dense_eigen.loke` and `tests/run/lib_dense_svd.loke` check
+them, both in the CPU-level corpus with the same output at every optimization
+and CPU level tried, and `tests/trap/dense_eigen_square.loke` and
+`tests/trap/dense_svd_relative.loke` the two panics.
+
+- **LAPACK's test ratios**, `|A V - V D| / (n |A| eps)` and
+  `|V^T V - I| / (n eps)` for the eigensolver, and
+  `|A - U S V^T| / (max(m, n) |A| eps)`, `|U^T U - I| / (m eps)`, and
+  `|V^T V - I| / (n eps)` for the SVD, stay below 30 (the eigensolver's below
+  3) for random, Hilbert, graded, Wilkinson, and nearly repeated symmetric
+  matrices, and for random, Hilbert, column-graded, and rank-deficient ones
+  of shapes from 1 x 1 to 200 x 200, tall and wide, at `f64` and to 64 x 64
+  at `f32`. Every result has the order and signs the contract gives.
+- **Exact cases**: a diagonal matrix gives its values sorted and a
+  permutation of the identity, the SVD moving a negative value's sign into
+  `U`; the tridiagonal matrix with 2 on the diagonal and 1 beside it gives
+  its known eigenvalues and signed eigenvectors; and a transposed matrix's
+  SVD is the original's with `U` and `V` exchanged, bit for bit.
+- **Wilkinson's W21+** gives its two largest eigenvalues, which agree to 14
+  digits, each within a relative `4 eps` of the published value, with
+  orthogonal vectors.
+- **`Svd.solve`** of a full-rank tall system is `least_squares`'s solution;
+  of a rank-deficient one it is orthogonal to the null space and satisfies the
+  normal equations; of a wide one it reproduces `b`; and a zero column, which
+  `least_squares` reports as `.Singular`, gets exactly 0. `rank` finds the
+  rank of a product of random factors.
+- **A dual number** through `symmetric_eigen` gives each eigenvalue's
+  derivative `v^T E v`, and through `svd` each singular value's `u^T E v`,
+  and the value parts are the `f64` results bit for bit.
+
+Decided while implementing:
+
+- **The iteration limit is pooled**, `30 n` sweeps for the whole matrix
+  rather than 30 for each value as `dsvdc` and `imtql2` have it. In the
+  200 x 200 column-graded test matrix, the top of the bidiagonal is large,
+  and the shift, computed from the small trailing block, is lost against it
+  in rounding, so the sweeps converge only linearly: the first singular value
+  took 62 sweeps, and the other 199 then took 212 between them. A limit for
+  each value failed there and at 64 x 64 in `f32`; LAPACK's `bdsqr` pools its
+  limit too. A result that converged under the old limit is unchanged.
+- **The QL iteration is `tqli`'s**, Numerical Recipes' form of EISPACK's
+  `imtql2`, after `sytd2`'s tridiagonalization, which reads and updates only
+  the lower triangle, so the trailing block stays exactly symmetric. The SVD's
+  iteration is `dsvdc`'s, after `gebd2`'s bidiagonalization. Both reductions
+  build their reflectors with `qr_in_place`'s code, now shared, whose results
+  are unchanged.
+- **No in-place forms.** Both iterations need several vectors of scratch
+  beyond the matrix, so an `_in_place` form would need a workspace argument;
+  the allocator argument already lets a caller place everything, in an arena
+  for instance. One is added with a caller who needs it.
+- **An element that is not finite is `.No_Convergence`, checked before the
+  reduction.** The iteration cannot reduce a NaN, and an infinity on the
+  diagonal would otherwise pass the rounding test with meaningless vectors.
+- **`Svd` is the thin decomposition**, `U` `m x k` and `V` `n x k` for
+  `k = min(m, n)`, which is what `solve` and `rank` need; a wide matrix is
+  decomposed as its transpose. A full `U` waits for a caller.
+- **`rank` and `solve` share one cutoff**: a singular value counts when it is
+  greater than `relative` times the largest, so `relative = 0` keeps every
+  value that is not zero, as NumPy's `rcond` does, and a zero matrix has
+  rank 0.
+- **Values-only forms**, cheaper because they skip the vectors, are a later
+  addition with a caller. They would give the same values bit for bit, since
+  the vectors never feed back into the values.

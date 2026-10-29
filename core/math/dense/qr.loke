@@ -48,37 +48,9 @@ qr_in_place :: proc(a: View_Mut($T), tau: []mut T) -> Status(Error) where linalg
 	rs := a.row_stride;
 	cs := a.column_stride;
 	foreach (k in 0 ..< n) {
-		sum := Sum_Of_Squares(T).init();
-		foreach (i in k + 1 ..< m) { sum.add(p[offset(i, k, rs, cs)]); }
-		rest := sum.root();
-		if (rest == T(0)) {
-			tau[k] = T(0);
-			continue;
-		}
-		alpha := p[offset(k, k, rs, cs)];
-		size := hypot(alpha, rest);
-		beta := size if alpha < T(0) else -size;
-		scale := (beta - alpha)/beta;
+		scale := householder(p, rs, cs, k, k, m);
 		tau[k] = scale;
-		// `|alpha - beta| >= |beta| >= |x[i]|`, so the division cannot
-		// overflow, where a reciprocal could.
-		divisor := alpha - beta;
-		foreach (i in k + 1 ..< m) {
-			at := offset(i, k, rs, cs);
-			p[at] = p[at]/divisor;
-		}
-		p[offset(k, k, rs, cs)] = beta;
-		foreach (j in k + 1 ..< n) {
-			top := offset(k, j, rs, cs);
-			w := p[top];
-			foreach (i in k + 1 ..< m) { w = w + p[offset(i, k, rs, cs)]*p[offset(i, j, rs, cs)]; }
-			factor := scale*w;
-			p[top] = p[top] - factor;
-			foreach (i in k + 1 ..< m) {
-				at := offset(i, j, rs, cs);
-				p[at] = p[at] - factor*p[offset(i, k, rs, cs)];
-			}
-		}
+		foreach (j in k + 1 ..< n) { reflect_column(p, rs, cs, k, k, m, scale, j); }
 	}
 	foreach (c in 0 ..< n) {
 		if (p[offset(c, c, rs, cs)] == T(0)) { return .err(.Singular); }
@@ -87,6 +59,47 @@ qr_in_place :: proc(a: View_Mut($T), tau: []mut T) -> Status(Error) where linalg
 		}
 	}
 	return .ok;
+}
+
+// LAPACK's `larfg` on rows `head ..< end` of `column` in the storage `p`
+// with strides `rs` and `cs`, as `qr_in_place` documents it: the reflector
+// that zeros the rows below `head`, its vector left below `head` and `beta`
+// at it. Returns `tau`, 0 for the identity, which leaves the column as it
+// was. Swapping `rs` and `cs` makes it reflect a row.
+@(private)
+householder :: proc(p: [^]$T, rs, cs, head, column, end: int) -> T where linalg.Real(T) {
+	sum := Sum_Of_Squares(T).init();
+	foreach (i in head + 1 ..< end) { sum.add(p[offset(i, column, rs, cs)]); }
+	rest := sum.root();
+	if (rest == T(0)) { return T(0); }
+	alpha := p[offset(head, column, rs, cs)];
+	size := hypot(alpha, rest);
+	beta := size if alpha < T(0) else -size;
+	// `|alpha - beta| >= |beta| >= |x[i]|`, so the division cannot
+	// overflow, where a reciprocal could.
+	divisor := alpha - beta;
+	foreach (i in head + 1 ..< end) {
+		at := offset(i, column, rs, cs);
+		p[at] = p[at]/divisor;
+	}
+	p[offset(head, column, rs, cs)] = beta;
+	return (beta - alpha)/beta;
+}
+
+// Applies the reflector `householder` left in `column` to column `target`
+// of the same storage, in `qr_in_place`'s order; a zero `scale` is skipped.
+@(private)
+reflect_column :: proc(p: [^]$T, rs, cs, head, column, end: int, scale: T, target: int) where linalg.Real(T) {
+	if (scale == T(0)) { return; }
+	top := offset(head, target, rs, cs);
+	w := p[top];
+	foreach (i in head + 1 ..< end) { w = w + p[offset(i, column, rs, cs)]*p[offset(i, target, rs, cs)]; }
+	factor := scale*w;
+	p[top] = p[top] - factor;
+	foreach (i in head + 1 ..< end) {
+		at := offset(i, target, rs, cs);
+		p[at] = p[at] - factor*p[offset(i, column, rs, cs)];
+	}
 }
 
 // `sqrt(a^2 + b^2)` without overflow or underflow in the squares:
@@ -116,7 +129,9 @@ qr :: proc(a: View($T), allocator: Allocator = mem.default_allocator()) -> Resul
 }
 
 impl Qr($T) {
+	/// The number of rows of the factored matrix.
 	rows :: proc(self) -> int { return self.packed.row_count; }
+	/// The number of columns of the factored matrix.
 	columns :: proc(self) -> int { return self.packed.column_count; }
 
 	/// Both factors in one view, as `qr_in_place` leaves them.
@@ -157,7 +172,7 @@ impl Qr($T) {
 		assert(b.row_count == self.packed.row_count, "dense.Qr.apply_q_into: shapes do not agree");
 		f := self.packed.view();
 		for (k := self.packed.column_count - 1; k >= 0; k -= 1) {
-			reflect(f, k, self.reflector_scales[k], b);
+			reflect(f, k, k, self.reflector_scales[k], b);
 		}
 	}
 
@@ -166,7 +181,7 @@ impl Qr($T) {
 		assert(b.row_count == self.packed.row_count, "dense.Qr.apply_q_transpose_into: shapes do not agree");
 		f := self.packed.view();
 		foreach (k in 0 ..< self.packed.column_count) {
-			reflect(f, k, self.reflector_scales[k], b);
+			reflect(f, k, k, self.reflector_scales[k], b);
 		}
 	}
 
@@ -193,25 +208,25 @@ impl Qr($T) {
 	}
 }
 
-// Applies reflector `k` of the packed factors `f` to each column of `b`, in
-// `qr_in_place`'s order. A zero scale is the identity and is skipped, as
-// `larf` skips it.
+// Applies the reflector in `column` of the packed factors `f`, whose element
+// `head` is 1 and not stored, to each column of `b`, in `qr_in_place`'s
+// order. A zero scale is the identity and is skipped, as `larf` skips it.
 @(private)
-reflect :: proc(f: View($T), k: int, scale: T, b: View_Mut(T)) where linalg.Real(T) {
+reflect :: proc(f: View($T), head, column: int, scale: T, b: View_Mut(T)) where linalg.Real(T) {
 	if (scale == T(0)) { return; }
 	m := f.row_count;
 	v := unsafe.raw_data(f.data);
 	x := unsafe.raw_data(b.data);
-	source := k*%f.column_stride;
+	source := column*%f.column_stride;
 	foreach (j in 0 ..< b.column_count) {
-		column := j*%b.column_stride;
-		top := k*%b.row_stride +% column;
+		base := j*%b.column_stride;
+		top := head*%b.row_stride +% base;
 		w := x[top];
-		foreach (i in k + 1 ..< m) { w = w + v[i*%f.row_stride +% source]*x[i*%b.row_stride +% column]; }
+		foreach (i in head + 1 ..< m) { w = w + v[i*%f.row_stride +% source]*x[i*%b.row_stride +% base]; }
 		factor := scale*w;
 		x[top] = x[top] - factor;
-		foreach (i in k + 1 ..< m) {
-			at := i*%b.row_stride +% column;
+		foreach (i in head + 1 ..< m) {
+			at := i*%b.row_stride +% base;
 			x[at] = x[at] - factor*v[i*%f.row_stride +% source];
 		}
 	}

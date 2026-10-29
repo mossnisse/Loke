@@ -1,0 +1,369 @@
+// standard-library "`core:math/dense`", milestone 3: the symmetric
+// eigensolver. LAPACK's test ratios for `A V - V D` and `V^T V` over random,
+// Hilbert, graded, Wilkinson, and nearly repeated matrices from 1 x 1 to
+// 200 x 200 at `f32` and `f64`, with the order and signs the contract gives;
+// exact results; Wilkinson's W21+, whose two largest eigenvalues agree to 14
+// digits; only the lower triangle read; each failure; a dual number's
+// derivative `v^T E v`; and results as bit patterns, the same at every
+// optimization and CPU level.
+package main;
+
+import "core:fmt";
+import "core:math";
+import "core:math/dense";
+import "core:math/linalg";
+import "core:unsafe";
+
+check :: proc(name: string_view, ok: bool) {
+	if (ok) {
+		fmt.println("ok", name);
+	} else {
+		fmt.println("FAIL", name);
+	}
+}
+
+bits64 :: proc(x: f64) -> u64 { return unsafe.transmute(u64, x); }
+bits32 :: proc(x: f32) -> u32 { return unsafe.transmute(u32, x); }
+
+epsilon :: proc($T: type) -> T {
+	when (T == f32) {
+		return math.F32_EPSILON;
+	} else {
+		return math.F64_EPSILON;
+	}
+}
+
+// A 64-bit linear congruential generator, so the matrices are the same on
+// every machine.
+Random :: struct { state: u64 }
+
+impl Random {
+	// Uniform in [-1, 1).
+	next :: proc(self: inout) -> f64 {
+		self.state = self.state*%6364136223846793005 +% 1442695040888963407;
+		return f64(self.state >> 11)/9007199254740992.0*2.0 - 1.0;
+	}
+}
+
+Family :: enum { Random, Hilbert, Graded, Wilkinson, Nearly_Repeated }
+
+// A symmetric matrix, written in both triangles.
+make_symmetric :: proc($T: type, family: Family, n: int, seed: u64) -> dense.Matrix(T) {
+	random := Random{seed};
+	m := dense.Matrix(T).zeros(n, n);
+	foreach (c in 0 ..< n) {
+		foreach (r in c ..< n) {
+			value := 0.0;
+			switch (family) {
+			case .Random:
+				value = random.next();
+			case .Hilbert:
+				value = 1.0/f64(r + c + 1);
+			case .Graded:
+				// D R D for D from 1 down to 2^-20.
+				value = random.next()*math.pow(2.0, -20.0*f64(r + c)/f64(n));
+			case .Wilkinson:
+				// |i - (n - 1)/2| on the diagonal, 1 beside it.
+				if (r == c) {
+					value = math.abs(f64(r) - f64(n - 1)/2.0);
+				} else if (r == c + 1) {
+					value = 1.0;
+				}
+			case .Nearly_Repeated:
+				// I + x x^T / n: n - 1 eigenvalues of 1, one near 4/3.
+				value = 0.0;
+			}
+			m[r, c] = T(value);
+			m[c, r] = T(value);
+		}
+	}
+	if (family == .Nearly_Repeated) {
+		x := dense.Matrix(T).zeros(n, 1);
+		foreach (i in 0 ..< n) { x[i, 0] = T(random.next()); }
+		foreach (c in 0 ..< n) {
+			foreach (r in 0 ..< n) {
+				identity := T(1) if r == c else T(0);
+				m[r, c] = identity + x[r, 0]*x[c, 0]/T(f64(n));
+			}
+		}
+	}
+	return m;
+}
+
+// Whether the values ascend and each vector's first component of largest
+// magnitude is positive.
+conventions :: proc(e: ^dense.Symmetric_Eigen($T)) -> bool where linalg.Real(T) {
+	values := e.values();
+	vectors := e.vectors();
+	foreach (i in 1 ..< values.len()) {
+		if (values[i] < values[i - 1]) { return false; }
+	}
+	foreach (c in 0 ..< vectors.columns()) {
+		best := vectors[0, c];
+		foreach (r in 1 ..< vectors.rows()) {
+			if (best.abs() < vectors[r, c].abs()) { best = vectors[r, c]; }
+		}
+		if (best < T(0)) { return false; }
+	}
+	return true;
+}
+
+// The larger of LAPACK's ratios for one matrix, each a small multiple of 1,
+// in the 1-norm: `|A V - V D| / (n |A| eps)` and `|V^T V - I| / (n eps)`.
+eigen_ratio :: proc(a: dense.View($T)) -> T {
+	n := a.rows();
+	eps := epsilon(T);
+	switch (dense.symmetric_eigen(a)) {
+	case .ok(e):
+		if (!conventions(&e)) {
+			fmt.println("FAIL conventions", n);
+			return T(1e30);
+		}
+		v := e.vectors();
+		residual := dense.multiply(a, v);
+		scaled := dense.Matrix(T).from_view(v);
+		foreach (c in 0 ..< n) {
+			foreach (r in 0 ..< n) { scaled[r, c] = scaled[r, c]*e.values()[c]; }
+		}
+		residual.view_mut().add_scaled(-T(1), scaled.view());
+		ratio := dense.norm_one(residual.view())/(T(f64(n))*dense.norm_one(a)*eps);
+		gram := dense.multiply(v.transpose(), v);
+		orthogonal := dense.norm_one(dense.subtract(gram.view(), dense.Matrix(T).identity(n).view()).view())/(T(f64(n))*eps);
+		if (ratio < orthogonal) { ratio = orthogonal; }
+		return ratio;
+	case .err(error):
+		fmt.println("FAIL symmetric_eigen", error);
+		return T(1e30);
+	}
+}
+
+SIZES :: [?]int{1, 2, 5, 10, 31, 64, 200};
+
+residuals :: proc($T: type, name: string_view, largest: int) {
+	families := [?]Family{.Random, .Hilbert, .Graded, .Wilkinson, .Nearly_Repeated};
+	foreach (family in families) {
+		worst := T(0);
+		foreach (n in SIZES) {
+			if (n > largest) { continue; }
+			a := make_symmetric(T, family, n, u64(n*5 + 1));
+			ratio := eigen_ratio(a.view());
+			if (worst < ratio) { worst = ratio; }
+		}
+		fmt.println("symmetric_eigen", name, family, worst < T(30));
+	}
+}
+
+exact :: proc() {
+	// A diagonal matrix needs no reflector and no rotation: its values sorted,
+	// the first of equal ones first, and a permutation of the identity.
+	d := dense.Matrix(f64).from_rows([4][4]f64{{3, 0, 0, 0}, {0, -1, 0, 0}, {0, 0, 2, 0}, {0, 0, 0, -1}});
+	switch (dense.symmetric_eigen(d.view())) {
+	case .ok(e):
+		values := e.values();
+		check("a diagonal matrix's values, sorted", values[0] == -1.0 && values[1] == -1.0 && values[2] == 2.0 && values[3] == 3.0);
+		permutation := dense.Matrix(f64).from_rows([4][4]f64{{0, 0, 0, 1}, {1, 0, 0, 0}, {0, 0, 1, 0}, {0, 1, 0, 0}});
+		check("and its vectors, a permutation", dense.equal(e.vectors(), permutation.view()));
+		check("size", e.size() == 4);
+	case .err(_):
+		check("a diagonal matrix's values, sorted", false);
+	}
+
+	// [[2, 1], [1, 2]] has the eigenvalues 1 and 3; the tridiagonal with 2
+	// on the diagonal and 1 beside it, 2 - sqrt(2), 2, and 2 + sqrt(2), with
+	// the vectors (1, -sqrt(2), 1)/2, (1, 0, -1)/sqrt(2), and (1, sqrt(2), 1)/2.
+	two := dense.Matrix(f64).from_rows([2][2]f64{{2, 1}, {1, 2}});
+	switch (dense.symmetric_eigen(two.view())) {
+	case .ok(e):
+		check("a 2 x 2 block", linalg.approx_equal(e.values()[0], 1.0, 4.0*math.F64_EPSILON, 0.0)
+			&& linalg.approx_equal(e.values()[1], 3.0, 0.0, 4.0*math.F64_EPSILON));
+	case .err(_):
+		check("a 2 x 2 block", false);
+	}
+	three := dense.Matrix(f64).from_rows([3][3]f64{{2, 1, 0}, {1, 2, 1}, {0, 1, 2}});
+	switch (dense.symmetric_eigen(three.view())) {
+	case .ok(e):
+		root := math.sqrt(2.0);
+		expected := dense.Matrix(f64).from_rows([3][3]f64{{-0.5, 1.0/root, 0.5}, {root/2.0, 0.0, root/2.0}, {-0.5, -1.0/root, 0.5}});
+		values := dense.Matrix(f64).from_column_major(e.values(), 3, 1);
+		check("a tridiagonal matrix's values", dense.approx_equal(values.view(),
+			dense.Matrix(f64).from_rows([3][1]f64{{2.0 - root}, {2.0}, {2.0 + root}}).view(), 1e-15, 1e-15));
+		check("and its vectors, signed", dense.approx_equal(e.vectors(), expected.view(), 1e-15, 0.0));
+	case .err(_):
+		check("a tridiagonal matrix's values", false);
+	}
+
+	// Wilkinson's W21+: its two largest eigenvalues agree to 14 digits, yet
+	// their vectors are orthogonal (the ratio test above covers them too).
+	w := make_symmetric(f64, .Wilkinson, 21, 0);
+	switch (dense.symmetric_eigen(w.view())) {
+	case .ok(e):
+		values := e.values();
+		check("W21+'s largest eigenvalues", linalg.approx_equal(values[20], 10.746194182903393, 0.0, 4.0*math.F64_EPSILON)
+			&& linalg.approx_equal(values[19], 10.746194182903322, 0.0, 4.0*math.F64_EPSILON)
+			&& linalg.approx_equal(values[0], -1.1254415221199854, 0.0, 16.0*math.F64_EPSILON));
+		sum := 0.0;
+		foreach (x in values) { sum += x; }
+		check("their sum is the trace", linalg.approx_equal(sum, 110.0, 0.0, 1e-14));
+		top := e.vectors().column(20);
+		next := e.vectors().column(19);
+		check("and the two vectors are orthogonal", math.abs(dense.dot(top, next)) < 1e-14);
+	case .err(_):
+		check("W21+'s largest eigenvalues", false);
+	}
+}
+
+views :: proc() {
+	// Only the lower triangle is read: a NaN above the diagonal changes
+	// nothing.
+	a := make_symmetric(f64, .Random, 6, 71);
+	marked := a.clone();
+	foreach (c in 1 ..< 6) {
+		foreach (r in 0 ..< c) { marked[r, c] = math.F64_NAN; }
+	}
+	same := false;
+	switch (dense.symmetric_eigen(a.view())) {
+	case .ok(plain):
+		switch (dense.symmetric_eigen(marked.view())) {
+		case .ok(lower):
+			values := dense.Matrix(f64).from_column_major(plain.values(), 6, 1);
+			other := dense.Matrix(f64).from_column_major(lower.values(), 6, 1);
+			same = dense.equal(values.view(), other.view()) && dense.equal(plain.vectors(), lower.vectors());
+		case .err(_):
+		}
+	case .err(_):
+	}
+	check("only the lower triangle is read", same);
+
+	// A block of a larger matrix, through its strides, gives its copy's bits.
+	big := make_symmetric(f64, .Random, 9, 72);
+	block := big.view().block(2, 2, 5, 5);
+	copy := dense.Matrix(f64).from_view(block);
+	same = false;
+	switch (dense.symmetric_eigen(block)) {
+	case .ok(from_view):
+		switch (dense.symmetric_eigen(copy.view())) {
+		case .ok(from_copy): same = dense.equal(from_view.vectors(), from_copy.vectors());
+		case .err(_):
+		}
+	case .err(_):
+	}
+	check("a block decomposes as its copy", same);
+}
+
+failures :: proc() {
+	nan := make_symmetric(f64, .Random, 4, 81);
+	nan[3, 1] = math.F64_NAN;
+	switch (dense.symmetric_eigen(nan.view())) {
+	case .ok(_):  check("a NaN does not converge", false);
+	case .err(e): check("a NaN does not converge", e == .No_Convergence);
+	}
+	infinite := make_symmetric(f64, .Random, 4, 82);
+	infinite[0, 0] = math.F64_INFINITY;
+	switch (dense.symmetric_eigen(infinite.view())) {
+	case .ok(_):  check("an infinity does not converge", false);
+	case .err(e): check("an infinity does not converge", e == .No_Convergence);
+	}
+	empty := dense.Matrix(f64).zeros(0, 0);
+	switch (dense.symmetric_eigen(empty.view())) {
+	case .ok(e):  check("a 0 x 0 matrix", e.size() == 0 && e.values().len() == 0);
+	case .err(_): check("a 0 x 0 matrix", false);
+	}
+	zero := dense.Matrix(f64).zeros(3, 3);
+	switch (dense.symmetric_eigen(zero.view())) {
+	case .ok(e):  check("a zero matrix", e.values()[0] == 0.0 && e.values()[2] == 0.0 && dense.equal(e.vectors(), dense.Matrix(f64).identity(3).view()));
+	case .err(_): check("a zero matrix", false);
+	}
+}
+
+// A forward-mode dual number, so `symmetric_eigen` differentiates.
+Dual :: struct { value, derivative: f64 }
+
+impl Dual {
+	@(public) from_f64 :: hook(convert) proc(value: f64) -> Dual { return {value, 0}; }
+	@(public) from_int :: hook(convert) proc(value: int) -> Dual { return {f64(value), 0}; }
+	@(public) add :: operator(+) proc(a, b: Dual) -> Dual { return {a.value + b.value, a.derivative + b.derivative}; }
+	@(public) subtract :: operator(-) proc(a, b: Dual) -> Dual { return {a.value - b.value, a.derivative - b.derivative}; }
+	@(public) negate :: operator(-) proc(a: Dual) -> Dual { return {-a.value, -a.derivative}; }
+	@(public) multiply :: operator(*) proc(a, b: Dual) -> Dual {
+		return {a.value*b.value, a.derivative*b.value + a.value*b.derivative};
+	}
+	@(public) divide :: operator(/) proc(a, b: Dual) -> Dual {
+		return {a.value/b.value, (a.derivative*b.value - a.value*b.derivative)/(b.value*b.value)};
+	}
+	@(public) equal :: operator(==) proc(a, b: Dual) -> bool { return a.value == b.value; }
+	@(public) less :: operator(<) proc(a, b: Dual) -> bool { return a.value < b.value; }
+
+	sqrt :: proc(self) -> Dual {
+		root := math.sqrt(self.value);
+		return {root, self.derivative/(root + root)};
+	}
+	sin :: proc(self) -> Dual { return {math.sin(self.value), self.derivative*math.cos(self.value)}; }
+	cos :: proc(self) -> Dual { return {math.cos(self.value), -self.derivative*math.sin(self.value)}; }
+	asin :: proc(self) -> Dual { return {math.asin(self.value), 0}; }
+	acos :: proc(self) -> Dual { return {math.acos(self.value), 0}; }
+	atan2 :: proc(self, x: Dual) -> Dual { return {math.atan2(self.value, x.value), 0}; }
+	abs :: proc(self) -> Dual { return -self if self.value < 0.0 else self; }
+	floor :: proc(self) -> Dual { return {math.floor(self.value), 0}; }
+	ceil :: proc(self) -> Dual { return {math.ceil(self.value), 0}; }
+	round :: proc(self) -> Dual { return {math.round(self.value), 0}; }
+	is_finite :: proc(self) -> bool { return math.is_finite(self.value); }
+	is_normal :: proc(self) -> bool { return math.is_finite(self.value) && math.abs(self.value) >= math.F64_MIN_NORMAL; }
+}
+
+dual :: proc() {
+	// A simple eigenvalue of A + t E has the derivative v^T E v at t = 0.
+	n := 6;
+	a := make_symmetric(f64, .Random, n, 91);
+	e := make_symmetric(f64, .Random, n, 92);
+	d := dense.Matrix(Dual).zeros(n, n);
+	foreach (c in 0 ..< n) {
+		foreach (r in 0 ..< n) { d[r, c] = Dual{a[r, c], e[r, c]}; }
+	}
+	switch (dense.symmetric_eigen(d.view())) {
+	case .ok(result):
+		switch (dense.symmetric_eigen(a.view())) {
+		case .ok(plain):
+			derivatives := true;
+			values := true;
+			foreach (i in 0 ..< n) {
+				v := plain.vectors().column(i);
+				ev := dense.multiply(e.view(), v);
+				expected := dense.dot(v, ev.view());
+				if (!linalg.approx_equal(result.values()[i].derivative, expected, 1e-12, 1e-10)) { derivatives = false; }
+				if (bits64(result.values()[i].value) != bits64(plain.values()[i])) { values = false; }
+			}
+			check("a dual number through symmetric_eigen gives v^T E v", derivatives);
+			check("and the same values as at f64, bit for bit", values);
+		case .err(_):
+			check("a dual number through symmetric_eigen gives v^T E v", false);
+		}
+	case .err(error):
+		fmt.println("FAIL dual symmetric_eigen", error);
+	}
+}
+
+determinism :: proc() {
+	a := make_symmetric(f64, .Random, 50, 101);
+	switch (dense.symmetric_eigen(a.view())) {
+	case .ok(e):
+		fmt.println("f64 symmetric_eigen", bits64(e.values()[0]), bits64(e.values()[49]),
+			bits64(e.vectors()[0, 0]), bits64(e.vectors()[17, 31]));
+	case .err(error):
+		fmt.println("FAIL determinism", error);
+	}
+	a32 := make_symmetric(f32, .Random, 31, 102);
+	switch (dense.symmetric_eigen(a32.view())) {
+	case .ok(e): fmt.println("f32 symmetric_eigen", bits32(e.values()[0]), bits32(e.values()[30]), bits32(e.vectors()[5, 7]));
+	case .err(error): fmt.println("FAIL determinism", error);
+	}
+}
+
+main :: proc() {
+	residuals(f64, "f64", 200);
+	residuals(f32, "f32", 64);
+	exact();
+	views();
+	failures();
+	dual();
+	determinism();
+}

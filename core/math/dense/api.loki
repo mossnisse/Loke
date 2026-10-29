@@ -3,7 +3,8 @@
 /*
 	Matrices whose size is known at run time: an owning `Matrix(T)`, views of
 	it and of foreign buffers, products, the LU, Cholesky, and QR
-	factorizations, and least squares, with the same bits everywhere.
+	factorizations, least squares, the symmetric eigendecomposition, and the
+	singular value decomposition, with the same bits everywhere.
 
 	`Matrix(T)` owns `rows x columns` elements stored column-major in one
 	allocation. `View(T)` reads, and `View_Mut(T)` writes, elements somewhere
@@ -29,9 +30,12 @@
 	past its data are programmer errors and panic. A numerical failure is an
 	`Error`: an exact zero pivot, an exact zero on `R`'s diagonal, or a factor
 	that is not finite is `.Singular`, and a Cholesky pivot that is not
-	positive is `.Not_Positive_Definite`. Nothing decides with a tolerance the
-	caller did not give; `Lu.reciprocal_condition` estimates how near
-	singular a matrix is, and the caller chooses the threshold.
+	positive is `.Not_Positive_Definite`; an eigenvalue or singular value
+	iteration that reaches its limit is `.No_Convergence`. Nothing decides
+	with a tolerance the caller did not give: `Lu.reciprocal_condition`
+	estimates how near singular a matrix is, and `Svd.rank` and `Svd.solve`
+	take the relative tolerance below which a singular value counts as zero.
+	The iterations decide convergence by rounding, which needs no tolerance.
 
 	Each operation is computed in the order its documentation gives, with no
 	`fma`, so it gives the same bits on every machine, CPU level, and
@@ -108,6 +112,54 @@ impl Matrix($T) {
 
 	// Rows in brackets, `[[1, 2], [3, 4]]`, as `linalg.Matrix` prints, each element with the caller's options.
 	format :: proc(self: ^, writer: fmt.Writer, options: fmt.Options) ---;
+}
+
+/*
+	The eigendecomposition `A = V D V^T` of a symmetric `A`: the eigenvalues
+	in ascending order, and `V` orthogonal with eigenvector `i` as column
+	`i`. `symmetric_eigen(a)` makes one.
+*/
+Symmetric_Eigen :: struct($T: type) where linalg.Real(T) {
+	// and fields private to the package
+}
+
+/*
+	The eigenvalues and eigenvectors of the symmetric `a`, from its lower
+	triangle: the elements above the diagonal are not read, so `A` is taken
+	as symmetric without a check. Allocated from `allocator`.
+
+	`A` is reduced to a tridiagonal `T = Q^T A Q` by `n - 2` Householder
+	reflectors built as `qr_in_place` builds them, each applied to the lower
+	triangle of the trailing block as `A = (A - v w^T) - w v^T` with
+	`w = p - (tau (p^T v) / 2) v` and `p = tau A v`, each sum in increasing
+	order. Then implicit QL with Wilkinson shifts reduces `T` to a diagonal,
+	the rotations accumulated into `Q`, in at most `30 n` sweeps in all, a
+	limit pooled as `svd`'s is rather than 30 for each eigenvalue. An
+	off-diagonal element `e` beside the diagonal elements `d0` and `d1` is
+	negligible when `t + |e| == t` for `t = |d0| + |d1|`.
+
+	The eigenvalues are sorted ascending, by a selection sort that takes the
+	first of equal ones, and each eigenvector is signed so that its first
+	component of largest magnitude is positive, so the vectors and not only
+	the subspaces are the same on every machine. The results are only as
+	unique as the problem: for equal eigenvalues, any orthonormal basis of
+	their subspace is a solution, and this is the one the method finds.
+
+	`.No_Convergence` past the iteration limit, which for a finite matrix is
+	a bug to report, or for an element that is not finite, which the
+	iteration cannot reduce. A non-square matrix panics.
+*/
+symmetric_eigen :: proc(a: View($T), allocator: Allocator = mem.default_allocator()) -> Result(Symmetric_Eigen(T), Error) where linalg.Real(T) ---;
+
+impl Symmetric_Eigen($T) {
+	// The order of the matrix.
+	size :: proc(self) -> int ---;
+
+	// The eigenvalues, ascending.
+	values :: proc(self: ^) -> []T ---;
+
+	// The eigenvectors as the columns of an orthogonal matrix, column `i` for `values()[i]`.
+	vectors :: proc(self: ^) -> View(T) ---;
 }
 
 /*
@@ -357,8 +409,10 @@ qr_in_place :: proc(a: View_Mut($T), tau: []mut T) -> Status(Error) where linalg
 qr :: proc(a: View($T), allocator: Allocator = mem.default_allocator()) -> Result(Qr(T), Error) where linalg.Real(T) ---;
 
 impl Qr($T) {
+	// The number of rows of the factored matrix.
 	rows :: proc(self) -> int ---;
 
+	// The number of columns of the factored matrix.
 	columns :: proc(self) -> int ---;
 
 	// Both factors in one view, as `qr_in_place` leaves them.
@@ -405,6 +459,88 @@ impl Qr($T) {
 	it is the solution of `A x = b`.
 */
 least_squares :: proc(a, b: View($T), allocator: Allocator = mem.default_allocator()) -> Result(Matrix(T), Error) where linalg.Real(T) ---;
+
+/*
+	The thin singular value decomposition `A = U S V^T` of an `m x n` `A`,
+	with `k = min(m, n)`: `U` is `m x k` and `V` is `n x k`, each with
+	orthonormal columns, and `S` the `k` singular values, descending and not
+	negative. `svd(a)` makes one.
+*/
+Svd :: struct($T: type) where linalg.Real(T) {
+	// and fields private to the package
+}
+
+/*
+	The singular value decomposition of the `m x n` `a`, allocated from
+	`allocator`. A wide `a` is decomposed as its transpose, with `U` and `V`
+	exchanged, so the method below always sees `m >= n`.
+
+	`A` is reduced to an upper bidiagonal `B = Q^T A P` by alternating
+	Householder reflectors built and applied as `qr_in_place` builds and
+	applies them: reflector `k` from the left zeros column `k` below the
+	diagonal, then one from the right zeros row `k` past the superdiagonal.
+	`U` and `V` start as `Q` and `P`. Then LINPACK's `dsvdc` iteration
+	reduces `B` to a diagonal, each rotation accumulated into `U` or `V`, in
+	at most `30 n` shifted QR sweeps in all. The limit is pooled, unlike
+	`dsvdc`'s 30 for each singular value: in a graded matrix the shift is lost
+	against the block's large end, so the first value to converge can take
+	many more sweeps, and the others then follow in one or two each.
+
+	A superdiagonal element `e` beside the diagonal elements `s0` and `s1` is
+	negligible when `t + |e| == t` for `t = |s0| + |s1|`, and a diagonal
+	element `s` beside the superdiagonal elements `e0` and `e1` when
+	`t + |s| == t` for `t = |e0| + |e1|`.
+
+	Each singular value is made non-negative as it converges, by negating its
+	column of `V`, and sorted into place, and finally each pair of columns
+	is signed so that the first component of largest magnitude in `V`'s
+	column is positive, so the vectors and not only the subspaces are the
+	same on every machine. For equal singular values the vectors are the
+	basis the method finds.
+
+	`.No_Convergence` past the iteration limit, which for a finite matrix is
+	a bug to report, or for an element that is not finite.
+*/
+svd :: proc(a: View($T), allocator: Allocator = mem.default_allocator()) -> Result(Svd(T), Error) where linalg.Real(T) ---;
+
+impl Svd($T) {
+	// The number of rows of the decomposed matrix, `m`.
+	rows :: proc(self) -> int ---;
+
+	// The number of columns of the decomposed matrix, `n`.
+	columns :: proc(self) -> int ---;
+
+	// `U`, `m x k`, borrowed from the decomposition.
+	u :: proc(self: ^) -> View(T) ---;
+
+	// The `k` singular values, descending.
+	singular_values :: proc(self: ^) -> []T ---;
+
+	// `V`, `n x k`, borrowed from the decomposition; `A = U S V^T`.
+	v :: proc(self: ^) -> View(T) ---;
+
+	/*
+		The number of singular values greater than `relative` times the
+		largest. `relative` has no default, since the right one depends on
+		the data's accuracy; a negative or NaN one panics.
+	*/
+	rank :: proc(self, relative: T) -> int ---;
+
+	/*
+		Overwrites the `n`-row `out` with the minimum-norm `x` that minimizes
+		`|A x - b|` in the 2-norm, for each column of the `m`-row `b`,
+		treating the singular values not greater than `relative` times the
+		largest as zero, as `rank` counts them: `x = sum of
+		(u_i^T b / s_i) v_i` over the others, in increasing `i`, with each
+		`u_i^T b` summed in increasing row order. `relative = 0` keeps every
+		singular value that is not zero. A negative or NaN `relative`, or a
+		shape mismatch, panics.
+	*/
+	solve_into :: proc(self, out: View_Mut(T), b: View(T), relative: T) ---;
+
+	// The minimum-norm least-squares solution of `solve_into`, `n` rows, allocated from `allocator`.
+	solve :: proc(self, b: View(T), relative: T, allocator: Allocator = mem.default_allocator()) -> Matrix(T) ---;
+}
 
 /*
 	A read-only view of `rows x columns` elements somewhere else: element

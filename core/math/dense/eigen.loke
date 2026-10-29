@@ -1,0 +1,268 @@
+// dense-matrix-plan.md "Algorithms": the symmetric eigensolver, Householder
+// tridiagonalization as LAPACK's `sytd2` does it from the lower triangle, then
+// implicit QL with Wilkinson shifts, as EISPACK's `imtql2` and Numerical
+// Recipes' `tqli` do it. Convergence is decided by rounding, with no epsilon:
+// an off-diagonal element is negligible when adding it to the magnitudes of
+// its two diagonal neighbours changes nothing.
+@(public)
+package dense;
+
+import "core:math/linalg";
+import "core:mem";
+import "core:unsafe";
+
+/**
+	The eigendecomposition `A = V D V^T` of a symmetric `A`: the eigenvalues
+	in ascending order, and `V` orthogonal with eigenvector `i` as column
+	`i`. `symmetric_eigen(a)` makes one.
+*/
+Symmetric_Eigen :: struct($T: type) where linalg.Real(T) {
+	@(private) eigenvalues:  [dynamic]T,   // ascending
+	@(private) eigenvectors: Matrix(T),    // as columns
+}
+
+/**
+	The eigenvalues and eigenvectors of the symmetric `a`, from its lower
+	triangle: the elements above the diagonal are not read, so `A` is taken
+	as symmetric without a check. Allocated from `allocator`.
+
+	`A` is reduced to a tridiagonal `T = Q^T A Q` by `n - 2` Householder
+	reflectors built as `qr_in_place` builds them, each applied to the lower
+	triangle of the trailing block as `A = (A - v w^T) - w v^T` with
+	`w = p - (tau (p^T v) / 2) v` and `p = tau A v`, each sum in increasing
+	order. Then implicit QL with Wilkinson shifts reduces `T` to a diagonal,
+	the rotations accumulated into `Q`, in at most `30 n` sweeps in all, a
+	limit pooled as `svd`'s is rather than 30 for each eigenvalue. An
+	off-diagonal element `e` beside the diagonal elements `d0` and `d1` is
+	negligible when `t + |e| == t` for `t = |d0| + |d1|`.
+
+	The eigenvalues are sorted ascending, by a selection sort that takes the
+	first of equal ones, and each eigenvector is signed so that its first
+	component of largest magnitude is positive, so the vectors and not only
+	the subspaces are the same on every machine. The results are only as
+	unique as the problem: for equal eigenvalues, any orthonormal basis of
+	their subspace is a solution, and this is the one the method finds.
+
+	`.No_Convergence` past the iteration limit, which for a finite matrix is
+	a bug to report, or for an element that is not finite, which the
+	iteration cannot reduce. A non-square matrix panics.
+*/
+symmetric_eigen :: proc(a: View($T), allocator: Allocator = mem.default_allocator()) -> Result(Symmetric_Eigen(T), Error) where linalg.Real(T) {
+	n := a.row_count;
+	assert(a.column_count == n, "dense.symmetric_eigen needs a square matrix");
+	work := Matrix(T).zeros(n, n, allocator);
+	foreach (c in 0 ..< n) {
+		foreach (r in c ..< n) {
+			x := a[r, c];
+			if (!x.is_finite()) { return .err(.No_Convergence); }
+			work[r, c] = x;
+		}
+	}
+	values := zeros_of(T, n, allocator);
+	off_diagonal := zeros_of(T, n, allocator);
+	scales := zeros_of(T, n, allocator);
+	scratch := zeros_of(T, n, allocator);
+	tridiagonalize(work.view_mut(), &mut values[:], &mut off_diagonal[:], &mut scales[:], &mut scratch[:]);
+
+	// Q = H_0 H_1 ... H_{n-3}, applied to the identity from the last
+	// reflector to the first. Reflector `k` leaves columns `0 ..= k` of the
+	// partial product as they are, so it is applied to the others alone.
+	vectors := Matrix(T).identity(n, allocator);
+	packed := work.view();
+	for (k := n - 2; k >= 0; k -= 1) {
+		reflect(packed, k + 1, k, scales[k], vectors.view_mut().block(0, k + 1, n, n - k - 1));
+	}
+	tridiagonal_ql(&mut values[:], &mut off_diagonal[:], vectors.view_mut()) or_return;
+
+	foreach (i in 0 ..< n) {
+		smallest := i;
+		foreach (j in i + 1 ..< n) {
+			if (values[j] < values[smallest]) { smallest = j; }
+		}
+		if (smallest != i) {
+			held := values[i];
+			values[i] = values[smallest];
+			values[smallest] = held;
+			swap_columns(vectors.view_mut(), i, smallest);
+		}
+	}
+	foreach (i in 0 ..< n) {
+		if (leads_negative(vectors.view(), i)) { negate_column(vectors.view_mut(), i); }
+	}
+	return .ok(Symmetric_Eigen(T){move(values), move(vectors)});
+}
+
+impl Symmetric_Eigen($T) {
+	/// The order of the matrix.
+	size :: proc(self) -> int { return self.eigenvectors.row_count; }
+
+	/// The eigenvalues, ascending.
+	values :: proc(self: ^) -> []T { return self.eigenvalues[:]; }
+
+	/// The eigenvectors as the columns of an orthogonal matrix, column `i` for `values()[i]`.
+	vectors :: proc(self: ^) -> View(T) { return self.eigenvectors.view(); }
+}
+
+// `n` zeros, allocated from `allocator`.
+@(private)
+zeros_of :: proc($T: type, n: int, allocator: Allocator) -> [dynamic]T where linalg.Real(T) {
+	result := make([dynamic]T, 0, n, allocator);
+	foreach (_ in 0 ..< n) { result.append(T(0)); }
+	return result;
+}
+
+// `sytd2` with `uplo = 'L'`: reduces the lower triangle of the square `a` to
+// tridiagonal form, leaving the diagonal in `d`, the subdiagonal in `e` with
+// `e[n - 1] = 0`, each reflector's scale in `tau` and its vector in `a`
+// below the subdiagonal. `work` holds `p` and then `w`.
+@(private)
+tridiagonalize :: proc(a: View_Mut($T), d, e, tau, work: []mut T) where linalg.Real(T) {
+	n := a.row_count;
+	x := unsafe.raw_data(a.data);
+	rs := a.row_stride;
+	cs := a.column_stride;
+	// The lower triangle's element (i, j) of the symmetric trailing block.
+	at := proc(i, j, rs, cs: int) -> int { return offset(i, j, rs, cs) if j <= i else offset(j, i, rs, cs); };
+	foreach (k in 0 ..< n - 1) {
+		scale := householder(x, rs, cs, k + 1, k, n);
+		tau[k] = scale;
+		e[k] = x[offset(k + 1, k, rs, cs)];
+		if (scale == T(0)) { continue; }
+		// The vector's first element is 1 while the block is updated, as
+		// `sytd2` sets it, so `v` reads straight from column `k`; a product
+		// with 1 is exact.
+		x[offset(k + 1, k, rs, cs)] = T(1);
+		foreach (i in k + 1 ..< n) {
+			sum := x[at(i, k + 1, rs, cs)]*x[offset(k + 1, k, rs, cs)];
+			foreach (j in k + 2 ..< n) { sum = sum + x[at(i, j, rs, cs)]*x[offset(j, k, rs, cs)]; }
+			work[i] = scale*sum;
+		}
+		dot := work[k + 1]*x[offset(k + 1, k, rs, cs)];
+		foreach (i in k + 2 ..< n) { dot = dot + work[i]*x[offset(i, k, rs, cs)]; }
+		adjust := -(scale*dot)/T(2);
+		foreach (i in k + 1 ..< n) { work[i] = work[i] + adjust*x[offset(i, k, rs, cs)]; }
+		foreach (j in k + 1 ..< n) {
+			vj := x[offset(j, k, rs, cs)];
+			wj := work[j];
+			foreach (i in j ..< n) {
+				place := offset(i, j, rs, cs);
+				x[place] = (x[place] - x[offset(i, k, rs, cs)]*wj) - work[i]*vj;
+			}
+		}
+		x[offset(k + 1, k, rs, cs)] = e[k];
+	}
+	foreach (i in 0 ..< n) { d[i] = x[offset(i, i, rs, cs)]; }
+	if (n > 0) { e[n - 1] = T(0); }
+}
+
+// Implicit QL with Wilkinson shifts on the symmetric tridiagonal matrix with
+// diagonal `d` and subdiagonal `e`, as `tqli` does it, each rotation also
+// applied to the columns of `z`. Leaves the eigenvalues in `d`, unsorted.
+@(private)
+tridiagonal_ql :: proc(d, e: []mut $T, z: View_Mut(T)) -> Status(Error) where linalg.Real(T) {
+	n := d.len();
+	sweeps := 0;
+	foreach (l in 0 ..< n) {
+		for (;;) {
+			m := n - 1;
+			foreach (j in l ..< n - 1) {
+				t := d[j].abs() + d[j + 1].abs();
+				if (t + e[j].abs() == t) {
+					m = j;
+					break;
+				}
+			}
+			if (m == l) { break; }
+			if (sweeps == 30*n) { return .err(.No_Convergence); }
+			sweeps += 1;
+			// The shift is the eigenvalue of the leading 2 x 2 block nearer
+			// to d[l].
+			g := (d[l + 1] - d[l])/(T(2)*e[l]);
+			r := hypot(g, T(1));
+			g = (d[m] - d[l]) + e[l]/(g + (-r if g < T(0) else r));
+			s := T(1);
+			c := T(1);
+			p := T(0);
+			underflow := false;
+			for (i := m - 1; i >= l; i -= 1) {
+				f := s*e[i];
+				b := c*e[i];
+				r = hypot(f, g);
+				e[i + 1] = r;
+				if (r == T(0)) {
+					// The rotation underflowed: deflate here and sweep again.
+					d[i + 1] = d[i + 1] - p;
+					e[m] = T(0);
+					underflow = true;
+					break;
+				}
+				s = f/r;
+				c = g/r;
+				g = d[i + 1] - p;
+				r = (d[i] - g)*s + (T(2)*c)*b;
+				p = s*r;
+				d[i + 1] = g + p;
+				g = c*r - b;
+				rotate_columns(z, i + 1, i, c, s);
+			}
+			if (underflow) { continue; }
+			d[l] = d[l] - p;
+			e[l] = g;
+			e[m] = T(0);
+		}
+	}
+	return .ok;
+}
+
+// BLAS's `rot` on columns `a` and `b` of `x`: each row becomes
+// `(c*xa + s*xb, c*xb - s*xa)`.
+@(private)
+rotate_columns :: proc(x: View_Mut($T), a, b: int, c, s: T) where linalg.Real(T) {
+	p := unsafe.raw_data(x.data);
+	first := a*%x.column_stride;
+	second := b*%x.column_stride;
+	foreach (i in 0 ..< x.row_count) {
+		row := i*%x.row_stride;
+		u := p[row +% first];
+		w := p[row +% second];
+		p[row +% first] = c*u + s*w;
+		p[row +% second] = c*w - s*u;
+	}
+}
+
+@(private)
+swap_columns :: proc(x: View_Mut($T), a, b: int) where linalg.Real(T) {
+	p := unsafe.raw_data(x.data);
+	foreach (i in 0 ..< x.row_count) {
+		first := offset(i, a, x.row_stride, x.column_stride);
+		second := offset(i, b, x.row_stride, x.column_stride);
+		held := p[first];
+		p[first] = p[second];
+		p[second] = held;
+	}
+}
+
+@(private)
+negate_column :: proc(x: View_Mut($T), c: int) where linalg.Real(T) {
+	p := unsafe.raw_data(x.data);
+	foreach (i in 0 ..< x.row_count) {
+		at := offset(i, c, x.row_stride, x.column_stride);
+		p[at] = -p[at];
+	}
+}
+
+// Whether the first component of largest magnitude in column `c` is negative.
+@(private)
+leads_negative :: proc(x: View($T), c: int) -> bool where linalg.Real(T) {
+	if (x.row_count == 0) { return false; }
+	best := x[0, c];
+	largest := best.abs();
+	foreach (i in 1 ..< x.row_count) {
+		candidate := x[i, c].abs();
+		if (largest < candidate) {
+			best = x[i, c];
+			largest = candidate;
+		}
+	}
+	return best < T(0);
+}

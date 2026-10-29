@@ -1,7 +1,8 @@
 /**
 	Matrices whose size is known at run time: an owning `Matrix(T)`, views of
 	it and of foreign buffers, products, the LU, Cholesky, and QR
-	factorizations, and least squares, with the same bits everywhere.
+	factorizations, least squares, the symmetric eigendecomposition, and the
+	singular value decomposition, with the same bits everywhere.
 
 	`Matrix(T)` owns `rows x columns` elements stored column-major in one
 	allocation. `View(T)` reads, and `View_Mut(T)` writes, elements somewhere
@@ -27,15 +28,18 @@
 	past its data are programmer errors and panic. A numerical failure is an
 	`Error`: an exact zero pivot, an exact zero on `R`'s diagonal, or a factor
 	that is not finite is `.Singular`, and a Cholesky pivot that is not
-	positive is `.Not_Positive_Definite`. Nothing decides with a tolerance the
-	caller did not give; `Lu.reciprocal_condition` estimates how near
-	singular a matrix is, and the caller chooses the threshold.
+	positive is `.Not_Positive_Definite`; an eigenvalue or singular value
+	iteration that reaches its limit is `.No_Convergence`. Nothing decides
+	with a tolerance the caller did not give: `Lu.reciprocal_condition`
+	estimates how near singular a matrix is, and `Svd.rank` and `Svd.solve`
+	take the relative tolerance below which a singular value counts as zero.
+	The iterations decide convergence by rounding, which needs no tolerance.
 
 	Each operation is computed in the order its documentation gives, with no
 	`fma`, so it gives the same bits on every machine, CPU level, and
 	optimization level.
 */
-// dense-matrix-plan.md is the design this package implements, milestones 1 and 2.
+// dense-matrix-plan.md is the design this package implements, milestones 1 to 3.
 @(public)
 package dense;
 

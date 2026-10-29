@@ -1,0 +1,412 @@
+// standard-library "`core:math/dense`", milestone 3: the singular value
+// decomposition. LAPACK's test ratios for `A - U S V^T`, `U^T U`, and
+// `V^T V` over random, Hilbert, graded, and rank-deficient matrices from
+// 1 x 1 to 200 x 200, tall and wide, at `f32` and `f64`, with the order and
+// signs the contract gives; exact results; `rank` and the minimum-norm
+// `solve` against `least_squares` and on rank-deficient problems; the
+// singular values against the eigenvalues of `A^T A`; each failure; a dual
+// number's derivative `u^T E v`; and results as bit patterns, the same at
+// every optimization and CPU level.
+package main;
+
+import "core:fmt";
+import "core:math";
+import "core:math/dense";
+import "core:math/linalg";
+import "core:unsafe";
+
+check :: proc(name: string_view, ok: bool) {
+	if (ok) {
+		fmt.println("ok", name);
+	} else {
+		fmt.println("FAIL", name);
+	}
+}
+
+bits64 :: proc(x: f64) -> u64 { return unsafe.transmute(u64, x); }
+bits32 :: proc(x: f32) -> u32 { return unsafe.transmute(u32, x); }
+
+epsilon :: proc($T: type) -> T {
+	when (T == f32) {
+		return math.F32_EPSILON;
+	} else {
+		return math.F64_EPSILON;
+	}
+}
+
+// A 64-bit linear congruential generator, so the matrices are the same on
+// every machine.
+Random :: struct { state: u64 }
+
+impl Random {
+	// Uniform in [-1, 1).
+	next :: proc(self: inout) -> f64 {
+		self.state = self.state*%6364136223846793005 +% 1442695040888963407;
+		return f64(self.state >> 11)/9007199254740992.0*2.0 - 1.0;
+	}
+}
+
+Family :: enum { Random, Hilbert, Graded, Rank_Deficient }
+
+make_matrix :: proc($T: type, family: Family, rows, columns: int, seed: u64) -> dense.Matrix(T) {
+	random := Random{seed};
+	m := dense.Matrix(T).zeros(rows, columns);
+	switch (family) {
+	case .Random:
+		foreach (c in 0 ..< columns) {
+			foreach (r in 0 ..< rows) { m[r, c] = T(random.next()); }
+		}
+	case .Hilbert:
+		foreach (c in 0 ..< columns) {
+			foreach (r in 0 ..< rows) { m[r, c] = T(1.0/f64(r + c + 1)); }
+		}
+	case .Graded:
+		// Columns scaled from 1 down to 2^-40. At 200 x 200, and at 64 x 64
+		// in f32, the first singular value takes more than 30 sweeps, which
+		// the pooled iteration limit allows.
+		foreach (c in 0 ..< columns) {
+			foreach (r in 0 ..< rows) {
+				m[r, c] = T(random.next()*math.pow(2.0, -40.0*f64(c)/f64(columns)));
+			}
+		}
+	case .Rank_Deficient:
+		// B C for B rows x k and C k x columns, k half the smaller side.
+		k := rank_of(rows, columns);
+		b := make_matrix(f64, .Random, rows, k, seed + 1);
+		c := make_matrix(f64, .Random, k, columns, seed + 2);
+		product := dense.multiply(b.view(), c.view());
+		foreach (j in 0 ..< columns) {
+			foreach (i in 0 ..< rows) { m[i, j] = T(product[i, j]); }
+		}
+	}
+	return m;
+}
+
+rank_of :: proc(rows, columns: int) -> int {
+	smaller := rows if rows < columns else columns;
+	return (smaller + 1)/2;
+}
+
+// Whether the singular values descend and are not negative, and each
+// column of V has its first component of largest magnitude positive.
+conventions :: proc(s: ^dense.Svd($T)) -> bool where linalg.Real(T) {
+	values := s.singular_values();
+	foreach (i in 0 ..< values.len()) {
+		if (values[i] < T(0)) { return false; }
+		if (i > 0 && values[i - 1] < values[i]) { return false; }
+	}
+	v := s.v();
+	foreach (c in 0 ..< v.columns()) {
+		best := v[0, c];
+		foreach (r in 1 ..< v.rows()) {
+			if (best.abs() < v[r, c].abs()) { best = v[r, c]; }
+		}
+		if (best < T(0)) { return false; }
+	}
+	return true;
+}
+
+// U S V^T, allocated.
+product_of :: proc(s: ^dense.Svd($T)) -> dense.Matrix(T) {
+	scaled := dense.Matrix(T).from_view(s.u());
+	foreach (c in 0 ..< scaled.columns()) {
+		foreach (r in 0 ..< scaled.rows()) { scaled[r, c] = scaled[r, c]*s.singular_values()[c]; }
+	}
+	return dense.multiply(scaled.view(), s.v().transpose());
+}
+
+// The largest of LAPACK's ratios for one matrix, each a small multiple of 1,
+// in the 1-norm: `|A - U S V^T| / (max(m, n) |A| eps)`, `|U^T U - I| / (m eps)`,
+// and `|V^T V - I| / (n eps)`.
+svd_ratio :: proc(a: dense.View($T)) -> T where linalg.Real(T) {
+	m := a.rows();
+	n := a.columns();
+	k := n if n < m else m;
+	eps := epsilon(T);
+	switch (dense.svd(a)) {
+	case .ok(s):
+		if (!conventions(&s) || s.u().rows() != m || s.u().columns() != k || s.v().rows() != n || s.v().columns() != k) {
+			fmt.println("FAIL conventions", m, n);
+			return T(1e30);
+		}
+		larger := m if n < m else n;
+		ratio := dense.norm_one(dense.subtract(a, product_of(&s).view()).view())/(T(f64(larger))*dense.norm_one(a)*eps);
+		identity := dense.Matrix(T).identity(k);
+		left := dense.multiply(s.u().transpose(), s.u());
+		orthogonal := dense.norm_one(dense.subtract(left.view(), identity.view()).view())/(T(f64(m))*eps);
+		if (ratio < orthogonal) { ratio = orthogonal; }
+		right := dense.multiply(s.v().transpose(), s.v());
+		orthogonal = dense.norm_one(dense.subtract(right.view(), identity.view()).view())/(T(f64(n))*eps);
+		if (ratio < orthogonal) { ratio = orthogonal; }
+		return ratio;
+	case .err(error):
+		fmt.println("FAIL svd", error);
+		return T(1e30);
+	}
+}
+
+Shape :: struct { rows, columns: int }
+
+SHAPES :: [?]Shape{{1, 1}, {3, 1}, {1, 3}, {5, 3}, {3, 5}, {10, 10}, {31, 7}, {7, 31}, {64, 64}, {200, 50}, {50, 200}, {200, 200}};
+
+residuals :: proc($T: type, name: string_view, largest: int) {
+	families := [?]Family{.Random, .Hilbert, .Graded, .Rank_Deficient};
+	foreach (family in families) {
+		worst := T(0);
+		foreach (shape in SHAPES) {
+			if (shape.rows > largest || shape.columns > largest) { continue; }
+			a := make_matrix(T, family, shape.rows, shape.columns, u64(shape.rows*7 + shape.columns));
+			ratio := svd_ratio(a.view());
+			if (worst < ratio) { worst = ratio; }
+		}
+		fmt.println("svd", name, family, worst < T(30));
+	}
+}
+
+exact :: proc() {
+	// A diagonal matrix needs no reflector and no rotation: the magnitudes
+	// sorted, a negative value's sign moved into U.
+	d := dense.Matrix(f64).from_rows([3][3]f64{{-1, 0, 0}, {0, 3, 0}, {0, 0, 0}});
+	switch (dense.svd(d.view())) {
+	case .ok(s):
+		values := s.singular_values();
+		check("a diagonal matrix's singular values", values[0] == 3.0 && values[1] == 1.0 && values[2] == 0.0 && bits64(values[2]) == 0);
+		u := dense.Matrix(f64).from_rows([3][3]f64{{0, -1, 0}, {1, 0, 0}, {0, 0, 1}});
+		v := dense.Matrix(f64).from_rows([3][3]f64{{0, 1, 0}, {1, 0, 0}, {0, 0, 1}});
+		check("and its vectors", dense.equal(s.u(), u.view()) && dense.equal(s.v(), v.view()));
+		check("rows and columns", s.rows() == 3 && s.columns() == 3);
+	case .err(_):
+		check("a diagonal matrix's singular values", false);
+	}
+
+	// [[3, 1], [1, 2], [0, 1]]: A^T A = [[10, 5], [5, 6]], whose eigenvalues
+	// are 8 +- sqrt(29).
+	a := dense.Matrix(f64).from_rows([3][2]f64{{3, 1}, {1, 2}, {0, 1}});
+	switch (dense.svd(a.view())) {
+	case .ok(s):
+		root := math.sqrt(29.0);
+		check("a 3 x 2 matrix's singular values", linalg.approx_equal(s.singular_values()[0], math.sqrt(8.0 + root), 0.0, 4.0*math.F64_EPSILON)
+			&& linalg.approx_equal(s.singular_values()[1], math.sqrt(8.0 - root), 0.0, 4.0*math.F64_EPSILON));
+		switch (dense.svd(a.view().transpose())) {
+		case .ok(t):
+			same := dense.equal(t.u(), s.v()) && dense.equal(t.v(), s.u())
+				&& t.singular_values()[0] == s.singular_values()[0] && t.singular_values()[1] == s.singular_values()[1];
+			check("its transpose exchanges U and V, bit for bit", same);
+		case .err(_):
+			check("its transpose exchanges U and V, bit for bit", false);
+		}
+	case .err(_):
+		check("a 3 x 2 matrix's singular values", false);
+	}
+
+	// The singular values are the square roots of the eigenvalues of A^T A.
+	b := make_matrix(f64, .Random, 20, 8, 111);
+	normal := dense.multiply(b.view().transpose(), b.view());
+	switch (dense.svd(b.view())) {
+	case .ok(s):
+		switch (dense.symmetric_eigen(normal.view())) {
+		case .ok(e):
+			agree := true;
+			foreach (i in 0 ..< 8) {
+				if (!linalg.approx_equal(s.singular_values()[i]*s.singular_values()[i], e.values()[7 - i], 0.0, 1e-13)) { agree = false; }
+			}
+			check("the squares are the eigenvalues of A^T A", agree);
+		case .err(_):
+			check("the squares are the eigenvalues of A^T A", false);
+		}
+	case .err(_):
+		check("the squares are the eigenvalues of A^T A", false);
+	}
+}
+
+solving :: proc() {
+	// A full-rank tall system: the minimum-norm solution is the least-squares one.
+	a := make_matrix(f64, .Random, 12, 5, 121);
+	b := make_matrix(f64, .Random, 12, 2, 122);
+	switch (dense.svd(a.view())) {
+	case .ok(s):
+		check("full rank", s.rank(1e-12) == 5 && s.rank(0.0) == 5);
+		x := s.solve(b.view(), 1e-12);
+		by_qr := dense.least_squares(a.view(), b.view()) or_else dense.Matrix(f64).zeros(5, 2);
+		check("Svd.solve of a full-rank system is least_squares", dense.approx_equal(x.view(), by_qr.view(), 1e-13, 1e-12));
+		into := dense.Matrix(f64).filled(5, 2, 7.0);
+		s.solve_into(into.view_mut(), b.view(), 1e-12);
+		check("solve_into gives solve's bits", dense.equal(into.view(), x.view()));
+	case .err(_):
+		check("full rank", false);
+	}
+
+	// Rank 4 of 7 columns: rank sees it, and the solution is the minimum-norm
+	// minimizer, orthogonal to the null space, with A^T (A x - b) = 0.
+	deficient := make_matrix(f64, .Rank_Deficient, 15, 7, 131);
+	rhs := make_matrix(f64, .Random, 15, 1, 132);
+	switch (dense.svd(deficient.view())) {
+	case .ok(s):
+		check("a rank-deficient matrix's rank", s.rank(1e-10) == 4 && s.rank(0.0) > 4);
+		x := s.solve(rhs.view(), 1e-10);
+		null_part := 0.0;
+		foreach (i in 4 ..< 7) { null_part += math.abs(dense.dot(s.v().column(i), x.view())); }
+		residual := dense.multiply(deficient.view(), x.view());
+		residual.view_mut().add_scaled(-1.0, rhs.view());
+		normal := dense.multiply(deficient.view().transpose(), residual.view());
+		check("its minimum-norm solution", null_part < 1e-13 && dense.norm_one(normal.view()) < 1e-12);
+	case .err(_):
+		check("a rank-deficient matrix's rank", false);
+	}
+
+	// A zero column, which least_squares reports as singular: its part of
+	// the solution is exactly 0.
+	zero_column := dense.Matrix(f64).from_rows([3][2]f64{{1, 0}, {2, 0}, {3, 0}});
+	values := dense.Matrix(f64).from_rows([3][1]f64{{1}, {2}, {3}});
+	switch (dense.svd(zero_column.view())) {
+	case .ok(s):
+		x := s.solve(values.view(), 0.0);
+		check("a zero column", s.rank(0.0) == 1 && x[1, 0] == 0.0 && linalg.approx_equal(x[0, 0], 1.0, 0.0, 4.0*math.F64_EPSILON));
+	case .err(_):
+		check("a zero column", false);
+	}
+
+	// A wide system: the minimum-norm solution of an underdetermined one,
+	// which A reproduces.
+	wide := make_matrix(f64, .Random, 3, 6, 141);
+	target := make_matrix(f64, .Random, 3, 1, 142);
+	switch (dense.svd(wide.view())) {
+	case .ok(s):
+		x := s.solve(target.view(), 1e-12);
+		reproduced := dense.multiply(wide.view(), x.view());
+		check("an underdetermined system", x.rows() == 6 && dense.approx_equal(reproduced.view(), target.view(), 1e-14, 1e-13));
+	case .err(_):
+		check("an underdetermined system", false);
+	}
+}
+
+failures :: proc() {
+	nan := make_matrix(f64, .Random, 4, 3, 151);
+	nan[2, 1] = math.F64_NAN;
+	switch (dense.svd(nan.view())) {
+	case .ok(_):  check("a NaN does not converge", false);
+	case .err(e): check("a NaN does not converge", e == .No_Convergence);
+	}
+	infinite := make_matrix(f64, .Random, 3, 4, 152);
+	infinite[0, 3] = -math.F64_INFINITY;
+	switch (dense.svd(infinite.view())) {
+	case .ok(_):  check("an infinity does not converge", false);
+	case .err(e): check("an infinity does not converge", e == .No_Convergence);
+	}
+	no_columns := dense.Matrix(f64).zeros(4, 0);
+	switch (dense.svd(no_columns.view())) {
+	case .ok(s):
+		x := s.solve(dense.Matrix(f64).filled(4, 2, 1.0).view(), 0.0);
+		check("a matrix with no columns", s.singular_values().len() == 0 && s.u().rows() == 4 && s.rank(0.0) == 0 && x.rows() == 0 && x.columns() == 2);
+	case .err(_):
+		check("a matrix with no columns", false);
+	}
+	no_rows := dense.Matrix(f64).zeros(0, 3);
+	switch (dense.svd(no_rows.view())) {
+	case .ok(s):
+		x := s.solve(dense.Matrix(f64).zeros(0, 1).view(), 0.0);
+		check("a matrix with no rows", s.v().rows() == 3 && x.rows() == 3 && dense.norm_one(x.view()) == 0.0);
+	case .err(_):
+		check("a matrix with no rows", false);
+	}
+	zero := dense.Matrix(f64).zeros(3, 2);
+	switch (dense.svd(zero.view())) {
+	case .ok(s):  check("a zero matrix", s.singular_values()[0] == 0.0 && s.rank(0.0) == 0);
+	case .err(_): check("a zero matrix", false);
+	}
+}
+
+// A forward-mode dual number, so `svd` differentiates.
+Dual :: struct { value, derivative: f64 }
+
+impl Dual {
+	@(public) from_f64 :: hook(convert) proc(value: f64) -> Dual { return {value, 0}; }
+	@(public) from_int :: hook(convert) proc(value: int) -> Dual { return {f64(value), 0}; }
+	@(public) add :: operator(+) proc(a, b: Dual) -> Dual { return {a.value + b.value, a.derivative + b.derivative}; }
+	@(public) subtract :: operator(-) proc(a, b: Dual) -> Dual { return {a.value - b.value, a.derivative - b.derivative}; }
+	@(public) negate :: operator(-) proc(a: Dual) -> Dual { return {-a.value, -a.derivative}; }
+	@(public) multiply :: operator(*) proc(a, b: Dual) -> Dual {
+		return {a.value*b.value, a.derivative*b.value + a.value*b.derivative};
+	}
+	@(public) divide :: operator(/) proc(a, b: Dual) -> Dual {
+		return {a.value/b.value, (a.derivative*b.value - a.value*b.derivative)/(b.value*b.value)};
+	}
+	@(public) equal :: operator(==) proc(a, b: Dual) -> bool { return a.value == b.value; }
+	@(public) less :: operator(<) proc(a, b: Dual) -> bool { return a.value < b.value; }
+
+	sqrt :: proc(self) -> Dual {
+		root := math.sqrt(self.value);
+		return {root, self.derivative/(root + root)};
+	}
+	sin :: proc(self) -> Dual { return {math.sin(self.value), self.derivative*math.cos(self.value)}; }
+	cos :: proc(self) -> Dual { return {math.cos(self.value), -self.derivative*math.sin(self.value)}; }
+	asin :: proc(self) -> Dual { return {math.asin(self.value), 0}; }
+	acos :: proc(self) -> Dual { return {math.acos(self.value), 0}; }
+	atan2 :: proc(self, x: Dual) -> Dual { return {math.atan2(self.value, x.value), 0}; }
+	abs :: proc(self) -> Dual { return -self if self.value < 0.0 else self; }
+	floor :: proc(self) -> Dual { return {math.floor(self.value), 0}; }
+	ceil :: proc(self) -> Dual { return {math.ceil(self.value), 0}; }
+	round :: proc(self) -> Dual { return {math.round(self.value), 0}; }
+	is_finite :: proc(self) -> bool { return math.is_finite(self.value); }
+	is_normal :: proc(self) -> bool { return math.is_finite(self.value) && math.abs(self.value) >= math.F64_MIN_NORMAL; }
+}
+
+dual :: proc() {
+	// A simple singular value of A + t E has the derivative u^T E v at t = 0.
+	m := 7;
+	n := 4;
+	a := make_matrix(f64, .Random, m, n, 161);
+	e := make_matrix(f64, .Random, m, n, 162);
+	d := dense.Matrix(Dual).zeros(m, n);
+	foreach (c in 0 ..< n) {
+		foreach (r in 0 ..< m) { d[r, c] = Dual{a[r, c], e[r, c]}; }
+	}
+	switch (dense.svd(d.view())) {
+	case .ok(result):
+		switch (dense.svd(a.view())) {
+		case .ok(plain):
+			derivatives := true;
+			values := true;
+			foreach (i in 0 ..< n) {
+				ev := dense.multiply(e.view(), plain.v().column(i));
+				expected := dense.dot(plain.u().column(i), ev.view());
+				if (!linalg.approx_equal(result.singular_values()[i].derivative, expected, 1e-12, 1e-10)) { derivatives = false; }
+				if (bits64(result.singular_values()[i].value) != bits64(plain.singular_values()[i])) { values = false; }
+			}
+			check("a dual number through svd gives u^T E v", derivatives);
+			check("and the same values as at f64, bit for bit", values);
+		case .err(_):
+			check("a dual number through svd gives u^T E v", false);
+		}
+	case .err(error):
+		fmt.println("FAIL dual svd", error);
+	}
+}
+
+determinism :: proc() {
+	a := make_matrix(f64, .Random, 60, 40, 171);
+	b := make_matrix(f64, .Random, 60, 1, 172);
+	switch (dense.svd(a.view())) {
+	case .ok(s):
+		x := s.solve(b.view(), 1e-12);
+		fmt.println("f64 svd", bits64(s.singular_values()[0]), bits64(s.singular_values()[39]),
+			bits64(s.u()[0, 0]), bits64(s.v()[17, 31]), bits64(x[0, 0]));
+	case .err(error):
+		fmt.println("FAIL determinism", error);
+	}
+	a32 := make_matrix(f32, .Random, 20, 31, 173);
+	switch (dense.svd(a32.view())) {
+	case .ok(s): fmt.println("f32 svd", bits32(s.singular_values()[0]), bits32(s.singular_values()[19]), bits32(s.v()[5, 7]));
+	case .err(error): fmt.println("FAIL determinism", error);
+	}
+}
+
+main :: proc() {
+	residuals(f64, "f64", 200);
+	residuals(f32, "f32", 64);
+	exact();
+	solving();
+	failures();
+	dual();
+	determinism();
+}

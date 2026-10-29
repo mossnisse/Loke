@@ -353,8 +353,10 @@ checklist.
   apart; products and element-wise operations, each with an `_into` form that
   never allocates; triangular solves, `lu` with `reciprocal_condition`,
   `cholesky`, Householder `qr` with `Q` applied without forming it,
-  `solve`, `inverse`, `least_squares`, and the Frobenius, 1-, and infinity
-  norms. Numerical failures are one `dense.Error`
+  `solve`, `inverse`, `least_squares`, `symmetric_eigen`, `svd` with a
+  minimum-norm `solve` and `rank`, and the Frobenius, 1-, and infinity
+  norms. Eigenvectors and singular vectors have a fixed sign, so two
+  machines give the same vectors. Numerical failures are one `dense.Error`
   ([`core:math/dense`](standard-library.md#coremathdense)).
 
 ### Changed

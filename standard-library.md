@@ -142,7 +142,7 @@ core:endian           fixed byte-order storage wrappers
 core:math             elementary functions, Complex, Quaternion
 core:math/repro       correctly rounded elementary functions
 core:math/linalg      fixed-size vectors, matrices, rotations, projections
-core:math/dense       run-time-sized matrices, views, LU, Cholesky, QR
+core:math/dense       run-time-sized matrices, views, LU, Cholesky, QR, eigenvalues, SVD
 core:random           seeded generators, entropy, distributions
 core:time             clocks, durations, the calendar, ISO 8601 text
 core:slice            slice algorithms and sorting            *
@@ -2569,9 +2569,10 @@ evaluated at compile time with the same result; one that does cannot, since
 ## `core:math/dense`
 
 Matrices whose size is known only at run time: an owner, views of it and of
-foreign buffers, products, the LU, Cholesky, and QR factorizations, and least
-squares. The design and its later milestones, the eigensolvers, the SVD, and
-measured performance, are in the [dense matrix plan](dense-matrix-plan.md).
+foreign buffers, products, the LU, Cholesky, and QR factorizations, least
+squares, the symmetric eigendecomposition, and the singular value
+decomposition. The design and its later milestones, measured performance and
+complex elements, are in the [dense matrix plan](dense-matrix-plan.md).
 
 `Matrix(T)` owns `rows x columns` elements stored column-major in one
 allocation, the order LAPACK and `linalg.Matrix` use, from the allocator it was
@@ -2647,13 +2648,33 @@ With `linalg.Real(T)`:
   is the residual's, in the rest, as LAPACK's `gels` does; and `factors()`
   and `tau()`;
 - `solve(a, b)`, `inverse(a)`, and `least_squares(a, b)`, which factor and
-  solve in one call. `least_squares` assumes full column rank.
+  solve in one call. `least_squares` assumes full column rank;
+- `symmetric_eigen(a)`, the eigenvalues and eigenvectors of a symmetric matrix
+  from its lower triangle, by Householder tridiagonalization and implicit QL
+  with Wilkinson shifts. `Symmetric_Eigen` has `values()`, ascending, and
+  `vectors()`, an orthogonal matrix with eigenvector `i` as column `i`;
+- `svd(a)`, the thin singular value decomposition `A = U S V^T` of any
+  `m x n` matrix, by Golub and Reinsch's method as LINPACK's `dsvdc` has it.
+  `Svd` has `u()` (`m x k`, `k = min(m, n)`), `singular_values()`,
+  descending and not negative, `v()` (`n x k`), `rank(relative)`, and
+  `solve(b, relative)` and `solve_into(out, b, relative)`, the minimum-norm
+  least-squares solution with the singular values not above `relative` times
+  the largest taken as zero. `relative` has no default.
+
+The signs of the vectors are part of the contract, so that two machines give
+the same vectors and not only the same subspaces: each eigenvector, and each
+column of `V` with its column of `U`, has its first component of largest
+magnitude positive. The iterations decide convergence by rounding rather than
+by a tolerance: an off-diagonal element is negligible when adding it to its
+two diagonal neighbours' magnitudes changes nothing.
 
 A numerical failure is a `dense.Error`, one type for the package so that
 `or_return` chains across factorizations: `.Singular` for an exact zero pivot
 or zero on `R`'s diagonal, or a factor that is not finite, and
 `.Not_Positive_Definite` for a Cholesky pivot that is not positive and
-finite. A nearly singular matrix factors, with
+finite, and `.No_Convergence` for an eigenvalue or singular value iteration
+that reaches its limit, or an element that is not finite, which it cannot
+reduce. A nearly singular matrix factors, with
 large elements, since no tolerance decides that it is singular;
 `reciprocal_condition` says how near it is. Each update in a factorization is
 one subtraction per term into the running element, in increasing order, and

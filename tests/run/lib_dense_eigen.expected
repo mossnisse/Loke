@@ -1,0 +1,29 @@
+symmetric_eigen f64 Random true
+symmetric_eigen f64 Hilbert true
+symmetric_eigen f64 Graded true
+symmetric_eigen f64 Wilkinson true
+symmetric_eigen f64 Nearly_Repeated true
+symmetric_eigen f32 Random true
+symmetric_eigen f32 Hilbert true
+symmetric_eigen f32 Graded true
+symmetric_eigen f32 Wilkinson true
+symmetric_eigen f32 Nearly_Repeated true
+ok a diagonal matrix's values, sorted
+ok and its vectors, a permutation
+ok size
+ok a 2 x 2 block
+ok a tridiagonal matrix's values
+ok and its vectors, signed
+ok W21+'s largest eigenvalues
+ok their sum is the trace
+ok and the two vectors are orthogonal
+ok only the lower triangle is read
+ok a block decomposes as its copy
+ok a NaN does not converge
+ok an infinity does not converge
+ok a 0 x 0 matrix
+ok a zero matrix
+ok a dual number through symmetric_eigen gives v^T E v
+ok and the same values as at f64, bit for bit
+f64 symmetric_eigen 13843856405945972237 4620131361850058330 13814198246282515991 4584348868214922486
+f32 symmetric_eigen 3232995879 1085522133 3185672102
