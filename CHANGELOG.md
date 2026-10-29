@@ -361,10 +361,13 @@ checklist.
   removed, or renamed meanwhile may be yielded, missed, or yielded under both
   names, without failing the walk
   ([Filesystem operations](standard-library.md#filesystem-operations)).
-- `core:fs` now documents how a reparse point reads until symbolic links are
+- `core:fs` now documents how a link behaves until symbolic links are
   supported: `metadata` and a directory entry classify a junction or a
-  directory link as a `Directory` and a file link as a `File`, every other
-  operation goes through the link, and `Kind.Other` is reserved
+  directory link as a `Directory` and a file link as a `File`, and
+  `Kind.Other` is reserved. Opening, reading, writing, and enumerating go
+  through the link to its target, while `remove`, `remove_directory`,
+  `rename`, and `replace_atomic` act on the link itself and leave the target
+  as it was
   ([Filesystem operations](standard-library.md#filesystem-operations)).
 - `fs.rename` now returns only once the rename is durable, and
   `fs.File.flush` is documented as making written data durable, which it

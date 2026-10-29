@@ -339,8 +339,14 @@ main :: proc() {
 	case .err: fmt.println(false);
 	}
 	fmt.println(succeeded(fs.remove_directory(through)));
-	fmt.println(succeeded(fs.remove_directory(junction)));
+	// `rename` moves the junction itself, and its target stays where it was.
+	moved := in_root(directory, "moved");
+	fmt.println(succeeded(fs.rename(junction, moved)));
+	fmt.println(fs.exists(junction) or_else true);
+	fmt.println(entry_kind(directory, "moved") or_else -2);
+	fmt.println(succeeded(fs.remove_directory(moved)));
 	fmt.println(fs.exists(nested) or_else false);
+	fmt.println(file_links_act_on_their_names(directory));
 
 	clean_up(directory);
 	fmt.println(fs.exists(directory) or_else true);
@@ -381,6 +387,61 @@ entry_kind :: proc(directory: string_view, name: string_view) -> Result(int, io.
 			return .ok(-1);
 		}
 	}
+}
+
+// Whether `file` reads as exactly `text`.
+holds :: proc(file: string_view, text: string_view) -> bool {
+	switch (fs.read_text(file)) {
+	case .ok(found): return found == text;
+	case .err: return false;
+	}
+}
+
+make_file_link :: proc(link: string_view, target: string_view) -> bool {
+	made := process.run(process.Command{
+		program = "cmd", arguments = []string_view{"/c", "mklink", link, target},
+		stdout = .Null, stderr = .Null,
+	}) or_else -1;
+	return made == 0;
+}
+
+// Reads and writes go through a file link to its target, while `remove`,
+// `rename`, and `replace_atomic` act on the link's name and leave the target
+// as it was (standard-library "Filesystem operations"). A file link needs a
+// privilege a junction does not, so where `mklink` is refused there is nothing
+// to observe and the case answers true; CI runs elevated and observes it.
+file_links_act_on_their_names :: proc(directory: string_view) -> bool {
+	target := in_root(directory, "target.txt");
+	link := in_root(directory, "link.txt");
+	if (!succeeded(fs.write_text(target, "original"))) { return false; }
+	if (!make_file_link(link, target)) { return succeeded(fs.remove(target)); }
+	if (!holds(link, "original")) { return false; }
+	if (!succeeded(fs.remove(link))) { return false; }
+	if (fs.exists(link) or_else true) { return false; }
+	if (!holds(target, "original")) { return false; }
+
+	// A renamed link still leads to the target.
+	if (!make_file_link(link, target)) { return false; }
+	renamed := in_root(directory, "renamed.txt");
+	if (!succeeded(fs.rename(link, renamed))) { return false; }
+	if (fs.exists(link) or_else true) { return false; }
+	if (!succeeded(fs.write_text(renamed, "written"))) { return false; }
+	if (!holds(target, "written")) { return false; }
+
+	// A rename onto a link replaces the link, not the target's content.
+	other := in_root(directory, "other.txt");
+	if (!succeeded(fs.write_text(other, "other"))) { return false; }
+	if (!succeeded(fs.rename(other, renamed))) { return false; }
+	if (!holds(renamed, "other") || !holds(target, "written")) { return false; }
+
+	// So does an atomic replacement.
+	if (!make_file_link(link, target)) { return false; }
+	if (!succeeded(fs.replace_atomic_text(link, "replaced"))) { return false; }
+	if (!holds(link, "replaced") || !holds(target, "written")) { return false; }
+	if (!succeeded(fs.write_text(link, "again")) || !holds(target, "written")) { return false; }
+
+	return succeeded(fs.remove(link)) && succeeded(fs.remove(renamed)) &&
+		succeeded(fs.remove(target));
 }
 
 // Removes every file, then the directories. `remove` on a missing path is not

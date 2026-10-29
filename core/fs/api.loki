@@ -150,6 +150,9 @@ append_text :: proc(path: string_view, text: string_view) -> Status(io.Error) --
 	The data goes first into a new file in the target's directory, named
 	`.replace-<process>-<attempt>.tmp`, which then takes the target's name. A
 	failure removes it; a crash before the switch can leave it behind.
+
+	A file link at `path` is replaced by an ordinary file, and its old target
+	keeps its content.
 */
 replace_atomic :: proc(path: string_view, data: []u8) -> Status(io.Error) ---;
 
@@ -164,12 +167,15 @@ metadata :: proc(path: string_view) -> Result(Metadata, io.Error) ---;
 */
 exists :: proc(path: string_view) -> Result(bool, io.Error) ---;
 
+// Removes a file. A file link is removed itself, and its target stays.
 remove :: proc(path: string_view) -> Status(io.Error) ---;
 
 /*
 	Replaces an existing file at `new_path`. Within one volume the switch is
 	atomic, and on `.ok` it is durable as far as the device honors flush
 	requests. A rename across volumes is refused rather than performed as a copy.
+
+	A link at either path is moved or replaced itself, never its target.
 */
 rename :: proc(old_path: string_view, new_path: string_view) -> Status(io.Error) ---;
 

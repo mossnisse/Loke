@@ -1931,12 +1931,25 @@ time outside the range of `time.Time` saturating at its end. `Other` is
 reserved; no operation produces it today.
 
 There is no symbolic-link support: no operation creates, resolves, or
-identifies a link. Until it arrives, `metadata` and a directory entry describe
-a reparse point as Windows describes the link itself, by its directory bit: a
-junction or a directory link is a `Directory` and a file link is a `File`,
-whether or not the target exists. Every other operation goes through the link
-to its target, so `create_directories` succeeds through a junction and
-`remove_directory` on a junction removes the junction and leaves its target.
+identifies a link. Until it arrives, a link, whether a file link, a directory
+link, or a junction, behaves as follows:
+
+- A link anywhere before the last element of a path is followed, so
+  `create_directories` succeeds through a junction.
+- `metadata` and a directory entry describe the link itself, by its directory
+  bit: a junction or a directory link is a `Directory` and a file link is a
+  `File`, whether or not the target exists. Likewise `exists` is true for a
+  link whose target is missing.
+- `open` and the whole-file reads, writes, and appends act on the target, and
+  `read_directory` enumerates the target.
+- `remove`, `remove_directory`, `rename`, and `replace_atomic` act on the name,
+  never the target. `remove` deletes a file link and `remove_directory` a
+  junction or directory link, leaving the target. `rename` moves the link, and
+  when `new_path` names a file link it replaces that link. `replace_atomic` puts
+  an ordinary file in place of a file link at `path`, leaving the old target
+  unchanged.
+- `create_directory` on a name a link already takes is `Already_Exists`.
+
 When link support arrives its behavior is explicit, not inherited from what
 Windows does.
 
