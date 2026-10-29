@@ -275,6 +275,21 @@ checklist.
   make the wrappers with `fmt.fixed`, `fmt.pad_left`, `fmt.pad_right`, and
   `fmt.zero_pad`, and keep the wrapped value yourself if you need it again.
 
+- `core:random`'s distributions now compute their `exp`, `log`, `pow`, and
+  `sqrt` with `core:math/repro`, so a seeded generator gives the same values
+  on every machine and CPU level, and the distributions run at compile time
+  ([Distributions](standard-library.md#distributions)). The algorithms and
+  draw orders are unchanged, but a value whose C library result was not
+  correctly rounded changes in its last bit, and with it any decision that
+  bit made: on one machine, about one `log_normal` value in 200. A count from `poisson`, `binomial`, or `geometric` that changes
+  shifts every later draw. Two ziggurat table entries also moved by an ulp,
+  which changes a `normal` or `exponential` value far more rarely. Upgrade
+  replays and saved sequences recorded from a distribution by recording them
+  again; a program that needs the old values must keep its own copy of the
+  old procedure. The distributions that call these functions on every value
+  are slower, `beta` by Jöhnk's method most, from 13 to 205 ns; `normal` and
+  `exponential` are not.
+
 ### Added
 
 - A block comment starting with `/**` is a
@@ -346,6 +361,10 @@ checklist.
   rather than a call to the C library: as correctly rounded, about as fast,
   and with a compile-time value, so `ROOT :: math.sqrt(2.0)` is a constant
   ([`core:math`](standard-library.md#coremath)).
+- `math.floor`, `ceil`, `trunc`, and `round`, in both widths, have
+  compile-time values, and are SSE4.1's rounding instruction from
+  `x86-64-v2` rather than a call to the C library, with the same exact
+  results.
 - Every Clang command now passes the CPU level's `-march` and
   `-ffp-contract=off`, the runtime's C sources included, whose default let
   Clang fuse `a*b + c` once a level has FMA. `-print-toolchain` prints both

@@ -716,9 +716,9 @@ algorithm's `fma` with an exact two-part product is possible, but needs a
 correctness argument for that algorithm over its full range. A correctly
 rounded finite result is defined by the arithmetic alone, so it is the same on
 every machine, optimization level, and platform, and at compile time; special
-cases and NaNs need their own rules. It is necessary for
-[Random distributions across platforms](#random-distributions-across-platforms)
-but not sufficient.
+cases and NaNs need their own rules. `core:random`'s distributions call them,
+so their values are the same on every machine too
+([Distributions](standard-library.md#distributions)).
 Hardware FMA is used where the [CPU level](compiler-guide.md#cpu-levels) has
 it without changing a finite bit, since a fused multiply-add is itself
 correctly rounded: at `-cpu=x86-64-v3`, `math.fma` is already the instruction. Porting fdlibm or musl instead would
@@ -882,24 +882,6 @@ toolchain would justify a fallback only if it remains supported. A processor
 missing a known level still needs coverage.
 
 ## Open questions in `core:random`
-
-### Random distributions across platforms
-
-The distributions call `core:math`'s `exp`, `log`, or `pow`, which are not
-deterministic even on one platform: the C library picks its algorithm by the
-processor's features (see [Deterministic math
-functions](#deterministic-math-functions)). `normal` and `exponential` do so
-only for a wedge or tail value. A seeded sequence can therefore differ between
-two machines running the same executable: rarely for those two, often for the
-others, and a different count from `poisson` or `binomial` shifts every later
-draw. Correctly rounded functions in Loke would remove the dependence on the
-processor and platform, and would also let the distributions run at compile
-time. Switching a distribution to them changes its sequence, though, so
-reproducible distributions also need a pinned, versioned algorithm and draw
-order
-([plan](deterministic-math-and-targets-plan.md#lockstep-integration-and-versioning)).
-Is identity across machines worth that code, or should the contract say that
-only the generators and the integer and `unit` mappings are reproducible?
 
 ### More generators and distributions
 

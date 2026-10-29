@@ -165,8 +165,14 @@ contribute_standard_members :: proc(k: ^Checker, pkg: ^Package) {
 		contribute_builtin(c, pkg, "fma_instruction", .Math_Fma_Instruction, public = false)
 		// Every x86-64 level has the square root instruction, and IEEE 754 fixes
 		// its result, so `sqrt` needs no C library call that folding cannot see
-		// through.
+		// through. Rounding to an integral value is exact, so neither do `floor`,
+		// `ceil`, `trunc`, and `round`, though below SSE4.1 LLVM calls the C
+		// library's for them.
 		contribute_builtin(c, pkg, "sqrt_instruction", .Math_Sqrt_Instruction, public = false)
+		contribute_builtin(c, pkg, "floor_instruction", .Math_Floor_Instruction, public = false)
+		contribute_builtin(c, pkg, "ceil_instruction", .Math_Ceil_Instruction, public = false)
+		contribute_builtin(c, pkg, "trunc_instruction", .Math_Trunc_Instruction, public = false)
+		contribute_builtin(c, pkg, "round_instruction", .Math_Round_Instruction, public = false)
 	case STD_LOG:
 		// design.md "Compiled log level": `LOKE_LOG_LEVEL` and `core:log`'s own
 		// `Level` must be one type, or a caller could not compare them. Allocated

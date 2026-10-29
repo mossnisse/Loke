@@ -277,6 +277,36 @@ need and `core:math/repro` lacked:
   steps. Starting them from the instruction would be faster and closer;
   their error bounds and searches would need redoing.
 
+Then `core:random`'s distributions, switched in place rather than given a
+second, reproducible set beside them, as
+[Lockstep integration and versioning](#lockstep-integration-and-versioning)
+proposed:
+
+- Every `exp`, `log`, `pow`, and `sqrt` they call is `core:math/repro`'s, so a
+  seeded generator's values are the same on every machine and CPU level, and
+  the distributions run at compile time, which needed `math.floor`, `ceil`,
+  `trunc`, and `round` to become instructions with compile-time values, as
+  `sqrt` had. The algorithms and draw orders are unchanged. Two of the 1,028
+  ziggurat table entries, `NORMAL_F[94]` and `EXPONENTIAL_F[87]`, were the
+  UCRT's recomputation and an ulp from the correctly rounded one; they are
+  now `core:math/repro`'s, and the other entries already were.
+- Few values change. The UCRT's `exp` differs from the correctly rounded one
+  on about one `log_normal` value in 200 and its `log` on about one `unit`
+  argument in 700, and 2 million seeded draws of each distribution kept
+  their bits but for `log_normal` and `gamma` below shape 1. Keeping the old
+  sequences would have kept them only on machines whose C library takes the
+  same path, at the price of listing every distribution twice.
+- The cost lands where a value calls those functions. Measured on
+  2026-10-29 at `-opt=speed` over 2 million draws, against the UCRT's
+  functions: `normal` and `exponential` stay at about 7 and 4 ns, `gamma` of
+  shape 3 goes from 17 to 23 ns and of shape 0.5 from 40 to 112, `student_t`
+  from 29 to 34, `poisson` from 24 to 53 at a mean of 4 and from 29 to 66 at
+  100, `binomial` from 56 to 119 by inversion and from 59 to 70 by BTPE,
+  `geometric` from 13 to 69, and `beta` from 35 to 46 by gammas and from 13
+  to 205 by Jöhnk's method, which calls `pow` twice per attempt. Faster
+  `core:math/repro` kernels, phase 6's work, would recover it for every
+  caller.
+
 Not started: phase 1's benchmarks (the UCRT timings in open questions stand
 until there is a kernel to compare), simulation support, dispatch, and other
 platforms.
@@ -328,8 +358,8 @@ selected target. This work should extend the planned
 [target boundary](future-plans.md#more-platforms), rather than add an unrelated
 x64-only configuration mechanism.
 
-The [random distributions](open-questions.md#random-distributions-across-platforms)
-also depend on these functions. Changing a result can change rejection sampling
+The [random distributions](standard-library.md#distributions)
+also depended on these functions. Changing a result can change rejection sampling
 and every subsequent draw. Fixing scalar math is therefore necessary but not
 sufficient to promise stable distribution sequences or lockstep simulation.
 

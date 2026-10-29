@@ -3,13 +3,19 @@ package main;
 // `core:math` binds the platform C math symbols directly, with a separate
 // entry point for each width. Widening an f32 call through double can still
 // print the right answer, so check the generated IR as well as runtime output.
-// `sqrt` is the instruction in each width, not the C library's.
+// `sqrt` is the instruction in each width, not the C library's, and so are
+// `floor`, `ceil`, `trunc`, and `round`, which LLVM turns into the C library's
+// calls only below SSE4.1.
 
 import "core:math";
 
 main :: proc() {
 	_ = math.sqrt(2.0);
 	_ = math.sqrt_f32(f32(2.0));
+	_ = math.floor(2.5);
+	_ = math.ceil_f32(f32(2.5));
+	_ = math.trunc(2.5);
+	_ = math.round_f32(f32(2.5));
 	_ = math.hypot(3.0, 4.0);
 	_ = math.hypot_f32(f32(3.0), f32(4.0));
 	_ = math.pow(2.0, 10.0);

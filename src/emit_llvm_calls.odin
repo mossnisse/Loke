@@ -108,7 +108,15 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 		case .Math_Fma_Instruction:
 			return emit_fma_instruction(e, v)
 		case .Math_Sqrt_Instruction:
-			return emit_sqrt_instruction(e, v)
+			return emit_float_instruction(e, v, "sqrt")
+		case .Math_Floor_Instruction:
+			return emit_float_instruction(e, v, "floor")
+		case .Math_Ceil_Instruction:
+			return emit_float_instruction(e, v, "ceil")
+		case .Math_Trunc_Instruction:
+			return emit_float_instruction(e, v, "trunc")
+		case .Math_Round_Instruction:
+			return emit_float_instruction(e, v, "round")
 		case .Unsafe_Take:
 			return load_place(e, as_type, emit_address(e, v.bound[0]))
 		case .Unsafe_Write:
@@ -173,11 +181,13 @@ emit_fma_instruction :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 }
 
 // `llvm.sqrt` is the instruction on every x86-64 level, correctly rounded as
-// IEEE 754 requires.
+// IEEE 754 requires. `llvm.floor`, `ceil`, `trunc`, and `round` are SSE4.1's
+// `roundsd` and `roundss` from `x86-64-v2`, and below it the C library's
+// functions of those names; the result is exact either way.
 @(private = "file")
-emit_sqrt_instruction :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
+emit_float_instruction :: proc(e: ^Emitter, v: ^Expr_Call, name: string) -> string {
 	llvm := llvm_type(e, expr_base(v.bound[0]).type)
-	key := fmt.aprintf("llvm.sqrt.%s", llvm == "float" ? "f32" : "f64")
+	key := fmt.aprintf("llvm.%s.%s", name, llvm == "float" ? "f32" : "f64")
 	if key not_in e.simd_intrinsics {
 		e.simd_intrinsics[key] = true
 		append(&e.globals, fmt.aprintf("declare %s @%s(%s)\n", llvm, key, llvm))

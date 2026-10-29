@@ -1,6 +1,7 @@
 // Boundary checks for `src/bigint.odin`, where a wrong fold would go unnoticed.
 package lokec
 
+import "core:c/libc"
 import "core:math"
 import "core:mem"
 import "core:testing"
@@ -375,4 +376,51 @@ exact_sqrt_matches_the_instruction :: proc(t: ^testing.T) {
 	testing.expectf(t, negative.float_raw == 0xffc00000, "sqrt_f32(-1) is %x", negative.float_raw)
 	signaling := exact_sqrt(float_bits_const(0x7ff0000000000001, 64))
 	testing.expectf(t, signaling.float_raw == 0x7ff8000000000001, "sqrt(sNaN) is %x", signaling.float_raw)
+}
+
+// The C library's `floor`, `ceil`, `trunc`, and `round` are exact, as the
+// instructions are, so they are the reference: at the boundaries where the
+// fraction is a half or just below one, near 2^52 and 2^23, at zeros of both
+// signs, and at seeded patterns of every sign and of exponents around the
+// integral range.
+@(test)
+exact_integral_matches_the_c_library :: proc(t: ^testing.T) {
+	check64 :: proc(t: ^testing.T, x: f64) {
+		for builtin, i in ([]Builtin_Kind{.Math_Floor_Instruction, .Math_Ceil_Instruction, .Math_Trunc_Instruction, .Math_Round_Instruction}) {
+			got := exact_integral(float_const(x, 64), builtin)
+			want := transmute(u64)([]f64{libc.floor(x), libc.ceil(x), libc.trunc(x), libc.round(x)}[i])
+			testing.expectf(t, got.float_raw == want, "%v(%x): expected %x, got %x", builtin, transmute(u64)x, want, got.float_raw)
+		}
+	}
+	check32 :: proc(t: ^testing.T, x: f32) {
+		for builtin, i in ([]Builtin_Kind{.Math_Floor_Instruction, .Math_Ceil_Instruction, .Math_Trunc_Instruction, .Math_Round_Instruction}) {
+			got := exact_integral(float_const(f64(x), 32), builtin)
+			want := u64(transmute(u32)([]f32{libc.floor(x), libc.ceil(x), libc.trunc(x), libc.round(x)}[i]))
+			testing.expectf(t, got.float_raw == want, "%v_f32(%x): expected %x, got %x", builtin, transmute(u32)x, want, got.float_raw)
+		}
+	}
+	for x in ([]f64{0.5, 0.49999999999999994, 1.5, 2.5, 0.25, 1, 4503599627370495.5, 4503599627370496, 4503599627370497, 2251799813685247.5, 1e300, math.INF_F64}) {
+		check64(t, x)
+		check64(t, -x)
+	}
+	check64(t, 0)
+	check64(t, math.copy_sign(f64(0), -1))
+	for x in ([]f32{0.5, 0.49999997, 1.5, 2.5, 8388607.5, 8388608, 8388609, 4194303.5, 3e38}) {
+		check32(t, x)
+		check32(t, -x)
+	}
+	check32(t, 0)
+	check32(t, math.copy_sign(f32(0), -1))
+	state: u64 = 0xbb67ae8584caa73b
+	for _ in 0 ..< 20000 {
+		state = state*6364136223846793005 + 1442695040888963407
+		// Exponents from 2^-4 to 2^59, either sign.
+		pattern := (state & 0x800fffffffffffff) | (1019 + (state >> 52) % 64) << 52
+		check64(t, transmute(f64)pattern)
+		pattern32 := u32(state >> 32) & 0x807fffff | (123 + u32(state >> 24) % 32) << 23
+		check32(t, transmute(f32)pattern32)
+	}
+
+	signaling := exact_integral(float_bits_const(0x7ff0000000000001, 64), .Math_Floor_Instruction)
+	testing.expectf(t, signaling.float_raw == 0x7ff8000000000001, "floor(sNaN) is %x", signaling.float_raw)
 }

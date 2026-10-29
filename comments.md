@@ -2030,8 +2030,19 @@ boundaries and API shapes follow a few common choices:
 - **Draw mappings are specified.** A seeded program's output is behavior a
   reader can depend on, so how each procedure maps draws to values is part of
   its contract, not an implementation detail. The ziggurat tables are constants
-  rather than computed at startup, so most normal and exponential values do not
-  depend on the C library at all.
+  rather than computed at startup, so most normal and exponential values call
+  no `exp` or `log` at all.
+- **Distributions use `core:math/repro`.** A seed that replays only on the
+  machine that recorded it is not much of a contract: a replay, a lockstep
+  peer, or content generated from a shared seed needs the same values
+  everywhere, and a count that differs shifts every later draw. Correctly
+  rounded functions give that, and let a distribution run at compile time.
+  Numpy, C++'s `<random>`, and Rust's `rand_distr` call the platform's
+  library instead and are faster for it, by up to 16 times for `beta` by
+  Jöhnk's method, though not at all for `normal` and `exponential`. A second,
+  fast set beside the reproducible one would list every distribution twice,
+  and the slow paths are better won back in `core:math/repro` itself, for
+  every caller.
 - **`Time` is an `i64` of nanoseconds.** It is what `fs.Metadata` already
   held and what Odin uses: arithmetic is one integer operation, and 1677 to
   2262 covers every clock reading and every file time. Seconds and

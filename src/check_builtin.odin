@@ -51,8 +51,9 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 		check_wrap_builtin(k, v)
 	case .Math_Fma_Available, .Math_Fma_Instruction:
 		check_fma_builtin(k, v, ident, sym.builtin)
-	case .Math_Sqrt_Instruction:
-		check_sqrt_builtin(k, v, ident)
+	case .Math_Sqrt_Instruction, .Math_Floor_Instruction, .Math_Ceil_Instruction, .Math_Trunc_Instruction,
+	     .Math_Round_Instruction:
+		check_float_instruction_builtin(k, v, ident)
 	case .Type_Info_Of:
 		check_type_info_of(k, v)
 	case .Strings_Allocate:
@@ -817,9 +818,10 @@ check_fma_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: 
 	v.type = operand
 }
 
-// `sqrt_instruction(x)` takes one `f32` or `f64` operand, of the result's type.
+// `sqrt_instruction(x)` and the rounding instructions take one `f32` or `f64`
+// operand, of the result's type.
 @(private = "file")
-check_sqrt_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
+check_float_instruction_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 	v.value_category = .Value
 	v.type = INVALID_TYPE
 	if len(v.args) != 1 {

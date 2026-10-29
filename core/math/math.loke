@@ -355,22 +355,6 @@ floor_mod :: proc(x: $T, y: T) -> T where interfaces.Integral(T), interfaces.Ord
 // C math function; f32 uses the float entry points without promotion to double.
 @(private)
 foreign platform_math {
-	@(link_name="floor")
-	rt_floor_f64 :: proc "c" (x: f64) -> f64 ---;
-	@(link_name="floorf")
-	rt_floor_f32 :: proc "c" (x: f32) -> f32 ---;
-	@(link_name="ceil")
-	rt_ceil_f64 :: proc "c" (x: f64) -> f64 ---;
-	@(link_name="ceilf")
-	rt_ceil_f32 :: proc "c" (x: f32) -> f32 ---;
-	@(link_name="round")
-	rt_round_f64 :: proc "c" (x: f64) -> f64 ---;
-	@(link_name="roundf")
-	rt_round_f32 :: proc "c" (x: f32) -> f32 ---;
-	@(link_name="trunc")
-	rt_trunc_f64 :: proc "c" (x: f64) -> f64 ---;
-	@(link_name="truncf")
-	rt_trunc_f32 :: proc "c" (x: f32) -> f32 ---;
 	@(link_name="exp")
 	rt_exp_f64 :: proc "c" (x: f64) -> f64 ---;
 	@(link_name="expf")
@@ -432,27 +416,47 @@ foreign platform_math {
 //
 // A NaN argument propagates to a quiet NaN throughout this section, and an
 // infinite argument to `floor`, `ceil`, `round` or `trunc` returns itself.
-// All four preserve the sign of a zero.
+// All four preserve the sign of a zero, are exact, and are evaluated at compile
+// time when their argument is constant.
 
 /// The largest integral value not greater than `x`.
-floor :: proc(x: f64) -> f64 { return rt_floor_f64(x); }
-floor_f32 :: proc(x: f32) -> f32 { return rt_floor_f32(x); }
+floor :: proc(x: f64) -> f64 { return floor_instruction(x); }
+floor_f32 :: proc(x: f32) -> f32 { return floor_instruction(x); }
 
 /// The smallest integral value not less than `x`.
-ceil :: proc(x: f64) -> f64 { return rt_ceil_f64(x); }
-ceil_f32 :: proc(x: f32) -> f32 { return rt_ceil_f32(x); }
+ceil :: proc(x: f64) -> f64 { return ceil_instruction(x); }
+ceil_f32 :: proc(x: f32) -> f32 { return ceil_instruction(x); }
 
 /**
 	The nearest integral value, with halfway cases rounded *away from zero* —
 	`round(0.5)` is `1` and `round(-0.5)` is `-1`. This is not the current
 	rounding mode's tie rule, which rounds halves to even.
 */
-round :: proc(x: f64) -> f64 { return rt_round_f64(x); }
-round_f32 :: proc(x: f32) -> f32 { return rt_round_f32(x); }
+round :: proc(x: f64) -> f64 { return round_instruction(x); }
+round_f32 :: proc(x: f32) -> f32 { return round_instruction(x); }
 
 /// `x` with its fractional part discarded: the integral value nearest to zero.
-trunc :: proc(x: f64) -> f64 { return rt_trunc_f64(x); }
-trunc_f32 :: proc(x: f32) -> f32 { return rt_trunc_f32(x); }
+trunc :: proc(x: f64) -> f64 { return trunc_instruction(x); }
+trunc_f32 :: proc(x: f32) -> f32 { return trunc_instruction(x); }
+
+/**
+	Rounding to an integral value, for an `f32` or `f64` operand: SSE4.1's
+	instruction from `x86-64-v2`, and below it the C library's function, whose
+	result is the same, since the rounding is exact. Evaluated at compile time
+	from the exact result.
+*/
+@(intrinsic)
+@(private)
+floor_instruction :: proc(x: $T) -> T ---;
+@(intrinsic)
+@(private)
+ceil_instruction :: proc(x: $T) -> T ---;
+@(intrinsic)
+@(private)
+trunc_instruction :: proc(x: $T) -> T ---;
+@(intrinsic)
+@(private)
+round_instruction :: proc(x: $T) -> T ---;
 
 /**
 	The floating remainder: the mathematical result of `x - trunc(x/y)*y`,

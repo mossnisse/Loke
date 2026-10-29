@@ -2321,7 +2321,10 @@ which NaN a NaN operand yields, which neither promises. `sqrt` is not backed
 by the C library either: it is the processor's square root instruction, which
 IEEE 754 makes correctly rounded, and a call with a constant argument has a
 compile-time value, rounded exactly as the instruction rounds. Which NaN it
-gives below zero is not promised.
+gives below zero is not promised. `floor`, `ceil`, `trunc`, and `round` are
+exact and also have compile-time values: they are SSE4.1's rounding
+instruction from `x86-64-v2`, and below it the C library's functions, which
+give the same results.
 
 The transcendental functions are not deterministic: `pow`, `exp`, `log`,
 `log2`, `log10`, `hypot`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, and
@@ -2556,18 +2559,19 @@ it, and construct the generator with `from_seed`, as
 [examples/dice.loke](examples/dice.loke) does. Do not seed from the clock or a
 process ID: parallel runs started together share them.
 
-Seeded generators, the procedures that compute on integers and floats, and
-`fill`, `shuffle`, and `sample` can run during
-[compile-time evaluation](design.md#compile-time-procedure-evaluation), for
-example to build a table of random constants. `from_entropy`, a draw from an
-unseeded generator, `fill_secure`, and `secure_u64` cannot. Neither can the
-[distributions](#distributions), which call `core:math`, or
-`Weighted.from_weights`, which allocates from a runtime allocator.
+Seeded generators, the procedures that compute on integers and floats, the
+[distributions](#distributions), and `fill`, `shuffle`, and `sample` can run
+during [compile-time evaluation](design.md#compile-time-procedure-evaluation),
+for example to build a table of random constants, and give the values a run
+would. `from_entropy`, a draw from an unseeded generator, `fill_secure`, and
+`secure_u64` cannot. Neither can `Weighted.from_weights`, which allocates from
+a runtime allocator.
 
 ### Reproducibility
 
-A seeded or restored generator produces the same sequence in every release.
-The mapping from draws to values is part of each procedure's contract:
+A seeded or restored generator produces the same sequence in every release,
+on every machine and [CPU level](compiler-guide.md#cpu-levels). The mapping
+from draws to values is part of each procedure's contract:
 
 | Procedure | Draws |
 | --- | --- |
@@ -2620,12 +2624,16 @@ normal, taking two draws per attempt, and one draw for the exponential. `normal`
 returns `mean + standard_deviation*z` and `exponential` returns `x/rate`, for a
 standard `z` or `x`.
 
-The tables are constants in the source, and the common path uses no
-`core:math` call. A wedge or tail value depends on `core:math.exp` and `log`,
-and the other distributions call `exp`, `log`, `pow`, or `sqrt` on every value.
-`exp`, `log`, and `pow` are not deterministic across machines (see
-[`core:math`](#coremath)), so neither are the values that use them; see
-[Random distributions across platforms](open-questions.md#random-distributions-across-platforms).
+The tables are constants in the source, computed from R and V with
+`core:math/repro`, and the common path calls no `exp` or `log`. A wedge or tail
+value calls `exp` or `log`, and the other distributions call `exp`, `log`,
+`pow`, or `sqrt` on every value. Each of those is
+[`core:math/repro`](#coremathrepro)'s, correctly rounded, so a distribution's
+values are the same on every machine, not only its draws. They are slower
+than the C library's where a value calls them, most for `beta` by Jöhnk's
+method, which calls `pow` twice per attempt; the
+[plan](deterministic-math-and-targets-plan.md#progress) records the
+measurements.
 
 ### Sampling
 

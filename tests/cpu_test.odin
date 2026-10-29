@@ -9,8 +9,9 @@ import "core:strings"
 import "core:testing"
 
 // The run cases whose output a level could move: fused or unfused arithmetic,
-// `math.fma` as an instruction, the bit operations v3 has instructions for,
-// vectors at twice the width, and the distributions over all of them. Each
+// `math.fma` and the rounding to an integral value as instructions, the bit
+// operations v3 has instructions for, vectors at twice the width, and the
+// distributions over all of them, `core:math/repro`'s functions included. Each
 // keeps its one `.expected`, which the ordinary run corpus pins at baseline.
 // The trap case binds the check the entry also calls above baseline.
 @(private = "file")
@@ -21,6 +22,8 @@ CPU_LEVEL_CASES :: []string {
 	"tests/run/lib_simd.loke",
 	"tests/run/simd_byte_lanes.loke",
 	"tests/run/lib_random.loke",
+	"tests/run/lib_random_distributions.loke",
+	"tests/run/lib_random_ziggurat.loke",
 	"tests/trap/cpu_level_unknown.loke",
 }
 

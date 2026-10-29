@@ -2,14 +2,16 @@
 	Continuous distributions built on `normal` and the gamma family:
 	`log_normal`, `gamma`, `beta`, `chi_squared`, and `student_t`.
 
-	Each procedure's draws are specified, as `unit`'s are, so a seeded generator
-	replays them; all of them call `core:math`, so none runs at compile time.
+	Each procedure's draws are specified, as `unit`'s are, and every `exp`,
+	`log`, `pow`, and `sqrt` is `core:math/repro`'s, so a seeded generator
+	replays them on every machine and during compile-time evaluation.
 */
 // standard-library "Distributions".
 @(public)
 package random;
 
 import "core:math";
+import "core:math/repro";
 
 /**
 	`exp(x)` for a normal `x` of `mean` and `standard_deviation`: the parameters
@@ -21,7 +23,7 @@ log_normal :: proc(source: inout $G, mean: f64 = 0, standard_deviation: f64 = 1)
 	if (!(math.is_finite(mean) && math.is_finite(standard_deviation) && standard_deviation >= 0.0)) {
 		panic("random.log_normal: the mean and standard deviation must be finite, and the deviation not negative");
 	}
-	return math.exp(mean + standard_deviation*standard_normal(inout source));
+	return repro.exp(mean + standard_deviation*standard_normal(inout source));
 }
 
 /**
@@ -62,15 +64,15 @@ beta :: proc(source: inout $G, alpha: f64, beta: f64) -> f64 where Source(G) {
 	for (;;) {
 		u := unit(inout source);
 		v := unit(inout source);
-		x := math.pow(u, 1.0/alpha);
-		y := math.pow(v, 1.0/beta);
+		x := repro.pow(u, 1.0/alpha);
+		y := repro.pow(v, 1.0/beta);
 		if (x + y <= 1.0 && u + v > 0.0) {
 			if (x > 0.0 && y > 0.0) { return x / (x + y); }
 			// A power underflowed; the ratio is still `x / (x + y)`, from the
 			// logarithms.
-			delta := math.log(u)/alpha - math.log(v)/beta;
-			if (delta > 0.0) { return math.exp(-log1p(math.exp(-delta))); }
-			return math.exp(delta - log1p(math.exp(delta)));
+			delta := repro.log(u)/alpha - repro.log(v)/beta;
+			if (delta > 0.0) { return repro.exp(-log1p(repro.exp(-delta))); }
+			return repro.exp(delta - log1p(repro.exp(delta)));
 		}
 	}
 }
@@ -101,7 +103,7 @@ student_t :: proc(source: inout $G, degrees_of_freedom: f64) -> f64 where Source
 	g := standard_gamma(inout source, degrees_of_freedom/2.0);
 	// Half the smallest `f64` is zero, and so would be the numerator.
 	if (g == 0.0) { return math.copy_sign(math.F64_INFINITY, z); }
-	return math.sqrt(degrees_of_freedom/2.0)*z / math.sqrt(g);
+	return repro.sqrt(degrees_of_freedom/2.0)*z / repro.sqrt(g);
 }
 
 // Marsaglia and Tsang, "A Simple Method for Generating Gamma Variables", 2000.
@@ -112,7 +114,7 @@ student_t :: proc(source: inout $G, degrees_of_freedom: f64) -> f64 where Source
 standard_gamma :: proc(source: inout $G, shape: f64) -> f64 where Source(G) {
 	boosted := shape < 1.0;
 	d := ((shape + 1.0) if boosted else shape) - 1.0/3.0;
-	c := 1.0 / math.sqrt(9.0*d);
+	c := 1.0 / repro.sqrt(9.0*d);
 	value := 0.0;
 	for (;;) {
 		z := standard_normal(inout source);
@@ -123,13 +125,13 @@ standard_gamma :: proc(source: inout $G, shape: f64) -> f64 where Source(G) {
 		// The squeeze first, so the logarithms run only when it rejects. `log(0)`
 		// is negative infinity, which accepts.
 		squeezed := u < 1.0 - 0.0331*(z*z)*(z*z);
-		if (squeezed || math.log(u) < 0.5*z*z + d*(1.0 - v + math.log(v))) {
+		if (squeezed || repro.log(u) < 0.5*z*z + d*(1.0 - v + repro.log(v))) {
 			value = d*v;
 			break;
 		}
 	}
 	if (boosted) {
-		value *= math.pow(open_unit(source.next_u64()), 1.0/shape);
+		value *= repro.pow(open_unit(source.next_u64()), 1.0/shape);
 	}
 	return value;
 }
@@ -143,7 +145,7 @@ standard_gamma :: proc(source: inout $G, shape: f64) -> f64 where Source(G) {
 log1p :: proc(x: f64) -> f64 {
 	u := 1.0 + x;
 	if (u == 1.0) { return x; }
-	return math.log(u)*x / (u - 1.0);
+	return repro.log(u)*x / (u - 1.0);
 }
 
 // `log(Gamma(x))` for `x >= 1`, by Stirling's series after shifting `x` to at
@@ -159,9 +161,9 @@ log_gamma :: proc(x: f64) -> f64 {
 	for (k := 8; k >= 0; k -= 1) {
 		series = series*x2 + LOG_GAMMA_SERIES[k];
 	}
-	result := series/x0 + 0.5*LOG_TWO_PI + (x0 - 0.5)*math.log(x0) - x0;
+	result := series/x0 + 0.5*LOG_TWO_PI + (x0 - 0.5)*repro.log(x0) - x0;
 	foreach (_ in 0 ..< shift) {
-		result -= math.log(x0 - 1.0);
+		result -= repro.log(x0 - 1.0);
 		x0 -= 1.0;
 	}
 	return result;

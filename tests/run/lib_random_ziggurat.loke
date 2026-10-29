@@ -2,20 +2,19 @@ package main;
 
 import "core:fmt";
 import "core:math";
+import "core:math/repro";
 import "core:random";
 import "core:unsafe";
 
 // The ziggurat tables in `core:random` are literals (standard-library
-// "Distributions"). This recomputes them from R and V with `core:math`, runs
-// the same sampler over the recomputation, and requires the package's
-// `normal` and `exponential` to give the same bits from the same seed. Every
-// accepted value from a layer is `u * X[i]`, so a wrong entry in either `X`
-// table changes the output; the `F` tables steer the wedge tests, which a
-// quarter of a million draws reach in every layer.
-//
-// Bit equality holds because the recomputation uses the same C library as the
-// computation that produced the literals. Another platform's `exp` and `log`
-// could differ in the last bit; this check would then need a tolerance.
+// "Distributions"). This recomputes them from R and V with `core:math/repro`,
+// whose results are the same on every machine, runs the same sampler over the
+// recomputation, and requires the package's `normal` and `exponential` to give
+// the same bits from the same seed. Every accepted value from a layer is
+// `u * X[i]`, so a wrong entry in either `X` table changes the output; the `F`
+// tables steer the wedge tests, which a quarter of a million draws reach in
+// every layer, though an `F` entry off in its last bit changes a decision too
+// rarely to show.
 
 NORMAL_R :: 3.6541528853610088;
 NORMAL_V :: 0.00492867323399;
@@ -27,8 +26,8 @@ Tables :: struct {
 	f: [257]f64,
 }
 
-normal_density :: proc(x: f64) -> f64 { return math.exp(-0.5*x*x); }
-exponential_density :: proc(x: f64) -> f64 { return math.exp(-x); }
+normal_density :: proc(x: f64) -> f64 { return repro.exp(-0.5*x*x); }
+exponential_density :: proc(x: f64) -> f64 { return repro.exp(-x); }
 
 build :: proc(r, v: f64, normal: bool) -> Tables {
 	t: Tables = {};
@@ -37,9 +36,9 @@ build :: proc(r, v: f64, normal: bool) -> Tables {
 	foreach (i in 2 ..< 256) {
 		previous := t.x[i - 1];
 		if (normal) {
-			t.x[i] = math.sqrt(-2.0*math.log(v / previous + normal_density(previous)));
+			t.x[i] = repro.sqrt(-2.0*repro.log(v / previous + normal_density(previous)));
 		} else {
-			t.x[i] = -math.log(v / previous + exponential_density(previous));
+			t.x[i] = -repro.log(v / previous + exponential_density(previous));
 		}
 	}
 	t.x[256] = 0.0;
@@ -62,8 +61,8 @@ reference_normal :: proc(rng: inout random.Xoshiro256, t: ^Tables) -> f64 {
 		if (math.abs(x) < t.x[layer + 1]) { return x; }
 		if (layer == 0) {
 			for (;;) {
-				tail := math.log(open_unit(rng.next_u64())) / NORMAL_R;
-				y := math.log(open_unit(rng.next_u64()));
+				tail := repro.log(open_unit(rng.next_u64())) / NORMAL_R;
+				y := repro.log(open_unit(rng.next_u64()));
 				if (-2.0*y >= tail*tail) {
 					return (tail - NORMAL_R) if u < 0.0 else (NORMAL_R - tail);
 				}
@@ -80,7 +79,7 @@ reference_exponential :: proc(rng: inout random.Xoshiro256, t: ^Tables) -> f64 {
 		layer := int(bits & 0xFF);
 		x := open_unit(bits)*t.x[layer];
 		if (x < t.x[layer + 1]) { return x; }
-		if (layer == 0) { return EXPONENTIAL_R - math.log(open_unit(rng.next_u64())); }
+		if (layer == 0) { return EXPONENTIAL_R - repro.log(open_unit(rng.next_u64())); }
 		height := t.f[layer + 1] + (t.f[layer] - t.f[layer + 1])*random.unit(inout rng);
 		if (height < exponential_density(x)) { return x; }
 	}

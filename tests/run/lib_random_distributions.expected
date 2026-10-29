@@ -33,3 +33,4 @@ beta huge shapes true
 beta subnormal shapes true
 student_t smallest freedom true
 compile time [0, 1, 5] true
+compile time distributions true

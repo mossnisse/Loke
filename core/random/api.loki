@@ -4,15 +4,17 @@
 	Continuous distributions built on `normal` and the gamma family:
 	`log_normal`, `gamma`, `beta`, `chi_squared`, and `student_t`.
 
-	Each procedure's draws are specified, as `unit`'s are, so a seeded generator
-	replays them; all of them call `core:math`, so none runs at compile time.
+	Each procedure's draws are specified, as `unit`'s are, and every `exp`,
+	`log`, `pow`, and `sqrt` is `core:math/repro`'s, so a seeded generator
+	replays them on every machine and during compile-time evaluation.
 
 	Counting distributions: `geometric`, `poisson`, and `binomial`.
 
 	`poisson` and `binomial` follow numpy's `random_poisson` and
 	`random_binomial` (numpy/random/src/distributions/distributions.c) step for
 	step, so their draws are specified by those algorithms, as `unit`'s are.
-	All three call `core:math`, so none runs at compile time.
+	Every `exp`, `log`, and `sqrt` is `core:math/repro`'s, so a seeded generator
+	replays all three on every machine and during compile-time evaluation.
 
 	`Pcg64`: PCG64-DXSM (O'Neill, "PCG: A family of simple fast space-efficient
 	statistically good algorithms for random number generation", 2014, with the
@@ -66,9 +68,9 @@
 	to X[256] = 0. A draw picks a layer from its low 8 bits and a position from
 	its high 52, so no bit serves both (Doornik, "An Improved Ziggurat Method",
 	2005). A position left of the next layer's edge is under the curve and is
-	returned at once, which is about 99% of draws and needs no `core:math`
-	call; the rest test the wedge against the density with one more `unit`
-	draw, or sample the tail.
+	returned at once, which is about 99% of draws and needs no
+	`core:math/repro` call; the rest test the wedge against the density with
+	one more `unit` draw, or sample the tail.
 */
 package random;
 

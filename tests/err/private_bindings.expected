@@ -12,4 +12,4 @@ L0336
 `rt_last_error` is not public in package `term`
 L0336
 @12:6
-`rt_floor_f64` is not public in package `math`
+`rt_exp_f64` is not public in package `math`

@@ -4,13 +4,15 @@
 	`poisson` and `binomial` follow numpy's `random_poisson` and
 	`random_binomial` (numpy/random/src/distributions/distributions.c) step for
 	step, so their draws are specified by those algorithms, as `unit`'s are.
-	All three call `core:math`, so none runs at compile time.
+	Every `exp`, `log`, and `sqrt` is `core:math/repro`'s, so a seeded generator
+	replays all three on every machine and during compile-time evaluation.
 */
 // standard-library "Distributions".
 @(public)
 package random;
 
 import "core:math";
+import "core:math/repro";
 
 /**
 	The number of failures before the first success in trials that each succeed
@@ -23,7 +25,7 @@ geometric :: proc(source: inout $G, probability: f64) -> u64 where Source(G) {
 		panic("random.geometric: the probability must be above 0 and at most 1");
 	}
 	// `1 - u` is exact and at least 2^-53, so its logarithm is finite.
-	failures := math.floor(math.log(1.0 - unit(inout source)) / log1p(-probability));
+	failures := math.floor(repro.log(1.0 - unit(inout source)) / log1p(-probability));
 	// `-0.0` when `probability` is 1.
 	if (!(failures > 0.0)) { return 0; }
 	if (failures >= TWO_TO_64) { return ~u64(0); }
@@ -43,7 +45,7 @@ poisson :: proc(source: inout $G, mean: f64) -> u64 where Source(G) {
 	}
 	if (mean >= 10.0) { return poisson_ptrs(inout source, mean); }
 	if (mean == 0.0) { return 0; }
-	limit := math.exp(-mean);
+	limit := repro.exp(-mean);
 	count := u64(0);
 	product := 1.0;
 	for (;;) {
@@ -61,7 +63,7 @@ poisson :: proc(source: inout $G, mean: f64) -> u64 where Source(G) {
 // counts spread 4% too wide. `poisson_log_mass` keeps its precision instead.
 @(private)
 poisson_ptrs :: proc(source: inout $G, mean: f64) -> u64 where Source(G) {
-	root := math.sqrt(mean);
+	root := repro.sqrt(mean);
 	b := 0.931 + 2.53*root;
 	a := -0.059 + 0.02483*b;
 	inverse_alpha := 1.1239 + 1.1328/(b - 3.4);
@@ -74,7 +76,7 @@ poisson_ptrs :: proc(source: inout $G, mean: f64) -> u64 where Source(G) {
 		if (u_s >= 0.07 && v <= v_r) { return u64(k); }
 		if (!(k >= 0.0 && k < TWO_TO_64) || (u_s < 0.013 && v > u_s)) { continue; }
 		// `log(0)` is negative infinity, which accepts.
-		hat := math.log(v) + math.log(inverse_alpha) - math.log(a/(u_s*u_s) + b);
+		hat := repro.log(v) + repro.log(inverse_alpha) - repro.log(a/(u_s*u_s) + b);
 		if (hat <= poisson_log_mass(k, mean)) { return u64(k); }
 	}
 }
@@ -87,7 +89,7 @@ poisson_ptrs :: proc(source: inout $G, mean: f64) -> u64 where Source(G) {
 @(private)
 poisson_log_mass :: proc(k: f64, mean: f64) -> f64 {
 	if (k == 0.0) { return -mean; }
-	return -stirling_error(k) - deviance(k, mean) - 0.5*(LOG_TWO_PI + math.log(k));
+	return -stirling_error(k) - deviance(k, mean) - 0.5*(LOG_TWO_PI + repro.log(k));
 }
 
 // `log(n!) - log(sqrt(2*pi*n) * (n/e)^n)` for an integral `n` of at least 1:
@@ -96,7 +98,7 @@ poisson_log_mass :: proc(k: f64, mean: f64) -> f64 {
 @(private)
 stirling_error :: proc(n: f64) -> f64 {
 	if (n <= 15.0) {
-		return log_gamma(n + 1.0) - (n + 0.5)*math.log(n) + n - 0.5*LOG_TWO_PI;
+		return log_gamma(n + 1.0) - (n + 0.5)*repro.log(n) + n - 0.5*LOG_TWO_PI;
 	}
 	n2 := n*n;
 	return (1.0/12.0 - (1.0/360.0 - (1.0/1260.0 - (1.0/1680.0 - 1.0/1188.0/n2)/n2)/n2)/n2)/n;
@@ -109,7 +111,7 @@ stirling_error :: proc(n: f64) -> f64 {
 deviance :: proc(x: f64, m: f64) -> f64 {
 	difference := x - m;
 	if (math.abs(difference) >= 0.1*(x + m)) {
-		return x*math.log(x/m) + m - x;
+		return x*repro.log(x/m) + m - x;
 	}
 	v := difference/(x + m);
 	sum := difference*v;
@@ -150,9 +152,9 @@ binomial :: proc(source: inout $G, trials: u64, probability: f64) -> u64 where S
 @(private)
 binomial_inversion :: proc(source: inout $G, trials: u64, p: f64) -> u64 where Source(G) {
 	q := 1.0 - p;
-	start := math.exp(f64(trials)*log1p(-p));
+	start := repro.exp(f64(trials)*log1p(-p));
 	mean := f64(trials)*p;
-	bound := u64(math.min(f64(trials), mean + 10.0*math.sqrt(mean*q + 1.0)));
+	bound := u64(math.min(f64(trials), mean + 10.0*repro.sqrt(mean*q + 1.0)));
 	count := u64(0);
 	mass := start;
 	u := unit(inout source);
@@ -183,7 +185,7 @@ binomial_btpe :: proc(source: inout $G, trials: u64, p: f64) -> u64 where Source
 	fm := n*r + r;
 	m := u64(math.floor(fm));
 	mf := f64(m);
-	p1 := math.floor(2.195*math.sqrt(n*r*q) - 4.6*q) + 0.5;
+	p1 := math.floor(2.195*repro.sqrt(n*r*q) - 4.6*q) + 0.5;
 	xm := mf + 0.5;
 	xl := xm - p1;
 	xr := xm + p1;
@@ -213,12 +215,12 @@ binomial_btpe :: proc(source: inout $G, trials: u64, p: f64) -> u64 where Source
 			y = math.floor(x);
 		} else if (u <= p3) {
 			// The left exponential tail; `v` of zero gives negative infinity.
-			y = math.floor(xl + math.log(v)/lambda_left);
+			y = math.floor(xl + repro.log(v)/lambda_left);
 			if (!(y >= 0.0)) { continue; }
 			v = v*(u - p2)*lambda_left;
 		} else {
 			// The right tail.
-			y = math.floor(xr - math.log(v)/lambda_right);
+			y = math.floor(xr - repro.log(v)/lambda_right);
 			if (!(y <= n)) { continue; }
 			v = v*(u - p3)*lambda_right;
 		}
@@ -241,15 +243,15 @@ binomial_btpe :: proc(source: inout $G, trials: u64, p: f64) -> u64 where Source
 		// The squeeze, then Stirling's approximation of the exact log ratio.
 		rho := (kf/nrq)*((kf*(kf/3.0 + 0.625) + 0.16666666666666666)/nrq + 0.5);
 		t := -kf*kf/(2.0*nrq);
-		log_v := math.log(v);
+		log_v := repro.log(v);
 		if (log_v < t - rho) { return count; }
 		if (log_v > t + rho) { continue; }
 		x1 := y + 1.0;
 		f1 := mf + 1.0;
 		z := n + 1.0 - mf;
 		w := n - y + 1.0;
-		bound := xm*math.log(f1/x1) + (f64(trials - m) + 0.5)*math.log(z/w) +
-			(y - mf)*math.log(w*r/(x1*q)) +
+		bound := xm*repro.log(f1/x1) + (f64(trials - m) + 0.5)*repro.log(z/w) +
+			(y - mf)*repro.log(w*r/(x1*q)) +
 			stirling_term(f1) + stirling_term(z) - stirling_term(x1) - stirling_term(w);
 		if (log_v > bound) { continue; }
 		return count;

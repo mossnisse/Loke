@@ -199,8 +199,7 @@ sampling :: proc() {
 }
 
 // `sample` runs during compile-time evaluation. A `Weighted` table allocates
-// from a runtime allocator, and the distributions call `core:math`, so neither
-// does.
+// from a runtime allocator, so it does not.
 dealt :: proc() -> [3]int {
 	rng := random.Pcg64.from_seed(5);
 	deck := [10]int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
@@ -209,6 +208,22 @@ dealt :: proc() -> [3]int {
 }
 DEALT :: dealt();
 
+// So do the distributions, whose `exp`, `log`, `pow`, and `sqrt` are
+// `core:math/repro`'s: the folded values are the run-time ones. The seed's
+// first draws take the paths that call them, wedge tests and Johnk's method
+// included.
+drawn :: proc() -> [10]f64 {
+	rng := random.Xoshiro256.from_seed(2026);
+	return [10]f64{
+		random.log_normal(inout rng), random.gamma(inout rng, 0.5),
+		random.gamma(inout rng, 4.0, 0.5), random.beta(inout rng, 0.5, 0.5),
+		random.beta(inout rng, 2.0, 3.0), random.student_t(inout rng, 5.0),
+		f64(random.geometric(inout rng, 0.25)), f64(random.poisson(inout rng, 3.0)),
+		f64(random.poisson(inout rng, 250.0)), f64(random.binomial(inout rng, 5000, 0.5)),
+	};
+}
+DRAWN :: drawn();
+
 main :: proc() {
 	replay();
 	continuous();
@@ -216,6 +231,7 @@ main :: proc() {
 	sampling();
 	limits();
 	fmt.println("compile time", DEALT, DEALT == dealt());
+	fmt.println("compile time distributions", DRAWN == drawn());
 }
 
 // Shapes below 3e-103 give exactly 0 or 1, in proportion `alpha : beta`.

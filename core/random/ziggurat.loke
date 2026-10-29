@@ -7,20 +7,22 @@
 	to X[256] = 0. A draw picks a layer from its low 8 bits and a position from
 	its high 52, so no bit serves both (Doornik, "An Improved Ziggurat Method",
 	2005). A position left of the next layer's edge is under the curve and is
-	returned at once, which is about 99% of draws and needs no `core:math`
-	call; the rest test the wedge against the density with one more `unit`
-	draw, or sample the tail.
+	returned at once, which is about 99% of draws and needs no
+	`core:math/repro` call; the rest test the wedge against the density with
+	one more `unit` draw, or sample the tail.
 */
 // standard-library "Distributions".
 //
-// The tables are literal so the common path does not depend on the C
-// library's `exp` and `log`. They were computed from the published R and V
-// with `core:math`; `tests/run/lib_random_ziggurat.loke` recomputes them and
-// checks that this sampler's output matches one built from the recomputation.
+// The tables are literal so the common path calls no `exp` or `log`. They
+// were computed from the published R and V with `core:math/repro`, which
+// gives the same bits on every machine; `tests/run/lib_random_ziggurat.loke`
+// recomputes them and checks that this sampler's output matches one built from
+// the recomputation.
 @(public)
 package random;
 
 import "core:math";
+import "core:math/repro";
 
 /**
 	A normally distributed value: `mean + standard_deviation * z` for a standard
@@ -59,7 +61,7 @@ standard_normal :: proc(source: inout $G) -> f64 where Source(G) {
 		if (math.abs(x) < NORMAL_X[layer + 1]) { return x; }
 		if (layer == 0) { return normal_tail(inout source, u < 0.0); }
 		height := NORMAL_F[layer + 1] + (NORMAL_F[layer] - NORMAL_F[layer + 1])*unit(inout source);
-		if (height < math.exp(-0.5*x*x)) { return x; }
+		if (height < repro.exp(-0.5*x*x)) { return x; }
 	}
 }
 
@@ -68,8 +70,8 @@ standard_normal :: proc(source: inout $G) -> f64 where Source(G) {
 @(private)
 normal_tail :: proc(source: inout $G, negative: bool) -> f64 where Source(G) {
 	for (;;) {
-		x := math.log(open_unit(source.next_u64())) / NORMAL_R;
-		y := math.log(open_unit(source.next_u64()));
+		x := repro.log(open_unit(source.next_u64())) / NORMAL_R;
+		y := repro.log(open_unit(source.next_u64()));
 		if (-2.0*y >= x*x) {
 			return (x - NORMAL_R) if negative else (NORMAL_R - x);
 		}
@@ -84,10 +86,10 @@ standard_exponential :: proc(source: inout $G) -> f64 where Source(G) {
 		x := open_unit(bits)*EXPONENTIAL_X[layer];
 		if (x < EXPONENTIAL_X[layer + 1]) { return x; }
 		// The tail is the exponential again, shifted to R: it is memoryless.
-		if (layer == 0) { return EXPONENTIAL_R - math.log(open_unit(source.next_u64())); }
+		if (layer == 0) { return EXPONENTIAL_R - repro.log(open_unit(source.next_u64())); }
 		height := EXPONENTIAL_F[layer + 1]
 			+ (EXPONENTIAL_F[layer] - EXPONENTIAL_F[layer + 1])*unit(inout source);
-		if (height < math.exp(-x)) { return x; }
+		if (height < repro.exp(-x)) { return x; }
 	}
 }
 
@@ -198,7 +200,7 @@ open_unit :: proc(bits: u64) -> f64 {
 	0.16878277480185033, 0.17139559563815562, 0.17401977008249936, 0.17665532144440665,
 	0.1793022745235304, 0.1819606556002165, 0.18463049242750454, 0.18731181422451693,
 	0.19000465167119307, 0.1927090369043288, 0.1954250035148856, 0.1981525865465381,
-	0.20089182249543133, 0.2036427493111215, 0.20640540639867933, 0.20917983462193565,
+	0.20089182249543133, 0.2036427493111215, 0.2064054063986793, 0.20917983462193565,
 	0.21196607630785294, 0.2147641752520085, 0.21757417672517837, 0.2203961274810116,
 	0.2232300757647896, 0.22607607132326488, 0.22893416541557748, 0.23180441082524852,
 	0.2346868618732527, 0.23758157443217368, 0.2404886059414491, 0.243408015423712,
@@ -332,7 +334,7 @@ open_unit :: proc(bits: u64) -> f64 {
 	0.0800339475423199, 0.08159798070923742, 0.0831740930096324, 0.08476233053236815,
 	0.08636274114075693, 0.08797537446727023, 0.08960028191003289, 0.0912375166310402,
 	0.09288713355604357, 0.09454918937605587, 0.09622374255043283, 0.09791085331149221,
-	0.09961058367063713, 0.10132299742595363, 0.1030481601712577, 0.10478613930657016,
+	0.09961058367063713, 0.10132299742595363, 0.1030481601712577, 0.10478613930657014,
 	0.10653700405000163, 0.10830082545103376, 0.11007767640518536, 0.11186763167005628,
 	0.11367076788274429, 0.1154871635786335, 0.11731689921155553, 0.11916005717532764,
 	0.12101672182667479, 0.12288697950954511, 0.12477091858083093, 0.12666862943751067,

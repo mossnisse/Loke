@@ -510,9 +510,14 @@ Builtin_Kind :: enum {
 	Math_Fma_Available,
 	Math_Fma_Instruction,
 	// standard-library "`core:math`": the square root instruction, which IEEE
-	// 754 makes correctly rounded, so `math.sqrt` is it and has a compile-time
-	// value. Package-private to `core:math`.
+	// 754 makes correctly rounded, and the rounding to an integral value, which
+	// is exact, so `math.sqrt`, `floor`, `ceil`, `trunc`, and `round` are each
+	// one and have a compile-time value. Package-private to `core:math`.
 	Math_Sqrt_Instruction,
+	Math_Floor_Instruction,
+	Math_Ceil_Instruction,
+	Math_Trunc_Instruction,
+	Math_Round_Instruction,
 	// design.md "SIMD vectors": the `core:simd` operations a constant lane index
 	// makes unwritable as a loop. `Simd_Reduce` takes the fold as a constant
 	// parameter, exactly as an atomic takes its ordering.
