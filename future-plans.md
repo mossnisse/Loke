@@ -116,7 +116,9 @@ mouse and resize events; `thread.try_spawn`, `try_lock`, and thread identity
 Math gaps include hyperbolics,
 `cbrt`/`ldexp`/`frexp`/`modf`, `erf`, `gamma`, lane-wise SIMD math, and
 integer bit helpers. `core:simd`'s remaining gaps are specified in
-[What SIMD does not do](design.md#what-simd-does-not-do).
+[What SIMD does not do](design.md#what-simd-does-not-do). Vectors, matrices,
+and rotations are proposed in the
+[linear algebra library plan](linear-algebra-plan.md).
 
 [`core:encoding/json`](standard-library.md#coreencodingjson) still needs this
 evidence, in this order; its open design questions are in
