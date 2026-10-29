@@ -214,9 +214,14 @@ of [`core:math`](standard-library.md#coremath):
   off in an eighth of its sample, where an exact computation in Python
   agrees with the oracle.
 
+Every NaN result of `core:math/repro` is the canonical quiet NaN, signaling
+arguments included, as [Reproducible result contract](#reproducible-result-contract)
+asks; a whole-program canonicalization mode is separate work, as
+[Special cases](#special-cases) says.
+
 Not started: phase 1's benchmarks (the UCRT timings in open questions stand
-until there is a kernel to compare), NaN canonicalization, the environment
-entry contract, simulation support, dispatch, and other platforms.
+until there is a kernel to compare), the environment entry contract,
+simulation support, dispatch, and other platforms.
 
 ## Recommended direction
 
