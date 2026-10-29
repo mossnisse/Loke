@@ -273,9 +273,9 @@ need and `core:math/repro` lacked:
   at run time, and 2,000 more against the oracle, which takes an exact
   integer square root.
 - `pair_root`, behind `hypot`, `asin`, and `acos`, and their `f32` first
-  approximations still start from the bit-pattern estimate and Newton's
-  steps. Starting them from the instruction would be faster and closer;
-  their error bounds and searches would need redoing.
+  approximations still started from the bit-pattern estimate and Newton's
+  steps; they start from the instruction now, as the last part of this
+  section describes.
 
 Then `core:random`'s distributions, switched in place rather than given a
 second, reproducible set beside them, as
@@ -353,6 +353,31 @@ Then the replay example and version metadata, which complete phase 5:
 - Phase 5's gate is met: the examples test pins its output, the CPU level
   test requires the same at `x86-64-v2` and `x86-64-v3`, and
   `test-all.ps1 -Full` reruns both at every optimization level.
+
+Then phase 6's first kernel change, one of two that a performance review's
+experiments on 2026-10-29 found would pay:
+
+- `pair_root` starts from the square root instruction, correctly rounded,
+  instead of a bit-pattern estimate and four Newton steps, and keeps its
+  residual correction, which then leaves the pair within 2^-103.3 of the
+  root rather than 2^-101; every bound derived from the old figure still
+  holds. The `f32` first approximations of `asin`, `acos`, `hypot`, and
+  `quaternion_abs` take the instruction's root too, within 1 or 2 ulps where
+  5 or 6 were, and 2 of `asin_f32`'s 2^18.5, under the margins they keep.
+  The bit-pattern estimate is gone.
+- No result changed: the probe's 37,956 oracle-checked results and its
+  fast-against-slow comparisons are bit for bit the same, and so is every
+  `f32` argument of `asin_f32` and `acos_f32` in (-1, 1), compared
+  exhaustively with the previous version.
+- Measured at `-opt=speed` with `bench/math_compare.loke`, medians per call:
+  `asin` from 67.2 to 53.1 ns, `acos` from 69.6 to 56.5, `hypot` from 29.3 to
+  20.0, and `asin_f32` from 42.3 to 31.9; `quaternion_abs` from 48 to 36 ns
+  and `quaternion_abs_f32` from 37 to 24. The others did not move.
+- The other experiment, `two_product` by hardware FMA, waits for a way for
+  `core:math/repro` to ask whether FMA is an instruction, which is private
+  to `core:math`, and for an argument that every exact product meets the
+  conditions under which Dekker's product and the fused one agree, since
+  otherwise a result would differ between CPU levels.
 
 Not started: phase 1's benchmarks (the UCRT timings in open questions stand
 until there is a kernel to compare), phase 6's faster kernels and dispatch,

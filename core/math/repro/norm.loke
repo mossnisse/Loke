@@ -12,16 +12,15 @@
 // parts in `f64`. The sum s is in [1, 16), each low part is under 2^-52 and
 // each error under 2^-50, so those seven terms are under 2^-48 in all and
 // their six additions err by under 6 2^-101: the pair is within 2^-98.4 of s
-// relative. Its root by `pair_root`, whose own error is 2^-101, is within
-// 2^-98.9, so the result is returned when it is decided within 2^-97. A
-// result that could be subnormal takes the slow path, as for `hypot`.
+// relative. Its root by `pair_root`, whose own error is under 2^-103.3, is
+// within 2^-99.3, so the result is returned when it is decided within 2^-97.
+// A result that could be subnormal takes the slow path, as for `hypot`.
 //
 // For `f32` components, exact as `f64` values with exact squares, s is
-// summed in one `f64` with three roundings, and s y, y from `root_estimate`
-// and a fourth step, is within 6 ulps of the result, `hypot_f32`'s 5 and one
-// more for the two further roundings; when no `f32` midpoint is within 8
-// ulps, narrowing it rounds correctly, and otherwise the double-`f64` result
-// decides, and then the slow path.
+// summed in one `f64` with three roundings, and its root by the square root
+// instruction is within 2 ulps of the result; when no `f32` midpoint is
+// within 8 ulps, narrowing it rounds correctly, and otherwise the
+// double-`f64` result decides, and then the slow path.
 //
 // The slow path forms s in fixed point, within 2^-317.9, since each product
 // truncates under 2^-320 and only a component below 2^-268 a loses bits, and
@@ -35,9 +34,10 @@
 // `tests/repro_test.odin` checks both paths against an independent oracle.
 package repro;
 
+import "core:math";
 import "core:unsafe";
 
-// 2^-97, past twice the fast path's bound of 2^-98.9.
+// 2^-97, past twice the fast path's bound of 2^-99.3.
 NORM_MARGIN :: 6.310887241768095e-30;
 
 // The components a fast-path square leaves out: below 2^-458 a.
@@ -64,7 +64,7 @@ norm_scaled :: proc(parts: [4]u64) -> (scaled: [4]f64, ea: int) {
 }
 
 // The root of the scaled components' sum of squares as a pair, within
-// 2^-98.9 relative.
+// 2^-99.3 relative.
 norm_pair :: proc(c: [4]f64) -> (high: f64, low: f64) {
 	h0, l0 := two_product(c[0], c[0]);
 	h1, l1 := two_product(c[1], c[1]);
@@ -97,9 +97,7 @@ norm_f32_of :: proc(parts: [4]u64) -> f32 {
 	c := from_bits(parts[2]);
 	d := from_bits(parts[3]);
 	s := ((a*a + b*b) + c*c) + d*d;
-	y := root_estimate(s);
-	y = y*(1.5 - (0.5*s)*(y*y));
-	quick := s*y;
+	quick := math.sqrt(s);
 	if (f32_decided(quick, 8)) { return f32(quick); }
 
 	scaled, ea := norm_scaled(parts);
