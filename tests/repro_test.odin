@@ -108,6 +108,16 @@ repro_functions_round_correctly :: proc(t: ^testing.T) {
 			want := fields[0] == "Pow" ? oracle_pow(&o, x, y, format) : oracle_hypot(x, y, format)
 			testing.expectf(t, got == want, "%s at f%s of %v and %v: got %x, the oracle %x", fields[0], fields[1], x, y, got, want)
 			checked += 1
+		case "Norm4":
+			values: [4]f64
+			for i in 0 ..< 4 {
+				pattern, _ := strconv.parse_u64(fields[2 + i])
+				values[i] = fields[1] == "32" ? f64(transmute(f32)u32(pattern)) : transmute(f64)pattern
+			}
+			got, _ := strconv.parse_u64(fields[6])
+			want := oracle_norm(values[:], fields[1] == "32" ? F32_FORMAT : F64_FORMAT)
+			testing.expectf(t, got == want, "Norm4 at f%s of %v: got %x, the oracle %x", fields[1], values, got, want)
+			checked += 1
 		case "Atan2", "Atan":
 			// atan x is atan2(x, 1).
 			y_bits, _ := strconv.parse_u64(fields[2])
@@ -164,5 +174,5 @@ repro_functions_round_correctly :: proc(t: ^testing.T) {
 			checked += 1
 		}
 	}
-	testing.expectf(t, checked == 35249 && constants == 100, "the probe printed %d checked results and %d constants", checked, constants)
+	testing.expectf(t, checked == 37956 && constants == 107, "the probe printed %d checked results and %d constants", checked, constants)
 }

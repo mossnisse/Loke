@@ -1,7 +1,8 @@
 // deterministic-math-and-targets-plan.md "Validation and performance gates": an
 // oracle for the correctly rounded `exp`, `log`, `log2`, `log10`, `sin`, `cos`,
-// `tan`, `asin`, `acos`, `pow`, `atan2`, `hypot`, and `sqrt` of `f64` and
-// `f32`, with the special cases of the reproducible contract.
+// `tan`, `asin`, `acos`, `pow`, `atan2`, `hypot`, `sqrt`, and the magnitude of
+// four components of `f64` and `f32`, with the special cases of the
+// reproducible contract.
 //
 // Each result is an interval of integers at a scale of `2^-precision`, every
 // step rounded outward, so the true value is always inside it. When both ends
@@ -10,8 +11,8 @@
 // ends because none of the transcendental functions has a dyadic value at a
 // dyadic argument other than the special cases handled first, so no result is
 // a midpoint; pow, which has, rounds its dyadic results exactly first, and
-// hypot and sqrt bracket an exact integer square root, a single point when
-// the root is exact. Host `libm` is never consulted.
+// hypot, the magnitude, and sqrt bracket an exact integer square root, a
+// single point when the root is exact. Host `libm` is never consulted.
 package tests
 
 import "core:fmt"
@@ -475,27 +476,47 @@ oracle_atan2 :: proc(o: ^Oracle, y, x: f64, format: Float_Format) -> u64 {
 // as it is, a midpoint to even. Otherwise the root is irrational, so the
 // search ends.
 oracle_hypot :: proc(x, y: f64, format: Float_Format) -> u64 {
-	if math.is_inf(x, 0) || math.is_inf(y, 0) {
-		return infinity_bits(format)
+	return oracle_norm({x, y}, format)
+}
+
+// The correctly rounded sqrt of the sum of the squares of `values`, held
+// exactly in `format`, the magnitude `quaternion_abs` computes from four, and
+// hypot from two, with hypot's special cases.
+oracle_norm :: proc(values: []f64, format: Float_Format) -> u64 {
+	for v in values {
+		if math.is_inf(v, 0) {
+			return infinity_bits(format)
+		}
 	}
-	if math.is_nan(x) || math.is_nan(y) {
-		return canonical_nan(format)
-	}
-	if x == 0 && y == 0 {
-		return 0
+	for v in values {
+		if math.is_nan(v) {
+			return canonical_nan(format)
+		}
 	}
 	scratch: virtual.Arena
 	_ = virtual.arena_init_growing(&scratch)
 	context.allocator = virtual.arena_allocator(&scratch)
-	// A zero argument contributes nothing at the other's exponent.
-	sx, ex := int_of(0), 0
-	sy, ey := int_of(0), 0
-	if x != 0 {sx, ex = dyadic(abs(x))}
-	if y != 0 {sy, ey = dyadic(abs(y))}
-	if x == 0 {ex = ey}
-	if y == 0 {ey = ex}
-	low := min(ex, ey)
-	sum := plus(shift_left(times(sx, sx), 2*(ex - low)), shift_left(times(sy, sy), 2*(ey - low)))
+	// A zero contributes nothing, at any exponent.
+	significands := make([]^big.Int, len(values))
+	exponents := make([]int, len(values))
+	low, any := 0, false
+	for v, i in values {
+		if v != 0 {
+			significands[i], exponents[i] = dyadic(abs(v))
+			if !any || exponents[i] < low {low = exponents[i]}
+			any = true
+		}
+	}
+	if !any {
+		virtual.arena_destroy(&scratch)
+		return 0
+	}
+	sum := int_of(0)
+	for v, i in values {
+		if v != 0 {
+			sum = plus(sum, shift_left(times(significands[i], significands[i]), 2*(exponents[i] - low)))
+		}
+	}
 	for w := START_PRECISION; w <= MAX_PRECISION; w *= 2 {
 		n := shift_left(sum, 2*w)
 		root := square_root(n)
@@ -508,7 +529,7 @@ oracle_hypot :: proc(x, y: f64, format: Float_Format) -> u64 {
 			return pattern
 		}
 	}
-	panic("the oracle could not decide a rounding of hypot")
+	panic("the oracle could not decide a rounding of a magnitude")
 }
 
 // sqrt x, in `format`, for an `f64` holding the argument exactly: ±0 gives

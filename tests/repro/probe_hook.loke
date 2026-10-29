@@ -2,6 +2,7 @@
 // the probe can call the slow path, which the package does not export.
 package repro;
 
+import "core:math";
 import "core:unsafe";
 
 @(public)
@@ -232,6 +233,51 @@ slow_hypot_bits :: proc(x: f64, y: f64, layout: Float_Layout, public: u64) -> u6
 	sh, sl := fast_two_sum(s, e + (pl + ql));
 	wh, wl := pair_root(sh, sl);
 	return hypot_slow(a2, b2, ea, wh + wl, layout);
+}
+
+// The magnitude's slow path wherever `quaternion_abs` would reach its
+// general case, and elsewhere `quaternion_abs` itself.
+@(public)
+slow_quaternion_abs :: proc(q: math.Quaternion(f64)) -> f64 {
+	parts := [4]u64{
+		unsafe.transmute(u64, q.real) & 0x7fffffffffffffff, unsafe.transmute(u64, q.i) & 0x7fffffffffffffff,
+		unsafe.transmute(u64, q.j) & 0x7fffffffffffffff, unsafe.transmute(u64, q.k) & 0x7fffffffffffffff,
+	};
+	public := quaternion_abs(q);
+	if (!slow_norm_order(inout parts)) { return public; }
+	scaled, ea := norm_scaled(parts);
+	wh, wl := norm_pair(scaled);
+	return unsafe.transmute(f64, norm_slow(parts, scaled, ea, wh + wl, F64_LAYOUT));
+}
+
+@(public)
+slow_quaternion_abs_f32 :: proc(q: math.Quaternion(f32)) -> f32 {
+	parts := [4]u64{
+		unsafe.transmute(u64, f64(abs32(q.real))), unsafe.transmute(u64, f64(abs32(q.i))),
+		unsafe.transmute(u64, f64(abs32(q.j))), unsafe.transmute(u64, f64(abs32(q.k))),
+	};
+	public := quaternion_abs_f32(q);
+	if (!slow_norm_order(inout parts)) { return public; }
+	scaled, ea := norm_scaled(parts);
+	wh, wl := norm_pair(scaled);
+	return unsafe.transmute(f32, u32(norm_slow(parts, scaled, ea, wh + wl, F32_LAYOUT)));
+}
+
+abs32 :: proc(x: f32) -> f32 {
+	return unsafe.transmute(f32, unsafe.transmute(u32, x) & 0x7fffffff);
+}
+
+// Puts the largest of the finite magnitudes `parts` first, or answers false
+// when one is infinite or NaN or all are zero.
+slow_norm_order :: proc(parts: inout [4]u64) -> bool {
+	largest := 0;
+	foreach (i in 0 ..< 4) {
+		if (parts[i] >= 0x7ff0000000000000) { return false; }
+		if (parts[i] > parts[largest]) { largest = i; }
+	}
+	if (parts[largest] == 0) { return false; }
+	parts[0], parts[largest] = parts[largest], parts[0];
+	return true;
 }
 
 finite_nonzero :: proc(a: f64) -> bool {

@@ -210,7 +210,8 @@ impl Complex(f64) {
 	/**
 		The magnitude. It avoids the overflow and underflow that squaring the
 		components would cause; a magnitude beyond `f64`'s range is still
-		infinity. Not deterministic, since `hypot` is not.
+		infinity. Not deterministic, since `hypot` is not;
+		`core:math/repro`'s `complex_abs` is.
 	*/
 	// `hypot`, not `sqrt(norm_squared())`: the magnitude of a complex number
 	// whose components are large is representable long after the sum of their
@@ -334,7 +335,8 @@ impl Quaternion(f64) {
 	/**
 		The magnitude, without the overflow or underflow of the sum of four
 		squares. The extra rounding is within the libm accuracy this package
-		promises. Not deterministic, since `hypot` is not.
+		promises. Not deterministic, since `hypot` is not;
+		`core:math/repro`'s `quaternion_abs` is, and rounds once.
 	*/
 	// Nested `hypot` rather than the root of the sum of four squares: the same
 	// overflow and underflow argument, one level deeper.

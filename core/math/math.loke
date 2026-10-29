@@ -20,9 +20,12 @@
 	build can evaluate a call with constant arguments using the compiling
 	machine's library; and another platform has another library. Code whose
 	results must agree bit for bit everywhere, such as a lockstep simulation or
-	content generated from a shared seed, should not use them. Everything else
-	here is exact or correctly rounded, and so deterministic, except the `abs`
-	of `Complex` and `Quaternion`, which uses `hypot`.
+	content generated from a shared seed, should not use them;
+	`core:math/repro` has what it implements with results that agree.
+	Everything else here is exact or correctly rounded, and so deterministic,
+	except the `abs` of `Complex` and `Quaternion`, which uses `hypot`, and
+	whose agreeing counterparts are `core:math/repro`'s `complex_abs` and
+	`quaternion_abs`.
 */
 // standard-library "`core:math`". The variation was measured: on one machine,
 // the C library's FMA3 and legacy paths disagree on about one `sin` in a

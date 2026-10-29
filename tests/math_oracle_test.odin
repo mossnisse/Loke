@@ -413,6 +413,44 @@ oracle_hypot_matches_known_results :: proc(t: ^testing.T) {
 	}
 }
 
+// The magnitude of four components: exact roots; hypot's midpoints, which
+// round to even, and the same with a fourth component of the smallest
+// subnormal, which must round them up; subnormals, overflow, and the special
+// cases, an infinity before a NaN.
+@(test)
+oracle_norm_matches_known_results :: proc(t: ^testing.T) {
+	Known :: struct {
+		values:  [4]f64,
+		format:  Float_Format,
+		pattern: u64,
+	}
+	nan := math.nan_f64()
+	inf := math.inf_f64(1)
+	smallest := 4.9406564584124654e-324
+	smallest32 := f64(transmute(f32)u32(1))
+	largest := 1.7976931348623157e308
+	known := []Known {
+		{{1, 2, 2, 4}, F64_FORMAT, transmute(u64)f64(5)},
+		{{-2, 4, -5, 6}, F32_FORMAT, u64(transmute(u32)f32(9))},
+		{{1, 1, 1, 1}, F32_FORMAT, u64(transmute(u32)f32(2))},
+		{{7006394575843381, 7006394850613860, 0, 0}, F64_FORMAT, transmute(u64)f64(9908538426787068)},
+		{{7006394575843381, 7006394850613860, smallest, 0}, F64_FORMAT, transmute(u64)f64(9908538426787070)},
+		{{0, 13013847, 0, 13025704}, F32_FORMAT, u64(transmute(u32)f32(18412744))},
+		{{13013847, 13025704, 0, smallest32}, F32_FORMAT, u64(transmute(u32)f32(18412746))},
+		{{smallest, smallest, smallest, smallest}, F64_FORMAT, 2},
+		{{largest, largest, largest, largest}, F64_FORMAT, 0x7ff0000000000000},
+		{{1e300, 1e300, 1e300, 1e300}, F64_FORMAT, transmute(u64)f64(2e300)},
+		{{0, math.copy_sign(f64(0), -1), 0, 0}, F64_FORMAT, 0},
+		{{nan, 1, 2, inf}, F64_FORMAT, 0x7ff0000000000000},
+		{{1, nan, 2, 3}, F32_FORMAT, 0x7fc00000},
+	}
+	for k in known {
+		values := k.values
+		got := oracle_norm(values[:], k.format)
+		testing.expectf(t, got == k.pattern, "norm(%v) at %v: expected %x, got %x", k.values, k.format, k.pattern, got)
+	}
+}
+
 // hypot against the C library's, which is within an ulp, over arguments of
 // every relative scale. The UCRT's `f64` hypot is an ulp off in about an
 // eighth of these, where an exact integer square root in Python and Python's

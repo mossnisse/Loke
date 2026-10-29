@@ -30,9 +30,12 @@
 	build can evaluate a call with constant arguments using the compiling
 	machine's library; and another platform has another library. Code whose
 	results must agree bit for bit everywhere, such as a lockstep simulation or
-	content generated from a shared seed, should not use them. Everything else
-	here is exact or correctly rounded, and so deterministic, except the `abs`
-	of `Complex` and `Quaternion`, which uses `hypot`.
+	content generated from a shared seed, should not use them;
+	`core:math/repro` has what it implements with results that agree.
+	Everything else here is exact or correctly rounded, and so deterministic,
+	except the `abs` of `Complex` and `Quaternion`, which uses `hypot`, and
+	whose agreeing counterparts are `core:math/repro`'s `complex_abs` and
+	`quaternion_abs`.
 */
 package math;
 
@@ -118,7 +121,8 @@ impl Complex(f64) {
 	/*
 		The magnitude. It avoids the overflow and underflow that squaring the
 		components would cause; a magnitude beyond `f64`'s range is still
-		infinity. Not deterministic, since `hypot` is not.
+		infinity. Not deterministic, since `hypot` is not;
+		`core:math/repro`'s `complex_abs` is.
 	*/
 	abs :: proc(self) -> f64 ---;
 
@@ -145,7 +149,8 @@ impl Quaternion(f64) {
 	/*
 		The magnitude, without the overflow or underflow of the sum of four
 		squares. The extra rounding is within the libm accuracy this package
-		promises. Not deterministic, since `hypot` is not.
+		promises. Not deterministic, since `hypot` is not;
+		`core:math/repro`'s `quaternion_abs` is, and rounds once.
 	*/
 	abs :: proc(self) -> f64 ---;
 

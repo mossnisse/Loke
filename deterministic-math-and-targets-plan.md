@@ -307,6 +307,33 @@ proposed:
   `core:math/repro` kernels, phase 6's work, would recover it for every
   caller.
 
+Then the composite operations: the audit found the magnitudes of
+`math.Complex` and `math.Quaternion` the only callers of a nondeterministic
+function outside `core:math`'s own procedures; nothing else in the bundled
+packages calls one. `core:math` cannot call `core:math/repro`, which imports
+it, and `repro.hypot` takes 30 ns to the UCRT's 4.4, so `abs` keeps the C
+library, and `core:math/repro` adds the entry points the plan asks for:
+
+- `complex_abs` is `hypot` of the two parts. `quaternion_abs` is sqrt(real^2
+  + i^2 + j^2 + k^2) rounded once, where `q.abs()` nests `hypot` and rounds
+  three times. Its fast path sums the four exact squares as a pair within
+  2^-98.4 and takes `pair_root`, deciding at 2^-97; its slow path is
+  `hypot`'s fixed-point root.
+- `hypot`'s proof does not carry over. With two components, one far below
+  the other leaves the root a float's distance from any midpoint; with four,
+  the near one's square can be finer than any fixed point holds and still
+  decide a near tie. So a root within 2^-300 of a midpoint is settled by
+  comparing the sum of squares with the midpoint's square exactly, in
+  integers over the whole span, about 4,200 bits. `quaternion_abs_f32` of
+  13013847, 13025704, 0, and the smallest subnormal rounds up to 18412746,
+  where without the fourth component the midpoint rounds to even.
+- The oracle's `hypot` became `oracle_norm`, of any number of components,
+  and the probe checks 2,707 more results against it, Euler's four-square
+  identity giving exact midpoints, and fast and slow paths agree over 20,000
+  seeded arguments in each width. Measured at `-opt=speed`, `quaternion_abs`
+  takes 48 ns and `quaternion_abs_f32` 37 ns, against 11 ns for `q.abs()`'s
+  three UCRT `hypot` calls.
+
 Not started: phase 1's benchmarks (the UCRT timings in open questions stand
 until there is a kernel to compare), simulation support, dispatch, and other
 platforms.

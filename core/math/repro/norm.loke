@@ -1,0 +1,203 @@
+// deterministic-math-and-targets-plan.md "Lockstep integration and versioning":
+// the magnitude of four components, sqrt(a^2 + b^2 + c^2 + d^2), in both
+// widths, behind `quaternion_abs`.
+//
+// With a the largest magnitude, every component is scaled by the power of two
+// that puts a in [1, 2), exactly; one below 2^-458 a is left out of the fast
+// path, where its square, under 2^-916 relative, is far inside the bound, and
+// `two_product` would need its error below the normal range.
+//
+// The fast path forms each square exactly as a pair (`two_product`), sums the
+// four high parts exactly (`two_sum`), and adds the three errors and four low
+// parts in `f64`. The sum s is in [1, 16), each low part is under 2^-52 and
+// each error under 2^-50, so those seven terms are under 2^-48 in all and
+// their six additions err by under 6 2^-101: the pair is within 2^-98.4 of s
+// relative. Its root by `pair_root`, whose own error is 2^-101, is within
+// 2^-98.9, so the result is returned when it is decided within 2^-97. A
+// result that could be subnormal takes the slow path, as for `hypot`.
+//
+// For `f32` components, exact as `f64` values with exact squares, s is
+// summed in one `f64` with three roundings, and s y, y from `root_estimate`
+// and a fourth step, is within 6 ulps of the result, `hypot_f32`'s 5 and one
+// more for the two further roundings; when no `f32` midpoint is within 8
+// ulps, narrowing it rounds correctly, and otherwise the double-`f64` result
+// decides, and then the slow path.
+//
+// The slow path forms s in fixed point, within 2^-317.9, since each product
+// truncates under 2^-320 and only a component below 2^-268 a loses bits, and
+// its root by `fixed_sqrt`, leaving the root within 2^-314.5. A root farther
+// than 2^-300 from a midpoint therefore rounds as the exact one does. Unlike
+// `hypot`'s, a near one is not settled by a gap: a component far below the
+// others can move the sum by less than any fixed point holds, so whether
+// the exact sum of squares is below, at, or above the midpoint's square is
+// decided exactly, in integers spanning every component's bits, and an
+// exact midpoint rounds to even. So every argument rounds correctly;
+// `tests/repro_test.odin` checks both paths against an independent oracle.
+package repro;
+
+import "core:unsafe";
+
+// 2^-97, past twice the fast path's bound of 2^-98.9.
+NORM_MARGIN :: 6.310887241768095e-30;
+
+// The components a fast-path square leaves out: below 2^-458 a.
+NORM_DROP :: -458;
+
+// Limbs enough for the exact comparison: the squares of finite `f64`s, and
+// of a midpoint near their root, span under 4,300 bits.
+NORM_LIMBS :: 72;
+
+// `parts`, finite magnitudes as `f64` bit patterns with the largest first and
+// nonzero, scaled by 2^-ea so that the first is in [1, 2), and ea; one the
+// fast path leaves out is 0.
+norm_scaled :: proc(parts: [4]u64) -> (scaled: [4]f64, ea: int) {
+	ea, fa := log_split(from_bits(parts[0]));
+	scaled: [4]f64 = {};
+	scaled[0] = from_bits(fa | 0x3ff0000000000000);
+	foreach (i in 1 ..< 4) {
+		if (parts[i] != 0) {
+			e, f := log_split(from_bits(parts[i]));
+			if (e - ea >= NORM_DROP) { scaled[i] = from_bits(f | 0x3ff0000000000000)*power_of_two(e - ea); }
+		}
+	}
+	return {scaled, ea};
+}
+
+// The root of the scaled components' sum of squares as a pair, within
+// 2^-98.9 relative.
+norm_pair :: proc(c: [4]f64) -> (high: f64, low: f64) {
+	h0, l0 := two_product(c[0], c[0]);
+	h1, l1 := two_product(c[1], c[1]);
+	h2, l2 := two_product(c[2], c[2]);
+	h3, l3 := two_product(c[3], c[3]);
+	t1, e1 := two_sum(h0, h1);
+	t2, e2 := two_sum(t1, h2);
+	t3, e3 := two_sum(t2, h3);
+	sh, sl := fast_two_sum(t3, ((l0 + l1) + (l2 + l3)) + ((e1 + e2) + e3));
+	return pair_root(sh, sl);
+}
+
+// The magnitude of `parts`, as `norm_scaled` takes them.
+norm_f64_of :: proc(parts: [4]u64) -> f64 {
+	scaled, ea := norm_scaled(parts);
+	wh, wl := norm_pair(scaled);
+	if (ea >= -1022) {
+		decided, v := f64_decided(wh, wl, NORM_MARGIN);
+		// Scaling back is exact, or overflows exactly when the result does.
+		if (decided) { return v*power_of_two(ea); }
+	}
+	return from_bits(norm_slow(parts, scaled, ea, wh + wl, F64_LAYOUT));
+}
+
+// The same for `f32` magnitudes, here as the bit patterns of their exact
+// `f64` values.
+norm_f32_of :: proc(parts: [4]u64) -> f32 {
+	a := from_bits(parts[0]);
+	b := from_bits(parts[1]);
+	c := from_bits(parts[2]);
+	d := from_bits(parts[3]);
+	s := ((a*a + b*b) + c*c) + d*d;
+	y := root_estimate(s);
+	y = y*(1.5 - (0.5*s)*(y*y));
+	quick := s*y;
+	if (f32_decided(quick, 8)) { return f32(quick); }
+
+	scaled, ea := norm_scaled(parts);
+	wh, wl := norm_pair(scaled);
+	// Exact: an `f32` magnitude's scale is far inside the `f64` range.
+	root := (wh + wl)*power_of_two(ea);
+	if (f32_decided(root, 1)) { return f32(root); }
+	return unsafe.transmute(f32, u32(norm_slow(parts, scaled, ea, wh + wl, F32_LAYOUT)));
+}
+
+// The magnitude correctly rounded to `layout`, as its bit pattern, for
+// `parts` and their scaling by `norm_scaled`, and an `f64` within 2^-52 of
+// the scaled root.
+norm_slow :: proc(parts: [4]u64, scaled: [4]f64, ea: int, near: f64, layout: Float_Layout) -> u64 {
+	f0 := fixed_of(scaled[0]);
+	f1 := fixed_of(scaled[1]);
+	f2 := fixed_of(scaled[2]);
+	f3 := fixed_of(scaled[3]);
+	s := fixed_plus(fixed_plus(fixed_times(f0, f0), fixed_times(f1, f1)), fixed_plus(fixed_times(f2, f2), fixed_times(f3, f3)));
+	w: Fixed = {};
+	if (s[5] >= 4) {
+		half := fixed_sqrt(fixed_shift_down(s, 2), 0.5*near);
+		w = fixed_plus(half, half);
+	} else {
+		w = fixed_sqrt(s, near);
+	}
+	exponent := ea - FRACTION_BITS;
+	unit, drop := fixed_round_place(w, exponent, layout);
+	kept := fixed_field(w, drop, layout.precision + 1);
+	// The one midpoint w can be near, kept + 1/2 units.
+	midpoint := fixed_scaled(Fixed{2*kept + 1, 0, 0, 0, 0, 0}, drop - 1);
+	distance: Fixed = {};
+	if (fixed_less(w, midpoint)) {
+		distance = fixed_minus(midpoint, w);
+	} else {
+		distance = fixed_minus(w, midpoint);
+	}
+	if (fixed_less(distance, Fixed{0x100000, 0, 0, 0, 0, 0})) {
+		side := norm_side(parts, 2*kept + 1, drop - 1 + exponent);
+		if (side > 0 || (side == 0 && kept & 1 == 1)) { kept += 1; }
+		return fixed_round_finish(kept, unit, layout);
+	}
+	return fixed_round(w, exponent, layout);
+}
+
+// Whether the exact sum of the squares of `parts`, finite `f64` magnitudes as
+// bit patterns, is below (-1), at (0), or above (1) the square of the
+// midpoint m 2^e, each square an integer times a power of two, all shifted
+// to the smallest.
+norm_side :: proc(parts: [4]u64, m: u64, e: int) -> int {
+	significands: [4]u64 = {};
+	exponents: [4]int = {};
+	base := 2*e;
+	foreach (i in 0 ..< 4) {
+		if (parts[i] != 0) {
+			significand, exponent := norm_dyadic(parts[i]);
+			significands[i] = significand;
+			exponents[i] = exponent;
+			if (2*exponent < base) { base = 2*exponent; }
+		}
+	}
+	sum: [NORM_LIMBS]u64 = {};
+	foreach (i in 0 ..< 4) {
+		if (significands[i] != 0) {
+			norm_add_shifted(inout sum, u128(significands[i])*u128(significands[i]), 2*exponents[i] - base);
+		}
+	}
+	square: [NORM_LIMBS]u64 = {};
+	norm_add_shifted(inout square, u128(m)*u128(m), 2*e - base);
+	for (i := NORM_LIMBS - 1; i >= 0; i -= 1) {
+		if (sum[i] > square[i]) { return 1; }
+		if (sum[i] < square[i]) { return -1; }
+	}
+	return 0;
+}
+
+// A positive finite `f64`'s bit pattern as an integer times 2^exponent.
+norm_dyadic :: proc(pattern: u64) -> (significand: u64, exponent: int) {
+	biased := int(pattern >> 52);
+	if (biased == 0) { return {pattern, -1074}; }
+	return {(pattern & 0x000fffffffffffff) | 0x0010000000000000, biased - 1075};
+}
+
+// acc + n 2^shift, for n below 2^128 and a sum that fits.
+norm_add_shifted :: proc(acc: inout [NORM_LIMBS]u64, n: u128, shift: int) {
+	limb := shift / 64;
+	bit := shift % 64;
+	words := [3]u64{u64(n & LOW_64), u64(n >> 64), 0};
+	if (bit != 0) {
+		words = [3]u64{words[0] << bit, (words[1] << bit) | (words[0] >> (64 - bit)), words[1] >> (64 - bit)};
+	}
+	carry: u128 = 0;
+	for (i := limb; i < NORM_LIMBS; i += 1) {
+		addend: u128 = 0;
+		if (i - limb < 3) { addend = u128(words[i - limb]); }
+		t := u128(acc[i]) + addend + carry;
+		acc[i] = u64(t & LOW_64);
+		carry = t >> 64;
+		if (i - limb >= 2 && carry == 0) { break; }
+	}
+}

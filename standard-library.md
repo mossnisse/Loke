@@ -2336,7 +2336,8 @@ call with constant arguments using the compiling machine's library; and
 another platform has another library. Code whose results must agree bit for
 bit everywhere, such as a lockstep simulation or content generated from a
 shared seed, should not use them; [`core:math/repro`](#coremathrepro) has
-the functions it implements with results that agree. The remaining
+the functions it implements with results that agree, and the magnitudes
+`complex_abs` and `quaternion_abs`. The remaining
 procedures, `sqrt` and `mod` included, are exact or correctly rounded, so
 their results are the same everywhere. See
 [Deterministic math functions](open-questions.md#deterministic-math-functions).
@@ -2353,8 +2354,9 @@ is the positive quiet NaN with no payload (`0x7ff8000000000000`,
 `0x7fc00000`), whatever NaN produced it.
 
 The package has `exp`, `log`, `log2`, `log10`, `pow`, `sqrt`, `sin`, `cos`,
-`tan`, `asin`, `acos`, `atan`, `atan2`, and `hypot`, each with the `f64` and
-`_f32` naming of `core:math`. A function missing here is not provided by
+`tan`, `asin`, `acos`, `atan`, `atan2`, and `hypot`, and the magnitudes
+`complex_abs` and `quaternion_abs` of `core:math`'s `Complex` and
+`Quaternion`, each with the `f64` and `_f32` naming of `core:math`. A function missing here is not provided by
 falling back to `core:math`. Each `_f32` procedure is rounded once to `f32`,
 not the `f64` one narrowed, which could round twice.
 
@@ -2405,6 +2407,15 @@ not the `f64` one narrowed, which could round twice.
   result is exact, and one exactly halfway between two floats, such as
   `hypot_f32(13013847, 13025704)`, whose exact value is 18412745, rounds to
   even.
+- `complex_abs(z)` is `hypot(z.real, z.imaginary)`, the value `z.abs()`
+  approximates.
+- `quaternion_abs(q)` is sqrt(real^2 + i^2 + j^2 + k^2), rounded once, without
+  overflow or underflow on the way; `q.abs()` nests `hypot` and rounds three
+  times. Its special cases are `hypot`'s: ±Inf in any component gives +Inf,
+  even with a NaN in another, otherwise NaN gives NaN, and four zeros give
+  +0. An exact result is exact, and one exactly halfway between two floats
+  rounds to even, so `quaternion_abs_f32` of 13013847, 13025704, 0, and 0 is
+  18412744, and with a fourth component of the smallest subnormal, 18412746.
 
 The plan for the rest of the package, and its special cases for further
 functions, is in the

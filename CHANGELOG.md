@@ -346,7 +346,10 @@ checklist.
   results are the same bits on every machine, CPU level, and optimization
   level, and at compile time: `exp`, `log`, `log2`, `log10`, `pow`, `sqrt`,
   `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, and `hypot` in both
-  widths ([`core:math/repro`](standard-library.md#coremathrepro)).
+  widths, and `complex_abs` and `quaternion_abs`, the magnitudes of
+  `math.Complex` and `math.Quaternion`, the second rounded once where
+  `q.abs()` rounds three times
+  ([`core:math/repro`](standard-library.md#coremathrepro)).
 - An export, or any procedure Loke defines with a foreign calling convention,
   runs in Loke's floating-point environment when a C host or library calls
   it with another rounding mode, flush-to-zero, or unmasked exceptions, and

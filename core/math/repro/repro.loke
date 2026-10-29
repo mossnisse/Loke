@@ -11,8 +11,10 @@
 
 	The package holds only what has been implemented and checked: today `exp`,
 	`log`, `log2`, `log10`, `pow`, `sqrt`, `sin`, `cos`, `tan`, `asin`, `acos`,
-	`atan`, `atan2`, and `hypot`, each in both widths. A function missing here
-	is not provided by falling back to `core:math`.
+	`atan`, `atan2`, and `hypot`, and the magnitudes `complex_abs` and
+	`quaternion_abs` of `core:math`'s `Complex` and `Quaternion`, each in both
+	widths. A function missing here is not provided by falling back to
+	`core:math`.
 */
 @(public)
 package repro;
@@ -306,6 +308,66 @@ hypot_f32 :: proc(x: f32, y: f32) -> f32 {
 	}
 	if (b == 0) { return unsafe.transmute(f32, a); }
 	return hypot_f32_of(f64(unsafe.transmute(f32, a)), f64(unsafe.transmute(f32, b)));
+}
+
+/**
+	The magnitude of z, `hypot(z.real, z.imaginary)`: what `z.abs()` computes,
+	with this package's result, the same everywhere.
+*/
+complex_abs :: proc(z: math.Complex(f64)) -> f64 {
+	return hypot(z.real, z.imaginary);
+}
+
+/// complex_abs for `f32`, `hypot_f32(z.real, z.imaginary)`.
+complex_abs_f32 :: proc(z: math.Complex(f32)) -> f32 {
+	return hypot_f32(z.real, z.imaginary);
+}
+
+/**
+	The magnitude of q, sqrt(real^2 + i^2 + j^2 + k^2) rounded once, without
+	overflow or underflow on the way; `q.abs()` nests `hypot` and rounds three
+	times. ±Inf in any component gives +Inf, even with a NaN in another;
+	otherwise NaN gives NaN, and four zeros give +0. A result too large for
+	`f64` is +Inf. An exact result is exact, and one exactly halfway between
+	two floats rounds to even.
+*/
+quaternion_abs :: proc(q: math.Quaternion(f64)) -> f64 {
+	parts := [4]u64{
+		unsafe.transmute(u64, q.real) & 0x7fffffffffffffff, unsafe.transmute(u64, q.i) & 0x7fffffffffffffff,
+		unsafe.transmute(u64, q.j) & 0x7fffffffffffffff, unsafe.transmute(u64, q.k) & 0x7fffffffffffffff,
+	};
+	largest := 0;
+	nan := false;
+	foreach (i in 0 ..< 4) {
+		if (parts[i] == 0x7ff0000000000000) { return unsafe.transmute(f64, u64(0x7ff0000000000000)); }
+		if (parts[i] > 0x7ff0000000000000) { nan = true; }
+		if (parts[i] > parts[largest]) { largest = i; }
+	}
+	if (nan) { return unsafe.transmute(f64, u64(CANONICAL_NAN_F64)); }
+	if (parts[largest] == 0) { return 0.0; }
+	parts[0], parts[largest] = parts[largest], parts[0];
+	return norm_f64_of(parts);
+}
+
+/// quaternion_abs for `f32`, with its special cases.
+quaternion_abs_f32 :: proc(q: math.Quaternion(f32)) -> f32 {
+	parts32 := [4]u32{
+		unsafe.transmute(u32, q.real) & 0x7fffffff, unsafe.transmute(u32, q.i) & 0x7fffffff,
+		unsafe.transmute(u32, q.j) & 0x7fffffff, unsafe.transmute(u32, q.k) & 0x7fffffff,
+	};
+	largest := 0;
+	nan := false;
+	foreach (i in 0 ..< 4) {
+		if (parts32[i] == 0x7f800000) { return unsafe.transmute(f32, u32(0x7f800000)); }
+		if (parts32[i] > 0x7f800000) { nan = true; }
+		if (parts32[i] > parts32[largest]) { largest = i; }
+	}
+	if (nan) { return unsafe.transmute(f32, u32(CANONICAL_NAN_F32)); }
+	if (parts32[largest] == 0) { return f32(0.0); }
+	parts32[0], parts32[largest] = parts32[largest], parts32[0];
+	parts: [4]u64 = {};
+	foreach (i in 0 ..< 4) { parts[i] = unsafe.transmute(u64, f64(unsafe.transmute(f32, parts32[i]))); }
+	return norm_f32_of(parts);
 }
 
 /**
