@@ -18,6 +18,7 @@ repro_constants_match_their_derivation :: proc(t: ^testing.T) {
 	check_generated_block(t, "core/math/repro/atan.loke", atan_constants_source(&o))
 	check_generated_block(t, "core/math/repro/exp.loke", exp_constants_source(&o))
 	check_generated_block(t, "core/math/repro/log.loke", log_constants_source(&o))
+	check_generated_block(t, "core/math/repro/log_base.loke", log_base_constants_source(&o))
 	check_generated_block(t, "core/math/repro/trig.loke", trig_constants_source(&o))
 }
 
@@ -128,12 +129,14 @@ repro_functions_round_correctly :: proc(t: ^testing.T) {
 			checked += 1
 		case "differs64", "differs32":
 			testing.expectf(t, false, "a fast path differs from its slow path at %s", line)
-		case "Exp", "Sin", "Cos", "Tan", "Log", "Asin", "Acos":
+		case "Exp", "Sin", "Cos", "Tan", "Log", "Log2", "Log10", "Asin", "Acos":
 			function := Oracle_Function.Exp
 			if fields[0] == "Sin" {function = .Sin}
 			if fields[0] == "Cos" {function = .Cos}
 			if fields[0] == "Tan" {function = .Tan}
 			if fields[0] == "Log" {function = .Log}
+			if fields[0] == "Log2" {function = .Log2}
+			if fields[0] == "Log10" {function = .Log10}
 			if fields[0] == "Asin" {function = .Asin}
 			if fields[0] == "Acos" {function = .Acos}
 			x, _ := strconv.parse_u64(fields[2])
@@ -149,5 +152,5 @@ repro_functions_round_correctly :: proc(t: ^testing.T) {
 			checked += 1
 		}
 	}
-	testing.expectf(t, checked == 25181 && constants == 64, "the probe printed %d checked results and %d constants", checked, constants)
+	testing.expectf(t, checked == 30267 && constants == 72, "the probe printed %d checked results and %d constants", checked, constants)
 }

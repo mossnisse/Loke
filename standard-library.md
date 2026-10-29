@@ -2345,15 +2345,18 @@ call is evaluated at compile time. No procedure calls the C library or uses
 is the positive quiet NaN with no payload (`0x7ff8000000000000`,
 `0x7fc00000`), whatever NaN produced it.
 
-The package has `exp`, `log`, `pow`, `sin`, `cos`, `tan`, `asin`, `acos`,
-`atan`, and `atan2`, each with the `f64` and `_f32` naming of `core:math`. A function missing here is
+The package has `exp`, `log`, `log2`, `log10`, `pow`, `sin`, `cos`, `tan`,
+`asin`, `acos`, `atan`, and `atan2`, each with the `f64` and `_f32` naming of
+`core:math`. A function missing here is
 not provided by falling back to `core:math`. Each `_f32` procedure is rounded
 once to `f32`, not the `f64` one narrowed, which could round twice.
 
 - `exp` of NaN is NaN, of +Inf is +Inf, of -Inf is +0, and of ±0 is exactly
   1.
-- `log` is the natural logarithm. NaN and every argument below zero, -Inf
-  included, give NaN; ±0 gives -Inf, 1 gives +0, and +Inf gives +Inf.
+- `log` is the natural logarithm, and `log2` and `log10` the logarithms to
+  bases 2 and 10. NaN and every argument below zero, -Inf included, give
+  NaN; ±0 gives -Inf, 1 gives +0, and +Inf gives +Inf. `log2` of a power of
+  two and `log10` of a power of ten are its exponent exactly.
 - `pow(x, y)` is x^y, with the special cases of IEC 60559 and C17's annex F
   but for NaN results, in this order: y = ±0 gives 1, and so does x = +1,
   NaN included; any other NaN argument gives NaN. x = ±0 gives ±Inf for an

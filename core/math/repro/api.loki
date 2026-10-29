@@ -12,9 +12,9 @@
 	each function. No procedure here calls the C library.
 
 	The package holds only what has been implemented and checked: today `exp`,
-	`log`, `pow`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, and `atan2`,
-	each in both widths. A function missing here is not provided by falling
-	back to `core:math`.
+	`log`, `log2`, `log10`, `pow`, `sin`, `cos`, `tan`, `asin`, `acos`,
+	`atan`, and `atan2`, each in both widths. A function missing here is not
+	provided by falling back to `core:math`.
 */
 package repro;
 
@@ -39,6 +39,24 @@ log :: proc(x: f64) -> f64 ---;
 
 // The natural logarithm for `f32`, with the special cases of `log`.
 log_f32 :: proc(x: f32) -> f32 ---;
+
+/*
+	The base-2 logarithm, with the special cases of `log`. At a power of two
+	the result is its exponent exactly.
+*/
+log2 :: proc(x: f64) -> f64 ---;
+
+// The base-2 logarithm for `f32`, with the special cases of `log`.
+log2_f32 :: proc(x: f32) -> f32 ---;
+
+/*
+	The base-10 logarithm, with the special cases of `log`. At a power of ten
+	the result is its exponent exactly.
+*/
+log10 :: proc(x: f64) -> f64 ---;
+
+// The base-10 logarithm for `f32`, with the special cases of `log`.
+log10_f32 :: proc(x: f32) -> f32 ---;
 
 /*
 	x raised to the power y, with the special cases of IEC 60559 and C17's

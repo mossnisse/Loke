@@ -24,6 +24,30 @@ slow_log_f32 :: proc(x: f32) -> f32 {
 	return unsafe.transmute(f32, u32(log_slow(f64(x), F32_LAYOUT)));
 }
 
+// log2's and log10's slow paths past the special cases of `log`, which
+// `log2` and `log10` themselves answer.
+@(public)
+slow_log2 :: proc(x: f64) -> f64 { return slow_log_base(x, 0); }
+
+@(public)
+slow_log10 :: proc(x: f64) -> f64 { return slow_log_base(x, 1); }
+
+@(public)
+slow_log2_f32 :: proc(x: f32) -> f32 { return slow_log_base_f32(x, 0); }
+
+@(public)
+slow_log10_f32 :: proc(x: f32) -> f32 { return slow_log_base_f32(x, 1); }
+
+slow_log_base :: proc(x: f64, base: int) -> f64 {
+	if (!(x > 0.0 && x <= 1.7976931348623157e308) || x == 1.0) { return log_base(x, base); }
+	return unsafe.transmute(f64, log_base_slow(x, base, F64_LAYOUT));
+}
+
+slow_log_base_f32 :: proc(x: f32, base: int) -> f32 {
+	if (!(x > f32(0.0) && f64(x) <= 1.7976931348623157e308) || x == f32(1.0)) { return log_base_f32(x, base); }
+	return unsafe.transmute(f32, u32(log_base_slow(f64(x), base, F32_LAYOUT)));
+}
+
 @(public)
 slow_sin :: proc(x: f64) -> f64 { return slow_trig(x, false); }
 

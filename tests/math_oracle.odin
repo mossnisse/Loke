@@ -1,7 +1,7 @@
 // deterministic-math-and-targets-plan.md "Validation and performance gates": an
-// oracle for the correctly rounded `exp`, `log`, `sin`, `cos`, `tan`, `asin`,
-// `acos`, `pow`, and `atan2` of `f64` and `f32`, with the special cases of the
-// reproducible contract.
+// oracle for the correctly rounded `exp`, `log`, `log2`, `log10`, `sin`, `cos`,
+// `tan`, `asin`, `acos`, `pow`, and `atan2` of `f64` and `f32`, with the
+// special cases of the reproducible contract.
 //
 // Each result is an interval of integers at a scale of `2^-precision`, every
 // step rounded outward, so the true value is always inside it. When both ends
@@ -22,6 +22,8 @@ import "core:strings"
 Oracle_Function :: enum {
 	Exp,
 	Log,
+	Log2,
+	Log10,
 	Sin,
 	Cos,
 	Tan,
@@ -128,7 +130,7 @@ special_case :: proc(function: Oracle_Function, x: f64, format: Float_Format) ->
 		if math.is_inf(x, 1) {return infinity, true}
 		if math.is_inf(x, -1) {return 0, true}
 		if x == 0 {return one, true}
-	case .Log:
+	case .Log, .Log2, .Log10:
 		if x == 0 {return infinity | negative_zero, true}
 		if x < 0 {return nan, true}
 		if math.is_inf(x, 1) {return infinity, true}
@@ -159,6 +161,8 @@ attempt :: proc(o: ^Oracle, function: Oracle_Function, x: f64, format: Float_For
 		return exp_attempt(o, x, format, precision)
 	case .Log:
 		return log_attempt(o, x, format, precision)
+	case .Log2, .Log10:
+		return log_base_attempt(o, x, function == .Log10, format, precision)
 	case .Sin, .Cos, .Tan:
 		return trig_attempt(o, function, x, format, precision)
 	case .Asin, .Acos:
@@ -210,6 +214,23 @@ exp_of_interval :: proc(o: ^Oracle, scaled: Interval, x: f64, format: Float_Form
 @(private = "file")
 log_attempt :: proc(o: ^Oracle, x: f64, format: Float_Format, w: int) -> (u64, bool) {
 	return round_signed(log_interval(o, x, w), -w, format)
+}
+
+// log2 x and log10 x as log x over ln 2 or ln 10, the divisor's interval
+// positive, so the quotient's ends come from the matching ends. They are
+// rational only at x = 2^k and 10^k, where they are the integer k, a float
+// and not a midpoint, so the search ends.
+@(private = "file")
+log_base_attempt :: proc(o: ^Oracle, x: f64, ten: bool, format: Float_Format, w: int) -> (u64, bool) {
+	v := log_interval(o, x, w)
+	divisor := ten ? log_interval(o, 10, w) : narrow(o.ln2, CONSTANT_PRECISION, w)
+	negative := sign_of(v.hi) < 0
+	if !negative && sign_of(v.lo) <= 0 {
+		return 0, false
+	}
+	m := negative ? Interval{negated(v.hi), negated(v.lo)} : v
+	quotient := Interval{divide_down(shift_left(m.lo, w), divisor.hi), divide_up(shift_left(m.hi, w), divisor.lo)}
+	return round_interval(quotient, -w, negative, format)
 }
 
 // log x for a positive finite x other than 1, at a scale of 2^-w: e ln 2 +
@@ -1146,6 +1167,43 @@ log_constants_source :: proc(o: ^Oracle) -> string {
 			pair = exact_pair(Interval{negated(v.hi), negated(v.lo)}, P)
 		}
 		fmt.sbprintf(&b, "\t0x%016x, 0x%016x, 0x%016x,\n", transmute(u64)d, transmute(u64)pair[0], transmute(u64)pair[1])
+	}
+	strings.write_string(&b, "};\n")
+	return strings.to_string(b)
+}
+
+// The constants `core:math/repro`'s `log2` and `log10` are built from, as the
+// Loke source between log_base.loke's generated-block markers: 1/ln 2 and
+// 1/ln 10 as `f64` pairs, the nearest `f64` and the nearest to the rest, and
+// times 2^320, floored, as six limbs.
+log_base_constants_source :: proc(o: ^Oracle) -> string {
+	context.allocator = virtual.arena_allocator(&o.arena)
+	P :: 400
+	b: strings.Builder
+	strings.builder_init(&b)
+	ln2 := narrow(o.ln2, CONSTANT_PRECISION, P)
+	divisors := [2]Interval{ln2, log_interval(o, 10, P)}
+	inverses: [2]Interval
+	for d, i in divisors {
+		inverses[i] = Interval{divide_down(power_of_two(2*P), d.hi), divide_up(power_of_two(2*P), d.lo)}
+	}
+	strings.write_string(&b, "LOG_BASE_PAIRS :: [4]u64{")
+	for v, i in inverses {
+		pair := exact_pair(v, P)
+		fmt.sbprintf(&b, "%s0x%016x, 0x%016x", i == 0 ? "" : ", ", transmute(u64)pair[0], transmute(u64)pair[1])
+	}
+	strings.write_string(&b, "};\n")
+	strings.write_string(&b, "LOG_BASE_FIXED :: [2][6]u64{\n")
+	for v in inverses {
+		wide := narrow(v, P, 320)
+		if compare(wide.lo, wide.hi) != 0 && compare(plus(wide.lo, int_of(1)), wide.hi) != 0 {
+			panic("a logarithm's base needs more bits")
+		}
+		strings.write_string(&b, "\t{")
+		for limb in 0 ..< 6 {
+			fmt.sbprintf(&b, "%s0x%016x", limb == 0 ? "" : ", ", low_bits(shift_down(wide.lo, 64*limb), 64))
+		}
+		strings.write_string(&b, "},\n")
 	}
 	strings.write_string(&b, "};\n")
 	return strings.to_string(b)

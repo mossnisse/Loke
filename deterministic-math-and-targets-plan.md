@@ -183,7 +183,21 @@ Then `tan` in both widths:
   Odin's `tan` is sin/cos, rounded twice, so the library test compares it
   with the C library's instead.
 
-The rest of phase 4's functions are next.
+Then `log2` and `log10` in both widths:
+
+- Each is `log`'s double-`f64` result times 1/ln 2 or 1/ln 10 as a pair,
+  within 2^-68, and `log`'s slow path times the constant in fixed point;
+  the `f32` procedures scale `log_f32`'s single-`f64` approximation first.
+- log2 x and log10 x are rational only at powers of 2 and 10, where they
+  are an integer, a float and not a midpoint, so no exact-case test is
+  needed: every close enough approximation rounds to it.
+- An exhaustive pass over every positive finite `f32` found 281 and 111
+  arguments that reach the double-`f64` step and 0 and 15 that reach the
+  slow path, and none where the first approximation disagreed. The oracle
+  divides its log by ln 2 or ln 10 and also generates the constants; the
+  library test compares with the C library's.
+
+The rest of phase 4's functions are next: `hypot`.
 
 Not started: phase 1's benchmarks (the UCRT timings in open questions stand
 until there is a kernel to compare), the rest of phase 4's kernels, NaN

@@ -98,20 +98,25 @@ log_f64_of :: proc(x: f64) -> f64 {
 // ulps, which its low bits show; then the double-`f64` result, within one
 // ulp, decides, and the slow path if that does not.
 log_f32_of :: proc(x: f64) -> f32 {
-	e, fraction := log_split(x);
-	i, big_e := log_bucket(fraction, e);
-	y := unsafe.transmute(f64, fraction | 0x3ff0000000000000);
-	r := y*unsafe.transmute(f64, LOG_TABLE[3*i]) - 1.0;
-	p := r - r*r*(0.5 - r*(1.0/3.0 - r*(0.25 - r*(0.2 - r*(1.0/6.0 - r*(1.0/7.0))))));
-	ef := f64(big_e);
-	quick := (ef*unsafe.transmute(f64, u64(LN2_HI)) + unsafe.transmute(f64, LOG_TABLE[3*i + 1]))
-		+ (p + (unsafe.transmute(f64, LOG_TABLE[3*i + 2]) + ef*unsafe.transmute(f64, u64(LN2_LO))));
+	quick := log_quick(x);
 	if (f32_decided(quick, 16)) { return f32(quick); }
 
 	h, l := log_kernel(x);
 	near := h + l;
 	if (f32_decided(near, 1)) { return f32(near); }
 	return unsafe.transmute(f32, u32(log_slow(x, F32_LAYOUT)));
+}
+
+// The single-`f64` approximation `log_f32_of` describes, for an `f32` x.
+log_quick :: proc(x: f64) -> f64 {
+	e, fraction := log_split(x);
+	i, big_e := log_bucket(fraction, e);
+	y := unsafe.transmute(f64, fraction | 0x3ff0000000000000);
+	r := y*unsafe.transmute(f64, LOG_TABLE[3*i]) - 1.0;
+	p := r - r*r*(0.5 - r*(1.0/3.0 - r*(0.25 - r*(0.2 - r*(1.0/6.0 - r*(1.0/7.0))))));
+	ef := f64(big_e);
+	return (ef*unsafe.transmute(f64, u64(LN2_HI)) + unsafe.transmute(f64, LOG_TABLE[3*i + 1]))
+		+ (p + (unsafe.transmute(f64, LOG_TABLE[3*i + 2]) + ef*unsafe.transmute(f64, u64(LN2_LO))));
 }
 
 // log x correctly rounded to `layout`, as its bit pattern, for a positive

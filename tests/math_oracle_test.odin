@@ -10,7 +10,10 @@ import "core:testing"
 // huge arguments", 1992), asin 1/2 = pi/6, acos 1/2 = pi/3, and
 // acos -1/2 = 2 pi/3, rounded from pi by exact rational arithmetic, and tan
 // at 1/2, 1, pi's and pi/2's `f64` values, and 10, from sin and cos summed
-// separately in 120-digit decimal.
+// separately in 120-digit decimal, and log2 and log10 at 3, 10, 1.25, and
+// 0.1's `f64` value, from 100-digit decimal logarithms; log10 of that is
+// within 2^-55 of -1, so it rounds to -1. The exact results at powers of 2
+// and of 10 are integers.
 @(test)
 oracle_matches_known_results :: proc(t: ^testing.T) {
 	o: Oracle
@@ -32,6 +35,23 @@ oracle_matches_known_results :: proc(t: ^testing.T) {
 		{.Exp, 1, F32_FORMAT, 0x402df854},
 		{.Log, 2, F32_FORMAT, 0x3f317218},
 		{.Sin, 1, F32_FORMAT, 0x3f576aa4},
+		{.Log2, 10, F64_FORMAT, 0x400a934f0979a371},
+		{.Log2, 3, F64_FORMAT, 0x3ff95c01a39fbd68},
+		{.Log2, 0.1, F64_FORMAT, 0xc00a934f0979a371},
+		{.Log2, 1.25, F64_FORMAT, 0x3fd49a784bcd1b8b},
+		{.Log10, 3, F64_FORMAT, 0x3fde8927964fd5fd},
+		{.Log10, 0.1, F64_FORMAT, 0xbff0000000000000},
+		{.Log10, 1.25, F64_FORMAT, 0x3fb8cf183886480d},
+		{.Log2, 10, F32_FORMAT, 0x40549a78},
+		{.Log2, 3, F32_FORMAT, 0x3fcae00d},
+		{.Log10, 3, F32_FORMAT, 0x3ef4493d},
+		{.Log10, f64(f32(1.25)), F32_FORMAT, 0x3dc678c2},
+		{.Log2, 8, F64_FORMAT, 0x4008000000000000},
+		{.Log2, 4.9406564584124654e-324, F64_FORMAT, 0xc090c80000000000},
+		{.Log2, 0.5, F32_FORMAT, 0xbf800000},
+		{.Log10, 1000, F64_FORMAT, 0x4008000000000000},
+		{.Log10, 1e22, F64_FORMAT, 0x4036000000000000},
+		{.Log10, 1e10, F32_FORMAT, 0x41200000},
 		{.Tan, 1, F64_FORMAT, 0x3ff8eb245cbee3a6},
 		{.Tan, -0.5, F64_FORMAT, 0xbfe17b4f5bf3474a},
 		{.Tan, 3.141592653589793, F64_FORMAT, 0xbca1a62633145c07},
@@ -60,6 +80,10 @@ oracle_matches_known_results :: proc(t: ^testing.T) {
 		{.Log, 0, F64_FORMAT, 0xfff0000000000000},
 		{.Log, -1, F64_FORMAT, 0x7ff8000000000000},
 		{.Log, -1, F32_FORMAT, 0x7fc00000},
+		{.Log2, 1, F64_FORMAT, 0},
+		{.Log2, math.copy_sign(f64(0), -1), F64_FORMAT, 0xfff0000000000000},
+		{.Log10, -2, F64_FORMAT, 0x7ff8000000000000},
+		{.Log10, math.inf_f64(1), F32_FORMAT, 0x7f800000},
 		{.Sin, math.copy_sign(f64(0), -1), F64_FORMAT, 0x8000000000000000},
 		{.Cos, math.inf_f64(1), F64_FORMAT, 0x7ff8000000000000},
 		{.Tan, math.copy_sign(f64(0), -1), F64_FORMAT, 0x8000000000000000},
@@ -83,8 +107,8 @@ oracle_matches_known_results :: proc(t: ^testing.T) {
 
 // Odin's own library is not correctly rounded, but it is within an ulp, and
 // it agrees with correct rounding almost always: a gross error in the oracle
-// breaks one of these. Its tan is sin/cos, rounded twice, so tan is
-// compared with the C library's instead.
+// breaks one of these. Its tan is sin/cos, rounded twice, so tan, log2,
+// and log10 are compared with the C library's instead.
 @(test)
 oracle_agrees_with_a_library_almost_always :: proc(t: ^testing.T) {
 	o: Oracle
@@ -100,7 +124,7 @@ oracle_agrees_with_a_library_almost_always :: proc(t: ^testing.T) {
 				x: f64
 				switch function {
 				case .Exp: x = f64(i64(state >> 11) % 1400000) / 1000 - 700
-				case .Log: x = transmute(f64)(u64(0x0010000000000000) + (state >> 2) % u64(0x7fd0000000000000))
+				case .Log, .Log2, .Log10: x = transmute(f64)(u64(0x0010000000000000) + (state >> 2) % u64(0x7fd0000000000000))
 				case .Sin, .Cos, .Tan: x = f64(i64(state >> 11) % 2000000) / 1000 - 1000
 				case .Asin, .Acos: x = f64(i64(state >> 11) % 2000000) / 1000000 - 1
 				}
@@ -108,11 +132,13 @@ oracle_agrees_with_a_library_almost_always :: proc(t: ^testing.T) {
 				if format == F32_FORMAT {
 					x32 := f32(x)
 					if function == .Exp {x32 = f32(x / 8)}
-					if function == .Log {x32 = transmute(f32)(0x00800000 + u32(state >> 40) % 0x7f000000)}
+					if function == .Log || function == .Log2 || function == .Log10 {x32 = transmute(f32)(0x00800000 + u32(state >> 40) % 0x7f000000)}
 					x = f64(x32)
 					switch function {
 					case .Exp: library = u64(transmute(u32)math.exp(x32))
 					case .Log: library = u64(transmute(u32)math.ln(x32))
+					case .Log2: library = u64(transmute(u32)libc.log2f(x32))
+					case .Log10: library = u64(transmute(u32)libc.log10f(x32))
 					case .Sin: library = u64(transmute(u32)math.sin(x32))
 					case .Cos: library = u64(transmute(u32)math.cos(x32))
 					case .Tan: library = u64(transmute(u32)libc.tanf(x32))
@@ -123,6 +149,8 @@ oracle_agrees_with_a_library_almost_always :: proc(t: ^testing.T) {
 					switch function {
 					case .Exp: library = transmute(u64)math.exp(x)
 					case .Log: library = transmute(u64)math.ln(x)
+					case .Log2: library = transmute(u64)libc.log2(x)
+					case .Log10: library = transmute(u64)libc.log10(x)
 					case .Sin: library = transmute(u64)math.sin(x)
 					case .Cos: library = transmute(u64)math.cos(x)
 					case .Tan: library = transmute(u64)libc.tan(x)

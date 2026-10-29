@@ -774,7 +774,11 @@ per independent call and 64 per dependent one against the UCRT's 11 and 12
 on its FMA3 path and 16 and 18 on its legacy one, `tan_f32` 81 ns against
 6.5 and 8.4, and its slow path 8.6 µs. Payne and Hanek's reduction, from
 2^20 pi/2 up, adds about 170 ns to `tan_f32`, and `sin` and `cos` take the
-same reduction. Why
+same reduction. `log2` and `log10`, over arguments from 2^-32 to 2^32,
+take 38 to 39 ns per independent call and 54 per dependent one against the
+UCRT's 8.9 and 27 for `log2` and 5.9 and 14 for `log10` on its FMA3 path,
+and 9.9 and 26 and 6.0 and 16 on its legacy one, `log2_f32` and `log10_f32`
+17 and 20 ns against 3.2 to 4.6, and their slow path 6.7 µs. Why
 the `f32` procedures before `atan` are slower than the `f64` ones that do
 the same work is not known. The estimate below was optimistic by
 two to three times: the time is in the dependent double-`f64` steps, not in
@@ -795,19 +799,21 @@ measure it. Open:
   widths, cover the common uses and the random distributions.
 - Should the C library's versions stay available under other names for
   callers who prefer speed to identity?
-- Can `core:math/repro`'s `pow`, `atan2`, `asin`, and `acos` be proved
-  correctly rounded? `pow`'s slow path is within 2^-240 of x^y, and a value
-  within 2^-230 of a midpoint is tested for being exactly that midpoint, so
-  it decides every argument unless an x^y that is not a midpoint comes
-  within 2^-230 of one; the slow path of the others, within 2^-305, never
-  meets a midpoint, but could meet a result that close to one. For
+- Can `core:math/repro`'s `pow`, `atan2`, `asin`, `acos`, `log2`, and
+  `log10` be proved correctly rounded? `pow`'s slow path is within 2^-240
+  of x^y, and a value within 2^-230 of a midpoint is tested for being
+  exactly that midpoint, so it decides every argument unless an x^y that is
+  not a midpoint comes within 2^-230 of one. The others' slow paths, within
+  2^-305 for `atan2`, `asin`, and `acos` and 2^-248 for `log2` and `log10`,
+  never meet a midpoint, but could meet a result that close to one. For
   one-argument functions, exhaustive searches bound that distance, but none
-  for binary64 `asin` or `acos` is relied on here; no search covers two
-  `f64` arguments, and no proof is known to rule it out. Their results are
-  the same everywhere either way. Binary64 `sin`, `cos`, and `tan` now have
-  published hard cases (Lefèvre, Ly, and Zimmermann, "Computing
-  hard-to-round cases of sin, cos, tan in double precision", ARITH 2026);
-  checking the slow paths against them would settle those three.
+  for binary64 `asin`, `acos`, `log2`, or `log10` is relied on here; no
+  search covers two `f64` arguments, and no proof is known to rule it out.
+  Their results are the same everywhere either way. Binary64 `sin`, `cos`,
+  and `tan` now have published hard cases (Lefèvre, Ly, and Zimmermann,
+  "Computing hard-to-round cases of sin, cos, tan in double precision",
+  ARITH 2026); checking the slow paths against them would settle those
+  three.
 
 The [deterministic math and CPU targeting
 plan](deterministic-math-and-targets-plan.md) proposes answers: a separate
