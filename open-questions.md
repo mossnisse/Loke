@@ -1,10 +1,15 @@
 # Open questions
 
-Decisions that are deliberately not yet made are recorded here rather than left implicit in normative prose. [`design.md`](design.md) defines the rules implementations must follow for the current language version; these questions concern possible later changes.
+Decisions that are deliberately not yet made are recorded here rather than left
+implicit in normative prose. [`design.md`](design.md) defines the rules
+implementations must follow for the current language version; these questions
+concern possible later changes.
 
-Design rationale and differences from Odin are recorded in [comments.md](comments.md).
+Design rationale and differences from Odin are recorded in
+[comments.md](comments.md).
 
-The current behavior inventory is in [Nondeterminism and undefined behavior audit](nondeterminism-audit.md).
+The current behavior inventory is in [Nondeterminism and undefined behavior
+audit](nondeterminism-audit.md).
 
 ## Invalid `typeid` representations
 
@@ -33,21 +38,21 @@ design questions stay open until a caller or a measurement settles them:
   decoded text would last until the next step, and a successful decode would
   require consuming the end or calling a `finish` that validates the rest: a
   valid prefix alone is not a validated document.
-- **An on-demand cursor or a SIMD structural index.** Either may beat the
-  scalar scanner on large input, but their navigation and validation
-  guarantees differ ([simdjson's paper](https://arxiv.org/abs/1902.08318),
-  [on-demand design constraints](https://simdjson.org/api/3.0.0/md_doc_ondemand_design.html)).
-  Neither is established as better for 2–64 KiB state files, and either would
+- **An on-demand cursor or a SIMD structural index.** Either may beat the scalar
+  scanner on large input, but their navigation and validation guarantees differ
+  ([simdjson's paper](https://arxiv.org/abs/1902.08318), [on-demand design
+  constraints](https://simdjson.org/api/3.0.0/md_doc_ondemand_design.html)).
+  Neither is established as better for 2 to 64 KiB state files, and either would
   stay separate from fully validating document parsing.
 - **Avoiding repeated validation and copies.** `parse` validates UTF-8 and then
   scans; a fused scanner would need a trusted validated-view operation and a
-  decision about keeping invalid UTF-8 ahead of every other error.
-  `stringify` validates and copies its finished bytes; a consuming
-  bytes-to-string conversion could avoid that, as retained owned bytes could
-  avoid the copy in an owning file load. Any such operation must preserve
-  [borrow provenance](design.md#procedure-result-contracts), allocator
-  ownership, and [string invariants](design.md#string-type); `unsafe.string_view`
-  still validates. Evaluate one only if profiling makes the cost material.
+  decision about keeping invalid UTF-8 ahead of every other error. `stringify`
+  validates and copies its finished bytes; a consuming bytes-to-string
+  conversion could avoid that, as retained owned bytes could avoid the copy in
+  an owning file load. Any such operation must preserve [borrow
+  provenance](design.md#procedure-result-contracts), allocator ownership, and
+  [string invariants](design.md#string-type); `unsafe.string_view` still
+  validates. Evaluate one only if profiling makes the cost material.
 - **Typed record codecs.** Reflection-based encoding and decoding need explicit
   contracts for field names, missing versus null members, duplicates, numeric
   ranges, and union mappings before an API is chosen. A mutable document,
@@ -85,51 +90,39 @@ annotations. Three decisions remain open:
   normalized input needs its own design for unresolved cleanup and last-use
   decisions.
 - **The cost of normalization.** Against the measurements taken before the
-  normalized input was introduced, checking costs 7–14% more front-end time on
-  the selected workloads and 3–10% more per workspace LSP operation, while
-  compiler peak working set is 5–10% lower on the larger workloads.
+  normalized input was introduced, checking costs 7 to 14% more front-end time
+  on the selected workloads and 3 to 10% more per workspace LSP operation, while
+  compiler peak working set is 5 to 10% lower on the larger workloads.
   Normalization is the largest provenance phase in the current records, under
   "Completed migration (stage 5)" in the repository's
-  `bench/baselines/README.md`.
-  Whether to accept that cost or reduce it is open.
+  `bench/baselines/README.md`. Whether to accept that cost or reduce it is open.
 
 ## Compositional loan construction
 
 Loan construction had separate paths for subject views, ordinary borrows,
-traversal, loaded carriers, and outer carriers, and each pointer-copy fix
-added a context-specific repair. The first migration (2026-10-28) routes every
+traversal, loaded carriers, and outer carriers, and each pointer-copy fix added
+a context-specific repair. Three migrations in October 2026 replaced them: every
 access to a place reached through carriers, whether a load, borrow, store, or
-switch subject, through one walk of the normalized place, and gives a
-parameter's caller storage slots of its own. It is described in
-[Ownership, lifecycle, and provenance](compiler-architecture.md#ownership-lifecycle-and-provenance).
-Locals and parameters now behave alike. The through-reborrows, path-tagged uses,
-and kept-copy pass that parameters needed are gone, and so are the two
-reported gaps. A generated matrix,
-[borrow_matrix_test.odin](tests/borrow_matrix_test.odin), crosses eleven place
-forms with a copy, a payload binding, a read-only or mutable borrow, slice,
-or traversal, and sixteen uses beside each, in straight-line code, a branch,
-or a loop, against a model of the rules written apart from the compiler.
-
-The second migration gives a switch over a place reached through carriers a
-hold of that place, which a write through any carrier naming the same storage
-at an overlapping path conflicts with, resolved while solving
-(`prov_place_loan`, `.Through`). That closed the remaining gap, a store or
-call through the pointer replacing the payload a binding views.
-
-The third makes a borrow, slice, or `foreach` of a place reached through
-carriers, as `&h^.count` or `p^^.items[:]`, reborrow each carrier it goes
-through for that place only (`Prov_Reborrow.placed`), so another field stays
-usable beside it, as it does beside a borrow of a local's field.
+switch subject, goes through one walk of the normalized place; a parameter's
+caller storage has slots of its own, so locals and parameters behave alike; and
+a switch, a borrow, a slice, and a traversal of such a place each take one
+**place loan**, which every access through a carrier naming that storage is
+checked against (`Prov_Place_Loan`, `check_place_loans`). The mechanism is
+described in [Ownership, lifecycle, and
+provenance](compiler-architecture.md#ownership-lifecycle-and-provenance). A
+generated matrix, [borrow_matrix_test.odin](tests/borrow_matrix_test.odin),
+crosses eleven place forms with a copy, a payload binding, a read-only or
+mutable borrow, slice, or traversal, and eighteen uses beside each, in
+straight-line code, a branch, or a loop, against a model of the rules written
+apart from the compiler; `matrix_known_gap` lists the cases
+[known-gaps.md](known-gaps.md) records.
 
 Still open:
 
-- **Place loans through carriers.** Done: a switch, a borrow, a slice, and a
-  traversal of a place reached through carriers each take one place loan,
-  which every access through a carrier naming that storage is checked
-  against ([One place loan through carriers](#one-place-loan-through-carriers-proposal-2026-10-28)).
-  A view's elements are still one place: `&mut s[0]` suspends `s[1]`, and a
-  write to `s[1].first` conflicts with a switch over `s[0].first`
-  (decision 2 there).
+- **A view's elements.** A view's loans name its elements with a wildcard, so
+  they are one place: `&mut s[0]` suspends `s[1]`, and a write to
+  `s[1].first` conflicts with a switch over `s[0].first`. Making a constant
+  element its own place changes the path a view's access states.
 - **Calls.** A carrier handed to a call uses every mutable carrier it reaches.
   A per-parameter summary of what a body uses through each parameter could
   narrow that, as written-argument regions already do for stores.
@@ -138,131 +131,43 @@ Still open:
   went through (`Prov_Reborrow.via`), and reloading a temporary severs what was
   reborrowed from its previous value. Explicit reaching definitions would state
   them as one rule; evaluate that if another loop or branch form needs a fourth.
-- **Caller storage contents.** A store through a parameter's loan lands in
-  the caller slots standing for the storage it names, and replaces what one
-  held where that storage is one place reached through pointers
-  (`publish_into_caller`); a later load reads them (`read_caller_slots`).
-  Caller slots of different loans are taken to name different storage, so a
-  store through one is not seen through another that a cyclic structure
-  makes the same. A view's slots stand for all of its elements, so a store
-  through a slice parameter still joins into the parameter itself, as does a
-  store whose copies no reborrow links to where it lands, such as a whole
-  record's; [known-gaps.md](known-gaps.md) records a rejection the first
-  causes. Storage below the second load gets a loan per carrier only where
-  the storage above it is one place; through a view or past the last load
-  depth it is one slot.
+- **Caller storage contents.** A store through a parameter's loan lands in the
+  caller slots standing for the storage it names, and replaces what one held
+  where that storage is one place reached through pointers
+  (`publish_into_caller`); a later load reads them (`read_caller_slots`). Caller
+  slots of different loans are taken to name different storage, so a store
+  through one is not seen through another that a cyclic structure makes the
+  same. A view's slots stand for all of its elements, so a store through a slice
+  parameter still joins into the parameter itself, as does a store whose copies
+  no reborrow links to where it lands, such as a whole record's; known-gaps.md
+  records [a rejection the first
+  causes](known-gaps.md#a-store-through-a-slice-parameter-joins-into-the-parameter).
+  Storage below the second load gets a loan per carrier only where the storage
+  above it is one place; through a view or past the last load depth it is one
+  slot.
 - **Matrix coverage.** Slices and traversals are taken of a fixed array, so
   no use beside them reallocates storage, and nothing leaves a traversal or a
   loop early with `break` or `return`. A loop that takes afresh is the one
   shape whose legality differs from straight-line code's: an earlier
   iteration's store changes what the place holds.
 
-Language changes should be evaluated separately. The proposed
-[written public borrow contracts](#public-borrow-contracts-should-stand-on-their-own)
-could simplify call boundaries and library exceptions, but cannot repair local
+Language changes should be evaluated separately. The proposed [written public
+borrow contracts](#public-borrow-contracts-should-stand-on-their-own) could
+simplify call boundaries and library exceptions, but cannot repair local
 reborrow construction. Explicit reborrow syntax or move-only mutable carriers
-would change ergonomics and compatibility while leaving nested place access
-and implicit call reborrows to analyze. Do not adopt those changes solely to
-work around the current implementation. Revisit them only with concrete
-examples and a demonstrably smaller set of semantic rules.
-
-### One place loan through carriers (proposal, 2026-10-28)
-
-A borrow of a local's field is a loan of the root at that field's path, and
-everything else follows from the one rule. A borrow of a place reached
-through a carrier has no such loan, since which storage the carrier names is
-known only to the solve, so the second and third migrations each built a
-stand-in, and later fixes patched them:
-
-- A switch takes a hold, a snapshot of the carriers with the path below their
-  pointee, which `.Through` writes through any carrier sharing a loan with the
-  snapshot conflict with (now `prov_place_loan`, `check_place_loans`).
-- A borrow, slice, or `foreach` takes placed reborrows instead, of each
-  carrier on the way, matched by slot against uses tagged with a path
-  (`Prov_Reborrow.placed`, `Prov_Event.placed`, `graph.place_use`). The one
-  for the carrier holding the place waits for the destination through marker
-  slots (`prov_place_markers`, `prov_marked_place`), and the outer carriers
-  get theirs up front (`prov_reborrow_outer_carriers`).
-- A borrow's value was the carriers' own slots, so it did not say which place
-  it was of, and a call handed `&mut h^.count`, or a record holding it, wrote
-  all of `h^` until `Prov_Slot.offset` recorded the place below their
-  pointee.
-- A mutable borrow weakened at its destination must retract its `.Through`
-  and make its walk's reads read only (`through_block`, `through_index`,
-  `walk_reads`).
-
-The two used to answer differently where they overlapped. Beside
-`&h^.count`, `q := h` was rejected, as `q := &mut l` is beside `&l.count`;
-beside a switch binding of `h^.first`, it compiled. A mutable copy beside the
-switch is now rejected too.
-
-**Proposed model.** Every borrow of a place reached through carriers, a
-switch subject's view included, records one **place loan**: a snapshot slot
-of the carriers holding the place, the possible paths below their pointee, its
-capability, and its span. It is live while the snapshot or anything derived
-from it is, as a hold is now. A slot also records the paths below what its
-loans name (`Prov_Slot.offsets`): a place loan's snapshot has the loan's paths,
-a copy keeps its source's, and a slot defined from sources with different
-offsets keeps each of them, so a borrow through a
-pointer chosen between two field borrows is a loan of both fields, not of
-their parent, while an access through carriers pointing at different places,
-as a record holding two field borrows, is checked at each one's own. Every
-access through carriers then states the carriers, each path below their
-pointee extended by its offset, and
-whether it reads, writes, or uses the carrier whole, which a copy or a
-call argument does with its destination's capability. The solve checks each
-access against the live place loans sharing a loan with its carriers at an
-overlapping path, as `check_place_loans` checks writes now, and skips the
-place loan the accessing carriers derive from.
-
-It removed the placed reborrows, the use tags, the marker slots, the
-outer-carrier placed reborrows, `prov_unsaid_writes`, and `through_carriers`,
-and switch holds became place loans. Weakening a place loan clears its
-capability as it does a fresh loan's, but the walk bookkeeping for weakening
-stays: a weakened borrow still makes its walk's reads of the carriers reads
-only, which the reborrows of carriers copied out of storage, as
-`node := h^.head`, are checked against, and those stay as they are. A
-carrier read out of a local's field, as `s.h` in `&s.h^.count`, needs nothing
-of its own, since a place loan is matched by the storage it names, not by the
-slot read.
-
-**Decisions.**
-
-1. Accepted and implemented: a copy of the carrier, or a call given it,
-   beside a switch binding over a place through it is rejected, as it is
-   beside a borrow and beside a binding of a local's field. Code previously
-   accepted, as
-   `switch (h^.first) { case .some(n): q := h; q^.total = 2; use(n) }`, is
-   rejected: a breaking change with an upgrade note.
-2. Deferred: whether a view's constant element is its own place, so
-   `&mut s[0]` leaves `s[1]` free. A view's loans name its elements with a
-   wildcard today, so this changes the path a view's access states.
-
-**Steps.** Each lands alone, gated against the matrix and a corpus diff with
-the parent commit: holds as place loans, with no change in behavior (done:
-`Prov_Place_Loan` records its capability and what it lends); offsets
-on slots, with calls writing at an argument's offset and `prov_unsaid_writes`
-removed (done: `Prov_Slot.offset`, found from the marker slots until borrows
-are place loans too, which closed the conditional record gap); a place
-loan's liveness as a bit of the reach rows, carried to whatever derives from
-its snapshot (done: `place_bit`, `place_loan_use`); decision 1 (done: a copy
-into storage uses what the carrier reaches and a mutable one writes it, as a
-call argument does, `prov_use_copied`); borrows, slices, and
-traversals as place loans, removing the placed reborrows, tags, and markers,
-with weakening clearing a place loan's capability (done: every access
-through carriers is a `.Through` read or write, a borrow's value is its
-snapshot, and what is loaded through a borrow carries its bit,
-`carry_place_bits`, which also exempts the cyclic writes in a
-[known gap](known-gaps.md#a-write-through-a-pointer-read-out-of-a-borrowed-place-is-not-checked-against-it)).
-The walk bookkeeping for weakening stays: a weakened borrow still turns its
-walk's reads of the carriers into reads only, for the reborrows of carriers
-copied out of storage. A store in a loop beside a borrow through a parameter
-is rejected for more place forms than before
-([known gap](known-gaps.md#a-store-through-a-carrier-loaded-from-a-parameter-joins-into-the-parameter)).
+would change ergonomics and compatibility while leaving nested place access and
+implicit call reborrows to analyze. Do not adopt those changes solely to work
+around the current implementation. Revisit them only with concrete examples and
+a demonstrably smaller set of semantic rules.
 
 ## Package and import versioning
 
-Should import paths encode package versions? And should a package declaration remain mandatory in every file, when every file in a directory must name the same package anyway, or is it ceremony? The current version requires the declaration and leaves dependency versions to the build system or package manager. A future package design may need reproducible version selection without making source imports depend on a particular registry.
+Should import paths encode package versions? And should a package declaration
+remain mandatory in every file, when every file in a directory must name the
+same package anyway, or is it ceremony? The current version requires the
+declaration and leaves dependency versions to the build system or package
+manager. A future package design may need reproducible version selection without
+making source imports depend on a particular registry.
 
 Decided so far, and built as `loke.project` (compiler-guide.md "Projects"):
 
@@ -280,13 +185,13 @@ Decided so far, and built as `loke.project` (compiler-guide.md "Projects"):
   without requiring it; a later version may require the direct `require`.
 - The manifest is plain `require <name> <path>` lines, trivial to parse now and
   in a self-hosted compiler.
-- Dependencies are local directories. When versioned sources arrive (a git
-  URL and tag, fetched into a cache outside the compiler front end), the
-  version chosen is the highest minimum any manifest asks for, as Go's minimal
-  version selection does: deterministic without a solver. Version selection
-  alone does not pin source content: the lock must record the selected source,
-  version, immutable commit ID, and content checksum for every dependency, as
-  planned in [Packages and dependencies](future-plans.md#packages-and-dependencies).
+- Dependencies are local directories. When versioned sources arrive (a git URL
+  and tag, fetched into a cache outside the compiler front end), the version
+  chosen is the highest minimum any manifest asks for, as Go's minimal version
+  selection does: deterministic without a solver. Version selection alone does
+  not pin source content: the lock must record the selected source, version,
+  immutable commit ID, and content checksum for every dependency, as planned in
+  [Packages and dependencies](future-plans.md#packages-and-dependencies).
 
 ### Before versioned sources
 
@@ -323,30 +228,31 @@ and explicit update boundary are already covered by
 
 ## Using a package without reading its code (proposal, 2026-10-21)
 
-Hand-written documentation goes stale, because nothing checks it. The
-proposal: what a package tells its users is generated from its source, checked
-by the compiler, or run by the test runner, and prose is kept for intent, which
-goes stale slowest. Its first two steps and its seventh are built:
-[`///` doc comments](design.md#comments), whose reasons are in
-[comments.md](comments.md#doc-comments-start-with-), a checked-in
-[interface file](compiler-guide.md#interface-files), `api.loki`, generated and
-never read for the reasons in
-[Hand-written package header files](comments.md#hand-written-package-header-files),
-and [`@(intrinsic)`](design.md#intrinsic) declarations of the names the
-compiler supplies, whose reasons are in
-[comments.md](comments.md#compiler-supplied-names-are-declared-in-source).
-The rest is a proposal for review, not yet a plan of record: once accepted, its
-plan moves to [future-plans.md](future-plans.md) and the language rules to
+Hand-written documentation goes stale, because nothing checks it. The proposal:
+what a package tells its users is generated from its source, checked by the
+compiler, or run by the test runner, and prose is kept for intent, which goes
+stale slowest. Its first two steps and its seventh are built: [`///` doc
+comments](design.md#comments), whose reasons are in
+[comments.md](comments.md#doc-comments-start-with-), a checked-in [interface
+file](compiler-guide.md#interface-files), `api.loki`, generated and never read
+for the reasons in [Hand-written package header
+files](comments.md#hand-written-package-header-files), and
+[`@(intrinsic)`](design.md#intrinsic) declarations of the names the compiler
+supplies, whose reasons are in
+[comments.md](comments.md#compiler-supplied-names-are-declared-in-source). The
+rest is a proposal for review, not yet a plan of record: once accepted, its plan
+moves to [future-plans.md](future-plans.md) and the language rules to
 [design.md](design.md).
 
 ### Proposed steps
 
 The compiler infers whether a result borrows an argument and from which
-allocator it comes (the [result contract](design.md#procedure-result-contracts)),
-and whether a call writes package state (the
-[write effect](design.md#global-write-effects)). Neither `-doc`, hover, nor the
-interface file shows them, so a reader opens the body to learn them. The
-proposal continues at step 3; steps 1, 2, and 7 are the built ones above.
+allocator it comes (the [result
+contract](design.md#procedure-result-contracts)), and whether a call writes
+package state (the [write effect](design.md#global-write-effects)). Neither
+`-doc`, hover, nor the interface file shows them, so a reader opens the body to
+learn them. The proposal continues at step 3; steps 1, 2, and 7 are the built
+ones above.
 
 **3. Inferred facts are shown, one line each.** The interface file and hover
 add an `// inferred:` line to a public procedure for its result contract and
@@ -415,8 +321,8 @@ Each step is one or more commits that update the spec, implementation, tests,
 citing comments, and CHANGELOG together, and passes `.\test-all.ps1`. The
 steps are in priority order; each is usable without the next.
 
-1. **`///` doc comments** — done on 2026-10-21.
-2. **The interface file** — done on 2026-10-21.
+1. **`///` doc comments**: done on 2026-10-21.
+2. **The interface file**: done on 2026-10-21.
 3. **Inferred lines.**
    - `src/doc.odin`: the result contract from `result_summary`
      (`src/borrow.odin`) and the write effect from `c.global_writes`
@@ -457,7 +363,7 @@ steps are in priority order; each is usable without the next.
    - [compiler-guide.md](compiler-guide.md): `-doc` and the comment subset.
      CHANGELOG: Changed, with an upgrade note for scripts that read `-doc`'s
      Markdown.
-7. **Compiler-contributed declarations** — done on 2026-10-27.
+7. **Compiler-contributed declarations**: done on 2026-10-27.
 
 ### Still open
 
@@ -481,9 +387,10 @@ steps are in priority order; each is usable without the next.
 references showed the bundled packages doing it in three ways, which the
 interface files now show, marked private:
 
-- a public field of a private type: `fmt.Padded`'s `fill: Fill`. An importer
-  can read and write the field but cannot name its type, so it cannot declare
-  a `Fill` variable or pass one through its own procedures;
+- a public field of a private type, which `fmt.Padded` had as `fill: Fill`
+  until its fields were made private. An importer could read and write the
+  field but not name its type, so it could not declare a `Fill` variable or
+  pass one through its own procedures;
 - a private procedure in a public `where` clause: `core:time`'s `is_styled`;
 - private procedures behind a public overload group: `thread.spawn`,
   `runtime.shared` and `try_shared`, and `container.Small_Array`'s `append`.
@@ -496,20 +403,45 @@ signature, and Go allows an unexported return type although its documentation
 cannot then describe the type. The options are to keep allowing all of it, as
 now; to warn when a public signature or public field names a private type, or
 a public `where` clause a private procedure, but not for a group's members;
-or to make that an error. The warning would make `fmt.Fill` public and keep
-the interface writer's private notes for groups only.
+or to make that an error. The warning would leave the interface writer's
+private notes to groups only.
 
 ## The `op`/`try_op` pair
 
-Should a container keep both spellings of a fallible operation? `append`/`try_append`, `reserve`/`try_reserve`, and the rest double the container API over a failure-policy choice. Typed fallibility made the fallible variant cheap — a `try_` operation reports failure as a `Result` rather than a bare `bool`, over an ordinary library union with `@(failure=...)` and no compiler-known error type — which is what makes keeping both spellings need re-justifying. Every shipped container keeps its pair today; collapsing them is a separate decision with its own migration.
+Should a container keep both spellings of a fallible operation?
+`append`/`try_append`, `reserve`/`try_reserve`, and the rest double the
+container API over a failure-policy choice. Typed fallibility made the fallible
+variant cheap: a `try_` operation reports failure as a `Result` rather than a
+bare `bool`, over an ordinary library union with `@(failure=...)` and no
+compiler-known error type. That is what makes keeping both spellings need
+re-justifying. Every shipped container keeps its pair today; collapsing them is
+a separate decision with its own migration.
 
-The language pairs a fallible operation with a policy-following one in a second place: the compiler-generated [`clone`/`try_clone`](design.md#lifecycle-hooks-and-resource-types). The shape is identical, so the two are one question asked twice — but they are not one answer, for two reasons that the container pair does not share.
+The language pairs a fallible operation with a policy-following one in a second
+place: the compiler-generated
+[`clone`/`try_clone`](design.md#lifecycle-hooks-and-resource-types). The shape
+is identical, so the two are one question asked twice, but they are not one
+answer, for two reasons that the container pair does not share.
 
-The pair costs a type author nothing. Both names are generated from the single `hook(copy)` role, so a record supplies one implementation and receives both spellings; a container supplies two implementations, two doc entries, and two test paths per operation. Duplication in the generated pair is two names, not two bodies.
+The pair costs a type author nothing. Both names are generated from the single
+`hook(copy)` role, so a record supplies one implementation and receives both
+spellings; a container supplies two implementations, two doc entries, and two
+test paths per operation. Duplication in the generated pair is two names, not
+two bodies.
 
-And the policy-following half is load-bearing rather than convenient. Copy assignment of a copyable type is *defined* as `try_clone` plus the [allocation failure policy](design.md#allocation-failure), and [`Cloneable`](design.md#standard-interface-catalogue) names the fallible slot, so both halves already have language-level jobs. Deleting `clone` would not remove the policy call, only move it to every call site that copies. A container `try_op` carries no equivalent obligation, which is what leaves the container pair the live half of the question.
+And the policy-following half is load-bearing rather than convenient. Copy
+assignment of a copyable type is *defined* as `try_clone` plus the [allocation
+failure policy](design.md#allocation-failure), and
+[`Cloneable`](design.md#standard-interface-catalogue) names the fallible slot,
+so both halves already have language-level jobs. Deleting `clone` would not
+remove the policy call, only move it to every call site that copies. A container
+`try_op` carries no equivalent obligation, which is what leaves the container
+pair the live half of the question.
 
-The allocation built-ins are a third instance, and they keep the pair: `box`/`try_box`, `make`/`try_make`, and `unsafe.new`/`unsafe.try_new` (see [The allocation built-ins follow the `try_` convention](comments.md#the-allocation-built-ins-follow-the-try_-convention)).
+The allocation built-ins are a third instance, and they keep the pair:
+`box`/`try_box`, `make`/`try_make`, and `unsafe.new`/`unsafe.try_new` (see [The
+allocation built-ins follow the `try_`
+convention](comments.md#the-allocation-built-ins-follow-the-try_-convention)).
 
 One alternative is a single fallible operation per container, with the policy
 chosen at the call site. In this sketch `append` has today's `try_append`
@@ -539,7 +471,8 @@ outweighs the smaller API.
 
 ## Pure procedures
 
-Should there be a form of procedure, distinct from `proc`, that is guaranteed by the compiler to be free of side effects?
+Should there be a form of procedure, distinct from `proc`, that is guaranteed by
+the compiler to be free of side effects?
 
 Compile-time evaluation no longer requires a second procedure kind: an ordinary
 procedure is evaluated contextually when its executed path is admissible. A
@@ -569,28 +502,27 @@ its sink for the call, and a logger lends process-lifetime storage, both through
 ### What a capture literal's `call` cannot do
 
 A literal's `call` takes a plain `self`, so it reads its captures and writes
-through `&mut` ones.
-What a plain `self` cannot do is keep mutable state inside the callable, or
-hand a capture away when called and so be callable once. Both matter only for
-a callable that outlives its scope: a stored generator, a deferred job, a
-thread worker. Those wait on
-[Owning runtime polymorphism](#owning-runtime-polymorphism) and
-[Thread transfer needs a visible contract](#thread-transfer-needs-a-visible-contract).
-Revisit `inout` and `move` calls when the first API takes such a callable; the
-receiver mode is then written, for example on the clause.
+through `&mut` ones. What a plain `self` cannot do is keep mutable state inside
+the callable, or hand a capture away when called and so be callable once. Both
+matter only for a callable that outlives its scope: a stored generator, a
+deferred job, a thread worker. Those wait on [Owning runtime
+polymorphism](#owning-runtime-polymorphism) and [Thread transfer needs a visible
+contract](#thread-transfer-needs-a-visible-contract). Revisit `inout` and `move`
+calls when the first API takes such a callable; the receiver mode is then
+written, for example on the clause.
 
 ### Returning a capture literal
 
-No signature can name a capture literal's type, so it cannot be returned or
-held in a file-scope type.
-A callable that is returned or kept past its frame is either a file-scope
-record written by hand or an owning erased value under
+No signature can name a capture literal's type, so it cannot be returned or held
+in a file-scope type. A callable that is returned or kept past its frame is
+either a file-scope record written by hand or an owning erased value under
 [Owning runtime polymorphism](#owning-runtime-polymorphism). Revisit when the
 first returned closure is needed. One answer then is an opaque result type,
-`-> some interfaces.Callable(proc(a, b: int) -> bool)`, as Rust's `-> impl Fn` is; it makes a caller depend
-on the body for the result's size, which works against
-[Public borrow contracts should stand on their own](#public-borrow-contracts-should-stand-on-their-own),
-and it overlaps an owning `dyn`.
+`-> some interfaces.Callable(proc(a, b: int) -> bool)`, as Rust's `-> impl Fn`
+is; it makes a caller depend on the body for the result's size, which works
+against [Public borrow contracts should stand on their
+own](#public-borrow-contracts-should-stand-on-their-own), and it overlaps an
+owning `dyn`.
 
 ### Compile-time capture literals
 
@@ -602,10 +534,10 @@ compile-time use appears.
 
 A [`dyn proc` view](design.md#borrowed-callable-views) is read-only, since a
 `call` takes a plain `self`: it reads its captures and writes through a `&mut`
-one. Revisit `dyn mut proc` with the `inout` call in
-[What a capture literal's `call` cannot do](#what-a-capture-literals-call-cannot-do):
-a callable that keeps mutable state inside itself would need a mutable view to
-be called through one.
+one. Revisit `dyn mut proc` with the `inout` call in [What a capture literal's
+`call` cannot do](#what-a-capture-literals-call-cannot-do): a callable that
+keeps mutable state inside itself would need a mutable view to be called through
+one.
 
 ## Owning runtime polymorphism
 
@@ -626,26 +558,31 @@ those questions and never allocates. The decided
 for a payload whose type is known; `Box(dyn I)` would still need erased clone
 and drop, and the payload's size and alignment from the witness.
 
-Note that the witness is currently a mechanism with no user-visible spelling: the
-compiler builds one for each `(Interface, Concrete, arguments...)` tuple reached
-by a `dyn` conversion, and nothing materializes it as a value. An earlier draft
-exposed `witness_of` and a compiler-defined `Witness(...)` type for exactly this
-future owner, which meant fixing a layout, a zero value, an invalid-witness panic
-rule, and a normative slot-flattening order for a consumer that did not exist.
-Whichever way the question above is answered, the primitive comes back with the
-owner that needs it.
+Note that the witness is currently a mechanism with no user-visible spelling:
+the compiler builds one for each `(Interface, Concrete, arguments...)` tuple
+reached by a `dyn` conversion, and nothing materializes it as a value. An
+earlier draft exposed `witness_of` and a compiler-defined `Witness(...)` type
+for exactly this future owner, which meant fixing a layout, a zero value, an
+invalid-witness panic rule, and a normative slot-flattening order for a consumer
+that did not exist. Whichever way the question above is answered, the primitive
+comes back with the owner that needs it.
 
 ## Concurrency refinements
 
-The current [memory model](design.md#concurrency-and-the-memory-model) defines data races, atomics, transfer between threads, and `Shared(T)`. Experience with a real concurrent runtime should determine whether later versions need compiler-checked `Send` or `Sync` interfaces, additional atomic orderings, or a thread-affine owning type for code that wants non-atomic reference counts.
+The current [memory model](design.md#concurrency-and-the-memory-model) defines
+data races, atomics, transfer between threads, and `Shared(T)`. Experience with
+a real concurrent runtime should determine whether later versions need
+compiler-checked `Send` or `Sync` interfaces, additional atomic orderings, or a
+thread-affine owning type for code that wants non-atomic reference counts.
 
-The cost of keeping immutable `string` safe to copy and drop across threads is treated separately under [Thread-affine strings](#thread-affine-strings).
+The cost of keeping immutable `string` safe to copy and drop across threads is
+treated separately under [Thread-affine strings](#thread-affine-strings).
 
-Higher-level constructs are a separate question: futures or a similar
-composable asynchronous result, and language help for reactivity, such as a
-procedure rerun when a variable it reads changes. Each needs a use of its own;
-[Thread transfer needs a visible contract](#thread-transfer-needs-a-visible-contract)
-already rules them out as the answer to borrowing across a join.
+Higher-level constructs are a separate question: futures or a similar composable
+asynchronous result, and language help for reactivity, such as a procedure rerun
+when a variable it reads changes. Each needs a use of its own; [Thread transfer
+needs a visible contract](#thread-transfer-needs-a-visible-contract) already
+rules them out as the answer to borrowing across a join.
 
 `Once` in `core:sync` spins without yielding while another thread runs its
 action, and `sync.Lazy(T)`'s `get` spins the same way while another task runs
@@ -696,32 +633,42 @@ an untyped token macro system by default.
 
 ## Recoverable panics
 
-Loke makes a panic unrecoverable: unwinding runs `defer`s and managed
-`drop`s for cleanup, but there is no `recover`, `try`, or catch construct that
-lets Loke code observe or resume from one. The [panic semantics](design.md#panics-and-unwinding)
-are otherwise fully defined, including the two build-selected strategies.
+Loke makes a panic unrecoverable: unwinding runs `defer`s and managed `drop`s
+for cleanup, but there is no `recover`, `try`, or catch construct that lets Loke
+code observe or resume from one. The [panic
+semantics](design.md#panics-and-unwinding) are otherwise fully defined,
+including the two build-selected strategies.
 
 The open question is whether a later version should add a bounded recovery
-mechanism — a per-thread catch at a task or request boundary, say — without
+mechanism (a per-thread catch at a task or request boundary, say) without
 reintroducing general exceptions. The appeal is server code that wants to fail
 one request rather than the process; the cost is a second control-flow path that
 every `drop` hook and `defer` would have to be correct under, and the temptation
-to use it as ordinary error handling in place of [`or_return`](design.md#or_return-operator).
-Not required by anything in this document.
+to use it as ordinary error handling in place of
+[`or_return`](design.md#or_return-operator). Not required by anything in this
+document.
 
-## intrinsics and inline assembly
+## Intrinsics and inline assembly
 
-How to add some suport to go even more low level and use SIMD efficiently, Intrinsic or inline assembly?
+How should a program reach the instructions the language does not express,
+to use SIMD and other hardware features fully: compiler intrinsics, inline
+assembly, or both? `Simd(T, N)` covers lane-wise arithmetic; what it leaves
+out is the target-specific instruction.
 
-## abstraction over SOA
+## Abstraction over SOA
 
-Is it the programers responsibility to abstract ove the right thing or does the language need some help with that?
+Is laying data out as a structure of arrays the programmer's responsibility,
+through ordinary records of arrays, or does the language need to help, for
+example with a layout attribute that keeps the field-access syntax of an array
+of structures?
 
 ## LLM optimization
 
-token optimization, can the syntax be made to be token efficient?
-LLM readability and writability, how does that differ from humans? LLM's are trained on human data but works differently.
-Encapsulation and abstractions must still be important so they can work on an part of the code.
+Could the syntax be made token-efficient for language models without making
+it worse for people? How a model reads and writes code differs from how a
+person does: models are trained on human-written code yet process it
+differently. Encapsulation and abstraction stay important either way, so that
+a model can work on one part of a program without reading the rest.
 
 ## Open questions in `core:strconv`
 
@@ -757,7 +704,7 @@ measured on 2026-10-27:
   becomes a constant.
 
 The proposed fix implements the functions in Loke, **correctly rounded**,
-porting CORE-MATH (MIT licence). They would use only the `+ - * /` and
+porting CORE-MATH (MIT license). They would use only the `+ - * /` and
 `math.fma` that design.md "Floating-point operators" already pins. Replacing an
 algorithm's `fma` with an exact two-part product is possible, but needs a
 correctness argument for that algorithm over its full range. A correctly
@@ -771,11 +718,11 @@ multiply-add is itself correctly rounded. Porting fdlibm or musl instead would
 also be deterministic, but it would freeze one algorithm's bits, so a bug fix
 would be a breaking change, and it would match no other implementation.
 
-The cost is code and time. On the measuring machine the UCRT takes about
-8.4 ns per `sin` or `cos`, 7.2 ns per `exp` or `log`, and 17 ns per `pow` on
-its FMA3 path, and 10.5, 8.2, and 24 ns on its legacy path. The estimate,
-without hardware FMA, is 1.5–2× that for `exp`, `log`, `sin`, and `cos` and
-2–3× for `pow`, and close to today's speed with it; a prototype `exp` would
+The cost is code and time. On the measuring machine the UCRT takes about 8.4 ns
+per `sin` or `cos`, 7.2 ns per `exp` or `log`, and 17 ns per `pow` on its FMA3
+path, and 10.5, 8.2, and 24 ns on its legacy path. The estimate, without
+hardware FMA, is 1.5 to 2 times that for `exp`, `log`, `sin`, and `cos` and 2 to
+3 times for `pow`, and close to today's speed with it; a prototype `exp` would
 measure it. Open:
 
 - Is cross-machine identity worth the code and the slowdown?
@@ -784,9 +731,10 @@ measure it. Open:
 - Should the C library's versions stay available under other names for
   callers who prefer speed to identity?
 
-The [deterministic math and CPU targeting plan](deterministic-math-and-targets-plan.md)
-proposes answers: a separate correctly rounded package first, platform math
-kept, and a decision on the default after measurement.
+The [deterministic math and CPU targeting
+plan](deterministic-math-and-targets-plan.md) proposes answers: a separate
+correctly rounded package first, platform math kept, and a decision on the
+default after measurement.
 
 ### Targeting x86-64 levels
 
@@ -801,19 +749,19 @@ which every 64-bit x86 processor runs. The higher levels are:
 
 Steam's survey, as quoted in the Flax Engine's
 [commits](https://git.flaxengine.com/Flax/FlaxEngine/commit/d1774cac28988b46bd1de87aec26745ae71fcb48),
-put SSE4.2 at 99.78% (September 2025) and AVX2 at 94.48% (May 2025). Windows
-on Arm emulates AVX2 and FMA for x64 programs from Windows 11 24H2.
+put SSE4.2 at 99.78% (September 2025) and AVX2 at 94.48% (May 2025). Windows on
+Arm emulates AVX2 and FMA for x64 programs from Windows 11 24H2.
 
 A level does not change determinism: `+ - * /` and `sqrt` give the same bits on
 every level, and Loke's IR never allows fusion (design.md "Floating-point
 operators"). The IR is not the only control, though: Clang's `-ffp-contract`
 also sets the backend's fusion mode, and the runtime's C sources get Clang's
 default, which fuses within an expression. A level option would need
-`-ffp-contract=off` on every Clang command and a test of that. It changes speed: v2 adds POPCNT and, if `floor` and its
-kin were bound to LLVM intrinsics instead of the C library, inline rounding;
-v3 adds 256-bit vectorization, hardware FMA, and BMI. A program built for a
-level crashes with an illegal instruction on a processor without it, unless
-the runtime checks first and reports it. Open:
+`-ffp-contract=off` on every Clang command and a test of that. It changes speed:
+v2 adds POPCNT and, if `floor` and its kin were bound to LLVM intrinsics instead
+of the C library, inline rounding; v3 adds 256-bit vectorization, hardware FMA,
+and BMI. A program built for a level crashes with an illegal instruction on a
+processor without it, unless the runtime checks first and reports it. Open:
 
 - Should the default move to v2, which costs almost nothing?
 - Should `lokec` offer an opt-in level, such as `-cpu=x86-64-v3`, with that
@@ -821,9 +769,10 @@ the runtime checks first and reports it. Open:
 - Or should the standard library choose at run time where it matters, as the
   correctly rounded functions could with FMA, leaving one baseline?
 
-The [deterministic math and CPU targeting plan](deterministic-math-and-targets-plan.md#cpu-targets-and-fma)
-proposes keeping baseline as the default, an opt-in `-cpu` level with a
-startup check, and run-time dispatch later only where measured.
+The [deterministic math and CPU targeting
+plan](deterministic-math-and-targets-plan.md#cpu-targets-and-fma) proposes
+keeping baseline as the default, an opt-in `-cpu` level with a startup check,
+and run-time dispatch later only where measured.
 
 ## Open questions in `core:random`
 
@@ -831,19 +780,19 @@ startup check, and run-time dispatch later only where measured.
 
 The distributions call `core:math`'s `exp`, `log`, or `pow`, which are not
 deterministic even on one platform: the C library picks its algorithm by the
-processor's features (see
-[Deterministic math functions](#deterministic-math-functions)). `normal` and
-`exponential` do so only for a wedge or tail value. A seeded sequence can
-therefore differ between two machines running the same executable: rarely for
-those two, often for the others, and a different count from `poisson` or
-`binomial` shifts every later draw. Correctly rounded functions in Loke would
-remove the dependence on the processor and platform, and would also let the
-distributions run at compile time. Switching a distribution to them changes
-its sequence, though, so reproducible distributions also need a pinned,
-versioned algorithm and draw order
-([plan](deterministic-math-and-targets-plan.md#lockstep-integration-and-versioning)). Is
-identity across machines worth that code, or should the contract say that only
-the generators and the integer and `unit` mappings are reproducible?
+processor's features (see [Deterministic math
+functions](#deterministic-math-functions)). `normal` and `exponential` do so
+only for a wedge or tail value. A seeded sequence can therefore differ between
+two machines running the same executable: rarely for those two, often for the
+others, and a different count from `poisson` or `binomial` shifts every later
+draw. Correctly rounded functions in Loke would remove the dependence on the
+processor and platform, and would also let the distributions run at compile
+time. Switching a distribution to them changes its sequence, though, so
+reproducible distributions also need a pinned, versioned algorithm and draw
+order
+([plan](deterministic-math-and-targets-plan.md#lockstep-integration-and-versioning)).
+Is identity across machines worth that code, or should the contract say that
+only the generators and the integer and `unit` mappings are reproducible?
 
 ### More generators and distributions
 
@@ -952,10 +901,11 @@ copyable, and nothing already in the package changes.
 
 ## Formatting
 
-The current formatter rules and rationale are in [comments.md "Formatting"](comments.md#formatting).
+The current formatter rules and rationale are in [comments.md
+"Formatting"](comments.md#formatting).
 
 Open: aligning columns automatically, as `gofmt` does, so a renamed field
-does not leave its neighbours misaligned; and indenting a continued line
+does not leave its neighbors misaligned; and indenting a continued line
 inside brackets, which `core/` leaves at the bracket's level.
 
 ## Language design review (2026-10-03)
@@ -983,10 +933,10 @@ fewer exceptions, rather than shortening keywords.
 | Later | Localize unchecked operations | Unsafe obligations are visible where introduced | Syntax and APIs |
 | Later | Checked thread transfer | Fewer races outside scoped tasks | Thread APIs and capabilities |
 
-Checked disjoint access was adopted (2026-10-22) as
-[Splitting a mutable slice](design.md#splitting-a-mutable-slice), for the
-reasons in [comments.md](comments.md#splitting-a-mutable-slice-is-compiler-known),
-and scoped workers as [Structured concurrency](design.md#structured-concurrency).
+Checked disjoint access was adopted (2026-10-22) as [Splitting a mutable
+slice](design.md#splitting-a-mutable-slice), for the reasons in
+[comments.md](comments.md#splitting-a-mutable-slice-is-compiler-known), and
+scoped workers as [Structured concurrency](design.md#structured-concurrency).
 
 Try each on concrete programs before deciding: a parser, a resource container,
 a sorting or partitioning algorithm, and a parallel numeric kernel.
@@ -1059,8 +1009,8 @@ The emitted-IR source does not currently spell general `noalias`/`readonly`
 parameter attributes. That is an implementation opportunity, not evidence that
 LLVM never infers them. Read-only capability alone is insufficient to promise
 memory cannot change: atomic operations intentionally write through read-only
-receivers, and foreign/unchecked aliases need their own contract. Follow
-[LLVM's attribute requirements](https://llvm.org/docs/LangRef.html#parameter-attributes)
+receivers, and foreign/unchecked aliases need their own contract. Follow [LLVM's
+attribute requirements](https://llvm.org/docs/LangRef.html#parameter-attributes)
 precisely rather than applying them to every `mut` or read-only type.
 
 Some transformations really are forbidden. Turning ordered floating additions
@@ -1117,15 +1067,15 @@ case.
 
 ### Thread transfer needs a visible contract
 
-Answered for work joined before its caller continues.
-[Structured concurrency](design.md#structured-concurrency) adds `parallel`
-blocks whose tasks keep their argument borrows until a join the block owns,
-which survives every early exit and cannot be skipped by `unsafe.forget`. The
-checks a task needs are inferred rather than declared through `Send` and
-`Sync`, apart from `@(thread_affine)`, `@(synchronized)`, and
-`@(cross_thread)`; [comments.md](comments.md#tasks-that-borrow-joined-by-their-block)
-gives the reasons. Futures, async syntax, and reactive variables were not
-needed to borrow across a join.
+Answered for work joined before its caller continues. [Structured
+concurrency](design.md#structured-concurrency) adds `parallel` blocks whose
+tasks keep their argument borrows until a join the block owns, which survives
+every early exit and cannot be skipped by `unsafe.forget`. The checks a task
+needs are inferred rather than declared through `Send` and `Sync`, apart from
+`@(thread_affine)`, `@(synchronized)`, and `@(cross_thread)`;
+[comments.md](comments.md#tasks-that-borrow-joined-by-their-block) gives the
+reasons. Futures, async syntax, and reactive variables were not needed to borrow
+across a join.
 
 Still open:
 
@@ -1153,15 +1103,15 @@ and standard-library.md under [`core:thread`](standard-library.md#corethread).
 These questions remain; none blocks what is built.
 
 1. **Erased callables at a spawn.** A spawned call may go through a procedure
-   value or a `dyn` view, and the effects follow the callbacks each call
-   passes. A view that arrives erased, as a parameter or stored local, is
-   checked through every type converted to its interface application
-   (answered 2026-10-27; see [Sharing with tasks](design.md#sharing-with-tasks)),
-   and a call through it takes its slot's whole effect union. What remains is
-   precision: one conversion of a mutable or thread-affine type anywhere
-   rejects every erased view of that application, and one fill writing a
-   global rejects every call through it. Public callable-effect contracts,
-   which would bound both, need a separate demonstrated requirement.
+   value or a `dyn` view, and the effects follow the callbacks each call passes.
+   A view that arrives erased, as a parameter or stored local, is checked
+   through every type converted to its interface application (answered
+   2026-10-27; see [Sharing with tasks](design.md#sharing-with-tasks)), and a
+   call through it takes its slot's whole effect union. What remains is
+   precision: one conversion of a mutable or thread-affine type anywhere rejects
+   every erased view of that application, and one fill writing a global rejects
+   every call through it. Public callable-effect contracts, which would bound
+   both, need a separate demonstrated requirement.
 
    The same union lets a task read through a `dyn` stored in a global, except
    a `dyn fmt.Formattable`, which stays unknown since printing builds its
@@ -1277,15 +1227,15 @@ These parts are open:
 
 ## Anonymous unions and their follow-ups (2026-10-18)
 
-A design exploration of 2026-10-17 and the proposal that followed it led to
-five adopted changes: [Success returns](design.md#success-returns),
-[Anonymous unions](design.md#anonymous-unions),
-[Widening by label](design.md#widening-by-label),
-[Per-variant switch cases](design.md#per-variant-switch-cases), and
-[Union argument expansion](design.md#union-argument-expansion). comments.md records why,
+A design exploration of 2026-10-17 and the proposal that followed it led to five
+adopted changes: [Success returns](design.md#success-returns), [Anonymous
+unions](design.md#anonymous-unions), [Widening by
+label](design.md#widening-by-label), [Per-variant switch
+cases](design.md#per-variant-switch-cases), and [Union argument
+expansion](design.md#union-argument-expansion). comments.md records why,
 including why `Result`, `Option`, and `Status` remain the fallible boundaries
-([Anonymous unions](comments.md#anonymous-unions)). What the proposal left
-open follows.
+([Anonymous unions](comments.md#anonymous-unions)). What the proposal left open
+follows.
 
 ### Generic implementations on structural shapes
 
@@ -1302,10 +1252,10 @@ when a program wants methods on a family of shapes.
 Anonymous unions remove declarations but make signatures longer. A plain alias
 already shortens a signature, as `Io_Status :: Status(Io_Error);` and
 `Config_Error :: (io: io.Error | parse: Parse_Error);` do, and a named shape
-still widens and still matches another package's identical shape. What a plain alias
-cannot do is fix one argument of a generic: `Result(T, io.Error)` needs `io` to
-name `Result($T, Error)` once, as Rust's `io::Result` does. That is a separate
-generics feature with its own design. It would not merge `Status` into
+still widens and still matches another package's identical shape. What a plain
+alias cannot do is fix one argument of a generic: `Result(T, io.Error)` needs
+`io` to name `Result($T, Error)` once, as Rust's `io::Result` does. That is a
+separate generics feature with its own design. It would not merge `Status` into
 `Result`, whose end-of-body rule differs, but it would have let `Status` be an
 alias; see [Error handling](#error-handling-2026-10-13).
 
@@ -1348,10 +1298,10 @@ Open points:
 
 The cost is visibility. The caller's full set no longer shows in its signature,
 only in hover and documentation, and a helper that adds an alternative grows
-every set that spreads it. Each caller's `switch` then fails to compile until
-it handles the new label, which is the intended signal. Compare it with
-restating the labels in the [representative programs](#evaluating-on-representative-programs)
-before deciding.
+every set that spreads it. Each caller's `switch` then fails to compile until it
+handles the new label, which is the intended signal. Compare it with restating
+the labels in the [representative
+programs](#evaluating-on-representative-programs) before deciding.
 
 ### Per-variant expansion
 
