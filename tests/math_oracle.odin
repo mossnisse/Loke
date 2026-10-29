@@ -1,6 +1,6 @@
 // deterministic-math-and-targets-plan.md "Validation and performance gates": an
-// oracle for the correctly rounded `exp`, `log`, `sin`, and `cos` of `f64` and
-// `f32`, with the special cases of the reproducible contract.
+// oracle for the correctly rounded `exp`, `log`, `sin`, `cos`, and `pow` of
+// `f64` and `f32`, with the special cases of the reproducible contract.
 //
 // Each result is an interval of integers at a scale of `2^-precision`, every
 // step rounded outward, so the true value is always inside it. When both ends
@@ -8,7 +8,8 @@
 // is monotone; otherwise the precision doubles (Ziv's strategy). The search
 // ends because none of these functions has a dyadic value at a dyadic
 // argument other than the special cases handled first, so no result is a
-// midpoint. Host `libm` is never consulted.
+// midpoint; pow, which has, rounds its dyadic results exactly first. Host
+// `libm` is never consulted.
 package tests
 
 import "core:fmt"
@@ -159,9 +160,15 @@ exp_attempt :: proc(o: ^Oracle, x: f64, format: Float_Format, w: int) -> (u64, b
 	// Far past both ends of either format: the result rounds to infinity or 0.
 	if x > 1000 {return infinity_bits(format), true}
 	if x < -1100 {return 0, true}
+	return exp_of_interval(o, scaled_argument(x, w + 16), x, format, w)
+}
+
+// exp of a value in `scaled`, an interval at a scale of 2^-(w + 16), whose
+// nearest `f64` is about `x`, which is within the range of `exp_attempt`.
+@(private = "file")
+exp_of_interval :: proc(o: ^Oracle, scaled: Interval, x: f64, format: Float_Format, w: int) -> (u64, bool) {
 	k := int(math.floor(x / math.LN2)) - 1
 	ln2 := narrow(o.ln2, CONSTANT_PRECISION, w + 16)
-	scaled := scaled_argument(x, w + 16)
 	kl := k >= 0 ? Interval{times(ln2.lo, int_of(k)), times(ln2.hi, int_of(k))} : Interval{times(ln2.hi, int_of(k)), times(ln2.lo, int_of(k))}
 	r := narrow(Interval{minus(scaled.lo, kl.hi), minus(scaled.hi, kl.lo)}, w + 16, w)
 	if sign_of(r.lo) <= 0 {
@@ -229,6 +236,152 @@ log_interval :: proc(o: ^Oracle, x: f64, w: int) -> Interval {
 	ln2 := narrow(o.ln2, CONSTANT_PRECISION, w)
 	el := e >= 0 ? Interval{times(ln2.lo, int_of(e)), times(ln2.hi, int_of(e))} : Interval{times(ln2.hi, int_of(e)), times(ln2.lo, int_of(e))}
 	return Interval{plus(el.lo, part.lo), plus(el.hi, part.hi)}
+}
+
+// The correctly rounded x^y's bit pattern, for arguments of `format`, which
+// `x` and `y` hold exactly, with the contract's table first. Unlike the
+// other functions, pow has dyadic results at finite arguments, among them
+// midpoints, at which the search would never end; `pow_exact` finds every
+// dyadic result small enough to be one and rounds it exactly.
+oracle_pow :: proc(o: ^Oracle, x, y: f64, format: Float_Format) -> u64 {
+	if special, ok := pow_special_case(x, y, format); ok {
+		return special
+	}
+	// x is finite, nonzero, and not ±1, y finite and nonzero, and x < 0 only
+	// with an integer y.
+	sign := x < 0 && is_odd_integer(y) ? sign_bit(format) : 0
+	scratch: virtual.Arena
+	_ = virtual.arena_init_growing(&scratch)
+	context.allocator = virtual.arena_allocator(&scratch)
+	if pattern, exact := pow_exact(abs(x), y, format); exact {
+		virtual.arena_destroy(&scratch)
+		return pattern | sign
+	}
+	for precision := START_PRECISION; precision <= MAX_PRECISION; precision *= 2 {
+		if pattern, decided := pow_attempt(o, abs(x), y, format, precision); decided {
+			virtual.arena_destroy(&scratch)
+			return pattern | sign
+		}
+		free_all(context.allocator)
+	}
+	panic("the oracle could not decide a rounding of pow")
+}
+
+// deterministic-math-and-targets-plan.md "Special cases": pow's table, in
+// its order, and x = -1 with an integer y, whose result is ±1.
+@(private = "file")
+pow_special_case :: proc(x, y: f64, format: Float_Format) -> (u64, bool) {
+	one := transmute(u64)f64(1)
+	if format == F32_FORMAT {
+		one = u64(transmute(u32)f32(1))
+	}
+	infinity := infinity_bits(format)
+	negative := sign_bit(format)
+	if y == 0 || x == 1 {return one, true}
+	if math.is_nan(x) || math.is_nan(y) {return canonical_nan(format), true}
+	odd := is_odd_integer(y)
+	if x == 0 {
+		x_sign := math.sign_bit(x) && odd ? negative : 0
+		return (y < 0 ? infinity : 0) | x_sign, true
+	}
+	if math.is_inf(y, 0) {
+		if x == -1 {return one, true}
+		return (abs(x) < 1) == (y < 0) ? infinity : 0, true
+	}
+	if math.is_inf(x, 0) {
+		x_sign := x < 0 && odd ? negative : 0
+		return (y < 0 ? 0 : infinity) | x_sign, true
+	}
+	if x < 0 && !is_integer(y) {return canonical_nan(format), true}
+	if x == -1 {return one | (odd ? negative : 0), true}
+	return 0, false
+}
+
+@(private = "file")
+is_integer :: proc(y: f64) -> bool {
+	return !math.is_inf(y, 0) && math.floor(y) == y
+}
+
+@(private = "file")
+is_odd_integer :: proc(y: f64) -> bool {
+	return is_integer(y) && abs(y) < 9007199254740992 && math.mod(y, 2) != 0
+}
+
+// An odd integer and a power of two whose product is a positive finite x.
+@(private = "file")
+odd_part :: proc(x: f64) -> (^big.Int, int) {
+	significand, exponent := dyadic(x)
+	for sign_of(significand) != 0 && low_bits(significand, 1) == 0 {
+		significand = shift_down(significand, 1)
+		exponent += 1
+	}
+	return significand, exponent
+}
+
+// x^y rounded exactly when it is a dyadic value with an odd part of at most
+// 200 bits, which every midpoint is, for x > 0 other than 1 and finite
+// nonzero y. With x = a 2^b and |y| = c 2^d, a and c odd, x^y is dyadic only
+// when b y is an integer and a^y is an integer: a = 1, or y > 0 and a is a
+// perfect 2^-d-th power.
+@(private = "file")
+pow_exact :: proc(x, y: f64, format: Float_Format) -> (u64, bool) {
+	a, b := odd_part(x)
+	c, d := odd_part(abs(y))
+	// t = b y, which must be an integer.
+	t_magnitude := times(int_of(abs(b)), c)
+	t_negative := (b < 0) != (y < 0)
+	if d >= 0 {
+		t_magnitude = shift_left(t_magnitude, d)
+	} else {
+		if compare(shift_left(shift_down(t_magnitude, -d), -d), t_magnitude) != 0 {return 0, false}
+		t_magnitude = shift_down(t_magnitude, -d)
+	}
+	value := int_of(1)
+	if compare(a, int_of(1)) != 0 {
+		if y < 0 {return 0, false}
+		root := a
+		for _ in 0 ..< max(0, -d) {
+			s := square_root(root)
+			if compare(times(s, s), root) != 0 {return 0, false}
+			root = s
+		}
+		power := shift_left(c, max(0, d))
+		if compare(times(power, int_of(bit_count(root))), int_of(200)) > 0 {return 0, false}
+		for _ in 0 ..< int(low_bits(power, 64)) {
+			value = times(value, root)
+		}
+	}
+	// value < 2^200, so past 2^4000 either way the result is infinite or 0.
+	if compare(t_magnitude, int_of(4000)) > 0 {
+		return t_negative ? 0 : infinity_bits(format), true
+	}
+	t := int(low_bits(t_magnitude, 64))
+	return round_magnitude(value, t_negative ? -t : t, format), true
+}
+
+// e^(y log x), for x > 0 other than 1 and finite nonzero y: log x at a scale
+// fine enough that y times it is within 2^-(w + 8), then `exp_of_interval`.
+@(private = "file")
+pow_attempt :: proc(o: ^Oracle, x, y: f64, format: Float_Format, w: int) -> (u64, bool) {
+	estimate := y*math.ln(x)
+	if estimate > 1000 {return infinity_bits(format), true}
+	if estimate < -1100 {return 0, true}
+	significand, exponent := dyadic(abs(y))
+	// |y| < 2^(exponent + 53).
+	scale := w + 8 + max(0, exponent + 53)
+	l := log_interval(o, x, scale)
+	z := Interval{times(l.lo, significand), times(l.hi, significand)}
+	if y < 0 {
+		z = Interval{negated(z.hi), negated(z.lo)}
+	}
+	// z is at a scale of 2^-(scale - exponent); bring it to 2^-(w + 16).
+	shift := scale - exponent - (w + 16)
+	if shift >= 0 {
+		z = Interval{floor_shift(z.lo, shift), ceil_shift(z.hi, shift)}
+	} else {
+		z = Interval{shift_left(z.lo, -shift), shift_left(z.hi, -shift)}
+	}
+	return exp_of_interval(o, z, estimate, format, w)
 }
 
 // sin and cos of |x| = q pi/2 + r, |r| a little over pi/4 at most, from the
@@ -750,7 +903,9 @@ trig_constants_source :: proc(o: ^Oracle) -> string {
 // exact, and exactly 1 and 1/2 at the ends; then L = -log d, or -log 2d from
 // i = 53 on, as an `f64` pair, which is 0 at both ends. Then ln 2 as a part
 // of 42 bits, so a multiple by an exponent is exact, and the nearest `f64`
-// to the rest.
+// to the rest. Then `pow`'s second table: for k in -128 ..= 128, the
+// nearest `f64` to 1/(1 + k 2^-15), exactly 1 at k = 0, and -log of it as
+// an `f64` pair.
 log_constants_source :: proc(o: ^Oracle) -> string {
 	context.allocator = virtual.arena_allocator(&o.arena)
 	P :: 400
@@ -781,6 +936,18 @@ log_constants_source :: proc(o: ^Oracle) -> string {
 	}
 	fmt.sbprintf(&b, "LN2_HI :: 0x%016x;\n", transmute(u64)parts[0][0])
 	fmt.sbprintf(&b, "LN2_LO :: 0x%016x;\n", transmute(u64)parts[0][1])
+	strings.write_string(&b, "LOG_FINE_TABLE :: [771]u64{\n")
+	for k in -128 ..= 128 {
+		d := 1.0
+		pair := [2]f64{0, 0}
+		if k != 0 {
+			d = split_round(divide_down(power_of_two(P + 15), int_of(32768 + k)), P, 53)
+			v := log_interval(o, d, P)
+			pair = exact_pair(Interval{negated(v.hi), negated(v.lo)}, P)
+		}
+		fmt.sbprintf(&b, "\t0x%016x, 0x%016x, 0x%016x,\n", transmute(u64)d, transmute(u64)pair[0], transmute(u64)pair[1])
+	}
+	strings.write_string(&b, "};\n")
 	return strings.to_string(b)
 }
 

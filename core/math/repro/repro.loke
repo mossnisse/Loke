@@ -10,7 +10,7 @@
 	each function. No procedure here calls the C library.
 
 	The package holds only what has been implemented and checked: today `exp`,
-	`log`, `sin`, and `cos`, each in both widths. A function missing here is not
+	`log`, `pow`, `sin`, and `cos`, each in both widths. A function missing here is not
 	provided by falling back to `core:math`.
 */
 @(public)
@@ -88,6 +88,79 @@ log_f32 :: proc(x: f32) -> f32 {
 	if (bits == 0) { return unsafe.transmute(f32, u32(0xff800000)); }
 	if (bits == 0x3f800000) { return f32(0.0); }
 	return log_f32_of(f64(x));
+}
+
+/**
+	x raised to the power y, with the special cases of IEC 60559 and C17's
+	annex F but for NaN results, which are the canonical NaN, in this order:
+	y = ±0 gives 1, and so does x = +1, NaN included; any other NaN argument
+	gives NaN. x = ±0 gives ±Inf for an odd integer y < 0, with x's sign,
+	+Inf for any other y < 0, ±0 for an odd integer y > 0, and +0 for any
+	other y > 0. x = -1 and y = ±Inf give 1; |x| < 1 gives +Inf for y = -Inf
+	and +0 for +Inf, and |x| > 1 the reverse. x = -Inf gives -0 for an odd
+	integer y < 0, +0 for any other y < 0, -Inf for an odd integer y > 0,
+	and +Inf for any other y > 0; x = +Inf gives +0 for y < 0 and +Inf for
+	y > 0. A finite x < 0 gives NaN when y is not an integer, and -|x|^y when
+	y is odd. Every exact result is exact, and one exactly halfway between
+	two floats rounds to even.
+*/
+pow :: proc(x: f64, y: f64) -> f64 {
+	xb := unsafe.transmute(u64, x);
+	yb := unsafe.transmute(u64, y);
+	ax := xb & 0x7fffffffffffffff;
+	ay := yb & 0x7fffffffffffffff;
+	if (ay == 0 || xb == 0x3ff0000000000000) { return 1.0; }
+	if (ax > 0x7ff0000000000000 || ay > 0x7ff0000000000000) { return unsafe.transmute(f64, u64(CANONICAL_NAN_F64)); }
+	kind := integer_kind(y);
+	odd_sign := u64(0);
+	if (xb >> 63 != 0 && kind == 1) { odd_sign = 0x8000000000000000; }
+	if (ax == 0) {
+		if (yb >> 63 != 0) { return unsafe.transmute(f64, 0x7ff0000000000000 | odd_sign); }
+		return unsafe.transmute(f64, odd_sign);
+	}
+	if (ay == 0x7ff0000000000000) {
+		if (xb == 0xbff0000000000000) { return 1.0; }
+		if ((ax < 0x3ff0000000000000) == (yb >> 63 != 0)) { return unsafe.transmute(f64, u64(0x7ff0000000000000)); }
+		return 0.0;
+	}
+	if (ax == 0x7ff0000000000000) {
+		if (yb >> 63 != 0) { return unsafe.transmute(f64, odd_sign); }
+		return unsafe.transmute(f64, 0x7ff0000000000000 | odd_sign);
+	}
+	if (xb >> 63 != 0 && kind == 0) { return unsafe.transmute(f64, u64(CANONICAL_NAN_F64)); }
+	magnitude := 1.0;
+	if (ax != 0x3ff0000000000000) { magnitude = pow_f64_of(unsafe.transmute(f64, ax), y); }
+	return unsafe.transmute(f64, unsafe.transmute(u64, magnitude) | odd_sign);
+}
+
+/// x raised to the power y for `f32`, with the special cases of `pow`.
+pow_f32 :: proc(x: f32, y: f32) -> f32 {
+	xb := unsafe.transmute(u32, x);
+	yb := unsafe.transmute(u32, y);
+	ax := xb & 0x7fffffff;
+	ay := yb & 0x7fffffff;
+	if (ay == 0 || xb == 0x3f800000) { return f32(1.0); }
+	if (ax > 0x7f800000 || ay > 0x7f800000) { return unsafe.transmute(f32, u32(CANONICAL_NAN_F32)); }
+	kind := integer_kind(f64(y));
+	odd_sign := u32(0);
+	if (xb >> 31 != 0 && kind == 1) { odd_sign = 0x80000000; }
+	if (ax == 0) {
+		if (yb >> 31 != 0) { return unsafe.transmute(f32, 0x7f800000 | odd_sign); }
+		return unsafe.transmute(f32, odd_sign);
+	}
+	if (ay == 0x7f800000) {
+		if (xb == 0xbf800000) { return f32(1.0); }
+		if ((ax < 0x3f800000) == (yb >> 31 != 0)) { return unsafe.transmute(f32, u32(0x7f800000)); }
+		return f32(0.0);
+	}
+	if (ax == 0x7f800000) {
+		if (yb >> 31 != 0) { return unsafe.transmute(f32, odd_sign); }
+		return unsafe.transmute(f32, 0x7f800000 | odd_sign);
+	}
+	if (xb >> 31 != 0 && kind == 0) { return unsafe.transmute(f32, u32(CANONICAL_NAN_F32)); }
+	magnitude := f32(1.0);
+	if (ax != 0x3f800000) { magnitude = pow_f32_of(f64(unsafe.transmute(f32, ax)), f64(y)); }
+	return unsafe.transmute(f32, unsafe.transmute(u32, magnitude) | odd_sign);
 }
 
 /**

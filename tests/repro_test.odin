@@ -93,6 +93,19 @@ repro_functions_round_correctly :: proc(t: ^testing.T) {
 			constants += len(fields) - 1
 		case "compared":
 			testing.expectf(t, len(fields) == 5 && fields[3] == "0" && fields[4] == "0", "a fast path differs from its slow path: %s", line)
+		case "Pow":
+			x_bits, _ := strconv.parse_u64(fields[2])
+			y_bits, _ := strconv.parse_u64(fields[3])
+			got, _ := strconv.parse_u64(fields[4])
+			x, y := transmute(f64)x_bits, transmute(f64)y_bits
+			format := F64_FORMAT
+			if fields[1] == "32" {
+				x, y = f64(transmute(f32)u32(x_bits)), f64(transmute(f32)u32(y_bits))
+				format = F32_FORMAT
+			}
+			want := oracle_pow(&o, x, y, format)
+			testing.expectf(t, got == want, "pow at f%s of %v and %v: got %x, the oracle %x", fields[1], x, y, got, want)
+			checked += 1
 		case "differs64", "differs32":
 			testing.expectf(t, false, "a fast path differs from its slow path at %s", line)
 		case "Exp", "Sin", "Cos", "Log":
@@ -113,5 +126,5 @@ repro_functions_round_correctly :: proc(t: ^testing.T) {
 			checked += 1
 		}
 	}
-	testing.expectf(t, checked == 10014 && constants == 25, "the probe printed %d checked results and %d constants", checked, constants)
+	testing.expectf(t, checked == 12809 && constants == 34, "the probe printed %d checked results and %d constants", checked, constants)
 }

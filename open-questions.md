@@ -752,7 +752,13 @@ on a grid of 1,024 `f32` values, the 2 that went there added 8 ns to `sin`'s
 average. `log`, over arguments from 2^-32 to 2^32, takes 26 ns per
 independent call and 43 per dependent one against the UCRT's 5.0 and 12 on
 its FMA3 path and 5.8 and 14.5 on its legacy one, `log_f32` 16 ns against 3.6
-and 4.1, and its slow path 4 to 6 µs. The estimate below was optimistic by
+and 4.1, and its slow path 4 to 6 µs. `pow`, over x from 0.01 to 100 and
+y within ±20, takes 75 to 93 ns per independent call and 88 to 98 per
+dependent one against the UCRT's 15 and 27 on its FMA3 path and 22 and 37
+on its legacy one, `pow_f32` 88 to 96 ns against 9.0 and 10.6, though none
+of those arguments leaves the fast path, and its slow path 11 to 12 µs.
+Why the `f32` procedures are slower than the `f64` ones that do the same
+work is not known. The estimate below was optimistic by
 two to three times: the time is in the dependent double-`f64` steps, not in
 calls or checks, once the frame pops a returning procedure made are gone
 (they took a third of `exp`'s time). A table twice as large, a lower-degree
@@ -771,6 +777,13 @@ measure it. Open:
   widths, cover the common uses and the random distributions.
 - Should the C library's versions stay available under other names for
   callers who prefer speed to identity?
+- Can `core:math/repro`'s `pow` be proved correctly rounded? Its slow path
+  is within 2^-240 of x^y, and a value within 2^-230 of a midpoint is tested
+  for being exactly that midpoint, so it decides every argument unless an
+  x^y that is not a midpoint comes within 2^-230 of one. For one-argument
+  functions, exhaustive searches bound that distance; no search covers two
+  `f64` arguments, and no proof is known to rule it out. Its results are
+  the same everywhere either way.
 
 The [deterministic math and CPU targeting
 plan](deterministic-math-and-targets-plan.md) proposes answers: a separate

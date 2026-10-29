@@ -2345,8 +2345,8 @@ call is evaluated at compile time. No procedure calls the C library or uses
 is the positive quiet NaN with no payload (`0x7ff8000000000000`,
 `0x7fc00000`), whatever NaN produced it.
 
-The package has `exp`, `log`, `sin`, and `cos`, each with the `f64` and
-`_f32` naming of `core:math`. A function missing here is not provided by
+The package has `exp`, `log`, `pow`, `sin`, and `cos`, each with the `f64`
+and `_f32` naming of `core:math`. A function missing here is not provided by
 falling back to `core:math`. Each `_f32` procedure is rounded once to `f32`,
 not the `f64` one narrowed, which could round twice.
 
@@ -2354,6 +2354,18 @@ not the `f64` one narrowed, which could round twice.
   1.
 - `log` is the natural logarithm. NaN and every argument below zero, -Inf
   included, give NaN; ±0 gives -Inf, 1 gives +0, and +Inf gives +Inf.
+- `pow(x, y)` is x^y, with the special cases of IEC 60559 and C17's annex F
+  but for NaN results, in this order: y = ±0 gives 1, and so does x = +1,
+  NaN included; any other NaN argument gives NaN. x = ±0 gives ±Inf for an
+  odd integer y < 0, with x's sign, +Inf for any other y < 0, ±0 for an odd
+  integer y > 0, and +0 for any other y > 0. x = -1 and y = ±Inf give 1;
+  |x| < 1 gives +Inf for y = -Inf and +0 for +Inf, and |x| > 1 the reverse.
+  x = -Inf gives -0 for an odd integer y < 0, +0 for any other y < 0, -Inf
+  for an odd integer y > 0, and +Inf for any other y > 0; x = +Inf gives +0
+  for y < 0 and +Inf for y > 0. A finite x < 0 gives NaN when y is not an
+  integer, and -|x|^y when y is odd. An exact result, such as `pow(4, 0.5)`,
+  is exact, and one exactly halfway between two floats, such as
+  `pow_f32(1 + 2^-12, 2)`, rounds to even.
 - `sin` and `cos` take radians. Every finite argument is reduced by an exact
   multiple of pi/2, however large. NaN and ±Inf give NaN; `sin(±0)` is ±0 and
   `cos(±0)` is exactly 1, and `sin(-x)` is `-sin(x)`.

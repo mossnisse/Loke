@@ -111,7 +111,27 @@ Phase 4, begun with `log` in both widths:
   slow path, as the margin predicts. With `log`, the probe compares the fast
   and slow paths over 220,000 arguments and the oracle over 10,000.
 
-`pow` is next.
+Then `pow` in both widths:
+
+- e^(y log x), with log x as a pair within 2^-83 relative, so that y log x
+  is within 2^-73.5 wherever the result is finite and not 0 or 1, and
+  `exp`'s kernel, which now takes y log x's low part. The log adds a second
+  table at steps of 2^-15 to `log`'s, so that its series is under 2^-16,
+  its first entry exactly 1 so that nothing cancels near 1 either.
+- The slow path multiplies `log`'s fixed-point value by y and takes `exp`'s
+  fixed-point value of that, within 2^-240. x^y can be exactly a midpoint,
+  so a value within 2^-230 of one is tested in integers for being exactly
+  it, and rounded to even if it is: (2 - 2^-26)^2, (1 + 2^-12)^2 in `f32`,
+  and 2^-1075 among them. Nothing proves no other x^y comes that close to
+  a midpoint; see
+  [Deterministic math functions](open-questions.md#deterministic-math-functions).
+- The oracle gains `oracle_pow`, with the table and an exact test of its
+  own in big integers for dyadic results, so that Ziv's search never meets
+  a midpoint. The probe checks the table over a grid of 143 pairs in each
+  width, pinned midpoints, 2,000 seeded pairs against the oracle, a
+  thousand of them midpoints, and 40,000 against the slow path.
+
+`atan2` and the rest of phase 4's functions are next.
 
 Not started: phase 1's benchmarks (the UCRT timings in open questions stand
 until there is a kernel to compare), the rest of phase 4's kernels, NaN
@@ -236,7 +256,7 @@ underflow to a subnormal or a zero of the result's sign. They follow the IEC
 60559 annex of C17 (F.10), except that every NaN result is the canonical one,
 whatever NaN produced it and whether or not it was signaling. `π`, `π/2`,
 `π/4`, and `3π/4` mean the correctly rounded constants of the result's width.
-`tests/math_oracle.odin` implements the first four tables.
+`tests/math_oracle.odin` implements all but `atan2`'s.
 
 | Function | Argument | Result |
 | --- | --- | --- |

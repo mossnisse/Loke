@@ -49,3 +49,42 @@ slow_trig_f32 :: proc(x: f32, want_cos: bool) -> f32 {
 	if (x < f32(0.0)) { ax = 0.0 - f64(x); }
 	return unsafe.transmute(f32, u32(trig_slow(ax, want_cos, !want_cos && x < f32(0.0), F32_LAYOUT)));
 }
+
+// pow's slow path wherever `pow` would reach its general case with z =
+// y log x in range; elsewhere `pow` itself, whose table and range checks
+// are the whole answer there.
+@(public)
+slow_pow :: proc(x: f64, y: f64) -> f64 {
+	ax := x;
+	if (x < 0.0) { ax = 0.0 - x; }
+	kind := integer_kind(y);
+	if (!pow_general(ax, y) || (x < 0.0 && kind == 0)) { return pow(x, y); }
+	lh, _ := pow_log(ax);
+	zh := y*lh;
+	if (zh > 710.0 || zh < -746.0 || (zh < 2.7755575615628914e-17 && zh > -2.7755575615628914e-17)) { return pow(x, y); }
+	result := unsafe.transmute(f64, pow_slow(ax, y, zh, F64_LAYOUT));
+	if (x < 0.0 && kind == 1) { return 0.0 - result; }
+	return result;
+}
+
+@(public)
+slow_pow_f32 :: proc(x: f32, y: f32) -> f32 {
+	ax := f64(x);
+	if (x < f32(0.0)) { ax = 0.0 - f64(x); }
+	kind := integer_kind(f64(y));
+	if (!pow_general(ax, f64(y)) || (x < f32(0.0) && kind == 0)) { return pow_f32(x, y); }
+	lh, _ := pow_log(ax);
+	zh := f64(y)*lh;
+	if (zh > 89.0 || zh < -104.0 || (zh < 1.4901161193847656e-08 && zh > -1.4901161193847656e-08)) { return pow_f32(x, y); }
+	result := unsafe.transmute(f32, u32(pow_slow(ax, f64(y), zh, F32_LAYOUT)));
+	if (x < f32(0.0) && kind == 1) { return f32(0.0) - result; }
+	return result;
+}
+
+// Whether |x| and y are past pow's table: |x| finite, nonzero, and not 1,
+// y finite and nonzero.
+pow_general :: proc(ax: f64, y: f64) -> bool {
+	ay := y;
+	if (y < 0.0) { ay = 0.0 - y; }
+	return ax > 0.0 && ax <= 1.7976931348623157e308 && ax != 1.0 && ay > 0.0 && ay <= 1.7976931348623157e308;
+}

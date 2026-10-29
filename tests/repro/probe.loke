@@ -111,6 +111,70 @@ log_argument_f32 :: proc(g: inout Generator, i: int) -> f32 {
 	}
 }
 
+// Arguments of pow: x up to 10 with y up to ±50; x near 1 with y of every
+// scale up to 2^63; x of every exponent with y spanning results from
+// overflow to underflow; negative x with integer y; x = m 2^-26, m odd and
+// above 2^26.5, whose square is a midpoint; and small integers to half-
+// integer powers, some of them exact.
+pow_argument :: proc(g: inout Generator, i: int) -> (x: f64, y: f64) {
+	u := unit(inout g);
+	v := unit(inout g);
+	switch (i % 6) {
+	case 0: return {u*10.0, v*100.0 - 50.0};
+	case 1:
+		x := 1.0 + (u*2.0 - 1.0)*inverse_power(next(inout g) % 53);
+		return {x, (v*2.0 - 1.0)*unsafe.transmute(f64, (1023 + next(inout g) % 64) << 52)};
+	case 2:
+		e := 1 + next(inout g) % 2046;
+		x := unsafe.transmute(f64, (e << 52) | (next(inout g) & 0x000fffffffffffff));
+		spread := 1000.0;
+		if (e != 1023) { spread = 1100.0/f64(abs_difference(e, 1023)); }
+		return {x, (v*2.0 - 1.0)*spread};
+	case 3: return {0.0 - (0.25 + u*4.0), f64(next(inout g) % 81) - 40.0};
+	case 4: return {f64(94906267 + 2*(next(inout g) % 19000000))/67108864.0, 2.0};
+	default: return {f64(1 + next(inout g) % 20), f64(next(inout g) % 60)/2.0 - 10.0};
+	}
+}
+
+pow_argument_f32 :: proc(g: inout Generator, i: int) -> (x: f32, y: f32) {
+	u := unit(inout g);
+	v := unit(inout g);
+	switch (i % 6) {
+	case 0: return {f32(u*10.0), f32(v*40.0 - 20.0)};
+	case 1:
+		x := f32(1.0 + (u*2.0 - 1.0)*inverse_power(next(inout g) % 24));
+		return {x, f32((v*2.0 - 1.0)*unsafe.transmute(f64, (1023 + next(inout g) % 30) << 52))};
+	case 2:
+		e := 1 + next(inout g) % 254;
+		x := unsafe.transmute(f32, u32((e << 23) | (next(inout g) & 0x7fffff)));
+		spread := 100.0;
+		if (e != 127) { spread = 120.0/f64(abs_difference(e, 127)); }
+		return {x, f32((v*2.0 - 1.0)*spread)};
+	case 3: return {f32(0.0 - (0.25 + u*4.0)), f32(f64(next(inout g) % 41) - 20.0)};
+	case 4: return {f32(f64(5793 + 2*(next(inout g) % 1199))/4096.0), f32(2.0)};
+	default: return {f32(1 + next(inout g) % 20), f32(f64(next(inout g) % 60)/2.0 - 10.0)};
+	}
+}
+
+abs_difference :: proc(a: u64, b: u64) -> u64 {
+	if (a > b) { return a - b; }
+	return b - a;
+}
+
+// Every pairing of these takes some row of pow's table, or its general
+// case for a negative x.
+POW_SPECIAL_X :: [11]u64{
+	0x0000000000000000, 0x8000000000000000, 0x3ff0000000000000, 0xbff0000000000000,
+	0x7ff0000000000000, 0xfff0000000000000, 0x7ff8000000000001, 0xc000000000000000,
+	0x3fe0000000000000, 0x4000000000000000, 0xbfe0000000000000,
+};
+POW_SPECIAL_Y :: [13]u64{
+	0x0000000000000000, 0x8000000000000000, 0x7ff0000000000000, 0xfff0000000000000,
+	0xfff8000000000000, 0x3ff0000000000000, 0xbff0000000000000, 0x4000000000000000,
+	0xc000000000000000, 0x4008000000000000, 0xc008000000000000, 0x3fe0000000000000,
+	0xbff8000000000000,
+};
+
 bits :: proc(x: f64) -> u64 { return unsafe.transmute(u64, x); }
 bits32 :: proc(x: f32) -> u64 { return u64(unsafe.transmute(u32, x)); }
 
@@ -167,6 +231,28 @@ CONSTANT_HARD_F64 :: [8]f64{
 	HARD_F64_0, HARD_F64_1, HARD_F64_2, HARD_F64_3,
 	HARD_F64_4, HARD_F64_5, HARD_F64_6, HARD_F64_7,
 };
+
+// pow's exact midpoints, which round to even: (2 - 2^-26)^2, (2 - 2^-17)^3,
+// and (w^2 2^-34)^1.5 with w = 2^18 - 1, of 54 bits, and 2^-1075, half the
+// smallest subnormal, beside 2^-1074 and 2^-800, both exact; and in `f32`,
+// (1 + 2^-12)^2 and 66049^1.5, of 25 bits, and 2^-150.
+HARD_POW :: [6][2]u64{
+	{0x3ffffffffc000000, 0x4000000000000000}, {0x3ffffff800000000, 0x4008000000000000},
+	{0x400ffff000020000, 0x3ff8000000000000}, {0x4000000000000000, 0xc090cc0000000000},
+	{0x4000000000000000, 0xc090c80000000000}, {0x3fe0000000000000, 0x4089000000000000},
+};
+HARD_POW_0 :: repro.pow(unsafe.transmute(f64, u64(0x3ffffffffc000000)), 2.0);
+HARD_POW_1 :: repro.pow(unsafe.transmute(f64, u64(0x3ffffff800000000)), 3.0);
+HARD_POW_2 :: repro.pow(unsafe.transmute(f64, u64(0x400ffff000020000)), 1.5);
+HARD_POW_3 :: repro.pow(2.0, -1075.0);
+HARD_POW_4 :: repro.pow(2.0, -1074.0);
+HARD_POW_5 :: repro.pow(0.5, 800.0);
+CONSTANT_HARD_POW :: [6]f64{HARD_POW_0, HARD_POW_1, HARD_POW_2, HARD_POW_3, HARD_POW_4, HARD_POW_5};
+HARD_POW_F32 :: [3][2]u32{{0x3f800800, 0x40000000}, {0x47810080, 0x3fc00000}, {0x40000000, 0xc3160000}};
+HARD_POW_F32_0 :: repro.pow_f32(unsafe.transmute(f32, u32(0x3f800800)), f32(2.0));
+HARD_POW_F32_1 :: repro.pow_f32(f32(66049.0), f32(1.5));
+HARD_POW_F32_2 :: repro.pow_f32(f32(2.0), f32(-150.0));
+CONSTANT_HARD_POW_F32 :: [3]f32{HARD_POW_F32_0, HARD_POW_F32_1, HARD_POW_F32_2};
 
 Function :: enum { Exp, Sin, Cos, Log }
 
@@ -258,6 +344,34 @@ main :: proc() {
 		fmt.println(functions64[i], 64, bits(z), bits(result));
 		fmt.println("constant", bits(constants64[i]) == bits(result));
 	}
+	hard_pow := HARD_POW;
+	constants_pow := CONSTANT_HARD_POW;
+	foreach (i in 0 ..< 6) {
+		x := unsafe.transmute(f64, hard_pow[i][0])*one;
+		y := unsafe.transmute(f64, hard_pow[i][1]);
+		result := repro.pow(x, y);
+		fmt.println("Pow", 64, bits(x), bits(y), bits(result));
+		fmt.println("constant", bits(constants_pow[i]) == bits(result));
+	}
+	hard_pow32 := HARD_POW_F32;
+	constants_pow32 := CONSTANT_HARD_POW_F32;
+	foreach (i in 0 ..< 3) {
+		x := unsafe.transmute(f32, hard_pow32[i][0])*f32(one);
+		y := unsafe.transmute(f32, hard_pow32[i][1]);
+		result := repro.pow_f32(x, y);
+		fmt.println("Pow", 32, bits32(x), bits32(y), bits32(result));
+		fmt.println("constant", bits32(constants_pow32[i]) == bits32(result));
+	}
+	special_x := POW_SPECIAL_X;
+	special_y := POW_SPECIAL_Y;
+	foreach (i in 0 ..< 11) {
+		foreach (j in 0 ..< 13) {
+			x := unsafe.transmute(f64, special_x[i]);
+			y := unsafe.transmute(f64, special_y[j]);
+			fmt.println("Pow", 64, bits(x), bits(y), bits(repro.pow(x*one, y)));
+			fmt.println("Pow", 32, bits32(f32(x)), bits32(f32(y)), bits32(repro.pow_f32(f32(x)*f32(one), f32(y))));
+		}
+	}
 
 	g := Generator{state = 0x9e3779b97f4a7c15};
 	foreach (f in [4]Function{.Exp, .Sin, .Cos, .Log}) {
@@ -290,6 +404,32 @@ main :: proc() {
 				fmt.println(f, 64, bits(x), bits(slow64(f, x)));
 				fmt.println(f, 32, bits32(y), bits32(slow32(f, y)));
 			}
+		}
+	}
+
+	differ := 0;
+	differ32 := 0;
+	foreach (i in 0 ..< 20000) {
+		x, y := pow_argument(inout g, i);
+		if (bits(repro.pow(x*one, y)) != bits(repro.slow_pow(x*one, y))) {
+			differ += 1;
+			if (differ <= 5) { fmt.println("differs64 Pow", bits(x), bits(y)); }
+		}
+		x32, y32 := pow_argument_f32(inout g, i);
+		if (bits32(repro.pow_f32(x32*f32(one), y32)) != bits32(repro.slow_pow_f32(x32*f32(one), y32))) {
+			differ32 += 1;
+			if (differ32 <= 5) { fmt.println("differs32 Pow", bits32(x32), bits32(y32)); }
+		}
+	}
+	fmt.println("compared Pow 20000", differ, differ32);
+	foreach (i in 0 ..< CHECKED) {
+		x, y := pow_argument(inout g, i);
+		fmt.println("Pow", 64, bits(x), bits(y), bits(repro.pow(x*one, y)));
+		x32, y32 := pow_argument_f32(inout g, i);
+		fmt.println("Pow", 32, bits32(x32), bits32(y32), bits32(repro.pow_f32(x32*f32(one), y32)));
+		if (i % 4 == 0) {
+			fmt.println("Pow", 64, bits(x), bits(y), bits(repro.slow_pow(x*one, y)));
+			fmt.println("Pow", 32, bits32(x32), bits32(y32), bits32(repro.slow_pow_f32(x32*f32(one), y32)));
 		}
 	}
 }

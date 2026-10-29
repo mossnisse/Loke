@@ -135,6 +135,36 @@ fixed_reciprocal :: proc(b: Fixed, near: f64) -> Fixed {
 	return x;
 }
 
+// a * 2^shift, truncated, for any shift; the caller keeps the result below
+// 2^64.
+fixed_scaled :: proc(a: Fixed, shift: int) -> Fixed {
+	result: Fixed = {};
+	if (shift >= 0) {
+		limbs := shift / 64;
+		bits := shift % 64;
+		foreach (j in 0 ..< 6) {
+			from := j - limbs;
+			if (from >= 0) {
+				part := a[from] << bits;
+				if (bits != 0 && from >= 1) { part |= a[from - 1] >> (64 - bits); }
+				result[j] = part;
+			}
+		}
+	} else {
+		limbs := (0 - shift) / 64;
+		bits := (0 - shift) % 64;
+		foreach (j in 0 ..< 6) {
+			from := j + limbs;
+			if (from < 6) {
+				part := a[from] >> bits;
+				if (bits != 0 && from + 1 < 6) { part |= a[from + 1] << (64 - bits); }
+				result[j] = part;
+			}
+		}
+	}
+	return result;
+}
+
 fixed_is_zero :: proc(a: Fixed) -> bool {
 	return (a[0] | a[1] | a[2] | a[3] | a[4] | a[5]) == 0;
 }
@@ -179,24 +209,38 @@ fixed_any_below :: proc(a: Fixed, position: int) -> bool {
 // ties to even, rounded once at its own last place; past the largest finite
 // value, infinity.
 fixed_round :: proc(a: Fixed, exponent: int, layout: Float_Layout) -> u64 {
-	leading := fixed_top_bit(a) + exponent;
-	unit := leading;
-	if (unit < layout.min_exponent) { unit = layout.min_exponent; }
-	unit -= layout.precision - 1;
-	// Every bit of a below `drop` goes; `drop` is over 100 here.
-	drop := unit - exponent;
+	unit, drop := fixed_round_place(a, exponent, layout);
 	kept := fixed_field(a, drop, layout.precision + 1);
 	if (fixed_field(a, drop - 1, 1) == 1 && (fixed_any_below(a, drop - 1) || kept & 1 == 1)) {
 		kept += 1;
 	}
-	if (kept == u64(1) << layout.precision) {
-		kept >>= 1;
-		unit += 1;
+	return fixed_round_finish(kept, unit, layout);
+}
+
+// For a * 2^exponent, a > 0: the exponent of the last place of its float of
+// `layout`, and the bit of a at that place, below which every bit goes;
+// `drop` is over 100 here.
+fixed_round_place :: proc(a: Fixed, exponent: int, layout: Float_Layout) -> (unit: int, drop: int) {
+	leading := fixed_top_bit(a) + exponent;
+	unit := leading;
+	if (unit < layout.min_exponent) { unit = layout.min_exponent; }
+	unit -= layout.precision - 1;
+	return {unit, unit - exponent};
+}
+
+// The pattern of kept 2^unit, kept the rounded significand, which can have
+// carried into a further bit.
+fixed_round_finish :: proc(kept: u64, unit: int, layout: Float_Layout) -> u64 {
+	significand := kept;
+	place := unit;
+	if (significand == u64(1) << layout.precision) {
+		significand >>= 1;
+		place += 1;
 	}
-	if (kept < u64(1) << (layout.precision - 1)) { return kept; }
-	biased := unit + layout.precision - 1 + layout.bias;
+	if (significand < u64(1) << (layout.precision - 1)) { return significand; }
+	biased := place + layout.precision - 1 + layout.bias;
 	if (biased >= 2*layout.bias + 1) {
 		return u64(2*layout.bias + 1) << (layout.precision - 1);
 	}
-	return (u64(biased) << (layout.precision - 1)) | (kept - (u64(1) << (layout.precision - 1)));
+	return (u64(biased) << (layout.precision - 1)) | (significand - (u64(1) << (layout.precision - 1)));
 }

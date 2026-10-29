@@ -38,8 +38,8 @@ fast_two_sum :: proc(a: f64, b: f64) -> (high: f64, low: f64) {
 }
 
 // a * b exactly as a product and its rounding error (Dekker), for operands
-// whose product neither overflows nor has an error below the normal range;
-// every operand here is between 2^-200 and 4.
+// under 2^995 whose product neither overflows nor has an error below the
+// normal range.
 two_product :: proc(a: f64, b: f64) -> (high: f64, low: f64) {
 	p := a*b;
 	ta := SPLITTER*a;
