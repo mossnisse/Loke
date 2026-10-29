@@ -12,8 +12,8 @@
 	each function. No procedure here calls the C library.
 
 	The package holds only what has been implemented and checked: today `exp`,
-	`log`, `pow`, `sin`, and `cos`, each in both widths. A function missing here is not
-	provided by falling back to `core:math`.
+	`log`, `pow`, `sin`, `cos`, `atan`, and `atan2`, each in both widths. A
+	function missing here is not provided by falling back to `core:math`.
 */
 package repro;
 
@@ -75,3 +75,29 @@ cos :: proc(x: f64) -> f64 ---;
 
 // The cosine for `f32`, with the special cases of `cos`.
 cos_f32 :: proc(x: f32) -> f32 ---;
+
+/*
+	The inverse tangent of x, in radians from -pi/2 to pi/2: `atan2(x, 1)`,
+	whose special cases it shares. NaN gives NaN, ±0 gives itself, and ±Inf
+	gives ±pi/2, correctly rounded.
+*/
+atan :: proc(x: f64) -> f64 ---;
+
+// The inverse tangent for `f32`, with the special cases of `atan`.
+atan_f32 :: proc(x: f32) -> f32 ---;
+
+/*
+	The angle from the positive x axis to the point (x, y), in radians from
+	-pi to pi, with y's sign: the inverse tangent of y/x, in the quadrant of
+	(x, y). The special cases are those of IEC 60559 and C17's annex F but
+	for NaN results, which are the canonical NaN: NaN gives NaN; y = ±0 gives
+	±pi for x = -0 or x < 0 and ±0 for x = +0 or x > 0; any other finite y
+	gives ±pi/2 for x = ±0, ±pi for x = -Inf, and ±0 for x = +Inf; and
+	y = ±Inf gives ±pi/2 for a finite x, ±3pi/4 for x = -Inf, and ±pi/4 for
+	x = +Inf, each multiple of pi correctly rounded. A result too small for
+	`f64` is a subnormal or zero of y's sign.
+*/
+atan2 :: proc(y: f64, x: f64) -> f64 ---;
+
+// atan2 for `f32`, with the special cases of `atan2`.
+atan2_f32 :: proc(y: f32, x: f32) -> f32 ---;

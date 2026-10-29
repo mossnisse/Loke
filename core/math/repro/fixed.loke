@@ -123,10 +123,10 @@ fixed_shift_down :: proc(a: Fixed, count: int) -> Fixed {
 	return result;
 }
 
-// 1/b within 2^-319, for b in [1, 4) whose nearest `f64` is `near`, by
-// Newton's iteration x (2 - b x) from near's reciprocal, within 2^-52.5 of
-// 1/b. A step takes an error e to b e^2 and adds under 1.5 2^-320 of
-// truncation, so three leave under 2^-319.
+// 1/b within 2^-319, for b in [1, 4) and an `f64` `near` within 2^-51 of it
+// relative, by Newton's iteration x (2 - b x) from near's reciprocal, within
+// 2^-50 of 1/b. A step takes an error e to b e^2 and adds under 1.5 2^-320
+// of truncation, so three leave under 2^-319.
 fixed_reciprocal :: proc(b: Fixed, near: f64) -> Fixed {
 	x := fixed_of(1.0/near);
 	foreach (_ in 0 ..< 3) {
@@ -167,6 +167,14 @@ fixed_scaled :: proc(a: Fixed, shift: int) -> Fixed {
 
 fixed_is_zero :: proc(a: Fixed) -> bool {
 	return (a[0] | a[1] | a[2] | a[3] | a[4] | a[5]) == 0;
+}
+
+fixed_less :: proc(a: Fixed, b: Fixed) -> bool {
+	foreach (step in 0 ..< 6) {
+		i := 5 - step;
+		if (a[i] != b[i]) { return a[i] < b[i]; }
+	}
+	return false;
 }
 
 // The `count` bits of the integer a from `position` up, count <= 64; bits
@@ -219,7 +227,7 @@ fixed_round :: proc(a: Fixed, exponent: int, layout: Float_Layout) -> u64 {
 
 // For a * 2^exponent, a > 0: the exponent of the last place of its float of
 // `layout`, and the bit of a at that place, below which every bit goes;
-// `drop` is over 100 here.
+// `drop` is over 10 here.
 fixed_round_place :: proc(a: Fixed, exponent: int, layout: Float_Layout) -> (unit: int, drop: int) {
 	leading := fixed_top_bit(a) + exponent;
 	unit := leading;

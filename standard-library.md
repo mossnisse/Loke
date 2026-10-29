@@ -2345,10 +2345,10 @@ call is evaluated at compile time. No procedure calls the C library or uses
 is the positive quiet NaN with no payload (`0x7ff8000000000000`,
 `0x7fc00000`), whatever NaN produced it.
 
-The package has `exp`, `log`, `pow`, `sin`, and `cos`, each with the `f64`
-and `_f32` naming of `core:math`. A function missing here is not provided by
-falling back to `core:math`. Each `_f32` procedure is rounded once to `f32`,
-not the `f64` one narrowed, which could round twice.
+The package has `exp`, `log`, `pow`, `sin`, `cos`, `atan`, and `atan2`, each
+with the `f64` and `_f32` naming of `core:math`. A function missing here is
+not provided by falling back to `core:math`. Each `_f32` procedure is rounded
+once to `f32`, not the `f64` one narrowed, which could round twice.
 
 - `exp` of NaN is NaN, of +Inf is +Inf, of -Inf is +0, and of ±0 is exactly
   1.
@@ -2369,6 +2369,18 @@ not the `f64` one narrowed, which could round twice.
 - `sin` and `cos` take radians. Every finite argument is reduced by an exact
   multiple of pi/2, however large. NaN and ±Inf give NaN; `sin(±0)` is ±0 and
   `cos(±0)` is exactly 1, and `sin(-x)` is `-sin(x)`.
+- `atan2(y, x)` is the angle from the positive x axis to the point (x, y),
+  from -pi to pi with y's sign, with the special cases of IEC 60559 and
+  C17's annex F but for NaN results: NaN gives NaN; y = ±0 gives ±pi for
+  x = -0 or x < 0 and ±0 for x = +0 or x > 0; any other finite y gives ±pi/2
+  for x = ±0, ±pi for x = -Inf, and ±0 for x = +Inf; and y = ±Inf gives
+  ±pi/2 for a finite x, ±3pi/4 for x = -Inf, and ±pi/4 for x = +Inf, each
+  multiple of pi correctly rounded. A quotient too small for the result's
+  width gives a subnormal or a zero of y's sign; atan t is just below t, so
+  a t exactly halfway between two floats rounds toward zero, and
+  `atan2(3*2^-1074, 2)` is 2^-1074.
+- `atan(x)` is `atan2(x, 1)`: NaN gives NaN, ±0 gives itself, and ±Inf gives
+  ±pi/2.
 
 The plan for the rest of the package, and its special cases for further
 functions, is in the

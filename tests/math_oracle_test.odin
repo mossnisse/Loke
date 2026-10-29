@@ -202,3 +202,103 @@ oracle_pow_agrees_with_a_library_almost_always :: proc(t: ^testing.T) {
 		testing.expectf(t, differ*20 <= CASES, "pow at %v: %d of %d differ from the library", format, differ, CASES)
 	}
 }
+
+// atan2's results fixed by other means: the contract's table, constants from
+// fdlibm's atan tables, which hold atan(1/2) and atan(3/2) correctly rounded,
+// and tiny quotients: atan t is just below t, so a t exactly halfway between
+// two floats rounds toward zero, not to even.
+@(test)
+oracle_atan2_matches_known_results :: proc(t: ^testing.T) {
+	o: Oracle
+	oracle_init(&o)
+	defer oracle_destroy(&o)
+	Known :: struct {
+		y, x:    f64,
+		format:  Float_Format,
+		pattern: u64,
+	}
+	nan := math.nan_f64()
+	inf := math.inf_f64(1)
+	negative_zero := math.copy_sign(f64(0), -1)
+	smallest := 4.9406564584124654e-324
+	known := []Known {
+		{1, 2, F64_FORMAT, 0x3fddac670561bb4f},
+		{3, 2, F64_FORMAT, 0x3fef730bd281f69b},
+		{-3, 2, F64_FORMAT, 0xbfef730bd281f69b},
+		{1, 1, F64_FORMAT, 0x3fe921fb54442d18},
+		{1, -1, F64_FORMAT, 0x4002d97c7f3321d2},
+		{-1, -1, F64_FORMAT, 0xc002d97c7f3321d2},
+		{1, 1, F32_FORMAT, 0x3f490fdb},
+		{1, -1, F32_FORMAT, 0x4016cbe4},
+		{1e-300, 1, F64_FORMAT, transmute(u64)f64(1e-300)},
+		{smallest, 2, F64_FORMAT, 0},
+		{3*smallest, 2, F64_FORMAT, 1},
+		{-3*smallest, 2, F64_FORMAT, 0x8000000000000001},
+		{3*smallest, 2*smallest, F64_FORMAT, 0x3fef730bd281f69b},
+		{smallest, 1e300, F64_FORMAT, 0},
+		{f64(3*transmute(f32)u32(1)), 2, F32_FORMAT, 1},
+		// The contract's table.
+		{nan, 0, F64_FORMAT, 0x7ff8000000000000},
+		{0, nan, F32_FORMAT, 0x7fc00000},
+		{0, negative_zero, F64_FORMAT, 0x400921fb54442d18},
+		{negative_zero, -1, F64_FORMAT, 0xc00921fb54442d18},
+		{negative_zero, 0, F64_FORMAT, 0x8000000000000000},
+		{0, 1, F64_FORMAT, 0},
+		{-1, 0, F64_FORMAT, 0xbff921fb54442d18},
+		{1, negative_zero, F32_FORMAT, 0x3fc90fdb},
+		{3, -inf, F64_FORMAT, 0x400921fb54442d18},
+		{-3, inf, F64_FORMAT, 0x8000000000000000},
+		{inf, 3, F64_FORMAT, 0x3ff921fb54442d18},
+		{-inf, -3, F32_FORMAT, 0xbfc90fdb},
+		{inf, -inf, F64_FORMAT, 0x4002d97c7f3321d2},
+		{-inf, inf, F64_FORMAT, 0xbfe921fb54442d18},
+		{inf, -inf, F32_FORMAT, 0x4016cbe4},
+	}
+	for k in known {
+		got := oracle_atan2(&o, k.y, k.x, k.format)
+		testing.expectf(t, got == k.pattern, "atan2(%v, %v) at %v: expected %x, got %x", k.y, k.x, k.format, k.pattern, got)
+	}
+}
+
+// atan2 against Odin's library, as for the other functions, over all four
+// quadrants and quotients of every size down to 2^-60. Its `f64` atan2 is an
+// ulp low in about a quarter of these, near ±pi/2 most often, where a
+// separate computation by angle halving agrees with the oracle, so a third
+// may differ.
+@(test)
+oracle_atan2_agrees_with_a_library_almost_always :: proc(t: ^testing.T) {
+	o: Oracle
+	oracle_init(&o)
+	defer oracle_destroy(&o)
+	state: u64 = 0x6a09e667f3bcc909
+	for format in ([]Float_Format{F64_FORMAT, F32_FORMAT}) {
+		differ := 0
+		CASES :: 400
+		for _ in 0 ..< CASES {
+			state = state*6364136223846793005 + 1442695040888963407
+			y := f64(i64(state >> 11) % 2000000) / 1000 - 1000
+			state = state*6364136223846793005 + 1442695040888963407
+			x := math.ldexp(f64(i64(state >> 11) % 2000000) / 1000 - 1000, -int(state % 61))
+			library, got: u64
+			if format == F32_FORMAT {
+				y32, x32 := f32(y), f32(x)
+				y, x = f64(y32), f64(x32)
+				library = u64(transmute(u32)math.atan2(y32, x32))
+			} else {
+				library = transmute(u64)math.atan2(y, x)
+			}
+			got = oracle_atan2(&o, y, x, format)
+			sign := format == F32_FORMAT ? u64(1) << 31 : u64(1) << 63
+			distance := got > library ? got - library : library - got
+			if got & sign != library & sign {
+				distance = max(u64)
+			}
+			if distance != 0 {
+				differ += 1
+			}
+			testing.expectf(t, distance <= 1, "atan2(%v, %v) at %v: oracle %x, library %x", y, x, format, got, library)
+		}
+		allowed := format == F64_FORMAT ? CASES/3 : CASES/20
+		testing.expectf(t, differ <= allowed, "atan2 at %v: %d of %d differ from the library", format, differ, CASES)
+	}
+}

@@ -757,8 +757,14 @@ y within ±20, takes 75 to 93 ns per independent call and 88 to 98 per
 dependent one against the UCRT's 15 and 27 on its FMA3 path and 22 and 37
 on its legacy one, `pow_f32` 88 to 96 ns against 9.0 and 10.6, though none
 of those arguments leaves the fast path, and its slow path 11 to 12 µs.
-Why the `f32` procedures are slower than the `f64` ones that do the same
-work is not known. The estimate below was optimistic by
+`atan2`, over y and x within ±10, takes 38 to 40 ns per independent call
+and 57 to 60 per dependent one against the UCRT's 15 to 16 and 24 to 25 on
+its FMA3 path and 18 and 26 to 28 on its legacy one, `atan2_f32` 29 to 31
+ns against 12 to 13 and 13 to 15, `atan` within ±20 44 to 53 ns against 5.1
+and 7.0, `atan_f32` 34 against 4.7 to 5.3 and 5.8 to 6.1, and its slow path
+4.2 to 4.6 µs; `atan` takes `atan2`'s path, three divisions included. Why
+the `f32` procedures before `atan` are slower than the `f64` ones that do
+the same work is not known. The estimate below was optimistic by
 two to three times: the time is in the dependent double-`f64` steps, not in
 calls or checks, once the frame pops a returning procedure made are gone
 (they took a third of `exp`'s time). A table twice as large, a lower-degree
@@ -777,13 +783,14 @@ measure it. Open:
   widths, cover the common uses and the random distributions.
 - Should the C library's versions stay available under other names for
   callers who prefer speed to identity?
-- Can `core:math/repro`'s `pow` be proved correctly rounded? Its slow path
-  is within 2^-240 of x^y, and a value within 2^-230 of a midpoint is tested
-  for being exactly that midpoint, so it decides every argument unless an
-  x^y that is not a midpoint comes within 2^-230 of one. For one-argument
-  functions, exhaustive searches bound that distance; no search covers two
-  `f64` arguments, and no proof is known to rule it out. Its results are
-  the same everywhere either way.
+- Can `core:math/repro`'s `pow` and `atan2` be proved correctly rounded?
+  `pow`'s slow path is within 2^-240 of x^y, and a value within 2^-230 of a
+  midpoint is tested for being exactly that midpoint, so it decides every
+  argument unless an x^y that is not a midpoint comes within 2^-230 of one;
+  `atan2`'s, within 2^-305, never meets a midpoint, but could meet a result
+  that close to one. For one-argument functions, exhaustive searches bound
+  that distance; no search covers two `f64` arguments, and no proof is
+  known to rule it out. Their results are the same everywhere either way.
 
 The [deterministic math and CPU targeting
 plan](deterministic-math-and-targets-plan.md) proposes answers: a separate

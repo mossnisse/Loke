@@ -15,6 +15,7 @@ repro_constants_match_their_derivation :: proc(t: ^testing.T) {
 	o: Oracle
 	oracle_init(&o)
 	defer oracle_destroy(&o)
+	check_generated_block(t, "core/math/repro/atan.loke", atan_constants_source(&o))
 	check_generated_block(t, "core/math/repro/exp.loke", exp_constants_source(&o))
 	check_generated_block(t, "core/math/repro/log.loke", log_constants_source(&o))
 	check_generated_block(t, "core/math/repro/trig.loke", trig_constants_source(&o))
@@ -106,6 +107,25 @@ repro_functions_round_correctly :: proc(t: ^testing.T) {
 			want := oracle_pow(&o, x, y, format)
 			testing.expectf(t, got == want, "pow at f%s of %v and %v: got %x, the oracle %x", fields[1], x, y, got, want)
 			checked += 1
+		case "Atan2", "Atan":
+			// atan x is atan2(x, 1).
+			y_bits, _ := strconv.parse_u64(fields[2])
+			x_bits := transmute(u64)f64(1)
+			got, _ := strconv.parse_u64(fields[3])
+			if fields[0] == "Atan2" {
+				x_bits, _ = strconv.parse_u64(fields[3])
+				got, _ = strconv.parse_u64(fields[4])
+			}
+			y, x := transmute(f64)y_bits, transmute(f64)x_bits
+			format := F64_FORMAT
+			if fields[1] == "32" {
+				y = f64(transmute(f32)u32(y_bits))
+				if fields[0] == "Atan2" {x = f64(transmute(f32)u32(x_bits))}
+				format = F32_FORMAT
+			}
+			want := oracle_atan2(&o, y, x, format)
+			testing.expectf(t, got == want, "%s at f%s of %v and %v: got %x, the oracle %x", fields[0], fields[1], y, x, got, want)
+			checked += 1
 		case "differs64", "differs32":
 			testing.expectf(t, false, "a fast path differs from its slow path at %s", line)
 		case "Exp", "Sin", "Cos", "Log":
@@ -126,5 +146,5 @@ repro_functions_round_correctly :: proc(t: ^testing.T) {
 			checked += 1
 		}
 	}
-	testing.expectf(t, checked == 12809 && constants == 34, "the probe printed %d checked results and %d constants", checked, constants)
+	testing.expectf(t, checked == 17539 && constants == 46, "the probe printed %d checked results and %d constants", checked, constants)
 }

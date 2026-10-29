@@ -81,6 +81,42 @@ slow_pow_f32 :: proc(x: f32, y: f32) -> f32 {
 	return result;
 }
 
+// atan2's slow path wherever `atan2` would reach its fast path; elsewhere
+// `atan2` itself, whose table and tiny quotients are the whole answer there.
+@(public)
+slow_atan2 :: proc(y: f64, x: f64) -> f64 {
+	ay := y;
+	if (y < 0.0) { ay = 0.0 - y; }
+	ax := x;
+	if (x < 0.0) { ax = 0.0 - x; }
+	if (!finite_nonzero(ay) || !finite_nonzero(ax)) { return atan2(y, x); }
+	part, gap, nf, df := atan2_split(ay, ax, x < 0.0);
+	if (gap < -101) { return atan2(y, x); }
+	n, d := atan2_operands(gap, nf, df);
+	result := unsafe.transmute(f64, atan2_slow(n, d, part, F64_LAYOUT));
+	if (y < 0.0) { return 0.0 - result; }
+	return result;
+}
+
+@(public)
+slow_atan2_f32 :: proc(y: f32, x: f32) -> f32 {
+	ay := f64(y);
+	if (y < f32(0.0)) { ay = 0.0 - f64(y); }
+	ax := f64(x);
+	if (x < f32(0.0)) { ax = 0.0 - f64(x); }
+	if (!finite_nonzero(ay) || !finite_nonzero(ax)) { return atan2_f32(y, x); }
+	part, gap, nf, df := atan2_split(ay, ax, x < f32(0.0));
+	if (gap < -101) { return atan2_f32(y, x); }
+	n, d := atan2_operands(gap, nf, df);
+	result := unsafe.transmute(f32, u32(atan2_slow(n, d, part, F32_LAYOUT)));
+	if (y < f32(0.0)) { return f32(0.0) - result; }
+	return result;
+}
+
+finite_nonzero :: proc(a: f64) -> bool {
+	return a > 0.0 && a <= 1.7976931348623157e308;
+}
+
 // Whether |x| and y are past pow's table: |x| finite, nonzero, and not 1,
 // y finite and nonzero.
 pow_general :: proc(ax: f64, y: f64) -> bool {

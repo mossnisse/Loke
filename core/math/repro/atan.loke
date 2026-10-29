@@ -1,0 +1,440 @@
+// deterministic-math-and-targets-plan.md "Reproducible result contract":
+// `atan2` and `atan` in both widths, past their tables of special cases.
+//
+// With n the smaller of |y| and |x| and d the larger, t = n/d is in (0, 1],
+// and atan2(y, x) has y's sign and the magnitude atan t when |y| <= |x| and
+// x > 0, pi/2 - atan t or pi/2 + atan t when |y| > |x|, as x is positive or
+// negative, and pi - atan t otherwise. With a base of pi/2 or pi, the
+// result is at least pi/4, so there atan t needs only an absolute bound.
+// atan x is atan2(x, 1).
+//
+// n and d are scaled by one power of two, so that d is in [1, 2). Below
+// 2^-101, t is within t^3/3 < 2^-202 t of atan t, closer than a quotient of
+// two floats of either width comes to a midpoint without being one, 2^-107 t;
+// so atan t rounds as t does, but for a t exactly halfway between two
+// floats, which rounds toward zero, being just above atan t. That is done in
+// integers, and with a base, the result is the base rounded, which no
+// midpoint of either width is within 2^-60 of. Otherwise the fast path takes
+// j, the nearest integer to 128 t, c = j/128, and atan t = atan c + atan u,
+// u = (t - c)/(1 + t c) = (n - c d)/(d + c n), |u| at most 2^-8 and a hair,
+// with atan c from a table of `f64` pairs and atan u from its series. Its
+// result h + l has a relative error under 2^-68.2:
+//
+// - c d and c n are exact as pairs (`two_product`), so n - c d is within
+//   2^-105 absolute (`two_sum`) and d + c n within 2^-105 relative; their
+//   quotient as a pair, its low part from the exact remainder of the high
+//   one's division, is within 2^-104 of u, and 2^-96 of the result.
+// - atan u is u - u^3/3 + ... + u^9/9, the rest under 2^-91 |u|. The part
+//   past u, with u^3's cross term in u's low part, is under 2^-17.5 |u| and
+//   evaluated within 5.1 ulps of itself, under 2^-68.2 |u|, and |u| is at
+//   most the result: at j = 1, both are about 2^-8, and from there on, or
+//   with a base, the result is the larger. For j = 0, u is t's pair.
+// - Each table pair, and pi/2's, is within 2^-106 relative of its value;
+//   the high parts are summed exactly as pairs (`two_sum`), and the low
+//   parts, under 2^-50 of the result, round by under 2^-102.
+//
+// A result is returned when both ends of h + l ± 2^-66 h round alike.
+// Otherwise the slow path recomputes it in 320-bit fixed point, with an
+// error under 2^-305 relative. No result past the tiny ones is subnormal,
+// and none is a midpoint: atan of a nonzero rational is not even algebraic,
+// and neither is pi/2 or pi plus or minus it, since the tangent of a
+// nonzero rational is not (Lindemann and Weierstrass). But as for `pow`, no
+// exhaustive search covers two binary64 arguments, so nothing proves that
+// no result comes within 2^-305 of a midpoint; `tests/repro_test.odin`
+// checks both paths against an independent oracle.
+package repro;
+
+import "core:unsafe";
+
+// The correctly rounded k pi/4 for k in 0 ..= 4, in each width: the results
+// of the special cases, and of a base that atan t is too small to move.
+QUARTER_TURNS :: [5]u64{0, 0x3fe921fb54442d18, 0x3ff921fb54442d18, 0x4002d97c7f3321d2, 0x400921fb54442d18};
+QUARTER_TURNS_F32 :: [5]u64{0, 0x3f490fdb, 0x3fc90fdb, 0x4016cbe4, 0x40490fdb};
+
+// The magnitude of atan2's special cases in quarters of pi, or -1 for
+// finite nonzero arguments, from whether each is zero or infinite and x's
+// sign bit.
+atan2_special :: proc(y_zero: bool, y_infinite: bool, x_zero: bool, x_infinite: bool, x_negative: bool) -> int {
+	if (y_infinite) {
+		if (!x_infinite) { return 2; }
+		if (x_negative) { return 3; }
+		return 1;
+	}
+	if (y_zero || x_infinite) {
+		if (x_negative) { return 4; }
+		return 0;
+	}
+	if (x_zero) { return 2; }
+	return -1;
+}
+
+// Which form of atan t the result takes, as `atan2_kernel` numbers them,
+// and t as the exponent gap and the fraction bits of n and d, for finite
+// nonzero magnitudes ay and ax.
+atan2_split :: proc(ay: f64, ax: f64, x_negative: bool) -> (part: int, gap: int, n_fraction: u64, d_fraction: u64) {
+	n := ay;
+	d := ax;
+	part := 0;
+	if (ay > ax) {
+		n = ax;
+		d = ay;
+		part = 1;
+		if (x_negative) { part = 2; }
+	} else if (x_negative) {
+		part = 3;
+	}
+	en, nf := log_split(n);
+	ed, df := log_split(d);
+	return {part, en - ed, nf, df};
+}
+
+// n and d scaled so that d is in [1, 2), for a gap of at least -101; n is
+// then at least 2^-101.
+atan2_operands :: proc(gap: int, n_fraction: u64, d_fraction: u64) -> (n: f64, d: f64) {
+	return {from_bits(n_fraction | 0x3ff0000000000000)*power_of_two(gap), from_bits(d_fraction | 0x3ff0000000000000)};
+}
+
+// The magnitude of a result whose t is below 2^-101: the base's quarter
+// turns, or for no base, t rounded to `layout` with a tie toward zero, from
+// t = (q + rest/md) 2^(gap - 64) for the integer quotient q of the
+// significands, md the divisor's.
+atan2_tiny :: proc(part: int, gap: int, n_fraction: u64, d_fraction: u64, layout: Float_Layout) -> u64 {
+	quarters := 2;
+	if (part == 3) { quarters = 4; }
+	if (part != 0) {
+		if (layout.width == 32) { return QUARTER_TURNS_F32[quarters]; }
+		return QUARTER_TURNS[quarters];
+	}
+	mn := u128(n_fraction | 0x0010000000000000) << 64;
+	md := u128(d_fraction | 0x0010000000000000);
+	q := mn/md;
+	a: Fixed = {u64(q & LOW_64), u64(q >> 64), 0, 0, 0, 0};
+	unit, drop := fixed_round_place(a, gap - 64, layout);
+	kept := fixed_field(a, drop, layout.precision + 1);
+	if (fixed_field(a, drop - 1, 1) == 1 && (mn % md != 0 || fixed_any_below(a, drop - 1))) { kept += 1; }
+	return fixed_round_finish(kept, unit, layout);
+}
+
+// The base of a part, pi/2 or pi as a pair or 0, and whether atan t is
+// subtracted from it.
+atan2_base :: proc(part: int) -> (high: f64, low: f64, subtract: bool) {
+	if (part == 0) { return {0.0, 0.0, false}; }
+	if (part == 3) { return {2.0*from_bits(PIO2_HI), 2.0*from_bits(PIO2_LO), true}; }
+	return {from_bits(PIO2_HI), from_bits(PIO2_LO), part == 1};
+}
+
+// The index into the table of atan(j/128), the nearest integer to 128 t,
+// from t's nearest `f64`.
+atan_index :: proc(t: f64) -> int {
+	return int((t*128.0 + ROUND_SHIFTER) - ROUND_SHIFTER);
+}
+
+// The result's magnitude as h + l, for t = n/d with d in [1, 2) and n in
+// [2^-102, d]: part 0 is atan t, 1 is pi/2 - atan t, 2 is pi/2 + atan t,
+// and 3 is pi - atan t.
+atan2_kernel :: proc(n: f64, d: f64, part: int) -> (high: f64, low: f64) {
+	th := n/d;
+	j := atan_index(th);
+	uh := th;
+	ul := 0.0;
+	if (j == 0) {
+		// n - th d is exact (Sterbenz), and so the remainder (`two_product`).
+		ph, pl := two_product(th, d);
+		ul = ((n - ph) - pl)/d;
+	} else {
+		c := f64(j)*(1.0/128.0);
+		ch, cl := two_product(c, d);
+		s, e := two_sum(n, 0.0 - ch);
+		nh, nl := two_sum(s, e - cl);
+		qh, ql := two_product(c, n);
+		sum, err := fast_two_sum(d, qh);
+		dh, dl := fast_two_sum(sum, err + ql);
+		uh = nh/dh;
+		ph, pl := two_product(uh, dh);
+		ul = (((nh - ph) - pl) + (nl - uh*dl))/dh;
+	}
+	// atan u - uh, the cross term of u^3 included.
+	u2 := uh*uh;
+	tail := ul + (uh*u2*(-1.0/3.0 + u2*(0.2 + u2*(-1.0/7.0 + u2*(1.0/9.0)))) - u2*ul);
+	ah := from_bits(ATAN_TABLE[2*j]);
+	al := from_bits(ATAN_TABLE[2*j + 1]);
+	bh, bl, subtract := atan2_base(part);
+	if (subtract) {
+		ah = 0.0 - ah;
+		al = 0.0 - al;
+		uh = 0.0 - uh;
+		tail = 0.0 - tail;
+	}
+	s1, e1 := two_sum(bh, ah);
+	s2, e2 := two_sum(s1, uh);
+	return fast_two_sum(s2, (e1 + e2) + (bl + (al + tail)));
+}
+
+// atan2's magnitude for finite nonzero magnitudes ay and ax.
+atan2_f64_of :: proc(ay: f64, ax: f64, x_negative: bool) -> f64 {
+	part, gap, nf, df := atan2_split(ay, ax, x_negative);
+	if (gap < -101) { return from_bits(atan2_tiny(part, gap, nf, df, F64_LAYOUT)); }
+	n, d := atan2_operands(gap, nf, df);
+	h, l := atan2_kernel(n, d, part);
+	decided, v := f64_decided(h, l);
+	if (decided) { return v; }
+	return from_bits(atan2_slow(n, d, part, F64_LAYOUT));
+}
+
+// The same for `f32` arguments, here exactly as `f64` values. A
+// single-`f64` approximation comes first, within 4 ulps of the result.
+// Narrowing it rounds the result correctly unless an `f32` midpoint is
+// within 8 ulps, which its low bits show; then the double-`f64` result,
+// within one ulp, decides, and the slow path if that does not.
+atan2_f32_of :: proc(ay: f64, ax: f64, x_negative: bool) -> f32 {
+	part, gap, nf, df := atan2_split(ay, ax, x_negative);
+	if (gap < -101) { return unsafe.transmute(f32, u32(atan2_tiny(part, gap, nf, df, F32_LAYOUT))); }
+	n, d := atan2_operands(gap, nf, df);
+	quick := atan2_quick(n, d, part);
+	if (f32_decided(quick, 8)) { return f32(quick); }
+
+	h, l := atan2_kernel(n, d, part);
+	near := h + l;
+	if (f32_decided(near, 1)) { return f32(near); }
+	return unsafe.transmute(f32, u32(atan2_slow(n, d, part, F32_LAYOUT)));
+}
+
+// The result's magnitude in single-`f64` arithmetic, for `f32` arguments
+// and the operands of `atan2_kernel`. n and d have 24 bits, so with j >= 1,
+// n is at least 2^-9, c d, c n, n - c d, and d + c n are exact, and u =
+// (n - c d)/(d + c n) rounds once; atan u's series to u^7/7, the rest under
+// 2^-67 |u|, rounds once more, as do the three sums with the table pair and
+// the base. That is within 4 ulps of the result, and of its own value, |u|
+// being at most the result and the table entry at most twice it.
+atan2_quick :: proc(n: f64, d: f64, part: int) -> f64 {
+	j := atan_index(n/d);
+	c := f64(j)*(1.0/128.0);
+	u := (n - c*d)/(d + c*n);
+	u2 := u*u;
+	p := u + u*u2*(-1.0/3.0 + u2*(0.2 + u2*(-1.0/7.0)));
+	ah := from_bits(ATAN_TABLE[2*j]);
+	al := from_bits(ATAN_TABLE[2*j + 1]);
+	bh, bl, subtract := atan2_base(part);
+	if (subtract) {
+		ah = 0.0 - ah;
+		al = 0.0 - al;
+		p = 0.0 - p;
+	}
+	return (bh + ah) + (p + (bl + al));
+}
+
+// atan2's magnitude correctly rounded to `layout`, as its bit pattern, for
+// n, d, and part as `atan2_kernel` takes them, in fixed point. With J the
+// nearest integer to 8 t and c = J/8: for J >= 1, atan t = atan c + atan u,
+// u = (n - c d)/(d + c n), |u| <= 1/16 and a hair, atan c from a table, and
+// u from the exact numerator and the denominator's reciprocal; for J = 0,
+// t < 1/16 and a hair, and atan t is t times its series, t scaled by 2^k
+// into [1/2, 2), so that a small t keeps every bit. The series alternate
+// and fall by 2^-7.9 a term, each operation truncates by under 2^-320, and
+// the reciprocals are within 2^-319, which leaves the result within 2^-305
+// relative.
+atan2_slow :: proc(n: f64, d: f64, part: int, layout: Float_Layout) -> u64 {
+	big_j := int((n/d*8.0 + ROUND_SHIFTER) - ROUND_SHIFTER);
+	value: Fixed = {};
+	k := 0;
+	if (big_j == 0) {
+		e, _ := log_split(n);
+		k = 0 - e;
+		q := fixed_times(fixed_of(n*power_of_two(k)), fixed_reciprocal(fixed_of(d), d));
+		value = atan_series(q, fixed_scaled(fixed_times(q, q), 0 - 2*k));
+	} else {
+		// 8n - J d and 8d + J n over 8, which loses no bit of either.
+		scaled_n := fixed_of(n);
+		scaled_d := fixed_of(d);
+		a := fixed_times_small(scaled_n, 8);
+		b := fixed_times_small(scaled_d, u64(big_j));
+		below := fixed_less(a, b);
+		numerator: Fixed = {};
+		if (below) {
+			numerator = fixed_shift_down(fixed_minus(b, a), 3);
+		} else {
+			numerator = fixed_shift_down(fixed_minus(a, b), 3);
+		}
+		denominator := fixed_shift_down(fixed_plus(fixed_times_small(scaled_d, 8), fixed_times_small(scaled_n, u64(big_j))), 3);
+		u := fixed_times(numerator, fixed_reciprocal(denominator, d + f64(big_j)*0.125*n));
+		atan_u := atan_series(u, fixed_times(u, u));
+		if (below) {
+			value = fixed_minus(ATAN_WIDE[big_j], atan_u);
+		} else {
+			value = fixed_plus(ATAN_WIDE[big_j], atan_u);
+		}
+	}
+	if (part == 0) { return fixed_round(value, 0 - k - FRACTION_BITS, layout); }
+	absolute := fixed_scaled(value, 0 - k);
+	base := PIO2_WIDE;
+	if (part == 3) { base = fixed_plus(PIO2_WIDE, PIO2_WIDE); }
+	if (part == 2) { return fixed_round(fixed_plus(base, absolute), 0 - FRACTION_BITS, layout); }
+	return fixed_round(fixed_minus(base, absolute), 0 - FRACTION_BITS, layout);
+}
+
+// q (1 - s/3 + s^2/5 - ...), atan q for s = q^2, or its multiple by 2^k
+// for s = (q 2^-k)^2; s is under 2^-7.9.
+atan_series :: proc(q: Fixed, s: Fixed) -> Fixed {
+	sum := FIXED_ONE;
+	power := FIXED_ONE;
+	subtract := true;
+	for (n: u64 = 3; ; n += 2) {
+		power = fixed_times(power, s);
+		term := fixed_divided_small(power, n);
+		if (fixed_is_zero(term)) { break; }
+		if (subtract) {
+			sum = fixed_minus(sum, term);
+		} else {
+			sum = fixed_plus(sum, term);
+		}
+		subtract = !subtract;
+	}
+	return fixed_times(q, sum);
+}
+
+// Generated by `atan_constants_source` in tests/math_oracle.odin, which
+// `tests/repro_test.odin` checks this block against.
+// BEGIN GENERATED
+ATAN_TABLE :: [258]u64{
+	0x0000000000000000, 0x0000000000000000,
+	0x3f7fffd555bbba97, 0x3c068062351fbbe6,
+	0x3f8fff555bbb729b, 0xbc2220c39d4dff50,
+	0x3f97fee0184a5c36, 0xbc343189fc0a354b,
+	0x3f9ffd55bba97625, 0xbc35ec431444912c,
+	0x3fa3fd65f169c9d9, 0x3c27230a716461b5,
+	0x3fa7fb818430da2a, 0xbc086ef8f794f105,
+	0x3fabf8ddf139c444, 0xbc489fe34b2a7fa8,
+	0x3faff55bb72cfdea, 0xbc3c934d86d23f1d,
+	0x3fb1f86dbf082d59, 0xbc4095dc7732ef81,
+	0x3fb3f59f0e7c559d, 0x3c5ac4ce285df847,
+	0x3fb5f2324fd2d7b2, 0x3c58a8da4401318e,
+	0x3fb7ee182602f10f, 0xbc5cfb654c0c3d98,
+	0x3fb9e94153cfdcf1, 0x3c5a332e1d69c47e,
+	0x3fbbe39ebe6f07c3, 0x3c5f7b8f29a05987,
+	0x3fbddd21701eba6e, 0x3c594effcd76fe58,
+	0x3fbfd5ba9aac2f6e, 0xbc4cd37686760c17,
+	0x3fc0e6adccf40882, 0xbc6d71a31bb98d0d,
+	0x3fc1e1fafb043727, 0xbc4b485914dacf8c,
+	0x3fc2dcbdb2fba1ff, 0x3c58f28705561534,
+	0x3fc3d6eee8c6626c, 0x3c661a3b0ce9281b,
+	0x3fc4d087a9da4f17, 0x3c61f323f1adf158,
+	0x3fc5c9811e3ec26a, 0xbc5054ab2c010f3d,
+	0x3fc6c1d4898933d9, 0xbc52954a7603c427,
+	0x3fc7b97b4bce5b02, 0x3c5347b0b4f881ca,
+	0x3fc8b06ee2879c29, 0xbc6118cd30308c4f,
+	0x3fc9a6a8e96c8626, 0x3c4cf601e7b4348e,
+	0x3fca9c231b403279, 0x3c60e8bbe89cca85,
+	0x3fcb90d7529260a2, 0x3c217b10d2e0e5ab,
+	0x3fcc84bf8a742e6e, 0xbc595bdd0682ea26,
+	0x3fcd77d5df205736, 0x3c6c648d1534597e,
+	0x3fce6a148e96ec4d, 0x3c6866b22029f765,
+	0x3fcf5b75f92c80dd, 0x3c68ab6e3cf7afbd,
+	0x3fd025fa510665b6, 0xbc7672df6832fa48,
+	0x3fd09dc597d86362, 0x3c762e47390cb865,
+	0x3fd1151a362431ca, 0xbc74dc8dc9077b9f,
+	0x3fd18bf5a30bf178, 0x3c630ca4748b1bf9,
+	0x3fd2025567e47c96, 0xbc61832328f4290e,
+	0x3fd278372057ef46, 0xbc7077cdd36dfc81,
+	0x3fd2ed987a823cfe, 0x3c6b91258ea012ca,
+	0x3fd362773707ebcc, 0xbc6963a544b672d8,
+	0x3fd3d6d129271134, 0x3c7137ca41cc958a,
+	0x3fd44aa436c2af0a, 0xbc75d5e43c55b3ba,
+	0x3fd4bdee586890e7, 0xbc6e4dc77c22a757,
+	0x3fd530ad9951cd4a, 0xbc62566480884082,
+	0x3fd5a2e0175e0f4e, 0x3c713b7a8f82e457,
+	0x3fd614840309cfe2, 0xbc7a725715711f00,
+	0x3fd685979f5fa6fe, 0xbc4257814d1ada9c,
+	0x3fd6f61941e4def1, 0xbc7c63aae6f6e918,
+	0x3fd7660752817502, 0xbc4dd11791cc7600,
+	0x3fd7d5604b63b3f7, 0x3c769c885c2b249a,
+	0x3fd84422b8df95d7, 0x3c7d76a0299b41b6,
+	0x3fd8b24d394a1b25, 0x3c7b6d0ba3748fa8,
+	0x3fd91fde7cd0c662, 0x3c71074188054b53,
+	0x3fd98cd5454d6b18, 0x3c79e6c988fd0a77,
+	0x3fd9f93066168002, 0xbc7c827047c9439a,
+	0x3fda64eec3cc23fd, 0xbc724dec1b50b7ff,
+	0x3fdad00f5422058b, 0x3c7fc4c33891d2e8,
+	0x3fdb3a911da65c6c, 0x3c7ae187b1ca5040,
+	0x3fdba473378624a5, 0x3c7519a1b46e4aff,
+	0x3fdc0db4c94ec9f0, 0xbc7cc1ce70934c34,
+	0x3fdc76550aad71f9, 0xbc774b8bff7043e4,
+	0x3fdcde53432c1351, 0xbc7a2cfa4418f1ad,
+	0x3fdd45aec9ec862b, 0x3c689421163ef92d,
+	0x3fddac670561bb4f, 0x3c7a2b7f222f65e2,
+	0x3fde127b6b0744b0, 0xbc52b0986398d4ab,
+	0x3fde77eb7f175a34, 0x3c70e53dc1bf3435,
+	0x3fdedcb6d43f8435, 0xbc5fc976330884e4,
+	0x3fdf40dd0b541418, 0xbc6a3992dc382a23,
+	0x3fdfa45dd3029259, 0xbc7ca563dc28d8b5,
+	0x3fe0039c73c1a40c, 0xbc8b32c949c9d593,
+	0x3fe034b709250488, 0x3c78f9b38d855410,
+	0x3fe0657e94db30d0, 0xbc7d5b495f6349e6,
+	0x3fe095f30861a590, 0xbc7121b20a15a9f3,
+	0x3fe0c6145b5b43da, 0x3c5974fa13b5404f,
+	0x3fe0f5e28b67e295, 0x3be311b17ec990d0,
+	0x3fe1255d9bfbd2a9, 0xbc52bdaee1c0ee35,
+	0x3fe154859637646a, 0xbc84ba7c548bf3c3,
+	0x3fe1835a88be7c13, 0x3c8c621cec00c301,
+	0x3fe1b1dc87904285, 0xbc621e8c8aef8f29,
+	0x3fe1e00babdefeb4, 0xbc5928df287a668f,
+	0x3fe20de813e823b2, 0xbc8791d753ebb744,
+	0x3fe23b71e2cc9e6a, 0x3c6c421c9f38224e,
+	0x3fe268a940696da6, 0x3c5d1348a04c73cc,
+	0x3fe2958e59308e31, 0xbc709e73b0c6c087,
+	0x3fe2c2215e024466, 0xbc44b810da3a4be1,
+	0x3fe2ee628406cbca, 0x3c8c5d5e9ff0cf8d,
+	0x3fe31a52048874be, 0x3c840cab87a7ac24,
+	0x3fe345f01cce37bb, 0x3c81021137c71102,
+	0x3fe3713d0df6c504, 0xbc54f789e031606d,
+	0x3fe39c391cd4171a, 0xbc82304331d8bf46,
+	0x3fe3c6e491c78dc5, 0xbc8e145094fd0ba7,
+	0x3fe3f13fb89e96f4, 0x3c7ecf8b492644f0,
+	0x3fe41b4ae06fea41, 0x3c63d60a53277652,
+	0x3fe445065b795b56, 0xbc7f76d0163f79c8,
+	0x3fe46e727efe4716, 0xbc639b9b1b844cc9,
+	0x3fe4978fa3269ee1, 0x3c72419a87f2a458,
+	0x3fe4c05e22de94e5, 0xbc8c0ac1f09f2edf,
+	0x3fe4e8de5bb6ec04, 0x3c84a33dbeb3796c,
+	0x3fe51110adc5ed81, 0x3c723dcd6832a63e,
+	0x3fe538f57b89061f, 0xbc81bb74abda520c,
+	0x3fe5608d29c70c34, 0x3c89939cf0de8088,
+	0x3fe587d81f732fbb, 0xbc75e5c9d8c5a950,
+	0x3fe5aed6c5909517, 0x3c87312f714a9436,
+	0x3fe5d58987169b18, 0x3c60028e4bc5e7ca,
+	0x3fe5fbf0d0d5cc4a, 0xbc5b4cfd000b7158,
+	0x3fe6220d115d7b8e, 0xbc62b785350ee8c1,
+	0x3fe647deb8e20b90, 0xbc5eca04023a51cf,
+	0x3fe66d663923e087, 0xbc76ea6febe8bbba,
+	0x3fe692a40556fb6a, 0x3c8d94b95a8ea2cc,
+	0x3fe6b798920b3d99, 0xbc8a80386188c50e,
+	0x3fe6dc44551553af, 0xbc5bf8863573828e,
+	0x3fe700a7c5784634, 0xbc78c34d25aadef6,
+	0x3fe724c35b4fae7b, 0x3c5948b32db3499b,
+	0x3fe748978fba8e0f, 0x3c47b2a6165884a1,
+	0x3fe76c24dcc6c6c0, 0x3c81952551adc83d,
+	0x3fe78f6bbd5d315e, 0x3c8406a089803740,
+	0x3fe7b26cad2e50fe, 0xbc8ce80df30411fb,
+	0x3fe7d528289fa093, 0x3c8560821e2f3aa9,
+	0x3fe7f79eacb97898, 0x3c8fd5ca80ead221,
+	0x3fe819d0b7158a4d, 0xbc7bf76229d3b917,
+	0x3fe83bbec5cdee22, 0x3c63107104ffc6c3,
+	0x3fe85d69576cc2c5, 0x3c66b66e7fc8b8c3,
+	0x3fe87ed0eadc5a2a, 0x3c70af5ad957f4bc,
+	0x3fe89ff5ff57f1f8, 0xbc855b9a5e177a1b,
+	0x3fe8c0d9145cf49d, 0x3c8bea4076dc4333,
+	0x3fe8e17aa99cc05e, 0xbc7ec182ab042f61,
+	0x3fe901db3eeef187, 0x3c868665e5603c8f,
+	0x3fe921fb54442d18, 0x3c81a62633145c07,
+};
+ATAN_WIDE :: [9][6]u64{
+	{0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000},
+	{0x1a9a0100403b384c, 0x5d926aefbf6d82ed, 0xf1672afb2bb35b24, 0x5912f313e7d111de, 0x1fd5ba9aac2f6dc6, 0x0000000000000000},
+	{0x64ae49459a395d94, 0xde8e9d9f251269d9, 0x6a9fea40e22ce0da, 0x5b71e7bd7de885f9, 0x3eb6ebf25901bac5, 0x0000000000000000},
+	{0x32662c101cfee06b, 0x2399f2e519a48470, 0x9ec21cbbd72a2ae6, 0xc55190916e7f2241, 0x5bd86507937bc239, 0x0000000000000000},
+	{0xfd4e2c8bc495a8b6, 0x71678b7374b12384, 0xb70a0ac3930e6f80, 0xb7f222f65e1d4681, 0x76b19c1586ed3da2, 0x0000000000000000},
+	{0x3669dcd3918d712b, 0xf53da46d13389eb2, 0x918a67e0652b375c, 0x5c835e1665c43747, 0x8f005d5ef7f59f9b, 0x0000000000000000},
+	{0xa7f7b7db933cb84f, 0x214866658cc4ef3a, 0xe3f08689eeb2b9e7, 0x19a87f2a457dac9e, 0xa4bc7d1934f70924, 0x0000000000000000},
+	{0x4655f065cec98182, 0xa012155f64cae530, 0x3d7aecc114c79a80, 0xcb2da55210a4443d, 0xb8053e2bc2319e73, 0x0000000000000000},
+	{0x514a08798e3404dd, 0x020bbea63b139b22, 0x29024e088a67cc74, 0xc4c6628b80dc1cd1, 0xc90fdaa22168c234, 0x0000000000000000},
+};
+// END GENERATED

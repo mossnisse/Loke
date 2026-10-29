@@ -330,8 +330,8 @@ checklist.
   ([CPU levels](compiler-guide.md#cpu-levels)).
 - `core:math/repro` holds correctly rounded elementary functions, whose
   results are the same bits on every machine, CPU level, and optimization
-  level, and at compile time, starting with `exp`, `log`, `pow`, `sin`, and
-  `cos` in both widths ([`core:math/repro`](standard-library.md#coremathrepro)).
+  level, and at compile time, starting with `exp`, `log`, `pow`, `sin`, `cos`,
+  `atan`, and `atan2` in both widths ([`core:math/repro`](standard-library.md#coremathrepro)).
 
 ### Changed
 

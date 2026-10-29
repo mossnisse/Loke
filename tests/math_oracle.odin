@@ -1,6 +1,7 @@
 // deterministic-math-and-targets-plan.md "Validation and performance gates": an
-// oracle for the correctly rounded `exp`, `log`, `sin`, `cos`, and `pow` of
-// `f64` and `f32`, with the special cases of the reproducible contract.
+// oracle for the correctly rounded `exp`, `log`, `sin`, `cos`, `pow`, and
+// `atan2` of `f64` and `f32`, with the special cases of the reproducible
+// contract.
 //
 // Each result is an interval of integers at a scale of `2^-precision`, every
 // step rounded outward, so the true value is always inside it. When both ends
@@ -382,6 +383,117 @@ pow_attempt :: proc(o: ^Oracle, x, y: f64, format: Float_Format, w: int) -> (u64
 		z = Interval{shift_left(z.lo, -shift), shift_left(z.hi, -shift)}
 	}
 	return exp_of_interval(o, z, estimate, format, w)
+}
+
+// The correctly rounded atan2(y, x)'s bit pattern, for arguments of `format`,
+// which `y` and `x` hold exactly. With t the smaller of |y| and |x| over the
+// larger, the result is atan t when |y| <= |x| and x is positive, pi/2 - atan t
+// or pi/2 + atan t when |y| > |x|, by x's sign, and pi - atan t otherwise,
+// with y's sign; x's sign bit decides, so -0 counts as negative. t is 0 when
+// the smaller is 0 or the larger alone is infinite, and 1 when both are
+// infinite, which gives the contract's table without listing it. No result
+// but 0 is dyadic, since atan of a nonzero rational is not even algebraic
+// (Lindemann-Weierstrass), so the search ends; a tiny atan t, though, is
+// within about t^3 of t, which can be a midpoint, so it takes about twice as
+// many bits as t is below one, and below 2^-1100 rounds to 0 at once.
+oracle_atan2 :: proc(o: ^Oracle, y, x: f64, format: Float_Format) -> u64 {
+	if math.is_nan(y) || math.is_nan(x) {
+		return canonical_nan(format)
+	}
+	negative := math.sign_bit(y)
+	sign := negative ? sign_bit(format) : 0
+	ay, ax := abs(y), abs(x)
+	swap := ay > ax
+	n, d := swap ? ax : ay, swap ? ay : ax
+	// The base in quarters of pi, and the sign atan t takes.
+	quarter, s := 0, 1
+	if swap {
+		quarter = 2
+		s = math.sign_bit(x) ? 1 : -1
+	} else if math.sign_bit(x) {
+		quarter = 4
+		s = -1
+	}
+	scratch: virtual.Arena
+	_ = virtual.arena_init_growing(&scratch)
+	context.allocator = virtual.arena_allocator(&scratch)
+	if p, q := atan2_ratio(n, d); quarter == 0 && (p == nil || bit_count(q) - bit_count(p) > 1100) {
+		virtual.arena_destroy(&scratch)
+		return sign
+	}
+	for precision := START_PRECISION; precision <= MAX_PRECISION; precision *= 2 {
+		if pattern, decided := atan2_attempt(o, n, d, quarter, s, negative, format, precision); decided {
+			virtual.arena_destroy(&scratch)
+			return pattern
+		}
+		free_all(context.allocator)
+	}
+	panic("the oracle could not decide a rounding of atan2")
+}
+
+// t = n/d as integers p/q, for 0 <= n <= d, or nil for t = 0: 1/1 when both
+// are infinite, and nil when n is 0 or d alone is infinite.
+@(private = "file")
+atan2_ratio :: proc(n, d: f64) -> (p, q: ^big.Int) {
+	if math.is_inf(n, 0) {
+		return int_of(1), int_of(1)
+	}
+	if n == 0 || math.is_inf(d, 0) {
+		return nil, nil
+	}
+	sn, en := dyadic(n)
+	sd, ed := dyadic(d)
+	low := min(en, ed)
+	return shift_left(sn, en - low), shift_left(sd, ed - low)
+}
+
+// quarter pi/4 + s atan(n/d), as `oracle_atan2` defines them. With no base,
+// the result is near n/d, so it gets as many more bits as that is below one.
+@(private = "file")
+atan2_attempt :: proc(o: ^Oracle, n, d: f64, quarter, s: int, negative: bool, format: Float_Format, w: int) -> (u64, bool) {
+	p, q := atan2_ratio(n, d)
+	scale := w + 2
+	if quarter == 0 {
+		scale = w + max(0, bit_count(q) - bit_count(p) + 1)
+	}
+	quarter_pi := narrow(o.pi, CONSTANT_PRECISION + 2, scale)
+	value := Interval{times(quarter_pi.lo, int_of(quarter)), times(quarter_pi.hi, int_of(quarter))}
+	if p != nil {
+		a := atan_interval(p, q, scale)
+		if s > 0 {
+			value = Interval{plus(value.lo, a.lo), plus(value.hi, a.hi)}
+		} else {
+			value = Interval{minus(value.lo, a.hi), minus(value.hi, a.lo)}
+		}
+	}
+	if sign_of(value.lo) <= 0 {
+		return 0, false
+	}
+	return round_interval(value, -scale, negative, format)
+}
+
+// atan(p/q) at a scale of 2^-scale, for integers 0 < p <= q, by Euler's
+// series: the sum over k >= 0 of (2k)!!/(2k + 1)!! z^k t/(1 + t^2), with
+// t = p/q, so that t/(1 + t^2) = p q/(p^2 + q^2) and z = t^2/(1 + t^2) =
+// p^2/(p^2 + q^2) <= 1/2. Each term is the one before times 2k z/(2k + 1),
+// under half of it, so the rest after a term is under that term; each term
+// is floored and ceiled from the ends of the last.
+@(private = "file")
+atan_interval :: proc(p, q: ^big.Int, scale: int) -> Interval {
+	p2 := times(p, p)
+	denominator := plus(p2, times(q, q))
+	first := shift_left(times(p, q), scale)
+	term := Interval{divide_down(first, denominator), divide_up(first, denominator)}
+	sum := term
+	for k := 1;; k += 1 {
+		factor := times(p2, int_of(2*k))
+		divisor := times(denominator, int_of(2*k + 1))
+		term = Interval{divide_down(times(term.lo, factor), divisor), divide_up(times(term.hi, factor), divisor)}
+		sum = Interval{plus(sum.lo, term.lo), plus(sum.hi, term.hi)}
+		if compare(term.hi, int_of(1)) <= 0 {
+			return Interval{sum.lo, plus(sum.hi, int_of(1))}
+		}
+	}
 }
 
 // sin and cos of |x| = q pi/2 + r, |r| a little over pi/4 at most, from the
@@ -946,6 +1058,43 @@ log_constants_source :: proc(o: ^Oracle) -> string {
 			pair = exact_pair(Interval{negated(v.hi), negated(v.lo)}, P)
 		}
 		fmt.sbprintf(&b, "\t0x%016x, 0x%016x, 0x%016x,\n", transmute(u64)d, transmute(u64)pair[0], transmute(u64)pair[1])
+	}
+	strings.write_string(&b, "};\n")
+	return strings.to_string(b)
+}
+
+// The constants `core:math/repro`'s `atan2` is built from, as the Loke source
+// between atan.loke's generated-block markers: atan(j/128) for j in 0 ..= 128
+// as `f64` pairs, each the correctly rounded value and the correctly rounded
+// rest, and atan(j/8) * 2^320 for j in 0 ..= 8, floored, as six limbs.
+atan_constants_source :: proc(o: ^Oracle) -> string {
+	context.allocator = virtual.arena_allocator(&o.arena)
+	P :: 400
+	b: strings.Builder
+	strings.builder_init(&b)
+	strings.write_string(&b, "ATAN_TABLE :: [258]u64{\n")
+	for j in 0 ..= 128 {
+		pair := [2]f64{0, 0}
+		if j > 0 {
+			pair = exact_pair(atan_interval(int_of(j), int_of(128), P), P)
+		}
+		fmt.sbprintf(&b, "\t0x%016x, 0x%016x,\n", transmute(u64)pair[0], transmute(u64)pair[1])
+	}
+	strings.write_string(&b, "};\n")
+	strings.write_string(&b, "ATAN_WIDE :: [9][6]u64{\n")
+	for j in 0 ..= 8 {
+		wide := Interval{int_of(0), int_of(0)}
+		if j > 0 {
+			wide = narrow(atan_interval(int_of(j), int_of(8), P), P, 320)
+			if compare(wide.lo, wide.hi) != 0 && compare(plus(wide.lo, int_of(1)), wide.hi) != 0 {
+				panic("atan(j/8) needs more bits")
+			}
+		}
+		strings.write_string(&b, "\t{")
+		for limb in 0 ..< 6 {
+			fmt.sbprintf(&b, "%s0x%016x", limb == 0 ? "" : ", ", low_bits(shift_down(wide.lo, 64*limb), 64))
+		}
+		strings.write_string(&b, "},\n")
 	}
 	strings.write_string(&b, "};\n")
 	return strings.to_string(b)

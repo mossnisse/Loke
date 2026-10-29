@@ -131,7 +131,28 @@ Then `pow` in both widths:
   width, pinned midpoints, 2,000 seeded pairs against the oracle, a
   thousand of them midpoints, and 40,000 against the slow path.
 
-`atan2` and the rest of phase 4's functions are next.
+Then `atan2` and `atan` in both widths, atan x being atan2(x, 1):
+
+- With t the smaller magnitude over the larger, the result is atan t, or
+  pi/2 or pi plus or minus it, at least pi/4 then. The fast path takes c =
+  j/128 nearest t from a table of `f64` pairs and atan t = atan c + atan u,
+  u = (n - c d)/(d + c n) from the two magnitudes, |u| <= 2^-8, so the
+  series is short and nothing near zero has an absolute error; `atan2_f32`
+  puts a single-`f64` path first, in which u's numerator and denominator
+  are exact. The slow path does the same in fixed point at c = J/8, and for
+  t < 1/16 scales t near 1 first.
+- Below 2^-101, t is closer to atan t than any quotient of two floats comes
+  to a midpoint without being one, so it is rounded in integers, but for a
+  t exactly halfway, which rounds toward zero: `atan2(3*2^-1074, 2)` is
+  2^-1074, not the even 2^-1073. As for `pow`, no search covers two
+  arguments, so nothing proves the slow path's 2^-305 enough.
+- The oracle gains `oracle_atan2`, which follows the table without listing
+  it and sums Euler's series for atan of a rational, independent of the
+  implementation's reduction. Odin's `atan2` is an ulp low in about a
+  quarter of its sample, where a separate computation by angle halving
+  agrees with the oracle.
+
+The rest of phase 4's functions are next.
 
 Not started: phase 1's benchmarks (the UCRT timings in open questions stand
 until there is a kernel to compare), the rest of phase 4's kernels, NaN
@@ -256,7 +277,7 @@ underflow to a subnormal or a zero of the result's sign. They follow the IEC
 60559 annex of C17 (F.10), except that every NaN result is the canonical one,
 whatever NaN produced it and whether or not it was signaling. `π`, `π/2`,
 `π/4`, and `3π/4` mean the correctly rounded constants of the result's width.
-`tests/math_oracle.odin` implements all but `atan2`'s.
+`tests/math_oracle.odin` implements all of them.
 
 | Function | Argument | Result |
 | --- | --- | --- |

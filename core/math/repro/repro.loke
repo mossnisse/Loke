@@ -10,8 +10,8 @@
 	each function. No procedure here calls the C library.
 
 	The package holds only what has been implemented and checked: today `exp`,
-	`log`, `pow`, `sin`, and `cos`, each in both widths. A function missing here is not
-	provided by falling back to `core:math`.
+	`log`, `pow`, `sin`, `cos`, `atan`, and `atan2`, each in both widths. A
+	function missing here is not provided by falling back to `core:math`.
 */
 @(public)
 package repro;
@@ -203,4 +203,76 @@ cos_f32 :: proc(x: f32) -> f32 {
 	if (magnitude < 0x39000000) { return f32(1.0); }
 	if (magnitude >= 0x7f800000) { return unsafe.transmute(f32, u32(CANONICAL_NAN_F32)); }
 	return trig_f32(f64(x), true);
+}
+
+/**
+	The inverse tangent of x, in radians from -pi/2 to pi/2: `atan2(x, 1)`,
+	whose special cases it shares. NaN gives NaN, ±0 gives itself, and ±Inf
+	gives ±pi/2, correctly rounded.
+*/
+atan :: proc(x: f64) -> f64 {
+	bits := unsafe.transmute(u64, x);
+	magnitude := bits & 0x7fffffffffffffff;
+	sign := bits & 0x8000000000000000;
+	// Below 2^-27 in magnitude, atan x is within half an ulp of x.
+	if (magnitude < 0x3e40000000000000) { return x; }
+	if (magnitude >= 0x7ff0000000000000) {
+		if (magnitude > 0x7ff0000000000000) { return unsafe.transmute(f64, u64(CANONICAL_NAN_F64)); }
+		return unsafe.transmute(f64, QUARTER_TURNS[2] | sign);
+	}
+	return unsafe.transmute(f64, unsafe.transmute(u64, atan2_f64_of(unsafe.transmute(f64, magnitude), 1.0, false)) | sign);
+}
+
+/// The inverse tangent for `f32`, with the special cases of `atan`.
+atan_f32 :: proc(x: f32) -> f32 {
+	bits := unsafe.transmute(u32, x);
+	magnitude := bits & 0x7fffffff;
+	sign := bits & 0x80000000;
+	// Below 2^-12 in magnitude, atan x is within half an ulp of x.
+	if (magnitude < 0x39800000) { return x; }
+	if (magnitude >= 0x7f800000) {
+		if (magnitude > 0x7f800000) { return unsafe.transmute(f32, u32(CANONICAL_NAN_F32)); }
+		return unsafe.transmute(f32, u32(QUARTER_TURNS_F32[2]) | sign);
+	}
+	return unsafe.transmute(f32, unsafe.transmute(u32, atan2_f32_of(f64(unsafe.transmute(f32, magnitude)), 1.0, false)) | sign);
+}
+
+/**
+	The angle from the positive x axis to the point (x, y), in radians from
+	-pi to pi, with y's sign: the inverse tangent of y/x, in the quadrant of
+	(x, y). The special cases are those of IEC 60559 and C17's annex F but
+	for NaN results, which are the canonical NaN: NaN gives NaN; y = ±0 gives
+	±pi for x = -0 or x < 0 and ±0 for x = +0 or x > 0; any other finite y
+	gives ±pi/2 for x = ±0, ±pi for x = -Inf, and ±0 for x = +Inf; and
+	y = ±Inf gives ±pi/2 for a finite x, ±3pi/4 for x = -Inf, and ±pi/4 for
+	x = +Inf, each multiple of pi correctly rounded. A result too small for
+	`f64` is a subnormal or zero of y's sign.
+*/
+atan2 :: proc(y: f64, x: f64) -> f64 {
+	yb := unsafe.transmute(u64, y);
+	xb := unsafe.transmute(u64, x);
+	ay := yb & 0x7fffffffffffffff;
+	ax := xb & 0x7fffffffffffffff;
+	if (ay > 0x7ff0000000000000 || ax > 0x7ff0000000000000) { return unsafe.transmute(f64, u64(CANONICAL_NAN_F64)); }
+	sign := yb & 0x8000000000000000;
+	x_negative := xb >> 63 != 0;
+	quarters := atan2_special(ay == 0, ay == 0x7ff0000000000000, ax == 0, ax == 0x7ff0000000000000, x_negative);
+	if (quarters >= 0) { return unsafe.transmute(f64, QUARTER_TURNS[quarters] | sign); }
+	magnitude := atan2_f64_of(unsafe.transmute(f64, ay), unsafe.transmute(f64, ax), x_negative);
+	return unsafe.transmute(f64, unsafe.transmute(u64, magnitude) | sign);
+}
+
+/// atan2 for `f32`, with the special cases of `atan2`.
+atan2_f32 :: proc(y: f32, x: f32) -> f32 {
+	yb := unsafe.transmute(u32, y);
+	xb := unsafe.transmute(u32, x);
+	ay := yb & 0x7fffffff;
+	ax := xb & 0x7fffffff;
+	if (ay > 0x7f800000 || ax > 0x7f800000) { return unsafe.transmute(f32, u32(CANONICAL_NAN_F32)); }
+	sign := yb & 0x80000000;
+	x_negative := xb >> 31 != 0;
+	quarters := atan2_special(ay == 0, ay == 0x7f800000, ax == 0, ax == 0x7f800000, x_negative);
+	if (quarters >= 0) { return unsafe.transmute(f32, u32(QUARTER_TURNS_F32[quarters]) | sign); }
+	magnitude := atan2_f32_of(f64(unsafe.transmute(f32, ay)), f64(unsafe.transmute(f32, ax)), x_negative);
+	return unsafe.transmute(f32, unsafe.transmute(u32, magnitude) | sign);
 }
