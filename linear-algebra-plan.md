@@ -419,7 +419,8 @@ Real:
 Sizes known only at run time are a different contract: they allocate, they
 are borrowed far more than copied, and the work is in solvers rather than in
 operators. They get their own package and plan, after `core:math/linalg`
-ships. That plan has to settle:
+ships; the [dense matrix plan](dense-matrix-plan.md) is that plan. It has to
+settle:
 
 - an owning `Dense(T)` that takes an allocator, and borrowed `View(T)` and
   mutable views with a row stride and a column stride, so that a block, a
@@ -451,7 +452,8 @@ Ordered by how foundational each part is, not by a particular program:
    `quaternion_between`, `nlerp`, `slerp`, Euler sequences, rotation vectors,
    `angle_between`, `project`, `reject`, `reflect`, `normal_matrix`,
    `inverse_affine`, and `project_point`.
-3. **Dense matrices**, under their own plan.
+3. **Dense matrices**, under their own plan, the
+   [dense matrix plan](dense-matrix-plan.md), proposed 2026-10-29.
 4. **Measured performance.** Benchmarks of products, `rotate`, and batch
    transforms against hand-written loops, then `Simd` inside the operations
    only where it wins without changing a result bit.

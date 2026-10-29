@@ -865,10 +865,10 @@ missing a known level still needs coverage.
 
 The [linear algebra library plan](linear-algebra-plan.md)'s first step tried
 its `Real` interface and generic matrix shapes against the compiler
-(`tests/pkg/real_interface`), and its first two milestones built
-[`core:math/linalg`](standard-library.md#coremathlinalg) on them. These
-language questions came out of it, and the library cannot settle them by
-itself.
+(`tests/pkg/real_interface`), its first two milestones built
+[`core:math/linalg`](standard-library.md#coremathlinalg) on them, and its third
+is the [dense matrix plan](dense-matrix-plan.md). These language questions came
+out of it, and the library cannot settle them by itself.
 
 ### Positional literals for vocabulary records
 
@@ -921,6 +921,35 @@ plain `Vector3(T)` parameter rather than one procedure with an
 others would allow the `Option` form. The open part is the order: whether an
 argument that needs a type may wait for inference, and what a call means when
 the waiting argument is also the only one that could bind `T`.
+
+### Disjoint strided mutable views
+
+The [dense matrix plan](dense-matrix-plan.md#one-owner-and-two-views) gives
+two disjoint mutable blocks of a matrix by splitting its `[]mut T`, as
+[`split_at_mut`](design.md#splitting-a-mutable-slice) does. That works only
+when one block's elements all precede the other's: the left and right columns
+of a column-major matrix. The top and bottom rows of the same matrix
+interleave in memory, so no split of the slice separates them, and two
+reborrows cannot be live at once. Blocked algorithms that update a panel and a
+trailing block together want exactly that pair. The language could check
+disjointness of strided index sets, which is decidable for a fixed stride
+pattern but is a new kind of borrow; or the library could build the two views
+through `core:unsafe`, which gives up the checker's guarantee for code the
+library does not control. The plan's factorizations work through one view by
+index and need neither; the question is what a user writing their own blocked
+algorithm gets.
+
+### Flat views of nested fixed arrays
+
+A nested fixed array is one contiguous value
+([Multidimensional arrays](design.md#multidimensional-arrays)), so
+`linalg.Matrix(f32, 4, 4)`'s `columns: [4][4]f32` holds 16 consecutive
+elements. Safe code cannot borrow them as one `[]f32`: slicing takes one
+index, and `[4][4]f32` slices to `[][4]f32`. A flattening borrow, a
+contributed member returning `[]T` over every scalar element, would let the
+dense package view a fixed matrix without a copy, and would serve image
+buffers and lookup tables stored as nested arrays. Without it the dense
+package copies at the boundary.
 
 ## Open questions in `core:random`
 
