@@ -769,7 +769,12 @@ its FMA3 path and 7.2 to 7.6 and 19 to 21 on its legacy one, `asin_f32` and
 `acos_f32` 42 to 44 ns against 4.6 and 5.1 to 5.9, and their slow path 4.9
 µs. The difference from `atan2` is presumably the four Newton steps for
 1/sqrt, a dependent chain, which is unmeasured; a table for the first
-estimate would save two. Why
+estimate would save two. `tan`, over arguments within ±700, takes 60 ns
+per independent call and 64 per dependent one against the UCRT's 11 and 12
+on its FMA3 path and 16 and 18 on its legacy one, `tan_f32` 81 ns against
+6.5 and 8.4, and its slow path 8.6 µs. Payne and Hanek's reduction, from
+2^20 pi/2 up, adds about 170 ns to `tan_f32`, and `sin` and `cos` take the
+same reduction. Why
 the `f32` procedures before `atan` are slower than the `f64` ones that do
 the same work is not known. The estimate below was optimistic by
 two to three times: the time is in the dependent double-`f64` steps, not in
@@ -799,7 +804,10 @@ measure it. Open:
   one-argument functions, exhaustive searches bound that distance, but none
   for binary64 `asin` or `acos` is relied on here; no search covers two
   `f64` arguments, and no proof is known to rule it out. Their results are
-  the same everywhere either way.
+  the same everywhere either way. Binary64 `sin`, `cos`, and `tan` now have
+  published hard cases (Lefèvre, Ly, and Zimmermann, "Computing
+  hard-to-round cases of sin, cos, tan in double precision", ARITH 2026);
+  checking the slow paths against them would settle those three.
 
 The [deterministic math and CPU targeting
 plan](deterministic-math-and-targets-plan.md) proposes answers: a separate

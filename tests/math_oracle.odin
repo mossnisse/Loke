@@ -1,6 +1,6 @@
 // deterministic-math-and-targets-plan.md "Validation and performance gates": an
-// oracle for the correctly rounded `exp`, `log`, `sin`, `cos`, `asin`, `acos`,
-// `pow`, and `atan2` of `f64` and `f32`, with the special cases of the
+// oracle for the correctly rounded `exp`, `log`, `sin`, `cos`, `tan`, `asin`,
+// `acos`, `pow`, and `atan2` of `f64` and `f32`, with the special cases of the
 // reproducible contract.
 //
 // Each result is an interval of integers at a scale of `2^-precision`, every
@@ -24,6 +24,7 @@ Oracle_Function :: enum {
 	Log,
 	Sin,
 	Cos,
+	Tan,
 	Asin,
 	Acos,
 }
@@ -138,6 +139,9 @@ special_case :: proc(function: Oracle_Function, x: f64, format: Float_Format) ->
 	case .Cos:
 		if math.is_inf(x, 0) {return nan, true}
 		if x == 0 {return one, true}
+	case .Tan:
+		if math.is_inf(x, 0) {return nan, true}
+		if x == 0 {return math.sign_bit(x) ? negative_zero : 0, true}
 	case .Asin:
 		if abs(x) > 1 {return nan, true}
 		if x == 0 {return math.sign_bit(x) ? negative_zero : 0, true}
@@ -155,7 +159,7 @@ attempt :: proc(o: ^Oracle, function: Oracle_Function, x: f64, format: Float_For
 		return exp_attempt(o, x, format, precision)
 	case .Log:
 		return log_attempt(o, x, format, precision)
-	case .Sin, .Cos:
+	case .Sin, .Cos, .Tan:
 		return trig_attempt(o, function, x, format, precision)
 	case .Asin, .Acos:
 		return arc_attempt(o, function, x, format, precision)
@@ -568,9 +572,10 @@ arc_attempt :: proc(o: ^Oracle, function: Oracle_Function, x: f64, format: Float
 	return round_interval(value, -scale, negative, format)
 }
 
-// sin and cos of |x| = q pi/2 + r, |r| a little over pi/4 at most, from the
-// Taylor series of sin |r| and cos |r|, both positive there. A tiny argument
-// gets as many more bits as it is below one, since sin x is about x.
+// sin, cos, and tan of |x| = q pi/2 + r, |r| a little over pi/4 at most, from
+// the Taylor series of sin |r| and cos |r|, both positive there; tan is
+// their quotient, or for an odd q minus its reciprocal. A tiny argument gets
+// as many more bits as it is below one, since sin x and tan x are about x.
 @(private = "file")
 trig_attempt :: proc(o: ^Oracle, function: Oracle_Function, x: f64, format: Float_Format, base: int) -> (u64, bool) {
 	significand, exponent := dyadic(abs(x))
@@ -600,6 +605,17 @@ trig_attempt :: proc(o: ^Oracle, function: Oracle_Function, x: f64, format: Floa
 		return 0, false
 	}
 	r2 := Interval{shift_down(times(r.lo, r.lo), w), shift_up(times(r.hi, r.hi), w)}
+	if function == .Tan {
+		odd := quadrant % 2 == 1
+		s := alternating_series(r, r2, 2, w)
+		c := alternating_series(Interval{power_of_two(w), power_of_two(w)}, r2, 1, w)
+		top, bottom := odd ? c : s, odd ? s : c
+		if sign_of(top.lo) <= 0 || sign_of(bottom.lo) <= 0 {
+			return 0, false
+		}
+		quotient := Interval{divide_down(shift_left(top.lo, w), bottom.hi), divide_up(shift_left(top.hi, w), bottom.lo)}
+		return round_interval(quotient, -w, (odd != r_negative) != math.sign_bit(x), format)
+	}
 	// sin or cos of |r|, chosen by quadrant: the four rotations of the pair.
 	use_sin := (quadrant % 2 == 0) == (function == .Sin)
 	value := use_sin ? alternating_series(r, r2, 2, w) : alternating_series(Interval{power_of_two(w), power_of_two(w)}, r2, 1, w)

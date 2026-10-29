@@ -1,0 +1,118 @@
+// deterministic-math-and-targets-plan.md "Reproducible result contract":
+// `tan` in both widths.
+//
+// |x| = q pi/2 + r as for `sin` and `cos`, and tan |x| is tan r for an even
+// q and -1/tan r for an odd one: s/c or -c/s, s = sin |r| and c = cos |r|
+// from `sin_kernel` and `cos_kernel`, each within 2^-68 relative, the
+// reduction's error included, with r's sign apart. The quotient of the
+// pairs, its low part from the exact remainder of the high one's division
+// (`two_product`), is within 2^-103 of theirs, so the result is within
+// 2^-66.9 relative: an error in r moves tan r by 2/sin 2r relative to it,
+// what it moves s and c by together. That is twice the other fast paths'
+// bound, so the result is returned when it is decided at twice that,
+// 2^-65.
+//
+// The slow path takes both series in fixed point, and the quotient from the
+// reciprocal of the denominator scaled into [1, 2), so a small sin r keeps
+// its bits. r is within 2^-318 absolute and at least 2^-61 for every `f64`
+// argument (Kahan and McDonald), so the result is within 2^-250 relative.
+// tan of a nonzero rational is not even algebraic (Lindemann and
+// Weierstrass), so no result but tan ±0 is a midpoint or zero, and no `f64`
+// result overflows. Lefèvre, Ly, and Zimmermann's exhaustive search ("Computing
+// hard-to-round cases of sin, cos, tan in double precision", ARITH 2026)
+// gives binary64 tan's hard cases; nothing here relies on it, and
+// `tests/repro_test.odin` checks both paths against an independent oracle.
+package repro;
+
+import "core:unsafe";
+
+// 2^-65, twice the bound of 2^-66 on `tan_kernel`.
+TAN_MARGIN :: 2.710505431213761e-20;
+
+// tan |x| as h + l, and whether it is negative, for a finite x at least
+// 2^-27 in magnitude; not decidable for the slow path's tiny r.
+tan_kernel :: proc(ax: f64) -> (decidable: bool, negative: bool, high: f64, low: f64) {
+	quadrant, rh, rl := reduce(ax);
+	if (quadrant < 0) { return {false, false, 0.0, 0.0}; }
+	r_negative := rh < 0.0;
+	if (r_negative) {
+		rh = 0.0 - rh;
+		rl = 0.0 - rl;
+	}
+	sh, sl := sin_kernel(rh, rl);
+	ch, cl := cos_kernel(rh, rl);
+	odd := quadrant % 2 == 1;
+	nh := sh;
+	nl := sl;
+	dh := ch;
+	dl := cl;
+	if (odd) {
+		nh = ch;
+		nl = cl;
+		dh = sh;
+		dl = sl;
+	}
+	qh := nh/dh;
+	// nh - ph is exact (Sterbenz), and so the remainder.
+	ph, pl := two_product(qh, dh);
+	ql := (((nh - ph) - pl) + (nl - qh*dl))/dh;
+	return {true, odd != r_negative, qh, ql};
+}
+
+// tan of a finite x at least 2^-27 in magnitude.
+tan_f64 :: proc(x: f64) -> f64 {
+	ax := x;
+	if (x < 0.0) { ax = 0.0 - x; }
+	decidable, negative, h, l := tan_kernel(ax);
+	if (decidable) {
+		decided, y := f64_decided_within(h, l, TAN_MARGIN);
+		if (decided) {
+			if (negative != (x < 0.0)) { return 0.0 - y; }
+			return y;
+		}
+	}
+	return unsafe.transmute(f64, tan_slow(ax, x < 0.0, F64_LAYOUT));
+}
+
+// The same for an `f32` argument: h + l, within an `f64` ulp of the result,
+// narrows to it unless an `f32` midpoint is that close.
+tan_f32_of :: proc(x: f64) -> f32 {
+	ax := x;
+	if (x < 0.0) { ax = 0.0 - x; }
+	decidable, negative, h, l := tan_kernel(ax);
+	if (decidable) {
+		y := h + l;
+		if (f32_decided(y, 1)) {
+			if (negative != (x < 0.0)) { return f32(0.0 - y); }
+			return f32(y);
+		}
+	}
+	return unsafe.transmute(f32, u32(tan_slow(ax, x < 0.0, F32_LAYOUT)));
+}
+
+// tan |x| correctly rounded to `layout`, as its bit pattern, negated when
+// `flip`: sin r and cos r in fixed point, and their quotient, the
+// denominator scaled by 2^k into [1, 2) for `fixed_reciprocal`, its nearest
+// `f64` correctly rounded.
+tan_slow :: proc(ax: f64, flip: bool, layout: Float_Layout) -> u64 {
+	quadrant, r_negative, r := reduce_fixed(ax);
+	r2 := fixed_times(r, r);
+	s := trig_series(r, r2, true);
+	c := trig_series(r, r2, false);
+	odd := quadrant % 2 == 1;
+	numerator := s;
+	denominator := c;
+	if (odd) {
+		numerator = c;
+		denominator = s;
+	}
+	k := FRACTION_BITS - fixed_top_bit(denominator);
+	scaled := fixed_scaled(denominator, k);
+	near := from_bits(fixed_round(scaled, 0 - FRACTION_BITS, F64_LAYOUT));
+	quotient := fixed_times(numerator, fixed_reciprocal(scaled, near));
+	pattern := fixed_round(quotient, k - FRACTION_BITS, layout);
+	if ((odd != r_negative) != flip) {
+		pattern |= u64(1) << (layout.width - 1);
+	}
+	return pattern;
+}

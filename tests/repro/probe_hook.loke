@@ -50,6 +50,24 @@ slow_trig_f32 :: proc(x: f32, want_cos: bool) -> f32 {
 	return unsafe.transmute(f32, u32(trig_slow(ax, want_cos, !want_cos && x < f32(0.0), F32_LAYOUT)));
 }
 
+// tan's slow path past its tiny arguments and special cases, where `tan`
+// itself is the whole answer.
+@(public)
+slow_tan :: proc(x: f64) -> f64 {
+	ax := x;
+	if (x < 0.0) { ax = 0.0 - x; }
+	if (!(ax >= 7.450580596923828e-09 && ax <= 1.7976931348623157e308)) { return tan(x); }
+	return unsafe.transmute(f64, tan_slow(ax, x < 0.0, F64_LAYOUT));
+}
+
+@(public)
+slow_tan_f32 :: proc(x: f32) -> f32 {
+	ax := f64(x);
+	if (x < f32(0.0)) { ax = 0.0 - f64(x); }
+	if (!(ax >= 0.000244140625 && ax <= 1.7976931348623157e308)) { return tan_f32(x); }
+	return unsafe.transmute(f32, u32(tan_slow(ax, x < f32(0.0), F32_LAYOUT)));
+}
+
 // pow's slow path wherever `pow` would reach its general case with z =
 // y log x in range; elsewhere `pow` itself, whose table and range checks
 // are the whole answer there.

@@ -12,9 +12,9 @@
 	each function. No procedure here calls the C library.
 
 	The package holds only what has been implemented and checked: today `exp`,
-	`log`, `pow`, `sin`, `cos`, `asin`, `acos`, `atan`, and `atan2`, each in
-	both widths. A function missing here is not provided by falling back to
-	`core:math`.
+	`log`, `pow`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, and `atan2`,
+	each in both widths. A function missing here is not provided by falling
+	back to `core:math`.
 */
 package repro;
 
@@ -76,6 +76,15 @@ cos :: proc(x: f64) -> f64 ---;
 
 // The cosine for `f32`, with the special cases of `cos`.
 cos_f32 :: proc(x: f32) -> f32 ---;
+
+/*
+	The tangent of x radians. NaN and ±Inf give NaN, and ±0 gives itself;
+	every finite argument is reduced exactly, however large.
+*/
+tan :: proc(x: f64) -> f64 ---;
+
+// The tangent for `f32`, with the special cases of `tan`.
+tan_f32 :: proc(x: f32) -> f32 ---;
 
 /*
 	The inverse sine of x, in radians from -pi/2 to pi/2. NaN, and any x

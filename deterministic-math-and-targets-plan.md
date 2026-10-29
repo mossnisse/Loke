@@ -170,6 +170,19 @@ w = sqrt(1 - x^2):
 - No binary64 worst-case search is relied on, so as for `atan2` nothing
   proves the slow path's 2^-305 enough.
 
+Then `tan` in both widths:
+
+- It takes `sin` and `cos`'s reduction and both kernels, and divides the
+  pairs, sin r/cos r or -cos r/sin r by the quadrant. The two kernels'
+  errors add, so its bound is 2^-66 and its margin 2^-65, twice the
+  others', and about one `f64` argument in 2,800 takes the slow path. That
+  takes both series in fixed point and their quotient, the denominator
+  scaled near 1.
+- An exhaustive pass over every finite `f32` from 2^-12 up found 2 that
+  reach the slow path. The oracle divides its sine and cosine intervals.
+  Odin's `tan` is sin/cos, rounded twice, so the library test compares it
+  with the C library's instead.
+
 The rest of phase 4's functions are next.
 
 Not started: phase 1's benchmarks (the UCRT timings in open questions stand

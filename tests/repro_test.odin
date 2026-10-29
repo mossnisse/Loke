@@ -128,10 +128,11 @@ repro_functions_round_correctly :: proc(t: ^testing.T) {
 			checked += 1
 		case "differs64", "differs32":
 			testing.expectf(t, false, "a fast path differs from its slow path at %s", line)
-		case "Exp", "Sin", "Cos", "Log", "Asin", "Acos":
+		case "Exp", "Sin", "Cos", "Tan", "Log", "Asin", "Acos":
 			function := Oracle_Function.Exp
 			if fields[0] == "Sin" {function = .Sin}
 			if fields[0] == "Cos" {function = .Cos}
+			if fields[0] == "Tan" {function = .Tan}
 			if fields[0] == "Log" {function = .Log}
 			if fields[0] == "Asin" {function = .Asin}
 			if fields[0] == "Acos" {function = .Acos}
@@ -148,5 +149,5 @@ repro_functions_round_correctly :: proc(t: ^testing.T) {
 			checked += 1
 		}
 	}
-	testing.expectf(t, checked == 22643 && constants == 58, "the probe printed %d checked results and %d constants", checked, constants)
+	testing.expectf(t, checked == 25181 && constants == 64, "the probe printed %d checked results and %d constants", checked, constants)
 }

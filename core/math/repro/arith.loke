@@ -64,7 +64,12 @@ abs_int :: proc(n: int) -> int {
 // Whether the nearest `f64` to h + l is decided within the margin, and that
 // `f64`, given h != 0 and |l| <= ulp(h).
 f64_decided :: proc(h: f64, l: f64) -> (decided: bool, value: f64) {
-	margin := h*MARGIN;
+	return f64_decided_within(h, l, MARGIN);
+}
+
+// The same at a relative margin of `relative`, twice a path's bound.
+f64_decided_within :: proc(h: f64, l: f64, relative: f64) -> (decided: bool, value: f64) {
+	margin := h*relative;
 	low := h + (l - margin);
 	return {low == h + (l + margin), low};
 }

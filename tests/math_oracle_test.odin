@@ -1,13 +1,16 @@
 package tests
 
+import "core:c/libc"
 import "core:math"
 import "core:testing"
 
 // Results fixed by other means: each constant's nearest float, which every
 // library that rounds these well gets, sin(10^22), whose argument reduction
 // needs pi to well over a thousand bits (K. C. Ng, "Argument reduction for
-// huge arguments", 1992), and asin 1/2 = pi/6, acos 1/2 = pi/3, and
-// acos -1/2 = 2 pi/3, rounded from pi by exact rational arithmetic.
+// huge arguments", 1992), asin 1/2 = pi/6, acos 1/2 = pi/3, and
+// acos -1/2 = 2 pi/3, rounded from pi by exact rational arithmetic, and tan
+// at 1/2, 1, pi's and pi/2's `f64` values, and 10, from sin and cos summed
+// separately in 120-digit decimal.
 @(test)
 oracle_matches_known_results :: proc(t: ^testing.T) {
 	o: Oracle
@@ -29,6 +32,15 @@ oracle_matches_known_results :: proc(t: ^testing.T) {
 		{.Exp, 1, F32_FORMAT, 0x402df854},
 		{.Log, 2, F32_FORMAT, 0x3f317218},
 		{.Sin, 1, F32_FORMAT, 0x3f576aa4},
+		{.Tan, 1, F64_FORMAT, 0x3ff8eb245cbee3a6},
+		{.Tan, -0.5, F64_FORMAT, 0xbfe17b4f5bf3474a},
+		{.Tan, 3.141592653589793, F64_FORMAT, 0xbca1a62633145c07},
+		{.Tan, 1.5707963267948966, F64_FORMAT, 0x434d02967c31cdb5},
+		{.Tan, 0.7853981633974483, F64_FORMAT, 0x3fefffffffffffff},
+		{.Tan, 10, F64_FORMAT, 0x3fe4bf5f34be3782},
+		{.Tan, 1, F32_FORMAT, 0x3fc75923},
+		{.Tan, f64(f32(1.5707963267948966)), F32_FORMAT, 0xcbae8a4a},
+		{.Tan, 10, F32_FORMAT, 0x3f25fafa},
 		{.Asin, 0.5, F64_FORMAT, 0x3fe0c152382d7366},
 		{.Asin, -0.5, F64_FORMAT, 0xbfe0c152382d7366},
 		{.Acos, 0.5, F64_FORMAT, 0x3ff0c152382d7366},
@@ -50,6 +62,8 @@ oracle_matches_known_results :: proc(t: ^testing.T) {
 		{.Log, -1, F32_FORMAT, 0x7fc00000},
 		{.Sin, math.copy_sign(f64(0), -1), F64_FORMAT, 0x8000000000000000},
 		{.Cos, math.inf_f64(1), F64_FORMAT, 0x7ff8000000000000},
+		{.Tan, math.copy_sign(f64(0), -1), F64_FORMAT, 0x8000000000000000},
+		{.Tan, math.inf_f64(-1), F32_FORMAT, 0x7fc00000},
 		{.Asin, math.copy_sign(f64(0), -1), F64_FORMAT, 0x8000000000000000},
 		{.Asin, 1.0000000000000002, F64_FORMAT, 0x7ff8000000000000},
 		{.Acos, 1, F64_FORMAT, 0},
@@ -69,7 +83,8 @@ oracle_matches_known_results :: proc(t: ^testing.T) {
 
 // Odin's own library is not correctly rounded, but it is within an ulp, and
 // it agrees with correct rounding almost always: a gross error in the oracle
-// breaks one of these.
+// breaks one of these. Its tan is sin/cos, rounded twice, so tan is
+// compared with the C library's instead.
 @(test)
 oracle_agrees_with_a_library_almost_always :: proc(t: ^testing.T) {
 	o: Oracle
@@ -86,7 +101,7 @@ oracle_agrees_with_a_library_almost_always :: proc(t: ^testing.T) {
 				switch function {
 				case .Exp: x = f64(i64(state >> 11) % 1400000) / 1000 - 700
 				case .Log: x = transmute(f64)(u64(0x0010000000000000) + (state >> 2) % u64(0x7fd0000000000000))
-				case .Sin, .Cos: x = f64(i64(state >> 11) % 2000000) / 1000 - 1000
+				case .Sin, .Cos, .Tan: x = f64(i64(state >> 11) % 2000000) / 1000 - 1000
 				case .Asin, .Acos: x = f64(i64(state >> 11) % 2000000) / 1000000 - 1
 				}
 				library, got: u64
@@ -100,6 +115,7 @@ oracle_agrees_with_a_library_almost_always :: proc(t: ^testing.T) {
 					case .Log: library = u64(transmute(u32)math.ln(x32))
 					case .Sin: library = u64(transmute(u32)math.sin(x32))
 					case .Cos: library = u64(transmute(u32)math.cos(x32))
+					case .Tan: library = u64(transmute(u32)libc.tanf(x32))
 					case .Asin: library = u64(transmute(u32)math.asin(x32))
 					case .Acos: library = u64(transmute(u32)math.acos(x32))
 					}
@@ -109,6 +125,7 @@ oracle_agrees_with_a_library_almost_always :: proc(t: ^testing.T) {
 					case .Log: library = transmute(u64)math.ln(x)
 					case .Sin: library = transmute(u64)math.sin(x)
 					case .Cos: library = transmute(u64)math.cos(x)
+					case .Tan: library = transmute(u64)libc.tan(x)
 					case .Asin: library = transmute(u64)math.asin(x)
 					case .Acos: library = transmute(u64)math.acos(x)
 					}
@@ -126,11 +143,11 @@ oracle_agrees_with_a_library_almost_always :: proc(t: ^testing.T) {
 				}
 				testing.expectf(t, distance <= 1, "%v(%v) at %v: oracle %x, library %x", function, x, format, got, library)
 			}
-			// Odin's `f64` acos, FreeBSD's, is an ulp off in about 7% of these,
-			// where a separate computation by Newton's method on cos agrees with
-			// the oracle, so a tenth may differ there.
+			// Odin's `f64` asin and acos, FreeBSD's, are an ulp off in 5 to 7%
+			// of these, where a separate computation by Newton's method on sin
+			// or cos agrees with the oracle, so a tenth may differ there.
 			allowed := CASES/20
-			if function == .Acos && format == F64_FORMAT {allowed = CASES/10}
+			if (function == .Asin || function == .Acos) && format == F64_FORMAT {allowed = CASES/10}
 			testing.expectf(t, differ <= allowed, "%v at %v: %d of %d differ from the library", function, format, differ, CASES)
 		}
 	}

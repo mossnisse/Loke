@@ -10,9 +10,9 @@
 	each function. No procedure here calls the C library.
 
 	The package holds only what has been implemented and checked: today `exp`,
-	`log`, `pow`, `sin`, `cos`, `asin`, `acos`, `atan`, and `atan2`, each in
-	both widths. A function missing here is not provided by falling back to
-	`core:math`.
+	`log`, `pow`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, and `atan2`,
+	each in both widths. A function missing here is not provided by falling
+	back to `core:math`.
 */
 @(public)
 package repro;
@@ -204,6 +204,27 @@ cos_f32 :: proc(x: f32) -> f32 {
 	if (magnitude < 0x39000000) { return f32(1.0); }
 	if (magnitude >= 0x7f800000) { return unsafe.transmute(f32, u32(CANONICAL_NAN_F32)); }
 	return trig_f32(f64(x), true);
+}
+
+/**
+	The tangent of x radians. NaN and ±Inf give NaN, and ±0 gives itself;
+	every finite argument is reduced exactly, however large.
+*/
+tan :: proc(x: f64) -> f64 {
+	magnitude := unsafe.transmute(u64, x) & 0x7fffffffffffffff;
+	// Below 2^-27 in magnitude, tan x is within half an ulp of x.
+	if (magnitude < 0x3e40000000000000) { return x; }
+	if (magnitude >= 0x7ff0000000000000) { return unsafe.transmute(f64, u64(CANONICAL_NAN_F64)); }
+	return tan_f64(x);
+}
+
+/// The tangent for `f32`, with the special cases of `tan`.
+tan_f32 :: proc(x: f32) -> f32 {
+	magnitude := unsafe.transmute(u32, x) & 0x7fffffff;
+	// Below 2^-12 in magnitude, tan x is within half an ulp of x.
+	if (magnitude < 0x39800000) { return x; }
+	if (magnitude >= 0x7f800000) { return unsafe.transmute(f32, u32(CANONICAL_NAN_F32)); }
+	return tan_f32_of(f64(x));
 }
 
 /**

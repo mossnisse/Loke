@@ -331,7 +331,7 @@ checklist.
 - `core:math/repro` holds correctly rounded elementary functions, whose
   results are the same bits on every machine, CPU level, and optimization
   level, and at compile time, starting with `exp`, `log`, `pow`, `sin`, `cos`,
-  `asin`, `acos`, `atan`, and `atan2` in both widths ([`core:math/repro`](standard-library.md#coremathrepro)).
+  `tan`, `asin`, `acos`, `atan`, and `atan2` in both widths ([`core:math/repro`](standard-library.md#coremathrepro)).
 
 ### Changed
 

@@ -2345,8 +2345,8 @@ call is evaluated at compile time. No procedure calls the C library or uses
 is the positive quiet NaN with no payload (`0x7ff8000000000000`,
 `0x7fc00000`), whatever NaN produced it.
 
-The package has `exp`, `log`, `pow`, `sin`, `cos`, `asin`, `acos`, `atan`,
-and `atan2`, each with the `f64` and `_f32` naming of `core:math`. A function missing here is
+The package has `exp`, `log`, `pow`, `sin`, `cos`, `tan`, `asin`, `acos`,
+`atan`, and `atan2`, each with the `f64` and `_f32` naming of `core:math`. A function missing here is
 not provided by falling back to `core:math`. Each `_f32` procedure is rounded
 once to `f32`, not the `f64` one narrowed, which could round twice.
 
@@ -2366,9 +2366,10 @@ once to `f32`, not the `f64` one narrowed, which could round twice.
   integer, and -|x|^y when y is odd. An exact result, such as `pow(4, 0.5)`,
   is exact, and one exactly halfway between two floats, such as
   `pow_f32(1 + 2^-12, 2)`, rounds to even.
-- `sin` and `cos` take radians. Every finite argument is reduced by an exact
-  multiple of pi/2, however large. NaN and ±Inf give NaN; `sin(±0)` is ±0 and
-  `cos(±0)` is exactly 1, and `sin(-x)` is `-sin(x)`.
+- `sin`, `cos`, and `tan` take radians. Every finite argument is reduced by
+  an exact multiple of pi/2, however large. NaN and ±Inf give NaN; `sin(±0)`
+  and `tan(±0)` are ±0 and `cos(±0)` is exactly 1, and `sin(-x)` and
+  `tan(-x)` are `-sin(x)` and `-tan(x)`.
 - `asin` and `acos` give radians, from -pi/2 to pi/2 and from 0 to pi. NaN
   and every argument outside [-1, 1], ±Inf included, give NaN. `asin(±0)`
   is ±0 and `asin(±1)` is ±pi/2; `acos(1)` is +0, `acos(-1)` is pi, and
