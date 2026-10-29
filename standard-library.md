@@ -142,6 +142,7 @@ core:endian           fixed byte-order storage wrappers
 core:math             elementary functions, Complex, Quaternion
 core:math/repro       correctly rounded elementary functions
 core:math/linalg      fixed-size vectors, matrices, rotations, projections
+core:math/dense       run-time-sized matrices, views, LU and Cholesky
 core:random           seeded generators, entropy, distributions
 core:time             clocks, durations, the calendar, ISO 8601 text
 core:slice            slice algorithms and sorting            *
@@ -2564,6 +2565,91 @@ the same bits on every machine, [CPU level](compiler-guide.md#cpu-levels),
 and optimization level. A call that does not reach `sqrt` can also be
 evaluated at compile time with the same result; one that does cannot, since
 `math.sqrt` calls a foreign procedure.
+
+## `core:math/dense`
+
+Matrices whose size is known only at run time: an owner, views of it and of
+foreign buffers, products, and the LU and Cholesky factorizations. The design
+and its later milestones, QR, the eigensolvers, the SVD, and measured
+performance, are in the [dense matrix plan](dense-matrix-plan.md).
+
+`Matrix(T)` owns `rows x columns` elements stored column-major in one
+allocation, the order LAPACK and `linalg.Matrix` use, from the allocator it was
+made with. `zeros`, `filled`, `identity`, `from_view`, `from_column_major`,
+`from_rows`, which takes a nested array written as it prints, and
+`from_fixed` make one; each takes an `allocator` that defaults to the
+program's. `rows()`, `columns()`, `m[r, c]`, and `m[r, c] = x` read and write
+it, `to_fixed(R, C)` copies it to a `linalg.Matrix`, and `format` prints it by
+rows as `linalg` does. A copy clones the storage, which the
+[copy-cost diagnostic](design.md#copy-cost-diagnostics) reports; `clone(allocator)`
+chooses where. There are no operators: each result of `a * b + c` would be
+allocated from an allocator the expression cannot name.
+
+`View(T)` reads, and `View_Mut(T)` writes, `rows x columns` elements of a slice:
+element `(r, c)` is `data[r*row_stride + c*column_stride]`. `m.view()` and
+`m.view_mut()` view a whole matrix, and `from_column_major(data, rows,
+columns, leading := rows)`, `from_row_major(data, rows, columns, leading :=
+columns)`, and `from_column(values)` view a foreign buffer. Every constructor
+checks once that the elements are inside the slice and that the leading
+dimension covers a whole column or row, so no two elements share a place;
+either failure panics. `block(row, column, rows, columns)`, `transpose()`,
+`row(r)`, and `column(c)` make smaller views without a copy. A view borrows
+its slice, so the [checker](design.md#capabilities-and-the-one-rule) keeps it
+from outliving the storage and rejects `multiply_into(m.view_mut(), m.view(),
+b)` where it is written; nothing is checked at run time.
+
+On a `View_Mut`, the methods that make a smaller view consume a temporary or
+`move(view)` and borrow a named view, so `m.view_mut().block(...)` can be
+bound and `whole.block(...)` leaves `whole` usable afterwards.
+`split_columns(k)` and `split_rows(k)` give two views that may be written at
+once; each panics for a view whose columns, or rows, interleave in the slice,
+as a column-major matrix's rows do. `as_view()` reads the same elements, and
+`fill(value)`, `copy_from(view)`, `scale_by(s)`, and `add_scaled(s, view)`,
+which adds `s*view` element by element, write them.
+
+With `interfaces.Numeric(T)`, so for integers and user number types too:
+
+- `multiply(a, b)` and `multiply_into(out, a, b)`, each element
+  `(a[i, 0]*b[0, j] + a[i, 1]*b[1, j]) + ...` from the first product, the order
+  `linalg.Matrix` uses, so the two agree bit for bit; and
+  `multiply_add_into(out, a, b)`, which adds each term into `out` in turn;
+- `add`, `subtract`, `scale(a, s)`, and `transpose`, each with an `_into`
+  form;
+- `dot(x, y)`, the sum of the element products in column order; `trace`; and
+  `equal`, exact and false for different shapes.
+
+Each `_into` form writes caller storage and never allocates; the other form
+allocates its result. A shape mismatch panics.
+
+With `linalg.Real(T)`:
+
+- `approx_equal(a, b, absolute, relative)` by `linalg.approx_equal`'s rule,
+  element by element, false for different shapes;
+- `norm_frobenius`, in one pass with a running scale so that it neither
+  overflows nor underflows where the result does not; `norm_one`, the largest
+  column sum; and `norm_infinity`, the largest row sum;
+- `solve_lower_into(l, b, unit_diagonal)` and `solve_upper_into(u, b,
+  unit_diagonal)`, which overwrite `b` and read only their triangle;
+- `lu(a)` and `lu_in_place(a, pivots)`, Gaussian elimination with partial
+  pivoting, the pivot the first element of largest magnitude in its column.
+  `Lu` has `solve`, `solve_into`, `inverse`, `determinant`, `factors()` and
+  `pivots()` in LAPACK's `getrf` form, and `reciprocal_condition()`, LAPACK's
+  `gecon` estimate of `1 / (|A|_1 |A^-1|_1)`;
+- `cholesky(a)` and `cholesky_in_place(a)`, the `L L^T` factor of a symmetric
+  positive definite matrix from its lower triangle, by columns. `Cholesky`
+  has `solve`, `solve_into`, `determinant`, and `lower()`;
+- `solve(a, b)` and `inverse(a)`, which factor and solve in one call.
+
+A numerical failure is a `dense.Error`, one type for the package so that
+`or_return` chains across factorizations: `.Singular` for an exact zero pivot
+or a factor that is not finite, and `.Not_Positive_Definite` for a Cholesky
+pivot that is not positive and finite. A nearly singular matrix factors, with
+large elements, since no tolerance decides that it is singular;
+`reciprocal_condition` says how near it is. Each update in a factorization is
+one subtraction per term into the running element, in increasing order, and
+every operation is computed in the order its documentation gives, with no
+`fma`, so results are the same bits on every machine,
+[CPU level](compiler-guide.md#cpu-levels), and optimization level.
 
 ## `core:random`
 

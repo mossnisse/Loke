@@ -453,8 +453,8 @@ Ordered by how foundational each part is, not by a particular program:
    `angle_between`, `project`, `reject`, `reflect`, `normal_matrix`,
    `inverse_affine`, and `project_point`.
 3. **Dense matrices**, under their own plan, the
-   [dense matrix plan](dense-matrix-plan.md), proposed and its questions
-   settled 2026-10-29.
+   [dense matrix plan](dense-matrix-plan.md), whose first milestone,
+   [`core:math/dense`](standard-library.md#coremathdense), is done.
 4. **Measured performance.** Benchmarks of products, `rotate`, and batch
    transforms against hand-written loops, then `Simd` inside the operations
    only where it wins without changing a result bit.

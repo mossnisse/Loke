@@ -1,0 +1,11 @@
+// standard-library "`core:math/dense`": a shape mismatch is a programmer
+// error, so a product of matrices whose inner dimensions differ panics.
+package main;
+
+import "core:math/dense";
+
+main :: proc() {
+	a := dense.Matrix(f64).zeros(2, 3);
+	b := dense.Matrix(f64).zeros(2, 3);
+	_ = dense.multiply(a.view(), b.view());
+}

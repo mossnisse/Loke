@@ -867,8 +867,9 @@ The [linear algebra library plan](linear-algebra-plan.md)'s first step tried
 its `Real` interface and generic matrix shapes against the compiler
 (`tests/pkg/real_interface`), its first two milestones built
 [`core:math/linalg`](standard-library.md#coremathlinalg) on them, and its third
-is the [dense matrix plan](dense-matrix-plan.md). These language questions came
-out of it, and the library cannot settle them by itself.
+is the [dense matrix plan](dense-matrix-plan.md), whose first milestone is
+[`core:math/dense`](standard-library.md#coremathdense). These language
+questions came out of it, and the library cannot settle them by itself.
 
 ### Positional literals for vocabulary records
 
@@ -966,6 +967,19 @@ two-dimensional loop over a slice pays the cost, and bounds checks add to it.
 Open: whether the compiler should prove the common shapes overflow-free (an
 index affine in loop variables whose ranges are known before the loop), or
 whether a checked-once form of indexing belongs in the language.
+
+### Slots through a record's bound
+
+`dense.Lu(T)` is declared `where linalg.Real(T)`, so no instance exists for an
+element type without `abs`. Even so, a method in `impl Lu($T)` cannot call
+`x.abs()` on a `T` until the method restates `where linalg.Real(T)`: a bare
+bound lets *its own declaration's* body call the interface's slots
+([where clauses](design.md#where-clauses)), and the record's body has no
+code. `core:math/linalg` restates `Real(T)` on each method that needs it, and
+`core:math/dense` does the same. Letting a record's bare bounds carry into its
+`impl` methods would remove the repetition; against it, a method's bounds are
+now all in its own signature, which is what [method
+exclusion](design.md#where-clauses) and the interface file show.
 
 ## Open questions in `core:random`
 

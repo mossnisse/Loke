@@ -1,0 +1,358 @@
+// dense-matrix-plan.md "Factorizations are values" and "Algorithms": each
+// factorization is a record that owns its factors, with an in-place form for
+// a caller who owns the storage. Every update in a factorization is one
+// subtraction per term into the running element, in increasing `k`, the
+// order a blocked form must keep.
+@(public)
+package dense;
+
+import "core:math/linalg";
+import "core:mem";
+import "core:unsafe";
+
+/**
+	The factors of `P A = L U` for a square `A`: `L` unit lower triangular,
+	`U` upper triangular, and `P` the row swaps partial pivoting chose.
+	`lu(a)` makes one.
+*/
+Lu :: struct($T: type) where linalg.Real(T) {
+	@(private) packed: Matrix(T),     // L below the diagonal, U on and above
+	@(private) swaps:  [dynamic]int,
+	@(private) norm:   T,             // the 1-norm of A, for reciprocal_condition
+}
+
+/**
+	Overwrites the square `a` with its LU factors, `L` below the diagonal and
+	`U` on and above it, and `pivots[k]` with the row swapped with row `k` at
+	step `k`, as LAPACK's `getrf` does. The pivot is the first element of
+	largest magnitude in its column, the multipliers are `a[r, k] / a[k, k]`,
+	and each trailing element is `((a - l[r, 0]*u[0, c]) - l[r, 1]*u[1, c]) -
+	...`. `.Singular` for an exact zero pivot or a factor that is not finite,
+	with `a` and `pivots` then unspecified. A shape mismatch panics.
+*/
+lu_in_place :: proc(a: View_Mut($T), pivots: []mut int) -> Status(Error) where linalg.Real(T) {
+	n := a.row_count;
+	assert(a.column_count == n && pivots.len() == n, "dense.lu_in_place needs a square matrix and one pivot per row");
+	m := unsafe.raw_data(a.data);
+	rs := a.row_stride;
+	cs := a.column_stride;
+	foreach (k in 0 ..< n) {
+		pivot := k;
+		largest := m[offset(k, k, rs, cs)].abs();
+		foreach (r in k + 1 ..< n) {
+			candidate := m[offset(r, k, rs, cs)].abs();
+			if (largest < candidate) {
+				pivot = r;
+				largest = candidate;
+			}
+		}
+		if (!(T(0) < largest)) { return .err(.Singular); }
+		pivots[k] = pivot;
+		if (pivot != k) {
+			foreach (c in 0 ..< n) {
+				held := m[offset(k, c, rs, cs)];
+				m[offset(k, c, rs, cs)] = m[offset(pivot, c, rs, cs)];
+				m[offset(pivot, c, rs, cs)] = held;
+			}
+		}
+		diagonal := m[offset(k, k, rs, cs)];
+		foreach (r in k + 1 ..< n) {
+			at := offset(r, k, rs, cs);
+			m[at] = m[at]/diagonal;
+		}
+		foreach (c in k + 1 ..< n) {
+			factor := m[offset(k, c, rs, cs)];
+			foreach (r in k + 1 ..< n) {
+				at := offset(r, c, rs, cs);
+				m[at] = m[at] - m[offset(r, k, rs, cs)]*factor;
+			}
+		}
+	}
+	foreach (c in 0 ..< n) {
+		foreach (r in 0 ..< n) {
+			if (!m[offset(r, c, rs, cs)].is_finite()) { return .err(.Singular); }
+		}
+	}
+	return .ok;
+}
+
+/// The LU factors of the square `a`, allocated from `allocator`, or `.Singular` as `lu_in_place` decides it.
+lu :: proc(a: View($T), allocator: Allocator = mem.default_allocator()) -> Result(Lu(T), Error) where linalg.Real(T) {
+	assert(a.row_count == a.column_count, "dense.lu needs a square matrix");
+	factors := Matrix(T).from_view(a, allocator);
+	pivots := make([dynamic]int, a.row_count, allocator);
+	lu_in_place(factors.view_mut(), &mut pivots[:]) or_return;
+	return .ok(Lu(T){move(factors), move(pivots), norm_one(a)});
+}
+
+impl Lu($T) {
+	/// The order of the factored matrix.
+	size :: proc(self) -> int { return self.packed.row_count; }
+
+	/// Both factors in one view, as `lu_in_place` leaves them: `L` below the diagonal, its unit diagonal not stored, and `U` on and above it.
+	factors :: proc(self: ^) -> View(T) { return self.packed.view(); }
+
+	/// `pivots()[k]` is the row swapped with row `k` at step `k`.
+	pivots :: proc(self: ^) -> []int { return self.swaps[:]; }
+
+	/**
+		Overwrites `b` with the solution `x` of `A x = b`, for each of its
+		columns: the row swaps in order, then `L y = b` and `U x = y` in the
+		order `solve_lower_into` and `solve_upper_into` give. A shape
+		mismatch panics. It does not fail: the factorization decided
+		singularity, and a solution too large for `T` is infinite.
+	*/
+	solve_into :: proc(self, b: View_Mut(T)) {
+		n := self.packed.row_count;
+		assert(b.row_count == n, "dense.Lu.solve_into: shapes do not agree");
+		x := b;
+		foreach (k in 0 ..< n) {
+			p := self.swaps[k];
+			if (p != k) {
+				foreach (j in 0 ..< b.column_count) {
+					held := x[k, j];
+					x[k, j] = x[p, j];
+					x[p, j] = held;
+				}
+			}
+		}
+		f := self.packed.view();
+		lower_solve(f, x, true);
+		upper_solve(f, x, false);
+	}
+
+	/// The solution of `A x = b`, allocated from `allocator`.
+	solve :: proc(self, b: View(T), allocator: Allocator = mem.default_allocator()) -> Matrix(T) {
+		result := Matrix(T).from_view(b, allocator);
+		self.solve_into(result.view_mut());
+		return result;
+	}
+
+	/// `A^-1`, by solving for the identity, allocated from `allocator`.
+	inverse :: proc(self, allocator: Allocator = mem.default_allocator()) -> Matrix(T) {
+		result := Matrix(T).identity(self.packed.row_count, allocator);
+		self.solve_into(result.view_mut());
+		return result;
+	}
+
+	/// The determinant: the product of `U`'s diagonal in order, negated at each row swap.
+	determinant :: proc(self) -> T {
+		result := T(1);
+		foreach (k in 0 ..< self.packed.row_count) {
+			result = result*self.packed[k, k];
+			if (self.swaps[k] != k) { result = -result; }
+		}
+		return result;
+	}
+
+	/**
+		An estimate of `1 / (|A|_1 |A^-1|_1)`, the reciprocal of the 1-norm
+		condition number: near 1 for a well-conditioned matrix, and near or
+		below the precision of `T` for one that is numerically singular.
+		`|A^-1|_1` is estimated as LAPACK's `gecon` does, by Hager's method
+		with Higham's refinements (at most five iterations, then an
+		alternating-sign test vector), which is a lower bound and rarely low
+		by more than a factor of 3. 1 for a 0 x 0 matrix. Its scratch vector
+		is allocated from `allocator`.
+	*/
+	reciprocal_condition :: proc(self, allocator: Allocator = mem.default_allocator()) -> T {
+		n := self.packed.row_count;
+		if (n == 0) { return T(1); }
+		if (self.norm == T(0)) { return T(0); }
+		return (T(1)/self.inverse_norm_estimate(allocator))/self.norm;
+	}
+
+	// Higham's form of Hager's estimator, as LAPACK's `lacn2` has it, with
+	// the sign vector kept in `signs`. Each sum is in index order.
+	@(private) inverse_norm_estimate :: proc(self, allocator: Allocator) -> T where linalg.Real(T) {
+		n := self.packed.row_count;
+		x := Matrix(T).filled(n, 1, T(1)/T(f64(n)), allocator);
+		self.solve_into(x.view_mut());
+		if (n == 1) { return x[0, 0].abs(); }
+		estimate := absolute_sum(x.view());
+		signs := Matrix(T).zeros(n, 1, allocator);
+		foreach (i in 0 ..< n) {
+			signs[i, 0] = sign_of(x[i, 0]);
+			x[i, 0] = signs[i, 0];
+		}
+		self.solve_transpose_into(x.view_mut());
+		j := largest_index(x.view());
+		iteration := 2;
+		for (;;) {
+			x.view_mut().fill(T(0));
+			x[j, 0] = T(1);
+			self.solve_into(x.view_mut());
+			previous := estimate;
+			estimate = absolute_sum(x.view());
+			repeated := true;
+			foreach (i in 0 ..< n) {
+				if (!(sign_of(x[i, 0]) == signs[i, 0])) { repeated = false; }
+			}
+			if (repeated || !(previous < estimate)) { break; }
+			foreach (i in 0 ..< n) {
+				signs[i, 0] = sign_of(x[i, 0]);
+				x[i, 0] = signs[i, 0];
+			}
+			self.solve_transpose_into(x.view_mut());
+			last := j;
+			j = largest_index(x.view());
+			if (x[last, 0].abs() == x[j, 0].abs() || iteration >= 5) { break; }
+			iteration += 1;
+		}
+		alternating := T(1);
+		foreach (i in 0 ..< n) {
+			x[i, 0] = alternating*(T(1) + T(f64(i))/T(f64(n - 1)));
+			alternating = -alternating;
+		}
+		self.solve_into(x.view_mut());
+		alternative := T(2)*(absolute_sum(x.view())/T(f64(3*n)));
+		if (estimate < alternative) { estimate = alternative; }
+		return estimate;
+	}
+
+	// Overwrites `b` with the solution of `A^T x = b`: with `A = P^T L U`,
+	// `U^T y = b`, then `L^T z = y`, then the row swaps undone in reverse.
+	@(private) solve_transpose_into :: proc(self, b: View_Mut(T)) {
+		n := self.packed.row_count;
+		x := b;
+		f := self.packed.view().transpose();
+		lower_solve(f, x, false);
+		upper_solve(f, x, true);
+		for (k := n - 1; k >= 0; k -= 1) {
+			p := self.swaps[k];
+			if (p != k) {
+				foreach (j in 0 ..< b.column_count) {
+					held := x[k, j];
+					x[k, j] = x[p, j];
+					x[p, j] = held;
+				}
+			}
+		}
+	}
+}
+
+@(private)
+sign_of :: proc(value: $T) -> T where linalg.Real(T) {
+	return -T(1) if value < T(0) else T(1);
+}
+
+@(private)
+absolute_sum :: proc(x: View($T)) -> T where linalg.Real(T) {
+	sum := T(0);
+	foreach (i in 0 ..< x.row_count) { sum = sum + x[i, 0].abs(); }
+	return sum;
+}
+
+// The first index of largest magnitude.
+@(private)
+largest_index :: proc(x: View($T)) -> int where linalg.Real(T) {
+	best := 0;
+	largest := x[0, 0].abs();
+	foreach (i in 1 ..< x.row_count) {
+		candidate := x[i, 0].abs();
+		if (largest < candidate) {
+			best = i;
+			largest = candidate;
+		}
+	}
+	return best;
+}
+
+/**
+	The factor `L` of `A = L L^T` for a symmetric positive definite `A`, with
+	`L` lower triangular and a positive diagonal. `cholesky(a)` makes one.
+*/
+Cholesky :: struct($T: type) where linalg.Real(T) {
+	@(private) factor: Matrix(T),   // L, with zeros above the diagonal
+}
+
+/**
+	Overwrites the lower triangle of the square `a` with `L`, column by
+	column; the elements above the diagonal are neither read nor written, so
+	`A` is taken as symmetric without a check. Each element of column `j` is
+	`((a - l[i, 0]*l[j, 0]) - l[i, 1]*l[j, 1]) - ...`, then the diagonal's
+	square root, and the elements below it divided by that.
+	`.Not_Positive_Definite`, with `a` unspecified, for a diagonal that is
+	not positive and finite before its square root. A shape mismatch panics.
+*/
+cholesky_in_place :: proc(a: View_Mut($T)) -> Status(Error) where linalg.Real(T) {
+	n := a.row_count;
+	assert(a.column_count == n, "dense.cholesky_in_place needs a square matrix");
+	m := unsafe.raw_data(a.data);
+	rs := a.row_stride;
+	cs := a.column_stride;
+	foreach (j in 0 ..< n) {
+		foreach (k in 0 ..< j) {
+			factor := m[offset(j, k, rs, cs)];
+			foreach (i in j ..< n) {
+				at := offset(i, j, rs, cs);
+				m[at] = m[at] - m[offset(i, k, rs, cs)]*factor;
+			}
+		}
+		// Every element below the diagonal reaches a later diagonal through
+		// its square, so this test also rejects a factor that is not finite.
+		d := m[offset(j, j, rs, cs)];
+		if (!(T(0) < d && d.is_finite())) { return .err(.Not_Positive_Definite); }
+		root := d.sqrt();
+		m[offset(j, j, rs, cs)] = root;
+		foreach (i in j + 1 ..< n) {
+			at := offset(i, j, rs, cs);
+			m[at] = m[at]/root;
+		}
+	}
+	return .ok;
+}
+
+/// The Cholesky factor of the square `a`, from its lower triangle, allocated from `allocator`.
+cholesky :: proc(a: View($T), allocator: Allocator = mem.default_allocator()) -> Result(Cholesky(T), Error) where linalg.Real(T) {
+	n := a.row_count;
+	assert(a.column_count == n, "dense.cholesky needs a square matrix");
+	factor := Matrix(T).zeros(n, n, allocator);
+	foreach (c in 0 ..< n) {
+		foreach (r in c ..< n) { factor[r, c] = a[r, c]; }
+	}
+	cholesky_in_place(factor.view_mut()) or_return;
+	return .ok(Cholesky(T){move(factor)});
+}
+
+impl Cholesky($T) {
+	/// The order of the factored matrix.
+	size :: proc(self) -> int { return self.factor.row_count; }
+
+	/// `L`, with zeros above the diagonal, borrowed from the factorization.
+	lower :: proc(self: ^) -> View(T) { return self.factor.view(); }
+
+	/// Overwrites `b` with the solution of `A x = b`: `L y = b`, then `L^T x = y`, in the triangular solves' orders.
+	solve_into :: proc(self, b: View_Mut(T)) {
+		assert(b.row_count == self.factor.row_count, "dense.Cholesky.solve_into: shapes do not agree");
+		f := self.factor.view();
+		lower_solve(f, b, false);
+		upper_solve(f.transpose(), b, false);
+	}
+
+	/// The solution of `A x = b`, allocated from `allocator`.
+	solve :: proc(self, b: View(T), allocator: Allocator = mem.default_allocator()) -> Matrix(T) {
+		result := Matrix(T).from_view(b, allocator);
+		self.solve_into(result.view_mut());
+		return result;
+	}
+
+	/// The determinant, `p*p` for `p` the product of `L`'s diagonal in order.
+	determinant :: proc(self) -> T {
+		p := T(1);
+		foreach (k in 0 ..< self.factor.row_count) { p = p*self.factor[k, k]; }
+		return p*p;
+	}
+}
+
+/// The solution of `A x = b` for the square `a`, by `lu`; `.Singular` as `lu` decides it.
+solve :: proc(a, b: View($T), allocator: Allocator = mem.default_allocator()) -> Result(Matrix(T), Error) where linalg.Real(T) {
+	factors := lu(a, allocator) or_return;
+	return .ok(factors.solve(b, allocator));
+}
+
+/// `a^-1` for the square `a`, by `lu`; `.Singular` as `lu` decides it.
+inverse :: proc(a: View($T), allocator: Allocator = mem.default_allocator()) -> Result(Matrix(T), Error) where linalg.Real(T) {
+	factors := lu(a, allocator) or_return;
+	return .ok(factors.inverse(allocator));
+}

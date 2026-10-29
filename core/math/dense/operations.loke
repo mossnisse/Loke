@@ -1,0 +1,362 @@
+// dense-matrix-plan.md "Named procedures, not operators" and "Determinism and
+// speed": each operation in an `_into` form that never allocates and a form
+// that allocates its result, in the floating-point order its documentation
+// gives. The views' extents were checked when they were made, so the loops
+// read and write through raw pointers, column by column of the output and
+// down each column.
+@(public)
+package dense;
+
+import "core:math/linalg";
+import "core:mem";
+import "core:unsafe";
+
+@(private)
+check_product_shapes :: proc(out_rows, out_columns: int, a, b: View($T), name: string_view) {
+	if (a.column_count != b.row_count || out_rows != a.row_count || out_columns != b.column_count) {
+		panic("dense: shapes do not agree:", out_rows, "x", out_columns, "=", a.row_count, "x", a.column_count,
+			"times", b.row_count, "x", b.column_count, "in", name);
+	}
+}
+
+/**
+	`out = a * b`. Each element is `(a[i, 0]*b[0, j] + a[i, 1]*b[1, j]) + ...`,
+	the terms in increasing `k` from the first product, the order
+	`linalg.Matrix` uses, so the two agree bit for bit. An inner dimension of
+	zero gives `T(0)`. A shape mismatch panics.
+*/
+multiply_into :: proc(out: View_Mut($T), a, b: View(T)) {
+	check_product_shapes(out.row_count, out.column_count, a, b, "dense.multiply_into");
+	if (a.column_count == 0) {
+		out.fill(T(0));
+		return;
+	}
+	o := unsafe.raw_data(out.data);
+	x := unsafe.raw_data(a.data);
+	y := unsafe.raw_data(b.data);
+	foreach (j in 0 ..< out.column_count) {
+		column := j*%out.column_stride;
+		first := y[offset(0, j, b.row_stride, b.column_stride)];
+		foreach (i in 0 ..< out.row_count) {
+			o[i*%out.row_stride +% column] = x[i*%a.row_stride]*first;
+		}
+		foreach (k in 1 ..< a.column_count) {
+			factor := y[offset(k, j, b.row_stride, b.column_stride)];
+			source := k*%a.column_stride;
+			foreach (i in 0 ..< out.row_count) {
+				at := i*%out.row_stride +% column;
+				o[at] = o[at] + x[i*%a.row_stride +% source]*factor;
+			}
+		}
+	}
+}
+
+/// `a * b`, allocated from `allocator`.
+multiply :: proc(a, b: View($T), allocator: Allocator = mem.default_allocator()) -> Matrix(T) {
+	result := Matrix(T).zeros(a.row_count, b.column_count, allocator);
+	multiply_into(result.view_mut(), a, b);
+	return result;
+}
+
+/**
+	`out = out + a * b`: each element of `out` has `a[i, k]*b[k, j]` added to
+	it one term at a time, in increasing `k`. That is not always the bits of
+	`out + (a * b)`, which sums the products first.
+*/
+multiply_add_into :: proc(out: View_Mut($T), a, b: View(T)) {
+	check_product_shapes(out.row_count, out.column_count, a, b, "dense.multiply_add_into");
+	o := unsafe.raw_data(out.data);
+	x := unsafe.raw_data(a.data);
+	y := unsafe.raw_data(b.data);
+	foreach (j in 0 ..< out.column_count) {
+		column := j*%out.column_stride;
+		foreach (k in 0 ..< a.column_count) {
+			factor := y[offset(k, j, b.row_stride, b.column_stride)];
+			source := k*%a.column_stride;
+			foreach (i in 0 ..< out.row_count) {
+				at := i*%out.row_stride +% column;
+				o[at] = o[at] + x[i*%a.row_stride +% source]*factor;
+			}
+		}
+	}
+}
+
+// The element-wise kernels: `out[r, c] = f(a[r, c], b[r, c])` for the one
+// operation `which` names, after the shape checks.
+@(private)
+Elementwise :: enum { Add, Subtract }
+
+@(private)
+elementwise_into :: proc(out: View_Mut($T), a, b: View(T), which: Elementwise, name: string_view) {
+	check_same_shape(out.row_count, out.column_count, a.row_count, a.column_count, name);
+	check_same_shape(a.row_count, a.column_count, b.row_count, b.column_count, name);
+	o := unsafe.raw_data(out.data);
+	x := unsafe.raw_data(a.data);
+	y := unsafe.raw_data(b.data);
+	foreach (c in 0 ..< out.column_count) {
+		foreach (r in 0 ..< out.row_count) {
+			left := x[offset(r, c, a.row_stride, a.column_stride)];
+			right := y[offset(r, c, b.row_stride, b.column_stride)];
+			at := offset(r, c, out.row_stride, out.column_stride);
+			switch (which) {
+			case .Add:      o[at] = left + right;
+			case .Subtract: o[at] = left - right;
+			}
+		}
+	}
+}
+
+/// `out = a + b`, element by element. A shape mismatch panics.
+add_into :: proc(out: View_Mut($T), a, b: View(T)) { elementwise_into(out, a, b, .Add, "dense.add_into"); }
+
+/// `a + b`, allocated from `allocator`.
+add :: proc(a, b: View($T), allocator: Allocator = mem.default_allocator()) -> Matrix(T) {
+	result := Matrix(T).zeros(a.row_count, a.column_count, allocator);
+	add_into(result.view_mut(), a, b);
+	return result;
+}
+
+/// `out = a - b`, element by element. A shape mismatch panics.
+subtract_into :: proc(out: View_Mut($T), a, b: View(T)) { elementwise_into(out, a, b, .Subtract, "dense.subtract_into"); }
+
+/// `a - b`, allocated from `allocator`.
+subtract :: proc(a, b: View($T), allocator: Allocator = mem.default_allocator()) -> Matrix(T) {
+	result := Matrix(T).zeros(a.row_count, a.column_count, allocator);
+	subtract_into(result.view_mut(), a, b);
+	return result;
+}
+
+/// `out = a*s`, element by element. A shape mismatch panics.
+scale_into :: proc(out: View_Mut($T), a: View(T), s: T) {
+	out.copy_from(a);
+	out.scale_by(s);
+}
+
+/// `a*s`, allocated from `allocator`.
+scale :: proc(a: View($T), s: T, allocator: Allocator = mem.default_allocator()) -> Matrix(T) {
+	result := Matrix(T).from_view(a, allocator);
+	result.view_mut().scale_by(s);
+	return result;
+}
+
+/// `out = a` transposed, a copy; `a.transpose()` is the same without one.
+transpose_into :: proc(out: View_Mut($T), a: View(T)) { out.copy_from(a.transpose()); }
+
+/// `a` transposed, allocated from `allocator`.
+transpose :: proc(a: View($T), allocator: Allocator = mem.default_allocator()) -> Matrix(T) {
+	return Matrix(T).from_view(a.transpose(), allocator);
+}
+
+/**
+	The sum of `x[r, c]*y[r, c]` over every element, column by column and
+	down each column from the first product; for two column vectors, the dot
+	product in index order. A shape mismatch panics, and an empty view gives
+	`T(0)`.
+*/
+dot :: proc(x, y: View($T)) -> T {
+	check_same_shape(x.row_count, x.column_count, y.row_count, y.column_count, "dense.dot");
+	result := T(0);
+	first := true;
+	foreach (c in 0 ..< x.column_count) {
+		foreach (r in 0 ..< x.row_count) {
+			term := x[r, c]*y[r, c];
+			if (first) {
+				result = term;
+				first = false;
+			} else {
+				result = result + term;
+			}
+		}
+	}
+	return result;
+}
+
+/// The sum of the diagonal of the square `a` in index order, `T(0)` for an empty one.
+trace :: proc(a: View($T)) -> T {
+	assert(a.row_count == a.column_count, "dense.trace needs a square matrix");
+	if (a.row_count == 0) { return T(0); }
+	result := a[0, 0];
+	foreach (i in 1 ..< a.row_count) { result = result + a[i, i]; }
+	return result;
+}
+
+/// Whether `a` and `b` have the same shape and exactly equal elements, by `==`.
+equal :: proc(a, b: View($T)) -> bool {
+	if (a.row_count != b.row_count || a.column_count != b.column_count) { return false; }
+	foreach (c in 0 ..< a.column_count) {
+		foreach (r in 0 ..< a.row_count) {
+			if (!(a[r, c] == b[r, c])) { return false; }
+		}
+	}
+	return true;
+}
+
+/**
+	Whether `a` and `b` have the same shape and every element pair agrees by
+	`linalg.approx_equal`'s rule: `|x - y| <= max(absolute, relative *
+	max(|x|, |y|))`, a NaN never equal and an infinity equal only to itself.
+	A negative or NaN tolerance panics.
+*/
+// `0 <= t` written with `<`, so a NaN tolerance fails it too, as in `linalg`.
+approx_equal :: proc(a, b: View($T), absolute, relative: T) -> bool where linalg.Real(T) {
+	assert(T(0) < absolute || absolute == T(0), "dense.approx_equal needs a non-negative absolute tolerance");
+	assert(T(0) < relative || relative == T(0), "dense.approx_equal needs a non-negative relative tolerance");
+	if (a.row_count != b.row_count || a.column_count != b.column_count) { return false; }
+	foreach (c in 0 ..< a.column_count) {
+		foreach (r in 0 ..< a.row_count) {
+			if (!linalg.approx_equal(a[r, c], b[r, c], absolute, relative)) { return false; }
+		}
+	}
+	return true;
+}
+
+/**
+	The Frobenius norm, the square root of the sum of the squared elements,
+	in one pass with a running scale so that it neither overflows nor
+	underflows where the result does not: for each non-zero element `x` in
+	column order, with `scale` the largest `|x|` so far and `sum` the sum of
+	`(|x| / scale)^2`, a new largest rescales `sum` as `1 + sum*(scale/|x|)^2`
+	and any other adds `(|x|/scale)^2`; the result is `scale*sqrt(sum)`. A NaN
+	element gives NaN, and an infinity otherwise gives infinity.
+*/
+norm_frobenius :: proc(a: View($T)) -> T where linalg.Real(T) {
+	scale := T(0);
+	sum := T(1);
+	infinite := false;
+	infinity := T(0);
+	foreach (c in 0 ..< a.column_count) {
+		foreach (r in 0 ..< a.row_count) {
+			x := a[r, c].abs();
+			if (!(x == x)) { return x; }
+			if (x == T(0)) { continue; }
+			if (!x.is_finite()) {
+				infinite = true;
+				infinity = x;
+				continue;
+			}
+			if (scale < x) {
+				ratio := scale/x;
+				sum = T(1) + sum*(ratio*ratio);
+				scale = x;
+			} else {
+				ratio := x/scale;
+				sum = sum + ratio*ratio;
+			}
+		}
+	}
+	if (infinite) { return infinity; }
+	return scale*sum.sqrt();
+}
+
+/**
+	The 1-norm, the largest column sum of `|a[r, c]|`, each summed down the
+	column; `T(0)` for an empty matrix, and NaN when any sum is NaN.
+*/
+norm_one :: proc(a: View($T)) -> T where linalg.Real(T) {
+	return largest_line_sum(a);
+}
+
+/// The infinity norm, the largest row sum of `|a[r, c]|`, each summed along the row.
+norm_infinity :: proc(a: View($T)) -> T where linalg.Real(T) {
+	return largest_line_sum(a.transpose());
+}
+
+@(private)
+largest_line_sum :: proc(a: View($T)) -> T where linalg.Real(T) {
+	best := T(0);
+	foreach (c in 0 ..< a.column_count) {
+		sum := T(0);
+		foreach (r in 0 ..< a.row_count) { sum = sum + a[r, c].abs(); }
+		if (!(sum == sum)) { return sum; }
+		if (best < sum) { best = sum; }
+	}
+	return best;
+}
+
+/**
+	Overwrites `b` with the solution `x` of `L x = b` for each column, where
+	`L` is the lower triangle of the square `l`; the elements above its
+	diagonal are not read. With `unit_diagonal` the diagonal is taken as ones
+	and not read either. Element `x[r]` is
+	`(((b[r] - l[r, 0]*x[0]) - l[r, 1]*x[1]) - ...) / l[r, r]`, the terms in
+	increasing order. `.Singular`, with `b` unchanged, for an exact zero on a
+	diagonal that is read. A shape mismatch panics.
+*/
+solve_lower_into :: proc(l: View($T), b: View_Mut(T), unit_diagonal: bool) -> Status(Error) where linalg.Real(T) {
+	check_triangular_shapes(l, b.row_count, "dense.solve_lower_into");
+	if (!unit_diagonal) { check_diagonal(l) or_return; }
+	lower_solve(l, b, unit_diagonal);
+	return .ok;
+}
+
+/**
+	Overwrites `b` with the solution `x` of `U x = b` for each column, where
+	`U` is the upper triangle of the square `u`. Element `x[r]` is
+	`(((b[r] - u[r, n-1]*x[n-1]) - u[r, n-2]*x[n-2]) - ...) / u[r, r]`, the
+	terms in decreasing order. Otherwise as `solve_lower_into`.
+*/
+solve_upper_into :: proc(u: View($T), b: View_Mut(T), unit_diagonal: bool) -> Status(Error) where linalg.Real(T) {
+	check_triangular_shapes(u, b.row_count, "dense.solve_upper_into");
+	if (!unit_diagonal) { check_diagonal(u) or_return; }
+	upper_solve(u, b, unit_diagonal);
+	return .ok;
+}
+
+@(private)
+check_triangular_shapes :: proc(t: View($T), rows: int, name: string_view) {
+	if (t.row_count != t.column_count || rows != t.row_count) {
+		panic("dense: shapes do not agree:", t.row_count, "x", t.column_count, "and", rows, "rows in", name);
+	}
+}
+
+@(private)
+check_diagonal :: proc(t: View($T)) -> Status(Error) where linalg.Real(T) {
+	foreach (i in 0 ..< t.row_count) {
+		if (t[i, i] == T(0)) { return .err(.Singular); }
+	}
+	return .ok;
+}
+
+// The substitution kernels behind every solve, so `Lu`, `Cholesky`, and the
+// triangular solves share one order. Each works down (or up) one column of
+// `b` at a time, subtracting the solved element's multiple from the rest of
+// the column, which updates each element in the documented order.
+@(private)
+lower_solve :: proc(l: View($T), b: View_Mut(T), unit_diagonal: bool) where linalg.Real(T) {
+	n := l.row_count;
+	f := unsafe.raw_data(l.data);
+	x := unsafe.raw_data(b.data);
+	foreach (j in 0 ..< b.column_count) {
+		column := j*%b.column_stride;
+		foreach (k in 0 ..< n) {
+			at := k*%b.row_stride +% column;
+			if (!unit_diagonal) { x[at] = x[at]/f[offset(k, k, l.row_stride, l.column_stride)]; }
+			solved := x[at];
+			source := k*%l.column_stride;
+			foreach (r in k + 1 ..< n) {
+				target := r*%b.row_stride +% column;
+				x[target] = x[target] - f[r*%l.row_stride +% source]*solved;
+			}
+		}
+	}
+}
+
+@(private)
+upper_solve :: proc(u: View($T), b: View_Mut(T), unit_diagonal: bool) where linalg.Real(T) {
+	n := u.row_count;
+	f := unsafe.raw_data(u.data);
+	x := unsafe.raw_data(b.data);
+	foreach (j in 0 ..< b.column_count) {
+		column := j*%b.column_stride;
+		for (k := n - 1; k >= 0; k -= 1) {
+			at := k*%b.row_stride +% column;
+			if (!unit_diagonal) { x[at] = x[at]/f[offset(k, k, u.row_stride, u.column_stride)]; }
+			solved := x[at];
+			source := k*%u.column_stride;
+			foreach (r in 0 ..< k) {
+				target := r*%b.row_stride +% column;
+				x[target] = x[target] - f[r*%u.row_stride +% source]*solved;
+			}
+		}
+	}
+}

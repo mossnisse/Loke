@@ -346,6 +346,15 @@ checklist.
   `project`, `reject`, and `reflect`, and a 4 x 4 transform has
   `inverse_affine`, `normal_matrix`, and `project_point`
   ([`core:math/linalg`](standard-library.md#coremathlinalg)).
+- `core:math/dense` has matrices whose size is known at run time, with the
+  same bits everywhere: an owning column-major `Matrix(T)`, `View(T)` and
+  `View_Mut(T)` over a matrix or a foreign buffer in either order, with
+  blocks, transposes, and column and row splits that the borrow checker keeps
+  apart; products and element-wise operations, each with an `_into` form that
+  never allocates; triangular solves, `lu` with `reciprocal_condition`,
+  `cholesky`, `solve`, `inverse`, and the Frobenius, 1-, and infinity norms.
+  Numerical failures are one `dense.Error`
+  ([`core:math/dense`](standard-library.md#coremathdense)).
 
 ### Changed
 

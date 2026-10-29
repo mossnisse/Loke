@@ -1,8 +1,11 @@
 # Dense matrix library plan
 
-Status: proposal, 2026-10-29, with its design questions settled and its spike
-run the same day ([Settled questions](#settled-questions),
-[Spike results](#spike-results)). It is milestone 3 of the
+Status: milestone 1 implemented, 2026-10-29, as
+[`core:math/dense`](standard-library.md#coremathdense)
+([Milestone 1 results](#milestone-1-results)), after its design questions were
+settled and its spike run the same day ([Settled questions](#settled-questions),
+[Spike results](#spike-results)); milestones 2 to 5 are proposals. It is
+milestone 3 of the
 [linear algebra library plan](linear-algebra-plan.md#milestones), which left
 this package [its own plan](linear-algebra-plan.md#dense-matrices-a-later-package)
 and the questions it has to settle. Nothing here changes the language
@@ -58,19 +61,19 @@ would give different bits on different machines
 
 ```loke
 Matrix :: struct($T: type) where interfaces.Numeric(T) {
-	@(private) rows, columns: int,
+	@(private) row_count, column_count: int,
 	@(private) data: [dynamic]T,       // column-major, rows*columns elements
 }
 
 View :: struct($T: type) where interfaces.Numeric(T) {
 	@(private) data: []T,
-	@(private) rows, columns: int,
+	@(private) row_count, column_count: int,
 	@(private) row_stride, column_stride: int,
 }
 
 View_Mut :: struct($T: type) where interfaces.Numeric(T) {
 	@(private) data: []mut T,
-	@(private) rows, columns: int,
+	@(private) row_count, column_count: int,
 	@(private) row_stride, column_stride: int,
 }
 ```
@@ -85,7 +88,9 @@ View_Mut :: struct($T: type) where interfaces.Numeric(T) {
   single row or column, a column-major foreign buffer with a leading dimension,
   and a row-major one (`row_stride = columns`, `column_stride = 1`).
 - The fields are private, and every constructor checks once that the largest
-  index the shape and strides reach is inside `data`. The kernels can then index
+  index the shape and strides reach is inside `data`, and that the leading
+  dimension covers a whole column or row, so that no two elements share a
+  place. The kernels can then index
   without a check per element, through `unsafe.raw_data`, and stay memory-safe:
   safe code cannot build a view whose strides point outside its slice. Strides
   are non-negative; a reversed view is a later addition if a caller needs one.
@@ -101,8 +106,8 @@ Two mutable views of one matrix cannot both be live, by
 a, b)` needs no aliasing check: a call that writes `out` while `a` reads the
 same storage is rejected where it is written. Disjoint mutable blocks come from
 splitting, as [`split_at_mut`](design.md#splitting-a-mutable-slice) splits a
-slice. `split_columns_mut(k)` splits a column-major view, whose columns are
-contiguous runs; `split_rows_mut(k)` splits a row-major one. A split across the
+slice. `split_columns(k)` splits a column-major view, whose columns are
+contiguous runs; `split_rows(k)` splits a row-major one. A split across the
 interleaved direction, the top and bottom rows of a column-major matrix, has no
 safe spelling yet ([Disjoint strided mutable views](open-questions.md#disjoint-strided-mutable-views)).
 The factorizations need none: each works through one `View_Mut` by index.
@@ -179,14 +184,15 @@ owns its factors:
 
 ```loke
 Lu :: struct($T: type) where linalg.Real(T) {
-	@(private) factors: Matrix(T),   // L below the diagonal (unit diagonal), U on and above
-	@(private) pivots:  [dynamic]int,
-	@(private) sign:    T,           // of the permutation, for the determinant
+	@(private) packed: Matrix(T),    // L below the diagonal (unit diagonal), U on and above
+	@(private) swaps:  [dynamic]int,
+	@(private) norm:   T,            // the 1-norm of A, for reciprocal_condition
 }
 ```
 
 `lu(a, allocator)` returns `Result(Lu(T), Error)`, and the result has `solve`,
-`solve_into`, `determinant`, `inverse`, and `reciprocal_condition`. The
+`solve_into`, `determinant`, `inverse`, `reciprocal_condition`, and the
+factors and pivots in `getrf`'s form. The
 in-place form `lu_in_place(a: View_Mut(T), pivots: []mut int) -> Status(Error)`
 overwrites `a` with the factors as LAPACK's `getrf` does, for a caller who owns
 the storage. Cholesky, QR, the symmetric eigendecomposition, and the SVD follow
@@ -260,8 +266,9 @@ omitted. "Real" means members bounded by `linalg.Real(T)`.
 
 ```text
 Matrix(T), any Numeric T:
-  zeros(rows, columns), identity(n), from_view(View), from_fixed(linalg.Matrix(T, R, C))
-  from_column_major([]T, rows, columns), from_rows([][]T)     // copies
+  zeros(rows, columns), filled(rows, columns, value), identity(n)
+  from_view(View), from_fixed(linalg.Matrix(T, R, C))
+  from_column_major([]T, rows, columns), from_rows([R][C]T)    // copies
   rows(), columns(), [r, c] and [r, c]=, view(), view_mut(), to_fixed($R, $C)
   format                                       // by rows, as linalg
 
@@ -270,9 +277,9 @@ View(T) and View_Mut(T), any Numeric T:
   from_row_major(data, rows, columns, leading := columns)
   from_column(values) -> rows x 1
   rows(), columns(), [r, c] (and [r, c]= on View_Mut)
-  block(row, column, rows, columns), transpose(), row(r), column(c)
-  View_Mut: as_view(), fill(value), copy_from(View),
-            split_columns_mut(k), split_rows_mut(k)   // panic for the interleaved direction
+  block(row, column, rows, columns), transpose(), row(r), column(c), to_fixed($R, $C)
+  View_Mut: as_view(), fill(value), copy_from(View), scale_by(s), add_scaled(s, View),
+            split_columns(k), split_rows(k)   // panic for the interleaved direction
 
 Operations, any Numeric T, each with an `_into` form:
   multiply(a, b), multiply_add_into(out, a, b), add(a, b), subtract(a, b),
@@ -282,13 +289,15 @@ Real:
   approx_equal(a, b, absolute, relative)       // linalg's rule, element-wise
   norm_frobenius(a), norm_one(a), norm_infinity(a)
   lu(a) -> Result(Lu(T), Error); lu_in_place(a, pivots) -> Status(Error)
-    Lu: solve(b), solve_into(b), determinant(), inverse(), reciprocal_condition()
+    Lu: solve(b), solve_into(b), determinant(), inverse(), reciprocal_condition(),
+        factors(), pivots(), size()
   cholesky(a) -> Result(Cholesky(T), Error)    // reads the lower triangle
-    Cholesky: solve(b), solve_into(b), determinant(), lower()
+  cholesky_in_place(a) -> Status(Error)
+    Cholesky: solve(b), solve_into(b), determinant(), lower(), size()
   qr(a) -> Result(Qr(T), Error)                // rows >= columns
     Qr: least_squares(b), q(), r(), apply_q_into(b), apply_q_transpose_into(b)
-  solve_lower_into(l, b, unit_diagonal), solve_upper_into(u, b)   // triangular
-  solve(a, b), least_squares(a, b)             // factor, then solve, in one call
+  solve_lower_into(l, b, unit_diagonal), solve_upper_into(u, b, unit_diagonal)
+  solve(a, b), inverse(a), least_squares(a, b) // factor, then solve, in one call
   symmetric_eigen(a) -> Result(Symmetric_Eigen(T), Error)
     values ascending; vectors as columns, each with its largest-magnitude
     component positive, the first on a tie
@@ -303,7 +312,8 @@ merely the same subspaces.
 
 ## Milestones
 
-1. **Storage, views, products, LU, and Cholesky.** `Matrix`, `View`,
+1. **Storage, views, products, LU, and Cholesky.** Done
+   ([Milestone 1 results](#milestone-1-results)). `Matrix`, `View`,
    `View_Mut`, the splits, products and the element-wise operations,
    triangular solves, `lu`, `cholesky`, `solve`, `inverse`, `determinant`,
    `reciprocal_condition`, and the norms. The spike before it is done
@@ -385,12 +395,13 @@ decisions.
 
 ## Spike results
 
-Done 2026-10-29. `tests/pkg/dense_spike` is a cut-down package with `Matrix`,
-`View`, `View_Mut`, `split_columns_mut`, `multiply_into`, and LU, used from a
-program at `f64` and with a forward-mode dual number. Its output is the same at
-every optimization level and at both CPU levels tried.
-`tests/pkg_err/dense_view_aliasing` holds what the borrow checker must reject.
-No compiler change was needed.
+Done 2026-10-29. The spike was a cut-down package, `tests/pkg/dense_spike`,
+with `Matrix`, `View`, `View_Mut`, `split_columns_mut`, `multiply_into`, and
+LU, used from a program at `f64` and with a forward-mode dual number. Its
+output was the same at every optimization level and at both CPU levels tried.
+Milestone 1 replaced it, and its aliasing test, what the borrow checker must
+reject, is now `tests/err/lib_dense_aliasing.loke`. No compiler change was
+needed.
 
 What held as planned:
 
@@ -447,3 +458,69 @@ product with `-opt=speed` on the development machine (milliseconds):
 - A hand-written loop pays the same price, which is a language question
   rather than this package's
   ([Overflow checks in index arithmetic](open-questions.md#overflow-checks-in-index-arithmetic)).
+
+## Milestone 1 results
+
+Done 2026-10-29, as
+[`core:math/dense`](standard-library.md#coremathdense) with its `api.loki`.
+`tests/run/lib_dense.loke` covers storage, views, splits, products, the
+element-wise operations, and the norms; `tests/run/lib_dense_solve.loke` the
+factorizations; each `tests/trap/dense_*.loke` one panic; and
+`tests/err/lib_dense_aliasing.loke` the checker. Both run tests give the same
+output at every optimization level and CPU level tried, and both are in the
+CPU-level corpus.
+
+What the tests show:
+
+- **Products** equal `linalg.Matrix`'s bit for bit for every shape tried up to
+  4 x 4, and through transposed views and blocks of larger matrices.
+- **LAPACK's test ratios**, `|P A - L U| / (n |A| eps)`, `|A x - b| / (|A| |x|
+  eps)`, `|A A^-1 - I| / (n |A| |A^-1| eps)`, and their Cholesky forms, stay
+  below 1 for random, Hilbert (to 10 x 10), graded, and nearly singular
+  matrices from 1 x 1 to 200 x 200 at `f64` and to 64 x 64 at `f32`; LAPACK's
+  threshold is 30, which the test checks.
+- **The Wilkinson matrix**, the worst case for partial pivoting, is not among
+  those families: its growth is `2^(n-1)`, so its residuals are as large as
+  that predicts. Every operation on it is exact, so the test checks instead
+  that `P A = L U` exactly and that `U`'s last element is `2^(n-1)`. The
+  symmetric Wilkinson matrices belong with the eigensolver tests of
+  milestone 3.
+- **`reciprocal_condition`** is never below the exact `1 / (|A|_1 |A^-1|_1)`
+  and never above three times it, for those families at sizes 2 to 31.
+- **A dual number** through `solve` gives the derivative `-A^-1 E x` to within
+  `1e-10` relative, and its value parts are the `f64` solution bit for bit.
+- **Rational elements** are not tested: the standard library has no rational
+  type, and integers cover exact `Numeric` arithmetic.
+
+What changed from the plan:
+
+- **Receivers for smaller views.** `block`, `transpose`, `row`, `column`, and
+  the splits on a `View_Mut` are each a group of a `self: move` member and a
+  `self: inout` one. A temporary or `move(v)` is consumed, so
+  `left, right := m.view_mut().split_columns(k)` can be bound, which a
+  borrowing receiver alone forbids; a named view is borrowed and stays usable.
+  The splits lost the plan's `_mut` suffix, which on `View_Mut` said nothing.
+- **In-place element-wise forms.** The one rule rejects
+  `add_into(m.view_mut(), m.view(), b)`, so `out += s*a` needs a form of its
+  own: `View_Mut.add_scaled(s, a)` and `scale_by(s)`, beside `fill` and
+  `copy_from`.
+- **Overlapping views.** Every constructor also checks that the leading
+  dimension covers a column (or row), so no two elements of a view share a
+  place, which the splits and a later threaded kernel rely on.
+- **The triangular solves** both take `unit_diagonal`, which has no default,
+  and return `Status(Error)`: `.Singular`, with `b` unchanged, for an exact
+  zero on a diagonal that is read.
+- **`from_rows`** takes a nested fixed array, `[R][C]T`, which a literal
+  writes as it prints; a run-time row-major buffer is copied with
+  `from_view(View.from_row_major(...))`.
+- **`Lu.factors()` and `Lu.pivots()`** give the packed factors in `getrf`'s
+  form, which the residual tests need and a caller passing them to other code
+  does too. `inverse(a)` is the one-call form beside `solve(a, b)`.
+- **The bound on each method.** A method of `impl Lu($T)` that calls a `Real`
+  slot restates `where linalg.Real(T)`, although `Lu` itself is bounded so
+  ([Slots through a record's bound](open-questions.md#slots-through-a-records-bound)).
+
+The kernels, the products, the element-wise operations, the factorizations,
+and the substitutions index through `unsafe.raw_data` with wrapping index
+arithmetic, which the spike found they need to vectorize. Their speed is
+measured in milestone 4.

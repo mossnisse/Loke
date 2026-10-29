@@ -1,9 +1,9 @@
-// dense-matrix-plan.md "One owner and two views": the borrow checker, not a
-// run-time check, keeps a mutable view from aliasing a read-only one, a view
-// from outliving its matrix, and the matrix from changing under a view.
+// standard-library "`core:math/dense`": the borrow checker, not a run-time
+// check, keeps a mutable view from aliasing a read-only one, a view from
+// outliving its matrix, and the matrix from changing under a view.
 package main;
 
-import "../../pkg/dense_spike/dense";
+import "core:math/dense";
 
 aliased_product :: proc() {
 	m := dense.Matrix(f64).identity(3);

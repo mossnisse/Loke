@@ -1,0 +1,15 @@
+// standard-library "`core:math/dense`": the rows of a column-major matrix are
+// interleaved, so they cannot be split into two slices, and `split_rows`
+// panics. Its columns split.
+package main;
+
+import "core:fmt";
+import "core:math/dense";
+
+main :: proc() {
+	m := dense.Matrix(f64).zeros(4, 4);
+	left, right := m.view_mut().split_columns(2);
+	fmt.println(left.columns(), right.columns());
+	top, bottom := m.view_mut().split_rows(2);
+	fmt.println(top.rows(), bottom.rows());
+}

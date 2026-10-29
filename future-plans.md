@@ -118,10 +118,11 @@ Math gaps include hyperbolics,
 integer bit helpers. `core:simd`'s remaining gaps are specified in
 [What SIMD does not do](design.md#what-simd-does-not-do).
 [`core:math/linalg`](standard-library.md#coremathlinalg) has its first two
-milestones, the core values and the rotation and geometry helpers; a
-dense-matrix package, proposed in the [dense matrix plan](dense-matrix-plan.md),
-and measured SIMD paths follow, in the
-[linear algebra library plan](linear-algebra-plan.md#milestones).
+milestones, the core values and the rotation and geometry helpers, and
+[`core:math/dense`](standard-library.md#coremathdense) the first milestone of
+the [dense matrix plan](dense-matrix-plan.md#milestones): storage, views,
+products, LU, and Cholesky. QR, the symmetric eigensolver, the SVD, and
+measured SIMD paths follow, in those plans' milestones.
 
 [`core:encoding/json`](standard-library.md#coreencodingjson) still needs this
 evidence, in this order; its open design questions are in

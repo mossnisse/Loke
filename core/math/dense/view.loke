@@ -1,0 +1,336 @@
+// dense-matrix-plan.md "One owner and two views": every constructor checks
+// once that the shape and strides stay inside the slice and that no two
+// elements share a place, so the kernels can index without a check per
+// element and a write through one element never changes another.
+@(public)
+package dense;
+
+import "base:interfaces";
+import "core:fmt";
+import "core:math/linalg";
+import "core:unsafe";
+
+/**
+	A read-only view of `rows x columns` elements somewhere else: element
+	`(r, c)` is `data[r*row_stride + c*column_stride]`. It borrows its slice,
+	so it cannot outlive the storage.
+*/
+View :: struct($T: type) where interfaces.Numeric(T) {
+	@(private) data:          []T,
+	@(private) row_count:     int,
+	@(private) column_count:  int,
+	@(private) row_stride:    int,
+	@(private) column_stride: int,
+}
+
+/**
+	A mutable view, laid out as `View`. It borrows its slice exclusively, so
+	no other view of the same elements is live while it is.
+*/
+View_Mut :: struct($T: type) where interfaces.Numeric(T) {
+	@(private) data:          []mut T,
+	@(private) row_count:     int,
+	@(private) column_count:  int,
+	@(private) row_stride:    int,
+	@(private) column_stride: int,
+}
+
+// The extent check: the largest index the shape and strides reach is inside
+// `length`. With the leading-dimension checks of the constructors, which
+// keep one stride at least as long as the run of the other, it also keeps
+// every element at its own place, and blocks and transposes keep both.
+@(private)
+check_extent :: proc(length, rows, columns, row_stride, column_stride: int) {
+	assert(rows >= 0 && columns >= 0, "dense: a view needs a non-negative shape");
+	if (rows == 0 || columns == 0) { return; }
+	last := (rows - 1)*row_stride + (columns - 1)*column_stride;
+	assert(last < length, "dense: a view's elements reach past its data");
+}
+
+@(private)
+check_leading :: proc(leading, run: int) {
+	assert(leading >= run, "dense: a view's leading dimension is shorter than its run");
+}
+
+@(private)
+check_block :: proc(row, column, rows, columns, row_count, column_count: int) {
+	assert(0 <= row && 0 <= column && 0 <= rows && 0 <= columns
+		&& rows <= row_count - row && columns <= column_count - column,
+		"dense: a block outside its view");
+}
+
+// The kernels index with this. Every index they form is below the view's
+// checked extent, so the arithmetic cannot overflow and is written wrapping:
+// a checked `+` or `*` is a branch per element, which keeps a loop from
+// vectorizing (dense-matrix-plan.md "Spike results").
+@(private)
+offset :: proc(row, column, row_stride, column_stride: int) -> int {
+	return row*%row_stride +% column*%column_stride;
+}
+
+impl View($T) {
+	/**
+		`rows x columns` column-major elements of `data`, column `c` starting
+		at `c*leading`. A `leading` below `rows`, or elements past the end of
+		`data`, panic.
+	*/
+	from_column_major :: proc(data: []T, rows, columns: int, leading := rows) -> View(T) {
+		check_leading(leading, rows);
+		check_extent(data.len(), rows, columns, 1, leading);
+		return {data, rows, columns, 1, leading};
+	}
+
+	/// `rows x columns` row-major elements of `data`, row `r` starting at `r*leading`.
+	from_row_major :: proc(data: []T, rows, columns: int, leading := columns) -> View(T) {
+		check_leading(leading, columns);
+		check_extent(data.len(), rows, columns, leading, 1);
+		return {data, rows, columns, leading, 1};
+	}
+
+	/// `values` as a column vector, `values.len() x 1`.
+	from_column :: proc(values: []T) -> View(T) {
+		return {values, values.len(), 1, 1, values.len()};
+	}
+
+	rows :: proc(self) -> int { return self.row_count; }
+	columns :: proc(self) -> int { return self.column_count; }
+
+	/// Element `(row, column)`; an index outside the view panics.
+	get :: operator([]) proc(self, row, column: int) -> T {
+		check_index(row, column, self.row_count, self.column_count);
+		return self.data[row*self.row_stride + column*self.column_stride];
+	}
+
+	/// The `rows x columns` block whose first element is `(row, column)`.
+	block :: proc(self, row, column, rows, columns: int) -> View(T) {
+		check_block(row, column, rows, columns, self.row_count, self.column_count);
+		if (rows == 0 || columns == 0) { return {self.data[:0], rows, columns, self.row_stride, self.column_stride}; }
+		start := row*self.row_stride + column*self.column_stride;
+		return {self.data[start:], rows, columns, self.row_stride, self.column_stride};
+	}
+
+	/// The transpose, with no copy: the strides swapped.
+	transpose :: proc(self) -> View(T) {
+		return {self.data, self.column_count, self.row_count, self.column_stride, self.row_stride};
+	}
+
+	/// Row `r` as a `1 x columns` view.
+	row :: proc(self, r: int) -> View(T) { return self.block(r, 0, 1, self.column_count); }
+
+	/// Column `c` as a `rows x 1` view.
+	column :: proc(self, c: int) -> View(T) { return self.block(0, c, self.row_count, 1); }
+
+	/// A copy as `linalg.Matrix(T, R, C)`; another shape panics.
+	to_fixed :: proc(self, $R: int, $C: int) -> linalg.Matrix(T, R, C) {
+		assert(self.row_count == R && self.column_count == C, "dense.View.to_fixed: shapes do not agree");
+		result: linalg.Matrix(T, R, C) = {};
+		foreach (c in 0 ..< C) {
+			foreach (r in 0 ..< R) { result.columns[c][r] = self[r, c]; }
+		}
+		return result;
+	}
+
+	/// Rows in brackets, as `Matrix(T)` prints.
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
+		format_view(self, writer, options);
+	}
+}
+
+// The methods that make a smaller view take a temporary or `move(view)`
+// whole, and borrow a named view otherwise, so both
+// `left, right := m.view_mut().split_columns(k)` and
+// `whole.split_columns(k)` work.
+impl View_Mut($T) {
+	/// As `View.from_column_major`, writable.
+	from_column_major :: proc(data: []mut T, rows, columns: int, leading := rows) -> View_Mut(T) {
+		check_leading(leading, rows);
+		check_extent(data.len(), rows, columns, 1, leading);
+		return {data, rows, columns, 1, leading};
+	}
+
+	/// As `View.from_row_major`, writable.
+	from_row_major :: proc(data: []mut T, rows, columns: int, leading := columns) -> View_Mut(T) {
+		check_leading(leading, columns);
+		check_extent(data.len(), rows, columns, leading, 1);
+		return {data, rows, columns, leading, 1};
+	}
+
+	/// `values` as a writable column vector.
+	from_column :: proc(values: []mut T) -> View_Mut(T) {
+		n := values.len();
+		return {values, n, 1, 1, n};
+	}
+
+	rows :: proc(self) -> int { return self.row_count; }
+	columns :: proc(self) -> int { return self.column_count; }
+
+	get :: operator([]) proc(self, row, column: int) -> T {
+		check_index(row, column, self.row_count, self.column_count);
+		return self.data[row*self.row_stride + column*self.column_stride];
+	}
+
+	get_mut :: operator([]) proc(self: inout, row, column: int) -> inout T {
+		check_index(row, column, self.row_count, self.column_count);
+		return inout self.data[row*self.row_stride + column*self.column_stride];
+	}
+
+	/// The same elements, read-only, borrowed from this view.
+	as_view :: proc(self: ^) -> View(T) {
+		return {self.data[:], self.row_count, self.column_count, self.row_stride, self.column_stride};
+	}
+
+	/// As `View.block`, writable. A temporary or `move(view)` is consumed, and a named view is borrowed.
+	block :: proc{block_whole, block_borrowed};
+
+	/// As `View.transpose`, writable.
+	transpose :: proc{transpose_whole, transpose_borrowed};
+
+	/// As `View.row`, writable.
+	row :: proc{row_whole, row_borrowed};
+
+	/// As `View.column`, writable.
+	column :: proc{column_whole, column_borrowed};
+
+	/**
+		The columns before `k` and from `k`, as two views that may be written
+		at once. A view whose columns interleave in its slice, as a row-major
+		matrix's do, panics.
+	*/
+	split_columns :: proc{split_columns_whole, split_columns_borrowed};
+
+	/// The rows before `k` and from `k`; a view whose rows interleave, as a column-major matrix's do, panics.
+	split_rows :: proc{split_rows_whole, split_rows_borrowed};
+
+	@(private) block_whole :: proc(self: move, row, column, rows, columns: int) -> View_Mut(T) {
+		check_block(row, column, rows, columns, self.row_count, self.column_count);
+		return sub_view(&mut self.data[:], row*self.row_stride + column*self.column_stride, rows, columns, self.row_stride, self.column_stride);
+	}
+	@(private) block_borrowed :: proc(self: inout, row, column, rows, columns: int) -> View_Mut(T) {
+		check_block(row, column, rows, columns, self.row_count, self.column_count);
+		return sub_view(&mut self.data[:], row*self.row_stride + column*self.column_stride, rows, columns, self.row_stride, self.column_stride);
+	}
+
+	@(private) transpose_whole :: proc(self: move) -> View_Mut(T) {
+		return {&mut self.data[:], self.column_count, self.row_count, self.column_stride, self.row_stride};
+	}
+	@(private) transpose_borrowed :: proc(self: inout) -> View_Mut(T) {
+		return {&mut self.data[:], self.column_count, self.row_count, self.column_stride, self.row_stride};
+	}
+
+	@(private) row_whole :: proc(self: move, r: int) -> View_Mut(T) {
+		check_block(r, 0, 1, self.column_count, self.row_count, self.column_count);
+		return sub_view(&mut self.data[:], r*self.row_stride, 1, self.column_count, self.row_stride, self.column_stride);
+	}
+	@(private) row_borrowed :: proc(self: inout, r: int) -> View_Mut(T) {
+		check_block(r, 0, 1, self.column_count, self.row_count, self.column_count);
+		return sub_view(&mut self.data[:], r*self.row_stride, 1, self.column_count, self.row_stride, self.column_stride);
+	}
+
+	@(private) column_whole :: proc(self: move, c: int) -> View_Mut(T) {
+		check_block(0, c, self.row_count, 1, self.row_count, self.column_count);
+		return sub_view(&mut self.data[:], c*self.column_stride, self.row_count, 1, self.row_stride, self.column_stride);
+	}
+	@(private) column_borrowed :: proc(self: inout, c: int) -> View_Mut(T) {
+		check_block(0, c, self.row_count, 1, self.row_count, self.column_count);
+		return sub_view(&mut self.data[:], c*self.column_stride, self.row_count, 1, self.row_stride, self.column_stride);
+	}
+
+	@(private) split_columns_whole :: proc(self: move, k: int) -> (left: View_Mut(T), right: View_Mut(T)) {
+		return split(&mut self.data[:], k, self.column_count, self.row_count, self.column_stride, self.row_stride, false);
+	}
+	@(private) split_columns_borrowed :: proc(self: inout, k: int) -> (left: View_Mut(T), right: View_Mut(T)) {
+		return split(&mut self.data[:], k, self.column_count, self.row_count, self.column_stride, self.row_stride, false);
+	}
+
+	@(private) split_rows_whole :: proc(self: move, k: int) -> (left: View_Mut(T), right: View_Mut(T)) {
+		return split(&mut self.data[:], k, self.row_count, self.column_count, self.row_stride, self.column_stride, true);
+	}
+	@(private) split_rows_borrowed :: proc(self: inout, k: int) -> (left: View_Mut(T), right: View_Mut(T)) {
+		return split(&mut self.data[:], k, self.row_count, self.column_count, self.row_stride, self.column_stride, true);
+	}
+
+	/// Sets every element to `value`.
+	fill :: proc(self, value: T) {
+		out := unsafe.raw_data(self.data);
+		foreach (c in 0 ..< self.column_count) {
+			foreach (r in 0 ..< self.row_count) { out[offset(r, c, self.row_stride, self.column_stride)] = value; }
+		}
+	}
+
+	/// Copies `source`, which must have this view's shape.
+	copy_from :: proc(self, source: View(T)) {
+		check_same_shape(self.row_count, self.column_count, source.row_count, source.column_count, "dense.View_Mut.copy_from");
+		out := unsafe.raw_data(self.data);
+		x := unsafe.raw_data(source.data);
+		foreach (c in 0 ..< self.column_count) {
+			foreach (r in 0 ..< self.row_count) {
+				out[offset(r, c, self.row_stride, self.column_stride)] = x[offset(r, c, source.row_stride, source.column_stride)];
+			}
+		}
+	}
+
+	/// Multiplies every element by `s`, as `element*s`.
+	scale_by :: proc(self, s: T) {
+		out := unsafe.raw_data(self.data);
+		foreach (c in 0 ..< self.column_count) {
+			foreach (r in 0 ..< self.row_count) {
+				at := offset(r, c, self.row_stride, self.column_stride);
+				out[at] = out[at]*s;
+			}
+		}
+	}
+
+	/// Adds `s` times `a`, which must have this view's shape: each element becomes `element + s*a[r, c]`.
+	add_scaled :: proc(self, s: T, a: View(T)) {
+		check_same_shape(self.row_count, self.column_count, a.row_count, a.column_count, "dense.View_Mut.add_scaled");
+		out := unsafe.raw_data(self.data);
+		x := unsafe.raw_data(a.data);
+		foreach (c in 0 ..< self.column_count) {
+			foreach (r in 0 ..< self.row_count) {
+				at := offset(r, c, self.row_stride, self.column_stride);
+				out[at] = out[at] + s*x[offset(r, c, a.row_stride, a.column_stride)];
+			}
+		}
+	}
+
+	/// Rows in brackets, as `Matrix(T)` prints.
+	format :: proc(self: ^, writer: fmt.Writer, options: fmt.Options) {
+		format_view(self.as_view(), writer, options);
+	}
+}
+
+@(private)
+sub_view :: proc(data: []mut $T, start, rows, columns, row_stride, column_stride: int) -> View_Mut(T) {
+	if (rows == 0 || columns == 0) { return {&mut data[:0], rows, columns, row_stride, column_stride}; }
+	return {&mut data[start:], rows, columns, row_stride, column_stride};
+}
+
+// Splits along the `outer` direction, whose stride `outer_stride` must step
+// past a whole run of the `inner` direction, so that everything before `k`
+// precedes everything from it and `split_at_mut` can divide the slice.
+@(private)
+split :: proc(data: []mut $T, k, outer, inner, outer_stride, inner_stride: int, rows: bool) -> (left: View_Mut(T), right: View_Mut(T)) {
+	assert(0 <= k && k <= outer, "dense: a split outside its view");
+	assert(inner <= 1 || outer <= 1 || (inner - 1)*inner_stride < outer_stride,
+		"dense: a split across interleaved elements");
+	mid := data.len();
+	if (k < outer && inner > 0) { mid = k*outer_stride; }
+	first, second := data.split_at_mut(mid);
+	if (rows) {
+		return {
+			View_Mut(T){first, k, inner, outer_stride, inner_stride},
+			View_Mut(T){second, outer - k, inner, outer_stride, inner_stride},
+		};
+	}
+	return {
+		View_Mut(T){first, inner, k, inner_stride, outer_stride},
+		View_Mut(T){second, inner, outer - k, inner_stride, outer_stride},
+	};
+}
+
+@(private)
+check_same_shape :: proc(rows, columns, other_rows, other_columns: int, name: string_view) {
+	if (rows != other_rows || columns != other_columns) {
+		panic("dense: shapes do not agree:", rows, "x", columns, "and", other_rows, "x", other_columns, "in", name);
+	}
+}
