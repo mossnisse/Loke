@@ -951,6 +951,22 @@ dense package view a fixed matrix without a copy, and would serve image
 buffers and lookup tables stored as nested arrays. Without it the dense
 package copies at the boundary.
 
+### Overflow checks in index arithmetic
+
+The [dense matrix spike](dense-matrix-plan.md#spike-results) measured a
+column-major product written as an ordinary loop over raw pointers. With the
+index computed as `k*n + i`, it ran 3.5 times slower than with `k*%n +% i`
+at the baseline CPU level and 5.7 times slower at `x86-64-v3`, for the same
+bits. The checked operators panic on overflow
+([Integer overflow](design.md#integer-overflow)), and that branch per element
+keeps the optimizer from vectorizing the loop, even where the induction
+variable and the bound make an overflow impossible. A library kernel can write
+the wrapping operators once it has checked its extents. A program's own
+two-dimensional loop over a slice pays the cost, and bounds checks add to it.
+Open: whether the compiler should prove the common shapes overflow-free (an
+index affine in loop variables whose ranges are known before the loop), or
+whether a checked-once form of indexing belongs in the language.
+
 ## Open questions in `core:random`
 
 ### Random distributions across platforms

@@ -1,7 +1,8 @@
 # Dense matrix library plan
 
-Status: proposal, 2026-10-29, with its design questions settled the same day
-([Settled questions](#settled-questions)). It is milestone 3 of the
+Status: proposal, 2026-10-29, with its design questions settled and its spike
+run the same day ([Settled questions](#settled-questions),
+[Spike results](#spike-results)). It is milestone 3 of the
 [linear algebra library plan](linear-algebra-plan.md#milestones), which left
 this package [its own plan](linear-algebra-plan.md#dense-matrices-a-later-package)
 and the questions it has to settle. Nothing here changes the language
@@ -305,9 +306,8 @@ merely the same subspaces.
 1. **Storage, views, products, LU, and Cholesky.** `Matrix`, `View`,
    `View_Mut`, the splits, products and the element-wise operations,
    triangular solves, `lu`, `cholesky`, `solve`, `inverse`, `determinant`,
-   `reciprocal_condition`, and the norms. Before it, a spike that runs one
-   view, one product, and one `lu` against the borrow checker and measures the
-   unchecked kernel.
+   `reciprocal_condition`, and the norms. The spike before it is done
+   ([Spike results](#spike-results)).
 2. **QR and least squares.** `qr`, `least_squares`, and the `Q` application
    forms.
 3. **Eigenvalues and singular values.** `symmetric_eigen` and `svd`, with
@@ -382,3 +382,68 @@ decisions.
 - **Fixed-size matrices**: `from_fixed` and `to_fixed` copy. A view without a
   copy waits for a flattening borrow
   ([Flat views of nested fixed arrays](open-questions.md#flat-views-of-nested-fixed-arrays)).
+
+## Spike results
+
+Done 2026-10-29. `tests/pkg/dense_spike` is a cut-down package with `Matrix`,
+`View`, `View_Mut`, `split_columns_mut`, `multiply_into`, and LU, used from a
+program at `f64` and with a forward-mode dual number. Its output is the same at
+every optimization level and at both CPU levels tried.
+`tests/pkg_err/dense_view_aliasing` holds what the borrow checker must reject.
+No compiler change was needed.
+
+What held as planned:
+
+- Views as records with private fields that carry their slice's borrow. A view
+  of a foreign buffer in either order, a transpose, and a block all index
+  alike.
+- `split_columns_mut` through `split_at_mut` inside a generic method, with
+  both halves written at once.
+- `Result(Lu(T), Error)` holding owners, `Status(Error)` through `or_return`,
+  and a dual number through `lu` and `solve_into`, whose derivative
+  `(-0.12, 0.04)` is the analytic one.
+- The borrow checker, with no run-time check, rejects all three misuses:
+  `multiply_into(m.view_mut(), m.view(), b)` (`L0511`), returning a view of a
+  local matrix (`L0526`), and writing a matrix while a view of it is live
+  (`L0512`).
+
+What the package must allow for:
+
+- **`view` takes `self: ^`.** A plain `self` is a value whose borrows end with
+  the call ([Receiver forms](design.md#receiver-forms)); `view_mut` and the
+  splits take `self: inout`.
+- **Accessors cannot share a field's name**, even a private field's, since
+  `m.rows` would select the field. The fields are `row_count` and
+  `column_count`, and the accessors are `rows()` and `columns()`.
+- **A `View_Mut` parameter is copied to a local before it is written through
+  `[r, c]=`**, since the subscript's receiver is `inout` and a parameter is
+  not a variable. The copy is a reborrow and costs nothing.
+
+The kernel, measured as the best of several runs of a 256 x 256 `f64`
+product with `-opt=speed` on the development machine (milliseconds):
+
+| Kernel | `x86-64` | `x86-64-v3` |
+| --- | --- | --- |
+| through a view's checked `[r, c]` | 21.7 | 21.1 |
+| a hand-written loop over a slice, checked indexing | 17.0 | 17.0 |
+| raw pointers, checked index arithmetic | 14.7 | 14.9 |
+| raw pointers, wrapping index arithmetic, contiguous | 4.2 | 2.6 |
+| the view kernel: raw pointers, wrapping arithmetic, any strides | 4.4 | 2.6 |
+
+- **Index once, then index unchecked.** The checked subscript costs a factor of
+  five to eight against the final kernel, which confirms the private-stride
+  design: the extent is checked when the view is made, and the kernels read
+  through `unsafe.raw_data`.
+- **The kernels' index arithmetic is wrapping.** A checked `+` or `*` is a
+  panic branch per element ([Integer overflow](design.md#integer-overflow)),
+  and it alone keeps the loop from vectorizing: raw pointers with checked
+  arithmetic are barely faster than the checked loop. Every index in a kernel
+  is below its view's checked extent, so `+%` and `*%` never wrap there.
+  Written so, the strided kernel runs as fast as the contiguous one on
+  contiguous data, so a separate unit-stride kernel is not needed. It
+  vectorizes across rows, the output
+  elements, so the bits are those of the checked kernel, which the spike
+  compares element for element.
+- A hand-written loop pays the same price, which is a language question
+  rather than this package's
+  ([Overflow checks in index arithmetic](open-questions.md#overflow-checks-in-index-arithmetic)).

@@ -1,0 +1,325 @@
+// dense-matrix-plan.md "Milestones": the spike before milestone 1. A cut-down
+// `core:math/dense` with the owner, both views, one product, and LU, to try
+// the plan's views against the borrow checker and its unchecked kernel.
+@(public)
+package dense;
+
+import "base:interfaces";
+import "core:math/linalg";
+import "core:mem";
+import "core:unsafe";
+
+/// The numerical failures, as the plan has them.
+Error :: enum {
+	Singular,
+	Not_Positive_Definite,
+	No_Convergence,
+}
+
+/// An owned `rows x columns` matrix, column-major and contiguous.
+Matrix :: struct($T: type) where interfaces.Numeric(T) {
+	@(private) row_count:    int,
+	@(private) column_count: int,
+	@(private) data:    [dynamic]T,
+}
+
+/// A read-only view: element `(r, c)` is `data[r*row_stride + c*column_stride]`.
+View :: struct($T: type) where interfaces.Numeric(T) {
+	@(private) data:          []T,
+	@(private) row_count:          int,
+	@(private) column_count:       int,
+	@(private) row_stride:    int,
+	@(private) column_stride: int,
+}
+
+/// A mutable view, with the layout of `View`.
+View_Mut :: struct($T: type) where interfaces.Numeric(T) {
+	@(private) data:          []mut T,
+	@(private) row_count:          int,
+	@(private) column_count:       int,
+	@(private) row_stride:    int,
+	@(private) column_stride: int,
+}
+
+// The one check every view constructor makes, so a kernel can index without
+// one: the largest index the shape and strides reach is inside `length`.
+@(private)
+check_extent :: proc(length, rows, columns, row_stride, column_stride: int) {
+	assert(rows >= 0 && columns >= 0, "dense: a view needs a non-negative shape");
+	assert(row_stride >= 0 && column_stride >= 0, "dense: a view needs non-negative strides");
+	if (rows == 0 || columns == 0) { return; }
+	last := (rows - 1)*row_stride + (columns - 1)*column_stride;
+	assert(last < length, "dense: a view's strides reach past its data");
+}
+
+impl Matrix($T) {
+	/// A `rows x columns` matrix of `T(0)`, allocated from `allocator`.
+	zeros :: proc(rows, columns: int, allocator: mem.Allocator = {}) -> Matrix(T) {
+		assert(rows >= 0 && columns >= 0, "dense.Matrix needs a non-negative shape");
+		data: [dynamic]T via allocator = {};
+		data.reserve(rows*columns);
+		foreach (_ in 0 ..< rows*columns) { data.append(T(0)); }
+		return {rows, columns, move(data)};
+	}
+
+	identity :: proc(n: int, allocator: mem.Allocator = {}) -> Matrix(T) {
+		result := Matrix(T).zeros(n, n, allocator);
+		foreach (i in 0 ..< n) { result.data[i*n + i] = T(1); }
+		return result;
+	}
+
+	rows :: proc(self) -> int { return self.row_count; }
+	columns :: proc(self) -> int { return self.column_count; }
+
+	get :: operator([]) proc(self, row, column: int) -> T {
+		assert(0 <= row && row < self.row_count && 0 <= column && column < self.column_count, "dense.Matrix index out of range");
+		return self.data[column*self.row_count + row];
+	}
+	get_mut :: operator([]) proc(self: inout, row, column: int) -> inout T {
+		assert(0 <= row && row < self.row_count && 0 <= column && column < self.column_count, "dense.Matrix index out of range");
+		return inout self.data[column*self.row_count + row];
+	}
+
+	/// The whole matrix as a read-only view.
+	view :: proc(self: ^) -> View(T) {
+		return {self.data[:], self.row_count, self.column_count, 1, self.row_count};
+	}
+
+	/// The whole matrix as a mutable view.
+	view_mut :: proc(self: inout) -> View_Mut(T) {
+		return {&mut self.data[:], self.row_count, self.column_count, 1, self.row_count};
+	}
+}
+
+impl View($T) {
+	/// `rows x columns` column-major elements of `data`, a column every `leading` elements.
+	from_column_major :: proc(data: []T, rows, columns, leading: int) -> View(T) {
+		check_extent(data.len(), rows, columns, 1, leading);
+		return {data, rows, columns, 1, leading};
+	}
+
+	/// `rows x columns` row-major elements of `data`, a row every `leading` elements.
+	from_row_major :: proc(data: []T, rows, columns, leading: int) -> View(T) {
+		check_extent(data.len(), rows, columns, leading, 1);
+		return {data, rows, columns, leading, 1};
+	}
+
+	rows :: proc(self) -> int { return self.row_count; }
+	columns :: proc(self) -> int { return self.column_count; }
+
+	get :: operator([]) proc(self, row, column: int) -> T {
+		assert(0 <= row && row < self.row_count && 0 <= column && column < self.column_count, "dense.View index out of range");
+		return self.data[row*self.row_stride + column*self.column_stride];
+	}
+
+	/// The transpose, by swapping the strides.
+	transpose :: proc(self) -> View(T) {
+		return {self.data, self.column_count, self.row_count, self.column_stride, self.row_stride};
+	}
+
+	/// The `rows x columns` block whose first element is `(row, column)`.
+	block :: proc(self, row, column, rows, columns: int) -> View(T) {
+		assert(0 <= row && 0 <= column && rows >= 0 && columns >= 0
+			&& row + rows <= self.row_count && column + columns <= self.column_count, "dense.View block out of range");
+		if (rows == 0 || columns == 0) { return {self.data[:0], rows, columns, self.row_stride, self.column_stride}; }
+		start := row*self.row_stride + column*self.column_stride;
+		return {self.data[start:], rows, columns, self.row_stride, self.column_stride};
+	}
+}
+
+impl View_Mut($T) {
+	rows :: proc(self) -> int { return self.row_count; }
+	columns :: proc(self) -> int { return self.column_count; }
+
+	get :: operator([]) proc(self, row, column: int) -> T {
+		assert(0 <= row && row < self.row_count && 0 <= column && column < self.column_count, "dense.View_Mut index out of range");
+		return self.data[row*self.row_stride + column*self.column_stride];
+	}
+	get_mut :: operator([]) proc(self: inout, row, column: int) -> inout T {
+		assert(0 <= row && row < self.row_count && 0 <= column && column < self.column_count, "dense.View_Mut index out of range");
+		return inout self.data[row*self.row_stride + column*self.column_stride];
+	}
+
+	/// The columns before `k` and from `k`, as two views that may be written at once.
+	/// The first block's elements all precede the second's only when the column
+	/// stride is the outer one; another view panics.
+	split_columns_mut :: proc(self: inout, k: int) -> (left: View_Mut(T), right: View_Mut(T)) {
+		assert(0 <= k && k <= self.column_count, "dense.View_Mut split out of range");
+		assert(self.row_count <= 1 || (self.row_count - 1)*self.row_stride < self.column_stride,
+			"dense.View_Mut.split_columns_mut needs columns that are contiguous runs");
+		mid := k*self.column_stride;
+		if (mid > self.data.len()) { mid = self.data.len(); }
+		first, second := self.data.split_at_mut(mid);
+		return {
+			View_Mut(T){first, self.row_count, k, self.row_stride, self.column_stride},
+			View_Mut(T){second, self.row_count, self.column_count - k, self.row_stride, self.column_stride},
+		};
+	}
+}
+
+/**
+	`out = a * b`. Each element is the sum of `a[i, k]*b[k, j]` in increasing
+	`k`, from the first product. A shape mismatch panics.
+*/
+// The views' extents were checked when they were made, so the loops index the
+// raw pointers without a check per element, column by column of `out` and
+// down each column, the order a column-major `a` is laid out in. Every index
+// is below its view's checked extent, so the index arithmetic cannot overflow
+// and is written wrapping: a checked `+` or `*` is a branch per element,
+// which keeps the loop from vectorizing across rows.
+multiply_into :: proc(out: View_Mut($T), a, b: View(T)) {
+	assert(a.column_count == b.row_count && out.row_count == a.row_count && out.column_count == b.column_count, "dense.multiply_into: shapes do not agree");
+	if (out.row_count == 0 || out.column_count == 0) { return; }
+	o := unsafe.raw_data(out.data);
+	x := unsafe.raw_data(a.data);
+	y := unsafe.raw_data(b.data);
+	if (a.column_count == 0) {
+		foreach (j in 0 ..< out.column_count) {
+			column := j*%out.column_stride;
+			foreach (i in 0 ..< out.row_count) { o[i*%out.row_stride +% column] = T(0); }
+		}
+		return;
+	}
+	foreach (j in 0 ..< out.column_count) {
+		column := j*%out.column_stride;
+		first := y[j*%b.column_stride];
+		foreach (i in 0 ..< out.row_count) {
+			o[i*%out.row_stride +% column] = x[i*%a.row_stride]*first;
+		}
+		foreach (k in 1 ..< a.column_count) {
+			factor := y[k*%b.row_stride +% j*%b.column_stride];
+			source := k*%a.column_stride;
+			foreach (i in 0 ..< out.row_count) {
+				at := i*%out.row_stride +% column;
+				o[at] = o[at] + x[i*%a.row_stride +% source]*factor;
+			}
+		}
+	}
+}
+
+/// `multiply_into` with a checked index per element, the baseline the spike measures against.
+multiply_into_checked :: proc(out: View_Mut($T), a, b: View(T)) {
+	assert(a.column_count == b.row_count && out.row_count == a.row_count && out.column_count == b.column_count, "dense.multiply_into: shapes do not agree");
+	result := out;
+	foreach (j in 0 ..< out.column_count) {
+		foreach (i in 0 ..< out.row_count) { result[i, j] = T(0); }
+		foreach (k in 0 ..< a.column_count) {
+			factor := b[k, j];
+			foreach (i in 0 ..< out.row_count) {
+				if (k == 0) {
+					result[i, j] = a[i, 0]*factor;
+				} else {
+					result[i, j] = result[i, j] + a[i, k]*factor;
+				}
+			}
+		}
+	}
+}
+
+/// `a * b`, allocated from `allocator`.
+multiply :: proc(a, b: View($T), allocator: mem.Allocator = {}) -> Matrix(T) {
+	result := Matrix(T).zeros(a.row_count, b.column_count, allocator);
+	multiply_into(result.view_mut(), a, b);
+	return result;
+}
+
+/// The factors of `P A = L U`, with `L` below the diagonal (unit diagonal) and `U` on and above.
+Lu :: struct($T: type) where linalg.Real(T) {
+	@(private) factors: Matrix(T),
+	@(private) pivots:  [dynamic]int,
+}
+
+/**
+	Overwrites the square `a` with its LU factors and `pivots` with the row
+	each step swapped in, by Gaussian elimination with partial pivoting: the
+	pivot is the first element of largest magnitude in its column. `.Singular`
+	for an exact zero pivot or a non-finite factor.
+*/
+// Each trailing update is one subtraction per step into the running element,
+// `((a - l0*u0) - l1*u1) - ...`, the order a blocked form must keep.
+lu_in_place :: proc(a: View_Mut($T), pivots: []mut int) -> Status(Error) where linalg.Real(T) {
+	n := a.row_count;
+	assert(a.column_count == n && pivots.len() == n, "dense.lu_in_place needs a square matrix and one pivot per row");
+	m := a;
+	foreach (k in 0 ..< n) {
+		pivot := k;
+		largest := m[k, k].abs();
+		foreach (r in k + 1 ..< n) {
+			candidate := m[r, k].abs();
+			if (largest < candidate) {
+				pivot = r;
+				largest = candidate;
+			}
+		}
+		if (!(T(0) < largest)) { return .err(.Singular); }
+		pivots[k] = pivot;
+		if (pivot != k) {
+			foreach (c in 0 ..< n) {
+				held := m[k, c];
+				m[k, c] = m[pivot, c];
+				m[pivot, c] = held;
+			}
+		}
+		diagonal := m[k, k];
+		foreach (r in k + 1 ..< n) { m[r, k] = m[r, k]/diagonal; }
+		foreach (c in k + 1 ..< n) {
+			factor := m[k, c];
+			foreach (r in k + 1 ..< n) { m[r, c] = m[r, c] - m[r, k]*factor; }
+		}
+	}
+	foreach (c in 0 ..< n) {
+		foreach (r in 0 ..< n) {
+			if (!m[r, c].is_finite()) { return .err(.Singular); }
+		}
+	}
+	return .ok;
+}
+
+/// The LU factors of the square `a`, allocated from `allocator`.
+lu :: proc(a: View($T), allocator: mem.Allocator = {}) -> Result(Lu(T), Error) where linalg.Real(T) {
+	factors := Matrix(T).zeros(a.row_count, a.column_count, allocator);
+	foreach (c in 0 ..< a.column_count) {
+		foreach (r in 0 ..< a.row_count) { factors[r, c] = a[r, c]; }
+	}
+	pivots: [dynamic]int via allocator = {};
+	foreach (_ in 0 ..< a.row_count) { pivots.append(0); }
+	lu_in_place(factors.view_mut(), &mut pivots[:]) or_return;
+	return .ok(Lu(T){move(factors), move(pivots)});
+}
+
+impl Lu($T) {
+	/// Overwrites `b` with the solution `x` of `A x = b`, for each of its columns.
+	solve_into :: proc(self, b: View_Mut(T)) {
+		n := self.factors.row_count;
+		assert(b.row_count == n, "dense.Lu.solve_into: shapes do not agree");
+		x := b;
+		f := self.factors.view();
+		foreach (j in 0 ..< b.column_count) {
+			foreach (k in 0 ..< n) {
+				p := self.pivots[k];
+				if (p != k) {
+					held := x[k, j];
+					x[k, j] = x[p, j];
+					x[p, j] = held;
+				}
+			}
+			foreach (k in 0 ..< n) {
+				foreach (r in k + 1 ..< n) { x[r, j] = x[r, j] - f[r, k]*x[k, j]; }
+			}
+			for (k := n - 1; k >= 0; k -= 1) {
+				x[k, j] = x[k, j]/f[k, k];
+				foreach (r in 0 ..< k) { x[r, j] = x[r, j] - f[r, k]*x[k, j]; }
+			}
+		}
+	}
+
+	/// The determinant: the product of `U`'s diagonal, negated for an odd permutation.
+	determinant :: proc(self) -> T {
+		result := T(1);
+		foreach (k in 0 ..< self.factors.row_count) {
+			result = result*self.factors[k, k];
+			if (self.pivots[k] != k) { result = -result; }
+		}
+		return result;
+	}
+}
