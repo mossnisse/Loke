@@ -1,9 +1,11 @@
 # Linear algebra library plan
 
 Status: proposal, 2026-10-29. Nothing here is implemented. This document
-proposes a `core:math/linalg` package; it does not change the language
-contract. The authorities it builds on are
-[Library numeric types](design.md#library-numeric-types),
+proposes a `core:math/linalg` package and outlines a later dense-matrix
+package; it does not change the language contract. The authorities it builds
+on are [Library numeric types](design.md#library-numeric-types),
+[Generic data types](design.md#generic-data-types),
+[where clauses](design.md#where-clauses),
 [Operator declarations](design.md#operator-declarations),
 [Methods and implementation blocks](design.md#methods-and-implementation-blocks),
 [Floating-point operators](design.md#floating-point-operators),
@@ -14,328 +16,373 @@ contract. The authorities it builds on are
 
 `core:math` has scalar functions, `Complex(T)`, and `Quaternion(T)`, but no
 vectors or matrices. `Simd(T, N)` is a machine-lane abstraction with
-size-alignment and constant-index rules ([Layout](design.md#layout),
-[Lane access](design.md#lane-access)), not a geometry type. A program that
-draws or simulates anything in two or three dimensions writes its own vector
-record today.
+alignment and constant-index rules ([Layout](design.md#layout),
+[Lane access](design.md#lane-access)), not an algebra type.
 
-The first caller is a game engine (DerpMiner, in a separate repository): its
-camera needs view and projection matrices for OpenGL 3.3, and its collision
-proof needs vector arithmetic in `f64` world space and `f32` render space. Its
-conventions are right-handed, `+Y` up, `f64` world positions, and
-camera-relative `f32` rendering. The package is general-purpose, so that
-caller fixes the first subset, not the shape of the API.
+Small vectors and matrices are vocabulary types. Rendering, games, physics,
+robotics, CAD, mapping, image processing, plotting and 2D vector graphics,
+control and filtering, and curve fitting all need them, and the strongest
+reason to put them in the standard library is that two libraries from
+different authors can then pass a point or a transform to each other without
+converting between their private records. The design therefore serves those
+domains together and takes no single program's conventions as defaults:
 
-In scope:
+- every convention that differs between domains (clip depth, Euler sequence)
+  is an explicit argument or name, never a silent default;
+- shapes are not limited to graphics' 2, 3, and 4: `Matrix(T, R, C)` takes
+  any small fixed shape, which state-space models, 6 x 6 spatial inertia,
+  and small least-squares fits need;
+- element types are not limited to `f32` and `f64`: integer coordinates and
+  user numeric types (fixed point, rationals, dual numbers for automatic
+  differentiation, intervals) get every operation their arithmetic supports;
+- results are bit-reproducible, which simulations, replays, networked
+  lockstep, and regression tests all want.
 
-- `Vector2(T)`, `Vector3(T)`, and `Vector4(T)`, generic over
-  `interfaces.Numeric(T)`, so integer cell coordinates use the same type as
-  float positions;
-- `Matrix3(T)` and `Matrix4(T)`, square, column-major, acting on column
-  vectors;
-- rotations as `math.Quaternion(T)`, the existing Hamilton quaternion;
-- transform and camera constructors with a stated clip-space convention;
-- `f32` and `f64` for everything that needs a square root, a trigonometric
-  function, or a degenerate-input check.
+The work is in two packages:
 
-Out of scope: general `M x N` matrices, tensors, decompositions (LU, QR,
-SVD, eigenvalues), sparse storage, dual quaternions, and geometric algebra.
-Rays, planes, AABBs, and frustum culling belong in a later, separate geometry
-package once two callers share them (see [Later work](#later-work)). Camera
-logic, camera-relative conversion, character controllers, BVHs, and contact
-solvers stay in their programs.
+1. `core:math/linalg`: fixed-size values that never allocate. Vectors of 2, 3,
+   and 4 components, matrices of any fixed shape, rotations, transforms, and
+   projections. This plan specifies it.
+2. A later dense-matrix package, for sizes known only at run time:
+   allocation, borrowed strided views, and solvers. This plan states its
+   boundary and the questions its own plan must settle
+   ([Dense matrices](#dense-matrices-a-later-package)).
+
+Out of scope for both: tensors of rank above 2, sparse storage, geometric
+algebra, and automatic differentiation itself. Rays, planes, boxes, and
+intersection tests belong in a separate geometry package
+([Later work](#later-work)).
 
 ## Design decisions
 
 ### Ordinary records, not SIMD
-
-Each type is a plain record with named fields:
 
 ```loke
 Vector2 :: struct($T: type) where interfaces.Numeric(T) { x, y: T }
 Vector3 :: struct($T: type) where interfaces.Numeric(T) { x, y, z: T }
 Vector4 :: struct($T: type) where interfaces.Numeric(T) { x, y, z, w: T }
 
-Matrix3 :: struct($T: type) where interfaces.Numeric(T) { columns: [3]Vector3(T) }
-Matrix4 :: struct($T: type) where interfaces.Numeric(T) { columns: [4]Vector4(T) }
+Matrix :: struct($T: type, $R, $C: int) where interfaces.Numeric(T), R >= 1, C >= 1 {
+	columns: [C][R]T,
+}
 ```
 
-`Vector3(f32)` is 12 bytes with 4-byte alignment, the layout of `[3]f32`, so
-arrays of vertices and uniform blocks have no padding the program did not ask
-for, and the types may cross a foreign boundary. A `Simd(f32, 4)` is 16-byte
-aligned and allows only constant lane indices, which is the wrong contract for
-stored data. The implementation may use `Simd` internally later, behind the
-same records, if [measurement](#validation) shows a gain;
-[Compiler-defined domain types](comments.md#compiler-defined-domain-types) is
-the existing reason these are library types.
+`Vector3(f32)` has the layout of `[3]f32`, 12 bytes with 4-byte alignment,
+and `Matrix(f32, 4, 4)` that of `[16]f32`: arrays of them have no padding the
+program did not ask for, and they can be handed to a foreign API (a GPU
+upload, a C geometry library) as they are. `Simd(f32, 4)` is 16-byte aligned
+and allows only constant lane indices, which is the wrong contract for stored
+data. The implementation may use `Simd` inside the operations later, without
+changing a result bit, if [measurement](#milestones) shows a gain;
+[Compiler-defined domain types](comments.md#compiler-defined-domain-types)
+is the existing reason these are library types.
 
-Named fields because a fixed array has no `.x` selectors and the language has
-no swizzles. `operator([])` gives a runtime index for axis loops (the longest
-axis of a box, a DDA step), panicking outside `0 ..< N` as array indexing does.
+### Named vectors, generic matrices
 
-### Generic arithmetic, two float widths
+Vectors of 2 to 4 components are the common case in every domain above, and
+named fields read as the mathematics does (`p.x`); a fixed array has no `.x`
+selectors and the language has no swizzles. `operator([])` adds a runtime
+index for axis loops, panicking outside `0 ..< N` as array indexing does.
 
-The [`Complex` pattern](standard-library.md#coremath) carries over: a generic
-`impl Vector3($T)` holds what `Numeric` can express (`+`, `-`, `*`, `/`,
-`dot`, `cross`, `length_squared`, transpose, matrix products, determinant),
-and `impl Vector3(f32)` and `impl Vector3(f64)` add what needs a float
-(`length`, `normalize`, `inverse`, projections). Integer vectors get checked
-arithmetic, so an overflowing `dot` of two `Vector3(i64)` panics like the
-scalar.
+Matrices have one generic type for every shape. `R` and `C` are value
+parameters, so `Matrix(f64, 6, 6)` and `Matrix(f32, 3, 4)` need nothing new,
+and a method bound ([where clauses](design.md#where-clauses)) restricts each
+operation to the shapes it means: `determinant` and `inverse` only where
+`R == C`, `perspective` only for `Matrix(T, 4, 4)`. A failed bound removes
+the method from that instantiation, so the type stays usable.
 
-`core:math` spells float-specific free procedures twice, unsuffixed for `f64`
-and `_f32` for `f32`. Methods need no suffix: the receiver's type selects the
-impl block, so `v.length()` is unambiguous. Constructors that take only
-scalars are members of the specialized type, `Matrix4(f32).perspective_gl(...)`,
-so an unfixed literal never has to choose a width. Free procedures over
-quaternions take a typed vector or quaternion argument, which selects the
-member of a two-member group.
+A vector of another length is a column matrix, `Matrix(T, N, 1)`, as in most
+numerical libraries. `Matrix(T, N, 1)` and `VectorN(T)` convert explicitly
+for `N` from 2 to 4. A generic `Vector(T, N)` beside the named ones was
+considered and left out: it would give `N = 3` two vector types with a
+conversion between them, which is the interoperability problem the package
+exists to remove.
+
+Fixed-size matrices are values and are copied as values; the package is for
+sizes where that is cheap. Large or run-time sizes belong in the dense
+package, and [Copy-cost diagnostics](design.md#copy-cost-diagnostics) already
+flag the mistake.
+
+### Element types
+
+The [`Complex` pattern](standard-library.md#coremath) carries over. Members
+that need only `interfaces.Numeric` arithmetic (`+`, `-`, `*`, `/`, `dot`,
+`cross`, `length_squared`, products, transpose, the determinant of a matrix of
+at most 4 x 4, `rotate`) are generic, so they work for integers and for user
+numeric types alike; integer overflow panics as for the scalar.
+
+Members that need a square root, a trigonometric function, or a degenerate
+input check (`length`, `normalize`, `inverse`, `solve`, rotation and
+projection constructors) exist for `f32` and `f64`. Methods need no `_f32`
+suffix, because the receiver's type selects the member; constructors that take
+only scalars are members of the specialized type
+(`Matrix(f32, 4, 4).perspective(...)`), so an unfixed literal never has to
+choose a width.
+
+Extending those members to a user scalar type needs an interface for
+`sqrt`, `sin`, `cos`, and friends that `f32` and `f64` satisfy too; see
+[Questions](#questions-to-settle-before-implementing).
 
 There is no implicit widening or narrowing. Conversion hooks give
-`Vector3(f32)(world_offset)` and `Vector3(f64)(v)`, and from `i32` and `i64`
-vectors to both float widths, each component converting as the scalar
-`f32(x)` does. A camera-relative offset is computed as `f64` subtraction and
-then narrowed once, by the program.
+`Vector3(f32)(v)` between the float widths and from `i32` and `i64`
+vectors, each component converting as the scalar does.
 
 ### Storage and multiplication order
 
-- Vectors are column vectors. `m * v` transforms `v`; there is no `v * m`.
-- `m.columns[c]` is column `c`, and `m.columns[c][r]` is the element in row
-  `r`, column `c`: column-major storage, which is OpenGL's upload order with
-  `transpose = GL_FALSE`. `to_array` returns the same order as a flat
-  `[16]T` or `[9]T`.
-- `from_rows` exists so that a matrix can be written in source in the order
-  it is printed in a textbook; `from_columns` and a literal are the storage
-  order.
-- `a * b` applies `b` first. `translation * rotation * scale` scales, then
+- Vectors are column vectors: `m * v` transforms `v`. There is no `v * m`;
+  `transpose(m) * v` says it.
+- Storage is column-major: `m.columns[c][r]` is row `r`, column `c`, and
+  `m.at(r, c)` reads it in the usual subscript order. `to_array` gives the
+  same order flat, which is what OpenGL takes with `transpose = GL_FALSE`,
+  what Direct3D and Vulkan shaders read as `column_major`, and what LAPACK
+  expects. Row-major consumers transpose once at the boundary.
+- `from_rows` lets a constant be written in source as it is printed in a
+  textbook; `from_columns` and a literal are the storage order.
+- `a * b` applies `b` first: `translation * rotation * scaling` scales, then
   rotates, then translates.
-- `format` prints rows, so printed output reads like the mathematics.
+- `format` prints rows.
 
-### Coordinate and rotation conventions
+### Coordinates and rotations
 
 - Angles are radians.
-- Right-handed: `cross(X, Y) == Z`. A positive angle rotates
-  counterclockwise when seen from the positive end of the axis looking toward
-  the origin.
-- Rotations are `math.Quaternion(T)` with `real` as the scalar part (often
-  called `w`). A unit quaternion `q` rotates `v` as `q v q*`, an active
-  rotation; `q` and `-q` are the same rotation. `a * b` rotates by `b` first,
-  matching the matrix order, so `Matrix3.from_quaternion(a * b)` equals
-  `from_quaternion(a) * from_quaternion(b)` up to rounding.
-- A new rotation type was considered and left out: the existing quaternion
-  already has Hamilton multiplication, conjugate, and formatting, and a
-  "unit" type cannot hold its invariant once rounding drifts it. Because an
-  extension `impl` is visible only in its own package
+- Right-handed: `cross(X, Y) == Z`, and a positive angle rotates
+  counterclockwise when seen from the positive end of the axis. The
+  constructors that depend on handedness are the camera ones, which build a
+  right-handed view space; a left-handed convention composes them with
+  `scaling({1, 1, -1})`, as the documentation shows. Separate left-handed
+  names are a [question](#questions-to-settle-before-implementing).
+- Rotations in 3D are `math.Quaternion(T)` with `real` as the scalar part
+  (often called `w`). A unit `q` rotates `v` as `q v q*`, an active rotation;
+  `q` and `-q` are the same rotation. `a * b` rotates by `b` first, so
+  `from_quaternion(a * b)` equals `from_quaternion(a) * from_quaternion(b)` up
+  to rounding. A separate unit-rotation type was left out: the existing
+  quaternion has the algebra, and a "unit" type cannot keep its invariant
+  through rounding. An extension `impl` is visible only in its own package
   ([Methods and implementation blocks](design.md#methods-and-implementation-blocks)),
-  the rotation operations are free procedures in `linalg` (`linalg.rotate(q, v)`),
-  not methods on the quaternion.
-- No Euler-angle API. Yaw and pitch compose as two axis rotations in the
-  order the program chooses, and the documentation shows the first-person
-  case:
+  so the rotation operations are free procedures, `linalg.rotate(q, v)`, not
+  quaternion methods.
+- Rotations in 2D are `Matrix(T, 2, 2).rotation(angle)`, or
+  `Matrix(T, 3, 3).rotation_2d(angle)` in homogeneous form.
+- Euler angles take an explicit sequence, because aerospace, robotics, and
+  graphics each use a different one and a default is a guaranteed bug.
+  `Euler_Order :: enum { XYZ, XZY, YXZ, YZX, ZXY, ZYX }` names intrinsic
+  Tait-Bryan sequences: `quaternion_from_euler(.ZYX, yaw, pitch, roll)` is
+  `axis_angle(Z, yaw) * axis_angle(Y, pitch) * axis_angle(X, roll)`, which is
+  also the extrinsic sequence read backward. `to_euler` returns the middle
+  angle in `[-pi/2, pi/2]` and the others in `[-pi, pi]`; at the middle
+  angle's limits (gimbal lock) the third angle is 0 and the first takes the
+  whole rotation about the shared axis. Proper Euler sequences (`ZXZ` and the
+  like) are added with a caller.
 
-  ```loke
-  orientation := linalg.quaternion_from_axis_angle(Vector3(f32).unit_y(), yaw) *
-  	linalg.quaternion_from_axis_angle(Vector3(f32).unit_x(), pitch);
-  ```
+### Projections and clip depth
 
-### The OpenGL projection convention
+Clip-space depth is the convention that differs most between graphics APIs,
+and a silent default is the classic source of depth-buffer bugs, so every
+projection takes it as a required argument:
 
-The projection constructors put the convention in their names, because three
-are in common use (OpenGL's `[-1, 1]` depth, Direct3D's and Vulkan's `[0, 1]`,
-and reversed depth) and a silent default is the classic source of
-depth-buffer bugs:
+```loke
+Depth_Range :: enum {
+	Negative_One_To_One,   // OpenGL without glClipControl
+	Zero_To_One,           // Direct3D, Vulkan, Metal, WebGPU
+	One_To_Zero,           // reversed depth on any of those
+}
+```
 
-- `perspective_gl(fovy, aspect, near, far)` and
-  `orthographic_gl(left, right, bottom, top, near, far)` map a right-handed
-  view space, looking down `-Z` with `+Y` up, to OpenGL normalized device
-  coordinates: `x`, `y`, and `z` in `[-1, 1]`, the near plane to `z = -1` and
-  the far plane to `z = +1`. This needs no `glClipControl`, which OpenGL 3.3
-  core lacks.
-- `perspective_gl` is the usual matrix with `f = cot(fovy/2)`:
+- `perspective(fovy, aspect, near, far, depth)` and
+  `orthographic(left, right, bottom, top, near, far, depth)` map a
+  right-handed view space, looking down `-Z` with `+Y` up, to normalized
+  device coordinates with `x` and `y` in `[-1, 1]` and `+Y` up, and `z` in the
+  chosen range, the near plane at its first value. Vulkan's downward
+  framebuffer `y` is a viewport choice, documented with the one-line flip,
+  not a fourth convention.
+- `perspective` for `.Negative_One_To_One`, with `f = cot(fovy/2)`:
 
   ```text
-  [ f/aspect  0   0                      0                    ]
-  [ 0         f   0                      0                    ]
+  [ f/aspect  0   0                      0                     ]
+  [ 0         f   0                      0                     ]
   [ 0         0   (far+near)/(near-far)  2*far*near/(near-far) ]
-  [ 0         0   -1                     0                    ]
+  [ 0         0   -1                     0                     ]
   ```
 
+  The other two ranges differ only in the third row.
+- An infinite `far` is allowed and special-cased to the infinite-far-plane
+  limit, since the formula would divide infinity by infinity; with
+  `.One_To_Zero` it is the usual infinite reversed projection.
 - Invalid parameters are programmer errors and panic, as `math.clamp` does
   for reversed bounds: `fovy` outside `(0, pi)`, a non-positive `aspect` or
-  `near`, `far <= near`, or any NaN. An infinite `far` is special-cased to the
-  infinite-far-plane limit (`-1` and `-2*near` in the third row), since the
-  formula would divide infinity by infinity.
+  `near`, `far <= near`, or a NaN.
 - `look_at(eye, target, up)` and `look_to(eye, forward, up)` build the
   right-handed view matrix whose rows are the side, up, and back vectors.
-  Both return `Option(Matrix4(T))`: `.none` when `forward` is zero or parallel
-  to `up`, which is the degenerate camera every engine meets when looking
-  straight up.
-
-Zero-to-one and reversed-depth variants are added when a caller targets
-them; they are new names, so the existing ones never change meaning.
+  Both return `Option`: `.none` when the direction is zero or parallel to
+  `up`, the degenerate camera every program meets when looking straight up.
 
 ### Degenerate inputs are explicit
 
-- `normalize` returns `Option(Vector3(T))`: `.none` when the squared length is
-  below the format's smallest normal, infinite, or NaN. That covers the zero
-  vector, vectors whose squares underflow, overflowing ones, and NaN, and
-  leaves every other vector with a relative error of a few ulps.
-  `normalize_or(v, fallback)` is the common pattern spelled once. There is no
-  normalize that silently returns zero or NaN.
-- `inverse` on a float matrix returns `Option`: `.none` when the determinant
-  is zero, infinite, or NaN. A nearly singular matrix still inverts, with
-  large entries; the documentation says so rather than inventing a tolerance.
-- `inverse_rigid` assumes a rotation plus translation and returns the
-  transpose-based inverse without checking; it is the cheap, accurate inverse
-  of a camera transform. `inverse_affine` checks only the 3 x 3 part.
-- `quaternion_normalize` follows `normalize`. `quaternion_from_axis_angle`
-  takes the axis as given; a non-unit axis gives a non-unit quaternion, and
-  the documentation shows `normalize(axis)` at the call site.
-- `project_point` divides by `w` and returns `.none` when `w` is zero or the
-  result is not finite; `transform_point` and `transform_direction` take `w`
-  as 1 and 0 and never divide.
+- `normalize` returns `Option(V)`: `.none` when the squared length is below
+  the format's smallest normal, infinite, or NaN. That covers the zero
+  vector, vectors whose squares underflow or overflow, and NaN, and leaves
+  every other vector within a few ulps of length 1. `normalize_or(v, fallback)`
+  spells the common pattern once. Nothing silently returns zero or NaN.
+- `inverse` and `solve` return `Option`: `.none` when a pivot is exactly zero
+  or the result is not finite. A nearly singular matrix still inverts with
+  large entries; the documentation says so rather than inventing a tolerance,
+  and `condition_estimate` is a later addition.
+- `inverse_rigid` assumes a rotation plus translation and inverts by
+  transposition without checking; `inverse_affine` checks only the linear
+  part.
+- `quaternion_normalize` follows `normalize`; `quaternion_from_axis_angle`
+  takes the axis as given, and the documentation shows `normalize(axis)` at
+  the call site. `quaternion_between(a, b)` returns `.none` for opposite
+  vectors unless given a fallback axis.
+- `project_point` divides by `w` and returns `.none` for a zero `w` or a
+  non-finite result; `transform_point` and `transform_direction` take `w` as
+  1 and 0 and never divide.
 
 ### Determinism
 
-Every operation in the package gives the same bits on every machine, CPU
-level, and optimization level, and at compile time, so that lockstep or
-seed-generated content can use it:
+Every operation gives the same bits on every machine, CPU level, and
+optimization level, and at compile time:
 
 - Each formula is specified in its evaluation order: `dot` is
-  `(x*x' + y*y') + z*z'`, a matrix product element is the `dot` of a row and a
-  column in index order, and `lerp(a, b, t)` is `a*(1 - t) + b*t`, exact at
-  both ends. [Floating-point operators](design.md#floating-point-operators)
-  already forbid contraction and reassociation, so the written order is the
-  computed one.
-- `length` uses `math.sqrt`, which is correctly rounded.
-- `sin`, `cos`, and `acos` come from `core:math/repro`, not the C library.
-  Rotation and projection constructors run per object or per frame, not per
-  vertex, so its roughly fourfold cost
+  `(x*x' + y*y') + z*z'`, a product element is the `dot` of a row and a column
+  in index order, and `lerp(a, b, t)` is `a*(1 - t) + b*t`, exact at both
+  ends. [Floating-point operators](design.md#floating-point-operators)
+  forbid contraction and reassociation, so the written order is the computed
+  one.
+- `inverse` and `solve` are LU with partial pivoting: the pivot is the
+  largest magnitude in the column, the first on a tie, so the elimination
+  order is fixed. At 2 x 2 to 4 x 4, `determinant` is the cofactor expansion
+  in a fixed order, which is exact for integers.
+- `length` uses `math.sqrt`, which is correctly rounded. `sin`, `cos`,
+  `asin`, `acos`, and `atan2` come from `core:math/repro`. Constructors run
+  per object or per frame, not per element, so its roughly fourfold cost
   ([Deterministic math functions](open-questions.md#deterministic-math-functions))
-  does not matter here. `perspective_gl` takes `cot(fovy/2)` as
-  `cos/sin`, so it does not wait for a `repro.tan`.
-- No `math.fma` and no `hypot`, whose results differ by machine or CPU level.
+  is not on the hot path. `perspective` takes `cot(fovy/2)` as `cos/sin`.
+- No `math.fma` and no `hypot`, whose results vary by machine or CPU level.
 
-This costs nothing on the hot path, since vector arithmetic is the plain
-operators, and removes a class of desynchronization bugs that a games-oriented
-library would otherwise document as a warning.
+Vector arithmetic is the plain operators, so this costs nothing where speed
+matters, and it removes a class of desynchronization and flaky-test bugs that
+a general library would otherwise have to document as a warning.
 
 ## Proposed API
 
-Sketches in the [standard-library](standard-library.md) style: constraints and
-receiver modes are omitted. `V` is the vector type of the block.
+Sketches in the [standard-library](standard-library.md) style; constraints and
+receiver modes are omitted. "Float" means members for `f32` and `f64`.
 
-### Vectors, any `Numeric` `T`
-
-```text
-Vector2/3/4(T):
-  splat(value: T) -> V
-  unit_x(), unit_y(), unit_z(), unit_w() -> V        // as the dimension allows
-  + - (binary), - (unary), * / (component-wise)
-  * (V, T), * (T, V), / (V, T)
-  ==                                                  // exact, component-wise
-  [] and []= with a runtime index
-  dot(a, b) -> T
-  length_squared(self) -> T
-  distance_squared(a, b) -> T
-  min(a, b), max(a, b) -> V                           // component-wise math.min/max
-  format(self, writer, options)
-Vector3(T): cross(a, b) -> Vector3(T); extend(self, w: T) -> Vector4(T); xy()
-Vector4(T): xyz() -> Vector3(T)
-Vector2(T): extend(self, z: T) -> Vector3(T); perp(self) -> Vector2(T)   // (-y, x)
-```
-
-### Vectors, `f32` and `f64`
+### Vectors
 
 ```text
-length(self) -> T
-distance(a, b) -> T
-normalize(self) -> Option(V)
-normalize_or(self, fallback: V) -> V
-lerp(a, b: V, t: T) -> V
-project(self, onto_unit: V) -> V      // onto_unit * dot(self, onto_unit)
-reject(self, unit_normal: V) -> V     // self - project(self, unit_normal): sliding
-abs, floor -> V                       // component-wise, for DDA and cell lookup
-conversion hooks from the other float width and from i32 and i64
+Vector2/3/4(T), any Numeric T:
+  splat(value: T); unit_x(), unit_y(), unit_z(), unit_w()   // as the length allows
+  + - (binary), - (unary), * / (component-wise); * (V, T), * (T, V), / (V, T)
+  ==, exact and component-wise; [] and []= with a runtime index
+  dot, length_squared, distance_squared
+  min, max                               // component-wise math.min, math.max
+  to_array, from_array, format
+  Vector3: cross; extend(w) -> Vector4; xy()
+  Vector4: xyz()
+  Vector2: extend(z) -> Vector3; perp() -> (-y, x); cross -> T   // the z of the 3D cross
+
+Float:
+  length, distance, normalize -> Option(V), normalize_or(fallback)
+  lerp(a, b, t), angle_between(a, b)     // atan2(|a x b|, a . b), stable near 0 and pi
+  project(onto_unit), reject(unit_normal), reflect(unit_normal)
+  abs, floor, ceil, round                // component-wise
+  conversion hooks from the other width and from i32 and i64 vectors
 ```
 
-### Matrices, any `Numeric` `T`
+### Matrices
 
 ```text
-Matrix3/4(T):
-  identity() -> M
-  from_columns(...), from_rows(...) -> M
-  column(self, c), row(self, r) -> Vector
-  transpose(self) -> M
-  * (M, M) -> M, * (M, Vector) -> Vector
-  ==
-  determinant(self) -> T
-  to_array(self) -> [9]T or [16]T     // column-major
-  format(self, writer, options)
-Matrix4(T):
-  translation(offset: Vector3(T)), scaling(factors: Vector3(T)) -> Matrix4(T)
-  transform_point(self, p: Vector3(T)) -> Vector3(T)        // w = 1, no divide
-  transform_direction(self, d: Vector3(T)) -> Vector3(T)    // w = 0
-  upper_left(self) -> Matrix3(T)
-  inverse_rigid(self) -> Matrix4(T)
-  from_quaternion(q: math.Quaternion(T)) -> Matrix4(T)
-Matrix3(T):
-  extend(self) -> Matrix4(T)
-  from_quaternion(q: math.Quaternion(T)) -> Matrix3(T)
+Matrix(T, R, C), any Numeric T:
+  identity()                                   where R == C
+  from_columns, from_rows, from_array, to_array
+  at(r, c), column(c) -> [R]T, row(r) -> [C]T
+  transpose -> Matrix(T, C, R)
+  * (Matrix(T, R, K), Matrix(T, K, C)) -> Matrix(T, R, C)
+  * (Matrix, T), * (T, Matrix), +, -, ==
+  * (Matrix(T, N, N), VectorN(T)) -> VectorN(T)        for N in 2 ..= 4
+  from_vector, to_vector                       Matrix(T, N, 1), N in 2 ..= 4
+  determinant                                  where R == C, R <= 4
+  trace                                        where R == C
+  format
+
+Square transforms, any Numeric T:
+  Matrix(T, 4, 4): translation(Vector3), scaling(Vector3), from_quaternion,
+                   transform_point, transform_direction, upper_left -> Matrix(T, 3, 3),
+                   inverse_rigid
+  Matrix(T, 3, 3): from_quaternion, extend -> Matrix(T, 4, 4),
+                   translation_2d(Vector2), scaling_2d(Vector2),
+                   transform_point_2d, transform_direction_2d
+
+Float:
+  inverse -> Option, solve(b: Matrix(T, N, K)) -> Option(Matrix(T, N, K))
+  determinant                                  any square size, through LU
+  Matrix(T, 4, 4): inverse_affine, normal_matrix -> Option(Matrix(T, 3, 3)),
+                   project_point -> Option(Vector3),
+                   rotation_x/y/z(angle), rotation(axis, angle),
+                   perspective, orthographic, look_at, look_to
+  Matrix(T, 3, 3): rotation_x/y/z, rotation(axis, angle), rotation_2d(angle)
+  Matrix(T, 2, 2): rotation(angle)
 ```
-
-`from_quaternion` assumes a unit quaternion and uses only arithmetic, so it is
-generic.
-
-### Matrices, `f32` and `f64`
-
-```text
-inverse(self) -> Option(M)
-Matrix4:
-  inverse_affine(self) -> Option(Matrix4(T))
-  normal_matrix(self) -> Option(Matrix3(T))     // inverse transpose of upper_left
-  project_point(self, p: Vector3(T)) -> Option(Vector3(T))
-  rotation_x(angle), rotation_y(angle), rotation_z(angle) -> Matrix4(T)
-  rotation(axis: Vector3(T), angle: T) -> Matrix4(T)
-  perspective_gl(fovy, aspect, near, far: T) -> Matrix4(T)
-  orthographic_gl(left, right, bottom, top, near, far: T) -> Matrix4(T)
-  look_at(eye, target, up: Vector3(T)) -> Option(Matrix4(T))
-  look_to(eye, forward, up: Vector3(T)) -> Option(Matrix4(T))
-Matrix3: rotation_x/y/z, rotation(axis, angle) as above
-```
-
-`inverse` is the adjugate divided by the determinant, built from 2 x 2 minors
-in a fixed order, each element divided rather than multiplied by a reciprocal.
 
 ### Rotations over `math.Quaternion(T)`
 
-Free procedures, each a group of an `f32` and an `f64` member:
+Free procedures; each float one is a group of an `f32` and an `f64` member,
+selected by its typed argument.
 
 ```text
-quaternion_from_axis_angle(axis: Vector3(T), angle: T) -> Quaternion(T)
-    // (cos(angle/2), sin(angle/2) * axis)
-rotate(q: Quaternion(T), v: Vector3(T)) -> Vector3(T)
-    // t := 2*cross(u, v); v + real*t + cross(u, t), for u the vector part
-quaternion_normalize(q) -> Option(Quaternion(T))
+any Numeric T:
+  rotate(q, v: Vector3(T)) -> Vector3(T)
+      // t := 2*cross(u, v); v + real*t + cross(u, t), for u the vector part
+Float:
+  quaternion_from_axis_angle(axis, angle)      // (cos(angle/2), sin(angle/2) * axis)
+  quaternion_normalize -> Option
+  quaternion_from_matrix(Matrix(T, 3, 3))      // Shepperd's method
+  quaternion_between(a, b, fallback_axis?) -> Option
+  quaternion_from_euler(order, first, second, third); to_euler(q, order)
+  quaternion_from_rotation_vector(v); to_rotation_vector(q)   // axis * angle
+  nlerp(a, b, t); slerp(a, b, t)               // both take the shorter arc
 ```
+
+## Dense matrices: a later package
+
+Sizes known only at run time are a different contract: they allocate, they
+are borrowed far more than copied, and the work is in solvers rather than in
+operators. They get their own package and plan, after `core:math/linalg`
+ships. That plan has to settle:
+
+- an owning `Dense(T)` that takes an allocator, and borrowed `View(T)` and
+  mutable views with a row stride and a column stride, so that a block, a
+  transpose, a row-major foreign buffer, and a column-major one are all views
+  without copies;
+- shape mismatches as panics (programmer errors), and numerical failure
+  (singular, not positive definite, no convergence) as `Result` errors;
+- outputs written into caller storage, with allocating conveniences beside
+  them, following [Ownership is visible](standard-library.md#ownership-is-visible);
+- the first algorithms: products, LU with partial pivoting, Cholesky,
+  Householder QR and least squares, then a symmetric eigensolver and the SVD;
+- a deterministic reference implementation in fixed order, and whether a
+  faster blocked, threaded, or BLAS-backed path is an opt-in separate
+  procedure, since it cannot keep the same bits.
 
 ## Milestones
 
-1. **Camera.** The vector types and their generic and float members; `Matrix3`
-   and `Matrix4` with products, transpose, `to_array`, translation, scaling,
-   axis rotations, `from_quaternion`, `inverse`, `inverse_rigid`,
-   `perspective_gl`, `orthographic_gl`, `look_at`, and `look_to`;
-   `quaternion_from_axis_angle`, `rotate`, and `quaternion_normalize`. Enough
-   for a first-person camera, a uniform upload, and an orthographic UI pass.
-2. **Collision proof.** `project`, `reject`, `abs`, `floor`, the integer
-   conversions, `normal_matrix`, `inverse_affine`, and `project_point`, and
-   then, as the controller needs them: `quaternion_between(a, b)`, whose
-   opposite-vector case returns `.none` or takes an explicit fallback axis;
-   `nlerp` and `slerp`, `slerp` with `repro.acos` and the shortest path;
-   `quaternion_from_matrix` by Shepperd's method.
-3. **Measured performance.** Benchmarks of matrix products, `rotate`, and
-   batch transforms against hand-written loops, then `Simd` inside the
-   records only where it wins without changing a result bit.
+Ordered by how foundational each part is, not by a particular program:
+
+1. **Core values.** The vector types; `Matrix(T, R, C)` with products,
+   transpose, conversions, and determinants; float `inverse` and `solve`;
+   2D and 3D transforms; `quaternion_from_axis_angle`, `rotate`,
+   `quaternion_normalize`, and `from_quaternion`; `perspective` and
+   `orthographic` in all three depth ranges; `look_at` and `look_to`.
+2. **Rotations and geometry helpers.** `quaternion_from_matrix`,
+   `quaternion_between`, `nlerp`, `slerp`, Euler sequences, rotation vectors,
+   `angle_between`, `project`, `reject`, `reflect`, `normal_matrix`,
+   `inverse_affine`, and `project_point`.
+3. **Dense matrices**, under their own plan.
+4. **Measured performance.** Benchmarks of products, `rotate`, and batch
+   transforms against hand-written loops, then `Simd` inside the operations
+   only where it wins without changing a result bit.
 
 Each milestone ships its `api.loki`, a [`standard-library.md`](standard-library.md)
 section and package-layout line, a `CHANGELOG.md` line, and the tests below.
@@ -345,52 +392,66 @@ section and package-layout line, a `CHANGELOG.md` line, and the tests below.
 `tests/run/lib_linalg*.loke` with `.expected` files, following
 [Standard-library verification](compiler-architecture.md#standard-library-verification):
 
-- **Exact identities**, compared bit for bit: `identity * m == m`,
+- **Exact identities**, bit for bit: `identity * m == m`,
   `transpose(transpose(m)) == m`, `cross(X, Y) == Z` and its cyclic
-  permutations, rotations by zero, `from_rows` against `from_columns` of the
-  transpose, and `to_array` order.
-- **Approximate identities** with tolerances stated per test, as a small
-  multiple of the format's epsilon times the operands' magnitude:
-  `m * inverse(m)` near identity for well-conditioned `m`; rotation matrices
-  orthonormal with determinant 1; `from_quaternion` agreeing with `rotate`;
-  `from_quaternion(a * b)` agreeing with the product; `normalize` within a
-  few ulps of length 1.
+  permutations, zero rotations, `from_rows` against `from_columns` of the
+  transpose, `to_array` order, and integer determinants against hand
+  results.
+- **Approximate identities**, with tolerances stated per test as a small
+  multiple of epsilon times the operands' magnitude: `m * inverse(m)` and
+  `solve` residuals for well-conditioned matrices of several shapes up to
+  6 x 6; rotation matrices orthonormal with determinant 1; `from_quaternion`
+  against `rotate`; products of quaternions against products of matrices;
+  `quaternion_from_matrix` and `to_euler` round trips for every
+  `Euler_Order`, gimbal lock included; `slerp` at its ends and midpoint.
 - **Degenerate inputs**: zero, subnormal, huge, infinite, and NaN vectors
-  through `normalize`; singular and NaN matrices through `inverse`; `look_at`
-  with `eye == target` and `forward` parallel to `up`; `project_point` at
-  `w = 0`; every `perspective_gl` panic case, and an infinite far plane.
-- **The GL convention**: a point on the near plane on the view axis maps to
-  `z = -1`, on the far plane to `+1`; clip `w` equals `-z_view`; a point at
-  `+Y` lands at positive NDC `y`; `look_at` from `+Z` toward the origin is the
-  identity rotation.
-- **Both widths**: each test runs at `f32` and `f64`, and the `f64` world to
-  camera-relative `f32` narrowing is pinned with a large world coordinate.
-- **Integers**: `Vector3(i64)` arithmetic, and an overflowing `dot` panics.
+  through `normalize`; singular and NaN matrices through `inverse` and
+  `solve`; `look_at` with no direction or one parallel to `up`; opposite
+  vectors through `quaternion_between`; `project_point` at `w = 0`; every
+  projection panic case, and an infinite far plane in each depth range.
+- **Clip conventions**: for each `Depth_Range`, a point on the view axis at
+  the near plane maps to the range's first value and at the far plane to its
+  second; clip `w` is `-z_view`; `+Y` maps to positive NDC `y`; `look_at`
+  from `+Z` toward the origin has the identity rotation.
+- **Element types**: every test at `f32` and `f64`; `i32` and `i64` vectors
+  and matrices, with an overflowing `dot` panicking; and a small user numeric
+  type in the test (a rational or fixed-point record), to show the generic
+  members accept one.
 - **Determinism**: results printed as bit patterns, the same at every
   optimization and [CPU level](compiler-guide.md#cpu-levels) and when folded
   at compile time, as `tests/repro_test.odin` checks for `core:math/repro`.
 
 ## Later work
 
-- A geometry package (`Aabb`, `Ray`, `Plane`, frustum planes from a
-  projection-view matrix, ray-box and ray-triangle tests) once a second
-  caller shares the engine's needs.
-- Zero-to-one and reversed-depth projections, with the first caller that
-  targets them.
-- `Matrix2`, affine 2D transforms, and non-square matrices, each with a
-  caller.
+- A geometry package: `Aabb`, `Ray`, `Plane`, `Sphere`, frustum planes from a
+  projection-view matrix, and ray, box, and triangle tests, specified once
+  the vector API has settled.
+- Lane-wise SIMD math and structure-of-arrays batch transforms, after the
+  benchmarks.
+- Proper Euler sequences, dual quaternions, and a condition-number estimate.
 
 ## Questions to settle before implementing
 
-- Whether a generic conversion hook (`Vector3(T)` from `Vector3($U)`) can be
+- **User scalar types beyond `Numeric`.** `length`, `normalize`, and the
+  rotation constructors could accept a fixed-point or dual-number `T` through
+  an interface for `sqrt` and the trigonometric functions. `f32` and `f64`
+  have no such methods, and an extension giving them some would be invisible
+  to callers ([Methods and implementation blocks](design.md#methods-and-implementation-blocks)),
+  so this needs either inherent members on the built-in floats or a
+  witness-style interface. Until then those members are `f32` and `f64` only.
+- **Complex elements.** `Complex(T)` satisfies `Numeric`, so `Vector3(Complex(f64))`
+  works; `dot` is the bilinear product, and a conjugating `inner` would be a
+  separate name.
+- **Left-handed constructors**: names of their own, or composition with a `Z`
+  flip, as proposed.
+- **Generic conversion hooks**: whether `Vector3(T)` from `Vector3($U)` can be
   constrained to convertible pairs, or the hooks stay a fixed list.
-- Whether the package should export short aliases (`Vector3f`, `Vector3d`) or
-  leave `Vec3 :: linalg.Vector3(f32);` to programs. The proposal leaves them
-  out.
-- Whether an approximate-equality helper belongs in the public API or only in
-  the tests. The proposal keeps it in the tests until a caller needs one.
-- Whether `perspective_gl` should validate with panics, as proposed, or
-  return `Option`; constructing a projection from runtime settings (a field of
-  view slider) might argue for `Option`.
-- Whether `unit_x()` and the like are constants in the generic `impl` or
-  procedures, depending on what the compiler accepts for a generic constant.
+- **Short names**: whether the package exports aliases such as
+  `Matrix4f :: Matrix(f32, 4, 4)`, or leaves them to programs. The proposal
+  leaves them out.
+- **Approximate equality** in the public API or only in tests, and with which
+  tolerance model (absolute, relative, ulps). The proposal keeps it in tests.
+- **Projection validation**: panics, as proposed, or `Option`, since a field
+  of view from runtime settings is plausible input.
+- **Two-index subscripts**: whether `operator([])` may take two indices, which
+  would let `m[r, c]` replace `m.at(r, c)`.
