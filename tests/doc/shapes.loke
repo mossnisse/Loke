@@ -21,6 +21,17 @@ Handle :: struct {
 /* A block comment is not a doc comment. */
 Facing :: enum { North, South }
 
+/**
+	A block doc comment loses the indentation its lines share.
+
+	Its blank lines stay,
+		and so does deeper indentation.
+*/
+Turn :: enum { Left, Right }
+
+/*** Three stars are not a doc comment. */
+Lane :: enum { Inner, Outer }
+
 /// The largest side any shape may have.
 MAX_SIDE :: 1000;
 

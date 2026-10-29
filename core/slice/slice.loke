@@ -1,12 +1,14 @@
-/// Slice algorithms.
-///
-/// Only `clone`/`try_clone` allocate storage of their own, and say so by
-/// returning an owner. Copying an element can allocate through its copy hook,
-/// so `fill`, and the one result copy `min` and `max` return, may allocate as
-/// well.
-///
-/// The mutating procedures take `[]mut T`, so passing a read-only `[]T` is a
-/// compile-time error rather than a silent no-op.
+/**
+	Slice algorithms.
+
+	Only `clone`/`try_clone` allocate storage of their own, and say so by
+	returning an owner. Copying an element can allocate through its copy hook,
+	so `fill`, and the one result copy `min` and `max` return, may allocate as
+	well.
+
+	The mutating procedures take `[]mut T`, so passing a read-only `[]T` is a
+	compile-time error rather than a silent no-op.
+*/
 // design.md "Slices", design.md "Sorting slices", and design.md "Slice queries
 // and copies".
 //
@@ -20,10 +22,12 @@ import "core:mem";
 
 // ---------------------------------------------------------------- ordering --
 
-/// Sorts in place according to `less`: a plain procedure, or a value whose
-/// `call` method compares, such as a record carrying configuration or checked
-/// borrows. It is borrowed for the call and retained nowhere, and sorting
-/// allocates nothing. The sort is not stable.
+/**
+	Sorts in place according to `less`: a plain procedure, or a value whose
+	`call` method compares, such as a record carrying configuration or checked
+	borrows. It is borrowed for the call and retained nowhere, and sorting
+	allocates nothing. The sort is not stable.
+*/
 // design.md "Sorting slices".
 //
 // The package-private intrinsic owns only the bridge to the shared
@@ -47,10 +51,12 @@ impl Ordering($T, $C) {
 	}
 }
 
-/// Ascending, in place. No allocation, and no comparator: `Ordered` is the
-/// precondition, and `Ordered` is IEEE-754 for floats, so a slice containing
-/// NaN sorts to an unspecified permutation rather than trapping. The same as
-/// `values.sort()`. The sort is not stable.
+/**
+	Ascending, in place. No allocation, and no comparator: `Ordered` is the
+	precondition, and `Ordered` is IEEE-754 for floats, so a slice containing
+	NaN sorts to an unspecified permutation rather than trapping. The same as
+	`values.sort()`. The sort is not stable.
+*/
 // This is design.md's free spelling of the contributed `values.sort()` member,
 // and it forwards to it: one introsort in the runtime, reached by both, so the
 // two spellings cannot drift apart.
@@ -66,10 +72,12 @@ reverse_sort :: proc(values: []mut $T) where interfaces.Ordered(T) {
 	values.reverse_sort();
 }
 
-/// Whether `sort` would leave the slice as it is. `Ordered` is IEEE-754 for
-/// floats here too, so a NaN is neither `<` nor `>=` anything: `is_sorted` says
-/// true of a slice a NaN sits in the middle of, and `sort` may still move it.
-/// The two agree that no pair is out of order, which is all either claims.
+/**
+	Whether `sort` would leave the slice as it is. `Ordered` is IEEE-754 for
+	floats here too, so a NaN is neither `<` nor `>=` anything: `is_sorted` says
+	true of a slice a NaN sits in the middle of, and `sort` may still move it.
+	The two agree that no pair is out of order, which is all either claims.
+*/
 is_sorted :: proc(values: []$T) -> bool where interfaces.Ordered(T) {
 	foreach (i in 1 ..< values.len()) {
 		if (values[i] < values[i - 1]) { return false; }
@@ -84,9 +92,11 @@ is_reverse_sorted :: proc(values: []$T) -> bool where interfaces.Ordered(T) {
 	return true;
 }
 
-/// The leftmost index at which `wanted` could be inserted while keeping the
-/// slice sorted, plus whether it is already there. `values` must be sorted
-/// ascending; a caller who has not sorted gets a meaningless answer, not a trap.
+/**
+	The leftmost index at which `wanted` could be inserted while keeping the
+	slice sorted, plus whether it is already there. `values` must be sorted
+	ascending; a caller who has not sorted gets a meaningless answer, not a trap.
+*/
 binary_search :: proc(values: []$T, wanted: T) -> (index: int, found: bool)
 	where interfaces.Ordered(T) {
 	low := 0;
@@ -100,10 +110,12 @@ binary_search :: proc(values: []$T, wanted: T) -> (index: int, found: bool)
 
 // ------------------------------------------------------------------ places --
 
-/// The elements at `left` and `right` trade contents: no copy or drop hook runs
-/// on either, so it reaches a move-only element and one with no zero value
-/// alike. Each index is bounds-checked, and two equal indices leave the element
-/// as it is. The same as `values.swap()`.
+/**
+	The elements at `left` and `right` trade contents: no copy or drop hook runs
+	on either, so it reaches a move-only element and one with no zero value
+	alike. Each index is bounds-checked, and two equal indices leave the element
+	as it is. The same as `values.swap()`.
+*/
 // The one rearrangement that installs no new value: no vacated slot has to be
 // filled. `exchange` needs a replacement, and the zero is the only one
 // available without a copy, which an element type may not have at all.
@@ -115,8 +127,10 @@ swap :: proc(values: []mut $T, left: int, right: int) {
 	values.swap(left, right);
 }
 
-/// Reverses the order of the elements in place. Built on `swap`, so it reaches a
-/// move-only element for the same reason `swap` does.
+/**
+	Reverses the order of the elements in place. Built on `swap`, so it reaches a
+	move-only element for the same reason `swap` does.
+*/
 reverse :: proc(values: []mut $T) {
 	low := 0;
 	high := values.len();
@@ -165,9 +179,11 @@ equal :: proc(left: []$T, right: []T) -> bool where interfaces.Equatable(T) {
 	return true;
 }
 
-/// The smallest element, or `.none` for an empty slice. Ties keep the earliest,
-/// and a NaN wins only from index 0; `max` is the same with `<` reversed. Only
-/// the result is copied.
+/**
+	The smallest element, or `.none` for an empty slice. Ties keep the earliest,
+	and a NaN wins only from index 0; `max` is the same with `<` reversed. Only
+	the result is copied.
+*/
 // There is no minimum of nothing, and returning the zero value would be a
 // wrong answer rather than a missing one. The candidate changes only for an
 // element `<` it.

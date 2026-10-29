@@ -76,7 +76,7 @@ if ($LASTEXITCODE -eq 0) { .\args.exe first "two words" }
 | `-runtime=<dir>` | Override the C runtime source directory, normally `runtime/` beside the compiler. |
 | `-log-level=debug\|info\|warning\|error\|off` | Set the compiled `LOKE_LOG_LEVEL` used by `core:log`. Default: `debug`. |
 | `-fmt`, `-fmt-check` | Rewrite a file, or a directory's `.loke` files, in the canonical layout (see [Formatting](comments.md#formatting)); `-fmt-check` only lists the files that would change and exits 1 if there are any. Only whitespace changes. |
-| `-doc` | Print the package's public API as Markdown and stop: the [doc comments](design.md#doc-comments) of its `package` clauses, then each public declaration's signature and public struct field, with its doc comment, then a page for each package of the project it imports. A doc comment starts with `///`; other comments are not shown. A standard-library directory works too: `lokec core\strings -doc`. |
+| `-doc` | Print the package's public API as Markdown and stop: the [doc comments](design.md#doc-comments) of its `package` clauses, then each public declaration's signature and public struct field, with its doc comment, then a page for each package of the project it imports. A doc comment is a `///` line or a `/** */` block; other comments are not shown. A standard-library directory works too: `lokec core\strings -doc`. |
 | `-api`, `-api-check` | Write the [interface file](#interface-files) `api.loki` in the directory of the root package and of each package of the project it imports, and stop; `-api-check` writes nothing, lists the interface files `-api` would change, and exits 1 if there are any. The input must be a directory. |
 | `-g` | Emit debug information at any `-opt` level: procedures, local variables and their types, and a line for each statement, loop update, and block's closing `}`. An executable gets a `.pdb` beside it, carrying natvis rules that show a string's text, a map's entries, and the value an `any_view` or `dyn` points at in Visual Studio and WinDbg, and a panic prints the Loke call stack after its report. |
 | `-debug` | Set `LOKE_DEBUG` to `true`. It does not imply `-g`, and `-g` does not imply it. |
@@ -158,9 +158,10 @@ local directories for now ([open-questions.md "Package and import versioning"](o
 
 A package's interface file, `api.loki`, is its public API as Loke source: what
 an importer can name, each declaration after its
-[doc comment](design.md#doc-comments), without bodies. Its comments are
-written `//`, since every comment in the file is for the package's users. It
-is generated from the package and checked in beside its `.loke` files, so it
+[doc comment](design.md#doc-comments), without bodies. Every comment in the
+file is for the package's users, so a doc comment of one line is written `//`
+and a longer one as a `/* */` block; one whose text contains `/*` or `*/`
+stays in `//` lines. It is generated from the package and checked in beside its `.loke` files, so it
 shows up in a directory listing, a search, and a code review. To use a
 package, read its `api.loki`; read its source only to change it.
 

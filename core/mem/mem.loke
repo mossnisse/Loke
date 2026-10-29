@@ -1,13 +1,15 @@
-/// Allocators.
-///
-/// One provider serves the whole program, reached through
-/// `mem.default_allocator()`. With nothing selected the runtime supplies the
-/// system heap; the root package may name a factory for the slot with
-/// `@(default_allocator = "<import path>:<name>")`. Either way the handle ABI is
-/// the same: everything a caller holds is one pointer to one provider record.
-///
-/// `mem.Arena` and `mem.Scratch` are the two local region roots, which is what
-/// makes a `free_all` able to succeed at all.
+/**
+	Allocators.
+
+	One provider serves the whole program, reached through
+	`mem.default_allocator()`. With nothing selected the runtime supplies the
+	system heap; the root package may name a factory for the slot with
+	`@(default_allocator = "<import path>:<name>")`. Either way the handle ABI is
+	the same: everything a caller holds is one pointer to one provider record.
+
+	`mem.Arena` and `mem.Scratch` are the two local region roots, which is what
+	makes a `free_all` able to succeed at all.
+*/
 // design.md "Allocators", "Build-selected providers".
 @(public)
 package mem;
@@ -18,86 +20,106 @@ package mem;
 // them, not merely call them: a region created here is one this body may reset
 // without a promise, and one no owner may outlive.
 
-/// The pointer-sized handle to an allocation provider. Copying one keeps its
-/// region identity; the zero `Allocator`, `{}`, selects the default provider.
+/**
+	The pointer-sized handle to an allocation provider. Copying one keeps its
+	region identity; the zero `Allocator`, `{}`, selects the default provider.
+*/
 @(intrinsic)
 Allocator :: ---;
 
-/// What a fallible allocation reports instead of applying the provider's
-/// failure policy. Its zero value means no failure.
+/**
+	What a fallible allocation reports instead of applying the provider's
+	failure policy. Its zero value means no failure.
+*/
 @(intrinsic)
 Allocator_Error :: ---;
 
-/// The build-selected default provider: the system heap unless the root
-/// package names a factory with `@(default_allocator = "<import path>:<name>")`.
-///
-/// It is the same procedure a generated copy operation's default argument
-/// names, so an omitted allocator and a written `mem.default_allocator()`
-/// select one provider through one call.
+/**
+	The build-selected default provider: the system heap unless the root
+	package names a factory with `@(default_allocator = "<import path>:<name>")`.
+
+	It is the same procedure a generated copy operation's default argument
+	names, so an omitted allocator and a written `mem.default_allocator()`
+	select one provider through one call.
+*/
 @(intrinsic)
 default_allocator :: proc() -> Allocator ---;
 
-/// What a region does when one of its own allocations fails: `.Panic` reports
-/// it, `.Trap` aborts without unwinding. Every constructor below takes one as
-/// its last argument, `.Panic` unless written.
+/**
+	What a region does when one of its own allocations fails: `.Panic` reports
+	it, `.Trap` aborts without unwinding. Every constructor below takes one as
+	its last argument, `.Panic` unless written.
+*/
 @(intrinsic)
 Failure_Policy :: enum { Panic, Trap }
 
-/// A local bump region, provider-backed or laid over a caller's buffer.
-///
-///     arena := mem.Arena.init();                       // blocks from the default provider
-///     arena := mem.Arena.from_buffer(&mut buffer[:]);  // caller storage, no allocation
-///     arena := mem.Arena.from_buffer(&mut buffer[:], policy = .Trap);
-///
-/// A reset needs every borrower of the region to be gone, and that is a scope
-/// rather than a convention: resetting while one is live is rejected (L0537).
-///
-///     {
-///         xs: [dynamic]int via arena.allocator() = {};
-///         xs.append(1, 2, 3);
-///     }
-///     free_all(arena.allocator());   // reusable: the region stays usable
-///
-/// The zero `Arena` owns an empty region: allocating from it fails under the
-/// provider's policy, and resetting or dropping it does nothing. That is what a
-/// `static` provider holds until a factory assigns it.
-///
-/// An `Arena` is move-only: two owners of one control block would release it
-/// twice, and a bump region has no meaningful copy. Moving one never changes its
-/// record address, so its region identity survives the move.
+/**
+	A local bump region, provider-backed or laid over a caller's buffer.
+
+	    arena := mem.Arena.init();                       // blocks from the default provider
+	    arena := mem.Arena.from_buffer(&mut buffer[:]);  // caller storage, no allocation
+	    arena := mem.Arena.from_buffer(&mut buffer[:], policy = .Trap);
+
+	A reset needs every borrower of the region to be gone, and that is a scope
+	rather than a convention: resetting while one is live is rejected (L0537).
+
+	    {
+	        xs: [dynamic]int via arena.allocator() = {};
+	        xs.append(1, 2, 3);
+	    }
+	    free_all(arena.allocator());   // reusable: the region stays usable
+
+	The zero `Arena` owns an empty region: allocating from it fails under the
+	provider's policy, and resetting or dropping it does nothing. That is what a
+	`static` provider holds until a factory assigns it.
+
+	An `Arena` is move-only: two owners of one control block would release it
+	twice, and a bump region has no meaningful copy. Moving one never changes its
+	record address, so its region identity survives the move.
+*/
 @(intrinsic)
 Arena :: ---;
 
 impl Arena {
-	/// An arena over `buffer`, allocating nothing. The buffer needs room for the
-	/// control block, one block header, and the slack to align the first of
-	/// them, 128 bytes on x86-64; a smaller one ends the process rather than
-	/// failing, since no policy could make it succeed.
+	/**
+		An arena over `buffer`, allocating nothing. The buffer needs room for the
+		control block, one block header, and the slack to align the first of
+		them, 128 bytes on x86-64; a smaller one ends the process rather than
+		failing, since no policy could make it succeed.
+	*/
 	@(intrinsic)
 	from_buffer :: proc(buffer: []mut u8, policy: Failure_Policy = .Panic) -> Arena ---;
 
-	/// An arena whose blocks come from `parent`, the default provider unless
-	/// written. Failing to create it applies `parent`'s failure policy.
+	/**
+		An arena whose blocks come from `parent`, the default provider unless
+		written. Failing to create it applies `parent`'s failure policy.
+	*/
 	@(intrinsic)
 	init :: proc(parent: Allocator = default_allocator(), policy: Failure_Policy = .Panic) -> Arena ---;
 
-	/// The handle to this region. Allocations through it last until the region
-	/// is reset or the arena is dropped.
+	/**
+		The handle to this region. Allocations through it last until the region
+		is reset or the arena is dropped.
+	*/
 	@(intrinsic)
 	allocator :: proc(self) -> Allocator ---;
 }
 
-/// A local bump region, always provider-backed: an `Arena` without
-/// `from_buffer`. It is move-only, and its zero value owns an empty region, as
-/// an `Arena`'s does.
-///
-///     scratch := mem.Scratch.init();
+/**
+	A local bump region, always provider-backed: an `Arena` without
+	`from_buffer`. It is move-only, and its zero value owns an empty region, as
+	an `Arena`'s does.
+
+	    scratch := mem.Scratch.init();
+*/
 @(intrinsic)
 Scratch :: ---;
 
 impl Scratch {
-	/// A scratch region whose blocks come from `parent`, the default provider
-	/// unless written. Failing to create it applies `parent`'s failure policy.
+	/**
+		A scratch region whose blocks come from `parent`, the default provider
+		unless written. Failing to create it applies `parent`'s failure policy.
+	*/
 	@(intrinsic)
 	init :: proc(parent: Allocator = default_allocator(), policy: Failure_Policy = .Panic) -> Scratch ---;
 
@@ -106,15 +128,19 @@ impl Scratch {
 	allocator :: proc(self) -> Allocator ---;
 }
 
-/// `Arena.init`, reporting a failure to create the arena instead of applying
-/// `parent`'s policy to it. It takes a parent allocator, not a buffer:
-/// `from_buffer` has no fallible spelling.
-///
-///     outcome := mem.try_arena();   // Result(Arena, Allocator_Error)
+/**
+	`Arena.init`, reporting a failure to create the arena instead of applying
+	`parent`'s policy to it. It takes a parent allocator, not a buffer:
+	`from_buffer` has no fallible spelling.
+
+	    outcome := mem.try_arena();   // Result(Arena, Allocator_Error)
+*/
 @(intrinsic)
 try_arena :: proc(parent: Allocator = default_allocator(), policy: Failure_Policy = .Panic) -> Result(Arena, Allocator_Error) ---;
 
-/// `Scratch.init`, reporting a failure to create the region instead of
-/// applying `parent`'s policy to it.
+/**
+	`Scratch.init`, reporting a failure to create the region instead of
+	applying `parent`'s policy to it.
+*/
 @(intrinsic)
 try_scratch :: proc(parent: Allocator = default_allocator(), policy: Failure_Policy = .Panic) -> Result(Scratch, Allocator_Error) ---;

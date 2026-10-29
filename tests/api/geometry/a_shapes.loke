@@ -9,7 +9,11 @@ import "core:strings";
 import text "core:fmt";
 import "./units";
 
-/// A point. The interface file shows only its public fields.
+/**
+	A point. The interface file shows only its public fields.
+
+	A doc comment of more than one line is shown as a block.
+*/
 Point :: struct {
 	/// Across, in metres.
 	x: f64,
@@ -17,7 +21,8 @@ Point :: struct {
 	@(private) cached: f64,
 }
 
-/// Which way a shape faces.
+/// Which way a shape faces. `///` lines that make more than one line of
+/// text are shown as a block too.
 Facing :: enum {
 	// Not shown.
 	North,
@@ -32,8 +37,12 @@ Size :: union {
 	point:,
 }
 
-/// The longest side any shape may have.
+/** The longest side any shape may have: one line, shown as a line. */
 LIMIT :: units.METRE * 1000;
+
+/// A note that names `*/`, which would end a block,
+/// stays in lines.
+SIDES :: 4;
 
 /// A counter is a variable, which is never public.
 counter: int = 0;
@@ -63,7 +72,10 @@ show :: proc(
 ) {}
 
 impl Point {
-	/// The sum of the coordinates.
+	/**
+		The sum of the coordinates,
+		indented with its member.
+	*/
 	sum :: proc(self) -> f64 { return self.x + self.y; }
 
 	/// Componentwise.

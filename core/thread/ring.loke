@@ -7,14 +7,16 @@ package thread;
 import "core:sync";
 import "core:unsafe";
 
-/// A bounded queue from one sender to one receiver that neither locks nor
-/// allocates once made, for a thread that must not wait, such as an audio
-/// loop. `split` makes its one `Ring_Sender` and one `Ring_Receiver`, which
-/// borrow it and operate only by polling: `try_send` and `try_receive` never
-/// wait.
-///
-/// Dropping an endpoint closes its side. Dropping the ring drops the items
-/// still queued. It is move-only and has no zero value.
+/**
+	A bounded queue from one sender to one receiver that neither locks nor
+	allocates once made, for a thread that must not wait, such as an audio
+	loop. `split` makes its one `Ring_Sender` and one `Ring_Receiver`, which
+	borrow it and operate only by polling: `try_send` and `try_receive` never
+	wait.
+
+	Dropping an endpoint closes its side. Dropping the ring drops the items
+	still queued. It is move-only and has no zero value.
+*/
 Ring :: struct($T: type) {
 	// `size` slots, one more than the capacity: the spare slot tells a full
 	// ring from an empty one. Only queued slots hold an item.
@@ -69,8 +71,10 @@ Ring_Receiver :: move_only struct($T: type) @(wakes_on_drop) {
 }
 
 impl Ring($T) {
-	/// A ring holding at most `capacity` items, from the default allocator. A
-	/// capacity below one, or one too large to allocate, panics.
+	/**
+		A ring holding at most `capacity` items, from the default allocator. A
+		capacity below one, or one too large to allocate, panics.
+	*/
 	init :: proc(capacity: int) -> Ring(T) {
 		if (capacity < 1) { panic("thread.Ring capacity must be positive"); }
 		if (capacity == MAX_INT) { panic("thread.Ring capacity is too large"); }
@@ -128,9 +132,11 @@ slot_at :: proc(ring: ^Ring($T), index: uint) -> ^mut Ring_Slot(T) {
 }
 
 impl Ring_Sender($T) {
-	/// Commits the item without waiting: `.full` hands it back from a full
-	/// ring whose receiver lives, and `.closed` once the receiver has
-	/// dropped, which takes precedence.
+	/**
+		Commits the item without waiting: `.full` hands it back from a full
+		ring whose receiver lives, and `.closed` once the receiver has
+		dropped, which takes precedence.
+	*/
 	try_send :: proc(self: inout, @(cross_thread, escape=static) value: move T) -> Status(Unsent(T)) {
 		ring := self.ring;
 		if (ring.receiver_gone.load(sync.Memory_Order.Acquire)) { return .err(.closed(move(value))); }
@@ -160,8 +166,10 @@ impl Ring_Sender($T) {
 }
 
 impl Ring_Receiver($T) {
-	/// Takes the oldest item without waiting: `.empty` means more may come,
-	/// and `.closed` that the sender has dropped and nothing is queued.
+	/**
+		Takes the oldest item without waiting: `.empty` means more may come,
+		and `.closed` that the sender has dropped and nothing is queued.
+	*/
 	try_receive :: proc(self: inout) -> Received(T) {
 		ring := self.ring;
 		at := self.head;

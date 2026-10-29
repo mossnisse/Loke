@@ -1,7 +1,9 @@
-/// The operating system's cryptographically secure generator.
-///
-/// These are the only bytes in the package fit for keys, tokens, and nonces. A
-/// seeded generator is predictable from its outputs, however it was seeded.
+/**
+	The operating system's cryptographically secure generator.
+
+	These are the only bytes in the package fit for keys, tokens, and nonces. A
+	seeded generator is predictable from its outputs, however it was seeded.
+*/
 // standard-library "Operating-system entropy".
 @(public)
 package random;
@@ -9,10 +11,12 @@ package random;
 import "core:math";
 import "core:unsafe";
 
-/// `destination` filled from the operating system's generator. There is no error
-/// to handle: the platform generator does not fail on a supported system, and if
-/// it ever reported failure, carrying on with predictable bytes would be worse
-/// than stopping, so the program panics.
+/**
+	`destination` filled from the operating system's generator. There is no error
+	to handle: the platform generator does not fail on a supported system, and if
+	it ever reported failure, carrying on with predictable bytes would be worse
+	than stopping, so the program panics.
+*/
 fill_secure :: proc(destination: []mut u8) {
 	filled := 0;
 	for (; filled < destination.len(); ) {
@@ -24,8 +28,10 @@ fill_secure :: proc(destination: []mut u8) {
 	}
 }
 
-/// Eight bytes of `fill_secure` as a `u64`, little-endian: a seed worth
-/// recording, so that `Xoshiro256.from_seed` can replay the run it started.
+/**
+	Eight bytes of `fill_secure` as a `u64`, little-endian: a seed worth
+	recording, so that `Xoshiro256.from_seed` can replay the run it started.
+*/
 secure_u64 :: proc() -> u64 {
 	bytes: [8]u8 = {};
 	fill_secure(&mut bytes[:]);

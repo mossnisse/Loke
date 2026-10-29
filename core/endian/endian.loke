@@ -1,17 +1,19 @@
-/// `Little_Endian(T)` and `Big_Endian(T)`: storage wrappers that fix a field's
-/// byte order regardless of the target's.
-///
-/// The wrapper is the *stored* form. Nothing arithmetic is defined on it: a
-/// caller `store`s a host value into one and `load`s a host value back out, and
-/// the byte swap — if the target needs one at all — happens exactly at those two
-/// points. That is the whole reason to have the type instead of remembering to
-/// swap at each use.
-///
-///     header: (magic: endian.Big_Endian(u32)) = {};
-///     header.magic = endian.Big_Endian(u32).store(0xCAFEBABE);
-///     fmt.println(header.magic.load());
-///
-/// `T` is an integer type. A one-byte `T` needs no swap and gets none.
+/**
+	`Little_Endian(T)` and `Big_Endian(T)`: storage wrappers that fix a field's
+	byte order regardless of the target's.
+
+	The wrapper is the *stored* form. Nothing arithmetic is defined on it: a
+	caller `store`s a host value into one and `load`s a host value back out, and
+	the byte swap — if the target needs one at all — happens exactly at those two
+	points. That is the whole reason to have the type instead of remembering to
+	swap at each use.
+
+	    header: (magic: endian.Big_Endian(u32)) = {};
+	    header.magic = endian.Big_Endian(u32).store(0xCAFEBABE);
+	    fmt.println(header.magic.load());
+
+	`T` is an integer type. A one-byte `T` needs no swap and gets none.
+*/
 // standard-library "`core:endian`".
 @(public)
 package endian;
@@ -44,15 +46,19 @@ impl Little_Endian($T) {
 		return host_to(self.stored, Order.Little);
 	}
 
-	/// Explicit only: a silent conversion from `T` would put a host value where a
-	/// stored one belongs at every assignment, which is the bug this type exists
-	/// to prevent. `Little_Endian(u32)(x)` is the written form.
+	/**
+		Explicit only: a silent conversion from `T` would put a host value where a
+		stored one belongs at every assignment, which is the bug this type exists
+		to prevent. `Little_Endian(u32)(x)` is the written form.
+	*/
 	from_host :: hook(convert) proc(value: T) -> Little_Endian(T) {
 		return {host_to(value, Order.Little)};
 	}
 
-	/// Prints the host value, not the stored bytes, with the caller's options, so
-	/// a caller asking for hex gets hex.
+	/**
+		Prints the host value, not the stored bytes, with the caller's options, so
+		a caller asking for hex gets hex.
+	*/
 	// `format_to_with` does that; printing the swapped bytes would be a puzzle.
 	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
 		fmt.format_to_with(writer, options, self.load());
@@ -109,8 +115,10 @@ host_to :: proc(value: $T, $wanted: Order) -> T where interfaces.Integral(T) {
 	}
 }
 
-/// `value` with its bytes in the opposite order. A one-byte value comes back
-/// unchanged.
+/**
+	`value` with its bytes in the opposite order. A one-byte value comes back
+	unchanged.
+*/
 // The `when` keeps the wide-mask arithmetic below out of checking for a
 // one-byte `T`: `T(0xFF)` does not fit in an `i8`.
 byte_swap :: proc(value: $T) -> T where interfaces.Integral(T) {

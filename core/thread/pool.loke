@@ -6,16 +6,18 @@ package thread;
 import "core:sync";
 import "core:unsafe";
 
-/// A fixed set of persistent worker threads that run the tasks of the
-/// `parallel (&pool)` blocks naming it, so a block opened once per round of
-/// work starts no thread. A block borrows the pool until its join, so the pool
-/// outlives every block that uses it.
-///
-/// A worker joining a block of its own pool runs that block's queued tasks,
-/// and their descendants on the same pool, while it waits; any other joining
-/// thread only waits. A worker keeps its `thread_local` storage from one task
-/// to the next. Dropping the pool lets its workers finish and joins them.
-/// It is move-only and has no zero value.
+/**
+	A fixed set of persistent worker threads that run the tasks of the
+	`parallel (&pool)` blocks naming it, so a block opened once per round of
+	work starts no thread. A block borrows the pool until its join, so the pool
+	outlives every block that uses it.
+
+	A worker joining a block of its own pool runs that block's queued tasks,
+	and their descendants on the same pool, while it waits; any other joining
+	thread only waits. A worker keeps its `thread_local` storage from one task
+	to the next. Dropping the pool lets its workers finish and joins them.
+	It is move-only and has no zero value.
+*/
 Pool :: move_only struct {
 	// The `Pool_State` its workers share, on the heap, so the pool can move
 	// while they run.
@@ -50,8 +52,10 @@ Pool_Node :: struct {
 @(private) running_in: thread_local rawptr;
 
 impl Pool {
-	/// A pool of `workers` threads, which wait for tasks until it drops. Fewer
-	/// than one worker panics, as does failing to start a thread.
+	/**
+		A pool of `workers` threads, which wait for tasks until it drops. Fewer
+		than one worker panics, as does failing to start a thread.
+	*/
 	init :: proc(workers: int) -> Pool {
 		if (workers < 1) { panic("thread.Pool needs at least one worker"); }
 		state := (^mut Pool_State)(unsafe.new(Pool_State{}));

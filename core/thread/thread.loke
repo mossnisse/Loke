@@ -1,11 +1,13 @@
-/// Threads, the mutexes and monitors that guard what they share, the
-/// channels and rings that carry work between them, and pools of workers for
-/// `parallel (pool)` blocks.
-///
-/// `spawn` and `join` supply the thread start and join edges of happens-before,
-/// and `Mutex` and `Monitor` the unlock-to-lock edge, which `Channel` and
-/// `Pool` use. A `Ring` orders each item's send before its receive through its
-/// own atomic indices.
+/**
+	Threads, the mutexes and monitors that guard what they share, the
+	channels and rings that carry work between them, and pools of workers for
+	`parallel (pool)` blocks.
+
+	`spawn` and `join` supply the thread start and join edges of happens-before,
+	and `Mutex` and `Monitor` the unlock-to-lock edge, which `Channel` and
+	`Pool` use. A `Ring` orders each item's send before its receive through its
+	own atomic indices.
+*/
 // standard-library "`core:thread`", design.md "Concurrency and the memory
 // model".
 //
@@ -69,22 +71,28 @@ foreign loke_runtime {
 @(private) INFINITE :: u32(0xFFFFFFFF);
 @(private) ALL_PROCESSOR_GROUPS :: u16(0xFFFF);
 
-/// How many threads can run at once on this machine: its logical processors, in
-/// every processor group, and never less than one.
+/**
+	How many threads can run at once on this machine: its logical processors, in
+	every processor group, and never less than one.
+*/
 processor_count :: proc() -> int {
 	count := int(rt_processor_count(ALL_PROCESSOR_GROUPS));
 	return count if count > 0 else 1;
 }
 
-/// A running thread. Dropping one joins it, so a thread never outlives the owner
-/// of its handle; `join` says so at the point it happens.
+/**
+	A running thread. Dropping one joins it, so a thread never outlives the owner
+	of its handle; `join` says so at the point it happens.
+*/
 Thread :: move_only struct {
 	@(private) handle: int,
 }
 
 impl Thread {
-	/// Waits for the thread to return. Its writes, and its `thread_local` drops,
-	/// happen before this returns.
+	/**
+		Waits for the thread to return. Its writes, and its `thread_local` drops,
+		happen before this returns.
+	*/
 	join :: proc(self: inout) {
 		if (self.handle == 0) { return; }
 		rt_wait(self.handle, INFINITE);
@@ -240,20 +248,24 @@ impl Task_Scope {
 	}
 }
 
-/// A `T` that one thread at a time may reach. `lock` blocks until the calling
-/// thread holds it and answers a guard; the guard reaches the value, and
-/// dropping it unlocks. An unlock happens before the next lock.
-///
-/// Every operation takes a read-only `^` receiver, so a `Mutex` works in
-/// file-scope storage and behind a `Shared(T)`. It is move-only.
+/**
+	A `T` that one thread at a time may reach. `lock` blocks until the calling
+	thread holds it and answers a guard; the guard reaches the value, and
+	dropping it unlocks. An unlock happens before the next lock.
+
+	Every operation takes a read-only `^` receiver, so a `Mutex` works in
+	file-scope storage and behind a `Shared(T)`. It is move-only.
+*/
 // As `sync.Atomic`'s do. Move-only because the lock word is an `Atomic`.
 Mutex :: struct($T: type) {
 	// A Windows SRWLOCK: one pointer, unlocked at zero, written only by the
 	// system's own atomic operations.
 	@(private) word: sync.Atomic(uintptr),
-	/// For a caller that owns the mutex outright, before spawning or after joining,
-	/// which needs no lock. Synchronized, as `Atomic`'s `value` is: outside this
-	/// package it is reached only with exclusive access to the mutex.
+	/**
+		For a caller that owns the mutex outright, before spawning or after joining,
+		which needs no lock. Synchronized, as `Atomic`'s `value` is: outside this
+		package it is reached only with exclusive access to the mutex.
+	*/
 	// Public for the same reason `Atomic`'s `value` is.
 	@(synchronized) value: T,
 }
@@ -266,8 +278,10 @@ impl Mutex($T) {
 	}
 }
 
-/// The pointer borrows the mutex, so it cannot move or end while locked. A
-/// guard stays on the thread that locked, which is the one that must unlock.
+/**
+	The pointer borrows the mutex, so it cannot move or end while locked. A
+	guard stays on the thread that locked, which is the one that must unlock.
+*/
 // Thread-affine because Windows requires an SRWLOCK to be released by the
 // thread that acquired it.
 Guard :: move_only struct($T: type) @(thread_affine, wakes_on_drop) {
@@ -275,8 +289,10 @@ Guard :: move_only struct($T: type) @(thread_affine, wakes_on_drop) {
 }
 
 impl Guard($T) {
-	/// The guarded value, for as long as this guard holds the lock: an `inout`
-	/// result borrows the guard, so nothing reached through it outlives the lock.
+	/**
+		The guarded value, for as long as this guard holds the lock: an `inout`
+		result borrows the guard, so nothing reached through it outlives the lock.
+	*/
 	get :: proc(self: inout) -> inout T {
 		return inout (^mut T)(rawptr(&self.mutex.value))^;
 	}
@@ -287,18 +303,20 @@ impl Guard($T) {
 	}
 }
 
-/// A `T` that one thread at a time may reach, whose holder can wait for it to
-/// reach a state. `lock` and the guard work as `Mutex`'s do; `lock_when` waits
-/// until `ready` answers `true` for the value, and `close` ends every such wait.
-///
-/// Dropping a guard on which `get` was called wakes every thread waiting in
-/// `lock_when`, so a waiter checks its condition again after every change made
-/// under the lock. A guard used only through `read` wakes no one. A `Mutex` is
-/// the choice where no one waits for a state.
-///
-/// Its zero value is unlocked and open and holds `T`'s zero. Every operation
-/// takes a read-only `^` receiver, so a `Monitor` works in file-scope storage
-/// and behind a `Shared(T)`. It is move-only.
+/**
+	A `T` that one thread at a time may reach, whose holder can wait for it to
+	reach a state. `lock` and the guard work as `Mutex`'s do; `lock_when` waits
+	until `ready` answers `true` for the value, and `close` ends every such wait.
+
+	Dropping a guard on which `get` was called wakes every thread waiting in
+	`lock_when`, so a waiter checks its condition again after every change made
+	under the lock. A guard used only through `read` wakes no one. A `Mutex` is
+	the choice where no one waits for a state.
+
+	Its zero value is unlocked and open and holds `T`'s zero. Every operation
+	takes a read-only `^` receiver, so a `Monitor` works in file-scope storage
+	and behind a `Shared(T)`. It is move-only.
+*/
 // standard-library "Monitors". Move-only, as `Mutex` is, because its lock
 // and condition words are `Atomic`s.
 Monitor :: struct($T: type) {
@@ -310,8 +328,10 @@ Monitor :: struct($T: type) {
 	// Written by `close` and read by `lock_when`, both under the lock; atomic
 	// only because they reach it through `^`.
 	@(private) closed: sync.Atomic(bool),
-	/// For a caller that owns the monitor outright, before spawning or after
-	/// joining, which needs no lock. Synchronized, as `Mutex`'s `value` is.
+	/**
+		For a caller that owns the monitor outright, before spawning or after
+		joining, which needs no lock. Synchronized, as `Mutex`'s `value` is.
+	*/
 	@(synchronized) value: T,
 }
 
@@ -322,18 +342,20 @@ impl Monitor($T) {
 		return Monitor_Guard(T){monitor = self};
 	}
 
-	/// Locks once `ready` answers `true` for the value, and answers the guard
-	/// still holding the lock, so the state `ready` saw is the state the guard
-	/// reaches. While `ready` answers `false` and the monitor is open, the
-	/// thread releases the lock and sleeps in one step, then relocks and asks
-	/// again when woken; a spurious wakeup only repeats the question. Once the
-	/// monitor is closed, a `false` answer returns `.none` instead of sleeping.
-	///
-	/// `ready` runs on this thread with the lock held. It must answer the same
-	/// for unchanged state, must not block, and must change nothing. Every
-	/// mutable input to its answer must be guarded by this monitor and changed
-	/// through a guard's `get`: nothing else wakes a waiter. The compiler does
-	/// not check this.
+	/**
+		Locks once `ready` answers `true` for the value, and answers the guard
+		still holding the lock, so the state `ready` saw is the state the guard
+		reaches. While `ready` answers `false` and the monitor is open, the
+		thread releases the lock and sleeps in one step, then relocks and asks
+		again when woken; a spurious wakeup only repeats the question. Once the
+		monitor is closed, a `false` answer returns `.none` instead of sleeping.
+
+		`ready` runs on this thread with the lock held. It must answer the same
+		for unchanged state, must not block, and must change nothing. Every
+		mutable input to its answer must be guarded by this monitor and changed
+		through a guard's `get`: nothing else wakes a waiter. The compiler does
+		not check this.
+	*/
 	// The question and the sleep both happen with the lock held, and the sleep
 	// releases it atomically, so a change made between them is impossible: it
 	// waits for the lock until this thread is asleep and registered to be woken.
@@ -348,13 +370,15 @@ impl Monitor($T) {
 		}
 	}
 
-	/// Closes the monitor and wakes every waiter. From then on a `lock_when`
-	/// whose `ready` answers `false` returns `.none`; one whose `ready` answers
-	/// `true` still returns its guard, so a closed monitor can be drained.
-	/// `lock` and the guards keep working. Closing again does nothing more.
-	///
-	/// `close` takes the lock: calling it while this thread holds it never
-	/// returns. Closing does not stop a waiter whose `ready` stays `true`.
+	/**
+		Closes the monitor and wakes every waiter. From then on a `lock_when`
+		whose `ready` answers `false` returns `.none`; one whose `ready` answers
+		`true` still returns its guard, so a closed monitor can be drained.
+		`lock` and the guards keep working. Closing again does nothing more.
+
+		`close` takes the lock: calling it while this thread holds it never
+		returns. Closing does not stop a waiter whose `ready` stays `true`.
+	*/
 	close :: proc(self: ^) {
 		rt_lock(rawptr(&self.word.value));
 		self.closed.store(true);
@@ -363,8 +387,10 @@ impl Monitor($T) {
 	}
 }
 
-/// The pointer borrows the monitor, so it cannot move or end while locked. A
-/// guard stays on the thread that locked, which is the one that must unlock.
+/**
+	The pointer borrows the monitor, so it cannot move or end while locked. A
+	guard stays on the thread that locked, which is the one that must unlock.
+*/
 // Thread-affine for the reason `Guard` is.
 Monitor_Guard :: move_only struct($T: type) @(thread_affine, wakes_on_drop) {
 	@(private) monitor: ^Monitor(T),
@@ -373,17 +399,21 @@ Monitor_Guard :: move_only struct($T: type) @(thread_affine, wakes_on_drop) {
 }
 
 impl Monitor_Guard($T) {
-	/// The guarded value, for as long as this guard holds the lock, as
-	/// `Guard.get` answers it. Calling it marks the guard changed, whether or
-	/// not the caller writes, so dropping the guard wakes every waiter.
+	/**
+		The guarded value, for as long as this guard holds the lock, as
+		`Guard.get` answers it. Calling it marks the guard changed, whether or
+		not the caller writes, so dropping the guard wakes every waiter.
+	*/
 	get :: proc(self: inout) -> inout T {
 		self.changed = true;
 		return inout (^mut T)(rawptr(&self.monitor.value))^;
 	}
 
-	/// The guarded value, read-only, for as long as this guard holds the lock.
-	/// It leaves the guard unchanged, so dropping it wakes no one; an atomic
-	/// updated through it wakes no one either.
+	/**
+		The guarded value, read-only, for as long as this guard holds the lock.
+		It leaves the guard unchanged, so dropping it wakes no one; an atomic
+		updated through it wakes no one either.
+	*/
 	read :: proc(self: ^) -> ^T {
 		// A pointer rebuilt from a `rawptr` has no checked provenance, so the
 		// call goes through a plain procedure type, whose result derives from

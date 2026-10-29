@@ -1,7 +1,9 @@
-/// Scalar parsing.
-///
-/// Every procedure here consumes the **whole** text after permitted surrounding
-/// ASCII whitespace. Formatting scalars is `core:fmt`'s.
+/**
+	Scalar parsing.
+
+	Every procedure here consumes the **whole** text after permitted surrounding
+	ASCII whitespace. Formatting scalars is `core:fmt`'s.
+*/
 // standard-library "`core:strconv`".
 //
 // Parsing is not a string algorithm: it interprets text as another type, so it
@@ -13,15 +15,21 @@ package strconv;
 
 import "core:unsafe";
 
-/// What went wrong: the failure payload of each parser's `Result`, so a parse
-/// composes with `or_return` like every other fallible call in the library.
+/**
+	What went wrong: the failure payload of each parser's `Result`, so a parse
+	composes with `or_return` like every other fallible call in the library.
+*/
 Parse_Error :: enum {
-	/// The text is not a number at all: no digits, a stray sign, a misplaced
-	/// underscore, an exponent with no digits.
+	/**
+		The text is not a number at all: no digits, a stray sign, a misplaced
+		underscore, an exponent with no digits.
+	*/
 	Invalid_Syntax,
-	/// A base outside 2 to 36. A prefix is recognised only when the base is 0, so
-	/// `0x` under an explicit base is ordinary non-digit text and reports
-	/// `Trailing_Data` rather than arriving here.
+	/**
+		A base outside 2 to 36. A prefix is recognised only when the base is 0, so
+		`0x` under an explicit base is ordinary non-digit text and reports
+		`Trailing_Data` rather than arriving here.
+	*/
 	Invalid_Base,
 	/// The value does not fit the destination type.
 	Overflow,
@@ -29,10 +37,12 @@ Parse_Error :: enum {
 	Trailing_Data,
 }
 
-/// `true` or `false`, or `.none` for anything else.
-///
-/// Accepts `true`, `True`, `TRUE`, `1`, and the matching `false` spellings and
-/// `0`; not `tRUE`.
+/**
+	`true` or `false`, or `.none` for anything else.
+
+	Accepts `true`, `True`, `TRUE`, `1`, and the matching `false` spellings and
+	`0`; not `tRUE`.
+*/
 // Absence is the whole story here, so this one reports `Option` rather than an
 // error value.
 parse_bool :: proc(text: string_view) -> Option(bool) {
@@ -46,9 +56,11 @@ parse_bool :: proc(text: string_view) -> Option(bool) {
 	return .none;
 }
 
-/// `base == 0` recognises the language's own prefixes — `0b`, `0o`, `0x` — and
-/// otherwise reads decimal. Any other base is 2 through 36, with no prefix
-/// accepted. Underscores may separate digits, as in a Loke literal.
+/**
+	`base == 0` recognises the language's own prefixes — `0b`, `0o`, `0x` — and
+	otherwise reads decimal. Any other base is 2 through 36, with no prefix
+	accepted. Underscores may separate digits, as in a Loke literal.
+*/
 parse_u64 :: proc(text: string_view, base: int = 0) -> Result(u64, Parse_Error) {
 	split := split_number(text, base) or_return;
 	if (split.negative) { return .err(.Invalid_Syntax); }
@@ -68,8 +80,10 @@ parse_i64 :: proc(text: string_view, base: int = 0) -> Result(i64, Parse_Error) 
 	return i64(magnitude);
 }
 
-/// `int` and `uint` are the target's pointer-sized integers, which on every
-/// supported target is 64 bits; these exist so a caller need not convert.
+/**
+	`int` and `uint` are the target's pointer-sized integers, which on every
+	supported target is 64 bits; these exist so a caller need not convert.
+*/
 parse_int :: proc(text: string_view, base: int = 0) -> Result(int, Parse_Error) {
 	return int(parse_i64(text, base) or_return);
 }
@@ -78,20 +92,22 @@ parse_uint :: proc(text: string_view, base: int = 0) -> Result(uint, Parse_Error
 	return uint(parse_u64(text, base) or_return);
 }
 
-/// Accepts `[+-]digits[.digits][(e|E)[+-]digits]`, where either digit run around
-/// the point may be empty but not both. Underscores may follow any digit, the
-/// rule `parse_u64` applies, in all three digit runs.
-///
-/// The result is correctly rounded, and what `fmt` prints this parses to the
-/// same value. Parsing is in the "C" numeric locale, so a program that sets a
-/// decimal-comma locale for its own C code still parses `1.5` as one and a
-/// half. It allocates nothing, however long the text.
-///
-/// Infinities and NaNs are not spellable; a caller that needs them tests for the
-/// words itself. A finite spelling past the largest `f64` is `Overflow`; one
-/// too small for the smallest subnormal rounds to a signed zero.
-///
-/// Making that locale can fail, which panics here; `try_parse_f64` reports it.
+/**
+	Accepts `[+-]digits[.digits][(e|E)[+-]digits]`, where either digit run around
+	the point may be empty but not both. Underscores may follow any digit, the
+	rule `parse_u64` applies, in all three digit runs.
+
+	The result is correctly rounded, and what `fmt` prints this parses to the
+	same value. Parsing is in the "C" numeric locale, so a program that sets a
+	decimal-comma locale for its own C code still parses `1.5` as one and a
+	half. It allocates nothing, however long the text.
+
+	Infinities and NaNs are not spellable; a caller that needs them tests for the
+	words itself. A finite spelling past the largest `f64` is `Overflow`; one
+	too small for the smallest subnormal rounds to a signed zero.
+
+	Making that locale can fail, which panics here; `try_parse_f64` reports it.
+*/
 // The lexer takes underscores in a written literal's mantissa but not its
 // exponent; that asymmetry carries no reason this package can see, so one rule
 // covers all three digit runs here.
@@ -106,9 +122,11 @@ parse_f64 :: proc(text: string_view) -> Result(f64, Parse_Error) {
 	}
 }
 
-/// What can stop a float conversion other than its text: the "C" numeric
-/// locale it runs in could not be made. `Out_Of_Memory` when that was an
-/// allocation failure, `Unavailable` otherwise.
+/**
+	What can stop a float conversion other than its text: the "C" numeric
+	locale it runs in could not be made. `Out_Of_Memory` when that was an
+	allocation failure, `Unavailable` otherwise.
+*/
 // `core:fmt` has the same two answers for spelling a float, as its own type
 // because neither package imports the other.
 Backend_Error :: enum {
@@ -116,8 +134,10 @@ Backend_Error :: enum {
 	Unavailable,
 }
 
-/// `parse_f64`, answering a `Backend_Error` where that panics. Every other
-/// answer is the same.
+/**
+	`parse_f64`, answering a `Backend_Error` where that panics. Every other
+	answer is the same.
+*/
 // standard-library "`core:strconv`": the shared fallible conversion that
 // `core:encoding/json` reads numbers with.
 //

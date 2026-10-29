@@ -1,17 +1,21 @@
-/// Borrowing iterators: split, fields, and lines.
-///
-/// None of these allocates. Every part borrows the text it was built from, so it
-/// cannot outlive it — which is exactly what a `string_view` already promises.
-/// Each is an ordinary iteration protocol implementation, so `foreach` walks it
-/// and generic code sees the same `Element`/`Iterator`/`iter`/`next` members a
-/// built-in container contributes.
+/**
+	Borrowing iterators: split, fields, and lines.
+
+	None of these allocates. Every part borrows the text it was built from, so it
+	cannot outlive it — which is exactly what a `string_view` already promises.
+	Each is an ordinary iteration protocol implementation, so `foreach` walks it
+	and generic code sees the same `Element`/`Iterator`/`iter`/`next` members a
+	built-in container contributes.
+*/
 // standard-library "Borrowing transformations and iterators".
 @(public)
 package strings;
 
-/// Every part between occurrences of `separator`, left to right. A trailing
-/// separator therefore yields a final empty part, and an empty separator yields
-/// the whole text once.
+/**
+	Every part between occurrences of `separator`, left to right. A trailing
+	separator therefore yields a final empty part, and an empty separator yields
+	the whole text once.
+*/
 split :: proc(text: string_view, separator: string_view) -> Split_Iterator {
 	return Split_Iterator{text, separator, false};
 }
@@ -46,8 +50,10 @@ impl Split_Iterator {
 	}
 }
 
-/// Runs of non-whitespace, with every run of Unicode White_Space between them
-/// discarded. Empty and all-whitespace text yield nothing.
+/**
+	Runs of non-whitespace, with every run of Unicode White_Space between them
+	discarded. Empty and all-whitespace text yield nothing.
+*/
 fields :: proc(text: string_view) -> Fields_Iterator {
 	return Fields_Iterator{text};
 }
@@ -87,8 +93,10 @@ impl Fields_Iterator {
 	}
 }
 
-/// Lines separated by `\n` or `\r\n`, with the ending removed. A final
-/// unterminated line is yielded; a final ending is not followed by an empty line.
+/**
+	Lines separated by `\n` or `\r\n`, with the ending removed. A final
+	unterminated line is yielded; a final ending is not followed by an empty line.
+*/
 lines :: proc(text: string_view) -> Lines_Iterator {
 	return Lines_Iterator{text, false};
 }

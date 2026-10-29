@@ -9,19 +9,21 @@ import "core:io";
 import "core:mem";
 import "core:strings";
 
-/// A streaming writer into `W`. It borrows the output and the caller's buffer,
-/// and keeps its nesting inline, so it allocates nothing of its own.
-///
-/// It checks every call against the document's shape: one root value, a key
-/// before each member's value, and closes that match what is open. The first
-/// failure of any kind, the output's included, is latched: every later call
-/// writes nothing and returns it. `finish` completes the document and flushes
-/// the buffer; after it, `finish` succeeds again without writing, and anything
-/// else is `Invalid_State`. Dropping a writer writes nothing, so an unfinished
-/// document can be left with bytes still in the buffer.
-///
-/// A failed write may leave part of a document in the output; nothing is
-/// rolled back.
+/**
+	A streaming writer into `W`. It borrows the output and the caller's buffer,
+	and keeps its nesting inline, so it allocates nothing of its own.
+
+	It checks every call against the document's shape: one root value, a key
+	before each member's value, and closes that match what is open. The first
+	failure of any kind, the output's included, is latched: every later call
+	writes nothing and returns it. `finish` completes the document and flushes
+	the buffer; after it, `finish` succeeds again without writing, and anything
+	else is `Invalid_State`. Dropping a writer writes nothing, so an unfinished
+	document can be left with bytes still in the buffer.
+
+	A failed write may leave part of a document in the output; nothing is
+	rolled back.
+*/
 Writer :: struct($W: type) {
 	@(private) output:    ^mut W,
 	@(private) buffer:    []mut u8,
@@ -37,9 +39,11 @@ Writer :: struct($W: type) {
 	@(private) failure:   Option(Write_Error),
 }
 
-/// A writer into `output`, through `buffer`, which must not be empty. Bytes
-/// reach `output` when the buffer fills and at `finish`; a span longer than the
-/// buffer goes straight through.
+/**
+	A writer into `output`, through `buffer`, which must not be empty. Bytes
+	reach `output` when the buffer fills and at `finish`; a span longer than the
+	buffer goes straight through.
+*/
 writer :: proc(
 	output: ^mut $W, buffer: []mut u8, options: Write_Options = {},
 ) -> Result(Writer(W), Write_Error) where io.Writer(W) {
@@ -54,9 +58,11 @@ writer :: proc(
 	});
 }
 
-/// The JSON text of `value` as an owned string from `allocator`: compact
-/// unless the options say otherwise. The output is assembled in memory and
-/// copied once into the string.
+/**
+	The JSON text of `value` as an owned string from `allocator`: compact
+	unless the options say otherwise. The output is assembled in memory and
+	copied once into the string.
+*/
 stringify :: proc(
 	value: Value,
 	allocator: Allocator = mem.default_allocator(),
@@ -109,8 +115,10 @@ impl Writer($W) {
 		return self.emit(colon);
 	}
 
-	/// Quoted, with `"`, `\`, and the control characters escaped; every other
-	/// character is written as UTF-8.
+	/**
+		Quoted, with `"`, `\`, and the control characters escaped; every other
+		character is written as UTF-8.
+	*/
 	string :: proc(self: inout, text: string_view) -> Status(Write_Error) where io.Writer(W) {
 		self.start_value() or_return;
 		self.quoted(text) or_return;
@@ -141,9 +149,11 @@ impl Writer($W) {
 		return self.scalar(spelled.bytes[:spelled.used]);
 	}
 
-	/// The shortest spelling that reads back as `value`, as `fmt` prints it,
-	/// with negative zero kept. A NaN or an infinity is `Non_Finite`, and is
-	/// refused before anything is written.
+	/**
+		The shortest spelling that reads back as `value`, as `fmt` prints it,
+		with negative zero kept. A NaN or an infinity is `Non_Finite`, and is
+		refused before anything is written.
+	*/
 	f64 :: proc(self: inout, value: f64) -> Status(Write_Error) where io.Writer(W) {
 		self.check() or_return;
 		if (value != value || value > 1.7976931348623157e308 || value < -1.7976931348623157e308) {
@@ -164,9 +174,11 @@ impl Writer($W) {
 		return self.scalar(value.spelling.bytes());
 	}
 
-	/// `value` and everything inside it, in order, repeated keys and number
-	/// spellings kept. Its containers count toward the depth limit on top of
-	/// those already open here.
+	/**
+		`value` and everything inside it, in order, repeated keys and number
+		spellings kept. Its containers count toward the depth limit on top of
+		those already open here.
+	*/
 	value :: proc(self: inout, value: Value) -> Status(Write_Error) where io.Writer(W) {
 		document := value.document;
 		// Where each container this call opened ends, innermost last.
@@ -200,8 +212,10 @@ impl Writer($W) {
 		}
 	}
 
-	/// Completes the document: the root must be written and every container
-	/// closed. Flushes the buffer to the output, and seals the writer.
+	/**
+		Completes the document: the root must be written and every container
+		closed. Flushes the buffer to the output, and seals the writer.
+	*/
 	finish :: proc(self: inout) -> Status(Write_Error) where io.Writer(W) {
 		switch (self.failure) {
 		case .some(error): return .err(error);

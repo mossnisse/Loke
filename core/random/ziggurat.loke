@@ -1,14 +1,16 @@
-/// `normal` and `exponential` by the ziggurat method (Marsaglia and Tsang, "The
-/// Ziggurat Method for Generating Random Variables", 2000), with 256 layers.
-///
-/// Each layer is a strip of equal area V under the density, X[i] its right edge
-/// and F[i] the density there, from X[0], the base strip's virtual width, down
-/// to X[256] = 0. A draw picks a layer from its low 8 bits and a position from
-/// its high 52, so no bit serves both (Doornik, "An Improved Ziggurat Method",
-/// 2005). A position left of the next layer's edge is under the curve and is
-/// returned at once, which is about 99% of draws and needs no `core:math`
-/// call; the rest test the wedge against the density with one more `unit`
-/// draw, or sample the tail.
+/**
+	`normal` and `exponential` by the ziggurat method (Marsaglia and Tsang, "The
+	Ziggurat Method for Generating Random Variables", 2000), with 256 layers.
+
+	Each layer is a strip of equal area V under the density, X[i] its right edge
+	and F[i] the density there, from X[0], the base strip's virtual width, down
+	to X[256] = 0. A draw picks a layer from its low 8 bits and a position from
+	its high 52, so no bit serves both (Doornik, "An Improved Ziggurat Method",
+	2005). A position left of the next layer's edge is under the curve and is
+	returned at once, which is about 99% of draws and needs no `core:math`
+	call; the rest test the wedge against the density with one more `unit`
+	draw, or sample the tail.
+*/
 // standard-library "Distributions".
 //
 // The tables are literal so the common path does not depend on the C
@@ -20,9 +22,11 @@ package random;
 
 import "core:math";
 
-/// A normally distributed value: `mean + standard_deviation * z` for a standard
-/// normal `z`. The mean must be finite and the deviation finite and not
-/// negative; a deviation of zero returns the mean after the same draws.
+/**
+	A normally distributed value: `mean + standard_deviation * z` for a standard
+	normal `z`. The mean must be finite and the deviation finite and not
+	negative; a deviation of zero returns the mean after the same draws.
+*/
 normal :: proc(source: inout $G, mean: f64 = 0, standard_deviation: f64 = 1) -> f64
 	where Source(G) {
 	if (!(math.is_finite(mean) && math.is_finite(standard_deviation) && standard_deviation >= 0.0)) {
@@ -31,8 +35,10 @@ normal :: proc(source: inout $G, mean: f64 = 0, standard_deviation: f64 = 1) -> 
 	return mean + standard_deviation*standard_normal(inout source);
 }
 
-/// An exponentially distributed value with `rate`, so of mean `1/rate`. The rate
-/// must be finite and positive.
+/**
+	An exponentially distributed value with `rate`, so of mean `1/rate`. The rate
+	must be finite and positive.
+*/
 exponential :: proc(source: inout $G, rate: f64 = 1) -> f64 where Source(G) {
 	if (!(math.is_finite(rate) && rate > 0.0)) {
 		panic("random.exponential: the rate must be finite and positive");

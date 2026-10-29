@@ -1,11 +1,13 @@
-/// `Bit_Set(Enum)`: a set of enum members held as bits.
-///
-/// A member's bit is its *declaration position*, not its numeric value, so an
-/// enum with holes — `enum { A, B = 4, C = 7 }` — still needs exactly three
-/// bits. That is also why this is not a hardware register layout; use an
-/// integer mask with explicit accessors for one.
-///
-/// The zero value is the empty set.
+/**
+	`Bit_Set(Enum)`: a set of enum members held as bits.
+
+	A member's bit is its *declaration position*, not its numeric value, so an
+	enum with holes — `enum { A, B = 4, C = 7 }` — still needs exactly three
+	bits. That is also why this is not a hardware register layout; use an
+	integer mask with explicit accessors for one.
+
+	The zero value is the empty set.
+*/
 // design.md's catalogue row for flag sets, and "Iterating an enumeration".
 // design.md keeps hardware register layouts on integer masks.
 @(public)
@@ -73,8 +75,10 @@ impl Bit_Set($E) {
 
 	// -------------------------------------------------------- operators --
 
-	/// Union, intersection, difference, and symmetric difference, spelled with the
-	/// integer operators: `|`, `&`, `&~` and `~`. `==` compares two sets.
+	/**
+		Union, intersection, difference, and symmetric difference, spelled with the
+		integer operators: `|`, `&`, `&~` and `~`. `==` compares two sets.
+	*/
 	// `Integral` already gives those operators exactly these meanings on the
 	// underlying words, so each of these is that operator applied word by word.
 	//
@@ -153,8 +157,10 @@ impl Bit_Set($E) {
 	has :: proc(self, at: int) -> bool { return self.words[at/64] & bit(at) != 0; }
 }
 
-/// Iterating a set yields the members it holds, in declaration order. The
-/// iterator holds a copy of the set, not a borrow of it.
+/**
+	Iterating a set yields the members it holds, in declaration order. The
+	iterator holds a copy of the set, not a borrow of it.
+*/
 // A set is one `u64` per 64 members, so for every enum worth writing the copy
 // is no larger than the slice header a borrow would need.
 Bit_Set_Iterator :: struct($E: type) {

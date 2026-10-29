@@ -1708,6 +1708,26 @@ is a warning, so a doc comment cannot be lost by a blank line or by standing
 above something that is not documented. See
 [Using a package without reading its code](open-questions.md#using-a-package-without-reading-its-code-proposal-2026-10-21).
 
+### Long doc comments are `/** */` blocks
+
+A paragraph written as `///` lines repeats its marker on every line, which is
+noise to read and stops an editor from reflowing it as prose. A block suits a
+package overview or a procedure's contract; a line suits a one-line summary, so
+Loke has both. `/**` is the marker Java, Kotlin, JavaScript, Swift, and Rust
+use, and it was already the start of a block comment, so the lexer is
+unchanged and no code changes meaning but the comments written `/**`, of which
+there were none. A new opener such as `/#` would have been a third comment
+syntax to learn. The text drops the indentation its lines share instead of
+following Javadoc's ` * ` on every line, which would bring the repeated marker
+back. `/***` and `/**/` stay ordinary, as `////` does, so a banner of stars is
+never documentation.
+
+The bundled packages write a doc comment of one line with `///` and a longer
+one as a block, with its text indented one tab past `/**` and the `*/` on a line
+of its own. The [interface file](compiler-guide.md#interface-files) follows the
+same rule from the text alone, so it reads like the source. `-fmt` changes only
+whitespace, so it does not choose between the forms.
+
 ### `transmute` is a procedure in `core:unsafe`, not an operator
 
 Bit reinterpretation uses `unsafe.transmute(T, value)`. Types are already call

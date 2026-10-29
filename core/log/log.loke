@@ -1,13 +1,15 @@
-/// Logging over the build-selected provider.
-///
-/// A `Logger` is an ordinary service handle: a `dyn mut` view of a sink, the same
-/// shape `fmt.Writer` has. Nothing about it is compiler-known. What the
-/// program selects is which one the package-level procedures below dispatch to,
-/// and `-log-level` decides which of them have a body at all.
-///
-/// There is no scoped or package-local override of the program logger. A package
-/// that needs a different sink, captured test output, or request-specific fields
-/// takes a `Logger` parameter or keeps one in a state object.
+/**
+	Logging over the build-selected provider.
+
+	A `Logger` is an ordinary service handle: a `dyn mut` view of a sink, the same
+	shape `fmt.Writer` has. Nothing about it is compiler-known. What the
+	program selects is which one the package-level procedures below dispatch to,
+	and `-log-level` decides which of them have a body at all.
+
+	There is no scoped or package-local override of the program logger. A package
+	that needs a different sink, captured test output, or request-specific fields
+	takes a `Logger` parameter or keeps one in a state object.
+*/
 // design.md "Build-selected providers"; standard-library "`core:log`".
 @(public)
 package log;
@@ -22,20 +24,26 @@ import "core:unsafe";
 // compares two values of the same enum, and a second nominal type here would
 // make that comparison impossible to write.
 
-/// The severity of a message, which is also `LOKE_LOG_LEVEL`'s type. `Off` is a
-/// threshold only, since nothing logs at it, and it is last so that
-/// `LOKE_LOG_LEVEL <= .Error` is false when logging is compiled out entirely.
+/**
+	The severity of a message, which is also `LOKE_LOG_LEVEL`'s type. `Off` is a
+	threshold only, since nothing logs at it, and it is last so that
+	`LOKE_LOG_LEVEL <= .Error` is false when logging is compiled out entirely.
+*/
 @(intrinsic)
 Level :: enum { Debug, Info, Warning, Error, Off }
 
-/// One logging sink. Any record with this `write` is one; the message carries no
-/// line ending.
+/**
+	One logging sink. Any record with this `write` is one; the message carries no
+	line ending.
+*/
 Sink :: interface($Self: type) {
 	slot write: proc(self: inout Self, level: Level, message: string_view);
 }
 
-/// The handle a program logs through: a view of a sink that lives as long as the
-/// process, since a factory's result is kept for the life of the program.
+/**
+	The handle a program logs through: a view of a sink that lives as long as the
+	process, since a factory's result is kept for the life of the program.
+*/
 Logger :: dyn mut Sink;
 
 // Where a selected logging provider is published. Generated startup writes the
@@ -47,15 +55,19 @@ Logger :: dyn mut Sink;
 @(private, synchronized)
 selected: Option(Logger) = .none;
 
-/// The handle the program is logging through, for code that wants to pass it on
-/// rather than call the package procedures.
+/**
+	The handle the program is logging through, for code that wants to pass it on
+	rather than call the package procedures.
+*/
 current :: proc() -> Logger {
 	return selected or_else standard_logger();
 }
 
-/// The standard logger: one line per record on the process error stream, with
-/// the level in front of it. It is the fallback *and* an ordinary provider — a
-/// build may select `log.standard_logger` explicitly to say so.
+/**
+	The standard logger: one line per record on the process error stream, with
+	the level in front of it. It is the fallback *and* an ordinary provider — a
+	build may select `log.standard_logger` explicitly to say so.
+*/
 // The view is made from a read-only address. `Standard` has no fields, so no
 // write through the view reaches its storage, and the one thing its records
 // share, the error stream, is serialized by `standard_lines` instead. A
@@ -115,9 +127,11 @@ error :: proc(args: ..any_view) {
 	when (LOKE_LOG_LEVEL <= Level.Error) { record(Level.Error, ..args); }
 }
 
-/// Is anything at this level compiled in? A caller with an expensive argument
-/// asks the constant directly in a `when`; this is for a runtime branch over a
-/// level held in a variable. `Off` answers false.
+/**
+	Is anything at this level compiled in? A caller with an expensive argument
+	asks the constant directly in a `when`; this is for a runtime branch over a
+	level held in a variable. `Off` answers false.
+*/
 // The caller with a level in a variable can be handed `Off` from
 // configuration, so `Off` answers false rather than comparing: it is a
 // threshold, there is no procedure that records at it, and nothing logs there.
@@ -125,10 +139,12 @@ enabled :: proc(level: Level) -> bool {
 	return level != Level.Off && LOKE_LOG_LEVEL <= level;
 }
 
-/// A record at a level chosen at runtime, which is what `enabled` above is for:
-/// having branched on a level held in a variable, this is how a caller records
-/// at it without switching over five members to reach one of the four fixed
-/// procedures. An `off` build discards it too.
+/**
+	A record at a level chosen at runtime, which is what `enabled` above is for:
+	having branched on a level held in a variable, this is how a caller records
+	at it without switching over five members to reach one of the four fixed
+	procedures. An `off` build discards it too.
+*/
 // The `when` is the same guard those four carry, asked once for the whole
 // package: `<= Error` is false only when logging is compiled out entirely, so
 // an `off` build discards this body too. `enabled` then does the per-level

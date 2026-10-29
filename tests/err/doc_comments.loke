@@ -54,11 +54,24 @@ impl Pair {
 	left_of :: proc(self) -> int { return self.inner.left; }
 }
 
+/**
+	Documented, by a block doc comment.
+*/
+// A maintainer note.
+BLOCK :: 1;
+
+/*** Three stars: an ordinary comment, never reported. */
+/**/
+ORDINARY :: 2;
+
+/** A block above a blank line. */
+
 /// Above a blank line.
 
 //// Four slashes: an ordinary comment, never reported.
 main :: proc() {
 	/// Inside a body.
+	/** Inside a body, as a block. */
 	x := twice(2); /// Sharing its line with code.
 	fmt.println(x, undeclared);
 }

@@ -1,12 +1,14 @@
-/// UTF-8 algorithms and efficient construction.
-///
-/// The built-in `string` already owns validation, byte and rune counts,
-/// comparison, slicing, concatenation, rune iteration and the conversions. This
-/// package adds what those primitives do not: search, trimming, splitting,
-/// joining, and a builder that turns repeated appends into one allocation.
-///
-/// Every index and length here is a **byte offset**. A name says `rune` when it
-/// means a scalar value; nothing in this package counts graphemes.
+/**
+	UTF-8 algorithms and efficient construction.
+
+	The built-in `string` already owns validation, byte and rune counts,
+	comparison, slicing, concatenation, rune iteration and the conversions. This
+	package adds what those primitives do not: search, trimming, splitting,
+	joining, and a builder that turns repeated appends into one allocation.
+
+	Every index and length here is a **byte offset**. A name says `rune` when it
+	means a scalar value; nothing in this package counts graphemes.
+*/
 // standard-library "`core:strings`".
 //
 // The compiler contributes one package-private primitive:
@@ -26,8 +28,10 @@ import "core:mem";
 
 // ------------------------------------------------------------ allocation --
 
-/// A copy of `text` in storage from `allocator`. Failure follows the allocator's
-/// failure policy, like every other implicitly allocating operation.
+/**
+	A copy of `text` in storage from `allocator`. Failure follows the allocator's
+	failure policy, like every other implicitly allocating operation.
+*/
 copy :: proc(text: string_view, allocator: Allocator = mem.default_allocator()) -> string {
 	switch (allocate_string(text, allocator)) {
 	case .ok(copied): return copied;
@@ -117,8 +121,10 @@ index_byte :: proc(text: string_view, value: u8) -> Option(int) {
 	return .none;
 }
 
-/// The byte offset where the scalar value begins. A rune never matches a
-/// continuation byte of another one.
+/**
+	The byte offset where the scalar value begins. A rune never matches a
+	continuation byte of another one.
+*/
 // The loop only visits boundaries.
 index_rune :: proc(text: string_view, value: rune) -> Option(int) {
 	foreach (codepoint, offset in text.rune_offsets()) {
@@ -215,8 +221,10 @@ rune_size :: proc(value: rune) -> int {
 
 // ------------------------------------------------------------- splitting --
 
-/// The two halves around the first occurrence of `separator`, or `.none` when it
-/// does not occur.
+/**
+	The two halves around the first occurrence of `separator`, or `.none` when it
+	does not occur.
+*/
 Cut :: struct { before: string_view, after: string_view }
 
 cut :: proc(text: string_view, separator: string_view) -> Option(Cut) {
@@ -231,17 +239,21 @@ cut :: proc(text: string_view, separator: string_view) -> Option(Cut) {
 // does. An offset from `index`, `cut`, or `rune_offsets()` always qualifies.
 // These are for one that may not: read from input, or computed by arithmetic.
 
-/// `text[low:high]`, or `.none` where that slice would panic: a bound out of
-/// range, `low` after `high`, or a bound inside a code point.
+/**
+	`text[low:high]`, or `.none` where that slice would panic: a bound out of
+	range, `low` after `high`, or a bound inside a code point.
+*/
 try_slice :: proc(text: string_view, low, high: int) -> Option(string_view) {
 	if (low < 0 || low > high || high > text.len()) { return .none; }
 	if (!is_boundary(text, low) || !is_boundary(text, high)) { return .none; }
 	return text[low:high];
 }
 
-/// The nearest boundary at or before `offset`, so `text[:floor_boundary(text, n)]`
-/// is the longest prefix of at most `n` bytes. Past the end, the end; a negative
-/// offset panics, as an index does.
+/**
+	The nearest boundary at or before `offset`, so `text[:floor_boundary(text, n)]`
+	is the longest prefix of at most `n` bytes. Past the end, the end; a negative
+	offset panics, as an index does.
+*/
 floor_boundary :: proc(text: string_view, offset: int) -> int {
 	if (offset >= text.len()) { return text.len(); }
 	at := offset;
@@ -249,8 +261,10 @@ floor_boundary :: proc(text: string_view, offset: int) -> int {
 	return at;
 }
 
-/// The nearest boundary at or after `offset`. Past the end, the end; a negative
-/// offset panics, as an index does.
+/**
+	The nearest boundary at or after `offset`. Past the end, the end; a negative
+	offset panics, as an index does.
+*/
 ceil_boundary :: proc(text: string_view, offset: int) -> int {
 	if (offset >= text.len()) { return text.len(); }
 	at := offset;
@@ -317,8 +331,10 @@ repeat :: proc(
 	return builder.finish();
 }
 
-/// Replaces up to `limit` non-overlapping occurrences, or every one when `limit`
-/// is negative. An empty `old` matches nowhere, which keeps the result finite.
+/**
+	Replaces up to `limit` non-overlapping occurrences, or every one when `limit`
+	is negative. An empty `old` matches nowhere, which keeps the result finite.
+*/
 replace :: proc(
 	text: string_view,
 	old: string_view,
@@ -343,8 +359,10 @@ replace :: proc(
 	return builder.finish();
 }
 
-/// `text` in upper case. Only ASCII letters change: every non-ASCII scalar value
-/// is copied as it stands.
+/**
+	`text` in upper case. Only ASCII letters change: every non-ASCII scalar value
+	is copied as it stands.
+*/
 // ponytail: ASCII case only. Full Unicode case conversion needs the mapping
 // tables of a `core:unicode` package, and guessing a subset of them would be
 // worse than passing the rest through unchanged. The signature already returns

@@ -267,6 +267,25 @@ checklist.
 
 ### Added
 
+- A block comment starting with `/**` is a
+  [doc comment](design.md#doc-comments), for documentation longer than a
+  line. Its text drops the indentation its lines share, so it needs no `*` on
+  each line; `/***` and `/**/` stay ordinary comments:
+
+  ```loke
+  /**
+  	Files, directories, and file metadata.
+
+  	A native error number reaches a caller only through `io.native_code_of`.
+  */
+  package fs;
+  ```
+
+  A `/**` comment written before this release is now shown by `-doc` and
+  hover, and is warned about with `L0260` when it documents nothing. The
+  bundled packages write their doc comments longer than a line this way, and
+  `api.loki` shows them as `/* */` blocks.
+
 - `fs.replace_atomic` and `fs.replace_atomic_text` replace a file so that a
   reader, or the program after a crash or power loss, sees either the whole
   previous file or the whole new one, and on success the new one is durable

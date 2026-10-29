@@ -343,11 +343,23 @@ x: int; // trailing comment
 
 ### Doc comments
 
-A line comment starting with `///`, but not `////`, is a **doc comment**. Its
-text excludes the `///` and one following space, if present. Doc comments have
-no effect on the program. Documentation tools, including
-[`lokec -doc`](compiler-guide.md#common-options) and language-server hover, show
-only these comments for the documented item.
+A **doc comment** is either a line comment starting with `///`, but not
+`////`, or a block comment starting with `/**`, but not `/***`, other than the
+empty `/**/`. Doc comments have no effect on the program. Documentation tools,
+including [`lokec -doc`](compiler-guide.md#common-options) and language-server
+hover, show only these comments for the documented item.
+
+A line doc comment's text excludes the `///` and one following space, if
+present. A block doc comment's text is the text between `/**` and `*/`, taken
+line by line:
+
+- the first line loses its leading spaces and tabs;
+- each later line loses the longest run of spaces and tabs that begins every
+  later line that is not blank;
+- each line loses its trailing whitespace;
+- blank lines at the start and end are dropped.
+
+A block doc comment nests like any block comment, so its text may contain one.
 
 These items can be documented:
 
@@ -367,7 +379,11 @@ comment inside a procedure body, on a line with code, or separated from the item
 by a blank line.
 
 ```loke
-/// Text measured in bytes.
+/**
+	Text measured in bytes.
+
+	Every count is of UTF-8 code units, not characters.
+*/
 package measure;
 
 /// The number of bytes in `text`.

@@ -5,13 +5,15 @@ package thread;
 
 import "core:unsafe";
 
-/// A bounded queue between tasks, owning its queued items. A task reaches it
-/// through an endpoint that borrows it: a `Sender` sends and a `Receiver`
-/// receives. `split` makes the first of each together, and `fork` adds more.
-///
-/// A side closes for good when its last endpoint drops, or both do at
-/// `close`. Dropping the channel drops the items still queued. It is
-/// move-only and has no zero value.
+/**
+	A bounded queue between tasks, owning its queued items. A task reaches it
+	through an endpoint that borrows it: a `Sender` sends and a `Receiver`
+	receives. `split` makes the first of each together, and `fork` adds more.
+
+	A side closes for good when its last endpoint drops, or both do at
+	`close`. Dropping the channel drops the items still queued. It is
+	move-only and has no zero value.
+*/
 Channel :: struct($T: type) {
 	// Required, so a channel has no zero value: `init` makes one.
 	@(private, required) state: Monitor(Channel_State(T)),
@@ -61,12 +63,16 @@ impl Channel_State($T) {
 	}
 }
 
-/// Why a send handed its item back: a side of the channel or ring has closed,
-/// or, for `try_send` alone, the queue is full. Dropping it drops the item.
+/**
+	Why a send handed its item back: a side of the channel or ring has closed,
+	or, for `try_send` alone, the queue is full. Dropping it drops the item.
+*/
 Unsent :: union($T: type) { closed: T, full: T }
 
-/// What `try_receive` found: an item, an empty queue that more may reach, or
-/// the end of the stream.
+/**
+	What `try_receive` found: an item, an empty queue that more may reach, or
+	the end of the stream.
+*/
 Received :: union($T: type) { item: T, empty, closed }
 
 /// Sends into the channel it borrows. Move-only; `fork` makes another.
@@ -74,21 +80,27 @@ Sender :: move_only struct($T: type) @(wakes_on_drop) {
 	@(private) channel: ^Channel(T),
 }
 
-/// Receives from the channel it borrows. Move-only; `fork` makes another.
-/// `foreach (item in receiver)` receives until the stream ends.
+/**
+	Receives from the channel it borrows. Move-only; `fork` makes another.
+	`foreach (item in receiver)` receives until the stream ends.
+*/
 Receiver :: move_only struct($T: type) @(wakes_on_drop) {
 	@(private) channel: ^Channel(T),
 }
 
-/// What `foreach` over a `Receiver` steps with. It borrows the receiver, so
-/// the receiving side stays open while it can still receive.
+/**
+	What `foreach` over a `Receiver` steps with. It borrows the receiver, so
+	the receiving side stays open while it can still receive.
+*/
 Receiver_Iterator :: struct($T: type) {
 	@(private) receiver: ^Receiver(T),
 }
 
 impl Channel($T) {
-	/// A channel holding at most `capacity` items, from the default allocator.
-	/// A capacity below one panics.
+	/**
+		A channel holding at most `capacity` items, from the default allocator.
+		A capacity below one panics.
+	*/
 	init :: proc(capacity: int) -> Channel(T) {
 		if (capacity < 1) { panic("thread.Channel capacity must be positive"); }
 		channel := Channel(T){state = {}};
@@ -96,8 +108,10 @@ impl Channel($T) {
 		return channel;
 	}
 
-	/// The first sender and receiver, made together. Splitting again, or after
-	/// `close`, panics.
+	/**
+		The first sender and receiver, made together. Splitting again, or after
+		`close`, panics.
+	*/
 	split :: proc(self: ^) -> (sender: Sender(T), receiver: Receiver(T)) {
 		{
 			state := self.state.lock();
@@ -111,9 +125,11 @@ impl Channel($T) {
 		return {Sender(T){self}, Receiver(T){self}};
 	}
 
-	/// Closes both sides for good and wakes every waiter: sends fail from now
-	/// on, and receivers drain what is queued, then see the end. Closing again
-	/// does nothing more. Closing before `split` prevents splitting.
+	/**
+		Closes both sides for good and wakes every waiter: sends fail from now
+		on, and receivers drain what is queued, then see the end. Closing again
+		does nothing more. Closing before `split` prevents splitting.
+	*/
 	close :: proc(self: ^) {
 		state := self.state.lock();
 		closing := &mut state.get();
@@ -135,8 +151,10 @@ queue_of :: proc(state: ^mut Channel_State($T)) -> ^mut Channel_State(T) {
 MAX_ENDPOINTS :: 0x7FFF_FFFF_FFFF_FFFF;
 
 impl Sender($T) {
-	/// Another sender on the same channel, keeping the sending side open while
-	/// either lives. It borrows the channel, not this sender.
+	/**
+		Another sender on the same channel, keeping the sending side open while
+		either lives. It borrows the channel, not this sender.
+	*/
 	fork :: proc(self: ^) -> Sender(T) {
 		{
 			state := self.channel.state.lock();
@@ -146,8 +164,10 @@ impl Sender($T) {
 		return Sender(T){self.channel};
 	}
 
-	/// Waits while the queue is full and both sides are open, then commits the
-	/// item. If either side has closed, the item comes back as `.closed`.
+	/**
+		Waits while the queue is full and both sides are open, then commits the
+		item. If either side has closed, the item comes back as `.closed`.
+	*/
 	send :: proc(self: ^, @(cross_thread, escape=static) value: move T) -> Status(Unsent(T)) {
 		state := self.channel.state.lock_when(Channel_State(T).can_send) or_else
 			return .err(.closed(move(value)));
@@ -156,8 +176,10 @@ impl Sender($T) {
 		return .ok;
 	}
 
-	/// Commits the item without waiting: `.full` hands it back from a full,
-	/// open queue, and `.closed` from a closed one, which takes precedence.
+	/**
+		Commits the item without waiting: `.full` hands it back from a full,
+		open queue, and `.closed` from a closed one, which takes precedence.
+	*/
 	try_send :: proc(self: ^, @(cross_thread, escape=static) value: move T) -> Status(Unsent(T)) {
 		state := self.channel.state.lock();
 		if (state.read().closed()) { return .err(.closed(move(value))); }
@@ -180,8 +202,10 @@ impl Sender($T) {
 impl Receiver($T) {
 	Element :: T;
 
-	/// Another receiver on the same channel, keeping the receiving side open
-	/// while either lives. It borrows the channel, not this receiver.
+	/**
+		Another receiver on the same channel, keeping the receiving side open
+		while either lives. It borrows the channel, not this receiver.
+	*/
 	fork :: proc(self: ^) -> Receiver(T) {
 		{
 			state := self.channel.state.lock();
@@ -191,16 +215,20 @@ impl Receiver($T) {
 		return Receiver(T){self.channel};
 	}
 
-	/// Waits while the queue is empty and the sending side is open, then takes
-	/// the oldest item; `.none` once the sending side has closed and the queue
-	/// is empty.
+	/**
+		Waits while the queue is empty and the sending side is open, then takes
+		the oldest item; `.none` once the sending side has closed and the queue
+		is empty.
+	*/
 	receive :: proc(self: ^) -> Option(T) {
 		state := self.channel.state.lock_when(Channel_State(T).can_receive) or_else return .none;
 		return queue_of(&mut state.get()).pop();
 	}
 
-	/// Takes the oldest item without waiting: `.empty` means more may come,
-	/// and `.closed` that the sending side has closed and nothing is queued.
+	/**
+		Takes the oldest item without waiting: `.empty` means more may come,
+		and `.closed` that the sending side has closed and nothing is queued.
+	*/
 	try_receive :: proc(self: ^) -> Received(T) {
 		state := self.channel.state.lock();
 		if (state.read().count > 0) {
@@ -211,8 +239,10 @@ impl Receiver($T) {
 		return .empty;
 	}
 
-	/// Receives item by item: each step waits as `receive` does, and the
-	/// loop ends with the stream.
+	/**
+		Receives item by item: each step waits as `receive` does, and the
+		loop ends with the stream.
+	*/
 	iter :: proc(self: ^) -> Receiver_Iterator(T) {
 		return Receiver_Iterator(T){self};
 	}

@@ -1,15 +1,17 @@
-/// JSON text: a fully validating parser into an immutable document, borrowed
-/// views of its values, and a buffered writer over any `io.Writer`.
-///
-/// Input is [RFC 8259](https://www.rfc-editor.org/rfc/rfc8259.txt) JSON with no
-/// extensions: one root value of any kind, UTF-8 with no byte order mark, no
-/// comments, no trailing commas, and only Unicode scalar values in escapes.
-/// Object members keep their order and every occurrence of a key, and numbers
-/// keep their exact spelling until a conversion is asked for.
-///
-/// Every error is an owned value with a byte offset; nothing here borrows the
-/// input to report a failure, and nothing panics on malformed or oversized
-/// input.
+/**
+	JSON text: a fully validating parser into an immutable document, borrowed
+	views of its values, and a buffered writer over any `io.Writer`.
+
+	Input is [RFC 8259](https://www.rfc-editor.org/rfc/rfc8259.txt) JSON with no
+	extensions: one root value of any kind, UTF-8 with no byte order mark, no
+	comments, no trailing commas, and only Unicode scalar values in escapes.
+	Object members keep their order and every occurrence of a key, and numbers
+	keep their exact spelling until a conversion is asked for.
+
+	Every error is an owned value with a byte offset; nothing here borrows the
+	input to report a failure, and nothing panics on malformed or oversized
+	input.
+*/
 // standard-library "`core:encoding/json`".
 //
 // Nothing here is JSON-specific to the language: the document stores offsets
@@ -21,8 +23,10 @@ package json;
 
 import "core:io";
 
-/// What a value is. `null`, an absent member, and a value of another kind are
-/// three different answers, and no accessor turns one kind into another.
+/**
+	What a value is. `null`, an absent member, and a value of another kind are
+	three different answers, and no accessor turns one kind into another.
+*/
 Kind :: enum {
 	Null,
 	Boolean,
@@ -40,14 +44,20 @@ Parse_Code :: enum {
 	Invalid_Syntax,
 	/// The input ended inside a value.
 	Unexpected_End,
-	/// Bytes given to `parse` that are not UTF-8. This one is reported in
-	/// preference to any other error in the input.
+	/**
+		Bytes given to `parse` that are not UTF-8. This one is reported in
+		preference to any other error in the input.
+	*/
 	Invalid_Utf8,
-	/// An escape that is not one of JSON's, or a `\u` escape that is not a
-	/// Unicode scalar value: an unpaired surrogate.
+	/**
+		An escape that is not one of JSON's, or a `\u` escape that is not a
+		Unicode scalar value: an unpaired surrogate.
+	*/
 	Invalid_Escape,
-	/// A number spelled other than JSON spells one: a leading zero, a `+`, a
-	/// point or exponent without digits.
+	/**
+		A number spelled other than JSON spells one: a leading zero, a `+`, a
+		point or exponent without digits.
+	*/
 	Invalid_Number,
 	/// Something other than whitespace after the root value.
 	Trailing_Input,
@@ -58,9 +68,11 @@ Parse_Code :: enum {
 	Out_Of_Memory,
 }
 
-/// A parse failure and the zero-based byte offset it was found at. End of
-/// input is reported at the input's length; an input or options failure at
-/// zero. `position` turns the offset into a line and column.
+/**
+	A parse failure and the zero-based byte offset it was found at. End of
+	input is reported at the input's length; an input or options failure at
+	zero. `position` turns the offset into a line and column.
+*/
 Parse_Error :: struct {
 	code:   Parse_Code,
 	offset: int,
@@ -83,10 +95,12 @@ Access_Code :: enum {
 	Backend_Failure,
 }
 
-/// An access failure, its offset in the input, and for `Wrong_Kind` the two
-/// kinds. A wrong kind or a conversion points at the value; a missing key at
-/// the opening brace of the object searched; a duplicate at the opening quote
-/// of the second matching key. A number made by `number` has offset zero.
+/**
+	An access failure, its offset in the input, and for `Wrong_Kind` the two
+	kinds. A wrong kind or a conversion points at the value; a missing key at
+	the opening brace of the object searched; a duplicate at the opening quote
+	of the second matching key. A number made by `number` has offset zero.
+*/
 Access_Error :: struct {
 	code:     Access_Code,
 	offset:   int,
@@ -96,9 +110,11 @@ Access_Error :: struct {
 
 /// Why writing failed.
 Write_Code :: enum {
-	/// A call the document's shape does not allow at this point: a value where a
-	/// key is due, a close that matches nothing, a second root, `finish` before
-	/// the root is complete, or anything but `finish` after it.
+	/**
+		A call the document's shape does not allow at this point: a value where a
+		key is due, a close that matches nothing, a second root, `finish` before
+		the root is complete, or anything but `finish` after it.
+	*/
 	Invalid_State,
 	/// An empty buffer, a negative limit, or a depth above `MAX_DEPTH`.
 	Invalid_Options,
@@ -121,43 +137,53 @@ Write_Error :: struct {
 
 // ---------------------------------------------------------------- options --
 
-/// The deepest nesting a parser or writer accepts, counting open arrays and
-/// objects; a scalar is at depth zero.
+/**
+	The deepest nesting a parser or writer accepts, counting open arrays and
+	objects; a scalar is at depth zero.
+*/
 MAX_DEPTH :: 256;
 
-/// Limits on one parse. A zero field selects its default: 64 MiB of input, four
-/// million values (an object's keys count), and `MAX_DEPTH`. A positive field
-/// lowers or raises the byte and value limits, and lowers the depth limit.
-///
-/// The limits bound the document's logical contents, not peak memory: growing
-/// storage, and capacity a reused document keeps, come on top.
+/**
+	Limits on one parse. A zero field selects its default: 64 MiB of input, four
+	million values (an object's keys count), and `MAX_DEPTH`. A positive field
+	lowers or raises the byte and value limits, and lowers the depth limit.
+
+	The limits bound the document's logical contents, not peak memory: growing
+	storage, and capacity a reused document keeps, come on top.
+*/
 Parse_Options :: struct {
 	max_bytes: int,
 	max_nodes: int,
 	max_depth: int,
 }
 
-/// How a writer lays its output out, and what it allows. A zero limit selects
-/// its default: `MAX_DEPTH` and 64 MiB of output.
-///
-/// Compact output has no whitespace at all. Pretty output puts every member and
-/// element on a line of its own, indented by two spaces per level, with `LF`
-/// line endings and a space after each key's colon. Neither adds a final newline.
+/**
+	How a writer lays its output out, and what it allows. A zero limit selects
+	its default: `MAX_DEPTH` and 64 MiB of output.
+
+	Compact output has no whitespace at all. Pretty output puts every member and
+	element on a line of its own, indented by two spaces per level, with `LF`
+	line endings and a space after each key's colon. Neither adds a final newline.
+*/
 Write_Options :: struct {
 	pretty:    bool,
 	max_depth: int,
 	max_bytes: int,
 }
 
-/// Where an offset falls in its text, both counted from one. The column counts
-/// bytes, so it is the offset from the start of the line plus one.
+/**
+	Where an offset falls in its text, both counted from one. The column counts
+	bytes, so it is the offset from the start of the line plus one.
+*/
 Position :: struct {
 	line:   int,
 	column: int,
 }
 
-/// The line and column of `offset` in `source`. Lines end at `\n`; an offset
-/// past the end is placed at the end.
+/**
+	The line and column of `offset` in `source`. Lines end at `\n`; an offset
+	past the end is placed at the end.
+*/
 position :: proc(source: []u8, offset: int) -> Position {
 	line := 1;
 	start := 0;

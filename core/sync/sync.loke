@@ -1,10 +1,12 @@
-/// `Atomic(T)`, `fence`, `Once`, and `Lazy(T)`.
-///
-/// **Ordering arguments are `$` parameters throughout**, so an ordering must
-/// be a constant at the call.
-///
-/// Data races are not checked: a race is undefined behaviour, and there are no
-/// implicit `Send`/`Sync` interfaces.
+/**
+	`Atomic(T)`, `fence`, `Once`, and `Lazy(T)`.
+
+	**Ordering arguments are `$` parameters throughout**, so an ordering must
+	be a constant at the call.
+
+	Data races are not checked: a race is undefined behaviour, and there are no
+	implicit `Send`/`Sync` interfaces.
+*/
 // design.md "Concurrency and the memory model", design.md "Atomic operations
 // and Once".
 //
@@ -31,32 +33,38 @@ import "core:unsafe";
 // because a contributed name and a source declaration share one package scope
 // and two `fence`s would be a redeclaration.
 
-/// The ordering an atomic operation asks for: `base:runtime`'s enum, so an
-/// ordering forwarded through a `$` parameter keeps meaning what it meant.
+/**
+	The ordering an atomic operation asks for: `base:runtime`'s enum, so an
+	ordering forwarded through a `$` parameter keeps meaning what it meant.
+*/
 @(intrinsic)
 Memory_Order :: enum { Relaxed, Acquire, Release, Acquire_Release, Sequentially_Consistent }
 
-/// The atomic types are `bool`, the integer and rune types, an enum over a
-/// supported integer, and any pointer. The arithmetic operations are integers
-/// only.
-///
-/// The zero value is `T`'s zero, and nothing has to run before it is usable.
-///
-/// `move_only`, because a copy of an atomic is a *non-atomic* read of it that
-/// hands back a second, unrelated atomic. A record holding one is move-only
-/// too.
+/**
+	The atomic types are `bool`, the integer and rune types, an enum over a
+	supported integer, and any pointer. The arithmetic operations are integers
+	only.
+
+	The zero value is `T`'s zero, and nothing has to run before it is usable.
+
+	`move_only`, because a copy of an atomic is a *non-atomic* read of it that
+	hands back a second, unrelated atomic. A record holding one is move-only
+	too.
+*/
 // Integers only is design.md's own rule that an enum member is a named
 // constant rather than a number with a name. design.md propagates `move_only`
 // structurally, so `Once` below is move-only too.
 Atomic :: move_only struct($T: type) {
-	/// Public, because a caller that has exclusive access — during
-	/// construction, or after joining every other thread — reads and writes it
-	/// without paying for a synchronizing operation. Every *atomic* access goes
-	/// through the methods below.
-	///
-	/// Synchronized: outside this package, `value` is reached only through an
-	/// owner nothing borrows, or through `^mut`, `[]mut`, or `inout`, never
-	/// through a read-only `^`, where an atomic operation may be writing it.
+	/**
+		Public, because a caller that has exclusive access — during
+		construction, or after joining every other thread — reads and writes it
+		without paying for a synchronizing operation. Every *atomic* access goes
+		through the methods below.
+
+		Synchronized: outside this package, `value` is reached only through an
+		owner nothing borrows, or through `^mut`, `[]mut`, or `inout`, never
+		through a read-only `^`, where an atomic operation may be writing it.
+	*/
 	@(public, synchronized) value: T,
 }
 
@@ -85,9 +93,11 @@ impl Atomic($T) {
 		return atomic_exchange(&self.value, value, order);
 	}
 
-	/// Writes `desired` if the value is `expected`. `swapped` says whether the
-	/// write happened, and `observed` is what was there — the value replaced when
-	/// it swapped, and the value that stopped it when it did not.
+	/**
+		Writes `desired` if the value is `expected`. `swapped` says whether the
+		write happened, and `observed` is what was there — the value replaced when
+		it swapped, and the value that stopped it when it did not.
+	*/
 	// Both orderings stay constants across this boundary, which is what the two
 	// `$` parameters are for.
 	compare_exchange :: proc(
@@ -139,18 +149,22 @@ impl Atomic($T) {
 	}
 }
 
-/// A standalone barrier. `.Relaxed` orders nothing and is rejected: a fence that
-/// does nothing is a mistake, not a no-op.
+/**
+	A standalone barrier. `.Relaxed` orders nothing and is rejected: a fence that
+	does nothing is a mistake, not a no-op.
+*/
 fence :: proc($order: Memory_Order = Memory_Order.Sequentially_Consistent) {
 	atomic_fence(order);
 }
 
-/// The way to guard lazy setup: file-scope and `static` storage are initialized
-/// by constants, so anything that must *run* runs on first use instead.
-///
-/// The zero value is an unfired `Once`, which is what lets it live in `static`
-/// storage with no initializer. It works wherever it can be reached: in
-/// `static` storage, and behind the `^T` a `Shared(T)` hands out.
+/**
+	The way to guard lazy setup: file-scope and `static` storage are initialized
+	by constants, so anything that must *run* runs on first use instead.
+
+	The zero value is an unfired `Once`, which is what lets it live in `static`
+	storage with no initializer. It works wherever it can be reached: in
+	`static` storage, and behind the `^T` a `Shared(T)` hands out.
+*/
 // design.md "Program entry and exit" names `Once` for this, and design.md
 // "Storage modifiers" gives static storage constant initialization. `do` fires
 // through a read-only `^` receiver, as every atomic operation does.
@@ -174,13 +188,15 @@ ONCE_DONE :: u32(2);
 ONCE_POISONED :: u32(3);
 
 impl Once {
-	/// Runs `action` exactly once across every thread that reaches this. A caller
-	/// that arrives while another thread is still running it waits, so `do`
-	/// returning means the action has *completed*, not merely started. Whatever
-	/// the action wrote is visible to every thread that returns from `do`.
-	///
-	/// An action must not reach its own `once`: a re-entrant `do` waits for itself
-	/// and never returns, and nothing reports it.
+	/**
+		Runs `action` exactly once across every thread that reaches this. A caller
+		that arrives while another thread is still running it waits, so `do`
+		returning means the action has *completed*, not merely started. Whatever
+		the action wrote is visible to every thread that returns from `do`.
+
+		An action must not reach its own `once`: a re-entrant `do` waits for itself
+		and never returns, and nothing reports it.
+	*/
 	// The winner publishes with a release store and every other thread observes
 	// with an acquire load.
 	//
@@ -196,8 +212,10 @@ impl Once {
 		finished = true;
 	}
 
-	/// Has the action completed? A `false` may be stale the moment it is read;
-	/// only `true` is a durable answer.
+	/**
+		Has the action completed? A `false` may be stale the moment it is read;
+		only `true` is a durable answer.
+	*/
 	is_done :: proc(self: ^) -> bool {
 		return self.state.load(Memory_Order.Acquire) == ONCE_DONE;
 	}
@@ -230,13 +248,15 @@ impl Once {
 	}
 }
 
-/// A `T` made on first use, by whichever thread asks first, and then shared by
-/// every thread that asks. It is a `Once` holding the value it guards, so lazy
-/// setup writes no file-scope storage of its own and a task may run it.
-///
-/// The zero value is empty, whatever `T` is, so a `Lazy` may live in `static`
-/// storage with no initializer. Like `Once`, it works behind the `^T` a
-/// `Shared(T)` hands out, and it is move-only.
+/**
+	A `T` made on first use, by whichever thread asks first, and then shared by
+	every thread that asks. It is a `Once` holding the value it guards, so lazy
+	setup writes no file-scope storage of its own and a task may run it.
+
+	The zero value is empty, whatever `T` is, so a `Lazy` may live in `static`
+	storage with no initializer. Like `Once`, it works behind the `^T` a
+	`Shared(T)` hands out, and it is move-only.
+*/
 // design.md "Atomic operations and Once". The value is synchronized: this
 // package writes it once, before publishing it, and only reads it after, so a
 // task that calls `get` on a global `Lazy` writes no global
@@ -247,19 +267,21 @@ Lazy :: struct($T: type) {
 }
 
 impl Lazy($T) {
-	/// The value, made by calling `init` if no thread has yet. A caller that
-	/// arrives while another thread is still making it waits, so the value is
-	/// always complete. If `init` panics, the `Lazy` is poisoned as a `Once`
-	/// is: every later call, and every call waiting on it, panics.
-	///
-	/// `init` must not reach this `Lazy`: a re-entrant `get` waits for itself
-	/// and never returns, and nothing reports it.
-	///
-	/// Any thread may reach the value, as long as the process runs, so it is
-	/// checked as an item a channel sends is: `init` borrows only what lasts
-	/// that long, and the value it makes borrows no `thread_local` storage,
-	/// holds nothing `@(thread_affine)`, and owns nothing in a region that ends
-	/// sooner.
+	/**
+		The value, made by calling `init` if no thread has yet. A caller that
+		arrives while another thread is still making it waits, so the value is
+		always complete. If `init` panics, the `Lazy` is poisoned as a `Once`
+		is: every later call, and every call waiting on it, panics.
+
+		`init` must not reach this `Lazy`: a re-entrant `get` waits for itself
+		and never returns, and nothing reports it.
+
+		Any thread may reach the value, as long as the process runs, so it is
+		checked as an item a channel sends is: `init` borrows only what lasts
+		that long, and the value it makes borrows no `thread_local` storage,
+		holds nothing `@(thread_affine)`, and owns nothing in a region that ends
+		sooner.
+	*/
 	// The result borrows the receiver through the payload binding below, which
 	// carries the receiver's provenance; only the one write goes through an
 	// unchecked address, as `Mutex`'s guard does, after `publish`'s parameter
@@ -277,8 +299,10 @@ impl Lazy($T) {
 		}
 	}
 
-	/// Has the value been made? A `false` may be stale the moment it is read;
-	/// only `true` is a durable answer.
+	/**
+		Has the value been made? A `false` may be stale the moment it is read;
+		only `true` is a durable answer.
+	*/
 	is_done :: proc(self: ^) -> bool {
 		return self.once.is_done();
 	}

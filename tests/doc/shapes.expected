@@ -31,6 +31,23 @@ Opaque to importers.
 Facing :: enum { North, South }
 ```
 
+## Turn
+
+```loke
+Turn :: enum { Left, Right }
+```
+
+A block doc comment loses the indentation its lines share.
+
+Its blank lines stay,
+	and so does deeper indentation.
+
+## Lane
+
+```loke
+Lane :: enum { Inner, Outer }
+```
+
 ## MAX_SIDE
 
 ```loke

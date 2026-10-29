@@ -138,8 +138,9 @@ interface_text :: proc(c: ^Compiler, id: Package_Id) -> (string, bool) {
 	return formatted, true
 }
 
-// `text` with each doc comment written `//`. Every comment of an interface
-// file is for the package's users, so `///` would mark nothing.
+// `text` with each doc comment written `//` or `/*`. Every comment of an
+// interface file is for the package's users, so `///` or `/**` would mark
+// nothing.
 @(private = "file")
 plain_comments :: proc(text: string) -> string {
 	scratch: Compiler
@@ -149,9 +150,9 @@ plain_comments :: proc(text: string) -> string {
 	b := strings.builder_make()
 	at := u32(0)
 	for comment in scratch.sources[0].comments {
-		if is_doc_comment(text[comment.lo:comment.hi]) {
+		if written := text[comment.lo:comment.hi]; is_doc_comment(written) {
 			strings.write_string(&b, text[at:comment.lo])
-			strings.write_string(&b, "//")
+			strings.write_string(&b, written[:2])
 			at = comment.lo + len("///")
 		}
 	}
@@ -1060,15 +1061,26 @@ write_interface_items :: proc(b: ^strings.Builder, a: ^Api_Package, items: []Api
 	}
 }
 
-// `doc`'s lines, each after `///`.
+// `doc` as a `///` line, or as a `/** */` block when it has more than one line,
+// as the bundled packages write it. Text that would open or close a block
+// comment stays in `///` lines.
 @(private = "file")
 write_doc_lines :: proc(b: ^strings.Builder, doc: string, indent := "") {
 	if doc == "" {
 		return
 	}
-	for line in strings.split_lines(doc) {
-		fmt.sbprintln(b, strings.trim_right_space(fmt.tprintf("%s/// %s", indent, line)))
+	lines := strings.split_lines(doc, context.temp_allocator)
+	if len(lines) == 1 || strings.contains(doc, "/*") || strings.contains(doc, "*/") {
+		for line in lines {
+			fmt.sbprintln(b, strings.trim_right_space(fmt.tprintf("%s/// %s", indent, line)))
+		}
+		return
 	}
+	fmt.sbprintfln(b, "%s/**", indent)
+	for line in lines {
+		fmt.sbprintln(b, strings.trim_right_space(fmt.tprintf("%s\t%s", indent, line)))
+	}
+	fmt.sbprintfln(b, "%s*/", indent)
 }
 
 // Where something written at `lo` starts, counting its attributes: each one's
@@ -1130,8 +1142,8 @@ public_struct :: proc(b: ^Api_Builder, record: ^Type_Record, lo: u32) -> string 
 	return strings.to_string(out)
 }
 
-// design.md "Doc comments": the doc comments in the block directly above `at`,
-// one to a line, with their markers removed.
+// design.md "Doc comments": the text of the doc comments in the block directly
+// above `at`, in order, one line of text to a line.
 doc_comment :: proc(c: ^Compiler, at: Span) -> string {
 	source := &c.sources[at.file]
 	first, last := comment_block(source, at.lo)
@@ -1139,17 +1151,68 @@ doc_comment :: proc(c: ^Compiler, at: Span) -> string {
 	defer delete(lines)
 	for comment in source.comments[first:last] {
 		written := source.text[comment.lo:comment.hi]
-		if is_doc_comment(written) {
+		if !is_doc_comment(written) {
+			continue
+		}
+		if strings.has_prefix(written, "///") {
 			written = written[3:]
 			append(&lines, strings.has_prefix(written, " ") ? written[1:] : written)
+		} else {
+			block_doc_lines(&lines, written)
 		}
 	}
 	return strings.join(lines[:], "\n")
 }
 
+// `///` but not `////`, or `/**` but not `/***` or the empty `/**/`.
 @(private = "file")
 is_doc_comment :: proc(written: string) -> bool {
+	if strings.has_prefix(written, "/**") {
+		return !strings.has_prefix(written, "/***") && written != "/**/"
+	}
 	return strings.has_prefix(written, "///") && !strings.has_prefix(written, "////")
+}
+
+// design.md "Doc comments": a block doc comment's lines between `/**` and
+// `*/`, without the indentation the lines after the first share, and without
+// blank lines at either end.
+@(private = "file")
+block_doc_lines :: proc(lines: ^[dynamic]string, written: string) {
+	body := strings.trim_suffix(written[len("/**"):], "*/")
+	written_lines := strings.split_lines(body, context.temp_allocator)
+	for &line in written_lines {
+		line = strings.trim_right_space(line)
+	}
+	margin, found := "", false
+	for line in written_lines[1:] {
+		if line == "" {
+			continue
+		}
+		indent := line[:len(line) - len(strings.trim_left(line, " \t"))]
+		if !found {
+			margin, found = indent, true
+		} else {
+			shared := 0
+			for shared < min(len(margin), len(indent)) && margin[shared] == indent[shared] {
+				shared += 1
+			}
+			margin = margin[:shared]
+		}
+	}
+	// The text after `/**` is not indented like the lines below it.
+	text := make([dynamic]string, context.temp_allocator)
+	append(&text, strings.trim_left(written_lines[0], " \t"))
+	for line in written_lines[1:] {
+		append(&text, line == "" ? line : line[len(margin):])
+	}
+	start, end := 0, len(text)
+	for start < end && text[start] == "" {
+		start += 1
+	}
+	for end > start && text[end - 1] == "" {
+		end -= 1
+	}
+	append(lines, ..text[start:end])
 }
 
 // The comments directly above `lo`, as a range of `source.comments`: each on a

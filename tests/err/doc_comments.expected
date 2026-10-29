@@ -3,12 +3,16 @@ warning[L0260]: this doc comment documents nothing
 warning[L0260]: this doc comment documents nothing
 @51:1
 warning[L0260]: this doc comment documents nothing
-@57:1
+@67:1
 warning[L0260]: this doc comment documents nothing
-@61:2
+@69:1
 warning[L0260]: this doc comment documents nothing
-@62:17
+@73:2
+warning[L0260]: this doc comment documents nothing
+@74:2
+warning[L0260]: this doc comment documents nothing
+@75:17
 L0315
-@63:17
+@76:17
 warning[L0260]: this doc comment documents nothing
-@65:1
+@78:1

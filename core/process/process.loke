@@ -25,8 +25,10 @@ Command :: struct {
 	program:     string_view,
 	/// What follows the program, which the child sees as its first argument.
 	arguments:   []string_view,
-	/// `.none` copies the parent's environment; `.some` is the whole of the
-	/// child's.
+	/**
+		`.none` copies the parent's environment; `.some` is the whole of the
+		child's.
+	*/
 	environment: Option([]Variable),
 	/// Empty keeps the parent's working directory.
 	directory:   string_view,
@@ -35,9 +37,11 @@ Command :: struct {
 	stderr:      Stdio,
 }
 
-/// A running or finished child. Each pipe is open only when the command asked
-/// for it. Dropping a `Child` closes its pipes and its handle to the process,
-/// and the child runs on, detached.
+/**
+	A running or finished child. Each pipe is open only when the command asked
+	for it. Dropping a `Child` closes its pipes and its handle to the process,
+	and the child runs on, detached.
+*/
 Child :: move_only struct {
 	stdin:  Pipe,
 	stdout: Pipe,
@@ -56,8 +60,10 @@ impl Child {
 
 	id :: proc(self) -> u32 { return self.process_id; }
 
-	/// Closes `stdin` first, so a child reading to the end of its input
-	/// finishes, then blocks until the child exits.
+	/**
+		Closes `stdin` first, so a child reading to the end of its input
+		finishes, then blocks until the child exits.
+	*/
 	wait :: proc(self: inout Child) -> Result(i32, io.Error) {
 		_ = self.stdin.close();
 		if (self.handle == NO_HANDLE) {
@@ -75,8 +81,10 @@ impl Child {
 	}
 }
 
-/// One end of a pipe to a child: written for its `stdin`, read for the others.
-/// The zero value is closed, and `drop` closes a live one.
+/**
+	One end of a pipe to a child: written for its `stdin`, read for the others.
+	The zero value is closed, and `drop` closes a live one.
+*/
 Pipe :: move_only struct {
 	@(private) handle: Handle,
 	@(private) writes: bool,
@@ -152,9 +160,11 @@ Output :: struct {
 	stderr: [dynamic]u8,
 }
 
-/// Runs `command` with its stdout and stderr piped, reads both to their end, and
-/// waits. stderr is read on a thread of its own, so a child filling either pipe
-/// while the other is read cannot deadlock. A failed read ends the child.
+/**
+	Runs `command` with its stdout and stderr piped, reads both to their end, and
+	waits. stderr is read on a thread of its own, so a child filling either pipe
+	while the other is read cannot deadlock. A failed read ends the child.
+*/
 output :: proc(command: Command) -> Result(Output, io.Error) {
 	piped := command;
 	piped.stdout = .Pipe;

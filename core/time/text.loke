@@ -1,9 +1,11 @@
-/// ISO 8601 text.
-///
-/// Each type prints in the ISO 8601 extended format, in the RFC 3339 profile
-/// where one applies, and its parser reads that back, the basic format, and
-/// RFC 3339's allowances. A duration prints in a short form, `1h30m`, and reads
-/// that or ISO 8601's `PT1H30M`.
+/**
+	ISO 8601 text.
+
+	Each type prints in the ISO 8601 extended format, in the RFC 3339 profile
+	where one applies, and its parser reads that back, the basic format, and
+	RFC 3339's allowances. A duration prints in a short form, `1h30m`, and reads
+	that or ISO 8601's `PT1H30M`.
+*/
 // standard-library "ISO 8601 text".
 @(public)
 package time;
@@ -13,14 +15,18 @@ import "core:math";
 
 // --------------------------------------------------------------- printing --
 
-/// How many digits of a second print. A fixed precision truncates and never
-/// rounds, so it never prints a second that has not arrived yet; for a
-/// `Duration` it truncates to that unit before the short form prints.
+/**
+	How many digits of a second print. A fixed precision truncates and never
+	rounds, so it never prints a second that has not arrived yet; for a
+	`Duration` it truncates to that unit before the short form prints.
+*/
 Precision :: enum { Shortest, Seconds, Milliseconds, Microseconds, Nanoseconds }
 
-/// `basic` drops the separators: `20261015T123456Z`. `iso` prints a `Duration`
-/// in ISO 8601 rather than the short form, and changes nothing for the other
-/// types, which print ISO 8601 already.
+/**
+	`basic` drops the separators: `20261015T123456Z`. `iso` prints a `Duration`
+	in ISO 8601 rather than the short form, and changes nothing for the other
+	types, which print ISO 8601 already.
+*/
 Style :: struct {
 	basic:     bool,
 	iso:       bool,
@@ -249,19 +255,27 @@ impl Text {
 Parse_Error :: enum {
 	/// The wrong shape: a missing separator, a digit too few, text left over.
 	Invalid_Syntax,
-	/// A field outside its range: month 13, 2026-02-29, minute 60, or a
-	/// calendar unit in a duration, which a `Duration` cannot hold exactly.
+	/**
+		A field outside its range: month 13, 2026-02-29, minute 60, or a
+		calendar unit in a duration, which a `Duration` cannot hold exactly.
+	*/
 	Invalid_Value,
-	/// A date and time with no offset, given to `parse_time` or
-	/// `parse_offset_date_time`.
+	/**
+		A date and time with no offset, given to `parse_time` or
+		`parse_offset_date_time`.
+	*/
 	Missing_Offset,
-	/// A valid value the type cannot hold: a `Time` after 2262, a duration
-	/// beyond 292 years.
+	/**
+		A valid value the type cannot hold: a `Time` after 2262, a duration
+		beyond 292 years.
+	*/
 	Out_Of_Range,
 }
 
-/// A date, time, and offset, converted to UTC. The offset is required, since a
-/// local time names no instant.
+/**
+	A date, time, and offset, converted to UTC. The offset is required, since a
+	local time names no instant.
+*/
 parse_time :: proc(text: string_view) -> Result(Time, Parse_Error) {
 	scanner := Scanner{bytes = trim(text)};
 	date_time := scanner.date_time() or_return;
@@ -314,9 +328,11 @@ parse_offset :: proc(text: string_view) -> Result(Offset, Parse_Error) {
 	return offset;
 }
 
-/// The short form, `1h30m` or `-153ms`, or ISO 8601's, `PT1H30M`. In either the
-/// units come largest first, each at most once, with a fraction only on the
-/// last. `us` is read as `µs`.
+/**
+	The short form, `1h30m` or `-153ms`, or ISO 8601's, `PT1H30M`. In either the
+	units come largest first, each at most once, with a fraction only on the
+	last. `us` is read as `µs`.
+*/
 parse_duration :: proc(text: string_view) -> Result(Duration, Parse_Error) {
 	scanner := Scanner{bytes = trim(text)};
 	negative := scanner.take(u8('-'));

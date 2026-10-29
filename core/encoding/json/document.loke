@@ -7,21 +7,23 @@ import "core:mem";
 import "core:strconv";
 import "core:strings";
 
-/// One parsed JSON text: every value in source order, in flat storage it owns.
-///
-/// **The zero value is an empty, allocator-unbound document**: `root` is
-/// `.none`, and its first growth binds the default provider. `init` selects
-/// another allocator without allocating anything.
-///
-/// A document either borrows its input (`parse`, `parse_text`, and their
-/// `reparse` forms) or owns it (`parse_owned`, `reparse_owned`); either way a
-/// borrowed input must outlive it. Views read it through a pointer, so while a
-/// `Value`, a string, or a `Number` from it is in use, the document cannot be
-/// cleared, reparsed, moved, or dropped.
-///
-/// `clear` and every `reparse` keep the allocator and the allocated capacity,
-/// which is what makes a document cheap to reuse. A failed reparse leaves it
-/// empty, with that capacity and no input. Drop the document to release it.
+/**
+	One parsed JSON text: every value in source order, in flat storage it owns.
+
+	**The zero value is an empty, allocator-unbound document**: `root` is
+	`.none`, and its first growth binds the default provider. `init` selects
+	another allocator without allocating anything.
+
+	A document either borrows its input (`parse`, `parse_text`, and their
+	`reparse` forms) or owns it (`parse_owned`, `reparse_owned`); either way a
+	borrowed input must outlive it. Views read it through a pointer, so while a
+	`Value`, a string, or a `Number` from it is in use, the document cannot be
+	cleared, reparsed, moved, or dropped.
+
+	`clear` and every `reparse` keep the allocator and the allocated capacity,
+	which is what makes a document cheap to reuse. A failed reparse leaves it
+	empty, with that capacity and no input. Drop the document to release it.
+*/
 // open-questions.md "Self-referential storage": the document stores offsets
 // into its source and its decoded text, never views of its own storage, so an
 // accessor computes each view from wherever the document now is.
@@ -31,22 +33,28 @@ Document :: move_only struct {
 	@(private) source:  Source,
 }
 
-/// One value in a document: a pointer to it and the value's index. Copying one
-/// copies those two words; nothing it returns allocates.
+/**
+	One value in a document: a pointer to it and the value's index. Copying one
+	copies those two words; nothing it returns allocates.
+*/
 Value :: struct {
 	@(private) document: ^Document,
 	@(private) index:    u32,
 }
 
-/// An array value. Its length is immediate; `at` walks from the start, so a
-/// complete traversal is a `foreach`, not a loop over `at`.
+/**
+	An array value. Its length is immediate; `at` walks from the start, so a
+	complete traversal is a `foreach`, not a loop over `at`.
+*/
 Array :: struct {
 	@(private) document: ^Document,
 	@(private) index:    u32,
 }
 
-/// An object value: its members in source order, every occurrence of a key
-/// included. Lookup is linear in the member count.
+/**
+	An object value: its members in source order, every occurrence of a key
+	included. Lookup is linear in the member count.
+*/
 Object :: struct {
 	@(private) document: ^Document,
 	@(private) index:    u32,
@@ -55,18 +63,22 @@ Object :: struct {
 /// One object member. A `foreach (key, value in object)` takes it apart.
 Member :: (key: string_view, value: Value);
 
-/// A number as it was spelled: exact, whatever its size, until a conversion is
-/// asked for. Only a document or `number` makes one, so its text is always a
-/// valid JSON number.
+/**
+	A number as it was spelled: exact, whatever its size, until a conversion is
+	asked for. Only a document or `number` makes one, so its text is always a
+	valid JSON number.
+*/
 Number :: struct {
 	@(private, required) spelling: string_view,
 	@(private) offset: int,
 }
 
-/// A borrowing document of `input`, which must be UTF-8. Invalid UTF-8 is
-/// reported, at its first bad byte, in preference to any other error. Every
-/// allocation, the document's own included, comes from `allocator`, and a
-/// failed parse releases all of it.
+/**
+	A borrowing document of `input`, which must be UTF-8. Invalid UTF-8 is
+	reported, at its first bad byte, in preference to any other error. Every
+	allocation, the document's own included, comes from `allocator`, and a
+	failed parse releases all of it.
+*/
 parse :: proc(
 	input: []u8,
 	allocator: Allocator = mem.default_allocator(),
@@ -88,9 +100,11 @@ parse_text :: proc(
 	return move(document);
 }
 
-/// A document that owns `input`, taken without copying its bytes. `allocator`
-/// selects the document's own storage; the string keeps the allocator it has.
-/// The string is consumed whether or not the parse succeeds.
+/**
+	A document that owns `input`, taken without copying its bytes. `allocator`
+	selects the document's own storage; the string keeps the allocator it has.
+	The string is consumed whether or not the parse succeeds.
+*/
 parse_owned :: proc(
 	input: move string,
 	allocator: Allocator = mem.default_allocator(),
@@ -110,15 +124,19 @@ impl Document {
 		};
 	}
 
-	/// The root value, or `.none` for an empty, cleared, or failed document. A
-	/// successful parse always has one, `null` included.
+	/**
+		The root value, or `.none` for an empty, cleared, or failed document. A
+		successful parse always has one, `null` included.
+	*/
 	root :: proc(self: ^) -> Option(Value) {
 		if (self.nodes.len() == 0) { return .none; }
 		return Value{self, 0};
 	}
 
-	/// Parses `input` into this document in place of what it held, reusing its
-	/// allocator and capacity. `input` must be UTF-8, as for `parse`.
+	/**
+		Parses `input` into this document in place of what it held, reusing its
+		allocator and capacity. `input` must be UTF-8, as for `parse`.
+	*/
 	reparse :: proc(
 		self: inout, @(escape=stored) input: []u8, options: Parse_Options = {},
 	) -> Status(Parse_Error) {
@@ -142,8 +160,10 @@ impl Document {
 		self.source = .borrowed(input);
 	}
 
-	/// Takes ownership of `input`, which is consumed whether or not the parse
-	/// succeeds.
+	/**
+		Takes ownership of `input`, which is consumed whether or not the parse
+		succeeds.
+	*/
 	reparse_owned :: proc(
 		self: inout, @(escape=stored) input: move string, options: Parse_Options = {},
 	) -> Status(Parse_Error) {
@@ -155,8 +175,10 @@ impl Document {
 		self.source = .owned(move(input));
 	}
 
-	/// Empties the document and releases its input, keeping its allocator and
-	/// capacity.
+	/**
+		Empties the document and releases its input, keeping its allocator and
+		capacity.
+	*/
 	clear :: proc(self: inout) {
 		self.nodes.clear();
 		self.decoded.clear();
@@ -172,8 +194,10 @@ impl Value {
 		return (node.info & TRUE_FLAG) != 0;
 	}
 
-	/// The decoded text, borrowed from the input when it had no escapes and from
-	/// the document otherwise.
+	/**
+		The decoded text, borrowed from the input when it had no escapes and from
+		the document otherwise.
+	*/
 	string :: proc(self) -> Result(string_view, Access_Error) {
 		node := self.expect(.String) or_return;
 		return string_of(self.document, node);
@@ -250,10 +274,12 @@ impl Object {
 
 	len :: proc(self) -> int { return int(self.document.nodes[int(self.index)].count); }
 
-	/// The value of the one member whose decoded key is `key`, compared byte
-	/// for byte, or `.none` when there is none. Two or more such members are
-	/// `Duplicate_Key`, never the first or last of them. A successful lookup
-	/// says nothing about whether other keys repeat.
+	/**
+		The value of the one member whose decoded key is `key`, compared byte
+		for byte, or `.none` when there is none. Two or more such members are
+		`Duplicate_Key`, never the first or last of them. A successful lookup
+		says nothing about whether other keys repeat.
+	*/
 	find :: proc(self, key: string_view) -> Result(Option(Value), Access_Error) {
 		// A match must still scan the rest, to find a second one.
 		found: u32 = 0;
@@ -306,9 +332,11 @@ impl Member_Iterator {
 	}
 }
 
-/// A number made from `text`, which must be exactly one JSON number with no
-/// whitespace around it. It borrows `text`, so an exact decimal can be written
-/// without building a document.
+/**
+	A number made from `text`, which must be exactly one JSON number with no
+	whitespace around it. It borrows `text`, so an exact decimal can be written
+	without building a document.
+*/
 number :: proc(text: string_view) -> Result(Number, Parse_Error) {
 	end := scan_number(text.bytes(), 0) or_return;
 	if (end != text.len()) { return .err(Parse_Error{.Invalid_Number, 0}); }
@@ -319,8 +347,10 @@ impl Number {
 	/// The spelling, exactly as written.
 	text :: proc(self) -> string_view { return self.spelling; }
 
-	/// The integer, for a spelling with neither a point nor an exponent: `1.0`
-	/// is `Not_Integer` however integral its value.
+	/**
+		The integer, for a spelling with neither a point nor an exponent: `1.0`
+		is `Not_Integer` however integral its value.
+	*/
 	to_i64 :: proc(self) -> Result(i64, Access_Error) {
 		self.require_integer() or_return;
 		switch (strconv.parse_i64(self.spelling, 10)) {
@@ -339,9 +369,11 @@ impl Number {
 		}
 	}
 
-	/// The nearest `f64`. Integer precision may be lost, a magnitude too small
-	/// rounds to a signed zero, and one too large is `Out_Of_Range`: the result
-	/// is never an infinity or a NaN.
+	/**
+		The nearest `f64`. Integer precision may be lost, a magnitude too small
+		rounds to a signed zero, and one too large is `Out_Of_Range`: the result
+		is never an infinity or a NaN.
+	*/
 	to_f64 :: proc(self) -> Result(f64, Access_Error) {
 		switch (strconv.try_parse_f64(self.spelling)) {
 		case .ok(value): return value;

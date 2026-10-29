@@ -31,8 +31,10 @@ days_in_month :: proc(year: int, month: Month) -> int {
 
 // -------------------------------------------------------------------- dates --
 
-/// A date from 0000-01-01 to 9999-12-31, the years ISO 8601 writes in four
-/// digits. Its zero value, 1970-01-01, is a date.
+/**
+	A date from 0000-01-01 to 9999-12-31, the years ISO 8601 writes in four
+	digits. Its zero value, 1970-01-01, is a date.
+*/
 // It counts days rather than holding a month, so its zero value is a date
 // (comments.md "Zeros that are values").
 Date :: struct {
@@ -70,8 +72,10 @@ impl Date {
 		return int(self.days - days_from_civil(self.year(), 1, 1)) + 1;
 	}
 
-	/// ISO 8601's week-numbering year and week. A week belongs to the year its
-	/// Thursday is in, so 2021-01-03 is in 2020's week 53.
+	/**
+		ISO 8601's week-numbering year and week. A week belongs to the year its
+		Thursday is in, so 2021-01-03 is in 2020's week 53.
+	*/
 	iso_week :: proc(self) -> (year: int, week: int) {
 		thursday := self.days + i64(4 - int(self.weekday()));
 		year := civil_from_days(thursday).year;
@@ -82,8 +86,10 @@ impl Date {
 		return in_range(self.days + days);
 	}
 
-	/// The same day of the month, or the month's last day when it is shorter:
-	/// 2026-01-31 plus one month is 2026-02-28.
+	/**
+		The same day of the month, or the month's last day when it is shorter:
+		2026-01-31 plus one month is 2026-02-28.
+	*/
 	add_months :: proc(self, months: i64) -> Date {
 		civil := civil_from_days(self.days);
 		total := i64(civil.year) * 12 + i64(civil.month - 1) + months;
@@ -121,8 +127,10 @@ Time_Of_Day :: struct {
 }
 
 impl Time_Of_Day {
-	/// `.none` for a field out of range. Second 60 is not accepted: a leap second
-	/// has no `Time`, and only the parsers read one, as second 59.
+	/**
+		`.none` for a field out of range. Second 60 is not accepted: a leap second
+		has no `Time`, and only the parsers read one, as second 59.
+	*/
 	// standard-library "Leap seconds".
 	from_components :: proc(hour, minute, second: int, nanosecond: int = 0) -> Option(Time_Of_Day) {
 		if (hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59) { return .none; }
@@ -151,8 +159,10 @@ impl Time_Of_Day {
 
 // ------------------------------------------------------- dates with a time --
 
-/// A date and a time of day, with no offset. Without a zone there is no daylight
-/// saving, so adding a `Duration` counts every day as 24 hours.
+/**
+	A date and a time of day, with no offset. Without a zone there is no daylight
+	saving, so adding a `Duration` counts every day as 24 hours.
+*/
 Date_Time :: struct {
 	date: Date,
 	time: Time_Of_Day,
@@ -207,8 +217,10 @@ impl Date_Time {
 
 // ------------------------------------------------------------------ offsets --
 
-/// Whole minutes east of UTC, from -23:59 to +23:59, the range RFC 3339 writes.
-/// The zero value is UTC.
+/**
+	Whole minutes east of UTC, from -23:59 to +23:59, the range RFC 3339 writes.
+	The zero value is UTC.
+*/
 Offset :: struct {
 	@(private) east: int,
 }
@@ -230,9 +242,11 @@ impl Offset {
 	}
 }
 
-/// A date and time, and the offset it was read at. It has `==` and no `<`: two
-/// values for one instant at different offsets are unequal, and ordering their
-/// fields would put the later instant first, so compare `to_time()` instead.
+/**
+	A date and time, and the offset it was read at. It has `==` and no `<`: two
+	values for one instant at different offsets are unequal, and ordering their
+	fields would put the later instant first, so compare `to_time()` instead.
+*/
 Offset_Date_Time :: struct {
 	date_time: Date_Time,
 	offset:    Offset,

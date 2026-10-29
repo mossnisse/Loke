@@ -1,9 +1,11 @@
-/// UTF-8 to UTF-16 and back.
-///
-/// Windows is a wide-character operating system: every path, environment
-/// variable, and console record it hands out is UTF-16. The library's public
-/// contract is UTF-8, so `core:fs`, `core:os`, and `core:term` convert through
-/// here rather than each growing a surrogate decoder of its own.
+/**
+	UTF-8 to UTF-16 and back.
+
+	Windows is a wide-character operating system: every path, environment
+	variable, and console record it hands out is UTF-16. The library's public
+	contract is UTF-8, so `core:fs`, `core:os`, and `core:term` convert through
+	here rather than each growing a surrogate decoder of its own.
+*/
 // standard-library "`core:encoding/utf16`".
 //
 // One decoder stays outside that: `runtime/args.c` converts the `wmain`
@@ -20,22 +22,28 @@ import "core:mem";
 import "core:strings";
 
 Error :: enum {
-	/// An unpaired surrogate: valid UTF-16 has none, and no Unicode scalar value
-	/// corresponds to one. A native name that cannot be represented is reported
-	/// rather than silently changed.
+	/**
+		An unpaired surrogate: valid UTF-16 has none, and no Unicode scalar value
+		corresponds to one. A native name that cannot be represented is reported
+		rather than silently changed.
+	*/
 	Invalid_Data,
 	Out_Of_Memory,
-	/// U+0000 in text to encode. The result is zero-terminated for a wide call,
-	/// so a zero inside would end the name there: `a\0b` would open `a`.
+	/**
+		U+0000 in text to encode. The result is zero-terminated for a wide call,
+		so a zero inside would end the name there: `a\0b` would open `a`.
+	*/
 	Contains_Zero,
 }
 
-/// The text as zero-terminated UTF-16, ready for a wide operating-system call.
-/// The terminator is part of the buffer but not of its length contract: callers
-/// pass the data pointer, and `result.len() - 1` is the unit count.
-///
-/// A `string_view` is valid UTF-8 by construction, so the only failures are an
-/// interior zero and allocation.
+/**
+	The text as zero-terminated UTF-16, ready for a wide operating-system call.
+	The terminator is part of the buffer but not of its length contract: callers
+	pass the data pointer, and `result.len() - 1` is the unit count.
+
+	A `string_view` is valid UTF-8 by construction, so the only failures are an
+	interior zero and allocation.
+*/
 encode :: proc(
 	text: string_view, allocator: Allocator = mem.default_allocator(),
 ) -> Result([dynamic]u16, Error) {
@@ -62,9 +70,11 @@ encode :: proc(
 	}
 }
 
-/// The units as an owning UTF-8 `string`. A zero unit does not end the input:
-/// pass the exact range to convert, which is what every Windows API that reports
-/// a length gives.
+/**
+	The units as an owning UTF-8 `string`. A zero unit does not end the input:
+	pass the exact range to convert, which is what every Windows API that reports
+	a length gives.
+*/
 decode :: proc(
 	units: []u16, allocator: Allocator = mem.default_allocator(),
 ) -> Result(string, Error) {
@@ -86,8 +96,10 @@ decode :: proc(
 	return builder.try_finish() or_return .Out_Of_Memory;
 }
 
-/// The units up to the first zero, which is what a wide API returning a
-/// terminated buffer gives.
+/**
+	The units up to the first zero, which is what a wide API returning a
+	terminated buffer gives.
+*/
 length_of :: proc(units: []u16) -> int {
 	foreach (unit, index in units.indexed()) {
 		if (unit == 0) { return index; }

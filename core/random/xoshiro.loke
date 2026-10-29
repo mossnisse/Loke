@@ -1,31 +1,37 @@
-/// `Xoshiro256`: the package's general-purpose generator, xoshiro256++
-/// (Blackman and Vigna, "Scrambled linear pseudorandom number generators",
-/// 2018), and SplitMix64, which seeds it.
-///
-/// Outputs, jumps, and seed expansion are those of the reference C code at
-/// prng.di.unimi.it, bit for bit.
+/**
+	`Xoshiro256`: the package's general-purpose generator, xoshiro256++
+	(Blackman and Vigna, "Scrambled linear pseudorandom number generators",
+	2018), and SplitMix64, which seeds it.
+
+	Outputs, jumps, and seed expansion are those of the reference C code at
+	prng.di.unimi.it, bit for bit.
+*/
 // standard-library "Generators" and "Seeding". `tests/run/lib_random.loke`
 // pins them.
 @(public)
 package random;
 
-/// xoshiro256++ state. Move-only, so a generator cannot be duplicated by
-/// accident: two copies would draw the same values, which is the bug passing one
-/// to `thread.spawn` and then using it again would otherwise be. `split` and
-/// `from_state(rng.state())` are the deliberate ways to get a second one.
-///
-/// The zero value is unseeded, and its first draw seeds it from the operating
-/// system. xoshiro's state is never all zero once seeded, so a zero state can
-/// only mean that.
+/**
+	xoshiro256++ state. Move-only, so a generator cannot be duplicated by
+	accident: two copies would draw the same values, which is the bug passing one
+	to `thread.spawn` and then using it again would otherwise be. `split` and
+	`from_state(rng.state())` are the deliberate ways to get a second one.
+
+	The zero value is unseeded, and its first draw seeds it from the operating
+	system. xoshiro's state is never all zero once seeded, so a zero state can
+	only mean that.
+*/
 Xoshiro256 :: move_only struct {
 	@(private) words: [4]u64,
 }
 
 impl Xoshiro256 {
-	/// A generator whose sequence is fixed by `seed` forever: its state is the
-	/// first four outputs of SplitMix64 started at `seed`, as the reference
-	/// recommends. Those four come from distinct inputs to a bijection, so they
-	/// are never all zero.
+	/**
+		A generator whose sequence is fixed by `seed` forever: its state is the
+		first four outputs of SplitMix64 started at `seed`, as the reference
+		recommends. Those four come from distinct inputs to a bijection, so they
+		are never all zero.
+	*/
 	from_seed :: proc(seed: u64) -> Xoshiro256 {
 		counter := seed;
 		words: [4]u64 = {};
@@ -36,15 +42,19 @@ impl Xoshiro256 {
 		return {words};
 	}
 
-	/// A generator seeded from the operating system's generator, as the zero
-	/// value seeds itself. Never reproducible; to replay a run, seed with
-	/// `from_seed(random.secure_u64())` and record that seed.
+	/**
+		A generator seeded from the operating system's generator, as the zero
+		value seeds itself. Never reproducible; to replay a run, seed with
+		`from_seed(random.secure_u64())` and record that seed.
+	*/
 	from_entropy :: proc() -> Xoshiro256 {
 		return {entropy_words()};
 	}
 
-	/// A generator with exactly this state, as `state` reported it. All zeros is
-	/// the unseeded zero value, so a snapshot of either kind restores exactly.
+	/**
+		A generator with exactly this state, as `state` reported it. All zeros is
+		the unseeded zero value, so a snapshot of either kind restores exactly.
+	*/
 	from_state :: proc(state: [4]u64) -> Xoshiro256 {
 		return {state};
 	}
@@ -70,8 +80,10 @@ impl Xoshiro256 {
 		return result;
 	}
 
-	/// Advances the state as 2^128 draws would. From one root, alternating a
-	/// hand-off with `jump` gives 2^128 workers blocks that cannot overlap.
+	/**
+		Advances the state as 2^128 draws would. From one root, alternating a
+		hand-off with `jump` gives 2^128 workers blocks that cannot overlap.
+	*/
 	jump :: proc(self: inout) {
 		self.jump_by(JUMP);
 	}
@@ -81,11 +93,13 @@ impl Xoshiro256 {
 		self.jump_by(LONG_JUMP);
 	}
 
-	/// A new generator for an independent stream, such as one to move into
-	/// `thread.spawn`. Its state is four draws from this one, each through the
-	/// SplitMix64 finalizer, so the result depends only on this generator's
-	/// state and splitting is reproducible however deeply it nests. Overlap
-	/// between streams is as unlikely as two random 256-bit states meeting.
+	/**
+		A new generator for an independent stream, such as one to move into
+		`thread.spawn`. Its state is four draws from this one, each through the
+		SplitMix64 finalizer, so the result depends only on this generator's
+		state and splitting is reproducible however deeply it nests. Overlap
+		between streams is as unlikely as two random 256-bit states meeting.
+	*/
 	split :: proc(self: inout) -> Xoshiro256 {
 		words: [4]u64 = {};
 		foreach (i in 0 ..< 4) {

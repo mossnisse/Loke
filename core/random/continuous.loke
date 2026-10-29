@@ -1,17 +1,21 @@
-/// Continuous distributions built on `normal` and the gamma family:
-/// `log_normal`, `gamma`, `beta`, `chi_squared`, and `student_t`.
-///
-/// Each procedure's draws are specified, as `unit`'s are, so a seeded generator
-/// replays them; all of them call `core:math`, so none runs at compile time.
+/**
+	Continuous distributions built on `normal` and the gamma family:
+	`log_normal`, `gamma`, `beta`, `chi_squared`, and `student_t`.
+
+	Each procedure's draws are specified, as `unit`'s are, so a seeded generator
+	replays them; all of them call `core:math`, so none runs at compile time.
+*/
 // standard-library "Distributions".
 @(public)
 package random;
 
 import "core:math";
 
-/// `exp(x)` for a normal `x` of `mean` and `standard_deviation`: the parameters
-/// are those of the value's logarithm. One `normal` draw, validated as
-/// `normal`'s.
+/**
+	`exp(x)` for a normal `x` of `mean` and `standard_deviation`: the parameters
+	are those of the value's logarithm. One `normal` draw, validated as
+	`normal`'s.
+*/
 log_normal :: proc(source: inout $G, mean: f64 = 0, standard_deviation: f64 = 1) -> f64
 	where Source(G) {
 	if (!(math.is_finite(mean) && math.is_finite(standard_deviation) && standard_deviation >= 0.0)) {
@@ -20,8 +24,10 @@ log_normal :: proc(source: inout $G, mean: f64 = 0, standard_deviation: f64 = 1)
 	return math.exp(mean + standard_deviation*standard_normal(inout source));
 }
 
-/// A gamma-distributed value of `shape` and `scale`, so of mean
-/// `shape * scale`. Both must be finite and positive.
+/**
+	A gamma-distributed value of `shape` and `scale`, so of mean
+	`shape * scale`. Both must be finite and positive.
+*/
 gamma :: proc(source: inout $G, shape: f64, scale: f64 = 1) -> f64 where Source(G) {
 	if (!(math.is_finite(shape) && shape > 0.0 && math.is_finite(scale) && scale > 0.0)) {
 		panic("random.gamma: the shape and scale must be finite and positive");
@@ -29,8 +35,10 @@ gamma :: proc(source: inout $G, shape: f64, scale: f64 = 1) -> f64 where Source(
 	return scale*standard_gamma(inout source, shape);
 }
 
-/// A beta-distributed value in [0, 1] with shapes `alpha` and `beta`, both
-/// finite and positive. Its mean is `alpha / (alpha + beta)`.
+/**
+	A beta-distributed value in [0, 1] with shapes `alpha` and `beta`, both
+	finite and positive. Its mean is `alpha / (alpha + beta)`.
+*/
 beta :: proc(source: inout $G, alpha: f64, beta: f64) -> f64 where Source(G) {
 	if (!(math.is_finite(alpha) && alpha > 0.0 && math.is_finite(beta) && beta > 0.0)) {
 		panic("random.beta: both shapes must be finite and positive");
@@ -67,8 +75,10 @@ beta :: proc(source: inout $G, alpha: f64, beta: f64) -> f64 where Source(G) {
 	}
 }
 
-/// A chi-squared value with `degrees_of_freedom`, finite and positive: twice a
-/// gamma of shape `degrees_of_freedom / 2`.
+/**
+	A chi-squared value with `degrees_of_freedom`, finite and positive: twice a
+	gamma of shape `degrees_of_freedom / 2`.
+*/
 chi_squared :: proc(source: inout $G, degrees_of_freedom: f64) -> f64 where Source(G) {
 	if (!(math.is_finite(degrees_of_freedom) && degrees_of_freedom > 0.0)) {
 		panic("random.chi_squared: the degrees of freedom must be finite and positive");
@@ -76,11 +86,13 @@ chi_squared :: proc(source: inout $G, degrees_of_freedom: f64) -> f64 where Sour
 	return 2.0*standard_gamma(inout source, degrees_of_freedom/2.0);
 }
 
-/// A Student's t value with `degrees_of_freedom`, finite and positive: a
-/// standard normal draw, then a gamma of shape `degrees_of_freedom / 2`, as
-/// `z * sqrt(degrees_of_freedom / 2 / g)`. A gamma draw of zero, which degrees
-/// of freedom near the smallest `f64` make likely, gives an infinity of `z`'s
-/// sign, the limit of that quotient; `z` is never zero.
+/**
+	A Student's t value with `degrees_of_freedom`, finite and positive: a
+	standard normal draw, then a gamma of shape `degrees_of_freedom / 2`, as
+	`z * sqrt(degrees_of_freedom / 2 / g)`. A gamma draw of zero, which degrees
+	of freedom near the smallest `f64` make likely, gives an infinity of `z`'s
+	sign, the limit of that quotient; `z` is never zero.
+*/
 student_t :: proc(source: inout $G, degrees_of_freedom: f64) -> f64 where Source(G) {
 	if (!(math.is_finite(degrees_of_freedom) && degrees_of_freedom > 0.0)) {
 		panic("random.student_t: the degrees of freedom must be finite and positive");

@@ -1,18 +1,22 @@
-/// `String_Builder`: repeated appends into one growing buffer, finished as one
-/// immutable `string`.
+/**
+	`String_Builder`: repeated appends into one growing buffer, finished as one
+	immutable `string`.
+*/
 // design.md "string type", standard-library "`String_Builder`".
 @(public)
 package strings;
 
 import "core:mem";
 
-/// A growing buffer finished as one immutable `string`. **The zero value is a
-/// usable, empty, allocator-unbound builder**: the first growth binds the
-/// default provider. `init` exists only to choose another allocator up front.
-///
-/// The buffer holds valid UTF-8 at every public boundary, so there is no
-/// arbitrary byte append: a caller with bytes that are not text wants a
-/// `[dynamic]u8`.
+/**
+	A growing buffer finished as one immutable `string`. **The zero value is a
+	usable, empty, allocator-unbound builder**: the first growth binds the
+	default provider. `init` exists only to choose another allocator up front.
+
+	The buffer holds valid UTF-8 at every public boundary, so there is no
+	arbitrary byte append: a caller with bytes that are not text wants a
+	`[dynamic]u8`.
+*/
 // design.md's own example is `builder: String_Builder = {};` followed by
 // `append`. The zero value inherits that from the `[dynamic]u8` it wraps.
 // There is deliberately no arbitrary byte append: it could break that
@@ -56,8 +60,10 @@ impl String_Builder {
 		self.data.append(..encoded[0:count]);
 	}
 
-	/// One ASCII byte. The name says `ascii` because that is the only byte a
-	/// caller can add without knowing where a rune begins.
+	/**
+		One ASCII byte. The name says `ascii` because that is the only byte a
+		caller can add without knowing where a rune begins.
+	*/
 	append_byte_ascii :: proc(self: inout String_Builder, value: u8) {
 		if (value >= 0x80) { panic("append_byte_ascii takes an ASCII byte"); }
 		self.data.append(value);
@@ -84,8 +90,10 @@ impl String_Builder {
 	/// Keeps the allocation, which is what makes a builder reusable across lines.
 	clear :: proc(self: inout String_Builder) { self.data.clear(); }
 
-	/// The text as an owned `string`: one linear copy. The buffer is retained for
-	/// reuse afterwards.
+	/**
+		The text as an owned `string`: one linear copy. The buffer is retained for
+		reuse afterwards.
+	*/
 	// design.md: a dynamic array owns raw element storage while a runtime string
 	// points past a reference-counted header, so the two are not
 	// storage-compatible.
@@ -95,19 +103,23 @@ impl String_Builder {
 		return text;
 	}
 
-	/// The same, reporting an allocation failure instead of applying a policy. The
-	/// builder is left completely unchanged when it fails.
+	/**
+		The same, reporting an allocation failure instead of applying a policy. The
+		builder is left completely unchanged when it fails.
+	*/
 	try_finish :: proc(self: inout String_Builder) -> Result(string, Allocator_Error) {
 		text := self.try_copy_string(self.allocator) or_return;
 		self.data.clear();
 		return text;
 	}
 
-	/// What is written so far, borrowed rather than copied, so a caller who only
-	/// reads the assembled text need not allocate a `string`. The view reads the
-	/// builder's own buffer, so an append while the view is still live is
-	/// rejected. `copy_string` is the one to reach for when the text really must
-	/// outlast the builder.
+	/**
+		What is written so far, borrowed rather than copied, so a caller who only
+		reads the assembled text need not allocate a `string`. The view reads the
+		builder's own buffer, so an append while the view is still live is
+		rejected. `copy_string` is the one to reach for when the text really must
+		outlast the builder.
+	*/
 	// The rejection is L0512, "a read-only borrow of it is still in use".
 	// `path.join` hands the view straight to `path.clean`.
 	view :: proc(self: ^) -> string_view {

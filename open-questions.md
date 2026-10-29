@@ -280,7 +280,7 @@ under its declaration (``// example: `split_on_commas` ``), and the HTML page
 shows its body. The gate builds each bundled package with `-test`, so an
 example that stops compiling or fails is caught.
 
-**5. Names in doc comments are checked.** A backticked span in a `///`
+**5. Names in doc comments are checked.** A backticked span in a doc
 comment that is a name or dotted path, such as `split`, `Builder.len`, or
 `mem.Allocator`, must resolve, as rustdoc's intra-doc links must. It resolves
 in the documented declaration's package and imports, and also among its
@@ -346,7 +346,7 @@ steps are in priority order; each is usable without the next.
    - Write a first few examples in `core:strings` and `core:container`.
      CHANGELOG: Added.
 5. **Checked references.**
-   - Resolution of backticked spans in `///` comments in the scopes above, a
+   - Resolution of backticked spans in doc comments in the scopes above, a
      warning code for an unresolved one, and the scope rule in design.md
      "Comments".
    - Fix what it reports in `core/` and `base/`.

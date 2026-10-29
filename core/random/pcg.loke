@@ -1,31 +1,37 @@
-/// `Pcg64`: PCG64-DXSM (O'Neill, "PCG: A family of simple fast space-efficient
-/// statistically good algorithms for random number generation", 2014, with the
-/// DXSM output function of 2019), the package's second generator.
-///
-/// Outputs, seeding, and `advance` are those of numpy's `PCG64DXSM`
-/// (numpy/random/src/pcg64), bit for bit.
+/**
+	`Pcg64`: PCG64-DXSM (O'Neill, "PCG: A family of simple fast space-efficient
+	statistically good algorithms for random number generation", 2014, with the
+	DXSM output function of 2019), the package's second generator.
+
+	Outputs, seeding, and `advance` are those of numpy's `PCG64DXSM`
+	(numpy/random/src/pcg64), bit for bit.
+*/
 // standard-library "Generators". `tests/run/lib_random_pcg.loke` pins them.
 @(public)
 package random;
 
 import "core:math";
 
-/// PCG64-DXSM state: a 128-bit linear congruential state and the odd increment
-/// that selects its stream. Move-only, as `Xoshiro256` is and for the same
-/// reason.
-///
-/// The zero value is unseeded, and its first draw seeds it from the operating
-/// system. A seeded increment is always odd, so a zero increment can only mean
-/// that.
+/**
+	PCG64-DXSM state: a 128-bit linear congruential state and the odd increment
+	that selects its stream. Move-only, as `Xoshiro256` is and for the same
+	reason.
+
+	The zero value is unseeded, and its first draw seeds it from the operating
+	system. A seeded increment is always odd, so a zero increment can only mean
+	that.
+*/
 Pcg64 :: move_only struct {
 	@(private) lcg: u128,
 	@(private) increment: u128,
 }
 
 impl Pcg64 {
-	/// A generator whose sequence is fixed by `seed` forever: the first four
-	/// outputs of SplitMix64 started at `seed`, high word first, are the initial
-	/// state and the stream, which PCG's own seeding then mixes in.
+	/**
+		A generator whose sequence is fixed by `seed` forever: the first four
+		outputs of SplitMix64 started at `seed`, high word first, are the initial
+		state and the stream, which PCG's own seeding then mixes in.
+	*/
 	from_seed :: proc(seed: u64) -> Pcg64 {
 		counter := seed;
 		words: [4]u64 = {};
@@ -36,14 +42,18 @@ impl Pcg64 {
 		return pcg_from_words(words);
 	}
 
-	/// A generator seeded from the operating system's generator, as the zero
-	/// value seeds itself. Never reproducible.
+	/**
+		A generator seeded from the operating system's generator, as the zero
+		value seeds itself. Never reproducible.
+	*/
 	from_entropy :: proc() -> Pcg64 {
 		return pcg_from_words(entropy_words());
 	}
 
-	/// A generator with exactly this state, as `state` reported it. The
-	/// increment must be odd, or both values zero for the unseeded zero value.
+	/**
+		A generator with exactly this state, as `state` reported it. The
+		increment must be odd, or both values zero for the unseeded zero value.
+	*/
 	from_state :: proc(state: u128, increment: u128) -> Pcg64 {
 		if ((increment & 1) == 0 && (increment | state) != 0) {
 			panic("random.Pcg64.from_state: the increment must be odd");
@@ -56,8 +66,10 @@ impl Pcg64 {
 		return {self.lcg, self.increment};
 	}
 
-	/// The next 64 bits. This is the `Source` slot. DXSM mixes the state before
-	/// the step, as numpy does, so the multiply and the output overlap.
+	/**
+		The next 64 bits. This is the `Source` slot. DXSM mixes the state before
+		the step, as numpy does, so the multiply and the output overlap.
+	*/
 	next_u64 :: proc(self: inout) -> u64 {
 		if (self.increment == 0) {
 			self = pcg_from_words(entropy_words());
@@ -72,9 +84,11 @@ impl Pcg64 {
 		return high;
 	}
 
-	/// Advances the state as `delta` draws would, in at most 128 steps (Brown,
-	/// "Random number generation with arbitrary strides", 1994). `delta` wraps,
-	/// so `advance(~u128(0))` steps back one draw.
+	/**
+		Advances the state as `delta` draws would, in at most 128 steps (Brown,
+		"Random number generation with arbitrary strides", 1994). `delta` wraps,
+		so `advance(~u128(0))` steps back one draw.
+	*/
 	advance :: proc(self: inout, delta: u128) {
 		if (self.increment == 0) {
 			self = pcg_from_words(entropy_words());
@@ -95,9 +109,11 @@ impl Pcg64 {
 		self.lcg = total_multiplier *% self.lcg +% total_addend;
 	}
 
-	/// A new generator for an independent stream: four draws from this one,
-	/// each through the SplitMix64 finalizer, seed it as `from_seed`'s four
-	/// words do. Deterministic given this generator's state.
+	/**
+		A new generator for an independent stream: four draws from this one,
+		each through the SplitMix64 finalizer, seed it as `from_seed`'s four
+		words do. Deterministic given this generator's state.
+	*/
 	split :: proc(self: inout) -> Pcg64 {
 		words: [4]u64 = {};
 		foreach (i in 0 ..< 4) {
