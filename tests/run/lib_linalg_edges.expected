@@ -12,4 +12,18 @@ ok half-turn rotation vector agrees for q and -q
 ok half-turn rotation vector agrees for q and -q
 ok half-turn rotation vector agrees for q and -q
 ok angle with zero ignores the sign of a zero dot product
+ok perspective coefficients where far*near leaves the range
+ok perspective coefficients where far*near leaves the range
+ok perspective with the largest finite far plane
+ok orthographic coefficients where a sum or difference of bounds overflows
+ok orthographic coefficients where a sum or difference of bounds overflows
+ok an orthographic coefficient can be subnormal
+ok to_euler of a quaternion at extreme scales, every order
+ok perspective coefficients where far*near leaves the range
+ok perspective coefficients where far*near leaves the range
+ok perspective with the largest finite far plane
+ok orthographic coefficients where a sum or difference of bounds overflows
+ok orthographic coefficients where a sum or difference of bounds overflows
+ok an orthographic coefficient can be subnormal
+ok to_euler of a quaternion at extreme scales, every order
 ok length folds at compile time

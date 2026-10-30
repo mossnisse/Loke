@@ -17,7 +17,8 @@
 
 	Each operation is computed in the order its documentation gives, with no
 	`fma` and no C library call, so it gives the same bits on every machine,
-	CPU level, and optimization level. The `f32` and `f64` slots of `Real` are
+	CPU level, and optimization level, but for which NaN a NaN result is, which
+	the language leaves unspecified. The `f32` and `f64` slots of `Real` are
 	`math.sqrt`, which is correctly rounded, and `core:math/repro`. Calls can
 	also be evaluated at compile time with the same result, including those
 	that reach `math.sqrt`.

@@ -6241,6 +6241,13 @@ multiplication then an addition, never a fused multiply-add whose result could
 differ. A fused multiply-add, which rounds once, is written `math.fma(a, b, c)`
 ([`core:math`](standard-library.md#coremath)).
 
+Which NaN an operation with a NaN result gives, its sign and payload, is
+unspecified, and two evaluations of one expression can give different ones,
+at another optimization or [CPU level](compiler-guide.md#cpu-levels), at
+compile time, or after the optimizer swaps the operands of `+` or `*`. Every
+other result, signed zeros and infinities included, is determined by the rules
+above.
+
 # 6. Statements & Control Flow
 
 *Grammar: [Statements](grammar.md#statements), [Control

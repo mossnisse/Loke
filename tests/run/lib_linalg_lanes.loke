@@ -9,7 +9,10 @@ import "core:unsafe";
 // compute in `Simd` lanes, `transform_point`, `transform_direction`, and a
 // 3 x 3 matrix times a vector, against the scalar formula they replaced,
 // bit for bit, over random operands and the special values, and folded at
-// compile time.
+// compile time. Which NaN a NaN result is, its sign and payload, is not
+// specified (design.md "Floating-point operators"): the backend commutes the
+// operands of `+` and `*`, and x86 keeps the first operand's NaN when both are
+// NaNs, so two NaN results agree whatever their bits.
 
 V3 :: linalg.Vector3(f32);
 M3 :: linalg.Matrix(f32, 3, 3);
@@ -26,7 +29,9 @@ check :: proc(name: string, ok: bool) {
 
 bits :: proc(x: f32) -> u32 { return unsafe.transmute(u32, x); }
 
-same :: proc(a, b: V3) -> bool { return bits(a.x) == bits(b.x) && bits(a.y) == bits(b.y) && bits(a.z) == bits(b.z); }
+agree :: proc(a, b: f32) -> bool { return bits(a) == bits(b) || (math.is_nan_f32(a) && math.is_nan_f32(b)); }
+
+same :: proc(a, b: V3) -> bool { return agree(a.x, b.x) && agree(a.y, b.y) && agree(a.z, b.z); }
 
 // The scalar forms, as transform.loke and matrix.loke write them for every
 // other element type.

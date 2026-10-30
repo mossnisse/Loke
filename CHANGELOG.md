@@ -463,6 +463,12 @@ checklist.
 
 ### Changed
 
+- A NaN result's sign and payload are unspecified, and can differ between
+  optimization and CPU levels, at compile time, or when the optimizer swaps
+  the operands of `+` or `*`
+  ([Floating-point operators](design.md#floating-point-operators)).
+  `core:math/linalg`'s same-bits promise now excepts which NaN a NaN result
+  is.
 - `core:fs` is documented to pass paths to Windows as given: an ordinary path
   is normalized before any link in it is followed, so
   `local/junction/../x` names `local/x`, while an extended-length `\\?\`
@@ -554,6 +560,20 @@ checklist.
 
 ### Fixed
 
+- `core:math/linalg`'s `perspective` and `perspective_lh` compute their depth
+  coefficients from `far/(far - near)` and `near/(far - near)`, so a finite
+  near and far whose product overflows or underflows, such as 10 and 1e38 at
+  `f32`, no longer give an infinite or zero coefficient
+  ([`core:math/linalg`](standard-library.md#coremathlinalg)).
+- `core:math/linalg`'s `orthographic` and `orthographic_lh` compute a row from
+  the halves of its bounds when their sum or difference overflows, so finite
+  bounds such as 2e38 and 3e38 at `f32` no longer give an infinite or zero
+  coefficient where the value is representable, a subnormal one included
+  ([`core:math/linalg`](standard-library.md#coremathlinalg)).
+- `core:math/linalg`'s `to_euler` divides a finite non-unit quaternion at an
+  extreme scale by its largest component magnitude first, so
+  `(1e200, 0, 1e200, 0)` gives the angles of the unit `(1, 0, 1, 0)` instead
+  of a NaN ([`core:math/linalg`](standard-library.md#coremathlinalg)).
 - `core:math/dense`'s `svd` and `symmetric_eigen` scale a matrix near
   overflow or among the subnormal numbers by a power of two first, so they
   no longer return infinite or NaN factors, discard an off-diagonal element

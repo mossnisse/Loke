@@ -1554,6 +1554,23 @@ after each call to a foreign procedure it reads MXCSR and panics, naming the
 procedure, when the control bits changed. That turns a silent wrong result
 far from its cause into a report at the call that caused it.
 
+### Which NaN an operation gives is unspecified
+
+[Floating-point operators](design.md#floating-point-operators) pins every
+result's bits but a NaN's. IEEE 754 does not say which NaN `a + b` gives when
+both operands are NaNs, and LLVM, without which Loke has no optimizer, treats
+`+` and `*` as commutative and the result's NaN sign and payload as free.
+x86 keeps the first operand's NaN, so a swap the register allocator makes
+changes them: at `-opt=speed`, `core:math/linalg`'s `Simd` `m * v` and the
+scalar formula it replaced computed the same sums but disagreed in the sign of
+a NaN where a positive `math.F32_NAN` met the negative NaN that `inf * 0`
+makes, and moving any statement in the test moved the swap. Pinning the NaN
+would need a canonicalizing step after every operation that may make one, a
+cost on every floating-point expression, for bits no operation but a bit test
+reads. A library that wants one NaN, as
+[`core:math/repro`](standard-library.md#coremathrepro) does, canonicalizes its
+own results.
+
 ### SIMD lanes follow the scalar rule
 
 Replacing a scalar kernel with SIMD should not change overflow behavior.

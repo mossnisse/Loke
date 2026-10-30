@@ -19,7 +19,8 @@
 
 	Each operation is computed in the order its documentation gives, with no
 	`fma` and no C library call, so it gives the same bits on every machine,
-	CPU level, and optimization level. The `f32` and `f64` slots of `Real` are
+	CPU level, and optimization level, but for which NaN a NaN result is, which
+	the language leaves unspecified. The `f32` and `f64` slots of `Real` are
 	`math.sqrt`, which is correctly rounded, and `core:math/repro`. Calls can
 	also be evaluated at compile time with the same result, including those
 	that reach `math.sqrt`.
@@ -379,7 +380,10 @@ quaternion_from_euler :: proc(order: Euler_Order, first, second, third: $T) -> m
 	`q`: the middle one in `[-pi/2, pi/2]` and the others in `[-pi, pi]`. When
 	the middle angle is within rounding of `pi/2` or `-pi/2`, gimbal lock, the
 	first and third axes coincide; the third angle is then 0 and the first
-	takes the whole rotation about them. `q` need not be a unit quaternion.
+	takes the whole rotation about them. `q` need not be a unit quaternion: a
+	finite nonzero `q` whose largest component magnitude `m` has an `m^4`
+	that is not `is_normal`, at a scale where its squares would overflow or
+	lose precision, is first divided by `m`. A unit quaternion never is.
 */
 to_euler :: proc(q: math.Quaternion($T), order: Euler_Order) -> (first: T, second: T, third: T) where Real(T) ---;
 
@@ -499,16 +503,19 @@ impl Matrix($T, $R, $C) {
 		and `w` equal to the view-space `-z`.
 
 		`fovy` is the vertical field of view in radians. With
-		`f = cos(fovy/2)/sin(fovy/2)`, for `.Negative_One_To_One`:
+		`f = cos(fovy/2)/sin(fovy/2)`, `r = far/(far - near)`, and
+		`s = near/(far - near)`, for `.Negative_One_To_One`:
 
-		    [ f/aspect  0   0                      0                     ]
-		    [ 0         f   0                      0                     ]
-		    [ 0         0   (far+near)/(near-far)  2*far*near/(near-far) ]
-		    [ 0         0   -1                     0                     ]
+		    [ f/aspect  0   0              0               ]
+		    [ 0         f   0              0               ]
+		    [ 0         0   -(1 + (s+s))   -((r+r)*near)   ]
+		    [ 0         0   -1             0               ]
 
-		`.Zero_To_One` has `far/(near-far)` and `far*near/(near-far)` in the third
-		row, and `.One_To_Zero` `near/(far-near)` and `far*near/(far-near)`. An
-		infinite `far` gives the limit of those as `far` grows. `fovy` outside
+		which is `(far+near)/(near-far)` and `2*far*near/(near-far)` in the
+		third row. `.Zero_To_One` has `-r` and `-(r*near)` there, and
+		`.One_To_Zero` `s` and `r*near`. Since `r` is at most `2/epsilon` and `s`
+		is `r - 1`, no step overflows unless its coefficient does. An infinite
+		`far` takes `r` as 1 and `s` as 0, the limit as `far` grows. `fovy` outside
 		`(0, pi)`, a non-positive `aspect` or `near`, `far <= near`, and a NaN
 		panic. Vulkan's downward framebuffer `y` is the viewport's choice: flip it
 		there, or negate `result[1, 1]`.
@@ -521,6 +528,17 @@ impl Matrix($T, $R, $C) {
 		`(right, top, -far)` to `x` and `y` in `[-1, 1]` and `z` in `depth`'s
 		range, the near plane at its first value. `near` may be negative. Equal
 		or non-finite bounds, `far <= near`, and a NaN panic.
+
+		The first row is `2/(right - left)` and
+		`-(right + left)/(right - left)`, the second the same of `bottom` and
+		`top`, and the third, with `deep = far - near`, `-2/deep` and
+		`-(far + near)/deep` for `.Negative_One_To_One`, `-1/deep` and
+		`-near/deep` for `.Zero_To_One`, and `1/deep` and `far/deep` for
+		`.One_To_Zero`. Where a difference or sum of two bounds that a row
+		uses overflows, that row is computed the same way from the halves of
+		the bounds, with `1` and `1/2` for `2` and `1`, which bounds that large
+		halve exactly; so a coefficient overflows or underflows only where its
+		value does.
 	*/
 	orthographic :: proc(left, right, bottom, top, near, far: T, depth: Depth_Range) -> Matrix(T, R, C) where R == 4, C == 4, Real(T) ---;
 

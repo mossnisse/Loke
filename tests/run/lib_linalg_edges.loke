@@ -1,4 +1,5 @@
-// standard-library.md "`core:math/linalg`": endpoint and sign regressions.
+// standard-library.md "`core:math/linalg`": endpoint, sign, and extreme-scale
+// regressions.
 package main;
 
 import "core:fmt";
@@ -55,11 +56,120 @@ edges :: proc($T: type) where linalg.Real(T) {
 		&& negative3.angle_between(zero3) == zero && zero3.angle_between(negative3) == zero);
 }
 
+largest_finite :: proc($T: type) -> T {
+	when (T == f32) { return math.F32_MAX; }
+	else { return math.F64_MAX; }
+}
+
+smallest_normal :: proc($T: type) -> T {
+	when (T == f32) { return math.F32_MIN_NORMAL; }
+	else { return math.F64_MIN_NORMAL; }
+}
+
+// Large enough that a unit quaternion's squared components overflow at the
+// scale, and its inverse small enough that they lose precision.
+huge :: proc($T: type) -> T {
+	when (T == f32) { return 1.0e30; }
+	else { return 1.0e200; }
+}
+
+// `perspective`'s depth coefficients where `far*near` overflows or
+// underflows but the coefficient does not, in every depth range and both
+// handednesses, and `to_euler` of a non-unit quaternion at extreme scales in
+// every order.
+extreme_scales :: proc($T: type) where linalg.Real(T) {
+	M4 :: linalg.Matrix(T, 4, 4);
+	one := T(1);
+	two := one + one;
+	ranges := [3]linalg.Depth_Range{.Negative_One_To_One, .Zero_To_One, .One_To_Zero};
+	// `far = 2*near`, so `r = 2` and `s = 1` exactly at either scale.
+	depths := [3]T{-T(3), -two, one};
+	offsets := [3]T{-T(4), -two, two};
+	foreach (near in [2]T{largest_finite(T)/T(4), smallest_normal(T)}) {
+		ok := true;
+		foreach (i in 0 ..< 3) {
+			p := M4.perspective(one, one, near, near*two, ranges[i]);
+			lh := M4.perspective_lh(one, one, near, near*two, ranges[i]);
+			ok = ok && p[2, 2] == depths[i] && p[2, 3] == offsets[i]*near
+				&& lh[2, 2] == -depths[i] && lh[2, 3] == offsets[i]*near;
+		}
+		check("perspective coefficients where far*near leaves the range", ok);
+	}
+	// The far plane at the largest finite value: the coefficients are the
+	// infinite far plane's within rounding.
+	near := T(10);
+	limits := [3]T{-one, -one, T(0)};
+	far_ok := true;
+	foreach (i in 0 ..< 3) {
+		p := M4.perspective(one, one, near, largest_finite(T), ranges[i]);
+		lh := M4.perspective_lh(one, one, near, largest_finite(T), ranges[i]);
+		limit := M4.perspective(one, one, near, T(f64(math.F64_INFINITY)), ranges[i]);
+		far_ok = far_ok && p[2, 3] == limit[2, 3] && lh[2, 3] == limit[2, 3]
+			&& linalg.approx_equal(p[2, 2], limits[i], smallest_normal(T)*T(8), T(0))
+			&& lh[2, 2] == -p[2, 2];
+	}
+	check("perspective with the largest finite far plane", far_ok);
+
+	// Orthographic bounds whose sum (`big` and `3*big`) or difference
+	// (`-3*big` and `3*big`) overflows, with `big = 1/smallest_normal`, a
+	// power of two, so each coefficient is exact or the correctly rounded
+	// subnormal.
+	big := one/smallest_normal(T);
+	tiny := smallest_normal(T);
+	lows := [2]T{big, -T(3)*big};
+	highs := [2]T{T(3)*big, T(3)*big};
+	axis_scales := [2]T{tiny, tiny/T(3)};
+	axis_offsets := [2]T{-two, T(0)};
+	depth_scales := [2][3]T{{-tiny, -tiny/two, tiny/two}, {-(tiny/T(3)), -(tiny/T(6)), tiny/T(6)}};
+	depth_offsets := [2][3]T{{-two, -T(0.5), T(1.5)}, {T(0), T(0.5), T(0.5)}};
+	foreach (c in 0 ..< 2) {
+		lo, hi := lows[c], highs[c];
+		ok := true;
+		foreach (i in 0 ..< 3) {
+			o := M4.orthographic(lo, hi, lo, hi, lo, hi, ranges[i]);
+			lh := M4.orthographic_lh(lo, hi, lo, hi, lo, hi, ranges[i]);
+			ok = ok && o[0, 0] == axis_scales[c] && o[0, 3] == axis_offsets[c]
+				&& o[1, 1] == axis_scales[c] && o[1, 3] == axis_offsets[c]
+				&& o[2, 2] == depth_scales[c][i] && o[2, 3] == depth_offsets[c][i]
+				&& lh[0, 0] == o[0, 0] && lh[1, 1] == o[1, 1] && lh[0, 3] == o[0, 3] && lh[1, 3] == o[1, 3]
+				&& lh[2, 2] == -o[2, 2] && lh[2, 3] == o[2, 3];
+		}
+		check("orthographic coefficients where a sum or difference of bounds overflows", ok);
+	}
+	check("an orthographic coefficient can be subnormal", T(0) < axis_scales[1] && !axis_scales[1].is_normal());
+
+	ORDERS :: [6]linalg.Euler_Order{.XYZ, .XZY, .YXZ, .YZX, .ZXY, .ZYX};
+	scales := [2]T{huge(T), one/huge(T)};
+	tolerance := T(0);
+	when (T == f32) { tolerance = T(64)*math.F32_EPSILON; }
+	else { tolerance = T(64)*math.F64_EPSILON; }
+	euler := true;
+	foreach (order in ORDERS) {
+		turned := linalg.quaternion_from_euler(order, T(0.3), -T(0.7), T(1.1));
+		first, second, third := linalg.to_euler(turned, order);
+		// The issue's quarter turn about Y: dividing by its largest component
+		// gives the unit-scale components exactly, so the angles are the same bits.
+		locked_first, locked_second, locked_third := linalg.to_euler(math.Quaternion(T).from_components(one, T(0), one, T(0)), order);
+		foreach (scale in scales) {
+			f, s, t := linalg.to_euler(turned*math.Quaternion(T)(scale), order);
+			ok := linalg.approx_equal(f, first, tolerance, T(0)) && linalg.approx_equal(s, second, tolerance, T(0))
+				&& linalg.approx_equal(t, third, tolerance, T(0));
+			lf, ls, lt := linalg.to_euler(math.Quaternion(T).from_components(scale, T(0), scale, T(0)), order);
+			ok = ok && lf == locked_first && ls == locked_second && lt == locked_third;
+			if (!ok) { fmt.println("  to_euler", order, scale, "gave", f, s, t, lf, ls, lt); }
+			euler = euler && ok;
+		}
+	}
+	check("to_euler of a quaternion at extreme scales, every order", euler);
+}
+
 // The merged math.sqrt implementation also has a compile-time meaning.
 LENGTH :: linalg.Vector3(f64){x = 3, y = 4, z = 0}.length();
 
 main :: proc() {
 	edges(f32);
 	edges(f64);
+	extreme_scales(f32);
+	extreme_scales(f64);
 	check("length folds at compile time", LENGTH == 5);
 }

@@ -214,7 +214,10 @@ quaternion_from_euler :: proc(order: Euler_Order, first, second, third: $T) -> m
 	`q`: the middle one in `[-pi/2, pi/2]` and the others in `[-pi, pi]`. When
 	the middle angle is within rounding of `pi/2` or `-pi/2`, gimbal lock, the
 	first and third axes coincide; the third angle is then 0 and the first
-	takes the whole rotation about them. `q` need not be a unit quaternion.
+	takes the whole rotation about them. `q` need not be a unit quaternion: a
+	finite nonzero `q` whose largest component magnitude `m` has an `m^4`
+	that is not `is_normal`, at a scale where its squares would overflow or
+	lose precision, is first divided by `m`. A unit quaternion never is.
 */
 // Bernardes and Viollet, "Quaternion to Euler angles conversion: A direct,
 // general and computationally efficient method" (PLOS ONE, 2022), for an
@@ -222,12 +225,24 @@ quaternion_from_euler :: proc(order: Euler_Order, first, second, third: $T) -> m
 // the angle between the pairs `(a, b)` and `(c, d)`, and the outer angles are
 // their half sum and half difference. The middle one is taken from
 // `n^2 - p^2 = 4*(w*q_j - sign*q_i*q_k)`, which does not cancel near 0.
+// The angles depend only on the ratios of the components. The largest
+// intermediate is `8*m^2`, so an `m^4` that is normal keeps every square
+// finite, and a product a rounding error below `m^2` normal too.
 to_euler :: proc(q: math.Quaternion($T), order: Euler_Order) -> (first: T, second: T, third: T) where Real(T) {
 	axes := euler_axes(order);
 	i, j, k := axes[2], axes[1], axes[0];
 	sign := T(1) if (i - j)*(j - k)*(k - i) > 0 else -T(1);
-	w := q.real;
-	qi, qj, qk := quaternion_part(q, i), quaternion_part(q, j), quaternion_part(q, k)*sign;
+	m := q.real.abs();
+	foreach (part in [3]T{q.i, q.j, q.k}) {
+		if (m < part.abs()) { m = part.abs(); }
+	}
+	squared := m*m;
+	scaled := q;
+	if (!(squared*squared).is_normal() && m.is_finite() && T(0) < m) {
+		scaled = math.Quaternion(T).from_components(q.real/m, q.i/m, q.j/m, q.k/m);
+	}
+	w := scaled.real;
+	qi, qj, qk := quaternion_part(scaled, i), quaternion_part(scaled, j), quaternion_part(scaled, k)*sign;
 	a, b := w - qj, qi + qk;
 	c, d := qj + w, qk - qi;
 	p := (a*a + b*b).sqrt();

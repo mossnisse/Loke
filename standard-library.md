@@ -2592,7 +2592,10 @@ The quaternion procedures:
   `to_euler(q, order)` returns `(first, second, third)` with the middle angle
   in `[-pi/2, pi/2]` and the others in `[-pi, pi]`. At gimbal lock, when the
   middle angle is within rounding of `pi/2` or `-pi/2`, the third angle is 0
-  and the first takes the whole rotation about the shared axis.
+  and the first takes the whole rotation about the shared axis. `q` need not
+  be a unit quaternion: a finite nonzero `q` whose largest component magnitude
+  `m` has an `m^4` that is not `is_normal` is first divided by `m`, so its
+  squares neither overflow nor lose precision, and a unit `q` never is.
 - `quaternion_from_rotation_vector(v)` turns `|v|` radians about the
   direction of `v`, and `to_rotation_vector(q)` returns the axis times the
   angle in `[0, pi]`, the same for `q` and `-q`; the zero vector is no
@@ -2606,10 +2609,20 @@ looking down `-Z` with `+Y` up to clip space, with `x` and `y` in `[-1, 1]`,
 value. `Depth_Range` has no default: `.Negative_One_To_One` is OpenGL's,
 `.Zero_To_One` Direct3D's, Vulkan's, Metal's, and WebGPU's, and
 `.One_To_Zero` reversed depth. A perspective's clip `w` is the view-space
-`-z`, and an infinite `far` gives the limit of the matrix as `far` grows. A
+`-z`. Its depth coefficients are computed in the order its documentation
+gives from `r = far/(far - near)`, at most `2/epsilon` however close the
+planes are, and `s = near/(far - near)`, never from `far*near`, so a step
+overflows only where its coefficient does; an infinite `far` takes `r` as 1
+and `s` as 0, the limit of the matrix as `far` grows. A
 field of view outside `(0, pi)`, a non-positive or infinite `aspect` or
 `near`, `far <= near`, and a NaN panic; an orthographic box needs finite,
-distinct bounds with `far` beyond `near`. Each `_lh` form takes the same
+distinct bounds with `far` beyond `near`. An orthographic matrix's
+coefficients are the quotients its documentation gives, such as
+`2/(right - left)` and `-(right + left)/(right - left)`, except that a row
+whose difference or sum of two bounds overflows computes them from the
+halves of those bounds, which are then exact, so a coefficient overflows or
+underflows only where its value does and ordinary bounds keep the plain
+quotients' bits. Each `_lh` form takes the same
 parameters for a view space looking down `+Z`: the projection is its twin
 with the third column negated. `look_at(eye, target, up)` and
 `look_to(eye, forward, up)` return the view matrix whose rows are the side,
@@ -2635,7 +2648,9 @@ Every operation is computed in the order documented on it, with no `fma` and
 no C library call: the `f32` and `f64` slots of `Real` are `math.sqrt`, which
 is correctly rounded, and [`core:math/repro`](#coremathrepro). Results are
 the same bits on every machine, [CPU level](compiler-guide.md#cpu-levels),
-and optimization level. Calls can also be evaluated at compile time with
+and optimization level, but for which NaN a NaN result is, which
+[Floating-point operators](design.md#floating-point-operators) leaves
+unspecified. Calls can also be evaluated at compile time with
 the same result, including those that reach `math.sqrt`. At `f32`, `transform_point`,
 `transform_direction`, and a 3 x 3 `m * v` compute in `Simd` lanes, each lane
 one component in the documented order, which changes their speed and not
@@ -2793,7 +2808,9 @@ large elements, since no tolerance decides that it is singular;
 one subtraction per term into the running element, in increasing order, and
 every operation is computed in the order its documentation gives, with no
 `fma`, so results are the same bits on every machine,
-[CPU level](compiler-guide.md#cpu-levels), and optimization level.
+[CPU level](compiler-guide.md#cpu-levels), and optimization level, but for which NaN a NaN result is, which
+[Floating-point operators](design.md#floating-point-operators) leaves
+unspecified.
 
 Products of `f32` and `f64` with contiguous columns run a `Simd` kernel that
 computes a tile of the output across lanes, each lane one element in its
@@ -3014,7 +3031,9 @@ algebra, the planes' intersection point, the segments' and triangles' closest
 points, the overlap tests, the box, plane, and triangle casts, `transform_box`,
 and the polygon procedures but `convex_hull`, is evaluated at compile time with
 the same result, and every result is the same bits on every machine,
-[CPU level](compiler-guide.md#cpu-levels), and optimization level. An `f32`
+[CPU level](compiler-guide.md#cpu-levels), and optimization level, but for which NaN a NaN result is, which
+[Floating-point operators](design.md#floating-point-operators) leaves
+unspecified. An `f32`
 box cast computes its three slabs in `Simd` lanes, each lane one axis in the
 documented order, which changes its speed and not its bits
 ([Milestone 5 results](geometry-plan.md#milestone-5-results)).
