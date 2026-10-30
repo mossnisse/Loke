@@ -1648,7 +1648,10 @@ bytes_for_bits :: proc(cap: int) -> int;   // cap/8, rounded up
 Index_Set(N).of(indices: ..int) -> Index_Set(N)
 Index_Set(N).all() -> Index_Set(N)
 Dynamic_Index_Set.init(cap: int, allocator := mem.default_allocator()) -> Dynamic_Index_Set
+Dynamic_Index_Set.try_init(cap: int, allocator := mem.default_allocator())
+	-> Result(Dynamic_Index_Set, Allocator_Error)
 Dynamic_Index_Set.resize(self: inout, cap: int)
+Dynamic_Index_Set.try_resize(self: inout, cap: int) -> Status(Allocator_Error)
 Index_View.over(words: []u64, cap: int) -> Index_View
 Index_View_Mut.over(words: []mut u64, cap: int) -> Index_View_Mut
 ```
@@ -1664,7 +1667,12 @@ words are:
   Copying one clones its storage, which the copy-cost diagnostic reports.
   `resize` keeps the indices below the new capacity, and those it adds are
   absent. `clear` keeps the storage, so a visited set is reused without
-  allocating.
+  allocating. `init` and `resize` follow the allocator's [failure
+  policy](design.md#allocation-failure); `try_init` and `try_resize` return
+  the `Allocator_Error` instead, under the [`try_`
+  convention](design.md#appending-to-a-dynamic-array), and a failed
+  `try_resize` leaves the set unchanged. Only growing allocates, so a
+  `try_resize` to a smaller capacity always succeeds.
 - **`Index_View`** and **`Index_View_Mut`** read and write a set stored in the
   caller's words, such as an arena or a field of the caller's own record.
   `over` panics unless `words.len()` is exactly `words_for_bits(cap)`. A view
@@ -1680,7 +1688,7 @@ owner or an `Index_View_Mut`, and `other` is an `Index_View`:
 | --- | --- |
 | `cap()` | The number of indices the set can hold. |
 | `len()`, `is_empty()` | The number of indices present, and whether it is zero. |
-| `contains(i)` | Whether `i` is present. |
+| `contains(i)`, `i in set` | Whether `i` is present. `in` is `contains` as an [operator](design.md#operator-declarations), so it panics for an `i` outside `0 ..< cap` as `contains` does; `!(i in set)` is its negation. |
 | `count_range(low, high)` | The number of indices present in `low ..< high`. |
 | `next_member(from)`, `next_absent(from)` | The smallest index at or after `from` that is present, or absent, as an `Option(int)`; `from` may be `cap`, which gives `.none`. |
 | `is_subset_of(other)`, `intersects(other)` | Whether every index of the set is in `other`, and whether any is. |

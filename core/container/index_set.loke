@@ -182,6 +182,9 @@ impl Index_Set($N) {
 		return result;
 	}
 
+	/// `index in set`: whether `index` is present, as `contains`.
+	is_member :: operator(in) proc(index: int, set: Index_Set(N)) -> bool { return has_member(set.words[:], N, index); }
+
 	// --------------------------------------------------------- bytes --
 
 	/// Writes the set to `out` in the byte order the package header gives; `out.len()` must be `bytes_for_bits(N)`.
@@ -225,6 +228,15 @@ impl Dynamic_Index_Set {
 	}
 
 	/**
+		As `init`, but a failure to allocate is returned rather than handled by
+		the allocator's failure policy. A negative `cap` panics.
+	*/
+	try_init :: proc(cap: int, allocator: Allocator = mem.default_allocator()) -> Result(Dynamic_Index_Set, Allocator_Error) {
+		words := try_make([dynamic]u64, words_for_bits(cap), allocator) or_return;
+		return .ok(Dynamic_Index_Set{move(words), cap});
+	}
+
+	/**
 		Changes the capacity to `cap`, keeping the indices below it; those
 		added are absent. A negative `cap` panics.
 	*/
@@ -235,6 +247,20 @@ impl Dynamic_Index_Set {
 		if (cap < self.capacity) { apply_range(&mut self.words[:], self.capacity, cap, self.capacity, .Unset); }
 		self.words.resize(count);
 		self.capacity = cap;
+	}
+
+	/**
+		As `resize`, but a failure to allocate is returned rather than handled
+		by the allocator's failure policy, and leaves the set unchanged. A
+		negative `cap` panics.
+	*/
+	try_resize :: proc(self: inout, cap: int) -> Status(Allocator_Error) {
+		// Only growing allocates, so it is done first: after it, `resize` only
+		// clears bits and sets the length to the one the storage already has.
+		count := words_for_bits(cap);
+		if (count > self.words.len()) { self.words.try_resize(count) or_return; }
+		self.resize(cap);
+		return .ok;
 	}
 
 	/// The set as a read-only view, borrowed from it.
@@ -275,6 +301,9 @@ impl Dynamic_Index_Set {
 
 	/// Equal capacities and equal members.
 	equal :: operator(==) proc(left, right: Dynamic_Index_Set) -> bool { return left.view() == right.view(); }
+
+	/// `index in set`: whether `index` is present, as `contains`.
+	is_member :: operator(in) proc(index: int, set: Dynamic_Index_Set) -> bool { return has_member(set.words[:], set.capacity, index); }
 
 	store_bytes :: proc(self: ^, out: []mut u8) { store(self.words[:], self.capacity, out); }
 	load_bytes :: proc(self: inout, bytes: []u8) -> bool { return load(&mut self.words[:], self.capacity, bytes); }
@@ -328,6 +357,9 @@ impl Index_View {
 		return true;
 	}
 
+	/// `index in set`: whether `index` is present, as `contains`.
+	is_member :: operator(in) proc(index: int, set: Index_View) -> bool { return has_member(set.words, set.capacity, index); }
+
 	store_bytes :: proc(self, out: []mut u8) { store(self.words, self.capacity, out); }
 
 	Element :: int;
@@ -379,6 +411,9 @@ impl Index_View_Mut {
 	retain_all :: proc(self: inout, other: Index_View) { combine(&mut self.words[:], self.capacity, other, .Retain); }
 	remove_all :: proc(self: inout, other: Index_View) { combine(&mut self.words[:], self.capacity, other, .Remove); }
 	toggle_all :: proc(self: inout, other: Index_View) { combine(&mut self.words[:], self.capacity, other, .Toggle); }
+
+	/// `index in set`: whether `index` is present, as `contains`.
+	is_member :: operator(in) proc(index: int, set: Index_View_Mut) -> bool { return has_member(set.words[:], set.capacity, index); }
 
 	store_bytes :: proc(self: ^, out: []mut u8) { store(self.words[:], self.capacity, out); }
 	load_bytes :: proc(self: inout, bytes: []u8) -> bool { return load(&mut self.words[:], self.capacity, bytes); }
