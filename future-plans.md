@@ -124,7 +124,9 @@ last its measured `Simd` paths, and
 of the [dense matrix plan](dense-matrix-plan.md#milestones): storage, views,
 products, LU, Cholesky, QR, least squares, the symmetric and Hermitian
 eigensolver, the SVD, measured `Simd`, blocked, and pooled kernels, and
-complex elements through `linalg.Scalar`.
+complex elements through `linalg.Scalar`. Shapes, exact predicates, and the
+queries between them are proposed for `core:math/geometry` in the
+[geometry library plan](geometry-plan.md#milestones).
 
 [`core:encoding/json`](standard-library.md#coreencodingjson) still needs this
 evidence, in this order; its open design questions are in

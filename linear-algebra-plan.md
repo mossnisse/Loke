@@ -509,8 +509,8 @@ section and package-layout line, a `CHANGELOG.md` line, and the tests below.
 ## Later work
 
 - A geometry package: `Aabb`, `Ray`, `Plane`, `Sphere`, frustum planes from a
-  projection-view matrix, and ray, box, and triangle tests, specified once
-  the vector API has settled.
+  projection-view matrix, and ray, box, and triangle tests, now proposed in
+  the [geometry library plan](geometry-plan.md).
 - Lane-wise SIMD math and structure-of-arrays batch transforms, a vector a
   lane rather than a component a lane, measured against `bench/linalg.loke`
   ([Milestone 4 results](#milestone-4-results)).
