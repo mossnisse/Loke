@@ -678,8 +678,10 @@ rune_literal :: proc(l: ^Lexer) -> Token {
 }
 
 // First match wins, so longer operators must precede their prefixes. `:` stays
-// separate because `::` and `:=` are token pairs.
-OPERATORS :: [?]struct {
+// separate because `::` and `:=` are token pairs. Read-only data rather than a
+// constant, so a scan does not materialize the table first.
+@(private, rodata)
+operator_table := [?]struct {
 	text: string,
 	kind: Token_Kind,
 }{
@@ -742,12 +744,8 @@ OPERATORS :: [?]struct {
 	{"}", .Rbrace},
 }
 
-// The table as data, so a scan does not materialize the constant first.
-@(private = "file", rodata)
-operator_table := OPERATORS
-
 operator_spelling :: proc(kind: Token_Kind) -> string {
-	for op in OPERATORS {
+	for op in operator_table {
 		if op.kind == kind {
 			return op.text
 		}

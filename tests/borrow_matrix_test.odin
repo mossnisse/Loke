@@ -200,14 +200,6 @@ matrix_expected :: proc(place: Matrix_Place, take: Matrix_Take, use: Matrix_Use,
 	return ""
 }
 
-// The code the compiler reports instead of `matrix_expected`'s for a case
-// known-gaps.md records, or false when it agrees. Fixing a gap fails these
-// cases until they are removed here. None is recorded now.
-@(private = "file")
-matrix_known_gap :: proc(place: Matrix_Place, take: Matrix_Take, use: Matrix_Use, shape: Matrix_Shape, later: bool) -> (string, bool) {
-	return "", false
-}
-
 // `replace_head` and the uses of `head` say nothing about a binding of
 // `first`, and the option copy and view say nothing about a copy of `head`;
 // beside a borrow of `count` or a slice of `cells`, both are other fields. A
@@ -422,10 +414,6 @@ borrow_matrix :: proc(t: ^testing.T) {
 		errors := matrix_errors(string(job.stderr))
 		for entry in program.cases {
 			expected := matrix_expected(program.place, program.take, entry.use, entry.shape, entry.later)
-			gap_code, gap := matrix_known_gap(program.place, program.take, entry.use, entry.shape, entry.later)
-			if gap {
-				expected = gap_code
-			}
 			code := ""
 			for e in errors {
 				if e.line >= entry.first_line && e.line <= entry.last_line {
@@ -435,10 +423,10 @@ borrow_matrix :: proc(t: ^testing.T) {
 			}
 			testing.expectf(
 				t, code == expected,
-				"%s (lines %d-%d): %v of a carrier from %s, then %s (%v)%s: expected %s%s, got %s",
+				"%s (lines %d-%d): %v of a carrier from %s, then %s (%v)%s: expected %s, got %s",
 				path, entry.first_line, entry.last_line, program.take, program.place.name, entry.use.name,
 				entry.shape, entry.later ? " and a later use" : "", expected if expected != "" else "no error",
-				gap ? " (a gap known-gaps.md records)" : "", code if code != "" else "no error",
+				code if code != "" else "no error",
 			)
 		}
 		// An error outside every case is a mistake in the generated program.

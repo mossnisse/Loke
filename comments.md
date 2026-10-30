@@ -2176,7 +2176,7 @@ boundaries and API shapes follow a few common choices:
   bytes it reads and writes for the same reason. Each handle holds one lock and a second is refused, because
   the platforms disagree about the second: Windows stacks it and needs two
   unlocks, and `flock` converts the first without promising atomicity.
- `core:fs` hands a path to
+- **Paths keep Windows' own normalization.** `core:fs` hands a path to
   Windows unchanged, so it names what it names to a shell or any other
   Windows program. Following each link before a later `..`, as POSIX does, would mean
   resolving the path one element at a time, a system call per element, and

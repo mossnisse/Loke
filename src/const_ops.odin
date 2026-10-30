@@ -200,21 +200,14 @@ bit_count :: proc(storage: Value_Storage, value: Big_Int, bits: int, builtin: Bu
 // right count and the reverse. The result is built in `storage`.
 rotate_const :: proc(c: ^Compiler, storage: Value_Storage, value, count: Big_Int, type: Type_Id, builtin: Builtin_Kind) -> Big_Int {
 	bits := type_bits(c, type)
-	amount, _ := bi_to_i64(storage, bi_wrap(storage, count, bits_for_amount(bits), false))
-	left := int(amount)
+	amount, _ := bi_to_i64(storage, count)
+	left := int(amount) & (bits - 1)
 	if builtin == .Math_Rotate_Right {
 		left = (bits - left) % bits
 	}
 	pattern := bi_wrap(storage, value, bits, false)
 	rotated := bi_or(storage, bi_shl(storage, pattern, left), bi_shr(storage, pattern, bits - left))
 	return bi_wrap(storage, rotated, bits, type_signed(c, type))
-}
-
-// The number of low bits of a count that a rotation of `bits`, a power of
-// two, keeps.
-@(private = "file")
-bits_for_amount :: proc(bits: int) -> int {
-	return int(intrinsics.count_trailing_zeros(u64(bits)))
 }
 
 // `x mod y` for two `f32` or two `f64` constants, the remainder of `x` by `y`

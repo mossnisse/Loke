@@ -920,20 +920,16 @@ flush_handle :: proc(handle: Handle) -> Status(io.Error) {
 // access check, so a caller allowed only to append is refused here.
 @(private)
 set_size_handle :: proc(handle: Handle, append: bool, size: i64) -> Status(io.Error) {
-	if (!append) { return set_end_of_file(handle, size); }
-	reopened := rt_reopen_file(handle, u32(FILE_WRITE_DATA), u32(SHARE_ALL), 0);
-	if (reopened == INVALID_HANDLE) {
-		return .err(from_last_error(.Set_Size));
+	target := handle;
+	if (append) {
+		target = rt_reopen_file(handle, u32(FILE_WRITE_DATA), u32(SHARE_ALL), 0);
+		if (target == INVALID_HANDLE) {
+			return .err(from_last_error(.Set_Size));
+		}
 	}
-	outcome := set_end_of_file(reopened, size);
-	_ = rt_close_handle(reopened);
-	return outcome;
-}
-
-@(private)
-set_end_of_file :: proc(handle: Handle, size: i64) -> Status(io.Error) {
+	defer if (append) { _ = rt_close_handle(target); }
 	end := size;
-	if (rt_set_file_information(handle, u32(FILE_END_OF_FILE_INFO_CLASS), &mut end, 8) == 0) {
+	if (rt_set_file_information(target, u32(FILE_END_OF_FILE_INFO_CLASS), &mut end, 8) == 0) {
 		return .err(from_last_error(.Set_Size));
 	}
 }

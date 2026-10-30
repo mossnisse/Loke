@@ -29,10 +29,8 @@ parent, `abed59c0`:
   [known-gaps.md](known-gaps.md#integer-builtin-registrations-break-dense-scalar-constraints),
   although the exact QR reproduction compiles and prints `ok` with the
   merged compiler, and [lib_dense.loke](tests/run/lib_dense.loke) passes.
-  The earlier merge's verification below already records that the failure
-  does not reproduce. Remove these 42 lines from the current gap inventory
-  and update the older review's reference to it; retain any useful history
-  in that review with its resolution stated.
+  The review of merge `4008ea61` had already found that the failure does not
+  reproduce. Remove these 42 lines from the current gap inventory.
 - **Exercise the failed unlock itself.** The added sequence in
   [lib_fs_lock.loke](tests/run/lib_fs_lock.loke) exercises successful
   releases and contention, but its comment acknowledges that it cannot make
@@ -55,87 +53,6 @@ diagnostics, the normalization and locking runtime regressions, the fs
 interface check, and the dense runtime regression. An isolated compiler
 with the view-depth argument removed also passes the borrow matrix and
 diagnostics and accepts the nine-reslice reproduction.
-
-## Review follow-up for integer bit operations and index sets
-
-Review of `723d216d` on 2026-10-30 found one small compiler simplification:
-in `rotate_const` in [const_ops.odin](src/const_ops.odin), both callers have
-already checked that the rotation count is an `int`. Convert that count
-directly with `bi_to_i64`, then normalize it with
-`int(amount) & (bits - 1)`. The supported widths are powers of two, so this
-keeps the required low bits for positive counts, negative counts, and
-`int.MIN`. Delete the extra `bi_wrap` on the count and the single-use
-`bits_for_amount` helper: seven fewer lines. An isolated compiler variant
-passes the new integer-bit regression and an independent rotation check over
-all 8-bit signed/unsigned values with counts from -129 through 129, plus
-representative wider values and extreme counts. The fixture also checks
-constant folding and compile-time evaluation.
-
-The index-set structure is otherwise coherent: the four public types lend
-views and forward to shared word-slice operations, keeping range masks,
-serialization, and tail preservation together. Keep the direct fixed-set
-operator loops, which build a fresh result without an implicit large copy,
-and the separate read-only and mutable views. A new adapter or configurable
-operation framework would add structure without removing the storage rules.
-
-The two behavioral findings are recorded in
-[the dense scalar regression](known-gaps.md#integer-builtin-registrations-break-dense-scalar-constraints)
-and [the storage-count overflow](known-gaps.md#index-set-storage-counts-overflow-for-valid-positive-capacities).
-Validation passed all 175 compiler unit tests, the LLVM-shape suite, the new
-integer-bit and index-set runtime cases, the affected `lib_math` and
-`lib_random` cases, and the math/container interface checks. The trap suite
-fails on the three dense cases recorded above. The diagnostics suite also
-fails on [generic_waiting_argument.loke](tests/err/generic_waiting_argument.loke);
-the parent compiler produces identical diagnostics for that case, so that
-failure predates this commit.
-
-Review of merge `4008ea61` against its first parent on the same date
-confirmed the storage-count overflow and independently validated the
-seven-line rotation simplification. The isolated variant passes the
-integer-bit regression, constant folding and compile-time evaluation across
-all supported integer widths with negative and extreme counts, and runtime
-comparisons of both rotations for every `u8` value and counts from -17
-through 17. The merge passes both new runtime regressions at default and
-speed optimization, the two changed package interface checks, all 175
-compiler unit tests, and the diagnostics, trap, and LLVM-shape suites.
-The existing `lib_math`, `lib_math_bits`, `lib_random`, and `lib_dense`
-runtime regressions also pass. The dense scalar and waiting-argument
-failures reported for the unmerged commit above do not reproduce in this
-merge.
-
-## Review follow-ups for file resizing, positional I/O, and locking
-
-Review of `675f0659`, `7ee9c971`, and `cf74b6e2` on 2026-10-30 found these
-cleanup and coverage items:
-
-- **Use one resize path with scoped cleanup.** `set_size_handle` and
-  `set_end_of_file` in [fs.loke](core/fs/fs.loke) can be one helper. Start
-  with the original handle, replace it with a reopened handle only for
-  append mode, conditionally `defer` closing that handle, and issue
-  `SetFileInformationByHandle` once. This removes the second helper and the
-  temporary result used to close before returning: four fewer lines. An
-  isolated variant passes [the resize regression](tests/run/lib_fs_set_size.loke)
-  with identical output. Keep the semantic platform helpers and the direct
-  positional transfer loops; introducing a general adapter would add more
-  structure than it removes.
-- **Restore the separate path-normalization rationale.** The locking commit
-  deleted the `Paths keep Windows' own normalization` bullet label in
-  [Standard-library API choices](comments.md#standard-library-api-choices),
-  leaving its paragraph attached to `File locks are advisory`. Restore the
-  bullet so these independent choices can be read separately.
-- **Keep a contended blocking-lock regression.**
-  [lib_fs_lock.loke](tests/run/lib_fs_lock.loke) exercises `try_lock` under
-  contention, but calls blocking `lock` only on a free file or an already
-  locked handle that is rejected before the platform call. Add a worker or
-  child-process handshake that checks that a blocked acquisition finishes
-  after the holder releases it, under the harness timeout. A separate
-  contended blocking-lock smoke check passed during this review.
-
-All three added regression programs and `lokec core/fs -api-check` passed.
-The append recovery sequence, including `flush`, and resizing an open append
-handle after deleting its name also succeeded on the review's Windows host.
-The review's unlock failure-state finding is fixed: a failed `unlock` now keeps
-the lock ([File locking](standard-library.md#file-locking)).
 
 ## JSON follow-ups
 
@@ -226,100 +143,6 @@ the precision table should guarantee a number of such places, which would make
 this program portable; the bound keeps the place loans and `.Through` events a
 borrow makes few.
 
-## Review follow-ups for the recorded-gap closure
-
-Review of `d3cb447a` on 2026-10-30 found these cleanup items:
-
-- **Remove the empty matrix exception path.**
-  `matrix_known_gap` in [borrow_matrix_test.odin](tests/borrow_matrix_test.odin)
-  now always returns `"", false`. Delete it, the caller's override branch,
-  and the conditional known-gap suffix in the failure message. Compare
-  against `matrix_expected` directly. This removes 12 lines without
-  changing coverage. Update the references to the exception helper in
-  [Testing and verification](compiler-architecture.md#testing-and-verification)
-  and [Compositional loan construction](#compositional-loan-construction).
-- **Refresh the caller-storage description below.** Its claim that slice
-  parameter stores always join into the parameter predates the new constant
-  element slots, and its known-gap link targets a heading removed by this
-  commit. Describe the remaining limitations: a store into one element of a
-  local view, and a whole record stored through a parameter, no longer join,
-  and known-gaps.md records neither.
-
-## Review follow-ups for the reborrow-gap closure
-
-Review of `bb65c244` on 2026-10-30 found a structural cleanup in
-[cfg_provenance.odin](src/cfg_provenance.odin): `prov_view_element` and the
-new `prov_local_view_element` separately walk selectors and indices, require
-a named slice with one constant nonnegative index, and verify that its one
-carrier hop starts at that identifier. Extract that shared place recognition
-into one helper returning the slice symbol and index. Keep the parameter
-immutability check, caller-slot creation, and local-slot lookup in their
-respective callers. This removes about 25 lines and gives new place forms
-one recognition path to update. Keep both local and parameter cases in the
-borrow matrix when doing this cleanup.
-
-The behavioral findings, a false `L0641` for a named read-only reborrow
-passed to a `stored` parameter and a lost mutable source when a stored named
-read-only reborrow is loaded again, are fixed.
-
-## Review follow-ups for the compiler-performance merge
-
-Review of `26022400` on 2026-10-30 found one small simplification in
-[lexer.odin](src/lexer.odin): `OPERATORS` is a constant array, while
-`operator_table` is a read-only data copy used by the lexer to avoid
-materializing that constant on every scan. The other consumers are ordinary
-loops in `operator_spelling` and the longest-first ordering test; none needs
-a compile-time constant. Declare the array itself once as package-private
-`rodata`, use it in both loops and the test, and delete the second declaration
-and its explanation. This removes about three lines while preserving the
-optimization, and the spelling lookup also avoids materializing the constant.
-Keep the token golden and longest-first ordering tests as the checks for it.
-
-The shared arena initialization and destruction helpers keep their lifecycle
-changes together, including checkpoint restoration. Keep the specialized LLVM
-formatting helpers local to emission; the direct fixed-width hexadecimal loop
-and the search for frame-pop candidates serve the measured hot paths without
-adding a general formatting or rewriting layer.
-
-## Review follow-up for the checking and emission speedups
-
-Review of `70093fb2` on 2026-10-30 found one small structural cleanup in
-[lexer.odin](src/lexer.odin): `OPERATORS` and `operator_table` can be one
-package-visible `@(rodata)` table. Both `operator` and `operator_spelling`,
-and the existing longest-match test in
-[front_end_test.odin](src/front_end_test.odin), can read that same table.
-Nothing needs the separate compile-time constant. This removes three lines
-and avoids materializing the constant array in `operator_spelling`. An
-isolated variant builds and passes all 175 compiler unit tests.
-
-Keep the sparse `released_indices` buffer in [borrow.odin](src/borrow.odin).
-An experiment reversing the slot and loan loops removed it and preserved
-the checked LLVM output, but checking the dense benchmark was slower; the
-smaller version did not establish a performance improvement.
-
-Before/after runs of [perf.ps1](perf.ps1), with default Odin builds and
-`-Repeat 3`, measured these front-end times on identical input hashes:
-
-| Program | Parent (ms) | Commit (ms) |
-| --- | ---: | ---: |
-| `bench/dense.loke` | 1597 | 1283 |
-| `bench/geometry.loke` | 1421 | 1129 |
-| `bench/linalg.loke` | 1418 | 937 |
-| `examples/corpus_runner.loke` | 921 | 659 |
-| `bench/workspace` | 486 | 400 |
-
-Other jobs were active on the machine, so timings are approximate. Peak
-working sets were nearly unchanged. Four interleaved runs of `Measure-Lsp`
-from the performance harness measured root-edit medians of 661 and 726 ms
-for the parent, versus 497 and 523 ms for the commit. The compiler and language-server unit
-suites passed, as did the borrow matrix, diagnostics, LLVM shapes, and LLVM
-reproducibility suites from the reviewed commit. The run corpus had one
-failure in [lib_geometry_lanes.loke](tests/run/lib_geometry_lanes.loke),
-using the checkout's newer bundled packages: its f32 triangle comparison
-fails with both parent and commit, which emit identical LLVM for it.
-Twelve repeated before/after builds of `corpus_runner` also emitted
-identical LLVM.
-
 ## Compositional loan construction
 
 Loan construction had separate paths for subject views, ordinary borrows,
@@ -337,8 +160,7 @@ generated matrix, [borrow_matrix_test.odin](tests/borrow_matrix_test.odin),
 crosses eleven place forms with a copy, a payload binding, a read-only or
 mutable borrow, slice, or traversal, and eighteen uses beside each, in
 straight-line code, a branch, or a loop, against a model of the rules written
-apart from the compiler; `matrix_known_gap` lists the cases
-[known-gaps.md](known-gaps.md) records.
+apart from the compiler.
 
 Still open:
 
@@ -360,14 +182,20 @@ Still open:
   (`publish_into_caller`); a later load reads them (`read_caller_slots`). Caller
   slots of different loans are taken to name different storage, so a store
   through one is not seen through another that a cyclic structure makes the
-  same. A view's slots stand for all of its elements, so a store through a slice
-  parameter still joins into the parameter itself, as does a store whose copies
-  no reborrow links to where it lands, such as a whole record's; known-gaps.md
-  records [a rejection the first
-  causes](known-gaps.md#a-store-through-a-slice-parameter-joins-into-the-parameter).
-  Storage below the second load gets a loan per carrier only where the storage
-  above it is one place; through a view or past the last load depth it is one
-  slot.
+  same, though a mutable cycle such as `l.next = .some(&mut l)` keeps `l`
+  suspended, so `&mut l` cannot then be passed on (`L0511`). A view's slots stand for all of its elements, which no store
+  replaces. One element at a constant index has slots of its own, which a store
+  naming it replaces: a view parameter's (`prov_view_element`), and a local
+  view's whose start in the range its borrow lends is known
+  (`prov_local_view_element`). A store into a view parameter at any other
+  index still joins into the parameter itself, as does a store whose copies no
+  reborrow links to where it lands; known-gaps.md records [a rejection the
+  first
+  causes](known-gaps.md#a-store-through-a-slice-parameter-at-a-variable-index-joins-into-the-parameter).
+  A record stored whole through a parameter replaces, and links, each carrier
+  slot it lands in. Storage below the second load gets a loan per carrier only
+  where the storage above it is one place; through a view or past the last
+  load depth it is one slot.
 - **Matrix coverage.** Slices and traversals are taken of a fixed array, so
   no use beside them reallocates storage, and nothing leaves a traversal or a
   loop early with `break` or `return`. A loop that takes afresh is the one

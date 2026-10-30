@@ -148,6 +148,41 @@ to it. Closing it needs each destination's carriers read before the first
 write, as the values already are (`prov_capture_slots`). Found while
 closing the self-resliced view case on 2026-10-30.
 
+### A store through a slice parameter at a variable index joins into the parameter
+
+[Weakening and reborrows](design.md#weakening-and-reborrows) borrows a place
+reached through a view for that place only, so storing `head` beside a borrow
+of `count` is allowed. Through a slice parameter at an index that is not a
+constant, it is rejected once a loop repeats it:
+
+```loke
+package main;
+Node :: struct { value: int }
+Counted :: struct { head: ^mut Node, tail: ^mut Node, count: int }
+sink :: proc(value: int) {}
+sliced :: proc(s: []mut Counted, k: int) {
+    for (round := 0; round < 2; round += 1) {
+        count := &s[k].count;
+        s[k].head = s[k].tail; // L0641, should be allowed
+        sink(count^);
+    }
+}
+main :: proc() {}
+```
+
+The same body compiles with `s[0]` in place of `s[k]`, without the loop, or
+over a fixed array or a local view, at a constant or a variable index;
+`s[round]`, and `count := &s[0].count` beside a store into `s[k].head`, are
+rejected too. A store through a view parameter lands in one element's own
+slots only at a constant index (`prov_view_element` in
+[src/cfg_provenance.odin](src/cfg_provenance.odin)). Any other store joins
+into the parameter itself (`publish_into_loan` in
+[src/borrow.odin](src/borrow.odin)), so the next iteration's copy of
+`s[k].tail` holds the loans of the storage `count` borrows. A slot for the
+elements at unknown indices, which such a store joins into without touching
+the parameter, would close it. Found refreshing open-questions.md "Caller
+storage contents" on 2026-10-30.
+
 ### A generic `impl`'s constant is not read by the type of its value
 
 [Private names in public declarations](design.md#private-names-in-public-declarations)
