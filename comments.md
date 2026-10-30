@@ -2193,6 +2193,22 @@ boundaries and API shapes follow a few common choices:
   sticky digit, so a tie broken by a later digit rounded the wrong way. Keeping
   767 digits and one standing for any nonzero remainder gives the correctly
   rounded result for any length, from a fixed buffer.
+- **Geometry recomputes out-of-range values instead of always widening.** A
+  ball query, a ball cast, or a triangle cast whose squares, edge functions,
+  or determinant are normal numbers keeps its `T` arithmetic and its bits;
+  only one whose values overflowed or underflowed is computed again in
+  `f64`. A ball cast scales its direction apart from its positions, since
+  `t` is a ratio of the two and a unit direction is common with any size of
+  ball. `f32` widens
+  to `f64` because every product of two `f32`s is exact there and no `f32`
+  square leaves its range. `f64` has nothing wider, so it scales by powers of
+  two, which are exact and change no rounding, in steps of `2^64` so that the
+  scale factor itself never overflows; a triangle whose largest sheared
+  coordinate is within `[2^-64, 2^64)` is not scaled at all, since scaling a
+  unit-sized triangle down would round away the bits of a subnormal corner.
+  Loops of multiplications by constants find and apply the scale with no
+  bit manipulation, and keep the triangle cast and the overlap tests
+  evaluable at compile time.
 
 ## Compiler design choices
 

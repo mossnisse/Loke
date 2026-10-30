@@ -1,0 +1,7 @@
+repeated corner 1.0 0.0 0.0 1.0
+shared edge true true
+small f32 hit 1065353216 1048576001 1056964607 1048576000
+large f64 hit 4607182418800017408 4598175219545276416 4602678819172646912 4598175219545276416
+large sphere false 1e20 1e20 0.0 0.0
+large sphere casts .none .some(1e20)
+all range checks passed

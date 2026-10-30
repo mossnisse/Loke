@@ -34,7 +34,11 @@ closest_on_segment :: proc(a, b, p: $V, zero: $T) -> V where linalg.Real(T) {
 
 // Ericson's closest point on a triangle by its Voronoi regions: a corner, an
 // edge, or the inside. A triangle of no area, whose inside region is empty,
-// takes the nearest of its edges' points.
+// takes the nearest of its edges' points. Each edge region also needs its
+// edge's squared length, the denominator of its parameter, to be positive:
+// an edge of no length, from two equal corners, has no region of its own,
+// and the other edges and corners, or the nearest edge's point, answer
+// instead.
 @(private)
 closest_on_triangle :: proc(a, b, c, p: $V, zero: $T) -> V where linalg.Real(T) {
 	ab := b - a;
@@ -48,7 +52,7 @@ closest_on_triangle :: proc(a, b, c, p: $V, zero: $T) -> V where linalg.Real(T) 
 	d4 := ac.dot(bp);
 	if (at_most(zero, d3) && at_most(d4, d3)) { return b; }
 	vc := d1*d4 - d3*d2;
-	if (at_most(vc, zero) && at_most(zero, d1) && at_most(d3, zero)) {
+	if (at_most(vc, zero) && at_most(zero, d1) && at_most(d3, zero) && zero < d1 - d3) {
 		return a + ab*(d1/(d1 - d3));
 	}
 	cp := p - c;
@@ -56,11 +60,11 @@ closest_on_triangle :: proc(a, b, c, p: $V, zero: $T) -> V where linalg.Real(T) 
 	d6 := ac.dot(cp);
 	if (at_most(zero, d6) && at_most(d5, d6)) { return c; }
 	vb := d5*d2 - d1*d6;
-	if (at_most(vb, zero) && at_most(zero, d2) && at_most(d6, zero)) {
+	if (at_most(vb, zero) && at_most(zero, d2) && at_most(d6, zero) && zero < d2 - d6) {
 		return a + ac*(d2/(d2 - d6));
 	}
 	va := d3*d6 - d5*d4;
-	if (at_most(va, zero) && at_most(zero, d4 - d3) && at_most(zero, d5 - d6)) {
+	if (at_most(va, zero) && at_most(zero, d4 - d3) && at_most(zero, d5 - d6) && zero < (d4 - d3) + (d5 - d6)) {
 		return b + (c - b)*((d4 - d3)/((d4 - d3) + (d5 - d6)));
 	}
 	total := va + vb + vc;

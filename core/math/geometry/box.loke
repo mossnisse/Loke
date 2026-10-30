@@ -88,8 +88,11 @@ impl Aabb2($T) {
 		if (self.is_empty()) { return {p, p}; }
 		return {self.min.min(p), self.max.max(p)};
 	}
-	/// The points in both boxes, empty when they do not overlap.
+	/// The points in both boxes, empty when they do not overlap or either is empty.
 	intersection :: proc(self, other: Aabb2(T)) -> Aabb2(T) where interfaces.Ordered(T) {
+		// An empty operand is the answer: `min` and `max` would drop a NaN corner.
+		if (self.is_empty()) { return self; }
+		if (other.is_empty()) { return other; }
 		return {self.min.max(other.min), self.max.min(other.max)};
 	}
 	/// Every face moved out by `amount`, or in for a negative one.
@@ -195,8 +198,11 @@ impl Aabb3($T) {
 		if (self.is_empty()) { return {p, p}; }
 		return {self.min.min(p), self.max.max(p)};
 	}
-	/// The points in both boxes, empty when they do not overlap.
+	/// The points in both boxes, empty when they do not overlap or either is empty.
 	intersection :: proc(self, other: Aabb3(T)) -> Aabb3(T) where interfaces.Ordered(T) {
+		// An empty operand is the answer: `min` and `max` would drop a NaN corner.
+		if (self.is_empty()) { return self; }
+		if (other.is_empty()) { return other; }
 		return {self.min.max(other.min), self.max.min(other.max)};
 	}
 	/// Every face moved out by `amount`, or in for a negative one.

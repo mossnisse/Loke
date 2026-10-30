@@ -1,0 +1,506 @@
+package main;
+
+import "core:fmt";
+import "core:math";
+import "core:math/geometry";
+import "core:math/linalg";
+import "core:unsafe";
+
+// standard-library.md "`core:math/geometry`" at the edges of its inputs:
+// triangles with repeated corners, which are the segments their corners
+// span; boxes with a NaN corner, which are empty, through `intersection`;
+// triangle casts through shared edges and interiors at small and large
+// scales, which the edge functions' products underflow or overflow; and
+// circle and sphere queries whose squares overflow or underflow, against
+// the same configurations at unit scale.
+
+failures := 0;
+
+check :: proc(name: string, ok: bool) {
+	if (!ok) {
+		failures += 1;
+		fmt.println("FAIL", name);
+	}
+}
+
+bits :: proc(x: $T) -> u64 {
+	when (T == f32) {
+		return u64(unsafe.transmute(u32, x));
+	} else {
+		return unsafe.transmute(u64, x);
+	}
+}
+
+// Whether `a` and `b` are within `tolerance` of each other relative to the
+// larger of 1 and their magnitudes, and neither is NaN.
+close :: proc(a, b, tolerance: $T) -> bool where linalg.Real(T) {
+	scale := T(1);
+	if (scale < a.abs()) { scale = a.abs(); }
+	if (scale < b.abs()) { scale = b.abs(); }
+	return at_most((a - b).abs(), tolerance*scale);
+}
+
+at_most :: proc(a, b: $T) -> bool where linalg.Real(T) { return a < b || a == b; }
+
+close2 :: proc(a, b: linalg.Vector2($T), tolerance: T) -> bool where linalg.Real(T) {
+	return close(a.x, b.x, tolerance) && close(a.y, b.y, tolerance);
+}
+
+close3 :: proc(a, b: linalg.Vector3($T), tolerance: T) -> bool where linalg.Real(T) {
+	return close(a.x, b.x, tolerance) && close(a.y, b.y, tolerance) && close(a.z, b.z, tolerance);
+}
+
+// The reproduction from known-gaps.md: the triangle `(a, a, c)` is the
+// segment from `a` to `c`.
+repeated_corner_reproduction :: proc() {
+	V :: linalg.Vector3(f64);
+	a := V.from_components(0, 0, 0);
+	c := V.from_components(2, 0, 0);
+	p := V.from_components(1, 1, 0);
+	triangle := geometry.Triangle3(f64).from_points(a, a, c);
+	q := triangle.closest_point(p);
+	fmt.println("repeated corner", q.x, q.y, q.z, triangle.distance(p));
+	check("the triangle (a, a, c) is its segment", q == V.from_components(1, 0, 0) && triangle.distance(p) == 1.0);
+}
+
+// Every placement of a repeated corner, and all three equal, against the
+// segment the distinct corners span, for points around it: in front of
+// each end, beside it, on it, and past it.
+repeated_corners :: proc($T: type, tolerance: T) where linalg.Real(T) {
+	V2 :: linalg.Vector2(T);
+	V3 :: linalg.Vector3(T);
+	p := V3.from_components(T(0.5), T(-1), T(0.25));
+	q := V3.from_components(T(2), T(1.5), T(-0.75));
+	bad := 0;
+	foreach (i in 0 ..< 7) {
+		foreach (j in 0 ..< 7) {
+			foreach (k in 0 ..< 3) {
+				x := V3.from_components(T(i)*T(0.75) - T(1.5), T(j)*T(0.75) - T(1.25), T(k) - T(1));
+				corners := [4][3]V3{{p, p, q}, {p, q, p}, {q, p, p}, {p, p, p}};
+				foreach (n in 0 ..< 4) {
+					corner := corners[n];
+					segment := geometry.Segment3(T).from_points(p, q if n < 3 else p);
+					triangle := geometry.Triangle3(T).from_points(corner[0], corner[1], corner[2]);
+					expected := segment.closest_point(x);
+					got := triangle.closest_point(x);
+					if (!close3(got, expected, tolerance) || !close(triangle.distance(x), segment.distance(x), tolerance)
+						|| !close(triangle.distance_squared(x), segment.distance_squared(x), tolerance)) {
+						bad += 1;
+					}
+					flat_x := V2.from_components(x.x, x.y);
+					flat := geometry.Triangle2(T).from_points(
+						V2.from_components(corner[0].x, corner[0].y),
+						V2.from_components(corner[1].x, corner[1].y),
+						V2.from_components(corner[2].x, corner[2].y));
+					flat_segment := geometry.Segment2(T).from_points(V2.from_components(p.x, p.y), V2.from_components(segment.b.x, segment.b.y));
+					if (!close2(flat.closest_point(flat_x), flat_segment.closest_point(flat_x), tolerance)
+						|| !close(flat.distance(flat_x), flat_segment.distance(flat_x), tolerance)) {
+						bad += 1;
+					}
+				}
+			}
+		}
+	}
+	check("a triangle with a repeated corner is the segment its corners span", bad == 0);
+	if (bad != 0) { fmt.println("repeated corners off by", bad); }
+}
+
+// A NaN in either corner of either operand, on each axis, leaves the
+// intersection empty in both orders.
+nan_intersections :: proc($T: type) where linalg.Real(T) {
+	nan := T(math.F64_NAN);
+	V2 :: linalg.Vector2(T);
+	V3 :: linalg.Vector3(T);
+	B2 :: geometry.Aabb2(T);
+	B3 :: geometry.Aabb3(T);
+	box2 := B2.from_min_max(V2.splat(T(0)), V2.splat(T(1)));
+	box3 := B3.from_min_max(V3.splat(T(0)), V3.splat(T(1)));
+	bad := 0;
+	foreach (axis in 0 ..< 3) {
+		low := V3.splat(T(0));
+		high := V3.splat(T(1));
+		if (axis == 0) { low.x = nan; high.x = nan; }
+		if (axis == 1) { low.y = nan; high.y = nan; }
+		if (axis == 2) { low.z = nan; high.z = nan; }
+		empties := [2]B3{B3.from_min_max(low, V3.splat(T(1))), B3.from_min_max(V3.splat(T(0)), high)};
+		foreach (empty in empties) {
+			if (!empty.is_empty() || !empty.intersection(box3).is_empty() || !box3.intersection(empty).is_empty()
+				|| !empty.intersection(empty).is_empty()) { bad += 1; }
+		}
+		if (axis < 2) {
+			empties2 := [2]B2{B2.from_min_max(V2.from_components(low.x, low.y), V2.splat(T(1))), B2.from_min_max(V2.splat(T(0)), V2.from_components(high.x, high.y))};
+			foreach (empty in empties2) {
+				if (!empty.is_empty() || !empty.intersection(box2).is_empty() || !box2.intersection(empty).is_empty()
+					|| !empty.intersection(empty).is_empty()) { bad += 1; }
+			}
+		}
+	}
+	check("a NaN-empty box's intersection is empty", bad == 0);
+	overlap := B3.from_min_max(V3.splat(T(0.5)), V3.splat(T(2)));
+	check("an overlap is unchanged", box3.intersection(overlap) == B3.from_min_max(V3.splat(T(0.5)), V3.splat(T(1)))
+		&& overlap.intersection(box3) == box3.intersection(overlap)
+		&& box3.intersection(B3.empty()).is_empty() && B3.empty().intersection(box3).is_empty());
+}
+
+integer_intersections :: proc() {
+	B :: geometry.Aabb2(i32);
+	box := B.from_min_max(linalg.Vector2(i32).splat(0), linalg.Vector2(i32).splat(4));
+	reversed := B.from_min_max(linalg.Vector2(i32).splat(3), linalg.Vector2(i32).splat(1));
+	check("an integer intersection with an empty box is empty", box.intersection(reversed).is_empty() && reversed.intersection(box).is_empty()
+		&& box.intersection(B.from_min_max(linalg.Vector2(i32).splat(2), linalg.Vector2(i32).splat(6))) == B.from_min_max(linalg.Vector2(i32).splat(2), linalg.Vector2(i32).splat(4)));
+}
+
+// The reproduction from known-gaps.md.
+shared_edge_reproduction :: proc() {
+	V :: linalg.Vector3(f32);
+	T :: geometry.Triangle3(f32);
+	size := f32(1e-24);
+	a := V.from_components(0, 0, 0);
+	b := V.from_components(size, 0, 0);
+	c := V.from_components(size, size, 0);
+	d := V.from_components(0, size, 0);
+	ray := geometry.Ray3(f32).from_origin_direction(
+		V.from_components(size*0.5, size*0.5, 1), V.from_components(0, 0, -1));
+	first := geometry.cast(ray, T.from_points(a, b, c), f32(0), f32(2)) != .none;
+	second := geometry.cast(ray, T.from_points(a, c, d), f32(0), f32(2)) != .none;
+	fmt.println("shared edge", first, second);
+	check("a ray through a tiny shared edge hits", first || second);
+}
+
+hit_t :: proc(hit: Option(geometry.Triangle_Hit($T))) -> T where linalg.Real(T) {
+	switch (hit) {
+	case .none: return T(math.F64_NAN);
+	case .some(h): return h.t;
+	}
+}
+
+hit_point :: proc(hit: Option(geometry.Triangle_Hit($T)), a, b, c: linalg.Vector3(T)) -> linalg.Vector3(T) where linalg.Real(T) {
+	switch (hit) {
+	case .none: return linalg.Vector3(T).splat(T(math.F64_NAN));
+	case .some(h): return a*h.barycentric.x + b*h.barycentric.y + c*h.barycentric.z;
+	}
+}
+
+// The square from `(0, 0)` to `(size, size)` at height 0, split along its
+// diagonal into `a, b, c` and `a, c, d`, cast by rays from either side,
+// straight and slanted. Points along the diagonal, the shared corners
+// among them, hit at least one triangle; interior points hit theirs alone,
+// at `t = 1`, at the point aimed at. A slanted ray aimed at the corner
+// `c`, which is a corner of the square, can pass outside it by the rounding
+// of its origin, so only straight rays, which are exact, aim there.
+shared_edges :: proc($T: type, size: T, tolerance: T) -> (misses: int, wrong: int) where linalg.Real(T) {
+	V :: linalg.Vector3(T);
+	a := V.from_components(T(0), T(0), T(0));
+	b := V.from_components(size, T(0), T(0));
+	c := V.from_components(size, size, T(0));
+	d := V.from_components(T(0), size, T(0));
+	lower := geometry.Triangle3(T).from_points(a, b, c);
+	upper := geometry.Triangle3(T).from_points(a, c, d);
+	misses, wrong := 0, 0;
+	slants := [3]V{V.from_components(T(0), T(0), T(1)), V.from_components(T(0.25), T(0.125), T(1)), V.from_components(T(-0.375), T(0.5), T(1))};
+	foreach (side in 0 ..< 2) {
+		foreach (s in 0 ..< 3) {
+			slant := slants[s];
+			direction := slant*size;
+			if (side == 1) { direction = direction*T(-1); }
+			foreach (k in 0 ..< 17) {
+				if (k == 16 && s != 0) { continue; }
+				f := T(k)/T(16);
+				target := V.from_components(size*f, size*f, T(0));
+				ray := geometry.Ray3(T).from_origin_direction(target - direction, direction);
+				first := geometry.cast(ray, lower, T(0), T(2));
+				second := geometry.cast(ray, upper, T(0), T(2));
+				if (first == .none && second == .none) { misses += 1; }
+			}
+			// Interior points of each triangle.
+			targets := [2]V{V.from_components(size*T(0.75), size*T(0.25), T(0)), V.from_components(size*T(0.25), size*T(0.75), T(0))};
+			foreach (n in 0 ..< 2) {
+				target := targets[n];
+				ray := geometry.Ray3(T).from_origin_direction(target - direction, direction);
+				first := geometry.cast(ray, lower, T(0), T(2));
+				second := geometry.cast(ray, upper, T(0), T(2));
+				mine, other := first, second;
+				if (n == 1) { mine, other = second, first; }
+				if (!(other == .none) || !close(hit_t(mine), T(1), tolerance)) { wrong += 1; }
+				corner_c := b if n == 0 else c;
+				corner_d := c if n == 0 else d;
+				point := hit_point(mine, a, corner_c, corner_d);
+				if (!close(point.x/size, target.x/size, tolerance) || !close(point.y/size, target.y/size, tolerance)) { wrong += 1; }
+			}
+		}
+	}
+	return {misses, wrong};
+}
+
+shared_edge_scales :: proc() {
+	scales32 := [?]f32{1.0e-24, 1.0e-30, 1.0e-36, 1.0, 1.0e20, 1.0e30, 1.0e36};
+	foreach (size in scales32) {
+		misses, wrong := shared_edges(f32, size, f32(1.0e-5));
+		check("f32 shared edges and interiors", misses == 0 && wrong == 0);
+		if (misses != 0 || wrong != 0) { fmt.println("f32 at", size, "misses", misses, "wrong", wrong); }
+	}
+	scales64 := [?]f64{1.0e-170, 1.0e-250, 1.0e-300, 1.0, 1.0e160, 1.0e250, 1.0e300};
+	foreach (size in scales64) {
+		misses, wrong := shared_edges(f64, size, 1.0e-12);
+		check("f64 shared edges and interiors", misses == 0 && wrong == 0);
+		if (misses != 0 || wrong != 0) { fmt.println("f64 at", size, "misses", misses, "wrong", wrong); }
+	}
+}
+
+V3F :: linalg.Vector3(f32);
+
+FOLDED_SMALL :: geometry.cast(geometry.Ray3(f32).from_origin_direction(V3F.from_components(0.75e-24, 0.25e-24, 1), V3F.from_components(0, 0, -1)),
+	geometry.Triangle3(f32).from_points(V3F.splat(0), V3F.from_components(1e-24, 0, 0), V3F.from_components(1e-24, 1e-24, 0)), f32(0), f32(2));
+FOLDED_LARGE :: geometry.cast(geometry.Ray3(f64).from_origin_direction(linalg.Vector3(f64).from_components(0.75e300, 0.25e300, 1e300), linalg.Vector3(f64).from_components(0, 0, -1e300)),
+	geometry.Triangle3(f64).from_points(linalg.Vector3(f64).splat(0), linalg.Vector3(f64).from_components(1e300, 0, 0), linalg.Vector3(f64).from_components(1e300, 1e300, 0)), 0.0, 2.0);
+
+print_hit :: proc(name: string, hit: Option(geometry.Triangle_Hit($T))) {
+	switch (hit) {
+	case .none: fmt.println(name, "none");
+	case .some(h): fmt.println(name, bits(h.t), bits(h.barycentric.x), bits(h.barycentric.y), bits(h.barycentric.z));
+	}
+}
+
+same_hit :: proc(a, b: Option(geometry.Triangle_Hit($T))) -> bool {
+	switch (a) {
+	case .none: return b == .none;
+	case .some(x):
+		switch (b) {
+		case .none: return false;
+		case .some(y):
+			return bits(x.t) == bits(y.t) && bits(x.barycentric.x) == bits(y.barycentric.x)
+				&& bits(x.barycentric.y) == bits(y.barycentric.y) && bits(x.barycentric.z) == bits(y.barycentric.z);
+		}
+	}
+}
+
+// The recomputed casts are the same bits at compile time and run time.
+folded_casts :: proc() {
+	one := f32(1);
+	small := geometry.cast(geometry.Ray3(f32).from_origin_direction(V3F.from_components(0.75e-24*one, 0.25e-24, 1), V3F.from_components(0, 0, -1)),
+		geometry.Triangle3(f32).from_points(V3F.splat(0), V3F.from_components(1e-24, 0, 0), V3F.from_components(1e-24, 1e-24, 0)), f32(0), f32(2));
+	large := geometry.cast(geometry.Ray3(f64).from_origin_direction(linalg.Vector3(f64).from_components(0.75e300*f64(one), 0.25e300, 1e300), linalg.Vector3(f64).from_components(0, 0, -1e300)),
+		geometry.Triangle3(f64).from_points(linalg.Vector3(f64).splat(0), linalg.Vector3(f64).from_components(1e300, 0, 0), linalg.Vector3(f64).from_components(1e300, 1e300, 0)), 0.0, 2.0);
+	print_hit("small f32 hit", small);
+	print_hit("large f64 hit", large);
+	check("folded small and large casts equal the run-time ones", same_hit(FOLDED_SMALL, small) && same_hit(FOLDED_LARGE, large));
+}
+
+// The reproduction from known-gaps.md.
+sphere_reproduction :: proc() {
+	V :: linalg.Vector3(f32);
+	sphere := geometry.Sphere(f32).from_center_radius(V.splat(0), 1e20);
+	p := V.from_components(2e20, 0, 0);
+	q := sphere.closest_point(p);
+	fmt.println("large sphere", sphere.contains(p), sphere.distance(p), q.x, q.y, q.z);
+	check("a point outside a large sphere is outside it", !sphere.contains(p) && sphere.distance(p) == f32(1e20) && q == V.from_components(1e20, 0, 0));
+	still := geometry.Ray3(f32).from_origin_direction(p, V.splat(0));
+	into := geometry.Ray3(f32).from_origin_direction(p, V.from_components(-1, 0, 0));
+	fmt.println("large sphere casts", geometry.cast(still, sphere, f32(0), f32(1)), geometry.cast(into, sphere, f32(0), f32(1e21)));
+	check("a ray that does not move, outside a large sphere, misses it", geometry.cast(still, sphere, f32(0), f32(1)) == .none
+		&& (geometry.cast(into, sphere, f32(0), f32(1e21)) or_else f32(0)) == f32(1e20));
+}
+
+// Configurations at unit scale, then scaled by `scale`, a power of two far
+// enough from 1 that their squares overflow or underflow: the answers are
+// the unit ones, the distances and the casts' `t` for an unscaled direction
+// scaled; for `f64`, whose recomputation is scaled exactly, bit for bit.
+Ball_Case :: struct { center: [3]f64, radius: f64, point: [3]f64 }
+
+ball_cases :: proc() -> [10]Ball_Case {
+	return {
+		{{0, 0, 0}, 1, {2, 0, 0}},
+		{{0, 0, 0}, 1, {0.5, 0.25, -0.125}},
+		{{1, 2, 3}, 2, {1, 2, 5}},
+		{{1, 2, 3}, 2, {1, 2, 5.000001}},
+		{{1, 2, 3}, 2, {1, 2, 4.999999}},
+		{{-1, 0.5, 0.25}, 0.75, {0.5, -1.25, 2}},
+		{{0.5, 0.5, 0.5}, 0.5, {0.5, 0.5, 0.5}},
+		{{0, 0, 0}, 0, {0, 0, 0}},
+		{{0, 0, 0}, 0, {1, 0, 0}},
+		{{-1, -1, -1}, 1, {1, 1, 1}},
+	};
+}
+
+v3_of :: proc($T: type, v: [3]f64, scale: f64) -> linalg.Vector3(T) {
+	return linalg.Vector3(T).from_components(T(v[0]*scale), T(v[1]*scale), T(v[2]*scale));
+}
+
+balls_at :: proc($T: type, scale: f64, tolerance: T) -> int where linalg.Real(T) {
+	bad := 0;
+	foreach (ball in ball_cases()) {
+		unit := geometry.Sphere(T).from_center_radius(v3_of(T, ball.center, 1), T(ball.radius));
+		far := geometry.Sphere(T).from_center_radius(v3_of(T, ball.center, scale), T(ball.radius*scale));
+		p_unit := v3_of(T, ball.point, 1);
+		p_far := v3_of(T, ball.point, scale);
+		if (unit.contains(p_unit) != far.contains(p_far)) { bad += 1; }
+		distance := far.distance(p_far);
+		closest := far.closest_point(p_far);
+		expected_closest := unit.closest_point(p_unit)*T(scale);
+		when (T == f64) {
+			if (!(bits(distance) == bits(unit.distance(p_unit)*scale))) { bad += 1; }
+		} else {
+			if (!close(distance/T(scale), unit.distance(p_unit), tolerance)) { bad += 1; }
+		}
+		if (!close(closest.x/T(scale), expected_closest.x/T(scale), tolerance) || !close(closest.y/T(scale), expected_closest.y/T(scale), tolerance)
+			|| !close(closest.z/T(scale), expected_closest.z/T(scale), tolerance)) { bad += 1; }
+		flat_unit := geometry.Circle(T).from_center_radius(linalg.Vector2(T).from_components(unit.center.x, unit.center.y), unit.radius);
+		flat_far := geometry.Circle(T).from_center_radius(linalg.Vector2(T).from_components(far.center.x, far.center.y), far.radius);
+		q_unit := linalg.Vector2(T).from_components(p_unit.x, p_unit.y);
+		q_far := linalg.Vector2(T).from_components(p_far.x, p_far.y);
+		if (flat_unit.contains(q_unit) != flat_far.contains(q_far)
+			|| !close(flat_far.distance(q_far)/T(scale), flat_unit.distance(q_unit), tolerance)) { bad += 1; }
+		// Two balls the same distance apart as the point, and a box at the point.
+		other_unit := geometry.Sphere(T).from_center_radius(p_unit, T(ball.radius)*T(0.5));
+		other_far := geometry.Sphere(T).from_center_radius(p_far, T(ball.radius*scale)*T(0.5));
+		if (geometry.intersects(unit, other_unit) != geometry.intersects(far, other_far)
+			|| geometry.intersects(other_unit, unit) != geometry.intersects(other_far, far)) { bad += 1; }
+		box_unit := geometry.Aabb3(T).from_corners(p_unit, p_unit + linalg.Vector3(T).splat(T(1)));
+		box_far := geometry.Aabb3(T).from_corners(p_far, p_far + linalg.Vector3(T).splat(T(scale)));
+		if (geometry.intersects(unit, box_unit) != geometry.intersects(far, box_far)
+			|| geometry.intersects(box_far, far) != geometry.intersects(box_unit, unit)) { bad += 1; }
+		disc_unit := geometry.Circle(T).from_center_radius(q_unit, unit.radius*T(0.5));
+		disc_far := geometry.Circle(T).from_center_radius(q_far, far.radius*T(0.5));
+		rect_unit := geometry.Aabb2(T).from_corners(q_unit, q_unit + linalg.Vector2(T).splat(T(1)));
+		rect_far := geometry.Aabb2(T).from_corners(q_far, q_far + linalg.Vector2(T).splat(T(scale)));
+		if (geometry.intersects(flat_unit, disc_unit) != geometry.intersects(flat_far, disc_far)
+			|| geometry.intersects(flat_unit, rect_unit) != geometry.intersects(flat_far, rect_far)
+			|| geometry.intersects(rect_far, flat_far) != geometry.intersects(rect_unit, flat_unit)) { bad += 1; }
+		// Casts from the point: a direction scaled with the shapes, whose `t`
+		// is the unit one, a unit direction, whose `t` scales, and none.
+		toward := (unit.center - p_unit) + v3_of(T, {0.25, -0.5, 0.125}, 1);
+		scaled_ray := geometry.Ray3(T).from_origin_direction(p_far, toward*T(scale));
+		unit_ray := geometry.Ray3(T).from_origin_direction(p_unit, toward);
+		long_ray := geometry.Ray3(T).from_origin_direction(p_far, toward);
+		still_unit := geometry.Ray3(T).from_origin_direction(p_unit, linalg.Vector3(T).splat(T(0)));
+		still_far := geometry.Ray3(T).from_origin_direction(p_far, linalg.Vector3(T).splat(T(0)));
+		expected := geometry.cast(unit_ray, unit, T(-10), T(10));
+		scaled := geometry.cast(scaled_ray, far, T(-10), T(10));
+		long := geometry.cast(long_ray, far, T(-10)*T(scale), T(10)*T(scale));
+		when (T == f64) {
+			if (!same_t(scaled, expected) || !same_t(long, scale_t(expected, T(scale)))) { bad += 1; }
+		} else {
+			if (!close_t(scaled, expected, T(1), tolerance) || !close_t(long, expected, T(scale), tolerance)) { bad += 1; }
+		}
+		if (!same_t(geometry.cast(still_far, far, T(0.25), T(1)), geometry.cast(still_unit, unit, T(0.25), T(1)))) { bad += 1; }
+		flat_toward := linalg.Vector2(T).from_components(toward.x, toward.y);
+		flat_expected := geometry.cast(geometry.Ray2(T).from_origin_direction(q_unit, flat_toward), flat_unit, T(-10), T(10));
+		flat_scaled := geometry.cast(geometry.Ray2(T).from_origin_direction(q_far, flat_toward*T(scale)), flat_far, T(-10), T(10));
+		if (!close_t(flat_scaled, flat_expected, T(1), tolerance)) { bad += 1; }
+	}
+	return bad;
+}
+
+same_t :: proc(a, b: Option($T)) -> bool {
+	switch (a) {
+	case .none: return b == .none;
+	case .some(x):
+		switch (b) {
+		case .none: return false;
+		case .some(y): return bits(x) == bits(y);
+		}
+	}
+}
+
+scale_t :: proc(a: Option($T), scale: T) -> Option(T) {
+	switch (a) {
+	case .none: return .none;
+	case .some(x): return .some(x*scale);
+	}
+}
+
+// Both miss, or `a` hits at `scale` times `b`'s distance, within `tolerance`.
+close_t :: proc(a, b: Option($T), scale, tolerance: T) -> bool where linalg.Real(T) {
+	switch (a) {
+	case .none: return b == .none;
+	case .some(x):
+		switch (b) {
+		case .none: return false;
+		case .some(y): return close(x/scale, y, tolerance);
+		}
+	}
+}
+
+ball_scales :: proc() {
+	// 2^70, 2^100, 2^-70, 2^-100 for f32; 2^600, 2^1000, 2^-600, 2^-1000 for f64.
+	scales32 := [?]f64{1180591620717411303424.0, 1267650600228229401496703205376.0, 1.0/1180591620717411303424.0, 1.0/1267650600228229401496703205376.0};
+	foreach (scale in scales32) {
+		bad := balls_at(f32, scale, f32(1.0e-6));
+		check("f32 balls far from unit scale answer as at unit scale", bad == 0);
+		if (bad != 0) { fmt.println("f32 balls at", scale, "off by", bad); }
+	}
+	two_600 := 1.0;
+	foreach (_ in 0 ..< 600) { two_600 *= 2.0; }
+	two_1000 := two_600;
+	foreach (_ in 0 ..< 400) { two_1000 *= 2.0; }
+	scales64 := [4]f64{two_600, two_1000, 1.0/two_600, 1.0/two_1000};
+	foreach (scale in scales64) {
+		bad := balls_at(f64, scale, 1.0e-15);
+		check("f64 balls far from unit scale answer as at unit scale", bad == 0);
+		if (bad != 0) { fmt.println("f64 balls at", scale, "off by", bad); }
+	}
+}
+
+// Operands near the largest finite values, whose offset or reach overflows,
+// and integer balls, which stay exact.
+ball_extremes :: proc() {
+	V :: linalg.Vector3(f64);
+	big := math.F64_MAX*0.75;
+	sphere := geometry.Sphere(f64).from_center_radius(V.from_components(-big, 0, 0), big);
+	p := V.from_components(big, 0, 0);
+	check("an f64 offset that overflows", !sphere.contains(p) && sphere.distance(p) == big && sphere.closest_point(p) == V.splat(0)
+		&& sphere.contains(V.splat(0)) && sphere.distance(V.splat(0)) == 0.0);
+	toward := geometry.Ray3(f64).from_origin_direction(p, V.from_components(-1, 0, 0));
+	check("a cast whose offset overflows", close((geometry.cast(toward, sphere, 0.0, math.F64_INFINITY) or_else 0.0)/big, 1.0, 1.0e-15)
+		&& geometry.cast(geometry.Ray3(f64).from_origin_direction(p, V.splat(0)), sphere, 0.0, 1.0) == .none
+		&& (geometry.cast(geometry.Ray3(f64).from_origin_direction(V.splat(0), V.splat(0)), sphere, 0.0, 1.0) or_else -1.0) == 0.0);
+	check("f64 radii whose sum overflows", geometry.intersects(sphere, geometry.Sphere(f64).from_center_radius(p, big))
+		&& !geometry.intersects(sphere, geometry.Sphere(f64).from_center_radius(p, big*0.5)));
+	W :: linalg.Vector3(f32);
+	big32 := math.F32_MAX*0.75;
+	sphere32 := geometry.Sphere(f32).from_center_radius(W.from_components(-big32, 0, 0), big32);
+	p32 := W.from_components(big32, 0, 0);
+	check("an f32 offset that overflows", !sphere32.contains(p32) && sphere32.distance(p32) == big32 && sphere32.closest_point(p32) == W.splat(0));
+	tiny := geometry.Circle(f32).from_center_radius(linalg.Vector2(f32).splat(0), 1.0e-25);
+	check("an f32 circle whose squares underflow", !tiny.contains(linalg.Vector2(f32).from_components(2.0e-25, 0))
+		&& tiny.contains(linalg.Vector2(f32).from_components(0.5e-25, 0.5e-25)) && tiny.distance(linalg.Vector2(f32).from_components(0, 3.0e-25)) == f32(2.0e-25)
+		&& !geometry.intersects(tiny, geometry.Circle(f32).from_center_radius(linalg.Vector2(f32).from_components(3.0e-25, 0), 1.0e-25)));
+	I :: linalg.Vector3(i64);
+	whole := geometry.Sphere(i64).from_center_radius(I.splat(0), 3000000000);
+	half := geometry.Sphere(i64).from_center_radius(I.splat(0), 1500000000);
+	check("an integer ball is exact", whole.contains(I.from_components(1800000000, 2400000000, 0)) && !whole.contains(I.from_components(1800000000, 2400000000, 1))
+		&& geometry.intersects(half, geometry.Sphere(i64).from_center_radius(I.from_components(1800000000, 2400000000, 0), 1500000000))
+		&& !geometry.intersects(half, geometry.Sphere(i64).from_center_radius(I.from_components(1800000000, 2400000000, 1), 1500000000))
+		&& geometry.intersects(whole, geometry.Aabb3(i64).from_min_max(I.from_components(1800000000, 2400000000, 0), I.splat(4000000000)))
+		&& !geometry.intersects(whole, geometry.Aabb3(i64).from_min_max(I.from_components(1800000000, 2400000001, 0), I.splat(4000000000))));
+	J :: linalg.Vector2(i32);
+	disc := geometry.Circle(i32).from_center_radius(J.splat(0), 5);
+	check("an integer circle is exact", disc.contains(J.from_components(3, 4)) && !disc.contains(J.from_components(4, 4))
+		&& geometry.intersects(disc, geometry.Aabb2(i32).from_min_max(J.from_components(3, 4), J.splat(9)))
+		&& !geometry.intersects(disc, geometry.Aabb2(i32).from_min_max(J.from_components(4, 4), J.splat(9))));
+}
+
+FOLDED_BALL :: geometry.intersects(geometry.Sphere(f32).from_center_radius(V3F.splat(0), 1e20), geometry.Sphere(f32).from_center_radius(V3F.from_components(3e20, 0, 0), 1e20));
+
+folded_balls :: proc() {
+	one := f32(1);
+	run := geometry.intersects(geometry.Sphere(f32).from_center_radius(V3F.splat(0), 1e20*one), geometry.Sphere(f32).from_center_radius(V3F.from_components(3e20, 0, 0), 1e20));
+	check("a folded large-sphere test equals the run-time one", !FOLDED_BALL && !run);
+}
+
+main :: proc() {
+	repeated_corner_reproduction();
+	repeated_corners(f64, 1.0e-12);
+	repeated_corners(f32, f32(1.0e-5));
+	nan_intersections(f64);
+	nan_intersections(f32);
+	integer_intersections();
+	shared_edge_reproduction();
+	shared_edge_scales();
+	folded_casts();
+	sphere_reproduction();
+	ball_scales();
+	ball_extremes();
+	folded_balls();
+	if (failures == 0) { fmt.println("all range checks passed"); }
+}

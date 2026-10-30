@@ -1,10 +1,14 @@
 // geometry-plan.md "Every solid is closed": a circle or a sphere holds its
 // boundary. A negative or NaN radius describes no set a caller meant, so it
 // panics where it is read, as `math.clamp` does for reversed bounds.
+// standard-library.md "`core:math/geometry`": an `f32` or `f64` square that
+// overflows or underflows decides nothing, so a ball query whose squares are
+// not normal numbers is decided again in `f64`, scaled.
 @(public)
 package geometry;
 
 import "base:interfaces";
+import "core:math";
 import "core:math/linalg";
 
 /// The disc of the points at most `radius` from `center`, its boundary included.
@@ -18,12 +22,180 @@ check_radius :: proc(radius: $T) where interfaces.Numeric(T), interfaces.Ordered
 	assert(at_most(T(0), radius), "geometry.Circle and geometry.Sphere need a radius that is not negative or NaN");
 }
 
+// 2^64 and 2^-64, the steps by which a value is scaled exactly.
+@(private) TWO_64 :: 18446744073709551616.0;
+@(private) TWO_MINUS_64 :: 1.0/18446744073709551616.0;
+
+// How many factors of 2^64 bring the largest magnitude `m`, finite and
+// positive, from outside `[2^-64, 2^64)` into `[2^-64, 1)`: positive to
+// scale up, negative to scale down, and 0 inside, where squares and
+// products of two neither overflow nor underflow, so that nothing is scaled
+// that does not need it. Scaling up is exact; scaling down loses bits only
+// of values below `m*2^-958`, which become subnormal.
+@(private)
+scale_steps :: proc(m: f64) -> int {
+	value := m;
+	steps := 0;
+	if (TWO_64 <= value) {
+		for (1.0 <= value) {
+			value *= TWO_MINUS_64;
+			steps -= 1;
+		}
+	}
+	for (value < TWO_MINUS_64) {
+		value *= TWO_64;
+		steps += 1;
+	}
+	return steps;
+}
+
+// `x` times `2^(64*steps)`, one exact step at a time, so no factor
+// overflows.
+@(private)
+scaled_by :: proc(x: f64, steps: int) -> f64 {
+	value := x;
+	remaining := steps;
+	for (0 < remaining) {
+		value *= TWO_64;
+		remaining -= 1;
+	}
+	for (remaining < 0) {
+		value *= TWO_MINUS_64;
+		remaining += 1;
+	}
+	return value;
+}
+
+// Whether an `f32` or `f64` is finite, not zero, and at full precision.
+@(private)
+is_normal_number :: proc(x: $T) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) {
+	when (T == f32) {
+		return math.is_finite_f32(f32(x)) && math.F32_MIN_NORMAL <= math.abs_f32(f32(x));
+	} else {
+		return math.is_finite(f64(x)) && math.F64_MIN_NORMAL <= math.abs(f64(x));
+	}
+}
+
+@(private)
+widen :: proc{widen2, widen3};
+@(private)
+widen2 :: proc(v: linalg.Vector2($T)) -> linalg.Vector3(f64) { return linalg.Vector3(f64).from_components(f64(v.x), f64(v.y), 0.0); }
+@(private)
+widen3 :: proc(v: linalg.Vector3($T)) -> linalg.Vector3(f64) { return linalg.Vector3(f64).from_components(f64(v.x), f64(v.y), f64(v.z)); }
+
+@(private)
+narrow :: proc{narrow2, narrow3};
+@(private)
+narrow2 :: proc(v: linalg.Vector3(f64), like: linalg.Vector2($T)) -> linalg.Vector2(T) { return linalg.Vector2(T).from_components(T(v.x), T(v.y)); }
+@(private)
+narrow3 :: proc(v: linalg.Vector3(f64), like: linalg.Vector3($T)) -> linalg.Vector3(T) { return linalg.Vector3(T).from_components(T(v.x), T(v.y), T(v.z)); }
+
+// The offset `to - from` and the reach `r1 + r2` of a ball query, in `f64`
+// and scaled together by `2^(64*steps)`, and by a further half when
+// `halved`. `f32` operands are exact in `f64`, where no difference, sum, or
+// square of theirs overflows or underflows. `f64` ones whose offset or
+// reach overflows take them from halves, which are exact, and the scaling
+// of `scale_steps` keeps their squares normal; an operand that is not
+// finite is left as computed.
+@(private)
+Ball_Gap :: struct { offset: linalg.Vector3(f64), reach: f64, steps: int, halved: bool }
+
+@(private)
+ball_gap :: proc(from, to: linalg.Vector3(f64), r1, r2: f64) -> Ball_Gap {
+	offset := to - from;
+	reach := r1 + r2;
+	halved := false;
+	if (!(math.is_finite(offset.x) && math.is_finite(offset.y) && math.is_finite(offset.z) && math.is_finite(reach))) {
+		offset = to*0.5 - from*0.5;
+		reach = r1*0.5 + r2*0.5;
+		halved = true;
+	}
+	m := math.max(math.max(math.abs(offset.x), math.abs(offset.y)), math.max(math.abs(offset.z), reach));
+	steps := 0;
+	if (0.0 < m && math.is_finite(m)) {
+		steps = scale_steps(m);
+		offset = linalg.Vector3(f64).from_components(scaled_by(offset.x, steps), scaled_by(offset.y, steps), scaled_by(offset.z, steps));
+		reach = scaled_by(reach, steps);
+	}
+	return {offset, reach, steps, halved};
+}
+
+impl Ball_Gap {
+	// `|offset| <= reach`.
+	reaches :: proc(self) -> bool { return at_most(self.offset.length_squared(), self.reach*self.reach); }
+	// `|offset| - reach`, unscaled.
+	gap :: proc(self) -> f64 {
+		value := scaled_by(math.sqrt(self.offset.length_squared()) - self.reach, -self.steps);
+		return value*2.0 if self.halved else value;
+	}
+	// `offset*(reach/|offset|)`, the point at `reach` from the offset's
+	// start toward its end, relative to the start and unscaled.
+	toward :: proc(self) -> linalg.Vector3(f64) {
+		unit := self.offset/math.sqrt(self.offset.length_squared());
+		reach := scaled_by(self.reach, -self.steps);
+		return unit*(reach*2.0 if self.halved else reach);
+	}
+}
+
+// Whether `to` is within `r1 + r2` of `from`, `|to - from|^2 <= (r1 +
+// r2)^2` as computed in `T`, which is exact for integers, and for `f32` and
+// `f64`, when either side is not a normal number, decided by `ball_gap`
+// free of overflow and underflow.
+@(private)
+ball_reaches :: proc(from, to: $V, r1, r2: $T) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) {
+	reach := r1 + r2;
+	squared := (to - from).length_squared();
+	limit := reach*reach;
+	when (T == f32 || T == f64) {
+		if (!(is_normal_number(squared) && is_normal_number(limit))) {
+			return ball_gap(widen(from), widen(to), f64(r1), f64(r2)).reaches();
+		}
+	}
+	return at_most(squared, limit);
+}
+
+// The point of a ball nearest `p`, for a `Real` `T`, by `ball_gap` for an
+// `f32` or `f64` ball whose squares are not normal numbers.
+@(private)
+ball_closest_point :: proc(center, p: $V, radius: $T) -> V where linalg.Real(T) {
+	check_radius(radius);
+	d := p - center;
+	squared := d.length_squared();
+	limit := radius*radius;
+	when (T == f32 || T == f64) {
+		if (!(is_normal_number(squared) && is_normal_number(limit))) {
+			gap := ball_gap(widen(center), widen(p), f64(radius), 0.0);
+			if (gap.reaches()) { return p; }
+			return narrow(widen(center) + gap.toward(), p);
+		}
+	}
+	if (at_most(squared, limit)) { return p; }
+	return center + d*(radius/squared.sqrt());
+}
+
+// The distance from `p` to a ball, as `ball_closest_point` finds it.
+@(private)
+ball_distance :: proc(center, p: $V, radius: $T) -> T where linalg.Real(T) {
+	check_radius(radius);
+	squared := (p - center).length_squared();
+	limit := radius*radius;
+	when (T == f32 || T == f64) {
+		if (!(is_normal_number(squared) && is_normal_number(limit))) {
+			gap := ball_gap(widen(center), widen(p), f64(radius), 0.0);
+			if (gap.reaches()) { return T(0); }
+			return T(gap.gap());
+		}
+	}
+	if (at_most(squared, limit)) { return T(0); }
+	return squared.sqrt() - radius;
+}
+
 impl Circle($T) {
 	from_center_radius :: proc(center: linalg.Vector2(T), radius: T) -> Circle(T) { return {center, radius}; }
-	/// Whether `p` is in the disc, `|p - center|^2 <= radius^2`, exact for integers.
+	/// Whether `p` is in the disc, `|p - center|^2 <= radius^2`, exact for integers and free of overflow and underflow for `f32` and `f64`.
 	contains :: proc(self, p: linalg.Vector2(T)) -> bool where interfaces.Ordered(T) {
 		check_radius(self.radius);
-		return at_most((p - self.center).length_squared(), self.radius*self.radius);
+		return ball_reaches(self.center, p, self.radius, T(0));
 	}
 	/// The square around the disc.
 	bounds :: proc(self) -> Aabb2(T) where interfaces.Ordered(T) {
@@ -36,27 +208,20 @@ impl Circle($T) {
 		`center + (p - center)*(radius/|p - center|)`.
 	*/
 	closest_point :: proc(self, p: linalg.Vector2(T)) -> linalg.Vector2(T) where linalg.Real(T) {
-		check_radius(self.radius);
-		d := p - self.center;
-		squared := d.length_squared();
-		if (at_most(squared, self.radius*self.radius)) { return p; }
-		return self.center + d*(self.radius/squared.sqrt());
+		return ball_closest_point(self.center, p, self.radius);
 	}
 	/// The distance from `p` to the disc, `|p - center| - radius`, and 0 inside it.
 	distance :: proc(self, p: linalg.Vector2(T)) -> T where linalg.Real(T) {
-		check_radius(self.radius);
-		squared := (p - self.center).length_squared();
-		if (at_most(squared, self.radius*self.radius)) { return T(0); }
-		return squared.sqrt() - self.radius;
+		return ball_distance(self.center, p, self.radius);
 	}
 }
 
 impl Sphere($T) {
 	from_center_radius :: proc(center: linalg.Vector3(T), radius: T) -> Sphere(T) { return {center, radius}; }
-	/// Whether `p` is in the ball, `|p - center|^2 <= radius^2`, exact for integers.
+	/// Whether `p` is in the ball, `|p - center|^2 <= radius^2`, exact for integers and free of overflow and underflow for `f32` and `f64`.
 	contains :: proc(self, p: linalg.Vector3(T)) -> bool where interfaces.Ordered(T) {
 		check_radius(self.radius);
-		return at_most((p - self.center).length_squared(), self.radius*self.radius);
+		return ball_reaches(self.center, p, self.radius, T(0));
 	}
 	/// The cube around the ball.
 	bounds :: proc(self) -> Aabb3(T) where interfaces.Ordered(T) {
@@ -69,17 +234,10 @@ impl Sphere($T) {
 		`center + (p - center)*(radius/|p - center|)`.
 	*/
 	closest_point :: proc(self, p: linalg.Vector3(T)) -> linalg.Vector3(T) where linalg.Real(T) {
-		check_radius(self.radius);
-		d := p - self.center;
-		squared := d.length_squared();
-		if (at_most(squared, self.radius*self.radius)) { return p; }
-		return self.center + d*(self.radius/squared.sqrt());
+		return ball_closest_point(self.center, p, self.radius);
 	}
 	/// The distance from `p` to the ball, `|p - center| - radius`, and 0 inside it.
 	distance :: proc(self, p: linalg.Vector3(T)) -> T where linalg.Real(T) {
-		check_radius(self.radius);
-		squared := (p - self.center).length_squared();
-		if (at_most(squared, self.radius*self.radius)) { return T(0); }
-		return squared.sqrt() - self.radius;
+		return ball_distance(self.center, p, self.radius);
 	}
 }

@@ -2843,7 +2843,8 @@ a constructor: `from_min_max` (as given), `from_corners` (sorted),
   `max = -inf`, is where a bound accumulates from, for a `Real` `T`; an
   integer box starts from `from_point` or `from_points`, which is `.none` for
   no points. `contains` takes a point or a box, `union` a box or a point, and
-  `intersection` gives an empty box for disjoint ones. `expand(amount)` moves
+  `intersection` gives an empty box for disjoint ones, and the empty one when
+  either is empty. `expand(amount)` moves
   every face out, `size` is `max - min`, `doubled_center` `min + max`,
   `center` `min*0.5 + max*0.5`, which cannot overflow, `corner(index)` takes
   `max` on the axes whose bit is set, and `area`, `perimeter`, `volume`, and
@@ -2854,7 +2855,13 @@ a constructor: `from_min_max` (as given), `from_corners` (sorted),
 - **Circles and spheres** have `contains`, `|p - center|^2 <= radius^2`,
   exact for integers, `bounds`, and, for a `Real` `T`, `closest_point`, which
   is `p` inside, and `distance`, which is 0 inside. A negative or NaN radius
-  describes no set, so every member panics on one.
+  describes no set, so every member panics on one. For `f32` and `f64`, a
+  square that is not a normal number, having overflowed or underflowed,
+  decides nothing: `contains`, `closest_point`, `distance`, and the circle and
+  sphere tests of `intersects` then compute again in `f64` (where `f32`
+  operands cannot overflow or underflow), `f64` operands scaled by a power of
+  two, so their answers are those of the finite operands as given, without
+  overflow or underflow.
 - **Planes** come from `from_point_normal` and `from_points`, which normalize
   the normal, `from_points` toward the side from which the three points turn
   counterclockwise, and return `.none` for a normal that does not normalize.
@@ -2910,17 +2917,27 @@ required, since a ray tracer starts past the surface it left and a line is
   which takes the discriminant from the center's distance to the line, so a
   small ball far away keeps its hit. A box and a ball are solids, so a ray
   starting inside one meets it at `t_min`. A ray with a zero direction is its
-  origin, met at `t_min` when the origin is inside.
+  origin, met at `t_min` when the origin is inside. For `f32` and `f64`, a
+  square or a product of the quadratic that overflows or underflows sends it,
+  as for the balls' other queries, to `f64`, the ball's offset and radius
+  scaled by one power of two and the direction by another, so a ball far
+  bigger or smaller than 1 is met where the finite operands as given meet it.
 - **A plane** gives `(offset - dot(normal, origin))/dot(normal, direction)`,
   `.none` for a ray parallel to it.
 - **A triangle** gives a `Triangle_Hit(T)`, the `t` and the `barycentric`
   coordinates of the hit point for `a`, `b`, and `c`, by the watertight test
   of Woop, Benthin, and Wald: the corners are sheared into the ray's frame,
   and an edge function that computes as zero has its sign recomputed exactly
-  with `orient2d`. Two triangles that share an edge compute its edge function
-  as exact negations, so a ray through the edge or a shared corner hits at
-  least one of them, from either side. A ray in the triangle's plane, or a
-  triangle of no area, gives `.none`.
+  with `orient2d`. Where the edge functions, the determinant they sum to, or
+  the distance's numerator overflow or underflow in `T`, as for a small or a
+  large triangle, they are computed again from the same sheared corners in
+  `f64`, where each product of `f32` coordinates is exact, after scaling
+  `f64` corners by a power of two. Two triangles that share an edge so
+  decide its side exactly, and a ray through the edge or a shared corner
+  hits at least one of them, from either side: for `f32` while the sheared
+  corners are finite, and for `f64` while each nonzero sheared coordinate is
+  also at least `2^-386` of its triangle's largest. A ray in the triangle's
+  plane, or a triangle of no area, gives `.none`.
 
 `Frustum(T)` has `planes: [6]Plane(T)`, left, right, bottom, top, near, and
 far, with inward normals, so `contains(p)` is every `signed_distance` at least

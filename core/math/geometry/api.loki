@@ -100,7 +100,7 @@ impl Aabb2($T) {
 	// Private to the package, but a public declaration names it.
 	union_point :: proc(self, p: linalg.Vector2(T)) -> Aabb2(T) where interfaces.Ordered(T) ---;
 
-	// The points in both boxes, empty when they do not overlap.
+	// The points in both boxes, empty when they do not overlap or either is empty.
 	intersection :: proc(self, other: Aabb2(T)) -> Aabb2(T) where interfaces.Ordered(T) ---;
 
 	// Every face moved out by `amount`, or in for a negative one.
@@ -171,7 +171,7 @@ impl Aabb3($T) {
 	// Private to the package, but a public declaration names it.
 	union_point :: proc(self, p: linalg.Vector3(T)) -> Aabb3(T) where interfaces.Ordered(T) ---;
 
-	// The points in both boxes, empty when they do not overlap.
+	// The points in both boxes, empty when they do not overlap or either is empty.
 	intersection :: proc(self, other: Aabb3(T)) -> Aabb3(T) where interfaces.Ordered(T) ---;
 
 	// Every face moved out by `amount`, or in for a negative one.
@@ -245,7 +245,8 @@ Sign :: enum { Negative, Zero, Positive }
 	two circles, two spheres, a circle and a box, a sphere and a box, a sphere
 	and a plane, a box and a plane, two `Segment2`s, a segment and a box, or
 	a `Triangle3` and an `Aabb3`, in either order. Box and circle tests need
-	only arithmetic and comparison, so integer shapes get them exactly; an
+	only arithmetic and comparison, so integer shapes get them exactly, and
+	`f32` and `f64` circles and spheres without overflow or underflow; an
 	empty box intersects nothing, and a negative or NaN radius panics. A plane
 	test takes the plane's normal as a unit vector.
 
@@ -599,14 +600,17 @@ impl Ray3($T) {
 	  between that axis's faces, on one included, and none otherwise, and
 	  an empty box is never hit.
 	- `cast(ray, circle, ...)` and `cast(ray, sphere, ...)` solve the
-	  quadratic, `t_min` for a ray starting inside. A ray with a zero
+	  quadratic, `t_min` for a ray starting inside, in scaled `f64` where
+	  an `f32` or `f64` square overflows or underflows. A ray with a zero
 	  direction is its origin, met at `t_min` when the origin is inside.
 	- `cast(ray, plane, ...)` is `(offset - dot(normal, origin))/dot(normal,
 	  direction)`, `.none` for a ray parallel to the plane.
 	- `cast(ray, triangle, ...)` returns a `Triangle_Hit`, by the watertight
 	  test of Woop, Benthin, and Wald: a ray through an edge or a corner that
-	  triangles share hits at least one of them. A ray in the triangle's
-	  plane, or a triangle of no area, gives `.none`.
+	  triangles share hits at least one of them, for small and large
+	  triangles too, whose edge functions are computed again in `f64` where
+	  they overflow or underflow. A ray in the triangle's plane, or a
+	  triangle of no area, gives `.none`.
 */
 cast :: proc{
 	cast_ray2_box2,
@@ -783,7 +787,7 @@ Sphere :: struct($T: type) where interfaces.Numeric(T) {
 impl Circle($T) {
 	from_center_radius :: proc(center: linalg.Vector2(T), radius: T) -> Circle(T) ---;
 
-	// Whether `p` is in the disc, `|p - center|^2 <= radius^2`, exact for integers.
+	// Whether `p` is in the disc, `|p - center|^2 <= radius^2`, exact for integers and free of overflow and underflow for `f32` and `f64`.
 	contains :: proc(self, p: linalg.Vector2(T)) -> bool where interfaces.Ordered(T) ---;
 
 	// The square around the disc.
@@ -802,7 +806,7 @@ impl Circle($T) {
 impl Sphere($T) {
 	from_center_radius :: proc(center: linalg.Vector3(T), radius: T) -> Sphere(T) ---;
 
-	// Whether `p` is in the ball, `|p - center|^2 <= radius^2`, exact for integers.
+	// Whether `p` is in the ball, `|p - center|^2 <= radius^2`, exact for integers and free of overflow and underflow for `f32` and `f64`.
 	contains :: proc(self, p: linalg.Vector3(T)) -> bool where interfaces.Ordered(T) ---;
 
 	// The cube around the ball.

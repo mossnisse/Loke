@@ -554,6 +554,16 @@ checklist.
 
 ### Fixed
 
+- `core:math/geometry` gives a triangle with two equal corners the closest
+  point and distance of the segment its corners span, where it returned NaN;
+  `intersection` of a box with a NaN corner is empty in either operand
+  order; a ray through an edge two triangles share hits one of them for
+  small and large triangles too, whose edge functions are now recomputed in
+  `f64` when they underflow or overflow; and `f32` and `f64` circle and
+  sphere `contains`, `closest_point`, `distance`, overlap tests, and `cast`
+  no longer treat a point as inside, or miss or invent a hit, when their
+  squares overflow or underflow
+  ([`core:math/geometry`](standard-library.md#coremathgeometry)).
 - `unsafe.transmute` to `typeid` works in constants:
   `unsafe.transmute(typeid, u64(999999))` is a constant that keeps its number
   for every bit pattern, and casting it back to an integer folds too

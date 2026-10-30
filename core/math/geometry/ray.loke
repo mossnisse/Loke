@@ -59,14 +59,17 @@ impl Ray3($T) {
 	  between that axis's faces, on one included, and none otherwise, and
 	  an empty box is never hit.
 	- `cast(ray, circle, ...)` and `cast(ray, sphere, ...)` solve the
-	  quadratic, `t_min` for a ray starting inside. A ray with a zero
+	  quadratic, `t_min` for a ray starting inside, in scaled `f64` where
+	  an `f32` or `f64` square overflows or underflows. A ray with a zero
 	  direction is its origin, met at `t_min` when the origin is inside.
 	- `cast(ray, plane, ...)` is `(offset - dot(normal, origin))/dot(normal,
 	  direction)`, `.none` for a ray parallel to the plane.
 	- `cast(ray, triangle, ...)` returns a `Triangle_Hit`, by the watertight
 	  test of Woop, Benthin, and Wald: a ray through an edge or a corner that
-	  triangles share hits at least one of them. A ray in the triangle's
-	  plane, or a triangle of no area, gives `.none`.
+	  triangles share hits at least one of them, for small and large
+	  triangles too, whose edge functions are computed again in `f64` where
+	  they overflow or underflow. A ray in the triangle's plane, or a
+	  triangle of no area, gives `.none`.
 */
 cast :: proc{
 	cast_ray2_box2,
@@ -200,23 +203,44 @@ cast_ray3_box3 :: proc(ray: Ray3($T), box: Aabb3(T), t_min, t_max: T) -> Option(
 // center's squared distance to the line, rather than `b^2 - a*c`, which
 // cancels for a small ball far away, and the roots `c/q` and `q/a`, with `q`
 // away from zero. The ball is solid, so the first `t` of the range inside it
-// is the hit.
+// is the hit. For `f32` and `f64`, a square or a product that overflows or
+// underflows, which would make a ball far bigger or smaller than 1 contain
+// or miss what it does not, sends the cast to `cast_ball_wide`; a zero is
+// usable only when what it squares is exactly zero.
 @(private)
 cast_ball :: proc(origin, direction, center: $V, radius, t_min, t_max: $T) -> Option(T) where linalg.Real(T) {
 	check_radius(radius);
 	f := origin - center;
 	squared_radius := radius*radius;
 	a := direction.dot(direction);
+	when (T == f32 || T == f64) {
+		if (!(is_normal_number(f.dot(f)) || f == V{}) || !(is_normal_number(squared_radius) || radius == T(0))
+			|| !(is_normal_number(a) || direction == V{})) {
+			return cast_ball_wide(origin, direction, center, radius, t_min, t_max);
+		}
+	}
 	if (a == T(0)) {
 		if (at_most(f.dot(f), squared_radius) && at_most(t_min, t_max)) { return .some(t_min); }
 		return .none;
 	}
 	b := -f.dot(direction);
+	when (T == f32 || T == f64) {
+		if (!b.is_finite()) { return cast_ball_wide(origin, direction, center, radius, t_min, t_max); }
+	}
 	l := f + direction*(b/a);
 	discriminant := squared_radius - l.dot(l);
 	if (!at_most(T(0), discriminant)) { return .none; }
-	root := (a*discriminant).sqrt();
+	product := a*discriminant;
+	when (T == f32 || T == f64) {
+		if (!(is_normal_number(product) || discriminant == T(0))) {
+			return cast_ball_wide(origin, direction, center, radius, t_min, t_max);
+		}
+	}
+	root := product.sqrt();
 	q := b + root if at_most(T(0), b) else b - root;
+	when (T == f32 || T == f64) {
+		if (!q.is_finite()) { return cast_ball_wide(origin, direction, center, radius, t_min, t_max); }
+	}
 	enter, leave := T(0), T(0);
 	if (!(q == T(0))) {
 		enter = (f.dot(f) - squared_radius)/q;
@@ -231,6 +255,78 @@ cast_ball :: proc(origin, direction, center: $V, radius, t_min, t_max: $T) -> Op
 	if (t_max < leave) { leave = t_max; }
 	if (at_most(enter, leave)) { return .some(enter); }
 	return .none;
+}
+
+// `cast_ball`'s quadratic in `f64`, for `f32` and `f64` operands out of its
+// range in `T`. The ball's offset `f` and radius are scaled together by a
+// power of two, from halves first when `f` overflows, and the direction by
+// another, each by `scale_steps`, so no square overflows or underflows; the
+// roots, in units of the scaled direction over the scaled offset, are
+// scaled back to `t` and compared with the range there. `f32` operands are
+// exact in `f64`, and `f64` ones that need no scaling compute what
+// `cast_ball` does, bit for bit.
+@(private)
+cast_ball_wide :: proc(origin, direction, center: $V, radius, t_min, t_max: $T) -> Option(T) where linalg.Real(T) {
+	f := widen(origin) - widen(center);
+	d := widen(direction);
+	r := f64(radius);
+	halved := false;
+	if (!(math.is_finite(f.x) && math.is_finite(f.y) && math.is_finite(f.z))) {
+		f = widen(origin)*0.5 - widen(center)*0.5;
+		r = r*0.5;
+		halved = true;
+	}
+	position_steps := 0;
+	m := math.max(math.max(math.abs(f.x), math.abs(f.y)), math.max(math.abs(f.z), r));
+	if (0.0 < m && math.is_finite(m)) {
+		position_steps = scale_steps(m);
+		f = scaled_vector3(f, position_steps);
+		r = scaled_by(r, position_steps);
+	}
+	direction_steps := 0;
+	n := math.max(math.max(math.abs(d.x), math.abs(d.y)), math.abs(d.z));
+	if (0.0 < n && math.is_finite(n)) {
+		direction_steps = scale_steps(n);
+		d = scaled_vector3(d, direction_steps);
+	}
+	low, high := f64(t_min), f64(t_max);
+	squared_radius := r*r;
+	a := d.dot(d);
+	if (a == 0.0) {
+		if (at_most(f.dot(f), squared_radius) && at_most(low, high)) { return .some(t_min); }
+		return .none;
+	}
+	b := -f.dot(d);
+	l := f + d*(b/a);
+	discriminant := squared_radius - l.dot(l);
+	if (!at_most(0.0, discriminant)) { return .none; }
+	root := math.sqrt(a*discriminant);
+	q := b + root if at_most(0.0, b) else b - root;
+	enter, leave := 0.0, 0.0;
+	if (!(q == 0.0)) {
+		// A position of `s` times the true one and a direction of `sigma`
+		// times it put the point of `t` at `t*s/sigma`.
+		enter = scaled_by((f.dot(f) - squared_radius)/q, direction_steps - position_steps);
+		leave = scaled_by(q/a, direction_steps - position_steps);
+		if (halved) {
+			enter *= 2.0;
+			leave *= 2.0;
+		}
+		if (leave < enter) {
+			swap := enter;
+			enter = leave;
+			leave = swap;
+		}
+	}
+	if (enter < low) { enter = low; }
+	if (high < leave) { leave = high; }
+	if (at_most(enter, leave)) { return .some(T(enter)); }
+	return .none;
+}
+
+@(private)
+scaled_vector3 :: proc(v: linalg.Vector3(f64), steps: int) -> linalg.Vector3(f64) {
+	return linalg.Vector3(f64).from_components(scaled_by(v.x, steps), scaled_by(v.y, steps), scaled_by(v.z, steps));
 }
 
 @(private)
@@ -263,6 +359,71 @@ edge_sign :: proc(value: $T, p, q: linalg.Vector2(T)) -> Sign where linalg.Real(
 	} else {
 		return .Zero;
 	}
+}
+
+// Whether an `f32` or `f64` edge function computed as `value` needs the wide
+// recomputation of `cast_sheared_wide` before its sign can be taken. A
+// finite value has the exact sign or is zero, since rounding each product
+// keeps their order, but an overflow may not. An `f32` zero's exact sign
+// comes from `orient2d`, which is exact over the whole range, and the
+// determinant then decides whether a vanished edge function matters. An
+// `f64` zero or subnormal is recomputed, since `orient2d` is exact only
+// within its documented range.
+@(private)
+needs_wide :: proc(value: $T) -> bool where linalg.Real(T) {
+	when (T == f32) {
+		return !value.is_finite();
+	} else {
+		return !value.is_normal();
+	}
+}
+
+@(private)
+scaled_vector2 :: proc(v: linalg.Vector2(f64), steps: int) -> linalg.Vector2(f64) {
+	return linalg.Vector2(f64).from_components(scaled_by(v.x, steps), scaled_by(v.y, steps));
+}
+
+// The rest of the watertight test from the sheared corners `a2`, `b2`, `c2`
+// and the corners' distances `za`, `zb`, `zc`, in `f64`, when an edge
+// function, the determinant, or the distance's numerator in `T` is not
+// usable. `f32` corners need nothing more, since every product of two is
+// exact in `f64`, so each edge function is the exact one rounded once. `f64`
+// corners whose largest coordinate is outside `[2^-64, 2^64)` are first
+// scaled together by the power of two of `scale_steps`, so the signs and the
+// ratios the hit is made of are those of the corners as given, without
+// overflow or underflow; an edge function that still computes as zero has
+// its sign from `orient2d` of the scaled corners. For `f64` corners it
+// leaves unscaled, this is the ordinary test, bit for bit.
+@(private)
+cast_sheared_wide :: proc(a2, b2, c2: linalg.Vector2($T), za, zb, zc, t_min, t_max: T) -> Option(Triangle_Hit(T)) where linalg.Real(T) {
+	W :: linalg.Vector2(f64);
+	a := W.from_components(f64(a2.x), f64(a2.y));
+	b := W.from_components(f64(b2.x), f64(b2.y));
+	c := W.from_components(f64(c2.x), f64(c2.y));
+	when (T == f64) {
+		m := math.max(math.max(math.max(a.x.abs(), a.y.abs()), math.max(b.x.abs(), b.y.abs())), math.max(c.x.abs(), c.y.abs()));
+		if (0.0 < m && m.is_finite()) {
+			steps := scale_steps(m);
+			a = scaled_vector2(a, steps);
+			b = scaled_vector2(b, steps);
+			c = scaled_vector2(c, steps);
+		}
+	}
+	u := c.x*b.y - c.y*b.x;
+	v := a.x*c.y - a.y*c.x;
+	w := b.x*a.y - b.y*a.x;
+	su := edge_sign(u, c, b);
+	sv := edge_sign(v, a, c);
+	sw := edge_sign(w, b, a);
+	negative := su == .Negative || sv == .Negative || sw == .Negative;
+	positive := su == .Positive || sv == .Positive || sw == .Positive;
+	if (negative && positive) { return .none; }
+
+	det := u + v + w;
+	if (det == 0.0) { return .none; }
+	t := T((u*f64(za) + v*f64(zb) + w*f64(zc))/det);
+	if (!(at_most(t_min, t) && at_most(t, t_max))) { return .none; }
+	return .some(Triangle_Hit(T){t, linalg.Vector3(T).from_components(T(u/det), T(v/det), T(w/det))});
 }
 
 // `v`'s components on the axes `kz + 1`, `kz + 2`, and `kz`, cyclically, so
@@ -306,9 +467,18 @@ cast_ray3_triangle3 :: proc(ray: Ray3($T), triangle: Triangle3(T), t_min, t_max:
 	b2 := linalg.Vector2(T).from_components(b.x - sx*b.z, b.y - sy*b.z);
 	c2 := linalg.Vector2(T).from_components(c.x - sx*c.z, c.y - sy*c.z);
 
+	za := sz*a.z;
+	zb := sz*b.z;
+	zc := sz*c.z;
+
 	u := c2.x*b2.y - c2.y*b2.x;
 	v := a2.x*c2.y - a2.y*c2.x;
 	w := b2.x*a2.y - b2.y*a2.x;
+	when (T == f32 || T == f64) {
+		if (needs_wide(u) || needs_wide(v) || needs_wide(w)) {
+			return cast_sheared_wide(a2, b2, c2, za, zb, zc, t_min, t_max);
+		}
+	}
 	su := edge_sign(u, c2, b2);
 	sv := edge_sign(v, a2, c2);
 	sw := edge_sign(w, b2, a2);
@@ -317,8 +487,16 @@ cast_ray3_triangle3 :: proc(ray: Ray3($T), triangle: Triangle3(T), t_min, t_max:
 	if (negative && positive) { return .none; }
 
 	det := u + v + w;
+	numerator := u*za + v*zb + w*zc;
+	when (T == f32 || T == f64) {
+		// Edge functions that vanished together, or a determinant or a
+		// numerator out of range.
+		if (!det.is_normal() || !numerator.is_finite()) {
+			return cast_sheared_wide(a2, b2, c2, za, zb, zc, t_min, t_max);
+		}
+	}
 	if (det == T(0)) { return .none; }
-	t := (u*(sz*a.z) + v*(sz*b.z) + w*(sz*c.z))/det;
+	t := numerator/det;
 	if (!(at_most(t_min, t) && at_most(t, t_max))) { return .none; }
 	return .some(Triangle_Hit(T){t, linalg.Vector3(T).from_components(u/det, v/det, w/det)});
 }

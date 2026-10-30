@@ -105,6 +105,58 @@ edge_sign :: proc(value: $T, p, q: linalg.Vector2(T)) -> geometry.Sign {
 	return geometry.orient2d(linalg.Vector2(T).splat(T(0)), p, q);
 }
 
+// The library's recomputation in `f64` when an edge function, the
+// determinant, or the numerator does not compute in range in `T`: `f32`
+// corners as they are, `f64` corners whose largest coordinate is outside
+// `[2^-64, 2^64)` scaled by steps of `2^64` into `[2^-64, 1)`.
+cast_wide :: proc(a2, b2, c2: linalg.Vector2($T), za, zb, zc, t_min, t_max: T) -> Option(geometry.Triangle_Hit(T)) where linalg.Real(T) {
+	corners := [3]linalg.Vector2(f64){
+		linalg.Vector2(f64).from_components(f64(a2.x), f64(a2.y)),
+		linalg.Vector2(f64).from_components(f64(b2.x), f64(b2.y)),
+		linalg.Vector2(f64).from_components(f64(c2.x), f64(c2.y)),
+	};
+	when (T == f64) {
+		m := 0.0;
+		foreach (corner in corners) {
+			if (m < corner.x.abs()) { m = corner.x.abs(); }
+			if (m < corner.y.abs()) { m = corner.y.abs(); }
+		}
+		up := 18446744073709551616.0;
+		down := 1.0/up;
+		if (m.is_finite() && up <= m) {
+			for (1.0 <= m) {
+				m *= down;
+				foreach (i in 0 ..< 3) { corners[i] = corners[i]*down; }
+			}
+		}
+		for (0.0 < m && m < down) {
+			m *= up;
+			foreach (i in 0 ..< 3) { corners[i] = corners[i]*up; }
+		}
+	}
+	a, b, c := corners[0], corners[1], corners[2];
+	u := c.x*b.y - c.y*b.x;
+	v := a.x*c.y - a.y*c.x;
+	w := b.x*a.y - b.y*a.x;
+	su := edge_sign(u, c, b);
+	sv := edge_sign(v, a, c);
+	sw := edge_sign(w, b, a);
+	negative := su == .Negative || sv == .Negative || sw == .Negative;
+	positive := su == .Positive || sv == .Positive || sw == .Positive;
+	if (negative && positive) { return .none; }
+	det := u + v + w;
+	if (det == 0.0) { return .none; }
+	t := T((u*f64(za) + v*f64(zb) + w*f64(zc))/det);
+	if (!(at_most(t_min, t) && at_most(t, t_max))) { return .none; }
+	return .some(geometry.Triangle_Hit(T){t = t, barycentric = linalg.Vector3(T).from_components(T(u/det), T(v/det), T(w/det))});
+}
+
+// Whether an edge function in `T` goes to `cast_wide`: an `f32` one that
+// is not finite, an `f64` one that is not normal.
+wide_edge :: proc(value: $T) -> bool where linalg.Real(T) {
+	when (T == f32) { return !value.is_finite(); } else { return !value.is_normal(); }
+}
+
 // Woop, Benthin, and Wald's test indexing by the run-time axes.
 cast_triangle :: proc(ray: geometry.Ray3($T), triangle: geometry.Triangle3(T), t_min, t_max: T) -> Option(geometry.Triangle_Hit(T)) where linalg.Real(T) {
 	d := ray.direction;
@@ -123,9 +175,11 @@ cast_triangle :: proc(ray: geometry.Ray3($T), triangle: geometry.Triangle3(T), t
 	a2 := linalg.Vector2(T).from_components(a[kx] - sx*a[kz], a[ky] - sy*a[kz]);
 	b2 := linalg.Vector2(T).from_components(b[kx] - sx*b[kz], b[ky] - sy*b[kz]);
 	c2 := linalg.Vector2(T).from_components(c[kx] - sx*c[kz], c[ky] - sy*c[kz]);
+	za, zb, zc := sz*a[kz], sz*b[kz], sz*c[kz];
 	u := c2.x*b2.y - c2.y*b2.x;
 	v := a2.x*c2.y - a2.y*c2.x;
 	w := b2.x*a2.y - b2.y*a2.x;
+	if (wide_edge(u) || wide_edge(v) || wide_edge(w)) { return cast_wide(a2, b2, c2, za, zb, zc, t_min, t_max); }
 	su := edge_sign(u, c2, b2);
 	sv := edge_sign(v, a2, c2);
 	sw := edge_sign(w, b2, a2);
@@ -133,8 +187,9 @@ cast_triangle :: proc(ray: geometry.Ray3($T), triangle: geometry.Triangle3(T), t
 	positive := su == .Positive || sv == .Positive || sw == .Positive;
 	if (negative && positive) { return .none; }
 	det := u + v + w;
-	if (det == T(0)) { return .none; }
-	t := (u*(sz*a[kz]) + v*(sz*b[kz]) + w*(sz*c[kz]))/det;
+	numerator := u*za + v*zb + w*zc;
+	if (!det.is_normal() || !numerator.is_finite()) { return cast_wide(a2, b2, c2, za, zb, zc, t_min, t_max); }
+	t := numerator/det;
 	if (!(at_most(t_min, t) && at_most(t, t_max))) { return .none; }
 	return .some(geometry.Triangle_Hit(T){t = t, barycentric = linalg.Vector3(T).from_components(u/det, v/det, w/det)});
 }

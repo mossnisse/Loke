@@ -12,7 +12,8 @@ import "core:math/linalg";
 	two circles, two spheres, a circle and a box, a sphere and a box, a sphere
 	and a plane, a box and a plane, two `Segment2`s, a segment and a box, or
 	a `Triangle3` and an `Aabb3`, in either order. Box and circle tests need
-	only arithmetic and comparison, so integer shapes get them exactly; an
+	only arithmetic and comparison, so integer shapes get them exactly, and
+	`f32` and `f64` circles and spheres without overflow or underflow; an
 	empty box intersects nothing, and a negative or NaN radius panics. A plane
 	test takes the plane's normal as a unit vector.
 
@@ -67,29 +68,28 @@ intersects_box3_box3 :: proc(a, b: Aabb3($T)) -> bool where interfaces.Ordered(T
 		&& at_most(a.min.z, b.max.z) && at_most(b.min.z, a.max.z);
 }
 
-// `|a.center - b.center|^2 <= (a.radius + b.radius)^2`.
+// `|a.center - b.center|^2 <= (a.radius + b.radius)^2`, by `ball_reaches`.
 @(private)
 intersects_circle_circle :: proc(a, b: Circle($T)) -> bool where interfaces.Ordered(T) {
 	check_radius(a.radius);
 	check_radius(b.radius);
-	reach := a.radius + b.radius;
-	return at_most((a.center - b.center).length_squared(), reach*reach);
+	return ball_reaches(b.center, a.center, a.radius, b.radius);
 }
 
 @(private)
 intersects_sphere_sphere :: proc(a, b: Sphere($T)) -> bool where interfaces.Ordered(T) {
 	check_radius(a.radius);
 	check_radius(b.radius);
-	reach := a.radius + b.radius;
-	return at_most((a.center - b.center).length_squared(), reach*reach);
+	return ball_reaches(b.center, a.center, a.radius, b.radius);
 }
 
-// The box's squared distance from the center at most the squared radius.
+// The box's squared distance from the center at most the squared radius,
+// from the center's offset to its nearest point of the box, by `ball_reaches`.
 @(private)
 intersects_circle_box2 :: proc(circle: Circle($T), box: Aabb2(T)) -> bool where interfaces.Ordered(T) {
 	check_radius(circle.radius);
 	if (box.is_empty()) { return false; }
-	return at_most(box.distance_squared(circle.center), circle.radius*circle.radius);
+	return ball_reaches(circle.center, box.closest_point(circle.center), circle.radius, T(0));
 }
 
 @(private)
@@ -101,7 +101,7 @@ intersects_box2_circle :: proc(box: Aabb2($T), circle: Circle(T)) -> bool where 
 intersects_sphere_box3 :: proc(sphere: Sphere($T), box: Aabb3(T)) -> bool where interfaces.Ordered(T) {
 	check_radius(sphere.radius);
 	if (box.is_empty()) { return false; }
-	return at_most(box.distance_squared(sphere.center), sphere.radius*sphere.radius);
+	return ball_reaches(sphere.center, box.closest_point(sphere.center), sphere.radius, T(0));
 }
 
 @(private)
