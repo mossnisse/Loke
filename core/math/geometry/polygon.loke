@@ -1,0 +1,261 @@
+// geometry-plan.md "Polygons are slices": a polygon is its vertices in order,
+// the last edge closing back to the first, borrowed as a slice. Every side
+// test is an exact `orient2d` and every other decision a comparison of input
+// coordinates, so the tests below are exact for `f32`, `f64`, and integers.
+@(public)
+package geometry;
+
+import "base:interfaces";
+import "core:math/linalg";
+import "core:mem";
+import "core:slice";
+
+/**
+	Which points a self-intersecting polygon fills: `.Nonzero`, those with a
+	winding number other than 0, as SVG and PostScript default to, or
+	`.Even_Odd`, those with an odd one, as the PDF `f*` operator and many GIS
+	formats use. They agree for a simple polygon.
+*/
+Fill_Rule :: enum { Nonzero, Even_Odd }
+
+/**
+	Twice the signed area of the polygon, positive for counterclockwise
+	vertices: the sum, in vertex order, of the cross products
+	`(v[i] - v[0]) x (v[i + 1] - v[0])`, which keeps a polygon far from the
+	origin accurate and is exact for integers. 0 for fewer than three
+	vertices.
+*/
+signed_area_doubled :: proc(polygon: []linalg.Vector2($T)) -> T where interfaces.Numeric(T) {
+	total := T(0);
+	if (polygon.len() < 3) { return total; }
+	origin := polygon[0];
+	foreach (i in 1 ..< polygon.len() - 1) {
+		total = total + (polygon[i] - origin).cross(polygon[i + 1] - origin);
+	}
+	return total;
+}
+
+/// The signed area of the polygon, `signed_area_doubled(polygon)*0.5`.
+signed_area :: proc(polygon: []linalg.Vector2($T)) -> T where linalg.Real(T) {
+	return signed_area_doubled(polygon)*T(0.5);
+}
+
+/**
+	The center of mass of the polygon's region, from the triangles fanning
+	from its first vertex weighted by their signed areas, or `.none` when its
+	signed area is zero or not normal, or the center is not finite. A
+	self-intersecting polygon's center weights each region by its winding
+	number.
+*/
+centroid :: proc(polygon: []linalg.Vector2($T)) -> Option(linalg.Vector2(T)) where linalg.Real(T) {
+	if (polygon.len() < 3) { return .none; }
+	origin := polygon[0];
+	area := T(0);
+	moment := linalg.Vector2(T).splat(T(0));
+	foreach (i in 1 ..< polygon.len() - 1) {
+		a := polygon[i] - origin;
+		b := polygon[i + 1] - origin;
+		weight := a.cross(b);
+		area = area + weight;
+		moment = moment + (a + b)*weight;
+	}
+	if (!area.is_normal()) { return .none; }
+	center := origin + moment/(area*T(3));
+	if (!(center.x.is_finite() && center.y.is_finite())) { return .none; }
+	return .some(center);
+}
+
+/**
+	How many times the polygon winds counterclockwise around `p`, negative for
+	clockwise, or `.none` when `p` is on the polygon's boundary, where the
+	winding number is not defined. It is Sunday's crossing test (2001): an
+	edge upward across `p`'s height with `p` to its left counts +1, and one
+	downward with `p` to its right counts -1, each side an exact `orient2d`.
+	An empty polygon winds 0 times around every point.
+*/
+winding_number :: proc(polygon: []linalg.Vector2($T), p: linalg.Vector2(T)) -> Option(int) where interfaces.Numeric(T), interfaces.Ordered(T) {
+	n := polygon.len();
+	winding := 0;
+	foreach (i in 0 ..< n) {
+		a := polygon[i];
+		b := polygon[(i + 1) % n];
+		side := orient2d(a, b, p);
+		if (side == .Zero && Aabb2(T).from_corners(a, b).contains(p)) { return .none; }
+		if (at_most(a.y, p.y)) {
+			if (p.y < b.y && side == .Positive) { winding += 1; }
+		} else if (at_most(b.y, p.y) && side == .Negative) {
+			winding -= 1;
+		}
+	}
+	return .some(winding);
+}
+
+/**
+	Whether the polygon's region under `rule` holds `p`, its boundary
+	included, as for every solid. The rule is required: a self-intersecting
+	polygon fills different points under each.
+*/
+contains :: proc(polygon: []linalg.Vector2($T), p: linalg.Vector2(T), rule: Fill_Rule) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) {
+	switch (winding_number(polygon, p)) {
+	case .none:
+		return true;
+	case .some(winding):
+		switch (rule) {
+		case .Nonzero: return winding != 0;
+		case .Even_Odd: return winding % 2 != 0;
+		}
+	}
+}
+
+// For collinear `a`, `b`, `c` with `b` apart from both: whether the path
+// turns back at `b`, which is then not between `a` and `c`. Collinear
+// distinct points differ in `x` unless their line is vertical.
+@(private)
+turns_back :: proc(a, b, c: linalg.Vector2($T)) -> bool where interfaces.Ordered(T) {
+	if (!(a.x == b.x)) { return (a.x < b.x) != (b.x < c.x); }
+	return (a.y < b.y) != (b.y < c.y);
+}
+
+// The sign of `b.x - a.x`, by comparison.
+@(private)
+x_direction :: proc(a, b: linalg.Vector2($T)) -> Sign where interfaces.Ordered(T) {
+	if (a.x < b.x) { return .Positive; }
+	if (b.x < a.x) { return .Negative; }
+	return .Zero;
+}
+
+/**
+	Whether the polygon bounds a convex region, traversed once in either
+	direction: every turn is the same way or straight, with at least one
+	turn, and the edges' directions go around once, which `x` changing
+	direction exactly twice decides. Fewer than three vertices, a vertex
+	repeated next to itself, and a path turning back on itself are not
+	convex. A ring that repeats its first vertex at its end, as some formats
+	write one, needs that vertex dropped first.
+*/
+is_convex :: proc(polygon: []linalg.Vector2($T)) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) {
+	n := polygon.len();
+	if (n < 3) { return false; }
+	turn := Sign.Zero;
+	foreach (i in 0 ..< n) {
+		a, b, c := polygon[i], polygon[(i + 1) % n], polygon[(i + 2) % n];
+		if (a == b) { return false; }
+		side := orient2d(a, b, c);
+		if (side == .Zero) {
+			if (turns_back(a, b, c)) { return false; }
+		} else if (turn == .Zero) {
+			turn = side;
+		} else if (side != turn) {
+			return false;
+		}
+	}
+	// A closed path with no turn has its vertices on one line, so it turns
+	// back somewhere, which returned above.
+	last := Sign.Zero;
+	foreach (i in 0 ..< n) {
+		direction := x_direction(polygon[i], polygon[(i + 1) % n]);
+		if (direction != .Zero) { last = direction; }
+	}
+	changes := 0;
+	foreach (i in 0 ..< n) {
+		direction := x_direction(polygon[i], polygon[(i + 1) % n]);
+		if (direction != .Zero && direction != last) {
+			changes += 1;
+			last = direction;
+		}
+	}
+	return changes == 2;
+}
+
+/**
+	Whether the polygon's edges meet only where consecutive edges share a
+	vertex: no edge crosses or touches another, no vertex repeats, and no
+	path turns back on itself. Each pair of edges is tested with the exact
+	segment test, so it is exact and quadratic in the vertices. Fewer than
+	three vertices are not simple.
+*/
+is_simple :: proc(polygon: []linalg.Vector2($T)) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) {
+	n := polygon.len();
+	if (n < 3) { return false; }
+	foreach (i in 0 ..< n) {
+		if (polygon[i] == polygon[(i + 1) % n]) { return false; }
+	}
+	foreach (i in 0 ..< n) {
+		a, b := polygon[i], polygon[(i + 1) % n];
+		foreach (j in i + 1 ..< n) {
+			c, d := polygon[j], polygon[(j + 1) % n];
+			// Consecutive edges share a vertex and overlap only when the path
+			// turns back there. The last and first edges need no test of
+			// their own: overlapping at the first vertex, one of them holds
+			// the other's far end, which another pair finds, or for three
+			// vertices another vertex turns back too.
+			if (j == i + 1) {
+				if (orient2d(a, b, d) == .Zero && turns_back(a, b, d)) { return false; }
+			} else if (!(i == 0 && j == n - 1) && intersects_segment2_segment2(Segment2(T){a, b}, Segment2(T){c, d})) {
+				return false;
+			}
+		}
+	}
+	return true;
+}
+
+/**
+	The convex hull of the points by Andrew's monotone chain (1979), each turn
+	an exact `orient2d`: its corners counterclockwise from the
+	lexicographically smallest point, smallest `x` then smallest `y`, with
+	points on its edges and repeated points left out. One distinct point
+	gives itself, and collinear points their two ends.
+
+	`convex_hull(points, out)` sorts `points` in place and writes the hull to
+	`out`, which needs room for `points.len()` points, returning how many it
+	wrote. `convex_hull(points, allocator)` sorts a copy and returns the hull
+	in a new array. A NaN coordinate gives an unspecified hull.
+*/
+convex_hull :: proc{convex_hull_into, convex_hull_allocated};
+
+@(private)
+convex_hull_into :: proc(points: []mut linalg.Vector2($T), out: []mut linalg.Vector2(T)) -> int where interfaces.Numeric(T), interfaces.Ordered(T) {
+	assert(points.len() <= out.len(), "geometry.convex_hull needs room in `out` for every point");
+	slice.sort_by(points, proc(a, b: linalg.Vector2(T)) -> bool { return a.x < b.x || (a.x == b.x && a.y < b.y); });
+	n := points.len();
+	if (n == 0) { return 0; }
+	first, last := points[0], points[n - 1];
+	k := 0;
+	foreach (p in points) {
+		if (k > 0 && out[k - 1] == p) { continue; }
+		for (k >= 2 && orient2d(out[k - 2], out[k - 1], p) != .Positive) { k -= 1; }
+		out[k] = p;
+		k += 1;
+	}
+	// The upper chain, back to the first point, which closes it without
+	// being written again. It takes only the points above the line from the
+	// first sorted point to the last, so it holds none of the lower chain's
+	// and `out` never needs more than `n`.
+	lower := k;
+	i := n - 2;
+	for (i >= 0) {
+		p := points[i];
+		if (i == 0 || orient2d(first, last, p) == .Positive) {
+			for (k > lower && orient2d(out[k - 2], out[k - 1], p) != .Positive) { k -= 1; }
+			if (i > 0) {
+				out[k] = p;
+				k += 1;
+			}
+		}
+		i -= 1;
+	}
+	return k;
+}
+
+@(private)
+convex_hull_allocated :: proc(points: []linalg.Vector2($T), allocator: Allocator = mem.default_allocator()) -> [dynamic]linalg.Vector2(T) where interfaces.Numeric(T), interfaces.Ordered(T) {
+	sorted := make([dynamic]linalg.Vector2(T), 0, points.len(), allocator);
+	result := make([dynamic]linalg.Vector2(T), 0, points.len(), allocator);
+	foreach (p in points) {
+		sorted.append(p);
+		result.append(p);
+	}
+	count := convex_hull_into(&mut sorted[:], &mut result[:]);
+	result.resize(count);
+	return result;
+}

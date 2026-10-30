@@ -126,9 +126,9 @@ products, LU, Cholesky, QR, least squares, the symmetric and Hermitian
 eigensolver, the SVD, measured `Simd`, blocked, and pooled kernels, and
 complex elements through `linalg.Scalar`.
 [`core:math/geometry`](standard-library.md#coremathgeometry) has the first
-three milestones of the [geometry library plan](geometry-plan.md#milestones),
-the exact predicates, the shapes with their point queries, and rays, culling,
-and transforms; polygons and measured performance follow.
+four milestones of the [geometry library plan](geometry-plan.md#milestones),
+the exact predicates, the shapes with their point queries, rays, culling, and
+transforms, and polygons; measured performance follows.
 
 [`core:encoding/json`](standard-library.md#coreencodingjson) still needs this
 evidence, in this order; its open design questions are in

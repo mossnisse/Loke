@@ -380,7 +380,10 @@ checklist.
   points of two segments, exact `intersects` between segments and between a
   segment and a box, triangles against boxes by separating axes, `Frustum`
   extraction for each `linalg.Depth_Range` with conservative culling, and
-  `transform_box` and `transform_plane`
+  `transform_box` and `transform_plane`; and polygons as slices of vertices,
+  with `signed_area`, `centroid`, `winding_number`, `contains` under a
+  required `Fill_Rule`, `convex_hull`, `is_convex`, and `is_simple`, exact
+  for `f32`, `f64`, and integers
   ([`core:math/geometry`](standard-library.md#coremathgeometry)).
 
 ### Changed

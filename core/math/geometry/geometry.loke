@@ -22,6 +22,11 @@
 	`transform_box` and `transform_plane` move a box's bound and a plane by a
 	transform.
 
+	A polygon is a slice of `linalg.Vector2` vertices, the last edge closing
+	back to the first: `signed_area`, `centroid`, `winding_number`, `contains`
+	under a stated `Fill_Rule`, `convex_hull`, `is_convex`, and `is_simple`,
+	each decision exact for `f32`, `f64`, and integers.
+
 	`orient2d`, `orient3d`, `incircle`, and `insphere` return the exact sign of
 	their determinant for `f32` and `f64` coordinates, as if computed in real
 	arithmetic, so code built on them cannot contradict itself: three points
@@ -35,7 +40,7 @@
 	level, and at compile time for whatever does not reach a square root,
 	which calls a foreign procedure.
 */
-// geometry-plan.md is the design this package implements, milestones 1 to 3.
+// geometry-plan.md is the design this package implements, milestones 1 to 4.
 @(public)
 package geometry;
 

@@ -23,6 +23,7 @@ CPU_LEVEL_CASES :: []string {
 	"tests/run/lib_geometry_predicates.loke",
 	"tests/run/lib_geometry_shapes.loke",
 	"tests/run/lib_geometry_rays.loke",
+	"tests/run/lib_geometry_polygons.loke",
 	"tests/run/lib_dense.loke",
 	"tests/run/lib_dense_solve.loke",
 	"tests/run/lib_dense_qr.loke",

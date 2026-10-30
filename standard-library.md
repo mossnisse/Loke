@@ -143,7 +143,7 @@ core:math             elementary functions, Complex, Quaternion
 core:math/repro       correctly rounded elementary functions
 core:math/linalg      fixed-size vectors, matrices, rotations, projections
 core:math/dense       run-time-sized matrices, views, LU, Cholesky, QR, eigenvalues, SVD
-core:math/geometry    shapes, rays, frustums, overlap tests, exact predicates
+core:math/geometry    shapes, rays, frustums, polygons, overlap tests, exact predicates
 core:random           seeded generators, entropy, distributions
 core:time             clocks, durations, the calendar, ISO 8601 text
 core:slice            slice algorithms and sorting            *
@@ -2720,10 +2720,10 @@ to share runs on the calling thread.
 
 ## `core:math/geometry`
 
-Shapes, rays, frustums, and exact geometric predicates over
+Shapes, rays, frustums, polygons, and exact geometric predicates over
 `core:math/linalg`'s vectors, from the
-[geometry library plan](geometry-plan.md), whose polygons and measured
-performance follow in its later milestones.
+[geometry library plan](geometry-plan.md), whose measured performance follows
+in its last milestone.
 
 `orient2d(a, b, c)`, `orient3d(a, b, c, d)`, `incircle(a, b, c, d)`, and
 `insphere(a, b, c, d, e)` return a `Sign`, `.Negative`, `.Zero`, or
@@ -2873,12 +2873,43 @@ stays empty. `transform_plane(m, plane)` moves a plane through
 `.none` when `m`'s linear part has no inverse. Spheres and circles have no
 transform, since only a similarity keeps them round.
 
-Everything that does not reach `math.sqrt`, the predicates, the box algebra,
-the planes' intersection point, the segments' and triangles' closest points,
-the overlap tests, the box, plane, and triangle casts, and `transform_box`, is
-evaluated at compile time with the same result, and every result is the same
-bits on every machine, [CPU level](compiler-guide.md#cpu-levels), and
-optimization level.
+A polygon is `[]linalg.Vector2(T)`, its vertices in order with the last edge
+closing back to the first, borrowed rather than copied; it does not repeat its
+first vertex at its end, as some formats write a ring. Every side test is an
+exact `orient2d` and every other decision a comparison of coordinates, so the
+answers are exact for `f32`, `f64`, and integers.
+
+- `signed_area_doubled(polygon)` is twice the signed area, positive for
+  counterclockwise vertices, the sum of `(v[i] - v[0]) x (v[i + 1] - v[0])`
+  in vertex order, which keeps a polygon far from the origin accurate and is
+  exact for integers; `signed_area` halves it. `centroid` is the center of
+  the region, each part weighted by its winding number, or `.none` for an
+  area that is zero or not normal.
+- `winding_number(polygon, p)` is how many times the polygon winds
+  counterclockwise around `p`, by Sunday's crossing test, or `.none` when `p`
+  is on the boundary, where it is not defined. `contains(polygon, p, rule)`
+  holds the boundary, as for every solid, and takes a required
+  `Fill_Rule`: `.Nonzero`, SVG's and PostScript's default, or `.Even_Odd`, the
+  PDF `f*` operator's and many GIS formats'. They differ only for a
+  self-intersecting polygon.
+- `is_convex` is true when every turn is the same way or straight and the
+  edges' directions go around once; `is_simple` when no two edges meet except
+  consecutive ones at their shared vertex. Both are false for fewer than three
+  vertices, a vertex repeated next to itself, or a path turning back on itself;
+  `is_simple` is quadratic.
+- `convex_hull` is Andrew's monotone chain: the hull's corners
+  counterclockwise from the lexicographically smallest point, with points on
+  its edges and repeated points left out. `convex_hull(points, out)` sorts the
+  `[]mut` points in place and writes into `out`, which needs room for every
+  point, returning the count; `convex_hull(points, allocator)` sorts a copy
+  and returns a `[dynamic]` array.
+
+Everything that does not reach `math.sqrt` or sort, the predicates, the box
+algebra, the planes' intersection point, the segments' and triangles' closest
+points, the overlap tests, the box, plane, and triangle casts, `transform_box`,
+and the polygon procedures but `convex_hull`, is evaluated at compile time with
+the same result, and every result is the same bits on every machine,
+[CPU level](compiler-guide.md#cpu-levels), and optimization level.
 
 ## `core:random`
 

@@ -1,11 +1,12 @@
 # Geometry library plan
 
-Status: milestones 1 to 3 implemented, 2026-10-30
+Status: milestones 1 to 4 implemented, 2026-10-30
 ([Milestone 1 results](#milestone-1-results),
 [Milestone 2 results](#milestone-2-results),
-[Milestone 3 results](#milestone-3-results)), after its questions were
-settled the same day ([Settled questions](#settled-questions)); milestones 4
-and 5 are proposals.
+[Milestone 3 results](#milestone-3-results),
+[Milestone 4 results](#milestone-4-results)), after its questions were
+settled the same day ([Settled questions](#settled-questions)); milestone 5
+is a proposal.
 [`core:math/geometry`](standard-library.md#coremathgeometry) documents what
 has shipped. This document specifies a
 `core:math/geometry` package of shapes, exact predicates, and the queries
@@ -277,9 +278,11 @@ beside it ([Ownership is visible](standard-library.md#ownership-is-visible)).
 - `signed_area(polygon)` is positive for counterclockwise vertices. Each term
   is the cross product of two edges from the first vertex, in vertex order,
   which keeps the area of a polygon far from the origin accurate.
-- `winding_number(polygon, p) -> int` is Sunday's crossing test (2001) with
-  each side test an exact `orient2d`, so it is exact for `f32`, `f64`, and
-  integers, and a point on the boundary is reported as such.
+- `winding_number(polygon, p) -> Option(int)` is Sunday's crossing test
+  (2001) with each side test an exact `orient2d`, so it is exact for `f32`,
+  `f64`, and integers, and a point on the boundary, where the number is not
+  defined, is reported as such: `.none`
+  ([Milestone 4 results](#milestone-4-results)).
 - `contains(polygon, p, rule: Fill_Rule)`, with
   `Fill_Rule :: enum { Nonzero, Even_Odd }` required: SVG and PostScript
   default to the first, many GIS formats and the PDF `f*` operator use the
@@ -373,7 +376,7 @@ Predicates, f32, f64, integers, and any Numeric T:
 
 Polygons over []Vector2(T):
   signed_area_doubled (Numeric); signed_area, centroid -> Option (Real)
-  winding_number(polygon, p) -> int; contains(polygon, p, rule: Fill_Rule)
+  winding_number(polygon, p) -> Option(int); contains(polygon, p, rule: Fill_Rule)
   convex_hull(points: []mut, out: []mut) -> int; convex_hull(points, allocator) -> [dynamic]
   is_convex; is_simple
 
@@ -401,7 +404,8 @@ Ordered by how much the later parts build on the earlier ones:
    boxes, spheres, planes, and triangles; segment and triangle closest
    points and overlap with boxes; `Frustum` for each `Depth_Range` and its
    culling tests; `transform_box` and `transform_plane`.
-4. **Polygons.** Signed area, centroid, winding number, `contains` with a
+4. **Polygons.** Done ([Milestone 4 results](#milestone-4-results)).
+   Signed area, centroid, winding number, `contains` with a
    `Fill_Rule`, convex hull, `is_convex`, and `is_simple`.
 5. **Measured performance.** Benchmarks of ray-box and ray-triangle casts,
    frustum culling, and the predicates' fast and exact paths over arrays,
@@ -719,3 +723,67 @@ Decided while implementing:
   empty. `transform_plane` takes a normal of any length.
 - **2D rays cast against boxes and circles only**; segments and triangles in
   the plane wait for the polygon milestone's needs.
+
+## Milestone 4 results
+
+Done 2026-10-30: the polygon procedures of milestone 4, with
+`tests/run/lib_geometry_polygons.loke`, in the CPU-level corpus. The test
+checks:
+
+- convex hulls of 120 point sets, random, on a small grid with repeated and
+  collinear points, on a circle, and within an ulp of one line, at `f64`,
+  `f32`, and `i32`, against the brute-force hull of the points in no flat or
+  solid triangle of three others, each hull strictly convex and
+  counterclockwise from the lexicographically smallest point, and both forms
+  of the call alike; and hulls of no points, one repeated point, collinear
+  points, and a square's grid;
+- winding numbers of random points in 200 random polygons against the summed
+  angles their edges subtend, and both fill rules against them; every vertex
+  on the boundary; points within ulps of a quadrilateral's diagonal, whose two
+  triangles' winding numbers add to the quadrilateral's and agree on which
+  points are on the diagonal; a pentagram, a square wound twice, a clockwise
+  square, rays through vertices and along edges, and empty, one-point, and
+  integer polygons;
+- areas exact for a polygon `10^8` from the origin, a clockwise one, and an
+  integer one, and centroids of a square, a triangle, an L, a clockwise
+  square, a polygon of no area, and one far out;
+- convexity and simplicity of hand-made polygons: straight vertices, a notch,
+  a spike, rectangles with a slit, three points folding back, a pentagram, a
+  bowtie, two squares sharing a corner, a vertex on another edge, a repeated
+  first vertex, and a thin triangle `2^50` across; of random star-shaped
+  polygons and hulls, and of hulls with two vertices swapped;
+- a dual number's derivative of the area and the centroid, and compile-time
+  folds of an area, a centroid, a winding number, `is_simple`, and
+  `is_convex`.
+
+Its output is the same at `-opt=minimal`, `speed`, `size`, and `aggressive`
+and at both CPU levels. Twenty of 22 planted bugs fail it. The other two are
+equivalent: a side test of zero in the crossing count never reaches it, since
+such a point is on the boundary and returned before, and `is_simple`'s check
+for a repeated vertex is also found by the edges around it, but stays as the
+precondition of the turning-back test. Three planted bugs that first passed
+showed checks that were not needed, which are gone: `is_convex`'s test for a
+path with no turn (a closed path on one line turns back), `is_simple`'s fold
+test at the first vertex (another pair always finds it), and the lower
+chain's restriction to points below the line from the first sorted point to
+the last.
+
+Decided while implementing:
+
+- **`winding_number` returns `Option(int)`**, `.none` on the boundary, which
+  is how the boundary is "reported as such"; `contains` counts it inside.
+- **A ring does not repeat its first vertex.** Formats that close a ring
+  that way, GeoJSON among them, give a zero-length edge, which `is_convex`
+  and `is_simple` reject; the caller drops the last vertex. Straight
+  vertices are allowed in both.
+- **`is_convex` counts the turns of `x`'s direction**: with every turn the
+  same way, the edges go around once exactly when the sign of `b.x - a.x`
+  changes twice around the polygon, which tells a convex pentagon from a
+  pentagram with comparisons alone.
+- **The hull's upper chain takes only the points above the line from the
+  first sorted point to the last**, plus the first point to close it. The
+  textbook chain can hold lower-hull points in the upper chain for a while
+  and needs room for `2n`; with the split, `out` needs only `n`, as the
+  documented contract says. A planted bug removing the split overruns it.
+- **`convex_hull` sorts with `slice.sort_by`**, lexicographically by `x` then
+  `y`, and is the one polygon procedure that does not fold at compile time.

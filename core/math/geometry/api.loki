@@ -24,6 +24,11 @@
 	`transform_box` and `transform_plane` move a box's bound and a plane by a
 	transform.
 
+	A polygon is a slice of `linalg.Vector2` vertices, the last edge closing
+	back to the first: `signed_area`, `centroid`, `winding_number`, `contains`
+	under a stated `Fill_Rule`, `convex_hull`, `is_convex`, and `is_simple`,
+	each decision exact for `f32`, `f64`, and integers.
+
 	`orient2d`, `orient3d`, `incircle`, and `insphere` return the exact sign of
 	their determinant for `f32` and `f64` coordinates, as if computed in real
 	arithmetic, so code built on them cannot contradict itself: three points
@@ -41,6 +46,7 @@ package geometry;
 
 import "base:interfaces";
 import "core:math/linalg";
+import "core:mem";
 
 /*
 	The axis-aligned rectangle of the points from `min` to `max`, both
@@ -391,6 +397,92 @@ impl Plane($T) {
 	(a.n x b.n)) / dot(a.n, b.n x c.n)`.
 */
 intersection_point :: proc(a, b, c: Plane($T)) -> Option(linalg.Vector3(T)) where linalg.Real(T) ---;
+
+/*
+	Which points a self-intersecting polygon fills: `.Nonzero`, those with a
+	winding number other than 0, as SVG and PostScript default to, or
+	`.Even_Odd`, those with an odd one, as the PDF `f*` operator and many GIS
+	formats use. They agree for a simple polygon.
+*/
+Fill_Rule :: enum { Nonzero, Even_Odd }
+
+/*
+	Twice the signed area of the polygon, positive for counterclockwise
+	vertices: the sum, in vertex order, of the cross products
+	`(v[i] - v[0]) x (v[i + 1] - v[0])`, which keeps a polygon far from the
+	origin accurate and is exact for integers. 0 for fewer than three
+	vertices.
+*/
+signed_area_doubled :: proc(polygon: []linalg.Vector2($T)) -> T where interfaces.Numeric(T) ---;
+
+// The signed area of the polygon, `signed_area_doubled(polygon)*0.5`.
+signed_area :: proc(polygon: []linalg.Vector2($T)) -> T where linalg.Real(T) ---;
+
+/*
+	The center of mass of the polygon's region, from the triangles fanning
+	from its first vertex weighted by their signed areas, or `.none` when its
+	signed area is zero or not normal, or the center is not finite. A
+	self-intersecting polygon's center weights each region by its winding
+	number.
+*/
+centroid :: proc(polygon: []linalg.Vector2($T)) -> Option(linalg.Vector2(T)) where linalg.Real(T) ---;
+
+/*
+	How many times the polygon winds counterclockwise around `p`, negative for
+	clockwise, or `.none` when `p` is on the polygon's boundary, where the
+	winding number is not defined. It is Sunday's crossing test (2001): an
+	edge upward across `p`'s height with `p` to its left counts +1, and one
+	downward with `p` to its right counts -1, each side an exact `orient2d`.
+	An empty polygon winds 0 times around every point.
+*/
+winding_number :: proc(polygon: []linalg.Vector2($T), p: linalg.Vector2(T)) -> Option(int) where interfaces.Numeric(T), interfaces.Ordered(T) ---;
+
+/*
+	Whether the polygon's region under `rule` holds `p`, its boundary
+	included, as for every solid. The rule is required: a self-intersecting
+	polygon fills different points under each.
+*/
+contains :: proc(polygon: []linalg.Vector2($T), p: linalg.Vector2(T), rule: Fill_Rule) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) ---;
+
+/*
+	Whether the polygon bounds a convex region, traversed once in either
+	direction: every turn is the same way or straight, with at least one
+	turn, and the edges' directions go around once, which `x` changing
+	direction exactly twice decides. Fewer than three vertices, a vertex
+	repeated next to itself, and a path turning back on itself are not
+	convex. A ring that repeats its first vertex at its end, as some formats
+	write one, needs that vertex dropped first.
+*/
+is_convex :: proc(polygon: []linalg.Vector2($T)) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) ---;
+
+/*
+	Whether the polygon's edges meet only where consecutive edges share a
+	vertex: no edge crosses or touches another, no vertex repeats, and no
+	path turns back on itself. Each pair of edges is tested with the exact
+	segment test, so it is exact and quadratic in the vertices. Fewer than
+	three vertices are not simple.
+*/
+is_simple :: proc(polygon: []linalg.Vector2($T)) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) ---;
+
+/*
+	The convex hull of the points by Andrew's monotone chain (1979), each turn
+	an exact `orient2d`: its corners counterclockwise from the
+	lexicographically smallest point, smallest `x` then smallest `y`, with
+	points on its edges and repeated points left out. One distinct point
+	gives itself, and collinear points their two ends.
+
+	`convex_hull(points, out)` sorts `points` in place and writes the hull to
+	`out`, which needs room for `points.len()` points, returning how many it
+	wrote. `convex_hull(points, allocator)` sorts a copy and returns the hull
+	in a new array. A NaN coordinate gives an unspecified hull.
+*/
+convex_hull :: proc{convex_hull_into, convex_hull_allocated};
+
+// Private to the package, but a public declaration names it.
+convex_hull_into :: proc(points: []mut linalg.Vector2($T), out: []mut linalg.Vector2(T)) -> int where interfaces.Numeric(T), interfaces.Ordered(T) ---;
+
+// Private to the package, but a public declaration names it.
+convex_hull_allocated :: proc(points: []linalg.Vector2($T), allocator: Allocator = mem.default_allocator()) -> [dynamic]linalg.Vector2(T) where interfaces.Numeric(T), interfaces.Ordered(T) ---;
 
 /*
 	Which side of the line through `a` and `b` the point `c` is on:
