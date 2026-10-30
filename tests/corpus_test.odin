@@ -1378,8 +1378,14 @@ interface_files_match_their_packages :: proc(t: ^testing.T) {
 				append(&command, flag)
 			}
 			checked, stdout, stderr, err := exec(os.Process_Desc{command = command[:]}, context.allocator)
+			// A case may name a private type from a public declaration on
+			// purpose, since the interface file still shows it: that warning
+			// (design.md "Private names in public declarations") is the only
+			// output allowed.
+			reported := strings.count(string(stderr), "error[") + strings.count(string(stderr), "warning[")
 			testing.expectf(
-				t, err == nil && checked.exit_code == 0 && len(stdout) == 0 && len(stderr) == 0,
+				t, err == nil && checked.exit_code == 0 && len(stdout) == 0 &&
+				reported == strings.count(string(stderr), "warning[L0740]"),
 				"%s: -api-check %s failed (exit %d)\n%s%s", dir, flag, checked.exit_code, string(stdout), string(stderr),
 			)
 		}
@@ -1465,6 +1471,15 @@ bundled_interface_files_are_current :: proc(t: ^testing.T) {
 			job.err == nil && job.state.exit_code == 0 && len(job.stdout) == 0,
 			"`lokec %s` failed; regenerate with `-api` and review the diff:\n%s%s",
 			strings.join(job.command[1:], " ", context.temp_allocator), string(job.stdout), string(job.stderr),
+		)
+		// Every program that imports a bundled package would show its warnings,
+		// such as a public declaration naming a private one (design.md "Private
+		// names in public declarations").
+		testing.expectf(
+			t,
+			!strings.contains(string(job.stderr), "warning["),
+			"`lokec %s` warns about a bundled package:\n%s",
+			strings.join(job.command[1:], " ", context.temp_allocator), string(job.stderr),
 		)
 	}
 }

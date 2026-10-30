@@ -175,9 +175,8 @@ impl math.Complex($R) {
 	@(private) imaginary_part :: proc(self) -> R { return self.imaginary; }
 }
 
-// The bound of the conversion hooks: each component converts as the scalar
-// `To(value)` does.
-@(private)
+/// The bound of the conversion hooks: each component converts as the scalar
+/// `To(value)` does.
 Converts :: interface($From, $To: type) {
 	(value: From) To(value) -> To;
 }

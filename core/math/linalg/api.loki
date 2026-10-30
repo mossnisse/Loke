@@ -108,7 +108,10 @@ Scalar :: interface($T: type) {
 	slot imaginary_part: proc(self) -> T.Real;
 }
 
-// Private to the package, but a public declaration names it.
+/*
+	The bound of the conversion hooks: each component converts as the scalar
+	`To(value)` does.
+*/
 Converts :: interface($From, $To: type) {
 	(value: From) To(value) -> To;
 }

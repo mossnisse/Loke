@@ -480,6 +480,17 @@ checklist.
   casts, frustum culling, and the predicates against hand-written loops
   ([`core:math/geometry`](standard-library.md#coremathgeometry)).
 
+- The warning `L0740` reports a public declaration that names a private one
+  of its package where an importer would have to name it too: a private type
+  in a public procedure's parameter or result types, a public field, a type
+  alias, or a constant's type, as `Fill` in `[]Fill` or `Option(Fill)`, and
+  any private declaration in a public `where` clause. A procedure group's
+  private members, defaults, array lengths, and a `package main` are not
+  reported ([Private names in public declarations](design.md#private-names-in-public-declarations)).
+  `core:math/linalg`'s `Converts`, the bound of the conversion hooks, is now
+  public, and `time.styled` writes its bound out instead of naming a private
+  procedure.
+
 ### Changed
 
 - A `typeid_of(T)` constant is specified to have no number during

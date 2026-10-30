@@ -264,7 +264,10 @@ A private declaration is shown too once a shown one names it, after a comment
 saying it is private: a type that a public procedure returns or a public field
 has, and the members of its `impl`; a procedure that a public overload group
 gathers; a constant in a default value; and whatever those name in turn. An
-importer cannot name such a declaration, but does reach it. A name is followed
+importer cannot name such a declaration, but does reach it. Apart from a
+group's members and values, naming one is also the warning `L0740`
+([Private names in public declarations](design.md#private-names-in-public-declarations)).
+A name is followed
 to the declaration the checker resolved it to, so a parameter spelled like a
 private type does not reach the type, and a private alias reaches the type it
 names. In syntax the checker never resolved, an untaken `when` branch or a
