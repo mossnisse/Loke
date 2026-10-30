@@ -122,7 +122,7 @@ pow_f64_of :: proc(x: f64, y: f64) -> f64 {
 // one; then the slow path.
 pow_f32_of :: proc(x: f64, y: f64) -> f32 {
 	z := y*log_quick(x);
-	if (z > -87.0 && z < 88.0) {
+	if (F32_FIRST_APPROXIMATION && z > -87.0 && z < 88.0) {
 		quick := exp_quick(z);
 		if (f32_decided(quick, QUICK_POW_ULPS)) { return f32(quick); }
 	}

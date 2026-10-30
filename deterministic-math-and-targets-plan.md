@@ -445,6 +445,29 @@ Then `pow_f32`, the last `f32` function without a first approximation:
 - Measured at `-opt=speed` with `bench/math_compare.loke` at baseline:
   `pow_f32` from 83.3 to 35.4 ns per call.
 
+Two `f64` experiments on 2026-10-30 did not pay, and changed nothing:
+
+- `log2` and `log10` take about 13 ns more than `log`: 9 in the kernel,
+  Dekker's product of `log`'s result with the constant, and the rest in the
+  decision. Specializing to the constant, so that its split folds, saved 1.3
+  ns; a table of -log2 d would only move the product onto the series. At
+  `x86-64-v3` the fused product already takes most of it.
+- `sin`, `cos`, and `tan` choose `sin_kernel` or `cos_kernel` by the
+  quadrant, a branch random arguments mispredict, but one kernel with its
+  coefficients chosen, as the `f32` first approximation does, took 43.2 ns
+  against 42.8: the double-`f64` kernels' cost is their arithmetic.
+
+The remaining `f64` gap needs other algorithms, each with a new bound.
+
+The plan's exhaustive `f32` gate: `F32_FIRST_APPROXIMATION`, true in the
+package, lets `tests/repro_test.odin` build a copy without the first
+approximations, and `tests/repro/exhaustive.loke` runs every `f32` bit
+pattern through both: the ten unary functions, `pow_f32` at y = 2, 1/2, 1/3,
+and -3/2, `hypot_f32` against 0.75, and `quaternion_abs_f32` against three
+fixed components, a hash per 2^24 results naming any block that differs.
+`test-all.ps1 -Exhaustive` runs it, in about 25 minutes on six cores; CI does not, and
+the release checklist does.
+
 Not started: phase 1's benchmarks (the UCRT timings in open questions stand
 until there is a kernel to compare), phase 6's faster kernels and dispatch,
 and other platforms.

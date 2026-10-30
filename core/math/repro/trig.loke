@@ -272,7 +272,7 @@ trig_f32 :: proc(x: f64, want_cos: bool) -> f32 {
 	ax := x;
 	if (x < 0.0) { ax = 0.0 - x; }
 	flip := !want_cos && x < 0.0;
-	if (ax < CODY_WAITE_LIMIT) {
+	if (F32_FIRST_APPROXIMATION && ax < CODY_WAITE_LIMIT) {
 		quadrant, r := quick_reduce(ax);
 		use_sin := (quadrant % 2 == 0) != want_cos;
 		a := r;

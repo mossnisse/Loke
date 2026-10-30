@@ -86,7 +86,7 @@ exp_f64_of :: proc(x: f64) -> f64 {
 // result, within one ulp, decides, and the slow path if that does not.
 exp_f32_of :: proc(x: f64) -> f32 {
 	quick := exp_quick(x);
-	if (f32_decided(quick, 4)) { return f32(quick); }
+	if (F32_FIRST_APPROXIMATION && f32_decided(quick, 4)) { return f32(quick); }
 
 	k, h, l := exp_kernel(x, 0.0);
 	scale := power_of_two(k >> 7);

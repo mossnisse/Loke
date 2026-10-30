@@ -152,7 +152,7 @@ arc_f32_of :: proc(a: f64, cosine: bool, x_negative: bool) -> f32 {
 	} else {
 		quick = atan2_quick(w, a, part);
 	}
-	if (f32_decided(quick, 524288)) { return f32(quick); }
+	if (F32_FIRST_APPROXIMATION && f32_decided(quick, 524288)) { return f32(quick); }
 
 	wh, wl := arc_root(a);
 	h := 0.0;

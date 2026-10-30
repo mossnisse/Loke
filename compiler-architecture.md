@@ -767,13 +767,18 @@ From the repository root:
 ```powershell
 .\test-all.ps1                     # quick gate
 .\test-all.ps1 -Full -RequireTools  # CI gate
+.\test-all.ps1 -Exhaustive          # quick gate and the exhaustive f32 sweep
 ```
 
 The quick gate checks heading citations and layering, runs unit tests, rebuilds
 `lokec.exe`, and runs baseline integration tests. `-Full` adds the checker
 mutation fuzzer and reruns optimization-sensitive corpora at every supported
 level. Use it locally for that additional coverage or to investigate CI
-failures.
+failures. `-Exhaustive` adds `core:math/repro`'s exhaustive comparison: every
+`f32` bit pattern through each function's single-`f64` first approximation and
+through a copy of the package without it, which must agree. It takes about 25
+minutes on six cores, so it is a release step rather than part of CI; run it
+after changing an `f32` path.
 
 Some checks need external tools: NASM, clang with a C-host toolset, or cdb
 (WinDbg/ Windows SDK, optionally selected by `LOKE_CDB`). Missing capabilities

@@ -56,8 +56,9 @@ become the release's upgrade notes.
 
 1. Confirm `main` is green in CI and that the `## Gaps` section of
    [known-gaps.md](known-gaps.md) reads exactly `None.`; the release workflow
-   checks that text and refuses anything else. Choose `X.Y.Z` using the
-   [version policy](#version-policy).
+   checks that text and refuses anything else. Run
+   `.\test-all.ps1 -Exhaustive` locally, about 25 minutes, which CI does not.
+   Choose `X.Y.Z` using the [version policy](#version-policy).
 2. Rename **Unreleased** in [CHANGELOG.md](CHANGELOG.md) to
    `[X.Y.Z] - YYYY-MM-DD`, add an empty **Unreleased** above it, and check the
    upgrade notes.

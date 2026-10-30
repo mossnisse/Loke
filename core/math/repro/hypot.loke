@@ -68,7 +68,7 @@ hypot_f64_of :: proc(a: f64, b: f64) -> f64 {
 hypot_f32_of :: proc(a: f64, b: f64) -> f32 {
 	s := a*a + b*b;
 	quick := math.sqrt(s);
-	if (f32_decided(quick, 8)) { return f32(quick); }
+	if (F32_FIRST_APPROXIMATION && f32_decided(quick, 8)) { return f32(quick); }
 
 	sh, sl := two_sum(a*a, b*b);
 	wh, wl := pair_root(sh, sl);

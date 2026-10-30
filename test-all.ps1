@@ -8,7 +8,11 @@ param(
     # Turns the harness's tool skips into failures: nasm and a C host toolset are
     # not shipped here, and without this a machine missing one still runs green
     # with that coverage gone.
-    [switch]$RequireTools
+    [switch]$RequireTools,
+    # Adds core:math/repro's exhaustive f32 comparison, every bit pattern through
+    # each first approximation and the path behind it: about 25 minutes, so a
+    # release step rather than CI's (releasing.md "Release checklist").
+    [switch]$Exhaustive
 )
 
 $ErrorActionPreference = 'Stop'
@@ -28,6 +32,7 @@ $repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $savedFlags = [Environment]::GetEnvironmentVariable('LOKE_TEST_FLAGS', 'Process')
 $savedRequireTools = [Environment]::GetEnvironmentVariable('LOKE_TEST_REQUIRE_TOOLS', 'Process')
 $savedFull = [Environment]::GetEnvironmentVariable('LOKE_TEST_FULL', 'Process')
+$savedExhaustive = [Environment]::GetEnvironmentVariable('LOKE_TEST_EXHAUSTIVE', 'Process')
 if ($Full) {
     [Environment]::SetEnvironmentVariable('LOKE_TEST_FULL', '1', 'Process')
 }
@@ -132,10 +137,21 @@ try {
             }
         }
     }
+    if ($Exhaustive) {
+        Write-Host "Comparing core:math/repro's f32 first approximations exhaustively"
+        [Environment]::SetEnvironmentVariable('LOKE_TEST_FLAGS', $null, 'Process')
+        [Environment]::SetEnvironmentVariable('LOKE_TEST_EXHAUSTIVE', '1', 'Process')
+        Invoke-Native 'exhaustive f32 comparison failed' {
+            odin test tests `
+                -define:ODIN_TEST_TRACK_MEMORY=false `
+                -define:ODIN_TEST_NAMES=tests.repro_f32_first_approximations_agree_exhaustively
+        }
+    }
 }
 finally {
     [Environment]::SetEnvironmentVariable('LOKE_TEST_FLAGS', $savedFlags, 'Process')
     [Environment]::SetEnvironmentVariable('LOKE_TEST_REQUIRE_TOOLS', $savedRequireTools, 'Process')
     [Environment]::SetEnvironmentVariable('LOKE_TEST_FULL', $savedFull, 'Process')
+    [Environment]::SetEnvironmentVariable('LOKE_TEST_EXHAUSTIVE', $savedExhaustive, 'Process')
     Pop-Location
 }

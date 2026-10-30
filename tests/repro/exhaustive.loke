@@ -1,0 +1,51 @@
+// tests/repro_test.odin's exhaustive gate builds this twice against copies of
+// `core:math/repro`, one with `F32_FIRST_APPROXIMATION` false, and requires
+// the same output: every `f32` bit pattern through the function its argument
+// names, a hash of each block of 2^24 results, so that a difference names its
+// block.
+package main;
+
+import "core:fmt";
+import "core:math";
+import "core:os";
+import "core:unsafe";
+import "probe:repro";
+
+Unary :: proc(x: f32) -> f32;
+
+pow_two :: proc(x: f32) -> f32 { return repro.pow_f32(x, f32(2.0)); }
+pow_half :: proc(x: f32) -> f32 { return repro.pow_f32(x, f32(0.5)); }
+pow_third :: proc(x: f32) -> f32 { return repro.pow_f32(x, f32(1.0)/f32(3.0)); }
+pow_minus :: proc(x: f32) -> f32 { return repro.pow_f32(x, f32(-1.5)); }
+hypot_one :: proc(x: f32) -> f32 { return repro.hypot_f32(x, f32(0.75)); }
+norm_four :: proc(x: f32) -> f32 {
+	return repro.quaternion_abs_f32(math.Quaternion(f32).from_components(x, f32(0.75), f32(0.5), f32(0.25)));
+}
+
+NAMES :: [16]string{
+	"exp", "log", "log2", "log10", "sin", "cos", "tan", "asin", "acos", "atan",
+	"pow_two", "pow_half", "pow_third", "pow_minus", "hypot", "norm",
+};
+
+main :: proc() {
+	functions := [16]Unary{
+		repro.exp_f32, repro.log_f32, repro.log2_f32, repro.log10_f32, repro.sin_f32, repro.cos_f32,
+		repro.tan_f32, repro.asin_f32, repro.acos_f32, repro.atan_f32,
+		pow_two, pow_half, pow_third, pow_minus, hypot_one, norm_four,
+	};
+	names := NAMES;
+	foreach (arg in os.args) {
+		foreach (k in 0 ..< 16) {
+			if (arg != names[k]) { continue; }
+			f := functions[k];
+			foreach (block in 0 ..< 256) {
+				hash: u64 = 0xcbf29ce484222325;
+				foreach (low in 0 ..< 0x1000000) {
+					pattern := u32(block << 24) | u32(low);
+					hash = (hash ~ u64(unsafe.transmute(u32, f(unsafe.transmute(f32, pattern))))) *% 0x100000001b3;
+				}
+				fmt.println(arg, block, hash);
+			}
+		}
+	}
+}

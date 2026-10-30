@@ -37,6 +37,11 @@ CANONICAL_NAN_F32 :: 0x7fc00000;
 ROUND_SHIFTER :: 6755399441055744.0;
 // 2^27 + 1, Veltkamp's splitting constant for `f64`.
 SPLITTER :: 134217729.0;
+// Whether the `f32` functions try their single-`f64` first approximation
+// before the double-`f64` path. Always true here; the exhaustive gate in
+// tests/repro_test.odin builds a copy with it false and requires every `f32`
+// argument to give the same result both ways.
+F32_FIRST_APPROXIMATION :: true;
 // 2^-66, twice the relative error the fast paths are bounded by: a result is
 // returned when both ends of h + l ± 2^-66 h round alike, which also covers
 // rounding l ± the margin itself.

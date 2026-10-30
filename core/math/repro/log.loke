@@ -99,7 +99,7 @@ log_f64_of :: proc(x: f64) -> f64 {
 // ulp, decides, and the slow path if that does not.
 log_f32_of :: proc(x: f64) -> f32 {
 	quick := log_quick(x);
-	if (f32_decided(quick, 16)) { return f32(quick); }
+	if (F32_FIRST_APPROXIMATION && f32_decided(quick, 16)) { return f32(quick); }
 
 	h, l := log_kernel(x);
 	near := h + l;

@@ -81,7 +81,7 @@ tan_f64 :: proc(x: f64) -> f64 {
 tan_f32_of :: proc(x: f64) -> f32 {
 	ax := x;
 	if (x < 0.0) { ax = 0.0 - x; }
-	if (ax < CODY_WAITE_LIMIT) {
+	if (F32_FIRST_APPROXIMATION && ax < CODY_WAITE_LIMIT) {
 		quadrant, r := quick_reduce(ax);
 		a := r;
 		if (r < 0.0) { a = 0.0 - r; }

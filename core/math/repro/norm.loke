@@ -98,7 +98,7 @@ norm_f32_of :: proc(parts: [4]u64) -> f32 {
 	d := from_bits(parts[3]);
 	s := ((a*a + b*b) + c*c) + d*d;
 	quick := math.sqrt(s);
-	if (f32_decided(quick, 8)) { return f32(quick); }
+	if (F32_FIRST_APPROXIMATION && f32_decided(quick, 8)) { return f32(quick); }
 
 	scaled, ea := norm_scaled(parts);
 	wh, wl := norm_pair(scaled);

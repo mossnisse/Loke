@@ -199,7 +199,7 @@ atan2_f32_of :: proc(ay: f64, ax: f64, x_negative: bool) -> f32 {
 	if (gap < -101) { return unsafe.transmute(f32, u32(atan2_tiny(part, gap, nf, df, F32_LAYOUT))); }
 	n, d := atan2_operands(gap, nf, df);
 	quick := atan2_quick(n, d, part);
-	if (f32_decided(quick, 8)) { return f32(quick); }
+	if (F32_FIRST_APPROXIMATION && f32_decided(quick, 8)) { return f32(quick); }
 
 	h, l := atan2_kernel(n, d, part);
 	near := h + l;

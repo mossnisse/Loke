@@ -3,6 +3,7 @@
 package tests
 
 import "core:fmt"
+import "core:log"
 import "core:os"
 import "core:path/filepath"
 import "core:strconv"
@@ -195,4 +196,97 @@ repro_functions_round_correctly :: proc(t: ^testing.T) {
 		}
 	}
 	testing.expectf(t, checked == 37956 && constants == 107, "the probe printed %d checked results and %d constants", checked, constants)
+}
+
+// The functions tests/repro/exhaustive.loke runs every `f32` bit pattern
+// through.
+@(private = "file")
+EXHAUSTIVE_FUNCTIONS :: []string {
+	"exp", "log", "log2", "log10", "sin", "cos", "tan", "asin", "acos", "atan",
+	"pow_two", "pow_half", "pow_third", "pow_minus", "hypot", "norm",
+}
+
+// deterministic-math-and-targets-plan.md "Validation and performance gates":
+// the `f32` first approximations, whose bounds are the tightest, never return
+// a result the double-`f64` path and the slow path behind them would not, for
+// any argument of the unary functions and of `pow_f32`, `hypot_f32`, and
+// `quaternion_abs_f32` with the others fixed. A copy of the package with
+// `F32_FIRST_APPROXIMATION` false gives the second answer. About 25 minutes,
+// so only `test-all.ps1 -Exhaustive`, which sets LOKE_TEST_EXHAUSTIVE, runs it.
+@(test)
+repro_f32_first_approximations_agree_exhaustively :: proc(t: ^testing.T) {
+	if os.get_env("LOKE_TEST_EXHAUSTIVE", context.temp_allocator) == "" {
+		log.info("LOKE_TEST_EXHAUSTIVE is not set; skipping the exhaustive f32 comparison")
+		return
+	}
+	package_sources, _ := filepath.glob("core/math/repro/*.loke", context.temp_allocator)
+	variants := []string{"first", "plain"}
+	builds := make([]Exec, len(variants), context.temp_allocator)
+	os.make_directory(TMP)
+	for variant, index in variants {
+		root := fmt.tprintf("%s/repro_exhaustive_%s", TMP, variant)
+		dir := fmt.tprintf("%s/repro", root)
+		os.make_directory(root)
+		os.make_directory(dir)
+		for path in package_sources {
+			data, read_err := os.read_entire_file(path, context.temp_allocator)
+			if !testing.expectf(t, read_err == nil, "cannot read %s", path) {
+				return
+			}
+			text := string(data)
+			if variant == "plain" && filepath.base(path) == "arith.loke" {
+				switched, found := strings.replace(text, "F32_FIRST_APPROXIMATION :: true;", "F32_FIRST_APPROXIMATION :: false;", 1, context.temp_allocator)
+				if !testing.expect(t, found, "arith.loke no longer declares F32_FIRST_APPROXIMATION :: true;") {
+					return
+				}
+				text = switched
+			}
+			_ = os.write_entire_file(fmt.tprintf("%s/%s", dir, filepath.base(path)), transmute([]byte)text)
+		}
+		command := make([dynamic]string, context.temp_allocator)
+		append(&command, compiler_path(), "tests/repro/exhaustive.loke", fmt.tprintf("-collection:probe=%s", root))
+		append(&command, "-opt=speed", "-o", fmt.tprintf("%s/exhaustive.exe", root))
+		builds[index].command = command[:]
+	}
+	exec_all(builds)
+	for build, index in builds {
+		if !testing.expectf(t, build.err == nil && build.state.exit_code == 0, "the %s build failed:\n%s", variants[index], string(build.stderr)) {
+			return
+		}
+	}
+
+	functions := EXHAUSTIVE_FUNCTIONS
+	runs := make([]Exec, len(variants)*len(functions), context.temp_allocator)
+	for build, v in builds {
+		for function, f in functions {
+			command := make([]string, 2, context.temp_allocator)
+			command[0] = launch_path(build.command[5])
+			command[1] = function
+			runs[v*len(functions) + f].command = command
+		}
+	}
+	exec_all(runs)
+	for function, f in functions {
+		first, plain := runs[f], runs[len(functions) + f]
+		if !testing.expectf(
+			t,
+			first.err == nil && first.state.exit_code == 0 && plain.err == nil && plain.state.exit_code == 0,
+			"%s: a run failed:\n%s%s", function, string(first.stderr), string(plain.stderr),
+		) {
+			continue
+		}
+		testing.expectf(t, strings.count(string(first.stdout), "\n") == 256, "%s: expected 256 block hashes", function)
+		if string(first.stdout) == string(plain.stdout) {
+			continue
+		}
+		// Name the first block that differs.
+		a, b := string(first.stdout), string(plain.stdout)
+		for line_a in strings.split_lines_iterator(&a) {
+			line_b, _ := strings.split_lines_iterator(&b)
+			if line_a != line_b {
+				testing.expectf(t, false, "%s: the first approximation changes a result in block %q (blocks are bits 24 to 31 of the pattern)", function, line_a)
+				break
+			}
+		}
+	}
 }
