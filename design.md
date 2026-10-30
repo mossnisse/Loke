@@ -11051,6 +11051,7 @@ statements and blocks, but this specification defines none for those positions.
 | `@(export)` | procedure and variable declarations | [emits a symbol for external linking](#export) |
 | `@(link_name=<string>)` | procedure and variable declarations, including foreign ones | [sets the symbol name](#link_namestring) |
 | `@(deprecated=<string>)` | procedure declarations | [reports the message at each use](#deprecatedstring) |
+| `@(cold)` | procedure declarations with a body | [rarely called, and never inlined](#cold) |
 | `@(cpu_dispatch=<string>)` | file-scope procedure declarations | [also emits a copy for a higher CPU level, which runs where the processor has it](#cpu_dispatchstring) |
 | `@(require_results)` | procedure declarations, procedure groups, foreign blocks, and type declarations | [results must be used or discarded](#require_results) |
 | `@(test)` | file-scope procedure declarations | [a test, which only a test build calls](#test) |
@@ -11073,6 +11074,37 @@ Storage duration uses [storage modifiers](#storage-modifiers), not attributes,
 and a [constant](#constant-declarations) specifies read-only data.
 
 ### Attribute reference
+
+#### `@(cold)`
+
+`@(cold)` marks a procedure that a program rarely calls, such as the exact
+fallback behind a fast estimate or a failure report. It takes no value, and
+marks a procedure declaration with a body: at file scope, in an `impl` block,
+or in a body, generic or not, with any calling convention. A foreign
+declaration has no body to mark.
+
+A cold procedure is never inlined into its callers, so they do not take on its
+locals and their frames stay small, and the compiler lays out the code leading
+to a call to it as unlikely to run. The attribute changes no result, and has no
+effect on [compile-time evaluation](#compile-time-procedure-evaluation), where
+a cold procedure runs like any other.
+
+A procedure that also has [`@(cpu_dispatch)`](#cpu_dispatchstring) is cold in
+both of its copies, and so is the dispatch between them. A callee that a copy
+takes with it is cold only if it is marked itself.
+
+```loke
+reciprocal_sqrt :: proc(x: f64) -> f64 {
+	estimate := 1.0 / math.sqrt(x);
+	if (decided(x, estimate)) { return estimate; }
+	return reciprocal_sqrt_exact(x);
+}
+
+@(cold)
+reciprocal_sqrt_exact :: proc(x: f64) -> f64 {
+	...
+}
+```
 
 #### `@(cpu_dispatch=<string>)`
 

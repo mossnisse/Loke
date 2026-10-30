@@ -69,6 +69,7 @@ log_base_f32_of :: proc(x: f64, base: int) -> f32 {
 }
 
 // The result correctly rounded to `layout`, as its bit pattern.
+@(cold)
 log_base_slow :: proc(x: f64, base: int, layout: Float_Layout) -> u64 {
 	negative, value := log_fixed(x);
 	pattern := fixed_round(fixed_times(value, LOG_BASE_FIXED[base]), 0 - FRACTION_BITS, layout);

@@ -111,6 +111,7 @@ norm_f32_of :: proc(parts: [4]u64) -> f32 {
 // The magnitude correctly rounded to `layout`, as its bit pattern, for
 // `parts` and their scaling by `norm_scaled`, and an `f64` within 2^-52 of
 // the scaled root.
+@(cold)
 norm_slow :: proc(parts: [4]u64, scaled: [4]f64, ea: int, near: f64, layout: Float_Layout) -> u64 {
 	f0 := fixed_of(scaled[0]);
 	f1 := fixed_of(scaled[1]);

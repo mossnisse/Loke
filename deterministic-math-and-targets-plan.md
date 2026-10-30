@@ -544,10 +544,20 @@ an independent call took half that.
   `x86-64-v3`, and 36.6 and 27.3 dependent; `pow` 60.3 and 55.3 dispatched,
   and 77.7 and 67.4 dependent. The `f32` functions, decided by their
   single-`f64` paths, did not move.
-- A temporary compiler change marking the slow paths `noinline cold`, which
-  no Loke attribute can yet ask for, kept their frames out of the fast paths:
-  `hypot` went from 17.1 to 12.6 ns, `pow` from 61 to 56, `tan` from 52 to
-  49, and the rest by about 1 ns. It is not adopted.
+- A temporary compiler change marking the slow paths `noinline cold` kept
+  their frames out of the fast paths: `hypot` went from 17.1 to 12.6 ns,
+  `pow` from 61 to 56, `tan` from 52 to 49, and the rest by about 1 ns.
+- [`@(cold)`](design.md#cold) now asks for it, and every `*_slow` procedure
+  of `core:math/repro` has it. Measured at `-opt=speed` with
+  `bench/math_compare`, medians of 40 samples per call from eight runs of
+  each build, interleaved, before and after: dispatched at baseline, `hypot`
+  17.88 and 13.40 ns, `pow` 58.40 and 55.24, `tan` 53.07 and 51.09, `exp`
+  14.10 and 13.30; at `x86-64-v3`, `hypot` 14.04 and 12.74, `pow` 57.53 and
+  56.10, `tan` 51.28 and 49.83, `exp` 13.68 and 12.64. The others moved by
+  under 1 ns either way but `cos`, 1.7 ns slower in both builds; four more
+  runs of the marked builds gave 37.13 and 35.66 ns, inside the unmarked
+  builds' range, and leaving `trig_slow` unmarked moved neither `sin` nor
+  `cos`. Every repro checksum is the same.
 
 Then `log_kernel`, behind `log`, `log2`, and `log10`:
 

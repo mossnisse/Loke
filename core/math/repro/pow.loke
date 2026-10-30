@@ -153,6 +153,7 @@ pow_f32_of :: proc(x: f64, y: f64) -> f32 {
 // x^y correctly rounded to `layout`, as its bit pattern, for a positive
 // finite x other than 1 and a finite nonzero y with |y log x| under 746,
 // whose nearest `f64` is about `estimate`.
+@(cold)
 pow_slow :: proc(x: f64, y: f64, estimate: f64, layout: Float_Layout) -> u64 {
 	log_negative, log_value := log_fixed(x);
 	odd, exponent := odd_split(from_bits(unsafe.transmute(u64, y) & 0x7fffffffffffffff));

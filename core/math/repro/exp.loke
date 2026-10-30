@@ -115,6 +115,7 @@ exp_quick :: proc(x: f64) -> f64 {
 }
 
 // e^x correctly rounded to `layout`, as its bit pattern.
+@(cold)
 exp_slow :: proc(x: f64, layout: Float_Layout) -> u64 {
 	ax := x;
 	if (x < 0.0) { ax = 0.0 - x; }

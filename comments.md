@@ -1925,6 +1925,26 @@ Loke wrappers where useful. Staying close to Odin's declaration model makes
 bindings easier to port, while explicit foreign-string and nullable-pointer
 types keep ownership and representation promises visible.
 
+### Cold procedures stay out of line
+
+[`@(cold)`](design.md#cold) has Odin's spelling and placement, local
+procedures included, which Odin's runtime uses for its assertion failure path.
+Odin documents its attribute as a hint that the procedure is rarely called;
+Loke's also promises that the procedure is never inlined, because that is what
+the gain depends on. LLVM's `cold` alone lowers the inlining threshold, but
+the bonus for an internal function's last call can still bring one in whole,
+and `core:math/repro`'s fixed-point slow paths are such functions: inlined, each
+made every call of its public function pay its frame, 968 bytes for `exp`, and
+the saves and restores of the callee-saved registers it uses. Marked, `hypot`
+went from 17.9 to 13.4 ns a call and `pow` from 58.4 to 55.2, with every result
+unchanged ([plan](deterministic-math-and-targets-plan.md#progress)).
+
+The attribute marks a procedure rather than a branch. A branch-likelihood hint
+would order a caller's blocks but leave the rare code's frame in the caller,
+which is the larger cost here, and the grammar's statement attributes stay
+undefined until a use needs one. A dispatched procedure's dispatch is cold
+with it, so a call to it is as unlikely through the dispatch as without one.
+
 ## Formatting
 
 `lokec -fmt` ([src/formatter.odin](src/formatter.odin)) settles the layout

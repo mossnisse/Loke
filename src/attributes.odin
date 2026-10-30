@@ -59,6 +59,9 @@ attribute_spec :: proc(name: string) -> (Attr_Spec, bool) {
 		return {{.Proc_Decl, .Proc_Group, .Foreign_Block, .Type_Decl}, .None, false}, true
 	case "deprecated":
 		return {{.Proc_Decl}, .Value_Required, false}, true
+	case "cold":
+		// That the procedure has a body is `validate_decl_attributes`'.
+		return {{.Proc_Decl}, .None, false}, true
 	case "cpu_dispatch":
 		// Which procedures may carry it is `validate_cpu_dispatch`'.
 		return {{.Proc_Decl}, .Value_Required, true}, true
@@ -300,6 +303,16 @@ validate_decl_attributes :: proc(k: ^Checker, d: ^Decl, scope := Attr_Scope.Glob
 	validate_attribute_list(k, d.attributes, decl_attr_position(k, d), scope, d.duration)
 	if scope != .Local {
 		validate_cpu_dispatch(k, d, scope, member)
+	}
+	// design.md "@(cold)": it describes the procedure's code, which a foreign
+	// declaration does not have.
+	if scope == .Foreign {
+		if attribute, found := find_attribute(d.attributes, "cold"); found && decl_attr_position(k, d) == .Proc_Decl {
+			errorf(
+				k.c, attribute.span, "L0607",
+				"`@(cold)` marks a procedure's body, and a foreign declaration has none",
+			)
+		}
 	}
 	// A generic template never resolves, so its parameters and record are
 	// reached here rather than only at resolution.

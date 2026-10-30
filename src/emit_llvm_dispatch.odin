@@ -113,7 +113,8 @@ emit_dispatched_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_P
 		append(&params, fmt.aprintf("%s%s %%arg%d", param_llvm(e, parameter, mode), param_nonnull(e, parameter, mode), index))
 	}
 	arguments := strings.join(params[:], ", ")
-	open_function(e, "define %s%s %s(%s)", llvm_linkage(llvm_name), result, llvm_name, arguments)
+	// design.md "@(cold)": a call to a cold procedure is a call to its dispatcher.
+	open_function(e, "define %s%s %s(%s)%s", llvm_linkage(llvm_name), result, llvm_name, arguments, cold_attributes(symbol))
 	fmt.sbprintfln(&e.b, "  %%has = call i1 %s()", check)
 	fmt.sbprintln(&e.b, "  br i1 %has, label %copy, label %plain")
 	for target in ([2]string{copy, plain}) {

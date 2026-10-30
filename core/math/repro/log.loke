@@ -132,6 +132,7 @@ log_quick :: proc(x: f64) -> f64 {
 // reciprocal of y' + 1; each term of the series truncates by under 2^-320,
 // and the terms fall by over 5 bits each; E ln 2 is within 1075 2^-320, so
 // the error is under 2^-305.
+@(cold)
 log_slow :: proc(x: f64, layout: Float_Layout) -> u64 {
 	negative, value := log_fixed(x);
 	pattern := fixed_round(value, 0 - FRACTION_BITS, layout);

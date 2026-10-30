@@ -1,0 +1,12 @@
+define internal i64 @loke.p.rare(i64 %arg0) cold noinline {
+define internal i64 @loke.p.rare_generic.int(i64 %arg0) cold noinline {
+define internal void @loke.p.Counter.reset(ptr nonnull %arg0) cold noinline {
+define internal i64 @loke.p.inner.0(i64 %arg0) cold noinline {
+define internal i32 @loke.entry.loke.p.from_c(i32 %arg0) noinline cold {
+define internal i32 @loke.p.from_c(i32 %arg0) {
+define internal double @loke.p.rare_dispatched.plain(double %arg0) cold noinline {
+define internal double @loke.p.rare_dispatched(double %arg0) cold noinline {
+define internal double @loke.p.rare_dispatched.v3(double %arg0) cold noinline "target-cpu"="x86-64-v3"
+define internal double @loke.p.warm(double %arg0) {
+define internal double @loke.p.warm.v3(double %arg0) "target-cpu"="x86-64-v3"
+define internal void @loke.p.main() {

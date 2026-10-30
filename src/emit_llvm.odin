@@ -606,6 +606,14 @@ entry_body_name :: proc(e: ^Emitter, llvm_name: string) -> string {
 	return claim_name(e, plain ? strings.concatenate({"@loke.entry.", llvm_name[1:]}) : "@loke.entry")
 }
 
+// design.md "@(cold)": what follows the signature of each function the
+// procedure is emitted as, or "". A generic instance's declaration is a clone of
+// the template's, attributes and all.
+@(private)
+cold_attributes :: proc(symbol: ^Symbol) -> string {
+	return symbol.decl != nil && has_attribute(symbol.decl.attributes, "cold") ? " cold noinline" : ""
+}
+
 // The procedure's own function, under `llvm_name`; a foreign-convention one is
 // a guard's body, which no caller may inline (`emit_foreign_entry_guard`). With
 // `copy_cpu`, the copy compiled for that level.
@@ -638,7 +646,7 @@ emit_proc_definition :: proc(
 			mode := symbol_param_mode(e.c, symbol, index)
 			fmt.sbprintf(&e.b, "%s%s %%arg%d", param_llvm(e, parameter, mode), param_nonnull(e, parameter, mode), index)
 		}
-		fmt.sbprintfln(&e.b, ")%s {{", copy_attributes(e))
+		fmt.sbprintfln(&e.b, ")%s%s {{", cold_attributes(symbol), copy_attributes(e))
 	}
 	debug_mark_proc(e, symbol_id)
 	fmt.sbprintln(&e.b, "entry:")

@@ -1,0 +1,40 @@
+// design.md "@(cold)": it marks a procedure declaration with a body, and takes
+// no value; a foreign declaration, a procedure group, a variable, and a type
+// have no body of their own to mark.
+package main;
+
+@(cold="rarely")
+valued :: proc() {}
+
+@(cold)
+@(cold)
+twice :: proc() {}
+
+a :: proc(x: int) {}
+b :: proc(x: f64) {}
+
+@(cold)
+group :: proc{a, b};
+
+@(cold)
+counter := 0;
+
+@(cold)
+Point :: struct { x: f64 }
+
+foreign kernel32 {
+	@(cold)
+	GetTickCount :: proc "stdcall" () -> u32 ---;
+}
+
+main :: proc() {
+	@(cold)
+	local := 1;
+	valued();
+	twice();
+	group(1);
+	_ = GetTickCount();
+	_ = Point{x = 1.0};
+	_ = local;
+	counter += 1;
+}
