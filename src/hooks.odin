@@ -796,6 +796,29 @@ resolve_hook_declaration :: proc(k: ^Checker, d: ^Decl, value: ^Expr_Operator) {
 	}
 }
 
+// The conversion a generic template declares, so `hook_candidates` finds it and
+// overload resolution instantiates it, as for a generic method. A generic
+// lifecycle hook is left to `validate_semantic_hook`, which rejects it: its
+// signature is fixed by its subject.
+mark_template_hook :: proc(k: ^Checker, d: ^Decl) {
+	if d.kind != .Const || len(d.values) != 1 {
+		return
+	}
+	value, is_hook := d.values[0].(^Expr_Operator)
+	if !is_hook || value.hook != .Convert {
+		return
+	}
+	sym := symbol_of(k.c, d.symbols[0])
+	if sym == nil {
+		return
+	}
+	if k.impl_type == INVALID_TYPE {
+		errorf(k.c, sym.span, "L0488", "`hook(convert)` is a type role and must be declared as an inherent `impl` member")
+		return
+	}
+	sym.hook = value.hook
+}
+
 // The fixed hook signatures, checked where each inherent declaration is written.
 validate_semantic_hook :: proc(k: ^Checker, item: ^Item_Impl, d: ^Decl, sym: ^Symbol, symbol_id: Symbol_Id) {
 	name := identifier_text(k.c, sym.name)

@@ -1269,6 +1269,84 @@ Inference :: struct {
 	ok:           bool,
 }
 
+// design.md "Implicit selector expression": the type a generic procedure's
+// parameter gives an argument that needs one, such as `.ZYX`, before
+// inference. Only a parameter whose written type names none of the
+// procedure's `$` parameters has one then, as `order: Euler_Order` beside
+// `first: $T` does; `Option(T)` waits for `T`, and gives none.
+generic_parameter_context_type :: proc(k: ^Checker, template: ^Generic_Template, name: Identifier_Id, position: int) -> Type_Id {
+	literal := decl_proc_literal(template.decl)
+	if literal == nil || literal.signature == nil {
+		return INVALID_TYPE
+	}
+	poly := Poly_Names{names = make([dynamic]string, 0, 4, k.c.semantic_allocator)}
+	for parameter in literal.signature.params {
+		for entry in parameter.names {
+			if entry.is_poly {
+				append(&poly.names, entry.name.text)
+			}
+		}
+		type_syntax_any_name(parameter.type, &poly, collect_poly_name)
+	}
+	written: Expr
+	current := 0
+	search: for parameter in literal.signature.params {
+		for entry in parameter.names {
+			selected := current == position || (parameter.mode == .Variadic && current <= position)
+			if name != INVALID_IDENTIFIER {
+				selected = intern_identifier(k.c, entry.name.text) == name
+			}
+			if selected {
+				if entry.is_poly {
+					return INVALID_TYPE
+				}
+				written = parameter.type
+				break search
+			}
+			current += 1
+		}
+	}
+	if written == nil || type_syntax_any_name(written, &poly, names_poly_parameter) {
+		return INVALID_TYPE
+	}
+	saved := enter_instance(k, template, new_instance_scope(k, template))
+	defer restore_checker_location(k, saved)
+	return resolve_type_syntax(k, clone_expr(k.c, written))
+}
+
+@(private = "file")
+Poly_Names :: struct {
+	names: [dynamic]string,
+}
+
+// Records each `$name` and finds nothing, so the walk visits every node.
+@(private = "file")
+collect_poly_name :: proc(data: rawptr, node: Expr) -> bool {
+	poly := (^Poly_Names)(data)
+	if v, is_poly := node.(^Type_Poly); is_poly {
+		append(&poly.names, v.name.text)
+	}
+	return false
+}
+
+// A name bound by `$`, or an inline definition, which is not looked into.
+@(private = "file")
+names_poly_parameter :: proc(data: rawptr, node: Expr) -> bool {
+	poly := (^Poly_Names)(data)
+	#partial switch v in node {
+	case ^Expr_Ident:
+		for name in poly.names {
+			if name == v.name {
+				return true
+			}
+		}
+		return false
+	case ^Type_Poly:
+		return true
+	}
+	return true
+}
+
 // Walks a template's written signature left to right, binding every `$` name
 // as it goes, so a later parameter type may name an earlier binding. `$`
 // parameters are compile-time inputs and do not survive into the instance's
@@ -2047,6 +2125,22 @@ bind_record_argument :: proc(
 		}
 		return "", true
 	}
+	// `M($R, $C)` re-read inside the instance that bound them, as `[$N]E` and
+	// `Simd($T, $N)` are: the `$` name stands for its constant.
+	if poly, is_poly := arg.value.(^Type_Poly); is_poly {
+		sym := symbol_of(k.c, lookup_symbol(k.scope, name_identifier(k.c, poly.name)))
+		if sym == nil || sym.kind != .Const {
+			return "", false
+		}
+		converted, problem := convert_generic_value(k, sym.const_value, sym.type, wanted)
+		if problem != "" {
+			return problem, false
+		}
+		if !bind_pattern_name(k, name, Generic_Arg{value = converted, value_type = wanted}, scope, out) {
+			return "this generic argument disagrees with an earlier one", false
+		}
+		return "", true
+	}
 	if check_single_expr(k, arg.value, wanted) == INVALID_TYPE {
 		return "", false // already reported
 	}
@@ -2500,11 +2594,17 @@ install_one_generic_impl :: proc(k: ^Checker, template: ^Generic_Template, insta
 	k.impl_type = instance.type
 	conflicts := declare_instance_impl_members(k, clone, instance, block)
 	append(&instance.impls, block)
-	// Resolved here, in the block's own scope.
+	// Resolved here, in the block's own scope. Groups go last: a group declared
+	// before its members must not take one in before its bound has excluded it.
 	for member in clone.members {
-		if d, is_decl := member.(^Decl); is_decl {
+		if d, is_decl := member.(^Decl); is_decl && !decl_is_proc_group(d) {
 			resolve_declaration_signature(k, d)
 			exclude_member_on_failed_bound(k, d)
+		}
+	}
+	for member in clone.members {
+		if d, is_decl := member.(^Decl); is_decl && decl_is_proc_group(d) {
+			resolve_declaration_signature(k, d)
 		}
 	}
 	for member in clone.members {
@@ -2513,6 +2613,15 @@ install_one_generic_impl :: proc(k: ^Checker, template: ^Generic_Template, insta
 		}
 	}
 	append(&k.c.pending_impl_instances, Pending_Impl{item = clone, scope = scope, pkg = block.pkg, file = block.file, file_node = block.file_node, subject = instance.type, conflicts = conflicts})
+}
+
+@(private = "file")
+decl_is_proc_group :: proc(d: ^Decl) -> bool {
+	if len(d.values) != 1 {
+		return false
+	}
+	_, is_group := d.values[0].(^Expr_Proc_Group)
+	return is_group
 }
 
 // design.md "where clauses": a method whose bound fails is dropped from that
@@ -2790,6 +2899,23 @@ register_instance_extension_name :: proc(
 instance_template_of :: proc(c: ^Compiler, type: Type_Id) -> Symbol_Id {
 	info := type_of(c, type)
 	return info == nil ? INVALID_SYMBOL : info.instance_of
+}
+
+// Positions the checker in the instantiated block that declares `d`, as
+// `check_pending_impl_instances` will: a compile-time call can need a member's
+// body before that pass reaches it. The caller restores its own location.
+enter_pending_impl_member :: proc(k: ^Checker, d: ^Decl) -> bool {
+	for pending in k.c.pending_impl_instances {
+		for member in pending.item.members {
+			if member_decl, is_decl := member.(^Decl); is_decl && member_decl == d {
+				enter_generic_location(
+					k, pending.scope, pending.pkg, pending.pkg, pending.subject, pending.file, pending.file_node,
+				)
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // The block instances discovered so far are checked after the package that

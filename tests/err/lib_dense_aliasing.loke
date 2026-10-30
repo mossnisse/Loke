@@ -1,0 +1,30 @@
+// standard-library "`core:math/dense`": the borrow checker, not a run-time
+// check, keeps a mutable view from aliasing a read-only one, a view from
+// outliving its matrix, and the matrix from changing under a view.
+package main;
+
+import "core:math/dense";
+
+aliased_product :: proc() {
+	m := dense.Matrix(f64).identity(3);
+	b := dense.Matrix(f64).identity(3);
+	dense.multiply_into(m.view_mut(), m.view(), b.view());
+}
+
+escaping_view :: proc() -> dense.View(f64) {
+	m := dense.Matrix(f64).identity(3);
+	return m.view();
+}
+
+write_under_view :: proc() {
+	m := dense.Matrix(f64).identity(3);
+	v := m.view();
+	m[0, 0] = 2.0;
+	_ = v[0, 0];
+}
+
+main :: proc() {
+	aliased_product();
+	_ = escaping_view();
+	write_under_view();
+}

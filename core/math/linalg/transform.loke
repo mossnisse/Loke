@@ -1,0 +1,436 @@
+// linear-algebra-plan.md "Coordinates and rotations" and "Projections and clip
+// depth": the constructors of square transforms, restricted to their shapes by
+// method bounds. Positive angles turn counterclockwise seen from the positive
+// end of the axis, in a right-handed space.
+@(public)
+package linalg;
+
+import "core:math";
+
+impl Matrix($T, $R, $C) {
+	/// The 4 x 4 transform that adds `offset` to a point.
+	translation :: proc(offset: Vector3(T)) -> Matrix(T, R, C) where R == 4, C == 4 {
+		result := Matrix(T, R, C).identity();
+		result.columns[3][0] = offset.x;
+		result.columns[3][1] = offset.y;
+		result.columns[3][2] = offset.z;
+		return result;
+	}
+
+	/// The 4 x 4 transform that multiplies each coordinate by `factors`.
+	scaling :: proc(factors: Vector3(T)) -> Matrix(T, R, C) where R == 4, C == 4 {
+		result := Matrix(T, R, C).identity();
+		result.columns[0][0] = factors.x;
+		result.columns[1][1] = factors.y;
+		result.columns[2][2] = factors.z;
+		return result;
+	}
+
+	/// The 3 x 3 transform of the plane that adds `offset` to a point.
+	translation_2d :: proc(offset: Vector2(T)) -> Matrix(T, R, C) where R == 3, C == 3 {
+		result := Matrix(T, R, C).identity();
+		result.columns[2][0] = offset.x;
+		result.columns[2][1] = offset.y;
+		return result;
+	}
+
+	/// The 3 x 3 transform of the plane that multiplies each coordinate by `factors`.
+	scaling_2d :: proc(factors: Vector2(T)) -> Matrix(T, R, C) where R == 3, C == 3 {
+		result := Matrix(T, R, C).identity();
+		result.columns[0][0] = factors.x;
+		result.columns[1][1] = factors.y;
+		return result;
+	}
+
+	/**
+		The rotation matrix of `q`, 3 x 3, or 4 x 4 with no translation, for a
+		unit `q`; another scales as well. `from_quaternion(a * b)` equals
+		`from_quaternion(a) * from_quaternion(b)` up to rounding.
+	*/
+	// With `w` the real part: the diagonal is `1 - 2(y*y + z*z)` and its turns,
+	// and the off-diagonal pairs are `2(x*y -+ w*z)` and their turns.
+	from_quaternion :: proc(q: math.Quaternion(T)) -> Matrix(T, R, C) where R == C, R == 3 || R == 4 {
+		w, x, y, z := q.real, q.i, q.j, q.k;
+		one := T(1);
+		two := one + one;
+		result := Matrix(T, R, C).identity();
+		result.columns[0][0] = one - two*(y*y + z*z);
+		result.columns[0][1] = two*(x*y + w*z);
+		result.columns[0][2] = two*(x*z - w*y);
+		result.columns[1][0] = two*(x*y - w*z);
+		result.columns[1][1] = one - two*(x*x + z*z);
+		result.columns[1][2] = two*(y*z + w*x);
+		result.columns[2][0] = two*(x*z + w*y);
+		result.columns[2][1] = two*(y*z - w*x);
+		result.columns[2][2] = one - two*(x*x + y*y);
+		return result;
+	}
+
+	/// The 4 x 4 transform with this 3 x 3 matrix as its linear part and no translation.
+	extend :: proc(self) -> Matrix(T, 4, 4) where R == 3, C == 3 {
+		result := Matrix(T, 4, 4).identity();
+		foreach (c in 0 ..< 3) {
+			foreach (r in 0 ..< 3) { result.columns[c][r] = self.columns[c][r]; }
+		}
+		return result;
+	}
+
+	/// The linear part of a 4 x 4 transform: its upper-left 3 x 3 block.
+	upper_left :: proc(self) -> Matrix(T, 3, 3) where R == 4, C == 4 {
+		result: Matrix(T, 3, 3) = {};
+		foreach (c in 0 ..< 3) {
+			foreach (r in 0 ..< 3) { result.columns[c][r] = self.columns[c][r]; }
+		}
+		return result;
+	}
+
+	/// `self * (p, 1)` without the last row: the point moves with the translation.
+	transform_point :: proc(self, p: Vector3(T)) -> Vector3(T) where R == 4, C == 4 {
+		when (T == f32) { return affine_lanes(self.columns, p, true); }
+		m := self.columns;
+		return {
+			m[0][0]*p.x + m[1][0]*p.y + m[2][0]*p.z + m[3][0],
+			m[0][1]*p.x + m[1][1]*p.y + m[2][1]*p.z + m[3][1],
+			m[0][2]*p.x + m[1][2]*p.y + m[2][2]*p.z + m[3][2],
+		};
+	}
+
+	/// `self * (d, 0)` without the last row: a direction ignores the translation.
+	transform_direction :: proc(self, d: Vector3(T)) -> Vector3(T) where R == 4, C == 4 {
+		when (T == f32) { return affine_lanes(self.columns, d, false); }
+		m := self.columns;
+		return {
+			m[0][0]*d.x + m[1][0]*d.y + m[2][0]*d.z,
+			m[0][1]*d.x + m[1][1]*d.y + m[2][1]*d.z,
+			m[0][2]*d.x + m[1][2]*d.y + m[2][2]*d.z,
+		};
+	}
+
+	/// `self * (p, 1)` without the last row, in the plane.
+	transform_point_2d :: proc(self, p: Vector2(T)) -> Vector2(T) where R == 3, C == 3 {
+		m := self.columns;
+		return {
+			m[0][0]*p.x + m[1][0]*p.y + m[2][0],
+			m[0][1]*p.x + m[1][1]*p.y + m[2][1],
+		};
+	}
+
+	/// `self * (d, 0)` without the last row, in the plane.
+	transform_direction_2d :: proc(self, d: Vector2(T)) -> Vector2(T) where R == 3, C == 3 {
+		m := self.columns;
+		return {
+			m[0][0]*d.x + m[1][0]*d.y,
+			m[0][1]*d.x + m[1][1]*d.y,
+		};
+	}
+
+	/**
+		The inverse of a rotation followed by a translation, by transposing the
+		rotation: `(transpose(R), -transpose(R) * t)`. It does not check that the
+		linear part is a rotation; for anything else the result is wrong.
+	*/
+	inverse_rigid :: proc(self) -> Matrix(T, R, C) where R == 4, C == 4 {
+		m := self.columns;
+		result := Matrix(T, R, C).identity();
+		foreach (c in 0 ..< 3) {
+			foreach (r in 0 ..< 3) { result.columns[c][r] = m[r][c]; }
+		}
+		foreach (r in 0 ..< 3) {
+			result.columns[3][r] = -(m[r][0]*m[3][0] + m[r][1]*m[3][1] + m[r][2]*m[3][2]);
+		}
+		return result;
+	}
+
+	/**
+		The inverse of an affine transform, a linear part followed by a
+		translation: `(inverse(L), -inverse(L) * t)`. The last row is taken as
+		`(0, 0, 0, 1)` without checking. `.none` when the linear part has no
+		`inverse`.
+	*/
+	inverse_affine :: proc(self) -> Option(Matrix(T, R, C)) where R == 4, C == 4, Real(T) {
+		linear := self.upper_left().inverse() or_return;
+		l := linear.columns;
+		t := self.columns[3];
+		result := linear.extend();
+		foreach (r in 0 ..< 3) {
+			result.columns[3][r] = -(l[0][r]*t[0] + l[1][r]*t[1] + l[2][r]*t[2]);
+		}
+		return result;
+	}
+
+	/**
+		The matrix that transforms surface normals as this transform moves the
+		surface: the transpose of the inverse of its linear part. It keeps
+		normals perpendicular under non-uniform scaling; normalize each result.
+		`.none` when the linear part has no `inverse`.
+	*/
+	normal_matrix :: proc(self) -> Option(Matrix(T, 3, 3)) where R == 4, C == 4, Real(T) {
+		linear := self.upper_left().inverse() or_return;
+		return linear.transpose();
+	}
+
+	/**
+		`self * (p, 1)` divided by its `w`: the point after a projection, in
+		normalized device coordinates. `.none` when `w` is zero or the result is
+		not finite, as for a point in the camera's plane.
+	*/
+	project_point :: proc(self, p: Vector3(T)) -> Option(Vector3(T)) where R == 4, C == 4, Real(T) {
+		m := self.columns;
+		w := m[0][3]*p.x + m[1][3]*p.y + m[2][3]*p.z + m[3][3];
+		if (w == T(0)) { return .none; }
+		result := self.transform_point(p)/w;
+		if (!result.x.is_finite() || !result.y.is_finite() || !result.z.is_finite()) { return .none; }
+		return result;
+	}
+
+	/// The rotation by `angle` about the x axis, 3 x 3 or 4 x 4.
+	rotation_x :: proc(angle: T) -> Matrix(T, R, C) where R == C, R == 3 || R == 4, Real(T) {
+		c, s := angle.cos(), angle.sin();
+		result := Matrix(T, R, C).identity();
+		result.columns[1][1] = c;
+		result.columns[1][2] = s;
+		result.columns[2][1] = -s;
+		result.columns[2][2] = c;
+		return result;
+	}
+
+	/// The rotation by `angle` about the y axis, 3 x 3 or 4 x 4.
+	rotation_y :: proc(angle: T) -> Matrix(T, R, C) where R == C, R == 3 || R == 4, Real(T) {
+		c, s := angle.cos(), angle.sin();
+		result := Matrix(T, R, C).identity();
+		result.columns[0][0] = c;
+		result.columns[0][2] = -s;
+		result.columns[2][0] = s;
+		result.columns[2][2] = c;
+		return result;
+	}
+
+	/// The rotation by `angle` about the z axis, 3 x 3 or 4 x 4.
+	rotation_z :: proc(angle: T) -> Matrix(T, R, C) where R == C, R == 3 || R == 4, Real(T) {
+		c, s := angle.cos(), angle.sin();
+		result := Matrix(T, R, C).identity();
+		result.columns[0][0] = c;
+		result.columns[0][1] = s;
+		result.columns[1][0] = -s;
+		result.columns[1][1] = c;
+		return result;
+	}
+
+	/**
+		A rotation: `Matrix(T, 2, 2).rotation(angle)` turns the plane, and
+		`rotation(axis, angle)` turns space about a unit `axis`, 3 x 3 or 4 x 4.
+		The axis is taken as given; normalize it first.
+	*/
+	rotation :: proc{rotation_planar, rotation_about};
+
+	@(private)
+	rotation_planar :: proc(angle: T) -> Matrix(T, R, C) where R == 2, C == 2, Real(T) {
+		c, s := angle.cos(), angle.sin();
+		return {{{c, s}, {-s, c}}};
+	}
+
+	// Rodrigues' formula: `c*I + s*[axis]x + (1 - c)*axis*axis^T`.
+	@(private)
+	rotation_about :: proc(axis: Vector3(T), angle: T) -> Matrix(T, R, C) where R == C, R == 3 || R == 4, Real(T) {
+		c, s := angle.cos(), angle.sin();
+		t := T(1) - c;
+		x, y, z := axis.x, axis.y, axis.z;
+		result := Matrix(T, R, C).identity();
+		result.columns[0][0] = t*x*x + c;
+		result.columns[0][1] = t*x*y + s*z;
+		result.columns[0][2] = t*x*z - s*y;
+		result.columns[1][0] = t*x*y - s*z;
+		result.columns[1][1] = t*y*y + c;
+		result.columns[1][2] = t*y*z + s*x;
+		result.columns[2][0] = t*x*z + s*y;
+		result.columns[2][1] = t*y*z - s*x;
+		result.columns[2][2] = t*z*z + c;
+		return result;
+	}
+
+	/// The 3 x 3 homogeneous rotation of the plane by `angle`.
+	rotation_2d :: proc(angle: T) -> Matrix(T, R, C) where R == 3, C == 3, Real(T) {
+		c, s := angle.cos(), angle.sin();
+		result := Matrix(T, R, C).identity();
+		result.columns[0][0] = c;
+		result.columns[0][1] = s;
+		result.columns[1][0] = -s;
+		result.columns[1][1] = c;
+		return result;
+	}
+
+	/**
+		The perspective projection of a right-handed view space, looking down
+		`-Z` with `+Y` up, to clip space: normalized `x` and `y` in `[-1, 1]` with
+		`+Y` up, `z` in `depth`'s range with the near plane at its first value,
+		and `w` equal to the view-space `-z`.
+
+		`fovy` is the vertical field of view in radians. With
+		`f = cos(fovy/2)/sin(fovy/2)`, for `.Negative_One_To_One`:
+
+		    [ f/aspect  0   0                      0                     ]
+		    [ 0         f   0                      0                     ]
+		    [ 0         0   (far+near)/(near-far)  2*far*near/(near-far) ]
+		    [ 0         0   -1                     0                     ]
+
+		`.Zero_To_One` has `far/(near-far)` and `far*near/(near-far)` in the third
+		row, and `.One_To_Zero` `near/(far-near)` and `far*near/(far-near)`. An
+		infinite `far` gives the limit of those as `far` grows. `fovy` outside
+		`(0, pi)`, a non-positive `aspect` or `near`, `far <= near`, and a NaN
+		panic. Vulkan's downward framebuffer `y` is the viewport's choice: flip it
+		there, or negate `result[1, 1]`.
+	*/
+	perspective :: proc(fovy, aspect, near, far: T, depth: Depth_Range) -> Matrix(T, R, C) where R == 4, C == 4, Real(T) {
+		zero := T(0);
+		pi := T(f64(math.PI));
+		assert(zero < fovy && fovy < pi, "linalg.perspective needs a field of view between 0 and pi");
+		assert(zero < aspect && aspect.is_finite(), "linalg.perspective needs a positive, finite aspect ratio");
+		assert(zero < near && near.is_finite(), "linalg.perspective needs a positive, finite near plane");
+		assert(near < far, "linalg.perspective needs the far plane beyond the near plane");
+		half := fovy*T(0.5);
+		f := half.cos()/half.sin();
+		result := Matrix(T, R, C).splat(zero);
+		result.columns[0][0] = f/aspect;
+		result.columns[1][1] = f;
+		result.columns[2][3] = -T(1);
+		infinite := !far.is_finite();
+		switch (depth) {
+		case .Negative_One_To_One:
+			if (infinite) {
+				result.columns[2][2] = -T(1);
+				result.columns[3][2] = -(near + near);
+			} else {
+				result.columns[2][2] = (far + near)/(near - far);
+				result.columns[3][2] = (far + far)*near/(near - far);
+			}
+		case .Zero_To_One:
+			if (infinite) {
+				result.columns[2][2] = -T(1);
+				result.columns[3][2] = -near;
+			} else {
+				result.columns[2][2] = far/(near - far);
+				result.columns[3][2] = far*near/(near - far);
+			}
+		case .One_To_Zero:
+			if (infinite) {
+				result.columns[2][2] = zero;
+				result.columns[3][2] = near;
+			} else {
+				result.columns[2][2] = near/(far - near);
+				result.columns[3][2] = far*near/(far - near);
+			}
+		}
+		return result;
+	}
+
+	/**
+		The orthographic projection of a right-handed view space, looking down
+		`-Z`, that maps the box from `(left, bottom, -near)` to
+		`(right, top, -far)` to `x` and `y` in `[-1, 1]` and `z` in `depth`'s
+		range, the near plane at its first value. `near` may be negative. Equal
+		or non-finite bounds, `far <= near`, and a NaN panic.
+	*/
+	orthographic :: proc(left, right, bottom, top, near, far: T, depth: Depth_Range) -> Matrix(T, R, C) where R == 4, C == 4, Real(T) {
+		assert(left.is_finite() && right.is_finite() && !(left == right),
+			"linalg.orthographic needs finite, distinct left and right planes");
+		assert(bottom.is_finite() && top.is_finite() && !(bottom == top),
+			"linalg.orthographic needs finite, distinct bottom and top planes");
+		assert(near.is_finite() && far.is_finite() && near < far,
+			"linalg.orthographic needs finite planes with far beyond near");
+		one := T(1);
+		two := one + one;
+		width := right - left;
+		height := top - bottom;
+		deep := far - near;
+		result := Matrix(T, R, C).identity();
+		result.columns[0][0] = two/width;
+		result.columns[3][0] = -(right + left)/width;
+		result.columns[1][1] = two/height;
+		result.columns[3][1] = -(top + bottom)/height;
+		switch (depth) {
+		case .Negative_One_To_One:
+			result.columns[2][2] = -two/deep;
+			result.columns[3][2] = -(far + near)/deep;
+		case .Zero_To_One:
+			result.columns[2][2] = -one/deep;
+			result.columns[3][2] = -near/deep;
+		case .One_To_Zero:
+			result.columns[2][2] = one/deep;
+			result.columns[3][2] = far/deep;
+		}
+		return result;
+	}
+
+	/**
+		`perspective` for a left-handed view space, looking down `+Z`: the same
+		parameters, and the same matrix with its third column negated, so clip
+		`w` is the view-space `z`.
+	*/
+	perspective_lh :: proc(fovy, aspect, near, far: T, depth: Depth_Range) -> Matrix(T, R, C) where R == 4, C == 4, Real(T) {
+		return Matrix(T, R, C).perspective(fovy, aspect, near, far, depth).mirror_view_z();
+	}
+
+	/// `orthographic` for a left-handed view space, looking down `+Z`, with `z` from `near` to `far`.
+	orthographic_lh :: proc(left, right, bottom, top, near, far: T, depth: Depth_Range) -> Matrix(T, R, C) where R == 4, C == 4, Real(T) {
+		return Matrix(T, R, C).orthographic(left, right, bottom, top, near, far, depth).mirror_view_z();
+	}
+
+	// `self * diag(1, 1, -1, 1)`: the projection of the `Z`-mirrored view space.
+	@(private)
+	mirror_view_z :: proc(self) -> Matrix(T, R, C) where R == 4, C == 4, Real(T) {
+		result := self;
+		foreach (r in 0 ..< 4) { result.columns[2][r] = -self.columns[2][r]; }
+		return result;
+	}
+
+	/**
+		The right-handed view matrix of a camera at `eye` looking at `target`,
+		with `up` as the general upward direction. Its rows are the side, up,
+		and back directions, and it moves `eye` to the origin. `.none` when
+		`target` is `eye`, or the direction to it is parallel to `up`.
+	*/
+	look_at :: proc(eye, target, up: Vector3(T)) -> Option(Matrix(T, R, C)) where R == 4, C == 4, Real(T) {
+		return Matrix(T, R, C).look_to(eye, target - eye, up);
+	}
+
+	/// `look_at` with the viewing direction `forward` instead of a target.
+	look_to :: proc(eye, forward, up: Vector3(T)) -> Option(Matrix(T, R, C)) where R == 4, C == 4, Real(T) {
+		f := forward.normalize() or_return;
+		s := f.cross(up).normalize() or_return;
+		u := s.cross(f);
+		return Matrix(T, R, C).view(s, u, -f, eye);
+	}
+
+	/// `look_at` for a left-handed view space, looking down `+Z`: its rows are the side, up, and forward directions.
+	look_at_lh :: proc(eye, target, up: Vector3(T)) -> Option(Matrix(T, R, C)) where R == 4, C == 4, Real(T) {
+		return Matrix(T, R, C).look_to_lh(eye, target - eye, up);
+	}
+
+	/// `look_to` for a left-handed view space, looking down `+Z`.
+	look_to_lh :: proc(eye, forward, up: Vector3(T)) -> Option(Matrix(T, R, C)) where R == 4, C == 4, Real(T) {
+		f := forward.normalize() or_return;
+		s := up.cross(f).normalize() or_return;
+		u := f.cross(s);
+		return Matrix(T, R, C).view(s, u, f, eye);
+	}
+
+	// The rows `side`, `up`, and `back`, then the translation that takes `eye`
+	// to the origin.
+	@(private)
+	view :: proc(side, up, back, eye: Vector3(T)) -> Matrix(T, R, C) where R == 4, C == 4, Real(T) {
+		result := Matrix(T, R, C).identity();
+		result.columns[0][0] = side.x;
+		result.columns[1][0] = side.y;
+		result.columns[2][0] = side.z;
+		result.columns[0][1] = up.x;
+		result.columns[1][1] = up.y;
+		result.columns[2][1] = up.z;
+		result.columns[0][2] = back.x;
+		result.columns[1][2] = back.y;
+		result.columns[2][2] = back.z;
+		result.columns[3][0] = -side.dot(eye);
+		result.columns[3][1] = -up.dot(eye);
+		result.columns[3][2] = -back.dot(eye);
+		return result;
+	}
+}

@@ -1,0 +1,29 @@
+qr f64 Random true
+qr f64 Hilbert true
+qr f64 Graded true
+qr f64 Nearly_Deficient true
+qr f32 Random true
+qr f32 Hilbert true
+qr f32 Graded true
+qr f32 Nearly_Deficient true
+ok the factors of orthogonal columns
+ok rows and columns
+ok a least-squares line
+ok the rest of b holds the residual
+ok an exact fit
+ok least squares of a square system is its solution
+ok Q^T Q b is b
+ok the whole Q is orthogonal
+ok its first columns are q() bit for bit
+ok Q^T A is R
+ok a row-major view factors as its copy
+ok a zero column is singular
+ok least_squares reports it
+ok a NaN is singular
+ok an infinity is singular
+ok qr_in_place reports it
+ok a matrix with no columns
+ok a dual number through least_squares gives the analytic derivative
+ok and the same value as at f64, bit for bit
+f64 qr 4616944885251033758 13836977934659183917 4607734038258249047 4598977684707560296 4595754316499740147
+f32 least_squares 3196228533 1037001796

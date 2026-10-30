@@ -384,6 +384,61 @@ checklist.
   thread-local drops `loke_rt_v1_thread_detach` runs. With `-debug`, a call into foreign code
   that returns with the environment changed panics, naming the procedure
   ([Floating-point operators](design.md#floating-point-operators)).
+- `core:math/linalg` has fixed-size vectors and matrices with the same bits
+  everywhere: `Vector2(T)` to `Vector4(T)` and `Matrix(T, R, C)` of any
+  shape, column-major with column vectors, for any `interfaces.Numeric(T)`;
+  `solve`, `inverse`, rotations, `rotate` over `math.Quaternion(T)`, and
+  `perspective`, `orthographic`, `look_at`, and `look_to` with their `_lh`
+  forms, for a `linalg.Real(T)` such as `f32`, `f64`, or a user type. Every
+  projection takes its clip-space `Depth_Range`, degenerate input returns
+  `Option`, and `approx_equal` takes both tolerances. The quaternion
+  procedures convert to and from matrices (`quaternion_from_matrix`), Euler
+  angles in an explicit `Euler_Order`, and rotation vectors, and add
+  `quaternion_between`, `nlerp`, and `slerp`. Vectors have `angle_between`,
+  `project`, `reject`, and `reflect`, and a 4 x 4 transform has
+  `inverse_affine`, `normal_matrix`, and `project_point`. `linalg.Scalar(T)`
+  is a real or complex number type, with an associated `T.Real`, which
+  `f32`, `f64`, and `math.Complex` of any `Real` meet. At `f32`,
+  `transform_point`, `transform_direction`, and a 3 x 3 `m * v` compute in
+  `Simd` lanes with the same bits; `bench/linalg.loke` measures the batch
+  operations ([`core:math/linalg`](standard-library.md#coremathlinalg)).
+- `core:math/dense` has matrices whose size is known at run time, of real or
+  complex elements, with the same bits everywhere: an owning column-major
+  `Matrix(T)`, `View(T)` and `View_Mut(T)` over a matrix or a foreign buffer
+  in either order, with blocks, transposes, conjugate transposes
+  (`adjoint()`), and column and row splits that the borrow checker keeps
+  apart; products and element-wise operations, each with an `_into` form that
+  never allocates; triangular solves, `lu` with `reciprocal_condition`,
+  `cholesky`, Householder `qr` with `Q` applied without forming it, `solve`,
+  `inverse`, `least_squares`, `symmetric_eigen` for symmetric and Hermitian
+  matrices, `svd` with a minimum-norm `solve` and `rank`, and the Frobenius,
+  1-, and infinity norms, for any `linalg.Scalar` element. Eigenvectors and
+  singular vectors have a fixed sign, so two machines give the same vectors.
+  Numerical failures are one `dense.Error`.
+  `f32` and `f64` products run a `Simd` kernel and `lu` and `cholesky` are
+  blocked around it, and the products, `lu`, and `cholesky` take an optional
+  thread pool, with the same bits either way; `bench/dense.loke` measures
+  them ([`core:math/dense`](standard-library.md#coremathdense)).
+- `core:math/geometry` has the exact predicates `orient2d`, `orient3d`,
+  `incircle`, and `insphere`, which return the sign of their determinant
+  exactly for `f32` and `f64` coordinates, by Shewchuk's adaptive method, and
+  for integers that do not overflow; and closed shapes over `linalg`'s
+  vectors, `Aabb2`, `Aabb3`, `Circle`, `Sphere`, `Plane`, `Segment2`,
+  `Segment3`, `Triangle2`, and `Triangle3`, with box algebra, `contains`,
+  closest points, distances, barycentric coordinates, and `intersects`
+  between boxes, circles, spheres, and planes, exact for integers; and
+  `Ray2` and `Ray3` with `cast` against boxes (conservative, never missing
+  one), circles, spheres, planes, and triangles (watertight), the closest
+  points of two segments, exact `intersects` between segments and between a
+  segment and a box, triangles against boxes by separating axes, `Frustum`
+  extraction for each `linalg.Depth_Range` with conservative culling, and
+  `transform_box` and `transform_plane`; and polygons as slices of vertices,
+  with `signed_area`, `centroid`, `winding_number`, `contains` under a
+  required `Fill_Rule`, `convex_hull`, `is_convex`, and `is_simple`, exact
+  for `f32`, `f64`, and integers. An `f32` box cast computes its three slabs
+  in `Simd` lanes with the same bits; `bench/geometry.loke` measures the
+  casts, frustum culling, and the predicates against hand-written loops
+  ([`core:math/geometry`](standard-library.md#coremathgeometry)).
 
 ### Changed
 
@@ -479,6 +534,44 @@ checklist.
 - `examples/lexer.loke` lexes the wrapping operators `+%`, `-%`, `*%`, and
   their compound assignments, which it read as two tokens each, so it agrees
   with `lokec -dump-tokens` again on a source that uses them.
+- A typed constant scalar splatted into a SIMD vector, as
+  `zero: Simd(T, 4) = T(0)` in a generic body or `Simd(f32, 4) = f32(0.5)`,
+  folds to the vector constant as an untyped one does. It reached the backend
+  as a scalar constant of the vector's type, and Clang rejected the module.
+- A `where` bound checked while an earlier file of a package resolved its
+  signatures found the slot's member resolved in that file's place, so
+  `self` in an `impl f32` block took the type being instantiated: the bound
+  failed and the block's body was rejected. Whether a package compiled
+  depended on how its files sorted.
+- A generic record's value parameters bind in a procedure's parameter pattern
+  as its type parameters do, so `rows :: proc(m: M($R, $C)) -> int` compiles;
+  before, every call reported `` `$R` is not bound here ``
+  ([Specialization](design.md#specialization)).
+- A member of a generic `impl` that adds generic parameters of its own works
+  as an operator, as `operator(*) proc(left: M(R, C), right: M(C, $K))`, as a
+  conversion hook generic over its source, now specified in
+  [Conversion hooks](design.md#conversion-hooks), and when called through its
+  type, as `M(2, 3).times(a, b)`. File-scope generic operators are found too.
+  Before, such operators and hooks were never found, and a malformed one
+  went unreported; it now gets the concrete declaration's `L0416` or `L0488`.
+- An arithmetic operator that does not apply because the type's inherent one is
+  not `@(public)` now says so, as ordering already did, including when an
+  interface requirement fails for a type declared in a package that exports
+  nothing by default.
+- An implicit selector such as `.First` or `.circle(r)` passed to a generic
+  procedure takes its type from a parameter whose written type names none of
+  the procedure's `$` parameters, as it does for an ordinary procedure;
+  before, it reported `L0385`
+  ([Implicit selector expression](design.md#implicit-selector-expression)).
+- A procedure group declared before its members in a generic `impl` drops a
+  member that a failed `where` bound excludes, as one declared after them
+  always did; before, every call through it was ambiguous
+  ([where clauses](design.md#where-clauses)).
+- A member of an instantiated generic block can be called at compile time
+  before the checker reaches the block: its `where` clause no longer reports
+  `L0433`, and a user operator such as an `inout` subscript, `g[i] = x`, no
+  longer runs unchecked and fails with `` `self` is not compile-time storage ``
+  ([Compile-time procedure evaluation](design.md#compile-time-procedure-evaluation)).
 - `Status` and `try_make` are listed among the [predeclared names](design.md#predeclared-names), which they have always been, and the VS Code grammar now highlights them as such. The specification also records `@(cross_thread)` in [procedure-type compatibility](design.md#procedure-type) and that a pooled task runs on a worker rather than a thread of its own.
 - A mutable borrow through a pointer passed to a read-only parameter is
   checked as read-only even when an index on the way calls something that

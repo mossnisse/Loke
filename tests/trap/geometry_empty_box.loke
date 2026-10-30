@@ -1,0 +1,13 @@
+// standard-library "`core:math/geometry`": an empty box has no closest point,
+// so asking for one panics rather than returning a point outside it.
+package main;
+
+import "core:fmt";
+import "core:math/geometry";
+import "core:math/linalg";
+
+main :: proc() {
+	box := geometry.Aabb3(f64).empty();
+	fmt.println(box.is_empty());
+	fmt.println(box.closest_point(linalg.Vector3(f64).splat(0)));
+}

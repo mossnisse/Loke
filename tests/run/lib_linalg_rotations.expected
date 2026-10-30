@@ -1,0 +1,114 @@
+-- vectors, f32
+ok angle_between perpendicular vectors is pi/2
+ok angle_between a vector and itself is 0
+ok angle_between opposite vectors is pi
+ok angle_between the zero vector is 0
+ok angle_between is accurate near 0
+ok angle_between is accurate near pi
+ok Vector2 angle_between
+ok Vector4 angle_between
+ok project + reject is the vector
+ok reject is across the normal
+ok reflect keeps the length and twice is the vector
+-- vectors, f64
+ok angle_between perpendicular vectors is pi/2
+ok angle_between a vector and itself is 0
+ok angle_between opposite vectors is pi
+ok angle_between the zero vector is 0
+ok angle_between is accurate near 0
+ok angle_between is accurate near pi
+ok Vector2 angle_between
+ok Vector4 angle_between
+ok project + reject is the vector
+ok reject is across the normal
+ok reflect keeps the length and twice is the vector
+-- matrices, f32
+ok inverse_affine inverts an affine transform
+ok inverse_affine agrees with inverse
+ok inverse_affine of a singular linear part is .none
+ok normal_matrix of a singular linear part is .none
+ok normal_matrix keeps normals perpendicular
+ok normal_matrix of a rotation is the rotation
+ok project_point maps near and far to the depth range
+ok project_point at w = 0 is .none
+ok project_point of an affine transform is transform_point
+ok project_point to a NaN is .none
+-- matrices, f64
+ok inverse_affine inverts an affine transform
+ok inverse_affine agrees with inverse
+ok inverse_affine of a singular linear part is .none
+ok normal_matrix of a singular linear part is .none
+ok normal_matrix keeps normals perpendicular
+ok normal_matrix of a rotation is the rotation
+ok project_point maps near and far to the depth range
+ok project_point at w = 0 is .none
+ok project_point of an affine transform is transform_point
+ok project_point to a NaN is .none
+-- rotations, f32
+ok quaternion_from_matrix inverts from_quaternion in every branch
+ok quaternion_from_matrix of the identity
+ok quaternion_from_matrix of a half turn
+ok quaternion_between turns a to b
+ok quaternion_between a vector and itself is no rotation
+ok quaternion_between opposite vectors is .none
+ok quaternion_between the zero vector is .none
+ok quaternion_between opposite vectors with a fallback axis turns half about its part across
+ok quaternion_between with a fallback along the vectors is .none
+ok quaternion_between nearly opposite vectors
+ok quaternion_between nearly opposite vectors in a general direction
+ok slerp is exact at both ends
+ok slerp takes the shorter arc
+ok slerp has constant angular speed
+ok slerp between close rotations
+ok slerp between equal rotations
+ok nlerp ends and shorter arc
+ok nlerp is a unit quaternion halfway along the arc
+ok quaternion_from_euler(.ZYX) is the product of axis rotations
+ok to_euler inverts quaternion_from_euler for every order
+ok to_euler at gimbal lock puts the whole turn in the first angle
+ok quaternion_from_rotation_vector is the axis-angle rotation
+ok to_rotation_vector inverts it, for q and -q
+ok a rotation vector near a half turn
+ok the zero rotation vector
+ok a rotation vector below the normal range
+-- rotations, f64
+ok quaternion_from_matrix inverts from_quaternion in every branch
+ok quaternion_from_matrix of the identity
+ok quaternion_from_matrix of a half turn
+ok quaternion_between turns a to b
+ok quaternion_between a vector and itself is no rotation
+ok quaternion_between opposite vectors is .none
+ok quaternion_between the zero vector is .none
+ok quaternion_between opposite vectors with a fallback axis turns half about its part across
+ok quaternion_between with a fallback along the vectors is .none
+ok quaternion_between nearly opposite vectors
+ok quaternion_between nearly opposite vectors in a general direction
+ok slerp is exact at both ends
+ok slerp takes the shorter arc
+ok slerp has constant angular speed
+ok slerp between close rotations
+ok slerp between equal rotations
+ok nlerp ends and shorter arc
+ok nlerp is a unit quaternion halfway along the arc
+ok quaternion_from_euler(.ZYX) is the product of axis rotations
+ok to_euler inverts quaternion_from_euler for every order
+ok to_euler at gimbal lock puts the whole turn in the first angle
+ok quaternion_from_rotation_vector is the axis-angle rotation
+ok to_rotation_vector inverts it, for q and -q
+ok a rotation vector near a half turn
+ok the zero rotation vector
+ok a rotation vector below the normal range
+-- element types
+(0, -2, 0) (1, 0, 3) (1, 2, 3) (-5, 7)
+ok the derivative of slerp is the analytic one
+-- determinism
+from_matrix 4593347560298684692 0 4603540157773103697 4605328470515712790
+slerp 4606058090419096436 0 4598900919937014865 4600644019943384513
+to_euler 4606328742801001341 4602975843651505581 4598426470215377642
+between 1061750574 1024989833 3204781879 1051401690
+angle 4608692665199806070 0 4610515082524271575 4612406594367767183
+from_euler 1042773718 1032303520 1058098380 1062068050
+ok a folded quaternion_from_euler equals the run-time one
+ok a folded inverse_affine equals the run-time one
+project_point 4585917339604257785 13810248796220444152 4606942845074666081
+ok a folded project_point equals the run-time one

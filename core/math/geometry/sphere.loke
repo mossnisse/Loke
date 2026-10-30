@@ -1,0 +1,85 @@
+// geometry-plan.md "Every solid is closed": a circle or a sphere holds its
+// boundary. A negative or NaN radius describes no set a caller meant, so it
+// panics where it is read, as `math.clamp` does for reversed bounds.
+@(public)
+package geometry;
+
+import "base:interfaces";
+import "core:math/linalg";
+
+/// The disc of the points at most `radius` from `center`, its boundary included.
+Circle :: struct($T: type) where interfaces.Numeric(T) { center: linalg.Vector2(T), radius: T }
+
+/// The ball of the points at most `radius` from `center`, its surface included.
+Sphere :: struct($T: type) where interfaces.Numeric(T) { center: linalg.Vector3(T), radius: T }
+
+@(private)
+check_radius :: proc(radius: $T) where interfaces.Numeric(T), interfaces.Ordered(T) {
+	assert(at_most(T(0), radius), "geometry.Circle and geometry.Sphere need a radius that is not negative or NaN");
+}
+
+impl Circle($T) {
+	from_center_radius :: proc(center: linalg.Vector2(T), radius: T) -> Circle(T) { return {center, radius}; }
+	/// Whether `p` is in the disc, `|p - center|^2 <= radius^2`, exact for integers.
+	contains :: proc(self, p: linalg.Vector2(T)) -> bool where interfaces.Ordered(T) {
+		check_radius(self.radius);
+		return at_most((p - self.center).length_squared(), self.radius*self.radius);
+	}
+	/// The square around the disc.
+	bounds :: proc(self) -> Aabb2(T) where interfaces.Ordered(T) {
+		check_radius(self.radius);
+		r := linalg.Vector2(T).splat(self.radius);
+		return {self.center - r, self.center + r};
+	}
+	/**
+		The point of the disc nearest `p`: `p` inside it, and otherwise
+		`center + (p - center)*(radius/|p - center|)`.
+	*/
+	closest_point :: proc(self, p: linalg.Vector2(T)) -> linalg.Vector2(T) where linalg.Real(T) {
+		check_radius(self.radius);
+		d := p - self.center;
+		squared := d.length_squared();
+		if (at_most(squared, self.radius*self.radius)) { return p; }
+		return self.center + d*(self.radius/squared.sqrt());
+	}
+	/// The distance from `p` to the disc, `|p - center| - radius`, and 0 inside it.
+	distance :: proc(self, p: linalg.Vector2(T)) -> T where linalg.Real(T) {
+		check_radius(self.radius);
+		squared := (p - self.center).length_squared();
+		if (at_most(squared, self.radius*self.radius)) { return T(0); }
+		return squared.sqrt() - self.radius;
+	}
+}
+
+impl Sphere($T) {
+	from_center_radius :: proc(center: linalg.Vector3(T), radius: T) -> Sphere(T) { return {center, radius}; }
+	/// Whether `p` is in the ball, `|p - center|^2 <= radius^2`, exact for integers.
+	contains :: proc(self, p: linalg.Vector3(T)) -> bool where interfaces.Ordered(T) {
+		check_radius(self.radius);
+		return at_most((p - self.center).length_squared(), self.radius*self.radius);
+	}
+	/// The cube around the ball.
+	bounds :: proc(self) -> Aabb3(T) where interfaces.Ordered(T) {
+		check_radius(self.radius);
+		r := linalg.Vector3(T).splat(self.radius);
+		return {self.center - r, self.center + r};
+	}
+	/**
+		The point of the ball nearest `p`: `p` inside it, and otherwise
+		`center + (p - center)*(radius/|p - center|)`.
+	*/
+	closest_point :: proc(self, p: linalg.Vector3(T)) -> linalg.Vector3(T) where linalg.Real(T) {
+		check_radius(self.radius);
+		d := p - self.center;
+		squared := d.length_squared();
+		if (at_most(squared, self.radius*self.radius)) { return p; }
+		return self.center + d*(self.radius/squared.sqrt());
+	}
+	/// The distance from `p` to the ball, `|p - center| - radius`, and 0 inside it.
+	distance :: proc(self, p: linalg.Vector3(T)) -> T where linalg.Real(T) {
+		check_radius(self.radius);
+		squared := (p - self.center).length_squared();
+		if (at_most(squared, self.radius*self.radius)) { return T(0); }
+		return squared.sqrt() - self.radius;
+	}
+}

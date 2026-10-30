@@ -1,0 +1,140 @@
+@(public)
+package scalar;
+
+import "base:interfaces";
+import "core:math";
+import "core:math/repro";
+
+// A float interface whose slots this package implements for the built-in
+// floats, so that a generic body can call `sqrt` on `f32`, `f64`, and a user
+// type alike (design.md "Runtime polymorphism": a slot implementation may be
+// declared in the interface's own package). The trigonometric slots are
+// `core:math/repro`'s, so the results are the same on every machine.
+Real :: interface($T: type) {
+	interfaces.Numeric(T);
+	interfaces.Ordered(T);
+	(value: f64) T(value) -> T;
+	slot sqrt: proc(self) -> T;
+	slot sin: proc(self) -> T;
+	slot atan2: proc(self, x: T) -> T;
+	slot is_normal: proc(self) -> bool;
+}
+
+// Private: a public extension is exported under this package's name, so `sqrt`
+// on both floats would be two exports of one name. A private one still meets
+// the slot for every importer.
+impl f32 {
+	@(private) sqrt :: proc(self) -> f32 { return math.sqrt_f32(self); }
+	@(private) sin :: proc(self) -> f32 { return repro.sin_f32(self); }
+	@(private) atan2 :: proc(self, x: f32) -> f32 { return repro.atan2_f32(self, x); }
+	@(private) is_normal :: proc(self) -> bool {
+		magnitude := math.abs_f32(self);
+		return magnitude >= math.F32_MIN_NORMAL && math.is_finite_f32(self);
+	}
+}
+
+impl f64 {
+	@(private) sqrt :: proc(self) -> f64 { return math.sqrt(self); }
+	@(private) sin :: proc(self) -> f64 { return repro.sin(self); }
+	@(private) atan2 :: proc(self, x: f64) -> f64 { return repro.atan2(self, x); }
+	@(private) is_normal :: proc(self) -> bool {
+		magnitude := math.abs(self);
+		return magnitude >= math.F64_MIN_NORMAL && math.is_finite(self);
+	}
+}
+
+Converts :: interface($From, $To: type) {
+	(value: From) To(value) -> To;
+}
+
+Vector3 :: struct($T: type) where interfaces.Numeric(T) {
+	x, y, z: T,
+}
+
+impl Vector3($T) {
+	from_vector :: hook(convert) proc(v: Vector3($U)) -> Vector3(T) where Converts(U, T) {
+		return {T(v.x), T(v.y), T(v.z)};
+	}
+
+	add :: operator(+) proc(left, right: Vector3(T)) -> Vector3(T) {
+		return {left.x + right.x, left.y + right.y, left.z + right.z};
+	}
+
+	dot :: proc(a, b: Vector3(T)) -> T {
+		return (a.x*b.x + a.y*b.y) + a.z*b.z;
+	}
+
+	length :: proc(self) -> T where Real(T) {
+		return Vector3(T).dot(self, self).sqrt();
+	}
+
+	normalize :: proc(self) -> Option(Vector3(T)) where Real(T) {
+		squared := Vector3(T).dot(self, self);
+		if (!squared.is_normal()) {
+			return .none;
+		}
+		length := squared.sqrt();
+		return .some({self.x/length, self.y/length, self.z/length});
+	}
+
+	// An angle through two slots and the constant requirement.
+	half_turn_sine :: proc(self) -> T where Real(T) {
+		return (T(0.5) * self.y.atan2(self.x)).sin();
+	}
+}
+
+// A free generic procedure with the bound on the procedure.
+distance :: proc(a, b: Vector3($T)) -> T where Real(T) {
+	d := Vector3(T){a.x - b.x, a.y - b.y, a.z - b.z};
+	return d.length();
+}
+
+Matrix :: struct($T: type, $R, $C: int) where interfaces.Numeric(T), R >= 1, C >= 1 {
+	columns: [C][R]T,
+}
+
+impl Matrix($T, $R, $C) {
+	identity :: proc() -> Matrix(T, R, C) where R == C {
+		result: Matrix(T, R, C) = {};
+		foreach (i in 0..<R) {
+			result.columns[i][i] = T(1);
+		}
+		return result;
+	}
+
+	get :: operator([]) proc(self, r, c: int) -> T {
+		return self.columns[c][r];
+	}
+
+	get_mut :: operator([]) proc(self: inout, r, c: int) -> inout T {
+		return inout self.columns[c][r];
+	}
+
+	transpose :: proc(self) -> Matrix(T, C, R) {
+		result: Matrix(T, C, R) = {};
+		foreach (c in 0..<C) {
+			foreach (r in 0..<R) {
+				result.columns[r][c] = self.columns[c][r];
+			}
+		}
+		return result;
+	}
+
+	multiply :: operator(*) proc(left: Matrix(T, R, C), right: Matrix(T, C, $K)) -> Matrix(T, R, K) {
+		result: Matrix(T, R, K) = {};
+		foreach (k in 0..<K) {
+			foreach (r in 0..<R) {
+				sum := T(0);
+				foreach (c in 0..<C) {
+					sum = sum + left.columns[c][r]*right.columns[k][c];
+				}
+				result.columns[k][r] = sum;
+			}
+		}
+		return result;
+	}
+
+	determinant :: proc(self) -> T where R == C, R == 2 {
+		return self.columns[0][0]*self.columns[1][1] - self.columns[1][0]*self.columns[0][1];
+	}
+}

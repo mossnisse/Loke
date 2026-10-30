@@ -1,0 +1,524 @@
+// standard-library "`core:math/dense`": the factorizations. LAPACK's test
+// ratios for `lu`, `solve`, `inverse`, and `cholesky` over random, Hilbert,
+// Wilkinson, graded, and nearly singular matrices from 1 x 1 to 200 x 200 at
+// `f32` and `f64`; the Wilkinson matrix's exact factors; the triangular solves; determinants; the condition
+// estimate against the exact condition number; each failure; a dual number
+// through `lu` and `solve` against the analytic derivative; and results as
+// bit patterns, the same at every optimization and CPU level.
+package main;
+
+import "core:fmt";
+import "core:math";
+import "core:math/dense";
+import "core:math/linalg";
+import "core:unsafe";
+
+check :: proc(name: string_view, ok: bool) {
+	if (ok) {
+		fmt.println("ok", name);
+	} else {
+		fmt.println("FAIL", name);
+	}
+}
+
+fails_with :: proc(status: Status(dense.Error), expected: dense.Error) -> bool {
+	switch (status) {
+	case .ok:     return false;
+	case .err(e): return e == expected;
+	}
+}
+
+bits64 :: proc(x: f64) -> u64 { return unsafe.transmute(u64, x); }
+bits32 :: proc(x: f32) -> u32 { return unsafe.transmute(u32, x); }
+
+epsilon :: proc($T: type) -> T {
+	when (T == f32) {
+		return math.F32_EPSILON;
+	} else {
+		return math.F64_EPSILON;
+	}
+}
+
+// A 64-bit linear congruential generator, so the matrices are the same on
+// every machine.
+Random :: struct { state: u64 }
+
+impl Random {
+	// Uniform in [-1, 1).
+	next :: proc(self: inout) -> f64 {
+		self.state = self.state*%6364136223846793005 +% 1442695040888963407;
+		return f64(self.state >> 11)/9007199254740992.0*2.0 - 1.0;
+	}
+}
+
+Family :: enum { Random, Hilbert, Wilkinson, Graded, Nearly_Singular }
+
+make_matrix :: proc($T: type, family: Family, n: int, seed: u64) -> dense.Matrix(T) {
+	random := Random{seed};
+	m := dense.Matrix(T).zeros(n, n);
+	switch (family) {
+	case .Random:
+		foreach (c in 0 ..< n) {
+			foreach (r in 0 ..< n) { m[r, c] = T(random.next()); }
+		}
+	case .Hilbert:
+		foreach (c in 0 ..< n) {
+			foreach (r in 0 ..< n) { m[r, c] = T(1.0/f64(r + c + 1)); }
+		}
+	case .Wilkinson:
+		// The matrix whose growth under partial pivoting is 2^(n-1): ones on
+		// the diagonal and in the last column, minus ones below.
+		foreach (c in 0 ..< n) {
+			foreach (r in 0 ..< n) {
+				if (r == c || c == n - 1) {
+					m[r, c] = T(1);
+				} else if (r > c) {
+					m[r, c] = -T(1);
+				}
+			}
+		}
+	case .Graded:
+		// Rows and columns scaled from 1 down to 2^-40.
+		foreach (c in 0 ..< n) {
+			foreach (r in 0 ..< n) {
+				m[r, c] = T(random.next()*math.pow(2.0, -40.0*f64(r + c)/f64(2*n)));
+			}
+		}
+	case .Nearly_Singular:
+		// A rank-one matrix plus a perturbation of 1e-10 of it at f64 and
+		// 1e-3 at f32, where 1e-10 would round away.
+		small := 1e-10;
+		when (T == f32) { small = 1e-3; }
+		u := dense.Matrix(f64).zeros(n, 1);
+		v := dense.Matrix(f64).zeros(n, 1);
+		foreach (i in 0 ..< n) {
+			u[i, 0] = random.next();
+			v[i, 0] = random.next();
+		}
+		foreach (c in 0 ..< n) {
+			foreach (r in 0 ..< n) { m[r, c] = T(u[r, 0]*v[c, 0] + small*random.next()); }
+		}
+	}
+	return m;
+}
+
+random_matrix :: proc($T: type, rows, columns: int, seed: u64) -> dense.Matrix(T) {
+	random := Random{seed};
+	m := dense.Matrix(T).zeros(rows, columns);
+	foreach (c in 0 ..< columns) {
+		foreach (r in 0 ..< rows) { m[r, c] = T(random.next()); }
+	}
+	return m;
+}
+
+// The Wilkinson matrix is the worst case for partial pivoting, so its
+// residuals grow as 2^(n-1) and are not in the families above. Every
+// operation on it is exact: no row is swapped, `L` is -1 below the diagonal,
+// and `U` is the identity but for its last column, 2^k in row k. Up to 50 x
+// 50, the product `L U` is exact too.
+wilkinson :: proc() {
+	exact := true;
+	foreach (n in [?]int{2, 5, 31, 50}) {
+		a := make_matrix(f64, .Wilkinson, n, 0);
+		switch (dense.lu(a.view())) {
+		case .ok(f):
+			l, u := unpack(f.factors());
+			exact = exact && dense.equal(dense.multiply(l.view(), u.view()).view(), a.view());
+			exact = exact && u[n - 1, n - 1] == math.pow(2.0, f64(n - 1)) && l[n - 1, 0] == -1.0;
+			foreach (k in 0 ..< n) { exact = exact && f.pivots()[k] == k; }
+		case .err(_):
+			exact = false;
+		}
+	}
+	check("the Wilkinson matrix factors exactly, with growth 2^(n-1)", exact);
+}
+
+// L and U as separate matrices, from the packed factors.
+unpack :: proc(f: dense.View($T)) -> (lower: dense.Matrix(T), upper: dense.Matrix(T)) {
+	n := f.rows();
+	l := dense.Matrix(T).identity(n);
+	u := dense.Matrix(T).zeros(n, n);
+	foreach (c in 0 ..< n) {
+		foreach (r in 0 ..< n) {
+			if (r > c) {
+				l[r, c] = f[r, c];
+			} else {
+				u[r, c] = f[r, c];
+			}
+		}
+	}
+	return {move(l), move(u)};
+}
+
+// `a` with the row swaps of `pivots` applied in order: `P A`.
+permuted :: proc(a: dense.View($T), pivots: []int) -> dense.Matrix(T) {
+	result := dense.Matrix(T).from_view(a);
+	foreach (k in 0 ..< pivots.len()) {
+		p := pivots[k];
+		foreach (c in 0 ..< a.columns()) {
+			held := result[k, c];
+			result[k, c] = result[p, c];
+			result[p, c] = held;
+		}
+	}
+	return result;
+}
+
+// The largest of LAPACK's ratios for one matrix, each of which should be a
+// small multiple of 1: `|P A - L U| / (n |A| eps)`, `|A x - b| / (|A| |x|
+// eps)`, and `|A A^-1 - I| / (n |A| |A^-1| eps)`, in the 1-norm.
+lu_ratio :: proc(a: dense.View($T)) -> T {
+	n := a.rows();
+	eps := epsilon(T);
+	scale := dense.norm_one(a);
+	switch (dense.lu(a)) {
+	case .ok(factors):
+		l, u := unpack(factors.factors());
+		lu_product := dense.multiply(l.view(), u.view());
+		pa := permuted(a, factors.pivots());
+		ratio := dense.norm_one(dense.subtract(pa.view(), lu_product.view()).view())/(T(f64(n))*scale*eps);
+
+		b := random_matrix(T, n, 3, u64(n) + 17);
+		x := factors.solve(b.view());
+		residual := dense.multiply(a, x.view());
+		residual.view_mut().add_scaled(-T(1), b.view());
+		solve_ratio := dense.norm_one(residual.view())/(scale*dense.norm_one(x.view())*eps);
+		if (ratio < solve_ratio) { ratio = solve_ratio; }
+
+		inverse := factors.inverse();
+		product := dense.multiply(a, inverse.view());
+		identity := dense.Matrix(T).identity(n);
+		inverse_ratio := dense.norm_one(dense.subtract(product.view(), identity.view()).view())
+			/ (T(f64(n))*scale*dense.norm_one(inverse.view())*eps);
+		if (ratio < inverse_ratio) { ratio = inverse_ratio; }
+		return ratio;
+	case .err(e):
+		fmt.println("FAIL lu", e);
+		return T(1e30);
+	}
+}
+
+// `|A - L L^T| / (n |A| eps)` and `|A x - b| / (|A| |x| eps)` for the
+// symmetric positive definite `A`.
+cholesky_ratio :: proc(a: dense.View($T)) -> T {
+	n := a.rows();
+	eps := epsilon(T);
+	scale := dense.norm_one(a);
+	switch (dense.cholesky(a)) {
+	case .ok(factor):
+		l := factor.lower();
+		product := dense.multiply(l, l.transpose());
+		ratio := dense.norm_one(dense.subtract(a, product.view()).view())/(T(f64(n))*scale*eps);
+		b := random_matrix(T, n, 2, u64(n) + 5);
+		x := factor.solve(b.view());
+		residual := dense.multiply(a, x.view());
+		residual.view_mut().add_scaled(-T(1), b.view());
+		solve_ratio := dense.norm_one(residual.view())/(scale*dense.norm_one(x.view())*eps);
+		if (ratio < solve_ratio) { ratio = solve_ratio; }
+		return ratio;
+	case .err(e):
+		fmt.println("FAIL cholesky", e);
+		return T(1e30);
+	}
+}
+
+// `B^T B + n I` for a random `B`, which is symmetric positive definite.
+spd :: proc($T: type, n: int, seed: u64) -> dense.Matrix(T) {
+	b := random_matrix(T, n, n, seed);
+	result := dense.multiply(b.view().transpose(), b.view());
+	foreach (i in 0 ..< n) { result[i, i] = result[i, i] + T(f64(n)); }
+	return result;
+}
+
+SIZES :: [?]int{1, 2, 3, 5, 10, 31, 64, 200};
+
+residuals :: proc($T: type, name: string_view, largest: int) {
+	families := [?]Family{.Random, .Hilbert, .Graded, .Nearly_Singular};
+	foreach (family in families) {
+		worst := T(0);
+		foreach (n in SIZES) {
+			if (n > largest) { continue; }
+			// The Hilbert matrix is singular in floating point well before
+			// 31 x 31.
+			if (family == .Hilbert && n > 10) { continue; }
+			a := make_matrix(T, family, n, u64(n)*31 + u64(family));
+			ratio := lu_ratio(a.view());
+			if (worst < ratio) { worst = ratio; }
+		}
+		fmt.println("lu", name, family, worst < T(30));
+	}
+	worst := T(0);
+	foreach (n in SIZES) {
+		if (n > largest) { continue; }
+		a := spd(T, n, u64(n) + 101);
+		ratio := cholesky_ratio(a.view());
+		if (worst < ratio) { worst = ratio; }
+		if (n <= 10) {
+			h := make_matrix(T, .Hilbert, n, 0);
+			// The Hilbert matrix is positive definite, and at f32 stays so in
+			// floating point only up to about 8 x 8.
+			if (T == f64 || n <= 5) {
+				ratio = cholesky_ratio(h.view());
+				if (worst < ratio) { worst = ratio; }
+			}
+		}
+	}
+	fmt.println("cholesky", name, worst < T(30));
+}
+
+triangular :: proc() {
+	// Only the triangle is read: the rest, and a unit diagonal, hold NaN.
+	nan := math.F64_NAN;
+	l := dense.Matrix(f64).from_rows([3][3]f64{{2, nan, nan}, {1, 4, nan}, {-1, 3, 8}});
+	b := dense.Matrix(f64).from_rows([3][1]f64{{2}, {9}, {27}});
+	x := b.clone();
+	ok := dense.solve_lower_into(l.view(), x.view_mut(), false) == .ok;
+	check("solve_lower_into reads only the lower triangle", ok && x[0, 0] == 1.0 && x[1, 0] == 2.0 && x[2, 0] == 2.75);
+	unit := dense.Matrix(f64).from_rows([3][3]f64{{nan, nan, nan}, {1, nan, nan}, {-1, 3, nan}});
+	x.view_mut().copy_from(b.view());
+	ok = dense.solve_lower_into(unit.view(), x.view_mut(), true) == .ok;
+	check("with a unit diagonal it is not read", ok && x[0, 0] == 2.0 && x[1, 0] == 7.0 && x[2, 0] == 8.0);
+	u := dense.Matrix(f64).from_rows([3][3]f64{{2, 1, -1}, {nan, 4, 3}, {nan, nan, 8}});
+	x.view_mut().copy_from(b.view());
+	ok = dense.solve_upper_into(u.view(), x.view_mut(), false) == .ok;
+	check("solve_upper_into reads only the upper triangle", ok && x[2, 0] == 3.375 && x[1, 0] == -0.28125 && x[0, 0] == 2.828125);
+	// A transposed view is the other triangle.
+	x.view_mut().copy_from(b.view());
+	ok = dense.solve_upper_into(l.view().transpose(), x.view_mut(), false) == .ok;
+	check("a transposed lower triangle is upper", ok);
+
+	singular := dense.Matrix(f64).from_rows([2][2]f64{{1, 0}, {5, 0}});
+	y := dense.Matrix(f64).filled(2, 1, 3.0);
+	status := dense.solve_lower_into(singular.view(), y.view_mut(), false);
+	check("a zero on the diagonal is singular, and b is unchanged", fails_with(status, .Singular) && y[0, 0] == 3.0 && y[1, 0] == 3.0);
+	check("unless the diagonal is unit", dense.solve_lower_into(singular.view(), y.view_mut(), true) == .ok && y[1, 0] == -12.0);
+}
+
+determinants :: proc() {
+	// A permutation: the sign alone.
+	swap := dense.Matrix(f64).from_rows([3][3]f64{{0, 1, 0}, {1, 0, 0}, {0, 0, 1}});
+	switch (dense.lu(swap.view())) {
+	case .ok(f): check("the determinant of a swap is -1", f.determinant() == -1.0);
+	case .err(_): check("the determinant of a swap is -1", false);
+	}
+	// Exact when every operation is: powers of two.
+	exact := dense.Matrix(f64).from_rows([3][3]f64{{4, 2, 0}, {2, 4, 2}, {0, 2, 4}});
+	switch (dense.lu(exact.view())) {
+	case .ok(f): check("an exact determinant", f.determinant() == 32.0);
+	case .err(_): check("an exact determinant", false);
+	}
+	switch (dense.cholesky(exact.view())) {
+	case .ok(c): check("the Cholesky determinant", linalg.approx_equal(c.determinant(), 32.0, 0.0, 4.0*math.F64_EPSILON));
+	case .err(_): check("the Cholesky determinant", false);
+	}
+	// det(H4) = 1/6048000.
+	h := make_matrix(f64, .Hilbert, 4, 0);
+	switch (dense.lu(h.view())) {
+	case .ok(f): check("the determinant of the 4 x 4 Hilbert matrix", linalg.approx_equal(f.determinant(), 1.0/6048000.0, 0.0, 1e-12));
+	case .err(_): check("the determinant of the 4 x 4 Hilbert matrix", false);
+	}
+	empty := dense.Matrix(f64).zeros(0, 0);
+	switch (dense.lu(empty.view())) {
+	case .ok(f): check("a 0 x 0 matrix factors", f.determinant() == 1.0 && f.reciprocal_condition() == 1.0 && f.size() == 0);
+	case .err(_): check("a 0 x 0 matrix factors", false);
+	}
+}
+
+condition :: proc() {
+	identity := dense.Matrix(f64).identity(7);
+	switch (dense.lu(identity.view())) {
+	case .ok(f): check("the identity's reciprocal condition is 1", f.reciprocal_condition() == 1.0);
+	case .err(_): check("the identity's reciprocal condition is 1", false);
+	}
+	// The estimate of |A^-1| is a lower bound, so the estimated reciprocal is
+	// at least the exact one, and rarely more than three times it.
+	within := true;
+	families := [?]Family{.Random, .Hilbert, .Graded, .Nearly_Singular};
+	foreach (family in families) {
+		foreach (n in [?]int{2, 5, 10, 31}) {
+			if (family == .Hilbert && n > 10) { continue; }
+			a := make_matrix(f64, family, n, u64(n) + 7);
+			switch (dense.lu(a.view())) {
+			case .ok(f):
+				exact := 1.0/(dense.norm_one(a.view())*dense.norm_one(f.inverse().view()));
+				estimate := f.reciprocal_condition();
+				// One ulp of slack each way for the rounding of two inverses.
+				low := exact*(1.0 - 1e-6) <= estimate;
+				high := estimate <= 3.0*exact;
+				if (!low || !high) {
+					fmt.println("condition", family, n, exact, estimate);
+					within = false;
+				}
+			case .err(e):
+				fmt.println("FAIL condition", family, n, e);
+				within = false;
+			}
+		}
+	}
+	check("reciprocal_condition is within a factor 3 of the exact value, from above", within);
+	h := make_matrix(f64, .Hilbert, 10, 0);
+	switch (dense.lu(h.view())) {
+	case .ok(f): check("the 10 x 10 Hilbert matrix is numerically singular", f.reciprocal_condition() < 1e-12);
+	case .err(_): check("the 10 x 10 Hilbert matrix is numerically singular", false);
+	}
+}
+
+failures :: proc() {
+	singular := dense.Matrix(f64).from_rows([2][2]f64{{1, 2}, {2, 4}});
+	switch (dense.lu(singular.view())) {
+	case .ok(_):  check("an exactly singular matrix", false);
+	case .err(e): check("an exactly singular matrix", e == .Singular);
+	}
+	switch (dense.solve(singular.view(), dense.Matrix(f64).zeros(2, 1).view())) {
+	case .ok(_):  check("solve of a singular matrix", false);
+	case .err(e): check("solve of a singular matrix", e == .Singular);
+	}
+	switch (dense.inverse(singular.view())) {
+	case .ok(_):  check("inverse of a singular matrix", false);
+	case .err(e): check("inverse of a singular matrix", e == .Singular);
+	}
+	nan := dense.Matrix(f64).identity(3);
+	nan[2, 1] = math.F64_NAN;
+	switch (dense.lu(nan.view())) {
+	case .ok(_):  check("a NaN is singular", false);
+	case .err(e): check("a NaN is singular", e == .Singular);
+	}
+	infinite := dense.Matrix(f64).identity(3);
+	infinite[0, 2] = math.F64_INFINITY;
+	switch (dense.lu(infinite.view())) {
+	case .ok(_):  check("an infinity is singular", false);
+	case .err(e): check("an infinity is singular", e == .Singular);
+	}
+	pivots := [dynamic]int{0, 0};
+	check("lu_in_place reports it", fails_with(dense.lu_in_place(singular.view_mut(), &mut pivots[:]), .Singular));
+
+	indefinite := dense.Matrix(f64).from_rows([2][2]f64{{1, 2}, {2, 1}});
+	switch (dense.cholesky(indefinite.view())) {
+	case .ok(_):  check("an indefinite matrix", false);
+	case .err(e): check("an indefinite matrix", e == .Not_Positive_Definite);
+	}
+	semidefinite := dense.Matrix(f64).from_rows([2][2]f64{{1, 1}, {1, 1}});
+	check("a semidefinite matrix", fails_with(dense.cholesky_in_place(semidefinite.view_mut()), .Not_Positive_Definite));
+	with_nan := dense.Matrix(f64).identity(3);
+	with_nan[2, 0] = math.F64_NAN;
+	check("a NaN below the diagonal", fails_with(dense.cholesky_in_place(with_nan.view_mut()), .Not_Positive_Definite));
+	// The upper triangle is not read, so a matrix that is not symmetric
+	// factors as its lower triangle says.
+	lower_only := dense.Matrix(f64).from_rows([2][2]f64{{4, 100}, {2, 2}});
+	switch (dense.cholesky(lower_only.view())) {
+	case .ok(c): check("cholesky reads only the lower triangle", c.lower()[1, 0] == 1.0 && c.lower()[1, 1] == 1.0 && c.lower()[0, 1] == 0.0);
+	case .err(_): check("cholesky reads only the lower triangle", false);
+	}
+}
+
+// A forward-mode dual number, so `lu` and `solve` differentiate.
+Dual :: struct { value, derivative: f64 }
+
+impl Dual {
+	@(public) from_f64 :: hook(convert) proc(value: f64) -> Dual { return {value, 0}; }
+	@(public) from_int :: hook(convert) proc(value: int) -> Dual { return {f64(value), 0}; }
+	@(public) add :: operator(+) proc(a, b: Dual) -> Dual { return {a.value + b.value, a.derivative + b.derivative}; }
+	@(public) subtract :: operator(-) proc(a, b: Dual) -> Dual { return {a.value - b.value, a.derivative - b.derivative}; }
+	@(public) negate :: operator(-) proc(a: Dual) -> Dual { return {-a.value, -a.derivative}; }
+	@(public) multiply :: operator(*) proc(a, b: Dual) -> Dual {
+		return {a.value*b.value, a.derivative*b.value + a.value*b.derivative};
+	}
+	@(public) divide :: operator(/) proc(a, b: Dual) -> Dual {
+		return {a.value/b.value, (a.derivative*b.value - a.value*b.derivative)/(b.value*b.value)};
+	}
+	@(public) equal :: operator(==) proc(a, b: Dual) -> bool { return a.value == b.value; }
+	@(public) less :: operator(<) proc(a, b: Dual) -> bool { return a.value < b.value; }
+
+	sqrt :: proc(self) -> Dual {
+		root := math.sqrt(self.value);
+		return {root, self.derivative/(root + root)};
+	}
+	sin :: proc(self) -> Dual { return {math.sin(self.value), self.derivative*math.cos(self.value)}; }
+	cos :: proc(self) -> Dual { return {math.cos(self.value), -self.derivative*math.sin(self.value)}; }
+	asin :: proc(self) -> Dual { return {math.asin(self.value), 0}; }
+	acos :: proc(self) -> Dual { return {math.acos(self.value), 0}; }
+	atan2 :: proc(self, x: Dual) -> Dual { return {math.atan2(self.value, x.value), 0}; }
+	abs :: proc(self) -> Dual { return -self if self.value < 0.0 else self; }
+	floor :: proc(self) -> Dual { return {math.floor(self.value), 0}; }
+	ceil :: proc(self) -> Dual { return {math.ceil(self.value), 0}; }
+	round :: proc(self) -> Dual { return {math.round(self.value), 0}; }
+	is_finite :: proc(self) -> bool { return math.is_finite(self.value); }
+	is_normal :: proc(self) -> bool { return math.is_finite(self.value) && math.abs(self.value) >= math.F64_MIN_NORMAL; }
+	// linalg.Scalar, which the factorizations need: a real type is its own
+	// real part, with no imaginary part.
+	@(public) Real :: Dual;
+	conjugate :: proc(self) -> Dual { return self; }
+	real_part :: proc(self) -> Dual { return self; }
+	imaginary_part :: proc(self) -> Dual { return {0, 0}; }
+}
+
+dual :: proc() {
+	// d/dt of the solution of (A + t E) x = b at t = 0 is -A^-1 E x for a
+	// constant b.
+	n := 6;
+	a := make_matrix(f64, .Random, n, 3);
+	e := make_matrix(f64, .Random, n, 4);
+	b := random_matrix(f64, n, 1, 5);
+	d := dense.Matrix(Dual).zeros(n, n);
+	rhs := dense.Matrix(Dual).zeros(n, 1);
+	foreach (c in 0 ..< n) {
+		foreach (r in 0 ..< n) { d[r, c] = Dual{a[r, c], e[r, c]}; }
+	}
+	foreach (r in 0 ..< n) { rhs[r, 0] = Dual{b[r, 0], 0}; }
+	switch (dense.solve(d.view(), rhs.view())) {
+	case .ok(x):
+		value := dense.Matrix(f64).zeros(n, 1);
+		derivative := dense.Matrix(f64).zeros(n, 1);
+		foreach (r in 0 ..< n) {
+			value[r, 0] = x[r, 0].value;
+			derivative[r, 0] = x[r, 0].derivative;
+		}
+		expected := dense.solve(a.view(), dense.multiply(e.view(), value.view()).view()) or_else dense.Matrix(f64).zeros(n, 1);
+		expected.view_mut().scale_by(-1.0);
+		check("a dual number through solve gives -A^-1 E x", dense.approx_equal(derivative.view(), expected.view(), 1e-12, 1e-10));
+		plain := dense.solve(a.view(), b.view()) or_else dense.Matrix(f64).zeros(n, 1);
+		check("and the same value as at f64, bit for bit", dense.equal(value.view(), plain.view()));
+	case .err(error):
+		fmt.println("FAIL dual solve", error);
+	}
+}
+
+determinism :: proc() {
+	a := make_matrix(f64, .Random, 50, 11);
+	b := random_matrix(f64, 50, 1, 12);
+	switch (dense.lu(a.view())) {
+	case .ok(f):
+		x := f.solve(b.view());
+		fmt.println("f64 lu", bits64(x[0, 0]), bits64(x[49, 0]), bits64(f.determinant()), bits64(f.reciprocal_condition()));
+	case .err(e):
+		fmt.println("FAIL determinism", e);
+	}
+	s := spd(f64, 50, 13);
+	switch (dense.cholesky(s.view())) {
+	case .ok(c):
+		x := c.solve(b.view());
+		fmt.println("f64 cholesky", bits64(x[0, 0]), bits64(x[49, 0]), bits64(c.determinant()));
+	case .err(e):
+		fmt.println("FAIL determinism", e);
+	}
+	a32 := make_matrix(f32, .Random, 31, 14);
+	b32 := random_matrix(f32, 31, 1, 15);
+	switch (dense.solve(a32.view(), b32.view())) {
+	case .ok(x): fmt.println("f32 solve", bits32(x[0, 0]), bits32(x[30, 0]));
+	case .err(e): fmt.println("FAIL determinism", e);
+	}
+	p := dense.multiply(a.view(), a.view().transpose());
+	fmt.println("f64 product", bits64(p[0, 0]), bits64(p[49, 17]), bits64(dense.norm_frobenius(p.view())));
+}
+
+main :: proc() {
+	residuals(f64, "f64", 200);
+	residuals(f32, "f32", 64);
+	wilkinson();
+	triangular();
+	determinants();
+	condition();
+	failures();
+	dual();
+	determinism();
+}

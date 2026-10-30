@@ -1,0 +1,900 @@
+package main;
+
+import "core:fmt";
+import "core:math";
+import "core:math/geometry";
+import "core:math/linalg";
+import "core:math/repro";
+import "core:unsafe";
+
+// geometry-plan.md "Validation", milestone 3: rays, segments against
+// segments and boxes, triangles against boxes, frustums, and transformed
+// boxes and planes. Ray-box casts and segment overlaps are checked against
+// exact rational references on integer inputs scaled by powers of two, at
+// f64, f32, and integers; ray-triangle casts for watertightness on two
+// meshes; frustums for every depth range against their view volumes; and a
+// dual number's derivative of each cast against the analytic one.
+
+failures := 0;
+
+check :: proc(name: string, ok: bool) {
+	if (!ok) {
+		failures += 1;
+		fmt.println("FAIL", name);
+	}
+}
+
+V2 :: linalg.Vector2(f64);
+V3 :: linalg.Vector3(f64);
+M4 :: linalg.Matrix(f64, 4, 4);
+
+v2 :: proc(x, y: f64) -> V2 { return V2.from_components(x, y); }
+v3 :: proc(x, y, z: f64) -> V3 { return V3.from_components(x, y, z); }
+
+bits :: proc(x: f64) -> u64 { return unsafe.transmute(u64, x); }
+
+some :: proc(o: Option($T)) -> bool { return !(o == .none); }
+
+// 2^k for a normal power of two.
+pow2 :: proc(k: int) -> f64 { return unsafe.transmute(f64, u64(1023 + k) << 52); }
+
+INF :: math.F64_INFINITY;
+
+Random :: struct { state: u64 }
+
+impl Random {
+	step :: proc(self: inout) -> u64 {
+		self.state = self.state*%6364136223846793005 +% 1442695040888963407;
+		return self.state >> 11;
+	}
+	// Uniform in [-2, 2).
+	next :: proc(self: inout) -> f64 { return f64(self.step())/9007199254740992.0*4.0 - 2.0; }
+	below :: proc(self: inout, n: int) -> int { return int(self.step() % u64(n)); }
+	// Uniform in [-k, k].
+	int_in :: proc(self: inout, k: int) -> i64 { return i64(self.below(2*k + 1)) - i64(k); }
+	v3 :: proc(self: inout) -> V3 {
+		x := self.next();
+		y := self.next();
+		z := self.next();
+		return V3.from_components(x, y, z);
+	}
+}
+
+// An integer point, scaled into each element type.
+P :: struct { x, y, z: i64 }
+
+random_p :: proc(random: inout Random, k: int) -> P {
+	x := random.int_in(k);
+	y := random.int_in(k);
+	z := random.int_in(k);
+	return {x, y, z};
+}
+
+to3 :: proc($T: type, p: P, scale: T) -> linalg.Vector3(T) {
+	return linalg.Vector3(T).from_components(T(p.x)*scale, T(p.y)*scale, T(p.z)*scale);
+}
+to2 :: proc($T: type, p: P, scale: T) -> linalg.Vector2(T) {
+	return linalg.Vector2(T).from_components(T(p.x)*scale, T(p.y)*scale);
+}
+
+// A rational `num/den` with `den > 0`, or an infinity with `den == 0` and the
+// sign of `num`.
+Q :: struct { num, den: i64 }
+
+less :: proc(a, b: Q) -> bool {
+	if (a.den == 0 && b.den == 0) { return a.num < b.num; }
+	if (a.den == 0) { return a.num < 0; }
+	if (b.den == 0) { return b.num > 0; }
+	return a.num*b.den < b.num*a.den;
+}
+
+fraction :: proc(num, den: i64) -> Q { return Q{-num, -den} if den < 0 else Q{num, den}; }
+
+// The exact slab test over `[t_min, t_max]` on the first `axes` axes: each
+// axis keeps `t` with `low <= o + t*d <= high`, all of it when `d` is zero
+// and `o` is between, none when it is outside.
+exact_ray_box :: proc(o, d, low, high: P, axes: int, t_min, t_max: Q) -> bool {
+	near, far := t_min, t_max;
+	os := [3]i64{o.x, o.y, o.z};
+	ds := [3]i64{d.x, d.y, d.z};
+	ls := [3]i64{low.x, low.y, low.z};
+	hs := [3]i64{high.x, high.y, high.z};
+	foreach (i in 0 ..< axes) {
+		if (ds[i] == 0) {
+			if (os[i] < ls[i] || hs[i] < os[i]) { return false; }
+			continue;
+		}
+		a := fraction(ls[i] - os[i], ds[i]);
+		b := fraction(hs[i] - os[i], ds[i]);
+		if (less(b, a)) {
+			swap := a;
+			a = b;
+			b = swap;
+		}
+		if (less(near, a)) { near = a; }
+		if (less(b, far)) { far = b; }
+	}
+	return !less(far, near);
+}
+
+corners_of :: proc(random: inout Random) -> (low: P, high: P) {
+	a := random_p(inout random, 4);
+	b := random_p(inout random, 4);
+	return {P{math.min(a.x, b.x), math.min(a.y, b.y), math.min(a.z, b.z)}, P{math.max(a.x, b.x), math.max(a.y, b.y), math.max(a.z, b.z)}};
+}
+
+// A zero direction component as -0 for odd `which`, the reciprocal then -inf.
+signed_zero :: proc($T: type, v: linalg.Vector3(T), which: int) -> linalg.Vector3(T) {
+	result := v;
+	if (which % 2 == 1) {
+		if (v.x == T(0)) { result.x = -T(0); }
+		if (v.y == T(0)) { result.y = -T(0); }
+		if (v.z == T(0)) { result.z = -T(0); }
+	}
+	return result;
+}
+
+// Random integer rays and boxes in `T`, scaled by `scale`, which changes no
+// `t`, over four ranges; returns the number of exact hits, and counts a
+// missed hit or a reported miss as a failure.
+ray_box_against_exact :: proc($T: type, scale: T, seed: u64) -> int {
+	random := Random{seed};
+	ranges := [4][2]Q{{{0, 1}, {1, 0}}, {{0, 1}, {1, 1}}, {{-1, 0}, {1, 0}}, {{1, 1}, {2, 1}}};
+	t_values := [4][2]T{{T(0), T(math.F64_INFINITY)}, {T(0), T(1)}, {-T(math.F64_INFINITY), T(math.F64_INFINITY)}, {T(1), T(2)}};
+	hits, wrong := 0, 0;
+	foreach (n in 0 ..< 6000) {
+		o := random_p(inout random, 6);
+		d := random_p(inout random, 2);
+		low, high := corners_of(inout random);
+		k := n % 4;
+		ray := geometry.Ray3(T).from_origin_direction(to3(T, o, scale), signed_zero(T, to3(T, d, scale), n/4));
+		box := geometry.Aabb3(T).from_min_max(to3(T, low, scale), to3(T, high, scale));
+		exact := exact_ray_box(o, d, low, high, 3, ranges[k][0], ranges[k][1]);
+		found := geometry.cast(ray, box, t_values[k][0], t_values[k][1]);
+		inverse := geometry.cast(ray, ray.inverse_direction(), box, t_values[k][0], t_values[k][1]);
+		if (exact) { hits += 1; }
+		if (exact != some(found) || !(found == inverse)) { wrong += 1; }
+
+		ray2 := geometry.Ray2(T).from_origin_direction(to2(T, o, scale), linalg.Vector2(T).from_components(signed_zero(T, to3(T, d, scale), n/4).x, signed_zero(T, to3(T, d, scale), n/4).y));
+		box2 := geometry.Aabb2(T).from_min_max(to2(T, low, scale), to2(T, high, scale));
+		exact2 := exact_ray_box(o, d, low, high, 2, ranges[k][0], ranges[k][1]);
+		if (exact2 != some(geometry.cast(ray2, box2, t_values[k][0], t_values[k][1]))) { wrong += 1; }
+	}
+	check("ray-box casts agree with the exact slab test", wrong == 0);
+	return hits;
+}
+
+ray_boxes :: proc() {
+	fmt.println("ray-box exact hits f64", ray_box_against_exact(f64, 1.0, 11), ray_box_against_exact(f64, pow2(-30), 12), ray_box_against_exact(f64, pow2(40), 13));
+	fmt.println("ray-box exact hits f32", ray_box_against_exact(f32, f32(1), 14), ray_box_against_exact(f32, f32(pow2(-20)), 15), ray_box_against_exact(f32, f32(pow2(30)), 16));
+
+	box := geometry.Aabb3(f64).from_min_max(v3(0, 0, 0), v3(1, 1, 1));
+	R :: geometry.Ray3(f64);
+	check("a ray along a face", (geometry.cast(R.from_origin_direction(v3(-1, 0, 0.5), v3(1, 0, 0)), box, 0.0, INF) or_else -1.0) == 1.0);
+	check("a ray along an edge", (geometry.cast(R.from_origin_direction(v3(-1, 1, 1), v3(1, 0, 0)), box, 0.0, INF) or_else -1.0) == 1.0);
+	check("a ray along a face with a negative zero", (geometry.cast(R.from_origin_direction(v3(-1, 1, 0.5), v3(1, -0.0, 0)), box, 0.0, INF) or_else -1.0) == 1.0);
+	check("a ray through a corner", (geometry.cast(R.from_origin_direction(v3(-1, -1, -1), v3(1, 1, 1)), box, 0.0, INF) or_else -1.0) == 1.0);
+	check("a ray grazing a corner", (geometry.cast(R.from_origin_direction(v3(2, 0, 0), v3(-1, 1, 0)), box, 0.0, INF) or_else -1.0) == 1.0);
+	check("a ray past a corner", geometry.cast(R.from_origin_direction(v3(2.25, 0, 0), v3(-1, 1, 0)), box, 0.0, INF) == .none);
+	check("a ray starting inside hits at t_min", (geometry.cast(R.from_origin_direction(v3(0.5, 0.5, 0.5), v3(0.3, -2, 7)), box, 0.0625, INF) or_else -1.0) == 0.0625);
+	check("a box behind the ray", geometry.cast(R.from_origin_direction(v3(3, 0.5, 0.5), v3(1, 0, 0)), box, 0.0, INF) == .none
+		&& (geometry.cast(R.from_origin_direction(v3(3, 0.5, 0.5), v3(1, 0, 0)), box, -INF, INF) or_else 0.0) == -3.0);
+	check("a ray that does not move", (geometry.cast(R.from_origin_direction(v3(0.5, 0.5, 1), v3(0, 0, 0)), box, 0.0, 2.0) or_else -1.0) == 0.0
+		&& geometry.cast(R.from_origin_direction(v3(0.5, 0.5, 1.5), v3(0, 0, 0)), box, 0.0, 2.0) == .none);
+	check("an empty box is never hit", geometry.cast(R.from_origin_direction(v3(-1, 0.5, 0.5), v3(1, 0, 0)), geometry.Aabb3(f64).empty(), 0.0, INF) == .none
+		&& geometry.cast(R.from_origin_direction(v3(-1, 0.5, 0.5), v3(1, 0, 0)), geometry.Aabb3(f64).from_min_max(v3(0, 0, 0), v3(1, math.F64_NAN, 1)), 0.0, INF) == .none);
+	// The conservative widening reaches past a box by an ulp, not by more.
+	edge := 1.0 + pow2(-52);
+	diagonal := R.from_origin_direction(v3(0, 0, 0.5), v3(1, 1, 0));
+	check("the widening reaches an ulp", some(geometry.cast(diagonal, geometry.Aabb3(f64).from_min_max(v3(edge, -1, 0), v3(2, 1, 1)), 0.0, INF))
+		&& geometry.cast(diagonal, geometry.Aabb3(f64).from_min_max(v3(1.0 + pow2(-40), -1, 0), v3(2, 1, 1)), 0.0, INF) == .none);
+	ray := R.from_origin_direction(v3(1, 2, 3), v3(-2, 0.5, 4));
+	check("at and from_points", ray.at(0.5) == v3(0, 2.25, 5) && R.from_points(v3(1, 1, 1), v3(3, 0, 1)).direction == v3(2, -1, 0)
+		&& geometry.Ray2(f64).from_points(v2(1, 1), v2(3, 0)).at(2.0) == v2(5, -1));
+	inverse := R.from_origin_direction(v3(0, 0, 0), v3(2, -0.0, 0)).inverse_direction();
+	check("inverse_direction", inverse.x == 0.5 && inverse.y == -INF && inverse.z == INF);
+}
+
+near :: proc(a, b, tolerance: f64) -> bool { return math.abs(a - b) <= tolerance; }
+
+spheres :: proc() {
+	R :: geometry.Ray3(f64);
+	S :: geometry.Sphere(f64);
+	sphere := S.from_center_radius(v3(0, 0, 0), 2);
+	check("a ray into a sphere", (geometry.cast(R.from_origin_direction(v3(-5, 0, 0), v3(1, 0, 0)), sphere, 0.0, INF) or_else -1.0) == 3.0);
+	check("a ray with a long direction", (geometry.cast(R.from_origin_direction(v3(-5, 0, 0), v3(4, 0, 0)), sphere, 0.0, INF) or_else -1.0) == 0.75);
+	check("a ray from inside hits at t_min", (geometry.cast(R.from_origin_direction(v3(0.5, 0, 0), v3(1, 0, 0)), sphere, 0.0, INF) or_else -1.0) == 0.0);
+	check("a ray past the far side", geometry.cast(R.from_origin_direction(v3(-5, 0, 0), v3(1, 0, 0)), sphere, 7.5, INF) == .none
+		&& (geometry.cast(R.from_origin_direction(v3(-5, 0, 0), v3(1, 0, 0)), sphere, 6.5, INF) or_else -1.0) == 6.5);
+	check("a tangent ray", (geometry.cast(R.from_origin_direction(v3(-5, 2, 0), v3(1, 0, 0)), sphere, 0.0, INF) or_else -1.0) == 5.0
+		&& geometry.cast(R.from_origin_direction(v3(-5, 2.0000001, 0), v3(1, 0, 0)), sphere, 0.0, INF) == .none);
+	check("a tangent ray at its origin", (geometry.cast(R.from_origin_direction(v3(0, 2, 0), v3(1, 0, 0)), sphere, 0.0, INF) or_else -1.0) == 0.0);
+	check("a sphere behind the ray", geometry.cast(R.from_origin_direction(v3(5, 0, 0), v3(1, 0, 0)), sphere, 0.0, INF) == .none
+		&& (geometry.cast(R.from_origin_direction(v3(5, 0, 0), v3(1, 0, 0)), sphere, -INF, INF) or_else 0.0) == -7.0);
+	check("a ray that does not move", (geometry.cast(R.from_origin_direction(v3(1, 1, 1), v3(0, 0, 0)), sphere, 0.25, 1.0) or_else -1.0) == 0.25
+		&& geometry.cast(R.from_origin_direction(v3(2, 2, 2), v3(0, 0, 0)), sphere, 0.0, 1.0) == .none);
+	// Haines et al.: a unit sphere 10^9 away, its near root 999999999, where
+	// `b^2 - 4ac` loses the discriminant to cancellation.
+	far := S.from_center_radius(v3(0, 0, 1.0e9), 1);
+	check("a small sphere far away", (geometry.cast(R.from_origin_direction(v3(0, 0, 0), v3(0, 0, 1)), far, 0.0, INF) or_else -1.0) == 999999999.0);
+	off := S.from_center_radius(v3(0, 0.5, 1.0e9), 1);
+	check("a small sphere far away and off the axis", near(geometry.cast(R.from_origin_direction(v3(0, 0, 0), v3(0, 0, 1)), off, 0.0, INF) or_else -1.0, 1.0e9 - math.sqrt(0.75), 2.5e-7));
+	tiny := S.from_center_radius(v3(1.0e6, 1.0e6, 1.0e6), 1.0e-4);
+	toward := V3.splat(1.0).normalize() or_else V3{};
+	check("a tiny sphere far away", near(geometry.cast(R.from_origin_direction(v3(0, 0, 0), toward), tiny, 0.0, INF) or_else -1.0, 1.0e6*math.sqrt(3.0) - 1.0e-4, 1.0e-9));
+
+	// Random rays against random spheres: a hit is on the surface, or at
+	// t_min inside, and a miss passes farther than the radius.
+	random := Random{21};
+	wrong := 0;
+	foreach (_ in 0 ..< 2000) {
+		s := S.from_center_radius(random.v3(), math.abs(random.next()));
+		r := R.from_origin_direction(random.v3()*3.0, random.v3());
+		closest := geometry.Segment3(f64).from_points(r.origin, r.at(1.0e3)).distance(s.center);
+		switch (geometry.cast(r, s, 0.0, INF)) {
+		case .some(t):
+			p := r.at(t);
+			on := near((p - s.center).length(), s.radius, 1.0e-12) || (t == 0.0 && s.contains(r.origin));
+			if (!on || t < 0.0) { wrong += 1; }
+		case .none:
+			if (closest < s.radius - 1.0e-12) { wrong += 1; }
+		}
+	}
+	check("random ray-sphere casts", wrong == 0);
+
+	circle := geometry.Circle(f64).from_center_radius(v2(1, 1), 1);
+	ray2 := geometry.Ray2(f64).from_origin_direction(v2(-2, 1), v2(1, 0));
+	check("a ray into a circle", (geometry.cast(ray2, circle, 0.0, INF) or_else -1.0) == 2.0
+		&& geometry.cast(geometry.Ray2(f64).from_origin_direction(v2(-2, 2.5), v2(1, 0)), circle, 0.0, INF) == .none);
+}
+
+planes :: proc() {
+	R :: geometry.Ray3(f64);
+	plane := geometry.Plane(f64).from_normal_offset(v3(0, 0, 1), 2);
+	check("a ray onto a plane", (geometry.cast(R.from_origin_direction(v3(1, 1, 0), v3(0, 0, 0.5)), plane, 0.0, INF) or_else -1.0) == 4.0);
+	check("a ray onto a plane from its positive side", (geometry.cast(R.from_origin_direction(v3(1, 1, 5), v3(0, 3, -1)), plane, 0.0, INF) or_else -1.0) == 3.0);
+	check("a ray parallel to a plane", geometry.cast(R.from_origin_direction(v3(1, 1, 0), v3(1, 0, 0)), plane, -INF, INF) == .none
+		&& geometry.cast(R.from_origin_direction(v3(1, 1, 2), v3(1, 0, 0)), plane, -INF, INF) == .none);
+	check("a plane outside the range", geometry.cast(R.from_origin_direction(v3(1, 1, 0), v3(0, 0, 1)), plane, 0.0, 1.5) == .none
+		&& (geometry.cast(R.from_origin_direction(v3(1, 1, 0), v3(0, 0, 1)), plane, 0.0, 2.0) or_else -1.0) == 2.0
+		&& geometry.cast(R.from_origin_direction(v3(1, 1, 0), v3(0, 0, -1)), plane, 0.0, INF) == .none);
+}
+
+// Triangles of a grid of `n` by `n` cells over a random height field, and
+// of a closed latitude-longitude sphere, every edge inside shared by two.
+grid_vertex :: proc($T: type, heights: []f64, n, i, j: int) -> linalg.Vector3(T) {
+	return linalg.Vector3(T).from_components(T(f64(i)*0.37 + 0.1*f64(j)), T(f64(j)*0.41), T(heights[i*(n + 1) + j]));
+}
+
+grid_mesh :: proc($T: type, n: int, heights: []f64) -> [dynamic]geometry.Triangle3(T) {
+	triangles := make([dynamic]geometry.Triangle3(T));
+	foreach (i in 0 ..< n) {
+		foreach (j in 0 ..< n) {
+			a, b := grid_vertex(T, heights, n, i, j), grid_vertex(T, heights, n, i + 1, j);
+			c, d := grid_vertex(T, heights, n, i + 1, j + 1), grid_vertex(T, heights, n, i, j + 1);
+			if ((i + j) % 2 == 0) {
+				triangles.append(geometry.Triangle3(T).from_points(a, b, c));
+				triangles.append(geometry.Triangle3(T).from_points(a, c, d));
+			} else {
+				triangles.append(geometry.Triangle3(T).from_points(a, b, d));
+				triangles.append(geometry.Triangle3(T).from_points(b, c, d));
+			}
+		}
+	}
+	return triangles;
+}
+
+sphere_vertex :: proc($T: type, rings, segments, i, j: int) -> linalg.Vector3(T) {
+	if (i == 0) { return linalg.Vector3(T).from_components(T(0), T(0), T(1)); }
+	if (i == rings) { return linalg.Vector3(T).from_components(T(0), T(0), -T(1)); }
+	theta := f64(i)*math.PI/f64(rings);
+	phi := f64(j % segments)*2.0*math.PI/f64(segments);
+	return linalg.Vector3(T).from_components(T(repro.sin(theta)*repro.cos(phi)), T(repro.sin(theta)*repro.sin(phi)), T(repro.cos(theta)));
+}
+
+sphere_mesh :: proc($T: type, rings, segments: int) -> [dynamic]geometry.Triangle3(T) {
+	triangles := make([dynamic]geometry.Triangle3(T));
+	foreach (i in 0 ..< rings) {
+		foreach (j in 0 ..< segments) {
+			a, b := sphere_vertex(T, rings, segments, i, j), sphere_vertex(T, rings, segments, i + 1, j);
+			c, d := sphere_vertex(T, rings, segments, i + 1, j + 1), sphere_vertex(T, rings, segments, i, j + 1);
+			if (i != 0) { triangles.append(geometry.Triangle3(T).from_points(a, b, d)); }
+			if (i != rings - 1) { triangles.append(geometry.Triangle3(T).from_points(b, c, d)); }
+		}
+	}
+	return triangles;
+}
+
+hits_any :: proc(ray: geometry.Ray3($T), triangles: []geometry.Triangle3(T)) -> bool {
+	foreach (triangle in triangles) {
+		if (some(geometry.cast(ray, triangle, T(0), T(math.F64_INFINITY)))) { return true; }
+	}
+	return false;
+}
+
+// Rays aimed at the vertices and at points of the shared edges of both
+// meshes, from random origins; returns the rays cast, and counts every miss
+// as a failure.
+watertight :: proc($T: type, seed: u64) -> int {
+	random := Random{seed};
+	rays, misses := 0, 0;
+	n := 6;
+	heights := make([dynamic]f64);
+	foreach (_ in 0 ..< (n + 1)*(n + 1)) { heights.append(random.next()*0.05); }
+	grid := grid_mesh(T, n, heights[:]);
+	foreach (k in 0 ..< 3000) {
+		// An inner vertex, a point of an edge from one, or of a cell's
+		// diagonal: every such edge is shared by two triangles.
+		i, j := 1 + random.below(n - 1), 1 + random.below(n - 1);
+		target := grid_vertex(T, heights[:], n, i, j);
+		s := T(math.abs(random.next())*0.5);
+		switch (k % 4) {
+		case 1:
+			target = target + (grid_vertex(T, heights[:], n, i + 1, j) - target)*s;
+		case 2:
+			target = target + (grid_vertex(T, heights[:], n, i, j + 1) - target)*s;
+		case 3:
+			// The diagonal of cell (i, j), a-c on even cells and b-d on odd ones.
+			from, to := grid_vertex(T, heights[:], n, i, j), grid_vertex(T, heights[:], n, i + 1, j + 1);
+			if ((i + j) % 2 == 1) {
+				from = grid_vertex(T, heights[:], n, i + 1, j);
+				to = grid_vertex(T, heights[:], n, i, j + 1);
+			}
+			target = from + (to - from)*s;
+		default:
+		}
+		// Steeper than any face, so the ray crosses the surface rather than
+		// grazing it, where rounding could rightly make it miss.
+		lift := linalg.Vector3(T).from_components(T(random.next()*0.25), T(random.next()*0.25), T(1.0 + math.abs(random.next())));
+		origin := target + lift;
+		ray := geometry.Ray3(T).from_origin_direction(origin, target - origin);
+		rays += 1;
+		if (!hits_any(ray, grid[:])) { misses += 1; }
+	}
+	rings, segments := 7, 11;
+	sphere := sphere_mesh(T, rings, segments);
+	foreach (k in 0 ..< 3000) {
+		i := 1 + random.below(rings - 1);
+		j := random.below(segments);
+		target := sphere_vertex(T, rings, segments, i, j);
+		if (k % 3 != 0) {
+			other := sphere_vertex(T, rings, segments, i + 1, j) if k % 3 == 1 else sphere_vertex(T, rings, segments, i, j + 1);
+			target = target + (other - target)*T(math.abs(random.next())*0.5);
+		}
+		// From the center, or from outside within 40 degrees of the
+		// vertex's direction, so the ray crosses the surface.
+		from := target*T(3) + linalg.Vector3(T).from_vector(random.v3()*0.5);
+		if (k % 2 == 0) { from = linalg.Vector3(T).splat(T(0)); }
+		ray := geometry.Ray3(T).from_origin_direction(from, target - from);
+		rays += 1;
+		if (!hits_any(ray, sphere[:])) { misses += 1; }
+	}
+	check("rays at shared edges and vertices hit a triangle", misses == 0);
+	return rays;
+}
+
+triangles :: proc() {
+	R :: geometry.Ray3(f64);
+	T3 :: geometry.Triangle3(f64);
+	triangle := T3.from_points(v3(0, 0, 1), v3(4, 0, 1), v3(0, 4, 1));
+	hit := geometry.cast(R.from_origin_direction(v3(1, 2, 5), v3(0, 0, -2)), triangle, 0.0, INF) or_else geometry.Triangle_Hit(f64){};
+	check("a ray into a triangle", hit.t == 2.0 && hit.barycentric == v3(0.25, 0.25, 0.5));
+	back := geometry.cast(R.from_origin_direction(v3(1, 2, -5), v3(0, 0, 3)), triangle, 0.0, INF) or_else geometry.Triangle_Hit(f64){};
+	check("a ray into a triangle's back", back.t == 2.0 && back.barycentric == v3(0.25, 0.25, 0.5));
+	corner := geometry.cast(R.from_origin_direction(v3(4, 0, 3), v3(0, 0, -1)), triangle, 0.0, INF) or_else geometry.Triangle_Hit(f64){};
+	check("a ray through a corner", corner.t == 2.0 && corner.barycentric == v3(0, 1, 0));
+	edge := geometry.cast(R.from_origin_direction(v3(2, 2, 3), v3(0, 0, -1)), triangle, 0.0, INF) or_else geometry.Triangle_Hit(f64){};
+	check("a ray through an edge", edge.t == 2.0 && edge.barycentric == v3(0, 0.5, 0.5));
+	check("a ray beside an edge", geometry.cast(R.from_origin_direction(v3(2, 2.0000000001, 3), v3(0, 0, -1)), triangle, 0.0, INF) == .none);
+	// Along z the corners are not sheared, and the edge function of b and c,
+	// `c.x*b.y - c.y*b.x`, rounds to zero: its products are -9 - 0.75 ulp and
+	// -9 - 1 ulp. Exactly it is 2^-51, the origin just outside that edge,
+	// where the other two edge functions put the triangle.
+	sliver := T3.from_points(v3(0, 1, 1), v3(-1, -3.0 - pow2(-51), 1), v3(3, 9.0 + pow2(-49), 1));
+	check("a ray past an edge by less than its rounding", geometry.cast(R.from_origin_direction(v3(0, 0, 0), v3(0, 0, 1)), sliver, 0.0, INF) == .none);
+	F3 :: linalg.Vector3(f32);
+	sliver32 := geometry.Triangle3(f32).from_points(F3.from_components(0, 1, 1), F3.from_components(-1, f32(-3.0 - pow2(-22)), 1), F3.from_components(3, f32(9.0 + pow2(-20)), 1));
+	check("an f32 ray past an edge by less than its rounding", geometry.cast(geometry.Ray3(f32).from_origin_direction(F3.splat(0), F3.from_components(0, 0, 1)), sliver32, f32(0), f32(INF)) == .none);
+	check("a ray in the triangle's plane", geometry.cast(R.from_origin_direction(v3(-1, 1, 1), v3(1, 0, 0)), triangle, -INF, INF) == .none);
+	check("a triangle of no area", geometry.cast(R.from_origin_direction(v3(1, 1, 3), v3(0, 0, -1)), T3.from_points(v3(0, 0, 1), v3(2, 2, 1), v3(4, 4, 1)), 0.0, INF) == .none);
+	check("a ray that does not move", geometry.cast(R.from_origin_direction(v3(1, 1, 1), v3(0, 0, 0)), triangle, 0.0, INF) == .none);
+	check("a triangle outside the range", geometry.cast(R.from_origin_direction(v3(1, 2, 5), v3(0, 0, -2)), triangle, 0.0, 1.5) == .none
+		&& geometry.cast(R.from_origin_direction(v3(1, 2, 5), v3(0, 0, -2)), triangle, 2.5, INF) == .none);
+
+	// Rays from random origins through points with chosen barycentric
+	// coordinates: inside by a margin they hit there, outside they miss.
+	random := Random{31};
+	wrong := 0;
+	foreach (_ in 0 ..< 3000) {
+		t := T3.from_points(random.v3(), random.v3(), random.v3());
+		u, v := math.abs(random.next())*0.5, math.abs(random.next())*0.5;
+		w := 1.0 - u - v;
+		if (random.below(2) == 0) { u = -0.01 - math.abs(random.next())*0.1; w = 1.0 - u - v; }
+		target := t.a*u + t.b*v + t.c*w;
+		origin := random.v3()*3.0;
+		area := t.area();
+		if (area < 0.05 || math.abs(w) < 0.01 || math.abs(u) < 0.01 || v < 0.01) { continue; }
+		normal := t.normal() or_else V3{};
+		if (math.abs(normal.dot((target - origin).normalize() or_else V3{})) < 0.05) { continue; }
+		switch (geometry.cast(R.from_origin_direction(origin, target - origin), t, 0.0, INF)) {
+		case .some(h):
+			if (u < 0.0 || w < 0.0 || !near(h.t, 1.0, 1.0e-9) || !near(h.barycentric.x, u, 1.0e-9) || !near(h.barycentric.y, v, 1.0e-9) || !near(h.barycentric.z, w, 1.0e-9)) { wrong += 1; }
+		case .none:
+			if (!(u < 0.0 || w < 0.0)) { wrong += 1; }
+		}
+	}
+	check("random ray-triangle casts", wrong == 0);
+	fmt.println("watertight rays f64", watertight(f64, 41), "f32", watertight(f32, 42));
+}
+
+// The closest points of segments, against a sampled grid of parameters.
+segment_pairs :: proc() {
+	S3 :: geometry.Segment3(f64);
+	random := Random{51};
+	wrong := 0;
+	foreach (_ in 0 ..< 300) {
+		a := S3.from_points(random.v3(), random.v3());
+		b := S3.from_points(random.v3(), random.v3());
+		if (random.below(4) == 0) { b = S3.from_points(a.a + v3(0.3, 0.1, -0.2), a.b + v3(0.3, 0.1, -0.2)); }
+		s, t := geometry.closest_points(a, b);
+		found := (a.at(s) - b.at(t)).length();
+		best := INF;
+		foreach (i in 0 ..< 61) {
+			foreach (j in 0 ..< 61) {
+				best = math.min(best, (a.at(f64(i)/60.0) - b.at(f64(j)/60.0)).length());
+			}
+		}
+		if (s < 0.0 || 1.0 < s || t < 0.0 || 1.0 < t || best < found - 1.0e-12) { wrong += 1; }
+	}
+	check("closest points of random segments", wrong == 0);
+	s, t := geometry.closest_points(S3.from_points(v3(0, 0, 0), v3(2, 0, 0)), S3.from_points(v3(1, -1, 3), v3(1, 1, 3)));
+	check("crossing segments", s == 0.5 && t == 0.5);
+	s, t = geometry.closest_points(S3.from_points(v3(0, 0, 0), v3(2, 0, 0)), S3.from_points(v3(3, 1, 0), v3(5, 1, 0)));
+	check("parallel segments apart", s == 1.0 && t == 0.0);
+	s, t = geometry.closest_points(S3.from_points(v3(1, 1, 1), v3(1, 1, 1)), S3.from_points(v3(0, 0, 0), v3(4, 0, 0)));
+	check("a segment of no length", s == 0.0 && t == 0.25);
+	s, t = geometry.closest_points(S3.from_points(v3(0, 0, 0), v3(4, 0, 0)), S3.from_points(v3(1, 1, 1), v3(1, 1, 1)));
+	check("the other segment of no length", s == 0.25 && t == 0.0);
+	s, t = geometry.closest_points(S3.from_points(v3(1, 1, 1), v3(1, 1, 1)), S3.from_points(v3(2, 2, 2), v3(2, 2, 2)));
+	check("two segments of no length", s == 0.0 && t == 0.0);
+	s, t = geometry.closest_points(S3.from_points(v3(0, 0, 0), v3(1, 0, 0)), S3.from_points(v3(3, 1, 0), v3(2, 2, 0)));
+	check("the far end of one segment", s == 1.0 && t == 0.5);
+	s2, t2 := geometry.closest_points(geometry.Segment2(f64).from_points(v2(0, 0), v2(2, 2)), geometry.Segment2(f64).from_points(v2(0, 2), v2(2, 0)));
+	check("crossing segments in the plane", s2 == 0.5 && t2 == 0.5);
+}
+
+direction :: proc(a, b, c: P) -> i64 { return (b.x - a.x)*(c.y - a.y) - (b.y - a.y)*(c.x - a.x); }
+on_segment :: proc(a, b, c: P) -> bool {
+	return math.min(a.x, b.x) <= c.x && c.x <= math.max(a.x, b.x) && math.min(a.y, b.y) <= c.y && c.y <= math.max(a.y, b.y);
+}
+
+// Cormen et al.'s segment intersection, exact in integers.
+exact_segments :: proc(a, b, c, d: P) -> bool {
+	d1, d2 := direction(c, d, a), direction(c, d, b);
+	d3, d4 := direction(a, b, c), direction(a, b, d);
+	if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) { return true; }
+	return (d1 == 0 && on_segment(c, d, a)) || (d2 == 0 && on_segment(c, d, b))
+		|| (d3 == 0 && on_segment(a, b, c)) || (d4 == 0 && on_segment(a, b, d));
+}
+
+segments_in :: proc($T: type, scale: T, a, b, c, d: P) -> bool {
+	return geometry.intersects(geometry.Segment2(T).from_points(to2(T, a, scale), to2(T, b, scale)), geometry.Segment2(T).from_points(to2(T, c, scale), to2(T, d, scale)));
+}
+
+segment_box_in :: proc($T: type, scale: T, a, b, low, high: P, dimensions: int) -> bool {
+	if (dimensions == 2) {
+		return geometry.intersects(geometry.Segment2(T).from_points(to2(T, a, scale), to2(T, b, scale)), geometry.Aabb2(T).from_min_max(to2(T, low, scale), to2(T, high, scale)));
+	}
+	return geometry.intersects(geometry.Aabb3(T).from_min_max(to3(T, low, scale), to3(T, high, scale)), geometry.Segment3(T).from_points(to3(T, a, scale), to3(T, b, scale)));
+}
+
+// Segments of small integers, which meet, touch, and overlap on a line
+// often, against the exact answers, at every element type and at scales
+// where the floating-point products round.
+segment_overlaps :: proc() {
+	random := Random{61};
+	wrong, crossing, touching := 0, 0, 0;
+	foreach (_ in 0 ..< 4000) {
+		a, b, c, d := random_p(inout random, 3), random_p(inout random, 3), random_p(inout random, 3), random_p(inout random, 3);
+		exact := exact_segments(a, b, c, d);
+		if (exact) { crossing += 1; }
+		ok := segments_in(f64, 1.0, a, b, c, d) == exact && segments_in(f64, pow2(-400), a, b, c, d) == exact && segments_in(f64, pow2(400), a, b, c, d) == exact
+			&& segments_in(f32, f32(1), a, b, c, d) == exact && segments_in(f32, f32(pow2(-60)), a, b, c, d) == exact && segments_in(i32, i32(1), a, b, c, d) == exact
+			&& segments_in(f64, 1.0, c, d, a, b) == exact && segments_in(f64, 1.0, b, a, c, d) == exact;
+		if (!ok) { wrong += 1; }
+	}
+	check("segment pairs agree with the exact test", wrong == 0);
+
+	// Near-collinear points 2^50 apart, where the products of the
+	// coordinates do not fit a double, against i128 orientations.
+	wrong = 0;
+	foreach (_ in 0 ..< 2000) {
+		base := i64(1) << 50;
+		a := P{0, 0, 0};
+		b := P{base, base/2 + random.int_in(2), 0};
+		c := P{base/2 + random.int_in(2), base/4 + random.int_in(2), 0};
+		d := P{base/2 + random.int_in(2) + 1000, base/4 - 3000 + random.int_in(2), 0};
+		if (random.below(2) == 0) { d = P{c.x + random.int_in(2), c.y + random.int_in(2) + 1, 0}; }
+		exact := exact_segments_wide(a, b, c, d);
+		if (exact) { touching += 1; }
+		if (segments_in(f64, 1.0, a, b, c, d) != exact || segments_in(f64, 1.0, c, d, b, a) != exact) { wrong += 1; }
+	}
+	check("near-collinear segments agree with the exact test", wrong == 0);
+	fmt.println("segment pairs meeting", crossing, "near-collinear meeting", touching);
+
+	wrong = 0;
+	meeting := [2]int{0, 0};
+	ranges := [2]Q{{0, 1}, {1, 1}};
+	foreach (n in 0 ..< 4000) {
+		a, b := random_p(inout random, 6), random_p(inout random, 6);
+		low, high := corners_of(inout random);
+		dimensions := 2 + n % 2;
+		direction := P{b.x - a.x, b.y - a.y, b.z - a.z};
+		exact := exact_ray_box(a, direction, low, high, dimensions, ranges[0], ranges[1]);
+		if (exact) { meeting[n % 2] += 1; }
+		ok := segment_box_in(f64, 1.0, a, b, low, high, dimensions) == exact && segment_box_in(f64, pow2(-400), a, b, low, high, dimensions) == exact
+			&& segment_box_in(f64, pow2(400), a, b, low, high, dimensions) == exact && segment_box_in(f32, f32(1), a, b, low, high, dimensions) == exact
+			&& segment_box_in(f32, f32(pow2(-60)), a, b, low, high, dimensions) == exact && segment_box_in(i32, i32(1), a, b, low, high, dimensions) == exact
+			&& segment_box_in(f64, 1.0, b, a, low, high, dimensions) == exact;
+		if (!ok) { wrong += 1; }
+	}
+	check("segments and boxes agree with the exact test", wrong == 0);
+	fmt.println("segment-box meeting 2d", meeting[0], "3d", meeting[1]);
+	check("a segment and an empty box", !geometry.intersects(geometry.Segment2(f64).from_points(v2(0, 0), v2(1, 1)), geometry.Aabb2(f64).empty()));
+}
+
+exact_segments_wide :: proc(a, b, c, d: P) -> bool {
+	orient :: proc(a, b, c: P) -> i128 { return i128(b.x - a.x)*i128(c.y - a.y) - i128(b.y - a.y)*i128(c.x - a.x); }
+	d1, d2 := orient(c, d, a), orient(c, d, b);
+	d3, d4 := orient(a, b, c), orient(a, b, d);
+	if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) { return true; }
+	return (d1 == 0 && on_segment(c, d, a)) || (d2 == 0 && on_segment(c, d, b))
+		|| (d3 == 0 && on_segment(a, b, c)) || (d4 == 0 && on_segment(a, b, d));
+}
+
+// The distance between a triangle and a box by alternating projections,
+// which decreases to it: toward 0 where they meet, however slowly, and to a
+// fixed point where they do not.
+apart :: proc(triangle: geometry.Triangle3(f64), box: geometry.Aabb3(f64)) -> f64 {
+	p := box.closest_point(triangle.a);
+	q := triangle.closest_point(p);
+	distance := (p - q).length();
+	foreach (_ in 0 ..< 1000000) {
+		p = box.closest_point(q);
+		q = triangle.closest_point(p);
+		next := (p - q).length();
+		if (next < 1.0e-9 || !(next < distance - distance*1.0e-12)) { return next; }
+		distance = next;
+	}
+	return distance;
+}
+
+triangle_boxes :: proc() {
+	random := Random{71};
+	wrong, meeting := 0, 0;
+	foreach (_ in 0 ..< 1500) {
+		a, b, c := random_p(inout random, 5), random_p(inout random, 5), random_p(inout random, 5);
+		low, high := corners_of(inout random);
+		box := geometry.Aabb3(i32).from_min_max(to3(i32, low, i32(1)), to3(i32, high, i32(1)));
+		triangle := geometry.Triangle3(i32).from_points(to3(i32, a, i32(1)), to3(i32, b, i32(1)), to3(i32, c, i32(1)));
+		answer := geometry.intersects(triangle, box);
+		f := geometry.Triangle3(f64).from_points(to3(f64, a, 1.0), to3(f64, b, 1.0), to3(f64, c, 1.0));
+		fbox := geometry.Aabb3(f64).from_min_max(to3(f64, low, 1.0), to3(f64, high, 1.0));
+		distance := apart(f, fbox);
+		if (answer) { meeting += 1; }
+		if (answer != (distance < 1.0e-7) || geometry.intersects(fbox, f) != answer || geometry.intersects(box, triangle) != answer) { wrong += 1; }
+	}
+	check("triangles and boxes agree with their distance", wrong == 0);
+	fmt.println("triangle-box meeting", meeting);
+
+	box := geometry.Aabb3(f64).from_min_max(v3(0, 0, 0), v3(1, 1, 1));
+	T3 :: geometry.Triangle3(f64);
+	check("a triangle through a box with no corner inside", geometry.intersects(T3.from_points(v3(-5, 0.5, -5), v3(5, 0.5, -5), v3(0, 0.5, 5)), box));
+	check("a triangle touching a box's corner", geometry.intersects(T3.from_points(v3(1, 1, 1), v3(3, 1, 1), v3(1, 3, 1)), box));
+	check("a triangle touching a box's face", geometry.intersects(T3.from_points(v3(1, 0.5, 0.5), v3(3, 0.5, 0.5), v3(1, 3, 0.5)), box));
+	// Their bounds overlap and the triangle's plane cuts the box, but an edge
+	// crossed with an axis separates them.
+	beside := T3.from_points(v3(2, 0.25, 0.75), v3(0.25, 2, 0.75), v3(1.5, 1.5, 1.5));
+	check("a triangle beside a box's edge", !geometry.intersects(beside, box) && apart(beside, box) > 0.1
+		&& geometry.intersects(geometry.Plane(f64).from_points(beside.a, beside.b, beside.c) or_else geometry.Plane(f64){}, box));
+	check("a triangle and an empty box", !geometry.intersects(T3.from_points(v3(0, 0, 0), v3(1, 0, 0), v3(0, 1, 0)), geometry.Aabb3(f64).empty()));
+	check("a triangle of no area", geometry.intersects(T3.from_points(v3(-1, 0.5, 0.5), v3(2, 0.5, 0.5), v3(2, 0.5, 0.5)), box)
+		&& !geometry.intersects(T3.from_points(v3(-1, 0.5, 0.5), v3(0.5, 2, 0.5), v3(0.5, 2, 0.5)), box));
+}
+
+Depth :: linalg.Depth_Range;
+
+// The eight corners of a view volume in view space: `x` and `y` at each
+// side of the near and far rectangles, near first.
+View_Volume :: struct { corners: [8]V3 }
+
+perspective_volume :: proc(fovy, aspect, near_z, far_z: f64, left_handed: bool) -> View_Volume {
+	result: View_Volume = {};
+	tangent := repro.sin(fovy*0.5)/repro.cos(fovy*0.5);
+	foreach (k in 0 ..< 8) {
+		depth := near_z if k < 4 else far_z;
+		h := depth*tangent;
+		w := h*aspect;
+		sx := -1.0 if k % 2 == 0 else 1.0;
+		sy := -1.0 if (k/2) % 2 == 0 else 1.0;
+		result.corners[k] = v3(sx*w, sy*h, depth if left_handed else -depth);
+	}
+	return result;
+}
+
+orthographic_volume :: proc(left, right, bottom, top, near_z, far_z: f64, left_handed: bool) -> View_Volume {
+	result: View_Volume = {};
+	foreach (k in 0 ..< 8) {
+		depth := near_z if k < 4 else far_z;
+		result.corners[k] = v3(left if k % 2 == 0 else right, bottom if (k/2) % 2 == 0 else top, depth if left_handed else -depth);
+	}
+	return result;
+}
+
+// Whether corner `k` lies on plane `p`: left 0, right 1, bottom 2, top 3,
+// near 4, far 5.
+on_plane :: proc(k, p: int) -> bool {
+	switch (p) {
+	case 0: return k % 2 == 0;
+	case 1: return k % 2 == 1;
+	case 2: return (k/2) % 2 == 0;
+	case 3: return (k/2) % 2 == 1;
+	case 4: return k < 4;
+	default: return k >= 4;
+	}
+}
+
+// The corners of `volume`, moved by `world_from_view`, on the planes they
+// belong to and inside the others; each face's center inside and, moved
+// out along its normal, outside.
+volume_fits :: proc(frustum: geometry.Frustum(f64), volume: View_Volume, world_from_view: M4, planes: int, tolerance: f64) -> bool {
+	ok := true;
+	corners: [8]V3 = {};
+	foreach (k in 0 ..< 8) { corners[k] = world_from_view.transform_point(volume.corners[k]); }
+	foreach (p in 0 ..< planes) {
+		plane := frustum.planes[p];
+		ok = ok && near(plane.normal.length(), 1.0, 1.0e-15);
+		center := V3.splat(0);
+		foreach (k in 0 ..< 8) {
+			d := plane.signed_distance(corners[k]);
+			if (on_plane(k, p)) {
+				ok = ok && near(d, 0.0, tolerance);
+				center = center + corners[k]*0.25;
+			} else {
+				ok = ok && -tolerance <= d;
+			}
+		}
+		ok = ok && frustum.contains(center + plane.normal*1.0e-6) && !frustum.contains(center - plane.normal*1.0e-6);
+	}
+	return ok;
+}
+
+frustums :: proc() {
+	view := M4.look_at(v3(1, 2, 3), v3(0, -1, -5), v3(0, 1, 0)) or_else M4{};
+	world_from_view := view.inverse_rigid();
+	identity := M4.identity();
+	fails := 0;
+	foreach (depth in Depth.values()) {
+		foreach (left_handed in [2]bool{false, true}) {
+			foreach (moved in [2]bool{false, true}) {
+				camera := view if moved else identity;
+				back := world_from_view if moved else identity;
+				projection := M4.perspective_lh(1.1, 1.6, 0.25, 40.0, depth) if left_handed else M4.perspective(1.1, 1.6, 0.25, 40.0, depth);
+				frustum := geometry.Frustum(f64).from_matrix(projection*camera, depth) or_else geometry.Frustum(f64){};
+				if (!volume_fits(frustum, perspective_volume(1.1, 1.6, 0.25, 40.0, left_handed), back, 6, 1.0e-12)) { fails += 1; }
+
+				ortho := M4.orthographic_lh(-3, 2, -1, 4, 0.5, 30, depth) if left_handed else M4.orthographic(-3, 2, -1, 4, 0.5, 30, depth);
+				box := geometry.Frustum(f64).from_matrix(ortho*camera, depth) or_else geometry.Frustum(f64){};
+				if (!volume_fits(box, orthographic_volume(-3, 2, -1, 4, 0.5, 30, left_handed), back, 6, 1.0e-12)) { fails += 1; }
+
+				infinite := M4.perspective_lh(1.1, 1.6, 0.25, INF, depth) if left_handed else M4.perspective(1.1, 1.6, 0.25, INF, depth);
+				open := geometry.Frustum(f64).from_matrix(infinite*camera, depth) or_else geometry.Frustum(f64){};
+				far := open.planes[5];
+				ahead := back.transform_point(v3(0, 0, 1.0e300 if left_handed else -1.0e300));
+				if (!volume_fits(open, perspective_volume(1.1, 1.6, 0.25, 40.0, left_handed), back, 5, 1.0e-12)
+					|| far.normal != V3.splat(0) || far.offset != -1.0 || !open.contains(ahead)) { fails += 1; }
+
+				if (!moved) {
+					// The near and far planes are the projection's.
+					forward := 1.0 if left_handed else -1.0;
+					n, f := frustum.planes[4], frustum.planes[5];
+					if (!(near(n.normal.z, forward, 1.0e-15) && near(n.offset, 0.25, 1.0e-15) && near(f.normal.z, -forward, 1.0e-15) && near(f.offset, -40.0, 1.0e-12))) { fails += 1; }
+				}
+			}
+		}
+	}
+	check("frustums fit their view volumes", fails == 0);
+	check("a singular clip matrix", geometry.Frustum(f64).from_matrix(M4.splat(0), .Zero_To_One) == .none);
+
+	// Culling, against the box frustum of an orthographic projection.
+	ortho := geometry.Frustum(f64).from_matrix(M4.orthographic(-1, 1, -1, 1, 1, 3, .Zero_To_One), .Zero_To_One) or_else geometry.Frustum(f64){};
+	S :: geometry.Sphere(f64);
+	B :: geometry.Aabb3(f64);
+	check("a sphere inside, touching, and outside", geometry.intersects(ortho, S.from_center_radius(v3(0, 0, -2), 0.5))
+		&& geometry.intersects(S.from_center_radius(v3(1.5, 0, -2), 0.5), ortho) && !geometry.intersects(ortho, S.from_center_radius(v3(1.5, 0, -2), 0.25)));
+	check("a box inside, touching, and outside", geometry.intersects(ortho, B.from_min_max(v3(-0.5, -0.5, -2.5), v3(0.5, 0.5, -1.5)))
+		&& geometry.intersects(B.from_min_max(v3(1, -0.5, -2.5), v3(2, 0.5, -1.5)), ortho) && !geometry.intersects(ortho, B.from_min_max(v3(1.25, -0.5, -2.5), v3(2, 0.5, -1.5)))
+		&& !geometry.intersects(ortho, B.from_min_max(v3(-0.5, -0.5, -0.5), v3(0.5, 0.5, -0.25))) && !geometry.intersects(ortho, B.empty()));
+	// Outside the frustum's edge but within each plane's reach: the
+	// documented conservative answer.
+	check("a sphere past the frustum's edge", geometry.intersects(ortho, S.from_center_radius(v3(1.5, 1.5, -2), 0.6)));
+	check("a point inside and outside", ortho.contains(v3(1, -1, -3)) && !ortho.contains(v3(1, -1, -3.0000001)));
+}
+
+transforms :: proc() {
+	random := Random{81};
+	wrong := 0;
+	foreach (n in 0 ..< 500) {
+		m := M4.identity();
+		foreach (r in 0 ..< 3) {
+			foreach (c in 0 ..< 4) { m[r, c] = random.next()*(4.0 if c == 3 else 1.0); }
+		}
+		if (n % 5 == 0) { m[0, 1] = 0.0; m[2, 2] = -0.0; }
+		box := geometry.Aabb3(f64).from_corners(random.v3(), random.v3());
+		bound := geometry.transform_box(m, box);
+		corners := geometry.Aabb3(f64).from_point(m.transform_point(box.corner(0)));
+		foreach (k in 1 ..< 8) { corners = corners.union(m.transform_point(box.corner(k))); }
+		if (bound != corners) { wrong += 1; }
+
+		m32 := linalg.Matrix(f32, 4, 4).from_matrix(m);
+		box32 := geometry.Aabb3(f32).from_min_max(linalg.Vector3(f32).from_vector(box.min), linalg.Vector3(f32).from_vector(box.max));
+		corners32 := geometry.Aabb3(f32).from_point(m32.transform_point(box32.corner(0)));
+		foreach (k in 1 ..< 8) { corners32 = corners32.union(m32.transform_point(box32.corner(k))); }
+		if (geometry.transform_box(m32, box32) != corners32) { wrong += 1; }
+
+		m3 := linalg.Matrix(f64, 3, 3).identity();
+		foreach (r in 0 ..< 2) {
+			foreach (c in 0 ..< 3) { m3[r, c] = m[r, c]; }
+		}
+		box2 := geometry.Aabb2(f64).from_corners(v2(box.min.x, box.min.y), v2(box.max.x, box.max.y));
+		corners2 := geometry.Aabb2(f64).from_point(m3.transform_point_2d(box2.corner(0)));
+		foreach (k in 1 ..< 4) { corners2 = corners2.union(m3.transform_point_2d(box2.corner(k))); }
+		if (geometry.transform_box(m3, box2) != corners2) { wrong += 1; }
+	}
+	check("transformed boxes bound their transformed corners exactly", wrong == 0);
+	I3 :: linalg.Vector3(i32);
+	im := linalg.Matrix(i32, 4, 4).from_rows({{0, -2, 0, 5}, {3, 0, 0, -1}, {0, 0, 1, 7}, {0, 0, 0, 1}});
+	ibox := geometry.Aabb3(i32).from_min_max(I3.from_components(-1, 0, 2), I3.from_components(4, 3, 5));
+	check("an integer transformed box", geometry.transform_box(im, ibox) == geometry.Aabb3(i32).from_min_max(I3.from_components(-1, -4, 9), I3.from_components(5, 11, 12)));
+	check("an empty box stays empty", geometry.transform_box(M4.identity(), geometry.Aabb3(f64).empty()).is_empty());
+
+	// Planes: points on a plane move onto the moved plane, and points on
+	// each side stay on that side.
+	wrong = 0;
+	foreach (_ in 0 ..< 500) {
+		m := M4.identity();
+		foreach (r in 0 ..< 3) {
+			foreach (c in 0 ..< 4) { m[r, c] = random.next()*(4.0 if c == 3 else 1.0); }
+		}
+		plane := geometry.Plane(f64).from_point_normal(random.v3(), random.v3()) or_else geometry.Plane(f64){};
+		if (math.abs(m.upper_left().determinant()) < 0.05) { continue; }
+		switch (geometry.transform_plane(m, plane)) {
+		case .some(moved):
+			if (!near(moved.normal.length(), 1.0, 1.0e-15)) { wrong += 1; }
+			foreach (_ in 0 ..< 4) {
+				p := plane.project(random.v3());
+				side := random.v3();
+				if (!near(moved.signed_distance(m.transform_point(p)), 0.0, 1.0e-11)) { wrong += 1; }
+				d := plane.signed_distance(side);
+				if (math.abs(d) > 0.01 && (d > 0.0) != (moved.signed_distance(m.transform_point(side)) > 0.0)) { wrong += 1; }
+			}
+			doubled := geometry.transform_plane(m, geometry.Plane(f64).from_normal_offset(plane.normal*2.0, plane.offset*2.0)) or_else geometry.Plane(f64){};
+			if (!near(doubled.offset, moved.offset, 1.0e-12) || !near((doubled.normal - moved.normal).length(), 0.0, 1.0e-15)) { wrong += 1; }
+		case .none:
+			wrong += 1;
+		}
+	}
+	check("transformed planes", wrong == 0);
+	flat := M4.identity();
+	flat[2, 2] = 0.0;
+	check("a singular transform", geometry.transform_plane(flat, geometry.Plane(f64).from_normal_offset(v3(1, 0, 0), 1)) == .none);
+	shift := M4.identity();
+	shift[0, 3] = 3.0;
+	check("a translated plane", (geometry.transform_plane(shift, geometry.Plane(f64).from_normal_offset(v3(1, 0, 0), 1)) or_else geometry.Plane(f64){}) == geometry.Plane(f64).from_normal_offset(v3(1, 0, 0), 4));
+}
+
+// A forward-mode dual number, as in tests/run/lib_geometry_shapes.loke, for
+// the derivative of each cast's distance.
+Dual :: struct { value, derivative: f64 }
+
+impl Dual {
+	@(public) from_f64 :: hook(convert) proc(value: f64) -> Dual { return {value, 0}; }
+	@(public) add :: operator(+) proc(a, b: Dual) -> Dual { return {a.value + b.value, a.derivative + b.derivative}; }
+	@(public) subtract :: operator(-) proc(a, b: Dual) -> Dual { return {a.value - b.value, a.derivative - b.derivative}; }
+	@(public) negate :: operator(-) proc(a: Dual) -> Dual { return {-a.value, -a.derivative}; }
+	@(public) multiply :: operator(*) proc(a, b: Dual) -> Dual {
+		return {a.value*b.value, a.derivative*b.value + a.value*b.derivative};
+	}
+	@(public) divide :: operator(/) proc(a, b: Dual) -> Dual {
+		return {a.value/b.value, (a.derivative*b.value - a.value*b.derivative)/(b.value*b.value)};
+	}
+	@(public) equal :: operator(==) proc(a, b: Dual) -> bool { return a.value == b.value; }
+	@(public) less :: operator(<) proc(a, b: Dual) -> bool { return a.value < b.value; }
+
+	sqrt :: proc(self) -> Dual {
+		root := math.sqrt(self.value);
+		return {root, self.derivative/(root + root)};
+	}
+	sin :: proc(self) -> Dual { return {repro.sin(self.value), self.derivative*repro.cos(self.value)}; }
+	cos :: proc(self) -> Dual { return {repro.cos(self.value), -self.derivative*repro.sin(self.value)}; }
+	asin :: proc(self) -> Dual { return {repro.asin(self.value), self.derivative/math.sqrt(1.0 - self.value*self.value)}; }
+	acos :: proc(self) -> Dual { return {repro.acos(self.value), -self.derivative/math.sqrt(1.0 - self.value*self.value)}; }
+	atan2 :: proc(self, x: Dual) -> Dual {
+		squared := x.value*x.value + self.value*self.value;
+		return {repro.atan2(self.value, x.value), (x.value*self.derivative - self.value*x.derivative)/squared};
+	}
+	abs :: proc(self) -> Dual { return -self if self.value < 0.0 else self; }
+	floor :: proc(self) -> Dual { return {math.floor(self.value), 0}; }
+	ceil :: proc(self) -> Dual { return {math.ceil(self.value), 0}; }
+	round :: proc(self) -> Dual { return {math.round(self.value), 0}; }
+	is_finite :: proc(self) -> bool { return math.is_finite(self.value); }
+	is_normal :: proc(self) -> bool { return math.is_finite(self.value) && math.abs(self.value) >= math.F64_MIN_NORMAL; }
+}
+
+D3 :: linalg.Vector3(Dual);
+
+lift :: proc(v: V3) -> D3 { return D3.from_components(Dual{v.x, 0}, Dual{v.y, 0}, Dual{v.z, 0}); }
+
+// `p` with a derivative of 1 in x.
+moving :: proc(p: V3) -> D3 { return D3.from_components(Dual{p.x, 1}, Dual{p.y, 0}, Dual{p.z, 0}); }
+
+duals :: proc() {
+	R :: geometry.Ray3(Dual);
+	zero, inf := Dual{0, 0}, Dual{INF, 0};
+	// A ray along +z from (x, 0.5, -10): each distance's derivative in x.
+	ray := R.from_origin_direction(moving(v3(0.3, 0.5, -10)), lift(v3(0, 0, 2)));
+	plane := geometry.Plane(Dual).from_normal_offset(lift(v3(0.6, 0, 0.8)), Dual{1, 0});
+	t := geometry.cast(ray, plane, zero, inf) or_else Dual{};
+	// t = (1 - 0.6x - 0.8*(-10))/(0.8*2), so dt/dx = -0.6/1.6.
+	check("a dual plane cast", near(t.derivative, -0.375, 1.0e-15));
+	sphere := geometry.Sphere(Dual).from_center_radius(lift(v3(0, 0.5, 0)), Dual{1, 0});
+	t = geometry.cast(ray, sphere, zero, inf) or_else Dual{};
+	// t = (10 - sqrt(1 - x^2))/2, so dt/dx = x/(2 sqrt(1 - x^2)).
+	check("a dual sphere cast", near(t.derivative, 0.3/(2.0*math.sqrt(1.0 - 0.09)), 1.0e-12));
+	tilted := R.from_origin_direction(moving(v3(-3, 0.5, 0.5)), lift(v3(1, 0, 0.1)));
+	box := geometry.Aabb3(Dual).from_min_max(lift(v3(0, 0, 0)), lift(v3(1, 1, 1)));
+	t = geometry.cast(tilted, box, zero, inf) or_else Dual{};
+	// The entry through the face x = 0, at t = -x.
+	check("a dual box cast", near(t.value, 3.0, 1.0e-15) && near(t.derivative, -1.0, 1.0e-15));
+	triangle := geometry.Triangle3(Dual).from_points(lift(v3(0, 0, 2)), lift(v3(4, 0, 0)), lift(v3(0, 4, 2)));
+	hit := geometry.cast(ray, triangle, zero, inf) or_else geometry.Triangle_Hit(Dual){};
+	// The plane x + 2z = 4 meets the ray at z = (4 - x)/2, t = (z + 10)/2,
+	// so dt/dx = -1/4.
+	check("a dual triangle cast", near(hit.t.derivative, -0.25, 1.0e-15) && near(hit.barycentric.y.derivative, 0.25, 1.0e-15));
+}
+
+FOLDED_BOX_CAST :: geometry.cast(geometry.Ray3(f64).from_origin_direction(V3.from_components(-1.3, 0.2, 0.7), V3.from_components(1.1, 0.3, -0.2)), geometry.Aabb3(f64).from_min_max(V3.from_components(0.1, 0.2, 0.3), V3.from_components(1.7, 1.4, 0.9)), 0.0, INF);
+FOLDED_TRIANGLE_CAST :: geometry.cast(geometry.Ray3(f64).from_origin_direction(V3.from_components(0.3, 0.4, 2.1), V3.from_components(-0.1, 0.2, -1.3)), geometry.Triangle3(f64).from_points(V3.from_components(0.1, 0.2, 0.3), V3.from_components(1.7, -0.4, 0.9), V3.from_components(-0.3, 1.3, 0.2)), 0.0, INF);
+FOLDED_TRANSFORM :: geometry.transform_box(M4.from_rows({{0.6, -0.8, 0, 1.5}, {0.8, 0.6, 0, -2.5}, {0, 0, 1.3, 0.1}, {0, 0, 0, 1}}), geometry.Aabb3(f64).from_min_max(V3.from_components(-1.1, 0.2, 0.3), V3.from_components(1.7, 1.4, 0.9)));
+
+determinism :: proc() {
+	one := 1.0;
+	box := geometry.cast(geometry.Ray3(f64).from_origin_direction(v3(-1.3*one, 0.2, 0.7), v3(1.1, 0.3, -0.2)), geometry.Aabb3(f64).from_min_max(v3(0.1, 0.2, 0.3), v3(1.7, 1.4, 0.9)), 0.0, INF) or_else 0.0;
+	hit := geometry.cast(geometry.Ray3(f64).from_origin_direction(v3(0.3*one, 0.4, 2.1), v3(-0.1, 0.2, -1.3)), geometry.Triangle3(f64).from_points(v3(0.1, 0.2, 0.3), v3(1.7, -0.4, 0.9), v3(-0.3, 1.3, 0.2)), 0.0, INF) or_else geometry.Triangle_Hit(f64){};
+	moved := geometry.transform_box(M4.from_rows({{0.6*one, -0.8, 0, 1.5}, {0.8, 0.6, 0, -2.5}, {0, 0, 1.3, 0.1}, {0, 0, 0, 1}}), geometry.Aabb3(f64).from_min_max(v3(-1.1, 0.2, 0.3), v3(1.7, 1.4, 0.9)));
+	sphere := geometry.cast(geometry.Ray3(f64).from_origin_direction(v3(-1.3*one, 0.2, 0.7), v3(1.1, 0.3, -0.2)), geometry.Sphere(f64).from_center_radius(v3(0.5, 0.6, 0.1), 0.7), 0.0, INF) or_else 0.0;
+	clip := M4.perspective(1.1, 1.6, 0.25, 40.0, .Zero_To_One)*(M4.look_at(v3(1*one, 2, 3), v3(0, -1, -5), v3(0, 1, 0)) or_else M4{});
+	frustum := geometry.Frustum(f64).from_matrix(clip, .Zero_To_One) or_else geometry.Frustum(f64){};
+	fmt.println("box cast", bits(box));
+	fmt.println("triangle cast", bits(hit.t), bits(hit.barycentric.x), bits(hit.barycentric.y), bits(hit.barycentric.z));
+	fmt.println("transformed box", bits(moved.min.x), bits(moved.min.y), bits(moved.max.z));
+	fmt.println("sphere cast", bits(sphere));
+	fmt.println("frustum left", bits(frustum.planes[0].normal.x), bits(frustum.planes[0].offset), "far", bits(frustum.planes[5].normal.z), bits(frustum.planes[5].offset));
+	check("folded casts and boxes equal the run-time ones", (FOLDED_BOX_CAST or_else 0.0) == box
+		&& (FOLDED_TRIANGLE_CAST or_else geometry.Triangle_Hit(f64){}) == hit && FOLDED_TRANSFORM == moved);
+}
+
+main :: proc() {
+	ray_boxes();
+	spheres();
+	planes();
+	triangles();
+	segment_pairs();
+	segment_overlaps();
+	triangle_boxes();
+	frustums();
+	transforms();
+	duals();
+	determinism();
+	fmt.println("failures", failures);
+}

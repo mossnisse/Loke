@@ -1,0 +1,63 @@
+ok zeros has its shape
+ok identity
+ok filled
+ok from_rows reads as it prints
+ok from_column_major is the storage order
+ok an empty matrix
+ok from_fixed copies
+ok to_fixed copies back
+ok a clone is separate storage
+[[1, 2, 3], [4, 5, 6]] [] [[0.5, -2.0]]
+[[1, 4], [2, 5], [3, 6]]
+ok an owner, a column-major buffer, and a row-major buffer view alike
+ok the default leading dimension is packed
+ok transpose swaps the shape
+ok a block of a transpose is the transpose of a block
+ok a row and a column
+ok an empty block
+ok from_column is a column vector
+ok split_columns through a temporary
+ok split_columns at both ends
+ok split_columns through a named view
+ok split_rows of a row-major buffer
+ok split_rows of a transpose
+ok block, row, column, and transpose of a View_Mut
+ok add_scaled
+ok scale_by
+ok copy_from a transpose
+ok as_view reads the same elements
+ok products equal linalg.Matrix bit for bit
+ok a product of transposed views
+ok a product into and out of blocks
+-4.551020408163264 6.163265306122448 0.9999999999999994
+ok an integer product
+ok multiply_add_into
+ok an empty inner dimension gives zeros
+ok and leaves an update unchanged
+ok multiply_add_into adds term by term
+ok add
+ok subtract
+ok scale
+ok transpose copies
+ok add_into a transposed view
+ok subtract_into
+ok scale_into
+ok transpose_into
+ok trace
+ok dot of two columns
+ok dot of two matrices
+ok equal needs the same shape
+ok approx_equal with both tolerances
+ok approx_equal outside them
+ok a NaN is never approximately equal
+ok approx_equal needs the same shape
+ok norm_one is the largest column sum
+ok norm_infinity is the largest row sum
+9.539392014169458 9.539392014169456
+ok norm_frobenius
+ok norm_frobenius does not overflow
+ok norm_frobenius does not underflow
+ok norm_frobenius of 3 and 4 times a large scale
+ok an infinity gives infinity
+ok a NaN gives NaN
+5.64059629211418 5.6405964

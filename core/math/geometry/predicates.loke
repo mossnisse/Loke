@@ -1,0 +1,237 @@
+// geometry-plan.md "Exact predicates": each `f64` predicate is Shewchuk's
+// first stage, the determinant in floating point of the coordinate
+// differences with his error bound, and, when the result is within the
+// bound, the exact determinant of expansion.loke. `f32` coordinates run the
+// `f64` predicate, every `f32` difference and product of up to five of them
+// being in the range where it is exact. Other element types compute the
+// first stage's determinant in `T`, which is exact for integers that do not
+// overflow.
+@(public)
+package geometry;
+
+import "base:interfaces";
+import "core:math/linalg";
+
+// 2^-53, the unit roundoff of `f64`.
+@(private) EPSILON :: 1.1102230246251565e-16;
+// Shewchuk's first-stage error bounds, relative to each determinant's
+// permanent.
+@(private) ORIENT2D_BOUND :: (3.0 + 16.0*EPSILON)*EPSILON;
+@(private) ORIENT3D_BOUND :: (7.0 + 56.0*EPSILON)*EPSILON;
+@(private) INCIRCLE_BOUND :: (10.0 + 96.0*EPSILON)*EPSILON;
+@(private) INSPHERE_BOUND :: (16.0 + 224.0*EPSILON)*EPSILON;
+
+@(private)
+sign_of :: proc(x: $T) -> Sign where interfaces.Numeric(T), interfaces.Ordered(T) {
+	if (T(0) < x) { return .Positive; }
+	if (x < T(0)) { return .Negative; }
+	return .Zero;
+}
+
+@(private)
+magnitude :: proc(x: f64) -> f64 { return -x if x < 0.0 else x; }
+
+/**
+	Which side of the line through `a` and `b` the point `c` is on:
+	`.Positive` when `a`, `b`, `c` turn counterclockwise, `.Negative` when
+	clockwise, and `.Zero` when they are collinear. It is the sign of
+	`(a.x - c.x)*(b.y - c.y) - (a.y - c.y)*(b.x - c.x)`.
+
+	Exact for `f32` over its whole finite range, for `f64` coordinates whose
+	magnitudes are 0 or between `2^-450` and `2^450`, and for integers whose
+	products do not overflow, which panics. Other types get the sign of that
+	formula in `T`. A NaN or infinite coordinate gives a sign that is the same
+	everywhere but means nothing.
+*/
+orient2d :: proc(a, b, c: linalg.Vector2($T)) -> Sign where interfaces.Numeric(T), interfaces.Ordered(T) {
+	when (T == f64 || T == f32) {
+		return orient2d_f64(f64(a.x), f64(a.y), f64(b.x), f64(b.y), f64(c.x), f64(c.y));
+	} else {
+		return sign_of((a.x - c.x)*(b.y - c.y) - (a.y - c.y)*(b.x - c.x));
+	}
+}
+
+@(private)
+orient2d_f64 :: proc(ax, ay, bx, by, cx, cy: f64) -> Sign {
+	left := (ax - cx)*(by - cy);
+	right := (ay - cy)*(bx - cx);
+	det := left - right;
+	// When the two products differ in sign, or one is zero, their difference
+	// has the sign of the exact one.
+	total := 0.0;
+	if (left > 0.0) {
+		if (right <= 0.0) { return sign_of(det); }
+		total = left + right;
+	} else if (left < 0.0) {
+		if (right >= 0.0) { return sign_of(det); }
+		total = -left - right;
+	} else {
+		return sign_of(det);
+	}
+	bound := ORIENT2D_BOUND*total;
+	if (det >= bound || -det >= bound) { return sign_of(det); }
+	return orient2d_exact(ax, ay, bx, by, cx, cy);
+}
+
+/**
+	Which side of the plane through `a`, `b`, and `c` the point `d` is on:
+	`.Positive` when `d` is below it, where `a`, `b`, `c` appear
+	counterclockwise seen from above, `.Negative` when above, and `.Zero` when
+	the four are coplanar. It is the sign of the determinant of the rows
+	`a - d`, `b - d`, and `c - d`.
+
+	Exact for `f32` over its whole finite range, for `f64` coordinates whose
+	magnitudes are 0 or between `2^-280` and `2^300`, and for integers whose
+	products do not overflow; otherwise as for `orient2d`.
+*/
+orient3d :: proc(a, b, c, d: linalg.Vector3($T)) -> Sign where interfaces.Numeric(T), interfaces.Ordered(T) {
+	when (T == f64 || T == f32) {
+		return orient3d_f64(point(a), point(b), point(c), point(d));
+	} else {
+		adx := a.x - d.x; bdx := b.x - d.x; cdx := c.x - d.x;
+		ady := a.y - d.y; bdy := b.y - d.y; cdy := c.y - d.y;
+		adz := a.z - d.z; bdz := b.z - d.z; cdz := c.z - d.z;
+		return sign_of(adz*(bdx*cdy - cdx*bdy) + bdz*(cdx*ady - adx*cdy) + cdz*(adx*bdy - bdx*ady));
+	}
+}
+
+// A float point's coordinates in `f64`, exactly.
+@(private)
+point :: proc(v: linalg.Vector3($T)) -> Point { return {f64(v.x), f64(v.y), f64(v.z)}; }
+
+@(private)
+point2 :: proc(v: linalg.Vector2($T)) -> Point { return {f64(v.x), f64(v.y), 0.0}; }
+
+@(private)
+orient3d_f64 :: proc(a, b, c, d: Point) -> Sign {
+	adx := a.x - d.x; bdx := b.x - d.x; cdx := c.x - d.x;
+	ady := a.y - d.y; bdy := b.y - d.y; cdy := c.y - d.y;
+	adz := a.z - d.z; bdz := b.z - d.z; cdz := c.z - d.z;
+	bdxcdy := bdx*cdy; cdxbdy := cdx*bdy;
+	cdxady := cdx*ady; adxcdy := adx*cdy;
+	adxbdy := adx*bdy; bdxady := bdx*ady;
+	det := adz*(bdxcdy - cdxbdy) + bdz*(cdxady - adxcdy) + cdz*(adxbdy - bdxady);
+	permanent := (magnitude(bdxcdy) + magnitude(cdxbdy))*magnitude(adz)
+		+ (magnitude(cdxady) + magnitude(adxcdy))*magnitude(bdz)
+		+ (magnitude(adxbdy) + magnitude(bdxady))*magnitude(cdz);
+	bound := ORIENT3D_BOUND*permanent;
+	if (det > bound || -det > bound) { return sign_of(det); }
+	return orient3d_exact(a, b, c, d);
+}
+
+/**
+	Whether `d` is inside the circle through `a`, `b`, and `c`, given in
+	counterclockwise order: `.Positive` inside, `.Negative` outside, and
+	`.Zero` on it; the signs swap for clockwise `a`, `b`, `c`. It is the sign
+	of the determinant of the rows `(p.x - d.x, p.y - d.y, |p - d|^2)` for `p`
+	in `a`, `b`, `c`.
+
+	Exact for `f32` over its whole finite range, for `f64` coordinates whose
+	magnitudes are 0 or between `2^-200` and `2^220`, and for integers whose
+	products do not overflow; otherwise as for `orient2d`.
+*/
+incircle :: proc(a, b, c, d: linalg.Vector2($T)) -> Sign where interfaces.Numeric(T), interfaces.Ordered(T) {
+	when (T == f64 || T == f32) {
+		return incircle_f64(point2(a), point2(b), point2(c), point2(d));
+	} else {
+		adx := a.x - d.x; bdx := b.x - d.x; cdx := c.x - d.x;
+		ady := a.y - d.y; bdy := b.y - d.y; cdy := c.y - d.y;
+		alift := adx*adx + ady*ady;
+		blift := bdx*bdx + bdy*bdy;
+		clift := cdx*cdx + cdy*cdy;
+		return sign_of(alift*(bdx*cdy - cdx*bdy) + blift*(cdx*ady - adx*cdy) + clift*(adx*bdy - bdx*ady));
+	}
+}
+
+@(private)
+incircle_f64 :: proc(a, b, c, d: Point) -> Sign {
+	adx := a.x - d.x; bdx := b.x - d.x; cdx := c.x - d.x;
+	ady := a.y - d.y; bdy := b.y - d.y; cdy := c.y - d.y;
+	bdxcdy := bdx*cdy; cdxbdy := cdx*bdy;
+	alift := adx*adx + ady*ady;
+	cdxady := cdx*ady; adxcdy := adx*cdy;
+	blift := bdx*bdx + bdy*bdy;
+	adxbdy := adx*bdy; bdxady := bdx*ady;
+	clift := cdx*cdx + cdy*cdy;
+	det := alift*(bdxcdy - cdxbdy) + blift*(cdxady - adxcdy) + clift*(adxbdy - bdxady);
+	permanent := (magnitude(bdxcdy) + magnitude(cdxbdy))*alift
+		+ (magnitude(cdxady) + magnitude(adxcdy))*blift
+		+ (magnitude(adxbdy) + magnitude(bdxady))*clift;
+	bound := INCIRCLE_BOUND*permanent;
+	if (det > bound || -det > bound) { return sign_of(det); }
+	return incircle_exact(a, b, c, d);
+}
+
+/**
+	Whether `e` is inside the sphere through `a`, `b`, `c`, and `d`, given so
+	that `orient3d(a, b, c, d)` is `.Positive`: `.Positive` inside,
+	`.Negative` outside, and `.Zero` on it; the signs swap for the other
+	orientation. It is the sign of the determinant of the rows
+	`(p.x - e.x, p.y - e.y, p.z - e.z, |p - e|^2)` for `p` in `a`, `b`, `c`,
+	`d`.
+
+	Exact for `f32` over its whole finite range, for `f64` coordinates whose
+	magnitudes are 0 or between `2^-150` and `2^180`, and for integers whose
+	products do not overflow; otherwise as for `orient2d`. Its exact path, met
+	only near a degenerate configuration, uses about 120 KB of stack.
+*/
+insphere :: proc(a, b, c, d, e: linalg.Vector3($T)) -> Sign where interfaces.Numeric(T), interfaces.Ordered(T) {
+	when (T == f64 || T == f32) {
+		return insphere_f64(point(a), point(b), point(c), point(d), point(e));
+	} else {
+		aex := a.x - e.x; bex := b.x - e.x; cex := c.x - e.x; dex := d.x - e.x;
+		aey := a.y - e.y; bey := b.y - e.y; cey := c.y - e.y; dey := d.y - e.y;
+		aez := a.z - e.z; bez := b.z - e.z; cez := c.z - e.z; dez := d.z - e.z;
+		ab := aex*bey - bex*aey;
+		bc := bex*cey - cex*bey;
+		cd := cex*dey - dex*cey;
+		da := dex*aey - aex*dey;
+		ac := aex*cey - cex*aey;
+		bd := bex*dey - dex*bey;
+		abc := aez*bc - bez*ac + cez*ab;
+		bcd := bez*cd - cez*bd + dez*bc;
+		cda := cez*da + dez*ac + aez*cd;
+		dab := dez*ab + aez*bd + bez*da;
+		alift := aex*aex + aey*aey + aez*aez;
+		blift := bex*bex + bey*bey + bez*bez;
+		clift := cex*cex + cey*cey + cez*cez;
+		dlift := dex*dex + dey*dey + dez*dez;
+		return sign_of((dlift*abc - clift*dab) + (blift*cda - alift*bcd));
+	}
+}
+
+@(private)
+insphere_f64 :: proc(a, b, c, d, e: Point) -> Sign {
+	aex := a.x - e.x; bex := b.x - e.x; cex := c.x - e.x; dex := d.x - e.x;
+	aey := a.y - e.y; bey := b.y - e.y; cey := c.y - e.y; dey := d.y - e.y;
+	aez := a.z - e.z; bez := b.z - e.z; cez := c.z - e.z; dez := d.z - e.z;
+	aexbey := aex*bey; bexaey := bex*aey; ab := aexbey - bexaey;
+	bexcey := bex*cey; cexbey := cex*bey; bc := bexcey - cexbey;
+	cexdey := cex*dey; dexcey := dex*cey; cd := cexdey - dexcey;
+	dexaey := dex*aey; aexdey := aex*dey; da := dexaey - aexdey;
+	aexcey := aex*cey; cexaey := cex*aey; ac := aexcey - cexaey;
+	bexdey := bex*dey; dexbey := dex*bey; bd := bexdey - dexbey;
+	abc := aez*bc - bez*ac + cez*ab;
+	bcd := bez*cd - cez*bd + dez*bc;
+	cda := cez*da + dez*ac + aez*cd;
+	dab := dez*ab + aez*bd + bez*da;
+	alift := aex*aex + aey*aey + aez*aez;
+	blift := bex*bex + bey*bey + bez*bez;
+	clift := cex*cex + cey*cey + cez*cez;
+	dlift := dex*dex + dey*dey + dez*dez;
+	det := (dlift*abc - clift*dab) + (blift*cda - alift*bcd);
+	aezp := magnitude(aez); bezp := magnitude(bez); cezp := magnitude(cez); dezp := magnitude(dez);
+	aexbeyp := magnitude(aexbey); bexaeyp := magnitude(bexaey);
+	bexceyp := magnitude(bexcey); cexbeyp := magnitude(cexbey);
+	cexdeyp := magnitude(cexdey); dexceyp := magnitude(dexcey);
+	dexaeyp := magnitude(dexaey); aexdeyp := magnitude(aexdey);
+	aexceyp := magnitude(aexcey); cexaeyp := magnitude(cexaey);
+	bexdeyp := magnitude(bexdey); dexbeyp := magnitude(dexbey);
+	permanent := ((cexdeyp + dexceyp)*bezp + (dexbeyp + bexdeyp)*cezp + (bexceyp + cexbeyp)*dezp)*alift
+		+ ((dexaeyp + aexdeyp)*cezp + (aexceyp + cexaeyp)*dezp + (cexdeyp + dexceyp)*aezp)*blift
+		+ ((aexbeyp + bexaeyp)*dezp + (bexdeyp + dexbeyp)*aezp + (dexaeyp + aexdeyp)*bezp)*clift
+		+ ((bexceyp + cexbeyp)*aezp + (cexaeyp + aexceyp)*bezp + (aexbeyp + bexaeyp)*cezp)*dlift;
+	bound := INSPHERE_BOUND*permanent;
+	if (det > bound || -det > bound) { return sign_of(det); }
+	return insphere_exact(a, b, c, d, e);
+}

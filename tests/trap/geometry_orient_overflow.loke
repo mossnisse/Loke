@@ -1,0 +1,15 @@
+// standard-library "`core:math/geometry`": integer coordinates keep integer
+// arithmetic, so a predicate whose determinant overflows panics as the scalar
+// `*` and `-` do.
+package main;
+
+import "core:fmt";
+import "core:math/geometry";
+import "core:math/linalg";
+
+V2 :: linalg.Vector2(i32);
+
+main :: proc() {
+	fmt.println(geometry.orient2d(V2.from_components(0, 0), V2.from_components(100, 0), V2.from_components(0, 100)));
+	fmt.println(geometry.orient2d(V2.from_components(0, 0), V2.from_components(60000, 0), V2.from_components(0, 60000)));
+}

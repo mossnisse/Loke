@@ -1,0 +1,10 @@
+ok f64 products through the fast path give the scalar kernel's bits
+ok f32 products through the fast path give the scalar kernel's bits
+ok f64 strided operands
+ok f32 strided operands
+ok f64 blocked LU gives the unblocked bits
+ok f32 blocked LU gives the unblocked bits
+ok f64 blocked Cholesky gives the unblocked bits
+ok f32 blocked Cholesky gives the unblocked bits
+ok f64 products, LU, and Cholesky with a pool give the same bits
+ok f32 products, LU, and Cholesky with a pool give the same bits

@@ -1,0 +1,183 @@
+// dense-matrix-plan.md "Determinism and speed": the product's fast path for
+// `f32` and `f64` with contiguous columns. Each element of `out` is still
+// `((a[i, 0]*b[0, j] + a[i, 1]*b[1, j]) + ...)`, its terms in increasing `k`:
+// a `Simd` lane computes one element, exactly as the scalar kernel does, and
+// the blocking only changes which elements are computed together and when a
+// partial sum is stored and loaded again, which rounds nothing.
+@(public)
+package dense;
+
+import "core:simd";
+import "core:unsafe";
+
+@(private)
+load :: proc(p: [^]$F, at: int, $W: int) -> Simd(F, W) {
+	lanes: [W]F = {};
+	foreach (l in 0 ..< W) { lanes[l] = p[at +% l]; }
+	return simd.from_array(lanes);
+}
+
+@(private)
+store :: proc(p: [^]$F, at: int, value: Simd(F, $W)) {
+	lanes := simd.to_array(value);
+	foreach (l in 0 ..< W) { p[at +% l] = lanes[l]; }
+}
+
+// The terms of a product computed between two stores of a partial sum, and
+// so the length of a packed panel.
+@(private) TERMS :: 256;
+
+// The columns of `b` packed at a time, `TERMS` rows of them, which each
+// packed panel of `a` is swept across. With the panel of `a`, the two take
+// 80 KB for `f64`, little enough for a thread's stack.
+@(private) COLUMNS :: 32;
+
+// `out[i ..< i + 2W, j ..< j + 4]` over `count` terms of the product,
+// starting from the first term when `first` and from the partial sums in
+// `out` otherwise. `panel` holds those rows of `a`, each term's `2W` elements
+// together, and `columns` those columns of `b`, each term's 4 elements
+// together.
+@(private)
+tile :: proc(o: [^]$F, oc: int, panel, columns: [^]F, i, j, count: int, first: bool, $W: int) {
+	o0 := i +% j*%oc;
+	o1 := o0 +% oc;
+	o2 := o1 +% oc;
+	o3 := o2 +% oc;
+	k := 0;
+	at := 0;
+	c00, c01, c02, c03, c10, c11, c12, c13: Simd(F, W) = {}, {}, {}, {}, {}, {}, {}, {};
+	if (first) {
+		a0 := load(panel, 0, W);
+		a1 := load(panel, W, W);
+		f0: Simd(F, W) = columns[0];
+		f1: Simd(F, W) = columns[1];
+		f2: Simd(F, W) = columns[2];
+		f3: Simd(F, W) = columns[3];
+		c00 = a0*f0; c01 = a0*f1; c02 = a0*f2; c03 = a0*f3;
+		c10 = a1*f0; c11 = a1*f1; c12 = a1*f2; c13 = a1*f3;
+		k = 1;
+		at = 2*W;
+	} else {
+		c00 = load(o, o0, W); c01 = load(o, o1, W); c02 = load(o, o2, W); c03 = load(o, o3, W);
+		c10 = load(o, o0 +% W, W); c11 = load(o, o1 +% W, W); c12 = load(o, o2 +% W, W); c13 = load(o, o3 +% W, W);
+	}
+	for (k < count) {
+		a0 := load(panel, at, W);
+		a1 := load(panel, at +% W, W);
+		row := k*%4;
+		f0: Simd(F, W) = columns[row];
+		f1: Simd(F, W) = columns[row +% 1];
+		f2: Simd(F, W) = columns[row +% 2];
+		f3: Simd(F, W) = columns[row +% 3];
+		c00 = c00 + a0*f0; c01 = c01 + a0*f1; c02 = c02 + a0*f2; c03 = c03 + a0*f3;
+		c10 = c10 + a1*f0; c11 = c11 + a1*f1; c12 = c12 + a1*f2; c13 = c13 + a1*f3;
+		k += 1;
+		at = at +% 2*W;
+	}
+	store(o, o0, c00); store(o, o1, c01); store(o, o2, c02); store(o, o3, c03);
+	store(o, o0 +% W, c10); store(o, o1 +% W, c11); store(o, o2 +% W, c12); store(o, o3 +% W, c13);
+}
+
+// One element of `out` over the terms `k_begin ..< k_end`, as `tile` computes
+// each of its lanes, for the rows and columns the tiles leave. With
+// `subtract`, each term is subtracted, which is the bits of adding it
+// negated, as `tile` does with a negated panel.
+@(private)
+single :: proc(o: [^]$F, oc: int, x: [^]F, xc: int, y: [^]F, yr, yc: int, i, j, k_begin, k_end: int, accumulate, subtract: bool) {
+	at := i +% j*%oc;
+	k := k_begin;
+	sum := o[at];
+	if (k == 0 && !accumulate) {
+		sum = x[i]*y[j*%yc];
+		k = 1;
+	}
+	for (k < k_end) {
+		term := x[i +% k*%xc]*y[k*%yr +% j*%yc];
+		sum = sum - term if subtract else sum + term;
+		k += 1;
+	}
+	o[at] = sum;
+}
+
+// Runs `fast_product` and returns true when the element type and layout allow
+// it: `f32` or `f64`, at least one term, and `out` and `a` with contiguous
+// columns.
+@(private)
+fast_path :: proc(out: View_Mut($T), a, b: View(T), accumulate: bool) -> bool {
+	if (a.column_count == 0 || a.row_stride != 1 || out.row_stride != 1) { return false; }
+	when (T == f64) {
+		fast_product(unsafe.raw_data(out.data), out.column_stride, unsafe.raw_data(a.data), a.column_stride,
+			unsafe.raw_data(b.data), b.row_stride, b.column_stride, out.row_count, out.column_count, a.column_count, accumulate, false, 4);
+		return true;
+	}
+	when (T == f32) {
+		fast_product(unsafe.raw_data(out.data), out.column_stride, unsafe.raw_data(a.data), a.column_stride,
+			unsafe.raw_data(b.data), b.row_stride, b.column_stride, out.row_count, out.column_count, a.column_count, accumulate, false, 8);
+		return true;
+	}
+	return false;
+}
+
+// `out = a * b`, or `out = out + a * b` when `accumulate`, for `out` and `a`
+// with unit row stride and at least one term: `TERMS` terms at a time; within
+// them `COLUMNS` columns of `b` at a time, packed; and within those `2W` rows
+// of `a` at a time, packed and swept across the packed columns four at a
+// time. With `subtract`, which needs `accumulate`, `out = out - a * b`, each
+// term subtracted in turn: the panel of `a` is packed negated, and
+// `x + (-p)` is the bits of `x - p`.
+@(private)
+fast_product :: proc(o: [^]$F, oc: int, x: [^]F, xc: int, y: [^]F, yr, yc: int, m, n, terms: int, accumulate, subtract: bool, $W: int) {
+	packed_rows: [TERMS*2*W]F = {};
+	panel := unsafe.raw_data(&packed_rows);
+	packed_columns: [TERMS*COLUMNS]F = {};
+	columns := unsafe.raw_data(&packed_columns);
+	full_rows := m/(2*W)*(2*W);
+	full_columns := n/4*4;
+	k0 := 0;
+	for (k0 < terms) {
+		k1 := k0 + TERMS if k0 + TERMS < terms else terms;
+		count := k1 - k0;
+		first := k0 == 0 && !accumulate;
+		j0 := 0;
+		for (j0 < full_columns) {
+			j1 := j0 + COLUMNS if j0 + COLUMNS < full_columns else full_columns;
+			at := 0;
+			j := j0;
+			for (j < j1) {
+				foreach (k in k0 ..< k1) {
+					row := k*%yr;
+					foreach (c in 0 ..< 4) { columns[at +% c] = y[row +% (j + c)*%yc]; }
+					at = at +% 4;
+				}
+				j += 4;
+			}
+			i := 0;
+			for (i < full_rows) {
+				at = 0;
+				foreach (k in k0 ..< k1) {
+					source := i +% k*%xc;
+					if (subtract) {
+						foreach (l in 0 ..< 2*W) { panel[at +% l] = -x[source +% l]; }
+					} else {
+						foreach (l in 0 ..< 2*W) { panel[at +% l] = x[source +% l]; }
+					}
+					at = at +% 2*W;
+				}
+				j = j0;
+				group := 0;
+				for (j < j1) {
+					tile(o, oc, panel, columns[group:], i, j, count, first, W);
+					j += 4;
+					group = group +% 4*count;
+				}
+				i += 2*W;
+			}
+			j0 = j1;
+		}
+		foreach (c in 0 ..< n) {
+			from := full_rows if c < full_columns else 0;
+			foreach (r in from ..< m) { single(o, oc, x, xc, y, yr, yc, r, c, k0, k1, accumulate, subtract); }
+		}
+		k0 = k1;
+	}
+}

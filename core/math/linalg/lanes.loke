@@ -1,0 +1,38 @@
+// linear-algebra-plan.md "Milestone 4 results": the `Simd` forms of the
+// operations measured faster with them. Each lane computes one component of
+// the result with the scalar form's operations in the scalar form's order,
+// so the bits are the same; a lane past the result's last component is
+// computed and dropped.
+@(public)
+package linalg;
+
+import "core:simd";
+
+// The three components of a column in the first three lanes.
+@(private)
+lanes3 :: proc(column: [3]f32) -> Simd(f32, 4) {
+	return simd.from_array([4]f32{column[0], column[1], column[2], 0});
+}
+
+// `m[0]*x + m[1]*y + m[2]*z + m[3]` for a point, without the last term for a
+// direction, in the first three lanes.
+@(private)
+affine_lanes :: proc(m: [4][4]f32, v: Vector3(f32), point: bool) -> Vector3(f32) {
+	x: Simd(f32, 4) = v.x;
+	y: Simd(f32, 4) = v.y;
+	z: Simd(f32, 4) = v.z;
+	sum := simd.from_array(m[0])*x + simd.from_array(m[1])*y + simd.from_array(m[2])*z;
+	if (point) { sum = sum + simd.from_array(m[3]); }
+	r := simd.to_array(sum);
+	return {r[0], r[1], r[2]};
+}
+
+// `m * v` for a 3 x 3 matrix, a column a lane.
+@(private)
+transform3_lanes :: proc(m: [3][3]f32, v: Vector3(f32)) -> Vector3(f32) {
+	x: Simd(f32, 4) = v.x;
+	y: Simd(f32, 4) = v.y;
+	z: Simd(f32, 4) = v.z;
+	r := simd.to_array(lanes3(m[0])*x + lanes3(m[1])*y + lanes3(m[2])*z);
+	return {r[0], r[1], r[2]};
+}

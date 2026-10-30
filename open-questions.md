@@ -643,6 +643,20 @@ to use SIMD and other hardware features fully: compiler intrinsics, inline
 assembly, or both? `Simd(T, N)` covers lane-wise arithmetic; what it leaves
 out is the target-specific instruction.
 
+## Keeping a cold path out of line
+
+Should a procedure be able to say that a call is rarely taken, or that a
+procedure is not to be inlined? `core:math/geometry`'s `f64` predicates are a
+short filter and an exact path reached only near a degenerate input. LLVM
+inlines the exact path into the filter, being its one caller, and the filter
+then costs 1265 against the inliner's threshold of 225, so no call site
+inlines the filter
+([Milestone 5 results](geometry-plan.md#milestone-5-results)). Loke has
+no attribute for either. A `@(cold)` on the procedure, or on a branch, would
+let the compiler keep the exact path out of line; it is a hint with no effect
+on results, so it could be added without a change of meaning. Not required
+by anything shipped.
+
 ## Abstraction over SOA
 
 Is laying data out as a structure of arrays the programmer's responsibility,
@@ -880,6 +894,191 @@ Keep the baseline function attributes and reporting wrapper. Settle the
 supported Clang minimum before removing the manual implementation; an older
 toolchain would justify a fallback only if it remains supported. A processor
 missing a known level still needs coverage.
+
+## Open questions from the linear algebra spike
+
+The [linear algebra library plan](linear-algebra-plan.md)'s first step tried
+its `Real` interface and generic matrix shapes against the compiler
+(`tests/pkg/real_interface`), its first two milestones built
+[`core:math/linalg`](standard-library.md#coremathlinalg) on them, and its third
+is the [dense matrix plan](dense-matrix-plan.md), whose five milestones
+are [`core:math/dense`](standard-library.md#coremathdense). These
+language questions came out of it, and the library cannot settle them by
+itself.
+
+### Positional literals for vocabulary records
+
+[Struct literals](design.md#struct-literals) allow positional elements only in
+the package that declares the fields, so a reordering cannot silently move a
+value. For a vector that rule turns `Vector3(f32){1, 2, 3}` into
+`linalg.Vector3(f32){x = 1, y = 2, z = 3}` in every program that uses it, or
+into a named constructor such as `Complex`'s `from_components`. The order of
+`x`, `y`, `z` is part of such a type's meaning, its layout is promised to
+foreign code, and it will never be reordered. A declaration-level opt-in,
+an attribute promising the field order as part of the public API, would let
+positional literals cross packages for exactly those records. Without it the
+library offers `from_components` and named literals, and the cost is
+verbosity at every call site.
+
+### Visibility in slot and expression requirements
+
+A named slot is met by an inherent method whatever its visibility, while an
+expression requirement such as `(a, b: T) a + b -> T` is checked where the
+interface writes it and so needs the operator to be visible there. A type in
+a `package main`, whose declarations are private by default, therefore meets
+`Real`'s `sqrt` slot but not `Numeric`'s `+` until its operators are marked
+`@(public)`. The diagnostic now names the cause; whether the two requirement
+forms should agree, and in which direction, is open.
+
+### Correctly rounded procedures at compile time
+
+[Compile-time procedure evaluation](design.md#compile-time-procedure-evaluation)
+cannot call foreign code, and `math.sqrt` is a call to the runtime's
+`rt_sqrt_f64`. So `core:math/linalg` folds a projection, a rotation, or an
+`inverse`, but not `length`, `normalize`, or `look_at`, and neither can any
+user constant that takes a distance. `sqrt` is correctly rounded, so the
+evaluator could compute it and give the bits the program would; so are
+`floor`, `ceil`, `round`, `trunc`, `fma`, and `mod`. Whether the evaluator
+should implement that set, or `core:math` should implement them in Loke as
+`core:math/repro` does its functions, is open; a `when`-selected Loke body
+would keep the run-time instruction.
+
+### Implicit selectors in inferred parameter types
+
+An implicit selector argument takes the type of the parameter it fills, and a
+generic procedure's parameter supplies one only when its written type names
+none of the procedure's `$` parameters
+([Implicit selector expression](design.md#implicit-selector-expression)). So
+`f(x, .some(y))` against `f :: proc(x: $T, y: Option(T) = .none)` is rejected
+even though `x` alone settles `T`. That is why
+`linalg.quaternion_between(a, b, fallback_axis)` is a procedure group with a
+plain `Vector3(T)` parameter rather than one procedure with an
+`Option(Vector3(T))` default. Typing such arguments after inference from the
+others would allow the `Option` form. The open part is the order: whether an
+argument that needs a type may wait for inference, and what a call means when
+the waiting argument is also the only one that could bind `T`.
+
+### Disjoint strided mutable views
+
+The [dense matrix plan](dense-matrix-plan.md#one-owner-and-two-views) gives
+two disjoint mutable blocks of a matrix by splitting its `[]mut T`, as
+[`split_at_mut`](design.md#splitting-a-mutable-slice) does. That works only
+when one block's elements all precede the other's: the left and right columns
+of a column-major matrix. The top and bottom rows of the same matrix
+interleave in memory, so no split of the slice separates them, and two
+reborrows cannot be live at once. Blocked algorithms that update a panel and a
+trailing block together want exactly that pair. The language could check
+disjointness of strided index sets, which is decidable for a fixed stride
+pattern but is a new kind of borrow; or the library could build the two views
+through `core:unsafe`, which gives up the checker's guarantee for code the
+library does not control. The plan's factorizations work through one view by
+index and need neither; the question is what a user writing their own blocked
+algorithm gets.
+
+### Flat views of nested fixed arrays
+
+A nested fixed array is one contiguous value
+([Multidimensional arrays](design.md#multidimensional-arrays)), so
+`linalg.Matrix(f32, 4, 4)`'s `columns: [4][4]f32` holds 16 consecutive
+elements. Safe code cannot borrow them as one `[]f32`: slicing takes one
+index, and `[4][4]f32` slices to `[][4]f32`. A flattening borrow, a
+contributed member returning `[]T` over every scalar element, would let the
+dense package view a fixed matrix without a copy, and would serve image
+buffers and lookup tables stored as nested arrays. Without it the dense
+package copies at the boundary.
+
+### Overflow checks in index arithmetic
+
+The [dense matrix spike](dense-matrix-plan.md#spike-results) measured a
+column-major product written as an ordinary loop over raw pointers. With the
+index computed as `k*n + i`, it ran 3.5 times slower than with `k*%n +% i`
+at the baseline CPU level and 5.7 times slower at `x86-64-v3`, for the same
+bits. The checked operators panic on overflow
+([Integer overflow](design.md#integer-overflow)), and that branch per element
+keeps the optimizer from vectorizing the loop, even where the induction
+variable and the bound make an overflow impossible. A library kernel can write
+the wrapping operators once it has checked its extents. A program's own
+two-dimensional loop over a slice pays the cost, and bounds checks add to it.
+Open: whether the compiler should prove the common shapes overflow-free (an
+index affine in loop variables whose ranges are known before the loop), or
+whether a checked-once form of indexing belongs in the language.
+
+### Slots through a record's bound
+
+`dense.Lu(T)` is declared `where linalg.Real(T)`, so no instance exists for an
+element type without `abs`. Even so, a method in `impl Lu($T)` cannot call
+`x.abs()` on a `T` until the method restates `where linalg.Real(T)`: a bare
+bound lets *its own declaration's* body call the interface's slots
+([where clauses](design.md#where-clauses)), and the record's body has no
+code. `core:math/linalg` restates `Real(T)` on each method that needs it, and
+`core:math/dense` does the same. Letting a record's bare bounds carry into its
+`impl` methods would remove the repetition; against it, a method's bounds are
+now all in its own signature, which is what [method
+exclusion](design.md#where-clauses) and the interface file show.
+
+### Associated constants through a bound
+
+`linalg.Scalar(T)` requires an associated type, `T.Real`, the type of a
+complex number's parts and a real type itself. `core:math/linalg` meets it for
+`f32`, `f64`, and `math.Complex(R)` with private extensions, `Real :: f64`,
+as it meets `Real`'s slots: a built-in type can only be extended, and a
+public extension would be exported as `linalg.Real`, the interface's own
+name. A bare bound grants its declaration's body the slots that satisfied it,
+private ones included ([Interface bodies](design.md#interface-bodies)), but
+not an associated constant. So in any other package a generic signature that
+names `T.Real` fails at `f64`:
+
+```loke
+package parts;
+
+import "core:math/linalg";
+
+@(public)
+real_of :: proc(x: $T) -> T.Real where linalg.Scalar(T) { return x.real_part(); }
+
+// From another package, parts.real_of(1.5) is rejected while instantiating:
+// error[L0306]: unknown type `T.Real`: `T` is not an imported package
+```
+
+`core:math/dense` declares its own private `Real` for the same three types,
+and so must every package with generic code over `Scalar`. Granting a bound's
+associated constants as it grants its slots would make `T.Real` mean in every
+package what it meant where the requirement was checked. The requirement
+already makes the member a compile-time type, so granting it hides nothing
+at run time. Against it, the grant would no longer be "only that slot on that
+type".
+
+### Slots through an associated type's bound
+
+`Scalar` composes `Real(T.Real)`, and an interface application standing alone
+in an interface body contributes its slots. A body bounded by `Scalar(T)` can
+call a `Real` slot on a `T.Real` only when `T.Real` is `T` itself:
+
+```loke
+package parts;
+
+import "core:math";
+import "core:math/linalg";
+
+// The constants the question above makes each package declare.
+impl f64 { @(private) Real :: f64; }
+impl math.Complex($R) { @(private) Real :: R; }
+
+@(public)
+size_of :: proc(x: $T) -> T.Real where linalg.Scalar(T) { return x.real_part().abs(); }
+
+// parts.size_of(-1.5) is 1.5, but parts.size_of of a math.Complex(f64) is
+// rejected while instantiating:
+// error[L0363]: `f64` has no field or member `abs`
+```
+
+`abs` on `f64` is `linalg`'s private extension, which the bound grants on
+`T` but not on the `f64` that `T.Real` names when `T` is complex. The dense
+package reaches such slots through helpers bounded by `linalg.Real(R)`
+directly, which a `T.Real` argument satisfies. Whether a composed bound on an
+associated type grants its slots on that type, as the composed bound's own
+wording suggests, is open; "only that slot on that type" can be read either
+way, and the helpers are the cost of the narrow reading.
 
 ## Open questions in `core:random`
 

@@ -1,0 +1,9 @@
+// standard-library "`core:math/linalg`": a NaN projection parameter panics.
+package main;
+
+import "core:math";
+import "core:math/linalg";
+
+main :: proc() {
+	_ = linalg.Matrix(f32, 4, 4).perspective(math.F32_NAN, 1.0, 0.1, 10.0, .Negative_One_To_One);
+}

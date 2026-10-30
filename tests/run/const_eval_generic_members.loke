@@ -1,0 +1,48 @@
+// design.md "Compile-time procedure evaluation" and "where clauses": a member of
+// an instantiated generic block can be called at compile time before the
+// checker reaches that block. Its `where` clause has the block's parameters in
+// scope, and a user operator reached through its resolution, such as an
+// `inout` subscript, has its body checked before it runs. Both used to fail:
+// the bound as a `where` with nothing generic in scope, the subscript as an
+// unchecked body whose `self` was no storage.
+package main;
+import "core:fmt";
+
+Box :: struct { cells: [2]int }
+
+impl Box {
+	get_mut :: operator([]) proc(self: inout, i: int) -> inout int { return inout self.cells[i]; }
+}
+
+Grid :: struct($N: int) { cells: [N]int }
+
+impl Grid($N) {
+	get_mut :: operator([]) proc(self: inout, i: int) -> inout int { return inout self.cells[i]; }
+	add :: operator(+) proc(left, right: Grid(N)) -> Grid(N) {
+		result := left;
+		foreach (i in 0..<N) { result.cells[i] += right.cells[i]; }
+		return result;
+	}
+	middle :: proc(self) -> int where N % 2 == 1 { return self.cells[N/2]; }
+}
+
+by_operator :: proc() -> int {
+	b: Box = {};
+	b[1] = 7;
+	return b.cells[1];
+}
+
+by_generic :: proc() -> Grid(3) {
+	g: Grid(3) = {};
+	g[2] = 9;
+	g[1] = 4;
+	return g + g;
+}
+
+PLAIN :: by_operator();
+GENERIC :: by_generic();
+MIDDLE :: by_generic().middle();
+
+main :: proc() {
+	fmt.println(PLAIN, GENERIC.cells, MIDDLE);
+}

@@ -1,0 +1,19 @@
+// design.md "Exported names": a root package's declarations keep the package
+// default, so its type's `+` is invisible where `lib` checks the requirement,
+// though the same requirement holds here. The message says why.
+package main;
+
+import "core:fmt";
+import "./lib";
+
+Pair :: struct { a, b: int }
+
+impl Pair {
+	add :: operator(+) proc(l, r: Pair) -> Pair { return {l.a + r.a, l.b + r.b}; }
+}
+
+static_assert(lib.Adds(Pair));
+
+main :: proc() {
+	fmt.println(lib.twice(Pair{1, 2}).b);
+}

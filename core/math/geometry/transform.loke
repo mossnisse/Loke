@@ -1,0 +1,75 @@
+// geometry-plan.md "Transforming shapes": a box by Arvo's method (Graphics
+// Gems, 1990), a plane through the inverse transpose of the linear part.
+// Spheres and circles have no transform: only a similarity keeps them round,
+// which a matrix does not say.
+@(public)
+package geometry;
+
+import "base:interfaces";
+import "core:math/linalg";
+
+/**
+	The box around the transformed box: `transform_box(m, box)` for a 4 x 4
+	affine `m` and an `Aabb3`, or a 3 x 3 `m` and an `Aabb2`, the last row
+	taken as the identity's, as `transform_point` takes it. Each bound is the
+	sum, in `transform_point`'s order, of each element's product with the
+	box's minimum or maximum, whichever is smaller (or larger), so it is
+	exactly the bound of the box's corners as `transform_point` moves them,
+	without forming them, and exact for integers. It bounds the transformed
+	box, not the shape inside it. An empty box stays empty.
+*/
+transform_box :: proc{transform_box2, transform_box3};
+
+@(private)
+smaller :: proc(a, b: $T) -> T where interfaces.Ordered(T) { return a if at_most(a, b) else b; }
+
+@(private)
+larger :: proc(a, b: $T) -> T where interfaces.Ordered(T) { return b if at_most(a, b) else a; }
+
+@(private)
+transform_box3 :: proc(m: linalg.Matrix($T, 4, 4), box: Aabb3(T)) -> Aabb3(T) where interfaces.Ordered(T) {
+	if (box.is_empty()) { return box; }
+	c := m.columns;
+	low, high := box.min, box.max;
+	foreach (i in 0 ..< 3) {
+		x0, x1 := c[0][i]*box.min.x, c[0][i]*box.max.x;
+		y0, y1 := c[1][i]*box.min.y, c[1][i]*box.max.y;
+		z0, z1 := c[2][i]*box.min.z, c[2][i]*box.max.z;
+		low[i] = smaller(x0, x1) + smaller(y0, y1) + smaller(z0, z1) + c[3][i];
+		high[i] = larger(x0, x1) + larger(y0, y1) + larger(z0, z1) + c[3][i];
+	}
+	return {low, high};
+}
+
+@(private)
+transform_box2 :: proc(m: linalg.Matrix($T, 3, 3), box: Aabb2(T)) -> Aabb2(T) where interfaces.Ordered(T) {
+	if (box.is_empty()) { return box; }
+	c := m.columns;
+	low, high := box.min, box.max;
+	foreach (i in 0 ..< 2) {
+		x0, x1 := c[0][i]*box.min.x, c[0][i]*box.max.x;
+		y0, y1 := c[1][i]*box.min.y, c[1][i]*box.max.y;
+		low[i] = smaller(x0, x1) + smaller(y0, y1) + c[2][i];
+		high[i] = larger(x0, x1) + larger(y0, y1) + c[2][i];
+	}
+	return {low, high};
+}
+
+/**
+	The plane `m` moves `plane` to, for a 4 x 4 affine `m`: its normal through
+	`m.normal_matrix()`, its offset `offset + dot(normal', translation)`, both
+	divided by the new normal's length, so any normal, unit or not, gives a
+	unit one. `.none` when `m`'s linear part has no inverse or the new normal
+	does not normalize.
+*/
+transform_plane :: proc(m: linalg.Matrix($T, 4, 4), plane: Plane(T)) -> Option(Plane(T)) where linalg.Real(T) {
+	normals := m.normal_matrix() or_return;
+	normal := normals*plane.normal;
+	c := m.columns;
+	translation := linalg.Vector3(T).from_components(c[3][0], c[3][1], c[3][2]);
+	offset := plane.offset + normal.dot(translation);
+	squared := normal.length_squared();
+	if (!squared.is_normal()) { return .none; }
+	length := squared.sqrt();
+	return .some(Plane(T){normal/length, offset/length});
+}

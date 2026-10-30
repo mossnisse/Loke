@@ -2975,6 +2975,13 @@ case .Diamonds, .Hearts: fmt.println("red");
 }
 ```
 
+A call argument takes its type from the parameter it fills. A generic
+procedure's parameter supplies it as an ordinary one does when the
+parameter's written type names none of the procedure's `$` parameters:
+`pick :: proc(order: Order, a, b: $T)` takes `pick(.First, x, y)`. A
+parameter written `Option(T)` has no type until `T` is inferred, so an
+implicit selector cannot fill it.
+
 #### Iterating an enumeration
 
 Every enum type has a compiler-provided `values()`, a constant fixed array of
@@ -4339,6 +4346,20 @@ It must be inherent to that type. Hooks may overload by source type, but each
 source/target pair has at most one hook. Built-in conversions cannot be
 replaced. Call a conversion as `Target(value)`, not by the hook declaration's
 name.
+
+A hook may be generic over its source, with the bounds a generic procedure
+takes; each source it is instantiated for is one pair. Lifecycle hooks cannot
+be generic, since their subject fixes their signature.
+
+```loke
+impl Vector3($T) {
+	from_vector :: hook(convert) proc(v: Vector3($U)) -> Vector3(T) where U != T {
+		return {T(v.x), T(v.y), T(v.z)};
+	}
+}
+
+narrow := Vector3(f32)(Vector3(f64){1, 2, 3});
+```
 
 #### Resolving `T(...)`
 

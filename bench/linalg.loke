@@ -1,0 +1,369 @@
+package main;
+
+import "core:fmt";
+import "core:math";
+import "core:math/linalg";
+import "core:os";
+import "core:time";
+import "core:unsafe";
+
+// The operations of core:math/linalg that programs run in batches: 4 x 4 and
+// 3 x 3 products, a matrix times a vector, `transform_point`, and `rotate`,
+// each over an array of operands, beside the same arithmetic written by hand
+// over plain arrays (linear-algebra-plan.md "Milestone 4 results"). Run as it
+// is, it computes each once and prints a hash of every result bit, which
+// bench/linalg.expected holds, so perf.ps1 times the whole and checks that no
+// result changed: each hand-written case prints the same hash as the
+// package's. Run with `-times`, it prints the fastest of several runs of each
+// operation instead, the inputs built and the hash taken outside the timing,
+// in nanoseconds an operation.
+
+// A 64-bit linear congruential generator, so the operands are the same on
+// every machine.
+Random :: struct { state: u64 }
+
+impl Random {
+	// Uniform in [-1, 1).
+	next :: proc(self: inout) -> f64 {
+		self.state = self.state*%6364136223846793005 +% 1442695040888963407;
+		return f64(self.state >> 11)/9007199254740992.0*2.0 - 1.0;
+	}
+}
+
+// The operands of every case: COUNT of each, swept ROUNDS times a run.
+COUNT :: 1024;
+ROUNDS :: 64;
+
+values :: proc($T: type, count: int, seed: u64) -> [dynamic]T {
+	random := Random{seed};
+	result := make([dynamic]T, 0, count);
+	foreach (_ in 0 ..< count) { result.append(T(random.next())); }
+	return result;
+}
+
+matrices :: proc($T: type, $N: int, seed: u64) -> [dynamic]linalg.Matrix(T, N, N) {
+	random := Random{seed};
+	result := make([dynamic]linalg.Matrix(T, N, N), 0, COUNT);
+	foreach (_ in 0 ..< COUNT) {
+		values: [N*N]T = {};
+		foreach (i in 0 ..< N*N) { values[i] = T(random.next()); }
+		result.append(linalg.Matrix(T, N, N).from_array(values));
+	}
+	return result;
+}
+
+vectors3 :: proc($T: type, seed: u64) -> [dynamic]linalg.Vector3(T) {
+	random := Random{seed};
+	result := make([dynamic]linalg.Vector3(T), 0, COUNT);
+	foreach (_ in 0 ..< COUNT) {
+		x := T(random.next());
+		y := T(random.next());
+		z := T(random.next());
+		result.append(linalg.Vector3(T).from_components(x, y, z));
+	}
+	return result;
+}
+
+vectors4 :: proc($T: type, seed: u64) -> [dynamic]linalg.Vector4(T) {
+	random := Random{seed};
+	result := make([dynamic]linalg.Vector4(T), 0, COUNT);
+	foreach (_ in 0 ..< COUNT) {
+		x := T(random.next());
+		y := T(random.next());
+		z := T(random.next());
+		w := T(random.next());
+		result.append(linalg.Vector4(T).from_components(x, y, z, w));
+	}
+	return result;
+}
+
+// Unit quaternions, so `rotate` is a rotation.
+quaternions :: proc($T: type, seed: u64) -> [dynamic]math.Quaternion(T) {
+	random := Random{seed};
+	result := make([dynamic]math.Quaternion(T), 0, COUNT);
+	foreach (_ in 0 ..< COUNT) {
+		axis := linalg.Vector3(T).from_components(T(random.next()), T(random.next()), T(random.next()));
+		unit := axis.normalize() or_else linalg.Vector3(T).from_components(T(1), T(0), T(0));
+		result.append(linalg.quaternion_from_axis_angle(unit, T(random.next()*3.0)));
+	}
+	return result;
+}
+
+// A hash of every bit of `values`, in order.
+Hash :: struct { state: u64 }
+
+impl Hash {
+	add :: proc(self: inout, value: $T) {
+		when (T == f32) {
+			self.state = (self.state ~ u64(unsafe.transmute(u32, value)))*%1099511628211;
+		} else {
+			self.state = (self.state ~ unsafe.transmute(u64, value))*%1099511628211;
+		}
+	}
+}
+
+hash_matrices :: proc(values: []linalg.Matrix($T, $N, N)) -> u64 {
+	hash := Hash{14695981039346656037};
+	foreach (m in values) {
+		foreach (x in m.to_array()) { hash.add(x); }
+	}
+	return hash.state;
+}
+
+hash_vectors3 :: proc(values: []linalg.Vector3($T)) -> u64 {
+	hash := Hash{14695981039346656037};
+	foreach (v in values) { hash.add(v.x); hash.add(v.y); hash.add(v.z); }
+	return hash.state;
+}
+
+hash_vectors4 :: proc(values: []linalg.Vector4($T)) -> u64 {
+	hash := Hash{14695981039346656037};
+	foreach (v in values) { hash.add(v.x); hash.add(v.y); hash.add(v.z); hash.add(v.w); }
+	return hash.state;
+}
+
+hash_slice :: proc(values: []$T) -> u64 {
+	hash := Hash{14695981039346656037};
+	foreach (x in values) { hash.add(x); }
+	return hash.state;
+}
+
+// The hand-written forms: the same operations, in the same order, over
+// plain column-major arrays, with checked indexing, as a caller might write
+// them without the package.
+
+hand_multiply :: proc(out: []mut $T, a, b: []T, $N: int) {
+	foreach (m in 0 ..< COUNT) {
+		at := m*N*N;
+		foreach (k in 0 ..< N) {
+			foreach (r in 0 ..< N) {
+				sum := a[at + r]*b[at + k*N];
+				foreach (c in 1 ..< N) { sum = sum + a[at + c*N + r]*b[at + k*N + c]; }
+				out[at + k*N + r] = sum;
+			}
+		}
+	}
+}
+
+hand_transform4 :: proc(out: []mut $T, m, v: []T) {
+	foreach (i in 0 ..< COUNT) {
+		x := v[4*i];
+		y := v[4*i + 1];
+		z := v[4*i + 2];
+		w := v[4*i + 3];
+		foreach (r in 0 ..< 4) { out[4*i + r] = m[r]*x + m[4 + r]*y + m[8 + r]*z + m[12 + r]*w; }
+	}
+}
+
+hand_transform_point :: proc(out: []mut $T, m, p: []T) {
+	foreach (i in 0 ..< COUNT) {
+		x := p[3*i];
+		y := p[3*i + 1];
+		z := p[3*i + 2];
+		foreach (r in 0 ..< 3) { out[3*i + r] = m[r]*x + m[4 + r]*y + m[8 + r]*z + m[12 + r]; }
+	}
+}
+
+// `v + 2 real (u x v) + u x 2(u x v)`, as `rotate` computes it.
+hand_rotate :: proc(out: []mut $T, q, v: []T) {
+	foreach (i in 0 ..< COUNT) {
+		w := q[4*i];
+		ux := q[4*i + 1];
+		uy := q[4*i + 2];
+		uz := q[4*i + 3];
+		vx := v[3*i];
+		vy := v[3*i + 1];
+		vz := v[3*i + 2];
+		cx := uy*vz - uz*vy;
+		cy := uz*vx - ux*vz;
+		cz := ux*vy - uy*vx;
+		tx := cx + cx;
+		ty := cy + cy;
+		tz := cz + cz;
+		out[3*i] = vx + tx*w + (uy*tz - uz*ty);
+		out[3*i + 1] = vy + ty*w + (uz*tx - ux*tz);
+		out[3*i + 2] = vz + tz*w + (ux*ty - uy*tx);
+	}
+}
+
+flatten_matrices :: proc(values: []linalg.Matrix($T, $N, N)) -> [dynamic]T {
+	result := make([dynamic]T, 0, values.len()*N*N);
+	foreach (m in values) {
+		foreach (x in m.to_array()) { result.append(x); }
+	}
+	return result;
+}
+
+flatten_vectors3 :: proc(values: []linalg.Vector3($T)) -> [dynamic]T {
+	result := make([dynamic]T, 0, values.len()*3);
+	foreach (v in values) { result.append(v.x); result.append(v.y); result.append(v.z); }
+	return result;
+}
+
+flatten_vectors4 :: proc(values: []linalg.Vector4($T)) -> [dynamic]T {
+	result := make([dynamic]T, 0, values.len()*4);
+	foreach (v in values) { result.append(v.x); result.append(v.y); result.append(v.z); result.append(v.w); }
+	return result;
+}
+
+flatten_quaternions :: proc(values: []math.Quaternion($T)) -> [dynamic]T {
+	result := make([dynamic]T, 0, values.len()*4);
+	foreach (q in values) { result.append(q.real); result.append(q.i); result.append(q.j); result.append(q.k); }
+	return result;
+}
+
+Operation :: enum {
+	Multiply4_F32, Multiply4_F64, Hand_Multiply4_F32, Multiply3_F32,
+	Transform4_F32, Hand_Transform4_F32, Transform3_F32,
+	Transform_Point_F32, Transform_Point_F64, Hand_Transform_Point_F32, Transform_Direction_F32,
+	Rotate_F32, Rotate_F64, Hand_Rotate_F32,
+}
+
+// The result of one run: a hash of every result bit, so that nothing is
+// optimized away and a change shows, and the seconds the run took, its
+// inputs built outside the timing.
+Outcome :: struct { checksum: u64, seconds: f64 }
+
+timed :: proc(start, stop: time.Tick, checksum: u64) -> Outcome {
+	return {checksum, (stop - start).seconds_f64()};
+}
+
+multiply_case :: proc($T: type, $N: int) -> Outcome {
+	a := matrices(T, N, 1);
+	b := matrices(T, N, 2);
+	out := matrices(T, N, 3);
+	start := time.tick_now();
+	foreach (_ in 0 ..< ROUNDS) {
+		foreach (i in 0 ..< COUNT) { out[i] = a[i]*b[i]; }
+	}
+	stop := time.tick_now();
+	return timed(start, stop, hash_matrices(out[:]));
+}
+
+transform4_case :: proc($T: type) -> Outcome {
+	m := matrices(T, 4, 1)[0];
+	v := vectors4(T, 4);
+	out := vectors4(T, 5);
+	start := time.tick_now();
+	foreach (_ in 0 ..< ROUNDS) {
+		foreach (i in 0 ..< COUNT) { out[i] = m*v[i]; }
+	}
+	stop := time.tick_now();
+	return timed(start, stop, hash_vectors4(out[:]));
+}
+
+transform3_case :: proc($T: type) -> Outcome {
+	m := matrices(T, 3, 1)[0];
+	v := vectors3(T, 4);
+	out := vectors3(T, 5);
+	start := time.tick_now();
+	foreach (_ in 0 ..< ROUNDS) {
+		foreach (i in 0 ..< COUNT) { out[i] = m*v[i]; }
+	}
+	stop := time.tick_now();
+	return timed(start, stop, hash_vectors3(out[:]));
+}
+
+transform_direction_case :: proc($T: type) -> Outcome {
+	m := matrices(T, 4, 1)[0];
+	d := vectors3(T, 6);
+	out := vectors3(T, 7);
+	start := time.tick_now();
+	foreach (_ in 0 ..< ROUNDS) {
+		foreach (i in 0 ..< COUNT) { out[i] = m.transform_direction(d[i]); }
+	}
+	stop := time.tick_now();
+	return timed(start, stop, hash_vectors3(out[:]));
+}
+
+transform_point_case :: proc($T: type) -> Outcome {
+	m := matrices(T, 4, 1)[0];
+	p := vectors3(T, 6);
+	out := vectors3(T, 7);
+	start := time.tick_now();
+	foreach (_ in 0 ..< ROUNDS) {
+		foreach (i in 0 ..< COUNT) { out[i] = m.transform_point(p[i]); }
+	}
+	stop := time.tick_now();
+	return timed(start, stop, hash_vectors3(out[:]));
+}
+
+rotate_case :: proc($T: type) -> Outcome {
+	q := quaternions(T, 8);
+	v := vectors3(T, 9);
+	out := vectors3(T, 10);
+	start := time.tick_now();
+	foreach (_ in 0 ..< ROUNDS) {
+		foreach (i in 0 ..< COUNT) { out[i] = linalg.rotate(q[i], v[i]); }
+	}
+	stop := time.tick_now();
+	return timed(start, stop, hash_vectors3(out[:]));
+}
+
+run :: proc(operation: Operation) -> Outcome {
+	switch (operation) {
+	case .Multiply4_F32: return multiply_case(f32, 4);
+	case .Multiply4_F64: return multiply_case(f64, 4);
+	case .Multiply3_F32: return multiply_case(f32, 3);
+	case .Hand_Multiply4_F32:
+		a := flatten_matrices(matrices(f32, 4, 1)[:]);
+		b := flatten_matrices(matrices(f32, 4, 2)[:]);
+		out := values(f32, COUNT*16, 3);
+		start := time.tick_now();
+		foreach (_ in 0 ..< ROUNDS) { hand_multiply(&mut out[:], a[:], b[:], 4); }
+		stop := time.tick_now();
+		return timed(start, stop, hash_slice(out[:]));
+	case .Transform4_F32: return transform4_case(f32);
+	case .Hand_Transform4_F32:
+		m := flatten_matrices(matrices(f32, 4, 1)[:1]);
+		v := flatten_vectors4(vectors4(f32, 4)[:]);
+		out := values(f32, COUNT*4, 5);
+		start := time.tick_now();
+		foreach (_ in 0 ..< ROUNDS) { hand_transform4(&mut out[:], m[:], v[:]); }
+		stop := time.tick_now();
+		return timed(start, stop, hash_slice(out[:]));
+	case .Transform3_F32: return transform3_case(f32);
+	case .Transform_Point_F32: return transform_point_case(f32);
+	case .Transform_Point_F64: return transform_point_case(f64);
+	case .Transform_Direction_F32: return transform_direction_case(f32);
+	case .Hand_Transform_Point_F32:
+		m := flatten_matrices(matrices(f32, 4, 1)[:1]);
+		p := flatten_vectors3(vectors3(f32, 6)[:]);
+		out := values(f32, COUNT*3, 7);
+		start := time.tick_now();
+		foreach (_ in 0 ..< ROUNDS) { hand_transform_point(&mut out[:], m[:], p[:]); }
+		stop := time.tick_now();
+		return timed(start, stop, hash_slice(out[:]));
+	case .Rotate_F32: return rotate_case(f32);
+	case .Rotate_F64: return rotate_case(f64);
+	case .Hand_Rotate_F32:
+		q := flatten_quaternions(quaternions(f32, 8)[:]);
+		v := flatten_vectors3(vectors3(f32, 9)[:]);
+		out := values(f32, COUNT*3, 10);
+		start := time.tick_now();
+		foreach (_ in 0 ..< ROUNDS) { hand_rotate(&mut out[:], q[:], v[:]); }
+		stop := time.tick_now();
+		return timed(start, stop, hash_slice(out[:]));
+	}
+}
+
+// The fastest of `repeat` runs, in seconds.
+fastest :: proc(operation: Operation, repeat: int) -> f64 {
+	best := 0.0;
+	foreach (i in 0 ..< repeat) {
+		seconds := run(operation).seconds;
+		if (i == 0 || seconds < best) { best = seconds; }
+	}
+	return best;
+}
+
+main :: proc() {
+	if (os.args.len() > 1 && os.args[1] == "-times") {
+		foreach (operation in Operation.values()) {
+			seconds := fastest(operation, 20);
+			fmt.println(operation, seconds*1e9/f64(COUNT*ROUNDS), "ns");
+		}
+		return;
+	}
+	foreach (operation in Operation.values()) { fmt.println(operation, run(operation).checksum); }
+}

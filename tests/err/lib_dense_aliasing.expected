@@ -1,0 +1,9 @@
+L0511
+@11:36
+this read of `m` is not compatible with the mutable borrow of it that is still in use
+L0526
+@16:9
+this borrow cannot be returned: `m` ends when this procedure returns
+L0512
+@22:2
+`m` cannot be modified here: a read-only borrow of it is still in use

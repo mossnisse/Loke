@@ -1,0 +1,10 @@
+// standard-library "`core:math/linalg`": a perspective near plane must be
+// positive; at zero every depth would map to one value.
+package main;
+
+import "core:math";
+import "core:math/linalg";
+
+main :: proc() {
+	_ = linalg.Matrix(f64, 4, 4).perspective(1.0, 1.0, 0.0, 10.0, .One_To_Zero);
+}

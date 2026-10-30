@@ -1,0 +1,4 @@
+L0444
+@18:14
+`Pair` does not satisfy `Adds(Pair)`
+`+` does not apply to `Pair` here: its inherent `+` is not `@(public)`

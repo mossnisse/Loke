@@ -1,0 +1,381 @@
+// linear-algebra-plan.md "Storage and multiplication order": column-major
+// storage, column vectors, and one generic record for every shape, whose
+// members are restricted to the shapes they mean by method bounds.
+@(public)
+package linalg;
+
+import "base:interfaces";
+import "core:fmt";
+
+/**
+	A matrix of `R` rows and `C` columns, stored column by column:
+	`m.columns[c][r]` is row `r`, column `c`, which `m[r, c]` reads.
+
+	The storage order is what OpenGL takes with `transpose = GL_FALSE`, what
+	Direct3D and Vulkan shaders read as `column_major`, and what LAPACK
+	expects; `to_array` gives it flat. `Matrix(f32, 4, 4)` has the layout of
+	`[16]f32`.
+*/
+Matrix :: struct($T: type, $R, $C: int) where interfaces.Numeric(T), R >= 1, C >= 1 {
+	columns: [C][R]T,
+}
+
+impl Matrix($T, $R, $C) {
+	/**
+		Every element `value`. `splat(T(0))` is the zero matrix, which a
+		zero-initialized `Matrix(T, R, C){}` is only when `T`'s zero value is
+		`T(0)`, as for the built-in numbers.
+	*/
+	splat :: proc(value: T) -> Matrix(T, R, C) {
+		result: Matrix(T, R, C) = {};
+		foreach (c in 0 ..< C) {
+			foreach (r in 0 ..< R) { result.columns[c][r] = value; }
+		}
+		return result;
+	}
+
+	/// Ones on the diagonal and zeros elsewhere.
+	identity :: proc() -> Matrix(T, R, C) where R == C {
+		result := Matrix(T, R, C).splat(T(0));
+		foreach (i in 0 ..< R) { result.columns[i][i] = T(1); }
+		return result;
+	}
+
+	/// The storage order: `columns[c]` is column `c`.
+	from_columns :: proc(columns: [C][R]T) -> Matrix(T, R, C) { return {columns}; }
+
+	/// `rows[r]` is row `r`, so a constant reads as it is printed.
+	from_rows :: proc(rows: [R][C]T) -> Matrix(T, R, C) {
+		result: Matrix(T, R, C) = {};
+		foreach (r in 0 ..< R) {
+			foreach (c in 0 ..< C) { result.columns[c][r] = rows[r][c]; }
+		}
+		return result;
+	}
+
+	/// Column-major, as `to_array` gives it.
+	from_array :: proc(values: [R*C]T) -> Matrix(T, R, C) {
+		result: Matrix(T, R, C) = {};
+		foreach (c in 0 ..< C) {
+			foreach (r in 0 ..< R) { result.columns[c][r] = values[c*R + r]; }
+		}
+		return result;
+	}
+
+	/// Column-major: column 0 first.
+	to_array :: proc(self) -> [R*C]T {
+		result: [R*C]T = {};
+		foreach (c in 0 ..< C) {
+			foreach (r in 0 ..< R) { result[c*R + r] = self.columns[c][r]; }
+		}
+		return result;
+	}
+
+	/// Each element converted as the scalar `T(value)` is.
+	from_matrix :: hook(convert) proc(m: Matrix($U, R, C)) -> Matrix(T, R, C) where Converts(U, T) {
+		result: Matrix(T, R, C) = {};
+		foreach (c in 0 ..< C) {
+			foreach (r in 0 ..< R) { result.columns[c][r] = T(m.columns[c][r]); }
+		}
+		return result;
+	}
+
+	/// Row `r`, column `c`; either outside the shape panics.
+	get :: operator([]) proc(self, r, c: int) -> T { return self.columns[c][r]; }
+	get_mut :: operator([]) proc(self: inout, r, c: int) -> inout T { return inout self.columns[c][r]; }
+
+	column :: proc(self, c: int) -> [R]T { return self.columns[c]; }
+	row :: proc(self, r: int) -> [C]T {
+		result: [C]T = {};
+		foreach (c in 0 ..< C) { result[c] = self.columns[c][r]; }
+		return result;
+	}
+
+	transpose :: proc(self) -> Matrix(T, C, R) {
+		result: Matrix(T, C, R) = {};
+		foreach (c in 0 ..< C) {
+			foreach (r in 0 ..< R) { result.columns[r][c] = self.columns[c][r]; }
+		}
+		return result;
+	}
+
+	/**
+		The matrix product, which applies `right` first. Each element is the dot
+		product of a row of `left` and a column of `right`, summed in index order
+		from the first product.
+	*/
+	multiply :: operator(*) proc(left: Matrix(T, R, C), right: Matrix(T, C, $K)) -> Matrix(T, R, K) {
+		result: Matrix(T, R, K) = {};
+		foreach (k in 0 ..< K) {
+			foreach (r in 0 ..< R) {
+				sum := left.columns[0][r]*right.columns[k][0];
+				foreach (c in 1 ..< C) { sum = sum + left.columns[c][r]*right.columns[k][c]; }
+				result.columns[k][r] = sum;
+			}
+		}
+		return result;
+	}
+
+	/// `m * v` for a square matrix of the vector's length, as the product with a column.
+	transform2 :: operator(*) proc(left: Matrix(T, R, C), right: Vector2(T)) -> Vector2(T) where R == 2, C == 2 {
+		return {
+			left.columns[0][0]*right.x + left.columns[1][0]*right.y,
+			left.columns[0][1]*right.x + left.columns[1][1]*right.y,
+		};
+	}
+	transform3 :: operator(*) proc(left: Matrix(T, R, C), right: Vector3(T)) -> Vector3(T) where R == 3, C == 3 {
+		when (T == f32) { return transform3_lanes(left.columns, right); }
+		return {
+			left.columns[0][0]*right.x + left.columns[1][0]*right.y + left.columns[2][0]*right.z,
+			left.columns[0][1]*right.x + left.columns[1][1]*right.y + left.columns[2][1]*right.z,
+			left.columns[0][2]*right.x + left.columns[1][2]*right.y + left.columns[2][2]*right.z,
+		};
+	}
+	transform4 :: operator(*) proc(left: Matrix(T, R, C), right: Vector4(T)) -> Vector4(T) where R == 4, C == 4 {
+		return {
+			left.columns[0][0]*right.x + left.columns[1][0]*right.y + left.columns[2][0]*right.z + left.columns[3][0]*right.w,
+			left.columns[0][1]*right.x + left.columns[1][1]*right.y + left.columns[2][1]*right.z + left.columns[3][1]*right.w,
+			left.columns[0][2]*right.x + left.columns[1][2]*right.y + left.columns[2][2]*right.z + left.columns[3][2]*right.w,
+			left.columns[0][3]*right.x + left.columns[1][3]*right.y + left.columns[2][3]*right.z + left.columns[3][3]*right.w,
+		};
+	}
+
+	add :: operator(+) proc(left, right: Matrix(T, R, C)) -> Matrix(T, R, C) {
+		result: Matrix(T, R, C) = {};
+		foreach (c in 0 ..< C) {
+			foreach (r in 0 ..< R) { result.columns[c][r] = left.columns[c][r] + right.columns[c][r]; }
+		}
+		return result;
+	}
+	subtract :: operator(-) proc(left, right: Matrix(T, R, C)) -> Matrix(T, R, C) {
+		result: Matrix(T, R, C) = {};
+		foreach (c in 0 ..< C) {
+			foreach (r in 0 ..< R) { result.columns[c][r] = left.columns[c][r] - right.columns[c][r]; }
+		}
+		return result;
+	}
+	negate :: operator(-) proc(self: Matrix(T, R, C)) -> Matrix(T, R, C) {
+		result: Matrix(T, R, C) = {};
+		foreach (c in 0 ..< C) {
+			foreach (r in 0 ..< R) { result.columns[c][r] = -self.columns[c][r]; }
+		}
+		return result;
+	}
+	scale :: operator(*) proc(left: Matrix(T, R, C), right: T) -> Matrix(T, R, C) {
+		result: Matrix(T, R, C) = {};
+		foreach (c in 0 ..< C) {
+			foreach (r in 0 ..< R) { result.columns[c][r] = left.columns[c][r]*right; }
+		}
+		return result;
+	}
+	scale_left :: operator(*) proc(left: T, right: Matrix(T, R, C)) -> Matrix(T, R, C) {
+		result: Matrix(T, R, C) = {};
+		foreach (c in 0 ..< C) {
+			foreach (r in 0 ..< R) { result.columns[c][r] = left*right.columns[c][r]; }
+		}
+		return result;
+	}
+	/// Exact and element-wise: a NaN element is unequal.
+	equal :: operator(==) proc(left, right: Matrix(T, R, C)) -> bool where interfaces.Equatable(T) {
+		foreach (c in 0 ..< C) {
+			foreach (r in 0 ..< R) {
+				if (!(left.columns[c][r] == right.columns[c][r])) { return false; }
+			}
+		}
+		return true;
+	}
+
+	/// The column matrix of a vector, `Matrix(T, N, 1)` for `N` from 2 to 4.
+	from_vector :: proc{from_vector2, from_vector3, from_vector4};
+	@(private) from_vector2 :: proc(v: Vector2(T)) -> Matrix(T, R, C) where R == 2, C == 1 {
+		return {{{v.x, v.y}}};
+	}
+	@(private) from_vector3 :: proc(v: Vector3(T)) -> Matrix(T, R, C) where R == 3, C == 1 {
+		return {{{v.x, v.y, v.z}}};
+	}
+	@(private) from_vector4 :: proc(v: Vector4(T)) -> Matrix(T, R, C) where R == 4, C == 1 {
+		return {{{v.x, v.y, v.z, v.w}}};
+	}
+
+	/// The vector of a column matrix, `Matrix(T, N, 1)` for `N` from 2 to 4.
+	to_vector :: proc{to_vector2, to_vector3, to_vector4};
+	@(private) to_vector2 :: proc(self) -> Vector2(T) where R == 2, C == 1 {
+		return {self.columns[0][0], self.columns[0][1]};
+	}
+	@(private) to_vector3 :: proc(self) -> Vector3(T) where R == 3, C == 1 {
+		return {self.columns[0][0], self.columns[0][1], self.columns[0][2]};
+	}
+	@(private) to_vector4 :: proc(self) -> Vector4(T) where R == 4, C == 1 {
+		return {self.columns[0][0], self.columns[0][1], self.columns[0][2], self.columns[0][3]};
+	}
+
+	/// The sum of the diagonal, in index order.
+	trace :: proc(self) -> T where R == C {
+		sum := self.columns[0][0];
+		foreach (i in 1 ..< R) { sum = sum + self.columns[i][i]; }
+		return sum;
+	}
+
+	/**
+		The determinant. Up to 4 x 4 it is the cofactor expansion along the first
+		row, in a fixed order, for any `Numeric` `T`, so an integer matrix's is
+		exact. A larger matrix needs `Real(T)` and is the product of the pivots
+		of `inverse`'s elimination, and 0 where that finds a zero pivot.
+	*/
+	determinant :: proc{determinant_cofactor, determinant_elimination};
+
+	@(private)
+	determinant_cofactor :: proc(self) -> T where R == C, R <= 4 {
+		m := self.columns;
+		when (R == 1) {
+			return m[0][0];
+		} else when (R == 2) {
+			return m[0][0]*m[1][1] - m[1][0]*m[0][1];
+		} else when (R == 3) {
+			return determinant3(
+				m[0][0], m[1][0], m[2][0],
+				m[0][1], m[1][1], m[2][1],
+				m[0][2], m[1][2], m[2][2]);
+		} else {
+			// Along row 0; the minor of column j drops it and row 0.
+			a := m[0][0]*determinant3(
+				m[1][1], m[2][1], m[3][1],
+				m[1][2], m[2][2], m[3][2],
+				m[1][3], m[2][3], m[3][3]);
+			b := m[1][0]*determinant3(
+				m[0][1], m[2][1], m[3][1],
+				m[0][2], m[2][2], m[3][2],
+				m[0][3], m[2][3], m[3][3]);
+			c := m[2][0]*determinant3(
+				m[0][1], m[1][1], m[3][1],
+				m[0][2], m[1][2], m[3][2],
+				m[0][3], m[1][3], m[3][3]);
+			d := m[3][0]*determinant3(
+				m[0][1], m[1][1], m[2][1],
+				m[0][2], m[1][2], m[2][2],
+				m[0][3], m[1][3], m[2][3]);
+			return a - b + c - d;
+		}
+	}
+
+	@(private)
+	determinant_elimination :: proc(self) -> T where R == C, R > 4, Real(T) {
+		a := self.columns;
+		negative := false;
+		foreach (k in 0 ..< R) {
+			p := pivot_row(a, k);
+			if (!(T(0) < a[k][p].abs())) { return T(0); }
+			if (p != k) {
+				swap_rows(&mut a, p, k);
+				negative = !negative;
+			}
+			eliminate_below(&mut a, k);
+		}
+		product := a[0][0];
+		foreach (k in 1 ..< R) { product = product*a[k][k]; }
+		return -product if negative else product;
+	}
+
+	/**
+		The solution `x` of `self * x == b`, or `.none` when `self` is singular:
+		a pivot is exactly zero or NaN, or a result element is not finite.
+
+		Gaussian elimination with partial pivoting, the pivot being the first
+		element of largest magnitude in its column, then back substitution, in a
+		fixed order. A nearly singular matrix still solves, with large elements;
+		no tolerance decides that it is singular.
+	*/
+	solve :: proc(self, b: Matrix(T, R, $K)) -> Option(Matrix(T, R, K)) where R == C, Real(T) {
+		a := self.columns;
+		x := b.columns;
+		foreach (k in 0 ..< R) {
+			p := pivot_row(a, k);
+			if (!(T(0) < a[k][p].abs())) { return .none; }
+			if (p != k) {
+				swap_rows(&mut a, p, k);
+				foreach (j in 0 ..< K) {
+					held := x[j][p];
+					x[j][p] = x[j][k];
+					x[j][k] = held;
+				}
+			}
+			foreach (r in k + 1 ..< R) {
+				factor := a[k][r]/a[k][k];
+				foreach (j in 0 ..< K) { x[j][r] = x[j][r] - factor*x[j][k]; }
+			}
+			eliminate_below(&mut a, k);
+		}
+		foreach (j in 0 ..< K) {
+			for (r := R - 1; r >= 0; r -= 1) {
+				sum := x[j][r];
+				foreach (c in r + 1 ..< R) { sum = sum - a[c][r]*x[j][c]; }
+				value := sum/a[r][r];
+				if (!value.is_finite()) { return .none; }
+				x[j][r] = value;
+			}
+		}
+		return Matrix(T, R, K){x};
+	}
+
+	/// `solve` for the identity: the inverse, or `.none` for a singular matrix.
+	inverse :: proc(self) -> Option(Matrix(T, R, C)) where R == C, Real(T) {
+		return self.solve(Matrix(T, R, C).identity());
+	}
+
+	/// Rows in brackets: `[[1, 2], [3, 4]]`, each element with the caller's options.
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
+		fmt.format_to(writer, "[");
+		foreach (r in 0 ..< R) {
+			if (r > 0) { fmt.format_to(writer, ", "); }
+			fmt.format_to(writer, "[");
+			foreach (c in 0 ..< C) {
+				if (c > 0) { fmt.format_to(writer, ", "); }
+				fmt.format_to_with(writer, options, self.columns[c][r]);
+			}
+			fmt.format_to(writer, "]");
+		}
+		fmt.format_to(writer, "]");
+	}
+}
+
+// The determinant of the rows `(a, b, c)`, `(d, e, f)`, `(g, h, i)`, along the
+// first row.
+@(private)
+determinant3 :: proc(a, b, c, d, e, f, g, h, i: $T) -> T where interfaces.Numeric(T) {
+	return a*(e*i - f*h) - b*(d*i - f*g) + c*(d*h - e*g);
+}
+
+// The elimination steps, over column-major storage `a[c][r]`. The pivot of
+// column `k` is the first row from `k` down whose magnitude is the largest.
+@(private)
+pivot_row :: proc(a: [$N][N]$T, k: int) -> int where Real(T) {
+	p := k;
+	best := a[k][k].abs();
+	foreach (r in k + 1 ..< N) {
+		magnitude := a[k][r].abs();
+		if (best < magnitude) {
+			p = r;
+			best = magnitude;
+		}
+	}
+	return p;
+}
+
+@(private)
+swap_rows :: proc(a: ^mut [$N][N]$T, p, k: int) {
+	foreach (c in 0 ..< N) {
+		held := a^[c][p];
+		a^[c][p] = a^[c][k];
+		a^[c][k] = held;
+	}
+}
+
+// Subtracts multiples of row `k` from the rows below it, leaving column `k`
+// below the diagonal as it was: only the columns after `k` are read again.
+@(private)
+eliminate_below :: proc(a: ^mut [$N][N]$T, k: int) where Real(T) {
+	foreach (r in k + 1 ..< N) {
+		factor := a^[k][r]/a^[k][k];
+		foreach (c in k + 1 ..< N) { a^[c][r] = a^[c][r] - factor*a^[c][k]; }
+	}
+}

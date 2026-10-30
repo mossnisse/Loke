@@ -1,0 +1,51 @@
+/**
+	Shapes and exact geometric predicates over `core:math/linalg`'s vectors,
+	with the same bits everywhere.
+
+	`Aabb2` and `Aabb3` are boxes by their corners, `Circle` and `Sphere`
+	discs and balls, `Plane` the points with `dot(normal, p) == offset`, and
+	`Segment2`, `Segment3`, `Triangle2`, and `Triangle3` the shapes their
+	points span. Every one is closed: it contains its boundary, so shapes that
+	touch intersect. A box with a minimum above its maximum, or a NaN corner,
+	is empty. Literals from another package name their fields, so each shape
+	has a constructor: `from_min_max`, `from_corners`, `from_center_radius`,
+	`from_normal_offset`, or `from_points`.
+
+	`Ray2` and `Ray3` are `origin + t*direction`, and `cast` finds where one
+	meets a box, a circle or a sphere, a plane, or a triangle within the range
+	of `t` its caller gives: conservatively for a box, which is never missed,
+	and watertight for triangles, so a ray through an edge two triangles
+	share hits one. `intersects` also tests segments against segments and
+	boxes, exactly from the predicates, and triangles against boxes. A
+	`Frustum` is the six planes of a clip matrix for a stated
+	`linalg.Depth_Range`, and culls spheres and boxes conservatively.
+	`transform_box` and `transform_plane` move a box's bound and a plane by a
+	transform.
+
+	A polygon is a slice of `linalg.Vector2` vertices, the last edge closing
+	back to the first: `signed_area`, `centroid`, `winding_number`, `contains`
+	under a stated `Fill_Rule`, `convex_hull`, `is_convex`, and `is_simple`,
+	each decision exact for `f32`, `f64`, and integers.
+
+	`orient2d`, `orient3d`, `incircle`, and `insphere` return the exact sign of
+	their determinant for `f32` and `f64` coordinates, as if computed in real
+	arithmetic, so code built on them cannot contradict itself: three points
+	are collinear or not, whichever order they are tested in. Each first
+	computes the determinant in floating point with an error bound, and only a
+	result within the bound, near a degenerate configuration, is recomputed
+	exactly. Integers get the plain determinant, exact while it does not
+	overflow, and other number types its sign as computed.
+
+	Every result is the same on every machine, CPU level, and optimization
+	level, and at compile time for whatever does not reach a square root,
+	which calls a foreign procedure.
+*/
+// geometry-plan.md is the design this package implements, milestones 1 to 5.
+@(public)
+package geometry;
+
+/**
+	The sign of a predicate's determinant. What `.Positive` means is stated on
+	each predicate.
+*/
+Sign :: enum { Negative, Zero, Positive }

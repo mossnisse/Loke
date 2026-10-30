@@ -1,0 +1,9 @@
+L0416
+@7:22
+`operator(+)` takes 1 or 2 parameters, found 3
+L0488
+@9:1
+`hook(convert)` is a type role and must be declared as an inherent `impl` member
+L0488
+@14:2
+`drop` has a fixed signature for `Owned`

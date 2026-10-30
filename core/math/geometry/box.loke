@@ -1,0 +1,258 @@
+// geometry-plan.md "Every solid is closed": a box is its corners, contains its
+// faces, and is empty when a minimum exceeds its maximum on some axis. Its
+// comparisons use `<` and `==` alone, so a NaN corner makes it empty.
+@(public)
+package geometry;
+
+import "base:interfaces";
+import "core:math";
+import "core:math/linalg";
+
+/**
+	The axis-aligned rectangle of the points from `min` to `max`, both
+	included, so an integer box from `(0, 0)` to `(3, 3)` holds 16 lattice
+	points. A box with `max.x < min.x` or `max.y < min.y`, or a NaN corner, is
+	empty: it contains nothing and is the identity of `union`.
+*/
+Aabb2 :: struct($T: type) where interfaces.Numeric(T) { min, max: linalg.Vector2(T) }
+
+/// The axis-aligned box of the points from `min` to `max`, as for `Aabb2`.
+Aabb3 :: struct($T: type) where interfaces.Numeric(T) { min, max: linalg.Vector3(T) }
+
+// `a <= b` from `<` and `==`, false for a NaN.
+@(private)
+at_most :: proc(a, b: $T) -> bool where interfaces.Ordered(T) { return a < b || a == b; }
+
+// Below `low`, the amount below; above `high`, the amount above; otherwise 0.
+@(private)
+outside :: proc(value, low, high: $T) -> T where interfaces.Numeric(T), interfaces.Ordered(T) {
+	if (value < low) { return low - value; }
+	if (high < value) { return value - high; }
+	return T(0);
+}
+
+@(private)
+clamp_to :: proc(value, low, high: $T) -> T where interfaces.Ordered(T) {
+	if (value < low) { return low; }
+	if (high < value) { return high; }
+	return value;
+}
+
+impl Aabb2($T) {
+	/// The box from `min` to `max` as given, empty when a minimum exceeds its maximum.
+	from_min_max :: proc(min, max: linalg.Vector2(T)) -> Aabb2(T) { return {min, max}; }
+	/// The box with corners `a` and `b`, in either order.
+	from_corners :: proc(a, b: linalg.Vector2(T)) -> Aabb2(T) where interfaces.Ordered(T) {
+		return {a.min(b), a.max(b)};
+	}
+	/// The box holding the one point `p`.
+	from_point :: proc(p: linalg.Vector2(T)) -> Aabb2(T) { return {p, p}; }
+	/// The smallest box holding every point, or `.none` for no points.
+	from_points :: proc(points: []linalg.Vector2(T)) -> Option(Aabb2(T)) where interfaces.Ordered(T) {
+		if (points.len() == 0) { return .none; }
+		result := Aabb2(T){points[0], points[0]};
+		foreach (p in points[1:]) { result = result.union(p); }
+		return .some(result);
+	}
+	/// The empty box `min = +inf`, `max = -inf`, from which `union` accumulates.
+	empty :: proc() -> Aabb2(T) where linalg.Real(T) {
+		inf := T(math.F64_INFINITY);
+		return {linalg.Vector2(T).splat(inf), linalg.Vector2(T).splat(-inf)};
+	}
+
+	is_empty :: proc(self) -> bool where interfaces.Ordered(T) {
+		return !(at_most(self.min.x, self.max.x) && at_most(self.min.y, self.max.y));
+	}
+
+	/// Whether the point is in the box, faces included, or the box in this one.
+	contains :: proc{contains_point, contains_box};
+	@(private) contains_point :: proc(self, p: linalg.Vector2(T)) -> bool where interfaces.Ordered(T) {
+		return at_most(self.min.x, p.x) && at_most(p.x, self.max.x)
+			&& at_most(self.min.y, p.y) && at_most(p.y, self.max.y);
+	}
+	/// An empty box is in every box.
+	@(private) contains_box :: proc(self, other: Aabb2(T)) -> bool where interfaces.Ordered(T) {
+		if (other.is_empty()) { return true; }
+		return at_most(self.min.x, other.min.x) && at_most(other.max.x, self.max.x)
+			&& at_most(self.min.y, other.min.y) && at_most(other.max.y, self.max.y);
+	}
+
+	/// The smallest box holding both boxes, or the box and the point; an empty one adds nothing.
+	union :: proc{union_box, union_point};
+	@(private) union_box :: proc(self, other: Aabb2(T)) -> Aabb2(T) where interfaces.Ordered(T) {
+		if (other.is_empty()) { return self; }
+		if (self.is_empty()) { return other; }
+		return {self.min.min(other.min), self.max.max(other.max)};
+	}
+	@(private) union_point :: proc(self, p: linalg.Vector2(T)) -> Aabb2(T) where interfaces.Ordered(T) {
+		if (self.is_empty()) { return {p, p}; }
+		return {self.min.min(p), self.max.max(p)};
+	}
+	/// The points in both boxes, empty when they do not overlap.
+	intersection :: proc(self, other: Aabb2(T)) -> Aabb2(T) where interfaces.Ordered(T) {
+		return {self.min.max(other.min), self.max.min(other.max)};
+	}
+	/// Every face moved out by `amount`, or in for a negative one.
+	expand :: proc(self, amount: T) -> Aabb2(T) {
+		offset := linalg.Vector2(T).splat(amount);
+		return {self.min - offset, self.max + offset};
+	}
+
+	/// `max - min`, negative on an axis where the box is empty.
+	size :: proc(self) -> linalg.Vector2(T) { return self.max - self.min; }
+	/// `min + max`, twice the center, which needs no division.
+	doubled_center :: proc(self) -> linalg.Vector2(T) { return self.min + self.max; }
+	/// `min*0.5 + max*0.5`, which cannot overflow.
+	center :: proc(self) -> linalg.Vector2(T) where linalg.Real(T) {
+		half := T(0.5);
+		return self.min*half + self.max*half;
+	}
+	/// Bit 0 of `index` selects `max.x` over `min.x`, and bit 1 `max.y`; it panics outside 0 to 3.
+	corner :: proc(self, index: int) -> linalg.Vector2(T) {
+		assert(0 <= index && index < 4, "geometry.Aabb2.corner needs an index from 0 to 3");
+		return linalg.Vector2(T).from_components(self.max.x if index & 1 != 0 else self.min.x, self.max.y if index & 2 != 0 else self.min.y);
+	}
+	/// `size().x * size().y`, 0 for an empty box.
+	area :: proc(self) -> T where interfaces.Ordered(T) {
+		if (self.is_empty()) { return T(0); }
+		s := self.size();
+		return s.x*s.y;
+	}
+	/// `2*(size().x + size().y)`, 0 for an empty box.
+	perimeter :: proc(self) -> T where interfaces.Ordered(T) {
+		if (self.is_empty()) { return T(0); }
+		s := self.size();
+		return (s.x + s.y)*T(2);
+	}
+
+	/// The point of the box nearest `p`, which is `p` inside it. It panics for an empty box.
+	closest_point :: proc(self, p: linalg.Vector2(T)) -> linalg.Vector2(T) where interfaces.Ordered(T) {
+		assert(!self.is_empty(), "geometry.Aabb2.closest_point needs a box that is not empty");
+		return linalg.Vector2(T).from_components(clamp_to(p.x, self.min.x, self.max.x), clamp_to(p.y, self.min.y, self.max.y));
+	}
+	/// The squared distance from `p` to the box, 0 inside it, exact for integers. It panics for an empty box.
+	distance_squared :: proc(self, p: linalg.Vector2(T)) -> T where interfaces.Ordered(T) {
+		assert(!self.is_empty(), "geometry.Aabb2.distance_squared needs a box that is not empty");
+		dx := outside(p.x, self.min.x, self.max.x);
+		dy := outside(p.y, self.min.y, self.max.y);
+		return dx*dx + dy*dy;
+	}
+	/// The square root of `distance_squared`. It panics for an empty box.
+	distance :: proc(self, p: linalg.Vector2(T)) -> T where linalg.Real(T) {
+		return self.distance_squared(p).sqrt();
+	}
+}
+
+impl Aabb3($T) {
+	/// The box from `min` to `max` as given, empty when a minimum exceeds its maximum.
+	from_min_max :: proc(min, max: linalg.Vector3(T)) -> Aabb3(T) { return {min, max}; }
+	/// The box with corners `a` and `b`, in either order.
+	from_corners :: proc(a, b: linalg.Vector3(T)) -> Aabb3(T) where interfaces.Ordered(T) {
+		return {a.min(b), a.max(b)};
+	}
+	/// The box holding the one point `p`.
+	from_point :: proc(p: linalg.Vector3(T)) -> Aabb3(T) { return {p, p}; }
+	/// The smallest box holding every point, or `.none` for no points.
+	from_points :: proc(points: []linalg.Vector3(T)) -> Option(Aabb3(T)) where interfaces.Ordered(T) {
+		if (points.len() == 0) { return .none; }
+		result := Aabb3(T){points[0], points[0]};
+		foreach (p in points[1:]) { result = result.union(p); }
+		return .some(result);
+	}
+	/// The empty box `min = +inf`, `max = -inf`, from which `union` accumulates.
+	empty :: proc() -> Aabb3(T) where linalg.Real(T) {
+		inf := T(math.F64_INFINITY);
+		return {linalg.Vector3(T).splat(inf), linalg.Vector3(T).splat(-inf)};
+	}
+
+	is_empty :: proc(self) -> bool where interfaces.Ordered(T) {
+		return !(at_most(self.min.x, self.max.x) && at_most(self.min.y, self.max.y) && at_most(self.min.z, self.max.z));
+	}
+
+	/// Whether the point is in the box, faces included, or the box in this one.
+	contains :: proc{contains_point, contains_box};
+	@(private) contains_point :: proc(self, p: linalg.Vector3(T)) -> bool where interfaces.Ordered(T) {
+		return at_most(self.min.x, p.x) && at_most(p.x, self.max.x)
+			&& at_most(self.min.y, p.y) && at_most(p.y, self.max.y)
+			&& at_most(self.min.z, p.z) && at_most(p.z, self.max.z);
+	}
+	/// An empty box is in every box.
+	@(private) contains_box :: proc(self, other: Aabb3(T)) -> bool where interfaces.Ordered(T) {
+		if (other.is_empty()) { return true; }
+		return at_most(self.min.x, other.min.x) && at_most(other.max.x, self.max.x)
+			&& at_most(self.min.y, other.min.y) && at_most(other.max.y, self.max.y)
+			&& at_most(self.min.z, other.min.z) && at_most(other.max.z, self.max.z);
+	}
+
+	/// The smallest box holding both boxes, or the box and the point; an empty one adds nothing.
+	union :: proc{union_box, union_point};
+	@(private) union_box :: proc(self, other: Aabb3(T)) -> Aabb3(T) where interfaces.Ordered(T) {
+		if (other.is_empty()) { return self; }
+		if (self.is_empty()) { return other; }
+		return {self.min.min(other.min), self.max.max(other.max)};
+	}
+	@(private) union_point :: proc(self, p: linalg.Vector3(T)) -> Aabb3(T) where interfaces.Ordered(T) {
+		if (self.is_empty()) { return {p, p}; }
+		return {self.min.min(p), self.max.max(p)};
+	}
+	/// The points in both boxes, empty when they do not overlap.
+	intersection :: proc(self, other: Aabb3(T)) -> Aabb3(T) where interfaces.Ordered(T) {
+		return {self.min.max(other.min), self.max.min(other.max)};
+	}
+	/// Every face moved out by `amount`, or in for a negative one.
+	expand :: proc(self, amount: T) -> Aabb3(T) {
+		offset := linalg.Vector3(T).splat(amount);
+		return {self.min - offset, self.max + offset};
+	}
+
+	/// `max - min`, negative on an axis where the box is empty.
+	size :: proc(self) -> linalg.Vector3(T) { return self.max - self.min; }
+	/// `min + max`, twice the center, which needs no division.
+	doubled_center :: proc(self) -> linalg.Vector3(T) { return self.min + self.max; }
+	/// `min*0.5 + max*0.5`, which cannot overflow.
+	center :: proc(self) -> linalg.Vector3(T) where linalg.Real(T) {
+		half := T(0.5);
+		return self.min*half + self.max*half;
+	}
+	/// Bits 0, 1, and 2 of `index` select `max` over `min` on x, y, and z; it panics outside 0 to 7.
+	corner :: proc(self, index: int) -> linalg.Vector3(T) {
+		assert(0 <= index && index < 8, "geometry.Aabb3.corner needs an index from 0 to 7");
+		return linalg.Vector3(T).from_components(
+			self.max.x if index & 1 != 0 else self.min.x,
+			self.max.y if index & 2 != 0 else self.min.y,
+			self.max.z if index & 4 != 0 else self.min.z);
+	}
+	/// The product of the sides, 0 for an empty box.
+	volume :: proc(self) -> T where interfaces.Ordered(T) {
+		if (self.is_empty()) { return T(0); }
+		s := self.size();
+		return s.x*s.y*s.z;
+	}
+	/// `2*(xy + yz + zx)` of the sides, 0 for an empty box.
+	surface_area :: proc(self) -> T where interfaces.Ordered(T) {
+		if (self.is_empty()) { return T(0); }
+		s := self.size();
+		return (s.x*s.y + s.y*s.z + s.z*s.x)*T(2);
+	}
+
+	/// The point of the box nearest `p`, which is `p` inside it. It panics for an empty box.
+	closest_point :: proc(self, p: linalg.Vector3(T)) -> linalg.Vector3(T) where interfaces.Ordered(T) {
+		assert(!self.is_empty(), "geometry.Aabb3.closest_point needs a box that is not empty");
+		return linalg.Vector3(T).from_components(
+			clamp_to(p.x, self.min.x, self.max.x),
+			clamp_to(p.y, self.min.y, self.max.y),
+			clamp_to(p.z, self.min.z, self.max.z));
+	}
+	/// The squared distance from `p` to the box, 0 inside it, exact for integers. It panics for an empty box.
+	distance_squared :: proc(self, p: linalg.Vector3(T)) -> T where interfaces.Ordered(T) {
+		assert(!self.is_empty(), "geometry.Aabb3.distance_squared needs a box that is not empty");
+		dx := outside(p.x, self.min.x, self.max.x);
+		dy := outside(p.y, self.min.y, self.max.y);
+		dz := outside(p.z, self.min.z, self.max.z);
+		return dx*dx + dy*dy + dz*dz;
+	}
+	/// The square root of `distance_squared`. It panics for an empty box.
+	distance :: proc(self, p: linalg.Vector3(T)) -> T where linalg.Real(T) {
+		return self.distance_squared(p).sqrt();
+	}
+}

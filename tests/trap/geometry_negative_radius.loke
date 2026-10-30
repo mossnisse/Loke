@@ -1,0 +1,14 @@
+// standard-library "`core:math/geometry`": a negative radius describes no
+// set, so a sphere with one panics where it is used, as `math.clamp` does for
+// reversed bounds.
+package main;
+
+import "core:fmt";
+import "core:math/geometry";
+import "core:math/linalg";
+
+main :: proc() {
+	origin := linalg.Vector3(f64).splat(0);
+	fmt.println(geometry.Sphere(f64).from_center_radius(origin, 0).contains(origin));
+	fmt.println(geometry.Sphere(f64).from_center_radius(origin, -1).contains(origin));
+}

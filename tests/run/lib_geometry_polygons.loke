@@ -1,0 +1,452 @@
+package main;
+
+import "core:fmt";
+import "core:math";
+import "core:math/geometry";
+import "core:math/linalg";
+import "core:math/repro";
+import "core:unsafe";
+
+// geometry-plan.md "Validation", milestone 4: polygons. Convex hulls against
+// the brute-force hull from exact triangle tests on every triple, winding
+// numbers against summed angles and against their additivity over a shared
+// edge, the polygon tests on hand-made and near-degenerate polygons, at f64,
+// f32, and integers, and a dual number's derivative of the area and the
+// centroid.
+
+failures := 0;
+
+check :: proc(name: string, ok: bool) {
+	if (!ok) {
+		failures += 1;
+		fmt.println("FAIL", name);
+	}
+}
+
+V2 :: linalg.Vector2(f64);
+I2 :: linalg.Vector2(i32);
+F2 :: linalg.Vector2(f32);
+
+v2 :: proc(x, y: f64) -> V2 { return V2.from_components(x, y); }
+i2 :: proc(x, y: i32) -> I2 { return I2.from_components(x, y); }
+
+bits :: proc(x: f64) -> u64 { return unsafe.transmute(u64, x); }
+
+// 2^k for a normal power of two.
+pow2 :: proc(k: int) -> f64 { return unsafe.transmute(f64, u64(1023 + k) << 52); }
+
+Random :: struct { state: u64 }
+
+impl Random {
+	step :: proc(self: inout) -> u64 {
+		self.state = self.state*%6364136223846793005 +% 1442695040888963407;
+		return self.state >> 11;
+	}
+	// Uniform in [-2, 2).
+	next :: proc(self: inout) -> f64 { return f64(self.step())/9007199254740992.0*4.0 - 2.0; }
+	below :: proc(self: inout, n: int) -> int { return int(self.step() % u64(n)); }
+	v2 :: proc(self: inout) -> V2 {
+		x := self.next();
+		y := self.next();
+		return V2.from_components(x, y);
+	}
+}
+
+some :: proc(o: Option($T)) -> bool { return !(o == .none); }
+
+// The extreme points of `points`, each once: those not in a triangle,
+// possibly flat, of three points different from them.
+brute_hull :: proc(points: []linalg.Vector2($T)) -> [dynamic]linalg.Vector2(T) {
+	result := make([dynamic]linalg.Vector2(T));
+	n := points.len();
+	foreach (q in 0 ..< n) {
+		p := points[q];
+		seen := false;
+		foreach (e in result[:]) { if (e == p) { seen = true; } }
+		if (seen) { continue; }
+		inside := false;
+		foreach (a in 0 ..< n) {
+			if (inside || points[a] == p) { continue; }
+			foreach (b in a ..< n) {
+				if (inside || points[b] == p) { continue; }
+				foreach (c in b ..< n) {
+					if (points[c] == p) { continue; }
+					if (geometry.Triangle2(T).from_points(points[a], points[b], points[c]).contains(p)) {
+						inside = true;
+						break;
+					}
+				}
+			}
+		}
+		if (!inside) { result.append(p); }
+	}
+	return result;
+}
+
+// The hull's vertices are the brute-force extreme points, counterclockwise
+// with every turn strictly left, from the lexicographically smallest.
+hull_agrees :: proc(points: []linalg.Vector2($T)) -> bool {
+	expected := brute_hull(points);
+	hull := geometry.convex_hull(points);
+	ok := hull.len() == expected.len();
+	foreach (p in hull[:]) {
+		found := false;
+		foreach (e in expected[:]) { if (e == p) { found = true; } }
+		ok = ok && found;
+	}
+	h := hull.len();
+	if (h >= 3) {
+		foreach (i in 0 ..< h) {
+			ok = ok && geometry.orient2d(hull[i], hull[(i + 1) % h], hull[(i + 2) % h]) == .Positive;
+		}
+		ok = ok && geometry.is_convex(hull[:]);
+	}
+	foreach (p in hull[:]) {
+		ok = ok && (hull[0].x < p.x || (hull[0].x == p.x && !(p.y < hull[0].y)));
+	}
+	// The form writing into caller storage gives the same hull.
+	copy := make([dynamic]linalg.Vector2(T));
+	out := make([dynamic]linalg.Vector2(T));
+	foreach (p in points) {
+		copy.append(p);
+		out.append(p);
+	}
+	count := geometry.convex_hull(&mut copy[:], &mut out[:]);
+	ok = ok && count == h;
+	foreach (i in 0 ..< math.min(count, h)) { ok = ok && out[i] == hull[i]; }
+	return ok;
+}
+
+hulls :: proc() {
+	random := Random{11};
+	wrong := 0;
+	foreach (n in 0 ..< 120) {
+		points := make([dynamic]V2);
+		count := n % 24;
+		foreach (_ in 0 ..< count) {
+			switch (n % 4) {
+			case 0: points.append(random.v2());
+			// A small grid: repeated and collinear points.
+			case 1: points.append(v2(f64(random.below(4)), f64(random.below(4))));
+			// Points on a circle, all extreme.
+			case 2:
+				angle := random.next()*math.PI;
+				points.append(v2(repro.cos(angle), repro.sin(angle)));
+			// Points within an ulp of one line, far from the origin, where
+			// the floating-point turn is wrong.
+			default:
+				k := f64(random.below(64));
+				points.append(v2(0.5 + k*pow2(-6), 0.5 + k*pow2(-6) + f64(random.below(3) - 1)*pow2(-53)));
+			}
+		}
+		if (!hull_agrees(points[:])) { wrong += 1; }
+
+		ints := make([dynamic]I2);
+		foreach (p in points[:]) { ints.append(i2(i32(p.x*1000.0), i32(p.y*1000.0))); }
+		if (!hull_agrees(ints[:])) { wrong += 1; }
+		floats := make([dynamic]F2);
+		foreach (p in points[:]) { floats.append(F2.from_vector(p)); }
+		if (!hull_agrees(floats[:])) { wrong += 1; }
+	}
+	check("convex hulls agree with the brute-force hull", wrong == 0);
+
+	none: [0]V2 = {};
+	check("the hull of no points", geometry.convex_hull(none[:]).len() == 0);
+	same := [3]V2{v2(1, 2), v2(1, 2), v2(1, 2)};
+	one := geometry.convex_hull(same[:]);
+	check("the hull of one repeated point", one.len() == 1 && one[0] == v2(1, 2));
+	line := [5]V2{v2(2, 2), v2(0, 0), v2(3, 3), v2(1, 1), v2(3, 3)};
+	ends := geometry.convex_hull(line[:]);
+	check("the hull of collinear points", ends.len() == 2 && ends[0] == v2(0, 0) && ends[1] == v2(3, 3));
+	square := [9]V2{v2(1, 1), v2(0, 0), v2(2, 0), v2(2, 2), v2(0, 2), v2(1, 0), v2(2, 1), v2(0, 1), v2(1, 2)};
+	corners := geometry.convex_hull(square[:]);
+	check("the hull of a square's grid", corners.len() == 4 && corners[0] == v2(0, 0) && corners[1] == v2(2, 0) && corners[2] == v2(2, 2) && corners[3] == v2(0, 2));
+	sorted := [3]V2{v2(3, 0), v2(0, 0), v2(0, 3)};
+	room := [3]V2{v2(9, 9), v2(9, 9), v2(9, 9)};
+	written := geometry.convex_hull(&mut sorted[:], &mut room[:]);
+	check("the hull into caller storage sorts its points", written == 3 && sorted[0] == v2(0, 0) && sorted[1] == v2(0, 3) && sorted[2] == v2(3, 0)
+		&& room[0] == v2(0, 0) && room[1] == v2(3, 0) && room[2] == v2(0, 3));
+}
+
+// The winding number of `p` from the angles its edges subtend, for a point
+// away from the boundary.
+angle_winding :: proc(polygon: []V2, p: V2) -> int {
+	total := 0.0;
+	n := polygon.len();
+	foreach (i in 0 ..< n) {
+		a := polygon[i] - p;
+		b := polygon[(i + 1) % n] - p;
+		total += repro.atan2(a.cross(b), a.dot(b));
+	}
+	return int(math.round(total/(2.0*math.PI)));
+}
+
+boundary_distance :: proc(polygon: []V2, p: V2) -> f64 {
+	best := math.F64_INFINITY;
+	n := polygon.len();
+	foreach (i in 0 ..< n) {
+		best = math.min(best, geometry.Segment2(f64).from_points(polygon[i], polygon[(i + 1) % n]).distance(p));
+	}
+	return best;
+}
+
+windings :: proc() {
+	random := Random{21};
+	wrong := 0;
+	foreach (_ in 0 ..< 200) {
+		polygon := make([dynamic]V2);
+		foreach (_ in 0 ..< 3 + random.below(9)) { polygon.append(random.v2()); }
+		foreach (_ in 0 ..< 20) {
+			p := random.v2();
+			if (boundary_distance(polygon[:], p) < 1.0e-6) { continue; }
+			expected := angle_winding(polygon[:], p);
+			w := geometry.winding_number(polygon[:], p) or_else 99;
+			if (w != expected) { wrong += 1; }
+			if (geometry.contains(polygon[:], p, .Nonzero) != (expected != 0) || geometry.contains(polygon[:], p, .Even_Odd) != (expected % 2 != 0)) { wrong += 1; }
+		}
+		// Every vertex and every edge's midpoint, when it is exact, is on the
+		// boundary.
+		n := polygon.len();
+		foreach (i in 0 ..< n) {
+			if (some(geometry.winding_number(polygon[:], polygon[i])) || !geometry.contains(polygon[:], polygon[i], .Even_Odd)) { wrong += 1; }
+		}
+	}
+	check("winding numbers agree with summed angles", wrong == 0);
+
+	// A quadrilateral split along its diagonal: off both triangles'
+	// boundaries, the two winding numbers add to the quadrilateral's, for
+	// points within ulps of the diagonal where the floating-point side test
+	// is wrong; on it, each triangle has the point on its boundary. The
+	// diagonal's points k/4096 of the way along are exact.
+	a, b, c, d := v2(0.125, 0.375), v2(1.9, 0.2), v2(1.625, 2.875), v2(-0.2, 1.6);
+	quad := [4]V2{a, b, c, d};
+	left := [3]V2{a, b, c};
+	right := [3]V2{a, c, d};
+	wrong = 0;
+	on := 0;
+	foreach (k in 0 ..< 4000) {
+		t := f64(k)/4096.0;
+		p := a + (c - a)*t;
+		p = v2(p.x + f64(random.below(5) - 2)*pow2(-53), p.y + f64(random.below(5) - 2)*pow2(-52));
+		w1, w2 := geometry.winding_number(left[:], p), geometry.winding_number(right[:], p);
+		whole := geometry.winding_number(quad[:], p) or_else 99;
+		switch (w1) {
+		case .none:
+			on += 1;
+			if (!(w2 == .none) || whole != 1) { wrong += 1; }
+		case .some(x):
+			if ((x + (w2 or_else 99)) != whole || !(whole == 1 || whole == 0)) { wrong += 1; }
+		}
+		if (!geometry.contains(left[:], p, .Nonzero) && !geometry.contains(right[:], p, .Nonzero) && 0.0 < t) { wrong += 1; }
+	}
+	check("winding numbers add over a shared edge", wrong == 0);
+	fmt.println("points on the shared diagonal", on);
+	check("a point on the diagonal is on both triangles", geometry.winding_number(left[:], a + (c - a)*0.5) == .none
+		&& geometry.winding_number(right[:], a + (c - a)*0.5) == .none && (geometry.winding_number(quad[:], a + (c - a)*0.5) or_else 99) == 1);
+
+	star := [5]V2{v2(0, 3), v2(2, -3), v2(-3, 1), v2(3, 1), v2(-2, -3)};
+	check("a pentagram's center", (geometry.winding_number(star[:], v2(0, 0)) or_else 99) == -2
+		&& geometry.contains(star[:], v2(0, 0), .Nonzero) && !geometry.contains(star[:], v2(0, 0), .Even_Odd)
+		&& geometry.contains(star[:], v2(0, 2.5), .Even_Odd) && !geometry.contains(star[:], v2(3, 3), .Nonzero));
+	twice := [8]V2{v2(0, 0), v2(1, 0), v2(1, 1), v2(0, 1), v2(0, 0), v2(1, 0), v2(1, 1), v2(0, 1)};
+	check("a square traversed twice", (geometry.winding_number(twice[:], v2(0.5, 0.5)) or_else 99) == 2 && !geometry.contains(twice[:], v2(0.5, 0.5), .Even_Odd));
+	clockwise := [4]V2{v2(0, 0), v2(0, 1), v2(1, 1), v2(1, 0)};
+	check("a clockwise square", (geometry.winding_number(clockwise[:], v2(0.5, 0.5)) or_else 99) == -1 && (geometry.winding_number(clockwise[:], v2(2, 0.5)) or_else 99) == 0);
+	// Edges at the point's height, a vertex level with it, and a horizontal
+	// edge through it.
+	notch := [6]V2{v2(0, 0), v2(4, 0), v2(4, 2), v2(3, 1), v2(2, 2), v2(0, 2)};
+	check("rays through vertices and along edges", (geometry.winding_number(notch[:], v2(1, 1)) or_else 99) == 1 && geometry.winding_number(notch[:], v2(1, 2)) == .none
+		&& (geometry.winding_number(notch[:], v2(3.5, 1)) or_else 99) == 1 && (geometry.winding_number(notch[:], v2(5, 1)) or_else 99) == 0
+		&& (geometry.winding_number(notch[:], v2(3, 1.5)) or_else 99) == 0 && (geometry.winding_number(notch[:], v2(-1, 2)) or_else 99) == 0
+		&& (geometry.winding_number(notch[:], v2(5, 0)) or_else 99) == 0 && geometry.winding_number(notch[:], v2(2, 0)) == .none);
+	empty: [0]V2 = {};
+	point := [1]V2{v2(1, 1)};
+	check("empty and single-point polygons", (geometry.winding_number(empty[:], v2(0, 0)) or_else 99) == 0 && !geometry.contains(empty[:], v2(0, 0), .Nonzero)
+		&& geometry.winding_number(point[:], v2(1, 1)) == .none && (geometry.winding_number(point[:], v2(1, 2)) or_else 99) == 0);
+	ipolygon := [4]I2{i2(0, 0), i2(4, 0), i2(4, 4), i2(0, 4)};
+	check("an integer polygon", (geometry.winding_number(ipolygon[:], i2(2, 2)) or_else 99) == 1 && geometry.winding_number(ipolygon[:], i2(4, 3)) == .none
+		&& (geometry.winding_number(ipolygon[:], i2(5, 3)) or_else 99) == 0 && geometry.contains(ipolygon[:], i2(0, 0), .Nonzero));
+}
+
+areas :: proc() {
+	square := [4]V2{v2(0, 0), v2(2, 0), v2(2, 2), v2(0, 2)};
+	check("a square's area", geometry.signed_area(square[:]) == 4.0 && geometry.signed_area_doubled(square[:]) == 8.0);
+	clockwise := [4]V2{v2(0, 0), v2(0, 2), v2(2, 2), v2(2, 0)};
+	check("a clockwise square's area", geometry.signed_area(clockwise[:]) == -4.0);
+	// 10^8 from the origin, the products of the shoelace formula need 54
+	// bits; the differences from the first vertex are exact.
+	far := [4]V2{v2(1.0e8 + 0.25, 1.0e8), v2(1.0e8 + 1.5, 1.0e8 + 0.125), v2(1.0e8 + 1.25, 1.0e8 + 1.75), v2(1.0e8, 1.0e8 + 1.5)};
+	near_origin := [4]V2{v2(0.25, 0), v2(1.5, 0.125), v2(1.25, 1.75), v2(0, 1.5)};
+	check("an area far from the origin", geometry.signed_area(far[:]) == geometry.signed_area(near_origin[:]));
+	ipolygon := [5]I2{i2(0, 0), i2(5, 0), i2(5, 3), i2(2, 1), i2(0, 3)};
+	check("an integer area", geometry.signed_area_doubled(ipolygon[:]) == 20);
+	short := [2]V2{v2(0, 0), v2(1, 1)};
+	check("fewer than three vertices have no area", geometry.signed_area(short[:]) == 0.0 && geometry.centroid(short[:]) == .none);
+
+	check("a square's centroid", (geometry.centroid(square[:]) or_else V2{}) == v2(1, 1));
+	triangle := [3]V2{v2(0, 0), v2(3, 0), v2(0, 6)};
+	check("a triangle's centroid", (geometry.centroid(triangle[:]) or_else V2{}) == v2(1, 2));
+	// An L of three unit squares has its centroid at (5/6, 5/6).
+	ell := [6]V2{v2(0, 0), v2(2, 0), v2(2, 1), v2(1, 1), v2(1, 2), v2(0, 2)};
+	c := geometry.centroid(ell[:]) or_else V2{};
+	check("an L's centroid", math.abs(c.x - 5.0/6.0) <= 1.0e-15 && math.abs(c.y - 5.0/6.0) <= 1.0e-15);
+	cl := geometry.centroid(clockwise[:]) or_else V2{};
+	check("a clockwise centroid", cl == v2(1, 1));
+	flat := [3]V2{v2(0, 0), v2(1, 1), v2(2, 2)};
+	check("a polygon of no area has no centroid", geometry.centroid(flat[:]) == .none);
+	fc := geometry.centroid(far[:]) or_else V2{};
+	nc := geometry.centroid(near_origin[:]) or_else V2{};
+	check("a centroid far from the origin", math.abs(fc.x - 1.0e8 - nc.x) <= 1.5e-8 && math.abs(fc.y - 1.0e8 - nc.y) <= 1.5e-8);
+}
+
+shapes :: proc() {
+	square := [4]V2{v2(0, 0), v2(2, 0), v2(2, 2), v2(0, 2)};
+	clockwise := [4]V2{v2(0, 0), v2(0, 2), v2(2, 2), v2(2, 0)};
+	straight := [5]V2{v2(0, 0), v2(1, 0), v2(2, 0), v2(2, 2), v2(0, 2)};
+	concave := [5]V2{v2(0, 0), v2(2, 0), v2(1, 1), v2(2, 2), v2(0, 2)};
+	spike := [5]V2{v2(0, 0), v2(2, 0), v2(3, 0), v2(2, 0.0), v2(2, 2)};
+	star := [5]V2{v2(0, 3), v2(2, -3), v2(-3, 1), v2(3, 1), v2(-2, -3)};
+	twice := [8]V2{v2(0, 0), v2(1, 0), v2(1, 1), v2(0, 1), v2(0, 0), v2(1, 0), v2(1, 1), v2(0, 1)};
+	repeated := [5]V2{v2(0, 0), v2(2, 0), v2(2, 2), v2(0, 2), v2(0, 0)};
+	flat := [3]V2{v2(0, 0), v2(1, 1), v2(2, 2)};
+	short := [2]V2{v2(0, 0), v2(1, 1)};
+	bowtie := [4]V2{v2(0, 0), v2(2, 2), v2(2, 0), v2(0, 2)};
+	// Two squares sharing a corner, and a vertex on another edge.
+	eight := [7]V2{v2(0, 0), v2(1, 0), v2(1, 1), v2(2, 1), v2(2, 2), v2(1, 2), v2(1, 1)};
+	touching := [5]V2{v2(0, 0), v2(4, 0), v2(4, 4), v2(2, 0), v2(0, 4)};
+	check("convex polygons", geometry.is_convex(square[:]) && geometry.is_convex(clockwise[:]) && geometry.is_convex(straight[:]));
+	check("polygons that are not convex", !geometry.is_convex(concave[:]) && !geometry.is_convex(spike[:]) && !geometry.is_convex(star[:]) && !geometry.is_convex(twice[:])
+		&& !geometry.is_convex(repeated[:]) && !geometry.is_convex(flat[:]) && !geometry.is_convex(short[:]) && !geometry.is_convex(bowtie[:]));
+	check("simple polygons", geometry.is_simple(square[:]) && geometry.is_simple(clockwise[:]) && geometry.is_simple(straight[:]) && geometry.is_simple(concave[:]));
+	check("polygons that are not simple", !geometry.is_simple(spike[:]) && !geometry.is_simple(star[:]) && !geometry.is_simple(twice[:]) && !geometry.is_simple(repeated[:])
+		&& !geometry.is_simple(flat[:]) && !geometry.is_simple(short[:]) && !geometry.is_simple(bowtie[:]) && !geometry.is_simple(eight[:]) && !geometry.is_simple(touching[:]));
+	// Rectangles with a slit cut back along one line, every other turn to
+	// the left: only turning back makes them neither convex nor simple.
+	slit := [7]V2{v2(0, 0), v2(4, 0), v2(4, 4), v2(2, 4), v2(2, 2), v2(2, 4), v2(0, 4)};
+	level_slit := [7]V2{v2(0, 0), v2(4, 0), v2(4, 2), v2(2, 2), v2(4, 2), v2(4, 4), v2(0, 4)};
+	check("polygons with a slit", !geometry.is_convex(slit[:]) && !geometry.is_simple(slit[:]) && !geometry.is_convex(level_slit[:]) && !geometry.is_simple(level_slit[:]));
+	// Three points on a line, turning back at the second and third.
+	folded := [3]V2{v2(1, 0), v2(2, 0), v2(0, 0)};
+	upright := [3]V2{v2(0, 1), v2(0, 2), v2(0, 0)};
+	check("three points folding back", !geometry.is_simple(folded[:]) && !geometry.is_simple(upright[:]) && !geometry.is_convex(folded[:]));
+	// The first and last edges overlap where the polygon starts.
+	back := [4]V2{v2(1, 0), v2(2, 0), v2(2, 2), v2(3, 0)};
+	check("a polygon folding back through its first vertex", !geometry.is_simple(back[:]) && !geometry.is_convex(back[:]));
+
+	// Random polygons sorted by angle about a point inside are simple, and
+	// the hulls of random points are convex and simple; a hull with two
+	// neighbors swapped is neither.
+	random := Random{31};
+	wrong := 0;
+	foreach (_ in 0 ..< 200) {
+		polygon := make([dynamic]V2);
+		count := 3 + random.below(12);
+		foreach (k in 0 ..< count) {
+			angle := (f64(k) + 0.25 + math.abs(random.next())*0.25)*2.0*math.PI/f64(count);
+			r := 0.5 + math.abs(random.next());
+			polygon.append(v2(r*repro.cos(angle), r*repro.sin(angle)));
+		}
+		if (!geometry.is_simple(polygon[:])) { wrong += 1; }
+		points := make([dynamic]V2);
+		foreach (_ in 0 ..< 3 + random.below(20)) { points.append(random.v2()); }
+		hull := geometry.convex_hull(points[:]);
+		if (hull.len() >= 3) {
+			if (!geometry.is_convex(hull[:]) || !geometry.is_simple(hull[:])) { wrong += 1; }
+			if (hull.len() >= 4) {
+				swapped := hull[1];
+				hull[1] = hull[2];
+				hull[2] = swapped;
+				if (geometry.is_convex(hull[:]) || geometry.is_simple(hull[:])) { wrong += 1; }
+			}
+		}
+	}
+	check("random simple and convex polygons", wrong == 0);
+
+	// Near-collinear vertices 2^50 apart: a turn of one unit is exact.
+	base := pow2(50);
+	thin := [3]V2{v2(0, 0), v2(base, base/2.0), v2(base/2.0, base/4.0 + 1.0)};
+	level := [3]V2{v2(0, 0), v2(base, base/2.0), v2(base/2.0, base/4.0)};
+	check("a thin triangle far out", geometry.is_convex(thin[:]) && geometry.is_simple(thin[:]) && !geometry.is_convex(level[:]) && !geometry.is_simple(level[:]));
+	ipolygon := [5]I2{i2(0, 0), i2(5, 0), i2(5, 3), i2(2, 1), i2(0, 3)};
+	check("an integer polygon's shape", !geometry.is_convex(ipolygon[:]) && geometry.is_simple(ipolygon[:]));
+}
+
+// A forward-mode dual number, as in tests/run/lib_geometry_shapes.loke.
+Dual :: struct { value, derivative: f64 }
+
+impl Dual {
+	@(public) from_f64 :: hook(convert) proc(value: f64) -> Dual { return {value, 0}; }
+	@(public) add :: operator(+) proc(a, b: Dual) -> Dual { return {a.value + b.value, a.derivative + b.derivative}; }
+	@(public) subtract :: operator(-) proc(a, b: Dual) -> Dual { return {a.value - b.value, a.derivative - b.derivative}; }
+	@(public) negate :: operator(-) proc(a: Dual) -> Dual { return {-a.value, -a.derivative}; }
+	@(public) multiply :: operator(*) proc(a, b: Dual) -> Dual {
+		return {a.value*b.value, a.derivative*b.value + a.value*b.derivative};
+	}
+	@(public) divide :: operator(/) proc(a, b: Dual) -> Dual {
+		return {a.value/b.value, (a.derivative*b.value - a.value*b.derivative)/(b.value*b.value)};
+	}
+	@(public) equal :: operator(==) proc(a, b: Dual) -> bool { return a.value == b.value; }
+	@(public) less :: operator(<) proc(a, b: Dual) -> bool { return a.value < b.value; }
+
+	sqrt :: proc(self) -> Dual {
+		root := math.sqrt(self.value);
+		return {root, self.derivative/(root + root)};
+	}
+	sin :: proc(self) -> Dual { return {repro.sin(self.value), self.derivative*repro.cos(self.value)}; }
+	cos :: proc(self) -> Dual { return {repro.cos(self.value), -self.derivative*repro.sin(self.value)}; }
+	asin :: proc(self) -> Dual { return {repro.asin(self.value), self.derivative/math.sqrt(1.0 - self.value*self.value)}; }
+	acos :: proc(self) -> Dual { return {repro.acos(self.value), -self.derivative/math.sqrt(1.0 - self.value*self.value)}; }
+	atan2 :: proc(self, x: Dual) -> Dual {
+		squared := x.value*x.value + self.value*self.value;
+		return {repro.atan2(self.value, x.value), (x.value*self.derivative - self.value*x.derivative)/squared};
+	}
+	abs :: proc(self) -> Dual { return -self if self.value < 0.0 else self; }
+	floor :: proc(self) -> Dual { return {math.floor(self.value), 0}; }
+	ceil :: proc(self) -> Dual { return {math.ceil(self.value), 0}; }
+	round :: proc(self) -> Dual { return {math.round(self.value), 0}; }
+	is_finite :: proc(self) -> bool { return math.is_finite(self.value); }
+	is_normal :: proc(self) -> bool { return math.is_finite(self.value) && math.abs(self.value) >= math.F64_MIN_NORMAL; }
+}
+
+D2 :: linalg.Vector2(Dual);
+
+d2 :: proc(x, y: f64) -> D2 { return D2.from_components(Dual{x, 0}, Dual{y, 0}); }
+
+duals :: proc() {
+	// The square from (0, 0) to (2, 2) with its corner (2, 2) moving in x by
+	// e: twice the area is 8 + 2e, and the centroid's x is
+	// (24 + 12e)/(24 + 6e), whose derivative at 0 is 1/4.
+	square := [4]D2{d2(0, 0), d2(2, 0), D2.from_components(Dual{2, 1}, Dual{2, 0}), d2(0, 2)};
+	area := geometry.signed_area(square[:]);
+	check("a dual area", area.value == 4.0 && area.derivative == 1.0);
+	c := geometry.centroid(square[:]) or_else D2{};
+	check("a dual centroid", math.abs(c.x.value - 1.0) <= 1.0e-15 && math.abs(c.x.derivative - 0.25) <= 1.0e-15);
+}
+
+FOLDED_AREA :: geometry.signed_area_doubled([5]linalg.Vector2(f64){V2.from_components(0.1, 0.2), V2.from_components(2.3, 0.1), V2.from_components(2.9, 1.7), V2.from_components(1.1, 2.6), V2.from_components(-0.4, 1.3)}[:]);
+FOLDED_CENTROID :: geometry.centroid([5]linalg.Vector2(f64){V2.from_components(0.1, 0.2), V2.from_components(2.3, 0.1), V2.from_components(2.9, 1.7), V2.from_components(1.1, 2.6), V2.from_components(-0.4, 1.3)}[:]);
+FOLDED_SIMPLE :: geometry.is_simple([5]linalg.Vector2(f64){V2.from_components(0, 3), V2.from_components(2, -3), V2.from_components(-3, 1), V2.from_components(3, 1), V2.from_components(-2, -3)}[:]);
+FOLDED_CONVEX :: geometry.is_convex([5]linalg.Vector2(f64){V2.from_components(0.1, 0.2), V2.from_components(2.3, 0.1), V2.from_components(2.9, 1.7), V2.from_components(1.1, 2.6), V2.from_components(-0.4, 1.3)}[:]);
+FOLDED_WINDING :: geometry.winding_number([5]linalg.Vector2(f64){V2.from_components(0, 3), V2.from_components(2, -3), V2.from_components(-3, 1), V2.from_components(3, 1), V2.from_components(-2, -3)}[:], V2.from_components(0.1, 0.2));
+
+determinism :: proc() {
+	one := 1.0;
+	polygon := [5]V2{v2(0.1*one, 0.2), v2(2.3, 0.1), v2(2.9, 1.7), v2(1.1, 2.6), v2(-0.4, 1.3)};
+	area := geometry.signed_area_doubled(polygon[:]);
+	c := geometry.centroid(polygon[:]) or_else V2{};
+	star := [5]V2{v2(0*one, 3), v2(2, -3), v2(-3, 1), v2(3, 1), v2(-2, -3)};
+	fmt.println("area", bits(area));
+	fmt.println("centroid", bits(c.x), bits(c.y));
+	check("folded polygon tests equal the run-time ones", FOLDED_AREA == area && FOLDED_WINDING == geometry.winding_number(star[:], v2(0.1, 0.2))
+		&& (FOLDED_CENTROID or_else V2{}) == c && FOLDED_SIMPLE == geometry.is_simple(star[:]) && FOLDED_CONVEX == geometry.is_convex(polygon[:]) && FOLDED_CONVEX);
+}
+
+main :: proc() {
+	hulls();
+	windings();
+	areas();
+	shapes();
+	duals();
+	determinism();
+	fmt.println("failures", failures);
+}

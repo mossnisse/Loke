@@ -2264,7 +2264,18 @@ check_binary :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id) {
 	}
 
 	if !builtin_operator_applies(k.c, v.op, operand_type) {
-		operator_mismatch2(k, v.op_span, v.op, lhs, rhs)
+		// Said in the message, as for ordering: an interface requirement keeps
+		// only the message, and a hidden inherent operator is the likely cause of
+		// a requirement that holds in the type's own package and nowhere else.
+		if hidden_inherent_operator(k, operator_text(v.op), []Type_Id{lhs, rhs}) {
+			errorf(
+				k.c, v.op_span, "L0318",
+				"`%s` does not apply to `%s` here: its inherent `%s` is not `@(public)`",
+				operator_text(v.op), type_name(k.c, lhs), operator_text(v.op),
+			)
+		} else {
+			operator_mismatch2(k, v.op_span, v.op, lhs, rhs)
+		}
 		v.type = INVALID_TYPE
 		return
 	}
@@ -3507,6 +3518,19 @@ materialize :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {
 		}
 		base.splat_from = expr_base(e).type
 		base.type = target
+		return true
+	}
+	// A typed constant scalar, such as `T(0)` in a generic body, folds to the
+	// vector here; an untyped one folds below. Left at its scalar type, it
+	// reached the backend as a scalar constant of the vector's type.
+	if type_is_simd(k.c, target) && !type_is_simd(k.c, base.type) && !type_is_untyped(k.c, base.type) {
+		converted, fits := convert_const(k.c, base.const_value, target, false)
+		if !fits {
+			report_unrepresentable(k, base, target)
+			return false
+		}
+		base.type = target
+		base.const_value = converted
 		return true
 	}
 	// design.md "Borrowed callable views": the procedure or capture value is

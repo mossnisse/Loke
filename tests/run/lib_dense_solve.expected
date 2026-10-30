@@ -1,0 +1,41 @@
+lu f64 Random true
+lu f64 Hilbert true
+lu f64 Graded true
+lu f64 Nearly_Singular true
+cholesky f64 true
+lu f32 Random true
+lu f32 Hilbert true
+lu f32 Graded true
+lu f32 Nearly_Singular true
+cholesky f32 true
+ok the Wilkinson matrix factors exactly, with growth 2^(n-1)
+ok solve_lower_into reads only the lower triangle
+ok with a unit diagonal it is not read
+ok solve_upper_into reads only the upper triangle
+ok a transposed lower triangle is upper
+ok a zero on the diagonal is singular, and b is unchanged
+ok unless the diagonal is unit
+ok the determinant of a swap is -1
+ok an exact determinant
+ok the Cholesky determinant
+ok the determinant of the 4 x 4 Hilbert matrix
+ok a 0 x 0 matrix factors
+ok the identity's reciprocal condition is 1
+ok reciprocal_condition is within a factor 3 of the exact value, from above
+ok the 10 x 10 Hilbert matrix is numerically singular
+ok an exactly singular matrix
+ok solve of a singular matrix
+ok inverse of a singular matrix
+ok a NaN is singular
+ok an infinity is singular
+ok lu_in_place reports it
+ok an indefinite matrix
+ok a semidefinite matrix
+ok a NaN below the diagonal
+ok cholesky reads only the lower triangle
+ok a dual number through solve gives -A^-1 E x
+ok and the same value as at f64, bit for bit
+f64 lu 4605047302950402849 13788271171316690355 14127809233173892295 4571263093488389583
+f64 cholesky 13796024459967195385 13800333191784048771 5961228801300036524
+f32 solve 3205836815 3166418367
+f64 product 4625595597550757277 13828844441110775466 4640142688960445906

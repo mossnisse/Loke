@@ -835,6 +835,11 @@ resolve_declaration_signature :: proc(k: ^Checker, d: ^Decl) {
 			// A generic method is reachable by method syntax, so its receiver is
 			// read off the syntax.
 			mark_template_receiver(k, d)
+			// A generic operator, `operator(*) proc(left: M(R, C), right: M(C, $K))`,
+			// or conversion hook, `hook(convert) proc(v: V($U)) -> V(T)`, is found
+			// by its role before it can be instantiated.
+			mark_template_operator(k, d)
+			mark_template_hook(k, d)
 			reject_uninstantiated_generic(k, d)
 			return
 		}

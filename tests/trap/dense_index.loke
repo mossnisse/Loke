@@ -1,0 +1,13 @@
+// standard-library "`core:math/dense`": an index outside a matrix panics.
+package main;
+
+import "core:fmt";
+import "core:math/dense";
+
+main :: proc() {
+	m := dense.Matrix(f64).identity(2);
+	row := 1;
+	fmt.println(m[row, 1]);
+	row += 1;
+	fmt.println(m[row, 1]);
+}

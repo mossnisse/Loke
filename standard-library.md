@@ -141,6 +141,9 @@ core:encoding/json    JSON documents, values, and a streaming writer
 core:endian           fixed byte-order storage wrappers
 core:math             elementary functions, Complex, Quaternion
 core:math/repro       correctly rounded elementary functions
+core:math/linalg      fixed-size vectors, matrices, rotations, projections
+core:math/dense       run-time-sized matrices, views, LU, Cholesky, QR, eigenvalues, SVD
+core:math/geometry    shapes, rays, frustums, polygons, overlap tests, exact predicates
 core:random           seeded generators, entropy, distributions
 core:time             clocks, durations, the calendar, ISO 8601 text
 core:slice            slice algorithms and sorting            *
@@ -2442,6 +2445,527 @@ another, as [examples/lockstep.loke](examples/lockstep.loke) does.
 The plan for the rest of the package, and its special cases for further
 functions, is in the
 [deterministic math and CPU targeting plan](deterministic-math-and-targets-plan.md#special-cases).
+
+## `core:math/linalg`
+
+Small vectors and matrices as ordinary records that never allocate, so that
+two libraries can pass a point or a transform to each other as it is. The
+design and its later milestones are in the
+[linear algebra library plan](linear-algebra-plan.md).
+
+`Vector2(T)`, `Vector3(T)`, and `Vector4(T)` have the fields `x`, `y`, `z`,
+and `w` as their length allows, and the layout of `[N]T`.
+`Matrix(T, R, C)` is `R` rows by `C` columns of any fixed shape, stored
+column-major in `columns: [C][R]T`; `m[r, c]` reads `m.columns[c][r]`, and
+`Matrix(f32, 4, 4)` has the layout of `[16]f32`, the order OpenGL takes with
+`transpose = GL_FALSE` and Direct3D and Vulkan shaders read as
+`column_major`. Vectors are columns: `m * v` transforms `v`, there is no
+`v * m`, and `a * b` applies `b` first. Each element of a product is the dot
+product of a row and a column, summed in index order from the first product.
+A literal outside the package names its fields,
+`linalg.Vector3(f32){x = 1, y = 2, z = 3}`, or uses `from_components`. The
+package exports no short names; a program's own alias,
+`Vec3 :: linalg.Vector3(f32);`, is the same type.
+
+Arithmetic needs only `interfaces.Numeric(T)`, so integers, whose overflow
+panics as for the scalar, and user number types get:
+
+- on every vector: `from_components`, `splat`, `unit_x` to `unit_w`,
+  `from_array` and `to_array`, `+`, `-`, unary `-`, component-wise `*` and
+  `/`, `*` and `/` by a scalar and `*` of a scalar, exact `==`, `[]` with a
+  runtime index that panics outside the components, `dot`,
+  `length_squared`, `distance_squared`, component-wise `min` and `max`, and
+  `project(onto)`, `reject(normal)`, and `reflect(normal)` for a unit `onto`
+  or `normal`, which need no square root and are exact for integers;
+  `Vector3` has `cross`, `extend(w)`, and `xy`; `Vector4` has `xyz`; and
+  `Vector2` has `cross`, the z of the 3D cross product, `perp`, the quarter
+  turn `(-y, x)`, and `extend(z)`;
+- on every matrix: `splat`, `identity` where `R == C`, `from_columns`,
+  `from_rows`, which reads as it is printed, `from_array` and `to_array` in
+  storage order, `[r, c]`, `column`, `row`, `transpose`, `*` of
+  `Matrix(T, R, K)` and `Matrix(T, K, C)`, `+`, `-`, unary `-`, `*` by and of
+  a scalar, exact `==`, `trace`, `determinant` up to 4 x 4 by cofactor
+  expansion along the first row, which is exact for integers, and `m * v`
+  for a square matrix of the vector's length; `Matrix(T, N, 1).from_vector`
+  and `to_vector` convert a column for `N` from 2 to 4;
+- the transforms: `Matrix(T, 4, 4)` `translation`, `scaling`,
+  `transform_point` (`w` 1), `transform_direction` (`w` 0), which never
+  divide, `upper_left`, and `inverse_rigid`, which inverts a rotation plus a
+  translation by transposition without checking that it is one;
+  `Matrix(T, 3, 3)` `translation_2d`, `scaling_2d`, `transform_point_2d`,
+  `transform_direction_2d`, and `extend` to 4 x 4; and `from_quaternion` at
+  3 x 3 and 4 x 4;
+- `rotate(q, v)`, which rotates `v` by the unit `math.Quaternion(T)` `q`.
+
+A conversion hook converts each component as the scalar `T(value)` does, so
+`linalg.Vector3(f32)(v)` narrows a `Vector3(f64)` and widens an integer
+vector, and matrices of one shape convert the same way. `format` prints a
+vector as `(1, 2, 3)` and a matrix by rows, `[[1, 2], [3, 4]]`, each element
+with the caller's `fmt.Options`. A zero-initialized vector or matrix holds
+`T`'s zero value, which is `T(0)` for the built-in numbers but not for every
+user type; `splat(T(0))` is the zero matrix for any `T`.
+
+A member that needs a square root, trigonometry, or a test for a degenerate
+input needs `linalg.Real(T)`: `Numeric` and `Ordered`, unary `-`, a
+conversion from `f64`, and the slots `sqrt`, `sin`, `cos`, `asin`, `acos`,
+`atan2`, `abs`, `floor`, `ceil`, `round`, `is_finite`, and `is_normal`
+(finite, non-zero, and full precision). The package implements it for `f32`
+and `f64`, and a user type, such as a dual number for automatic
+differentiation, implements it with inherent methods. Its generic bodies
+compare with `<` and `==` alone, so a user type need not declare `<=`. A user
+type declared in `package main` marks its operators and conversion
+`@(public)`, since those requirements are checked in `linalg`. The `Real`
+members are:
+
+- on every vector: `length`, `distance`, `normalize`, `normalize_or`,
+  `lerp(other, t)`, which is `self*(1 - t) + other*t` and exact at both ends,
+  `angle_between(other)` in `[0, pi]`, and component-wise `abs`, `floor`,
+  `ceil`, and `round`. `angle_between` is `atan2(|cross|, dot)`, and Kahan's
+  `2*atan2(|a*|b| - b*|a||, |a*|b| + b*|a||)` for `Vector4`, so it stays
+  accurate near 0 and pi, where the `acos` of a normalized dot product does
+  not; it is 0 when either vector is zero;
+- on a square matrix: `solve(b)` for any `Matrix(T, R, K)` right-hand side,
+  `inverse`, and `determinant` above 4 x 4. They use Gaussian elimination
+  with partial pivoting, the pivot the first element of largest magnitude in
+  its column, in a fixed order;
+- on `Matrix(T, 4, 4)`: `inverse_affine`, which inverts the linear part and
+  takes the last row as `(0, 0, 0, 1)` unchecked; `normal_matrix`, the
+  transpose of the inverse of the linear part, which keeps surface normals
+  perpendicular under non-uniform scaling; and `project_point(p)`, which
+  divides `self * (p, 1)` by its `w`;
+- the rotations: `rotation_x`, `rotation_y`, `rotation_z`, and
+  `rotation(axis, angle)` at 3 x 3 and 4 x 4, `Matrix(T, 2, 2).rotation(angle)`,
+  and `Matrix(T, 3, 3).rotation_2d(angle)`; and the free procedures
+  `quaternion_from_axis_angle(axis, angle)`, which takes the axis as given,
+  `quaternion_normalize`, `quaternion_from_matrix`, `quaternion_between`,
+  `nlerp`, `slerp`, `quaternion_from_euler`, `to_euler`,
+  `quaternion_from_rotation_vector`, and `to_rotation_vector`;
+- the cameras, on `Matrix(T, 4, 4)`: `perspective`, `orthographic`,
+  `look_at`, `look_to`, and the `_lh` form of each.
+
+Angles are radians, and space is right-handed: `unit_x().cross(unit_y())` is
+`unit_z()`, and a positive angle turns counterclockwise seen from the
+positive end of the axis. A quaternion's `real` is its scalar part; a unit
+`q` rotates as `q v q*`, `q` and `-q` rotate alike, and `rotate(a * b, v)`
+rotates by `b` first, as `from_quaternion(a * b)` equals
+`from_quaternion(a) * from_quaternion(b)` up to rounding.
+
+The quaternion procedures:
+
+- `quaternion_from_matrix(m)` takes a rotation matrix, 3 x 3 or the linear
+  part of a 4 x 4, to its unit quaternion with a non-negative real part, by
+  Shepperd's method, which takes the square root of the largest of the four
+  squared components and stays accurate at every angle.
+- `quaternion_between(a, b)` is the shortest rotation turning the direction
+  of `a` to that of `b`, accurate even for nearly opposite vectors. It is
+  `.none` for a zero vector and for opposite ones, where every axis across
+  them is as short; `quaternion_between(a, b, fallback_axis)` turns those half
+  a turn about the part of `fallback_axis` across `a` instead.
+- `nlerp(a, b, t)` and `slerp(a, b, t)` interpolate from the unit `a` at
+  `t = 0` to the unit `b` at `t = 1` along the shorter arc, negating `b` when
+  `dot(a, b) < 0`. `nlerp` normalizes the component-wise `lerp`; `slerp`
+  turns at constant angular speed, is exact at both ends, and takes its
+  angle as `2*atan2(|a - b|, |a + b|)`, which stays accurate for close
+  rotations.
+- `Euler_Order` names the six intrinsic Tait-Bryan sequences, `.XYZ` to
+  `.ZYX`, and has no default. `quaternion_from_euler(.ZYX, yaw, pitch, roll)`
+  is `axis_angle(Z, yaw) * axis_angle(Y, pitch) * axis_angle(X, roll)`, which
+  is also the extrinsic sequence `X`, `Y`, `Z` about fixed axes.
+  `to_euler(q, order)` returns `(first, second, third)` with the middle angle
+  in `[-pi/2, pi/2]` and the others in `[-pi, pi]`. At gimbal lock, when the
+  middle angle is within rounding of `pi/2` or `-pi/2`, the third angle is 0
+  and the first takes the whole rotation about the shared axis.
+- `quaternion_from_rotation_vector(v)` turns `|v|` radians about the
+  direction of `v`, and `to_rotation_vector(q)` returns the axis times the
+  angle in `[0, pi]`, the same for `q` and `-q`; the zero vector is no
+  rotation.
+
+`perspective(fovy, aspect, near, far, depth)` and
+`orthographic(left, right, bottom, top, near, far, depth)` map a view space
+looking down `-Z` with `+Y` up to clip space, with `x` and `y` in `[-1, 1]`,
+`+Y` up, and `z` in the range `depth` names, the near plane at its first
+value. `Depth_Range` has no default: `.Negative_One_To_One` is OpenGL's,
+`.Zero_To_One` Direct3D's, Vulkan's, Metal's, and WebGPU's, and
+`.One_To_Zero` reversed depth. A perspective's clip `w` is the view-space
+`-z`, and an infinite `far` gives the limit of the matrix as `far` grows. A
+field of view outside `(0, pi)`, a non-positive or infinite `aspect` or
+`near`, `far <= near`, and a NaN panic; an orthographic box needs finite,
+distinct bounds with `far` beyond `near`. Each `_lh` form takes the same
+parameters for a view space looking down `+Z`: the projection is its twin
+with the third column negated. `look_at(eye, target, up)` and
+`look_to(eye, forward, up)` return the view matrix whose rows are the side,
+up, and back directions (side, up, and forward for `_lh`), or `.none` when
+the direction is zero or parallel to `up`.
+
+Degenerate input is never a silent zero or NaN. `normalize` and
+`quaternion_normalize` return `.none` when the squared length is not
+`is_normal`: zero, underflowing or overflowing squares, an infinity, or a
+NaN. `inverse` and `solve` return `.none` when a pivot is zero or NaN or a
+result element is not finite; a nearly singular matrix still inverts, with
+large elements, since no tolerance decides that it is singular.
+`inverse_affine` and `normal_matrix` return `.none` when the linear part has
+no inverse, and `project_point` when `w` is zero or the result is not finite.
+
+`approx_equal(a, b, absolute, relative)` compares two scalars, vectors,
+matrices, or quaternions with a `Real` element: every component pair has
+`|a - b| <= max(absolute, relative * max(|a|, |b|))`. Both tolerances are
+required, and a negative or NaN one panics. A NaN component is never equal,
+and an infinity equals only itself, whatever the tolerances.
+
+Every operation is computed in the order documented on it, with no `fma` and
+no C library call: the `f32` and `f64` slots of `Real` are `math.sqrt`, which
+is correctly rounded, and [`core:math/repro`](#coremathrepro). Results are
+the same bits on every machine, [CPU level](compiler-guide.md#cpu-levels),
+and optimization level. A call that does not reach `sqrt` can also be
+evaluated at compile time with the same result; one that does cannot, since
+`math.sqrt` calls a foreign procedure. At `f32`, `transform_point`,
+`transform_direction`, and a 3 x 3 `m * v` compute in `Simd` lanes, each lane
+one component in the documented order, which changes their speed and not
+their bits ([Milestone 4 results](linear-algebra-plan.md#milestone-4-results)).
+
+`linalg.Scalar(T)` is a real or complex number type, the element type of
+[`core:math/dense`](#coremathdense)'s factorizations: `Numeric`, `==`, unary
+`-`, an associated type `T.Real` that is `Real`, a conversion `T(x)` from a
+`T.Real`, and the slots `conjugate`, `real_part`, and `imaginary_part`. The
+package implements it for `f32` and `f64`, each its own `Real` with no
+imaginary part, and for `math.Complex(R)` of any `Real(R)`. A user real type
+implements it with an inherent `Real` constant naming itself, `conjugate` and
+`real_part` returning the value, and `imaginary_part` returning zero.
+
+## `core:math/dense`
+
+Matrices whose size is known only at run time: an owner, views of it and of
+foreign buffers, products, the LU, Cholesky, and QR factorizations, least
+squares, the symmetric and Hermitian eigendecomposition, and the singular
+value decomposition, of real or complex elements. The design and its measured
+performance are in the [dense matrix plan](dense-matrix-plan.md).
+
+`Matrix(T)` owns `rows x columns` elements stored column-major in one
+allocation, the order LAPACK and `linalg.Matrix` use, from the allocator it was
+made with. `zeros`, `filled`, `identity`, `from_view`, `from_column_major`,
+`from_rows`, which takes a nested array written as it prints, and
+`from_fixed` make one; each takes an `allocator` that defaults to the
+program's. `rows()`, `columns()`, `m[r, c]`, and `m[r, c] = x` read and write
+it, `to_fixed(R, C)` copies it to a `linalg.Matrix`, and `format` prints it by
+rows as `linalg` does. A copy clones the storage, which the
+[copy-cost diagnostic](design.md#copy-cost-diagnostics) reports; `clone(allocator)`
+chooses where. There are no operators: each result of `a * b + c` would be
+allocated from an allocator the expression cannot name.
+
+`View(T)` reads, and `View_Mut(T)` writes, `rows x columns` elements of a slice:
+element `(r, c)` is `data[r*row_stride + c*column_stride]`. `m.view()` and
+`m.view_mut()` view a whole matrix, and `from_column_major(data, rows,
+columns, leading := rows)`, `from_row_major(data, rows, columns, leading :=
+columns)`, and `from_column(values)` view a foreign buffer. Every constructor
+checks once that the elements are inside the slice and that the leading
+dimension covers a whole column or row, so no two elements share a place;
+either failure panics. `block(row, column, rows, columns)`, `transpose()`,
+`row(r)`, and `column(c)` make smaller views without a copy, and so does
+`adjoint()`, for a `linalg.Scalar(T)`, which reads the conjugate transpose and
+is the transpose for a real `T`. A view borrows
+its slice, so the [checker](design.md#capabilities-and-the-one-rule) keeps it
+from outliving the storage and rejects `multiply_into(m.view_mut(), m.view(),
+b)` where it is written; nothing is checked at run time.
+
+On a `View_Mut`, the methods that make a smaller view consume a temporary or
+`move(view)` and borrow a named view, so `m.view_mut().block(...)` can be
+bound and `whole.block(...)` leaves `whole` usable afterwards.
+`split_columns(k)` and `split_rows(k)` give two views that may be written at
+once; each panics for a view whose columns, or rows, interleave in the slice,
+as a column-major matrix's rows do. `as_view()` reads the same elements, and
+`fill(value)`, `copy_from(view)`, `scale_by(s)`, and `add_scaled(s, view)`,
+which adds `s*view` element by element, write them.
+
+With `interfaces.Numeric(T)`, so for integers and user number types too:
+
+- `multiply(a, b)` and `multiply_into(out, a, b)`, each element
+  `(a[i, 0]*b[0, j] + a[i, 1]*b[1, j]) + ...` from the first product, the order
+  `linalg.Matrix` uses, so the two agree bit for bit; and
+  `multiply_add_into(out, a, b)`, which adds each term into `out` in turn;
+- `add`, `subtract`, `scale(a, s)`, and `transpose`, each with an `_into`
+  form;
+- `dot(x, y)`, the sum of the element products in column order, conjugating
+  nothing, so `x^H y` is `dot(x.adjoint().transpose(), y)`; `trace`; and
+  `equal`, exact and false for different shapes.
+
+Each `_into` form writes caller storage and never allocates; the other form
+allocates its result. A shape mismatch panics.
+
+With [`linalg.Scalar(T)`](#coremathlinalg), so for `f32`, `f64`,
+`math.Complex` of either, and user number types, a transpose below being the
+conjugate transpose for a complex `T`, and a norm, a tolerance, an
+eigenvalue, and a singular value being `T.Real`:
+
+- `approx_equal(a, b, absolute, relative)` by `linalg.approx_equal`'s rule,
+  element by element and by modulus, false for different shapes;
+- `norm_frobenius`, in one pass with a running scale so that it neither
+  overflows nor underflows where the result does not, a complex element as
+  its two parts; `norm_one`, the largest column sum of moduli; and
+  `norm_infinity`, the largest row sum;
+- `solve_lower_into(l, b, unit_diagonal)` and `solve_upper_into(u, b,
+  unit_diagonal)`, which overwrite `b` and read only their triangle;
+- `lu(a)` and `lu_in_place(a, pivots)`, Gaussian elimination with partial
+  pivoting, the pivot the first element of largest magnitude in its column,
+  `|re| + |im|` for a complex one as in LAPACK.
+  `Lu` has `solve`, `solve_into`, `inverse`, `determinant`, `factors()` and
+  `pivots()` in LAPACK's `getrf` form, and `reciprocal_condition()`, LAPACK's
+  `gecon` estimate of `1 / (|A|_1 |A^-1|_1)`;
+- `cholesky(a)` and `cholesky_in_place(a)`, the `L L^H` factor of a Hermitian
+  positive definite matrix from its lower triangle, with a real diagonal.
+  `Cholesky`
+  has `solve`, `solve_into`, `determinant`, and `lower()`;
+- `qr(a)` and `qr_in_place(a, tau)`, for `rows >= columns`, by unblocked
+  Householder reflectors, applied a panel of columns at a time, in LAPACK's
+  `geqrf` form, `R`'s diagonal real. `Qr` has `q()`, the first
+  `n` columns of `Q`, `r()`, `apply_q_into(b)` and
+  `apply_q_adjoint_into(b)`, which apply `Q` and `Q^H` without forming it,
+  `least_squares(b)`, and `least_squares_into(b)`, which leaves the
+  minimizer in `b`'s first `n` rows and the residual's components, whose norm
+  is the residual's, in the rest, as LAPACK's `gels` does; and `factors()`
+  and `tau()`;
+- `solve(a, b)`, `inverse(a)`, and `least_squares(a, b)`, which factor and
+  solve in one call. `least_squares` assumes full column rank;
+- `symmetric_eigen(a)`, the eigenvalues and eigenvectors of a symmetric
+  matrix, or a Hermitian one for a complex `T`, from its lower triangle, the
+  diagonal's imaginary parts not read, by Householder reduction to a real
+  tridiagonal and implicit QL with Wilkinson shifts. `Symmetric_Eigen` has
+  `values()`, real and ascending, and `vectors()`, an orthogonal, or unitary,
+  matrix with eigenvector `i` as column `i`;
+- `svd(a)`, the thin singular value decomposition `A = U S V^H` of any
+  `m x n` matrix, by Golub and Reinsch's method as LINPACK's `dsvdc` has it.
+  `Svd` has `u()` (`m x k`, `k = min(m, n)`), `singular_values()`,
+  descending and not negative, `v()` (`n x k`), `rank(relative)`, and
+  `solve(b, relative)` and `solve_into(out, b, relative)`, the minimum-norm
+  least-squares solution with the singular values not above `relative` times
+  the largest taken as zero. `relative` has no default.
+
+The signs of the vectors are part of the contract, so that two machines give
+the same vectors and not only the same subspaces: each eigenvector, and each
+column of `V` with its column of `U`, has its first component of largest
+magnitude positive, for a complex `T` by multiplying it by a unit. The iterations decide convergence by rounding rather than
+by a tolerance: an off-diagonal element is negligible when adding it to its
+two diagonal neighbours' magnitudes changes nothing.
+
+A numerical failure is a `dense.Error`, one type for the package so that
+`or_return` chains across factorizations: `.Singular` for an exact zero pivot
+or zero on `R`'s diagonal, or a factor that is not finite, and
+`.Not_Positive_Definite` for a Cholesky pivot that is not positive and
+finite, and `.No_Convergence` for an eigenvalue or singular value iteration
+that reaches its limit, or an element that is not finite, which it cannot
+reduce. A nearly singular matrix factors, with
+large elements, since no tolerance decides that it is singular;
+`reciprocal_condition` says how near it is. Each update in a factorization is
+one subtraction per term into the running element, in increasing order, and
+every operation is computed in the order its documentation gives, with no
+`fma`, so results are the same bits on every machine,
+[CPU level](compiler-guide.md#cpu-levels), and optimization level.
+
+Products of `f32` and `f64` with contiguous columns run a `Simd` kernel that
+computes a tile of the output across lanes, each lane one element in its
+documented order, and `lu` and `cholesky` are blocked around it, so a large
+product runs at about half a reference BLAS's speed, which uses `fma`, and
+gives the bits of the plain loop. `multiply`, `multiply_into`,
+`multiply_add_into`, `lu`, `lu_in_place`, `cholesky`, and `cholesky_in_place`
+take an optional `pool: Option(^thread.Pool)` ([Pools](#pools)): with one,
+blocks of the output are computed as tasks on its workers, each element in
+the same order, so the result is the same bits as without; a product too small
+to share runs on the calling thread.
+
+## `core:math/geometry`
+
+Shapes, rays, frustums, polygons, and exact geometric predicates over
+`core:math/linalg`'s vectors, from the
+[geometry library plan](geometry-plan.md), whose measured performance follows
+in its last milestone.
+
+`orient2d(a, b, c)`, `orient3d(a, b, c, d)`, `incircle(a, b, c, d)`, and
+`insphere(a, b, c, d, e)` return a `Sign`, `.Negative`, `.Zero`, or
+`.Positive`, of a determinant of their points:
+
+- `orient2d` is `.Positive` when `a`, `b`, `c` turn counterclockwise and
+  `.Zero` when they are collinear;
+- `orient3d` is `.Positive` when `d` is below the plane through `a`, `b`, and
+  `c`, which appear counterclockwise from above, and `.Zero` when the four are
+  coplanar;
+- `incircle` is `.Positive` when `d` is inside the circle through
+  counterclockwise `a`, `b`, `c`, and `.Zero` on it;
+- `insphere` is `.Positive` when `e` is inside the sphere through `a`, `b`,
+  `c`, `d`, given so that `orient3d(a, b, c, d)` is `.Positive`, and `.Zero` on
+  it.
+
+Reversing the stated orientation swaps `.Positive` and `.Negative`, and any
+odd permutation of the points does too, exactly. For `f32` and `f64`, the
+sign is that of the exact determinant of the coordinates as given, as if
+computed in real arithmetic, so a hull, a triangulation, or a
+point-in-polygon test built on the predicates cannot contradict itself.
+Each computes the determinant in floating point with Shewchuk's error bound
+and recomputes it exactly, in expansion arithmetic, only when the result is
+within the bound, near a degenerate configuration. `f32` coordinates are
+exact over their whole finite range. `f64` coordinates are exact when each is
+0 or has a magnitude in the range its predicate documents, from
+`[2^-450, 2^450]` for `orient2d` to `[2^-150, 2^180]` for `insphere`; a NaN or
+an infinity gives a sign that is the same everywhere but means nothing.
+Integer coordinates take the plain determinant, which is exact and panics if
+it overflows, and other ordered number types take its sign as computed.
+`insphere`'s exact path uses about 120 KB of stack.
+
+The shapes are records over the vectors, `Aabb2(T)` and `Aabb3(T)` with
+`min` and `max`, `Circle(T)` and `Sphere(T)` with `center` and `radius`,
+`Plane(T)` with `normal` and `offset`, `Segment2(T)` and `Segment3(T)` with
+`a` and `b`, and `Triangle2(T)` and `Triangle3(T)` with `a`, `b`, and `c`.
+Each contains its boundary, so shapes that touch intersect and `contains` is
+true on a face. A literal from another package names its fields, so each has
+a constructor: `from_min_max` (as given), `from_corners` (sorted),
+`from_point`, and `from_points` for boxes, `from_center_radius`,
+`from_normal_offset`, and `from_points` for the others.
+
+- **Boxes** are empty when a minimum exceeds its maximum, or a corner is NaN:
+  an empty box contains no point, is in every box, intersects nothing, and
+  adds nothing to `union`. `Aabb3(T).empty()`, `min = +inf` and
+  `max = -inf`, is where a bound accumulates from, for a `Real` `T`; an
+  integer box starts from `from_point` or `from_points`, which is `.none` for
+  no points. `contains` takes a point or a box, `union` a box or a point, and
+  `intersection` gives an empty box for disjoint ones. `expand(amount)` moves
+  every face out, `size` is `max - min`, `doubled_center` `min + max`,
+  `center` `min*0.5 + max*0.5`, which cannot overflow, `corner(index)` takes
+  `max` on the axes whose bit is set, and `area`, `perimeter`, `volume`, and
+  `surface_area` are 0 for an empty box. `closest_point` and
+  `distance_squared` need only comparison and arithmetic, so they are exact
+  for integers; they and `distance` panic for an empty box, which has no
+  nearest point.
+- **Circles and spheres** have `contains`, `|p - center|^2 <= radius^2`,
+  exact for integers, `bounds`, and, for a `Real` `T`, `closest_point`, which
+  is `p` inside, and `distance`, which is 0 inside. A negative or NaN radius
+  describes no set, so every member panics on one.
+- **Planes** come from `from_point_normal` and `from_points`, which normalize
+  the normal, `from_points` toward the side from which the three points turn
+  counterclockwise, and return `.none` for a normal that does not normalize.
+  `signed_distance(p)` is `dot(normal, p) - offset`, positive on the normal's
+  side; `project` and the distances assume a unit normal. `flip` swaps the
+  sides, and `intersection_point(a, b, c)` is the one point of three planes,
+  `.none` when they share a line or two are parallel.
+- **Segments and triangles** have `closest_point`, `distance_squared`, and
+  `distance` (Ericson's Voronoi regions, so a point on a region's boundary
+  gets that boundary's answer), `bounds`, `length` or `area`, and
+  `barycentric(p)`, the `(u, v, w)` of `p`, projected onto the plane in 3D,
+  `.none` for a triangle of no area. A segment of no length is its point, and
+  a triangle of no area is the segment its corners span. `Triangle3.normal`
+  points toward the side from which `a`, `b`, `c` turn counterclockwise.
+  `Triangle2.contains` is three exact `orient2d` tests, so it is exact on its
+  edges for `f32`, `f64`, and integers, for either winding, and
+  `Triangle2.closest_point` of a point it contains is that point.
+
+`closest_points(a, b)` of two segments returns the parameters `s` and `t` of
+their closest points, `a.at(s)` and `b.at(t)`, each in `[0, 1]` (Ericson's
+method), with `s = 0` for parallel segments and for one of no length.
+
+`intersects(a, b)` takes two boxes, two circles, two spheres, a circle and a
+box, a sphere and a box, a sphere and a plane, a box and a plane, two
+`Segment2`s, a segment and a box, or a `Triangle3` and an `Aabb3`, in either
+order. A box and a plane intersect when the plane separates or touches the two
+corners farthest apart along its normal, each corner's distance computed from
+the corner itself. Every test compares the values it computes, so integer
+shapes intersect exactly. The segment tests are exact for `f32` and `f64`
+too: each side test is an exact `orient2d`, a 3D segment and a box are tested
+in the three coordinate projections, and segments on one line overlap as their
+bounds do. A triangle and a box are tested on the thirteen separating axes of
+Akenine-Möller, each projection compared as computed.
+
+`Ray2(T)` and `Ray3(T)` have `origin` and `direction`, which need not be a
+unit vector; `from_origin_direction`, `from_points(from, to)`, whose
+direction is `to - from`, `at(t)`, and `inverse_direction()`, `1/direction`
+per component. `cast(ray, shape, t_min, t_max)` is the first `t` in the
+closed range at which the ray meets the shape, or `.none`; the range is
+required, since a ray tracer starts past the surface it left and a line is
+`[-inf, inf]`.
+
+- **A box**, `Aabb2` or `Aabb3`, is the slab test, with the reciprocal from
+  `cast(ray, ray.inverse_direction(), box, t_min, t_max)` computed once for
+  many boxes. It is conservative: the exit distance is widened by `2*gamma(4)`
+  of the larger end's magnitude, which covers both ends' rounding, so a box
+  the exact ray meets is never missed while the distances it computes are
+  finite and normal, and a box the ray passes within a few ulps of may be
+  reported. A zero direction component gives an unbounded slab when the
+  origin is between its faces and an empty one otherwise, with an origin on a
+  face counting as between, `-0` as well as `0`.
+- **A circle or a sphere** solves the quadratic in the form of Haines et al.,
+  which takes the discriminant from the center's distance to the line, so a
+  small ball far away keeps its hit. A box and a ball are solids, so a ray
+  starting inside one meets it at `t_min`. A ray with a zero direction is its
+  origin, met at `t_min` when the origin is inside.
+- **A plane** gives `(offset - dot(normal, origin))/dot(normal, direction)`,
+  `.none` for a ray parallel to it.
+- **A triangle** gives a `Triangle_Hit(T)`, the `t` and the `barycentric`
+  coordinates of the hit point for `a`, `b`, and `c`, by the watertight test
+  of Woop, Benthin, and Wald: the corners are sheared into the ray's frame,
+  and an edge function that computes as zero has its sign recomputed exactly
+  with `orient2d`. Two triangles that share an edge compute its edge function
+  as exact negations, so a ray through the edge or a shared corner hits at
+  least one of them, from either side. A ray in the triangle's plane, or a
+  triangle of no area, gives `.none`.
+
+`Frustum(T)` has `planes: [6]Plane(T)`, left, right, bottom, top, near, and
+far, with inward normals, so `contains(p)` is every `signed_distance` at least
+0. `Frustum(T).from_matrix(clip, depth)` extracts them from
+`clip = projection * view` (Gribb and Hartmann) for the clip depth `depth`,
+which decides which rows are the near and far planes and so has no default,
+and normalizes each; a far plane at infinity is normal 0 and offset -1, which
+every point is inside, and any other plane that does not normalize gives
+`.none`. `intersects(frustum, sphere)` and `intersects(frustum, box)`, in
+either order, are conservative culling tests: false only when the shape is
+wholly behind one plane, so a shape outside the frustum near one of its edges
+can be reported as intersecting.
+
+`transform_box(m, box)` bounds the box an affine `m` moves, 4 x 4 for an
+`Aabb3` and 3 x 3 for an `Aabb2`, by Arvo's method: each bound is the sum, in
+`transform_point`'s order, of each element times the box's minimum or maximum,
+whichever product is smaller or larger, so it is exactly the bound of the
+corners as `transform_point` moves them, and exact for integers. An empty box
+stays empty. `transform_plane(m, plane)` moves a plane through
+`m.normal_matrix()` and renormalizes, for a normal of any length, or is
+`.none` when `m`'s linear part has no inverse. Spheres and circles have no
+transform, since only a similarity keeps them round.
+
+A polygon is `[]linalg.Vector2(T)`, its vertices in order with the last edge
+closing back to the first, borrowed rather than copied; it does not repeat its
+first vertex at its end, as some formats write a ring. Every side test is an
+exact `orient2d` and every other decision a comparison of coordinates, so the
+answers are exact for `f32`, `f64`, and integers.
+
+- `signed_area_doubled(polygon)` is twice the signed area, positive for
+  counterclockwise vertices, the sum of `(v[i] - v[0]) x (v[i + 1] - v[0])`
+  in vertex order, which keeps a polygon far from the origin accurate and is
+  exact for integers; `signed_area` halves it. `centroid` is the center of
+  the region, each part weighted by its winding number, or `.none` for an
+  area that is zero or not normal.
+- `winding_number(polygon, p)` is how many times the polygon winds
+  counterclockwise around `p`, by Sunday's crossing test, or `.none` when `p`
+  is on the boundary, where it is not defined. `contains(polygon, p, rule)`
+  holds the boundary, as for every solid, and takes a required
+  `Fill_Rule`: `.Nonzero`, SVG's and PostScript's default, or `.Even_Odd`, the
+  PDF `f*` operator's and many GIS formats'. They differ only for a
+  self-intersecting polygon.
+- `is_convex` is true when every turn is the same way or straight and the
+  edges' directions go around once; `is_simple` when no two edges meet except
+  consecutive ones at their shared vertex. Both are false for fewer than three
+  vertices, a vertex repeated next to itself, or a path turning back on itself;
+  `is_simple` is quadratic.
+- `convex_hull` is Andrew's monotone chain: the hull's corners
+  counterclockwise from the lexicographically smallest point, with points on
+  its edges and repeated points left out. `convex_hull(points, out)` sorts the
+  `[]mut` points in place and writes into `out`, which needs room for every
+  point, returning the count; `convex_hull(points, allocator)` sorts a copy
+  and returns a `[dynamic]` array.
+
+Everything that does not reach `math.sqrt` or sort, the predicates, the box
+algebra, the planes' intersection point, the segments' and triangles' closest
+points, the overlap tests, the box, plane, and triangle casts, `transform_box`,
+and the polygon procedures but `convex_hull`, is evaluated at compile time with
+the same result, and every result is the same bits on every machine,
+[CPU level](compiler-guide.md#cpu-levels), and optimization level. An `f32`
+box cast computes its three slabs in `Simd` lanes, each lane one axis in the
+documented order, which changes its speed and not its bits
+([Milestone 5 results](geometry-plan.md#milestone-5-results)).
 
 ## `core:random`
 

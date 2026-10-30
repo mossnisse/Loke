@@ -1,0 +1,2 @@
+loke: panic: geometry.Aabb3.closest_point needs a box that is not empty
+loke: panicked

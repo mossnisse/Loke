@@ -1,0 +1,214 @@
+/**
+	Matrices whose size is known at run time: an owning `Matrix(T)`, views of
+	it and of foreign buffers, products, the LU, Cholesky, and QR
+	factorizations, least squares, the symmetric and Hermitian
+	eigendecomposition, and the singular value decomposition, of real or
+	complex elements, with the same bits everywhere.
+
+	`Matrix(T)` owns `rows x columns` elements stored column-major in one
+	allocation. `View(T)` reads, and `View_Mut(T)` writes, elements somewhere
+	else: element `(r, c)` is `data[r*row_stride + c*column_stride]`, so one
+	type covers a whole matrix, a block of one, a transpose, a row or column,
+	and a column-major or row-major foreign buffer, without a copy. A view
+	carries its slice's borrow, so the checker keeps it from outliving its
+	storage and rejects a call that writes one view while another reads the
+	same elements. A vector is a view with one column.
+
+	There are no operators. Each operation is a named procedure in two forms:
+	`multiply_into(out, a, b)` writes caller storage and never allocates, and
+	`multiply(a, b, allocator)` allocates its result. Copying a `Matrix(T)`
+	clones its storage, which the copy-cost diagnostic reports.
+
+	Storage, views, products, and the element-wise operations need only
+	`interfaces.Numeric(T)`. The norms, the comparisons with a tolerance, and
+	the factorizations need `linalg.Scalar(T)`, which `f32`, `f64`, and
+	`math.Complex` of either meet, and a user real type, such as a dual
+	number, with four more members than `linalg.Real` asks. For a complex
+	`T`, a transpose in a factorization is the conjugate transpose: `L L^H`,
+	unitary `Q`, `A = U S V^H`, and `View.adjoint()` reads `A^H` without a
+	copy. A norm, a tolerance, a singular value, and an eigenvalue of a
+	Hermitian matrix are `T.Real`, which is `T` for a real `T`.
+
+	A shape mismatch, an index outside a view, and a view whose strides reach
+	past its data are programmer errors and panic. A numerical failure is an
+	`Error`: an exact zero pivot, an exact zero on `R`'s diagonal, or a factor
+	that is not finite is `.Singular`, and a Cholesky pivot that is not
+	positive is `.Not_Positive_Definite`; an eigenvalue or singular value
+	iteration that reaches its limit is `.No_Convergence`. Nothing decides
+	with a tolerance the caller did not give: `Lu.reciprocal_condition`
+	estimates how near singular a matrix is, and `Svd.rank` and `Svd.solve`
+	take the relative tolerance below which a singular value counts as zero.
+	The iterations decide convergence by rounding, which needs no tolerance.
+
+	Each operation is computed in the order its documentation gives, with no
+	`fma`, so it gives the same bits on every machine, CPU level, and
+	optimization level.
+*/
+// dense-matrix-plan.md is the design this package implements, milestones 1 to 5.
+@(public)
+package dense;
+
+import "base:interfaces";
+import "core:fmt";
+import "core:math/linalg";
+import "core:mem";
+import "core:unsafe";
+
+/// The numerical failures. Each procedure that returns one says which.
+Error :: enum {
+	/// An exact zero pivot or zero on `R`'s diagonal, or a factor that is not finite.
+	Singular,
+	/// A Cholesky pivot that is not positive, or not finite.
+	Not_Positive_Definite,
+	/// An iteration limit reached; no procedure in this version returns it.
+	No_Convergence,
+}
+
+/**
+	An owned `rows x columns` matrix, column-major and contiguous: element
+	`(r, c)` is at `c*rows + r`, the order LAPACK and `linalg.Matrix` use. Its
+	allocator is the one chosen when it was made.
+*/
+// dense-matrix-plan.md "One owner and two views". The fields are private so
+// that `data` always holds exactly `row_count*column_count` elements, which
+// `view` relies on; accessors cannot share a field's name, so the fields are
+// `row_count` and `column_count`.
+Matrix :: struct($T: type) where interfaces.Numeric(T) {
+	@(private) row_count:    int,
+	@(private) column_count: int,
+	@(private) data:         [dynamic]T,
+}
+
+// `count` elements, each `value`. A `f32` or `f64` matrix is made at its
+// length, zero-filled, and then written through a raw pointer; any other
+// element type, which need not have a zero value, by appending.
+@(private)
+storage :: proc($T: type, count: int, value: T, allocator: Allocator) -> [dynamic]T {
+	when (T == f64 || T == f32) {
+		data := make([dynamic]T, count, allocator);
+		p := unsafe.raw_data(data);
+		foreach (i in 0 ..< count) { p[i] = value; }
+		return data;
+	} else {
+		data := make([dynamic]T, 0, count, allocator);
+		foreach (_ in 0 ..< count) { data.append(value); }
+		return data;
+	}
+}
+
+impl Matrix($T) {
+	/**
+		A `rows x columns` matrix of `T(0)`, which is not always `T`'s zero
+		value for a user type. A negative shape panics.
+	*/
+	zeros :: proc(rows, columns: int, allocator: Allocator = mem.default_allocator()) -> Matrix(T) {
+		return Matrix(T).filled(rows, columns, T(0), allocator);
+	}
+
+	/// A `rows x columns` matrix with every element `value`.
+	filled :: proc(rows, columns: int, value: T, allocator: Allocator = mem.default_allocator()) -> Matrix(T) {
+		assert(rows >= 0 && columns >= 0, "dense.Matrix needs a non-negative shape");
+		data := storage(T, rows*columns, value, allocator);
+		return {rows, columns, move(data)};
+	}
+
+	/// The `n x n` identity.
+	identity :: proc(n: int, allocator: Allocator = mem.default_allocator()) -> Matrix(T) {
+		result := Matrix(T).zeros(n, n, allocator);
+		foreach (i in 0 ..< n) { result.data[i*n + i] = T(1); }
+		return result;
+	}
+
+	/// A copy of the elements `view` reaches.
+	from_view :: proc(view: View(T), allocator: Allocator = mem.default_allocator()) -> Matrix(T) {
+		rows := view.row_count;
+		data := storage(T, rows*view.column_count, T(0), allocator);
+		p := unsafe.raw_data(data);
+		x := unsafe.raw_data(view.data);
+		foreach (c in 0 ..< view.column_count) {
+			foreach (r in 0 ..< rows) { p[r +% c*%rows] = conjugate_if(x[offset(r, c, view.row_stride, view.column_stride)], view.conjugated); }
+		}
+		return {rows, view.column_count, move(data)};
+	}
+
+	/// A copy of `rows*columns` column-major elements; `data` must hold exactly that many.
+	from_column_major :: proc(data: []T, rows, columns: int, allocator: Allocator = mem.default_allocator()) -> Matrix(T) {
+		assert(rows >= 0 && columns >= 0 && data.len() == rows*columns,
+			"dense.Matrix.from_column_major needs rows*columns elements");
+		return Matrix(T).from_view(View(T).from_column_major(data, rows, columns), allocator);
+	}
+
+	/// A copy of rows written as they print: `from_rows([2][3]f64{{1, 2, 3}, {4, 5, 6}})`.
+	from_rows :: proc(rows: [$R][$C]T, allocator: Allocator = mem.default_allocator()) -> Matrix(T) {
+		result := Matrix(T).zeros(R, C, allocator);
+		foreach (c in 0 ..< C) {
+			foreach (r in 0 ..< R) { result.data[c*R + r] = rows[r][c]; }
+		}
+		return result;
+	}
+
+	/// A copy of a fixed-size matrix.
+	from_fixed :: proc(m: linalg.Matrix(T, $R, $C), allocator: Allocator = mem.default_allocator()) -> Matrix(T) {
+		result := Matrix(T).zeros(R, C, allocator);
+		foreach (c in 0 ..< C) {
+			foreach (r in 0 ..< R) { result.data[c*R + r] = m.columns[c][r]; }
+		}
+		return result;
+	}
+
+	rows :: proc(self) -> int { return self.row_count; }
+	columns :: proc(self) -> int { return self.column_count; }
+
+	/// Element `(row, column)`; an index outside the matrix panics.
+	get :: operator([]) proc(self, row, column: int) -> T {
+		check_index(row, column, self.row_count, self.column_count);
+		return self.data[column*self.row_count + row];
+	}
+
+	get_mut :: operator([]) proc(self: inout, row, column: int) -> inout T {
+		check_index(row, column, self.row_count, self.column_count);
+		return inout self.data[column*self.row_count + row];
+	}
+
+	/// The whole matrix as a read-only view, which borrows it.
+	view :: proc(self: ^) -> View(T) {
+		return {self.data[:], self.row_count, self.column_count, 1, self.row_count, false};
+	}
+
+	/// The whole matrix as a mutable view, which borrows it exclusively.
+	view_mut :: proc(self: inout) -> View_Mut(T) {
+		return {&mut self.data[:], self.row_count, self.column_count, 1, self.row_count};
+	}
+
+	/// A copy as `linalg.Matrix(T, R, C)`; another shape panics.
+	to_fixed :: proc(self: ^, $R: int, $C: int) -> linalg.Matrix(T, R, C) {
+		return self.view().to_fixed(R, C);
+	}
+
+	/// Rows in brackets, `[[1, 2], [3, 4]]`, as `linalg.Matrix` prints, each element with the caller's options.
+	format :: proc(self: ^, writer: fmt.Writer, options: fmt.Options) {
+		format_view(self.view(), writer, options);
+	}
+}
+
+@(private)
+check_index :: proc(row, column, rows, columns: int) {
+	if (row < 0 || row >= rows || column < 0 || column >= columns) {
+		panic("dense: index", row, column, "out of range for", rows, "x", columns);
+	}
+}
+
+@(private)
+format_view :: proc(view: View($T), writer: fmt.Writer, options: fmt.Options) {
+	fmt.format_to(writer, "[");
+	foreach (r in 0 ..< view.row_count) {
+		if (r > 0) { fmt.format_to(writer, ", "); }
+		fmt.format_to(writer, "[");
+		foreach (c in 0 ..< view.column_count) {
+			if (c > 0) { fmt.format_to(writer, ", "); }
+			fmt.format_to_with(writer, options, view[r, c]);
+		}
+		fmt.format_to(writer, "]");
+	}
+	fmt.format_to(writer, "]");
+}

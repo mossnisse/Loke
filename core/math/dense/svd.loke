@@ -1,0 +1,374 @@
+// dense-matrix-plan.md "Algorithms": the singular value decomposition by
+// Golub and Reinsch, a Householder bidiagonalization as LAPACK's `gebd2`
+// does it, then the implicit-shift QR iteration of LINPACK's `dsvdc`, whose
+// tests for a negligible element are by rounding, with no epsilon.
+@(public)
+package dense;
+
+import "core:math/linalg";
+import "core:mem";
+import "core:unsafe";
+
+/**
+	The thin singular value decomposition `A = U S V^H` of an `m x n` `A`,
+	which is `A = U S V^T` for a real `T`, with `k = min(m, n)`: `U` is
+	`m x k` and `V` is `n x k`, each with orthonormal columns, and `S` the
+	`k` singular values, real, descending, and not negative. `svd(a)` makes
+	one.
+*/
+Svd :: struct($T: type) where linalg.Scalar(T) {
+	@(private) left:     Matrix(T),         // U
+	@(private) singular: [dynamic]T.Real,   // descending
+	@(private) right:    Matrix(T),         // V
+}
+
+/**
+	The singular value decomposition of the `m x n` `a`, allocated from
+	`allocator`. A wide `a` is decomposed as its adjoint, which is its
+	transpose for a real `T`, with `U` and `V` exchanged, so the method below
+	always sees `m >= n`.
+
+	`A` is reduced to a real upper bidiagonal `B = Q^H A P` by alternating
+	Householder reflectors built and applied as `qr_in_place` builds and
+	applies them: reflector `k` from the left zeros column `k` below the
+	diagonal, then one from the right zeros row `k` past the superdiagonal,
+	built from the row as it stands and applied to the transpose's columns
+	as `H^H`, which is `A G` for `G` its conjugate.
+	`U` and `V` start as `Q` and `P`. Then LINPACK's `dsvdc` iteration
+	reduces `B` to a diagonal, each rotation accumulated into `U` or `V`, in
+	at most `30 n` shifted QR sweeps in all. The limit is pooled, unlike
+	`dsvdc`'s 30 for each singular value: in a graded matrix the shift is lost
+	against the block's large end, so the first value to converge can take
+	many more sweeps, and the others then follow in one or two each.
+
+	A superdiagonal element `e` beside the diagonal elements `s0` and `s1` is
+	negligible when `t + |e| == t` for `t = |s0| + |s1|`, and a diagonal
+	element `s` beside the superdiagonal elements `e0` and `e1` when
+	`t + |s| == t` for `t = |e0| + |e1|`.
+
+	Each singular value is made non-negative as it converges, by negating its
+	column of `V`, and sorted into place, and finally each pair of columns
+	is signed so that the first component of largest magnitude in `V`'s
+	column is positive: for a complex `T`, both columns are multiplied by the
+	unit `conj(z) / |z|` for that component `z`, by modulus, which is then
+	exactly `|z|`. So the vectors and not only the subspaces are the same on
+	every machine. For equal singular values the vectors are the basis the
+	method finds.
+
+	`.No_Convergence` past the iteration limit, which for a finite matrix is
+	a bug to report, or for an element that is not finite.
+*/
+svd :: proc(a: View($T), allocator: Allocator = mem.default_allocator()) -> Result(Svd(T), Error) where linalg.Scalar(T) {
+	m := a.row_count;
+	n := a.column_count;
+	foreach (c in 0 ..< n) {
+		foreach (r in 0 ..< m) {
+			if (!finite(a[r, c])) { return .err(.No_Convergence); }
+		}
+	}
+	k := n if n < m else m;
+	left := Matrix(T).zeros(m, k, allocator);
+	right := Matrix(T).zeros(n, k, allocator);
+	values := zeros_of(T.Real, k, allocator);
+	if (n <= m) {
+		golub_reinsch(a, left.view_mut(), &mut values[:], right.view_mut(), allocator) or_return;
+	} else {
+		golub_reinsch(a.adjoint(), right.view_mut(), &mut values[:], left.view_mut(), allocator) or_return;
+	}
+	foreach (i in 0 ..< k) {
+		lead := leading_unit(right.view(), i);
+		apply_unit(left.view_mut(), i, lead.unit);
+		apply_unit(right.view_mut(), i, lead.unit);
+		when (T != T.Real) {
+			if (lead.unit != T(1)) { right[lead.row, i] = T(lead.size); }
+		}
+	}
+	return .ok(Svd(T){move(left), move(values), move(right)});
+}
+
+impl Svd($T) {
+	/// The number of rows of the decomposed matrix, `m`.
+	rows :: proc(self) -> int { return self.left.row_count; }
+	/// The number of columns of the decomposed matrix, `n`.
+	columns :: proc(self) -> int { return self.right.row_count; }
+
+	/// `U`, `m x k`, borrowed from the decomposition.
+	u :: proc(self: ^) -> View(T) { return self.left.view(); }
+
+	/// The `k` singular values, descending.
+	singular_values :: proc(self: ^) -> []T.Real { return self.singular[:]; }
+
+	/// `V`, `n x k`, borrowed from the decomposition; `A = U S V^H`.
+	v :: proc(self: ^) -> View(T) { return self.right.view(); }
+
+	/**
+		The number of singular values greater than `relative` times the
+		largest. `relative` has no default, since the right one depends on
+		the data's accuracy; a negative or NaN one panics.
+	*/
+	rank :: proc(self, relative: T.Real) -> int {
+		assert(T.Real(0) < relative || T.Real(0) == relative, "dense.Svd.rank needs a relative tolerance that is not negative");
+		if (self.singular.len() == 0) { return 0; }
+		cutoff := relative*self.singular[0];
+		count := 0;
+		foreach (i in 0 ..< self.singular.len()) {
+			if (cutoff < self.singular[i]) { count += 1; }
+		}
+		return count;
+	}
+
+	/**
+		Overwrites the `n`-row `out` with the minimum-norm `x` that minimizes
+		`|A x - b|` in the 2-norm, for each column of the `m`-row `b`,
+		treating the singular values not greater than `relative` times the
+		largest as zero, as `rank` counts them: `x = sum of
+		(u_i^H b / s_i) v_i` over the others, in increasing `i`, with each
+		`u_i^H b` summed in increasing row order. `relative = 0` keeps every
+		singular value that is not zero. A negative or NaN `relative`, or a
+		shape mismatch, panics.
+	*/
+	solve_into :: proc(self, out: View_Mut(T), b: View(T), relative: T.Real) {
+		assert(T.Real(0) < relative || T.Real(0) == relative, "dense.Svd.solve needs a relative tolerance that is not negative");
+		m := self.left.row_count;
+		n := self.right.row_count;
+		assert(b.row_count == m && out.row_count == n && out.column_count == b.column_count, "dense.Svd.solve_into: shapes do not agree");
+		out.fill(T(0));
+		used := self.rank(relative);
+		u := unsafe.raw_data(self.left.data);
+		v := unsafe.raw_data(self.right.data);
+		x := unsafe.raw_data(out.data);
+		y := unsafe.raw_data(b.data);
+		foreach (j in 0 ..< b.column_count) {
+			foreach (i in 0 ..< used) {
+				// U and V are this record's own contiguous column-major matrices.
+				column := i*%m;
+				sum := conj(u[column])*conjugate_if(y[offset(0, j, b.row_stride, b.column_stride)], b.conjugated);
+				foreach (r in 1 ..< m) { sum = sum + conj(u[column +% r])*conjugate_if(y[offset(r, j, b.row_stride, b.column_stride)], b.conjugated); }
+				coefficient := sum/T(self.singular[i]);
+				source := i*%n;
+				foreach (r in 0 ..< n) {
+					at := offset(r, j, out.row_stride, out.column_stride);
+					x[at] = x[at] + coefficient*v[source +% r];
+				}
+			}
+		}
+	}
+
+	/// The minimum-norm least-squares solution of `solve_into`, `n` rows, allocated from `allocator`.
+	solve :: proc(self, b: View(T), relative: T.Real, allocator: Allocator = mem.default_allocator()) -> Matrix(T) {
+		result := Matrix(T).zeros(self.right.row_count, b.column_count, allocator);
+		self.solve_into(result.view_mut(), b, relative);
+		return result;
+	}
+}
+
+// The decomposition of the `m x n` `a`, `m >= n`, into `u` (`m x n`), `s`,
+// and `v` (`n x n`), with each singular value non-negative and in
+// descending order, before the final signs.
+@(private)
+golub_reinsch :: proc(a: View($T), u: View_Mut(T), s: []mut $R, v: View_Mut(T), allocator: Allocator) -> Status(Error) where linalg.Scalar(T), R == T.Real {
+	m := a.row_count;
+	n := a.column_count;
+	work := Matrix(T).from_view(a, allocator);
+	e := zeros_of(R, n, allocator);
+	left_scales := zeros_of(T, n, allocator);
+	right_scales := zeros_of(T, n, allocator);
+	bidiagonalize(work.view_mut(), s, &mut e[:], &mut left_scales[:], &mut right_scales[:]);
+
+	// U = H_0 ... H_{n-1} and V = G_0 ... G_{n-2}, each applied to the
+	// identity from the last reflector to the first, and to the columns it
+	// changes alone, as `symmetric_eigen` forms its `Q`. `G_k` is the
+	// conjugate of the reflector built from row `k`, so its vector is read
+	// through the adjoint and its scale conjugated; for a real `T` that is
+	// the transpose and the scale itself.
+	uu := u;
+	uu.fill(T(0));
+	foreach (i in 0 ..< n) { uu[i, i] = T(1); }
+	packed := work.view();
+	for (k := n - 1; k >= 0; k -= 1) {
+		reflect(packed, k, k, left_scales[k], uu.block(0, k, m, n - k));
+	}
+	vv := v;
+	vv.fill(T(0));
+	foreach (i in 0 ..< n) { vv[i, i] = T(1); }
+	rows_of := packed.adjoint();
+	for (k := n - 2; k >= 0; k -= 1) {
+		reflect(rows_of, k + 1, k, conj(right_scales[k]), vv.block(0, k + 1, n, n - k - 1));
+	}
+	return bidiagonal_qr(s, &mut e[:], uu, vv);
+}
+
+// `dsvdc`'s main loop on the real bidiagonal `s`, `e`, each rotation applied
+// to the columns of `uu` or `vv`, with `q` the last singular value not yet
+// found.
+@(private)
+bidiagonal_qr :: proc(s, e: []mut $T, uu, vv: View_Mut($S)) -> Status(Error) where linalg.Real(T), linalg.Scalar(S), S.Real == T {
+	n := s.len();
+	q := n - 1;
+	sweeps := 0;
+	for (q >= 0) {
+		if (sweeps == 30*n) { return .err(.No_Convergence); }
+		// `j` is the largest index below `q` of a negligible e[j], -1 for none.
+		j := -1;
+		for (i := q - 1; i >= 0; i -= 1) {
+			t := s[i].abs() + s[i + 1].abs();
+			if (t + e[i].abs() == t) {
+				e[i] = T(0);
+				j = i;
+				break;
+			}
+		}
+		if (j == q - 1) {
+			// s[q] has converged: make it non-negative and sort it into place.
+			l := q;
+			if (s[l] < T(0)) {
+				s[l] = -s[l];
+				negate_column(vv, l);
+			} else if (s[l] == T(0)) {
+				s[l] = T(0);   // not -0
+			}
+			for (l < n - 1 && s[l] < s[l + 1]) {
+				held := s[l];
+				s[l] = s[l + 1];
+				s[l + 1] = held;
+				swap_columns(vv, l, l + 1);
+				swap_columns(uu, l, l + 1);
+				l += 1;
+			}
+			q -= 1;
+			continue;
+		}
+		// `zero` is the largest index in `j + 1 ..= q` of a negligible s,
+		// `j` for none.
+		zero := j;
+		for (t := q; t > j; t -= 1) {
+			test := T(0);
+			if (t != q) { test = test + e[t].abs(); }
+			if (t != j + 1) { test = test + e[t - 1].abs(); }
+			if (test + s[t].abs() == test) {
+				s[t] = T(0);
+				zero = t;
+				break;
+			}
+		}
+		if (zero == q) {
+			// Deflate a negligible s[q], chasing e[q - 1] up the block.
+			l := j + 1;
+			f := e[q - 1];
+			e[q - 1] = T(0);
+			for (k := q - 1; k >= l; k -= 1) {
+				g := rotation(s[k], f);
+				s[k] = g.r;
+				if (k != l) {
+					f = -g.s*e[k - 1];
+					e[k - 1] = g.c*e[k - 1];
+				}
+				rotate_columns(vv, k, q, g.c, g.s);
+			}
+		} else if (zero != j) {
+			// Split at a negligible s[zero], chasing e[zero] down the block.
+			l := zero + 1;
+			f := e[zero];
+			e[zero] = T(0);
+			foreach (k in l ..< q + 1) {
+				g := rotation(s[k], f);
+				s[k] = g.r;
+				f = -g.s*e[k];
+				e[k] = g.c*e[k];
+				rotate_columns(uu, k, zero, g.c, g.s);
+			}
+		} else {
+			qr_sweep(s, &mut e[:], j + 1, q, uu, vv);
+			sweeps += 1;
+		}
+	}
+	return .ok;
+}
+
+// `gebd2` for `m >= n`: reduces `a` to a real upper bidiagonal form,
+// leaving the diagonal in `d`, the superdiagonal in `e` with `e[n - 1] = 0`,
+// the scales in `tauq` and `taup`, and the vectors in `a` below the diagonal
+// and right of the superdiagonal. Each reflector is applied as `H^H`, with
+// the scale `conj(tau)`.
+@(private)
+bidiagonalize :: proc(a: View_Mut($T), d, e: []mut $R, tauq, taup: []mut T) where linalg.Scalar(T), R == T.Real {
+	m := a.row_count;
+	n := a.column_count;
+	x := unsafe.raw_data(a.data);
+	rs := a.row_stride;
+	cs := a.column_stride;
+	foreach (k in 0 ..< n) {
+		scale := householder(x, rs, cs, k, k, m);
+		tauq[k] = scale;
+		d[k] = x[offset(k, k, rs, cs)].real_part();
+		reflect_columns(x, rs, cs, k, k, m, conj(scale), k + 1, n);
+		if (k + 1 < n) {
+			// Row k is a column of the transpose, whose strides are exchanged.
+			row_scale := householder(x, cs, rs, k + 1, k, n);
+			taup[k] = row_scale;
+			e[k] = x[offset(k, k + 1, rs, cs)].real_part();
+			reflect_columns(x, cs, rs, k + 1, k, n, conj(row_scale), k + 1, m);
+		} else {
+			taup[k] = T(0);
+			e[k] = R(0);
+		}
+	}
+}
+
+// One shifted QR sweep of `dsvdc` over the unreduced block `l ..= q` of the
+// bidiagonal `s`, `e`, the shift from the trailing 2 x 2 block scaled by its
+// largest element, each rotation from the right applied to `v` and each from
+// the left to `u`.
+@(private)
+qr_sweep :: proc(s, e: []mut $T, l, q: int, u, v: View_Mut($S)) where linalg.Real(T), linalg.Scalar(S), S.Real == T {
+	largest := larger_of(larger_of(larger_of(larger_of(s[q].abs(), s[q - 1].abs()), e[q - 1].abs()), s[l].abs()), e[l].abs());
+	sm := s[q]/largest;
+	smm1 := s[q - 1]/largest;
+	emm1 := e[q - 1]/largest;
+	sl := s[l]/largest;
+	el := e[l]/largest;
+	b := ((smm1 + sm)*(smm1 - sm) + emm1*emm1)/T(2);
+	c := (sm*emm1)*(sm*emm1);
+	shift := T(0);
+	if (!(b == T(0) && c == T(0))) {
+		shift = (b*b + c).sqrt();
+		if (b < T(0)) { shift = -shift; }
+		shift = c/(b + shift);
+	}
+	f := (sl + sm)*(sl - sm) + shift;
+	g := sl*el;
+	foreach (k in l ..< q) {
+		right := rotation(f, g);
+		if (k != l) { e[k - 1] = right.r; }
+		f = right.c*s[k] + right.s*e[k];
+		e[k] = right.c*e[k] - right.s*s[k];
+		g = right.s*s[k + 1];
+		s[k + 1] = right.c*s[k + 1];
+		rotate_columns(v, k, k + 1, right.c, right.s);
+		left := rotation(f, g);
+		s[k] = left.r;
+		f = left.c*e[k] + left.s*s[k + 1];
+		s[k + 1] = -left.s*e[k] + left.c*s[k + 1];
+		g = left.s*e[k + 1];
+		e[k + 1] = left.c*e[k + 1];
+		rotate_columns(u, k, k + 1, left.c, left.s);
+	}
+	e[q - 1] = f;
+}
+
+@(private)
+Rotation :: struct($T: type) { c, s, r: T }
+
+// BLAS's `rotg`: `c` and `s` with `c*a + s*b = r` and `c*b - s*a = 0`,
+// `r = hypot(a, b)` with the sign of the larger magnitude, `b` on a tie.
+@(private)
+rotation :: proc(a, b: $T) -> Rotation(T) where linalg.Real(T) {
+	if (a == T(0) && b == T(0)) { return {T(1), T(0), T(0)}; }
+	r := hypot(a, b);
+	larger := a if b.abs() < a.abs() else b;
+	if (larger < T(0)) { r = -r; }
+	return {a/r, b/r, r};
+}
+
+@(private)
+larger_of :: proc(a, b: $T) -> T where linalg.Real(T) { return b if a < b else a; }

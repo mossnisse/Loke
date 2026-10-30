@@ -352,8 +352,10 @@ callee_generic_procedure :: proc(k: ^Checker, callee: Expr) -> Symbol_Id {
 	return template == nil ? INVALID_SYMBOL : template.symbol
 }
 
-// `Type.group(...)` or `pkg.Type.group(...)`. A value receiver is not type
-// syntax, so it falls through to the method path silently.
+// `Type.group(...)` or `pkg.Type.group(...)`, or a generic member such as
+// `M(2, 3).times(a, b)`, which ranks as a template does when called bare. A
+// value receiver is not type syntax, so it falls through to the method path
+// silently.
 @(private = "file")
 associated_group :: proc(k: ^Checker, callee: Expr) -> Symbol_Id {
 	sel, is_selector := callee.(^Expr_Selector)
@@ -366,6 +368,9 @@ associated_group :: proc(k: ^Checker, callee: Expr) -> Symbol_Id {
 	}
 	member := find_member(k, subject, intern_identifier(k.c, sel.name.text))
 	if sym := symbol_of(k.c, member); sym != nil && sym.kind == .Proc_Group {
+		return member
+	}
+	if template := generic_template_for(k, member); template != nil && template.kind == .Procedure {
 		return member
 	}
 	return INVALID_SYMBOL

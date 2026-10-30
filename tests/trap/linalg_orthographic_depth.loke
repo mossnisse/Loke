@@ -1,0 +1,10 @@
+// standard-library "`core:math/linalg`": an orthographic far plane before the
+// near one panics.
+package main;
+
+import "core:math";
+import "core:math/linalg";
+
+main :: proc() {
+	_ = linalg.Matrix(f32, 4, 4).orthographic_lh(-1.0, 1.0, -1.0, 1.0, 5.0, 1.0, .One_To_Zero);
+}

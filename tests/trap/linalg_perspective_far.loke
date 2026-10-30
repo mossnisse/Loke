@@ -1,0 +1,10 @@
+// standard-library "`core:math/linalg`": the far plane must lie beyond the
+// near one. An infinite far plane is allowed; an equal one is not.
+package main;
+
+import "core:math";
+import "core:math/linalg";
+
+main :: proc() {
+	_ = linalg.Matrix(f64, 4, 4).perspective_lh(1.0, 1.0, 2.0, 2.0, .Zero_To_One);
+}

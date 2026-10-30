@@ -1,0 +1,357 @@
+package main;
+
+import "core:fmt";
+import "core:math/geometry";
+import "core:math/linalg";
+
+// geometry-plan.md "Validation": orient2d, orient3d, incircle, and insphere
+// against the exact determinant of integer coordinates, computed here in
+// i128 by cofactor expansion of the raw rows (x, y, 1), (x, y, z, 1),
+// (x, y, x^2 + y^2, 1), and (x, y, z, x^2 + y^2 + z^2, 1), a formulation the
+// package does not use for its first stage. The configurations are random and
+// nearly degenerate: points on a line, a plane, a circle, or a sphere moved by
+// one unit or not at all, which is where the floating-point first stage cannot
+// decide. Each is checked at f64, at f32 where it fits, and scaled by powers
+// of two to the ends of each documented range, which changes no sign.
+
+failures := 0;
+
+check :: proc(name: string, ok: bool) {
+	if (!ok) {
+		failures += 1;
+		fmt.println("FAIL", name);
+	}
+}
+
+Random :: struct { state: u64 }
+
+impl Random {
+	bits :: proc(self: inout) -> u64 {
+		self.state = self.state*%6364136223846793005 +% 1442695040888963407;
+		return self.state >> 11;
+	}
+	// Uniform in [-2^bits, 2^bits].
+	signed :: proc(self: inout, bits: int) -> i64 {
+		span := u64(1) << u64(bits + 1);
+		return i64(self.bits() % (span + 1)) - i64(span/2);
+	}
+	below :: proc(self: inout, n: int) -> int { return int(self.bits() % u64(n)); }
+}
+
+P :: struct { x, y, z: i64 }
+
+add :: proc(a, b: P) -> P { return {a.x + b.x, a.y + b.y, a.z + b.z}; }
+times :: proc(k: i64, a: P) -> P { return {k*a.x, k*a.y, k*a.z}; }
+
+// Moves one coordinate of one point by -1, 0, or 1.
+perturb :: proc(random: inout Random, points: []mut P, dimensions: int) {
+	i := random.below(points.len());
+	delta := i64(random.below(3)) - 1;
+	switch (random.below(dimensions)) {
+	case 0: points[i].x += delta;
+	case 1: points[i].y += delta;
+	case:   points[i].z += delta;
+	}
+}
+
+// The determinant of the leading n x n block, by cofactor expansion along the
+// first row.
+determinant :: proc(m: [5][5]i128, n: int) -> i128 {
+	if (n == 1) { return m[0][0]; }
+	total: i128 = 0;
+	foreach (column in 0 ..< n) {
+		if (m[0][column] == 0) { continue; }
+		minor: [5][5]i128 = {};
+		foreach (r in 1 ..< n) {
+			c2 := 0;
+			foreach (c in 0 ..< n) {
+				if (c != column) {
+					minor[r - 1][c2] = m[r][c];
+					c2 += 1;
+				}
+			}
+		}
+		term := m[0][column]*determinant(minor, n - 1);
+		total = total - term if column % 2 == 1 else total + term;
+	}
+	return total;
+}
+
+sign :: proc(x: i128) -> geometry.Sign {
+	if (x > 0) { return .Positive; }
+	if (x < 0) { return .Negative; }
+	return .Zero;
+}
+
+flip :: proc(s: geometry.Sign) -> geometry.Sign {
+	switch (s) {
+	case .Positive: return .Negative;
+	case .Negative: return .Positive;
+	case .Zero:     return .Zero;
+	}
+}
+
+Kind :: enum { Orient2d, Orient3d, Incircle, Insphere }
+
+counts :: proc(kind: Kind) -> int {
+	switch (kind) {
+	case .Orient2d: return 3;
+	case .Orient3d, .Incircle: return 4;
+	case .Insphere: return 5;
+	}
+}
+
+reference :: proc(kind: Kind, p: []P) -> geometry.Sign {
+	m: [5][5]i128 = {};
+	n := counts(kind);
+	foreach (i in 0 ..< n) {
+		x := i128(p[i].x);
+		y := i128(p[i].y);
+		z := i128(p[i].z);
+		switch (kind) {
+		case .Orient2d: m[i] = {x, y, 1, 0, 0};
+		case .Orient3d: m[i] = {x, y, z, 1, 0};
+		case .Incircle: m[i] = {x, y, x*x + y*y, 1, 0};
+		case .Insphere: m[i] = {x, y, z, x*x + y*y + z*z, 1};
+		}
+	}
+	return sign(determinant(m, n));
+}
+
+v2 :: proc($T: type, p: P, scale: T) -> linalg.Vector2(T) {
+	return linalg.Vector2(T).from_components(T(p.x)*scale, T(p.y)*scale);
+}
+v3 :: proc($T: type, p: P, scale: T) -> linalg.Vector3(T) {
+	return linalg.Vector3(T).from_components(T(p.x)*scale, T(p.y)*scale, T(p.z)*scale);
+}
+
+predicate :: proc(kind: Kind, p: []P, $T: type, scale: T) -> geometry.Sign {
+	switch (kind) {
+	case .Orient2d: return geometry.orient2d(v2(T, p[0], scale), v2(T, p[1], scale), v2(T, p[2], scale));
+	case .Orient3d: return geometry.orient3d(v3(T, p[0], scale), v3(T, p[1], scale), v3(T, p[2], scale), v3(T, p[3], scale));
+	case .Incircle: return geometry.incircle(v2(T, p[0], scale), v2(T, p[1], scale), v2(T, p[2], scale), v2(T, p[3], scale));
+	case .Insphere: return geometry.insphere(v3(T, p[0], scale), v3(T, p[1], scale), v3(T, p[2], scale), v3(T, p[3], scale), v3(T, p[4], scale));
+	}
+}
+
+// 2^n exactly, for n inside the format's range.
+power :: proc($T: type, n: int) -> T {
+	x := T(1);
+	if (n >= 0) {
+		foreach (_ in 0 ..< n) { x = x*T(2); }
+	} else {
+		foreach (_ in 0 ..< -n) { x = x*T(0.5); }
+	}
+	return x;
+}
+
+// Integer points on the circle x^2 + y^2 = 65^2 and on the sphere
+// x^2 + y^2 + z^2 = 9^2.
+CIRCLE :: [?][2]i64{
+	{65, 0}, {63, 16}, {60, 25}, {56, 33}, {52, 39}, {39, 52}, {33, 56}, {25, 60}, {16, 63}, {0, 65},
+	{-16, 63}, {-33, 56}, {-52, 39}, {-60, 25}, {-65, 0}, {-56, -33}, {-39, -52}, {0, -65}, {33, -56}, {63, -16},
+};
+SPHERE :: [?][3]i64{
+	{9, 0, 0}, {0, 9, 0}, {0, 0, 9}, {-9, 0, 0}, {0, -9, 0}, {0, 0, -9},
+	{1, 4, 8}, {4, 8, 1}, {8, 1, 4}, {-1, 4, 8}, {4, -8, 1}, {8, 1, -4}, {4, 4, 7}, {-4, 4, -7}, {7, -4, 4},
+	{3, 6, 6}, {6, -3, 6}, {-6, 6, -3}, {-8, -4, -1}, {-1, -8, 4},
+};
+
+// A configuration of `kind`, its coordinates within `bits` bits: random,
+// or nearly degenerate.
+configuration :: proc(random: inout Random, kind: Kind, bits: int, degenerate: bool, out: []mut P) {
+	n := counts(kind);
+	if (!degenerate) {
+		foreach (i in 0 ..< n) {
+			z := random.signed(bits) if kind == .Orient3d || kind == .Insphere else 0;
+			out[i] = {random.signed(bits), random.signed(bits), z};
+		}
+		return;
+	}
+	// The points spread over most of the bits, so their differences are
+	// large and the first stage's products are rounded.
+	half := bits/2;
+	base := P{random.signed(bits - 2), random.signed(bits - 2), 0};
+	if (kind == .Orient3d || kind == .Insphere) { base.z = random.signed(bits - 2); }
+	switch (kind) {
+	case .Orient2d:
+		d := P{random.signed(half), random.signed(half), 0};
+		foreach (i in 0 ..< n) { out[i] = add(base, times(random.signed(half - 3), d)); }
+	case .Orient3d:
+		u := P{random.signed(half), random.signed(half), random.signed(half)};
+		w := P{random.signed(half), random.signed(half), random.signed(half)};
+		foreach (i in 0 ..< n) { out[i] = add(base, add(times(random.signed(half - 4), u), times(random.signed(half - 4), w))); }
+	case .Incircle:
+		// An odd scale, so the differences have many significant bits.
+		s := (i64(1) << u64(bits - 10)) + 2*i64(random.below(1 << (bits - 11))) + 1;
+		foreach (i in 0 ..< n) {
+			c := CIRCLE[random.below(CIRCLE.len())];
+			out[i] = add(base, times(s, P{c[0], c[1], 0}));
+		}
+	case .Insphere:
+		s := (i64(1) << u64(bits - 7)) + 2*i64(random.below(1 << (bits - 8))) + 1;
+		foreach (i in 0 ..< n) {
+			c := SPHERE[random.below(SPHERE.len())];
+			out[i] = add(base, times(s, P{c[0], c[1], c[2]}));
+		}
+	}
+	if (random.below(4) != 0) { perturb(inout random, out, 3 if kind == .Orient3d || kind == .Insphere else 2); }
+}
+
+// The bits of coordinate each predicate's i128 reference allows, and the
+// documented f64 exponent range [-low, high].
+Limits :: struct { bits, low, high: int }
+
+limits :: proc(kind: Kind) -> Limits {
+	switch (kind) {
+	case .Orient2d: return {50, 450, 450};
+	case .Orient3d: return {36, 280, 300};
+	case .Incircle: return {26, 200, 220};
+	case .Insphere: return {20, 150, 180};
+	}
+}
+
+Tally :: struct { positive, negative, zero, wrong: int }
+
+impl Tally {
+	count :: proc(self: inout, expected, actual: geometry.Sign) {
+		if (expected != actual) { self.wrong += 1; }
+		switch (expected) {
+		case .Positive: self.positive += 1;
+		case .Negative: self.negative += 1;
+		case .Zero:     self.zero += 1;
+		}
+	}
+}
+
+// Each predicate over random and nearly degenerate configurations, at f64
+// as they are and scaled to the ends of the documented range, and at f32
+// for the ones that fit in 22 bits, as they are and scaled to the ends of
+// its range.
+against_reference :: proc(kind: Kind) {
+	random := Random{u64(kind) + 7};
+	lim := limits(kind);
+	f64_tally: Tally = {};
+	f32_tally: Tally = {};
+	scaled_wrong := 0;
+	points: [5]P = {};
+	foreach (round in 0 ..< 3000) {
+		degenerate := round % 3 != 0;
+		configuration(inout random, kind, lim.bits, degenerate, &mut points[:]);
+		expected := reference(kind, points[:]);
+		f64_tally.count(expected, predicate(kind, points[:], f64, 1.0));
+		low := power(f64, -lim.low);
+		high := power(f64, lim.high - lim.bits - 1);
+		if (predicate(kind, points[:], f64, low) != expected || predicate(kind, points[:], f64, high) != expected) { scaled_wrong += 1; }
+
+		configuration(inout random, kind, 22 if kind != .Insphere else 10, degenerate, &mut points[:]);
+		expected = reference(kind, points[:]);
+		f32_tally.count(expected, predicate(kind, points[:], f32, 1.0));
+		foreach (e in [?]int{-149, -100, 60, 104}) {
+			if (predicate(kind, points[:], f32, power(f32, e)) != expected) { scaled_wrong += 1; }
+		}
+	}
+	fmt.println(kind, "f64", f64_tally.positive, f64_tally.negative, f64_tally.zero, "f32", f32_tally.positive, f32_tally.negative, f32_tally.zero);
+	check("f64 signs against the exact determinant", f64_tally.wrong == 0);
+	check("f32 signs against the exact determinant", f32_tally.wrong == 0);
+	check("signs scaled to the ends of the ranges", scaled_wrong == 0);
+}
+
+// Kettner et al. (2008): p near (0.5, 0.5), a 256 x 256 grid of ulps, against
+// q = (12, 12) and r = (24, 24). Scaled by 2^53 the points are integers, so
+// the reference is exact; the plain formula gets some of them wrong.
+kettner :: proc() {
+	V :: linalg.Vector2(f64);
+	q := V.from_components(12, 12);
+	r := V.from_components(24, 24);
+	ulp := power(f64, -53);
+	tally: Tally = {};
+	naive_wrong := 0;
+	foreach (i in 0 ..< 256) {
+		foreach (j in 0 ..< 256) {
+			p := V.from_components(0.5 + f64(i)*ulp, 0.5 + f64(j)*ulp);
+			unit := i64(1) << 53;
+			points := [3]P{{unit/2 + i64(i), unit/2 + i64(j), 0}, {12*unit, 12*unit, 0}, {24*unit, 24*unit, 0}};
+			expected := reference(.Orient2d, points[:]);
+			tally.count(expected, geometry.orient2d(p, q, r));
+			naive := (p.x - r.x)*(q.y - r.y) - (p.y - r.y)*(q.x - r.x);
+			plain: geometry.Sign = .Zero;
+			if (naive > 0.0) { plain = .Positive; } else if (naive < 0.0) { plain = .Negative; }
+			if (plain != expected) { naive_wrong += 1; }
+		}
+	}
+	fmt.println("kettner", tally.positive, tally.negative, tally.zero, "plain formula wrong", naive_wrong);
+	check("the Kettner grid against the exact determinant", tally.wrong == 0);
+	check("the plain formula fails on the Kettner grid", naive_wrong > 0);
+}
+
+// Permuting the points changes the sign by the permutation's parity, exactly.
+symmetries :: proc() {
+	random := Random{99};
+	wrong := 0;
+	points: [5]P = {};
+	foreach (_ in 0 ..< 2000) {
+		configuration(inout random, .Orient2d, 50, true, &mut points[:]);
+		a := v2(f64, points[0], 1.0);
+		b := v2(f64, points[1], 1.0);
+		c := v2(f64, points[2], 1.0);
+		s := geometry.orient2d(a, b, c);
+		if (geometry.orient2d(b, c, a) != s || geometry.orient2d(b, a, c) != flip(s)) { wrong += 1; }
+
+		configuration(inout random, .Orient3d, 36, true, &mut points[:]);
+		d3 := [4]linalg.Vector3(f64){v3(f64, points[0], 1.0), v3(f64, points[1], 1.0), v3(f64, points[2], 1.0), v3(f64, points[3], 1.0)};
+		s = geometry.orient3d(d3[0], d3[1], d3[2], d3[3]);
+		if (geometry.orient3d(d3[1], d3[0], d3[2], d3[3]) != flip(s) || geometry.orient3d(d3[1], d3[2], d3[0], d3[3]) != s || geometry.orient3d(d3[0], d3[1], d3[3], d3[2]) != flip(s)) { wrong += 1; }
+
+		configuration(inout random, .Incircle, 26, true, &mut points[:]);
+		e := [4]linalg.Vector2(f64){v2(f64, points[0], 1.0), v2(f64, points[1], 1.0), v2(f64, points[2], 1.0), v2(f64, points[3], 1.0)};
+		s = geometry.incircle(e[0], e[1], e[2], e[3]);
+		if (geometry.incircle(e[1], e[0], e[2], e[3]) != flip(s) || geometry.incircle(e[1], e[2], e[0], e[3]) != s) { wrong += 1; }
+
+		configuration(inout random, .Insphere, 20, true, &mut points[:]);
+		f := [5]linalg.Vector3(f64){v3(f64, points[0], 1.0), v3(f64, points[1], 1.0), v3(f64, points[2], 1.0), v3(f64, points[3], 1.0), v3(f64, points[4], 1.0)};
+		s = geometry.insphere(f[0], f[1], f[2], f[3], f[4]);
+		if (geometry.insphere(f[1], f[0], f[2], f[3], f[4]) != flip(s) || geometry.insphere(f[1], f[2], f[0], f[3], f[4]) != s) { wrong += 1; }
+	}
+	check("permutations change the sign by their parity", wrong == 0);
+}
+
+V2 :: linalg.Vector2(f64);
+V3 :: linalg.Vector3(f64);
+
+// Nearly degenerate inputs, which reach each exact path, folded at compile
+// time: the first point of the Kettner grid one ulp off the line, and points
+// on a unit circle and sphere moved by an ulp.
+FOLDED_ORIENT2D :: geometry.orient2d(V2.from_components(0.5000000000000001, 0.5), V2.from_components(12, 12), V2.from_components(24, 24));
+FOLDED_ORIENT3D :: geometry.orient3d(V3.from_components(0.1, 0.2, 0.3), V3.from_components(1.1, 1.2, 1.3), V3.from_components(2.1, 2.2, 2.3), V3.from_components(0.30000000000000004, 0.7, 1.1));
+FOLDED_INCIRCLE :: geometry.incircle(V2.from_components(1, 0), V2.from_components(0, 1), V2.from_components(-1, 0), V2.from_components(0, -1.0000000000000002));
+FOLDED_INSPHERE :: geometry.insphere(V3.from_components(1, 0, 0), V3.from_components(0, 1, 0), V3.from_components(-1, 0, 0), V3.from_components(0, 0, -1), V3.from_components(0, -0.9999999999999999, 0));
+
+folding :: proc() {
+	one := V2.from_components(0.5000000000000001, 0.5);
+	orient2d := geometry.orient2d(one, V2.from_components(12, 12), V2.from_components(24, 24));
+	orient3d := geometry.orient3d(V3.from_components(0.1, 0.2, 0.3), V3.from_components(1.1, 1.2, 1.3), V3.from_components(2.1, 2.2, 2.3), V3.from_components(0.30000000000000004, 0.7, 1.1));
+	incircle := geometry.incircle(V2.from_components(1, 0), V2.from_components(0, 1), V2.from_components(-1, 0), V2.from_components(0, -1.0000000000000002));
+	insphere := geometry.insphere(V3.from_components(1, 0, 0), V3.from_components(0, 1, 0), V3.from_components(-1, 0, 0), V3.from_components(0, 0, -1), V3.from_components(0, -0.9999999999999999, 0));
+	fmt.println("near degenerate", orient2d, orient3d, incircle, insphere);
+	check("folded predicates equal the run-time ones",
+		FOLDED_ORIENT2D == orient2d && FOLDED_ORIENT3D == orient3d && FOLDED_INCIRCLE == incircle && FOLDED_INSPHERE == insphere);
+}
+
+// Integers take the plain determinant, exactly.
+integers :: proc() {
+	W :: linalg.Vector2(i64);
+	check("i64 orient2d", geometry.orient2d(W.from_components(0, 0), W.from_components(3, 1), W.from_components(6, 2)) == .Zero
+		&& geometry.orient2d(W.from_components(0, 0), W.from_components(3, 1), W.from_components(6, 3)) == .Positive);
+	check("i32 incircle on the circle", geometry.incircle(linalg.Vector2(i32).from_components(65, 0), linalg.Vector2(i32).from_components(0, 65),
+		linalg.Vector2(i32).from_components(-65, 0), linalg.Vector2(i32).from_components(33, -56)) == .Zero);
+}
+
+main :: proc() {
+	foreach (kind in Kind.values()) { against_reference(kind); }
+	kettner();
+	symmetries();
+	folding();
+	integers();
+	if (failures == 0) { fmt.println("all predicate checks passed"); }
+}

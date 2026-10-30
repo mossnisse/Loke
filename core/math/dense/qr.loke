@@ -1,0 +1,376 @@
+// dense-matrix-plan.md "Algorithms" and "Determinism and speed": Householder
+// QR, unblocked, so its result is one order everywhere. Each reflector is
+// built and applied as LAPACK's `larfg` and `larf` do, in the order the
+// documentation of `qr_in_place` gives; the blocked WY form reorders those
+// updates and is not used.
+@(public)
+package dense;
+
+import "core:math/linalg";
+import "core:mem";
+import "core:unsafe";
+
+/**
+	The factors of `A = Q R` for an `m x n` matrix `A` with `m >= n`: `Q` a
+	product of `n` Householder reflectors `H_k = I - tau[k] v_k v_k^H`, which
+	is orthogonal, or unitary for a complex `T`, and `R` upper triangular
+	`n x n` with a real diagonal. `qr(a)` makes one.
+*/
+Qr :: struct($T: type) where linalg.Scalar(T) {
+	@(private) packed:           Matrix(T),     // R on and above the diagonal, each v_k below it
+	@(private) reflector_scales: [dynamic]T,    // tau
+}
+
+/**
+	Overwrites the `m x n` matrix `a`, `m >= n`, with its QR factors as
+	LAPACK's `geqrf` does: `R` on and above the diagonal, and below it each
+	reflector's vector `v_k`, whose element `k` is 1 and not stored; `tau[k]`
+	is reflector `k`'s scale.
+
+	Step `k` takes the column `x = a[k:m, k]`, with `alpha = x[0]` and `s` the
+	norm of `x[1:]` by `norm_frobenius`'s running scale. If `s` is 0, and
+	`alpha` is real, the reflector is the identity, `tau[k] = 0`, and `R`'s
+	diagonal is `alpha`. Otherwise `beta = -sign(re alpha) * h`, with `h`
+	`hypot(alpha, s)` for a real `T` and `hypot(hypot(re alpha, im alpha), s)`
+	for a complex one (negative for a real part of zero), `tau[k] = (beta -
+	alpha) / beta`, each `v_k[i] = x[i] / (alpha - beta)`, and `R`'s diagonal
+	is the real `beta`, as LAPACK's `larfg` makes them. `H_k^H` is then
+	applied to each later column `y = a[k:m, j]` as
+	`w = (y[0] + conj(v[1])*y[1]) + ...`, the terms in increasing order, and
+	`y[i] = y[i] - (conj(tau)*w)*v[i]`; `conj` is nothing for a real `T`.
+
+	`.Singular`, with `a` and `tau` then unspecified, for an exact zero on
+	`R`'s diagonal or a factor that is not finite: the matrix does not have
+	full column rank. A wide matrix, or a `tau` of the wrong length, panics.
+*/
+qr_in_place :: proc(a: View_Mut($T), tau: []mut T) -> Status(Error) where linalg.Scalar(T) {
+	m := a.row_count;
+	n := a.column_count;
+	assert(m >= n && tau.len() == n, "dense.qr_in_place needs rows >= columns and one scale per column");
+	p := unsafe.raw_data(a.data);
+	rs := a.row_stride;
+	cs := a.column_stride;
+	// `QR_PANEL` reflectors at a time: each built and applied to the rest of
+	// its panel, then all of them, in order, to each later column while that
+	// column is in cache. Every column receives the same reflectors in the
+	// same order as one reflector at a time across the whole matrix.
+	k0 := 0;
+	for (k0 < n) {
+		k1 := k0 + QR_PANEL if k0 + QR_PANEL < n else n;
+		foreach (k in k0 ..< k1) {
+			scale := householder(p, rs, cs, k, k, m);
+			tau[k] = scale;
+			reflect_columns(p, rs, cs, k, k, m, conj(scale), k + 1, k1);
+		}
+		j := k1;
+		for (j < n) {
+			last := j + 4 if j + 4 < n else n;
+			foreach (k in k0 ..< k1) { reflect_columns(p, rs, cs, k, k, m, conj(tau[k]), j, last); }
+			j = last;
+		}
+		k0 = k1;
+	}
+	foreach (c in 0 ..< n) {
+		if (p[offset(c, c, rs, cs)] == T(0)) { return .err(.Singular); }
+		foreach (r in 0 ..< m) {
+			if (!finite(p[offset(r, c, rs, cs)])) { return .err(.Singular); }
+		}
+	}
+	return .ok;
+}
+
+// LAPACK's `larfg` on rows `head ..< end` of `column` in the storage `p`
+// with strides `rs` and `cs`, as `qr_in_place` documents it: the reflector
+// that zeros the rows below `head`, its vector left below `head` and `beta`
+// at it. Returns `tau`, 0 for the identity, which leaves the column as it
+// was. Swapping `rs` and `cs` makes it reflect a row.
+@(private)
+householder :: proc(p: [^]$T, rs, cs, head, column, end: int) -> T where linalg.Scalar(T) {
+	sum := Sum_Of_Squares(T.Real).init();
+	foreach (i in head + 1 ..< end) { sum.add_parts(p[offset(i, column, rs, cs)]); }
+	rest := sum.root();
+	alpha := p[offset(head, column, rs, cs)];
+	if (rest == T.Real(0) && alpha.imaginary_part() == T.Real(0)) { return T(0); }
+	real := alpha.real_part();
+	size := reflector_size(alpha, rest);
+	beta := T(size if real < T.Real(0) else -size);
+	// `|alpha - beta| >= |beta| >= |x[i]|`, so the division cannot
+	// overflow, where a reciprocal could.
+	divisor := alpha - beta;
+	foreach (i in head + 1 ..< end) {
+		at := offset(i, column, rs, cs);
+		p[at] = p[at]/divisor;
+	}
+	p[offset(head, column, rs, cs)] = beta;
+	return (beta - alpha)/beta;
+}
+
+// `|beta|` of a reflector: `hypot(alpha, rest)`, of all three parts for a
+// complex `alpha`.
+@(private)
+reflector_size :: proc(alpha: $T, rest: T.Real) -> T.Real where linalg.Scalar(T) {
+	when (T == T.Real) {
+		return hypot(alpha, rest);
+	} else {
+		return hypot(hypot(alpha.real_part(), alpha.imaginary_part()), rest);
+	}
+}
+
+// The reflectors `qr_in_place` builds before applying them to the columns
+// beyond.
+@(private) QR_PANEL :: 16;
+
+// `reflect_column` on the columns `first ..< last`, four at a time, so that
+// four sums run side by side; each column's own sum and update are
+// `reflect_column`'s, term for term. `scale` is the one applied, `conj(tau)`
+// for `H^H`.
+@(private)
+reflect_columns :: proc(p: [^]$T, rs, cs, head, column, end: int, scale: T, first, last: int) where linalg.Scalar(T) {
+	if (scale == T(0)) { return; }
+	j := first;
+	for (j + 4 <= last) {
+		t0 := offset(head, j, rs, cs);
+		t1 := t0 +% cs;
+		t2 := t1 +% cs;
+		t3 := t2 +% cs;
+		w0 := p[t0];
+		w1 := p[t1];
+		w2 := p[t2];
+		w3 := p[t3];
+		foreach (i in head + 1 ..< end) {
+			v := conj(p[offset(i, column, rs, cs)]);
+			at := offset(i, j, rs, cs);
+			w0 = w0 + v*p[at];
+			w1 = w1 + v*p[at +% cs];
+			w2 = w2 + v*p[at +% 2*%cs];
+			w3 = w3 + v*p[at +% 3*%cs];
+		}
+		f0 := scale*w0;
+		f1 := scale*w1;
+		f2 := scale*w2;
+		f3 := scale*w3;
+		p[t0] = p[t0] - f0;
+		p[t1] = p[t1] - f1;
+		p[t2] = p[t2] - f2;
+		p[t3] = p[t3] - f3;
+		foreach (i in head + 1 ..< end) {
+			v := p[offset(i, column, rs, cs)];
+			at := offset(i, j, rs, cs);
+			p[at] = p[at] - f0*v;
+			p[at +% cs] = p[at +% cs] - f1*v;
+			p[at +% 2*%cs] = p[at +% 2*%cs] - f2*v;
+			p[at +% 3*%cs] = p[at +% 3*%cs] - f3*v;
+		}
+		j += 4;
+	}
+	for (j < last) {
+		reflect_column(p, rs, cs, head, column, end, scale, j);
+		j += 1;
+	}
+}
+
+// Applies the reflector `householder` left in `column` to column `target`
+// of the same storage, in `qr_in_place`'s order; a zero `scale` is skipped.
+@(private)
+reflect_column :: proc(p: [^]$T, rs, cs, head, column, end: int, scale: T, target: int) where linalg.Scalar(T) {
+	if (scale == T(0)) { return; }
+	top := offset(head, target, rs, cs);
+	w := p[top];
+	foreach (i in head + 1 ..< end) { w = w + conj(p[offset(i, column, rs, cs)])*p[offset(i, target, rs, cs)]; }
+	factor := scale*w;
+	p[top] = p[top] - factor;
+	foreach (i in head + 1 ..< end) {
+		at := offset(i, target, rs, cs);
+		p[at] = p[at] - factor*p[offset(i, column, rs, cs)];
+	}
+}
+
+// `sqrt(a^2 + b^2)` without overflow or underflow in the squares:
+// `x*sqrt(1 + (y/x)^2)` for `x` the larger magnitude.
+@(private)
+hypot :: proc(a, b: $T) -> T where linalg.Real(T) {
+	x := a.abs();
+	y := b.abs();
+	if (x < y) {
+		held := x;
+		x = y;
+		y = held;
+	}
+	if (x == T(0)) { return T(0); }
+	ratio := y/x;
+	return x*(T(1) + ratio*ratio).sqrt();
+}
+
+/// The QR factors of the `m x n` matrix `a`, `m >= n`, allocated from `allocator`, or `.Singular` as `qr_in_place` decides it.
+qr :: proc(a: View($T), allocator: Allocator = mem.default_allocator()) -> Result(Qr(T), Error) where linalg.Scalar(T) {
+	assert(a.row_count >= a.column_count, "dense.qr needs rows >= columns");
+	packed := Matrix(T).from_view(a, allocator);
+	scales := make([dynamic]T, 0, a.column_count, allocator);
+	foreach (_ in 0 ..< a.column_count) { scales.append(T(0)); }
+	qr_in_place(packed.view_mut(), &mut scales[:]) or_return;
+	return .ok(Qr(T){move(packed), move(scales)});
+}
+
+impl Qr($T) {
+	/// The number of rows of the factored matrix.
+	rows :: proc(self) -> int { return self.packed.row_count; }
+	/// The number of columns of the factored matrix.
+	columns :: proc(self) -> int { return self.packed.column_count; }
+
+	/// Both factors in one view, as `qr_in_place` leaves them.
+	factors :: proc(self: ^) -> View(T) { return self.packed.view(); }
+
+	/// `tau()[k]` is the scale of reflector `k`.
+	tau :: proc(self: ^) -> []T { return self.reflector_scales[:]; }
+
+	/// `R`, `n x n` with zeros below the diagonal, allocated from `allocator`.
+	r :: proc(self, allocator: Allocator = mem.default_allocator()) -> Matrix(T) {
+		n := self.packed.column_count;
+		result := Matrix(T).zeros(n, n, allocator);
+		foreach (c in 0 ..< n) {
+			foreach (r in 0 ..< c + 1) { result[r, c] = self.packed[r, c]; }
+		}
+		return result;
+	}
+
+	/**
+		The first `n` columns of `Q`, `m x n` with orthonormal columns (in the
+		complex inner product for a complex `T`):
+		`apply_q_into` of the first `n` columns of the identity. The whole
+		`m x m` `Q` is `apply_q_into` of the whole identity.
+	*/
+	q :: proc(self, allocator: Allocator = mem.default_allocator()) -> Matrix(T) {
+		m := self.packed.row_count;
+		n := self.packed.column_count;
+		result := Matrix(T).zeros(m, n, allocator);
+		foreach (i in 0 ..< n) { result[i, i] = T(1); }
+		self.apply_q_into(result.view_mut());
+		return result;
+	}
+
+	/**
+		Overwrites the `m`-row `b` with `Q b`: the reflectors from the last to
+		the first, each applied to each column as `qr_in_place` applies it.
+	*/
+	apply_q_into :: proc(self, b: View_Mut(T)) {
+		assert(b.row_count == self.packed.row_count, "dense.Qr.apply_q_into: shapes do not agree");
+		f := self.packed.view();
+		for (k := self.packed.column_count - 1; k >= 0; k -= 1) {
+			reflect(f, k, k, self.reflector_scales[k], b);
+		}
+	}
+
+	/**
+		Overwrites the `m`-row `b` with `Q^H b`, which is `Q^T b` for a real
+		`T`: the reflectors from the first to the last, each as `H_k^H`, with
+		the scale `conj(tau[k])`.
+	*/
+	apply_q_adjoint_into :: proc(self, b: View_Mut(T)) {
+		assert(b.row_count == self.packed.row_count, "dense.Qr.apply_q_adjoint_into: shapes do not agree");
+		f := self.packed.view();
+		foreach (k in 0 ..< self.packed.column_count) {
+			reflect(f, k, k, conj(self.reflector_scales[k]), b);
+		}
+	}
+
+	/**
+		Overwrites the `m`-row `b` as LAPACK's `gels` does: its first `n` rows
+		become the `x` that minimizes `|A x - b|` in the 2-norm, for each
+		column, and the other `m - n` rows the residual's components in `Q`'s
+		basis, so their norm is `|A x - b|`. That is `Q^H b`, then `R x = c` for
+		its first `n` rows in `solve_upper_into`'s order.
+	*/
+	least_squares_into :: proc(self, b: View_Mut(T)) {
+		self.apply_q_adjoint_into(b);
+		n := self.packed.column_count;
+		whole := b;
+		top := whole.block(0, 0, n, b.column_count);
+		upper_solve(self.packed.view().block(0, 0, n, n), top, false);
+	}
+
+	/// The `n`-row `x` that minimizes `|A x - b|`, allocated, with a copy of `b` to work in, from `allocator`.
+	least_squares :: proc(self, b: View(T), allocator: Allocator = mem.default_allocator()) -> Matrix(T) {
+		work := Matrix(T).from_view(b, allocator);
+		self.least_squares_into(work.view_mut());
+		return Matrix(T).from_view(work.view().block(0, 0, self.packed.column_count, b.column_count), allocator);
+	}
+}
+
+// Applies `I - scale v v^H`, for the vector `v` in `column` of the packed
+// factors `f`, whose element `head` is 1 and not stored, to each column of
+// `b`, in `qr_in_place`'s order: `scale` is `tau` for `H` and `conj(tau)`
+// for `H^H`. An adjoint `f` reads `v` conjugated. A zero scale is the
+// identity and is skipped, as `larf` skips it.
+@(private)
+reflect :: proc(f: View($T), head, column: int, scale: T, b: View_Mut(T)) where linalg.Scalar(T) {
+	if (scale == T(0)) { return; }
+	m := f.row_count;
+	v := unsafe.raw_data(f.data);
+	flag := f.conjugated;
+	x := unsafe.raw_data(b.data);
+	source := column*%f.column_stride;
+	fr := f.row_stride;
+	br := b.row_stride;
+	bc := b.column_stride;
+	// Four columns at a time, so that four sums run side by side, each
+	// column's own sum and update term for term as below.
+	j := 0;
+	for (j + 4 <= b.column_count) {
+		t0 := head*%br +% j*%bc;
+		t1 := t0 +% bc;
+		t2 := t1 +% bc;
+		t3 := t2 +% bc;
+		w0 := x[t0];
+		w1 := x[t1];
+		w2 := x[t2];
+		w3 := x[t3];
+		foreach (i in head + 1 ..< m) {
+			e := conj(conjugate_if(v[i*%fr +% source], flag));
+			at := i*%br +% j*%bc;
+			w0 = w0 + e*x[at];
+			w1 = w1 + e*x[at +% bc];
+			w2 = w2 + e*x[at +% 2*%bc];
+			w3 = w3 + e*x[at +% 3*%bc];
+		}
+		f0 := scale*w0;
+		f1 := scale*w1;
+		f2 := scale*w2;
+		f3 := scale*w3;
+		x[t0] = x[t0] - f0;
+		x[t1] = x[t1] - f1;
+		x[t2] = x[t2] - f2;
+		x[t3] = x[t3] - f3;
+		foreach (i in head + 1 ..< m) {
+			e := conjugate_if(v[i*%fr +% source], flag);
+			at := i*%br +% j*%bc;
+			x[at] = x[at] - f0*e;
+			x[at +% bc] = x[at +% bc] - f1*e;
+			x[at +% 2*%bc] = x[at +% 2*%bc] - f2*e;
+			x[at +% 3*%bc] = x[at +% 3*%bc] - f3*e;
+		}
+		j += 4;
+	}
+	for (j < b.column_count) {
+		base := j*%b.column_stride;
+		top := head*%b.row_stride +% base;
+		w := x[top];
+		foreach (i in head + 1 ..< m) { w = w + conj(conjugate_if(v[i*%f.row_stride +% source], flag))*x[i*%b.row_stride +% base]; }
+		factor := scale*w;
+		x[top] = x[top] - factor;
+		foreach (i in head + 1 ..< m) {
+			at := i*%b.row_stride +% base;
+			x[at] = x[at] - factor*conjugate_if(v[i*%f.row_stride +% source], flag);
+		}
+		j += 1;
+	}
+}
+
+/**
+	The `x` that minimizes `|A x - b|` in the 2-norm for the `m x n` matrix
+	`a`, `m >= n`, by `qr`; `.Singular` as `qr` decides it. For a square `a`
+	it is the solution of `A x = b`.
+*/
+least_squares :: proc(a, b: View($T), allocator: Allocator = mem.default_allocator()) -> Result(Matrix(T), Error) where linalg.Scalar(T) {
+	factors := qr(a, allocator) or_return;
+	return .ok(factors.least_squares(b, allocator));
+}

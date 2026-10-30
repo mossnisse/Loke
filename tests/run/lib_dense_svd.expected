@@ -1,0 +1,30 @@
+svd f64 Random true
+svd f64 Hilbert true
+svd f64 Graded true
+svd f64 Rank_Deficient true
+svd f32 Random true
+svd f32 Hilbert true
+svd f32 Graded true
+svd f32 Rank_Deficient true
+ok a diagonal matrix's singular values
+ok and its vectors
+ok rows and columns
+ok a 3 x 2 matrix's singular values
+ok its transpose exchanges U and V, bit for bit
+ok the squares are the eigenvalues of A^T A
+ok full rank
+ok Svd.solve of a full-rank system is least_squares
+ok solve_into gives solve's bits
+ok a rank-deficient matrix's rank
+ok its minimum-norm solution
+ok a zero column
+ok an underdetermined system
+ok a NaN does not converge
+ok an infinity does not converge
+ok a matrix with no columns
+ok a matrix with no rows
+ok a zero matrix
+ok a dual number through svd gives u^T E v
+ok and the same values as at f64, bit for bit
+f64 svd 4620369754622863496 4608043130559760917 4597451073073087511 13809160656070739452 13819480991198718872
+f32 svd 1084783098 1061947382 1033058596

@@ -1,0 +1,30 @@
+// design.md "where clauses": a member a failed bound excludes is also removed
+// from a procedure group naming it, wherever the group is declared in the
+// block. A group declared before its members used to take them in before their
+// bounds were evaluated, and every call through it was ambiguous.
+package main;
+import "core:fmt";
+
+Grid :: struct($R, $C: int) { cells: [C][R]int }
+
+impl Grid($R, $C) {
+	size :: proc{size_small, size_large};
+	@(private) size_small :: proc(self) -> string where R*C <= 4 { return "small"; }
+	@(private) size_large :: proc(self) -> string where R*C > 4 { return "large"; }
+
+	// One member left, selected by the receiver's shape.
+	first :: proc{first_of_column, first_of_row};
+	@(private) first_of_column :: proc(self) -> [R]int where C == 1 { return self.cells[0]; }
+	@(private) first_of_row :: proc(self) -> [C]int where R == 1, C != 1 {
+		result: [C]int = {};
+		foreach (c in 0..<C) { result[c] = self.cells[c][0]; }
+		return result;
+	}
+}
+
+main :: proc() {
+	fmt.println(Grid(2, 2){}.size(), Grid(3, 2){}.size());
+	column := Grid(3, 1){{{1, 2, 3}}};
+	row := Grid(1, 2){{{4}, {5}}};
+	fmt.println(column.first(), row.first());
+}

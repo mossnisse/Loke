@@ -1,0 +1,289 @@
+/**
+	Fixed-size vectors, matrices, and rotations, with the same bits everywhere.
+
+	`Vector2(T)`, `Vector3(T)`, and `Vector4(T)` are column vectors with the
+	layout of `[N]T`, and `Matrix(T, R, C)` is `R` rows by `C` columns stored
+	column-major in `columns: [C][R]T`, so `m[r, c]` is `m.columns[c][r]`. `m * v`
+	transforms `v`, and `a * b` applies `b` first: `translation * rotation *
+	scaling` scales, then rotates, then translates. Rotations in 3D are
+	`math.Quaternion(T)` with `real` as the scalar part, and angles are radians.
+	Space is right-handed; only the camera constructors depend on handedness,
+	and each has an `_lh` twin.
+
+	Arithmetic needs only `interfaces.Numeric(T)`, so integers and user number
+	types get it. Members that need a square root, trigonometry, or a check for
+	a degenerate input need `Real(T)`, which this package implements for `f32`
+	and `f64` and a user type implements with its own methods.
+
+	Each operation is computed in the order its documentation gives, with no
+	`fma` and no C library call, so it gives the same bits on every machine,
+	CPU level, and optimization level. The `f32` and `f64` slots of `Real` are
+	`math.sqrt`, which is correctly rounded, and `core:math/repro`. A call that
+	does not reach `sqrt` can also be evaluated at compile time, with the same
+	result; `math.sqrt` is a foreign procedure, which a compile-time call cannot
+	run.
+
+	Nothing returns a silent zero or NaN for a degenerate input: `normalize`,
+	`inverse`, `solve`, `inverse_affine`, `normal_matrix`, `project_point`,
+	`look_at`, `quaternion_normalize`, and `quaternion_between` return
+	`Option`, and invalid projection parameters panic. Euler angles take an
+	explicit `Euler_Order`, since each field uses a different one.
+*/
+// linear-algebra-plan.md is the design this package implements, milestones 1 and 2.
+@(public)
+package linalg;
+
+import "base:interfaces";
+import "core:math";
+import "core:math/repro";
+
+/**
+	A real number type: what `length`, `normalize`, `inverse`, and the rotation
+	and projection constructors need of an element.
+
+	`f32` and `f64` meet it through this package. A user type meets it with
+	inherent methods, and, when it is declared in `package main` or is
+	otherwise private, with `@(public)` operators and conversion, since those
+	requirements are checked here:
+
+	    Dual :: struct { value, derivative: f64 }
+
+	    impl Dual {
+	        @(public) from_f64 :: hook(convert) proc(value: f64) -> Dual { ... }
+	        @(public) add :: operator(+) proc(a, b: Dual) -> Dual { ... }
+	        // ... -, *, /, unary -, ==, <
+	        sqrt :: proc(self) -> Dual { ... }
+	        // ... and the other slots
+	    }
+
+	`is_normal` is true for a finite value that is not zero and has full
+	precision; it is what the degenerate input checks test.
+*/
+// linear-algebra-plan.md "Element types". Only `<` and `==` are required, so
+// the generic bodies here compare with those alone: a user type need not
+// declare `<=`, and `!(a < b)` would wrongly hold for a NaN.
+Real :: interface($T: type) {
+	interfaces.Numeric(T);
+	interfaces.Ordered(T);
+	(value: T) - value -> T;
+	(value: f64) T(value) -> T;
+	slot sqrt:      proc(self) -> T;
+	slot sin:       proc(self) -> T;
+	slot cos:       proc(self) -> T;
+	slot asin:      proc(self) -> T;
+	slot acos:      proc(self) -> T;
+	slot atan2:     proc(self, x: T) -> T;
+	slot abs:       proc(self) -> T;
+	slot floor:     proc(self) -> T;
+	slot ceil:      proc(self) -> T;
+	slot round:     proc(self) -> T;
+	slot is_finite: proc(self) -> bool;
+	slot is_normal: proc(self) -> bool;
+}
+
+// The slots for the built-in floats. They are private: a public extension is
+// exported under this package's name, so `sqrt` on both floats would be two
+// exports of one name, and a private one still meets the slot for every
+// importer (design.md "Runtime polymorphism").
+impl f32 {
+	@(private) sqrt :: proc(self) -> f32 { return math.sqrt_f32(self); }
+	@(private) sin :: proc(self) -> f32 { return repro.sin_f32(self); }
+	@(private) cos :: proc(self) -> f32 { return repro.cos_f32(self); }
+	@(private) asin :: proc(self) -> f32 { return repro.asin_f32(self); }
+	@(private) acos :: proc(self) -> f32 { return repro.acos_f32(self); }
+	@(private) atan2 :: proc(self, x: f32) -> f32 { return repro.atan2_f32(self, x); }
+	@(private) abs :: proc(self) -> f32 { return math.abs_f32(self); }
+	@(private) floor :: proc(self) -> f32 { return math.floor_f32(self); }
+	@(private) ceil :: proc(self) -> f32 { return math.ceil_f32(self); }
+	@(private) round :: proc(self) -> f32 { return math.round_f32(self); }
+	@(private) is_finite :: proc(self) -> bool { return math.is_finite_f32(self); }
+	@(private) is_normal :: proc(self) -> bool {
+		return math.is_finite_f32(self) && math.abs_f32(self) >= math.F32_MIN_NORMAL;
+	}
+}
+
+impl f64 {
+	@(private) sqrt :: proc(self) -> f64 { return math.sqrt(self); }
+	@(private) sin :: proc(self) -> f64 { return repro.sin(self); }
+	@(private) cos :: proc(self) -> f64 { return repro.cos(self); }
+	@(private) asin :: proc(self) -> f64 { return repro.asin(self); }
+	@(private) acos :: proc(self) -> f64 { return repro.acos(self); }
+	@(private) atan2 :: proc(self, x: f64) -> f64 { return repro.atan2(self, x); }
+	@(private) abs :: proc(self) -> f64 { return math.abs(self); }
+	@(private) floor :: proc(self) -> f64 { return math.floor(self); }
+	@(private) ceil :: proc(self) -> f64 { return math.ceil(self); }
+	@(private) round :: proc(self) -> f64 { return math.round(self); }
+	@(private) is_finite :: proc(self) -> bool { return math.is_finite(self); }
+	@(private) is_normal :: proc(self) -> bool {
+		return math.is_finite(self) && math.abs(self) >= math.F64_MIN_NORMAL;
+	}
+}
+
+/**
+	A real or complex number type: what the factorizations of
+	`core:math/dense` need of an element. `T.Real` is the type of its real and
+	imaginary parts, a `Real` type, and `T(x)` makes a `T` from one.
+	`conjugate` is the complex conjugate.
+
+	`f32` and `f64` meet it through this package, as their own `Real`, with
+	`conjugate` and `real_part` the value itself and `imaginary_part` zero, and
+	so does `math.Complex(R)` for every `Real(R)`. A user real type meets it
+	with those members inherent:
+
+	    impl Dual {
+	        @(public) Real :: Dual;
+	        conjugate :: proc(self) -> Dual { return self; }
+	        real_part :: proc(self) -> Dual { return self; }
+	        imaginary_part :: proc(self) -> Dual { return Dual{}; }
+	    }
+*/
+// dense-matrix-plan.md "Complex elements". A real `T` is recognised in
+// generic code as `T == T.Real`, which lets an algorithm keep the real form
+// of each step; every requirement agrees with it for a real type, so the
+// two forms give the same bits.
+Scalar :: interface($T: type) {
+	interfaces.Numeric(T);
+	T.Real -> type;
+	Real(T.Real);
+	(value: T.Real) T(value) -> T;
+	(a, b: T) a == b -> bool;
+	(value: T) - value -> T;
+	slot conjugate:      proc(self) -> T;
+	slot real_part:      proc(self) -> T.Real;
+	slot imaginary_part: proc(self) -> T.Real;
+}
+
+// `Scalar` for the built-in floats and for `math.Complex`, private as the
+// `Real` slots are; `math.Complex` has its own `conjugate`.
+impl f32 {
+	@(private) Real :: f32;
+	@(private) conjugate :: proc(self) -> f32 { return self; }
+	@(private) real_part :: proc(self) -> f32 { return self; }
+	@(private) imaginary_part :: proc(self) -> f32 { return 0; }
+}
+
+impl f64 {
+	@(private) Real :: f64;
+	@(private) conjugate :: proc(self) -> f64 { return self; }
+	@(private) real_part :: proc(self) -> f64 { return self; }
+	@(private) imaginary_part :: proc(self) -> f64 { return 0; }
+}
+
+impl math.Complex($R) {
+	@(private) Real :: R;
+	@(private) real_part :: proc(self) -> R { return self.real; }
+	@(private) imaginary_part :: proc(self) -> R { return self.imaginary; }
+}
+
+// The bound of the conversion hooks: each component converts as the scalar
+// `To(value)` does.
+@(private)
+Converts :: interface($From, $To: type) {
+	(value: From) To(value) -> To;
+}
+
+/**
+	The clip-space depth range a projection maps the near and far planes to.
+	It has no default, because the APIs disagree and the wrong one is a silent
+	depth-buffer bug.
+*/
+Depth_Range :: enum {
+	/// Near at -1, far at 1: OpenGL without `glClipControl`.
+	Negative_One_To_One,
+	/// Near at 0, far at 1: Direct3D, Vulkan, Metal, and WebGPU.
+	Zero_To_One,
+	/// Near at 1, far at 0: reversed depth on any of those.
+	One_To_Zero,
+}
+
+/**
+	Whether `a` and `b` agree within the tolerances: every component pair has
+	`|a - b| <= max(absolute, relative * max(|a|, |b|))`.
+
+	The absolute tolerance governs near zero, where a relative one means
+	nothing, and the relative one elsewhere; neither has a default, because
+	none suits both metres and nanometres. A negative or NaN tolerance panics.
+	A NaN component is never equal, and an infinity equals only itself,
+	whatever the tolerances. It takes a `Real` scalar, a vector, a matrix, or a
+	quaternion; for two rotations, where `q` and `-q` agree, test both.
+*/
+approx_equal :: proc{
+	approx_equal_scalar,
+	approx_equal_vector2,
+	approx_equal_vector3,
+	approx_equal_vector4,
+	approx_equal_matrix,
+	approx_equal_quaternion,
+};
+
+@(private)
+approx_equal_scalar :: proc(a, b: $T, absolute, relative: T) -> bool where Real(T) {
+	check_tolerances(absolute, relative);
+	return close(a, b, absolute, relative);
+}
+
+@(private)
+approx_equal_vector2 :: proc(a, b: Vector2($T), absolute, relative: T) -> bool where Real(T) {
+	check_tolerances(absolute, relative);
+	return close(a.x, b.x, absolute, relative) && close(a.y, b.y, absolute, relative);
+}
+
+@(private)
+approx_equal_vector3 :: proc(a, b: Vector3($T), absolute, relative: T) -> bool where Real(T) {
+	check_tolerances(absolute, relative);
+	return close(a.x, b.x, absolute, relative)
+		&& close(a.y, b.y, absolute, relative)
+		&& close(a.z, b.z, absolute, relative);
+}
+
+@(private)
+approx_equal_vector4 :: proc(a, b: Vector4($T), absolute, relative: T) -> bool where Real(T) {
+	check_tolerances(absolute, relative);
+	return close(a.x, b.x, absolute, relative)
+		&& close(a.y, b.y, absolute, relative)
+		&& close(a.z, b.z, absolute, relative)
+		&& close(a.w, b.w, absolute, relative);
+}
+
+@(private)
+approx_equal_matrix :: proc(a, b: Matrix($T, $R, $C), absolute, relative: T) -> bool where Real(T) {
+	check_tolerances(absolute, relative);
+	foreach (c in 0 ..< C) {
+		foreach (r in 0 ..< R) {
+			if (!close(a.columns[c][r], b.columns[c][r], absolute, relative)) { return false; }
+		}
+	}
+	return true;
+}
+
+@(private)
+approx_equal_quaternion :: proc(a, b: math.Quaternion($T), absolute, relative: T) -> bool where Real(T) {
+	check_tolerances(absolute, relative);
+	return close(a.real, b.real, absolute, relative)
+		&& close(a.i, b.i, absolute, relative)
+		&& close(a.j, b.j, absolute, relative)
+		&& close(a.k, b.k, absolute, relative);
+}
+
+// `0 <= t` written with `<`, so a NaN tolerance fails it too.
+@(private)
+check_tolerances :: proc(absolute, relative: $T) where Real(T) {
+	assert(T(0) < absolute || absolute == T(0), "linalg.approx_equal needs a non-negative absolute tolerance");
+	assert(T(0) < relative || relative == T(0), "linalg.approx_equal needs a non-negative relative tolerance");
+}
+
+// Equal values first: two equal infinities differ by NaN. Any other
+// infinity, or a NaN, is never close; a relative tolerance would otherwise
+// scale an infinite magnitude into an infinite allowance.
+@(private)
+close :: proc(a, b: $T, absolute, relative: T) -> bool where Real(T) {
+	if (a == b) { return true; }
+	if (!a.is_finite() || !b.is_finite()) { return false; }
+	difference := (a - b).abs();
+	magnitude := a.abs();
+	other := b.abs();
+	if (magnitude < other) { magnitude = other; }
+	allowed := relative*magnitude;
+	if (allowed < absolute) { allowed = absolute; }
+	return difference < allowed || difference == allowed;
+}

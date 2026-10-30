@@ -1,0 +1,252 @@
+package main;
+
+import "core:fmt";
+import "core:math";
+import "core:math/geometry";
+import "core:math/linalg";
+import "core:unsafe";
+
+// geometry-plan.md "Milestone 5 results": the `f32` box cast, which computes
+// the three slabs in `Simd` lanes, and the triangle cast, which permutes the
+// axes rather than indexing by a run-time one, against the scalar formulas
+// they replaced, bit for bit, over random operands and the special values,
+// and folded at compile time; `f64`, which keeps the scalar box cast, the
+// same way.
+
+failures := 0;
+
+check :: proc(name: string, ok: bool) {
+	if (!ok) {
+		failures += 1;
+		fmt.println("FAIL", name);
+	}
+}
+
+bits :: proc(x: $T) -> u64 {
+	when (T == f32) {
+		return u64(unsafe.transmute(u32, x));
+	} else {
+		return unsafe.transmute(u64, x);
+	}
+}
+
+same_t :: proc(a, b: Option($T)) -> bool {
+	switch (a) {
+	case .none: return b == .none;
+	case .some(x):
+		switch (b) {
+		case .none: return false;
+		case .some(y): return bits(x) == bits(y);
+		}
+	}
+}
+
+same_hit :: proc(a, b: Option(geometry.Triangle_Hit($T))) -> bool {
+	switch (a) {
+	case .none: return b == .none;
+	case .some(x):
+		switch (b) {
+		case .none: return false;
+		case .some(y):
+			return bits(x.t) == bits(y.t) && bits(x.barycentric.x) == bits(y.barycentric.x)
+				&& bits(x.barycentric.y) == bits(y.barycentric.y) && bits(x.barycentric.z) == bits(y.barycentric.z);
+		}
+	}
+}
+
+// The scalar forms, as ray.loke writes them for every other element type.
+
+at_most :: proc(a, b: $T) -> bool { return a < b || a == b; }
+
+slab :: proc(near: inout $T, far: inout T, low, high, origin, inverse: T) {
+	near_face, far_face := low, high;
+	if (inverse < T(0)) {
+		near_face = high;
+		far_face = low;
+	}
+	enter := (near_face - origin)*inverse;
+	leave := (far_face - origin)*inverse;
+	if (near < enter) { near = enter; }
+	if (leave < far) { far = leave; }
+}
+
+slab_hit :: proc(near, far: $T) -> Option(T) where linalg.Real(T) {
+	infinity := T(math.F64_INFINITY);
+	if (!(near < infinity) || !(-infinity < far)) { return .none; }
+	widening := T(8.0*1.1102230246251565e-16/(1.0 - 4.0*1.1102230246251565e-16));
+	when (T == f32) { widening = T(8.0*5.9604644775390625e-08/(1.0 - 4.0*5.9604644775390625e-08)); }
+	slack := T(0);
+	if (near.is_finite() && far.is_finite()) {
+		larger := near.abs();
+		if (larger < far.abs()) { larger = far.abs(); }
+		slack = larger*widening;
+	}
+	if (at_most(near, far + slack)) { return .some(near); }
+	return .none;
+}
+
+cast_box :: proc(ray: geometry.Ray3($T), inverse: linalg.Vector3(T), box: geometry.Aabb3(T), t_min, t_max: T) -> Option(T) {
+	if (box.is_empty()) { return .none; }
+	near, far := t_min, t_max;
+	slab(inout near, inout far, box.min.x, box.max.x, ray.origin.x, inverse.x);
+	slab(inout near, inout far, box.min.y, box.max.y, ray.origin.y, inverse.y);
+	slab(inout near, inout far, box.min.z, box.max.z, ray.origin.z, inverse.z);
+	return slab_hit(near, far);
+}
+
+sign_of :: proc(x: $T) -> geometry.Sign {
+	if (T(0) < x) { return .Positive; }
+	if (x < T(0)) { return .Negative; }
+	return .Zero;
+}
+
+edge_sign :: proc(value: $T, p, q: linalg.Vector2(T)) -> geometry.Sign {
+	if (!(value == T(0))) { return sign_of(value); }
+	return geometry.orient2d(linalg.Vector2(T).splat(T(0)), p, q);
+}
+
+// Woop, Benthin, and Wald's test indexing by the run-time axes.
+cast_triangle :: proc(ray: geometry.Ray3($T), triangle: geometry.Triangle3(T), t_min, t_max: T) -> Option(geometry.Triangle_Hit(T)) where linalg.Real(T) {
+	d := ray.direction;
+	kz := 0;
+	if (d.x.abs() < d.y.abs()) { kz = 1; }
+	if (d[kz].abs() < d.z.abs()) { kz = 2; }
+	kx := (kz + 1) % 3;
+	ky := (kx + 1) % 3;
+	if (d[kz] == T(0)) { return .none; }
+	sx := d[kx]/d[kz];
+	sy := d[ky]/d[kz];
+	sz := T(1)/d[kz];
+	a := triangle.a - ray.origin;
+	b := triangle.b - ray.origin;
+	c := triangle.c - ray.origin;
+	a2 := linalg.Vector2(T).from_components(a[kx] - sx*a[kz], a[ky] - sy*a[kz]);
+	b2 := linalg.Vector2(T).from_components(b[kx] - sx*b[kz], b[ky] - sy*b[kz]);
+	c2 := linalg.Vector2(T).from_components(c[kx] - sx*c[kz], c[ky] - sy*c[kz]);
+	u := c2.x*b2.y - c2.y*b2.x;
+	v := a2.x*c2.y - a2.y*c2.x;
+	w := b2.x*a2.y - b2.y*a2.x;
+	su := edge_sign(u, c2, b2);
+	sv := edge_sign(v, a2, c2);
+	sw := edge_sign(w, b2, a2);
+	negative := su == .Negative || sv == .Negative || sw == .Negative;
+	positive := su == .Positive || sv == .Positive || sw == .Positive;
+	if (negative && positive) { return .none; }
+	det := u + v + w;
+	if (det == T(0)) { return .none; }
+	t := (u*(sz*a[kz]) + v*(sz*b[kz]) + w*(sz*c[kz]))/det;
+	if (!(at_most(t_min, t) && at_most(t, t_max))) { return .none; }
+	return .some(geometry.Triangle_Hit(T){t = t, barycentric = linalg.Vector3(T).from_components(u/det, v/det, w/det)});
+}
+
+Random :: struct { state: u64 }
+
+impl Random {
+	// Mostly uniform in [-4, 4), with a special value one time in eight.
+	next :: proc(self: inout, $T: type) -> T {
+		self.state = self.state*%6364136223846793005 +% 1442695040888963407;
+		pick := (self.state >> 32) % 64;
+		switch (pick) {
+		case 0: return T(-0.0);
+		case 1: return T(math.F64_INFINITY);
+		case 2: return -T(math.F64_INFINITY);
+		case 3: return T(math.F64_NAN);
+		case 4:
+			when (T == f32) { return T(1.0e-40); } else { return T(1.0e-310); }
+		case 5:
+			when (T == f32) { return T(math.F32_MAX); } else { return T(math.F64_MAX); }
+		case 6: return T(0.0);
+		case 7: return T(-1.0e-38);
+		case: return T(f64(self.state >> 40)/16777216.0*8.0 - 4.0);
+		}
+	}
+	vector :: proc(self: inout, $T: type) -> linalg.Vector3(T) {
+		x := self.next(T);
+		y := self.next(T);
+		z := self.next(T);
+		return linalg.Vector3(T).from_components(x, y, z);
+	}
+	// Mostly a small grid, so that rays meet faces, edges, and corners
+	// exactly, with the special values among them.
+	grid :: proc(self: inout, $T: type) -> T where linalg.Real(T) {
+		x := self.next(T);
+		if (!x.is_finite() || x.abs() < T(1.0e-30)) { return x; }
+		return T(math.floor(f64(x)*2.0))*T(0.5);
+	}
+	grid_vector :: proc(self: inout, $T: type) -> linalg.Vector3(T) where linalg.Real(T) {
+		x := self.grid(T);
+		y := self.grid(T);
+		z := self.grid(T);
+		return linalg.Vector3(T).from_components(x, y, z);
+	}
+}
+
+// Rays at random and on the grid, most of them aimed at a corner of the box
+// or its center, or at a corner of the triangle or a point of an edge, so
+// that they meet faces, edges, and corners exactly.
+lanes_agree :: proc($T: type, seed: u64) -> (boxes: int, triangles: int, box_hits: int, triangle_hits: int) where linalg.Real(T) {
+	random := Random{seed};
+	box_bad, triangle_bad, box_hits, triangle_hits := 0, 0, 0, 0;
+	foreach (k in 0 ..< 8000) {
+		gridded := k % 2 == 0;
+		origin := random.grid_vector(T) if gridded else random.vector(T);
+		box := geometry.Aabb3(T).from_min_max(random.grid_vector(T), random.grid_vector(T));
+		if (k % 3 == 0) { box = geometry.Aabb3(T).from_corners(random.grid_vector(T), random.grid_vector(T)); }
+		triangle := geometry.Triangle3(T){a = random.grid_vector(T), b = random.grid_vector(T), c = random.grid_vector(T)};
+		direction := random.grid_vector(T) if gridded else random.vector(T);
+		target := direction;
+		switch (k % 8) {
+		case 0, 1: target = box.min;
+		case 2, 3: target = (box.min + box.max)*T(0.5);
+		case 4: target = triangle.a;
+		case 5: target = (triangle.b + triangle.c)*T(0.5);
+		case 6: target = (triangle.a + triangle.b + triangle.c)/T(3);
+		case: target = origin + direction;
+		}
+		ray := geometry.Ray3(T).from_points(origin, target);
+		t_min, t_max := T(0), T(math.F64_INFINITY);
+		if (k % 5 == 1) {
+			t_min = random.next(T);
+			t_max = random.next(T);
+		}
+		inverse := ray.inverse_direction();
+		expected := cast_box(ray, inverse, box, t_min, t_max);
+		if (!same_t(geometry.cast(ray, box, t_min, t_max), expected) || !same_t(geometry.cast(ray, inverse, box, t_min, t_max), expected)) { box_bad += 1; }
+		if (!(expected == .none)) { box_hits += 1; }
+		hit := cast_triangle(ray, triangle, t_min, t_max);
+		if (!same_hit(geometry.cast(ray, triangle, t_min, t_max), hit)) { triangle_bad += 1; }
+		if (!(hit == .none)) { triangle_hits += 1; }
+	}
+	return {box_bad, triangle_bad, box_hits, triangle_hits};
+}
+
+V3 :: linalg.Vector3(f32);
+
+FOLDED_BOX :: geometry.cast(geometry.Ray3(f32).from_points(V3.from_components(-2, 0.5, 0.25), V3.from_components(1, 0.125, 0.75)), geometry.Aabb3(f32).from_min_max(V3.splat(-1), V3.splat(1)), f32(0), f32(10));
+FOLDED_TRIANGLE :: geometry.cast(geometry.Ray3(f32).from_points(V3.from_components(0.1, 0.2, 3), V3.from_components(0.2, 0.1, -1)), geometry.Triangle3(f32){a = V3.from_components(-1, -1, 0), b = V3.from_components(2, -1, 0), c = V3.from_components(0, 2, 0.5)}, f32(0), f32(10));
+
+main :: proc() {
+	boxes32, triangles32, box_hits32, triangle_hits32 := lanes_agree(f32, 1);
+	boxes64, triangles64, box_hits64, triangle_hits64 := lanes_agree(f64, 2);
+	check("the f32 box cast is the scalar form", boxes32 == 0);
+	check("the f64 box cast is the scalar form", boxes64 == 0);
+	check("the f32 triangle cast is the indexed form", triangles32 == 0);
+	check("the f64 triangle cast is the indexed form", triangles64 == 0);
+	fmt.println("hits of 8000 boxes", box_hits32, box_hits64, "and triangles", triangle_hits32, triangle_hits64);
+
+	ray := geometry.Ray3(f32).from_points(V3.from_components(-2, 0.5, 0.25), V3.from_components(1, 0.125, 0.75));
+	box := geometry.Aabb3(f32).from_min_max(V3.splat(-1), V3.splat(1));
+	t := geometry.cast(ray, box, f32(0), f32(10)) or_else f32(-1);
+	fmt.println("box", bits(t));
+	check("a folded box cast equals the run-time one", same_t(FOLDED_BOX, geometry.cast(ray, box, f32(0), f32(10))));
+	along := geometry.Ray3(f32).from_points(V3.from_components(0.1, 0.2, 3), V3.from_components(0.2, 0.1, -1));
+	triangle := geometry.Triangle3(f32){a = V3.from_components(-1, -1, 0), b = V3.from_components(2, -1, 0), c = V3.from_components(0, 2, 0.5)};
+	hit := geometry.cast(along, triangle, f32(0), f32(10));
+	switch (hit) {
+	case .none: fmt.println("triangle none");
+	case .some(h): fmt.println("triangle", bits(h.t), bits(h.barycentric.x), bits(h.barycentric.y), bits(h.barycentric.z));
+	}
+	check("a folded triangle cast equals the run-time one", same_hit(FOLDED_TRIANGLE, hit));
+
+	if (failures == 0) { fmt.println("all lane checks passed"); }
+}

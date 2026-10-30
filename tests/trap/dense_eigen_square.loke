@@ -1,0 +1,16 @@
+// standard-library "`core:math/dense`": `symmetric_eigen` needs a square
+// matrix, so a 2 x 3 one panics. A square one decomposes.
+package main;
+
+import "core:fmt";
+import "core:math/dense";
+
+main :: proc() {
+	square := dense.Matrix(f64).identity(3);
+	switch (dense.symmetric_eigen(square.view())) {
+	case .ok(e):  fmt.println(e.size(), e.values()[0]);
+	case .err(e): fmt.println(e);
+	}
+	wide := dense.Matrix(f64).zeros(2, 3);
+	_ = dense.symmetric_eigen(wide.view());
+}

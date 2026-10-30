@@ -1,0 +1,10 @@
+// Sorts before slots.loke, so this signature instantiates `Box(f32)`, and
+// probes `length`'s bound `Root(f32)`, before the `impl f32` block's own
+// signatures are resolved. The probe resolves `root` in its own block: read
+// from here, `self` was `Box(f32)`, so `Root(f32)` failed and `root`'s body
+// was rejected.
+@(public)
+package shapes;
+
+@(private)
+first :: proc(box: Box(f32)) -> f32 { return box.x; }

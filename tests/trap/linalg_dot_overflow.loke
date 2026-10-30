@@ -1,0 +1,12 @@
+// standard-library "`core:math/linalg`": integer vectors keep integer
+// arithmetic, so a `dot` that overflows panics as the scalar `*` and `+` do.
+package main;
+
+import "core:fmt";
+import "core:math/linalg";
+
+main :: proc() {
+	v := linalg.Vector3(i32).from_components(40000, 40000, 0);
+	fmt.println(v.dot(linalg.Vector3(i32).unit_x()));
+	fmt.println(v.dot(v));
+}
