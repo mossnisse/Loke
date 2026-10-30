@@ -3,7 +3,10 @@
 // doc comments (design.md "Doc comments"). `-doc` prints it as Markdown, and
 // `-api` writes each package's interface file, Loke source without bodies
 // (compiler-guide.md "Interface files"). Both read one model of a package's
-// API, so they show the same declarations.
+// API, so they show the same declarations. Building that model allocates as it
+// goes and frees nothing, as a command that writes once and exits may; a
+// caller that lives on, like the language server, runs it under a temporary
+// allocator.
 package lokec
 
 import "core:fmt"
