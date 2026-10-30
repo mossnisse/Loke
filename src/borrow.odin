@@ -3481,8 +3481,7 @@ publish_view_loan :: proc(graph: ^Flow_Graph, event: Prov_Event, one: int) -> Pr
 	if last.kind != .Range || last.precision != {} || last.hi <= last.lo {
 		return loan
 	}
-	starts := make(map[[2]int]Prov_View_Start, graph.alloc)
-	offset, length, present, known := publish_view_of(graph, event.view_slot - 1, event.view_reaching, one, last.hi - last.lo, &starts)
+	offset, length, present, known := publish_view_of(graph, event.view_slot - 1, event.view_reaching, one, last.hi - last.lo)
 	if !present || !known || event.view_index >= length {
 		return loan
 	}
@@ -3503,6 +3502,20 @@ Prov_View_Start :: struct {
 	present, known, settled: bool,
 }
 
+// One view `publish_view_of` is working out: the definitions `reaching` of
+// `slot`, of which `next` is the first not yet taken, and what those taken
+// agree on. `key` names the reslice definition that reads the view, and is
+// `{-1, -1}` for the view the store names.
+@(private = "file")
+Prov_View_Walk :: struct {
+	key:            [2]int,
+	slot:           int,
+	reaching:       []int,
+	next:           int,
+	offset, length: i64,
+	present:        bool,
+}
+
 // design.md "Values that contain borrows": where in the `range` elements
 // `loan` lends the view held in `slot` starts, and how many it views,
 // whenever `slot` holds that loan where the definitions `reaching` of it
@@ -3512,71 +3525,130 @@ Prov_View_Start :: struct {
 // pointer change it unseen. `present` is false when no definition takes the
 // loan, and `known` false when it is not known where the view starts, as for
 // a slot resliced from itself in a loop, whose reslice reaches itself.
-// `starts` holds each definition's answer (`publish_view_def`).
+//
+// A reslice is worked out from the view it reads, so the walk keeps a stack
+// of views rather than recursing: a chain of reslices may be as long as the
+// procedure. `starts` holds each definition's answer. One reached again
+// while its own answer is being worked out reslices what it made itself, so
+// where it starts is not known. Each definition is worked out once, which
+// bounds the walk.
 @(private = "file")
-publish_view_of :: proc(
-	graph: ^Flow_Graph, slot: int, reaching: []int, loan: int, range: i64,
-	starts: ^map[[2]int]Prov_View_Start,
-) -> (offset, length: i64, present, known: bool) {
-	defs, recorded := graph.view_defs[slot]
-	if !recorded || len(reaching) == 0 {
+publish_view_of :: proc(graph: ^Flow_Graph, slot: int, reaching: []int, loan: int, range: i64) -> (offset, length: i64, present, known: bool) {
+	unknown :: Prov_View_Start{present = true}
+	starts := make(map[[2]int]Prov_View_Start, graph.alloc)
+	walks := make([dynamic]Prov_View_Walk, 0, 8, graph.alloc)
+	if !publish_view_walk(graph, &walks, {-1, -1}, slot, reaching) {
 		return 0, 0, true, false
+	}
+	for {
+		view, ended := publish_view_advance(graph, &walks, &starts, loan, range)
+		for ended {
+			done := pop(&walks)
+			if len(walks) == 0 {
+				return view.offset, view.length, view.present, view.known
+			}
+			start := publish_view_def(graph.view_defs[done.key[0]][done.key[1]], view, loan, range)
+			starts[done.key] = start
+			if publish_view_take(&walks[len(walks) - 1], start) {
+				ended = false
+			} else {
+				view = unknown
+			}
+		}
+	}
+}
+
+// Starts working out the view the definitions `reaching` of `slot` make, for
+// the definition `key`, unless it is unknown from the outset.
+@(private = "file")
+publish_view_walk :: proc(graph: ^Flow_Graph, walks: ^[dynamic]Prov_View_Walk, key: [2]int, slot: int, reaching: []int) -> bool {
+	if slot not_in graph.view_defs || len(reaching) == 0 {
+		return false
 	}
 	symbol := graph.prov_slots[slot].symbol
 	for other in graph.loans {
 		if graph.roots[int(other.root)].symbol == symbol {
-			return 0, 0, true, false
+			return false
 		}
 	}
-	for index in reaching {
-		if index < 0 || index >= len(defs) {
-			return 0, 0, true, false
-		}
-		start := publish_view_def(graph, slot, index, loan, range, starts)
-		if !start.present {
-			continue
-		}
-		if !start.known || present && (start.offset != offset || start.length != length) {
-			return 0, 0, true, false
-		}
-		offset, length, present = start.offset, start.length, true
-	}
-	return offset, length, present, true
+	append(walks, Prov_View_Walk{key = key, slot = slot, reaching = reaching})
+	return true
 }
 
-// `publish_view_of` for definition `index` of `slot`. One reached again
-// while its own answer is being worked out reslices what it made itself, so
-// where it starts is not known. Each definition is worked out once, which
-// bounds the walk however long the chain of reslices.
+// Takes the definitions of the innermost view until one is a reslice whose
+// source must be worked out first, which it starts, or the view is `ended`.
 @(private = "file")
-publish_view_def :: proc(
-	graph: ^Flow_Graph, slot, index, loan: int, range: i64,
-	starts: ^map[[2]int]Prov_View_Start,
-) -> Prov_View_Start {
-	key := [2]int{slot, index}
-	if start, seen := starts^[key]; seen {
-		return start.settled ? start : Prov_View_Start{present = true}
+publish_view_advance :: proc(
+	graph: ^Flow_Graph, walks: ^[dynamic]Prov_View_Walk, starts: ^map[[2]int]Prov_View_Start,
+	loan: int, range: i64,
+) -> (view: Prov_View_Start, ended: bool) {
+	unknown :: Prov_View_Start{present = true}
+	walk := &walks[len(walks) - 1]
+	defs := graph.view_defs[walk.slot]
+	for walk.next < len(walk.reaching) {
+		index := walk.reaching[walk.next]
+		if index < 0 || index >= len(defs) {
+			return unknown, true
+		}
+		key := [2]int{walk.slot, index}
+		start, seen := starts^[key]
+		if seen && !start.settled {
+			return unknown, true
+		}
+		if !seen {
+			def := defs[index]
+			if !def.unknown && def.from > 0 {
+				starts^[key] = {}
+				if publish_view_walk(graph, walks, key, def.from - 1, def.reaching) {
+					return {}, false
+				}
+				start = publish_view_def(def, unknown, loan, range)
+			} else {
+				start = publish_view_def(def, {}, loan, range)
+			}
+			starts^[key] = start
+		}
+		if !publish_view_take(walk, start) {
+			return unknown, true
+		}
 	}
-	starts^[key] = {}
-	def := graph.view_defs[slot][index]
+	return {offset = walk.offset, length = walk.length, present = walk.present, known = true}, true
+}
+
+// Adds one definition's start to what the definitions of `walk` agree on,
+// and whether they still agree on a known one.
+@(private = "file")
+publish_view_take :: proc(walk: ^Prov_View_Walk, start: Prov_View_Start) -> bool {
+	walk.next += 1
+	if !start.present {
+		return true
+	}
+	if !start.known || walk.present && (start.offset != walk.offset || start.length != walk.length) {
+		return false
+	}
+	walk.offset, walk.length, walk.present = start.offset, start.length, true
+	return true
+}
+
+// Where `def` starts, `source` being the view a reslice reads.
+@(private = "file")
+publish_view_def :: proc(def: Prov_View_Def, source: Prov_View_Start, loan: int, range: i64) -> Prov_View_Start {
 	start: Prov_View_Start
 	switch {
 	case def.unknown:
 		start.present = true
 	case def.from > 0:
-		from, viewed, holds, exact := publish_view_of(graph, def.from - 1, def.reaching, loan, range, starts)
-		hi := def.hi < 0 ? viewed : def.hi
-		if holds {
+		hi := def.hi < 0 ? source.length : def.hi
+		if source.present {
 			start.present = true
-			if exact && def.lo >= 0 && def.lo <= hi && hi <= viewed {
-				start.offset, start.length, start.known = from + def.lo, hi - def.lo, true
+			if source.known && def.lo >= 0 && def.lo <= hi && hi <= source.length {
+				start.offset, start.length, start.known = source.offset + def.lo, hi - def.lo, true
 			}
 		}
 	case int(def.loan) == loan:
 		start = Prov_View_Start{offset = 0, length = range, present = true, known = true}
 	}
 	start.settled = true
-	starts^[key] = start
 	return start
 }
 
