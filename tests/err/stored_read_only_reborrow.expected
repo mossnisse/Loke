@@ -1,12 +1,33 @@
 L0641
-@21:2
+@24:2
 `r` cannot be used here: a read-only reborrow of it is still in use
 L0641
-@27:2
+@30:2
 `r` cannot be used here: a read-only reborrow of it is still in use
 L0641
-@37:2
+@40:2
 `r` cannot be used here: a read-only reborrow of it is still in use
 L0641
-@43:10
+@46:10
+`r` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@124:2
+`r` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@129:2
+`r` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@138:2
+`r` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@146:2
+`r` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@153:2
+`r` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@162:2
+`r` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@172:2
 `r` cannot be used here: a read-only reborrow of it is still in use

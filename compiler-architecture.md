@@ -430,7 +430,8 @@ Keep these contracts:
   store whose every copy is linked there skips the parameter itself
   (`Prov_Event.linked`). What a call leaves of a `stored` argument publishes
   the same way, linked to every slot a destination may stand for
-  (`prov_reborrow_retained`).
+  (`prov_reborrow_retained`); as for a copy, a named read-only reborrow
+  linked there is extended rather than suspended (`Prov_Reborrow.passes_on`).
 - **Owners, handles, and fields stay apart.** Region facts are kept by path,
   and backing dependencies apart from payload dependencies: a record's fields,
   a container's elements and backing, a shared handle's control block and

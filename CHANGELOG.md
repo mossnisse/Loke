@@ -29,6 +29,14 @@ checklist.
   writing through `r` while `h` was still used compiled. Upgrade by moving
   the copy's last use before the write, or by taking the copy after it.
 
+- The same holds when what was stored is a named read-only reborrow, or a
+  copy of one: after `read: ^Node = r; p^.head = read; h := p^.head;`, or
+  `keep(p, read)` with an `@(escape=stored)` parameter, writing through `r`
+  while `h` is still used is rejected with `L0641`
+  ([Weakening and reborrows](design.md#weakening-and-reborrows)). Before, it
+  compiled. Upgrade as above: move `h`'s last use before the write, or take
+  the copy after it.
+
 - A carrier copied out of a record stored whole through a pointer, as
   `x := p^.head` after `p^ = q^`, now reborrows the carrier it was copied
   from, so copying `q^.head` again while `x` is still in use is rejected with
@@ -656,6 +664,12 @@ checklist.
   beside an `inout` destination, as `keep(inout d, r)`, is no longer
   rejected with `L0641` at the call itself
   ([Retaining a borrow](design.md#retaining-a-borrow)).
+- Passing a named read-only reborrow to an `@(escape=stored)` parameter, as
+  `keep(p, read)` after `read: ^Node = r`, is no longer rejected with
+  `L0641` at the call; what the call stores extends the reborrow, so `r`
+  stays unwritable while it is used
+  ([Weakening and reborrows](design.md#weakening-and-reborrows),
+  [Retaining a borrow](design.md#retaining-a-borrow)).
 - `core:math/linalg`'s `perspective` and `perspective_lh` compute their depth
   coefficients from `far/(far - near)` and `near/(far - near)`, so a finite
   near and far whose product overflows or underflows, such as 10 and 1e38 at
