@@ -1,0 +1,13 @@
+package main;
+
+import "core:container";
+
+// standard-library.md "`core:container` index sets": the byte form of a set of
+// capacity `cap` is exactly `bytes_for_bits(cap)` bytes. A reader that slices
+// out another length has a bug, which panics; bad padding is data, which
+// `load_bytes` reports as false.
+main :: proc() {
+	cells: container.Index_Set(20) = {};
+	bytes: [4]u8 = {};
+	_ = cells.load_bytes(bytes[:]);
+}

@@ -11,6 +11,8 @@
 @(public)
 package random;
 
+import "core:math";
+
 /**
 	xoshiro256++ state. Move-only, so a generator cannot be duplicated by
 	accident: two copies would draw the same values, which is the bug passing one
@@ -69,14 +71,14 @@ impl Xoshiro256 {
 		if ((self.words[0] | self.words[1] | self.words[2] | self.words[3]) == 0) {
 			self.words = entropy_words();
 		}
-		result := rotate_left(self.words[0] +% self.words[3], 23) +% self.words[0];
+		result := math.rotate_left(self.words[0] +% self.words[3], 23) +% self.words[0];
 		shifted := self.words[1] << 17;
 		self.words[2] ~= self.words[0];
 		self.words[3] ~= self.words[1];
 		self.words[1] ~= self.words[2];
 		self.words[0] ~= self.words[3];
 		self.words[2] ~= shifted;
-		self.words[3] = rotate_left(self.words[3], 45);
+		self.words[3] = math.rotate_left(self.words[3], 45);
 		return result;
 	}
 
@@ -147,11 +149,4 @@ mix64 :: proc(value: u64) -> u64 {
 	z = (z ~ (z >> 30)) *% 0xbf58476d1ce4e5b9;
 	z = (z ~ (z >> 27)) *% 0x94d049bb133111eb;
 	return z ~ (z >> 31);
-}
-
-// Shift counts at or past the width are defined (design.md "Integer
-// operators"), and LLVM turns this pattern into one rotate instruction.
-@(private)
-rotate_left :: proc(value: u64, count: uint) -> u64 {
-	return (value << count) | (value >> (64 - count));
 }

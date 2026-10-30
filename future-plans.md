@@ -114,7 +114,9 @@ mouse and resize events; `thread.try_spawn`, `try_lock`, and thread identity
 [Waiting on a condition, not a signal](comments.md#waiting-on-a-condition-not-a-signal)).
 Math gaps include hyperbolics,
 `cbrt`/`ldexp`/`frexp`/`modf`, `erf`, `gamma`, lane-wise SIMD math, and
-integer bit helpers. `core:simd`'s remaining gaps are specified in
+the lane-wise and remaining integer bit operations (see
+[Integer bit operations not yet provided](open-questions.md#integer-bit-operations-not-yet-provided)).
+`core:simd`'s remaining gaps are specified in
 [What SIMD does not do](design.md#what-simd-does-not-do).
 [`core:math/linalg`](standard-library.md#coremathlinalg) has every milestone
 of the [linear algebra library plan](linear-algebra-plan.md#milestones), the

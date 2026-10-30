@@ -1,0 +1,15 @@
+package main;
+
+import "core:container";
+import "core:fmt";
+
+// standard-library.md "`core:container` index sets": an index outside
+// `0 ..< cap` panics, as an array index does, rather than reaching a bit of the
+// final word past the capacity.
+main :: proc() {
+	cells: container.Index_Set(70) = {};
+	cells.set(69);
+	fmt.println(cells.contains(69));
+	at := 70;
+	cells.set(at);
+}

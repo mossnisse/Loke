@@ -178,6 +178,13 @@ contribute_standard_members :: proc(k: ^Checker, pkg: ^Package) {
 		// it: `frem` calls the C library's `fmod`, and the built-in gives it a
 		// compile-time value.
 		contribute_builtin(c, pkg, "mod_instruction", .Math_Mod_Instruction, public = false)
+		// The bit counts cannot be written as one instruction in Loke: a loop or
+		// a SWAR fold is what an unoptimized build would run.
+		contribute_builtin(c, pkg, "count_ones", .Math_Count_Ones)
+		contribute_builtin(c, pkg, "leading_zeros", .Math_Leading_Zeros)
+		contribute_builtin(c, pkg, "trailing_zeros", .Math_Trailing_Zeros)
+		contribute_builtin(c, pkg, "rotate_left", .Math_Rotate_Left)
+		contribute_builtin(c, pkg, "rotate_right", .Math_Rotate_Right)
 	case STD_LOG:
 		// design.md "Compiled log level": `LOKE_LOG_LEVEL` and `core:log`'s own
 		// `Level` must be one type, or a caller could not compare them. Allocated

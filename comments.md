@@ -2394,6 +2394,60 @@ boundaries and API shapes follow a few common choices:
   triangular solve, as LAPACK's `latrs` does: Hager's estimator is
   homogeneous, so one factor keeps a well-conditioned matrix's solutions
   near 1 at any scale, and the plain solves are kept.
+- **The integer bit operations are compiler-known, and zero is the width.**
+  A population count or a zero count written in Loke is a loop or a SWAR
+  fold, and the default `-opt=none` build runs it as written; set-bit
+  iteration in an engine's inner loop needs the one instruction. The library
+  had grown three private copies (a SWAR `popcount` in `core:container`, a
+  binary-search `leading_zeros_u128` in `core:math`, and a `rotate_left` in
+  `core:random`), which the public operations replace. A zero operand
+  counts as the width, LLVM's defined form of `ctlz` and `cttz`, rather than
+  poison or a panic: `W - leading_zeros(x)` is then the bit width of every
+  `x`, and a zero word ends an iteration rather than needing a guard. The
+  counts return `int`, as `len` does, whatever the operand's width, and read
+  a signed operand's two's-complement pattern rather than refusing it, as
+  the bitwise operators do. Odin spells them `count_ones`,
+  `count_leading_zeros`, and `count_trailing_zeros` in `base:intrinsics`
+  and returns the operand's type; Rust's `count_ones`, `leading_zeros`, and
+  `trailing_zeros` are the names kept here.
+- **A rotation count is an `int`, taken modulo the width and floored.**
+  Every count is then defined without a panic, and a negative count rotates
+  the other way, as Go's `bits.RotateLeft` does, so one procedure serves a
+  rotation whose direction is computed. A shift's count panics when
+  negative because a negative shift has no single meaning; a negative
+  rotation does. The rotations are compiler-known for the same type rule as
+  the counts: written in Loke over `interfaces.Integral(T)`, a record that
+  merely has the operators would be rotated at a width it does not have.
+- **An index set is a set, as `Bit_Set` is.** Its members are the indices
+  present, so `len` counts them, `cap` is the capacity, and iteration yields
+  the present indices, with the verbs `Bit_Set` already uses. A packed
+  `[N]bool` with `len == N` is the other reading, but every engine use named
+  for it (dug cells, dirty cells, visited cells) asks set questions:
+  whether an index is present, how many, and which. The name says what a
+  member is, which `Bit_Set(Enum)` says by its parameter; Odin's
+  `core:container/bit_array.Bit_Array` is the dynamic, `get`/`set` reading.
+- **One contract over three storages, written once.** A fixed set lives in
+  a chunk record, a run-time capacity needs an allocator, and an arena or a
+  record field the caller already owns needs neither, so the gap asked for
+  one of the first and the last. Rather than three APIs, every operation is
+  a private procedure over a word slice and a capacity, the owners lend a
+  view, and a procedure that takes `Index_View` takes them all, as
+  `core:math/dense` lends `View` from `Matrix`.
+- **A view ignores and preserves the bits past its capacity.** A caller's
+  words are not ours to clean, and a view that required clear tail bits
+  would make every `over` a scan or a trust. Masking the final word on each
+  read and writing only below the capacity costs one `and` per operation,
+  and lets a caller pack other data into the spare bits. An owner keeps them
+  clear as well, so `Index_Set(N)`'s generated `==` compares words.
+- **The byte form is fixed, and the words are not it.** Words in host order
+  would make a save written on one machine unreadable on another of the
+  other byte order, and exposing them as bytes would invite exactly that.
+  So the words are reachable only as `u64` values through a view, and the
+  file form is its own operation, least significant bit first in each byte
+  and bytes in index order, which is also what a little-endian host's words
+  look like, so a reader in another language can take it as either. Padding
+  in the final byte must be zero: a reader then rejects a save of a larger
+  capacity instead of quietly dropping its high indices.
 
 ## Compiler design choices
 

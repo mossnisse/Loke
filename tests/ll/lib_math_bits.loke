@@ -1,0 +1,20 @@
+package main;
+
+// standard-library.md "`core:math`": the bit counts and rotations are each one
+// LLVM intrinsic call, not a loop, at every optimization level. The counts
+// pass `i1 false`, so a zero operand is the width rather than poison, and a
+// narrow operand's count widens to `int`.
+
+import "core:math";
+
+main :: proc() {
+	x: u64 = 12;
+	b: u8 = 3;
+	w: u128 = 5;
+	k := 3;
+	_ = math.count_ones(x);
+	_ = math.leading_zeros(b);
+	_ = math.trailing_zeros(w);
+	_ = math.rotate_left(x, k);
+	_ = math.rotate_right(b, k);
+}

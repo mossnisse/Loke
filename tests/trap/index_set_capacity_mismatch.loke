@@ -1,0 +1,13 @@
+package main;
+
+import "core:container";
+import "core:fmt";
+
+// standard-library.md "`core:container` index sets": two sets combined must
+// have the same capacity.
+main :: proc() {
+	visited := container.Dynamic_Index_Set.init(100);
+	frontier := container.Dynamic_Index_Set.init(101);
+	fmt.println(visited.cap(), frontier.cap());
+	visited.insert_all(frontier.view());
+}

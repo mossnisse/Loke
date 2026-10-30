@@ -1,0 +1,62 @@
+cap0 0 0 true {}
+.none .none true
+cap1 1 1 false {0}
+0 .none
+63 64 65 true
+.none .none .some(64) .none
+a 130 6 false {0, 63, 64, 127, 128, 129}
+true false true
+a toggled 130 5 false {0, 62, 127, 128, 129}
+84 84 4 6 0
+{3, 4, 5, 6, 60, 61, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189}
+129 true false true
+true .none
+200 .none .none
+.some(5) .some(70) .some(149) .none
+.some(6) .none .none
+{1, 2, 3, 65, 69} {2} {1, 65} {1, 3, 65, 69}
+67 true true
+true true false true
+false
+sum 446
+257 0 .some(4095) 512
+dyn zero 0 0 true {}
+d 100 3 false {1, 64, 99}
+300 {1, 64, 99} .none
+64 {1}
+200 {1} 0
+false 1 2
+true
+false
+{1, 2, 3, 65, 69} true
+{2, 3, 69}
+{2, 69}
+68
+29 true
+12 false
+16 false
+2 .some(64) .none {64, 65}
+true
+true
+{0, 1, 65}
+3 true
+66
+true
+0
+true
+{0, 65}
+true
+{0, 1}
+true
+true
+false
+3 [1, 6, 8]
+true true
+false true
+[0, 128]
+true {0, 1, 2, 3, 4, 5, 6, 7, 15}
+[3, 0, 0, 0, 0, 0, 0, 0, 0]
+true {7, 65}
+true
+true true
+0 1 2 0 2

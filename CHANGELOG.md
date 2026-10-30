@@ -344,6 +344,23 @@ checklist.
   naming the unbound parameter), and in a procedure group it takes no part in
   choosing the member, whose parameter then checks it.
 
+- `core:math` has the
+  [integer bit operations](standard-library.md#integer-bit-operations)
+  `count_ones`, `leading_zeros`, `trailing_zeros`, `rotate_left`, and
+  `rotate_right`, for every integer type, signed or unsigned. Zero has as
+  many leading and trailing zeros as its type has bits, a rotation takes any
+  `int` count modulo the width, a constant argument gives a constant, and
+  each is one LLVM intrinsic at every optimization level.
+
+- `core:container` has
+  [index sets](standard-library.md#corecontainer-index-sets), sets of the
+  indices `0 ..< cap` held one bit each: `Index_Set(N)` inline,
+  `Dynamic_Index_Set` from an allocator, and `Index_View` and
+  `Index_View_Mut` over the caller's words. They set, clear, and test single
+  indices and ranges, count, search for the next present or absent index,
+  combine in place, iterate present indices, and store to and load from a
+  byte form fixed independently of the host's byte order.
+
 - A [repeatable math benchmark](bench/math_compare/README.md#reproduce) comparing
   UCRT and reproducible functions with seeded, grid, and dependent inputs.
 

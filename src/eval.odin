@@ -2956,6 +2956,27 @@ eval_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (Eval_Va
 		}
 		return scalar(exact_mod(const_of(x), const_of(y)), v.type), true
 
+	case .Math_Rotate_Left, .Math_Rotate_Right:
+		operand, ok := eval_expr(ev, v.bound[0])
+		if !ok {
+			return Eval_Value{}, false
+		}
+		by, by_ok := eval_expr(ev, v.bound[1])
+		if !by_ok {
+			return Eval_Value{}, false
+		}
+		rotated := rotate_const(ev.k.c, ev.alloc, const_of(operand).integer, const_of(by).integer, v.type, symbol.builtin)
+		return scalar(integer_const(rotated), v.type), true
+
+	case .Math_Count_Ones, .Math_Leading_Zeros, .Math_Trailing_Zeros:
+		operand, ok := eval_expr(ev, v.bound[0])
+		if !ok {
+			return Eval_Value{}, false
+		}
+		source := expr_base(v.bound[0]).type
+		count := bit_count(ev.alloc, const_of(operand).integer, type_bits(ev.k.c, source), symbol.builtin)
+		return scalar(integer_const(bi_from_i64(ev.alloc, i64(count))), TYPE_INT), true
+
 	case .Unsafe_Transmute:
 		// The checker's fold, for an operand that is a local.
 		operand, ok := eval_expr(ev, v.bound[0])

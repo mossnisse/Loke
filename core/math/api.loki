@@ -337,6 +337,48 @@ floor_div :: proc(x: $T, y: T) -> T where interfaces.Integral(T), interfaces.Ord
 */
 floor_mod :: proc(x: $T, y: T) -> T where interfaces.Integral(T), interfaces.Ordered(T) ---;
 
+/*
+	The number of set bits in `value`, which is a value of an integer type:
+	`count_ones(u8(0b1011))` is `3`, and `count_ones(i32(-1))` is `32`. A
+	constant argument gives a constant.
+*/
+@(intrinsic)
+count_ones :: proc(value: $T) -> int ---;
+
+/*
+	The number of zero bits above the highest set bit of `value`, which is a
+	value of an integer type. Zero gives the width: `leading_zeros(u32(0))` is
+	`32`, and `leading_zeros(u32(1))` is `31`. A negative value gives `0`. So
+	`width - leading_zeros(x)` is the number of bits `x` needs, and for a
+	non-zero `x` the index of its highest set bit is one less.
+*/
+@(intrinsic)
+leading_zeros :: proc(value: $T) -> int ---;
+
+/*
+	The number of zero bits below the lowest set bit of `value`, which is a
+	value of an integer type, and so the index of that bit. Zero gives the
+	width: `trailing_zeros(u64(0))` is `64`, and `trailing_zeros(u8(0b1000))`
+	is `3`.
+*/
+@(intrinsic)
+trailing_zeros :: proc(value: $T) -> int ---;
+
+/*
+	`value`, which is a value of an integer type, with its bits rotated
+	`count` places toward the high end: the bits shifted out at the top come
+	back in at the bottom. The count is taken modulo the width, floored, so
+	every `int` is defined and a negative count rotates right:
+	`rotate_left(u8(0b1000_0001), 1)` is `0b0000_0011`, and
+	`rotate_left(x, -1) == rotate_right(x, 1)`.
+*/
+@(intrinsic)
+rotate_left :: proc(value: $T, count: int) -> T ---;
+
+// As `rotate_left`, toward the low end.
+@(intrinsic)
+rotate_right :: proc(value: $T, count: int) -> T ---;
+
 // The largest integral value not greater than `x`.
 floor :: proc(x: f64) -> f64 ---;
 
