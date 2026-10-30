@@ -566,6 +566,23 @@ Then `log_kernel`, behind `log`, `log2`, and `log10`:
   `log10` 39.0 and 33.6 then 39.9 and 33.7. Independent calls overlap the
   decision and the next call's start, so they gain less than the chain.
 
+Then `pow_log`, `pow`'s own logarithm:
+
+- r2 = rh + rl is no longer renormalized: rh is (d2 - 1) + r1 d2 rounded,
+  and the rest, under 2^-60.4, joins the low parts, with rl's terms to
+  rh^2 rl. The series starts about 24 cycles sooner, and Estrin's scheme
+  takes about 16 off c. The bound stays 2^-83. Deriving it again found the
+  previous text understating the low parts: they hold c, up to 2^-33.5 of
+  the result where E is 0, so six of their sums round by up to 2^-83.97 in
+  all, not under 2^-99; the total was and is under 2^-83.
+- No result changed. Against `log_fixed`, over the same 6 million arguments
+  as `log`'s, the largest relative error was 2^-84.5, where the previous
+  version's was 2^-84.4.
+- Measured with `bench/math_compare` while other work loaded the machine
+  by a third to a half, the lowest of four medians per call before and
+  after: `pow` 54.8 and 50.9 ns, and 65.5 and 61.0 dependent, faster in each
+  of the four pairs. `pow_f32` did not move.
+
 Not started: phase 6's faster kernels for the other `f64` functions, whose
 chains a latency count, as for `exp`, would show where to shorten; the
 worst-case latency and simulation frame-time measurements its gate asks

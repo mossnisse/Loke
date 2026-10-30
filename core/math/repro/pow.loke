@@ -12,22 +12,28 @@
 // log x takes `log`'s table and a second one: r1 = y d1 - 1 exactly, as in
 // `log`, |r1| <= 2^-8; k, the nearest integer to 2^15 r1, picks d2 near
 // 1/(1 + k 2^-15), and r2 = (1 + r1) d2 - 1 = (d2 - 1) + r1 d2, |r2| under
-// 2^-15.99, within 2^-113 absolute: d2 - 1 is exact (Sterbenz), the product
-// with r1's high part exact as a pair, and `two_sum` adds them exactly. log x
-// = E ln 2 + L1 + L2 + log(1 + r2):
+// 2^-15.99, as rh + rl within 2^-113 absolute: d2 - 1 is exact (Sterbenz),
+// the product with r1's high part exact as a pair, and `two_sum` adds them
+// exactly. rh is that sum rounded, and the rest, rl, under 2^-60.4, is not
+// renormalized into it, so that the series need not wait. log x = E ln 2 +
+// L1 + L2 + log(1 + r2):
 //
 // - d2 is exactly 1 at k = 0, where L2 is 0 and r2 is r1 exactly, so where
 //   both tables' parts are 0, log x is the series alone, with no absolute
 //   error to divide by a small result; elsewhere |log x| is over 2^-17.
 // - log(1 + r2) is r2 - r2^2/2 + c, c the series from r^3/3 to r^6/6, the
-//   rest under 2^-96 relative, with rh^2 exact and the part of r^2 with rl
-//   added; c is under 2^-33.5 relative and within 5.1 ulps of itself, under
-//   2^-84.1 relative.
+//   rest under 2^-96 relative, with rh^2 exact and rl's terms to rh^2 rl
+//   added, those left out under 2^-92 relative; c is under 2^-33.5 relative
+//   and, by Estrin's scheme, within 5.1 ulps of itself, under 2^-84.2
+//   relative: three for rh^3, and two for its cofactor near 1/3.
 // - E ln 2 is E times a 42-bit part, exact, and E times the rest, exact as a
 //   pair, both within 2^-86.9 absolute of E ln 2, which is over 1/3 when E
 //   is not zero; each table pair is within 2^-106 relative of its value.
-// - The high parts are summed exactly as pairs (`two_sum`), and the low
-//   parts, under 2^-49 of the result, round by under 2^-99.
+// - The high parts are summed exactly as pairs (`two_sum`). The low parts
+//   hold c, so they too reach 2^-33.5 of the result, where E is 0, and six
+//   of their sums round at c's scale, by under 2^-83.97 in all; the others
+//   round by under 2^-93. Where E is not 0, |log x| is over 1/3 and c,
+//   under 2^-49.5, is under 2^-47.9 of it.
 //
 // These sum to under 2^-83.
 //
@@ -75,14 +81,16 @@ pow_log :: proc(x: f64) -> (high: f64, low: f64) {
 	fine := 3*(k + 128);
 	d2 := from_bits(LOG_FINE_TABLE[fine]);
 	qh, ql := two_product(r1h, d2);
-	s, err := two_sum(d2 - 1.0, qh);
-	rh, rl := two_sum(s, err + (ql + r1l*d2));
+	// r2 = rh + rl, rl not renormalized into rh, so that the series need
+	// not wait for it.
+	rh, err := two_sum(d2 - 1.0, qh);
+	rl := err + (ql + r1l*d2);
 
-	// log(1 + r2) = (rh - rh^2/2) + the rest.
+	// log(1 + r2) = (rh - rh^2/2) + the rest, c by Estrin's scheme.
 	sh, sl := two_product(rh, rh);
 	t1, t2 := two_sum(rh, 0.0 - 0.5*sh);
-	c := sh*rh*(1.0/3.0 - rh*(0.25 - rh*(0.2 - rh*(1.0/6.0))));
-	tail := t2 + ((rl - 0.5*sl) + (c - rh*rl));
+	c := sh*rh*((1.0/3.0 - rh*0.25) + sh*(0.2 - rh*(1.0/6.0)));
+	tail := t2 + ((rl - 0.5*sl) + (c + (sh*rl - rh*rl)));
 
 	ef := f64(big_e);
 	bh, bl := two_product(ef, from_bits(LN2_LO));
