@@ -100,17 +100,6 @@ the precision table should guarantee a number of such places, which would make
 this program portable; the bound keeps the place loans and `.Through` events a
 borrow makes few.
 
-## Review follow-ups for the recorded-gap closure
-
-Review of `d3cb447a` on 2026-10-30 found these cleanup items:
-
-- **Refresh the caller-storage description below.** Its claim that slice
-  parameter stores always join into the parameter predates the new constant
-  element slots, and its known-gap link targets a heading removed by this
-  commit. Describe the remaining limitations: a store into one element of a
-  local view, and a whole record stored through a parameter, no longer join,
-  and known-gaps.md records neither.
-
 ## Review follow-ups for the reborrow-gap closure
 
 Review of `bb65c244` on 2026-10-30 found a structural cleanup in
@@ -225,14 +214,20 @@ Still open:
   (`publish_into_caller`); a later load reads them (`read_caller_slots`). Caller
   slots of different loans are taken to name different storage, so a store
   through one is not seen through another that a cyclic structure makes the
-  same. A view's slots stand for all of its elements, so a store through a slice
-  parameter still joins into the parameter itself, as does a store whose copies
-  no reborrow links to where it lands, such as a whole record's; known-gaps.md
-  records [a rejection the first
-  causes](known-gaps.md#a-store-through-a-slice-parameter-joins-into-the-parameter).
-  Storage below the second load gets a loan per carrier only where the storage
-  above it is one place; through a view or past the last load depth it is one
-  slot.
+  same, though a mutable cycle such as `l.next = .some(&mut l)` keeps `l`
+  suspended, so `&mut l` cannot then be passed on (`L0511`). A view's slots stand for all of its elements, which no store
+  replaces. One element at a constant index has slots of its own, which a store
+  naming it replaces: a view parameter's (`prov_view_element`), and a local
+  view's whose start in the range its borrow lends is known
+  (`prov_local_view_element`). A store into a view parameter at any other
+  index still joins into the parameter itself, as does a store whose copies no
+  reborrow links to where it lands; known-gaps.md records [a rejection the
+  first
+  causes](known-gaps.md#a-store-through-a-slice-parameter-at-a-variable-index-joins-into-the-parameter).
+  A record stored whole through a parameter replaces, and links, each carrier
+  slot it lands in. Storage below the second load gets a loan per carrier only
+  where the storage above it is one place; through a view or past the last
+  load depth it is one slot.
 - **Matrix coverage.** Slices and traversals are taken of a fixed array, so
   no use beside them reallocates storage, and nothing leaves a traversal or a
   loop early with `break` or `return`. A loop that takes afresh is the one
