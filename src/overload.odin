@@ -21,6 +21,11 @@ Arg_Info :: struct {
 	is_const:    bool,
 	const_value: Const_Value,
 	is_receiver: bool,
+	// design.md "Arguments typed after inference": an argument that needs its
+	// parameter's type and has none before inference. It is left unchecked,
+	// takes no part in choosing a candidate, and is typed against the chosen
+	// one's parameter by `bind_chosen_call`.
+	waiting:     bool,
 }
 
 Candidate :: struct {
@@ -46,6 +51,10 @@ Candidate :: struct {
 	scope:      ^Scope,
 	viable:     bool,
 	reason:     string,
+	// Inference left a waiting argument's parameter type with an unbound `$`
+	// name; `waiting_arg` is that argument's index.
+	unbound_wait: bool,
+	waiting_arg:  int,
 }
 
 @(private = "file")
@@ -137,6 +146,14 @@ collect_call_arguments :: proc(
 					}
 				}
 				expected = common_argument_type(k, context_candidates, info.name, index + offset)
+				// design.md "Arguments typed after inference": typed once a
+				// candidate is chosen, against its parameter.
+				if expected == INVALID_TYPE && arg.mode == .Value && argument_can_wait(arg.value) &&
+				   argument_waits(k, context_candidates, info.name, index + offset) {
+					info.waiting = true
+					out[index] = info
+					continue
+				}
 			}
 			info.type = check_single_expr(k, arg.value, expected, arg.mode == .Inout ? .Place : .Value)
 		}
@@ -161,6 +178,34 @@ argument_needs_context :: proc(e: Expr) -> bool {
 	case ^Expr_Call:
 		sel, is_selector := v.callee.(^Expr_Selector)
 		return is_selector && sel.operand == nil
+	}
+	return false
+}
+
+// A capture literal lowers to a composite but has its own type, so it is
+// checked, and binds, like any typed argument; only the forms that have no
+// type without a destination wait.
+@(private = "file")
+argument_can_wait :: proc(e: Expr) -> bool {
+	if composite, is_composite := e.(^Expr_Composite); is_composite {
+		return composite.capture == nil
+	}
+	return true
+}
+
+// Whether a generic candidate's parameter for this argument names the
+// candidate's `$` parameters, so the argument waits for inference.
+@(private = "file")
+argument_waits :: proc(k: ^Checker, candidates: []Symbol_Id, name: Identifier_Id, position: int) -> bool {
+	for candidate in candidates {
+		sym := symbol_of(k.c, candidate)
+		if sym == nil || !sym.generic {
+			continue
+		}
+		template := generic_template_for(k, candidate)
+		if template != nil && template.kind == .Procedure && generic_parameter_waits(k, template, name, position) {
+			return true
+		}
 	}
 	return false
 }
@@ -253,6 +298,12 @@ constant_conversion_preserves_kind :: proc(c: ^Compiler, from, to: Type_Id) -> b
 
 @(private = "file")
 argument_rank :: proc(k: ^Checker, arg: Arg_Info, param: Type_Id, mode: Param_Mode) -> int {
+	// design.md "Arguments typed after inference": a waiting argument takes no
+	// part in choosing; whether it fits is checked against the chosen
+	// candidate's parameter. It is never a place, so it cannot be `inout`.
+	if arg.waiting {
+		return param == INVALID_TYPE || mode == .Inout ? RANK_NONE : RANK_EXACT
+	}
 	if param == INVALID_TYPE || arg.type == INVALID_TYPE {
 		return RANK_NONE
 	}
@@ -407,6 +458,14 @@ build_candidate :: proc(k: ^Checker, symbol_id: Symbol_Id, args: []Arg_Info) -> 
 			return cand
 		}
 		rank := argument_rank(k, arg, want, mode)
+		if rank == RANK_NONE && arg.waiting && mode == .Inout {
+			cand.reason = fmt.aprintf(
+				"it takes argument %d by `inout`, which needs a place",
+				index + 1,
+				allocator = k.c.semantic_allocator,
+			)
+			return cand
+		}
 		if rank == RANK_NONE {
 			// design.md "Union argument expansion": a place lends its payload,
 			// and moving the operand is what gives it up. The `Unit{}` of a
@@ -444,7 +503,8 @@ build_candidate :: proc(k: ^Checker, symbol_id: Symbol_Id, args: []Arg_Info) -> 
 			return cand
 		}
 		cand.ranks[index] = rank
-		if expression_is_owned_argument(arg.expr) && mode != .Move {
+		// A waiting argument is unchecked, and every form that waits is a temporary.
+		if (arg.waiting || expression_is_owned_argument(arg.expr)) && mode != .Move {
 			cand.unconsumed += 1
 		}
 	}
@@ -474,7 +534,13 @@ build_generic_candidate :: proc(k: ^Checker, template: ^Generic_Template, args: 
 	}
 	inference := infer_generic_arguments(k, template, args)
 	if !inference.ok {
-		return Candidate{symbol = template.symbol, args = args, reason = inference.reason}
+		return Candidate {
+			symbol       = template.symbol,
+			args         = args,
+			reason       = inference.reason,
+			unbound_wait = inference.unbound_wait,
+			waiting_arg  = inference.waiting_arg,
+		}
 	}
 	instance, made := instantiate_generic(k, template, inference.bindings, inference.scope, no_span(), report = false)
 	if !made {
@@ -695,6 +761,13 @@ report_no_match :: proc(
 			return
 		}
 	}
+	// design.md "Arguments typed after inference": a sole generic whose waiting
+	// argument is the only one that could bind a `$` name says so at that
+	// argument, which has no type, as it would with no context at all.
+	if len(all) == 1 && all[0].unbound_wait && all[0].waiting_arg < len(args) {
+		errorf(k.c, args[all[0].waiting_arg].span, "L0385", "%s", all[0].reason)
+		return
+	}
 	// A sole rejected generic can report its precise failed bound.
 	if len(all) == 1 && all[0].template != nil {
 		instantiate_generic(k, all[0].template, all[0].bindings, all[0].scope, span, report = true)
@@ -787,6 +860,9 @@ bind_chosen_call :: proc(k: ^Checker, v: ^Expr_Call, cand: Candidate) -> bool {
 	if sym == nil {
 		return false
 	}
+	if !type_waiting_arguments(k, v, sym, cand) {
+		return false
+	}
 	if info := type_of(k.c, sym.proc_type); variadic_parameter_index(info) >= 0 {
 		receiver: Expr
 		if len(cand.args) > 0 && cand.args[0].is_receiver {
@@ -835,6 +911,50 @@ bind_chosen_call :: proc(k: ^Checker, v: ^Expr_Call, cand: Candidate) -> bool {
 		v.bound_order = order[:]
 	}
 	require_argument_ownership(k, v, cand.symbol)
+	return ok
+}
+
+// design.md "Arguments typed after inference": each waiting argument is checked
+// against the chosen candidate's parameter, its `$` names now substituted (the
+// element type, for a variadic pack). The arguments are still evaluated in
+// written order; only their checking waited.
+@(private = "file")
+type_waiting_arguments :: proc(k: ^Checker, v: ^Expr_Call, sym: ^Symbol, cand: Candidate) -> bool {
+	info := type_of(k.c, sym.proc_type)
+	pack := variadic_parameter_index(info)
+	ok := true
+	for &arg, index in cand.args {
+		if !arg.waiting {
+			continue
+		}
+		slot := cand.slots[index]
+		if slot < 0 || slot >= len(sym.params) {
+			ok = false
+			continue
+		}
+		target := sym.params[slot]
+		if slot == pack {
+			target = slice_element(k.c, target)
+		}
+		arg.waiting = false
+		arg.type = check_single_expr(k, arg.expr, target)
+		if arg.type == INVALID_TYPE {
+			ok = false
+			// A group chose this member without it, which the error alone hides.
+			if len(v.overload_members) > 1 {
+				add_notef(
+					k.c, sym.span,
+					"the other arguments chose `%s`; an argument that takes its parameter's type does not take part in choosing",
+					identifier_text(k.c, sym.name),
+				)
+			}
+			continue
+		}
+		if base := expr_base(arg.expr); base != nil {
+			arg.is_const = base.is_const
+			arg.const_value = base.const_value
+		}
+	}
 	return ok
 }
 

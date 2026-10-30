@@ -333,6 +333,17 @@ checklist.
 
 ### Added
 
+- An implicit selector or typeless literal argument whose generic parameter
+  type names the procedure's `$` parameters is typed after the other arguments
+  have inferred them, so `value_or(x, .some(y))` against
+  `proc(value: $T, fallback: Option(T) = .none)` compiles, as do
+  `same(Color.Red, .Green)` and `second(1, {2, 3})`
+  ([Arguments typed after inference](design.md#arguments-typed-after-inference)).
+  Arguments still run in written order. A waiting argument binds nothing, so
+  one that is the only binder of a `$` name is still rejected (`L0385`, now
+  naming the unbound parameter), and in a procedure group it takes no part in
+  choosing the member, whose parameter then checks it.
+
 - A [repeatable math benchmark](bench/math_compare/README.md#reproduce) comparing
   UCRT and reproducible functions with seeded, grid, and dependent inputs.
 
@@ -631,6 +642,12 @@ checklist.
   ([`core:math`](standard-library.md#coremath)).
 
 ### Fixed
+
+- An implicit selector given to a generic procedure's `$` parameter whose type
+  names no `$` parameter, as `.Fast` to `run :: proc($mode: Mode, x: $T)`,
+  now takes that type, as an ordinary parameter's argument does
+  ([Implicit selector expression](design.md#implicit-selector-expression)).
+  Before, it was rejected with `L0385`.
 
 - A store into one element of a local slice view at a constant index, as
   `s[0].head = s[0].tail` with `s := &mut arr[:]` or a constant reslice

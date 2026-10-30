@@ -1270,19 +1270,78 @@ Inference :: struct {
 	compile_omitted: int,
 	scope:        ^Scope,
 	reason:       string,
+	// design.md "Arguments typed after inference": the waiting argument whose
+	// parameter type still names an unbound `$` name, which `reason` explains.
+	unbound_wait: bool,
+	waiting_arg:  int,
 	ok:           bool,
+}
+
+// An argument that waits for inference, and the written parameter type it will
+// take (the element type, for a variadic pack).
+@(private = "file")
+Waiting_Argument :: struct {
+	index:     int,
+	written:   Expr,
+	parameter: string,
 }
 
 // design.md "Implicit selector expression": the type a generic procedure's
 // parameter gives an argument that needs one, such as `.ZYX`, before
 // inference. Only a parameter whose written type names none of the
 // procedure's `$` parameters has one then, as `order: Euler_Order` beside
-// `first: $T` does; `Option(T)` waits for `T`, and gives none.
+// `first: $T` does, and so does a `$` parameter's, as `$mode: Mode`;
+// `Option(T)` waits for `T` (`generic_parameter_waits`).
 generic_parameter_context_type :: proc(k: ^Checker, template: ^Generic_Template, name: Identifier_Id, position: int) -> Type_Id {
-	literal := decl_proc_literal(template.decl)
-	if literal == nil || literal.signature == nil {
+	written, _, poly := generic_parameter_written(k, template, name, position)
+	if written == nil || type_syntax_any_name(written, &poly, names_poly_parameter) {
 		return INVALID_TYPE
 	}
+	saved := enter_instance(k, template, new_instance_scope(k, template))
+	defer restore_checker_location(k, saved)
+	return resolve_type_syntax(k, clone_expr(k.c, written))
+}
+
+// design.md "Arguments typed after inference": whether an argument that needs
+// its parameter's type waits for the other arguments' inference here, because
+// the runtime parameter it fills names the procedure's `$` parameters. A `$`
+// parameter's argument never waits, since it selects the instance.
+generic_parameter_waits :: proc(k: ^Checker, template: ^Generic_Template, name: Identifier_Id, position: int) -> bool {
+	written, compile_time, poly := generic_parameter_written(k, template, name, position)
+	return written != nil && !compile_time && type_syntax_any_name(written, &poly, names_poly_parameter)
+}
+
+// The written type of the parameter an argument fills, by name or position (a
+// variadic pack takes every later position), whether that parameter is a `$`
+// one, and the procedure's `$` names.
+@(private = "file")
+generic_parameter_written :: proc(
+	k: ^Checker, template: ^Generic_Template, name: Identifier_Id, position: int,
+) -> (written: Expr, compile_time: bool, poly: Poly_Names) {
+	literal := decl_proc_literal(template.decl)
+	if literal == nil || literal.signature == nil {
+		return
+	}
+	poly = template_poly_names(k, literal)
+	current := 0
+	for parameter in literal.signature.params {
+		for entry in parameter.names {
+			selected := current == position || (parameter.mode == .Variadic && current <= position)
+			if name != INVALID_IDENTIFIER {
+				selected = intern_identifier(k.c, entry.name.text) == name
+			}
+			if selected {
+				return parameter.type, entry.is_poly, poly
+			}
+			current += 1
+		}
+	}
+	return
+}
+
+// Every `$` name a procedure's signature binds.
+@(private = "file")
+template_poly_names :: proc(k: ^Checker, literal: ^Expr_Proc) -> Poly_Names {
 	poly := Poly_Names{names = make([dynamic]string, 0, 4, k.c.semantic_allocator)}
 	for parameter in literal.signature.params {
 		for entry in parameter.names {
@@ -1292,35 +1351,43 @@ generic_parameter_context_type :: proc(k: ^Checker, template: ^Generic_Template,
 		}
 		type_syntax_any_name(parameter.type, &poly, collect_poly_name)
 	}
-	written: Expr
-	current := 0
-	search: for parameter in literal.signature.params {
-		for entry in parameter.names {
-			selected := current == position || (parameter.mode == .Variadic && current <= position)
-			if name != INVALID_IDENTIFIER {
-				selected = intern_identifier(k.c, entry.name.text) == name
-			}
-			if selected {
-				if entry.is_poly {
-					return INVALID_TYPE
-				}
-				written = parameter.type
-				break search
-			}
-			current += 1
-		}
-	}
-	if written == nil || type_syntax_any_name(written, &poly, names_poly_parameter) {
-		return INVALID_TYPE
-	}
-	saved := enter_instance(k, template, new_instance_scope(k, template))
-	defer restore_checker_location(k, saved)
-	return resolve_type_syntax(k, clone_expr(k.c, written))
+	return poly
 }
 
 @(private = "file")
 Poly_Names :: struct {
 	names: [dynamic]string,
+}
+
+// The `$` names inference left unbound, and the first one a waiting
+// argument's parameter type names; an inline definition, which is not looked
+// into, counts as naming the first.
+@(private = "file")
+Unbound_Names :: struct {
+	names: [dynamic]string,
+	found: string,
+}
+
+@(private = "file")
+names_unbound_parameter :: proc(data: rawptr, node: Expr) -> bool {
+	unbound := (^Unbound_Names)(data)
+	text := ""
+	#partial switch v in node {
+	case ^Expr_Ident:
+		text = v.name
+	case ^Type_Poly:
+		text = v.name.text
+	case:
+		unbound.found = unbound.names[0]
+		return true
+	}
+	for name in unbound.names {
+		if name == text {
+			unbound.found = name
+			return true
+		}
+	}
+	return false
 }
 
 // Records each `$name` and finds nothing, so the walk visits every node.
@@ -1383,6 +1450,7 @@ infer_generic_arguments :: proc(k: ^Checker, template: ^Generic_Template, args: 
 	}
 
 	claimed := make([]bool, len(args), k.c.semantic_allocator)
+	waits := make([dynamic]Waiting_Argument, 0, 2, context.temp_allocator)
 	compile_time := make([]bool, len(args), k.c.semantic_allocator)
 	compile_targets := make([]Type_Id, len(args), k.c.semantic_allocator)
 	next := 0
@@ -1402,8 +1470,21 @@ infer_generic_arguments :: proc(k: ^Checker, template: ^Generic_Template, args: 
 		}
 		if parameter.mode == .Variadic {
 			// A pattern in the element type binds from the first of the remaining
-			// arguments; the rest are ranked, not matched.
-			if index, found := claim_argument(args, INVALID_IDENTIFIER, &next, claimed); found {
+			// arguments that does not wait; the rest are ranked, not matched.
+			matched_one := false
+			for {
+				index, found := claim_argument(args, INVALID_IDENTIFIER, &next, claimed)
+				if !found {
+					break
+				}
+				if args[index].waiting {
+					append(&waits, Waiting_Argument{index, parameter.type, len(names) > 0 ? names[0].name.text : ""})
+					continue
+				}
+				if matched_one {
+					continue
+				}
+				matched_one = true
 				matched := args[index].type
 				// A spread supplies the pack slice, while the written variadic type is
 				// its element. Infer `$T` in `..$T` from `..values`, not from the
@@ -1419,11 +1500,6 @@ infer_generic_arguments :: proc(k: ^Checker, template: ^Generic_Template, args: 
 						allocator = k.c.semantic_allocator,
 					)
 					return result
-				}
-			}
-			for {
-				if _, found := claim_argument(args, INVALID_IDENTIFIER, &next, claimed); !found {
-					break
 				}
 			}
 			continue
@@ -1451,6 +1527,20 @@ infer_generic_arguments :: proc(k: ^Checker, template: ^Generic_Template, args: 
 				continue
 			}
 			arg := args[index]
+			if arg.waiting {
+				// A `$` argument selects the instance, so it cannot wait for one.
+				if entry.is_poly {
+					result.reason = fmt.aprintf(
+						"argument %d needs its parameter's type, which the `$` parameter `%s` does not give",
+						index + 1,
+						entry.name.text,
+						allocator = k.c.semantic_allocator,
+					)
+					return result
+				}
+				append(&waits, Waiting_Argument{index, parameter.type, entry.name.text})
+				continue
+			}
 			if !entry.is_poly {
 				// An ordinary runtime parameter, whose written type may still be a
 				// pattern binding parts of the argument's type.
@@ -1505,6 +1595,39 @@ infer_generic_arguments :: proc(k: ^Checker, template: ^Generic_Template, args: 
 				len(args),
 				allocator = k.c.semantic_allocator,
 			)
+			return result
+		}
+	}
+	// design.md "Arguments typed after inference": a waiting argument takes its
+	// parameter's type once every `$` name that type names is bound by the
+	// other arguments. One that only it could bind stays unbound, so the call
+	// is rejected; the argument is typed after selection (`bind_chosen_call`).
+	if len(waits) > 0 {
+		unbound := Unbound_Names{names = make([dynamic]string, 0, 2, context.temp_allocator)}
+		for name in template_poly_names(k, literal).names {
+			id := intern_identifier(k.c, name)
+			bound := false
+			for binding in bindings {
+				bound ||= binding.name == id
+			}
+			if !bound {
+				append(&unbound.names, name)
+			}
+		}
+		for wait in waits {
+			if len(unbound.names) == 0 || !type_syntax_any_name(wait.written, &unbound, names_unbound_parameter) {
+				continue
+			}
+			result.reason = fmt.aprintf(
+				"argument %d takes its type from parameter `%s`, whose type names `%s`, and no other argument binds `%s`",
+				wait.index + 1,
+				wait.parameter,
+				unbound.found,
+				unbound.found,
+				allocator = k.c.semantic_allocator,
+			)
+			result.unbound_wait = true
+			result.waiting_arg = wait.index
 			return result
 		}
 	}

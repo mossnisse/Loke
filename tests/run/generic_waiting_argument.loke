@@ -1,0 +1,60 @@
+// design.md "Arguments typed after inference": an argument that takes its
+// parameter's type waits when that type names the procedure's `$` parameters,
+// and is typed once the other arguments have bound them: an `Option(T)`
+// payload or default, an enumerator, a typeless literal, by name, in a
+// variadic pack, through a method, and through a group, which is chosen from
+// the other arguments. Evaluation stays in written order.
+package main;
+
+import "core:fmt";
+
+Color :: enum { Red, Green, Blue }
+
+value_or :: proc(value: $T, fallback: Option(T) = .none) -> T {
+	switch (fallback) {
+	case .some(v): return v;
+	case .none:    return value;
+	}
+}
+
+same :: proc(a: $T, b: T) -> T { return b; }
+
+// The binder may come after the waiting argument.
+later :: proc(a: T, b: $T) -> T { return a; }
+
+count :: proc(first: $T, rest: ..T) -> int { return rest.len() + 1; }
+
+second :: proc(first: $T, pair: [2]T) -> T { return pair[1]; }
+
+Box :: struct($T: type) { value: T }
+
+impl Box($T) {
+	pick :: proc(self, other: $U, choice: Option(U)) -> U {
+		switch (choice) {
+		case .some(v): return v;
+		case .none:    return other;
+		}
+	}
+}
+
+show_color :: proc(x: int, color: Color) -> string_view { return "color"; }
+show_option :: proc(x: $T, value: Option(T)) -> string_view { return "option"; }
+show :: proc{show_color, show_option}
+
+trace :: proc(n: int) -> int {
+	fmt.println("evaluated", n);
+	return n;
+}
+
+main :: proc() {
+	fmt.println(value_or(3), value_or(3, .some(5)), value_or(3, .none));
+	fmt.println(value_or(Color.Red, .some(.Blue)));
+	fmt.println(value_or(fallback = .some("y"), value = "x"));
+	fmt.println(same(Color.Red, .Green), later(.Blue, Color.Red));
+	fmt.println(count(Color.Red, .Green, .Blue), count(Color.Green));
+	fmt.println(second(1, {2, 3}));
+	box := Box(int){value = 7};
+	fmt.println(box.pick(1.5, .some(2.5)), box.pick("kept", .none));
+	fmt.println(show(1, .Red), show("a", .none), show(2.5, .some(1)));
+	fmt.println(value_or(trace(1), .some(trace(2))));
+}

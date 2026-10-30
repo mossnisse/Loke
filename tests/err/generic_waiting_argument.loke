@@ -1,0 +1,31 @@
+package main;
+
+// design.md "Arguments typed after inference": a waiting argument binds
+// nothing, so one that is the only binder of a `$` name has no type; it is
+// typed against the substituted parameter; and in a group it takes no part in
+// choosing the member, whose parameter then checks it.
+
+Color :: enum { Red, Green, Blue }
+
+lone :: proc(a: int, b: Option($U)) -> int { return a; }
+count :: proc(first: $T, rest: ..T) -> int { return rest.len() + 1; }
+value_or :: proc(value: $T, fallback: Option(T) = .none) -> T { return value; }
+
+show_color :: proc(x: int, color: Color) -> int { return 1; }
+show_option :: proc(x: $T, value: Option(T)) -> int { return 2; }
+show :: proc{show_color, show_option}
+
+only_option :: proc(a: Option($U)) -> int { return 1; }
+only_pair :: proc(a, b: int) -> int { return 2; }
+only :: proc{only_option, only_pair}
+
+pinned :: proc(x: $T, $fallback: T) -> T { return x; }
+
+main :: proc() {
+	_ = lone(1, .none);
+	_ = count(.Green, Color.Blue);
+	_ = value_or(1, .some("one"));
+	_ = show(1, .none);
+	_ = only(.none);
+	_ = pinned(Color.Red, .Blue);
+}
