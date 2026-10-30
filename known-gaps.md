@@ -7,6 +7,63 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
+### Constant bit casts cannot construct valid `typeid` values
+
+[Invalid representations](design.md#invalid-representations) makes every
+`typeid` bit pattern a value, and
+[`unsafe.transmute`](design.md#unsafetransmute) promises compile-time bytewise
+conversion for admitted scalar shapes. A `typeid` is a same-sized, trivial
+scalar with no borrow, but this program is rejected:
+
+```loke
+package main;
+import "core:fmt";
+import "core:unsafe";
+FORGED :: unsafe.transmute(typeid, u64(999999));
+main :: proc() { fmt.println(FORGED); }
+```
+
+It reports `L0688`, "`unsafe.transmute` has no compile-time meaning from `u64`
+to `typeid`". Making `FORGED` a local variable instead succeeds and prints
+`999999`. Found reviewing `c885b92d` on 2026-10-29: the runtime path also
+preserves and reflects the high-bit and all-ones patterns correctly, but
+`fold_transmute`, `const_storage`, and `const_from_storage` in
+[check_builtin.odin](src/check_builtin.odin) do not handle `Typeid`.
+Implement constant storage for these values and add a regression comparing
+constant and runtime bit casts, while preserving the deferred numbering of
+symbolic `typeid_of` constants.
+
+### Native path normalization can remove an intermediate link before traversal
+
+[Filesystem operations](standard-library.md#filesystem-operations) says a
+link anywhere before the last path element is followed. Ordinary Windows
+paths instead normalize `.` and `..` before resolving links, so a junction
+followed by `..` can disappear without being followed. In a fresh directory:
+
+```powershell
+New-Item -ItemType Directory -Path local,target\child | Out-Null
+Set-Content local\marker.txt local -NoNewline
+Set-Content target\marker.txt target-parent -NoNewline
+New-Item -ItemType Junction -Path local\junction -Target (Resolve-Path target\child).Path | Out-Null
+```
+
+```loke
+package main;
+import "core:fmt";
+import "core:fs";
+main :: proc() {
+    fmt.println(fs.read_text("local/junction/../marker.txt") or_else "error");
+}
+```
+
+This prints `local`, whereas following the junction before `..` would read
+`target/marker.txt` and print `target-parent`. Found reviewing `9c8a17c7` on
+2026-10-29. Qualify the new link rule with the ordering of native path
+normalization and traversal, including the separate treatment of
+extended-length paths, if retaining Windows path semantics. Microsoft's
+[path-normalization description](https://learn.microsoft.com/en-us/dotnet/standard/io/file-path-formats#path-normalization)
+describes the preprocessing.
+
 ### A store through a slice parameter joins into the parameter
 
 [Weakening and reborrows](design.md#weakening-and-reborrows) borrows a place
