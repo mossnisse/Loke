@@ -50,5 +50,12 @@ L0431
 @83:7
 a procedure literal is a value, and a generic procedure is not one
 L0341
-@93:11
-a capture literal has no compile-time value
+@102:11
+a `dyn proc` view has no compile-time value
+in `viewed`, called here
+L0341
+@105:13
+a capture literal is a runtime value: it may be made and called during compile-time evaluation, but cannot be its result
+L0341
+@106:13
+a capture literal is a runtime value

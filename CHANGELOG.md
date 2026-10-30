@@ -392,6 +392,14 @@ checklist.
   return an `Allocator_Error` instead of following the allocator's failure
   policy, leaving the set unchanged when they fail.
 
+- Compile-time evaluation runs a [capture literal](design.md#capture-literals),
+  so a constant may be computed by a procedure that makes one and calls it,
+  directly or through an `interfaces.Callable` parameter, including writes
+  through a `&mut` capture
+  ([Compile-time procedure evaluation](design.md#compile-time-procedure-evaluation)).
+  The literal stays a runtime value: a constant's value cannot be or hold one,
+  and a `dyn proc` view of one is still rejected, both with `L0341`.
+
 - A [repeatable math benchmark](bench/math_compare/README.md#reproduce) comparing
   UCRT and reproducible functions with seeded, grid, and dependent inputs.
 

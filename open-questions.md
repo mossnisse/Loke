@@ -575,13 +575,9 @@ first returned closure is needed. One answer then is an opaque result type,
 is; it makes a caller depend on the body for the result's size, which works
 against [Public borrow contracts should stand on their
 own](#public-borrow-contracts-should-stand-on-their-own), and it overlaps an
-owning `dyn`.
-
-### Compile-time capture literals
-
-Compile-time evaluation rejects a capture literal, as having no compile-time
-value. Its record could be evaluated as any record is; support it when a
-compile-time use appears.
+owning `dyn`. A literal that can be returned could also be a constant's value,
+which [compile-time evaluation](design.md#compile-time-procedure-evaluation)
+keeps out today; decide that with the returned closure.
 
 ### A mutable callable view
 

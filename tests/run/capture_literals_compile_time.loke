@@ -1,0 +1,126 @@
+package main; import "core:fmt"; import "base:interfaces";
+
+// design.md "Compile-time procedure evaluation": a capture literal is made and
+// called while a constant is evaluated, as its record and `call` method are.
+// Each constant is also required where only a compile-time value will do, and
+// each procedure runs again at run time, which must agree.
+
+apply :: proc(value: int, f: $C) -> int where interfaces.Callable(C, proc(n: int) -> int) {
+	return f(value);
+}
+
+each :: proc(values: []int, f: $C) where interfaces.Callable(C, proc(v: int)) {
+	foreach (v in values) { f(v); }
+}
+
+// A copied capture, called directly and through `call`.
+direct :: proc() -> int {
+	f := proc(a, b: int) -> int capture(k = 10) { return a * k + b; };
+	return f(3, 4) + f.call(1, 2);
+}
+
+// Through a generic `Callable` parameter, named and as a temporary.
+through_generic :: proc(k: int) -> int {
+	offset := k;
+	add := proc(n: int) -> int capture(offset) { return n + offset; };
+	return apply(4, add) + apply(10, proc(n: int) -> int capture(offset) { return n * offset; });
+}
+
+// A `&mut` capture writes the local itself, across calls and copies.
+counted :: proc() -> int {
+	count := 0;
+	bump := proc() capture(&mut count) { count += 1; };
+	bump();
+	again := bump;
+	again();
+	bump();
+	return count;
+}
+
+// A `&mut` capture of a place: `a[i]` as `i` was when the literal was made.
+slot :: proc() -> int {
+	a := [3]int{1, 2, 3};
+	i := 1;
+	set := proc(v: int) capture(&mut s = a[i]) { s = v; };
+	i = 2;
+	set(40);
+	return a[0] + a[1] + a[2];
+}
+
+// A copy is taken once; a read-only borrow sees later writes.
+copied_and_borrowed :: proc() -> int {
+	n := 1;
+	copy := proc() -> int capture(n) { return n; };
+	n = 50;
+	seen := proc() -> int capture(&n) { return n; };
+	return copy() * 1000 + seen();
+}
+
+// Nested literals: the inner one borrows through the outer one's borrow.
+nested :: proc() -> int {
+	total := 0;
+	outer := proc(k: int) capture(&mut total) {
+		inner := proc() capture(&mut total, k) { total += k; };
+		inner();
+		inner();
+	};
+	outer(3);
+	outer(4);
+	return total;
+}
+
+// A moved container, used while evaluation runs.
+moved :: proc() -> int {
+	items: [dynamic]int = {};
+	items.append(4);
+	items.append(5);
+	f := proc() -> int capture(move(items)) { return items[0] + items[1] + items.len(); };
+	return f();
+}
+
+// A receiver's path, borrowed under its own name.
+Config :: struct { limit: int }
+
+impl Config {
+	count_below :: proc(self, values: []int) -> int {
+		below := proc(v: int) -> bool capture(&cfg = self) { return v < cfg.limit; };
+		n := 0;
+		foreach (v in values) { if (below(v)) { n += 1; } }
+		return n;
+	}
+}
+
+// Each instance has its own record.
+sum_scaled :: proc(values: []int, $T: type) -> T {
+	total: T = 0;
+	scale := T(2);
+	each(values, proc(v: int) capture(&mut total, scale) { total += T(v) * scale; });
+	return total;
+}
+
+VALUES :: [?]int{1, 2, 3, 7, 9};
+
+DIRECT :: direct();
+GENERIC :: through_generic(3);
+COUNTED :: counted();
+SLOT :: slot();
+COPIED :: copied_and_borrowed();
+NESTED :: nested();
+MOVED :: moved();
+BELOW :: Config{limit = 5}.count_below(VALUES[:]);
+SUM_INT :: sum_scaled(VALUES[:], int);
+SUM_I8 :: sum_scaled(VALUES[:], i8);
+
+Sized :: [SUM_I8]u8;
+
+main :: proc() {
+	// A constant in a body may make a literal in its initializer.
+	LOCAL :: apply(4, proc(n: int) -> int capture(k = 3) { return n + k; });
+	fmt.println(DIRECT, GENERIC, COUNTED, SLOT, COPIED, NESTED, MOVED, BELOW, SUM_INT, SUM_I8, LOCAL);
+	fmt.println(
+		direct(), through_generic(3), counted(), slot(), copied_and_borrowed(), nested(), moved(),
+		Config{limit = 5}.count_below(VALUES[:]), sum_scaled(VALUES[:], int), sum_scaled(VALUES[:], i8),
+	);
+	fmt.println(size_of(Sized));
+	when (COUNTED == 3 && NESTED == 14) { fmt.println("evaluated"); }
+}
