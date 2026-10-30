@@ -100,23 +100,6 @@ the precision table should guarantee a number of such places, which would make
 this program portable; the bound keeps the place loans and `.Through` events a
 borrow makes few.
 
-## Review follow-ups for the reborrow-gap closure
-
-Review of `bb65c244` on 2026-10-30 found a structural cleanup in
-[cfg_provenance.odin](src/cfg_provenance.odin): `prov_view_element` and the
-new `prov_local_view_element` separately walk selectors and indices, require
-a named slice with one constant nonnegative index, and verify that its one
-carrier hop starts at that identifier. Extract that shared place recognition
-into one helper returning the slice symbol and index. Keep the parameter
-immutability check, caller-slot creation, and local-slot lookup in their
-respective callers. This removes about 25 lines and gives new place forms
-one recognition path to update. Keep both local and parameter cases in the
-borrow matrix when doing this cleanup.
-
-The behavioral findings, a false `L0641` for a named read-only reborrow
-passed to a `stored` parameter and a lost mutable source when a stored named
-read-only reborrow is loaded again, are fixed.
-
 ## Review follow-ups for the compiler-performance merge
 
 Review of `26022400` on 2026-10-30 found one small simplification in

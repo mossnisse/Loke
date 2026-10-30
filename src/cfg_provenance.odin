@@ -2846,40 +2846,15 @@ Prov_View_Element :: struct {
 @(private = "file")
 prov_view_element :: proc(graph: ^Flow_Graph, place: Expr) -> (int, []int) {
 	c := graph.k.c
-	// The constant subscript applied to a parameter, found before the hops.
-	index, operand: Expr
-	for e := place; e != nil && index == nil; {
-		#partial switch v in e {
-		case ^Expr_Selector:
-			e = v.operand
-		case ^Expr_Index:
-			if _, named := v.operand.(^Expr_Ident); named && len(v.indices) == 1 {
-				index, operand = v.indices[0], v.operand
-			}
-			e = v.operand
-		case:
-			e = nil
-		}
-	}
-	if index == nil {
-		return 0, nil
-	}
-	element, constant := prov_const_int(graph, index)
-	ident := operand.(^Expr_Ident)
-	sym := symbol_of(c, ident.symbol)
-	if !constant || element < 0 || sym == nil || sym.kind != .Parameter || !sym.immutable ||
-	   underlying_kind(c, sym.type) != .Slice {
-		return 0, nil
-	}
-	// The parameter's pointee holds the place.
-	hops := prov_place_hops(graph, place)
-	if len(hops) != 1 || expr_base(prov_value(graph, hops[0].carrier).origin) != expr_base(operand) {
+	view, element, found_element := prov_constant_view_element(graph, place)
+	sym := symbol_of(c, view)
+	if !found_element || sym.kind != .Parameter || !sym.immutable {
 		return 0, nil
 	}
 	// The parameter's root, and its own loan, the first not standing for content.
 	root, own := NO_ROOT, NO_LOAN
 	for entry, at in graph.roots {
-		if entry.kind == .Param && entry.symbol == ident.symbol {
+		if entry.kind == .Param && entry.symbol == view {
 			root = Root_Id(at)
 			break
 		}
@@ -2958,7 +2933,26 @@ prov_reborrow_element :: proc(graph: ^Flow_Graph, own: Loan_Id, elements: []int)
 // names no such element.
 @(private = "file")
 prov_local_view_element :: proc(graph: ^Flow_Graph, place: Expr) -> (int, i64) {
+	view, element, found_element := prov_constant_view_element(graph, place)
+	if !found_element || symbol_of(graph.k.c, view).kind == .Parameter {
+		return 0, 0
+	}
+	slot, found := prov_slot_for_symbol(graph, view)
+	if !found {
+		return 0, 0
+	}
+	return slot + 1, element
+}
+
+// The named view `s` and the constant `k` when `place` is `s[k]`, or a place
+// inside it reached through selectors, with `k` nonnegative and `s`'s pointee
+// holding the place: `s` is the one carrier it is reached through. Shared by
+// `prov_view_element` and `prov_local_view_element`, which decide whether
+// that element has slots of its own.
+@(private = "file")
+prov_constant_view_element :: proc(graph: ^Flow_Graph, place: Expr) -> (Symbol_Id, i64, bool) {
 	c := graph.k.c
+	// The constant subscript applied to a named view, found before the hops.
 	index, operand: Expr
 	for e := place; e != nil && index == nil; {
 		#partial switch v in e {
@@ -2974,23 +2968,19 @@ prov_local_view_element :: proc(graph: ^Flow_Graph, place: Expr) -> (int, i64) {
 		}
 	}
 	if index == nil {
-		return 0, 0
+		return INVALID_SYMBOL, 0, false
 	}
 	element, constant := prov_const_int(graph, index)
 	ident := operand.(^Expr_Ident)
 	sym := symbol_of(c, ident.symbol)
-	if !constant || element < 0 || sym == nil || sym.kind == .Parameter || underlying_kind(c, sym.type) != .Slice {
-		return 0, 0
+	if !constant || element < 0 || sym == nil || underlying_kind(c, sym.type) != .Slice {
+		return INVALID_SYMBOL, 0, false
 	}
 	hops := prov_place_hops(graph, place)
 	if len(hops) != 1 || expr_base(prov_value(graph, hops[0].carrier).origin) != expr_base(operand) {
-		return 0, 0
+		return INVALID_SYMBOL, 0, false
 	}
-	slot, found := prov_slot_for_symbol(graph, ident.symbol)
-	if !found {
-		return 0, 0
-	}
-	return slot + 1, element
+	return ident.symbol, element, true
 }
 
 // `prov_view_element` for a store of `stored` from `sources` at `target`,
