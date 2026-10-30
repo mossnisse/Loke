@@ -505,6 +505,11 @@ checklist.
   system, and creates its tables only when it fills them; the borrow solver
   visits only the loans an event releases; the lexer matches an operator by
   its first byte.
+- A release's `lokec.exe` and `loke-lsp.exe` are built with Odin's `-o:speed`,
+  which makes the compiler two to three times faster still; `test-all.ps1
+  -Full`, the gate CI runs, tests that build. The quick gate and
+  [Building from source](readme.md#building-from-source) keep the default,
+  which builds in about a second rather than a minute.
 
 - A value whose bits are not a representation of its type, a `bool` other
   than 0 or 1, an enum value naming no member, a null `^T`, or a union tag out

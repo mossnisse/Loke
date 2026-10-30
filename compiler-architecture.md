@@ -782,8 +782,9 @@ From the repository root:
 
 The quick gate checks heading citations and layering, runs unit tests, rebuilds
 `lokec.exe`, and runs baseline integration tests. `-Full` adds the checker
-mutation fuzzer and reruns optimization-sensitive corpora at every supported
-level. Use it locally for that additional coverage or to investigate CI
+mutation fuzzer, reruns optimization-sensitive corpora at every supported
+level, and builds `lokec.exe` and `loke-lsp.exe` with Odin's `-o:speed`, as a
+release is built, rather than its quicker default. Use it locally for that additional coverage or to investigate CI
 failures. `-Exhaustive` adds `core:math/repro`'s exhaustive comparison: every
 `f32` bit pattern through each function's single-`f64` first approximation and
 through a copy of the package without it, which must agree. It takes about 25

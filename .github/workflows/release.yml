@@ -43,12 +43,13 @@ jobs:
           $odin = Get-ChildItem "$env:RUNNER_TEMP\odin" -Recurse -Filter odin.exe | Select-Object -First 1
           $odin.DirectoryName >> $env:GITHUB_PATH
 
-      # Built exactly as test-all.ps1 builds the binary it tests.
+      # Built exactly as test-all.ps1 -Full, the test job's gate, builds the
+      # binaries it tests.
       - name: Build and package
         run: |
-          odin build src -out:lokec.exe -vet-unused -vet-shadowing
+          odin build src -out:lokec.exe -vet-unused -vet-shadowing -o:speed
           if ($LASTEXITCODE -ne 0) { throw "compiler build failed" }
-          odin build lsp -out:loke-lsp.exe -vet-unused -vet-shadowing
+          odin build lsp -out:loke-lsp.exe -vet-unused -vet-shadowing -o:speed
           if ($LASTEXITCODE -ne 0) { throw "language server build failed" }
           $name = "loke-$env:GITHUB_REF_NAME-windows-amd64"
           $stage = "$env:RUNNER_TEMP\$name"
