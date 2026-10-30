@@ -7,26 +7,53 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
-### Optimized linalg SIMD and scalar transforms can disagree bit for bit
+### Which NaN an operation on two NaNs yields depends on the CPU level and the code around it
 
 [`core:math/linalg`](standard-library.md#coremathlinalg) promises the same
-result bits for its SIMD and scalar formulas. On this Windows x86-64 host,
-the existing deterministic regression fails with speed optimization:
+result bits on every CPU level and optimization level, and for its `Simd`
+and scalar formulas alike. When both operands of an addition are NaNs, which
+one the result carries is not stable:
 
-```powershell
-.\lokec.exe tests/run/lib_linalg_lanes.loke -opt=speed -o tests/tmp/linalg-lanes.exe
-.\tests\tmp\linalg-lanes.exe
+```loke
+package main;
+import "core:fmt";
+import "core:math";
+import "core:unsafe";
+operands: [4]f32 = {math.F32_NAN, 2, -0.0, math.F32_INFINITY};
+main :: proc() {
+    o := operands;
+    fmt.println(unsafe.transmute(u32, o[0]*o[1] + o[2]*o[3]));
+}
 ```
 
-It prints `FAIL a 3 x 3 times a vector is the scalar form` and omits
-`all lane checks passed`. The three printed finite-result bit patterns still
-match the expected file. The failing loop covers 4,000 deterministic vectors
-and matrices, including NaNs, infinities, and signed zeros. Adding diagnostic
-printing inside that loop made the failure disappear, so its exact operands
-and cause have not yet been isolated; a NaN-bit difference is a hypothesis,
-not an established diagnosis. Found in the linalg merge review on 2026-10-30.
-Keep the regression and its bitwise comparison until the discrepancy is
-understood; do not replace its expected output with the failing result.
+This prints `4290772992` (`0xFFC00000`, the NaN that `-0.0*inf` creates) at
+`-cpu=x86-64` and `x86-64-v2`, and `2143289344` (`0x7FC00000`, the NaN
+operand's) at `x86-64-v3`, at every `-opt` level. An x86 addition of two NaNs
+returns its first source operand's, and LLVM treats `fadd` as commutative, so
+which operand comes first follows register allocation: SSE's two-operand and
+AVX's three-operand forms differ, and so does code that inlines the
+expression into different surroundings. Neither
+[Floating-point operators](design.md#floating-point-operators) nor the IR
+pins it.
+
+`tests/run/lib_linalg_lanes.loke` compares lane and scalar results bit for
+bit over 4,000 operands that include NaNs and infinities, so it fails
+wherever the two forms happen to be allocated differently: at the time of
+writing, `transform_point` at `-cpu=x86-64-v3 -opt=minimal`, the 3 x 3
+product at the default level with `-opt=size` or `speed`, and other
+combinations at other levels (`tests/cpu_test.odin`'s
+`cpu_levels_compute_what_baseline_does` runs it at each level in the full
+gate). Its first mismatch at `-cpu=x86-64-v3 -opt=minimal` is component `z`
+at iteration 896, where `v.x` is NaN and `v.z` is infinity against a `-0.0`
+matrix element. Adding diagnostic printing inside its loop moves the
+allocation, which is why that once hid the failure. Found in the linalg merge
+review on 2026-10-30; isolated while running `test-all.ps1 -Full` on
+2026-10-30. Closing it needs either a specified NaN for such operations,
+which costs a canonicalization on every floating-point result that may be a
+NaN, or the promise narrowed to say which NaN is unspecified, with the
+regression comparing NaN results by class. Until then, keep the regression and
+its bitwise comparison; do not replace its expected output with the failing
+result.
 
 ### Linalg perspective can overflow with finite projection coefficients
 

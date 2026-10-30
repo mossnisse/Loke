@@ -742,6 +742,10 @@ OPERATORS :: [?]struct {
 	{"}", .Rbrace},
 }
 
+// The table as data, so a scan does not materialize the constant first.
+@(private = "file", rodata)
+operator_table := OPERATORS
+
 operator_spelling :: proc(kind: Token_Kind) -> string {
 	for op in OPERATORS {
 		if op.kind == kind {
@@ -754,8 +758,11 @@ operator_spelling :: proc(kind: Token_Kind) -> string {
 @(private = "file")
 operator :: proc(l: ^Lexer) -> Token {
 	lo := l.pos
-	for op in OPERATORS {
-		if matches(l, op.text) {
+	first := peek(l)
+	for op in operator_table {
+		// Nearly every entry differs in its first byte, which is cheaper to
+		// compare than the whole spelling.
+		if op.text[0] == first && matches(l, op.text) {
 			l.pos += u32(len(op.text))
 			return Token{kind = op.kind, lo = lo, hi = l.pos}
 		}

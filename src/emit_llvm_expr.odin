@@ -536,14 +536,26 @@ const_operand :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string 
 // syntax only round-trips some values exactly.
 llvm_float :: proc(pattern: u64, bits: u16) -> string {
 	if bits == 16 {
-		return fmt.aprintf("0xH%04X", u16(pattern))
+		return hex_pattern("0xH", u64(u16(pattern)), 4)
 	}
 	if bits == 32 {
 		// LLVM writes a `float` constant as the `double` pattern of the same value.
 		// Widening the bits, not the value, keeps a signalling NaN's payload.
-		return fmt.aprintf("0x%016X", f32_pattern_as_f64(u32(pattern)))
+		return hex_pattern("0x", f32_pattern_as_f64(u32(pattern)), 16)
 	}
-	return fmt.aprintf("0x%016X", pattern)
+	return hex_pattern("0x", pattern, 16)
+}
+
+// `prefix` and the low `width` hexadecimal digits of `pattern`, upper case.
+@(private = "file")
+hex_pattern :: proc(prefix: string, pattern: u64, width: int) -> string {
+	digits := "0123456789ABCDEF"
+	out := make([]u8, len(prefix) + width)
+	copy(out, prefix)
+	for index in 0 ..< width {
+		out[len(out) - 1 - index] = digits[(pattern >> uint(4 * index)) & 0xf]
+	}
+	return string(out)
 }
 
 @(private = "file")

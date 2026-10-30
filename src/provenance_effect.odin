@@ -91,7 +91,7 @@ build_provenance_replay :: proc(k: ^Checker, literal: ^Expr_Proc, mode: Flow_Mod
 	program.operations = make([dynamic]Prov_Effect_Site, allocator)
 	program.events = make([dynamic]Prov_Event_Site, allocator)
 	program.root_regions = make([dynamic]Prov_Root_Region, allocator)
-	program.borrowed_owners = make(map[Value_Id]bool, 4, allocator)
+	program.borrowed_owners = make(map[Value_Id]bool, allocator)
 	initial := build_flow_pass(k, literal, allocator, mode, program)
 	initial.effect_program = nil
 	weight := prov_fact_weight(&initial.facts)
@@ -111,13 +111,14 @@ build_provenance_replay :: proc(k: ^Checker, literal: ^Expr_Proc, mode: Flow_Mod
 	prov_drop_event_diagnostics(k.c, program)
 	program.normalization_time = time.tick_since(started)
 	replay_started := time.tick_now()
-	carry_arena, replay_arena: virtual.Arena
-	defer virtual.arena_destroy(&carry_arena)
-	defer virtual.arena_destroy(&replay_arena)
-	carry := prov_carry_facts(initial, virtual.arena_allocator(&carry_arena))
+	// Bodies are not replayed within one another, so one pair of arenas serves
+	// every body.
+	carry_arena, replay_arena := &k.c.replay_carry_arena, &k.c.replay_round_arena
+	defer free_all(virtual.arena_allocator(carry_arena))
+	carry := prov_carry_facts(initial, virtual.arena_allocator(carry_arena))
 	seeded := weight
 	for {
-		graph := prov_fact_graph(k, literal, mode, program, virtual.arena_allocator(&replay_arena))
+		graph := prov_fact_graph(k, literal, mode, program, virtual.arena_allocator(replay_arena))
 		prov_seed_regions(graph, carry)
 		replayed_diagnostics := len(k.c.diagnostics)
 		prov_replay_fact_operations(graph, program)
@@ -125,12 +126,12 @@ build_provenance_replay :: proc(k: ^Checker, literal: ^Expr_Proc, mode: Flow_Mod
 		current_weight := prov_fact_weight(&graph.facts)
 		settled := current_weight == seeded
 		if !settled {
-			free_all(virtual.arena_allocator(&carry_arena))
-			carry = prov_carry_facts(graph, virtual.arena_allocator(&carry_arena))
+			free_all(virtual.arena_allocator(carry_arena))
+			carry = prov_carry_facts(graph, virtual.arena_allocator(carry_arena))
 		}
 		program.peak_used_bytes = max(program.peak_used_bytes,
 		                             k.c.analysis_arena.total_used - initial_bytes + carry_arena.total_used + replay_arena.total_used)
-		free_all(virtual.arena_allocator(&replay_arena))
+		free_all(virtual.arena_allocator(replay_arena))
 		if settled { break }
 		seeded = current_weight
 	}

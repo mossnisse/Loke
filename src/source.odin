@@ -390,6 +390,10 @@ Compiler :: struct {
 	// Per-procedure ownership-analysis scratch, reserved once and reset after
 	// each body. Nothing built in it outlives `analyze_ownership`.
 	analysis_arena:       virtual.Arena,
+	// The provenance fixed point's carried facts and each round's graph
+	// (`build_provenance_replay`), reset after each body like the analysis arena.
+	replay_carry_arena:   virtual.Arena,
+	replay_round_arena:   virtual.Arena,
 	provenance_stats: Prov_Replay_Statistics,
 	analysis_allocator:   mem.Allocator,
 	// Everything LLVM emission and the toolchain allocate: the backend builds its

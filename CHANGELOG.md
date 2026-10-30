@@ -498,6 +498,18 @@ checklist.
   unwind frame it never pushed each time it returns. The call survived
   optimization and inlining, so every such procedure paid for it; a small
   floating-point kernel ran about a third faster without it.
+- `lokec` checks and emits about a fifth faster, with the same output: the
+  front end takes 14 to 33 percent less time on the examples and benchmarks,
+  and `loke-lsp` answers an edit about a sixth sooner. Ownership analysis
+  keeps its scratch memory between procedures instead of returning it to the
+  system, and creates its tables only when it fills them; the borrow solver
+  visits only the loans an event releases; the lexer matches an operator by
+  its first byte.
+- A release's `lokec.exe` and `loke-lsp.exe` are built with Odin's `-o:speed`,
+  which makes the compiler two to three times faster still; `test-all.ps1
+  -Full`, the gate CI runs, tests that build. The quick gate and
+  [Building from source](readme.md#building-from-source) keep the default,
+  which builds in about a second rather than a minute.
 
 - A value whose bits are not a representation of its type, a `bool` other
   than 0 or 1, an enum value naming no member, a null `^T`, or a union tag out

@@ -89,6 +89,9 @@ if ($LASTEXITCODE -eq 0) { .\hello.exe }
 ```
 
 To build the language server too, run `odin build lsp -out:loke-lsp.exe`.
+That build is quick to make. A release adds `-o:speed` to both commands: the
+build takes about a minute each, and the compiler runs two to three times
+faster.
 
 ## Documentation
 

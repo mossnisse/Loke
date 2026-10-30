@@ -2,8 +2,9 @@
 param(
     # The quick run is every check once, at the default optimization level. Full
     # adds what multiplies the cost: the whole corpus again at each -opt level,
-    # and the checker mutation fuzzer. CI runs it; use it locally for changes
-    # targeting that extra coverage or to investigate a CI failure (AGENTS.md).
+    # the checker mutation fuzzer, and lokec and loke-lsp built optimized, as a
+    # release is. CI runs it; use it locally for changes targeting that extra
+    # coverage or to investigate a CI failure (AGENTS.md).
     [switch]$Full,
     # Turns the harness's tool skips into failures: nasm and a C host toolset are
     # not shipped here, and without this a machine missing one still runs green
@@ -99,12 +100,16 @@ try {
 
     # An unused local or a shadowed name is how a rename or a deleted branch goes
     # quiet instead of failing, so the shipped binary is built under both vets.
-    Invoke-Native 'compiler build failed' { odin build src -out:lokec.exe -vet-unused -vet-shadowing }
+    # A release is optimized, which makes the compiler two to three times faster
+    # but takes about a minute per binary to build, so the full gate, which
+    # release.yml runs first, tests that build and the quick one Odin's default.
+    $optimization = if ($Full) { '-o:speed' } else { '-o:minimal' }
+    Invoke-Native 'compiler build failed' { odin build src -out:lokec.exe -vet-unused -vet-shadowing $optimization }
 
     # The language server compiles in the whole compiler, so it is rebuilt with
     # it; the integration harness talks to the binary over real pipes.
     Invoke-Native 'language server unit tests failed' { odin test lsp -vet-unused -vet-shadowing -vet-packages:lsp }
-    Invoke-Native 'language server build failed' { odin build lsp -out:loke-lsp.exe -vet-unused -vet-shadowing }
+    Invoke-Native 'language server build failed' { odin build lsp -out:loke-lsp.exe -vet-unused -vet-shadowing $optimization }
 
     # This is also the example gate: every program under examples/ is
     # compiled from its real source here, and the ones with fixed output are

@@ -298,13 +298,13 @@ try_incremental_check :: proc(s: ^Compilation_Session, input: string, documentat
 	checkpoint := &cache.entries[checkpoint_index]
 	virtual.arena_temp_end(checkpoint.mark)
 	for block in checkpoint.blocks { copy(block.block.base[:len(block.bytes)], block.bytes) }
-	virtual.arena_destroy(&c.analysis_arena)
+	destroy_analysis_arenas(c)
 	virtual.arena_destroy(&c.emission_arena)
 	semantic_arena := c.semantic_arena
 	c^ = checkpoint.state
 	c.semantic_arena = semantic_arena
-	c.analysis_arena, c.emission_arena = {}, {}
-	if err := virtual.arena_init_growing(&c.analysis_arena); err != nil { panic("cannot reserve the compilation's analysis arena") }
+	c.analysis_arena, c.replay_carry_arena, c.replay_round_arena, c.emission_arena = {}, {}, {}, {}
+	init_analysis_arenas(c)
 	checkpoint.mark = virtual.arena_temp_begin(&c.semantic_arena)
 	virtual.arena_destroy(&s.scratch_arena)
 	context.temp_allocator = virtual.arena_allocator(&s.scratch_arena)
