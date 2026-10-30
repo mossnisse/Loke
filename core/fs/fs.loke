@@ -955,8 +955,24 @@ lock_handle :: proc(handle: Handle, mode: Lock_Mode, wait: bool) -> Result(bool,
 	return true;
 }
 
+// A fault for a test (comments.md "Standard-library API choices"): built with
+// `-define:CORE_FS_FAIL_FIRST_UNLOCK=true`, the program's first native release
+// fails and leaves the lock held, which no real call can be made to do. In
+// any other build the flag is false and the fault is not compiled.
+@(private) FAIL_FIRST_UNLOCK :: build_config(CORE_FS_FAIL_FIRST_UNLOCK, false);
+
+when (FAIL_FIRST_UNLOCK) {
+	@(private) failed_an_unlock: bool = false;
+}
+
 @(private)
 unlock_handle :: proc(handle: Handle) -> Status(io.Error) {
+	when (FAIL_FIRST_UNLOCK) {
+		if (!failed_an_unlock) {
+			failed_an_unlock = true;
+			return .err(io.make_error(.Other, .Unlock));
+		}
+	}
 	place := at_offset(LOCK_OFFSET);
 	if (rt_unlock_file(handle, 0, 1, 0, &mut place) == 0) {
 		return .err(from_last_error(.Unlock));

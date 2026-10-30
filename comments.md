@@ -2201,6 +2201,16 @@ boundaries and API shapes follow a few common choices:
   bytes it reads and writes for the same reason. Each handle holds one lock and a second is refused, because
   the platforms disagree about the second: Windows stacks it and needs two
   unlocks, and `flock` converts the first without promising atomicity.
+- **A failed release is a build-time fault.** Nothing a program does makes
+  `UnlockFileEx` fail on a handle that holds its lock, yet what a failed
+  `unlock` leaves behind is a promise: the lock stays held and a retry
+  releases it. `core:fs` therefore reads one
+  [`build_config`](design.md#build_configidentifier-default),
+  `CORE_FS_FAIL_FIRST_UNLOCK`, which makes the first native release fail
+  without releasing; `tests/run/lib_fs_unlock_failure.loke` is built with it.
+  A public hook would put a test's needs into every caller's API, and
+  interposing on the system call would depend on how the program is linked.
+  A constant that defaults to false compiles to nothing in every other build.
 - **Paths keep Windows' own normalization.** `core:fs` hands a path to
   Windows unchanged, so it names what it names to a shell or any other
   Windows program. Following each link before a later `..`, as POSIX does, would mean

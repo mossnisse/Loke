@@ -50,9 +50,13 @@ Closed Lock
 ok
 ok
 true
+ok
+true
+false
+true
+0
 true
 ok
-0
 true
 true
 true

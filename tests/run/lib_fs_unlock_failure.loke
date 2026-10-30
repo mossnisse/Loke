@@ -1,0 +1,80 @@
+package main;
+
+import "core:fmt";
+import "core:fs";
+import "core:io";
+import "core:os";
+import "core:path";
+import "core:strings";
+
+// `File.unlock` (standard-library "File locking"): a failed `unlock` leaves the
+// handle holding its lock, so another handle is still kept out and calling
+// `unlock` again retries the release. No real call can be made to fail, so the
+// sibling `.flags` builds this with `CORE_FS_FAIL_FIRST_UNLOCK`, which makes
+// `core:fs`'s first native release in the program fail and keep the lock.
+
+attempt :: proc(outcome: Result(bool, io.Error)) {
+	switch (outcome) {
+	case .ok(acquired): fmt.println(acquired);
+	case .err(error): fmt.println(io.code_of(error), io.operation_of(error));
+	}
+}
+
+report :: proc(outcome: Status(io.Error)) {
+	switch (outcome) {
+	case .ok: fmt.println("ok");
+	case .err(error): fmt.println(io.code_of(error), io.operation_of(error));
+	}
+}
+
+succeeded :: proc(outcome: Status(io.Error)) -> bool {
+	switch (outcome) {
+	case .ok:  return true;
+	case .err: return false;
+	}
+	return false;
+}
+
+root :: proc() -> string {
+	switch (os.get_environment("TEMP")) {
+	case .ok(outcome):
+		switch (outcome) {
+		case .some(base): return path.join([]string_view{base, "loke_fs_unlock_failure"});
+		case .none:
+		}
+	case .err:
+	}
+	return strings.copy("loke_fs_unlock_failure");
+}
+
+open_as :: proc(file: string_view, access: fs.Access) -> fs.File {
+	return fs.open(file, fs.Open_Options{access = access, disposition = .Open_Or_Create, append = false}) or_else panic("the test's file could not be opened");
+}
+
+main :: proc() {
+	directory := root();
+	data := path.join([]string_view{directory, "store.bin"});
+	_ = fs.remove(data);
+	_ = fs.remove_directory(directory);
+	fmt.println(succeeded(fs.create_directories(directory)));
+	fmt.println(succeeded(fs.write_text(data, "0123")));
+
+	owner := open_as(data, .Read_Write);
+	rival := open_as(data, .Read);
+	report(owner.lock(.Exclusive));
+	// The release fails, and the lock is still the owner's: another handle is
+	// kept out, and the owner, still holding one, cannot lock again.
+	report(owner.unlock());
+	attempt(rival.try_lock(.Shared));
+	report(owner.lock(.Shared));
+	// The retry makes the native release, so another handle takes the lock.
+	report(owner.unlock());
+	attempt(rival.try_lock(.Exclusive));
+	report(rival.unlock());
+	report(owner.unlock());
+
+	fmt.println(succeeded(owner.close()));
+	fmt.println(succeeded(rival.close()));
+	fmt.println(succeeded(fs.remove(data)));
+	fmt.println(succeeded(fs.remove_directory(directory)));
+}
