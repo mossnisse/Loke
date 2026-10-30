@@ -3685,6 +3685,17 @@ The following may be overloaded:
 | Compound assignment | `+=`, `-=`, `*=`, `+%=`, `-%=`, `*%=`, `/=`, `%=`, `\|=`, `~=`, `&=`, `&~=`, `<<=`, `>>=` |
 | Structural syntax | `[]`, `[]=`, `[:]` |
 
+An `operator(in)` takes the tested value first and the container second, the
+order in which `x in c` writes them:
+
+```loke
+impl Bag {
+	holds :: operator(in) proc(item: int, bag: Bag) -> bool {
+		return bag.contains(item);
+	}
+}
+```
+
 `!=` falls back to `!(left == right)` when `==` exists and no more specific `!=`
 overload does. A compound assignment falls back to the binary operator plus
 assignment; a direct compound overload can avoid a temporary or allocation:

@@ -305,6 +305,9 @@ impl Index_Set($N) {
 	// Every index `0 ..< N` that `self` does not hold.
 	complement :: operator(~) proc(self: Index_Set(N)) -> Index_Set(N) ---;
 
+	// `index in set`: whether `index` is present, as `contains`.
+	is_member :: operator(in) proc(index: int, set: Index_Set(N)) -> bool ---;
+
 	// Writes the set to `out` in the byte order the package header gives; `out.len()` must be `bytes_for_bits(N)`.
 	store_bytes :: proc(self: ^, out: []mut u8) ---;
 
@@ -338,10 +341,23 @@ impl Dynamic_Index_Set {
 	init :: proc(cap: int, allocator: Allocator = mem.default_allocator()) -> Dynamic_Index_Set ---;
 
 	/*
+		As `init`, but a failure to allocate is returned rather than handled by
+		the allocator's failure policy. A negative `cap` panics.
+	*/
+	try_init :: proc(cap: int, allocator: Allocator = mem.default_allocator()) -> Result(Dynamic_Index_Set, Allocator_Error) ---;
+
+	/*
 		Changes the capacity to `cap`, keeping the indices below it; those
 		added are absent. A negative `cap` panics.
 	*/
 	resize :: proc(self: inout, cap: int) ---;
+
+	/*
+		As `resize`, but a failure to allocate is returned rather than handled
+		by the allocator's failure policy, and leaves the set unchanged. A
+		negative `cap` panics.
+	*/
+	try_resize :: proc(self: inout, cap: int) -> Status(Allocator_Error) ---;
 
 	// The set as a read-only view, borrowed from it.
 	view :: proc(self: ^) -> Index_View ---;
@@ -397,6 +413,9 @@ impl Dynamic_Index_Set {
 	// Equal capacities and equal members.
 	equal :: operator(==) proc(left, right: Dynamic_Index_Set) -> bool ---;
 
+	// `index in set`: whether `index` is present, as `contains`.
+	is_member :: operator(in) proc(index: int, set: Dynamic_Index_Set) -> bool ---;
+
 	store_bytes :: proc(self: ^, out: []mut u8) ---;
 
 	load_bytes :: proc(self: inout, bytes: []u8) -> bool ---;
@@ -445,6 +464,9 @@ impl Index_View {
 
 	// Equal capacities and equal members; the bits past the capacity are not compared.
 	equal :: operator(==) proc(left, right: Index_View) -> bool ---;
+
+	// `index in set`: whether `index` is present, as `contains`.
+	is_member :: operator(in) proc(index: int, set: Index_View) -> bool ---;
 
 	store_bytes :: proc(self, out: []mut u8) ---;
 
@@ -512,6 +534,9 @@ impl Index_View_Mut {
 	remove_all :: proc(self: inout, other: Index_View) ---;
 
 	toggle_all :: proc(self: inout, other: Index_View) ---;
+
+	// `index in set`: whether `index` is present, as `contains`.
+	is_member :: operator(in) proc(index: int, set: Index_View_Mut) -> bool ---;
 
 	store_bytes :: proc(self: ^, out: []mut u8) ---;
 

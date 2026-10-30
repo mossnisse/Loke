@@ -1,0 +1,15 @@
+package main;
+
+import "core:container";
+import "core:fmt";
+
+// standard-library.md "`core:container` index sets": `index in set` is
+// `contains`, so an index outside `0 ..< cap` panics as it does, rather than
+// answering `false` as a range's `in` would.
+main :: proc() {
+	cells := container.Dynamic_Index_Set.init(70);
+	cells.set(69);
+	fmt.println(69 in cells);
+	at := -1;
+	fmt.println(at in cells);
+}

@@ -1,0 +1,115 @@
+// `core:container` index sets (standard-library "`core:container` index
+// sets"): `Dynamic_Index_Set.try_init` and `try_resize` report an allocation
+// failure under the `try_` convention (design.md "Appending to a dynamic
+// array") and leave the set unchanged, and `index in set` is `contains` for
+// every representation (design.md "Operator declarations").
+package main;
+
+import "core:container";
+import "core:fmt";
+import "core:mem";
+
+// Reads the set through a view, so the `in` of `Index_View` is the one used.
+members_below :: proc(set: container.Index_View, limit: int) -> int {
+	total := 0;
+	foreach (index in 0 ..< limit) {
+		if (index in set) { total += 1; }
+	}
+	return total;
+}
+
+main :: proc() {
+	// ------------------------------------------------------------- in --
+
+	// Present and absent indices on each side of the word seam, and the
+	// negation, which is written `!(i in set)`.
+	fixed := container.Index_Set(70).of(0, 63, 64, 69);
+	fmt.println(0 in fixed, 63 in fixed, 64 in fixed, 69 in fixed);
+	fmt.println(1 in fixed, 62 in fixed, 65 in fixed, 68 in fixed);
+	fmt.println(!(1 in fixed), !(64 in fixed));
+	fmt.println(container.Index_Set(70).is_member(63, fixed), container.Index_Set(70).is_member(62, fixed));
+
+	at := 69;
+	fmt.println(at in fixed, at - 1 in fixed, at in ~fixed, at in fixed | container.Index_Set(70).of(68));
+
+	dynamic_set := container.Dynamic_Index_Set.init(130);
+	dynamic_set.set(129);
+	dynamic_set.set(64);
+	fmt.println(129 in dynamic_set, 64 in dynamic_set, 0 in dynamic_set, 128 in dynamic_set);
+	fmt.println(members_below(dynamic_set.view(), 130), members_below(fixed.view(), 70));
+
+	// A view ignores the caller's bits past its capacity.
+	words: [2]u64 = {0x1, 0xFFFF_FFFF_FFFF_FFF8};
+	fmt.println(0 in container.Index_View.over(words[:], 66), 65 in container.Index_View.over(words[:], 66));
+	{
+		writer := container.Index_View_Mut.over(&mut words[:], 66);
+		writer.set(65);
+		fmt.println(65 in writer, 64 in writer, 1 in writer);
+	}
+
+	// A condition-only loop tests membership as it goes; the bound comes
+	// first, since an index past the capacity panics.
+	next := 0;
+	for (next < 70 && next in fixed) { next += 63; }
+	fmt.println(next);
+
+	// --------------------------------------------- try_init, try_resize --
+
+	// An arena over a small buffer is an allocator that fails once its room
+	// is used up.
+	room: [512]u8 = {};
+	arena := mem.Arena.from_buffer(&mut room[:]);
+
+	switch (container.Dynamic_Index_Set.try_init(100000, arena.allocator())) {
+	case .ok(set): fmt.println("try_init: unexpected success", set.cap());
+	case .err(failure): fmt.println("try_init: out of memory");
+	}
+
+	// No heap holds this request, so the default allocator fails it too.
+	huge := 4611686018427387904;
+	switch (container.Dynamic_Index_Set.try_init(huge)) {
+	case .ok(set): fmt.println("try_init huge: unexpected success", set.cap());
+	case .err(failure): fmt.println("try_init huge: out of memory");
+	}
+
+	// What fits is an empty set, as `init` makes.
+	small := container.Dynamic_Index_Set.try_init(70, arena.allocator()) or_else panic("try_init(70) failed");
+	fmt.println(small.cap(), small.len(), small);
+	small.set(1);
+	small.set(69);
+
+	// A failed growth leaves the capacity, the members, and the storage
+	// unchanged, and the set stays usable.
+	before: [9]u8 = {};
+	small.store_bytes(&mut before[:]);
+	fmt.println(small.try_resize(5000) != .ok, small.cap(), small.len(), small);
+	after: [9]u8 = {};
+	small.store_bytes(&mut after[:]);
+	fmt.println(before == after, 69 in small);
+	fmt.println(small.try_resize(huge) != .ok, small.cap(), small);
+	small.set(2);
+	fmt.println(small);
+
+	// Shrinking cannot fail. It drops the indices past the new capacity, and
+	// growing again within the storage finds them absent, as `resize` does.
+	fmt.println(small.try_resize(65) == .ok, small.cap(), small);
+	fmt.println(small.try_resize(70) == .ok, small.cap(), small, 69 in small);
+
+	// Growth that fits succeeds, keeping members and adding absent indices.
+	grown := container.Dynamic_Index_Set.try_init(10) or_else panic("try_init(10) failed");
+	grown.set(9);
+	fmt.println(grown.try_resize(200) == .ok, grown.cap(), grown, 199 in grown);
+	grown.set(199);
+	fmt.println(grown);
+
+	// `or_return` hands the failure on.
+	fmt.println(rebuild(huge) != .ok, rebuild(100) == .ok);
+}
+
+rebuild :: proc(cap: int) -> Status(Allocator_Error) {
+	set := container.Dynamic_Index_Set.try_init(8) or_return;
+	set.set(7);
+	set.try_resize(cap) or_return;
+	assert(7 in set);
+	return .ok;
+}

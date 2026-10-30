@@ -2469,6 +2469,13 @@ boundaries and API shapes follow a few common choices:
   look like, so a reader in another language can take it as either. Padding
   in the final byte must be zero: a reader then rejects a save of a larger
   capacity instead of quietly dropping its high indices.
+- **`i in set` panics where `contains` does.** A range's `in` answers
+  `false` for a value outside it, so the operator could have read an index
+  outside `0 ..< cap` as absent. But every other index set operation treats
+  such an index as a programmer error, as an array index is, and an `in`
+  that quietly answered would hide the miscomputed index that a `contains`
+  in the same place reports. The operator is `contains` respelled, so the
+  two can be swapped without changing what a program does.
 
 ## Compiler design choices
 

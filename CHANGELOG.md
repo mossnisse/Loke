@@ -387,7 +387,10 @@ checklist.
   `Index_View_Mut` over the caller's words. They set, clear, and test single
   indices and ranges, count, search for the next present or absent index,
   combine in place, iterate present indices, and store to and load from a
-  byte form fixed independently of the host's byte order.
+  byte form fixed independently of the host's byte order. Membership is
+  also `i in set`, and `Dynamic_Index_Set`'s `try_init` and `try_resize`
+  return an `Allocator_Error` instead of following the allocator's failure
+  policy, leaving the set unchanged when they fail.
 
 - A [repeatable math benchmark](bench/math_compare/README.md#reproduce) comparing
   UCRT and reproducible functions with seeded, grid, and dependent inputs.

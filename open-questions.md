@@ -965,14 +965,6 @@ counts and the rotations. Left out until a caller settles their contracts:
 - **Bit field extract and deposit** (`pext` and `pdep`), which exist only from
   `x86-64-v3` and would need a portable fallback with the same result.
 
-[`core:container` index sets](standard-library.md#corecontainer-index-sets)
-leave out two things a caller may want:
-`try_init` and `try_resize` forms of `Dynamic_Index_Set` that report
-allocation failure under the library-wide
-[`try_` convention](#the-optry_op-pair) rather than following the
-allocator's policy, and a membership operator, `i in set`, which design.md's
-operator table allows overloading but no library type yet uses.
-
 ## Open questions from the linear algebra spike
 
 The [linear algebra library plan](linear-algebra-plan.md)'s first step tried
