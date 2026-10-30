@@ -4700,6 +4700,15 @@ generic `T`, `T.Element` is valid only when the active constraints require that
 member unambiguously. Requirement order is irrelevant, and duplicate
 requirements for the selector must agree.
 
+The member is the one ordinary lookup finds where the interface is applied, or,
+when that finds none, the one a slot would find: an inherent member whatever
+its visibility, or an extension in the package of the interface that writes the
+requirement. The application's other requirements, and the applications it
+composes, reach that member through the same selector. So when `Measured(T)`
+requires `T.Unit -> type` and composes `Length(T.Unit)`, a type that the
+package of `Measured` extends with a private `Unit` meets `Measured` in every
+package, and `Length` is applied to that `Unit`.
+
 **Named slot form** `slot name: proc(...);` declares a method requirement:
 
 - Its first parameter must be `self` in one of the four [receiver
@@ -4716,14 +4725,26 @@ requirements for the selector must agree.
   Witness members are never overload groups.
 
 A slot is both a static callable requirement and a potential
-[witness](#runtime-polymorphism) entry. Inside a declaration constrained by a
-[bare bound](#where-clauses) `I(T)`, `value.slot()` reaches the implementation
-that satisfied `I`, even one the instantiating package could not otherwise see.
-Only that slot on that type is granted. Everything else keeps the [visibility
-rules](#exported-names): unrelated private members, a member offered only by a
-negated bound or one side of `||`, and every call outside a constrained
-declaration. A `static_assert` grants nothing, since it constrains no
-declaration.
+[witness](#runtime-polymorphism) entry. A [bare bound](#where-clauses) `I(T)`
+grants the declaration it constrains the members that satisfied `I`, even ones
+the declaring package could not otherwise see. The grant covers the
+declaration's signature, its `where` clause, and its body, or a record's
+fields. It consists of:
+
+- each slot of `I`, and of every application `I` composes, on that
+  application's subject: `value.slot()` on a `T` reaches the implementation
+  that satisfied `I`, and when `I` composes `J(T.Element)`, `item.slot()` on a
+  `T.Element` reaches the one that satisfied `J`;
+- each associated constant that `I` and the applications it composes require,
+  the member the requirement found, so `T.Element` means in the declaration
+  what it meant where the bound was checked.
+
+Only those members, on those types, are granted, and only where ordinary lookup
+finds none. Everything else keeps the [visibility rules](#exported-names):
+unrelated private members, a member offered only by a negated bound, one side
+of `||`, or a `when` condition, and every use outside a constrained
+declaration, including another declaration that checking it reaches. A
+`static_assert` grants nothing, since it constrains no declaration.
 
 Method and operator requirements are written as ordinary calls on bound values;
 lifecycle requirements name the hook (the standard
@@ -7675,8 +7696,8 @@ it would be without the clause. Multiple bounds are separated by commas and all
 must hold.
 
 A bound that is a plain interface application, not negated and not one side of
-`||`, is a **bare bound**. Besides filtering, it lets the body call the
-interface's slots on the constrained type (see [Interface
+`||`, is a **bare bound**. Besides filtering, it grants the declaration the
+slots and associated constants that satisfied it (see [Interface
 bodies](#interface-bodies)). A negated or disjunctive bound is only tested for
 truth.
 
@@ -11719,7 +11740,7 @@ each.
 
 | Term | Meaning |
 | --- | --- |
-| **bare bound** | A `where` bound that is a plain interface application, not negated and not one side of `||`. Besides filtering, it lets the body call the interface's slots. See [where clauses](#where-clauses). |
+| **bare bound** | A `where` bound that is a plain interface application, not negated and not one side of `||`. Besides filtering, it grants the declaration the slots and associated constants that satisfied it. See [where clauses](#where-clauses). |
 | **borrow carrier** | A value that refers to another root without owning it: `^T`, `[]T`, a view, a `dyn` value, a parameter access path. See [Storage roots and borrow carriers](#storage-roots-and-borrow-carriers). |
 | **capability** | Whether a borrow is read-only or mutable. It is part of the carrier's type, spelled `mut`: `[]mut T`, `^mut T`, `dyn mut I`. See [Capabilities and the one rule](#capabilities-and-the-one-rule). |
 | **carrier path** | A projection path from a value to a borrow carrier inside it. A record holding a `[]int` is checked wherever a bare `[]int` is. See [Values that contain borrows](#values-that-contain-borrows). |

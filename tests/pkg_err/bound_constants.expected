@@ -1,0 +1,12 @@
+L0408
+@9:9
+`Rod` has no member `HIDDEN`
+L0363
+@14:9
+`f64` has no field or member `hidden`
+L0363
+@19:9
+`Rod` has no field or member `metres`
+L0306
+@24:8
+unknown type `T.Unit`

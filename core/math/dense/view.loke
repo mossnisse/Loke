@@ -75,9 +75,17 @@ offset :: proc(row, column, row_stride, column_stride: int) -> int {
 @(private)
 conjugate_if :: proc(value: $T, conjugated: bool) -> T where interfaces.Numeric(T) {
 	when (linalg.Scalar(T)) {
-		when (T != T.Real) {
-			if (conjugated) { return value.conjugate(); }
-		}
+		return scalar_conjugate_if(value, conjugated);
+	} else {
+		return value;
+	}
+}
+
+// `conjugate_if` where `T.Real` is granted, which a `when` does not do.
+@(private)
+scalar_conjugate_if :: proc(value: $T, conjugated: bool) -> T where linalg.Scalar(T) {
+	when (T != T.Real) {
+		if (conjugated) { return value.conjugate(); }
 	}
 	return value;
 }

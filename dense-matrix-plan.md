@@ -855,13 +855,14 @@ Decided while implementing:
   `V` with its column of `U`, is multiplied by `conj(z) / |z|` for its first
   component `z` of largest modulus, which is then set to `|z|` exactly. For a
   real `T` that unit is `-1` or `1`, the negation milestone 3 applied.
-- **`T.Real` in `core:math/dense`** is declared again for `f32`, `f64`, and
-  `math.Complex`, privately, because a bound grants a package the slots of
-  `linalg`'s private extensions but not their associated constant; and a
-  `Real` slot on a complex `T`'s parts is reached through a helper bounded by
-  `linalg.Real`. Both are open language questions
-  ([Associated constants through a bound](open-questions.md#associated-constants-through-a-bound),
-  [Slots through an associated type's bound](open-questions.md#slots-through-an-associated-types-bound)).
+- **`T.Real` in `core:math/dense`** is `linalg`'s private extension for
+  `f32`, `f64`, and `math.Complex`, which a `linalg.Scalar(T)` bound grants,
+  with `Real`'s slots on it ([Interface bodies](design.md#interface-bodies)).
+  The milestone first declared `Real` again in the dense package and reached a
+  complex `T`'s parts' slots through helpers bounded by `linalg.Real`, until
+  the language granted both. A method of a factorization record that names
+  `T.Real` restates the bound
+  ([Slots through a record's bound](open-questions.md#slots-through-a-records-bound)).
 
 Complex elements use the scalar kernels. At `-opt=speed` on `x86-64-v3`,
 counting real operations, a 256 x 256 complex product runs at about 8 a
