@@ -1,10 +1,11 @@
 # Geometry library plan
 
-Status: milestones 1 and 2 implemented, 2026-10-30
+Status: milestones 1 to 3 implemented, 2026-10-30
 ([Milestone 1 results](#milestone-1-results),
-[Milestone 2 results](#milestone-2-results)), after its questions were
-settled the same day ([Settled questions](#settled-questions)); milestones 3
-to 5 are proposals.
+[Milestone 2 results](#milestone-2-results),
+[Milestone 3 results](#milestone-3-results)), after its questions were
+settled the same day ([Settled questions](#settled-questions)); milestones 4
+and 5 are proposals.
 [`core:math/geometry`](standard-library.md#coremathgeometry) documents what
 has shipped. This document specifies a
 `core:math/geometry` package of shapes, exact predicates, and the queries
@@ -145,9 +146,11 @@ every ray tracer meets first.
   over many boxes multiplies rather than divides; a zero component gives an
   infinite reciprocal and an unbounded slab.
   The NaN from `0 * inf` (an origin on a slab plane, a direction along it) is
-  dropped by ordering the minimum and maximum so that a NaN loses, and the far
-  distance is widened by `1 + 2*gamma(3)`, as Ize (2013) proves sufficient,
-  so a box that the exact ray touches is never missed. The test is
+  dropped by choosing each slab's near face by the reciprocal's sign and
+  letting a NaN lose both comparisons, and the far distance is widened by
+  `2*gamma(4)` of the larger end's magnitude, from Ize's (2013) `gamma(3)`
+  bound on each distance ([Milestone 3 results](#milestone-3-results)), so a
+  box that the exact ray touches is never missed. The test is
   conservative by design: bounding volumes are where a false miss loses a
   hit and a false hit costs one more test
   ([Settled questions](#settled-questions)).
@@ -393,7 +396,8 @@ Ordered by how much the later parts build on the earlier ones:
    `Plane`, `Segment2`, `Segment3`, `Triangle2`, and `Triangle3`; their
    construction, `contains`, `closest_point`, and distances; box algebra; and
    the overlap tests between boxes, spheres, circles, and planes.
-3. **Rays, culling, and transforms.** `Ray2`, `Ray3`, and `cast` against
+3. **Rays, culling, and transforms.** Done
+   ([Milestone 3 results](#milestone-3-results)). `Ray2`, `Ray3`, and `cast` against
    boxes, spheres, planes, and triangles; segment and triangle closest
    points and overlap with boxes; `Frustum` for each `Depth_Range` and its
    culling tests; `transform_box` and `transform_plane`.
@@ -624,3 +628,94 @@ Decided while implementing:
   exact for integers.
 - **`intersects` has no box-point member**: `contains` is that test, and one
   name for it is enough.
+
+## Milestone 3 results
+
+Done 2026-10-30: rays and `cast`, the closest points of two segments, the
+segment and triangle overlap tests, `Frustum`, `transform_box`, and
+`transform_plane`, with `tests/run/lib_geometry_rays.loke`, in the CPU-level
+corpus. The test checks:
+
+- ray-box casts against an exact rational slab test on 36,000 random integer
+  rays and boxes, scaled by powers of two at `f64` and `f32`, over four
+  ranges, with zero direction components and their `-0` forms, in 2D and 3D,
+  and both forms of the call; and rays along faces and edges, through and
+  past corners, from inside, behind the box, and with no direction;
+- that the widening reaches a box an ulp away and not one `2^-40` away;
+- ray-sphere casts of a unit sphere `10^9` away, on and off the axis, and of
+  a tiny one, where the textbook discriminant cancels, and 2,000 random casts
+  whose hits are on the surface and whose misses pass outside it;
+- 12,000 rays at the vertices, edges, and diagonals of a height-field grid
+  and of a closed latitude-longitude sphere, at `f64` and `f32`, each
+  crossing the surface rather than grazing it, every one hitting a triangle;
+  random rays through chosen barycentric coordinates; and a ray outside an
+  edge by less than the rounding of its edge function, `2^-51`, at both
+  types;
+- segment pairs against Cormen et al.'s test in integers on small
+  coordinates at `f64` (including `2^-400` and `2^400`), `f32`, and `i32`,
+  and against `i128` orientations on near-collinear points `2^50` apart;
+  segments against boxes, against the exact slab test over `[0, 1]`;
+  triangles against integer boxes, against their distance by alternating
+  projections; and the closest points of segments against a sampled grid;
+- frustums for every `Depth_Range`, both handednesses, perspective,
+  orthographic, and an infinite far plane, with and without a view matrix:
+  the view volume's eight corners on their planes within `1e-12`, each
+  face's center inside and outside by `1e-6`, the near and far planes the
+  projection's, and culling inside, touching, outside, and the documented
+  conservative case;
+- transformed boxes equal to the bound of their corners through
+  `transform_point` bit for bit at `f64`, `f32` (whose `transform_point` is
+  the `Simd` form), in 2D, and for integers; transformed planes holding
+  their moved points and sides;
+- a dual number's derivative of the plane, sphere, box, and triangle casts,
+  and compile-time folds of a box cast, a triangle cast, and a transformed
+  box to the run-time bits.
+
+Its output is the same at `-opt=minimal`, `speed`, `size`, and `aggressive`
+and at both CPU levels. All 36 planted bugs fail it, among them a
+Möller-Trumbore ray-triangle test, which leaks at shared edges, and an exact
+edge-function sign left out, which a ray outside an edge by less than its
+rounding catches.
+
+Decided while implementing:
+
+- **The slab widening is symmetric.** The proposal's `far*(1 + 2*gamma(3))`
+  holds for positive distances; a line's range reaches negative ones, where
+  scaling `far` up narrows it. The far end is widened by `2*gamma(4)` of the
+  larger magnitude of the two ends instead, which covers each end's
+  `gamma(3)` error relative to itself and the widening's own rounding. An
+  entry at `+inf` or an exit at `-inf`, a zero direction component with the
+  origin outside its slab, is a miss, and each slab's near face is chosen by
+  the reciprocal's sign, as Williams et al. do, so an origin on a face with
+  the ray along it bounds nothing for either sign of zero.
+- **A box and a ball are solids**: a ray starting inside one meets it at
+  `t_min`, as the closed-set convention gives. A plane and a triangle are
+  surfaces.
+- **The reciprocal is an argument of `cast`**, `cast(ray,
+  ray.inverse_direction(), box, t_min, t_max)`, rather than a second ray
+  type.
+- **`Triangle_Hit` holds all three barycentric coordinates**, as
+  `barycentric` returns them, rather than `u` and `v`.
+- **The watertight test takes only the sign of its exact recomputation**,
+  `orient2d` of the sheared corners, which lifts `f32` to `f64` as Woop et
+  al. do; the computed edge values stay the barycentric weights. Their swap
+  of the x and y axes for a negative direction keeps the winding for
+  backface culling, which `cast` does not do; without culling it negates
+  every edge function and the determinant together, so it is left out.
+- **Segment overlaps are exact for floats**: a 2D segment and a box by its
+  line's `orient2d` against the four corners, and a 3D one in the three
+  coordinate projections, which are its cross-product separating axes. A
+  triangle and a box compare their projections as computed, exact for
+  integers only: an edge's separating axis there has the triangle on both
+  sides of a line through no input point.
+- **`closest_points` returns the parameters `(s, t)`**, and segments gained
+  `at(t)`, rather than returning the two points.
+- **The frustum tests are members of `intersects`**, documented as
+  conservative, and `Frustum` has `from_planes`. Its planes are in the order
+  left, right, bottom, top, near, far.
+- **`transform_box` needs only `Ordered`**, as the milestone 2 boxes did, and
+  has a 2D form for 3 x 3 transforms. Its bound is exactly that of
+  `transform_point`'s corners, which the test checks, and an empty box stays
+  empty. `transform_plane` takes a normal of any length.
+- **2D rays cast against boxes and circles only**; segments and triangles in
+  the plane wait for the polygon milestone's needs.

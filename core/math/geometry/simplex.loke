@@ -96,8 +96,55 @@ barycentric_of :: proc(a, b, c, p: $V, zero: $T) -> Option(linalg.Vector3(T)) wh
 	return .some(linalg.Vector3(T).from_components(T(1) - v - w, v, w));
 }
 
+// Ericson's closest points of two segments (5.1.9), as the parameters `s`
+// and `t` of `p1 + (q1 - p1)*s` and `p2 + (q2 - p2)*t`, each in `[0, 1]`. A
+// segment of no length is its first point, and parallel segments, whose
+// determinant `a*e - b*b` is zero, take `s = 0`.
+@(private)
+closest_parameters :: proc(p1, q1, p2, q2: $V, zero: $T) -> (s: T, t: T) where linalg.Real(T) {
+	one := T(1);
+	d1 := q1 - p1;
+	d2 := q2 - p2;
+	r := p1 - p2;
+	a := d1.dot(d1);
+	e := d2.dot(d2);
+	f := d2.dot(r);
+	if (a == zero && e == zero) { return {zero, zero}; }
+	if (a == zero) { return {zero, clamp_to(f/e, zero, one)}; }
+	c := d1.dot(r);
+	if (e == zero) { return {clamp_to(-c/a, zero, one), zero}; }
+	b := d1.dot(d2);
+	denominator := a*e - b*b;
+	s := zero;
+	if (!(denominator == zero)) { s = clamp_to((b*f - c*e)/denominator, zero, one); }
+	t := (b*s + f)/e;
+	if (t < zero) { return {clamp_to(-c/a, zero, one), zero}; }
+	if (one < t) { return {clamp_to((b - c)/a, zero, one), one}; }
+	return {s, t};
+}
+
+/**
+	The parameters `s` and `t` of the closest points of two segments,
+	`a.at(s)` and `b.at(t)`, each in `[0, 1]` (Ericson, 5.1.9). Where many
+	pairs are closest, as for overlapping parallel segments, it is one of
+	them. A segment of no length has parameter 0.
+*/
+closest_points :: proc{closest_points_segment2, closest_points_segment3};
+
+@(private)
+closest_points_segment2 :: proc(a, b: Segment2($T)) -> (s: T, t: T) where linalg.Real(T) {
+	return closest_parameters(a.a, a.b, b.a, b.b, T(0));
+}
+
+@(private)
+closest_points_segment3 :: proc(a, b: Segment3($T)) -> (s: T, t: T) where linalg.Real(T) {
+	return closest_parameters(a.a, a.b, b.a, b.b, T(0));
+}
+
 impl Segment2($T) {
 	from_points :: proc(a, b: linalg.Vector2(T)) -> Segment2(T) { return {a, b}; }
+	/// `a + (b - a)*t`.
+	at :: proc(self, t: T) -> linalg.Vector2(T) { return self.a + (self.b - self.a)*t; }
 	length :: proc(self) -> T where linalg.Real(T) { return (self.b - self.a).length(); }
 	bounds :: proc(self) -> Aabb2(T) where interfaces.Ordered(T) { return Aabb2(T).from_corners(self.a, self.b); }
 	/// The point of the segment nearest `p`.
@@ -112,6 +159,8 @@ impl Segment2($T) {
 
 impl Segment3($T) {
 	from_points :: proc(a, b: linalg.Vector3(T)) -> Segment3(T) { return {a, b}; }
+	/// `a + (b - a)*t`.
+	at :: proc(self, t: T) -> linalg.Vector3(T) { return self.a + (self.b - self.a)*t; }
 	length :: proc(self) -> T where linalg.Real(T) { return (self.b - self.a).length(); }
 	bounds :: proc(self) -> Aabb3(T) where interfaces.Ordered(T) { return Aabb3(T).from_corners(self.a, self.b); }
 	/// The point of the segment nearest `p`.

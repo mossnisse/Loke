@@ -1,0 +1,271 @@
+// geometry-plan.md "Rays take their range": a ray is `origin + t*direction`,
+// and every cast searches the range of `t` its caller gives. A box and a
+// ball are solids, so a ray that starts inside one hits it at `t_min`.
+@(public)
+package geometry;
+
+import "base:interfaces";
+import "core:math";
+import "core:math/linalg";
+
+/// The points `origin + t*direction`; `direction` need not be a unit vector, and `t` is in units of its length.
+Ray2 :: struct($T: type) where interfaces.Numeric(T) { origin, direction: linalg.Vector2(T) }
+/// The points `origin + t*direction`; `direction` need not be a unit vector, and `t` is in units of its length.
+Ray3 :: struct($T: type) where interfaces.Numeric(T) { origin, direction: linalg.Vector3(T) }
+
+/**
+	Where a ray meets a triangle: at distance `t`, the point
+	`barycentric.x*a + barycentric.y*b + barycentric.z*c`, its coordinates
+	summing to 1.
+*/
+Triangle_Hit :: struct($T: type) where interfaces.Numeric(T) { t: T, barycentric: linalg.Vector3(T) }
+
+impl Ray2($T) {
+	from_origin_direction :: proc(origin, direction: linalg.Vector2(T)) -> Ray2(T) { return {origin, direction}; }
+	/// The ray from `from` with direction `to - from`, so `t` from 0 to 1 is the segment between them.
+	from_points :: proc(from, to: linalg.Vector2(T)) -> Ray2(T) { return {from, to - from}; }
+	/// `origin + direction*t`.
+	at :: proc(self, t: T) -> linalg.Vector2(T) { return self.origin + self.direction*t; }
+	/// `1/direction` per component, infinite for a zero one, which `cast` against many boxes takes.
+	inverse_direction :: proc(self) -> linalg.Vector2(T) where linalg.Real(T) {
+		return linalg.Vector2(T).splat(T(1))/self.direction;
+	}
+}
+
+impl Ray3($T) {
+	from_origin_direction :: proc(origin, direction: linalg.Vector3(T)) -> Ray3(T) { return {origin, direction}; }
+	/// The ray from `from` with direction `to - from`, so `t` from 0 to 1 is the segment between them.
+	from_points :: proc(from, to: linalg.Vector3(T)) -> Ray3(T) { return {from, to - from}; }
+	/// `origin + direction*t`.
+	at :: proc(self, t: T) -> linalg.Vector3(T) { return self.origin + self.direction*t; }
+	/// `1/direction` per component, infinite for a zero one, which `cast` against many boxes takes.
+	inverse_direction :: proc(self) -> linalg.Vector3(T) where linalg.Real(T) {
+		return linalg.Vector3(T).splat(T(1))/self.direction;
+	}
+}
+
+/**
+	The first distance `t` in `[t_min, t_max]` at which the ray meets the
+	shape, or `.none`:
+
+	- `cast(ray, box, t_min, t_max)` and `cast(ray, ray.inverse_direction(),
+	  box, t_min, t_max)`, for an `Aabb2` or an `Aabb3`, is the slab test. It
+	  is conservative: it never misses a box the exact ray meets in the range
+	  while the distances it computes are finite and normal, and may report a
+	  box the ray passes within a few ulps of. Its `t` is the entry distance
+	  as computed, `t_min` for a ray starting inside. A zero direction
+	  component, `0` or `-0`, gives an unbounded slab when the origin is
+	  between that axis's faces, on one included, and none otherwise, and
+	  an empty box is never hit.
+	- `cast(ray, circle, ...)` and `cast(ray, sphere, ...)` solve the
+	  quadratic, `t_min` for a ray starting inside. A ray with a zero
+	  direction is its origin, met at `t_min` when the origin is inside.
+	- `cast(ray, plane, ...)` is `(offset - dot(normal, origin))/dot(normal,
+	  direction)`, `.none` for a ray parallel to the plane.
+	- `cast(ray, triangle, ...)` returns a `Triangle_Hit`, by the watertight
+	  test of Woop, Benthin, and Wald: a ray through an edge or a corner that
+	  triangles share hits at least one of them. A ray in the triangle's
+	  plane, or a triangle of no area, gives `.none`.
+*/
+cast :: proc{
+	cast_ray2_box2,
+	cast_ray2_box2_inverse,
+	cast_ray3_box3,
+	cast_ray3_box3_inverse,
+	cast_ray2_circle,
+	cast_ray3_sphere,
+	cast_ray3_plane,
+	cast_ray3_triangle3,
+};
+
+// The slab test's widening for `T`, `2*gamma(4)` of its unit roundoff:
+// each slab distance is within `gamma(3)` of the exact one relative to
+// itself (Ize, Robust BVH ray traversal, 2013), the entry and exit together
+// within twice that of the larger, and the widening's own rounding is the
+// rest.
+@(private) F32_SLAB_WIDENING :: 8.0*5.9604644775390625e-08/(1.0 - 4.0*5.9604644775390625e-08);
+@(private) F64_SLAB_WIDENING :: 8.0*EPSILON/(1.0 - 4.0*EPSILON);
+
+// One axis of the slab test: the distances to the box's two faces on it,
+// the near face chosen by the sign of `inverse` (Williams et al., 2005),
+// narrowing `[near, far]`. A NaN, from an origin on a face with the ray
+// along it, loses both comparisons, so that face bounds nothing.
+@(private)
+slab :: proc(near: inout $T, far: inout T, low, high, origin, inverse: T) where linalg.Real(T) {
+	near_face, far_face := low, high;
+	if (inverse < T(0)) {
+		near_face = high;
+		far_face = low;
+	}
+	enter := (near_face - origin)*inverse;
+	leave := (far_face - origin)*inverse;
+	if (near < enter) { near = enter; }
+	if (leave < far) { far = leave; }
+}
+
+// The slab test's answer: `near` when it is at most `far` widened by
+// `F*_SLAB_WIDENING` of the larger magnitude. An infinite end needs no
+// widening, and an entry at +inf or an exit at -inf is a slab the ray never
+// enters: a zero direction component with the origin outside it.
+@(private)
+slab_hit :: proc(near, far: $T) -> Option(T) where linalg.Real(T) {
+	infinity := T(math.F64_INFINITY);
+	if (!(near < infinity) || !(-infinity < far)) { return .none; }
+	widening := T(F64_SLAB_WIDENING);
+	when (T == f32) { widening = T(F32_SLAB_WIDENING); }
+	slack := T(0);
+	if (near.is_finite() && far.is_finite()) {
+		larger := near.abs();
+		if (larger < far.abs()) { larger = far.abs(); }
+		slack = larger*widening;
+	}
+	if (at_most(near, far + slack)) { return .some(near); }
+	return .none;
+}
+
+@(private)
+cast_ray2_box2_inverse :: proc(ray: Ray2($T), inverse_direction: linalg.Vector2(T), box: Aabb2(T), t_min, t_max: T) -> Option(T) where linalg.Real(T) {
+	if (box.is_empty()) { return .none; }
+	near, far := t_min, t_max;
+	slab(inout near, inout far, box.min.x, box.max.x, ray.origin.x, inverse_direction.x);
+	slab(inout near, inout far, box.min.y, box.max.y, ray.origin.y, inverse_direction.y);
+	return slab_hit(near, far);
+}
+
+@(private)
+cast_ray2_box2 :: proc(ray: Ray2($T), box: Aabb2(T), t_min, t_max: T) -> Option(T) where linalg.Real(T) {
+	return cast_ray2_box2_inverse(ray, ray.inverse_direction(), box, t_min, t_max);
+}
+
+@(private)
+cast_ray3_box3_inverse :: proc(ray: Ray3($T), inverse_direction: linalg.Vector3(T), box: Aabb3(T), t_min, t_max: T) -> Option(T) where linalg.Real(T) {
+	if (box.is_empty()) { return .none; }
+	near, far := t_min, t_max;
+	slab(inout near, inout far, box.min.x, box.max.x, ray.origin.x, inverse_direction.x);
+	slab(inout near, inout far, box.min.y, box.max.y, ray.origin.y, inverse_direction.y);
+	slab(inout near, inout far, box.min.z, box.max.z, ray.origin.z, inverse_direction.z);
+	return slab_hit(near, far);
+}
+
+@(private)
+cast_ray3_box3 :: proc(ray: Ray3($T), box: Aabb3(T), t_min, t_max: T) -> Option(T) where linalg.Real(T) {
+	return cast_ray3_box3_inverse(ray, ray.inverse_direction(), box, t_min, t_max);
+}
+
+// The roots of `|origin + t*direction - center|^2 = radius^2` in the form of
+// Haines, Günther, and Akenine-Möller (Ray Tracing Gems, 2019, chapter 7):
+// the discriminant `a*(radius^2 - |f + direction*(b/a)|^2)`, from the
+// center's squared distance to the line, rather than `b^2 - a*c`, which
+// cancels for a small ball far away, and the roots `c/q` and `q/a`, with `q`
+// away from zero. The ball is solid, so the first `t` of the range inside it
+// is the hit.
+@(private)
+cast_ball :: proc(origin, direction, center: $V, radius, t_min, t_max: $T) -> Option(T) where linalg.Real(T) {
+	check_radius(radius);
+	f := origin - center;
+	squared_radius := radius*radius;
+	a := direction.dot(direction);
+	if (a == T(0)) {
+		if (at_most(f.dot(f), squared_radius) && at_most(t_min, t_max)) { return .some(t_min); }
+		return .none;
+	}
+	b := -f.dot(direction);
+	l := f + direction*(b/a);
+	discriminant := squared_radius - l.dot(l);
+	if (!at_most(T(0), discriminant)) { return .none; }
+	root := (a*discriminant).sqrt();
+	q := b + root if at_most(T(0), b) else b - root;
+	enter, leave := T(0), T(0);
+	if (!(q == T(0))) {
+		enter = (f.dot(f) - squared_radius)/q;
+		leave = q/a;
+		if (leave < enter) {
+			swap := enter;
+			enter = leave;
+			leave = swap;
+		}
+	}
+	if (enter < t_min) { enter = t_min; }
+	if (t_max < leave) { leave = t_max; }
+	if (at_most(enter, leave)) { return .some(enter); }
+	return .none;
+}
+
+@(private)
+cast_ray2_circle :: proc(ray: Ray2($T), circle: Circle(T), t_min, t_max: T) -> Option(T) where linalg.Real(T) {
+	return cast_ball(ray.origin, ray.direction, circle.center, circle.radius, t_min, t_max);
+}
+
+@(private)
+cast_ray3_sphere :: proc(ray: Ray3($T), sphere: Sphere(T), t_min, t_max: T) -> Option(T) where linalg.Real(T) {
+	return cast_ball(ray.origin, ray.direction, sphere.center, sphere.radius, t_min, t_max);
+}
+
+@(private)
+cast_ray3_plane :: proc(ray: Ray3($T), plane: Plane(T), t_min, t_max: T) -> Option(T) where linalg.Real(T) {
+	denominator := plane.normal.dot(ray.direction);
+	if (denominator == T(0)) { return .none; }
+	t := -plane.signed_distance(ray.origin)/denominator;
+	if (at_most(t_min, t) && at_most(t, t_max)) { return .some(t); }
+	return .none;
+}
+
+// The sign of the edge function `p.x*q.y - p.y*q.x` computed as `value`, and
+// where that is zero, the exact sign of the sheared corners for `f32` and
+// `f64`, as Woop et al. recompute it: `orient2d` of the origin, `p`, and `q`.
+@(private)
+edge_sign :: proc(value: $T, p, q: linalg.Vector2(T)) -> Sign where linalg.Real(T) {
+	if (!(value == T(0))) { return sign_of(value); }
+	when (T == f32 || T == f64) {
+		return orient2d(linalg.Vector2(T).splat(T(0)), p, q);
+	} else {
+		return .Zero;
+	}
+}
+
+// Woop, Benthin, and Wald, Watertight ray/triangle intersection (2013): the
+// corners are moved to the ray's origin, the axis of the direction's largest
+// component becomes z, and the corners are sheared so the ray runs along z.
+// A corner's sheared coordinates depend only on the ray and the corner, and
+// an edge function computed with its corners swapped is exactly its
+// negation, so two triangles sharing an edge agree on which side of it the
+// ray passes. Their swap of x and y for a negative z keeps the winding for
+// backface culling; with hits from both sides it would negate every edge
+// function and the determinant together and change no result, so it is left
+// out.
+@(private)
+cast_ray3_triangle3 :: proc(ray: Ray3($T), triangle: Triangle3(T), t_min, t_max: T) -> Option(Triangle_Hit(T)) where linalg.Real(T) {
+	d := ray.direction;
+	kz := 0;
+	if (d.x.abs() < d.y.abs()) { kz = 1; }
+	if (d[kz].abs() < d.z.abs()) { kz = 2; }
+	kx := (kz + 1) % 3;
+	ky := (kx + 1) % 3;
+	if (d[kz] == T(0)) { return .none; }
+	sx := d[kx]/d[kz];
+	sy := d[ky]/d[kz];
+	sz := T(1)/d[kz];
+
+	a := triangle.a - ray.origin;
+	b := triangle.b - ray.origin;
+	c := triangle.c - ray.origin;
+	a2 := linalg.Vector2(T).from_components(a[kx] - sx*a[kz], a[ky] - sy*a[kz]);
+	b2 := linalg.Vector2(T).from_components(b[kx] - sx*b[kz], b[ky] - sy*b[kz]);
+	c2 := linalg.Vector2(T).from_components(c[kx] - sx*c[kz], c[ky] - sy*c[kz]);
+
+	u := c2.x*b2.y - c2.y*b2.x;
+	v := a2.x*c2.y - a2.y*c2.x;
+	w := b2.x*a2.y - b2.y*a2.x;
+	su := edge_sign(u, c2, b2);
+	sv := edge_sign(v, a2, c2);
+	sw := edge_sign(w, b2, a2);
+	negative := su == .Negative || sv == .Negative || sw == .Negative;
+	positive := su == .Positive || sv == .Positive || sw == .Positive;
+	if (negative && positive) { return .none; }
+
+	det := u + v + w;
+	if (det == T(0)) { return .none; }
+	t := (u*(sz*a[kz]) + v*(sz*b[kz]) + w*(sz*c[kz]))/det;
+	if (!(at_most(t_min, t) && at_most(t, t_max))) { return .none; }
+	return .some(Triangle_Hit(T){t, linalg.Vector3(T).from_components(u/det, v/det, w/det)});
+}

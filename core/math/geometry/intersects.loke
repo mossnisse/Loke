@@ -10,10 +10,21 @@ import "core:math/linalg";
 /**
 	Whether two closed shapes share a point, touching included: two boxes,
 	two circles, two spheres, a circle and a box, a sphere and a box, a sphere
-	and a plane, or a box and a plane, in either order. Box and circle tests
-	need only arithmetic and comparison, so integer shapes get them exactly; an
+	and a plane, a box and a plane, two `Segment2`s, a segment and a box, or
+	a `Triangle3` and an `Aabb3`, in either order. Box and circle tests need
+	only arithmetic and comparison, so integer shapes get them exactly; an
 	empty box intersects nothing, and a negative or NaN radius panics. A plane
 	test takes the plane's normal as a unit vector.
+
+	The segment tests are exact for `f32`, `f64`, and integers, from exact
+	`orient2d` tests. A triangle and a box are tested on the thirteen
+	separating axes of Akenine-Möller (2001), each projection compared as
+	computed, which is exact for integers.
+
+	A `Frustum` and a sphere or a box is conservative, as culling is: it is
+	false only when the shape is wholly outside one plane, so a shape near an
+	edge or a corner of the frustum but outside it can be reported as
+	intersecting.
 */
 intersects :: proc{
 	intersects_box2_box2,
@@ -28,6 +39,17 @@ intersects :: proc{
 	intersects_plane_sphere,
 	intersects_box3_plane,
 	intersects_plane_box3,
+	intersects_segment2_segment2,
+	intersects_segment2_box2,
+	intersects_box2_segment2,
+	intersects_segment3_box3,
+	intersects_box3_segment3,
+	intersects_triangle3_box3,
+	intersects_box3_triangle3,
+	intersects_frustum_sphere,
+	intersects_sphere_frustum,
+	intersects_frustum_box3,
+	intersects_box3_frustum,
 };
 
 @(private)
@@ -100,26 +122,176 @@ intersects_plane_sphere :: proc(plane: Plane($T), sphere: Sphere(T)) -> bool whe
 	return intersects_sphere_plane(sphere, plane);
 }
 
-// The plane separates or touches the two corners farthest apart along its
-// normal: the one each of whose coordinates is the minimum where the normal is
-// positive and the maximum elsewhere, and its opposite. Each corner's signed
-// distance is computed from the corner itself, with no center or extent.
+// The two corners of a box farthest apart along `n`: `low`, each of whose
+// coordinates is the minimum where `n` is not negative and the maximum
+// elsewhere, and its opposite `high`. Every corner's projection on `n` is
+// between theirs, each computed from the corner itself, with no center or
+// extent.
+@(private)
+extreme_corners :: proc(box: Aabb3($T), n: linalg.Vector3(T)) -> (low: linalg.Vector3(T), high: linalg.Vector3(T)) where interfaces.Ordered(T) {
+	return {
+		linalg.Vector3(T).from_components(
+			box.min.x if at_most(T(0), n.x) else box.max.x,
+			box.min.y if at_most(T(0), n.y) else box.max.y,
+			box.min.z if at_most(T(0), n.z) else box.max.z),
+		linalg.Vector3(T).from_components(
+			box.max.x if at_most(T(0), n.x) else box.min.x,
+			box.max.y if at_most(T(0), n.y) else box.min.y,
+			box.max.z if at_most(T(0), n.z) else box.min.z),
+	};
+}
+
+// The plane separates or touches the box's two extreme corners along its
+// normal.
 @(private)
 intersects_box3_plane :: proc(box: Aabb3($T), plane: Plane(T)) -> bool where interfaces.Ordered(T) {
 	if (box.is_empty()) { return false; }
-	n := plane.normal;
-	low := linalg.Vector3(T).from_components(
-		box.min.x if at_most(T(0), n.x) else box.max.x,
-		box.min.y if at_most(T(0), n.y) else box.max.y,
-		box.min.z if at_most(T(0), n.z) else box.max.z);
-	high := linalg.Vector3(T).from_components(
-		box.max.x if at_most(T(0), n.x) else box.min.x,
-		box.max.y if at_most(T(0), n.y) else box.min.y,
-		box.max.z if at_most(T(0), n.z) else box.min.z);
+	low, high := extreme_corners(box, plane.normal);
 	return at_most(plane.signed_distance(low), T(0)) && at_most(T(0), plane.signed_distance(high));
 }
 
 @(private)
 intersects_plane_box3 :: proc(plane: Plane($T), box: Aabb3(T)) -> bool where interfaces.Ordered(T) {
 	return intersects_box3_plane(box, plane);
+}
+
+// Whether two orientations are strictly on the same side.
+@(private)
+same_side :: proc(a, b: Sign) -> bool { return a == b && a != .Zero; }
+
+// Neither segment's line has the other's ends strictly on one side, and
+// segments on one line overlap as their bounds do. A segment of no length is
+// its point: its orientations against the other are all zero, so the other
+// segment's line decides, and then the bounds.
+@(private)
+intersects_segment2_segment2 :: proc(a, b: Segment2($T)) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) {
+	o1 := orient2d(a.a, a.b, b.a);
+	o2 := orient2d(a.a, a.b, b.b);
+	o3 := orient2d(b.a, b.b, a.a);
+	o4 := orient2d(b.a, b.b, a.b);
+	if (same_side(o1, o2) || same_side(o3, o4)) { return false; }
+	if (o1 == .Zero && o2 == .Zero && o3 == .Zero && o4 == .Zero) {
+		return intersects_box2_box2(a.bounds(), b.bounds());
+	}
+	return true;
+}
+
+// Whether the line through `a` and `b` has the four corners of the
+// rectangle from `low` to `high` strictly on one side of it, by exact
+// `orient2d` tests. A line of no direction separates nothing.
+@(private)
+line_separates :: proc(a, b, low, high: linalg.Vector2($T)) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) {
+	s0 := orient2d(a, b, low);
+	s1 := orient2d(a, b, linalg.Vector2(T).from_components(high.x, low.y));
+	s2 := orient2d(a, b, high);
+	s3 := orient2d(a, b, linalg.Vector2(T).from_components(low.x, high.y));
+	return same_side(s0, s1) && s1 == s2 && s2 == s3;
+}
+
+// The separating axes of a segment and a box (Ericson 5.3.3) are the box's
+// axes, which the bounds test, and the segment's direction crossed with
+// each of them, which separate exactly when the segment's line separates the
+// box in the projection along that axis.
+@(private)
+intersects_segment2_box2 :: proc(segment: Segment2($T), box: Aabb2(T)) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) {
+	if (!intersects_box2_box2(segment.bounds(), box)) { return false; }
+	return !line_separates(segment.a, segment.b, box.min, box.max);
+}
+
+@(private)
+intersects_box2_segment2 :: proc(box: Aabb2($T), segment: Segment2(T)) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) {
+	return intersects_segment2_box2(segment, box);
+}
+
+@(private)
+yz :: proc(v: linalg.Vector3($T)) -> linalg.Vector2(T) { return linalg.Vector2(T).from_components(v.y, v.z); }
+@(private)
+zx :: proc(v: linalg.Vector3($T)) -> linalg.Vector2(T) { return linalg.Vector2(T).from_components(v.z, v.x); }
+@(private)
+xy :: proc(v: linalg.Vector3($T)) -> linalg.Vector2(T) { return linalg.Vector2(T).from_components(v.x, v.y); }
+
+@(private)
+intersects_segment3_box3 :: proc(segment: Segment3($T), box: Aabb3(T)) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) {
+	if (!intersects_box3_box3(segment.bounds(), box)) { return false; }
+	a, b := segment.a, segment.b;
+	return !line_separates(yz(a), yz(b), yz(box.min), yz(box.max))
+		&& !line_separates(zx(a), zx(b), zx(box.min), zx(box.max))
+		&& !line_separates(xy(a), xy(b), xy(box.min), xy(box.max));
+}
+
+@(private)
+intersects_box3_segment3 :: proc(box: Aabb3($T), segment: Segment3(T)) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) {
+	return intersects_segment3_box3(segment, box);
+}
+
+// Whether `axis` separates the triangle `a`, `b`, `c` from the box: the
+// triangle's projections all below the box's lowest, or all above its
+// highest. A zero axis separates nothing.
+@(private)
+axis_separates :: proc(axis, a, b, c: linalg.Vector3($T), box: Aabb3(T)) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) {
+	pa, pb, pc := axis.dot(a), axis.dot(b), axis.dot(c);
+	low, high := extreme_corners(box, axis);
+	box_low, box_high := axis.dot(low), axis.dot(high);
+	return (pa < box_low && pb < box_low && pc < box_low)
+		|| (box_high < pa && box_high < pb && box_high < pc);
+}
+
+// Akenine-Möller, Fast 3D triangle-box overlap testing (2001): the box's
+// three axes, which the bounds test, the triangle's normal, and each edge
+// crossed with each box axis. `e_x` crossed with an edge `f` is
+// `(0, -f.z, f.y)`, written out so that it needs no negation.
+@(private)
+intersects_triangle3_box3 :: proc(triangle: Triangle3($T), box: Aabb3(T)) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) {
+	if (!intersects_box3_box3(triangle.bounds(), box)) { return false; }
+	a, b, c := triangle.a, triangle.b, triangle.c;
+	f0 := b - a;
+	f1 := c - b;
+	f2 := a - c;
+	if (axis_separates(f0.cross(c - a), a, b, c, box)) { return false; }
+	zero := T(0);
+	foreach (f in [3]linalg.Vector3(T){f0, f1, f2}) {
+		x := linalg.Vector3(T).from_components(zero, zero - f.z, f.y);
+		y := linalg.Vector3(T).from_components(f.z, zero, zero - f.x);
+		z := linalg.Vector3(T).from_components(zero - f.y, f.x, zero);
+		if (axis_separates(x, a, b, c, box) || axis_separates(y, a, b, c, box) || axis_separates(z, a, b, c, box)) {
+			return false;
+		}
+	}
+	return true;
+}
+
+@(private)
+intersects_box3_triangle3 :: proc(box: Aabb3($T), triangle: Triangle3(T)) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) {
+	return intersects_triangle3_box3(triangle, box);
+}
+
+// Outside when the center is more than `radius` behind one plane.
+@(private)
+intersects_frustum_sphere :: proc(frustum: Frustum($T), sphere: Sphere(T)) -> bool where linalg.Real(T) {
+	check_radius(sphere.radius);
+	foreach (plane in frustum.planes) {
+		if (plane.signed_distance(sphere.center) < -sphere.radius) { return false; }
+	}
+	return true;
+}
+
+@(private)
+intersects_sphere_frustum :: proc(sphere: Sphere($T), frustum: Frustum(T)) -> bool where linalg.Real(T) {
+	return intersects_frustum_sphere(frustum, sphere);
+}
+
+// Outside when the corner farthest along a plane's normal is behind it.
+@(private)
+intersects_frustum_box3 :: proc(frustum: Frustum($T), box: Aabb3(T)) -> bool where linalg.Real(T) {
+	if (box.is_empty()) { return false; }
+	foreach (plane in frustum.planes) {
+		_, high := extreme_corners(box, plane.normal);
+		if (plane.signed_distance(high) < T(0)) { return false; }
+	}
+	return true;
+}
+
+@(private)
+intersects_box3_frustum :: proc(box: Aabb3($T), frustum: Frustum(T)) -> bool where linalg.Real(T) {
+	return intersects_frustum_box3(frustum, box);
 }

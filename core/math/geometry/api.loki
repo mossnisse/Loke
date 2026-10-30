@@ -13,6 +13,17 @@
 	has a constructor: `from_min_max`, `from_corners`, `from_center_radius`,
 	`from_normal_offset`, or `from_points`.
 
+	`Ray2` and `Ray3` are `origin + t*direction`, and `cast` finds where one
+	meets a box, a circle or a sphere, a plane, or a triangle within the range
+	of `t` its caller gives: conservatively for a box, which is never missed,
+	and watertight for triangles, so a ray through an edge two triangles
+	share hits one. `intersects` also tests segments against segments and
+	boxes, exactly from the predicates, and triangles against boxes. A
+	`Frustum` is the six planes of a clip matrix for a stated
+	`linalg.Depth_Range`, and culls spheres and boxes conservatively.
+	`transform_box` and `transform_plane` move a box's bound and a plane by a
+	transform.
+
 	`orient2d`, `orient3d`, `incircle`, and `insphere` return the exact sign of
 	their determinant for `f32` and `f64` coordinates, as if computed in real
 	arithmetic, so code built on them cannot contradict itself: three points
@@ -189,6 +200,35 @@ impl Aabb3($T) {
 }
 
 /*
+	The view volume of a camera as six planes with inward normals, in the
+	order left, right, bottom, top, near, far: a point is inside when its
+	`signed_distance` to every plane is at least 0.
+*/
+Frustum :: struct($T: type) where interfaces.Numeric(T) {
+	planes: [6]Plane(T),
+}
+
+impl Frustum($T) {
+	// The frustum with the planes as given, left, right, bottom, top, near, far.
+	from_planes :: proc(planes: [6]Plane(T)) -> Frustum(T) ---;
+
+	/*
+		The planes of `clip = projection * view`, which maps the frustum to
+		`-w <= x, y <= w` and `z` in `depth`'s range, with unit normals pointing
+		inward. The depth range decides which rows are the near and far
+		planes, so it is required. A far plane at infinity, from
+		`linalg.perspective` with an infinite `far`, has a zero normal; it is
+		stored as normal 0 and offset -1, which every point is inside. `.none`
+		when any other plane's normal does not normalize, which no valid
+		projection gives.
+	*/
+	from_matrix :: proc(clip: linalg.Matrix(T, 4, 4), depth: linalg.Depth_Range) -> Option(Frustum(T)) where linalg.Real(T) ---;
+
+	// Whether `p` is inside or on every plane.
+	contains :: proc(self, p: linalg.Vector3(T)) -> bool where interfaces.Ordered(T) ---;
+}
+
+/*
 	The sign of a predicate's determinant. What `.Positive` means is stated on
 	each predicate.
 */
@@ -197,10 +237,21 @@ Sign :: enum { Negative, Zero, Positive }
 /*
 	Whether two closed shapes share a point, touching included: two boxes,
 	two circles, two spheres, a circle and a box, a sphere and a box, a sphere
-	and a plane, or a box and a plane, in either order. Box and circle tests
-	need only arithmetic and comparison, so integer shapes get them exactly; an
+	and a plane, a box and a plane, two `Segment2`s, a segment and a box, or
+	a `Triangle3` and an `Aabb3`, in either order. Box and circle tests need
+	only arithmetic and comparison, so integer shapes get them exactly; an
 	empty box intersects nothing, and a negative or NaN radius panics. A plane
 	test takes the plane's normal as a unit vector.
+
+	The segment tests are exact for `f32`, `f64`, and integers, from exact
+	`orient2d` tests. A triangle and a box are tested on the thirteen
+	separating axes of Akenine-Möller (2001), each projection compared as
+	computed, which is exact for integers.
+
+	A `Frustum` and a sphere or a box is conservative, as culling is: it is
+	false only when the shape is wholly outside one plane, so a shape near an
+	edge or a corner of the frustum but outside it can be reported as
+	intersecting.
 */
 intersects :: proc{
 	intersects_box2_box2,
@@ -215,6 +266,17 @@ intersects :: proc{
 	intersects_plane_sphere,
 	intersects_box3_plane,
 	intersects_plane_box3,
+	intersects_segment2_segment2,
+	intersects_segment2_box2,
+	intersects_box2_segment2,
+	intersects_segment3_box3,
+	intersects_box3_segment3,
+	intersects_triangle3_box3,
+	intersects_box3_triangle3,
+	intersects_frustum_sphere,
+	intersects_sphere_frustum,
+	intersects_frustum_box3,
+	intersects_box3_frustum,
 };
 
 // Private to the package, but a public declaration names it.
@@ -252,6 +314,39 @@ intersects_box3_plane :: proc(box: Aabb3($T), plane: Plane(T)) -> bool where int
 
 // Private to the package, but a public declaration names it.
 intersects_plane_box3 :: proc(plane: Plane($T), box: Aabb3(T)) -> bool where interfaces.Ordered(T) ---;
+
+// Private to the package, but a public declaration names it.
+intersects_segment2_segment2 :: proc(a, b: Segment2($T)) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) ---;
+
+// Private to the package, but a public declaration names it.
+intersects_segment2_box2 :: proc(segment: Segment2($T), box: Aabb2(T)) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) ---;
+
+// Private to the package, but a public declaration names it.
+intersects_box2_segment2 :: proc(box: Aabb2($T), segment: Segment2(T)) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) ---;
+
+// Private to the package, but a public declaration names it.
+intersects_segment3_box3 :: proc(segment: Segment3($T), box: Aabb3(T)) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) ---;
+
+// Private to the package, but a public declaration names it.
+intersects_box3_segment3 :: proc(box: Aabb3($T), segment: Segment3(T)) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) ---;
+
+// Private to the package, but a public declaration names it.
+intersects_triangle3_box3 :: proc(triangle: Triangle3($T), box: Aabb3(T)) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) ---;
+
+// Private to the package, but a public declaration names it.
+intersects_box3_triangle3 :: proc(box: Aabb3($T), triangle: Triangle3(T)) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) ---;
+
+// Private to the package, but a public declaration names it.
+intersects_frustum_sphere :: proc(frustum: Frustum($T), sphere: Sphere(T)) -> bool where linalg.Real(T) ---;
+
+// Private to the package, but a public declaration names it.
+intersects_sphere_frustum :: proc(sphere: Sphere($T), frustum: Frustum(T)) -> bool where linalg.Real(T) ---;
+
+// Private to the package, but a public declaration names it.
+intersects_frustum_box3 :: proc(frustum: Frustum($T), box: Aabb3(T)) -> bool where linalg.Real(T) ---;
+
+// Private to the package, but a public declaration names it.
+intersects_box3_frustum :: proc(box: Aabb3($T), frustum: Frustum(T)) -> bool where linalg.Real(T) ---;
 
 /*
 	The plane of the points `p` with `dot(normal, p) == offset`. Its positive
@@ -352,6 +447,110 @@ incircle :: proc(a, b, c, d: linalg.Vector2($T)) -> Sign where interfaces.Numeri
 */
 insphere :: proc(a, b, c, d, e: linalg.Vector3($T)) -> Sign where interfaces.Numeric(T), interfaces.Ordered(T) ---;
 
+// The points `origin + t*direction`; `direction` need not be a unit vector, and `t` is in units of its length.
+Ray2 :: struct($T: type) where interfaces.Numeric(T) {
+	origin, direction: linalg.Vector2(T),
+}
+
+// The points `origin + t*direction`; `direction` need not be a unit vector, and `t` is in units of its length.
+Ray3 :: struct($T: type) where interfaces.Numeric(T) {
+	origin, direction: linalg.Vector3(T),
+}
+
+/*
+	Where a ray meets a triangle: at distance `t`, the point
+	`barycentric.x*a + barycentric.y*b + barycentric.z*c`, its coordinates
+	summing to 1.
+*/
+Triangle_Hit :: struct($T: type) where interfaces.Numeric(T) {
+	t: T,
+	barycentric: linalg.Vector3(T),
+}
+
+impl Ray2($T) {
+	from_origin_direction :: proc(origin, direction: linalg.Vector2(T)) -> Ray2(T) ---;
+
+	// The ray from `from` with direction `to - from`, so `t` from 0 to 1 is the segment between them.
+	from_points :: proc(from, to: linalg.Vector2(T)) -> Ray2(T) ---;
+
+	// `origin + direction*t`.
+	at :: proc(self, t: T) -> linalg.Vector2(T) ---;
+
+	// `1/direction` per component, infinite for a zero one, which `cast` against many boxes takes.
+	inverse_direction :: proc(self) -> linalg.Vector2(T) where linalg.Real(T) ---;
+}
+
+impl Ray3($T) {
+	from_origin_direction :: proc(origin, direction: linalg.Vector3(T)) -> Ray3(T) ---;
+
+	// The ray from `from` with direction `to - from`, so `t` from 0 to 1 is the segment between them.
+	from_points :: proc(from, to: linalg.Vector3(T)) -> Ray3(T) ---;
+
+	// `origin + direction*t`.
+	at :: proc(self, t: T) -> linalg.Vector3(T) ---;
+
+	// `1/direction` per component, infinite for a zero one, which `cast` against many boxes takes.
+	inverse_direction :: proc(self) -> linalg.Vector3(T) where linalg.Real(T) ---;
+}
+
+/*
+	The first distance `t` in `[t_min, t_max]` at which the ray meets the
+	shape, or `.none`:
+
+	- `cast(ray, box, t_min, t_max)` and `cast(ray, ray.inverse_direction(),
+	  box, t_min, t_max)`, for an `Aabb2` or an `Aabb3`, is the slab test. It
+	  is conservative: it never misses a box the exact ray meets in the range
+	  while the distances it computes are finite and normal, and may report a
+	  box the ray passes within a few ulps of. Its `t` is the entry distance
+	  as computed, `t_min` for a ray starting inside. A zero direction
+	  component, `0` or `-0`, gives an unbounded slab when the origin is
+	  between that axis's faces, on one included, and none otherwise, and
+	  an empty box is never hit.
+	- `cast(ray, circle, ...)` and `cast(ray, sphere, ...)` solve the
+	  quadratic, `t_min` for a ray starting inside. A ray with a zero
+	  direction is its origin, met at `t_min` when the origin is inside.
+	- `cast(ray, plane, ...)` is `(offset - dot(normal, origin))/dot(normal,
+	  direction)`, `.none` for a ray parallel to the plane.
+	- `cast(ray, triangle, ...)` returns a `Triangle_Hit`, by the watertight
+	  test of Woop, Benthin, and Wald: a ray through an edge or a corner that
+	  triangles share hits at least one of them. A ray in the triangle's
+	  plane, or a triangle of no area, gives `.none`.
+*/
+cast :: proc{
+	cast_ray2_box2,
+	cast_ray2_box2_inverse,
+	cast_ray3_box3,
+	cast_ray3_box3_inverse,
+	cast_ray2_circle,
+	cast_ray3_sphere,
+	cast_ray3_plane,
+	cast_ray3_triangle3,
+};
+
+// Private to the package, but a public declaration names it.
+cast_ray2_box2_inverse :: proc(ray: Ray2($T), inverse_direction: linalg.Vector2(T), box: Aabb2(T), t_min, t_max: T) -> Option(T) where linalg.Real(T) ---;
+
+// Private to the package, but a public declaration names it.
+cast_ray2_box2 :: proc(ray: Ray2($T), box: Aabb2(T), t_min, t_max: T) -> Option(T) where linalg.Real(T) ---;
+
+// Private to the package, but a public declaration names it.
+cast_ray3_box3_inverse :: proc(ray: Ray3($T), inverse_direction: linalg.Vector3(T), box: Aabb3(T), t_min, t_max: T) -> Option(T) where linalg.Real(T) ---;
+
+// Private to the package, but a public declaration names it.
+cast_ray3_box3 :: proc(ray: Ray3($T), box: Aabb3(T), t_min, t_max: T) -> Option(T) where linalg.Real(T) ---;
+
+// Private to the package, but a public declaration names it.
+cast_ray2_circle :: proc(ray: Ray2($T), circle: Circle(T), t_min, t_max: T) -> Option(T) where linalg.Real(T) ---;
+
+// Private to the package, but a public declaration names it.
+cast_ray3_sphere :: proc(ray: Ray3($T), sphere: Sphere(T), t_min, t_max: T) -> Option(T) where linalg.Real(T) ---;
+
+// Private to the package, but a public declaration names it.
+cast_ray3_plane :: proc(ray: Ray3($T), plane: Plane(T), t_min, t_max: T) -> Option(T) where linalg.Real(T) ---;
+
+// Private to the package, but a public declaration names it.
+cast_ray3_triangle3 :: proc(ray: Ray3($T), triangle: Triangle3(T), t_min, t_max: T) -> Option(Triangle_Hit(T)) where linalg.Real(T) ---;
+
 // The points from `a` to `b`, both ends included.
 Segment2 :: struct($T: type) where interfaces.Numeric(T) {
 	a, b: linalg.Vector2(T),
@@ -372,8 +571,25 @@ Triangle3 :: struct($T: type) where interfaces.Numeric(T) {
 	a, b, c: linalg.Vector3(T),
 }
 
+/*
+	The parameters `s` and `t` of the closest points of two segments,
+	`a.at(s)` and `b.at(t)`, each in `[0, 1]` (Ericson, 5.1.9). Where many
+	pairs are closest, as for overlapping parallel segments, it is one of
+	them. A segment of no length has parameter 0.
+*/
+closest_points :: proc{closest_points_segment2, closest_points_segment3};
+
+// Private to the package, but a public declaration names it.
+closest_points_segment2 :: proc(a, b: Segment2($T)) -> (s: T, t: T) where linalg.Real(T) ---;
+
+// Private to the package, but a public declaration names it.
+closest_points_segment3 :: proc(a, b: Segment3($T)) -> (s: T, t: T) where linalg.Real(T) ---;
+
 impl Segment2($T) {
 	from_points :: proc(a, b: linalg.Vector2(T)) -> Segment2(T) ---;
+
+	// `a + (b - a)*t`.
+	at :: proc(self, t: T) -> linalg.Vector2(T) ---;
 
 	length :: proc(self) -> T where linalg.Real(T) ---;
 
@@ -389,6 +605,9 @@ impl Segment2($T) {
 
 impl Segment3($T) {
 	from_points :: proc(a, b: linalg.Vector3(T)) -> Segment3(T) ---;
+
+	// `a + (b - a)*t`.
+	at :: proc(self, t: T) -> linalg.Vector3(T) ---;
 
 	length :: proc(self) -> T where linalg.Real(T) ---;
 
@@ -506,3 +725,30 @@ impl Sphere($T) {
 	// The distance from `p` to the ball, `|p - center| - radius`, and 0 inside it.
 	distance :: proc(self, p: linalg.Vector3(T)) -> T where linalg.Real(T) ---;
 }
+
+/*
+	The box around the transformed box: `transform_box(m, box)` for a 4 x 4
+	affine `m` and an `Aabb3`, or a 3 x 3 `m` and an `Aabb2`, the last row
+	taken as the identity's, as `transform_point` takes it. Each bound is the
+	sum, in `transform_point`'s order, of each element's product with the
+	box's minimum or maximum, whichever is smaller (or larger), so it is
+	exactly the bound of the box's corners as `transform_point` moves them,
+	without forming them, and exact for integers. It bounds the transformed
+	box, not the shape inside it. An empty box stays empty.
+*/
+transform_box :: proc{transform_box2, transform_box3};
+
+// Private to the package, but a public declaration names it.
+transform_box3 :: proc(m: linalg.Matrix($T, 4, 4), box: Aabb3(T)) -> Aabb3(T) where interfaces.Ordered(T) ---;
+
+// Private to the package, but a public declaration names it.
+transform_box2 :: proc(m: linalg.Matrix($T, 3, 3), box: Aabb2(T)) -> Aabb2(T) where interfaces.Ordered(T) ---;
+
+/*
+	The plane `m` moves `plane` to, for a 4 x 4 affine `m`: its normal through
+	`m.normal_matrix()`, its offset `offset + dot(normal', translation)`, both
+	divided by the new normal's length, so any normal, unit or not, gives a
+	unit one. `.none` when `m`'s linear part has no inverse or the new normal
+	does not normalize.
+*/
+transform_plane :: proc(m: linalg.Matrix($T, 4, 4), plane: Plane(T)) -> Option(Plane(T)) where linalg.Real(T) ---;

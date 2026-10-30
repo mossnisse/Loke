@@ -11,6 +11,17 @@
 	has a constructor: `from_min_max`, `from_corners`, `from_center_radius`,
 	`from_normal_offset`, or `from_points`.
 
+	`Ray2` and `Ray3` are `origin + t*direction`, and `cast` finds where one
+	meets a box, a circle or a sphere, a plane, or a triangle within the range
+	of `t` its caller gives: conservatively for a box, which is never missed,
+	and watertight for triangles, so a ray through an edge two triangles
+	share hits one. `intersects` also tests segments against segments and
+	boxes, exactly from the predicates, and triangles against boxes. A
+	`Frustum` is the six planes of a clip matrix for a stated
+	`linalg.Depth_Range`, and culls spheres and boxes conservatively.
+	`transform_box` and `transform_plane` move a box's bound and a plane by a
+	transform.
+
 	`orient2d`, `orient3d`, `incircle`, and `insphere` return the exact sign of
 	their determinant for `f32` and `f64` coordinates, as if computed in real
 	arithmetic, so code built on them cannot contradict itself: three points
@@ -24,7 +35,7 @@
 	level, and at compile time for whatever does not reach a square root,
 	which calls a foreign procedure.
 */
-// geometry-plan.md is the design this package implements, milestones 1 and 2.
+// geometry-plan.md is the design this package implements, milestones 1 to 3.
 @(public)
 package geometry;
 

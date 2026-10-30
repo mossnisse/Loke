@@ -1,0 +1,82 @@
+// geometry-plan.md "Frustums take their clip depth": the six planes of a
+// clip matrix by Gribb and Hartmann (2001), normals inward. The side planes
+// are the same for every depth range, and the near and far planes are the
+// rows its table gives.
+@(public)
+package geometry;
+
+import "base:interfaces";
+import "core:math/linalg";
+
+/**
+	The view volume of a camera as six planes with inward normals, in the
+	order left, right, bottom, top, near, far: a point is inside when its
+	`signed_distance` to every plane is at least 0.
+*/
+Frustum :: struct($T: type) where interfaces.Numeric(T) { planes: [6]Plane(T) }
+
+impl Frustum($T) {
+	/// The frustum with the planes as given, left, right, bottom, top, near, far.
+	from_planes :: proc(planes: [6]Plane(T)) -> Frustum(T) { return {planes}; }
+	/**
+		The planes of `clip = projection * view`, which maps the frustum to
+		`-w <= x, y <= w` and `z` in `depth`'s range, with unit normals pointing
+		inward. The depth range decides which rows are the near and far
+		planes, so it is required. A far plane at infinity, from
+		`linalg.perspective` with an infinite `far`, has a zero normal; it is
+		stored as normal 0 and offset -1, which every point is inside. `.none`
+		when any other plane's normal does not normalize, which no valid
+		projection gives.
+	*/
+	from_matrix :: proc(clip: linalg.Matrix(T, 4, 4), depth: linalg.Depth_Range) -> Option(Frustum(T)) where linalg.Real(T) {
+		r0 := clip.row(0);
+		r1 := clip.row(1);
+		r2 := clip.row(2);
+		r3 := clip.row(3);
+		near_row, far_row := plus(r3, r2), minus(r3, r2);
+		switch (depth) {
+		case .Negative_One_To_One:
+		case .Zero_To_One:
+			near_row = r2;
+		case .One_To_Zero:
+			near_row = minus(r3, r2);
+			far_row = r2;
+		}
+		left := plane_of_row(plus(r3, r0)) or_return;
+		right := plane_of_row(minus(r3, r0)) or_return;
+		bottom := plane_of_row(plus(r3, r1)) or_return;
+		top := plane_of_row(minus(r3, r1)) or_return;
+		near := plane_of_row(near_row) or_return;
+		zero := T(0);
+		far := Plane(T){linalg.Vector3(T).splat(zero), -T(1)};
+		if (!(far_row[0] == zero && far_row[1] == zero && far_row[2] == zero && zero < far_row[3])) {
+			far = plane_of_row(far_row) or_return;
+		}
+		return .some(Frustum(T){{left, right, bottom, top, near, far}});
+	}
+
+	/// Whether `p` is inside or on every plane.
+	contains :: proc(self, p: linalg.Vector3(T)) -> bool where interfaces.Ordered(T) {
+		foreach (plane in self.planes) {
+			if (!at_most(T(0), plane.signed_distance(p))) { return false; }
+		}
+		return true;
+	}
+}
+
+@(private)
+plus :: proc(a, b: [4]$T) -> [4]T where interfaces.Numeric(T) { return {a[0] + b[0], a[1] + b[1], a[2] + b[2], a[3] + b[3]}; }
+
+@(private)
+minus :: proc(a, b: [4]$T) -> [4]T where interfaces.Numeric(T) { return {a[0] - b[0], a[1] - b[1], a[2] - b[2], a[3] - b[3]}; }
+
+// The plane `dot((x, y, z), p) + w >= 0` of a row combination, divided by
+// the length of `(x, y, z)`, or `.none` when that does not normalize.
+@(private)
+plane_of_row :: proc(row: [4]$T) -> Option(Plane(T)) where linalg.Real(T) {
+	normal := linalg.Vector3(T).from_components(row[0], row[1], row[2]);
+	squared := normal.length_squared();
+	if (!squared.is_normal()) { return .none; }
+	length := squared.sqrt();
+	return .some(Plane(T){normal/length, -row[3]/length});
+}

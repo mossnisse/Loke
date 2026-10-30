@@ -143,7 +143,7 @@ core:math             elementary functions, Complex, Quaternion
 core:math/repro       correctly rounded elementary functions
 core:math/linalg      fixed-size vectors, matrices, rotations, projections
 core:math/dense       run-time-sized matrices, views, LU, Cholesky, QR, eigenvalues, SVD
-core:math/geometry    boxes, spheres, planes, segments, triangles, exact predicates
+core:math/geometry    shapes, rays, frustums, overlap tests, exact predicates
 core:random           seeded generators, entropy, distributions
 core:time             clocks, durations, the calendar, ISO 8601 text
 core:slice            slice algorithms and sorting            *
@@ -2720,9 +2720,10 @@ to share runs on the calling thread.
 
 ## `core:math/geometry`
 
-Shapes and exact geometric predicates over `core:math/linalg`'s vectors, from
-the [geometry library plan](geometry-plan.md), whose rays, frustums, and
-polygons follow in its later milestones.
+Shapes, rays, frustums, and exact geometric predicates over
+`core:math/linalg`'s vectors, from the
+[geometry library plan](geometry-plan.md), whose polygons and measured
+performance follow in its later milestones.
 
 `orient2d(a, b, c)`, `orient3d(a, b, c, d)`, `incircle(a, b, c, d)`, and
 `insphere(a, b, c, d, e)` return a `Sign`, `.Negative`, `.Zero`, or
@@ -2801,17 +2802,82 @@ a constructor: `from_min_max` (as given), `from_corners` (sorted),
   edges for `f32`, `f64`, and integers, for either winding, and
   `Triangle2.closest_point` of a point it contains is that point.
 
+`closest_points(a, b)` of two segments returns the parameters `s` and `t` of
+their closest points, `a.at(s)` and `b.at(t)`, each in `[0, 1]` (Ericson's
+method), with `s = 0` for parallel segments and for one of no length.
+
 `intersects(a, b)` takes two boxes, two circles, two spheres, a circle and a
-box, a sphere and a box, a sphere and a plane, or a box and a plane, in either
+box, a sphere and a box, a sphere and a plane, a box and a plane, two
+`Segment2`s, a segment and a box, or a `Triangle3` and an `Aabb3`, in either
 order. A box and a plane intersect when the plane separates or touches the two
 corners farthest apart along its normal, each corner's distance computed from
 the corner itself. Every test compares the values it computes, so integer
-boxes, circles, and planes intersect exactly.
+shapes intersect exactly. The segment tests are exact for `f32` and `f64`
+too: each side test is an exact `orient2d`, a 3D segment and a box are tested
+in the three coordinate projections, and segments on one line overlap as their
+bounds do. A triangle and a box are tested on the thirteen separating axes of
+Akenine-Möller, each projection compared as computed.
+
+`Ray2(T)` and `Ray3(T)` have `origin` and `direction`, which need not be a
+unit vector; `from_origin_direction`, `from_points(from, to)`, whose
+direction is `to - from`, `at(t)`, and `inverse_direction()`, `1/direction`
+per component. `cast(ray, shape, t_min, t_max)` is the first `t` in the
+closed range at which the ray meets the shape, or `.none`; the range is
+required, since a ray tracer starts past the surface it left and a line is
+`[-inf, inf]`.
+
+- **A box**, `Aabb2` or `Aabb3`, is the slab test, with the reciprocal from
+  `cast(ray, ray.inverse_direction(), box, t_min, t_max)` computed once for
+  many boxes. It is conservative: the exit distance is widened by `2*gamma(4)`
+  of the larger end's magnitude, which covers both ends' rounding, so a box
+  the exact ray meets is never missed while the distances it computes are
+  finite and normal, and a box the ray passes within a few ulps of may be
+  reported. A zero direction component gives an unbounded slab when the
+  origin is between its faces and an empty one otherwise, with an origin on a
+  face counting as between, `-0` as well as `0`.
+- **A circle or a sphere** solves the quadratic in the form of Haines et al.,
+  which takes the discriminant from the center's distance to the line, so a
+  small ball far away keeps its hit. A box and a ball are solids, so a ray
+  starting inside one meets it at `t_min`. A ray with a zero direction is its
+  origin, met at `t_min` when the origin is inside.
+- **A plane** gives `(offset - dot(normal, origin))/dot(normal, direction)`,
+  `.none` for a ray parallel to it.
+- **A triangle** gives a `Triangle_Hit(T)`, the `t` and the `barycentric`
+  coordinates of the hit point for `a`, `b`, and `c`, by the watertight test
+  of Woop, Benthin, and Wald: the corners are sheared into the ray's frame,
+  and an edge function that computes as zero has its sign recomputed exactly
+  with `orient2d`. Two triangles that share an edge compute its edge function
+  as exact negations, so a ray through the edge or a shared corner hits at
+  least one of them, from either side. A ray in the triangle's plane, or a
+  triangle of no area, gives `.none`.
+
+`Frustum(T)` has `planes: [6]Plane(T)`, left, right, bottom, top, near, and
+far, with inward normals, so `contains(p)` is every `signed_distance` at least
+0. `Frustum(T).from_matrix(clip, depth)` extracts them from
+`clip = projection * view` (Gribb and Hartmann) for the clip depth `depth`,
+which decides which rows are the near and far planes and so has no default,
+and normalizes each; a far plane at infinity is normal 0 and offset -1, which
+every point is inside, and any other plane that does not normalize gives
+`.none`. `intersects(frustum, sphere)` and `intersects(frustum, box)`, in
+either order, are conservative culling tests: false only when the shape is
+wholly behind one plane, so a shape outside the frustum near one of its edges
+can be reported as intersecting.
+
+`transform_box(m, box)` bounds the box an affine `m` moves, 4 x 4 for an
+`Aabb3` and 3 x 3 for an `Aabb2`, by Arvo's method: each bound is the sum, in
+`transform_point`'s order, of each element times the box's minimum or maximum,
+whichever product is smaller or larger, so it is exactly the bound of the
+corners as `transform_point` moves them, and exact for integers. An empty box
+stays empty. `transform_plane(m, plane)` moves a plane through
+`m.normal_matrix()` and renormalizes, for a normal of any length, or is
+`.none` when `m`'s linear part has no inverse. Spheres and circles have no
+transform, since only a similarity keeps them round.
 
 Everything that does not reach `math.sqrt`, the predicates, the box algebra,
-the planes' intersection point, and the segments' and triangles' closest
-points, is evaluated at compile time with the same result, and every result is
-the same bits on every machine, [CPU level](compiler-guide.md#cpu-levels), and
+the planes' intersection point, the segments' and triangles' closest points,
+the overlap tests, the box, plane, and triangle casts, and `transform_box`, is
+evaluated at compile time with the same result, and every result is the same
+bits on every machine, [CPU level](compiler-guide.md#cpu-levels), and
 optimization level.
 
 ## `core:random`

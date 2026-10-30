@@ -374,7 +374,13 @@ checklist.
   vectors, `Aabb2`, `Aabb3`, `Circle`, `Sphere`, `Plane`, `Segment2`,
   `Segment3`, `Triangle2`, and `Triangle3`, with box algebra, `contains`,
   closest points, distances, barycentric coordinates, and `intersects`
-  between boxes, circles, spheres, and planes, exact for integers
+  between boxes, circles, spheres, and planes, exact for integers; and
+  `Ray2` and `Ray3` with `cast` against boxes (conservative, never missing
+  one), circles, spheres, planes, and triangles (watertight), the closest
+  points of two segments, exact `intersects` between segments and between a
+  segment and a box, triangles against boxes by separating axes, `Frustum`
+  extraction for each `linalg.Depth_Range` with conservative culling, and
+  `transform_box` and `transform_plane`
   ([`core:math/geometry`](standard-library.md#coremathgeometry)).
 
 ### Changed
