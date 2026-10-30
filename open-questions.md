@@ -16,16 +16,6 @@ audit](nondeterminism-audit.md).
 Review of `675f0659`, `7ee9c971`, and `cf74b6e2` on 2026-10-30 found these
 cleanup and coverage items:
 
-- **Use one resize path with scoped cleanup.** `set_size_handle` and
-  `set_end_of_file` in [fs.loke](core/fs/fs.loke) can be one helper. Start
-  with the original handle, replace it with a reopened handle only for
-  append mode, conditionally `defer` closing that handle, and issue
-  `SetFileInformationByHandle` once. This removes the second helper and the
-  temporary result used to close before returning: four fewer lines. An
-  isolated variant passes [the resize regression](tests/run/lib_fs_set_size.loke)
-  with identical output. Keep the semantic platform helpers and the direct
-  positional transfer loops; introducing a general adapter would add more
-  structure than it removes.
 - **Restore the separate path-normalization rationale.** The locking commit
   deleted the `Paths keep Windows' own normalization` bullet label in
   [Standard-library API choices](comments.md#standard-library-api-choices),
