@@ -1,0 +1,19 @@
+package main;
+// design.md "Floating-point operators": a procedure Loke defines with a
+// foreign calling convention is, under its own name, a guard that switches to
+// Loke's environment only when the caller's differs, around a body no caller
+// may inline. With `-debug`, a call to a foreign procedure or through a
+// foreign procedure value checks the environment when it returns; a call to
+// the guard, which restores its caller's, does not.
+foreign import libc "system:legacy_stdio_definitions.lib";
+foreign libc {
+	abs :: proc "c" (n: i32) -> i32 ---;
+}
+@(export)
+scaled :: proc "c" (x: f64) -> f64 { return x*2.0; }
+main :: proc() {
+	_ = abs(-1);
+	absolute := abs;
+	_ = absolute(-2);
+	_ = scaled(1.0);
+}

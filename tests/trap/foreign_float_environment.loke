@@ -1,0 +1,23 @@
+// design.md "Floating-point operators": with `-debug`, a foreign call that
+// returns with the floating-point environment changed panics, naming the
+// callee. `_controlfp_s` from the C runtime sets the rounding mode upward and
+// returns; the call before it, through a procedure value, changes nothing.
+package main;
+
+import "core:fmt";
+
+foreign import libc "system:legacy_stdio_definitions.lib";
+
+foreign libc {
+	_controlfp_s :: proc "c" (current: ^mut u32, new_control: u32, mask: u32) -> i32 ---;
+}
+
+main :: proc() {
+	current: u32 = 0;
+	read := _controlfp_s;
+	// A zero mask only reads the control word.
+	_ = read(&mut current, 0, 0);
+	fmt.println("read");
+	_ = _controlfp_s(&mut current, 0x00000200, 0x00000300);  // _RC_UP, _MCW_RC
+	fmt.println("not reached");
+}

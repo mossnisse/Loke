@@ -1,0 +1,49 @@
+// design.md "Floating-point operators": a procedure Loke defines with a
+// foreign calling convention runs in Loke's environment whatever its caller's,
+// and gives the caller's back. `environment_host.c` calls these rounding
+// upward, with flush-to-zero, denormals-are-zero, and the invalid-operation
+// exception unmasked: from its main thread, through a C procedure that calls
+// back into Loke, and from a thread of its own. The object is built with
+// `-debug`, so the call to that C procedure, which restores Loke's
+// environment before returning, is checked too.
+package environment;
+
+import "core:unsafe";
+
+Probe :: proc "c" (one: f64) -> i32;
+Visit :: proc "c" (probe: Probe, one: f64) -> i32;
+
+bits64 :: proc(x: f64) -> u64 { return unsafe.transmute(u64, x); }
+
+// One bit for each property of Loke's environment that holds, 15 for all
+// four, from `one` = 1, which the host passes so that nothing folds.
+@(export)
+env_probe :: proc "c" (one: f64) -> i32 {
+	result: i32 = 0;
+	// Ties go to even both ways: upward rounding changes the first, and
+	// downward or toward zero the second.
+	half_ulp := 1.1102230246251565e-16;  // 2^-53
+	if (bits64(one + half_ulp) == bits64(1.0) && bits64((0.0 - one) - half_ulp) == bits64(-1.0)) {
+		result |= 1;
+	}
+	// A subnormal result is kept, which flush-to-zero makes zero.
+	if (bits64(2.2250738585072014e-308*one*0.5) == 0x0008000000000000) {
+		result |= 2;
+	}
+	// A subnormal operand is not read as zero: 2^-1074 2^60 is 2^-1014.
+	if (bits64(4.9406564584124654e-324*(one*1152921504606846976.0)) == 0x0090000000000000) {
+		result |= 4;
+	}
+	// An invalid operation goes on, with a NaN; unmasked, it would stop here.
+	zero := one - one;
+	nan := zero/zero;
+	if (nan != nan) {
+		result |= 8;
+	}
+	return result;
+}
+
+@(export)
+env_through :: proc "c" (visit: Visit, one: f64) -> i32 {
+	return visit(env_probe, one);
+}

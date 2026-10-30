@@ -137,10 +137,10 @@ fixed_reciprocal :: proc(b: Fixed, near: f64) -> Fixed {
 }
 
 // sqrt v within 2^-316 relative, for v in [1, 4) and an `f64` `near` within
-// 2^-51 of it relative, by Newton's iteration y (3 - v y^2)/2 for 1/sqrt v
-// from near's reciprocal, within 2^-50 of it, and then v y. A step takes a
-// relative error e to under 1.5 e^2 + e^3/2 and adds under 2^-317 of
-// truncation, so three leave under 2^-316.9.
+// 2^-51 of sqrt v relative, by Newton's iteration y (3 - v y^2)/2 for
+// 1/sqrt v from near's reciprocal, within 2^-50 of 1/sqrt v, and then v y.
+// A step takes a relative error e to under 1.5 e^2 + e^3/2 and adds under
+// 2^-317 of truncation, so three leave under 2^-316.9.
 fixed_sqrt :: proc(v: Fixed, near: f64) -> Fixed {
 	y := fixed_of(1.0/near);
 	foreach (_ in 0 ..< 3) {

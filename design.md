@@ -6220,9 +6220,18 @@ Arithmetic rounds to nearest, ties to even, keeps subnormal operands and
 results rather than flushing them to zero, and handles every floating-point
 exception without stopping. A program runs in that environment on its main
 thread and on every thread it starts, and Loke has no operation that changes
-it. Foreign code that changes the rounding mode, the treatment of subnormals,
-or an exception's handling must restore it before Loke code runs again;
-floating-point results computed in another environment are unspecified.
+it. A procedure Loke defines with a [foreign calling
+convention](#calling-conventions), such as an [export](#export) or a callback
+handed to C, may be called from foreign code in another environment: it then
+establishes Loke's for its body and restores its caller's rounding mode,
+treatment of subnormals, and exception handling when it returns. Which
+exception flags are raised afterwards is unspecified. Foreign code that Loke
+calls and that changes any of these must restore them before it returns to
+Loke; floating-point results computed in another environment are
+unspecified. With [`-debug`](compiler-guide.md#common-options), a call to a
+foreign procedure, or through a procedure value with a foreign calling
+convention, that returns with the environment changed panics, naming the
+procedure.
 
 Floating-point operations are not contracted or reassociated. Each operation the
 source writes is evaluated and rounded on its own, so `a*b + c` is a

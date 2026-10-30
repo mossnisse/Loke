@@ -726,12 +726,25 @@ proc_convention_of :: proc(e: ^Emitter, symbol: ^Symbol) -> string {
 }
 
 // The `define` signature of a foreign-convention procedure under the Windows
-// x64 classification. A result larger than one register becomes a hidden
-// leading `sret` pointer and a `void` return; `e.abi_sret` records it.
+// x64 classification, with any function attributes. A result larger than one
+// register becomes a hidden leading `sret` pointer and a `void` return;
+// `e.abi_sret` records it.
 @(private)
-emit_foreign_signature :: proc(e: ^Emitter, symbol: ^Symbol, llvm_name: string) {
-	ret := "void"
-	sret_prefix := ""
+emit_foreign_signature :: proc(e: ^Emitter, symbol: ^Symbol, llvm_name: string, attributes := "") {
+	ret, params := foreign_signature(e, symbol)
+	fmt.sbprintf(&e.b, "define %s%s %s(%s)", llvm_linkage(llvm_name), ret, llvm_name, strings.join(params, ", "))
+	if attributes != "" {
+		fmt.sbprintf(&e.b, " %s", attributes)
+	}
+	fmt.sbprintln(&e.b, " {")
+}
+
+// The return type and the parameters, each with its attributes and name, as
+// a `define` writes them and a call that forwards them writes them again.
+@(private = "file")
+foreign_signature :: proc(e: ^Emitter, symbol: ^Symbol) -> (ret: string, params: []string) {
+	ret = "void"
+	out := make([dynamic]string, 0, len(symbol.params) + 1)
 	proc_info := type_of(e.c, symbol.proc_type)
 	if symbol.result != INVALID_TYPE {
 		result := symbol.result
@@ -741,9 +754,9 @@ emit_foreign_signature :: proc(e: ^Emitter, symbol: ^Symbol, llvm_name: string) 
 			switch abi_pass(e.c, result) {
 			case .Indirect:
 				e.abi_sret = "%arg.sret"
-				sret_prefix = fmt.aprintf(
+				append(&out, fmt.aprintf(
 					"ptr sret(%s) align %d %s", llvm_type(e, result), type_align(e.c, result), e.abi_sret,
-				)
+				))
 			case .Reg_Int:
 				ret = fmt.aprintf("i%d", abi_reg_bits(e.c, result))
 			case .Bool_I1:
@@ -753,20 +766,103 @@ emit_foreign_signature :: proc(e: ^Emitter, symbol: ^Symbol, llvm_name: string) 
 			}
 		}
 	}
-	fmt.sbprintf(&e.b, "define %s%s %s(", llvm_linkage(llvm_name), ret, llvm_name)
-	need_comma := false
-	if sret_prefix != "" {
-		fmt.sbprint(&e.b, sret_prefix)
-		need_comma = true
-	}
 	for parameter, index in symbol.params {
-		if need_comma {
-			fmt.sbprint(&e.b, ", ")
-		}
-		need_comma = true
-		fmt.sbprintf(&e.b, "%s %%arg%d", foreign_param_type(e, symbol, parameter, index), index)
+		append(&out, fmt.aprintf("%s %%arg%d", foreign_param_type(e, symbol, parameter, index), index))
 	}
-	fmt.sbprintln(&e.b, ") {")
+	return ret, out[:]
+}
+
+// design.md "Floating-point operators": MXCSR's control bits, the rounding
+// mode, flush-to-zero, denormals-are-zero, and the exception masks, and their
+// value in Loke's environment, which is also the Windows x64 default. The six
+// bits below are the exception flags, which the environment leaves free.
+@(private = "file")
+MXCSR_CONTROL :: 0xffc0
+@(private = "file")
+MXCSR_LOKE :: 0x1f80
+@(private = "file")
+MXCSR_FLAGS :: 0x3f
+
+// The externally callable half of a Loke procedure with a foreign calling
+// convention, under its own name: foreign code may enter it in any
+// environment, so it sets Loke's when the caller's differs, calls `body` with
+// the same arguments, and restores the caller's control bits on return,
+// keeping the flags raised meanwhile. `body` is `noinline` (`emit_proc`), so
+// none of its arithmetic can be moved into this function and run before the
+// switch; this one does no floating-point arithmetic of its own.
+@(private)
+emit_foreign_entry_guard :: proc(e: ^Emitter, symbol: ^Symbol, llvm_name, body: string) {
+	// Between functions: the `sret` name this records belongs to none.
+	saved := e.abi_sret
+	defer e.abi_sret = saved
+	ret, params := foreign_signature(e, symbol)
+	arguments := strings.join(params, ", ")
+	open_function(e, "define %s%s %s(%s)", llvm_linkage(llvm_name), ret, llvm_name, arguments)
+	fmt.sbprintln(&e.b, "  %mxcsr = alloca i32, align 4")
+	fmt.sbprintln(&e.b, "  call void @llvm.x86.sse.stmxcsr(ptr %mxcsr)")
+	fmt.sbprintln(&e.b, "  %mxcsr.caller = load i32, ptr %mxcsr, align 4")
+	fmt.sbprintfln(&e.b, "  %%mxcsr.control = and i32 %%mxcsr.caller, %d", MXCSR_CONTROL)
+	fmt.sbprintfln(&e.b, "  %%mxcsr.ours = icmp eq i32 %%mxcsr.control, %d", MXCSR_LOKE)
+	fmt.sbprintln(&e.b, "  br i1 %mxcsr.ours, label %same, label %switched")
+
+	result := ret == "void" ? "" : "%result = "
+	fmt.sbprintln(&e.b, "same:")
+	fmt.sbprintfln(&e.b, "  %scall %s %s(%s)", result, ret, body, arguments)
+	fmt.sbprintln(&e.b, ret == "void" ? "  ret void" : strings.concatenate({"  ret ", foreign_return_type(ret), " %result"}))
+
+	fmt.sbprintln(&e.b, "switched:")
+	fmt.sbprintfln(&e.b, "  %%mxcsr.held = and i32 %%mxcsr.caller, %d", MXCSR_FLAGS)
+	fmt.sbprintfln(&e.b, "  %%mxcsr.loke = or i32 %%mxcsr.held, %d", MXCSR_LOKE)
+	fmt.sbprintln(&e.b, "  store i32 %mxcsr.loke, ptr %mxcsr, align 4")
+	fmt.sbprintln(&e.b, "  call void @llvm.x86.sse.ldmxcsr(ptr %mxcsr)")
+	switched := ret == "void" ? "" : "%switched.result = "
+	fmt.sbprintfln(&e.b, "  %scall %s %s(%s)", switched, ret, body, arguments)
+	fmt.sbprintln(&e.b, "  call void @llvm.x86.sse.stmxcsr(ptr %mxcsr)")
+	fmt.sbprintln(&e.b, "  %mxcsr.after = load i32, ptr %mxcsr, align 4")
+	fmt.sbprintfln(&e.b, "  %%mxcsr.raised = and i32 %%mxcsr.after, %d", MXCSR_FLAGS)
+	fmt.sbprintln(&e.b, "  %mxcsr.back = or i32 %mxcsr.control, %mxcsr.raised")
+	fmt.sbprintln(&e.b, "  store i32 %mxcsr.back, ptr %mxcsr, align 4")
+	fmt.sbprintln(&e.b, "  call void @llvm.x86.sse.ldmxcsr(ptr %mxcsr)")
+	fmt.sbprintln(&e.b, ret == "void" ? "  ret void" : strings.concatenate({"  ret ", foreign_return_type(ret), " %switched.result"}))
+	fmt.sbprintln(&e.b, "}")
+	fmt.sbprintln(&e.b, "")
+}
+
+// A `ret` names the type without the return attribute a `define` carries.
+@(private = "file")
+foreign_return_type :: proc(ret: string) -> string {
+	return strings.trim_prefix(ret, "zeroext ")
+}
+
+// design.md "Floating-point operators": with `-debug`, a call into foreign code
+// that returns with Loke's environment changed panics, naming the callee, after
+// putting the environment back so the report and the unwind run in it. A
+// procedure Loke defines guards its own entry, so a call to one is not checked.
+@(private = "file")
+emit_foreign_environment_check :: proc(e: ^Emitter, symbol: ^Symbol) {
+	if !e.c.debug || (symbol != nil && !symbol.is_foreign) {
+		return
+	}
+	slot := alloca(e, "i32")
+	fmt.sbprintfln(&e.b, "  call void @llvm.x86.sse.stmxcsr(ptr %s)", slot)
+	value, control, kept := temp(e), temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = load i32, ptr %s, align 4", value, slot)
+	fmt.sbprintfln(&e.b, "  %s = and i32 %s, %d", control, value, MXCSR_CONTROL)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq i32 %s, %d", kept, control, MXCSR_LOKE)
+	changed, after := new_label(e, "fenv.changed"), new_label(e, "fenv.kept")
+	branch_if(e, kept, after, changed)
+	place_label(e, changed)
+	flags, restored := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = and i32 %s, %d", flags, value, MXCSR_FLAGS)
+	fmt.sbprintfln(&e.b, "  %s = or i32 %s, %d", restored, flags, MXCSR_LOKE)
+	fmt.sbprintfln(&e.b, "  store i32 %s, ptr %s, align 4", restored, slot)
+	fmt.sbprintfln(&e.b, "  call void @llvm.x86.sse.ldmxcsr(ptr %s)", slot)
+	call := "a foreign call through a procedure value"
+	if symbol != nil {
+		call = fmt.aprintf("the foreign call to `%s`", identifier_text(e.c, symbol.name))
+	}
+	emit_panic(e, fmt.aprintf("%s returned with the floating-point environment changed", call))
+	place_label(e, after)
 }
 
 // The LLVM type (with any ABI attribute) one foreign parameter occupies.
@@ -1051,6 +1147,7 @@ emit_foreign_call :: proc(
 		fmt.sbprint(&e.b, arg)
 	}
 	fmt.sbprintln(&e.b, ")")
+	emit_foreign_environment_check(e, symbol)
 
 	if callee_type.result == INVALID_TYPE {
 		return nil

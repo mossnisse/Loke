@@ -24,6 +24,30 @@ slow_log_f32 :: proc(x: f32) -> f32 {
 	return unsafe.transmute(f32, u32(log_slow(f64(x), F32_LAYOUT)));
 }
 
+// log2's and log10's slow paths past the special cases of `log`, which
+// `log2` and `log10` themselves answer.
+@(public)
+slow_log2 :: proc(x: f64) -> f64 { return slow_log_base(x, 0); }
+
+@(public)
+slow_log10 :: proc(x: f64) -> f64 { return slow_log_base(x, 1); }
+
+@(public)
+slow_log2_f32 :: proc(x: f32) -> f32 { return slow_log_base_f32(x, 0); }
+
+@(public)
+slow_log10_f32 :: proc(x: f32) -> f32 { return slow_log_base_f32(x, 1); }
+
+slow_log_base :: proc(x: f64, base: int) -> f64 {
+	if (!(x > 0.0 && x <= 1.7976931348623157e308) || x == 1.0) { return log_base(x, base); }
+	return unsafe.transmute(f64, log_base_slow(x, base, F64_LAYOUT));
+}
+
+slow_log_base_f32 :: proc(x: f32, base: int) -> f32 {
+	if (!(x > f32(0.0) && f64(x) <= 1.7976931348623157e308) || x == f32(1.0)) { return log_base_f32(x, base); }
+	return unsafe.transmute(f32, u32(log_base_slow(f64(x), base, F32_LAYOUT)));
+}
+
 @(public)
 slow_sin :: proc(x: f64) -> f64 { return slow_trig(x, false); }
 
@@ -48,6 +72,24 @@ slow_trig_f32 :: proc(x: f32, want_cos: bool) -> f32 {
 	ax := f64(x);
 	if (x < f32(0.0)) { ax = 0.0 - f64(x); }
 	return unsafe.transmute(f32, u32(trig_slow(ax, want_cos, !want_cos && x < f32(0.0), F32_LAYOUT)));
+}
+
+// tan's slow path past its tiny arguments and special cases, where `tan`
+// itself is the whole answer.
+@(public)
+slow_tan :: proc(x: f64) -> f64 {
+	ax := x;
+	if (x < 0.0) { ax = 0.0 - x; }
+	if (!(ax >= 7.450580596923828e-09 && ax <= 1.7976931348623157e308)) { return tan(x); }
+	return unsafe.transmute(f64, tan_slow(ax, x < 0.0, F64_LAYOUT));
+}
+
+@(public)
+slow_tan_f32 :: proc(x: f32) -> f32 {
+	ax := f64(x);
+	if (x < f32(0.0)) { ax = 0.0 - f64(x); }
+	if (!(ax >= 0.000244140625 && ax <= 1.7976931348623157e308)) { return tan_f32(x); }
+	return unsafe.transmute(f32, u32(tan_slow(ax, x < f32(0.0), F32_LAYOUT)));
 }
 
 // pow's slow path wherever `pow` would reach its general case with z =
@@ -156,6 +198,40 @@ slow_arc :: proc(a: f64, cosine: bool, x_negative: bool, layout: Float_Layout) -
 	a_small := a < from_bits(HALF_ROOT_ABOVE);
 	wh, wl := arc_root(a);
 	return arc_slow(a, wh + wl, a_small, arc_part(a_small, cosine, x_negative), layout);
+}
+
+// hypot's slow path wherever `hypot` would reach its general case;
+// elsewhere `hypot` itself, whose special cases and far smaller second
+// argument are the whole answer there.
+@(public)
+slow_hypot :: proc(x: f64, y: f64) -> f64 {
+	return unsafe.transmute(f64, slow_hypot_bits(x, y, F64_LAYOUT, unsafe.transmute(u64, hypot(x, y))));
+}
+
+@(public)
+slow_hypot_f32 :: proc(x: f32, y: f32) -> f32 {
+	return unsafe.transmute(f32, u32(slow_hypot_bits(f64(x), f64(y), F32_LAYOUT, u64(unsafe.transmute(u32, hypot_f32(x, y))))));
+}
+
+slow_hypot_bits :: proc(x: f64, y: f64, layout: Float_Layout, public: u64) -> u64 {
+	a := x;
+	if (x < 0.0) { a = 0.0 - x; }
+	b := y;
+	if (y < 0.0) { b = 0.0 - y; }
+	if (b > a) {
+		t := a;
+		a = b;
+		b = t;
+	}
+	if (!finite_nonzero(a) || !finite_nonzero(b)) { return public; }
+	near, a2, b2, ea := hypot_parts(a, b);
+	if (!near) { return public; }
+	ph, pl := two_product(a2, a2);
+	qh, ql := two_product(b2, b2);
+	s, e := two_sum(ph, qh);
+	sh, sl := fast_two_sum(s, e + (pl + ql));
+	wh, wl := pair_root(sh, sl);
+	return hypot_slow(a2, b2, ea, wh + wl, layout);
 }
 
 finite_nonzero :: proc(a: f64) -> bool {

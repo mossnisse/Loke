@@ -1,7 +1,7 @@
 // deterministic-math-and-targets-plan.md "Validation and performance gates": an
-// oracle for the correctly rounded `exp`, `log`, `sin`, `cos`, `asin`, `acos`,
-// `pow`, and `atan2` of `f64` and `f32`, with the special cases of the
-// reproducible contract.
+// oracle for the correctly rounded `exp`, `log`, `log2`, `log10`, `sin`, `cos`,
+// `tan`, `asin`, `acos`, `pow`, `atan2`, and `hypot` of `f64` and `f32`, with
+// the special cases of the reproducible contract.
 //
 // Each result is an interval of integers at a scale of `2^-precision`, every
 // step rounded outward, so the true value is always inside it. When both ends
@@ -22,8 +22,11 @@ import "core:strings"
 Oracle_Function :: enum {
 	Exp,
 	Log,
+	Log2,
+	Log10,
 	Sin,
 	Cos,
+	Tan,
 	Asin,
 	Acos,
 }
@@ -127,7 +130,7 @@ special_case :: proc(function: Oracle_Function, x: f64, format: Float_Format) ->
 		if math.is_inf(x, 1) {return infinity, true}
 		if math.is_inf(x, -1) {return 0, true}
 		if x == 0 {return one, true}
-	case .Log:
+	case .Log, .Log2, .Log10:
 		if x == 0 {return infinity | negative_zero, true}
 		if x < 0 {return nan, true}
 		if math.is_inf(x, 1) {return infinity, true}
@@ -138,6 +141,9 @@ special_case :: proc(function: Oracle_Function, x: f64, format: Float_Format) ->
 	case .Cos:
 		if math.is_inf(x, 0) {return nan, true}
 		if x == 0 {return one, true}
+	case .Tan:
+		if math.is_inf(x, 0) {return nan, true}
+		if x == 0 {return math.sign_bit(x) ? negative_zero : 0, true}
 	case .Asin:
 		if abs(x) > 1 {return nan, true}
 		if x == 0 {return math.sign_bit(x) ? negative_zero : 0, true}
@@ -155,7 +161,9 @@ attempt :: proc(o: ^Oracle, function: Oracle_Function, x: f64, format: Float_For
 		return exp_attempt(o, x, format, precision)
 	case .Log:
 		return log_attempt(o, x, format, precision)
-	case .Sin, .Cos:
+	case .Log2, .Log10:
+		return log_base_attempt(o, x, function == .Log10, format, precision)
+	case .Sin, .Cos, .Tan:
 		return trig_attempt(o, function, x, format, precision)
 	case .Asin, .Acos:
 		return arc_attempt(o, function, x, format, precision)
@@ -206,6 +214,23 @@ exp_of_interval :: proc(o: ^Oracle, scaled: Interval, x: f64, format: Float_Form
 @(private = "file")
 log_attempt :: proc(o: ^Oracle, x: f64, format: Float_Format, w: int) -> (u64, bool) {
 	return round_signed(log_interval(o, x, w), -w, format)
+}
+
+// log2 x and log10 x as log x over ln 2 or ln 10, the divisor's interval
+// positive, so the quotient's ends come from the matching ends. They are
+// rational only at x = 2^k and 10^k, where they are the integer k, a float
+// and not a midpoint, so the search ends.
+@(private = "file")
+log_base_attempt :: proc(o: ^Oracle, x: f64, ten: bool, format: Float_Format, w: int) -> (u64, bool) {
+	v := log_interval(o, x, w)
+	divisor := ten ? log_interval(o, 10, w) : narrow(o.ln2, CONSTANT_PRECISION, w)
+	negative := sign_of(v.hi) < 0
+	if !negative && sign_of(v.lo) <= 0 {
+		return 0, false
+	}
+	m := negative ? Interval{negated(v.hi), negated(v.lo)} : v
+	quotient := Interval{divide_down(shift_left(m.lo, w), divisor.hi), divide_up(shift_left(m.hi, w), divisor.lo)}
+	return round_interval(quotient, -w, negative, format)
 }
 
 // log x for a positive finite x other than 1, at a scale of 2^-w: e ln 2 +
@@ -441,6 +466,50 @@ oracle_atan2 :: proc(o: ^Oracle, y, x: f64, format: Float_Format) -> u64 {
 	panic("the oracle could not decide a rounding of atan2")
 }
 
+// The correctly rounded hypot(x, y)'s bit pattern, sqrt(x^2 + y^2), for
+// arguments of `format`, which `x` and `y` hold exactly. An infinite argument
+// gives +Inf, even with a NaN, and otherwise a NaN gives NaN (C17 F.10.4.3).
+// x^2 + y^2 is an exact integer S times 2^(2 low), and its root at w more
+// bits is floor(sqrt(S 2^(2w))) or exactly that; an exact root is rounded
+// as it is, a midpoint to even. Otherwise the root is irrational, so the
+// search ends.
+oracle_hypot :: proc(x, y: f64, format: Float_Format) -> u64 {
+	if math.is_inf(x, 0) || math.is_inf(y, 0) {
+		return infinity_bits(format)
+	}
+	if math.is_nan(x) || math.is_nan(y) {
+		return canonical_nan(format)
+	}
+	if x == 0 && y == 0 {
+		return 0
+	}
+	scratch: virtual.Arena
+	_ = virtual.arena_init_growing(&scratch)
+	context.allocator = virtual.arena_allocator(&scratch)
+	// A zero argument contributes nothing at the other's exponent.
+	sx, ex := int_of(0), 0
+	sy, ey := int_of(0), 0
+	if x != 0 {sx, ex = dyadic(abs(x))}
+	if y != 0 {sy, ey = dyadic(abs(y))}
+	if x == 0 {ex = ey}
+	if y == 0 {ey = ex}
+	low := min(ex, ey)
+	sum := plus(shift_left(times(sx, sx), 2*(ex - low)), shift_left(times(sy, sy), 2*(ey - low)))
+	for w := START_PRECISION; w <= MAX_PRECISION; w *= 2 {
+		n := shift_left(sum, 2*w)
+		root := square_root(n)
+		value := Interval{root, root}
+		if compare(times(root, root), n) != 0 {
+			value.hi = plus(root, int_of(1))
+		}
+		if pattern, decided := round_interval(value, low - w, false, format); decided {
+			virtual.arena_destroy(&scratch)
+			return pattern
+		}
+	}
+	panic("the oracle could not decide a rounding of hypot")
+}
+
 // t = n/d as integers p/q, for 0 <= n <= d, or nil for t = 0: 1/1 when both
 // are infinite, and nil when n is 0 or d alone is infinite.
 @(private = "file")
@@ -568,9 +637,10 @@ arc_attempt :: proc(o: ^Oracle, function: Oracle_Function, x: f64, format: Float
 	return round_interval(value, -scale, negative, format)
 }
 
-// sin and cos of |x| = q pi/2 + r, |r| a little over pi/4 at most, from the
-// Taylor series of sin |r| and cos |r|, both positive there. A tiny argument
-// gets as many more bits as it is below one, since sin x is about x.
+// sin, cos, and tan of |x| = q pi/2 + r, |r| a little over pi/4 at most, from
+// the Taylor series of sin |r| and cos |r|, both positive there; tan is
+// their quotient, or for an odd q minus its reciprocal. A tiny argument gets
+// as many more bits as it is below one, since sin x and tan x are about x.
 @(private = "file")
 trig_attempt :: proc(o: ^Oracle, function: Oracle_Function, x: f64, format: Float_Format, base: int) -> (u64, bool) {
 	significand, exponent := dyadic(abs(x))
@@ -600,6 +670,17 @@ trig_attempt :: proc(o: ^Oracle, function: Oracle_Function, x: f64, format: Floa
 		return 0, false
 	}
 	r2 := Interval{shift_down(times(r.lo, r.lo), w), shift_up(times(r.hi, r.hi), w)}
+	if function == .Tan {
+		odd := quadrant % 2 == 1
+		s := alternating_series(r, r2, 2, w)
+		c := alternating_series(Interval{power_of_two(w), power_of_two(w)}, r2, 1, w)
+		top, bottom := odd ? c : s, odd ? s : c
+		if sign_of(top.lo) <= 0 || sign_of(bottom.lo) <= 0 {
+			return 0, false
+		}
+		quotient := Interval{divide_down(shift_left(top.lo, w), bottom.hi), divide_up(shift_left(top.hi, w), bottom.lo)}
+		return round_interval(quotient, -w, (odd != r_negative) != math.sign_bit(x), format)
+	}
 	// sin or cos of |r|, chosen by quadrant: the four rotations of the pair.
 	use_sin := (quadrant % 2 == 0) == (function == .Sin)
 	value := use_sin ? alternating_series(r, r2, 2, w) : alternating_series(Interval{power_of_two(w), power_of_two(w)}, r2, 1, w)
@@ -1025,14 +1106,12 @@ trig_constants_source :: proc(o: ^Oracle) -> string {
 	strings.builder_init(&b)
 
 	strings.write_string(&b, "SIN_COS_TABLE :: [808]u64{\n")
-	r2_of :: proc(a: ^big.Int) -> Interval {
-		return Interval{shift_down(times(a, a), P), shift_up(times(a, a), P)}
-	}
 	for j in 0 ..< 202 {
 		pairs: [2][2]f64 = {{0, 0}, {1, 0}}
 		if j > 0 {
 			a := shift_left(int_of(j), P - 8)
-			r2 := r2_of(a)
+			square := times(a, a)
+			r2 := Interval{shift_down(square, P), shift_up(square, P)}
 			sine := alternating_series(Interval{a, a}, r2, 2, P)
 			cosine := alternating_series(Interval{power_of_two(P), power_of_two(P)}, r2, 1, P)
 			pairs = {exact_pair(sine, P), exact_pair(cosine, P)}
@@ -1130,6 +1209,43 @@ log_constants_source :: proc(o: ^Oracle) -> string {
 			pair = exact_pair(Interval{negated(v.hi), negated(v.lo)}, P)
 		}
 		fmt.sbprintf(&b, "\t0x%016x, 0x%016x, 0x%016x,\n", transmute(u64)d, transmute(u64)pair[0], transmute(u64)pair[1])
+	}
+	strings.write_string(&b, "};\n")
+	return strings.to_string(b)
+}
+
+// The constants `core:math/repro`'s `log2` and `log10` are built from, as the
+// Loke source between log_base.loke's generated-block markers: 1/ln 2 and
+// 1/ln 10 as `f64` pairs, the nearest `f64` and the nearest to the rest, and
+// times 2^320, floored, as six limbs.
+log_base_constants_source :: proc(o: ^Oracle) -> string {
+	context.allocator = virtual.arena_allocator(&o.arena)
+	P :: 400
+	b: strings.Builder
+	strings.builder_init(&b)
+	ln2 := narrow(o.ln2, CONSTANT_PRECISION, P)
+	divisors := [2]Interval{ln2, log_interval(o, 10, P)}
+	inverses: [2]Interval
+	for d, i in divisors {
+		inverses[i] = Interval{divide_down(power_of_two(2*P), d.hi), divide_up(power_of_two(2*P), d.lo)}
+	}
+	strings.write_string(&b, "LOG_BASE_PAIRS :: [4]u64{")
+	for v, i in inverses {
+		pair := exact_pair(v, P)
+		fmt.sbprintf(&b, "%s0x%016x, 0x%016x", i == 0 ? "" : ", ", transmute(u64)pair[0], transmute(u64)pair[1])
+	}
+	strings.write_string(&b, "};\n")
+	strings.write_string(&b, "LOG_BASE_FIXED :: [2][6]u64{\n")
+	for v in inverses {
+		wide := narrow(v, P, 320)
+		if compare(wide.lo, wide.hi) != 0 && compare(plus(wide.lo, int_of(1)), wide.hi) != 0 {
+			panic("a logarithm's base needs more bits")
+		}
+		strings.write_string(&b, "\t{")
+		for limb in 0 ..< 6 {
+			fmt.sbprintf(&b, "%s0x%016x", limb == 0 ? "" : ", ", low_bits(shift_down(wide.lo, 64*limb), 64))
+		}
+		strings.write_string(&b, "},\n")
 	}
 	strings.write_string(&b, "};\n")
 	return strings.to_string(b)

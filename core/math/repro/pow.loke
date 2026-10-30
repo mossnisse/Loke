@@ -126,15 +126,8 @@ pow_f32_of :: proc(x: f64, y: f64) -> f32 {
 // whose nearest `f64` is about `estimate`.
 pow_slow :: proc(x: f64, y: f64, estimate: f64, layout: Float_Layout) -> u64 {
 	log_negative, log_value := log_fixed(x);
-	pattern := unsafe.transmute(u64, y) & 0x7fffffffffffffff;
-	biased := int(pattern >> 52);
-	significand := pattern & 0x000fffffffffffff;
-	exponent := -1074;
-	if (biased != 0) {
-		significand |= 0x0010000000000000;
-		exponent = biased - 1075;
-	}
-	z := fixed_scaled(fixed_times_small(log_value, significand), exponent);
+	odd, exponent := odd_split(from_bits(unsafe.transmute(u64, y) & 0x7fffffffffffffff));
+	z := fixed_scaled(fixed_times_small(log_value, odd), exponent);
 	sum, sum_exponent := exp_fixed(log_negative != (y < 0.0), z, estimate);
 
 	unit, drop := fixed_round_place(sum, sum_exponent, layout);
@@ -164,14 +157,9 @@ fixed_near_half :: proc(a: Fixed, drop: int, low: int) -> bool {
 
 // A positive finite x as an odd integer a and a power of two, x = a 2^b.
 odd_split :: proc(x: f64) -> (odd: u64, exponent: int) {
-	pattern := unsafe.transmute(u64, x);
-	biased := int(pattern >> 52);
-	odd := pattern & 0x000fffffffffffff;
-	exponent := -1074;
-	if (biased != 0) {
-		odd |= 0x0010000000000000;
-		exponent = biased - 1075;
-	}
+	e, fraction := log_split(x);
+	odd := fraction | 0x0010000000000000;
+	exponent := e - 52;
 	for (odd & 1 == 0) {
 		odd >>= 1;
 		exponent += 1;

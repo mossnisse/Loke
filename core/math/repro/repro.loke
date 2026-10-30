@@ -10,9 +10,9 @@
 	each function. No procedure here calls the C library.
 
 	The package holds only what has been implemented and checked: today `exp`,
-	`log`, `pow`, `sin`, `cos`, `asin`, `acos`, `atan`, and `atan2`, each in
-	both widths. A function missing here is not provided by falling back to
-	`core:math`.
+	`log`, `log2`, `log10`, `pow`, `sin`, `cos`, `tan`, `asin`, `acos`,
+	`atan`, `atan2`, and `hypot`, each in both widths. A function missing here
+	is not provided by falling back to `core:math`.
 */
 @(public)
 package repro;
@@ -90,6 +90,24 @@ log_f32 :: proc(x: f32) -> f32 {
 	if (bits == 0x3f800000) { return f32(0.0); }
 	return log_f32_of(f64(x));
 }
+
+/**
+	The base-2 logarithm, with the special cases of `log`. At a power of two
+	the result is its exponent exactly.
+*/
+log2 :: proc(x: f64) -> f64 { return log_base(x, 0); }
+
+/// The base-2 logarithm for `f32`, with the special cases of `log`.
+log2_f32 :: proc(x: f32) -> f32 { return log_base_f32(x, 0); }
+
+/**
+	The base-10 logarithm, with the special cases of `log`. At a power of ten
+	the result is its exponent exactly.
+*/
+log10 :: proc(x: f64) -> f64 { return log_base(x, 1); }
+
+/// The base-10 logarithm for `f32`, with the special cases of `log`.
+log10_f32 :: proc(x: f32) -> f32 { return log_base_f32(x, 1); }
 
 /**
 	x raised to the power y, with the special cases of IEC 60559 and C17's
@@ -207,6 +225,65 @@ cos_f32 :: proc(x: f32) -> f32 {
 }
 
 /**
+	The tangent of x radians. NaN and ±Inf give NaN, and ±0 gives itself;
+	every finite argument is reduced exactly, however large.
+*/
+tan :: proc(x: f64) -> f64 {
+	magnitude := unsafe.transmute(u64, x) & 0x7fffffffffffffff;
+	// Below 2^-27 in magnitude, tan x is within half an ulp of x.
+	if (magnitude < 0x3e40000000000000) { return x; }
+	if (magnitude >= 0x7ff0000000000000) { return unsafe.transmute(f64, u64(CANONICAL_NAN_F64)); }
+	return tan_f64(x);
+}
+
+/// The tangent for `f32`, with the special cases of `tan`.
+tan_f32 :: proc(x: f32) -> f32 {
+	magnitude := unsafe.transmute(u32, x) & 0x7fffffff;
+	// Below 2^-12 in magnitude, tan x is within half an ulp of x.
+	if (magnitude < 0x39800000) { return x; }
+	if (magnitude >= 0x7f800000) { return unsafe.transmute(f32, u32(CANONICAL_NAN_F32)); }
+	return tan_f32_of(f64(x));
+}
+
+/**
+	sqrt(x^2 + y^2), without overflow or underflow on the way. ±Inf in either
+	argument gives +Inf, even with a NaN in the other; otherwise NaN gives
+	NaN. hypot(x, ±0) is |x|, and a result too large for `f64` is +Inf. An
+	exact result is exact, and one exactly halfway between two floats rounds
+	to even.
+*/
+hypot :: proc(x: f64, y: f64) -> f64 {
+	xb := unsafe.transmute(u64, x) & 0x7fffffffffffffff;
+	yb := unsafe.transmute(u64, y) & 0x7fffffffffffffff;
+	if (xb == 0x7ff0000000000000 || yb == 0x7ff0000000000000) { return unsafe.transmute(f64, u64(0x7ff0000000000000)); }
+	if (xb > 0x7ff0000000000000 || yb > 0x7ff0000000000000) { return unsafe.transmute(f64, u64(CANONICAL_NAN_F64)); }
+	a := xb;
+	b := yb;
+	if (yb > xb) {
+		a = yb;
+		b = xb;
+	}
+	if (b == 0) { return unsafe.transmute(f64, a); }
+	return hypot_f64_of(unsafe.transmute(f64, a), unsafe.transmute(f64, b));
+}
+
+/// hypot for `f32`, with the special cases of `hypot`.
+hypot_f32 :: proc(x: f32, y: f32) -> f32 {
+	xb := unsafe.transmute(u32, x) & 0x7fffffff;
+	yb := unsafe.transmute(u32, y) & 0x7fffffff;
+	if (xb == 0x7f800000 || yb == 0x7f800000) { return unsafe.transmute(f32, u32(0x7f800000)); }
+	if (xb > 0x7f800000 || yb > 0x7f800000) { return unsafe.transmute(f32, u32(CANONICAL_NAN_F32)); }
+	a := xb;
+	b := yb;
+	if (yb > xb) {
+		a = yb;
+		b = xb;
+	}
+	if (b == 0) { return unsafe.transmute(f32, a); }
+	return hypot_f32_of(f64(unsafe.transmute(f32, a)), f64(unsafe.transmute(f32, b)));
+}
+
+/**
 	The inverse sine of x, in radians from -pi/2 to pi/2. NaN, and any x
 	outside [-1, 1], ±Inf included, gives NaN; ±0 gives itself, and ±1 gives
 	±pi/2, correctly rounded.
@@ -276,30 +353,16 @@ acos_f32 :: proc(x: f32) -> f32 {
 	gives ±pi/2, correctly rounded.
 */
 atan :: proc(x: f64) -> f64 {
-	bits := unsafe.transmute(u64, x);
-	magnitude := bits & 0x7fffffffffffffff;
-	sign := bits & 0x8000000000000000;
 	// Below 2^-27 in magnitude, atan x is within half an ulp of x.
-	if (magnitude < 0x3e40000000000000) { return x; }
-	if (magnitude >= 0x7ff0000000000000) {
-		if (magnitude > 0x7ff0000000000000) { return unsafe.transmute(f64, u64(CANONICAL_NAN_F64)); }
-		return unsafe.transmute(f64, QUARTER_TURNS[2] | sign);
-	}
-	return unsafe.transmute(f64, unsafe.transmute(u64, atan2_f64_of(unsafe.transmute(f64, magnitude), 1.0, false)) | sign);
+	if (unsafe.transmute(u64, x) & 0x7fffffffffffffff < 0x3e40000000000000) { return x; }
+	return atan2(x, 1.0);
 }
 
 /// The inverse tangent for `f32`, with the special cases of `atan`.
 atan_f32 :: proc(x: f32) -> f32 {
-	bits := unsafe.transmute(u32, x);
-	magnitude := bits & 0x7fffffff;
-	sign := bits & 0x80000000;
 	// Below 2^-12 in magnitude, atan x is within half an ulp of x.
-	if (magnitude < 0x39800000) { return x; }
-	if (magnitude >= 0x7f800000) {
-		if (magnitude > 0x7f800000) { return unsafe.transmute(f32, u32(CANONICAL_NAN_F32)); }
-		return unsafe.transmute(f32, u32(QUARTER_TURNS_F32[2]) | sign);
-	}
-	return unsafe.transmute(f32, unsafe.transmute(u32, atan2_f32_of(f64(unsafe.transmute(f32, magnitude)), 1.0, false)) | sign);
+	if (unsafe.transmute(u32, x) & 0x7fffffff < 0x39800000) { return x; }
+	return atan2_f32(x, f32(1.0));
 }
 
 /**

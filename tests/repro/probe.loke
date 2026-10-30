@@ -255,6 +255,70 @@ atan2_argument_f32 :: proc(g: inout Generator, i: int) -> (y: f32, x: f32) {
 	return {y, x};
 }
 
+// Arguments of hypot: both up to 1000; of scales up to 2^70 apart, either
+// side of the 2^-61 cutoff; subnormal, so the result may be; near overflow;
+// and Pythagorean triples scaled by a power of two, with generators p near
+// 2^26.3 and q near (sqrt 2 - 1) p, so the hypotenuse is a little over
+// 2^53: exact, a float when even and a midpoint when odd, for legs below
+// 2^53, which most are.
+hypot_argument :: proc(g: inout Generator, i: int) -> (x: f64, y: f64) {
+	u := unit(inout g);
+	v := unit(inout g);
+	x := 0.0;
+	y := 0.0;
+	switch (i % 5) {
+	case 0:
+		x = u*2000.0 - 1000.0;
+		y = v*2000.0 - 1000.0;
+	case 1:
+		x = (1.0 + u)*unsafe.transmute(f64, (1023 + next(inout g) % 140 - 70) << 52);
+		y = (1.0 - v)*unsafe.transmute(f64, (1023 + next(inout g) % 140 - 70) << 52);
+	case 2:
+		x = unsafe.transmute(f64, next(inout g) % 0x0030000000000000);
+		y = unsafe.transmute(f64, next(inout g) % 0x0010000000000000);
+	case 3:
+		x = (1.0 + u)*8.98846567431158e307;
+		y = (1.0 + v)*8.98846567431158e307;
+	default:
+		p := 67108864 + next(inout g) % 27000000;
+		q := p*41/100 + next(inout g) % (p/40);
+		scale := unsafe.transmute(f64, (1023 + next(inout g) % 200 - 100) << 52);
+		x = f64(p*p - q*q)*scale;
+		y = f64(2*p*q)*scale;
+	}
+	if (next(inout g) % 2 == 0) { x = 0.0 - x; }
+	return {x, y};
+}
+
+hypot_argument_f32 :: proc(g: inout Generator, i: int) -> (x: f32, y: f32) {
+	u := unit(inout g);
+	v := unit(inout g);
+	x := f32(0.0);
+	y := f32(0.0);
+	switch (i % 5) {
+	case 0:
+		x = f32(u*2000.0 - 1000.0);
+		y = f32(v*2000.0 - 1000.0);
+	case 1:
+		x = f32((1.0 + u)*unsafe.transmute(f64, (1023 + next(inout g) % 60 - 30) << 52));
+		y = f32((1.0 - v)*unsafe.transmute(f64, (1023 + next(inout g) % 60 - 30) << 52));
+	case 2:
+		x = unsafe.transmute(f32, u32(next(inout g) % 0x01800000));
+		y = unsafe.transmute(f32, u32(next(inout g) % 0x00800000));
+	case 3:
+		x = f32((1.0 + u)*1.7014118346046923e38*0.999);
+		y = f32((1.0 + v)*1.7014118346046923e38*0.999);
+	default:
+		p := 1 + next(inout g) % 4095;
+		q := 1 + next(inout g) % p;
+		scale := unsafe.transmute(f64, (1023 + next(inout g) % 60 - 30) << 52);
+		x = f32(f64(p*p - q*q)*scale);
+		y = f32(f64(2*p*q)*scale);
+	}
+	if (next(inout g) % 2 == 0) { x = f32(0.0) - x; }
+	return {x, y};
+}
+
 abs_difference :: proc(a: u64, b: u64) -> u64 {
 	if (a > b) { return a - b; }
 	return b - a;
@@ -296,6 +360,57 @@ ARC_SPECIAL :: [20]u64{
 ARC_SPECIAL_F32 :: [8]u32{
 	0x3f800001, 0xbf800001, 0x3f7fffff, 0xbf7fffff,
 	0x39800000, 0xb97fffff, 0x21800000, 0xa17fffff,
+};
+
+// tan's cutoffs and nearest-pole arguments beside atan2's table of special
+// values: either side of 2^-27 and 2^-12, pi/2 and pi's `f64` values, and
+// the largest `f64`.
+TAN_SPECIAL :: [7]u64{
+	0x3e40000000000000, 0x3e3fffffffffffff, 0x3f30000000000000, 0xbf2fffffffffffff,
+	0x3ff921fb54442d18, 0x400921fb54442d18, 0x7fefffffffffffff,
+};
+
+// log2's and log10's special cases, exact results, and their neighbors:
+// zeros, infinities, NaN, -1, 1, 2^-1074, 1/2, 2^1023, 1024 and below it,
+// 10, 1000 and below it, 10^10, 10^22 and above it, and the `f64` values of
+// 10^23 and 0.1.
+LOG_SPECIAL :: [20]u64{
+	0x0000000000000000, 0x8000000000000000, 0x7ff0000000000000, 0xfff0000000000000,
+	0x7ff8000000000001, 0xbff0000000000000, 0x3ff0000000000000, 0x0000000000000001,
+	0x3fe0000000000000, 0x7fe0000000000000, 0x4090000000000000, 0x408fffffffffffff,
+	0x4024000000000000, 0x408f400000000000, 0x408f3fffffffffff, 0x4202a05f20000000,
+	0x4480f0cf064dd592, 0x4480f0cf064dd593, 0x44b52d02c7e14af6, 0x3fb999999999999a,
+};
+
+// Every one-argument function's special arguments in each width: both
+// zeros, both infinities, quiet and signaling NaNs of both signs, and
+// negative finite values, -1, -1/2, the most negative, and the smallest
+// subnormal's negation. At run time each pattern is or'd with a zero the
+// compiler cannot see, so a signaling NaN arrives unquieted.
+UNARY_SPECIAL :: [12]u64{
+	0x0000000000000000, 0x8000000000000000, 0x7ff0000000000000, 0xfff0000000000000,
+	0x7ff8000000000000, 0xfff8000000000000, 0x7ff0000000000001, 0xfff4000000000000,
+	0xbff0000000000000, 0xbfe0000000000000, 0xffefffffffffffff, 0x8000000000000001,
+};
+UNARY_SPECIAL_F32 :: [12]u32{
+	0x00000000, 0x80000000, 0x7f800000, 0xff800000,
+	0x7fc00000, 0xffc00000, 0x7f800001, 0xffa00000,
+	0xbf800000, 0xbf000000, 0xff7fffff, 0x80000001,
+};
+// Some of them folded, against the same calls at run time.
+FOLDED_SPECIAL :: [7]f64{
+	repro.log(unsafe.transmute(f64, u64(0x8000000000000000))),
+	repro.log(-1.0),
+	repro.log10(unsafe.transmute(f64, u64(0xfff0000000000000))),
+	repro.exp(unsafe.transmute(f64, u64(0xfff0000000000000))),
+	repro.sin(unsafe.transmute(f64, u64(0x7ff0000000000001))),
+	repro.atan(unsafe.transmute(f64, u64(0xfff0000000000000))),
+	repro.tan(unsafe.transmute(f64, u64(0x8000000000000000))),
+};
+FOLDED_SPECIAL_F32 :: [3]f32{
+	repro.log_f32(unsafe.transmute(f32, u32(0x80000000))),
+	repro.acos_f32(unsafe.transmute(f32, u32(0xff800000))),
+	repro.log2_f32(unsafe.transmute(f32, u32(0x7f800000))),
 };
 
 bits :: proc(x: f64) -> u64 { return unsafe.transmute(u64, x); }
@@ -403,6 +518,60 @@ HARD_ATAN_F32 :: [2]u32{0x3a27ba3b, 0x3d8d6b23};
 HARD_ATAN_F32_0 :: repro.atan_f32(unsafe.transmute(f32, u32(0x3a27ba3b)));
 HARD_ATAN_F32_1 :: repro.atan_f32(unsafe.transmute(f32, u32(0x3d8d6b23)));
 CONSTANT_HARD_ATAN_F32 :: [2]f32{HARD_ATAN_F32_0, HARD_ATAN_F32_1};
+// hypot: exact midpoints, Pythagorean triples whose hypotenuse has 54 or 25
+// bits and is odd, which round to even; 3 2^-1074 and 4 2^-1074, whose
+// result could be subnormal, so the slow path; the largest `f64` twice,
+// which overflows; and two `f32` pairs found by search, one that reaches
+// the double-`f64` step and one the slow path.
+HARD_HYPOT :: [4][2]u64{
+	{0x4338e4475bd97035, 0x4338e4476c3a1a64}, {0x0000000000000003, 0x0000000000000004},
+	{0x7fefffffffffffff, 0x7fefffffffffffff}, {0x4008000000000000, 0x4010000000000000},
+};
+HARD_HYPOT_0 :: repro.hypot(7006394575843381.0, 7006394850613860.0);
+HARD_HYPOT_1 :: repro.hypot(unsafe.transmute(f64, u64(3)), unsafe.transmute(f64, u64(4)));
+HARD_HYPOT_2 :: repro.hypot(1.7976931348623157e308, 1.7976931348623157e308);
+HARD_HYPOT_3 :: repro.hypot(3.0, 4.0);
+CONSTANT_HARD_HYPOT :: [4]f64{HARD_HYPOT_0, HARD_HYPOT_1, HARD_HYPOT_2, HARD_HYPOT_3};
+HARD_HYPOT_F32 :: [3][2]u32{{0x4b469357, 0x4b46c1a8}, {0x6ff49f6b, 0x6fb7778f}, {0x5eacdb0e, 0x5e100be1}};
+HARD_HYPOT_F32_0 :: repro.hypot_f32(f32(13013847.0), f32(13025704.0));
+HARD_HYPOT_F32_1 :: repro.hypot_f32(unsafe.transmute(f32, u32(0x6ff49f6b)), unsafe.transmute(f32, u32(0x6fb7778f)));
+HARD_HYPOT_F32_2 :: repro.hypot_f32(unsafe.transmute(f32, u32(0x5eacdb0e)), unsafe.transmute(f32, u32(0x5e100be1)));
+CONSTANT_HARD_HYPOT_F32 :: [3]f32{HARD_HYPOT_F32_0, HARD_HYPOT_F32_1, HARD_HYPOT_F32_2};
+
+// log2 and log10: an `f64` argument of each, found by search, that takes
+// the slow path; then `f32` ones of an exhaustive pass, log2's and log10's
+// that reach the double-`f64` step, both subnormal, and two of the 15 that
+// reach log10's slow path, log2's reaching none.
+HARD_LOG_BASE :: [2]u64{0x39f13e1978352f6d, 0x32d3c264b120e68d};
+HARD_LOG_BASE_FUNCTIONS :: [2]Function{.Log2, .Log10};
+HARD_LOG_BASE_0 :: repro.log2(unsafe.transmute(f64, u64(0x39f13e1978352f6d)));
+HARD_LOG_BASE_1 :: repro.log10(unsafe.transmute(f64, u64(0x32d3c264b120e68d)));
+CONSTANT_HARD_LOG_BASE :: [2]f64{HARD_LOG_BASE_0, HARD_LOG_BASE_1};
+HARD_LOG_BASE_F32 :: [4]u32{0x002452a4, 0x0197b60d, 0x0a4d4ce8, 0x2f149212};
+HARD_LOG_BASE_FUNCTIONS_F32 :: [4]Function{.Log2, .Log10, .Log10, .Log10};
+HARD_LOG_BASE_F32_0 :: repro.log2_f32(unsafe.transmute(f32, u32(0x002452a4)));
+HARD_LOG_BASE_F32_1 :: repro.log10_f32(unsafe.transmute(f32, u32(0x0197b60d)));
+HARD_LOG_BASE_F32_2 :: repro.log10_f32(unsafe.transmute(f32, u32(0x0a4d4ce8)));
+HARD_LOG_BASE_F32_3 :: repro.log10_f32(unsafe.transmute(f32, u32(0x2f149212)));
+CONSTANT_HARD_LOG_BASE_F32 :: [4]f32{HARD_LOG_BASE_F32_0, HARD_LOG_BASE_F32_1, HARD_LOG_BASE_F32_2, HARD_LOG_BASE_F32_3};
+CONSTANT_LOG2 :: repro.log2(10.0);
+CONSTANT_LOG10_F32 :: repro.log10_f32(f32(1000.0));
+
+// tan: `f64` arguments found by search that take the slow path, a tiny one
+// and one near an odd multiple of pi/2, so -1/tan r; and the two `f32`
+// arguments, of an exhaustive pass, that reach the slow path, both reduced
+// by Payne and Hanek's method.
+HARD_TAN :: [2]u64{0x3e5250934c70f078, 0x40831554f6327854};
+HARD_TAN_0 :: repro.tan(unsafe.transmute(f64, u64(0x3e5250934c70f078)));
+HARD_TAN_1 :: repro.tan(unsafe.transmute(f64, u64(0x40831554f6327854)));
+CONSTANT_HARD_TAN :: [2]f64{HARD_TAN_0, HARD_TAN_1};
+HARD_TAN_F32 :: [2]u32{0x5d5873ae, 0x5ffd33a4};
+HARD_TAN_F32_0 :: repro.tan_f32(unsafe.transmute(f32, u32(0x5d5873ae)));
+HARD_TAN_F32_1 :: repro.tan_f32(unsafe.transmute(f32, u32(0x5ffd33a4)));
+CONSTANT_HARD_TAN_F32 :: [2]f32{HARD_TAN_F32_0, HARD_TAN_F32_1};
+CONSTANT_TAN :: repro.tan(1.0e22);
+CONSTANT_TAN_F32 :: repro.tan_f32(f32(-3.0));
+
 // asin and acos: `f64` arguments found by search that take the slow path,
 // asin's with J = 0, acos's with w the numerator and of a negative x; then
 // `f32` arguments of an exhaustive pass, two that reach the double-`f64`
@@ -428,14 +597,17 @@ CONSTANT_ACOS_F32 :: repro.acos_f32(f32(0.25));
 CONSTANT_ATAN :: repro.atan(3.0);
 CONSTANT_ATAN_F32 :: repro.atan_f32(f32(-0.25));
 
-Function :: enum { Exp, Sin, Cos, Log, Asin, Acos }
+Function :: enum { Exp, Sin, Cos, Tan, Log, Log2, Log10, Asin, Acos }
 
 fast64 :: proc(f: Function, x: f64) -> f64 {
 	switch (f) {
 	case .Exp: return repro.exp(x);
 	case .Sin: return repro.sin(x);
 	case .Cos: return repro.cos(x);
+	case .Tan: return repro.tan(x);
 	case .Log: return repro.log(x);
+	case .Log2: return repro.log2(x);
+	case .Log10: return repro.log10(x);
 	case .Asin: return repro.asin(x);
 	case .Acos: return repro.acos(x);
 	}
@@ -446,7 +618,10 @@ slow64 :: proc(f: Function, x: f64) -> f64 {
 	case .Exp: return repro.slow_exp(x);
 	case .Sin: return repro.slow_sin(x);
 	case .Cos: return repro.slow_cos(x);
+	case .Tan: return repro.slow_tan(x);
 	case .Log: return repro.slow_log(x);
+	case .Log2: return repro.slow_log2(x);
+	case .Log10: return repro.slow_log10(x);
 	case .Asin: return repro.slow_asin(x);
 	case .Acos: return repro.slow_acos(x);
 	}
@@ -457,7 +632,10 @@ fast32 :: proc(f: Function, x: f32) -> f32 {
 	case .Exp: return repro.exp_f32(x);
 	case .Sin: return repro.sin_f32(x);
 	case .Cos: return repro.cos_f32(x);
+	case .Tan: return repro.tan_f32(x);
 	case .Log: return repro.log_f32(x);
+	case .Log2: return repro.log2_f32(x);
+	case .Log10: return repro.log10_f32(x);
 	case .Asin: return repro.asin_f32(x);
 	case .Acos: return repro.acos_f32(x);
 	}
@@ -468,7 +646,10 @@ slow32 :: proc(f: Function, x: f32) -> f32 {
 	case .Exp: return repro.slow_exp_f32(x);
 	case .Sin: return repro.slow_sin_f32(x);
 	case .Cos: return repro.slow_cos_f32(x);
+	case .Tan: return repro.slow_tan_f32(x);
 	case .Log: return repro.slow_log_f32(x);
+	case .Log2: return repro.slow_log2_f32(x);
+	case .Log10: return repro.slow_log10_f32(x);
 	case .Asin: return repro.slow_asin_f32(x);
 	case .Acos: return repro.slow_acos_f32(x);
 	}
@@ -476,14 +657,14 @@ slow32 :: proc(f: Function, x: f32) -> f32 {
 
 argument64 :: proc(f: Function, g: inout Generator, i: int) -> f64 {
 	if (f == .Exp) { return argument(inout g, i); }
-	if (f == .Log) { return log_argument(inout g, i); }
+	if (f == .Log || f == .Log2 || f == .Log10) { return log_argument(inout g, i); }
 	if (f == .Asin || f == .Acos) { return arc_argument(inout g, i); }
 	return trig_argument(inout g, i);
 }
 
 argument32 :: proc(f: Function, g: inout Generator, i: int) -> f32 {
 	if (f == .Exp) { return argument_f32(inout g, i); }
-	if (f == .Log) { return log_argument_f32(inout g, i); }
+	if (f == .Log || f == .Log2 || f == .Log10) { return log_argument_f32(inout g, i); }
 	if (f == .Asin || f == .Acos) { return arc_argument_f32(inout g, i); }
 	return trig_argument_f32(inout g, i);
 }
@@ -514,7 +695,11 @@ main :: proc() {
 		bits(CONSTANT_ASIN) == bits(repro.asin(0.25*one)),
 		bits(CONSTANT_ACOS) == bits(repro.acos(-0.75*one)),
 		bits32(CONSTANT_ASIN_F32) == bits32(repro.asin_f32(f32(0.75*one))),
-		bits32(CONSTANT_ACOS_F32) == bits32(repro.acos_f32(f32(0.25*one))));
+		bits32(CONSTANT_ACOS_F32) == bits32(repro.acos_f32(f32(0.25*one))),
+		bits(CONSTANT_TAN) == bits(repro.tan(1.0e22*one)),
+		bits32(CONSTANT_TAN_F32) == bits32(repro.tan_f32(f32(-3.0*one))),
+		bits(CONSTANT_LOG2) == bits(repro.log2(10.0*one)),
+		bits32(CONSTANT_LOG10_F32) == bits32(repro.log10_f32(f32(1000.0*one))));
 
 	hard := HARD_F32;
 	functions := HARD_FUNCTIONS;
@@ -533,6 +718,58 @@ main :: proc() {
 		result := fast64(functions64[i], z);
 		fmt.println(functions64[i], 64, bits(z), bits(result));
 		fmt.println("constant", bits(constants64[i]) == bits(result));
+	}
+	hard_hypot := HARD_HYPOT;
+	constants_hypot := CONSTANT_HARD_HYPOT;
+	foreach (i in 0 ..< 4) {
+		x := unsafe.transmute(f64, hard_hypot[i][0])*one;
+		y := unsafe.transmute(f64, hard_hypot[i][1]);
+		result := repro.hypot(x, y);
+		fmt.println("Hypot", 64, bits(x), bits(y), bits(result));
+		fmt.println("constant", bits(constants_hypot[i]) == bits(result));
+	}
+	hard_hypot32 := HARD_HYPOT_F32;
+	constants_hypot32 := CONSTANT_HARD_HYPOT_F32;
+	foreach (i in 0 ..< 3) {
+		x := unsafe.transmute(f32, hard_hypot32[i][0])*f32(one);
+		y := unsafe.transmute(f32, hard_hypot32[i][1]);
+		result := repro.hypot_f32(x, y);
+		fmt.println("Hypot", 32, bits32(x), bits32(y), bits32(result));
+		fmt.println("constant", bits32(constants_hypot32[i]) == bits32(result));
+	}
+	hard_log_base := HARD_LOG_BASE;
+	functions_log_base := HARD_LOG_BASE_FUNCTIONS;
+	constants_log_base := CONSTANT_HARD_LOG_BASE;
+	foreach (i in 0 ..< 2) {
+		z := unsafe.transmute(f64, hard_log_base[i])*one;
+		result := fast64(functions_log_base[i], z);
+		fmt.println(functions_log_base[i], 64, bits(z), bits(result));
+		fmt.println("constant", bits(constants_log_base[i]) == bits(result));
+	}
+	hard_log_base32 := HARD_LOG_BASE_F32;
+	functions_log_base32 := HARD_LOG_BASE_FUNCTIONS_F32;
+	constants_log_base32 := CONSTANT_HARD_LOG_BASE_F32;
+	foreach (i in 0 ..< 4) {
+		y := unsafe.transmute(f32, hard_log_base32[i])*f32(one);
+		result := fast32(functions_log_base32[i], y);
+		fmt.println(functions_log_base32[i], 32, bits32(y), bits32(result));
+		fmt.println("constant", bits32(constants_log_base32[i]) == bits32(result));
+	}
+	hard_tan := HARD_TAN;
+	constants_tan := CONSTANT_HARD_TAN;
+	foreach (i in 0 ..< 2) {
+		z := unsafe.transmute(f64, hard_tan[i])*one;
+		result := repro.tan(z);
+		fmt.println("Tan", 64, bits(z), bits(result));
+		fmt.println("constant", bits(constants_tan[i]) == bits(result));
+	}
+	hard_tan32 := HARD_TAN_F32;
+	constants_tan32 := CONSTANT_HARD_TAN_F32;
+	foreach (i in 0 ..< 2) {
+		y := unsafe.transmute(f32, hard_tan32[i])*f32(one);
+		result := repro.tan_f32(y);
+		fmt.println("Tan", 32, bits32(y), bits32(result));
+		fmt.println("constant", bits32(constants_tan32[i]) == bits32(result));
 	}
 	hard_arc := HARD_ARC_F64;
 	functions_arc := HARD_ARC_FUNCTIONS_F64;
@@ -605,7 +842,55 @@ main :: proc() {
 			x := unsafe.transmute(f64, atan2_special[j]);
 			fmt.println("Atan2", 64, bits(y), bits(x), bits(repro.atan2(y*one, x)));
 			fmt.println("Atan2", 32, bits32(f32(y)), bits32(f32(x)), bits32(repro.atan2_f32(f32(y)*f32(one), f32(x))));
+			fmt.println("Hypot", 64, bits(y), bits(x), bits(repro.hypot(y*one, x)));
+			fmt.println("Hypot", 32, bits32(f32(y)), bits32(f32(x)), bits32(repro.hypot_f32(f32(y)*f32(one), f32(x))));
 		}
+	}
+	noise := u64(os.args.len()) - 1;
+	unary_special := UNARY_SPECIAL;
+	unary_special_32 := UNARY_SPECIAL_F32;
+	foreach (i in 0 ..< 12) {
+		x := unsafe.transmute(f64, unary_special[i] | noise);
+		y := unsafe.transmute(f32, unary_special_32[i] | u32(noise));
+		foreach (f in [9]Function{.Exp, .Sin, .Cos, .Tan, .Log, .Log2, .Log10, .Asin, .Acos}) {
+			fmt.println(f, 64, unary_special[i], bits(fast64(f, x)));
+			fmt.println(f, 32, unary_special_32[i], bits32(fast32(f, y)));
+		}
+		fmt.println("Atan", 64, unary_special[i], bits(repro.atan(x)));
+		fmt.println("Atan", 32, unary_special_32[i], bits32(repro.atan_f32(y)));
+	}
+	folded := FOLDED_SPECIAL;
+	folded_32 := FOLDED_SPECIAL_F32;
+	runtime := [7]f64{
+		repro.log(unsafe.transmute(f64, u64(0x8000000000000000) | noise)),
+		repro.log(unsafe.transmute(f64, u64(0xbff0000000000000) | noise)),
+		repro.log10(unsafe.transmute(f64, u64(0xfff0000000000000) | noise)),
+		repro.exp(unsafe.transmute(f64, u64(0xfff0000000000000) | noise)),
+		repro.sin(unsafe.transmute(f64, u64(0x7ff0000000000001) | noise)),
+		repro.atan(unsafe.transmute(f64, u64(0xfff0000000000000) | noise)),
+		repro.tan(unsafe.transmute(f64, u64(0x8000000000000000) | noise)),
+	};
+	runtime_32 := [3]f32{
+		repro.log_f32(unsafe.transmute(f32, u32(0x80000000) | u32(noise))),
+		repro.acos_f32(unsafe.transmute(f32, u32(0xff800000) | u32(noise))),
+		repro.log2_f32(unsafe.transmute(f32, u32(0x7f800000) | u32(noise))),
+	};
+	foreach (i in 0 ..< 7) { fmt.println("constant", bits(folded[i]) == bits(runtime[i])); }
+	foreach (i in 0 ..< 3) { fmt.println("constant", bits32(folded_32[i]) == bits32(runtime_32[i])); }
+	log_special := LOG_SPECIAL;
+	foreach (i in 0 ..< 20) {
+		x := unsafe.transmute(f64, log_special[i]);
+		foreach (f in [2]Function{.Log2, .Log10}) {
+			fmt.println(f, 64, bits(x), bits(fast64(f, x*one)));
+			fmt.println(f, 32, bits32(f32(x)), bits32(fast32(f, f32(x)*f32(one))));
+		}
+	}
+	tan_special := TAN_SPECIAL;
+	foreach (i in 0 ..< 17) {
+		x := unsafe.transmute(f64, tan_special[i % 7]);
+		if (i >= 7) { x = unsafe.transmute(f64, atan2_special[i - 7]); }
+		fmt.println("Tan", 64, bits(x), bits(repro.tan(x*one)));
+		fmt.println("Tan", 32, bits32(f32(x)), bits32(repro.tan_f32(f32(x)*f32(one))));
 	}
 	arc_special := ARC_SPECIAL;
 	foreach (i in 0 ..< 20) {
@@ -634,7 +919,7 @@ main :: proc() {
 	}
 
 	g := Generator{state = 0x9e3779b97f4a7c15};
-	foreach (f in [6]Function{.Exp, .Sin, .Cos, .Log, .Asin, .Acos}) {
+	foreach (f in [9]Function{.Exp, .Sin, .Cos, .Tan, .Log, .Log2, .Log10, .Asin, .Acos}) {
 		differ := 0;
 		differ32 := 0;
 		foreach (i in 0 ..< compared(f)) {
@@ -653,7 +938,7 @@ main :: proc() {
 	}
 
 	CHECKED :: 1000;
-	foreach (f in [6]Function{.Exp, .Sin, .Cos, .Log, .Asin, .Acos}) {
+	foreach (f in [9]Function{.Exp, .Sin, .Cos, .Tan, .Log, .Log2, .Log10, .Asin, .Acos}) {
 		foreach (i in 0 ..< CHECKED) {
 			x := argument64(f, inout g, i)*one;
 			fmt.println(f, 64, bits(x), bits(fast64(f, x)));
@@ -722,5 +1007,31 @@ main :: proc() {
 		fmt.println("Atan", 64, bits(z), bits(repro.atan(z*one)));
 		z32 := y32/x32;
 		fmt.println("Atan", 32, bits32(z32), bits32(repro.atan_f32(z32*f32(one))));
+	}
+
+	differ = 0;
+	differ32 = 0;
+	foreach (i in 0 ..< 20000) {
+		x, y := hypot_argument(inout g, i);
+		if (bits(repro.hypot(x*one, y)) != bits(repro.slow_hypot(x*one, y))) {
+			differ += 1;
+			if (differ <= 5) { fmt.println("differs64 Hypot", bits(x), bits(y)); }
+		}
+		x32, y32 := hypot_argument_f32(inout g, i);
+		if (bits32(repro.hypot_f32(x32*f32(one), y32)) != bits32(repro.slow_hypot_f32(x32*f32(one), y32))) {
+			differ32 += 1;
+			if (differ32 <= 5) { fmt.println("differs32 Hypot", bits32(x32), bits32(y32)); }
+		}
+	}
+	fmt.println("compared Hypot 20000", differ, differ32);
+	foreach (i in 0 ..< CHECKED) {
+		x, y := hypot_argument(inout g, i);
+		fmt.println("Hypot", 64, bits(x), bits(y), bits(repro.hypot(x*one, y)));
+		x32, y32 := hypot_argument_f32(inout g, i);
+		fmt.println("Hypot", 32, bits32(x32), bits32(y32), bits32(repro.hypot_f32(x32*f32(one), y32)));
+		if (i % 4 == 0) {
+			fmt.println("Hypot", 64, bits(x), bits(y), bits(repro.slow_hypot(x*one, y)));
+			fmt.println("Hypot", 32, bits32(x32), bits32(y32), bits32(repro.slow_hypot_f32(x32*f32(one), y32)));
+		}
 	}
 }

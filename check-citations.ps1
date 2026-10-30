@@ -13,10 +13,19 @@ param([string[]]$Specs = @('design.md', 'grammar.md', 'standard-library.md', 'co
 $repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Push-Location -LiteralPath $repoRoot
 try {
-    # The tutorials link to the sections they teach from as `design.md "X"`.
-    $sources = @(Get-ChildItem -Recurse -File -Include *.odin, *.loke, *.c, *.h |
-        Where-Object { $_.FullName -notlike '*\tests\tmp\*' }) +
-        @(Get-ChildItem -File tutorials/*.md)
+    # The repository's own files, tracked or new, and not what git ignores: a
+    # walk of the directory also read tests/tmp's copies and other sessions'
+    # worktrees under .claude, which cite headings this checkout lacks. The
+    # tutorials link to the sections they teach from as `design.md "X"`.
+    $listed = @(git ls-files --cached --others --exclude-standard)
+    if ($LASTEXITCODE -ne 0) { throw "git ls-files failed ($LASTEXITCODE)" }
+    # The extensions match in any case, as tests/pkg/spelling's z.LOKE needs,
+    # which git's pathspecs would not; a tracked file deleted from the working
+    # tree is still listed.
+    $sources = @($listed | Where-Object {
+            [System.IO.Path]::GetExtension($_) -in '.odin', '.loke', '.c', '.h' -and
+            (Test-Path -LiteralPath $_ -PathType Leaf)
+        } | Get-Item) + @(Get-ChildItem -File tutorials/*.md)
 
     $texts = @{}
     foreach ($file in $sources) {

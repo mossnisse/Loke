@@ -2348,15 +2348,18 @@ call is evaluated at compile time. No procedure calls the C library or uses
 is the positive quiet NaN with no payload (`0x7ff8000000000000`,
 `0x7fc00000`), whatever NaN produced it.
 
-The package has `exp`, `log`, `pow`, `sin`, `cos`, `asin`, `acos`, `atan`,
-and `atan2`, each with the `f64` and `_f32` naming of `core:math`. A function missing here is
+The package has `exp`, `log`, `log2`, `log10`, `pow`, `sin`, `cos`, `tan`,
+`asin`, `acos`, `atan`, `atan2`, and `hypot`, each with the `f64` and `_f32`
+naming of `core:math`. A function missing here is
 not provided by falling back to `core:math`. Each `_f32` procedure is rounded
 once to `f32`, not the `f64` one narrowed, which could round twice.
 
 - `exp` of NaN is NaN, of +Inf is +Inf, of -Inf is +0, and of ±0 is exactly
   1.
-- `log` is the natural logarithm. NaN and every argument below zero, -Inf
-  included, give NaN; ±0 gives -Inf, 1 gives +0, and +Inf gives +Inf.
+- `log` is the natural logarithm, and `log2` and `log10` the logarithms to
+  bases 2 and 10. NaN and every argument below zero, -Inf included, give
+  NaN; ±0 gives -Inf, 1 gives +0, and +Inf gives +Inf. `log2` of a power of
+  two and `log10` of a power of ten are its exponent exactly.
 - `pow(x, y)` is x^y, with the special cases of IEC 60559 and C17's annex F
   but for NaN results, in this order: y = ±0 gives 1, and so does x = +1,
   NaN included; any other NaN argument gives NaN. x = ±0 gives ±Inf for an
@@ -2369,9 +2372,10 @@ once to `f32`, not the `f64` one narrowed, which could round twice.
   integer, and -|x|^y when y is odd. An exact result, such as `pow(4, 0.5)`,
   is exact, and one exactly halfway between two floats, such as
   `pow_f32(1 + 2^-12, 2)`, rounds to even.
-- `sin` and `cos` take radians. Every finite argument is reduced by an exact
-  multiple of pi/2, however large. NaN and ±Inf give NaN; `sin(±0)` is ±0 and
-  `cos(±0)` is exactly 1, and `sin(-x)` is `-sin(x)`.
+- `sin`, `cos`, and `tan` take radians. Every finite argument is reduced by
+  an exact multiple of pi/2, however large. NaN and ±Inf give NaN; `sin(±0)`
+  and `tan(±0)` are ±0 and `cos(±0)` is exactly 1, and `sin(-x)` and
+  `tan(-x)` are `-sin(x)` and `-tan(x)`.
 - `asin` and `acos` give radians, from -pi/2 to pi/2 and from 0 to pi. NaN
   and every argument outside [-1, 1], ±Inf included, give NaN. `asin(±0)`
   is ±0 and `asin(±1)` is ±pi/2; `acos(1)` is +0, `acos(-1)` is pi, and
@@ -2388,6 +2392,12 @@ once to `f32`, not the `f64` one narrowed, which could round twice.
   `atan2(3*2^-1074, 2)` is 2^-1074.
 - `atan(x)` is `atan2(x, 1)`: NaN gives NaN, ±0 gives itself, and ±Inf gives
   ±pi/2.
+- `hypot(x, y)` is sqrt(x^2 + y^2), without overflow or underflow on the
+  way. As in C17's annex F, ±Inf in either argument gives +Inf, even with a
+  NaN in the other; otherwise NaN gives NaN. `hypot(x, ±0)` is |x|. An exact
+  result is exact, and one exactly halfway between two floats, such as
+  `hypot_f32(13013847, 13025704)`, whose exact value is 18412745, rounds to
+  even.
 
 The plan for the rest of the package, and its special cases for further
 functions, is in the

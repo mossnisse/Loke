@@ -1,0 +1,113 @@
+// deterministic-math-and-targets-plan.md "Reproducible result contract":
+// `hypot` in both widths.
+//
+// With a the larger magnitude and b the smaller, hypot is a sqrt(1 + (b/a)^2).
+// When b is below 2^-61 a, that is above a by under 2^-121 a, which rounds
+// to a. Otherwise both are scaled by a power of two, exactly, so that a is
+// in [1, 2) and b at least 2^-61, and the result is scaled back.
+//
+// The fast path forms s = a^2 + b^2 as a pair within 2^-104 relative, both
+// squares exact (`two_product`), and its root as `pair_root` does, within
+// 2^-101; that is far inside the margin other paths use, so the result is
+// returned when it is decided within 2^-99. A result that could be
+// subnormal takes the slow path, since scaling it back would round twice.
+// For `f32` arguments, s is formed in one `f64`, both squares exact and
+// the sum rounded once, and s y, y from `root_estimate` and a fourth step,
+// is within 5 ulps of the result; when no `f32` midpoint is within 8 ulps,
+// narrowing it rounds correctly, and otherwise the double-`f64` result
+// decides, and then the slow path.
+//
+// The slow path forms s exactly in fixed point, its bits ending above
+// 2^-226, and its root by `fixed_sqrt`, within 2^-316. A result can be a
+// midpoint, x^2 + y^2 being the square of one, such as hypot(13013847,
+// 13025704) = 18412745 in `f32`, so a root within 2^-300 of a midpoint is
+// tested for being exactly it, its square compared with s, and an exact
+// midpoint rounds to even. A root that is not a midpoint is at least
+// 2^-229 from one: s and a midpoint's square are both multiples of 2^-226,
+// so they differ by at least that, and their roots by at least that over
+// the sum of the roots, under 6. So the slow path rounds every argument
+// correctly; `tests/repro_test.odin` checks both paths against an
+// independent oracle.
+package repro;
+
+import "core:unsafe";
+
+// 2^-99, twice the bound of 2^-100 on the fast path.
+HYPOT_MARGIN :: 1.5777218104420236e-30;
+
+// a and b scaled by 2^-ea, a into [1, 2), and ea, for finite magnitudes
+// a >= b > 0; `near` is false when b is below 2^-61 a, where the result
+// rounds to a.
+hypot_parts :: proc(a: f64, b: f64) -> (near: bool, a_scaled: f64, b_scaled: f64, ea: int) {
+	ea, fa := log_split(a);
+	eb, fb := log_split(b);
+	if (eb - ea < -61) { return {false, 0.0, 0.0, 0}; }
+	return {true, from_bits(fa | 0x3ff0000000000000), from_bits(fb | 0x3ff0000000000000)*power_of_two(eb - ea), ea};
+}
+
+// hypot for finite magnitudes a >= b > 0.
+hypot_f64_of :: proc(a: f64, b: f64) -> f64 {
+	near, a2, b2, ea := hypot_parts(a, b);
+	if (!near) { return a; }
+	ph, pl := two_product(a2, a2);
+	qh, ql := two_product(b2, b2);
+	s, e := two_sum(ph, qh);
+	sh, sl := fast_two_sum(s, e + (pl + ql));
+	wh, wl := pair_root(sh, sl);
+	if (ea >= -1022) {
+		decided, v := f64_decided(wh, wl, HYPOT_MARGIN);
+		// Scaling back is exact, or overflows exactly when the result does.
+		if (decided) { return v*power_of_two(ea); }
+	}
+	return from_bits(hypot_slow(a2, b2, ea, wh + wl, F64_LAYOUT));
+}
+
+// The same for `f32` magnitudes a >= b > 0, here exactly as `f64` values,
+// whose squares are normal and exact.
+hypot_f32_of :: proc(a: f64, b: f64) -> f32 {
+	s := a*a + b*b;
+	y := root_estimate(s);
+	y = y*(1.5 - (0.5*s)*(y*y));
+	quick := s*y;
+	if (f32_decided(quick, 8)) { return f32(quick); }
+
+	sh, sl := two_sum(a*a, b*b);
+	wh, wl := pair_root(sh, sl);
+	root := wh + wl;
+	if (f32_decided(root, 1)) { return f32(root); }
+	near, a2, b2, ea := hypot_parts(a, b);
+	if (!near) { return f32(a); }
+	return unsafe.transmute(f32, u32(hypot_slow(a2, b2, ea, root*power_of_two(0 - ea), F32_LAYOUT)));
+}
+
+// hypot correctly rounded to `layout`, as its bit pattern, for a and b as
+// `hypot_parts` scales them and an `f64` within 2^-52 of the scaled root.
+hypot_slow :: proc(a: f64, b: f64, ea: int, near: f64, layout: Float_Layout) -> u64 {
+	fa := fixed_of(a);
+	fb := fixed_of(b);
+	s := fixed_plus(fixed_times(fa, fa), fixed_times(fb, fb));
+	w: Fixed = {};
+	if (s[5] >= 4) {
+		half := fixed_sqrt(fixed_shift_down(s, 2), 0.5*near);
+		w = fixed_plus(half, half);
+	} else {
+		w = fixed_sqrt(s, near);
+	}
+	exponent := ea - FRACTION_BITS;
+	unit, drop := fixed_round_place(w, exponent, layout);
+	kept := fixed_field(w, drop, layout.precision + 1);
+	// The one midpoint w can be near, kept + 1/2 units. Its last bit is at
+	// 2^-53 or above, w being at least 1, so its square is exact.
+	midpoint := fixed_scaled(Fixed{2*kept + 1, 0, 0, 0, 0, 0}, drop - 1);
+	distance: Fixed = {};
+	if (fixed_less(w, midpoint)) {
+		distance = fixed_minus(midpoint, w);
+	} else {
+		distance = fixed_minus(w, midpoint);
+	}
+	if (fixed_less(distance, Fixed{0x100000, 0, 0, 0, 0, 0}) && fixed_times(midpoint, midpoint) == s) {
+		if (kept & 1 == 1) { kept += 1; }
+		return fixed_round_finish(kept, unit, layout);
+	}
+	return fixed_round(w, exponent, layout);
+}

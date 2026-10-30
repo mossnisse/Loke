@@ -18,6 +18,7 @@ repro_constants_match_their_derivation :: proc(t: ^testing.T) {
 	check_generated_block(t, "core/math/repro/atan.loke", atan_constants_source(&o))
 	check_generated_block(t, "core/math/repro/exp.loke", exp_constants_source(&o))
 	check_generated_block(t, "core/math/repro/log.loke", log_constants_source(&o))
+	check_generated_block(t, "core/math/repro/log_base.loke", log_base_constants_source(&o))
 	check_generated_block(t, "core/math/repro/trig.loke", trig_constants_source(&o))
 }
 
@@ -94,7 +95,7 @@ repro_functions_round_correctly :: proc(t: ^testing.T) {
 			constants += len(fields) - 1
 		case "compared":
 			testing.expectf(t, len(fields) == 5 && fields[3] == "0" && fields[4] == "0", "a fast path differs from its slow path: %s", line)
-		case "Pow":
+		case "Pow", "Hypot":
 			x_bits, _ := strconv.parse_u64(fields[2])
 			y_bits, _ := strconv.parse_u64(fields[3])
 			got, _ := strconv.parse_u64(fields[4])
@@ -104,8 +105,8 @@ repro_functions_round_correctly :: proc(t: ^testing.T) {
 				x, y = f64(transmute(f32)u32(x_bits)), f64(transmute(f32)u32(y_bits))
 				format = F32_FORMAT
 			}
-			want := oracle_pow(&o, x, y, format)
-			testing.expectf(t, got == want, "pow at f%s of %v and %v: got %x, the oracle %x", fields[1], x, y, got, want)
+			want := fields[0] == "Pow" ? oracle_pow(&o, x, y, format) : oracle_hypot(x, y, format)
+			testing.expectf(t, got == want, "%s at f%s of %v and %v: got %x, the oracle %x", fields[0], fields[1], x, y, got, want)
 			checked += 1
 		case "Atan2", "Atan":
 			// atan x is atan2(x, 1).
@@ -128,11 +129,14 @@ repro_functions_round_correctly :: proc(t: ^testing.T) {
 			checked += 1
 		case "differs64", "differs32":
 			testing.expectf(t, false, "a fast path differs from its slow path at %s", line)
-		case "Exp", "Sin", "Cos", "Log", "Asin", "Acos":
+		case "Exp", "Sin", "Cos", "Tan", "Log", "Log2", "Log10", "Asin", "Acos":
 			function := Oracle_Function.Exp
 			if fields[0] == "Sin" {function = .Sin}
 			if fields[0] == "Cos" {function = .Cos}
+			if fields[0] == "Tan" {function = .Tan}
 			if fields[0] == "Log" {function = .Log}
+			if fields[0] == "Log2" {function = .Log2}
+			if fields[0] == "Log10" {function = .Log10}
 			if fields[0] == "Asin" {function = .Asin}
 			if fields[0] == "Acos" {function = .Acos}
 			x, _ := strconv.parse_u64(fields[2])
@@ -148,5 +152,5 @@ repro_functions_round_correctly :: proc(t: ^testing.T) {
 			checked += 1
 		}
 	}
-	testing.expectf(t, checked == 22643 && constants == 58, "the probe printed %d checked results and %d constants", checked, constants)
+	testing.expectf(t, checked == 33214 && constants == 89, "the probe printed %d checked results and %d constants", checked, constants)
 }

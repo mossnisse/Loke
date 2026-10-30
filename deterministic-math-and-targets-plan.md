@@ -39,8 +39,8 @@ From phase 1:
   nearest-even rounding, subnormals kept, and non-stop exceptions on every
   thread, with no Loke operation that changes them and a restore obligation on
   foreign code. `tests/run/float_environment.loke` checks Windows gives it to
-  the main thread and to a started one. The entry mechanism for C hosts is not
-  done; the obligation covers them for now.
+  the main thread and to a started one. Phase 4 adds the entry from C hosts;
+  see below.
 - [Special cases](#special-cases) for `exp`, `log`, `sin`, `cos`, `pow`, and
   `atan2`.
 - An oracle, `tests/math_oracle.odin`: outward-rounded interval arithmetic on
@@ -170,12 +170,79 @@ w = sqrt(1 - x^2):
 - No binary64 worst-case search is relied on, so as for `atan2` nothing
   proves the slow path's 2^-305 enough.
 
-The rest of phase 4's functions are next.
+Then `tan` in both widths:
+
+- It takes `sin` and `cos`'s reduction and both kernels, and divides the
+  pairs, sin r/cos r or -cos r/sin r by the quadrant. The two kernels'
+  errors add, so its bound is 2^-66 and its margin 2^-65, twice the
+  others', and about one `f64` argument in 2,800 takes the slow path. That
+  takes both series in fixed point and their quotient, the denominator
+  scaled near 1.
+- An exhaustive pass over every finite `f32` from 2^-12 up found 2 that
+  reach the slow path. The oracle divides its sine and cosine intervals.
+  Odin's `tan` is sin/cos, rounded twice, so the library test compares it
+  with the C library's instead.
+
+Then `log2` and `log10` in both widths:
+
+- Each is `log`'s double-`f64` result times 1/ln 2 or 1/ln 10 as a pair,
+  within 2^-68, and `log`'s slow path times the constant in fixed point;
+  the `f32` procedures scale `log_f32`'s single-`f64` approximation first.
+- log2 x and log10 x are rational only at powers of 2 and 10, where they
+  are an integer, a float and not a midpoint, so no exact-case test is
+  needed: every close enough approximation rounds to it.
+- An exhaustive pass over every positive finite `f32` found 281 and 111
+  arguments that reach the double-`f64` step and 0 and 15 that reach the
+  slow path, and none where the first approximation disagreed. The oracle
+  divides its log by ln 2 or ln 10 and also generates the constants; the
+  library test compares with the C library's.
+
+Then `hypot` in both widths, which completes the transcendental functions
+of [`core:math`](standard-library.md#coremath):
+
+- x^2 + y^2 is formed with both squares exact, after scaling the larger
+  argument into [1, 2), and its root comes from the same software square
+  root as `asin`'s. The fast path is within 2^-100, so it decides at 2^-99
+  and leaves the slow path to exact midpoints, results that could be
+  subnormal, and about one random `f32` pair in 10^7.
+- Unlike the others, `hypot` has midpoint results, Pythagorean triples whose
+  hypotenuse has one bit too many and is odd. The slow path forms x^2 + y^2
+  exactly in fixed point and tests a root near a midpoint by squaring the
+  midpoint. A root that is not a midpoint is at least 2^-229 from one, so
+  `hypot` is proved correctly rounded, needing no search.
+- The oracle takes exact integer square roots. The UCRT's `hypot` is an ulp
+  off in an eighth of its sample, where an exact computation in Python
+  agrees with the oracle.
+
+Every NaN result of `core:math/repro` is the canonical quiet NaN, signaling
+arguments included, as [Reproducible result contract](#reproducible-result-contract)
+asks; a whole-program canonicalization mode is separate work, as
+[Special cases](#special-cases) says.
+
+Then the entry from foreign code, which
+[Execution environment and future platforms](#execution-environment-and-future-platforms)
+asks for:
+
+- Instead of a scoped call each host makes, every procedure Loke defines with
+  a foreign calling convention guards its own entry. Under its own name it
+  reads MXCSR, and only when the control bits differ from Loke's sets them,
+  calls the body, and restores the caller's; the body is a function no caller
+  may inline, so none of its arithmetic runs before the switch. That covers
+  exports, callbacks reached from a C library, and threads the host created,
+  and a host cannot forget it. See
+  [The floating-point environment is fixed](comments.md#the-floating-point-environment-is-fixed).
+- With `-debug`, each call to a foreign procedure, or through a foreign
+  procedure value, reads MXCSR when it returns and panics, naming the
+  procedure, when Loke's environment changed. A release build does not check.
+- `tests/obj/environment_host.c` calls into Loke rounding upward, with
+  flush-to-zero, denormals-are-zero, and the invalid-operation exception
+  unmasked, from its main thread, through a callback, and from a thread of
+  its own; built without the guard, its second call stops on that exception.
+  `tests/trap/foreign_float_environment.loke` is the `-debug` check's.
 
 Not started: phase 1's benchmarks (the UCRT timings in open questions stand
-until there is a kernel to compare), the rest of phase 4's kernels, NaN
-canonicalization, the environment entry
-contract, simulation support, dispatch, and other platforms.
+until there is a kernel to compare), simulation support, dispatch, and other
+platforms.
 
 ## Recommended direction
 

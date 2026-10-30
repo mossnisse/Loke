@@ -1843,6 +1843,45 @@ atomics_hold_under_contention :: proc(t: ^testing.T, clang: string, include_flag
 	)
 }
 
+// design.md "Floating-point operators": an export and a callback run in Loke's
+// environment whatever the C host's, on its main thread and on one it starts,
+// and the host gets its own back. `environment_host.c` exits with the number
+// of the first check that failed.
+@(test)
+foreign_entries_run_in_lokes_environment :: proc(t: ^testing.T) {
+	clang, include_flags, found := host_toolchain()
+	if !found {
+		skipped_capability(t, "no clang or MSVC toolset, so no C host calls into Loke")
+		return
+	}
+	os.make_directory(TMP)
+	obj := fmt.tprintf("%s/environment.obj", TMP)
+	state, _, stderr, err := exec(
+		os.Process_Desc {
+			command = []string{compiler_path(), "tests/obj/environment.loke", "-build-mode=obj", "-debug", "-o", obj},
+		},
+		context.allocator,
+	)
+	if !testing.expectf(t, err == nil && state.exit_code == 0, "the environment object build failed:\n%s", string(stderr)) {
+		return
+	}
+	exe := fmt.tprintf("%s/environment-host.exe", TMP)
+	link_state, _, link_stderr, link_err := exec(
+		os.Process_Desc{command = c_host_link_command(clang, "tests/obj/environment_host.c", obj, exe, include_flags)},
+		context.allocator,
+	)
+	if !testing.expectf(t, link_err == nil && link_state.exit_code == 0, "the environment host link failed:\n%s", string(link_stderr)) {
+		return
+	}
+	run_state, _, run_stderr, run_err := exec(os.Process_Desc{command = []string{launch_path(exe)}}, context.allocator)
+	testing.expectf(t, run_err == nil, "cannot run %s", exe)
+	testing.expectf(
+		t, run_state.exit_code == 0,
+		"a call into Loke ran in or left the wrong environment: check %d (see `environment_host.c`)\n%s",
+		run_state.exit_code, string(run_stderr),
+	)
+}
+
 // standard-library "`core:process`": `output` that fails to collect stdout
 // returns the error, rather than joining a stderr reader that the child,
 // blocked writing stdout, never lets finish. One that fails to collect stderr
