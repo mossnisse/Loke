@@ -1,0 +1,44 @@
+// design.md "Interface bodies": a bare `linalg.Scalar(T)` bound grants this
+// package `T.Real`, which `core:math/linalg` meets privately for the built-in
+// floats and `math.Complex`, and `Real(T.Real)`'s slots on it, in the
+// signature, the body, and a record's fields. `core:math` is imported too, so
+// its compiler-supplied bit operations are registered in the same build: they
+// are names in `core:math`'s scope and must not disturb the grant.
+package main;
+
+import "core:fmt";
+import "core:math";
+import "core:math/linalg";
+
+// `|z|` as `core:math/dense` writes it: `abs` on `T.Real` is a slot of the
+// composed `Real(T.Real)`, private to `linalg` for `f64`.
+modulus :: proc(z: $T) -> T.Real where linalg.Scalar(T) {
+	when (T == T.Real) {
+		return z.abs();
+	} else {
+		return z.real_part().abs() + z.imaginary_part().abs();
+	}
+}
+
+Parts :: struct($T: type) where linalg.Scalar(T) {
+	real:      T.Real,
+	imaginary: T.Real,
+}
+
+parts :: proc(z: $T) -> Parts(T) where linalg.Scalar(T) {
+	return {real = z.real_part(), imaginary = z.imaginary_part()};
+}
+
+static_assert(linalg.Scalar(f64));
+static_assert(linalg.Scalar(math.Complex(f64)));
+
+main :: proc() {
+	fmt.println(modulus(-2.5));
+	fmt.println(modulus(f32(1.5)));
+	fmt.println(modulus(math.Complex(f64){real = 3, imaginary = -4}));
+	p := parts(math.Complex(f64){real = 1, imaginary = 2});
+	fmt.println(p.real, p.imaginary);
+	q := parts(7.0);
+	fmt.println(q.real, q.imaginary);
+	fmt.println(math.count_ones(u8(0b1011)), math.leading_zeros(u32(1)), math.rotate_left(u8(0b1000_0001), 1));
+}
