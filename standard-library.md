@@ -2021,7 +2021,9 @@ one writer, not a protection against a program that does not ask.
 A handle holds one lock at a time: `lock` or `try_lock` while it holds one is
 `Unsupported`, so changing the mode means `unlock` first, and another handle
 can take the lock in between. `unlock`
-on a handle holding no lock, a closed one included, succeeds. `close` and
+on a handle holding no lock, a closed one included, succeeds, and a failed
+`unlock` leaves the handle holding its lock, so calling it again retries the
+release. `close` and
 `drop` release the lock, and so does the program ending however it ends, so a
 crash leaves no stale lock behind. `lock` and `try_lock` on a closed file are
 `Closed`. Every handle can lock except one opened `Write` with `append`, which

@@ -300,12 +300,15 @@ impl File {
 
 	/**
 		Releases this handle's lock. A handle that holds none, a closed one
-		included, has nothing to release.
+		included, has nothing to release. A failed release leaves the handle
+		holding the lock, so calling `unlock` again retries it.
 	*/
 	unlock :: proc(self: inout File) -> Status(io.Error) {
 		if (!self.locked) { return .ok; }
+		// Forgotten only once released: a lock still held must keep `unlock`
+		// retrying, `lock` refusing, and `close` releasing it.
+		unlock_handle(self.handle) or_return;
 		self.locked = false;
-		return unlock_handle(self.handle);
 	}
 
 	@(private)

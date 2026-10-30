@@ -42,8 +42,8 @@ cleanup and coverage items:
 All three added regression programs and `lokec core/fs -api-check` passed.
 The append recovery sequence, including `flush`, and resizing an open append
 handle after deleting its name also succeeded on the review's Windows host.
-The unlock failure-state finding is recorded in
-[known-gaps.md](known-gaps.md#a-failed-file-unlock-is-forgotten-before-the-native-lock-is-released).
+The review's unlock failure-state finding is fixed: a failed `unlock` now keeps
+the lock ([File locking](standard-library.md#file-locking)).
 
 ## JSON follow-ups
 

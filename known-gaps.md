@@ -7,42 +7,6 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
-### A failed file unlock is forgotten before the native lock is released
-
-The [file-locking contract](standard-library.md#file-locking) gives each
-`fs.File` one lock and makes `unlock` release it. In
-[fs.loke](core/fs/fs.loke), `File.unlock` instead clears `self.locked` before
-calling the fallible `unlock_handle`. If that call fails while leaving the
-native lock held, a retry answers success without attempting the release;
-`check_lockable` also admits another acquisition, and `close` skips its
-explicit unlock.
-
-Minimal fault-injection reproduction: in an isolated copy of `core:fs`, make
-the first `unlock_handle` call return
-`.err(io.make_error(.Interrupted, .Unlock))` before calling `UnlockFileEx`,
-then run:
-
-```loke
-package main;
-import "core:fmt";
-import "core:fs";
-main :: proc() {
-    owner := fs.create("unlock-repro.bin") or_else panic("open");
-    other := fs.open_read("unlock-repro.bin") or_else panic("open");
-    _ = owner.lock(.Exclusive);
-    _ = owner.unlock(); // injected failure: the native lock is still held
-    _ = owner.unlock(); // reports success without retrying the native call
-    fmt.println(other.try_lock(.Exclusive) or_else false);
-}
-```
-
-This prints `false`. Calling `unlock_handle(self.handle) or_return` before
-clearing `self.locked` makes the retry release the lock and prints `true`.
-Both outcomes were verified with the injected failure; no native unlock
-failure was observed in the ordinary filesystem tests. Preserve the lock
-state on failure and add a regression that injects a failed release.
-Found reviewing `cf74b6e2` on 2026-10-30.
-
 ### Storing one element of a local view resliced from itself is rejected
 
 [Weakening and reborrows](design.md#weakening-and-reborrows) lets a store

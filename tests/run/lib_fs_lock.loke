@@ -134,6 +134,22 @@ main :: proc() {
 	attempt(owner.try_lock(.Exclusive));
 	report(owner.unlock());
 
+	// `unlock` forgets the lock once it is released, not before: then another
+	// handle takes it, a refused `try_lock` leaves nothing to release, and the
+	// handle locks again. A release that fails keeps the lock, but nothing a
+	// program does here can make the native call fail.
+	report(owner.lock(.Exclusive));
+	report(owner.unlock());
+	attempt(other.try_lock(.Exclusive));
+	attempt(owner.try_lock(.Shared));
+	report(owner.unlock());
+	report(other.unlock());
+	report(owner.lock(.Shared));
+	attempt(other.try_lock(.Exclusive));
+	report(owner.unlock());
+	attempt(other.try_lock(.Exclusive));
+	report(other.unlock());
+
 	// An append handle that can also read locks; a write-only one is refused.
 	appender := fs.open(data, fs.Open_Options{access = .Read_Write, disposition = .Open_Existing, append = true}) or_else panic("the test's file could not be opened");
 	attempt(appender.try_lock(.Exclusive));

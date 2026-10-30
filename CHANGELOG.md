@@ -378,7 +378,8 @@ checklist.
 
 - `fs.File.lock`, `try_lock`, and `unlock` take an advisory shared or
   exclusive lock on a whole file, held by the handle and released by `close`,
-  `drop`, or the program ending, so a store can insist on one writer.
+  `drop`, or the program ending, so a store can insist on one writer. A
+  failed `unlock` keeps the lock, so a retry releases it.
   `io.Operation` gains `Lock` and `Unlock`
   ([File locking](standard-library.md#file-locking)).
 
