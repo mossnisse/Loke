@@ -427,8 +427,9 @@ Then the `f32` functions' rounding decision and first approximations:
   separate loop measured `cos_f32` from 56 to 25 ns and `tan_f32` from 88
   to 30. The `f64` functions did not change.
 - Found on the way: an array literal whose element type is spelled as a
-  procedure type reports a compiler defect besides its parse error; see
-  [known-gaps.md](known-gaps.md#a-procedure-literal-used-as-an-array-literals-type-reports-a-compiler-defect).
+  procedure type reported a compiler defect, `L0350`, besides its parse
+  error; it now reports the parse error alone
+  (`tests/err/proc_literal_array_type.loke`).
 
 Then `pow_f32`, the last `f32` function without a first approximation:
 

@@ -454,6 +454,10 @@ checklist.
 
 ### Fixed
 
+- A fixed array type around a procedure literal, such as
+  `[1]proc(x: int) -> int{one}` written for an array of procedures, reports
+  only its parse error, not also `L0350`, the compiler-defect report; name
+  the procedure type to write such an array.
 - `examples/lexer.loke` lexes the wrapping operators `+%`, `-%`, `*%`, and
   their compound assignments, which it read as two tokens each, so it agrees
   with `lokec -dump-tokens` again on a source that uses them.

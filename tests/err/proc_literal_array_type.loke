@@ -1,0 +1,11 @@
+// design.md "Procedure type": `proc(x: int){}` is a procedure literal, so
+// this is a fixed array type around one, which the parser reports alone; the
+// checker has nothing to add, and once reported a compiler defect besides.
+package main;
+
+one :: proc(x: int) -> int { return x; }
+
+main :: proc() {
+	fns := [1]proc(x: int){};
+	_ = fns;
+}

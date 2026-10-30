@@ -139,26 +139,3 @@ the whole record. The bound keeps the place loans and `.Through` events a
 borrow makes few. The diagnostic also does not name the limit, which
 [Minimum provenance precision](design.md#minimum-provenance-precision)
 requires of a rejection an analysis budget causes.
-
-### A procedure literal used as an array literal's type reports a compiler defect
-
-`[1]proc(x: int) -> int{one}` reads `proc(x: int) -> int{one}` as a
-procedure literal, so the array type has no element type of its own. The
-parser reports that as `L0220`, but the checker then reaches its invariant
-guard and also reports `L0350`, "this construct parses, but the checker has no
-rule for it; this is a compiler defect":
-
-```loke
-package main;
-one :: proc(x: int) -> int { return x; }
-main :: proc() {
-	fns := [1]proc(x: int) -> int{one};
-	_ = fns;
-}
-```
-
-`[1]proc(x: int){}` does the same. `L0350` should be unreachable from any
-input (`unsupported_construct` in [src/check.odin](src/check.odin)); the
-`L0220` alone is the diagnostic, and a named type, `Unary :: proc(x: int) ->
-int;` then `[1]Unary{one}`, is the spelling that works. Found writing a
-benchmark on 2026-10-30.

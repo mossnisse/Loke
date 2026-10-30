@@ -2231,8 +2231,10 @@ resolve_type_name :: proc(k: ^Checker, d: ^Decl) -> Type_Id {
 // Says why a written type did not resolve, for the paths where
 // `resolve_type_syntax` reported nothing itself.
 report_unresolved_type :: proc(k: ^Checker, syntax: Expr) {
-	// The parser already reported it.
-	if _, is_error := syntax.(^Expr_Error); is_error {
+	// The parser already reported it: an error node, or a shape it marked,
+	// such as `[1]proc(x: int) -> int{one}`, a type around a procedure
+	// literal, whose components would otherwise be reported again.
+	if _, is_error := syntax.(^Expr_Error); is_error || expr_has_error(syntax) {
 		return
 	}
 	if ident, is_ident := syntax.(^Expr_Ident); is_ident {
