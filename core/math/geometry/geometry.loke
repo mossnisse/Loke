@@ -1,0 +1,25 @@
+/**
+	Exact geometric predicates over `core:math/linalg`'s vectors, with the
+	same result everywhere.
+
+	`orient2d`, `orient3d`, `incircle`, and `insphere` return the exact sign of
+	their determinant for `f32` and `f64` coordinates, as if computed in real
+	arithmetic, so code built on them cannot contradict itself: three points
+	are collinear or not, whichever order they are tested in. Each first
+	computes the determinant in floating point with an error bound, and only a
+	result within the bound, near a degenerate configuration, is recomputed
+	exactly. Integers get the plain determinant, exact while it does not
+	overflow, and other number types its sign as computed.
+
+	Every result is the same on every machine, CPU level, and optimization
+	level, and at compile time.
+*/
+// geometry-plan.md is the design this package implements, milestone 1.
+@(public)
+package geometry;
+
+/**
+	The sign of a predicate's determinant. What `.Positive` means is stated on
+	each predicate.
+*/
+Sign :: enum { Negative, Zero, Positive }

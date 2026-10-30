@@ -143,6 +143,7 @@ core:math             elementary functions, Complex, Quaternion
 core:math/repro       correctly rounded elementary functions
 core:math/linalg      fixed-size vectors, matrices, rotations, projections
 core:math/dense       run-time-sized matrices, views, LU, Cholesky, QR, eigenvalues, SVD
+core:math/geometry    exact orientation and in-circle predicates
 core:random           seeded generators, entropy, distributions
 core:time             clocks, durations, the calendar, ISO 8601 text
 core:slice            slice algorithms and sorting            *
@@ -2716,6 +2717,47 @@ take an optional `pool: Option(^thread.Pool)` ([Pools](#pools)): with one,
 blocks of the output are computed as tasks on its workers, each element in
 the same order, so the result is the same bits as without; a product too small
 to share runs on the calling thread.
+
+## `core:math/geometry`
+
+Exact geometric predicates over `core:math/linalg`'s vectors, the first part of
+the [geometry library plan](geometry-plan.md), whose shapes and queries follow
+in its later milestones.
+
+`orient2d(a, b, c)`, `orient3d(a, b, c, d)`, `incircle(a, b, c, d)`, and
+`insphere(a, b, c, d, e)` return a `Sign`, `.Negative`, `.Zero`, or
+`.Positive`, of a determinant of their points:
+
+- `orient2d` is `.Positive` when `a`, `b`, `c` turn counterclockwise and
+  `.Zero` when they are collinear;
+- `orient3d` is `.Positive` when `d` is below the plane through `a`, `b`, and
+  `c`, which appear counterclockwise from above, and `.Zero` when the four are
+  coplanar;
+- `incircle` is `.Positive` when `d` is inside the circle through
+  counterclockwise `a`, `b`, `c`, and `.Zero` on it;
+- `insphere` is `.Positive` when `e` is inside the sphere through `a`, `b`,
+  `c`, `d`, given so that `orient3d(a, b, c, d)` is `.Positive`, and `.Zero` on
+  it.
+
+Reversing the stated orientation swaps `.Positive` and `.Negative`, and any
+odd permutation of the points does too, exactly. For `f32` and `f64`, the
+sign is that of the exact determinant of the coordinates as given, as if
+computed in real arithmetic, so a hull, a triangulation, or a
+point-in-polygon test built on the predicates cannot contradict itself.
+Each computes the determinant in floating point with Shewchuk's error bound
+and recomputes it exactly, in expansion arithmetic, only when the result is
+within the bound, near a degenerate configuration. `f32` coordinates are
+exact over their whole finite range. `f64` coordinates are exact when each is
+0 or has a magnitude in the range its predicate documents, from
+`[2^-450, 2^450]` for `orient2d` to `[2^-150, 2^180]` for `insphere`; a NaN or
+an infinity gives a sign that is the same everywhere but means nothing.
+Integer coordinates take the plain determinant, which is exact and panics if
+it overflows, and other ordered number types take its sign as computed.
+`insphere`'s exact path uses about 120 KB of stack.
+
+The predicates call no foreign procedure, so they are evaluated at compile
+time with the same result, and they give the same result on every machine,
+[CPU level](compiler-guide.md#cpu-levels), and optimization level.
 
 ## `core:random`
 

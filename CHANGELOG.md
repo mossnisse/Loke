@@ -367,6 +367,11 @@ checklist.
   blocked around it, and the products, `lu`, and `cholesky` take an optional
   thread pool, with the same bits either way; `bench/dense.loke` measures
   them ([`core:math/dense`](standard-library.md#coremathdense)).
+- `core:math/geometry` has the exact predicates `orient2d`, `orient3d`,
+  `incircle`, and `insphere`, which return the sign of their determinant
+  exactly for `f32` and `f64` coordinates, by Shewchuk's adaptive method, and
+  for integers that do not overflow
+  ([`core:math/geometry`](standard-library.md#coremathgeometry)).
 
 ### Changed
 

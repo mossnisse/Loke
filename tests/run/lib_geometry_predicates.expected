@@ -1,0 +1,7 @@
+Orient2d f64 784 769 1447 f32 798 849 1353
+Orient3d f64 912 877 1211 f32 877 890 1233
+Incircle f64 877 808 1315 f32 851 847 1302
+Insphere f64 886 840 1274 f32 852 838 1310
+kettner 32640 32640 256 plain formula wrong 11492
+near degenerate Negative Negative Negative Positive
+all predicate checks passed

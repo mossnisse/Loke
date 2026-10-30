@@ -1,7 +1,11 @@
 # Geometry library plan
 
-Status: proposal, 2026-10-30; its questions are in
-[Questions to settle](#questions-to-settle). This document specifies a
+Status: milestone 1 implemented, 2026-10-30
+([Milestone 1 results](#milestone-1-results)), after its questions were
+settled the same day ([Settled questions](#settled-questions)); milestones 2
+to 5 are proposals.
+[`core:math/geometry`](standard-library.md#coremathgeometry) documents what
+has shipped. This document specifies a
 `core:math/geometry` package of shapes, exact predicates, and the queries
 between them, the first item of the linear algebra plan's
 [Later work](linear-algebra-plan.md#later-work), which waited for the vector
@@ -101,7 +105,7 @@ which an overlap test between closed sets has an exact answer. An integer
 rectangle is the same closed set: `Aabb2(i32){min = {0, 0}, max = {3, 3}}`
 contains the 16 lattice points from `(0, 0)` to `(3, 3)`. A pixel rectangle
 with an exclusive maximum is a different contract, left out
-([Questions to settle](#questions-to-settle)).
+([Settled questions](#settled-questions)).
 
 `min` and `max` are corners, not a center and extents: a center-extents form
 cannot represent every box of float corners exactly, and the corners are what
@@ -145,7 +149,7 @@ every ray tracer meets first.
   so a box that the exact ray touches is never missed. The test is
   conservative by design: bounding volumes are where a false miss loses a
   hit and a false hit costs one more test
-  ([Questions to settle](#questions-to-settle)).
+  ([Settled questions](#settled-questions)).
 - **Ray and triangle** is the watertight test of Woop, Benthin, and Wald
   (2013): the ray is sheared to the `+Z` axis, and each edge function is
   recomputed in `f64` (for `f32`) or with the exact orientation predicate (for
@@ -225,7 +229,7 @@ package has its own copy rather than a new public API in `repro`.
   and wider for the lower degrees. Milestone 1 derives and documents each
   range. Scaling the inputs by a power of two,
   which changes no sign, would extend it to every finite input, at a cost
-  ([Questions to settle](#questions-to-settle)).
+  ([Settled questions](#settled-questions)).
 - **Integer** inputs compute the determinant directly, which is exact while
   it does not overflow; an overflow panics, as for the scalar arithmetic.
 - **A user `Real` type** gets the plain formula, whose sign is that of the
@@ -377,7 +381,8 @@ Transforms, Real:
 
 Ordered by how much the later parts build on the earlier ones:
 
-1. **Exact predicates.** `Sign`, `orient2d`, `orient3d`, `incircle`, and
+1. **Exact predicates.** Done ([Milestone 1 results](#milestone-1-results)).
+   `Sign`, `orient2d`, `orient3d`, `incircle`, and
    `insphere` for `f32`, `f64`, integers, and the plain formula for other
    types, with the expansion arithmetic they need. Everything exact later in
    the package is built on these, so they are first, with their tests against
@@ -444,29 +449,30 @@ section and package-layout line, a `CHANGELOG.md` line, and the tests below.
   optimization and [CPU level](compiler-guide.md#cpu-levels) and when folded
   at compile time.
 
-## Questions to settle
+## Settled questions
 
-Each has a recommendation, which the sections above assume.
+Settled on 2026-10-30, each as recommended; the sections above carry the
+decisions.
 
-1. **The package's place.** `core:math/geometry`, beside `linalg` and `dense`
-   (recommended), or a top-level `core:geometry`. Geometry is not only math to
-   its users, but its dependencies are `linalg` and `repro`, and its siblings
-   are where a reader looks.
-2. **Ray-box conservativeness.** The widened, never-missing slab test
-   (recommended), or the slab test as computed, which can miss a box the ray
-   grazes by an ulp. A caller wanting the exact entry distance of a hit box
-   computes it with `cast` against the box's faces.
-3. **`f64` predicates over every finite input.** Documented exactness ranges
-   (recommended for the first milestone), or scaling by a power of two when
-   an input is outside the range, which costs a branch on every call but
-   leaves no input inexact. This can be added later without changing a result
-   inside the ranges.
-4. **Half-open integer rectangles.** None (recommended): `Aabb2` is closed for
-   every `T`, and a `Rect` with an exclusive maximum for pixels and UI belongs
-   with the image and UI code that needs it, whose conventions (`width` and
-   `height` or a corner) differ again.
-5. **Shapes beyond the listed ones.** Oriented boxes, capsules, and cylinders
-   wait for a caller (recommended), or join milestone 3 for physics now.
+1. **The package's place**: `core:math/geometry`, beside `linalg` and
+   `dense`. Geometry is not only math to its users, but its dependencies are
+   `linalg`, and its siblings are where a reader looks. A top-level
+   `core:geometry` was the alternative.
+2. **Ray-box conservativeness**: the widened slab test, which never misses a
+   box the exact ray touches. The slab test as computed can miss a box the
+   ray grazes by an ulp; a caller wanting the exact entry distance of a hit
+   box computes it with `cast` against the box's faces.
+3. **`f64` predicates over every finite input**: documented exactness ranges
+   for now. Scaling by a power of two when an input is outside them would
+   cost a branch on every call but leave no input inexact, and it can be
+   added later without changing a result inside the ranges.
+4. **Half-open integer rectangles**: none. `Aabb2` is closed for every `T`,
+   and a `Rect` with an exclusive maximum for pixels and UI belongs with the
+   image and UI code that needs it, whose conventions (`width` and `height`
+   or a corner) differ again.
+5. **Shapes beyond the listed ones**: oriented boxes, capsules, and cylinders
+   wait for a caller ([Later work](#later-work)), rather than joining
+   milestone 3 for physics now.
 
 ## Later work
 
@@ -506,3 +512,54 @@ Each has a recommendation, which the sections above assume.
   Tools* 10(1).
 - Woop, S., Benthin, C., and Wald, I. (2013). Watertight ray/triangle
   intersection. *Journal of Computer Graphics Techniques* 2(1).
+
+## Milestone 1 results
+
+Done 2026-10-30: `core/math/geometry` with the four predicates, and
+`tests/run/lib_geometry_predicates.loke`, in the CPU-level corpus, and
+`tests/trap/geometry_orient_overflow.loke`. The test compares each predicate
+with the exact determinant of integer coordinates, computed in the test in
+`i128` by cofactor expansion of the raw rows, over 3000 configurations each:
+random ones, and points on a line, a plane, a circle, or a sphere, spread
+over most of the bits and moved by one unit or not at all. Each is checked at
+`f64`, at `f32`, and scaled by powers of two to the ends of the documented
+`f64` range and across the `f32` range, subnormals included. It also checks
+Kettner et al.'s grid of 65536 points ulps from the line through `(12, 12)`
+and `(24, 24)`, where the plain formula gets 11492 signs wrong and the
+predicate none; that each permutation of the points changes the sign by its
+parity; and that a nearly degenerate call of each predicate, which reaches
+its exact path, folds at compile time to the run-time sign. The output is the
+same at `-opt=minimal`, `speed`, `size`, and `aggressive` and at both CPU
+levels. Thirteen planted bugs each fail it: each exact path returning
+`.Zero`, each error bound set to zero, a dropped component in the sum and in
+the scaling of an expansion, a wrong error term in the exact product, a sign
+in the exact `insphere`, and `f32` skipping the `f64` path.
+
+Decided while implementing:
+
+- **Two stages, not four.** Shewchuk's predicates add two intermediate
+  stages between the floating-point filter and the exact determinant, which
+  shorten the exact path's work. The exact path here goes straight to the
+  determinant: its result is the same exact sign, it is reached only near a
+  degenerate configuration, and the intermediate stages, most of Shewchuk's
+  code, are for milestone 5 to measure.
+- **The exact determinant is of the raw coordinates.** The predicate's points,
+  with a column of ones (and the lifted column for the in-tests), form one
+  larger determinant, expanded along a column into the pairwise minors
+  `p.x q.y - q.x p.y`. No coordinate difference then has to be exact, so the
+  exact path needs nothing the first stage does not.
+- **The `f64` ranges** follow from requiring that no product of `k`
+  coordinates or differences, `k` being the predicate's degree, overflow or
+  fall below the normal range: a coordinate of magnitude at least `2^-m` is a
+  multiple of `2^-(m+52)`, and `k(m + 52)` must stay within 1022.
+  `orient2d` is exact for magnitudes in `[2^-450, 2^450]`, `orient3d` in
+  `[2^-280, 2^300]`, `incircle` in `[2^-200, 2^220]`, and `insphere` in
+  `[2^-150, 2^180]`. The same requirement holds for every `f32` input in
+  `f64`, whose degree-five products stay above `2^-745`.
+- **The bound is `Numeric` and `Ordered`, not `Real`**: a sign needs only
+  arithmetic and comparison, so integers and user ordered types get the
+  predicates, with no square root anywhere.
+- **`insphere`'s exact path holds its expansions in one record of about
+  120 KB**, in that procedure's frame only, so the common path's frame stays
+  small. Threads get the operating system's default stack, 1 MB on Windows,
+  and `core:math/dense` already uses 80 KB on its workers.

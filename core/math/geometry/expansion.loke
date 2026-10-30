@@ -1,0 +1,348 @@
+// geometry-plan.md "Exact predicates": Shewchuk's expansion arithmetic
+// (Discrete & Computational Geometry 18, 1997). An expansion is a slice of
+// `f64` components, in increasing magnitude and nonoverlapping, whose exact
+// sum is the value; each operation here is exact, given what design.md
+// "Floating-point operators" guarantees: rounding to nearest, ties to even,
+// subnormals kept, and no contraction. The exact determinants below are each
+// a predicate's last resort, computed from the raw coordinates as one larger
+// determinant with a column of ones, so no coordinate difference has to be
+// exact. core:math/repro has the same error-free transforms, privately.
+@(public)
+package geometry;
+
+// 2^27 + 1, Veltkamp's splitting constant for `f64`.
+@(private) SPLITTER :: 134217729.0;
+
+// a + b exactly as a sum and its rounding error (Knuth).
+@(private)
+two_sum :: proc(a, b: f64) -> (high: f64, low: f64) {
+	x := a + b;
+	b_virtual := x - a;
+	a_virtual := x - b_virtual;
+	return {x, (a - a_virtual) + (b - b_virtual)};
+}
+
+// The same, given |a| >= |b| (Dekker).
+@(private)
+fast_two_sum :: proc(a, b: f64) -> (high: f64, low: f64) {
+	x := a + b;
+	return {x, b - (x - a)};
+}
+
+// `a` as two halves of at most 26 significant bits each.
+@(private)
+split :: proc(a: f64) -> (high: f64, low: f64) {
+	c := SPLITTER*a;
+	high := c - (c - a);
+	return {high, a - high};
+}
+
+// a * b exactly as a product and its rounding error (Dekker), `b` already
+// split.
+@(private)
+two_product_presplit :: proc(a, b, b_high, b_low: f64) -> (high: f64, low: f64) {
+	x := a*b;
+	a_high, a_low := split(a);
+	error := ((x - a_high*b_high) - a_low*b_high) - a_high*b_low;
+	return {x, a_low*b_low - error};
+}
+
+@(private)
+two_product :: proc(a, b: f64) -> (high: f64, low: f64) {
+	b_high, b_low := split(b);
+	return two_product_presplit(a, b, b_high, b_low);
+}
+
+// e + f into h, zero components dropped, at most e.len() + f.len() of them:
+// Shewchuk's FAST-EXPANSION-SUM-ZEROELIM. Both are non-empty.
+@(private)
+sum :: proc(e, f: []f64, h: []mut f64) -> int {
+	ei := 0;
+	fi := 0;
+	e_now := e[0];
+	f_now := f[0];
+	q := 0.0;
+	// The component of smaller magnitude goes first.
+	if ((f_now > e_now) == (f_now > -e_now)) {
+		q = e_now;
+		ei = 1;
+	} else {
+		q = f_now;
+		fi = 1;
+	}
+	count := 0;
+	if (ei < e.len() && fi < f.len()) {
+		e_now = e[ei];
+		f_now = f[fi];
+		low := 0.0;
+		if ((f_now > e_now) == (f_now > -e_now)) {
+			q, low = fast_two_sum(e_now, q);
+			ei += 1;
+		} else {
+			q, low = fast_two_sum(f_now, q);
+			fi += 1;
+		}
+		if (low != 0.0) { h[count] = low; count += 1; }
+		for (ei < e.len() && fi < f.len()) {
+			e_now = e[ei];
+			f_now = f[fi];
+			if ((f_now > e_now) == (f_now > -e_now)) {
+				q, low = two_sum(q, e_now);
+				ei += 1;
+			} else {
+				q, low = two_sum(q, f_now);
+				fi += 1;
+			}
+			if (low != 0.0) { h[count] = low; count += 1; }
+		}
+	}
+	for (ei < e.len()) {
+		low := 0.0;
+		q, low = two_sum(q, e[ei]);
+		ei += 1;
+		if (low != 0.0) { h[count] = low; count += 1; }
+	}
+	for (fi < f.len()) {
+		low := 0.0;
+		q, low = two_sum(q, f[fi]);
+		fi += 1;
+		if (low != 0.0) { h[count] = low; count += 1; }
+	}
+	if (q != 0.0 || count == 0) { h[count] = q; count += 1; }
+	return count;
+}
+
+// e * b into h, zero components dropped, at most 2 e.len() of them:
+// Shewchuk's SCALE-EXPANSION-ZEROELIM. `e` is non-empty.
+@(private)
+scale :: proc(e: []f64, b: f64, h: []mut f64) -> int {
+	b_high, b_low := split(b);
+	q, low := two_product_presplit(e[0], b, b_high, b_low);
+	count := 0;
+	if (low != 0.0) { h[count] = low; count += 1; }
+	foreach (i in 1 ..< e.len()) {
+		product_high, product_low := two_product_presplit(e[i], b, b_high, b_low);
+		partial, low2 := two_sum(q, product_low);
+		if (low2 != 0.0) { h[count] = low2; count += 1; }
+		next, low3 := fast_two_sum(product_high, partial);
+		q = next;
+		if (low3 != 0.0) { h[count] = low3; count += 1; }
+	}
+	if (q != 0.0 || count == 0) { h[count] = q; count += 1; }
+	return count;
+}
+
+// e * f into h, at most 2 e.len() f.len() components, through two scratch
+// buffers as long as h.
+@(private)
+multiply :: proc(e, f: []f64, h, scratch, term: []mut f64) -> int {
+	count := scale(e, f[0], h);
+	foreach (k in 1 ..< f.len()) {
+		n := scale(e, f[k], term);
+		foreach (i in 0 ..< count) { scratch[i] = h[i]; }
+		count = sum(scratch[0:count], term[0:n], h);
+	}
+	return count;
+}
+
+@(private)
+negate :: proc(e: []mut f64) {
+	foreach (i in 0 ..< e.len()) { e[i] = -e[i]; }
+}
+
+// The sign of an expansion is that of its largest component.
+@(private)
+expansion_sign :: proc(e: []f64) -> Sign {
+	return sign_of(e[e.len() - 1]);
+}
+
+// `p.x q.y - q.x p.y` into h, at most 4 components.
+@(private)
+minor2 :: proc(px, py, qx, qy: f64, h: []mut f64) -> int {
+	a_high, a_low := two_product(px, qy);
+	b_high, b_low := two_product(qx, py);
+	e := [2]f64{a_low, a_high};
+	f := [2]f64{-b_low, -b_high};
+	return sum(e[:], f[:], h);
+}
+
+// pq + qr + rp, the determinant of the rows (x, y, 1) of three points, from
+// their pairwise minors, into h, at most 12 components.
+@(private)
+minor3 :: proc(pq, qr, rp: []f64, h: []mut f64) -> int {
+	partial: [8]f64 = {};
+	n := sum(pq, qr, &mut partial[:]);
+	return sum(partial[0:n], rp, h);
+}
+
+// The exact orient2d: ab + bc + ca over the raw coordinates.
+@(private)
+orient2d_exact :: proc(ax, ay, bx, by, cx, cy: f64) -> Sign {
+	ab: [4]f64 = {};
+	bc: [4]f64 = {};
+	ca: [4]f64 = {};
+	nab := minor2(ax, ay, bx, by, &mut ab[:]);
+	nbc := minor2(bx, by, cx, cy, &mut bc[:]);
+	nca := minor2(cx, cy, ax, ay, &mut ca[:]);
+	det: [12]f64 = {};
+	n := minor3(ab[0:nab], bc[0:nbc], ca[0:nca], &mut det[:]);
+	return expansion_sign(det[0:n]);
+}
+
+// A point's three coordinates for the exact determinants.
+@(private) Point :: struct { x, y, z: f64 }
+
+// The pairwise minors `p.x q.y - q.x p.y` of up to five points, each with
+// its negation, so that a minor of three points is three of them summed.
+@(private)
+Minors :: struct {
+	terms: [5][5][4]f64,
+	counts: [5][5]int,
+}
+
+@(private)
+minors :: proc(points: []Point) -> Minors {
+	m: Minors = {};
+	foreach (i in 0 ..< points.len()) {
+		foreach (j in i + 1 ..< points.len()) {
+			p := points[i];
+			q := points[j];
+			n := minor2(p.x, p.y, q.x, q.y, &mut m.terms[i][j][:]);
+			m.counts[i][j] = n;
+			m.counts[j][i] = n;
+			foreach (k in 0 ..< n) { m.terms[j][i][k] = -m.terms[i][j][k]; }
+		}
+	}
+	return m;
+}
+
+// The determinant of the rows (x, y, 1) of points i, j, k, at most 12
+// components.
+@(private)
+xy_minor :: proc(m: ^Minors, i, j, k: int, h: []mut f64) -> int {
+	return minor3(m.terms[i][j][0:m.counts[i][j]], m.terms[j][k][0:m.counts[j][k]], m.terms[k][i][0:m.counts[k][i]], h);
+}
+
+// The determinant of the rows (x, y, z, 1) of points i, j, k, l, expanded
+// along z: `i.z M(jkl) - j.z M(ikl) + k.z M(ijl) - l.z M(ijk)`, at most 96
+// components.
+@(private)
+xyz_minor :: proc(points: []Point, m: ^Minors, i, j, k, l: int, h: []mut f64) -> int {
+	minor: [12]f64 = {};
+	scaled: [4][24]f64 = {};
+	counts: [4]int = {};
+	n := xy_minor(m, j, k, l, &mut minor[:]);
+	counts[0] = scale(minor[0:n], points[i].z, &mut scaled[0][:]);
+	n = xy_minor(m, i, k, l, &mut minor[:]);
+	counts[1] = scale(minor[0:n], -points[j].z, &mut scaled[1][:]);
+	n = xy_minor(m, i, j, l, &mut minor[:]);
+	counts[2] = scale(minor[0:n], points[k].z, &mut scaled[2][:]);
+	n = xy_minor(m, i, j, k, &mut minor[:]);
+	counts[3] = scale(minor[0:n], -points[l].z, &mut scaled[3][:]);
+	first: [48]f64 = {};
+	second: [48]f64 = {};
+	n1 := sum(scaled[0][0:counts[0]], scaled[1][0:counts[1]], &mut first[:]);
+	n2 := sum(scaled[2][0:counts[2]], scaled[3][0:counts[3]], &mut second[:]);
+	return sum(first[0:n1], second[0:n2], h);
+}
+
+// The exact orient3d: the determinant of the rows (x, y, z, 1) of a, b, c, d.
+@(private)
+orient3d_exact :: proc(a, b, c, d: Point) -> Sign {
+	points := [4]Point{a, b, c, d};
+	m := minors(points[:]);
+	det: [96]f64 = {};
+	n := xyz_minor(points[:], &m, 0, 1, 2, 3, &mut det[:]);
+	return expansion_sign(det[0:n]);
+}
+
+// `x^2 + y^2`, and with `z^2` for a 3D point, at most 6 components.
+@(private)
+lift :: proc(p: Point, three: bool, h: []mut f64) -> int {
+	xh, xl := two_product(p.x, p.x);
+	yh, yl := two_product(p.y, p.y);
+	x := [2]f64{xl, xh};
+	y := [2]f64{yl, yh};
+	if (!three) { return sum(x[:], y[:], h); }
+	xy: [4]f64 = {};
+	n := sum(x[:], y[:], &mut xy[:]);
+	zh, zl := two_product(p.z, p.z);
+	z := [2]f64{zl, zh};
+	return sum(xy[0:n], z[:], h);
+}
+
+// The exact incircle: the determinant of the rows (x, y, x^2 + y^2, 1) of
+// a, b, c, d, expanded along the lifted column.
+@(private)
+incircle_exact :: proc(a, b, c, d: Point) -> Sign {
+	points := [4]Point{a, b, c, d};
+	m := minors(points[:]);
+	total: [384]f64 = {};
+	other: [384]f64 = {};
+	count := 0;
+	foreach (i in 0 ..< 4) {
+		minor: [12]f64 = {};
+		n := 0;
+		switch (i) {
+		case 0: n = xy_minor(&m, 1, 2, 3, &mut minor[:]);
+		case 1: n = xy_minor(&m, 0, 2, 3, &mut minor[:]);
+		case 2: n = xy_minor(&m, 0, 1, 3, &mut minor[:]);
+		case:   n = xy_minor(&m, 0, 1, 2, &mut minor[:]);
+		}
+		if (i % 2 == 1) { negate(&mut minor[0:n]); }
+		lifted: [6]f64 = {};
+		nl := lift(points[i], false, &mut lifted[:]);
+		term: [96]f64 = {};
+		scratch: [96]f64 = {};
+		partial: [96]f64 = {};
+		nt := multiply(minor[0:n], lifted[0:nl], &mut term[:], &mut scratch[:], &mut partial[:]);
+		if (i == 0) {
+			foreach (k in 0 ..< nt) { total[k] = term[k]; }
+			count = nt;
+		} else {
+			foreach (k in 0 ..< count) { other[k] = total[k]; }
+			count = sum(other[0:count], term[0:nt], &mut total[:]);
+		}
+	}
+	return expansion_sign(total[0:count]);
+}
+
+// The working storage of the exact insphere, about 100 KB, in one record so
+// that only this path's frame holds it.
+@(private)
+Insphere_Storage :: struct {
+	total, other: [5760]f64,
+	term, scratch, partial: [1152]f64,
+	minor: [96]f64,
+}
+
+// The exact insphere: the determinant of the rows (x, y, z, x^2 + y^2 + z^2,
+// 1) of a, b, c, d, e, expanded along the lifted column, the signs
+// alternating from `-` for a.
+@(private)
+insphere_exact :: proc(a, b, c, d, e: Point) -> Sign {
+	points := [5]Point{a, b, c, d, e};
+	m := minors(points[:]);
+	s: Insphere_Storage = {};
+	count := 0;
+	foreach (i in 0 ..< 5) {
+		rest: [4]int = {};
+		r := 0;
+		foreach (j in 0 ..< 5) {
+			if (j != i) { rest[r] = j; r += 1; }
+		}
+		n := xyz_minor(points[:], &m, rest[0], rest[1], rest[2], rest[3], &mut s.minor[:]);
+		if (i % 2 == 0) { negate(&mut s.minor[0:n]); }
+		lifted: [6]f64 = {};
+		nl := lift(points[i], true, &mut lifted[:]);
+		nt := multiply(s.minor[0:n], lifted[0:nl], &mut s.term[:], &mut s.scratch[:], &mut s.partial[:]);
+		if (i == 0) {
+			foreach (k in 0 ..< nt) { s.total[k] = s.term[k]; }
+			count = nt;
+		} else {
+			foreach (k in 0 ..< count) { s.other[k] = s.total[k]; }
+			count = sum(s.other[0:count], s.term[0:nt], &mut s.total[:]);
+		}
+	}
+	return expansion_sign(s.total[0:count]);
+}
