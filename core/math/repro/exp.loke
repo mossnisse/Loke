@@ -85,19 +85,24 @@ exp_f64_of :: proc(x: f64) -> f64 {
 // midpoint is within 4 ulps, which its low bits show; then the double-`f64`
 // result, within one ulp, decides, and the slow path if that does not.
 exp_f32_of :: proc(x: f64) -> f32 {
+	quick := exp_quick(x);
+	if (f32_decided(quick, 4)) { return f32(quick); }
+
+	k, h, l := exp_kernel(x, 0.0);
+	scale := power_of_two(k >> 7);
+	y := h*scale + l*scale;
+	if (f32_decided(y, 1)) { return f32(y); }
+	return unsafe.transmute(f32, u32(exp_slow(x, F32_LAYOUT)));
+}
+
+// The single-`f64` approximation `exp_f32_of` describes, for |x| < 104.
+exp_quick :: proc(x: f64) -> f64 {
 	kf := (x*INV_LN2_128 + ROUND_SHIFTER) - ROUND_SHIFTER;
 	k := int(kf);
 	r := (x - kf*unsafe.transmute(f64, u64(LN2_128_HI))) - kf*unsafe.transmute(f64, u64(LN2_128_MID));
 	p := r*(1.0 + r*(0.5 + r*(1.0/6.0 + r*(1.0/24.0 + r*(1.0/120.0)))));
 	th := unsafe.transmute(f64, EXP_TABLE[2*(k & 127)]);
-	scale := power_of_two(k >> 7);
-	quick := (th + th*p)*scale;
-	if (f32_decided(quick, 4)) { return f32(quick); }
-
-	_, h, l := exp_kernel(x, 0.0);
-	y := h*scale + l*scale;
-	if (f32_decided(y, 1)) { return f32(y); }
-	return unsafe.transmute(f32, u32(exp_slow(x, F32_LAYOUT)));
+	return (th + th*p)*power_of_two(k >> 7);
 }
 
 // e^x correctly rounded to `layout`, as its bit pattern.

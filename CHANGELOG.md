@@ -377,10 +377,11 @@ checklist.
 ### Changed
 
 - `core:math/repro`'s `f32` functions are faster, with the same results:
-  `sin_f32`, `cos_f32`, and `tan_f32` try a single-`f64` approximation
-  first, as the others already did, and every `f32` rounding decision lost a
-  mispredicted branch. `sin_f32` takes 27 ns rather than 61, `tan_f32` 30
-  rather than 88, and `exp_f32` 14 rather than 20.
+  `sin_f32`, `cos_f32`, `tan_f32`, and `pow_f32` try a single-`f64`
+  approximation first, as the others already did, and every `f32` rounding
+  decision lost a mispredicted branch. `sin_f32` takes 27 ns rather than 61,
+  `tan_f32` 30 rather than 88, `pow_f32` 35 rather than 92, and `exp_f32` 14
+  rather than 20.
 - `math.sqrt` and `math.sqrt_f32` are the processor's square root instruction
   rather than a call to the C library: as correctly rounded, about as fast,
   and with a compile-time value, so `ROOT :: math.sqrt(2.0)` is a constant

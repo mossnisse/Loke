@@ -43,9 +43,23 @@
 // known to come closer than that to a midpoint without being one, but no
 // exhaustive search covers two binary64 arguments, so nothing proves it;
 // `tests/repro_test.odin` checks both paths against an independent oracle.
+//
+// `f32` arguments first take a single-`f64` approximation: z = y log x from
+// `log_f32`'s, within 6 ulps of log x, and so within 6.5 2^-52 of z
+// relative with the product's rounding, and e^z from `exp_f32`'s, within 1.1
+// ulps. For a result in the normal `f32` range, |z| < 88, z's error is under
+// 88 6.5 2^-52 = 2^-42.8 absolute, which moves e^z by under 2^-42.8
+// relative, so the result is within 2^10.2 `f64` ulps. When no `f32` midpoint is within 2^11 ulps,
+// narrowing it rounds correctly; an exact midpoint never is, so it goes on,
+// with every result outside that range, to the double-`f64` path above, and
+// then the slow path.
 package repro;
 
 import "core:unsafe";
+
+// The window, in `f64` ulps, of `pow_f32`'s first approximation, past its
+// bound of 2^10.2.
+QUICK_POW_ULPS :: 2048;
 
 // log x as h + l, within 2^-83 relative, for a positive finite x other
 // than 1.
@@ -102,10 +116,17 @@ pow_f64_of :: proc(x: f64, y: f64) -> f64 {
 }
 
 // x^y for `f32` arguments, x positive and not 1 and y nonzero, here exactly
-// as `f64` values: the same pair, scaled into a normal `f64` within one ulp
-// of x^y, which rounds x^y correctly unless an `f32` midpoint is that close,
-// as it is when x^y is one; then the slow path.
+// as `f64` values: the single-`f64` approximation first, and then the same
+// pair, scaled into a normal `f64` within one ulp of x^y, which rounds x^y
+// correctly unless an `f32` midpoint is that close, as it is when x^y is
+// one; then the slow path.
 pow_f32_of :: proc(x: f64, y: f64) -> f32 {
+	z := y*log_quick(x);
+	if (z > -87.0 && z < 88.0) {
+		quick := exp_quick(z);
+		if (f32_decided(quick, QUICK_POW_ULPS)) { return f32(quick); }
+	}
+
 	lh, ll := pow_log(x);
 	zh := y*lh;
 	// e^89 overflows `f32` and e^-104 is below half its smallest subnormal;

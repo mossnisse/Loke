@@ -430,6 +430,21 @@ Then the `f32` functions' rounding decision and first approximations:
   procedure type reports a compiler defect besides its parse error; see
   [known-gaps.md](known-gaps.md#a-procedure-literal-used-as-an-array-literals-type-reports-a-compiler-defect).
 
+Then `pow_f32`, the last `f32` function without a first approximation:
+
+- z = y log x from `log_f32`'s single-`f64` logarithm, and e^z from
+  `exp_f32`'s single-`f64` exponential, for |z| under 88, so that the result
+  is normal; its error is under 2^10.2 `f64` ulps, and it decides at 2^11.
+  An exact midpoint never decides there, so `pow_slow`'s exact test still
+  settles every one.
+- Every positive finite `f32` x against y = 2, 1/2, 1/3, and -3/2, 2.1
+  billion pairs each, and 341 million seeded pairs, random patterns, bases
+  near 1 with large exponents, and small integer exponents among them, gave
+  the previous path's result every time; the largest error found was 208
+  ulps.
+- Measured at `-opt=speed` with `bench/math_compare.loke` at baseline:
+  `pow_f32` from 83.3 to 35.4 ns per call.
+
 Not started: phase 1's benchmarks (the UCRT timings in open questions stand
 until there is a kernel to compare), phase 6's faster kernels and dispatch,
 and other platforms.
