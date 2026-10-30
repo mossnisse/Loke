@@ -2550,8 +2550,9 @@ The rest of the package is:
 - `min`, `max`, and `clamp` over any numeric, ordered `T`; `clamp` with
   `high < low` panics;
 - the integer bit operations `count_ones`, `leading_zeros`, `trailing_zeros`,
-  `rotate_left`, and `rotate_right`, which
-  [Integer bit operations](#integer-bit-operations) describes;
+  `bit_width`, `rotate_left`, `rotate_right`, `reverse_bits`,
+  `is_power_of_two`, `next_power_of_two`, and `checked_next_power_of_two`,
+  which [Integer bit operations](#integer-bit-operations) describes;
 - `floor`, `ceil`, `round`, `trunc`, `mod`, `sqrt`, `hypot`, `fma`, `pow`,
   `exp`, `log`, `log2`, `log10`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`,
   `atan2`, `to_radians`, `to_degrees`, and `fma_is_instruction`.
@@ -2605,45 +2606,79 @@ their results are the same everywhere. See
 ### Integer bit operations
 
 ```loke
-count_ones     :: proc(value: $T) -> int;
-leading_zeros  :: proc(value: $T) -> int;
-trailing_zeros :: proc(value: $T) -> int;
-rotate_left    :: proc(value: $T, count: int) -> T;
-rotate_right   :: proc(value: $T, count: int) -> T;
+count_ones                :: proc(value: $T) -> int;
+leading_zeros             :: proc(value: $T) -> int;
+trailing_zeros            :: proc(value: $T) -> int;
+bit_width                 :: proc(value: $T) -> int;
+rotate_left               :: proc(value: $T, count: int) -> T;
+rotate_right              :: proc(value: $T, count: int) -> T;
+reverse_bits              :: proc(value: $T) -> T;
+is_power_of_two           :: proc(value: $T) -> bool;
+next_power_of_two         :: proc(value: $T) -> T;
+checked_next_power_of_two :: proc(value: $T) -> Option(T);
 ```
 
 `value` has an integer type of any width, signed or unsigned, or a `distinct`
 type over one; an unfixed constant is an `int`. A float, rune, enum, `bool`,
-or `Simd` vector is a compilation error. Each operation reads the value's
-two's-complement bit pattern at its type's width `W`, so a signed and an
-unsigned value with the same bits give the same answer:
+or `Simd` vector is a compilation error. The counts, the rotations, and the
+reversal read the value's two's-complement bit pattern at its type's width
+`W`, so a signed and an unsigned value with the same bits give the same
+answer:
 
 | Call | Result |
 | --- | --- |
 | `count_ones(x)` | The number of set bits, `0 ..= W`. `count_ones(i32(-1))` is `32`. |
 | `leading_zeros(x)` | The number of zero bits above the highest set bit. A negative value gives `0`. |
 | `trailing_zeros(x)` | The number of zero bits below the lowest set bit, which is that bit's index. |
+| `bit_width(x)` | `W - leading_zeros(x)`: the highest set bit's index plus one, the number of bits `x` needs. A negative value gives `W`. |
 | `rotate_left(x, count)` | `x` rotated `count` places toward the high end: the bits shifted out at the top come back in at the bottom. |
 | `rotate_right(x, count)` | `x` rotated `count` places toward the low end. |
+| `reverse_bits(x)` | `x` with bit `i` moved to bit `W - 1 - i`. `reverse_bits(i8(1))` is `-128`. |
 
 Zero is defined: `leading_zeros(x)` and `trailing_zeros(x)` are both `W` for
-`x == 0`, as `count_ones(x)` is `0`. So `W - leading_zeros(x)` is the number of
-bits `x` needs, and iterating the set bits of a word is
-`trailing_zeros(word)` followed by `word &= word - 1` until the word is zero.
+`x == 0`, as `count_ones(x)` and `bit_width(x)` are `0`. Iterating the set bits
+of a word is `trailing_zeros(word)` followed by `word &= word - 1` until the
+word is zero.
 
 A rotation takes `count` modulo `W`, floored as
 [`floor_mod`](design.md#integer-operators) floors it, so every `int` count is
 defined: a count past the width wraps, and a negative count rotates the other
-way, `rotate_left(x, -k) == rotate_right(x, k)`. Nothing panics.
+way, `rotate_left(x, -k) == rotate_right(x, k)`. A rotation never panics.
+
+The power-of-two operations read the value instead, so a negative value is
+never a power of two:
+
+| Call | Result |
+| --- | --- |
+| `is_power_of_two(x)` | Whether `x` is `2^k` for some `k >= 0`. Zero and every negative value are not, a signed minimum included, though its pattern has one set bit. |
+| `next_power_of_two(x)` | The smallest power of two at least `x`. A power of two is itself, and every `x <= 1`, zero and every negative value included, gives `1`. |
+| `checked_next_power_of_two(x)` | `.some(next_power_of_two(x))`, or `.none` where that power does not fit. |
+
+The largest power of two a type holds is `2^(W-1)` unsigned and `2^(W-2)`
+signed, the sign bit being no power of two. Past it, the next power of two
+does not fit, and `next_power_of_two` panics, as checked arithmetic does
+([Integer overflow](design.md#integer-overflow)): `next_power_of_two(u8(129))`
+and `next_power_of_two(i8(65))` both panic. Where it is computed at compile
+time, from a constant argument or in
+[compile-time evaluation](design.md#compile-time-procedure-evaluation), the
+same overflow is a compilation diagnostic. `checked_next_power_of_two` is the
+form that never panics, as `checked_add` is for `+`. There is no wrapping
+form: the low bits of the power that does not fit are all zero, which no
+caller wants as a power of two.
 
 A constant argument gives a constant, and each operation has a compile-time
-value. At run time each is one LLVM intrinsic, never a loop: `ctpop`, `ctlz`,
-and `cttz` with a zero operand defined, and the funnel shifts `fshl` and
-`fshr`. On x86-64 a rotation is one `rol` or `ror` at every
-[CPU level](compiler-guide.md#cpu-levels); a count is one `popcnt`, `lzcnt`, or
-`tzcnt` from the level that has it (`x86-64-v2` for `popcnt`, `x86-64-v3` for
-the other two) and a short instruction sequence below it. A result is the
-same at every level.
+value; `checked_next_power_of_two`, whose `Option` is not a constant, has one
+by compile-time evaluation. At run time each is one LLVM intrinsic or a few
+instructions around one, never a loop: `ctpop`, `ctlz`, and `cttz` with a zero
+operand defined, the funnel shifts `fshl` and `fshr`, and `bitreverse`;
+`bit_width` and the power-of-two round-up are `ctlz` with a subtraction, and
+`is_power_of_two` is `x > 0` and `x & (x - 1) == 0`. On x86-64 a rotation is
+one `rol` or `ror` at every [CPU level](compiler-guide.md#cpu-levels); a count
+is one `popcnt`, `lzcnt`, or `tzcnt` from the level that has it (`x86-64-v2`
+for `popcnt`, `x86-64-v3` for the other two) and a short instruction sequence
+below it. No level has a bit reversal instruction, so `reverse_bits` is a byte
+swap and shift-and-mask steps at every level. A result is the same at every
+level.
 
 ## `core:math/repro`
 

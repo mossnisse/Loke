@@ -54,8 +54,10 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 	case .Math_Sqrt_Instruction, .Math_Floor_Instruction, .Math_Ceil_Instruction, .Math_Trunc_Instruction,
 	     .Math_Round_Instruction, .Math_Mod_Instruction:
 		check_float_instruction_builtin(k, v, ident)
-	case .Math_Count_Ones, .Math_Leading_Zeros, .Math_Trailing_Zeros:
+	case .Math_Count_Ones, .Math_Leading_Zeros, .Math_Trailing_Zeros, .Math_Bit_Width:
 		check_bit_count_builtin(k, v, ident, sym.builtin)
+	case .Math_Reverse_Bits, .Math_Is_Power_Of_Two, .Math_Next_Power_Of_Two, .Math_Checked_Next_Power_Of_Two:
+		check_bit_value_builtin(k, v, ident, sym.builtin)
 	case .Math_Rotate_Left, .Math_Rotate_Right:
 		check_rotate_builtin(k, v, ident, sym.builtin)
 	case .Type_Info_Of:
@@ -849,13 +851,62 @@ check_float_instruction_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr
 	v.type = operand
 }
 
-// `count_ones(x)`, `leading_zeros(x)`, and `trailing_zeros(x)` take one value
-// of an integer type, distinct ones included, and count bits of its
-// two's-complement pattern; an unfixed constant is an `int`. The count is an
-// `int` whatever the operand's width, as a length is. A vector is refused: the
-// lane-wise forms are not specified.
+// `count_ones(x)`, `leading_zeros(x)`, `trailing_zeros(x)`, and `bit_width(x)`
+// take one value of an integer type, distinct ones included, and count bits of
+// its two's-complement pattern; an unfixed constant is an `int`. The count is
+// an `int` whatever the operand's width, as a length is. A vector is refused:
+// the lane-wise forms are not specified.
 @(private = "file")
 check_bit_count_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind) {
+	arg, type, ok := check_bit_operand(k, v, ident)
+	if !ok {
+		return
+	}
+	v.type = TYPE_INT
+	if base := expr_base(arg); base.is_const && base.const_value.kind == .Integer {
+		count := bit_count(k.c, base.const_value.integer, type_bits(k.c, type), kind)
+		v.is_const = true
+		v.const_value = int_const(k.c, i64(count))
+	}
+}
+
+// `reverse_bits(x)` and `next_power_of_two(x)` return the operand's type,
+// `is_power_of_two(x)` a `bool`, and `checked_next_power_of_two(x)` an
+// `Option` of the operand's type, over the operand the counts take. A constant
+// `next_power_of_two` that does not fit is design.md "Integer overflow"'s
+// compile-time diagnostic, where a run would panic. An `Option` is not a
+// constant, so the checked form has a compile-time value only by evaluation,
+// as `math.checked_add` has.
+@(private = "file")
+check_bit_value_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind) {
+	arg, type, ok := check_bit_operand(k, v, ident)
+	if !ok {
+		return
+	}
+	if kind == .Math_Checked_Next_Power_Of_Two {
+		v.type = option_type(k, type, v.span)
+		return
+	}
+	v.type = kind == .Math_Is_Power_Of_Two ? TYPE_BOOL : type
+	base := expr_base(arg)
+	if !base.is_const || base.const_value.kind != .Integer {
+		return
+	}
+	result, fits := bit_value_const(k.c, k.c, base.const_value.integer, type, kind)
+	if !fits {
+		report_integer_overflow(k.c, v.span, result.integer, type)
+		v.type = INVALID_TYPE
+		return
+	}
+	v.is_const = true
+	v.const_value = result
+}
+
+// The one operand of a bit count or value operation: a value of an integer
+// type, bound as the call's only argument. The call is a value, invalid until
+// its caller sets the result type.
+@(private = "file")
+check_bit_operand :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) -> (arg: Expr, type: Type_Id, ok: bool) {
 	v.value_category = .Value
 	v.type = INVALID_TYPE
 	if len(v.args) != 1 {
@@ -865,8 +916,8 @@ check_bit_count_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, 
 	if !builtin_arguments_ok(k, v) {
 		return
 	}
-	arg := v.args[0].value
-	type := check_single_expr(k, arg)
+	arg = v.args[0].value
+	type = check_single_expr(k, arg)
 	if type == INVALID_TYPE || !materialize(k, arg, default_type(k.c, type)) {
 		return
 	}
@@ -878,12 +929,7 @@ check_bit_count_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, 
 	bound := make([]Expr, 1, k.c.semantic_allocator)
 	bound[0] = arg
 	v.bound = bound
-	v.type = TYPE_INT
-	if base := expr_base(arg); base.is_const && base.const_value.kind == .Integer {
-		count := bit_count(k.c, base.const_value.integer, type_bits(k.c, type), kind)
-		v.is_const = true
-		v.const_value = int_const(k.c, i64(count))
-	}
+	return arg, type, true
 }
 
 // `rotate_left(x, count)` and `rotate_right(x, count)` take a value of an
