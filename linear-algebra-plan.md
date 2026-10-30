@@ -633,8 +633,7 @@ Decided while implementing:
   ([Compile-time procedure evaluation](design.md#compile-time-procedure-evaluation)),
   so `length`, `normalize`, `look_at`, and the rest did not fold. The merged
   implementation of `math.sqrt` now folds too, with the same result as at
-  runtime. The original question is in
-  [Correctly rounded procedures at compile time](open-questions.md#correctly-rounded-procedures-at-compile-time).
+  runtime.
 
 Compiler bugs found and fixed in the same change, each with a regression test
 (`tests/run/generic_group_bound_order`,

@@ -947,15 +947,6 @@ a `package main`, whose declarations are private by default, therefore meets
 `@(public)`. The diagnostic now names the cause; whether the two requirement
 forms should agree, and in which direction, is open.
 
-### Correctly rounded procedures at compile time
-
-Resolved: [`core:math`](standard-library.md#coremath)'s correctly rounded
-procedures, including `sqrt` and `mod`, now have compile-time values.
-`core:math/linalg` can therefore fold `length`, `normalize`, and `look_at`
-as well as projections, rotations, and `inverse`. The original limitation
-was that [compile-time procedure evaluation](design.md#compile-time-procedure-evaluation)
-could not call the foreign runtime implementation of `math.sqrt`.
-
 ### Implicit selectors in inferred parameter types
 
 An implicit selector argument takes the type of the parameter it fills, and a
