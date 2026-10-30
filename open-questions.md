@@ -11,53 +11,6 @@ Design rationale and differences from Odin are recorded in
 The current behavior inventory is in [Nondeterminism and undefined behavior
 audit](nondeterminism-audit.md).
 
-## Review follow-up for integer bit operations and index sets
-
-Review of `723d216d` on 2026-10-30 found one small compiler simplification:
-in `rotate_const` in [const_ops.odin](src/const_ops.odin), both callers have
-already checked that the rotation count is an `int`. Convert that count
-directly with `bi_to_i64`, then normalize it with
-`int(amount) & (bits - 1)`. The supported widths are powers of two, so this
-keeps the required low bits for positive counts, negative counts, and
-`int.MIN`. Delete the extra `bi_wrap` on the count and the single-use
-`bits_for_amount` helper: seven fewer lines. An isolated compiler variant
-passes the new integer-bit regression and an independent rotation check over
-all 8-bit signed/unsigned values with counts from -129 through 129, plus
-representative wider values and extreme counts. The fixture also checks
-constant folding and compile-time evaluation.
-
-The index-set structure is otherwise coherent: the four public types lend
-views and forward to shared word-slice operations, keeping range masks,
-serialization, and tail preservation together. Keep the direct fixed-set
-operator loops, which build a fresh result without an implicit large copy,
-and the separate read-only and mutable views. A new adapter or configurable
-operation framework would add structure without removing the storage rules.
-
-The two behavioral findings are recorded in
-[the dense scalar regression](known-gaps.md#integer-builtin-registrations-break-dense-scalar-constraints)
-and [the storage-count overflow](known-gaps.md#index-set-storage-counts-overflow-for-valid-positive-capacities).
-Validation passed all 175 compiler unit tests, the LLVM-shape suite, the new
-integer-bit and index-set runtime cases, the affected `lib_math` and
-`lib_random` cases, and the math/container interface checks. The trap suite
-fails on the three dense cases recorded above. The diagnostics suite also
-fails on [generic_waiting_argument.loke](tests/err/generic_waiting_argument.loke);
-the parent compiler produces identical diagnostics for that case, so that
-failure predates this commit.
-
-Review of merge `4008ea61` against its first parent on the same date
-confirmed the storage-count overflow and independently validated the
-seven-line rotation simplification. The isolated variant passes the
-integer-bit regression, constant folding and compile-time evaluation across
-all supported integer widths with negative and extreme counts, and runtime
-comparisons of both rotations for every `u8` value and counts from -17
-through 17. The merge passes both new runtime regressions at default and
-speed optimization, the two changed package interface checks, all 175
-compiler unit tests, and the diagnostics, trap, and LLVM-shape suites.
-The existing `lib_math`, `lib_math_bits`, `lib_random`, and `lib_dense`
-runtime regressions also pass. The dense scalar and waiting-argument
-failures reported for the unmerged commit above do not reproduce in this
-merge.
-
 ## Review follow-ups for file resizing, positional I/O, and locking
 
 Review of `675f0659`, `7ee9c971`, and `cf74b6e2` on 2026-10-30 found these
