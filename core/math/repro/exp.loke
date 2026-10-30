@@ -4,25 +4,31 @@
 // The fast path writes x = (128m + i) ln 2/128 + r with |r| <= ln 2/256, and
 // e^x = 2^m 2^(i/128) e^r, with 2^(i/128) from a table of `f64` pairs and e^r
 // from its Taylor series, both in double-`f64` arithmetic. Its result h + l has
-// a relative error under 2^-67:
+// a relative error under 2^-67.8:
 //
-// - r = rh + rl is exact to about 2^-114: k ln 2/128 is split into three
-//   parts, the first two of 35 bits so k times each is exact for |k| < 2^18,
-//   x - k HI is exact (both are multiples of 2^-61 and the difference is under
-//   2^-8, and k is 0 below that), and `two_sum` keeps the next subtraction
-//   exact.
-// - The series stops at r^6/720; the rest is under |r|^7/7! < 2^-72. Its
-//   terms past 1 + r sum to under 2^-18 and are evaluated with a relative
-//   error under 2.5 ulps, under 2^-69.7 absolute; the r^2 term's cross part
-//   rh rl is added, and the others are below 2^-78.
+// - r = rh + rl to about 2^-114: k ln 2/128 is split into three parts, the
+//   first two of 35 bits so k times each is exact for |k| < 2^18, x - k HI is
+//   exact (both are multiples of 2^-61 and the difference is under 2^-8, and
+//   k is 0 below that), `two_sum` keeps the next subtraction exact, and the
+//   third part's product rounds by under 2^-118. |rh| < 2^-8.52 and
+//   |rl| < 2^-61.9; `pow`'s tail, under 2^-42.85, joins rl within 2^-95.8.
+// - rh is not renormalized with rl, so the series starts as soon as rh is
+//   known: e^r - 1 - rh is p = rh^2 P(rh), P to rh^4/720 by Estrin's scheme,
+//   plus rl (1 + rh + rh^2/2 + rh^3/6). The series' rest is under
+//   |rh|^7/7! < 2^-72, and rl's under 2^-81.4 with `pow`'s tail. p is under
+//   2^-18.05 and within 4.02 ulps of itself, under 2^-69.05 absolute: four
+//   roundings at its scale, those of rh^2, the two sums near 1/2, and the
+//   last product, and under 2^-9 ulps from the rest.
 // - Each table pair is within 2^-106 of 2^(i/128). Its product with e^r is
-//   th + th rh, exact (`two_product`, `fast_two_sum`), plus terms below
-//   2^-17 th, whose products and sums round by under 2^-69.9 and 2^-70.
+//   th + th rh, exact (`two_product`, `fast_two_sum`), plus th p, th's
+//   product with rl's terms, and tl (1 + rh): tl p, under 2^-71.05 th, is
+//   left out, and the four roundings at th p's scale are under 2^-69.05 th
+//   in all, those below it under 2^-94.
 //
-// These sum to under 2^-68.2.
+// These sum to under 2^-67.8.
 //
-// A result is returned when both ends of h + l ± 2^-66 h round alike, twice
-// the bound, which also covers rounding l ± the bound itself. Otherwise, and
+// A result is returned when both ends of h + l ± 2^-66 h round alike, over
+// three times the bound, which also covers rounding l ± the margin itself. Otherwise, and
 // for the results that could be subnormal, the slow path recomputes e^x in
 // 320-bit fixed point and rounds that. No binary64 argument of exp is known
 // to need more than about 2^-120 relative accuracy to round correctly
@@ -41,26 +47,29 @@ INV_LN2     :: 1.4426950408889634;
 // x + tail = k ln 2/128 + r, and 2^(i/128) e^r as h + l, |l| <= ulp(h)/2,
 // for |x| under 746 and |tail| <= ulp(x), where i is k's low seven bits.
 // `exp` passes no tail; `pow` passes y log x as a pair, whose tail joins r
-// within 2^-97.
+// within 2^-95.8.
 exp_kernel :: proc(x: f64, tail: f64) -> (k: int, high: f64, low: f64) {
 	kf := (x*INV_LN2_128 + ROUND_SHIFTER) - ROUND_SHIFTER;
 	k := int(kf);
 	r1 := x - kf*unsafe.transmute(f64, u64(LN2_128_HI));
 	rh, rl := two_sum(r1, 0.0 - kf*unsafe.transmute(f64, u64(LN2_128_MID)));
 	rl = (rl - kf*unsafe.transmute(f64, u64(LN2_128_LO))) + tail;
-	rh, rl = two_sum(rh, rl);
 
-	// e^r - 1 - rh, the cross term of r^2 included.
-	q := rl + (rh*rh*(0.5 + rh*(1.0/6.0 + rh*(1.0/24.0 + rh*(1.0/120.0 + rh*(1.0/720.0))))) + rh*rl);
+	// e^r - 1 - rh = p + rl e^rh. Estrin's scheme and the unrenormalized rh
+	// keep the dependency chain short, which is most of this kernel's time.
+	r2 := rh*rh;
+	c2 := 0.5 + rh*(1.0/6.0);
+	p := r2*(c2 + r2*((1.0/24.0 + rh*(1.0/120.0)) + r2*(1.0/720.0)));
+	cross := rl + rl*(rh + r2*c2);
 
-	// T e^r = th + th rh + th q + tl (1 + rh + q): th rh exactly, the others
-	// below 2^-17 th and rounded.
+	// T e^r = th + th rh + th p + th cross + tl (1 + rh): th rh exactly, the
+	// others below 2^-17 th and rounded.
 	i := k & 127;
 	th := unsafe.transmute(f64, EXP_TABLE[2*i]);
 	tl := unsafe.transmute(f64, EXP_TABLE[2*i + 1]);
 	ph, pl := two_product(th, rh);
 	s, e := fast_two_sum(th, ph);
-	h, l := fast_two_sum(s, e + (pl + (th*q + (tl + tl*rh))));
+	h, l := fast_two_sum(s, e + (pl + (th*p + (th*cross + (tl + tl*rh)))));
 	return {k, h, l};
 }
 

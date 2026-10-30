@@ -4,9 +4,9 @@
 // x^y = e^z, z = y log x, for x > 0 other than 1. The fast path computes
 // log x as a pair within 2^-83 relative, z = y log x as a pair from it
 // (`two_product`, its low part rounded by under 2^-106 |z|), and e^z by
-// `exp`'s kernel, whose relative error is under 2^-68.2. A result that is
+// `exp`'s kernel, whose relative error is under 2^-67.8. A result that is
 // not infinite, 0, or 1 has |z| < 746, so z's error, under 2^-73.5, adds to
-// that for under 2^-68.1, and the result is returned, as `exp`'s are, when
+// that for under 2^-67.7, and the result is returned, as `exp`'s are, when
 // both ends of h + l ± 2^-66 h round alike.
 //
 // log x takes `log`'s table and a second one: r1 = y d1 - 1 exactly, as in

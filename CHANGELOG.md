@@ -387,6 +387,9 @@ checklist.
 
 ### Changed
 
+- `core:math/repro`'s `exp` takes 14 ns rather than 19, and `pow` 55 rather
+  than 60, with the same results: their shared kernel's dependency chain is
+  about a third shorter.
 - `core:math/repro`'s `f32` functions are faster, with the same results:
   `sin_f32`, `cos_f32`, `tan_f32`, and `pow_f32` try a single-`f64`
   approximation first, as the others already did, and every `f32` rounding

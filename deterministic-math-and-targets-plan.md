@@ -521,9 +521,38 @@ capped. Measured again on 2026-10-30 after the changes above, the dispatched
 took 2.1 to 8.7, and the measured `f32` ones 2.3 to 3.7, where they took 4.6
 to 9.4; every checksum is the earlier run's.
 
-Not started: phase 6's faster `f64` kernels, which need other algorithms,
-the worst-case latency and simulation frame-time measurements its gate
-asks for, and other platforms.
+Then a shorter dependency chain in `exp_kernel`, behind `exp` and `pow`, on
+2026-10-30. On independent calls these functions are latency-bound, not
+throughput-bound: summing the floating-point latencies of `exp`'s chain gave
+about 145 cycles, which at this machine's clock is the 36 ns a dependent
+call took, and the out-of-order window holds about two calls' worth, so
+an independent call took half that.
+
+- The series now starts from rh as `two_sum` first rounds it, without
+  renormalizing rl into it, and evaluates P by Estrin's scheme rather than
+  Horner's; rl's terms, to rl rh^3/6 since `pow`'s tail can reach 2^-42.85,
+  run beside it. The chain is about 100 cycles. The bound, derived again in
+  `exp.loke`, is 2^-67.8 where it was 2^-68.2, still under the margin of
+  2^-66; `pow`'s is 2^-67.7.
+- No result changed: the probe passes, and every checksum of the benchmark is
+  the same. Against `exp_fixed`, the kernel's largest relative error over 20
+  million seeded arguments, each without and with a tail like `pow`'s, was
+  2^-68.6, the same as the previous kernel's measured the same way.
+- Measured at `-opt=speed` with `bench/math_compare`, medians per call
+  before and after, each the mean of two runs: `exp` 18.7 and 13.7 ns
+  dispatched, 20.4 and 15.7 in the plain copies, 18.1 and 13.0 at
+  `x86-64-v3`, and 36.6 and 27.3 dependent; `pow` 60.3 and 55.3 dispatched,
+  and 77.7 and 67.4 dependent. The `f32` functions, decided by their
+  single-`f64` paths, did not move.
+- A temporary compiler change marking the slow paths `noinline cold`, which
+  no Loke attribute can yet ask for, kept their frames out of the fast paths:
+  `hypot` went from 17.1 to 12.6 ns, `pow` from 61 to 56, `tan` from 52 to
+  49, and the rest by about 1 ns. It is not adopted.
+
+Not started: phase 6's faster kernels for the other `f64` functions, whose
+chains a latency count, as for `exp`, would show where to shorten; the
+worst-case latency and simulation frame-time measurements its gate asks
+for; and other platforms.
 
 ## Recommended direction
 
