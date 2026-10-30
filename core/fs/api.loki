@@ -260,7 +260,8 @@ create_directory :: proc(path: string_view) -> Status(io.Error) ---;
 
 /*
 	Every missing parent, then the directory itself. An existing directory is not
-	a failure.
+	a failure. The parents are those of the path Windows normalizes this one to,
+	so an element that a later `..` takes away is never created or looked up.
 */
 create_directories :: proc(path: string_view) -> Status(io.Error) ---;
 

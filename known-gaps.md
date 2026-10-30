@@ -40,35 +40,6 @@ view's start tracked per program point, like the loans a slot holds. When the
 reslice runs inside the loop, the store may name several places and rejecting
 it is correct. Found while closing the resliced-view case on 2026-10-30.
 
-### Recursive directory creation visits prefixes removed by normalization
-
-The [`core:fs` path contract](standard-library.md#corefs) says that only the
-elements remaining after native normalization are looked up. Recursive
-directory creation instead visits each written prefix before Windows can
-normalize the complete path. In a fresh working directory:
-
-```loke
-package main;
-import "core:fmt";
-import "core:fs";
-main :: proc() {
-    _ = fs.create_directories("normalization-repro/skipped/../made");
-    fmt.println(fs.exists("normalization-repro/skipped") or_else false);
-}
-```
-
-This prints `true`: `skipped` is created even though normalization removes
-it from the final path. If `skipped` is an existing file, the operation fails
-before creating `made`, although the normalized destination has no such
-component. `create_directories` in [fs.loke](core/fs/fs.loke) calls
-`ensure_directory` for each prefix of the original string. The new
-[normalization test](tests/run/lib_fs_link_normalization.loke) uses an
-existing directory junction, so it does not reveal these extra operations.
-Found reviewing `d3cb447a` on 2026-10-30. Either document prefix processing as
-an exception to the blanket normalization guarantee, or normalize ordinary
-paths before recursive creation while preserving the extended-length path
-rules. Cover a missing and a file-valued component canceled by `..`.
-
 ### A storing call rejects a named read-only reborrow
 
 [Weakening and reborrows](design.md#weakening-and-reborrows) says that copies

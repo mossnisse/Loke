@@ -1851,9 +1851,11 @@ private, its zero value is closed, it disables cloning, and its `drop` closes a
 live handle.
 
 Every operation passes its path to Windows as given: `core:fs` neither
-rewrites it nor adds a `\\?\` prefix, and `read_directory` only appends the
-search pattern `*`, after a `\` where one is needed. Windows normalizes an ordinary path
-lexically before it looks up any element of it, as its
+rewrites it nor adds a `\\?\` prefix, `read_directory` only appends the
+search pattern `*`, after a `\` where one is needed, and `create_directories`
+asks Windows for the normalized path first and creates directories along it.
+Windows normalizes an ordinary path lexically before it looks up any element
+of it, as its
 [path normalization](https://learn.microsoft.com/en-us/dotnet/standard/io/file-path-formats#path-normalization)
 describes: a relative path is joined to the current directory's path, `/`
 becomes `\`, runs of separators collapse, and each `.` element is dropped, as
@@ -2160,9 +2162,12 @@ it is durable as far as the device honors flush requests.
 
 `create_directories` succeeds when the path ends up naming a directory, so an
 existing directory and a volume root such as `C:\` are not failures, while an
-existing file is `Already_Exists`. A path ending in a drive's colon, such as
-`C:`, names that drive's current directory for `read_directory` as for every
-other operation.
+existing file is `Already_Exists`. It creates the missing directories of the
+path that remains after [native normalization](#corefs), so
+`a/skipped/../made` makes whichever of `a` and `a/made` is missing and never
+looks up `skipped`, which may be missing or a file. An extended-length path is
+walked as written. A path ending in a drive's colon, such as `C:`, names that
+drive's current directory for `read_directory` as for every other operation.
 Removing an existing file with `remove_directory` is `Invalid_Path`; the
 operation requires a directory and preserves the native error number.
 

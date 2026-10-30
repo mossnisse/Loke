@@ -2079,6 +2079,10 @@ boundaries and API shapes follow a few common choices:
   would make `fs` disagree with the native tools about which file a path
   names. A caller that wants no normalization already has the
   extended-length `\\?\` form, which Windows passes on as written.
+  `create_directories`, the one operation that walks the prefixes of its
+  path, takes them from what `GetFullPathNameW` returns rather than from a
+  lexical cleaner of its own, so they are the elements Windows looks up by
+  construction.
 - **Joining takes a slice.** A variadic would absorb trailing allocator
   arguments or prevent a preceding default allocator from being omitted.
 - **Case conversion is ASCII-only.** Full Unicode mapping requires tables and

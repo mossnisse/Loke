@@ -489,22 +489,52 @@ create_directory :: proc(path: string_view) -> Status(io.Error) {
 
 /**
 	Every missing parent, then the directory itself. An existing directory is not
-	a failure.
+	a failure. The parents are those of the path Windows normalizes this one to,
+	so an element that a later `..` takes away is never created or looked up.
 */
-// Nothing at or above the volume is a directory anything can create — `C:` is a
-// drive and a UNC prefix is a share — so the walk starts past whatever
+// The walk is over the path Windows normalizes this one to, so it creates only
+// the elements that remain (standard-library.md "`core:fs`"): a prefix of the
+// path as written can hold an element a later `..` takes away. Both that path
+// and an extended-length one separate elements with `\` alone.
+//
+// It goes up from the whole path while a parent is missing, then down creating
+// each one, so existing directories above the first missing one are never
+// asked for. Nothing at or above the volume is a directory anything can create
+// — `C:` is a drive and a UNC prefix is a share — so the walk stops at whatever
 // `path.volume` finds.
 create_directories :: proc(path: string_view) -> Status(io.Error) {
-	bytes := path.bytes();
-	// The separator *ending* the volume names the volume itself, so the walk skips
-	// it rather than starting after it. One `at == start` covers both `C:\x` and a
-	// rooted `\x`, whose volume is empty.
-	start := lexical.volume(path).len();
-	for (at := start; at < bytes.len(); at += 1) {
-		if (!is_separator(bytes[at]) || at == start) { continue; }
-		ensure_directory(path[0:at]) or_return;
+	full := full_path_native(path, .Create_Directory) or_return;
+	bytes := full.bytes();
+	floor := lexical.volume(full).len();
+	// A separator ending the path names the directory before it, except the one
+	// ending the volume: `C:\` is the root, while `C:` is the drive's current
+	// directory.
+	end := bytes.len();
+	for (; end > floor + 1 && bytes[end - 1] == u8('\\'); end -= 1) {}
+	at := deepest_directory(full, floor, end) or_return;
+	for (next := at + 1; next < end; next += 1) {
+		if (bytes[next] == u8('\\')) { ensure_directory(full[0:next]) or_return; }
 	}
-	return ensure_directory(path);
+	if (at < end) { ensure_directory(full[0:end]) or_return; }
+}
+
+// Where the directory nearest the end of `full[0:end]` that is there, or can be
+// made, ends. `Not_Found` from creating one is a missing parent — or a file
+// where a parent should be, which the step up then reports as `Already_Exists`.
+@(private)
+deepest_directory :: proc(full: string_view, floor: int, end: int) -> Result(int, io.Error) {
+	bytes := full.bytes();
+	at := end;
+	for (;;) {
+		switch (ensure_directory(full[0:at])) {
+		case .ok: return at;
+		case .err(error):
+			parent := at - 1;
+			for (; parent > floor && bytes[parent] != u8('\\'); parent -= 1) {}
+			if (!io.is(error, .Not_Found) || parent <= floor) { return .err(error); }
+			at = parent;
+		}
+	}
 }
 
 // The postcondition is that a directory is there, so a failed creation is
@@ -664,6 +694,10 @@ foreign kernel32 {
 	rt_file_information :: proc "stdcall" (handle: int, data: rawptr) -> i32 ---;
 	@(link_name="GetCurrentProcessId")
 	rt_current_process_id :: proc "stdcall" () -> u32 ---;
+	@(link_name="GetFullPathNameW")
+	rt_full_path_name :: proc "stdcall" (
+		path: [^]u16, size: u32, buffer: [^]u16, part: rawptr,
+	) -> u32 ---;
 	@(link_name="CreateDirectoryW")
 	rt_create_directory :: proc "stdcall" (path: [^]u16, security: rawptr) -> i32 ---;
 	@(link_name="RemoveDirectoryW")
@@ -1107,6 +1141,38 @@ rename_information :: proc(path: string_view) -> Result([dynamic]u16, io.Error) 
 		return move(information);
 	case .err:
 		return .err(io.from_allocator_error(.Rename));
+	}
+}
+
+// The path Windows normalizes `path` to before it looks up any element, by the
+// rules every other call applies on its own (standard-library.md "`core:fs`"),
+// or an extended-length path as written, since Windows does not normalize one.
+@(private)
+full_path_native :: proc(path: string_view, operation: io.Operation) -> Result(string, io.Error) {
+	if (strings.starts_with(path, "\\\\?\\")) {
+		return scratch_join([]string_view{path}, operation);
+	}
+	wide := wide_path(path, operation) or_return;
+	// The same size, fill, and retry as `core:os`'s working directory: another
+	// thread can change the current directory between the two calls.
+	needed := rt_full_path_name(unsafe.raw_data(wide), 0, nil, nil);
+	for (;;) {
+		if (needed == 0) {
+			return .err(from_last_error(operation));
+		}
+		buffer: [dynamic]u16 = {};
+		switch (try_make([dynamic]u16, int(needed), int(needed), mem.default_allocator())) {
+		case .ok(made):  buffer = move(made);
+		case .err: return .err(io.from_allocator_error(operation));
+		}
+		written := rt_full_path_name(unsafe.raw_data(wide), needed, unsafe.raw_data(buffer), nil);
+		if (written != 0 && written < needed) {
+			switch (utf16.decode(buffer[0:int(written)], mem.default_allocator())) {
+			case .ok(text):   return text;
+			case .err(error): return .err(from_utf16_error(error, operation));
+			}
+		}
+		needed = written;
 	}
 }
 

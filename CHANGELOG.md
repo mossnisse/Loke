@@ -633,6 +633,11 @@ checklist.
 
 ### Fixed
 
+- `fs.create_directories` creates only the directories of the path Windows
+  normalizes its argument to, so `a/skipped/../made` no longer creates
+  `skipped`, nor fails when `skipped` is a file; an extended-length `\\?\`
+  path is still walked as written
+  ([Filesystem operations](standard-library.md#filesystem-operations)).
 - A store into one element of a local slice view at a constant index, as
   `s[0].head = s[0].tail` with `s := &mut arr[:]` or a constant reslice
   `t := &mut s[1:]`, now replaces what that element held, so a loop that

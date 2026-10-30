@@ -1,0 +1,114 @@
+package main;
+
+import "core:fmt";
+import "core:fs";
+import "core:io";
+import "core:os";
+import "core:path";
+import "core:strings";
+
+// `create_directories` walks the path Windows normalizes its argument to, so an
+// element a later `..` takes away is never created or looked up, whether it is
+// missing or names a file; an extended-length `\\?\` path is walked as written
+// (standard-library "`core:fs`" and "Filesystem operations").
+
+succeeded :: proc(outcome: Status(io.Error)) -> bool {
+	switch (outcome) {
+	case .ok:  return true;
+	case .err: return false;
+	}
+	return false;
+}
+
+// The portable code that refused the creation, or "ok".
+report :: proc(outcome: Status(io.Error)) {
+	switch (outcome) {
+	case .ok: fmt.println("ok");
+	case .err(error): fmt.println(io.code_of(error), io.operation_of(error));
+	}
+}
+
+root :: proc() -> string {
+	switch (os.get_environment("TEMP")) {
+	case .ok(outcome):
+		switch (outcome) {
+		case .some(base): return path.join([]string_view{base, "loke_fs_create_normalization"});
+		case .none:
+		}
+	case .err:
+	}
+	return strings.copy("loke_fs_create_normalization");
+}
+
+// Spelled out rather than through `path.join`, which would remove the `..`
+// itself before `create_directories` ever saw it.
+spelled :: proc(parts: []string_view) -> string {
+	return strings.join(parts, "");
+}
+
+in_root :: proc(directory: string_view, name: string_view) -> string {
+	return path.join([]string_view{directory, name});
+}
+
+exists :: proc(directory: string_view, name: string_view) -> bool {
+	return fs.exists(in_root(directory, name)) or_else true;
+}
+
+clean_up :: proc(directory: string_view) {
+	foreach (name in []string_view{
+		"made", "skipped", "after", "fresh/made", "fresh/skipped", "fresh",
+		"relative/made", "relative/skipped", "relative", "trailing", "wide/deep",
+		"wide", "made2",
+	}) {
+		_ = fs.remove_directory(in_root(directory, name));
+	}
+	_ = fs.remove(in_root(directory, "file.txt"));
+	_ = fs.remove_directory(directory);
+}
+
+main :: proc() {
+	directory := root();
+	// A leftover directory from an interrupted earlier run is not a failure.
+	clean_up(directory);
+	fmt.println(succeeded(fs.create_directories(directory)));
+
+	// A missing element taken away by `..` is not created, whichever separator
+	// spells it, and neither is a missing one above it.
+	report(fs.create_directories(spelled([]string_view{directory, "\\skipped\\..\\made"})));
+	fmt.println(exists(directory, "made"), exists(directory, "skipped"));
+	report(fs.create_directories(spelled([]string_view{directory, "/fresh/skipped/../made"})));
+	fmt.println(exists(directory, "fresh/made"), exists(directory, "fresh/skipped"));
+
+	// Nor is a file in its place an obstacle, while a file the path still goes
+	// through is one.
+	file := in_root(directory, "file.txt");
+	fmt.println(succeeded(fs.write_text(file, "not a directory")));
+	report(fs.create_directories(spelled([]string_view{file, "\\..\\after"})));
+	fmt.println(exists(directory, "after"));
+	report(fs.create_directories(spelled([]string_view{file, "\\after"})));
+	report(fs.create_directories(spelled([]string_view{file, "\\deeper\\after"})));
+
+	// A relative path is normalized against the current directory, as Windows
+	// normalizes it for every other call.
+	previous := os.working_directory() or_else panic("the test cannot find its directory");
+	fmt.println(succeeded(os.set_working_directory(directory)));
+	report(fs.create_directories("relative\\skipped\\..\\made\\"));
+	fmt.println(succeeded(os.set_working_directory(previous)));
+	fmt.println(exists(directory, "relative/made"), exists(directory, "relative/skipped"));
+
+	// A trailing separator names the directory before it.
+	report(fs.create_directories(spelled([]string_view{directory, "\\trailing\\\\"})));
+	fmt.println(exists(directory, "trailing"));
+
+	// An extended-length path is walked as written: its missing parents are
+	// made, and so is an element before `..`, which reaches NTFS as a name that
+	// it refuses.
+	extended := spelled([]string_view{"\\\\?\\", directory});
+	report(fs.create_directories(spelled([]string_view{extended, "\\wide\\deep"})));
+	fmt.println(exists(directory, "wide/deep"));
+	fmt.println(succeeded(fs.create_directories(spelled([]string_view{extended, "\\skipped\\..\\made2"}))));
+	fmt.println(exists(directory, "skipped"), exists(directory, "made2"));
+
+	clean_up(directory);
+	fmt.println(fs.exists(directory) or_else true);
+}
