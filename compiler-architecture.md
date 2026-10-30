@@ -423,8 +423,12 @@ Keep these contracts:
   (`Prov_View_Def`, `prov_local_view_element`, `publish_view_of`). A parameter's loan publishes into its caller slots,
   so the parameter itself holds nothing stored. A view parameter's slots
   stand for every element, so only a store into one element, `s[k]` with a
-  constant `k`, lands in slots of that element (`prov_view_element`); any
-  other store through a view also joins into the parameter itself. Each
+  constant `k`, lands in slots of that element (`prov_view_element`) and
+  replaces what they hold. A carrier stored into a view parameter where the
+  store names no one element, as `s[k]` with a variable `k`, lands in the
+  slots standing for every element and in those of each constant element,
+  and replaces none (`prov_view_any_element_store`, `Prov_Event.any_element`);
+  any other store through a view also joins into the parameter itself. Each
   carrier the store copies is linked as a reborrow to the slots where it may
   land (`prov_reborrow_stored_content` for one inside a record), and only a
   store whose every copy is linked there skips the parameter itself

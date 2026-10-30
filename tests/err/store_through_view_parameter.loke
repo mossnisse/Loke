@@ -5,12 +5,14 @@
 // no store into the parameter itself, so a borrow of `count` beside it stays
 // legal, also when a loop repeats it (design.md "Weakening and reborrows").
 // Through another index, which may name the same element, nothing is
-// replaced.
+// replaced: the store lands in every element the view may hold, which a load
+// of any of them sees, and still not in the parameter itself.
 package main;
 
 Node :: struct { value: int }
 Counted :: struct { head: ^mut Node, tail: ^mut Node, count: int }
 One :: struct { head: ^mut Node, count: int }
+Heads :: struct { heads: [2]^mut Node, count: int }
 sink :: proc(value: int) {}
 touch :: proc(s: []mut Counted) {}
 
@@ -140,6 +142,95 @@ chained :: proc(s: []mut Counted) {
 passed_on :: proc(s: []mut Counted) {
 	s[0].head = s[0].tail;
 	head := s[0].head;
+	touch(s);
+	head^.value = 1;
+}
+
+// Legal: storing `head` at an index that is no constant beside a borrow of
+// `count` of the same element, or of another.
+beside_count_indexed :: proc(s: []mut Counted, k: int) {
+	for (round := 0; round < 2; round += 1) {
+		count := &s[k].count;
+		s[k].head = s[k].tail;
+		sink(count^);
+	}
+}
+
+beside_count_round :: proc(s: []mut Counted) {
+	for (round := 0; round < 2; round += 1) {
+		count := &s[round].count;
+		s[round].head = s[round].tail;
+		sink(count^);
+	}
+}
+
+beside_constant_count :: proc(s: []mut Counted, k: int) {
+	for (round := 0; round < 2; round += 1) {
+		count := &s[0].count;
+		s[k].head = s[k].tail;
+		sink(count^);
+	}
+}
+
+// Legal: the store into `s[0].head` replaces what the one at `s[k]` may have
+// left there.
+replaced_after_indexed :: proc(
+	s: []mut Counted, k: int, @(escape=stored) first: ^mut Node, @(escape=stored) second: ^mut Node,
+) {
+	s[k].head = first;
+	s[0].head = second;
+	head := s[0].head;
+	first^.value = 1;
+	head^.value = 2;
+}
+
+// `s[k]` may be the element loaded after it, whether at a constant index,
+// one loaded before the store too, or another index.
+indexed_then_constant :: proc(s: []mut Counted, k: int, @(escape=stored) node: ^mut Node) {
+	s[k].head = node;
+	head := s[0].head;
+	node^.value = 1;
+	head^.value = 2;
+}
+
+indexed_then_loaded_constant :: proc(s: []mut Counted, k: int, @(escape=stored) node: ^mut Node) {
+	sink(s[1].head^.value);
+	s[k].head = node;
+	head := s[1].head;
+	node^.value = 1;
+	head^.value = 2;
+}
+
+indexed_then_indexed :: proc(s: []mut Counted, k: int, j: int, @(escape=stored) node: ^mut Node) {
+	s[k].head = node;
+	head := s[j].head;
+	node^.value = 1;
+	head^.value = 2;
+}
+
+// A store below a constant element at an index that is no constant names no
+// one place of it either.
+indexed_below_constant :: proc(s: []mut Heads, i: int, @(escape=stored) node: ^mut Node) {
+	s[0].heads[i] = node;
+	head := s[0].heads[1];
+	node^.value = 1;
+	head^.value = 2;
+}
+
+// The copy of `tail` the last iteration stored in `head` is still in use.
+replaced_in_use_indexed :: proc(s: []mut Counted, k: int) {
+	for (round := 0; round < 2; round += 1) {
+		head := s[k].head;
+		head^.value = 1;
+		s[k].head = s[k].tail;
+		head^.value = 2;
+	}
+}
+
+// The call may use the copy of `tail` stored in `head`.
+passed_on_indexed :: proc(s: []mut Counted, k: int) {
+	s[k].head = s[k].tail;
+	head := s[k].head;
 	touch(s);
 	head^.value = 1;
 }

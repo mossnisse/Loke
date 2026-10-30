@@ -3003,7 +3003,7 @@ run_prov_event :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8, ended
 				publish_into_loan(
 					state, reach, index, event.path, event.stored if index == one else INVALID_TYPE, state.precision[slot], event.linked,
 					event.retained, event.elements if index == one && index + 1 == event.element_loan else nil,
-					publish_view_loan(graph, event, index).path if index == one else nil,
+					publish_view_loan(graph, event, index).path if index == one else nil, index + 1 == event.any_element,
 				)
 			}
 		}
@@ -3811,14 +3811,16 @@ solve_loan_liveness :: proc(state: ^Prov_State) {
 // of the `stored` type at exactly that place, or of a carrier inside a
 // `stored` value there, is replaced instead, as a store to the place itself
 // replaces it (`publish_replaces`). A parameter's caller storage is its loan's
-// caller slots (`publish_into_caller`), and one element of a view parameter
-// its `elements` (`prov_view_element`). `linked` is the type stored when each
-// carrier it copies is linked as a reborrow to the slots it may land in
+// caller slots (`publish_into_caller`), one element of a view parameter
+// its `elements` (`prov_view_element`), and, for an `any_element` store,
+// which names no one element of a view parameter, every caller slot standing
+// for one (`prov_view_any_element_store`). `linked` is the type stored when
+// each carrier it copies is linked as a reborrow to the slots it may land in
 // (`Prov_Event.linked`).
 @(private = "file")
 publish_into_loan :: proc(
 	state: ^Prov_State, reach: []u8, loan_index: int, path: []Proj_Step, stored: Type_Id, carrier_loss: Precision_Loss,
-	linked: Type_Id, retained: bool, elements: []int, view: []Proj_Step,
+	linked: Type_Id, retained: bool, elements: []int, view: []Proj_Step, any_element: bool,
 ) {
 	graph := state.graph
 	loan := graph.loans[loan_index]
@@ -3844,6 +3846,13 @@ publish_into_loan :: proc(
 		// What a call leaves in a view may be in any element, each of which
 		// these slots stand for, and which `prov_reborrow_retained` links.
 		publish_into_caller(state, reach, slots[:], loan, path, INVALID_TYPE, carrier_loss, INVALID_TYPE)
+	} else if caller && any_element {
+		// So may a carrier stored where the store names no one element of a
+		// view parameter, which replaces none of them, and whose copy is
+		// linked to each (`prov_view_any_element_store`).
+		if publish_into_caller(state, reach, slots[:], loan, path, INVALID_TYPE, carrier_loss, linked) {
+			return
+		}
 	}
 	for slot, index in graph.prov_slots {
 		if slot.symbol != root.symbol || !paths_overlap_joined(slot.path, loan.path, path) {
