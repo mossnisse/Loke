@@ -19,7 +19,8 @@ import "core:unsafe";
 Lu :: struct($T: type) where linalg.Scalar(T) {
 	@(private) packed: Matrix(T),     // L below the diagonal, U on and above
 	@(private) swaps:  [dynamic]int,
-	@(private) norm:   T.Real,        // the 1-norm of A, for reciprocal_condition
+	@(private) norm:   T.Real,        // the 1-norm of A over norm_scale, for reciprocal_condition
+	@(private) norm_scale: T.Real,    // 1, or the scaling_limit when the 1-norm overflows
 }
 
 /**
@@ -216,7 +217,27 @@ lu :: proc(a: View($T), allocator: Allocator = mem.default_allocator(), pool: Op
 	factors := Matrix(T).from_view(a, allocator);
 	pivots := make([dynamic]int, a.row_count, allocator);
 	lu_in_place(factors.view_mut(), &mut pivots[:], pool) or_return;
-	return .ok(Lu(T){move(factors), move(pivots), norm_one(a)});
+	norm := norm_one(a);
+	norm_scale := T.Real(1);
+	if (!real_finite(norm)) {
+		// The factors are finite, so the elements are and a column sum
+		// overflowed: it is summed again with each element over the limit.
+		norm_scale = scaling_limit(T.Real);
+		norm = scaled_norm_one(a, T.Real(1)/norm_scale);
+	}
+	return .ok(Lu(T){move(factors), move(pivots), norm, norm_scale});
+}
+
+// `norm_one` of `a` with each element multiplied by `scale` first.
+@(private)
+scaled_norm_one :: proc(a: View($T), scale: T.Real) -> T.Real where linalg.Scalar(T) {
+	best := T.Real(0);
+	foreach (c in 0 ..< a.column_count) {
+		sum := T.Real(0);
+		foreach (r in 0 ..< a.row_count) { sum = sum + modulus(times_real(scale, a[r, c])); }
+		if (best < sum) { best = sum; }
+	}
+	return best;
 }
 
 impl Lu($T) {
@@ -289,34 +310,55 @@ impl Lu($T) {
 		by more than a factor of 3; for a complex `T` as `zgecon` does, the
 		signs being the units `x / |x|`. 1 for a 0 x 0 matrix. Its scratch
 		vector is allocated from `allocator`.
+
+		Each vector the estimator solves for is multiplied by `sigma`, the
+		largest power of two not above `|A|_1` but at least the smallest
+		normal number and at most half the largest finite power of two, so
+		that the solutions of a well-conditioned matrix neither overflow nor
+		underflow, and the result is `(sigma / e) / |A|_1` for the estimate
+		`e` of `sigma |A^-1|_1`. A power of two changes the rounding of no
+		value that is not subnormal, so multiplying `A` by a power of two
+		changes no bit of the result where neither the factorization nor the
+		estimate reaches a subnormal value. When the sum `|A|_1` overflows,
+		it is formed from each element multiplied by `1/big`, for `big` the
+		largest power of two whose square is finite, and multiplied back
+		within the quotient. 0 when the estimate of `sigma |A^-1|_1` is not
+		finite.
 	*/
 	reciprocal_condition :: proc(self, allocator: Allocator = mem.default_allocator()) -> T.Real {
 		n := self.packed.row_count;
 		if (n == 0) { return T.Real(1); }
 		if (self.norm == T.Real(0)) { return T.Real(0); }
-		return (T.Real(1)/self.inverse_norm_estimate(allocator))/self.norm;
+		sigma := power_of_two_below(self.norm*self.norm_scale);
+		// The alternating vector reaches 2 sigma.
+		if (!real_finite(T.Real(2)*sigma)) { sigma = T.Real(0.5)*sigma; }
+		estimate := self.inverse_norm_estimate(sigma, allocator);
+		if (!real_finite(estimate)) { return T.Real(0); }
+		return ((sigma/self.norm_scale)/estimate)/self.norm;
 	}
 
 	// Higham's form of Hager's estimator, as LAPACK's `lacn2` has it, with
 	// the sign vector kept in `signs`, or as `zlacn2` has it for a complex
 	// `T`, which does not test for repeated signs. Each sum is in index order.
-	@(private) inverse_norm_estimate :: proc(self, allocator: Allocator) -> T.Real where linalg.Scalar(T) {
+	// Every right-hand side is multiplied by `sigma`, so the estimate is of
+	// `sigma |A^-1|_1`.
+	@(private) inverse_norm_estimate :: proc(self, sigma: T.Real, allocator: Allocator) -> T.Real where linalg.Scalar(T) {
 		n := self.packed.row_count;
-		x := Matrix(T).filled(n, 1, T(1)/from_f64(T, f64(n)), allocator);
+		x := Matrix(T).filled(n, 1, times_real(sigma, T(1)/from_f64(T, f64(n))), allocator);
 		self.solve_into(x.view_mut());
 		if (n == 1) { return modulus(x[0, 0]); }
 		estimate := absolute_sum(x.view());
 		signs := Matrix(T).zeros(n, 1, allocator);
 		foreach (i in 0 ..< n) {
 			signs[i, 0] = sign_of(x[i, 0]);
-			x[i, 0] = signs[i, 0];
+			x[i, 0] = times_real(sigma, signs[i, 0]);
 		}
 		self.solve_adjoint_into(x.view_mut());
 		j := largest_index(x.view());
 		iteration := 2;
 		for (;;) {
 			x.view_mut().fill(T(0));
-			x[j, 0] = T(1);
+			x[j, 0] = T(sigma);
 			self.solve_into(x.view_mut());
 			previous := estimate;
 			estimate = absolute_sum(x.view());
@@ -330,7 +372,7 @@ impl Lu($T) {
 			if (repeated || !(previous < estimate)) { break; }
 			foreach (i in 0 ..< n) {
 				signs[i, 0] = sign_of(x[i, 0]);
-				x[i, 0] = signs[i, 0];
+				x[i, 0] = times_real(sigma, signs[i, 0]);
 			}
 			self.solve_adjoint_into(x.view_mut());
 			last := j;
@@ -340,7 +382,7 @@ impl Lu($T) {
 		}
 		alternating := T(1);
 		foreach (i in 0 ..< n) {
-			x[i, 0] = alternating*(T(1) + from_f64(T, f64(i))/from_f64(T, f64(n - 1)));
+			x[i, 0] = times_real(sigma, alternating*(T(1) + from_f64(T, f64(i))/from_f64(T, f64(n - 1))));
 			alternating = -alternating;
 		}
 		self.solve_into(x.view_mut());

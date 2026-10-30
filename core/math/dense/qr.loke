@@ -34,14 +34,22 @@ Qr :: struct($T: type) where linalg.Scalar(T) {
 	`hypot(alpha, s)` for a real `T` and `hypot(hypot(re alpha, im alpha), s)`
 	for a complex one (negative for a real part of zero), `tau[k] = (beta -
 	alpha) / beta`, each `v_k[i] = x[i] / (alpha - beta)`, and `R`'s diagonal
-	is the real `beta`, as LAPACK's `larfg` makes them. `H_k^H` is then
+	is the real `beta`, as LAPACK's `larfg` makes them. When `alpha - beta`
+	overflows, `tau[k]` and `v_k` are computed from `alpha`, `beta`, and
+	each `x[i]` multiplied by 1/2. When `h` is subnormal, `x` is first
+	multiplied by the largest power of two whose square is finite, `2^511`
+	for `f64` and `2^63` for `f32`, and the step taken on that, with `R`'s
+	diagonal multiplied back. `tau` and `v` do not depend on
+	either scale, so these give the bits an unbounded exponent would, where
+	the plain form would overflow or lose precision. `H_k^H` is then
 	applied to each later column `y = a[k:m, j]` as
 	`w = (y[0] + conj(v[1])*y[1]) + ...`, the terms in increasing order, and
 	`y[i] = y[i] - (conj(tau)*w)*v[i]`; `conj` is nothing for a real `T`.
 
 	`.Singular`, with `a` and `tau` then unspecified, for an exact zero on
-	`R`'s diagonal or a factor that is not finite: the matrix does not have
-	full column rank. A wide matrix, or a `tau` of the wrong length, panics.
+	`R`'s diagonal, where the matrix does not have full column rank, or a
+	factor that is not finite, as when a column's norm overflows. A wide
+	matrix, or a `tau` of the wrong length, panics.
 */
 qr_in_place :: proc(a: View_Mut($T), tau: []mut T) -> Status(Error) where linalg.Scalar(T) {
 	m := a.row_count;
@@ -86,23 +94,59 @@ qr_in_place :: proc(a: View_Mut($T), tau: []mut T) -> Status(Error) where linalg
 // was. Swapping `rs` and `cs` makes it reflect a row.
 @(private)
 householder :: proc(p: [^]$T, rs, cs, head, column, end: int) -> T where linalg.Scalar(T) {
-	sum := Sum_Of_Squares(T.Real).init();
-	foreach (i in head + 1 ..< end) { sum.add_parts(p[offset(i, column, rs, cs)]); }
-	rest := sum.root();
+	rest := column_rest(p, rs, cs, head, column, end);
 	alpha := p[offset(head, column, rs, cs)];
 	if (rest == T.Real(0) && alpha.imaginary_part() == T.Real(0)) { return T(0); }
-	real := alpha.real_part();
 	size := reflector_size(alpha, rest);
+	unscale := T.Real(1);
+	if (real_finite(size) && !real_normal(size)) {
+		// A subnormal `|beta|` has lost the precision `tau` needs: the
+		// column is multiplied by a power of two first, as `larfg`
+		// rescales it, which `tau` and `v` do not depend on.
+		big := scaling_limit(T.Real);
+		foreach (i in head ..< end) {
+			at := offset(i, column, rs, cs);
+			p[at] = times_real(big, p[at]);
+		}
+		unscale = T.Real(1)/big;
+		rest = column_rest(p, rs, cs, head, column, end);
+		alpha = p[offset(head, column, rs, cs)];
+		size = reflector_size(alpha, rest);
+	}
+	real := alpha.real_part();
 	beta := T(size if real < T.Real(0) else -size);
 	// `|alpha - beta| >= |beta| >= |x[i]|`, so the division cannot
-	// overflow, where a reciprocal could.
+	// overflow, where a reciprocal could. The difference itself can, when
+	// `|beta|` is near the largest finite value; halving each operand is
+	// exact there, and so gives the bits an unbounded exponent would.
 	divisor := alpha - beta;
+	if (finite(divisor)) {
+		foreach (i in head + 1 ..< end) {
+			at := offset(i, column, rs, cs);
+			p[at] = p[at]/divisor;
+		}
+		p[offset(head, column, rs, cs)] = times_real(unscale, beta);
+		return (beta - alpha)/beta;
+	}
+	half := T.Real(0.5);
+	half_alpha := times_real(half, alpha);
+	half_beta := times_real(half, beta);
+	divisor = half_alpha - half_beta;
 	foreach (i in head + 1 ..< end) {
 		at := offset(i, column, rs, cs);
-		p[at] = p[at]/divisor;
+		p[at] = times_real(half, p[at])/divisor;
 	}
 	p[offset(head, column, rs, cs)] = beta;
-	return (beta - alpha)/beta;
+	return (half_beta - half_alpha)/half_beta;
+}
+
+// The norm of rows `head + 1 ..< end` of `column`, by `norm_frobenius`'s
+// running scale.
+@(private)
+column_rest :: proc(p: [^]$T, rs, cs, head, column, end: int) -> T.Real where linalg.Scalar(T) {
+	sum := Sum_Of_Squares(T.Real).init();
+	foreach (i in head + 1 ..< end) { sum.add_parts(p[offset(i, column, rs, cs)]); }
+	return sum.root();
 }
 
 // `|beta|` of a reflector: `hypot(alpha, rest)`, of all three parts for a

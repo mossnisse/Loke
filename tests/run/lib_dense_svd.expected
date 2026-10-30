@@ -24,6 +24,15 @@ ok an infinity does not converge
 ok a matrix with no columns
 ok a matrix with no rows
 ok a zero matrix
+ok scaling by 2^1000 or 2^-1060 changes only the values, f64
+ok scaling by 2^100 or 2^-140 changes only the values, f32
+ok a column near overflow has a finite U
+ok a bidiagonal near overflow keeps its superdiagonal
+ok a 3 x 2 matrix near overflow
+ok a 9 x 6 matrix near overflow
+ok a matrix of subnormal numbers keeps orthonormal vectors
+ok a column near overflow, f32
+ok a singular value that overflows does not converge
 ok a dual number through svd gives u^T E v
 ok and the same values as at f64, bit for bit
 f64 svd 4620369754622863496 4608043130559760917 4597451073073087511 13809160656070739452 13819480991198718872

@@ -2209,6 +2209,26 @@ boundaries and API shapes follow a few common choices:
   Loops of multiplications by constants find and apply the scale with no
   bit manipulation, and keep the triangle cast and the overlap tests
   evaluable at compile time.
+- **Dense decompositions rescale by powers of two.** `symmetric_eigen` and
+  `svd` scale a matrix outside a safe range first, as LAPACK's `syev` and
+  `gesvd` do, rather than making each deflation test, shift, and rotation
+  overflow-safe on its own: a half-scale form of the convergence test alone
+  still leaves the shift's `d1 - d0` and the bidiagonal's products to
+  overflow. LAPACK's `lascl` multiplies by a ratio that rounds each element;
+  a power of two rounds nothing that is not subnormal, so a scaled matrix
+  gives the unscaled method's bits wherever that one worked, and the
+  same-bits promise and every earlier result stand. The limit is the
+  largest power of two whose square is finite, rather than LAPACK's
+  `sqrt(1/smlnum)`, because it is found with `is_finite` alone, so a user
+  real type such as a dual number gets the same limit and keeps `f64`'s
+  bits. The Householder builder halves its operands only when
+  `alpha - beta` overflows, since halving always would round a subnormal
+  operand, and rescales a subnormal column as `larfg` does, so `Q` stays
+  orthonormal. `reciprocal_condition` multiplies its right-hand sides by a
+  power of two near `|A|_1` instead of tracking a scale through each
+  triangular solve, as LAPACK's `latrs` does: Hager's estimator is
+  homogeneous, so one factor keeps a well-conditioned matrix's solutions
+  near 1 at any scale, and the plain solves are kept.
 
 ## Compiler design choices
 

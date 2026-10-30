@@ -28,6 +28,15 @@ Svd :: struct($T: type) where linalg.Scalar(T) {
 	transpose for a real `T`, with `U` and `V` exchanged, so the method below
 	always sees `m >= n`.
 
+	A matrix whose largest part of an element has a magnitude above `big`,
+	the largest power of two whose square is finite (`2^511` for `f64` and
+	`2^63` for `f32`), is first multiplied by `1/big`, and one whose largest
+	is below `1/big` but not zero by `big`, and the singular values are
+	multiplied back at the end. No step then overflows, and since a power
+	of two changes the rounding of no value that is not subnormal, the
+	results are those of the unscaled method wherever it neither overflows
+	nor reaches a subnormal value.
+
 	`A` is reduced to a real upper bidiagonal `B = Q^H A P` by alternating
 	Householder reflectors built and applied as `qr_in_place` builds and
 	applies them: reflector `k` from the left zeros column `k` below the
@@ -56,25 +65,36 @@ Svd :: struct($T: type) where linalg.Scalar(T) {
 	method finds.
 
 	`.No_Convergence` past the iteration limit, which for a finite matrix is
-	a bug to report, or for an element that is not finite.
+	a bug to report, for an element that is not finite, or for a singular
+	value too large for `T.Real`, so that a successful decomposition is
+	always finite.
 */
 svd :: proc(a: View($T), allocator: Allocator = mem.default_allocator()) -> Result(Svd(T), Error) where linalg.Scalar(T) {
 	m := a.row_count;
 	n := a.column_count;
+	largest := T.Real(0);
 	foreach (c in 0 ..< n) {
 		foreach (r in 0 ..< m) {
-			if (!finite(a[r, c])) { return .err(.No_Convergence); }
+			x := a[r, c];
+			if (!finite(x)) { return .err(.No_Convergence); }
+			largest = larger_of(largest, part_magnitude(x));
 		}
 	}
+	scale := matrix_scale(largest);
 	k := n if n < m else m;
 	left := Matrix(T).zeros(m, k, allocator);
 	right := Matrix(T).zeros(n, k, allocator);
 	values := zeros_of(T.Real, k, allocator);
 	if (n <= m) {
-		golub_reinsch(a, left.view_mut(), &mut values[:], right.view_mut(), allocator) or_return;
+		golub_reinsch(a, scale, left.view_mut(), &mut values[:], right.view_mut(), allocator) or_return;
 	} else {
-		golub_reinsch(a.adjoint(), right.view_mut(), &mut values[:], left.view_mut(), allocator) or_return;
+		golub_reinsch(a.adjoint(), scale, right.view_mut(), &mut values[:], left.view_mut(), allocator) or_return;
 	}
+	if (!(scale == T.Real(1))) {
+		unscale := T.Real(1)/scale;
+		foreach (i in 0 ..< k) { values[i] = values[i]*unscale; }
+	}
+	if (!reals_finite(values[:]) || !view_finite(left.view()) || !view_finite(right.view())) { return .err(.No_Convergence); }
 	foreach (i in 0 ..< k) {
 		lead := leading_unit(right.view(), i);
 		apply_unit(left.view_mut(), i, lead.unit);
@@ -166,14 +186,17 @@ impl Svd($T) {
 // and `v` (`n x n`), with each singular value non-negative and in
 // descending order, before the final signs.
 @(private)
-golub_reinsch :: proc(a: View($T), u: View_Mut(T), s: []mut $R, v: View_Mut(T), allocator: Allocator) -> Status(Error) where linalg.Scalar(T), R == T.Real {
+golub_reinsch :: proc(a: View($T), scale: $R, u: View_Mut(T), s: []mut R, v: View_Mut(T), allocator: Allocator) -> Status(Error) where linalg.Scalar(T), R == T.Real {
 	m := a.row_count;
 	n := a.column_count;
 	work := Matrix(T).from_view(a, allocator);
+	if (!(scale == R(1))) { work.view_mut().scale_by(T(scale)); }
 	e := zeros_of(R, n, allocator);
 	left_scales := zeros_of(T, n, allocator);
 	right_scales := zeros_of(T, n, allocator);
 	bidiagonalize(work.view_mut(), s, &mut e[:], &mut left_scales[:], &mut right_scales[:]);
+	// A bidiagonal that is not finite would never deflate.
+	if (!reals_finite(s[:]) || !reals_finite(e[:])) { return .err(.No_Convergence); }
 
 	// U = H_0 ... H_{n-1} and V = G_0 ... G_{n-2}, each applied to the
 	// identity from the last reflector to the first, and to the columns it

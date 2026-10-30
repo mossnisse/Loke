@@ -32,6 +32,67 @@ epsilon :: proc($T: type) -> T {
 	}
 }
 
+// 2^k, by exact doublings or halvings.
+power_of_two :: proc($T: type, k: int) -> T where linalg.Real(T) {
+	result := T(1);
+	foreach (_ in 0 ..< (k if 0 < k else -k)) { result = result*(T(2) if 0 < k else T(0.5)); }
+	return result;
+}
+
+// A column times 2^k, near overflow or among the subnormal numbers, gives
+// the reflector of the column itself, bit for bit, and `R` times 2^k, where
+// the plain `larfg` overflows or loses `tau`'s precision.
+scaled_column :: proc($T: type, name: string_view, column: []f64, k: int) where linalg.Real(T) {
+	n := column.len();
+	plain := dense.Matrix(T).zeros(n, 1);
+	foreach (i in 0 ..< n) { plain[i, 0] = T(column[i]); }
+	power := power_of_two(T, k);
+	scaled := dense.Matrix(T).from_view(plain.view());
+	scaled.view_mut().scale_by(power);
+	ok := false;
+	switch (dense.qr(plain.view())) {
+	case .ok(f):
+		switch (dense.qr(scaled.view())) {
+		case .ok(g):
+			ok = g.tau()[0] == f.tau()[0] && g.factors()[0, 0] == f.factors()[0, 0]*power;
+			foreach (i in 1 ..< n) {
+				if (!(g.factors()[i, 0] == f.factors()[i, 0])) { ok = false; }
+			}
+			q := g.q();
+			gram := dense.multiply(q.view().transpose(), q.view());
+			if (!(dense.norm_one(dense.subtract(gram.view(), dense.Matrix(T).identity(1).view()).view()) < T(4)*epsilon(T))) { ok = false; }
+		case .err(_):
+		}
+	case .err(_):
+	}
+	check(name, ok);
+}
+
+extremes :: proc() {
+	scaled_column(f64, "a column whose alpha - beta overflows, f64", [?]f64{3, 4}[:], 1021);
+	scaled_column(f32, "a column whose alpha - beta overflows, f32", [?]f64{3, 4}[:], 125);
+	scaled_column(f64, "a column of subnormal numbers, f64", [?]f64{3, 4, 7}[:], -1070);
+	scaled_column(f32, "a column of subnormal numbers, f32", [?]f64{3, 4, 7}[:], -146);
+	scaled_column(f64, "a subnormal column with a zero head, f64", [?]f64{0, 4, 7, 1}[:], -1072);
+	// The review's reproduction, whose Q was once infinite and NaN.
+	a := dense.Matrix(f64).from_rows([2][1]f64{{1e308}, {1e308}});
+	switch (dense.qr(a.view())) {
+	case .ok(f):
+		q := f.q();
+		root := 1.0/math.sqrt(2.0);
+		check("a column near overflow has a finite Q", f.r()[0, 0] == -1.4142135623730951e308
+			&& linalg.approx_equal(q[0, 0], -root, 4.0*math.F64_EPSILON, 0.0) && linalg.approx_equal(q[1, 0], -root, 4.0*math.F64_EPSILON, 0.0));
+	case .err(_):
+		check("a column near overflow has a finite Q", false);
+	}
+	// A column whose norm overflows has no representable R.
+	huge := dense.Matrix(f64).from_rows([2][1]f64{{1.5e308}, {1.5e308}});
+	switch (dense.qr(huge.view())) {
+	case .ok(_):  check("a column whose norm overflows is singular", false);
+	case .err(e): check("a column whose norm overflows is singular", e == .Singular);
+	}
+}
+
 // A 64-bit linear congruential generator, so the matrices are the same on
 // every machine.
 Random :: struct { state: u64 }
@@ -375,6 +436,7 @@ main :: proc() {
 	exact();
 	q_forms();
 	failures();
+	extremes();
 	dual();
 	determinism();
 }

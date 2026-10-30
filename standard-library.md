@@ -2727,14 +2727,20 @@ eigenvalue, and a singular value being `T.Real`:
   `|re| + |im|` for a complex one as in LAPACK.
   `Lu` has `solve`, `solve_into`, `inverse`, `determinant`, `factors()` and
   `pivots()` in LAPACK's `getrf` form, and `reciprocal_condition()`, LAPACK's
-  `gecon` estimate of `1 / (|A|_1 |A^-1|_1)`;
+  `gecon` estimate of `1 / (|A|_1 |A^-1|_1)`, its solves taken on vectors
+  multiplied by a power of two near `|A|_1` so that multiplying `A` by a
+  power of two changes no bit of it and a well-conditioned matrix of any
+  scale is not reported singular;
 - `cholesky(a)` and `cholesky_in_place(a)`, the `L L^H` factor of a Hermitian
   positive definite matrix from its lower triangle, with a real diagonal.
   `Cholesky`
   has `solve`, `solve_into`, `determinant`, and `lower()`;
 - `qr(a)` and `qr_in_place(a, tau)`, for `rows >= columns`, by unblocked
   Householder reflectors, applied a panel of columns at a time, in LAPACK's
-  `geqrf` form, `R`'s diagonal real. `Qr` has `q()`, the first
+  `geqrf` form, `R`'s diagonal real, each reflector built at half scale
+  when `larfg`'s `alpha - beta` would overflow and from its column
+  multiplied by a power of two when `beta` is subnormal, which changes
+  neither `tau` nor the vector. `Qr` has `q()`, the first
   `n` columns of `Q`, `r()`, `apply_q_into(b)` and
   `apply_q_adjoint_into(b)`, which apply `Q` and `Q^H` without forming it,
   `least_squares(b)`, and `least_squares_into(b)`, which leaves the
@@ -2757,20 +2763,31 @@ eigenvalue, and a singular value being `T.Real`:
   least-squares solution with the singular values not above `relative` times
   the largest taken as zero. `relative` has no default.
 
+`symmetric_eigen` and `svd` first multiply a matrix by `1/big` when the
+largest magnitude of an element's part is above `big`, the largest power of
+two whose square is finite (`2^511` for `f64` and `2^63` for `f32`), and by
+`big` when it is below `1/big` but not zero, then multiply the eigenvalues or
+singular values back. No step of either method then overflows, and since a
+power of two changes the rounding of no value that is not subnormal, a matrix
+gives the results of the unscaled method wherever that neither overflows nor
+reaches a subnormal value. A successful decomposition is finite.
+
 The signs of the vectors are part of the contract, so that two machines give
 the same vectors and not only the same subspaces: each eigenvector, and each
 column of `V` with its column of `U`, has its first component of largest
 magnitude positive, for a complex `T` by multiplying it by a unit. The iterations decide convergence by rounding rather than
 by a tolerance: an off-diagonal element is negligible when adding it to its
-two diagonal neighbours' magnitudes changes nothing.
+two diagonal neighbours' magnitudes changes nothing, in the scaled matrix,
+where that sum cannot overflow.
 
 A numerical failure is a `dense.Error`, one type for the package so that
 `or_return` chains across factorizations: `.Singular` for an exact zero pivot
 or zero on `R`'s diagonal, or a factor that is not finite, and
 `.Not_Positive_Definite` for a Cholesky pivot that is not positive and
 finite, and `.No_Convergence` for an eigenvalue or singular value iteration
-that reaches its limit, or an element that is not finite, which it cannot
-reduce. A nearly singular matrix factors, with
+that reaches its limit, an element that is read and is not finite, which it
+cannot reduce, or an eigenvalue or singular value too large for `T.Real`. A
+nearly singular matrix factors, with
 large elements, since no tolerance decides that it is singular;
 `reciprocal_condition` says how near it is. Each update in a factorization is
 one subtraction per term into the running element, in increasing order, and

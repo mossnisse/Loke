@@ -29,6 +29,15 @@ Symmetric_Eigen :: struct($T: type) where linalg.Scalar(T) {
 	not read, and nor is the imaginary part of the diagonal, so `A` is taken
 	as symmetric, or Hermitian, without a check. Allocated from `allocator`.
 
+	A matrix whose largest part of an element has a magnitude above `big`,
+	the largest power of two whose square is finite (`2^511` for `f64` and
+	`2^63` for `f32`), is first multiplied by `1/big`, and one whose largest
+	is below `1/big` but not zero by `big`, and the eigenvalues are
+	multiplied back at the end. No step then overflows, and since a power
+	of two changes the rounding of no value that is not subnormal, the
+	results are those of the unscaled method wherever it neither overflows
+	nor reaches a subnormal value.
+
 	`A` is reduced to a real tridiagonal `T = Q^H A Q` by `n - 2` Householder
 	reflectors built as `qr_in_place` builds them, each applied to the lower
 	triangle of the trailing block as `A = (A - v w^H) - w v^H` with
@@ -51,20 +60,27 @@ Symmetric_Eigen :: struct($T: type) where linalg.Scalar(T) {
 	one the method finds.
 
 	`.No_Convergence` past the iteration limit, which for a finite matrix is
-	a bug to report, or for an element that is not finite, which the
-	iteration cannot reduce. A non-square matrix panics.
+	a bug to report, for an element that is read and is not finite, which
+	the iteration cannot reduce, or for an eigenvalue too large for
+	`T.Real`, so that a successful decomposition is always finite. A
+	non-square matrix panics.
 */
 symmetric_eigen :: proc(a: View($T), allocator: Allocator = mem.default_allocator()) -> Result(Symmetric_Eigen(T), Error) where linalg.Scalar(T) {
 	n := a.row_count;
 	assert(a.column_count == n, "dense.symmetric_eigen needs a square matrix");
 	work := Matrix(T).zeros(n, n, allocator);
+	largest := T.Real(0);
 	foreach (c in 0 ..< n) {
 		foreach (r in c ..< n) {
-			x := a[r, c];
+			// The diagonal's imaginary part is dropped before it is read.
+			x := a[r, c] if r != c else real_only(a[r, c]);
 			if (!finite(x)) { return .err(.No_Convergence); }
-			work[r, c] = x if r != c else real_only(x);
+			largest = larger_of(largest, part_magnitude(x));
+			work[r, c] = x;
 		}
 	}
+	scale := matrix_scale(largest);
+	if (!(scale == T.Real(1))) { work.view_mut().scale_by(T(scale)); }
 	values := zeros_of(T.Real, n, allocator);
 	off_diagonal := zeros_of(T.Real, n, allocator);
 	scales := zeros_of(T, n, allocator);
@@ -80,6 +96,11 @@ symmetric_eigen :: proc(a: View($T), allocator: Allocator = mem.default_allocato
 		reflect(packed, k + 1, k, scales[k], vectors.view_mut().block(0, k + 1, n, n - k - 1));
 	}
 	tridiagonal_ql(&mut values[:], &mut off_diagonal[:], vectors.view_mut()) or_return;
+	if (!(scale == T.Real(1))) {
+		unscale := T.Real(1)/scale;
+		foreach (i in 0 ..< n) { values[i] = values[i]*unscale; }
+	}
+	if (!reals_finite(values[:]) || !view_finite(vectors.view())) { return .err(.No_Convergence); }
 
 	foreach (i in 0 ..< n) {
 		smallest := i;

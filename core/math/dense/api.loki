@@ -36,10 +36,12 @@
 	`Error`: an exact zero pivot, an exact zero on `R`'s diagonal, or a factor
 	that is not finite is `.Singular`, and a Cholesky pivot that is not
 	positive is `.Not_Positive_Definite`; an eigenvalue or singular value
-	iteration that reaches its limit is `.No_Convergence`. Nothing decides
-	with a tolerance the caller did not give: `Lu.reciprocal_condition`
-	estimates how near singular a matrix is, and `Svd.rank` and `Svd.solve`
-	take the relative tolerance below which a singular value counts as zero.
+	iteration that reaches its limit, an element it reads that is not
+	finite, or a result too large for `T.Real` is `.No_Convergence`.
+	Nothing decides with a tolerance the caller did not give:
+	`Lu.reciprocal_condition` estimates how near singular a matrix is, and
+	`Svd.rank` and `Svd.solve` take the relative tolerance below which a
+	singular value counts as zero.
 	The iterations decide convergence by rounding, which needs no tolerance.
 
 	Each operation is computed in the order its documentation gives, with no
@@ -60,7 +62,7 @@ Error :: enum {
 	Singular,
 	// A Cholesky pivot that is not positive, or not finite.
 	Not_Positive_Definite,
-	// An iteration limit reached; no procedure in this version returns it.
+	// An iteration limit reached, an element that is not finite, or an eigenvalue or singular value too large for `T.Real`.
 	No_Convergence,
 }
 
@@ -136,6 +138,15 @@ Symmetric_Eigen :: struct($T: type) where linalg.Scalar(T) {
 	not read, and nor is the imaginary part of the diagonal, so `A` is taken
 	as symmetric, or Hermitian, without a check. Allocated from `allocator`.
 
+	A matrix whose largest part of an element has a magnitude above `big`,
+	the largest power of two whose square is finite (`2^511` for `f64` and
+	`2^63` for `f32`), is first multiplied by `1/big`, and one whose largest
+	is below `1/big` but not zero by `big`, and the eigenvalues are
+	multiplied back at the end. No step then overflows, and since a power
+	of two changes the rounding of no value that is not subnormal, the
+	results are those of the unscaled method wherever it neither overflows
+	nor reaches a subnormal value.
+
 	`A` is reduced to a real tridiagonal `T = Q^H A Q` by `n - 2` Householder
 	reflectors built as `qr_in_place` builds them, each applied to the lower
 	triangle of the trailing block as `A = (A - v w^H) - w v^H` with
@@ -158,8 +169,10 @@ Symmetric_Eigen :: struct($T: type) where linalg.Scalar(T) {
 	one the method finds.
 
 	`.No_Convergence` past the iteration limit, which for a finite matrix is
-	a bug to report, or for an element that is not finite, which the
-	iteration cannot reduce. A non-square matrix panics.
+	a bug to report, for an element that is read and is not finite, which
+	the iteration cannot reduce, or for an eigenvalue too large for
+	`T.Real`, so that a successful decomposition is always finite. A
+	non-square matrix panics.
 */
 symmetric_eigen :: proc(a: View($T), allocator: Allocator = mem.default_allocator()) -> Result(Symmetric_Eigen(T), Error) where linalg.Scalar(T) ---;
 
@@ -240,6 +253,20 @@ impl Lu($T) {
 		by more than a factor of 3; for a complex `T` as `zgecon` does, the
 		signs being the units `x / |x|`. 1 for a 0 x 0 matrix. Its scratch
 		vector is allocated from `allocator`.
+
+		Each vector the estimator solves for is multiplied by `sigma`, the
+		largest power of two not above `|A|_1` but at least the smallest
+		normal number and at most half the largest finite power of two, so
+		that the solutions of a well-conditioned matrix neither overflow nor
+		underflow, and the result is `(sigma / e) / |A|_1` for the estimate
+		`e` of `sigma |A^-1|_1`. A power of two changes the rounding of no
+		value that is not subnormal, so multiplying `A` by a power of two
+		changes no bit of the result where neither the factorization nor the
+		estimate reaches a subnormal value. When the sum `|A|_1` overflows,
+		it is formed from each element multiplied by `1/big`, for `big` the
+		largest power of two whose square is finite, and multiplied back
+		within the quotient. 0 when the estimate of `sigma |A^-1|_1` is not
+		finite.
 	*/
 	reciprocal_condition :: proc(self, allocator: Allocator = mem.default_allocator()) -> T.Real ---;
 }
@@ -431,14 +458,22 @@ Qr :: struct($T: type) where linalg.Scalar(T) {
 	`hypot(alpha, s)` for a real `T` and `hypot(hypot(re alpha, im alpha), s)`
 	for a complex one (negative for a real part of zero), `tau[k] = (beta -
 	alpha) / beta`, each `v_k[i] = x[i] / (alpha - beta)`, and `R`'s diagonal
-	is the real `beta`, as LAPACK's `larfg` makes them. `H_k^H` is then
+	is the real `beta`, as LAPACK's `larfg` makes them. When `alpha - beta`
+	overflows, `tau[k]` and `v_k` are computed from `alpha`, `beta`, and
+	each `x[i]` multiplied by 1/2. When `h` is subnormal, `x` is first
+	multiplied by the largest power of two whose square is finite, `2^511`
+	for `f64` and `2^63` for `f32`, and the step taken on that, with `R`'s
+	diagonal multiplied back. `tau` and `v` do not depend on
+	either scale, so these give the bits an unbounded exponent would, where
+	the plain form would overflow or lose precision. `H_k^H` is then
 	applied to each later column `y = a[k:m, j]` as
 	`w = (y[0] + conj(v[1])*y[1]) + ...`, the terms in increasing order, and
 	`y[i] = y[i] - (conj(tau)*w)*v[i]`; `conj` is nothing for a real `T`.
 
 	`.Singular`, with `a` and `tau` then unspecified, for an exact zero on
-	`R`'s diagonal or a factor that is not finite: the matrix does not have
-	full column rank. A wide matrix, or a `tau` of the wrong length, panics.
+	`R`'s diagonal, where the matrix does not have full column rank, or a
+	factor that is not finite, as when a column's norm overflows. A wide
+	matrix, or a `tau` of the wrong length, panics.
 */
 qr_in_place :: proc(a: View_Mut($T), tau: []mut T) -> Status(Error) where linalg.Scalar(T) ---;
 
@@ -519,6 +554,15 @@ Svd :: struct($T: type) where linalg.Scalar(T) {
 	transpose for a real `T`, with `U` and `V` exchanged, so the method below
 	always sees `m >= n`.
 
+	A matrix whose largest part of an element has a magnitude above `big`,
+	the largest power of two whose square is finite (`2^511` for `f64` and
+	`2^63` for `f32`), is first multiplied by `1/big`, and one whose largest
+	is below `1/big` but not zero by `big`, and the singular values are
+	multiplied back at the end. No step then overflows, and since a power
+	of two changes the rounding of no value that is not subnormal, the
+	results are those of the unscaled method wherever it neither overflows
+	nor reaches a subnormal value.
+
 	`A` is reduced to a real upper bidiagonal `B = Q^H A P` by alternating
 	Householder reflectors built and applied as `qr_in_place` builds and
 	applies them: reflector `k` from the left zeros column `k` below the
@@ -547,7 +591,9 @@ Svd :: struct($T: type) where linalg.Scalar(T) {
 	method finds.
 
 	`.No_Convergence` past the iteration limit, which for a finite matrix is
-	a bug to report, or for an element that is not finite.
+	a bug to report, for an element that is not finite, or for a singular
+	value too large for `T.Real`, so that a successful decomposition is
+	always finite.
 */
 svd :: proc(a: View($T), allocator: Allocator = mem.default_allocator()) -> Result(Svd(T), Error) where linalg.Scalar(T) ---;
 

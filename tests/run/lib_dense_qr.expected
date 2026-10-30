@@ -23,6 +23,13 @@ ok a NaN is singular
 ok an infinity is singular
 ok qr_in_place reports it
 ok a matrix with no columns
+ok a column whose alpha - beta overflows, f64
+ok a column whose alpha - beta overflows, f32
+ok a column of subnormal numbers, f64
+ok a column of subnormal numbers, f32
+ok a subnormal column with a zero head, f64
+ok a column near overflow has a finite Q
+ok a column whose norm overflows is singular
 ok a dual number through least_squares gives the analytic derivative
 ok and the same value as at f64, bit for bit
 f64 qr 4616944885251033758 13836977934659183917 4607734038258249047 4598977684707560296 4595754316499740147

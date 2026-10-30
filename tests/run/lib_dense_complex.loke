@@ -441,6 +441,46 @@ complex_eigen :: proc($R: type, sizes: []int, name: string_view) where linalg.Re
 	check(name, worst < R(30) && ok);
 }
 
+// The diagonal's imaginary part is not read, so a NaN or an infinity there
+// is not a failure and gives the bits of a zero one; a 1 x 1 matrix's
+// eigenvalue is its real part.
+ignored_diagonal :: proc($R: type, name: string_view) where linalg.Real(R) {
+	C :: math.Complex(R);
+	ok := true;
+	b := complex_matrix(R, 5, 5, 75);
+	base := dense.add(b.view(), b.view().adjoint());
+	foreach (i in 0 ..< 5) { base[i, i] = cx(base[i, i].real, R(0)); }
+	switch (dense.symmetric_eigen(base.view())) {
+	case .ok(plain):
+		foreach (part in [?]R{R(math.F64_NAN), R(math.F64_INFINITY), -R(math.F64_INFINITY)}) {
+			marked := dense.Matrix(C).from_view(base.view());
+			foreach (i in 0 ..< 5) { marked[i, i] = cx(marked[i, i].real, part); }
+			switch (dense.symmetric_eigen(marked.view())) {
+			case .ok(e):
+				if (!dense.equal(e.vectors(), plain.vectors())) { ok = false; }
+				foreach (i in 0 ..< 5) {
+					if (!(e.values()[i] == plain.values()[i])) { ok = false; }
+				}
+			case .err(_): ok = false;
+			}
+		}
+	case .err(_): ok = false;
+	}
+	single := dense.Matrix(C).filled(1, 1, cx(R(2), R(math.F64_NAN)));
+	switch (dense.symmetric_eigen(single.view())) {
+	case .ok(e):  if (!(e.values()[0] == R(2)) || !(e.vectors()[0, 0] == cx(R(1), R(0)))) { ok = false; }
+	case .err(_): ok = false;
+	}
+	// A NaN off the diagonal is read.
+	read := dense.Matrix(C).from_view(base.view());
+	read[3, 1] = cx(R(0), R(math.F64_NAN));
+	switch (dense.symmetric_eigen(read.view())) {
+	case .ok(_):  ok = false;
+	case .err(e): if (e != .No_Convergence) { ok = false; }
+	}
+	check(name, ok);
+}
+
 // The SVD of random complex matrices, tall and wide: `|A - U S V^H| /
 // (max(m, n) |A| eps)`, `|U^H U - I|`, `|V^H V - I|`, descending values that
 // are not negative, each column of `V` led by a real positive component,
@@ -570,6 +610,8 @@ main :: proc() {
 	complex_qr(f32, [?][2]int{{1, 1}, {7, 3}, {33, 20}}[:], "complex QR ratios below 30, f32");
 	complex_eigen(f64, [?]int{1, 2, 7, 33, 100}[:], "Hermitian eigen ratios below 30, f64");
 	complex_eigen(f32, [?]int{1, 2, 7, 33}[:], "Hermitian eigen ratios below 30, f32");
+	ignored_diagonal(f64, "a NaN or infinite imaginary diagonal is not read, f64");
+	ignored_diagonal(f32, "a NaN or infinite imaginary diagonal is not read, f32");
 	complex_svd(f64, [?][2]int{{1, 1}, {7, 3}, {3, 7}, {33, 33}, {60, 25}, {25, 60}}[:], "complex SVD ratios below 30, f64");
 	complex_svd(f32, [?][2]int{{1, 1}, {7, 3}, {3, 7}, {33, 20}}[:], "complex SVD ratios below 30, f32");
 	norms();

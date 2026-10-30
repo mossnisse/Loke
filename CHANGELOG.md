@@ -554,6 +554,22 @@ checklist.
 
 ### Fixed
 
+- `core:math/dense`'s `svd` and `symmetric_eigen` scale a matrix near
+  overflow or among the subnormal numbers by a power of two first, so they
+  no longer return infinite or NaN factors, discard an off-diagonal element
+  near overflow, or hang. An eigenvalue or singular value too large for the
+  type is reported as `.No_Convergence`, and matrices in range keep their
+  bits ([`core:math/dense`](standard-library.md#coremathdense)).
+- `core:math/dense`'s Householder reflector no longer overflows for a column
+  near the largest finite value, and keeps `Q` orthonormal for a subnormal
+  column ([`core:math/dense`](standard-library.md#coremathdense)).
+- `core:math/dense`'s `symmetric_eigen` no longer rejects a NaN or infinite
+  imaginary part on a Hermitian matrix's diagonal, which it does not read
+  ([`core:math/dense`](standard-library.md#coremathdense)).
+- `core:math/dense`'s `Lu.reciprocal_condition` no longer reports a
+  well-conditioned matrix of tiny or huge scale as singular; multiplying the
+  matrix by a power of two leaves the estimate unchanged
+  ([`core:math/dense`](standard-library.md#coremathdense)).
 - `core:math/geometry` gives a triangle with two equal corners the closest
   point and distance of the segment its corners span, where it returned NaN;
   `intersection` of a box with a NaN corner is empty in either operand

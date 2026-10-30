@@ -316,6 +316,122 @@ failures :: proc() {
 	}
 }
 
+// 2^k, by exact doublings or halvings.
+power_of_two :: proc($T: type, k: int) -> T where linalg.Real(T) {
+	result := T(1);
+	foreach (_ in 0 ..< (k if 0 < k else -k)) { result = result*(T(2) if 0 < k else T(0.5)); }
+	return result;
+}
+
+// A matrix of small integers, so that any power of two times it is exact.
+integer_matrix :: proc($T: type, rows, columns: int, seed: u64) -> dense.Matrix(T) where linalg.Real(T) {
+	random := Random{seed};
+	m := dense.Matrix(T).zeros(rows, columns);
+	foreach (c in 0 ..< columns) {
+		foreach (r in 0 ..< rows) { m[r, c] = T(math.floor(random.next()*64.0)); }
+	}
+	return m;
+}
+
+// The matrix times a power of two has the same U and V, bit for bit, and its
+// singular values times the power, tall and wide, out to where the unscaled
+// method would overflow or lose precision in subnormal numbers.
+scale_invariance :: proc($T: type, name: string_view, powers: []int) where linalg.Real(T) {
+	ok := true;
+	foreach (shape in [?]Shape{{7, 4}, {4, 7}}) {
+		a := integer_matrix(T, shape.rows, shape.columns, u64(shape.rows) + 181);
+		switch (dense.svd(a.view())) {
+		case .ok(plain):
+			foreach (k in powers) {
+				power := power_of_two(T, k);
+				scaled := dense.Matrix(T).from_view(a.view());
+				scaled.view_mut().scale_by(power);
+				switch (dense.svd(scaled.view())) {
+				case .ok(s):
+					if (!dense.equal(s.u(), plain.u()) || !dense.equal(s.v(), plain.v())) { ok = false; }
+					foreach (i in 0 ..< 4) {
+						if (!(s.singular_values()[i] == plain.singular_values()[i]*power)) { ok = false; }
+					}
+				case .err(_): ok = false;
+				}
+			}
+		case .err(_): ok = false;
+		}
+	}
+	check(name, ok);
+}
+
+// `|A - U S V^T|_F / (max(m, n) |A|_F eps)` and the orthonormality ratios,
+// in the Frobenius norm, which does not overflow near the largest value.
+extreme_ratio :: proc(a: dense.View(f64)) -> f64 {
+	switch (dense.svd(a)) {
+	case .ok(s):
+		if (!conventions(&s)) { return 1e30; }
+		m := a.rows();
+		n := a.columns();
+		k := n if n < m else m;
+		larger := m if n < m else n;
+		ratio := dense.norm_frobenius(dense.subtract(a, product_of(&s).view()).view())/(f64(larger)*dense.norm_frobenius(a)*math.F64_EPSILON);
+		identity := dense.Matrix(f64).identity(k);
+		left := dense.multiply(s.u().transpose(), s.u());
+		orthogonal := dense.norm_one(dense.subtract(left.view(), identity.view()).view())/(f64(m)*math.F64_EPSILON);
+		if (ratio < orthogonal) { ratio = orthogonal; }
+		right := dense.multiply(s.v().transpose(), s.v());
+		orthogonal = dense.norm_one(dense.subtract(right.view(), identity.view()).view())/(f64(n)*math.F64_EPSILON);
+		if (ratio < orthogonal) { ratio = orthogonal; }
+		return ratio;
+	case .err(_):
+		return 1e30;
+	}
+}
+
+extremes :: proc() {
+	// The review's reproductions: U was once infinite and NaN, and then a
+	// superdiagonal element as large as the diagonal was dropped.
+	column := dense.Matrix(f64).from_rows([2][1]f64{{1e308}, {1e308}});
+	switch (dense.svd(column.view())) {
+	case .ok(s):
+		root := 1.0/math.sqrt(2.0);
+		check("a column near overflow has a finite U", s.singular_values()[0] == 1.4142135623730951e308 && s.v()[0, 0] == 1.0
+			&& linalg.approx_equal(s.u()[0, 0], root, 4.0*math.F64_EPSILON, 0.0) && linalg.approx_equal(s.u()[1, 0], root, 4.0*math.F64_EPSILON, 0.0));
+	case .err(_):
+		check("a column near overflow has a finite U", false);
+	}
+	upper := dense.Matrix(f64).from_rows([2][2]f64{{1e308, 1e307}, {0, 1e308}});
+	check("a bidiagonal near overflow keeps its superdiagonal", extreme_ratio(upper.view()) < 30.0);
+	// Once a loop that never ended: the bidiagonal overflowed to NaN.
+	tall := dense.Matrix(f64).from_rows([3][2]f64{{1e308, 1e308}, {1e308, -1e308}, {1e307, 1e307}});
+	check("a 3 x 2 matrix near overflow", extreme_ratio(tall.view()) < 30.0);
+	large := integer_matrix(f64, 9, 6, 191);
+	large.view_mut().scale_by(power_of_two(f64, 1012));
+	check("a 9 x 6 matrix near overflow", extreme_ratio(large.view()) < 30.0 && extreme_ratio(large.view().transpose()) < 30.0);
+	tiny := integer_matrix(f64, 9, 6, 192);
+	tiny.view_mut().scale_by(power_of_two(f64, -1068));
+	switch (dense.svd(tiny.view())) {
+	case .ok(s):
+		left := dense.multiply(s.u().transpose(), s.u());
+		right := dense.multiply(s.v().transpose(), s.v());
+		identity := dense.Matrix(f64).identity(6);
+		check("a matrix of subnormal numbers keeps orthonormal vectors",
+			dense.norm_one(dense.subtract(left.view(), identity.view()).view()) < 30.0*9.0*math.F64_EPSILON
+			&& dense.norm_one(dense.subtract(right.view(), identity.view()).view()) < 30.0*6.0*math.F64_EPSILON);
+	case .err(_):
+		check("a matrix of subnormal numbers keeps orthonormal vectors", false);
+	}
+	// A column near f32's overflow.
+	narrow := dense.Matrix(f32).from_rows([2][1]f32{{2e38}, {2e38}});
+	switch (dense.svd(narrow.view())) {
+	case .ok(s):  check("a column near overflow, f32", linalg.approx_equal(s.singular_values()[0], f32(2.828427e38), f32(0), 4.0*math.F32_EPSILON));
+	case .err(_): check("a column near overflow, f32", false);
+	}
+	// A singular value too large for f64 is not a success.
+	huge := dense.Matrix(f64).filled(2, 2, 1.5e308);
+	switch (dense.svd(huge.view())) {
+	case .ok(_):  check("a singular value that overflows does not converge", false);
+	case .err(e): check("a singular value that overflows does not converge", e == .No_Convergence);
+	}
+}
+
 // A forward-mode dual number, so `svd` differentiates.
 Dual :: struct { value, derivative: f64 }
 
@@ -413,6 +529,9 @@ main :: proc() {
 	exact();
 	solving();
 	failures();
+	scale_invariance(f64, "scaling by 2^1000 or 2^-1060 changes only the values, f64", [?]int{1000, -1060, -540}[:]);
+	scale_invariance(f32, "scaling by 2^100 or 2^-140 changes only the values, f32", [?]int{100, -140, -70}[:]);
+	extremes();
 	dual();
 	determinism();
 }

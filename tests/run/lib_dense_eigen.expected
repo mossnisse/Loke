@@ -23,6 +23,13 @@ ok a NaN does not converge
 ok an infinity does not converge
 ok a 0 x 0 matrix
 ok a zero matrix
+ok scaling by 2^1000 or 2^-1060 changes only the values, f64
+ok scaling by 2^100 or 2^-140 changes only the values, f32
+ok a matrix near overflow keeps its off-diagonal
+ok eigenvalues of opposite signs near overflow
+ok a 12 x 12 matrix near overflow
+ok a matrix of subnormal numbers keeps orthonormal vectors
+ok an eigenvalue that overflows does not converge
 ok a dual number through symmetric_eigen gives v^T E v
 ok and the same values as at f64, bit for bit
 f64 symmetric_eigen 13843856405945972237 4620131361850058330 13814198246282515991 4584348868214922486

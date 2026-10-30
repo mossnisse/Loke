@@ -19,6 +19,8 @@ ok complex QR ratios below 30, f64
 ok complex QR ratios below 30, f32
 ok Hermitian eigen ratios below 30, f64
 ok Hermitian eigen ratios below 30, f32
+ok a NaN or infinite imaginary diagonal is not read, f64
+ok a NaN or infinite imaginary diagonal is not read, f32
 ok complex SVD ratios below 30, f64
 ok complex SVD ratios below 30, f32
 ok norm_frobenius sums the parts in order

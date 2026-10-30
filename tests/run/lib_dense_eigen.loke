@@ -275,6 +275,100 @@ failures :: proc() {
 	}
 }
 
+// 2^k, by exact doublings or halvings.
+power_of_two :: proc($T: type, k: int) -> T where linalg.Real(T) {
+	result := T(1);
+	foreach (_ in 0 ..< (k if 0 < k else -k)) { result = result*(T(2) if 0 < k else T(0.5)); }
+	return result;
+}
+
+// A symmetric matrix of small integers, so that any power of two times it is
+// exact, subnormal or not.
+integer_symmetric :: proc($T: type, n: int, seed: u64) -> dense.Matrix(T) where linalg.Real(T) {
+	random := Random{seed};
+	m := dense.Matrix(T).zeros(n, n);
+	foreach (c in 0 ..< n) {
+		foreach (r in c ..< n) {
+			x := T(math.floor(random.next()*64.0));
+			m[r, c] = x;
+			m[c, r] = x;
+		}
+	}
+	return m;
+}
+
+// The matrix times a power of two has the same vectors, bit for bit, and its
+// values times the power, out to where the unscaled method would overflow
+// or lose precision in subnormal numbers.
+scale_invariance :: proc($T: type, name: string_view, powers: []int) where linalg.Real(T) {
+	a := integer_symmetric(T, 7, 113);
+	ok := true;
+	switch (dense.symmetric_eigen(a.view())) {
+	case .ok(plain):
+		foreach (k in powers) {
+			power := power_of_two(T, k);
+			scaled := dense.Matrix(T).from_view(a.view());
+			scaled.view_mut().scale_by(power);
+			switch (dense.symmetric_eigen(scaled.view())) {
+			case .ok(e):
+				if (!dense.equal(e.vectors(), plain.vectors())) { ok = false; }
+				foreach (i in 0 ..< 7) {
+					if (!(e.values()[i] == plain.values()[i]*power)) { ok = false; }
+				}
+			case .err(_): ok = false;
+			}
+		}
+	case .err(_): ok = false;
+	}
+	check(name, ok);
+}
+
+extremes :: proc() {
+	// The review's reproduction: the sum of the diagonal magnitudes
+	// overflows, which once made the off-diagonal negligible.
+	a := dense.Matrix(f64).from_rows([2][2]f64{{1e308, 1e307}, {1e307, 1e308}});
+	switch (dense.symmetric_eigen(a.view())) {
+	case .ok(e):
+		root := 1.0/math.sqrt(2.0);
+		expected := dense.Matrix(f64).from_rows([2][2]f64{{root, root}, {-root, root}});
+		check("a matrix near overflow keeps its off-diagonal", linalg.approx_equal(e.values()[0], 9e307, 0.0, 4.0*math.F64_EPSILON)
+			&& linalg.approx_equal(e.values()[1], 1.1e308, 0.0, 4.0*math.F64_EPSILON)
+			&& dense.approx_equal(e.vectors(), expected.view(), 4.0*math.F64_EPSILON, 0.0));
+	case .err(_):
+		check("a matrix near overflow keeps its off-diagonal", false);
+	}
+	// Eigenvalues -1e308 and 1e308, whose difference overflows.
+	opposite := dense.Matrix(f64).from_rows([2][2]f64{{1e308, 1e300}, {1e300, -1e308}});
+	switch (dense.symmetric_eigen(opposite.view())) {
+	case .ok(e):
+		check("eigenvalues of opposite signs near overflow", e.values()[0] == -1e308 && e.values()[1] == 1e308
+			&& math.abs(e.vectors()[1, 0]) == 1.0 && e.vectors()[0, 1] == 1.0);
+	case .err(_):
+		check("eigenvalues of opposite signs near overflow", false);
+	}
+	// A larger matrix near overflow, and one of subnormal numbers, by the
+	// residual ratios.
+	large := integer_symmetric(f64, 12, 114);
+	large.view_mut().scale_by(power_of_two(f64, 1010));
+	check("a 12 x 12 matrix near overflow", eigen_ratio(large.view()) < 30.0);
+	tiny := integer_symmetric(f64, 12, 115);
+	tiny.view_mut().scale_by(power_of_two(f64, -1068));
+	switch (dense.symmetric_eigen(tiny.view())) {
+	case .ok(e):
+		gram := dense.multiply(e.vectors().transpose(), e.vectors());
+		orthogonal := dense.norm_one(dense.subtract(gram.view(), dense.Matrix(f64).identity(12).view()).view())/(12.0*math.F64_EPSILON);
+		check("a matrix of subnormal numbers keeps orthonormal vectors", orthogonal < 30.0);
+	case .err(_):
+		check("a matrix of subnormal numbers keeps orthonormal vectors", false);
+	}
+	// An eigenvalue too large for f64 is not a success.
+	huge := dense.Matrix(f64).filled(2, 2, 1.5e308);
+	switch (dense.symmetric_eigen(huge.view())) {
+	case .ok(_):  check("an eigenvalue that overflows does not converge", false);
+	case .err(e): check("an eigenvalue that overflows does not converge", e == .No_Convergence);
+	}
+}
+
 // A forward-mode dual number, so `symmetric_eigen` differentiates.
 Dual :: struct { value, derivative: f64 }
 
@@ -370,6 +464,9 @@ main :: proc() {
 	exact();
 	views();
 	failures();
+	scale_invariance(f64, "scaling by 2^1000 or 2^-1060 changes only the values, f64", [?]int{1000, -1060, -540}[:]);
+	scale_invariance(f32, "scaling by 2^100 or 2^-140 changes only the values, f32", [?]int{100, -140, -70}[:]);
+	extremes();
 	dual();
 	determinism();
 }

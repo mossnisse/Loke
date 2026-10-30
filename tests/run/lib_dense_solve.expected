@@ -23,6 +23,11 @@ ok a 0 x 0 matrix factors
 ok the identity's reciprocal condition is 1
 ok reciprocal_condition is within a factor 3 of the exact value, from above
 ok the 10 x 10 Hilbert matrix is numerically singular
+ok a scalar's reciprocal condition is 1 at any scale
+ok a scaled identity's reciprocal condition is 1
+ok a power of two times a matrix changes no bit of the estimate
+ok nor much among the subnormal numbers
+ok a matrix whose 1-norm overflows
 ok an exactly singular matrix
 ok solve of a singular matrix
 ok inverse of a singular matrix

@@ -363,6 +363,75 @@ condition :: proc() {
 	}
 }
 
+// 2^k, by exact doublings or halvings.
+power_of_two :: proc($T: type, k: int) -> T where linalg.Real(T) {
+	result := T(1);
+	foreach (_ in 0 ..< (k if 0 < k else -k)) { result = result*(T(2) if 0 < k else T(0.5)); }
+	return result;
+}
+
+rcond_of :: proc(a: dense.View($T)) -> T {
+	switch (dense.lu(a)) {
+	case .ok(f):  return f.reciprocal_condition();
+	case .err(_): return T(-1);
+	}
+}
+
+// The condition number does not depend on scale, so neither does the
+// estimate: a scalar or a scaled identity is 1 out to the subnormal numbers
+// and the largest, and a power of two times a matrix changes no bit.
+condition_scaling :: proc() {
+	near_one := true;
+	foreach (x in [?]f64{1e-309, 1e-320, power_of_two(f64, -1074), 1e308, 1.7976931348623157e308, -3.0}) {
+		scalar := dense.Matrix(f64).from_rows([1][1]f64{{x}});
+		r := rcond_of(scalar.view());
+		if (!linalg.approx_equal(r, 1.0, 4.0*math.F64_EPSILON, 0.0)) {
+			fmt.println("condition of", x, r);
+			near_one = false;
+		}
+	}
+	foreach (x in [?]f32{1e-40, power_of_two(f32, -149), 3e38}) {
+		scalar := dense.Matrix(f32).from_rows([1][1]f32{{x}});
+		r := rcond_of(scalar.view());
+		if (!linalg.approx_equal(r, f32(1), f32(4)*math.F32_EPSILON, f32(0))) {
+			fmt.println("condition of", x, r);
+			near_one = false;
+		}
+	}
+	check("a scalar's reciprocal condition is 1 at any scale", near_one);
+
+	identities := true;
+	foreach (k in [?]int{-1074, -1060, -1000, 1000, 1023}) {
+		scaled := dense.Matrix(f64).identity(5);
+		scaled.view_mut().scale_by(power_of_two(f64, k));
+		if (!(rcond_of(scaled.view()) == 1.0)) { identities = false; }
+	}
+	foreach (x in [?]f64{1e-310, 1e300}) {
+		scaled := dense.Matrix(f64).identity(5);
+		scaled.view_mut().scale_by(x);
+		if (!linalg.approx_equal(rcond_of(scaled.view()), 1.0, 1e-12, 0.0)) { identities = false; }
+	}
+	check("a scaled identity's reciprocal condition is 1", identities);
+
+	a := make_matrix(f64, .Random, 6, 211);
+	plain := rcond_of(a.view());
+	same := 0.0 < plain;
+	foreach (k in [?]int{-1000, -500, 500, 1000}) {
+		scaled := dense.Matrix(f64).from_view(a.view());
+		scaled.view_mut().scale_by(power_of_two(f64, k));
+		if (!(bits64(rcond_of(scaled.view())) == bits64(plain))) { same = false; }
+	}
+	check("a power of two times a matrix changes no bit of the estimate", same);
+	subnormal := dense.Matrix(f64).from_view(a.view());
+	subnormal.view_mut().scale_by(power_of_two(f64, -1040));
+	check("nor much among the subnormal numbers", linalg.approx_equal(rcond_of(subnormal.view()), plain, 0.0, 1e-6));
+
+	// |A|_1 overflows, but the estimate is the one for the matrix over 1e308.
+	upper := dense.Matrix(f64).from_rows([2][2]f64{{1e308, 1e308}, {0, 1e308}});
+	unit := dense.Matrix(f64).from_rows([2][2]f64{{1, 1}, {0, 1}});
+	check("a matrix whose 1-norm overflows", linalg.approx_equal(rcond_of(upper.view()), rcond_of(unit.view()), 0.0, 4.0*math.F64_EPSILON));
+}
+
 failures :: proc() {
 	singular := dense.Matrix(f64).from_rows([2][2]f64{{1, 2}, {2, 4}});
 	switch (dense.lu(singular.view())) {
@@ -518,6 +587,7 @@ main :: proc() {
 	triangular();
 	determinants();
 	condition();
+	condition_scaling();
 	failures();
 	dual();
 	determinism();

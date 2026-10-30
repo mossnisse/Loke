@@ -105,6 +105,98 @@ real_sqrt :: proc(x: $R) -> R where linalg.Real(R) { return x.sqrt(); }
 @(private)
 real_finite :: proc(x: $R) -> bool where linalg.Real(R) { return x.is_finite(); }
 
+@(private)
+real_normal :: proc(x: $R) -> bool where linalg.Real(R) { return x.is_normal(); }
+
+// The larger magnitude of `z`'s two parts: `|z|` for a real `T`.
+@(private)
+part_magnitude :: proc(z: $T) -> T.Real where linalg.Scalar(T) {
+	when (T == T.Real) {
+		return real_abs(z);
+	} else {
+		return larger_of(real_abs(z.real_part()), real_abs(z.imaginary_part()));
+	}
+}
+
+// The largest power of two whose square is finite, `2^511` for `f64` and
+// `2^63` for `f32`: by squaring from 2 while the next square's square is
+// finite, then trying each square root of that step in turn, each of which
+// is exact. A matrix or column is rescaled by it or its reciprocal, which
+// changes no bit of a result that neither overflows nor is subnormal.
+@(private)
+scaling_limit :: proc($R: type) -> R where linalg.Real(R) {
+	big := R(2);
+	for (real_finite(big*big*(big*big))) { big = big*big; }
+	step := big;
+	for (R(2) < step) {
+		step = real_sqrt(step);
+		if (real_finite(big*step*(big*step))) { big = big*step; }
+	}
+	return big;
+}
+
+// The power of two by which `svd` and `symmetric_eigen` multiply a matrix
+// whose largest part has the magnitude `largest`: `1/big` above `big`, `big`
+// below `1/big` but not zero, and otherwise 1, for `big` the
+// `scaling_limit`.
+@(private)
+matrix_scale :: proc(largest: $R) -> R where linalg.Real(R) {
+	big := scaling_limit(R);
+	small := R(1)/big;
+	if (big < largest) { return small; }
+	if (R(0) < largest && largest < small) { return big; }
+	return R(1);
+}
+
+// The largest power of two not above the positive `x`, but at least the
+// smallest normal number and at most the largest finite power of two: by
+// steps that square while they still fit.
+@(private)
+power_of_two_below :: proc(x: $R) -> R where linalg.Real(R) {
+	p := R(1);
+	if (R(1) < x) {
+		for (at_most(p*R(2), x)) {
+			step := R(2);
+			for (at_most(p*(step*step), x)) { step = step*step; }
+			p = p*step;
+		}
+	} else {
+		half := R(0.5);
+		for (x < p && real_normal(p*half)) {
+			step := half;
+			for (real_normal(p*(step*step)) && x < p*(step*step)) { step = step*step; }
+			p = p*step;
+		}
+	}
+	return p;
+}
+
+// Whether `a` is finite and not above `b`.
+@(private)
+at_most :: proc(a, b: $R) -> bool where linalg.Real(R) {
+	return real_finite(a) && (a < b || a == b);
+}
+
+// Whether every element of `x` is finite.
+@(private)
+view_finite :: proc(x: View($T)) -> bool where linalg.Scalar(T) {
+	foreach (c in 0 ..< x.column_count) {
+		foreach (r in 0 ..< x.row_count) {
+			if (!finite(x[r, c])) { return false; }
+		}
+	}
+	return true;
+}
+
+// Whether every element of `x` is finite.
+@(private)
+reals_finite :: proc(x: []$R) -> bool where linalg.Real(R) {
+	foreach (i in 0 ..< x.len()) {
+		if (!real_finite(x[i])) { return false; }
+	}
+	return true;
+}
+
 // `n` zeros, allocated from `allocator`.
 @(private)
 zeros_of :: proc($T: type, n: int, allocator: Allocator) -> [dynamic]T where interfaces.Numeric(T) {
