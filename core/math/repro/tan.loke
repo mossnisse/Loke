@@ -104,6 +104,7 @@ tan_f32_of :: proc(x: f64) -> f32 {
 // `flip`: sin r and cos r in fixed point, and their quotient, the
 // denominator scaled by 2^k into [1, 2) for `fixed_reciprocal`, its nearest
 // `f64` correctly rounded.
+@(cold)
 tan_slow :: proc(ax: f64, flip: bool, layout: Float_Layout) -> u64 {
 	quadrant, r_negative, r := reduce_fixed(ax);
 	r2 := fixed_times(r, r);

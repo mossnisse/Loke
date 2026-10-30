@@ -241,6 +241,7 @@ atan2_quick :: proc(n: f64, d: f64, part: int) -> f64 {
 // and fall by 2^-7.9 a term, each operation truncates by under 2^-320, and
 // the reciprocals are within 2^-319, which leaves the result within 2^-305
 // relative.
+@(cold)
 atan2_slow :: proc(n: f64, d: f64, part: int, layout: Float_Layout) -> u64 {
 	big_j := atan_wide_index(n, d);
 	k := 0;
@@ -259,6 +260,7 @@ atan_wide_index :: proc(n: f64, d: f64) -> int {
 // `atan2_slow` from J and n and d in fixed point, n times 2^k for J = 0 and
 // k = 0 otherwise, with `f64` values n_near and d_near within 2^-52 of
 // them relative, n_near unscaled.
+@(cold)
 atan_slow_of :: proc(n: Fixed, d: Fixed, n_near: f64, d_near: f64, k: int, big_j: int, part: int, layout: Float_Layout) -> u64 {
 	value: Fixed = {};
 	if (big_j == 0) {

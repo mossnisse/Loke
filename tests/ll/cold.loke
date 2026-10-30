@@ -1,0 +1,41 @@
+package main;
+
+// design.md "@(cold)": every function a cold procedure is emitted as is
+// `cold noinline`: a plain one, a generic instance, an `impl` member, a local
+// procedure, a foreign-convention body, whose guard is left as is, and both
+// copies of a dispatched one with the check between them. A callee a copy
+// takes with it is cold only if it is marked itself.
+
+import "core:fmt";
+import "core:os";
+
+@(cold)
+rare :: proc(x: int) -> int { return x*3 + 1; }
+
+@(cold)
+rare_generic :: proc(x: $T) -> T { return x; }
+
+Counter :: struct { n: int }
+
+impl Counter {
+	@(cold)
+	reset :: proc(self: inout Counter) { self.n = 0; }
+}
+
+@(cold)
+from_c :: proc "c" (x: i32) -> i32 { return x + 1; }
+
+warm :: proc(x: f64) -> f64 { return x*x; }
+
+@(cold, cpu_dispatch="x86-64-v3")
+rare_dispatched :: proc(x: f64) -> f64 { return warm(x) + 1.0; }
+
+main :: proc() {
+	@(cold)
+	inner :: proc(x: int) -> int { return x - 1; }
+
+	n := os.args.len();
+	c := Counter{n = n};
+	c.reset();
+	fmt.println(rare(n), rare_generic(n), inner(n), from_c(i32(n)), rare_dispatched(f64(n)), c.n);
+}

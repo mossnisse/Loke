@@ -733,7 +733,8 @@ proc_convention_of :: proc(e: ^Emitter, symbol: ^Symbol) -> string {
 emit_foreign_signature :: proc(e: ^Emitter, symbol: ^Symbol, llvm_name: string) {
 	ret, params := foreign_signature(e, symbol)
 	fmt.sbprintf(&e.b, "define %s%s %s(%s) noinline", llvm_linkage(llvm_name), ret, llvm_name, strings.join(params, ", "))
-	fmt.sbprintln(&e.b, " {")
+	// design.md "@(cold)": the body is `noinline` already.
+	fmt.sbprintln(&e.b, cold_attributes(symbol) != "" ? " cold {" : " {")
 }
 
 // The return type and the parameters, each with its attributes and name, as

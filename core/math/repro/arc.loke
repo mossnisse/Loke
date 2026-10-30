@@ -171,6 +171,7 @@ arc_f32_of :: proc(a: f64, cosine: bool, x_negative: bool) -> f32 {
 // pattern, by `atan_slow_of` with n and d doubled, from a, w's nearest
 // `f64`, and the part. A w below 2a is formed at the scale 2^s that puts
 // 2w 2^s in [1, 2), and kept there when J = 0.
+@(cold)
 arc_slow :: proc(a: f64, w_near: f64, a_small: bool, part: int, layout: Float_Layout) -> u64 {
 	fa := fixed_of(a);
 	r := fixed_minus(FIXED_ONE, fixed_times(fa, fa));

@@ -359,6 +359,12 @@ checklist.
   most near a fifth faster there. `LOKE_DISPATCH_CPU=x86-64` keeps a run on
   the build's own code ([`@(cpu_dispatch)`](design.md#cpu_dispatchstring),
   [CPU levels](compiler-guide.md#cpu-levels)).
+- `@(cold)` marks a rarely called procedure, which is never inlined into its
+  callers, so their frames stay small, and the path to a call to it is laid
+  out as unlikely. `core:math/repro`'s fixed-point slow paths are marked:
+  `hypot` takes 13.4 ns rather than 17.9, `pow` 55.2 rather than 58.4, and
+  `tan` 51.1 rather than 53.1, with the same results
+  ([`@(cold)`](design.md#cold)).
 - `core:math/repro` holds correctly rounded elementary functions, whose
   results are the same bits on every machine, CPU level, and optimization
   level, and at compile time: `exp`, `log`, `log2`, `log10`, `pow`, `sqrt`,

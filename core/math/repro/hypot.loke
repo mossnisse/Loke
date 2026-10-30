@@ -81,6 +81,7 @@ hypot_f32_of :: proc(a: f64, b: f64) -> f32 {
 
 // hypot correctly rounded to `layout`, as its bit pattern, for a and b as
 // `hypot_parts` scales them and an `f64` within 2^-52 of the scaled root.
+@(cold)
 hypot_slow :: proc(a: f64, b: f64, ea: int, near: f64, layout: Float_Layout) -> u64 {
 	fa := fixed_of(a);
 	fb := fixed_of(b);

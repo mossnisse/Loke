@@ -297,6 +297,7 @@ trig_f32 :: proc(x: f64, want_cos: bool) -> f32 {
 // when `flip`: the reduction in fixed point, r = f pi/2 for the fraction
 // Payne and Hanek's leaves, and the series in r, alternating and decreasing
 // from its first term, so every partial sum stays positive.
+@(cold)
 trig_slow :: proc(ax: f64, want_cos: bool, flip: bool, layout: Float_Layout) -> u64 {
 	quadrant, r_negative, r := reduce_fixed(ax);
 	use_sin := (quadrant % 2 == 0) != want_cos;
