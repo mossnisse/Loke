@@ -7,6 +7,43 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
+### Nine constant self-reslices still prevent an element store from replacing its contents
+
+[Values that contain borrows](design.md#values-that-contain-borrows) lets a
+store replace the contents of one known element. The reaching-definition
+analysis added by the fix-gaps-1030 branch recognizes constant self-reslices
+before a loop, but `publish_view_of` in [borrow.odin](src/borrow.odin) still
+gives up at `depth > 8`, even for identity reslices:
+
+```loke
+package main;
+Node :: struct { value: int }
+Counted :: struct { head: ^mut Node, tail: ^mut Node, count: int }
+main :: proc() {
+    a := Node{1}; b := Node{2}; c := Node{3}; d := Node{4};
+    arr := [2]Counted{{&mut a, &mut b, 0}, {&mut c, &mut d, 0}};
+    s := &mut arr[:];
+    s = &mut s[0:]; s = &mut s[0:]; s = &mut s[0:];
+    s = &mut s[0:]; s = &mut s[0:]; s = &mut s[0:];
+    s = &mut s[0:]; s = &mut s[0:]; s = &mut s[0:];
+    for (round := 0; round < 2; round += 1) {
+        h := s[0].head;
+        h^.value = 1;
+        s[0].head = s[0].tail;
+    }
+}
+```
+
+This reports `L0641` at `s[0].tail`; removing one reslice makes it compile.
+All nine definitions have the same constant start and length. The new
+`publish_view_def` cache already detects a definition reached while its own
+answer is being evaluated, so the old depth argument and cutoff can be
+removed. An isolated compiler without them accepts the reproduction and
+passes the borrow matrix and diagnostics suite, including reslices inside
+loops and disagreeing branches. Found reviewing `81a9342c` against its
+`main` parent on 2026-10-30. This is a remaining limitation of the closure,
+rather than a new rejection of previously accepted code.
+
 ### Integer builtin registrations break dense scalar constraints
 
 [`core:math/dense`](standard-library.md#coremathdense) accepts `f64` for
