@@ -90,6 +90,24 @@ impl File {
 		weaker for `flush` to mean.
 	*/
 	flush :: proc(self: inout File) -> Status(io.Error) ---;
+
+	/*
+		Makes the file exactly `size` bytes long: a smaller size discards the
+		bytes past it, and a larger one adds bytes that read as zero. The
+		position does not move, so a position past the new end is where the next
+		write begins; in append mode that is the new end.
+
+		It needs `Write` or `Read_Write` access, and append mode does not stand
+		in its way. Like a write, the new size is durable once `flush` returns.
+	*/
+	set_size :: proc(self: inout File, size: u64) -> Status(io.Error) ---;
+
+	/*
+		What `fs.metadata` would answer for the file this handle has open, asked
+		of the handle rather than a name: the answer follows the file through a
+		rename. Any access mode can ask.
+	*/
+	metadata :: proc(self) -> Result(Metadata, io.Error) ---;
 }
 
 /*

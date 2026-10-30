@@ -82,6 +82,7 @@ Metadata :: struct {
 File :: move_only struct {
 	@(private) handle: Handle,
 	@(private) access: Access,
+	@(private) append: bool,
 }
 
 impl File {
@@ -143,7 +144,47 @@ impl File {
 		if (self.handle == NO_HANDLE) { return .ok; }
 		return flush_handle(self.handle);
 	}
+
+	/**
+		Makes the file exactly `size` bytes long: a smaller size discards the
+		bytes past it, and a larger one adds bytes that read as zero. The
+		position does not move, so a position past the new end is where the next
+		write begins; in append mode that is the new end.
+
+		It needs `Write` or `Read_Write` access, and append mode does not stand
+		in its way. Like a write, the new size is durable once `flush` returns.
+	*/
+	// standard-library.md "Opening and file I/O". A log cut back to its last
+	// whole record after a crash is the caller this exists for, and such a log
+	// is usually open for append, hence the exemption.
+	set_size :: proc(self: inout File, size: u64) -> Status(io.Error) {
+		if (self.handle == NO_HANDLE) {
+			return .err(io.make_error(.Closed, .Set_Size));
+		}
+		if (self.access == .Read) {
+			return .err(io.make_error(.Unsupported, .Set_Size));
+		}
+		// Every platform counts file offsets in a signed 64-bit integer.
+		if (size > u64(MAX_FILE_SIZE)) {
+			return .err(io.make_error(.Unsupported, .Set_Size));
+		}
+		return set_size_handle(self.handle, self.append, i64(size));
+	}
+
+	/**
+		What `fs.metadata` would answer for the file this handle has open, asked
+		of the handle rather than a name: the answer follows the file through a
+		rename. Any access mode can ask.
+	*/
+	metadata :: proc(self) -> Result(Metadata, io.Error) {
+		if (self.handle == NO_HANDLE) {
+			return .err(io.make_error(.Closed, .Metadata));
+		}
+		return metadata_handle(self.handle);
+	}
 }
+
+@(private) MAX_FILE_SIZE :: 0x7FFFFFFFFFFFFFFF;
 
 /**
 	Truncating writes to the file, so a read-only open that would truncate is
@@ -411,7 +452,9 @@ foreign import kernel32 "system:kernel32.lib";
 
 @(private) GENERIC_READ  :: 0x80000000;
 @(private) GENERIC_WRITE :: 0x40000000;
+@(private) FILE_WRITE_DATA :: 0x0002;
 @(private) FILE_APPEND_DATA :: 0x0004;
+@(private) FILE_READ_ATTRIBUTES :: 0x0080;
 @(private) SHARE_ALL :: 0x00000007;
 @(private) CREATE_NEW :: 1;
 @(private) CREATE_ALWAYS :: 2;
@@ -425,6 +468,8 @@ foreign import kernel32 "system:kernel32.lib";
 @(private) MOVEFILE_WRITE_THROUGH :: 0x8;
 // `FILE_INFO_BY_HANDLE_CLASS`'s `FileRenameInfo`.
 @(private) FILE_RENAME_INFO_CLASS :: 3;
+// And its `FileEndOfFileInfo`.
+@(private) FILE_END_OF_FILE_INFO_CLASS :: 6;
 
 // The 100-nanosecond ticks between 1601-01-01 and 1970-01-01.
 @(private) FILETIME_UNIX_EPOCH :: 116444736000000000;
@@ -460,8 +505,12 @@ foreign kernel32 {
 	rt_move_file :: proc "stdcall" (from: [^]u16, to: [^]u16, flags: u32) -> i32 ---;
 	@(link_name="SetFileInformationByHandle")
 	rt_set_file_information :: proc "stdcall" (
-		handle: int, class: u32, information: [^]u16, size: u32,
+		handle: int, class: u32, information: rawptr, size: u32,
 	) -> i32 ---;
+	@(link_name="ReOpenFile")
+	rt_reopen_file :: proc "stdcall" (handle: int, access: u32, share: u32, flags: u32) -> int ---;
+	@(link_name="GetFileInformationByHandle")
+	rt_file_information :: proc "stdcall" (handle: int, data: rawptr) -> i32 ---;
 	@(link_name="GetCurrentProcessId")
 	rt_current_process_id :: proc "stdcall" () -> u32 ---;
 	@(link_name="CreateDirectoryW")
@@ -488,6 +537,21 @@ File_Attribute_Data :: struct {
 	written:     [2]u32,
 	size_high:   u32,
 	size_low:    u32,
+}
+
+// `BY_HANDLE_FILE_INFORMATION`: 52 bytes, alignment 4.
+@(private)
+Handle_Information :: struct {
+	attributes:    u32,
+	created:       [2]u32,
+	accessed:      [2]u32,
+	written:       [2]u32,
+	volume_serial: u32,
+	size_high:     u32,
+	size_low:      u32,
+	links:         u32,
+	index_high:    u32,
+	index_low:     u32,
 }
 
 // `WIN32_FIND_DATAW`: 592 bytes, alignment 4.
@@ -535,7 +599,9 @@ from_last_error :: proc(operation: io.Operation) -> io.Error {
 open_native :: proc(path: string_view, options: Open_Options) -> Result(File, io.Error) {
 	wide := wide_path(path, .Open) or_return;
 
-	access: u32 = 0;
+	// Every handle can answer `File.metadata`: the write rights alone do not
+	// include reading attributes.
+	access: u32 = u32(FILE_READ_ATTRIBUTES);
 	if (options.access == .Read || options.access == .Read_Write) {
 		access |= u32(GENERIC_READ);
 	}
@@ -557,7 +623,7 @@ open_native :: proc(path: string_view, options: Open_Options) -> Result(File, io
 	if (handle == INVALID_HANDLE) {
 		return .err(from_last_error(.Open));
 	}
-	return File{handle, options.access};
+	return File{handle, options.access, options.append};
 }
 
 @(private)
@@ -618,6 +684,44 @@ flush_handle :: proc(handle: Handle) -> Status(io.Error) {
 	if (rt_flush(handle) == 0) {
 		return .err(from_last_error(.Flush));
 	}
+}
+
+// An append handle holds the append right without the write right, and setting
+// the end of a file needs the write right, so the change goes through a second
+// handle to the same file. Reopening a handle rather than the name keeps it the
+// same file whatever has happened to the name since, and it asks the file's own
+// access check, so a caller allowed only to append is refused here.
+@(private)
+set_size_handle :: proc(handle: Handle, append: bool, size: i64) -> Status(io.Error) {
+	if (!append) { return set_end_of_file(handle, size); }
+	reopened := rt_reopen_file(handle, u32(FILE_WRITE_DATA), u32(SHARE_ALL), 0);
+	if (reopened == INVALID_HANDLE) {
+		return .err(from_last_error(.Set_Size));
+	}
+	outcome := set_end_of_file(reopened, size);
+	_ = rt_close_handle(reopened);
+	return outcome;
+}
+
+@(private)
+set_end_of_file :: proc(handle: Handle, size: i64) -> Status(io.Error) {
+	end := size;
+	if (rt_set_file_information(handle, u32(FILE_END_OF_FILE_INFO_CLASS), &mut end, 8) == 0) {
+		return .err(from_last_error(.Set_Size));
+	}
+}
+
+@(private)
+metadata_handle :: proc(handle: Handle) -> Result(Metadata, io.Error) {
+	data: Handle_Information = {};
+	if (rt_file_information(handle, &mut data) == 0) {
+		return .err(from_last_error(.Metadata));
+	}
+	return Metadata{
+		kind_of(data.attributes),
+		(u64(data.size_high) << 32) | u64(data.size_low),
+		modified_time(data.written),
+	};
 }
 
 @(private)
@@ -706,7 +810,7 @@ replace_atomic_native :: proc(path: string_view, data: []u8) -> Status(io.Error)
 			if (io.is(error, .Already_Exists) && attempt + 1 < TEMPORARY_ATTEMPTS) { continue; }
 			return .err(error);
 		}
-		file := File{handle, .Write};
+		file := File{handle, .Write, false};
 		renamed := false;
 		// Cleanup runs in reverse: the handle closes, then a temporary that never
 		// took the target's name is deleted. Once it has, the old name may already

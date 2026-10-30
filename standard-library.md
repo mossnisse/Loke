@@ -223,6 +223,7 @@ Operation :: enum {
 	Spawn,
 	Wait,
 	Kill,
+	Set_Size,
 	Other,
 }
 
@@ -1799,6 +1800,8 @@ impl File {
 	seek    :: proc(self: inout File, offset: i64, origin: Seek_Origin)
 		-> Result(u64, io.Error);
 	flush   :: proc(self: inout File) -> Status(io.Error);
+	set_size :: proc(self: inout File, size: u64) -> Status(io.Error);
+	metadata :: proc(self) -> Result(Metadata, io.Error);
 	close   :: proc(self: inout File) -> Status(io.Error);
 	is_open :: proc(self) -> bool;
 }
@@ -1808,8 +1811,8 @@ Because structural interface satisfaction is determined by the static type,
 `File` satisfies both `io.Reader` and `io.Writer`: it has both slots regardless of
 the options used for a particular instance. The open mode is checked at runtime:
 using an unsupported direction returns `Unsupported`, and a nonempty read or
-write, or a seek, on a closed file returns `Closed`; `flush` and `close` on a
-closed file succeed. A disposition that truncates needs `Write` or
+write, a seek, a `set_size`, or a `metadata` on a closed file returns `Closed`;
+`flush` and `close` on a closed file succeed. A disposition that truncates needs `Write` or
 `Read_Write` access, and `Truncate_Existing` cannot be combined with `append`
 (Windows truncates an existing file only for a caller holding the full write
 right, which append mode gives up); `open` answers `Unsupported` for either
@@ -1821,6 +1824,32 @@ multiple writes from multiple processes into one atomic transaction.
 the storage device, so they survive a crash or power loss as far as the device
 honors the request. `File` keeps no buffer of its own, so there is no weaker
 meaning for `flush` to have.
+
+`set_size` makes the file exactly `size` bytes long. A smaller size discards
+the bytes past it; a larger one adds bytes that read as zero. The position does
+not move, so a position past the new end is where the next write begins, and
+the bytes between read as zero; in append mode the next write begins at the new
+end. It needs `Write` or `Read_Write` access, and `Read` answers `Unsupported`.
+Append mode does not prevent it: the change is made through the file's own
+write right, so a caller whose access check allows only appending gets
+`Permission_Denied`. A size above `2^63 - 1`, which no signed 64-bit file
+offset can hold, is `Unsupported`. Like a write, the new size is durable once
+`flush` returns. Its failures carry the operation `Set_Size`.
+
+`metadata` answers what [`fs.metadata`](#filesystem-operations) would, asked of
+the open file rather than a name, so the answer follows the file through a
+rename. Every access mode can ask.
+
+Example (imports `core:fs` and `core:io`): a log of newline-ended records, open
+for append, is cut back to its last whole record after a crash, so the next
+record does not follow a torn one.
+
+```loke
+recover_tail :: proc(log: inout fs.File, whole: u64) -> Status(io.Error) {
+	log.set_size(whole) or_return;
+	return log.flush();
+}
+```
 
 ### Whole-file convenience
 

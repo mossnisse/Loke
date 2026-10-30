@@ -1,0 +1,133 @@
+package main;
+
+import "core:fmt";
+import "core:fs";
+import "core:io";
+import "core:os";
+import "core:path";
+import "core:strings";
+
+// `File.set_size` and `File.metadata` (standard-library "Opening and file
+// I/O"): a smaller size discards the tail, a larger one reads as zeros, the
+// position stays where it was, and an append handle can be cut back to its last
+// whole record and go on appending, which is crash-tail recovery for a log.
+
+succeeded :: proc(outcome: Status(io.Error)) -> bool {
+	switch (outcome) {
+	case .ok:  return true;
+	case .err: return false;
+	}
+	return false;
+}
+
+failure_of :: proc(outcome: Status(io.Error)) -> io.Error {
+	switch (outcome) {
+	case .ok:  return io.make_error(.Other, .Other);
+	case .err(error): return error;
+	}
+}
+
+root :: proc() -> string {
+	switch (os.get_environment("TEMP")) {
+	case .ok(outcome):
+		switch (outcome) {
+		case .some(base): return path.join([]string_view{base, "loke_fs_set_size"});
+		case .none:
+		}
+	case .err:
+	}
+	return strings.copy("loke_fs_set_size");
+}
+
+// The file's bytes, with each zero byte shown as `.`.
+show :: proc(file: string_view) {
+	bytes := fs.read_bytes(file) or_else panic("a file the test just wrote could not be read");
+	shown := make([dynamic]u8, 0, bytes.len());
+	foreach (byte in bytes) {
+		shown.append(u8('.') if byte == 0 else byte);
+	}
+	fmt.println(bytes.len(), string_view.from_utf8(shown[:]) or_else "not UTF-8");
+}
+
+size_of_open :: proc(file: fs.File) -> i64 {
+	switch (file.metadata()) {
+	case .ok(info): return i64(info.size);
+	case .err: return -1;
+	}
+}
+
+main :: proc() {
+	directory := root();
+	_ = fs.remove(path.join([]string_view{directory, "data.bin"}));
+	_ = fs.remove(path.join([]string_view{directory, "moved.bin"}));
+	_ = fs.remove(path.join([]string_view{directory, "log.txt"}));
+	_ = fs.remove_directory(directory);
+	fmt.println(succeeded(fs.create_directories(directory)));
+
+	// Shrinking discards the tail, and the position stays at 10, past the new
+	// end: the next write lands there, and the gap reads as zeros.
+	data := path.join([]string_view{directory, "data.bin"});
+	file := fs.open(data, fs.Open_Options{access = .Read_Write, disposition = .Create_New, append = false}) or_else panic("a new file could not be created");
+	fmt.println(succeeded(io.write_string(inout file, "0123456789")));
+	fmt.println(succeeded(file.set_size(4)));
+	fmt.println(size_of_open(file));
+	fmt.println(file.seek(0, .Current) or_else 0);
+	show(data);
+	fmt.println(succeeded(io.write_string(inout file, "X")));
+	show(data);
+	// Growing adds zeros, and the new size is durable once `flush` returns.
+	fmt.println(succeeded(file.set_size(14)));
+	fmt.println(succeeded(file.flush()));
+	show(data);
+	fmt.println(succeeded(file.set_size(0)));
+	show(data);
+	// A size no signed 64-bit offset can hold is refused before it reaches the
+	// platform.
+	huge := failure_of(file.set_size(0x8000000000000000));
+	fmt.println(io.is(huge, .Unsupported), io.operation_of(huge) == .Set_Size);
+
+	// The handle's metadata follows the file through a rename.
+	fmt.println(succeeded(io.write_string(inout file, "abc")));
+	moved := path.join([]string_view{directory, "moved.bin"});
+	fmt.println(succeeded(fs.rename(data, moved)));
+	switch (file.metadata()) {
+	case .ok(info): fmt.println(info.kind == .File, info.size, info.modified != .none);
+	case .err: fmt.println(false);
+	}
+	fmt.println(succeeded(file.close()));
+	closed_size := failure_of(file.set_size(0));
+	fmt.println(io.is(closed_size, .Closed), io.operation_of(closed_size) == .Set_Size);
+	switch (file.metadata()) {
+	case .ok: fmt.println(false);
+	case .err(closed): fmt.println(io.is(closed, .Closed), io.operation_of(closed) == .Metadata);
+	}
+
+	// A write-only handle can still answer `metadata`.
+	writer := fs.create(moved) or_else panic("a file the test just wrote could not be opened");
+	fmt.println(succeeded(io.write_string(inout writer, "four")));
+	fmt.println(size_of_open(writer));
+	fmt.println(succeeded(writer.close()));
+
+	// A read-only handle refuses, and the file is left whole.
+	reader := fs.open_read(moved) or_else panic("a file the test just wrote could not be opened");
+	refused := failure_of(reader.set_size(1));
+	fmt.println(io.is(refused, .Unsupported), io.operation_of(refused) == .Set_Size);
+	fmt.println(size_of_open(reader));
+	fmt.println(succeeded(reader.close()));
+	show(moved);
+
+	// Crash-tail recovery: a log whose last record was torn is cut back to its
+	// last whole record through the append handle, and appending goes on from
+	// there rather than from the old end.
+	log := path.join([]string_view{directory, "log.txt"});
+	fmt.println(succeeded(fs.write_text(log, "one\ntwo\nthr")));
+	appender := fs.append(log) or_else panic("a file the test just wrote could not be opened");
+	fmt.println(succeeded(appender.set_size(8)));
+	fmt.println(succeeded(io.write_string(inout appender, "three\n")));
+	fmt.println(succeeded(appender.close()));
+	fmt.println(fs.read_text(log) or_else panic("a file the test just wrote could not be read"));
+
+	fmt.println(succeeded(fs.remove(moved)));
+	fmt.println(succeeded(fs.remove(log)));
+	fmt.println(succeeded(fs.remove_directory(directory)));
+}

@@ -329,6 +329,12 @@ checklist.
   bundled packages write their doc comments longer than a line this way, and
   `api.loki` shows them as `/* */` blocks.
 
+- `fs.File.set_size` truncates or extends an open file, so a log can be cut
+  back to its last whole record after a crash, through its append handle
+  too; `fs.File.metadata` describes the open file, its size included, without
+  moving the position. `io.Operation` gains `Set_Size`
+  ([Opening and file I/O](standard-library.md#opening-and-file-io)).
+
 - `fs.replace_atomic` and `fs.replace_atomic_text` replace a file so that a
   reader, or the program after a crash or power loss, sees either the whole
   previous file or the whole new one, and on success the new one is durable
