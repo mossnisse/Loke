@@ -1,9 +1,18 @@
 # Performance baselines
 
-These records are comparison inputs for [perf.ps1](../../perf.ps1). Source
+The JSON records are comparison inputs for [perf.ps1](../../perf.ps1). Source
 hashes in each record prevent comparisons across changed workload inputs. Use
 the same machine, tools, and measurement settings for later comparisons; the
 figures are observations, not performance thresholds.
+
+## Math functions
+
+[math-compare-2026-10-30.csv](math-compare-2026-10-30.csv) and
+[math-compare-2026-10-29.csv](math-compare-2026-10-29.csv) record the standalone
+[UCRT/repro comparison](../math_compare/README.md#measurements), the earlier one
+including its separate optimization experiments. They are not inputs to
+`perf.ps1`. The report gives the commands, input ranges, timing method, and
+limitations.
 
 ## Provenance normalization
 

@@ -369,7 +369,8 @@ experiments on 2026-10-29 found would pay:
   fast-against-slow comparisons are bit for bit the same, and so is every
   `f32` argument of `asin_f32` and `acos_f32` in (-1, 1), compared
   exhaustively with the previous version.
-- Measured at `-opt=speed` with `bench/math_compare.loke`, medians per call:
+- Measured at `-opt=speed` with
+  [`bench/math_compare`](bench/math_compare/README.md), medians per call:
   `asin` from 67.2 to 53.1 ns, `acos` from 69.6 to 56.5, `hypot` from 29.3 to
   20.0, and `asin_f32` from 42.3 to 31.9; `quaternion_abs` from 48 to 36 ns
   and `quaternion_abs_f32` from 37 to 24. The others did not move.
@@ -397,7 +398,7 @@ Then the other, `two_product` by the FMA instruction:
   and `quaternion_abs` included; the same check with the fused error halved
   panicked at once.
 - Measured at `-opt=speed` and `-cpu=x86-64-v3` with
-  `bench/math_compare.loke`, medians per call, Dekker's then fused: `exp` 19.4
+  `bench/math_compare`, medians per call, Dekker's then fused: `exp` 19.4
   and 18.0 ns, `log` 22.0 and 17.3, `log2` 32.6 and 23.4, `sin` 41.2 and 36.9,
   `tan` 56.4 and 48.3, `asin` 56.4 and 40.2, `acos` 58.5 and 41.9, `atan2`
   38.7 and 32.9, `pow` 72.4 and 57.5, `hypot` 19.5 and 13.4, and `pow_f32`
@@ -421,7 +422,7 @@ Then the `f32` functions' rounding decision and first approximations:
   281,612,248 such arguments, both signs, found it within 3, 1.7, and 4.5
   ulps of the double-`f64` result, and every result equal to the previous
   path's at the window of 16 ulps.
-- Measured at `-opt=speed` with `bench/math_compare.loke` at baseline,
+- Measured at `-opt=speed` with `bench/math_compare` at baseline,
   medians per call before and after: `sin_f32` 61.3 and 26.6 ns, `exp_f32`
   20.1 and 13.6, `asin_f32` 33.8 and 24.5, and `pow_f32` 92.2 and 81.7; a
   separate loop measured `cos_f32` from 56 to 25 ns and `tan_f32` from 88
@@ -443,7 +444,7 @@ Then `pow_f32`, the last `f32` function without a first approximation:
   near 1 with large exponents, and small integer exponents among them, gave
   the previous path's result every time; the largest error found was 208
   ulps.
-- Measured at `-opt=speed` with `bench/math_compare.loke` at baseline:
+- Measured at `-opt=speed` with `bench/math_compare` at baseline:
   `pow_f32` from 83.3 to 35.4 ns per call.
 
 Two `f64` experiments on 2026-10-30 did not pay, and changed nothing:
@@ -512,9 +513,17 @@ with `x86-64-v3`.
   build allows. The `_f32` functions measured no faster in their copies and
   are not marked.
 
-Not started: phase 1's benchmarks (the UCRT timings in open questions stand
-until there is a kernel to compare), phase 6's faster kernels, and other
-platforms.
+Phase 1's benchmark is [`bench/math_compare`](bench/math_compare/README.md),
+which times every `core:math/repro` function against the UCRT's with seeded,
+ordered, and dependent arguments, on either UCRT path and with dispatch
+capped. Measured again on 2026-10-30 after the changes above, the dispatched
+`f64` functions but `sqrt` take 1.9 to 4.7 times the UCRT's time, where they
+took 2.1 to 8.7, and the measured `f32` ones 2.3 to 3.7, where they took 4.6
+to 9.4; every checksum is the earlier run's.
+
+Not started: phase 6's faster `f64` kernels, which need other algorithms,
+the worst-case latency and simulation frame-time measurements its gate
+asks for, and other platforms.
 
 ## Recommended direction
 

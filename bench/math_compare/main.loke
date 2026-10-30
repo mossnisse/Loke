@@ -1,0 +1,147 @@
+// See README.md for commands, methodology, and limitations.
+package main;
+
+import "core:fmt";
+import "core:math";
+import "core:math/repro";
+import "core:os";
+import "core:time";
+
+foreign crt {
+	@(link_name="_set_FMA3_enable")
+	set_fma :: proc "c" (enabled: i32) -> i32 ---;
+}
+
+COUNT :: 4096;
+ROUNDS :: 256;
+
+next :: proc(state: inout u64) -> f64 {
+	state = state *% 6364136223846793005 +% 1442695040888963407;
+	return f64(state >> 11)/9007199254740992.0;
+}
+
+// Four sums avoid imposing one addition dependency on every independent call.
+// Print the sums outside the timer so the optimizer must retain the results.
+sample :: proc($T: type, fn: proc(x: T, y: T) -> T, xs: []T, ys: []T,
+	rounds: int, dependent: bool) -> (ns: f64, sum: f64) {
+		a, b, c, d := 0.0, 0.0, 0.0, 0.0;
+		previous := T(0);
+		start := time.tick_now();
+		foreach (_ in 0 ..< rounds) {
+			if (dependent) {
+				foreach (i in 0 ..< COUNT) {
+					previous = fn(xs[i] + previous*T(1.0e-12), ys[i]);
+				}
+			} else {
+				for (i := 0; i < COUNT; i += 4) {
+					a += f64(fn(xs[i], ys[i]));
+					b += f64(fn(xs[i+1], ys[i+1]));
+					c += f64(fn(xs[i+2], ys[i+2]));
+					d += f64(fn(xs[i+3], ys[i+3]));
+				}
+			}
+		}
+		elapsed := i64(start.elapsed());
+		return {f64(elapsed)/f64(rounds*COUNT), a+b+c+d+f64(previous)};
+	}
+
+compare :: proc($T: type, name: string, low: f64, span: f64,
+	platform: proc(x: T, y: T) -> T, deterministic: proc(x: T, y: T) -> T,
+	grid: bool, dependent: bool) {
+		xs: [COUNT]T = {};
+		ys: [COUNT]T = {};
+		state: u64 = 42;
+		foreach (i in 0 ..< COUNT) {
+			u := next(inout state);
+			if (grid) { u = (f64(i)+0.5)/f64(COUNT); }
+			xs[i] = T(low + span*u);
+			ys[i] = T(-10.0 + 20.0*next(inout state));
+		}
+		_, warm_a := sample(T, platform, xs[:], ys[:], 4, dependent);
+		_, warm_b := sample(T, deterministic, xs[:], ys[:], 4, dependent);
+		fmt.println("warm", name, warm_a, warm_b);
+		foreach (trial in 0 ..< 5) {
+			// Reverse order each trial to reduce systematic warmup/order bias.
+			if (trial % 2 == 0) {
+				ns_a, sum_a := sample(T, platform, xs[:], ys[:], ROUNDS, dependent);
+				ns_b, sum_b := sample(T, deterministic, xs[:], ys[:], ROUNDS, dependent);
+				fmt.println(name, trial, ns_a, ns_b, sum_a, sum_b);
+			} else {
+				ns_b, sum_b := sample(T, deterministic, xs[:], ys[:], ROUNDS, dependent);
+				ns_a, sum_a := sample(T, platform, xs[:], ys[:], ROUNDS, dependent);
+				fmt.println(name, trial, ns_a, ns_b, sum_a, sum_b);
+			}
+		}
+	}
+
+main :: proc() {
+	grid := false;
+	dependent := false;
+	legacy := false;
+	foreach (arg in os.args) {
+		if (arg == "grid") { grid = true; }
+		if (arg == "dependent") { dependent = true; }
+		if (arg == "legacy") { legacy = true; }
+	}
+	if (legacy) { _ = set_fma(0); }
+	fmt.println("grid", grid, "dependent", dependent, "legacy", legacy);
+	fmt.println("function trial UCRT_ns repro_ns UCRT_checksum repro_checksum");
+	compare(f64, "exp", -10.0, 20.0, crt_exp, repro_exp, grid, dependent);
+	compare(f64, "log", 0.5, 1.5, crt_log, repro_log, grid, dependent);
+	compare(f64, "log2", 0.5, 1.5, crt_log2, repro_log2, grid, dependent);
+	compare(f64, "log10", 0.5, 1.5, crt_log10, repro_log10, grid, dependent);
+	compare(f64, "sin", -700.0, 1400.0, crt_sin, repro_sin, grid, dependent);
+	compare(f64, "cos", -700.0, 1400.0, crt_cos, repro_cos, grid, dependent);
+	compare(f64, "tan", -700.0, 1400.0, crt_tan, repro_tan, grid, dependent);
+	compare(f64, "asin", -0.999, 1.998, crt_asin, repro_asin, grid, dependent);
+	compare(f64, "acos", -0.999, 1.998, crt_acos, repro_acos, grid, dependent);
+	compare(f64, "atan", -20.0, 40.0, crt_atan, repro_atan, grid, dependent);
+	compare(f64, "atan2", -10.0, 20.0, crt_atan2, repro_atan2, grid, dependent);
+	compare(f64, "pow", 0.25, 3.75, crt_pow, repro_pow, grid, dependent);
+	compare(f64, "hypot", 0.125, 999.875, crt_hypot, repro_hypot, grid, dependent);
+	compare(f64, "sqrt", 0.125, 999.875, crt_sqrt, repro_sqrt, grid, dependent);
+	compare(f32, "exp_f32", -10.0, 20.0, crt_exp_f32, repro_exp_f32, grid, dependent);
+	compare(f32, "sin_f32", -700.0, 1400.0, crt_sin_f32, repro_sin_f32, grid, dependent);
+	compare(f32, "asin_f32", -0.999, 1.998, crt_asin_f32, repro_asin_f32, grid, dependent);
+	compare(f32, "pow_f32", 0.25, 3.75, crt_pow_f32, repro_pow_f32, grid, dependent);
+	compare(f32, "sqrt_f32", 0.125, 999.875, crt_sqrt_f32, repro_sqrt_f32, grid, dependent);
+}
+
+crt_exp :: proc(x: f64, y: f64) -> f64 { return math.exp(x); }
+repro_exp :: proc(x: f64, y: f64) -> f64 { return repro.exp(x); }
+crt_log :: proc(x: f64, y: f64) -> f64 { return math.log(x); }
+repro_log :: proc(x: f64, y: f64) -> f64 { return repro.log(x); }
+crt_log2 :: proc(x: f64, y: f64) -> f64 { return math.log2(x); }
+repro_log2 :: proc(x: f64, y: f64) -> f64 { return repro.log2(x); }
+crt_log10 :: proc(x: f64, y: f64) -> f64 { return math.log10(x); }
+repro_log10 :: proc(x: f64, y: f64) -> f64 { return repro.log10(x); }
+crt_sin :: proc(x: f64, y: f64) -> f64 { return math.sin(x); }
+repro_sin :: proc(x: f64, y: f64) -> f64 { return repro.sin(x); }
+crt_cos :: proc(x: f64, y: f64) -> f64 { return math.cos(x); }
+repro_cos :: proc(x: f64, y: f64) -> f64 { return repro.cos(x); }
+crt_tan :: proc(x: f64, y: f64) -> f64 { return math.tan(x); }
+repro_tan :: proc(x: f64, y: f64) -> f64 { return repro.tan(x); }
+crt_asin :: proc(x: f64, y: f64) -> f64 { return math.asin(x); }
+repro_asin :: proc(x: f64, y: f64) -> f64 { return repro.asin(x); }
+crt_acos :: proc(x: f64, y: f64) -> f64 { return math.acos(x); }
+repro_acos :: proc(x: f64, y: f64) -> f64 { return repro.acos(x); }
+crt_atan :: proc(x: f64, y: f64) -> f64 { return math.atan(x); }
+repro_atan :: proc(x: f64, y: f64) -> f64 { return repro.atan(x); }
+crt_atan2 :: proc(x: f64, y: f64) -> f64 { return math.atan2(x, y); }
+repro_atan2 :: proc(x: f64, y: f64) -> f64 { return repro.atan2(x, y); }
+crt_pow :: proc(x: f64, y: f64) -> f64 { return math.pow(x, y); }
+repro_pow :: proc(x: f64, y: f64) -> f64 { return repro.pow(x, y); }
+crt_hypot :: proc(x: f64, y: f64) -> f64 { return math.hypot(x, y); }
+repro_hypot :: proc(x: f64, y: f64) -> f64 { return repro.hypot(x, y); }
+crt_sqrt :: proc(x: f64, y: f64) -> f64 { return math.sqrt(x); }
+repro_sqrt :: proc(x: f64, y: f64) -> f64 { return repro.sqrt(x); }
+crt_exp_f32 :: proc(x: f32, y: f32) -> f32 { return math.exp_f32(x); }
+repro_exp_f32 :: proc(x: f32, y: f32) -> f32 { return repro.exp_f32(x); }
+crt_sin_f32 :: proc(x: f32, y: f32) -> f32 { return math.sin_f32(x); }
+repro_sin_f32 :: proc(x: f32, y: f32) -> f32 { return repro.sin_f32(x); }
+crt_asin_f32 :: proc(x: f32, y: f32) -> f32 { return math.asin_f32(x); }
+repro_asin_f32 :: proc(x: f32, y: f32) -> f32 { return repro.asin_f32(x); }
+crt_pow_f32 :: proc(x: f32, y: f32) -> f32 { return math.pow_f32(x, y); }
+repro_pow_f32 :: proc(x: f32, y: f32) -> f32 { return repro.pow_f32(x, y); }
+crt_sqrt_f32 :: proc(x: f32, y: f32) -> f32 { return math.sqrt_f32(x); }
+repro_sqrt_f32 :: proc(x: f32, y: f32) -> f32 { return repro.sqrt_f32(x); }

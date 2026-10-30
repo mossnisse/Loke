@@ -292,6 +292,9 @@ checklist.
 
 ### Added
 
+- A [repeatable math benchmark](bench/math_compare/README.md#reproduce) comparing
+  UCRT and reproducible functions with seeded, grid, and dependent inputs.
+
 - A block comment starting with `/**` is a
   [doc comment](design.md#doc-comments), for documentation longer than a
   line. Its text drops the indentation its lines share, so it needs no `*` on
