@@ -1,9 +1,32 @@
 // The double-`f64` arithmetic and the rounding decisions every function here
-// shares. Nothing here uses `fma`, so every CPU level computes the same bits
-// without software emulation; deterministic-math-and-targets-plan.md "CPU
-// targets and FMA".
+// shares.
+//
+// The one operation a CPU level changes is `two_product`'s error, a b - p for
+// p = a b rounded: the FMA instruction's where `math.fma_is_instruction()`,
+// and Dekker's product elsewhere, never `math.fma`'s integer arithmetic,
+// which is slower than Dekker's (deterministic-math-and-targets-plan.md "CPU
+// targets and FMA"). Both are exact for every call here, so every level
+// computes the same bits. The error is a multiple of the operands' units
+// times each other, 2^(ea - 52) 2^(eb - 52), and under ulp(p), so it is
+// representable unless that unit is below 2^-1074, and the fused error, a
+// sum rounded once, is then exact. Dekker's is exact when none of its steps
+// overflows or underflows (Dekker, "A floating-point technique for extending
+// the available precision", 1971): for operands under 2^995, so that
+// Veltkamp's split does not overflow, and a product that does not overflow
+// and is at least 2^-916, so that the units' product is a normal 2^-1022 or
+// more. An exact error of 0 is +0 both ways, the sum of a value and its
+// negation, and nothing else differs.
+//
+// Every call meets that. Each fast path starts from arguments past their
+// special cases, at least 2^-120 or scaled near 1, and from table entries;
+// sums of multiples of a unit stay multiples of it, products multiply the
+// units, and quotients are of a bounded divisor, so every value is 0 or above
+// 2^-300, and every operand under 2^64: `pow`'s y is, its |y log x| under 746
+// and |log x| over 2^-54, and `norm`'s fast path leaves out a component below
+// 2^-458 of the largest, whose square is the smallest product, 2^-916.
 package repro;
 
+import "core:math";
 import "core:unsafe";
 
 CANONICAL_NAN_F64 :: 0x7ff8000000000000;
@@ -37,11 +60,13 @@ fast_two_sum :: proc(a: f64, b: f64) -> (high: f64, low: f64) {
 	return {s, b - (s - a)};
 }
 
-// a * b exactly as a product and its rounding error (Dekker), for operands
-// under 2^995 whose product neither overflows nor has an error below the
-// normal range.
+// a * b exactly as a product and its rounding error, for operands under
+// 2^995 whose product is 0 or at least 2^-916 and does not overflow: the
+// fused error where FMA is an instruction, and otherwise Dekker's, as the
+// file's head describes.
 two_product :: proc(a: f64, b: f64) -> (high: f64, low: f64) {
 	p := a*b;
+	when (math.fma_is_instruction()) { return {p, math.fma(a, b, 0.0 - p)}; }
 	ta := SPLITTER*a;
 	ah := ta - (ta - a);
 	al := a - ah;

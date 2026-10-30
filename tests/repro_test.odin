@@ -47,7 +47,9 @@ check_generated_block :: proc(t: ^testing.T, path: string, expected: string) {
 // The package's functions agree with their slow paths, which the probe
 // reaches through a copy of the package with tests/repro/probe_hook.loke
 // added, over seeded arguments, and with the oracle over a sample of them.
-// The constants the probe folds agree with the same calls at run time.
+// The constants the probe folds agree with the same calls at run time. At
+// `x86-64-v3`, where `two_product` takes the FMA instruction's error, the
+// probe prints exactly what it does at baseline.
 @(test)
 repro_functions_round_correctly :: proc(t: ^testing.T) {
 	root := fmt.tprintf("%s/repro_probe", TMP)
@@ -66,17 +68,35 @@ repro_functions_round_correctly :: proc(t: ^testing.T) {
 		}
 		_ = os.write_entire_file(fmt.tprintf("%s/%s", dir, filepath.base(path)), data)
 	}
-	exe := fmt.tprintf("%s/probe.exe", root)
-	command := make([dynamic]string, context.temp_allocator)
-	append(&command, compiler_path(), "tests/repro/probe.loke", fmt.tprintf("-collection:probe=%s", root), "-o", exe)
-	append(&command, ..env_flags())
-	state, _, stderr, err := exec(os.Process_Desc{command = command[:]}, context.allocator)
-	if !testing.expectf(t, err == nil && state.exit_code == 0, "the probe build failed:\n%s", string(stderr)) {
+	levels := []string{"x86-64", "x86-64-v3"}
+	builds := make([]Exec, len(levels), context.temp_allocator)
+	for level, index in levels {
+		command := make([dynamic]string, context.temp_allocator)
+		exe := fmt.tprintf("%s/probe-%s.exe", root, level)
+		append(&command, compiler_path(), "tests/repro/probe.loke", fmt.tprintf("-collection:probe=%s", root), "-o", exe)
+		append(&command, fmt.tprintf("-cpu=%s", level))
+		append(&command, ..env_flags())
+		builds[index].command = command[:]
+	}
+	exec_all(builds)
+	runs := make([]Exec, len(levels), context.temp_allocator)
+	for build, index in builds {
+		if !testing.expectf(t, build.err == nil && build.state.exit_code == 0, "the probe build at -cpu=%s failed:\n%s", levels[index], string(build.stderr)) {
+			return
+		}
+		runs[index].command = make([]string, 1, context.temp_allocator)
+		runs[index].command[0] = launch_path(build.command[4])
+	}
+	exec_all(runs)
+	run, fused := runs[0], runs[1]
+	if !testing.expectf(t, run.err == nil && run.state.exit_code == 0, "the probe failed:\n%s", string(run.stderr)) {
 		return
 	}
-	run, stdout, run_stderr, run_err := exec(os.Process_Desc{command = []string{launch_path(exe)}}, context.allocator)
-	if !testing.expectf(t, run_err == nil && run.exit_code == 0, "the probe failed:\n%s", string(run_stderr)) {
-		return
+	stdout := run.stdout
+	if fused.state.exit_code == 3 && strings.has_prefix(string(fused.stderr), UNSUPPORTED_CPU) {
+		skipped_capability(t, "this processor does not run x86-64-v3")
+	} else if testing.expectf(t, fused.err == nil && fused.state.exit_code == 0, "the probe at -cpu=x86-64-v3 failed:\n%s", string(fused.stderr)) {
+		testing.expectf(t, string(fused.stdout) == string(stdout), "the probe's output at -cpu=x86-64-v3 differs from baseline's")
 	}
 
 	o: Oracle

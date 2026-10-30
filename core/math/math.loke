@@ -528,7 +528,7 @@ hypot_f32 :: proc(a: f32, b: f32) -> f32 { return rt_hypot_f32(a, b); }
 // not correctly rounded in every version a toolchain may link. Both round once,
 // so they agree on every finite result.
 fma :: proc(a: f64, b: f64, c: f64) -> f64 {
-	when (fma_instruction_available()) { return fma_instruction(a, b, c); }
+	when (fma_is_instruction()) { return fma_instruction(a, b, c); }
 	if (!is_finite(a) || !is_finite(b) || a == 0.0 || b == 0.0) {
 		// The product is exact: an infinity, a NaN, or a signed zero.
 		return a*b + c;
@@ -540,7 +540,7 @@ fma :: proc(a: f64, b: f64, c: f64) -> f64 {
 }
 
 fma_f32 :: proc(a: f32, b: f32, c: f32) -> f32 {
-	when (fma_instruction_available()) { return fma_instruction(a, b, c); }
+	when (fma_is_instruction()) { return fma_instruction(a, b, c); }
 	if (!is_finite_f32(a) || !is_finite_f32(b) || a == f32(0.0) || b == f32(0.0)) {
 		return a*b + c;
 	}
@@ -550,10 +550,18 @@ fma_f32 :: proc(a: f32, b: f32, c: f32) -> f32 {
 	return unsafe.transmute(f32, u32(bits));
 }
 
-/// Whether the CPU level has a fused multiply-add instruction.
+/**
+	Whether `fma` and `fma_f32` are one instruction at the program's CPU level,
+	as at `-cpu=x86-64-v3`, rather than slower integer arithmetic. A constant,
+	so `when` can choose between an algorithm that calls `fma` and one that
+	does not:
+
+	    when (math.fma_is_instruction()) { ... }
+
+	Their results are the same either way.
+*/
 @(intrinsic)
-@(private)
-fma_instruction_available :: proc() -> bool ---;
+fma_is_instruction :: proc() -> bool ---;
 
 /**
 	`a*b + c` in one instruction, for three `f32` or three `f64` operands, on a

@@ -761,7 +761,7 @@ check_wrap_builtin :: proc(k: ^Checker, v: ^Expr_Call) {
 	}
 }
 
-// `fma_instruction_available()` folds to whether the target has the
+// `fma_is_instruction()` folds to whether the target has the
 // instruction; `fma_instruction(a, b, c)` takes three operands of one float
 // type the instruction has a form for, and needs the instruction, so that a
 // call reached on a target without it is an error rather than LLVM's libcall.

@@ -110,6 +110,8 @@ fused at any level ([Floating-point operators](design.md#floating-point-operator
 since every Clang command also passes `-ffp-contract=off`. At `x86-64-v3`,
 `math.fma` is a single instruction, with the result the integer arithmetic of
 the other levels computes; a constant `math.fma` has that result too.
+`math.fma_is_instruction()` is then true, and `core:math/repro` takes its
+exact products from the instruction, with the same results.
 
 A program built for a level runs only on a processor that has it. An
 executable built above `x86-64` therefore checks the processor before any

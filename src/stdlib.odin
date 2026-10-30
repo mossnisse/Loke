@@ -160,8 +160,9 @@ contribute_standard_members :: proc(k: ^Checker, pkg: ^Package) {
 		contribute_builtin(c, pkg, "wrap", .Math_Wrap)
 		// A target with FMA computes `fma` in one instruction instead of the
 		// integer arithmetic every other target uses. The instruction cannot be
-		// written in Loke, and neither can the question of whether it exists.
-		contribute_builtin(c, pkg, "fma_instruction_available", .Math_Fma_Available, public = false)
+		// written in Loke, and neither can the question of whether it exists,
+		// which is public, so that an algorithm can choose by it.
+		contribute_builtin(c, pkg, "fma_is_instruction", .Math_Fma_Available)
 		contribute_builtin(c, pkg, "fma_instruction", .Math_Fma_Instruction, public = false)
 		// Every x86-64 level has the square root instruction, and IEEE 754 fixes
 		// its result, so `sqrt` needs no C library call that folding cannot see

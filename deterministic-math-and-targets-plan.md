@@ -373,11 +373,36 @@ experiments on 2026-10-29 found would pay:
   `asin` from 67.2 to 53.1 ns, `acos` from 69.6 to 56.5, `hypot` from 29.3 to
   20.0, and `asin_f32` from 42.3 to 31.9; `quaternion_abs` from 48 to 36 ns
   and `quaternion_abs_f32` from 37 to 24. The others did not move.
-- The other experiment, `two_product` by hardware FMA, waits for a way for
-  `core:math/repro` to ask whether FMA is an instruction, which is private
-  to `core:math`, and for an argument that every exact product meets the
-  conditions under which Dekker's product and the fused one agree, since
-  otherwise a result would differ between CPU levels.
+
+Then the other, `two_product` by the FMA instruction:
+
+- `math.fma_is_instruction()`, public and constant, tells `core:math/repro`,
+  and any other algorithm, whether `math.fma` is the instruction; a
+  `core:math/repro`-private built-in would not have reached the probe's copy
+  of the package. Where it is, `two_product`'s error is `fma(a, b, -p)`, and
+  elsewhere still Dekker's, never `math.fma`'s slower integer arithmetic.
+- The two agree bit for bit wherever both are exact, which for Dekker's needs
+  operands under 2^995 and a product of 0 or at least 2^-916, and the fused
+  one needs less; an exact zero error is +0 both ways. The audit of every
+  call, recorded in `arith.loke`'s head, finds each fast path's values 0 or
+  above about 2^-300 and its operands under 2^64, `norm`'s smallest square at
+  2^-916 included. So every intermediate value is the same at every CPU
+  level, not only the results, which are correctly rounded either way.
+- `tests/repro_test.odin` builds the probe at `x86-64-v3` too and requires its
+  output to be baseline's, folded constants included. A copy of the package
+  whose `two_product` computed both errors and panicked on any difference
+  passed the probe, every 61st `f32` pattern through the ten unary functions
+  (70 million arguments each), and 4 million seeded `f64` and `f32` bit
+  patterns of every exponent through all of them, `pow`, `atan2`, `hypot`,
+  and `quaternion_abs` included; the same check with the fused error halved
+  panicked at once.
+- Measured at `-opt=speed` and `-cpu=x86-64-v3` with
+  `bench/math_compare.loke`, medians per call, Dekker's then fused: `exp` 19.4
+  and 18.0 ns, `log` 22.0 and 17.3, `log2` 32.6 and 23.4, `sin` 41.2 and 36.9,
+  `tan` 56.4 and 48.3, `asin` 56.4 and 40.2, `acos` 58.5 and 41.9, `atan2`
+  38.7 and 32.9, `pow` 72.4 and 57.5, `hypot` 19.5 and 13.4, and `pow_f32`
+  87.8 and 75.7; `sin_f32` and `asin_f32`, decided by their single-`f64`
+  paths, did not move. Baseline builds are unchanged.
 
 Not started: phase 1's benchmarks (the UCRT timings in open questions stand
 until there is a kernel to compare), phase 6's faster kernels and dispatch,

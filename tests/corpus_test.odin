@@ -775,9 +775,6 @@ UNPINNED :: []string {
 	"L0601",
 	// A `base:runtime` without `Type_Info`/`Member_Info`; the runtime is always loaded.
 	"L0575",
-	// `core:math`'s package-private FMA built-ins, which no other package can
-	// name and `core:math` calls correctly.
-	"L0738",
 }
 
 @(test)

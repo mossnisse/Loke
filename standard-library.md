@@ -2301,7 +2301,7 @@ The rest of the package is:
   `high < low` panics;
 - `floor`, `ceil`, `round`, `trunc`, `mod`, `sqrt`, `hypot`, `fma`, `pow`,
   `exp`, `log`, `log2`, `log10`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`,
-  `atan2`, `to_radians`, and `to_degrees`.
+  `atan2`, `to_radians`, `to_degrees`, and `fma_is_instruction`.
 
 Floating-point functions use an unsuffixed name for `f64` and `_f32` for
 `f32`, avoiding ambiguous overloads for untyped literals. There is no implicit
@@ -2317,7 +2317,9 @@ result does not depend on the C library, and the product's exponent is not
 bounded, so a finite product too large for the format still meets the addend.
 On a [CPU level](compiler-guide.md#cpu-levels) with an FMA instruction it is
 that instruction, and elsewhere integer arithmetic; the results agree, except
-which NaN a NaN operand yields, which neither promises. `sqrt` is not backed
+which NaN a NaN operand yields, which neither promises. `fma_is_instruction()`
+is a constant, true where `fma` is the instruction, so that `when` can choose
+an algorithm that calls `fma` only where it is fast. `sqrt` is not backed
 by the C library either: it is the processor's square root instruction, which
 IEEE 754 makes correctly rounded, and a call with a constant argument has a
 compile-time value, rounded exactly as the instruction rounds. Which NaN it
@@ -2348,9 +2350,11 @@ Each procedure returns its exact mathematical result rounded once to the
 result's width, to nearest with ties to even, with gradual underflow and
 overflow to infinity. The result is therefore the same bits on every machine,
 [CPU level](compiler-guide.md#cpu-levels), and optimization level, and when a
-call is evaluated at compile time. No procedure calls the C library or uses
-`math.fma`, so none depends on the processor's FMA either. Every NaN result
-is the positive quiet NaN with no payload (`0x7ff8000000000000`,
+call is evaluated at compile time. No procedure calls the C library. Where
+`math.fma_is_instruction()` is true, the exact products the fast paths take
+come from `math.fma`, and elsewhere from Dekker's algorithm, which gives
+the same exact value, so the processor's FMA changes only their speed. Every
+NaN result is the positive quiet NaN with no payload (`0x7ff8000000000000`,
 `0x7fc00000`), whatever NaN produced it.
 
 The package has `exp`, `log`, `log2`, `log10`, `pow`, `sqrt`, `sin`, `cos`,

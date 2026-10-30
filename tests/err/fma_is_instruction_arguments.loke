@@ -1,0 +1,8 @@
+// standard-library.md "`core:math`": `fma_is_instruction` takes no argument.
+package main;
+
+import "core:math";
+
+main :: proc() {
+	when (math.fma_is_instruction(1.0)) {}
+}

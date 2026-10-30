@@ -416,6 +416,19 @@ fma :: proc(a: f64, b: f64, c: f64) -> f64 ---;
 fma_f32 :: proc(a: f32, b: f32, c: f32) -> f32 ---;
 
 /*
+	Whether `fma` and `fma_f32` are one instruction at the program's CPU level,
+	as at `-cpu=x86-64-v3`, rather than slower integer arithmetic. A constant,
+	so `when` can choose between an algorithm that calls `fma` and one that
+	does not:
+
+	    when (math.fma_is_instruction()) { ... }
+
+	Their results are the same either way.
+*/
+@(intrinsic)
+fma_is_instruction :: proc() -> bool ---;
+
+/*
 	`base` raised to `exponent`, following the IEC 60559 special-case table:
 
 	  pow(x, +-0)                          -> 1, for every x including NaN

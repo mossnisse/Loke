@@ -34,7 +34,7 @@ CPU_LEVEL_CASES :: []string {
 CPU_LEVELS :: []string{"x86-64-v2", "x86-64-v3"}
 
 // What the startup check prints on a processor without the level.
-@(private = "file")
+@(private)
 UNSUPPORTED_CPU :: "loke: this processor does not support "
 
 @(test)

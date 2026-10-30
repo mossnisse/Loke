@@ -342,6 +342,12 @@ checklist.
   static constructor, before its C host's `main`, and the host can check first
   with `loke_rt_v1_cpu_supports`
   ([CPU levels](compiler-guide.md#cpu-levels)).
+- `math.fma_is_instruction()` is a constant, true at a CPU level where
+  `math.fma` is one instruction, so that `when` can choose an algorithm by it.
+  `core:math/repro` does: at `x86-64-v3` its exact products come from the
+  instruction, with the same results, and its functions take up to a third
+  less time, `asin` 29%, `pow` 21%, and `hypot` 31% less
+  ([`core:math`](standard-library.md#coremath)).
 - `core:math/repro` holds correctly rounded elementary functions, whose
   results are the same bits on every machine, CPU level, and optimization
   level, and at compile time: `exp`, `log`, `log2`, `log10`, `pow`, `sqrt`,
