@@ -187,13 +187,12 @@ Still open:
   replaces. One element at a constant index has slots of its own, which a store
   naming it replaces: a view parameter's (`prov_view_element`), and a local
   view's whose start in the range its borrow lends is known
-  (`prov_local_view_element`). A store into a view parameter at any other
-  index still joins into the parameter itself, as does a store whose copies no
-  reborrow links to where it lands; known-gaps.md records [a rejection the
-  first
-  causes](known-gaps.md#a-store-through-a-slice-parameter-at-a-variable-index-joins-into-the-parameter).
-  A record stored whole through a parameter replaces, and links, each carrier
-  slot it lands in. Storage below the second load gets a loan per carrier only
+  (`prov_local_view_element`). A carrier stored into a view parameter at any
+  other index lands in each of its element slots and replaces none
+  (`prov_view_any_element_store`). A record stored whole into any element of
+  a view parameter still joins into the parameter itself, as does a store
+  whose copies no reborrow links to where it lands. A record stored whole through a parameter replaces, and
+  links, each carrier slot it lands in. Storage below the second load gets a loan per carrier only
   where the storage above it is one place; through a view or past the last
   load depth it is one slot.
 - **Matrix coverage.** Slices and traversals are taken of a fixed array, so

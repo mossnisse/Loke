@@ -1,24 +1,42 @@
 L0641
-@81:15
+@83:15
 `s` cannot be used here: a mutable reborrow of it is still in use
 L0641
-@90:10
+@92:10
 `s` cannot be used here: a mutable reborrow of it is still in use
 L0641
-@98:10
+@100:10
 `s` cannot be used here: a mutable reborrow of it is still in use
 L0641
-@107:10
+@109:10
 `s` cannot be used here: a mutable reborrow of it is still in use
 L0641
-@115:10
+@117:10
 `s` cannot be used here: a mutable reborrow of it is still in use
 L0641
-@123:10
+@125:10
 `s` cannot be used here: a mutable reborrow of it is still in use
 L0641
-@135:15
+@137:15
 `s` cannot be used here: a mutable reborrow of it is still in use
 L0641
-@143:8
+@145:8
+`s` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@192:2
+`node` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@200:2
+`node` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@207:2
+`node` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@216:2
+`node` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@225:15
+`s` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@234:8
 `s` cannot be used here: a mutable reborrow of it is still in use
