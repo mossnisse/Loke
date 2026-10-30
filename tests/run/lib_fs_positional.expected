@@ -1,0 +1,34 @@
+true
+true
+ok 2
+ok 4
+01AB
+ok 2
+89
+End_Of_Input Read
+End_Of_Input Read
+true
+789
+Unexpected_End Read
+true
+13 01AB456789..Z
+13
+true
+14 01AB456789..Z!
+Unsupported Read
+Unsupported Write
+ok 0
+true
+Closed Read
+Closed Write
+ok 4
+AB45
+Unsupported Write
+true
+Unsupported Write
+true
+Unsupported Read
+true
+14 01AB456789..Z!
+true
+true

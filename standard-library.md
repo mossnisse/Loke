@@ -1851,6 +1851,51 @@ recover_tail :: proc(log: inout fs.File, whole: u64) -> Status(io.Error) {
 }
 ```
 
+### Positional I/O
+
+```loke
+impl File {
+	read_at       :: proc(self: inout File, destination: []mut u8, offset: u64)
+		-> Result(int, io.Error);
+	write_at      :: proc(self: inout File, source: []u8, offset: u64)
+		-> Result(int, io.Error);
+	read_exact_at :: proc(self: inout File, destination: []mut u8, offset: u64)
+		-> Status(io.Error);
+	write_all_at  :: proc(self: inout File, source: []u8, offset: u64)
+		-> Status(io.Error);
+}
+```
+
+`read_at` and `write_at` are `read` and `write` at `offset` rather than the
+position, each in one system call, so no seek is made for anything to come
+between. They check the access and a closed file as `read` and `write` do, and
+an empty buffer answers zero. A read that reaches the end of the file is short;
+one that starts at or past the end is `End_Of_Input`. A write past the end
+extends the file, and the bytes between read as zero. An append handle reads
+at any offset, but `write_at` on it is `Unsupported`, since it writes only at
+the end. An offset above `2^63 - 1` is `Unsupported`. After either call the
+position is unspecified: seek before the next `read` or `write`.
+
+`read_exact_at` and `write_all_at` loop over short transfers, with the
+contracts of `io.read_exact` and `io.write_all`: a file that ends before
+`destination` is full is `Unexpected_End`, and a failure part way has already
+moved the bytes before it.
+
+Example (imports `core:fs` and `core:io`): a fixed-size page of a store,
+read and written in place.
+
+```loke
+PAGE :: 4096;
+
+read_page :: proc(store: inout fs.File, page: u64, into: []mut u8) -> Status(io.Error) {
+	return store.read_exact_at(&mut into[0:PAGE], page * PAGE);
+}
+
+write_page :: proc(store: inout fs.File, page: u64, from: []u8) -> Status(io.Error) {
+	return store.write_all_at(from[0:PAGE], page * PAGE);
+}
+```
+
 ### Whole-file convenience
 
 ```loke

@@ -335,6 +335,11 @@ checklist.
   moving the position. `io.Operation` gains `Set_Size`
   ([Opening and file I/O](standard-library.md#opening-and-file-io)).
 
+- `fs.File.read_at` and `write_at` read and write at an offset in one call,
+  and `read_exact_at` and `write_all_at` loop until the whole buffer has
+  moved, for files read and written in place by page
+  ([Positional I/O](standard-library.md#positional-io)).
+
 - `fs.replace_atomic` and `fs.replace_atomic_text` replace a file so that a
   reader, or the program after a crash or power loss, sees either the whole
   previous file or the whole new one, and on success the new one is durable

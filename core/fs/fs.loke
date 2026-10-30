@@ -135,6 +135,75 @@ impl File {
 	}
 
 	/**
+		`read`, but from `offset` rather than the position, in one call: there is
+		no seek for anything to come between. A read at or past the end is
+		`End_Of_Input`. Afterward the position is unspecified, so seek before the
+		next `read` or `write`.
+	*/
+	// standard-library.md "Positional I/O"; why the position is left unspecified
+	// is comments.md "Standard-library API choices".
+	read_at :: proc(self: inout File, destination: []mut u8, offset: u64) -> Result(int, io.Error) {
+		if (destination.len() == 0) { return 0; }
+		if (self.handle == NO_HANDLE) {
+			return .err(io.make_error(.Closed, .Read));
+		}
+		if (self.access == .Write || offset > u64(MAX_FILE_SIZE)) {
+			return .err(io.make_error(.Unsupported, .Read));
+		}
+		return read_handle_at(self.handle, destination, i64(offset));
+	}
+
+	/**
+		`write`, but at `offset` rather than the position, in one call. Writing
+		past the end extends the file, and the bytes between read as zero. An
+		append handle answers `Unsupported`: it writes only at the end.
+		Afterward the position is unspecified.
+	*/
+	write_at :: proc(self: inout File, source: []u8, offset: u64) -> Result(int, io.Error) {
+		if (source.len() == 0) { return 0; }
+		if (self.handle == NO_HANDLE) {
+			return .err(io.make_error(.Closed, .Write));
+		}
+		if (self.access == .Read || self.append || offset > u64(MAX_FILE_SIZE)) {
+			return .err(io.make_error(.Unsupported, .Write));
+		}
+		return write_handle_at(self.handle, source, i64(offset));
+	}
+
+	/**
+		Fills `destination` from `offset` on, or fails: `io.read_exact`'s
+		contract, a file that ends first included, at an offset.
+	*/
+	read_exact_at :: proc(self: inout File, destination: []mut u8, offset: u64) -> Status(io.Error) {
+		filled := 0;
+		for (; filled < destination.len(); ) {
+			switch (self.read_at(&mut destination[filled:], offset + u64(filled))) {
+			case .ok(count):
+				if (count == 0) { return .err(io.make_error(.Unexpected_End, .Read)); }
+				filled += count;
+			case .err(error):
+				if (io.is(error, .End_Of_Input)) {
+					return .err(io.make_error(.Unexpected_End, .Read));
+				}
+				return .err(error);
+			}
+		}
+	}
+
+	/// Writes every byte of `source` from `offset` on, looping over partial writes.
+	write_all_at :: proc(self: inout File, source: []u8, offset: u64) -> Status(io.Error) {
+		written := 0;
+		for (; written < source.len(); ) {
+			count := self.write_at(source[written:], offset + u64(written)) or_return;
+			// `io.write_all`'s guard against a write that accepts nothing.
+			if (count == 0) {
+				return .err(io.make_error(.Broken_Pipe, .Write));
+			}
+			written += count;
+		}
+	}
+
+	/**
 		Returns once the file's written data and metadata have been handed to the
 		storage device, so they survive a crash or power loss as far as the device
 		honors the request. `File` keeps no buffer of its own, so there is nothing
@@ -633,12 +702,43 @@ close_handle :: proc(handle: Handle) -> Status(io.Error) {
 	}
 }
 
+// `OVERLAPPED` on 64-bit Windows: 32 bytes. On a handle opened without
+// `FILE_FLAG_OVERLAPPED` it carries only the offset to read or write at, and the
+// call still completes before it returns. It also moves the file pointer to just
+// past the bytes moved, which is why `read_at` leaves the position unspecified.
+@(private)
+Overlapped :: struct {
+	internal:      int,
+	internal_high: int,
+	offset_low:    u32,
+	offset_high:   u32,
+	event:         int,
+}
+
+@(private)
+at_offset :: proc(offset: i64) -> Overlapped {
+	return Overlapped{0, 0, u32(offset & 0xFFFFFFFF), u32(offset >> 32), 0};
+}
+
 @(private)
 read_handle :: proc(handle: Handle, destination: []mut u8) -> Result(int, io.Error) {
+	return read_native(handle, destination, nil);
+}
+
+@(private)
+read_handle_at :: proc(handle: Handle, destination: []mut u8, offset: i64) -> Result(int, io.Error) {
+	place := at_offset(offset);
+	return read_native(handle, destination, &mut place);
+}
+
+@(private)
+read_native :: proc(handle: Handle, destination: []mut u8, place: rawptr) -> Result(int, io.Error) {
 	wanted := destination.len();
 	if (wanted > MAX_CHUNK) { wanted = MAX_CHUNK; }
 	read: u32 = 0;
-	if (rt_read_file(handle, unsafe.raw_data(destination), u32(wanted), &mut read, nil) == 0) {
+	// A positional read past the end fails with ERROR_HANDLE_EOF, which is
+	// already `End_Of_Input`.
+	if (rt_read_file(handle, unsafe.raw_data(destination), u32(wanted), &mut read, place) == 0) {
 		error := from_last_error(.Read);
 		// A read that ends at the end of a pipe is the end of input, not a fault.
 		if (io.is(error, .Broken_Pipe)) {
@@ -654,10 +754,21 @@ read_handle :: proc(handle: Handle, destination: []mut u8) -> Result(int, io.Err
 
 @(private)
 write_handle :: proc(handle: Handle, source: []u8) -> Result(int, io.Error) {
+	return write_native(handle, source, nil);
+}
+
+@(private)
+write_handle_at :: proc(handle: Handle, source: []u8, offset: i64) -> Result(int, io.Error) {
+	place := at_offset(offset);
+	return write_native(handle, source, &mut place);
+}
+
+@(private)
+write_native :: proc(handle: Handle, source: []u8, place: rawptr) -> Result(int, io.Error) {
 	wanted := source.len();
 	if (wanted > MAX_CHUNK) { wanted = MAX_CHUNK; }
 	written: u32 = 0;
-	if (rt_write_file(handle, unsafe.raw_data(source), u32(wanted), &mut written, nil) == 0) {
+	if (rt_write_file(handle, unsafe.raw_data(source), u32(wanted), &mut written, place) == 0) {
 		return .err(from_last_error(.Write));
 	}
 	return int(written);

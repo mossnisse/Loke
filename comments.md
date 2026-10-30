@@ -2011,6 +2011,15 @@ boundaries and API shapes follow a few common choices:
   other operation already goes through the link, so reporting the link's own
   directory bit is consistent with them, costs nothing, and leaves `Other`
   free for link support to give a meaning to.
+- **Positional I/O leaves the position unspecified.** On a handle not
+  opened for overlapped I/O, Windows moves the file pointer to just past the
+  bytes a positional `ReadFile` or `WriteFile` moved, while POSIX `pread` and
+  `pwrite` leave it alone. Promising either would cost the other platform an
+  extra seek on every call, and a caller mixing positional and stream I/O
+  already has `seek` to say where the stream goes next. Opening every Windows
+  handle for overlapped I/O would leave the pointer alone, but such a handle
+  keeps no file pointer at all, so `read` and `write` would have to track the
+  position themselves.
 - **Paths keep Windows' own normalization.** `core:fs` hands a path to
   Windows unchanged, so it names what it names to a shell or any other
   Windows program. Following each link before a later `..`, as POSIX does, would mean

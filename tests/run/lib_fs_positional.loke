@@ -1,0 +1,130 @@
+package main;
+
+import "core:fmt";
+import "core:fs";
+import "core:io";
+import "core:os";
+import "core:path";
+import "core:strings";
+
+// `File.read_at`, `write_at`, `read_exact_at`, and `write_all_at`
+// (standard-library "Positional I/O"): each reads or writes at its own offset,
+// a short read at the end is not a failure but an exact one is, a write past
+// the end leaves zeros, and an append handle refuses to write anywhere but the
+// end.
+
+succeeded :: proc(outcome: Status(io.Error)) -> bool {
+	switch (outcome) {
+	case .ok:  return true;
+	case .err: return false;
+	}
+	return false;
+}
+
+failure_of :: proc(outcome: Status(io.Error)) -> io.Error {
+	switch (outcome) {
+	case .ok:  return io.make_error(.Other, .Other);
+	case .err(error): return error;
+	}
+}
+
+// What a read or write answered: the count, or the code and operation.
+report :: proc(outcome: Result(int, io.Error)) {
+	switch (outcome) {
+	case .ok(count): fmt.println("ok", count);
+	case .err(error): fmt.println(io.code_of(error), io.operation_of(error));
+	}
+}
+
+root :: proc() -> string {
+	switch (os.get_environment("TEMP")) {
+	case .ok(outcome):
+		switch (outcome) {
+		case .some(base): return path.join([]string_view{base, "loke_fs_positional"});
+		case .none:
+		}
+	case .err:
+	}
+	return strings.copy("loke_fs_positional");
+}
+
+// The file's bytes, with each zero byte shown as `.`.
+show :: proc(file: string_view) {
+	bytes := fs.read_bytes(file) or_else panic("a file the test just wrote could not be read");
+	shown := make([dynamic]u8, 0, bytes.len());
+	foreach (byte in bytes) {
+		shown.append(u8('.') if byte == 0 else byte);
+	}
+	fmt.println(bytes.len(), string_view.from_utf8(shown[:]) or_else "not UTF-8");
+}
+
+text :: proc(bytes: []u8) -> string_view {
+	return string_view.from_utf8(bytes) or_else "not UTF-8";
+}
+
+main :: proc() {
+	directory := root();
+	data := path.join([]string_view{directory, "data.bin"});
+	_ = fs.remove(data);
+	_ = fs.remove_directory(directory);
+	fmt.println(succeeded(fs.create_directories(directory)));
+
+	file := fs.open(data, fs.Open_Options{access = .Read_Write, disposition = .Create_New, append = false}) or_else panic("a new file could not be created");
+	fmt.println(succeeded(io.write_string(inout file, "0123456789")));
+
+	// Each call names its own offset.
+	ab: string_view = "AB";
+	report(file.write_at(ab.bytes(), 2));
+	four: [4]u8 = {};
+	report(file.read_at(&mut four[:], 0));
+	fmt.println(text(four[:]));
+	// A read that reaches the end is short, not a failure; one that starts there
+	// is `End_Of_Input`.
+	report(file.read_at(&mut four[:], 8));
+	fmt.println(text(four[0:2]));
+	report(file.read_at(&mut four[:], 10));
+	// The offset's high half reaches the platform: 2^32 is past this file's end,
+	// not offset 0.
+	report(file.read_at(&mut four[:], 0x100000000));
+	three: [3]u8 = {};
+	fmt.println(succeeded(file.read_exact_at(&mut three[:], 7)));
+	fmt.println(text(three[:]));
+	short := failure_of(file.read_exact_at(&mut four[:], 8));
+	fmt.println(io.code_of(short), io.operation_of(short));
+
+	// Writing past the end extends the file, and the gap reads as zeros.
+	z: string_view = "Z";
+	fmt.println(succeeded(file.write_all_at(z.bytes(), 12)));
+	show(data);
+	// Afterward the position is unspecified, so a stream write seeks first.
+	fmt.println(file.seek(0, .End) or_else 0);
+	fmt.println(succeeded(io.write_string(inout file, "!")));
+	show(data);
+
+	// An offset no signed 64-bit offset can hold, and an empty buffer.
+	report(file.read_at(&mut four[:], 0x8000000000000000));
+	report(file.write_at(z.bytes(), 0x8000000000000000));
+	report(file.read_at(&mut four[0:0], 0));
+	fmt.println(succeeded(file.close()));
+	report(file.read_at(&mut four[:], 0));
+	report(file.write_at(z.bytes(), 0));
+
+	// An append handle reads anywhere and writes only at the end.
+	appender := fs.open(data, fs.Open_Options{access = .Read_Write, disposition = .Open_Existing, append = true}) or_else panic("a file the test just wrote could not be opened");
+	report(appender.read_at(&mut four[:], 2));
+	fmt.println(text(four[:]));
+	report(appender.write_at(z.bytes(), 0));
+	fmt.println(succeeded(appender.close()));
+
+	// A handle without the direction refuses it.
+	reader := fs.open_read(data) or_else panic("a file the test just wrote could not be opened");
+	report(reader.write_at(z.bytes(), 0));
+	fmt.println(succeeded(reader.close()));
+	writer := fs.open(data, fs.Open_Options{access = .Write, disposition = .Open_Existing, append = false}) or_else panic("a file the test just wrote could not be opened");
+	report(writer.read_at(&mut four[:], 0));
+	fmt.println(succeeded(writer.close()));
+	show(data);
+
+	fmt.println(succeeded(fs.remove(data)));
+	fmt.println(succeeded(fs.remove_directory(directory)));
+}
