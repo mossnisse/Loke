@@ -2909,7 +2909,10 @@ algebra, the planes' intersection point, the segments' and triangles' closest
 points, the overlap tests, the box, plane, and triangle casts, `transform_box`,
 and the polygon procedures but `convex_hull`, is evaluated at compile time with
 the same result, and every result is the same bits on every machine,
-[CPU level](compiler-guide.md#cpu-levels), and optimization level.
+[CPU level](compiler-guide.md#cpu-levels), and optimization level. An `f32`
+box cast computes its three slabs in `Simd` lanes, each lane one axis in the
+documented order, which changes its speed and not its bits
+([Milestone 5 results](geometry-plan.md#milestone-5-results)).
 
 ## `core:random`
 

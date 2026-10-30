@@ -7,6 +7,7 @@ package geometry;
 import "base:interfaces";
 import "core:math";
 import "core:math/linalg";
+import "core:simd";
 
 /// The points `origin + t*direction`; `direction` need not be a unit vector, and `t` is in units of its length.
 Ray2 :: struct($T: type) where interfaces.Numeric(T) { origin, direction: linalg.Vector2(T) }
@@ -103,6 +104,33 @@ slab :: proc(near: inout $T, far: inout T, low, high, origin, inverse: T) where 
 	if (leave < far) { far = leave; }
 }
 
+// `slab` on the three axes of an `f32` box at once, an axis a lane: the
+// faces chosen by a lane-wise select, which LLVM does not turn into a branch
+// on the direction's sign as it does the scalar choice, and each lane's
+// distances `slab`'s operations in its order, so the bits are the same
+// (geometry-plan.md "Milestone 5 results"). The fourth lane is computed and
+// dropped.
+@(private)
+slab_lanes :: proc(near: inout f32, far: inout f32, box: Aabb3(f32), origin: linalg.Vector3(f32), i: Simd(f32, 4)) {
+	low := lanes(box.min, 0);
+	high := lanes(box.max, 0);
+	o := lanes(origin, 0);
+	zero: Simd(f32, 4) = 0;
+	negative := i < zero;
+	enter := simd.to_array((simd.select(negative, high, low) - o)*i);
+	leave := simd.to_array((simd.select(negative, low, high) - o)*i);
+	foreach (axis in 0 ..< 3) {
+		if (near < enter[axis]) { near = enter[axis]; }
+		if (leave[axis] < far) { far = leave[axis]; }
+	}
+}
+
+// A vector's components in the first three lanes and `pad` in the fourth.
+@(private)
+lanes :: proc(v: linalg.Vector3(f32), pad: f32) -> Simd(f32, 4) {
+	return simd.from_array([4]f32{v.x, v.y, v.z, pad});
+}
+
 // The slab test's answer: `near` when it is at most `far` widened by
 // `F*_SLAB_WIDENING` of the larger magnitude. An infinite end needs no
 // widening, and an entry at +inf or an exit at -inf is a slab the ray never
@@ -141,15 +169,29 @@ cast_ray2_box2 :: proc(ray: Ray2($T), box: Aabb2(T), t_min, t_max: T) -> Option(
 cast_ray3_box3_inverse :: proc(ray: Ray3($T), inverse_direction: linalg.Vector3(T), box: Aabb3(T), t_min, t_max: T) -> Option(T) where linalg.Real(T) {
 	if (box.is_empty()) { return .none; }
 	near, far := t_min, t_max;
-	slab(inout near, inout far, box.min.x, box.max.x, ray.origin.x, inverse_direction.x);
-	slab(inout near, inout far, box.min.y, box.max.y, ray.origin.y, inverse_direction.y);
-	slab(inout near, inout far, box.min.z, box.max.z, ray.origin.z, inverse_direction.z);
+	when (T == f32) {
+		slab_lanes(inout near, inout far, box, ray.origin, lanes(inverse_direction, 0));
+	} else {
+		slab(inout near, inout far, box.min.x, box.max.x, ray.origin.x, inverse_direction.x);
+		slab(inout near, inout far, box.min.y, box.max.y, ray.origin.y, inverse_direction.y);
+		slab(inout near, inout far, box.min.z, box.max.z, ray.origin.z, inverse_direction.z);
+	}
 	return slab_hit(near, far);
 }
 
+// For `f32`, the inverse is computed in the lanes too, each lane
+// `inverse_direction`'s division.
 @(private)
 cast_ray3_box3 :: proc(ray: Ray3($T), box: Aabb3(T), t_min, t_max: T) -> Option(T) where linalg.Real(T) {
-	return cast_ray3_box3_inverse(ray, ray.inverse_direction(), box, t_min, t_max);
+	when (T == f32) {
+		if (box.is_empty()) { return .none; }
+		near, far := t_min, t_max;
+		one: Simd(f32, 4) = 1;
+		slab_lanes(inout near, inout far, box, ray.origin, one/lanes(ray.direction, 1));
+		return slab_hit(near, far);
+	} else {
+		return cast_ray3_box3_inverse(ray, ray.inverse_direction(), box, t_min, t_max);
+	}
 }
 
 // The roots of `|origin + t*direction - center|^2 = radius^2` in the form of
@@ -223,6 +265,15 @@ edge_sign :: proc(value: $T, p, q: linalg.Vector2(T)) -> Sign where linalg.Real(
 	}
 }
 
+// `v`'s components on the axes `kz + 1`, `kz + 2`, and `kz`, cyclically, so
+// that `kz` is last, without indexing by a run-time axis.
+@(private)
+rotated :: proc(v: linalg.Vector3($T), kz: int) -> linalg.Vector3(T) {
+	if (kz == 0) { return linalg.Vector3(T).from_components(v.y, v.z, v.x); }
+	if (kz == 1) { return linalg.Vector3(T).from_components(v.z, v.x, v.y); }
+	return v;
+}
+
 // Woop, Benthin, and Wald, Watertight ray/triangle intersection (2013): the
 // corners are moved to the ray's origin, the axis of the direction's largest
 // component becomes z, and the corners are sheared so the ray runs along z.
@@ -235,23 +286,25 @@ edge_sign :: proc(value: $T, p, q: linalg.Vector2(T)) -> Sign where linalg.Real(
 // out.
 @(private)
 cast_ray3_triangle3 :: proc(ray: Ray3($T), triangle: Triangle3(T), t_min, t_max: T) -> Option(Triangle_Hit(T)) where linalg.Real(T) {
-	d := ray.direction;
 	kz := 0;
-	if (d.x.abs() < d.y.abs()) { kz = 1; }
-	if (d[kz].abs() < d.z.abs()) { kz = 2; }
-	kx := (kz + 1) % 3;
-	ky := (kx + 1) % 3;
-	if (d[kz] == T(0)) { return .none; }
-	sx := d[kx]/d[kz];
-	sy := d[ky]/d[kz];
-	sz := T(1)/d[kz];
+	largest := ray.direction.x.abs();
+	if (largest < ray.direction.y.abs()) {
+		kz = 1;
+		largest = ray.direction.y.abs();
+	}
+	if (largest < ray.direction.z.abs()) { kz = 2; }
+	d := rotated(ray.direction, kz);
+	if (d.z == T(0)) { return .none; }
+	sx := d.x/d.z;
+	sy := d.y/d.z;
+	sz := T(1)/d.z;
 
-	a := triangle.a - ray.origin;
-	b := triangle.b - ray.origin;
-	c := triangle.c - ray.origin;
-	a2 := linalg.Vector2(T).from_components(a[kx] - sx*a[kz], a[ky] - sy*a[kz]);
-	b2 := linalg.Vector2(T).from_components(b[kx] - sx*b[kz], b[ky] - sy*b[kz]);
-	c2 := linalg.Vector2(T).from_components(c[kx] - sx*c[kz], c[ky] - sy*c[kz]);
+	a := rotated(triangle.a - ray.origin, kz);
+	b := rotated(triangle.b - ray.origin, kz);
+	c := rotated(triangle.c - ray.origin, kz);
+	a2 := linalg.Vector2(T).from_components(a.x - sx*a.z, a.y - sy*a.z);
+	b2 := linalg.Vector2(T).from_components(b.x - sx*b.z, b.y - sy*b.z);
+	c2 := linalg.Vector2(T).from_components(c.x - sx*c.z, c.y - sy*c.z);
 
 	u := c2.x*b2.y - c2.y*b2.x;
 	v := a2.x*c2.y - a2.y*c2.x;
@@ -265,7 +318,7 @@ cast_ray3_triangle3 :: proc(ray: Ray3($T), triangle: Triangle3(T), t_min, t_max:
 
 	det := u + v + w;
 	if (det == T(0)) { return .none; }
-	t := (u*(sz*a[kz]) + v*(sz*b[kz]) + w*(sz*c[kz]))/det;
+	t := (u*(sz*a.z) + v*(sz*b.z) + w*(sz*c.z))/det;
 	if (!(at_most(t_min, t) && at_most(t, t_max))) { return .none; }
 	return .some(Triangle_Hit(T){t, linalg.Vector3(T).from_components(u/det, v/det, w/det)});
 }

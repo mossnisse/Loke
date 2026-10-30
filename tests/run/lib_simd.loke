@@ -48,6 +48,10 @@ main :: proc() {
 	scale := 3;
 	widened: Simd(int, 4) = scale;
 	fmt.println(widened);
+	// A typed constant splats as an untyped one does, `T(1)` in a generic body
+	// among them; it once reached the backend as a scalar of the vector's type.
+	half: Simd(f32, 4) = f32(0.5);
+	fmt.println(half, typed_splat(f64), TYPED_SPLAT);
 
 	// "A comparison yields a lane mask, not a `bool`."
 	mask := a > b;
@@ -204,6 +208,13 @@ lane_arithmetic :: proc() -> i32 {
 }
 
 FOLDED :: lane_arithmetic();
+
+typed_splat :: proc($T: type) -> Simd(T, 2) {
+	one: Simd(T, 2) = T(1);
+	return one + T(2);
+}
+
+TYPED_SPLAT :: typed_splat(f32);
 
 // The lane-wise conversion, in the checker and in the evaluator. `const_of`
 // carries no lanes and the splat path answered only its own target, so both

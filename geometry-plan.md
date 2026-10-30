@@ -1,12 +1,12 @@
 # Geometry library plan
 
-Status: milestones 1 to 4 implemented, 2026-10-30
+Status: implemented, 2026-10-30, every milestone
 ([Milestone 1 results](#milestone-1-results),
 [Milestone 2 results](#milestone-2-results),
 [Milestone 3 results](#milestone-3-results),
-[Milestone 4 results](#milestone-4-results)), after its questions were
-settled the same day ([Settled questions](#settled-questions)); milestone 5
-is a proposal.
+[Milestone 4 results](#milestone-4-results),
+[Milestone 5 results](#milestone-5-results)), after its questions were
+settled the same day ([Settled questions](#settled-questions)).
 [`core:math/geometry`](standard-library.md#coremathgeometry) documents what
 has shipped. This document specifies a
 `core:math/geometry` package of shapes, exact predicates, and the queries
@@ -407,7 +407,8 @@ Ordered by how much the later parts build on the earlier ones:
 4. **Polygons.** Done ([Milestone 4 results](#milestone-4-results)).
    Signed area, centroid, winding number, `contains` with a
    `Fill_Rule`, convex hull, `is_convex`, and `is_simple`.
-5. **Measured performance.** Benchmarks of ray-box and ray-triangle casts,
+5. **Measured performance.** Done ([Milestone 5 results](#milestone-5-results)).
+   Benchmarks of ray-box and ray-triangle casts,
    frustum culling, and the predicates' fast and exact paths over arrays,
    against hand-written loops, then `Simd` inside an operation only where it
    wins without changing a result bit, as
@@ -787,3 +788,114 @@ Decided while implementing:
   documented contract says. A planted bug removing the split overruns it.
 - **`convex_hull` sorts with `slice.sort_by`**, lexicographically by `x` then
   `y`, and is the one polygon procedure that does not fold at compile time.
+
+## Milestone 5 results
+
+Done 2026-10-30. `bench/geometry.loke` times, each over 1024 operands, a ray
+cast against a box with and without the inverse direction given, against a
+triangle, a frustum culling boxes and spheres, and each predicate on random
+points, which its filter decides, and on points exactly on a line, plane,
+circle, or sphere, which reach its exact path. Beside them are the plain tests
+written by hand: the slab test without its widening, Möller and Trumbore's
+ray-triangle test, the frustum test inline, and each predicate's formula
+without its filter. Its hashes of every result bit, in
+`bench/geometry.expected`, are the same at both CPU levels, and each
+hand-written form that decides the same inputs hashes as the package's, so
+`perf.ps1` checks on every run that no result changed.
+`tests/run/lib_geometry_lanes.loke`, in the CPU-level corpus, checks the box
+and triangle casts against the scalar formulas they replaced, bit for bit, at
+`f32` and `f64` over 8000 rays each, most of them aimed at a box's corner or
+center or a triangle's corner or edge on a grid, with infinities, NaNs,
+signed zeros, and subnormals among the coordinates and the range, and folded
+at compile time. Seven of eight planted bugs fail it; the eighth makes the
+exit's comparison inclusive, which changes only the sign of a zero exit, and
+the cast returns the entry. Every earlier `lib_geometry` test gives the same
+output at every optimization and CPU level tried.
+
+What changed:
+
+- **An `f32` box cast computes its three slabs in `Simd(f32, 4)` lanes**,
+  each lane one axis with `slab`'s operations in its order, the fourth
+  computed and dropped, and the entry and exit then narrowed axis by axis as
+  before. Without a given inverse, the inverse is computed in the lanes too.
+  LLVM compiled the scalar choice of each axis's near face, by the sign of
+  the inverse, to a branch, which a random ray mispredicts half the time; a
+  lane-wise select is never a branch.
+- **The triangle cast permutes the axes once** rather than indexing the
+  direction and the corners by the run-time axis `kz`. Each index carried a
+  bounds check whose panic formats the index, and the triangle cast was
+  the slowest of the casts. It is not a `Simd` change, and it
+  computes the same values.
+
+What stayed, and why:
+
+- **`f64` box casts.** `Simd(f64, 4)` is two registers at `x86-64`. The lane
+  form was 20 to 25% faster at `-opt=speed` but 13% slower at
+  `-opt=aggressive` and 64% slower at `-opt=size`.
+- **The predicates' filters.** `orient3d`'s three terms and their magnitudes
+  in lanes were 22% faster at `x86-64` and 9 to 11% slower at `x86-64-v3`
+  with `-opt=speed`, and 27 to 33% slower at `-opt=aggressive`. `incircle`'s
+  were slower at both CPU levels, by 9 and 22%. `orient2d`'s test of the
+  products' signs written as values rather than branches was 2 to 4%
+  slower.
+- **`slab_hit` without branches**, its tests combined into one condition,
+  was 35% slower than its branches, which predict well apart from the hit
+  itself.
+- **Frustum culling** runs within 13% of the hand-written loop at `x86-64`
+  and 26% at `x86-64-v3`, and was not changed.
+
+The best of several runs, in nanoseconds an operation, at `-opt=speed` on the
+development machine, a six-core Intel processor, the two builds run
+alternately. "Before" is milestone 4's package under the same benchmark; "by
+hand" is the hand-written loop.
+
+| Operation | `x86-64` before | `x86-64` after | `x86-64-v3` before | `x86-64-v3` after | By hand, `x86-64` |
+| --- | --- | --- | --- | --- | --- |
+| Box cast, `f32` | 10.97 | 7.46 | 13.71 | 10.97 | 2.62 |
+| Box cast, inverse given, `f32` | 10.85 | 6.22 | 10.79 | 8.53 | |
+| Box cast, `f64` | 11.45 | 10.97 | 10.26 | 10.15 | |
+| Triangle cast, `f32` | 29.23 | 18.74 | 26.48 | 18.16 | 4.34 |
+| Triangle cast, `f64` | 34.98 | 27.40 | 31.97 | 25.72 | |
+| Frustum and box, `f32` | 5.01 | | 2.44 | | 4.42 |
+| Frustum and box, `f64` | 5.05 | | 4.67 | | |
+| Frustum and sphere, `f32` | 2.65 | | 2.43 | | |
+| `orient2d`, filter | 6.70 | | 6.56 | | 1.72 |
+| `orient2d`, exact | 77.3 | | 74.7 | | |
+| `orient3d`, filter | 10.63 | | 10.42 | | 3.57 |
+| `orient3d`, exact | 376 | | 335 | | |
+| `incircle`, filter | 7.1 | | 6.96 | | 4.0 |
+| `incircle`, exact | 877 | | 836 | | |
+| `insphere`, filter | 17.9 | | 14.1 | | 9.93 |
+| `insphere`, exact | 3956 | | 3840 | | |
+
+At `-opt=aggressive` the `f32` box cast went from 8.89 to 7.48 ns, and with
+the inverse given from 7.26 to 10.57; at `-opt=size`, from 10.70 to 12.02
+and from 10.92 to 11.11. The triangle cast was faster at every optimization
+level, at `-opt=size` from 52.6 to 19.3 ns. The decisions were taken at
+`-opt=speed`, as for [linalg](linear-algebra-plan.md#milestone-4-results).
+
+The figures move with code placement. The hand-written `incircle` loop, whose
+code did not change, ran 18% faster in every build after the change than
+before it, and the `f32` box cast with the inverse given took 6.2 ns in one
+build and 10.9 in another that differed only in `orient3d`. So a decision
+needed an effect at both CPU levels and was checked at `-opt=aggressive`
+and `-opt=size`.
+
+The distance to the hand-written forms is mostly not the robustness the
+package adds. LLVM compiles the hand-written box loop four rays at a time,
+which it cannot do across the package's cast with its branches. The
+predicates' plain formula has no branch to predict. And the `f64` filter of
+`orient2d` is not inlined into its callers: LLVM inlines the exact path,
+whose one caller it is, into the filter, which then costs 1265 against the
+inliner's threshold of 225. Loke has no attribute that keeps a procedure out
+of line or marks it cold
+([Keeping a cold path out of line](open-questions.md#keeping-a-cold-path-out-of-line)).
+Each package case is a loop over slices, as the hand-written ones are: a loop
+indexing `[dynamic]` arrays reloaded their headers after every store, which
+cost the package's box casts about a third of their time.
+
+A compiler bug found and fixed in the same change, with a regression test in
+`tests/run/lib_simd.loke`: a typed constant scalar splatted into a vector,
+`zero: Simd(T, 4) = T(0)` in a generic body, kept its scalar type and value,
+and reached LLVM as a scalar constant of the vector's type, which Clang
+rejected.

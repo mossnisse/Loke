@@ -1,0 +1,565 @@
+package main;
+
+import "core:fmt";
+import "core:math";
+import "core:math/geometry";
+import "core:math/linalg";
+import "core:os";
+import "core:time";
+import "core:unsafe";
+
+// The operations of core:math/geometry that programs run in batches: rays
+// cast against boxes and triangles, boxes and spheres culled against a
+// frustum, and the four predicates on inputs their floating-point filter
+// decides and on degenerate inputs that reach their exact path, each over
+// an array of operands, beside the plain test written by hand
+// (geometry-plan.md "Milestone 5 results"). The hand-written forms are what a
+// caller might write without the package: the slab test without its
+// widening, Möller and Trumbore's ray-triangle test, the frustum test
+// inline, and each predicate's formula in `f64` without its filter. Run as
+// it is, it computes each once and prints a hash of every result bit, which
+// bench/geometry.expected holds, so perf.ps1 times the whole and checks that
+// no result changed; a hand-written form that decides the same inputs
+// prints the same hash as the package's. Run with `-times`, it prints the
+// fastest of several runs of each operation instead, the inputs built and
+// the hash taken outside the timing, in nanoseconds an operation.
+
+// A 64-bit linear congruential generator, so the operands are the same on
+// every machine.
+Random :: struct { state: u64 }
+
+impl Random {
+	// Uniform in [-1, 1).
+	next :: proc(self: inout) -> f64 {
+		self.state = self.state*%6364136223846793005 +% 1442695040888963407;
+		return f64(self.state >> 11)/9007199254740992.0*2.0 - 1.0;
+	}
+	// Uniform over the integers in [-limit, limit).
+	integer :: proc(self: inout, limit: int) -> f64 {
+		return math.floor(self.next()*f64(limit));
+	}
+}
+
+// The operands of every case: COUNT of each, swept ROUNDS times a run.
+COUNT :: 1024;
+ROUNDS :: 64;
+
+v3 :: proc($T: type, x, y, z: f64) -> linalg.Vector3(T) {
+	return linalg.Vector3(T).from_components(T(x), T(y), T(z));
+}
+
+random3 :: proc($T: type, random: inout Random, scale: f64) -> linalg.Vector3(T) {
+	x := random.next()*scale;
+	y := random.next()*scale;
+	z := random.next()*scale;
+	return v3(T, x, y, z);
+}
+
+// Rays from around the unit cube, each toward a point within `spread` of its
+// target, the center of the box or triangle it is cast against.
+rays :: proc($T: type, seed: u64, targets: []linalg.Vector3(T), spread: f64) -> [dynamic]geometry.Ray3(T) {
+	random := Random{seed};
+	result := make([dynamic]geometry.Ray3(T), 0, COUNT);
+	foreach (target in targets) {
+		origin := random3(T, inout random, 4.0);
+		aim := target + random3(T, inout random, spread);
+		result.append(geometry.Ray3(T).from_points(origin, aim));
+	}
+	return result;
+}
+
+box_centers :: proc(boxes: []geometry.Aabb3($T)) -> [dynamic]linalg.Vector3(T) {
+	result := make([dynamic]linalg.Vector3(T), 0, boxes.len());
+	foreach (box in boxes) { result.append(box.center()); }
+	return result;
+}
+
+triangle_centers :: proc(triangles: []geometry.Triangle3($T)) -> [dynamic]linalg.Vector3(T) {
+	result := make([dynamic]linalg.Vector3(T), 0, triangles.len());
+	foreach (t in triangles) { result.append((t.a + t.b + t.c)/T(3)); }
+	return result;
+}
+
+boxes :: proc($T: type, seed: u64, scale: f64) -> [dynamic]geometry.Aabb3(T) {
+	random := Random{seed};
+	result := make([dynamic]geometry.Aabb3(T), 0, COUNT);
+	foreach (_ in 0 ..< COUNT) {
+		center := random3(T, inout random, scale);
+		half := random3(T, inout random, 0.2*scale) + linalg.Vector3(T).splat(T(0.25*scale));
+		result.append(geometry.Aabb3(T).from_corners(center - half, center + half));
+	}
+	return result;
+}
+
+triangles :: proc($T: type, seed: u64) -> [dynamic]geometry.Triangle3(T) {
+	random := Random{seed};
+	result := make([dynamic]geometry.Triangle3(T), 0, COUNT);
+	foreach (_ in 0 ..< COUNT) {
+		center := random3(T, inout random, 0.5);
+		a := center + random3(T, inout random, 0.6);
+		b := center + random3(T, inout random, 0.6);
+		c := center + random3(T, inout random, 0.6);
+		result.append(geometry.Triangle3(T){a = a, b = b, c = c});
+	}
+	return result;
+}
+
+spheres :: proc($T: type, seed: u64) -> [dynamic]geometry.Sphere(T) {
+	random := Random{seed};
+	result := make([dynamic]geometry.Sphere(T), 0, COUNT);
+	foreach (_ in 0 ..< COUNT) {
+		center := random3(T, inout random, 40.0);
+		radius := T(4.0*random.next() + 12.0);
+		result.append(geometry.Sphere(T).from_center_radius(center, radius));
+	}
+	return result;
+}
+
+// A camera at the origin looking down -z, which sees about a third of the
+// boxes and spheres around it.
+frustum :: proc($T: type) -> geometry.Frustum(T) {
+	projection := linalg.Matrix(T, 4, 4).perspective(T(1.1), T(1.6), T(0.25), T(40), .Zero_To_One);
+	return geometry.Frustum(T).from_matrix(projection, .Zero_To_One) or_else geometry.Frustum(T){};
+}
+
+points2 :: proc(seed: u64) -> [dynamic]linalg.Vector2(f64) {
+	random := Random{seed};
+	result := make([dynamic]linalg.Vector2(f64), 0, COUNT);
+	foreach (_ in 0 ..< COUNT) {
+		x := random.next();
+		y := random.next();
+		result.append(linalg.Vector2(f64).from_components(x, y));
+	}
+	return result;
+}
+
+points3 :: proc(seed: u64) -> [dynamic]linalg.Vector3(f64) {
+	random := Random{seed};
+	result := make([dynamic]linalg.Vector3(f64), 0, COUNT);
+	foreach (_ in 0 ..< COUNT) { result.append(random3(f64, inout random, 1.0)); }
+	return result;
+}
+
+// Degenerate operands, each set of a predicate's points exactly on one line,
+// plane, circle, or sphere, with integer coordinates small enough that the
+// filter's determinant is exactly 0, so every call reaches the exact path.
+// `count` points per call, COUNT calls.
+
+collinear :: proc(seed: u64) -> [dynamic]linalg.Vector2(f64) {
+	random := Random{seed};
+	result := make([dynamic]linalg.Vector2(f64), 0, 3*COUNT);
+	foreach (_ in 0 ..< COUNT) {
+		x, y := random.integer(1 << 20), random.integer(1 << 20);
+		dx, dy := random.integer(1 << 10), random.integer(1 << 10);
+		foreach (k in [3]f64{0, 3, -5}) { result.append(linalg.Vector2(f64).from_components(x + k*dx, y + k*dy)); }
+	}
+	return result;
+}
+
+coplanar :: proc(seed: u64) -> [dynamic]linalg.Vector3(f64) {
+	random := Random{seed};
+	result := make([dynamic]linalg.Vector3(f64), 0, 4*COUNT);
+	foreach (_ in 0 ..< COUNT) {
+		p := v3(f64, random.integer(1 << 16), random.integer(1 << 16), random.integer(1 << 16));
+		u := v3(f64, random.integer(1 << 6), random.integer(1 << 6), random.integer(1 << 6));
+		w := v3(f64, random.integer(1 << 6), random.integer(1 << 6), random.integer(1 << 6));
+		foreach (_ in 0 ..< 4) { result.append(p + u*random.integer(1 << 6) + w*random.integer(1 << 6)); }
+	}
+	return result;
+}
+
+// The twelve integer points at distance 5 from the origin.
+CIRCLE_5 :: [12][2]f64{{5, 0}, {4, 3}, {3, 4}, {0, 5}, {-3, 4}, {-4, 3}, {-5, 0}, {-4, -3}, {-3, -4}, {0, -5}, {3, -4}, {4, -3}};
+
+cocircular :: proc(seed: u64) -> [dynamic]linalg.Vector2(f64) {
+	random := Random{seed};
+	result := make([dynamic]linalg.Vector2(f64), 0, 4*COUNT);
+	foreach (_ in 0 ..< COUNT) {
+		cx, cy := random.integer(1 << 30), random.integer(1 << 30);
+		scale := random.integer(1 << 7) + f64(1 << 7) + 1.0;
+		first := int(random.integer(6)) + 6;
+		foreach (k in 0 ..< 4) {
+			corner := CIRCLE_5[(first + 3*k) % 12];
+			result.append(linalg.Vector2(f64).from_components(cx + corner[0]*scale, cy + corner[1]*scale));
+		}
+	}
+	return result;
+}
+
+// Five of the integer points at distance 3 from the origin, no four of them
+// on a plane.
+SPHERE_3 :: [5][3]f64{{3, 0, 0}, {0, 3, 0}, {0, 0, 3}, {-1, -2, -2}, {2, -2, 1}};
+
+cospherical :: proc(seed: u64) -> [dynamic]linalg.Vector3(f64) {
+	random := Random{seed};
+	result := make([dynamic]linalg.Vector3(f64), 0, 5*COUNT);
+	foreach (_ in 0 ..< COUNT) {
+		center := v3(f64, random.integer(1 << 30), random.integer(1 << 30), random.integer(1 << 30));
+		scale := random.integer(1 << 5) + f64(1 << 5) + 1.0;
+		foreach (corner in SPHERE_3) { result.append(center + v3(f64, corner[0], corner[1], corner[2])*scale); }
+	}
+	return result;
+}
+
+// A hash of every bit of the values given, in order.
+Hash :: struct { state: u64 }
+
+impl Hash {
+	add :: proc(self: inout, value: $T) {
+		when (T == f32) {
+			self.state = (self.state ~ u64(unsafe.transmute(u32, value)))*%1099511628211;
+		} else when (T == bool) {
+			self.state = (self.state ~ (1 if value else 0))*%1099511628211;
+		} else when (T == geometry.Sign) {
+			code: u64 = 1;
+			switch (value) {
+			case .Negative: code = 0;
+			case .Zero: code = 1;
+			case .Positive: code = 2;
+			}
+			self.state = (self.state ~ code)*%1099511628211;
+		} else {
+			self.state = (self.state ~ unsafe.transmute(u64, value))*%1099511628211;
+		}
+	}
+}
+
+hash_slice :: proc(values: []$T) -> u64 {
+	hash := Hash{14695981039346656037};
+	foreach (x in values) { hash.add(x); }
+	return hash.state;
+}
+
+hash_hits :: proc(values: []Option(geometry.Triangle_Hit($T))) -> u64 {
+	hash := Hash{14695981039346656037};
+	foreach (o in values) {
+		switch (o) {
+		case .none: hash.add(T(-1));
+		case .some(hit): hash.add(hit.t); hash.add(hit.barycentric.x); hash.add(hit.barycentric.y); hash.add(hit.barycentric.z);
+		}
+	}
+	return hash.state;
+}
+
+// The hand-written forms.
+
+// The slab test of Williams et al. without the widening: the entry and exit
+// of each axis by the sign of the inverse, hit when the entry is at most the
+// exit. Its `t` is the package's, so it hashes the same unless a ray passes
+// within ulps of a box.
+hand_ray_box :: proc(out: []mut $T, rays: []geometry.Ray3(T), inverses: []linalg.Vector3(T), boxes: []geometry.Aabb3(T)) {
+	foreach (i in 0 ..< COUNT) {
+		o := rays[i].origin;
+		inverse := inverses[i];
+		box := boxes[i];
+		near, far := T(0), T(math.F64_INFINITY);
+		foreach (axis in 0 ..< 3) {
+			low, high := box.min[axis], box.max[axis];
+			if (inverse[axis] < T(0)) {
+				low = box.max[axis];
+				high = box.min[axis];
+			}
+			enter := (low - o[axis])*inverse[axis];
+			leave := (high - o[axis])*inverse[axis];
+			if (near < enter) { near = enter; }
+			if (leave < far) { far = leave; }
+		}
+		out[i] = near if near <= far else T(-1);
+	}
+}
+
+// Möller and Trumbore (1997), with no tolerance: the edges from `a`, the
+// determinant from the direction crossed with the second edge, and the
+// barycentric coordinates and distance by Cramer's rule.
+hand_ray_triangle :: proc(out: []mut $T, rays: []geometry.Ray3(T), triangles: []geometry.Triangle3(T)) {
+	foreach (i in 0 ..< COUNT) {
+		ray := rays[i];
+		triangle := triangles[i];
+		out[i] = T(-1);
+		e1 := triangle.b - triangle.a;
+		e2 := triangle.c - triangle.a;
+		p := ray.direction.cross(e2);
+		det := e1.dot(p);
+		if (det == T(0)) { continue; }
+		inverse := T(1)/det;
+		s := ray.origin - triangle.a;
+		u := s.dot(p)*inverse;
+		if (u < T(0) || T(1) < u) { continue; }
+		q := s.cross(e1);
+		v := ray.direction.dot(q)*inverse;
+		if (v < T(0) || T(1) < u + v) { continue; }
+		t := e2.dot(q)*inverse;
+		if (T(0) <= t) { out[i] = t; }
+	}
+}
+
+// The corner farthest along each plane's normal, behind the plane or not, as
+// the package computes it.
+hand_frustum_box :: proc(out: []mut bool, frustum: geometry.Frustum($T), boxes: []geometry.Aabb3(T)) {
+	foreach (i in 0 ..< COUNT) {
+		box := boxes[i];
+		inside := true;
+		foreach (plane in frustum.planes) {
+			n := plane.normal;
+			x := box.max.x if T(0) <= n.x else box.min.x;
+			y := box.max.y if T(0) <= n.y else box.min.y;
+			z := box.max.z if T(0) <= n.z else box.min.z;
+			if (n.x*x + n.y*y + n.z*z - plane.offset < T(0)) {
+				inside = false;
+				break;
+			}
+		}
+		out[i] = inside;
+	}
+}
+
+sign_of :: proc(x: f64) -> geometry.Sign {
+	if (0.0 < x) { return .Positive; }
+	if (x < 0.0) { return .Negative; }
+	return .Zero;
+}
+
+hand_orient2d :: proc(out: []mut geometry.Sign, p: []linalg.Vector2(f64)) {
+	foreach (i in 0 ..< COUNT) {
+		a, b, c := p[3*i], p[3*i + 1], p[3*i + 2];
+		out[i] = sign_of((a.x - c.x)*(b.y - c.y) - (a.y - c.y)*(b.x - c.x));
+	}
+}
+
+hand_orient3d :: proc(out: []mut geometry.Sign, p: []linalg.Vector3(f64)) {
+	foreach (i in 0 ..< COUNT) {
+		ad, bd, cd := p[4*i] - p[4*i + 3], p[4*i + 1] - p[4*i + 3], p[4*i + 2] - p[4*i + 3];
+		out[i] = sign_of(ad.z*(bd.x*cd.y - cd.x*bd.y) + bd.z*(cd.x*ad.y - ad.x*cd.y) + cd.z*(ad.x*bd.y - bd.x*ad.y));
+	}
+}
+
+hand_incircle :: proc(out: []mut geometry.Sign, p: []linalg.Vector2(f64)) {
+	foreach (i in 0 ..< COUNT) {
+		ad, bd, cd := p[4*i] - p[4*i + 3], p[4*i + 1] - p[4*i + 3], p[4*i + 2] - p[4*i + 3];
+		out[i] = sign_of(ad.length_squared()*(bd.x*cd.y - cd.x*bd.y) + bd.length_squared()*(cd.x*ad.y - ad.x*cd.y) + cd.length_squared()*(ad.x*bd.y - bd.x*ad.y));
+	}
+}
+
+hand_insphere :: proc(out: []mut geometry.Sign, p: []linalg.Vector3(f64)) {
+	foreach (i in 0 ..< COUNT) {
+		e := p[5*i + 4];
+		a, b, c, d := p[5*i] - e, p[5*i + 1] - e, p[5*i + 2] - e, p[5*i + 3] - e;
+		ab := a.x*b.y - b.x*a.y;
+		bc := b.x*c.y - c.x*b.y;
+		cd := c.x*d.y - d.x*c.y;
+		da := d.x*a.y - a.x*d.y;
+		ac := a.x*c.y - c.x*a.y;
+		bd := b.x*d.y - d.x*b.y;
+		abc := a.z*bc - b.z*ac + c.z*ab;
+		bcd := b.z*cd - c.z*bd + d.z*bc;
+		cda := c.z*da + d.z*ac + a.z*cd;
+		dab := d.z*ab + a.z*bd + b.z*da;
+		out[i] = sign_of((d.length_squared()*abc - c.length_squared()*dab) + (b.length_squared()*cda - a.length_squared()*bcd));
+	}
+}
+
+Operation :: enum {
+	Ray_Box_F32, Ray_Box_F64, Ray_Box_Inverse_F32, Hand_Ray_Box_F32,
+	Ray_Triangle_F32, Ray_Triangle_F64, Hand_Ray_Triangle_F32,
+	Frustum_Box_F32, Frustum_Box_F64, Hand_Frustum_Box_F32, Frustum_Sphere_F32,
+	Orient2d, Hand_Orient2d, Orient2d_Exact,
+	Orient3d, Hand_Orient3d, Orient3d_Exact,
+	Incircle, Hand_Incircle, Incircle_Exact,
+	Insphere, Hand_Insphere, Insphere_Exact,
+}
+
+// The result of one run: a hash of every result bit, so that nothing is
+// optimized away and a change shows, and the seconds the run took, its
+// inputs built outside the timing.
+Outcome :: struct { checksum: u64, seconds: f64 }
+
+timed :: proc(start, stop: time.Tick, checksum: u64) -> Outcome {
+	return {checksum, (stop - start).seconds_f64()};
+}
+
+// The package's forms, each a loop over slices as the hand-written ones
+// are: each ray against its own box or triangle, over the unbounded range
+// from 0, with `.none` stored as -1.
+
+cast_boxes :: proc(out: []mut $T, rays: []geometry.Ray3(T), boxes: []geometry.Aabb3(T)) {
+	infinity := T(math.F64_INFINITY);
+	foreach (i in 0 ..< COUNT) { out[i] = geometry.cast(rays[i], boxes[i], T(0), infinity) or_else T(-1); }
+}
+
+cast_boxes_inverse :: proc(out: []mut $T, rays: []geometry.Ray3(T), inverses: []linalg.Vector3(T), boxes: []geometry.Aabb3(T)) {
+	infinity := T(math.F64_INFINITY);
+	foreach (i in 0 ..< COUNT) { out[i] = geometry.cast(rays[i], inverses[i], boxes[i], T(0), infinity) or_else T(-1); }
+}
+
+cast_triangles :: proc(out: []mut Option(geometry.Triangle_Hit($T)), rays: []geometry.Ray3(T), triangles: []geometry.Triangle3(T)) {
+	infinity := T(math.F64_INFINITY);
+	foreach (i in 0 ..< COUNT) { out[i] = geometry.cast(rays[i], triangles[i], T(0), infinity); }
+}
+
+cull_boxes :: proc(out: []mut bool, frustum: geometry.Frustum($T), boxes: []geometry.Aabb3(T)) {
+	foreach (i in 0 ..< COUNT) { out[i] = geometry.intersects(frustum, boxes[i]); }
+}
+
+cull_spheres :: proc(out: []mut bool, frustum: geometry.Frustum($T), spheres: []geometry.Sphere(T)) {
+	foreach (i in 0 ..< COUNT) { out[i] = geometry.intersects(frustum, spheres[i]); }
+}
+
+orient2d_all :: proc(out: []mut geometry.Sign, p: []linalg.Vector2(f64)) {
+	foreach (i in 0 ..< COUNT) { out[i] = geometry.orient2d(p[3*i], p[3*i + 1], p[3*i + 2]); }
+}
+
+orient3d_all :: proc(out: []mut geometry.Sign, p: []linalg.Vector3(f64)) {
+	foreach (i in 0 ..< COUNT) { out[i] = geometry.orient3d(p[4*i], p[4*i + 1], p[4*i + 2], p[4*i + 3]); }
+}
+
+incircle_all :: proc(out: []mut geometry.Sign, p: []linalg.Vector2(f64)) {
+	foreach (i in 0 ..< COUNT) { out[i] = geometry.incircle(p[4*i], p[4*i + 1], p[4*i + 2], p[4*i + 3]); }
+}
+
+insphere_all :: proc(out: []mut geometry.Sign, p: []linalg.Vector3(f64)) {
+	foreach (i in 0 ..< COUNT) { out[i] = geometry.insphere(p[5*i], p[5*i + 1], p[5*i + 2], p[5*i + 3], p[5*i + 4]); }
+}
+
+ray_box_case :: proc($T: type, inverse: bool) -> Outcome {
+	b := boxes(T, 2, 1.0);
+	r := rays(T, 1, box_centers(b[:])[:], 0.5);
+	inverses := make([dynamic]linalg.Vector3(T), 0, COUNT);
+	foreach (ray in r) { inverses.append(ray.inverse_direction()); }
+	out := make([dynamic]T, COUNT);
+	start := time.tick_now();
+	if (inverse) {
+		foreach (_ in 0 ..< ROUNDS) { cast_boxes_inverse(&mut out[:], r[:], inverses[:], b[:]); }
+	} else {
+		foreach (_ in 0 ..< ROUNDS) { cast_boxes(&mut out[:], r[:], b[:]); }
+	}
+	stop := time.tick_now();
+	return timed(start, stop, hash_slice(out[:]));
+}
+
+ray_triangle_case :: proc($T: type) -> Outcome {
+	t := triangles(T, 3);
+	r := rays(T, 1, triangle_centers(t[:])[:], 0.2);
+	out := make([dynamic]Option(geometry.Triangle_Hit(T)), COUNT);
+	start := time.tick_now();
+	foreach (_ in 0 ..< ROUNDS) { cast_triangles(&mut out[:], r[:], t[:]); }
+	stop := time.tick_now();
+	return timed(start, stop, hash_hits(out[:]));
+}
+
+frustum_box_case :: proc($T: type) -> Outcome {
+	f := frustum(T);
+	b := boxes(T, 4, 40.0);
+	out := make([dynamic]bool, COUNT);
+	start := time.tick_now();
+	foreach (_ in 0 ..< ROUNDS) { cull_boxes(&mut out[:], f, b[:]); }
+	stop := time.tick_now();
+	return timed(start, stop, hash_slice(out[:]));
+}
+
+frustum_sphere_case :: proc($T: type) -> Outcome {
+	f := frustum(T);
+	s := spheres(T, 5);
+	out := make([dynamic]bool, COUNT);
+	start := time.tick_now();
+	foreach (_ in 0 ..< ROUNDS) { cull_spheres(&mut out[:], f, s[:]); }
+	stop := time.tick_now();
+	return timed(start, stop, hash_slice(out[:]));
+}
+
+// One predicate over COUNT calls' points, by `all` or the hand-written form.
+predicate_case :: proc(p: []$V, all: proc(out: []mut geometry.Sign, p: []V)) -> Outcome {
+	out := make([dynamic]geometry.Sign, COUNT);
+	start := time.tick_now();
+	foreach (_ in 0 ..< ROUNDS) { all(&mut out[:], p); }
+	stop := time.tick_now();
+	return timed(start, stop, hash_slice(out[:]));
+}
+
+// Random points for a predicate taking `count` of them, COUNT calls.
+random_points2 :: proc(count: int, seed: u64) -> [dynamic]linalg.Vector2(f64) {
+	result := make([dynamic]linalg.Vector2(f64), 0, count*COUNT);
+	foreach (k in 0 ..< count) {
+		foreach (p in points2(seed + u64(k))) { result.append(p); }
+	}
+	return result;
+}
+
+random_points3 :: proc(count: int, seed: u64) -> [dynamic]linalg.Vector3(f64) {
+	result := make([dynamic]linalg.Vector3(f64), 0, count*COUNT);
+	foreach (k in 0 ..< count) {
+		foreach (p in points3(seed + u64(k))) { result.append(p); }
+	}
+	return result;
+}
+
+run :: proc(operation: Operation) -> Outcome {
+	switch (operation) {
+	case .Ray_Box_F32: return ray_box_case(f32, false);
+	case .Ray_Box_F64: return ray_box_case(f64, false);
+	case .Ray_Box_Inverse_F32: return ray_box_case(f32, true);
+	case .Hand_Ray_Box_F32:
+		b := boxes(f32, 2, 1.0);
+		r := rays(f32, 1, box_centers(b[:])[:], 0.5);
+		inverses := make([dynamic]linalg.Vector3(f32), 0, COUNT);
+		foreach (ray in r) { inverses.append(ray.inverse_direction()); }
+		out := make([dynamic]f32, COUNT);
+		start := time.tick_now();
+		foreach (_ in 0 ..< ROUNDS) { hand_ray_box(&mut out[:], r[:], inverses[:], b[:]); }
+		stop := time.tick_now();
+		return timed(start, stop, hash_slice(out[:]));
+	case .Ray_Triangle_F32: return ray_triangle_case(f32);
+	case .Ray_Triangle_F64: return ray_triangle_case(f64);
+	case .Hand_Ray_Triangle_F32:
+		t := triangles(f32, 3);
+		r := rays(f32, 1, triangle_centers(t[:])[:], 0.2);
+		out := make([dynamic]f32, COUNT);
+		start := time.tick_now();
+		foreach (_ in 0 ..< ROUNDS) { hand_ray_triangle(&mut out[:], r[:], t[:]); }
+		stop := time.tick_now();
+		return timed(start, stop, hash_slice(out[:]));
+	case .Frustum_Box_F32: return frustum_box_case(f32);
+	case .Frustum_Box_F64: return frustum_box_case(f64);
+	case .Hand_Frustum_Box_F32:
+		f := frustum(f32);
+		b := boxes(f32, 4, 40.0);
+		out := make([dynamic]bool, COUNT);
+		start := time.tick_now();
+		foreach (_ in 0 ..< ROUNDS) { hand_frustum_box(&mut out[:], f, b[:]); }
+		stop := time.tick_now();
+		return timed(start, stop, hash_slice(out[:]));
+	case .Frustum_Sphere_F32: return frustum_sphere_case(f32);
+	case .Orient2d: return predicate_case(random_points2(3, 10)[:], orient2d_all);
+	case .Hand_Orient2d: return predicate_case(random_points2(3, 10)[:], hand_orient2d);
+	case .Orient2d_Exact: return predicate_case(collinear(11)[:], orient2d_all);
+	case .Orient3d: return predicate_case(random_points3(4, 20)[:], orient3d_all);
+	case .Hand_Orient3d: return predicate_case(random_points3(4, 20)[:], hand_orient3d);
+	case .Orient3d_Exact: return predicate_case(coplanar(21)[:], orient3d_all);
+	case .Incircle: return predicate_case(random_points2(4, 30)[:], incircle_all);
+	case .Hand_Incircle: return predicate_case(random_points2(4, 30)[:], hand_incircle);
+	case .Incircle_Exact: return predicate_case(cocircular(31)[:], incircle_all);
+	case .Insphere: return predicate_case(random_points3(5, 40)[:], insphere_all);
+	case .Hand_Insphere: return predicate_case(random_points3(5, 40)[:], hand_insphere);
+	case .Insphere_Exact: return predicate_case(cospherical(41)[:], insphere_all);
+	}
+}
+
+// The fastest of `repeat` runs, in seconds.
+fastest :: proc(operation: Operation, repeat: int) -> f64 {
+	best := 0.0;
+	foreach (i in 0 ..< repeat) {
+		seconds := run(operation).seconds;
+		if (i == 0 || seconds < best) { best = seconds; }
+	}
+	return best;
+}
+
+main :: proc() {
+	if (os.args.len() > 1 && os.args[1] == "-times") {
+		foreach (operation in Operation.values()) {
+			seconds := fastest(operation, 20);
+			fmt.println(operation, seconds*1e9/f64(COUNT*ROUNDS), "ns");
+		}
+		return;
+	}
+	foreach (operation in Operation.values()) { fmt.println(operation, run(operation).checksum); }
+}

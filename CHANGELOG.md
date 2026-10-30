@@ -383,7 +383,9 @@ checklist.
   `transform_box` and `transform_plane`; and polygons as slices of vertices,
   with `signed_area`, `centroid`, `winding_number`, `contains` under a
   required `Fill_Rule`, `convex_hull`, `is_convex`, and `is_simple`, exact
-  for `f32`, `f64`, and integers
+  for `f32`, `f64`, and integers. An `f32` box cast computes its three slabs
+  in `Simd` lanes with the same bits; `bench/geometry.loke` measures the
+  casts, frustum culling, and the predicates against hand-written loops
   ([`core:math/geometry`](standard-library.md#coremathgeometry)).
 
 ### Changed
@@ -452,6 +454,10 @@ checklist.
 
 ### Fixed
 
+- A typed constant scalar splatted into a SIMD vector, as
+  `zero: Simd(T, 4) = T(0)` in a generic body or `Simd(f32, 4) = f32(0.5)`,
+  folds to the vector constant as an untyped one does. It reached the backend
+  as a scalar constant of the vector's type, and Clang rejected the module.
 - A `where` bound checked while an earlier file of a package resolved its
   signatures found the slot's member resolved in that file's place, so
   `self` in an `impl f32` block took the type being instantiated: the bound

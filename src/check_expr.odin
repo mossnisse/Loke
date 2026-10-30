@@ -3520,6 +3520,19 @@ materialize :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {
 		base.type = target
 		return true
 	}
+	// A typed constant scalar, such as `T(0)` in a generic body, folds to the
+	// vector here; an untyped one folds below. Left at its scalar type, it
+	// reached the backend as a scalar constant of the vector's type.
+	if type_is_simd(k.c, target) && !type_is_simd(k.c, base.type) && !type_is_untyped(k.c, base.type) {
+		converted, fits := convert_const(k.c, base.const_value, target, false)
+		if !fits {
+			report_unrepresentable(k, base, target)
+			return false
+		}
+		base.type = target
+		base.const_value = converted
+		return true
+	}
 	// design.md "Borrowed callable views": the procedure or capture value is
 	// kept, as for `any_view`, for the backend to hold or take the address of.
 	if signature := dyn_proc_signature(k.c, target); signature != INVALID_TYPE && base.type != target &&
