@@ -73,192 +73,116 @@ and the subsequent products produce NaN. Found in the linalg merge review on
 2026-10-30. Rescale finite nonzero inputs before these products, with
 regressions for large and small scales and every Euler order.
 
-### Constant bit casts cannot construct valid `typeid` values
+### A bit cast of a `typeid_of` constant has no compile-time value
 
-[Invalid representations](design.md#invalid-representations) makes every
-`typeid` bit pattern a value, and
-[`unsafe.transmute`](design.md#unsafetransmute) promises compile-time bytewise
-conversion for admitted scalar shapes. A `typeid` is a same-sized, trivial
-scalar with no borrow, but this program is rejected:
+[`unsafe.transmute`](design.md#unsafetransmute) promises compile-time
+bytewise conversion for admitted scalar shapes, and a constant bit cast now
+builds a `typeid` from an integer, but not the reverse for a symbolic type:
 
 ```loke
 package main;
-import "core:fmt";
 import "core:unsafe";
-FORGED :: unsafe.transmute(typeid, u64(999999));
-main :: proc() { fmt.println(FORGED); }
+X :: unsafe.transmute(u64, typeid_of(int));
+main :: proc() {}
 ```
 
-It reports `L0688`, "`unsafe.transmute` has no compile-time meaning from `u64`
-to `typeid`". Making `FORGED` a local variable instead succeeds and prints
-`999999`. Found reviewing `c885b92d` on 2026-10-29: the runtime path also
-preserves and reflects the high-bit and all-ones patterns correctly, but
-`fold_transmute`, `const_storage`, and `const_from_storage` in
-[check_builtin.odin](src/check_builtin.odin) do not handle `Typeid`.
-Implement constant storage for these values and add a regression comparing
-constant and runtime bit casts, while preserving the deferred numbering of
-symbolic `typeid_of` constants.
+It reports `L0688`, "`unsafe.transmute` has no compile-time meaning from
+`typeid` to `u64`". The same cast where the program runs gives the number.
+A `typeid_of(T)` constant has no number until emission freezes the numbering
+(`freeze_typeids`), so `const_storage` in
+[src/check_builtin.odin](src/check_builtin.odin) treats it as unfoldable.
+Found while fixing constant `typeid` bit casts on 2026-10-30. Folding it needs
+type numbers fixed before constants that depend on them are evaluated, or the
+spec to exclude symbolic `typeid` constants; see
+[Comparing a forged `typeid` constant](open-questions.md#comparing-a-forged-typeid-constant).
 
-### Native path normalization can remove an intermediate link before traversal
+### Storing one element of a local slice view in a loop is rejected
 
-[Filesystem operations](standard-library.md#filesystem-operations) says a
-link anywhere before the last path element is followed. Ordinary Windows
-paths instead normalize `.` and `..` before resolving links, so a junction
-followed by `..` can disappear without being followed. In a fresh directory:
-
-```powershell
-New-Item -ItemType Directory -Path local,target\child | Out-Null
-Set-Content local\marker.txt local -NoNewline
-Set-Content target\marker.txt target-parent -NoNewline
-New-Item -ItemType Junction -Path local\junction -Target (Resolve-Path target\child).Path | Out-Null
-```
-
-```loke
-package main;
-import "core:fmt";
-import "core:fs";
-main :: proc() {
-    fmt.println(fs.read_text("local/junction/../marker.txt") or_else "error");
-}
-```
-
-This prints `local`, whereas following the junction before `..` would read
-`target/marker.txt` and print `target-parent`. Found reviewing `9c8a17c7` on
-2026-10-29. Qualify the new link rule with the ordering of native path
-normalization and traversal, including the separate treatment of
-extended-length paths, if retaining Windows path semantics. Microsoft's
-[path-normalization description](https://learn.microsoft.com/en-us/dotnet/standard/io/file-path-formats#path-normalization)
-describes the preprocessing.
-
-### A store through a slice parameter joins into the parameter
-
-[Weakening and reborrows](design.md#weakening-and-reborrows) borrows a place
-reached through a view for that place only, so storing `head` beside a borrow
-of `count` is allowed. Through a slice parameter it is rejected once a loop
-repeats it, though the same body without the loop compiles:
+[Weakening and reborrows](design.md#weakening-and-reborrows) lets a store
+replace what one place held, so the copy of `s[0].head` taken in one
+iteration no longer holds the storage the next store puts there. Through a
+slice parameter this is now accepted, but through a local view of two or
+more elements it is not:
 
 ```loke
 package main;
 Node :: struct { value: int }
 Counted :: struct { head: ^mut Node, tail: ^mut Node, count: int }
-sink :: proc(value: int) {}
-sliced :: proc(s: []mut Counted) {
+local_view :: proc() {
+    a := Node{1}; b := Node{2}; c := Node{3}; d := Node{4};
+    arr := [2]Counted{{&mut a, &mut b, 0}, {&mut c, &mut d, 0}};
+    s := &mut arr[:];
     for (round := 0; round < 2; round += 1) {
-        count := &s[0].count;
+        h := s[0].head;
+        h^.value = 1;
         s[0].head = s[0].tail; // L0641, should be allowed
-        sink(count^);
     }
 }
 main :: proc() {}
 ```
 
-A store through a parameter lands in the slots standing for the caller
-storage it names (`prov_caller_slots` in
-[src/cfg_provenance.odin](src/cfg_provenance.odin)), but a view's slots stand
-for all of its elements, which no store replaces, as a view's element step is
-not kept below its loan. Landing there alone, with the copy linked to the
-slot, would reject a loop that copies `s[0].head` and stores `s[0].tail` into
-it, so such a store still joins into the parameter itself
-(`publish_into_loan` in [src/borrow.odin](src/borrow.odin)), and the next
-iteration's copy of `s[0].tail` loaded through it then holds the loans of the
-storage `count` is borrowed from. Telling one element's slots from the
-others' would close it. `matrix_known_gap` lists the matrix cases.
+A local view's loan names a range of `arr`, so `publish_replaces` in
+[src/borrow.odin](src/borrow.odin) never finds the one place a store into an
+element replaces, and the store only joins. A one-element view compiles.
+Found while fixing stores through slice parameters on 2026-10-30; the
+parameter fix (`prov_view_element` in
+[src/cfg_provenance.odin](src/cfg_provenance.odin)) gives a view parameter's
+element at a constant index slots of its own, which a local view's range
+loan could do as well.
 
-### A whole value stored through a pointer keeps no reborrow of its carriers
+### A borrow a call stores through a pointer argument is not reborrowed by a later copy
 
-[Weakening and reborrows](design.md#weakening-and-reborrows) makes a carrier
-copied out of storage a reborrow of the carrier stored there, wherever that
-storage is. A record holding carriers stored through a pointer copies each of
-them, but the copies are not linked to where they land, so copying the
-source's carrier again while a copy of the stored one is in use is accepted:
+[Retaining a borrow](design.md#retaining-a-borrow) says a callee may write an
+`@(escape=stored)` argument's borrows into any compatible mutable destination
+it receives, and [Weakening and reborrows](design.md#weakening-and-reborrows)
+makes a carrier copied out of storage a reborrow of the carrier stored there.
+After such a call, a copy out of the destination is not linked to the
+argument, so two mutable paths to `r^` are used together:
+
+```loke
+package main;
+Node :: struct { value: int }
+Counted :: struct { head: ^mut Node, tail: ^mut Node, count: int }
+relink :: proc(p: ^mut Counted, @(escape=stored) n: ^mut Node) { p^.head = n; }
+caller :: proc(p: ^mut Counted, @(escape=stored) r: ^mut Node) {
+    relink(p, r);
+    h := p^.head;
+    r^.value = 1; // should be L0641: `h` may copy `r`
+    h^.value = 2;
+}
+main :: proc() {}
+```
+
+This compiles. Writing `p^.head = r` in `caller` instead is rejected. Found
+while fixing stores through slice parameters on 2026-10-30. A call's stored
+argument should publish into each compatible destination as a store does,
+with the copy linked to the slots it may land in.
+
+### A whole record stored through a parameter joins into the parameter
+
+[Weakening and reborrows](design.md#weakening-and-reborrows) lets a carrier be
+used beside one copied from a sibling field. Storing a whole record through a
+pointer to a local now links each copied carrier to where it lands, but
+through a parameter the store also joins into the parameter itself, so a copy
+of one field holds the loans of every field:
 
 ```loke
 package main;
 Node :: struct { value: int }
 List :: struct { head: ^mut Node, tail: ^mut Node }
-whole :: proc(q: ^mut List) {
-    a := Node{1}; b := Node{2};
-    l := List{&mut a, &mut b};
-    p := &mut l;
+sibling :: proc(@(escape=stored) p: ^mut List, @(escape=stored) q: ^mut List) {
     p^ = q^;
     x := p^.head;
-    y := q^.head; // should be L0641: `x` copies the copy of `q^.head`
+    y := q^.tail; // L0641, should be allowed: `x` copies `q^.head`
     x^.value = 1;
     y^.value = 2;
 }
 main :: proc() {}
 ```
 
-`prov_assign` in [src/cfg_provenance.odin](src/cfg_provenance.odin) links the
-copy a store of one carrier makes to every slot it may land in
-(`prov_reborrow`), but nothing for a record. Storing `p^.head = q^.head`
-instead is rejected. Through a parameter, such a store also joins into the
-parameter itself, which keeps the same body over parameters rejected.
-
-### A store through a one-pointer-field parameter keeps the old borrow
-
-[Values that contain borrows](design.md#values-that-contain-borrows) says
-replacing a carrier stored in a field ends the old borrow in that field.
-With a parameter whose record has one pointer field, the old borrow remains
-linked to the field, so copying the new value reports `L0641`:
-
-```loke
-package main;
-Node :: struct { value: int }
-One :: struct { head: ^mut Node, count: int }
-probe :: proc(p: ^mut One, @(escape=stored) replacement: ^mut Node) {
-    old := p^.head;
-    p^.head = replacement;
-    fresh := p^.head; // L0641, should be allowed
-    old^.value = 1;
-    fresh^.value = 2;
-}
-main :: proc() {}
-```
-
-The same sequence through a pointer to a local `One` compiles, as does a
-parameter whose record has two pointer fields. For one nonempty carrier
-path, `prov_caller_slots` in
-[src/cfg_provenance.odin](src/cfg_provenance.odin) creates an untyped slot for
-the whole record instead of a typed slot at `head`. `caller_replaces` in
-[src/borrow.odin](src/borrow.odin) cannot recognize that slot as the field
-replaced by the store, so it keeps the old borrow. Preserve the single
-carrier path and its type when constructing the caller slot.
-
-### A pointer chosen among more than eight places covers their shared prefix
-
-[Weakening and reborrows](design.md#weakening-and-reborrows) lets a carrier be
-used for a place beside the one borrowed through it. A pointer chosen among
-nine fields of a nested record reports `L0641` at a write to a field of the
-record that none of the nine is:
-
-```loke
-package main;
-Wide :: struct { a: int, b: int, c: int, d: int, e: int, z: int }
-Sides :: struct { left: Wide, right: Wide }
-probe :: proc(s: ^mut Sides, i: int) -> int {
-    q := &mut s^.left.a;
-    if (i == 1) { q = &mut s^.left.b; }
-    if (i == 2) { q = &mut s^.left.c; }
-    if (i == 3) { q = &mut s^.left.d; }
-    if (i == 4) { q = &mut s^.left.e; }
-    if (i == 5) { q = &mut s^.right.a; }
-    if (i == 6) { q = &mut s^.right.b; }
-    if (i == 7) { q = &mut s^.right.c; }
-    if (i == 8) { q = &mut s^.right.d; }
-    value := &q^;
-    s^.right.e = 2; // allowed
-    s^.left.z = 3;  // L0641, should be allowed
-    return value^;
-}
-main :: proc() {}
-```
-
-`prov_union_offsets` in [src/cfg_provenance.odin](src/cfg_provenance.odin)
-keeps at most eight places a value may point at (`PROV_OFFSET_LIMIT`), and past
-that merges the two sharing the longest prefix into it, here `s^.left`, so the
-place loan overlaps `s^.left.z`. Nine sibling fields of one record merge into
-the whole record. The bound keeps the place loans and `.Through` events a
-borrow makes few. The diagnostic also does not name the limit, which
-[Minimum provenance precision](design.md#minimum-provenance-precision)
-requires of a rejection an analysis budget causes.
+`caller_replaces` in [src/borrow.odin](src/borrow.odin) does not replace
+caller slots for a record store, so `publish_into_loan` keeps joining such a
+store into the parameter. The same body over a pointer to a local compiles.
+Found while fixing whole-record stores on 2026-10-30. Replacing the record's
+carrier slots, as the one-field store through a parameter now does, would
+close it.

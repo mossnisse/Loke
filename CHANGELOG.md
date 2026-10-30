@@ -10,6 +10,21 @@ checklist.
 
 ### Breaking changes
 
+- A carrier copied out of a record stored whole through a pointer, as
+  `x := p^.head` after `p^ = q^`, now reborrows the carrier it was copied
+  from, so copying `q^.head` again while `x` is still in use is rejected with
+  `L0641`, as storing `p^.head = q^.head` already was
+  ([Weakening and reborrows](design.md#weakening-and-reborrows)). Before, it
+  compiled, and two mutable pointers to one node were used together. Upgrade
+  by finishing with the copy before copying the source again, or by copying
+  through the destination only.
+
+- A loop that keeps a copy of what an earlier iteration stored into an element
+  of a slice parameter, as `s[0].head = s[1].tail; s[1].tail = s[2].tail;`
+  repeated, is now rejected with `L0641`, as the same loop over a local array
+  already was ([Weakening and reborrows](design.md#weakening-and-reborrows)).
+  Upgrade by restructuring the loop as for the local array.
+
 - The floating-point environment is specified: rounding to nearest, ties to
   even, subnormals kept, and non-stop exceptions, on every thread a program
   starts ([Floating-point operators](design.md#floating-point-operators)).
@@ -448,6 +463,11 @@ checklist.
 
 ### Changed
 
+- `core:fs` is documented to pass paths to Windows as given: an ordinary path
+  is normalized before any link in it is followed, so
+  `local/junction/../x` names `local/x`, while an extended-length `\\?\`
+  path is not normalized ([`core:fs`](standard-library.md#corefs),
+  [Filesystem operations](standard-library.md#filesystem-operations)).
 - `core:math/repro`'s `exp` takes 14 ns rather than 19, and `pow` 55 rather
   than 60, with the same results: their shared kernel's dependency chain is
   about a third shorter. `log`, `log2`, and `log10` take 1 to 4 ns less per
@@ -534,6 +554,30 @@ checklist.
 
 ### Fixed
 
+- `unsafe.transmute` to `typeid` works in constants:
+  `unsafe.transmute(typeid, u64(999999))` is a constant that keeps its number
+  for every bit pattern, and casting it back to an integer folds too
+  ([`unsafe.transmute`](design.md#unsafetransmute),
+  [Invalid representations](design.md#invalid-representations)). Before, it
+  reported `L0688`.
+- A store through a pointer parameter whose record has a single carrier
+  field, as `p^.head = replacement`, ends the old borrow in that field, as it
+  already did for records with several, and reading a plain field beside such
+  a carrier is no longer taken as a use of it
+  ([Values that contain borrows](design.md#values-that-contain-borrows)).
+- A store into one element of a slice parameter at a constant index, as
+  `s[0].head = s[0].tail`, replaces what that field held instead of joining
+  into the parameter, so a borrow of another field beside it is accepted, also
+  in a loop ([Weakening and reborrows](design.md#weakening-and-reborrows)).
+- Storing a whole record through a pointer to one place replaces the carriers
+  it held, so a copy of a field taken before the store no longer conflicts
+  with one taken after it
+  ([Values that contain borrows](design.md#values-that-contain-borrows)).
+- A rejection caused by a pointer that may point at more than eight places of
+  one storage, which the analysis then takes to point at a place they share,
+  says the reborrow *may* cover the place and names the limit, as
+  [Minimum provenance precision](design.md#minimum-provenance-precision)
+  requires.
 - `core:math/linalg` preserves exact `lerp` and `slerp` endpoints, including
   signed zero; `angle_between` returns zero for a zero vector even when its
   dot product is negative zero; and `to_rotation_vector` chooses the same

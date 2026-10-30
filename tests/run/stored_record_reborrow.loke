@@ -1,0 +1,161 @@
+package main;
+import "core:fmt";
+// design.md "Weakening and reborrows": a whole value stored through a pointer
+// copies each carrier it holds, and a copy of one suspends only the carrier it
+// was copied from, only while it is used. Another carrier beside it, and
+// storing a new carrier into its place, are not uses of it. design.md "Values
+// that contain borrows": storing the whole value through a pointer naming one
+// place replaces each carrier there, as storing it into a local does.
+Node :: struct { value: int }
+List :: struct { head: ^mut Node, tail: ^mut Node }
+Outer :: struct { list: List, count: int }
+Pair :: struct { items: [2]^mut Node }
+Holder :: struct { head: Option(^mut Node) }
+
+// The copy's last use comes before the source is copied again.
+done_before :: proc(q: ^mut List) {
+	a := Node{1}; b := Node{2};
+	l := List{&mut a, &mut b};
+	p := &mut l;
+	p^ = q^;
+	x := p^.head;
+	x^.value += 10;
+	y := q^.head;
+	y^.value += 100;
+}
+
+// The other carrier of the source stays free.
+sibling :: proc(q: ^mut List) {
+	a := Node{1}; b := Node{2};
+	l := List{&mut a, &mut b};
+	p := &mut l;
+	p^ = q^;
+	x := p^.head;
+	y := q^.tail;
+	x^.value += 10;
+	y^.value += 100;
+}
+
+// A new carrier stored over the copy ends its reborrow.
+replaced :: proc(q: ^mut List) {
+	a := Node{1}; b := Node{2}; c := Node{3};
+	l := List{&mut a, &mut b};
+	p := &mut l;
+	p^ = q^;
+	p^.head = &mut c;
+	x := p^.head;
+	y := q^.head;
+	x^.value += 10;
+	y^.value += 100;
+	fmt.println(c.value);
+}
+
+nested_sibling :: proc(q: ^mut Outer) {
+	a := Node{1}; b := Node{2};
+	o := Outer{List{&mut a, &mut b}, 0};
+	p := &mut o;
+	p^ = q^;
+	x := p^.list.head;
+	y := q^.list.tail;
+	q^.count += 1;
+	x^.value += 10;
+	y^.value += 100;
+}
+
+other_element :: proc(q: ^mut Pair) {
+	a := Node{1}; b := Node{2};
+	l := Pair{{&mut a, &mut b}};
+	p := &mut l;
+	p^ = q^;
+	x := p^.items[0];
+	y := q^.items[1];
+	x^.value += 10;
+	y^.value += 100;
+}
+
+// Storing into the source's place is no use of the copy taken from it.
+source_replaced :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3}; d := Node{4}; e := Node{5};
+	l := List{&mut a, &mut b};
+	m := List{&mut c, &mut d};
+	p := &mut l;
+	p^ = m;
+	m.head = &mut e;
+	x := p^.head;
+	m.head^.value += 100;
+	x^.value += 10;
+	fmt.println(c.value, e.value);
+}
+
+option_beside :: proc(q: ^mut Holder) {
+	a := Node{1};
+	l := Holder{.some(&mut a)};
+	p := &mut l;
+	p^ = q^;
+	switch (p^.head) { case .some(n): n^.value += 10; case .none: }
+	switch (q^.head) { case .some(n): n^.value += 100; case .none: }
+}
+
+// Each store replaces what the last one left, so the copy an iteration takes
+// reborrows only the source's carrier, and only until its last use.
+each_iteration :: proc(q: ^mut List) {
+	a := Node{1}; b := Node{2};
+	l := List{&mut a, &mut b};
+	p := &mut l;
+	for (i := 0; i < 3; i += 1) {
+		p^ = q^;
+		x := p^.head;
+		x^.value += 1;
+	}
+	y := q^.head;
+	y^.value += 100;
+}
+
+into_field_each_iteration :: proc(q: ^mut List) {
+	a := Node{1}; b := Node{2};
+	o := Outer{List{&mut a, &mut b}, 0};
+	p := &mut o;
+	for (i := 0; i < 3; i += 1) {
+		p^.list = q^;
+		x := p^.list.head;
+		x^.value += 1;
+	}
+}
+
+// A copy taken before the store holds what the place held then.
+old_then_fresh :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3}; d := Node{4};
+	l := List{&mut a, &mut b};
+	m := List{&mut c, &mut d};
+	p := &mut l;
+	old := p^.head;
+	p^ = m;
+	fresh := p^.head;
+	old^.value += 10;
+	fresh^.value += 100;
+	fmt.println(a.value, c.value);
+}
+
+main :: proc() {
+	h := Node{0}; t := Node{0};
+	list := List{&mut h, &mut t};
+	done_before(&mut list);
+	sibling(&mut list);
+	replaced(&mut list);
+	fmt.println(h.value, t.value);
+	outer := Outer{List{&mut h, &mut t}, 0};
+	nested_sibling(&mut outer);
+	fmt.println(h.value, t.value, outer.count);
+	pair := Pair{{&mut h, &mut t}};
+	other_element(&mut pair);
+	fmt.println(h.value, t.value);
+	source_replaced();
+	holder := Holder{.some(&mut h)};
+	option_beside(&mut holder);
+	fmt.println(h.value);
+	again := List{&mut h, &mut t};
+	each_iteration(&mut again);
+	into_field_each_iteration(&mut again);
+	fmt.println(h.value);
+	old_then_fresh();
+}

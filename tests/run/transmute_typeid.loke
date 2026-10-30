@@ -1,0 +1,70 @@
+// design.md "Invalid representations": every `typeid` bit pattern is a value,
+// so a constant bit cast to `typeid` folds as it converts at run time, and
+// keeps its number. A `typeid_of(T)` constant is numbered only after discovery,
+// so it still converts when the program runs, to the number emission gives it.
+package main;
+
+import "base:runtime";
+import "core:fmt";
+import "core:unsafe";
+
+FORGED :: unsafe.transmute(typeid, u64(999999));
+HIGH :: unsafe.transmute(typeid, u64(0x8000_0000_0000_0000));
+ONES :: unsafe.transmute(typeid, ~u64(0));
+NONE :: unsafe.transmute(typeid, u64(0));
+Tag :: distinct typeid;
+TAGGED :: unsafe.transmute(Tag, i64(-2));
+
+// Folded back: each is a constant declaration, so none can wait for run time.
+FORGED_BITS :: unsafe.transmute(u64, FORGED);
+HIGH_BITS :: unsafe.transmute(u64, HIGH);
+ONES_BITS :: unsafe.transmute(i64, ONES);
+ROUND_TRIP :: unsafe.transmute(typeid, unsafe.transmute(u64, HIGH));
+
+Pair :: struct { id: typeid, bits: u64 }
+PAIR :: unsafe.transmute(Pair, [2]u64{999999, 7});
+
+INT_ID :: typeid_of(int);
+
+bits :: proc(id: typeid) -> u64 { return unsafe.transmute(u64, id); }
+forge :: proc(number: u64) -> typeid { return unsafe.transmute(typeid, number); }
+
+// Evaluated: the conversions run on locals, and the result leaves as a constant.
+EVALUATED :: forge(42);
+EVALUATED_BITS :: bits(forge(0xffff_0000_0000_0001));
+
+main :: proc() {
+	ordinary, high, ones, zero := u64(999999), u64(0x8000_0000_0000_0000), ~u64(0), u64(0);
+	at_run_time := [4]typeid{
+		unsafe.transmute(typeid, ordinary), unsafe.transmute(typeid, high),
+		unsafe.transmute(typeid, ones), unsafe.transmute(typeid, zero),
+	};
+	constant := [4]typeid{FORGED, HIGH, ONES, NONE};
+	foreach (i in 0 ..< 4) {
+		fmt.println(constant[i], bits(constant[i]), constant[i] == at_run_time[i]);
+	}
+	fmt.println(FORGED_BITS, HIGH_BITS, ONES_BITS, ROUND_TRIP == HIGH);
+	fmt.println(unsafe.transmute(u64, TAGGED), typeid(TAGGED) == at_run_time[2]);
+	fmt.println(PAIR.id == FORGED, PAIR.bits, PAIR == Pair{at_run_time[0], 7});
+	fmt.println(EVALUATED, EVALUATED == forge(42), EVALUATED_BITS);
+
+	// Folded: both numbers are known.
+	when (FORGED != HIGH && ROUND_TRIP == HIGH && NONE == typeid{} && INT_ID != NONE) {
+		fmt.println("folded");
+	}
+	// Left to run time: `int`'s number is not known while checking.
+	fmt.println(FORGED == INT_ID, HIGH != typeid_of(int));
+	id := typeid_of(int);
+	fmt.println(unsafe.transmute(u64, INT_ID) == bits(id), bits(INT_ID) != 0);
+
+	// Distinct numbers are distinct cases.
+	switch (at_run_time[1]) {
+	case FORGED: fmt.println("forged");
+	case HIGH:   fmt.println("high");
+	case ONES:   fmt.println("ones");
+	default:     fmt.println("other");
+	}
+
+	// design.md "`type` and `typeid`": an id no type has is `Invalid`.
+	fmt.println(type_info_of(FORGED).kind == runtime.Type_Kind.Invalid, type_info_of(ONES).id == NONE);
+}

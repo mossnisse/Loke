@@ -1,0 +1,30 @@
+package main;
+import "core:fmt";
+// design.md "Weakening and reborrows": a carrier may be used for a place beside
+// the one borrowed through it. A pointer chosen among eight places is told
+// apart at each of them, so every other field stays free beside a borrow
+// through it; past eight, tests/err/borrow_place_through_pointer.loke shows
+// the rejection naming the limit (design.md "Minimum provenance precision").
+Wide :: struct { a: int, b: int, c: int, d: int, e: int, z: int }
+Sides :: struct { left: Wide, right: Wide }
+
+chosen_among_eight :: proc(s: ^mut Sides, i: int) -> int {
+	q := &mut s^.left.a;
+	if (i == 1) { q = &mut s^.left.b; }
+	if (i == 2) { q = &mut s^.left.c; }
+	if (i == 3) { q = &mut s^.left.d; }
+	if (i == 4) { q = &mut s^.left.e; }
+	if (i == 5) { q = &mut s^.right.a; }
+	if (i == 6) { q = &mut s^.right.b; }
+	if (i == 7) { q = &mut s^.right.c; }
+	value := &q^;
+	s^.right.e = 2;
+	s^.left.z = 3;
+	s^.right.z = 4;
+	return value^;
+}
+
+main :: proc() {
+	s := Sides{Wide{1, 2, 3, 4, 5, 6}, Wide{7, 8, 9, 10, 11, 12}};
+	fmt.println(chosen_among_eight(&mut s, 0), chosen_among_eight(&mut s, 7), s.left.z, s.right.e, s.right.z);
+}

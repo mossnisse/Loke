@@ -147,8 +147,10 @@ chosen_read :: proc(h: ^mut Holder, flag: bool) -> int {
 }
 
 // Past eight places, those sharing the longest prefix are taken as it: the
-// pointer may point at all of `left`, but only at four fields of `right`.
-// known-gaps.md records the conflict at `s^.left.z`.
+// pointer may point at all of `left`, but only at four fields of `right`. No
+// minimum precision covers so many places, so the conflict at `s^.left.z`
+// names the limit and says the reborrow may cover it (design.md "Minimum
+// provenance precision").
 chosen_past_limit :: proc(s: ^mut Sides, i: int) -> int {
 	q := &mut s^.left.a;
 	if (i == 1) { q = &mut s^.left.b; }

@@ -302,6 +302,49 @@ typeid_const :: proc(type: Type_Id) -> Const_Value {
 	return Const_Value{kind = .Type, type_value = type}
 }
 
+// design.md "Invalid representations": every `typeid` bit pattern is a value,
+// numbers no type has included. A constant read back from storage, as
+// `unsafe.transmute(typeid, u64(7))` is, keeps that number in `integer` and
+// names no type: types are numbered only by `freeze_typeids`, after discovery,
+// so it cannot be matched to one while checking. Zero is the nil `typeid`,
+// `type_const(INVALID_TYPE)`.
+typeid_number_const :: proc(c: ^Compiler, number: u64) -> Const_Value {
+	if number == 0 {
+		return type_const(INVALID_TYPE)
+	}
+	return Const_Value{kind = .Type, type_value = INVALID_TYPE, integer = bi_from_u64(c, number)}
+}
+
+// The number a `typeid` constant holds when it is already known: the nil one's
+// and a bit-cast one's. A `typeid_of(T)` constant's waits for `freeze_typeids`.
+typeid_const_number :: proc(c: Value_Storage, value: Const_Value) -> (number: u64, known: bool) {
+	if value.kind != .Type || value.type_value != INVALID_TYPE {
+		return 0, false
+	}
+	if bi_is_zero(value.integer) {
+		return 0, true
+	}
+	number, _ = bi_to_u64(c, value.integer)
+	return number, true
+}
+
+// `==` between two `typeid` (or `type`) constants. A known number against a
+// `typeid_of(T)` is undecided until `T` is numbered, except that no type is
+// numbered zero.
+type_consts_equal :: proc(c: Value_Storage, a, b: Const_Value) -> (equal: bool, known: bool) {
+	left, left_known := typeid_const_number(c, a)
+	right, right_known := typeid_const_number(c, b)
+	switch {
+	case left_known && right_known:
+		return left == right, true
+	case left_known:
+		return false, left == 0
+	case right_known:
+		return false, right == 0
+	}
+	return a.type_value == b.type_value, true
+}
+
 // Whether a constant of this value and type names a type, as an alias does.
 // `typeid_of(T)` folds to the same constant kind, but its type says it is a
 // runtime `typeid` value, which is a value and never a type.

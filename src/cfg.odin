@@ -271,6 +271,9 @@ Prov_State :: struct {
 	// The slots standing for what the caller storage each parameter loan names
 	// holds (`prov_caller_slots`).
 	caller_slots:   map[Loan_Id][dynamic]int,
+	// Per view parameter's own loan and constant index, the caller slots
+	// standing for that one element (`prov_view_element`).
+	view_elements:  map[Prov_View_Element][]int,
 	// Per call with a `self: ^` receiver, what the receiver's place holds, which
 	// the call's actual joins with its borrow of that place: a load through the
 	// receiver reads these at its path rather than through them.
@@ -451,6 +454,7 @@ new_flow_graph :: proc(k: ^Checker, literal: ^Expr_Proc, allocator: mem.Allocato
 		graph.step_views = make(map[Symbol_Id]bool, 8, allocator)
 		graph.lent_aliases = make(map[int][]int, 8, allocator)
 		graph.caller_slots = make(map[Loan_Id][dynamic]int, 4, allocator)
+		graph.view_elements = make(map[Prov_View_Element][]int, 2, allocator)
 		graph.receiver_content = make(map[^Expr_Call][]int, 2, allocator)
 		graph.fresh_slots = make(map[int]bool, 2, allocator)
 		graph.content_by_symbol = make(map[Symbol_Id][]int, 8, allocator)
@@ -2425,7 +2429,7 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 			}
 			only := prov_read_is_reads_only(graph.k.c, prov_type(graph, v))
 			if carriers, path, ok := prov_read_through_carrier(graph, v, only); ok {
-				return prov_load_content(graph, carriers, path, prov_type(graph, v), v.span, only)
+				return prov_load_content(graph, carriers, path, prov_type(graph, v), v.span, only, place = v)
 			}
 			loans := walk_flow_expr(graph, v.operand)
 			if v.resolution.kind == .Field && v.operand != nil {
@@ -2459,7 +2463,7 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 			}
 			only := prov_read_is_reads_only(graph.k.c, prov_type(graph, v))
 			if carriers, path, ok := prov_read_through_carrier(graph, v, only); ok {
-				return prov_load_content(graph, carriers, path, prov_type(graph, v), v.span, only)
+				return prov_load_content(graph, carriers, path, prov_type(graph, v), v.span, only, place = v)
 			}
 			loans := walk_flow_expr(graph, v.operand)
 			for index in v.indices {

@@ -4205,7 +4205,7 @@ const_equal :: proc(c: ^Compiler, a, b: Const_Value) -> (bool, bool) {
 	case .String:
 		return a.text == b.text, true
 	case .Type:
-		return a.type_value == b.type_value, true
+		return type_consts_equal(c, a, b)
 	case .Nil:
 		return true, true
 	}

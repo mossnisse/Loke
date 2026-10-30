@@ -1,0 +1,147 @@
+// design.md "Values that contain borrows": a parameter binding is read-only,
+// so `s[0]`, with `s` a view parameter, is always one element of the caller's
+// view, and a store of a carrier into one of its fields replaces what that
+// field held, as a store through a pointer parameter does. Storing `head` is
+// no store into the parameter itself, so a borrow of `count` beside it stays
+// legal, also when a loop repeats it (design.md "Weakening and reborrows").
+// Through another index, which may name the same element, nothing is
+// replaced.
+package main;
+
+Node :: struct { value: int }
+Counted :: struct { head: ^mut Node, tail: ^mut Node, count: int }
+One :: struct { head: ^mut Node, count: int }
+sink :: proc(value: int) {}
+touch :: proc(s: []mut Counted) {}
+
+// Legal: storing `head` beside a borrow of `count`.
+beside_count :: proc(s: []mut Counted) {
+	for (round := 0; round < 2; round += 1) {
+		count := &s[0].count;
+		s[0].head = s[0].tail;
+		sink(count^);
+	}
+}
+
+beside_count_straight :: proc(s: []mut Counted) {
+	s[0].head = s[0].tail;
+	count := &s[0].count;
+	tail := s[0].tail;
+	sink(count^);
+}
+
+beside_other_count :: proc(s: []mut Counted, i: int) {
+	for (round := 0; round < 2; round += 1) {
+		count := &s[i].count;
+		s[0].head = s[0].tail;
+		sink(count^);
+	}
+}
+
+beside_count_one :: proc(s: []mut One) {
+	for (round := 0; round < 2; round += 1) {
+		count := &s[0].count;
+		s[0].head = s[1].head;
+		sink(count^);
+	}
+}
+
+// Legal: each iteration's store replaces `head`, so the copy of `tail` an
+// earlier iteration stored there is no longer in use.
+replaced_each_round :: proc(s: []mut Counted) {
+	for (round := 0; round < 2; round += 1) {
+		head := s[0].head;
+		head^.value = 1;
+		s[0].head = s[0].tail;
+	}
+}
+
+replaced_each_round_one :: proc(s: []mut One) {
+	for (round := 0; round < 2; round += 1) {
+		head := s[0].head;
+		head^.value = 1;
+		s[0].head = s[1].head;
+	}
+}
+
+// Legal: `head` was replaced, so `old` is the only copy of what it held.
+replaced :: proc(s: []mut Counted, @(escape=stored) replacement: ^mut Node) {
+	old := s[0].head;
+	s[0].head = replacement;
+	fresh := s[0].head;
+	old^.value = 1;
+	fresh^.value = 2;
+}
+
+// The copy of `tail` the last iteration stored in `head` is still in use.
+replaced_in_use :: proc(s: []mut Counted) {
+	for (round := 0; round < 2; round += 1) {
+		head := s[0].head;
+		head^.value = 1;
+		s[0].head = s[0].tail;
+		head^.value = 2;
+	}
+}
+
+// The copy of `tail` stored in `head` is still in use through `head`.
+copied_again :: proc(s: []mut Counted) {
+	s[0].head = s[0].tail;
+	head := s[0].head;
+	tail := s[0].tail;
+	head^.value = 1;
+	tail^.value = 2;
+}
+
+copied_again_other_element :: proc(s: []mut Counted) {
+	s[1].head = s[0].tail;
+	head := s[1].head;
+	tail := s[0].tail;
+	head^.value = 1;
+	tail^.value = 2;
+}
+
+// `s[i]` and `s[j]`, or `s[i]` and `s[0]`, may be one element.
+copied_again_indexed :: proc(s: []mut Counted, i: int, j: int) {
+	s[i].head = s[j].tail;
+	head := s[i].head;
+	tail := s[j].tail;
+	head^.value = 1;
+	tail^.value = 2;
+}
+
+loaded_indexed :: proc(s: []mut Counted, i: int) {
+	s[0].head = s[0].tail;
+	head := s[i].head;
+	tail := s[0].tail;
+	head^.value = 1;
+	tail^.value = 2;
+}
+
+stored_indexed :: proc(s: []mut Counted, i: int) {
+	s[i].head = s[0].tail;
+	head := s[0].head;
+	tail := s[0].tail;
+	head^.value = 1;
+	tail^.value = 2;
+}
+
+// What the last iteration stored in `tail` is a copy of `s[2].tail`, which
+// `head` holds a copy of in the next.
+chained :: proc(s: []mut Counted) {
+	for (round := 0; round < 3; round += 1) {
+		head := s[0].head;
+		head^.value = 1;
+		s[0].head = s[1].tail;
+		s[1].tail = s[2].tail;
+	}
+}
+
+// The call may use the copy of `tail` stored in `head`.
+passed_on :: proc(s: []mut Counted) {
+	s[0].head = s[0].tail;
+	head := s[0].head;
+	touch(s);
+	head^.value = 1;
+}
+
+main :: proc() {}

@@ -407,7 +407,8 @@ freeze :: proc(ev: ^Evaluator, v: Eval_Value, allocator: mem.Allocator = {}) -> 
 		return zero, ok
 	}
 	cv := const_of(v)
-	if v.kind == .Integer || v.kind == .Rune {
+	// A bit-cast `typeid` keeps its number there too (`typeid_number_const`).
+	if v.kind == .Integer || v.kind == .Rune || (v.kind == .Type && !bi_is_zero(v.integer)) {
 		cv.integer = bi_clone(storage, v.integer)
 	} else if v.kind == .String {
 		cv.text = strings.clone(v.text, storage)

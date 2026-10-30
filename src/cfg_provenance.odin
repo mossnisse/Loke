@@ -154,6 +154,14 @@ Prov_Event :: struct {
 	// every slot it may land in. Any other store through a parameter's loan
 	// also joins into the parameter itself (`publish_into_loan`).
 	linked:        bool,
+	// `Publish`, `Load`: for a store of one carrier into, or a load out of,
+	// one element of a view parameter, `s[k]` with a constant `k`, one more
+	// than the parameter's own loan, and the caller slots standing for that
+	// element (`prov_view_element`), where the store lands when that loan is
+	// the one its carriers name, and the load reads instead of the slots
+	// standing for every element; 0 otherwise.
+	element_loan:  int,
+	elements:      []int,
 	// `Task_Start`, `Shared_Effect`: see `Prov_Kind`.
 	symbol:        Symbol_Id,
 	// One more than the window bit of the pooled block whose join this
@@ -391,7 +399,7 @@ prov_place_loan :: proc(
 		return nil
 	}
 	span := expr_span(place)
-	offsets, _ := prov_value_offset(graph, carriers)
+	offsets, _, merged := prov_value_offset(graph, carriers)
 	paths := make([][]Proj_Step, len(offsets), graph.alloc)
 	for at, index in offsets {
 		paths[index] = prov_concat_path(graph, at, path)
@@ -403,12 +411,19 @@ prov_place_loan :: proc(
 	slot := prov_temp_slot(graph)
 	loan := &graph.place_loans[len(graph.place_loans) - 1]
 	loan.slot = slot
+	// design.md "Minimum provenance precision": a loan of places merged past
+	// the limit may cover a place the carriers never point at, so a rejection
+	// it causes names the limit.
+	if merged {
+		graph.prov_slots[slot].precision |= {.Places}
+	}
 	prov_emit(graph, Prov_Event {
 		kind = .Def, slot = slot, loan = NO_LOAN, sources = carriers, span = span, place_loan = len(graph.place_loans),
 	})
 	// A borrow points at the place it is of (`Prov_Slot.offsets`).
 	if borrows {
 		graph.prov_slots[slot].offsets = loan.paths
+		graph.prov_slots[slot].offsets_merged = merged
 	}
 	return prov_one(graph, slot)
 }
@@ -441,11 +456,14 @@ prov_access_through :: proc(graph: ^Flow_Graph, carriers: []int, path: []Proj_St
 		return -1
 	}
 	first := len(graph.blocks[graph.current].prov)
-	offsets, _ := prov_value_offset(graph, carriers)
+	offsets, _, merged := prov_value_offset(graph, carriers)
 	if prov_offsets_agree(graph, carriers, offsets) {
+		// As for a place loan (`prov_place_loan`): merged places name the limit.
+		precision: Precision_Loss = merged ? {.Places} : {}
 		for at in offsets {
 			prov_emit(graph, Prov_Event {
 				kind = .Through, into = carriers, path = prov_concat_path(graph, at, path), span = span, verb = verb, access = access,
+				precision = precision,
 			})
 		}
 		return first
@@ -602,38 +620,53 @@ prov_emit :: proc(graph: ^Flow_Graph, event: Prov_Event) {
 // point at (`Prov_Slot.offsets`): any of theirs, as a borrow's place loan
 // snapshot points at the place it is of. A slot standing for a borrow's
 // access, which names no storage, takes no part. False when no slot names
-// storage.
+// storage. `merged` when places past `PROV_OFFSET_LIMIT` were taken as a
+// prefix they share, here or in a slot's own offsets.
 @(private)
-prov_value_offset :: proc(graph: ^Flow_Graph, slots: []int) -> ([][]Proj_Step, bool) {
-	out: [][]Proj_Step
-	found := false
+prov_value_offset :: proc(graph: ^Flow_Graph, slots: []int) -> (out: [][]Proj_Step, found: bool, merged: bool) {
 	for slot in slots {
 		entry := graph.prov_slots[slot]
 		if entry.through_block != NO_BLOCK {
 			continue
 		}
 		offsets := prov_slot_offsets(entry)
-		out = found ? prov_union_offsets(graph, out, offsets) : offsets
+		merged ||= entry.offsets_merged
+		if found {
+			joined: bool
+			out, joined = prov_union_offsets(graph, out, offsets)
+			merged ||= joined
+		} else {
+			out = offsets
+		}
 		found = true
 	}
-	return out, found
+	return
 }
 
 // Records what a definition of `slot` from `sources` may point at, besides
 // what the slot's earlier definitions may.
 @(private = "file")
 prov_note_offset :: proc(graph: ^Flow_Graph, slot: int, sources: []int) {
-	at, found := prov_value_offset(graph, sources)
+	at, found, merged := prov_value_offset(graph, sources)
 	if !found {
 		return
 	}
 	entry := &graph.prov_slots[slot]
-	entry.offsets = entry.offsets != nil ? prov_union_offsets(graph, entry.offsets, at) : at
+	if entry.offsets != nil {
+		joined: bool
+		entry.offsets, joined = prov_union_offsets(graph, entry.offsets, at)
+		merged ||= joined
+	} else {
+		entry.offsets = at
+	}
+	entry.offsets_merged ||= merged
 }
 
 // The most places a value is told apart at; past it, places are merged into a
-// prefix they share (`prov_union_offsets`).
-@(private = "file")
+// prefix they share (`prov_union_offsets`). No minimum the specification
+// guarantees bounds it, so a rejection the merge may cause names it
+// (design.md "Minimum provenance precision", `Precision_Limit.Places`).
+@(private)
 PROV_OFFSET_LIMIT :: 8
 
 // A slot whose definitions name no storage points at the whole of it.
@@ -650,14 +683,14 @@ prov_slot_offsets :: proc(entry: Prov_Slot) -> [][]Proj_Step {
 // such pair among equals, are taken as that prefix until few enough are left,
 // so `[inner, a]` and `[inner, b]` become `[inner]` while a place outside
 // `inner` stays apart. Each place of `a` and `b` stays inside one of the
-// result.
+// result. `merged` when the limit took any.
 @(private = "file")
-prov_union_offsets :: proc(graph: ^Flow_Graph, a, b: [][]Proj_Step) -> [][]Proj_Step {
+prov_union_offsets :: proc(graph: ^Flow_Graph, a, b: [][]Proj_Step) -> (union_of: [][]Proj_Step, merged: bool) {
 	if prov_offsets_cover(a, b) {
-		return a
+		return a, false
 	}
 	if prov_offsets_cover(b, a) {
-		return b
+		return b, false
 	}
 	out := make([dynamic][]Proj_Step, 0, len(a) + len(b), graph.alloc)
 	for at in a {
@@ -679,8 +712,9 @@ prov_union_offsets :: proc(graph: ^Flow_Graph, a, b: [][]Proj_Step) -> [][]Proj_
 		ordered_remove(&out, second)
 		ordered_remove(&out, first)
 		prov_add_offset(&out, shared)
+		merged = true
 	}
-	return out[:]
+	return out[:], merged
 }
 
 @(private = "file")
@@ -1425,7 +1459,7 @@ prov_value_content :: proc(graph: ^Flow_Graph, sources: []int, type: Type_Id, sp
 @(private)
 prov_load_content :: proc(
 	graph: ^Flow_Graph, carriers: []int, path: []Proj_Step, type: Type_Id, span: Span, reads_only := false,
-	walked := false,
+	walked := false, place: Expr = nil,
 ) -> []int {
 	if len(carriers) == 0 {
 		return nil
@@ -1433,16 +1467,24 @@ prov_load_content :: proc(
 	prov_reach(graph, carriers, span)
 	content := prov_temp_content(graph, type)
 	graph.has_content_load ||= len(content) > 0
+	// One element of a view parameter is read alone (`prov_view_element`).
+	element_loan: int
+	elements: []int
+	if place != nil && len(content) > 0 {
+		element_loan, elements = prov_view_element(graph, place)
+	}
 	for slot in content {
 		graph.prov_slots[slot].loaded = true
 		prov_emit(graph, Prov_Event {
-			kind       = .Load,
-			slot       = slot,
-			into       = carriers,
-			path       = prov_concat_path(graph, path, graph.prov_slots[slot].path),
-			span       = span,
-			reads_only = reads_only,
-			walked     = walked,
+			kind         = .Load,
+			slot         = slot,
+			into         = carriers,
+			path         = prov_concat_path(graph, path, graph.prov_slots[slot].path),
+			span         = span,
+			reads_only   = reads_only,
+			walked       = walked,
+			element_loan = element_loan,
+			elements     = elements,
 		})
 	}
 	prov_emit(graph, Prov_Event{kind = .Live, sources = content, span = span, reads_only = reads_only})
@@ -1508,7 +1550,7 @@ prov_read_carrier :: proc(graph: ^Flow_Graph, operand: Expr, reads_only: bool) -
 		// stored carrier is only read too.
 		if prov_reads_plainly_through(graph, operand) {
 			if carriers, path, through := prov_read_through_carrier(graph, operand, reads_only = true); through {
-				return prov_load_content(graph, carriers, path, prov_type(graph, operand), expr_span(operand), reads_only = true)
+				return prov_load_content(graph, carriers, path, prov_type(graph, operand), expr_span(operand), reads_only = true, place = operand)
 			}
 		}
 	}
@@ -2043,6 +2085,50 @@ prov_reborrow :: proc(graph: ^Flow_Graph, slots: []int, destination: Type_Id, in
 	}
 }
 
+// A value holding carriers stored through carriers, as `p^ = q^` for a
+// record of pointers, copies each of them (design.md "Weakening and
+// reborrows"). As a carrier stored alone is, each copy is linked to every
+// slot of its type that may stand for where it lands: a named one, or one
+// standing for one caller storage, whose path ends where the carrier is
+// inside the value. Which storage the target names is known only to the
+// solve, and a slot stays suspended only while it holds the source's loan.
+// An untyped caller slot is no candidate: it may stand for storage holding
+// no carrier, as the `Node` a parameter's `^mut Node` field points at does,
+// which a store through a parameter, joining into it, would then leave
+// reborrowing the copy. A path cut at a budget has no one carrier type, and
+// is left unlinked, as `prov_define_one_content` leaves one stored into a
+// local.
+@(private = "file")
+prov_reborrow_stored_content :: proc(graph: ^Flow_Graph, sources: []int, stored: Type_Id, span: Span) {
+	c := graph.k.c
+	if type_is_carrier(c, stored) {
+		return
+	}
+	for path in carrier_shape(c, stored) {
+		if path.truncated || path.type == INVALID_TYPE {
+			continue
+		}
+		selected := prov_select_content(graph, sources, stored, path.steps)
+		if len(selected) == 0 {
+			continue
+		}
+		prov_reborrow(graph, selected, path.type, span = span, copies = true)
+		for entry, candidate in graph.prov_slots {
+			if (entry.symbol != INVALID_SYMBOL || entry.caller_one) && entry.content_type == path.type &&
+			   prov_path_may_end_in(entry.path, path.steps) {
+				prov_reborrow(graph, selected, path.type, candidate, span)
+			}
+		}
+	}
+}
+
+// Whether the place `path` names may be the one `tail` names inside a value
+// stored at some place: whether its last steps may overlap `tail`.
+@(private = "file")
+prov_path_may_end_in :: proc(path, tail: []Proj_Step) -> bool {
+	return len(path) >= len(tail) && paths_overlap(path[len(path) - len(tail):], tail)
+}
+
 // The reads of the carriers a mutable borrow through them went through, made
 // reads only once the borrow is weakened (`Prov_Slot.walk_reads`).
 @(private = "file")
@@ -2372,7 +2458,8 @@ prov_bind_parameters :: proc(graph: ^Flow_Graph, literal: ^Expr_Proc) {
 // A store through a loan naming one storage, reached through pointers alone,
 // lands in these slots and replaces the one holding exactly the carrier
 // stored (`publish_into_caller`); one through a view, whose slots stand for
-// every element, joins into the parameter itself. Slots of different loans
+// every element, joins into the parameter itself, unless it names one
+// element of a view parameter (`prov_view_element`). Slots of different loans
 // are taken to name different storage.
 @(private = "file")
 prov_caller_slots :: proc(graph: ^Flow_Graph, root: Root_Id, first: int, name: string) {
@@ -2426,9 +2513,12 @@ prov_caller_slots :: proc(graph: ^Flow_Graph, root: Root_Id, first: int, name: s
 			paths = carrier_shape(c, element)
 		}
 		if len(paths) < 2 {
-			// One carrier path at the storage itself is the slot's whole content.
+			// One carrier path in the storage is the slot's content, kept with
+			// its place and type so a store of exactly that carrier replaces it
+			// (`caller_replaces`), as `p^.head` with `p: ^mut One` and
+			// `One :: struct { head: ^mut Node, count: int }`.
 			whole := Carrier_Path{type = INVALID_TYPE}
-			if len(paths) == 1 && len(paths[0].steps) == 0 {
+			if len(paths) == 1 {
 				whole = paths[0]
 			}
 			mutable := len(paths) == 1 ? paths[0].mutable : graph.loans[int(held)].mutable || reaches_mutable
@@ -2521,6 +2611,126 @@ prov_caller_slot :: proc(
 	}
 	append(&graph.caller_slots[loan], slot)
 	append(&graph.entry_defs, Prov_Entry_Def{slot = slot, loan = held})
+}
+
+// One element of a view parameter's caller storage (`prov_view_element`).
+Prov_View_Element :: struct {
+	loan:  Loan_Id,
+	index: i64,
+}
+
+// design.md "Values that contain borrows": a parameter binding is read-only,
+// so `s[k]`, with `s` a view parameter and `k` a constant, always names the
+// one element `k` of the caller's view, which a store of a carrier there
+// replaces as one through a pointer replaces its pointee's (`caller_replaces`).
+// The slots standing for every element (`prov_caller_slots`) cannot be
+// replaced, so that element gets slots of its own beside them, holding what
+// they hold at entry, and a load naming it reads those alone, while any
+// other load through the parameter reads both. Any other store into the
+// caller's view, through another index or carrier, still joins into the
+// parameter itself, which every load through it reads too. The parameter's
+// own loan plus one and the element's slots, or 0 and nil when `place` names
+// no such element.
+@(private = "file")
+prov_view_element :: proc(graph: ^Flow_Graph, place: Expr) -> (int, []int) {
+	c := graph.k.c
+	// The constant subscript applied to a parameter, found before the hops.
+	index, operand: Expr
+	for e := place; e != nil && index == nil; {
+		#partial switch v in e {
+		case ^Expr_Selector:
+			e = v.operand
+		case ^Expr_Index:
+			if _, named := v.operand.(^Expr_Ident); named && len(v.indices) == 1 {
+				index, operand = v.indices[0], v.operand
+			}
+			e = v.operand
+		case:
+			e = nil
+		}
+	}
+	if index == nil {
+		return 0, nil
+	}
+	element, constant := prov_const_int(graph, index)
+	ident := operand.(^Expr_Ident)
+	sym := symbol_of(c, ident.symbol)
+	if !constant || element < 0 || sym == nil || sym.kind != .Parameter || !sym.immutable ||
+	   underlying_kind(c, sym.type) != .Slice {
+		return 0, nil
+	}
+	// The parameter's pointee holds the place.
+	hops := prov_place_hops(graph, place)
+	if len(hops) != 1 || expr_base(prov_value(graph, hops[0].carrier).origin) != expr_base(operand) {
+		return 0, nil
+	}
+	// The parameter's root, and its own loan, the first not standing for content.
+	root, own := NO_ROOT, NO_LOAN
+	for entry, at in graph.roots {
+		if entry.kind == .Param && entry.symbol == ident.symbol {
+			root = Root_Id(at)
+			break
+		}
+	}
+	for loan, at in graph.loans {
+		if root != NO_ROOT && loan.root == root && !loan.content {
+			own = Loan_Id(at)
+			break
+		}
+	}
+	if own == NO_LOAN {
+		return 0, nil
+	}
+	key := Prov_View_Element{loan = own, index = element}
+	slots, found := graph.view_elements[key]
+	if !found {
+		// As `prov_caller_slots` makes the slots standing for every element.
+		descriptor := graph.roots[int(root)]
+		pointee := carrier_pointee_shape(c, sym.type)
+		first := len(graph.prov_slots)
+		if len(descriptor.pointee_loans) > 0 {
+			for loans, position in descriptor.pointee_loans {
+				prov_caller_slot(graph, own, pointee[position], loans[0], descriptor.name, pointee[position].mutable, false)
+			}
+		} else if len(pointee) == 1 {
+			held := Loan_Id(deeper_content_loan(descriptor, graph.loans[int(own)], int(own)))
+			prov_caller_slot(graph, own, pointee[0], held, descriptor.name, pointee[0].mutable, false)
+		}
+		slots = make([]int, len(graph.prov_slots) - first, graph.alloc)
+		for &slot, at in slots {
+			slot = first + at
+			graph.prov_slots[slot].caller_element = true
+		}
+		graph.view_elements[key] = slots
+	}
+	if len(slots) == 0 {
+		return 0, nil
+	}
+	return int(own) + 1, slots
+}
+
+// `prov_view_element` for a store of `stored` from `sources` at `target`,
+// whose copy reborrows the slots of that element it lands in, as a store's
+// copy reborrows the caller slots of one place (`prov_assign`).
+@(private = "file")
+prov_view_element_store :: proc(graph: ^Flow_Graph, target: Expr, stored: Type_Id, sources: []int) -> (int, []int) {
+	if !type_is_carrier(graph.k.c, stored) {
+		return 0, nil
+	}
+	loan, slots := prov_view_element(graph, target)
+	if loan == 0 {
+		return 0, nil
+	}
+	below := prov_place_hops(graph, target)[0].path
+	if !prov_path_names_one_place(below) {
+		return 0, nil
+	}
+	for slot in slots {
+		if entry := graph.prov_slots[slot]; entry.content_type == stored && paths_overlap(entry.path, below) {
+			prov_reborrow(graph, sources, stored, slot, expr_span(target))
+		}
+	}
+	return loan, slots
 }
 
 // Erasing into an `any_view` keeps the source root with a read-only loan
@@ -5185,6 +5395,7 @@ prov_reach_hop :: proc(graph: ^Flow_Graph, place: Expr, hops: []Place_Hop, at: i
 		from := prov_next_event(graph)
 		slots = prov_load_content(
 			graph, outer, hops[at + 1].path, prov_type(graph, carrier), expr_span(carrier), reads_only = loads, walked = true,
+			place = carrier,
 		)
 		prov_note_walk_reads(graph, walk, from)
 		if only {
@@ -6071,6 +6282,7 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 				// design.md "Weakening and reborrows".
 				if len(through) > 0 {
 					stored := prov_type(graph, target)
+					element_loan, elements := prov_view_element_store(graph, target, stored, sources)
 					if len(sources) > 0 {
 						prov_reborrow(graph, sources, stored, span = expr_span(target), copies = true)
 						// Which storage `target` names is known only to the solve, so the
@@ -6083,15 +6295,16 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 								prov_reborrow(graph, sources, stored, candidate, expr_span(target))
 							}
 						}
+						prov_reborrow_stored_content(graph, sources, stored, expr_span(target))
 					}
 					publish := Prov_Event {
 						kind = .Publish, span = expr_span(target), sources = sources, into = through,
-						linked = type_is_carrier(graph.k.c, stored),
+						linked = type_is_carrier(graph.k.c, stored), element_loan = element_loan, elements = elements,
 					}
 					// design.md "Values that contain borrows": carriers pointing at
 					// one place replace what it holds wherever they name one storage
-					// (`publish_into_loan`).
-					if offsets, found := prov_value_offset(graph, through); found && len(offsets) == 1 &&
+					// (`publish_into_loan`); a prefix places were merged into is not one.
+					if offsets, found, merged := prov_value_offset(graph, through); found && !merged && len(offsets) == 1 &&
 					   prov_offsets_agree(graph, through, offsets) && prov_path_names_one_place(offsets[0]) &&
 					   prov_path_names_one_place(below) {
 						publish.path, publish.stored = prov_concat_path(graph, offsets[0], below), stored

@@ -1,0 +1,87 @@
+// design.md "Weakening and reborrows": a carrier copied out of storage
+// reborrows the carrier stored there, wherever that storage is. A whole value
+// stored through a pointer copies each carrier it holds, so a copy of one of
+// those copies keeps the carrier it was copied from suspended, as storing
+// that carrier alone does.
+package main;
+
+Node :: struct { value: int }
+List :: struct { head: ^mut Node, tail: ^mut Node }
+Outer :: struct { list: List, count: int }
+Pair :: struct { items: [2]^mut Node }
+Holder :: struct { head: Option(^mut Node) }
+
+// `x` copies the copy of `q^.head` that `p^ = q^` stored in `l`.
+whole :: proc(q: ^mut List) {
+	a := Node{1}; b := Node{2};
+	l := List{&mut a, &mut b};
+	p := &mut l;
+	p^ = q^;
+	x := p^.head;
+	y := q^.head;
+	x^.value = 1;
+	y^.value = 2;
+}
+
+// From a local, as from a parameter.
+from_local :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3}; d := Node{4};
+	l := List{&mut a, &mut b};
+	m := List{&mut c, &mut d};
+	p := &mut l;
+	p^ = m;
+	x := p^.head;
+	y := m.head;
+	x^.value = 1;
+	y^.value = 2;
+}
+
+// A carrier in a nested record.
+nested :: proc(q: ^mut Outer) {
+	a := Node{1}; b := Node{2};
+	o := Outer{List{&mut a, &mut b}, 0};
+	p := &mut o;
+	p^ = q^;
+	x := p^.list.head;
+	y := q^.list.head;
+	x^.value = 1;
+	y^.value = 2;
+}
+
+// A record stored into a field of one.
+into_field :: proc(q: ^mut List) {
+	a := Node{1}; b := Node{2};
+	o := Outer{List{&mut a, &mut b}, 0};
+	p := &mut o;
+	p^.list = q^;
+	x := p^.list.head;
+	y := q^.head;
+	x^.value = 1;
+	y^.value = 2;
+}
+
+// An element of an array of carriers.
+element :: proc(q: ^mut Pair) {
+	a := Node{1}; b := Node{2};
+	l := Pair{{&mut a, &mut b}};
+	p := &mut l;
+	p^ = q^;
+	x := p^.items[0];
+	y := q^.items[0];
+	x^.value = 1;
+	y^.value = 2;
+}
+
+// A carrier in an `Option`.
+optional :: proc(q: ^mut Holder) {
+	a := Node{1};
+	l := Holder{.some(&mut a)};
+	p := &mut l;
+	p^ = q^;
+	x := p^.head;
+	y := q^.head;
+	switch (x) { case .some(n): n^.value = 1; case .none: }
+	switch (y) { case .some(n): n^.value = 2; case .none: }
+}
+
+main :: proc() {}

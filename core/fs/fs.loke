@@ -507,7 +507,9 @@ Find_Data :: struct {
 
 // Every path crosses here exactly once: UTF-8 in, zero-terminated UTF-16 out.
 // A path that cannot be represented is `Invalid_Path` rather than a silently
-// changed name.
+// changed name. Nothing else is changed either: no `\\?\` prefix, no cleaning,
+// so Windows normalizes an ordinary path before following any link in it, as
+// it does for every other program (standard-library.md "`core:fs`").
 @(private)
 wide_path :: proc(path: string_view, operation: io.Operation) -> Result([dynamic]u16, io.Error) {
 	if (path.len() == 0) {

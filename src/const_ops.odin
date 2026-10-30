@@ -672,13 +672,14 @@ fold_comparison :: proc(c: ^Compiler, op: Token_Kind, a, b: Const_Value, allocat
 		if op != .Eq_Eq && op != .Not_Eq {
 			return false, false
 		}
-		return (a.type_value == b.type_value) == (op == .Eq_Eq), true
+		equal, known := type_consts_equal(storage, a, b)
+		return equal == (op == .Eq_Eq), known
 	case a.kind == .Aggregate && b.kind == .Aggregate:
 		if op != .Eq_Eq && op != .Not_Eq {
 			return aggregate_order(c, op, a.aggregate, b.aggregate, storage)
 		}
-		equal := aggregate_equal(c, a.aggregate, b.aggregate, storage)
-		return equal == (op == .Eq_Eq), true
+		equal, known := aggregate_equal(c, a.aggregate, b.aggregate, storage)
+		return equal == (op == .Eq_Eq), known
 	case:
 		return false, false
 	}
@@ -700,20 +701,23 @@ fold_comparison :: proc(c: ^Compiler, op: Token_Kind, a, b: Const_Value, allocat
 	return false, false
 }
 
+// Unknown only while a `typeid` part awaits its number (`type_consts_equal`),
+// and then only if no other part already differs.
 @(private = "file")
-aggregate_equal :: proc(c: ^Compiler, a, b: ^Const_Aggregate, allocator: mem.Allocator = {}) -> bool {
+aggregate_equal :: proc(c: ^Compiler, a, b: ^Const_Aggregate, allocator: mem.Allocator = {}) -> (equal: bool, known: bool) {
 	if a == nil || b == nil || len(a.elements) != len(b.elements) {
-		return false
+		return false, true
 	}
 	// design.md "Unions": equal values hold the same variant.
 	if type_is_union(c, a.type) {
 		if a.variant != b.variant {
-			return false
+			return false, true
 		}
 		if union_variant_payload(c, a.type, a.variant) == TYPE_VOID {
-			return true
+			return true, true
 		}
 	}
+	deferred := false
 	info := underlying_info(c, a.type)
 	for element, index in a.elements {
 		other := b.elements[index]
@@ -723,22 +727,36 @@ aggregate_equal :: proc(c: ^Compiler, a, b: ^Const_Aggregate, allocator: mem.All
 			live, live_ok := bi_to_i64(allocator, a.elements[counter.index].integer)
 			if !live_ok || live < 0 || element.aggregate == nil || other.aggregate == nil ||
 			   live > i64(min(len(element.aggregate.elements), len(other.aggregate.elements))) {
-				return false
+				return false, true
 			}
 			for at in 0 ..< int(live) {
-				equal, ok := fold_comparison(c, .Eq_Eq, element.aggregate.elements[at], other.aggregate.elements[at], allocator)
-				if !ok || !equal {
-					return false
+				if !part_equal(c, element.aggregate.elements[at], other.aggregate.elements[at], allocator, &deferred) {
+					return false, true
 				}
 			}
 			continue
 		}
-		equal, ok := fold_comparison(c, .Eq_Eq, element, other, allocator)
-		if !ok || !equal {
-			return false
+		if !part_equal(c, element, other, allocator, &deferred) {
+			return false, true
 		}
 	}
-	return true
+	if deferred {
+		return false, false
+	}
+	return true, true
+}
+
+// Whether a pair of parts may be equal; a pair awaiting a `typeid` number sets
+// `deferred`. Any other pair a constant cannot compare counts as a difference.
+@(private = "file")
+part_equal :: proc(c: ^Compiler, a, b: Const_Value, allocator: mem.Allocator, deferred: ^bool) -> bool {
+	equal, ok := fold_comparison(c, .Eq_Eq, a, b, allocator)
+	// Between two `type` or two aggregate constants, `==` is unknown only then.
+	if !ok && (a.kind == .Type || a.kind == .Aggregate) && a.kind == b.kind {
+		deferred^ = true
+		return true
+	}
+	return ok && equal
 }
 
 // design.md "Comparison operators": an anonymous record orders by its first

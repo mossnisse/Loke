@@ -1,0 +1,112 @@
+package main;
+
+import "core:fmt";
+import "core:fs";
+import "core:io";
+import "core:os";
+import "core:path";
+import "core:process";
+import "core:strings";
+
+// Windows normalizes an ordinary path before it follows any link in it, so a
+// junction followed by `..` is never reached, while an extended-length `\\?\`
+// path reaches the filesystem as written (standard-library "`core:fs`" and
+// "Filesystem operations").
+//
+// The junction `local/junction` leads to `target/child`. Following it before
+// `..` would name `target/marker.txt`; normalization names `local/marker.txt`.
+// `mklink /J` needs no privilege, which a symbolic link would.
+
+succeeded :: proc(outcome: Status(io.Error)) -> bool {
+	switch (outcome) {
+	case .ok:  return true;
+	case .err: return false;
+	}
+	return false;
+}
+
+// The file's text, or what refused it: the portable code and the native one.
+read :: proc(file: string_view) {
+	switch (fs.read_text(file)) {
+	case .ok(text): fmt.println(text);
+	case .err(error): fmt.println(io.is(error, .Invalid_Path), io.native_code_of(error));
+	}
+}
+
+root :: proc() -> string {
+	switch (os.get_environment("TEMP")) {
+	case .ok(outcome):
+		switch (outcome) {
+		case .some(base): return path.join([]string_view{base, "loke_fs_link_normalization"});
+		case .none:
+		}
+	case .err:
+	}
+	return strings.copy("loke_fs_link_normalization");
+}
+
+// Spelled out rather than through `path.join`, which would remove the `..`
+// itself before Windows ever saw it.
+spelled :: proc(parts: []string_view) -> string {
+	return strings.join(parts, "");
+}
+
+clean_up :: proc(directory: string_view) {
+	local := path.join([]string_view{directory, "local"});
+	target := path.join([]string_view{directory, "target"});
+	child := path.join([]string_view{target, "child"});
+	_ = fs.remove_directory(path.join([]string_view{local, "junction"}));
+	_ = fs.remove_directory(path.join([]string_view{local, "made"}));
+	_ = fs.remove_directory(path.join([]string_view{target, "made"}));
+	_ = fs.remove(path.join([]string_view{local, "marker.txt"}));
+	_ = fs.remove(path.join([]string_view{target, "marker.txt"}));
+	_ = fs.remove(path.join([]string_view{child, "inside.txt"}));
+	_ = fs.remove_directory(child);
+	_ = fs.remove_directory(target);
+	_ = fs.remove_directory(local);
+	_ = fs.remove_directory(directory);
+}
+
+main :: proc() {
+	directory := root();
+	// A leftover directory from an interrupted earlier run is not a failure.
+	clean_up(directory);
+	local := path.join([]string_view{directory, "local"});
+	target := path.join([]string_view{directory, "target"});
+	child := path.join([]string_view{target, "child"});
+	junction := path.join([]string_view{local, "junction"});
+	fmt.println(succeeded(fs.create_directories(local)), succeeded(fs.create_directories(child)));
+	fmt.println(succeeded(fs.write_text(path.join([]string_view{local, "marker.txt"}), "local")));
+	fmt.println(succeeded(fs.write_text(path.join([]string_view{target, "marker.txt"}), "target-parent")));
+	fmt.println(succeeded(fs.write_text(path.join([]string_view{child, "inside.txt"}), "inside")));
+	made := process.run(process.Command{
+		program = "cmd", arguments = []string_view{"/c", "mklink", "/J", junction, child},
+		stdout = .Null, stderr = .Null,
+	}) or_else -1;
+	fmt.println(made == 0);
+
+	// The junction is followed when an element comes after it.
+	read(spelled([]string_view{junction, "\\inside.txt"}));
+	// `..` takes the junction away before anything is looked up, whichever
+	// separator spells it.
+	read(spelled([]string_view{junction, "\\..\\marker.txt"}));
+	read(spelled([]string_view{junction, "/../marker.txt"}));
+	// So does every operation, not only reads: this makes `local/made`.
+	fmt.println(succeeded(fs.create_directories(spelled([]string_view{junction, "\\..\\made"}))));
+	fmt.println(fs.exists(path.join([]string_view{local, "made"})) or_else false);
+	fmt.println(fs.exists(path.join([]string_view{target, "made"})) or_else true);
+
+	// An extended-length path is not normalized. The junction in it is followed,
+	// while `.`, `..`, and `/` reach NTFS as written, and NTFS refuses them.
+	extended := spelled([]string_view{"\\\\?\\", junction});
+	read(spelled([]string_view{extended, "\\inside.txt"}));
+	read(spelled([]string_view{extended, "\\..\\marker.txt"}));
+	read(spelled([]string_view{extended, "/inside.txt"}));
+	switch (fs.read_text(spelled([]string_view{extended, "\\.\\inside.txt"}))) {
+	case .ok: fmt.println(false);
+	case .err: fmt.println(true);
+	}
+
+	clean_up(directory);
+	fmt.println(fs.exists(directory) or_else true);
+}

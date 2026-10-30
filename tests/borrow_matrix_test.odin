@@ -184,25 +184,9 @@ matrix_expected :: proc(place: Matrix_Place, take: Matrix_Take, use: Matrix_Use,
 
 // The code the compiler reports instead of `matrix_expected`'s for a case
 // known-gaps.md records, or false when it agrees. Fixing a gap fails these
-// cases until they are removed here.
+// cases until they are removed here. None is recorded now.
 @(private = "file")
 matrix_known_gap :: proc(place: Matrix_Place, take: Matrix_Take, use: Matrix_Use, shape: Matrix_Shape, later: bool) -> (string, bool) {
-	if use.name != "replace_head" || shape != .Loop_Whole {
-		return "", false
-	}
-	// "A store through a slice parameter joins into the parameter"
-	switch place.name {
-	case "param_slice":
-		switch take {
-		case .Borrow, .Borrow_Mut, .Slice, .Slice_Mut:
-			if later {
-				return "L0641", true
-			}
-		case .Foreach, .Foreach_Mut:
-			return "L0641", true
-		case .Copy, .Binding:
-		}
-	}
 	return "", false
 }
 

@@ -59,5 +59,7 @@ L0641
 @144:16
 `h` cannot be used here: a mutable reborrow of it is still in use
 L0641
-@165:2
-`s` cannot be used here: a read-only reborrow of it is still in use
+@167:2
+`s` cannot be used here: a read-only reborrow of it that may cover this place is still in use
+provenance precision limit: a pointer that may point at more than 8 places of one storage is taken to point at a place they share
+this conservative dependency may cause the rejection; choose the pointer among fewer places to keep them apart

@@ -1751,6 +1751,21 @@ with a `write` method, which is the process-lifetime storage design.md
 private, its zero value is closed, it disables cloning, and its `drop` closes a
 live handle.
 
+Every operation passes its path to Windows as given: `core:fs` neither
+rewrites it nor adds a `\\?\` prefix, and `read_directory` only appends the
+search pattern `*`, after a `\` where one is needed. Windows normalizes an ordinary path
+lexically before it looks up any element of it, as its
+[path normalization](https://learn.microsoft.com/en-us/dotnet/standard/io/file-path-formats#path-normalization)
+describes: a relative path is joined to the current directory's path, `/`
+becomes `\`, runs of separators collapse, and each `.` element is dropped, as
+is each `..` element together with the element before it, among other
+rewrites. Only the elements that remain are looked up, so
+`local/junction/../marker.txt` names `local/marker.txt` wherever `junction`
+leads. A device path beginning `\\.\` is normalized the same way. An
+extended-length path beginning `\\?\` is not normalized: it reaches the
+filesystem as written, `/` is not a separator in it, and `.` and `..` are names
+rather than steps, which NTFS refuses.
+
 ### Opening and file I/O
 
 ```loke
@@ -1939,7 +1954,10 @@ identifies a link. Until it arrives, a link, whether a file link, a directory
 link, or a junction, behaves as follows:
 
 - A link anywhere before the last element of a path is followed, so
-  `create_directories` succeeds through a junction.
+  `create_directories` succeeds through a junction. The elements are those
+  that remain after [native normalization](#corefs): a link that a later `..`
+  takes away is never reached, so `..` steps back along the path as written,
+  not out of the link's target.
 - `metadata` and a directory entry describe the link itself, by its directory
   bit: a junction or a directory link is a `Directory` and a file link is a
   `File`, whether or not the target exists. Likewise `exists` is true for a

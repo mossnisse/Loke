@@ -85,6 +85,35 @@ annotations. Three decisions remain open:
   "Completed migration (stage 5)" in the repository's
   `bench/baselines/README.md`. Whether to accept that cost or reduce it is open.
 
+## Places one chosen pointer keeps apart
+
+[Minimum provenance precision](design.md#minimum-provenance-precision) bounds
+aggregate nesting, carrier paths per type, fixed arrays, and map keys, but not
+how many places a pointer chosen across branches may point at. `lokec` keeps
+eight (`PROV_OFFSET_LIMIT` in
+[src/cfg_provenance.odin](src/cfg_provenance.odin)) and past that merges the
+two sharing the longest prefix, so a pointer chosen among nine fields of
+`s^.left` and `s^.right` is taken to point into `s^.left`, and a write to
+`s^.left.z` is rejected with `L0641`. The diagnostic says the reborrow *may*
+cover the place and names the limit, as the section requires. Open: whether
+the precision table should guarantee a number of such places, which would make
+this program portable; the bound keeps the place loans and `.Through` events a
+borrow makes few.
+
+## Comparing a forged `typeid` constant
+
+A constant bit cast builds a `typeid` from any 64-bit pattern
+([Invalid representations](design.md#invalid-representations)), but a
+`typeid_of(T)` constant has no number until emission numbers the program's
+types. So `FORGED == typeid_of(int)`, with `FORGED` a nonzero bit-cast
+constant, has no compile-time answer: where a constant is required, such as a
+`when` condition or a constant declaration, it reports `L0341`, and elsewhere
+it is compared when the program runs. A zero pattern is the nil `typeid`,
+which equals no type. Open: whether to specify that such a comparison is not
+a constant expression, or to fix type numbers before constants that depend on
+them are evaluated, which would also fold `unsafe.transmute(u64,
+typeid_of(T))`.
+
 ## Compositional loan construction
 
 Loan construction had separate paths for subject views, ordinary borrows,

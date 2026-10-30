@@ -2,7 +2,9 @@
 // affect acceptance, type identity, or the generated program.
 package lokec
 
-Precision_Limit :: enum { Array_Elements, Depth, Width, Map_Width, Map_Keys, Map_Summary }
+// `Places` is the one budget past the specification's minimums: the places
+// below one storage a pointer is told apart at (`PROV_OFFSET_LIMIT`).
+Precision_Limit :: enum { Array_Elements, Depth, Width, Map_Width, Map_Keys, Map_Summary, Places }
 Precision_Loss :: bit_set[Precision_Limit; u8]
 
 path_precision :: proc(path: []Proj_Step) -> (loss: Precision_Loss) {
@@ -35,7 +37,12 @@ add_precision_notes :: proc(c: ^Compiler, span: Span, loss: Precision_Loss) {
 	if .Map_Summary in loss {
 		add_notef(c, span, "provenance precision loss: procedure result contracts merge map entry identities across calls, preserving only enclosing paths and the key/value distinction")
 	}
-	if loss != {} {
+	if .Places in loss {
+		add_notef(c, span, "provenance precision limit: a pointer that may point at more than %d places of one storage is taken to point at a place they share", PROV_OFFSET_LIMIT)
+	}
+	if loss == {.Places} {
+		add_notef(c, span, "this conservative dependency may cause the rejection; choose the pointer among fewer places to keep them apart")
+	} else if loss != {} {
 		add_notef(c, span, "this conservative dependency may cause the rejection; pass or return the needed field or element separately to preserve its provenance")
 	}
 }

@@ -106,10 +106,14 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 	}
 	#partial switch info.kind {
 	case .Typeid:
-		// `freeze_typeids` has numbered every requested type before emission.
-		id := typeid_value(e.c, value.type_value)
-		if value.type_value != INVALID_TYPE && id == 0 {
-			backend_fail(e, "a typeid constant was not registered before freezing")
+		// `freeze_typeids` has numbered every requested type before emission;
+		// a bit-cast constant brought its own number.
+		id, known := typeid_const_number(e.c, value)
+		if !known {
+			id = typeid_value(e.c, value.type_value)
+			if id == 0 {
+				backend_fail(e, "a typeid constant was not registered before freezing")
+			}
 		}
 		return fmt.aprintf("%d", id)
 	case .Bool:
@@ -338,10 +342,13 @@ write_const_bytes :: proc(
 		}
 		return true
 	case .Typeid:
-		id := typeid_value(e.c, value.type_value)
-		if value.type_value != INVALID_TYPE && id == 0 {
-			backend_fail(e, "a typeid constant was not registered before freezing")
-			return false
+		id, known := typeid_const_number(e.c, value)
+		if !known {
+			id = typeid_value(e.c, value.type_value)
+			if id == 0 {
+				backend_fail(e, "a typeid constant was not registered before freezing")
+				return false
+			}
 		}
 		for _, index in out {
 			out[index] = u8(id >> u64(index * 8))

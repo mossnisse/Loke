@@ -20,8 +20,5 @@ L0641
 @92:3
 `node` cannot be used here: a mutable reborrow of it is still in use
 L0641
-@93:10
-`node` cannot be used here: a mutable reborrow of it is still in use
-L0641
 @106:12
 `p` cannot be used here: a mutable reborrow of it is still in use

@@ -893,7 +893,7 @@ fold_transmute :: proc(k: ^Checker, v: ^Expr_Call, source, target: Type_Id) {
 		return
 	}
 	#partial switch underlying_kind(k.c, target) {
-	case .Float, .Bool, .Int, .Rune, .Enum:
+	case .Float, .Bool, .Int, .Rune, .Enum, .Typeid:
 	case:
 		return
 	}
@@ -919,8 +919,8 @@ Const_Pattern :: enum {
 	Invalid,
 	// Reads padding, whose bits no value put there.
 	Padding,
-	// Valid, but with no compile-time storage (a pointer, a union, or a record
-	// with uninitialized capacity).
+	// Valid, but with no compile-time storage (a pointer, a union, a record
+	// with uninitialized capacity, or a `typeid_of(T)` not yet numbered).
 	Unfoldable,
 }
 
@@ -962,6 +962,14 @@ const_storage :: proc(c: ^Compiler, value: Const_Value, type: Type_Id, bytes: []
 			return false
 		}
 		return store_integer(c, value.integer, bytes, written)
+	case .Typeid:
+		// A `typeid_of(T)` has no number until `freeze_typeids` gives it one,
+		// and folding it now would fix one that emission might not agree with.
+		number, known := typeid_const_number(c, value)
+		if !known {
+			return false
+		}
+		return store_integer(c, bi_from_u64(c, number), bytes, written)
 	case .Array, .Simd:
 		if value.kind != .Aggregate || value.aggregate == nil || u64(len(value.aggregate.elements)) != info.count {
 			return false
@@ -1013,7 +1021,7 @@ const_from_storage :: proc(c: ^Compiler, bytes: []u8, written: []bool, type: Typ
 		return {}, .Unfoldable
 	}
 	#partial switch info.kind {
-	case .Float, .Bool, .Int, .Rune, .Enum:
+	case .Float, .Bool, .Int, .Rune, .Enum, .Typeid:
 		raw := bi_zero(c)
 		for index := len(bytes) - 1; index >= 0; index -= 1 {
 			if !written[index] {
@@ -1035,6 +1043,10 @@ const_from_storage :: proc(c: ^Compiler, bytes: []u8, written: []bool, type: Typ
 		case .Rune:
 			// design.md "Invalid representations": every 32-bit pattern is a `rune`.
 			return rune_const(bi_wrap(c, raw, 32, true)), .Folded
+		case .Typeid:
+			// design.md "Invalid representations": and every pattern a `typeid`.
+			number, _ := bi_to_u64(c, raw)
+			return typeid_number_const(c, number), .Folded
 		case .Enum:
 			candidate := integer_const(bi_wrap(c, raw, int(info.bits), info.signed))
 			if enum_member_by_value(c, type, candidate) == INVALID_SYMBOL {

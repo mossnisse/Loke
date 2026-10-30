@@ -1,0 +1,65 @@
+// design.md "Values that contain borrows": a store through a parameter
+// replaces the carrier in the field it writes, which ends the old borrow
+// there, also when that field is the only carrier in the record. A copy of
+// the field afterwards reborrows only what was stored, so it may be used
+// beside a copy of what the field held before (design.md "Weakening and
+// reborrows").
+package main;
+
+Node :: struct { value: int }
+One :: struct { head: ^mut Node, count: int }
+Inner :: struct { head: ^mut Node, count: int }
+Outer :: struct { inner: Inner, total: int }
+
+// Legal: `head` was replaced, so `old` is the only copy of what it held.
+replaced :: proc(p: ^mut One, @(escape=stored) replacement: ^mut Node) {
+	old := p^.head;
+	p^.head = replacement;
+	fresh := p^.head;
+	old^.value = 1;
+	fresh^.value = 2;
+}
+
+replaced_loaded :: proc(p: ^mut ^mut One, @(escape=stored) replacement: ^mut Node) {
+	old := p^^.head;
+	p^^.head = replacement;
+	fresh := p^^.head;
+	old^.value = 1;
+	fresh^.value = 2;
+}
+
+replaced_nested :: proc(p: ^mut Outer, @(escape=stored) replacement: ^mut Node) {
+	old := p^.inner.head;
+	p^.inner.head = replacement;
+	fresh := p^.inner.head;
+	old^.value = 1;
+	fresh^.value = 2;
+}
+
+// Nothing replaced `head`, so the second copy uses the first.
+copied_twice :: proc(p: ^mut One) {
+	old := p^.head;
+	fresh := p^.head;
+	old^.value = 1;
+	fresh^.value = 2;
+}
+
+// The copy of `replacement` stored in `head` is still in use through `fresh`.
+replacement_in_use :: proc(p: ^mut One, @(escape=stored) replacement: ^mut Node) {
+	p^.head = replacement;
+	fresh := p^.head;
+	replacement^.value = 1;
+	fresh^.value = 2;
+}
+
+// Writing `count` replaces nothing in `head`.
+beside_count :: proc(p: ^mut One, @(escape=stored) replacement: ^mut Node) {
+	p^.head = replacement;
+	old := p^.head;
+	p^.count = 3;
+	fresh := p^.head;
+	old^.value = 1;
+	fresh^.value = 2;
+}
+
+main :: proc() {}

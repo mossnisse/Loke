@@ -805,6 +805,10 @@ const_key_text :: proc(c: ^Compiler, value: Const_Value) -> string {
 	case .String:
 		return value.text
 	case .Type:
+		// A bit-cast `typeid` names no type, only its number.
+		if number, known := typeid_const_number(c, value); known && number != 0 {
+			return fmt.aprintf("n%d", number, allocator = c.semantic_allocator)
+		}
 		return fmt.aprintf("t%d", u32(value.type_value), allocator = c.semantic_allocator)
 	case .Nil:
 		return "nil"

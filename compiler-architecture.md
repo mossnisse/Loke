@@ -366,7 +366,7 @@ behavioral controls for all of it.
 
 | Concept | Owner |
 | --- | --- |
-| Access through carriers: the hops to a place, the caller slots a parameter's loan stands for, and the reborrow a loaded copy takes | `prov_read_through_carrier`, `prov_place_hops`, `prov_caller_slots`, `prov_reborrow_loaded` in `cfg_provenance.odin` |
+| Access through carriers: the hops to a place, the caller slots a parameter's loan stands for, and the reborrow a loaded copy takes | `prov_read_through_carrier`, `prov_place_hops`, `prov_caller_slots`, `prov_view_element`, `prov_reborrow_loaded` in `cfg_provenance.odin` |
 | Place loans, taken by a borrow, slice, traversal, or switch of a place reached through carriers | `Prov_Place_Loan`, `prov_place_loan`, `place_bit`, `check_place_loans` in `borrow.odin` |
 | Access events, the places a slot's definitions may point at, and their merging | `prov_access_through`, `Prov_Slot.offsets`, `prov_note_offset`, `prov_union_offsets` |
 | Publication: a store through carriers | `publish_into_loan`, `publish_into_caller`, `read_caller_slots`, `resolve_content_reads` in `borrow.odin` |
@@ -380,7 +380,7 @@ behavioral controls for all of it.
 | `thread_local` borrows crossing calls, and callbacks | `Compiler.thread_local_writes`, `Callback_Write`, `Callback_Read`, `CALLBACK_RESULT`, `prov_callback_result`, `prov_callback_returned` |
 | Global-write effects and the callbacks a call passes | `compute_global_writes`, `Called_Parameter`, `Callback_Summary`, `call_parts`, `indirect_call_targets`, `callable_type_targets` in `global_effects.odin` |
 | Thread summaries for `parallel` blocks | `compute_thread_summaries`, `Compiler.reach_effects`, `allocator_uses`, `thread_facts_pending`, `thread_summaries_wanted` |
-| Bounded merges and the diagnostics that say *may* | `precision.odin`, `Carrier_Path.cut`, `L0646`, `L0647`, `L0730` |
+| Bounded merges and the diagnostics that say *may* | `precision.odin`, `Carrier_Path.cut`, `PROV_OFFSET_LIMIT`, `L0641`, `L0646`, `L0647`, `L0730` |
 
 Keep these contracts:
 
@@ -402,13 +402,22 @@ Keep these contracts:
   the carriers point, so a write lands only where it names. Offsets merge past
   eight places and alias paths stop at `WRITTEN_ALIAS_DEPTH`; a truncated
   path carries the precision marker, so `L0646`, `L0647`, and `L0730` say the
-  borrow *may* be there, and recursive cursors converge.
+  borrow *may* be there, and recursive cursors converge. A place loan or
+  `.Through` event made from merged offsets (`Prov_Slot.offsets_merged`)
+  carries `Precision_Limit.Places`, so its `L0641` or `L0511` says the
+  reborrow *may* cover the place and names the limit.
 - **A store through carriers is a `Publish` event.** It joins what is stored
   into the slots of each storage the carriers' loans name. Where they name one
   place with one live loan of exact path, the slot of the stored type at that
-  place is replaced, as a store to the place itself replaces it (design.md
-  "Values that contain borrows"). A parameter's loan publishes into its caller
-  slots, so the parameter itself holds nothing stored.
+  place, or of each carrier inside a stored record, is replaced, as a store to
+  the place itself replaces it (design.md "Values that contain borrows"). A
+  parameter's loan publishes into its caller slots, so the parameter itself
+  holds nothing stored. A view parameter's slots stand for every element, so
+  only a store into one element, `s[k]` with a constant `k`, lands in slots of
+  that element (`prov_view_element`); any other store through a view also
+  joins into the parameter itself. Each carrier the store copies is linked as
+  a reborrow to the slots where it may land (`prov_reborrow_stored_content`
+  for one inside a record).
 - **Owners, handles, and fields stay apart.** Region facts are kept by path,
   and backing dependencies apart from payload dependencies: a record's fields,
   a container's elements and backing, a shared handle's control block and

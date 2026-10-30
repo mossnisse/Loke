@@ -2011,6 +2011,13 @@ boundaries and API shapes follow a few common choices:
   other operation already goes through the link, so reporting the link's own
   directory bit is consistent with them, costs nothing, and leaves `Other`
   free for link support to give a meaning to.
+- **Paths keep Windows' own normalization.** `core:fs` hands a path to
+  Windows unchanged, so it names what it names to a shell or any other
+  Windows program. Following each link before a later `..`, as POSIX does, would mean
+  resolving the path one element at a time, a system call per element, and
+  would make `fs` disagree with the native tools about which file a path
+  names. A caller that wants no normalization already has the
+  extended-length `\\?\` form, which Windows passes on as written.
 - **Joining takes a slice.** A variadic would absorb trailing allocator
   arguments or prevent a preceding default allocator from being omitted.
 - **Case conversion is ASCII-only.** Full Unicode mapping requires tables and
