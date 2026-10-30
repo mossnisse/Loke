@@ -60,6 +60,12 @@ MATRIX_PLACES := [?]Matrix_Place {
 		"t[0]", "&mut t[0]", false,
 	},
 	{
+		"local_self_resliced", "",
+		MATRIX_NODES + " d := Node{4, .none}; e := Node{5, .none}; f := Node{6, .none}; lists := [2]List{List{&mut d, &mut e, 2, .some(&mut f), [2]int{4, 5}}, " +
+		MATRIX_LIST + "}; s := &mut lists[:]; s = &mut s[1:];",
+		"s[0]", "&mut s[0]", false,
+	},
+	{
 		"local_chosen", "",
 		MATRIX_NODES + " d := Node{4, .none}; e := Node{5, .none}; f := Node{6, .none}; lists := [2]List{" + MATRIX_LIST +
 		", List{&mut d, &mut e, 2, .some(&mut f), [2]int{4, 5}}}; chosen := &mut lists[0] if cond() else &mut lists[1];",

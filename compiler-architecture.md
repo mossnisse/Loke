@@ -413,8 +413,13 @@ Keep these contracts:
   the place itself replaces it (design.md "Values that contain borrows"). A
   local view's loan names the range it lends, so `s[k]` with a constant `k`
   names one element of it only where every definition of `s` that takes the
-  loan agrees on where `s` starts in that range: the borrow itself, or a
-  constant reslice of such a view, and nothing borrows `s`
+  loan and may reach the store agrees on where `s` starts in that range: the
+  borrow itself, or a constant reslice of such a view, and nothing borrows
+  `s`. Which definitions reach the store, and each reslice, is a
+  reaching-definitions pass over the views stores name
+  (`solve_view_defs`), so `s = &mut s[1:]` before a loop is known there, but
+  not inside it, where the reslice reaches itself, and not in a multiple
+  assignment that also writes `s`
   (`Prov_View_Def`, `prov_local_view_element`, `publish_view_of`). A parameter's loan publishes into its caller slots,
   so the parameter itself holds nothing stored. A view parameter's slots
   stand for every element, so only a store into one element, `s[k]` with a

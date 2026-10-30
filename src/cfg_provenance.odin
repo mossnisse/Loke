@@ -173,9 +173,14 @@ Prov_Event :: struct {
 	// `Publish`: for a store into `s[k]`, with `s` a local view and `k` a
 	// constant, one more than `s`'s slot, and `k`, which name one element of
 	// the range the borrow `s` holds lends (`prov_local_view_element`); 0
-	// otherwise.
+	// otherwise. `view_reaching` are the definitions of that slot that may
+	// reach the store (`Prov_View_Def.reaching`).
 	view_slot:     int,
 	view_index:    i64,
+	view_reaching: []int,
+	// `Def` of a named slot: one more than the index of its definition in
+	// `view_defs` (`prov_note_view`), or 0.
+	view_def:      int,
 	// `Task_Start`, `Shared_Effect`: see `Prov_Kind`.
 	symbol:        Symbol_Id,
 	// One more than the window bit of the pooled block whose join this
@@ -624,24 +629,28 @@ prov_emit :: proc(graph: ^Flow_Graph, event: Prov_Event) {
 			graph.has_region_event ||= !region_is_empty(content.region)
 		}
 	}
+	emitted := event
 	if event.kind == .Def {
 		prov_note_offset(graph, event.slot, event.sources)
-		prov_note_view(graph, event)
+		emitted.view_def = prov_note_view(graph, event)
 	}
-	append(&graph.blocks[graph.current].prov, event)
+	append(&graph.blocks[graph.current].prov, emitted)
 }
 
 // Records how a definition of a named slot relates its view to a fresh
 // borrow (`Prov_View_Def`), so a constant subscript of a view held there
 // names one element of the range that borrow lends
 // (`prov_local_view_element`): the borrow itself, the reslice
-// `prov_note_reslice` announced, or anything else.
+// `prov_note_reslice` announced, or anything else. One more than the
+// definition's index among the slot's (`Prov_Event.view_def`), or 0, as for
+// an event a fact graph emits into the graph it materializes, whose
+// definitions it does not record.
 @(private = "file")
-prov_note_view :: proc(graph: ^Flow_Graph, event: Prov_Event) {
+prov_note_view :: proc(graph: ^Flow_Graph, event: Prov_Event) -> int {
 	reslice := graph.view_reslice
 	graph.view_reslice = {}
-	if graph.prov_slots[event.slot].symbol == INVALID_SYMBOL {
-		return
+	if graph.prov_slots[event.slot].symbol == INVALID_SYMBOL || graph.materialized != nil {
+		return 0
 	}
 	def := Prov_View_Def{loan = NO_LOAN, unknown = true}
 	if reslice.slot == event.slot + 1 && event.place_loan == 0 && event.loan == NO_LOAN {
@@ -658,6 +667,7 @@ prov_note_view :: proc(graph: ^Flow_Graph, event: Prov_Event) {
 		graph.view_defs[event.slot] = make([dynamic]Prov_View_Def, 0, 1, graph.alloc)
 	}
 	append(&graph.view_defs[event.slot], def)
+	return len(graph.view_defs[event.slot])
 }
 
 // Announces that the next definition of `slot` takes `value`, when that is a
@@ -6563,6 +6573,16 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 						linked = prov_store_linked(graph.k.c, stored), element_loan = element_loan, elements = elements,
 					}
 					publish.view_slot, publish.view_index = prov_local_view_element(graph, target)
+					// design.md "Evaluation order": a destination is evaluated before an
+					// earlier target of the same statement is written, so the view it
+					// went through is not the one the definitions reaching here made.
+					for other in s.lhs {
+						if ident, is_ident := other.(^Expr_Ident); is_ident && publish.view_slot > 0 {
+							if slot, found := prov_slot_for_symbol(graph, ident.symbol); found && slot + 1 == publish.view_slot {
+								publish.view_slot = 0
+							}
+						}
+					}
 					// design.md "Values that contain borrows": carriers pointing at
 					// one place replace what it holds wherever they name one storage
 					// (`publish_into_loan`); a prefix places were merged into is not one.

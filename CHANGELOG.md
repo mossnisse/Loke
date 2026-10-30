@@ -643,6 +643,11 @@ checklist.
   `t := &mut s[1:]`, now replaces what that element held, so a loop that
   copies `s[0].head` before the store compiles, as it does through a slice
   parameter ([Weakening and reborrows](design.md#weakening-and-reborrows)).
+- Such a store also replaces what the element held when the view was resliced
+  from itself before the loop, as `s = &mut s[1:]`; it was rejected with
+  `L0641`. Resliced inside the loop or in one branch only, `s[0]` may name
+  several elements, and the store is still rejected
+  ([Weakening and reborrows](design.md#weakening-and-reborrows)).
 - After `p^ = q^` through a pointer parameter, a copy of one carrier, as
   `p^.head`, no longer holds the loans of the record's other carriers, so
   `q^.tail` stays usable beside it
