@@ -1,9 +1,13 @@
-// `core:math`'s integer bit operations (standard-library "`core:math`"):
-// `count_ones`, `leading_zeros`, `trailing_zeros`, `rotate_left`, and
-// `rotate_right`, at every integer width, signed and unsigned, a distinct
-// integer, and an unfixed constant. Zero counts as the width. Each answer is
-// computed three ways that must agree: at run time, folded by the checker from
-// a constant argument, and by compile-time evaluation of a procedure.
+// `core:math`'s integer bit operations (standard-library "Integer bit
+// operations"): `count_ones`, `leading_zeros`, `trailing_zeros`,
+// `rotate_left`, `rotate_right`, `bit_width`, `reverse_bits`,
+// `is_power_of_two`, and `next_power_of_two`, with
+// `checked_next_power_of_two`, at every integer width, signed and unsigned, a
+// distinct integer, and an unfixed constant. Zero counts as the width. Each
+// answer is computed three ways that must agree: at run time, folded by the
+// checker from a constant argument, and by compile-time evaluation of a
+// procedure. The panics are tests/trap/math_next_power_of_two_*, and the
+// compile-time overflow tests/err/math_next_power_of_two_overflow.
 package main;
 
 import "core:fmt";
@@ -29,8 +33,49 @@ spun :: proc(value: i16, count: int) -> i16 {
 EVALUATED :: bits_of(0x00F0_0000);
 SPUN      :: spun(1, 1);
 
+// The width, reversal, and power-of-two operations, folded and evaluated.
+WIDTH    :: math.bit_width(u8(0b0101));
+REVERSED :: math.reverse_bits(u8(0b0000_0110));
+POWER    :: math.is_power_of_two(u16(1024));
+ROUNDED  :: math.next_power_of_two(u32(5));
+LARGEST  :: math.next_power_of_two(i8(64));
+NEGATIVE :: math.next_power_of_two(i8(-128));
+
+rounded :: proc(value: i64) -> i64 {
+	x := value;
+	return math.next_power_of_two(x);
+}
+mirrored :: proc(value: u16) -> u16 {
+	x := value;
+	return math.reverse_bits(x);
+}
+signed_width :: proc(value: i32) -> int {
+	x := value;
+	if (math.is_power_of_two(x)) { return 0 - math.bit_width(x); }
+	return math.bit_width(x);
+}
+checked :: proc(value: u8) -> int {
+	x := value;
+	switch (math.checked_next_power_of_two(x)) {
+	case .some(power): return int(power);
+	case .none:        return -1;
+	}
+}
+ROUNDED_EVAL  :: rounded(1000);
+MIRRORED_EVAL :: mirrored(1);
+WIDTH_EVAL    :: signed_width(64);
+MINIMUM_EVAL  :: signed_width(-2147483647 - 1);
+CHECKED_EVAL  :: checked(100);
+UNFIT_EVAL    :: checked(129);
+
 counts :: proc(label: string_view, value: $T) {
 	fmt.println(label, math.count_ones(value), math.leading_zeros(value), math.trailing_zeros(value));
+}
+
+// The bit width, the reversal, the power-of-two test, and the round-up, whose
+// checked form answers `.none` where `next_power_of_two` would panic.
+shape :: proc(label: string_view, value: $T) {
+	fmt.println(label, math.bit_width(value), math.reverse_bits(value), math.is_power_of_two(value), math.checked_next_power_of_two(value));
 }
 
 main :: proc() {
@@ -95,4 +140,93 @@ main :: proc() {
 
 	// An unfixed constant is an `int`.
 	fmt.println(math.count_ones(255), math.leading_zeros(1), math.rotate_left(1, -1) == -9223372036854775807 - 1);
+
+	static_assert(WIDTH == 3 && REVERSED == 0b0110_0000 && POWER && ROUNDED == 8 && LARGEST == 64 && NEGATIVE == 1);
+	static_assert(ROUNDED_EVAL == 1024 && MIRRORED_EVAL == 32768 && WIDTH_EVAL == -7 && MINIMUM_EVAL == 32);
+	static_assert(CHECKED_EVAL == 128 && UNFIT_EVAL == -1);
+	fmt.println(WIDTH, REVERSED, POWER, ROUNDED, LARGEST, NEGATIVE, ROUNDED_EVAL, MIRRORED_EVAL, WIDTH_EVAL, MINIMUM_EVAL, CHECKED_EVAL, UNFIT_EVAL);
+
+	// Zero, one, the largest power of two, the first value past it, and the
+	// maximum, at every unsigned width.
+	shape("u8 0", u8(0));
+	shape("u8 1", u8(1));
+	shape("u8 2^7", u8(128));
+	shape("u8 2^7+1", u8(129));
+	shape("u8 MAX", u8(255));
+	shape("u16 2^15", u16(1) << 15);
+	shape("u16 2^15+1", (u16(1) << 15) + 1);
+	shape("u16 MAX", u16(0xFFFF));
+	shape("u32 2^31", u32(1) << 31);
+	shape("u32 2^31+1", (u32(1) << 31) + 1);
+	shape("u32 MAX", u32(0xFFFF_FFFF));
+	shape("u64 0", u64(0));
+	shape("u64 2^63", u64(1) << 63);
+	shape("u64 2^63+1", (u64(1) << 63) + 1);
+	shape("u64 MAX", u64(0xFFFF_FFFF_FFFF_FFFF));
+	shape("uint 1", uint(1));
+	shape("uint 2^63+1", (uint(1) << 63) + 1);
+	shape("u128 0", u128(0));
+	shape("u128 2^64+1", (u128(1) << 64) + 1);
+	shape("u128 2^127", u128(1) << 127);
+	shape("u128 2^127+1", (u128(1) << 127) + 1);
+
+	// Signed: the largest power of two is 2^(W-2) below the sign bit, and a
+	// negative value is no power of two but rounds up to 1. The minimum's
+	// single set bit makes its width the full width.
+	shape("i8 0", i8(0));
+	shape("i8 1", i8(1));
+	shape("i8 -1", i8(-1));
+	shape("i8 2^6", i8(64));
+	shape("i8 2^6+1", i8(65));
+	shape("i8 MAX", i8(127));
+	shape("i8 MIN", i8(-128));
+	shape("i16 2^14+1", i16(16385));
+	shape("i16 MIN", i16(-32768));
+	shape("i32 2^30", i32(1) << 30);
+	shape("i32 2^30+1", (i32(1) << 30) + 1);
+	shape("i32 MIN", i32(-2147483647 - 1));
+	shape("i64 2^62", i64(1) << 62);
+	shape("i64 2^62+1", (i64(1) << 62) + 1);
+	shape("i64 MIN", i64(-9223372036854775807 - 1));
+	shape("int -5", -5);
+	shape("int MAX", 9223372036854775807);
+	shape("i128 1", i128(1));
+	shape("i128 -1", i128(-1));
+	shape("i128 2^126", i128(1) << 126);
+	shape("i128 2^126+1", (i128(1) << 126) + 1);
+	shape("Cell 5", Cell(5));
+	shape("Cell 2^15+1", Cell(0x8001));
+
+	// The round-up at run time, at every width, up to the largest power that
+	// fits, through variables so that nothing folds.
+	n8: u8 = 65;
+	n16: u16 = 0x4001;
+	n32: u32 = 0x4000_0001;
+	n64: u64 = 3;
+	n128: u128 = (u128(1) << 100) + 1;
+	nu: uint = 0x8000_0000_0000_0000;
+	fmt.println(math.next_power_of_two(n8), math.next_power_of_two(n16), math.next_power_of_two(n32), math.next_power_of_two(n64), math.next_power_of_two(n128) == u128(1) << 101, math.next_power_of_two(nu));
+	m8: i8 = 33;
+	m16: i16 = -32768;
+	m32: i32 = 0x2000_0001;
+	m64: i64 = 0x4000_0000_0000_0000;
+	m128: i128 = (i128(1) << 125) + 1;
+	mi := 0;
+	fmt.println(math.next_power_of_two(m8), math.next_power_of_two(m16), math.next_power_of_two(m32), math.next_power_of_two(m64), math.next_power_of_two(m128) == i128(1) << 126, math.next_power_of_two(mi));
+	fmt.println(math.next_power_of_two(Cell(3)), math.next_power_of_two(1000), math.reverse_bits(1) == -9223372036854775807 - 1, math.bit_width(255), math.is_power_of_two(256));
+
+	// Every bit position of a u64 and an i64: a power of two is its own round-up,
+	// its width is its index plus one, and its reversal mirrors the index.
+	powers := true;
+	foreach (bit in 0 ..< 64) {
+		power := u64(1) << uint(bit);
+		if (!math.is_power_of_two(power) || math.next_power_of_two(power) != power || math.bit_width(power) != bit + 1) {
+			powers = false;
+		}
+		if (math.reverse_bits(power) != u64(1) << uint(63 - bit)) { powers = false; }
+		if (bit >= 2 && (math.is_power_of_two(power + 1) || math.next_power_of_two(power - 1) != power)) { powers = false; }
+		signed := i64(1) << uint(bit);
+		if (math.is_power_of_two(signed) != (bit < 63) || math.bit_width(signed) != bit + 1) { powers = false; }
+	}
+	fmt.println("powers agree", powers);
 }

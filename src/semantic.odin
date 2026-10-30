@@ -532,6 +532,16 @@ Builtin_Kind :: enum {
 	// count is taken modulo the width, so any `int` count is defined.
 	Math_Rotate_Left,
 	Math_Rotate_Right,
+	// The bit width, `W - ctlz`, a count as the others are; the bit reversal,
+	// LLVM's `bitreverse`; and the power-of-two test and round-up, which read
+	// the operand's value rather than its pattern. `Math_Next_Power_Of_Two`
+	// panics as checked arithmetic does when its result does not fit, and
+	// `Math_Checked_Next_Power_Of_Two` answers `Option(T)` there instead.
+	Math_Bit_Width,
+	Math_Reverse_Bits,
+	Math_Is_Power_Of_Two,
+	Math_Next_Power_Of_Two,
+	Math_Checked_Next_Power_Of_Two,
 	// design.md "SIMD vectors": the `core:simd` operations a constant lane index
 	// makes unwritable as a loop. `Simd_Reduce` takes the fold as a constant
 	// parameter, exactly as an atomic takes its ordering.

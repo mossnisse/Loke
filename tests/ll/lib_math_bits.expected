@@ -3,6 +3,8 @@ declare i8 @llvm.ctlz.i8(i8, i1)
 declare i128 @llvm.cttz.i128(i128, i1)
 declare i64 @llvm.fshl.i64(i64, i64, i64)
 declare i8 @llvm.fshr.i8(i8, i8, i8)
+declare i16 @llvm.ctlz.i16(i16, i1)
+declare i128 @llvm.bitreverse.i128(i128)
 call i64 @llvm.ctpop.i64(i64
 call i8 @llvm.ctlz.i8(i8 %*, i1 false)
 = zext i8 %* to i64
@@ -11,3 +13,15 @@ call i128 @llvm.cttz.i128(i128 %*, i1 false)
 call i64 @llvm.fshl.i64(i64
 = trunc i64 %* to i8
 call i8 @llvm.fshr.i8(i8
+call i16 @llvm.ctlz.i16(i16 %*, i1 false)
+= sub i16 16, %*
+= zext i16 %* to i64
+call i128 @llvm.bitreverse.i128(i128 %*)
+= icmp sgt i16 %*, 0
+= icmp sle i16 %*, 1
+= icmp uge i16 %*, 15
+br i1 %*, label %int.overflow.*, label %ok.*
+= shl i16 1, %*
+= icmp ule i64 %*, 1
+= icmp uge i64 %*, 64
+= shl i64 1, %*

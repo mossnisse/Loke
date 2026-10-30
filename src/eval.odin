@@ -94,7 +94,7 @@ require_const :: proc(k: ^Checker, e: Expr, what: string, code := "L0340") -> (C
 	if !ok {
 		return Const_Value{}, false
 	}
-	frozen, froze := freeze(&ev, value)
+	frozen, froze := freeze_result(&ev, value)
 	if !froze {
 		return Const_Value{}, false
 	}
@@ -114,7 +114,7 @@ evaluate_static_elements :: proc(k: ^Checker, e: Expr, what: string, code := "L0
 	}
 	out := make([]Const_Value, len(value.elements), k.c.semantic_allocator)
 	for element, index in value.elements {
-		frozen, froze := freeze(&ev, element)
+		frozen, froze := freeze_result(&ev, element)
 		if !froze {
 			return nil, false
 		}
@@ -378,6 +378,34 @@ copy_value :: proc(ev: ^Evaluator, v: Eval_Value) -> (Eval_Value, bool) {
 		out.elements[index] = copied
 	}
 	return out, true
+}
+
+// What evaluation hands the program. design.md "Compile-time procedure
+// evaluation": a capture literal's record is used only while evaluation runs,
+// so neither it nor a value holding one is a result.
+@(private = "file")
+freeze_result :: proc(ev: ^Evaluator, v: Eval_Value) -> (Const_Value, bool) {
+	if eval_holds_capture(ev.k.c, v) {
+		eval_fail(
+			ev, ev.origin, "L0341",
+			"a capture literal is a runtime value: it may be made and called during compile-time evaluation, but cannot be its result",
+		)
+		return Const_Value{}, false
+	}
+	return freeze(ev, v)
+}
+
+@(private = "file")
+eval_holds_capture :: proc(c: ^Compiler, v: Eval_Value) -> bool {
+	if type_is_capture_record(c, type_underlying(c, v.type)) {
+		return true
+	}
+	for element in v.elements {
+		if eval_holds_capture(c, element) {
+			return true
+		}
+	}
+	return false
 }
 
 // Into immutable compilation storage; a pointer cannot make the trip.
@@ -745,11 +773,8 @@ eval_value_unviewed :: proc(ev: ^Evaluator, e: Expr) -> (result: Eval_Value, suc
 		return eval_call(ev, v)
 
 	case ^Expr_Composite:
-		// design.md "Capture literals": no compile-time value yet.
-		if v.capture != nil {
-			eval_fail(ev, v.capture.clause_span, "L0341", "a capture literal has no compile-time value")
-			return Eval_Value{}, false
-		}
+		// design.md "Capture literals": a capture literal is its record's
+		// literal, whose elements are the captures as their modes take them.
 		return eval_composite(ev, v)
 
 	case ^Expr_Range:
@@ -2968,7 +2993,7 @@ eval_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (Eval_Va
 		rotated := rotate_const(ev.k.c, ev.alloc, const_of(operand).integer, const_of(by).integer, v.type, symbol.builtin)
 		return scalar(integer_const(rotated), v.type), true
 
-	case .Math_Count_Ones, .Math_Leading_Zeros, .Math_Trailing_Zeros:
+	case .Math_Count_Ones, .Math_Leading_Zeros, .Math_Trailing_Zeros, .Math_Bit_Width:
 		operand, ok := eval_expr(ev, v.bound[0])
 		if !ok {
 			return Eval_Value{}, false
@@ -2976,6 +3001,27 @@ eval_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (Eval_Va
 		source := expr_base(v.bound[0]).type
 		count := bit_count(ev.alloc, const_of(operand).integer, type_bits(ev.k.c, source), symbol.builtin)
 		return scalar(integer_const(bi_from_i64(ev.alloc, i64(count))), TYPE_INT), true
+
+	// design.md "Integer overflow": a `next_power_of_two` that would panic at
+	// run time is a compile-time diagnostic, as a checked `+` is, and the
+	// checked form's `.none`.
+	case .Math_Reverse_Bits, .Math_Is_Power_Of_Two, .Math_Next_Power_Of_Two, .Math_Checked_Next_Power_Of_Two:
+		operand, ok := eval_expr(ev, v.bound[0])
+		if !ok {
+			return Eval_Value{}, false
+		}
+		source := expr_base(v.bound[0]).type
+		if symbol.builtin == .Math_Checked_Next_Power_Of_Two {
+			power, fits := bit_value_const(ev.k.c, ev.alloc, const_of(operand).integer, source, .Math_Next_Power_Of_Two)
+			return eval_option(ev, v.type, scalar(power, source), fits)
+		}
+		result, fits := bit_value_const(ev.k.c, ev.alloc, const_of(operand).integer, source, symbol.builtin)
+		if !fits {
+			report_integer_overflow(ev.k.c, v.span, result.integer, source, ev.alloc)
+			eval_fold_failed(ev)
+			return Eval_Value{}, false
+		}
+		return scalar(result, v.type), true
 
 	case .Unsafe_Transmute:
 		// The checker's fold, for an operand that is a local.

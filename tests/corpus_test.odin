@@ -111,8 +111,27 @@ remove_tree :: proc(path: string) -> os.Error {
 }
 
 // Every launch in the harness goes through here, so none of them holds a core
-// while it waits.
-exec :: subprocess.run
+// while it waits, and none waits past its deadline: a child that stalls, or
+// leaves a descendant holding its output open, is ended with everything it
+// started, and the case fails with `.Timeout` instead of hanging the gate.
+exec :: proc(
+	desc: os.Process_Desc,
+	allocator: runtime.Allocator,
+	deadline := DEADLINE,
+) -> (
+	os.Process_State,
+	[]byte,
+	[]byte,
+	os.Error,
+) {
+	return subprocess.run(desc, allocator, deadline)
+}
+
+// The longest one launch may take: far beyond the slowest compile or run on a
+// loaded CI machine, and still a prompt failure beside CI's job limit. A test
+// whose launch runs longer, as the exhaustive comparison's do, gives its own.
+@(private)
+DEADLINE :: 5 * time.Minute
 
 @(private)
 compiler_path :: proc() -> string {
@@ -1002,6 +1021,49 @@ a_test_executable_runs_one_test_by_name :: proc(t: ^testing.T) {
 		testing.expectf(t, state.exit_code == run.exit, "%v: exited with %d", run.args, state.exit_code)
 		testing.expectf(t, normalise(string(stdout)) == run.stdout, "%v: stdout %q", run.args, string(stdout))
 		testing.expectf(t, normalise(string(stderr)) == run.stderr, "%v: stderr %q", run.args, string(stderr))
+	}
+}
+
+// A bundled package's own tests reach its private declarations, which a
+// program under tests/run cannot: core:time gives its rule evaluation known
+// rules that way. Every package under core/ or base/ whose files declare a test
+// runs them with `-test`, and each must pass.
+@(test)
+library_packages_pass_their_tests :: proc(t: ^testing.T) {
+	os.make_directory(TMP)
+	packages := make([dynamic]string, context.temp_allocator)
+	for pattern in ([]string{"core/*/*.loke", "core/*/*/*.loke", "base/*/*.loke"}) {
+		files, _ := filepath.glob(pattern, context.temp_allocator)
+		for file in files {
+			text, err := os.read_entire_file(file, context.temp_allocator)
+			if err != nil || !strings.contains(string(text), "\n@(test)") {
+				continue
+			}
+			dir := path_dir(file, context.temp_allocator)
+			if !slice.contains(packages[:], dir) {
+				append(&packages, dir)
+			}
+		}
+	}
+	testing.expect(t, len(packages) > 0, "no library package declares a test")
+	jobs := make([]Exec, len(packages), context.temp_allocator)
+	for dir, i in packages {
+		name, _ := strings.replace_all(filepath.base(dir), " ", "_", context.temp_allocator)
+		command := make([dynamic]string, context.temp_allocator)
+		append(&command, compiler_path(), dir, "-test", "-o", fmt.tprintf("%s/library-%s-%d.test.exe", TMP, name, i))
+		append(&command, ..env_flags())
+		jobs[i].command = command[:]
+	}
+	exec_all(jobs)
+	for dir, i in packages {
+		job := jobs[i]
+		if !testing.expectf(t, job.err == nil, "%s: cannot run %s", dir, compiler_path()) {
+			continue
+		}
+		testing.expectf(
+			t, job.state.exit_code == 0,
+			"%s: its tests did not all pass\n%s%s", dir, string(job.stdout), string(job.stderr),
+		)
 	}
 }
 
@@ -1927,17 +1989,11 @@ output_returns_a_failed_collection :: proc(t: ^testing.T) {
 	if !testing.expectf(t, err == nil && state.exit_code == 0, "cannot build the program:\n%s", string(stderr)) {
 		return
 	}
-	process, start_err := os.process_start(os.Process_Desc{command = []string{launch_path(exe)}})
-	if !testing.expectf(t, start_err == nil, "cannot run %s", exe) {
-		return
-	}
-	run_state, wait_err := os.process_wait(process, 60 * time.Second)
-	// Only a timeout leaves the process to kill; any other failure released it.
-	if wait_err == os.General_Error.Timeout {
-		_ = os.process_kill(process)
-		_, _ = os.process_wait(process)
-	}
-	testing.expectf(t, wait_err == nil, "`output` hung after its stdout collection failed")
+	run_state, _, _, wait_err := exec(
+		os.Process_Desc{command = []string{launch_path(exe)}}, context.allocator, 60 * time.Second,
+	)
+	testing.expectf(t, wait_err != os.General_Error.Timeout, "`output` hung after its stdout collection failed")
+	testing.expectf(t, wait_err == nil || wait_err == os.General_Error.Timeout, "cannot run %s: %v", exe, wait_err)
 	testing.expectf(t, wait_err != nil || run_state.exit_code == 0, "`output` returned the wrong outcome (exit %d)", run_state.exit_code)
 }
 
@@ -2199,7 +2255,9 @@ case_directories :: proc(t: ^testing.T, root: string) -> []string {
 // One process the harness waits on; `exec_all` fills in the rest.
 @(private)
 Exec :: struct {
-	command: []string,
+	command:  []string,
+	// Zero is `DEADLINE`.
+	deadline: time.Duration,
 	state:   os.Process_State,
 	stdout:  []byte,
 	stderr:  []byte,
@@ -2228,6 +2286,7 @@ exec_all :: proc(jobs: []Exec) {
 			job.state, job.stdout, job.stderr, job.err = exec(
 				os.Process_Desc{command = job.command},
 				runtime.heap_allocator(),
+				job.deadline if job.deadline != 0 else DEADLINE,
 			)
 		}, &job)
 	}
@@ -2278,7 +2337,7 @@ run_programs :: proc(t: ^testing.T, cases: []Program_Case, trap := false) {
 		if run.command == nil {
 			continue
 		}
-		testing.expectf(t, run.err == nil, "%s: cannot run the produced exe", c.path)
+		testing.expectf(t, run.err == nil, "%s: cannot run the produced exe: %v", c.path, run.err)
 		if trap {
 			testing.expectf(t, run.state.exit_code != 0, "%s: expected a runtime failure", c.path)
 		} else {

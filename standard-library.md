@@ -24,7 +24,7 @@ Examples use Loke syntax; the API summaries use Odin-style declaration sketches.
 | Start threads, protect shared state, wait for it to change, pass work between tasks, with or without waiting, or run tasks on a pool | [`core:thread`](#corethread) |
 | Use numeric functions and types | [`core:math`](#coremath) |
 | Draw random numbers, shuffle, sample, or get secret bytes | [`core:random`](#corerandom) |
-| Read clocks, work with dates, or print and parse ISO 8601 times | [`core:time`](#coretime) |
+| Read clocks, work with dates and the local time zone, or print and parse ISO 8601 times | [`core:time`](#coretime) |
 
 Start with the [design rules](#design-rules) for text, errors, and ownership.
 The [package layout](#package-layout) lists the remaining foundational packages.
@@ -1648,7 +1648,10 @@ bytes_for_bits :: proc(cap: int) -> int;   // cap/8, rounded up
 Index_Set(N).of(indices: ..int) -> Index_Set(N)
 Index_Set(N).all() -> Index_Set(N)
 Dynamic_Index_Set.init(cap: int, allocator := mem.default_allocator()) -> Dynamic_Index_Set
+Dynamic_Index_Set.try_init(cap: int, allocator := mem.default_allocator())
+	-> Result(Dynamic_Index_Set, Allocator_Error)
 Dynamic_Index_Set.resize(self: inout, cap: int)
+Dynamic_Index_Set.try_resize(self: inout, cap: int) -> Status(Allocator_Error)
 Index_View.over(words: []u64, cap: int) -> Index_View
 Index_View_Mut.over(words: []mut u64, cap: int) -> Index_View_Mut
 ```
@@ -1664,7 +1667,12 @@ words are:
   Copying one clones its storage, which the copy-cost diagnostic reports.
   `resize` keeps the indices below the new capacity, and those it adds are
   absent. `clear` keeps the storage, so a visited set is reused without
-  allocating.
+  allocating. `init` and `resize` follow the allocator's [failure
+  policy](design.md#allocation-failure); `try_init` and `try_resize` return
+  the `Allocator_Error` instead, under the [`try_`
+  convention](design.md#appending-to-a-dynamic-array), and a failed
+  `try_resize` leaves the set unchanged. Only growing allocates, so a
+  `try_resize` to a smaller capacity always succeeds.
 - **`Index_View`** and **`Index_View_Mut`** read and write a set stored in the
   caller's words, such as an arena or a field of the caller's own record.
   `over` panics unless `words.len()` is exactly `words_for_bits(cap)`. A view
@@ -1680,7 +1688,7 @@ owner or an `Index_View_Mut`, and `other` is an `Index_View`:
 | --- | --- |
 | `cap()` | The number of indices the set can hold. |
 | `len()`, `is_empty()` | The number of indices present, and whether it is zero. |
-| `contains(i)` | Whether `i` is present. |
+| `contains(i)`, `i in set` | Whether `i` is present. `in` is `contains` as an [operator](design.md#operator-declarations), so it panics for an `i` outside `0 ..< cap` as `contains` does; `!(i in set)` is its negation. |
 | `count_range(low, high)` | The number of indices present in `low ..< high`. |
 | `next_member(from)`, `next_absent(from)` | The smallest index at or after `from` that is present, or absent, as an `Option(int)`; `from` may be `cap`, which gives `.none`. |
 | `is_subset_of(other)`, `intersects(other)` | Whether every index of the set is in `other`, and whether any is. |
@@ -2550,8 +2558,9 @@ The rest of the package is:
 - `min`, `max`, and `clamp` over any numeric, ordered `T`; `clamp` with
   `high < low` panics;
 - the integer bit operations `count_ones`, `leading_zeros`, `trailing_zeros`,
-  `rotate_left`, and `rotate_right`, which
-  [Integer bit operations](#integer-bit-operations) describes;
+  `bit_width`, `rotate_left`, `rotate_right`, `reverse_bits`,
+  `is_power_of_two`, `next_power_of_two`, and `checked_next_power_of_two`,
+  which [Integer bit operations](#integer-bit-operations) describes;
 - `floor`, `ceil`, `round`, `trunc`, `mod`, `sqrt`, `hypot`, `fma`, `pow`,
   `exp`, `log`, `log2`, `log10`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`,
   `atan2`, `to_radians`, `to_degrees`, and `fma_is_instruction`.
@@ -2605,45 +2614,79 @@ their results are the same everywhere. See
 ### Integer bit operations
 
 ```loke
-count_ones     :: proc(value: $T) -> int;
-leading_zeros  :: proc(value: $T) -> int;
-trailing_zeros :: proc(value: $T) -> int;
-rotate_left    :: proc(value: $T, count: int) -> T;
-rotate_right   :: proc(value: $T, count: int) -> T;
+count_ones                :: proc(value: $T) -> int;
+leading_zeros             :: proc(value: $T) -> int;
+trailing_zeros            :: proc(value: $T) -> int;
+bit_width                 :: proc(value: $T) -> int;
+rotate_left               :: proc(value: $T, count: int) -> T;
+rotate_right              :: proc(value: $T, count: int) -> T;
+reverse_bits              :: proc(value: $T) -> T;
+is_power_of_two           :: proc(value: $T) -> bool;
+next_power_of_two         :: proc(value: $T) -> T;
+checked_next_power_of_two :: proc(value: $T) -> Option(T);
 ```
 
 `value` has an integer type of any width, signed or unsigned, or a `distinct`
 type over one; an unfixed constant is an `int`. A float, rune, enum, `bool`,
-or `Simd` vector is a compilation error. Each operation reads the value's
-two's-complement bit pattern at its type's width `W`, so a signed and an
-unsigned value with the same bits give the same answer:
+or `Simd` vector is a compilation error. The counts, the rotations, and the
+reversal read the value's two's-complement bit pattern at its type's width
+`W`, so a signed and an unsigned value with the same bits give the same
+answer:
 
 | Call | Result |
 | --- | --- |
 | `count_ones(x)` | The number of set bits, `0 ..= W`. `count_ones(i32(-1))` is `32`. |
 | `leading_zeros(x)` | The number of zero bits above the highest set bit. A negative value gives `0`. |
 | `trailing_zeros(x)` | The number of zero bits below the lowest set bit, which is that bit's index. |
+| `bit_width(x)` | `W - leading_zeros(x)`: the highest set bit's index plus one, the number of bits `x` needs. A negative value gives `W`. |
 | `rotate_left(x, count)` | `x` rotated `count` places toward the high end: the bits shifted out at the top come back in at the bottom. |
 | `rotate_right(x, count)` | `x` rotated `count` places toward the low end. |
+| `reverse_bits(x)` | `x` with bit `i` moved to bit `W - 1 - i`. `reverse_bits(i8(1))` is `-128`. |
 
 Zero is defined: `leading_zeros(x)` and `trailing_zeros(x)` are both `W` for
-`x == 0`, as `count_ones(x)` is `0`. So `W - leading_zeros(x)` is the number of
-bits `x` needs, and iterating the set bits of a word is
-`trailing_zeros(word)` followed by `word &= word - 1` until the word is zero.
+`x == 0`, as `count_ones(x)` and `bit_width(x)` are `0`. Iterating the set bits
+of a word is `trailing_zeros(word)` followed by `word &= word - 1` until the
+word is zero.
 
 A rotation takes `count` modulo `W`, floored as
 [`floor_mod`](design.md#integer-operators) floors it, so every `int` count is
 defined: a count past the width wraps, and a negative count rotates the other
-way, `rotate_left(x, -k) == rotate_right(x, k)`. Nothing panics.
+way, `rotate_left(x, -k) == rotate_right(x, k)`. A rotation never panics.
+
+The power-of-two operations read the value instead, so a negative value is
+never a power of two:
+
+| Call | Result |
+| --- | --- |
+| `is_power_of_two(x)` | Whether `x` is `2^k` for some `k >= 0`. Zero and every negative value are not, a signed minimum included, though its pattern has one set bit. |
+| `next_power_of_two(x)` | The smallest power of two at least `x`. A power of two is itself, and every `x <= 1`, zero and every negative value included, gives `1`. |
+| `checked_next_power_of_two(x)` | `.some(next_power_of_two(x))`, or `.none` where that power does not fit. |
+
+The largest power of two a type holds is `2^(W-1)` unsigned and `2^(W-2)`
+signed, the sign bit being no power of two. Past it, the next power of two
+does not fit, and `next_power_of_two` panics, as checked arithmetic does
+([Integer overflow](design.md#integer-overflow)): `next_power_of_two(u8(129))`
+and `next_power_of_two(i8(65))` both panic. Where it is computed at compile
+time, from a constant argument or in
+[compile-time evaluation](design.md#compile-time-procedure-evaluation), the
+same overflow is a compilation diagnostic. `checked_next_power_of_two` is the
+form that never panics, as `checked_add` is for `+`. There is no wrapping
+form: the low bits of the power that does not fit are all zero, which no
+caller wants as a power of two.
 
 A constant argument gives a constant, and each operation has a compile-time
-value. At run time each is one LLVM intrinsic, never a loop: `ctpop`, `ctlz`,
-and `cttz` with a zero operand defined, and the funnel shifts `fshl` and
-`fshr`. On x86-64 a rotation is one `rol` or `ror` at every
-[CPU level](compiler-guide.md#cpu-levels); a count is one `popcnt`, `lzcnt`, or
-`tzcnt` from the level that has it (`x86-64-v2` for `popcnt`, `x86-64-v3` for
-the other two) and a short instruction sequence below it. A result is the
-same at every level.
+value; `checked_next_power_of_two`, whose `Option` is not a constant, has one
+by compile-time evaluation. At run time each is one LLVM intrinsic or a few
+instructions around one, never a loop: `ctpop`, `ctlz`, and `cttz` with a zero
+operand defined, the funnel shifts `fshl` and `fshr`, and `bitreverse`;
+`bit_width` and the power-of-two round-up are `ctlz` with a subtraction, and
+`is_power_of_two` is `x > 0` and `x & (x - 1) == 0`. On x86-64 a rotation is
+one `rol` or `ror` at every [CPU level](compiler-guide.md#cpu-levels); a count
+is one `popcnt`, `lzcnt`, or `tzcnt` from the level that has it (`x86-64-v2`
+for `popcnt`, `x86-64-v3` for the other two) and a short instruction sequence
+below it. No level has a bit reversal instruction, so `reverse_bits` is a byte
+swap and shift-and-mask steps at every level. A result is the same at every
+level.
 
 ## `core:math/repro`
 
@@ -3598,16 +3641,17 @@ instantiated.
 ## `core:time`
 
 `core:time` has clocks, durations, instants, the proleptic Gregorian calendar,
-fixed UTC offsets, and ISO 8601 text. Dates and times print in the ISO 8601
-extended format, in the RFC 3339 profile where one applies, and parse back. A
-duration prints in a short form, `1h30m` or `153ms`; its ISO 8601 form,
-`PT1H30M`, is one style away and parses too. There is no locale, no month or
-weekday name in text, and no pattern language. Other forms are built from the
+fixed UTC offsets, the system's local time zone, and ISO 8601 text. Dates and
+times print in the ISO 8601 extended format, in the RFC 3339 profile where one
+applies, and parse back. A duration prints in a short form, `1h30m` or
+`153ms`; its ISO 8601 form, `PT1H30M`, is one style away and parses too. There
+is no locale, no month or weekday name in text, and no pattern language. Other
+forms are built from the
 [accessors](#the-calendar) with [`fmt.zero_pad`](#corefmt), as in
 `fmt.concat_to(w, fmt.zero_pad(date.day(), 2), ".", fmt.zero_pad(int(date.month()), 2), ".", date.year())`
 for `15.10.2026`.
 
-Named time zones and the system's local zone are not here yet; see
+Time zones chosen by name, such as `Europe/Stockholm`, are not here yet; see
 [Open questions in `core:time`](open-questions.md#open-questions-in-coretime).
 
 | Type | Holds | Zero value |
@@ -3620,14 +3664,15 @@ Named time zones and the system's local zone are not here yet; see
 | `Date_Time` | A `Date` and a `Time_Of_Day`, with no offset | 1970-01-01T00:00:00 |
 | `Offset` | Whole minutes east of UTC, −23:59 to +23:59 | UTC |
 | `Offset_Date_Time` | A `Date_Time` and the `Offset` it was read at | 1970-01-01T00:00:00Z |
+| `Zone` | A fixed `Offset`, or the zone the system's clock shows | UTC |
 
 Every zero value is a valid value. All of them are plain copyable data with no
 resource to drop, so they cross threads freely. The four calendar types are the
 four kinds of date and time ISO 8601 text distinguishes, and TOML's four:
 local date, local time, local date-time, and offset date-time.
 
-Everything except `now`, `tick_now`, and `sleep` is integer arithmetic in Loke,
-so it also runs during
+Everything except the clocks, `now`, `now_local`, `tick_now`, and `sleep`, and
+the system zone, is integer arithmetic in Loke, so it also runs during
 [compile-time evaluation](design.md#compile-time-procedure-evaluation).
 
 ### Clocks
@@ -3790,6 +3835,96 @@ Offsets are whole minutes up to ±23:59, the range RFC 3339 writes.
 `Offset_Date_Time` has `==` and no `<`. Two values for one instant at
 different offsets are unequal, and ordering their fields would put the later
 instant first; compare `to_time()` instead.
+
+### Time zones
+
+```loke
+Zone :: struct { /* private: a fixed offset or the system's zone */ }
+local_zone() -> Zone
+fixed_zone(offset: Offset) -> Zone
+now_local() -> Offset_Date_Time
+
+Zone.offset_at(self, instant: Time) -> Offset
+Zone.to_local(self, instant: Time) -> Offset_Date_Time
+
+Resolution :: union {
+	unique:  Offset,
+	gap:     (before: Offset, after: Offset),     // clocks skipped this time
+	overlap: (earlier: Offset, later: Offset),    // clocks showed it twice
+}
+Choice :: enum { Compatible, Earlier, Later, Reject }
+Zone.resolve(self, local: Date_Time) -> Resolution
+Zone.at(self, local: Date_Time,
+	choice: Choice = .Compatible) -> Option(Offset_Date_Time)
+```
+
+A `Zone` is a fixed offset or the system zone, the one the operating system's
+clock shows. It is plain copyable data like the package's other types, and its
+zero value is UTC. `now_local()` is `local_zone().to_local(now())`. A zone
+chosen by name is not here; see
+[Named time zones](open-questions.md#named-time-zones).
+
+The system zone's rules are Windows': `GetDynamicTimeZoneInformation` names
+the zone and `GetTimeZoneInformationForYear` gives each year's standard offset
+and daylight-saving rule, the rules `SystemTimeToTzSpecificLocalTimeEx`
+applies. Its history is what Windows records: changes Microsoft has published,
+with the earliest recorded rule standing in for the years before it and the
+latest for the years after. The package owns no zone data, and Windows Update
+keeps the system's current. The `TZ` environment variable, which the C runtime
+reads, is not consulted. When automatic adjustment for daylight saving time is
+off in Windows' settings, the clock shows standard time all year, and so does
+the zone: each year's standard offset.
+
+Each use reads the current setting, so a long-running program follows a change
+to the system zone, and nothing is read at import
+([No hidden process behavior](#no-hidden-process-behavior)). If Windows reports
+a failure, which it does not on a supported system, the call panics, as
+[`random.fill_secure`](#operating-system-entropy) does. A fixed zone reads
+nothing, so it also works during compile-time evaluation. The system zone has
+no name: Windows names its zones its own way, and the IANA name needs CLDR's
+mapping.
+
+A year's rule is read as `SystemTimeToTzSpecificLocalTimeEx` reads it:
+
+- Daylight saving starts at a wall-clock time in standard time and ends at one
+  in daylight saving time, both in the rule's year, each the *n*th or last
+  weekday of a month or a fixed day. When it starts later in the year than it
+  ends, as south of the equator, it runs from the year's start to its end and
+  from its start to the year's end.
+- A year's rule takes over from the year before's when the clock, under the
+  year before's, shows the new year. Where the two disagree there, the clocks
+  skip or repeat around midnight on January 1st.
+- A transition at midnight in the first week of January stands for the state
+  the year starts in, and takes effect when the year's rule takes over.
+  Windows writes a year that starts in daylight saving, or one in which it
+  changes on January 1st, that way.
+
+A wall-clock time can fall in a gap, when clocks skip forward, or an overlap,
+when they repeat. `resolve` says which, with the offsets on each side: a gap's
+`before` and `after` are the offsets before and after the clocks skipped, and
+an overlap's `earlier` and `later` the offsets of its earlier and later
+instants. It tries each offset the zone uses within a day of `local` and keeps
+those whose instant converts back to the same wall-clock time: one is
+`unique`, two an `overlap`, and none a `gap`. Any date of the calendar can be
+resolved, including those outside the range of `Time`.
+
+`at` gives `local` with the offset the choice picks:
+
+| Choice | In a gap | In an overlap |
+| --- | --- | --- |
+| `Compatible` | The offset before the gap, so the time moves forward by the gap's length, at the offset after it | The earlier instant |
+| `Earlier` | The instant before the gap: the time moves back by the gap's length, at the offset before it | The earlier instant |
+| `Later` | As `Compatible` | The later instant |
+| `Reject` | `.none` | `.none` |
+
+`Compatible` is what RFC 5545 and Temporal do. A time with one offset takes it
+whatever the choice. In the European Union's spring change, 02:30 on
+2026-03-29 falls in a gap from `+01:00` to `+02:00`: `Compatible` and `Later`
+give `2026-03-29T03:30:00+02:00`, and `Earlier` gives
+`2026-03-29T01:30:00+01:00`. In autumn, 02:30 on 2026-10-25 is an overlap:
+`Earlier` gives `2026-10-25T02:30:00+02:00` and `Later`
+`2026-10-25T02:30:00+01:00`. A time moved out of a gap past 9999-12-31 or
+before 0000-01-01 panics, as `Date_Time` arithmetic does.
 
 ### ISO 8601 text
 

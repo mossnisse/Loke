@@ -629,6 +629,14 @@ The main rejected alternatives were:
 `capture` is contextual after a procedure literal's signature, preserving its
 use as an ordinary identifier elsewhere.
 
+[Compile-time evaluation](design.md#compile-time-procedure-evaluation) runs a
+capture literal as the record it abbreviates, so a constant can be computed
+through a callback API. The record stays out of the constant itself. A literal
+is declared with `:=` because it is a runtime value; admitting one through a
+generic identity, while `::` rejects it written directly, would make the rule
+depend on spelling. A named record with a `call` method is a constant like any
+other record.
+
 ### Borrowed callable views
 
 A [`dyn proc` view](design.md#borrowed-callable-views) gives heterogeneous
@@ -2193,6 +2201,16 @@ boundaries and API shapes follow a few common choices:
   bytes it reads and writes for the same reason. Each handle holds one lock and a second is refused, because
   the platforms disagree about the second: Windows stacks it and needs two
   unlocks, and `flock` converts the first without promising atomicity.
+- **A failed release is a build-time fault.** Nothing a program does makes
+  `UnlockFileEx` fail on a handle that holds its lock, yet what a failed
+  `unlock` leaves behind is a promise: the lock stays held and a retry
+  releases it. `core:fs` therefore reads one
+  [`build_config`](design.md#build_configidentifier-default),
+  `CORE_FS_FAIL_FIRST_UNLOCK`, which makes the first native release fail
+  without releasing; `tests/run/lib_fs_unlock_failure.loke` is built with it.
+  A public hook would put a test's needs into every caller's API, and
+  interposing on the system call would depend on how the program is linked.
+  A constant that defaults to false compiles to nothing in every other build.
 - **Paths keep Windows' own normalization.** `core:fs` hands a path to
   Windows unchanged, so it names what it names to a shell or any other
   Windows program. Following each link before a later `..`, as POSIX does, would mean
@@ -2338,6 +2356,63 @@ boundaries and API shapes follow a few common choices:
   and a stale copy gives wrong local times with no error. When a caller needs
   them, the data is the system's own, kept current by its updates: ICU on
   Windows and the TZif files elsewhere. The compiler never ships tzdata.
+- **The local zone is Windows' own rules, read on each use.** The clock a
+  user sees is the system's, so a zone from `TZ`, which only the C runtime
+  reads, or from a copy of tzdata could disagree with it. Reading the setting
+  at every use costs a registry lookup, about 9 µs, and lets a long-running
+  program follow a change without a cache to invalidate or a value read at
+  import. A failure panics for the reason `random.fill_secure` does: Windows
+  does not fail here on a supported system, and a guessed offset would give
+  wrong times silently.
+- **The package evaluates the yearly rules itself.** Calling
+  `SystemTimeToTzSpecificLocalTimeEx` for every instant would be simpler for
+  `offset_at`, but `resolve` needs the reverse, and
+  `TzSpecificLocalTimeToSystemTimeEx` picks one side of a gap or overlap
+  without saying so. Its `SYSTEMTIME` also stops at 1601 and holds only
+  milliseconds. Evaluating `GetTimeZoneInformationForYear`'s rules in Loke
+  reaches the whole calendar, and taking a rule as data lets the package's
+  tests give it the European Union's or Samoa's.
+- **The new year is read as Windows reads it.** Windows' per-year rules say
+  nothing about when one year's rule gives way to the next, so the reading
+  was found by comparing with `SystemTimeToTzSpecificLocalTimeEx` over all
+  141 zones of a Windows 10 installation. Taking the rule of the UTC year, as
+  Wine does, disagreed in 14 zones wherever the rule changes at the new year.
+  Taking over when the old rule's clock shows the new year disagreed in 41,
+  for an hour each, until a midnight transition in January's first week was
+  read as the state the year starts in: that is how Windows writes "this year
+  starts in daylight saving", as in Perth in 2009, and it is also why Windows
+  ends Central Brazilian Standard Time's daylight saving on January 1st in
+  the years before its first record, 2004, rather than on the first Thursday
+  that record names. With both, the two agree at every instant compared:
+  hourly from 1990 to 2030 on both sides of each hour, and every 15 minutes
+  around each new year and every 37 hours from 1678 to 2261.
+- **Automatic adjustment off means standard time.** With "Adjust for daylight
+  saving time automatically" off, Windows' clock shows standard time all year
+  and `GetDynamicTimeZoneInformation` sets `DynamicDaylightTimeDisabled`.
+  `SystemTimeToTzSpecificLocalTimeEx` ignores that flag and still applies the
+  rules, but the zone is the one the clock shows, as .NET's
+  `TimeZoneInfo.Local` also takes it.
+- **`resolve` tries offsets rather than inverting the rule.** Each offset the
+  zone uses within a day of the time is converted back, and those that show
+  the time again are kept. That handles any rule, including a change of rule
+  at the new year such as Samoa's skipped day, with at most four conversions
+  and no case analysis of its own. `Compatible` is the default of RFC 5545,
+  Temporal, and Python's `fold=0`, and what a calendar entry at 02:30 on the
+  spring change most plausibly means.
+- **The sketch's `Resolution` needed no change.** A payload written
+  `(before: Offset, after: Offset)` is an anonymous record, so a caller binds
+  `.gap(before, after)` in any package: only a nominal record's fields are
+  limited to the package that declares them. `Zone` is a struct around a
+  private union, so a named variant can be added later without changing its
+  type, and its zero value is the first variant's, UTC.
+- **The rule evaluation is tested from inside the package.** Known rules have
+  to reach private declarations, so they are `@(test)` procedures in
+  `core/time/zone_test.loke`, which the integration harness runs for every
+  bundled package that declares tests. A program under `tests/run` compares
+  the public procedures with `SystemTimeToTzSpecificLocalTimeEx` in the
+  machine's own zone. The package's foreign declarations take `rawptr`, as the
+  clock's do, because a foreign symbol has one type: that program declares
+  the same functions with its own structures.
 - **A duration prints `µs`.** The `µ` is U+00B5, two bytes of UTF-8, as Go
   prints it. A console whose code page is not UTF-8 shows it wrongly, but
   that console misprints every non-ASCII string, and the parser accepts `us`
@@ -2439,6 +2514,27 @@ boundaries and API shapes follow a few common choices:
   rotation does. The rotations are compiler-known for the same type rule as
   the counts: written in Loke over `interfaces.Integral(T)`, a record that
   merely has the operators would be rotated at a width it does not have.
+- **The power-of-two operations read the value, and the round-up is checked
+  arithmetic.** A power of two is a number, so `is_power_of_two` answers for
+  the value: a signed minimum has one set bit but is negative, and calling
+  it a power of two would make `is_power_of_two(x)` true where `x > 0` is
+  false. `next_power_of_two` is the least power of two at least its operand,
+  which is 1 for every operand up to 1, so zero and a negative operand need
+  no panic or special case of their own; Rust and C++20 offer it only for
+  unsigned types, which Loke's `int` lengths would make every caller
+  convert. A result past the type's largest power is a mathematical result
+  that does not fit, and design.md "Integer overflow" already says what that
+  does: it panics, and is a compile-time error where it is folded. The
+  arithmetic policies are panic, wrap, and checked; the checked form,
+  `checked_next_power_of_two`, is kept, while a wrapping one is not, since
+  the low bits of the power that does not fit are zero, never a power of
+  two. The checked form is compiler-known like the rest, not written over
+  `interfaces.Integral(T)` as `checked_add` is, because a `distinct`
+  integer has no arithmetic until it is given some and would fail that
+  constraint where the other bit operations accept it. `bit_width` is C++20's
+  name for `W - leading_zeros(x)`, Go's `bits.Len`, and reads the pattern as
+  the counts do, so a negative value needs the full width; `reverse_bits`,
+  `is_power_of_two`, and `next_power_of_two` are Rust's names.
 - **An index set is a set, as `Bit_Set` is.** Its members are the indices
   present, so `len` counts them, `cap` is the capacity, and iteration yields
   the present indices, with the verbs `Bit_Set` already uses. A packed
@@ -2469,6 +2565,13 @@ boundaries and API shapes follow a few common choices:
   look like, so a reader in another language can take it as either. Padding
   in the final byte must be zero: a reader then rejects a save of a larger
   capacity instead of quietly dropping its high indices.
+- **`i in set` panics where `contains` does.** A range's `in` answers
+  `false` for a value outside it, so the operator could have read an index
+  outside `0 ..< cap` as absent. But every other index set operation treats
+  such an index as a programmer error, as an array index is, and an `in`
+  that quietly answered would hide the miscomputed index that a `contains`
+  in the same place reports. The operator is `contains` respelled, so the
+  two can be swapped without changing what a program does.
 
 ## Compiler design choices
 

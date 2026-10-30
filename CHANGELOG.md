@@ -380,6 +380,16 @@ checklist.
   `int` count modulo the width, a constant argument gives a constant, and
   each is one LLVM intrinsic at every optimization level.
 
+- `core:math` has the
+  [integer bit operations](standard-library.md#integer-bit-operations)
+  `bit_width`, `reverse_bits` (LLVM's `bitreverse`), `is_power_of_two`,
+  `next_power_of_two`, and `checked_next_power_of_two`, for the same types.
+  The power-of-two operations read the value, so zero and every negative
+  value are no power of two and round up to 1. A `next_power_of_two` that
+  does not fit its type panics as checked arithmetic does, or is a
+  compile-time error where it is computed at compile time, and the checked
+  form returns `.none` there.
+
 - `core:container` has
   [index sets](standard-library.md#corecontainer-index-sets), sets of the
   indices `0 ..< cap` held one bit each: `Index_Set(N)` inline,
@@ -387,7 +397,18 @@ checklist.
   `Index_View_Mut` over the caller's words. They set, clear, and test single
   indices and ranges, count, search for the next present or absent index,
   combine in place, iterate present indices, and store to and load from a
-  byte form fixed independently of the host's byte order.
+  byte form fixed independently of the host's byte order. Membership is
+  also `i in set`, and `Dynamic_Index_Set`'s `try_init` and `try_resize`
+  return an `Allocator_Error` instead of following the allocator's failure
+  policy, leaving the set unchanged when they fail.
+
+- Compile-time evaluation runs a [capture literal](design.md#capture-literals),
+  so a constant may be computed by a procedure that makes one and calls it,
+  directly or through an `interfaces.Callable` parameter, including writes
+  through a `&mut` capture
+  ([Compile-time procedure evaluation](design.md#compile-time-procedure-evaluation)).
+  The literal stays a runtime value: a constant's value cannot be or hold one,
+  and a `dyn proc` view of one is still rejected, both with `L0341`.
 
 - A [repeatable math benchmark](bench/math_compare/README.md#reproduce) comparing
   UCRT and reproducible functions with seeded, grid, and dependent inputs.
@@ -560,6 +581,14 @@ checklist.
   in `Simd` lanes with the same bits; `bench/geometry.loke` measures the
   casts, frustum culling, and the predicates against hand-written loops
   ([`core:math/geometry`](standard-library.md#coremathgeometry)).
+- `core:time` has time zones: `local_zone()`, the zone the system's clock
+  shows, with Windows' own rules and history, read on each use; `fixed_zone`;
+  and `now_local()`. `Zone.offset_at` and `Zone.to_local` convert an
+  instant, `Zone.resolve` says whether a wall-clock time is `unique`, in a
+  `gap`, or in an `overlap`, with the offsets on each side, and `Zone.at`
+  picks an instant with a `Choice`: `Compatible`, RFC 5545's and Temporal's,
+  `Earlier`, `Later`, or `Reject`
+  ([Time zones](standard-library.md#time-zones)).
 
 - The warning `L0740` reports a public declaration that names a private one
   of its package where an importer would have to name it too: a private type
@@ -650,6 +679,13 @@ checklist.
   -Full`, the gate CI runs, tests that build. The quick gate and
   [Building from source](readme.md#building-from-source) keep the default,
   which builds in about a second rather than a minute.
+- The test harness ends a launch still running after five minutes, with every
+  process it started, and fails its case, so a stalled program no longer
+  hangs `test-all.ps1` until CI's job limit
+  ([Testing and verification](compiler-architecture.md#testing-and-verification)).
+  The processes `lokec` and the harness start, clang and test executables
+  among them, now inherit only their standard handles, so one child no
+  longer keeps another's output open.
 
 - A value whose bits are not a representation of its type, a `bool` other
   than 0 or 1, an enum value naming no member, a null `^T`, or a union tag out

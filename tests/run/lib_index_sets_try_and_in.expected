@@ -1,0 +1,22 @@
+true true true true
+false false false false
+true false
+true false
+true false false true
+true true false false
+2 4
+true false
+true false false
+126
+try_init: out of memory
+try_init huge: out of memory
+70 0 {}
+true 70 2 {1, 69}
+true true
+true 70 {1, 69}
+{1, 2, 69}
+true 65 {1, 2}
+true 70 {1, 2} false
+true 200 {9} false
+{9, 199}
+true true

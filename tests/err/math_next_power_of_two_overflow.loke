@@ -1,0 +1,23 @@
+// standard-library.md "Integer bit operations": a `next_power_of_two` whose
+// result does not fit its type is a compile-time error wherever it is computed
+// at compile time, as checked arithmetic is (design.md "Integer overflow"):
+// folded from a constant argument, and in compile-time evaluation. The largest
+// power that fits is no error.
+package main;
+
+import "core:math";
+
+UNSIGNED :: math.next_power_of_two(u8(129));
+SIGNED   :: math.next_power_of_two(i16(16385));
+WIDEST   :: math.next_power_of_two((u128(1) << 127) + 1);
+FITS     :: math.next_power_of_two(i16(16384));
+
+rounded :: proc(value: i32) -> i32 {
+	x := value;
+	return math.next_power_of_two(x);
+}
+EVALUATED :: rounded(0x4000_0001);
+
+main :: proc() {
+	_ = math.next_power_of_two(9223372036854775807);
+}

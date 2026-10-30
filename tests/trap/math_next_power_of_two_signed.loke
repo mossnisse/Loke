@@ -1,0 +1,17 @@
+package main;
+
+import "core:fmt";
+import "core:math";
+
+// standard-library.md "Integer bit operations": a signed type's largest power
+// of two is the one below its sign bit, 64 for an `i8`. Every negative value
+// rounds up to 1, and 65 rounds up to 128, which does not fit and panics as
+// checked arithmetic does (design.md "Integer overflow").
+main :: proc() {
+	value: i8 = -128;
+	fmt.println(math.next_power_of_two(value));
+	value = 64;
+	fmt.println(math.next_power_of_two(value));
+	value += 1;
+	fmt.println(math.next_power_of_two(value));
+}

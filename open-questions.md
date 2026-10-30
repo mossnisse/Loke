@@ -44,78 +44,6 @@ Generated programs with 512 and 4,096 identity reslices also compile. The
 field and whole-record destination reproductions compile incorrectly; the
 equivalent sequential field stores correctly report `L0511`.
 
-## Review of the five follow-up cleanup commits
-
-Review on 2026-10-30 covered the contended-lock test (`8256eb0a`), removal
-of the borrow-matrix exception path (`f887ea9f`), the caller-storage
-description (`67052a14`), shared constant-view-element recognition
-(`758b7c28`), and the lexer's single read-only operator table (`d24421a7`).
-Two issues remain in the lock test:
-
-- **Enforce the promised timeout.**
-  [lib_fs_lock.loke](tests/run/lib_fs_lock.loke) says that a lock which never
-  returns will fail at the harness's timeout, but `programs_run` and
-  `run_programs` in [corpus_test.odin](tests/corpus_test.odin) set none, and
-  [subprocess.run](src/subprocess/subprocess.odin) waits for output EOF and
-  process completion without a deadline. A regression that leaves the child
-  waiting therefore hangs the local gate; CI has only its 120-minute job
-  limit. Add an enforced deadline and cleanup for the waiting process tree.
-  A review variant that stalls the waiter after its ready signal remained
-  blocked through the actual subprocess helper until an external five-second
-  watchdog terminated the review runner and its children.
-- **Observe acquisition rather than infer it from the file marker.** The
-  parent writes `released` before it unlocks, and the waiter reads that text
-  after `lock` returns. That only observes when the read happened. A waiter
-  descheduled after an incorrect early return can see the marker and exit 0
-  without having acquired any lock. A review variant replacing only the
-  waiter's acquisition with immediate success and inserting a 100 ms pause
-  before the marker read still produces the exact expected output. Have the
-  child report acquisition and retain the lock until a parent acknowledgement;
-  after releasing its own lock, the parent can verify that the child still
-  excludes another exclusive acquisition before allowing it to finish. Use
-  the enforced deadline for a missing acknowledgement. This also lets the
-  protocol replace the file-content marker.
-
-The other four changes keep useful boundaries: the matrix is judged directly
-against its independent model, the shared view recognizer handles syntax and
-carrier checks while its callers retain their storage rules, and the lexer,
-spelling lookup, and ordering test share one read-only table. No further
-structural simplification was identified in those changes. The refreshed
-caller-storage reproduction reports `L0641`, while its constant-index
-variant compiles, as documented.
-
-Validation passes all 175 compiler unit tests, the borrow matrix,
-diagnostics, and the normal file-lock runtime regression. The fault variants
-above were isolated under `tests/tmp`; the stalled process tree was
-terminated and its temporary file removed.
-
-## Review of the fix-gaps-1030 merge
-
-Review of `81a9342c` on 2026-10-30 covered its documentation merge against
-the first parent and its compiler/filesystem fixes against the `main`
-parent, `abed59c0`:
-
-- **Exercise the failed unlock itself.** The added sequence in
-  [lib_fs_lock.loke](tests/run/lib_fs_lock.loke) exercises successful
-  releases and contention, but its comment acknowledges that it cannot make
-  the native release fail. Reverting the order of clearing `self.locked`
-  would leave this sequence's behavior unchanged. Add a fault-injection
-  regression that fails the first native release without releasing the
-  lock, checks that another acquisition is still refused, then retries and
-  verifies that the native release runs and another handle can acquire the
-  lock. The implementation fix is sound on inspection; the missing check
-  leaves its failure-state guarantee unprotected.
-
-The event-based reaching-definition pass and the transitive reborrow walk
-with a visited set fit the existing provenance structure. Keep those
-separate from source-place recognition. The native path normalization
-helper and the ascent/descent directory walk also keep distinct work
-together without a general filesystem abstraction.
-
-Validation passes all 175 compiler unit tests, the borrow matrix,
-diagnostics, the normalization and locking runtime regressions, the fs
-interface check, and the dense runtime regression.
-
 ## JSON follow-ups
 
 [`core:encoding/json`](standard-library.md#coreencodingjson) implements the
@@ -608,13 +536,9 @@ first returned closure is needed. One answer then is an opaque result type,
 is; it makes a caller depend on the body for the result's size, which works
 against [Public borrow contracts should stand on their
 own](#public-borrow-contracts-should-stand-on-their-own), and it overlaps an
-owning `dyn`.
-
-### Compile-time capture literals
-
-Compile-time evaluation rejects a capture literal, as having no compile-time
-value. Its record could be evaluated as any record is; support it when a
-compile-time use appears.
+owning `dyn`. A literal that can be returned could also be a constant's value,
+which [compile-time evaluation](design.md#compile-time-procedure-evaluation)
+keeps out today; decide that with the returned closure.
 
 ### A mutable callable view
 
@@ -983,28 +907,16 @@ baseline as the default and adds run-time dispatch later only where measured.
 ### Integer bit operations not yet provided
 
 [Integer bit operations](standard-library.md#integer-bit-operations) has the
-counts and the rotations. Left out until a caller settles their contracts:
+counts, the bit width, the rotations, the reversal, and the power-of-two
+operations. Left out until a caller settles their contracts:
 
-- **Lane-wise forms.** LLVM's `ctpop`, `ctlz`, `cttz`, and funnel shifts take
-  vectors, so a `Simd(T, N)` operand could count lane by lane. The result type
+- **Lane-wise forms.** LLVM's `ctpop`, `ctlz`, `cttz`, `bitreverse`, and
+  funnel shifts take vectors, so a `Simd(T, N)` operand could count lane by lane. The result type
   is the question: a `Simd(int, N)` widens every lane past the operand's,
   and a `Simd(T, N)` is not an `int` as the scalar forms are. The checker
   refuses a vector today, so either choice can be added.
-- **`reverse_bits`, `is_power_of_two`, `next_power_of_two`, and a bit-width
-  helper.** `reverse_bits` is LLVM's `bitreverse`; the others are a line each
-  over `leading_zeros`, but `next_power_of_two` must say what an
-  unrepresentable result does, and the answer should match the overflow
-  policy of [Integer overflow](design.md#integer-overflow).
 - **Bit field extract and deposit** (`pext` and `pdep`), which exist only from
   `x86-64-v3` and would need a portable fallback with the same result.
-
-[`core:container` index sets](standard-library.md#corecontainer-index-sets)
-leave out two things a caller may want:
-`try_init` and `try_resize` forms of `Dynamic_Index_Set` that report
-allocation failure under the library-wide
-[`try_` convention](#the-optry_op-pair) rather than following the
-allocator's policy, and a membership operator, `i in set`, which design.md's
-operator table allows overloading but no library type yet uses.
 
 ## Open questions from the linear algebra spike
 
@@ -1126,61 +1038,10 @@ between them. Does a caller need it?
 ## Open questions in `core:time`
 
 [`core:time`](standard-library.md#coretime) has clocks, durations, instants,
-the calendar, fixed offsets, and ISO 8601 text; the reasons for its shape are
-in [Standard-library API choices](comments.md#standard-library-api-choices).
-Time zones are what is left.
-
-### The local time zone
-
-The planned second phase, for a caller that wants the time on the machine's
-clock:
-
-```loke
-Zone :: struct { /* private: a fixed offset or the system's zone */ }
-local_zone() -> Zone
-fixed_zone(offset: Offset) -> Zone
-now_local() -> Offset_Date_Time
-
-Zone.offset_at(self, instant: Time) -> Offset
-Zone.to_local(self, instant: Time) -> Offset_Date_Time
-
-Resolution :: union {
-	unique:  Offset,
-	gap:     (before: Offset, after: Offset),     // clocks skipped this time
-	overlap: (earlier: Offset, later: Offset),    // clocks showed it twice
-}
-Choice :: enum { Compatible, Earlier, Later, Reject }
-Zone.resolve(self, local: Date_Time) -> Resolution
-Zone.at(self, local: Date_Time,
-	choice: Choice = .Compatible) -> Option(Offset_Date_Time)
-```
-
-The system zone is the one the operating system's clock shows. On Windows,
-`GetDynamicTimeZoneInformation` names it and `GetTimeZoneInformationForYear`
-gives each year's standard offset and daylight-saving rule, the rules
-`SystemTimeToTzSpecificLocalTimeEx` applies. Its history is what Windows
-records: changes Microsoft has published, with the earliest recorded rule
-standing in for the years before it. The package owns no zone data, and
-Windows Update keeps the system's current. The `TZ` environment variable, which
-the C runtime reads, is not consulted.
-
-Each use reads the current setting, so a long-running program follows a change
-to the system zone, and nothing is read at import
-([No hidden process behavior](standard-library.md#no-hidden-process-behavior)).
-If Windows reports a failure, which it does not on a supported system, the
-call panics, as `random.fill_secure` does.
-
-A wall-clock time can fall in a gap, when clocks skip forward, or an overlap,
-when they repeat an hour. `resolve` says which, with the offsets on each side.
-`at` chooses: `Compatible` uses the offset before a gap, which moves the time
-forward by the gap's length, and the earlier instant of an overlap, as RFC 5545
-and Temporal do; `Earlier` and `Later` take the instant before or after;
-`Reject` answers `.none` for either. `resolve` tries each offset the zone uses
-near that date and keeps those whose instant converts back to the same wall
-time. The rule evaluation takes a year's rule as data, so tests can give it
-known rules, such as the European Union's, for gaps and overlaps, and compare
-`offset_at` with `SystemTimeToTzSpecificLocalTimeEx` across a year in
-whatever zone the machine has.
+the calendar, fixed offsets, the system's local zone, and ISO 8601 text; the
+reasons for its shape are in
+[Standard-library API choices](comments.md#standard-library-api-choices).
+Zones chosen by name are what is left.
 
 ### Named time zones
 
@@ -1207,9 +1068,12 @@ copyable, and nothing already in the package changes.
 - **Calendar durations.** `P1Y2M3D` has no type; `add_months` and its siblings
   do the arithmetic. A `Period` type waits for a caller that stores or parses
   one.
-- **The system zone's name.** Windows names its zones its own way. The IANA
-  name needs CLDR's mapping, which ICU has, so `Zone` would have no name in
-  the second phase.
+- **The system zone's name.** Windows names its zones its own way, and the
+  IANA name needs CLDR's mapping, which ICU has, so a `Zone` has no name. A
+  caller that shows one, or records the zone beside a time, would need it.
+- **Printing a zone.** A `Zone` prints as `Zone{}`, whatever it holds, since
+  its field is private. A fixed zone could print its offset; what the system
+  zone prints waits on its name.
 
 ## Formatting
 

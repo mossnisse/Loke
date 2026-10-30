@@ -832,7 +832,7 @@ reclamation. The integration harness is in `tests/`:
 | `ll/`, `layout/` | Required/forbidden LLVM shapes and LLVM acceptance; compiler/LLVM layout agreement. |
 | `pkg/`, `obj/`, `os/` | Multi-package programs, C-host linking, process arguments, environment, and file links where the account may create one. |
 | `doc/`, `examples/` | Generated documentation and classified real example programs with expected output. |
-| `test/` | Test builds: the `-test` runner's report against `.expected`, exiting 1 when it lists a failure. |
+| `test/` | Test builds: the `-test` runner's report against `.expected`, exiting 1 when it lists a failure. Every package under `core/` or `base/` that declares a test is also built with `-test`, and its tests must pass. |
 | `api/` | Interface files: `-api-check` against each case's checked-in `api.loki`, with and without `-debug`, and `-api` restoring them to a copy. |
 | `debugger/` | Debug information: cdb runs a `-g` build, stops in it, and shows the caller's locals through the Natvis rules. |
 | `tutorial_test.odin` | Programs, auxiliary files, outputs, panics, and diagnostics extracted from tutorial fences. |
@@ -845,7 +845,11 @@ reasoned entry in `UNPINNED` in `tests/corpus_test.odin`. Fuzzer failures become
 regressions with their fixes; `LOKE_FUZZ_SEED` and `LOKE_FUZZ_MUTANTS` explore
 more cases. Harness workers collect results and assertions run on the test
 thread; child processes use the shared `subprocess` package without
-busy-waiting.
+busy-waiting. Each child inherits only its standard handles and runs in a Job
+Object, and the harness gives every launch a deadline, `DEADLINE` in
+`tests/corpus_test.odin` (five minutes): a launch still running then is ended
+with every process it started, and its case fails with `Timeout` rather than
+hanging the gate.
 
 For individual suites:
 
@@ -933,8 +937,14 @@ API:
 - For `core:time`: known answers checked against another calendar
   implementation, at both ends of every range and around 1970; a walk over
   every day from 0000-01-01 to 9999-12-31; every parse error; and a
-  print-then-parse round trip for every type and style. An `.expected` file
-  holds no clock reading, only comparisons with one.
+  print-then-parse round trip for every type and style. The package's own
+  tests, in `core/time/zone_test.loke`, give the zone rule evaluation known
+  rules: the European Union's, the United States', New South Wales', and
+  Windows' records of zones whose rule changes at a new year.
+  `lib_time_zone` compares the system zone with
+  `SystemTimeToTzSpecificLocalTimeEx` in the machine's own zone. An
+  `.expected` file holds no clock reading or offset of the machine's zone,
+  only comparisons with one.
 
 Use fake short readers/writers as in `lib_io` and isolated temporary directories
 as in `lib_fs`. `lib_term` covers output and redirected handles;

@@ -1,3 +1,12 @@
 L0738
-@8:22
+@9:22
 `count_ones` takes a value of an integer type; found `f64`
+L0738
+@10:24
+`reverse_bits` takes a value of an integer type; found `rune`
+L0738
+@11:27
+`is_power_of_two` takes a value of an integer type; found `bool`
+L0738
+@12:37
+`checked_next_power_of_two` takes a value of an integer type; found `f64`

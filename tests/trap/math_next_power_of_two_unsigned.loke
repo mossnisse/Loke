@@ -1,0 +1,13 @@
+package main;
+
+import "core:fmt";
+import "core:math";
+
+// standard-library.md "Integer bit operations": the largest power of two a
+// `u64` holds is its own round-up, and one past it has a round-up that does not
+// fit, which panics as checked arithmetic does (design.md "Integer overflow").
+main :: proc() {
+	largest: u64 = 0x8000_0000_0000_0000;
+	fmt.println(math.next_power_of_two(largest));
+	fmt.println(math.next_power_of_two(largest + 1));
+}

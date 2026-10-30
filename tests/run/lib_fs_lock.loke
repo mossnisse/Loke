@@ -73,11 +73,12 @@ probe :: proc(file: string_view, mode: string_view) {
 	}
 }
 
-// The child that waits: kept out by the parent's exclusive lock, it says so on
-// its stdout and then waits in `lock`. Once that returns, the parent has
-// released, so the file holds what the parent wrote just before releasing. It
-// answers in its exit status: 0 for that, 1 when `try_lock` was not kept out,
-// 2 for a failure, and 3 when `lock` returned before the release.
+// The child that waits: kept out by the parent's exclusive lock, it writes `w`
+// on its stdout and then waits in `lock`. Once that returns it writes `a`, and
+// holds the lock until the parent, having seen that lock keep out another,
+// writes `k` on its stdin. It answers in its exit status: 0 for that, 1 when
+// `try_lock` was not kept out, 2 for a failure, and 3 when the parent's
+// acknowledgement never came.
 waiter :: proc(file: string_view) {
 	handle := fs.open_read(file) or_else os.exit(2);
 	switch (handle.try_lock(.Shared)) {
@@ -91,7 +92,11 @@ waiter :: proc(file: string_view) {
 	case .ok:
 	case .err: os.exit(2);
 	}
-	os.exit(0 if (fs.read_text(file) or_else "") == "released" else 3);
+	_ = signal.write("a".bytes());
+	reply: [1]u8 = {};
+	input := term.stdin();
+	acknowledged := (input.read(&mut reply[:]) or_else 0) == 1 && reply[0] == u8('k');
+	os.exit(0 if acknowledged else 3);
 }
 
 // The child's answer for a lock of `mode` on `file`, or -1 when it did not run.
@@ -161,10 +166,10 @@ main :: proc() {
 	attempt(owner.try_lock(.Exclusive));
 	report(owner.unlock());
 
-	// `unlock` forgets the lock once it is released, not before: then another
-	// handle takes it, a refused `try_lock` leaves nothing to release, and the
-	// handle locks again. A release that fails keeps the lock, but nothing a
-	// program does here can make the native call fail.
+	// `unlock` forgets the lock once it is released: then another handle takes
+	// it, a refused `try_lock` leaves nothing to release, and the handle locks
+	// again. A release that fails keeps the lock, which only a fault can show:
+	// lib_fs_unlock_failure.loke.
 	report(owner.lock(.Exclusive));
 	report(owner.unlock());
 	attempt(other.try_lock(.Exclusive));
@@ -192,23 +197,32 @@ main :: proc() {
 	attempt(other.try_lock(.Shared));
 	report(other.unlock());
 
-	// A `lock` kept waiting returns once the holder releases. The child answers
-	// only after it has seen the exclusive lock keep it out, so the release
-	// comes after that; the pause makes it all but certain that the child is
-	// inside `lock` by then, and the answer is the same either way. A `lock`
-	// that never returned would stop the test at the harness's timeout.
+	// A `lock` kept waiting returns once the holder releases, holding the lock.
+	// The child says it is waiting only after it has seen the exclusive lock
+	// keep it out, so the release comes after that; the pause makes it all but
+	// certain that the child is inside `lock` by then, and the answers are the
+	// same either way. The child then says it has the lock and keeps it until
+	// told, and the proof that it does is that another handle is kept out. A
+	// child that never answers, or never hears back, stalls this program until
+	// the harness's deadline ends both and fails the case.
 	report(owner.lock(.Exclusive));
 	{
 		exe := os.executable_path() or_else panic("the test cannot find its own executable");
 		blocked := process.spawn(process.Command{
-			program = exe, arguments = []string_view{"waiter", data}, stdout = .Pipe,
+			program = exe, arguments = []string_view{"waiter", data}, stdin = .Pipe, stdout = .Pipe,
 		}) or_else panic("the waiting child could not start");
 		signal: [1]u8 = {};
-		fmt.println((blocked.stdout.read(&mut signal[:]) or_else 0) == 1);
+		fmt.println((blocked.stdout.read(&mut signal[:]) or_else 0) == 1 && signal[0] == u8('w'));
 		time.sleep(50 * time.MILLISECOND);
-		fmt.println(succeeded(fs.write_text(data, "released")));
 		report(owner.unlock());
+		fmt.println((blocked.stdout.read(&mut signal[:]) or_else 0) == 1 && signal[0] == u8('a'));
+		rival := open_as(data, .Read);
+		attempt(rival.try_lock(.Exclusive));
+		fmt.println((blocked.stdin.write("k".bytes()) or_else 0) == 1);
 		fmt.println(blocked.wait() or_else -1);
+		// The child's lock ended with it.
+		attempt(rival.try_lock(.Exclusive));
+		report(rival.unlock());
 	}
 
 	fmt.println(succeeded(owner.close()));
