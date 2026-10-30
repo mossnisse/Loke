@@ -518,6 +518,9 @@ Builtin_Kind :: enum {
 	Math_Ceil_Instruction,
 	Math_Trunc_Instruction,
 	Math_Round_Instruction,
+	// The floating remainder, LLVM's `frem`, which calls the C library's `fmod`;
+	// exact, so `math.mod` has a compile-time value too.
+	Math_Mod_Instruction,
 	// design.md "SIMD vectors": the `core:simd` operations a constant lane index
 	// makes unwritable as a loop. `Simd_Reduce` takes the fold as a constant
 	// parameter, exactly as an atomic takes its ordering.

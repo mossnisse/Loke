@@ -2326,7 +2326,8 @@ compile-time value, rounded exactly as the instruction rounds. Which NaN it
 gives below zero is not promised. `floor`, `ceil`, `trunc`, and `round` are
 exact and also have compile-time values: they are SSE4.1's rounding
 instruction from `x86-64-v2`, and below it the C library's functions, which
-give the same results.
+give the same results. So does `mod`, whose exact remainder is the C
+library's `fmod` at run time, no x86-64 level having an instruction for it.
 
 The transcendental functions are not deterministic: `pow`, `exp`, `log`,
 `log2`, `log10`, `hypot`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, and

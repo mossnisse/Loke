@@ -3,6 +3,7 @@
 // arbitrary-precision integer half.
 package lokec
 
+import "base:intrinsics"
 import "core:math"
 import "core:mem"
 import "core:strings"
@@ -172,6 +173,80 @@ exact_integral :: proc(x: Const_Value, builtin: Builtin_Kind) -> Const_Value {
 		return float_const(math.round(x.float), bits)
 	}
 	return float_const(math.trunc(x.float), bits)
+}
+
+// `x mod y` for two `f32` or two `f64` constants, the remainder of `x` by `y`
+// with `x`'s sign: the compile-time value of `core:math.mod`, whose run-time
+// `frem` calls the C library's `fmod`. Both are exact, so they agree on every
+// result but which NaN a NaN or an invalid operand gives, which nothing
+// promises. An `f32` remainder is exact as an `f64`, so the `f64` one serves
+// both widths.
+exact_mod :: proc(x, y: Const_Value) -> Const_Value {
+	bits := x.float_bits
+	quiet := u64(bits == 32 ? 1 << 22 : 1 << 51)
+	if math.is_nan(x.float) {
+		return float_bits_const(x.float_raw | quiet, bits)
+	}
+	if math.is_nan(y.float) {
+		return float_bits_const(y.float_raw | quiet, bits)
+	}
+	if math.is_inf(x.float) || y.float == 0 {
+		return float_bits_const(bits == 32 ? 0xffc00000 : 0xfff8000000000000, bits)
+	}
+	if math.is_inf(y.float) {
+		return x
+	}
+	return float_const(remainder_exact(x.float, y.float), bits)
+}
+
+// With x = m_x 2^e_x and y = m_y 2^e_y, both significands normalized to 53
+// bits, the remainder of m_x 2^(e_x - e_y) by m_y, reduced 64 bits of the gap
+// at a time in `u128`, is r < m_y, and r 2^e_y is the result: a multiple of
+// the smallest subnormal, as x and y are, and under |y|, so representable.
+@(private = "file")
+remainder_exact :: proc(x, y: f64) -> f64 {
+	SIGN :: u64(1) << 63
+	a, b := transmute(u64)x, transmute(u64)y
+	sign := a & SIGN
+	ax, ay := a &~ SIGN, b &~ SIGN
+	if ax < ay {
+		return x
+	}
+	if ax == ay {
+		return transmute(f64)sign
+	}
+	mx, ex := remainder_operand(ax)
+	my, ey := remainder_operand(ay)
+	r := u128(mx % my)
+	for ex > ey {
+		shift := min(ex - ey, 64)
+		r = (r << uint(shift)) % u128(my)
+		ex -= shift
+	}
+	if r == 0 {
+		return transmute(f64)sign
+	}
+	// r 2^ey with r normalized to 53 bits, and its biased exponent.
+	top := 128 - int(intrinsics.count_leading_zeros(r))
+	significand := u64(r) << uint(53 - top)
+	biased := ey - (53 - top) + 1023 + 52
+	if biased >= 1 {
+		return transmute(f64)(sign | (u64(biased - 1) << 52 + significand))
+	}
+	// A subnormal result: the shift drops only zero bits.
+	return transmute(f64)(sign | significand >> uint(1 - biased))
+}
+
+// A positive finite magnitude's significand with its top bit at bit 52, and
+// the exponent that keeps its value.
+@(private = "file")
+remainder_operand :: proc(magnitude: u64) -> (significand: u64, exponent: int) {
+	field := int(magnitude >> 52)
+	if field != 0 {
+		return magnitude & (1 << 52 - 1) | 1 << 52, field - 1075
+	}
+	shift := int(intrinsics.count_leading_zeros(magnitude)) - 11
+	return magnitude << uint(shift), -1074 - shift
 }
 
 // For a positive finite x = M 2^E, M an integer shifted into [2^52, 2^54) with

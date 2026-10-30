@@ -117,6 +117,12 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 			return emit_float_instruction(e, v, "trunc")
 		case .Math_Round_Instruction:
 			return emit_float_instruction(e, v, "round")
+		case .Math_Mod_Instruction:
+			llvm := llvm_type(e, expr_base(v.bound[0]).type)
+			x, y := emit_expr(e, v.bound[0]), emit_expr(e, v.bound[1])
+			out := temp(e)
+			fmt.sbprintfln(&e.b, "  %s = frem %s %s, %s", out, llvm, x, y)
+			return out
 		case .Unsafe_Take:
 			return load_place(e, as_type, emit_address(e, v.bound[0]))
 		case .Unsafe_Write:

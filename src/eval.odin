@@ -2925,6 +2925,17 @@ eval_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (Eval_Va
 		}
 		return scalar(exact_integral(const_of(operand), symbol.builtin), v.type), true
 
+	case .Math_Mod_Instruction:
+		x, x_ok := eval_expr(ev, v.bound[0])
+		if !x_ok {
+			return Eval_Value{}, false
+		}
+		y, y_ok := eval_expr(ev, v.bound[1])
+		if !y_ok {
+			return Eval_Value{}, false
+		}
+		return scalar(exact_mod(const_of(x), const_of(y)), v.type), true
+
 	case .Unsafe_Transmute:
 		// The checker's fold, for an operand that is a local.
 		operand, ok := eval_expr(ev, v.bound[0])

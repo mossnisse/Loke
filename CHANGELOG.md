@@ -390,6 +390,9 @@ checklist.
   compile-time values, and are SSE4.1's rounding instruction from
   `x86-64-v2` rather than a call to the C library, with the same exact
   results.
+- `math.mod` and `math.mod_f32` have compile-time values, so
+  `PHASE :: math.mod(7.5, 2.0)` is a constant; at run time they are still
+  the C library's `fmod`, which is exact.
 - Every Clang command now passes the CPU level's `-march` and
   `-ffp-contract=off`, the runtime's C sources included, whose default let
   Clang fuse `a*b + c` once a level has FMA. `-print-toolchain` prints both

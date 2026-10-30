@@ -174,6 +174,10 @@ contribute_standard_members :: proc(k: ^Checker, pkg: ^Package) {
 		contribute_builtin(c, pkg, "ceil_instruction", .Math_Ceil_Instruction, public = false)
 		contribute_builtin(c, pkg, "trunc_instruction", .Math_Trunc_Instruction, public = false)
 		contribute_builtin(c, pkg, "round_instruction", .Math_Round_Instruction, public = false)
+		// The remainder is exact too, but no x86-64 level has an instruction for
+		// it: `frem` calls the C library's `fmod`, and the built-in gives it a
+		// compile-time value.
+		contribute_builtin(c, pkg, "mod_instruction", .Math_Mod_Instruction, public = false)
 	case STD_LOG:
 		// design.md "Compiled log level": `LOKE_LOG_LEVEL` and `core:log`'s own
 		// `Level` must be one type, or a caller could not compare them. Allocated

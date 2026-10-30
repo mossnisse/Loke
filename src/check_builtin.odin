@@ -52,7 +52,7 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 	case .Math_Fma_Available, .Math_Fma_Instruction:
 		check_fma_builtin(k, v, ident, sym.builtin)
 	case .Math_Sqrt_Instruction, .Math_Floor_Instruction, .Math_Ceil_Instruction, .Math_Trunc_Instruction,
-	     .Math_Round_Instruction:
+	     .Math_Round_Instruction, .Math_Mod_Instruction:
 		check_float_instruction_builtin(k, v, ident)
 	case .Type_Info_Of:
 		check_type_info_of(k, v)
@@ -819,32 +819,36 @@ check_fma_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: 
 }
 
 // `sqrt_instruction(x)` and the rounding instructions take one `f32` or `f64`
-// operand, of the result's type.
+// operand, of the result's type, and `mod_instruction(x, y)` two of one type.
 @(private = "file")
 check_float_instruction_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 	v.value_category = .Value
 	v.type = INVALID_TYPE
-	if len(v.args) != 1 {
-		errorf(k.c, v.span, "L0738", "`%s` takes 1 argument, found %d", ident.name, len(v.args))
+	wanted := ident.name == "mod_instruction" ? 2 : 1
+	if len(v.args) != wanted {
+		errorf(k.c, v.span, "L0738", "`%s` takes %d argument%s, found %d", ident.name, wanted, wanted == 1 ? "" : "s", len(v.args))
 		return
 	}
 	if !builtin_arguments_ok(k, v) {
 		return
 	}
-	arg := v.args[0].value
-	type := check_single_expr(k, arg)
-	if type == INVALID_TYPE || !materialize(k, arg, default_type(k.c, type)) {
-		return
+	bound := make([]Expr, wanted, k.c.semantic_allocator)
+	operand := INVALID_TYPE
+	for arg, index in v.args {
+		type := check_single_expr(k, arg.value)
+		if type == INVALID_TYPE || !materialize(k, arg.value, default_type(k.c, type)) {
+			return
+		}
+		type = expr_base(arg.value).type
+		if (type != TYPE_F32 && type != TYPE_F64) || (operand != INVALID_TYPE && type != operand) {
+			errorf(k.c, expr_span(arg.value), "L0738", "`%s` takes %s; found `%s`", ident.name, wanted == 1 ? "an `f32` or `f64` operand" : "two `f32` or two `f64` operands", type_name(k.c, type))
+			return
+		}
+		operand = type
+		bound[index] = arg.value
 	}
-	type = expr_base(arg).type
-	if type != TYPE_F32 && type != TYPE_F64 {
-		errorf(k.c, expr_span(arg), "L0738", "`%s` takes an `f32` or `f64` operand; found `%s`", ident.name, type_name(k.c, type))
-		return
-	}
-	bound := make([]Expr, 1, k.c.semantic_allocator)
-	bound[0] = arg
 	v.bound = bound
-	v.type = type
+	v.type = operand
 }
 
 // An enum source wraps its backing value; a destination is a plain integer.

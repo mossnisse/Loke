@@ -424,3 +424,54 @@ exact_integral_matches_the_c_library :: proc(t: ^testing.T) {
 	signaling := exact_integral(float_bits_const(0x7ff0000000000001, 64), .Math_Floor_Instruction)
 	testing.expectf(t, signaling.float_raw == 0x7ff8000000000001, "floor(sNaN) is %x", signaling.float_raw)
 }
+
+// The C library's `fmod` is exact, as `exact_mod` is, so it is the reference:
+// at the cases where the divisor is infinite, larger than the dividend, or
+// equal to it, at subnormals and near multiples, and at seeded patterns of
+// every exponent, either sign, and in both widths.
+@(test)
+exact_mod_matches_the_c_library :: proc(t: ^testing.T) {
+	check64 :: proc(t: ^testing.T, x, y: f64) {
+		got := exact_mod(float_const(x, 64), float_const(y, 64))
+		want := libc.fmod(x, y)
+		if math.is_nan(want) {
+			testing.expectf(t, math.is_nan(got.float), "mod(%x, %x): expected a NaN, got %x", transmute(u64)x, transmute(u64)y, got.float_raw)
+			return
+		}
+		testing.expectf(t, got.float_raw == transmute(u64)want, "mod(%x, %x): expected %x, got %x", transmute(u64)x, transmute(u64)y, transmute(u64)want, got.float_raw)
+	}
+	check32 :: proc(t: ^testing.T, x, y: f32) {
+		got := exact_mod(float_const(f64(x), 32), float_const(f64(y), 32))
+		want := libc.fmod(x, y)
+		if math.is_nan(want) {
+			testing.expectf(t, math.is_nan(got.float), "mod_f32(%x, %x): expected a NaN, got %x", transmute(u32)x, transmute(u32)y, got.float_raw)
+			return
+		}
+		testing.expectf(t, got.float_raw == u64(transmute(u32)want), "mod_f32(%x, %x): expected %x, got %x", transmute(u32)x, transmute(u32)y, transmute(u32)want, got.float_raw)
+	}
+	values := []f64{0, 1, 1.5, 3, 7, 0.1, 1e300, 1.7976931348623157e308, 5e-324, 2.2250738585072014e-308, math.INF_F64, math.nan_f64()}
+	for x in values {
+		for y in values {
+			check64(t, x, y)
+			check64(t, -x, y)
+			check64(t, x, -y)
+			check64(t, f64(f32(x)), f64(f32(y)))
+			check32(t, f32(x), f32(y))
+			check32(t, -f32(x), f32(y))
+		}
+	}
+	state: u64 = 0x3c6ef372fe94f82b
+	for _ in 0 ..< 20000 {
+		state = state*6364136223846793005 + 1442695040888963407
+		x := state
+		state = state*6364136223846793005 + 1442695040888963407
+		y := state
+		// Finite patterns of every exponent, and dividends near multiples.
+		x &~= 0x4000000000000000 * u64((x >> 52) & 0x7ff == 0x7ff)
+		y &~= 0x4000000000000000 * u64((y >> 52) & 0x7ff == 0x7ff)
+		a, b := transmute(f64)x, transmute(f64)y
+		check64(t, a, b)
+		check64(t, b*f64(x % 1000) + b*0.001*f64(y % 7), b)
+		check32(t, transmute(f32)u32(x >> 32), transmute(f32)u32(y >> 32))
+	}
+}

@@ -398,10 +398,6 @@ foreign platform_math {
 	rt_atan_f64 :: proc "c" (x: f64) -> f64 ---;
 	@(link_name="atanf")
 	rt_atan_f32 :: proc "c" (x: f32) -> f32 ---;
-	@(link_name="fmod")
-	rt_mod_f64 :: proc "c" (a: f64, b: f64) -> f64 ---;
-	@(link_name="fmodf")
-	rt_mod_f32 :: proc "c" (a: f32, b: f32) -> f32 ---;
 	@(link_name="hypot")
 	rt_hypot_f64 :: proc "c" (a: f64, b: f64) -> f64 ---;
 	@(link_name="hypotf")
@@ -470,9 +466,21 @@ round_instruction :: proc(x: $T) -> T ---;
 	  x finite, y infinite         -> x
 	  otherwise                    -> a result whose sign matches x, including
 	                                  an exact zero, which keeps x's zero sign
+
+	The result is exact, and a call with constant arguments has a compile-time
+	value.
 */
-mod :: proc(x: f64, y: f64) -> f64 { return rt_mod_f64(x, y); }
-mod_f32 :: proc(x: f32, y: f32) -> f32 { return rt_mod_f32(x, y); }
+mod :: proc(x: f64, y: f64) -> f64 { return mod_instruction(x, y); }
+mod_f32 :: proc(x: f32, y: f32) -> f32 { return mod_instruction(x, y); }
+
+/**
+	The floating remainder, LLVM's `frem`, for two `f32` or two `f64` operands:
+	on every x86-64 level a call to the C library's `fmod`, which is exact.
+	Evaluated at compile time from the exact result.
+*/
+@(intrinsic)
+@(private)
+mod_instruction :: proc(x: $T, y: T) -> T ---;
 
 // ------------------------------------------- roots, powers, logarithms --
 //

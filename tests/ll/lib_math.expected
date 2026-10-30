@@ -6,8 +6,6 @@ declare double @pow(double, double)
 declare float @powf(float, float)
 declare double @sin(double)
 declare float @sinf(float)
-declare double @fmod(double, double)
-declare float @fmodf(float, float)
 declare float @expf(float)
 declare float @tanf(float)
 declare float @acosf(float)
@@ -25,8 +23,10 @@ not @trunc(
 not @roundf(
 call double @hypot(double
 call float @hypotf(float
-call double @fmod(double
-call float @fmodf(float
+frem double
+frem float
+not @fmod(
+not @fmodf(
 not @fma(
 not @fmaf(
 not @llvm.fma

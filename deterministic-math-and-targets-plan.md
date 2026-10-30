@@ -469,6 +469,13 @@ fixed components, a hash per 2^24 results naming any block that differs.
 `test-all.ps1 -Exhaustive` runs it, in about 25 minutes on six cores; CI does not, and
 the release checklist does.
 
+`math.mod`, the last exact `core:math` procedure without a compile-time
+value, is now LLVM's `frem` through a package-private built-in, which still
+calls the C library's `fmod` at run time, and the evaluator computes the
+remainder exactly in integers; it agreed with `fmod` on 3 million seeded
+pairs of every exponent. A remainder written in Loke was exact too, agreeing
+on 400 million pairs, but took 22 ns to `fmod`'s 4 when wrapping an angle.
+
 Not started: phase 1's benchmarks (the UCRT timings in open questions stand
 until there is a kernel to compare), phase 6's faster kernels and dispatch,
 and other platforms.

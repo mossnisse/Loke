@@ -59,7 +59,24 @@ remainder :: proc() {
 	fmt.println(math.is_nan(math.mod(1.0, 0.0)), math.is_nan(math.mod(INF, 3.0)));
 	fmt.println(math.mod(3.5, INF), math.mod(-3.5, INF));
 	fmt.println(math.is_nan_f32(math.mod_f32(f32(1.0), f32(0.0))));
+	// A constant call has a compile-time value, the run-time call's bits: a
+	// large quotient, a subnormal result, and a negative zero among them.
+	x := -7.5;
+	huge := 1.0e300;
+	tiny := 1.5e-323;
+	whole := -6.0;
+	fmt.println(MOD_SMALL, bits64(MOD_SMALL) == bits64(math.mod(x, 2.0)));
+	fmt.println(MOD_HUGE, bits64(MOD_HUGE) == bits64(math.mod(huge, 3.0)));
+	fmt.println(bits64(MOD_TINY), bits64(MOD_TINY) == bits64(math.mod(tiny, 1.0e-323)));
+	fmt.println(bits64(MOD_ZERO), bits64(MOD_ZERO) == bits64(math.mod(whole, 3.0)));
+	fmt.println(MOD_F32, bits32(MOD_F32) == bits32(math.mod_f32(f32(7.5), f32(x/3.75))));
 }
+
+MOD_SMALL :: math.mod(-7.5, 2.0);
+MOD_HUGE :: math.mod(1.0e300, 3.0);
+MOD_TINY :: math.mod(1.5e-323, 1.0e-323);
+MOD_ZERO :: math.mod(-6.0, 3.0);
+MOD_F32 :: math.mod_f32(f32(7.5), f32(-2.0));
 
 roots :: proc() {
 	// Exact in binary floating point, at both widths.

@@ -370,6 +370,9 @@ trunc_f32 :: proc(x: f32) -> f32 ---;
 	  x finite, y infinite         -> x
 	  otherwise                    -> a result whose sign matches x, including
 	                                  an exact zero, which keeps x's zero sign
+
+	The result is exact, and a call with constant arguments has a compile-time
+	value.
 */
 mod :: proc(x: f64, y: f64) -> f64 ---;
 

@@ -5,7 +5,8 @@ package main;
 // print the right answer, so check the generated IR as well as runtime output.
 // `sqrt` is the instruction in each width, not the C library's, and so are
 // `floor`, `ceil`, `trunc`, and `round`, which LLVM turns into the C library's
-// calls only below SSE4.1.
+// calls only below SSE4.1. `mod` is LLVM's `frem`, which LLVM turns into the
+// C library's `fmod` and `fmodf`.
 
 import "core:math";
 
