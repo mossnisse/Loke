@@ -7,6 +7,8 @@ import "core:os";
 import "core:path";
 import "core:process";
 import "core:strings";
+import "core:term";
+import "core:time";
 
 // `File.lock`, `try_lock`, and `unlock` (standard-library "File locking"): the
 // lock belongs to a handle, so two handles in one program contend for it as two
@@ -14,7 +16,7 @@ import "core:strings";
 // nothing; the lock is advisory, so reads and writes through other handles go
 // on; and closing or dropping a handle releases its lock. The program also runs
 // itself as a child that probes the lock, so the same answers hold between two
-// processes.
+// processes, and as one whose `lock` waits until the holder releases.
 
 succeeded :: proc(outcome: Status(io.Error)) -> bool {
 	switch (outcome) {
@@ -71,6 +73,27 @@ probe :: proc(file: string_view, mode: string_view) {
 	}
 }
 
+// The child that waits: kept out by the parent's exclusive lock, it says so on
+// its stdout and then waits in `lock`. Once that returns, the parent has
+// released, so the file holds what the parent wrote just before releasing. It
+// answers in its exit status: 0 for that, 1 when `try_lock` was not kept out,
+// 2 for a failure, and 3 when `lock` returned before the release.
+waiter :: proc(file: string_view) {
+	handle := fs.open_read(file) or_else os.exit(2);
+	switch (handle.try_lock(.Shared)) {
+	case .ok(acquired): if (acquired) { os.exit(1); }
+	case .err: os.exit(2);
+	}
+	// `term`'s output is unbuffered, so the parent reads this before `lock` waits.
+	signal := term.stdout();
+	_ = signal.write("w".bytes());
+	switch (handle.lock(.Shared)) {
+	case .ok:
+	case .err: os.exit(2);
+	}
+	os.exit(0 if (fs.read_text(file) or_else "") == "released" else 3);
+}
+
 // The child's answer for a lock of `mode` on `file`, or -1 when it did not run.
 from_another_process :: proc(file: string_view, mode: string_view) -> i32 {
 	exe := os.executable_path() or_else panic("the test cannot find its own executable");
@@ -82,6 +105,10 @@ from_another_process :: proc(file: string_view, mode: string_view) -> i32 {
 main :: proc() {
 	if (os.args.len() > 3 && os.args[1] == "probe") {
 		probe(os.args[2], os.args[3]);
+		return;
+	}
+	if (os.args.len() > 2 && os.args[1] == "waiter") {
+		waiter(os.args[2]);
 		return;
 	}
 	directory := root();
@@ -164,6 +191,25 @@ main :: proc() {
 	report(other.lock(.Shared));
 	attempt(other.try_lock(.Shared));
 	report(other.unlock());
+
+	// A `lock` kept waiting returns once the holder releases. The child answers
+	// only after it has seen the exclusive lock keep it out, so the release
+	// comes after that; the pause makes it all but certain that the child is
+	// inside `lock` by then, and the answer is the same either way. A `lock`
+	// that never returned would stop the test at the harness's timeout.
+	report(owner.lock(.Exclusive));
+	{
+		exe := os.executable_path() or_else panic("the test cannot find its own executable");
+		blocked := process.spawn(process.Command{
+			program = exe, arguments = []string_view{"waiter", data}, stdout = .Pipe,
+		}) or_else panic("the waiting child could not start");
+		signal: [1]u8 = {};
+		fmt.println((blocked.stdout.read(&mut signal[:]) or_else 0) == 1);
+		time.sleep(50 * time.MILLISECOND);
+		fmt.println(succeeded(fs.write_text(data, "released")));
+		report(owner.unlock());
+		fmt.println(blocked.wait() or_else -1);
+	}
 
 	fmt.println(succeeded(owner.close()));
 	fmt.println(succeeded(fs.remove(data)));

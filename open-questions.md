@@ -11,25 +11,6 @@ Design rationale and differences from Odin are recorded in
 The current behavior inventory is in [Nondeterminism and undefined behavior
 audit](nondeterminism-audit.md).
 
-## Review follow-ups for file resizing, positional I/O, and locking
-
-Review of `675f0659`, `7ee9c971`, and `cf74b6e2` on 2026-10-30 found these
-cleanup and coverage items:
-
-- **Keep a contended blocking-lock regression.**
-  [lib_fs_lock.loke](tests/run/lib_fs_lock.loke) exercises `try_lock` under
-  contention, but calls blocking `lock` only on a free file or an already
-  locked handle that is rejected before the platform call. Add a worker or
-  child-process handshake that checks that a blocked acquisition finishes
-  after the holder releases it, under the harness timeout. A separate
-  contended blocking-lock smoke check passed during this review.
-
-All three added regression programs and `lokec core/fs -api-check` passed.
-The append recovery sequence, including `flush`, and resizing an open append
-handle after deleting its name also succeeded on the review's Windows host.
-The review's unlock failure-state finding is fixed: a failed `unlock` now keeps
-the lock ([File locking](standard-library.md#file-locking)).
-
 ## JSON follow-ups
 
 [`core:encoding/json`](standard-library.md#coreencodingjson) implements the
