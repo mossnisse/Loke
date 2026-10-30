@@ -50,7 +50,10 @@ check_generated_block :: proc(t: ^testing.T, path: string, expected: string) {
 // added, over seeded arguments, and with the oracle over a sample of them.
 // The constants the probe folds agree with the same calls at run time. At
 // `x86-64-v3`, where `two_product` takes the FMA instruction's error, the
-// probe prints exactly what it does at baseline.
+// probe prints exactly what it does at baseline, where each public `f64`
+// procedure runs its copy for that level on a processor with it, and what it
+// does at baseline with `LOKE_DISPATCH_CPU` keeping every call to the plain
+// copies (design.md "@(cpu_dispatch=<string>)").
 @(test)
 repro_functions_round_correctly :: proc(t: ^testing.T) {
 	root := fmt.tprintf("%s/repro_probe", TMP)
@@ -94,6 +97,17 @@ repro_functions_round_correctly :: proc(t: ^testing.T) {
 		return
 	}
 	stdout := run.stdout
+	inherited, environ_err := os.environ(context.allocator)
+	if !testing.expect(t, environ_err == nil, "cannot read this process's environment") {
+		return
+	}
+	plain, plain_stdout, plain_stderr, plain_err := exec(
+		os.Process_Desc{command = run.command, env = append_env(inherited, "LOKE_DISPATCH_CPU=x86-64")},
+		context.allocator,
+	)
+	if testing.expectf(t, plain_err == nil && plain.exit_code == 0, "the probe's plain copies failed:\n%s", string(plain_stderr)) {
+		testing.expectf(t, string(plain_stdout) == string(stdout), "the probe's output with its plain copies differs from its dispatched output")
+	}
 	if fused.state.exit_code == 3 && strings.has_prefix(string(fused.stderr), UNSUPPORTED_CPU) {
 		skipped_capability(t, "this processor does not run x86-64-v3")
 	} else if testing.expectf(t, fused.err == nil && fused.state.exit_code == 0, "the probe at -cpu=x86-64-v3 failed:\n%s", string(fused.stderr)) {

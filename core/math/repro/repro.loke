@@ -36,6 +36,7 @@ RESULTS_VERSION :: u32(1);
 	a finite result too large for `f64` is +Inf, and one too small is a
 	subnormal or +0.
 */
+@(cpu_dispatch="x86-64-v3")
 exp :: proc(x: f64) -> f64 {
 	bits := unsafe.transmute(u64, x);
 	magnitude := bits & 0x7fffffffffffffff;
@@ -77,6 +78,7 @@ exp_f32 :: proc(x: f32) -> f32 {
 	The natural logarithm of x. NaN and every x < 0, -Inf included, give NaN,
 	±0 gives -Inf, 1 gives +0, and +Inf gives +Inf.
 */
+@(cpu_dispatch="x86-64-v3")
 log :: proc(x: f64) -> f64 {
 	bits := unsafe.transmute(u64, x);
 	// Every negative argument and every NaN is at or above +Inf's pattern.
@@ -107,6 +109,7 @@ log_f32 :: proc(x: f32) -> f32 {
 	The base-2 logarithm, with the special cases of `log`. At a power of two
 	the result is its exponent exactly.
 */
+@(cpu_dispatch="x86-64-v3")
 log2 :: proc(x: f64) -> f64 { return log_base(x, 0); }
 
 /// The base-2 logarithm for `f32`, with the special cases of `log`.
@@ -116,6 +119,7 @@ log2_f32 :: proc(x: f32) -> f32 { return log_base_f32(x, 0); }
 	The base-10 logarithm, with the special cases of `log`. At a power of ten
 	the result is its exponent exactly.
 */
+@(cpu_dispatch="x86-64-v3")
 log10 :: proc(x: f64) -> f64 { return log_base(x, 1); }
 
 /// The base-10 logarithm for `f32`, with the special cases of `log`.
@@ -135,6 +139,7 @@ log10_f32 :: proc(x: f32) -> f32 { return log_base_f32(x, 1); }
 	y is odd. Every exact result is exact, and one exactly halfway between
 	two floats rounds to even.
 */
+@(cpu_dispatch="x86-64-v3")
 pow :: proc(x: f64, y: f64) -> f64 {
 	xb := unsafe.transmute(u64, x);
 	yb := unsafe.transmute(u64, y);
@@ -198,6 +203,7 @@ pow_f32 :: proc(x: f32, y: f32) -> f32 {
 	The sine of x radians. NaN and ±Inf give NaN, and ±0 gives itself; every
 	finite argument is reduced exactly, however large.
 */
+@(cpu_dispatch="x86-64-v3")
 sin :: proc(x: f64) -> f64 {
 	magnitude := unsafe.transmute(u64, x) & 0x7fffffffffffffff;
 	// Below 2^-26 in magnitude, sin x is within half an ulp of x.
@@ -219,6 +225,7 @@ sin_f32 :: proc(x: f32) -> f32 {
 	The cosine of x radians. NaN and ±Inf give NaN, and ±0 gives exactly 1;
 	every finite argument is reduced exactly, however large.
 */
+@(cpu_dispatch="x86-64-v3")
 cos :: proc(x: f64) -> f64 {
 	magnitude := unsafe.transmute(u64, x) & 0x7fffffffffffffff;
 	// Below 2^-27 in magnitude, cos x is within half an ulp of 1.
@@ -240,6 +247,7 @@ cos_f32 :: proc(x: f32) -> f32 {
 	The tangent of x radians. NaN and ±Inf give NaN, and ±0 gives itself;
 	every finite argument is reduced exactly, however large.
 */
+@(cpu_dispatch="x86-64-v3")
 tan :: proc(x: f64) -> f64 {
 	magnitude := unsafe.transmute(u64, x) & 0x7fffffffffffffff;
 	// Below 2^-27 in magnitude, tan x is within half an ulp of x.
@@ -288,6 +296,7 @@ sqrt_f32 :: proc(x: f32) -> f32 {
 	exact result is exact, and one exactly halfway between two floats rounds
 	to even.
 */
+@(cpu_dispatch="x86-64-v3")
 hypot :: proc(x: f64, y: f64) -> f64 {
 	xb := unsafe.transmute(u64, x) & 0x7fffffffffffffff;
 	yb := unsafe.transmute(u64, y) & 0x7fffffffffffffff;
@@ -323,6 +332,7 @@ hypot_f32 :: proc(x: f32, y: f32) -> f32 {
 	The magnitude of z, `hypot(z.real, z.imaginary)`: what `z.abs()` computes,
 	with this package's result, the same everywhere.
 */
+@(cpu_dispatch="x86-64-v3")
 complex_abs :: proc(z: math.Complex(f64)) -> f64 {
 	return hypot(z.real, z.imaginary);
 }
@@ -340,6 +350,7 @@ complex_abs_f32 :: proc(z: math.Complex(f32)) -> f32 {
 	`f64` is +Inf. An exact result is exact, and one exactly halfway between
 	two floats rounds to even.
 */
+@(cpu_dispatch="x86-64-v3")
 quaternion_abs :: proc(q: math.Quaternion(f64)) -> f64 {
 	parts := [4]u64{
 		unsafe.transmute(u64, q.real) & 0x7fffffffffffffff, unsafe.transmute(u64, q.i) & 0x7fffffffffffffff,
@@ -384,6 +395,7 @@ quaternion_abs_f32 :: proc(q: math.Quaternion(f32)) -> f32 {
 	outside [-1, 1], ±Inf included, gives NaN; ±0 gives itself, and ±1 gives
 	±pi/2, correctly rounded.
 */
+@(cpu_dispatch="x86-64-v3")
 asin :: proc(x: f64) -> f64 {
 	bits := unsafe.transmute(u64, x);
 	magnitude := bits & 0x7fffffffffffffff;
@@ -416,6 +428,7 @@ asin_f32 :: proc(x: f32) -> f32 {
 	[-1, 1], ±Inf included, gives NaN; 1 gives +0, -1 gives pi, and ±0 gives
 	pi/2, each multiple of pi correctly rounded.
 */
+@(cpu_dispatch="x86-64-v3")
 acos :: proc(x: f64) -> f64 {
 	bits := unsafe.transmute(u64, x);
 	magnitude := bits & 0x7fffffffffffffff;
@@ -448,6 +461,7 @@ acos_f32 :: proc(x: f32) -> f32 {
 	whose special cases it shares. NaN gives NaN, ±0 gives itself, and ±Inf
 	gives ±pi/2, correctly rounded.
 */
+@(cpu_dispatch="x86-64-v3")
 atan :: proc(x: f64) -> f64 {
 	// Below 2^-27 in magnitude, atan x is within half an ulp of x.
 	if (unsafe.transmute(u64, x) & 0x7fffffffffffffff < 0x3e40000000000000) { return x; }
@@ -472,6 +486,7 @@ atan_f32 :: proc(x: f32) -> f32 {
 	x = +Inf, each multiple of pi correctly rounded. A result too small for
 	`f64` is a subnormal or zero of y's sign.
 */
+@(cpu_dispatch="x86-64-v3")
 atan2 :: proc(y: f64, x: f64) -> f64 {
 	yb := unsafe.transmute(u64, y);
 	xb := unsafe.transmute(u64, x);

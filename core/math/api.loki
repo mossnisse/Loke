@@ -419,14 +419,17 @@ fma :: proc(a: f64, b: f64, c: f64) -> f64 ---;
 fma_f32 :: proc(a: f32, b: f32, c: f32) -> f32 ---;
 
 /*
-	Whether `fma` and `fma_f32` are one instruction at the program's CPU level,
-	as at `-cpu=x86-64-v3`, rather than slower integer arithmetic. A constant,
-	so `when` can choose between an algorithm that calls `fma` and one that
-	does not:
+	Whether `fma` and `fma_f32` are one instruction in the code calling this,
+	rather than slower integer arithmetic: in a build for a CPU level with FMA,
+	such as `-cpu=x86-64-v3`, and in a procedure's copy for such a level, which
+	`@(cpu_dispatch)` makes. An `if` can choose between an algorithm that calls
+	`fma` and one that does not, and the optimizer keeps only the branch taken:
 
-	    when (math.fma_is_instruction()) { ... }
+	    if (math.fma_is_instruction()) { ... }
 
-	Their results are the same either way.
+	It is not a constant, since one procedure's copies answer differently. At
+	compile time, in a constant or a `when`, it answers for the build's level.
+	The results of `fma` are the same either way.
 */
 @(intrinsic)
 fma_is_instruction :: proc() -> bool ---;

@@ -1,0 +1,26 @@
+// design.md "@(cpu_dispatch=<string>)": a baseline build's dispatched procedure
+// runs its copy for the level where the processor has it, and its plain copy
+// where `LOKE_DISPATCH_CPU` caps the level below that; both compute the same
+// bits, `core:math/repro`'s among them. tests/cpu_test.odin runs it each way.
+package main;
+
+import "core:fmt";
+import "core:math";
+import "core:math/repro";
+import "core:unsafe";
+
+@(cpu_dispatch="x86-64-v3")
+copy_has_fma :: proc() -> bool { return math.fma_is_instruction(); }
+
+main :: proc() {
+	fmt.println("copy", copy_has_fma(), "main", math.fma_is_instruction());
+	hash: u64 = 0;
+	x := 0.001;
+	foreach (_ in 0 ..< 20000) {
+		y := repro.pow(x, 1.37) + repro.tan(x) + repro.asin(1.0/(1.0 + x)) + repro.hypot(x, 0.3) +
+			repro.log(x) + repro.atan2(0.5, x) + repro.exp(0.0 - x/10.0) + repro.sin(x)*repro.cos(x);
+		hash = hash*%31 +% unsafe.transmute(u64, y);
+		x = x*1.0004 + 0.0007;
+	}
+	fmt.println(hash, math.fma(0.1, 0.3, -0.03));
+}

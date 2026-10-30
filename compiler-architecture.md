@@ -709,6 +709,7 @@ be file-private. Paths below are relative to `src/`.
 | `emit_llvm_box.odin` | Box construction, unboxing, and recursive drop/clone thunks. |
 | `emit_llvm_runtime.odin` | Runtime declarations, reflection metadata, formatting tables, globals, and witnesses. |
 | `emit_llvm_debug.odin` | Debug locations, scopes, locals, CodeView metadata, and Natvis rules. |
+| `emit_llvm_dispatch.odin` | `@(cpu_dispatch)`: a procedure's copies for a higher CPU level with their callees', the dispatcher between them, and the cached processor check. |
 | `emit_llvm_toolchain.odin` | `.ll`/`.obj`/`.exe` artifact policy, clang/NASM discovery and invocation, foreign inputs, and layout probes. |
 | `subprocess/subprocess.odin` | Child-process execution without busy-waiting; also used by the test harness. |
 

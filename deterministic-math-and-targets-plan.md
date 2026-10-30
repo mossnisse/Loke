@@ -376,7 +376,7 @@ experiments on 2026-10-29 found would pay:
 
 Then the other, `two_product` by the FMA instruction:
 
-- `math.fma_is_instruction()`, public and constant, tells `core:math/repro`,
+- `math.fma_is_instruction()`, public and then constant, tells `core:math/repro`,
   and any other algorithm, whether `math.fma` is the instruction; a
   `core:math/repro`-private built-in would not have reached the probe's copy
   of the package. Where it is, `two_product`'s error is `fma(a, b, -p)`, and
@@ -476,9 +476,37 @@ remainder exactly in integers; it agreed with `fmod` on 3 million seeded
 pairs of every exponent. A remainder written in Loke was exact too, agreeing
 on 400 million pairs, but took 22 ns to `fmod`'s 4 when wrapping an angle.
 
+Phase 6's dispatch, on 2026-10-30: a baseline executable runs
+`core:math/repro`'s `f64` functions with the FMA instruction on a processor
+with `x86-64-v3`.
+
+- [`@(cpu_dispatch="x86-64-v3")`](design.md#cpu_dispatchstring) marks a
+  procedure that a build for a lower level also emits for the named one, with
+  every procedure its copy calls directly, so the copy needs no inlining from
+  the build's level and nothing of the level's runs outside it. Its own name
+  becomes a dispatcher at the build's level that asks the runtime's
+  `loke_rt_v1_cpu_dispatch`, once per process, through a cached byte. This is
+  the plan's "isolated from cross-target inlining": LLVM never inlines a
+  function into one lacking its features. No fat binary, and no general
+  per-procedure target attribute: the copy's features are a CPU level's.
+- `math.fma_is_instruction()` is no longer a constant, since the copies
+  answer differently; `math.fma` and `two_product` test it in an `if`. At
+  compile time it answers for the build's level.
+- `LOKE_DISPATCH_CPU` caps the copies that run, which is how
+  `tests/repro_test.odin` and `tests/cpu_test.odin` run the fallback on a
+  processor with the level and require the same output.
+- Measured at `-opt=speed` with calls the optimizer cannot inline, in ns per
+  call for the plain copies, the dispatched ones, and a `x86-64-v3` build:
+  `log` 26.2, 20.5, 18.0; `tan` 55.6, 43.6, 42.2; `hypot` 21.7, 17.8, 14.5;
+  `atan2` 38.6, 35.1, 32.6. Over a direct loop, `pow` 74.3, 58.7, 57.6,
+  `asin` 50.3, 39.0, 37.0, and `log2` 34.7, 20.7, 19.8. The rest of the gap to
+  the `x86-64-v3` build is the dispatcher's call and the inlining a whole
+  build allows. The `_f32` functions measured no faster in their copies and
+  are not marked.
+
 Not started: phase 1's benchmarks (the UCRT timings in open questions stand
-until there is a kernel to compare), phase 6's faster kernels and dispatch,
-and other platforms.
+until there is a kernel to compare), phase 6's faster kernels, and other
+platforms.
 
 ## Recommended direction
 

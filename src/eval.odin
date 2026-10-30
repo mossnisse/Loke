@@ -2895,6 +2895,11 @@ eval_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (Eval_Va
 		wrapped.integer = wrap_to_type(ev.k.c, wrapped.integer, v.type, ev.alloc)
 		return scalar(wrapped, v.type), true
 
+	// A compile-time value is the build's: no copy of a procedure for another
+	// level is evaluated (design.md "@(cpu_dispatch=<string>)").
+	case .Math_Fma_Available:
+		return scalar(bool_const(.FMA in ev.k.c.target.features), TYPE_BOOL), true
+
 	// Rounded once from the exact value, as the instruction does, rather than
 	// by the host's arithmetic or its C library.
 	case .Math_Fma_Instruction:

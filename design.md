@@ -11030,6 +11030,7 @@ statements and blocks, but this specification defines none for those positions.
 | `@(export)` | procedure and variable declarations | [emits a symbol for external linking](#export) |
 | `@(link_name=<string>)` | procedure and variable declarations, including foreign ones | [sets the symbol name](#link_namestring) |
 | `@(deprecated=<string>)` | procedure declarations | [reports the message at each use](#deprecatedstring) |
+| `@(cpu_dispatch=<string>)` | file-scope procedure declarations | [also emits a copy for a higher CPU level, which runs where the processor has it](#cpu_dispatchstring) |
 | `@(require_results)` | procedure declarations, procedure groups, foreign blocks, and type declarations | [results must be used or discarded](#require_results) |
 | `@(test)` | file-scope procedure declarations | [a test, which only a test build calls](#test) |
 | `@(intrinsic)` | file-scope procedure and type declarations, and members of an `impl` block, in a bundled package | [describes a name the compiler supplies](#intrinsic) |
@@ -11051,6 +11052,42 @@ Storage duration uses [storage modifiers](#storage-modifiers), not attributes,
 and a [constant](#constant-declarations) specifies read-only data.
 
 ### Attribute reference
+
+#### `@(cpu_dispatch=<string>)`
+
+`@(cpu_dispatch="x86-64-v3")` lets a program built for a lower [CPU
+level](compiler-guide.md#cpu-levels) run a procedure with the named level's
+instructions on a processor that has them. The value names a level above
+`x86-64`: `"x86-64-v2"` or `"x86-64-v3"`. The procedure is declared at file
+scope with a body, is not generic, and has the Loke calling convention.
+
+When the build's level is below the named one, the procedure is emitted twice:
+once for the build's level, and once for the named level, and that copy's
+direct calls reach copies of their callees for the same level, made the same
+way. A call to the procedure, direct or through a procedure value, asks once
+per process whether the processor has the level and runs one copy or the other.
+A call a copy makes through a procedure value or a `dyn` value reaches the
+procedure as written. The copies are one procedure: one procedure value, and
+one of each of its `static` variables. At the named level or above, the
+attribute has no effect.
+
+Both copies compute the same results, since a CPU level selects instructions
+and never changes arithmetic ([Floating-point
+operators](#floating-point-operators)). What a copy observes differently is
+`math.fma_is_instruction()` ([`core:math`](standard-library.md#coremath)), true
+in a copy for a level with FMA, and code that chooses an algorithm by it must
+compute the same results on both branches:
+
+```loke
+// The rounding error of a*b, exactly, for operands under 2^995 whose
+// product is 0 or at least 2^-916: Dekker's product is exact there too.
+@(cpu_dispatch="x86-64-v3")
+product_error :: proc(a: f64, b: f64) -> f64 {
+	p := a*b;
+	if (math.fma_is_instruction()) { return math.fma(a, b, 0.0 - p); }
+	return dekker_error(a, b, p);
+}
+```
 
 #### `@(default_calling_convention=<string>)`
 

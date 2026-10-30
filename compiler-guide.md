@@ -113,6 +113,20 @@ the other levels computes; a constant `math.fma` has that result too.
 `math.fma_is_instruction()` is then true, and `core:math/repro` takes its
 exact products from the instruction, with the same results.
 
+A procedure marked [`@(cpu_dispatch="x86-64-v3")`](design.md#cpu_dispatchstring)
+also has a copy for that level in a build for a lower one, which its calls run
+where the processor has the level. `core:math/repro`'s `f64` functions are
+marked, so a baseline executable runs them with the FMA instruction on a
+processor with `x86-64-v3`, most of the way to a `x86-64-v3` build's speed,
+with the same results either way. The runtime asks the processor once per
+process. Setting the environment variable `LOKE_DISPATCH_CPU` to a level caps
+the copies that run at that level, and a value naming no level runs none, so
+a test can take the other path on any processor:
+
+```powershell
+$env:LOKE_DISPATCH_CPU = "x86-64"
+```
+
 A program built for a level runs only on a processor that has it. An
 executable built above `x86-64` therefore checks the processor before any
 other code runs: its entry is baseline code whose first act is the check. On a
@@ -134,7 +148,9 @@ export may run first, so it checks for itself. The runtime exports
 `int32_t loke_rt_v1_cpu_supports(int32_t level)` and
 `void loke_rt_v1_require_cpu(int32_t level)`, with `level` 0, 1, or 2 for the
 three levels in order; the second reports and exits as the executable does.
-Both are baseline code, so a host may call them before anything else, for
+`int32_t loke_rt_v1_cpu_dispatch(int32_t level)` is the first with
+`LOKE_DISPATCH_CPU` applied, which dispatched procedures ask. All three are
+baseline code, so a host may call them before anything else, for
 example to choose between a baseline and a `x86-64-v3` build of a DLL before
 loading one. The host also compiles the runtime sources for the object's
 level: `-print-toolchain -cpu=<level>` prints the `-march` and

@@ -8,10 +8,13 @@
  * compiled with the build's flags: the toolchain supplies it already built, for
  * every x64 processor.
  */
+/* `getenv` is standard C; the Microsoft C library deprecates it. */
+#define _CRT_SECURE_NO_WARNINGS
 #include "loke_rt.h"
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #if defined(_MSC_VER) && !defined(__clang__)
 #include <intrin.h>
@@ -103,6 +106,26 @@ int32_t loke_rt_v1_cpu_supports(int32_t level) {
 		return 0;
 	}
 	return supports(&levels[level]);
+}
+
+/* design.md "@(cpu_dispatch=<string>)": whether a dispatched procedure runs its
+ * copy for `level`. `LOKE_DISPATCH_CPU` caps the level for testing: with it
+ * set, only a copy for the level it names or a lower one runs, and with a value
+ * naming no level, none does. */
+int32_t loke_rt_v1_cpu_dispatch(int32_t level) {
+	const char *cap = getenv("LOKE_DISPATCH_CPU");
+	if (cap != NULL) {
+		int32_t allowed = -1;
+		for (int32_t index = 0; index < LEVEL_COUNT; index++) {
+			if (strcmp(cap, levels[index].name) == 0) {
+				allowed = index;
+			}
+		}
+		if (level > allowed) {
+			return 0;
+		}
+	}
+	return loke_rt_v1_cpu_supports(level);
 }
 
 void loke_rt_v1_require_cpu(int32_t level) {

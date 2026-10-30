@@ -4,5 +4,5 @@ package main;
 import "core:math";
 
 main :: proc() {
-	when (math.fma_is_instruction(1.0)) {}
+	if (math.fma_is_instruction(1.0)) {}
 }

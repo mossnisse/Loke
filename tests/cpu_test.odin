@@ -176,3 +176,87 @@ object_checks_its_cpu_level_before_the_host :: proc(t: ^testing.T) {
 		string(runs[1].stderr),
 	)
 }
+
+// design.md "@(cpu_dispatch=<string>)": a baseline build runs a dispatched
+// procedure's copy for `x86-64-v3` exactly where the processor has the level,
+// which the same program built for the level tells, and its plain copy when
+// `LOKE_DISPATCH_CPU` caps the level below it or names none. Every way
+// computes the same bits, `core:math/repro`'s functions included.
+@(test)
+dispatched_procedures_compute_what_their_copies_do :: proc(t: ^testing.T) {
+	dir := fmt.tprintf("%s/cpu", TMP)
+	os.make_directory(TMP)
+	os.make_directory(dir)
+	levels := []string{"x86-64", "x86-64-v3"}
+	builds := make([]Exec, len(levels), context.temp_allocator)
+	for level, index in levels {
+		command := make([dynamic]string, context.temp_allocator)
+		append(&command, compiler_path(), "tests/repro/dispatch.loke", fmt.tprintf("-cpu=%s", level))
+		append(&command, "-o", fmt.tprintf("%s/dispatch-%s.exe", dir, level))
+		append(&command, ..env_flags())
+		builds[index].command = command[:]
+	}
+	exec_all(builds)
+	for build, index in builds {
+		if !testing.expectf(t, build.err == nil && build.state.exit_code == 0, "the build at -cpu=%s failed:\n%s", levels[index], string(build.stderr)) {
+			return
+		}
+	}
+	baseline := launch_path(fmt.tprintf("%s/dispatch-x86-64.exe", dir))
+	inherited, environ_err := os.environ(context.allocator)
+	if !testing.expect(t, environ_err == nil, "cannot read this process's environment") {
+		return
+	}
+	level, _, level_stderr, level_err := exec(
+		os.Process_Desc{command = []string{launch_path(fmt.tprintf("%s/dispatch-x86-64-v3.exe", dir))}, env = without_dispatch_cap(inherited)},
+		context.allocator,
+	)
+	has_level := true
+	if level.exit_code == 3 && strings.has_prefix(string(level_stderr), UNSUPPORTED_CPU) {
+		has_level = false
+	} else if !testing.expectf(t, level_err == nil && level.exit_code == 0, "the x86-64-v3 build exited %d", level.exit_code) {
+		return
+	}
+
+	// The cap, if any, and whether the copy for the level runs under it.
+	Case :: struct {
+		cap:    string,
+		copies: bool,
+	}
+	cases := []Case{{"", has_level}, {"x86-64-v3", has_level}, {"x86-64-v2", false}, {"x86-64", false}, {"none", false}}
+	results := make([]string, len(cases), context.temp_allocator)
+	for c, index in cases {
+		env := without_dispatch_cap(inherited)
+		if c.cap != "" {
+			env = append_env(env, fmt.tprintf("LOKE_DISPATCH_CPU=%s", c.cap))
+		}
+		run, stdout, stderr, err := exec(os.Process_Desc{command = []string{baseline}, env = env}, context.allocator)
+		if !testing.expectf(t, err == nil && run.exit_code == 0, "LOKE_DISPATCH_CPU=%q: exited %d:\n%s", c.cap, run.exit_code, string(stderr)) {
+			return
+		}
+		text := string(stdout)
+		first, _ := strings.split_lines_iterator(&text)
+		testing.expectf(
+			t, first == fmt.tprintf("copy %v main false", c.copies),
+			"LOKE_DISPATCH_CPU=%q: expected the copy for the level %s, found %q",
+			c.cap, c.copies ? "to run" : "not to run", first,
+		)
+		results[index] = text
+	}
+	for result, index in results {
+		testing.expectf(t, result == results[0], "LOKE_DISPATCH_CPU=%q computed other bits", cases[index].cap)
+	}
+}
+
+// The inherited environment with no `LOKE_DISPATCH_CPU`, which a developer may
+// have set.
+@(private = "file")
+without_dispatch_cap :: proc(env: []string) -> []string {
+	kept := make([dynamic]string, context.temp_allocator)
+	for entry in env {
+		if !strings.has_prefix(strings.to_upper(entry, context.temp_allocator), "LOKE_DISPATCH_CPU=") {
+			append(&kept, entry)
+		}
+	}
+	return kept[:]
+}

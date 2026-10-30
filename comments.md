@@ -1476,6 +1476,43 @@ The baseline x86-64 target has no FMA instruction, so the software path serves
 it; it is slower than the instruction, and correct. At `-cpu=x86-64-v3`,
 `math.fma` is the instruction, with the same results.
 
+### A dispatched procedure is copied with its callees
+
+A program for distribution is built for `x86-64`, and most processors running
+it have `x86-64-v3`, on which `core:math/repro`'s `f64` functions take a fifth
+less time with the FMA instruction. [`@(cpu_dispatch)`](design.md#cpu_dispatchstring)
+lets one build have both: the marked procedure is emitted once for the build's
+level and once for the higher one, and a cached check picks one per call.
+
+The copy takes its callees with it, made the same way, rather than calling
+them at the build's level. An exact product is two instructions inside a
+kernel's inner loop, so it pays only when the whole kernel is compiled with
+FMA and the optimizer can inline it there; and LLVM never inlines a function
+into one whose features lack the callee's, so code for the higher level stays
+behind the check without any further rule. The alternatives each had a cost
+this avoids. Writing the kernels generic over a `fused` constant would thread
+a parameter through most of `core:math/repro`'s procedures, and would still
+need a way to give one instance other target features. A per-procedure
+target attribute, the shape GCC and Rust have, leaves the user to mark every
+callee and to keep the marked code from being reached without a check. A
+whole second program, a fat binary, multiplies the code and the link for one
+package's benefit.
+
+Only a direct call reaches a copy. A call through a procedure value or `dyn`
+value reaches the procedure as written, which is correct at any level and
+only slower; following values would make a copy of every procedure of a type.
+
+`math.fma_is_instruction()` stopped being a constant for this, since a copy
+must answer differently from the procedure it copies, which a `when` decided
+once could not. In an `if` the optimizer still keeps only the branch taken. In
+code without the instruction `fma_instruction` traps rather than becoming
+LLVM's call to the C library's `fma`, which is not correctly rounded in every
+version a toolchain may link; the `if` keeps any call from reaching it.
+
+The `_f32` functions are not marked: their first approximation in one `f64`
+decides almost every argument with no exact product, and their copies measured
+no faster. `sqrt` is one instruction at every level.
+
 ### The floating-point environment is fixed
 
 Loke code always runs with rounding to nearest, subnormals kept, and

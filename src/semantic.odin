@@ -772,6 +772,10 @@ Symbol :: struct {
 	// design.md "Test procedures": `@(test)`, which only a test build calls, so
 	// no code may name it.
 	is_test:            bool,
+	// design.md "@(cpu_dispatch=<string>)": a call runs a copy compiled for
+	// `dispatch_cpu` where the processor has it, when the build's level is lower.
+	dispatches:         bool,
+	dispatch_cpu:       Cpu_Level,
 	// design.md "Foreign system": no body, so the backend emits a
 	// `declare`/`external global` under `link_name`. The source library isn't
 	// recorded — every foreign block links against the one image.

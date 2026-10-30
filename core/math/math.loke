@@ -531,12 +531,13 @@ hypot_f32 :: proc(a: f32, b: f32) -> f32 { return rt_hypot_f32(a, b); }
 */
 // design.md "Floating-point operators".
 //
-// One instruction on a CPU level that has it (compiler-guide.md "CPU levels"),
-// and otherwise integer arithmetic rather than the C library, whose `fma` is
-// not correctly rounded in every version a toolchain may link. Both round once,
-// so they agree on every finite result.
+// One instruction in code compiled for a CPU level that has it
+// (compiler-guide.md "CPU levels", design.md "@(cpu_dispatch=<string>)"), and
+// otherwise integer arithmetic rather than the C library, whose `fma` is not
+// correctly rounded in every version a toolchain may link. Both round once, so
+// they agree on every finite result.
 fma :: proc(a: f64, b: f64, c: f64) -> f64 {
-	when (fma_is_instruction()) { return fma_instruction(a, b, c); }
+	if (fma_is_instruction()) { return fma_instruction(a, b, c); }
 	if (!is_finite(a) || !is_finite(b) || a == 0.0 || b == 0.0) {
 		// The product is exact: an infinity, a NaN, or a signed zero.
 		return a*b + c;
@@ -548,7 +549,7 @@ fma :: proc(a: f64, b: f64, c: f64) -> f64 {
 }
 
 fma_f32 :: proc(a: f32, b: f32, c: f32) -> f32 {
-	when (fma_is_instruction()) { return fma_instruction(a, b, c); }
+	if (fma_is_instruction()) { return fma_instruction(a, b, c); }
 	if (!is_finite_f32(a) || !is_finite_f32(b) || a == f32(0.0) || b == f32(0.0)) {
 		return a*b + c;
 	}
@@ -559,21 +560,25 @@ fma_f32 :: proc(a: f32, b: f32, c: f32) -> f32 {
 }
 
 /**
-	Whether `fma` and `fma_f32` are one instruction at the program's CPU level,
-	as at `-cpu=x86-64-v3`, rather than slower integer arithmetic. A constant,
-	so `when` can choose between an algorithm that calls `fma` and one that
-	does not:
+	Whether `fma` and `fma_f32` are one instruction in the code calling this,
+	rather than slower integer arithmetic: in a build for a CPU level with FMA,
+	such as `-cpu=x86-64-v3`, and in a procedure's copy for such a level, which
+	`@(cpu_dispatch)` makes. An `if` can choose between an algorithm that calls
+	`fma` and one that does not, and the optimizer keeps only the branch taken:
 
-	    when (math.fma_is_instruction()) { ... }
+	    if (math.fma_is_instruction()) { ... }
 
-	Their results are the same either way.
+	It is not a constant, since one procedure's copies answer differently. At
+	compile time, in a constant or a `when`, it answers for the build's level.
+	The results of `fma` are the same either way.
 */
 @(intrinsic)
 fma_is_instruction :: proc() -> bool ---;
 
 /**
-	`a*b + c` in one instruction, for three `f32` or three `f64` operands, on a
-	CPU level that has it. Evaluated at compile time from the exact result.
+	`a*b + c` in one instruction, for three `f32` or three `f64` operands, in
+	code compiled for a CPU level that has it, where `fma_is_instruction()` is
+	true; elsewhere it traps. Evaluated at compile time from the exact result.
 */
 @(intrinsic)
 @(private)

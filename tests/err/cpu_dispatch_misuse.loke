@@ -1,0 +1,39 @@
+// design.md "@(cpu_dispatch=<string>)": the value names a level above
+// baseline, on a file-scope procedure with a body that the compiler can emit
+// twice, which a generic, a foreign-convention procedure, an `impl` member,
+// and a foreign declaration are not.
+package main;
+
+@(cpu_dispatch="x86-64")
+baseline :: proc() {}
+
+@(cpu_dispatch="x86-64-v4")
+unknown :: proc() {}
+
+@(cpu_dispatch="x86-64-v3")
+generic :: proc(x: $T) -> T { return x; }
+
+@(cpu_dispatch="x86-64-v3")
+exported :: proc "c" () {}
+
+Point :: struct { x: f64 }
+
+impl Point {
+	@(cpu_dispatch="x86-64-v3")
+	length :: proc(self) -> f64 { return self.x; }
+}
+
+foreign kernel32 {
+	@(cpu_dispatch="x86-64-v3")
+	GetTickCount :: proc "stdcall" () -> u32 ---;
+}
+
+main :: proc() {
+	baseline();
+	unknown();
+	exported();
+	p := Point{x = 1.0};
+	_ = p.length();
+	_ = GetTickCount();
+	_ = generic(1);
+}

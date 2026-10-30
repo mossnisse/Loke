@@ -57,6 +57,13 @@ Emitter :: struct {
 	// The LLVM intrinsics a call has declared, by name.
 	simd_intrinsics: map[string]bool,
 	globals:  [dynamic]string,
+	// design.md "@(cpu_dispatch=<string>)": every procedure body by symbol, the
+	// copies for a higher level by name, those still to write, and each level's
+	// processor check (`src/emit_llvm_dispatch.odin`).
+	bodies:           map[Symbol_Id]^Expr_Proc,
+	cpu_copies:       map[Cpu_Copy]string,
+	unwritten_copies: [dynamic]Cpu_Copy,
+	dispatch_checks:  map[Cpu_Level]string,
 }
 
 // The only `Emitter` literal, so no map is left uninitialized.
@@ -81,6 +88,10 @@ make_emitter :: proc(c: ^Compiler) -> Emitter {
 		literals     = make(map[string]string),
 		simd_intrinsics = make(map[string]bool),
 		globals      = make([dynamic]string),
+		bodies       = make(map[Symbol_Id]^Expr_Proc),
+		cpu_copies   = make(map[Cpu_Copy]string),
+		unwritten_copies = make([dynamic]Cpu_Copy),
+		dispatch_checks = make(map[Cpu_Level]string),
 	}
 	strings.builder_init(&e.b)
 	return e
@@ -116,6 +127,7 @@ emit_llvm_module :: proc(c: ^Compiler) -> (module: string, ok: bool) {
 	}
 	emit_synth_procs(&e)
 	emit_witnesses(&e)
+	emit_cpu_copies(&e)
 	// Every module, object builds included: the runtime's `thread_detach` calls it.
 	emit_thread_local_teardown(&e)
 	emit_sink_bridge(&e)
@@ -161,6 +173,10 @@ Function_Emission :: struct {
 Function_State :: struct {
 	// Whether the current block already ends in a terminator.
 	terminated: bool,
+	// Set while writing a procedure's copy for `copy_cpu`, whose direct calls
+	// name copies too (design.md "@(cpu_dispatch=<string>)").
+	copying:    bool,
+	copy_cpu:   Cpu_Level,
 	// INVALID_TYPE, with an empty `result_slot`, when there is no result.
 	result_type: Type_Id,
 	result_slot: string,
@@ -377,7 +393,7 @@ name_package_symbols :: proc(e: ^Emitter, pkg: ^Package) {
 // member spells its owner unqualified (`Point.show` for two packages' `Point`),
 // an instance `wrap.int` can meet a member `int` of a type `wrap`, and the root
 // package has no key, so its `pt.x` meets package `pt`'s own `x`.
-@(private = "file")
+@(private)
 claim_name :: proc(e: ^Emitter, base: string) -> string {
 	name := base
 	for n := 1; e.taken_names[name]; n += 1 {
@@ -566,7 +582,12 @@ emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 		return
 	}
 	if !convention_is_foreign(proc_convention_of(e, symbol)) {
-		emit_proc_definition(e, symbol_id, literal, llvm_name)
+		e.bodies[symbol_id] = literal
+		if dispatched(e, symbol) {
+			emit_dispatched_proc(e, symbol_id, literal, llvm_name)
+		} else {
+			emit_proc_definition(e, symbol_id, literal, llvm_name)
+		}
 		return
 	}
 	// design.md "Floating-point operators": foreign code may call it in another
@@ -586,12 +607,16 @@ entry_body_name :: proc(e: ^Emitter, llvm_name: string) -> string {
 }
 
 // The procedure's own function, under `llvm_name`; a foreign-convention one is
-// a guard's body, which no caller may inline (`emit_foreign_entry_guard`).
-@(private = "file")
-emit_proc_definition :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc, llvm_name: string) {
+// a guard's body, which no caller may inline (`emit_foreign_entry_guard`). With
+// `copy_cpu`, the copy compiled for that level.
+@(private)
+emit_proc_definition :: proc(
+	e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc, llvm_name: string, copy_cpu := Maybe(Cpu_Level){},
+) {
 	symbol := symbol_of(e.c, symbol_id)
 	function := begin_function_emission(e)
 	defer finish_function_emission(e, function)
+	e.copy_cpu, e.copying = copy_cpu.?
 
 	e.result_type = symbol.result
 	e.result_inout = result_inout_of(e, symbol.proc_type)
@@ -613,7 +638,7 @@ emit_proc_definition :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_P
 			mode := symbol_param_mode(e.c, symbol, index)
 			fmt.sbprintf(&e.b, "%s%s %%arg%d", param_llvm(e, parameter, mode), param_nonnull(e, parameter, mode), index)
 		}
-		fmt.sbprintln(&e.b, ") {")
+		fmt.sbprintfln(&e.b, ")%s {{", copy_attributes(e))
 	}
 	debug_mark_proc(e, symbol_id)
 	fmt.sbprintln(&e.b, "entry:")

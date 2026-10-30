@@ -105,6 +105,8 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 		case .Math_Wrap:
 			source := expr_base(v.bound[0]).type
 			return emit_value_conversion(e, emit_expr(e, v.bound[0]), source, as_type, checked = false)
+		case .Math_Fma_Available:
+			return .FMA in emitted_features(e) ? "true" : "false"
 		case .Math_Fma_Instruction:
 			return emit_fma_instruction(e, v)
 		case .Math_Sqrt_Instruction:
@@ -159,7 +161,7 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 		case .Free_All:
 			emit_region_reset(e, v)
 			return "0"
-		case .None, .Size_Of, .Align_Of, .Offset_Of, .Is_Copyable, .Is_Union, .Math_Fma_Available,
+		case .None, .Size_Of, .Align_Of, .Offset_Of, .Is_Copyable, .Is_Union,
 		     .Static_Assert, .Build_Config, .Source_Location, .Caller_Location,
 		     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Variants_Of:
 			backend_fail(e, "an unfrozen compile-time built-in reached emission")
@@ -175,6 +177,16 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 @(private = "file")
 emit_fma_instruction :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 	llvm := llvm_type(e, expr_base(v.bound[0]).type)
+	if .FMA not_in emitted_features(e) {
+		if "llvm.trap" not_in e.simd_intrinsics {
+			e.simd_intrinsics["llvm.trap"] = true
+			append(&e.globals, "declare void @llvm.trap()\n")
+		}
+		fmt.sbprintln(&e.b, "  call void @llvm.trap()")
+		fmt.sbprintln(&e.b, "  unreachable")
+		fmt.sbprintfln(&e.b, "unreachable.%d:", next_id(e))
+		return "poison"
+	}
 	key := fmt.aprintf("llvm.fma.%s", llvm == "float" ? "f32" : "f64")
 	if key not_in e.simd_intrinsics {
 		e.simd_intrinsics[key] = true
@@ -382,7 +394,7 @@ emit_operator_call :: proc(e: ^Emitter, symbol_id: Symbol_Id, bound: []Expr, lef
 	if left_place != "" && !param_mode_is_pointer(info.param_modes[0]) {
 		receiver = load_place(e, info.parameters[0], left_place)
 	}
-	results := emit_bound_call(e, symbol_id, symbol_name(e, symbol_id), info, bound, receiver = receiver)
+	results := emit_bound_call(e, symbol_id, callee_name(e, symbol_id), info, bound, receiver = receiver)
 	return len(results) == 0 ? "0" : results[0]
 }
 
@@ -823,7 +835,7 @@ emit_direct_call :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 
 	callee := ""
 	if symbol != nil && symbol.kind == .Proc {
-		callee = symbol_name(e, v.resolution.symbol)
+		callee = callee_name(e, v.resolution.symbol)
 	} else {
 		callee = emit_expr(e, v.callee)
 	}

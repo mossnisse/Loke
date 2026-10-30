@@ -365,7 +365,7 @@ emit_unwind_thunk :: proc(e: ^Emitter) {
 	e.stack_saves = nil
 	u.replaying = true
 
-	open_function(e, "define private void %s(ptr %%ctx)", u.thunk)
+	open_function(e, "define private void %s(ptr %%ctx)%s", u.thunk, copy_attributes(e))
 	u.live = load(e, "ptr", "%ctx")
 	env := unwind_env_load(e, "%ctx", 1)
 

@@ -1,0 +1,18 @@
+L0739
+@7:3
+found `x86-64`
+L0739
+@10:3
+found `x86-64-v4`
+L0739
+@13:3
+a generic procedure
+L0739
+@16:3
+a foreign calling convention
+L0739
+@22:4
+a member of an `impl` block
+L0739
+@27:4
+a foreign declaration

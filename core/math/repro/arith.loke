@@ -2,8 +2,9 @@
 // shares.
 //
 // The one operation a CPU level changes is `two_product`'s error, a b - p for
-// p = a b rounded: the FMA instruction's where `math.fma_is_instruction()`,
-// and Dekker's product elsewhere, never `math.fma`'s integer arithmetic,
+// p = a b rounded: the FMA instruction's where `math.fma_is_instruction()`, in
+// a build for `x86-64-v3` and in the copies each public procedure's
+// `@(cpu_dispatch)` makes for it, and Dekker's product elsewhere, never `math.fma`'s integer arithmetic,
 // which is slower than Dekker's (deterministic-math-and-targets-plan.md "CPU
 // targets and FMA"). Both are exact for every call here, so every level
 // computes the same bits. The error is a multiple of the operands' units
@@ -71,7 +72,7 @@ fast_two_sum :: proc(a: f64, b: f64) -> (high: f64, low: f64) {
 // file's head describes.
 two_product :: proc(a: f64, b: f64) -> (high: f64, low: f64) {
 	p := a*b;
-	when (math.fma_is_instruction()) { return {p, math.fma(a, b, 0.0 - p)}; }
+	if (math.fma_is_instruction()) { return {p, math.fma(a, b, 0.0 - p)}; }
 	ta := SPLITTER*a;
 	ah := ta - (ta - a);
 	al := a - ah;

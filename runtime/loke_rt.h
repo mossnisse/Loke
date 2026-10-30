@@ -603,6 +603,12 @@ void loke_rt_v1_abort(const char *what);
 int32_t loke_rt_v1_cpu_supports(int32_t level);
 void loke_rt_v1_require_cpu(int32_t level);
 
+/* design.md "@(cpu_dispatch=<string>)": `loke_rt_v1_cpu_supports`, unless the
+ * environment variable `LOKE_DISPATCH_CPU` names a lower level, or none, in
+ * which case 0. A dispatched procedure asks it once per process for its level;
+ * baseline code too. */
+int32_t loke_rt_v1_cpu_dispatch(int32_t level);
+
 /* --------------------------------------------------- process arguments -- */
 
 /* design.md "Program entry and exit". The generated `wmain`

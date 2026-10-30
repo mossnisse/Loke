@@ -1,0 +1,20 @@
+package main;
+
+// design.md "@(cpu_dispatch=<string>)": below the named level the procedure's
+// own name is a dispatcher between its two copies. The level's copy calls its
+// callees' copies for the level, `math.fma`'s among them, which is the
+// instruction only there; the build's copy of `math.fma` traps where the
+// instruction would be, and takes the integer arithmetic.
+
+import "core:fmt";
+import "core:math";
+import "core:os";
+
+scaled :: proc(x: f64) -> f64 { return math.fma(x, x, x); }
+
+@(cpu_dispatch="x86-64-v3")
+kernel :: proc(x: f64) -> f64 { return scaled(x) + 1.0; }
+
+main :: proc() {
+	fmt.println(kernel(f64(os.args.len())), math.fma_is_instruction());
+}

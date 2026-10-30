@@ -761,10 +761,11 @@ check_wrap_builtin :: proc(k: ^Checker, v: ^Expr_Call) {
 	}
 }
 
-// `fma_is_instruction()` folds to whether the target has the
-// instruction; `fma_instruction(a, b, c)` takes three operands of one float
-// type the instruction has a form for, and needs the instruction, so that a
-// call reached on a target without it is an error rather than LLVM's libcall.
+// `fma_is_instruction()` is a `bool` each emitted copy of its procedure
+// answers for itself (design.md "@(cpu_dispatch=<string>)"), so no constant;
+// `fma_instruction(a, b, c)` takes three operands of one float type the
+// instruction has a form for. A copy without the instruction traps on it rather
+// than calling LLVM's libcall, the C library's `fma`.
 @(private = "file")
 check_fma_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind) {
 	v.value_category = .Value
@@ -780,15 +781,8 @@ check_fma_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: 
 	if !builtin_arguments_ok(k, v) {
 		return
 	}
-	available := .FMA in k.c.target.features
 	if kind == .Math_Fma_Available {
 		v.type = TYPE_BOOL
-		v.is_const = true
-		v.const_value = bool_const(available)
-		return
-	}
-	if !available {
-		errorf(k.c, v.span, "L0738", "`%s` needs a CPU level with FMA, such as `-cpu=x86-64-v3`", ident.name)
 		return
 	}
 	operand := INVALID_TYPE

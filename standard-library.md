@@ -2318,8 +2318,12 @@ bounded, so a finite product too large for the format still meets the addend.
 On a [CPU level](compiler-guide.md#cpu-levels) with an FMA instruction it is
 that instruction, and elsewhere integer arithmetic; the results agree, except
 which NaN a NaN operand yields, which neither promises. `fma_is_instruction()`
-is a constant, true where `fma` is the instruction, so that `when` can choose
-an algorithm that calls `fma` only where it is fast. `sqrt` is not backed
+is true in code where `fma` is the instruction, so that an `if` can choose an
+algorithm that calls `fma` only where it is fast: in a build for a level with
+FMA, and in a procedure's copy for one, which
+[`@(cpu_dispatch)`](design.md#cpu_dispatchstring) makes. It is not a constant,
+since a procedure's copies answer differently; in a constant or a `when` it
+answers for the build's level. `sqrt` is not backed
 by the C library either: it is the processor's square root instruction, which
 IEEE 754 makes correctly rounded, and a call with a constant argument has a
 compile-time value, rounded exactly as the instruction rounds. Which NaN it
@@ -2354,7 +2358,13 @@ overflow to infinity. The result is therefore the same bits on every machine,
 call is evaluated at compile time. No procedure calls the C library. Where
 `math.fma_is_instruction()` is true, the exact products the fast paths take
 come from `math.fma`, and elsewhere from Dekker's algorithm, which gives
-the same exact value, so the processor's FMA changes only their speed. Every
+the same exact value, so the processor's FMA changes only their speed. Each
+`f64` procedure but `sqrt` is marked
+[`@(cpu_dispatch="x86-64-v3")`](design.md#cpu_dispatchstring), so a build for
+a lower level runs it with the instruction on a processor that has
+`x86-64-v3`, 7% faster there for `exp` and 40% for `log2`, most near 20%.
+The `_f32` procedures are not marked, since their usual path takes no exact
+product. Every
 NaN result is the positive quiet NaN with no payload (`0x7ff8000000000000`,
 `0x7fc00000`), whatever NaN produced it.
 

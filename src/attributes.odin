@@ -59,6 +59,9 @@ attribute_spec :: proc(name: string) -> (Attr_Spec, bool) {
 		return {{.Proc_Decl, .Proc_Group, .Foreign_Block, .Type_Decl}, .None, false}, true
 	case "deprecated":
 		return {{.Proc_Decl}, .Value_Required, false}, true
+	case "cpu_dispatch":
+		// Which procedures may carry it is `validate_cpu_dispatch`'.
+		return {{.Proc_Decl}, .Value_Required, true}, true
 	case "test":
 		// Its other rules are `check_test_procedures`'.
 		return {{.Proc_Decl}, .None, true}, true
@@ -283,18 +286,21 @@ validate_impl_attributes :: proc(k: ^Checker, item: ^Item_Impl) {
 	for member in item.members {
 		#partial switch m in member {
 		case ^Decl:
-			validate_decl_attributes(k, m)
+			validate_decl_attributes(k, m, member = true)
 		case ^Item_Delegate:
 			validate_attribute_list(k, m.attributes, .Delegate)
 		}
 	}
 }
 
-validate_decl_attributes :: proc(k: ^Checker, d: ^Decl, scope := Attr_Scope.Global) {
+validate_decl_attributes :: proc(k: ^Checker, d: ^Decl, scope := Attr_Scope.Global, member := false) {
 	if len(d.symbols) == 0 {
 		return
 	}
 	validate_attribute_list(k, d.attributes, decl_attr_position(k, d), scope, d.duration)
+	if scope != .Local {
+		validate_cpu_dispatch(k, d, scope, member)
+	}
 	// A generic template never resolves, so its parameters and record are
 	// reached here rather than only at resolution.
 	if literal := decl_proc_literal(d); literal != nil {
@@ -342,6 +348,55 @@ validate_record_attributes :: proc(k: ^Checker, record: ^Type_Record) {
 	}
 }
 
+// design.md "@(cpu_dispatch=<string>)": a level above baseline, on a file-scope
+// procedure the compiler can emit twice, which a generic, a foreign-convention
+// procedure, and a foreign declaration are not.
+@(private = "file")
+validate_cpu_dispatch :: proc(k: ^Checker, d: ^Decl, scope: Attr_Scope, member: bool) {
+	for attribute in d.attributes {
+		if len(attribute.path) != 1 || attribute.path[0].text != "cpu_dispatch" {
+			continue
+		}
+		literal := decl_proc_literal(d)
+		if literal == nil || decl_attr_position(k, d) != .Proc_Decl {
+			return
+		}
+		reason := ""
+		switch {
+		case scope == .Foreign:
+			reason = "a foreign declaration, which has no body to emit"
+		case member:
+			reason = "a member of an `impl` block; it marks file-scope procedures"
+		case proc_signature_is_generic(literal):
+			reason = "a generic procedure"
+		case literal.signature != nil && convention_is_foreign(literal.signature.convention):
+			reason = "a procedure with a foreign calling convention"
+		}
+		if reason != "" {
+			errorf(k.c, attribute.span, "L0739", "`@(cpu_dispatch)` cannot mark %s", reason)
+			return
+		}
+		if text, ok := attribute_string_value(k.c, d.attributes, "cpu_dispatch"); ok {
+			if _, known := dispatch_cpu_level(text); !known {
+				errorf(
+					k.c, attribute.span, "L0739",
+					"`@(cpu_dispatch)` names a CPU level above baseline, `x86-64-v2` or `x86-64-v3`; found `%s`", text,
+				)
+			}
+		}
+		return
+	}
+}
+
+// The level a `@(cpu_dispatch)` value names, which is never baseline.
+dispatch_cpu_level :: proc(text: string) -> (Cpu_Level, bool) {
+	switch text {
+	case "x86-64-v2": return .X86_64_V2, true
+	case "x86-64-v3": return .X86_64_V3, true
+	}
+	return .X86_64, false
+}
+
 @(private = "file")
 decl_attr_position :: proc(k: ^Checker, d: ^Decl) -> Attr_Pos {
 	if sym := symbol_of(k.c, d.symbols[0]); sym != nil {
@@ -355,7 +410,8 @@ decl_attr_position :: proc(k: ^Checker, d: ^Decl) -> Attr_Pos {
 	return d.kind == .Const ? .Const_Decl : .Var_Decl
 }
 
-// Records `@(deprecated)`, `@(require_results)`, and `@(test)` on the symbol
+// Records `@(deprecated)`, `@(require_results)`, `@(test)`, and
+// `@(cpu_dispatch)` on the symbol
 // while its signature resolves, so a use in another package already sees them.
 apply_proc_metadata :: proc(k: ^Checker, d: ^Decl, symbol_id: Symbol_Id) {
 	sym := symbol_of(k.c, symbol_id)
@@ -378,6 +434,10 @@ apply_proc_metadata :: proc(k: ^Checker, d: ^Decl, symbol_id: Symbol_Id) {
 			sym.require_results = true
 		case "test":
 			sym.is_test = sym.kind == .Proc
+		case "cpu_dispatch":
+			if text, ok := attribute_string_value(k.c, d.attributes, "cpu_dispatch"); ok && sym.kind == .Proc {
+				sym.dispatch_cpu, sym.dispatches = dispatch_cpu_level(text)
+			}
 		}
 	}
 }

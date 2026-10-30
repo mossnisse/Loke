@@ -1,0 +1,17 @@
+define internal double @loke.p.kernel(double %arg0) {
+%has = call i1 @loke.cpu_dispatch.v3()
+tail call double @loke.p.kernel.v3(double %arg0)
+tail call double @loke.p.kernel.plain(double %arg0)
+call double @loke.p.scaled(double
+call double @loke.p.kernel(double
+define internal double @loke.p.kernel.v3(double %arg0) "target-cpu"="x86-64-v3" "target-features"="+avx,+avx2,+bmi,+bmi2,+cmov,+crc32,+cx16,+cx8,+f16c,+fma,+fxsr,+lzcnt,+mmx,+movbe,+popcnt,+sahf,+sse,+sse2,+sse3,+sse4.1,+sse4.2,+ssse3,+x87,+xsave" {
+call double @loke.p.scaled.v3(double
+define internal double @loke.p.scaled.v3(double %arg0) "target-cpu"="x86-64-v3"
+call double @loke.p.core$3amath.fma.v3(double
+define internal double @loke.p.core$3amath.fma.v3(double %arg0, double %arg1, double %arg2) "target-cpu"="x86-64-v3"
+call double @llvm.fma.f64(double
+call void @llvm.trap()
+call i32 @loke_rt_v1_cpu_dispatch(i32 2)
+declare i32 @loke_rt_v1_cpu_dispatch(i32)
+@loke.cpu_dispatch.v3.state = internal global i8 0
+not @loke.p.main.v3
