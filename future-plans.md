@@ -106,8 +106,7 @@ Current optional gaps, to add only when a caller establishes their contract:
 in `core:random`, `f32` distributions,
 sampling indices from a range without materializing it, and distributions such
 as the negative binomial, Cauchy, and Weibull; buffered streams,
-`fs.absolute`, `fs.canonicalize`, symlinks, and file
-locking; fallible twins of
+`fs.absolute`, `fs.canonicalize`, and symlinks; fallible twins of
 allocating string transformations other than `copy`, Unicode case mapping,
 normalization, and grapheme segmentation; terminal colors, cursor movement,
 mouse and resize events; `thread.try_spawn`, `try_lock`, and thread identity

@@ -1,0 +1,155 @@
+package main;
+
+import "core:fmt";
+import "core:fs";
+import "core:io";
+import "core:os";
+import "core:path";
+import "core:process";
+import "core:strings";
+
+// `File.lock`, `try_lock`, and `unlock` (standard-library "File locking"): the
+// lock belongs to a handle, so two handles in one program contend for it as two
+// programs would; shared locks admit each other and an exclusive one admits
+// nothing; the lock is advisory, so reads and writes through other handles go
+// on; and closing or dropping a handle releases its lock. The program also runs
+// itself as a child that probes the lock, so the same answers hold between two
+// processes.
+
+succeeded :: proc(outcome: Status(io.Error)) -> bool {
+	switch (outcome) {
+	case .ok:  return true;
+	case .err: return false;
+	}
+	return false;
+}
+
+// Whether the lock was taken, or the code and operation that refused it.
+attempt :: proc(outcome: Result(bool, io.Error)) {
+	switch (outcome) {
+	case .ok(acquired): fmt.println(acquired);
+	case .err(error): fmt.println(io.code_of(error), io.operation_of(error));
+	}
+}
+
+report :: proc(outcome: Status(io.Error)) {
+	switch (outcome) {
+	case .ok: fmt.println("ok");
+	case .err(error): fmt.println(io.code_of(error), io.operation_of(error));
+	}
+}
+
+root :: proc() -> string {
+	switch (os.get_environment("TEMP")) {
+	case .ok(outcome):
+		switch (outcome) {
+		case .some(base): return path.join([]string_view{base, "loke_fs_lock"});
+		case .none:
+		}
+	case .err:
+	}
+	return strings.copy("loke_fs_lock");
+}
+
+open_as :: proc(file: string_view, access: fs.Access) -> fs.File {
+	return fs.open(file, fs.Open_Options{access = access, disposition = .Open_Or_Create, append = false}) or_else panic("the test's file could not be opened");
+}
+
+// A handle that locks and then goes out of scope releases the lock in `drop`.
+lock_and_drop :: proc(file: string_view) {
+	scoped := open_as(file, .Read);
+	attempt(scoped.try_lock(.Exclusive));
+}
+
+// The child: tries the lock its arguments name and answers in its exit status,
+// 0 for taken, 1 for kept out, 2 for a failure.
+probe :: proc(file: string_view, mode: string_view) {
+	handle := fs.open_read(file) or_else os.exit(2);
+	switch (handle.try_lock(fs.Lock_Mode.Exclusive if mode == "exclusive" else fs.Lock_Mode.Shared)) {
+	case .ok(acquired): os.exit(0 if acquired else 1);
+	case .err: os.exit(2);
+	}
+}
+
+// The child's answer for a lock of `mode` on `file`, or -1 when it did not run.
+from_another_process :: proc(file: string_view, mode: string_view) -> i32 {
+	exe := os.executable_path() or_else panic("the test cannot find its own executable");
+	return process.run(process.Command{
+		program = exe, arguments = []string_view{"probe", file, mode},
+	}) or_else -1;
+}
+
+main :: proc() {
+	if (os.args.len() > 3 && os.args[1] == "probe") {
+		probe(os.args[2], os.args[3]);
+		return;
+	}
+	directory := root();
+	data := path.join([]string_view{directory, "store.bin"});
+	_ = fs.remove(data);
+	_ = fs.remove_directory(directory);
+	fmt.println(succeeded(fs.create_directories(directory)));
+	fmt.println(succeeded(fs.write_text(data, "0123")));
+
+	owner := open_as(data, .Read_Write);
+	other := open_as(data, .Read);
+	attempt(owner.try_lock(.Exclusive));
+	attempt(other.try_lock(.Shared));
+	attempt(other.try_lock(.Exclusive));
+	fmt.println(from_another_process(data, "shared"));
+	// One lock per handle: a second is refused rather than stacked.
+	report(owner.lock(.Shared));
+
+	// Advisory: other handles still read and write, and the size is the data's.
+	fmt.println(fs.read_text(data) or_else "unreadable");
+	fmt.println(succeeded(fs.append_text(data, "45")));
+	writer := open_as(data, .Write);
+	fmt.println(succeeded(writer.write_all_at("ab".bytes(), 0)));
+	fmt.println(succeeded(writer.set_size(5)));
+	fmt.println(succeeded(writer.close()));
+	fmt.println(fs.read_text(data) or_else "unreadable");
+	fmt.println((owner.metadata() or_else fs.Metadata{}).size);
+
+	// Shared locks admit each other and keep out an exclusive one.
+	report(owner.unlock());
+	attempt(other.try_lock(.Shared));
+	attempt(owner.try_lock(.Shared));
+	fmt.println(from_another_process(data, "shared"), from_another_process(data, "exclusive"));
+	third := open_as(data, .Read);
+	attempt(third.try_lock(.Exclusive));
+	report(owner.unlock());
+	report(other.unlock());
+	// Unlocking a handle that holds nothing is not a failure.
+	report(other.unlock());
+
+	// `lock` on a free file returns at once, and `close` releases it.
+	report(third.lock(.Exclusive));
+	attempt(owner.try_lock(.Shared));
+	fmt.println(succeeded(third.close()));
+	attempt(owner.try_lock(.Exclusive));
+	report(owner.unlock());
+
+	// So does `drop`.
+	lock_and_drop(data);
+	attempt(owner.try_lock(.Exclusive));
+	report(owner.unlock());
+
+	// An append handle that can also read locks; a write-only one is refused.
+	appender := fs.open(data, fs.Open_Options{access = .Read_Write, disposition = .Open_Existing, append = true}) or_else panic("the test's file could not be opened");
+	attempt(appender.try_lock(.Exclusive));
+	attempt(owner.try_lock(.Shared));
+	fmt.println(succeeded(appender.close()));
+	write_only := fs.append(data) or_else panic("the test's file could not be opened");
+	attempt(write_only.try_lock(.Shared));
+	fmt.println(succeeded(write_only.close()));
+
+	// A closed handle cannot lock, and has nothing to unlock.
+	fmt.println(succeeded(other.close()));
+	report(other.lock(.Shared));
+	attempt(other.try_lock(.Shared));
+	report(other.unlock());
+
+	fmt.println(succeeded(owner.close()));
+	fmt.println(succeeded(fs.remove(data)));
+	fmt.println(succeeded(fs.remove_directory(directory)));
+}

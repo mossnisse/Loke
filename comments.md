@@ -2156,7 +2156,27 @@ boundaries and API shapes follow a few common choices:
   other operation already goes through the link, so reporting the link's own
   directory bit is consistent with them, costs nothing, and leaves `Other`
   free for link support to give a meaning to.
-- **Paths keep Windows' own normalization.** `core:fs` hands a path to
+- **Positional I/O leaves the position unspecified.** On a handle not
+  opened for overlapped I/O, Windows moves the file pointer to just past the
+  bytes a positional `ReadFile` or `WriteFile` moved, while POSIX `pread` and
+  `pwrite` leave it alone. Promising either would cost the other platform an
+  extra seek on every call, and a caller mixing positional and stream I/O
+  already has `seek` to say where the stream goes next. Opening every Windows
+  handle for overlapped I/O would leave the pointer alone, but such a handle
+  keeps no file pointer at all, so `read` and `write` would have to track the
+  position themselves.
+- **File locks are advisory.** A Windows byte-range lock is mandatory: the
+  bytes it covers refuse reads and writes through other handles, the locking
+  program's own other handles included. A POSIX `flock` lock is advisory and covers the whole
+  file. A mandatory whole-file lock would make every other handle fail, even
+  `fs.read_bytes` in the program holding it, and could not be had on POSIX at
+  all. `core:fs` therefore locks the one byte at offset `2^63 - 1`, which no
+  file holds and no `fs` call can reach, so the Windows lock is seen only by
+  other locks, as `flock`'s is. SQLite keeps its lock bytes apart from the
+  bytes it reads and writes for the same reason. Each handle holds one lock and a second is refused, because
+  the platforms disagree about the second: Windows stacks it and needs two
+  unlocks, and `flock` converts the first without promising atomicity.
+ `core:fs` hands a path to
   Windows unchanged, so it names what it names to a shell or any other
   Windows program. Following each link before a later `..`, as POSIX does, would mean
   resolving the path one element at a time, a system call per element, and

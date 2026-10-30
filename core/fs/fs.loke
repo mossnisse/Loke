@@ -53,6 +53,12 @@ Open_Options :: struct {
 Seek_Origin :: enum {Start, Current, End}
 
 /**
+	A `Shared` lock admits other shared locks and keeps out an exclusive one;
+	an `Exclusive` lock keeps out every other lock.
+*/
+Lock_Mode :: enum {Shared, Exclusive}
+
+/**
 	`Other` is reserved; no operation produces it today. A reparse point reads
 	by its directory bit until links are supported as such.
 */
@@ -82,6 +88,8 @@ Metadata :: struct {
 File :: move_only struct {
 	@(private) handle: Handle,
 	@(private) access: Access,
+	@(private) append: bool,
+	@(private) locked: bool,
 }
 
 impl File {
@@ -99,6 +107,13 @@ impl File {
 		if (self.handle == NO_HANDLE) { return .ok; }
 		handle := self.handle;
 		self.handle = NO_HANDLE;
+		// Closing releases a lock in any case, but Windows promises only that it
+		// happens eventually, so the release is made here, now. A failure to
+		// release is not reported: the close that follows releases it.
+		if (self.locked) {
+			self.locked = false;
+			_ = unlock_handle(handle);
+		}
 		return close_handle(handle);
 	}
 
@@ -134,6 +149,75 @@ impl File {
 	}
 
 	/**
+		`read`, but from `offset` rather than the position, in one call: there is
+		no seek for anything to come between. A read at or past the end is
+		`End_Of_Input`. Afterward the position is unspecified, so seek before the
+		next `read` or `write`.
+	*/
+	// standard-library.md "Positional I/O"; why the position is left unspecified
+	// is comments.md "Standard-library API choices".
+	read_at :: proc(self: inout File, destination: []mut u8, offset: u64) -> Result(int, io.Error) {
+		if (destination.len() == 0) { return 0; }
+		if (self.handle == NO_HANDLE) {
+			return .err(io.make_error(.Closed, .Read));
+		}
+		if (self.access == .Write || offset > u64(MAX_FILE_SIZE)) {
+			return .err(io.make_error(.Unsupported, .Read));
+		}
+		return read_handle_at(self.handle, destination, i64(offset));
+	}
+
+	/**
+		`write`, but at `offset` rather than the position, in one call. Writing
+		past the end extends the file, and the bytes between read as zero. An
+		append handle answers `Unsupported`: it writes only at the end.
+		Afterward the position is unspecified.
+	*/
+	write_at :: proc(self: inout File, source: []u8, offset: u64) -> Result(int, io.Error) {
+		if (source.len() == 0) { return 0; }
+		if (self.handle == NO_HANDLE) {
+			return .err(io.make_error(.Closed, .Write));
+		}
+		if (self.access == .Read || self.append || offset > u64(MAX_FILE_SIZE)) {
+			return .err(io.make_error(.Unsupported, .Write));
+		}
+		return write_handle_at(self.handle, source, i64(offset));
+	}
+
+	/**
+		Fills `destination` from `offset` on, or fails: `io.read_exact`'s
+		contract, a file that ends first included, at an offset.
+	*/
+	read_exact_at :: proc(self: inout File, destination: []mut u8, offset: u64) -> Status(io.Error) {
+		filled := 0;
+		for (; filled < destination.len(); ) {
+			switch (self.read_at(&mut destination[filled:], offset + u64(filled))) {
+			case .ok(count):
+				if (count == 0) { return .err(io.make_error(.Unexpected_End, .Read)); }
+				filled += count;
+			case .err(error):
+				if (io.is(error, .End_Of_Input)) {
+					return .err(io.make_error(.Unexpected_End, .Read));
+				}
+				return .err(error);
+			}
+		}
+	}
+
+	/// Writes every byte of `source` from `offset` on, looping over partial writes.
+	write_all_at :: proc(self: inout File, source: []u8, offset: u64) -> Status(io.Error) {
+		written := 0;
+		for (; written < source.len(); ) {
+			count := self.write_at(source[written:], offset + u64(written)) or_return;
+			// `io.write_all`'s guard against a write that accepts nothing.
+			if (count == 0) {
+				return .err(io.make_error(.Broken_Pipe, .Write));
+			}
+			written += count;
+		}
+	}
+
+	/**
 		Returns once the file's written data and metadata have been handed to the
 		storage device, so they survive a crash or power loss as far as the device
 		honors the request. `File` keeps no buffer of its own, so there is nothing
@@ -143,7 +227,101 @@ impl File {
 		if (self.handle == NO_HANDLE) { return .ok; }
 		return flush_handle(self.handle);
 	}
+
+	/**
+		Makes the file exactly `size` bytes long: a smaller size discards the
+		bytes past it, and a larger one adds bytes that read as zero. The
+		position does not move, so a position past the new end is where the next
+		write begins; in append mode that is the new end.
+
+		It needs `Write` or `Read_Write` access, and append mode does not stand
+		in its way. Like a write, the new size is durable once `flush` returns.
+	*/
+	// standard-library.md "Opening and file I/O". A log cut back to its last
+	// whole record after a crash is the caller this exists for, and such a log
+	// is usually open for append, hence the exemption.
+	set_size :: proc(self: inout File, size: u64) -> Status(io.Error) {
+		if (self.handle == NO_HANDLE) {
+			return .err(io.make_error(.Closed, .Set_Size));
+		}
+		if (self.access == .Read) {
+			return .err(io.make_error(.Unsupported, .Set_Size));
+		}
+		// Every platform counts file offsets in a signed 64-bit integer.
+		if (size > u64(MAX_FILE_SIZE)) {
+			return .err(io.make_error(.Unsupported, .Set_Size));
+		}
+		return set_size_handle(self.handle, self.append, i64(size));
+	}
+
+	/**
+		What `fs.metadata` would answer for the file this handle has open, asked
+		of the handle rather than a name: the answer follows the file through a
+		rename. Any access mode can ask.
+	*/
+	metadata :: proc(self) -> Result(Metadata, io.Error) {
+		if (self.handle == NO_HANDLE) {
+			return .err(io.make_error(.Closed, .Metadata));
+		}
+		return metadata_handle(self.handle);
+	}
+
+	/**
+		Takes an advisory lock on the whole file, waiting for as long as another
+		handle holds one that keeps this one out. Advisory: only `lock` and
+		`try_lock` respect it, so reads and writes through any handle go on as
+		before. The lock belongs to this handle, so a second handle to the same
+		file, in this program or another, contends for it like any other.
+
+		`close` releases it, and so does the program ending however it ends, so
+		a crash leaves no stale lock behind. A handle holds one lock at a time:
+		locking again while it holds one is `Unsupported`, and changing the mode
+		means `unlock` first. Every handle can lock except one opened `Write`
+		with `append`, which is `Unsupported`: open it `Read_Write` instead.
+	*/
+	// standard-library.md "File locking"; comments.md "Standard-library API
+	// choices" has why it is advisory.
+	lock :: proc(self: inout File, mode: Lock_Mode) -> Status(io.Error) {
+		self.check_lockable() or_return;
+		lock_handle(self.handle, mode, true) or_return;
+		self.locked = true;
+	}
+
+	/**
+		`lock` without the wait: `false` when another handle holds a lock that
+		keeps this one out, and the handle is left unlocked.
+	*/
+	try_lock :: proc(self: inout File, mode: Lock_Mode) -> Result(bool, io.Error) {
+		self.check_lockable() or_return;
+		acquired := lock_handle(self.handle, mode, false) or_return;
+		self.locked = acquired;
+		return acquired;
+	}
+
+	/**
+		Releases this handle's lock. A handle that holds none, a closed one
+		included, has nothing to release.
+	*/
+	unlock :: proc(self: inout File) -> Status(io.Error) {
+		if (!self.locked) { return .ok; }
+		self.locked = false;
+		return unlock_handle(self.handle);
+	}
+
+	@(private)
+	check_lockable :: proc(self) -> Status(io.Error) {
+		if (self.handle == NO_HANDLE) {
+			return .err(io.make_error(.Closed, .Lock));
+		}
+		// Windows locks only for a handle holding the right to read or to write
+		// anywhere, and a write-only append handle holds neither.
+		if (self.locked || (self.access == .Write && self.append)) {
+			return .err(io.make_error(.Unsupported, .Lock));
+		}
+	}
 }
+
+@(private) MAX_FILE_SIZE :: 0x7FFFFFFFFFFFFFFF;
 
 /**
 	Truncating writes to the file, so a read-only open that would truncate is
@@ -411,7 +589,9 @@ foreign import kernel32 "system:kernel32.lib";
 
 @(private) GENERIC_READ  :: 0x80000000;
 @(private) GENERIC_WRITE :: 0x40000000;
+@(private) FILE_WRITE_DATA :: 0x0002;
 @(private) FILE_APPEND_DATA :: 0x0004;
+@(private) FILE_READ_ATTRIBUTES :: 0x0080;
 @(private) SHARE_ALL :: 0x00000007;
 @(private) CREATE_NEW :: 1;
 @(private) CREATE_ALWAYS :: 2;
@@ -425,6 +605,11 @@ foreign import kernel32 "system:kernel32.lib";
 @(private) MOVEFILE_WRITE_THROUGH :: 0x8;
 // `FILE_INFO_BY_HANDLE_CLASS`'s `FileRenameInfo`.
 @(private) FILE_RENAME_INFO_CLASS :: 3;
+// And its `FileEndOfFileInfo`.
+@(private) FILE_END_OF_FILE_INFO_CLASS :: 6;
+@(private) LOCKFILE_FAIL_IMMEDIATELY :: 0x1;
+@(private) LOCKFILE_EXCLUSIVE_LOCK :: 0x2;
+@(private) ERROR_LOCK_VIOLATION :: 33;
 
 // The 100-nanosecond ticks between 1601-01-01 and 1970-01-01.
 @(private) FILETIME_UNIX_EPOCH :: 116444736000000000;
@@ -460,8 +645,20 @@ foreign kernel32 {
 	rt_move_file :: proc "stdcall" (from: [^]u16, to: [^]u16, flags: u32) -> i32 ---;
 	@(link_name="SetFileInformationByHandle")
 	rt_set_file_information :: proc "stdcall" (
-		handle: int, class: u32, information: [^]u16, size: u32,
+		handle: int, class: u32, information: rawptr, size: u32,
 	) -> i32 ---;
+	@(link_name="ReOpenFile")
+	rt_reopen_file :: proc "stdcall" (handle: int, access: u32, share: u32, flags: u32) -> int ---;
+	@(link_name="LockFileEx")
+	rt_lock_file :: proc "stdcall" (
+		handle: int, flags: u32, reserved: u32, count_low: u32, count_high: u32, overlapped: rawptr,
+	) -> i32 ---;
+	@(link_name="UnlockFileEx")
+	rt_unlock_file :: proc "stdcall" (
+		handle: int, reserved: u32, count_low: u32, count_high: u32, overlapped: rawptr,
+	) -> i32 ---;
+	@(link_name="GetFileInformationByHandle")
+	rt_file_information :: proc "stdcall" (handle: int, data: rawptr) -> i32 ---;
 	@(link_name="GetCurrentProcessId")
 	rt_current_process_id :: proc "stdcall" () -> u32 ---;
 	@(link_name="CreateDirectoryW")
@@ -488,6 +685,21 @@ File_Attribute_Data :: struct {
 	written:     [2]u32,
 	size_high:   u32,
 	size_low:    u32,
+}
+
+// `BY_HANDLE_FILE_INFORMATION`: 52 bytes, alignment 4.
+@(private)
+Handle_Information :: struct {
+	attributes:    u32,
+	created:       [2]u32,
+	accessed:      [2]u32,
+	written:       [2]u32,
+	volume_serial: u32,
+	size_high:     u32,
+	size_low:      u32,
+	links:         u32,
+	index_high:    u32,
+	index_low:     u32,
 }
 
 // `WIN32_FIND_DATAW`: 592 bytes, alignment 4.
@@ -535,7 +747,9 @@ from_last_error :: proc(operation: io.Operation) -> io.Error {
 open_native :: proc(path: string_view, options: Open_Options) -> Result(File, io.Error) {
 	wide := wide_path(path, .Open) or_return;
 
-	access: u32 = 0;
+	// Every handle can answer `File.metadata`: the write rights alone do not
+	// include reading attributes.
+	access: u32 = u32(FILE_READ_ATTRIBUTES);
 	if (options.access == .Read || options.access == .Read_Write) {
 		access |= u32(GENERIC_READ);
 	}
@@ -557,7 +771,7 @@ open_native :: proc(path: string_view, options: Open_Options) -> Result(File, io
 	if (handle == INVALID_HANDLE) {
 		return .err(from_last_error(.Open));
 	}
-	return File{handle, options.access};
+	return File{handle, options.access, options.append, false};
 }
 
 @(private)
@@ -567,12 +781,43 @@ close_handle :: proc(handle: Handle) -> Status(io.Error) {
 	}
 }
 
+// `OVERLAPPED` on 64-bit Windows: 32 bytes. On a handle opened without
+// `FILE_FLAG_OVERLAPPED` it carries only the offset to read or write at, and the
+// call still completes before it returns. It also moves the file pointer to just
+// past the bytes moved, which is why `read_at` leaves the position unspecified.
+@(private)
+Overlapped :: struct {
+	internal:      int,
+	internal_high: int,
+	offset_low:    u32,
+	offset_high:   u32,
+	event:         int,
+}
+
+@(private)
+at_offset :: proc(offset: i64) -> Overlapped {
+	return Overlapped{0, 0, u32(offset & 0xFFFFFFFF), u32(offset >> 32), 0};
+}
+
 @(private)
 read_handle :: proc(handle: Handle, destination: []mut u8) -> Result(int, io.Error) {
+	return read_native(handle, destination, nil);
+}
+
+@(private)
+read_handle_at :: proc(handle: Handle, destination: []mut u8, offset: i64) -> Result(int, io.Error) {
+	place := at_offset(offset);
+	return read_native(handle, destination, &mut place);
+}
+
+@(private)
+read_native :: proc(handle: Handle, destination: []mut u8, place: rawptr) -> Result(int, io.Error) {
 	wanted := destination.len();
 	if (wanted > MAX_CHUNK) { wanted = MAX_CHUNK; }
 	read: u32 = 0;
-	if (rt_read_file(handle, unsafe.raw_data(destination), u32(wanted), &mut read, nil) == 0) {
+	// A positional read past the end fails with ERROR_HANDLE_EOF, which is
+	// already `End_Of_Input`.
+	if (rt_read_file(handle, unsafe.raw_data(destination), u32(wanted), &mut read, place) == 0) {
 		error := from_last_error(.Read);
 		// A read that ends at the end of a pipe is the end of input, not a fault.
 		if (io.is(error, .Broken_Pipe)) {
@@ -588,10 +833,21 @@ read_handle :: proc(handle: Handle, destination: []mut u8) -> Result(int, io.Err
 
 @(private)
 write_handle :: proc(handle: Handle, source: []u8) -> Result(int, io.Error) {
+	return write_native(handle, source, nil);
+}
+
+@(private)
+write_handle_at :: proc(handle: Handle, source: []u8, offset: i64) -> Result(int, io.Error) {
+	place := at_offset(offset);
+	return write_native(handle, source, &mut place);
+}
+
+@(private)
+write_native :: proc(handle: Handle, source: []u8, place: rawptr) -> Result(int, io.Error) {
 	wanted := source.len();
 	if (wanted > MAX_CHUNK) { wanted = MAX_CHUNK; }
 	written: u32 = 0;
-	if (rt_write_file(handle, unsafe.raw_data(source), u32(wanted), &mut written, nil) == 0) {
+	if (rt_write_file(handle, unsafe.raw_data(source), u32(wanted), &mut written, place) == 0) {
 		return .err(from_last_error(.Write));
 	}
 	return int(written);
@@ -618,6 +874,73 @@ flush_handle :: proc(handle: Handle) -> Status(io.Error) {
 	if (rt_flush(handle) == 0) {
 		return .err(from_last_error(.Flush));
 	}
+}
+
+// An append handle holds the append right without the write right, and setting
+// the end of a file needs the write right, so the change goes through a second
+// handle to the same file. Reopening a handle rather than the name keeps it the
+// same file whatever has happened to the name since, and it asks the file's own
+// access check, so a caller allowed only to append is refused here.
+@(private)
+set_size_handle :: proc(handle: Handle, append: bool, size: i64) -> Status(io.Error) {
+	if (!append) { return set_end_of_file(handle, size); }
+	reopened := rt_reopen_file(handle, u32(FILE_WRITE_DATA), u32(SHARE_ALL), 0);
+	if (reopened == INVALID_HANDLE) {
+		return .err(from_last_error(.Set_Size));
+	}
+	outcome := set_end_of_file(reopened, size);
+	_ = rt_close_handle(reopened);
+	return outcome;
+}
+
+@(private)
+set_end_of_file :: proc(handle: Handle, size: i64) -> Status(io.Error) {
+	end := size;
+	if (rt_set_file_information(handle, u32(FILE_END_OF_FILE_INFO_CLASS), &mut end, 8) == 0) {
+		return .err(from_last_error(.Set_Size));
+	}
+}
+
+// A Windows byte-range lock is mandatory: it refuses other handles' reads and
+// writes of the bytes it covers. Locking the one byte at the last offset a file
+// can name covers no byte a file holds, `set_size` and the positional calls
+// refuse to reach it, and what is left is a lock that only other locks see.
+@(private) LOCK_OFFSET :: 0x7FFFFFFFFFFFFFFF;
+
+@(private)
+lock_handle :: proc(handle: Handle, mode: Lock_Mode, wait: bool) -> Result(bool, io.Error) {
+	flags: u32 = 0;
+	if (mode == .Exclusive) { flags |= u32(LOCKFILE_EXCLUSIVE_LOCK); }
+	if (!wait) { flags |= u32(LOCKFILE_FAIL_IMMEDIATELY); }
+	// On a synchronous handle the call returns once the lock is taken or refused.
+	place := at_offset(LOCK_OFFSET);
+	if (rt_lock_file(handle, flags, 0, 1, 0, &mut place) == 0) {
+		error := from_last_error(.Lock);
+		if (!wait && io.native_code_of(error) == ERROR_LOCK_VIOLATION) { return false; }
+		return .err(error);
+	}
+	return true;
+}
+
+@(private)
+unlock_handle :: proc(handle: Handle) -> Status(io.Error) {
+	place := at_offset(LOCK_OFFSET);
+	if (rt_unlock_file(handle, 0, 1, 0, &mut place) == 0) {
+		return .err(from_last_error(.Unlock));
+	}
+}
+
+@(private)
+metadata_handle :: proc(handle: Handle) -> Result(Metadata, io.Error) {
+	data: Handle_Information = {};
+	if (rt_file_information(handle, &mut data) == 0) {
+		return .err(from_last_error(.Metadata));
+	}
+	return Metadata{
+		kind_of(data.attributes),
+		(u64(data.size_high) << 32) | u64(data.size_low),
+		modified_time(data.written),
+	};
 }
 
 @(private)
@@ -706,7 +1029,7 @@ replace_atomic_native :: proc(path: string_view, data: []u8) -> Status(io.Error)
 			if (io.is(error, .Already_Exists) && attempt + 1 < TEMPORARY_ATTEMPTS) { continue; }
 			return .err(error);
 		}
-		file := File{handle, .Write};
+		file := File{handle, .Write, false, false};
 		renamed := false;
 		// Cleanup runs in reverse: the handle closes, then a temporary that never
 		// took the target's name is deleted. Once it has, the old name may already
