@@ -43,38 +43,38 @@ failure was observed in the ordinary filesystem tests. Preserve the lock
 state on failure and add a regression that injects a failed release.
 Found reviewing `cf74b6e2` on 2026-10-30.
 
-### Storing one element of a local view resliced from itself is rejected
+### A multiple assignment's destination goes through its carrier's new value
 
-[Weakening and reborrows](design.md#weakening-and-reborrows) lets a store
-replace what one place held. A local view whose definitions are each a borrow,
-or a constant reslice of another such view, now replaces the one element it
-names, but a view resliced from itself does not:
+[Evaluation order](design.md#evaluation-order) evaluates every destination of
+a multiple assignment before any is written, and
+[Values that contain borrows](design.md#values-that-contain-borrows) puts a
+store where the carrier it goes through points. `prov_assign` in
+[src/cfg_provenance.odin](src/cfg_provenance.odin) instead handles each
+target in turn, so a later destination reached through a carrier an earlier
+target redefines is taken to go through the new value (unsound):
 
 ```loke
 package main;
 Node :: struct { value: int }
-Counted :: struct { head: ^mut Node, tail: ^mut Node, count: int }
-self_resliced :: proc() {
-    a := Node{1}; b := Node{2}; c := Node{3}; d := Node{4}; e := Node{5}; f := Node{6};
-    arr := [3]Counted{{&mut a, &mut b, 0}, {&mut c, &mut d, 0}, {&mut e, &mut f, 0}};
-    s := &mut arr[:];
-    s = &mut s[1:];
-    for (round := 0; round < 2; round += 1) {
-        h := s[0].head;
-        h^.value = 1;
-        s[0].head = s[0].tail; // L0641, should be allowed
-    }
+Pair :: struct { head: ^mut Node, tail: ^mut Node }
+main :: proc() {
+    a := Node{1}; b := Node{2}; c := Node{3}; d := Node{4};
+    x := Pair{&mut a, &mut b};
+    y := Pair{&mut c, &mut d};
+    p := &mut x;
+    p, p^.head = &mut y, p^.tail; // stores into x.head
+    h := x.head;                  // points at b
+    b.value = 7;                  // accepted, should be L0511
+    h^.value = 1;
 }
-main :: proc() {}
 ```
 
-`publish_view_of` in [src/borrow.odin](src/borrow.odin) relates a view to the
-range its borrow lends from each definition of the slot, wherever it stands,
-so a definition that reslices the slot itself refers back to itself and the
-view's start counts as unknown. Telling the two definitions apart needs the
-view's start tracked per program point, like the loans a slot holds. When the
-reslice runs inside the loop, the store may name several places and rejecting
-it is correct. Found while closing the resliced-view case on 2026-10-30.
+Writing `p^.head = p^.tail; p = &mut y;` instead reports `L0511` at
+`b.value = 7`. A store into an element of a local view a multiple assignment
+also reassigns is not narrowed to one element, so the narrowing adds nothing
+to it. Closing it needs each destination's carriers read before the first
+write, as the values already are (`prov_capture_slots`). Found while
+closing the self-resliced view case on 2026-10-30.
 
 ### Recursive directory creation visits prefixes removed by normalization
 

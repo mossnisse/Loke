@@ -297,12 +297,16 @@ Prov_Slot :: struct {
 // `t := &mut s[1:]`, with `hi` -1 for its end; or `unknown`.
 Prov_View_Def :: struct {
 	// For the reslice about to be defined, one more than the slot it defines.
-	slot:    int,
-	loan:    Loan_Id,
+	slot:     int,
+	loan:     Loan_Id,
 	// One more than the slot resliced, or 0.
-	from:    int,
-	lo, hi:  i64,
-	unknown: bool,
+	from:     int,
+	lo, hi:   i64,
+	unknown:  bool,
+	// For a reslice, the definitions of the slot resliced that may reach it,
+	// as indices into its `view_defs`, the slot's count among them standing
+	// for one not recorded (`solve_view_defs`).
+	reaching: []int,
 }
 
 // A slot holding no fresh borrow. Zero would name loan 0 and event 0.
@@ -2841,6 +2845,7 @@ prepare_state :: proc(state: ^Prov_State) -> bool {
 	state.uses = make([]Span, max(state.slots, 1), graph.alloc)
 	state.merged = make([]u8, max(state.row_bytes, 1), graph.alloc)
 	settle_pool_joins(state)
+	solve_view_defs(graph)
 	return true
 }
 
@@ -3474,7 +3479,8 @@ publish_view_loan :: proc(graph: ^Flow_Graph, event: Prov_Event, one: int) -> Pr
 	if last.kind != .Range || last.precision != {} || last.hi <= last.lo {
 		return loan
 	}
-	offset, length, present, known := publish_view_of(graph, event.view_slot - 1, one, last.hi - last.lo, 0)
+	starts := make(map[[2]int]Prov_View_Start, graph.alloc)
+	offset, length, present, known := publish_view_of(graph, event.view_slot - 1, event.view_reaching, one, last.hi - last.lo, &starts, 0)
 	if !present || !known || event.view_index >= length {
 		return loan
 	}
@@ -3486,18 +3492,32 @@ publish_view_loan :: proc(graph: ^Flow_Graph, event: Prov_Event, one: int) -> Pr
 	return loan
 }
 
+// Where one definition of a view slot starts in the range a loan lends, as
+// `publish_view_of` has it, and whether that is `settled` rather than still
+// being worked out.
+@(private = "file")
+Prov_View_Start :: struct {
+	offset, length:          i64,
+	present, known, settled: bool,
+}
+
 // design.md "Values that contain borrows": where in the `range` elements
 // `loan` lends the view held in `slot` starts, and how many it views,
-// whenever `slot` holds that loan. Each definition of the slot takes the
-// borrow itself, a constant reslice of another such slot, or something else,
-// and all that take the loan must agree; nothing may borrow the slot, which
-// would let a store through a pointer change it unseen. `present` is false
-// when no definition takes the loan, and `known` false when it is not known
-// where the view starts, as for a slot resliced from itself in a loop.
+// whenever `slot` holds that loan where the definitions `reaching` of it
+// reach (`solve_view_defs`). Each takes the borrow itself, a constant reslice
+// of another such slot, or something else, and all that take the loan must
+// agree; nothing may borrow the slot, which would let a store through a
+// pointer change it unseen. `present` is false when no definition takes the
+// loan, and `known` false when it is not known where the view starts, as for
+// a slot resliced from itself in a loop, whose reslice reaches itself.
+// `starts` holds each definition's answer (`publish_view_def`).
 @(private = "file")
-publish_view_of :: proc(graph: ^Flow_Graph, slot, loan: int, range: i64, depth: int) -> (offset, length: i64, present, known: bool) {
+publish_view_of :: proc(
+	graph: ^Flow_Graph, slot: int, reaching: []int, loan: int, range: i64,
+	starts: ^map[[2]int]Prov_View_Start, depth: int,
+) -> (offset, length: i64, present, known: bool) {
 	defs, recorded := graph.view_defs[slot]
-	if !recorded || depth > 8 {
+	if !recorded || len(reaching) == 0 || depth > 8 {
 		return 0, 0, true, false
 	}
 	symbol := graph.prov_slots[slot].symbol
@@ -3506,32 +3526,199 @@ publish_view_of :: proc(graph: ^Flow_Graph, slot, loan: int, range: i64, depth: 
 			return 0, 0, true, false
 		}
 	}
-	for def in defs {
-		start, count: i64
-		switch {
-		case def.unknown:
+	for index in reaching {
+		if index < 0 || index >= len(defs) {
 			return 0, 0, true, false
-		case def.from > 0:
-			from, viewed, holds, exact := publish_view_of(graph, def.from - 1, loan, range, depth + 1)
-			if !holds {
-				continue
-			}
-			hi := def.hi < 0 ? viewed : def.hi
-			if !exact || def.lo < 0 || def.lo > hi || hi > viewed {
-				return 0, 0, true, false
-			}
-			start, count = from + def.lo, hi - def.lo
-		case int(def.loan) == loan:
-			start, count = 0, range
-		case:
+		}
+		start := publish_view_def(graph, slot, index, loan, range, starts, depth)
+		if !start.present {
 			continue
 		}
-		if present && (start != offset || count != length) {
+		if !start.known || present && (start.offset != offset || start.length != length) {
 			return 0, 0, true, false
 		}
-		offset, length, present = start, count, true
+		offset, length, present = start.offset, start.length, true
 	}
 	return offset, length, present, true
+}
+
+// `publish_view_of` for definition `index` of `slot`. One reached again
+// while its own answer is being worked out reslices what it made itself, so
+// where it starts is not known.
+@(private = "file")
+publish_view_def :: proc(
+	graph: ^Flow_Graph, slot, index, loan: int, range: i64,
+	starts: ^map[[2]int]Prov_View_Start, depth: int,
+) -> Prov_View_Start {
+	key := [2]int{slot, index}
+	if start, seen := starts^[key]; seen {
+		return start.settled ? start : Prov_View_Start{present = true}
+	}
+	starts^[key] = {}
+	def := graph.view_defs[slot][index]
+	start: Prov_View_Start
+	switch {
+	case def.unknown:
+		start.present = true
+	case def.from > 0:
+		from, viewed, holds, exact := publish_view_of(graph, def.from - 1, def.reaching, loan, range, starts, depth + 1)
+		hi := def.hi < 0 ? viewed : def.hi
+		if holds {
+			start.present = true
+			if exact && def.lo >= 0 && def.lo <= hi && hi <= viewed {
+				start.offset, start.length, start.known = from + def.lo, hi - def.lo, true
+			}
+		}
+	case int(def.loan) == loan:
+		start = Prov_View_Start{offset = 0, length = range, present = true, known = true}
+	}
+	start.settled = true
+	starts^[key] = start
+	return start
+}
+
+// design.md "Values that contain borrows": the definitions of each local
+// view that may reach a store into one of its elements
+// (`Prov_Event.view_reaching`), and of each view a constant reslice of it
+// reads (`Prov_View_Def.reaching`), so `publish_view_of` takes only the
+// definitions that may have made the value used there. A definition
+// replaces every earlier one of its slot: `s = &mut s[1:]` before a loop
+// sees only the borrow before it, and inside the loop it reaches itself too.
+// Only the slots such stores name, and those their definitions reslice, are
+// followed; each has a bit per recorded definition and one for any other
+// definition, as a borrowed parameter's at entry.
+@(private = "file")
+solve_view_defs :: proc(graph: ^Flow_Graph) {
+	first := make(map[int]int, graph.alloc)
+	followed := make([dynamic]int, 0, 4, graph.alloc)
+	for block in graph.blocks {
+		for event in block.prov {
+			if event.kind == .Publish && event.view_slot > 0 && event.view_slot - 1 not_in first {
+				first[event.view_slot - 1] = 0
+				append(&followed, event.view_slot - 1)
+			}
+		}
+	}
+	if len(followed) == 0 {
+		return
+	}
+	bits := 0
+	for index := 0; index < len(followed); index += 1 {
+		slot := followed[index]
+		first[slot] = bits
+		defs := graph.view_defs[slot]
+		bits += len(defs) + 1
+		for &def in defs {
+			def.reaching = nil
+			if def.from > 0 && def.from - 1 not_in first {
+				first[def.from - 1] = 0
+				append(&followed, def.from - 1)
+			}
+		}
+	}
+	width := (bits + 7) / 8
+	entry := make([][]u8, len(graph.blocks), graph.alloc)
+	exit := make([][]u8, len(graph.blocks), graph.alloc)
+	for id in 0 ..< len(graph.blocks) {
+		entry[id] = make([]u8, width, graph.alloc)
+		exit[id] = make([]u8, width, graph.alloc)
+	}
+	visited := make([]bool, len(graph.blocks), graph.alloc)
+	queued := make([]bool, len(graph.blocks), graph.alloc)
+	queue := make([dynamic]Block_Id, 0, len(graph.blocks), graph.alloc)
+	append(&queue, Block_Id(0))
+	queued[0] = true
+	row := make([]u8, width, graph.alloc)
+	for head := 0; head < len(queue); head += 1 {
+		id := int(queue[head])
+		block := graph.blocks[id]
+		queued[id] = false
+		mem.zero_slice(row)
+		seen := id == 0
+		for predecessor in block.preds {
+			if visited[int(predecessor)] {
+				bytes_or(row, exit[int(predecessor)])
+				seen = true
+			}
+		}
+		if !seen {
+			continue
+		}
+		if id == 0 {
+			for def in graph.entry_defs {
+				if base, found := first[def.slot]; found {
+					bit_mark(row, base + len(graph.view_defs[def.slot]))
+				}
+			}
+		}
+		copy(entry[id], row)
+		for event in block.prov {
+			view_def_step(graph, first, event, row)
+		}
+		if visited[id] && slice.equal(exit[id], row) {
+			continue
+		}
+		copy(exit[id], row)
+		visited[id] = true
+		for successor in block.succs {
+			if !queued[int(successor)] {
+				append(&queue, successor)
+				queued[int(successor)] = true
+			}
+		}
+	}
+	for block, id in graph.blocks {
+		if !visited[id] {
+			continue
+		}
+		copy(row, entry[id])
+		for &event in block.prov {
+			if event.kind == .Publish && event.view_slot > 0 {
+				event.view_reaching = view_defs_reaching(graph, first, event.view_slot - 1, row, nil)
+			} else if event.kind == .Def && event.view_def > 0 && event.slot in first &&
+			          event.view_def <= len(graph.view_defs[event.slot]) {
+				defs := graph.view_defs[event.slot]
+				if def := &defs[event.view_def - 1]; def.from > 0 {
+					def.reaching = view_defs_reaching(graph, first, def.from - 1, row, def.reaching)
+				}
+			}
+			view_def_step(graph, first, event, row)
+		}
+	}
+}
+
+// What `event` leaves of the definitions reaching (`solve_view_defs`): a
+// definition of a followed slot replaces its others, and so does anything
+// else that writes it, standing for a definition not recorded.
+@(private = "file")
+view_def_step :: proc(graph: ^Flow_Graph, first: map[int]int, event: Prov_Event, row: []u8) {
+	if event.kind != .Def && event.kind != .Load {
+		return
+	}
+	base, followed := first[event.slot]
+	if !followed {
+		return
+	}
+	count := len(graph.view_defs[event.slot])
+	for bit in base ..= base + count {
+		bit_clear(row, bit)
+	}
+	index := event.view_def - 1
+	bit_mark(row, base + (event.kind == .Def && index >= 0 && index < count ? index : count))
+}
+
+// The definitions of `slot` in `row`, added to those in `into`.
+@(private = "file")
+view_defs_reaching :: proc(graph: ^Flow_Graph, first: map[int]int, slot: int, row: []u8, into: []int) -> []int {
+	base := first[slot]
+	out := make([dynamic]int, 0, len(into) + 1, graph.alloc)
+	append(&out, ..into)
+	for index in 0 ..= len(graph.view_defs[slot]) {
+		if bit_get(row, base + index) && !slice.contains(out[:], index) {
+			append(&out, index)
+		}
+	}
+	return out[:]
 }
 
 // The slots a store through carriers replaces (`publish_into_loan`).

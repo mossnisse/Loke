@@ -7,8 +7,10 @@
 // store through a view parameter's element does. So does one through a view
 // whose definitions are each a constant reslice of such a view, as
 // `t := &mut s[1:]`, whose `t[k]` is element `lo + 1 + k`, or the one
-// borrow it holds there. What it stores is still a copy: a copy of that copy
-// reborrows the carrier it came from.
+// borrow it holds there. Only the definitions that may reach the store count,
+// so a view resliced from itself before the loop is known too, but not one
+// resliced in the loop or in one branch. What it stores is still a copy: a
+// copy of that copy reborrows the carrier it came from.
 package main;
 
 Node :: struct { value: int }
@@ -124,6 +126,92 @@ copy_of_the_copy :: proc() {
 	t := s[0].tail;
 	h^.value = 1;
 	t^.value = 2;
+}
+
+// Legal: in the loop `s` holds only what the reslice before it made, which
+// starts at element 1, so `s[0]` is `arr[1]`.
+self_resliced :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3}; d := Node{4}; e := Node{5}; f := Node{6};
+	arr := [3]Counted{{&mut a, &mut b, 0}, {&mut c, &mut d, 0}, {&mut e, &mut f, 0}};
+	s := &mut arr[:];
+	s = &mut s[1:];
+	for (round := 0; round < 2; round += 1) {
+		h := s[0].head;
+		h^.value = 1;
+		s[0].head = s[0].tail;
+	}
+}
+
+// Legal: `s[0]` is `arr[2]`.
+self_resliced_twice :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3}; d := Node{4}; e := Node{5}; f := Node{6};
+	arr := [3]Counted{{&mut a, &mut b, 0}, {&mut c, &mut d, 0}, {&mut e, &mut f, 0}};
+	s := &mut arr[:];
+	s = &mut s[1:];
+	s = &mut s[1:];
+	for (round := 0; round < 2; round += 1) {
+		h := s[0].head;
+		h^.value = 1;
+		s[0].head = s[0].tail;
+	}
+}
+
+// Legal: each iteration borrows afresh and reslices once, so `t[0]` is
+// `arr[1]` in every iteration.
+self_resliced_each_iteration :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3}; d := Node{4}; e := Node{5}; f := Node{6};
+	arr := [3]Counted{{&mut a, &mut b, 0}, {&mut c, &mut d, 0}, {&mut e, &mut f, 0}};
+	for (round := 0; round < 2; round += 1) {
+		t := &mut arr[:];
+		t = &mut t[1:];
+		h := t[0].head;
+		h^.value = 1;
+		t[0].head = t[0].tail;
+	}
+}
+
+// The reslice runs in the loop, so `s[0]` is another element each
+// iteration: the store may land in several, and replaces none.
+self_resliced_in_loop :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3}; d := Node{4}; e := Node{5}; f := Node{6};
+	arr := [3]Counted{{&mut a, &mut b, 0}, {&mut c, &mut d, 0}, {&mut e, &mut f, 0}};
+	s := &mut arr[:];
+	for (round := 0; round < 2; round += 1) {
+		s = &mut s[1:];
+		h := s[0].head;
+		h^.value = 1;
+		s[0].head = s[0].tail;
+	}
+}
+
+// Resliced in one branch only, `s[0]` may be `arr[0]` or `arr[1]`, so the
+// store may land in either, and replaces neither.
+self_resliced_in_branch :: proc(resliced: bool) {
+	a := Node{1}; b := Node{2}; c := Node{3}; d := Node{4}; e := Node{5}; f := Node{6};
+	arr := [3]Counted{{&mut a, &mut b, 0}, {&mut c, &mut d, 0}, {&mut e, &mut f, 0}};
+	s := &mut arr[:];
+	if (resliced) {
+		s = &mut s[1:];
+	}
+	for (round := 0; round < 2; round += 1) {
+		h := s[0].head;
+		h^.value = 1;
+		s[0].head = s[0].tail;
+	}
+}
+
+// design.md "Evaluation order": the destination `s[0]` is evaluated before
+// the same statement reslices `s`, so it is `arr[1]`, and `arr[2].head`
+// still holds the borrow of `e`.
+resliced_by_the_same_statement :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3}; d := Node{4}; e := Node{5}; f := Node{6};
+	arr := [3]Counted{{&mut a, &mut b, 0}, {&mut c, &mut d, 0}, {&mut e, &mut f, 0}};
+	s := &mut arr[:];
+	s = &mut s[1:];
+	s, s[0].head = &mut s[1:], s[0].tail;
+	h := arr[2].head;
+	e.value = 7;
+	h^.value = 1;
 }
 
 main :: proc() {}

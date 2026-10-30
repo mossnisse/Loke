@@ -149,9 +149,9 @@ Review of `d3cb447a` on 2026-10-30 found these cleanup items:
 - **Refresh the caller-storage description below.** Its claim that slice
   parameter stores always join into the parameter predates the new constant
   element slots, and its known-gap link targets a heading removed by this
-  commit. Describe the remaining limitations and point to
-  [local slice stores](known-gaps.md#storing-one-element-of-a-local-slice-view-in-a-loop-is-rejected)
-  and [whole-record parameter stores](known-gaps.md#a-whole-record-stored-through-a-parameter-joins-into-the-parameter).
+  commit. Describe the remaining limitations: a store into one element of a
+  local view, and a whole record stored through a parameter, no longer join,
+  and known-gaps.md records neither.
 
 ## Review follow-ups for the reborrow-gap closure
 

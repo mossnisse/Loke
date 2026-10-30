@@ -1,9 +1,18 @@
 L0511
-@100:2
+@102:2
 this write of `a` is not compatible with the mutable pointer of it that is still in use
 L0641
-@112:15
+@114:15
 `arr` cannot be used here: a mutable reborrow of it is still in use
 L0641
-@124:7
+@126:7
 `arr` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@183:15
+`arr` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@199:15
+`arr` cannot be used here: a mutable reborrow of it is still in use
+L0511
+@213:2
+this write of `e` is not compatible with the mutable pointer of it that is still in use
