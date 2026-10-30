@@ -1,0 +1,472 @@
+/**
+	Time zones: a fixed offset, or the zone the system's clock shows.
+
+	A wall-clock time can fall in a gap, when clocks skip forward, or an
+	overlap, when they go back; `Zone.resolve` says which, and `Zone.at`
+	chooses an instant.
+*/
+// standard-library "Time zones". The system zone's rules are Windows' own,
+// read on each use and kept for the rest of it in a `Rules`. Evaluating a
+// year's rule takes the rule as data, so this package's tests give it known
+// rules (zone_test.loke).
+@(public)
+package time;
+
+import "core:math";
+
+// -------------------------------------------------------------------- zones --
+
+/**
+	A time zone: a fixed offset, or the zone the system's clock shows. It is
+	plain copyable data. The system zone reads Windows' setting on each use, so
+	one value follows a change to the setting. The zero value is UTC.
+*/
+Zone :: struct {
+	@(private) kind: Zone_Kind,
+}
+
+@(private)
+Zone_Kind :: union @(zero=fixed) { fixed: Offset, system }
+
+/// The zone the system's clock shows, read again on each use.
+local_zone :: proc() -> Zone {
+	return Zone{.system};
+}
+
+fixed_zone :: proc(offset: Offset) -> Zone {
+	return Zone{.fixed(offset)};
+}
+
+/// The system clock's reading, at the local zone's offset.
+now_local :: proc() -> Offset_Date_Time {
+	return local_zone().to_local(now());
+}
+
+/**
+	How a date and time without an offset falls in a zone. In a `gap` the
+	clocks skipped it, going from offset `before` to `after`; in an `overlap`
+	they showed it twice, first at offset `earlier` and then at `later`.
+*/
+Resolution :: union {
+	unique:  Offset,
+	gap:     (before: Offset, after: Offset),
+	overlap: (earlier: Offset, later: Offset),
+}
+
+/**
+	Which instant `Zone.at` takes for a time in a gap or an overlap.
+	`Compatible` takes the offset before a gap, which moves the time forward
+	by the gap's length, and the earlier instant of an overlap, as RFC 5545
+	and Temporal do. `Earlier` and `Later` take the instant before or after
+	the transition. `Reject` takes neither.
+*/
+Choice :: enum { Compatible, Earlier, Later, Reject }
+
+impl Zone {
+	/// The offset from UTC the zone's clocks show at `instant`.
+	offset_at :: proc(self, instant: Time) -> Offset {
+		switch (self.kind) {
+		case .fixed(offset): return offset;
+		case .system:
+			rules := Rules{source = .system(read_system_zone())};
+			return offset_in(inout rules, i128(instant.nanoseconds));
+		}
+	}
+
+	/// The date and time the zone's clocks show at `instant`.
+	to_local :: proc(self, instant: Time) -> Offset_Date_Time {
+		return instant.at_offset(self.offset_at(instant));
+	}
+
+	/**
+		Whether the zone's clocks show `local` once, never, or twice. Any date
+		of the calendar can be asked about, including those outside the range
+		of `Time`.
+	*/
+	resolve :: proc(self, local: Date_Time) -> Resolution {
+		switch (self.kind) {
+		case .fixed(offset): return .unique(offset);
+		case .system:
+			rules := Rules{source = .system(read_system_zone())};
+			return resolve_in(inout rules, local);
+		}
+	}
+
+	/**
+		`local` with the zone's offset, choosing as `choice` says in a gap or an
+		overlap, or `.none` when `choice` is `Reject` there. A time moved out of
+		a gap past 9999-12-31 or before 0000-01-01 panics, as `Date_Time`'s
+		arithmetic does.
+	*/
+	at :: proc(self, local: Date_Time, choice: Choice = .Compatible) -> Option(Offset_Date_Time) {
+		return choose(self.resolve(local), local, choice);
+	}
+}
+
+// ------------------------------------------------------------- the rules --
+
+// A year's rule, as Windows records one: the standard offset and, when the
+// year has daylight saving, its offset and the wall-clock times it starts and
+// ends. Offsets are minutes east of UTC.
+@(private)
+Year_Rule :: struct {
+	standard:        int,
+	daylight_saving: bool,
+	daylight:        int,
+	// A wall-clock time in standard time.
+	daylight_starts: Transition,
+	// A wall-clock time in daylight saving time.
+	standard_starts: Transition,
+}
+
+// A day of the year and a time on it, as a `SYSTEMTIME` names one: the
+// `week`th `weekday` of `month`, 5 for its last, or with `week` 0 the `day`th
+// day of the month. `weekday` is ISO's, 1 for Monday.
+@(private)
+Transition :: struct {
+	month:   int,
+	week:    int,
+	weekday: int,
+	day:     int,
+	clock:   Duration,
+}
+
+// Where a zone's rules come from: the system's setting, read once for the
+// use, or rules the package's tests give.
+@(private)
+Rule_Source :: union {
+	system: System_Zone,
+	given:  proc(year: int) -> Year_Rule,
+}
+
+// The rules one use asks for, each asked of the source once. A use needs the
+// rule of the year its time falls in, and near the new year that of the year
+// before or after: two at most, so asking Windows costs one or two lookups.
+@(private)
+Rules :: struct {
+	source: Rule_Source,
+	count:  int,
+	years:  [2]int,
+	known:  [2]Year_Rule,
+}
+
+impl Rules {
+	@(private)
+	for_year :: proc(self: inout, year: int) -> Year_Rule {
+		foreach (i in 0 ..< self.count) {
+			if (self.years[i] == year) { return self.known[i]; }
+		}
+		rule := Year_Rule{};
+		switch (self.source) {
+		case .system(zone): rule = system_rule(&zone, year);
+		case .given(rules): rule = rules(year);
+		}
+		if (self.count < 2) {
+			self.years[self.count] = year;
+			self.known[self.count] = rule;
+			self.count += 1;
+		}
+		return rule;
+	}
+}
+
+// Instants and wall-clock times in nanoseconds since 1970 in 128 bits, so the
+// whole calendar's are exact, beyond the range of `Time`.
+@(private) WIDE_DAY :: i128(86400000000000);
+@(private) WIDE_MINUTE :: i128(60000000000);
+
+@(private)
+wall_nanoseconds :: proc(local: Date_Time) -> i128 {
+	return i128(local.date.days) * WIDE_DAY + i128(local.time.nanoseconds);
+}
+
+@(private)
+year_of :: proc(nanoseconds: i128) -> int {
+	days := nanoseconds / WIDE_DAY;
+	if (nanoseconds % WIDE_DAY < 0) { days -= 1; }
+	return civil_from_days(i64(days)).year;
+}
+
+// The transition's wall-clock time in `year`. A day of the month past the
+// month's end is its last day.
+@(private)
+transition_in :: proc(transition: Transition, year: int) -> i128 {
+	month := transition.month;
+	last := days_in_month(year, Month.from_int(month) or_else panic("time: a transition month outside 1 to 12"));
+	day := transition.day;
+	if (transition.week != 0) {
+		first := Date{days_from_civil(year, month, 1)};
+		day = 1 + int(floor_mod(i64(transition.weekday - int(first.weekday())), 7)) + 7 * (transition.week - 1);
+		for (; day > last; ) { day -= 7; }
+	} else if (day > last) {
+		day = last;
+	}
+	return i128(days_from_civil(year, month, day)) * WIDE_DAY + i128(i64(transition.clock));
+}
+
+// The offset at the instant `utc`. Within a day of the new year the rule of
+// the year before or after can apply.
+@(private)
+offset_in :: proc(rules: inout Rules, utc: i128) -> Offset {
+	year := year_of(utc);
+	if (utc < year_start(year) + WIDE_DAY && utc < takes_over(inout rules, year)) {
+		return Offset{offset_in_year(rules.for_year(year - 1), year - 1, utc)};
+	}
+	if (utc >= year_start(year + 1) - WIDE_DAY && utc >= takes_over(inout rules, year + 1)) {
+		return Offset{offset_in_year(rules.for_year(year + 1), year + 1, utc)};
+	}
+	return Offset{offset_in_year(rules.for_year(year), year, utc)};
+}
+
+// standard-library "Time zones": `year`'s rule takes over when the clock,
+// under the year before's, shows the new year.
+@(private)
+takes_over :: proc(rules: inout Rules, year: int) -> i128 {
+	return year_start(year) - i128(year_end_offset(rules.for_year(year - 1), year - 1)) * WIDE_MINUTE;
+}
+
+// The offset `rule` gives after its last transition of `year`: daylight
+// saving's south of the equator.
+@(private)
+year_end_offset :: proc(rule: Year_Rule, year: int) -> int {
+	if (!rule.daylight_saving) { return rule.standard; }
+	begins := transition_at(rule.daylight_starts, year, rule.standard);
+	ends := transition_at(rule.standard_starts, year, rule.daylight);
+	return rule.daylight if ends < begins else rule.standard;
+}
+
+// The offset `rule`, the rule of `year`, gives at `utc`, with its transitions
+// in that year. Daylight saving runs from the first to the second; south of
+// the equator, where the second comes first, it runs from the year's start to
+// the second and from the first to the year's end.
+@(private)
+offset_in_year :: proc(rule: Year_Rule, year: int, utc: i128) -> int {
+	if (!rule.daylight_saving) { return rule.standard; }
+	begins := transition_at(rule.daylight_starts, year, rule.standard);
+	ends := transition_at(rule.standard_starts, year, rule.daylight);
+	saving := begins <= utc && utc < ends if begins < ends else utc < ends || utc >= begins;
+	return rule.daylight if saving else rule.standard;
+}
+
+// The instant of `transition` in `year`, its wall-clock time read at
+// `offset`. standard-library "Time zones": one at midnight in the first week
+// of January marks the state the year starts in, so it comes before the year's
+// rule takes over.
+@(private)
+transition_at :: proc(transition: Transition, year: int, offset: int) -> i128 {
+	if (transition.month == 1 && transition.week == 1 && transition.clock == 0) { return year_start(year) - 2 * WIDE_DAY; }
+	return transition_in(transition, year) - i128(offset) * WIDE_MINUTE;
+}
+
+@(private)
+year_start :: proc(year: int) -> i128 {
+	return i128(days_from_civil(year, 1, 1)) * WIDE_DAY;
+}
+
+// standard-library "Time zones": each offset the zone uses within a day of
+// `local` is tried, and kept when its instant shows `local` again.
+@(private)
+resolve_in :: proc(rules: inout Rules, local: Date_Time) -> Resolution {
+	wall := wall_nanoseconds(local);
+	candidates: [4]int = {};
+	count := 0;
+	for (year := year_of(wall - WIDE_DAY); year <= year_of(wall + WIDE_DAY); year += 1) {
+		rule := rules.for_year(year);
+		count = with_candidate(&mut candidates, count, rule.standard);
+		if (rule.daylight_saving) { count = with_candidate(&mut candidates, count, rule.daylight); }
+	}
+	// The largest offset gives the earliest instant.
+	largest := candidates[0];
+	smallest := candidates[0];
+	earlier := Option(int).none;
+	later := Option(int).none;
+	foreach (i in 0 ..< count) {
+		offset := candidates[i];
+		largest = math.max(largest, offset);
+		smallest = math.min(smallest, offset);
+		if (offset_in(inout rules, wall - i128(offset) * WIDE_MINUTE).east != offset) { continue; }
+		if (earlier == .none || offset > (earlier or_else 0)) { earlier = .some(offset); }
+		if (later == .none || offset < (later or_else 0)) { later = .some(offset); }
+	}
+	switch (earlier) {
+	case .none:
+		// A gap: the transition lies between the instants of the largest and
+		// the smallest offsets.
+		return .gap({
+			offset_in(inout rules, wall - i128(largest) * WIDE_MINUTE),
+			offset_in(inout rules, wall - i128(smallest) * WIDE_MINUTE),
+		});
+	case .some(first):
+		last := later or_else first;
+		if (first == last) { return .unique(Offset{first}); }
+		return .overlap({Offset{first}, Offset{last}});
+	}
+}
+
+@(private)
+with_candidate :: proc(candidates: ^mut [4]int, count: int, offset: int) -> int {
+	foreach (i in 0 ..< count) {
+		if (candidates^[i] == offset) { return count; }
+	}
+	candidates^[count] = offset;
+	return count + 1;
+}
+
+// standard-library "Time zones": `Compatible` is RFC 5545's and Temporal's
+// choice.
+@(private)
+choose :: proc(resolution: Resolution, local: Date_Time, choice: Choice) -> Option(Offset_Date_Time) {
+	switch (resolution) {
+	case .unique(offset):
+		return Offset_Date_Time{local, offset};
+	case .gap(before, after):
+		length := Duration(i64(after.east - before.east) * i64(MINUTE));
+		switch (choice) {
+		case .Compatible, .Later: return Offset_Date_Time{local + length, after};
+		case .Earlier:            return Offset_Date_Time{local - length, before};
+		case .Reject:             return .none;
+		}
+	case .overlap(earlier, later):
+		switch (choice) {
+		case .Compatible, .Earlier: return Offset_Date_Time{local, earlier};
+		case .Later:                return Offset_Date_Time{local, later};
+		case .Reject:               return .none;
+		}
+	}
+}
+
+// ------------------------------------------------------------ the platform --
+
+when (LOKE_OS == .Windows) {
+
+foreign import kernel32 "system:kernel32.lib";
+
+// `SYSTEMTIME`: eight `WORD`s, 16 bytes.
+@(private)
+System_Time :: struct {
+	year:         u16,
+	month:        u16,
+	weekday:      u16,
+	day:          u16,
+	hour:         u16,
+	minute:       u16,
+	second:       u16,
+	milliseconds: u16,
+}
+
+// `TIME_ZONE_INFORMATION`: 172 bytes, alignment 4. A bias is minutes *west*
+// of UTC, and the standard or daylight bias is added to it.
+@(private)
+Time_Zone_Information :: struct {
+	bias:          i32,
+	standard_name: [32]u16,
+	standard_date: System_Time,
+	standard_bias: i32,
+	daylight_name: [32]u16,
+	daylight_date: System_Time,
+	daylight_bias: i32,
+}
+
+// `DYNAMIC_TIME_ZONE_INFORMATION`: the same, then the zone's registry key and
+// whether automatic adjustment for daylight saving is off; 432 bytes.
+@(private)
+System_Zone :: struct {
+	bias:                           i32,
+	standard_name:                  [32]u16,
+	standard_date:                  System_Time,
+	standard_bias:                  i32,
+	daylight_name:                  [32]u16,
+	daylight_date:                  System_Time,
+	daylight_bias:                  i32,
+	key_name:                       [128]u16,
+	dynamic_daylight_time_disabled: u8,
+}
+
+static_assert(size_of(System_Time) == 16);
+static_assert(size_of(Time_Zone_Information) == 172);
+static_assert(size_of(System_Zone) == 432);
+
+// The structures pass as `rawptr`, as the clock's `FILETIME` does, so a program
+// that binds these functions itself, with its own structures, does not declare
+// them with a different type.
+@(private)
+foreign kernel32 {
+	@(link_name="GetDynamicTimeZoneInformation")
+	rt_dynamic_time_zone :: proc "stdcall" (zone: rawptr) -> u32 ---;
+	@(link_name="GetTimeZoneInformationForYear")
+	rt_time_zone_for_year :: proc "stdcall" (year: u16, zone: rawptr, information: rawptr) -> i32 ---;
+}
+
+@(private) TIME_ZONE_ID_INVALID :: u32(0xFFFFFFFF);
+
+// The setting now. Neither call fails on a supported system; if one did, a
+// guess at the offset would give wrong times without an error, so it panics,
+// as `random.fill_secure` does.
+@(private)
+read_system_zone :: proc() -> System_Zone {
+	zone := System_Zone{};
+	if (rt_dynamic_time_zone(&mut zone) == TIME_ZONE_ID_INVALID) { system_failed(); }
+	return zone;
+}
+
+// Windows answers for every year, giving the earliest rule it records for the
+// years before it and the latest for the years after.
+@(private)
+system_rule :: proc(zone: ^System_Zone, year: int) -> Year_Rule {
+	information := Time_Zone_Information{};
+	asked := u16(math.max(0, math.min(year, 9999)));
+	if (rt_time_zone_for_year(asked, zone, &mut information) == 0) { system_failed(); }
+	rule := Year_Rule{
+		standard = minutes_east(information.bias + information.standard_bias),
+		daylight = minutes_east(information.bias + information.daylight_bias),
+		daylight_starts = transition_of(information.daylight_date),
+		standard_starts = transition_of(information.standard_date),
+	};
+	// A month of zero is a year without daylight saving. With automatic
+	// adjustment off the clock shows standard time all year, though
+	// `SystemTimeToTzSpecificLocalTimeEx` still applies the rules.
+	rule.daylight_saving = information.daylight_date.month != 0 && information.standard_date.month != 0 &&
+		zone^.dynamic_daylight_time_disabled == 0;
+	if (rule.daylight_saving && !(names_a_day(information.daylight_date) && names_a_day(information.standard_date))) {
+		system_failed();
+	}
+	return rule;
+}
+
+// Whether a transition's `SYSTEMTIME` names a day and a time, as
+// `GetTimeZoneInformationForYear` promises.
+@(private)
+names_a_day :: proc(time: System_Time) -> bool {
+	if (time.month < 1 || time.month > 12 || time.hour > 23 || time.minute > 59 || time.second > 59 || time.milliseconds > 999) {
+		return false;
+	}
+	if (time.year != 0) { return time.day >= 1 && time.day <= 31; }
+	return time.day >= 1 && time.day <= 5 && time.weekday <= 6;
+}
+
+@(private)
+minutes_east :: proc(bias: i32) -> int {
+	offset := -int(bias);
+	if (offset < -MAX_OFFSET_MINUTES || offset > MAX_OFFSET_MINUTES) { system_failed(); }
+	return offset;
+}
+
+// A `SYSTEMTIME` with a year of zero names a weekday of a month, `day` its
+// week; one with a year names the day itself. Its weekday counts from Sunday.
+@(private)
+transition_of :: proc(time: System_Time) -> Transition {
+	clock := i64(time.hour) * i64(HOUR) + i64(time.minute) * i64(MINUTE) +
+		i64(time.second) * i64(SECOND) + i64(time.milliseconds) * i64(MILLISECOND);
+	weekday := 7 if time.weekday == 0 else int(time.weekday);
+	if (time.year != 0) {
+		return Transition{month = int(time.month), weekday = weekday, day = int(time.day), clock = Duration(clock)};
+	}
+	return Transition{month = int(time.month), week = int(time.day), weekday = weekday, clock = Duration(clock)};
+}
+
+@(private)
+system_failed :: proc() -> ! {
+	panic("time: Windows could not read the system's time zone");
+}
+
+}

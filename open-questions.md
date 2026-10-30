@@ -1005,61 +1005,10 @@ between them. Does a caller need it?
 ## Open questions in `core:time`
 
 [`core:time`](standard-library.md#coretime) has clocks, durations, instants,
-the calendar, fixed offsets, and ISO 8601 text; the reasons for its shape are
-in [Standard-library API choices](comments.md#standard-library-api-choices).
-Time zones are what is left.
-
-### The local time zone
-
-The planned second phase, for a caller that wants the time on the machine's
-clock:
-
-```loke
-Zone :: struct { /* private: a fixed offset or the system's zone */ }
-local_zone() -> Zone
-fixed_zone(offset: Offset) -> Zone
-now_local() -> Offset_Date_Time
-
-Zone.offset_at(self, instant: Time) -> Offset
-Zone.to_local(self, instant: Time) -> Offset_Date_Time
-
-Resolution :: union {
-	unique:  Offset,
-	gap:     (before: Offset, after: Offset),     // clocks skipped this time
-	overlap: (earlier: Offset, later: Offset),    // clocks showed it twice
-}
-Choice :: enum { Compatible, Earlier, Later, Reject }
-Zone.resolve(self, local: Date_Time) -> Resolution
-Zone.at(self, local: Date_Time,
-	choice: Choice = .Compatible) -> Option(Offset_Date_Time)
-```
-
-The system zone is the one the operating system's clock shows. On Windows,
-`GetDynamicTimeZoneInformation` names it and `GetTimeZoneInformationForYear`
-gives each year's standard offset and daylight-saving rule, the rules
-`SystemTimeToTzSpecificLocalTimeEx` applies. Its history is what Windows
-records: changes Microsoft has published, with the earliest recorded rule
-standing in for the years before it. The package owns no zone data, and
-Windows Update keeps the system's current. The `TZ` environment variable, which
-the C runtime reads, is not consulted.
-
-Each use reads the current setting, so a long-running program follows a change
-to the system zone, and nothing is read at import
-([No hidden process behavior](standard-library.md#no-hidden-process-behavior)).
-If Windows reports a failure, which it does not on a supported system, the
-call panics, as `random.fill_secure` does.
-
-A wall-clock time can fall in a gap, when clocks skip forward, or an overlap,
-when they repeat an hour. `resolve` says which, with the offsets on each side.
-`at` chooses: `Compatible` uses the offset before a gap, which moves the time
-forward by the gap's length, and the earlier instant of an overlap, as RFC 5545
-and Temporal do; `Earlier` and `Later` take the instant before or after;
-`Reject` answers `.none` for either. `resolve` tries each offset the zone uses
-near that date and keeps those whose instant converts back to the same wall
-time. The rule evaluation takes a year's rule as data, so tests can give it
-known rules, such as the European Union's, for gaps and overlaps, and compare
-`offset_at` with `SystemTimeToTzSpecificLocalTimeEx` across a year in
-whatever zone the machine has.
+the calendar, fixed offsets, the system's local zone, and ISO 8601 text; the
+reasons for its shape are in
+[Standard-library API choices](comments.md#standard-library-api-choices).
+Zones chosen by name are what is left.
 
 ### Named time zones
 
@@ -1086,9 +1035,12 @@ copyable, and nothing already in the package changes.
 - **Calendar durations.** `P1Y2M3D` has no type; `add_months` and its siblings
   do the arithmetic. A `Period` type waits for a caller that stores or parses
   one.
-- **The system zone's name.** Windows names its zones its own way. The IANA
-  name needs CLDR's mapping, which ICU has, so `Zone` would have no name in
-  the second phase.
+- **The system zone's name.** Windows names its zones its own way, and the
+  IANA name needs CLDR's mapping, which ICU has, so a `Zone` has no name. A
+  caller that shows one, or records the zone beside a time, would need it.
+- **Printing a zone.** A `Zone` prints as `Zone{}`, whatever it holds, since
+  its field is private. A fixed zone could print its offset; what the system
+  zone prints waits on its name.
 
 ## Formatting
 

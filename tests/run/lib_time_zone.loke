@@ -1,0 +1,147 @@
+package main;
+
+import "core:fmt";
+import "core:time";
+
+// standard-library "Time zones": the system zone against Windows' own
+// conversion, `SystemTimeToTzSpecificLocalTimeEx`, through this year and the
+// next in whatever zone the machine has, and the public procedures' agreement
+// with one another there. Known rules with gaps and overlaps are checked by the
+// package's own tests in core/time/zone_test.loke, which can give the rule
+// evaluation its rules as data. The expected output holds only counts.
+
+foreign import kernel32 "system:kernel32.lib";
+
+System_Time :: struct {
+	year: u16, month: u16, weekday: u16, day: u16,
+	hour: u16, minute: u16, second: u16, milliseconds: u16,
+}
+
+Time_Zone_Information :: struct {
+	bias:          i32,
+	standard_name: [32]u16,
+	standard_date: System_Time,
+	standard_bias: i32,
+	daylight_name: [32]u16,
+	daylight_date: System_Time,
+	daylight_bias: i32,
+}
+
+Dynamic_Time_Zone_Information :: struct {
+	information:                    Time_Zone_Information,
+	key_name:                       [128]u16,
+	dynamic_daylight_time_disabled: u8,
+}
+
+// `core:time` binds the first two with `rawptr` parameters, and a foreign
+// symbol has one type, so these do too.
+foreign kernel32 {
+	@(link_name="GetDynamicTimeZoneInformation")
+	dynamic_time_zone :: proc "stdcall" (zone: rawptr) -> u32 ---;
+	@(link_name="GetTimeZoneInformationForYear")
+	time_zone_for_year :: proc "stdcall" (year: u16, zone: rawptr, information: rawptr) -> i32 ---;
+	@(link_name="SystemTimeToTzSpecificLocalTimeEx")
+	to_local_time :: proc "stdcall" (zone: ^Dynamic_Time_Zone_Information, utc: ^System_Time, local: ^mut System_Time) -> i32 ---;
+}
+
+// Windows' offset at `instant`, in minutes east. With automatic adjustment for
+// daylight saving off, the clock shows the year's standard time, which
+// `SystemTimeToTzSpecificLocalTimeEx` does not follow, so the year's standard
+// offset is the answer then.
+windows_offset :: proc(zone: ^Dynamic_Time_Zone_Information, instant: time.Time) -> int {
+	utc := instant.utc();
+	if (zone^.dynamic_daylight_time_disabled != 0) {
+		information := Time_Zone_Information{};
+		if (time_zone_for_year(u16(utc.date.year()), zone, &mut information) == 0) { panic("no rule for the year"); }
+		return -int(information.bias + information.standard_bias);
+	}
+	asked := System_Time{
+		u16(utc.date.year()), u16(int(utc.date.month())), u16(int(utc.date.weekday()) % 7), u16(utc.date.day()),
+		u16(utc.time.hour()), u16(utc.time.minute()), u16(utc.time.second()), u16(utc.time.nanosecond() / 1000000),
+	};
+	local := System_Time{};
+	if (to_local_time(zone, &asked, &mut local) == 0) { panic("SystemTimeToTzSpecificLocalTimeEx failed"); }
+	month := time.Month.from_int(int(local.month)) or_else panic("a month");
+	date := time.Date.from_components(int(local.year), month, int(local.day)) or_else panic("a date");
+	shown := i64(local.hour) * 60 + i64(local.minute);
+	return int(utc.date.days_until(date) * 1440 + shown - i64(utc.time.hour() * 60 + utc.time.minute()));
+}
+
+// A fixed zone reads nothing from the system, so it also runs during
+// compile-time evaluation.
+FOLDED :: time.fixed_zone(time.Offset.from_minutes(330) or_else panic("an offset")).to_local(time.from_unix_nanoseconds(0));
+FOLDED_AT :: time.fixed_zone(time.Offset.from_minutes(-90) or_else panic("an offset")).at(time.Date_Time{}, .Reject);
+
+// Whether `resolution` allows `offset` for the wall time it was asked about.
+allows :: proc(resolution: time.Resolution, offset: time.Offset) -> bool {
+	switch (resolution) {
+	case .unique(only):            return only == offset;
+	case .overlap(earlier, later): return offset == earlier || offset == later;
+	case .gap:                     return false;
+	}
+}
+
+main :: proc() {
+	zone := time.local_zone();
+	setting := Dynamic_Time_Zone_Information{};
+	if (dynamic_time_zone(&mut setting) == 0xFFFFFFFF) { panic("GetDynamicTimeZoneInformation failed"); }
+
+	// Every hour, and the millisecond before it, from this year's first day
+	// through the next year's last, UTC. Most transitions fall on the hour, so
+	// each of those is seen from both sides.
+	year := time.now().utc().date.year();
+	first := time.Date.from_components(year, .January, 1) or_else panic("a date");
+	start := time.Date_Time{date = first}.at_offset(time.UTC).to_time() or_else panic("an instant");
+	checked := 0;
+	disagree := 0;
+	inconsistent := 0;
+	for (moment := start; moment < start + 2 * 8784 * time.HOUR; moment = moment + time.HOUR) {
+		foreach (instant in [2]time.Time{moment - time.MILLISECOND, moment}) {
+			offset := zone.offset_at(instant);
+			if (offset.minutes() != windows_offset(&setting, instant)) {
+				if (disagree < 10) { fmt.println("disagree:", instant, offset, windows_offset(&setting, instant)); }
+				disagree += 1;
+			}
+			local := zone.to_local(instant);
+			if (local != instant.at_offset(offset)) { inconsistent += 1; }
+
+			// The wall time the clock showed resolves to the offset it was
+			// shown at, and `at` finds the instant again.
+			resolution := zone.resolve(local.date_time);
+			if (!allows(resolution, offset)) { inconsistent += 1; }
+			switch (resolution) {
+			case .unique:
+				if (zone.at(local.date_time, .Reject) != Option(time.Offset_Date_Time).some(local)) { inconsistent += 1; }
+			case .overlap(earlier, _):
+				choice := time.Choice.Earlier if offset == earlier else time.Choice.Later;
+				if (zone.at(local.date_time, choice) != Option(time.Offset_Date_Time).some(local)) { inconsistent += 1; }
+				if (zone.at(local.date_time, .Reject) != .none) { inconsistent += 1; }
+			case .gap:
+			}
+
+			// A wall time half an hour on may be one the clocks skipped; then
+			// each choice lands on one side of the gap.
+			later := local.date_time + 30 * time.MINUTE;
+			switch (zone.resolve(later)) {
+			case .gap(before, after):
+				forward := zone.at(later) or_else panic("compatible");
+				if (forward.offset != after || forward.to_time() != Option(time.Time).some(later.at_offset(before).to_time() or_else panic("in range"))) { inconsistent += 1; }
+				if (zone.offset_at(forward.to_time() or_else panic("in range")) != after) { inconsistent += 1; }
+				back := zone.at(later, .Earlier) or_else panic("earlier");
+				if (back.offset != before || zone.offset_at(back.to_time() or_else panic("in range")) != before) { inconsistent += 1; }
+				if (zone.at(later, .Reject) != .none) { inconsistent += 1; }
+			case .unique, .overlap:
+			}
+			checked += 1;
+		}
+	}
+	fmt.println("-- system zone:", disagree, "instants disagree with Windows,", inconsistent, "inconsistent");
+	fmt.println("-- instants checked:", checked == 2 * 2 * 8784);
+
+	fmt.println("-- folded:", FOLDED, FOLDED_AT);
+
+	// `now_local` reads the clock at the zone's offset.
+	reading := time.now_local();
+	instant := reading.to_time() or_else panic("in range");
+	fmt.println("-- now_local:", reading.offset == zone.offset_at(instant), time.now() - instant >= time.Duration(0));
+}
