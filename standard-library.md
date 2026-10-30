@@ -1642,8 +1642,8 @@ Dynamic_Index_Set :: struct { /* private */ }                         // allocat
 Index_View        :: struct { /* private */ }                         // caller's words, read
 Index_View_Mut    :: struct { /* private */ }                         // caller's words, written
 
-words_for_bits :: proc(cap: int) -> int;   // (cap + 63)/64
-bytes_for_bits :: proc(cap: int) -> int;   // (cap + 7)/8
+words_for_bits :: proc(cap: int) -> int;   // cap/64, rounded up
+bytes_for_bits :: proc(cap: int) -> int;   // cap/8, rounded up
 
 Index_Set(N).of(indices: ..int) -> Index_Set(N)
 Index_Set(N).all() -> Index_Set(N)
