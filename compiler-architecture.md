@@ -266,7 +266,7 @@ records.
 | --- | --- |
 | Batch inputs | Process-owned source buffers and diagnostics; one syntax arena per parsed file. |
 | Semantic arena | Stores, interned data, specializations, cloned syntax, and frozen constants. Incremental inputs, syntax, and diagnostics also live here for checkpointing. |
-| Analysis arena | Disposable ownership/provenance graphs, reclaimed after analysis. |
+| Analysis arena | Disposable ownership/provenance graphs, reclaimed after analysis. It and the two provenance replay arenas beside it reserve one large block, so the reset after each body keeps its pages instead of returning them to the system. |
 | CTFE scratch | Bounded frames and mutable values; escaping constants are frozen into semantic storage. |
 | Emission arena | LLVM text, temporary maps, layout probes, and toolchain scratch; released with the compilation. |
 | Session arenas | Copied configuration, scratch, queries, and statistics; see [sessions](#reusable-batch-sessions). |
