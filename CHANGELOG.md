@@ -10,6 +10,26 @@ checklist.
 
 ### Breaking changes
 
+- A store through a carrier that the same multiple assignment reassigns, as
+  `p^.head` in `p, p^.head = &mut y, p^.tail`, is now checked where the
+  carrier pointed before the statement, where the store lands
+  ([Evaluation order](design.md#evaluation-order),
+  [Values that contain borrows](design.md#values-that-contain-borrows)).
+  Before, the checker took it to go through the new value, so writing the
+  storage a copy of `x.head` still pointed at compiled; it is now rejected
+  with `L0511`, and a reborrow of the old target still in use after the
+  statement now conflicts with the store (`L0641`). Upgrade by ending the
+  borrow first, or by splitting the statement: `p^.head = v; p = q;` stores
+  through the old `p`, `p = q; p^.head = v;` through the new one.
+
+- A loop that copies `s[k].head` out of a slice parameter, stores
+  `s[k].tail` into it at a variable index, and uses the copy after the store
+  is now rejected with `L0641`, as it already was through a pointer that may
+  name either of two places
+  ([Weakening and reborrows](design.md#weakening-and-reborrows)). The next
+  iteration's copy of `tail` can alias the copy still in use. Upgrade by
+  finishing with the copy before the store.
+
 - `lokec` needs LLVM/Clang 18 or later, now stated in
   [Getting started](readme.md#getting-started). The runtime's processor check
   for [CPU levels](compiler-guide.md#cpu-levels) uses compiler-rt's
@@ -685,6 +705,24 @@ checklist.
   ([`core:math`](standard-library.md#coremath)).
 
 ### Fixed
+
+- `container.words_for_bits` and `container.bytes_for_bits` no longer
+  overflow for capacities near the largest `int`, and `Index_Set(N)` can be
+  instantiated at that boundary
+  ([`core:container` index sets](standard-library.md#corecontainer-index-sets)).
+- A store into one element of a local view replaces its contents however many
+  constant reslices of the view come before it; nine or more were rejected
+  with `L0641`
+  ([Values that contain borrows](design.md#values-that-contain-borrows)).
+- Storing a carrier through a slice parameter at a variable index, as
+  `s[k].head = s[k].tail`, no longer rejects a borrow of another field of the
+  same or another element kept beside it in a loop (`L0641`)
+  ([Weakening and reborrows](design.md#weakening-and-reborrows)).
+- A public constant with no written type in a generic `impl` now warns
+  `L0740` when its value's type is private, as it does in a non-generic
+  `impl`: at the declaration when the value names none of the block's `$`
+  names, otherwise once from the instances
+  ([Private names in public declarations](design.md#private-names-in-public-declarations)).
 
 - `fs.create_directories` creates only the directories of the path Windows
   normalizes its argument to, so `a/skipped/../made` no longer creates
