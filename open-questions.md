@@ -11,6 +11,39 @@ Design rationale and differences from Odin are recorded in
 The current behavior inventory is in [Nondeterminism and undefined behavior
 audit](nondeterminism-audit.md).
 
+## Review of the known-gap closure commits
+
+Review on 2026-10-30 covered removal of the view-start depth cutoff
+(`475dd041`), multiple-assignment destination capture (`d1ee2a57`), generic
+`impl` constant warnings (`2372c82c`), unknown-index view-parameter stores
+(`5387ce1c`), and the iterative view-start walk (`7c4bd5dd`). The integrated
+compiler was rebuilt from `5322493c`.
+
+One remaining soundness issue is recorded in
+[known-gaps.md](known-gaps.md#multiple-assignment-still-rereads-carriers-stored-in-fields-or-whole-records):
+the destination-capture phase is enabled only by a list of bare carrier
+identifiers, so replacing a field or a whole record can still make a later
+destination use its carrier's new contents. Make destination preparation a
+phase over all targets of a multiple assignment, independent of the special
+case for capturing right-hand values read from rewritten local carriers.
+This keeps the phase boundary aligned with evaluation order and covers the
+different destination forms through the same preparation path.
+
+The other changes keep clear responsibilities. The explicit stack and
+per-definition cache in [borrow.odin](src/borrow.odin) preserve cycle
+detection while avoiding a host-stack limit. The view-parameter helpers keep
+syntax recognition, destination-slot selection, and publication distinct.
+The generic-constant checks use value types, keep declaration checks separate
+from instance checks, and retain the once-per-declaration warning rule. No
+additional structural simplification was identified in those four changes.
+
+Validation passes all 175 compiler unit tests, the borrow matrix, both
+diagnostics suites, and the new
+[multiple-assignment runtime regression](tests/run/store_through_reassigned_carrier.loke).
+Generated programs with 512 and 4,096 identity reslices also compile. The
+field and whole-record destination reproductions compile incorrectly; the
+equivalent sequential field stores correctly report `L0511`.
+
 ## Review of the five follow-up cleanup commits
 
 Review on 2026-10-30 covered the contended-lock test (`8256eb0a`), removal
