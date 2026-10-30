@@ -1,0 +1,18 @@
+L0511
+@19:2
+this write of `b` is not compatible with the mutable pointer of it that is still in use
+L0511
+@33:2
+this write of `b` is not compatible with the mutable pointer of it that is still in use
+L0511
+@46:2
+this write of `d` is not compatible with the mutable pointer of it that is still in use
+L0511
+@58:2
+this write of `b` is not compatible with the mutable pointer of it that is still in use
+L0641
+@70:5
+`p` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@80:5
+`p` cannot be used here: a mutable reborrow of it is still in use

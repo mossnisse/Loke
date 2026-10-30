@@ -1,0 +1,84 @@
+// design.md "Evaluation order": every destination of a multiple assignment is
+// evaluated before any write, so a store through a carrier the same statement
+// reassigns goes where the carrier pointed before, and the borrow it stores
+// there stays in use (design.md "Values that contain borrows").
+package main;
+
+Node :: struct { value: int }
+Pair :: struct { head: ^mut Node, tail: ^mut Node }
+Retarget :: struct { pair: ^mut Pair, node: ^mut Node }
+
+// `p^.head` is `x.head`, which now holds the borrow of `b`.
+reassigned :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3}; d := Node{4};
+	x := Pair{&mut a, &mut b};
+	y := Pair{&mut c, &mut d};
+	p := &mut x;
+	p, p^.head = &mut y, p^.tail;
+	h := x.head;
+	b.value = 7;
+	h^.value = 1;
+}
+
+// Two hops: `p^^.head` is read through the old `p`, so it is `x.head`.
+two_hops :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3}; d := Node{4};
+	x := Pair{&mut a, &mut b};
+	y := Pair{&mut c, &mut d};
+	px := &mut x;
+	py := &mut y;
+	p := &mut px;
+	p, p^^.head = &mut py, p^^.tail;
+	h := x.head;
+	b.value = 7;
+	h^.value = 1;
+}
+
+// Swapped carriers: `p^.head` goes through the old `p`, `x`.
+swapped :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3}; d := Node{4};
+	x := Pair{&mut a, &mut b};
+	y := Pair{&mut c, &mut d};
+	p := &mut x;
+	q := &mut y;
+	p, q, p^.head = q, p, q^.tail;
+	h := x.head;
+	d.value = 7;
+	h^.value = 1;
+}
+
+// Destructuring evaluates its destinations the same way.
+destructured :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3}; d := Node{4};
+	x := Pair{&mut a, &mut b};
+	y := Pair{&mut c, &mut d};
+	p := &mut x;
+	p, p^.head = Retarget{&mut y, p^.tail};
+	h := x.head;
+	b.value = 7;
+	h^.value = 1;
+}
+
+// design.md "Weakening and reborrows": the store goes through the old `p`,
+// which a reborrow still in use suspends, as it would before `p = &mut y`.
+reborrowed :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3}; d := Node{4}; e := Node{5};
+	x := Pair{&mut a, &mut b};
+	y := Pair{&mut c, &mut d};
+	p := &mut x;
+	r := &mut p^;
+	p, p^.head = &mut y, &mut e;
+	r^.tail^.value = 1;
+}
+
+copied :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3}; d := Node{4}; e := Node{5};
+	x := Pair{&mut a, &mut b};
+	y := Pair{&mut c, &mut d};
+	p := &mut x;
+	r := p;
+	p, p^.head = &mut y, &mut e;
+	r^.tail^.value = 1;
+}
+
+main :: proc() {}

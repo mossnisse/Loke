@@ -6435,14 +6435,25 @@ prov_destructure_index :: proc(c: ^Compiler, plan: ^Destructure, index: int) -> 
 	return index
 }
 
+// A destination of a multiple assignment stored through a carrier, read before
+// any target is written (`prov_assign`): what `prov_read_through_carrier`
+// returned, with each carrier another target redefines held as it was.
+@(private = "file")
+Prov_Destination :: struct {
+	through: []int,
+	below:   []Proj_Step,
+	reached: bool,
+	read:    bool,
+}
+
 @(private)
 prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 	// design.md "Evaluation order": every value is evaluated before any write,
 	// so a value read from a variable this statement also writes, as in
 	// `a, b = b, a`, keeps what the variable held then.
 	value_loans := value_loans
-	if len(s.lhs) > 1 && !s.destructure.active && value_loans != nil {
-		written := make([dynamic]int, 0, len(s.lhs), graph.alloc)
+	written := make([dynamic]int, 0, len(s.lhs), graph.alloc)
+	if len(s.lhs) > 1 {
 		for target in s.lhs {
 			if ident, is_ident := target.(^Expr_Ident); is_ident {
 				if slot, is_carrier := prov_slot_for_symbol(graph, ident.symbol); is_carrier {
@@ -6450,12 +6461,40 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 				}
 			}
 		}
-		if len(written) > 0 {
-			captured := make([][]int, len(value_loans), graph.alloc)
-			for loans, index in value_loans {
-				captured[index] = prov_capture_slots(graph, loans, written[:], s.op_span)
+	}
+	if len(written) > 0 && !s.destructure.active && value_loans != nil {
+		captured := make([][]int, len(value_loans), graph.alloc)
+		for loans, index in value_loans {
+			captured[index] = prov_capture_slots(graph, loans, written[:], s.op_span)
+		}
+		value_loans = captured
+	}
+	// The destinations are evaluated next, all before the first write, so a
+	// store through a carrier another target of this statement redefines, as
+	// `p^.head` in `p, p^.head = &mut y, p^.tail`, goes where the carrier
+	// pointed then (design.md "Values that contain borrows").
+	destinations: []Prov_Destination
+	if len(written) > 0 && s.op == .Assign {
+		destinations = make([]Prov_Destination, len(s.lhs), graph.alloc)
+		for target, index in s.lhs {
+			if _, is_ident := target.(^Expr_Ident); is_ident {
+				continue
 			}
-			value_loans = captured
+			if _, _, place_ok := prov_place_of(graph, target); place_ok {
+				continue
+			}
+			through, below, reached := prov_read_through_carrier(graph, target, store = true)
+			if reached {
+				held := prov_capture_slots(graph, through, written[:], expr_span(target))
+				// A diagnostic about the store names the carrier it went through.
+				for slot, at in held {
+					if slot != through[at] && graph.prov_slots[slot].name == "" {
+						graph.prov_slots[slot].name = graph.prov_slots[through[at]].name
+					}
+				}
+				through = held
+			}
+			destinations[index] = Prov_Destination{through, below, reached, true}
 		}
 	}
 	for target, index in s.lhs {
@@ -6542,7 +6581,13 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 			// it goes through, so one read out of another, as `p^^.a` in
 			// `p^^.a^.value = 3`, uses what a copy of it, as `node := p^^.a`,
 			// suspends.
-			through, below, reached := prov_read_through_carrier(graph, target, store = true)
+			destination: Prov_Destination
+			if index < len(destinations) && destinations[index].read {
+				destination = destinations[index]
+			} else {
+				destination.through, destination.below, destination.reached = prov_read_through_carrier(graph, target, store = true)
+			}
+			through, below, reached := destination.through, destination.below, destination.reached
 			walked := false
 			if !reached {
 				through, walked = prov_inout_result_place(graph, target)
