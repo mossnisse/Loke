@@ -495,6 +495,14 @@ with `x86-64-v3`.
 - `LOKE_DISPATCH_CPU` caps the copies that run, which is how
   `tests/repro_test.odin` and `tests/cpu_test.odin` run the fallback on a
   processor with the level and require the same output.
+- The validation gates' assembly check: `tests/cpu_test.odin` disassembles
+  an object build of `tests/obj/dispatch_kernels.loke` with the
+  `llvm-objdump` beside Clang. At baseline no function but a `.v3` copy holds
+  a VEX instruction or any SSE3-and-later, POPCNT, LZCNT, BMI, or MOVBE
+  instruction, and the copies hold FMA; at both levels a written `a*b + c` is
+  not fused. Adding `contract` to that IR by hand makes it `vfmadd213sd`,
+  which the check reports. Real non-FMA hardware, or an emulator such as
+  Intel SDE, remains untested.
 - Measured at `-opt=speed` with calls the optimizer cannot inline, in ns per
   call for the plain copies, the dispatched ones, and a `x86-64-v3` build:
   `log` 26.2, 20.5, 18.0; `tan` 55.6, 43.6, 42.2; `hypot` 21.7, 17.8, 14.5;

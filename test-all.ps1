@@ -118,13 +118,14 @@ try {
     # Every test that compiles with LOKE_TEST_FLAGS reruns at each level: the
     # run/trap corpus, multi-package programs, the examples, the tutorials,
     # the floating-point cases rebuilt at each CPU level, core:math/repro's
-    # probe, and the dispatched procedures' copies.
+    # probe, the dispatched procedures' copies, and their object code.
     $matrix = @(
         'programs_run', 'programs_trap', 'packages_run',
         'examples_compile_and_run', 'example_greeting_appends_to_its_file',
         'example_streaming_reads_its_input', 'example_dice_replays_its_seed',
         'tutorials_compile_and_run', 'cpu_levels_compute_what_baseline_does',
-        'repro_functions_round_correctly', 'dispatched_procedures_compute_what_their_copies_do'
+        'repro_functions_round_correctly', 'dispatched_procedures_compute_what_their_copies_do',
+        'object_code_keeps_each_level_where_it_may_run'
     ) -join ','
     if ($Full) {
         foreach ($mode in @('minimal', 'size', 'speed', 'aggressive')) {

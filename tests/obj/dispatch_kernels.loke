@@ -1,0 +1,21 @@
+// compiler-guide.md "CPU levels" and design.md "@(cpu_dispatch=<string>)": an
+// object build whose exports keep `core:math/repro`'s dispatched functions,
+// for tests/cpu_test.odin to disassemble. Below `x86-64-v3` only their copies
+// for the level may hold its instructions, and at any level `unfused`'s
+// `a*b + c` stays a multiplication and an addition.
+package kernels;
+
+import "core:math";
+import "core:math/repro";
+
+@(export)
+kernels_run :: proc "c" (x: f64) -> f64 {
+	return repro.pow(x, 1.37) + repro.tan(x) + repro.asin(1.0/(1.0 + x)) + repro.hypot(x, 0.3) +
+		repro.log(x) + repro.atan2(0.5, x) + repro.exp(0.0 - x) + repro.sin(x)*repro.cos(x) +
+		repro.log2(x) + repro.log10(x) + repro.acos(0.5/(1.0 + x)) + repro.atan(x) + math.fma(x, x, x);
+}
+
+@(export)
+unfused :: proc "c" (a: f64, b: f64, c: f64) -> f64 {
+	return a*b + c;
+}

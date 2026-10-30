@@ -781,8 +781,10 @@ through a copy of the package without it, which must agree. It takes about 25
 minutes on six cores, so it is a release step rather than part of CI; run it
 after changing an `f32` path.
 
-Some checks need external tools: NASM, clang with a C-host toolset, or cdb
-(WinDbg/ Windows SDK, optionally selected by `LOKE_CDB`). Missing capabilities
+Some checks need external tools: NASM, clang with a C-host toolset, the
+`llvm-objdump` beside clang, which disassembles object code to check which CPU
+level's instructions it holds, or cdb (WinDbg/ Windows SDK, optionally selected
+by `LOKE_CDB`). Missing capabilities
 are reported as skips. `-RequireTools`, or `LOKE_TEST_REQUIRE_TOOLS=1`, turns
 those skips into failures; CI uses both switches.
 

@@ -42,6 +42,8 @@
 //     fault.{loke,c}               fails, run under a time limit
 //   tests/obj/numeric_locale_      a C host over its own copy of format.c
 //     fault.c                      whose "C" locale cannot be created
+//   tests/obj/dispatch_kernels.    an object build disassembled function by
+//     loke                         function (tests/cpu_test.odin)
 //
 // Any case may sit beside a `.flags` file of extra compiler options, one per
 // line, which is how `-define` and `-collection` are exercised.

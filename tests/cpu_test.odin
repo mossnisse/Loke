@@ -260,3 +260,119 @@ without_dispatch_cap :: proc(env: []string) -> []string {
 	}
 	return kept[:]
 }
+
+// deterministic-math-and-targets-plan.md "Validation and performance gates":
+// the object code itself shows what may run where. Built for baseline, no
+// function but a dispatched procedure's copy for `x86-64-v3`, named `.v3`,
+// holds an instruction beyond SSE2, so forcing the plain copies never meets
+// one, and those copies do hold the FMA instruction. Built for `x86-64-v3`, a
+// written `a*b + c` is still not fused.
+@(test)
+object_code_keeps_each_level_where_it_may_run :: proc(t: ^testing.T) {
+	clang, _, found := host_toolchain()
+	objdump, _ := filepath.join({filepath.dir(clang), "llvm-objdump.exe"}, context.temp_allocator)
+	if !found || !os.exists(objdump) {
+		skipped_capability(t, "no llvm-objdump beside clang, so no object code is disassembled")
+		return
+	}
+	dir := fmt.tprintf("%s/cpu", TMP)
+	os.make_directory(TMP)
+	os.make_directory(dir)
+	levels := []string{"x86-64", "x86-64-v3"}
+	listings: [2]map[string][dynamic]string
+	for level, index in levels {
+		obj := fmt.tprintf("%s/dispatch_kernels-%s.obj", dir, level)
+		command := make([dynamic]string, context.temp_allocator)
+		append(&command, compiler_path(), "tests/obj/dispatch_kernels.loke", "-build-mode=obj", fmt.tprintf("-cpu=%s", level), "-o", obj)
+		append(&command, ..env_flags())
+		state, _, stderr, err := exec(os.Process_Desc{command = command[:]}, context.allocator)
+		if !testing.expectf(t, err == nil && state.exit_code == 0, "the object build at -cpu=%s failed:\n%s", level, string(stderr)) {
+			return
+		}
+		dumped, stdout, dump_stderr, dump_err := exec(
+			os.Process_Desc{command = []string{objdump, "-d", "--no-show-raw-insn", obj}},
+			context.allocator,
+		)
+		if !testing.expectf(t, dump_err == nil && dumped.exit_code == 0, "llvm-objdump failed on %s:\n%s", obj, string(dump_stderr)) {
+			return
+		}
+		listings[index] = function_mnemonics(string(stdout))
+	}
+
+	fused_copies := 0
+	for name, mnemonics in listings[0] {
+		copy := strings.has_suffix(name, ".v3")
+		for mnemonic in mnemonics {
+			if copy {
+				fused_copies += int(is_fma_mnemonic(mnemonic))
+			} else {
+				testing.expectf(t, !beyond_baseline(mnemonic), "baseline function %s holds `%s`", name, mnemonic)
+			}
+		}
+	}
+	testing.expect(t, fused_copies > 0, "no `x86-64-v3` copy in the baseline object holds the FMA instruction")
+	for listing, index in listings {
+		for name in ([]string{"unfused", "loke.entry.unfused"}) {
+			mnemonics, present := listing[name]
+			if !testing.expectf(t, present, "-cpu=%s: no function %s in the object", levels[index], name) {
+				continue
+			}
+			for mnemonic in mnemonics {
+				testing.expectf(t, !is_fma_mnemonic(mnemonic), "-cpu=%s: %s fuses `a*b + c` into `%s`", levels[index], name, mnemonic)
+			}
+		}
+	}
+}
+
+// Each function's instruction mnemonics in `llvm-objdump -d` output, by name.
+@(private = "file")
+function_mnemonics :: proc(listing: string) -> map[string][dynamic]string {
+	functions := make(map[string][dynamic]string, context.temp_allocator)
+	current := ""
+	rest := listing
+	for line in strings.split_lines_iterator(&rest) {
+		trimmed := strings.trim_space(line)
+		if strings.has_suffix(trimmed, ">:") {
+			open := strings.index_byte(trimmed, '<')
+			current = trimmed[open + 1:len(trimmed) - 2]
+			functions[current] = make([dynamic]string, context.temp_allocator)
+			continue
+		}
+		fields := strings.fields(trimmed, context.temp_allocator)
+		if current == "" || len(fields) < 2 || !strings.has_suffix(fields[0], ":") {
+			continue
+		}
+		append(&functions[current], fields[1])
+	}
+	return functions
+}
+
+@(private = "file")
+is_fma_mnemonic :: proc(mnemonic: string) -> bool {
+	return strings.has_prefix(mnemonic, "vfmadd") || strings.has_prefix(mnemonic, "vfmsub") ||
+		strings.has_prefix(mnemonic, "vfnmadd") || strings.has_prefix(mnemonic, "vfnmsub")
+}
+
+// Every VEX instruction is spelled with a leading `v`; the rest are the SSE3,
+// SSSE3, SSE4, POPCNT, LZCNT, BMI, MOVBE, and CMPXCHG16B instructions LLVM
+// selects when a level allows them.
+@(private = "file")
+beyond_baseline :: proc(mnemonic: string) -> bool {
+	if strings.has_prefix(mnemonic, "v") {
+		return true
+	}
+	switch mnemonic {
+	case "popcnt", "lzcnt", "tzcnt", "andn", "bextr", "blsi", "blsr", "blsmsk", "bzhi",
+	     "pdep", "pext", "rorx", "sarx", "shlx", "shrx", "mulx", "movbe", "crc32",
+	     "cmpxchg16b", "haddpd", "haddps", "hsubpd", "hsubps", "addsubpd", "addsubps",
+	     "movddup", "movshdup", "movsldup", "lddqu", "pshufb", "palignr", "pabsd",
+	     "pmaddubsw", "phaddd", "ptest", "roundsd", "roundss", "roundpd", "roundps",
+	     "blendpd", "blendps", "blendvpd", "blendvps", "pblendvb", "pblendw",
+	     "insertps", "extractps", "pextrb", "pextrd", "pextrq", "pinsrb", "pinsrd",
+	     "pinsrq", "pmulld", "pminsd", "pmaxsd", "pminud", "pmaxud", "pcmpeqq",
+	     "pcmpgtq", "packusdw", "dppd", "dpps", "pmovzxbw", "pmovzxbd", "pmovzxwd",
+	     "pmovzxdq", "pmovsxbw", "pmovsxbd", "pmovsxwd", "pmovsxdq":
+		return true
+	}
+	return false
+}
