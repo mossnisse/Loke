@@ -346,8 +346,10 @@ checklist.
   `project`, `reject`, and `reflect`, and a 4 x 4 transform has
   `inverse_affine`, `normal_matrix`, and `project_point`. `linalg.Scalar(T)`
   is a real or complex number type, with an associated `T.Real`, which
-  `f32`, `f64`, and `math.Complex` of any `Real` meet
-  ([`core:math/linalg`](standard-library.md#coremathlinalg)).
+  `f32`, `f64`, and `math.Complex` of any `Real` meet. At `f32`,
+  `transform_point`, `transform_direction`, and a 3 x 3 `m * v` compute in
+  `Simd` lanes with the same bits; `bench/linalg.loke` measures the batch
+  operations ([`core:math/linalg`](standard-library.md#coremathlinalg)).
 - `core:math/dense` has matrices whose size is known at run time, of real or
   complex elements, with the same bits everywhere: an owning column-major
   `Matrix(T)`, `View(T)` and `View_Mut(T)` over a matrix or a foreign buffer
@@ -432,6 +434,11 @@ checklist.
 
 ### Fixed
 
+- A `where` bound checked while an earlier file of a package resolved its
+  signatures found the slot's member resolved in that file's place, so
+  `self` in an `impl f32` block took the type being instantiated: the bound
+  failed and the block's body was rejected. Whether a package compiled
+  depended on how its files sorted.
 - A generic record's value parameters bind in a procedure's parameter pattern
   as its type parameters do, so `rows :: proc(m: M($R, $C)) -> int` compiles;
   before, every call reported `` `$R` is not bound here ``

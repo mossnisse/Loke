@@ -1,9 +1,11 @@
 # Linear algebra library plan
 
-Status: milestones 1 and 2 implemented, 2026-10-29
+Status: implemented, 2026-10-30
 ([Milestone 1 results](#milestone-1-results),
-[Milestone 2 results](#milestone-2-results)); milestones 3 and 4 are
-proposals. This document specifies the `core:math/linalg` package and
+[Milestone 2 results](#milestone-2-results),
+[Milestone 4 results](#milestone-4-results)); milestone 3 is the
+[dense matrix plan](dense-matrix-plan.md), also done. This document
+specifies the `core:math/linalg` package and
 outlines a later dense-matrix package; it does not change the language
 contract, and
 [`core:math/linalg`](standard-library.md#coremathlinalg) documents what has
@@ -77,8 +79,9 @@ and `Matrix(f32, 4, 4)` that of `[16]f32`: arrays of them have no padding the
 program did not ask for, and they can be handed to a foreign API (a GPU
 upload, a C geometry library) as they are. `Simd(f32, 4)` is 16-byte aligned
 and allows only constant lane indices, which is the wrong contract for stored
-data. The implementation may use `Simd` inside the operations later, without
-changing a result bit, if [measurement](#milestones) shows a gain;
+data. The implementation uses `Simd` inside an operation only where
+[measurement](#milestone-4-results) showed a gain, without changing a result
+bit;
 [Compiler-defined domain types](comments.md#compiler-defined-domain-types)
 is the existing reason these are library types.
 
@@ -455,9 +458,10 @@ Ordered by how foundational each part is, not by a particular program:
 3. **Dense matrices**, under their own plan, the
    [dense matrix plan](dense-matrix-plan.md), whose five milestones,
    [`core:math/dense`](standard-library.md#coremathdense), are done.
-4. **Measured performance.** Benchmarks of products, `rotate`, and batch
-   transforms against hand-written loops, then `Simd` inside the operations
-   only where it wins without changing a result bit.
+4. **Measured performance.** Done
+   ([Milestone 4 results](#milestone-4-results)). Benchmarks of products,
+   `rotate`, and batch transforms against hand-written loops, then `Simd`
+   inside the operations only where it wins without changing a result bit.
 
 Each milestone ships its `api.loki`, a [`standard-library.md`](standard-library.md)
 section and package-layout line, a `CHANGELOG.md` line, and the tests below.
@@ -507,8 +511,9 @@ section and package-layout line, a `CHANGELOG.md` line, and the tests below.
 - A geometry package: `Aabb`, `Ray`, `Plane`, `Sphere`, frustum planes from a
   projection-view matrix, and ray, box, and triangle tests, specified once
   the vector API has settled.
-- Lane-wise SIMD math and structure-of-arrays batch transforms, after the
-  benchmarks.
+- Lane-wise SIMD math and structure-of-arrays batch transforms, a vector a
+  lane rather than a component a lane, measured against `bench/linalg.loke`
+  ([Milestone 4 results](#milestone-4-results)).
 - Proper Euler sequences, dual quaternions, and a condition-number estimate.
 
 ## Settled questions
@@ -702,3 +707,69 @@ A compiler bug found and fixed in the same change, with a regression test
 as `.ZYX` passed to a generic procedure had no expected type, even for a
 parameter whose written type names none of the procedure's `$` parameters,
 so `quaternion_from_euler(.ZYX, yaw, pitch, roll)` did not compile.
+
+## Milestone 4 results
+
+Done 2026-10-30. `bench/linalg.loke` times 4 x 4 and 3 x 3 products, `m * v`,
+`transform_point`, `transform_direction`, and `rotate`, each over 1024
+operands, beside the same arithmetic written by hand over plain arrays. Its
+hashes of every result bit, in `bench/linalg.expected`, are the same at both
+CPU levels, and each hand-written case hashes as the package's, so
+`perf.ps1` checks on every run that no result changed.
+`tests/run/lib_linalg_lanes.loke`, in the CPU-level corpus, checks the `Simd`
+forms against the scalar formulas bit for bit over 4000 random operands, with
+infinities, NaNs, signed zeros, and subnormals among them, and folded at
+compile time. Every earlier `lib_linalg` and `lib_dense` test gives the same
+output at every optimization and CPU level tried.
+
+What changed: at `f32`, `transform_point`, `transform_direction`, and
+`Matrix(f32, 3, 3) * Vector3(f32)` compute the three components in the first
+three lanes of a `Simd(f32, 4)`, each lane the scalar form's terms in its
+order. The fourth lane, from the matrix's fourth row or a zero, is computed
+and dropped. LLVM had compiled the scalar forms to two lanes and a separate
+third. Every other element type keeps the scalar form.
+
+What stayed, and why:
+
+- **4 x 4 products and `m * v` of a `Vector4`.** LLVM's vectorizer already
+  compiles the scalar form to what the `Simd` form gives, 16 packed
+  multiplies and 12 packed adds for an `f32` product, and the two timed
+  alike.
+- **`f64`.** `Simd(f64, 4)` is two registers at `x86-64`, where the lane form
+  of `transform_point` ran slower, 2.42 against 2.55 ns, and faster only
+  with AVX at `x86-64-v3`, 2.50 against 2.05. A program cannot choose by CPU
+  level in source, so `f64` keeps the scalar form.
+- **`rotate`.** The lane form's cross products need lane shuffles. It was
+  within 6% at `f32`, and 23% slower at `f64` at `x86-64`.
+- **3 x 3 products.** Repacking each three-element column to four lanes left
+  a gain of 2 to 9%, too little for a second form of the product.
+
+The best of several runs, in nanoseconds an operation, at `-opt=speed` on the
+development machine, a six-core Intel processor, the two builds run
+alternately. "Before" is milestone 2's package under the same benchmark;
+"by hand" is the hand-written loop at `x86-64`.
+
+| Operation | `x86-64` before | `x86-64` after | `x86-64-v3` before | `x86-64-v3` after | By hand |
+| --- | --- | --- | --- | --- | --- |
+| 4 x 4 product, `f32` | 6.24 | 6.23 | 4.77 | 4.75 | 20.7 |
+| 4 x 4 product, `f64` | 10.24 | 10.27 | 7.69 | 7.79 | |
+| 3 x 3 product, `f32` | 5.84 | 5.84 | 5.07 | 5.05 | |
+| `m * v`, 4 x 4, `f32` | 2.36 | 2.36 | 1.97 | 1.97 | 4.66 |
+| `m * v`, 3 x 3, `f32` | 2.10 | 1.83 | 2.05 | 1.78 | |
+| `transform_point`, `f32` | 2.48 | 1.84 | 2.42 | 1.81 | 3.38 |
+| `transform_point`, `f64` | 2.46 | 2.46 | 2.51 | 2.52 | |
+| `transform_direction`, `f32` | 2.10 | 1.73 | 2.05 | 1.91 | |
+| `rotate`, `f32` | 3.90 | 3.90 | 3.89 | 3.89 | 4.37 |
+| `rotate`, `f64` | 4.08 | 4.08 | 3.99 | 3.99 | |
+
+The hand-written loops index slices with bounds checks, which costs a
+product three times the package's time and `rotate` about 12%; the package's
+records index fixed arrays with constant indices, which need none.
+
+A compiler bug found and fixed in the same change, with a regression test
+(`tests/pkg/slot_file_order`): a `where` bound probed while an earlier file
+of a package resolved its signatures resolved the slot's member there, not
+in its own block, so `self` in an `impl f32` took the type being
+instantiated. The bound failed and the block's body was rejected. Adding
+`lanes.loke`, which sorts before `linalg.loke`, failed `Real(f32)` for the
+whole package.

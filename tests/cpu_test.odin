@@ -19,6 +19,7 @@ CPU_LEVEL_CASES :: []string {
 	"tests/run/lib_math.loke",
 	"tests/run/lib_linalg.loke",
 	"tests/run/lib_linalg_rotations.loke",
+	"tests/run/lib_linalg_lanes.loke",
 	"tests/run/lib_dense.loke",
 	"tests/run/lib_dense_solve.loke",
 	"tests/run/lib_dense_qr.loke",

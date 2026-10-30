@@ -1041,8 +1041,11 @@ collect_slot_members :: proc(k: ^Checker, members: []Symbol_Id, name: Identifier
 		if sym.bound_excluded {
 			continue
 		}
+		// In the member's own file and block: a bound probed from an earlier
+		// file, or from another type's block, would otherwise read `self` as
+		// that block's subject.
 		if sym.decl != nil && sym.decl.sig_state == .Unchecked {
-			resolve_declaration_signature(k, sym.decl)
+			resolve_symbol_signature_in_place(k, member, sym.owner_type)
 			sym = symbol_of(k.c, member)
 		}
 		// A witness member is never a group, so the group's members are candidates.

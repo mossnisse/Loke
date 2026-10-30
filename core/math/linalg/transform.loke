@@ -86,6 +86,7 @@ impl Matrix($T, $R, $C) {
 
 	/// `self * (p, 1)` without the last row: the point moves with the translation.
 	transform_point :: proc(self, p: Vector3(T)) -> Vector3(T) where R == 4, C == 4 {
+		when (T == f32) { return affine_lanes(self.columns, p, true); }
 		m := self.columns;
 		return {
 			m[0][0]*p.x + m[1][0]*p.y + m[2][0]*p.z + m[3][0],
@@ -96,6 +97,7 @@ impl Matrix($T, $R, $C) {
 
 	/// `self * (d, 0)` without the last row: a direction ignores the translation.
 	transform_direction :: proc(self, d: Vector3(T)) -> Vector3(T) where R == 4, C == 4 {
+		when (T == f32) { return affine_lanes(self.columns, d, false); }
 		m := self.columns;
 		return {
 			m[0][0]*d.x + m[1][0]*d.y + m[2][0]*d.z,

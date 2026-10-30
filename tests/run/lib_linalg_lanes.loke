@@ -1,0 +1,130 @@
+package main;
+
+import "core:fmt";
+import "core:math";
+import "core:math/linalg";
+import "core:unsafe";
+
+// linear-algebra-plan.md "Milestone 4 results": the `f32` operations that
+// compute in `Simd` lanes, `transform_point`, `transform_direction`, and a
+// 3 x 3 matrix times a vector, against the scalar formula they replaced,
+// bit for bit, over random operands and the special values, and folded at
+// compile time.
+
+V3 :: linalg.Vector3(f32);
+M3 :: linalg.Matrix(f32, 3, 3);
+M4 :: linalg.Matrix(f32, 4, 4);
+
+failures := 0;
+
+check :: proc(name: string, ok: bool) {
+	if (!ok) {
+		failures += 1;
+		fmt.println("FAIL", name);
+	}
+}
+
+bits :: proc(x: f32) -> u32 { return unsafe.transmute(u32, x); }
+
+same :: proc(a, b: V3) -> bool { return bits(a.x) == bits(b.x) && bits(a.y) == bits(b.y) && bits(a.z) == bits(b.z); }
+
+// The scalar forms, as transform.loke and matrix.loke write them for every
+// other element type.
+point :: proc(m: M4, p: V3) -> V3 {
+	c := m.columns;
+	return V3.from_components(
+		c[0][0]*p.x + c[1][0]*p.y + c[2][0]*p.z + c[3][0],
+		c[0][1]*p.x + c[1][1]*p.y + c[2][1]*p.z + c[3][1],
+		c[0][2]*p.x + c[1][2]*p.y + c[2][2]*p.z + c[3][2]);
+}
+
+direction :: proc(m: M4, d: V3) -> V3 {
+	c := m.columns;
+	return V3.from_components(
+		c[0][0]*d.x + c[1][0]*d.y + c[2][0]*d.z,
+		c[0][1]*d.x + c[1][1]*d.y + c[2][1]*d.z,
+		c[0][2]*d.x + c[1][2]*d.y + c[2][2]*d.z);
+}
+
+transform3 :: proc(m: M3, v: V3) -> V3 {
+	c := m.columns;
+	return V3.from_components(
+		c[0][0]*v.x + c[1][0]*v.y + c[2][0]*v.z,
+		c[0][1]*v.x + c[1][1]*v.y + c[2][1]*v.z,
+		c[0][2]*v.x + c[1][2]*v.y + c[2][2]*v.z);
+}
+
+Random :: struct { state: u64 }
+
+impl Random {
+	// Mostly uniform in [-4, 4), with a special value one time in eight.
+	next :: proc(self: inout) -> f32 {
+		self.state = self.state*%6364136223846793005 +% 1442695040888963407;
+		pick := (self.state >> 32) % 64;
+		switch (pick) {
+		case 0: return -0.0;
+		case 1: return math.F32_INFINITY;
+		case 2: return -math.F32_INFINITY;
+		case 3: return math.F32_NAN;
+		case 4: return 1.0e-40;
+		case 5: return math.F32_MAX;
+		case 6: return 0.0;
+		case 7: return -1.0e-38;
+		case: return f32(f64(self.state >> 40)/16777216.0*8.0 - 4.0);
+		}
+	}
+	vector :: proc(self: inout) -> V3 {
+		x := self.next();
+		y := self.next();
+		z := self.next();
+		return V3.from_components(x, y, z);
+	}
+}
+
+FOLDED_POINT :: M4.from_array([16]f32{0.5, -1.25, 3, 0, 2, 0.75, -0.5, 0, -1, 4, 0.125, 0, 7, -3, 1.5, 1}).transform_point(V3.from_components(0.3, -0.7, 1.1));
+FOLDED_DIRECTION :: M4.from_array([16]f32{0.5, -1.25, 3, 0, 2, 0.75, -0.5, 0, -1, 4, 0.125, 0, 7, -3, 1.5, 1}).transform_direction(V3.from_components(0.3, -0.7, 1.1));
+FOLDED_TRANSFORM3 :: M3.from_array([9]f32{0.5, -1.25, 3, 2, 0.75, -0.5, -1, 4, 0.125})*V3.from_components(0.3, -0.7, 1.1);
+
+main :: proc() {
+	random := Random{12345};
+	point_bad := 0;
+	direction_bad := 0;
+	transform3_bad := 0;
+	foreach (_ in 0 ..< 4000) {
+		values4: [16]f32 = {};
+		foreach (i in 0 ..< 16) { values4[i] = random.next(); }
+		values3: [9]f32 = {};
+		foreach (i in 0 ..< 9) { values3[i] = random.next(); }
+		m4 := M4.from_array(values4);
+		m3 := M3.from_array(values3);
+		v := random.vector();
+		if (!same(m4.transform_point(v), point(m4, v))) { point_bad += 1; }
+		if (!same(m4.transform_direction(v), direction(m4, v))) { direction_bad += 1; }
+		if (!same(m3*v, transform3(m3, v))) { transform3_bad += 1; }
+	}
+	check("transform_point is the scalar form", point_bad == 0);
+	check("transform_direction is the scalar form", direction_bad == 0);
+	check("a 3 x 3 times a vector is the scalar form", transform3_bad == 0);
+
+	// A NaN or infinity in the dropped fourth row reaches no component.
+	poisoned := M4.identity();
+	poisoned[3, 0] = math.F32_NAN;
+	poisoned[3, 3] = math.F32_INFINITY;
+	one := V3.from_components(1, 2, 3);
+	check("the fourth row is not read", same(poisoned.transform_point(one), one) && same(poisoned.transform_direction(one), one));
+
+	m := M4.from_array([16]f32{0.5, -1.25, 3, 0, 2, 0.75, -0.5, 0, -1, 4, 0.125, 0, 7, -3, 1.5, 1});
+	m3 := M3.from_array([9]f32{0.5, -1.25, 3, 2, 0.75, -0.5, -1, 4, 0.125});
+	v := V3.from_components(0.3, -0.7, 1.1);
+	p := m.transform_point(v);
+	d := m.transform_direction(v);
+	t := m3*v;
+	fmt.println("transform_point", bits(p.x), bits(p.y), bits(p.z));
+	fmt.println("transform_direction", bits(d.x), bits(d.y), bits(d.z));
+	fmt.println("transform3", bits(t.x), bits(t.y), bits(t.z));
+	check("a folded transform_point equals the run-time one", same(FOLDED_POINT, p));
+	check("a folded transform_direction equals the run-time one", same(FOLDED_DIRECTION, d));
+	check("a folded 3 x 3 product equals the run-time one", same(FOLDED_TRANSFORM3, t));
+
+	if (failures == 0) { fmt.println("all lane checks passed"); }
+}

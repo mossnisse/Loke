@@ -1,0 +1,18 @@
+@(public)
+package shapes;
+
+import "core:math";
+
+Root :: interface($T: type) {
+	slot root: proc(self) -> T;
+}
+
+impl f32 {
+	@(private) root :: proc(self) -> f32 { return math.sqrt_f32(self); }
+}
+
+Box :: struct($T: type) { x: T }
+
+impl Box($T) {
+	length :: proc(self) -> T where Root(T) { return self.x.root(); }
+}

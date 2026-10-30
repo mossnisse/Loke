@@ -2564,7 +2564,10 @@ is correctly rounded, and [`core:math/repro`](#coremathrepro). Results are
 the same bits on every machine, [CPU level](compiler-guide.md#cpu-levels),
 and optimization level. A call that does not reach `sqrt` can also be
 evaluated at compile time with the same result; one that does cannot, since
-`math.sqrt` calls a foreign procedure.
+`math.sqrt` calls a foreign procedure. At `f32`, `transform_point`,
+`transform_direction`, and a 3 x 3 `m * v` compute in `Simd` lanes, each lane
+one component in the documented order, which changes their speed and not
+their bits ([Milestone 4 results](linear-algebra-plan.md#milestone-4-results)).
 
 `linalg.Scalar(T)` is a real or complex number type, the element type of
 [`core:math/dense`](#coremathdense)'s factorizations: `Numeric`, `==`, unary

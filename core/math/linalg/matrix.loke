@@ -124,6 +124,7 @@ impl Matrix($T, $R, $C) {
 		};
 	}
 	transform3 :: operator(*) proc(left: Matrix(T, R, C), right: Vector3(T)) -> Vector3(T) where R == 3, C == 3 {
+		when (T == f32) { return transform3_lanes(left.columns, right); }
 		return {
 			left.columns[0][0]*right.x + left.columns[1][0]*right.y + left.columns[2][0]*right.z,
 			left.columns[0][1]*right.x + left.columns[1][1]*right.y + left.columns[2][1]*right.z,
