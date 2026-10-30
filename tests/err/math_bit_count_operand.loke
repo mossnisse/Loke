@@ -1,0 +1,9 @@
+// standard-library.md "`core:math`": the bit counts take a value of an integer
+// type, not a float.
+package main;
+
+import "core:math";
+
+main :: proc() {
+	_ = math.count_ones(1.5);
+}

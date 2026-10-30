@@ -148,6 +148,7 @@ core:random           seeded generators, entropy, distributions
 core:time             clocks, durations, the calendar, ISO 8601 text
 core:slice            slice algorithms and sorting            *
 core:container        Small_Array, Bit_Set, Enum_Array        *
+                      index sets
 core:log              logging over the selected provider
 core:io               byte stream protocols and the I/O error
 core:path             lexical path operations
@@ -158,7 +159,9 @@ core:process          child processes and their pipes
 ```
 
 A package marked `*` is specified by `design.md`, in the section its source
-header comment cites; this document covers the unmarked packages.
+header comment cites; this document covers the unmarked packages, and
+`core:container`'s index sets, which `design.md` does not use
+([`core:container` index sets](#corecontainer-index-sets)).
 
 Planned additions are in [Standard-library maturity](future-plans.md#standard-library-maturity).
 
@@ -1626,6 +1629,99 @@ save_generation :: proc(path: string_view, generation: u64, allocator: Allocator
 }
 ```
 
+## `core:container` index sets
+
+A set of the indices `0 ..< cap`, one bit each, for the sets an engine keeps
+over cells, entities, or slots: what was dug, what changed this frame, and what
+a search has visited. `Bit_Set(Enum)` is not one: its members are an enum's
+declaration positions, fixed at compile time.
+
+```loke
+Index_Set         :: struct($N: int) where N >= 0 { /* private */ }  // inline words
+Dynamic_Index_Set :: struct { /* private */ }                         // allocated words
+Index_View        :: struct { /* private */ }                         // caller's words, read
+Index_View_Mut    :: struct { /* private */ }                         // caller's words, written
+
+words_for_bits :: proc(cap: int) -> int;   // (cap + 63)/64
+bytes_for_bits :: proc(cap: int) -> int;   // (cap + 7)/8
+
+Index_Set(N).of(indices: ..int) -> Index_Set(N)
+Index_Set(N).all() -> Index_Set(N)
+Dynamic_Index_Set.init(cap: int, allocator := mem.default_allocator()) -> Dynamic_Index_Set
+Dynamic_Index_Set.resize(self: inout, cap: int)
+Index_View.over(words: []u64, cap: int) -> Index_View
+Index_View_Mut.over(words: []mut u64, cap: int) -> Index_View_Mut
+```
+
+The three representations share one contract and differ only in where the
+words are:
+
+- **`Index_Set(N)`** holds `words_for_bits(N)` words inline. It never
+  allocates, its zero value is the empty set, and it is an ordinary value: a
+  chunk's dirty or excavated cells live in the chunk record.
+- **`Dynamic_Index_Set`** owns words from the allocator chosen by `init`, for a
+  capacity known at run time. Its zero value is the empty set of capacity `0`.
+  Copying one clones its storage, which the copy-cost diagnostic reports.
+  `resize` keeps the indices below the new capacity, and those it adds are
+  absent. `clear` keeps the storage, so a visited set is reused without
+  allocating.
+- **`Index_View`** and **`Index_View_Mut`** read and write a set stored in the
+  caller's words, such as an arena or a field of the caller's own record.
+  `over` panics unless `words.len()` is exactly `words_for_bits(cap)`. A view
+  borrows its words, so it cannot outlive them, and a mutable one borrows them
+  exclusively. Each owner lends one with `view` and `view_mut`, and
+  `Index_View_Mut.as_view` lends a read-only one, so a procedure that takes an
+  `Index_View` accepts every representation.
+
+Every representation has these members; the writing ones need a mutable
+owner or an `Index_View_Mut`, and `other` is an `Index_View`:
+
+| Member | Meaning |
+| --- | --- |
+| `cap()` | The number of indices the set can hold. |
+| `len()`, `is_empty()` | The number of indices present, and whether it is zero. |
+| `contains(i)` | Whether `i` is present. |
+| `count_range(low, high)` | The number of indices present in `low ..< high`. |
+| `next_member(from)`, `next_absent(from)` | The smallest index at or after `from` that is present, or absent, as an `Option(int)`; `from` may be `cap`, which gives `.none`. |
+| `is_subset_of(other)`, `intersects(other)` | Whether every index of the set is in `other`, and whether any is. |
+| `set(i)`, `unset(i)`, `toggle(i)` | Add, remove, or flip one index. |
+| `clear()`, `fill()` | Remove every index, or add every index `0 ..< cap`. |
+| `set_range(low, high)`, `unset_range`, `toggle_range` | The same for `low ..< high`, a word at a time. |
+| `insert_all(other)`, `retain_all(other)`, `remove_all(other)`, `toggle_all(other)` | Union, intersection, difference, and symmetric difference, in place. |
+| `store_bytes(out)`, `load_bytes(bytes)` | The byte form, below. A read-only view has no `load_bytes`. |
+| `iter()` | The indices present, in increasing order, one trailing-zero count each. The iterator borrows the words. |
+| `==` | Equal capacities and equal members. An `Index_View_Mut` compares through `as_view()`. |
+
+`Index_Set(N)` also has the operators of `Bit_Set`: `|`, `&`, `&~`, and `~`
+make a new set, unary `~` is the complement within `0 ..< N`, and their
+compound assignments, such as `|=`, assign the result. A set prints as `{1, 5, 9}`.
+
+An index outside `0 ..< cap` panics, as an array index does; so does a range
+unless `0 <= low <= high <= cap`, a search from outside `0 ..= cap`, and a
+combination or comparison of two sets with different capacities, except `==`,
+which is false. These are programmer errors, as the matching array operations
+are.
+
+**Word layout.** Index `i` is bit `i % 64` of word `i / 64`, counting from the
+least significant bit, so the set's words are what a caller-backed view
+reads. When `cap` is not a multiple of 64, the bits of the final word at or
+above `cap` are not members. An owner keeps them clear, which is why its `==`
+can compare words. A view ignores them when it reads and never changes them
+when it writes, so a caller's words need not be clean and may keep other data
+there.
+
+**Byte form.** The words are `u64` values in the host's byte order, so they
+are not a file format, and no member exposes them as bytes. `store_bytes`
+writes the set to exactly `bytes_for_bits(cap)` bytes: index `i` is bit
+`i % 8` of byte `i / 8`, counting from the least significant bit, on every
+host, and the bits of the final byte at or above `cap` are zero. `load_bytes`
+reads the same form and returns `true`; a set bit at or above `cap` in the
+final byte returns `false` and leaves the set unchanged, since it is a
+corrupt or mismatched save rather than a bug. Either procedure panics on a
+buffer of another length, because the caller chose the length. The capacity
+itself is not stored: a save format records it, as it records any other
+length.
+
 ## `core:endian`
 
 A binary format fixes each field's byte order; these wrappers put that order in
@@ -2446,6 +2542,9 @@ The rest of the package is:
   are bit tests: no rounding, and a NaN is never quieted;
 - `min`, `max`, and `clamp` over any numeric, ordered `T`; `clamp` with
   `high < low` panics;
+- the integer bit operations `count_ones`, `leading_zeros`, `trailing_zeros`,
+  `rotate_left`, and `rotate_right`, which
+  [Integer bit operations](#integer-bit-operations) describes;
 - `floor`, `ceil`, `round`, `trunc`, `mod`, `sqrt`, `hypot`, `fma`, `pow`,
   `exp`, `log`, `log2`, `log10`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`,
   `atan2`, `to_radians`, `to_degrees`, and `fma_is_instruction`.
@@ -2495,6 +2594,49 @@ the functions it implements with results that agree, and the magnitudes
 procedures, `sqrt` and `mod` included, are exact or correctly rounded, so
 their results are the same everywhere. See
 [Deterministic math functions](open-questions.md#deterministic-math-functions).
+
+### Integer bit operations
+
+```loke
+count_ones     :: proc(value: $T) -> int;
+leading_zeros  :: proc(value: $T) -> int;
+trailing_zeros :: proc(value: $T) -> int;
+rotate_left    :: proc(value: $T, count: int) -> T;
+rotate_right   :: proc(value: $T, count: int) -> T;
+```
+
+`value` has an integer type of any width, signed or unsigned, or a `distinct`
+type over one; an unfixed constant is an `int`. A float, rune, enum, `bool`,
+or `Simd` vector is a compilation error. Each operation reads the value's
+two's-complement bit pattern at its type's width `W`, so a signed and an
+unsigned value with the same bits give the same answer:
+
+| Call | Result |
+| --- | --- |
+| `count_ones(x)` | The number of set bits, `0 ..= W`. `count_ones(i32(-1))` is `32`. |
+| `leading_zeros(x)` | The number of zero bits above the highest set bit. A negative value gives `0`. |
+| `trailing_zeros(x)` | The number of zero bits below the lowest set bit, which is that bit's index. |
+| `rotate_left(x, count)` | `x` rotated `count` places toward the high end: the bits shifted out at the top come back in at the bottom. |
+| `rotate_right(x, count)` | `x` rotated `count` places toward the low end. |
+
+Zero is defined: `leading_zeros(x)` and `trailing_zeros(x)` are both `W` for
+`x == 0`, as `count_ones(x)` is `0`. So `W - leading_zeros(x)` is the number of
+bits `x` needs, and iterating the set bits of a word is
+`trailing_zeros(word)` followed by `word &= word - 1` until the word is zero.
+
+A rotation takes `count` modulo `W`, floored as
+[`floor_mod`](design.md#integer-operators) floors it, so every `int` count is
+defined: a count past the width wraps, and a negative count rotates the other
+way, `rotate_left(x, -k) == rotate_right(x, k)`. Nothing panics.
+
+A constant argument gives a constant, and each operation has a compile-time
+value. At run time each is one LLVM intrinsic, never a loop: `ctpop`, `ctlz`,
+and `cttz` with a zero operand defined, and the funnel shifts `fshl` and
+`fshr`. On x86-64 a rotation is one `rol` or `ror` at every
+[CPU level](compiler-guide.md#cpu-levels); a count is one `popcnt`, `lzcnt`, or
+`tzcnt` from the level that has it (`x86-64-v2` for `popcnt`, `x86-64-v3` for
+the other two) and a short instruction sequence below it. A result is the
+same at every level.
 
 ## `core:math/repro`
 

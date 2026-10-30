@@ -1,0 +1,615 @@
+/**
+	`Index_Set(N)`, `Dynamic_Index_Set`, `Index_View`, and `Index_View_Mut`:
+	sets of the indices `0 ..< cap`, one bit each.
+
+	`Index_Set(N)` holds its bits inline, so it never allocates and its zero
+	value is the empty set. `Dynamic_Index_Set` owns storage for a capacity
+	chosen at run time, from an allocator. `Index_View` reads, and
+	`Index_View_Mut` writes, a set stored in the caller's `u64` words, and
+	each owner lends one of its own, so a procedure that takes a view accepts
+	every representation.
+
+	Index `i` is bit `i % 64` of word `i / 64`, counting from the least
+	significant bit. Bits of the final word at or above `cap` are not
+	members: an owner keeps them clear, and a view ignores them when it reads
+	and leaves them unchanged when it writes, so they may hold anything.
+
+	An index outside `0 ..< cap` panics, as an array index does, and so does a
+	range whose ends are not `0 <= low <= high <= cap`. Two sets combined or
+	compared must have the same `cap`.
+
+	The words are `u64` values in the host's byte order, so they are not a
+	file format. `store_bytes` and `load_bytes` are: index `i` is bit `i % 8`
+	of byte `i / 8`, counting from the least significant bit, in
+	`bytes_for_bits(cap)` bytes, and the bits of the final byte at or above
+	`cap` are zero.
+*/
+// standard-library "`core:container` index sets". Every operation is written
+// once, over a word slice and a capacity, at the end of this file; the four
+// types forward to those procedures.
+@(public)
+package container;
+
+import "core:fmt";
+import "core:math";
+import "core:mem";
+
+/// The number of `u64` words that hold `cap` bits. A negative `cap` panics.
+words_for_bits :: proc(cap: int) -> int {
+	assert(cap >= 0, "container: an index set needs a non-negative capacity");
+	return (cap + 63)/64;
+}
+
+/// The number of bytes `store_bytes` writes for `cap` bits. A negative `cap` panics.
+bytes_for_bits :: proc(cap: int) -> int {
+	assert(cap >= 0, "container: an index set needs a non-negative capacity");
+	return (cap + 7)/8;
+}
+
+// ======================================================= fixed, inline ==
+
+/// The indices `0 ..< N`, held inline in `words_for_bits(N)` words.
+Index_Set :: struct($N: int) where N >= 0 {
+	@(private) words: [(N + 63)/64]u64,
+}
+
+impl Index_Set($N) {
+	// ------------------------------------------------------- construction --
+
+	/// Every listed index, and nothing else. `Index_Set(64).of(1, 2, 3)`.
+	of :: proc(indices: ..int) -> Index_Set(N) {
+		result: Index_Set(N) = {};
+		foreach (index in indices) { result.set(index); }
+		return result;
+	}
+
+	/// Every index `0 ..< N`.
+	all :: proc() -> Index_Set(N) {
+		result: Index_Set(N) = {};
+		result.fill();
+		return result;
+	}
+
+	// -------------------------------------------------------------- views --
+
+	/// The set as a read-only view, borrowed from it.
+	view :: proc(self: ^) -> Index_View { return {self.words[:], N}; }
+
+	/// The set as a mutable view, which borrows it exclusively.
+	view_mut :: proc(self: inout) -> Index_View_Mut { return {&mut self.words[:], N}; }
+
+	// ------------------------------------------------------------ queries --
+
+	/// `N`, the number of indices the set can hold.
+	cap :: proc(self: ^) -> int { return N; }
+
+	/// The number of indices present, not `N`, which `cap` is.
+	len :: proc(self: ^) -> int { return count_members(self.words[:], N); }
+
+	is_empty :: proc(self: ^) -> bool { return no_members(self.words[:], N); }
+	contains :: proc(self: ^, index: int) -> bool { return has_member(self.words[:], N, index); }
+
+	/// The number of indices present in `low ..< high`.
+	count_range :: proc(self: ^, low, high: int) -> int { return count_members_in(self.words[:], N, low, high); }
+
+	/// The smallest index present at or after `from`, which may be `N`.
+	next_member :: proc(self: ^, from: int) -> Option(int) { return next_bit(self.words[:], N, from, false); }
+
+	/// The smallest index absent at or after `from`, which may be `N`.
+	next_absent :: proc(self: ^, from: int) -> Option(int) { return next_bit(self.words[:], N, from, true); }
+
+	is_subset_of :: proc(self: ^, other: Index_View) -> bool { return subset_of(self.words[:], N, other); }
+
+	/// Whether any index is in both sets.
+	intersects :: proc(self: ^, other: Index_View) -> bool { return overlaps(self.words[:], N, other); }
+
+	// ----------------------------------------------------------- mutation --
+
+	set :: proc(self: inout, index: int) { set_member(&mut self.words[:], N, index); }
+	unset :: proc(self: inout, index: int) { unset_member(&mut self.words[:], N, index); }
+	toggle :: proc(self: inout, index: int) { toggle_member(&mut self.words[:], N, index); }
+
+	/// Removes every index.
+	clear :: proc(self: inout) { apply_range(&mut self.words[:], N, 0, N, .Unset); }
+
+	/// Adds every index `0 ..< N`.
+	fill :: proc(self: inout) { apply_range(&mut self.words[:], N, 0, N, .Set); }
+
+	set_range :: proc(self: inout, low, high: int) { apply_range(&mut self.words[:], N, low, high, .Set); }
+	unset_range :: proc(self: inout, low, high: int) { apply_range(&mut self.words[:], N, low, high, .Unset); }
+	toggle_range :: proc(self: inout, low, high: int) { apply_range(&mut self.words[:], N, low, high, .Toggle); }
+
+	/// Adds every index of `other`: the union, in place.
+	insert_all :: proc(self: inout, other: Index_View) { combine(&mut self.words[:], N, other, .Insert); }
+	/// Keeps only the indices `other` also holds: the intersection, in place.
+	retain_all :: proc(self: inout, other: Index_View) { combine(&mut self.words[:], N, other, .Retain); }
+	/// Removes every index of `other`: the difference, in place.
+	remove_all :: proc(self: inout, other: Index_View) { combine(&mut self.words[:], N, other, .Remove); }
+	/// Toggles every index of `other`: the symmetric difference, in place.
+	toggle_all :: proc(self: inout, other: Index_View) { combine(&mut self.words[:], N, other, .Toggle); }
+
+	// -------------------------------------------------------- operators --
+
+	/**
+		Union, intersection, difference, and symmetric difference, spelled with
+		the integer operators `|`, `&`, `&~`, and `~`, and the complement `~`,
+		as for `Bit_Set`. `==` compares two sets.
+	*/
+	// Each builds its result word by word rather than from a copy of an
+	// operand, which for a large `N` the copy-cost diagnostic would report.
+	//
+	// `==` is the generated field-wise equality: the bits at or above `N` are
+	// invariantly clear in both operands, so equal words are equal sets.
+	union_with :: operator(|) proc(left, right: Index_Set(N)) -> Index_Set(N) {
+		result: Index_Set(N) = {};
+		foreach (word, at in left.words.indexed()) { result.words[at] = word | right.words[at]; }
+		return result;
+	}
+
+	intersect :: operator(&) proc(left, right: Index_Set(N)) -> Index_Set(N) {
+		result: Index_Set(N) = {};
+		foreach (word, at in left.words.indexed()) { result.words[at] = word & right.words[at]; }
+		return result;
+	}
+
+	difference :: operator(&~) proc(left, right: Index_Set(N)) -> Index_Set(N) {
+		result: Index_Set(N) = {};
+		foreach (word, at in left.words.indexed()) { result.words[at] = word &~ right.words[at]; }
+		return result;
+	}
+
+	symmetric_difference :: operator(~) proc(left, right: Index_Set(N)) -> Index_Set(N) {
+		result: Index_Set(N) = {};
+		foreach (word, at in left.words.indexed()) { result.words[at] = word ~ right.words[at]; }
+		return result;
+	}
+
+	/// Every index `0 ..< N` that `self` does not hold.
+	complement :: operator(~) proc(self: Index_Set(N)) -> Index_Set(N) {
+		result: Index_Set(N) = {};
+		foreach (word, at in self.words.indexed()) { result.words[at] = ~word & member_mask(N, at); }
+		return result;
+	}
+
+	// --------------------------------------------------------- bytes --
+
+	/// Writes the set to `out` in the byte order the package header gives; `out.len()` must be `bytes_for_bits(N)`.
+	store_bytes :: proc(self: ^, out: []mut u8) { store(self.words[:], N, out); }
+
+	/**
+		Replaces the set with the one `bytes` holds, in the byte order the
+		package header gives, and is true; `bytes.len()` must be
+		`bytes_for_bits(N)`. A set bit at or above `N` in the final byte is
+		false, and leaves the set unchanged.
+	*/
+	load_bytes :: proc(self: inout, bytes: []u8) -> bool { return load(&mut self.words[:], N, bytes); }
+
+	// -------------------------------------------------------- iteration --
+
+	Element :: int;
+
+	/// The indices present, in increasing order. The iterator borrows the set.
+	iter :: proc(self: ^) -> Index_Iterator { return iterate(self.words[:], N); }
+
+	format :: proc(self: ^, writer: fmt.Writer, options: fmt.Options) { format_members(self.words[:], N, writer); }
+}
+
+// ==================================================== dynamic, owned ==
+
+/**
+	The indices `0 ..< cap`, for a `cap` chosen at run time, in storage from
+	the allocator chosen when it was made. The zero value is an empty set of
+	capacity 0. Copying one clones its storage.
+*/
+Dynamic_Index_Set :: struct {
+	@(private) words:    [dynamic]u64,
+	@(private) capacity: int,
+}
+
+impl Dynamic_Index_Set {
+	/// An empty set of `cap` indices. A negative `cap` panics.
+	init :: proc(cap: int, allocator: Allocator = mem.default_allocator()) -> Dynamic_Index_Set {
+		words := make([dynamic]u64, words_for_bits(cap), allocator);
+		return {move(words), cap};
+	}
+
+	/**
+		Changes the capacity to `cap`, keeping the indices below it; those
+		added are absent. A negative `cap` panics.
+	*/
+	resize :: proc(self: inout, cap: int) {
+		count := words_for_bits(cap);
+		// Clear the bits above the smaller capacity before growing, so the
+		// owner's clear-tail invariant holds for the new last word as well.
+		if (cap < self.capacity) { apply_range(&mut self.words[:], self.capacity, cap, self.capacity, .Unset); }
+		self.words.resize(count);
+		self.capacity = cap;
+	}
+
+	/// The set as a read-only view, borrowed from it.
+	view :: proc(self: ^) -> Index_View { return {self.words[:], self.capacity}; }
+
+	/// The set as a mutable view, which borrows it exclusively.
+	view_mut :: proc(self: inout) -> Index_View_Mut { return {&mut self.words[:], self.capacity}; }
+
+	/// The number of indices the set can hold.
+	cap :: proc(self: ^) -> int { return self.capacity; }
+
+	/// The number of indices present, not the capacity, which `cap` is.
+	len :: proc(self: ^) -> int { return count_members(self.words[:], self.capacity); }
+
+	is_empty :: proc(self: ^) -> bool { return no_members(self.words[:], self.capacity); }
+	contains :: proc(self: ^, index: int) -> bool { return has_member(self.words[:], self.capacity, index); }
+	count_range :: proc(self: ^, low, high: int) -> int { return count_members_in(self.words[:], self.capacity, low, high); }
+	next_member :: proc(self: ^, from: int) -> Option(int) { return next_bit(self.words[:], self.capacity, from, false); }
+	next_absent :: proc(self: ^, from: int) -> Option(int) { return next_bit(self.words[:], self.capacity, from, true); }
+	is_subset_of :: proc(self: ^, other: Index_View) -> bool { return subset_of(self.words[:], self.capacity, other); }
+	intersects :: proc(self: ^, other: Index_View) -> bool { return overlaps(self.words[:], self.capacity, other); }
+
+	set :: proc(self: inout, index: int) { set_member(&mut self.words[:], self.capacity, index); }
+	unset :: proc(self: inout, index: int) { unset_member(&mut self.words[:], self.capacity, index); }
+	toggle :: proc(self: inout, index: int) { toggle_member(&mut self.words[:], self.capacity, index); }
+
+	/// Removes every index and keeps the storage, which is how a visited set is reused.
+	clear :: proc(self: inout) { apply_range(&mut self.words[:], self.capacity, 0, self.capacity, .Unset); }
+
+	fill :: proc(self: inout) { apply_range(&mut self.words[:], self.capacity, 0, self.capacity, .Set); }
+	set_range :: proc(self: inout, low, high: int) { apply_range(&mut self.words[:], self.capacity, low, high, .Set); }
+	unset_range :: proc(self: inout, low, high: int) { apply_range(&mut self.words[:], self.capacity, low, high, .Unset); }
+	toggle_range :: proc(self: inout, low, high: int) { apply_range(&mut self.words[:], self.capacity, low, high, .Toggle); }
+	insert_all :: proc(self: inout, other: Index_View) { combine(&mut self.words[:], self.capacity, other, .Insert); }
+	retain_all :: proc(self: inout, other: Index_View) { combine(&mut self.words[:], self.capacity, other, .Retain); }
+	remove_all :: proc(self: inout, other: Index_View) { combine(&mut self.words[:], self.capacity, other, .Remove); }
+	toggle_all :: proc(self: inout, other: Index_View) { combine(&mut self.words[:], self.capacity, other, .Toggle); }
+
+	/// Equal capacities and equal members.
+	equal :: operator(==) proc(left, right: Dynamic_Index_Set) -> bool { return left.view() == right.view(); }
+
+	store_bytes :: proc(self: ^, out: []mut u8) { store(self.words[:], self.capacity, out); }
+	load_bytes :: proc(self: inout, bytes: []u8) -> bool { return load(&mut self.words[:], self.capacity, bytes); }
+
+	Element :: int;
+
+	iter :: proc(self: ^) -> Index_Iterator { return iterate(self.words[:], self.capacity); }
+
+	format :: proc(self: ^, writer: fmt.Writer, options: fmt.Options) { format_members(self.words[:], self.capacity, writer); }
+}
+
+// =================================================== caller-backed ==
+
+/**
+	A read-only index set stored in the caller's words: index `i` is bit
+	`i % 64` of `words[i / 64]`. It borrows the words, so it cannot outlive
+	them.
+*/
+Index_View :: struct {
+	@(private) words:    []u64,
+	@(private) capacity: int,
+}
+
+impl Index_View {
+	/**
+		The set of capacity `cap` in `words`, whose length must be
+		`words_for_bits(cap)`. The bits of the final word at or above `cap` are
+		ignored.
+	*/
+	over :: proc(words: []u64, cap: int) -> Index_View {
+		assert(words.len() == words_for_bits(cap), "container: an index view needs exactly words_for_bits(cap) words");
+		return {words, cap};
+	}
+
+	cap :: proc(self) -> int { return self.capacity; }
+	len :: proc(self) -> int { return count_members(self.words, self.capacity); }
+	is_empty :: proc(self) -> bool { return no_members(self.words, self.capacity); }
+	contains :: proc(self, index: int) -> bool { return has_member(self.words, self.capacity, index); }
+	count_range :: proc(self, low, high: int) -> int { return count_members_in(self.words, self.capacity, low, high); }
+	next_member :: proc(self, from: int) -> Option(int) { return next_bit(self.words, self.capacity, from, false); }
+	next_absent :: proc(self, from: int) -> Option(int) { return next_bit(self.words, self.capacity, from, true); }
+	is_subset_of :: proc(self, other: Index_View) -> bool { return subset_of(self.words, self.capacity, other); }
+	intersects :: proc(self, other: Index_View) -> bool { return overlaps(self.words, self.capacity, other); }
+
+	/// Equal capacities and equal members; the bits past the capacity are not compared.
+	equal :: operator(==) proc(left, right: Index_View) -> bool {
+		if (left.capacity != right.capacity) { return false; }
+		foreach (index in 0 ..< left.words.len()) {
+			if (word_of(left.words, left.capacity, index) != word_of(right.words, right.capacity, index)) { return false; }
+		}
+		return true;
+	}
+
+	store_bytes :: proc(self, out: []mut u8) { store(self.words, self.capacity, out); }
+
+	Element :: int;
+
+	iter :: proc(self) -> Index_Iterator { return iterate(self.words, self.capacity); }
+
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) { format_members(self.words, self.capacity, writer); }
+}
+
+/**
+	A mutable index set stored in the caller's words, laid out as
+	`Index_View`. It borrows the words exclusively. A write never changes the
+	bits of the final word at or above the capacity.
+*/
+Index_View_Mut :: struct {
+	@(private) words:    []mut u64,
+	@(private) capacity: int,
+}
+
+impl Index_View_Mut {
+	/// As `Index_View.over`, writable.
+	over :: proc(words: []mut u64, cap: int) -> Index_View_Mut {
+		assert(words.len() == words_for_bits(cap), "container: an index view needs exactly words_for_bits(cap) words");
+		return {words, cap};
+	}
+
+	/// The same set, read-only, borrowed from this view.
+	as_view :: proc(self: ^) -> Index_View { return {self.words[:], self.capacity}; }
+
+	cap :: proc(self: ^) -> int { return self.capacity; }
+	len :: proc(self: ^) -> int { return count_members(self.words[:], self.capacity); }
+	is_empty :: proc(self: ^) -> bool { return no_members(self.words[:], self.capacity); }
+	contains :: proc(self: ^, index: int) -> bool { return has_member(self.words[:], self.capacity, index); }
+	count_range :: proc(self: ^, low, high: int) -> int { return count_members_in(self.words[:], self.capacity, low, high); }
+	next_member :: proc(self: ^, from: int) -> Option(int) { return next_bit(self.words[:], self.capacity, from, false); }
+	next_absent :: proc(self: ^, from: int) -> Option(int) { return next_bit(self.words[:], self.capacity, from, true); }
+	is_subset_of :: proc(self: ^, other: Index_View) -> bool { return subset_of(self.words[:], self.capacity, other); }
+	intersects :: proc(self: ^, other: Index_View) -> bool { return overlaps(self.words[:], self.capacity, other); }
+
+	set :: proc(self: inout, index: int) { set_member(&mut self.words[:], self.capacity, index); }
+	unset :: proc(self: inout, index: int) { unset_member(&mut self.words[:], self.capacity, index); }
+	toggle :: proc(self: inout, index: int) { toggle_member(&mut self.words[:], self.capacity, index); }
+	clear :: proc(self: inout) { apply_range(&mut self.words[:], self.capacity, 0, self.capacity, .Unset); }
+	fill :: proc(self: inout) { apply_range(&mut self.words[:], self.capacity, 0, self.capacity, .Set); }
+	set_range :: proc(self: inout, low, high: int) { apply_range(&mut self.words[:], self.capacity, low, high, .Set); }
+	unset_range :: proc(self: inout, low, high: int) { apply_range(&mut self.words[:], self.capacity, low, high, .Unset); }
+	toggle_range :: proc(self: inout, low, high: int) { apply_range(&mut self.words[:], self.capacity, low, high, .Toggle); }
+	insert_all :: proc(self: inout, other: Index_View) { combine(&mut self.words[:], self.capacity, other, .Insert); }
+	retain_all :: proc(self: inout, other: Index_View) { combine(&mut self.words[:], self.capacity, other, .Retain); }
+	remove_all :: proc(self: inout, other: Index_View) { combine(&mut self.words[:], self.capacity, other, .Remove); }
+	toggle_all :: proc(self: inout, other: Index_View) { combine(&mut self.words[:], self.capacity, other, .Toggle); }
+
+	store_bytes :: proc(self: ^, out: []mut u8) { store(self.words[:], self.capacity, out); }
+	load_bytes :: proc(self: inout, bytes: []u8) -> bool { return load(&mut self.words[:], self.capacity, bytes); }
+
+	Element :: int;
+
+	iter :: proc(self: ^) -> Index_Iterator { return iterate(self.words[:], self.capacity); }
+
+	format :: proc(self: ^, writer: fmt.Writer, options: fmt.Options) { format_members(self.words[:], self.capacity, writer); }
+}
+
+// ========================================================= iteration ==
+
+/**
+	Yields the indices a set holds, in increasing order, one trailing-zero
+	count per index. It borrows the set's words.
+*/
+Index_Iterator :: struct {
+	@(private) words:    []u64,
+	@(private) capacity: int,
+	@(private) at:       int,   // the word `pending` came from
+	@(private) pending:  u64,   // that word's members not yet yielded
+}
+
+impl Index_Iterator {
+	Element :: int;
+
+	iter :: proc(self) -> Index_Iterator { return self; }
+
+	next :: proc(self: inout) -> Option(int) {
+		for (self.pending == 0) {
+			self.at += 1;
+			if (self.at >= self.words.len()) { return .none; }
+			self.pending = word_of(self.words, self.capacity, self.at);
+		}
+		bit := math.trailing_zeros(self.pending);
+		self.pending &= self.pending - 1;
+		return self.at*64 + bit;
+	}
+}
+
+// ============================================================== guts ==
+//
+// Each procedure takes a set as its words and its capacity. A read goes
+// through `word_of`, which drops the final word's bits at or above the
+// capacity; a write changes only bits below it.
+
+@(private)
+check_member_index :: proc(index, cap: int) {
+	assert(0 <= index && index < cap, "container: index set index out of range");
+}
+
+@(private)
+check_member_range :: proc(low, high, cap: int) {
+	assert(0 <= low && low <= high && high <= cap, "container: index set range out of order or out of range");
+}
+
+@(private)
+check_same_cap :: proc(cap: int, other: Index_View) {
+	assert(cap == other.capacity, "container: index sets of different capacities");
+}
+
+// The bits of word `at` that are members: every bit but in the final word.
+@(private)
+member_mask :: proc(cap, at: int) -> u64 {
+	if (at < cap/64) { return ~u64(0); }
+	return (u64(1) << uint(cap % 64)) - 1;
+}
+
+@(private)
+word_of :: proc(words: []u64, cap, at: int) -> u64 { return words[at] & member_mask(cap, at); }
+
+@(private)
+has_member :: proc(words: []u64, cap, index: int) -> bool {
+	check_member_index(index, cap);
+	return words[index/64] & (u64(1) << uint(index % 64)) != 0;
+}
+
+@(private)
+set_member :: proc(words: []mut u64, cap, index: int) {
+	check_member_index(index, cap);
+	words[index/64] |= u64(1) << uint(index % 64);
+}
+
+@(private)
+unset_member :: proc(words: []mut u64, cap, index: int) {
+	check_member_index(index, cap);
+	words[index/64] &~= u64(1) << uint(index % 64);
+}
+
+@(private)
+toggle_member :: proc(words: []mut u64, cap, index: int) {
+	check_member_index(index, cap);
+	words[index/64] ~= u64(1) << uint(index % 64);
+}
+
+@(private)
+count_members :: proc(words: []u64, cap: int) -> int {
+	total := 0;
+	foreach (at in 0 ..< words.len()) { total += math.count_ones(word_of(words, cap, at)); }
+	return total;
+}
+
+@(private)
+no_members :: proc(words: []u64, cap: int) -> bool {
+	foreach (at in 0 ..< words.len()) {
+		if (word_of(words, cap, at) != 0) { return false; }
+	}
+	return true;
+}
+
+// The bits of word `at` inside `low ..< high`, which overlaps it.
+@(private)
+range_mask :: proc(at, low, high: int) -> u64 {
+	first := math.max(low - at*64, 0);
+	last := math.min(high - at*64, 64);
+	// `<< 64` is 0 (design.md "Integer operators"), so a run reaching the
+	// word's top bit needs no special case.
+	return ((u64(1) << uint(last)) -% 1) &~ ((u64(1) << uint(first)) -% 1);
+}
+
+@(private)
+count_members_in :: proc(words: []u64, cap, low, high: int) -> int {
+	check_member_range(low, high, cap);
+	if (low == high) { return 0; }
+	total := 0;
+	foreach (at in low/64 ..= (high - 1)/64) { total += math.count_ones(words[at] & range_mask(at, low, high)); }
+	return total;
+}
+
+@(private)
+Range_Op :: enum { Set, Unset, Toggle }
+
+@(private)
+apply_range :: proc(words: []mut u64, cap, low, high: int, op: Range_Op) {
+	check_member_range(low, high, cap);
+	if (low == high) { return; }
+	foreach (at in low/64 ..= (high - 1)/64) {
+		mask := range_mask(at, low, high);
+		switch (op) {
+		case .Set:    words[at] |= mask;
+		case .Unset:  words[at] &~= mask;
+		case .Toggle: words[at] ~= mask;
+		}
+	}
+}
+
+// The first index at or after `from` that is a member, or with `absent` the
+// first that is not. An absent index is a member of the complement, so the
+// scan inverts each word, and `word_of`'s mask keeps the bits past the
+// capacity out of it.
+@(private)
+next_bit :: proc(words: []u64, cap, from: int, absent: bool) -> Option(int) {
+	assert(0 <= from && from <= cap, "container: index set search starts out of range");
+	if (from == cap) { return .none; }
+	at := from/64;
+	flip := ~u64(0) if absent else u64(0);
+	candidates := ((words[at] ~ flip) & member_mask(cap, at)) &~ ((u64(1) << uint(from % 64)) - 1);
+	for (candidates == 0) {
+		at += 1;
+		if (at >= words.len()) { return .none; }
+		candidates = (words[at] ~ flip) & member_mask(cap, at);
+	}
+	return at*64 + math.trailing_zeros(candidates);
+}
+
+@(private)
+subset_of :: proc(words: []u64, cap: int, other: Index_View) -> bool {
+	check_same_cap(cap, other);
+	foreach (at in 0 ..< words.len()) {
+		if (word_of(words, cap, at) &~ other.words[at] != 0) { return false; }
+	}
+	return true;
+}
+
+@(private)
+overlaps :: proc(words: []u64, cap: int, other: Index_View) -> bool {
+	check_same_cap(cap, other);
+	foreach (at in 0 ..< words.len()) {
+		if (word_of(words, cap, at) & other.words[at] != 0) { return true; }
+	}
+	return false;
+}
+
+@(private)
+Combine_Op :: enum { Insert, Retain, Remove, Toggle }
+
+@(private)
+combine :: proc(words: []mut u64, cap: int, other: Index_View, op: Combine_Op) {
+	check_same_cap(cap, other);
+	foreach (at in 0 ..< words.len()) {
+		mask := member_mask(cap, at);
+		bits := other.words[at] & mask;
+		switch (op) {
+		case .Insert: words[at] |= bits;
+		case .Retain: words[at] &= bits | ~mask;
+		case .Remove: words[at] &~= bits;
+		case .Toggle: words[at] ~= bits;
+		}
+	}
+}
+
+@(private)
+iterate :: proc(words: []u64, cap: int) -> Index_Iterator {
+	if (words.len() == 0) { return {words, cap, 0, 0}; }
+	return {words, cap, 0, word_of(words, cap, 0)};
+}
+
+// Byte `at` of the serialized form: eight bits of one word, with the bits
+// past the capacity already dropped by `word_of`.
+@(private)
+store :: proc(words: []u64, cap: int, out: []mut u8) {
+	assert(out.len() == bytes_for_bits(cap), "container: an index set stores into exactly bytes_for_bits(cap) bytes");
+	foreach (at in 0 ..< out.len()) {
+		out[at] = math.wrap(u8, word_of(words, cap, at/8) >> uint(8*(at % 8)));
+	}
+}
+
+@(private)
+load :: proc(words: []mut u64, cap: int, bytes: []u8) -> bool {
+	assert(bytes.len() == bytes_for_bits(cap), "container: an index set loads from exactly bytes_for_bits(cap) bytes");
+	if (cap % 8 != 0 && bytes[bytes.len() - 1] >> uint(cap % 8) != 0) { return false; }
+	foreach (at in 0 ..< words.len()) {
+		loaded := u64(0);
+		foreach (part in 0 ..< 8) {
+			index := at*8 + part;
+			if (index < bytes.len()) { loaded |= u64(bytes[index]) << uint(8*part); }
+		}
+		mask := member_mask(cap, at);
+		words[at] = (words[at] &~ mask) | loaded;
+	}
+	return true;
+}
+
+@(private)
+format_members :: proc(words: []u64, cap: int, writer: fmt.Writer) {
+	fmt.format_to(writer, "{");
+	written := 0;
+	foreach (index in iterate(words, cap)) {
+		if (written > 0) { fmt.format_to(writer, ", "); }
+		fmt.format_to(writer, index);
+		written += 1;
+	}
+	fmt.format_to(writer, "}");
+}

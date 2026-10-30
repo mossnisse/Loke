@@ -1,0 +1,10 @@
+// standard-library.md "`core:math`": a rotation count is an `int`.
+package main;
+
+import "core:math";
+
+main :: proc() {
+	x: u32 = 1;
+	n: u8 = 3;
+	_ = math.rotate_left(x, n);
+}

@@ -1,0 +1,255 @@
+// `core:container`'s index sets (standard-library "`core:container` index
+// sets"): `Index_Set(N)`, `Dynamic_Index_Set`, and the caller-backed
+// `Index_View` and `Index_View_Mut`. Capacities sit at and around the 64-bit
+// word seam, where the final partial word's bits past the capacity are
+// either kept clear (an owner) or ignored and preserved (a view over words
+// the caller filled with ones). The byte form is pinned exactly.
+package main;
+
+import "core:container";
+import "core:fmt";
+
+// One procedure reads every representation through its view.
+summary :: proc(label: string_view, set: container.Index_View) {
+	fmt.println(label, set.cap(), set.len(), set.is_empty(), set);
+}
+
+// A 4-connected flood fill over a `width x height` grid of walls, the way an
+// engine marks the cells reachable from `start`. The visited set is reused
+// across calls by `clear`, so it allocates once.
+flood :: proc(walls: container.Index_View, width, height, start: int, visited: inout container.Dynamic_Index_Set) -> int {
+	visited.clear();
+	stack: [dynamic]int = {};
+	stack.append(start);
+	visited.set(start);
+	for (stack.len() > 0) {
+		cell := stack[stack.len() - 1];
+		remaining := stack.len() - 1;
+		stack.resize(remaining);
+		x := cell % width;
+		y := cell / width;
+		neighbours: [4]int = {-1, -1, -1, -1};
+		if (x > 0)          { neighbours[0] = cell - 1; }
+		if (x < width - 1)  { neighbours[1] = cell + 1; }
+		if (y > 0)          { neighbours[2] = cell - width; }
+		if (y < height - 1) { neighbours[3] = cell + width; }
+		foreach (next in neighbours) {
+			if (next < 0 || walls.contains(next) || visited.contains(next)) { continue; }
+			visited.set(next);
+			stack.append(next);
+		}
+	}
+	return visited.len();
+}
+
+main :: proc() {
+	// --------------------------------------------------- Index_Set(N) --
+
+	// Zero value is empty; every capacity around the seam behaves alike.
+	empty: container.Index_Set(0) = {};
+	summary("cap0", empty.view());
+	fmt.println(empty.next_member(0), empty.next_absent(0), container.Index_Set(0).all() == empty);
+
+	one := container.Index_Set(1).all();
+	summary("cap1", one.view());
+	fmt.println((~one).len(), one.next_absent(0));
+
+	full63 := container.Index_Set(63).all();
+	full64 := container.Index_Set(64).all();
+	full65 := container.Index_Set(65).all();
+	fmt.println(full63.len(), full64.len(), full65.len(), (~full65).is_empty());
+	fmt.println(full63.next_absent(0), full64.next_absent(10), full65.next_member(64), full65.next_member(65));
+
+	a: container.Index_Set(130) = {};
+	a.set(0); a.set(63); a.set(64); a.set(127); a.set(128); a.set(129);
+	summary("a", a.view());
+	fmt.println(a.contains(63), a.contains(62), a.contains(129));
+	a.unset(63);
+	a.toggle(62);
+	a.toggle(64);
+	summary("a toggled", a.view());
+
+	// Ranges inside a word, across one seam, across two, empty, and whole.
+	r: container.Index_Set(200) = {};
+	r.set_range(3, 7);
+	r.set_range(60, 70);
+	r.set_range(120, 190);
+	r.set_range(50, 50);
+	fmt.println(r.len(), r.count_range(0, 200), r.count_range(60, 64), r.count_range(64, 70), r.count_range(100, 100));
+	r.unset_range(62, 125);
+	fmt.println(r);
+	r.toggle_range(0, 200);
+	fmt.println(r.len(), r.contains(0), r.contains(3), r.contains(199));
+	r.clear();
+	fmt.println(r.is_empty(), r.next_member(0));
+	r.fill();
+	fmt.println(r.len(), r.next_absent(0), r.next_absent(200));
+
+	// Searches start anywhere, including at the capacity.
+	s := container.Index_Set(150).of(5, 70, 149);
+	fmt.println(s.next_member(0), s.next_member(6), s.next_member(71), s.next_member(150));
+	fmt.println(s.next_absent(5), s.next_absent(149), s.next_absent(150));
+
+	// Operators; the complement stays inside the capacity, so it compares
+	// equal to a set built the other way.
+	x := container.Index_Set(70).of(1, 2, 65);
+	y := container.Index_Set(70).of(2, 3, 69);
+	fmt.println(x | y, x & y, x &~ y, x ~ y);
+	fmt.println((~x).len(), ~~x == x, (x | ~x) == container.Index_Set(70).all());
+	z := x;
+	z |= y;
+	fmt.println(z == (x | y), x.is_subset_of(z.view()), z.is_subset_of(x.view()), x.intersects(y.view()));
+	fmt.println(x.intersects(container.Index_Set(70).of(0, 69).view()));
+
+	// Iteration yields members in increasing order.
+	total := 0;
+	foreach (index in a) { total += index; }
+	fmt.println("sum", total);
+
+	// A chunk's worth of cells: 16 x 16 x 16.
+	dirty: container.Index_Set(4096) = {};
+	dirty.set_range(256, 512);
+	dirty.set(4095);
+	fmt.println(dirty.len(), dirty.count_range(0, 256), dirty.next_member(513), size_of(container.Index_Set(4096)));
+
+	// ------------------------------------------- Dynamic_Index_Set --
+
+	zero: container.Dynamic_Index_Set = {};
+	summary("dyn zero", zero.view());
+
+	d := container.Dynamic_Index_Set.init(100);
+	d.set(1); d.set(64); d.set(99);
+	summary("d", d.view());
+
+	// Growing keeps members and adds absent indices; shrinking drops those
+	// past the new capacity and clears them, so growing again finds none.
+	d.resize(300);
+	fmt.println(d.cap(), d, d.next_member(100));
+	d.resize(64);
+	fmt.println(d.cap(), d);
+	d.resize(200);
+	fmt.println(d.cap(), d, d.count_range(64, 200));
+
+	// A copy is independent, and equality compares capacity and members.
+	e := d.clone();
+	e.set(150);
+	fmt.println(d == e, d.len(), e.len());
+	e.unset(150);
+	fmt.println(d == e);
+	f := container.Dynamic_Index_Set.init(201);
+	f.set(1);
+	fmt.println(d == f);
+
+	// In-place algebra with any representation of the same capacity.
+	g := container.Dynamic_Index_Set.init(70);
+	g.insert_all(x.view());
+	g.insert_all(y.view());
+	fmt.println(g, g.view() == (x | y).view());
+	g.retain_all(y.view());
+	fmt.println(g);
+	g.remove_all(container.Index_Set(70).of(3).view());
+	fmt.println(g);
+	g.toggle_all(container.Index_Set(70).all().view());
+	fmt.println(g.len());
+
+	// A visited set reused across flood fills. The grid is 8 x 4 with a wall
+	// down column 3, rows 0 to 2.
+	walls := container.Dynamic_Index_Set.init(32);
+	walls.set(3); walls.set(11); walls.set(19);
+	visited := container.Dynamic_Index_Set.init(32);
+	fmt.println(flood(walls.view(), 8, 4, 0, inout visited), visited.contains(31));
+	walls.set(27);
+	fmt.println(flood(walls.view(), 8, 4, 0, inout visited), visited.contains(31));
+	fmt.println(flood(walls.view(), 8, 4, 31, inout visited), visited.contains(0));
+
+	// --------------------------------------------- caller-backed views --
+
+	// The caller's final word is all ones; bits 66 and up are not members, so
+	// reads ignore them and writes leave them. Each step's view ends before the
+	// words are read directly.
+	words: [2]u64 = {0, 0xFFFF_FFFF_FFFF_FFFF};
+	{
+		v := container.Index_View_Mut.over(&mut words[:], 66);
+		fmt.println(v.len(), v.next_member(0), v.next_absent(64), v);
+		v.clear();
+		fmt.println(v.is_empty());
+	}
+	fmt.println(words[1] == 0xFFFF_FFFF_FFFF_FFFC);
+	{
+		v := container.Index_View_Mut.over(&mut words[:], 66);
+		v.set(65);
+		v.set_range(0, 2);
+		fmt.println(v);
+	}
+	fmt.println(words[0], words[1] == 0xFFFF_FFFF_FFFF_FFFE);
+	{
+		v := container.Index_View_Mut.over(&mut words[:], 66);
+		v.fill();
+		fmt.println(v.len());
+	}
+	fmt.println(words[1] == 0xFFFF_FFFF_FFFF_FFFF);
+	{
+		v := container.Index_View_Mut.over(&mut words[:], 66);
+		v.toggle_range(0, 66);
+		fmt.println(v.len());
+	}
+	fmt.println(words[1] == 0xFFFF_FFFF_FFFF_FFFC);
+	{
+		v := container.Index_View_Mut.over(&mut words[:], 66);
+		v.insert_all(container.Index_Set(66).all().view());
+		v.retain_all(container.Index_Set(66).of(0, 65).view());
+		fmt.println(v);
+	}
+	fmt.println(words[1] == 0xFFFF_FFFF_FFFF_FFFE);
+	{
+		v := container.Index_View_Mut.over(&mut words[:], 66);
+		v.toggle_all(container.Index_Set(66).of(1, 65).view());
+		fmt.println(v);
+	}
+	fmt.println(words[1] == 0xFFFF_FFFF_FFFF_FFFC);
+
+	// A read-only view compares and iterates its members only.
+	other: [2]u64 = {3, 0x10};
+	fmt.println(container.Index_View.over(other[:], 66) == container.Index_Set(66).of(0, 1).view());
+	fmt.println(container.Index_View.over(other[:], 66) == container.Index_View.over(other[:], 65));
+
+	// ---------------------------------------------------- byte form --
+
+	// Index i is bit i % 8 of byte i / 8, least significant first, whatever
+	// the host's byte order; the padding of the final byte is zero.
+	p := container.Index_Set(20).of(0, 9, 10, 19);
+	bytes: [3]u8 = {};
+	p.store_bytes(&mut bytes[:]);
+	fmt.println(container.bytes_for_bits(20), bytes);
+	q: container.Index_Set(20) = {};
+	fmt.println(q.load_bytes(bytes[:]), q == p);
+
+	// A set padding bit is rejected and the set is unchanged.
+	bad: [3]u8 = {0xFF, 0xFF, 0x10};
+	fmt.println(q.load_bytes(bad[:]), q == p);
+
+	// A capacity that fills its last byte has no padding to check.
+	w := container.Index_Set(16).of(15);
+	two: [2]u8 = {0, 0};
+	w.store_bytes(&mut two[:]);
+	fmt.println(two);
+	two[0] = 0xFF;
+	fmt.println(w.load_bytes(two[:]), w);
+
+	// A view stores only its members, and loading keeps the caller's tail.
+	stored: [9]u8 = {};
+	container.Index_View.over(words[:], 66).store_bytes(&mut stored[:]);
+	fmt.println(stored);
+	stored[0] = 0x80;
+	stored[8] = 0x02;
+	{
+		v := container.Index_View_Mut.over(&mut words[:], 66);
+		fmt.println(v.load_bytes(stored[:]), v);
+	}
+	fmt.println(words[1] == 0xFFFF_FFFF_FFFF_FFFE);
+
+	// A dynamic set round-trips through the same bytes as a fixed one.
+	h := container.Dynamic_Index_Set.init(20);
+	fmt.println(h.load_bytes(bytes[:]), h.view() == p.view());
+	fmt.println(container.words_for_bits(0), container.words_for_bits(64), container.words_for_bits(65), container.bytes_for_bits(0), container.bytes_for_bits(9));
+}

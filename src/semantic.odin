@@ -521,6 +521,17 @@ Builtin_Kind :: enum {
 	// The floating remainder, LLVM's `frem`, which calls the C library's `fmod`;
 	// exact, so `math.mod` has a compile-time value too.
 	Math_Mod_Instruction,
+	// standard-library "`core:math`": the bit counts of an integer's
+	// two's-complement pattern, LLVM's `ctpop`, `ctlz`, and `cttz` with a zero
+	// operand defined as the width, so each is one instruction where the CPU
+	// level has it and has a compile-time value.
+	Math_Count_Ones,
+	Math_Leading_Zeros,
+	Math_Trailing_Zeros,
+	// The rotations, LLVM's funnel shifts with both inputs the operand, whose
+	// count is taken modulo the width, so any `int` count is defined.
+	Math_Rotate_Left,
+	Math_Rotate_Right,
 	// design.md "SIMD vectors": the `core:simd` operations a constant lane index
 	// makes unwritable as a loop. `Simd_Reduce` takes the fold as a constant
 	// parameter, exactly as an atomic takes its ordering.

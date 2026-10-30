@@ -175,6 +175,48 @@ exact_integral :: proc(x: Const_Value, builtin: Builtin_Kind) -> Const_Value {
 	return float_const(math.trunc(x.float), bits)
 }
 
+// The compile-time value of `core:math.count_ones`, `leading_zeros`, or
+// `trailing_zeros` (`builtin`) of `value` as a `bits`-wide integer: its
+// two's-complement pattern, which no integer type wider than 128 bits has.
+// Zero has `bits` leading and trailing zeros, as LLVM's `ctlz` and `cttz`
+// with a defined zero result give.
+bit_count :: proc(storage: Value_Storage, value: Big_Int, bits: int, builtin: Builtin_Kind) -> int {
+	pattern := bi_wrap(storage, value, bits, false)
+	low, _ := bi_to_u64(storage, bi_and(storage, pattern, bi_from_u64(storage, max(u64))))
+	high, _ := bi_to_u64(storage, bi_shr(storage, pattern, 64))
+	x := u128(high) << 64 | u128(low)
+	#partial switch builtin {
+	case .Math_Count_Ones:
+		return int(intrinsics.count_ones(x))
+	case .Math_Leading_Zeros:
+		return int(intrinsics.count_leading_zeros(x)) - (128 - bits)
+	}
+	return x == 0 ? bits : int(intrinsics.count_trailing_zeros(x))
+}
+
+// The compile-time value of `core:math.rotate_left` or `rotate_right`
+// (`builtin`): `value` of integer type `type` rotated by `count` modulo its
+// width, which the floored remainder makes a left rotation for a negative
+// right count and the reverse. The result is built in `storage`.
+rotate_const :: proc(c: ^Compiler, storage: Value_Storage, value, count: Big_Int, type: Type_Id, builtin: Builtin_Kind) -> Big_Int {
+	bits := type_bits(c, type)
+	amount, _ := bi_to_i64(storage, bi_wrap(storage, count, bits_for_amount(bits), false))
+	left := int(amount)
+	if builtin == .Math_Rotate_Right {
+		left = (bits - left) % bits
+	}
+	pattern := bi_wrap(storage, value, bits, false)
+	rotated := bi_or(storage, bi_shl(storage, pattern, left), bi_shr(storage, pattern, bits - left))
+	return bi_wrap(storage, rotated, bits, type_signed(c, type))
+}
+
+// The number of low bits of a count that a rotation of `bits`, a power of
+// two, keeps.
+@(private = "file")
+bits_for_amount :: proc(bits: int) -> int {
+	return int(intrinsics.count_trailing_zeros(u64(bits)))
+}
+
 // `x mod y` for two `f32` or two `f64` constants, the remainder of `x` by `y`
 // with `x`'s sign: the compile-time value of `core:math.mod`, whose run-time
 // `frem` calls the C library's `fmod`. Both are exact, so they agree on every

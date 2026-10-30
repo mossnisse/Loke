@@ -352,6 +352,59 @@ floor_mod :: proc(x: $T, y: T) -> T where interfaces.Integral(T), interfaces.Ord
 	return remainder;
 }
 
+// ------------------------------------------------------- bit operations --
+//
+// standard-library "`core:math`". Each reads the operand's two's-complement
+// pattern at its type's width, so a signed and an unsigned value with the same
+// bits give the same answer. They are compiler-known because none can be
+// written as one instruction in Loke, and each is one where the CPU level has
+// it: `rol` and `ror` everywhere, `popcnt` from `x86-64-v2`, `lzcnt` and
+// `tzcnt` from `x86-64-v3`, and a short sequence below those. Written over
+// `interfaces.Integral(T)` instead, they would accept a record that has the
+// operators but no width to count or rotate at.
+
+/**
+	The number of set bits in `value`, which is a value of an integer type:
+	`count_ones(u8(0b1011))` is `3`, and `count_ones(i32(-1))` is `32`. A
+	constant argument gives a constant.
+*/
+@(intrinsic)
+count_ones :: proc(value: $T) -> int ---;
+
+/**
+	The number of zero bits above the highest set bit of `value`, which is a
+	value of an integer type. Zero gives the width: `leading_zeros(u32(0))` is
+	`32`, and `leading_zeros(u32(1))` is `31`. A negative value gives `0`. So
+	`width - leading_zeros(x)` is the number of bits `x` needs, and for a
+	non-zero `x` the index of its highest set bit is one less.
+*/
+@(intrinsic)
+leading_zeros :: proc(value: $T) -> int ---;
+
+/**
+	The number of zero bits below the lowest set bit of `value`, which is a
+	value of an integer type, and so the index of that bit. Zero gives the
+	width: `trailing_zeros(u64(0))` is `64`, and `trailing_zeros(u8(0b1000))`
+	is `3`.
+*/
+@(intrinsic)
+trailing_zeros :: proc(value: $T) -> int ---;
+
+/**
+	`value`, which is a value of an integer type, with its bits rotated
+	`count` places toward the high end: the bits shifted out at the top come
+	back in at the bottom. The count is taken modulo the width, floored, so
+	every `int` is defined and a negative count rotates right:
+	`rotate_left(u8(0b1000_0001), 1)` is `0b0000_0011`, and
+	`rotate_left(x, -1) == rotate_right(x, 1)`.
+*/
+@(intrinsic)
+rotate_left :: proc(value: $T, count: int) -> T ---;
+
+/// As `rotate_left`, toward the low end.
+@(intrinsic)
+rotate_right :: proc(value: $T, count: int) -> T ---;
+
 // ------------------------------------------------ platform math bindings --
 //
 // The Windows x64 toolchain links the CRT. Bind each width directly to its
@@ -638,7 +691,7 @@ fused_multiply_add :: proc(a: u64, b: u64, c: u64, precision: int, max_exponent:
 	// Normalize the sum to bit 127 and round at the bit worth the result's
 	// unit in the last place: the format's precision for a normal result, or
 	// the smallest subnormal's for a smaller one.
-	top := leading_zeros_u128(sum);
+	top := leading_zeros(sum);
 	sum <<= top;
 	exponent := high.exponent - top;
 	min_exponent := 1 - max_exponent;
@@ -696,25 +749,9 @@ fused_operand :: proc(bits: u64, precision: int, max_exponent: int) -> Fused_Ope
 // A non-zero term shifted so that its top bit is bit 125.
 @(private)
 fused_align :: proc(term: Fused_Operand) -> Fused_Operand {
-	shift := leading_zeros_u128(term.significand) - 2;
+	shift := leading_zeros(term.significand) - 2;
 	return {negative = term.negative, significand = term.significand << shift,
 		exponent = term.exponent - shift};
-}
-
-// The number of zero bits above the highest set bit of a non-zero `x`.
-@(private)
-leading_zeros_u128 :: proc(x: u128) -> int {
-	count := 0;
-	value := x;
-	width := 64;
-	for (width > 0) {
-		if (value >> (128 - width) == 0) {
-			count += width;
-			value <<= width;
-		}
-		width /= 2;
-	}
-	return count;
 }
 
 /**

@@ -125,6 +125,16 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 			out := temp(e)
 			fmt.sbprintfln(&e.b, "  %s = frem %s %s, %s", out, llvm, x, y)
 			return out
+		case .Math_Count_Ones:
+			return emit_bit_count(e, v, "ctpop")
+		case .Math_Leading_Zeros:
+			return emit_bit_count(e, v, "ctlz")
+		case .Math_Trailing_Zeros:
+			return emit_bit_count(e, v, "cttz")
+		case .Math_Rotate_Left:
+			return emit_rotate(e, v, "fshl")
+		case .Math_Rotate_Right:
+			return emit_rotate(e, v, "fshr")
 		case .Unsafe_Take:
 			return load_place(e, as_type, emit_address(e, v.bound[0]))
 		case .Unsafe_Write:
@@ -170,6 +180,63 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	}
 	backend_fail(e, "an intrinsic call has no builtin symbol")
 	return "0"
+}
+
+// `llvm.ctpop`, `llvm.ctlz`, or `llvm.cttz` (`name`) of an integer operand,
+// widened or narrowed to the `int` result. The zero-operand flag is false, so
+// a zero operand counts as its width rather than as poison.
+@(private = "file")
+emit_bit_count :: proc(e: ^Emitter, v: ^Expr_Call, name: string) -> string {
+	source := expr_base(v.bound[0]).type
+	llvm := llvm_type(e, source)
+	key := fmt.aprintf("llvm.%s.%s", name, llvm)
+	if key not_in e.simd_intrinsics {
+		e.simd_intrinsics[key] = true
+		zero_flag := name == "ctpop" ? "" : ", i1"
+		append(&e.globals, fmt.aprintf("declare %s @%s(%s%s)\n", llvm, key, llvm, zero_flag))
+	}
+	operand := emit_expr(e, v.bound[0])
+	count := temp(e)
+	if name == "ctpop" {
+		fmt.sbprintfln(&e.b, "  %s = call %s @%s(%s %s)", count, llvm, key, llvm, operand)
+	} else {
+		fmt.sbprintfln(&e.b, "  %s = call %s @%s(%s %s, i1 false)", count, llvm, key, llvm, operand)
+	}
+	result := llvm_type(e, TYPE_INT)
+	if llvm == result {
+		return count
+	}
+	out := temp(e)
+	widen := type_bits(e.c, source) < type_bits(e.c, TYPE_INT)
+	fmt.sbprintfln(&e.b, "  %s = %s %s %s to %s", out, widen ? "zext" : "trunc", llvm, count, result)
+	return out
+}
+
+// `llvm.fshl` or `llvm.fshr` (`name`) with the operand as both halves, which
+// rotates it. The funnel shift takes its amount modulo the width, a power of
+// two, so the `int` count's low bits are all it needs, and `trunc` or `zext`
+// keeps them: the floored remainder the specification gives a negative count.
+@(private = "file")
+emit_rotate :: proc(e: ^Emitter, v: ^Expr_Call, name: string) -> string {
+	source := expr_base(v.bound[0]).type
+	llvm := llvm_type(e, source)
+	key := fmt.aprintf("llvm.%s.%s", name, llvm)
+	if key not_in e.simd_intrinsics {
+		e.simd_intrinsics[key] = true
+		append(&e.globals, fmt.aprintf("declare %s @%s(%s, %s, %s)\n", llvm, key, llvm, llvm, llvm))
+	}
+	value := emit_expr(e, v.bound[0])
+	count := emit_expr(e, v.bound[1])
+	count_llvm := llvm_type(e, TYPE_INT)
+	if count_llvm != llvm {
+		narrow := type_bits(e.c, source) < type_bits(e.c, TYPE_INT)
+		converted := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = %s %s %s to %s", converted, narrow ? "trunc" : "zext", count_llvm, count, llvm)
+		count = converted
+	}
+	out := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = call %s @%s(%s %s, %s %s, %s %s)", out, llvm, key, llvm, value, llvm, value, llvm, count)
+	return out
 }
 
 // The checker admits the call only on a target with the instruction, where

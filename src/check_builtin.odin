@@ -54,6 +54,10 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 	case .Math_Sqrt_Instruction, .Math_Floor_Instruction, .Math_Ceil_Instruction, .Math_Trunc_Instruction,
 	     .Math_Round_Instruction, .Math_Mod_Instruction:
 		check_float_instruction_builtin(k, v, ident)
+	case .Math_Count_Ones, .Math_Leading_Zeros, .Math_Trailing_Zeros:
+		check_bit_count_builtin(k, v, ident, sym.builtin)
+	case .Math_Rotate_Left, .Math_Rotate_Right:
+		check_rotate_builtin(k, v, ident, sym.builtin)
 	case .Type_Info_Of:
 		check_type_info_of(k, v)
 	case .Strings_Allocate:
@@ -843,6 +847,90 @@ check_float_instruction_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr
 	}
 	v.bound = bound
 	v.type = operand
+}
+
+// `count_ones(x)`, `leading_zeros(x)`, and `trailing_zeros(x)` take one value
+// of an integer type, distinct ones included, and count bits of its
+// two's-complement pattern; an unfixed constant is an `int`. The count is an
+// `int` whatever the operand's width, as a length is. A vector is refused: the
+// lane-wise forms are not specified.
+@(private = "file")
+check_bit_count_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind) {
+	v.value_category = .Value
+	v.type = INVALID_TYPE
+	if len(v.args) != 1 {
+		errorf(k.c, v.span, "L0738", "`%s` takes 1 argument, found %d", ident.name, len(v.args))
+		return
+	}
+	if !builtin_arguments_ok(k, v) {
+		return
+	}
+	arg := v.args[0].value
+	type := check_single_expr(k, arg)
+	if type == INVALID_TYPE || !materialize(k, arg, default_type(k.c, type)) {
+		return
+	}
+	type = expr_base(arg).type
+	if !type_is_integer(k.c, type) {
+		errorf(k.c, expr_span(arg), "L0738", "`%s` takes a value of an integer type; found `%s`", ident.name, type_name(k.c, type))
+		return
+	}
+	bound := make([]Expr, 1, k.c.semantic_allocator)
+	bound[0] = arg
+	v.bound = bound
+	v.type = TYPE_INT
+	if base := expr_base(arg); base.is_const && base.const_value.kind == .Integer {
+		count := bit_count(k.c, base.const_value.integer, type_bits(k.c, type), kind)
+		v.is_const = true
+		v.const_value = int_const(k.c, i64(count))
+	}
+}
+
+// `rotate_left(x, count)` and `rotate_right(x, count)` take a value of an
+// integer type, as the bit counts do, and an `int` count, and return the
+// operand's type. The count is reduced modulo the width, so a negative one
+// rotates the other way.
+@(private = "file")
+check_rotate_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind) {
+	v.value_category = .Value
+	v.type = INVALID_TYPE
+	if len(v.args) != 2 {
+		errorf(k.c, v.span, "L0738", "`%s` takes 2 arguments, found %d", ident.name, len(v.args))
+		return
+	}
+	if !builtin_arguments_ok(k, v) {
+		return
+	}
+	value, count := v.args[0].value, v.args[1].value
+	type := check_single_expr(k, value)
+	if type == INVALID_TYPE || !materialize(k, value, default_type(k.c, type)) {
+		return
+	}
+	type = expr_base(value).type
+	if !type_is_integer(k.c, type) {
+		errorf(k.c, expr_span(value), "L0738", "`%s` takes a value of an integer type; found `%s`", ident.name, type_name(k.c, type))
+		return
+	}
+	count_type := check_single_expr(k, count)
+	if count_type == INVALID_TYPE {
+		return
+	}
+	if count_type != TYPE_INT && !type_is_untyped(k.c, count_type) {
+		errorf(k.c, expr_span(count), "L0738", "`%s` takes an `int` count; found `%s`", ident.name, type_name(k.c, count_type))
+		return
+	}
+	if !materialize(k, count, TYPE_INT) {
+		return
+	}
+	bound := make([]Expr, 2, k.c.semantic_allocator)
+	bound[0], bound[1] = value, count
+	v.bound = bound
+	v.type = type
+	base, by := expr_base(value), expr_base(count)
+	if base.is_const && base.const_value.kind == .Integer && by.is_const && by.const_value.kind == .Integer {
+		v.is_const = true
+		v.const_value = integer_const(rotate_const(k.c, k.c, base.const_value.integer, by.const_value.integer, type, kind))
+	}
 }
 
 // An enum source wraps its backing value; a destination is a plain integer.

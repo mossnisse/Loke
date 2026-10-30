@@ -1,0 +1,13 @@
+declare i64 @llvm.ctpop.i64(i64)
+declare i8 @llvm.ctlz.i8(i8, i1)
+declare i128 @llvm.cttz.i128(i128, i1)
+declare i64 @llvm.fshl.i64(i64, i64, i64)
+declare i8 @llvm.fshr.i8(i8, i8, i8)
+call i64 @llvm.ctpop.i64(i64
+call i8 @llvm.ctlz.i8(i8 %*, i1 false)
+= zext i8 %* to i64
+call i128 @llvm.cttz.i128(i128 %*, i1 false)
+= trunc i128 %* to i64
+call i64 @llvm.fshl.i64(i64
+= trunc i64 %* to i8
+call i8 @llvm.fshr.i8(i8
