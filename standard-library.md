@@ -223,6 +223,9 @@ Operation :: enum {
 	Spawn,
 	Wait,
 	Kill,
+	Set_Size,
+	Lock,
+	Unlock,
 	Other,
 }
 
@@ -1799,6 +1802,8 @@ impl File {
 	seek    :: proc(self: inout File, offset: i64, origin: Seek_Origin)
 		-> Result(u64, io.Error);
 	flush   :: proc(self: inout File) -> Status(io.Error);
+	set_size :: proc(self: inout File, size: u64) -> Status(io.Error);
+	metadata :: proc(self) -> Result(Metadata, io.Error);
 	close   :: proc(self: inout File) -> Status(io.Error);
 	is_open :: proc(self) -> bool;
 }
@@ -1808,8 +1813,8 @@ Because structural interface satisfaction is determined by the static type,
 `File` satisfies both `io.Reader` and `io.Writer`: it has both slots regardless of
 the options used for a particular instance. The open mode is checked at runtime:
 using an unsupported direction returns `Unsupported`, and a nonempty read or
-write, or a seek, on a closed file returns `Closed`; `flush` and `close` on a
-closed file succeed. A disposition that truncates needs `Write` or
+write, a seek, a `set_size`, or a `metadata` on a closed file returns `Closed`;
+`flush` and `close` on a closed file succeed. A disposition that truncates needs `Write` or
 `Read_Write` access, and `Truncate_Existing` cannot be combined with `append`
 (Windows truncates an existing file only for a caller holding the full write
 right, which append mode gives up); `open` answers `Unsupported` for either
@@ -1821,6 +1826,127 @@ multiple writes from multiple processes into one atomic transaction.
 the storage device, so they survive a crash or power loss as far as the device
 honors the request. `File` keeps no buffer of its own, so there is no weaker
 meaning for `flush` to have.
+
+`set_size` makes the file exactly `size` bytes long. A smaller size discards
+the bytes past it; a larger one adds bytes that read as zero. The position does
+not move, so a position past the new end is where the next write begins, and
+the bytes between read as zero; in append mode the next write begins at the new
+end. It needs `Write` or `Read_Write` access, and `Read` answers `Unsupported`.
+Append mode does not prevent it: the change is made through the file's own
+write right, so a caller whose access check allows only appending gets
+`Permission_Denied`. A size above `2^63 - 1`, which no signed 64-bit file
+offset can hold, is `Unsupported`. Like a write, the new size is durable once
+`flush` returns. Its failures carry the operation `Set_Size`.
+
+`metadata` answers what [`fs.metadata`](#filesystem-operations) would, asked of
+the open file rather than a name, so the answer follows the file through a
+rename. Every access mode can ask.
+
+Example (imports `core:fs` and `core:io`): a log of newline-ended records, open
+for append, is cut back to its last whole record after a crash, so the next
+record does not follow a torn one.
+
+```loke
+recover_tail :: proc(log: inout fs.File, whole: u64) -> Status(io.Error) {
+	log.set_size(whole) or_return;
+	return log.flush();
+}
+```
+
+### Positional I/O
+
+```loke
+impl File {
+	read_at       :: proc(self: inout File, destination: []mut u8, offset: u64)
+		-> Result(int, io.Error);
+	write_at      :: proc(self: inout File, source: []u8, offset: u64)
+		-> Result(int, io.Error);
+	read_exact_at :: proc(self: inout File, destination: []mut u8, offset: u64)
+		-> Status(io.Error);
+	write_all_at  :: proc(self: inout File, source: []u8, offset: u64)
+		-> Status(io.Error);
+}
+```
+
+`read_at` and `write_at` are `read` and `write` at `offset` rather than the
+position, each in one system call, so no seek is made for anything to come
+between. They check the access and a closed file as `read` and `write` do, and
+an empty buffer answers zero. A read that reaches the end of the file is short;
+one that starts at or past the end is `End_Of_Input`. A write past the end
+extends the file, and the bytes between read as zero. An append handle reads
+at any offset, but `write_at` on it is `Unsupported`, since it writes only at
+the end. An offset above `2^63 - 1` is `Unsupported`. After either call the
+position is unspecified: seek before the next `read` or `write`.
+
+`read_exact_at` and `write_all_at` loop over short transfers, with the
+contracts of `io.read_exact` and `io.write_all`: a file that ends before
+`destination` is full is `Unexpected_End`, and a failure part way has already
+moved the bytes before it.
+
+Example (imports `core:fs` and `core:io`): a fixed-size page of a store,
+read and written in place.
+
+```loke
+PAGE :: 4096;
+
+read_page :: proc(store: inout fs.File, page: u64, into: []mut u8) -> Status(io.Error) {
+	return store.read_exact_at(&mut into[0:PAGE], page * PAGE);
+}
+
+write_page :: proc(store: inout fs.File, page: u64, from: []u8) -> Status(io.Error) {
+	return store.write_all_at(from[0:PAGE], page * PAGE);
+}
+```
+
+### File locking
+
+```loke
+Lock_Mode :: enum {Shared, Exclusive}
+
+impl File {
+	lock     :: proc(self: inout File, mode: Lock_Mode) -> Status(io.Error);
+	try_lock :: proc(self: inout File, mode: Lock_Mode) -> Result(bool, io.Error);
+	unlock   :: proc(self: inout File) -> Status(io.Error);
+}
+```
+
+A lock covers the whole file and belongs to the handle that took it, so a
+second handle to the same file, in the same program or another, contends for
+it like any other. A `Shared` lock admits other shared locks and keeps out an
+exclusive one; an `Exclusive` lock keeps out every other lock. `lock` waits for
+as long as a lock that keeps it out is held; `try_lock` answers `false` instead
+and leaves the handle unlocked.
+
+The lock is advisory: only `lock` and `try_lock` respect it, so reads, writes,
+`set_size`, and every whole-file operation go on through any handle as before.
+It is a way for cooperating programs to agree, such as a store that must have
+one writer, not a protection against a program that does not ask.
+
+A handle holds one lock at a time: `lock` or `try_lock` while it holds one is
+`Unsupported`, so changing the mode means `unlock` first, and another handle
+can take the lock in between. `unlock`
+on a handle holding no lock, a closed one included, succeeds. `close` and
+`drop` release the lock, and so does the program ending however it ends, so a
+crash leaves no stale lock behind. `lock` and `try_lock` on a closed file are
+`Closed`. Every handle can lock except one opened `Write` with `append`, which
+is `Unsupported`: Windows locks only for a handle that may read or may write
+anywhere, and append mode gives up the second. Failures carry the operations
+`Lock` and `Unlock`.
+
+Example (imports `core:fs` and `core:io`): a store refuses to open while
+another program has it open for writing.
+
+```loke
+open_store :: proc(path: string_view) -> Result(fs.File, io.Error) {
+	store := fs.open(path, fs.Open_Options{
+		access = .Read_Write, disposition = .Open_Or_Create, append = false,
+	}) or_return;
+	if (!(store.try_lock(.Exclusive) or_return)) {
+		return .err(io.make_error(.Permission_Denied, .Lock));
+	}
+	return move(store);
+}
+```
 
 ### Whole-file convenience
 

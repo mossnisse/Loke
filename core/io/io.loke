@@ -81,6 +81,9 @@ Operation :: enum {
 	Spawn,
 	Wait,
 	Kill,
+	Set_Size,
+	Lock,
+	Unlock,
 	Other,
 }
 
