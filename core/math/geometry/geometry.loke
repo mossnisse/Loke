@@ -1,6 +1,15 @@
 /**
-	Exact geometric predicates over `core:math/linalg`'s vectors, with the
-	same result everywhere.
+	Shapes and exact geometric predicates over `core:math/linalg`'s vectors,
+	with the same bits everywhere.
+
+	`Aabb2` and `Aabb3` are boxes by their corners, `Circle` and `Sphere`
+	discs and balls, `Plane` the points with `dot(normal, p) == offset`, and
+	`Segment2`, `Segment3`, `Triangle2`, and `Triangle3` the shapes their
+	points span. Every one is closed: it contains its boundary, so shapes that
+	touch intersect. A box with a minimum above its maximum, or a NaN corner,
+	is empty. Literals from another package name their fields, so each shape
+	has a constructor: `from_min_max`, `from_corners`, `from_center_radius`,
+	`from_normal_offset`, or `from_points`.
 
 	`orient2d`, `orient3d`, `incircle`, and `insphere` return the exact sign of
 	their determinant for `f32` and `f64` coordinates, as if computed in real
@@ -12,9 +21,10 @@
 	overflow, and other number types its sign as computed.
 
 	Every result is the same on every machine, CPU level, and optimization
-	level, and at compile time.
+	level, and at compile time for whatever does not reach a square root,
+	which calls a foreign procedure.
 */
-// geometry-plan.md is the design this package implements, milestone 1.
+// geometry-plan.md is the design this package implements, milestones 1 and 2.
 @(public)
 package geometry;
 

@@ -1,0 +1,196 @@
+// geometry-plan.md "Every solid is closed": segments and triangles, and their
+// closest points, Ericson's (Real-Time Collision Detection, 2005, 5.1.2 and
+// 5.1.5), written once over the vector type for both dimensions. Each region
+// test compares the dot products it computes, so a point exactly on a
+// boundary gets that boundary's answer.
+@(public)
+package geometry;
+
+import "base:interfaces";
+import "core:math/linalg";
+
+/// The points from `a` to `b`, both ends included.
+Segment2 :: struct($T: type) where interfaces.Numeric(T) { a, b: linalg.Vector2(T) }
+/// The points from `a` to `b`, both ends included.
+Segment3 :: struct($T: type) where interfaces.Numeric(T) { a, b: linalg.Vector3(T) }
+
+/// The solid triangle with corners `a`, `b`, and `c`, its edges included.
+Triangle2 :: struct($T: type) where interfaces.Numeric(T) { a, b, c: linalg.Vector2(T) }
+/// The solid triangle with corners `a`, `b`, and `c`, its edges included.
+Triangle3 :: struct($T: type) where interfaces.Numeric(T) { a, b, c: linalg.Vector3(T) }
+
+// The point of the segment from `a` to `b` nearest `p`: `a` when the
+// projection's parameter is at most 0, which covers a segment of no length,
+// `b` when it is at least 1, and `a + (b - a)*t` between.
+@(private)
+closest_on_segment :: proc(a, b, p: $V, zero: $T) -> V where linalg.Real(T) {
+	ab := b - a;
+	t := (p - a).dot(ab);
+	if (at_most(t, zero)) { return a; }
+	length := ab.dot(ab);
+	if (at_most(length, t)) { return b; }
+	return a + ab*(t/length);
+}
+
+// Ericson's closest point on a triangle by its Voronoi regions: a corner, an
+// edge, or the inside. A triangle of no area, whose inside region is empty,
+// takes the nearest of its edges' points.
+@(private)
+closest_on_triangle :: proc(a, b, c, p: $V, zero: $T) -> V where linalg.Real(T) {
+	ab := b - a;
+	ac := c - a;
+	ap := p - a;
+	d1 := ab.dot(ap);
+	d2 := ac.dot(ap);
+	if (at_most(d1, zero) && at_most(d2, zero)) { return a; }
+	bp := p - b;
+	d3 := ab.dot(bp);
+	d4 := ac.dot(bp);
+	if (at_most(zero, d3) && at_most(d4, d3)) { return b; }
+	vc := d1*d4 - d3*d2;
+	if (at_most(vc, zero) && at_most(zero, d1) && at_most(d3, zero)) {
+		return a + ab*(d1/(d1 - d3));
+	}
+	cp := p - c;
+	d5 := ab.dot(cp);
+	d6 := ac.dot(cp);
+	if (at_most(zero, d6) && at_most(d5, d6)) { return c; }
+	vb := d5*d2 - d1*d6;
+	if (at_most(vb, zero) && at_most(zero, d2) && at_most(d6, zero)) {
+		return a + ac*(d2/(d2 - d6));
+	}
+	va := d3*d6 - d5*d4;
+	if (at_most(va, zero) && at_most(zero, d4 - d3) && at_most(zero, d5 - d6)) {
+		return b + (c - b)*((d4 - d3)/((d4 - d3) + (d5 - d6)));
+	}
+	total := va + vb + vc;
+	if (!(zero < total)) {
+		on_ab := closest_on_segment(a, b, p, zero);
+		on_bc := closest_on_segment(b, c, p, zero);
+		on_ca := closest_on_segment(c, a, p, zero);
+		best := on_ab;
+		if ((p - on_bc).dot(p - on_bc) < (p - best).dot(p - best)) { best = on_bc; }
+		if ((p - on_ca).dot(p - on_ca) < (p - best).dot(p - best)) { best = on_ca; }
+		return best;
+	}
+	return a + ab*(vb/total) + ac*(vc/total);
+}
+
+// Ericson's barycentric coordinates of `p` projected onto the triangle's
+// plane, or `.none` when the triangle has no area: the Gram determinant
+// `d00 d11 - d01^2` is not positive and normal.
+@(private)
+barycentric_of :: proc(a, b, c, p: $V, zero: $T) -> Option(linalg.Vector3(T)) where linalg.Real(T) {
+	v0 := b - a;
+	v1 := c - a;
+	v2 := p - a;
+	d00 := v0.dot(v0);
+	d01 := v0.dot(v1);
+	d11 := v1.dot(v1);
+	d20 := v2.dot(v0);
+	d21 := v2.dot(v1);
+	denominator := d00*d11 - d01*d01;
+	if (!(zero < denominator) || !denominator.is_normal()) { return .none; }
+	v := (d11*d20 - d01*d21)/denominator;
+	w := (d00*d21 - d01*d20)/denominator;
+	return .some(linalg.Vector3(T).from_components(T(1) - v - w, v, w));
+}
+
+impl Segment2($T) {
+	from_points :: proc(a, b: linalg.Vector2(T)) -> Segment2(T) { return {a, b}; }
+	length :: proc(self) -> T where linalg.Real(T) { return (self.b - self.a).length(); }
+	bounds :: proc(self) -> Aabb2(T) where interfaces.Ordered(T) { return Aabb2(T).from_corners(self.a, self.b); }
+	/// The point of the segment nearest `p`.
+	closest_point :: proc(self, p: linalg.Vector2(T)) -> linalg.Vector2(T) where linalg.Real(T) {
+		return closest_on_segment(self.a, self.b, p, T(0));
+	}
+	distance_squared :: proc(self, p: linalg.Vector2(T)) -> T where linalg.Real(T) {
+		return (p - self.closest_point(p)).length_squared();
+	}
+	distance :: proc(self, p: linalg.Vector2(T)) -> T where linalg.Real(T) { return self.distance_squared(p).sqrt(); }
+}
+
+impl Segment3($T) {
+	from_points :: proc(a, b: linalg.Vector3(T)) -> Segment3(T) { return {a, b}; }
+	length :: proc(self) -> T where linalg.Real(T) { return (self.b - self.a).length(); }
+	bounds :: proc(self) -> Aabb3(T) where interfaces.Ordered(T) { return Aabb3(T).from_corners(self.a, self.b); }
+	/// The point of the segment nearest `p`.
+	closest_point :: proc(self, p: linalg.Vector3(T)) -> linalg.Vector3(T) where linalg.Real(T) {
+		return closest_on_segment(self.a, self.b, p, T(0));
+	}
+	distance_squared :: proc(self, p: linalg.Vector3(T)) -> T where linalg.Real(T) {
+		return (p - self.closest_point(p)).length_squared();
+	}
+	distance :: proc(self, p: linalg.Vector3(T)) -> T where linalg.Real(T) { return self.distance_squared(p).sqrt(); }
+}
+
+impl Triangle2($T) {
+	from_points :: proc(a, b, c: linalg.Vector2(T)) -> Triangle2(T) { return {a, b, c}; }
+	/**
+		Whether `p` is in the triangle, its edges included, from three exact
+		`orient2d` tests, so it is exact for `f32`, `f64`, and integers and
+		holds for either winding. A triangle of no area is the segment, or
+		the point, its corners span.
+	*/
+	contains :: proc(self, p: linalg.Vector2(T)) -> bool where interfaces.Ordered(T) {
+		s1 := orient2d(self.a, self.b, p);
+		s2 := orient2d(self.b, self.c, p);
+		s3 := orient2d(self.c, self.a, p);
+		if (s1 == .Zero && s2 == .Zero && s3 == .Zero) {
+			// On the line of a degenerate triangle: inside its span.
+			return self.bounds().contains(p);
+		}
+		has_positive := s1 == .Positive || s2 == .Positive || s3 == .Positive;
+		has_negative := s1 == .Negative || s2 == .Negative || s3 == .Negative;
+		return !(has_positive && has_negative);
+	}
+	/// Half the absolute cross product of two edges.
+	area :: proc(self) -> T where linalg.Real(T) { return (self.b - self.a).cross(self.c - self.a).abs()*T(0.5); }
+	bounds :: proc(self) -> Aabb2(T) where interfaces.Ordered(T) {
+		return Aabb2(T).from_corners(self.a, self.b).union(self.c);
+	}
+	/// The point of the triangle nearest `p`: `p` itself when `contains(p)`, and otherwise a point of an edge.
+	closest_point :: proc(self, p: linalg.Vector2(T)) -> linalg.Vector2(T) where linalg.Real(T) {
+		if (self.contains(p)) { return p; }
+		return closest_on_triangle(self.a, self.b, self.c, p, T(0));
+	}
+	distance_squared :: proc(self, p: linalg.Vector2(T)) -> T where linalg.Real(T) {
+		return (p - self.closest_point(p)).length_squared();
+	}
+	distance :: proc(self, p: linalg.Vector2(T)) -> T where linalg.Real(T) { return self.distance_squared(p).sqrt(); }
+	/**
+		`(u, v, w)` with `p = u a + v b + w c` and `u + v + w = 1`, or `.none`
+		for a triangle of no area.
+	*/
+	barycentric :: proc(self, p: linalg.Vector2(T)) -> Option(linalg.Vector3(T)) where linalg.Real(T) {
+		return barycentric_of(self.a, self.b, self.c, p, T(0));
+	}
+}
+
+impl Triangle3($T) {
+	from_points :: proc(a, b, c: linalg.Vector3(T)) -> Triangle3(T) { return {a, b, c}; }
+	/// The unit normal toward the side from which `a`, `b`, `c` appear counterclockwise, or `.none` for no area.
+	normal :: proc(self) -> Option(linalg.Vector3(T)) where linalg.Real(T) {
+		return (self.b - self.a).cross(self.c - self.a).normalize();
+	}
+	/// Half the length of the cross product of two edges.
+	area :: proc(self) -> T where linalg.Real(T) { return (self.b - self.a).cross(self.c - self.a).length()*T(0.5); }
+	bounds :: proc(self) -> Aabb3(T) where interfaces.Ordered(T) {
+		return Aabb3(T).from_corners(self.a, self.b).union(self.c);
+	}
+	/// The point of the triangle nearest `p`.
+	closest_point :: proc(self, p: linalg.Vector3(T)) -> linalg.Vector3(T) where linalg.Real(T) {
+		return closest_on_triangle(self.a, self.b, self.c, p, T(0));
+	}
+	distance_squared :: proc(self, p: linalg.Vector3(T)) -> T where linalg.Real(T) {
+		return (p - self.closest_point(p)).length_squared();
+	}
+	distance :: proc(self, p: linalg.Vector3(T)) -> T where linalg.Real(T) { return self.distance_squared(p).sqrt(); }
+	/**
+		`(u, v, w)` of `p`'s projection onto the triangle's plane, with
+		`u + v + w = 1`, or `.none` for a triangle of no area.
+	*/
+	barycentric :: proc(self, p: linalg.Vector3(T)) -> Option(linalg.Vector3(T)) where linalg.Real(T) {
+		return barycentric_of(self.a, self.b, self.c, p, T(0));
+	}
+}

@@ -370,7 +370,11 @@ checklist.
 - `core:math/geometry` has the exact predicates `orient2d`, `orient3d`,
   `incircle`, and `insphere`, which return the sign of their determinant
   exactly for `f32` and `f64` coordinates, by Shewchuk's adaptive method, and
-  for integers that do not overflow
+  for integers that do not overflow; and closed shapes over `linalg`'s
+  vectors, `Aabb2`, `Aabb3`, `Circle`, `Sphere`, `Plane`, `Segment2`,
+  `Segment3`, `Triangle2`, and `Triangle3`, with box algebra, `contains`,
+  closest points, distances, barycentric coordinates, and `intersects`
+  between boxes, circles, spheres, and planes, exact for integers
   ([`core:math/geometry`](standard-library.md#coremathgeometry)).
 
 ### Changed

@@ -143,7 +143,7 @@ core:math             elementary functions, Complex, Quaternion
 core:math/repro       correctly rounded elementary functions
 core:math/linalg      fixed-size vectors, matrices, rotations, projections
 core:math/dense       run-time-sized matrices, views, LU, Cholesky, QR, eigenvalues, SVD
-core:math/geometry    exact orientation and in-circle predicates
+core:math/geometry    boxes, spheres, planes, segments, triangles, exact predicates
 core:random           seeded generators, entropy, distributions
 core:time             clocks, durations, the calendar, ISO 8601 text
 core:slice            slice algorithms and sorting            *
@@ -2720,9 +2720,9 @@ to share runs on the calling thread.
 
 ## `core:math/geometry`
 
-Exact geometric predicates over `core:math/linalg`'s vectors, the first part of
-the [geometry library plan](geometry-plan.md), whose shapes and queries follow
-in its later milestones.
+Shapes and exact geometric predicates over `core:math/linalg`'s vectors, from
+the [geometry library plan](geometry-plan.md), whose rays, frustums, and
+polygons follow in its later milestones.
 
 `orient2d(a, b, c)`, `orient3d(a, b, c, d)`, `incircle(a, b, c, d)`, and
 `insphere(a, b, c, d, e)` return a `Sign`, `.Negative`, `.Zero`, or
@@ -2755,9 +2755,64 @@ Integer coordinates take the plain determinant, which is exact and panics if
 it overflows, and other ordered number types take its sign as computed.
 `insphere`'s exact path uses about 120 KB of stack.
 
-The predicates call no foreign procedure, so they are evaluated at compile
-time with the same result, and they give the same result on every machine,
-[CPU level](compiler-guide.md#cpu-levels), and optimization level.
+The shapes are records over the vectors, `Aabb2(T)` and `Aabb3(T)` with
+`min` and `max`, `Circle(T)` and `Sphere(T)` with `center` and `radius`,
+`Plane(T)` with `normal` and `offset`, `Segment2(T)` and `Segment3(T)` with
+`a` and `b`, and `Triangle2(T)` and `Triangle3(T)` with `a`, `b`, and `c`.
+Each contains its boundary, so shapes that touch intersect and `contains` is
+true on a face. A literal from another package names its fields, so each has
+a constructor: `from_min_max` (as given), `from_corners` (sorted),
+`from_point`, and `from_points` for boxes, `from_center_radius`,
+`from_normal_offset`, and `from_points` for the others.
+
+- **Boxes** are empty when a minimum exceeds its maximum, or a corner is NaN:
+  an empty box contains no point, is in every box, intersects nothing, and
+  adds nothing to `union`. `Aabb3(T).empty()`, `min = +inf` and
+  `max = -inf`, is where a bound accumulates from, for a `Real` `T`; an
+  integer box starts from `from_point` or `from_points`, which is `.none` for
+  no points. `contains` takes a point or a box, `union` a box or a point, and
+  `intersection` gives an empty box for disjoint ones. `expand(amount)` moves
+  every face out, `size` is `max - min`, `doubled_center` `min + max`,
+  `center` `min*0.5 + max*0.5`, which cannot overflow, `corner(index)` takes
+  `max` on the axes whose bit is set, and `area`, `perimeter`, `volume`, and
+  `surface_area` are 0 for an empty box. `closest_point` and
+  `distance_squared` need only comparison and arithmetic, so they are exact
+  for integers; they and `distance` panic for an empty box, which has no
+  nearest point.
+- **Circles and spheres** have `contains`, `|p - center|^2 <= radius^2`,
+  exact for integers, `bounds`, and, for a `Real` `T`, `closest_point`, which
+  is `p` inside, and `distance`, which is 0 inside. A negative or NaN radius
+  describes no set, so every member panics on one.
+- **Planes** come from `from_point_normal` and `from_points`, which normalize
+  the normal, `from_points` toward the side from which the three points turn
+  counterclockwise, and return `.none` for a normal that does not normalize.
+  `signed_distance(p)` is `dot(normal, p) - offset`, positive on the normal's
+  side; `project` and the distances assume a unit normal. `flip` swaps the
+  sides, and `intersection_point(a, b, c)` is the one point of three planes,
+  `.none` when they share a line or two are parallel.
+- **Segments and triangles** have `closest_point`, `distance_squared`, and
+  `distance` (Ericson's Voronoi regions, so a point on a region's boundary
+  gets that boundary's answer), `bounds`, `length` or `area`, and
+  `barycentric(p)`, the `(u, v, w)` of `p`, projected onto the plane in 3D,
+  `.none` for a triangle of no area. A segment of no length is its point, and
+  a triangle of no area is the segment its corners span. `Triangle3.normal`
+  points toward the side from which `a`, `b`, `c` turn counterclockwise.
+  `Triangle2.contains` is three exact `orient2d` tests, so it is exact on its
+  edges for `f32`, `f64`, and integers, for either winding, and
+  `Triangle2.closest_point` of a point it contains is that point.
+
+`intersects(a, b)` takes two boxes, two circles, two spheres, a circle and a
+box, a sphere and a box, a sphere and a plane, or a box and a plane, in either
+order. A box and a plane intersect when the plane separates or touches the two
+corners farthest apart along its normal, each corner's distance computed from
+the corner itself. Every test compares the values it computes, so integer
+boxes, circles, and planes intersect exactly.
+
+Everything that does not reach `math.sqrt`, the predicates, the box algebra,
+the planes' intersection point, and the segments' and triangles' closest
+points, is evaluated at compile time with the same result, and every result is
+the same bits on every machine, [CPU level](compiler-guide.md#cpu-levels), and
+optimization level.
 
 ## `core:random`
 

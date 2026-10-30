@@ -125,9 +125,10 @@ of the [dense matrix plan](dense-matrix-plan.md#milestones): storage, views,
 products, LU, Cholesky, QR, least squares, the symmetric and Hermitian
 eigensolver, the SVD, measured `Simd`, blocked, and pooled kernels, and
 complex elements through `linalg.Scalar`.
-[`core:math/geometry`](standard-library.md#coremathgeometry) has the first
-milestone of the [geometry library plan](geometry-plan.md#milestones), the
-exact predicates; its shapes and the queries between them follow.
+[`core:math/geometry`](standard-library.md#coremathgeometry) has the first two
+milestones of the [geometry library plan](geometry-plan.md#milestones), the
+exact predicates and the shapes with their point queries; rays, frustums, and
+polygons follow.
 
 [`core:encoding/json`](standard-library.md#coreencodingjson) still needs this
 evidence, in this order; its open design questions are in

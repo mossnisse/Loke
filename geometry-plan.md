@@ -1,8 +1,9 @@
 # Geometry library plan
 
-Status: milestone 1 implemented, 2026-10-30
-([Milestone 1 results](#milestone-1-results)), after its questions were
-settled the same day ([Settled questions](#settled-questions)); milestones 2
+Status: milestones 1 and 2 implemented, 2026-10-30
+([Milestone 1 results](#milestone-1-results),
+[Milestone 2 results](#milestone-2-results)), after its questions were
+settled the same day ([Settled questions](#settled-questions)); milestones 3
 to 5 are proposals.
 [`core:math/geometry`](standard-library.md#coremathgeometry) documents what
 has shipped. This document specifies a
@@ -387,7 +388,8 @@ Ordered by how much the later parts build on the earlier ones:
    types, with the expansion arithmetic they need. Everything exact later in
    the package is built on these, so they are first, with their tests against
    exact arithmetic.
-2. **Shapes and point queries.** `Aabb2`, `Aabb3`, `Circle`, `Sphere`,
+2. **Shapes and point queries.** Done
+   ([Milestone 2 results](#milestone-2-results)). `Aabb2`, `Aabb3`, `Circle`, `Sphere`,
    `Plane`, `Segment2`, `Segment3`, `Triangle2`, and `Triangle3`; their
    construction, `contains`, `closest_point`, and distances; box algebra; and
    the overlap tests between boxes, spheres, circles, and planes.
@@ -563,3 +565,62 @@ Decided while implementing:
   120 KB**, in that procedure's frame only, so the common path's frame stays
   small. Threads get the operating system's default stack, 1 MB on Windows,
   and `core:math/dense` already uses 80 KB on its workers.
+
+## Milestone 2 results
+
+Done 2026-10-30: the shapes of milestone 2, with
+`tests/run/lib_geometry_shapes.loke`, in the CPU-level corpus, and
+`tests/trap/geometry_empty_box.loke` and `geometry_negative_radius.loke`. The
+test checks:
+
+- box algebra at `i32`, `f32`, and `f64`: sorting corners, empty boxes
+  reversed and with a NaN corner, `union`'s identity, a point box, disjoint
+  and touching intersections, the measures, and a center near the largest
+  float;
+- the closed-set boundaries exactly: a box's faces, an integer circle's
+  boundary, a sphere's surface and the next float past it, touching boxes,
+  circles, spheres, and planes, and a box and a plane through its corner;
+- each Voronoi region of a triangle, and closest points of 300 random
+  triangles against a sampled triangle of 861 points, none nearer by more
+  than `1e-12`, each closest point inside by its barycentric coordinates;
+- degenerate shapes: a segment of no length, triangles of no area and of one
+  point, collinear points with no plane, parallel planes;
+- a dual number's derivative of the sphere, box, segment, triangle, and plane
+  distances against `(p - q).x/|p - q|`;
+- that the triangle's and segment's closest points, three planes' point, and a
+  box distance fold at compile time to the run-time bits.
+
+Its output is the same at `-opt=minimal`, `speed`, `size`, and `aggressive`
+and at both CPU levels. Fifteen of sixteen planted bugs fail it; the
+sixteenth, a degenerate triangle's fallback skipping one of its three edges,
+is equivalent: when the corners are collinear, the other two edges always
+cover the span. The fallback keeps all three for a triangle that rounding
+alone makes degenerate.
+
+Decided while implementing:
+
+- **Constructors for every shape.** A literal from another package must name
+  its fields ([Struct literals](design.md#struct-literals)), as `linalg`'s
+  vectors found, so each shape has one: `from_min_max` (as given) beside
+  `from_corners` (sorted), `from_center_radius`, `from_normal_offset`, and
+  `from_points`.
+- **More of the boxes need only `Ordered`.** `closest_point`,
+  `distance_squared`, and the four measures clamp, compare, and multiply, so
+  integer boxes get them exactly; only `empty`, `center`, and `distance` need
+  `Real`.
+- **An empty box has no nearest point.** `closest_point`, `distance_squared`,
+  and `distance` panic for one, since any answer would be a point outside it;
+  `contains`, `intersects`, `union`, and the measures each have an answer and
+  give it.
+- **A negative or NaN radius panics.** It describes no set a caller meant, as
+  reversed bounds do for `math.clamp`, and treating it as empty would make
+  `contains` with `r*r` silently true.
+- **`Triangle2.closest_point` returns a point the exact `contains` accepts**,
+  rather than Ericson's barycentric combination, which is an ulp off for some
+  inside points.
+- **A box and a plane** are compared by the two corners farthest apart along
+  the normal, each corner's distance computed from the corner, rather than by
+  the center and the projected extent, which round twice; the test is then
+  exact for integers.
+- **`intersects` has no box-point member**: `contains` is that test, and one
+  name for it is enough.

@@ -1,0 +1,2 @@
+loke: panic: geometry.Circle and geometry.Sphere need a radius that is not negative or NaN
+loke: panicked

@@ -1,0 +1,125 @@
+// geometry-plan.md "Every solid is closed": two shapes intersect when they
+// share a point, so touching ones do. Each test compares the values it
+// computes, exactly for integers, and an empty box intersects nothing.
+@(public)
+package geometry;
+
+import "base:interfaces";
+import "core:math/linalg";
+
+/**
+	Whether two closed shapes share a point, touching included: two boxes,
+	two circles, two spheres, a circle and a box, a sphere and a box, a sphere
+	and a plane, or a box and a plane, in either order. Box and circle tests
+	need only arithmetic and comparison, so integer shapes get them exactly; an
+	empty box intersects nothing, and a negative or NaN radius panics. A plane
+	test takes the plane's normal as a unit vector.
+*/
+intersects :: proc{
+	intersects_box2_box2,
+	intersects_box3_box3,
+	intersects_circle_circle,
+	intersects_sphere_sphere,
+	intersects_circle_box2,
+	intersects_box2_circle,
+	intersects_sphere_box3,
+	intersects_box3_sphere,
+	intersects_sphere_plane,
+	intersects_plane_sphere,
+	intersects_box3_plane,
+	intersects_plane_box3,
+};
+
+@(private)
+intersects_box2_box2 :: proc(a, b: Aabb2($T)) -> bool where interfaces.Ordered(T) {
+	if (a.is_empty() || b.is_empty()) { return false; }
+	return at_most(a.min.x, b.max.x) && at_most(b.min.x, a.max.x)
+		&& at_most(a.min.y, b.max.y) && at_most(b.min.y, a.max.y);
+}
+
+@(private)
+intersects_box3_box3 :: proc(a, b: Aabb3($T)) -> bool where interfaces.Ordered(T) {
+	if (a.is_empty() || b.is_empty()) { return false; }
+	return at_most(a.min.x, b.max.x) && at_most(b.min.x, a.max.x)
+		&& at_most(a.min.y, b.max.y) && at_most(b.min.y, a.max.y)
+		&& at_most(a.min.z, b.max.z) && at_most(b.min.z, a.max.z);
+}
+
+// `|a.center - b.center|^2 <= (a.radius + b.radius)^2`.
+@(private)
+intersects_circle_circle :: proc(a, b: Circle($T)) -> bool where interfaces.Ordered(T) {
+	check_radius(a.radius);
+	check_radius(b.radius);
+	reach := a.radius + b.radius;
+	return at_most((a.center - b.center).length_squared(), reach*reach);
+}
+
+@(private)
+intersects_sphere_sphere :: proc(a, b: Sphere($T)) -> bool where interfaces.Ordered(T) {
+	check_radius(a.radius);
+	check_radius(b.radius);
+	reach := a.radius + b.radius;
+	return at_most((a.center - b.center).length_squared(), reach*reach);
+}
+
+// The box's squared distance from the center at most the squared radius.
+@(private)
+intersects_circle_box2 :: proc(circle: Circle($T), box: Aabb2(T)) -> bool where interfaces.Ordered(T) {
+	check_radius(circle.radius);
+	if (box.is_empty()) { return false; }
+	return at_most(box.distance_squared(circle.center), circle.radius*circle.radius);
+}
+
+@(private)
+intersects_box2_circle :: proc(box: Aabb2($T), circle: Circle(T)) -> bool where interfaces.Ordered(T) {
+	return intersects_circle_box2(circle, box);
+}
+
+@(private)
+intersects_sphere_box3 :: proc(sphere: Sphere($T), box: Aabb3(T)) -> bool where interfaces.Ordered(T) {
+	check_radius(sphere.radius);
+	if (box.is_empty()) { return false; }
+	return at_most(box.distance_squared(sphere.center), sphere.radius*sphere.radius);
+}
+
+@(private)
+intersects_box3_sphere :: proc(box: Aabb3($T), sphere: Sphere(T)) -> bool where interfaces.Ordered(T) {
+	return intersects_sphere_box3(sphere, box);
+}
+
+// `-radius <= signed_distance(center) <= radius`.
+@(private)
+intersects_sphere_plane :: proc(sphere: Sphere($T), plane: Plane(T)) -> bool where linalg.Real(T) {
+	check_radius(sphere.radius);
+	d := plane.signed_distance(sphere.center);
+	return at_most(-sphere.radius, d) && at_most(d, sphere.radius);
+}
+
+@(private)
+intersects_plane_sphere :: proc(plane: Plane($T), sphere: Sphere(T)) -> bool where linalg.Real(T) {
+	return intersects_sphere_plane(sphere, plane);
+}
+
+// The plane separates or touches the two corners farthest apart along its
+// normal: the one each of whose coordinates is the minimum where the normal is
+// positive and the maximum elsewhere, and its opposite. Each corner's signed
+// distance is computed from the corner itself, with no center or extent.
+@(private)
+intersects_box3_plane :: proc(box: Aabb3($T), plane: Plane(T)) -> bool where interfaces.Ordered(T) {
+	if (box.is_empty()) { return false; }
+	n := plane.normal;
+	low := linalg.Vector3(T).from_components(
+		box.min.x if at_most(T(0), n.x) else box.max.x,
+		box.min.y if at_most(T(0), n.y) else box.max.y,
+		box.min.z if at_most(T(0), n.z) else box.max.z);
+	high := linalg.Vector3(T).from_components(
+		box.max.x if at_most(T(0), n.x) else box.min.x,
+		box.max.y if at_most(T(0), n.y) else box.min.y,
+		box.max.z if at_most(T(0), n.z) else box.min.z);
+	return at_most(plane.signed_distance(low), T(0)) && at_most(T(0), plane.signed_distance(high));
+}
+
+@(private)
+intersects_plane_box3 :: proc(plane: Plane($T), box: Aabb3(T)) -> bool where interfaces.Ordered(T) {
+	return intersects_box3_plane(box, plane);
+}

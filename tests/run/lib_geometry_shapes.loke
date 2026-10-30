@@ -1,0 +1,342 @@
+package main;
+
+import "core:fmt";
+import "core:math";
+import "core:math/geometry";
+import "core:math/linalg";
+import "core:math/repro";
+import "core:unsafe";
+
+// geometry-plan.md "Validation", milestone 2: boxes, circles, spheres,
+// planes, segments, and triangles. Box algebra and the closed-set boundary
+// cases are checked exactly, at f64, f32, and integers; closest points
+// against brute force over a sampled triangle or segment; degenerate shapes
+// against their documented answers; every `intersects` pair touching and
+// apart; and a dual number's derivative of each distance against the
+// analytic one.
+
+failures := 0;
+
+check :: proc(name: string, ok: bool) {
+	if (!ok) {
+		failures += 1;
+		fmt.println("FAIL", name);
+	}
+}
+
+V2 :: linalg.Vector2(f64);
+V3 :: linalg.Vector3(f64);
+I2 :: linalg.Vector2(i32);
+I3 :: linalg.Vector3(i32);
+
+v2 :: proc(x, y: f64) -> V2 { return V2.from_components(x, y); }
+v3 :: proc(x, y, z: f64) -> V3 { return V3.from_components(x, y, z); }
+i2 :: proc(x, y: i32) -> I2 { return I2.from_components(x, y); }
+i3 :: proc(x, y, z: i32) -> I3 { return I3.from_components(x, y, z); }
+
+bits :: proc(x: f64) -> u64 { return unsafe.transmute(u64, x); }
+
+Random :: struct { state: u64 }
+
+impl Random {
+	// Uniform in [-2, 2).
+	next :: proc(self: inout) -> f64 {
+		self.state = self.state*%6364136223846793005 +% 1442695040888963407;
+		return f64(self.state >> 11)/9007199254740992.0*4.0 - 2.0;
+	}
+	v2 :: proc(self: inout) -> V2 {
+		x := self.next();
+		y := self.next();
+		return V2.from_components(x, y);
+	}
+	v3 :: proc(self: inout) -> V3 {
+		x := self.next();
+		y := self.next();
+		z := self.next();
+		return V3.from_components(x, y, z);
+	}
+}
+
+boxes :: proc() {
+	B :: geometry.Aabb2(i32);
+	box := B.from_corners(i2(3, -1), i2(0, 2));
+	check("from_corners sorts each component", box.min == i2(0, -1) && box.max == i2(3, 2));
+	check("an integer box contains its faces", box.contains(i2(0, -1)) && box.contains(i2(3, 2)) && box.contains(i2(3, 0)) && !box.contains(i2(4, 0)));
+	check("size, doubled center, area, perimeter", box.size() == i2(3, 3) && box.doubled_center() == i2(3, 1) && box.area() == 9 && box.perimeter() == 12);
+	check("corners", box.corner(0) == i2(0, -1) && box.corner(1) == i2(3, -1) && box.corner(2) == i2(0, 2) && box.corner(3) == i2(3, 2));
+	reversed := B.from_min_max(i2(5, 5), i2(0, 0));
+	check("a reversed box is empty and adds nothing to a union", reversed.is_empty()
+		&& reversed.union(B.from_min_max(i2(6, 6), i2(7, 7))) == B.from_min_max(i2(6, 6), i2(7, 7))
+		&& B.from_min_max(i2(6, 6), i2(7, 7)).union(reversed) == B.from_min_max(i2(6, 6), i2(7, 7))
+		&& !reversed.contains(i2(2, 2)) && reversed.area() == 0);
+	check("an empty box is in every box", box.contains(reversed) && box.contains(box) && !box.contains(box.expand(1)));
+	check("a disjoint intersection is empty", box.intersection(B.from_min_max(i2(4, 4), i2(5, 5))).is_empty()
+		&& box.intersection(B.from_min_max(i2(3, 2), i2(5, 5))) == B.from_min_max(i2(3, 2), i2(3, 2)));
+	check("union with a point", reversed.union(i2(1, 1)) == B.from_min_max(i2(1, 1), i2(1, 1)) && box.union(i2(-2, 9)) == B.from_min_max(i2(-2, -1), i2(3, 9)));
+	check("integer closest point and squared distance", box.closest_point(i2(5, 7)) == i2(3, 2) && box.distance_squared(i2(5, 7)) == 29
+		&& box.distance_squared(i2(1, 1)) == 0 && box.closest_point(i2(1, 1)) == i2(1, 1));
+	points := [?]I2{i2(1, 1), i2(-3, 4), i2(2, -5)};
+	check("from_points", (B.from_points(points[:]) or_else reversed) == B.from_min_max(i2(-3, -5), i2(2, 4)) && B.from_points(points[0:0]) == .none);
+
+	C :: geometry.Aabb3(f64);
+	empty := C.empty();
+	check("the empty box accumulates", empty.is_empty() && empty.union(v3(1, 2, 3)) == C.from_min_max(v3(1, 2, 3), v3(1, 2, 3)) && empty.volume() == 0.0);
+	unit := C.from_min_max(v3(0, 0, 0), v3(1, 2, 3));
+	check("volume, surface area, center", unit.volume() == 6.0 && unit.surface_area() == 22.0 && unit.center() == v3(0.5, 1, 1.5));
+	huge := C.from_min_max(V3.splat(-math.F64_MAX), V3.splat(math.F64_MAX));
+	check("the center of a huge box does not overflow", huge.center() == V3.splat(0.0));
+	high := C.from_min_max(V3.splat(math.F64_MAX*0.5), V3.splat(math.F64_MAX));
+	middle := high.center();
+	check("the center of a box near the largest float is finite and inside it", math.is_finite(middle.x) && high.contains(middle) && middle != high.min);
+	dot := C.from_point(v3(1, 2, 3));
+	check("a box of one point is not empty", !dot.is_empty() && dot.contains(v3(1, 2, 3)) && dot.volume() == 0.0
+		&& geometry.intersects(dot, C.from_min_max(v3(1, 0, 0), v3(2, 2, 3))) && unit.intersection(C.from_min_max(v3(1, 2, 3), v3(4, 4, 4))) == C.from_point(v3(1, 2, 3)));
+	check("a distance from a box", unit.distance(v3(4, 6, 3)) == 5.0 && unit.distance(v3(0.5, 0.5, 0.5)) == 0.0);
+	nan := C.from_min_max(v3(0, math.F64_NAN, 0), v3(1, 1, 1));
+	check("a NaN corner makes a box empty", nan.is_empty() && !nan.contains(v3(0.5, 0.5, 0.5)) && !geometry.intersects(nan, unit));
+	check("corner 7 is max", unit.corner(7) == unit.max && unit.corner(0) == unit.min && unit.corner(5) == v3(1, 0, 3));
+	f32_box := geometry.Aabb3(f32).from_min_max(linalg.Vector3(f32).splat(-1), linalg.Vector3(f32).splat(1));
+	check("an f32 box", f32_box.contains(linalg.Vector3(f32).from_components(1, -1, 0.5)) && f32_box.distance(linalg.Vector3(f32).from_components(4, 5, 1)) == f32(5));
+}
+
+round_shapes :: proc() {
+	circle := geometry.Circle(i32).from_center_radius(i2(1, 1), 5);
+	check("an integer circle contains its boundary", circle.contains(i2(4, 5)) && circle.contains(i2(-2, -3)) && !circle.contains(i2(-4, -3)) && !circle.contains(i2(5, 5)));
+	check("circle bounds", circle.bounds() == geometry.Aabb2(i32).from_min_max(i2(-4, -4), i2(6, 6)));
+	sphere := geometry.Sphere(f64).from_center_radius(v3(1, 2, 3), 2);
+	check("a sphere contains its surface", sphere.contains(v3(1, 2, 5)) && !sphere.contains(v3(1, 2, 5.000000000000001)));
+	inside := v3(1.5, 2.5, 3.5);
+	check("inside, the closest point is the point", sphere.closest_point(inside) == inside && sphere.distance(inside) == 0.0);
+	check("outside, the closest point is on the surface", sphere.closest_point(v3(1, 2, 9)) == v3(1, 2, 5) && sphere.distance(v3(1, 2, 9)) == 4.0
+		&& sphere.closest_point(v3(4, 6, 3)) == v3(2.2, 3.6, 3));
+	disc := geometry.Circle(f64).from_center_radius(v2(0, 0), 1);
+	check("a circle's closest point and distance", disc.closest_point(v2(3, 4)) == v2(0.6000000000000001, 0.8) && disc.distance(v2(3, 4)) == 4.0);
+	check("a zero radius is the center alone", geometry.Sphere(f64).from_center_radius(v3(0, 0, 0), 0).contains(v3(0, 0, 0)) && !geometry.Sphere(f64).from_center_radius(v3(0, 0, 0), 0).contains(v3(0, 0, 1.0e-100)));
+}
+
+planes :: proc() {
+	P :: geometry.Plane(f64);
+	ground := P.from_points(v3(0, 0, 2), v3(1, 0, 2), v3(0, 1, 2)) or_else P{};
+	check("from_points: counterclockwise from above has an upward normal", ground.normal == v3(0, 0, 1) && ground.offset == 2.0);
+	check("collinear points have no plane", P.from_points(v3(0, 0, 0), v3(1, 1, 1), v3(2, 2, 2)) == .none);
+	check("a zero normal has no plane", P.from_point_normal(v3(1, 1, 1), v3(0, 0, 0)) == .none);
+	tilted := P.from_point_normal(v3(0, 0, 1), v3(0, 3, 4)) or_else P{};
+	check("from_point_normal normalizes", tilted.normal == v3(0, 0.6, 0.8) && tilted.offset == 0.8);
+	check("signed distance and project", ground.signed_distance(v3(5, 5, 7)) == 5.0 && ground.signed_distance(v3(0, 0, -1)) == -3.0
+		&& ground.project(v3(5, -5, 7)) == v3(5, -5, 2));
+	check("flip", ground.flip().signed_distance(v3(5, 5, 7)) == -5.0);
+	x := P.from_normal_offset(v3(1, 0, 0), 1);
+	y := P.from_normal_offset(v3(0, 1, 0), -2);
+	z := P.from_normal_offset(v3(0, 0, 1), 3);
+	check("three planes meet in a point", (geometry.intersection_point(x, y, z) or_else V3{}) == v3(1, -2, 3));
+	check("parallel planes meet nowhere", geometry.intersection_point(x, P.from_normal_offset(v3(1, 0, 0), 5), z) == .none
+		&& geometry.intersection_point(x, y, P.from_normal_offset(v3(1, 1, 0), 0)) == .none);
+	skew := (geometry.intersection_point(tilted, x, P.from_normal_offset(v3(0, 1, 0), 0.5)) or_else V3{});
+	check("a tilted plane", linalg.approx_equal(tilted.signed_distance(skew), 0.0, 1.0e-15, 0.0) && skew.x == 1.0 && skew.y == 0.5);
+}
+
+// Every point of the triangle `a + s (b - a) + t (c - a)` on a grid of
+// `n` steps, its distance from `p` at least the closest point's.
+sampled_minimum :: proc(a, b, c, p: V3, n: int) -> f64 {
+	best := 1.0e300;
+	foreach (i in 0 ..= n) {
+		foreach (j in 0 ..= n - i) {
+			q := a + (b - a)*(f64(i)/f64(n)) + (c - a)*(f64(j)/f64(n));
+			best = math.min(best, (p - q).length());
+		}
+	}
+	return best;
+}
+
+segments_and_triangles :: proc() {
+	S :: geometry.Segment3(f64);
+	s := S.from_points(v3(0, 0, 0), v3(4, 0, 0));
+	check("segment ends and inside", s.closest_point(v3(-3, 1, 0)) == s.a && s.closest_point(v3(7, 1, 0)) == s.b && s.closest_point(v3(1, 2, 3)) == v3(1, 0, 0));
+	check("segment distance and length", s.distance(v3(2, 3, 4)) == 5.0 && s.length() == 4.0);
+	point := S.from_points(v3(1, 1, 1), v3(1, 1, 1));
+	check("a segment of no length is its point", point.closest_point(v3(5, 5, 5)) == v3(1, 1, 1) && point.distance(v3(1, 1, 3)) == 2.0);
+	flat := geometry.Segment2(f64).from_points(v2(0, 0), v2(2, 2));
+	check("a 2D segment", flat.closest_point(v2(2, 0)) == v2(1, 1) && flat.bounds() == geometry.Aabb2(f64).from_min_max(v2(0, 0), v2(2, 2)));
+
+	T3 :: geometry.Triangle3(f64);
+	t := T3.from_points(v3(0, 0, 0), v3(2, 0, 0), v3(0, 2, 0));
+	check("triangle regions", t.closest_point(v3(-1, -1, 5)) == t.a && t.closest_point(v3(3, -1, 0)) == t.b && t.closest_point(v3(-1, 3, 0)) == t.c
+		&& t.closest_point(v3(1, -1, 0)) == v3(1, 0, 0) && t.closest_point(v3(-1, 1, 0)) == v3(0, 1, 0)
+		&& t.closest_point(v3(2, 2, 0)) == v3(1, 1, 0) && t.closest_point(v3(0.5, 0.5, 3)) == v3(0.5, 0.5, 0));
+	check("triangle normal and area", (t.normal() or_else V3{}) == v3(0, 0, 1) && t.area() == 2.0);
+	b := t.barycentric(v3(0.5, 0.5, 9)) or_else V3{};
+	check("barycentric of a projected point", b == v3(0.5, 0.25, 0.25));
+	sliver := T3.from_points(v3(0, 0, 0), v3(1, 1, 1), v3(3, 3, 3));
+	check("a triangle of no area: no normal, no barycentric, its span's closest point", sliver.normal() == .none && sliver.barycentric(v3(1, 0, 0)) == .none
+		&& sliver.area() == 0.0 && sliver.closest_point(v3(4, 4, 4)) == v3(3, 3, 3)
+		&& sliver.closest_point(v3(2, 2, -1)) == v3(1, 1, 1));
+	dot := T3.from_points(v3(1, 2, 3), v3(1, 2, 3), v3(1, 2, 3));
+	check("a triangle of one point", dot.closest_point(v3(0, 0, 0)) == v3(1, 2, 3));
+
+	// Random triangles and points against the sampled triangle.
+	random := Random{11};
+	worst := 0.0;
+	outside := 0;
+	foreach (_ in 0 ..< 300) {
+		r := T3.from_points(random.v3(), random.v3(), random.v3());
+		p := random.v3()*2.0;
+		q := r.closest_point(p);
+		excess := (p - q).length() - sampled_minimum(r.a, r.b, r.c, p, 40);
+		worst = math.max(worst, excess);
+		w := r.barycentric(q) or_else V3{};
+		if (w.x < -1.0e-12 || w.y < -1.0e-12 || w.z < -1.0e-12) { outside += 1; }
+		if (!linalg.approx_equal(w.x*r.a.x + w.y*r.b.x + w.z*r.c.x, q.x, 1.0e-12, 0.0)) { outside += 1; }
+	}
+	check("closest points are in the triangle", outside == 0);
+	check("no sampled point is nearer than the closest point", worst <= 1.0e-12);
+
+	T2 :: geometry.Triangle2(f64);
+	u := T2.from_points(v2(0.1, 0.1), v2(0.7, 0.2), v2(0.3, 0.9));
+	on_edge := u.a + (u.b - u.a)*0.5;
+	check("a 2D triangle contains its corners and an edge midpoint, either winding",
+		u.contains(u.a) && u.contains(u.b) && u.contains(u.c) && u.contains(on_edge)
+		&& T2.from_points(u.c, u.b, u.a).contains(on_edge) && u.contains(v2(0.35, 0.4)) && !u.contains(v2(0.9, 0.9)));
+	check("contains is exact on an edge's line", geometry.orient2d(u.a, u.b, on_edge) != .Zero || u.contains(on_edge));
+	line := T2.from_points(v2(0, 0), v2(1, 1), v2(3, 3));
+	check("a degenerate 2D triangle is its span", line.contains(v2(2, 2)) && !line.contains(v2(4, 4)) && !line.contains(v2(1, 0)));
+	single := T2.from_points(v2(1, 1), v2(1, 1), v2(1, 1));
+	check("a 2D triangle of one point", single.contains(v2(1, 1)) && !single.contains(v2(1, 2)));
+	ints := geometry.Triangle2(i32).from_points(i2(0, 0), i2(4, 0), i2(0, 4));
+	check("an integer triangle", ints.contains(i2(2, 2)) && ints.contains(i2(0, 0)) && !ints.contains(i2(3, 2)));
+	check("a 2D triangle's closest point and area", u.closest_point(v2(0.35, 0.4)) == v2(0.35, 0.4) && T2.from_points(v2(0, 0), v2(2, 0), v2(0, 2)).closest_point(v2(2, 2)) == v2(1, 1)
+		&& T2.from_points(v2(0, 0), v2(2, 0), v2(0, 2)).area() == 2.0);
+}
+
+intersections :: proc() {
+	A2 :: geometry.Aabb2(i32);
+	check("boxes touching on a face intersect", geometry.intersects(A2.from_min_max(i2(0, 0), i2(2, 2)), A2.from_min_max(i2(2, 1), i2(3, 3)))
+		&& !geometry.intersects(A2.from_min_max(i2(0, 0), i2(2, 2)), A2.from_min_max(i2(3, 1), i2(4, 3))));
+	A3 :: geometry.Aabb3(f64);
+	check("3D boxes", geometry.intersects(A3.from_min_max(v3(0, 0, 0), v3(1, 1, 1)), A3.from_min_max(v3(1, 1, 1), v3(2, 2, 2)))
+		&& !geometry.intersects(A3.from_min_max(v3(0, 0, 0), v3(1, 1, 1)), A3.from_min_max(v3(1, 1, 1.0000000000000002), v3(2, 2, 2)))
+		&& !geometry.intersects(A3.from_min_max(v3(0, 0, 0), v3(1, 1, 1)), A3.empty()));
+	check("circles touching intersect", geometry.intersects(geometry.Circle(i32).from_center_radius(i2(0, 0), 2), geometry.Circle(i32).from_center_radius(i2(3, 4), 3))
+		&& !geometry.intersects(geometry.Circle(i32).from_center_radius(i2(0, 0), 2), geometry.Circle(i32).from_center_radius(i2(3, 4), 2)));
+	check("spheres", geometry.intersects(geometry.Sphere(f64).from_center_radius(v3(0, 0, 0), 1), geometry.Sphere(f64).from_center_radius(v3(0, 0, 3), 2))
+		&& !geometry.intersects(geometry.Sphere(f64).from_center_radius(v3(0, 0, 0), 1), geometry.Sphere(f64).from_center_radius(v3(0, 0, 3.0000000000000004), 2)));
+	box2 := A2.from_min_max(i2(0, 0), i2(4, 4));
+	check("a circle and a box, either order", geometry.intersects(geometry.Circle(i32).from_center_radius(i2(7, 8), 5), box2) && geometry.intersects(box2, geometry.Circle(i32).from_center_radius(i2(7, 8), 5))
+		&& !geometry.intersects(geometry.Circle(i32).from_center_radius(i2(7, 8), 4), box2) && !geometry.intersects(geometry.Circle(i32).from_center_radius(i2(1, 1), 4), A2.from_min_max(i2(5, 5), i2(0, 0))));
+	box3 := A3.from_min_max(v3(-1, -1, -1), v3(1, 1, 1));
+	check("a sphere and a box", geometry.intersects(geometry.Sphere(f64).from_center_radius(v3(3, 3, 1), math.sqrt(8.0)), box3)
+		&& geometry.intersects(box3, geometry.Sphere(f64).from_center_radius(v3(0, 0, 0), 0.5)) && !geometry.intersects(geometry.Sphere(f64).from_center_radius(v3(3, 3, 3), 3), box3));
+	P :: geometry.Plane(f64);
+	check("a sphere and a plane", geometry.intersects(geometry.Sphere(f64).from_center_radius(v3(0, 0, 3), 2), P.from_normal_offset(v3(0, 0, 1), 1))
+		&& geometry.intersects(P.from_normal_offset(v3(0, 0, 1), 5), geometry.Sphere(f64).from_center_radius(v3(0, 0, 3), 2))
+		&& !geometry.intersects(geometry.Sphere(f64).from_center_radius(v3(0, 0, 3), 2), P.from_normal_offset(v3(0, 0, 1), 0.9999999999999996)));
+	diagonal := P.from_point_normal(v3(1, 1, 1), v3(1, 1, 1)) or_else P{};
+	check("a box and a plane through its corner", geometry.intersects(box3, P.from_normal_offset(v3(0, 0, 1), 1)) && geometry.intersects(P.from_normal_offset(v3(0, 0, -1), 1), box3)
+		&& !geometry.intersects(box3, P.from_normal_offset(v3(0, 0, 1), 1.0000000000000002))
+		&& geometry.intersects(box3, diagonal.flip()) && geometry.intersects(box3, P.from_normal_offset(diagonal.normal, 0.0)));
+	ibox := geometry.Aabb3(i32).from_min_max(i3(0, 0, 0), i3(2, 2, 2));
+	check("an integer box and plane", geometry.intersects(ibox, geometry.Plane(i32).from_normal_offset(i3(1, 1, 1), 6)) && !geometry.intersects(ibox, geometry.Plane(i32).from_normal_offset(i3(1, 1, 1), 7))
+		&& geometry.intersects(ibox, geometry.Plane(i32).from_normal_offset(i3(1, -1, 0), 2)) && !geometry.intersects(ibox, geometry.Plane(i32).from_normal_offset(i3(1, -1, 0), 3)));
+}
+
+// A forward-mode dual number, as in tests/run/lib_linalg_rotations.loke, for
+// the derivative of each distance along x.
+Dual :: struct { value, derivative: f64 }
+
+impl Dual {
+	@(public) from_f64 :: hook(convert) proc(value: f64) -> Dual { return {value, 0}; }
+	@(public) add :: operator(+) proc(a, b: Dual) -> Dual { return {a.value + b.value, a.derivative + b.derivative}; }
+	@(public) subtract :: operator(-) proc(a, b: Dual) -> Dual { return {a.value - b.value, a.derivative - b.derivative}; }
+	@(public) negate :: operator(-) proc(a: Dual) -> Dual { return {-a.value, -a.derivative}; }
+	@(public) multiply :: operator(*) proc(a, b: Dual) -> Dual {
+		return {a.value*b.value, a.derivative*b.value + a.value*b.derivative};
+	}
+	@(public) divide :: operator(/) proc(a, b: Dual) -> Dual {
+		return {a.value/b.value, (a.derivative*b.value - a.value*b.derivative)/(b.value*b.value)};
+	}
+	@(public) equal :: operator(==) proc(a, b: Dual) -> bool { return a.value == b.value; }
+	@(public) less :: operator(<) proc(a, b: Dual) -> bool { return a.value < b.value; }
+
+	sqrt :: proc(self) -> Dual {
+		root := math.sqrt(self.value);
+		return {root, self.derivative/(root + root)};
+	}
+	sin :: proc(self) -> Dual { return {repro.sin(self.value), self.derivative*repro.cos(self.value)}; }
+	cos :: proc(self) -> Dual { return {repro.cos(self.value), -self.derivative*repro.sin(self.value)}; }
+	asin :: proc(self) -> Dual { return {repro.asin(self.value), self.derivative/math.sqrt(1.0 - self.value*self.value)}; }
+	acos :: proc(self) -> Dual { return {repro.acos(self.value), -self.derivative/math.sqrt(1.0 - self.value*self.value)}; }
+	atan2 :: proc(self, x: Dual) -> Dual {
+		squared := x.value*x.value + self.value*self.value;
+		return {repro.atan2(self.value, x.value), (x.value*self.derivative - self.value*x.derivative)/squared};
+	}
+	abs :: proc(self) -> Dual { return -self if self.value < 0.0 else self; }
+	floor :: proc(self) -> Dual { return {math.floor(self.value), 0}; }
+	ceil :: proc(self) -> Dual { return {math.ceil(self.value), 0}; }
+	round :: proc(self) -> Dual { return {math.round(self.value), 0}; }
+	is_finite :: proc(self) -> bool { return math.is_finite(self.value); }
+	is_normal :: proc(self) -> bool { return math.is_finite(self.value) && math.abs(self.value) >= math.F64_MIN_NORMAL; }
+}
+
+D3 :: linalg.Vector3(Dual);
+
+lift :: proc(v: V3) -> D3 { return D3.from_components(Dual{v.x, 0}, Dual{v.y, 0}, Dual{v.z, 0}); }
+
+// `p` with a derivative of 1 in x.
+moving :: proc(p: V3) -> D3 { return D3.from_components(Dual{p.x, 1}, Dual{p.y, 0}, Dual{p.z, 0}); }
+
+near :: proc(a, b: f64) -> bool { return math.abs(a - b) <= 1.0e-12; }
+
+duals :: proc() {
+	p := v3(2.5, 1.5, 4);
+	// Each distance's derivative along x is (p - q).x/|p - q| for the
+	// closest point q, which does not move to first order.
+	sphere := geometry.Sphere(Dual).from_center_radius(lift(v3(0.5, 0.5, 0.5)), Dual{1, 0});
+	d := sphere.distance(moving(p));
+	check("a dual sphere distance", near(d.derivative, (p.x - 0.5)/(p - v3(0.5, 0.5, 0.5)).length()));
+	box := geometry.Aabb3(Dual).from_min_max(lift(v3(0, 0, 0)), lift(v3(1, 1, 1)));
+	d = box.distance(moving(p));
+	q := v3(1, 1, 1);
+	check("a dual box distance", near(d.derivative, (p.x - q.x)/(p - q).length()));
+	segment := geometry.Segment3(Dual).from_points(lift(v3(0, 0, 0)), lift(v3(0, 0, 8)));
+	d = segment.distance(moving(p));
+	check("a dual segment distance", near(d.derivative, p.x/math.sqrt(p.x*p.x + p.y*p.y)));
+	triangle := geometry.Triangle3(Dual).from_points(lift(v3(0, 0, 0)), lift(v3(4, 0, 0)), lift(v3(0, 4, 0)));
+	d = triangle.distance(moving(v3(1, 1, 3)));
+	check("a dual triangle distance above its inside", near(d.value, 3.0) && near(d.derivative, 0.0));
+	d = triangle.distance(moving(p));
+	closest := geometry.Triangle3(f64).from_points(v3(0, 0, 0), v3(4, 0, 0), v3(0, 4, 0)).closest_point(p);
+	check("a dual triangle distance beside an edge", near(d.derivative, (p.x - closest.x)/(p - closest).length()));
+	plane := geometry.Plane(Dual).from_normal_offset(lift(v3(0.6, 0.8, 0)), Dual{1, 0});
+	check("a dual plane distance", near(plane.signed_distance(moving(p)).derivative, 0.6));
+}
+
+FOLDED_CLOSEST :: geometry.Triangle3(f64).from_points(V3.from_components(0.1, 0.2, 0.3), V3.from_components(1.7, -0.4, 0.9), V3.from_components(-0.3, 1.3, 0.2)).closest_point(V3.from_components(0.9, 0.8, -1.1));
+FOLDED_SEGMENT :: geometry.Segment3(f64).from_points(V3.from_components(0.1, 0.2, 0.3), V3.from_components(1.7, -0.4, 0.9)).closest_point(V3.from_components(0.9, 0.8, -1.1));
+FOLDED_POINT :: geometry.intersection_point(geometry.Plane(f64).from_normal_offset(V3.from_components(0.6, 0.8, 0), 0.3), geometry.Plane(f64).from_normal_offset(V3.from_components(0, 0.6, 0.8), -0.7), geometry.Plane(f64).from_normal_offset(V3.from_components(0.8, 0, 0.6), 1.1));
+FOLDED_BOX :: geometry.Aabb3(f64).from_min_max(V3.from_components(-1, -2, -3), V3.from_components(1.5, 2.5, 3.5)).distance_squared(V3.from_components(4.1, -2.9, 0.3));
+
+determinism :: proc() {
+	one := 1.0;
+	closest := geometry.Triangle3(f64).from_points(v3(0.1*one, 0.2, 0.3), v3(1.7, -0.4, 0.9), v3(-0.3, 1.3, 0.2)).closest_point(v3(0.9, 0.8, -1.1));
+	segment := geometry.Segment3(f64).from_points(v3(0.1*one, 0.2, 0.3), v3(1.7, -0.4, 0.9)).closest_point(v3(0.9, 0.8, -1.1));
+	point := geometry.intersection_point(geometry.Plane(f64).from_normal_offset(v3(0.6*one, 0.8, 0), 0.3), geometry.Plane(f64).from_normal_offset(v3(0, 0.6, 0.8), -0.7), geometry.Plane(f64).from_normal_offset(v3(0.8, 0, 0.6), 1.1)) or_else V3{};
+	box := geometry.Aabb3(f64).from_min_max(v3(-1*one, -2, -3), v3(1.5, 2.5, 3.5)).distance_squared(v3(4.1, -2.9, 0.3));
+	sphere := geometry.Sphere(f64).from_center_radius(v3(0.3*one, -0.2, 0.1), 0.7).closest_point(v3(2.3, 1.9, -0.4));
+	fmt.println("triangle", bits(closest.x), bits(closest.y), bits(closest.z));
+	fmt.println("segment", bits(segment.x), bits(segment.y), bits(segment.z));
+	fmt.println("planes", bits(point.x), bits(point.y), bits(point.z));
+	fmt.println("box", bits(box));
+	fmt.println("sphere", bits(sphere.x), bits(sphere.y), bits(sphere.z));
+	check("folded shapes equal the run-time ones", FOLDED_CLOSEST == closest && FOLDED_SEGMENT == segment
+		&& (FOLDED_POINT or_else V3{}) == point && FOLDED_BOX == box);
+}
+
+main :: proc() {
+	boxes();
+	round_shapes();
+	planes();
+	segments_and_triangles();
+	intersections();
+	duals();
+	determinism();
+	if (failures == 0) { fmt.println("all shape checks passed"); }
+}
