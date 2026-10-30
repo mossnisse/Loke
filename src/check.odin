@@ -31,6 +31,9 @@ Checker :: struct {
 	// Set by `check_finite_size` when its walk reached a record still resolving
 	// its fields, so the answer is not cached.
 	size_incomplete: bool,
+	// How deep the search for a granted associated constant is, since resolving
+	// an interface's arguments can look one up again.
+	grant_depth: int,
 
 	using body: Body_Context,
 }
@@ -41,6 +44,15 @@ Checker :: struct {
 Body_Context :: struct {
 	// The procedure being checked, and so the frame a name may come from.
 	proc_literal:      ^Expr_Proc,
+	// design.md "Interface bodies": the `where` clauses whose bare bounds grant
+	// what satisfied them to the code being checked when it is a signature, a
+	// `where` clause, or a record's fields; set, they replace `proc_literal`'s.
+	bounds:            []Expr,
+	bounds_set:        bool,
+	// The interface application whose requirements are being checked, which
+	// reach the associated constants it requires as a bound's body does.
+	requiring:         ^Interface_Info,
+	requiring_args:    []Generic_Arg,
 	// The capture record whose literal is being checked, which alone may
 	// initialise its fields (design.md "Capture literals").
 	building_capture:  Type_Id,
@@ -807,6 +819,7 @@ resolve_symbol_signature_in_place :: proc(k: ^Checker, symbol_id: Symbol_Id, sub
 	saved := save_checker_location(k)
 	defer restore_checker_location(k, saved)
 	enter_symbol_location(k, sym, subject)
+	leave_grants(k)
 	resolve_declaration_signature(k, sym.decl)
 }
 
@@ -818,7 +831,17 @@ check_symbol_decl_in_place :: proc(k: ^Checker, symbol_id: Symbol_Id, subject :=
 	saved := save_checker_location(k)
 	defer restore_checker_location(k, saved)
 	enter_symbol_location(k, sym, subject)
+	leave_grants(k)
 	check_decl(k, sym.decl)
+}
+
+// design.md "Interface bodies": another declaration checked on demand has its
+// own bounds, not those of the code that reached it. A body's grant is already
+// confined to that body's scopes (`granting_bounds`).
+@(private = "file")
+leave_grants :: proc(k: ^Checker) {
+	k.body.bounds, k.body.bounds_set = nil, false
+	k.body.requiring, k.body.requiring_args = nil, nil
 }
 
 resolve_declaration_signature :: proc(k: ^Checker, d: ^Decl) {
@@ -1373,6 +1396,10 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 	symbol.kind = .Proc
 	symbol.type = TYPE_VOID
 	validate_param_attributes(k, literal.signature.params)
+	// design.md "Interface bodies": the signature has the grant of its own bounds.
+	outer_bounds, outer_set := k.body.bounds, k.body.bounds_set
+	k.body.bounds, k.body.bounds_set = literal.where_clauses, true
+	defer k.body.bounds, k.body.bounds_set = outer_bounds, outer_set
 
 	reported := k.c.error_count
 	params := make([dynamic]Type_Id, 0, 4, k.c.semantic_allocator)

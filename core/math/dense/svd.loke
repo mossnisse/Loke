@@ -116,7 +116,7 @@ impl Svd($T) {
 	u :: proc(self: ^) -> View(T) { return self.left.view(); }
 
 	/// The `k` singular values, descending.
-	singular_values :: proc(self: ^) -> []T.Real { return self.singular[:]; }
+	singular_values :: proc(self: ^) -> []T.Real where linalg.Scalar(T) { return self.singular[:]; }
 
 	/// `V`, `n x k`, borrowed from the decomposition; `A = U S V^H`.
 	v :: proc(self: ^) -> View(T) { return self.right.view(); }
@@ -126,7 +126,7 @@ impl Svd($T) {
 		largest. `relative` has no default, since the right one depends on
 		the data's accuracy; a negative or NaN one panics.
 	*/
-	rank :: proc(self, relative: T.Real) -> int {
+	rank :: proc(self, relative: T.Real) -> int where linalg.Scalar(T) {
 		assert(T.Real(0) < relative || T.Real(0) == relative, "dense.Svd.rank needs a relative tolerance that is not negative");
 		if (self.singular.len() == 0) { return 0; }
 		cutoff := relative*self.singular[0];
@@ -147,7 +147,7 @@ impl Svd($T) {
 		singular value that is not zero. A negative or NaN `relative`, or a
 		shape mismatch, panics.
 	*/
-	solve_into :: proc(self, out: View_Mut(T), b: View(T), relative: T.Real) {
+	solve_into :: proc(self, out: View_Mut(T), b: View(T), relative: T.Real) where linalg.Scalar(T) {
 		assert(T.Real(0) < relative || T.Real(0) == relative, "dense.Svd.solve needs a relative tolerance that is not negative");
 		m := self.left.row_count;
 		n := self.right.row_count;
@@ -175,7 +175,7 @@ impl Svd($T) {
 	}
 
 	/// The minimum-norm least-squares solution of `solve_into`, `n` rows, allocated from `allocator`.
-	solve :: proc(self, b: View(T), relative: T.Real, allocator: Allocator = mem.default_allocator()) -> Matrix(T) {
+	solve :: proc(self, b: View(T), relative: T.Real, allocator: Allocator = mem.default_allocator()) -> Matrix(T) where linalg.Scalar(T) {
 		result := Matrix(T).zeros(self.right.row_count, b.column_count, allocator);
 		self.solve_into(result.view_mut(), b, relative);
 		return result;

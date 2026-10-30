@@ -513,7 +513,9 @@ interface_check :: proc(
 		restore_checker_location(k, saved)
 		k.interface_depth -= 1
 	}
-	k.body = {}
+	// design.md "Interface bodies": each requirement reaches the associated
+	// constants the application requires, met as a slot is.
+	k.body = {requiring = info, requiring_args = args}
 
 	application_pkg := lookup_package(k)
 	for requirement in info.node.requirements {
@@ -1059,18 +1061,40 @@ collect_slot_members :: proc(k: ^Checker, members: []Symbol_Id, name: Identifier
 	}
 }
 
-// design.md "Interfaces as reusable constraints": a bare `where I(T)` bound
-// grants `T`'s slots of `I` under the interface's visibility, which ordinary
-// lookup in the body would reject. Nilling `proc_literal` guards recursion.
-required_slot_candidates :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> []Symbol_Id {
+// design.md "Interface bodies": the `where` clauses whose bare bounds grant the
+// code being checked what satisfied them. A body's are its own procedure's,
+// and only while the code is in that body: a declaration elsewhere that its
+// checking reaches is checked in its own scope and gets nothing.
+granting_bounds :: proc(k: ^Checker) -> []Expr {
+	if k.bounds_set {
+		return k.bounds
+	}
 	literal := k.proc_literal
 	if literal == nil || len(literal.where_clauses) == 0 {
 		return nil
 	}
-	k.proc_literal = nil
-	defer k.proc_literal = literal
+	for scope := k.scope; scope != nil; scope = scope.parent {
+		if scope.owner_proc == rawptr(literal) {
+			return literal.where_clauses
+		}
+	}
+	return nil
+}
 
-	for clause in literal.where_clauses {
+// design.md "Interface bodies": a bare `where I(T)` bound grants the slots of
+// `I` and of the applications it composes, each on its own subject, under the
+// interface's visibility, which ordinary lookup in the body would reject.
+// Clearing the bounds guards recursion.
+required_slot_candidates :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> []Symbol_Id {
+	bounds := granting_bounds(k)
+	if len(bounds) == 0 {
+		return nil
+	}
+	outer := k.body
+	k.body.bounds, k.body.bounds_set = nil, true
+	defer k.body = outer
+
+	for clause in bounds {
 		call, is_call := clause.(^Expr_Call)
 		if !is_call {
 			continue
@@ -1080,13 +1104,13 @@ required_slot_candidates :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id
 			continue
 		}
 		args, bound := bound_arguments(k, call, info)
-		if !bound || !args[0].is_type || args[0].type != type {
+		if !bound || !args[0].is_type {
 			continue
 		}
 		// `Callable` states its slot by a built-in rule, so it grants `call`
 		// itself, directly or composed: what `c(args)` in the constrained body
 		// reaches.
-		if identifier_text(k.c, name) == "call" {
+		if args[0].type == type && identifier_text(k.c, name) == "call" {
 			if callable := composed_callable(k, info, args, type); callable != nil {
 				if found := slot_candidates(k, type, name, callable.pkg); len(found) > 0 {
 					return found
@@ -1103,12 +1127,147 @@ required_slot_candidates :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id
 			if entry.name != name || owner == nil {
 				continue
 			}
+			// On the subject of the application that wrote the slot: `Real(T.Real)`
+			// in `Scalar(T)` grants `abs` on `T.Real`, not on `T`.
+			if len(entry.args) == 0 || !entry.args[0].is_type || entry.args[0].type != type {
+				continue
+			}
 			if found := slot_candidates(k, type, name, owner.pkg); len(found) > 0 {
 				return found
 			}
 		}
 	}
 	return nil
+}
+
+// design.md "Interface bodies": the associated constant `type.name` that the
+// interface application being checked, or a bare bound of the declaration
+// being checked, requires, found as its requirement found it when the
+// requiring package could not see it: an inherent member whatever its
+// visibility, or an extension in the package of the interface that writes
+// the requirement. Ordinary lookup has already failed.
+required_associated_constant :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> Symbol_Id {
+	if k.grant_depth >= MAX_INTERFACE_DEPTH {
+		return INVALID_SYMBOL
+	}
+	k.grant_depth += 1
+	defer k.grant_depth -= 1
+	if k.requiring != nil {
+		if found := application_constant(k, k.requiring, k.requiring_args, type, name); found != INVALID_SYMBOL {
+			return found
+		}
+	}
+	bounds := granting_bounds(k)
+	if len(bounds) == 0 {
+		return INVALID_SYMBOL
+	}
+	for clause in bounds {
+		call, is_call := clause.(^Expr_Call)
+		if !is_call {
+			continue
+		}
+		info := interface_info_for(k, named_callee_symbol(k, call.callee))
+		if info == nil || interface_is_callable(k.c, info) || !interface_names_constant(k, info, name) {
+			continue
+		}
+		// The bound's arguments are read where it is written, without its grant.
+		outer := k.body
+		k.body.bounds, k.body.bounds_set, k.body.requiring = nil, true, nil
+		args, bound := bound_arguments(k, call, info)
+		k.body = outer
+		if !bound {
+			continue
+		}
+		if found := application_constant(k, info, args, type, name); found != INVALID_SYMBOL {
+			return found
+		}
+	}
+	return INVALID_SYMBOL
+}
+
+// Whether `info` or an interface it composes writes a requirement `X.name -> R`,
+// read from the syntax alone so a failed lookup costs little.
+@(private = "file")
+interface_names_constant :: proc(k: ^Checker, info: ^Interface_Info, name: Identifier_Id, depth := 0) -> bool {
+	if depth >= MAX_INTERFACE_DEPTH {
+		return false
+	}
+	for requirement in info.node.requirements {
+		if requirement.kind == .Slot {
+			continue
+		}
+		if selector, is_selector := requirement.expr.(^Expr_Selector); is_selector && requirement.result != nil {
+			if intern_identifier(k.c, selector.name.text) == name {
+				return true
+			}
+			continue
+		}
+		if composed := composed_interface_of(k, requirement); composed != nil && composed != info {
+			if interface_names_constant(k, composed, name, depth + 1) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// The member a requirement `X.name -> R` of `info(args)`, or of an application
+// it composes, requires of `type`, as `slot_candidates` finds a slot's.
+@(private = "file")
+application_constant :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic_Arg, type: Type_Id, name: Identifier_Id) -> Symbol_Id {
+	if len(args) != len(info.params) || interface_is_callable(k.c, info) || !interface_names_constant(k, info, name) {
+		return INVALID_SYMBOL
+	}
+	saved := save_checker_location(k)
+	defer restore_checker_location(k, saved)
+	k.scope, k.pkg, k.lookup_pkg = interface_scope(k, info, args), info.pkg, info.pkg
+	if info.file_node != nil {
+		k.file, k.file_node = info.file, info.file_node
+	}
+	// A composed application's arguments may name this application's constants.
+	k.body = {requiring = info, requiring_args = args}
+
+	// The application's own requirements first, so resolving a composed
+	// argument that names one finds it without composing again.
+	for requirement in info.node.requirements {
+		if requirement.kind == .Slot || requirement.result == nil || len(requirement.bindings) > 0 {
+			continue
+		}
+		selector, is_selector := requirement.expr.(^Expr_Selector)
+		if !is_selector || intern_identifier(k.c, selector.name.text) != name {
+			continue
+		}
+		if resolve_type_syntax(k, clone_expr(k.c, selector.operand)) != type {
+			continue
+		}
+		for candidate in slot_candidates(k, type, name, info.pkg) {
+			if sym := symbol_of(k.c, candidate); sym != nil && (sym.kind == .Const || sym.kind == .Type) {
+				return candidate
+			}
+		}
+	}
+	for requirement in info.node.requirements {
+		if requirement.kind == .Slot {
+			continue
+		}
+		composed := composed_interface_of(k, requirement)
+		if composed == nil {
+			continue
+		}
+		// Clone before annotating: one declaration serves many applications.
+		call, is_call := clone_requirement_syntax(k.c, requirement).expr.(^Expr_Call)
+		if !is_call {
+			continue
+		}
+		composed_args, valid := bound_arguments(k, call, composed)
+		if !valid {
+			continue
+		}
+		if found := application_constant(k, composed, composed_args, type, name); found != INVALID_SYMBOL {
+			return found
+		}
+	}
+	return INVALID_SYMBOL
 }
 
 // The `Callable` that `info(args)` is or composes on `type`, at any depth, as

@@ -1,0 +1,5 @@
+package widget;
+
+// Carries no members of its own; `shape` supplies them, privately.
+@(public)
+Rod :: struct { @(public) length: f64 }

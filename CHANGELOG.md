@@ -489,6 +489,22 @@ checklist.
 
 ### Changed
 
+- A bare `where` bound grants its declaration the associated constants that
+  met the interface, as it grants slots, in the signature, the other bounds,
+  the body, and a record's fields, and grants the slots of an application the
+  interface composes on that application's subject, so a `linalg.Scalar(T)`
+  bound reaches `T.Real` and `linalg.Real`'s slots on it in any package
+  ([Interface bodies](design.md#interface-bodies)). An associated constant
+  requirement such as `T.Real -> type` is now met, when the applying package
+  sees no such member, as a slot is: by an inherent member whatever its
+  visibility or an extension in the interface's package. An application that
+  was false for that reason alone, as `linalg.Scalar(f64)` was outside
+  `core:math/linalg`, is now true, in a `when` condition too.
+  `core:math/dense` no longer declares its own `Real` for `f32`, `f64`, and
+  `math.Complex`, and the methods `Lu.reciprocal_condition`,
+  `Symmetric_Eigen.values`, `Svd.singular_values`, `Svd.rank`,
+  `Svd.solve_into`, and `Svd.solve` restate `where linalg.Scalar(T)`, which
+  their records already require.
 - A `typeid_of(T)` constant is specified to have no number during
   compilation: bit casting one with `unsafe.transmute`, or comparing one with
   a `typeid` built from a bit pattern, is a compile-time error where a

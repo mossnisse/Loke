@@ -1170,6 +1170,44 @@ Additional reflection can be introduced when an actual tool needs it.
 form, `T.Element -> type;`, whose result is necessarily compile-time known.
 A separate associated-constant declaration grammar adds little to that model.
 
+### A bound grants what met it
+
+A bare bound already granted its declaration the slots that satisfied it, so a
+package could meet an interface for a built-in type with private extensions
+and every importer's generic code could call them. An associated constant met
+the same way was not granted, and was not even found by the requirement
+outside the interface's package, since an expression requirement is checked
+with the visibility of the package applying it. `core:math/linalg` meets
+`Scalar` for `f32`, `f64`, and `math.Complex` with a private `Real :: f64`, a
+private extension because a public one would be exported as `linalg.Real`, the
+interface's own name. So `Scalar(f64)` was false in any package that did not
+declare its own `Real` for `f64`, and `core:math/dense` declared one for each
+of the three types, as every package with generic code over `Scalar` would
+have had to.
+An associated constant is now found as a slot is when the applying package
+sees none, and a bound grants it as it grants a slot
+([Interface bodies](design.md#interface-bodies)). The requirement already
+makes the member a compile-time constant, usually a type, so the grant hides
+nothing at run time; it makes `T.Real` mean in every package what it meant
+where the requirement was checked.
+
+`Scalar` also composes `Real(T.Real)`, and an application standing alone in an
+interface body contributes its slots. A body bounded by `Scalar(T)` could call
+`Real`'s slots on a `T.Real` only when `T.Real` was `T` itself, because the
+grant was matched against the bound's own subject. Matching each slot against
+the subject of the application that writes it reads "contributing its slots" as
+the composition's own wording says: the slots on the type they were checked on.
+`core:math/dense` had reached them through helpers bounded by `linalg.Real(R)`,
+which a `T.Real` argument satisfies; those helpers are gone.
+
+The grant stays narrow: the members that met a requirement, on the types they
+were required of, in the declaration the bound constrains, and only where
+ordinary lookup finds nothing. A bound on a record still does not carry into
+the record's methods ([Slots through a record's bound](open-questions.md#slots-through-a-records-bound)),
+so `core:math/dense`'s methods that name `T.Real` restate `linalg.Scalar(T)`.
+Operators and other expression requirements keep the applying package's
+visibility ([Visibility in slot and expression requirements](open-questions.md#visibility-in-slot-and-expression-requirements)).
+
 ### Headless switch
 
 An `if`/`else if` chain already selects among unrelated conditions. Requiring

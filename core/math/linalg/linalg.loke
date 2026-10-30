@@ -154,7 +154,9 @@ Scalar :: interface($T: type) {
 }
 
 // `Scalar` for the built-in floats and for `math.Complex`, private as the
-// `Real` slots are; `math.Complex` has its own `conjugate`.
+// `Real` slots are; `math.Complex` has its own `conjugate`. The private `Real`
+// still meets `T.Real -> type` in every package, and a `Scalar` bound grants
+// it (design.md "Interface bodies").
 impl f32 {
 	@(private) Real :: f32;
 	@(private) conjugate :: proc(self) -> f32 { return self; }

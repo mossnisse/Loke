@@ -1958,11 +1958,14 @@ instantiate_record_body :: proc(
 	instance.signature_ok = true
 	clone.sig_state = .Checking
 	before := len(k.c.diagnostics)
+	// design.md "Interface bodies": the fields have the grant of the record's bounds.
+	k.body.bounds, k.body.bounds_set = record.where_clauses, true
 	if record.kind == .Struct {
 		resolve_struct_fields(k, type, record)
 	} else {
 		resolve_union_variants(k, type, record)
 	}
+	k.body.bounds, k.body.bounds_set = nil, false
 	apply_type_metadata(k, clone, type)
 	clone.sig_state = .Checked
 	if report && len(k.c.diagnostics) > before {
@@ -2306,6 +2309,10 @@ check_where_clauses :: proc(
 	k: ^Checker, clauses: []Expr, span: Span, what: string, report: bool,
 	report_malformed := false, false_bound: ^Expr = nil,
 ) -> bool {
+	// design.md "Interface bodies": each bound has the grant of the others.
+	outer_bounds, outer_set := k.body.bounds, k.body.bounds_set
+	k.body.bounds, k.body.bounds_set = clauses, true
+	defer k.body.bounds, k.body.bounds_set = outer_bounds, outer_set
 	for clause in clauses {
 		errors := k.c.error_count
 		probe: Probe

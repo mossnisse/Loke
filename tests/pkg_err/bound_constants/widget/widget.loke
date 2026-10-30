@@ -1,0 +1,4 @@
+package widget;
+
+@(public)
+Rod :: struct { @(public) length: f64 }

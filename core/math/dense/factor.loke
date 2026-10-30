@@ -219,7 +219,7 @@ lu :: proc(a: View($T), allocator: Allocator = mem.default_allocator(), pool: Op
 	lu_in_place(factors.view_mut(), &mut pivots[:], pool) or_return;
 	norm := norm_one(a);
 	norm_scale := T.Real(1);
-	if (!real_finite(norm)) {
+	if (!norm.is_finite()) {
 		// The factors are finite, so the elements are and a column sum
 		// overflowed: it is summed again with each element over the limit.
 		norm_scale = scaling_limit(T.Real);
@@ -325,15 +325,15 @@ impl Lu($T) {
 		within the quotient. 0 when the estimate of `sigma |A^-1|_1` is not
 		finite.
 	*/
-	reciprocal_condition :: proc(self, allocator: Allocator = mem.default_allocator()) -> T.Real {
+	reciprocal_condition :: proc(self, allocator: Allocator = mem.default_allocator()) -> T.Real where linalg.Scalar(T) {
 		n := self.packed.row_count;
 		if (n == 0) { return T.Real(1); }
 		if (self.norm == T.Real(0)) { return T.Real(0); }
 		sigma := power_of_two_below(self.norm*self.norm_scale);
 		// The alternating vector reaches 2 sigma.
-		if (!real_finite(T.Real(2)*sigma)) { sigma = T.Real(0.5)*sigma; }
+		if (!(T.Real(2)*sigma).is_finite()) { sigma = T.Real(0.5)*sigma; }
 		estimate := self.inverse_norm_estimate(sigma, allocator);
-		if (!real_finite(estimate)) { return T.Real(0); }
+		if (!estimate.is_finite()) { return T.Real(0); }
 		return ((sigma/self.norm_scale)/estimate)/self.norm;
 	}
 
@@ -511,8 +511,8 @@ cholesky_columns :: proc(m: [^]$T, rs, cs, n, j0, j1, first: int) -> bool where 
 		// its squared modulus, so this test also rejects a factor that is not
 		// finite.
 		d := m[offset(j, j, rs, cs)].real_part();
-		if (!(T.Real(0) < d && real_finite(d))) { return false; }
-		root := T(real_sqrt(d));
+		if (!(T.Real(0) < d && d.is_finite())) { return false; }
+		root := T(d.sqrt());
 		m[offset(j, j, rs, cs)] = root;
 		foreach (i in j + 1 ..< n) {
 			at := offset(i, j, rs, cs);

@@ -1,0 +1,29 @@
+package shape;
+
+import "../widget";
+
+@(public)
+Length :: interface($T: type) {
+	slot metres: proc(self) -> f64;
+}
+
+// An associated type, an associated constant, and a composed bound on the
+// associated type, as `linalg.Scalar` composes `Real(T.Real)`.
+@(public)
+Measured :: interface($T: type) {
+	T.Unit -> type;
+	T.SCALE -> f64;
+	Length(T.Unit);
+	slot unit_of: proc(self) -> T.Unit;
+}
+
+// Private: only a bound on `Measured` reaches these from another package.
+impl widget.Rod {
+	Unit :: f64;
+	SCALE :: 2.0;
+	unit_of :: proc(self) -> f64 { return self.length; }
+}
+
+impl f64 {
+	metres :: proc(self) -> f64 { return self; }
+}

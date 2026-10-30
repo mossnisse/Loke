@@ -1,0 +1,34 @@
+package main; import "core:fmt";
+import "./shape"; import "./widget";
+
+// design.md "Interface bodies": a bound grants the associated constants and
+// slots that met it, each on the type it was required of, and nothing else.
+
+// A private constant that no requirement names.
+hidden_constant :: proc(x: $T) -> f64 where shape.Measured(T) {
+	return T.HIDDEN;
+}
+
+// A private extension of `T.Unit` that is not a slot of `Length`.
+hidden_slot :: proc(x: $T) -> f64 where shape.Measured(T) {
+	return x.unit_of().hidden();
+}
+
+// `Length`'s slot is granted on `T.Unit`, not on `T`.
+wrong_subject :: proc(x: $T) -> f64 where shape.Measured(T) {
+	return x.metres();
+}
+
+// One side of `||` is only tested for truth.
+disjunction :: proc(x: $T) -> f64 where shape.Measured(T) || shape.Length(T) {
+	unit: T.Unit = 0;
+	return unit;
+}
+
+main :: proc() {
+	rod := widget.Rod{length = 1.5};
+	fmt.println(hidden_constant(rod));
+	fmt.println(hidden_slot(rod));
+	fmt.println(wrong_subject(rod));
+	fmt.println(disjunction(rod));
+}
