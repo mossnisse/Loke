@@ -72,3 +72,36 @@ impl Corner {
 impl Point {
 	@(public) corner :: proc(self) -> Corner { return {self.x, self.y}; }
 }
+
+// A generic `impl`'s constant with no written type is read by its value's
+// type: at the declaration when the value names no `$` name of the block, and
+// in each instance when it does, passing over the type the instance binds.
+@(public) Holder :: struct($T: type) { value: T }
+@(public) Twin :: struct($A: type, $B: type) { a: A, b: B }
+@(public) Row :: struct($N: int) { cells: [N]int }
+@(private) Secret :: struct($T: type) { value: T }
+@(public) Lone :: struct($T: type) { value: T }
+impl Holder($T) {
+	@(public) START :: Corner{}; // though the one instance binding `T` to it is `Holder(Corner)`
+	@(public) TWINNED :: Twin(T, Corner){}; // by `Holder(int)`, once for both instances
+	@(public) HELD :: Holder(T){}; // not reported: `T` names no type
+	@(public) CORNER_SIZE :: size_of(Corner); // not reported: an `int`
+	@(private) INNER :: Corner{}; // not reported: private
+}
+impl Row($N) {
+	@(public) CORNERS :: [N]Corner{}; // by `Row(2)`
+}
+impl Secret($T) {
+	@(public) HIDDEN :: Corner{}; // not reported: the subject is private
+}
+impl Lone($T) {
+	@(public) LONE :: Corner{}; // with no instance
+	@(public) LONE_TWIN :: Twin(T, Corner){}; // not reported: no instance gives it a type
+}
+@(private) instances :: proc() {
+	_ = Holder(Corner).HELD;
+	_ = Holder(int).HELD;
+	_ = Holder(bool).HELD;
+	_ = Row(2){};
+	_ = Secret(int).HIDDEN;
+}

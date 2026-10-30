@@ -140,6 +140,10 @@ Compiler :: struct {
 	// a deep instantiation does not attach it once per level.
 	last_noted_diagnostic: int,
 	pending_impl_instances: [dynamic]Pending_Impl,
+	// The names of generic `impl` constants already warned about by their
+	// value's type (`src/private_names.odin`), so one is reported once however
+	// many instances read it.
+	private_constants_read: map[Span]bool,
 
 	// Interface declarations (`src/interface.odin`), keyed by their symbol.
 	interfaces:            map[Symbol_Id]^Interface_Info,

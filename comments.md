@@ -1194,6 +1194,23 @@ read. `package main` is left out entirely: nothing imports it, and its fields
 are public by default, so a warning there would fire on every program that
 stores a private enum in a struct.
 
+A generic `impl`'s constant with no written type is the one place the warning
+reads a type rather than a name, and its template has no type to read. The
+syntax cannot stand in for one: `Corner{}` writes its type, but
+`size_of(Corner)` names a type and is an `int`. So the value is checked as a
+`$` default is ([Default values](design.md#default-values)): one that names
+none of the block's `$` names means the same in every instance and is read at
+the declaration, which is where a library's author builds it, usually with no
+instance in sight. One that names a `$` name is read per instance, and a type
+an instance binds is passed over, since a `$` name names no type. This misses
+a private type the value also writes when every instance binds that same type,
+as `Twin(T, Corner){}` in a package that only uses `Holder(Corner)`; telling
+the two apart would need the value checked against a type no instance binds.
+A block no instance uses gives such a value no type, as its members get no
+other diagnostic, and is not read; one instance anywhere in the build is
+enough, and the warning names the declaration, once, however many instances
+show it.
+
 ### Standard free aliases
 
 `f(x)` uses lexical lookup; `x.f()` uses receiver lookup. Special aliases such
