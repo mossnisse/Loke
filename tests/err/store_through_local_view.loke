@@ -156,6 +156,22 @@ self_resliced_twice :: proc() {
 	}
 }
 
+// Legal: however long the chain of reslices before the loop, each starts
+// where the one before it does, so `s[0]` is `arr[0]`.
+self_resliced_nine_times :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3}; d := Node{4};
+	arr := [2]Counted{{&mut a, &mut b, 0}, {&mut c, &mut d, 0}};
+	s := &mut arr[:];
+	s = &mut s[0:]; s = &mut s[0:]; s = &mut s[0:];
+	s = &mut s[0:]; s = &mut s[0:]; s = &mut s[0:];
+	s = &mut s[0:]; s = &mut s[0:]; s = &mut s[0:];
+	for (round := 0; round < 2; round += 1) {
+		h := s[0].head;
+		h^.value = 1;
+		s[0].head = s[0].tail;
+	}
+}
+
 // Legal: each iteration borrows afresh and reslices once, so `t[0]` is
 // `arr[1]` in every iteration.
 self_resliced_each_iteration :: proc() {

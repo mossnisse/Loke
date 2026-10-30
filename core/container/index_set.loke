@@ -37,20 +37,31 @@ import "core:mem";
 /// The number of `u64` words that hold `cap` bits. A negative `cap` panics.
 words_for_bits :: proc(cap: int) -> int {
 	assert(cap >= 0, "container: an index set needs a non-negative capacity");
-	return (cap + 63)/64;
+	return round_up_quotient(cap, 64);
 }
 
 /// The number of bytes `store_bytes` writes for `cap` bits. A negative `cap` panics.
 bytes_for_bits :: proc(cap: int) -> int {
 	assert(cap >= 0, "container: an index set needs a non-negative capacity");
-	return (cap + 7)/8;
+	return round_up_quotient(cap, 8);
+}
+
+// `cap/divisor` rounded up, without `cap + divisor - 1`, which overflows for a
+// capacity near the largest `int` whose answer fits.
+@(private)
+round_up_quotient :: proc(cap, divisor: int) -> int {
+	quotient := cap/divisor;
+	if (cap % divisor != 0) { quotient += 1; }
+	return quotient;
 }
 
 // ======================================================= fixed, inline ==
 
 /// The indices `0 ..< N`, held inline in `words_for_bits(N)` words.
 Index_Set :: struct($N: int) where N >= 0 {
-	@(private) words: [(N + 63)/64]u64,
+	// `words_for_bits(N)` as a constant: the remainder term is 0 or 1, so the
+	// sum cannot overflow.
+	@(private) words: [N/64 + (N%64 + 63)/64]u64,
 }
 
 impl Index_Set($N) {

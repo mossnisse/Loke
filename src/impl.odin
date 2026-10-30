@@ -292,6 +292,13 @@ resolve_impl_signatures :: proc(k: ^Checker, item: ^Item_Impl) {
 
 check_impl_block :: proc(k: ^Checker, item: ^Item_Impl) {
 	if item.subject == INVALID_TYPE {
+		// A generic block's members are checked per instance, but a public
+		// constant's type may be the same in all of them.
+		if call, is_call := item.type.(^Expr_Call); is_call {
+			if template := generic_template_of_callee(k, call.callee, .Record); template != nil {
+				read_generic_impl_constants(k, item, template)
+			}
+		}
 		return
 	}
 	outer := k.impl_type

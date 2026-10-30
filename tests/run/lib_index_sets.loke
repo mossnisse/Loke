@@ -252,4 +252,13 @@ main :: proc() {
 	h := container.Dynamic_Index_Set.init(20);
 	fmt.println(h.load_bytes(bytes[:]), h.view() == p.view());
 	fmt.println(container.words_for_bits(0), container.words_for_bits(64), container.words_for_bits(65), container.bytes_for_bits(0), container.bytes_for_bits(9));
+
+	// The counts round up without overflowing, through the largest `int`: an
+	// exact multiple just below it, then the largest `int` itself.
+	top: int = 9223372036854775807;
+	fmt.println(container.words_for_bits(1), container.words_for_bits(128), container.words_for_bits(top - 63), container.words_for_bits(top));
+	fmt.println(container.bytes_for_bits(1), container.bytes_for_bits(8), container.bytes_for_bits(top - 7), container.bytes_for_bits(top));
+
+	// A fixed set's inline words are the same count, as a constant.
+	fmt.println(size_of(container.Index_Set(0)), size_of(container.Index_Set(64)), size_of(container.Index_Set(65)), size_of(container.Index_Set(9223372036854775807)));
 }

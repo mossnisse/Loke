@@ -22,7 +22,9 @@ MATRIX_DIR :: TMP + "/borrow_matrix"
 
 // Where the `List` lives, and how the place is written: `base` is the `List`
 // itself, `pointer` a `^mut List` to it, which `local_chosen` chooses between
-// two elements of an array, so it may point at either. A `read_only` place is
+// two elements of an array, so it may point at either, and
+// `param_slice_indexed` reaches at an index that is no constant, so it may be
+// any element of the view. A `read_only` place is
 // reached through a read-only pointer, so nothing writes the place itself,
 // but the mutable carriers stored in it keep their capability (design.md
 // "Values that contain borrows").
@@ -47,6 +49,7 @@ MATRIX_PLACES := [?]Matrix_Place {
 	{"local_indexed", "", MATRIX_NODES + " lists := [1]List{" + MATRIX_LIST + "}; p := &mut lists;", "p[0]", "&mut p[0]", false},
 	{"param_indexed", "p: ^mut [1]List", "", "p[0]", "&mut p[0]", false},
 	{"param_slice", "s: []mut List", "", "s[0]", "&mut s[0]", false},
+	{"param_slice_indexed", "s: []mut List, k: int", "", "s[k]", "&mut s[k]", false},
 	{
 		"local_slice", "",
 		MATRIX_NODES + " d := Node{4, .none}; e := Node{5, .none}; f := Node{6, .none}; lists := [2]List{" + MATRIX_LIST +
@@ -145,12 +148,14 @@ Matrix_Shape :: enum { Straight, Branch, Branch_Later, Loop_Carried, Loop_Whole 
 // `replace_head` stored there, so its copy out of `head` reborrows `tail`,
 // which copying `tail` again then uses. A store through a pointer that may
 // name either of two places replaces neither (design.md "Values that contain
-// borrows"), so there `head` keeps every earlier iteration's copy of `tail`,
+// borrows"), and neither does one into a view at an index that is no
+// constant, so there `head` keeps every earlier iteration's copy of `tail`,
 // which the next copy out of `head` uses even without a later use.
 // The code the rejection is reported with, or "" when the case is legal.
 @(private = "file")
 matrix_expected :: proc(place: Matrix_Place, take: Matrix_Take, use: Matrix_Use, shape: Matrix_Shape, later: bool) -> string {
-	if place.name == "local_chosen" && take == .Copy && use.name == "replace_head" && shape == .Loop_Whole {
+	if (place.name == "local_chosen" || place.name == "param_slice_indexed") && take == .Copy && use.name == "replace_head" &&
+	   shape == .Loop_Whole {
 		return "L0641"
 	}
 	if !later && take != .Foreach && take != .Foreach_Mut {

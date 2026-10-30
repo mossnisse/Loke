@@ -9184,7 +9184,12 @@ a `where` clause written in private terms. The warning applies to:
   enum's backing type; a generic parameter's type; the types an interface
   requirement binds and gives; and a constant's written type. A constant with
   no written type is read by the type of its value: `DEFAULT :: Fill{}` names
-  `Fill`.
+  `Fill`. In a [generic `impl`](#generic-types), a value that names none of
+  the block's `$` names has the same type in every instance and is read at the
+  declaration, whether or not an instance exists; one that names a `$` name
+  has a type only in an instance, so it is read in each instance the build
+  creates, and not at all when there is none. Either way it is warned about
+  once.
 - **Any private declaration in a `where` clause**, or in the expression of an
   interface requirement: a procedure, interface, constant, or type.
 
@@ -9198,7 +9203,9 @@ It does not apply to:
   API. A private member declared in the package is read as a public procedure
   is, since the group exports its signature.
 - A parameter or a `$` name, whatever type an instance binds to it:
-  `identity :: proc(value: $T) -> T` names no type.
+  `identity :: proc(value: $T) -> T` names no type. When a generic `impl`'s
+  constant is read in an instance, a part of its type that is the type the
+  instance binds to one of the block's `$` names is read as that name.
 - The members of an `impl` whose subject is a private type. An importer
   reaches them only through a value of that type, and the declaration that
   hands one out is the one warned about.

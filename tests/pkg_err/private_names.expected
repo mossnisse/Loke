@@ -41,6 +41,14 @@ warning[L0740]: `area_corner`, which the public group `area` exports, names the 
 @53:40
 warning[L0740]: public `Point.corner` names the private type `Corner`
 @73:36
+warning[L0740]: public `Holder.START` has the private type `Corner`
+@85:12
+warning[L0740]: public `Holder.TWINNED` has the private type `Corner`
+@86:12
+warning[L0740]: public `Row.CORNERS` has the private type `Corner`
+@92:12
+warning[L0740]: public `Lone.LONE` has the private type `Corner`
+@98:12
 !`Padded.hidden`
 !`area_int`
 !`twice`
@@ -54,3 +62,8 @@ warning[L0740]: public `Point.corner` names the private type `Corner`
 !`make_hidden`
 !`Hidden`
 !`Kind`
+!`Holder.HELD`
+!`Holder.CORNER_SIZE`
+!`Holder.INNER`
+!`Secret.HIDDEN`
+!`Lone.LONE_TWIN`

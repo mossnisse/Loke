@@ -62,20 +62,6 @@ Review of `81a9342c` on 2026-10-30 covered its documentation merge against
 the first parent and its compiler/filesystem fixes against the `main`
 parent, `abed59c0`:
 
-- **Remove the obsolete view-depth argument.** The new per-definition cache
-  in [borrow.odin](src/borrow.odin) detects cycles, while the retained
-  `depth > 8` cutoff still rejects a finite chain of nine identity reslices.
-  Remove that argument from `publish_view_of`, `publish_view_def`, and
-  their calls, and keep the cache's cycle detection. The reproduction and
-  validation are in
-  [known-gaps.md](known-gaps.md#nine-constant-self-reslices-still-prevent-an-element-store-from-replacing-its-contents).
-- **Delete the resolved dense-scalar gap.** The merge restores the
-  `Integer builtin registrations break dense scalar constraints` entry to
-  [known-gaps.md](known-gaps.md#integer-builtin-registrations-break-dense-scalar-constraints),
-  although the exact QR reproduction compiles and prints `ok` with the
-  merged compiler, and [lib_dense.loke](tests/run/lib_dense.loke) passes.
-  The review of merge `4008ea61` had already found that the failure does not
-  reproduce. Remove these 42 lines from the current gap inventory.
 - **Exercise the failed unlock itself.** The added sequence in
   [lib_fs_lock.loke](tests/run/lib_fs_lock.loke) exercises successful
   releases and contention, but its comment acknowledges that it cannot make
@@ -95,9 +81,7 @@ together without a general filesystem abstraction.
 
 Validation passes all 175 compiler unit tests, the borrow matrix,
 diagnostics, the normalization and locking runtime regressions, the fs
-interface check, and the dense runtime regression. An isolated compiler
-with the view-depth argument removed also passes the borrow matrix and
-diagnostics and accepts the nine-reslice reproduction.
+interface check, and the dense runtime regression.
 
 ## JSON follow-ups
 
@@ -232,13 +216,12 @@ Still open:
   replaces. One element at a constant index has slots of its own, which a store
   naming it replaces: a view parameter's (`prov_view_element`), and a local
   view's whose start in the range its borrow lends is known
-  (`prov_local_view_element`). A store into a view parameter at any other
-  index still joins into the parameter itself, as does a store whose copies no
-  reborrow links to where it lands; known-gaps.md records [a rejection the
-  first
-  causes](known-gaps.md#a-store-through-a-slice-parameter-at-a-variable-index-joins-into-the-parameter).
-  A record stored whole through a parameter replaces, and links, each carrier
-  slot it lands in. Storage below the second load gets a loan per carrier only
+  (`prov_local_view_element`). A carrier stored into a view parameter at any
+  other index lands in each of its element slots and replaces none
+  (`prov_view_any_element_store`). A record stored whole into any element of
+  a view parameter still joins into the parameter itself, as does a store
+  whose copies no reborrow links to where it lands. A record stored whole through a parameter replaces, and
+  links, each carrier slot it lands in. Storage below the second load gets a loan per carrier only
   where the storage above it is one place; through a view or past the last
   load depth it is one slot.
 - **Matrix coverage.** Slices and traversals are taken of a fixed array, so

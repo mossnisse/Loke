@@ -3092,6 +3092,8 @@ check_pending_impl_instances :: proc(k: ^Checker) {
 				check_decl(k, d)
 			}
 		}
+		// Each constant has its type now.
+		check_instance_private_names(k.c, pending)
 		if pkg := package_of(k.c, pending.pkg); pkg != nil {
 			for member in pending.item.members {
 				d, is_decl := member.(^Decl)
