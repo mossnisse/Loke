@@ -16,11 +16,6 @@ audit](nondeterminism-audit.md).
 Review of `675f0659`, `7ee9c971`, and `cf74b6e2` on 2026-10-30 found these
 cleanup and coverage items:
 
-- **Restore the separate path-normalization rationale.** The locking commit
-  deleted the `Paths keep Windows' own normalization` bullet label in
-  [Standard-library API choices](comments.md#standard-library-api-choices),
-  leaving its paragraph attached to `File locks are advisory`. Restore the
-  bullet so these independent choices can be read separately.
 - **Keep a contended blocking-lock regression.**
   [lib_fs_lock.loke](tests/run/lib_fs_lock.loke) exercises `try_lock` under
   contention, but calls blocking `lock` only on a free file or an already
