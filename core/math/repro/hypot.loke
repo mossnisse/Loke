@@ -85,13 +85,7 @@ hypot_slow :: proc(a: f64, b: f64, ea: int, near: f64, layout: Float_Layout) -> 
 	fa := fixed_of(a);
 	fb := fixed_of(b);
 	s := fixed_plus(fixed_times(fa, fa), fixed_times(fb, fb));
-	w: Fixed = {};
-	if (s[5] >= 4) {
-		half := fixed_sqrt(fixed_shift_down(s, 2), 0.5*near);
-		w = fixed_plus(half, half);
-	} else {
-		w = fixed_sqrt(s, near);
-	}
+	w := fixed_sqrt(s, near);
 	exponent := ea - FRACTION_BITS;
 	unit, drop := fixed_round_place(w, exponent, layout);
 	kept := fixed_field(w, drop, layout.precision + 1);
