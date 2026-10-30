@@ -1,0 +1,129 @@
+// design.md "Weakening and reborrows": a store replaces what one place held,
+// so the copy of `s[0].head` one iteration takes no longer holds the storage
+// the next store puts there. design.md "Values that contain borrows": with
+// `s` a local view each of whose definitions is one borrow `&mut a[lo:hi]`,
+// `s[k]` with a constant `k` is the one element `lo + k` of `a`, and a store
+// of a carrier into one of its fields replaces what that field held, as a
+// store through a view parameter's element does. So does one through a view
+// whose definitions are each a constant reslice of such a view, as
+// `t := &mut s[1:]`, whose `t[k]` is element `lo + 1 + k`, or the one
+// borrow it holds there. What it stores is still a copy: a copy of that copy
+// reborrows the carrier it came from.
+package main;
+
+Node :: struct { value: int }
+Counted :: struct { head: ^mut Node, tail: ^mut Node, count: int }
+sink :: proc(value: int) {}
+
+// Legal: each iteration's copy is done before the store replaces it.
+each_iteration :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3}; d := Node{4};
+	arr := [2]Counted{{&mut a, &mut b, 0}, {&mut c, &mut d, 0}};
+	s := &mut arr[:];
+	for (round := 0; round < 2; round += 1) {
+		h := s[0].head;
+		h^.value = 1;
+		s[0].head = s[0].tail;
+	}
+}
+
+// Legal: the view starts at element 1, so `s[1]` is `arr[2]`.
+from_offset :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3}; d := Node{4}; e := Node{5}; f := Node{6};
+	arr := [3]Counted{{&mut a, &mut b, 0}, {&mut c, &mut d, 0}, {&mut e, &mut f, 0}};
+	s := &mut arr[1:3];
+	for (round := 0; round < 2; round += 1) {
+		h := s[1].head;
+		h^.value = 1;
+		s[1].head = s[1].tail;
+	}
+}
+
+// Legal: `t[1]` is `arr[2]`, and `u[0]` is `arr[2]` too.
+resliced :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3}; d := Node{4}; e := Node{5}; f := Node{6};
+	arr := [3]Counted{{&mut a, &mut b, 0}, {&mut c, &mut d, 0}, {&mut e, &mut f, 0}};
+	s := &mut arr[:];
+	t := &mut s[1:];
+	for (round := 0; round < 2; round += 1) {
+		h := t[1].head;
+		h^.value = 1;
+		t[1].head = t[1].tail;
+	}
+}
+
+resliced_twice :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3}; d := Node{4}; e := Node{5}; f := Node{6};
+	arr := [3]Counted{{&mut a, &mut b, 0}, {&mut c, &mut d, 0}, {&mut e, &mut f, 0}};
+	s := &mut arr[0:3];
+	t := &mut s[1:3];
+	u := &mut t[1:2];
+	for (round := 0; round < 2; round += 1) {
+		h := u[0].head;
+		h^.value = 1;
+		u[0].head = u[0].tail;
+	}
+}
+
+// Legal: inside the loop `s` holds only the second borrow.
+reassigned_before :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3}; d := Node{4}; e := Node{5}; f := Node{6};
+	arr := [3]Counted{{&mut a, &mut b, 0}, {&mut c, &mut d, 0}, {&mut e, &mut f, 0}};
+	s := &mut arr[0:2];
+	sink(s[0].count);
+	s = &mut arr[1:3];
+	for (round := 0; round < 2; round += 1) {
+		h := s[0].head;
+		h^.value = 1;
+		s[0].head = s[0].tail;
+	}
+}
+
+// Legal: the store replaced what `arr[1].head` held, the borrow of `c`.
+resliced_replaces :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3}; d := Node{4}; e := Node{5}; f := Node{6};
+	arr := [3]Counted{{&mut a, &mut b, 0}, {&mut c, &mut d, 0}, {&mut e, &mut f, 0}};
+	s := &mut arr[:];
+	t := &mut s[1:];
+	t[0].head = t[0].tail;
+	c.value = 5;
+	sink(arr[1].head^.value);
+}
+
+// `t[0]` is `arr[1]`, so `arr[0].head` still holds the borrow of `a`.
+resliced_keeps_the_other :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3}; d := Node{4}; e := Node{5}; f := Node{6};
+	arr := [3]Counted{{&mut a, &mut b, 0}, {&mut c, &mut d, 0}, {&mut e, &mut f, 0}};
+	s := &mut arr[:];
+	t := &mut s[1:];
+	t[0].head = t[0].tail;
+	a.value = 5;
+	sink(arr[0].head^.value);
+}
+
+// The copy taken before the store is used after it, so the next iteration's
+// copy of the stored `tail` is live while `tail` is read again.
+used_after_store :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3}; d := Node{4};
+	arr := [2]Counted{{&mut a, &mut b, 0}, {&mut c, &mut d, 0}};
+	s := &mut arr[:];
+	for (round := 0; round < 2; round += 1) {
+		h := s[0].head;
+		s[0].head = s[0].tail;
+		h^.value = 1;
+	}
+}
+
+// A copy of what the store left in `s[1].head` reborrows `s[0].tail`.
+copy_of_the_copy :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3}; d := Node{4};
+	arr := [2]Counted{{&mut a, &mut b, 0}, {&mut c, &mut d, 0}};
+	s := &mut arr[:];
+	s[1].head = s[0].tail;
+	h := s[1].head;
+	t := s[0].tail;
+	h^.value = 1;
+	t^.value = 2;
+}
+
+main :: proc() {}

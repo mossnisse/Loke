@@ -48,6 +48,18 @@ MATRIX_PLACES := [?]Matrix_Place {
 	{"param_indexed", "p: ^mut [1]List", "", "p[0]", "&mut p[0]", false},
 	{"param_slice", "s: []mut List", "", "s[0]", "&mut s[0]", false},
 	{
+		"local_slice", "",
+		MATRIX_NODES + " d := Node{4, .none}; e := Node{5, .none}; f := Node{6, .none}; lists := [2]List{" + MATRIX_LIST +
+		", List{&mut d, &mut e, 2, .some(&mut f), [2]int{4, 5}}}; s := &mut lists[:];",
+		"s[0]", "&mut s[0]", false,
+	},
+	{
+		"local_resliced", "",
+		MATRIX_NODES + " d := Node{4, .none}; e := Node{5, .none}; f := Node{6, .none}; lists := [2]List{List{&mut d, &mut e, 2, .some(&mut f), [2]int{4, 5}}, " +
+		MATRIX_LIST + "}; s := &mut lists[:]; t := &mut s[1:];",
+		"t[0]", "&mut t[0]", false,
+	},
+	{
 		"local_chosen", "",
 		MATRIX_NODES + " d := Node{4, .none}; e := Node{5, .none}; f := Node{6, .none}; lists := [2]List{" + MATRIX_LIST +
 		", List{&mut d, &mut e, 2, .some(&mut f), [2]int{4, 5}}}; chosen := &mut lists[0] if cond() else &mut lists[1];",

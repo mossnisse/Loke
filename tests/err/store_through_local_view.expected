@@ -1,0 +1,9 @@
+L0511
+@100:2
+this write of `a` is not compatible with the mutable pointer of it that is still in use
+L0641
+@112:15
+`arr` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@124:7
+`arr` cannot be used here: a mutable reborrow of it is still in use

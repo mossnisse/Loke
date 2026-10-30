@@ -136,6 +136,31 @@ old_then_fresh :: proc() {
 	fmt.println(a.value, c.value);
 }
 
+// Through a parameter, the copy of `q^.head` leaves `q^.tail` free, as
+// through a pointer to a local.
+parameter_sibling :: proc(p: ^mut List, @(escape=stored) q: ^mut List) {
+	p^ = q^;
+	x := p^.head;
+	y := q^.tail;
+	x^.value += 1000;
+	y^.value += 2000;
+}
+
+parameter_field_sibling :: proc(p: ^mut Outer, @(escape=stored) q: ^mut List) {
+	p^.list = q^;
+	x := p^.list.head;
+	q^.tail^.value += 2000;
+	p^.count += 1;
+	x^.value += 1000;
+}
+
+parameter_literal_sibling :: proc(p: ^mut List, @(escape=stored) a: ^mut Node, @(escape=stored) b: ^mut Node) {
+	p^ = List{a, b};
+	x := p^.head;
+	b^.value += 2000;
+	x^.value += 1000;
+}
+
 main :: proc() {
 	h := Node{0}; t := Node{0};
 	list := List{&mut h, &mut t};
@@ -158,4 +183,30 @@ main :: proc() {
 	into_field_each_iteration(&mut again);
 	fmt.println(h.value);
 	old_then_fresh();
+	run_parameter_sibling();
+	run_parameter_field_sibling();
+	run_parameter_literal_sibling();
+}
+
+run_parameter_sibling :: proc() {
+	m := Node{1}; n := Node{2}; o := Node{3}; k := Node{4};
+	from := List{&mut m, &mut n};
+	into := List{&mut o, &mut k};
+	parameter_sibling(&mut into, &mut from);
+	fmt.println(m.value, n.value, o.value, k.value);
+}
+
+run_parameter_field_sibling :: proc() {
+	m := Node{1}; n := Node{2}; o := Node{3}; k := Node{4};
+	from := List{&mut m, &mut n};
+	held := Outer{List{&mut o, &mut k}, 0};
+	parameter_field_sibling(&mut held, &mut from);
+	fmt.println(m.value, n.value, held.count);
+}
+
+run_parameter_literal_sibling :: proc() {
+	m := Node{1}; n := Node{2}; o := Node{3}; k := Node{4};
+	into := List{&mut m, &mut n};
+	parameter_literal_sibling(&mut into, &mut o, &mut k);
+	fmt.println(m.value, n.value, o.value, k.value);
 }

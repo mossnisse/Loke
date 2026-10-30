@@ -1,0 +1,6 @@
+L0641
+@42:2
+`r` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@50:2
+`r` cannot be used here: a read-only reborrow of it is still in use

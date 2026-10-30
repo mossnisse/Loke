@@ -12,3 +12,16 @@ L0641
 @70:7
 L0641
 @82:7
+L0641
+@91:7
+L0641
+@99:2
+L0641
+@106:2
+L0641
+@113:2
+L0641
+@124:2
+L0641
+@132:2
+`a` cannot be used here: a mutable reborrow of it is still in use

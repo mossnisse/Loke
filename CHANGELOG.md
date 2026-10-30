@@ -10,6 +10,25 @@ checklist.
 
 ### Breaking changes
 
+- A call that may store an `@(escape=stored)` argument into a mutable
+  destination it was also given, as `relink(p, r)`, now makes a carrier later
+  copied out of that destination, as `h := p^.head`, a reborrow of the
+  argument, so using `r` while `h` is still in use is rejected with `L0641`,
+  as it is after storing `p^.head = r` directly
+  ([Retaining a borrow](design.md#retaining-a-borrow),
+  [Weakening and reborrows](design.md#weakening-and-reborrows)). Before, it
+  compiled, and two mutable paths to one node were used together. Upgrade by
+  finishing with the copy before using the argument again, or by taking the
+  copy after the argument's last use.
+
+- A read-only copy of a borrow stored through a pointer, as `h := p^.head`
+  after `p^.head = r` with `head: ^Node` and `r: ^mut Node`, now keeps `r`
+  from being written until `h`'s last use, as a read-only reborrow taken
+  directly does; so does a call that stores `r` into such a destination
+  ([Weakening and reborrows](design.md#weakening-and-reborrows)). Before,
+  writing through `r` while `h` was still used compiled. Upgrade by moving
+  the copy's last use before the write, or by taking the copy after it.
+
 - A carrier copied out of a record stored whole through a pointer, as
   `x := p^.head` after `p^ = q^`, now reborrows the carrier it was copied
   from, so copying `q^.head` again while `x` is still in use is rejected with
@@ -560,6 +579,19 @@ checklist.
 
 ### Fixed
 
+- A store into one element of a local slice view at a constant index, as
+  `s[0].head = s[0].tail` with `s := &mut arr[:]` or a constant reslice
+  `t := &mut s[1:]`, now replaces what that element held, so a loop that
+  copies `s[0].head` before the store compiles, as it does through a slice
+  parameter ([Weakening and reborrows](design.md#weakening-and-reborrows)).
+- After `p^ = q^` through a pointer parameter, a copy of one carrier, as
+  `p^.head`, no longer holds the loans of the record's other carriers, so
+  `q^.tail` stays usable beside it
+  ([Weakening and reborrows](design.md#weakening-and-reborrows)).
+- Passing an existing mutable carrier to an `@(escape=stored)` parameter
+  beside an `inout` destination, as `keep(inout d, r)`, is no longer
+  rejected with `L0641` at the call itself
+  ([Retaining a borrow](design.md#retaining-a-borrow)).
 - `core:math/linalg`'s `perspective` and `perspective_lh` compute their depth
   coefficients from `far/(far - near)` and `near/(far - near)`, so a finite
   near and far whose product overflows or underflows, such as 10 and 1e38 at

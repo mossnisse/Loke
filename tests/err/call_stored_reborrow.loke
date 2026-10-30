@@ -1,0 +1,104 @@
+// design.md "Retaining a borrow": a call may write an `@(escape=stored)`
+// argument's borrows into any compatible mutable destination it receives,
+// and design.md "Weakening and reborrows" makes a carrier copied out of
+// storage a reborrow of the carrier stored there. So after such a call, a
+// mutable copy out of a destination may copy the argument, which stays
+// suspended until that copy's last use, as after storing it there directly.
+// The stored copy itself is a reborrow too, used again by reading through
+// it. Another field the call may not have written, and uses after the
+// copy's last use, stay legal.
+package main;
+
+Node :: struct { value: int }
+Counted :: struct { head: ^mut Node, tail: ^mut Node, count: int }
+Holder :: struct { n: ^mut Node }
+
+relink :: proc(p: ^mut Counted, @(escape=stored) n: ^mut Node) { p^.head = n; }
+relink_view :: proc(s: []mut Counted, @(escape=stored) n: ^mut Node) { s[0].head = n; }
+relink_inner :: proc(p: ^mut Counted, @(escape=stored) h: ^mut Holder) { p^.head = h^.n; }
+sink :: proc(value: int) {}
+
+// Through a parameter.
+through_parameter :: proc(p: ^mut Counted, @(escape=stored) r: ^mut Node) {
+	relink(p, r);
+	h := p^.head;
+	r^.value = 1;
+	h^.value = 2;
+}
+
+// Into a local.
+into_local :: proc(@(escape=stored) r: ^mut Node) {
+	a := Node{1}; b := Node{2};
+	c := Counted{&mut a, &mut b, 0};
+	relink(&mut c, r);
+	h := c.head;
+	r^.value = 1;
+	h^.value = 2;
+}
+
+// Through a pointer to a local.
+through_local_pointer :: proc(@(escape=stored) r: ^mut Node) {
+	a := Node{1}; b := Node{2};
+	c := Counted{&mut a, &mut b, 0};
+	p := &mut c;
+	relink(p, r);
+	h := p^.head;
+	r^.value = 1;
+	h^.value = 2;
+}
+
+// Into an element of a view parameter.
+into_view :: proc(s: []mut Counted, @(escape=stored) r: ^mut Node) {
+	relink_view(s, r);
+	h := s[0].head;
+	r^.value = 1;
+	h^.value = 2;
+}
+
+// What the argument reaches may be stored as well.
+reached :: proc(p: ^mut Counted, @(escape=stored) q: ^mut Holder) {
+	relink_inner(p, q);
+	h := p^.head;
+	q^.n^.value = 1;
+	h^.value = 2;
+}
+
+// The stored copy is used by reading through it.
+stored_copy :: proc(p: ^mut Counted, @(escape=stored) r: ^mut Node) {
+	relink(p, r);
+	r^.value = 1;
+	p^.head^.value = 2;
+}
+
+// Legal: the copy's last use comes first.
+copy_done_first :: proc(p: ^mut Counted, @(escape=stored) r: ^mut Node) {
+	relink(p, r);
+	h := p^.head;
+	h^.value = 2;
+	r^.value = 1;
+}
+
+// Legal: no copy is taken, and `count` holds no carrier.
+beside :: proc(p: ^mut Counted, @(escape=stored) r: ^mut Node) {
+	relink(p, r);
+	r^.value = 1;
+	p^.count = 2;
+}
+
+// Legal: another element of the view is written beside the argument.
+beside_in_view :: proc(s: []mut Counted, @(escape=stored) r: ^mut Node) {
+	relink_view(s, r);
+	r^.value = 1;
+	s[1].count = 2;
+}
+
+// Legal: two arguments stored one after the other, neither copied out.
+both :: proc(p: ^mut Counted, @(escape=stored) r: ^mut Node, @(escape=stored) q: ^mut Node) {
+	relink(p, r);
+	relink(p, q);
+	r^.value = 1;
+	q^.value = 2;
+	sink(p^.count);
+}
+
+main :: proc() {}

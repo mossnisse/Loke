@@ -274,6 +274,11 @@ Prov_State :: struct {
 	// Per view parameter's own loan and constant index, the caller slots
 	// standing for that one element (`prov_view_element`).
 	view_elements:  map[Prov_View_Element][]int,
+	// Per named slot, how each of its definitions relates its view to a fresh
+	// borrow, and the reslice the definition being emitted makes, if any
+	// (`prov_note_view`).
+	view_defs:      map[int][dynamic]Prov_View_Def,
+	view_reslice:   Prov_View_Def,
 	// Per call with a `self: ^` receiver, what the receiver's place holds, which
 	// the call's actual joins with its borrow of that place: a load through the
 	// receiver reads these at its path rather than through them.
@@ -455,6 +460,7 @@ new_flow_graph :: proc(k: ^Checker, literal: ^Expr_Proc, allocator: mem.Allocato
 		graph.lent_aliases = make(map[int][]int, 8, allocator)
 		graph.caller_slots = make(map[Loan_Id][dynamic]int, 4, allocator)
 		graph.view_elements = make(map[Prov_View_Element][]int, 2, allocator)
+		graph.view_defs = make(map[int][dynamic]Prov_View_Def, 2, allocator)
 		graph.receiver_content = make(map[^Expr_Call][]int, 2, allocator)
 		graph.fresh_slots = make(map[int]bool, 2, allocator)
 		graph.content_by_symbol = make(map[Symbol_Id][]int, 8, allocator)

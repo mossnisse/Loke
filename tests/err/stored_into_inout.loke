@@ -1,0 +1,54 @@
+// design.md "Retaining a borrow": a call may write a `stored` argument into
+// an `inout` destination it receives, which then reborrows the argument
+// (design.md "Weakening and reborrows"). The call's own use of the argument
+// is no use beside that reborrow, so passing an existing mutable carrier is
+// legal; using it while the destination still holds a copy in use is not.
+package main;
+
+Node :: struct { value: int }
+sink :: proc(value: int) {}
+keep :: proc(destination: inout ^mut Node, @(escape=stored) n: ^mut Node) { destination = n; }
+keep_read_only :: proc(destination: inout ^Node, @(escape=stored) n: ^mut Node) { destination = n; }
+
+// Legal.
+kept :: proc(@(escape=stored) r: ^mut Node) {
+	a := Node{1};
+	d := &mut a;
+	keep(inout d, r);
+	d^.value = 2;
+}
+
+kept_read_only :: proc(@(escape=stored) r: ^mut Node) {
+	a := Node{1};
+	d: ^Node = &a;
+	keep_read_only(inout d, r);
+	sink(r^.value);
+	sink(d^.value);
+}
+
+kept_then_done :: proc(@(escape=stored) r: ^mut Node) {
+	a := Node{1};
+	d := &mut a;
+	keep(inout d, r);
+	d^.value = 2;
+	r^.value = 3;
+}
+
+// Rejected: the argument is used while the destination's copy is in use.
+used_beside :: proc(@(escape=stored) r: ^mut Node) {
+	a := Node{1};
+	d := &mut a;
+	keep(inout d, r);
+	r^.value = 1;
+	d^.value = 2;
+}
+
+written_beside_read_only :: proc(@(escape=stored) r: ^mut Node) {
+	a := Node{1};
+	d: ^Node = &a;
+	keep_read_only(inout d, r);
+	r^.value = 3;
+	sink(d^.value);
+}
+
+main :: proc() {}

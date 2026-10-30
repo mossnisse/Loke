@@ -1,0 +1,12 @@
+L0641
+@21:2
+`r` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@27:2
+`r` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@37:2
+`r` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@43:10
+`r` cannot be used here: a read-only reborrow of it is still in use

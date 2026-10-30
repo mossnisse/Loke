@@ -84,4 +84,53 @@ optional :: proc(q: ^mut Holder) {
 	switch (y) { case .some(n): n^.value = 2; case .none: }
 }
 
+// Through a parameter, as through a pointer to a local.
+through_parameter :: proc(@(escape=stored) p: ^mut List, @(escape=stored) q: ^mut List) {
+	p^ = q^;
+	x := p^.head;
+	y := q^.head;
+	x^.value = 1;
+	y^.value = 2;
+}
+
+through_parameter_tail :: proc(@(escape=stored) p: ^mut List, @(escape=stored) q: ^mut List) {
+	p^ = q^;
+	x := p^.tail;
+	q^.tail^.value = 3;
+	x^.value = 1;
+}
+
+into_parameter_field :: proc(@(escape=stored) p: ^mut Outer, @(escape=stored) q: ^mut List) {
+	p^.list = q^;
+	x := p^.list.head;
+	q^.head^.value = 3;
+	x^.value = 1;
+}
+
+through_two_parameter_pointers :: proc(@(escape=stored) p: ^mut ^mut List, @(escape=stored) q: ^mut List) {
+	p^^ = q^;
+	x := p^^.head;
+	q^.head^.value = 3;
+	x^.value = 1;
+}
+
+cond :: proc() -> bool { return true; }
+
+// A pointer that may name either parameter replaces neither.
+either_parameter :: proc(@(escape=stored) p: ^mut List, @(escape=stored) o: ^mut List, @(escape=stored) q: ^mut List) {
+	t := p if cond() else o;
+	t^ = q^;
+	x := p^.head;
+	q^.head^.value = 3;
+	x^.value = 1;
+}
+
+// A literal's carriers, through a parameter.
+literal_through_parameter :: proc(@(escape=stored) p: ^mut List, @(escape=stored) a: ^mut Node, @(escape=stored) b: ^mut Node) {
+	p^ = List{a, b};
+	x := p^.head;
+	a^.value = 3;
+	x^.value = 1;
+}
+
 main :: proc() {}

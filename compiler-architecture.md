@@ -369,7 +369,7 @@ behavioral controls for all of it.
 | Access through carriers: the hops to a place, the caller slots a parameter's loan stands for, and the reborrow a loaded copy takes | `prov_read_through_carrier`, `prov_place_hops`, `prov_caller_slots`, `prov_view_element`, `prov_reborrow_loaded` in `cfg_provenance.odin` |
 | Place loans, taken by a borrow, slice, traversal, or switch of a place reached through carriers | `Prov_Place_Loan`, `prov_place_loan`, `place_bit`, `check_place_loans` in `borrow.odin` |
 | Access events, the places a slot's definitions may point at, and their merging | `prov_access_through`, `Prov_Slot.offsets`, `prov_note_offset`, `prov_union_offsets` |
-| Publication: a store through carriers | `publish_into_loan`, `publish_into_caller`, `read_caller_slots`, `resolve_content_reads` in `borrow.odin` |
+| Publication: a store through carriers, or what a call leaves of a `stored` argument | `publish_into_loan`, `publish_into_caller`, `read_caller_slots`, `resolve_content_reads` in `borrow.odin`; `prov_reborrow_retained` in `cfg_provenance.odin` |
 | Written-argument regions, by parameter and by path | `param_writes_caller`, `Compiler.written_regions`, `written_owner_regions`, `written_region_content`, `Prov_Region_Content` |
 | Region shapes and queries of a value's fields | `region_field_shape`, `Region_Query`, `prov_result_region_at`, `prov_result_region_fields` |
 | Copies and clones | `Prov_Region_Copy`, `prov_copied_region_at`, `prov_clone_region_at`, `prov_define_value_regions` |
@@ -411,13 +411,21 @@ Keep these contracts:
   place with one live loan of exact path, the slot of the stored type at that
   place, or of each carrier inside a stored record, is replaced, as a store to
   the place itself replaces it (design.md "Values that contain borrows"). A
-  parameter's loan publishes into its caller slots, so the parameter itself
-  holds nothing stored. A view parameter's slots stand for every element, so
-  only a store into one element, `s[k]` with a constant `k`, lands in slots of
-  that element (`prov_view_element`); any other store through a view also
-  joins into the parameter itself. Each carrier the store copies is linked as
-  a reborrow to the slots where it may land (`prov_reborrow_stored_content`
-  for one inside a record).
+  local view's loan names the range it lends, so `s[k]` with a constant `k`
+  names one element of it only where every definition of `s` that takes the
+  loan agrees on where `s` starts in that range: the borrow itself, or a
+  constant reslice of such a view, and nothing borrows `s`
+  (`Prov_View_Def`, `prov_local_view_element`, `publish_view_of`). A parameter's loan publishes into its caller slots,
+  so the parameter itself holds nothing stored. A view parameter's slots
+  stand for every element, so only a store into one element, `s[k]` with a
+  constant `k`, lands in slots of that element (`prov_view_element`); any
+  other store through a view also joins into the parameter itself. Each
+  carrier the store copies is linked as a reborrow to the slots where it may
+  land (`prov_reborrow_stored_content` for one inside a record), and only a
+  store whose every copy is linked there skips the parameter itself
+  (`Prov_Event.linked`). What a call leaves of a `stored` argument publishes
+  the same way, linked to every slot a destination may stand for
+  (`prov_reborrow_retained`).
 - **Owners, handles, and fields stay apart.** Region facts are kept by path,
   and backing dependencies apart from payload dependencies: a record's fields,
   a container's elements and backing, a shared handle's control block and

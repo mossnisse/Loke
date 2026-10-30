@@ -291,6 +291,20 @@ Prov_Slot :: struct {
 	offsets_merged: bool,
 }
 
+// How one definition of a named view slot relates what it views to the range
+// a fresh borrow lends (`prov_note_view`): that borrow itself, as
+// `s := &mut a[0:2]`; elements `lo` up to `hi` of another such slot, as
+// `t := &mut s[1:]`, with `hi` -1 for its end; or `unknown`.
+Prov_View_Def :: struct {
+	// For the reslice about to be defined, one more than the slot it defines.
+	slot:    int,
+	loan:    Loan_Id,
+	// One more than the slot resliced, or 0.
+	from:    int,
+	lo, hi:  i64,
+	unknown: bool,
+}
+
 // A slot holding no fresh borrow. Zero would name loan 0 and event 0.
 empty_prov_slot :: proc(symbol: Symbol_Id) -> Prov_Slot {
 	return Prov_Slot {
@@ -329,6 +343,11 @@ Prov_Reborrow :: struct {
 	// Loaded on the way to a place through `source` (`Prov_Event.walked`): the
 	// access to that place stands for the use, so it suspends nothing.
 	walked: bool,
+	// Taken from a read-only carrier loaded out through a pointer, or from a
+	// copy of one, which extends a reborrow only once the solve finds that
+	// carrier read one of a mutable carrier stored there
+	// (`prov_reborrow_loaded`); until then the solve does not see it.
+	pending: bool,
 }
 
 // A loan of `place`, reached through carriers, at `path` below their pointee.
@@ -2976,7 +2995,8 @@ run_prov_event :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8, ended
 				}
 				publish_into_loan(
 					state, reach, index, event.path, event.stored if index == one else INVALID_TYPE, state.precision[slot], event.linked,
-					event.elements if index == one && index + 1 == event.element_loan else nil,
+					event.retained, event.elements if index == one && index + 1 == event.element_loan else nil,
+					publish_view_loan(graph, event, index).path if index == one else nil,
 				)
 			}
 		}
@@ -3425,6 +3445,83 @@ resolve_content_reads :: proc(state: ^Prov_State) {
 			}
 		}
 	}
+	// Activating pending reborrows changes no count, so the index is rebuilt.
+	state.reborrow_starts = nil
+}
+
+// `one`, the loan a store's carriers name, with the path of the one element
+// of the range it lends that the store names (`prov_local_view_element`),
+// when what the local view stored through views is known relative to that
+// range (`publish_view_of`). An index past the view names none, as the store
+// would panic.
+@(private = "file")
+publish_view_loan :: proc(graph: ^Flow_Graph, event: Prov_Event, one: int) -> Prov_Loan {
+	loan := graph.loans[one]
+	if event.view_slot == 0 || len(loan.path) == 0 || !path_is_exact(loan.path[:len(loan.path) - 1]) {
+		return loan
+	}
+	last := loan.path[len(loan.path) - 1]
+	if last.kind != .Range || last.precision != {} || last.hi <= last.lo {
+		return loan
+	}
+	offset, length, present, known := publish_view_of(graph, event.view_slot - 1, one, last.hi - last.lo, 0)
+	if !present || !known || event.view_index >= length {
+		return loan
+	}
+	at := last.lo + offset + event.view_index
+	path := make([]Proj_Step, len(loan.path), graph.alloc)
+	copy(path, loan.path)
+	path[len(path) - 1] = proj_range(at, at + 1)
+	loan.path = path
+	return loan
+}
+
+// design.md "Values that contain borrows": where in the `range` elements
+// `loan` lends the view held in `slot` starts, and how many it views,
+// whenever `slot` holds that loan. Each definition of the slot takes the
+// borrow itself, a constant reslice of another such slot, or something else,
+// and all that take the loan must agree; nothing may borrow the slot, which
+// would let a store through a pointer change it unseen. `present` is false
+// when no definition takes the loan, and `known` false when it is not known
+// where the view starts, as for a slot resliced from itself in a loop.
+@(private = "file")
+publish_view_of :: proc(graph: ^Flow_Graph, slot, loan: int, range: i64, depth: int) -> (offset, length: i64, present, known: bool) {
+	defs, recorded := graph.view_defs[slot]
+	if !recorded || depth > 8 {
+		return 0, 0, true, false
+	}
+	symbol := graph.prov_slots[slot].symbol
+	for other in graph.loans {
+		if graph.roots[int(other.root)].symbol == symbol {
+			return 0, 0, true, false
+		}
+	}
+	for def in defs {
+		start, count: i64
+		switch {
+		case def.unknown:
+			return 0, 0, true, false
+		case def.from > 0:
+			from, viewed, holds, exact := publish_view_of(graph, def.from - 1, loan, range, depth + 1)
+			if !holds {
+				continue
+			}
+			hi := def.hi < 0 ? viewed : def.hi
+			if !exact || def.lo < 0 || def.lo > hi || hi > viewed {
+				return 0, 0, true, false
+			}
+			start, count = from + def.lo, hi - def.lo
+		case int(def.loan) == loan:
+			start, count = 0, range
+		case:
+			continue
+		}
+		if present && (start != offset || count != length) {
+			return 0, 0, true, false
+		}
+		offset, length, present = start, count, true
+	}
+	return offset, length, present, true
 }
 
 // The slots a store through carriers replaces (`publish_into_loan`).
@@ -3435,13 +3532,13 @@ publish_replaced_slots :: proc(state: ^Prov_State, event: Prov_Event, reach: []u
 		return nil
 	}
 	graph := state.graph
-	loan := graph.loans[one]
+	loan := publish_view_loan(graph, event, one)
 	symbol := graph.roots[int(loan.root)].symbol
 	out := make([dynamic]int, 0, 1, graph.alloc)
 	// One element of a view parameter is one place (`prov_view_element`).
 	if one + 1 == event.element_loan {
 		for index in event.elements {
-			if caller_replaces(graph.prov_slots[index], event.path, event.stored) {
+			if caller_replaces(graph.k.c, graph.prov_slots[index], event.path, event.stored) {
 				append(&out, index)
 			}
 		}
@@ -3449,7 +3546,7 @@ publish_replaced_slots :: proc(state: ^Prov_State, event: Prov_Event, reach: []u
 	}
 	if slots, caller := graph.caller_slots[Loan_Id(one)]; caller && graph.prov_slots[slots[0]].caller_one {
 		for index in slots {
-			if caller_replaces(graph.prov_slots[index], event.path, event.stored) {
+			if caller_replaces(graph.k.c, graph.prov_slots[index], event.path, event.stored) {
 				append(&out, index)
 			}
 		}
@@ -3516,14 +3613,19 @@ solve_loan_liveness :: proc(state: ^Prov_State) {
 // `stored` value there, is replaced instead, as a store to the place itself
 // replaces it (`publish_replaces`). A parameter's caller storage is its loan's
 // caller slots (`publish_into_caller`), and one element of a view parameter
-// its `elements` (`prov_view_element`).
+// its `elements` (`prov_view_element`). `linked` is the type stored when each
+// carrier it copies is linked as a reborrow to the slots it may land in
+// (`Prov_Event.linked`).
 @(private = "file")
 publish_into_loan :: proc(
 	state: ^Prov_State, reach: []u8, loan_index: int, path: []Proj_Step, stored: Type_Id, carrier_loss: Precision_Loss,
-	linked: bool, elements: []int,
+	linked: Type_Id, retained: bool, elements: []int, view: []Proj_Step,
 ) {
 	graph := state.graph
 	loan := graph.loans[loan_index]
+	if view != nil {
+		loan.path = view
+	}
 	root := graph.roots[int(loan.root)]
 	if root.symbol == INVALID_SYMBOL {
 		return
@@ -3532,15 +3634,17 @@ publish_into_loan :: proc(
 	// by every later load through the parameter, which then reborrows what
 	// it copied from.
 	if len(elements) > 0 {
-		publish_into_caller(state, reach, elements, loan, path, stored, carrier_loss)
-		if linked {
+		if publish_into_caller(state, reach, elements, loan, path, stored, carrier_loss, linked) || retained {
 			return
 		}
 	} else if slots, caller := graph.caller_slots[Loan_Id(loan_index)]; caller && graph.prov_slots[slots[0]].caller_one {
-		publish_into_caller(state, reach, slots[:], loan, path, stored, carrier_loss)
-		if linked {
+		if publish_into_caller(state, reach, slots[:], loan, path, stored, carrier_loss, linked) || retained {
 			return
 		}
+	} else if caller && retained {
+		// What a call leaves in a view may be in any element, each of which
+		// these slots stand for, and which `prov_reborrow_retained` links.
+		publish_into_caller(state, reach, slots[:], loan, path, INVALID_TYPE, carrier_loss, INVALID_TYPE)
 	}
 	for slot, index in graph.prov_slots {
 		if slot.symbol != root.symbol || !paths_overlap_joined(slot.path, loan.path, path) {
@@ -3559,18 +3663,26 @@ publish_into_loan :: proc(
 // design.md "Values that contain borrows": a store through a parameter's
 // loan lands in the slots standing for the caller storage it names, at
 // `path`, which a later load through the loan reads (`read_caller_slots`).
-// Only a slot of one place is replaced (`caller_replaces`).
+// Only a slot of one place is replaced (`caller_replaces`). True when the
+// store is `linked` and each slot it lands in is one its copies are linked
+// to, so the parameter itself need not hold it.
 @(private = "file")
 publish_into_caller :: proc(
 	state: ^Prov_State, reach: []u8, slots: []int, loan: Prov_Loan, path: []Proj_Step, stored: Type_Id,
-	carrier_loss: Precision_Loss,
-) {
+	carrier_loss: Precision_Loss, linked: Type_Id,
+) -> bool {
+	c := state.graph.k.c
+	// A value holding carriers is linked only where it lands in a slot.
+	carrier := linked != INVALID_TYPE && type_is_carrier(c, linked)
+	landed, found := linked != INVALID_TYPE, carrier
 	for index in slots {
 		slot := state.graph.prov_slots[index]
 		if !paths_overlap(slot.path, path) {
 			continue
 		}
-		if caller_replaces(slot, path, stored) {
+		found = true
+		landed = landed && (carrier || stored_content_linked(c, slot, linked))
+		if caller_replaces(c, slot, path, stored) {
 			copy(reach_row(state, reach, index), state.merged)
 			state.precision[index] = state.merged_precision | carrier_loss | slot.precision
 			continue
@@ -3578,25 +3690,49 @@ publish_into_caller :: proc(
 		bytes_or(reach_row(state, reach, index), state.merged)
 		state.precision[index] |= state.merged_precision | carrier_loss | slot.precision | path_precision(loan.path)
 	}
+	return landed && found
+}
+
+// Whether `prov_reborrow_stored_content` links the carriers of a `stored`
+// value to `slot`, a caller slot it may land in: one standing for one place,
+// of the type of a carrier inside the value whose place it may be.
+@(private = "file")
+stored_content_linked :: proc(c: ^Compiler, slot: Prov_Slot, stored: Type_Id) -> bool {
+	if !slot.caller_one || slot.content_type == INVALID_TYPE {
+		return false
+	}
+	for inner in carrier_shape(c, stored) {
+		if !inner.truncated && inner.type == slot.content_type && prov_path_may_end_in(slot.path, inner.steps) {
+			return true
+		}
+	}
+	return false
 }
 
 // Whether a store of `stored` at `path` below a parameter loan's caller
 // storage replaces `slot`, one of its caller slots: the storage is one place,
 // or one element of a view, and the slot holds exactly the carrier at `path`
-// in it.
+// in it, or a carrier inside a `stored` value there, as a store of a record
+// into a local replaces each carrier inside it (`publish_replaces`).
 @(private = "file")
-caller_replaces :: proc(slot: Prov_Slot, path: []Proj_Step, stored: Type_Id) -> bool {
-	return stored != INVALID_TYPE && (slot.caller_one || slot.caller_element) && slot.content_type == stored &&
-	       len(slot.path) == len(path) &&
-	       path_is_exact(slot.path) && path_is_exact(path) && paths_overlap(slot.path, path)
+caller_replaces :: proc(c: ^Compiler, slot: Prov_Slot, path: []Proj_Step, stored: Type_Id) -> bool {
+	if stored == INVALID_TYPE || !slot.caller_one && !slot.caller_element || slot.content_type == INVALID_TYPE ||
+	   !path_is_exact(slot.path) || !path_is_exact(path) || !paths_overlap(slot.path, path) {
+		return false
+	}
+	if slot.content_type == stored {
+		return len(slot.path) == len(path)
+	}
+	return len(slot.path) > len(path) && !type_is_carrier(c, stored) &&
+	       stored_carrier_at(c, stored, slot.path[len(path):], slot.content_type)
 }
 
-// Whether a store of `stored` at `path` below `loan`'s storage replaces
-// `slot`, of that storage: the slot holds exactly that one place. A view's
-// loan ends in the range it lends, so an element below it is one step longer
-// than any slot of its type. A value holding carriers, stored whole, replaces
-// the slot of each carrier inside it, as storing it into a local does
-// (design.md "Values that contain borrows").
+// Whether `slot`, of `loan`'s storage, holds exactly the one place a store of
+// `stored` at `path` below that storage writes. A view's loan ends in the
+// range it lends, so an element below it is one step longer than any slot of
+// its type. A value holding carriers, stored whole, replaces the slot of each
+// carrier inside it, as storing it into a local does (design.md "Values that
+// contain borrows").
 @(private = "file")
 publish_replaces :: proc(c: ^Compiler, slot: Prov_Slot, loan: Prov_Loan, path: []Proj_Step, stored: Type_Id) -> bool {
 	if stored == INVALID_TYPE || slot.content_type == INVALID_TYPE || !path_is_exact(slot.path) ||
@@ -3607,13 +3743,15 @@ publish_replaces :: proc(c: ^Compiler, slot: Prov_Slot, loan: Prov_Loan, path: [
 	if slot.content_type == stored {
 		return len(slot.path) == at
 	}
-	if len(slot.path) <= at || type_is_carrier(c, stored) {
-		return false
-	}
-	below := slot.path[at:]
+	return len(slot.path) > at && !type_is_carrier(c, stored) && stored_carrier_at(c, stored, slot.path[at:], slot.content_type)
+}
+
+// Whether a carrier of `type` lies exactly at `below` inside a `stored` value.
+@(private = "file")
+stored_carrier_at :: proc(c: ^Compiler, stored: Type_Id, below: []Proj_Step, type: Type_Id) -> bool {
 	for inner in carrier_shape(c, stored) {
-		if !inner.truncated && inner.type == slot.content_type && len(inner.steps) == len(below) &&
-		   path_is_exact(inner.steps) && paths_overlap(inner.steps, below) {
+		if !inner.truncated && inner.type == type && len(inner.steps) == len(below) && path_is_exact(inner.steps) &&
+		   paths_overlap(inner.steps, below) {
 			return true
 		}
 	}
@@ -4926,7 +5064,9 @@ reborrows_of :: proc(state: ^Prov_State, slot: int) -> []int {
 		slots := len(graph.prov_slots)
 		starts := make([]int, slots + 1, graph.alloc)
 		for reborrow in graph.reborrows {
-			starts[reborrow.source + 1] += 1
+			if !reborrow.pending {
+				starts[reborrow.source + 1] += 1
+			}
 		}
 		for index in 0 ..< slots {
 			starts[index + 1] += starts[index]
@@ -4934,8 +5074,10 @@ reborrows_of :: proc(state: ^Prov_State, slot: int) -> []int {
 		indices := make([]int, len(graph.reborrows), graph.alloc)
 		filled := make([]int, slots, context.temp_allocator)
 		for reborrow, index in graph.reborrows {
-			indices[starts[reborrow.source] + filled[reborrow.source]] = index
-			filled[reborrow.source] += 1
+			if !reborrow.pending {
+				indices[starts[reborrow.source] + filled[reborrow.source]] = index
+				filled[reborrow.source] += 1
+			}
 		}
 		state.reborrow_starts, state.reborrow_indices, state.reborrows_indexed = starts, indices, len(graph.reborrows)
 	}

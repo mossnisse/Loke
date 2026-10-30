@@ -1,0 +1,78 @@
+// design.md "Weakening and reborrows": weakening an existing mutable carrier
+// creates a read-only reborrow, and until its last use the source cannot be
+// written through. A carrier copied out of storage reborrows the carrier
+// stored there, so a read-only copy of a read-only reborrow stored through a
+// pointer keeps the source suspended, as the stored reborrow itself does, and
+// as one a call stores there does (design.md "Retaining a borrow"). Reading
+// the source stays legal, and a copy of a read-only carrier never suspends
+// the place it was copied from.
+package main;
+Node :: struct { value: int }
+Ro :: struct { head: ^Node, count: int }
+Mixed :: struct { ro: ^Node, rw: ^mut Node }
+sink :: proc(value: int) {}
+touch :: proc(p: ^mut Ro) { p^.count += 1; }
+relink_ro :: proc(p: ^mut Ro, @(escape=stored) n: ^Node) { p^.head = n; }
+// Rejected: the source is written, or copied mutably, while a read-only
+// copy of what was stored is in use.
+e_call :: proc(p: ^mut Ro, @(escape=stored) r: ^mut Node) {
+	relink_ro(p, r);
+	h := p^.head;
+	r^.value = 1;
+	sink(h^.value);
+}
+e_param :: proc(p: ^mut Ro, @(escape=stored) r: ^mut Node) {
+	p^.head = r;
+	h := p^.head;
+	r^.value = 1;
+	sink(h^.value);
+}
+e_local :: proc(r: ^mut Node) {
+	a := Node{1};
+	l := Ro{&a, 0};
+	p := &mut l;
+	p^.head = r;
+	h := p^.head;
+	k := h;
+	r^.value = 1;
+	sink(k^.value);
+}
+e_mixed :: proc(p: ^mut Mixed, @(escape=stored) r: ^mut Node) {
+	p^.ro = r;
+	h := p^.ro;
+	p^.rw = r;
+	sink(h^.value);
+}
+// Legal.
+ok_read :: proc(p: ^mut Ro, @(escape=stored) r: ^mut Node) {
+	p^.head = r;
+	h := p^.head;
+	sink(r^.value);
+	sink(h^.value);
+}
+ok_after :: proc(p: ^mut Ro, @(escape=stored) r: ^mut Node) {
+	p^.head = r;
+	h := p^.head;
+	sink(h^.value);
+	r^.value = 1;
+}
+ok_touch :: proc(p: ^mut Ro) {
+	h := p^.head;
+	touch(p);
+	q := p^.head;
+	sink(h^.value);
+	sink(q^.value);
+}
+ok_replace :: proc(p: ^mut Ro, @(escape=stored) r: ^mut Node, @(escape=stored) other: ^Node) {
+	p^.head = r;
+	h := p^.head;
+	p^.head = other;
+	sink(h^.value);
+}
+ok_call_read :: proc(p: ^mut Ro, @(escape=stored) r: ^mut Node) {
+	relink_ro(p, r);
+	h := p^.head;
+	sink(r^.value);
+	sink(h^.value);
+}
+main :: proc() {}
