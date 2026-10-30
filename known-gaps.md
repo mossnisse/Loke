@@ -104,34 +104,3 @@ Found reviewing `d3cb447a` on 2026-10-30. Either document prefix processing as
 an exception to the blanket normalization guarantee, or normalize ordinary
 paths before recursive creation while preserving the extended-length path
 rules. Cover a missing and a file-valued component canceled by `..`.
-
-### Loading a stored named read-only copy loses its mutable source
-
-[Weakening and reborrows](design.md#weakening-and-reborrows) keeps the mutable
-source of a read-only reborrow suspended through copies, including copies
-stored through a pointer and subsequently loaded:
-
-```loke
-package main;
-Node :: struct { value: int }
-Holder :: struct { head: ^Node }
-sink :: proc(value: int) {}
-caller :: proc(p: ^mut Holder, @(escape=stored) r: ^mut Node) {
-    read: ^Node = r;
-    p^.head = read;
-    h := p^.head;
-    r^.value = 1; // should be L0641: h still reborrows r
-    sink(h^.value);
-}
-main :: proc() {}
-```
-
-This compiles both before and after `bb65c244`. Its new
-`prov_slot_reborrows_mutable` in
-[cfg_provenance.odin](src/cfg_provenance.odin) only recognizes an immediate
-mutable source. Here the stored slot derives from `read`, which is read-only,
-so `prov_reborrow_loaded` leaves the load's copies pending and the later use
-of `h` does not keep `r` suspended. Resolve the transitive reborrow ancestry
-when activating loaded read-only copies, including named intermediates.
-Found reviewing `bb65c244` on 2026-10-30; this remains outside the direct
-mutable-to-read-only store covered by that commit's regression cases.

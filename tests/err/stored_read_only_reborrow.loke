@@ -7,7 +7,8 @@
 // the source stays legal, and a copy of a read-only carrier never suspends
 // the place it was copied from: passing a named read-only reborrow to a
 // `stored` parameter only extends it, so it stays usable at the call and
-// after, while its mutable source stays suspended.
+// after, while its mutable source stays suspended, as it does through a copy
+// loaded out of wherever the named reborrow was stored.
 package main;
 Node :: struct { value: int }
 Ro :: struct { head: ^Node, count: int }
@@ -95,6 +96,27 @@ ok_call_named_after :: proc(p: ^mut Ro, @(escape=stored) r: ^mut Node) {
 	sink(p^.head^.value);
 	r^.value = 1;
 }
+ok_named_unused :: proc(p: ^mut Ro, @(escape=stored) r: ^mut Node) {
+	read: ^Node = r;
+	p^.head = read;
+	h := p^.head;
+	r^.value = 1;
+}
+ok_named_after :: proc(p: ^mut Ro, @(escape=stored) r: ^mut Node) {
+	read: ^Node = r;
+	p^.head = read;
+	h := p^.head;
+	sink(h^.value);
+	r^.value = 1;
+}
+ok_named_read :: proc(p: ^mut Ro, @(escape=stored) r: ^mut Node) {
+	read: ^Node = r;
+	p^.head = read;
+	h := p^.head;
+	sink(r^.value);
+	sink(read^.value);
+	sink(h^.value);
+}
 // Rejected: what the call stored keeps the named reborrow's source suspended.
 e_call_named :: proc(p: ^mut Ro, @(escape=stored) r: ^mut Node) {
 	read: ^Node = r;
@@ -106,5 +128,48 @@ e_call_weakened :: proc(p: ^mut Ro, @(escape=stored) r: ^mut Node) {
 	relink_ro(p, r);
 	r^.value = 1;
 	sink(p^.head^.value);
+}
+// Rejected: a copy loaded out of where a named read-only reborrow, or a copy
+// of one, was stored still reborrows its mutable source.
+e_named :: proc(p: ^mut Ro, @(escape=stored) r: ^mut Node) {
+	read: ^Node = r;
+	p^.head = read;
+	h := p^.head;
+	r^.value = 1;
+	sink(h^.value);
+}
+e_named_copy :: proc(p: ^mut Ro, @(escape=stored) r: ^mut Node) {
+	read: ^Node = r;
+	again := read;
+	p^.head = again;
+	h := p^.head;
+	r^.value = 1;
+	sink(h^.value);
+}
+e_named_call_copy :: proc(p: ^mut Ro, @(escape=stored) r: ^mut Node) {
+	read: ^Node = r;
+	relink_ro(p, read);
+	h := p^.head;
+	r^.value = 1;
+	sink(h^.value);
+}
+e_named_reloaded :: proc(p: ^mut Ro, q: ^mut Ro, @(escape=stored) r: ^mut Node) {
+	read: ^Node = r;
+	p^.head = read;
+	h := p^.head;
+	q^.head = h;
+	k := q^.head;
+	r^.value = 1;
+	sink(k^.value);
+}
+e_named_local :: proc(r: ^mut Node) {
+	a := Node{1};
+	l := Ro{&a, 0};
+	p := &mut l;
+	read: ^Node = r;
+	p^.head = read;
+	h := p^.head;
+	r^.value = 1;
+	sink(h^.value);
 }
 main :: proc() {}

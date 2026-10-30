@@ -29,6 +29,14 @@ checklist.
   writing through `r` while `h` was still used compiled. Upgrade by moving
   the copy's last use before the write, or by taking the copy after it.
 
+- The same holds when what was stored is a named read-only reborrow, or a
+  copy of one: after `read: ^Node = r; p^.head = read; h := p^.head;`, or
+  `keep(p, read)` with an `@(escape=stored)` parameter, writing through `r`
+  while `h` is still used is rejected with `L0641`
+  ([Weakening and reborrows](design.md#weakening-and-reborrows)). Before, it
+  compiled. Upgrade as above: move `h`'s last use before the write, or take
+  the copy after it.
+
 - A carrier copied out of a record stored whole through a pointer, as
   `x := p^.head` after `p^ = q^`, now reborrows the carrier it was copied
   from, so copying `q^.head` again while `x` is still in use is rejected with
