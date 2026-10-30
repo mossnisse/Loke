@@ -1128,6 +1128,37 @@ constant already covers a value fixed at compile time, and a value computed
 at run time is a procedure, which can still change how it is computed. This
 was proposed by the language design review of 2026-10-11.
 
+### A warning for private names in public declarations
+
+A public procedure that returns a private type compiles, and an importer can
+call it, but cannot declare a variable of the result's type, store it in a
+field, or pass it through a procedure of its own. A public `where` clause
+written in private terms, as `core:time`'s `styled` had with
+`is_styled(T)`, states a bound the importer can neither read nor name. Both
+are almost always accidents: following the references the interface files
+make found `fmt.Padded`'s public `fill: Fill`, since made private, and that
+`where` clause, since written out. Rust warns on a private type in a public signature; Go
+allows an unexported result type, which its documentation then cannot
+describe.
+
+[Private names in public declarations](design.md#private-names-in-public-declarations)
+makes it a warning, `L0740`, rather than an error, since the code is sound
+and occasionally deliberate: a constructor may hand out a value of a type
+whose name is withheld so that only its methods are API. An error would also
+have no way out short of exporting the name. The interface file still shows
+such a declaration, marked private, so an importer can read what it calls.
+
+The warning reads names, not types: a public `Alias :: Inner` is reported
+for its private target, but it gives importers a name, so a signature that
+writes `Alias` is not. Values are left out because an
+importer can write them without the name: a private constant as a default, an
+array length, or an attribute's value. A procedure group's members are left
+out by name, because a group exports one name over several signatures, as
+`thread.spawn` and `runtime.shared` do, but the signatures it exports are
+read. `package main` is left out entirely: nothing imports it, and its fields
+are public by default, so a warning there would fire on every program that
+stores a private enum in a struct.
+
 ### Standard free aliases
 
 `f(x)` uses lexical lookup; `x.f()` uses receiver lookup. Special aliases such

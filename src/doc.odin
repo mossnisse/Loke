@@ -257,11 +257,12 @@ Api_Builder :: struct {
 	private_names: map[string]bool,
 }
 
-// design.md "Exported names" lets a public declaration name a private one: a
-// procedure may return a value of a private type, and a public overload group
-// may gather private procedures. An importer cannot name such a declaration,
-// but does call it or its members, so it is shown, marked private, once a
-// shown item refers to it. A reference is followed by what the checker
+// design.md "Private names in public declarations" lets a public declaration
+// name a private one: a public overload group may gather private procedures,
+// a default or an attribute may name a private constant, and a procedure that
+// returns a value of a private type is warned about but compiles. An importer
+// cannot name such a declaration, but does call it or read it, so it is shown,
+// marked private, once a shown item refers to it. A reference is followed by what the checker
 // resolved it to, and only in syntax the checker never resolved, an untaken
 // `when` branch or a generic template, by its written name.
 @(private = "file")
@@ -522,7 +523,6 @@ api_decl :: proc(
 // Whether an importer can name `d`. A declaration no symbol records, in an
 // untaken `when` branch or a generic `impl`, which is checked per instance,
 // takes its visibility from its written attributes, as the checker would.
-@(private = "file")
 decl_is_public :: proc(c: ^Compiler, file: ^File, d: ^Decl, block: []Attribute = nil) -> bool {
 	if len(d.names) == 0 || d.names[0].text == "_" {
 		return false

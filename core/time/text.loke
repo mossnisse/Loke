@@ -36,7 +36,9 @@ Style :: struct {
 DEFAULT_STYLE :: Style{};
 
 /// `value` printed in `style`, as `fmt.fixed` does for a float.
-styled :: proc(value: $T, style: Style) -> Styled(T) where is_styled(T) {
+styled :: proc(value: $T, style: Style) -> Styled(T)
+	where T == Duration || T == Time || T == Offset_Date_Time || T == Date_Time ||
+	T == Date || T == Time_Of_Day || T == Offset {
 	return Styled(T){value, style};
 }
 
@@ -65,12 +67,6 @@ impl Styled($T) {
 		}
 		text.send(writer);
 	}
-}
-
-@(private)
-is_styled :: proc($T: type) -> bool {
-	return T == Duration || T == Time || T == Offset_Date_Time || T == Date_Time ||
-		T == Date || T == Time_Of_Day || T == Offset;
 }
 
 // One value's text, built in place and written in one call. The longest is an

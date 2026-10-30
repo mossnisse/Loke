@@ -285,6 +285,9 @@ check_package_bodies :: proc(k: ^Checker, package_id: Package_Id) {
 	}
 	// And any a body's own procedure type deferred.
 	check_deferred_foreign_signatures(k)
+
+	// Every symbol has its kind and its constant its type.
+	check_private_names(k.c, package_id)
 }
 
 @(private = "file")

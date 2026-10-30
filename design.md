@@ -9108,6 +9108,46 @@ One predicate answers this question for reflection descriptors, field reads and
 writes, `offset_of`, and both aggregate literal forms, so no path can reach a
 field another path hides.
 
+#### Private names in public declarations
+
+A public declaration may name a private declaration of its package, but where an
+importer would have to name it too, the compiler warns (`L0740`). An importer
+can call a procedure that returns a private type but cannot declare a variable
+of that type or pass it through its own procedures, and it cannot read or meet
+a `where` clause written in private terms. The warning applies to:
+
+- **A private type in a type**, anywhere in the type's syntax, as `Fill` in
+  `Fill`, `[]Fill`, `^Fill`, or `Option(Fill)`. A type here is a struct, union,
+  enum, interface, or distinct type, or an alias of one. The types read are a
+  procedure's parameter and result types; a public field's type in a struct
+  and a variant's in a union; a type alias's target; a distinct type's base; an
+  enum's backing type; a generic parameter's type; the types an interface
+  requirement binds and gives; and a constant's written type. A constant with
+  no written type is read by the type of its value: `DEFAULT :: Fill{}` names
+  `Fill`.
+- **Any private declaration in a `where` clause**, or in the expression of an
+  interface requirement: a procedure, interface, constant, or type.
+
+It does not apply to:
+
+- A value, which an importer can write without naming it: a parameter's
+  default, an array length, a generic type's value argument, or an attribute's
+  value. A private constant may stand in any of them.
+- A [procedure group](#explicit-procedure-overloading)'s members: a group
+  exports one name over several signatures, and its members' names are not
+  API. A private member declared in the package is read as a public procedure
+  is, since the group exports its signature.
+- A parameter or a `$` name, whatever type an instance binds to it:
+  `identity :: proc(value: $T) -> T` names no type.
+- The members of an `impl` whose subject is a private type. An importer
+  reaches them only through a value of that type, and the declaration that
+  hands one out is the one warned about.
+- A private field, which no importer reads.
+- A `package main`, which nothing imports.
+
+Only the declarations the build selects are read: a declaration in an untaken
+[`when`](#when-statement) branch is not.
+
 #### Organizing packages
 
 Packages may be thematically organized by placing them in subdirectories of

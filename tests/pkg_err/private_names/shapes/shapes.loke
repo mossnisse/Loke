@@ -1,0 +1,74 @@
+// design.md "Private names in public declarations": each public declaration
+// below names a private one where an importer would have to name it too.
+package shapes;
+
+@(private) Fill :: enum { Solid, Hatched }
+@(private) Corner :: struct { x, y: int }
+@(private) Alias :: Corner;
+@(private) Bounded :: interface($T: type) { (a, b: T) a < b -> bool; }
+@(private) is_small :: proc($N: int) -> bool { return N < 8; }
+@(private) LIMIT :: 8;
+
+// A parameter, and the same type again in the result, reported once.
+@(public) fill_of :: proc(fill: Fill) -> Fill { return fill; }
+
+// Nested in a slice, a pointer, and a generic type's argument.
+@(public) corners :: proc() -> []Corner { return {}; }
+@(public) first :: proc(at: ^Corner) -> int { return at.x; }
+@(public) find :: proc() -> Option(Corner) { return .none; }
+
+// An alias is a type too.
+@(public) make_alias :: proc() -> Alias { return {}; }
+
+// A public field, a type alias's target, and a distinct type's base.
+@(public) Padded :: struct {
+	@(public) fill: Fill,
+	@(private) hidden: Fill, // private, so not read
+}
+@(public) Public_Alias :: Corner;
+@(public) Distinct :: distinct Corner;
+
+// A union's variant and a constant's type, written and inferred.
+@(public) Shape :: union { Square: Corner, Circle: int }
+@(public) ORIGIN: Corner : Corner{};
+@(public) DEFAULT_FILL :: Fill.Solid;
+
+// A procedure, an interface, and a constant in a `where` clause.
+@(public) small :: proc($N: int) -> int where is_small(N) { return N; }
+@(public) least :: proc(a, b: $T) -> T where Bounded(T) { return a if a < b else b; }
+@(public) bounded :: proc($N: int) -> int where N <= LIMIT { return N; }
+
+// A generic record's `where` clause and field, a generic `impl`'s member, and
+// an interface requirement's result, none of which a symbol records.
+@(public) Box :: struct($T: type) where Bounded(T) { value: T }
+@(public) Pair :: struct($T: type) { @(public) first: T, @(public) second: Corner }
+impl Pair($T) {
+	@(public) second_of :: proc(self) -> Corner { return self.second; }
+}
+@(public) Cornered :: interface($T: type) { (value: T) value.corner() -> Corner; }
+
+// The private members of a public group are not reported by name, but the
+// signature the group exports is read.
+@(private) area_int :: proc(side: int) -> int { return side * side; }
+@(private) area_corner :: proc(corner: Corner) -> int { return corner.x * corner.y; }
+@(public) area :: proc{area_int, area_corner};
+
+// None of these is reported.
+@(public) Point :: struct { x, y: int }
+@(public) origin :: proc() -> Point { return {}; }
+@(public) identity :: proc(value: $T) -> T { return value; }
+@(public) sized :: proc(value: int = LIMIT) -> [LIMIT]int { return {}; }
+@(public) twice :: proc{area_int, origin_twice};
+@(private) origin_twice :: proc(point: Point) -> Point { return {point.x * 2, point.y * 2}; }
+@(private) scratch :: proc(corner: Corner) -> Corner { return corner; }
+
+// A private type's members are reached only through a value of it.
+impl Corner {
+	@(public) sum :: proc(self) -> int { return self.x + self.y; }
+	@(public) moved :: proc(self, by: Corner) -> Corner { return {self.x + by.x, self.y + by.y}; }
+}
+
+// A public type's members are read.
+impl Point {
+	@(public) corner :: proc(self) -> Corner { return {self.x, self.y}; }
+}

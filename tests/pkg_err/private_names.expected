@@ -1,0 +1,56 @@
+L0310
+@15:15
+warning[L0740]: public `fill_of` names the private type `Fill`, which an importer cannot name
+@13:33
+declared here; make it `@(public)` if it is part of the API
+warning[L0740]: public `corners` names the private type `Corner`
+@16:34
+warning[L0740]: public `first` names the private type `Corner`
+@17:30
+warning[L0740]: public `find` names the private type `Corner`
+@18:36
+warning[L0740]: public `make_alias` names the private type `Alias`
+@21:35
+warning[L0740]: public `Padded.fill` names the private type `Fill`
+@25:18
+warning[L0740]: public `Public_Alias` names the private type `Corner`
+@28:27
+warning[L0740]: public `Distinct` names the private type `Corner`
+@29:32
+warning[L0740]: public `Shape` names the private type `Corner`
+@32:36
+warning[L0740]: public `ORIGIN` names the private type `Corner`
+@33:19
+warning[L0740]: public `DEFAULT_FILL` has the private type `Fill`
+@34:11
+warning[L0740]: public `small` names the private `is_small` in a `where` clause
+@37:47
+warning[L0740]: public `least` names the private `Bounded` in a `where` clause
+@38:46
+warning[L0740]: public `bounded` names the private `LIMIT` in a `where` clause
+@39:54
+warning[L0740]: public `Box` names the private `Bounded` in a `where` clause
+@43:41
+warning[L0740]: public `Pair.second` names the private type `Corner`
+@44:76
+warning[L0740]: public `Pair.second_of` names the private type `Corner`
+@46:39
+warning[L0740]: public `Cornered` names the private type `Corner`
+@48:74
+warning[L0740]: `area_corner`, which the public group `area` exports, names the private type `Corner`
+@53:40
+warning[L0740]: public `Point.corner` names the private type `Corner`
+@73:36
+!`Padded.hidden`
+!`area_int`
+!`twice`
+!`origin_twice`
+!`origin`
+!`identity`
+!`sized`
+!`scratch`
+!`Corner.sum`
+!`Corner.moved`
+!`make_hidden`
+!`Hidden`
+!`Kind`
