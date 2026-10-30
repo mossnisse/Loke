@@ -133,8 +133,10 @@ cpu_levels_compute_what_baseline_does :: proc(t: ^testing.T) {
 // compiler-guide.md "CPU levels": an object build above baseline checks the
 // processor before its host's `main`, from a static constructor. One host
 // stands in for the check, to see it run once, first, for the object's level;
-// the other links the runtime's own check, which passes on any processor that
-// runs the level.
+// one stands in for compiler-rt's detection with a processor that has no level,
+// to see the runtime's own check report it on any processor; the last links
+// the runtime's check and the real detection, which passes on any processor
+// that runs the level.
 @(test)
 object_checks_its_cpu_level_before_the_host :: proc(t: ^testing.T) {
 	clang, include_flags, found := host_toolchain()
@@ -164,8 +166,9 @@ object_checks_its_cpu_level_before_the_host :: proc(t: ^testing.T) {
 			append(&command, word)
 		}
 	}
+	missing := c_host_link_command(clang, "tests/obj/cpu_missing_host.c", obj, fmt.tprintf("%s/cpu-missing-host.exe", dir), include_flags)
 	real := c_host_link_command(clang, "tests/obj/host.c", obj, fmt.tprintf("%s/widget-host-v2.exe", dir), include_flags)
-	links := []Exec{{command = command[:]}, {command = real}}
+	links := []Exec{{command = command[:]}, {command = missing}, {command = real}}
 	exec_all(links)
 	for link in links {
 		if !testing.expectf(t, link.err == nil && link.state.exit_code == 0, "%v failed:\n%s", link.command, string(link.stderr)) {
@@ -173,7 +176,11 @@ object_checks_its_cpu_level_before_the_host :: proc(t: ^testing.T) {
 		}
 	}
 
-	runs := []Exec{{command = []string{launch_path(command[4])}}, {command = []string{launch_path(real[4])}}}
+	runs := make([]Exec, len(links), context.temp_allocator)
+	for link, index in links {
+		runs[index].command = make([]string, 1, context.temp_allocator)
+		runs[index].command[0] = launch_path(link.command[4])
+	}
 	exec_all(runs)
 	testing.expectf(
 		t,
@@ -181,16 +188,25 @@ object_checks_its_cpu_level_before_the_host :: proc(t: ^testing.T) {
 		"the object's constructor did not check level 1 exactly once before `main` (exit %d)",
 		runs[0].state.exit_code,
 	)
-	if runs[1].state.exit_code == 3 && strings.has_prefix(string(runs[1].stderr), UNSUPPORTED_CPU) {
+	report := fmt.tprintf("%sx86-64-v2, which the program was built for", UNSUPPORTED_CPU)
+	testing.expectf(
+		t,
+		runs[1].err == nil && runs[1].state.exit_code == 3 && normalise(string(runs[1].stderr)) == report,
+		"on a processor without x86-64-v2, the v2 object's host exited %d, expected 3, with stderr %q, expected %q",
+		runs[1].state.exit_code,
+		normalise(string(runs[1].stderr)),
+		report,
+	)
+	if runs[2].state.exit_code == 3 && strings.has_prefix(string(runs[2].stderr), UNSUPPORTED_CPU) {
 		skipped_capability(t, "this processor does not run x86-64-v2")
 		return
 	}
 	testing.expectf(
 		t,
-		runs[1].err == nil && runs[1].state.exit_code == 0,
+		runs[2].err == nil && runs[2].state.exit_code == 0,
 		"the v2 object's host exited %d:\n%s",
-		runs[1].state.exit_code,
-		string(runs[1].stderr),
+		runs[2].state.exit_code,
+		string(runs[2].stderr),
 	)
 }
 

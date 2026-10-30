@@ -2303,6 +2303,37 @@ The declaration adds no symbol. It never reaches the selected view the checker
 walks, so no other pass treats a `---` body as a foreign procedure or a missing
 definition, and the name keeps the one identity the compiler gave it.
 
+### The processor check asks compiler-rt
+
+A build above baseline checks the processor at startup
+([CPU levels](compiler-guide.md#cpu-levels)), and `runtime/cpu.c` asks
+Clang's `__builtin_cpu_supports("x86-64-v2")` or `("x86-64-v3")` after
+`__builtin_cpu_init()` rather than reading CPUID and XGETBV itself. Every link
+already takes compiler-rt, which supplies the detection, built for every x64
+processor, and keeps it current with Clang; the hand-written version was CPUID
+and XGETBV assembly with two compilers' spellings and a mask for each level's
+feature bits, all of it to review again for each new level.
+
+The level names arrived in Clang 18 (`27da15381cbe`, "[X86]
+`__builtin_cpu_supports`: support x86-64{,-v2,-v3,-v4}", August 2023); Clang
+17's compiler-rt has no level bits, and its Clang rejects the strings. So
+Clang 18 is the stated minimum ([readme.md](readme.md#getting-started)). The
+alternative, keeping the manual version as a fallback for older Clang, would
+keep all of it for toolchains nothing tests, and a toolchain older than the
+minimum fails while compiling the runtime instead of misjudging a processor.
+
+The detection is libgcc's definition of the levels. Its `x86-64-v3` needs
+AVX2, which it counts only when CPUID reports OSXSAVE and AVX and XCR0 shows
+that the operating system saves the SSE and AVX registers, the check the
+manual version made. Its `x86-64-v2` tests SSE4.2, POPCNT, CMPXCHG16B, and
+LAHF/SAHF but not SSE3, SSSE3, and SSE4.1, which every processor with SSE4.2
+has; only a hypervisor hiding those three could tell the two apart.
+
+A test cannot choose the processor it runs on, so
+`tests/obj/cpu_missing_host.c` defines compiler-rt's detection symbols itself,
+which keeps the linker from taking the library's, and reports no level; the
+runtime's real check then reports a missing `x86-64-v2` on any machine.
+
 ### Compiler architecture audit (2026-09-28)
 
 The audit of `b2cc712` and its follow-up favored enforcing existing phase
