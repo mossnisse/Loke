@@ -897,21 +897,6 @@ The [deterministic math and CPU targeting
 plan](deterministic-math-and-targets-plan.md#cpu-targets-and-fma) keeps
 baseline as the default and adds run-time dispatch later only where measured.
 
-#### Reusing Clang's CPU detection
-
-Should [runtime/cpu.c](runtime/cpu.c) use Clang's
-[`__builtin_cpu_supports`](https://clang.llvm.org/docs/LanguageExtensions.html#builtin-cpu-supports)
-for `x86-64-v2` and `x86-64-v3`, with `__builtin_cpu_init` before querying,
-instead of maintaining CPUID assembly, XGETBV, and feature masks? The runtime
-already links compiler-rt, which supplies the detection. In the 2026-10-29
-review of `86c3a7a2`, a prototype replacing that machinery removed 76 lines,
-linked with Clang 22.1.8 at `-O3 -march=x86-64-v3`, and preserved the baseline,
-v2, v3, invalid-level results, report, and exit status on a v3 processor.
-Keep the baseline function attributes and reporting wrapper. Settle the
-supported Clang minimum before removing the manual implementation; an older
-toolchain would justify a fallback only if it remains supported. A processor
-missing a known level still needs coverage.
-
 ## Open questions from the linear algebra spike
 
 The [linear algebra library plan](linear-algebra-plan.md)'s first step tried

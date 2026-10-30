@@ -630,7 +630,9 @@ Every Clang command takes its code-generation flags from
 `append_codegen_flags`, so the module and the runtime cannot disagree on the
 level or on `-ffp-contract=off`. `runtime/cpu.c` is the one runtime file
 compiled as baseline code whatever the level, because the startup check runs
-before anything the level permits. Its callers are baseline too: `wmain`, and
+before anything the level permits; the detection it asks for,
+compiler-rt's `__builtin_cpu_supports`, comes prebuilt for every x64
+processor. Its callers are baseline too: `wmain`, and
 in an object build the `@llvm.global_ctors` entry `emit_object_cpu_check`
 adds, both through explicit `"target-features"` lists.
 

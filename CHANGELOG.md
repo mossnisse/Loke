@@ -10,6 +10,13 @@ checklist.
 
 ### Breaking changes
 
+- `lokec` needs LLVM/Clang 18 or later, now stated in
+  [Getting started](readme.md#getting-started). The runtime's processor check
+  for [CPU levels](compiler-guide.md#cpu-levels) uses compiler-rt's
+  detection, which knows the levels from Clang 18; with an older Clang every
+  build fails compiling `runtime/cpu.c` with `invalid cpu feature string for
+  builtin`. Upgrade LLVM, for example with `winget upgrade LLVM.LLVM`.
+
 - A call that may store an `@(escape=stored)` argument into a mutable
   destination it was also given, as `relink(p, r)`, now makes a carrier later
   copied out of that destination, as `h := p^.head`, a reborrow of the

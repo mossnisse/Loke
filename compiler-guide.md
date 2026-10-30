@@ -561,6 +561,10 @@ relative collection path is relative to the first workspace folder.
   Windows LLVM installation directories, then `PATH`. To select an installation
   for the current PowerShell session, set
   `$env:LOKE_CLANG = 'C:\Program Files\LLVM\bin\clang.exe'`.
+- **Clang reports `invalid cpu feature string for builtin` in `cpu.c`:** the
+  runtime needs Clang 18 or later, whose compiler-rt detects the
+  [CPU levels](#cpu-levels). `lokec -print-toolchain` names the Clang it
+  uses; install a newer LLVM, or select one with `LOKE_CLANG`.
 - **A `.asm` import cannot be assembled (`L0632`):** a foreign import of a
   `.asm` file is assembled with NASM, which `lokec` finds through `LOKE_NASM`
   and then `PATH`. Install NASM, or set `$env:LOKE_NASM` to its `nasm.exe`.
