@@ -1,7 +1,8 @@
 // design.md "Invalid representations": every `typeid` bit pattern is a value,
 // so a constant bit cast to `typeid` folds as it converts at run time, and
-// keeps its number. A `typeid_of(T)` constant is numbered only after discovery,
-// so it still converts when the program runs, to the number emission gives it.
+// keeps its number. design.md "`type` and `typeid`": a `typeid_of(T)` constant
+// has no number while compiling, so it converts when the program runs, to the
+// number emission gives it.
 package main;
 
 import "base:runtime";

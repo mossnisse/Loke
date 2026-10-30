@@ -100,50 +100,6 @@ the precision table should guarantee a number of such places, which would make
 this program portable; the bound keeps the place loans and `.Through` events a
 borrow makes few.
 
-## Comparing a forged `typeid` constant
-
-A constant bit cast builds a `typeid` from any 64-bit pattern
-([Invalid representations](design.md#invalid-representations)), but a
-`typeid_of(T)` constant has no number until emission numbers the program's
-types. So `FORGED == typeid_of(int)`, with `FORGED` a nonzero bit-cast
-constant, has no compile-time answer: where a constant is required, such as a
-`when` condition or a constant declaration, it reports `L0341`, and elsewhere
-it is compared when the program runs. A zero pattern is the nil `typeid`,
-which equals no type. Open: whether to specify that such a comparison is not
-a constant expression, or to fix type numbers before constants that depend on
-them are evaluated, which would also fold `unsafe.transmute(u64,
-typeid_of(T))`.
-
-The numbers cannot be fixed early as they are now made. `freeze_typeids`
-numbers every requested type densely, by its place in the sorted set of them,
-so one type's number depends on which other types the program requests, and
-that set depends on constants: a `when` on such a number, or an instance whose
-argument is one, can add a type that sorts earlier and moves the number it was
-computed from. Numbering in order of request instead would let checking order,
-which an incremental session does not keep, change an observable value. The
-routes that remain:
-
-- **Number a type from its own identity**, a hash of `typeid_sort_key`, at
-  least for each type whose number a constant reads. The number is then known
-  as soon as the type is, and an incremental check, which rechecks every
-  package after the earliest changed one, recomputes it with the key. The cost
-  is in the runtime: `type_info_of`, type names, and formatting through an
-  `any_view` index tables by id with one range check, which
-  [Unchecked operations need the import](comments.md#unchecked-operations-need-the-import)
-  relies on, and a hashed id needs a search. Two types hashing alike
-  would need a new, if improbable, compile-time error, and keys hold package
-  keys and, for a type declared in a procedure, its source position, so the
-  value a constant sees changes with them. A type demanded only while checking
-  speculatively must still be numbered by hash at emission.
-- **Leave the number to emission** while the constant stays a constant: it
-  could be emitted, but would have no value where one is needed, as an array
-  length, a `when` condition, a `case`, arithmetic in another constant, or a
-  generic argument. That makes some constants valueless, a change to what a
-  constant is.
-- **Specify the current behavior**: a `typeid_of(T)` constant has no number
-  during compilation, so `unsafe.transmute` from it, and `==` against a
-  bit-cast `typeid`, have no compile-time meaning, as for a union.
-
 ## Compositional loan construction
 
 Loan construction had separate paths for subject views, ordinary borrows,

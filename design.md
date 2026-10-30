@@ -3144,6 +3144,16 @@ main :: proc() {
 `type`. It is total: the zero `typeid`, written `{}`, and an id no type has both
 answer the entry whose kind is `Invalid` and whose other fields are zero.
 
+A `typeid_of(T)` constant names its type, but has no number while the program
+is compiled: types are numbered only once the whole program's types are known.
+Comparing two such constants, or one with the zero `typeid`, is a constant
+expression, true exactly when both name the same type, and the zero `typeid`
+names none. Comparing one with a `typeid` built from a bit pattern by
+[`unsafe.transmute`](#unsafetransmute), and bit casting one to another type,
+have no compile-time meaning: where a constant is required, as in a constant
+declaration or a `when` condition, they are compile-time errors, and elsewhere
+they are evaluated when the program runs, where the id has its number.
+
 For a union value, `type_of(value)` is the union's static type. Its active
 variant is a tag, not a separate runtime type; inspect it with a
 [`switch`](#inspecting-a-union).
@@ -8694,7 +8704,10 @@ storage byte by byte, little-endian, so a constant of any shape the checks admit
 Padding between or after fields holds no value, and a result that would read it
 is a compile-time error. A union, whose tag encoding is unspecified, and a
 record with an [`initialized`](#uninitialized-capacity) field, whose capacity
-holds no value, have no compile-time meaning on either side.
+holds no value, have no compile-time meaning on either side. Neither does a
+source that is or contains a `typeid_of(T)` constant, which has no number until
+the program's types are numbered ([`type` and `typeid`](#type-and-typeid)); a
+`typeid` built from a bit pattern converts both ways.
 
 Pointer destinations are limited to `rawptr` and C pointers, and the result is
 unchecked: dereferencing it is valid only when the input bits already describe

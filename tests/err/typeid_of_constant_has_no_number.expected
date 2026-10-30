@@ -1,0 +1,15 @@
+L0688
+@13:9
+`unsafe.transmute` has no compile-time meaning from `typeid` to `u64`
+L0688
+@14:11
+`unsafe.transmute` has no compile-time meaning from `typeid` to `i64`
+L0688
+@15:9
+`unsafe.transmute` has no compile-time meaning from `Holder` to `u64`
+L0341
+@16:9
+this comparison has no compile-time meaning
+L0341
+@21:8
+this comparison has no compile-time meaning

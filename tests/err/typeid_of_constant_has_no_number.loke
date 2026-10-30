@@ -1,0 +1,26 @@
+// design.md "`type` and `typeid`": a `typeid_of(T)` constant has no number
+// while the program is compiled, so where a constant is required a bit cast of
+// one, or a comparison with a forged id, is an error. Comparing two
+// `typeid_of` constants, or one with the zero id, still folds.
+package main;
+
+import "core:unsafe";
+
+FORGED :: unsafe.transmute(typeid, u64(5));
+INT_ID :: typeid_of(int);
+Holder :: struct { id: typeid }
+
+BITS :: unsafe.transmute(u64, INT_ID);
+SIGNED :: unsafe.transmute(i64, typeid_of(bool));
+HELD :: unsafe.transmute(u64, Holder{INT_ID});
+SAME :: INT_ID == FORGED;
+
+FOLDS :: INT_ID != typeid_of(bool) && INT_ID != typeid{} && FORGED != typeid{};
+
+main :: proc() {
+	when (INT_ID == FORGED) {}
+	when (FOLDS) {}
+	// Where the program runs, both have their meaning.
+	_ = unsafe.transmute(u64, INT_ID);
+	_ = INT_ID == FORGED;
+}

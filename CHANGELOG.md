@@ -482,6 +482,13 @@ checklist.
 
 ### Changed
 
+- A `typeid_of(T)` constant is specified to have no number during
+  compilation: bit casting one with `unsafe.transmute`, or comparing one with
+  a `typeid` built from a bit pattern, is a compile-time error where a
+  constant is required (`L0688`, `L0341`) and is evaluated when the program
+  runs elsewhere. Comparing two `typeid_of` constants still folds. This is
+  the compiler's existing behavior
+  ([`type` and `typeid`](design.md#type-and-typeid)).
 - A NaN result's sign and payload are unspecified, and can differ between
   optimization and CPU levels, at compile time, or when the optimizer swaps
   the operands of `+` or `*`

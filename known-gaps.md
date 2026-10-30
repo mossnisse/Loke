@@ -7,30 +7,6 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
-### A bit cast of a `typeid_of` constant has no compile-time value
-
-[`unsafe.transmute`](design.md#unsafetransmute) promises compile-time
-bytewise conversion for admitted scalar shapes, and a constant bit cast now
-builds a `typeid` from an integer, but not the reverse for a symbolic type:
-
-```loke
-package main;
-import "core:unsafe";
-X :: unsafe.transmute(u64, typeid_of(int));
-main :: proc() {}
-```
-
-It reports `L0688`, "`unsafe.transmute` has no compile-time meaning from
-`typeid` to `u64`". The same cast where the program runs gives the number.
-A `typeid_of(T)` constant has no number until emission freezes the numbering
-(`freeze_typeids`), so `const_storage` in
-[src/check_builtin.odin](src/check_builtin.odin) treats it as unfoldable.
-Found while fixing constant `typeid` bit casts on 2026-10-30. Dense numbering
-cannot be fixed earlier, since which types are numbered depends on constants;
-folding it needs numbers derived from each type's own identity, or the spec to
-exclude symbolic `typeid` constants. See
-[Comparing a forged `typeid` constant](open-questions.md#comparing-a-forged-typeid-constant).
-
 ### Storing one element of a local view resliced from itself is rejected
 
 [Weakening and reborrows](design.md#weakening-and-reborrows) lets a store

@@ -1842,6 +1842,30 @@ arguments, so a separate operator would add a keyword and precedence rule.
 The import also exposes a trust boundary: a bit pattern valid for the source
 need not represent a valid destination value.
 
+### A `typeid_of` constant has no compile-time number
+
+[`type` and `typeid`](design.md#type-and-typeid) leaves a `typeid_of(T)`
+constant without a number during compilation, so bit casting it, or comparing
+it with a forged id, waits for the program to run. Emission numbers the
+program's types densely, by each one's place in the sorted set of every type
+the program requests, so that `type_info_of` and formatting index their
+tables with one range check
+([Unchecked operations need the import](#unchecked-operations-need-the-import)).
+One type's number therefore depends on which others are requested, and that
+set depends on constants: a `when` on such a number, or an instance whose
+argument is one, could add a type that sorts earlier and move the number it
+was computed from. Numbering in order of request would let checking order,
+which an incremental session does not keep, change an observable value.
+
+Two other routes would fold the number. Numbering a type by a hash of its
+identity makes its number known as soon as the type is, but turns each table
+lookup into a search, needs a compile-time error for two types that hash
+alike, and makes the value depend on package keys and, for a type declared in
+a procedure, its source position. Leaving the number to emission while the
+expression stays a constant would give a constant with no value where one is
+needed, as an array length, a `case`, or a generic argument. Comparing two
+`typeid_of` constants needs no number, only the types, so it folds.
+
 ### Parenthesized control-flow headers
 
 Parentheses separate a control-flow header from its body. A uniform boundary

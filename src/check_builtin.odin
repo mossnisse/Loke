@@ -963,8 +963,9 @@ const_storage :: proc(c: ^Compiler, value: Const_Value, type: Type_Id, bytes: []
 		}
 		return store_integer(c, value.integer, bytes, written)
 	case .Typeid:
-		// A `typeid_of(T)` has no number until `freeze_typeids` gives it one,
-		// and folding it now would fix one that emission might not agree with.
+		// design.md "`type` and `typeid`": a `typeid_of(T)` has no number until
+		// `freeze_typeids` gives it one, and folding it now would fix one that
+		// emission might not agree with.
 		number, known := typeid_const_number(c, value)
 		if !known {
 			return false
