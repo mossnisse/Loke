@@ -25,9 +25,10 @@ It reports `L0688`, "`unsafe.transmute` has no compile-time meaning from
 A `typeid_of(T)` constant has no number until emission freezes the numbering
 (`freeze_typeids`), so `const_storage` in
 [src/check_builtin.odin](src/check_builtin.odin) treats it as unfoldable.
-Found while fixing constant `typeid` bit casts on 2026-10-30. Folding it needs
-type numbers fixed before constants that depend on them are evaluated, or the
-spec to exclude symbolic `typeid` constants; see
+Found while fixing constant `typeid` bit casts on 2026-10-30. Dense numbering
+cannot be fixed earlier, since which types are numbered depends on constants;
+folding it needs numbers derived from each type's own identity, or the spec to
+exclude symbolic `typeid` constants. See
 [Comparing a forged `typeid` constant](open-questions.md#comparing-a-forged-typeid-constant).
 
 ### Storing one element of a local view resliced from itself is rejected
