@@ -96,7 +96,11 @@ f64_decided :: proc(h: f64, l: f64, relative: f64 = MARGIN) -> (decided: bool, v
 
 // Whether every `f64` within `ulps` of the normal y narrows to the `f32` y
 // narrows to: whether no `f32` midpoint is that close. The bits of |y| below
-// its `f32` unit, which is coarser for a subnormal result, show the distance.
+// its `f32` unit, which is coarser for a subnormal result, show the distance:
+// they are within `ulps` of the midpoint exactly when their difference from
+// it, plus `ulps`, wrapping, is at most 2 `ulps`. One comparison rather than
+// two joined by `||`, which compiled to a branch that random arguments
+// mispredict half the time.
 f32_decided :: proc(y: f64, ulps: u64) -> bool {
 	pattern := unsafe.transmute(u64, y) & 0x7fffffffffffffff;
 	exponent := int(pattern >> 52) - 1023;
@@ -105,5 +109,5 @@ f32_decided :: proc(y: f64, ulps: u64) -> bool {
 	if (exponent < -126) { drop = 29 + (-126 - exponent); }
 	below := significand & ((u64(1) << drop) - 1);
 	half := u64(1) << (drop - 1);
-	return below + ulps < half || below > half + ulps;
+	return (below -% half) +% ulps > 2*ulps;
 }

@@ -74,11 +74,21 @@ tan_f64 :: proc(x: f64) -> f64 {
 	return unsafe.transmute(f64, tan_slow(ax, x < 0.0, F64_LAYOUT));
 }
 
-// The same for an `f32` argument: h + l, within an `f64` ulp of the result,
-// narrows to it unless an `f32` midpoint is that close.
+// The same for an `f32` argument: the single-`f64` approximation first,
+// sin over cos or the reverse from `quick_sin_cos`, and then h + l, within an
+// `f64` ulp of the result, which narrows to it unless an `f32` midpoint is
+// that close.
 tan_f32_of :: proc(x: f64) -> f32 {
 	ax := x;
 	if (x < 0.0) { ax = 0.0 - x; }
+	if (ax < CODY_WAITE_LIMIT) {
+		quadrant, r := quick_reduce(ax);
+		a := r;
+		if (r < 0.0) { a = 0.0 - r; }
+		odd := quadrant % 2 == 1;
+		quick := quick_sin_cos(a, !odd)/quick_sin_cos(a, odd);
+		if (f32_decided(quick, QUICK_TRIG_ULPS)) { return signed_f32(quick, (odd != (r < 0.0)) != (x < 0.0)); }
+	}
 	decidable, negative, h, l := tan_kernel(ax);
 	if (decidable) {
 		y := h + l;

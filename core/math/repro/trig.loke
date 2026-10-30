@@ -37,6 +37,19 @@
 // truncate by under 2^-319, within 2^-313 absolute: under 2^-252 relative
 // to the smallest sine, about 2^-61, and far less to a cosine, at least
 // 0.7.
+//
+// An `f32` argument below 2^20 pi/2 first takes a single-`f64` approximation:
+// Cody and Waite's reduction with three of the parts, the first two
+// products exact and the third too, its 28 bits times q's 20, each
+// subtraction after the first rounding by 2^-53 of about |r|, and the fourth
+// part's q P4 under 2^-80, against |r| at least 2^-27.8 for every such
+// argument. Then the table's high parts at j/256 and the series in t to t^5
+// and t^4, whose rest is under 2^-62 relative, each sum and product rounding
+// once. An exhaustive pass over those arguments found the result within 3
+// ulps of the double-`f64` one for sin, 1.7 for cos, and 4.5 for tan, the
+// quotient of the two. When no `f32` midpoint is within 16 ulps, narrowing it
+// rounds correctly, and otherwise the double-`f64` result decides, and then
+// the slow path; the same pass compared every result with that path's.
 package repro;
 
 import "core:unsafe";
@@ -48,6 +61,9 @@ TWO_OVER_PI_F64 :: 0.6366197723675814;
 QUARTER_PI :: 0.7853981633974483;
 // Under 2^20 pi/2, so q < 2^20 in Cody and Waite's reduction.
 CODY_WAITE_LIMIT :: 1647099.0;
+// The window, in `f64` ulps, of the `f32` first approximations: past
+// their errors, as the file's head describes.
+QUICK_TRIG_ULPS :: 16;
 
 // 64 bits of 2/pi from bit `start`, counted from 1 after the binary point.
 two_over_pi_word :: proc(start: int) -> u64 {
@@ -213,13 +229,59 @@ trig_f64 :: proc(x: f64, want_cos: bool) -> f64 {
 	return unsafe.transmute(f64, trig_slow(ax, want_cos, flip, F64_LAYOUT));
 }
 
-// The same for an `f32` argument: h + l, within an `f64` ulp of the result,
-// narrows to it unless an `f32` midpoint is that close. No result here is
-// subnormal.
+// |x| = quadrant pi/2 + r in single-`f64` arithmetic, for an `f32` |x| below
+// `CODY_WAITE_LIMIT`, as the file's head describes.
+quick_reduce :: proc(ax: f64) -> (quadrant: int, r: f64) {
+	if (ax <= QUARTER_PI) { return {0, ax}; }
+	qf := (ax*TWO_OVER_PI_F64 + ROUND_SHIFTER) - ROUND_SHIFTER;
+	r := ((ax - qf*from_bits(PIO2_1)) - qf*from_bits(PIO2_2)) - qf*from_bits(PIO2_3);
+	return {int(qf) & 3, r};
+}
+
+// sin a, or cos a when `!use_sin`, in single-`f64` arithmetic, for 0 <= a
+// <= pi/4 + 2^-40, from the table's high parts and t's series: p + q t +
+// p (cos t - 1) + q (sin t - t), with p and q sin c and cos c, or cos c and
+// -sin c, chosen rather than branched to, since the quadrant is as good as
+// random. At j = 0 they are 0 and 1, or 1 and 0.
+quick_sin_cos :: proc(a: f64, use_sin: bool) -> f64 {
+	j := table_index(a);
+	t := a - f64(j)*(1.0/256.0);
+	t2 := t*t;
+	p := from_bits(SIN_COS_TABLE[4*j]);
+	q := from_bits(SIN_COS_TABLE[4*j + 2]);
+	if (!use_sin) {
+		c := p;
+		p = q;
+		q = 0.0 - c;
+	}
+	return p + (q*t + (p*(t2*(-0.5 + t2*(1.0/24.0))) + q*(t*t2*(-1.0/6.0 + t2*(1.0/120.0)))));
+}
+
+// An `f32` result's bits from its `f64` magnitude and sign, without a branch
+// on the sign, which is as good as random.
+signed_f32 :: proc(magnitude: f64, negative: bool) -> f32 {
+	sign := u32(0);
+	if (negative) { sign = 0x80000000; }
+	return unsafe.transmute(f32, unsafe.transmute(u32, f32(magnitude)) | sign);
+}
+
+// The same for an `f32` argument: the single-`f64` approximation first,
+// and then h + l, within an `f64` ulp of the result, which narrows to it
+// unless an `f32` midpoint is that close. No result here is subnormal.
 trig_f32 :: proc(x: f64, want_cos: bool) -> f32 {
 	ax := x;
 	if (x < 0.0) { ax = 0.0 - x; }
 	flip := !want_cos && x < 0.0;
+	if (ax < CODY_WAITE_LIMIT) {
+		quadrant, r := quick_reduce(ax);
+		use_sin := (quadrant % 2 == 0) != want_cos;
+		a := r;
+		if (r < 0.0) { a = 0.0 - r; }
+		quick := quick_sin_cos(a, use_sin);
+		if (f32_decided(quick, QUICK_TRIG_ULPS)) {
+			return signed_f32(quick, trig_negative(want_cos, quadrant, use_sin, r < 0.0) != flip);
+		}
+	}
 	decidable, negative, h, l := trig_kernel(ax, want_cos);
 	if (decidable) {
 		y := h + l;

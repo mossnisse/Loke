@@ -404,6 +404,32 @@ Then the other, `two_product` by the FMA instruction:
   87.8 and 75.7; `sin_f32` and `asin_f32`, decided by their single-`f64`
   paths, did not move. Baseline builds are unchanged.
 
+Then the `f32` functions' rounding decision and first approximations:
+
+- `f32_decided`, which every `f32` result passes through, joined two
+  comparisons with `||`; the second's overflow check made it a branch,
+  taken for about half of random arguments and mispredicted as often. One
+  wrapping comparison decides the same, as 200 million seeded values at
+  every window the package uses confirmed, and took 6 to 8 ns off each
+  `f32` function.
+- `sin_f32`, `cos_f32`, and `tan_f32` had no first approximation, and went
+  straight to the double-`f64` kernel, so `sin_f32` took longer than `sin`.
+  Below 2^20 pi/2 they now take a single-`f64` one: Cody and Waite's
+  reduction with three parts and the table's high parts with short series,
+  sin and cos chosen by coefficients and the sign set by a mask rather than
+  by branches the quadrant would mispredict. An exhaustive pass over all
+  281,612,248 such arguments, both signs, found it within 3, 1.7, and 4.5
+  ulps of the double-`f64` result, and every result equal to the previous
+  path's at the window of 16 ulps.
+- Measured at `-opt=speed` with `bench/math_compare.loke` at baseline,
+  medians per call before and after: `sin_f32` 61.3 and 26.6 ns, `exp_f32`
+  20.1 and 13.6, `asin_f32` 33.8 and 24.5, and `pow_f32` 92.2 and 81.7; a
+  separate loop measured `cos_f32` from 56 to 25 ns and `tan_f32` from 88
+  to 30. The `f64` functions did not change.
+- Found on the way: an array literal whose element type is spelled as a
+  procedure type reports a compiler defect besides its parse error; see
+  [known-gaps.md](known-gaps.md#a-procedure-literal-used-as-an-array-literals-type-reports-a-compiler-defect).
+
 Not started: phase 1's benchmarks (the UCRT timings in open questions stand
 until there is a kernel to compare), phase 6's faster kernels and dispatch,
 and other platforms.
