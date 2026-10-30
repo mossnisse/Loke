@@ -951,6 +951,41 @@ binds the same names, which positional binding would silently swap. Named types
 stay out for the reason they stay out of widening: their fields and variants
 belong to a declaration, which `Option($T)` already matches.
 
+### Arguments typed after inference
+
+An implicit selector or a typeless literal has no type of its own; it takes its
+parameter's. A generic parameter written `Option(T)` has none until `T` is
+inferred, so before [Arguments typed after
+inference](design.md#arguments-typed-after-inference) such an argument could
+fill only a parameter whose type named no `$` parameter, and
+`value_or(x, .some(y))` against `proc(value: $T, fallback: Option(T))` was
+rejected though `x` alone settles `T`. `linalg.quaternion_between` became a
+procedure group with a plain `Vector3(T)` parameter for that reason, where one
+procedure with an `Option(Vector3(T))` default would say what it means.
+
+Letting the argument wait costs nothing in meaning, because it contributes
+nothing to inference: it has no type to match a pattern against, so typing it
+before or after the other arguments cannot change what they bind, and the
+result is the same whichever argument is written first. Only typing waits;
+arguments still run in written order, so the rule never shows at run time.
+
+The case where the waiting argument is the only one that could bind a `$` name
+stays an error. Binding `U` from `.none` against `Option($U)` would have to
+guess `U`, and from `.some(5)` it would have to type `5` with no destination
+and then read `U` back out of the result: a second, inside-out inference for
+one argument shape. Requiring the type to be written, as
+`Option(int).none`, keeps inference reading only arguments that have types.
+
+In a group the waiting argument does not take part in choosing the member, as
+a destination type does not: selection reads the arguments that have types,
+and the chosen member's parameter then checks the one that waited. The
+alternative, typing it speculatively against each member and dropping those it
+does not fit, would let an implicit selector choose between overloads, which
+is exactly what a destination type is denied, and would check one expression
+once per member. The cost is that `show(1, .none)` picks the non-parametric
+`show_color` from `1` and then rejects `.none`, though a generic member would
+have taken it; the error says that the other arguments chose the member.
+
 ### Per-variant switch cases
 
 Interpreters walking a tree, protocol handlers, and error reporters often do

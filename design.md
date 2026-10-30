@@ -2980,7 +2980,8 @@ procedure's parameter supplies it as an ordinary one does when the
 parameter's written type names none of the procedure's `$` parameters:
 `pick :: proc(order: Order, a, b: $T)` takes `pick(.First, x, y)`. A
 parameter written `Option(T)` has no type until `T` is inferred, so an
-implicit selector cannot fill it.
+implicit selector filling it is typed after the other arguments have inferred
+`T` ([Arguments typed after inference](#arguments-typed-after-inference)).
 
 #### Iterating an enumeration
 
@@ -3793,7 +3794,9 @@ only when no viable explicit overload exists.
 checks the selected result afterward. A mismatch names the selected member:
 `typed: f64 = pick(7)` is an error if `pick(7)` selects an `int` member; the
 destination cannot select a floating overload. Members differing only in result
-type are therefore always ambiguous.
+type are therefore always ambiguous. An argument that [waits for
+inference](#arguments-typed-after-inference) is checked the same way: it ranks
+alike for every candidate, and the selected member's parameter checks it.
 
 If multiple maximal candidates remain, the diagnostic must list all their
 signatures and explain the ambiguity in source-level terms, such as different
@@ -7562,6 +7565,63 @@ array := squares(4, T);
 foreach (v, i in array.indexed()) {
 	assert(v == T(i*i));
 }
+```
+
+#### Arguments typed after inference
+
+An argument that takes its type from its parameter, an [implicit
+selector](#implicit-selector-expression) such as `.Red`, `.none`, or
+`.some(y)`, or a literal written without its type such as `{4, 5}`, has no
+type of its own to infer from. When the runtime parameter it fills names the
+procedure's `$` parameters, the argument waits: the other arguments, and
+omitted `$` parameters' defaults, bind them first, and the argument is then
+typed against the parameter type with them substituted. Named arguments,
+variadic elements, and a method's arguments wait the same way.
+
+```loke
+Color :: enum { Red, Green, Blue }
+
+value_or :: proc(value: $T, fallback: Option(T) = .none) -> T {...}
+count :: proc(first: $T, rest: ..T) -> int {...}
+second :: proc(first: $T, pair: [2]T) -> T {...}
+
+a := value_or(3, .some(5));                    // T is int; `.some(5)` is an Option(int)
+b := value_or(fallback = .none, value = "x");  // T is string
+n := count(Color.Red, .Green, .Blue);          // T is Color
+s := second(1, {2, 3});                        // `{2, 3}` is a [2]int
+```
+
+A waiting argument binds nothing. If its parameter type still names a `$`
+parameter after every other argument is inferred, the waiting argument is the
+only one that could bind it, and the call is rejected: with
+`lone :: proc(a: int, b: Option($U))`, `lone(1, .none)` is an error and
+`lone(1, Option(int).none)` names the type. `count(.Green, Color.Blue)` is an
+error too, since only `first: $T` binds `T`. A `$` parameter's argument never
+waits, because it is a compile-time input that selects the instance, so an
+implicit selector given to `$fallback: T` is an error.
+
+Waiting changes only the order in which arguments are typed. Arguments are
+still evaluated in written order ([Evaluation order](#evaluation-order)).
+
+In a call through a [procedure group](#explicit-procedure-overloading), an
+argument waits when any member's parameter for it names that member's `$`
+parameters. It then takes no part in choosing the member: the group is resolved
+from the other arguments, as a destination type checks a selected result
+afterward ([Operator lookup and overload
+resolution](#operator-lookup-and-overload-resolution)), and the argument is
+typed against the chosen member's parameter. A member whose parameter type
+would need the waiting argument to bind a `$` parameter is not viable. When
+the chosen member's parameter does not take the argument, the call is an error
+at the argument, even if another member's would have:
+
+```loke
+show_color  :: proc(x: int, color: Color) {...}
+show_option :: proc(x: $T, value: Option(T)) {...}
+show :: proc{show_color, show_option}
+
+show(1, .Red);    // `show_color`: non-parametric wins the tie
+show("a", .none); // `show_option`, the only member taking a string
+show(1, .none);   // error: `show_color` is chosen, and `Color` has no `none`
 ```
 
 ### Specialization

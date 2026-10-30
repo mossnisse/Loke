@@ -956,21 +956,6 @@ as well as projections, rotations, and `inverse`. The original limitation
 was that [compile-time procedure evaluation](design.md#compile-time-procedure-evaluation)
 could not call the foreign runtime implementation of `math.sqrt`.
 
-### Implicit selectors in inferred parameter types
-
-An implicit selector argument takes the type of the parameter it fills, and a
-generic procedure's parameter supplies one only when its written type names
-none of the procedure's `$` parameters
-([Implicit selector expression](design.md#implicit-selector-expression)). So
-`f(x, .some(y))` against `f :: proc(x: $T, y: Option(T) = .none)` is rejected
-even though `x` alone settles `T`. That is why
-`linalg.quaternion_between(a, b, fallback_axis)` is a procedure group with a
-plain `Vector3(T)` parameter rather than one procedure with an
-`Option(Vector3(T))` default. Typing such arguments after inference from the
-others would allow the `Option` form. The open part is the order: whether an
-argument that needs a type may wait for inference, and what a call means when
-the waiting argument is also the only one that could bind `T`.
-
 ### Disjoint strided mutable views
 
 The [dense matrix plan](dense-matrix-plan.md#one-owner-and-two-views) gives
