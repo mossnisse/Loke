@@ -84,13 +84,28 @@ generic :: proc() -> int {
 	return f(2);
 }
 
-// A capture runs when the literal is evaluated, which compile time cannot do.
-folded :: proc() -> int {
-	f := proc() -> int capture(n = 2) { return n; };
+// design.md "Compile-time procedure evaluation": compile-time evaluation may
+// make and call a literal, but its record is a runtime value and cannot be the
+// result, alone or inside another value, and a `dyn proc` view of it has no
+// compile-time value.
+identity :: proc(x: $T) -> T { return x; }
+
+Wrapped :: struct($T: type) { value: T }
+
+wrap :: proc(x: $T) -> Wrapped(T) { return Wrapped(T){value = x}; }
+
+viewed :: proc() -> int {
+	f: dyn proc() -> int = proc() -> int capture(n = 2) { return n; };
 	return f();
 }
 
-FOLDED :: folded();
+VIEWED :: viewed();
+
+escaped :: proc() -> int {
+	ESCAPED :: identity(proc() -> int capture(n = 2) { return n; });
+	WRAPPED :: wrap(proc() -> int capture(n = 3) { return n; });
+	return ESCAPED() + WRAPPED.value();
+}
 
 main :: proc() {
 	h := Holder{1};
@@ -103,5 +118,6 @@ main :: proc() {
 	opaque();
 	_ = shadowed();
 	_ = generic();
+	_ = escaped();
 	_ = global();
 }

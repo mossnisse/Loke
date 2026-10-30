@@ -629,6 +629,14 @@ The main rejected alternatives were:
 `capture` is contextual after a procedure literal's signature, preserving its
 use as an ordinary identifier elsewhere.
 
+[Compile-time evaluation](design.md#compile-time-procedure-evaluation) runs a
+capture literal as the record it abbreviates, so a constant can be computed
+through a callback API. The record stays out of the constant itself. A literal
+is declared with `:=` because it is a runtime value; admitting one through a
+generic identity, while `::` rejects it written directly, would make the rule
+depend on spelling. A named record with a `call` method is a constant like any
+other record.
+
 ### Borrowed callable views
 
 A [`dyn proc` view](design.md#borrowed-callable-views) gives heterogeneous

@@ -5699,6 +5699,28 @@ must satisfy the [materialization](#materialization) rules. In particular, a
 runtime-owning dynamic array or map must first be converted to a fixed array,
 immutable string, or ordinary record.
 
+A [capture literal](#capture-literals) on the executed path is evaluated as the
+record and `call` method it creates. Its captures are taken where it is
+evaluated: a copied or moved capture is a field, and a borrowed capture
+addresses evaluator storage, so a `&mut` capture writes the evaluated local
+itself. It may be called directly, through `call`, or through a generic
+`interfaces.Callable` parameter:
+
+```loke
+count_below :: proc(values: []int, limit: int) -> int {
+	n := 0;
+	tally := proc(v: int) capture(&mut n, limit) { if (v < limit) { n += 1; } };
+	foreach (v in values) { tally(v); }
+	return n;
+}
+
+SMALL :: count_below([]int{3, 8, 1}, 5);   // 2
+```
+
+The literal remains a runtime value. The final result may neither be one nor
+hold one, even when every capture is a copy, and a [`dyn proc`
+view](#borrowed-callable-views) of one has no compile-time value.
+
 Only the executed path must satisfy these restrictions; every branch still
 parses and type-checks unless discarded by `when`. A reached panic or failed
 `assert` is a compilation error. Resource limits must also produce a diagnostic
@@ -6973,9 +6995,10 @@ collect(nodes, proc(@(escape=stored) node: ^Node) capture(&mut found) { found.ap
 ```
 
 A capture literal is a runtime value. It is declared with `:=`, never `::`; it
-appears only in a procedure body; it has no calling convention; and compile-time
-evaluation rejects it. A literal without a clause captures nothing and is an
-ordinary procedure value.
+appears only in a procedure body; and it has no calling convention.
+[Compile-time evaluation](#compile-time-procedure-evaluation) may make and call
+one, but no constant holds one. A literal without a clause captures nothing and
+is an ordinary procedure value.
 
 ### Parameters
 

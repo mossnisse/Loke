@@ -94,7 +94,7 @@ require_const :: proc(k: ^Checker, e: Expr, what: string, code := "L0340") -> (C
 	if !ok {
 		return Const_Value{}, false
 	}
-	frozen, froze := freeze(&ev, value)
+	frozen, froze := freeze_result(&ev, value)
 	if !froze {
 		return Const_Value{}, false
 	}
@@ -114,7 +114,7 @@ evaluate_static_elements :: proc(k: ^Checker, e: Expr, what: string, code := "L0
 	}
 	out := make([]Const_Value, len(value.elements), k.c.semantic_allocator)
 	for element, index in value.elements {
-		frozen, froze := freeze(&ev, element)
+		frozen, froze := freeze_result(&ev, element)
 		if !froze {
 			return nil, false
 		}
@@ -378,6 +378,34 @@ copy_value :: proc(ev: ^Evaluator, v: Eval_Value) -> (Eval_Value, bool) {
 		out.elements[index] = copied
 	}
 	return out, true
+}
+
+// What evaluation hands the program. design.md "Compile-time procedure
+// evaluation": a capture literal's record is used only while evaluation runs,
+// so neither it nor a value holding one is a result.
+@(private = "file")
+freeze_result :: proc(ev: ^Evaluator, v: Eval_Value) -> (Const_Value, bool) {
+	if eval_holds_capture(ev.k.c, v) {
+		eval_fail(
+			ev, ev.origin, "L0341",
+			"a capture literal is a runtime value: it may be made and called during compile-time evaluation, but cannot be its result",
+		)
+		return Const_Value{}, false
+	}
+	return freeze(ev, v)
+}
+
+@(private = "file")
+eval_holds_capture :: proc(c: ^Compiler, v: Eval_Value) -> bool {
+	if type_is_capture_record(c, type_underlying(c, v.type)) {
+		return true
+	}
+	for element in v.elements {
+		if eval_holds_capture(c, element) {
+			return true
+		}
+	}
+	return false
 }
 
 // Into immutable compilation storage; a pointer cannot make the trip.
@@ -745,11 +773,8 @@ eval_value_unviewed :: proc(ev: ^Evaluator, e: Expr) -> (result: Eval_Value, suc
 		return eval_call(ev, v)
 
 	case ^Expr_Composite:
-		// design.md "Capture literals": no compile-time value yet.
-		if v.capture != nil {
-			eval_fail(ev, v.capture.clause_span, "L0341", "a capture literal has no compile-time value")
-			return Eval_Value{}, false
-		}
+		// design.md "Capture literals": a capture literal is its record's
+		// literal, whose elements are the captures as their modes take them.
 		return eval_composite(ev, v)
 
 	case ^Expr_Range:
