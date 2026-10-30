@@ -486,6 +486,10 @@ find_member :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> Symbol_I
 	if required := required_slot_candidates(k, type, name); len(required) == 1 {
 		return required[0]
 	}
+	// design.md "Interface bodies": and the associated constants a bound requires.
+	if constant := required_associated_constant(k, type, name); constant != INVALID_SYMBOL {
+		return constant
+	}
 	return iteration_adapter_member(k, type, name)
 }
 

@@ -39,3 +39,25 @@ also reassigns is not narrowed to one element, so the narrowing adds nothing
 to it. Closing it needs each destination's carriers read before the first
 write, as the values already are (`prov_capture_slots`). Found while
 closing the self-resliced view case on 2026-10-30.
+
+### A generic `impl`'s constant is not read by the type of its value
+
+[Private names in public declarations](design.md#private-names-in-public-declarations)
+reads a public constant with no written type by the type of its value. A
+member of a generic `impl` is checked per instance, so its template has no
+symbol and no type, and only its written syntax is read:
+
+```loke
+package shapes;
+@(private) Corner :: struct { x: int }
+@(public) Box :: struct($T: type) { value: T }
+impl Box($T) {
+    @(public) ORIGIN :: Corner{}; // should warn L0740, as it does in a non-generic `impl`
+}
+```
+
+`read_public_decl` in [src/private_names.odin](src/private_names.odin) reads
+the type from the constant's symbol. Reading it from the syntax would guess:
+`Corner{}` names its type, but `size_of(Corner)` names a type and has another.
+Writing the type, `ORIGIN: Corner : Corner{}`, is reported. Found while adding
+the warning on 2026-10-30.

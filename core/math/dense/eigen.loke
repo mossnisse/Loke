@@ -129,7 +129,7 @@ impl Symmetric_Eigen($T) {
 	size :: proc(self) -> int { return self.eigenvectors.row_count; }
 
 	/// The eigenvalues, ascending.
-	values :: proc(self: ^) -> []T.Real { return self.eigenvalues[:]; }
+	values :: proc(self: ^) -> []T.Real where linalg.Scalar(T) { return self.eigenvalues[:]; }
 
 	/// The eigenvectors as the columns of an orthogonal, or unitary, matrix, column `i` for `values()[i]`.
 	vectors :: proc(self: ^) -> View(T) { return self.eigenvectors.view(); }

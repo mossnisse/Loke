@@ -731,6 +731,8 @@ interface_slots :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic_Arg,
 	if info.file_node != nil {
 		k.file, k.file_node = info.file, info.file_node
 	}
+	// A composed application's arguments may name this one's associated constants.
+	k.body = {requiring = info, requiring_args = args}
 
 	for requirement in info.node.requirements {
 		if requirement.kind == .Slot {

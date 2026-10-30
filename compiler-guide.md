@@ -264,7 +264,10 @@ A private declaration is shown too once a shown one names it, after a comment
 saying it is private: a type that a public procedure returns or a public field
 has, and the members of its `impl`; a procedure that a public overload group
 gathers; a constant in a default value; and whatever those name in turn. An
-importer cannot name such a declaration, but does reach it. A name is followed
+importer cannot name such a declaration, but does reach it. Apart from a
+group's members and values, naming one is also the warning `L0740`
+([Private names in public declarations](design.md#private-names-in-public-declarations)).
+A name is followed
 to the declaration the checker resolved it to, so a parameter spelled like a
 private type does not reach the type, and a private alias reaches the type it
 names. In syntax the checker never resolved, an untaken `when` branch or a
@@ -561,6 +564,10 @@ relative collection path is relative to the first workspace folder.
   Windows LLVM installation directories, then `PATH`. To select an installation
   for the current PowerShell session, set
   `$env:LOKE_CLANG = 'C:\Program Files\LLVM\bin\clang.exe'`.
+- **Clang reports `invalid cpu feature string for builtin` in `cpu.c`:** the
+  runtime needs Clang 18 or later, whose compiler-rt detects the
+  [CPU levels](#cpu-levels). `lokec -print-toolchain` names the Clang it
+  uses; install a newer LLVM, or select one with `LOKE_CLANG`.
 - **A `.asm` import cannot be assembled (`L0632`):** a foreign import of a
   `.asm` file is assembled with NASM, which `lokec` finds through `LOKE_NASM`
   and then `PATH`. Install NASM, or set `$env:LOKE_NASM` to its `nasm.exe`.

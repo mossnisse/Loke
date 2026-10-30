@@ -633,8 +633,7 @@ Decided while implementing:
   ([Compile-time procedure evaluation](design.md#compile-time-procedure-evaluation)),
   so `length`, `normalize`, `look_at`, and the rest did not fold. The merged
   implementation of `math.sqrt` now folds too, with the same result as at
-  runtime. The original question is in
-  [Correctly rounded procedures at compile time](open-questions.md#correctly-rounded-procedures-at-compile-time).
+  runtime.
 
 Compiler bugs found and fixed in the same change, each with a regression test
 (`tests/run/generic_group_bound_order`,
@@ -682,8 +681,11 @@ Decided while implementing:
   nearly opposite vectors: at `(1, 0, 0)` and `(-1, 1e-9, 0)` the halfway
   vector turned `u` to `-u`, an error of `1e-9` radians, where this form is
   within rounding. The optional fallback axis is a second group member, not
-  an `Option` parameter, because `.some(axis)` has no type before `T` is
-  inferred ([Implicit selectors in inferred parameter types](open-questions.md#implicit-selectors-in-inferred-parameter-types)).
+  an `Option` parameter, because `.some(axis)` had no type before `T` was
+  inferred when the procedure was written. An argument now waits for that
+  inference ([Arguments typed after inference](design.md#arguments-typed-after-inference)),
+  so the group could become one procedure with an `Option(Vector3(T))`
+  default.
 - **`quaternion_from_matrix` returns a non-negative real part**, so a
   round trip is the same quaternion and not its negation.
 - **`to_euler` follows Bernardes and Viollet** (PLOS ONE, 2022), which

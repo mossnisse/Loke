@@ -636,7 +636,9 @@ Every Clang command takes its code-generation flags from
 `append_codegen_flags`, so the module and the runtime cannot disagree on the
 level or on `-ffp-contract=off`. `runtime/cpu.c` is the one runtime file
 compiled as baseline code whatever the level, because the startup check runs
-before anything the level permits. Its callers are baseline too: `wmain`, and
+before anything the level permits; the detection it asks for,
+compiler-rt's `__builtin_cpu_supports`, comes prebuilt for every x64
+processor. Its callers are baseline too: `wmain`, and
 in an object build the `@llvm.global_ctors` entry `emit_object_cpu_check`
 adds, both through explicit `"target-features"` lists.
 
@@ -684,6 +686,7 @@ be file-private. Paths below are relative to `src/`.
 | `slice.odin`, `container.odin`, `text.odin`, `simd.odin`, `atomics.odin` | The slice type, its shared ABI type and queries; managed-container, text, SIMD, and atomic semantics, and the member tables of the built-in carriers. |
 | `capture.odin` | Lower capture literals to ordinary records, `call` methods, and record literals. |
 | `test_procedures.odin` | `@(test)` declarations, checked in every build and called only by a test build's entry. |
+| `private_names.odin` | The warning for a public declaration that names a private one of its package, read from the written signatures once a package is checked. |
 | `parallel.odin` | `parallel` blocks and `spawn` statements: placement, callee and result rules, and each spawn's frame record and run procedure ([Lowering parallel blocks](#lowering-parallel-blocks)). |
 | `box.odin` | Box types, construction, unboxing, dereference projections, and shared allocation layout. |
 | `hash.odin`, `format.odin`, `iterate.odin` | Contributed hashing, coherent formatting, ranges, `foreach`, and iteration protocol support. |

@@ -19,8 +19,8 @@ Current implementation limits are in [known gaps](known-gaps.md).
 
 ## Getting started
 
-Install **LLVM/Clang** and the **Microsoft C++ build tools with the Windows SDK**,
-then download and extract a compiler bundle from the
+Install **LLVM/Clang 18 or later** and the **Microsoft C++ build tools with the
+Windows SDK**, then download and extract a compiler bundle from the
 [releases page](https://github.com/mossnisse/Loke/releases).
 [Getting started](tutorials/01-getting-started.md) walks through installation
 and adding the compiler to `PATH`.

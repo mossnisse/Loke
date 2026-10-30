@@ -205,7 +205,9 @@ Style :: struct {
 DEFAULT_STYLE :: Style{};
 
 // `value` printed in `style`, as `fmt.fixed` does for a float.
-styled :: proc(value: $T, style: Style) -> Styled(T) where is_styled(T) ---;
+styled :: proc(value: $T, style: Style) -> Styled(T)
+	where T == Duration || T == Time || T == Offset_Date_Time || T == Date_Time ||
+	T == Date || T == Time_Of_Day || T == Offset ---;
 
 Styled :: struct($T: type) {
 	value: T,
@@ -215,9 +217,6 @@ Styled :: struct($T: type) {
 impl Styled($T) {
 	format :: proc(self, writer: fmt.Writer, options: fmt.Options) ---;
 }
-
-// Private to the package, but a public declaration names it.
-is_styled :: proc($T: type) -> bool ---;
 
 Parse_Error :: enum {
 	// The wrong shape: a missing separator, a digit too few, text left over.

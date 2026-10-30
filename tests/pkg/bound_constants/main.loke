@@ -1,0 +1,44 @@
+package main;
+
+import "core:fmt";
+import "./shape";
+import "./widget";
+
+// design.md "Interface bodies": a bare bound grants its declaration the
+// associated constants that met it, as it grants slots, in the signature, the
+// other bounds, and the body, and the slots of an application it composes on
+// that application's own subject. `shape` meets `Measured(Rod)` with private
+// extensions, which this package cannot otherwise see.
+
+// The associated type in the signature and the body, the constant in the body.
+scaled :: proc(x: $T) -> T.Unit where shape.Measured(T) {
+	unit: T.Unit = x.unit_of();
+	return unit*T.SCALE;
+}
+
+// A `Length` slot on `T.Unit`, which `Measured(T)` composes.
+metres_of :: proc(x: $T) -> f64 where shape.Measured(T) {
+	return x.unit_of().metres();
+}
+
+// One bound naming the associated type another bound grants.
+same_unit :: proc(x: $T, u: $U) -> U where shape.Measured(T), U == T.Unit {
+	return u + x.unit_of();
+}
+
+// A record's fields have the grant of its bounds.
+Reading :: struct($T: type) where shape.Measured(T) {
+	value: T.Unit,
+}
+
+// The application holds here too, though this package sees none of its members.
+static_assert(shape.Measured(widget.Rod));
+
+main :: proc() {
+	rod := widget.Rod{length = 1.5};
+	fmt.println(scaled(rod));
+	fmt.println(metres_of(rod));
+	fmt.println(same_unit(rod, 2.0));
+	reading := Reading(widget.Rod){value = 4.5};
+	fmt.println(reading.value);
+}

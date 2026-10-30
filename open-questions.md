@@ -511,32 +511,6 @@ steps are in priority order; each is usable without the next.
   packages get `api.loki` by default, and whether `loke.project` should name
   the packages `-api-check` covers.
 
-### Public declarations that name private ones
-
-**Should a public declaration be allowed to name a private one?**
-[Exported names](design.md#exported-names) does not forbid it, and following
-references showed the bundled packages doing it in three ways, which the
-interface files now show, marked private:
-
-- a public field of a private type, which `fmt.Padded` had as `fill: Fill`
-  until its fields were made private. An importer could read and write the
-  field but not name its type, so it could not declare a `Fill` variable or
-  pass one through its own procedures;
-- a private procedure in a public `where` clause: `core:time`'s `is_styled`;
-- private procedures behind a public overload group: `thread.spawn`,
-  `runtime.shared` and `try_shared`, and `container.Small_Array`'s `append`.
-
-A private type that a public procedure returns is a fourth way, which no
-bundled package uses. The group case looks deliberate: a group exports one
-name over several signatures, and its members' own names are not meant to be
-API. The type cases look accidental. Rust warns on a private type in a public
-signature, and Go allows an unexported return type although its documentation
-cannot then describe the type. The options are to keep allowing all of it, as
-now; to warn when a public signature or public field names a private type, or
-a public `where` clause a private procedure, but not for a group's members;
-or to make that an error. The warning would leave the interface writer's
-private notes to groups only.
-
 ## The `op`/`try_op` pair
 
 Should a container keep both spellings of a fallible operation?
@@ -1025,21 +999,6 @@ The [deterministic math and CPU targeting
 plan](deterministic-math-and-targets-plan.md#cpu-targets-and-fma) keeps
 baseline as the default and adds run-time dispatch later only where measured.
 
-#### Reusing Clang's CPU detection
-
-Should [runtime/cpu.c](runtime/cpu.c) use Clang's
-[`__builtin_cpu_supports`](https://clang.llvm.org/docs/LanguageExtensions.html#builtin-cpu-supports)
-for `x86-64-v2` and `x86-64-v3`, with `__builtin_cpu_init` before querying,
-instead of maintaining CPUID assembly, XGETBV, and feature masks? The runtime
-already links compiler-rt, which supplies the detection. In the 2026-10-29
-review of `86c3a7a2`, a prototype replacing that machinery removed 76 lines,
-linked with Clang 22.1.8 at `-O3 -march=x86-64-v3`, and preserved the baseline,
-v2, v3, invalid-level results, report, and exit status on a v3 processor.
-Keep the baseline function attributes and reporting wrapper. Settle the
-supported Clang minimum before removing the manual implementation; an older
-toolchain would justify a fallback only if it remains supported. A processor
-missing a known level still needs coverage.
-
 ### Integer bit operations not yet provided
 
 [Integer bit operations](standard-library.md#integer-bit-operations) has the
@@ -1094,36 +1053,16 @@ verbosity at every call site.
 ### Visibility in slot and expression requirements
 
 A named slot is met by an inherent method whatever its visibility, while an
-expression requirement such as `(a, b: T) a + b -> T` is checked where the
-interface writes it and so needs the operator to be visible there. A type in
-a `package main`, whose declarations are private by default, therefore meets
+expression requirement such as `(a, b: T) a + b -> T` is checked with the
+visibility of the package that applies the interface, where the bound is
+written, and so needs the operator to be visible there. A type in a
+`package main`, whose declarations are private by default, therefore meets
 `Real`'s `sqrt` slot but not `Numeric`'s `+` until its operators are marked
-`@(public)`. The diagnostic now names the cause; whether the two requirement
-forms should agree, and in which direction, is open.
-
-### Correctly rounded procedures at compile time
-
-Resolved: [`core:math`](standard-library.md#coremath)'s correctly rounded
-procedures, including `sqrt` and `mod`, now have compile-time values.
-`core:math/linalg` can therefore fold `length`, `normalize`, and `look_at`
-as well as projections, rotations, and `inverse`. The original limitation
-was that [compile-time procedure evaluation](design.md#compile-time-procedure-evaluation)
-could not call the foreign runtime implementation of `math.sqrt`.
-
-### Implicit selectors in inferred parameter types
-
-An implicit selector argument takes the type of the parameter it fills, and a
-generic procedure's parameter supplies one only when its written type names
-none of the procedure's `$` parameters
-([Implicit selector expression](design.md#implicit-selector-expression)). So
-`f(x, .some(y))` against `f :: proc(x: $T, y: Option(T) = .none)` is rejected
-even though `x` alone settles `T`. That is why
-`linalg.quaternion_between(a, b, fallback_axis)` is a procedure group with a
-plain `Vector3(T)` parameter rather than one procedure with an
-`Option(Vector3(T))` default. Typing such arguments after inference from the
-others would allow the `Option` form. The open part is the order: whether an
-argument that needs a type may wait for inference, and what a call means when
-the waiting argument is also the only one that could bind `T`.
+`@(public)`. The diagnostic now names the cause. An associated constant
+requirement, `T.Real -> type`, falls back to the slot rule when the applying
+package sees no such member ([Interface bodies](design.md#interface-bodies));
+whether the other expression requirements should agree with slots, and in
+which direction, is open.
 
 ### Disjoint strided mutable views
 
@@ -1172,80 +1111,17 @@ whether a checked-once form of indexing belongs in the language.
 
 ### Slots through a record's bound
 
-`dense.Lu(T)` is declared `where linalg.Real(T)`, so no instance exists for an
-element type without `abs`. Even so, a method in `impl Lu($T)` cannot call
-`x.abs()` on a `T` until the method restates `where linalg.Real(T)`: a bare
-bound lets *its own declaration's* body call the interface's slots
-([where clauses](design.md#where-clauses)), and the record's body has no
-code. `core:math/linalg` restates `Real(T)` on each method that needs it, and
-`core:math/dense` does the same. Letting a record's bare bounds carry into its
-`impl` methods would remove the repetition; against it, a method's bounds are
-now all in its own signature, which is what [method
+`dense.Lu(T)` is declared `where linalg.Scalar(T)`, so no instance exists for
+an element type without `T.Real`. Even so, a method in `impl Lu($T)` cannot
+name `T.Real`, or call `x.abs()` on one, until the method restates
+`where linalg.Scalar(T)`: a bare bound grants *its own declaration* the slots
+and associated constants that satisfied it
+([where clauses](design.md#where-clauses)), and the record's own grant
+reaches only its fields. `core:math/linalg` restates `Real(T)` on each method
+that needs it, and `core:math/dense` restates `Scalar(T)`. Letting a record's
+bare bounds carry into its `impl` methods would remove the repetition; against
+it, a method's bounds are now all in its own signature, which is what [method
 exclusion](design.md#where-clauses) and the interface file show.
-
-### Associated constants through a bound
-
-`linalg.Scalar(T)` requires an associated type, `T.Real`, the type of a
-complex number's parts and a real type itself. `core:math/linalg` meets it for
-`f32`, `f64`, and `math.Complex(R)` with private extensions, `Real :: f64`,
-as it meets `Real`'s slots: a built-in type can only be extended, and a
-public extension would be exported as `linalg.Real`, the interface's own
-name. A bare bound grants its declaration's body the slots that satisfied it,
-private ones included ([Interface bodies](design.md#interface-bodies)), but
-not an associated constant. So in any other package a generic signature that
-names `T.Real` fails at `f64`:
-
-```loke
-package parts;
-
-import "core:math/linalg";
-
-@(public)
-real_of :: proc(x: $T) -> T.Real where linalg.Scalar(T) { return x.real_part(); }
-
-// From another package, parts.real_of(1.5) is rejected while instantiating:
-// error[L0306]: unknown type `T.Real`: `T` is not an imported package
-```
-
-`core:math/dense` declares its own private `Real` for the same three types,
-and so must every package with generic code over `Scalar`. Granting a bound's
-associated constants as it grants its slots would make `T.Real` mean in every
-package what it meant where the requirement was checked. The requirement
-already makes the member a compile-time type, so granting it hides nothing
-at run time. Against it, the grant would no longer be "only that slot on that
-type".
-
-### Slots through an associated type's bound
-
-`Scalar` composes `Real(T.Real)`, and an interface application standing alone
-in an interface body contributes its slots. A body bounded by `Scalar(T)` can
-call a `Real` slot on a `T.Real` only when `T.Real` is `T` itself:
-
-```loke
-package parts;
-
-import "core:math";
-import "core:math/linalg";
-
-// The constants the question above makes each package declare.
-impl f64 { @(private) Real :: f64; }
-impl math.Complex($R) { @(private) Real :: R; }
-
-@(public)
-size_of :: proc(x: $T) -> T.Real where linalg.Scalar(T) { return x.real_part().abs(); }
-
-// parts.size_of(-1.5) is 1.5, but parts.size_of of a math.Complex(f64) is
-// rejected while instantiating:
-// error[L0363]: `f64` has no field or member `abs`
-```
-
-`abs` on `f64` is `linalg`'s private extension, which the bound grants on
-`T` but not on the `f64` that `T.Real` names when `T` is complex. The dense
-package reaches such slots through helpers bounded by `linalg.Real(R)`
-directly, which a `T.Real` argument satisfies. Whether a composed bound on an
-associated type grants its slots on that type, as the composed bound's own
-wording suggests, is open; "only that slot on that type" can be read either
-way, and the helpers are the cost of the narrow reading.
 
 ## Open questions in `core:random`
 

@@ -8,7 +8,7 @@ The compiler, `lokec`, runs on 64-bit Windows. It turns a Loke program into
 LLVM IR and hands that to Clang, which produces the executable, so two tools
 come first:
 
-- **LLVM**, which provides Clang. Install it with
+- **LLVM 18 or later**, which provides Clang. Install it with
   `winget install LLVM.LLVM`, or from the [LLVM releases page](https://github.com/llvm/llvm-project/releases).
 - **The Microsoft C++ build tools and the Windows SDK**, which provide the
   linker and the C runtime. Install

@@ -2980,7 +2980,8 @@ procedure's parameter supplies it as an ordinary one does when the
 parameter's written type names none of the procedure's `$` parameters:
 `pick :: proc(order: Order, a, b: $T)` takes `pick(.First, x, y)`. A
 parameter written `Option(T)` has no type until `T` is inferred, so an
-implicit selector cannot fill it.
+implicit selector filling it is typed after the other arguments have inferred
+`T` ([Arguments typed after inference](#arguments-typed-after-inference)).
 
 #### Iterating an enumeration
 
@@ -3793,7 +3794,9 @@ only when no viable explicit overload exists.
 checks the selected result afterward. A mismatch names the selected member:
 `typed: f64 = pick(7)` is an error if `pick(7)` selects an `int` member; the
 destination cannot select a floating overload. Members differing only in result
-type are therefore always ambiguous.
+type are therefore always ambiguous. An argument that [waits for
+inference](#arguments-typed-after-inference) is checked the same way: it ranks
+alike for every candidate, and the selected member's parameter checks it.
 
 If multiple maximal candidates remain, the diagnostic must list all their
 signatures and explain the ambiguity in source-level terms, such as different
@@ -4700,6 +4703,15 @@ generic `T`, `T.Element` is valid only when the active constraints require that
 member unambiguously. Requirement order is irrelevant, and duplicate
 requirements for the selector must agree.
 
+The member is the one ordinary lookup finds where the interface is applied, or,
+when that finds none, the one a slot would find: an inherent member whatever
+its visibility, or an extension in the package of the interface that writes the
+requirement. The application's other requirements, and the applications it
+composes, reach that member through the same selector. So when `Measured(T)`
+requires `T.Unit -> type` and composes `Length(T.Unit)`, a type that the
+package of `Measured` extends with a private `Unit` meets `Measured` in every
+package, and `Length` is applied to that `Unit`.
+
 **Named slot form** `slot name: proc(...);` declares a method requirement:
 
 - Its first parameter must be `self` in one of the four [receiver
@@ -4716,14 +4728,26 @@ requirements for the selector must agree.
   Witness members are never overload groups.
 
 A slot is both a static callable requirement and a potential
-[witness](#runtime-polymorphism) entry. Inside a declaration constrained by a
-[bare bound](#where-clauses) `I(T)`, `value.slot()` reaches the implementation
-that satisfied `I`, even one the instantiating package could not otherwise see.
-Only that slot on that type is granted. Everything else keeps the [visibility
-rules](#exported-names): unrelated private members, a member offered only by a
-negated bound or one side of `||`, and every call outside a constrained
-declaration. A `static_assert` grants nothing, since it constrains no
-declaration.
+[witness](#runtime-polymorphism) entry. A [bare bound](#where-clauses) `I(T)`
+grants the declaration it constrains the members that satisfied `I`, even ones
+the declaring package could not otherwise see. The grant covers the
+declaration's signature, its `where` clause, and its body, or a record's
+fields. It consists of:
+
+- each slot of `I`, and of every application `I` composes, on that
+  application's subject: `value.slot()` on a `T` reaches the implementation
+  that satisfied `I`, and when `I` composes `J(T.Element)`, `item.slot()` on a
+  `T.Element` reaches the one that satisfied `J`;
+- each associated constant that `I` and the applications it composes require,
+  the member the requirement found, so `T.Element` means in the declaration
+  what it meant where the bound was checked.
+
+Only those members, on those types, are granted, and only where ordinary lookup
+finds none. Everything else keeps the [visibility rules](#exported-names):
+unrelated private members, a member offered only by a negated bound, one side
+of `||`, or a `when` condition, and every use outside a constrained
+declaration, including another declaration that checking it reaches. A
+`static_assert` grants nothing, since it constrains no declaration.
 
 Method and operator requirements are written as ordinary calls on bound values;
 lifecycle requirements name the hook (the standard
@@ -7564,6 +7588,63 @@ foreach (v, i in array.indexed()) {
 }
 ```
 
+#### Arguments typed after inference
+
+An argument that takes its type from its parameter, an [implicit
+selector](#implicit-selector-expression) such as `.Red`, `.none`, or
+`.some(y)`, or a literal written without its type such as `{4, 5}`, has no
+type of its own to infer from. When the runtime parameter it fills names the
+procedure's `$` parameters, the argument waits: the other arguments, and
+omitted `$` parameters' defaults, bind them first, and the argument is then
+typed against the parameter type with them substituted. Named arguments,
+variadic elements, and a method's arguments wait the same way.
+
+```loke
+Color :: enum { Red, Green, Blue }
+
+value_or :: proc(value: $T, fallback: Option(T) = .none) -> T {...}
+count :: proc(first: $T, rest: ..T) -> int {...}
+second :: proc(first: $T, pair: [2]T) -> T {...}
+
+a := value_or(3, .some(5));                    // T is int; `.some(5)` is an Option(int)
+b := value_or(fallback = .none, value = "x");  // T is string
+n := count(Color.Red, .Green, .Blue);          // T is Color
+s := second(1, {2, 3});                        // `{2, 3}` is a [2]int
+```
+
+A waiting argument binds nothing. If its parameter type still names a `$`
+parameter after every other argument is inferred, the waiting argument is the
+only one that could bind it, and the call is rejected: with
+`lone :: proc(a: int, b: Option($U))`, `lone(1, .none)` is an error and
+`lone(1, Option(int).none)` names the type. `count(.Green, Color.Blue)` is an
+error too, since only `first: $T` binds `T`. A `$` parameter's argument never
+waits, because it is a compile-time input that selects the instance, so an
+implicit selector given to `$fallback: T` is an error.
+
+Waiting changes only the order in which arguments are typed. Arguments are
+still evaluated in written order ([Evaluation order](#evaluation-order)).
+
+In a call through a [procedure group](#explicit-procedure-overloading), an
+argument waits when any member's parameter for it names that member's `$`
+parameters. It then takes no part in choosing the member: the group is resolved
+from the other arguments, as a destination type checks a selected result
+afterward ([Operator lookup and overload
+resolution](#operator-lookup-and-overload-resolution)), and the argument is
+typed against the chosen member's parameter. A member whose parameter type
+would need the waiting argument to bind a `$` parameter is not viable. When
+the chosen member's parameter does not take the argument, the call is an error
+at the argument, even if another member's would have:
+
+```loke
+show_color  :: proc(x: int, color: Color) {...}
+show_option :: proc(x: $T, value: Option(T)) {...}
+show :: proc{show_color, show_option}
+
+show(1, .Red);    // `show_color`: non-parametric wins the tie
+show("a", .none); // `show_option`, the only member taking a string
+show(1, .none);   // error: `show_color` is chosen, and `Color` has no `none`
+```
+
 ### Specialization
 
 A generic parameter can require a structural shape. Write the shape in the
@@ -7675,8 +7756,8 @@ it would be without the clause. Multiple bounds are separated by commas and all
 must hold.
 
 A bound that is a plain interface application, not negated and not one side of
-`||`, is a **bare bound**. Besides filtering, it lets the body call the
-interface's slots on the constrained type (see [Interface
+`||`, is a **bare bound**. Besides filtering, it grants the declaration the
+slots and associated constants that satisfied it (see [Interface
 bodies](#interface-bodies)). A negated or disjunctive bound is only tested for
 truth.
 
@@ -9086,6 +9167,46 @@ declarations keep the package default, since a public
 One predicate answers this question for reflection descriptors, field reads and
 writes, `offset_of`, and both aggregate literal forms, so no path can reach a
 field another path hides.
+
+#### Private names in public declarations
+
+A public declaration may name a private declaration of its package, but where an
+importer would have to name it too, the compiler warns (`L0740`). An importer
+can call a procedure that returns a private type but cannot declare a variable
+of that type or pass it through its own procedures, and it cannot read or meet
+a `where` clause written in private terms. The warning applies to:
+
+- **A private type in a type**, anywhere in the type's syntax, as `Fill` in
+  `Fill`, `[]Fill`, `^Fill`, or `Option(Fill)`. A type here is a struct, union,
+  enum, interface, or distinct type, or an alias of one. The types read are a
+  procedure's parameter and result types; a public field's type in a struct
+  and a variant's in a union; a type alias's target; a distinct type's base; an
+  enum's backing type; a generic parameter's type; the types an interface
+  requirement binds and gives; and a constant's written type. A constant with
+  no written type is read by the type of its value: `DEFAULT :: Fill{}` names
+  `Fill`.
+- **Any private declaration in a `where` clause**, or in the expression of an
+  interface requirement: a procedure, interface, constant, or type.
+
+It does not apply to:
+
+- A value, which an importer can write without naming it: a parameter's
+  default, an array length, a generic type's value argument, or an attribute's
+  value. A private constant may stand in any of them.
+- A [procedure group](#explicit-procedure-overloading)'s members: a group
+  exports one name over several signatures, and its members' names are not
+  API. A private member declared in the package is read as a public procedure
+  is, since the group exports its signature.
+- A parameter or a `$` name, whatever type an instance binds to it:
+  `identity :: proc(value: $T) -> T` names no type.
+- The members of an `impl` whose subject is a private type. An importer
+  reaches them only through a value of that type, and the declaration that
+  hands one out is the one warned about.
+- A private field, which no importer reads.
+- A `package main`, which nothing imports.
+
+Only the declarations the build selects are read: a declaration in an untaken
+[`when`](#when-statement) branch is not.
 
 #### Organizing packages
 
@@ -11719,7 +11840,7 @@ each.
 
 | Term | Meaning |
 | --- | --- |
-| **bare bound** | A `where` bound that is a plain interface application, not negated and not one side of `||`. Besides filtering, it lets the body call the interface's slots. See [where clauses](#where-clauses). |
+| **bare bound** | A `where` bound that is a plain interface application, not negated and not one side of `||`. Besides filtering, it grants the declaration the slots and associated constants that satisfied it. See [where clauses](#where-clauses). |
 | **borrow carrier** | A value that refers to another root without owning it: `^T`, `[]T`, a view, a `dyn` value, a parameter access path. See [Storage roots and borrow carriers](#storage-roots-and-borrow-carriers). |
 | **capability** | Whether a borrow is read-only or mutable. It is part of the carrier's type, spelled `mut`: `[]mut T`, `^mut T`, `dyn mut I`. See [Capabilities and the one rule](#capabilities-and-the-one-rule). |
 | **carrier path** | A projection path from a value to a borrow carrier inside it. A record holding a `[]int` is checked wherever a bare `[]int` is. See [Values that contain borrows](#values-that-contain-borrows). |

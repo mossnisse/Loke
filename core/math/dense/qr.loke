@@ -99,7 +99,7 @@ householder :: proc(p: [^]$T, rs, cs, head, column, end: int) -> T where linalg.
 	if (rest == T.Real(0) && alpha.imaginary_part() == T.Real(0)) { return T(0); }
 	size := reflector_size(alpha, rest);
 	unscale := T.Real(1);
-	if (real_finite(size) && !real_normal(size)) {
+	if (size.is_finite() && !size.is_normal()) {
 		// A subnormal `|beta|` has lost the precision `tau` needs: the
 		// column is multiplied by a power of two first, as `larfg`
 		// rescales it, which `tau` and `v` do not depend on.

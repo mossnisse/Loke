@@ -10,6 +10,13 @@ checklist.
 
 ### Breaking changes
 
+- `lokec` needs LLVM/Clang 18 or later, now stated in
+  [Getting started](readme.md#getting-started). The runtime's processor check
+  for [CPU levels](compiler-guide.md#cpu-levels) uses compiler-rt's
+  detection, which knows the levels from Clang 18; with an older Clang every
+  build fails compiling `runtime/cpu.c` with `invalid cpu feature string for
+  builtin`. Upgrade LLVM, for example with `winget upgrade LLVM.LLVM`.
+
 - A call that may store an `@(escape=stored)` argument into a mutable
   destination it was also given, as `relink(p, r)`, now makes a carrier later
   copied out of that destination, as `h := p^.head`, a reborrow of the
@@ -334,6 +341,17 @@ checklist.
 
 ### Added
 
+- An implicit selector or typeless literal argument whose generic parameter
+  type names the procedure's `$` parameters is typed after the other arguments
+  have inferred them, so `value_or(x, .some(y))` against
+  `proc(value: $T, fallback: Option(T) = .none)` compiles, as do
+  `same(Color.Red, .Green)` and `second(1, {2, 3})`
+  ([Arguments typed after inference](design.md#arguments-typed-after-inference)).
+  Arguments still run in written order. A waiting argument binds nothing, so
+  one that is the only binder of a `$` name is still rejected (`L0385`, now
+  naming the unbound parameter), and in a procedure group it takes no part in
+  choosing the member, whose parameter then checks it.
+
 - `core:math` has the
   [integer bit operations](standard-library.md#integer-bit-operations)
   `count_ones`, `leading_zeros`, `trailing_zeros`, `rotate_left`, and
@@ -523,8 +541,35 @@ checklist.
   casts, frustum culling, and the predicates against hand-written loops
   ([`core:math/geometry`](standard-library.md#coremathgeometry)).
 
+- The warning `L0740` reports a public declaration that names a private one
+  of its package where an importer would have to name it too: a private type
+  in a public procedure's parameter or result types, a public field, a type
+  alias, or a constant's type, as `Fill` in `[]Fill` or `Option(Fill)`, and
+  any private declaration in a public `where` clause. A procedure group's
+  private members, defaults, array lengths, and a `package main` are not
+  reported ([Private names in public declarations](design.md#private-names-in-public-declarations)).
+  `core:math/linalg`'s `Converts`, the bound of the conversion hooks, is now
+  public, and `time.styled` writes its bound out instead of naming a private
+  procedure.
+
 ### Changed
 
+- A bare `where` bound grants its declaration the associated constants that
+  met the interface, as it grants slots, in the signature, the other bounds,
+  the body, and a record's fields, and grants the slots of an application the
+  interface composes on that application's subject, so a `linalg.Scalar(T)`
+  bound reaches `T.Real` and `linalg.Real`'s slots on it in any package
+  ([Interface bodies](design.md#interface-bodies)). An associated constant
+  requirement such as `T.Real -> type` is now met, when the applying package
+  sees no such member, as a slot is: by an inherent member whatever its
+  visibility or an extension in the interface's package. An application that
+  was false for that reason alone, as `linalg.Scalar(f64)` was outside
+  `core:math/linalg`, is now true, in a `when` condition too.
+  `core:math/dense` no longer declares its own `Real` for `f32`, `f64`, and
+  `math.Complex`, and the methods `Lu.reciprocal_condition`,
+  `Symmetric_Eigen.values`, `Svd.singular_values`, `Svd.rank`,
+  `Svd.solve_into`, and `Svd.solve` restate `where linalg.Scalar(T)`, which
+  their records already require.
 - A `typeid_of(T)` constant is specified to have no number during
   compilation: bit casting one with `unsafe.transmute`, or comparing one with
   a `typeid` built from a bit pattern, is a compile-time error where a
@@ -646,6 +691,12 @@ checklist.
   `skipped`, nor fails when `skipped` is a file; an extended-length `\\?\`
   path is still walked as written
   ([Filesystem operations](standard-library.md#filesystem-operations)).
+- An implicit selector given to a generic procedure's `$` parameter whose type
+  names no `$` parameter, as `.Fast` to `run :: proc($mode: Mode, x: $T)`,
+  now takes that type, as an ordinary parameter's argument does
+  ([Implicit selector expression](design.md#implicit-selector-expression)).
+  Before, it was rejected with `L0385`.
+
 - A store into one element of a local slice view at a constant index, as
   `s[0].head = s[0].tail` with `s := &mut arr[:]` or a constant reslice
   `t := &mut s[1:]`, now replaces what that element held, so a loop that

@@ -1,0 +1,27 @@
+package shape;
+
+import "../widget";
+
+@(public)
+Length :: interface($T: type) {
+	slot metres: proc(self) -> f64;
+}
+
+@(public)
+Measured :: interface($T: type) {
+	T.Unit -> type;
+	Length(T.Unit);
+	slot unit_of: proc(self) -> T.Unit;
+}
+
+// Private: a bound on `Measured` reaches only what meets it.
+impl widget.Rod {
+	Unit :: f64;
+	HIDDEN :: 3.0;
+	unit_of :: proc(self) -> f64 { return self.length; }
+}
+
+impl f64 {
+	metres :: proc(self) -> f64 { return self; }
+	hidden :: proc(self) -> f64 { return -self; }
+}

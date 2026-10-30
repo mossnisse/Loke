@@ -951,6 +951,41 @@ binds the same names, which positional binding would silently swap. Named types
 stay out for the reason they stay out of widening: their fields and variants
 belong to a declaration, which `Option($T)` already matches.
 
+### Arguments typed after inference
+
+An implicit selector or a typeless literal has no type of its own; it takes its
+parameter's. A generic parameter written `Option(T)` has none until `T` is
+inferred, so before [Arguments typed after
+inference](design.md#arguments-typed-after-inference) such an argument could
+fill only a parameter whose type named no `$` parameter, and
+`value_or(x, .some(y))` against `proc(value: $T, fallback: Option(T))` was
+rejected though `x` alone settles `T`. `linalg.quaternion_between` became a
+procedure group with a plain `Vector3(T)` parameter for that reason, where one
+procedure with an `Option(Vector3(T))` default would say what it means.
+
+Letting the argument wait costs nothing in meaning, because it contributes
+nothing to inference: it has no type to match a pattern against, so typing it
+before or after the other arguments cannot change what they bind, and the
+result is the same whichever argument is written first. Only typing waits;
+arguments still run in written order, so the rule never shows at run time.
+
+The case where the waiting argument is the only one that could bind a `$` name
+stays an error. Binding `U` from `.none` against `Option($U)` would have to
+guess `U`, and from `.some(5)` it would have to type `5` with no destination
+and then read `U` back out of the result: a second, inside-out inference for
+one argument shape. Requiring the type to be written, as
+`Option(int).none`, keeps inference reading only arguments that have types.
+
+In a group the waiting argument does not take part in choosing the member, as
+a destination type does not: selection reads the arguments that have types,
+and the chosen member's parameter then checks the one that waited. The
+alternative, typing it speculatively against each member and dropping those it
+does not fit, would let an implicit selector choose between overloads, which
+is exactly what a destination type is denied, and would check one expression
+once per member. The cost is that `show(1, .none)` picks the non-parametric
+`show_color` from `1` and then rejects `.none`, though a generic member would
+have taken it; the error says that the other arguments chose the member.
+
 ### Per-variant switch cases
 
 Interpreters walking a tree, protocol handlers, and error reporters often do
@@ -1128,6 +1163,37 @@ constant already covers a value fixed at compile time, and a value computed
 at run time is a procedure, which can still change how it is computed. This
 was proposed by the language design review of 2026-10-11.
 
+### A warning for private names in public declarations
+
+A public procedure that returns a private type compiles, and an importer can
+call it, but cannot declare a variable of the result's type, store it in a
+field, or pass it through a procedure of its own. A public `where` clause
+written in private terms, as `core:time`'s `styled` had with
+`is_styled(T)`, states a bound the importer can neither read nor name. Both
+are almost always accidents: following the references the interface files
+make found `fmt.Padded`'s public `fill: Fill`, since made private, and that
+`where` clause, since written out. Rust warns on a private type in a public signature; Go
+allows an unexported result type, which its documentation then cannot
+describe.
+
+[Private names in public declarations](design.md#private-names-in-public-declarations)
+makes it a warning, `L0740`, rather than an error, since the code is sound
+and occasionally deliberate: a constructor may hand out a value of a type
+whose name is withheld so that only its methods are API. An error would also
+have no way out short of exporting the name. The interface file still shows
+such a declaration, marked private, so an importer can read what it calls.
+
+The warning reads names, not types: a public `Alias :: Inner` is reported
+for its private target, but it gives importers a name, so a signature that
+writes `Alias` is not. Values are left out because an
+importer can write them without the name: a private constant as a default, an
+array length, or an attribute's value. A procedure group's members are left
+out by name, because a group exports one name over several signatures, as
+`thread.spawn` and `runtime.shared` do, but the signatures it exports are
+read. `package main` is left out entirely: nothing imports it, and its fields
+are public by default, so a warning there would fire on every program that
+stores a private enum in a struct.
+
 ### Standard free aliases
 
 `f(x)` uses lexical lookup; `x.f()` uses receiver lookup. Special aliases such
@@ -1169,6 +1235,44 @@ Additional reflection can be introduced when an actual tool needs it.
 `T.NAME -> Type;` is an expression requirement. Associated types use the same
 form, `T.Element -> type;`, whose result is necessarily compile-time known.
 A separate associated-constant declaration grammar adds little to that model.
+
+### A bound grants what met it
+
+A bare bound already granted its declaration the slots that satisfied it, so a
+package could meet an interface for a built-in type with private extensions
+and every importer's generic code could call them. An associated constant met
+the same way was not granted, and was not even found by the requirement
+outside the interface's package, since an expression requirement is checked
+with the visibility of the package applying it. `core:math/linalg` meets
+`Scalar` for `f32`, `f64`, and `math.Complex` with a private `Real :: f64`, a
+private extension because a public one would be exported as `linalg.Real`, the
+interface's own name. So `Scalar(f64)` was false in any package that did not
+declare its own `Real` for `f64`, and `core:math/dense` declared one for each
+of the three types, as every package with generic code over `Scalar` would
+have had to.
+An associated constant is now found as a slot is when the applying package
+sees none, and a bound grants it as it grants a slot
+([Interface bodies](design.md#interface-bodies)). The requirement already
+makes the member a compile-time constant, usually a type, so the grant hides
+nothing at run time; it makes `T.Real` mean in every package what it meant
+where the requirement was checked.
+
+`Scalar` also composes `Real(T.Real)`, and an application standing alone in an
+interface body contributes its slots. A body bounded by `Scalar(T)` could call
+`Real`'s slots on a `T.Real` only when `T.Real` was `T` itself, because the
+grant was matched against the bound's own subject. Matching each slot against
+the subject of the application that writes it reads "contributing its slots" as
+the composition's own wording says: the slots on the type they were checked on.
+`core:math/dense` had reached them through helpers bounded by `linalg.Real(R)`,
+which a `T.Real` argument satisfies; those helpers are gone.
+
+The grant stays narrow: the members that met a requirement, on the types they
+were required of, in the declaration the bound constrains, and only where
+ordinary lookup finds nothing. A bound on a record still does not carry into
+the record's methods ([Slots through a record's bound](open-questions.md#slots-through-a-records-bound)),
+so `core:math/dense`'s methods that name `T.Real` restate `linalg.Scalar(T)`.
+Operators and other expression requirements keep the applying package's
+visibility ([Visibility in slot and expression requirements](open-questions.md#visibility-in-slot-and-expression-requirements)).
 
 ### Headless switch
 
@@ -2380,6 +2484,37 @@ documented where its package is, which a generated table would not do.
 The declaration adds no symbol. It never reaches the selected view the checker
 walks, so no other pass treats a `---` body as a foreign procedure or a missing
 definition, and the name keeps the one identity the compiler gave it.
+
+### The processor check asks compiler-rt
+
+A build above baseline checks the processor at startup
+([CPU levels](compiler-guide.md#cpu-levels)), and `runtime/cpu.c` asks
+Clang's `__builtin_cpu_supports("x86-64-v2")` or `("x86-64-v3")` after
+`__builtin_cpu_init()` rather than reading CPUID and XGETBV itself. Every link
+already takes compiler-rt, which supplies the detection, built for every x64
+processor, and keeps it current with Clang; the hand-written version was CPUID
+and XGETBV assembly with two compilers' spellings and a mask for each level's
+feature bits, all of it to review again for each new level.
+
+The level names arrived in Clang 18 (`27da15381cbe`, "[X86]
+`__builtin_cpu_supports`: support x86-64{,-v2,-v3,-v4}", August 2023); Clang
+17's compiler-rt has no level bits, and its Clang rejects the strings. So
+Clang 18 is the stated minimum ([readme.md](readme.md#getting-started)). The
+alternative, keeping the manual version as a fallback for older Clang, would
+keep all of it for toolchains nothing tests, and a toolchain older than the
+minimum fails while compiling the runtime instead of misjudging a processor.
+
+The detection is libgcc's definition of the levels. Its `x86-64-v3` needs
+AVX2, which it counts only when CPUID reports OSXSAVE and AVX and XCR0 shows
+that the operating system saves the SSE and AVX registers, the check the
+manual version made. Its `x86-64-v2` tests SSE4.2, POPCNT, CMPXCHG16B, and
+LAHF/SAHF but not SSE3, SSSE3, and SSE4.1, which every processor with SSE4.2
+has; only a hypervisor hiding those three could tell the two apart.
+
+A test cannot choose the processor it runs on, so
+`tests/obj/cpu_missing_host.c` defines compiler-rt's detection symbols itself,
+which keeps the linker from taking the library's, and reports no level; the
+runtime's real check then reports a missing `x86-64-v2` on any machine.
 
 ### Compiler architecture audit (2026-09-28)
 

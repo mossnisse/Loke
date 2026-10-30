@@ -1,0 +1,21 @@
+L0385
+@25:14
+argument 2 takes its type from parameter `b`, whose type names `U`, and no other argument binds `U`
+L0385
+@26:12
+argument 1 takes its type from parameter `first`, whose type names `T`, and no other argument binds `T`
+L0310
+@27:24
+is not a value of `int`
+L0363
+@28:14
+`Color` has no member `none`
+the other arguments chose `show_color`; an argument that takes its parameter's type does not take part in choosing
+L0392
+@29:6
+`only_option` does not apply: argument 1 takes its type from parameter `a`
+`only_pair` does not apply
+!<invalid>
+L0385
+@30:24
+`.Blue` needs an expected enum type here

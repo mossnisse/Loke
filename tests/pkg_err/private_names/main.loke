@@ -1,0 +1,16 @@
+// design.md "Private names in public declarations": nothing imports a
+// `package main`, so nothing in it is reported, though its fields are public by
+// default and a declaration may be `@(public)`.
+package main;
+
+import "./shapes";
+
+Kind :: enum { Small, Large }
+Hidden :: struct { kind: Kind }
+@(public) make_hidden :: proc() -> Hidden { return {}; }
+
+main :: proc() {
+	_ = shapes.origin();
+	_ = make_hidden();
+	wrong: int = "text"; // the case's one error
+}
