@@ -104,14 +104,6 @@ borrow makes few.
 
 Review of `d3cb447a` on 2026-10-30 found these cleanup items:
 
-- **Remove the empty matrix exception path.**
-  `matrix_known_gap` in [borrow_matrix_test.odin](tests/borrow_matrix_test.odin)
-  now always returns `"", false`. Delete it, the caller's override branch,
-  and the conditional known-gap suffix in the failure message. Compare
-  against `matrix_expected` directly. This removes 12 lines without
-  changing coverage. Update the references to the exception helper in
-  [Testing and verification](compiler-architecture.md#testing-and-verification)
-  and [Compositional loan construction](#compositional-loan-construction).
 - **Refresh the caller-storage description below.** Its claim that slice
   parameter stores always join into the parameter predates the new constant
   element slots, and its known-gap link targets a heading removed by this
@@ -211,8 +203,7 @@ generated matrix, [borrow_matrix_test.odin](tests/borrow_matrix_test.odin),
 crosses eleven place forms with a copy, a payload binding, a read-only or
 mutable borrow, slice, or traversal, and eighteen uses beside each, in
 straight-line code, a branch, or a loop, against a model of the rules written
-apart from the compiler; `matrix_known_gap` lists the cases
-[known-gaps.md](known-gaps.md) records.
+apart from the compiler.
 
 Still open:
 
