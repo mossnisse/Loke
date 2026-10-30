@@ -845,7 +845,11 @@ reasoned entry in `UNPINNED` in `tests/corpus_test.odin`. Fuzzer failures become
 regressions with their fixes; `LOKE_FUZZ_SEED` and `LOKE_FUZZ_MUTANTS` explore
 more cases. Harness workers collect results and assertions run on the test
 thread; child processes use the shared `subprocess` package without
-busy-waiting.
+busy-waiting. Each child inherits only its standard handles and runs in a Job
+Object, and the harness gives every launch a deadline, `DEADLINE` in
+`tests/corpus_test.odin` (five minutes): a launch still running then is ended
+with every process it started, and its case fails with `Timeout` rather than
+hanging the gate.
 
 For individual suites:
 

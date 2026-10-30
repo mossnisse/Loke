@@ -650,6 +650,13 @@ checklist.
   -Full`, the gate CI runs, tests that build. The quick gate and
   [Building from source](readme.md#building-from-source) keep the default,
   which builds in about a second rather than a minute.
+- The test harness ends a launch still running after five minutes, with every
+  process it started, and fails its case, so a stalled program no longer
+  hangs `test-all.ps1` until CI's job limit
+  ([Testing and verification](compiler-architecture.md#testing-and-verification)).
+  The processes `lokec` and the harness start, clang and test executables
+  among them, now inherit only their standard handles, so one child no
+  longer keeps another's output open.
 
 - A value whose bits are not a representation of its type, a `bool` other
   than 0 or 1, an enum value naming no member, a null `^T`, or a union tag out

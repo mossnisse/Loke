@@ -9,6 +9,7 @@ import "core:path/filepath"
 import "core:strconv"
 import "core:strings"
 import "core:testing"
+import "core:time"
 
 // The constants in core/math/repro are what the oracle derives.
 @(test)
@@ -276,7 +277,8 @@ repro_f32_first_approximations_agree_exhaustively :: proc(t: ^testing.T) {
 			command := make([]string, 2, context.temp_allocator)
 			command[0] = launch_path(build.command[5])
 			command[1] = function
-			runs[v*len(functions) + f].command = command
+			// Each sweep takes minutes; the whole comparison, about 25 of them.
+			runs[v*len(functions) + f] = {command = command, deadline = 2 * time.Hour}
 		}
 	}
 	exec_all(runs)
