@@ -2993,7 +2993,7 @@ eval_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (Eval_Va
 		rotated := rotate_const(ev.k.c, ev.alloc, const_of(operand).integer, const_of(by).integer, v.type, symbol.builtin)
 		return scalar(integer_const(rotated), v.type), true
 
-	case .Math_Count_Ones, .Math_Leading_Zeros, .Math_Trailing_Zeros:
+	case .Math_Count_Ones, .Math_Leading_Zeros, .Math_Trailing_Zeros, .Math_Bit_Width:
 		operand, ok := eval_expr(ev, v.bound[0])
 		if !ok {
 			return Eval_Value{}, false
@@ -3001,6 +3001,27 @@ eval_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (Eval_Va
 		source := expr_base(v.bound[0]).type
 		count := bit_count(ev.alloc, const_of(operand).integer, type_bits(ev.k.c, source), symbol.builtin)
 		return scalar(integer_const(bi_from_i64(ev.alloc, i64(count))), TYPE_INT), true
+
+	// design.md "Integer overflow": a `next_power_of_two` that would panic at
+	// run time is a compile-time diagnostic, as a checked `+` is, and the
+	// checked form's `.none`.
+	case .Math_Reverse_Bits, .Math_Is_Power_Of_Two, .Math_Next_Power_Of_Two, .Math_Checked_Next_Power_Of_Two:
+		operand, ok := eval_expr(ev, v.bound[0])
+		if !ok {
+			return Eval_Value{}, false
+		}
+		source := expr_base(v.bound[0]).type
+		if symbol.builtin == .Math_Checked_Next_Power_Of_Two {
+			power, fits := bit_value_const(ev.k.c, ev.alloc, const_of(operand).integer, source, .Math_Next_Power_Of_Two)
+			return eval_option(ev, v.type, scalar(power, source), fits)
+		}
+		result, fits := bit_value_const(ev.k.c, ev.alloc, const_of(operand).integer, source, symbol.builtin)
+		if !fits {
+			report_integer_overflow(ev.k.c, v.span, result.integer, source, ev.alloc)
+			eval_fold_failed(ev)
+			return Eval_Value{}, false
+		}
+		return scalar(result, v.type), true
 
 	case .Unsafe_Transmute:
 		// The checker's fold, for an operand that is a local.

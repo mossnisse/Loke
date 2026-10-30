@@ -1,0 +1,15 @@
+L0397
+@10:13
+unsigned overflow: the result 256 does not fit `u8`
+L0397
+@11:13
+signed overflow: the result 32768 does not fit `i16`
+L0397
+@12:13
+the result 340282366920938463463374607431768211456 does not fit `u128`
+L0397
+@17:9
+signed overflow: the result 2147483648 does not fit `i32`
+L0397
+@22:6
+the result 9223372036854775808 does not fit `int`

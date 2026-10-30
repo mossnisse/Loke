@@ -2447,6 +2447,27 @@ boundaries and API shapes follow a few common choices:
   rotation does. The rotations are compiler-known for the same type rule as
   the counts: written in Loke over `interfaces.Integral(T)`, a record that
   merely has the operators would be rotated at a width it does not have.
+- **The power-of-two operations read the value, and the round-up is checked
+  arithmetic.** A power of two is a number, so `is_power_of_two` answers for
+  the value: a signed minimum has one set bit but is negative, and calling
+  it a power of two would make `is_power_of_two(x)` true where `x > 0` is
+  false. `next_power_of_two` is the least power of two at least its operand,
+  which is 1 for every operand up to 1, so zero and a negative operand need
+  no panic or special case of their own; Rust and C++20 offer it only for
+  unsigned types, which Loke's `int` lengths would make every caller
+  convert. A result past the type's largest power is a mathematical result
+  that does not fit, and design.md "Integer overflow" already says what that
+  does: it panics, and is a compile-time error where it is folded. The
+  arithmetic policies are panic, wrap, and checked; the checked form,
+  `checked_next_power_of_two`, is kept, while a wrapping one is not, since
+  the low bits of the power that does not fit are zero, never a power of
+  two. The checked form is compiler-known like the rest, not written over
+  `interfaces.Integral(T)` as `checked_add` is, because a `distinct`
+  integer has no arithmetic until it is given some and would fail that
+  constraint where the other bit operations accept it. `bit_width` is C++20's
+  name for `W - leading_zeros(x)`, Go's `bits.Len`, and reads the pattern as
+  the counts do, so a negative value needs the full width; `reverse_bits`,
+  `is_power_of_two`, and `next_power_of_two` are Rust's names.
 - **An index set is a set, as `Bit_Set` is.** Its members are the indices
   present, so `len` counts them, `cap` is the capacity, and iteration yields
   the present indices, with the verbs `Bit_Set` already uses. A packed

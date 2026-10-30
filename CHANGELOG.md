@@ -380,6 +380,16 @@ checklist.
   `int` count modulo the width, a constant argument gives a constant, and
   each is one LLVM intrinsic at every optimization level.
 
+- `core:math` has the
+  [integer bit operations](standard-library.md#integer-bit-operations)
+  `bit_width`, `reverse_bits` (LLVM's `bitreverse`), `is_power_of_two`,
+  `next_power_of_two`, and `checked_next_power_of_two`, for the same types.
+  The power-of-two operations read the value, so zero and every negative
+  value are no power of two and round up to 1. A `next_power_of_two` that
+  does not fit its type panics as checked arithmetic does, or is a
+  compile-time error where it is computed at compile time, and the checked
+  form returns `.none` there.
+
 - `core:container` has
   [index sets](standard-library.md#corecontainer-index-sets), sets of the
   indices `0 ..< cap` held one bit each: `Index_Set(N)` inline,

@@ -135,6 +135,16 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 			return emit_rotate(e, v, "fshl")
 		case .Math_Rotate_Right:
 			return emit_rotate(e, v, "fshr")
+		case .Math_Bit_Width:
+			return emit_bit_width(e, v)
+		case .Math_Reverse_Bits:
+			return emit_reverse_bits(e, v)
+		case .Math_Is_Power_Of_Two:
+			return emit_is_power_of_two(e, v)
+		case .Math_Next_Power_Of_Two:
+			return emit_next_power_of_two(e, v, as_type, checked = false)
+		case .Math_Checked_Next_Power_Of_Two:
+			return emit_next_power_of_two(e, v, as_type, checked = true)
 		case .Unsafe_Take:
 			return load_place(e, as_type, emit_address(e, v.bound[0]))
 		case .Unsafe_Write:
@@ -210,6 +220,106 @@ emit_bit_count :: proc(e: ^Emitter, v: ^Expr_Call, name: string) -> string {
 	widen := type_bits(e.c, source) < type_bits(e.c, TYPE_INT)
 	fmt.sbprintfln(&e.b, "  %s = %s %s %s to %s", out, widen ? "zext" : "trunc", llvm, count, result)
 	return out
+}
+
+// `llvm.ctlz` of the operand, with a zero operand defined as the width, in the
+// operand's own type: the zero counts and the power-of-two round-up share it.
+@(private = "file")
+emit_ctlz :: proc(e: ^Emitter, llvm, operand: string) -> string {
+	key := fmt.aprintf("llvm.ctlz.%s", llvm)
+	if key not_in e.simd_intrinsics {
+		e.simd_intrinsics[key] = true
+		append(&e.globals, fmt.aprintf("declare %s @%s(%s, i1)\n", llvm, key, llvm))
+	}
+	count := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = call %s @%s(%s %s, i1 false)", count, llvm, key, llvm, operand)
+	return count
+}
+
+// The width less the leading zeros, which a zero operand makes the width, so
+// the bit width of zero is zero; then widened or narrowed to `int` as a count.
+@(private = "file")
+emit_bit_width :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
+	source := expr_base(v.bound[0]).type
+	llvm := llvm_type(e, source)
+	leading := emit_ctlz(e, llvm, emit_expr(e, v.bound[0]))
+	width := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = sub %s %d, %s", width, llvm, type_bits(e.c, source), leading)
+	result := llvm_type(e, TYPE_INT)
+	if llvm == result {
+		return width
+	}
+	out := temp(e)
+	widen := type_bits(e.c, source) < type_bits(e.c, TYPE_INT)
+	fmt.sbprintfln(&e.b, "  %s = %s %s %s to %s", out, widen ? "zext" : "trunc", llvm, width, result)
+	return out
+}
+
+// `llvm.bitreverse`. No x86-64 CPU level has an instruction for it, so LLVM
+// expands it to a byte swap and shift-and-mask steps, never a loop.
+@(private = "file")
+emit_reverse_bits :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
+	llvm := llvm_type(e, expr_base(v.bound[0]).type)
+	key := fmt.aprintf("llvm.bitreverse.%s", llvm)
+	if key not_in e.simd_intrinsics {
+		e.simd_intrinsics[key] = true
+		append(&e.globals, fmt.aprintf("declare %s @%s(%s)\n", llvm, key, llvm))
+	}
+	operand := emit_expr(e, v.bound[0])
+	out := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = call %s @%s(%s %s)", out, llvm, key, llvm, operand)
+	return out
+}
+
+// A positive value with no bit below its highest: `x > 0` and `x & (x - 1)`
+// zero, which reads the value, so a signed minimum, one set bit but negative,
+// is not a power of two. `x - 1` may wrap, but only where `x > 0` is false.
+@(private = "file")
+emit_is_power_of_two :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
+	source := expr_base(v.bound[0]).type
+	llvm := llvm_type(e, source)
+	x := emit_expr(e, v.bound[0])
+	positive, below, rest, single, out := temp(e), temp(e), temp(e), temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp %s %s %s, 0", positive, type_signed(e.c, source) ? "sgt" : "ugt", llvm, x)
+	fmt.sbprintfln(&e.b, "  %s = sub %s %s, 1", below, llvm, x)
+	fmt.sbprintfln(&e.b, "  %s = and %s %s, %s", rest, llvm, x, below)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, 0", single, llvm, rest)
+	fmt.sbprintfln(&e.b, "  %s = and i1 %s, %s", out, positive, single)
+	return out
+}
+
+// design.md "Integer overflow": `1 << (W - ctlz(x - 1))` for `x > 1`, and 1
+// for every smaller value, whose exponent is selected to 0 before the check.
+// An exponent of `W` (unsigned) or `W - 1` (signed) does not fit and panics as
+// checked arithmetic does, so the shift that remains is always in range. The
+// checked form makes that test the option's presence instead, and shifts by a
+// zero exponent where it fails, so that no shift is poison.
+@(private = "file")
+emit_next_power_of_two :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id, checked: bool) -> string {
+	source := expr_base(v.bound[0]).type
+	llvm := llvm_type(e, source)
+	bits := type_bits(e.c, source)
+	signed := type_signed(e.c, source)
+	x := emit_expr(e, v.bound[0])
+	small, below := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp %s %s %s, 1", small, signed ? "sle" : "ule", llvm, x)
+	fmt.sbprintfln(&e.b, "  %s = sub %s %s, 1", below, llvm, x)
+	leading := emit_ctlz(e, llvm, below)
+	needed, exponent, overflowed := temp(e), temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = sub %s %d, %s", needed, llvm, bits, leading)
+	fmt.sbprintfln(&e.b, "  %s = select i1 %s, %s 0, %s %s", exponent, small, llvm, llvm, needed)
+	fmt.sbprintfln(&e.b, "  %s = icmp uge %s %s, %d", overflowed, llvm, exponent, signed ? bits - 1 : bits)
+	if !checked {
+		panic_if(e, overflowed, "int.overflow", overflow_message(signed))
+		out := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = shl %s 1, %s", out, llvm, exponent)
+		return out
+	}
+	shift, power, present := temp(e), temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = select i1 %s, %s 0, %s %s", shift, overflowed, llvm, llvm, exponent)
+	fmt.sbprintfln(&e.b, "  %s = shl %s 1, %s", power, llvm, shift)
+	fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", present, overflowed)
+	return emit_option_value(e, as_type, present, power)
 }
 
 // `llvm.fshl` or `llvm.fshr` (`name`) with the operand as both halves, which

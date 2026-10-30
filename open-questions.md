@@ -946,18 +946,14 @@ baseline as the default and adds run-time dispatch later only where measured.
 ### Integer bit operations not yet provided
 
 [Integer bit operations](standard-library.md#integer-bit-operations) has the
-counts and the rotations. Left out until a caller settles their contracts:
+counts, the bit width, the rotations, the reversal, and the power-of-two
+operations. Left out until a caller settles their contracts:
 
-- **Lane-wise forms.** LLVM's `ctpop`, `ctlz`, `cttz`, and funnel shifts take
-  vectors, so a `Simd(T, N)` operand could count lane by lane. The result type
+- **Lane-wise forms.** LLVM's `ctpop`, `ctlz`, `cttz`, `bitreverse`, and
+  funnel shifts take vectors, so a `Simd(T, N)` operand could count lane by lane. The result type
   is the question: a `Simd(int, N)` widens every lane past the operand's,
   and a `Simd(T, N)` is not an `int` as the scalar forms are. The checker
   refuses a vector today, so either choice can be added.
-- **`reverse_bits`, `is_power_of_two`, `next_power_of_two`, and a bit-width
-  helper.** `reverse_bits` is LLVM's `bitreverse`; the others are a line each
-  over `leading_zeros`, but `next_power_of_two` must say what an
-  unrepresentable result does, and the answer should match the overflow
-  policy of [Integer overflow](design.md#integer-overflow).
 - **Bit field extract and deposit** (`pext` and `pdep`), which exist only from
   `x86-64-v3` and would need a portable fallback with the same result.
 

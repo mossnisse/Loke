@@ -185,6 +185,11 @@ contribute_standard_members :: proc(k: ^Checker, pkg: ^Package) {
 		contribute_builtin(c, pkg, "trailing_zeros", .Math_Trailing_Zeros)
 		contribute_builtin(c, pkg, "rotate_left", .Math_Rotate_Left)
 		contribute_builtin(c, pkg, "rotate_right", .Math_Rotate_Right)
+		contribute_builtin(c, pkg, "bit_width", .Math_Bit_Width)
+		contribute_builtin(c, pkg, "reverse_bits", .Math_Reverse_Bits)
+		contribute_builtin(c, pkg, "is_power_of_two", .Math_Is_Power_Of_Two)
+		contribute_builtin(c, pkg, "next_power_of_two", .Math_Next_Power_Of_Two)
+		contribute_builtin(c, pkg, "checked_next_power_of_two", .Math_Checked_Next_Power_Of_Two)
 	case STD_LOG:
 		// design.md "Compiled log level": `LOKE_LOG_LEVEL` and `core:log`'s own
 		// `Level` must be one type, or a caller could not compare them. Allocated

@@ -175,23 +175,58 @@ exact_integral :: proc(x: Const_Value, builtin: Builtin_Kind) -> Const_Value {
 	return float_const(math.trunc(x.float), bits)
 }
 
-// The compile-time value of `core:math.count_ones`, `leading_zeros`, or
-// `trailing_zeros` (`builtin`) of `value` as a `bits`-wide integer: its
-// two's-complement pattern, which no integer type wider than 128 bits has.
-// Zero has `bits` leading and trailing zeros, as LLVM's `ctlz` and `cttz`
-// with a defined zero result give.
+// The compile-time value of `core:math.count_ones`, `leading_zeros`,
+// `trailing_zeros`, or `bit_width` (`builtin`) of `value` as a `bits`-wide
+// integer. Zero has `bits` leading and trailing zeros, as LLVM's `ctlz` and
+// `cttz` with a defined zero result give, and so a bit width of 0.
 bit_count :: proc(storage: Value_Storage, value: Big_Int, bits: int, builtin: Builtin_Kind) -> int {
-	pattern := bi_wrap(storage, value, bits, false)
-	low, _ := bi_to_u64(storage, bi_and(storage, pattern, bi_from_u64(storage, max(u64))))
-	high, _ := bi_to_u64(storage, bi_shr(storage, pattern, 64))
-	x := u128(high) << 64 | u128(low)
+	x := bit_pattern(storage, value, bits)
 	#partial switch builtin {
 	case .Math_Count_Ones:
 		return int(intrinsics.count_ones(x))
 	case .Math_Leading_Zeros:
 		return int(intrinsics.count_leading_zeros(x)) - (128 - bits)
+	case .Math_Bit_Width:
+		return 128 - int(intrinsics.count_leading_zeros(x))
 	}
 	return x == 0 ? bits : int(intrinsics.count_trailing_zeros(x))
+}
+
+// `value`'s two's-complement pattern as a `bits`-wide integer, which no
+// integer type wider than 128 bits has.
+@(private = "file")
+bit_pattern :: proc(storage: Value_Storage, value: Big_Int, bits: int) -> u128 {
+	pattern := bi_wrap(storage, value, bits, false)
+	low, _ := bi_to_u64(storage, bi_and(storage, pattern, bi_from_u64(storage, max(u64))))
+	high, _ := bi_to_u64(storage, bi_shr(storage, pattern, 64))
+	return u128(high) << 64 | u128(low)
+}
+
+// The compile-time value of `core:math.reverse_bits`, `is_power_of_two`, or
+// `next_power_of_two` (`builtin`) of `value`, of integer type `type`, built in
+// `storage`. The reversal reads the pattern and gives `type`'s value of the
+// reversed one. The other two read the value: a power of two is positive, and
+// every value up to 1 rounds up to 1. A `next_power_of_two` that does not fit
+// `type` is not `fits`, and `result` is then the mathematical power, for the
+// overflow diagnostic.
+bit_value_const :: proc(c: ^Compiler, storage: Value_Storage, value: Big_Int, type: Type_Id, builtin: Builtin_Kind) -> (result: Const_Value, fits: bool) {
+	bits := type_bits(c, type)
+	signed := type_signed(c, type)
+	x := bit_pattern(storage, value, bits)
+	#partial switch builtin {
+	case .Math_Reverse_Bits:
+		reversed := intrinsics.reverse_bits(x) >> uint(128 - bits)
+		pattern := bi_or(storage, bi_shl(storage, bi_from_u64(storage, u64(reversed >> 64)), 64), bi_from_u64(storage, u64(reversed)))
+		return integer_const(bi_wrap(storage, pattern, bits, signed)), true
+	case .Math_Is_Power_Of_Two:
+		return bool_const(bi_sign(value) > 0 && intrinsics.count_ones(x) == 1), true
+	}
+	if bi_cmp(storage, value, bi_from_i64(storage, 1)) <= 0 {
+		return integer_const(bi_from_i64(storage, 1)), true
+	}
+	// `value` is above 1 here, so its pattern is its value.
+	exponent := 128 - int(intrinsics.count_leading_zeros(x - 1))
+	return integer_const(bi_pow2(storage, exponent)), exponent < bits - (signed ? 1 : 0)
 }
 
 // The compile-time value of `core:math.rotate_left` or `rotate_right`

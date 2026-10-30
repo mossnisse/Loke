@@ -1,9 +1,13 @@
 // standard-library.md "`core:math`": the bit counts take a value of an integer
-// type, not a float.
+// type, not a float, and so do the width, reversal, and power-of-two
+// operations, which refuse a rune and a `bool` as well.
 package main;
 
 import "core:math";
 
 main :: proc() {
 	_ = math.count_ones(1.5);
+	_ = math.reverse_bits('a');
+	_ = math.is_power_of_two(true);
+	_ = math.checked_next_power_of_two(2.0);
 }

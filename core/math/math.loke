@@ -361,7 +361,11 @@ floor_mod :: proc(x: $T, y: T) -> T where interfaces.Integral(T), interfaces.Ord
 // it: `rol` and `ror` everywhere, `popcnt` from `x86-64-v2`, `lzcnt` and
 // `tzcnt` from `x86-64-v3`, and a short sequence below those. Written over
 // `interfaces.Integral(T)` instead, they would accept a record that has the
-// operators but no width to count or rotate at.
+// operators but no width to count or rotate at. The bit width, the reversal,
+// and the power-of-two operations are compiler-known for that type rule and so
+// that a constant argument gives a constant, as it does for the counts.
+// `is_power_of_two` and `next_power_of_two` read the operand's value, not its
+// pattern: a negative value is not a power of two.
 
 /**
 	The number of set bits in `value`, which is a value of an integer type:
@@ -404,6 +408,53 @@ rotate_left :: proc(value: $T, count: int) -> T ---;
 /// As `rotate_left`, toward the low end.
 @(intrinsic)
 rotate_right :: proc(value: $T, count: int) -> T ---;
+
+/**
+	The number of bits `value`, which is a value of an integer type, needs:
+	the index of its highest set bit plus one, or `0` for zero. It is
+	`width - leading_zeros(value)`, so a negative value gives the width:
+	`bit_width(u8(0b0101))` is `3`, `bit_width(u32(0))` is `0`, and
+	`bit_width(i8(-1))` is `8`.
+*/
+@(intrinsic)
+bit_width :: proc(value: $T) -> int ---;
+
+/**
+	`value`, which is a value of an integer type, with the order of its bits
+	reversed: bit `i` moves to bit `width - 1 - i`.
+	`reverse_bits(u8(0b0000_0110))` is `0b0110_0000`, and
+	`reverse_bits(i8(1))` is `-128`.
+*/
+@(intrinsic)
+reverse_bits :: proc(value: $T) -> T ---;
+
+/**
+	Whether `value`, which is a value of an integer type, is `2^k` for some
+	`k >= 0`. Zero and every negative value are not, a signed minimum included,
+	though its pattern has one set bit: `is_power_of_two(u8(64))` is `true`,
+	and `is_power_of_two(i8(-128))` is `false`.
+*/
+@(intrinsic)
+is_power_of_two :: proc(value: $T) -> bool ---;
+
+/**
+	The smallest power of two at least `value`, which is a value of an integer
+	type: `next_power_of_two(u32(5))` is `8`, and a power of two is itself.
+	Every value up to 1, zero and negative values included, gives `1`. A result
+	that does not fit the type panics, as checked arithmetic does:
+	`next_power_of_two(u8(129))` panics, and `checked_next_power_of_two`
+	returns `.none` there instead.
+*/
+@(intrinsic)
+next_power_of_two :: proc(value: $T) -> T ---;
+
+/**
+	`next_power_of_two(value)`, or `.none` when that power does not fit the
+	type: `checked_next_power_of_two(u8(100))` is `.some(128)`, and
+	`checked_next_power_of_two(u8(129))` is `.none`.
+*/
+@(intrinsic)
+checked_next_power_of_two :: proc(value: $T) -> Option(T) ---;
 
 // ------------------------------------------------ platform math bindings --
 //
