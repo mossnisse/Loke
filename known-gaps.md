@@ -7,6 +7,77 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
+### Integer builtin registrations break dense scalar constraints
+
+[`core:math/dense`](standard-library.md#coremathdense) accepts `f64` for
+factorizations through `linalg.Scalar`, whose private associated `Real` type
+is admitted by the [interface requirements](design.md#interface-bodies).
+After `723d216d`, this ordinary program is rejected:
+
+```loke
+package main;
+import "core:fmt";
+import "core:math/dense";
+main :: proc() {
+    matrix := dense.Matrix(f64).identity(2);
+    switch (dense.qr(matrix.view())) {
+    case .ok: fmt.println("ok");
+    case .err: fmt.println("err");
+    }
+}
+```
+
+The diagnostic is `L0444: f64 does not satisfy Scalar(f64)`. The existing
+[QR](tests/trap/dense_qr_wide.loke),
+[SVD](tests/trap/dense_svd_relative.loke), and
+[eigensolver](tests/trap/dense_eigen_square.loke) trap cases fail at
+compilation for the same reason, before reaching their intended checks.
+[lib_dense.loke](tests/run/lib_dense.loke) also stops compiling, reporting
+unresolved `T.Real` return types. These programs compile with the parent
+compiler and library.
+
+The trigger was isolated further using the same archived parent library:
+the parent compiler accepts the examples, the new compiler rejects them,
+and removing just the five new `contribute_builtin` calls from an isolated
+compiler variant makes the minimal example and all three trap cases compile
+again. The constant-rotation simplification in that variant cannot run in
+this experiment, because the parent library has no new bit-operation calls.
+This isolates the trigger to the new registrations in
+[stdlib.odin](src/stdlib.odin); the underlying constraint-resolution cause
+has not been established. Adding builtin symbols must preserve the existing
+associated-type and extension requirements. Keep these integration cases
+and add a focused compiler regression for the resolution failure when fixing
+it. Found reviewing `723d216d` on 2026-10-30.
+
+### Index-set storage counts overflow for valid positive capacities
+
+The [index-set storage helpers](standard-library.md#corecontainer-index-sets)
+return the words or bytes needed for a nonnegative capacity. Both helpers
+in [index_set.loke](core/container/index_set.loke) add the rounding increment
+before dividing, which overflows near `int.MAX` even though the answer fits:
+
+```loke
+package main;
+import "core:container";
+import "core:fmt";
+main :: proc() {
+    cap: int = 9223372036854775807;
+    fmt.println(container.words_for_bits(cap));
+    // Run separately with bytes_for_bits(cap) to reproduce its overflow.
+}
+```
+
+Both calls panic with signed integer overflow, without allocating any set.
+The correct results are `144115188075855872` words and
+`1152921504606846976` bytes. Compute `cap/divisor` plus one when
+`cap % divisor != 0`, rather than adding to `cap`. Apply the same arithmetic
+to the fixed set's array-length expression, and cover zero, exact multiples,
+and the upper `int` boundary. Found reviewing `723d216d` on 2026-10-30.
+
+Confirmed independently when reviewing merge `4008ea61` against its first
+parent on the same date: both helpers still panic for the capacity above,
+using a compiler rebuilt from the merge.
+
 ### A multiple assignment's destination goes through its carrier's new value
 
 [Evaluation order](design.md#evaluation-order) evaluates every destination of
