@@ -843,13 +843,12 @@ static self slot using delegate thread_local manual
 	}
 }
 
-// `operator` takes the first match in `OPERATORS`, so longer operators must
-// come first to honour grammar.md's longest match.
+// `operator` takes the first match in `operator_table`, so longer operators
+// must come first to honour grammar.md's longest match.
 @(test)
 operator_table_is_ordered_longest_first :: proc(t: ^testing.T) {
-	table := OPERATORS
-	for op, i in table {
-		for later in table[i + 1:] {
+	for op, i in operator_table {
+		for later in operator_table[i + 1:] {
 			testing.expectf(
 				t,
 				!strings.has_prefix(later.text, op.text),

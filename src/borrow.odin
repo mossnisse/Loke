@@ -3059,6 +3059,8 @@ mark_released :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8) {
 		return
 	}
 	// Rows change only at the released loans, and most events release none.
+	// Looping over loans outside slots needs no index buffer, but checked
+	// bench/dense.loke more slowly when tried on 2026-10-30.
 	clear(&state.released_indices)
 	for released, index in state.released {
 		if released {

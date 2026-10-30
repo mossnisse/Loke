@@ -100,64 +100,6 @@ the precision table should guarantee a number of such places, which would make
 this program portable; the bound keeps the place loans and `.Through` events a
 borrow makes few.
 
-## Review follow-ups for the compiler-performance merge
-
-Review of `26022400` on 2026-10-30 found one small simplification in
-[lexer.odin](src/lexer.odin): `OPERATORS` is a constant array, while
-`operator_table` is a read-only data copy used by the lexer to avoid
-materializing that constant on every scan. The other consumers are ordinary
-loops in `operator_spelling` and the longest-first ordering test; none needs
-a compile-time constant. Declare the array itself once as package-private
-`rodata`, use it in both loops and the test, and delete the second declaration
-and its explanation. This removes about three lines while preserving the
-optimization, and the spelling lookup also avoids materializing the constant.
-Keep the token golden and longest-first ordering tests as the checks for it.
-
-The shared arena initialization and destruction helpers keep their lifecycle
-changes together, including checkpoint restoration. Keep the specialized LLVM
-formatting helpers local to emission; the direct fixed-width hexadecimal loop
-and the search for frame-pop candidates serve the measured hot paths without
-adding a general formatting or rewriting layer.
-
-## Review follow-up for the checking and emission speedups
-
-Review of `70093fb2` on 2026-10-30 found one small structural cleanup in
-[lexer.odin](src/lexer.odin): `OPERATORS` and `operator_table` can be one
-package-visible `@(rodata)` table. Both `operator` and `operator_spelling`,
-and the existing longest-match test in
-[front_end_test.odin](src/front_end_test.odin), can read that same table.
-Nothing needs the separate compile-time constant. This removes three lines
-and avoids materializing the constant array in `operator_spelling`. An
-isolated variant builds and passes all 175 compiler unit tests.
-
-Keep the sparse `released_indices` buffer in [borrow.odin](src/borrow.odin).
-An experiment reversing the slot and loan loops removed it and preserved
-the checked LLVM output, but checking the dense benchmark was slower; the
-smaller version did not establish a performance improvement.
-
-Before/after runs of [perf.ps1](perf.ps1), with default Odin builds and
-`-Repeat 3`, measured these front-end times on identical input hashes:
-
-| Program | Parent (ms) | Commit (ms) |
-| --- | ---: | ---: |
-| `bench/dense.loke` | 1597 | 1283 |
-| `bench/geometry.loke` | 1421 | 1129 |
-| `bench/linalg.loke` | 1418 | 937 |
-| `examples/corpus_runner.loke` | 921 | 659 |
-| `bench/workspace` | 486 | 400 |
-
-Other jobs were active on the machine, so timings are approximate. Peak
-working sets were nearly unchanged. Four interleaved runs of `Measure-Lsp`
-from the performance harness measured root-edit medians of 661 and 726 ms
-for the parent, versus 497 and 523 ms for the commit. The compiler and language-server unit
-suites passed, as did the borrow matrix, diagnostics, LLVM shapes, and LLVM
-reproducibility suites from the reviewed commit. The run corpus had one
-failure in [lib_geometry_lanes.loke](tests/run/lib_geometry_lanes.loke),
-using the checkout's newer bundled packages: its f32 triangle comparison
-fails with both parent and commit, which emit identical LLVM for it.
-Twelve repeated before/after builds of `corpus_runner` also emitted
-identical LLVM.
-
 ## Compositional loan construction
 
 Loan construction had separate paths for subject views, ordinary borrows,
