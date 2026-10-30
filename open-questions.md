@@ -887,8 +887,9 @@ put SSE4.2 at 99.78% (September 2025) and AVX2 at 94.48% (May 2025). Windows on
 Arm emulates AVX2 and FMA for x64 programs from Windows 11 24H2.
 
 A level does not change determinism: `+ - * /` and `sqrt` give the same bits on
-every level, and Loke's IR never allows fusion (design.md "Floating-point
-operators"). The IR is not the only control, though: Clang's `-ffp-contract`
+every level, except which NaN an operation on two NaNs yields ([a known
+gap](known-gaps.md#which-nan-an-operation-on-two-nans-yields-depends-on-the-cpu-level-and-the-code-around-it)),
+and Loke's IR never allows fusion (design.md "Floating-point operators"). The IR is not the only control, though: Clang's `-ffp-contract`
 also sets the backend's fusion mode, and the runtime's C sources would get
 Clang's default, which fuses within an expression, so every Clang command
 passes `-ffp-contract=off`, and `tests/cpu_test.odin` rebuilds the
