@@ -1,10 +1,10 @@
 /**
-	Clocks, durations, instants, the calendar, fixed UTC offsets, and ISO 8601
-	text.
+	Clocks, durations, instants, the calendar, fixed UTC offsets, the system's
+	local time zone, and ISO 8601 text.
 
-	Everything but the three clock procedures, `now`, `tick_now`, and `sleep`,
-	is integer arithmetic in Loke, so it also runs during compile-time
-	evaluation. There are no named time zones.
+	Everything but the clock procedures, `now`, `now_local`, `tick_now`, and
+	`sleep`, and the system zone, is integer arithmetic in Loke, so it also
+	runs during compile-time evaluation. There are no named time zones.
 */
 // standard-library "`core:time`". The clock procedures ask the operating
 // system, and sit behind `when (LOKE_OS == .Windows)` at the end of this file.

@@ -2193,6 +2193,63 @@ boundaries and API shapes follow a few common choices:
   and a stale copy gives wrong local times with no error. When a caller needs
   them, the data is the system's own, kept current by its updates: ICU on
   Windows and the TZif files elsewhere. The compiler never ships tzdata.
+- **The local zone is Windows' own rules, read on each use.** The clock a
+  user sees is the system's, so a zone from `TZ`, which only the C runtime
+  reads, or from a copy of tzdata could disagree with it. Reading the setting
+  at every use costs a registry lookup, about 9 µs, and lets a long-running
+  program follow a change without a cache to invalidate or a value read at
+  import. A failure panics for the reason `random.fill_secure` does: Windows
+  does not fail here on a supported system, and a guessed offset would give
+  wrong times silently.
+- **The package evaluates the yearly rules itself.** Calling
+  `SystemTimeToTzSpecificLocalTimeEx` for every instant would be simpler for
+  `offset_at`, but `resolve` needs the reverse, and
+  `TzSpecificLocalTimeToSystemTimeEx` picks one side of a gap or overlap
+  without saying so. Its `SYSTEMTIME` also stops at 1601 and holds only
+  milliseconds. Evaluating `GetTimeZoneInformationForYear`'s rules in Loke
+  reaches the whole calendar, and taking a rule as data lets the package's
+  tests give it the European Union's or Samoa's.
+- **The new year is read as Windows reads it.** Windows' per-year rules say
+  nothing about when one year's rule gives way to the next, so the reading
+  was found by comparing with `SystemTimeToTzSpecificLocalTimeEx` over all
+  141 zones of a Windows 10 installation. Taking the rule of the UTC year, as
+  Wine does, disagreed in 14 zones wherever the rule changes at the new year.
+  Taking over when the old rule's clock shows the new year disagreed in 41,
+  for an hour each, until a midnight transition in January's first week was
+  read as the state the year starts in: that is how Windows writes "this year
+  starts in daylight saving", as in Perth in 2009, and it is also why Windows
+  ends Central Brazilian Standard Time's daylight saving on January 1st in
+  the years before its first record, 2004, rather than on the first Thursday
+  that record names. With both, the two agree at every instant compared:
+  hourly from 1990 to 2030 on both sides of each hour, and every 15 minutes
+  around each new year and every 37 hours from 1678 to 2261.
+- **Automatic adjustment off means standard time.** With "Adjust for daylight
+  saving time automatically" off, Windows' clock shows standard time all year
+  and `GetDynamicTimeZoneInformation` sets `DynamicDaylightTimeDisabled`.
+  `SystemTimeToTzSpecificLocalTimeEx` ignores that flag and still applies the
+  rules, but the zone is the one the clock shows, as .NET's
+  `TimeZoneInfo.Local` also takes it.
+- **`resolve` tries offsets rather than inverting the rule.** Each offset the
+  zone uses within a day of the time is converted back, and those that show
+  the time again are kept. That handles any rule, including a change of rule
+  at the new year such as Samoa's skipped day, with at most four conversions
+  and no case analysis of its own. `Compatible` is the default of RFC 5545,
+  Temporal, and Python's `fold=0`, and what a calendar entry at 02:30 on the
+  spring change most plausibly means.
+- **The sketch's `Resolution` needed no change.** A payload written
+  `(before: Offset, after: Offset)` is an anonymous record, so a caller binds
+  `.gap(before, after)` in any package: only a nominal record's fields are
+  limited to the package that declares them. `Zone` is a struct around a
+  private union, so a named variant can be added later without changing its
+  type, and its zero value is the first variant's, UTC.
+- **The rule evaluation is tested from inside the package.** Known rules have
+  to reach private declarations, so they are `@(test)` procedures in
+  `core/time/zone_test.loke`, which the integration harness runs for every
+  bundled package that declares tests. A program under `tests/run` compares
+  the public procedures with `SystemTimeToTzSpecificLocalTimeEx` in the
+  machine's own zone. The package's foreign declarations take `rawptr`, as the
+  clock's do, because a foreign symbol has one type: that program declares
+  the same functions with its own structures.
 - **A duration prints `µs`.** The `µ` is U+00B5, two bytes of UTF-8, as Go
   prints it. A console whose code page is not UTF-8 shows it wrongly, but
   that console misprints every non-ASCII string, and the parser accepts `us`

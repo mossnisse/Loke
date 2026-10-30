@@ -101,7 +101,7 @@ Implementation order:
 Current optional gaps, to add only when a caller establishes their contract:
 `core:bytes`, `core:unicode`,
 `core:encoding/base64`, and `core:testing`; in
-`core:time`, the local and named time zones (see
+`core:time`, named time zones (see
 [Open questions in `core:time`](open-questions.md#open-questions-in-coretime));
 in `core:random`, `f32` distributions,
 sampling indices from a range without materializing it, and distributions such

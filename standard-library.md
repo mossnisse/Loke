@@ -24,7 +24,7 @@ Examples use Loke syntax; the API summaries use Odin-style declaration sketches.
 | Start threads, protect shared state, wait for it to change, pass work between tasks, with or without waiting, or run tasks on a pool | [`core:thread`](#corethread) |
 | Use numeric functions and types | [`core:math`](#coremath) |
 | Draw random numbers, shuffle, sample, or get secret bytes | [`core:random`](#corerandom) |
-| Read clocks, work with dates, or print and parse ISO 8601 times | [`core:time`](#coretime) |
+| Read clocks, work with dates and the local time zone, or print and parse ISO 8601 times | [`core:time`](#coretime) |
 
 Start with the [design rules](#design-rules) for text, errors, and ownership.
 The [package layout](#package-layout) lists the remaining foundational packages.
@@ -3323,16 +3323,17 @@ instantiated.
 ## `core:time`
 
 `core:time` has clocks, durations, instants, the proleptic Gregorian calendar,
-fixed UTC offsets, and ISO 8601 text. Dates and times print in the ISO 8601
-extended format, in the RFC 3339 profile where one applies, and parse back. A
-duration prints in a short form, `1h30m` or `153ms`; its ISO 8601 form,
-`PT1H30M`, is one style away and parses too. There is no locale, no month or
-weekday name in text, and no pattern language. Other forms are built from the
+fixed UTC offsets, the system's local time zone, and ISO 8601 text. Dates and
+times print in the ISO 8601 extended format, in the RFC 3339 profile where one
+applies, and parse back. A duration prints in a short form, `1h30m` or
+`153ms`; its ISO 8601 form, `PT1H30M`, is one style away and parses too. There
+is no locale, no month or weekday name in text, and no pattern language. Other
+forms are built from the
 [accessors](#the-calendar) with [`fmt.zero_pad`](#corefmt), as in
 `fmt.concat_to(w, fmt.zero_pad(date.day(), 2), ".", fmt.zero_pad(int(date.month()), 2), ".", date.year())`
 for `15.10.2026`.
 
-Named time zones and the system's local zone are not here yet; see
+Time zones chosen by name, such as `Europe/Stockholm`, are not here yet; see
 [Open questions in `core:time`](open-questions.md#open-questions-in-coretime).
 
 | Type | Holds | Zero value |
@@ -3345,14 +3346,15 @@ Named time zones and the system's local zone are not here yet; see
 | `Date_Time` | A `Date` and a `Time_Of_Day`, with no offset | 1970-01-01T00:00:00 |
 | `Offset` | Whole minutes east of UTC, −23:59 to +23:59 | UTC |
 | `Offset_Date_Time` | A `Date_Time` and the `Offset` it was read at | 1970-01-01T00:00:00Z |
+| `Zone` | A fixed `Offset`, or the zone the system's clock shows | UTC |
 
 Every zero value is a valid value. All of them are plain copyable data with no
 resource to drop, so they cross threads freely. The four calendar types are the
 four kinds of date and time ISO 8601 text distinguishes, and TOML's four:
 local date, local time, local date-time, and offset date-time.
 
-Everything except `now`, `tick_now`, and `sleep` is integer arithmetic in Loke,
-so it also runs during
+Everything except the clocks, `now`, `now_local`, `tick_now`, and `sleep`, and
+the system zone, is integer arithmetic in Loke, so it also runs during
 [compile-time evaluation](design.md#compile-time-procedure-evaluation).
 
 ### Clocks
@@ -3515,6 +3517,96 @@ Offsets are whole minutes up to ±23:59, the range RFC 3339 writes.
 `Offset_Date_Time` has `==` and no `<`. Two values for one instant at
 different offsets are unequal, and ordering their fields would put the later
 instant first; compare `to_time()` instead.
+
+### Time zones
+
+```loke
+Zone :: struct { /* private: a fixed offset or the system's zone */ }
+local_zone() -> Zone
+fixed_zone(offset: Offset) -> Zone
+now_local() -> Offset_Date_Time
+
+Zone.offset_at(self, instant: Time) -> Offset
+Zone.to_local(self, instant: Time) -> Offset_Date_Time
+
+Resolution :: union {
+	unique:  Offset,
+	gap:     (before: Offset, after: Offset),     // clocks skipped this time
+	overlap: (earlier: Offset, later: Offset),    // clocks showed it twice
+}
+Choice :: enum { Compatible, Earlier, Later, Reject }
+Zone.resolve(self, local: Date_Time) -> Resolution
+Zone.at(self, local: Date_Time,
+	choice: Choice = .Compatible) -> Option(Offset_Date_Time)
+```
+
+A `Zone` is a fixed offset or the system zone, the one the operating system's
+clock shows. It is plain copyable data like the package's other types, and its
+zero value is UTC. `now_local()` is `local_zone().to_local(now())`. A zone
+chosen by name is not here; see
+[Named time zones](open-questions.md#named-time-zones).
+
+The system zone's rules are Windows': `GetDynamicTimeZoneInformation` names
+the zone and `GetTimeZoneInformationForYear` gives each year's standard offset
+and daylight-saving rule, the rules `SystemTimeToTzSpecificLocalTimeEx`
+applies. Its history is what Windows records: changes Microsoft has published,
+with the earliest recorded rule standing in for the years before it and the
+latest for the years after. The package owns no zone data, and Windows Update
+keeps the system's current. The `TZ` environment variable, which the C runtime
+reads, is not consulted. When automatic adjustment for daylight saving time is
+off in Windows' settings, the clock shows standard time all year, and so does
+the zone: each year's standard offset.
+
+Each use reads the current setting, so a long-running program follows a change
+to the system zone, and nothing is read at import
+([No hidden process behavior](#no-hidden-process-behavior)). If Windows reports
+a failure, which it does not on a supported system, the call panics, as
+[`random.fill_secure`](#operating-system-entropy) does. A fixed zone reads
+nothing, so it also works during compile-time evaluation. The system zone has
+no name: Windows names its zones its own way, and the IANA name needs CLDR's
+mapping.
+
+A year's rule is read as `SystemTimeToTzSpecificLocalTimeEx` reads it:
+
+- Daylight saving starts at a wall-clock time in standard time and ends at one
+  in daylight saving time, both in the rule's year, each the *n*th or last
+  weekday of a month or a fixed day. When it starts later in the year than it
+  ends, as south of the equator, it runs from the year's start to its end and
+  from its start to the year's end.
+- A year's rule takes over from the year before's when the clock, under the
+  year before's, shows the new year. Where the two disagree there, the clocks
+  skip or repeat around midnight on January 1st.
+- A transition at midnight in the first week of January stands for the state
+  the year starts in, and takes effect when the year's rule takes over.
+  Windows writes a year that starts in daylight saving, or one in which it
+  changes on January 1st, that way.
+
+A wall-clock time can fall in a gap, when clocks skip forward, or an overlap,
+when they repeat. `resolve` says which, with the offsets on each side: a gap's
+`before` and `after` are the offsets before and after the clocks skipped, and
+an overlap's `earlier` and `later` the offsets of its earlier and later
+instants. It tries each offset the zone uses within a day of `local` and keeps
+those whose instant converts back to the same wall-clock time: one is
+`unique`, two an `overlap`, and none a `gap`. Any date of the calendar can be
+resolved, including those outside the range of `Time`.
+
+`at` gives `local` with the offset the choice picks:
+
+| Choice | In a gap | In an overlap |
+| --- | --- | --- |
+| `Compatible` | The offset before the gap, so the time moves forward by the gap's length, at the offset after it | The earlier instant |
+| `Earlier` | The instant before the gap: the time moves back by the gap's length, at the offset before it | The earlier instant |
+| `Later` | As `Compatible` | The later instant |
+| `Reject` | `.none` | `.none` |
+
+`Compatible` is what RFC 5545 and Temporal do. A time with one offset takes it
+whatever the choice. In the European Union's spring change, 02:30 on
+2026-03-29 falls in a gap from `+01:00` to `+02:00`: `Compatible` and `Later`
+give `2026-03-29T03:30:00+02:00`, and `Earlier` gives
+`2026-03-29T01:30:00+01:00`. In autumn, 02:30 on 2026-10-25 is an overlap:
+`Earlier` gives `2026-10-25T02:30:00+02:00` and `Later`
+`2026-10-25T02:30:00+01:00`. A time moved out of a gap past 9999-12-31 or
+before 0000-01-01 panics, as `Date_Time` arithmetic does.
 
 ### ISO 8601 text
 

@@ -479,6 +479,14 @@ checklist.
   in `Simd` lanes with the same bits; `bench/geometry.loke` measures the
   casts, frustum culling, and the predicates against hand-written loops
   ([`core:math/geometry`](standard-library.md#coremathgeometry)).
+- `core:time` has time zones: `local_zone()`, the zone the system's clock
+  shows, with Windows' own rules and history, read on each use; `fixed_zone`;
+  and `now_local()`. `Zone.offset_at` and `Zone.to_local` convert an
+  instant, `Zone.resolve` says whether a wall-clock time is `unique`, in a
+  `gap`, or in an `overlap`, with the offsets on each side, and `Zone.at`
+  picks an instant with a `Choice`: `Compatible`, RFC 5545's and Temporal's,
+  `Earlier`, `Later`, or `Reject`
+  ([Time zones](standard-library.md#time-zones)).
 
 ### Changed
 

@@ -1,0 +1,318 @@
+// standard-library "Time zones": the rule evaluation, given known rules. These
+// reach the package's private declarations, which a program cannot; run them
+// with `lokec core/time -test`. tests/run/lib_time_zone.loke compares the
+// system zone with Windows' own conversion.
+@(public)
+package time;
+
+// The European Union's rule since 1996, at +01:00: from the last Sunday of
+// March at 01:00 UTC to the last Sunday of October at 01:00 UTC.
+@(private)
+eu_rule :: proc(year: int) -> Year_Rule {
+	return Year_Rule{
+		standard = 60, daylight_saving = true, daylight = 120,
+		daylight_starts = Transition{month = 3, week = 5, weekday = 7, clock = 2 * HOUR},
+		standard_starts = Transition{month = 10, week = 5, weekday = 7, clock = 3 * HOUR},
+	};
+}
+
+// The United States' rule since 2007, at -05:00: from the second Sunday of
+// March to the first Sunday of November, at 02:00 local time.
+@(private)
+us_rule :: proc(year: int) -> Year_Rule {
+	return Year_Rule{
+		standard = -300, daylight_saving = true, daylight = -240,
+		daylight_starts = Transition{month = 3, week = 2, weekday = 7, clock = 2 * HOUR},
+		standard_starts = Transition{month = 11, week = 1, weekday = 7, clock = 2 * HOUR},
+	};
+}
+
+// New South Wales' since 2008, at +10:00: from the first Sunday of October at
+// 02:00 to the first Sunday of April at 03:00, so daylight saving spans the
+// new year.
+@(private)
+sydney_rule :: proc(year: int) -> Year_Rule {
+	return Year_Rule{
+		standard = 600, daylight_saving = true, daylight = 660,
+		daylight_starts = Transition{month = 10, week = 1, weekday = 7, clock = 2 * HOUR},
+		standard_starts = Transition{month = 4, week = 1, weekday = 7, clock = 3 * HOUR},
+	};
+}
+
+// India's: +05:30 and no daylight saving.
+@(private)
+india_rule :: proc(year: int) -> Year_Rule {
+	return Year_Rule{standard = 330};
+}
+
+@(private)
+wall :: proc(year: int, month: Month, day, hour, minute: int, second: int = 0, nanosecond: int = 0) -> Date_Time {
+	return Date_Time{
+		Date.from_components(year, month, day) or_else panic("time test: not a date"),
+		Time_Of_Day.from_components(hour, minute, second, nanosecond) or_else panic("time test: not a time"),
+	};
+}
+
+@(private)
+minutes :: proc(east: int) -> Offset {
+	return Offset.from_minutes(east) or_else panic("time test: not an offset");
+}
+
+// The offset at the instant `utc` names, written as a UTC date and time.
+@(private)
+offset_given :: proc(rule: proc(year: int) -> Year_Rule, utc: Date_Time) -> int {
+	rules := Rules{source = .given(rule)};
+	return offset_in(inout rules, wall_nanoseconds(utc)).east;
+}
+
+@(private)
+resolve_given :: proc(rule: proc(year: int) -> Year_Rule, local: Date_Time) -> Resolution {
+	rules := Rules{source = .given(rule)};
+	return resolve_in(inout rules, local);
+}
+
+@(test)
+eu_offsets_change_at_one_utc :: proc() {
+	// 2026's last Sundays are March 29 and October 25.
+	assert(offset_given(eu_rule, wall(2026, .March, 29, 0, 59, 59, 999999999)) == 60);
+	assert(offset_given(eu_rule, wall(2026, .March, 29, 1, 0)) == 120);
+	assert(offset_given(eu_rule, wall(2026, .July, 1, 12, 0)) == 120);
+	assert(offset_given(eu_rule, wall(2026, .October, 25, 0, 59, 59, 999999999)) == 120);
+	assert(offset_given(eu_rule, wall(2026, .October, 25, 1, 0)) == 60);
+	assert(offset_given(eu_rule, wall(2026, .December, 31, 23, 30)) == 60);
+	assert(offset_given(eu_rule, wall(2027, .January, 1, 0, 30)) == 60);
+	// A month with five Sundays: 2027's last in March is the 28th.
+	assert(offset_given(eu_rule, wall(2027, .March, 28, 0, 59)) == 60);
+	assert(offset_given(eu_rule, wall(2027, .March, 28, 1, 0)) == 120);
+}
+
+@(test)
+us_offsets_change_at_two_local :: proc() {
+	// March 8 and November 1, 2026.
+	assert(offset_given(us_rule, wall(2026, .March, 8, 6, 59)) == -300);
+	assert(offset_given(us_rule, wall(2026, .March, 8, 7, 0)) == -240);
+	assert(offset_given(us_rule, wall(2026, .November, 1, 5, 59)) == -240);
+	assert(offset_given(us_rule, wall(2026, .November, 1, 6, 0)) == -300);
+}
+
+@(test)
+southern_daylight_saving_spans_the_new_year :: proc() {
+	// It ends on April 5, 2026 at 03:00 daylight time, 16:00 UTC the day
+	// before, and starts on October 4 at 02:00 standard time.
+	assert(offset_given(sydney_rule, wall(2026, .January, 1, 0, 0)) == 660);
+	assert(offset_given(sydney_rule, wall(2026, .April, 4, 15, 59)) == 660);
+	assert(offset_given(sydney_rule, wall(2026, .April, 4, 16, 0)) == 600);
+	assert(offset_given(sydney_rule, wall(2026, .July, 1, 0, 0)) == 600);
+	assert(offset_given(sydney_rule, wall(2026, .October, 3, 15, 59)) == 600);
+	assert(offset_given(sydney_rule, wall(2026, .October, 3, 16, 0)) == 660);
+	assert(offset_given(sydney_rule, wall(2026, .December, 31, 13, 0)) == 660);
+	assert(offset_given(sydney_rule, wall(2026, .December, 31, 13, 30)) == 660);
+}
+
+@(test)
+eu_wall_times_resolve :: proc() {
+	before := minutes(60);
+	after := minutes(120);
+	// Clocks went from 02:00 to 03:00 on March 29, 2026.
+	assert(resolve_given(eu_rule, wall(2026, .March, 29, 1, 59, 59, 999999999)) == Resolution.unique(before));
+	assert(resolve_given(eu_rule, wall(2026, .March, 29, 2, 0)) == Resolution.gap({before, after}));
+	assert(resolve_given(eu_rule, wall(2026, .March, 29, 2, 59, 59, 999999999)) == Resolution.gap({before, after}));
+	assert(resolve_given(eu_rule, wall(2026, .March, 29, 3, 0)) == Resolution.unique(after));
+	// And from 03:00 back to 02:00 on October 25.
+	assert(resolve_given(eu_rule, wall(2026, .October, 25, 1, 59)) == Resolution.unique(after));
+	assert(resolve_given(eu_rule, wall(2026, .October, 25, 2, 0)) == Resolution.overlap({after, before}));
+	assert(resolve_given(eu_rule, wall(2026, .October, 25, 2, 59, 59, 999999999)) == Resolution.overlap({after, before}));
+	assert(resolve_given(eu_rule, wall(2026, .October, 25, 3, 0)) == Resolution.unique(before));
+	assert(resolve_given(eu_rule, wall(2026, .July, 1, 12, 0)) == Resolution.unique(after));
+}
+
+@(test)
+other_wall_times_resolve :: proc() {
+	standard := minutes(-300);
+	daylight := minutes(-240);
+	assert(resolve_given(us_rule, wall(2026, .March, 8, 2, 30)) == Resolution.gap({standard, daylight}));
+	assert(resolve_given(us_rule, wall(2026, .November, 1, 1, 30)) == Resolution.overlap({daylight, standard}));
+	assert(resolve_given(us_rule, wall(2026, .November, 1, 0, 59)) == Resolution.unique(daylight));
+	assert(resolve_given(us_rule, wall(2026, .November, 1, 2, 0)) == Resolution.unique(standard));
+	// South of the equator the overlap comes in April and the gap in October.
+	assert(resolve_given(sydney_rule, wall(2026, .April, 5, 2, 30)) == Resolution.overlap({minutes(660), minutes(600)}));
+	assert(resolve_given(sydney_rule, wall(2026, .October, 4, 2, 30)) == Resolution.gap({minutes(600), minutes(660)}));
+	assert(resolve_given(sydney_rule, wall(2027, .January, 1, 0, 0)) == Resolution.unique(minutes(660)));
+	assert(resolve_given(india_rule, wall(2026, .March, 29, 2, 30)) == Resolution.unique(minutes(330)));
+}
+
+@(test)
+the_whole_calendar_resolves :: proc() {
+	// Beyond the range of `Time`, and a day either side of the calendar's
+	// ends, where the rule of year -1 or 10000 is asked for.
+	assert(resolve_given(eu_rule, wall(0, .January, 1, 0, 0)) == Resolution.unique(minutes(60)));
+	assert(resolve_given(eu_rule, wall(9999, .December, 31, 23, 59, 59, 999999999)) == Resolution.unique(minutes(60)));
+	assert(resolve_given(eu_rule, wall(5000, .March, 30, 2, 30)) == Resolution.gap({minutes(60), minutes(120)}));
+	assert(resolve_given(sydney_rule, wall(0, .January, 1, 0, 0)) == Resolution.unique(minutes(660)));
+	assert(resolve_given(sydney_rule, wall(9999, .December, 31, 23, 59)) == Resolution.unique(minutes(660)));
+}
+
+@(test)
+each_choice_picks_its_instant :: proc() {
+	gap := Resolution.gap({minutes(60), minutes(120)});
+	overlap := Resolution.overlap({minutes(120), minutes(60)});
+	spring := wall(2026, .March, 29, 2, 30);
+	autumn := wall(2026, .October, 25, 2, 30);
+	// `Compatible` and `Later` move a time in the gap forward by its length;
+	// `Earlier` moves it back.
+	assert(choose(gap, spring, .Compatible) == Option(Offset_Date_Time).some({wall(2026, .March, 29, 3, 30), minutes(120)}));
+	assert(choose(gap, spring, .Later) == Option(Offset_Date_Time).some({wall(2026, .March, 29, 3, 30), minutes(120)}));
+	assert(choose(gap, spring, .Earlier) == Option(Offset_Date_Time).some({wall(2026, .March, 29, 1, 30), minutes(60)}));
+	assert(choose(gap, spring, .Reject) == Option(Offset_Date_Time).none);
+	// The instants either side of the gap are the ones a minute's offset
+	// apart: 01:30Z and 00:30Z.
+	assert((choose(gap, spring, .Later) or_else panic("later")).to_time() == Option(Time).some(from_unix_nanoseconds(1774747800000000000)));
+	assert((choose(gap, spring, .Earlier) or_else panic("earlier")).to_time() == Option(Time).some(from_unix_nanoseconds(1774744200000000000)));
+	assert(choose(overlap, autumn, .Compatible) == Option(Offset_Date_Time).some({autumn, minutes(120)}));
+	assert(choose(overlap, autumn, .Earlier) == Option(Offset_Date_Time).some({autumn, minutes(120)}));
+	assert(choose(overlap, autumn, .Later) == Option(Offset_Date_Time).some({autumn, minutes(60)}));
+	assert(choose(overlap, autumn, .Reject) == Option(Offset_Date_Time).none);
+	unique := Resolution.unique(minutes(60));
+	assert(choose(unique, spring, .Reject) == Option(Offset_Date_Time).some({spring, minutes(60)}));
+	assert(choose(unique, spring, .Later) == Option(Offset_Date_Time).some({spring, minutes(60)}));
+}
+
+@(test)
+fixed_zones_have_one_offset :: proc() {
+	zone := fixed_zone(minutes(-570));
+	moment := from_unix_nanoseconds(1792074896789000000);
+	assert(zone.offset_at(moment) == minutes(-570));
+	assert(zone.to_local(moment) == moment.at_offset(minutes(-570)));
+	assert(zone.resolve(wall(2026, .March, 29, 2, 30)) == Resolution.unique(minutes(-570)));
+	assert(zone.at(wall(2026, .March, 29, 2, 30), .Reject) == Option(Offset_Date_Time).some({wall(2026, .March, 29, 2, 30), minutes(-570)}));
+	// The zero value is UTC.
+	assert(Zone{}.offset_at(moment) == UTC);
+	assert(Zone{}.resolve(wall(0, .January, 1, 0, 0)) == Resolution.unique(UTC));
+}
+
+@(test)
+transitions_fall_on_their_days :: proc() {
+	// The last Sunday of a month with four or five; the fourth Friday; a fixed
+	// day, and one past the month's end.
+	last_sunday := Transition{month = 2, week = 5, weekday = 7};
+	assert(transition_in(last_sunday, 2026) == wall_nanoseconds(wall(2026, .February, 22, 0, 0)));
+	assert(transition_in(last_sunday, 2032) == wall_nanoseconds(wall(2032, .February, 29, 0, 0)));
+	fourth_friday := Transition{month = 1, week = 4, weekday = 5, clock = 23 * HOUR + 59 * MINUTE + 59 * SECOND + 999 * MILLISECOND};
+	assert(transition_in(fourth_friday, 2026) == wall_nanoseconds(wall(2026, .January, 23, 23, 59, 59, 999000000)));
+	assert(transition_in(Transition{month = 4, day = 15}, 2026) == wall_nanoseconds(wall(2026, .April, 15, 0, 0)));
+	assert(transition_in(Transition{month = 4, day = 31}, 2026) == wall_nanoseconds(wall(2026, .April, 30, 0, 0)));
+}
+
+// Rules that change from year to year, after Windows' own records. A rule that
+// changes at the new year takes over when the old rule's clock shows the new
+// year, and a transition at midnight in the first week of January stands for
+// the state the year starts in. Each was compared with
+// `SystemTimeToTzSpecificLocalTimeEx` for the zone it is named after.
+
+// "W. Australia Standard Time": daylight saving from October 2008 to March
+// 2009, its last year written as starting on January 1st.
+@(private)
+perth_rule :: proc(year: int) -> Year_Rule {
+	if (year > 2009) { return Year_Rule{standard = 480}; }
+	rule := Year_Rule{
+		standard = 480, daylight_saving = true, daylight = 540,
+		daylight_starts = Transition{month = 10, week = 5, weekday = 7, clock = 2 * HOUR},
+		standard_starts = Transition{month = 3, week = 5, weekday = 7, clock = 3 * HOUR},
+	};
+	if (year == 2009) { rule.daylight_starts = Transition{month = 1, week = 1, weekday = 4}; }
+	return rule;
+}
+
+// "Turks And Caicos Standard Time": -04:00 all through 2017, then the United
+// States' rule at -05:00.
+@(private)
+turks_rule :: proc(year: int) -> Year_Rule {
+	if (year == 2017) { return Year_Rule{standard = -240}; }
+	return us_rule(year);
+}
+
+// "Samoa Standard Time": across the date line at the end of 2011, which
+// Windows records as a change of rule at the new year.
+@(private)
+samoa_rule :: proc(year: int) -> Year_Rule {
+	if (year <= 2011) {
+		return Year_Rule{
+			standard = -660, daylight_saving = true, daylight = -600,
+			daylight_starts = Transition{month = 9, week = 4, weekday = 6, clock = 3 * HOUR},
+			standard_starts = Transition{month = 4, week = 1, weekday = 6, clock = 4 * HOUR},
+		};
+	}
+	return Year_Rule{
+		standard = 780, daylight_saving = true, daylight = 840,
+		daylight_starts = Transition{month = 9, week = 5, weekday = 7, clock = 3 * HOUR},
+		standard_starts = Transition{month = 4, week = 1, weekday = 7, clock = 4 * HOUR},
+	};
+}
+
+// "Sao Tome Standard Time": from UTC to +01:00 at 01:00 on January 1st, 2018,
+// written as daylight saving at +00:00 from the year's start to then.
+@(private)
+sao_tome_rule :: proc(year: int) -> Year_Rule {
+	if (year != 2018) { return Year_Rule{}; }
+	return Year_Rule{
+		standard = 60, daylight_saving = true, daylight = 0,
+		daylight_starts = Transition{month = 1, week = 1, weekday = 1},
+		standard_starts = Transition{month = 1, week = 1, weekday = 1, clock = HOUR},
+	};
+}
+
+// "Central Brazilian Standard Time" before 2004, the earliest year Windows
+// records: daylight saving from November's first Tuesday to the year's end,
+// written as ending on January's first Thursday, which was January 1st in 2004.
+@(private)
+brazil_rule :: proc(year: int) -> Year_Rule {
+	return Year_Rule{
+		standard = -240, daylight_saving = true, daylight = -180,
+		daylight_starts = Transition{month = 11, week = 1, weekday = 2},
+		standard_starts = Transition{month = 1, week = 1, weekday = 4},
+	};
+}
+
+@(test)
+a_new_rule_takes_over_at_the_new_year :: proc() {
+	// Perth stays at +09:00 into 2009, though the new rule's standard time is
+	// still in 2008 for its first hour.
+	assert(offset_given(perth_rule, wall(2008, .December, 31, 15, 30)) == 540);
+	assert(offset_given(perth_rule, wall(2008, .December, 31, 16, 30)) == 540);
+	assert(offset_given(perth_rule, wall(2009, .March, 28, 17, 59)) == 540);
+	assert(offset_given(perth_rule, wall(2009, .March, 28, 18, 0)) == 480);
+	assert(offset_given(perth_rule, wall(2009, .December, 31, 16, 30)) == 480);
+	assert(resolve_given(perth_rule, wall(2009, .January, 1, 0, 30)) == Resolution.unique(minutes(540)));
+
+	// Turks and Caicos goes back an hour when its clock shows 2018.
+	assert(offset_given(turks_rule, wall(2018, .January, 1, 3, 59)) == -240);
+	assert(offset_given(turks_rule, wall(2018, .January, 1, 4, 0)) == -300);
+	assert(resolve_given(turks_rule, wall(2017, .December, 31, 23, 30)) == Resolution.overlap({minutes(-240), minutes(-300)}));
+	assert(resolve_given(turks_rule, wall(2018, .January, 1, 0, 0)) == Resolution.unique(minutes(-300)));
+
+	// Samoa skips January 1st, 2012.
+	assert(offset_given(samoa_rule, wall(2012, .January, 1, 9, 59)) == -600);
+	assert(offset_given(samoa_rule, wall(2012, .January, 1, 10, 0)) == 840);
+	assert(resolve_given(samoa_rule, wall(2011, .December, 31, 23, 59)) == Resolution.unique(minutes(-600)));
+	assert(resolve_given(samoa_rule, wall(2012, .January, 1, 12, 0)) == Resolution.gap({minutes(-600), minutes(840)}));
+	assert(resolve_given(samoa_rule, wall(2012, .January, 2, 0, 0)) == Resolution.unique(minutes(840)));
+}
+
+@(test)
+january_midnight_marks_the_start_of_the_year :: proc() {
+	// Sao Tome's skipped hour.
+	assert(offset_given(sao_tome_rule, wall(2018, .January, 1, 0, 59)) == 0);
+	assert(offset_given(sao_tome_rule, wall(2018, .January, 1, 1, 0)) == 60);
+	assert(resolve_given(sao_tome_rule, wall(2018, .January, 1, 1, 30)) == Resolution.gap({UTC, minutes(60)}));
+	assert(offset_given(sao_tome_rule, wall(2019, .January, 1, 12, 0)) == 0);
+
+	// In 2003 daylight saving ends as the year starts, not on January 2nd.
+	assert(offset_given(brazil_rule, wall(2002, .December, 31, 12, 0)) == -180);
+	assert(offset_given(brazil_rule, wall(2003, .January, 1, 2, 59)) == -180);
+	assert(offset_given(brazil_rule, wall(2003, .January, 1, 3, 0)) == -240);
+	assert(offset_given(brazil_rule, wall(2003, .January, 1, 12, 0)) == -240);
+	assert(offset_given(brazil_rule, wall(2003, .November, 4, 3, 59)) == -240);
+	assert(offset_given(brazil_rule, wall(2003, .November, 4, 4, 0)) == -180);
+	assert(resolve_given(brazil_rule, wall(2002, .December, 31, 23, 30)) == Resolution.overlap({minutes(-180), minutes(-240)}));
+	assert(resolve_given(brazil_rule, wall(2003, .November, 4, 0, 30)) == Resolution.gap({minutes(-240), minutes(-180)}));
+}

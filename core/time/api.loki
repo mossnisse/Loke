@@ -10,12 +10,18 @@
 	RFC 3339's allowances. A duration prints in a short form, `1h30m`, and reads
 	that or ISO 8601's `PT1H30M`.
 
-	Clocks, durations, instants, the calendar, fixed UTC offsets, and ISO 8601
-	text.
+	Clocks, durations, instants, the calendar, fixed UTC offsets, the system's
+	local time zone, and ISO 8601 text.
 
-	Everything but the three clock procedures, `now`, `tick_now`, and `sleep`,
-	is integer arithmetic in Loke, so it also runs during compile-time
-	evaluation. There are no named time zones.
+	Everything but the clock procedures, `now`, `now_local`, `tick_now`, and
+	`sleep`, and the system zone, is integer arithmetic in Loke, so it also
+	runs during compile-time evaluation. There are no named time zones.
+
+	Time zones: a fixed offset, or the zone the system's clock shows.
+
+	A wall-clock time can fall in a gap, when clocks skip forward, or an
+	overlap, when they go back; `Zone.resolve` says which, and `Zone.at`
+	chooses an instant.
 */
 package time;
 
@@ -406,3 +412,63 @@ tick_now :: proc() -> Tick ---;
 	monotonic clock shows the time has passed.
 */
 sleep :: proc(duration: Duration) ---;
+
+/*
+	A time zone: a fixed offset, or the zone the system's clock shows. It is
+	plain copyable data. The system zone reads Windows' setting on each use, so
+	one value follows a change to the setting. The zero value is UTC.
+*/
+Zone :: struct {
+	// and fields private to the package
+}
+
+// The zone the system's clock shows, read again on each use.
+local_zone :: proc() -> Zone ---;
+
+fixed_zone :: proc(offset: Offset) -> Zone ---;
+
+// The system clock's reading, at the local zone's offset.
+now_local :: proc() -> Offset_Date_Time ---;
+
+/*
+	How a date and time without an offset falls in a zone. In a `gap` the
+	clocks skipped it, going from offset `before` to `after`; in an `overlap`
+	they showed it twice, first at offset `earlier` and then at `later`.
+*/
+Resolution :: union {
+	unique:  Offset,
+	gap:     (before: Offset, after: Offset),
+	overlap: (earlier: Offset, later: Offset),
+}
+
+/*
+	Which instant `Zone.at` takes for a time in a gap or an overlap.
+	`Compatible` takes the offset before a gap, which moves the time forward
+	by the gap's length, and the earlier instant of an overlap, as RFC 5545
+	and Temporal do. `Earlier` and `Later` take the instant before or after
+	the transition. `Reject` takes neither.
+*/
+Choice :: enum { Compatible, Earlier, Later, Reject }
+
+impl Zone {
+	// The offset from UTC the zone's clocks show at `instant`.
+	offset_at :: proc(self, instant: Time) -> Offset ---;
+
+	// The date and time the zone's clocks show at `instant`.
+	to_local :: proc(self, instant: Time) -> Offset_Date_Time ---;
+
+	/*
+		Whether the zone's clocks show `local` once, never, or twice. Any date
+		of the calendar can be asked about, including those outside the range
+		of `Time`.
+	*/
+	resolve :: proc(self, local: Date_Time) -> Resolution ---;
+
+	/*
+		`local` with the zone's offset, choosing as `choice` says in a gap or an
+		overlap, or `.none` when `choice` is `Reject` there. A time moved out of
+		a gap past 9999-12-31 or before 0000-01-01 panics, as `Date_Time`'s
+		arithmetic does.
+	*/
+	at :: proc(self, local: Date_Time, choice: Choice = .Compatible) -> Option(Offset_Date_Time) ---;
+}

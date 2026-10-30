@@ -1005,6 +1005,49 @@ a_test_executable_runs_one_test_by_name :: proc(t: ^testing.T) {
 	}
 }
 
+// A bundled package's own tests reach its private declarations, which a
+// program under tests/run cannot: core:time gives its rule evaluation known
+// rules that way. Every package under core/ or base/ whose files declare a test
+// runs them with `-test`, and each must pass.
+@(test)
+library_packages_pass_their_tests :: proc(t: ^testing.T) {
+	os.make_directory(TMP)
+	packages := make([dynamic]string, context.temp_allocator)
+	for pattern in ([]string{"core/*/*.loke", "core/*/*/*.loke", "base/*/*.loke"}) {
+		files, _ := filepath.glob(pattern, context.temp_allocator)
+		for file in files {
+			text, err := os.read_entire_file(file, context.temp_allocator)
+			if err != nil || !strings.contains(string(text), "\n@(test)") {
+				continue
+			}
+			dir := path_dir(file, context.temp_allocator)
+			if !slice.contains(packages[:], dir) {
+				append(&packages, dir)
+			}
+		}
+	}
+	testing.expect(t, len(packages) > 0, "no library package declares a test")
+	jobs := make([]Exec, len(packages), context.temp_allocator)
+	for dir, i in packages {
+		name, _ := strings.replace_all(filepath.base(dir), " ", "_", context.temp_allocator)
+		command := make([dynamic]string, context.temp_allocator)
+		append(&command, compiler_path(), dir, "-test", "-o", fmt.tprintf("%s/library-%s-%d.test.exe", TMP, name, i))
+		append(&command, ..env_flags())
+		jobs[i].command = command[:]
+	}
+	exec_all(jobs)
+	for dir, i in packages {
+		job := jobs[i]
+		if !testing.expectf(t, job.err == nil, "%s: cannot run %s", dir, compiler_path()) {
+			continue
+		}
+		testing.expectf(
+			t, job.state.exit_code == 0,
+			"%s: its tests did not all pass\n%s%s", dir, string(job.stdout), string(job.stderr),
+		)
+	}
+}
+
 // The generated IR is not compared whole — that would break on every temporary
 // renumbering. Each case lists the instruction shapes that must survive: the
 // integer guards, the short-circuit phi, the bounds and nil checks, the defer
