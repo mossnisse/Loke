@@ -628,11 +628,12 @@ Decided while implementing:
   for bit, and `look_at_lh` takes `up x forward` as its side, so the
   left-handed pipeline sees the `Z`-mirrored scene as the right-handed one
   sees the scene.
-- **Compile-time evaluation stops at `sqrt`.** `math.sqrt` is a foreign
-  procedure, which a compile-time call cannot run
+- **Compile-time evaluation originally stopped at `sqrt`.** At this milestone,
+  `math.sqrt` was a foreign procedure, which a compile-time call could not run
   ([Compile-time procedure evaluation](design.md#compile-time-procedure-evaluation)),
-  so `length`, `normalize`, `look_at`, and the rest do not fold; the
-  projections, rotations, products, and `inverse` do. The question is in
+  so `length`, `normalize`, `look_at`, and the rest did not fold. The merged
+  implementation of `math.sqrt` now folds too, with the same result as at
+  runtime. The original question is in
   [Correctly rounded procedures at compile time](open-questions.md#correctly-rounded-procedures-at-compile-time).
 
 Compiler bugs found and fixed in the same change, each with a regression test

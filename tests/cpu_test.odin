@@ -22,6 +22,7 @@ CPU_LEVEL_CASES :: []string {
 	"tests/run/lib_math.loke",
 	"tests/run/lib_linalg.loke",
 	"tests/run/lib_linalg_rotations.loke",
+	"tests/run/lib_linalg_edges.loke",
 	"tests/run/lib_linalg_lanes.loke",
 	"tests/run/lib_geometry_predicates.loke",
 	"tests/run/lib_geometry_shapes.loke",

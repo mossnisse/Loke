@@ -167,7 +167,9 @@ nlerp :: proc(a, b: math.Quaternion($T), t: T) -> math.Quaternion(T) where Real(
 // stays accurate for close quaternions, where `acos(dot)` does not, so only
 // an angle whose sine is not normal needs the linear form.
 slerp :: proc(a, b: math.Quaternion($T), t: T) -> math.Quaternion(T) where Real(T) {
+	if (t == T(0)) { return a; }
 	e := shorter_arc(a, b);
+	if (t == T(1)) { return e; }
 	half := (a - e).norm_squared().sqrt().atan2((a + e).norm_squared().sqrt());
 	angle := half + half;
 	sine := angle.sin();
@@ -271,12 +273,16 @@ quaternion_from_rotation_vector :: proc(v: Vector3($T)) -> math.Quaternion(T) wh
 /**
 	The rotation vector of the unit quaternion `q`: its axis times its angle,
 	in `[0, pi]`, so `q` and `-q` give the same vector. The zero vector for no
-	rotation.
+	rotation. At an exact half turn, the first nonzero axis component is
+	positive, choosing the same axis for both quaternion signs.
 */
 to_rotation_vector :: proc(q: math.Quaternion($T)) -> Vector3(T) where Real(T) {
 	w := q.real;
 	u := Vector3(T){q.i, q.j, q.k};
-	if (w < T(0)) {
+	first := u.x;
+	if (first == T(0)) { first = u.y; }
+	if (first == T(0)) { first = u.z; }
+	if (w < T(0) || (w == T(0) && first < T(0))) {
 		w = -w;
 		u = -u;
 	}

@@ -2578,7 +2578,8 @@ The quaternion procedures:
 - `quaternion_from_rotation_vector(v)` turns `|v|` radians about the
   direction of `v`, and `to_rotation_vector(q)` returns the axis times the
   angle in `[0, pi]`, the same for `q` and `-q`; the zero vector is no
-  rotation.
+  rotation. At an exact half turn, the first nonzero axis component is
+  positive.
 
 `perspective(fovy, aspect, near, far, depth)` and
 `orthographic(left, right, bottom, top, near, far, depth)` map a view space
@@ -2616,9 +2617,8 @@ Every operation is computed in the order documented on it, with no `fma` and
 no C library call: the `f32` and `f64` slots of `Real` are `math.sqrt`, which
 is correctly rounded, and [`core:math/repro`](#coremathrepro). Results are
 the same bits on every machine, [CPU level](compiler-guide.md#cpu-levels),
-and optimization level. A call that does not reach `sqrt` can also be
-evaluated at compile time with the same result; one that does cannot, since
-`math.sqrt` calls a foreign procedure. At `f32`, `transform_point`,
+and optimization level. Calls can also be evaluated at compile time with
+the same result, including those that reach `math.sqrt`. At `f32`, `transform_point`,
 `transform_direction`, and a 3 x 3 `m * v` compute in `Simd` lanes, each lane
 one component in the documented order, which changes their speed and not
 their bits ([Milestone 4 results](linear-algebra-plan.md#milestone-4-results)).

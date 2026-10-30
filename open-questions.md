@@ -932,16 +932,12 @@ forms should agree, and in which direction, is open.
 
 ### Correctly rounded procedures at compile time
 
-[Compile-time procedure evaluation](design.md#compile-time-procedure-evaluation)
-cannot call foreign code, and `math.sqrt` is a call to the runtime's
-`rt_sqrt_f64`. So `core:math/linalg` folds a projection, a rotation, or an
-`inverse`, but not `length`, `normalize`, or `look_at`, and neither can any
-user constant that takes a distance. `sqrt` is correctly rounded, so the
-evaluator could compute it and give the bits the program would; so are
-`floor`, `ceil`, `round`, `trunc`, `fma`, and `mod`. Whether the evaluator
-should implement that set, or `core:math` should implement them in Loke as
-`core:math/repro` does its functions, is open; a `when`-selected Loke body
-would keep the run-time instruction.
+Resolved: [`core:math`](standard-library.md#coremath)'s correctly rounded
+procedures, including `sqrt` and `mod`, now have compile-time values.
+`core:math/linalg` can therefore fold `length`, `normalize`, and `look_at`
+as well as projections, rotations, and `inverse`. The original limitation
+was that [compile-time procedure evaluation](design.md#compile-time-procedure-evaluation)
+could not call the foreign runtime implementation of `math.sqrt`.
 
 ### Implicit selectors in inferred parameter types
 

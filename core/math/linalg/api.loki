@@ -20,10 +20,9 @@
 	Each operation is computed in the order its documentation gives, with no
 	`fma` and no C library call, so it gives the same bits on every machine,
 	CPU level, and optimization level. The `f32` and `f64` slots of `Real` are
-	`math.sqrt`, which is correctly rounded, and `core:math/repro`. A call that
-	does not reach `sqrt` can also be evaluated at compile time, with the same
-	result; `math.sqrt` is a foreign procedure, which a compile-time call cannot
-	run.
+	`math.sqrt`, which is correctly rounded, and `core:math/repro`. Calls can
+	also be evaluated at compile time with the same result, including those
+	that reach `math.sqrt`.
 
 	Nothing returns a silent zero or NaN for a degenerate input: `normalize`,
 	`inverse`, `solve`, `inverse_affine`, `normal_matrix`, `project_point`,
@@ -393,7 +392,8 @@ quaternion_from_rotation_vector :: proc(v: Vector3($T)) -> math.Quaternion(T) wh
 /*
 	The rotation vector of the unit quaternion `q`: its axis times its angle,
 	in `[0, pi]`, so `q` and `-q` give the same vector. The zero vector for no
-	rotation.
+	rotation. At an exact half turn, the first nonzero axis component is
+	positive, choosing the same axis for both quaternion signs.
 */
 to_rotation_vector :: proc(q: math.Quaternion($T)) -> Vector3(T) where Real(T) ---;
 
@@ -412,8 +412,10 @@ impl Matrix($T, $R, $C) {
 
 	/*
 		The rotation matrix of `q`, 3 x 3, or 4 x 4 with no translation, for a
-		unit `q`; another scales as well. `from_quaternion(a * b)` equals
-		`from_quaternion(a) * from_quaternion(b)` up to rounding.
+		unit `q`. Normalize `q` first if needed; a non-unit input does not in
+		general give a rotation or a uniform scale. For unit `a` and `b`,
+		`from_quaternion(a * b)` equals `from_quaternion(a) * from_quaternion(b)`
+		up to rounding.
 	*/
 	from_quaternion :: proc(q: math.Quaternion(T)) -> Matrix(T, R, C) where R == C, R == 3 || R == 4 ---;
 

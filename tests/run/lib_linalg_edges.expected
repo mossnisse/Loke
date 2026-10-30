@@ -1,0 +1,15 @@
+ok lerp preserves signed-zero endpoints
+ok lerp endpoints do not evaluate the other endpoint
+ok slerp preserves signed-zero endpoints
+ok half-turn rotation vector agrees for q and -q
+ok half-turn rotation vector agrees for q and -q
+ok half-turn rotation vector agrees for q and -q
+ok angle with zero ignores the sign of a zero dot product
+ok lerp preserves signed-zero endpoints
+ok lerp endpoints do not evaluate the other endpoint
+ok slerp preserves signed-zero endpoints
+ok half-turn rotation vector agrees for q and -q
+ok half-turn rotation vector agrees for q and -q
+ok half-turn rotation vector agrees for q and -q
+ok angle with zero ignores the sign of a zero dot product
+ok length folds at compile time

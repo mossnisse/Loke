@@ -139,6 +139,8 @@ impl Vector2($T) {
 	}
 	/// `self*(1 - t) + other*t` per component, exact at both ends.
 	lerp :: proc(self, other: Vector2(T), t: T) -> Vector2(T) where Real(T) {
+		if (t == T(0)) { return self; }
+		if (t == T(1)) { return other; }
 		s := T(1) - t;
 		return {self.x*s + other.x*t, self.y*s + other.y*t};
 	}
@@ -148,6 +150,7 @@ impl Vector2($T) {
 		not. 0 when either vector is zero.
 	*/
 	angle_between :: proc(self, other: Vector2(T)) -> T where Real(T) {
+		if ((self.x == T(0) && self.y == T(0)) || (other.x == T(0) && other.y == T(0))) { return T(0); }
 		return self.cross(other).abs().atan2(self.dot(other));
 	}
 	abs :: proc(self) -> Vector2(T) where Real(T) { return {self.x.abs(), self.y.abs()}; }
@@ -286,6 +289,8 @@ impl Vector3($T) {
 	}
 	/// `self*(1 - t) + other*t` per component, exact at both ends.
 	lerp :: proc(self, other: Vector3(T), t: T) -> Vector3(T) where Real(T) {
+		if (t == T(0)) { return self; }
+		if (t == T(1)) { return other; }
 		s := T(1) - t;
 		return {self.x*s + other.x*t, self.y*s + other.y*t, self.z*s + other.z*t};
 	}
@@ -295,6 +300,8 @@ impl Vector3($T) {
 		not. 0 when either vector is zero.
 	*/
 	angle_between :: proc(self, other: Vector3(T)) -> T where Real(T) {
+		if ((self.x == T(0) && self.y == T(0) && self.z == T(0))
+			|| (other.x == T(0) && other.y == T(0) && other.z == T(0))) { return T(0); }
 		return self.cross(other).length().atan2(self.dot(other));
 	}
 	abs :: proc(self) -> Vector3(T) where Real(T) { return {self.x.abs(), self.y.abs(), self.z.abs()}; }
@@ -435,6 +442,8 @@ impl Vector4($T) {
 	}
 	/// `self*(1 - t) + other*t` per component, exact at both ends.
 	lerp :: proc(self, other: Vector4(T), t: T) -> Vector4(T) where Real(T) {
+		if (t == T(0)) { return self; }
+		if (t == T(1)) { return other; }
 		s := T(1) - t;
 		return {
 			self.x*s + other.x*t, self.y*s + other.y*t,
@@ -447,6 +456,8 @@ impl Vector4($T) {
 		`2*atan2(|a*|b| - b*|a||, |a*|b| + b*|a||)`. 0 when either vector is zero.
 	*/
 	angle_between :: proc(self, other: Vector4(T)) -> T where Real(T) {
+		if ((self.x == T(0) && self.y == T(0) && self.z == T(0) && self.w == T(0))
+			|| (other.x == T(0) && other.y == T(0) && other.z == T(0) && other.w == T(0))) { return T(0); }
 		a := self*other.length();
 		b := other*self.length();
 		half := (a - b).length().atan2((a + b).length());

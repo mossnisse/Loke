@@ -527,6 +527,11 @@ checklist.
 
 ### Fixed
 
+- `core:math/linalg` preserves exact `lerp` and `slerp` endpoints, including
+  signed zero; `angle_between` returns zero for a zero vector even when its
+  dot product is negative zero; and `to_rotation_vector` chooses the same
+  axis for both signs of an exact half-turn quaternion
+  ([`core:math/linalg`](standard-library.md#coremathlinalg)).
 - A fixed array type around a procedure literal, such as
   `[1]proc(x: int) -> int{one}` written for an array of procedures, reports
   only its parse error, not also `L0350`, the compiler-defect report; name

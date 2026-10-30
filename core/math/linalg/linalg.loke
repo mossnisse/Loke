@@ -18,10 +18,9 @@
 	Each operation is computed in the order its documentation gives, with no
 	`fma` and no C library call, so it gives the same bits on every machine,
 	CPU level, and optimization level. The `f32` and `f64` slots of `Real` are
-	`math.sqrt`, which is correctly rounded, and `core:math/repro`. A call that
-	does not reach `sqrt` can also be evaluated at compile time, with the same
-	result; `math.sqrt` is a foreign procedure, which a compile-time call cannot
-	run.
+	`math.sqrt`, which is correctly rounded, and `core:math/repro`. Calls can
+	also be evaluated at compile time with the same result, including those
+	that reach `math.sqrt`.
 
 	Nothing returns a silent zero or NaN for a degenerate input: `normalize`,
 	`inverse`, `solve`, `inverse_affine`, `normal_matrix`, `project_point`,

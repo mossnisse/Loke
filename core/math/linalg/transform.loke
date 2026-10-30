@@ -44,8 +44,10 @@ impl Matrix($T, $R, $C) {
 
 	/**
 		The rotation matrix of `q`, 3 x 3, or 4 x 4 with no translation, for a
-		unit `q`; another scales as well. `from_quaternion(a * b)` equals
-		`from_quaternion(a) * from_quaternion(b)` up to rounding.
+		unit `q`. Normalize `q` first if needed; a non-unit input does not in
+		general give a rotation or a uniform scale. For unit `a` and `b`,
+		`from_quaternion(a * b)` equals `from_quaternion(a) * from_quaternion(b)`
+		up to rounding.
 	*/
 	// With `w` the real part: the diagonal is `1 - 2(y*y + z*z)` and its turns,
 	// and the off-diagonal pairs are `2(x*y -+ w*z)` and their turns.
