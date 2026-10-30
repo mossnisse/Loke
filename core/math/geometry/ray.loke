@@ -214,8 +214,8 @@ cast_ball :: proc(origin, direction, center: $V, radius, t_min, t_max: $T) -> Op
 	squared_radius := radius*radius;
 	a := direction.dot(direction);
 	when (T == f32 || T == f64) {
-		if (!(is_normal_number(f.dot(f)) || f == V{}) || !(is_normal_number(squared_radius) || radius == T(0))
-			|| !(is_normal_number(a) || direction == V{})) {
+		usable := (is_normal_number(f.dot(f)) || f == V{}) && (is_normal_number(squared_radius) || radius == T(0));
+		if (!usable || !(is_normal_number(a) || direction == V{})) {
 			return cast_ball_wide(origin, direction, center, radius, t_min, t_max);
 		}
 	}
