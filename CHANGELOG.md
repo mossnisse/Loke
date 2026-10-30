@@ -340,6 +340,12 @@ checklist.
   moved, for files read and written in place by page
   ([Positional I/O](standard-library.md#positional-io)).
 
+- `fs.File.lock`, `try_lock`, and `unlock` take an advisory shared or
+  exclusive lock on a whole file, held by the handle and released by `close`,
+  `drop`, or the program ending, so a store can insist on one writer.
+  `io.Operation` gains `Lock` and `Unlock`
+  ([File locking](standard-library.md#file-locking)).
+
 - `fs.replace_atomic` and `fs.replace_atomic_text` replace a file so that a
   reader, or the program after a crash or power loss, sees either the whole
   previous file or the whole new one, and on success the new one is durable

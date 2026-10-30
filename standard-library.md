@@ -224,6 +224,8 @@ Operation :: enum {
 	Wait,
 	Kill,
 	Set_Size,
+	Lock,
+	Unlock,
 	Other,
 }
 
@@ -1893,6 +1895,56 @@ read_page :: proc(store: inout fs.File, page: u64, into: []mut u8) -> Status(io.
 
 write_page :: proc(store: inout fs.File, page: u64, from: []u8) -> Status(io.Error) {
 	return store.write_all_at(from[0:PAGE], page * PAGE);
+}
+```
+
+### File locking
+
+```loke
+Lock_Mode :: enum {Shared, Exclusive}
+
+impl File {
+	lock     :: proc(self: inout File, mode: Lock_Mode) -> Status(io.Error);
+	try_lock :: proc(self: inout File, mode: Lock_Mode) -> Result(bool, io.Error);
+	unlock   :: proc(self: inout File) -> Status(io.Error);
+}
+```
+
+A lock covers the whole file and belongs to the handle that took it, so a
+second handle to the same file, in the same program or another, contends for
+it like any other. A `Shared` lock admits other shared locks and keeps out an
+exclusive one; an `Exclusive` lock keeps out every other lock. `lock` waits for
+as long as a lock that keeps it out is held; `try_lock` answers `false` instead
+and leaves the handle unlocked.
+
+The lock is advisory: only `lock` and `try_lock` respect it, so reads, writes,
+`set_size`, and every whole-file operation go on through any handle as before.
+It is a way for cooperating programs to agree, such as a store that must have
+one writer, not a protection against a program that does not ask.
+
+A handle holds one lock at a time: `lock` or `try_lock` while it holds one is
+`Unsupported`, so changing the mode means `unlock` first, and another handle
+can take the lock in between. `unlock`
+on a handle holding no lock, a closed one included, succeeds. `close` and
+`drop` release the lock, and so does the program ending however it ends, so a
+crash leaves no stale lock behind. `lock` and `try_lock` on a closed file are
+`Closed`. Every handle can lock except one opened `Write` with `append`, which
+is `Unsupported`: Windows locks only for a handle that may read or may write
+anywhere, and append mode gives up the second. Failures carry the operations
+`Lock` and `Unlock`.
+
+Example (imports `core:fs` and `core:io`): a store refuses to open while
+another program has it open for writing.
+
+```loke
+open_store :: proc(path: string_view) -> Result(fs.File, io.Error) {
+	store := fs.open(path, fs.Open_Options{
+		access = .Read_Write, disposition = .Open_Or_Create, append = false,
+	}) or_return;
+	if (!(store.try_lock(.Exclusive) or_return)) {
+		return .err(io.make_error(.Permission_Denied, .Lock));
+	}
+	return move(store);
 }
 ```
 

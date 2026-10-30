@@ -36,6 +36,12 @@ Open_Options :: struct {
 Seek_Origin :: enum {Start, Current, End}
 
 /*
+	A `Shared` lock admits other shared locks and keeps out an exclusive one;
+	an `Exclusive` lock keeps out every other lock.
+*/
+Lock_Mode :: enum {Shared, Exclusive}
+
+/*
 	`Other` is reserved; no operation produces it today. A reparse point reads
 	by its directory bit until links are supported as such.
 */
@@ -133,6 +139,33 @@ impl File {
 		rename. Any access mode can ask.
 	*/
 	metadata :: proc(self) -> Result(Metadata, io.Error) ---;
+
+	/*
+		Takes an advisory lock on the whole file, waiting for as long as another
+		handle holds one that keeps this one out. Advisory: only `lock` and
+		`try_lock` respect it, so reads and writes through any handle go on as
+		before. The lock belongs to this handle, so a second handle to the same
+		file, in this program or another, contends for it like any other.
+
+		`close` releases it, and so does the program ending however it ends, so
+		a crash leaves no stale lock behind. A handle holds one lock at a time:
+		locking again while it holds one is `Unsupported`, and changing the mode
+		means `unlock` first. Every handle can lock except one opened `Write`
+		with `append`, which is `Unsupported`: open it `Read_Write` instead.
+	*/
+	lock :: proc(self: inout File, mode: Lock_Mode) -> Status(io.Error) ---;
+
+	/*
+		`lock` without the wait: `false` when another handle holds a lock that
+		keeps this one out, and the handle is left unlocked.
+	*/
+	try_lock :: proc(self: inout File, mode: Lock_Mode) -> Result(bool, io.Error) ---;
+
+	/*
+		Releases this handle's lock. A handle that holds none, a closed one
+		included, has nothing to release.
+	*/
+	unlock :: proc(self: inout File) -> Status(io.Error) ---;
 }
 
 /*

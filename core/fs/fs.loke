@@ -53,6 +53,12 @@ Open_Options :: struct {
 Seek_Origin :: enum {Start, Current, End}
 
 /**
+	A `Shared` lock admits other shared locks and keeps out an exclusive one;
+	an `Exclusive` lock keeps out every other lock.
+*/
+Lock_Mode :: enum {Shared, Exclusive}
+
+/**
 	`Other` is reserved; no operation produces it today. A reparse point reads
 	by its directory bit until links are supported as such.
 */
@@ -83,6 +89,7 @@ File :: move_only struct {
 	@(private) handle: Handle,
 	@(private) access: Access,
 	@(private) append: bool,
+	@(private) locked: bool,
 }
 
 impl File {
@@ -100,6 +107,13 @@ impl File {
 		if (self.handle == NO_HANDLE) { return .ok; }
 		handle := self.handle;
 		self.handle = NO_HANDLE;
+		// Closing releases a lock in any case, but Windows promises only that it
+		// happens eventually, so the release is made here, now. A failure to
+		// release is not reported: the close that follows releases it.
+		if (self.locked) {
+			self.locked = false;
+			_ = unlock_handle(handle);
+		}
 		return close_handle(handle);
 	}
 
@@ -250,6 +264,60 @@ impl File {
 			return .err(io.make_error(.Closed, .Metadata));
 		}
 		return metadata_handle(self.handle);
+	}
+
+	/**
+		Takes an advisory lock on the whole file, waiting for as long as another
+		handle holds one that keeps this one out. Advisory: only `lock` and
+		`try_lock` respect it, so reads and writes through any handle go on as
+		before. The lock belongs to this handle, so a second handle to the same
+		file, in this program or another, contends for it like any other.
+
+		`close` releases it, and so does the program ending however it ends, so
+		a crash leaves no stale lock behind. A handle holds one lock at a time:
+		locking again while it holds one is `Unsupported`, and changing the mode
+		means `unlock` first. Every handle can lock except one opened `Write`
+		with `append`, which is `Unsupported`: open it `Read_Write` instead.
+	*/
+	// standard-library.md "File locking"; comments.md "Standard-library API
+	// choices" has why it is advisory.
+	lock :: proc(self: inout File, mode: Lock_Mode) -> Status(io.Error) {
+		self.check_lockable() or_return;
+		lock_handle(self.handle, mode, true) or_return;
+		self.locked = true;
+	}
+
+	/**
+		`lock` without the wait: `false` when another handle holds a lock that
+		keeps this one out, and the handle is left unlocked.
+	*/
+	try_lock :: proc(self: inout File, mode: Lock_Mode) -> Result(bool, io.Error) {
+		self.check_lockable() or_return;
+		acquired := lock_handle(self.handle, mode, false) or_return;
+		self.locked = acquired;
+		return acquired;
+	}
+
+	/**
+		Releases this handle's lock. A handle that holds none, a closed one
+		included, has nothing to release.
+	*/
+	unlock :: proc(self: inout File) -> Status(io.Error) {
+		if (!self.locked) { return .ok; }
+		self.locked = false;
+		return unlock_handle(self.handle);
+	}
+
+	@(private)
+	check_lockable :: proc(self) -> Status(io.Error) {
+		if (self.handle == NO_HANDLE) {
+			return .err(io.make_error(.Closed, .Lock));
+		}
+		// Windows locks only for a handle holding the right to read or to write
+		// anywhere, and a write-only append handle holds neither.
+		if (self.locked || (self.access == .Write && self.append)) {
+			return .err(io.make_error(.Unsupported, .Lock));
+		}
 	}
 }
 
@@ -539,6 +607,9 @@ foreign import kernel32 "system:kernel32.lib";
 @(private) FILE_RENAME_INFO_CLASS :: 3;
 // And its `FileEndOfFileInfo`.
 @(private) FILE_END_OF_FILE_INFO_CLASS :: 6;
+@(private) LOCKFILE_FAIL_IMMEDIATELY :: 0x1;
+@(private) LOCKFILE_EXCLUSIVE_LOCK :: 0x2;
+@(private) ERROR_LOCK_VIOLATION :: 33;
 
 // The 100-nanosecond ticks between 1601-01-01 and 1970-01-01.
 @(private) FILETIME_UNIX_EPOCH :: 116444736000000000;
@@ -578,6 +649,14 @@ foreign kernel32 {
 	) -> i32 ---;
 	@(link_name="ReOpenFile")
 	rt_reopen_file :: proc "stdcall" (handle: int, access: u32, share: u32, flags: u32) -> int ---;
+	@(link_name="LockFileEx")
+	rt_lock_file :: proc "stdcall" (
+		handle: int, flags: u32, reserved: u32, count_low: u32, count_high: u32, overlapped: rawptr,
+	) -> i32 ---;
+	@(link_name="UnlockFileEx")
+	rt_unlock_file :: proc "stdcall" (
+		handle: int, reserved: u32, count_low: u32, count_high: u32, overlapped: rawptr,
+	) -> i32 ---;
 	@(link_name="GetFileInformationByHandle")
 	rt_file_information :: proc "stdcall" (handle: int, data: rawptr) -> i32 ---;
 	@(link_name="GetCurrentProcessId")
@@ -692,7 +771,7 @@ open_native :: proc(path: string_view, options: Open_Options) -> Result(File, io
 	if (handle == INVALID_HANDLE) {
 		return .err(from_last_error(.Open));
 	}
-	return File{handle, options.access, options.append};
+	return File{handle, options.access, options.append, false};
 }
 
 @(private)
@@ -822,6 +901,35 @@ set_end_of_file :: proc(handle: Handle, size: i64) -> Status(io.Error) {
 	}
 }
 
+// A Windows byte-range lock is mandatory: it refuses other handles' reads and
+// writes of the bytes it covers. Locking the one byte at the last offset a file
+// can name covers no byte a file holds, `set_size` and the positional calls
+// refuse to reach it, and what is left is a lock that only other locks see.
+@(private) LOCK_OFFSET :: 0x7FFFFFFFFFFFFFFF;
+
+@(private)
+lock_handle :: proc(handle: Handle, mode: Lock_Mode, wait: bool) -> Result(bool, io.Error) {
+	flags: u32 = 0;
+	if (mode == .Exclusive) { flags |= u32(LOCKFILE_EXCLUSIVE_LOCK); }
+	if (!wait) { flags |= u32(LOCKFILE_FAIL_IMMEDIATELY); }
+	// On a synchronous handle the call returns once the lock is taken or refused.
+	place := at_offset(LOCK_OFFSET);
+	if (rt_lock_file(handle, flags, 0, 1, 0, &mut place) == 0) {
+		error := from_last_error(.Lock);
+		if (!wait && io.native_code_of(error) == ERROR_LOCK_VIOLATION) { return false; }
+		return .err(error);
+	}
+	return true;
+}
+
+@(private)
+unlock_handle :: proc(handle: Handle) -> Status(io.Error) {
+	place := at_offset(LOCK_OFFSET);
+	if (rt_unlock_file(handle, 0, 1, 0, &mut place) == 0) {
+		return .err(from_last_error(.Unlock));
+	}
+}
+
 @(private)
 metadata_handle :: proc(handle: Handle) -> Result(Metadata, io.Error) {
 	data: Handle_Information = {};
@@ -921,7 +1029,7 @@ replace_atomic_native :: proc(path: string_view, data: []u8) -> Status(io.Error)
 			if (io.is(error, .Already_Exists) && attempt + 1 < TEMPORARY_ATTEMPTS) { continue; }
 			return .err(error);
 		}
-		file := File{handle, .Write, false};
+		file := File{handle, .Write, false, false};
 		renamed := false;
 		// Cleanup runs in reverse: the handle closes, then a temporary that never
 		// took the target's name is deleted. Once it has, the old name may already
