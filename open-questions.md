@@ -11,6 +11,51 @@ Design rationale and differences from Odin are recorded in
 The current behavior inventory is in [Nondeterminism and undefined behavior
 audit](nondeterminism-audit.md).
 
+## Review of the five follow-up cleanup commits
+
+Review on 2026-10-30 covered the contended-lock test (`8256eb0a`), removal
+of the borrow-matrix exception path (`f887ea9f`), the caller-storage
+description (`67052a14`), shared constant-view-element recognition
+(`758b7c28`), and the lexer's single read-only operator table (`d24421a7`).
+Two issues remain in the lock test:
+
+- **Enforce the promised timeout.**
+  [lib_fs_lock.loke](tests/run/lib_fs_lock.loke) says that a lock which never
+  returns will fail at the harness's timeout, but `programs_run` and
+  `run_programs` in [corpus_test.odin](tests/corpus_test.odin) set none, and
+  [subprocess.run](src/subprocess/subprocess.odin) waits for output EOF and
+  process completion without a deadline. A regression that leaves the child
+  waiting therefore hangs the local gate; CI has only its 120-minute job
+  limit. Add an enforced deadline and cleanup for the waiting process tree.
+  A review variant that stalls the waiter after its ready signal remained
+  blocked through the actual subprocess helper until an external five-second
+  watchdog terminated the review runner and its children.
+- **Observe acquisition rather than infer it from the file marker.** The
+  parent writes `released` before it unlocks, and the waiter reads that text
+  after `lock` returns. That only observes when the read happened. A waiter
+  descheduled after an incorrect early return can see the marker and exit 0
+  without having acquired any lock. A review variant replacing only the
+  waiter's acquisition with immediate success and inserting a 100 ms pause
+  before the marker read still produces the exact expected output. Have the
+  child report acquisition and retain the lock until a parent acknowledgement;
+  after releasing its own lock, the parent can verify that the child still
+  excludes another exclusive acquisition before allowing it to finish. Use
+  the enforced deadline for a missing acknowledgement. This also lets the
+  protocol replace the file-content marker.
+
+The other four changes keep useful boundaries: the matrix is judged directly
+against its independent model, the shared view recognizer handles syntax and
+carrier checks while its callers retain their storage rules, and the lexer,
+spelling lookup, and ordering test share one read-only table. No further
+structural simplification was identified in those changes. The refreshed
+caller-storage reproduction reports `L0641`, while its constant-index
+variant compiles, as documented.
+
+Validation passes all 175 compiler unit tests, the borrow matrix,
+diagnostics, and the normal file-lock runtime regression. The fault variants
+above were isolated under `tests/tmp`; the stalled process tree was
+terminated and its temporary file removed.
+
 ## Review of the fix-gaps-1030 merge
 
 Review of `81a9342c` on 2026-10-30 covered its documentation merge against
