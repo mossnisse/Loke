@@ -152,9 +152,7 @@ session_check_modes_preserve_entry_requirements :: proc(t: ^testing.T) {
 	testing.expect(t, !emitted)
 	if !testing.expect(t, init_session(&s, session_test_config())) { return }
 	if !testing.expect(t, check_session(&s, path, documentation = true)) { report(&s.compiler); return }
-	page := document_project(&s.compiler, s.compiler.root_package)
-	testing.expect(t, strings.contains(page, "answer"))
-	delete(page)
+	testing.expect(t, strings.contains(temporary_documentation(&s), "answer"))
 	_, emitted = emit_session_ir(&s)
 	testing.expect(t, !emitted, "documentation checking must not enable executable emission")
 	testing.expect(t, !check_session(&s, path), "an executable still requires main")
@@ -181,6 +179,14 @@ session_check_modes_preserve_entry_requirements :: proc(t: ^testing.T) {
 	testing.expect(t, check_session(&s, path), "a new check must clear emission failures")
 	_, generated = emit_session_ir(&s)
 	testing.expect(t, generated)
+}
+
+// `document_project` allocates as it goes, so the page and everything built for
+// it live only as long as the test's temporary allocator, as in the server.
+@(private = "file")
+temporary_documentation :: proc(s: ^Compilation_Session) -> string {
+	context.allocator = context.temp_allocator
+	return document_project(&s.compiler, s.compiler.root_package)
 }
 
 // Odin's test allocator checks ordinary allocations and frees in this loop;

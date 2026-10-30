@@ -313,8 +313,32 @@ without_unpushed_pops :: proc(e: ^Emitter, body: string) -> string {
 		return body
 	}
 	pop := fmt.tprintf("  call void @loke_rt_v1_frame_pop(ptr %s)\n", e.unwind.frame)
-	stripped, _ := strings.replace_all(body, pop, "")
-	return stripped
+	// Candidates are found by the pop's `@` with `index_byte`, which scans far
+	// faster than a substring search; this runs over every such body.
+	marker := strings.index_byte(pop, '@')
+	stripped: strings.Builder
+	kept, from := 0, marker
+	for from <= len(body) {
+		at := strings.index_byte(body[from:], '@')
+		if at < 0 {
+			break
+		}
+		start := from + at - marker
+		from += at + 1
+		if strings.has_prefix(body[start:], pop) {
+			if stripped.buf == nil {
+				stripped = strings.builder_make(0, len(body))
+			}
+			strings.write_string(&stripped, body[kept:start])
+			kept = start + len(pop)
+			from = kept + marker
+		}
+	}
+	if stripped.buf == nil {
+		return body
+	}
+	strings.write_string(&stripped, body[kept:])
+	return strings.to_string(stripped)
 }
 
 // design.md "What the unwind runs, and what it does not": a generated body that

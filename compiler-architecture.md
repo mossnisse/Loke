@@ -266,7 +266,7 @@ records.
 | --- | --- |
 | Batch inputs | Process-owned source buffers and diagnostics; one syntax arena per parsed file. |
 | Semantic arena | Stores, interned data, specializations, cloned syntax, and frozen constants. Incremental inputs, syntax, and diagnostics also live here for checkpointing. |
-| Analysis arena | Disposable ownership/provenance graphs, reclaimed after analysis. |
+| Analysis arena | Disposable ownership/provenance graphs, reclaimed after analysis. It and the two provenance replay arenas beside it reserve one large block, so the reset after each body keeps its pages instead of returning them to the system. |
 | CTFE scratch | Bounded frames and mutable values; escaping constants are frozen into semantic storage. |
 | Emission arena | LLVM text, temporary maps, layout probes, and toolchain scratch; released with the compilation. |
 | Session arenas | Copied configuration, scratch, queries, and statistics; see [sessions](#reusable-batch-sessions). |
@@ -790,8 +790,9 @@ From the repository root:
 
 The quick gate checks heading citations and layering, runs unit tests, rebuilds
 `lokec.exe`, and runs baseline integration tests. `-Full` adds the checker
-mutation fuzzer and reruns optimization-sensitive corpora at every supported
-level. Use it locally for that additional coverage or to investigate CI
+mutation fuzzer, reruns optimization-sensitive corpora at every supported
+level, and builds `lokec.exe` and `loke-lsp.exe` with Odin's `-o:speed`, as a
+release is built, rather than its quicker default. Use it locally for that additional coverage or to investigate CI
 failures. `-Exhaustive` adds `core:math/repro`'s exhaustive comparison: every
 `f32` bit pattern through each function's single-`f64` first approximation and
 through a copy of the package without it, which must agree. It takes about 25

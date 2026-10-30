@@ -574,7 +574,7 @@ type_carries_borrow :: proc(c: ^Compiler, type: Type_Id) -> Carrier_Reach {
 	if cached, found := c.carrier_reach[type]; found {
 		return cached
 	}
-	visiting := make(map[Type_Id]bool, 8, context.temp_allocator)
+	visiting := make(map[Type_Id]bool, context.temp_allocator)
 	reach := carrier_reach_walk(c, type, &visiting)
 	c.carrier_reach[type] = reach
 	return reach
@@ -1391,8 +1391,9 @@ Prov_State :: struct {
 	reborrows_indexed:  int,
 	// The reborrows a redefinition may sever, from a fresh or loaded source.
 	severable: []int,
-	// Scratch: the loans one event ends.
+	// Scratch: the loans one event ends, and their indices.
 	released: []bool,
+	released_indices: [dynamic]int,
 	live:    []bool,
 	uses:    []Span,
 	merged:  []u8,
@@ -2826,6 +2827,7 @@ prepare_state :: proc(state: ^Prov_State) -> bool {
 	state.reach = make([]u8, width, graph.alloc)
 	state.precision = make([]Precision_Loss, state.slots, graph.alloc)
 	state.released = make([]bool, state.loans, graph.alloc)
+	state.released_indices = make([dynamic]int, graph.alloc)
 	state.ended = make([]bool, state.loans, graph.alloc)
 	state.severed = make([]bool, len(graph.reborrows), graph.alloc)
 	severable := make([dynamic]int, 0, 4, graph.alloc)
@@ -3032,13 +3034,13 @@ publish_one_loan :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8, end
 // and clears the mark where a loop head re-establishes them.
 @(private = "file")
 mark_released :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8) {
-	mem.zero_slice(state.released)
 	revived := event.kind == .Live && event.revives
 	#partial switch event.kind {
 	case .Live:
 		if !revived {
 			return
 		}
+		mem.zero_slice(state.released)
 		for source in event.sources {
 			row := reach_row(state, reach, source)
 			for index in 0 ..< state.loans {
@@ -3046,16 +3048,24 @@ mark_released :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8) {
 			}
 		}
 	case .Access, .Root_End, .Reset:
+		mem.zero_slice(state.released)
 		end_loans(state, event, reach, state.released)
 	case:
 		return
 	}
+	// Rows change only at the released loans, and most events release none.
+	clear(&state.released_indices)
+	for released, index in state.released {
+		if released {
+			append(&state.released_indices, index)
+		}
+	}
+	if len(state.released_indices) == 0 {
+		return
+	}
 	for slot in 0 ..< state.slots {
 		row := reach_row(state, reach, slot)
-		for index in 0 ..< state.loans {
-			if !state.released[index] {
-				continue
-			}
+		for index in state.released_indices {
 			if revived {
 				bit_clear(row, state.loans + index)
 			} else if bit_get(row, index) {
@@ -3820,15 +3830,15 @@ report_provenance :: proc(state: ^Prov_State) {
 	graph := state.graph
 	// One expression gets one borrow diagnostic: a receiver and the call it
 	// starts, or two rules meeting the same mistake, report once.
-	reported := make(map[[2]u32]bool, 8, graph.alloc)
+	reported := make(map[[2]u32]bool, graph.alloc)
 	visited := make([]bool, len(graph.blocks), graph.alloc)
 	for block, id in graph.blocks {
 		visited[id] = block.prov_visited
 	}
 	window_entry := solve_window(state, visited)
 	shared := Shared_Reports{
-		seen   = make(map[Shared_Report]bool, 4, graph.alloc),
-		scopes = make(map[int]bool, 2, graph.alloc),
+		seen   = make(map[Shared_Report]bool, graph.alloc),
+		scopes = make(map[int]bool, graph.alloc),
 	}
 	for block, id in graph.blocks {
 		if !block.prov_visited || len(block.prov) == 0 {
@@ -4132,9 +4142,9 @@ check_join_retention :: proc(state: ^Prov_State, event: Prov_Event, live: []bool
 	for slot in held {
 		is_task_slot[slot] = true
 	}
-	reported := make(map[Symbol_Id]bool, 2, graph.alloc)
-	wakers := make(map[Symbol_Id]Type_Id, 8, graph.alloc)
-	reached := make(map[Root_Id]Reached_Storage, 4, graph.alloc)
+	reported := make(map[Symbol_Id]bool, graph.alloc)
+	wakers := make(map[Symbol_Id]Type_Id, graph.alloc)
+	reached := make(map[Root_Id]Reached_Storage, graph.alloc)
 	for slot in 0 ..< min(state.slots, len(graph.prov_slots)) {
 		info := graph.prov_slots[slot]
 		sym := symbol_of(c, info.symbol)
@@ -5004,7 +5014,7 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 @(private = "file")
 live_reborrow_of :: proc(state: ^Prov_State, source: int, live: []bool, use: Prov_Event) -> (Prov_Reborrow, int, bool) {
 	graph := state.graph
-	visited := make(map[int]bool, 8, context.temp_allocator)
+	visited := make(map[int]bool, context.temp_allocator)
 	pending := make([dynamic]int, 0, 8, context.temp_allocator)
 	for index in reborrows_of(state, source) {
 		reborrow := graph.reborrows[index]
@@ -5523,7 +5533,7 @@ check_retention :: proc(state: ^Prov_State, event: Prov_Event) {
 	// Written through a carrier (`p^.view`): the destinations are its loans' roots,
 	// live or not.
 	if len(event.into) > 0 {
-		seen := make(map[Root_Id]bool, 4, context.temp_allocator)
+		seen := make(map[Root_Id]bool, context.temp_allocator)
 		it := live_loans(state, nil, event.into)
 		for slot, index in next_live_loan(&it) {
 			target := graph.loans[index].root

@@ -5,6 +5,7 @@ package lokec
 
 import "core:fmt"
 import "core:mem/virtual"
+import "core:strconv"
 import "core:strings"
 
 // An `or_return` mapper's error and the hold that drops it until the mapper
@@ -977,12 +978,20 @@ next_id :: proc(e: ^Emitter) -> int {
 
 @(private)
 temp :: proc(e: ^Emitter) -> string {
-	return fmt.aprintf("%%t%d", next_id(e))
+	return numbered_name("%t", "", next_id(e))
 }
 
 @(private)
 new_label :: proc(e: ^Emitter, prefix: string) -> string {
-	return fmt.aprintf("%s.%d", prefix, next_id(e))
+	return numbered_name(prefix, ".", next_id(e))
+}
+
+// `prefix`, `separator`, and `id` in decimal. Nearly every instruction names
+// a value or label, so this skips `fmt`'s format parsing.
+@(private = "file")
+numbered_name :: proc(prefix, separator: string, id: int) -> string {
+	digits: [24]u8
+	return strings.concatenate({prefix, separator, strconv.write_int(digits[:], i64(id), 10)})
 }
 
 // Common instructions, each naming its own result. Types are LLVM text.
