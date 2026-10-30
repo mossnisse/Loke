@@ -3482,7 +3482,7 @@ publish_view_loan :: proc(graph: ^Flow_Graph, event: Prov_Event, one: int) -> Pr
 		return loan
 	}
 	starts := make(map[[2]int]Prov_View_Start, graph.alloc)
-	offset, length, present, known := publish_view_of(graph, event.view_slot - 1, event.view_reaching, one, last.hi - last.lo, &starts, 0)
+	offset, length, present, known := publish_view_of(graph, event.view_slot - 1, event.view_reaching, one, last.hi - last.lo, &starts)
 	if !present || !known || event.view_index >= length {
 		return loan
 	}
@@ -3516,10 +3516,10 @@ Prov_View_Start :: struct {
 @(private = "file")
 publish_view_of :: proc(
 	graph: ^Flow_Graph, slot: int, reaching: []int, loan: int, range: i64,
-	starts: ^map[[2]int]Prov_View_Start, depth: int,
+	starts: ^map[[2]int]Prov_View_Start,
 ) -> (offset, length: i64, present, known: bool) {
 	defs, recorded := graph.view_defs[slot]
-	if !recorded || len(reaching) == 0 || depth > 8 {
+	if !recorded || len(reaching) == 0 {
 		return 0, 0, true, false
 	}
 	symbol := graph.prov_slots[slot].symbol
@@ -3532,7 +3532,7 @@ publish_view_of :: proc(
 		if index < 0 || index >= len(defs) {
 			return 0, 0, true, false
 		}
-		start := publish_view_def(graph, slot, index, loan, range, starts, depth)
+		start := publish_view_def(graph, slot, index, loan, range, starts)
 		if !start.present {
 			continue
 		}
@@ -3546,11 +3546,12 @@ publish_view_of :: proc(
 
 // `publish_view_of` for definition `index` of `slot`. One reached again
 // while its own answer is being worked out reslices what it made itself, so
-// where it starts is not known.
+// where it starts is not known. Each definition is worked out once, which
+// bounds the walk however long the chain of reslices.
 @(private = "file")
 publish_view_def :: proc(
 	graph: ^Flow_Graph, slot, index, loan: int, range: i64,
-	starts: ^map[[2]int]Prov_View_Start, depth: int,
+	starts: ^map[[2]int]Prov_View_Start,
 ) -> Prov_View_Start {
 	key := [2]int{slot, index}
 	if start, seen := starts^[key]; seen {
@@ -3563,7 +3564,7 @@ publish_view_def :: proc(
 	case def.unknown:
 		start.present = true
 	case def.from > 0:
-		from, viewed, holds, exact := publish_view_of(graph, def.from - 1, def.reaching, loan, range, starts, depth + 1)
+		from, viewed, holds, exact := publish_view_of(graph, def.from - 1, def.reaching, loan, range, starts)
 		hi := def.hi < 0 ? viewed : def.hi
 		if holds {
 			start.present = true
