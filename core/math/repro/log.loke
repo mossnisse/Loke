@@ -18,14 +18,16 @@
 //   halving it is exact, and rh - rh^2/2 is exact as a pair; the parts of r^2
 //   and r^3 with rl that matter, -rh rl and rh^2 rl, are added, and those
 //   left out are below 2^-77 relative. c is under 2^-17.5 relative to r and
-//   evaluated within 5.1 ulps of itself, under 2^-68.2 of r, and |r| is at
-//   most |log x| where the table's part is not zero.
+//   evaluated within 6.02 ulps of itself, under 2^-67.99 of r: three for
+//   rh^3, and three for its cofactor, by Estrin's scheme, from four roundings
+//   of values near 1/3, each under 2^-55. |r| is at most |log x| where the
+//   table's part is not zero.
 // - E ln 2 is E times a 42-bit part, exactly for |E| <= 1075, plus E times
 //   the rest, both within 2^-85 absolute; each L is within 2^-106 of itself;
 //   and every sum is exact as a pair (`two_sum`) but for the low parts, which
 //   are under 2^-50 of the result and round by under 2^-103.
 //
-// These sum to under 2^-68.1. A result is returned when both ends of h + l
+// These sum to under 2^-67.9. A result is returned when both ends of h + l
 // ± 2^-66 h round alike. Otherwise the slow path recomputes log x in 320-bit
 // fixed point as E ln 2 + 2 atanh((y' - 1)/(y' + 1)), y' = y or y/2 as E
 // above, and rounds that; its error is under 2^-300 absolute, and |log x|
@@ -71,7 +73,11 @@ log_kernel :: proc(x: f64) -> (high: f64, low: f64) {
 	// log(1 + r) = (rh - rh^2/2) + the rest.
 	sh, sl := two_product(rh, rh);
 	t1, t2 := two_sum(rh, 0.0 - 0.5*sh);
-	c := sh*rh*(1.0/3.0 - rh*(0.25 - rh*(0.2 - rh*(1.0/6.0 - rh*(1.0/7.0 - rh*(0.125 - rh*(1.0/9.0)))))));
+	// c = rh^3 Q, Q by Estrin's scheme, so that c does not wait on a chain
+	// of seven products and sums, most of this kernel's latency.
+	s4 := sh*sh;
+	q := ((1.0/3.0 - rh*0.25) + sh*(0.2 - rh*(1.0/6.0))) + s4*((1.0/7.0 - rh*0.125) + sh*(1.0/9.0));
+	c := sh*rh*q;
 	tail := t2 + ((rl - 0.5*sl) + (c + (sh*rl - rh*rl)));
 
 	ef := f64(big_e);

@@ -549,6 +549,23 @@ an independent call took half that.
   `hypot` went from 17.1 to 12.6 ns, `pow` from 61 to 56, `tan` from 52 to
   49, and the rest by about 1 ns. It is not adopted.
 
+Then `log_kernel`, behind `log`, `log2`, and `log10`:
+
+- Its series, c = r^3 (1/3 - r/4 + ... + r^6/9), was a degree-6 Horner
+  chain, 56 of the kernel's roughly 125 cycles; by Estrin's scheme it takes
+  about 20. Its rounding grows from 5.1 to 6.02 ulps of c, so `log`'s bound
+  becomes 2^-67.9 where it was 2^-68.1, and `log2`'s and `log10`'s with it.
+- No result changed. Against `log_fixed`, the largest relative error over 6
+  million arguments, any positive bit pattern, near 1 on both sides, and
+  from 2^-32 to 2^32, was 2^-68.5, where the previous kernel's was 2^-68.8.
+- Measured at `-opt=speed` with `bench/math_compare`, two pairs of runs
+  each time, medians per call before and after: `log` 20.5 and 16.7 ns in
+  the first and 18.9 and 17.7 in the second, `log2` 25.3 and 21.4 then 24.9
+  and 22.8, `log10` 27.1 and 23.1 then 26.8 and 24.3; dependent, `log` 35.4
+  and 29.6 then 35.8 and 31.3, `log2` 38.7 and 32.8 then 38.7 and 33.8, and
+  `log10` 39.0 and 33.6 then 39.9 and 33.7. Independent calls overlap the
+  decision and the next call's start, so they gain less than the chain.
+
 Not started: phase 6's faster kernels for the other `f64` functions, whose
 chains a latency count, as for `exp`, would show where to shorten; the
 worst-case latency and simulation frame-time measurements its gate asks

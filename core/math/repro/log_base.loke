@@ -2,10 +2,10 @@
 // `log2` and `log10` in both widths.
 //
 // log2 x and log10 x are log x times 1/ln 2 or 1/ln 10, from `log_kernel`'s
-// h + l, within 2^-68.1 relative, and the constant as a pair within 2^-106
+// h + l, within 2^-67.9 relative, and the constant as a pair within 2^-106
 // of it: h times its high part is exact as a pair (`two_product`), and the
 // cross products and their sum round by under 2^-104 of the result, so the
-// product is within 2^-68 relative, and is returned when it is decided as
+// product is within 2^-67.9 relative, and is returned when it is decided as
 // `log`'s is. For an `f32` argument, `log_quick`, within 6 ulps of log x,
 // times the high part comes first: within 14 ulps of its own value, so
 // narrowing it rounds correctly unless an `f32` midpoint is within 16; then
