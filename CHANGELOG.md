@@ -645,6 +645,12 @@ checklist.
   beside an `inout` destination, as `keep(inout d, r)`, is no longer
   rejected with `L0641` at the call itself
   ([Retaining a borrow](design.md#retaining-a-borrow)).
+- Passing a named read-only reborrow to an `@(escape=stored)` parameter, as
+  `keep(p, read)` after `read: ^Node = r`, is no longer rejected with
+  `L0641` at the call; what the call stores extends the reborrow, so `r`
+  stays unwritable while it is used
+  ([Weakening and reborrows](design.md#weakening-and-reborrows),
+  [Retaining a borrow](design.md#retaining-a-borrow)).
 - `core:math/linalg`'s `perspective` and `perspective_lh` compute their depth
   coefficients from `far/(far - near)` and `near/(far - near)`, so a finite
   near and far whose product overflows or underflows, such as 10 and 1e38 at

@@ -167,8 +167,9 @@ one recognition path to update. Keep both local and parameter cases in the
 borrow matrix when doing this cleanup.
 
 The behavioral findings are recorded in
-[known-gaps.md](known-gaps.md#a-storing-call-rejects-a-named-read-only-reborrow)
-and [the stored read-only copy gap](known-gaps.md#loading-a-stored-named-read-only-copy-loses-its-mutable-source).
+[the stored read-only copy gap](known-gaps.md#loading-a-stored-named-read-only-copy-loses-its-mutable-source);
+the false `L0641` for a named read-only reborrow passed to a `stored`
+parameter is fixed.
 
 ## Review follow-ups for the compiler-performance merge
 

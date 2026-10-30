@@ -105,36 +105,6 @@ an exception to the blanket normalization guarantee, or normalize ordinary
 paths before recursive creation while preserving the extended-length path
 rules. Cover a missing and a file-valued component canceled by `..`.
 
-### A storing call rejects a named read-only reborrow
-
-[Weakening and reborrows](design.md#weakening-and-reborrows) says that copies
-of a read-only reborrow extend its loan without suspending the read-only
-carrier itself. Passing such a copy to a
-[`stored` parameter](design.md#retaining-a-borrow) is legal:
-
-```loke
-package main;
-Node :: struct { value: int }
-Holder :: struct { head: ^Node }
-sink :: proc(value: int) {}
-keep :: proc(p: ^mut Holder, @(escape=stored) n: ^Node) { p^.head = n; }
-caller :: proc(p: ^mut Holder, @(escape=stored) r: ^mut Node) {
-    read: ^Node = r;
-    keep(p, read); // L0641, should be allowed
-    sink(p^.head^.value);
-}
-main :: proc() {}
-```
-
-This compiled before `bb65c244` and is rejected by that commit.
-`prov_reborrow_retained` in [cfg_provenance.odin](src/cfg_provenance.odin)
-links `read` to the destination with `passes_on` left false, so the call's
-own use of its read-only argument conflicts with the stored copy. Ordinary
-copies in `prov_reborrow` set `passes_on` for read-only sources. Apply the
-same rule to retained copies, and cover a named read-only reborrow as well
-as the implicit weakening of a mutable argument. Found reviewing `bb65c244`
-on 2026-10-30.
-
 ### Loading a stored named read-only copy loses its mutable source
 
 [Weakening and reborrows](design.md#weakening-and-reborrows) keeps the mutable

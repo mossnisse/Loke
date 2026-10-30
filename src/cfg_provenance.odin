@@ -8130,10 +8130,14 @@ prov_reborrow_retained :: proc(graph: ^Flow_Graph, sources: []int, mutable: bool
 			continue
 		}
 		mutable_caller := caller[source] && entry.content_type != INVALID_TYPE && carrier_is_mutable(c, entry.content_type)
-		if !prov_slot_is_mutable_carrier(graph, source) && !prov_slot_is_loaded_mutable(graph, source) &&
-		   !prov_slot_is_reborrow(graph, source) && !mutable_caller {
+		mutable_source := prov_slot_is_mutable_carrier(graph, source) || prov_slot_is_loaded_mutable(graph, source) || mutable_caller
+		if !mutable_source && !prov_slot_is_reborrow(graph, source) {
 			continue
 		}
+		// As for a copy (`prov_reborrow`), a named read-only reborrow, or a
+		// read-only carrier loaded out through a pointer, is not itself
+		// suspended by what the call leaves of it: that only extends it.
+		passes_on := !mutable_source && (entry.symbol != INVALID_SYMBOL || prov_slot_is_loaded_read_only(graph, source))
 		for candidate, into in graph.prov_slots {
 			if into == source {
 				continue
@@ -8154,7 +8158,9 @@ prov_reborrow_retained :: proc(graph: ^Flow_Graph, sources: []int, mutable: bool
 				continue
 			}
 			held := type == INVALID_TYPE ? candidate.caller_mutable : carrier_is_mutable(c, type)
-			append(&graph.reborrows, Prov_Reborrow{source = source, derived = into, span = span, mutable = mutable && held})
+			append(&graph.reborrows, Prov_Reborrow {
+				source = source, derived = into, span = span, mutable = mutable && held, passes_on = passes_on,
+			})
 		}
 	}
 }
