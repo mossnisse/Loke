@@ -30,6 +30,9 @@ code. Its five findings are incorporated below: preserve generic `Status`
 fallthrough and `any_view` lifetimes, prove address capture separately from
 borrow escape, prove slice bounds at each access, and remove the incorrect
 small-value ABI premise. The additional evidence is under [Probes](#probes).
+A later revision replaced the `any_view` lowering with deleting `any_view`
+([2.4](#24-existentials-dyn-alone)). That makes the lifetime finding moot,
+and the block-end `any_view` local is counted as lost.
 
 ## Contents
 
@@ -68,10 +71,11 @@ lost, in rough priority order:
 2. **One way to list a sum's alternatives.** `variants_of` accepts an enum,
    whose members are payloadless variants; the integer mapping and
    `enum_values_of` stay `enum`'s ([2.1](#21-sums-enum-and-union)).
-3. **One erasure lowering.** `any_view` is represented as a `dyn` view whose
-   witness carries the `typeid` and the format thunk, so printing calls the
-   formatter directly; its existing storage and temporary-lifetime rules stay
-   ([2.4](#24-existentials-any_view-as-a-dyn-view)).
+3. **One erasure mechanism.** Delete `any_view`. The printers, `assert`, and
+   `panic` take `..dyn Formattable`, a value converts implicitly at a
+   `..dyn I` parameter, and `Formattable` moves to a `base:` package. Checked
+   inspection of an open type set goes; unions, generics, and interfaces cover
+   what it did ([2.4](#24-existentials-dyn-alone)).
 4. **Effects stated once**, as one algebra that the four inferred effects
    read ([2.6](#26-effects-as-one-algebra)).
 5. **Attributes in one position**, with `move_only` as one of them
@@ -270,7 +274,7 @@ still a generics feature with its own design: inference through an alias, its
 `api.loki` form, and whether an alias may be named without its arguments each
 need a rule.
 
-### 2.4 Existentials: `any_view` as a `dyn` view
+### 2.4 Existentials: `dyn` alone
 
 A `dyn I` is an existential package: a data pointer and evidence about the
 hidden type (a witness). An [`any_view`](design.md#any_view-type) is the same
@@ -280,42 +284,90 @@ words, both borrow, and both have no zero value. Printing builds a
 `typeid` through a table, which is the indirection a witness pointer would
 carry directly.
 
-**Proposal.** One lowering, with the surface unchanged:
+`any_view` has two things that `dyn fmt.Formattable` lacks. A value converts to
+it implicitly at its destination, and its `typeid` supports checked
+inspection: `.(T)`, `.as(T)`, and a switch over the type it holds. Printing
+needs the first. The second is the one place where the language lets code ask
+an erased value what it is.
 
-- `any_view` is represented as a `dyn` view of a built-in interface whose
-  witness starts with the concrete type's `typeid` and holds its format thunk.
-  Printing calls the thunk directly; the type `switch`, `.(T)`, and `.as(T)`
-  compare the `typeid`.
-- Keep [all of `any_view`'s source-level rules](design.md#any_view-type).
-  Conversion is implicit at an `any_view` destination, and a `..any_view`
-  parameter may form a temporary slice. An `any_view` still cannot be a result,
-  global, field, ordinary container element, or captured/stored value.
-- Preserve temporary lifetime extension: a temporary converted into an
-  `any_view` local lives until block end; one converted for a call lives through
-  that complete call expression. An ordinary `dyn` view follows slice lifetime
-  rules and its view of a temporary lasts only for the complete expression
-  ([Borrowed dynamic interface values](design.md#borrowed-dynamic-interface-values)).
-  Sharing representation and dispatch does not replace these distinct rules.
+**Proposal.** Delete `any_view`, and make its implicit conversion a property of
+variadic `dyn` parameters:
 
-**What is lost.** Nothing a program can write. The cost is a witness table per
-erased type, which the format-thunk table already is, with a word for the
-`typeid`.
+- A variadic `..dyn I` parameter accepts each argument whose type satisfies
+  `I` and converts it implicitly to a `dyn I` view, as `..any_view` converts
+  today. The temporaries live through the complete call expression, and the
+  materialized `[]dyn I` keeps the variadic rules that `[]any_view` has now:
+  the callee may read, index, iterate, and forward it, and may not store it.
+  An argument that is already a `dyn I` passes as itself instead of being
+  viewed again, so forwarding prints the value and not the view's type name.
+  This entry replaces "concrete values to `any_view`" in
+  [Implicit type conversions](design.md#implicit-type-conversions), so the list
+  [2.7](#27-coercions) wants shorter does not grow. Everywhere else, a `dyn`
+  view is still the explicit `(dyn I)(&x)`.
+- The variadic printers in `core:fmt`, the procedures in `core:log`, and
+  `io.write_formatted` take `..dyn Formattable`. The generated default methods
+  already satisfy it for every printable type.
+- `Formattable`, `Writer` with its `Sink`, and `Options` move into a `base:`
+  package that `core:fmt` re-exports. `assert` and `panic` then take
+  `..dyn Formattable` without making the language core depend on `core:fmt`,
+  just as Rust's `panic!` uses `core::fmt`. A program still calls them without
+  importing anything.
+- `@(c_vararg)` gets a spelling of its own, for example
+  `@(c_vararg) args: ..`, because its `..any_view` is only notation and not the
+  type.
+- The checked extractions `.(T)` and `.as(T)` on an erased value go, along with
+  the switch over a held type. grammar.md loses the `Type(name)` alternative of
+  `Branch_Pattern`, type case values, and the matching clause under
+  [Resolved ambiguities](grammar.md#resolved-ambiguities). Switches and
+  patterns over unions stay.
 
-**What is not proposed.** The first draft also retired `any_view` in favor of
-`..dyn fmt.Formattable` and gave every `dyn` view a checked downcast. Three
-costs decide against it:
+**What it removes.** One of the two erasure mechanisms. In design.md this is
+the [any_view type](design.md#any_view-type) section; the `any_view` entries in
+the conversion list, the printing table, the non-null types, and the
+temporary-lifetime path; and the paired "an `any_view` or
+`dyn fmt.Formattable`" clauses in the concurrency rules, which then name one
+thing. The compiler also loses the `typeid`-to-witness table, because a `dyn`
+view already carries its witness.
 
-- A `dyn` conversion is explicit and starts from a pointer
-  ([Borrowed dynamic interface values](design.md#borrowed-dynamic-interface-values)).
-  `fmt.println(x, 42)` would need an implicit conversion from a value to `dyn`,
-  a new entry in the list [2.7](#27-coercions) wants shorter, or an exception
-  for variadic parameters, which is the exception the change was to remove.
-- `assert` and `panic` are built-ins. Typed with `fmt.Formattable`, they would
-  make the language core depend on `core:fmt`.
-- A downcast on every `dyn` lets code special-case the concrete type behind an
+**What is lost.**
+
+- **Checked inspection of an open type set.** This is code that receives a
+  value of any type and branches on what it is. Each use has a replacement
+  that says more. A closed set of types is a union. A type known where the
+  call is written is a `$T` parameter with compile-time reflection. Behavior
+  that varies by type over an open set is an interface: a SQL binder
+  `db.exec(query, ..args)` that sends integers, floats, and strings
+  differently takes `..dyn Bindable`, implemented once per type. A user type
+  joins by implementing the interface, and a wrapper cannot silently fall
+  into a default case.
+- **The `any_view` local.** `view: any_view = make_guard();` and its block-end
+  extension go. The value is named instead.
+- **Library freedom in formatting.** `Formattable`'s signature, `Writer`, and
+  `Options` become part of the `base:` layer that the built-ins use, so
+  changing them is a language change rather than a library one.
+- **Migration.** A parameter typed `..any_view` becomes `..dyn fmt.Formattable`
+  mechanically. Each `.(T)`, `.as(T)`, and type switch on an `any_view` is
+  rewritten by hand into one of the forms above, so the change needs an
+  upgrade note.
+
+**What is not proposed.**
+
+- **A checked downcast on every `dyn`.** The first draft retired `any_view`
+  this way. A downcast lets code special-case the concrete type behind an
   interface, and a wrapper type then silently loses those special cases, as
-  Go's interface upgrades do. Today a `dyn I` holder can only call slots, and
-  design.md sends checked inspection to `any_view`.
+  Go's interface upgrades do. Without `any_view`, no erased value can be
+  inspected, and that is the point of deleting it.
+- **An implicit conversion from a value to `dyn` at every destination.** Only a
+  variadic parameter converts, as only an `any_view` destination does today. A
+  `dyn` local or argument stays an explicit borrow from a pointer
+  ([Borrowed dynamic interface values](design.md#borrowed-dynamic-interface-values)).
+- **Lowering `any_view` as a `dyn` view while keeping its rules.** An earlier
+  revision of this review proposed this. It changes representation and
+  dispatch but keeps every source rule, so the specification would not shrink.
+  It would also have had to preserve storage and temporary rules that differ
+  from `dyn`'s, as the
+  [review of these proposals](open-questions.md#review-of-the-design-review-proposals-2026-10-31)
+  found.
 
 ### 2.5 Procedures are callable records
 
@@ -560,7 +612,7 @@ where code can act on them, and comments.md
 leaves procedure reflection out of that tier "without a demonstrated
 consumer", so the runtime table is the one place a procedure's shape is
 reflected. Printing does not read `Type_Info`: it dispatches through
-generated format thunks ([2.4](#24-existentials-any_view-as-a-dyn-view)), so
+generated format thunks ([2.4](#24-existentials-dyn-alone)), so
 the remaining consumer is a program that wants a type's name, size, or member
 table at run time.
 
@@ -683,6 +735,7 @@ thing. Each row names the replacement and what is lost.
 | Delete | Replaced by | Lost | Priority |
 | --- | --- | --- | --- |
 | `Status` as a nominal type, `Status.map_error` | `Status :: Result(Unit, $E)` ([2.3](#23-status-is-resultunit-e)) | The type name `Status(E)` at run time; `Result(Unit, E)` gains fallthrough, bare `return;`, `.ok` printing, and the null niche | High |
+| `any_view`, its `.(T)`, `.as(T)`, and type switch | `..dyn fmt.Formattable` with implicit conversion at a variadic; unions, `$T`, and interfaces ([2.4](#24-existentials-dyn-alone)) | Checked inspection of an open type set; the block-end `any_view` local | High |
 | Type-position attributes, inline nominal `enum`/`union` | Declaration attributes ([3.1](#31-attributes-in-one-position)) | `[size_of(enum { A, B })]u8` | Medium |
 | `move_only` keyword | `@(move_only)` ([2.8](#28-affine-types-a-drop-hook-needs-a-copy-decision)) | A reserved word | Medium |
 | "Any of a union's variants to that union" | Nothing; the compiler already rejects it | Nothing | Done with this review |
@@ -981,9 +1034,15 @@ compiler, test, and changelog change in one commit as AGENTS.md requires.
       upgrade note for type names.
 4. `variants_of` accepts an enum ([2.1](#21-sums-enum-and-union)). Independent
    of step 3.
-5. `any_view` lowered as a `dyn` view. Depends on nothing above; touches the
-   witness layout and the printing path while preserving its storage
-   restrictions and temporary lifetimes.
+5. Delete `any_view` ([2.4](#24-existentials-dyn-alone)), in two commits.
+   Independent of the steps above.
+   1. Move `Formattable`, `Writer`, `Sink`, and `Options` into a `base:`
+      package that `core:fmt` re-exports, and let a value convert implicitly
+      at a `..dyn I` parameter. Nothing is removed yet.
+   2. Retype the printers, `core:log`, `io.write_formatted`, `assert`, and
+      `panic` as `..dyn Formattable`; give `@(c_vararg)` its own spelling; and
+      delete `any_view`, its extractions, and type switches, with an upgrade
+      note.
 6. Attributes in one position, `@(move_only)`, and the copy decision for drop
    hooks.
 7. Range facts and loop versioning for checked arithmetic
@@ -1065,8 +1124,11 @@ outweighs its gain, and none is recommended.
   without them, such as Core 2 and Phenom II. [CPU levels](compiler-guide.md#cpu-levels)
   already recommends `x86-64` for distribution and says what `x86-64-v2`
   costs, and the startup check makes opting in safe.
-- **Retire `any_view` for `..dyn fmt.Formattable` with a downcast on every
-  `dyn`**, for the reasons in [2.4](#24-existentials-any_view-as-a-dyn-view).
+- **A checked downcast on every `dyn`**, which the first draft paired with
+  retiring `any_view`, for the reasons in [2.4](#24-existentials-dyn-alone).
+- **Lowering `any_view` as a `dyn` view while keeping its rules.** It was
+  superseded by deleting `any_view`, because it changed the compiler without
+  shrinking the specification ([2.4](#24-existentials-dyn-alone)).
 - **A drop hook implies move-only**, for the reasons in
   [2.8](#28-affine-types-a-drop-hook-needs-a-copy-decision).
 - **Give every payloadless union `enum`'s integer mapping and ordering**, for

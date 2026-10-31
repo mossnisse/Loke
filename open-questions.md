@@ -155,7 +155,7 @@ prerequisites; the language changes themselves remain proposals.
 
 4. **Keep `any_view`'s storage and temporary rules when sharing its lowering
    (P2).**
-   [Section 2.4](design-review-2026-10-31.md#24-existentials-any_view-as-a-dyn-view)
+   [Section 2.4](design-review-2026-10-31.md#24-existentials-dyn-alone)
    originally proposed using `dyn` lifetime rules with only implicit conversion
    and variadic packing as differences. [An `any_view`](design.md#any_view-type)
    also cannot be a result, field, ordinary container element, or captured
@@ -167,6 +167,11 @@ prerequisites; the language changes themselves remain proposals.
    valid today. Sharing a witness representation is compatible with retaining
    these rules, but replacing them as written is a language change. List them
    explicitly or narrow the proposal to representation and dispatch.
+
+   Superseded: section 2.4 now proposes deleting `any_view`, so no lowering has
+   to keep these rules. Its implicit conversion survives only at a `..dyn I`
+   parameter, whose temporaries live through the call. The block-end local is
+   counted as lost.
 
 5. **Remove the incorrect small-value ABI premise (P2).**
    [Section 6.5](design-review-2026-10-31.md#65-union-layout-and-small-values)
