@@ -20,7 +20,7 @@ a type now gets the generated default for the `Formattable` slot and prints by
 it in every package, its own included, as
 [String format printing](design.md#string-format-printing) and
 [Interface bodies](design.md#interface-bodies) together require; the
-`tests/pkg/private_formatter` case pins it. Two questions the spec leaves
+`tests/pkg/private_formatter` case pins it. Three questions the spec leaves
 open remain with that fix:
 
 - **Ordinary lookup of a hidden default `format`.** Ordinary lookup of
@@ -32,6 +32,12 @@ open remain with that fix:
   `format` is never what printing calls, which an author may not expect. A
   warning at the declaration would say so, but would also fire for a method
   meant only for direct calls in its package.
+- **A bound generic's direct call in the defining package.** There, a
+  procedure bound by `where fmt.Formattable(T)` that calls
+  `value^.format(...)` finds the private method by ordinary lookup, which
+  comes before the bound, while printing the same value uses the default.
+  Whether a call through the bound should instead reach the slot's method is
+  part of the first question.
 
 The other two findings remain:
 
