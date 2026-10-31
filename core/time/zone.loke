@@ -403,24 +403,35 @@ read_system_zone :: proc() -> System_Zone {
 	return zone;
 }
 
-// Windows answers for every year, giving the earliest rule it records for the
-// years before it and the latest for the years after.
+// standard-library "Time zones": a zone with dynamic daylight saving off, or
+// one set without a registry key, as `SetTimeZoneInformation` can, has the
+// fixed rule it supplies every year. For any other, Windows answers for every
+// year, giving the earliest rule it records for the years before it and the
+// latest for the years after.
 @(private)
 system_rule :: proc(zone: ^System_Zone, year: int) -> Year_Rule {
+	if (zone^.dynamic_daylight_time_disabled != 0 || zone^.key_name[0] == 0) {
+		return rule_of(zone^.information);
+	}
 	information := Time_Zone_Information{};
 	asked := u16(math.max(0, math.min(year, 9999)));
 	if (rt_time_zone_for_year(asked, zone, &mut information) == 0) { system_failed(); }
+	return rule_of(information);
+}
+
+// The rule a `TIME_ZONE_INFORMATION` records. A transition month of zero is a
+// rule without daylight saving: turning automatic adjustment for it off clears
+// both, while turning off only dynamic updates keeps them as a fixed annual
+// rule.
+@(private)
+rule_of :: proc(information: Time_Zone_Information) -> Year_Rule {
 	rule := Year_Rule{
 		standard = minutes_east(information.bias + information.standard_bias),
 		daylight = minutes_east(information.bias + information.daylight_bias),
 		daylight_starts = transition_of(information.daylight_date),
 		standard_starts = transition_of(information.standard_date),
 	};
-	// A month of zero is a year without daylight saving. With automatic
-	// adjustment off the clock shows standard time all year, though
-	// `SystemTimeToTzSpecificLocalTimeEx` still applies the rules.
-	rule.daylight_saving = information.daylight_date.month != 0 && information.standard_date.month != 0 &&
-		zone^.dynamic_daylight_time_disabled == 0;
+	rule.daylight_saving = information.daylight_date.month != 0 && information.standard_date.month != 0;
 	if (rule.daylight_saving && !(names_a_day(information.daylight_date) && names_a_day(information.standard_date))) {
 		system_failed();
 	}

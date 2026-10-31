@@ -105,3 +105,23 @@ impl Lone($T) {
 	_ = Row(2){};
 	_ = Secret(int).HIDDEN;
 }
+
+// A generic `impl`'s type alias is read by its target's syntax, as any alias's
+// is, whether or not the target names a `$` name of the block, and once however
+// many instances there are.
+@(public) Shelf :: struct($T: type) { value: T }
+@(private) Point_Alias :: Point;
+impl Shelf($T) {
+	@(public) Inner :: Corner;
+	@(public) Aliased :: Point_Alias; // a private alias of a public type
+	@(public) Paired :: Twin(T, Corner);
+	@(public) Mapped :: map[T]Corner;
+	@(public) Callback :: proc(corner: Corner);
+	@(public) Plain_Twin :: Twin(T, Point); // not reported
+	@(public) Itself :: T; // not reported
+}
+@(private) shelves :: proc() {
+	_ = Shelf(int){};
+	_ = size_of(Shelf(bool).Paired);
+	_ = size_of(Shelf(int).Inner);
+}

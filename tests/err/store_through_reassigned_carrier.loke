@@ -81,4 +81,57 @@ copied :: proc() {
 	r^.tail^.value = 1;
 }
 
+Outer :: struct { pointer: ^mut Pair }
+Swap :: struct { first: ^mut Node, second: ^mut Node }
+
+// A carrier in a field: `holder.pointer^.head` goes through the old
+// `holder.pointer`, so it is `x.head`.
+field_carrier :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3}; d := Node{4};
+	x := Pair{&mut a, &mut b};
+	y := Pair{&mut c, &mut d};
+	holder := Outer{&mut x};
+	holder.pointer, holder.pointer^.head = &mut y, holder.pointer^.tail;
+	h := x.head;
+	b.value = 7;
+	h^.value = 1;
+}
+
+// The whole record holding the carrier is replaced.
+whole_record :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3}; d := Node{4};
+	x := Pair{&mut a, &mut b};
+	y := Pair{&mut c, &mut d};
+	holder := Outer{&mut x};
+	holder, holder.pointer^.head = Outer{&mut y}, holder.pointer^.tail;
+	h := x.head;
+	b.value = 7;
+	h^.value = 1;
+}
+
+// A carrier loaded out of storage the earlier store replaces: `o^.pointer` is
+// loaded before `o^.pointer = &mut y` is written.
+stored_carrier :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3}; d := Node{4};
+	x := Pair{&mut a, &mut b};
+	y := Pair{&mut c, &mut d};
+	holder := Outer{&mut x};
+	o := &mut holder;
+	o^.pointer, o^.pointer^.head = &mut y, o^.pointer^.tail;
+	h := x.head;
+	b.value = 7;
+	h^.value = 1;
+}
+
+// Destructuring into the fields of the record it reads: `r.first` takes the
+// old `r.second`, the borrow of `b`.
+destructured_fields :: proc() {
+	a := Node{1}; b := Node{2};
+	r := Swap{&mut a, &mut b};
+	r.second, r.first = r;
+	h := r.first;
+	b.value = 7;
+	h^.value = 1;
+}
+
 main :: proc() {}

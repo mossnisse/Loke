@@ -3870,9 +3870,15 @@ applies. Its history is what Windows records: changes Microsoft has published,
 with the earliest recorded rule standing in for the years before it and the
 latest for the years after. The package owns no zone data, and Windows Update
 keeps the system's current. The `TZ` environment variable, which the C runtime
-reads, is not consulted. When automatic adjustment for daylight saving time is
-off in Windows' settings, the clock shows standard time all year, and so does
-the zone: each year's standard offset.
+reads, is not consulted.
+
+A zone that supplies its own fixed rule has that rule every year instead, as
+`SystemTimeToTzSpecificLocalTime` applies it: one with no registry key, as
+`SetTimeZoneInformation` can set, or one whose dynamic daylight saving is
+disabled. Daylight saving runs between the rule's transition dates each year,
+unless the dates are cleared. When automatic adjustment for daylight saving
+time is off in Windows' settings, Windows clears them: the clock shows
+standard time all year, and so does the zone.
 
 Each use reads the current setting, so a long-running program follows a change
 to the system zone, and nothing is read at import

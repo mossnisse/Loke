@@ -58,8 +58,49 @@ destructured :: proc() {
 	fmt.println(a.value, b.value, c.value, d.value);
 }
 
+Outer :: struct { pointer: ^mut Pair }
+
+// A carrier in a field: `holder.pointer^.head` is `x.head`.
+field_carrier :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3}; d := Node{4};
+	x := Pair{&mut a, &mut b};
+	y := Pair{&mut c, &mut d};
+	holder := Outer{&mut x};
+	holder.pointer, holder.pointer^.head = &mut y, holder.pointer^.tail;
+	h := x.head;
+	a.value = 10;
+	h^.value += 20;
+	k := y.head;
+	d.value = 30;
+	k^.value += 40;
+	fmt.println(a.value, b.value, c.value, d.value);
+}
+
+// The whole record holding the carrier is replaced, and the store still goes
+// through the old one; then through `o^.pointer`, loaded before the first
+// store replaces it.
+whole_record :: proc() {
+	a := Node{1}; b := Node{2}; c := Node{3}; d := Node{4}; e := Node{5}; f := Node{6};
+	x := Pair{&mut a, &mut b};
+	y := Pair{&mut c, &mut d};
+	z := Pair{&mut e, &mut f};
+	holder := Outer{&mut x};
+	holder, holder.pointer^.head = Outer{&mut y}, holder.pointer^.tail;
+	o := &mut holder;
+	o^.pointer, o^.pointer^.head = &mut z, o^.pointer^.tail;
+	h := x.head;
+	k := y.head;
+	a.value = 10;
+	c.value = 30;
+	h^.value += 20;
+	k^.value += 40;
+	fmt.println(a.value, b.value, c.value, d.value, e.value, f.value);
+}
+
 main :: proc() {
 	reassigned();
 	in_turn();
 	destructured();
+	field_carrier();
+	whole_record();
 }

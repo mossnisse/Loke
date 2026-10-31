@@ -11,7 +11,8 @@ import "core:strings"
 // template and a generic `impl`'s members are checked per instance, so their
 // syntax resolves to nothing, and what an importer reads is the written name.
 // The one type read, an untyped constant's, is read for a generic `impl`'s
-// members by `read_generic_impl_constants` and `check_instance_private_names`.
+// members by `read_generic_impl_constants` and `check_instance_private_names`;
+// the first also says which of those members are type aliases.
 check_private_names :: proc(c: ^Compiler, package_id: Package_Id) {
 	pkg := package_of(c, package_id)
 	// design.md "Exported names": nothing imports a `package main`.
@@ -221,16 +222,20 @@ read_public_decl :: proc(x: ^Exposure, d: ^Decl, subject: string) {
 			walk(x, v.backing, .Type)
 		case ^Type_Distinct:
 			walk(x, v.elem, .Type)
+		case ^Type_Pointer, ^Type_C_Pointer, ^Type_Slice, ^Type_Dynamic_Array, ^Type_Array, ^Type_Map, ^Type_Dyn, ^Type_Proc, ^Type_Anon_Record, ^Type_Anon_Union:
+			walk(x, d.values[index], .Type) // a type alias's target, written as one
 		case:
-			if symbol != nil && symbol_names_type(x.c, symbol) {
+			// A generic `impl`'s member has no symbol: whether its value is a
+			// type, `read_generic_impl_constants` decided, and a constant's
+			// value is read there by its type.
+			names_type := symbol_names_type(x.c, symbol) if symbol != nil else name.span in x.c.generic_impl_types
+			if names_type {
 				walk(x, d.values[index], .Type) // a type alias's target
 			} else if d.declared_type != nil {
 				walk(x, d.declared_type, .Type)
 			} else if symbol != nil && symbol.kind == .Const {
 				report_constant_type(x, name, symbol.type)
 			}
-			// A generic `impl`'s member has no symbol, and is read where its
-			// value has a type (`read_generic_impl_constants`).
 		}
 	}
 }
@@ -611,6 +616,13 @@ private_type_in :: proc(c: ^Compiler, scope: ^Scope, type: Type_Id, bound: []Typ
 // default: a speculative check of a copy against stand-ins for those names
 // sees whether any lookup reached one. A value that names one is read per
 // instance, by `check_instance_private_names`.
+//
+// A member whose value is a type is a type alias, whose target
+// `check_private_names` reads by its syntax, as it does any alias's: a private
+// alias of a public type is a name an importer cannot write, though the type
+// it means is public. Resolution says so here for a value that names no `$`
+// name; one that does is a type when it instantiates a generic record, as
+// `Pair(T, Corner)` does.
 read_generic_impl_constants :: proc(k: ^Checker, item: ^Item_Impl, template: ^Generic_Template) {
 	call, is_call := item.type.(^Expr_Call)
 	pkg := package_of(k.c, k.pkg)
@@ -643,11 +655,22 @@ read_generic_impl_constants :: proc(k: ^Checker, item: ^Item_Impl, template: ^Ge
 			type := check_single_expr(k, clone_expr(k.c, d.values[index]))
 			k.scope = saved
 			end_probe(k.c, probe)
-			if !stand_ins.reached && type != INVALID_TYPE && type != TYPE_TYPE {
+			is_type := instantiates_generic_record(k, d.values[index]) if stand_ins.reached else type == TYPE_TYPE
+			if is_type {
+				k.c.generic_impl_types[name.span] = true
+			} else if !stand_ins.reached && type != INVALID_TYPE {
 				read_impl_constant(k.c, pkg.scope, item, name, type, nil)
 			}
 		}
 	}
+}
+
+// `Name(...)` where `Name` is a generic record, which a `$` name in the
+// arguments leaves unresolved until an instance binds it.
+@(private = "file")
+instantiates_generic_record :: proc(k: ^Checker, value: Expr) -> bool {
+	call, is_call := value.(^Expr_Call)
+	return is_call && generic_template_of_callee(k, call.callee, .Record) != nil
 }
 
 // design.md "Private names in public declarations": a generic `impl`'s

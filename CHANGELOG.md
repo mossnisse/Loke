@@ -22,6 +22,17 @@ checklist.
   borrow first, or by splitting the statement: `p^.head = v; p = q;` stores
   through the old `p`, `p = q; p^.head = v;` through the new one.
 
+- The same holds when the reassigned carrier is a field or the whole record
+  that holds it, as `holder.pointer` in
+  `holder.pointer, holder.pointer^.head = &mut y, holder.pointer^.tail` or
+  `holder` in `holder, holder.pointer^.head = Outer{&mut y}, ...`, or when it
+  is loaded through a pointer an earlier target replaces. A destructuring
+  assignment that reads the record it writes, as `r.second, r.first = r`,
+  now keeps the values the record held before the statement. Code that
+  relied on the old reading is now rejected with `L0511`
+  ([Evaluation order](design.md#evaluation-order)). Upgrade as above, by
+  splitting the statement in the order you mean.
+
 - A loop that copies `s[k].head` out of a slice parameter, stores
   `s[k].tail` into it at a variable index, and uses the copy after the store
   is now rejected with `L0641`, as it already was through a pointer that may
@@ -764,6 +775,17 @@ checklist.
   `impl`: at the declaration when the value names none of the block's `$`
   names, otherwise once from the instances
   ([Private names in public declarations](design.md#private-names-in-public-declarations)).
+- A public type alias in a generic `impl` now warns `L0740` when its target
+  names a private type, as it does in a non-generic `impl`, including a
+  private alias of a public type and a target such as `Pair(T, Corner)` that
+  names the block's `$` names
+  ([Private names in public declarations](design.md#private-names-in-public-declarations)).
+- `time.local_zone` on Windows no longer panics for a zone set without a
+  registry key, as `SetTimeZoneInformation` can leave it, and a zone whose
+  dynamic daylight saving is disabled keeps its fixed annual transitions
+  instead of showing standard time all year; it reads the zone's own rule,
+  as Windows' clock does
+  ([Time zones](standard-library.md#time-zones)).
 
 - `fs.create_directories` creates only the directories of the path Windows
   normalizes its argument to, so `a/skipped/../made` no longer creates

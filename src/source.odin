@@ -144,6 +144,10 @@ Compiler :: struct {
 	// value's type (`src/private_names.odin`), so one is reported once however
 	// many instances read it.
 	private_constants_read: map[Span]bool,
+	// The names of public generic `impl` members whose value is a type, which
+	// no symbol in the template records, so `check_private_names` reads them
+	// as type aliases.
+	generic_impl_types: map[Span]bool,
 
 	// Interface declarations (`src/interface.odin`), keyed by their symbol.
 	interfaces:            map[Symbol_Id]^Interface_Info,

@@ -16,3 +16,15 @@ L0641
 L0641
 @80:5
 `p` cannot be used here: a mutable reborrow of it is still in use
+L0511
+@96:2
+this write of `b` is not compatible with the mutable pointer of it that is still in use
+L0511
+@108:2
+this write of `b` is not compatible with the mutable pointer of it that is still in use
+L0511
+@122:2
+this write of `b` is not compatible with the mutable pointer of it that is still in use
+L0511
+@133:2
+this write of `b` is not compatible with the mutable pointer of it that is still in use

@@ -2463,12 +2463,17 @@ boundaries and API shapes follow a few common choices:
   that record names. With both, the two agree at every instant compared:
   hourly from 1990 to 2030 on both sides of each hour, and every 15 minutes
   around each new year and every 37 hours from 1678 to 2261.
-- **Automatic adjustment off means standard time.** With "Adjust for daylight
-  saving time automatically" off, Windows' clock shows standard time all year
-  and `GetDynamicTimeZoneInformation` sets `DynamicDaylightTimeDisabled`.
-  `SystemTimeToTzSpecificLocalTimeEx` ignores that flag and still applies the
-  rules, but the zone is the one the clock shows, as .NET's
-  `TimeZoneInfo.Local` also takes it.
+- **A zone's own fixed rule stands when Windows' records do not apply.**
+  `DynamicDaylightTimeDisabled` turns off the per-year records, not daylight
+  saving: Windows then uses the fixed annual transitions the zone supplies,
+  and only a zone whose transition dates are cleared, as turning off "Adjust
+  for daylight saving time automatically" leaves it, shows standard time all
+  year. A zone set with `SetTimeZoneInformation` can have no registry key, so
+  `GetTimeZoneInformationForYear` has nothing to look up, though Windows still
+  applies the zone's own rule. In both cases the package reads that rule, as
+  `SystemTimeToTzSpecificLocalTime` does. `SystemTimeToTzSpecificLocalTimeEx`
+  ignores the flag and still applies the records, but the zone is the one the
+  clock shows, as .NET's `TimeZoneInfo.Local` also takes it.
 - **`resolve` tries offsets rather than inverting the rule.** Each offset the
   zone uses within a day of the time is converted back, and those that show
   the time again are kept. That handles any rule, including a change of rule

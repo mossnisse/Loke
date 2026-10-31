@@ -49,6 +49,16 @@ warning[L0740]: public `Row.CORNERS` has the private type `Corner`
 @92:12
 warning[L0740]: public `Lone.LONE` has the private type `Corner`
 @98:12
+warning[L0740]: public `Shelf.Inner` names the private type `Corner`
+@115:21
+warning[L0740]: public `Shelf.Aliased` names the private type `Point_Alias`
+@116:23
+warning[L0740]: public `Shelf.Paired` names the private type `Corner`
+@117:30
+warning[L0740]: public `Shelf.Mapped` names the private type `Corner`
+@118:28
+warning[L0740]: public `Shelf.Callback` names the private type `Corner`
+@119:37
 !`Padded.hidden`
 !`area_int`
 !`twice`
@@ -67,3 +77,5 @@ warning[L0740]: public `Lone.LONE` has the private type `Corner`
 !`Holder.INNER`
 !`Secret.HIDDEN`
 !`Lone.LONE_TWIN`
+!`Shelf.Plain_Twin`
+!`Shelf.Itself`

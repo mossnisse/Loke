@@ -690,7 +690,7 @@ be file-private. Paths below are relative to `src/`.
 | `slice.odin`, `container.odin`, `text.odin`, `simd.odin`, `atomics.odin` | The slice type, its shared ABI type and queries; managed-container, text, SIMD, and atomic semantics, and the member tables of the built-in carriers. |
 | `capture.odin` | Lower capture literals to ordinary records, `call` methods, and record literals. |
 | `test_procedures.odin` | `@(test)` declarations, checked in every build and called only by a test build's entry. |
-| `private_names.odin` | The warning for a public declaration that names a private one of its package, read from the written signatures once a package is checked; a generic `impl`'s untyped constant is read by its value's type at the declaration or per instance. |
+| `private_names.odin` | The warning for a public declaration that names a private one of its package, read from the written signatures once a package is checked; a generic `impl`'s untyped constant is read by its value's type at the declaration or per instance, and one whose value is a type by its target's syntax, as any type alias is. |
 | `parallel.odin` | `parallel` blocks and `spawn` statements: placement, callee and result rules, and each spawn's frame record and run procedure ([Lowering parallel blocks](#lowering-parallel-blocks)). |
 | `box.odin` | Box types, construction, unboxing, dereference projections, and shared allocation layout. |
 | `hash.odin`, `format.odin`, `iterate.odin` | Contributed hashing, coherent formatting, ranges, `foreach`, and iteration protocol support. |
@@ -939,10 +939,11 @@ API:
   every day from 0000-01-01 to 9999-12-31; every parse error; and a
   print-then-parse round trip for every type and style. The package's own
   tests, in `core/time/zone_test.loke`, give the zone rule evaluation known
-  rules: the European Union's, the United States', New South Wales', and
-  Windows' records of zones whose rule changes at a new year.
-  `lib_time_zone` compares the system zone with
-  `SystemTimeToTzSpecificLocalTimeEx` in the machine's own zone. An
+  rules: the European Union's, the United States', New South Wales',
+  Windows' records of zones whose rule changes at a new year, and the fixed
+  rules a system zone can supply. `lib_time_zone` compares the system zone
+  with `SystemTimeToTzSpecificLocalTimeEx`, or `SystemTimeToTzSpecificLocalTime`
+  for a zone with a fixed rule, in the machine's own zone. An
   `.expected` file holds no clock reading or offset of the machine's zone,
   only comparisons with one.
 - For `core:math/repro`: `tests/math_oracle.odin` is an independent oracle,

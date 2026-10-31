@@ -6519,17 +6519,23 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 	// so a value read from a variable this statement also writes, as in
 	// `a, b = b, a`, keeps what the variable held then.
 	value_loans := value_loans
+	// The slots a target redefines: a carrier local's own, or the content slots
+	// of a record local, whole as `holder` or in part as `holder.pointer`.
 	written := make([dynamic]int, 0, len(s.lhs), graph.alloc)
 	if len(s.lhs) > 1 {
 		for target in s.lhs {
 			if ident, is_ident := target.(^Expr_Ident); is_ident {
 				if slot, is_carrier := prov_slot_for_symbol(graph, ident.symbol); is_carrier {
 					append(&written, slot)
+				} else {
+					append(&written, ..prov_content_slots(graph, ident.symbol))
 				}
+			} else if root, path, place_ok := prov_place_of(graph, target); place_ok {
+				append(&written, ..prov_content_at(graph, root, path))
 			}
 		}
 	}
-	if len(written) > 0 && !s.destructure.active && value_loans != nil {
+	if len(written) > 0 && value_loans != nil {
 		captured := make([][]int, len(value_loans), graph.alloc)
 		for loans, index in value_loans {
 			captured[index] = prov_capture_slots(graph, loans, written[:], s.op_span)
@@ -6539,9 +6545,13 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 	// The destinations are evaluated next, all before the first write, so a
 	// store through a carrier another target of this statement redefines, as
 	// `p^.head` in `p, p^.head = &mut y, p^.tail`, goes where the carrier
-	// pointed then (design.md "Values that contain borrows").
+	// pointed then (design.md "Values that contain borrows"). That holds for a
+	// carrier in a field, as `holder.pointer` in
+	// `holder.pointer, holder.pointer^.head = &mut y, holder.pointer^.tail`,
+	// and for one loaded out of storage an earlier store replaces, as `p^.inner`
+	// in `p^.inner, p^.inner^.head = &mut y, ...`: the read loads it now.
 	destinations: []Prov_Destination
-	if len(written) > 0 && s.op == .Assign {
+	if len(s.lhs) > 1 && s.op == .Assign {
 		destinations = make([]Prov_Destination, len(s.lhs), graph.alloc)
 		for target, index in s.lhs {
 			if _, is_ident := target.(^Expr_Ident); is_ident {

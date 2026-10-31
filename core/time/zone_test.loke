@@ -316,3 +316,84 @@ january_midnight_marks_the_start_of_the_year :: proc() {
 	assert(resolve_given(brazil_rule, wall(2002, .December, 31, 23, 30)) == Resolution.overlap({minutes(-180), minutes(-240)}));
 	assert(resolve_given(brazil_rule, wall(2003, .November, 4, 0, 30)) == Resolution.gap({minutes(-240), minutes(-180)}));
 }
+
+when (LOKE_OS == .Windows) {
+
+// standard-library "Time zones": a system zone's own fixed rule, which a zone
+// set without a registry key, or with dynamic daylight saving off, has every
+// year. Windows is not asked, so these need no particular system setting.
+
+// The offset a system zone gives at the instant `utc` names.
+@(private)
+offset_of_system :: proc(zone: System_Zone, utc: Date_Time) -> int {
+	rules := Rules{source = .system(zone)};
+	return offset_in(inout rules, wall_nanoseconds(utc)).east;
+}
+
+// A zone at `bias` minutes west of UTC, `daylight_bias` more in daylight
+// saving from `daylight_date` to `standard_date`.
+@(private)
+supplied_zone :: proc(bias, daylight_bias: i32, daylight_date, standard_date: System_Time) -> System_Zone {
+	zone := System_Zone{};
+	zone.information.bias = bias;
+	zone.information.daylight_bias = daylight_bias;
+	zone.information.daylight_date = daylight_date;
+	zone.information.standard_date = standard_date;
+	return zone;
+}
+
+@(test)
+a_zone_without_a_key_has_its_own_rule :: proc() {
+	// As `SetTimeZoneInformation` leaves one: the European Union's rule at
+	// +01:00, from the last Sunday of March at 02:00 to the last Sunday of
+	// October at 03:00, which Windows' own fixed-rule conversion follows.
+	zone := supplied_zone(-60, -60,
+		System_Time{month = 3, weekday = 0, day = 5, hour = 2},
+		System_Time{month = 10, weekday = 0, day = 5, hour = 3});
+	zone.dynamic_daylight_time_disabled = 1;
+	assert(offset_of_system(zone, wall(2026, .July, 1, 12, 0)) == 120);
+	instant := parse_time("2026-07-01T12:00:00Z") or_else panic("time test: an instant");
+	assert(instant.at_offset(minutes(offset_of_system(zone, wall(2026, .July, 1, 12, 0)))).date_time == wall(2026, .July, 1, 14, 0));
+	assert(offset_of_system(zone, wall(2026, .March, 29, 0, 59)) == 60);
+	assert(offset_of_system(zone, wall(2026, .March, 29, 1, 0)) == 120);
+	assert(offset_of_system(zone, wall(2026, .October, 25, 0, 59)) == 120);
+	assert(offset_of_system(zone, wall(2026, .October, 25, 1, 0)) == 60);
+	assert(offset_of_system(zone, wall(1990, .January, 15, 12, 0)) == 60);
+	rules := Rules{source = .system(zone)};
+	assert(resolve_in(inout rules, wall(2026, .March, 29, 2, 30)) == Resolution.gap({minutes(60), minutes(120)}));
+
+	// With dynamic daylight saving on, the empty key still names no rules.
+	zone.dynamic_daylight_time_disabled = 0;
+	assert(offset_of_system(zone, wall(2026, .July, 1, 12, 0)) == 120);
+	assert(offset_of_system(zone, wall(2026, .December, 1, 12, 0)) == 60);
+}
+
+@(test)
+dynamic_daylight_saving_off_keeps_fixed_transitions :: proc() {
+	// A registered zone at -09:00 and -08:00 in daylight saving, from March's
+	// second Sunday to November's first at 02:00, with dynamic updates off
+	// but its transitions kept.
+	zone := supplied_zone(540, -60,
+		System_Time{month = 3, weekday = 0, day = 2, hour = 2},
+		System_Time{month = 11, weekday = 0, day = 1, hour = 2});
+	zone.key_name[0] = 0x41; // "A"
+	zone.dynamic_daylight_time_disabled = 1;
+	assert(offset_of_system(zone, wall(2026, .July, 1, 12, 0)) == -480);
+	assert(offset_of_system(zone, wall(2026, .January, 15, 12, 0)) == -540);
+	// March 8 and November 1, 2026, at 02:00 local time.
+	assert(offset_of_system(zone, wall(2026, .March, 8, 10, 59)) == -540);
+	assert(offset_of_system(zone, wall(2026, .March, 8, 11, 0)) == -480);
+	assert(offset_of_system(zone, wall(2026, .November, 1, 9, 59)) == -480);
+	assert(offset_of_system(zone, wall(2026, .November, 1, 10, 0)) == -540);
+
+	// Turning automatic adjustment off clears both transitions: standard
+	// time all year.
+	zone.information.daylight_date = System_Time{};
+	zone.information.standard_date = System_Time{};
+	assert(offset_of_system(zone, wall(2026, .July, 1, 12, 0)) == -540);
+	assert(offset_of_system(zone, wall(2026, .January, 15, 12, 0)) == -540);
+	rules := Rules{source = .system(zone)};
+	assert(resolve_in(inout rules, wall(2026, .March, 8, 2, 30)) == Resolution.unique(minutes(-540)));
+}
+
+}

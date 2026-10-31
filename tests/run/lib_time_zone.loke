@@ -4,9 +4,10 @@ import "core:fmt";
 import "core:time";
 
 // standard-library "Time zones": the system zone against Windows' own
-// conversion, `SystemTimeToTzSpecificLocalTimeEx`, through this year and the
-// next in whatever zone the machine has, and the public procedures' agreement
-// with one another there. Known rules with gaps and overlaps are checked by the
+// conversion, `SystemTimeToTzSpecificLocalTimeEx` or, for a zone with a fixed
+// rule, `SystemTimeToTzSpecificLocalTime`, through this year and the next in
+// whatever zone the machine has, and the public procedures' agreement with one
+// another there. Known rules with gaps and overlaps are checked by the
 // package's own tests in core/time/zone_test.loke, which can give the rule
 // evaluation its rules as data. The expected output holds only counts.
 
@@ -33,34 +34,36 @@ Dynamic_Time_Zone_Information :: struct {
 	dynamic_daylight_time_disabled: u8,
 }
 
-// `core:time` binds the first two with `rawptr` parameters, and a foreign
-// symbol has one type, so these do too.
+// `core:time` binds the first with a `rawptr` parameter, and a foreign symbol
+// has one type, so this does too.
 foreign kernel32 {
 	@(link_name="GetDynamicTimeZoneInformation")
 	dynamic_time_zone :: proc "stdcall" (zone: rawptr) -> u32 ---;
-	@(link_name="GetTimeZoneInformationForYear")
-	time_zone_for_year :: proc "stdcall" (year: u16, zone: rawptr, information: rawptr) -> i32 ---;
 	@(link_name="SystemTimeToTzSpecificLocalTimeEx")
 	to_local_time :: proc "stdcall" (zone: ^Dynamic_Time_Zone_Information, utc: ^System_Time, local: ^mut System_Time) -> i32 ---;
+	@(link_name="SystemTimeToTzSpecificLocalTime")
+	to_fixed_local_time :: proc "stdcall" (zone: ^Time_Zone_Information, utc: ^System_Time, local: ^mut System_Time) -> i32 ---;
 }
 
-// Windows' offset at `instant`, in minutes east. With automatic adjustment for
-// daylight saving off, the clock shows the year's standard time, which
-// `SystemTimeToTzSpecificLocalTimeEx` does not follow, so the year's standard
-// offset is the answer then.
+// Windows' offset at `instant`, in minutes east. A zone with dynamic daylight
+// saving off, or one without a registry key, keeps the fixed rule it supplies,
+// which `SystemTimeToTzSpecificLocalTime` applies; with automatic adjustment
+// off that rule has no transitions, and the clock shows standard time all
+// year. Any other follows the registry's rules, as
+// `SystemTimeToTzSpecificLocalTimeEx` does.
 windows_offset :: proc(zone: ^Dynamic_Time_Zone_Information, instant: time.Time) -> int {
 	utc := instant.utc();
-	if (zone^.dynamic_daylight_time_disabled != 0) {
-		information := Time_Zone_Information{};
-		if (time_zone_for_year(u16(utc.date.year()), zone, &mut information) == 0) { panic("no rule for the year"); }
-		return -int(information.bias + information.standard_bias);
-	}
 	asked := System_Time{
 		u16(utc.date.year()), u16(int(utc.date.month())), u16(int(utc.date.weekday()) % 7), u16(utc.date.day()),
 		u16(utc.time.hour()), u16(utc.time.minute()), u16(utc.time.second()), u16(utc.time.nanosecond() / 1000000),
 	};
 	local := System_Time{};
-	if (to_local_time(zone, &asked, &mut local) == 0) { panic("SystemTimeToTzSpecificLocalTimeEx failed"); }
+	if (zone^.dynamic_daylight_time_disabled != 0 || zone^.key_name[0] == 0) {
+		information := zone^.information;
+		if (to_fixed_local_time(&information, &asked, &mut local) == 0) { panic("SystemTimeToTzSpecificLocalTime failed"); }
+	} else if (to_local_time(zone, &asked, &mut local) == 0) {
+		panic("SystemTimeToTzSpecificLocalTimeEx failed");
+	}
 	month := time.Month.from_int(int(local.month)) or_else panic("a month");
 	date := time.Date.from_components(int(local.year), month, int(local.day)) or_else panic("a date");
 	shown := i64(local.hour) * 60 + i64(local.minute);
