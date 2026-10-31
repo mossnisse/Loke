@@ -11,48 +11,6 @@ Design rationale and differences from Odin are recorded in
 The current behavior inventory is in [Nondeterminism and undefined behavior
 audit](nondeterminism-audit.md).
 
-## Storage scope of the chosen-place guarantee
-
-The chosen-place row in
-[Minimum provenance precision](design.md#minimum-provenance-precision) says
-"8 places of one storage". Does the guarantee apply only when all alternatives
-name one storage, or independently to each storage a carrier may name? State
-the scope explicitly and test a choice across roots. The current
-`PROV_OFFSET_LIMIT` bounds a carrier's combined projection paths, without a
-separate budget for each root: four choices from `s` and five from `t` already
-force a merge and reject the otherwise disjoint write below:
-
-```loke
-package main;
-Wide :: struct { a: int, b: int, c: int, d: int, e: int, z: int }
-Sides :: struct { left: Wide, right: Wide, z: int }
-chosen :: proc(s: ^mut Sides, t: ^mut Sides, i: int) -> int {
-    q := &mut s^.left.a;
-    if (i == 1) { q = &mut s^.left.b; }
-    if (i == 2) { q = &mut s^.left.c; }
-    if (i == 3) { q = &mut s^.left.d; }
-    if (i == 4) { q = &mut t^.left.e; }
-    if (i == 5) { q = &mut t^.right.a; }
-    if (i == 6) { q = &mut t^.right.b; }
-    if (i == 7) { q = &mut t^.right.c; }
-    if (i == 8) { q = &mut t^.right.d; }
-    value := &q^;
-    s^.left.z = 1; // L0641, naming the eight-place limit
-    return value^;
-}
-main :: proc() {}
-```
-
-Removing the last choice makes the program compile. `Prov_Slot.offsets` in
-[src/borrow.odin](src/borrow.odin) stores unkeyed paths; `prov_value_offset`
-and `prov_note_offset` in [src/cfg_provenance.odin](src/cfg_provenance.odin)
-merge them under one limit. A guarantee per root needs the paths associated
-with their roots instead. The boundary test added by `6e3807fb` covers only
-one root, so it does not settle the wording's scope. Confirmed while reviewing
-that commit on 2026-10-31 with a freshly built compiler; the diagnostic suite
-and specification citation check pass. No further correctness finding or
-actionable simplification was found in this small, focused change.
-
 ## Review of the zone, math, Once, and evaluator commits (2026-10-31)
 
 Reviewed `da8e5fd7`, `a7ae660b`, `b505e25e`, and `e32d97f6` for correctness,

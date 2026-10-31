@@ -2,9 +2,11 @@
 // affect acceptance, type identity, or the generated program.
 package lokec
 
-// `Places` is the places below one storage a pointer is told apart at
-// (`PROV_OFFSET_LIMIT`), the specification's chosen-places minimum.
-Precision_Limit :: enum { Array_Elements, Depth, Width, Map_Width, Map_Keys, Map_Summary, Places }
+// `Places` is the places below one storage, and in all, a pointer is told
+// apart at (`PROV_OFFSET_LIMIT`, `PROV_OFFSET_TOTAL`), the specification's
+// chosen-places minimums; `Storages` is a pointer that may point into several
+// storages taken to point at each of its places in every one.
+Precision_Limit :: enum { Array_Elements, Depth, Width, Map_Width, Map_Keys, Map_Summary, Places, Storages }
 Precision_Loss :: bit_set[Precision_Limit; u8]
 
 path_precision :: proc(path: []Proj_Step) -> (loss: Precision_Loss) {
@@ -38,9 +40,14 @@ add_precision_notes :: proc(c: ^Compiler, span: Span, loss: Precision_Loss) {
 		add_notef(c, span, "provenance precision loss: procedure result contracts merge map entry identities across calls, preserving only enclosing paths and the key/value distinction")
 	}
 	if .Places in loss {
-		add_notef(c, span, "provenance precision limit: a pointer that may point at more than %d places of one storage is taken to point at a place they share", PROV_OFFSET_LIMIT)
+		add_notef(c, span, "provenance precision limit: a pointer that may point at more than %d places of one storage, or %d in all, is taken to point at a place they share", PROV_OFFSET_LIMIT, PROV_OFFSET_TOTAL)
 	}
-	if loss == {.Places} {
+	if .Storages in loss {
+		add_notef(c, span, "provenance precision limit: a pointer that may point into more than one storage is taken to point at each of its places in every one")
+	}
+	if loss == {.Storages} {
+		add_notef(c, span, "this conservative dependency may cause the rejection; choose the pointer among places of one storage to keep them apart")
+	} else if loss != {} && loss <= {.Places, .Storages} {
 		add_notef(c, span, "this conservative dependency may cause the rejection; choose the pointer among fewer places to keep them apart")
 	} else if loss != {} {
 		add_notef(c, span, "this conservative dependency may cause the rejection; pass or return the needed field or element separately to preserve its provenance")

@@ -61,5 +61,13 @@ L0641
 L0641
 @167:2
 `s` cannot be used here: a read-only reborrow of it that may cover this place is still in use
-provenance precision limit: a pointer that may point at more than 8 places of one storage is taken to point at a place they share
+provenance precision limit: a pointer that may point at more than 8 places of one storage, or 64 in all, is taken to point at a place they share
 this conservative dependency may cause the rejection; choose the pointer among fewer places to keep them apart
+L0641
+@186:2
+`s` cannot be used here: a read-only reborrow of it that may cover this place is still in use
+L0641
+@197:2
+`t` cannot be used here: a read-only reborrow of it that may cover this place is still in use
+provenance precision limit: a pointer that may point into more than one storage is taken to point at each of its places in every one
+this conservative dependency may cause the rejection; choose the pointer among places of one storage to keep them apart

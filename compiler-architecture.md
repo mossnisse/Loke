@@ -384,7 +384,7 @@ behavioral controls for all of it.
 | `thread_local` borrows crossing calls, and callbacks | `Compiler.thread_local_writes`, `Callback_Write`, `Callback_Read`, `CALLBACK_RESULT`, `prov_callback_result`, `prov_callback_returned` |
 | Global-write effects and the callbacks a call passes | `compute_global_writes`, `Called_Parameter`, `Callback_Summary`, `call_parts`, `indirect_call_targets`, `callable_type_targets` in `global_effects.odin` |
 | Thread summaries for `parallel` blocks | `compute_thread_summaries`, `Compiler.reach_effects`, `allocator_uses`, `thread_facts_pending`, `thread_summaries_wanted` |
-| Bounded merges and the diagnostics that say *may* | `precision.odin`, `Carrier_Path.cut`, `PROV_OFFSET_LIMIT`, `L0641`, `L0646`, `L0647`, `L0730` |
+| Bounded merges and the diagnostics that say *may* | `precision.odin`, `Carrier_Path.cut`, `PROV_OFFSET_LIMIT`, `PROV_OFFSET_TOTAL`, `L0641`, `L0646`, `L0647`, `L0730` |
 
 Keep these contracts:
 
@@ -403,13 +403,17 @@ Keep these contracts:
   borrow's conflict is `L0641`, a switch's `L0511`.
 - **Paths are below the pointee, and bounded.** Slot offsets, place-loan
   paths, written-alias paths, and region content paths all start below where
-  the carriers point, so a write lands only where it names. Offsets merge past
-  eight places and alias paths stop at `WRITTEN_ALIAS_DEPTH`; a truncated
-  path carries the precision marker, so `L0646`, `L0647`, and `L0730` say the
-  borrow *may* be there, and recursive cursors converge. A place loan or
-  `.Through` event made from merged offsets (`Prov_Slot.offsets_merged`)
-  carries `Precision_Limit.Places`, so its `L0641` or `L0511` says the
-  reborrow *may* cover the place and names the limit.
+  the carriers point, so a write lands only where it names. Each offset
+  records the carrier slot whose storage it was reached in (`Prov_Offset`),
+  and offsets merge past eight places of one such storage or 64 in all; place
+  loans and `.Through` events take their paths in every storage the carriers
+  name. Alias paths stop at `WRITTEN_ALIAS_DEPTH`; a truncated path carries the
+  precision marker, so `L0646`, `L0647`, and `L0730` say the borrow *may* be
+  there, and recursive cursors converge. A place loan or `.Through` event made
+  from merged offsets (`Prov_Slot.offsets_merged`) carries
+  `Precision_Limit.Places`, and one from offsets of several storages that do
+  not cover each other `Precision_Limit.Storages`, so its `L0641` or `L0511`
+  says the reborrow *may* cover the place and names the limit.
 - **A store through carriers is a `Publish` event.** It joins what is stored
   into the slots of each storage the carriers' loans name. Where they name one
   place with one live loan of exact path, the slot of the stored type at that
