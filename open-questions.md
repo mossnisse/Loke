@@ -1059,6 +1059,26 @@ copyable, and nothing already in the package changes.
   its field is private. A fixed zone could print its offset; what the system
   zone prints waits on its name.
 
+### Local time zone commit review (2026-10-31)
+
+Open findings from reviewing `4e84bec2`, beyond the behavior divergences in
+[Known gaps](known-gaps.md#gaps):
+
+- **Include package tests in the optimization matrix.**
+  `library_packages_pass_their_tests` in
+  [corpus_test.odin](tests/corpus_test.odin) accepts `LOKE_TEST_FLAGS`, but
+  [test-all.ps1](test-all.ps1) omits it from `$matrix`. Consequently `-Full`
+  and CI run the synthetic zone-rule tests only at the baseline optimization
+  level; the public integration test covers only the machine's current zone.
+  Add the package-test procedure to the matrix, following
+  [Testing and verification](compiler-architecture.md#testing-and-verification).
+- **Reuse the Windows ABI prefix.** `System_Zone` in
+  [zone.loke](core/time/zone.loke) repeats all seven fields of
+  `Time_Zone_Information`. Embed one `information: Time_Zone_Information`
+  field, as [lib_time_zone.loke](tests/run/lib_time_zone.loke) already does.
+  The layout stays the same, six declarations disappear, and the prefix has
+  one definition. Keep the existing size assertions.
+
 ## Formatting
 
 The current formatter rules and rationale are in [comments.md

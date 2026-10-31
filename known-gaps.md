@@ -7,6 +7,65 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
+### The local time zone requires a Windows registry key
+
+[Time zones](standard-library.md#time-zones) defines the local zone as the
+zone the system's clock shows. A custom, fixed-rule Windows zone set with
+`SetTimeZoneInformation` can have an empty `TimeZoneKeyName`. Windows still
+uses its supplied offsets and transitions, but `system_rule` in
+[zone.loke](core/time/zone.loke) always calls
+`GetTimeZoneInformationForYear`, which needs a registered zone.
+
+On a system with that legacy configuration, this program panics instead of
+printing the local time:
+
+```loke
+package main;
+import "core:fmt";
+import "core:time";
+main :: proc() {
+    instant := time.parse_time("2026-07-01T12:00:00Z") or_else panic("a time");
+    fmt.println(time.local_zone().to_local(instant));
+}
+```
+
+A read-only probe reproduced the failing lookup without changing the system
+setting: a `System_Zone` with an empty key, bias -60, daylight bias -60,
+the last Sundays of March and October at 02:00 and 03:00, and
+`dynamic_daylight_time_disabled = 1`. `GetTimeZoneInformationForYear(2026,
+...)` returned zero with Windows error 2, so `system_rule` panics. The fixed
+rule conversion `SystemTimeToTzSpecificLocalTime` succeeded and returned
+14:00 for the instant above.
+
+Decode the supplied zone's own rule when no registry key is available.
+Microsoft documents the legacy configuration under
+[SetTimeZoneInformation](https://learn.microsoft.com/en-us/windows/win32/api/timezoneapi/nf-timezoneapi-settimezoneinformation).
+Found reviewing `4e84bec2` on 2026-10-31.
+
+### Disabling dynamic Windows rules also disables fixed annual daylight saving
+
+[Time zones](standard-library.md#time-zones) promises the zone the system's
+clock shows. `system_rule` in [zone.loke](core/time/zone.loke) treats
+`DynamicDaylightTimeDisabled` alone as disabling all daylight saving.
+Windows also uses that flag for a fixed set of annual transitions: disabling
+dynamic updates and disabling daylight saving are distinct. Microsoft
+documents that disabling daylight saving also clears both transition dates
+under
+[DYNAMIC_TIME_ZONE_INFORMATION](https://learn.microsoft.com/en-us/windows/win32/api/timezoneapi/ns-timezoneapi-dynamic_time_zone_information).
+
+Use the program in [The local time zone requires a Windows registry
+key](#the-local-time-zone-requires-a-windows-registry-key) with a registered
+zone whose dynamic updates are disabled but whose standard and daylight
+transition dates are retained. In a read-only probe with an installed zone
+at -09:00 standard and -08:00 daylight, both returned transition months
+remained nonzero (November and March). For 2026-07-01T12:00:00Z, Windows'
+fixed-rule conversion returned 04:00, while `offset_in` returned -09:00,
+making Loke show 03:00. No system setting was changed for the probe.
+
+Preserve the supplied annual transitions when dynamic updates are off, and
+distinguish that mode from cleared transition dates. Found reviewing
+`4e84bec2` on 2026-10-31.
+
 ### Multiple assignment still rereads carriers stored in fields or whole records
 
 [Evaluation order](design.md#evaluation-order) evaluates every destination
