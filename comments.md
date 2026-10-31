@@ -2915,6 +2915,27 @@ The declaration adds no symbol. It never reaches the selected view the checker
 walks, so no other pass treats a `---` body as a foreign procedure or a missing
 definition, and the name keeps the one identity the compiler gave it.
 
+### Projects name dependencies, not versions
+
+Imports carry no version and no location. A project gives each dependency a
+name, and the name is a collection prefix, `import "json:parse";`, so moving or
+vendoring `json` changes one manifest line and no source
+([Projects](compiler-guide.md#projects)). One name names one directory in the
+whole program, across every dependency's manifest: a conflict is an error
+rather than two copies of a package, because two copies would give one type two
+identities, and a `-collection` override chooses the directory for the whole
+program. The names are one flat space, so a program can import a dependency of
+a dependency without requiring it. The manifest is plain `require <name>
+<path>` lines, trivial to parse now and in a self-hosted compiler.
+
+When versioned sources arrive, the version chosen is the highest minimum any
+manifest asks for, as Go's minimal version selection does: deterministic
+without a solver. Selection alone does not pin content, so the lock records
+each dependency's source, version, immutable commit, and checksum
+([Packages and dependencies](future-plans.md#packages-and-dependencies)). What
+identity and compatibility boundary that selection works within is open
+([Package and import versioning](open-questions.md#package-and-import-versioning)).
+
 ### A CPU level changes instructions, not results
 
 The instructions a build may use, the numerical contract of its math, and its

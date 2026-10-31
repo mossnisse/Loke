@@ -11,69 +11,6 @@ Design rationale and differences from Odin are recorded in
 The current behavior inventory is in [Nondeterminism and undefined behavior
 audit](nondeterminism-audit.md).
 
-## Review of the index-set, capture-evaluation, and integer-bit additions
-
-Review of `9a66aa7a`, `eae9478e`, and `ae7e1fb1` on 2026-10-31 found no
-correctness issue and one small simplification:
-
-- **Reuse the count emitter for `bit_width`.** In
-  [emit_llvm_calls.odin](src/emit_llvm_calls.odin), `emit_bit_width` repeats
-  the widening/narrowing to `int` already handled by `emit_bit_count`.
-  Call `emit_bit_count(e, v, "ctlz")`, then subtract that `int` from the
-  operand's width. A zero count is at most 128, so moving the conversion
-  before the subtraction preserves every result. This removes nine lines;
-  keep the source-width `emit_ctlz` helper for the power-of-two round-up.
-  Update the bit-width comment and the subtraction shape in
-  [lib_math_bits.expected](tests/ll/lib_math_bits.expected) to `i64`.
-
-The isolated simplification passes the integer-bit runtime regression at
-default and speed optimization, exhaustive compile-time and runtime checks
-of every `u8` and `i8` value against an independent reference, wider constant
-cases, the adjusted IR shapes, and LLVM assembly. The original commits pass
-all 177 compiler unit tests, diagnostics, LLVM shapes, both changed package
-interface checks, and all three affected runtime regressions at default and
-speed optimization. The three new panic cases also match their expected
-output and errors.
-
-The fallible resize keeps its transaction boundary by growing storage before
-changing membership or capacity, and compile-time captures reuse the existing
-record evaluator while checking the final result boundary. Their structure
-does not need another abstraction. The working tree's concurrent geometry
-and documentation edits were preserved.
-
-## Review of the known-gap closure commits
-
-Review on 2026-10-30 covered removal of the view-start depth cutoff
-(`475dd041`), multiple-assignment destination capture (`d1ee2a57`), generic
-`impl` constant warnings (`2372c82c`), unknown-index view-parameter stores
-(`5387ce1c`), and the iterative view-start walk (`7c4bd5dd`). The integrated
-compiler was rebuilt from `5322493c`.
-
-One remaining soundness issue is recorded in
-[known-gaps.md](known-gaps.md#multiple-assignment-still-rereads-carriers-stored-in-fields-or-whole-records):
-the destination-capture phase is enabled only by a list of bare carrier
-identifiers, so replacing a field or a whole record can still make a later
-destination use its carrier's new contents. Make destination preparation a
-phase over all targets of a multiple assignment, independent of the special
-case for capturing right-hand values read from rewritten local carriers.
-This keeps the phase boundary aligned with evaluation order and covers the
-different destination forms through the same preparation path.
-
-The other changes keep clear responsibilities. The explicit stack and
-per-definition cache in [borrow.odin](src/borrow.odin) preserve cycle
-detection while avoiding a host-stack limit. The view-parameter helpers keep
-syntax recognition, destination-slot selection, and publication distinct.
-The generic-constant checks use value types, keep declaration checks separate
-from instance checks, and retain the once-per-declaration warning rule. No
-additional structural simplification was identified in those four changes.
-
-Validation passes all 175 compiler unit tests, the borrow matrix, both
-diagnostics suites, and the new
-[multiple-assignment runtime regression](tests/run/store_through_reassigned_carrier.loke).
-Generated programs with 512 and 4,096 identity reslices also compile. The
-field and whole-record destination reproductions compile incorrectly; the
-equivalent sequential field stores correctly report `L0511`.
-
 ## JSON follow-ups
 
 [`core:encoding/json`](standard-library.md#coreencodingjson) implements the
@@ -165,24 +102,12 @@ borrow makes few.
 
 ## Compositional loan construction
 
-Loan construction had separate paths for subject views, ordinary borrows,
-traversal, loaded carriers, and outer carriers, and each pointer-copy fix added
-a context-specific repair. Three migrations in October 2026 replaced them: every
-access to a place reached through carriers, whether a load, borrow, store, or
-switch subject, goes through one walk of the normalized place; a parameter's
-caller storage has slots of its own, so locals and parameters behave alike; and
-a switch, a borrow, a slice, and a traversal of such a place each take one
-**place loan**, which every access through a carrier naming that storage is
-checked against (`Prov_Place_Loan`, `check_place_loans`). The mechanism is
-described in [Ownership, lifecycle, and
-provenance](compiler-architecture.md#ownership-lifecycle-and-provenance). A
-generated matrix, [borrow_matrix_test.odin](tests/borrow_matrix_test.odin),
-crosses eleven place forms with a copy, a payload binding, a read-only or
-mutable borrow, slice, or traversal, and eighteen uses beside each, in
-straight-line code, a branch, or a loop, against a model of the rules written
-apart from the compiler.
-
-Still open:
+Every access to a place reached through carriers goes through one walk of the
+normalized place, and a borrow, slice, traversal, or switch of one takes a
+**place loan** ([Ownership, lifecycle, and
+provenance](compiler-architecture.md#ownership-lifecycle-and-provenance));
+[borrow_matrix_test.odin](tests/borrow_matrix_test.odin) checks the rules
+against a model written apart from the compiler. Still open:
 
 - **A view's elements.** A view's loans name its elements with a wildcard, so
   they are one place: `&mut s[0]` suspends `s[1]`, and a write to
@@ -197,24 +122,15 @@ Still open:
   reborrowed from its previous value. Explicit reaching definitions would state
   them as one rule; evaluate that if another loop or branch form needs a fourth.
 - **Caller storage contents.** A store through a parameter's loan lands in the
-  caller slots standing for the storage it names, and replaces what one held
-  where that storage is one place reached through pointers
-  (`publish_into_caller`); a later load reads them (`read_caller_slots`). Caller
-  slots of different loans are taken to name different storage, so a store
-  through one is not seen through another that a cyclic structure makes the
-  same, though a mutable cycle such as `l.next = .some(&mut l)` keeps `l`
-  suspended, so `&mut l` cannot then be passed on (`L0511`). A view's slots stand for all of its elements, which no store
-  replaces. One element at a constant index has slots of its own, which a store
-  naming it replaces: a view parameter's (`prov_view_element`), and a local
-  view's whose start in the range its borrow lends is known
-  (`prov_local_view_element`). A carrier stored into a view parameter at any
-  other index lands in each of its element slots and replaces none
-  (`prov_view_any_element_store`). A record stored whole into any element of
-  a view parameter still joins into the parameter itself, as does a store
-  whose copies no reborrow links to where it lands. A record stored whole through a parameter replaces, and
-  links, each carrier slot it lands in. Storage below the second load gets a loan per carrier only
-  where the storage above it is one place; through a view or past the last
-  load depth it is one slot.
+  caller slots for the storage it names (`publish_into_caller`), and a later
+  load reads them. The remaining imprecision: caller slots of different loans
+  are taken to name different storage, so a store through one is not seen
+  through another that a cyclic structure makes the same (a mutable cycle
+  such as `l.next = .some(&mut l)` keeps `l` suspended, so this cannot be
+  exploited); a view's slots stand for all its elements, apart from an element
+  at a constant index; a record stored whole into a view parameter's element
+  joins into the parameter itself; and storage below the second load, or
+  through a view, is one slot.
 - **Matrix coverage.** Slices and traversals are taken of a fixed array, so
   no use beside them reallocates storage, and nothing leaves a traversal or a
   loop early with `break` or `return`. A loop that takes afresh is the one
@@ -239,37 +155,15 @@ declaration and leaves dependency versions to the build system or package
 manager. A future package design may need reproducible version selection without
 making source imports depend on a particular registry.
 
-Decided so far, and built as `loke.project` (compiler-guide.md "Projects"):
-
-- Imports carry no version and no location. A project gives each dependency a
-  name, and the name is a collection prefix: `import "json:parse";`. Where
-  `json` comes from is the project's business, so moving or vendoring it
-  changes one manifest line and no source; when another manifest also
-  requires `json`, the line conflicts with it, and a `-collection` override
-  chooses the directory for the whole program
-  ([Projects](compiler-guide.md#projects)).
-- One name names one directory in the whole program, across every
-  dependency's manifest. A conflict is an error rather than two copies of a
-  package, because two copies would give one type two identities. The names
-  are one flat space, so a program can import a dependency of a dependency
-  without requiring it; a later version may require the direct `require`.
-- The manifest is plain `require <name> <path>` lines, trivial to parse now and
-  in a self-hosted compiler.
-- Dependencies are local directories. When versioned sources arrive (a git URL
-  and tag, fetched into a cache outside the compiler front end), the version
-  chosen is the highest minimum any manifest asks for, as Go's minimal version
-  selection does: deterministic without a solver. Version selection alone does
-  not pin source content: the lock must record the selected source, version,
-  immutable commit ID, and content checksum for every dependency, as planned in
-  [Packages and dependencies](future-plans.md#packages-and-dependencies).
+What is decided, and why, is in
+[Projects name dependencies, not versions](comments.md#projects-name-dependencies-not-versions).
 
 ### Before versioned sources
 
 The local-directory workflow is implemented; versioned resolution is still a
-direction. These findings concern the choices needed before extending it, not
-compiler divergences from the current specification. The lock, offline builds,
-and explicit update boundary are already covered by
-[Packages and dependencies](future-plans.md#packages-and-dependencies).
+direction, planned in
+[Packages and dependencies](future-plans.md#packages-and-dependencies). Two
+choices are needed before extending it:
 
 - **Separate a collection prefix from dependency identity.** Two independent
   libraries can both use `json` for unrelated sources. The flat namespace
@@ -385,55 +279,7 @@ interface file as a Loke document instead of a Markdown preview.
 - **A checked list of a package's main entry points.** The overview's checked
   references cover it.
 
-### Implementation plan
-
-Each step is one or more commits that update the spec, implementation, tests,
-citing comments, and CHANGELOG together, and passes `.\test-all.ps1`. The
-steps are in priority order; each is usable without the next.
-
-1. **`///` doc comments**: done on 2026-10-21.
-2. **The interface file**: done on 2026-10-21.
-3. **Inferred lines.**
-   - `src/doc.odin`: the result contract from `result_summary`
-     (`src/borrow.odin`) and the write effect from `c.global_writes`
-     (`src/global_effects.odin`), turned into the phrasings above; hover adds
-     the same line.
-   - Regenerate every `api.loki` and read the diff: each line is a claim
-     about a bundled procedure, and a surprising one is a finding for
-     `known-gaps.md` or for the procedure.
-   - Tests: a case for each phrasing, a generic procedure and a `when`
-     declaration getting none, and a procedure with nothing to report.
-   - [releasing.md](releasing.md): a changed `inferred:` line in a bundled
-     package is listed as a possible break. CHANGELOG: Added.
-4. **Examples.**
-   - [design.md "Test procedures"](design.md#test-procedures): the `example`
-     attribute, what it may name, and that it is a test in every other way.
-   - Checker: resolve the named declaration, and report a private name used
-     in an example's body.
-   - `src/doc.odin`: the `// example:` line in the interface file.
-   - Gate: a corpus test that runs `-test` on every bundled package with
-     tests. None has any today.
-   - Write a first few examples in `core:strings` and `core:container`.
-     CHANGELOG: Added.
-5. **Checked references.**
-   - Resolution of backticked spans in doc comments in the scopes above, a
-     warning code for an unresolved one, and the scope rule in design.md
-     "Comments".
-   - Fix what it reports in `core/` and `base/`.
-   - Tests: resolved and unresolved names, a parameter, a member, and prose
-     spans that are not checked. CHANGELOG: Added.
-6. **HTML `-doc`.**
-   - A new `src/doc_html.odin`: pages, anchors, coloring from the lexer's
-     tokens, links from the checker's resolution of each name in a signature,
-     the comment subset, and examples' bodies.
-   - `src/main.odin`: `-doc` writes the directory, with `-o` to choose it.
-     The Markdown writer and `tests/doc/`'s Markdown goldens are removed.
-   - Tests: an HTML golden for one case, and a check that every link on every
-     bundled package's page has a target.
-   - [compiler-guide.md](compiler-guide.md): `-doc` and the comment subset.
-     CHANGELOG: Changed, with an upgrade note for scripts that read `-doc`'s
-     Markdown.
-7. **Compiler-contributed declarations**: done on 2026-10-27.
+The steps are in priority order, and each is usable without the next.
 
 ### Still open
 
@@ -725,138 +571,20 @@ a model can work on one part of a program without reading the rest.
 ### Deterministic math functions
 
 [`core:math`](standard-library.md#coremath)'s transcendental functions bind
-the C library, and are documented as not deterministic. Two causes were
-measured on 2026-10-27:
+the C library and are not deterministic. The statically linked UCRT chooses
+between an FMA3 and a legacy implementation at run time, and the two disagreed
+on up to one seeded argument in 40 (`tan`, 2026-10-27); LLVM also folds a call
+with constant arguments using the compiling machine's library. Neither path is
+more than an ulp from correct rounding, but `exp` misses it on about one
+argument in 200 and `sin` and `cos` on one in 40 (2026-10-29, against
+[the oracle](tests/math_oracle.odin)), and `sinf` and `cosf` of an infinity
+return a negative NaN.
 
-- **The processor.** The statically linked UCRT chooses between an FMA3 and a
-  legacy implementation at run time. One executable, run over 200,000 seeded
-  arguments per function with each path forced through `_set_FMA3_enable`,
-  disagreed with itself on `tan` 5,319 times, `asin` 2,596, `sin` 2,124, `cos`
-  2,092, `acos` 1,012, `exp` 295, `pow` 63, `atan` 57, and `atan2` 15; on
-  `asin_f32` 1,761, `acos_f32` 463, and `log10_f32` 22. `log`, `log2`,
-  `hypot`, and the other `f32` functions did not differ, which is an
-  observation, not a promise. A processor without FMA3, such as an Intel one
-  before Haswell, a budget Pentium or Celeron from before about 2021, or a
-  virtual machine that hides AVX, takes the legacy path.
-- **The optimizer.** The bindings are plain `sin`, `pow`, ... declarations
-  with no `nobuiltin`, so LLVM constant-folds a call with constant arguments
-  using the compiling machine's library: at `-opt=speed`, `math.sin(0.5)`
-  becomes a constant.
+The answer so far is a separate correctly rounded package,
+[`core:math/repro`](standard-library.md#coremathrepro), with platform math
+kept and a decision on the default after measurement
+([Future plans](future-plans.md#standard-library-maturity)). Open:
 
-How far the UCRT is from correct rounding was measured on 2026-10-29 against
-[the oracle](tests/math_oracle.odin), over 200,000 seeded arguments per
-function and width on each path (exp over its finite-result range, log over
-every positive normal, sin and cos half within 2^20 and half over every
-magnitude). The results not correctly rounded, FMA3 path then legacy path:
-
-| Function | `f64` | `f32` |
-| --- | --- | --- |
-| `exp` | 992, 1,038 | 20, 20 |
-| `log` | 2, 2 | 18, 19 |
-| `sin` | 4,723, 5,096 | 129, 129 of 156,205 finite |
-| `cos` | 4,670, 5,031 | 133, 133 of 156,287 finite |
-
-None was more than one ulp away, which also cross-checks the oracle against an
-independent implementation over 1.5 million arguments. `sinf` and `cosf` of an
-infinity return `0xffc00000`, a negative NaN, where the reproducible contract
-returns the positive canonical one.
-
-The proposed fix implements the functions in Loke, **correctly rounded**,
-porting CORE-MATH (MIT license). They would use only the `+ - * /` and
-`math.fma` that design.md "Floating-point operators" already pins. Replacing an
-algorithm's `fma` with an exact two-part product is possible, but needs a
-correctness argument for that algorithm over its full range. A correctly
-rounded finite result is defined by the arithmetic alone, so it is the same on
-every machine, optimization level, and platform, and at compile time; special
-cases and NaNs need their own rules. `core:random`'s distributions call them,
-so their values are the same on every machine too
-([Distributions](standard-library.md#distributions)).
-Hardware FMA is used where the [CPU level](compiler-guide.md#cpu-levels) has
-it without changing a finite bit, since a fused multiply-add is itself
-correctly rounded: at `-cpu=x86-64-v3`, `math.fma` is already the instruction. Porting fdlibm or musl instead would
-also be deterministic, but it would freeze one algorithm's bits, so a bug fix
-would be a breaking change, and it would match no other implementation.
-
-Compile-time evaluation has a cost of its own. Measured on 2026-10-29,
-`core:math`'s integer `fma` takes about 250 KB of evaluator scratch per call at
-compile time, so one constant whose evaluation makes about 250 calls exceeds
-the 64 MB budget (`L0342`); at `-cpu=x86-64-v3` the instruction's exact
-evaluator takes a small fraction of that. Kernels ported to Loke and folded at
-compile time would meet this budget long before a fast loop would. They do:
-a call to `core:math/repro` that takes its fixed-point slow path takes 8 to
-16 MB of it, since the evaluator reclaims nothing a call frees, so one
-constant can fold four such calls but not eight; a call its fast path
-decides takes far less.
-
-The first port, `core:math/repro`'s `exp`, measured on 2026-10-29 at
-`-opt=speed` over 4 million calls on the same machine: 21 ns per independent
-call and 36 ns per dependent one for `f64`, against the UCRT's 4.9 and 16 ns
-on its FMA3 path and 6.3 and 18 ns on its legacy path, the same at
-`-cpu=x86-64-v3`; `exp_f32` 18 ns against 4.1 and 4.5. It uses no `fma`: the
-one exact product it needs is Dekker's, which gives the instruction's bits.
-By its margin, about one argument in 4,000 takes the fixed-point slow path,
-4 µs at 320 bits, as does every argument whose result could be subnormal.
-`sin` and `cos`, measured the same way over arguments within ±700, take 36
-ns per independent call against the UCRT's 7.0 to 7.4 on its FMA3 path and
-9.7 on its legacy one, and 30 ns per dependent call against 9 to 11;
-`sin_f32` takes 49 ns against 6.7 and 8.2. Their slow path also takes 4 µs:
-on a grid of 1,024 `f32` values, the 2 that went there added 8 ns to `sin`'s
-average. `log`, over arguments from 2^-32 to 2^32, takes 26 ns per
-independent call and 43 per dependent one against the UCRT's 5.0 and 12 on
-its FMA3 path and 5.8 and 14.5 on its legacy one, `log_f32` 16 ns against 3.6
-and 4.1, and its slow path 4 to 6 µs. `pow`, over x from 0.01 to 100 and
-y within ±20, takes 75 to 93 ns per independent call and 88 to 98 per
-dependent one against the UCRT's 15 and 27 on its FMA3 path and 22 and 37
-on its legacy one, `pow_f32` 88 to 96 ns against 9.0 and 10.6, though none
-of those arguments leaves the fast path, and its slow path 11 to 12 µs.
-`atan2`, over y and x within ±10, takes 38 to 40 ns per independent call
-and 57 to 60 per dependent one against the UCRT's 15 to 16 and 24 to 25 on
-its FMA3 path and 18 and 26 to 28 on its legacy one, `atan2_f32` 29 to 31
-ns against 12 to 13 and 13 to 15, `atan` within ±20 44 to 53 ns against 5.1
-and 7.0, `atan_f32` 34 against 4.7 to 5.3 and 5.8 to 6.1, and its slow path
-4.2 to 4.6 µs; `atan` takes `atan2`'s path, three divisions included.
-`asin` and `acos`, over (-1, 1), take 67 to 68 ns per independent call and
-87 to 88 per dependent one against the UCRT's 5.1 to 5.6 and 13 to 17 on
-its FMA3 path and 7.2 to 7.6 and 19 to 21 on its legacy one, `asin_f32` and
-`acos_f32` 42 to 44 ns against 4.6 and 5.1 to 5.9, and their slow path 4.9
-µs. The difference from `atan2` is presumably the four Newton steps for
-1/sqrt, a dependent chain, which is unmeasured; a table for the first
-estimate would save two, and `math.sqrt`, which is now the instruction and
-has a compile-time value, all of them. `sqrt` itself takes 1.5 ns, the
-instruction's time; a software version from the same steps took 42. `tan`,
-over arguments within ±700, takes 60 ns per independent call and 64 per
-dependent one against the UCRT's 11 and 12
-on its FMA3 path and 16 and 18 on its legacy one, `tan_f32` 81 ns against
-6.5 and 8.4, and its slow path 8.6 µs. Payne and Hanek's reduction, from
-2^20 pi/2 up, adds about 170 ns to `tan_f32`, and `sin` and `cos` take the
-same reduction. `log2` and `log10`, over arguments from 2^-32 to 2^32,
-take 38 to 39 ns per independent call and 54 per dependent one against the
-UCRT's 8.9 and 27 for `log2` and 5.9 and 14 for `log10` on its FMA3 path,
-and 9.9 and 26 and 6.0 and 16 on its legacy one, `log2_f32` and `log10_f32`
-17 and 20 ns against 3.2 to 4.6, and their slow path 6.7 µs. `hypot`, over
-x and y within ±1000, takes 29 to 31 ns per independent call and 53 to 54
-per dependent one against the UCRT's 4.4 and 8.7 to 9.2, `hypot_f32` 20 ns
-against 3.4 to 3.5, and its slow path 0.74 to 0.77 µs. Why
-the `f32` procedures before `atan` are slower than the `f64` ones that do
-the same work is not known. The estimate below was optimistic by
-two to three times: the time is in the dependent double-`f64` steps, not in
-calls or checks, once the frame pops a returning procedure made are gone
-(they took a third of `exp`'s time). A table twice as large, a lower-degree
-polynomial, and Estrin's scheme are the next things to try, and `fma` where
-the CPU level has it.
-
-The cost is code and time. On the measuring machine the UCRT takes about 8.4 ns
-per `sin` or `cos`, 7.2 ns per `exp` or `log`, and 17 ns per `pow` on its FMA3
-path, and 10.5, 8.2, and 24 ns on its legacy path. The estimate, without
-hardware FMA, is 1.5 to 2 times that for `exp`, `log`, `sin`, and `cos` and 2 to
-3 times for `pow`, and close to today's speed with it; a prototype `exp` would
-measure it. Open:
-
-- Is cross-machine identity worth the code and the slowdown?
-- Which functions come first? `exp`, `log`, `sin`, `cos`, and `pow`, in both
-  widths, cover the common uses and the random distributions.
-- Should the C library's versions stay available under other names for
-  callers who prefer speed to identity?
 - Can `core:math/repro`'s `pow`, `atan2`, `asin`, `acos`, `log2`, and
   `log10` be proved correctly rounded? `pow`'s slow path is within 2^-240
   of x^y, and a value within 2^-230 of a midpoint is tested for being
@@ -872,17 +600,20 @@ measure it. Open:
   "Computing hard-to-round cases of sin, cos, tan in double precision",
   ARITH 2026); checking the slow paths against them would settle those
   three.
-
-The answer so far is a separate correctly rounded package,
-[`core:math/repro`](standard-library.md#coremathrepro), with platform math
-kept and a decision on the default after measurement
-([Future plans](future-plans.md#standard-library-maturity)).
+- Should the compile-time evaluator reclaim what a call frees? A call to
+  `core:math/repro` that takes its fixed-point slow path uses 8 to 16 MB of
+  the evaluator's 64 MB budget (`L0342`), since nothing a call frees is
+  reclaimed, so one constant can fold four such calls but not eight; a call
+  its fast path decides uses far less. `core:math`'s integer `fma` takes
+  about 250 KB a call the same way.
 
 ### Targeting x86-64 levels
 
 Programs target baseline x86-64 (SSE2), which every 64-bit x86 processor runs,
 unless built with [`-cpu`](compiler-guide.md#cpu-levels), which offers v2 and
-v3 with a startup check. The levels are:
+v3 with a startup check; a level changes instructions, not results
+([comments.md](comments.md#a-cpu-level-changes-instructions-not-results)).
+The levels are:
 
 | Level | Adds | Processors |
 | --- | --- | --- |
@@ -893,34 +624,14 @@ v3 with a startup check. The levels are:
 Steam's survey, as quoted in the Flax Engine's
 [commits](https://git.flaxengine.com/Flax/FlaxEngine/commit/d1774cac28988b46bd1de87aec26745ae71fcb48),
 put SSE4.2 at 99.78% (September 2025) and AVX2 at 94.48% (May 2025). Windows on
-Arm emulates AVX2 and FMA for x64 programs from Windows 11 24H2.
-
-A level does not change determinism: `+ - * /` and `sqrt` give the same bits on
-every level, except which NaN an operation on two NaNs yields, which
-design.md "Floating-point operators" leaves unspecified, and Loke's IR never
-allows fusion (the same section). The IR is not the only control, though:
-Clang's `-ffp-contract` also sets the backend's fusion mode, and the runtime's
-C sources would get
-Clang's default, which fuses within an expression, so every Clang command
-passes `-ffp-contract=off`, and `tests/cpu_test.odin` rebuilds the
-floating-point cases at each level. It changes speed:
-v2 adds POPCNT and, if `floor` and its kin were bound to LLVM intrinsics instead
-of the C library, inline rounding; v3 adds 256-bit vectorization, hardware FMA,
-and BMI. A program built for a level crashes with an illegal instruction on a
-processor without it, which is why an executable or object built above
-baseline checks first and reports it. Open:
+Arm emulates AVX2 and FMA for x64 programs from Windows 11 24H2. Run-time
+dispatch is added only where measured, as
+[`@(cpu_dispatch)`](design.md#cpu_dispatchstring) does for
+`core:math/repro`'s `f64` functions. Open:
 
 - Should the default move to v2, which costs almost nothing?
-- Should the standard library also choose at run time where it matters, as the
-  correctly rounded functions could with FMA, for baseline builds?
 - Should v4 and `native` follow? v4 needs AVX-512 hardware to test on, and
   `native` resolves to a feature set of its own rather than a level.
-
-Baseline stays the default
-([A CPU level changes instructions, not results](comments.md#a-cpu-level-changes-instructions-not-results)),
-and run-time dispatch is added only where measured, as
-[`@(cpu_dispatch)`](design.md#cpu_dispatchstring) does for
-`core:math/repro`'s `f64` functions.
 
 ### Integer bit operations not yet provided
 
@@ -1091,26 +802,6 @@ copyable, and nothing already in the package changes.
   its field is private. A fixed zone could print its offset; what the system
   zone prints waits on its name.
 
-### Local time zone commit review (2026-10-31)
-
-Open findings from reviewing `4e84bec2`, beyond the behavior divergences in
-[Known gaps](known-gaps.md#gaps):
-
-- **Include package tests in the optimization matrix.**
-  `library_packages_pass_their_tests` in
-  [corpus_test.odin](tests/corpus_test.odin) accepts `LOKE_TEST_FLAGS`, but
-  [test-all.ps1](test-all.ps1) omits it from `$matrix`. Consequently `-Full`
-  and CI run the synthetic zone-rule tests only at the baseline optimization
-  level; the public integration test covers only the machine's current zone.
-  Add the package-test procedure to the matrix, following
-  [Testing and verification](compiler-architecture.md#testing-and-verification).
-- **Reuse the Windows ABI prefix.** `System_Zone` in
-  [zone.loke](core/time/zone.loke) repeats all seven fields of
-  `Time_Zone_Information`. Embed one `information: Time_Zone_Information`
-  field, as [lib_time_zone.loke](tests/run/lib_time_zone.loke) already does.
-  The layout stays the same, six declarations disappear, and the prefix has
-  one definition. Keep the existing size assertions.
-
 ## Formatting
 
 The current formatter rules and rationale are in [comments.md
@@ -1122,36 +813,15 @@ inside brackets, which `core/` leaves at the bracket's level.
 
 ## Language design review (2026-10-03)
 
-This is a set of proposals, not an amendment to the normative specification.
-Backward compatibility is deliberately not a constraint. The review examined
-the specification, grammar, rationale, existing open questions, compiler
-architecture, relevant checker/emitter code, standard-library APIs, examples,
-and focused compiler probes. It is not a proof of compiler soundness or a
-performance benchmark.
-
-Loke already has a strong foundation: deterministic evaluation order, lexical
-cleanup, checked indexing and signed arithmetic, closed enums, exhaustive
-union switches, explicit fallibility, definition-site generic lookup, and no
-user-defined implicit conversions. Preserve those. The largest simplification
-would come from making ownership, capability, and safety rules compose with
-fewer exceptions, rather than shortening keywords.
-
-### Recommended order
-
-| Priority | Proposal | Main benefit | Scope |
-| --- | --- | --- | --- |
-| Next | Compiler-selected ordinary union layout | Compact nested results | Representation contract |
-| Next | Stable written borrow contracts | Public signatures do not depend on implementation bodies | Procedure types |
-| Later | Localize unchecked operations | Unsafe obligations are visible where introduced | Syntax and APIs |
-| Later | Checked thread transfer | Fewer races outside scoped tasks | Thread APIs and capabilities |
-
-Checked disjoint access was adopted (2026-10-22) as [Splitting a mutable
-slice](design.md#splitting-a-mutable-slice), for the reasons in
-[comments.md](comments.md#splitting-a-mutable-slice-is-compiler-known), and
-scoped workers as [Structured concurrency](design.md#structured-concurrency).
-
-Try each on concrete programs before deciding: a parser, a resource container,
-a sorting or partitioning algorithm, and a parallel numeric kernel.
+Proposals from a review of the specification, not amendments to it; backward
+compatibility was not a constraint. Of its recommendations, checked disjoint
+access was adopted as [Splitting a mutable
+slice](design.md#splitting-a-mutable-slice) and scoped workers as [Structured
+concurrency](design.md#structured-concurrency). The rest follow, in the order
+the review suggested: compiler-selected union layout and written borrow
+contracts first, then unchecked operations at their use and checked thread
+transfer. Try each on a parser, a resource container, a partitioning
+algorithm, and a parallel numeric kernel before deciding.
 
 ### Put unchecked obligations at their operation
 
@@ -1188,55 +858,36 @@ pinning or self-referential types.
 
 ### Performance opportunities and actual semantic limits
 
-Fast programs are expressible: fixed contiguous arrays, slices, arena-backed
-owners, monomorphized generics, static iteration, explicit moves, and
-`Simd(T, N)` provide the necessary building blocks. However, no benchmark in
-this review establishes that the current compiler achieves C-like performance.
+Fast programs are expressible: fixed arrays, slices, arena-backed owners,
+monomorphized generics, static iteration, explicit moves, and `Simd(T, N)`.
+What remains open is where the compiler could do more without changing a
+specified result:
 
-| Area | Current consequence | Recommendation |
-| --- | --- | --- |
-| Bounds/overflow checks | Observable failure constrains motion and speculation | Keep checks; eliminate those proved redundant and expose explicit arithmetic policies. References are [never null](design.md#types-with-no-zero-value), so they carry no nil checks |
-| Aliasing | Local exclusivity can help; unknown provenance and hidden effects limit what may be assumed | Repair effect holes first, then emit alias/memory attributes only where their precise obligations hold |
-| Floating-point expressions | Unwritten FMA contraction and reassociation are forbidden; a fused multiply-add is written `math.fma`, computed in software on the baseline target | Add separately named reassociating reductions; keep default arithmetic strict. Emit the FMA instruction for `math.fma` once a target with it can be selected |
-| Ordered reductions | A floating SIMD sum is defined left to right | Retain the ordered form and offer an explicit unordered/tree reduction with documented numerical differences |
-| Custom clone/drop and allocators | Calls may have observable effects or fail | Define which implicit copies may be elided; preserve explicit clone contracts |
-| Dynamic interface dispatch | An unknown witness requires an indirect call | Prefer generic specialization in hot code; devirtualize when a concrete witness is known |
-| Atomic string/shared accounting | Cross-thread sharing requires synchronization | Borrow views in hot paths; consider thread-local ownership only after measurement |
-| Union representation | Fixed payload-plus-tag layout prevents general niche encoding | Give ordinary unions compiler-selected layout; explicit layout only where requested |
+- **Union layout.** Null already encodes `.none` in an `Option` over a
+  non-null reference ([Representation](design.md#representation)); every
+  other union has a fixed payload-plus-tag layout. Making an ordinary union's
+  layout the compiler's choice would allow other niches and a compact nested
+  `Result(Option(T), E)`, keeping `size_of`, alignment, reflection, and the
+  ABI within a build accurate, with an explicit representation where a
+  stable tag and layout are needed for serialization or foreign code.
+- **Alias attributes.** The emitted IR spells no general `noalias` or
+  `readonly` parameter attributes. Read-only capability alone does not
+  promise that memory cannot change, since atomics write through read-only
+  receivers and foreign or unchecked aliases need their own contract, so each
+  attribute needs [LLVM's precise obligations](https://llvm.org/docs/LangRef.html#parameter-attributes)
+  shown to hold.
+- **Explicit reductions.** A floating-point sum is ordered, and the default
+  arithmetic stays strict. Separately named reassociating or tree reductions,
+  with their numerical differences documented, would let a kernel ask for the
+  faster order.
+- **Copy elision.** Which implicit copies of a type with a custom clone or
+  drop may be elided is unspecified, so none is.
 
-An unused representation, or niche, is a bit pattern no valid payload uses.
-For references the niche is decided: null encodes `.none` in an `Option`-shaped
-union over a non-null reference
-([Representation](design.md#representation)).
-What remains here is every other union.
-
-Make the layout of ordinary unions an implementation choice, while retaining
-accurate `size_of`, alignment, reflection, and consistent ABI within a build.
-An explicit representation contract can preserve a stable tag and field layout
-for serialization or external consumers. Do not expose an unstable optimized
-representation as a wire format. Nested `Result(Option(T), E)` is another
-candidate for compact representation, subject to its actual payload states.
-
-The emitted-IR source does not currently spell general `noalias`/`readonly`
-parameter attributes. That is an implementation opportunity, not evidence that
-LLVM never infers them. Read-only capability alone is insufficient to promise
-memory cannot change: atomic operations intentionally write through read-only
-receivers, and foreign/unchecked aliases need their own contract. Follow [LLVM's
-attribute requirements](https://llvm.org/docs/LangRef.html#parameter-attributes)
-precisely rather than applying them to every `mut` or read-only type.
-
-Some transformations really are forbidden. Turning ordered floating additions
-into a different reduction tree, silently fusing `a*b+c`, or hoisting a possible
-panic ahead of earlier observable writes can change the specified result.
-That does not mean all vectorization is forbidden: independent iterations,
-proofs that checks cannot fail, runtime alias checks, and target-supported
-ordered reductions remain available. LLVM documents these distinctions in its
-[vectorization guide](https://llvm.org/docs/Vectorizers.html).
-
-Do not add a general purity/effect language merely to request faster code.
-Start with the inferred effects already needed for safety, explicit numerical
-operations, and measurements of bounds checks, allocation counts, retained
-strings, generated code, and representative kernels.
+Some transformations are forbidden outright: reordering floating-point
+additions into another tree, fusing `a*b + c`, or hoisting a possible panic
+above an earlier observable write. Vectorizing independent iterations, proving
+checks cannot fail, and runtime alias checks stay available. A general purity
+or effect language is not to be added only to request faster code.
 
 ### Public borrow contracts should stand on their own
 
@@ -1575,3 +1226,26 @@ the declaration, not to a procedure-value type. `@(noreturn)` would state that
 more literally than punctuation. `-> never` also reads well, but should be
 spelled only if the language adds a real uninhabited type, with its rules for
 procedure types and conversions.
+
+## Small code findings
+
+Reviews found these simplifications and test gaps, none a divergence from the
+spec:
+
+- **`bit_width` can reuse the count emitter.** `emit_bit_width` in
+  [emit_llvm_calls.odin](src/emit_llvm_calls.odin) repeats the widening or
+  narrowing to `int` that `emit_bit_count` does. Call
+  `emit_bit_count(e, v, "ctlz")` and subtract from the operand's width; a
+  count is at most 128, so every result is kept. Update
+  [lib_math_bits.expected](tests/ll/lib_math_bits.expected) to the `i64`
+  subtraction, and keep `emit_ctlz` for the power-of-two round-up.
+- **Package tests are not in the optimization matrix.**
+  `library_packages_pass_their_tests` in
+  [corpus_test.odin](tests/corpus_test.odin) accepts `LOKE_TEST_FLAGS`, but
+  [test-all.ps1](test-all.ps1) leaves it out of `$matrix`, so `-Full` and CI
+  run `core:time`'s zone-rule tests at the baseline optimization level only.
+- **`System_Zone` repeats a Windows ABI prefix.** It restates the seven fields
+  of `Time_Zone_Information` in [zone.loke](core/time/zone.loke); one embedded
+  `information: Time_Zone_Information` field, as
+  [lib_time_zone.loke](tests/run/lib_time_zone.loke) has, keeps the layout
+  and the size assertions with one definition of the prefix.
