@@ -11,6 +11,39 @@ Design rationale and differences from Odin are recorded in
 The current behavior inventory is in [Nondeterminism and undefined behavior
 audit](nondeterminism-audit.md).
 
+## Review of summary visits and scratch arenas (2026-10-31)
+
+Reviewed `e4d3562b` ("Skip unchanged provenance summary visits and drop arena
+locks") for correctness, simplification, and structure. Two findings remain:
+
+- **Preserve arena growth (P2).** The new allocator panics on a valid
+  procedure the parent compiler accepts. The reproduction and cause are in
+  [Known gaps](known-gaps.md#a-procedures-analysis-panics-after-one-gib-of-scratch-allocations).
+- **Correct the reported performance range (P3).** The
+  [changelog](CHANGELOG.md#unreleased),
+  [baseline explanation](bench/baselines/README.md#skipped-summary-visits-and-lock-free-scratch-arenas),
+  and [normalization question](#normalized-input-for-provenance-analysis)
+  say front-end time fell 8-17% on workloads taking over 30 ms. For records
+  whose baseline exceeds 30 ms, the saved JSON shows about 3-16% instead:
+  `bench/nbody.loke` goes from 31 to 30 ms (3.2%), and
+  `examples/timestamps.loke` from 126 to 106 ms (15.9%). If the cutoff refers
+  to the final measurements instead, `examples/parallel.loke` still goes
+  from 44 to 41 ms (6.8%). All compared source hashes match. State the
+  cutoff and range consistently with the saved data.
+
+The revision stamps remain local to summary inference, and the guards avoid
+work at its source. No further actionable structural change or simplification
+was found.
+
+Validation passed: 178 compiler unit tests, 43 LSP unit tests, the diagnostic
+and borrow-matrix suites, and all 81 integration tests other than the debugger
+test. The performance-script test failed its exact `(-100%)` output assertion
+in the parallel run, which printed `(-99%)`, then passed in isolation. The
+debugger test aborts in the Odin runner with both the parent and reviewed
+compilers. Both compiler/LSP builds and all 2,822 heading citations passed.
+The scratch-limit reproduction was compared with fresh parent and reviewed
+compiler builds; no implementation fixes were applied during review.
+
 ## Storage scope of the chosen-place guarantee
 
 The chosen-place row in
