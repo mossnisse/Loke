@@ -30,7 +30,6 @@ main :: proc() {
 	d: dyn Shape = nil;
 	c: cstring_view = nil;
 	h: Shared(int) = nil;
-	any: any_view = {};
 	held: Shared(int) = {};
 	node: Node = {};
 

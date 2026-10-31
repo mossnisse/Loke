@@ -10,6 +10,18 @@ checklist.
 
 ### Breaking changes
 
+- The `any_view` type is gone, with its implicit conversion, the explicit
+  `any_view(value)`, and its storage diagnostic `L0462`; `any_view` is now an
+  unknown name (`L0306`). `dyn` is the one type-erased view. A `..dyn I`
+  parameter still views each argument implicitly
+  ([Variadic parameters](design.md#variadic-parameters)), and the printers
+  take `..dyn fmt.Formattable`. `base:runtime`'s `Type_Kind` loses `Any_View`,
+  so `Dyn` and every later member move down by one. Upgrade an `any_view`
+  parameter that prints its value to `..dyn fmt.Formattable` or to a
+  `dyn fmt.Formattable` made with `(dyn fmt.Formattable)(&value)`, one that
+  stands for a closed set of types to a union, and one whose type is known
+  where the call is written to a `$T` parameter; and recompile code that
+  stored `Type_Kind` values as numbers.
 - Runtime type inspection is gone: the checked extractions `view.(T)` and
   `view.as(T)` on an `any_view`, a switch over an `any_view`'s type, and a
   type such as `case int(n):` or `case f32, f64:` as a case value
@@ -32,10 +44,9 @@ checklist.
   `debug`, `info`, `warning`, `error`, and `at`, and `io.write_formatted` and
   `write_formatted_line` take `..dyn fmt.Formattable` rather than
   `..any_view` ([String format printing](design.md#string-format-printing)).
-  A call that lists its arguments is unchanged and prints the same, and a lone
-  `any_view` argument still prints the value it views. Upgrade a procedure that
-  spreads its own `..any_view` arguments into them by declaring that parameter
-  `..dyn fmt.Formattable`.
+  A call that lists its arguments is unchanged and prints the same. Upgrade a
+  procedure that spreads its own `..any_view` arguments into them by declaring
+  that parameter `..dyn fmt.Formattable`.
 - `Status(E)` is now `Result(Unit, E)`, declared as the parametric alias
   `Status :: Result(Unit, $E);` rather than a union of its own
   ([Typed fallibility](design.md#typed-fallibility)). A procedure generic over

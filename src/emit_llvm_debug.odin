@@ -183,7 +183,6 @@ attach_debug_info :: proc(e: ^Emitter, module: string) -> string {
 		}
 	}
 
-	debug_any_view_natvis(&d)
 	debug_dyn_natvis(&d)
 	strings.write_string(&d.natvis, "</AutoVisualizer>\n")
 	c.natvis = strings.to_string(d.natvis)
@@ -398,7 +397,7 @@ debug_type :: proc(d: ^Debug_Info, type: Type_Id) -> int {
 			d, id, `!DICompositeType(tag: DW_TAG_enumeration_type, name: "%s", baseType: !%d, size: %d, elements: !{{%s})`,
 			name, debug_type(d, info.element), size, strings.to_string(enumerators),
 		)
-	case .Struct, .Any_View, .Dyn:
+	case .Struct, .Dyn:
 		if info.kind == .Dyn {
 			name = fmt.aprintf("dyn$%d", u32(type))
 			append(&d.dyns, type)
@@ -574,34 +573,6 @@ debug_map :: proc(d: ^Debug_Info, id: int, type: Type_Id) {
 	rule, _ = strings.replace_all(rule, "@KEY_SIZE@", fmt.aprint(type_size(c, info.key)))
 	rule, _ = strings.replace_all(rule, "@VALUE_SIZE@", fmt.aprint(type_size(c, info.element)))
 	strings.write_string(&d.natvis, rule)
-}
-
-// design.md "any_view type": `data` points at a value of the type `id` names,
-// so the rule shows that value, with a case for every type that has a typeid.
-@(private = "file")
-debug_any_view_natvis :: proc(d: ^Debug_Info) {
-	if TYPE_ANY_VIEW not_in d.types {
-		return
-	}
-	shown := strings.builder_make()
-	expanded := strings.builder_make()
-	for type in d.c.typeid_order {
-		value := typeid_value(d.c, type)
-		if value == 0 || type_size(d.c, type) == 0 {
-			continue
-		}
-		name := fmt.aprintf("typeid$%d", value)
-		debug_natvis_type(d, name, type)
-		condition := fmt.aprintf(`Condition="id == %d"`, value)
-		strings.write_string(&shown, strings.concatenate({"    <DisplayString ", condition, ">{*(", name, "*)data}</DisplayString>\n"}))
-		strings.write_string(&expanded, strings.concatenate({"      <ExpandedItem ", condition, ">*(", name, "*)data</ExpandedItem>\n"}))
-	}
-	strings.write_string(&d.natvis, "  <Type Name=\"any_view\">\n")
-	strings.write_string(&d.natvis, "    <DisplayString Condition=\"data == 0\">nil</DisplayString>\n")
-	strings.write_string(&d.natvis, strings.to_string(shown))
-	strings.write_string(&d.natvis, "    <DisplayString>{{ id={id} }}</DisplayString>\n    <Expand>\n")
-	strings.write_string(&d.natvis, strings.to_string(expanded))
-	strings.write_string(&d.natvis, "    </Expand>\n  </Type>\n")
 }
 
 // design.md "Borrowed dynamic interface values": a witness table's global, as

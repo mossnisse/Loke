@@ -338,7 +338,7 @@ type_is_non_null :: proc(c: ^Compiler, type: Type_Id) -> bool {
 		return false
 	}
 	#partial switch info.kind {
-	case .Pointer, .Proc, .Dyn, .Any_View, .CString_View, .Box:
+	case .Pointer, .Proc, .Dyn, .CString_View, .Box:
 		return true
 	case .Struct:
 		return info.instance_of != INVALID_SYMBOL && info.instance_of == c.shared_symbol

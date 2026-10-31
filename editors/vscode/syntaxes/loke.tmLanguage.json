@@ -162,7 +162,7 @@
     },
     "types": {
       "patterns": [
-        { "name": "support.type.primitive.loke", "match": "\\b(?:bool|int|i8|i16|i32|i64|i128|uint|u8|u16|u32|u64|u128|uintptr|byte|f16|f32|f64|rune|string|string_view|cstring_view|rawptr|typeid|any_view)\\b" },
+        { "name": "support.type.primitive.loke", "match": "\\b(?:bool|int|i8|i16|i32|i64|i128|uint|u8|u16|u32|u64|u128|uintptr|byte|f16|f32|f64|rune|string|string_view|cstring_view|rawptr|typeid)\\b" },
         { "name": "support.type.loke", "match": "\\b(?:Allocator|Allocator_Error|Unit|Option|Result|Status|Range|Simd|Box|Shared|Weak)\\b" },
         { "name": "entity.name.type.parameter.loke", "match": "\\$[A-Za-z_][A-Za-z0-9_]*" }
       ]

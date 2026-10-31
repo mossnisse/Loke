@@ -341,11 +341,7 @@ argument_rank :: proc(k: ^Checker, arg: Arg_Info, param: Type_Id, mode: Param_Mo
 	if type_is_untyped(k.c, arg.type) {
 		if assignable(k.c, arg.type, param) {
 			if arg.is_const {
-				wanted := param
-				if param == TYPE_ANY_VIEW {
-					wanted = any_view_source_type(k.c, arg.type)
-				}
-				if _, fits := convert_const(k.c, arg.const_value, wanted, false); !fits {
+				if _, fits := convert_const(k.c, arg.const_value, param, false); !fits {
 					return RANK_NONE
 				}
 			}

@@ -34,7 +34,6 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 		{"rawptr", TYPE_RAWPTR},
 		{"byte", TYPE_U8},
 		{"typeid", TYPE_TYPEID},
-		{"any_view", TYPE_ANY_VIEW},
 		{"string", TYPE_STRING},
 		{"string_view", TYPE_STRING_VIEW},
 		{"cstring_view", TYPE_CSTRING_VIEW},

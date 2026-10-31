@@ -207,8 +207,8 @@ name. They are:
 
 - types: `bool`, `int`, `i8`, `i16`, `i32`, `i64`, `i128`, `uint`, `u8`, `u16`,
   `u32`, `u64`, `u128`, `uintptr`, `byte`, `f16`, `f32`, `f64`, `rune`,
-  `string`, `string_view`, `cstring_view`, `rawptr`, `typeid`, `any_view`,
-  `Allocator`, and `Allocator_Error`;
+  `string`, `string_view`, `cstring_view`, `rawptr`, `typeid`, `Allocator`,
+  and `Allocator_Error`;
 - generic and marker types: `Unit`, `Option`, `Result`, `Status`, `Range`,
   `Simd`, `Box`, `Shared`, and `Weak`;
 - operations: `assert`, `panic`, `static_assert`, `build_config`,
@@ -424,7 +424,6 @@ string   // immutable, valid UTF-8 text
 rawptr   // untyped pointer
 type     // compile-time-only type of types
 typeid   // runtime type identifier
-any_view // erased view of any value
 ```
 
 `bool` is one byte. A foreign boolean binds as its integer type and is converted
@@ -482,7 +481,7 @@ These types have no zero value:
 - an enum with no variant represented by `0`;
 - a struct with a [`@(required)`](#required-fields) field;
 - a **non-null type**: either a **reference** (`^T`, `^mut T`, procedure values,
-  `dyn I`, `dyn mut I`, `any_view`, or `cstring_view`), which always refers to
+  `dyn I`, `dyn mut I`, or `cstring_view`), which always refers to
   something, or an **owning handle** ([`Box(T)`](#owned-values) or
   [`Shared(T)`](#shared-ownership)), which always owns a payload.
 
@@ -577,8 +576,6 @@ extensions cannot add conversions.
 - `^mut T` -> `^T`, `[]mut T` -> `[]T`, and `dyn mut I` -> `dyn I`
 - `^T` / `^mut T` -> `rawptr`
 - `[^]T` -> `rawptr`
-- Concrete values to `any_view` when an `any_view` parameter or local
-  destination is expected; the result is a checked non-escaping borrow
 - `dyn Derived` -> `dyn Base` when `Derived` composes `Base`; the result keeps
   the same data borrow and selects the base witness
 - A value whose type satisfies `I` -> a `dyn I` view of it, when it is an
@@ -745,8 +742,8 @@ A generated method prints:
 | anonymous record | `(x = 1, y = 2)`, or `(1, 2)` when unlabeled |
 | union, including `Option` | `.none` or `.some(3)`: the variant, and its payload in parentheses unless it is `Unit` |
 | `Box(T)` | its payload |
-| `any_view` | the value it views |
-| `dyn` view | its type's name |
+| `dyn fmt.Formattable` | the value it views |
+| any other `dyn` view | its type's name |
 
 A struct prints its public fields only, as reflection from another package sees
 it, because one printed form serves every package. A `package main`'s fields are
@@ -933,8 +930,7 @@ writer := &mut i;  // ^mut int: can read and change i
 `&` reaches every place that can be read: a local, a value parameter, an element
 of a `[]T`, and a [materialized constant](#materialization). `&mut` additionally
 requires that the place be assignable, so a value parameter, a `[]T` element,
-and a constant all reject it. Neither reaches a [packed](#packed) field or an
-`any_view`.
+and a constant all reject it. Neither reaches a [packed](#packed) field.
 
 The postfix `^` operator dereferences a pointer. Dereferencing either capability
 yields a place with an address; only `^mut T` yields one that may be written:
@@ -2808,10 +2804,10 @@ payload or with a `Unit` payload and the other with a
 [non-null](#types-with-no-zero-value) payload, is the payload alone: that
 payload's first word is a non-null address, so the null first word is the other
 variant. `Option(^T)` is one address, as is `Option` of a procedure value,
-`cstring_view`, `Box(T)`, or `Shared(T)`; `Option(dyn I)` and
-`Option(any_view)` are their two words, and `Result(Unit, ^T)` is one address
-as `Status(^T)` is. Nothing else changes: the variants keep their declaration
-order, and the all-zero value is still the variant without a reference.
+`cstring_view`, `Box(T)`, or `Shared(T)`; `Option(dyn I)` is its two words, and
+`Result(Unit, ^T)` is one address as `Status(^T)` is. Nothing else changes: the
+variants keep their declaration order, and the all-zero value is still the
+variant without a reference.
 
 #### Anonymous unions
 
@@ -3159,8 +3155,7 @@ concrete runtime type. It is not usable as a type and does not make a generic
 procedure, keeping runtime reflection from becoming a second spelling of
 specialization.
 
-`typeid` is used by `any_view`,
-[`dyn Interface`](#borrowed-dynamic-interface-values), and runtime reflection:
+`typeid` is used by printing and runtime reflection:
 
 ```loke
 a := typeid_of(bool);
@@ -3304,61 +3299,10 @@ and mutation rules still apply; `pointer` is rejected for a packed field.
 Reflection values may be inspected, compared for identity, passed to `$`
 parameters, and iterated by static `foreach`. They cannot be materialized into
 runtime storage: a reflection value is always a constant, so `fields_of(T)[i]`
-needs a constant `i`, and a descriptor cannot become an `any_view` or bind a
+needs a constant `i`, and a descriptor cannot be viewed through a `dyn` or bind a
 runtime parameter, including one whose `$T` would infer a descriptor or `type`.
 Runtime tools instead use the less powerful `runtime.Type_Info` reached through
 `type_info_of`.
-
-### any_view type
-
-`any_view` is a non-owning, type-erased view used for formatting, logging, and
-runtime reflection. Creating one borrows its source. It always views a value, so
-it has no zero value.
-
-It may be a local variable or parameter, but it cannot be a result type, global,
-struct or union field, container element, or captured/stored value. The ordinary
-local borrow checker ensures a local `any_view` does not outlive or overlap an
-invalidating operation on its source. A temporary converted for a call remains
-valid through that complete call expression. A temporary converted into a local
-`any_view` is [extended](#temporaries-and-procedure-boundaries) to the end of
-the block, and dropped there:
-
-```loke
-view: any_view = make_guard();
-fmt.println(view);       // fine: the guard lives until the block ends
-```
-
-**A variadic `..any_view` parameter is the only exception to the container
-rule.** It takes mixed values: the caller converts each argument to `any_view`
-and materializes a temporary `[]any_view` for the duration of the call.
-
-```loke
-show :: proc(args: ..any_view) { ... }
-```
-
-The slice and its elements borrow the caller's temporary arguments and live only
-for the complete call expression. The called procedure can read, index, iterate,
-and forward the slice to another `..any_view` parameter, but must not store the
-slice or an element past the call.
-
-`[]any_view` exists only for this variadic call. [`@(c_vararg)`](#c_vararg) is
-separate signature notation and uses the C default argument promotions.
-
-Conversion from a concrete value to `any_view` is implicit when an `any_view`
-parameter or local destination is expected, and it never allocates.
-`any_view(value)` writes the same conversion out, for a subject or an argument
-with no `any_view` destination. A `type` or reflection descriptor exists only
-while compiling, so it cannot be erased. An `any_view` prints the value it
-views; nothing extracts that value or switches on its type.
-
-```loke
-print_value :: proc(value: any_view) { ... }
-print_value(42); // the temporary lives through the call
-```
-
-Use a union to own one of a closed set of types, a `$T` parameter for a type
-known where the call is written, and `dyn Interface` for borrowed runtime
-behavior.
 
 # 3. Methods, Operators & Interfaces
 
@@ -6005,8 +5949,7 @@ addressable:
 for a value parameter, an element reached through a `[]T` or a `^T`, and a
 materialized constant, each of which `&` still reaches.
 
-An `any_view` is not addressable. An individual field of an `@(packed)` struct
-is not addressable.
+An individual field of an `@(packed)` struct is not addressable.
 
 Both forms are always single-valued: every addressable operand yields exactly
 one pointer.
@@ -7031,7 +6974,7 @@ passed where only the signature matters. Copyability follows the fields: moving
 a move-only value into a capture makes the callable move-only.
 
 Captures are inaccessible to external field selection and reflection. The type
-has no `==` or printed form and cannot be viewed through `any_view`.
+has no `==` or printed form, so no printer can view it.
 
 **Borrows.** A literal with a borrowed capture carries that borrow and is
 checked as a record holding a `^T` or `^mut T` is ([Values that contain
@@ -7232,8 +7175,9 @@ Any other copy is measured by the inline bytes it duplicates. A copy that
 [last-use transfer](#last-use-transfer) makes a move is not reported, and
 neither is a written `clone()`, which states the copy is intended.
 
-Converting an operand to a destination type is not itself a copy: `print(count)`
-erases an `int` into a borrowing `any_view`, duplicating nothing. Ordinary
+Converting an operand to a destination type is not itself a copy:
+`fmt.print(count)` views an `int` as a borrowing `dyn fmt.Formattable`,
+duplicating nothing. Ordinary
 `value: T` parameters borrow managed owners for the call and are not copy sites
 either.
 
@@ -8014,7 +7958,7 @@ root. The built-in carriers are:
 
 - `^T` and `^mut T`, immutable and mutable single-value pointers;
 - `[]T` and `[]mut T`, immutable and mutable slices;
-- `string_view`, `cstring_view`, and `any_view`;
+- `string_view` and `cstring_view`;
 - `Allocator` handles, which borrow their provider's control block;
 - `dyn Interface` and `dyn mut Interface` views, and compiler-known iterators;
 - default and `inout` parameter access paths for the duration of a call;
@@ -8414,7 +8358,7 @@ starts at the value the local receives and goes on through:
 - slicing an array, string, or dynamic array, which borrows the operand, and
   reslicing a view, which goes on into the view;
 - an implicit conversion to a view: a `string_view` or `[]T` of an owner, the
-  `^T` of a box, an `any_view`, or a `dyn` or `dyn proc` view, each of which
+  `^T` of a box, or a `dyn` or `dyn proc` view, each of which
   borrows the converted value;
 - a field, an element, or a box's payload, which is part of the temporary
   holding it.
@@ -8427,7 +8371,6 @@ of its own, so a temporary extended there ends with each iteration.
 ```loke
 p := &Point{1, 2};                       // lives until the block ends
 items := [dynamic]int{1, 2, 3}[:];       // the dynamic array lives with `items`
-view: any_view = make_guard();           // the guard is dropped at the end of the block
 ```
 
 A borrow derived from a local root cannot be returned:
@@ -8891,7 +8834,7 @@ The compiler checks the shape of the conversion and nothing else. The source and
 destination must be the **same size**, and both must have a **trivial
 lifecycle**: no copy or drop hook, no managed owner, and recursively
 bitwise-copyable. Neither side may be or contain a reference (`^T`, a slice, a
-`string_view`, an `any_view`, or a `dyn`), because a bit cast would hand back a
+`string_view`, or a `dyn`), because a bit cast would hand back a
 borrow the compiler never saw loaned. This prevents a bit cast from duplicating
 an owning representation or manufacturing a value whose cleanup invariant was
 never established.
@@ -9017,12 +8960,10 @@ These types have invalid representations:
   why an unknown value [stays an integer](#integer-conversion) until
   `Enum.from_int` validates it;
 - a [non-null type](#types-with-no-zero-value), `^T`, `^mut T`, a procedure
-  value, `dyn I`, `dyn mut I`, `any_view`, `cstring_view`, `Box(T)`, and
-  `Shared(T)`, with a null address word. An `Option` of one, which stores the
+  value, `dyn I`, `dyn mut I`, `cstring_view`, `Box(T)`, and `Shared(T)`, with
+  a null address word. An `Option` of one, which stores the
   payload alone (see [Representation](#representation)), adds no invalid
   representation of its own: its null word is `.none`;
-- an [`any_view`](#any_view-type) whose `typeid` names no type of the program,
-  or whose address does not point to a value of the type it names;
 - a union: a tag outside `0 ..< variant_count`, or a payload region that is not
   a value of the variant the tag names;
 - `string` and `string_view`: bytes that are not valid UTF-8, or a pointer and
@@ -10377,7 +10318,7 @@ A value that crosses to another thread through a
   arguments of a generic record. An unchecked address, a `rawptr` or a C pointer
   such as `[^]T`, is not followed, as the rules above let one cross without
   proof.
-- It reaches no `any_view` or `dyn fmt.Formattable` value, which hides the type
+- It reaches no `dyn fmt.Formattable` value, which hides the type
   that would show it may cross, unless the value is converted to the view at the
   call, where its concrete type is checked instead. Any other `dyn` view is
   checked through every type the program converts to its interface application,
@@ -10727,8 +10668,8 @@ unless their types rule it out. Two such roots may overlap only where an
 object one's type reaches is, holds, or lies within an object the other's
 reaches: the root's own type, and what its pointers, views, and owned payloads
 point to, at any depth. Holding counts fields, fixed-array elements, and
-variants, through `distinct`. A raw or foreign pointer, a `dyn` or
-`any_view` value, or a type parameter reaches storage of any type. A local of
+variants, through `distinct`. A raw or foreign pointer, a `dyn` value, or a type
+parameter reaches storage of any type. A local of
 the procedure overlaps no other root. A value moved into a task's
 argument, or dropped before the join, is not kept, unless a result or
 writeback can hand it back. Every exit is checked: a drop at the normal end of
@@ -10837,7 +10778,7 @@ through every type the program converts to its interface application, under
 either capability and wherever the conversion runs, as under [Globals while
 tasks run](#globals-while-tasks-run): what a read-only view may view is shared,
 so it reaches no mutable carrier, and a `dyn mut` view passed directly is the
-task's alone. An `any_view` or `dyn fmt.Formattable` that arrives erased hides
+task's alone. A `dyn fmt.Formattable` that arrives erased hides
 its captures and cannot be shared. This includes the view a spawned `dyn` call
 goes through, whose call takes the effects of every type that fills its slot. A
 view only borrows what it converts, so moving the view gives the task nothing of
@@ -10957,7 +10898,7 @@ A [`@(thread_affine)`](#thread_affine) value is not moved, copied, or borrowed
 into or out of a task, through any of the paths above, owned and shared payloads
 included. A task may create, use, and drop its own. A `dyn` view the spawn did
 not make is shown free of one through every type converted to it, as under
-[Sharing with tasks](#sharing-with-tasks); a value reaching an `any_view` or
+[Sharing with tasks](#sharing-with-tasks); a value reaching a
 `dyn fmt.Formattable` the spawn did not make cannot be, and is rejected.
 
 #### Allocators and tasks
@@ -11085,7 +11026,7 @@ foreign-ABI-safe, including as enum backings or nested record fields. A pointer
 to such a type remains permitted.
 
 Managed containers, `string`, slices, dynamic arrays, maps, boxes, other tagged
-unions, `any_view`, `dyn Interface`, [`Simd(T, N)`](#simd-vectors), and records
+unions, `dyn Interface`, [`Simd(T, N)`](#simd-vectors), and records
 with custom lifecycle hooks are not foreign-ABI-safe. Interface declarations and
 compile-time `type` values have no runtime ABI, and a [generic](#generics)
 procedure or type is likewise not ABI surface: only a concrete instantiation,

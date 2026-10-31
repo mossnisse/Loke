@@ -32,7 +32,6 @@ main :: proc() {
 	static_assert(is_union((ok: int | none:)));
 	static_assert(!is_union(int));
 	static_assert(!is_union((x: int, y: int)));
-	static_assert(!is_union(any_view));
 	// A distinct type is not its underlying union; an expanded case rejects it too.
 	static_assert(!is_union(Wrapped));
 

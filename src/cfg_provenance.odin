@@ -1961,9 +1961,9 @@ prov_read_is_reads_only :: proc(c: ^Compiler, type: Type_Id) -> bool {
 // is wanted is only read, which a read-only reborrow of it allows, so
 // `Views{xs, xs}`, and `v: []int = xs` or `v = xs` beside another read-only
 // view of `xs`, are accepted.
-// An erased value is not only read: a stored `any_view` borrows the place it
-// views (design.md "any_view type"), which a call argument does only for the
-// call.
+// An erased value is not only read: a stored `dyn proc` borrows the place it
+// views (design.md "Borrowed callable views"), which a call argument does only
+// for the call.
 @(private)
 prov_walk_stored :: proc(graph: ^Flow_Graph, value: Expr, destination: Type_Id) -> []int {
 	if expr_base(value) != nil && prov_repr(graph, value).erased_from == INVALID_TYPE &&
@@ -2421,7 +2421,7 @@ prov_plain_slice_local :: proc(graph: ^Flow_Graph, e: Expr) -> (^Expr_Ident, boo
 	if !is_ident || prov_repr(graph, ident).view_from != INVALID_TYPE {
 		return nil, false
 	}
-	// An erased operand's own type is `any_view`.
+	// An erased operand's own type is a `dyn` view.
 	type := prov_repr(graph, ident).erased_from != INVALID_TYPE ? prov_repr(graph, ident).erased_from : prov_type(graph, ident)
 	if underlying_kind(graph.k.c, type) != .Slice {
 		return nil, false
@@ -2446,7 +2446,7 @@ prov_argument_only_read :: proc(graph: ^Flow_Graph, argument: Expr, parameter: T
 	if repr.view_from != INVALID_TYPE || type_carries_borrow(c, parameter).mutable {
 		return false
 	}
-	// An erased operand's own type is `any_view`.
+	// An erased operand's own type is a `dyn` view.
 	type := repr.erased_from != INVALID_TYPE ? repr.erased_from : repr.type
 	if !type_is_carrier(c, type) {
 		return false
@@ -3431,8 +3431,8 @@ prov_view_any_element_store :: proc(graph: ^Flow_Graph, target: Expr, stored: Ty
 	return int(own) + 1
 }
 
-// Erasing into an `any_view` keeps the source root with a read-only loan
-// (design.md).
+// An implicit `dyn` view keeps the source root with a read-only loan
+// (design.md "Variadic parameters", "Borrowed callable views").
 @(private)
 prov_erase :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 	span := expr_span(e)
@@ -4813,8 +4813,7 @@ prov_reset_promise :: proc(graph: ^Flow_Graph, set: Region_Set) -> (covered: boo
 		covered = true
 	}
 	// Every alternative that is not this body's own needs the promise; the
-	// default or an unknown allocator, such as one extracted from an `any_view`,
-	// never has it.
+	// default or an unknown allocator never has it.
 	if set.default || set.unknown {
 		return false, ""
 	}
@@ -7365,8 +7364,8 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	case Call_Text, Call_Text_Conversion:
 		return prov_text_call(graph, v)
 	case Call_Conversion:
-		// design.md "any_view type", "Borrowed callable views": `any_view(value)`
-		// and a `dyn proc` conversion are the implicit conversion written out.
+		// design.md "Borrowed callable views": a `dyn proc` conversion is the
+		// implicit conversion written out.
 		// The operand is erased and is the result, so it borrows what it views
 		// as at a typed destination.
 		if operand, erasing := explicit_erasure_operand(v); erasing {
@@ -7702,9 +7701,6 @@ prov_builtin_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> (result: []int, 
 	}
 	if sym := symbol_of(c, v.resolution.symbol); sym != nil && sym.kind == .Builtin {
 		#partial switch sym.builtin {
-		case .Fmt_Format_View:
-			// The interface view borrows exactly what the erased input borrows.
-			return walk_flow_expr(graph, v.bound[0]), true
 		case .Box_New, .Try_Box:
 			// design.md "Owned values": the payload's borrows land below the box's
 			// one step, path by path, so a box keeps its fields apart as a record
@@ -9193,9 +9189,9 @@ viewed_subject :: proc(c: ^Compiler, base, reached: Type_Id, via: Transfer_Via) 
 	return fmt.tprintf("`%s` reaches %s", type_name(c, base), chain)
 }
 
-// What an argument takes across: a `dyn` or `any_view` made at the call is
-// checked through what it erased, which is known there. An explicit conversion
-// to either is the implicit one written out, so its operand is what was erased.
+// What an argument takes across: a `dyn` made at the call is checked through
+// what it erased, which is known there. An explicit conversion to one is the
+// implicit one written out, so its operand is what was erased.
 @(private = "file")
 prov_transferred_type :: proc(c: ^Compiler, argument: Expr) -> Type_Id {
 	base := expr_base(argument)
@@ -9206,7 +9202,7 @@ prov_transferred_type :: proc(c: ^Compiler, argument: Expr) -> Type_Id {
 		kind := underlying_kind(c, call.type)
 		#partial switch _ in call.operation {
 		case Call_Dyn_Conversion, Call_Conversion:
-			if kind == .Dyn || kind == .Any_View {
+			if kind == .Dyn {
 				return prov_transferred_type(c, call.bound[0])
 			}
 		}

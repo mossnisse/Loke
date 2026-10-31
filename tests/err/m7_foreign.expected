@@ -23,17 +23,13 @@ L0627
 @24:24
 
 L0627
-`@(c_vararg) args: ..`
-@25:22
-
-L0627
 a bare `..` is a C variadic parameter
-@26:23
+@25:23
 
 L0626
 `@(by_ptr)` is only allowed on a foreign procedure parameter
-@29:21
+@28:21
 
 L0628
 a C-variadic call cannot spread; pass each concrete argument
-@33:15
+@32:15

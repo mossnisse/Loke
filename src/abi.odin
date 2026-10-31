@@ -323,8 +323,6 @@ abi_walk :: proc(
 			}
 		}
 		return false, "a tagged union", ""
-	case .Any_View:
-		return false, "an `any_view`", ""
 	case .Dyn:
 		return false, "a `dyn` interface value", ""
 	case .Interface:

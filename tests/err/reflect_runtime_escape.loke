@@ -6,7 +6,7 @@ package main; import "core:fmt";
 Point :: struct { x: int }
 Other :: struct { x: int }
 
-takes :: proc(value: any_view) { }
+takes :: proc(values: ..dyn fmt.Formattable) { }
 generic :: proc(value: $T) { }
 declared :: proc(t: type) { }
 

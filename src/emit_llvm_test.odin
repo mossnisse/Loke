@@ -283,8 +283,6 @@ coercion_emission_preserves_checked_annotations :: proc(t: ^testing.T) {
 main :: proc() {
     number := 7;
     text: string = "hello";
-    erased_place: any_view = number;
-    erased_temporary: any_view = number + 1;
     view: string_view = text;
     vector: Simd(int, 4) = -number;
 }
@@ -297,19 +295,17 @@ main :: proc() {
 	body := decl_proc(f.items[0].(^Decl)).body
 	number := body.stmts[0].(^Decl).symbols[0]
 	text := body.stmts[1].(^Decl).symbols[0]
-	sources := [4]Type_Id{TYPE_INT, TYPE_INT, TYPE_STRING, TYPE_INT}
+	sources := [2]Type_Id{TYPE_STRING, TYPE_INT}
 	// design.md "Integer overflow": signed arithmetic is the checked intrinsic.
-	operations := [4]string{"load i64", "sadd.with.overflow.i64", "load " + STRING_TYPE, "ssub.with.overflow.i64"}
-	expressions: [4]Expr
-	saved: [4]Expr_Base
+	operations := [2]string{"load " + STRING_TYPE, "ssub.with.overflow.i64"}
+	expressions: [2]Expr
+	saved: [2]Expr_Base
 	for index in 0 ..< len(expressions) {
 		expr := body.stmts[index + 2].(^Decl).values[0]
 		expressions[index] = expr
 		saved[index] = expr_base(expr)^
 	}
-	testing.expect(t, saved[0].erased_from == TYPE_INT && saved[0].addressable)
-	testing.expect(t, saved[1].erased_from == TYPE_INT && !saved[1].addressable)
-	testing.expect(t, saved[2].view_from == TYPE_STRING && saved[3].splat_from == TYPE_INT)
+	testing.expect(t, saved[0].view_from == TYPE_STRING && saved[1].splat_from == TYPE_INT)
 
 	// A source-type request skips only this node's conversion.
 	for expr, index in expressions {
@@ -474,7 +470,7 @@ emission_rejects_incomplete_registries :: proc(t: ^testing.T) {
 			append(&c.held_diagnostics, Diagnostic{severity = .Error, code = "L0000"})
 		case "unanalyzed": c.program_analyzed = false
 		case "formatters": c.formatters_ready = false
-		case "carrier": type_of(&c, TYPE_ANY_VIEW).fields = nil
+		case "carrier": type_of(&c, slice_of(&c, TYPE_INT, false)).fields = nil
 		}
 		testing.expectf(t, !validate_emission_dependencies(&c), "%s registry was accepted at the emission boundary", broken)
 		expect_rejection(t, &c, message)

@@ -4,8 +4,8 @@
 // with it, whose calls check more. A `@(thread_affine)` value made and dropped
 // on one thread never crosses, and a synchronized field is read through the
 // owner once every thread that used it has joined. An unchecked C pointer
-// crosses whatever it points to, and an `any_view` made at the call is checked
-// through the value it erased.
+// crosses whatever it points to, and a `dyn` view made at the call is checked
+// through the value it views.
 package main;
 
 import "core:fmt";
@@ -42,7 +42,7 @@ pass_address :: proc(@(cross_thread, escape=static) address: move [^]Handle) -> 
 }
 
 shown: int = 5;
-pass_view :: proc(@(cross_thread, escape=static) view: move any_view) {
+pass_view :: proc(@(cross_thread, escape=static) view: move dyn fmt.Formattable) {
 	fmt.println(view);
 }
 
@@ -64,5 +64,5 @@ main :: proc() {
 	here := Handle{id = 7};
 	fmt.println(here.id);
 	fmt.println(pass_address(nil));
-	pass_view(any_view(shown));
+	pass_view((dyn fmt.Formattable)(&shown));
 }

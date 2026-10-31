@@ -32,10 +32,10 @@ impl Bag {
 }
 
 // design.md: "Copying a borrow carrier copies the view and its root provenance",
-// so an `any_view` may be copied and read freely while its subject is untouched.
+// so a `dyn` view may be copied and read freely while its subject is untouched.
 erased_copies :: proc() {
 	value := 7;
-	view: any_view = value;
+	view := (dyn fmt.Formattable)(&value);
 	alias := view;
 	fmt.println(view);
 	fmt.println(alias);

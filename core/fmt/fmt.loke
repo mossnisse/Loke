@@ -61,7 +61,6 @@ Format_View :: dyn Formattable;
 //   stdout_writer()      the process output sink
 //   stderr_writer()      the process error sink
 //   write_bytes(w, view) one string view, straight through the sink
-//   format_view(v)       borrow an `any_view` as `dyn Formattable`
 //
 // A `..dyn Formattable` pack views each argument where it is written
 // (design.md "Variadic parameters"), so formatting one is a slot call.

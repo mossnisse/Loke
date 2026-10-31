@@ -468,7 +468,7 @@ type_is_carrier :: proc(c: ^Compiler, type: Type_Id) -> bool {
 		return true
 	}
 	#partial switch underlying_kind(c, type) {
-	case .Pointer, .Slice, .String_View, .CString_View, .Any_View, .Dyn:
+	case .Pointer, .Slice, .String_View, .CString_View, .Dyn:
 		return true
 	}
 	return false
@@ -872,7 +872,6 @@ carrier_noun :: proc(c: ^Compiler, type: Type_Id) -> string {
 	case .Slice:        return "slice"
 	case .String_View:  return "string view"
 	case .CString_View: return "C string view"
-	case .Any_View:     return "view"
 	case .Dyn:          return "dyn view"
 	}
 	return "borrow"
@@ -4859,7 +4858,7 @@ collect_pointees :: proc(c: ^Compiler, type: Type_Id, objects: ^[dynamic]Type_Id
 	append(inside, type)
 	defer pop(inside)
 	#partial switch info.kind {
-	case .Raw_Pointer, .C_Pointer, .Any_View, .Dyn, .Interface, .Type, .Invalid:
+	case .Raw_Pointer, .C_Pointer, .Dyn, .Interface, .Type, .Invalid:
 		return false
 	case .Distinct, .Array, .Simd:
 		return collect_pointees(c, info.element, objects, inside)

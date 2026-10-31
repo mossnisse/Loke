@@ -176,7 +176,7 @@ define_struct :: proc(e: ^Emitter, type: Type_Id, emitted: ^map[Type_Id]bool) {
 		if dyn_abi_type(e.c, type) != type {
 			return
 		}
-	} else if info.kind != .Struct && info.kind != .Any_View {
+	} else if info.kind != .Struct {
 		return
 	}
 	emitted[type] = true
@@ -382,7 +382,7 @@ llvm_type :: proc(e: ^Emitter, type: Type_Id) -> string {
 		// which is where the lane-wise operators and the vector alignment rule
 		// both come from.
 		return fmt.aprintf("<%d x %s>", info.count, simd_lane_llvm_type(e, info))
-	case .Struct, .Union, .Any_View, .Dyn, .Slice:
+	case .Struct, .Union, .Dyn, .Slice:
 		// A two-word erased view or slice is an ordinary aggregate to the backend.
 		return struct_name(e, under)
 	case .Invalid, .Distinct, .Interface,

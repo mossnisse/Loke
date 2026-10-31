@@ -303,7 +303,7 @@ written_signatures_agree_on_parameter_shapes :: proc(t: ^testing.T) {
 Sink :: struct { value: int }
 Collects :: interface($T: type) {
     slot append: proc(self, values: ..int) -> int;
-    slot show: proc(self, values: ..any_view) -> int;
+    slot show: proc(self, values: ..bool) -> int;
     slot update: proc(self, left, right: inout int);
     slot defaulted: proc(self, value: int) -> int;
     slot take: proc(self: move T) -> int;
@@ -312,7 +312,7 @@ Collects :: interface($T: type) {
 sum :: proc(self, other: int) -> int { return self + other; }
 impl Sink {
     append :: proc(self, values: ..int) -> int { return values.len(); }
-    show :: proc(self, values: ..any_view) -> int { return values.len(); }
+    show :: proc(self, values: ..bool) -> int { return values.len(); }
     update :: proc(self, left, right: inout int) { left += 1; right += 1; }
     defaulted :: proc(self, value: int = 7) -> int { return value; }
     take :: proc(self: move Sink) -> int { return self.value; }
@@ -330,7 +330,7 @@ main :: proc() {
     // other argument.
     assert(Sink.append(value, 1, 2) == 2);
     assert(value.append(1, 2) == 2);
-    assert(value.show(1, true) == 2);
+    assert(value.show(false, true) == 2);
     assert(value.defaulted() == 7);
     assert(value.plain_type() == 3);
     left, right := 1, 2;
@@ -389,14 +389,13 @@ main :: proc() {
 
 @(test)
 interface_probes_do_not_register_emission_dependencies :: proc(t: ^testing.T) {
-	// A small core:fmt package reaches its private dispatch intrinsic without
-	// checking the real library's bodies, which already request formatting.
+	// A small core:fmt package reaches formatting without checking the real
+	// library's bodies, which already request it.
 	source := `package fmt;
 import "base:runtime";
 Writer :: struct {}
 Options :: struct {}
 Formattable :: interface($Self: type) { slot format: proc(self: ^, writer: Writer, options: Options); }
-Format_View :: dyn Formattable;
 Record :: struct { value: int }
 Tag :: struct { label: string }
 Sized :: interface($T: type) { slot size: proc(self) -> int; }
@@ -414,7 +413,6 @@ Probe :: interface($T: type) {
     &TABLE -> ^[2]int;
     typeid_of(T) -> typeid;
     type_info_of(typeid_of(T)) -> _;
-    (value: any_view) format_view(value) -> Format_View;
 }
 Nested :: interface($T: type) { Probe(T); }
 Rejected :: interface($T: type) { Nested(T); T.missing -> _; }
@@ -461,12 +459,11 @@ Rejected :: interface($T: type) { Nested(T); T.missing -> _; }
 	// Check real uses in the same compilation so cached probe results cannot
 	// hide a missing commitment. CTFE inside a bound is covered separately above.
 	real_source := `package fmt;
-use_dependencies :: proc(value: ^Record, erased: any_view, writer: Writer, options: Options) {
+use_dependencies :: proc(value: ^Record, writer: Writer, options: Options) {
     id := identity(value^);
     view := (dyn Sized)(value);
     address := &TABLE;
     info := type_info_of(typeid_of(Record));
-    view_to_format := format_view(erased);
     value^.format(writer, options);
 }`
 	file_id := add_source(&p.c, "<real-use>", real_source)

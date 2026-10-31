@@ -5,17 +5,6 @@ import "core:unsafe";
 // design.md's variadic form is one trailing parameter.
 misplaced :: proc(nums: ..int, tail: int) -> int { return tail; }
 
-show :: proc(args: ..any_view) -> int { return args.len(); }
-
-// design.md "any_view type": the `..any_view` exception "does not permit an
-// escape. The slice and its elements borrow the caller's temporary arguments."
-escaping_slice :: proc(args: ..any_view) -> []any_view { return args; }
-escaping_element :: proc(args: ..any_view) -> any_view { return args[0]; }
-
-// No other operation can produce `[]any_view`: it is a calling form, not a
-// container type.
-stored: []any_view;
-
 sum :: proc(nums: ..int) -> int { return nums.len(); }
 
 // design.md "Named arguments": a name reaches a fixed parameter, never a pack

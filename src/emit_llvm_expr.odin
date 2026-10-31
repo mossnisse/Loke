@@ -168,7 +168,7 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 		}
 		strings.write_string(&b, vector ? " >" : " ]")
 		return strings.to_string(b)
-	case .Struct, .Any_View, .Dyn, .Slice, .Dynamic_Array, .Map:
+	case .Struct, .Dyn, .Slice, .Dynamic_Array, .Map:
 		if value.kind == .Nil {
 			return "zeroinitializer"
 		}
@@ -1155,14 +1155,10 @@ emit_expr_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 		return emit_dyn_proc_value(e, expr, from, as_type)
 	}
 	// design.md "Variadic parameters": a value a `..dyn I` pack views, with the
-	// witness of its type. A `dyn` value erased into an `any_view` is emitted at
-	// its own type here and must not be viewed again.
+	// witness of its type. A `dyn` value passed as it is keeps its own type and
+	// is not viewed again.
 	if from := base.erased_from; from != INVALID_TYPE && as_type == base.type && type_is_dyn(e.c, as_type) {
 		return emit_dyn_view_value(e, emit_viewed_address(e, expr, from), from, as_type)
-	}
-	// A value becoming an `any_view`: its address plus the frozen `typeid`.
-	if from := base.erased_from; from != INVALID_TYPE && as_type == TYPE_ANY_VIEW {
-		return emit_any_view_value(e, emit_viewed_address(e, expr, from), from)
 	}
 	// A `string` borrowed as a `string_view`: the owning word is dropped, and
 	// addressing the source keeps an owned temporary alive.
@@ -1782,7 +1778,7 @@ emit_equal :: proc(e: ^Emitter, type: Type_Id, lhs, rhs: string) -> string {
 	#partial switch info.kind {
 	case .Union:
 		return emit_union_equal(e, under, lhs, rhs)
-	case .Dyn, .Any_View:
+	case .Dyn:
 		// Comparable only with `nil`, the zero view, so the second word decides.
 		llvm := llvm_type(e, under)
 		left := extract(e, llvm, lhs, 1)
@@ -1959,7 +1955,7 @@ emit_prefix_equal :: proc(
 @(private = "file")
 type_is_erased_view :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	#partial switch underlying_kind(c, type) {
-	case .Dyn, .Any_View, .Slice:
+	case .Dyn, .Slice:
 		return true
 	}
 	return false

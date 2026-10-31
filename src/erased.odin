@@ -1,6 +1,5 @@
-// Erased views, both compiler-owned two-word structs:
+// Erased views, compiler-owned two-word structs:
 //
-//   any_view       { ptr data, typeid id }
 //   dyn Interface  { ptr data, ptr witness }
 //   dyn proc(...)  { ptr data, ptr code }
 //
@@ -15,117 +14,8 @@ package lokec
 import "core:fmt"
 import "core:strings"
 
-ANY_VIEW_DATA :: 0
-ANY_VIEW_ID :: 1
-
 DYN_DATA :: 0
 DYN_WITNESS :: 1
-
-// Installed on first use: the predeclared table runs before any symbol exists.
-ensure_any_view_fields :: proc(c: ^Compiler) {
-	info := type_of(c, TYPE_ANY_VIEW)
-	if info == nil || len(info.fields) > 0 {
-		return
-	}
-	fields := make([]Symbol_Id, 2, c.semantic_allocator)
-	fields[ANY_VIEW_DATA] = new_field(c, "data", TYPE_RAWPTR, ANY_VIEW_DATA)
-	fields[ANY_VIEW_ID] = new_field(c, "id", TYPE_TYPEID, ANY_VIEW_ID)
-	info.fields = fields
-	info.backend_label = "any_view"
-}
-
-// design.md: `any_view` may only be a local or a parameter. The resolved type is
-// asked, so an alias or a generic substitution cannot bypass the rule.
-type_mentions_any_view :: proc(c: ^Compiler, id: Type_Id, allow_top := false) -> bool {
-	if id == INVALID_TYPE {
-		return false
-	}
-	if id == TYPE_ANY_VIEW {
-		return !allow_top
-	}
-	seen := make(map[Type_Id]bool, context.temp_allocator)
-	return type_contains_any_view(c, id, &seen)
-}
-
-@(private = "file")
-type_contains_any_view :: proc(c: ^Compiler, id: Type_Id, seen: ^map[Type_Id]bool) -> bool {
-	if seen[id] {
-		return false
-	}
-	seen[id] = true
-	info := type_of(c, id)
-	if info == nil {
-		return false
-	}
-	#partial switch info.kind {
-	case .Any_View:
-		return true
-	case .Pointer, .C_Pointer, .Slice, .Dynamic_Array, .Box, .Array, .Distinct:
-		return type_contains_any_view(c, info.element, seen)
-	case .Map:
-		return type_contains_any_view(c, info.key, seen) ||
-		       type_contains_any_view(c, info.element, seen)
-	case .Union:
-		for variant in info.variants {
-			if type_contains_any_view(c, variant, seen) {
-				return true
-			}
-		}
-	case .Struct:
-		for field in info.fields {
-			sym := symbol_of(c, field)
-			if sym != nil && type_contains_any_view(c, sym.type, seen) {
-				return true
-			}
-		}
-	case .Proc:
-		for parameter in info.parameters {
-			if type_contains_any_view(c, parameter, seen) {
-				return true
-			}
-		}
-		if info.result != INVALID_TYPE && type_contains_any_view(c, info.result, seen) {
-			return true
-		}
-	}
-	return false
-}
-
-reject_any_view_position :: proc(k: ^Checker, type: Type_Id, span: Span, what: string) -> bool {
-	if !type_mentions_any_view(k.c, type) {
-		return false
-	}
-	errorf(
-		k.c,
-		span,
-		"L0462",
-		"`any_view` is a borrowed view and cannot be %s; it may only be a local or a parameter",
-		what,
-	)
-	return true
-}
-
-// design.md: conversion from a concrete value is implicit at an `any_view`
-// destination and never allocates.
-any_view_accepts :: proc(c: ^Compiler, from: Type_Id) -> bool {
-	if from == INVALID_TYPE || from == TYPE_ANY_VIEW {
-		return false
-	}
-	if type_is_untyped(c, from) && from != TYPE_UNTYPED_NIL {
-		return true // through its default type
-	}
-	// design.md "Zero values": a `type` or descriptor exists only while
-	// compiling, so there is nothing at run time for a view to point at.
-	// design.md "Capture literals": a callable has no printed form to view.
-	return type_is_supported(c, from) && !type_mentions_any_view(c, from) &&
-	       compile_time_only_component(c, from) == INVALID_TYPE && !type_is_capture_record(c, from)
-}
-
-// The concrete type an `any_view` is being made from, once untyped constants
-// have taken their default type.
-any_view_source_type :: proc(c: ^Compiler, from: Type_Id) -> Type_Id {
-	return type_is_untyped(c, from) ? default_type(c, from) : from
-}
 
 // design.md "Variadic parameters": the element of a `..dyn I` pack, which views
 // each value written at the call. A `dyn mut I` pack and a `dyn proc` pack take

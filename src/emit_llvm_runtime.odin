@@ -5,11 +5,10 @@ import "core:fmt"
 import "core:slice"
 import "core:strings"
 
-// design.md "String format printing": Formattable witnesses per typeid. A
-// formatted panic without core:fmt uses primitive thunks and needs no import.
-FMT_ENTRIES :: "@.loke.formatters"
-FMT_ENTRY_COUNT :: "@.loke.formatters.count"
+// design.md "String format printing": each `typeid`'s name, so a `typeid`
+// prints without a `base:runtime` import.
 TYPE_NAMES :: "@.loke.type_names"
+TYPE_NAME_COUNT :: "@.loke.type_names.count"
 
 @(private)
 emit_preamble :: proc(e: ^Emitter) {
@@ -548,26 +547,19 @@ fmt_thunk_name :: proc(e: ^Emitter, type: Type_Id) -> string {
 	return fmt.aprintf("@loke.f.%d", typeid_value(e.c, type))
 }
 
-// Runtime-ABI wrappers for recursive aggregate formatting, and a table of
-// ordinary Formattable witnesses (primitive thunks without core:fmt).
+// Runtime-ABI wrappers for recursive aggregate formatting, one per printable
+// type, which a formatted panic calls without core:fmt.
 @(private)
 emit_format_thunks :: proc(e: ^Emitter) {
 	if !e.c.format_requested {
 		return
 	}
 	count := len(e.c.typeid_order)
-	entries := make([]string, count + 1)
-	for &entry in entries {
-		entry = "null"
-	}
 	for type in e.c.typeid_order {
 		id := typeid_value(e.c, type)
-		if id == 0 || int(id) > count || !type_is_printable(e.c, type) {
-			continue
+		if id != 0 && int(id) <= count && type_is_printable(e.c, type) {
+			emit_one_format_thunk(e, type)
 		}
-		emit_one_format_thunk(e, type)
-		witness := e.c.formatters[type]
-		entries[id] = witness != nil ? e.witness_names[witness] : fmt_thunk_name(e, type)
 	}
 
 	// Private `typeid` names, so printing needs no `base:runtime` import.
@@ -580,15 +572,7 @@ emit_format_thunks :: proc(e: ^Emitter) {
 	}
 
 	b := strings.builder_make()
-	fmt.sbprintf(&b, "%s = private unnamed_addr constant [%d x ptr] [", FMT_ENTRIES, count + 1)
-	for entry, index in entries {
-		if index > 0 {
-			strings.write_string(&b, ",")
-		}
-		fmt.sbprintf(&b, " ptr %s", entry)
-	}
-	strings.write_string(&b, " ]\n")
-	fmt.sbprintf(&b, "%s = private unnamed_addr constant i64 %d\n", FMT_ENTRY_COUNT, count)
+	fmt.sbprintf(&b, "%s = private unnamed_addr constant i64 %d\n", TYPE_NAME_COUNT, count)
 	strings.write_string(&b, strings.concatenate({
 		PANIC_OPTIONS, " = private unnamed_addr constant { i64, i8, [7 x i8] } { i64 10, i8 0, [7 x i8] zeroinitializer }\n",
 	}))
@@ -817,10 +801,6 @@ emit_format_body :: proc(e: ^Emitter, type: Type_Id, address: string) {
 	case .Struct:
 		emit_format_struct(e, type, under, address)
 
-	case .Any_View:
-		data, id := load_pair(e, llvm_type(e, under), address, ANY_VIEW_DATA, ANY_VIEW_ID)
-		emit_format_dispatch_at(e, data, id, "%w", "%o")
-
 	case .Union:
 		emit_format_union(e, under, address)
 
@@ -865,7 +845,7 @@ emit_format_union :: proc(e: ^Emitter, under: Type_Id, address: string) {
 // A `typeid` prints its type's name, or its number when it has none.
 @(private = "file")
 emit_format_type_name :: proc(e: ^Emitter, id: string) {
-	safe, _ := typeid_index(e, id, FMT_ENTRY_COUNT)
+	safe, _ := typeid_index(e, id, TYPE_NAME_COUNT)
 	view := gep_at(e, STRING_VIEW_TYPE, TYPE_NAMES, safe)
 	data := load(e, "ptr", view)
 	stride := gep_field(e, STRING_VIEW_TYPE, view, STRING_LEN)
@@ -1102,30 +1082,8 @@ emit_fmt_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> stri
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_bytes(ptr %s, ptr %s, i64 %s)", writer, data, length)
 		return "0"
 
-	case .Fmt_Format_View:
-		view := emit_expr(e, v.bound[0])
-		storage := llvm_type(e, TYPE_ANY_VIEW)
-		data := extract(e, storage, view, ANY_VIEW_DATA)
-		id := extract(e, storage, view, ANY_VIEW_ID)
-		safe, _ := typeid_index(e, id, FMT_ENTRY_COUNT)
-		witness := load(e, "ptr", gep_at(e, "ptr", FMT_ENTRIES, safe))
-		first := insert(e, llvm_type(e, v.type), "undef", "ptr", data, DYN_DATA)
-		return insert(e, llvm_type(e, v.type), first, "ptr", witness, DYN_WITNESS)
 	}
 	return "0"
-}
-
-// Dispatches an erased value through the table. Every type an `any_view` can
-// erase has an entry (design.md "any_view type").
-@(private = "file")
-emit_format_dispatch_at :: proc(e: ^Emitter, data, id, writer, options: string) {
-	safe, _ := typeid_index(e, id, FMT_ENTRY_COUNT)
-	thunk := load(e, "ptr", gep_at(e, "ptr", FMT_ENTRIES, safe))
-	if _, uses_interface := e.c.runtime_types["Format_View"]; uses_interface {
-		emit_format_witness_call(e, thunk, data, writer, options)
-	} else {
-		fmt.sbprintfln(&e.b, "  call void %s(ptr %s, ptr %s, ptr %s)", thunk, data, writer, options)
-	}
 }
 
 // The same slot ABI ordinary dyn calls use, with the C runtime's spilled
@@ -1254,7 +1212,6 @@ public_type_kind :: proc(c: ^Compiler, type: Type_Id) -> Runtime_Type_Kind {
 	case .String_View:     return .String_View
 	case .CString_View:    return .CString_View
 	case .Typeid:          return .Typeid
-	case .Any_View:        return .Any_View
 	case .Dyn:             return .Dyn
 	case .Allocator:       return .Allocator
 	case .Allocator_Error: return .Allocator_Error
@@ -1551,16 +1508,6 @@ emit_synth_standard_customization :: proc(e: ^Emitter, symbol: ^Symbol, name: st
 }
 
 // ============================================================ erased views ==
-
-// `{ ptr data, typeid id }`, pairing the source's address with its `typeid`.
-@(private)
-emit_any_view_value :: proc(e: ^Emitter, address: string, concrete: Type_Id) -> string {
-	storage := llvm_type(e, TYPE_ANY_VIEW)
-	first := insert(e, storage, "undef", "ptr", address, ANY_VIEW_DATA)
-	out := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i64 %d, %d", out, storage, first, typeid_value(e.c, concrete), ANY_VIEW_ID)
-	return out
-}
 
 // `(dyn I)(&value)`: the data pointer plus the witness, or for a callable view
 // the witness's one thunk.

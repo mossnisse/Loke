@@ -20,8 +20,8 @@ main :: proc() {
 	view: string_view = name;
 	ages := map[string]int{"Bob" = 2};
 	ids := map[int]string{7 = "seven"};
-	count: any_view = ages["Bob"];
-	text: any_view = ids[7];
+	count := ages["Bob"];
+	text := ids[7];
 	box := Box{width = 3, height = 4};
 	shape := (dyn Sized)(&box);
 	stop();

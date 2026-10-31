@@ -364,7 +364,7 @@ has_excluded_copy_hook :: proc(c: ^Compiler, info: ^Type_Info) -> bool {
 
 // design.md "@(thread_affine)": what a value would take to another thread
 // that may not go. `affine` is a thread-affine type it holds or reaches, and
-// `erased` a `dyn` or `any_view` it reaches, behind which affinity cannot be
+// `erased` a `dyn` it reaches, behind which affinity cannot be
 // seen. Like `move_only`, affinity propagates structurally, but transfer also
 // follows pointees, owned and shared payloads, container elements, and a
 // generic record's type arguments. An unchecked address, a `rawptr` or a C
@@ -449,7 +449,7 @@ transfer_facts_walk :: proc(
 		}
 	}
 	#partial switch info.kind {
-	case .Dyn, .Any_View:
+	case .Dyn:
 		if through_views && info.kind == .Dyn && !view_is_printing(c, info) {
 			for witness in view_witness_types(c, info) {
 				inner := via

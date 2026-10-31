@@ -2271,7 +2271,8 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 			graph.extended_content[base] = carried
 		}
 	}
-	// design.md "any_view type": an erased view borrows the place it came from.
+	// design.md "Variadic parameters", "Borrowed callable views": an implicit view
+	// borrows the place it came from.
 	if prov {
 		if expr_base(e) != nil && prov_repr(graph, e).erased_from != INVALID_TYPE {
 			return prov_erase(graph, e)

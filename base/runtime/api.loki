@@ -54,7 +54,7 @@ Type_Kind :: enum u8 {
 	Invalid, Void, Bool, Signed_Int, Unsigned_Int, Float, Rune,
 	Raw_Pointer, Pointer, C_Pointer, Array, Slice, Dynamic_Array, Map,
 	Struct, Enum, Union, Proc, String, String_View, CString_View,
-	Typeid, Any_View, Dyn, Distinct, Simd, Allocator, Allocator_Error, Box,
+	Typeid, Dyn, Distinct, Simd, Allocator, Allocator_Error, Box,
 }
 
 Member_Kind :: enum u8 { Field, Enum_Value, Union_Variant, Parameter, Result }

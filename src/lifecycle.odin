@@ -431,9 +431,8 @@ extends_into_local :: proc(c: ^Compiler, id: Symbol_Id) -> bool {
 // The value a local receives: an implicit view conversion borrows the value it
 // converts, and `&`, `&mut`, and slicing borrow their operand. Reslicing a view
 // borrows what the view does, so the path goes on through it. Calls end it,
-// except an explicit `any_view(value)` or `dyn proc` conversion, which is the
-// implicit one written out (design.md "any_view type", "Borrowed callable
-// views").
+// except an explicit `dyn proc` conversion, which is the implicit one written
+// out (design.md "Borrowed callable views").
 @(private = "file")
 mark_extending_path :: proc(c: ^Compiler, value: Expr, into: ^map[^Expr_Base]bool) {
 	base := expr_base(value)
@@ -465,8 +464,8 @@ mark_extending_path :: proc(c: ^Compiler, value: Expr, into: ^map[^Expr_Base]boo
 	}
 }
 
-// The erased operand of an explicit conversion to `any_view` or `dyn proc`,
-// whose result is that operand. Identity conversions wrapped around it are
+// The erased operand of an explicit conversion to `dyn proc`, whose result is
+// that operand. Identity conversions wrapped around it are
 // looked through: their result is their operand.
 explicit_erasure_operand :: proc(value: Expr) -> (Expr, bool) {
 	call, is_call := value.(^Expr_Call)

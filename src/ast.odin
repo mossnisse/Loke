@@ -18,7 +18,8 @@ Expr_Base :: struct {
 	addressable:  bool,
 	assignable:   bool,
 	immutable:    Immutable_Reason,
-	// The concrete type erased into the `any_view` that `type` names.
+	// The concrete type a `dyn` view that `type` names was made from, at a
+	// `..dyn I` pack or as a `dyn proc`.
 	erased_from: Type_Id,
 	// A `string` borrowed as a `string_view`, or a `[dynamic]T` as a `[]T`: the
 	// source type to narrow from.

@@ -67,7 +67,7 @@ Prov_Input_Key :: struct {
 }
 
 // The implicit conversions a checked node can carry (design.md "string type
-// conversions", "any_view type", "Widening by label", "Slice literals").
+// conversions", "Variadic parameters", "Widening by label", "Slice literals").
 Prov_Conversion :: enum { View, Erasure, Widening, Backing }
 
 Prov_Input :: struct {

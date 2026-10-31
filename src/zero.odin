@@ -66,7 +66,7 @@ type_has_zero_walk :: proc(c: ^Compiler, type: Type_Id, seen: ^map[Type_Id]bool)
 		return false
 	// design.md "Types with no zero value": a reference always refers to
 	// something, so there is no null one; `Option(^T)` is the absent one.
-	case .Pointer, .Proc, .Dyn, .Any_View, .CString_View:
+	case .Pointer, .Proc, .Dyn, .CString_View:
 		return false
 	}
 	// Scalars, SIMD vectors, and container headers, whose capacity is raw storage.

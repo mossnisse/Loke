@@ -161,7 +161,7 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 			return "0"
 		case .Type_Info_Of:
 			return emit_type_info_of(e, v)
-		case .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_View:
+		case .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes:
 			return emit_fmt_builtin(e, v, symbol.builtin)
 		case .Strings_Allocate:
 			return emit_strings_allocate(e, v, as_type)[0]
@@ -750,7 +750,7 @@ emit_union_failed :: proc(e: ^Emitter, union_type: Type_Id, value: string) -> st
 
 // Applies the explicit representations needed by propagated failures.
 @(private = "file")
-emit_failure_conversion :: proc(e: ^Emitter, value: string, from, into: Type_Id, source_address := "") -> string {
+emit_failure_conversion :: proc(e: ^Emitter, value: string, from, into: Type_Id) -> string {
 	if from == into || value == "" {
 		return value
 	}
@@ -758,15 +758,6 @@ emit_failure_conversion :: proc(e: ^Emitter, value: string, from, into: Type_Id,
 		data := extract(e, STRING_TYPE, value, STRING_DATA)
 		length := extract(e, STRING_TYPE, value, STRING_LEN)
 		return emit_ptr_len(e, STRING_VIEW_TYPE, data, length)
-	}
-	if into == TYPE_ANY_VIEW {
-		concrete := any_view_source_type(e.c, from)
-		slot := source_address
-		if slot == "" {
-			slot = alloca(e, llvm_type(e, concrete))
-			store(e, concrete, value, slot)
-		}
-		return emit_any_view_value(e, slot, concrete)
 	}
 	// design.md "Widening by label": a smaller error set propagates into a
 	// larger one.
@@ -884,9 +875,7 @@ emit_or_return :: proc(e: ^Emitter, v: ^Expr_Postfix) -> []string {
 	operand_address := ""
 	value := ""
 	if v.borrows {
-		// A place is evaluated once and retained as an address. Borrowing failure
-		// conversions such as `T -> any_view` must point into that proven-live
-		// source rather than into the temporary union spill below.
+		// A place is evaluated once and retained as an address.
 		operand_address = emit_address(e, v.operand)
 		value = load_place(e, operand_type, operand_address)
 	} else {
@@ -936,11 +925,7 @@ emit_or_return :: proc(e: ^Emitter, v: ^Expr_Postfix) -> []string {
 			   !failure_assignment_borrows(e.c, failure_type, failure_into) {
 				error = emit_clone_value(e, failure_type, error)
 			}
-			source_address := ""
-			if v.borrows && failure_assignment_borrows(e.c, failure_type, failure_into) {
-				source_address = gep_field(e, llvm_type(e, operand_type), operand_address, 0)
-			}
-			error = emit_failure_conversion(e, error, failure_type, failure_into, source_address)
+			error = emit_failure_conversion(e, error, failure_type, failure_into)
 		}
 		wrapped := emit_union_value(e, e.result_type, target_info.failure_variant, error)
 		store(e, e.result_type, wrapped, e.result_slot)

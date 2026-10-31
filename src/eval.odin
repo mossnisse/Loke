@@ -484,7 +484,7 @@ zero_value :: proc(ev: ^Evaluator, type: Type_Id) -> (Eval_Value, bool) {
 	#partial switch info.kind {
 	case .Int, .Enum, .Rune:
 		return Eval_Value{kind = info.kind == .Rune ? .Rune : .Integer, type = type, integer = bi_zero(ev.alloc)}, true
-	case .Array, .Struct, .Any_View, .Dyn:
+	case .Array, .Struct, .Dyn:
 		count := info.kind == .Array ? int(info.count) : len(info.fields)
 		kind, element, fields := info.kind, info.element, info.fields
 		elements, allocated := eval_elements(ev, count)
@@ -3977,7 +3977,7 @@ eval_dispatch :: proc(ev: ^Evaluator, s: ^Stmt_Switch) -> (Eval_Value, bool) {
 // case binding then names rather than copies.
 @(private = "file")
 eval_frame_place :: proc(ev: ^Evaluator, subject: Expr) -> bool {
-	if !expression_is_borrowed_place(subject) || expr_base(subject).type == TYPE_ANY_VIEW {
+	if !expression_is_borrowed_place(subject) {
 		return false
 	}
 	frame := current_frame(ev)

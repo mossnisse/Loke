@@ -20,10 +20,10 @@ place :: proc{place_one, place_two};
 tone :: proc{tone_one, tone_two};
 
 // design.md rank 1: `^mut T` weakening to `^T` creates no value, so it outranks
-// the erasure to `any_view` instead of tying with it.
+// the conversion to `rawptr` instead of tying with it.
 through_ptr :: proc(p: ^int) -> int { return p^; }
-through_view :: proc(v: any_view) -> int { return 0; }
-reach :: proc{through_ptr, through_view};
+through_raw :: proc(p: rawptr) -> int { return 0; }
+reach :: proc{through_ptr, through_raw};
 
 pad :: proc(i: int, by: int = 5) -> int { return i + by; }
 pad3 :: proc(i: int, j: int, k: int) -> int { return i * j * k; }

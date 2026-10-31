@@ -197,7 +197,6 @@ formatter_signature_ok :: proc(c: ^Compiler, sym: ^Symbol, subject, writer, opti
 //   stdout_writer() -> Writer
 //   stderr_writer() -> Writer
 //   write_bytes(w: Writer, text: string_view)
-//   format_view(value: any_view) -> dyn Formattable
 check_fmt_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind) {
 	v.value_category = .Value
 	writer, has_writer := local_type_named(k, "Writer")
@@ -216,13 +215,6 @@ check_fmt_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: 
 		result = writer
 	case .Fmt_Write_Bytes:
 		wanted = []Type_Id{writer, TYPE_STRING_VIEW}
-	case .Fmt_Format_View:
-		wanted = []Type_Id{TYPE_ANY_VIEW}
-		result, _ = local_type_named(k, "Format_View")
-		k.c.runtime_types["Format_View"] = result
-		if committing(k.c) {
-			k.c.format_requested = true
-		}
 	}
 
 	if len(v.args) != len(wanted) {

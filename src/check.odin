@@ -976,7 +976,6 @@ resolve_struct_fields :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) {
 		bindings := make([dynamic]Symbol_Id, 0, len(field.names), k.c.semantic_allocator)
 		// design.md "Compile-time reflection": fields have visibility too.
 		public := field_is_public(k, &field)
-		reject_any_view_position(k, field_type, field.span, "a record field")
 		for name in field.names {
 			if name.text != "_" && member_named(k.c, members[:], name_identifier(k.c, name)) != INVALID_SYMBOL {
 				errorf(k.c, name.span, "L0304", "`%s` is already a field of this record", name.text)
@@ -1092,7 +1091,6 @@ resolve_anon_record :: proc(k: ^Checker, value: ^Type_Anon_Record) -> Type_Id {
 			bad = true
 			continue
 		}
-		reject_any_view_position(k, field_type, field.span, "a record field")
 		if len(field.names) == 0 {
 			append(&specs, Anon_Record_Field{name = positional_field_name(k.c, index), type = field_type})
 			continue
@@ -1466,9 +1464,6 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 				errorf(k.c, parameter.span, "L0408", "a parameter needs a type or a default; only the receiver `self` may omit both")
 			}
 		}
-		if parameter_type != INVALID_TYPE && type_mentions_any_view(k.c, parameter_type, allow_top = true) {
-			reject_any_view_position(k, parameter_type, parameter.span, "stored inside another type")
-		}
 		bindings := make([dynamic]Symbol_Id, 0, len(parameter.names), k.c.semantic_allocator)
 		for parameter_name, name_index in parameter.names {
 			// Written names, so a removed `$` parameter still takes its name.
@@ -1558,7 +1553,6 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 		if result.type != nil && result_type == INVALID_TYPE && k.c.error_count == before {
 			report_unresolved_type(k, result.type)
 		}
-		reject_any_view_position(k, result_type, result.span, "a result type")
 		result_inout = result.is_inout
 	}
 
@@ -2474,10 +2468,6 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 	// design.md "Allocators": before the initialiser, which builds with the
 	// selected provider.
 	if !check_via_policy(k, d, declared) {
-		return
-	}
-	if declared != INVALID_TYPE && type_mentions_any_view(k.c, declared, allow_top = !d.top_level) {
-		reject_any_view_position(k, declared, d.span, d.top_level ? "a global" : "stored inside another type")
 		return
 	}
 	if declared != INVALID_TYPE && type_is_compile_time_only(k.c, declared) && d.kind != .Const {

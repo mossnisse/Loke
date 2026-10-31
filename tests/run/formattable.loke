@@ -47,8 +47,6 @@ main :: proc() {
 	default_view := (dyn fmt.Formattable)(&number);
 	fmt.println(default_view);
 	forward("mixed", token, Label{7});
-	erased: any_view = token;
-	fmt.println(erased);
 	fmt.println([?]Label{{1}, {2}});
 	result: Result = .value(Label{8});
 	fmt.println(result);

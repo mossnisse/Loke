@@ -696,7 +696,7 @@ a_temporary_path_alias_preserves_the_output :: proc(t: ^testing.T) {
 	)
 }
 
-// `-g` writes natvis rules for a map's entries and an `any_view`'s value, and
+// `-g` writes natvis rules for a map's entries and a `dyn` view's value, and
 // the linker stores them in the PDB, where Visual Studio and WinDbg find them.
 // No debugger runs here, so this pins the rules and their delivery only.
 @(test)
@@ -718,7 +718,7 @@ a_debug_build_carries_its_natvis :: proc(t: ^testing.T) {
 	if !testing.expect(t, natvis_err == nil, "-g -keep-temps left no .natvis") {
 		return
 	}
-	for rule in ([]string{`<Type Name="string$">`, `<Type Name="map$`, `$key*)((char*)table + table->keys_offset + slot * 24)`, `<Type Name="any_view">`, `{*(typeid$`, `Condition="witness == &amp;witness$`}) {
+	for rule in ([]string{`<Type Name="string$">`, `<Type Name="map$`, `$key*)((char*)table + table->keys_offset + slot * 24)`, `Condition="witness == &amp;witness$`}) {
 		testing.expectf(t, strings.contains(string(natvis), rule), "the .natvis has no `%s`:\n%s", rule, string(natvis))
 	}
 	pdb, pdb_err := os.read_entire_file(fmt.tprintf("%s/natvis.pdb", TMP), context.allocator)
@@ -767,8 +767,8 @@ a_debugger_shows_values :: proc(t: ^testing.T) {
 		`ages = { len=1 }`,
 		`["[\"Bob\"]"]`,
 		`"seven" [Type: map$`,
-		`any_view count = 2`,
-		`any_view text = "seven"`,
+		`int64 count = 0n2`,
+		`string$ text = "seven"`,
 		`width            : 3`,
 	}) {
 		testing.expectf(t, strings.contains(string(stdout), shown), "cdb does not show `%s`:\n%s", shown, string(stdout))

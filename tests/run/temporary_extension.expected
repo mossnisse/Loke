@@ -1,7 +1,6 @@
-using 1 2 3 Tracked{id = 4}
+using 1 2 3
 end of declarations
 drop 5
-drop 4
 drop 3
 drop 2
 drop 1

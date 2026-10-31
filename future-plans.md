@@ -406,7 +406,7 @@ declaration comments, `-api` writes each package's checked-in
 [interface file](compiler-guide.md#interface-files), and Windows `-g` emits
 CodeView/PDB information for
 procedures, scoped locals, and statement locations. Debug executables include
-Loke panic frames; natvis covers strings, maps, `any_view`, and `dyn` values.
+Loke panic frames; natvis covers strings, maps, and `dyn` values.
 See [Common options](compiler-guide.md#common-options) and
 [Formatting](comments.md#formatting).
 

@@ -45,32 +45,31 @@ TYPE_TYPE     :: Type_Id(21)
 
 TYPE_STRING   :: Type_Id(22)
 TYPE_TYPEID   :: Type_Id(23)
-TYPE_ANY_VIEW :: Type_Id(24)
 
-TYPE_UNTYPED_INT   :: Type_Id(25)
-TYPE_UNTYPED_FLOAT :: Type_Id(26)
-TYPE_UNTYPED_BOOL  :: Type_Id(27)
-TYPE_UNTYPED_RUNE  :: Type_Id(28)
-TYPE_UNTYPED_NIL   :: Type_Id(29)
+TYPE_UNTYPED_INT   :: Type_Id(24)
+TYPE_UNTYPED_FLOAT :: Type_Id(25)
+TYPE_UNTYPED_BOOL  :: Type_Id(26)
+TYPE_UNTYPED_RUNE  :: Type_Id(27)
+TYPE_UNTYPED_NIL   :: Type_Id(28)
 // A compile-time string; where a value is wanted it defaults to `string`.
-TYPE_UNTYPED_STRING :: Type_Id(30)
+TYPE_UNTYPED_STRING :: Type_Id(29)
 
 // design.md "string type conversions": a borrowed view over UTF-8 text that
 // owns and terminates nothing.
-TYPE_STRING_VIEW :: Type_Id(31)
+TYPE_STRING_VIEW :: Type_Id(30)
 
 // design.md "Allocators" and "Allocation failure". `core:mem` and `base:runtime`
 // export these identities rather than declaring their own, since the fixed
 // lifecycle signatures spell them unqualified. `Allocator` is a one-word
 // nominal handle; region identity lives in `src/borrow.odin`, not in the ABI.
-TYPE_ALLOCATOR :: Type_Id(32)
-TYPE_ALLOCATOR_ERROR :: Type_Id(33)
+TYPE_ALLOCATOR :: Type_Id(31)
+TYPE_ALLOCATOR_ERROR :: Type_Id(32)
 
 // design.md "C string views": a non-owning, zero-terminated byte view, and
 // deliberately not a promise of UTF-8.
-TYPE_CSTRING_VIEW :: Type_Id(34)
+TYPE_CSTRING_VIEW :: Type_Id(33)
 
-FIRST_DYNAMIC_TYPE :: Type_Id(35)
+FIRST_DYNAMIC_TYPE :: Type_Id(34)
 
 Type_Kind :: enum {
 	Invalid,
@@ -90,7 +89,6 @@ Type_Kind :: enum {
 	String_View,
 	CString_View,
 	Typeid,
-	Any_View,
 	Pointer,
 	C_Pointer,
 	Slice,
@@ -555,7 +553,6 @@ Builtin_Kind :: enum {
 	Fmt_Stdout_Writer,
 	Fmt_Stderr_Writer,
 	Fmt_Write_Bytes,
-	Fmt_Format_View,
 	// `core:slice`'s typed comparator bridge to the shared runtime introsort. The
 	// comparator pointer is used synchronously and never retained.
 	Slice_Sort_By,
@@ -1042,7 +1039,6 @@ init_semantic_stores :: proc(c: ^Compiler) {
 		Type_Info{kind = .Type},
 		Type_Info{kind = .String},
 		Type_Info{kind = .Typeid, bits = 64},
-		Type_Info{kind = .Any_View},
 		Type_Info{kind = .Untyped_Int},
 		Type_Info{kind = .Untyped_Float},
 		Type_Info{kind = .Untyped_Bool},
@@ -1092,7 +1088,7 @@ new_symbol :: proc(c: ^Compiler, value: Symbol) -> Symbol_Id {
 }
 
 // One field of a compiler-owned struct-shaped type — a slice, a container
-// header, `any_view`, a range. Every such type installs its fields the same way,
+// header, a range. Every such type installs its fields the same way,
 // so they share one constructor rather than a private copy apiece.
 new_field :: proc(c: ^Compiler, name: string, type: Type_Id, index: int, public := false) -> Symbol_Id {
 	return new_symbol(c, Symbol {
@@ -2209,7 +2205,7 @@ type_contains_invalid :: proc(c: ^Compiler, id: Type_Id, seen: ^Type_Walk) -> bo
 	case .Invalid:
 		return true
 	case .Void, .Bool, .Int, .Float, .Rune, .Enum, .Raw_Pointer, .Typeid,
-	     .String, .String_View, .CString_View, .Any_View, .Dyn, .Interface, .Type,
+	     .String, .String_View, .CString_View, .Dyn, .Interface, .Type,
 	     .Allocator, .Allocator_Error,
 	     .Untyped_Int, .Untyped_Float, .Untyped_Bool, .Untyped_Rune, .Untyped_Nil,
 	     .Untyped_String:
@@ -2273,7 +2269,7 @@ type_is_supported_walk :: proc(c: ^Compiler, id: Type_Id, seen: ^Type_Walk) -> b
 		return true
 	case .Typeid:
 		return true
-	case .Any_View, .Dyn:
+	case .Dyn:
 		return true
 	case .Allocator, .Allocator_Error:
 		return true
@@ -2357,7 +2353,6 @@ PREDECLARED_NAMES := [int(FIRST_DYNAMIC_TYPE)]string {
 	TYPE_TYPE            = "type",
 	TYPE_STRING          = "string",
 	TYPE_TYPEID          = "typeid",
-	TYPE_ANY_VIEW        = "any_view",
 	TYPE_UNTYPED_INT     = "untyped int",
 	TYPE_UNTYPED_FLOAT   = "untyped float",
 	TYPE_UNTYPED_BOOL    = "untyped bool",

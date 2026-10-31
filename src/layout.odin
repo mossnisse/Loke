@@ -143,10 +143,7 @@ compute_layout :: proc(c: ^Compiler, type: Type_Id, span: Span) {
 		offsets[0] = 0
 		offsets[1] = shape.tag_offset
 
-	case .Struct, .Any_View, .Dyn, .Slice, .Dynamic_Array, .Map:
-		if info.kind == .Any_View {
-			ensure_any_view_fields(c)
-		}
+	case .Struct, .Dyn, .Slice, .Dynamic_Array, .Map:
 		offsets = make([]u64, len(info.fields), c.semantic_allocator)
 		cursor := u64(0)
 		for field, index in info.fields {

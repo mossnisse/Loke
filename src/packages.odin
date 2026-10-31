@@ -85,9 +85,6 @@ finalize_semantics :: proc(c: ^Compiler) {
 	freeze_typeids(c)
 	discover_formatters(c)
 	_ = finalize_lifecycle_operations(c)
-	// The one carrier whose fields cannot be made when its type is: the
-	// predeclared table runs before any symbol exists.
-	ensure_any_view_fields(c)
 }
 
 // ------------------------------------------------------------------ loading --

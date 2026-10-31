@@ -25,7 +25,7 @@ validate_emission_dependencies :: proc(c: ^Compiler) -> bool {
 	// The emitter reads carrier fields; it never installs them.
 	for info in c.types {
 		#partial switch info.kind {
-		case .Any_View, .Slice, .Dynamic_Array, .Map:
+		case .Slice, .Dynamic_Array, .Map:
 			if len(info.fields) == 0 {
 				return emission_contract_error(c, "a carrier type has no installed fields")
 			}

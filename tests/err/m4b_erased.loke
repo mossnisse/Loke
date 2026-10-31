@@ -27,18 +27,7 @@ impl Circle {
 	draw :: proc(self, canvas: inout Canvas) { canvas.marks += self.radius; }
 }
 
-// `any_view` may only be a local or a parameter.
-Holder :: struct { view: any_view }
-global_view: any_view;
-Alias :: any_view;
-
-produce :: proc() -> any_view { return 1; }
-nested :: proc(views: [3]any_view) -> int { return 0; }
-
 main :: proc() {
-	// An alias cannot bypass the position restriction.
-	stored: [2]Alias;
-
 	c := Circle{1};
 	// A concrete type that supplies no slot.
 	o: Opaque = {1};

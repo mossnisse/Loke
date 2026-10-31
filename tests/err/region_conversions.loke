@@ -29,9 +29,9 @@ extended_slice :: proc() {
 	free_all(arena.allocator());
 	fmt.println(view);
 }
-extended_erasure :: proc() {
+extended_text_view :: proc() {
 	arena := mem.Arena.init();
-	view: any_view = fmt.to_string(arena.allocator(), 42);
+	view: string_view = fmt.to_string(arena.allocator(), 42);
 	free_all(arena.allocator());
 	fmt.println(view);
 }

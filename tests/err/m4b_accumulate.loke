@@ -21,8 +21,6 @@ main :: proc() {
 	// A concrete type with no slot cannot be erased.
 	t: Thing = {1};
 	view := (dyn Named)(&t);
-	// `any_view` cannot be stored inside another type.
-	pair: [2]any_view;
 	// A descriptor cannot be materialised.
 	descriptor := fields_of(Thing)[0];
 	// A static expansion is not a loop.

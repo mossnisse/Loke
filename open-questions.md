@@ -202,21 +202,19 @@ prerequisites; the language changes themselves remain proposals.
    (P2).**
    [Section 2.4](design-review-2026-10-31.md#24-existentials-dyn-alone)
    originally proposed using `dyn` lifetime rules with only implicit conversion
-   and variadic packing as differences. [An `any_view`](design.md#any_view-type)
-   also cannot be a result, field, ordinary container element, or captured
-   value; [ordinary `dyn` views](design.md#borrowed-dynamic-interface-values)
+   and variadic packing as differences. An `any_view` also could not be a
+   result, field, ordinary container element, or captured value; [ordinary `dyn` views](design.md#borrowed-dynamic-interface-values)
    follow slice lifetimes instead. A temporary converted into an `any_view`
    local lives to block end, whereas the ordinary `dyn` rule limits a view of
    a temporary to its complete expression. For example,
    `view: any_view = [dynamic]int{1, 2};` followed by `fmt.println(view);` is
-   valid today. Sharing a witness representation is compatible with retaining
+   was valid. Sharing a witness representation is compatible with retaining
    these rules, but replacing them as written is a language change. List them
    explicitly or narrow the proposal to representation and dispatch.
 
-   Superseded: section 2.4 now proposes deleting `any_view`, so no lowering has
-   to keep these rules. Its implicit conversion survives only at a `..dyn I`
-   parameter, whose temporaries live through the call. The block-end local is
-   counted as lost.
+   Resolved: `any_view` is deleted, so no lowering has to keep these rules.
+   Its implicit conversion survives only at a `..dyn I` parameter, whose
+   temporaries live through the call, and the block-end local is gone with it.
 
 5. **Remove the incorrect small-value ABI premise (P2).**
    [Section 6.5](design-review-2026-10-31.md#65-union-layout-and-small-values)

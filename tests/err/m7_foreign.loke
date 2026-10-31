@@ -22,7 +22,6 @@ foreign libc {
 	moved :: proc "c" (v: move Res) ---;
 	generic_one :: proc "c" ($T: type, v: T) -> T ---;
 	typed_va :: proc "c" (@(c_vararg) a: ..int) ---;
-	old_va :: proc "c" (@(c_vararg) a: ..any_view) ---;
 	bare_va :: proc "c" (a: ..) ---;
 }
 

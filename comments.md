@@ -92,7 +92,8 @@ extends this to the data-parallel case.
 
 How long a temporary lives once depended on what viewed it: a slice literal's
 backing array lived until its scope ended, a temporary erased into a local
-`any_view` did so only when its lifecycle was trivial, and a capture literal
+`any_view`, a view type since removed, did so only when its lifecycle was
+trivial, and a capture literal
 stored straight into a `dyn proc` local ended with its statement and made the
 next call an error. The [one rule](design.md#temporaries-and-procedure-boundaries)
 is C++'s and Rust's for a reference a declaration binds: a temporary that a
@@ -111,8 +112,8 @@ Loke goes one step past C++ and Rust and extends through an assignment to a
 whole local too. The temporary still ends with the block holding the
 assignment, and a statement runs once per entry to its block, so the storage
 stays bounded; a `for` update and a deferred statement, which rerun in one
-scope, are the exceptions. That keeps assigning a fresh `any_view` or slice
-literal to an existing local working as it did. The cost is that a managed
+scope, are the exceptions. That keeps assigning a fresh slice literal to an
+existing local working as it did. The cost is that a managed
 temporary bound this way drops at the end of the block rather than of its
 statement, the drop a named local would have had.
 
@@ -475,8 +476,8 @@ handle to decide which.
 
 `{}` means a usable zero: an empty view, invalid type id, default allocator,
 or empty weak handle. `nil` means an absent raw address. A non-null type has no
-valid zero, so `^T`, procedure values, `dyn` views, `any_view`, `cstring_view`,
-`Box(T)`, and `Shared(T)` cannot be null. Absence is represented by `Option`.
+valid zero, so `^T`, procedure values, `dyn` views, `cstring_view`, `Box(T)`,
+and `Shared(T)` cannot be null. Absence is represented by `Option`.
 The non-null types split into references, which are borrows and checked as
 such, and owning handles, which are owners. Calling them all references would
 make an owning handle look like a borrow; the shared name is what the zero rule
@@ -1423,7 +1424,7 @@ include target vector operations that a record cannot promise.
 
 ### Owning type erasure
 
-`any_view` and `dyn` borrow their payloads. An owning erased value would also
+A `dyn` view borrows its payload. An owning erased value would also
 need allocation, alignment, clone/drop dispatch, region tracking, and rules for
 borrows across moves. Keeping those out makes dynamic dispatch usable without
 silently allocating. Closed owning sets use unions; an open owning abstraction
@@ -1434,7 +1435,7 @@ needs an explicit storage and lifecycle contract.
 A `dyn` view is otherwise written `(dyn I)(&value)`, so that a borrow of a
 value is visible where it is made. A call that takes several values of
 different types through one interface would then spell that conversion at every
-argument, as `fmt.println` would without `any_view`. Converting the elements of
+argument of `fmt.println`. Converting the elements of
 a `..dyn I` pack keeps that call short without making the conversion general.
 The borrow ends with the call expression, as the pack itself does, so nothing
 the call site does not show can outlive it. A local or an ordinary parameter
@@ -1611,10 +1612,7 @@ range: the reflection table is indexed by an id that comes from data, not from
 a branch the compiler controls, so the check costs one compare and a select
 and spares every reflection caller an obligation. A forged id therefore reads
 as the `Invalid` entry rather than past the table, compares unequal to every
-real id, and prints as its number. An `any_view` is different: it promises a
-value of the type its id names, as a slice header promises its storage, so
-formatting dispatches through it unchecked, and one whose id names no type is
-an invalid `any_view` though the id alone is a valid `typeid`.
+real id, and prints as its number.
 
 ### Formatting and logging sinks are `dyn` views
 

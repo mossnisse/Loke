@@ -13,15 +13,13 @@ impl Read {
 	retire :: hook(drop) proc(self: inout Read) { fmt.println(self.data[0]); }
 }
 
-make_read :: proc(data: []int) -> Read { return Read{data, 1}; }
-
 // Overwriting the view does not end the temporary it extended.
 overwritten :: proc() {
 	values := [dynamic]int{7};
-	view: any_view = make_read(values[:]);
-	view = 0;
+	view := &Read{values[:], 1};
+	view = &Read{{}, 0};
 	drop(values);
-	fmt.println(view);
+	fmt.println(view^.n);
 }
 
 // The borrow may name one field; the whole temporary is still dropped.
@@ -37,8 +35,8 @@ Plain :: struct { data: []int, n: int }
 
 unhooked :: proc() {
 	values := [dynamic]int{7};
-	view: any_view = Plain{values[:], 1};
-	fmt.println(view);
+	view := &Plain{values[:], 1};
+	fmt.println(view^);
 	drop(values);
 }
 
@@ -50,15 +48,13 @@ impl Clear {
 	retire :: hook(drop) proc(self: inout Clear) { shared_values = {}; }
 }
 
-make_clear :: proc() -> Clear { return Clear{1}; }
-
 // The hook's write happens where the block ends, while `borrowed` is live.
 writes_at_block_end :: proc() {
 	shared_values.append(7);
 	borrowed := shared_values[:];
 	{
-		view: any_view = make_clear();
-		fmt.println(view);
+		view := &Clear{1};
+		fmt.println(view^);
 	}
 	fmt.println(borrowed[0]);
 }

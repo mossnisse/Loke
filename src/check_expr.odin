@@ -3392,7 +3392,7 @@ zero_const :: proc(c: ^Compiler, type: Type_Id, build := true) -> (Const_Value, 
 		return Const_Value{}, false
 	}
 	#partial switch info.kind {
-	case .Array, .Simd, .Struct, .Any_View, .Dyn, .Slice, .Dynamic_Array, .Map:
+	case .Array, .Simd, .Struct, .Dyn, .Slice, .Dynamic_Array, .Map:
 		if build && const_element_count(c, type) > MAX_CONST_ELEMENTS {
 			return Const_Value{}, false
 		}
@@ -3438,7 +3438,7 @@ zero_const :: proc(c: ^Compiler, type: Type_Id, build := true) -> (Const_Value, 
 		aggregate.type = type
 		aggregate.elements = elements
 		return Const_Value{kind = .Aggregate, aggregate = aggregate}, true
-	case .Struct, .Any_View, .Dyn, .Dynamic_Array, .Map:
+	case .Struct, .Dyn, .Dynamic_Array, .Map:
 		// A record containing itself by value was already reported and has no
 		// zero value to build.
 		if info.size_state == .Cyclic {
@@ -3531,7 +3531,7 @@ materialize :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {
 		return true
 	}
 	// design.md "Borrowed callable views": the procedure or capture value is
-	// kept, as for `any_view`, for the backend to hold or take the address of.
+	// kept for the backend to hold or take the address of.
 	if signature := dyn_proc_signature(k.c, target); signature != INVALID_TYPE && base.type != target &&
 	   base.erased_from == INVALID_TYPE && dyn_proc_accepts(k.c, base.type, signature) {
 		// design.md "Escape levels": a procedure meets the signature as it would
@@ -3552,34 +3552,6 @@ materialize :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {
 			base.widened_from = base.type
 		}
 		base.type = target
-		return true
-	}
-	// The concrete type is kept so the backend knows what to take the address
-	// of and which `typeid` to pair with it (design.md "any_view type").
-	if target == TYPE_ANY_VIEW && base.type != TYPE_ANY_VIEW {
-		if !any_view_accepts(k.c, base.type) {
-			// Erasing a descriptor would materialise it at run time.
-			if offender := compile_time_only_component(k.c, base.type); offender != INVALID_TYPE {
-				report_compile_time_only(k, offender, base.span)
-			}
-			// design.md "Capture literals": a callable has no printed form.
-			if type_is_capture_record(k.c, base.type) {
-				errorf(
-					k.c, base.span, "L0310",
-					"`%s` is a capture literal, which has no printed form, so no `any_view` can view it",
-					type_name(k.c, base.type),
-				)
-			}
-			return false
-		}
-		concrete := any_view_source_type(k.c, base.type)
-		if type_is_untyped(k.c, base.type) && !materialize(k, e, concrete) {
-			return false
-		}
-		ensure_any_view_fields(k.c)
-		request_typeid(k.c, concrete)
-		base.erased_from = concrete
-		base.type = TYPE_ANY_VIEW
 		return true
 	}
 	if !type_is_untyped(k.c, base.type) {
@@ -3953,10 +3925,6 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 		return true
 	}
 	if distinct_proc_converts(c, from, to) {
-		return true
-	}
-	// Above the untyped cases: a constant reaches `any_view` at its default type.
-	if to == TYPE_ANY_VIEW && any_view_accepts(c, from) {
 		return true
 	}
 	if from == TYPE_UNTYPED_STRING {

@@ -71,7 +71,7 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 	case .Atomic_Load, .Atomic_Store, .Atomic_Exchange, .Atomic_Compare_Exchange,
 	     .Atomic_Add, .Atomic_Sub, .Atomic_And, .Atomic_Or, .Atomic_Xor, .Atomic_Fence:
 		check_atomic_builtin(k, v, ident, sym.builtin)
-	case .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_View:
+	case .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes:
 		check_fmt_builtin(k, v, ident, sym.builtin)
 	case .Default_Allocator:
 		if len(v.args) != 0 {
@@ -207,7 +207,7 @@ builtin_arguments_ok :: proc(k: ^Checker, v: ^Expr_Call) -> bool {
 
 // `assert(condition[, message, ..args])` and `panic([message, ..args])`. Neither
 // folds: the evaluator diagnoses a compile-time occurrence and the backend
-// lowers the rest. The arguments after the message are `any_view`s.
+// lowers the rest. Each argument after the message prints as its type does.
 @(private = "file")
 check_assert_or_panic :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind) {
 	v.type = INVALID_TYPE
@@ -1530,7 +1530,7 @@ Runtime_Type_Kind :: enum {
 	Invalid, Void, Bool, Signed_Int, Unsigned_Int, Float, Rune,
 	Raw_Pointer, Pointer, C_Pointer, Array, Slice, Dynamic_Array, Map,
 	Struct, Enum, Union, Proc, String, String_View, CString_View,
-	Typeid, Any_View, Dyn, Distinct, Simd, Allocator, Allocator_Error, Box,
+	Typeid, Dyn, Distinct, Simd, Allocator, Allocator_Error, Box,
 }
 
 Runtime_Member_Kind :: enum { Field, Enum_Value, Union_Variant, Parameter, Result }

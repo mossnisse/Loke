@@ -58,8 +58,8 @@ project collections through `register_project`, then follows this order:
    allocator regions. It resolves provider factories, releases held diagnostics,
    and records `program_analyzed`.
 5. Validate entry and exports. `finalize_semantics` freezes `typeid` values,
-   discovers `fmt.Formattable` witnesses, snapshots lifecycle operations, and
-   installs `any_view` fields. These steps are idempotent.
+   discovers `fmt.Formattable` witnesses, and snapshots lifecycle operations.
+   These steps are idempotent.
 6. `emit_session` calls `emit_package`, then `emit_llvm_module`. Before
    allocating an emitter, `validate_emission_dependencies` verifies the checked
    state. One module contains every package in deterministic dependency order.

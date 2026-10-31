@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // design.md "Allocator regions and region provenance": borrowed array storage
 // retains owners written through its mutable view until their actual cleanup.
@@ -27,7 +27,7 @@ stored_pointer_reset :: proc(@(allocator_reset) allocator: Allocator) {
     assert(output.len() == 1);
 }
 
-// design.md "Evaluation order": an erased user-operator result keeps the
+// design.md "Evaluation order": a viewed user-operator result keeps the
 // allocator its owner came from while a later argument resets it.
 Maker :: struct { allocator: Allocator }
 impl Maker {
@@ -39,7 +39,7 @@ reset :: proc(@(allocator_reset) allocator: Allocator) -> int {
     free_all(allocator);
     return 0;
 }
-show :: proc(value: any_view, code: int) {}
+show :: proc(values: ..dyn fmt.Formattable) {}
 
 erased_operator_reset :: proc(@(allocator_reset) allocator: Allocator) {
     maker := Maker{allocator};

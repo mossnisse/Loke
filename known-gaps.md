@@ -34,6 +34,38 @@ binding. Follow ordinary type-alias targets in their defining scopes when
 determining the success payload's dependency. Confirmed on `3b49d840` during
 review on 2026-10-31 (P2).
 
+### An overwritten slice literal's hooked elements stop borrowing
+
+[Temporaries and procedure
+boundaries](design.md#temporaries-and-procedure-boundaries) extends a slice
+literal's backing array to the end of the block, where its elements are
+dropped, and what a drop hook reads stays borrowed until then. Once the local
+is overwritten, the elements' borrows end early:
+
+```loke
+package main;
+import "core:fmt";
+Read :: struct { data: []int }
+impl Read {
+    retire :: hook(drop) proc(self: inout Read) { fmt.println(self.data[0]); }
+}
+main :: proc() {
+    values := [dynamic]int{7};
+    view: []Read = []Read{Read{values[:]}};
+    view = {};
+    drop(values);
+    fmt.println(view.len());
+}
+```
+
+This compiles, and the hook reads `values` after it was dropped. The same code
+with `view := &Read{values[:]};` overwritten by another `&Read{...}` reports
+`L0512` at `drop(values)`, noting the temporary is still used when it is
+dropped at the end of its scope; so did an `any_view` local. The backing
+array's drop at the block's end should keep its elements' borrows live as the
+extended composite's does. Found on `b73dfa55` while moving
+`tests/err/temporary_extension_drops.loke` off `any_view` (P1).
+
 ### `or_else` drops the region of its left operand's payload
 
 [Allocator regions and region

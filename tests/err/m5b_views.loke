@@ -31,30 +31,31 @@ impl Ok_Table {
 	}
 }
 
-// design.md "any_view type": the view holds the address of the concrete value,
-// so invalidating the subject while the view is still read is the same mistake
-// as any other borrow.
+// design.md "Borrowed dynamic interface values": the view holds the address of
+// the concrete value, so invalidating the subject while the view is still read
+// is the same mistake as any other borrow.
 erased_subject_assigned :: proc() {
 	value := 1;
-	view: any_view = value;
+	view := (dyn fmt.Formattable)(&value);
 	value = 2;
 	fmt.println(view);
 }
 
 erased_subject_borrowed :: proc() {
 	value := 1;
-	view: any_view = value;
+	view := (dyn fmt.Formattable)(&value);
 	pointer := &mut value;
 	pointer^ = 3;
 	fmt.println(view);
 }
 
-// An erased view of storage the compiler created still ends with its scope.
+// A view of a local still ends with the local's scope.
 erased_temporary_outlives_its_scope :: proc() {
-	view: any_view = 0;
+	outer := 0;
+	view := (dyn fmt.Formattable)(&outer);
 	{
 		inner := 7;
-		view = inner;
+		view = (dyn fmt.Formattable)(&inner);
 	}
 	fmt.println(view);
 }

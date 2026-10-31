@@ -133,7 +133,7 @@ expression_sites :: proc() {
 	chosen: Result([2]int, int) = .ok(big); // variant payload
 	_ = chosen;
 
-	// Not a copy: erasing into an `any_view` borrows what it points at, so the
-	// destination's own size is not a duplication of `big`.
+	// Not a copy: a print argument is viewed as a `dyn fmt.Formattable`, which
+	// borrows what it points at, so it is not a duplication of `big`.
 	fmt.println(held.values.len(), store.len(), picked.len(), big.len());
 }
