@@ -842,6 +842,13 @@ checklist.
   selects a private type member from an instance, as `Box(T).Hidden` or
   `Box(int).Hidden` does
   ([Private names in public declarations](design.md#private-names-in-public-declarations)).
+- In a generic `impl`, `L0740` now also reads the target of an alias whose
+  written type is an alias of `type`, as `Inner: Meta : Corner` for
+  `Meta :: type`, or a `$` name that an instance binds to `type`; selects a
+  private member alias written as a slice, pointer, array, or map type, as
+  `Box(T).Hidden` for `Hidden :: []T`; and follows a chain of member aliases
+  however long it is, where it stopped after eight
+  ([Private names in public declarations](design.md#private-names-in-public-declarations)).
 - `time.local_zone` on Windows no longer panics for a zone set without a
   registry key, as `SetTimeZoneInformation` can leave it, and a zone whose
   dynamic daylight saving is disabled keeps its fixed annual transitions

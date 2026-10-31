@@ -77,6 +77,22 @@ warning[L0740]: public `Bin.Followed` names the private type `Bin.Chained`
 @150:31
 warning[L0740]: public `Bin.Through` names the private type `Secret`
 @151:23
+warning[L0740]: public `Tray.Meta_Typed` names the private type `Corner`
+@167:31
+warning[L0740]: public `Tray.Twice_Typed` names the private type `Corner`
+@168:38
+warning[L0740]: public `Tray.Many_Leak` names the private type `Tray.Many`
+@173:33
+warning[L0740]: public `Tray.Pointed_Leak` names the private type `Tray.Pointed`
+@174:36
+warning[L0740]: public `Tray.Fixed_Leak` names the private type `Tray.Fixed`
+@175:34
+warning[L0740]: public `Tray.Keyed_Leak` names the private type `Tray.Keyed`
+@176:34
+warning[L0740]: public `Tray.Chain_Leak` names the private type `Tray.H0`
+@187:34
+warning[L0740]: public `Rack.Bound_Typed` names the private type `Corner`
+@191:29
 !`Padded.hidden`
 !`area_int`
 !`twice`

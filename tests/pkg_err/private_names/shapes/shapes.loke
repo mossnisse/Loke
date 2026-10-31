@@ -156,3 +156,42 @@ impl Bin($T) {
 	_ = size_of(Bin(int).Sibling);
 	_ = size_of(Bin(bool).Concrete);
 }
+
+// An alias's written type is `type` through an alias of it too, or in an
+// instance that binds a `$` name to `type`; a member written as a composite type
+// is a type to select; and a chain of selections is followed however long it is.
+@(public) Meta :: type;
+@(public) Meta_Twice :: Meta;
+@(public) Tray :: struct($T: type) { value: int }
+impl Tray($T) {
+	@(public) Meta_Typed: Meta : Corner;
+	@(public) Twice_Typed: Meta_Twice : Corner;
+	@(private) Many :: []T;
+	@(private) Pointed :: ^T;
+	@(private) Fixed :: [2]T;
+	@(private) Keyed :: map[T]int;
+	@(public) Many_Leak :: Tray(T).Many;
+	@(public) Pointed_Leak :: Tray(T).Pointed;
+	@(public) Fixed_Leak :: Tray(T).Fixed;
+	@(public) Keyed_Leak :: Tray(T).Keyed;
+	@(private) H0 :: Tray(T).H1;
+	@(private) H1 :: Tray(T).H2;
+	@(private) H2 :: Tray(T).H3;
+	@(private) H3 :: Tray(T).H4;
+	@(private) H4 :: Tray(T).H5;
+	@(private) H5 :: Tray(T).H6;
+	@(private) H6 :: Tray(T).H7;
+	@(private) H7 :: Tray(T).H8;
+	@(private) H8 :: Tray(T).H9;
+	@(private) H9 :: Corner;
+	@(public) Chain_Leak :: Tray(T).H0;
+}
+@(public) Rack :: struct($T: type) { value: int }
+impl Rack($T) {
+	@(public) Bound_Typed: T : Corner;
+}
+@(private) trays :: proc() {
+	_ = size_of(Tray(Point).Meta_Typed);
+	_ = size_of(Tray(Point).Many_Leak);
+	_ = Rack(type).Bound_Typed;
+}
