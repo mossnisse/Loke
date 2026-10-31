@@ -8188,8 +8188,7 @@ reborrows that carrier, and each carrier loaded on the way, as `p^` for
 `&p^^.count`, for that place only. While the borrow is in
 use, the carrier may still be used for a place that does not
 [overlap](#places-and-overlap) it, such as another field. Copying the carrier,
-or passing it to a procedure, uses all of what it points to. A view's elements
-count as one place here, so `&mut xs[0]` still suspends `xs[1]`:
+or passing it to a procedure, uses all of what it points to:
 
 ```loke
 Counter :: struct { count: int, total: int }
@@ -8201,6 +8200,23 @@ tally :: proc(c: ^mut Counter) {
 	c^.total += 1;           // OK: another field
 	look(c);                 // ERROR: the call may read `c^.count`
 	count^ += 1;
+}
+```
+
+In a view, elements at different constant indices are different places
+wherever it is known where the view starts: in a view parameter, whose binding
+is read-only, and in a local view that is never borrowed itself and whose every
+definition that may reach the access is a fresh borrow of a range, as
+`&mut a[0:4]`, or a constant reslice of such a view, as `s = &mut s[1:]`
+before a loop. So `&mut xs[0]` leaves `xs[1]` usable. Through an index that is
+not a constant, or through a copy of the view, the element may be any of them:
+
+```loke
+tally_first :: proc(xs: []mut Counter, i: int) {
+	first := &mut xs[0];  // a mutable reborrow of `xs` for `xs[0]`
+	xs[1].count += 1;     // OK: another element
+	xs[i].count += 1;     // ERROR: `xs[i]` may be `xs[0]`
+	first^.count += 1;
 }
 ```
 

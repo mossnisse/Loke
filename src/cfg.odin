@@ -1963,7 +1963,7 @@ foreach_reborrow_through_carrier :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach, p
 		return nil
 	}
 	if place_loop {
-		prov_write_through(graph, carriers, below, expr_span(source), "mutable traversal")
+		prov_write_through(graph, carriers, below, expr_span(source), "mutable traversal", source)
 	}
 	return prov_place_loan(graph, carriers, below, place_loop, "element", source, borrows = true)
 }

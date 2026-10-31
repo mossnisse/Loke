@@ -1,0 +1,70 @@
+// design.md "Weakening and reborrows", "Places and overlap": elements of a
+// view at different constant indices are different places wherever it is
+// known where the view starts, so a borrow, payload binding, or traversal of
+// one leaves another usable: in a view parameter, in a local view borrowed
+// from an array, and in one resliced from such a view by a constant before a
+// loop.
+package main;
+
+import "core:fmt";
+
+Counter :: struct { count: int, total: int, first: Option(^mut int), cells: [2]int }
+
+bump :: proc(n: ^mut int) { n^ += 1; }
+
+param_borrow :: proc(xs: []mut Counter) {
+	first := &mut xs[0];
+	xs[1].count += 1;
+	bump(&mut xs[1].total);
+	first^.count += 10;
+}
+
+param_binding :: proc(xs: []mut Counter) {
+	switch (xs[0].first) {
+	case .some(n):
+		xs[1].first = .none;
+		n^ += 100;
+	case .none:
+	}
+}
+
+param_traversal :: proc(xs: []mut Counter) {
+	foreach (&mut cell in xs[0].cells) {
+		cell += xs[1].cells[0];
+		xs[1].cells[1] += 1;
+	}
+}
+
+local_two_borrows :: proc() -> int {
+	counters := [3]Counter{};
+	view := &mut counters[:];
+	a := &mut view[0];
+	b := &mut view[2];
+	a^.count = 1;
+	b^.count = 2;
+	a^.count += b^.count;
+	return counters[0].count * 10 + counters[2].count;
+}
+
+local_resliced :: proc() -> int {
+	counters := [3]Counter{};
+	view := &mut counters[:];
+	view = &mut view[1:];
+	for (i := 0; i < 2; i += 1) {
+		a := &mut view[0];
+		view[1].count += 1;
+		a^.count += 3;
+	}
+	return counters[1].count * 10 + counters[2].count;
+}
+
+main :: proc() {
+	n := 1;
+	counters := [2]Counter{Counter{first = .some(&mut n)}, Counter{cells = [2]int{5, 6}}};
+	param_borrow(&mut counters[:]);
+	param_binding(&mut counters[:]);
+	param_traversal(&mut counters[:]);
+	fmt.println(counters[0].count, counters[1].count, counters[1].total, n);
+	fmt.println(counters[0].cells[0], counters[0].cells[1], counters[1].cells[1]);
+	fmt.println(local_two_borrows(), local_resliced());
+}

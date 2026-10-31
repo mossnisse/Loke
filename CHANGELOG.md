@@ -628,6 +628,13 @@ checklist.
 
 ### Changed
 
+- Elements of a view at different constant indices are now different places
+  wherever it is known where the view starts: in a view parameter, and in a
+  local view borrowed from a range or resliced from one by a constant. So
+  `&mut xs[0]` leaves `xs[1]` usable, and a switch over `xs[0].first` allows a
+  store into `xs[1].first`
+  ([Weakening and reborrows](design.md#weakening-and-reborrows)). An index
+  that is no constant, or a copy of the view, may still name any element.
 - Checking is faster: front-end time fell 8-17% on the examples and
   benchmarks taking over 30 ms (`bench/workspace` 184 to 162 ms,
   `examples/corpus_runner.loke` 249 to 228 ms), compiler peak working set

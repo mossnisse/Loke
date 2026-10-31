@@ -2,9 +2,10 @@
 // traversals of one, and the uses beside them (design.md "Weakening and
 // reborrows", "Switch ownership", "Slices", "foreach statement"). Each
 // program takes a mutable carrier out of `head` or `first` of a `List`,
-// borrows its `count`, or slices or traverses its `cells`, reached through
-// one of several place forms, does one thing beside it, and maybe uses what
-// it took again, in straight-line code, a branch, or a loop. Whether that is
+// borrows its `count`, or slices or traverses its `cells` or its dynamic
+// `items`, reached through one of several place forms, does one thing beside
+// it, and maybe uses what it took again, in straight-line code, a branch, or
+// a loop, or leaves by `return` or `break` right after the use. Whether that is
 // legal comes from `matrix_expected`, a model of the rules written apart from
 // the compiler, never from its output, so a form the compiler handles
 // differently from the others shows up as a disagreement. Every case is one
@@ -27,68 +28,79 @@ MATRIX_DIR :: TMP + "/borrow_matrix"
 // any element of the view. A `read_only` place is
 // reached through a read-only pointer, so nothing writes the place itself,
 // but the mutable carriers stored in it keep their capability (design.md
-// "Values that contain borrows").
+// "Values that contain borrows"). In a view, `other` is another element at a
+// constant index, which is a place of its own (design.md "Places and
+// overlap"), and "" elsewhere.
 @(private = "file")
 Matrix_Place :: struct {
-	name, params, setup, base, pointer: string,
-	read_only:                          bool,
+	name, params, setup, base, pointer, other: string,
+	read_only:                                 bool,
 }
 
 @(private = "file")
 MATRIX_NODES :: "a := Node{1, .none}; b := Node{2, .none}; c := Node{3, .none};"
 @(private = "file")
-MATRIX_LIST :: "List{&mut a, &mut b, 2, .some(&mut c), [2]int{4, 5}}"
+MATRIX_LIST :: "List{&mut a, &mut b, 2, .some(&mut c), [2]int{4, 5}, [dynamic]int{1}}"
+@(private = "file")
+MATRIX_MORE_NODES :: " d := Node{4, .none}; e := Node{5, .none}; f := Node{6, .none};"
+@(private = "file")
+MATRIX_LAST_NODES :: " g := Node{7, .none}; h := Node{8, .none}; i := Node{9, .none};"
+@(private = "file")
+MATRIX_OTHER_LIST :: "List{&mut d, &mut e, 2, .some(&mut f), [2]int{4, 5}, [dynamic]int{1}}"
+@(private = "file")
+MATRIX_LAST_LIST :: "List{&mut g, &mut h, 2, .some(&mut i), [2]int{4, 5}, [dynamic]int{1}}"
 
 @(private = "file")
 MATRIX_PLACES := [?]Matrix_Place {
-	{"local", "", MATRIX_NODES + " l := " + MATRIX_LIST + ";", "l", "&mut l", false},
-	{"local_pointer", "", MATRIX_NODES + " l := " + MATRIX_LIST + "; list := &mut l;", "list^", "list", false},
-	{"param", "list: ^mut List", "", "list^", "list", false},
-	{"local_two_pointers", "", MATRIX_NODES + " l := " + MATRIX_LIST + "; held := &mut l; p := &mut held;", "p^^", "p^", false},
-	{"param_two_pointers", "p: ^mut ^mut List", "", "p^^", "p^", false},
-	{"local_indexed", "", MATRIX_NODES + " lists := [1]List{" + MATRIX_LIST + "}; p := &mut lists;", "p[0]", "&mut p[0]", false},
-	{"param_indexed", "p: ^mut [1]List", "", "p[0]", "&mut p[0]", false},
-	{"param_slice", "s: []mut List", "", "s[0]", "&mut s[0]", false},
-	{"param_slice_indexed", "s: []mut List, k: int", "", "s[k]", "&mut s[k]", false},
+	{"local", "", MATRIX_NODES + " l := " + MATRIX_LIST + ";", "l", "&mut l", "", false},
+	{"local_pointer", "", MATRIX_NODES + " l := " + MATRIX_LIST + "; list := &mut l;", "list^", "list", "", false},
+	{"param", "list: ^mut List", "", "list^", "list", "", false},
+	{"local_two_pointers", "", MATRIX_NODES + " l := " + MATRIX_LIST + "; held := &mut l; p := &mut held;", "p^^", "p^", "", false},
+	{"param_two_pointers", "p: ^mut ^mut List", "", "p^^", "p^", "", false},
+	{"local_indexed", "", MATRIX_NODES + " lists := [1]List{" + MATRIX_LIST + "}; p := &mut lists;", "p[0]", "&mut p[0]", "", false},
+	{"param_indexed", "p: ^mut [1]List", "", "p[0]", "&mut p[0]", "", false},
+	{"param_slice", "s: []mut List", "", "s[0]", "&mut s[0]", "s[1]", false},
+	{"param_slice_indexed", "s: []mut List, k: int", "", "s[k]", "&mut s[k]", "s[1]", false},
 	{
 		"local_slice", "",
-		MATRIX_NODES + " d := Node{4, .none}; e := Node{5, .none}; f := Node{6, .none}; lists := [2]List{" + MATRIX_LIST +
-		", List{&mut d, &mut e, 2, .some(&mut f), [2]int{4, 5}}}; s := &mut lists[:];",
-		"s[0]", "&mut s[0]", false,
+		MATRIX_NODES + MATRIX_MORE_NODES + " lists := [2]List{" + MATRIX_LIST + ", " + MATRIX_OTHER_LIST + "}; s := &mut lists[:];",
+		"s[0]", "&mut s[0]", "s[1]", false,
 	},
 	{
 		"local_resliced", "",
-		MATRIX_NODES + " d := Node{4, .none}; e := Node{5, .none}; f := Node{6, .none}; lists := [2]List{List{&mut d, &mut e, 2, .some(&mut f), [2]int{4, 5}}, " +
-		MATRIX_LIST + "}; s := &mut lists[:]; t := &mut s[1:];",
-		"t[0]", "&mut t[0]", false,
+		MATRIX_NODES + MATRIX_MORE_NODES + MATRIX_LAST_NODES + " lists := [3]List{" + MATRIX_OTHER_LIST + ", " + MATRIX_LIST + ", " + MATRIX_LAST_LIST +
+		"}; s := &mut lists[:]; t := &mut s[1:];",
+		"t[0]", "&mut t[0]", "t[1]", false,
 	},
 	{
 		"local_self_resliced", "",
-		MATRIX_NODES + " d := Node{4, .none}; e := Node{5, .none}; f := Node{6, .none}; lists := [2]List{List{&mut d, &mut e, 2, .some(&mut f), [2]int{4, 5}}, " +
-		MATRIX_LIST + "}; s := &mut lists[:]; s = &mut s[1:];",
-		"s[0]", "&mut s[0]", false,
+		MATRIX_NODES + MATRIX_MORE_NODES + MATRIX_LAST_NODES + " lists := [3]List{" + MATRIX_OTHER_LIST + ", " + MATRIX_LIST + ", " + MATRIX_LAST_LIST +
+		"}; s := &mut lists[:]; s = &mut s[1:];",
+		"s[0]", "&mut s[0]", "s[1]", false,
 	},
 	{
 		"local_chosen", "",
-		MATRIX_NODES + " d := Node{4, .none}; e := Node{5, .none}; f := Node{6, .none}; lists := [2]List{" + MATRIX_LIST +
-		", List{&mut d, &mut e, 2, .some(&mut f), [2]int{4, 5}}}; chosen := &mut lists[0] if cond() else &mut lists[1];",
-		"chosen^", "chosen", false,
+		MATRIX_NODES + MATRIX_MORE_NODES + " lists := [2]List{" + MATRIX_LIST + ", " + MATRIX_OTHER_LIST +
+		"}; chosen := &mut lists[0] if cond() else &mut lists[1];",
+		"chosen^", "chosen", "", false,
 	},
-	{"param_read_only", "list: ^List", "", "list^", "list", true},
-	{"param_read_only_two_pointers", "p: ^^List", "", "p^^", "p^", true},
+	{"param_read_only", "list: ^List", "", "list^", "list", "", true},
+	{"param_read_only_two_pointers", "p: ^^List", "", "p^^", "p^", "", true},
 }
 
 // What is taken: a mutable carrier copied out of `head`, or bound as the
 // payload of `first` by a switch over the place, a read-only or mutable
-// borrow of `count`, a read-only or mutable slice of `cells`, or a borrowing
-// or mutable traversal of `cells`.
+// borrow of `count`, a read-only or mutable slice of `cells`, a borrowing or
+// mutable traversal of `cells`, or a slice or borrowing traversal of the
+// dynamic array `items`, which a use beside it may reallocate.
 @(private = "file")
-Matrix_Take :: enum { Copy, Binding, Borrow, Borrow_Mut, Slice, Slice_Mut, Foreach, Foreach_Mut }
+Matrix_Take :: enum { Copy, Binding, Borrow, Borrow_Mut, Slice, Slice_Mut, Foreach, Foreach_Mut, Slice_Items, Foreach_Items }
 
 // What happens beside the carrier taken. `before` runs between its first use
 // and the later one; `after` runs after the later one, keeping anything
 // `before` made in use. `$H`, `$T`, `$F`, `$B` and `$P` stand for `head`,
-// `tail`, `first`, the `List` and a pointer to it.
+// `tail`, `first`, the `List` and a pointer to it, and `$O` for another
+// element of a view.
 @(private = "file")
 Matrix_Use :: struct {
 	name, before, after: string,
@@ -114,18 +126,41 @@ MATRIX_USES := [?]Matrix_Use {
 	{"pass_read", "sink(look($P));", ""},
 	{"copy_pointer", "q := $P;", ""},
 	{"copy_pointer_read", "q: ^List = $P;", ""},
+	{"grow_items", "$B.items.append(1);", ""},
+	{"pass_items", "grow(&mut $B.items);", ""},
+	{"write_other_count", "$O.count += 1;", ""},
+	{"write_other_cells", "$O.cells[1] = 2;", ""},
+	{"read_other_cells", "sink($O.cells[1]);", ""},
+	{"replace_other_first", "$O.first = .none;", ""},
+	{"pass_other_count", "bump(&mut $O.count);", ""},
+}
+
+// The use of the place itself that a use of another element of a view stands
+// for where the two may be one element, or "" for a use of the place itself.
+@(private = "file")
+matrix_same_element :: proc(use: Matrix_Use) -> string {
+	switch use.name {
+	case "write_other_count": return "write_count"
+	case "write_other_cells": return "write_cells"
+	case "read_other_cells": return "read_cells"
+	case "replace_other_first": return "replace_first"
+	case "pass_other_count": return "pass_sibling"
+	}
+	return ""
 }
 
 // Where the use and the later use stand. `Branch` makes the use one arm of an
 // `if`, and `Branch_Later` makes the later use conditional. `Loop_Carried`
 // repeats the later use and then the use in a loop, so the later use of one
 // iteration follows the use of the one before, and `Loop_Whole` repeats the
-// whole case, taking afresh in each iteration. Only what the place holds when
+// whole case, taking afresh in each iteration. `Leave_Return` returns right
+// after the use, and `Break_Traversal` breaks out of a traversal right after
+// it, so nothing taken is used after the use. Only what the place holds when
 // a later iteration takes from it changes what is legal (`matrix_expected`);
 // a use that needs `after` is not put where it would leave its own block
 // before `after`.
 @(private = "file")
-Matrix_Shape :: enum { Straight, Branch, Branch_Later, Loop_Carried, Loop_Whole }
+Matrix_Shape :: enum { Straight, Branch, Branch_Later, Loop_Carried, Loop_Whole, Leave_Return, Break_Traversal }
 
 // The rules, for what is taken out of a place and used again later
 // (design.md "Weakening and reborrows"): a copy is a mutable reborrow of the
@@ -143,22 +178,42 @@ Matrix_Shape :: enum { Straight, Branch, Branch_Later, Loop_Carried, Loop_Whole 
 // it, or a call that may, too; the other fields stay free. A traversal of
 // `cells` is a borrow of it for the whole loop, as the next step uses the
 // traversal again, so it conflicts with a use in the body whether or not the
-// element is used after it (design.md "foreach statement"). A loop that takes
+// element is used after it (design.md "foreach statement"), unless the
+// traversal is left right after the use, by `break` or `return`, which no
+// step follows; a slice or traversal of `items` conflicts in the same way with
+// growing `items`, which may reallocate it. A loop that takes
 // afresh finds in `head` the copy of `tail` an earlier iteration's
 // `replace_head` stored there, so its copy out of `head` reborrows `tail`,
 // which copying `tail` again then uses. A store through a pointer that may
 // name either of two places replaces neither (design.md "Values that contain
 // borrows"), and neither does one into a view at an index that is no
 // constant, so there `head` keeps every earlier iteration's copy of `tail`,
-// which the next copy out of `head` uses even without a later use.
+// which the next copy out of `head` uses even without a later use. In a
+// view, an element at another constant index is another place, so a use of
+// it is legal whatever was taken; through an index that is no constant, the
+// place may be that element, and the use counts as one of the place itself
+// (design.md "Places and overlap").
 // The code the rejection is reported with, or "" when the case is legal.
 @(private = "file")
 matrix_expected :: proc(place: Matrix_Place, take: Matrix_Take, use: Matrix_Use, shape: Matrix_Shape, later: bool) -> string {
+	if shape == .Leave_Return || shape == .Break_Traversal {
+		return ""
+	}
+	if same := matrix_same_element(use); same != "" {
+		if place.name != "param_slice_indexed" {
+			return ""
+		}
+		for candidate in MATRIX_USES {
+			if candidate.name == same {
+				return matrix_expected(place, take, candidate, shape, later)
+			}
+		}
+	}
 	if (place.name == "local_chosen" || place.name == "param_slice_indexed") && take == .Copy && use.name == "replace_head" &&
 	   shape == .Loop_Whole {
 		return "L0641"
 	}
-	if !later && take != .Foreach && take != .Foreach_Mut {
+	if !later && take != .Foreach && take != .Foreach_Mut && take != .Foreach_Items {
 		return ""
 	}
 	// A local's own loan conflicts with an access to it; through a pointer, a
@@ -201,6 +256,14 @@ matrix_expected :: proc(place: Matrix_Place, take: Matrix_Take, use: Matrix_Use,
 		case "write_cells", "read_cells", "pass_whole", "copy_pointer", "pass_cells", "pass_read", "copy_pointer_read":
 			return conflict
 		}
+	case .Slice_Items, .Foreach_Items:
+		switch use.name {
+		case "grow_items":
+			// Growing a local's own array invalidates what its loan lends.
+			return place.name == "local" ? "L0512" : conflict
+		case "pass_items", "pass_whole", "copy_pointer":
+			return conflict
+		}
 	}
 	return ""
 }
@@ -208,8 +271,8 @@ matrix_expected :: proc(place: Matrix_Place, take: Matrix_Take, use: Matrix_Use,
 // `replace_head` and the uses of `head` say nothing about a binding of
 // `first`, and the option copy and view say nothing about a copy of `head`;
 // beside a borrow of `count` or a slice of `cells`, both are other fields. A
-// read-only place cannot be written, borrowed mutably, or handed on as a
-// mutable pointer.
+// read-only place cannot be written, grown, borrowed mutably, or handed on as
+// a mutable pointer. Only a traversal can be broken out of.
 @(private = "file")
 matrix_applies :: proc(place: Matrix_Place, take: Matrix_Take, use: Matrix_Use, shape: Matrix_Shape) -> bool {
 	switch take {
@@ -217,13 +280,19 @@ matrix_applies :: proc(place: Matrix_Place, take: Matrix_Take, use: Matrix_Use, 
 		if place.read_only {
 			return false
 		}
-	case .Copy, .Binding, .Borrow, .Slice, .Foreach:
+	case .Copy, .Binding, .Borrow, .Slice, .Foreach, .Slice_Items, .Foreach_Items:
 	}
-	if (shape == .Branch || shape == .Loop_Carried) && use.after != "" {
+	if (shape == .Branch || shape == .Loop_Carried || shape == .Leave_Return || shape == .Break_Traversal) && use.after != "" {
+		return false
+	}
+	if shape == .Break_Traversal && take != .Foreach && take != .Foreach_Mut && take != .Foreach_Items {
+		return false
+	}
+	if matrix_same_element(use) != "" && place.other == "" {
 		return false
 	}
 	switch use.name {
-	case "write_count", "write_cells", "replace_first", "pass_whole", "pass_sibling", "pass_cells", "copy_pointer":
+	case "write_count", "write_cells", "replace_first", "pass_whole", "pass_sibling", "pass_cells", "copy_pointer", "grow_items", "pass_items":
 		return !place.read_only
 	case "copy_same_option", "second_view":
 		return take != .Copy
@@ -252,6 +321,7 @@ matrix_expand :: proc(text: string, place: Matrix_Place) -> string {
 	out, _ = strings.replace_all(out, "$F", fmt.tprintf("%s.first", place.base), context.temp_allocator)
 	out, _ = strings.replace_all(out, "$B", place.base, context.temp_allocator)
 	out, _ = strings.replace_all(out, "$P", place.pointer, context.temp_allocator)
+	out, _ = strings.replace_all(out, "$O", place.other, context.temp_allocator)
 	return out
 }
 
@@ -268,12 +338,13 @@ matrix_program :: proc(place: Matrix_Place, take: Matrix_Take, cases: ^[dynamic]
 	}
 	line(&b, &lines, "package main;")
 	line(&b, &lines, "Node :: struct { value: int, next: Option(^mut Node) }")
-	line(&b, &lines, "List :: struct { head: ^mut Node, tail: ^mut Node, count: int, first: Option(^mut Node), cells: [2]int }")
+	line(&b, &lines, "List :: struct { head: ^mut Node, tail: ^mut Node, count: int, first: Option(^mut Node), cells: [2]int, items: [dynamic]int }")
 	line(&b, &lines, "sink :: proc(value: int) {}")
 	line(&b, &lines, "cond :: proc() -> bool { return true; }")
 	line(&b, &lines, "touch :: proc(list: ^mut List) { list^.head^.value += 1; }")
 	line(&b, &lines, "look :: proc(list: ^List) -> int { return list^.head^.value; }")
 	line(&b, &lines, "bump :: proc(n: ^mut int) { n^ += 1; }")
+	line(&b, &lines, "grow :: proc(items: ^mut [dynamic]int) { items^.append(1); }")
 	line(&b, &lines, "main :: proc() {}")
 
 	// How the take opens and closes, and its first and later use.
@@ -298,6 +369,11 @@ matrix_program :: proc(place: Matrix_Place, take: Matrix_Take, cases: ^[dynamic]
 	case .Foreach_Mut:
 		open, close = fmt.tprintf("foreach (&mut item in %s.cells) {{", place.base), "}"
 		first, again = "item = 0;", "item = 1;"
+	case .Slice_Items:
+		open, first, again = fmt.tprintf("taken := %s.items[:];", place.base), "sink(taken[0]);", "sink(taken[0]);"
+	case .Foreach_Items:
+		open, close = fmt.tprintf("foreach (item in %s.items) {{", place.base), "}"
+		first, again = "sink(item);", "sink(item);"
 	}
 
 	for use in MATRIX_USES {
@@ -335,6 +411,12 @@ matrix_program :: proc(place: Matrix_Place, take: Matrix_Take, cases: ^[dynamic]
 					line(&b, &lines, fmt.tprintf("\t%s", later_use))
 					line(&b, &lines, fmt.tprintf("\t%s", before))
 					line(&b, &lines, "\t}")
+				case .Leave_Return:
+					line(&b, &lines, fmt.tprintf("\tif (cond()) {{ %s return; }}", before))
+					line(&b, &lines, fmt.tprintf("\t%s", later_use))
+				case .Break_Traversal:
+					line(&b, &lines, fmt.tprintf("\tif (cond()) {{ %s break; }}", before))
+					line(&b, &lines, fmt.tprintf("\t%s", later_use))
 				}
 				if close != "" {
 					line(&b, &lines, fmt.tprintf("\t%s", close))

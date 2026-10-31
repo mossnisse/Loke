@@ -1,0 +1,79 @@
+package main;
+
+// design.md "Weakening and reborrows": an element of a view is a place of its
+// own only where it is known where the view starts. The same element, one
+// through an index that is no constant, one through a copy of the view, and
+// one of a view whose start a loop or a branch changes, or that is itself
+// borrowed, may be the borrowed element.
+
+Counter :: struct { count: int, first: Option(^mut int) }
+
+cond :: proc() -> bool { return true; }
+
+same_element :: proc(xs: []mut Counter) {
+	first := &mut xs[0];
+	xs[0].count += 1;
+	first^.count += 1;
+}
+
+variable_index :: proc(xs: []mut Counter, i: int) {
+	first := &mut xs[0];
+	xs[i].count += 1;
+	first^.count += 1;
+}
+
+through_copy :: proc(xs: []mut Counter) {
+	view := xs;
+	first := &mut view[0];
+	view[1].count += 1;
+	first^.count += 1;
+}
+
+same_binding :: proc(xs: []mut Counter) {
+	switch (xs[0].first) {
+	case .some(n):
+		xs[0].first = .none;
+		n^ += 1;
+	case .none:
+	}
+}
+
+resliced_onto :: proc() {
+	counters := [3]Counter{};
+	view := &mut counters[:];
+	second := &mut view[1];
+	view = &mut view[1:];
+	view[0].count += 1;
+	second^.count += 1;
+}
+
+resliced_in_loop :: proc() {
+	counters := [4]Counter{};
+	view := &mut counters[:];
+	for (i := 0; i < 2; i += 1) {
+		second := &mut view[1];
+		view = &mut view[1:];
+		view[0].count += 1;
+		second^.count += 1;
+	}
+}
+
+chosen_start :: proc() {
+	counters := [3]Counter{};
+	view := &mut counters[:];
+	if (cond()) { view = &mut view[1:]; }
+	first := &mut view[0];
+	view[1].count += 1;
+	first^.count += 1;
+}
+
+view_borrowed :: proc() {
+	counters := [3]Counter{};
+	view := &mut counters[:];
+	held := &mut view;
+	first := &mut view[0];
+	view[1].count += 1;
+	first^.count += 1;
+}
+
+main :: proc() {}

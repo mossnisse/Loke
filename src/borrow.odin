@@ -320,6 +320,23 @@ Prov_View_Def :: struct {
 	reaching: []int,
 }
 
+// design.md "Places and overlap": the constant element `index` of a named
+// view that a place reached through it is in, as `s[1]` for `s[1].count`
+// (`prov_view_at`), so a place loan or access naming another element of the
+// same view does not overlap it (`view_elements_apart`). `slot` is one more
+// than the view's slot, or 0 when the place is in no such element. For a view
+// parameter, whose binding is read-only, `loan` is one more than its own
+// loan, relative to which element `index` is where it always is. For a local
+// view, `loan` is 0 and `reaching` are the definitions of the slot that may
+// reach the place (`solve_view_defs`), which say where it starts
+// (`publish_view_of`).
+Prov_View_At :: struct {
+	slot:     int,
+	loan:     int,
+	index:    i64,
+	reaching: []int,
+}
+
 // A slot holding no fresh borrow. Zero would name loan 0 and event 0.
 empty_prov_slot :: proc(symbol: Symbol_Id) -> Prov_Slot {
 	return Prov_Slot {
@@ -373,7 +390,8 @@ Prov_Reborrow :: struct {
 // such a place takes a read-only one for its payload bindings (design.md
 // "Switch ownership"); `what` names what it lends. A borrow, slice, or
 // traversal of one `borrows` it, with the borrow's capability (design.md
-// "Weakening and reborrows").
+// "Weakening and reborrows"). `element` is the constant element of a view the
+// place is in, if any.
 Prov_Place_Loan :: struct {
 	slot:    int,
 	paths:   [][]Proj_Step,
@@ -382,6 +400,7 @@ Prov_Place_Loan :: struct {
 	what:    string,
 	span:    Span,
 	place:   string,
+	element: Prov_View_At,
 }
 
 // design.md "Storage roots and borrow carriers". `rawptr` and `[^]T` carry no
@@ -3511,23 +3530,70 @@ resolve_content_reads :: proc(state: ^Prov_State) {
 @(private = "file")
 publish_view_loan :: proc(graph: ^Flow_Graph, event: Prov_Event, one: int) -> Prov_Loan {
 	loan := graph.loans[one]
-	if event.view_slot == 0 || len(loan.path) == 0 || !path_is_exact(loan.path[:len(loan.path) - 1]) {
+	element, known := view_element_in(graph, Prov_View_At{slot = event.view_slot, index = event.view_index, reaching = event.view_reaching}, one)
+	if !known {
 		return loan
 	}
-	last := loan.path[len(loan.path) - 1]
-	if last.kind != .Range || last.precision != {} || last.hi <= last.lo {
-		return loan
-	}
-	offset, length, present, known := publish_view_of(graph, event.view_slot - 1, event.view_reaching, one, last.hi - last.lo)
-	if !present || !known || event.view_index >= length {
-		return loan
-	}
-	at := last.lo + offset + event.view_index
+	at := loan.path[len(loan.path) - 1].lo + element
 	path := make([]Proj_Step, len(loan.path), graph.alloc)
 	copy(path, loan.path)
 	path[len(path) - 1] = proj_range(at, at + 1)
 	loan.path = path
 	return loan
+}
+
+// Where the element `at` names is among those `loan` lends, counted from the
+// first, when that is known: for a view parameter, relative to its own loan,
+// at its index; for a local view, relative to a loan of a range, at its
+// index past where the view starts in that range (`publish_view_of`). An
+// index past the view names none, as an access there would panic.
+@(private = "file")
+view_element_in :: proc(graph: ^Flow_Graph, at: Prov_View_At, loan: int) -> (i64, bool) {
+	if at.slot == 0 {
+		return 0, false
+	}
+	if at.loan > 0 {
+		return at.index, at.loan - 1 == loan
+	}
+	lent := graph.loans[loan]
+	if len(lent.path) == 0 || !path_is_exact(lent.path[:len(lent.path) - 1]) {
+		return 0, false
+	}
+	last := lent.path[len(lent.path) - 1]
+	if last.kind != .Range || last.precision != {} || last.hi <= last.lo {
+		return 0, false
+	}
+	offset, length, present, known := publish_view_of(graph, at.slot - 1, at.reaching, loan, last.hi - last.lo)
+	if !present || !known || at.index >= length {
+		return 0, false
+	}
+	return offset + at.index, true
+}
+
+// design.md "Places and overlap": whether the elements `a` and `b` name are
+// different elements of what the slots `a_slot` and `b_slot` view, relative
+// to every loan both hold (`view_element_in`). A loan an access goes through
+// that either element is not known in may name the same element.
+@(private = "file")
+view_elements_apart :: proc(state: ^Prov_State, a: Prov_View_At, a_slot: int, b: Prov_View_At, b_slot: int) -> bool {
+	if a.slot == 0 || b.slot == 0 {
+		return false
+	}
+	first := reach_row(state, state.reach, a_slot)
+	second := reach_row(state, state.reach, b_slot)
+	shared := false
+	for index in 0 ..< state.loans {
+		if !bit_get(first, index) || state.ended[index] || !bit_get(second, index) {
+			continue
+		}
+		left, left_known := view_element_in(state.graph, a, index)
+		right, right_known := view_element_in(state.graph, b, index)
+		if !left_known || !right_known || left == right {
+			return false
+		}
+		shared = true
+	}
+	return shared
 }
 
 // Where one definition of a view slot starts in the range a loan lends, as
@@ -3689,16 +3755,17 @@ publish_view_def :: proc(def: Prov_View_Def, source: Prov_View_Start, loan: int,
 	return start
 }
 
-// design.md "Values that contain borrows": the definitions of each local
-// view that may reach a store into one of its elements
-// (`Prov_Event.view_reaching`), and of each view a constant reslice of it
-// reads (`Prov_View_Def.reaching`), so `publish_view_of` takes only the
+// design.md "Values that contain borrows", "Weakening and reborrows": the
+// definitions of each local view that may reach a store into one of its
+// elements (`Prov_Event.view_reaching`), a place loan or access in one
+// (`Prov_View_At.reaching`), and of each view a constant reslice of it reads
+// (`Prov_View_Def.reaching`), so `publish_view_of` takes only the
 // definitions that may have made the value used there. A definition
 // replaces every earlier one of its slot: `s = &mut s[1:]` before a loop
 // sees only the borrow before it, and inside the loop it reaches itself too.
-// Only the slots such stores name, and those their definitions reslice, are
-// followed; each has a bit per recorded definition and one for any other
-// definition, as a borrowed parameter's at entry.
+// Only the slots such stores and accesses name, and those their definitions
+// reslice, are followed; each has a bit per recorded definition and one for
+// any other definition, as a borrowed parameter's at entry.
 @(private = "file")
 solve_view_defs :: proc(graph: ^Flow_Graph) {
 	first := make(map[int]int, graph.alloc)
@@ -3708,6 +3775,10 @@ solve_view_defs :: proc(graph: ^Flow_Graph) {
 			if event.kind == .Publish && event.view_slot > 0 && event.view_slot - 1 not_in first {
 				first[event.view_slot - 1] = 0
 				append(&followed, event.view_slot - 1)
+			}
+			if at := event.element; at.slot > 0 && at.loan == 0 && at.slot - 1 not_in first {
+				first[at.slot - 1] = 0
+				append(&followed, at.slot - 1)
 			}
 		}
 	}
@@ -3785,6 +3856,12 @@ solve_view_defs :: proc(graph: ^Flow_Graph) {
 		}
 		copy(row, entry[id])
 		for &event in block.prov {
+			if at := &event.element; at.slot > 0 && at.loan == 0 {
+				at.reaching = view_defs_reaching(graph, first, at.slot - 1, row, nil)
+				if event.kind == .Def && event.place_loan > 0 {
+					graph.place_loans[event.place_loan - 1].element.reaching = at.reaching
+				}
+			}
 			if event.kind == .Publish && event.view_slot > 0 {
 				event.view_reaching = view_defs_reaching(graph, first, event.view_slot - 1, row, nil)
 			} else if event.kind == .Def && event.view_def > 0 && event.slot in first &&
@@ -5424,7 +5501,7 @@ check_place_loans :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, u
 		bit := place_bit(state, index)
 		for carrier in event.into {
 			if !prov_slots_overlap(state, loan.slot, carrier) || bit_get(reach_row(state, state.reach, carrier), bit) ||
-			   accessed_beside(state, index, carrier) {
+			   accessed_beside(state, index, carrier) || view_elements_apart(state, loan.element, loan.slot, event.element, carrier) {
 				continue
 			}
 			state.diagnostic_precision |= state.precision[loan.slot] | state.precision[carrier] | event.precision
@@ -5456,8 +5533,10 @@ accessed_beside :: proc(state: ^Prov_State, index: int, carrier: int) -> bool {
 	loans := state.graph.place_loans
 	row := reach_row(state, state.reach, carrier)
 	for other, at in loans {
-		if at != index && other.borrows && bit_get(row, place_bit(state, at)) && !place_loans_overlap(other, loans[index]) &&
-		   prov_slots_overlap(state, other.slot, loans[index].slot) {
+		if at == index || !other.borrows || !bit_get(row, place_bit(state, at)) || !prov_slots_overlap(state, other.slot, loans[index].slot) {
+			continue
+		}
+		if !place_loans_overlap(other, loans[index]) || view_elements_apart(state, other.element, other.slot, loans[index].element, loans[index].slot) {
 			return true
 		}
 	}

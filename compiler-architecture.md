@@ -371,7 +371,7 @@ behavioral controls for all of it.
 | Concept | Owner |
 | --- | --- |
 | Access through carriers: the hops to a place, the caller slots a parameter's loan stands for, and the reborrow a loaded copy takes | `prov_read_through_carrier`, `prov_place_hops`, `prov_caller_slots`, `prov_view_element`, `prov_reborrow_loaded` in `cfg_provenance.odin` |
-| Place loans, taken by a borrow, slice, traversal, or switch of a place reached through carriers | `Prov_Place_Loan`, `prov_place_loan`, `place_bit`, `check_place_loans` in `borrow.odin` |
+| Place loans, taken by a borrow, slice, traversal, or switch of a place reached through carriers, and the constant view element one is in | `Prov_Place_Loan`, `prov_place_loan`, `place_bit`, `check_place_loans`, `Prov_View_At`, `view_elements_apart` in `borrow.odin`; `prov_view_at` in `cfg_provenance.odin` |
 | Access events, the places a slot's definitions may point at, and their merging | `prov_access_through`, `Prov_Slot.offsets`, `prov_note_offset`, `prov_union_offsets` |
 | Publication: a store through carriers, or what a call leaves of a `stored` argument | `publish_into_loan`, `publish_into_caller`, `read_caller_slots`, `resolve_content_reads` in `borrow.odin`; `prov_reborrow_retained` in `cfg_provenance.odin` |
 | Written-argument regions, by parameter and by path | `param_writes_caller`, `Compiler.written_regions`, `written_owner_regions`, `written_region_content`, `Prov_Region_Content` |
@@ -400,7 +400,16 @@ Keep these contracts:
   Which storage the carriers name is known only to the solve, so a borrow,
   slice, traversal, or switch of such a place snapshots the carriers and is
   checked against later accesses by path overlap (`check_place_loans`); a
-  borrow's conflict is `L0641`, a switch's `L0511`.
+  borrow's conflict is `L0641`, a switch's `L0511`. A view's paths name no
+  element, so a place loan or `.Through` event in `s[k]`, with `s` a named
+  view and `k` a constant, also records that element (`Prov_View_At`,
+  `prov_view_at`). Two such accesses are apart when, for every loan both
+  carriers hold, both elements are known and differ (`view_elements_apart`):
+  a view parameter's element is its index relative to the parameter's own
+  loan, and a local view's is worked out from where the view starts in the
+  range a fresh borrow lends, from the definitions `solve_view_defs` finds
+  reaching each access, as for a store (`view_element_in`,
+  `publish_view_of`).
 - **Paths are below the pointee, and bounded.** Slot offsets, place-loan
   paths, written-alias paths, and region content paths all start below where
   the carriers point, so a write lands only where it names. Each offset

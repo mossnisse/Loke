@@ -1467,6 +1467,20 @@ another read. Permitting recognized read-only uses allows `slice.equal(xs, xs)`
 without weakening exclusivity. A mutable reborrow still excludes other reads,
 which could observe a partially updated value.
 
+### A view's constant elements are places only where its start is known
+
+`xs[0]` and `xs[1]` name different storage only relative to where `xs`
+starts. Two views sharing one borrow may start at different elements: the
+reslice `xs[1:]` names `xs[1]` as its `[0]`. So the rule that
+separates constant elements (design.md "Weakening and reborrows") covers only
+views whose start is fixed: a parameter, whose binding cannot be reassigned,
+and a local view whose reaching definitions all derive from one fresh borrow
+of a range by constant reslices. That is the information the compiler already
+works out to let a store replace what one element holds, so the rule costs no
+new analysis, and through any other view an element stays a possible alias of
+every other, as before. Tracking a start for every copy would accept more,
+but would make legality depend on how far a value's history is followed.
+
 ### Each required result is asked about
 
 `@(require_results)` checks each result stored in a local, not merely whether

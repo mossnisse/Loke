@@ -166,3 +166,36 @@ the whole of `s` as well as of `t`. Counting a place against only the storage
 its carrier names where it is taken needs offsets that follow the
 definitions reaching each borrow. Found while closing the storage scope of the
 chosen-place guarantee on 2026-10-31.
+
+### A copy out of a local view's element suspends the other elements' carriers
+
+[Weakening and reborrows](design.md#weakening-and-reborrows) says a carrier
+copied out of storage reborrows the carrier stored there, and another field
+beside it is not a use of it. Through a local view, a copy out of one element
+suspends the carriers stored in every other element, so the second copy here
+is rejected:
+
+```loke
+package main;
+Node :: struct { value: int }
+List :: struct { head: ^mut Node }
+through_local_view :: proc() {
+    a := Node{1}; b := Node{2};
+    lists := [2]List{List{&mut a}, List{&mut b}};
+    s := &mut lists[:];
+    node := s[0].head;
+    other := s[1].head; // L0641; should be accepted
+    other^.value = 3;
+    node^.value = 1;
+}
+main :: proc() {}
+```
+
+The same copies are accepted out of `lists` itself and out of a view
+parameter `s: []mut List`, whose constant elements get caller slots of their
+own (`prov_view_element` in [src/cfg_provenance.odin](src/cfg_provenance.odin)).
+A load through a local view reads the content slots of the whole range the
+view's loan lends, so both copies reborrow the same slots. Reading only the
+element's own slots needs where the view starts, as `prov_local_view_element`
+already works out for a store into one element. Found while making constant
+view elements their own places on 2026-10-31.

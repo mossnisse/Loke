@@ -1,0 +1,24 @@
+L0641
+@15:2
+`xs` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@21:2
+`xs` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@28:2
+`view` cannot be used here: a mutable reborrow of it is still in use
+L0511
+@35:3
+this write is not compatible with the read-only payload of `xs[0].first`
+L0641
+@46:2
+`view` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@56:3
+`view` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@66:2
+`view` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@75:2
+`view` cannot be used here: a mutable reborrow of it is still in use

@@ -161,13 +161,16 @@ provenance](compiler-architecture.md#ownership-lifecycle-and-provenance));
 [borrow_matrix_test.odin](tests/borrow_matrix_test.odin) checks the rules
 against a model written apart from the compiler. Still open:
 
-- **A view's elements.** A view's loans name its elements with a wildcard, so
-  they are one place: `&mut s[0]` suspends `s[1]`, and a write to
-  `s[1].first` conflicts with a switch over `s[0].first`. Making a constant
-  element its own place changes the path a view's access states.
-- **Calls.** A carrier handed to a call uses every mutable carrier it reaches.
-  A per-parameter summary of what a body uses through each parameter could
-  narrow that, as written-argument regions already do for stores.
+- **Calls.** A carrier handed to a call uses every mutable carrier it reaches
+  ([Weakening and reborrows](design.md#weakening-and-reborrows)). A
+  per-parameter summary of what a body uses through each parameter could
+  narrow that, as written-argument regions already do for stores. That is a
+  change to the language, not only to the analysis: whether a caller is
+  accepted would then depend on what the callee's body touches, so editing a
+  body could reject its callers, as [global write
+  effects](design.md#global-write-effects) already can. Decide it together
+  with [written public borrow
+  contracts](#public-borrow-contracts-should-stand-on-their-own).
 - **Value identity.** Three rules now say which definition a reborrow belongs
   to: a load defines its slot afresh, a reborrow records the carriers its load
   went through (`Prov_Reborrow.via`), and reloading a temporary severs what was
@@ -183,11 +186,6 @@ against a model written apart from the compiler. Still open:
   at a constant index; a record stored whole into a view parameter's element
   joins into the parameter itself; and storage below the second load, or
   through a view, is one slot.
-- **Matrix coverage.** Slices and traversals are taken of a fixed array, so
-  no use beside them reallocates storage, and nothing leaves a traversal or a
-  loop early with `break` or `return`. A loop that takes afresh is the one
-  shape whose legality differs from straight-line code's: an earlier
-  iteration's store changes what the place holds.
 
 Language changes should be evaluated separately. The proposed [written public
 borrow contracts](#public-borrow-contracts-should-stand-on-their-own) could
