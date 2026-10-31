@@ -1,10 +1,14 @@
 // A callable record whose `call` is private to this package, as a comparator
-// or mapper written beside its data usually is.
+// or mapper written beside its data usually is. The record is private too, so
+// that `call` meets `Callable`'s slot (design.md "Interface bodies"); `make`
+// hands one out on purpose.
 package provider;
 
-@(public)
-F :: struct {}
+f :: struct {}
 
-impl F {
+impl f {
 	call :: proc(self, n: int) -> int { return n + 1; }
 }
+
+@(public)
+make :: proc() -> f { return f{}; }

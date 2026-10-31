@@ -14,8 +14,8 @@ maybe :: proc(w: $T) -> int where iface.Readable(T) || iface.Unrelated(T) {
 	return w.read();
 }
 
-// A bound over one type says nothing about another. `Readable(Widget)` is true
-// here, but this declaration never required it.
+// A bound over one type says nothing about another, and `Widget`'s private
+// `read` meets no slot in any case.
 Local :: struct { n: int }
 impl Local { value :: proc(self) -> int { return self.n; } }
 
@@ -30,6 +30,6 @@ main :: proc() {
 	w := widget.make(5);
 	fmt.println(leak(w));
 	fmt.println(maybe(w));
-	fmt.println(other(Local{1}, w));
-	fmt.println(plain(w));
+	fmt.println(other(Local{1}, widget.Widget{value = 5}));
+	fmt.println(plain(widget.Widget{value = 5}));
 }

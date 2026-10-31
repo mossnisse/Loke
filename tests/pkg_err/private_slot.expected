@@ -1,0 +1,14 @@
+L0444
+@20:2
+`Counter` does not satisfy `Pokeable(Counter)`
+`Counter.poke` is private, and a public type's private method meets no slot
+L0444
+@21:6
+`Counter` does not satisfy `Pokeable(Counter)`
+L0444
+@22:6
+`Counter` does not satisfy `Keeps_Secret(Counter)`
+L0444
+@23:6
+`Counter` does not satisfy `Callable(Counter, proc(int) -> int)`
+`Counter.call` is private, and a public type's private method meets no slot

@@ -4715,8 +4715,8 @@ member unambiguously. Requirement order is irrelevant, and duplicate
 requirements for the selector must agree.
 
 The member is the one ordinary lookup finds where the interface is applied, or,
-when that finds none, the one a slot would find: an inherent member whatever
-its visibility, or an extension in the package of the interface that writes the
+when that finds none, the one a slot would find: an inherent member that a slot
+may use, or an extension in the package of the interface that writes the
 requirement. The application's other requirements, and the applications it
 composes, reach that member through the same selector. So when `Measured(T)`
 requires `T.Unit -> type` and composes `Length(T.Unit)`, a type that the
@@ -4735,6 +4735,15 @@ package, and `Length` is applied to that `Unit`.
   exactly, and so must receiver and parameter modes, except that a `self: ^`
   slot is also met by a plain `self` method, which [lends
   less](#receiver-forms); default arguments do not participate.
+- An inherent method meets a slot when it is public, or when its type is not
+  declared public or belongs to a `package main`. Such a type reaches another
+  package only through its own package's declarations, and a public one that
+  names it [warns](#private-names-in-public-declarations). A
+  public type's private methods are not its API, so they meet no slot in any
+  package, its own included, and whether a type meets an interface does not
+  depend on where it is asked. A member the compiler supplies, such as a
+  default `format`, is the type's own behavior and meets a slot as a public
+  one does.
 - Slot names must be unique across the interface and everything it composes.
   Witness members are never overload groups.
 
@@ -9200,7 +9209,10 @@ out of a file-wide `@(public)` package attribute.
 
 **Loke has two visibility levels: package and public.** It has no file-private
 visibility. The package is the encapsulation boundary. Put code in a separate
-package when it needs a separate visibility boundary.
+package when it needs a separate visibility boundary. An interface does not
+cross it either: a public type's private method meets no
+[slot](#interface-bodies), so another package cannot reach it through generic
+code or a `dyn` view.
 
 Struct fields use the same two levels. A field inherits the default selected by
 the package declaration in its source file and may override that default with

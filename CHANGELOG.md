@@ -10,6 +10,17 @@ checklist.
 
 ### Breaking changes
 
+- A public type's private method no longer meets an interface slot, in any
+  package, so an importer can no longer call it by declaring an interface
+  with a slot of its name and calling that from a bound generic procedure or
+  a `dyn` view ([Interface bodies](design.md#interface-bodies)). The same holds
+  for a private associated constant that a requirement such as
+  `T.Element -> type` would find. Private types and every type in a
+  `package main` are unchanged. A bound that relied on such a method now
+  fails with `L0444`, whose note names the private method. Upgrade by marking
+  the method `@(public)`, if meeting the interface is meant to be part of the
+  type's API, or by passing a private wrapper type instead.
+
 - A store through a carrier that the same multiple assignment reassigns, as
   `p^.head` in `p, p^.head = &mut y, p^.tail`, is now checked where the
   carrier pointed before the statement, where the store lands

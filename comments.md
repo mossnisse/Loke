@@ -1213,6 +1213,31 @@ constant already covers a value fixed at compile time, and a value computed
 at run time is a procedure, which can still change how it is computed. This
 was proposed by the language design review of 2026-10-11.
 
+### A public type's private methods meet no slot
+
+A slot was met by an inherent method whatever its visibility, so any importer
+could call any private method of a library's public type: it declared an
+interface with a slot of that name and called it from a bound generic
+procedure or a `dyn` view. Private then meant only that the name was not
+written at the call, and a library could not rename or remove a private
+method without risking an importer's build.
+
+The rule could instead have asked who supplies the type, so that a library
+passing its own value to generic code still reached its private methods. But
+a generic instance is checked once and shared, as is a `dyn` witness table,
+so the bound would hold or fail by whichever package asked first, and a type
+with a private `format` would print one way inside its package and another
+outside. [Interface bodies](design.md#interface-bodies) instead decides by the
+type: a public type meets a slot only with public methods, everywhere, and a
+type no importer can name, a private one or any in a `package main`, keeps
+its private methods as candidates, since every value of it comes from its own
+package. The cost falls on a library whose own generic code relied on a
+private method of its public type: it makes the method public, which shows
+the conformance in its interface file, or wraps the value in a private type.
+Go reaches a similar place by qualifying an unexported method's name with its
+package, so no other package's interface can require it; Loke's slots match
+by name, so the type's visibility decides instead.
+
 ### A warning for private names in public declarations
 
 A public procedure that returns a private type compiles, and an importer can

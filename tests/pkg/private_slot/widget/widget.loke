@@ -1,0 +1,23 @@
+package widget;
+
+import "../shapes";
+
+// design.md "Interface bodies": a private method meets another package's slot
+// on a type no importer can name, and a public one on any type.
+
+inner :: struct {}
+
+impl inner {
+	name :: proc(self) -> string { return "inner"; }
+}
+
+@(public)
+Gear :: struct {}
+
+impl Gear {
+	@(public)
+	name :: proc(self) -> string { return "gear"; }
+}
+
+@(public)
+inner_name :: proc() -> string { return shapes.describe(inner{}); }

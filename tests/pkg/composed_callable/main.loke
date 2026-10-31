@@ -21,7 +21,7 @@ nested :: proc(f: $C) -> int where Wrapped(C) { return f(10); }
 direct :: proc(f: $C) -> int where interfaces.Callable(C, proc(n: int) -> int) { return f(1); }
 
 main :: proc() {
-	fmt.println(composed(provider.F{}));
-	fmt.println(nested(provider.F{}));
-	fmt.println(direct(provider.F{}));
+	fmt.println(composed(provider.make()));
+	fmt.println(nested(provider.make()));
+	fmt.println(direct(provider.make()));
 }

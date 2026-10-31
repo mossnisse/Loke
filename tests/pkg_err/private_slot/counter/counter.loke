@@ -1,0 +1,17 @@
+package counter;
+
+// design.md "Interface bodies": a public type's private members are not API,
+// so they meet no slot and no associated constant requirement anywhere.
+
+@(public)
+Counter :: struct {
+	count: int,
+}
+
+impl Counter {
+	@(public)
+	get :: proc(self) -> int { return self.count; }
+	poke :: proc(self: inout, value: int) { self.count = value; }
+	Secret :: int;
+	call :: proc(self, n: int) -> int { return self.count + n; }
+}

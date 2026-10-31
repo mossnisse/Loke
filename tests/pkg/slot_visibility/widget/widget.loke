@@ -4,6 +4,14 @@ package widget;
 Widget :: struct { @(public) value: int }
 
 impl Widget {
+	// Package-private on a public type, so it meets no slot.
+	read :: proc(self) -> int { return self.value; }
+}
+
+// Private, so its private methods meet slots: every value comes from here.
+gadget :: struct { value: int }
+
+impl gadget {
 	// Package-private, and the only implementation of `Readable`'s slot.
 	read :: proc(self) -> int { return self.value; }
 
@@ -15,5 +23,6 @@ impl Widget {
 @(public)
 Tag :: struct { @(public) id: int }
 
+// Hands out a value whose type importers cannot name, on purpose.
 @(public)
-make :: proc(v: int) -> Widget { return Widget{v}; }
+make :: proc(v: int) -> gadget { return gadget{v}; }

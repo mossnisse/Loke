@@ -1,0 +1,26 @@
+package main;
+
+import "./counter";
+import "base:interfaces";
+
+Pokeable :: interface($T: type) {
+	slot poke: proc(self: inout T, value: int);
+}
+
+Keeps_Secret :: interface($T: type) {
+	T.Secret -> type;
+}
+
+force :: proc(c: inout $T) where Pokeable(T) { c.poke(-42); }
+
+reveal :: proc(c: $T) -> int where Keeps_Secret(T) { return size_of(T.Secret); }
+
+main :: proc() {
+	c := counter.Counter{};
+	force(inout c);
+	_ = (dyn mut Pokeable)(&mut c);
+	_ = reveal(c);
+	_ = apply(c);
+}
+
+apply :: proc(f: $C) -> int where interfaces.Callable(C, proc(n: int) -> int) { return f(1); }

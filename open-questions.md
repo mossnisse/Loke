@@ -766,7 +766,8 @@ verbosity at every call site.
 
 ### Visibility in slot and expression requirements
 
-A named slot is met by an inherent method whatever its visibility, while an
+A named slot is met by a private inherent method on any type no importer can
+name ([Interface bodies](design.md#interface-bodies)), while an
 expression requirement such as `(a, b: T) a + b -> T` is checked with the
 visibility of the package that applies the interface, where the bound is
 written, and so needs the operator to be visible there. A type in a

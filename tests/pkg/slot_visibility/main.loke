@@ -1,9 +1,9 @@
 package main; import "core:fmt";
 import "./iface"; import "./widget";
 
-// design.md "Interfaces as reusable constraints" / "Runtime witnesses": a slot
-// is matched by an inherent method whatever its visibility, or by an extension
-// in the slot's declaring package — so satisfaction, `dyn` erasure, and a
+// design.md "Interface bodies": a slot is matched by an inherent method that
+// is public or on a type no importer can name, or by an extension in the
+// slot's declaring package — so satisfaction, `dyn` erasure, and a
 // constrained generic body must all reach the same implementation. The body
 // used ordinary visibility-filtered lookup and rejected what the bound accepted.
 
@@ -26,7 +26,7 @@ observe :: proc(v: dyn iface.Readable) -> int { return v.read(); }
 main :: proc() {
 	w := widget.make(5);
 
-	// A private inherent method, reached through the bound.
+	// A private inherent method of a private type, reached through the bound.
 	fmt.println(use(w));
 	fmt.println(via_type(w));
 	fmt.println(observe((dyn iface.Readable)(&w)));

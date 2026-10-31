@@ -1,12 +1,15 @@
 L0363
 @9:9
-`Widget` has no field or member `secret`
+`gadget` has no field or member `secret`
 L0363
 @14:9
-`Widget` has no field or member `read`
+`gadget` has no field or member `read`
 L0363
 @23:9
 `Widget` has no field or member `read`
 L0363
 @27:49
 `Widget` has no field or member `read`
+warning[L0740]
+@28:25
+public `make` names the private type `gadget`

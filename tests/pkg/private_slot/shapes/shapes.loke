@@ -1,0 +1,9 @@
+package shapes;
+
+@(public)
+Named :: interface($T: type) {
+	slot name: proc(self) -> string;
+}
+
+@(public)
+describe :: proc(value: $T) -> string where Named(T) { return value.name(); }

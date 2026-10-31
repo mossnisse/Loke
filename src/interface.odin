@@ -814,6 +814,9 @@ callable_check :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic_Arg) 
 	if callable_call_method(k, info, subject, signature) != INVALID_SYMBOL {
 		return Requirement_Failure{}, true
 	}
+	if hidden := private_slot_member(k, subject, intern_identifier(k.c, "call")); hidden != nil {
+		return private_slot_failure(k, at, subject, hidden.name), false
+	}
 	return Requirement_Failure {
 		span   = at,
 		reason = fmt.aprintf(
@@ -999,6 +1002,9 @@ check_slot_requirement :: proc(
 			return Requirement_Failure{}, true
 		}
 	}
+	if private_slot_member(k, subject, name) != nil {
+		return private_slot_failure(k, requirement.span, subject, name), false
+	}
 	return Requirement_Failure {
 		span   = requirement.span,
 		reason = fmt.aprintf(
@@ -1010,9 +1016,11 @@ check_slot_requirement :: proc(
 	}, false
 }
 
-// A slot's candidates: inherent methods whatever their visibility, plus
-// extensions from `owner_pkg`, the slot's interface package. Shared with witness
-// construction so `dyn` selects what satisfaction promised.
+// A slot's candidates: inherent methods, plus extensions from `owner_pkg`, the
+// slot's interface package. A private inherent method is one only on a type no
+// importer can name (design.md "Interface bodies"), so the answer is the same
+// in every package. Shared with witness construction so `dyn` selects what
+// satisfaction promised.
 slot_candidates :: proc(k: ^Checker, subject: Type_Id, name: Identifier_Id, owner_pkg: Package_Id) -> []Symbol_Id {
 	ensure_format_member(k, subject, name)
 	ensure_iteration_members(k, subject)
@@ -1022,18 +1030,63 @@ slot_candidates :: proc(k: ^Checker, subject: Type_Id, name: Identifier_Id, owne
 	// design.md "Distinct types": a `distinct` name's own members, never its
 	// underlying type's, as for ordinary member lookup.
 	if info := type_of(k.c, subject); info != nil {
-		collect_slot_members(k, info.members, name, &out)
+		collect_slot_members(k, info.members, name, &out, private_ok = !type_is_exported(k.c, subject))
 	}
 	if pkg := package_of(k.c, owner_pkg); pkg != nil {
 		if members, found := pkg.extensions[subject]; found {
-			collect_slot_members(k, members, name, &out)
+			collect_slot_members(k, members, name, &out, private_ok = true)
 		}
 	}
 	return out[:]
 }
 
+// A private inherent method `slot_candidates` passed over, so a failure can say
+// why.
 @(private = "file")
-collect_slot_members :: proc(k: ^Checker, members: []Symbol_Id, name: Identifier_Id, out: ^[dynamic]Symbol_Id) {
+private_slot_member :: proc(k: ^Checker, subject: Type_Id, name: Identifier_Id) -> ^Symbol {
+	info := type_of(k.c, subject)
+	if info == nil || !type_is_exported(k.c, subject) {
+		return nil
+	}
+	for member in info.members {
+		sym := symbol_of(k.c, member)
+		if sym != nil && sym.name == name && !sym.public && sym.synth == .None && !sym.bound_excluded {
+			return sym
+		}
+	}
+	return nil
+}
+
+@(private = "file")
+private_slot_failure :: proc(k: ^Checker, span: Span, subject: Type_Id, name: Identifier_Id) -> Requirement_Failure {
+	return Requirement_Failure {
+		span   = span,
+		reason = fmt.aprintf(
+			"`%s.%s` is private, and a public type's private method meets no slot",
+			type_name(k.c, subject),
+			identifier_text(k.c, name),
+			allocator = k.c.semantic_allocator,
+		),
+	}
+}
+
+// Whether an importer can name `type`: a public declaration outside `package
+// main`, or an instance of one.
+type_is_exported :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	info := type_of(c, type)
+	if info == nil {
+		return false
+	}
+	sym := symbol_of(c, info.instance_of != INVALID_SYMBOL ? info.instance_of : info.symbol)
+	if sym == nil || !sym.public {
+		return false
+	}
+	pkg := package_of(c, sym.pkg)
+	return pkg != nil && identifier_text(c, pkg.name) != "main"
+}
+
+@(private = "file")
+collect_slot_members :: proc(k: ^Checker, members: []Symbol_Id, name: Identifier_Id, out: ^[dynamic]Symbol_Id, private_ok: bool) {
 	for member in members {
 		sym := symbol_of(k.c, member)
 		if sym == nil || sym.name != name {
@@ -1041,6 +1094,11 @@ collect_slot_members :: proc(k: ^Checker, members: []Symbol_Id, name: Identifier
 		}
 		// This bypasses `member_is_visible`, so it repeats its `where` exclusion.
 		if sym.bound_excluded {
+			continue
+		}
+		// What the compiler contributes is the type's own behavior, not a member
+		// its author kept private.
+		if !private_ok && !sym.public && sym.synth == .None {
 			continue
 		}
 		// In the member's own file and block: a bound probed from an earlier

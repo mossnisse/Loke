@@ -1,0 +1,18 @@
+package main;
+
+import "core:fmt";
+import "./shapes";
+import "./widget";
+
+// A `package main` type's methods are private by default and meet the slot.
+Local :: struct {}
+
+impl Local {
+	name :: proc(self) -> string { return "local"; }
+}
+
+main :: proc() {
+	fmt.println(widget.inner_name());
+	fmt.println(shapes.describe(widget.Gear{}));
+	fmt.println(shapes.describe(Local{}));
+}
