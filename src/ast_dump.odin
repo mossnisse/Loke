@@ -486,12 +486,6 @@ dump_expr :: proc(b: ^strings.Builder, expr: Expr, depth: int) {
 		dump_child(b, node.operand, depth)
 		fmt.sbprintf(b, " %q)", node.name.text)
 
-	case ^Expr_Checked_Extract:
-		fmt.sbprint(b, "(extract")
-		dump_child(b, node.operand, depth)
-		dump_child(b, node.target, depth)
-		fmt.sbprint(b, ")")
-
 	case ^Expr_Index:
 		fmt.sbprint(b, "(index")
 		dump_child(b, node.operand, depth)

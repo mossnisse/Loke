@@ -1283,7 +1283,7 @@ emit_expr_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 		}
 		return load_place(e, as_type, result)
 
-	case ^Expr_Checked_Extract, ^Expr_Or_Else:
+	case ^Expr_Or_Else:
 		return emit_producer_value(e, expr, as_type)[0]
 
 	case ^Expr_Composite:

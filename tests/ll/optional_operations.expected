@@ -4,9 +4,5 @@ mlookup.hit
 mlookup.done
 call i32 @loke_rt_v1_dyn_clone(ptr
 cclone.fail
-typecase.test.
-typecase.body.
 icmp eq i8
-anyview.match
-anyview.mismatch
 orelse.fallback

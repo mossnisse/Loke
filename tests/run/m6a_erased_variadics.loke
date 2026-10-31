@@ -1,25 +1,30 @@
 package main; import "core:fmt";
 
-// design.md "any_view type": "**A variadic `..any_view` parameter is the only
-// exception to the container rule.**" The caller converts each argument to
-// `any_view` and materializes a temporary `[]any_view` for the duration of the
-// call; the callee may read, index, iterate, and forward it.
+// design.md "Variadic parameters": a `..dyn I` caller views each argument, and
+// the pack is a temporary of the complete call expression. The callee may
+// read, index, iterate, and forward it.
 
-count :: proc(args: ..any_view) -> int { return args.len(); }
+Number :: interface($Self: type) {
+	slot number: proc(self: ^) -> int;
+}
 
-// Checked extractions still work on an erased element, because an `any_view` is a
-// pointer plus a `typeid` however it was formed.
-ints :: proc(args: ..any_view) -> int {
+impl int { number :: proc(self) -> int { return self; } }
+impl bool { number :: proc(self) -> int { return 0; } }
+impl rune { number :: proc(self) -> int { return 0; } }
+
+count :: proc(args: ..dyn Number) -> int { return args.len(); }
+
+// Each element dispatches through its own witness, whatever type it views.
+ints :: proc(args: ..dyn Number) -> int {
 	total := 0;
 	foreach (a in args) {
-		total = total + (a.as(int) or_else 0);
+		total = total + a.number();
 	}
 	return total;
 }
 
-// design.md: "The called procedure can read, index, iterate, and forward the
-// slice to another `..any_view` parameter."
-forward :: proc(args: ..any_view) -> int { return ints(..args); }
+// A sole spread forwards the pack to another `..dyn Number` parameter.
+forward :: proc(args: ..dyn Number) -> int { return ints(..args); }
 
 main :: proc() {
 	fmt.println(count());

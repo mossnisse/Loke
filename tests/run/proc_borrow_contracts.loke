@@ -62,7 +62,11 @@ constant_view :: proc() -> []int {
 }
 
 allocate :: proc() -> Box(int) { return box(0); }
-read_erased :: proc(value: any_view) -> int { return value.as(int) or_else 0; }
+Readable :: interface($Self: type) {
+	slot read: proc(self: ^) -> int;
+}
+impl int { read :: proc(self) -> int { return self; } }
+read_viewed :: proc(values: ..dyn Readable) -> int { return values[0].read(); }
 view_length :: proc(value: string_view) -> int { return value.len(); }
 
 choose_allocator :: proc(first, second: Allocator) -> Allocator { return first; }
@@ -93,7 +97,7 @@ main :: proc() {
 	pointer := allocator();
 	pointer^ = 12;
 	assert(pointer^ == 12);
-	assert(read_erased(37) == 37);
+	assert(read_viewed(37) == 37);
 	text: string = "hello";
 	assert(view_length(text) == 5);
 	arena := mem.Arena.init();

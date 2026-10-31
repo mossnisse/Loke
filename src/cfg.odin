@@ -2134,7 +2134,6 @@ walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) -> (carried: []int
 	// A switch over a temporary consumes it into the case binding; one over a
 	// place borrows it, for the whole switch.
 	consumes := s.kind != .Value && s.subject != nil &&
-		prov_type(graph, s.subject) != TYPE_ANY_VIEW &&
 		!expression_is_borrowed_place(s.subject)
 	held := len(graph.held)
 	defer resize(&graph.held, held)
@@ -2611,18 +2610,6 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 		payload := prov_payload_content(graph, value_loans, prov_type(graph, v.value), prov_type(graph, v), v.span)
 		return prov_join(graph, payload, fallback_loans)
 
-	case ^Expr_Checked_Extract:
-		loans := walk_flow_expr(graph, v.operand)
-		if prov {
-			// A union keeps its alternatives below a wildcard; an erased view
-			// points at the value.
-			operand_type := prov_type(graph, v.operand)
-			if type_is_union(graph.k.c, operand_type) {
-				return prov_project_content(graph, loans, operand_type, {proj_wild()}, prov_type(graph, v), v.span)
-			}
-			return prov_load_content(graph, loans, nil, prov_type(graph, v), v.span)
-		}
-		return nil
 
 	case ^Expr_Range:
 		walk_flow_expr(graph, v.lo)
@@ -2669,8 +2656,6 @@ walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	case Call_Enum_From_Int:
 		walk_flow_expr(graph, v.bound[0])
 		return nil
-	case Call_Extract:
-		return walk_flow_expr(graph, operation.node)
 	case Call_Box_Unbox:
 		// The payload carries what the consumed box carried below its one step.
 		loans := walk_flow_expr(graph, v.bound[0])

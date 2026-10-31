@@ -30,9 +30,8 @@ main :: proc() {
 	default:   fmt.println("on", s);
 	}
 
-	value: any_view = 2.5;
-	switch (value) {
-	case int(v): fmt.println("int", v);
-	default:  fmt.println("something else");
+	switch (Setting.off) {
+	case .number(v): fmt.println("number", v);
+	default:         fmt.println("something else");
 	}
 }

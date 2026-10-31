@@ -1,9 +1,9 @@
 L0219
 @6:13
 expected `)` to close the parenthesised expression
-L0224
-@8:13
-expected `)` to close the checked extraction
+L0225
+@8:9
+a union's variant is read with `.as(.name)` or a `switch`
 L0225
 @9:9
 expected a name after `.`

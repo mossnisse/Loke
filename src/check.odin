@@ -4110,8 +4110,8 @@ report_header_binding :: proc(k: ^Checker, s: ^Stmt_Switch) -> bool {
 	}
 	errorf(
 		k.c, expr_span(s.subject), "L0426",
-		"a switch binds in its cases: write `switch (subject)` with `case .variant(%s):`, or `case T(%s):` over an `any_view`",
-		name.name, name.name,
+		"a switch binds in its cases: write `switch (subject)` with `case .variant(%s):`",
+		name.name,
 	)
 	return true
 }
@@ -4143,8 +4143,8 @@ check_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 	}
 	// design.md "Inspecting a union": the subject's type decides.
 	// A `dyn` subject arrives too, so it is told why it has no such switch.
-	if type_is_union(k.c, subject) || subject == TYPE_ANY_VIEW || type_is_dyn(k.c, subject) {
-		adopt_branch_patterns(k, s, subject == TYPE_ANY_VIEW)
+	if type_is_union(k.c, subject) || type_is_dyn(k.c, subject) {
+		adopt_branch_patterns(k, s)
 		return check_variant_cases(k, s, subject)
 	}
 	if type_is_untyped(k.c, subject) {
@@ -4221,13 +4221,13 @@ check_case_value :: proc(
 		}
 		return
 	}
-	// design.md "switch statement": only an `any_view` subject has types to
-	// match, and that switch never reaches here.
+	// design.md "switch statement": a case names values, never types, so a
+	// type is reported rather than compared.
 	if _, is_call := value.(^Expr_Call); !is_call {
 		if named := resolve_type_syntax(k, value); named != INVALID_TYPE {
 			errorf(
 				k.c, expr_span(value), "L0426",
-				"`%s` is a type, and only a switch over an `any_view` matches types; this one is over `%s`",
+				"`%s` is a type, and a switch matches values of its subject `%s`, not types; hold the alternatives in a union to match them",
 				type_name(k.c, named), type_name(k.c, subject),
 			)
 			return

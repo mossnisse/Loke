@@ -21,7 +21,7 @@ main :: proc() {
 	case:
 	}
 	switch (tag := kind(); tag) {
-	case Circle, ^Square:
+	case circle, square^:
 		break;
 	}
 	switch (x in set) {

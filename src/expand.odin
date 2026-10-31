@@ -431,7 +431,7 @@ expand_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> 
 		return true
 	}
 	written := s.cases[position]
-	if subject == TYPE_ANY_VIEW || !type_is_union(k.c, subject) {
+	if !type_is_union(k.c, subject) {
 		errorf(
 			k.c, expr_span(written.values[0]), "L0426",
 			"an expanded case needs a union subject, and this switch is over `%s`", type_name(k.c, subject),

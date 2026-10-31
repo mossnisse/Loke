@@ -48,8 +48,6 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 		return emit_union_as(e, v, operation.index, as_type)
 	case Call_Box_Unbox:
 		return emit_box_unbox(e, v)
-	case Call_Extract:
-		return emit_any_view_extract(e, operation.node, operation.node.type)[0]
 	case Call_Dyn_Slot:
 		results := emit_dyn_slot_call(e, v)
 		return len(results) == 0 ? "0" : results[0]
@@ -593,8 +591,6 @@ emit_producer_value :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> []stri
 	#partial switch v in expr {
 	case ^Expr_Call:
 		#partial switch operation in v.operation {
-		case Call_Extract:
-			return emit_any_view_extract(e, operation.node, operation.node.type)
 		case Call_Dyn_Slot:
 			return emit_dyn_slot_call(e, v)
 		case Call_Allocation:
@@ -617,8 +613,6 @@ emit_producer_value :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> []stri
 		single := make([]string, 1)
 		single[0] = emit_expr_at(e, expr, as_type)
 		return single
-	case ^Expr_Checked_Extract:
-		return emit_any_view_extract(e, v, as_type)
 	case ^Expr_Or_Else:
 		return emit_or_else(e, v)
 	case ^Expr_Postfix:

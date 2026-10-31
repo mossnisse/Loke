@@ -32,18 +32,14 @@ impl Bag {
 }
 
 // design.md: "Copying a borrow carrier copies the view and its root provenance",
-// so an `any_view` may be copied, extracted and switched on freely while its
-// subject is untouched.
+// so an `any_view` may be copied and read freely while its subject is untouched.
 erased_copies :: proc() {
 	value := 7;
 	view: any_view = value;
 	alias := view;
-	fmt.println(view.(int));
-	fmt.println(alias.(int));
-	switch (alias) {
-	case int(v):  fmt.println(v);
-	case:      fmt.println(0);
-	}
+	fmt.println(view);
+	fmt.println(alias);
+	fmt.println(alias);
 	// Every view is finished, so the subject is writable again.
 	value = 8;
 	fmt.println(value);

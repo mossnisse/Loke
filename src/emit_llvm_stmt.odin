@@ -809,8 +809,8 @@ or_match :: proc(e: ^Emitter, matched, test: string) -> string {
 	return out
 }
 
-// A type switch dispatches on a union's tag or an `any_view`'s `typeid`. A case
-// binds at the variant's type, or at the subject's type for several or default.
+// A type switch dispatches on a union's tag. A case binds at the variant's
+// type, or at the subject's type for several or default.
 // A union argument expansion's switch also yields the value of the arm that ran,
 // at `result` (design.md "Union argument expansion").
 @(private)
@@ -821,27 +821,18 @@ emit_type_switch :: proc(e: ^Emitter, s: ^Stmt_Switch, result := TYPE_VOID) -> s
 	}
 	debug_mark_location(e, expr_span(s.subject))
 	union_type := expr_base(s.subject).type
-	erased := union_type == TYPE_ANY_VIEW
-	consumes := false
-	tag_llvm := "i64"
 	// Over an addressable place a case binds the payload, or its fields, in the
 	// subject's own storage (design.md "Switch ownership").
 	place := ""
-	if switch_binds_place(s) || !erased && binds_subject_storage(e, s) {
+	if switch_binds_place(s) || binds_subject_storage(e, s) {
 		place = emit_address(e, s.subject)
 	}
 	value := place != "" ? load_place(e, union_type, place) : emit_expr(e, s.subject)
-	slot, tag: string
-	if erased {
-		storage := llvm_type(e, TYPE_ANY_VIEW)
-		slot, tag = extract(e, storage, value, ANY_VIEW_DATA), extract(e, storage, value, ANY_VIEW_ID)
-	} else {
-		tag_llvm = fmt.aprintf("i%d", union_layout(e.c, union_type).tag_bytes * 8)
-		slot = emit_union_spill(e, union_type, value)
-		tag = emit_union_tag(e, union_type, value)
-		// A produced subject is the switch's to drop; a named place is borrowed.
-		consumes = !expression_is_borrowed_place(s.subject)
-	}
+	tag_llvm := fmt.aprintf("i%d", union_layout(e.c, union_type).tag_bytes * 8)
+	slot := emit_union_spill(e, union_type, value)
+	tag := emit_union_tag(e, union_type, value)
+	// A produced subject is the switch's to drop; a named place is borrowed.
+	consumes := !expression_is_borrowed_place(s.subject)
 	joined := result != TYPE_VOID && result != INVALID_TYPE ? temporary_slot(e, result) : ""
 	done := new_label(e, "typeswitch.done")
 	bodies, tests, order, fallback := switch_labels(e, s, "typecase", done)
@@ -853,14 +844,7 @@ emit_type_switch :: proc(e: ^Emitter, s: ^Stmt_Switch, result := TYPE_VOID) -> s
 		next := position + 1 < len(order) ? tests[order[position + 1]] : fallback
 		matched := ""
 		entry := s.cases[case_index]
-		count := erased ? len(entry.values) : len(entry.variant_indices)
-		for value_index in 0 ..< count {
-			discriminant := u64(0)
-			if erased {
-				discriminant = typeid_value(e.c, expr_base(entry.values[value_index]).denoted_type)
-			} else {
-				discriminant = u64(entry.variant_indices[value_index])
-			}
+		for discriminant in entry.variant_indices {
 			test := temp(e)
 			fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %d", test, tag_llvm, tag, discriminant)
 			matched = or_match(e, matched, test)
@@ -876,7 +860,7 @@ emit_type_switch :: proc(e: ^Emitter, s: ^Stmt_Switch, result := TYPE_VOID) -> s
 		} else if place != "" && names_storage(e, entry.binding_symbol) {
 			bind_local(e, entry.binding_symbol, gep_field(e, llvm_type(e, union_type), place, 0))
 		} else {
-			emit_type_case_binding(e, entry, union_type, value, slot, erased)
+			emit_type_case_binding(e, entry, union_type, value, slot)
 		}
 		// A consumed payload drops with the binding, or with the case if unbound.
 		if consumes && len(entry.fields) == 0 {
@@ -907,7 +891,7 @@ emit_type_switch :: proc(e: ^Emitter, s: ^Stmt_Switch, result := TYPE_VOID) -> s
 }
 
 @(private = "file")
-emit_type_case_binding :: proc(e: ^Emitter, entry: Switch_Case, union_type: Type_Id, value, slot: string, erased := false) {
+emit_type_case_binding :: proc(e: ^Emitter, entry: Switch_Case, union_type: Type_Id, value, slot: string) {
 	if entry.binding_symbol == INVALID_SYMBOL {
 		return
 	}
@@ -918,14 +902,7 @@ emit_type_case_binding :: proc(e: ^Emitter, entry: Switch_Case, union_type: Type
 		store(e, union_type, value, binding)
 		return
 	}
-	// A concrete erased case reads through the data pointer.
-	payload := ""
-	if erased {
-		payload = load_place(e, entry.binding_type, slot)
-	} else {
-		payload = emit_union_payload(e, union_type, entry.binding_type, slot)
-	}
-	store(e, entry.binding_type, payload, binding)
+	store(e, entry.binding_type, emit_union_payload(e, union_type, entry.binding_type, slot), binding)
 }
 
 // A binding over a place names the subject's storage unless that storage is a

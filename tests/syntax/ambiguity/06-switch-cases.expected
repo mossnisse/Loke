@@ -26,12 +26,7 @@
         )
         (switch value
           (subject (ident "figure"))
-          (case (call (ident "int") (ident "n")) (slice (ident "u8")) (ptr (ident "Square"))
-          )
-        )
-        (switch value
-          (subject (ident "figure"))
-          (case (call (slice (ident "int")) (ident "xs"))
+          (case (call (ident "g") (ident "n")) (index (ident "xs") (int "0")) (postfix Caret (ident "p"))
           )
         )
         (switch value

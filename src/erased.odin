@@ -1192,10 +1192,9 @@ check_dyn_conversion :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
 	v.operation = Call_Dyn_Conversion{witness = witness}
 }
 
-// design.md "any_view type": `view.as(T)` becomes the same checked extraction
-// node as `view.(T)`. A union receiver takes `u.as(.name)` (design.md
-// "Inspecting a union"); any other type keeps its own `as` member.
-check_any_view_as :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) -> bool {
+// A union receiver takes `u.as(.name)` (design.md "Inspecting a union"); any
+// other type keeps its own `as` member.
+check_as_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) -> bool {
 	if sel.name.text != "as" {
 		return false
 	}
@@ -1210,66 +1209,7 @@ check_any_view_as :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) -> bo
 	if type_is_union(k.c, type_underlying(k.c, subject)) {
 		return check_union_as(k, v, sel, subject)
 	}
-	if subject != TYPE_ANY_VIEW {
-		return false
-	}
-
-	v.value_category = .Value
-	v.resolution = Resolution{kind = .Builtin_Operator}
-	bound := make([]Expr, 1, k.c.semantic_allocator)
-	bound[0] = sel.operand
-	v.bound = bound
-
-	if len(v.args) != 1 || v.args[0].name.text != "" || v.args[0].mode != .Value ||
-	   v.args[0].value == nil {
-		errorf(
-			k.c, v.span, "L0425",
-			"`as` names the requested type as its one positional argument, found %d argument%s",
-			len(v.args), len(v.args) == 1 ? "" : "s",
-		)
-		v.type = INVALID_TYPE
-		return true
-	}
-
-	extract := new(Expr_Checked_Extract, k.c.semantic_allocator)
-	extract.span = v.span
-	extract.operand = sel.operand
-	extract.target = v.args[0].value
-	extract.mode = .Optional
-	v.operation = Call_Extract{node = extract}
-
-	check_extract_of(k, extract, TYPE_ANY_VIEW)
-	v.type = extract.type
-	return true
-}
-
-check_any_view_extract :: proc(k: ^Checker, v: ^Expr_Checked_Extract) {
-	target := resolve_type_syntax(k, v.target)
-	if target == INVALID_TYPE {
-		errorf(k.c, expr_span(v.target), "L0465", "a checked extraction names the requested type")
-		v.type = INVALID_TYPE
-		return
-	}
-	if !any_view_accepts(k.c, target) {
-		errorf(
-			k.c,
-			expr_span(v.target),
-			"L0465",
-			"`%s` is not a concrete type an `any_view` can hold",
-			type_name(k.c, target),
-		)
-		v.type = INVALID_TYPE
-		return
-	}
-	// `.as(T)` gives `Option(T)`; `.(T)` traps on a mismatch.
-	v.payload = target
-	v.type = v.mode == .Optional ? option_type(k, target, v.span) : target
-	if type_clone_disabled(k.c, target) {
-		errorf(k.c, v.span, "L0503", "`%s` is move-only, so a checked extraction cannot copy it from an `any_view`", type_name(k.c, target))
-		return
-	}
-	contribute_lifecycle_members(k, target)
-	request_typeid(k.c, target)
+	return false
 }
 
 // A name a `dyn` view has no member for: a slot it has not, or, since

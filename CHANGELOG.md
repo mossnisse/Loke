@@ -10,6 +10,16 @@ checklist.
 
 ### Breaking changes
 
+- Runtime type inspection is gone: the checked extractions `view.(T)` and
+  `view.as(T)` on an `any_view`, a switch over an `any_view`'s type, and a
+  type such as `case int(n):` or `case f32, f64:` as a case value
+  ([switch statement](design.md#switch-statement)). `.(` is now `L0225`, a
+  type case in a switch is `L0426`, and a type switch over a `dyn` value is
+  still `L0466`. A union is still read with `value.as(.name)` and its switch.
+  Upgrade each inspection by what it stood for: hold a closed set of types in
+  a union and switch on its variants, take a type known where the call is
+  written as a `$T` parameter, or add an interface slot for the behavior and
+  call it through a `dyn` view.
 - A C variadic parameter is written `@(c_vararg) args: ..`, with no type,
   rather than `..any_view`, which is now `L0627`; a bare `..` without the
   attribute is `L0627` too ([`@(c_vararg)`](design.md#c_vararg)). Upgrade by

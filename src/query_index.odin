@@ -226,9 +226,6 @@ index_query_expr :: proc(index: ^Query_Index, expr: Expr) {
 		index_query_name(index, v.name.span, v.name.text, v.resolution.symbol, type)
 		index_query_operand(index, v)
 		index_query_expr(index, v.operand)
-	case ^Expr_Checked_Extract:
-		index_query_expr(index, v.operand)
-		index_query_expr(index, v.target)
 	case ^Expr_Index:
 		index_query_expr(index, v.operand)
 		for value in v.indices { index_query_expr(index, value) }

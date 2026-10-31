@@ -1492,9 +1492,22 @@ which returns an optional copy. Move-only payloads need a switch. Reading an
 inactive payload as an owner could manufacture a container header and later
 free an invalid address, so no unchecked extraction is part of ordinary syntax.
 
-Raw representation work remains in `core:unsafe`. The open type set of
-`any_view` has a separate checked, panicking extraction; neither form guesses
-the active payload.
+Raw representation work remains in `core:unsafe`.
+
+### No runtime type inspection
+
+Nothing in Loke asks a value for its concrete type at run time: there is no
+`.(T)` extraction, no `.as(T)` on an erased view, and no switch over types.
+Those forms served an open set of types behind `any_view`, and each use has a
+better fit. A closed set of alternatives is a union, whose switch is checked
+for coverage. A type known where the call is written is a `$T` parameter, which
+keeps its static type. A behavior a caller needs from an unknown type is an
+interface slot, reached through `dyn`. Inspection on top of these would let a
+procedure behave differently for types its signature does not mention, and a
+type switch over an open set can never be exhaustive. Printing, the remaining
+use, needs only the `format` behavior every printable type has. See [section
+2.4](design-review-2026-10-31.md#24-existentials-dyn-alone) of the design
+review.
 
 ### Nominal conformance declarations
 

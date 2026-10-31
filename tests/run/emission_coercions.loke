@@ -8,10 +8,13 @@ calls: int;
 
 next_int :: proc() -> int { calls += 1; return calls; }
 next_text :: proc() -> string { calls += 1; return "abc"; }
-integer :: proc(value: any_view) -> int { return value.(int); }
-small_integer :: proc(value: any_view) -> i32 { return value.(i32); }
-box_number :: proc(value: any_view) -> int { return value.(Box).number; }
-slice_length :: proc(value: any_view) -> int { return value.([]mut int).len(); }
+Count :: interface($Self: type) {
+    slot count: proc(self: ^) -> int;
+}
+impl int { count :: proc(self) -> int { return self; } }
+impl i32 { count :: proc(self) -> int { return int(self); } }
+impl Box { count :: proc(self) -> int { return self.number; } }
+integer :: proc(values: ..dyn Count) -> int { return values[0].count(); }
 text_length :: proc(value: string_view) -> int { return value.len(); }
 lanes_equal :: proc(value: Simd(int, 4), expected: int) -> bool {
     return simd.all(value == expected);
@@ -26,8 +29,9 @@ main :: proc() {
     texts := [1]string{"hello"};
     pointer := &n;
 
-    // Erasure uses the source's storage when it is a place, and otherwise
-    // spills the source representation. Every expression is evaluated once.
+    // A viewed argument uses the source's storage when it is a place, and
+    // otherwise spills the source representation. Every expression is
+    // evaluated once.
     assert(integer(n) == 7);
     assert(integer(box.number) == 7);
     assert(integer(numbers[1]) == 8);
@@ -35,9 +39,8 @@ main :: proc() {
     assert(integer(n + 1) == 8);
     assert(integer(-n) == -7);
     assert(integer(n if choose else 99) == 7);
-    assert(small_integer(i32(n)) == 7);
-    assert(box_number(Box{number = n + 1, text = "x"}) == 8);
-    assert(slice_length(&mut numbers[:]) == 2);
+    assert(integer(i32(n)) == 7);
+    assert(integer(Box{number = n + 1, text = "x"}) == 8);
     assert(integer(next_int()) == 1);
     assert(calls == 1);
 

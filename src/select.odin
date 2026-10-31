@@ -433,11 +433,6 @@ first_unresolved_name :: proc(k: ^Checker, e: Expr) -> string {
 			return missing
 		}
 		return first_unresolved_name(k, v.fallback)
-	case ^Expr_Checked_Extract:
-		if missing := first_unresolved_name(k, v.operand); missing != "" {
-			return missing
-		}
-		return first_unresolved_name(k, v.target)
 	case ^Expr_Call:
 		// `Simd`, `Range`, and `Box` are predeclared type constructors recognized
 		// by name, with no universe binding to find (design.md "Predeclared names").

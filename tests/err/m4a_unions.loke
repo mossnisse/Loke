@@ -46,10 +46,7 @@ main :: proc() {
 	z: Value = 1;               // an implicit payload conversion
 	q: Three_Way = .c(1);       // a payload where the variant takes none
 
-	// A payload type does not name a variant: two variants may share one.
-	a := v.(i32);
-
-	// Only a switch over an `any_view` matches types.
+	// A switch matches values, not types.
 	plain := 1;
 	switch (plain) {
 	case int:
@@ -80,5 +77,5 @@ main :: proc() {
 	// Only a `Unit` payload may be left out.
 	r: Result(i32, bool) = .ok;
 
-	fmt.println(a, b, w, x, y, z, q, r);
+	fmt.println(b, w, x, y, z, q, r);
 }

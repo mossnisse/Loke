@@ -2068,9 +2068,9 @@ parse_switch_case :: proc(p: ^Parser) -> Switch_Case {
 				append(&values, poly)
 				break
 			}
-			// A case may name a type, for an `any_view` subject; the subject's
-			// type decides what a case names (design.md "switch statement").
-			p.type_value = true
+			// `$v(name)` is an expanded case with a binding, which begins as a
+			// type does.
+			p.type_value = at(p, .Dollar)
 			append(&values, parse_expr(p))
 			p.type_value = false
 			bad_label ||= expr_has_error(values[len(values) - 1])
@@ -2355,17 +2355,13 @@ parse_postfix :: proc(p: ^Parser) -> Expr {
 		#partial switch t.kind {
 		case .Period:
 			advance(p)
-			if allow(p, .Lparen) {
-				target := parse_type(p)
-				_, closed := expect(p, .Rparen, "L0224", "`)` to close the checked extraction")
-				a := new_expr(p, Expr_Checked_Extract, lo)
-				a.operand = e
-				a.target = target
-				a.has_error = !closed || expr_has_error(e) || expr_has_error(target)
-				e = a
-				continue
+			// design.md "Inspecting a union": no value has a runtime type to
+			// extract, so `.(T)` names nothing.
+			what := "a name after `.`"
+			if at(p, .Lparen) {
+				what = "a name after `.`; a union's variant is read with `.as(.name)` or a `switch`, and an interface's behavior through a slot"
 			}
-			name, ok := expect_member_name(p, "L0225", "a name after `.`")
+			name, ok := expect_member_name(p, "L0225", what)
 			s := new_expr(p, Expr_Selector, lo)
 			s.operand = e
 			if ok {

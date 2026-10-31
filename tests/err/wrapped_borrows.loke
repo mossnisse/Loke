@@ -61,13 +61,13 @@ converted_through_a_switch :: proc() -> string_view {
 	}
 }
 
-// An allocator handle keeps its region through the wrapper, so a local arena's
+// An allocator handle keeps its region through an `Option`, so a local arena's
 // reset is still caught.
-erased_allocator :: proc() {
+wrapped_allocator :: proc() {
 	arena := mem.Arena.init();
 	allocator := arena.allocator();
-	view: any_view = allocator;
-	switch (view.as(Allocator)) {
+	wrapped: Option(Allocator) = .some(allocator);
+	switch (wrapped) {
 	case .some(restored):
 		xs: [dynamic]int via restored = {};
 		xs.append(1);
@@ -80,5 +80,5 @@ erased_allocator :: proc() {
 main :: proc() {
 	fmt.println(bare().len(), through_a_switch().len(), through_or_else().len());
 	fmt.println(converted().len(), converted_through_a_switch().len());
-	erased_allocator();
+	wrapped_allocator();
 }

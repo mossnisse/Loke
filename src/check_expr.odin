@@ -62,9 +62,6 @@ check_expr :: proc(
 	case ^Expr_Slice:
 		check_slice(k, v, expected)
 
-	case ^Expr_Checked_Extract:
-		check_extract_of(k, v, check_single_expr(k, v.operand))
-
 	case ^Expr_Or_Else:
 		check_or_else(k, v)
 

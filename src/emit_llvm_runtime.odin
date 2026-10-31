@@ -1562,59 +1562,6 @@ emit_any_view_value :: proc(e: ^Emitter, address: string, concrete: Type_Id) -> 
 	return out
 }
 
-// `.(T)` traps on a `typeid` mismatch; `.as(T)` yields `Option(T)`.
-@(private)
-emit_any_view_extract :: proc(e: ^Emitter, v: ^Expr_Checked_Extract, as_type: Type_Id) -> []string {
-	single := make([]string, 1)
-	single[0] = "zeroinitializer"
-	view := emit_expr(e, v.operand)
-	storage := llvm_type(e, TYPE_ANY_VIEW)
-	data := extract(e, storage, view, ANY_VIEW_DATA)
-	id := extract(e, storage, view, ANY_VIEW_ID)
-	matched := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, %d", matched, id, typeid_value(e.c, v.payload))
-
-	if v.mode == .Trap {
-		failed := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", failed, matched)
-		panic_if(e, failed, "anyview.mismatch", "checked extraction failed")
-		out := load_place(e, v.payload, data)
-		if emit_lifecycle(e, v.payload).managed {
-			out = emit_clone_value(e, v.payload, out)
-		}
-		single[0] = out
-		return single
-	}
-
-	option := as_type
-	info := underlying_info(e.c, option)
-	if info == nil || info.kind != .Union || !info.failure_designated ||
-	   len(info.variants) != 2 || info.failure_variant < 0 || info.failure_variant >= 2 {
-		backend_fail(e, "an optional extraction has no checked failure variant")
-		return single
-	}
-	some := 1 - info.failure_variant
-	if info.variants[some] != v.payload {
-		backend_fail(e, "an optional extraction has the wrong success payload")
-		return single
-	}
-	slot := alloca(e, llvm_type(e, option))
-	store(e, option, "zeroinitializer", slot)
-	then_label, done_label := new_label(e, "anyview.match"), new_label(e, "anyview.done")
-	fmt.sbprintfln(&e.b, "  br i1 %s, label %%%s, label %%%s", matched, then_label, done_label)
-	fmt.sbprintfln(&e.b, "%s:", then_label)
-	loaded := load_place(e, v.payload, data)
-	if emit_lifecycle(e, v.payload).managed {
-		loaded = emit_clone_value(e, v.payload, loaded)
-	}
-	wrapped := emit_union_value(e, option, some, loaded)
-	store(e, option, wrapped, slot)
-	branch(e, done_label)
-	place_label(e, done_label)
-	single[0] = load_place(e, option, slot)
-	return single
-}
-
 // `(dyn I)(&value)`: the data pointer plus the witness, or for a callable view
 // the witness's one thunk.
 @(private)

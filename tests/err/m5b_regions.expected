@@ -37,12 +37,9 @@ L0539
 L0310
 @118:32
 cannot initialise `proc(Allocator)` with `proc(@(allocator_reset) Allocator)`
-L0537
-@136:3
-this reset would end the region backing `xs`, which is still live here
 L0536
-@149:2
+@133:2
 this value is backed by an allocator region this procedure received, so it cannot be stored in `global_holder` (file-scope storage), which outlives that region
 L0592
-@163:9
+@147:9
 this result is backed by `arena`, an allocator region that ends when this procedure returns

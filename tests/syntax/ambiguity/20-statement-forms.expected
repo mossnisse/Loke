@@ -71,7 +71,7 @@
             (call (ident "kind"))
           )
           (subject (ident "tag"))
-          (case (ident "Circle") (ptr (ident "Square"))
+          (case (ident "circle") (postfix Caret (ident "square"))
             (break)
           )
         )

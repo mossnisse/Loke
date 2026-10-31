@@ -46,7 +46,6 @@ Expr :: union {
 	^Expr_Literal,
 	^Expr_Ident,
 	^Expr_Selector,
-	^Expr_Checked_Extract,
 	^Expr_Index,
 	^Expr_Slice,
 	^Expr_Call,
@@ -112,22 +111,6 @@ Expr_Selector :: struct {
 	// design.md "@(synchronized)": a synchronized field reached from outside its
 	// declaring package, which the borrow analysis counts as exclusive access.
 	synchronized:  bool,
-}
-
-// `x.(T)` traps and yields one value; `x.as(T)` yields `Option(T)`.
-Extract_Mode :: enum {
-	Trap,
-	Optional,
-}
-
-// `x.(T)`, and the node `x.as(T)` resolves to.
-Expr_Checked_Extract :: struct {
-	using base: Expr_Base,
-	operand:    Expr,
-	target:     Expr,
-	mode:       Extract_Mode,
-	// The requested type; `type` is `Option(T)` for `.as(T)`.
-	payload:    Type_Id,
 }
 
 // `x[a]`, and the user-defined comma form `x[a, b]`.
@@ -212,7 +195,6 @@ Call_Operation :: union {
 	Call_Enum_From_Int,
 	Call_Union_Construct,
 	Call_Union_As,
-	Call_Extract,
 	Call_Text_Conversion,
 	Call_Atomic,
 	Call_Sort_By,
@@ -237,8 +219,6 @@ Call_Enum_From_Int :: struct { type: Type_Id }
 Call_Union_Construct :: struct { index: int, clone: bool }
 // `u.as(.name)`: the variant tested and copied out.
 Call_Union_As :: struct { index: int }
-// The same checked extraction node used by the postfix spelling.
-Call_Extract :: struct { node: ^Expr_Checked_Extract }
 Call_Text_Conversion :: struct { op: Text_Conversion }
 // Orderings and the element type are settled during checking, not runtime args.
 Call_Atomic :: struct { type: Type_Id, order: int, failure_order: int }
@@ -714,8 +694,6 @@ expr_base :: proc(e: Expr) -> ^Expr_Base {
 		return &v.base
 	case ^Expr_Selector:
 		return &v.base
-	case ^Expr_Checked_Extract:
-		return &v.base
 	case ^Expr_Index:
 		return &v.base
 	case ^Expr_Slice:
@@ -958,9 +936,9 @@ Stmt_When :: struct {
 
 Switch_Kind :: enum {
 	Value,
-	// A union or `any_view` switch, whose cases name variants or types and may
-	// bind with `.variant(binding)` or `T(binding)`; the checker turns a
-	// `Value` switch over either into this.
+	// A union switch, whose cases name variants and may bind with
+	// `.variant(binding)`; the checker turns a `Value` switch over a union
+	// into this.
 	Pattern,
 }
 
@@ -1413,8 +1391,6 @@ type_syntax_any_name :: proc(e: Expr, data: rawptr, matches: Name_Match) -> bool
 		return type_syntax_any_name(v.key, data, matches) || type_syntax_any_name(v.value, data, matches)
 	case ^Expr_Selector:
 		return type_syntax_any_name(v.operand, data, matches)
-	case ^Expr_Checked_Extract:
-		return type_syntax_any_name(v.operand, data, matches) || type_syntax_any_name(v.target, data, matches)
 	case ^Expr_Index:
 		if type_syntax_any_name(v.operand, data, matches) {
 			return true

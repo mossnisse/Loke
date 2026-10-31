@@ -24,7 +24,4 @@ main :: proc() {
 	fmt.println(through_view((dyn Drawable)(&s)));
 	// The equivalent generic call is direct.
 	fmt.println(statically(c));
-	// An `any_view` made from a temporary has storage for the complete call.
-	view: any_view = 42;
-	fmt.println(view.(int));
 }

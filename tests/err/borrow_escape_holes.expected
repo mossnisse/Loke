@@ -2,5 +2,5 @@ L0526
 @8:15
 this `inout` result cannot be returned: `local` ends when this procedure returns
 L0537
-@36:2
+@35:2
 this reset would end the region backing `numbers`, which is still live here

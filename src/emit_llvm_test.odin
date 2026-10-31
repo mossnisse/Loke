@@ -151,8 +151,6 @@ main :: proc() {
     wrapped: Value = .number(n);
     length := text.byte_len();
     color := Color.from_int(n);
-    view: any_view = n;
-    extracted := view.as(int);
 }
 `)
 	defer destroy_checked(&p)
@@ -168,17 +166,15 @@ main :: proc() {
 			}
 		}
 	}
-	if !testing.expect(t, len(calls) == 6) { return }
+	if !testing.expect(t, len(calls) == 5) { return }
 	_, ordinary := calls[0].operation.(Call_Procedure)
 	_, conversion := calls[1].operation.(Call_Conversion)
 	construction, wrapped := calls[2].operation.(Call_Union_Construct)
 	text, text_call := calls[3].operation.(Call_Text)
 	enum_conversion, enum_call := calls[4].operation.(Call_Enum_From_Int)
-	extraction, extracted := calls[5].operation.(Call_Extract)
-	testing.expect(t, ordinary && conversion && wrapped && text_call && enum_call && extracted)
+	testing.expect(t, ordinary && conversion && wrapped && text_call && enum_call)
 	testing.expect(t, construction.index == 0 && !construction.clone)
 	testing.expect(t, text.op == .Byte_Len && type_is_enum(c, enum_conversion.type))
-	testing.expect(t, extraction.node != nil && extraction.node.type == calls[5].type)
 	testing.expect(t, len(calls[0].bound_order) == 1 && calls[0].bound_order[0] == 0)
 	for call in calls {
 		clone := clone_expr(c, call).(^Expr_Call)
@@ -239,45 +235,6 @@ main :: proc() { assert(value() == 78); }
 	module, missing := emit_llvm_module(c)
 	testing.expect(t, !missing && module == "", "missing field indices did not reject the module")
 	expect_rejection(t, c, "a struct literal element has no resolved field index")
-}
-
-@(test)
-optional_extraction_uses_checked_variant_metadata :: proc(t: ^testing.T) {
-	p: Checked
-	check_for_emission(&p, `package main;
-main :: proc() {
-    view: any_view = 42;
-    extracted := view.as(int);
-}
-`)
-	defer destroy_checked(&p)
-	c, f := &p.c, &p.f
-	if !testing.expect(t, c.error_count == 0) { report(c); return }
-	body := decl_proc(f.items[0].(^Decl)).body
-	call := body.stmts[1].(^Decl).values[0].(^Expr_Call)
-	extraction := call.operation.(Call_Extract).node
-	if !testing.expect(t, extraction != nil) { return }
-	finalize_semantics(c)
-	// Only the extraction, since reflection tables do read variant names.
-	previous := ""
-	for pass in 0 ..< 2 {
-		context.allocator = virtual.arena_allocator(&c.emission_arena)
-		e := make_emitter(c)
-		e.names[body.stmts[0].(^Decl).symbols[0]] = "%view"
-		emit_expr(&e, call)
-		ir := strings.to_string(e.b)
-		if !testing.expect(t, !e.failed && c.error_count == 0) { report(c); return }
-		if pass > 0 {
-			testing.expect(t, ir == previous, "LLVM repeated the optional success variant lookup")
-		}
-		previous = ir
-		info := type_of(c, extraction.type)
-		info.variant_names[0], info.variant_names[1] = info.variant_names[1], info.variant_names[0]
-	}
-	type_of(c, extraction.type).failure_designated = false
-	module, missing := emit_llvm_module(c)
-	testing.expect(t, !missing && module == "", "missing failure metadata did not reject the module")
-	expect_rejection(t, c, "an optional extraction has no checked failure variant")
 }
 
 @(test)

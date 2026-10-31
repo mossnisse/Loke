@@ -304,11 +304,11 @@ published_content_read :: proc() -> []int {
 	return p^.view;
 }
 
-erased_extraction_read :: proc() -> []int {
+wrapped_payload_read :: proc() -> []int {
 	local := [3]int{1, 2, 3};
 	held := Holder{local[:]};
-	erased: any_view = held;
-	switch (erased.as(Holder)) {
+	wrapped: Option(Holder) = .some(held);
+	switch (wrapped) {
 	case .some(value): return value.view;
 	case .none: return {};
 	}

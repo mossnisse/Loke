@@ -28,14 +28,8 @@ L0463
 @52:5
 returns the subject
 L0467
-@58:2
+@57:2
 has no slot `paint`
-L0465
-@61:7
-is not a concrete type an `any_view` can hold
 L0466
-@66:7
-has no checked extraction
-L0466
-@67:10
+@58:10
 cannot be matched by type

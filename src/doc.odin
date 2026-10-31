@@ -592,9 +592,6 @@ api_refs :: proc(w: ^Ref_Walk, e: Expr) {
 			append(&w.refs, fmt.aprintf("%s.%s", ident.name, v.name.text))
 		}
 		api_refs(w, v.operand)
-	case ^Expr_Checked_Extract:
-		api_refs(w, v.operand)
-		api_refs(w, v.target)
 	case ^Expr_Index:
 		api_refs(w, v.operand)
 		for index in v.indices {

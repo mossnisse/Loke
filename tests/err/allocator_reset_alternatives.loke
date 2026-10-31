@@ -2,13 +2,16 @@ package main;
 
 // design.md "Allocator regions and region provenance": every region a reset
 // may reach that is not this body's own needs the `@(allocator_reset)`
-// promise. A marked alternative does not cover an unknown one, the default,
-// or an allocator in another parameter's record field.
+// promise. A marked alternative does not cover an allocator another
+// parameter carries in an `Option`, the default, or one in another parameter's
+// record field.
 Holder :: struct { allocator: Allocator }
 
-extracted :: proc(@(allocator_reset) allowed: Allocator, erased: any_view) {
-	selected := erased.as(Allocator) or_else allowed;
-	free_all(selected);
+wrapped :: proc(@(allocator_reset) allowed: Allocator, maybe: Option(Allocator)) {
+	switch (maybe) {
+	case .some(selected): free_all(selected);
+	case .none: free_all(allowed);
+	}
 }
 
 defaulted :: proc(@(allocator_reset) allowed: Allocator, flag: bool) {

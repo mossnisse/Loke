@@ -33,7 +33,7 @@ main :: proc() {
 	// Every suffix, composed.
 	e9 := p^;
 	e10 := p.field.inner;
-	e11 := p.(int);
+	e11 := p.as(.name);
 	e12 := f();
 	e13 := f(a)(b)(c);
 	e14 := m[key];
@@ -43,7 +43,7 @@ main :: proc() {
 	e18 := s[:b];
 	e19 := s[a:b];
 	e20 := may_fail() or_return;
-	e21 := p^.field.(Shape)[1][2:3](x) or_return;
+	e21 := p^.field[1][2:3](x) or_return;
 
 	// Primary expressions.
 	e22 := 42;

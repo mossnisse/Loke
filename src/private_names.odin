@@ -458,9 +458,6 @@ walk :: proc(x: ^Exposure, e: Expr, position: Position) {
 			found_name(x, written, v.name.span, named, position)
 		}
 		walk(x, v.operand, position)
-	case ^Expr_Checked_Extract:
-		walk(x, v.operand, position)
-		walk(x, v.target, position)
 	case ^Expr_Index:
 		walk(x, v.operand, position)
 		for index in v.indices {

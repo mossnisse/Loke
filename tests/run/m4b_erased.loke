@@ -1,5 +1,4 @@
 package main; import "core:fmt";
-import "core:sync";
 
 Canvas :: struct { marks: int }
 
@@ -52,37 +51,12 @@ impl Counter {
 	cell :: proc(self: inout Counter) -> inout int { return inout self.value; }
 }
 
-describe :: proc(value: any_view) -> int {
-	switch (value) {
-	case int(v):
-		return v;
-	case bool(v):
-		if (v) { return 1; }
-		return 0;
-	case Circle(v):
-		return v.radius;
-	case:
-		return -1;
-	}
-}
-
 paint :: proc(target: dyn Drawable, canvas: inout Canvas) -> int {
 	target.draw(inout canvas);
 	return target.size();
 }
 
 main :: proc() {
-	owned_extraction();
-	fmt.println(describe(7));
-	fmt.println(describe(true));
-	fmt.println(describe(Circle{5}));
-	fmt.println(describe(1.5));
-
-	// A temporary converted for a call stays valid through the call.
-	view: any_view = 42;
-	fmt.println(view.as(int) or_else -1);
-	fmt.println(view.(int));
-
 	c := Circle{3};
 	s := Square{2};
 	canvas: Canvas = {0};
@@ -130,49 +104,4 @@ more :: proc() {
 	nested.cell() += 2;
 	fmt.println(nested.cell());
 	fmt.println(counter.value);
-}
-
-erased_drops: int;
-erased_copies: sync.Atomic(int);
-Owned :: struct { id: int }
-impl Owned {
-	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Owned, Allocator_Error) {
-		erased_copies.add(1);
-		return .ok(Owned{self.id + 100});
-	}
-	release :: hook(drop) proc(self: inout Owned) { if (self.id != 0) { erased_drops += 1; } }
-}
-
-owned_extraction :: proc() {
-	{
-		source := Owned{1};
-		view: any_view = source;
-		{
-			switch (view.as(Owned)) {
-			case .some(held): assert(held.id == 101 && source.id == 1 && erased_copies.load() == 1);
-			case .none: assert(false);
-			}
-		}
-		assert(erased_drops == 1);
-		{
-			switch (view.as(Owned)) {
-			case .some:
-			case .none: assert(false);
-			}
-		}
-		assert(erased_copies.load() == 2 && erased_drops == 2);
-		{
-			held := view.(Owned);
-			assert(held.id == 101 && erased_copies.load() == 3);
-		}
-		assert(erased_drops == 3);
-		view.as(Owned);
-		assert(erased_copies.load() == 4 && erased_drops == 4);
-		other: any_view = 42;
-		switch (other.as(Owned)) {
-		case .some: assert(false);
-		case .none: assert(erased_copies.load() == 4);
-		}
-	}
-	assert(erased_drops == 5);
 }

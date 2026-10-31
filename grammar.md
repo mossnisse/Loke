@@ -618,26 +618,23 @@ Switch_Statement = Attributes? "switch" "(" Init_Statement? Expression ")"
                    "{" Switch_Case* "}"
 Switch_Case  = ("case" (Branch_Pattern | Case_Value_List)? | "default") ":" Statement*
 Case_Value_List = Case_Value ("," Case_Value)*
-Case_Value   = Expression | Type
+Case_Value   = Expression
 // A branch pattern is recognized only when the switch subject is a union, as
-// `.variant(name)` or `.variant(a, b)`, or an `any_view`, as `Type(name)`. It
-// is deliberately shallow: one variant or type, then identifier bindings, no
+// `.variant(name)` or `.variant(a, b)`. It is deliberately shallow: one variant,
+// then identifier bindings, no
 // nesting. Two or more bind a union payload's record fields (design.md
 // "Inspecting a union"); `&mut` binds a payload or field as a writable place
 // (design.md "Switch ownership"). `$` begins an expanded case, one copy per
 // remaining variant, with at most one payload binding (design.md "Per-variant
 // switch cases").
 Branch_Pattern = "." Identifier "(" Binding_Leaf ("," Binding_Leaf)* ")"
-               | Type "(" Identifier ")"
                | "$" Identifier ("(" Binding_Leaf ")")?
 Binding_Leaf   = ("&" "mut")? Identifier
 ```
 
 `default` is the default case; `case` with no values means the same. Case values
 may be ranges, since `..=` and `..<` are ordinary binary operators in the
-expression grammar. A case value may be a type, which only a switch over an
-`any_view` matches. A composite or pointer type in a `Branch_Pattern` is
-parenthesized, `([]u8)(bytes)`, as in a conversion.
+expression grammar.
 
 # Expressions
 
@@ -678,7 +675,6 @@ Unary_Expression = ("+" | "-" | "!" | "~" | "&" "mut"?) Unary_Expression
 Postfix_Expression = Primary_Expression Suffix*
 Suffix = "^"                                          // dereference
        | "." Member_Name                              // selector
-       | "." "(" Type ")"                             // trapping checked extraction
        | "(" Argument_List? ")"                       // call or conversion
        | "[" Index_Or_Slice "]"
        | "or_return" Postfix_Expression?              // failure operand
@@ -790,9 +786,6 @@ Variant construction has no syntax of its own: `.name(payload)` is the
 implicit-selector primary followed by the call suffix, and `U.name(payload)` is
 the ordinary selector followed by one. Whether `.name` is a variant, an enum
 member, or a member of an expected record type follows from the expected type.
-The erased extraction `view.as(T)` is likewise a selector and a call; only its
-`any_view` receiver makes it the built-in.
-
 `move(x)` is a primary form rather than a call because `move` is a keyword,
 which it must be anyway as a [parameter mode](#procedures).
 
@@ -803,12 +796,10 @@ The productions above use the following deterministic parsing rules:
 - A condition-only `For_Header` whose whole `Expression` is
   `name in expression` is rejected. A loop over membership uses
   `for ((name in expression))`; iteration is `foreach`.
-- A switch parses its cases as expressions, a type among them. When the
-  subject's type is a union, the checker reads a singleton case of the exact
-  shape `.name(binding, ...)` as a branch-local pattern, and when it is an
-  `any_view`, one of the shape `Type(binding)` whose whole is not itself a
-  type, so `Option(int)` stays a type case; calls of any other shape, and
-  every case of any other switch, remain expressions. A case that begins with
+- A switch parses its cases as expressions. When the subject's type is a
+  union, the checker reads a singleton case of the exact shape
+  `.name(binding, ...)` as a branch-local pattern; calls of any other shape,
+  and every case of any other switch, remain expressions. A case that begins with
   `$` parses as an expanded case, so in `case $variant:` the `:` ends the case
   label rather than annotating the `$` name. A switch header binds
   nothing, so `switch (x in set)` switches on the membership test.

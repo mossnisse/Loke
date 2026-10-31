@@ -21,10 +21,12 @@ main :: proc() {
 	c, present := m["x"];
 	d := m["x"] or_else 3;
 
-	// A union is inspected by `switch`; neither extraction spelling applies to
-	// one any more.
-	e := v.(i32);
+	// A union is inspected by `switch`, or one variant by `as(.name)`; `as` takes
+	// no type, and names its variant as its one positional argument.
 	f := v.as(i32);
+	g := v.as();
+	h := v.as(.flag, .number);
+	i := v.as(name = .flag);
 
 	// `lookup_value` does not exist on anything but a map.
 	p := Plain{1};
@@ -34,18 +36,5 @@ main :: proc() {
 	tokens: map[int]Token = {};
 	r := tokens.lookup_value(1);
 
-	fmt.println(c, present, d, e, f, q, r);
-}
-
-erased :: proc(view: any_view) {
-	// `as` names the requested type as its one positional argument.
-	g := view.as();
-	h := view.as(int, bool);
-	i := view.as(t = int);
-
-	// And a move-only type cannot be copied out of an erased view, whichever
-	// spelling asks for it.
-	value := view.as(Token);
-	trapped := view.(Token);
-	fmt.println(g, h, i, value, trapped.id);
+	fmt.println(c, present, d, f, g, h, i, q, r);
 }

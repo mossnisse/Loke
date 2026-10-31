@@ -94,7 +94,7 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 	if sel, is_selector := v.callee.(^Expr_Selector); is_selector && sel.operand != nil {
 		// Compiler-defined operations on unions, text, and enums.
 		if check_box_unbox(k, v, sel) ||
-		   check_any_view_as(k, v, sel) ||
+		   check_as_call(k, v, sel) ||
 		   check_text_operation(k, v, sel) ||
 		   check_enum_values(k, v, sel) ||
 		   check_enum_from_int(k, v, sel) {
@@ -642,7 +642,7 @@ annotate_chosen_callee :: proc(k: ^Checker, v: ^Expr_Call, chosen: Symbol_Id) {
 @(private = "file")
 report_argument_copies :: proc(k: ^Checker, v: ^Expr_Call) {
 	#partial switch operation in v.operation {
-	case Call_Enum_From_Int, Call_Extract, Call_Box_Unbox, Call_Union_As, Call_Union_Construct:
+	case Call_Enum_From_Int, Call_Box_Unbox, Call_Union_As, Call_Union_Construct:
 		return
 	case Call_Reflect:
 		if operation.op == .Field_Get { return }

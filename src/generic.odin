@@ -687,7 +687,7 @@ pattern_shape :: proc(e: Expr, bindings: ^[dynamic]Name = nil) -> (specificity: 
 			}
 		}
 	// One layer each, holding no pattern: a name, a value, or a declared body.
-	case ^Expr_Error, ^Expr_Literal, ^Expr_Ident, ^Expr_Selector, ^Expr_Checked_Extract, ^Expr_Index,
+	case ^Expr_Error, ^Expr_Literal, ^Expr_Ident, ^Expr_Selector, ^Expr_Index,
 	     ^Expr_Slice, ^Expr_Postfix, ^Expr_Propagated_Error, ^Expr_Unary, ^Expr_Binary, ^Expr_Range, ^Expr_Or_Else, ^Expr_Cond,
 	     ^Expr_Move, ^Expr_Composite, ^Expr_Proc, ^Expr_Proc_Group, ^Expr_Operator, ^Type_Type,
 	     ^Type_Record, ^Type_Enum, ^Type_Interface:

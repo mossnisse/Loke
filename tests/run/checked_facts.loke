@@ -3,6 +3,7 @@ import "core:fmt";
 
 Forward :: struct { first, second, omitted: int }
 Reverse :: struct { second, first: int }
+Fact :: union { number: int, flag: bool }
 
 named :: proc(seed: $T) -> T {
     return T{second = 22, first = 11};
@@ -33,8 +34,8 @@ main :: proc() {
     mixed := Forward{next(inout counter), second = next(inout counter)};
     assert(mixed.first == 3 && mixed.second == 4 && mixed.omitted == 0);
 
-    view: any_view = 42;
-    assert((view.as(int) or_else -1) == 42);
-    assert(!(view.as(bool) or_else false));
+    fact: Fact = .number(42);
+    assert((fact.as(.number) or_else -1) == 42);
+    assert(!(fact.as(.flag) or_else false));
     fmt.println("checked facts");
 }

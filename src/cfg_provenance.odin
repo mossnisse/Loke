@@ -251,16 +251,13 @@ Prov_Self_Reads :: struct {
 }
 
 // The payload under a union's wildcard alternative: unwrapping keeps every borrow
-// the wrapper carried. An `any_view` reads through its data pointer instead.
+// the wrapper carried.
 @(private)
 prov_payload_content :: proc(
 	graph: ^Flow_Graph, loans: []int, subject_type, payload_type: Type_Id, span: Span,
 ) -> []int {
 	if len(loans) == 0 || payload_type == INVALID_TYPE || payload_type == subject_type {
 		return loans
-	}
-	if subject_type == TYPE_ANY_VIEW {
-		return prov_load_content(graph, loans, nil, payload_type, span)
 	}
 	if !type_is_union(graph.k.c, subject_type) {
 		return loans
@@ -4550,10 +4547,6 @@ prov_call_region :: proc(graph: ^Flow_Graph, id: Value_Id, result_type: Type_Id)
 	// design.md "string type conversions": these copy into the default allocator.
 	if operation, conversion := v.operation.(Call_Text_Conversion); conversion &&
 	   (operation.op == .String_From_Bytes || operation.op == .String_From_C_View) {
-		out.default = true
-		return out
-	}
-	if _, extraction := v.operation.(Call_Extract); extraction && type_is_managed(c, result_type) {
 		out.default = true
 		return out
 	}

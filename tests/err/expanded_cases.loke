@@ -16,7 +16,7 @@ area :: proc(shape: Shape) -> int {
 	}
 }
 
-placement :: proc(shape: Shape, colour: Colour, view: any_view) {
+placement :: proc(shape: Shape, colour: Colour) {
 	switch (shape) {
 	case $v(p): fmt.println(p);
 	case .circle:
@@ -35,9 +35,6 @@ placement :: proc(shape: Shape, colour: Colour, view: any_view) {
 	case $v(.circle): fmt.println(v);
 	}
 	switch (colour) {
-	case $v: fmt.println(v.name);
-	}
-	switch (view) {
 	case $v: fmt.println(v.name);
 	}
 }

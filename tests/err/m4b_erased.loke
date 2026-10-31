@@ -51,19 +51,10 @@ main :: proc() {
 	m: dyn Consuming;
 	r: dyn Returning;
 
-	// A dynamic interface has no checked extraction and no type switch.
+	// A dynamic interface has no type switch.
 	view := (dyn Drawable)(&c);
-	// An interface has no slot by that name, and an `any_view` holds concrete
-	// types only.
+	// An interface has no slot by that name.
 	view.paint(inout canvas);
-	erased: any_view = 1;
-	switch (erased) {
-	case Drawable:
-		fmt.println(1);
-	case:
-		fmt.println(0);
-	}
-	x := view.(Circle);
 	switch (view) {
 	case Circle:
 		fmt.println(1);

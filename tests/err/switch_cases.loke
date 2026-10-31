@@ -37,14 +37,6 @@ header_binding :: proc(shape: Shape) {
 	}
 }
 
-// An `any_view` lends read-only, so its case binding cannot be `&mut`.
-erased_mut :: proc(value: any_view) {
-	switch (value) {
-	case int(&mut n): fmt.println(n);
-	default:
-	}
-}
-
 // A union variant repeated in one case, and one repeated across cases.
 Signal :: union { level: int, idle }
 
@@ -65,6 +57,5 @@ main :: proc() {
 	duplicated(1);
 	open(1);
 	header_binding(.empty);
-	erased_mut(1);
 	repeated_variant(.idle);
 }

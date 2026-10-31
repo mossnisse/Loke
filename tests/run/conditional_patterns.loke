@@ -35,10 +35,12 @@ take :: proc(id: int) -> Option(Ticket) {
 	return .none;
 }
 
-kind :: proc(value: any_view) -> string {
-	if (case int(n) = value) {
+Value :: union { number: int, text: string, real: f64 }
+
+kind :: proc(value: Value) -> string {
+	if (case .number(n) = value) {
 		return "small" if n < 10 else "large";
-	} else if (case string = value) {
+	} else if (case .text = value) {
 		return "text";
 	} else {
 		return "other";
@@ -60,7 +62,7 @@ main :: proc() {
 		fmt.println("none");
 	}
 
-	fmt.println(kind(3), kind(30), kind("x"), kind(1.5));
+	fmt.println(kind(.number(3)), kind(.number(30)), kind(.text("x")), kind(.real(1.5)));
 
 	count := 0;
 	for (case .some(ticket) = take(3 - count)) {

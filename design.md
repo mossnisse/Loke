@@ -3348,49 +3348,17 @@ Conversion from a concrete value to `any_view` is implicit when an `any_view`
 parameter or local destination is expected, and it never allocates.
 `any_view(value)` writes the same conversion out, for a subject or an argument
 with no `any_view` destination. A `type` or reflection descriptor exists only
-while compiling, so it cannot be erased. It supports runtime checked extractions
-and a switch over its type.
+while compiling, so it cannot be erased. An `any_view` prints the value it
+views; nothing extracts that value or switches on its type.
 
 ```loke
 print_value :: proc(value: any_view) { ... }
 print_value(42); // the temporary lives through the call
 ```
 
-`value.(T)` extracts a `T` and panics on a type mismatch. `value.as(T)` returns
-`Option(T)`, which can be inspected without panicking:
-
-```loke
-print_text :: proc(value: any_view) {
-	switch (value.as(string)) {
-	case .some(text): fmt.println(text);
-	case .none: fmt.println("not a string");
-	}
-}
-```
-
-A switch over an `any_view` matches the type it holds. A case names one or more
-concrete types, and a case naming one type may bind the value as that type with
-`T(name)`, the spelling of a conversion. A case that is already a complete type,
-such as `Option(int)`, names that type rather than binding: `Option(int)(item)`
-binds; a composite or pointer type is parenthesized there as in a conversion.
-The binding is read-only, since an `any_view` lends what it views. A case naming
-several types, and the default case, read the subject, which stays an
-`any_view`. No list of cases covers every type, so such a switch needs a default
-case:
-
-```loke
-describe :: proc(value: any_view) {
-	switch (value) {
-	case int(n):        fmt.println("int", n);
-	case ([]u8)(bytes): fmt.println(bytes.len(), "bytes");
-	case f32, f64:      fmt.println("float", value);
-	default:            fmt.println("something else");
-	}
-}
-```
-
-Use a union to own one of a closed set of types, and `dyn Interface` for
-borrowed runtime behavior.
+Use a union to own one of a closed set of types, a `$T` parameter for a type
+known where the call is written, and `dyn Interface` for borrowed runtime
+behavior.
 
 # 3. Methods, Operators & Interfaces
 
@@ -5210,9 +5178,9 @@ temporary is valid only for that complete expression.
 
 A `dyn Interface` always views a value, so it has no zero value, and a slot call
 needs no test. Copying one copies only the view when the borrow rules permit the
-alias. Dynamic interface values are not comparable.
-
-Use `any_view`, not `dyn`, when checked runtime type inspection is required.
+alias. Dynamic interface values are not comparable, and nothing recovers the
+concrete type a `dyn` views: a behavior the caller needs is a slot, and a closed
+set of types is a union.
 
 A dyn view satisfies its own interface through compiler-provided forwarding
 slots: the bridge between static and runtime polymorphism. `dyn mut I` satisfies
@@ -6037,9 +6005,8 @@ addressable:
 for a value parameter, an element reached through a `[]T` or a `^T`, and a
 materialized constant, each of which `&` still reaches.
 
-An `any_view` is not addressable, and a checked extraction `x.(T)` or `x.as(T)`
-produces a value rather than a place. An individual field of an `@(packed)`
-struct is not addressable.
+An `any_view` is not addressable. An individual field of an `@(packed)` struct
+is not addressable.
 
 Both forms are always single-valued: every addressable operand yields exactly
 one pointer.
@@ -6190,10 +6157,10 @@ and its result is an ordinary value. Left grouping would give the outer
 `or_else` an ordinary left operand and make a fallback chain invalid.
 
 The postfix forms (call `()`, index `[]`, slice `[:]`, selector `.`, dereference
-`^`, panicking checked extraction `.(T)`, and `or_return`) are not in the table
+`^`, and `or_return`) are not in the table
 because they bind tighter than every unary and binary operator. They associate
 left to right among themselves. `-x^` is `-(x^)`, `f() or_return + 1` is
-`(f() or_return) + 1`, and `a.b().as(T) or_else c` is `(a.b().as(T)) or_else c`.
+`(f() or_return) + 1`, and `a.b().as(.name) or_else c` is `(a.b().as(.name)) or_else c`.
 `or_return` is postfix rather than binary: its [failure
 operand](#the-failure-operand) is optional and is itself a postfix expression,
 so the whole form is one postfix expression. After `or_return`, a token that
@@ -6705,8 +6672,8 @@ case limit():
 
 The header is an initialization statement and a subject, and binds nothing:
 `switch (x in set)` switches on the boolean membership test. A switch over a
-[union](#inspecting-a-union) or an [`any_view`](#any_view-type) matches variants
-or types instead of comparing values, and each case binds what it matches. This
+[union](#inspecting-a-union) matches variants instead of comparing values, and
+each case binds what it matches. This
 keeps unrelated payload names and types out of the other branches:
 
 ```loke
@@ -9544,8 +9511,7 @@ trailing `bool` is not a status, and a procedure returning
 
 A producer's result count is its own, and a destination never changes it. Where
 two behaviors are wanted they are two operations: `m[key]` panics for a missing
-key and `m.lookup_value(key)` returns `Option(V)`; `view.(T)` panics on a
-mismatch and `view.as(T)` returns `Option(T)`.
+key and `m.lookup_value(key)` returns `Option(V)`.
 
 #### Success returns
 
@@ -9638,7 +9604,7 @@ i := m.lookup_value("hellope") or_else 123;
 assert(i == 123);
 ```
 
-The same rule applies to validating conversions, erased extractions, and other
+The same rule applies to validating conversions and other
 `Option`/`Result` producers. Failure cleanup follows [Operator
 ownership](#operator-ownership): a temporary's managed failure is dropped before
 the fallback, while a place keeps its own. To inspect the error, use `switch`;
@@ -9864,7 +9830,6 @@ call stack. Runtime panics arise from:
 - a string slice bound that falls inside a UTF-8 sequence
 - a [floating-point value that is not in the integer type it converts
   to](#type-conversion)
-- a failed checked extraction, `v.(T)`
 - an allocation failure when the allocator policy is
   [`.Panic`](#allocation-failure)
 
@@ -11984,7 +11949,7 @@ collects those requirements for conformance checking; omitting one is a defect.
 | A variant or enum switch is not exhaustive | the variants it did not cover ([§](#inspecting-a-union)) |
 | An overloaded call stays ambiguous | every maximal candidate with its signature, and why selection failed, in the programmer's terms rather than as a rank vector or a tie-breaker number ([§](#operator-lookup-and-overload-resolution)) |
 | An overloaded call's result does not fit its destination | the member the arguments selected ([§](#operator-lookup-and-overload-resolution)) |
-| A switch header is written `switch (name in subject)` with an undeclared `name` | that a switch binds in its cases, and the `.variant(name)` or `T(name)` case that does ([§](#inspecting-a-union)) |
+| A switch header is written `switch (name in subject)` with an undeclared `name` | that a switch binds in its cases, and the `.variant(name)` case that does ([§](#inspecting-a-union)) |
 | A `foreach` header is written `(&mut value, index in sequence)` or `(&mut value in map)` | the adapter or destructuring that supplies the index or key ([§](#element-bindings)) |
 | A required interface application does not hold | the concrete application and the interface-body line that failed; "constraint not satisfied" alone is a defect ([§](#interface-bodies)) |
 | A mutating slot is called through a `dyn I` | `dyn mut I`, as a capability error rather than a missing member ([§](#borrowed-dynamic-interface-values)) |

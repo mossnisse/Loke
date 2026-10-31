@@ -323,7 +323,7 @@ main :: proc() {
 	assert(nested_pointer_read(numbers[:])[0] == 1);
 	assert(read_does_not_borrow_wrapper(numbers[:])[0] == 1);
 	assert(read_scalar_from_pointer() == 7);
-	assert(erased_extraction_read(numbers[:])[0] == 1);
+	assert(wrapped_payload_read(numbers[:])[0] == 1);
 	assert(projected_pointer_read(numbers[:])[0] == 1);
 	assert(reordered_result_field(numbers[:])[0] == 1);
 	assert(reordered_parameter_field(numbers[:])[0] == 1);
@@ -450,10 +450,10 @@ read_scalar_from_pointer :: proc() -> int {
 	return p^;
 }
 
-erased_extraction_read :: proc(values: []int) -> []int {
+wrapped_payload_read :: proc(values: []int) -> []int {
 	held := Holder{values};
-	erased: any_view = held;
-	switch (erased.as(Holder)) {
+	wrapped: Option(Holder) = .some(held);
+	switch (wrapped) {
 	case .some(value): return value.view;
 	case .none: return {};
 	}

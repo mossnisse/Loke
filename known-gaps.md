@@ -34,6 +34,30 @@ binding. Follow ordinary type-alias targets in their defining scopes when
 determining the success payload's dependency. Confirmed on `3b49d840` during
 review on 2026-10-31 (P2).
 
+### `or_else` drops the region of its left operand's payload
+
+[Allocator regions and region
+provenance](design.md#allocator-regions-and-region-provenance) requires the
+`@(allocator_reset)` promise for every region a reset may reach that is not the
+body's own. An allocator unwrapped from an unmarked `Option(Allocator)`
+parameter by `or_else` escapes that rule when the fallback is marked:
+
+```loke
+package main;
+reset :: proc(@(allocator_reset) allowed: Allocator, maybe: Option(Allocator)) {
+    selected := maybe or_else allowed;
+    free_all(selected);
+}
+main :: proc() {}
+```
+
+This compiles. The same reset reached through `switch (maybe) { case
+.some(selected): free_all(selected); ... }` reports `L0538`, and so does
+`maybe or_else Allocator{}`, where the default is what is uncovered. The result
+of `or_else` should carry the region of the payload as well as the fallback's.
+Found on `701846e9` while removing `any_view` extraction from
+`tests/err/allocator_reset_alternatives.loke` (P2).
+
 ### Recursive records through parametric aliases depend on resolution order
 
 A [parametric alias](design.md#parametric-aliases) has its expansion's identity,

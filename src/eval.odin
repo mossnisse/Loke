@@ -783,7 +783,7 @@ eval_value_unviewed :: proc(ev: ^Evaluator, e: Expr) -> (result: Eval_Value, suc
 		}
 		return value, true
 
-	case ^Expr_Error, ^Expr_Literal, ^Expr_Checked_Extract,
+	case ^Expr_Error, ^Expr_Literal,
 	     ^Expr_Proc_Group, ^Expr_Operator,
 	     ^Type_Pointer, ^Type_C_Pointer, ^Type_Slice, ^Type_Dynamic_Array,
 	     ^Type_Array, ^Type_Map, ^Type_Distinct, ^Type_Dyn, ^Type_Type,
@@ -2327,9 +2327,6 @@ eval_call :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (Eval_Value, bool) {
 		return eval_conversion(ev, v)
 	case Call_Union_Construct:
 		return eval_union_construct(ev, v)
-	case Call_Extract:
-		eval_fail(ev, v.span, "L0341", "this expression has no compile-time meaning")
-		return Eval_Value{}, false
 	case Call_Text:
 		return eval_text_op(ev, v)
 	case Call_Reflect:
