@@ -764,8 +764,8 @@ prov_note_offset :: proc(graph: ^Flow_Graph, slot: int, sources: []int) {
 }
 
 // The most places a value is told apart at; past it, places are merged into a
-// prefix they share (`prov_union_offsets`). No minimum the specification
-// guarantees bounds it, so a rejection the merge may cause names it
+// prefix they share (`prov_union_offsets`). It is the specification's
+// minimum for chosen places, so a rejection the merge may cause names it
 // (design.md "Minimum provenance precision", `Precision_Limit.Places`).
 @(private)
 PROV_OFFSET_LIMIT :: 8

@@ -146,11 +146,11 @@ chosen_read :: proc(h: ^mut Holder, flag: bool) -> int {
 	return total;
 }
 
-// Past eight places, those sharing the longest prefix are taken as it: the
-// pointer may point at all of `left`, but only at four fields of `right`. No
-// minimum precision covers so many places, so the conflict at `s^.left.z`
-// names the limit and says the reborrow may cover it (design.md "Minimum
-// provenance precision").
+// Past the eight places the specification guarantees, those sharing the
+// longest prefix are taken as it: the pointer may point at all of `left`, but
+// only at four fields of `right`, so the conflict at `s^.left.z` names the
+// limit and says the reborrow may cover it (design.md "Minimum provenance
+// precision").
 chosen_past_limit :: proc(s: ^mut Sides, i: int) -> int {
 	q := &mut s^.left.a;
 	if (i == 1) { q = &mut s^.left.b; }
@@ -299,6 +299,26 @@ chosen_among_five :: proc(w: ^mut Wide, x: bool, y: bool, u: bool, v: bool) -> i
 	q := a if x else b if y else c if u else d if v else e;
 	value := &q^;
 	w^.z = 1;
+	return value^;
+}
+
+// Eight places, the most a pointer is guaranteed to keep apart, leave every
+// other field usable (design.md "Minimum provenance precision").
+chosen_at_limit :: proc(s: ^mut Sides, i: int) -> int {
+	q := &mut s^.left.a;
+	if (i == 1) { q = &mut s^.left.b; }
+	if (i == 2) { q = &mut s^.left.c; }
+	if (i == 3) { q = &mut s^.left.d; }
+	if (i == 4) { q = &mut s^.left.e; }
+	if (i == 5) { q = &mut s^.right.a; }
+	if (i == 6) { q = &mut s^.right.b; }
+	if (i == 7) { q = &mut s^.right.c; }
+	value := &q^;
+	s^.z = 1;
+	s^.left.z = 2;
+	s^.right.d = 3;
+	s^.right.e = 4;
+	s^.right.z = 5;
 	return value^;
 }
 

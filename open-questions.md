@@ -107,21 +107,6 @@ annotations. Three decisions remain open:
   "Completed migration (stage 5)" in the repository's
   `bench/baselines/README.md`. Whether to accept that cost or reduce it is open.
 
-## Places one chosen pointer keeps apart
-
-[Minimum provenance precision](design.md#minimum-provenance-precision) bounds
-aggregate nesting, carrier paths per type, fixed arrays, and map keys, but not
-how many places a pointer chosen across branches may point at. `lokec` keeps
-eight (`PROV_OFFSET_LIMIT` in
-[src/cfg_provenance.odin](src/cfg_provenance.odin)) and past that merges the
-two sharing the longest prefix, so a pointer chosen among nine fields of
-`s^.left` and `s^.right` is taken to point into `s^.left`, and a write to
-`s^.left.z` is rejected with `L0641`. The diagnostic says the reborrow *may*
-cover the place and names the limit, as the section requires. Open: whether
-the precision table should guarantee a number of such places, which would make
-this program portable; the bound keeps the place loans and `.Through` events a
-borrow makes few.
-
 ## Compositional loan construction
 
 Every access to a place reached through carriers goes through one walk of the

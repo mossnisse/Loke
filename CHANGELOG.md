@@ -372,6 +372,12 @@ checklist.
 
 ### Added
 
+- [Minimum provenance precision](design.md#minimum-provenance-precision)
+  now guarantees that a pointer chosen among borrows by branches or
+  reassignment keeps at least 8 places of one storage apart, so a write to
+  another field beside a borrow through it is portable. `lokec` already kept
+  8; past that, the rejection still names the limit.
+
 - An implicit selector or typeless literal argument whose generic parameter
   type names the procedure's `$` parameters is typed after the other arguments
   have inferred them, so `value_or(x, .some(y))` against

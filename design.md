@@ -11829,6 +11829,7 @@ type sizes. Each guarantee applies while the other budgets are also satisfied:
 | Aggregate nesting | Preserve carrier leaves reached in at most **4 projection steps**. A record field, union alternative, or array element costs one step; a map entry plus its key/value projection costs two. The carrier itself costs no step. |
 | Carrier paths | Preserve at least **64 paths per value type**, after applying the other shape rules. Fields without borrows cost no paths. |
 | Fixed arrays | Distinguish every element of arrays of **1 through 8 elements**, when selected by a compile-time-known index. |
+| Chosen places | Distinguish at least **8 places of one storage** that a carrier may point at when its value is chosen among borrows by branches or reassignment, as `q := &mut s.a if flag else &mut s.b`. A place inside another counts as that one. |
 | Map entry width | Distinguish constant keys when the nonrecursive key and value shapes together contain at most **2 carrier paths**, measured before replicating entries. |
 | Constant map keys | Distinguish at least the first **4 distinct supported constant keys encountered per procedure**, shared across its maps. Supported keys are strings, booleans, runes, and integers representable in signed 64 bits. Key identities are local to the body; result contracts merge map entries across calls while preserving enclosing paths and the key/value distinction. |
 

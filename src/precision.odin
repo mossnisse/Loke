@@ -2,8 +2,8 @@
 // affect acceptance, type identity, or the generated program.
 package lokec
 
-// `Places` is the one budget past the specification's minimums: the places
-// below one storage a pointer is told apart at (`PROV_OFFSET_LIMIT`).
+// `Places` is the places below one storage a pointer is told apart at
+// (`PROV_OFFSET_LIMIT`), the specification's chosen-places minimum.
 Precision_Limit :: enum { Array_Elements, Depth, Width, Map_Width, Map_Keys, Map_Summary, Places }
 Precision_Loss :: bit_set[Precision_Limit; u8]
 
