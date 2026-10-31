@@ -62,12 +62,12 @@ lost, in rough priority order:
 
 1. **`Status(E)` is `Result(Unit, E)`** through a parametric type alias, which
    removes a nominal type and the wart that generic code over `Result` does not
-   accept a `Status`. The return rule must preserve fallthrough when only the
-   failure type is generic ([2.3](#23-status-is-resultunit-e)).
-2. **One type kind for sums.** `enum` and `union` share one kind in the
-   checker, the emitter, and reflection, and one reflection descriptor; the
-   integer mapping and ordering stay `enum`'s
-   ([2.1](#21-sums-one-type-kind-for-enum-and-union)).
+   accept a `Status`. A `Unit` success first gets what a payloadless one has,
+   so that the alias renames a type without changing behavior
+   ([2.3](#23-status-is-resultunit-e)).
+2. **One way to list a sum's alternatives.** `variants_of` accepts an enum,
+   whose members are payloadless variants; the integer mapping and
+   `enum_values_of` stay `enum`'s ([2.1](#21-sums-enum-and-union)).
 3. **One erasure lowering.** `any_view` is represented as a `dyn` view whose
    witness carries the `typeid` and the format thunk, so printing calls the
    formatter directly; its existing storage and temporary-lifetime rules stay
@@ -149,7 +149,7 @@ existential packages (`dyn`), region-based memory (allocator provenance), and
 an inferred effect system. Each is sound and conventional. The simplifications
 come from the places where one of those denotations has two spellings.
 
-### 2.1 Sums: one type kind for `enum` and `union`
+### 2.1 Sums: `enum` and `union`
 
 A sum type is one thing. Loke spells it as `enum { A, B }`, as
 `union { a, b }`, and as `(a: | b:)`, and the fallible shapes build on the
@@ -159,19 +159,25 @@ named, payloadless alternatives. What `enum` adds is a chosen backing integer
 its variants), explicit member values with holes, an ordering, integer
 conversion, `from_int`, and `values()`.
 
-**Proposal.** Unify the implementation and the reflection, not the surface:
+**Proposal.** Unify how generic code lists the alternatives, not the surface
+or the integer mapping:
 
-- One type kind in the checker, the emitter, the reflection tables, and the
-  formatter, with an enum as the case whose representation is written.
-  `Type_Kind.Enum` stays as the name of that case.
-- `variants_of(T)` serves both, with `meta.Variant` gaining the tag `value`
-  that `meta.Enum_Value` has; `enum_values_of` and `meta.Enum_Value` go.
+- `variants_of(T)` accepts an enum as well as a union. Each member is a
+  payloadless variant: its name, the payload `Unit`, and its declaration index.
+- `enum_values_of` and `meta.Enum_Value` stay. They are the enum-only integer
+  view, like `from_int`; `meta.Variant` gains no `value`, since a union's tag
+  number is representation and must not become readable through it.
+- `Type_Kind` keeps both `Enum` and `Union`, so no reflection consumer
+  migrates. One kind inside the checker and emitter is a compiler refactor
+  that changes nothing in the specification; it is worth doing only for the
+  code it removes.
 - The integer mapping stays `enum`'s alone. Ordering, integer conversion,
   `from_int`, `values()`, and `Bit_Set`/`Enum_Array` eligibility are not
   extended to unions.
 
-**What is lost.** `enum_values_of` and `meta.Enum_Value`, which `variants_of`
-replaces. The cost is a migration of `Type_Kind` consumers and of `base:meta`.
+**What is lost.** Nothing. The first draft also merged the descriptors, giving
+`meta.Variant` a tag `value`; that would have exposed union tag numbers, which
+the next paragraph says are not API.
 
 **Why the surface stays.** A union's tag order is representation, not API:
 [Widening by label](design.md#widening-by-label) promises no tag number between
@@ -230,9 +236,28 @@ the success decision independent of a particular instantiation.
 **What is lost.** Nothing a program can write. `return .ok;` stays valid; it is
 already how a `Result(Unit, E)` returns. A procedure written
 `-> Result(Unit, E)` may now reach its end or use `return;`, including when
-`E` is generic, as a `Status(E)` one may.
-Diagnostics should keep the alias a type was written with, or every `Status(E)`
-in an error message reads `Result(Unit, E)`.
+`E` is generic, as a `Status(E)` one may. What changes is observable output and
+layout, which the first draft did not count:
+
+- **Printing.** A `Status` success prints `.ok` and a `Result(Unit, E)` one
+  prints `.ok(Unit{})`. As one type they print one way, so a `Unit` payload
+  should print as `.ok`.
+- **Type names.** An alias has no identity, so `typeid` names and run-time
+  type names read `Result(Unit, int)`, not `Status(int)`. Only diagnostics can
+  keep the spelling a type was written with, and doing so needs the written
+  syntax, not the interned type.
+- **Layout.** A union uses a pointer's null value as its tag only when the
+  other variant carries nothing, so `Status(^T)` is one word today and
+  `Result(Unit, ^T)` is not. A `Unit` payload should count as nothing there.
+- **The rule names `Unit`.** Fallibility is recognized by shape, not names;
+  the new rule reads the payload `Unit`, the type a payloadless variant already
+  reports through `variants_of`. It also covers `Option(Unit)`, whose body may
+  then reach its end and return `.some`, and a user union whose success is
+  `Unit`.
+
+**Order.** Making a `Unit` success behave as a payloadless one in all four
+respects is useful without aliases and holds all the behavioral change. The
+alias then renames a type, and its only remaining break is in type names.
 
 Parametric aliases are a type-level function with no new identity, and they
 would also answer the `io.Result(T)` wish in the same open question. They are
@@ -652,8 +677,7 @@ thing. Each row names the replacement and what is lost.
 
 | Delete | Replaced by | Lost | Priority |
 | --- | --- | --- | --- |
-| `Status` as a nominal type, `Status.map_error` | `Status :: Result(Unit, $E)` ([2.3](#23-status-is-resultunit-e)) | Nothing; `Result(Unit, E)` gains fallthrough and bare `return;`, including for generic `E` | High |
-| `enum_values_of`, `meta.Enum_Value`, a separate enum kind | `variants_of`, `meta.Variant` with `value`, one sum kind ([2.1](#21-sums-one-type-kind-for-enum-and-union)) | Nothing | Medium |
+| `Status` as a nominal type, `Status.map_error` | `Status :: Result(Unit, $E)` ([2.3](#23-status-is-resultunit-e)) | The type name `Status(E)` at run time; `Result(Unit, E)` gains fallthrough, bare `return;`, `.ok` printing, and the null niche | High |
 | Type-position attributes, inline nominal `enum`/`union` | Declaration attributes ([3.1](#31-attributes-in-one-position)) | `[size_of(enum { A, B })]u8` | Medium |
 | `move_only` keyword | `@(move_only)` ([2.8](#28-affine-types-a-drop-hook-needs-a-copy-decision)) | A reserved word | Medium |
 | "Any of a union's variants to that union" | Nothing; the compiler already rejects it | Nothing | Done with this review |
@@ -936,24 +960,36 @@ compiler, test, and changelog change in one commit as AGENTS.md requires.
    ([6.2](#62-container-operations-in-ir-not-through-an-operation-table)), and
    a leaner unwind bookkeeping ([6.3](#63-unwind-bookkeeping)). Measure each
    with `perf.ps1` and the `bench/` workloads before and after.
-3. Design parametric aliases with `Status` as the first user: settle inference,
-   interface-file representation, and generic fallthrough and bare-return rules
-   before implementation. Separately, consider one type kind for `enum` and
-   `union`, with an explicit migration for public reflection consumers.
-4. `any_view` lowered as a `dyn` view. Depends on nothing above; touches the
+3. `Status` as `Result(Unit, E)`, in three commits
+   ([2.3](#23-status-is-resultunit-e)):
+   1. A `Unit` success behaves as a payloadless one: it may reach the end of a
+      body and use `return;` when the result as written, not a generic
+      argument, makes it `Unit`; it prints as `.ok`; and it leaves the null
+      niche available.
+   2. Parametric type aliases. The parameters are the `$` names in order of
+      first appearance, each of which must appear where an argument binds it;
+      an alias needs its arguments and may not refer to itself; it has the
+      identity of its expansion, so inference matches the expansion; names in
+      its body resolve where it is declared; and `api.loki` keeps the
+      declaration as written.
+   3. `Status :: Result(Unit, $E);`, deleting `Status.map_error`, with an
+      upgrade note for type names.
+4. `variants_of` accepts an enum ([2.1](#21-sums-enum-and-union)). Independent
+   of step 3.
+5. `any_view` lowered as a `dyn` view. Depends on nothing above; touches the
    witness layout and the printing path while preserving its storage
    restrictions and temporary lifetimes.
-5. Attributes in one position, `@(move_only)`, and the copy decision for drop
+6. Attributes in one position, `@(move_only)`, and the copy decision for drop
    hooks.
-6. Range facts and loop versioning for checked arithmetic
+7. Range facts and loop versioning for checked arithmetic
    ([6.4](#64-checked-arithmetic-and-bounds-in-loops)), with bounds proofs that
    account for reassigned slices, aliases, and calls. Then measure the dense
    kernels again; container fast paths in IR if step 2 left them hot.
-7. Alias attributes ([6.1](#61-alias-attributes-from-facts-the-checker-already-proves)),
+8. Alias attributes ([6.1](#61-alias-attributes-from-facts-the-checker-already-proves)),
    after the soundness gaps they depend on are closed and design.md states the
    aliasing rule for unchecked code. Capture attributes require a separate
    proof covering address observation and provenance escape.
-8. If `inout` is folded into `^mut T` at all ([2.9](#29-one-capability-axis)),
+9. If `inout` is folded into `^mut T` at all ([2.9](#29-one-capability-axis)),
    last: it is the largest surface change, and it needs the formatter able to
    rewrite call sites and receivers mechanically. The explanation in
    [Capabilities and the one rule](design.md#capabilities-and-the-one-rule)
@@ -1029,7 +1065,7 @@ outweighs its gain, and none is recommended.
 - **A drop hook implies move-only**, for the reasons in
   [2.8](#28-affine-types-a-drop-hook-needs-a-copy-decision).
 - **Give every payloadless union `enum`'s integer mapping and ordering**, for
-  the reasons in [2.1](#21-sums-one-type-kind-for-enum-and-union).
+  the reasons in [2.1](#21-sums-enum-and-union).
 
 ## Probes
 
