@@ -11,6 +11,66 @@ Design rationale and differences from Odin are recorded in
 The current behavior inventory is in [Nondeterminism and undefined behavior
 audit](nondeterminism-audit.md).
 
+## Review of constant view elements and the wider borrow matrix (2026-10-31)
+
+Reviewed `72431f48` for correctness, simplification, and structure. Two
+findings remain:
+
+- **Keep known starts when lengths vary (P2).** Shortening a view on one
+  branch leaves its start unchanged, but accesses to different constant
+  elements still conflict. Full views of dynamic arrays have the same
+  problem with an unknown upper bound. The
+  [reproductions and cause](known-gaps.md#views-with-a-known-start-lose-element-precision-when-their-length-varies)
+  distinguish start information from the exact extent the publication
+  helper currently requires.
+- **Remove the matrix's lookup loop (P3, shrink).** `matrix_expected` in
+  [tests/borrow_matrix_test.odin](tests/borrow_matrix_test.odin) only reads
+  the operation's name. After `matrix_same_element` has remapped it, replace
+  the five-line scan of `MATRIX_USES` with
+  `return matrix_expected(place, take, Matrix_Use{name = same}, shape, later)`.
+  The fixture's source text is not needed by the expected-result model.
+  Net: four lines fewer.
+
+`Prov_View_At` is a focused record, and sharing the start computation between
+publication and place checks avoids duplicate walkers. The precision gap
+shows where those callers need different information: element separation needs
+a known start, while publication also uses the extent and underlying loan.
+Add a matrix place for a dynamically backed view, plus a branch changing
+only length; the new dynamic `items` cases exercise the array stored inside
+an element instead.
+
+The meaning of "fresh borrow of a range" in
+[Weakening and reborrows](design.md#weakening-and-reborrows) should also be
+explicit about views made through another carrier. A local
+`s := &mut a^[0:2]`, with `a: ^mut [2]Counter`, rejects the same distinct
+element access:
+
+```loke
+package main;
+Counter :: struct { count: int }
+through_pointer :: proc(a: ^mut [2]Counter) {
+    s := &mut a^[0:2];
+    first := &mut s[0];
+    s[1].count += 1; // L0641
+    first^.count += 1;
+}
+main :: proc() {}
+```
+
+Such a slice reborrows the pointer, so whether it qualifies as "fresh" is
+not settled by the wording. `prov_slice` in
+[src/cfg_provenance.odin](src/cfg_provenance.odin) makes it a place-loan
+snapshot rather than a fresh range loan, and `prov_note_view` leaves its
+start unknown. Clarify whether that exclusion is intended; this case is a
+scope question rather than a confirmed implementation divergence.
+
+Validation passed: 178 compiler unit tests, 43 LSP unit tests, diagnostic and
+package-diagnostic suites, the expanded borrow matrix, the executable corpus,
+and compiler/LSP builds. The fixed-start/varying-length rejection was
+reproduced with a dedicated build of the reviewed compiler; unconditional
+reslicing and a bounded dynamic-array view provided accepting controls.
+No implementation fixes were applied during review.
+
 ## Review of the follow-up fixes (2026-10-31)
 
 Reviewed `4b31729d` (tangent bound and minimized integer copies), `d66b3d8b`

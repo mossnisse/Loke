@@ -7,6 +7,40 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
+### Views with a known start lose element precision when their length varies
+
+[Weakening and reborrows](design.md#weakening-and-reborrows) separates constant
+elements of a local view when its start is known and its reaching definitions
+are fresh range borrows or constant reslices. A branch that only shortens the
+view keeps its start at zero, and both indices below remain in bounds, but
+the write is rejected:
+
+```loke
+package main;
+Counter :: struct { count: int }
+length_only :: proc(flag: bool) {
+    a := [3]Counter{};
+    s := &mut a[:];
+    if (flag) { s = &mut s[:2]; }
+    first := &mut s[0];
+    s[1].count += 1; // L0641; should be accepted
+    first^.count += 1;
+}
+main :: proc() {}
+```
+
+Making the reslice unconditional compiles. `view_element_in` in
+[src/borrow.odin](src/borrow.odin) reuses `publish_view_of`, whose
+`publish_view_take` requires every reaching definition to agree on both
+offset and length. This loses a known start when only lengths differ.
+The same distinction also affects a fresh full view of a dynamic array:
+`a := [dynamic]Counter{Counter{}, Counter{}}; s := &mut a[:]` rejects the
+same two-element access, while spelling `a[0:2]` compiles. Its runtime upper
+bound prevents `view_element_in` from recognizing a bounded range, although
+the start is zero. Track knowledge of the start separately from an exact
+extent, retaining any bounds required for publication. Confirmed while
+reviewing `72431f48` on 2026-10-31.
+
 ### Typed generic aliases still skip targets when their written type is an alias
 
 [Private names in public declarations](design.md#private-names-in-public-declarations)
