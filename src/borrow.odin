@@ -305,7 +305,10 @@ Prov_Offset :: struct {
 // How one definition of a named view slot relates what it views to the range
 // a fresh borrow lends (`prov_note_view`): that borrow itself, as
 // `s := &mut a[0:2]`; elements `lo` up to `hi` of another such slot, as
-// `t := &mut s[1:]`, with `hi` -1 for its end; or `unknown`.
+// `t := &mut s[1:]`, with `hi` -1 for its end; or `unknown`. A borrow whose
+// end is not constant, as `&mut d[:]` of a dynamic array, lends a range its
+// loan's last step cannot name, so it is `open`, starting at element `lo`
+// of what it is taken from.
 Prov_View_Def :: struct {
 	// For the reslice about to be defined, one more than the slot it defines.
 	slot:     int,
@@ -314,6 +317,7 @@ Prov_View_Def :: struct {
 	from:     int,
 	lo, hi:   i64,
 	unknown:  bool,
+	open:     bool,
 	// For a reslice, the definitions of the slot resliced that may reach it,
 	// as indices into its `view_defs`, the slot's count among them standing
 	// for one not recorded (`solve_view_defs`).
@@ -3529,24 +3533,18 @@ resolve_content_reads :: proc(state: ^Prov_State) {
 // would panic.
 @(private = "file")
 publish_view_loan :: proc(graph: ^Flow_Graph, event: Prov_Event, one: int) -> Prov_Loan {
-	loan := graph.loans[one]
-	element, known := view_element_in(graph, Prov_View_At{slot = event.view_slot, index = event.view_index, reaching = event.view_reaching}, one)
-	if !known {
-		return loan
-	}
-	at := loan.path[len(loan.path) - 1].lo + element
-	path := make([]Proj_Step, len(loan.path), graph.alloc)
-	copy(path, loan.path)
-	path[len(path) - 1] = proj_range(at, at + 1)
-	loan.path = path
+	loan, _ := view_element_loan(graph, Prov_View_At{slot = event.view_slot, index = event.view_index, reaching = event.view_reaching}, one)
 	return loan
 }
 
 // Where the element `at` names is among those `loan` lends, counted from the
 // first, when that is known: for a view parameter, relative to its own loan,
 // at its index; for a local view, relative to a loan of a range, at its
-// index past where the view starts in that range (`publish_view_of`). An
-// index past the view names none, as an access there would panic.
+// index past where the view starts in that range (`publish_view_of`). Only
+// the start must be known, not how many elements the view holds: an index
+// past the end of a shorter view panics, so wherever the access goes on, the
+// index names the same element. One past every length the view may have
+// names none.
 @(private = "file")
 view_element_in :: proc(graph: ^Flow_Graph, at: Prov_View_At, loan: int) -> (i64, bool) {
 	if at.slot == 0 {
@@ -3559,15 +3557,49 @@ view_element_in :: proc(graph: ^Flow_Graph, at: Prov_View_At, loan: int) -> (i64
 	if len(lent.path) == 0 || !path_is_exact(lent.path[:len(lent.path) - 1]) {
 		return 0, false
 	}
+	// A constant range lends that many elements; a wildcard, as an open
+	// borrow's (`Prov_View_Def.open`), any number from the first.
 	last := lent.path[len(lent.path) - 1]
-	if last.kind != .Range || last.precision != {} || last.hi <= last.lo {
+	range: i64
+	switch {
+	case last.precision != {}:
+		return 0, false
+	case last.kind == .Range && last.hi > last.lo:
+		range = last.hi - last.lo
+	case last.kind == .Wild:
+		range = VIEW_OPEN_RANGE
+	case:
 		return 0, false
 	}
-	offset, length, present, known := publish_view_of(graph, at.slot - 1, at.reaching, loan, last.hi - last.lo)
+	offset, length, present, known := publish_view_of(graph, at.slot - 1, at.reaching, loan, range)
 	if !present || !known || at.index >= length {
 		return 0, false
 	}
 	return offset + at.index, true
+}
+
+// The `range` of a loan whose last step is a wildcard (`view_element_in`):
+// where the view starts is all that is known of it, and no constant index
+// lies past its end.
+@(private = "file")
+VIEW_OPEN_RANGE :: max(i64)
+
+// The loan `one`, narrowed to the one element of the range it lends that
+// `at` names when that is known (`view_element_in`), as a store into `s[k]`
+// names, with `s` a local view.
+@(private = "file")
+view_element_loan :: proc(graph: ^Flow_Graph, at: Prov_View_At, one: int) -> (Prov_Loan, bool) {
+	loan := graph.loans[one]
+	element, known := view_element_in(graph, at, one)
+	if !known {
+		return loan, false
+	}
+	at_element := loan.path[len(loan.path) - 1].lo + element
+	path := make([]Proj_Step, len(loan.path), graph.alloc)
+	copy(path, loan.path)
+	path[len(path) - 1] = proj_range(at_element, at_element + 1)
+	loan.path = path
+	return loan, true
 }
 
 // design.md "Places and overlap": whether the elements `a` and `b` name are
@@ -3596,9 +3628,9 @@ view_elements_apart :: proc(state: ^Prov_State, a: Prov_View_At, a_slot: int, b:
 	return shared
 }
 
-// Where one definition of a view slot starts in the range a loan lends, as
-// `publish_view_of` has it, and whether that is `settled` rather than still
-// being worked out.
+// Where one definition of a view slot starts in the range a loan lends, and
+// at most how many elements it views, as `publish_view_of` has it, and
+// whether that is `settled` rather than still being worked out.
 @(private = "file")
 Prov_View_Start :: struct {
 	offset, length:          i64,
@@ -3606,9 +3638,10 @@ Prov_View_Start :: struct {
 }
 
 // One view `publish_view_of` is working out: the definitions `reaching` of
-// `slot`, of which `next` is the first not yet taken, and what those taken
-// agree on. `key` names the reslice definition that reads the view, and is
-// `{-1, -1}` for the view the store names.
+// `slot`, of which `next` is the first not yet taken, where those taken
+// agree it starts, and the most elements any of them views. `key` names the
+// reslice definition that reads the view, and is `{-1, -1}` for the view the
+// store names.
 @(private = "file")
 Prov_View_Walk :: struct {
 	key:            [2]int,
@@ -3620,14 +3653,16 @@ Prov_View_Walk :: struct {
 }
 
 // design.md "Values that contain borrows": where in the `range` elements
-// `loan` lends the view held in `slot` starts, and how many it views,
+// `loan` lends the view held in `slot` starts, and at most how many it views,
 // whenever `slot` holds that loan where the definitions `reaching` of it
 // reach (`solve_view_defs`). Each takes the borrow itself, a constant reslice
 // of another such slot, or something else, and all that take the loan must
-// agree; nothing may borrow the slot, which would let a store through a
-// pointer change it unseen. `present` is false when no definition takes the
-// loan, and `known` false when it is not known where the view starts, as for
-// a slot resliced from itself in a loop, whose reslice reaches itself.
+// agree where it starts, though not on its length, so a branch that only
+// shortens the view keeps its elements apart; nothing may borrow the slot,
+// which would let a store through a pointer change it unseen. `present` is
+// false when no definition takes the loan, and `known` false when it is not
+// known where the view starts, as for a slot resliced from itself in a loop,
+// whose reslice reaches itself.
 //
 // A reslice is worked out from the view it reads, so the walk keeps a stack
 // of views rather than recursing: a chain of reslices may be as long as the
@@ -3719,21 +3754,28 @@ publish_view_advance :: proc(
 }
 
 // Adds one definition's start to what the definitions of `walk` agree on,
-// and whether they still agree on a known one.
+// and whether they still agree on a known one. The view holds at most as
+// many elements as the longest of them.
 @(private = "file")
 publish_view_take :: proc(walk: ^Prov_View_Walk, start: Prov_View_Start) -> bool {
 	walk.next += 1
 	if !start.present {
 		return true
 	}
-	if !start.known || walk.present && (start.offset != walk.offset || start.length != walk.length) {
+	if !start.known || walk.present && start.offset != walk.offset {
 		return false
 	}
-	walk.offset, walk.length, walk.present = start.offset, start.length, true
+	walk.length = walk.present ? max(walk.length, start.length) : start.length
+	walk.offset, walk.present = start.offset, true
 	return true
 }
 
-// Where `def` starts, `source` being the view a reslice reads.
+// Where `def` starts, `source` being the view a reslice reads. A reslice
+// past the most elements its source may view always panics, and is taken as
+// not known; one within them starts where its constant start says whatever
+// length the source has, as it panics where the source is shorter. An open
+// borrow starts where it says (`Prov_View_Def.open`), and only a loan whose
+// range the analysis cannot name, as `VIEW_OPEN_RANGE`, may be one.
 @(private = "file")
 publish_view_def :: proc(def: Prov_View_Def, source: Prov_View_Start, loan: int, range: i64) -> Prov_View_Start {
 	start: Prov_View_Start
@@ -3749,7 +3791,11 @@ publish_view_def :: proc(def: Prov_View_Def, source: Prov_View_Start, loan: int,
 			}
 		}
 	case int(def.loan) == loan:
-		start = Prov_View_Start{offset = 0, length = range, present = true, known = true}
+		start.present = true
+		if def.open == (range == VIEW_OPEN_RANGE) && def.lo >= 0 && def.lo <= range {
+			first := def.open ? def.lo : 0
+			start.offset, start.length, start.known = first, range - first, true
+		}
 	}
 	start.settled = true
 	return start

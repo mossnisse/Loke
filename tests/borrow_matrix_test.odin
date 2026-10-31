@@ -25,7 +25,9 @@ MATRIX_DIR :: TMP + "/borrow_matrix"
 // itself, `pointer` a `^mut List` to it, which `local_chosen` chooses between
 // two elements of an array, so it may point at either, and
 // `param_slice_indexed` reaches at an index that is no constant, so it may be
-// any element of the view. A `read_only` place is
+// any element of the view, while a branch only shortens the view
+// `local_shortened` reaches through, which leaves where it starts known. A
+// `read_only` place is
 // reached through a read-only pointer, so nothing writes the place itself,
 // but the mutable carriers stored in it keep their capability (design.md
 // "Values that contain borrows"). In a view, `other` is another element at a
@@ -76,6 +78,12 @@ MATRIX_PLACES := [?]Matrix_Place {
 		"local_self_resliced", "",
 		MATRIX_NODES + MATRIX_MORE_NODES + MATRIX_LAST_NODES + " lists := [3]List{" + MATRIX_OTHER_LIST + ", " + MATRIX_LIST + ", " + MATRIX_LAST_LIST +
 		"}; s := &mut lists[:]; s = &mut s[1:];",
+		"s[0]", "&mut s[0]", "s[1]", false,
+	},
+	{
+		"local_shortened", "",
+		MATRIX_NODES + MATRIX_MORE_NODES + MATRIX_LAST_NODES + " lists := [3]List{" + MATRIX_LIST + ", " + MATRIX_OTHER_LIST + ", " + MATRIX_LAST_LIST +
+		"}; s := &mut lists[:]; if (cond()) { s = &mut s[:2]; }",
 		"s[0]", "&mut s[0]", "s[1]", false,
 	},
 	{

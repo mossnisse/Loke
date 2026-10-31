@@ -2,8 +2,9 @@
 // view at different constant indices are different places wherever it is
 // known where the view starts, so a borrow, payload binding, or traversal of
 // one leaves another usable: in a view parameter, in a local view borrowed
-// from an array, and in one resliced from such a view by a constant before a
-// loop.
+// from an array, in one resliced from such a view by a constant before a
+// loop, in one a branch only shortens, and in one borrowed whole from a
+// dynamic array.
 package main;
 
 import "core:fmt";
@@ -11,6 +12,8 @@ import "core:fmt";
 Counter :: struct { count: int, total: int, first: Option(^mut int), cells: [2]int }
 
 bump :: proc(n: ^mut int) { n^ += 1; }
+
+cond :: proc() -> bool { return true; }
 
 param_borrow :: proc(xs: []mut Counter) {
 	first := &mut xs[0];
@@ -58,6 +61,25 @@ local_resliced :: proc() -> int {
 	return counters[1].count * 10 + counters[2].count;
 }
 
+local_shortened :: proc() -> int {
+	counters := [3]Counter{};
+	view := &mut counters[:];
+	if (cond()) { view = &mut view[:2]; }
+	a := &mut view[0];
+	view[1].count += 1;
+	a^.count += 4;
+	return counters[0].count * 10 + counters[1].count;
+}
+
+local_dynamic :: proc() -> int {
+	counters := [dynamic]Counter{Counter{}, Counter{}};
+	view := &mut counters[:];
+	a := &mut view[0];
+	view[1].count += 2;
+	a^.count += 5;
+	return counters[0].count * 10 + counters[1].count;
+}
+
 main :: proc() {
 	n := 1;
 	counters := [2]Counter{Counter{first = .some(&mut n)}, Counter{cells = [2]int{5, 6}}};
@@ -67,4 +89,5 @@ main :: proc() {
 	fmt.println(counters[0].count, counters[1].count, counters[1].total, n);
 	fmt.println(counters[0].cells[0], counters[0].cells[1], counters[1].cells[1]);
 	fmt.println(local_two_borrows(), local_resliced());
+	fmt.println(local_shortened(), local_dynamic());
 }
