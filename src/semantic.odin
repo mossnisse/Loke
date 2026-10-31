@@ -900,32 +900,31 @@ Package :: struct {
 	intrinsics_bound: bool,
 }
 
-// Address space reserved per block of an arena reset after every body. Pages
-// are committed as they are first used and stay committed across `free_all`;
-// with Odin's 1 MiB default, `free_all` released every block but the first and
-// the next body faulted the pages in again.
+// Address space reserved for each arena reset after every body. Pages are
+// committed as they are first used and stay committed across resets, so the
+// next body does not fault them in again.
 SCRATCH_ARENA_RESERVE :: mem.Gigabyte
 
 // The per-body scratch arenas, empty.
 @(private)
 init_analysis_arenas :: proc(c: ^Compiler) {
-	if err := virtual.arena_init_growing(&c.analysis_arena, SCRATCH_ARENA_RESERVE); err != nil {
+	if err := scratch_arena_init(&c.analysis_arena, SCRATCH_ARENA_RESERVE); err != nil {
 		panic("cannot reserve the compilation's analysis arena")
 	}
-	c.analysis_allocator = virtual.arena_allocator(&c.analysis_arena)
-	if err := virtual.arena_init_growing(&c.replay_carry_arena, SCRATCH_ARENA_RESERVE); err != nil {
+	c.analysis_allocator = scratch_allocator(&c.analysis_arena)
+	if err := scratch_arena_init(&c.replay_carry_arena, SCRATCH_ARENA_RESERVE); err != nil {
 		panic("cannot reserve the compilation's provenance replay arenas")
 	}
-	if err := virtual.arena_init_growing(&c.replay_round_arena, SCRATCH_ARENA_RESERVE); err != nil {
+	if err := scratch_arena_init(&c.replay_round_arena, SCRATCH_ARENA_RESERVE); err != nil {
 		panic("cannot reserve the compilation's provenance replay arenas")
 	}
 }
 
 @(private)
 destroy_analysis_arenas :: proc(c: ^Compiler) {
-	virtual.arena_destroy(&c.analysis_arena)
-	virtual.arena_destroy(&c.replay_carry_arena)
-	virtual.arena_destroy(&c.replay_round_arena)
+	scratch_arena_destroy(&c.analysis_arena)
+	scratch_arena_destroy(&c.replay_carry_arena)
+	scratch_arena_destroy(&c.replay_round_arena)
 }
 
 init_semantic_stores :: proc(c: ^Compiler) {

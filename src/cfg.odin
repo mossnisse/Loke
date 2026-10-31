@@ -1085,12 +1085,7 @@ unwind_drop_effects :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span, exit:
 // written end for the diagnostic.
 @(private)
 provider_region_end :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span, node: rawptr, ends := "", path: []Proj_Step = nil) {
-	sym := symbol_of(graph.k.c, id)
-	if sym == nil || sym.kind != .Var || sym.duration != .None || !type_carries_provider(graph.k.c, sym.type) {
-		return
-	}
-	// A view such as a `&` loop element owns nothing, so it ends no region.
-	if sym.borrowed_binding != .None {
+	if !provider_local(graph.k.c, id) {
 		return
 	}
 	key := Reset_Key{graph.literal, node, id, graph.expansion}
@@ -1114,6 +1109,16 @@ provider_region_end :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span, node:
 	prov_reset(graph, region, span, true, nil, live, ends, id, provider_end = true)
 }
 
+// A local holding a provider by value, whose end can end a region. A view such
+// as a `&` loop element owns nothing, so it ends no region. Asked before an
+// end is described, since most locals hold none.
+@(private = "file")
+provider_local :: proc(c: ^Compiler, id: Symbol_Id) -> bool {
+	sym := symbol_of(c, id)
+	return sym != nil && sym.kind == .Var && sym.duration == .None && sym.borrowed_binding == .None &&
+	       type_carries_provider(c, sym.type)
+}
+
 // A `move` out of a local ends what it holds, unless the move is into a new
 // local or a result, which carries the region along.
 @(private)
@@ -1121,14 +1126,14 @@ provider_move_end :: proc(graph: ^Flow_Graph, v: ^Expr_Move) {
 	if graph.aliased_moves[v] {
 		return
 	}
-	if ident, is_ident := v.value.(^Expr_Ident); is_ident {
+	if ident, is_ident := v.value.(^Expr_Ident); is_ident && provider_local(graph.k.c, ident.symbol) {
 		provider_region_end(graph, ident.symbol, v.span, v, provider_end_phrase(graph, "moving", ident.name))
 	}
 }
 
 @(private)
 provider_drop_end :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
-	if ident, is_ident := v.bound[0].(^Expr_Ident); is_ident {
+	if ident, is_ident := v.bound[0].(^Expr_Ident); is_ident && provider_local(graph.k.c, ident.symbol) {
 		provider_region_end(graph, ident.symbol, v.span, v, provider_end_phrase(graph, "dropping", ident.name))
 	}
 }
@@ -1146,6 +1151,9 @@ provider_exchange_end :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 // Assignment drops the destination's previous value (design.md).
 @(private)
 provider_assign_end :: proc(graph: ^Flow_Graph, target: ^Expr_Ident) {
+	if !provider_local(graph.k.c, target.symbol) {
+		return
+	}
 	provider_region_end(
 		graph, target.symbol, target.span, target, provider_end_phrase(graph, "assigning over", target.name),
 	)

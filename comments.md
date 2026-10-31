@@ -3125,9 +3125,17 @@ recorded inputs alone, rather than splicing them into the construction graph,
 would mean recording every loan and slot the walk creates, which no fact
 changes.
 
-The frozen input is shared within one concrete body build. Whole-program summary
-visits still rebuild the body, so retaining normalized bodies across those visits
-remains a [measured later decision](open-questions.md#normalized-input-for-provenance-analysis).
-The profiling records under
+The frozen input is shared within one concrete body build, not retained across
+the whole-program visits. A construction graph depends on more than its body: a
+call's result loans come from the callee's current result summary
+(`prov_call_result`), and the walk records a call's effects or its accesses
+according to whether global writes have settled, and reports diagnostics only
+in their own pass. Each later visit differs in one of those, so a retained
+graph could not stand for the next build without also recording everything it
+read; retaining every graph until its diagnostic pass would also have held
+tens of megabytes. The summary worklist instead skips a visit when no summary
+the body reads has grown since its last one, which leaves about three builds
+per body: one collecting global writes, one discovering summaries, and one
+reporting diagnostics. The profiling records under
 [Provenance normalization](bench/baselines/README.md#provenance-normalization)
 distinguish normalization, fact replay, and event materialization cost.

@@ -3,7 +3,6 @@
 package lokec
 
 import "core:mem"
-import "core:mem/virtual"
 import "core:slice"
 import "core:time"
 
@@ -114,11 +113,11 @@ build_provenance_replay :: proc(k: ^Checker, literal: ^Expr_Proc, mode: Flow_Mod
 	// Bodies are not replayed within one another, so one pair of arenas serves
 	// every body.
 	carry_arena, replay_arena := &k.c.replay_carry_arena, &k.c.replay_round_arena
-	defer free_all(virtual.arena_allocator(carry_arena))
-	carry := prov_carry_facts(initial, virtual.arena_allocator(carry_arena))
+	defer scratch_arena_reset(carry_arena)
+	carry := prov_carry_facts(initial, scratch_allocator(carry_arena))
 	seeded := weight
 	for {
-		graph := prov_fact_graph(k, literal, mode, program, virtual.arena_allocator(replay_arena))
+		graph := prov_fact_graph(k, literal, mode, program, scratch_allocator(replay_arena))
 		prov_seed_regions(graph, carry)
 		replayed_diagnostics := len(k.c.diagnostics)
 		prov_replay_fact_operations(graph, program)
@@ -126,12 +125,12 @@ build_provenance_replay :: proc(k: ^Checker, literal: ^Expr_Proc, mode: Flow_Mod
 		current_weight := prov_fact_weight(&graph.facts)
 		settled := current_weight == seeded
 		if !settled {
-			free_all(virtual.arena_allocator(carry_arena))
-			carry = prov_carry_facts(graph, virtual.arena_allocator(carry_arena))
+			scratch_arena_reset(carry_arena)
+			carry = prov_carry_facts(graph, scratch_allocator(carry_arena))
 		}
 		program.peak_used_bytes = max(program.peak_used_bytes,
 		                             k.c.analysis_arena.total_used - initial_bytes + carry_arena.total_used + replay_arena.total_used)
-		free_all(virtual.arena_allocator(replay_arena))
+		scratch_arena_reset(replay_arena)
 		if settled { break }
 		seeded = current_weight
 	}

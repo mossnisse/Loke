@@ -162,35 +162,27 @@ design questions stay open until a caller or a measurement settles them:
 Provenance analysis reads a
 [normalized body](compiler-architecture.md#normalized-provenance-input) that it
 rebuilds once per analysis invocation, consuming settled lifecycle
-annotations. Three decisions remain open:
+annotations. Bodies are not retained across visits; a visit whose summaries
+are unchanged is skipped instead
+([rationale](comments.md#provenance-replay-and-precise-publication)). Two
+decisions remain open:
 
-- **Retaining normalized bodies.** Each clean body is normalized about four
-  times per compilation: once collecting global writes, once in the summary
-  discovery visit and once from the worklist (a body with no result and no
-  owner writes skips both, and one whose callee's summary grew is visited
-  again), and once for its own diagnostics. Measured on 2026-10-28 with a
-  temporary per-body counter on the `bench/baselines/README.md` workloads
-  (`bench/provenance.loke`, `bench/workspace`, `examples/corpus_runner.loke`),
-  bodies were built 3.9-4.0 times each (at most 6), and the normalizations
-  after each body's first cost 6 / 120 / 192 ms of 31 / 386 / 682 ms checking
-  time, 20-31%, the most retaining could save; repeat visits would still
-  replay and materialize. Retaining every construction graph until its
-  diagnostic pass would hold 1.6 / 27 / 38 MB of analysis arena (0.4 / 7 /
-  10 MB in table entries alone) against compiler peaks of 12 / 60 / 89 MB.
-  A retained input must also serve the diagnostic pass, whose construction
-  walk alone reports cross-thread calls and `spawn` transfers, and outlive
-  the per-body release of the analysis arena.
 - **Lifecycle analysis on the same input.** Lifecycle analysis still walks the
   checked AST, and provenance consumes its settled decisions. Moving it onto the
   normalized input needs its own design for unresolved cleanup and last-use
   decisions.
-- **The cost of normalization.** Against the measurements taken before the
-  normalized input was introduced, checking costs 7 to 14% more front-end time
-  on the selected workloads and 3 to 10% more per workspace LSP operation, while
-  compiler peak working set is 5 to 10% lower on the larger workloads.
-  Normalization is the largest provenance phase in the current records, under
-  "Completed migration (stage 5)" in the repository's
-  `bench/baselines/README.md`. Whether to accept that cost or reduce it is open.
+- **The cost of normalization.** Normalization is still the largest provenance
+  phase: about 40% of checking time on `bench/workspace` and
+  `examples/corpus_runner.loke` after skipped visits and lock-free scratch
+  arenas took 8-17% off front-end time (under "Skipped summary visits and
+  lock-free scratch arenas" in the repository's `bench/baselines/README.md`).
+  A sampling profile of the builds left interning as the largest single cost:
+  `Prov_Input_Key`, about 72 bytes, is hashed byte by byte on every value and
+  call lookup (`prov_intern_value`, `prov_input_call`, about 7% of build time).
+  The three remaining builds per body differ in callee summaries, in whether
+  global writes have settled, or in reporting diagnostics; sharing one would
+  need the walk's output to stop depending on them. Whether either reduction
+  pays for its complexity is open.
 
 ## Compositional loan construction
 

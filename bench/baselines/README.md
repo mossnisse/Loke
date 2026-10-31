@@ -261,3 +261,58 @@ and value forms during construction moves cost from materialization, now
 Checking time is 3% lower on `bench/provenance.loke` and 6% lower on
 `corpus_runner`, and 2% higher on `bench/workspace`; the sampled arena peak
 changed by −7% to +3%.
+
+### Skipped summary visits and lock-free scratch arenas
+
+[provenance-visit-skip.json](provenance-visit-skip.json) records the working
+tree after commit `402c1508eee0addf1c2191304c1eb678e9a6707a`, measured on
+2026-10-31, against
+[provenance-visit-skip-before.json](provenance-visit-skip-before.json), that
+commit itself, captured just before on the same machine (Odin
+`dev-2026-10-nightly:84bc3fc`) with unchanged workload source hashes. Both
+compilers and language servers were built with `-o:speed`; no test suite or
+other compiler workload ran during capture. SHA-256 values:
+
+- before: `lokec.exe`
+  `03ae892fb20173f94f344789466149951a48b4b380cb680467438567433c35d6`,
+  `loke-lsp.exe`
+  `75d8a543175431267cfe050b5236d623adb388d87e3d21820ca07b9f20252e4f`.
+- after: `lokec.exe`
+  `6dbf31491e880590e07a6206e1c6dd4ff4ae535b7ee26d5264d5b67341ae339a`,
+  `loke-lsp.exe`
+  `94423406aeafc67bf119ece9a441fabd4ee45a56a8ec0bed7ff611ffc9880874`.
+
+```powershell
+.\perf.ps1 -Lokec <before>/lokec.exe -Lsp <before>/loke-lsp.exe -Out bench/baselines/provenance-visit-skip-before.json
+.\perf.ps1 -Lokec <after>/lokec.exe -Lsp <after>/loke-lsp.exe -Baseline bench/baselines/provenance-visit-skip-before.json -Out bench/baselines/provenance-visit-skip.json
+```
+
+| Workload | Before / after front end (ms) | Before / after compiler peak (MB) |
+| --- | ---: | ---: |
+| `bench/provenance.loke` | 21 / 21 | 12.1 / 12.0 |
+| `bench/workspace` | 184 / 162 | 72.7 / 68.2 |
+| `examples/corpus_runner.loke` | 249 / 228 | 103.0 / 97.1 |
+
+Front-end time fell 8-17% on the examples and benchmarks taking over 30 ms,
+and peak working set 1-7%. Workspace LSP measurements were open 406 / 358 ms,
+root edit 266 / 239 ms, library edit 329 / 310 ms, completion 263 / 245 ms, and
+peak working set 118.7 / 114.3 MB. All records completed, executable sizes
+stayed unchanged, and benchmark outputs matched.
+
+[provenance-visit-skip-profile.json](provenance-visit-skip-profile.json) is the
+probe's record of the same working tree; the parent's, captured the same way
+just before, is in the table:
+
+| Workload | Before / after check (ms) | Before / after body builds | Before / after normalize (ms) |
+| --- | ---: | ---: | ---: |
+| `bench/provenance.loke` | 9.6 / 8.9 | 113 / 90 | 2.2 / 1.6 |
+| `bench/workspace` | 131.5 / 111.5 | 1887 / 1471 | 57.9 / 43.5 |
+| `examples/corpus_runner.loke` | 187.2 / 160.4 | 2358 / 1857 | 84.5 / 66.2 |
+
+A summary visit is now skipped when no summary its body reads has grown since
+its last visit, which removes about a fifth of the body builds: on
+`bench/workspace`, 481 bodies are built once collecting global writes, 458 in
+discovery, 51 in the worklist (from about 470), and 481 for diagnostics. The
+analysis and replay arenas no longer take a lock per allocation, which a
+sampling profile put at about a tenth of each build. Replay and
+materialization fell with the builds; the sampled arena peak is unchanged.

@@ -1,0 +1,281 @@
+[
+  {
+    "program": "examples/aliasing.loke",
+    "input": "4e1c4480a8b03e0a",
+    "check_ms": 19.0,
+    "build_ms": 273.0,
+    "peak_mb": 12.5,
+    "exe_kb": 243.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/arena_pipeline.loke",
+    "input": "3ec9aa5d562f76c2",
+    "check_ms": 26.0,
+    "build_ms": 411.0,
+    "peak_mb": 15.2,
+    "exe_kb": 245.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/channels.loke",
+    "input": "20515597bc1f3678",
+    "check_ms": 68.0,
+    "build_ms": 536.0,
+    "peak_mb": 27.5,
+    "exe_kb": 261.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/compile_time.loke",
+    "input": "a6e2eeb29e371a43",
+    "check_ms": 19.0,
+    "build_ms": 281.0,
+    "peak_mb": 12.9,
+    "exe_kb": 246.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/config_parser.loke",
+    "input": "9aa797aa91fa3501",
+    "check_ms": 32.0,
+    "build_ms": 331.0,
+    "peak_mb": 18.0,
+    "exe_kb": 248.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/corpus_runner.loke",
+    "input": "c2fdd371f8e9cf08",
+    "check_ms": 249.0,
+    "build_ms": 4220.0,
+    "peak_mb": 103.0,
+    "exe_kb": 434.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/dice.loke",
+    "input": "a003f9c05b030684",
+    "check_ms": 177.0,
+    "build_ms": 896.0,
+    "peak_mb": 78.5,
+    "exe_kb": 259.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/game_of_life.loke",
+    "input": "8c01605cb4eaac42",
+    "check_ms": 23.0,
+    "build_ms": 1068.0,
+    "peak_mb": 11.8,
+    "exe_kb": 338.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/greeting.loke",
+    "input": "f4f618d566e22c95",
+    "check_ms": 172.0,
+    "build_ms": 1534.0,
+    "peak_mb": 72.1,
+    "exe_kb": 267.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/hello.loke",
+    "input": "c4cf66af675af63c",
+    "check_ms": 18.0,
+    "build_ms": 256.0,
+    "peak_mb": 11.0,
+    "exe_kb": 242.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/keys.loke",
+    "input": "82b245a9dfd929a5",
+    "check_ms": 65.0,
+    "build_ms": 419.0,
+    "peak_mb": 26.6,
+    "exe_kb": 250.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/lexer.loke",
+    "input": "7c96998319482d23",
+    "check_ms": 184.0,
+    "build_ms": 3038.0,
+    "peak_mb": 74.3,
+    "exe_kb": 366.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/lockstep.loke",
+    "input": "51befb641cfc92a9",
+    "check_ms": 137.0,
+    "build_ms": 1268.0,
+    "peak_mb": 64.6,
+    "exe_kb": 334.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/mixer.loke",
+    "input": "134e86d69466a7b2",
+    "check_ms": 119.0,
+    "build_ms": 850.0,
+    "peak_mb": 50.7,
+    "exe_kb": 257.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/orders.loke",
+    "input": "b462638f542f7b29",
+    "check_ms": 51.0,
+    "build_ms": 451.0,
+    "peak_mb": 22.7,
+    "exe_kb": 253.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/parallel.loke",
+    "input": "026dc2baa81cfa8d",
+    "check_ms": 44.0,
+    "build_ms": 358.0,
+    "peak_mb": 19.5,
+    "exe_kb": 248.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/shapes.loke",
+    "input": "bd0f06a20d9e2f1e",
+    "check_ms": 19.0,
+    "build_ms": 262.0,
+    "peak_mb": 12.0,
+    "exe_kb": 243.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/streaming.loke",
+    "input": "ecf2f82a5287c191",
+    "check_ms": 187.0,
+    "build_ms": 1898.0,
+    "peak_mb": 78.7,
+    "exe_kb": 258.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/timestamps.loke",
+    "input": "87004fd51e43a90e",
+    "check_ms": 126.0,
+    "build_ms": 897.0,
+    "peak_mb": 49.7,
+    "exe_kb": 278.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/tokens.loke",
+    "input": "43992d785f9d8062",
+    "check_ms": 20.0,
+    "build_ms": 297.0,
+    "peak_mb": 12.7,
+    "exe_kb": 244.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/tour.loke",
+    "input": "24d31b9eca4c4e85",
+    "check_ms": 20.0,
+    "build_ms": 262.0,
+    "peak_mb": 12.0,
+    "exe_kb": 243.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/word_frequency.loke",
+    "input": "e8c6a407e03a5794",
+    "check_ms": 20.0,
+    "build_ms": 299.0,
+    "peak_mb": 12.9,
+    "exe_kb": 245.0,
+    "run_ms": null
+  },
+  {
+    "program": "bench/collections.loke",
+    "input": "0b71e7b40d82c23f",
+    "check_ms": 40.0,
+    "build_ms": 333.0,
+    "peak_mb": 18.9,
+    "exe_kb": 246.0,
+    "run_ms": 412.0
+  },
+  {
+    "program": "bench/dense.loke",
+    "input": "796d0e0f14b591bc",
+    "check_ms": 451.0,
+    "build_ms": 2205.0,
+    "peak_mb": 199.5,
+    "exe_kb": 356.0,
+    "run_ms": 4868.0
+  },
+  {
+    "program": "bench/geometry.loke",
+    "input": "9806ee029871df36",
+    "check_ms": 423.0,
+    "build_ms": 2326.0,
+    "peak_mb": 205.2,
+    "exe_kb": 350.0,
+    "run_ms": 374.0
+  },
+  {
+    "program": "bench/linalg.loke",
+    "input": "ad32bf6189dfdc07",
+    "check_ms": 330.0,
+    "build_ms": 1604.0,
+    "peak_mb": 156.1,
+    "exe_kb": 298.0,
+    "run_ms": 13.0
+  },
+  {
+    "program": "bench/nbody.loke",
+    "input": "8bfa0afb9954b1cd",
+    "check_ms": 31.0,
+    "build_ms": 295.0,
+    "peak_mb": 15.7,
+    "exe_kb": 244.0,
+    "run_ms": 347.0
+  },
+  {
+    "program": "bench/once_contention.loke",
+    "input": "4b1c72c4b3d661c6",
+    "check_ms": 35.0,
+    "build_ms": 294.0,
+    "peak_mb": 16.9,
+    "exe_kb": 244.0,
+    "run_ms": 189.0
+  },
+  {
+    "program": "bench/provenance.loke",
+    "input": "aea29dc98bf06986",
+    "check_ms": 21.0,
+    "build_ms": 267.0,
+    "peak_mb": 12.1,
+    "exe_kb": 242.0,
+    "run_ms": 6.0
+  },
+  {
+    "program": "bench/workspace",
+    "input": "8d4f7e178bd3f332",
+    "check_ms": 184.0,
+    "build_ms": 963.0,
+    "peak_mb": 72.7,
+    "exe_kb": 258.0,
+    "run_ms": 6.0
+  },
+  {
+    "program": "bench/workspace (loke-lsp)",
+    "input": "8d4f7e178bd3f332",
+    "open_ms": 406.0,
+    "edit_ms": 266.0,
+    "library_edit_ms": 329.0,
+    "completion_ms": 263.0,
+    "server_peak_mb": 118.7
+  }
+]

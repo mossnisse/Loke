@@ -1007,7 +1007,6 @@ prov_effect_call :: proc(
 		if regions_of != nil || drops { prov_event(graph, use) }
 		return
 	}
-	name := effect_call_description(c, target, dropped, described, unnamed)
 	// design.md "Globals while tasks run": what the parent calls while its
 	// tasks run reaches what the callee's summaries say. The writes are noted
 	// where they become accesses below.
@@ -1025,9 +1024,15 @@ prov_effect_call :: proc(
 	} else {
 		prov_window_effect_use(graph, target, span)
 	}
+	writes := effect_call_writes(c, graph_body(graph), target)
+	if len(writes) == 0 {
+		return
+	}
+	// Described only for the accesses below, which most calls make none of.
+	name := effect_call_description(c, target, dropped, described, unnamed)
 	graph.effect_name = name
 	defer graph.effect_name = ""
-	for global in effect_call_writes(c, graph_body(graph), target) {
+	for global in writes {
 		// A task's `thread_local` writes are never the parent's at its spawn:
 		// a bare block's task has a thread of its own, and a pooled one runs
 		// on the parent's thread only at the join, which counts them there.

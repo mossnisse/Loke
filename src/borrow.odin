@@ -1510,10 +1510,33 @@ Checked_Body :: struct {
 analyze_program_provenance :: proc(k: ^Checker) {
 	compute_global_writes(k)
 	// Discovery records each body's callees. Source order may put a caller before
-	// its callee, so every body is then visited once more before the worklist.
+	// its callee, so every body is then queued once more before the worklist. A
+	// body's summary depends only on the summaries it reads, its recorded
+	// dependencies, as the worklist already relies on, so a queued body is
+	// visited again only when one of them grew since its last visit: `clock`
+	// counts growth, `grew_at` stamps each summary's latest, and `visited_at`
+	// each body's last visit.
+	clock := 0
+	grew_at := make([]int, len(k.c.symbols), context.temp_allocator)
+	visited_at := make([]int, len(k.c.symbols), context.temp_allocator)
+	visit :: proc(k: ^Checker, clock: ^int, grew_at, visited_at: []int, literal: ^Expr_Proc) -> bool {
+		visited_at[int(literal.symbol)] = clock^
+		grew := summarize_body(k, literal)
+		if grew {
+			clock^ += 1
+			grew_at[int(literal.symbol)] = clock^
+		}
+		return grew
+	}
+	stale :: proc(c: ^Compiler, grew_at, visited_at: []int, literal: ^Expr_Proc) -> bool {
+		for callee in c.result_summary_dependencies[literal.symbol] {
+			if grew_at[int(callee)] > visited_at[int(literal.symbol)] { return true }
+		}
+		return false
+	}
 	for body in k.c.checked_bodies {
 		if body.clean {
-			_ = summarize_body(k, body.literal)
+			_ = visit(k, &clock, grew_at, visited_at, body.literal)
 		}
 	}
 	queue := make([dynamic]^Expr_Proc, 0, len(k.c.checked_bodies), context.temp_allocator)
@@ -1543,7 +1566,10 @@ analyze_program_provenance :: proc(k: ^Checker) {
 	for head := 0; head < len(queue); head += 1 {
 		literal := queue[head]
 		queued[int(literal.symbol)] = false
-		grew := summarize_body(k, literal)
+		if !stale(k.c, grew_at, visited_at, literal) {
+			continue
+		}
+		grew := visit(k, &clock, grew_at, visited_at, literal)
 		register(k.c, &callers, registered, literal)
 		if !grew {
 			continue

@@ -623,6 +623,13 @@ checklist.
 
 ### Changed
 
+- Checking is faster: front-end time fell 8-17% on the examples and
+  benchmarks taking over 30 ms (`bench/workspace` 184 to 162 ms,
+  `examples/corpus_runner.loke` 249 to 228 ms), compiler peak working set
+  1-7%, and language-server operations on `bench/workspace` 6-12%.
+  Provenance summaries no longer rebuild a body none of whose callees'
+  summaries changed, and the per-body analysis arenas no longer lock on every
+  allocation. Diagnostics are unchanged.
 - A thread that finds a `sync.Once` action, or a `sync.Lazy(T)`'s `init`,
   still running now blocks after a short spin instead of spinning until it
   finishes, so slow setup no longer costs every waiting thread a processor
