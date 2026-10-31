@@ -11,7 +11,9 @@
 // and Once".
 //
 // The compiler owns the operations whose ordering is part of the instruction,
-// and everything here is ordinary Loke over them. A constant at the caller
+// and everything here is ordinary Loke over them and, for a thread waiting on
+// a `Once`, over kernel32's lock and condition variable, behind
+// `when (LOKE_OS == .Windows)` as in `core:time`. A constant at the caller
 // does not make an ordinary parameter constant inside this body, and the
 // intrinsics require a constant — so forwarding an ordering through a runtime
 // parameter would not compile, and a `$` one keeps it constant across the
@@ -194,13 +196,16 @@ impl Once {
 		returning means the action has *completed*, not merely started. Whatever
 		the action wrote is visible to every thread that returns from `do`.
 
+		A waiting thread blocks after a short spin, so a slow action costs the
+		threads waiting on it no processor time.
+
 		An action must not reach its own `once`: a re-entrant `do` waits for itself
 		and never returns, and nothing reports it.
 	*/
 	// The winner publishes with a release store and every other thread observes
 	// with an acquire load.
 	//
-	// The thread running the action is the one the wait below spins on. Detecting
+	// The thread running the action is the one `claim` waits for. Detecting
 	// re-entry needs a thread identity, which the library does not expose, so it
 	// is a rule rather than a diagnostic.
 	do :: proc(self: ^Once, action: proc()) {
@@ -230,22 +235,101 @@ impl Once {
 			ONCE_IDLE, ONCE_RUNNING, Memory_Order.Acquire, Memory_Order.Acquire,
 		);
 		if (won) { return true; }
-		// Another thread is running it. Spin on the acquire load rather than
-		// blocking: this implementation has no blocking wait for an atomic
-		// state change.
-		//
-		// ponytail: a spin, with no yield and no backoff. If a `Once` ever guards
-		// something slow, give this a platform wait — the state values already
-		// distinguish "running" from "done", which is what such a wait needs.
-		for (; observed == ONCE_RUNNING; observed = self.state.load(Memory_Order.Acquire)) { }
+		// Another thread is running it. A short spin catches an action that is
+		// about to finish, and after it the thread blocks until `settle` wakes
+		// it, so a slow action costs its waiters no processor time. Every exit
+		// from the loop is an acquire load, whether it spun, woke, or woke
+		// spuriously or for another `Once`.
+		spins := 0;
+		for (; observed == ONCE_RUNNING; observed = self.state.load(Memory_Order.Acquire)) {
+			if (spins < ONCE_SPINS) {
+				spins += 1;
+			} else {
+				wait_while_running(&self.state);
+			}
+		}
 		if (observed == ONCE_POISONED) { panic("a `Once` action panicked"); }
 		return false;
 	}
 
+	// The store comes first, so a waiter the wake misses is one that checks the
+	// state afterwards and does not sleep. It runs on unwinding too, which is how
+	// a waiter learns of a poisoning.
 	@(private)
 	settle :: proc(self: ^, finished: bool) {
 		self.state.store(ONCE_DONE if finished else ONCE_POISONED, Memory_Order.Release);
+		wake_waiters();
 	}
+}
+
+// How many reloads a waiter spends before it blocks. A wait and a wake are each
+// a trip into the system; an action that ends within this many loads is cheaper
+// to watch than to sleep through.
+@(private)
+ONCE_SPINS :: 100;
+
+when (LOKE_OS == .Windows) {
+
+// kernel32, which every host already links, rather than `WaitOnAddress`, whose
+// import library an object build's host would have to add. The declarations
+// match `core:thread`'s, since a symbol two packages declare must have one type.
+foreign import kernel32 "system:kernel32.lib";
+
+@(private)
+foreign kernel32 {
+	@(link_name="AcquireSRWLockExclusive")
+	rt_lock :: proc "stdcall" (lock: rawptr) ---;
+	@(link_name="ReleaseSRWLockExclusive")
+	rt_unlock :: proc "stdcall" (lock: rawptr) ---;
+	@(link_name="SleepConditionVariableSRW")
+	rt_sleep :: proc "stdcall" (condition: rawptr, lock: rawptr, milliseconds: u32, flags: u32) -> i32 ---;
+	@(link_name="WakeAllConditionVariable")
+	rt_wake_all :: proc "stdcall" (condition: rawptr) ---;
+}
+
+@(private) INFINITE :: u32(0xFFFFFFFF);
+
+// One SRWLOCK and one CONDITION_VARIABLE for every `Once` in the process: each
+// is one pointer, ready at zero, so static storage needs no setup, and a `Once`
+// stays one word. The cost is that settling any `Once` wakes the waiters of
+// every other, which find their own still running and sleep again. Waiting at
+// all is rare: it takes a second thread arriving during a slow action.
+@(private) wait_lock: static Atomic(uintptr) = {};
+@(private) wait_wake: static Atomic(uintptr) = {};
+
+// The check and the sleep both happen under the lock, and the sleep releases it
+// atomically, so a `settle` between them is impossible: it waits for the lock
+// until this thread is asleep. Nothing here can panic, so the lock is always
+// released by this thread, which took it. A spurious wakeup only checks again.
+@(private)
+wait_while_running :: proc(state: ^Atomic(u32)) {
+	rt_lock(rawptr(&wait_lock.value));
+	for (state.load(Memory_Order.Acquire) == ONCE_RUNNING) {
+		_ = rt_sleep(rawptr(&wait_wake.value), rawptr(&wait_lock.value), INFINITE, 0);
+	}
+	rt_unlock(rawptr(&wait_lock.value));
+}
+
+// Called after the state's store. Taking and releasing the lock means a waiter
+// that saw "running" under it is already asleep, so the wake reaches it; one
+// that checks later sees the new state. The settling thread takes and releases
+// the lock with nothing between, on unwinding too.
+@(private)
+wake_waiters :: proc() {
+	rt_lock(rawptr(&wait_lock.value));
+	rt_unlock(rawptr(&wait_lock.value));
+	rt_wake_all(rawptr(&wait_wake.value));
+}
+
+} else {
+
+// With no platform wait, a waiter spins on its reload.
+@(private)
+wait_while_running :: proc(state: ^Atomic(u32)) {}
+
+@(private)
+wake_waiters :: proc() {}
+
 }
 
 /**
@@ -269,9 +353,10 @@ Lazy :: struct($T: type) {
 impl Lazy($T) {
 	/**
 		The value, made by calling `init` if no thread has yet. A caller that
-		arrives while another thread is still making it waits, so the value is
-		always complete. If `init` panics, the `Lazy` is poisoned as a `Once`
-		is: every later call, and every call waiting on it, panics.
+		arrives while another thread is still making it waits, blocking after a
+		short spin as `Once.do` does, so the value is always complete. If
+		`init` panics, the `Lazy` is poisoned as a `Once` is: every later call,
+		and every call waiting on it, panics.
 
 		`init` must not reach this `Lazy`: a re-entrant `get` waits for itself
 		and never returns, and nothing reports it.
