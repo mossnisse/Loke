@@ -24,6 +24,13 @@ listed with its reason under [Withdrawn proposals](#withdrawn-proposals), so
 that it is not proposed again without an answer. Others were narrowed, and
 their **What is lost** now says what the first draft missed.
 
+A [review of these proposals](open-questions.md#review-of-the-design-review-proposals-2026-10-31)
+then checked the return and lifetime rules, LLVM capture semantics, and emitted
+code. Its five findings are incorporated below: preserve generic `Status`
+fallthrough and `any_view` lifetimes, prove address capture separately from
+borrow escape, prove slice bounds at each access, and remove the incorrect
+small-value ABI premise. The additional evidence is under [Probes](#probes).
+
 ## Contents
 
 - [Summary](#summary)
@@ -55,14 +62,15 @@ lost, in rough priority order:
 
 1. **`Status(E)` is `Result(Unit, E)`** through a parametric type alias, which
    removes a nominal type and the wart that generic code over `Result` does not
-   accept a `Status` ([2.3](#23-status-is-resultunit-e)).
+   accept a `Status`. The return rule must preserve fallthrough when only the
+   failure type is generic ([2.3](#23-status-is-resultunit-e)).
 2. **One type kind for sums.** `enum` and `union` share one kind in the
    checker, the emitter, and reflection, and one reflection descriptor; the
    integer mapping and ordering stay `enum`'s
    ([2.1](#21-sums-one-type-kind-for-enum-and-union)).
 3. **One erasure lowering.** `any_view` is represented as a `dyn` view whose
    witness carries the `typeid` and the format thunk, so printing calls the
-   formatter directly; the language surface does not change
+   formatter directly; its existing storage and temporary-lifetime rules stay
    ([2.4](#24-existentials-any_view-as-a-dyn-view)).
 4. **Effects stated once**, as one algebra that the four inferred effects
    read ([2.6](#26-effects-as-one-algebra)).
@@ -74,9 +82,10 @@ lost, in rough priority order:
    already gone ([5](#5-deletion-candidates)).
 7. **Generated-code performance.** Mark the panic entry `cold noreturn`; inline
    the container fast paths, first by linking the runtime as bitcode; trim the
-   unwind bookkeeping; prove the common index arithmetic overflow-free; and emit
-   `noalias` from the facts the borrow checker proves once the gaps it depends
-   on are closed ([6](#6-performance-of-the-generated-code)).
+   unwind bookkeeping; prove common index arithmetic overflow-free and indexed
+   views' bounds stable; and emit `noalias` once its soundness prerequisites
+   hold. Capture attributes need their own proof
+   ([6](#6-performance-of-the-generated-code)).
 
 Except where a section's **What is lost** says otherwise, none of these changes
 what a Loke program can express.
@@ -204,15 +213,24 @@ one procedure, and generic code over `Result` takes a `Status`.
 [Parametric aliases](open-questions.md#parametric-aliases) says such an alias
 would not merge the two because their end-of-body rules differ; this proposal
 removes the difference. The rule becomes: a procedure whose written result,
-after alias expansion, has a success variant that carries nothing or carries
-`Unit`, and that names no generic argument, may reach its end. That is the
-exclusion [Success returns](design.md#success-returns) already uses, so a
-generic `Result($T, E)` body still does not change meaning with its instance,
-and the rule is stated once.
+after alias expansion, has a success known to carry nothing or `Unit`
+independently of its generic arguments may reach its end or use bare `return;`.
+Generic arguments in the failure payload do not disqualify it: `Status(E)`
+expands to `Result(Unit, E)` and keeps both forms even when `E` is generic.
+A generic `Result(T, E)` does not gain them merely because one instance sets
+`T` to `Unit`.
+
+This is a separate rule from implicit success wrapping under
+[Success returns](design.md#success-returns), whose generic exclusion also
+depends on the failure variant having a payload. Applying that exclusion to
+the whole result here would reject currently valid generic `Status(E)` bodies
+([Probes](#probes)). Alias expansion must preserve enough information to make
+the success decision independent of a particular instantiation.
 
 **What is lost.** Nothing a program can write. `return .ok;` stays valid; it is
-already how a `Result(Unit, E)` returns. A non-generic procedure written
-`-> Result(Unit, E)` may now reach its end, as a `Status(E)` one may.
+already how a `Result(Unit, E)` returns. A procedure written
+`-> Result(Unit, E)` may now reach its end or use `return;`, including when
+`E` is generic, as a `Status(E)` one may.
 Diagnostics should keep the alias a type was written with, or every `Status(E)`
 in an error message reads `Result(Unit, E)`.
 
@@ -238,9 +256,16 @@ carry directly.
   witness starts with the concrete type's `typeid` and holds its format thunk.
   Printing calls the thunk directly; the type `switch`, `.(T)`, and `.as(T)`
   compare the `typeid`.
-- design.md states `any_view`'s lifetime rules as those of a `dyn` view, plus
-  its two differences: conversion to it is implicit at an `any_view`
-  destination, and a `..any_view` parameter may form a temporary slice.
+- Keep [all of `any_view`'s source-level rules](design.md#any_view-type).
+  Conversion is implicit at an `any_view` destination, and a `..any_view`
+  parameter may form a temporary slice. An `any_view` still cannot be a result,
+  global, field, ordinary container element, or captured/stored value.
+- Preserve temporary lifetime extension: a temporary converted into an
+  `any_view` local lives until block end; one converted for a call lives through
+  that complete call expression. An ordinary `dyn` view follows slice lifetime
+  rules and its view of a temporary lasts only for the complete expression
+  ([Borrowed dynamic interface values](design.md#borrowed-dynamic-interface-values)).
+  Sharing representation and dispatch does not replace these distinct rules.
 
 **What is lost.** Nothing a program can write. The cost is a witness table per
 erased type, which the format-thunk table already is, with a word for the
@@ -627,7 +652,7 @@ thing. Each row names the replacement and what is lost.
 
 | Delete | Replaced by | Lost | Priority |
 | --- | --- | --- | --- |
-| `Status` as a nominal type, `Status.map_error` | `Status :: Result(Unit, $E)` ([2.3](#23-status-is-resultunit-e)) | Nothing; a non-generic `Result(Unit, E)` gains the end-of-body rule | High |
+| `Status` as a nominal type, `Status.map_error` | `Status :: Result(Unit, $E)` ([2.3](#23-status-is-resultunit-e)) | Nothing; `Result(Unit, E)` gains fallthrough and bare `return;`, including for generic `E` | High |
 | `enum_values_of`, `meta.Enum_Value`, a separate enum kind | `variants_of`, `meta.Variant` with `value`, one sum kind ([2.1](#21-sums-one-type-kind-for-enum-and-union)) | Nothing | Medium |
 | Type-position attributes, inline nominal `enum`/`union` | Declaration attributes ([3.1](#31-attributes-in-one-position)) | `[size_of(enum { A, B })]u8` | Medium |
 | `move_only` keyword | `@(move_only)` ([2.8](#28-affine-types-a-drop-hook-needs-a-copy-decision)) | A reserved word | Medium |
@@ -680,14 +705,26 @@ access. For the duration of a call, then:
   call, which is what lets loads move. Rust emits the same pair for a `&T`
   whose type has no interior mutability;
 - a `value: T` parameter that travels by pointer ("borrowed for the call;
-  borrows of its own storage cannot escape") is `noalias readonly` and
-  `captures(none)` under the same exclusion;
-- a `@(escape=none)` parameter is `captures(none)` whatever its mode.
+  borrows of its own storage cannot escape") is a candidate for
+  `noalias readonly` under the same exclusion.
 
-This is exactly the argument Rust makes for `&mut` and `&`. Slices and views
-need one ABI change to carry attributes: pass the data pointer and length as
-separate scalar parameters in the `loke` convention, which is private to the
-compiler. The gain is the usual one for `noalias`: loads hoisted out of loops
+**Capture is a separate property.** Neither value-parameter storage rules nor
+`@(escape=none)` imply `captures(none)`. Loke's
+[escape levels](design.md#escape-levels) restrict retained borrows, but a
+procedure may still return whether two pointer arguments have equal addresses.
+LLVM counts that observable result as
+[address capture](https://llvm.org/docs/LangRef.html#address-capture), even
+when no borrow survives the call ([Probes](#probes)). Emit `captures(none)`
+only after proving that neither address nor provenance escapes. If the address
+may escape, `captures(address)` is a candidate only after proving that
+provenance cannot escape, including through unchecked operations. Otherwise
+omit the capture attribute.
+
+To attach pointer parameter attributes to slices, expose their data pointer and
+length as separate scalar LLVM parameters in the `loke` convention, which is
+private to the compiler. This is distinct from machine register passing, which
+already handles the example slice ([6.5](#65-union-layout-and-small-values)).
+The gain is the usual one for `noalias`: loads hoisted out of loops
 across stores, vectorization of loops that write through one slice and read
 another, and fewer reloads around calls.
 
@@ -714,6 +751,8 @@ into undefined behavior that the optimizer exploits, so they come last:
   addresses stored in `%uenv` reach the runtime, which limits what LLVM may
   assume about those locals and may cancel some of the gain
   ([6.3](#63-unwind-bookkeeping)).
+- Prove capture attributes independently. Closing the borrow-checker gaps and
+  stating an aliasing rule do not rule out observable address capture.
 
 ### 6.2 Container operations in IR, not through an operation table
 
@@ -799,8 +838,14 @@ cost:
   `rows * columns` was computed, checked, before the loop. The emitter can then
   write `add nsw` and a plain `getelementptr` instead of the checked forms. The
   same facts remove the bounds check on `xs[i]` inside a loop over
-  `0 ..< xs.len()` when the body cannot change `xs`'s length, which holds for
-  a slice and not for a `[dynamic]T` the body appends to.
+  `0 ..< xs.len()` only when the compiler proves the index is in bounds for
+  the view used at that access. A sufficient condition is an unchanged valid
+  header throughout the loop, including across calls and writes through mutable
+  aliases. Slice type alone proves no such invariance: `xs = xs[:0]` can
+  replace its header while the range retains its original bound, and a later
+  `xs[i]` must still panic ([Probes](#probes)). Read-only elements do not make
+  the slice variable constant. Track this fact for both slices and dynamic
+  arrays, invalidating it when a write or call can change it.
 - **Loop versioning** for the remaining affine index expressions: check once
   before the loop that the maximum index fits, and run an unchecked body when
   it does, the checked body otherwise. LLVM does this for runtime alias checks
@@ -817,10 +862,18 @@ The open item on compiler-chosen union layout
 ([Performance opportunities and actual semantic limits](open-questions.md#performance-opportunities-and-actual-semantic-limits))
 is endorsed: `Result(Option(T), E)` and a `Result(Small, Enum)` should fit
 their niches, with `@(repr=...)` for a stable layout where foreign code or
-serialization needs one. Independently, the `loke` convention could pass a
-two-word record such as a slice or an `Option(^T)` in registers rather than
-as an LLVM aggregate, which the current `LARGE_VALUE_BYTES` rule handles
-only by address.
+serialization needs one.
+
+The earlier claim that slices and `Option(^T)` need a new register-passing ABI
+was incorrect. `LARGE_VALUE_BYTES` is 4,096 bytes, and smaller ordinary values
+already travel as LLVM values. An LLVM aggregate does not imply an indirect
+machine argument: the assembly probe receives a slice in `rcx` and `rdx` and
+an `Option(^int)` in `rcx` alone ([Probes](#probes)). The option already uses
+the null niche specified under [Representation](design.md#representation).
+There is no demonstrated small-value ABI change to recommend here. Any further
+change needs a measured case; exposing a slice's pointer for attributes under
+[6.1](#61-alias-attributes-from-facts-the-checker-already-proves) is a separate
+reason to change its LLVM signature.
 
 ### 6.6 What not to do
 
@@ -849,9 +902,10 @@ reduction, a separately named operation says so, for example
   ([2.6](#26-effects-as-one-algebra)), the "takes its element like an
   initialization" rule, which [Container insertion](design.md#container-insertion),
   `box`, `shared`, `find_or_insert`, variant construction, and record literals
-  each restate, and the generic-argument exclusion
+  each restate, and the rule for fallthrough and bare `return;`
   ([2.3](#23-status-is-resultunit-e)) each appear in several places with
-  slightly different wording.
+  slightly different wording. Keep the latter distinct from the generic
+  restriction on implicit success wrapping.
 - **Editorial defects found while reading**, fixed in design.md in the same
   change as this review:
   - [Implicit type conversions](design.md#implicit-type-conversions) listed
@@ -882,19 +936,23 @@ compiler, test, and changelog change in one commit as AGENTS.md requires.
    ([6.2](#62-container-operations-in-ir-not-through-an-operation-table)), and
    a leaner unwind bookkeeping ([6.3](#63-unwind-bookkeeping)). Measure each
    with `perf.ps1` and the `bench/` workloads before and after.
-3. Parametric aliases with `Status` as the first user, and one type kind for
-   `enum` and `union`. Both are mostly internal and shrink reflection and the
-   error catalogue.
+3. Design parametric aliases with `Status` as the first user: settle inference,
+   interface-file representation, and generic fallthrough and bare-return rules
+   before implementation. Separately, consider one type kind for `enum` and
+   `union`, with an explicit migration for public reflection consumers.
 4. `any_view` lowered as a `dyn` view. Depends on nothing above; touches the
-   witness layout and the printing path.
+   witness layout and the printing path while preserving its storage
+   restrictions and temporary lifetimes.
 5. Attributes in one position, `@(move_only)`, and the copy decision for drop
    hooks.
 6. Range facts and loop versioning for checked arithmetic
-   ([6.4](#64-checked-arithmetic-and-bounds-in-loops)), then measure the
-   dense kernels again; container fast paths in IR if step 2 left them hot.
+   ([6.4](#64-checked-arithmetic-and-bounds-in-loops)), with bounds proofs that
+   account for reassigned slices, aliases, and calls. Then measure the dense
+   kernels again; container fast paths in IR if step 2 left them hot.
 7. Alias attributes ([6.1](#61-alias-attributes-from-facts-the-checker-already-proves)),
    after the soundness gaps they depend on are closed and design.md states the
-   aliasing rule for unchecked code.
+   aliasing rule for unchecked code. Capture attributes require a separate
+   proof covering address observation and provenance escape.
 8. If `inout` is folded into `^mut T` at all ([2.9](#29-one-capability-axis)),
    last: it is the largest surface change, and it needs the formatter able to
    rewrite call sites and receivers mechanically. The explanation in
@@ -1032,3 +1090,64 @@ to its data pointer in this ABI. The container runtime boundary was read from
 `runtime/loke_rt.h` and `src/emit_llvm_containers.odin`: `append`, `insert`,
 `pop`, `remove`, `resize`, `clone`, `drop`, and every map operation are calls
 into prebuilt C taking a `loke_rt_container_ops_v1` table.
+
+**Follow-up checks of the proposals.** A compiler freshly built from
+`55610f79` with Odin vet checks ran the following program successfully:
+
+```loke
+package main;
+import "core:fmt";
+
+same :: proc(@(escape=none) a: ^int, @(escape=none) b: ^int) -> bool {
+	return a == b;
+}
+
+succeed :: proc(error: $E) -> Status(E) {
+	_ = error;
+}
+
+main :: proc() {
+	x := 1;
+	y := 2;
+	fmt.println(same(&x, &x), same(&x, &y));
+	fmt.println(succeed(42));
+	view: any_view = [dynamic]int{1, 2};
+	fmt.println(view);
+}
+```
+
+```text
+true false
+.ok
+[1, 2]
+```
+
+The comparison observes addresses without retaining borrows; the generic
+`Status(E)` body falls through; and the temporary viewed by the local
+`any_view` remains alive for the following statement.
+
+The same compiler accepted this program, which panicked with `index out of
+range` and exit code 3:
+
+```loke
+package main;
+import "core:fmt";
+
+main :: proc() {
+	values := [2]int{10, 20};
+	xs := values[:];
+	foreach (i in 0 ..< xs.len()) {
+		xs = xs[:0];
+		fmt.println(xs[i]);
+	}
+}
+```
+
+The range bound does not shrink when the slice is reassigned. The panic is
+required behavior for a bounds-removal optimization to preserve.
+
+Finally, Clang assembly generated from emitted IR with `-S -O0` showed that
+the `sum(xs: []int)` procedure above receives the slice's two words in `rcx`
+and `rdx`. A procedure taking `Option(^int)` received its single word in
+`rcx`. These observations check the small-argument ABI claim; they are not
+performance measurements or a claim about every aggregate shape.

@@ -11,6 +11,132 @@ Design rationale and differences from Odin are recorded in
 The current behavior inventory is in [Nondeterminism and undefined behavior
 audit](nondeterminism-audit.md).
 
+## Review of the design-review proposals (2026-10-31)
+
+Reviewed the full [language design review](design-review-2026-10-31.md#summary)
+against the specification and selected checker, emitter, and runtime paths.
+Five issues were found in the reviewed draft; these concerned the proposed
+changes, not current compiler divergences. All five are now addressed in the
+review document. The findings below retain the evidence and implementation
+prerequisites; the language changes themselves remain proposals.
+
+1. **Do not derive `captures(none)` from borrow escape levels (P1).**
+   [Section 6.1](design-review-2026-10-31.md#61-alias-attributes-from-facts-the-checker-already-proves)
+   originally mapped every `@(escape=none)` parameter to this LLVM attribute.
+   Loke's [escape levels](design.md#escape-levels) restrict retained borrows; they do
+   not prohibit observing a pointer's address. This valid procedure returns
+   `true` for equal addresses and `false` for different ones:
+
+   ```loke
+   same :: proc(@(escape=none) a: ^int, @(escape=none) b: ^int) -> bool {
+       return a == b;
+   }
+   ```
+
+   LLVM counts that observable result as
+   [address capture](https://llvm.org/docs/LangRef.html#address-capture), even
+   though no borrow survives the call. Adding `captures(none)` would therefore
+   violate the IR contract for a valid program. The proposal needs a separate
+   address-capture analysis; consider `captures(address)` only after proving
+   that provenance cannot escape through the unchecked routes either. Closing
+   the listed borrow-checker gaps alone does not establish this property.
+
+2. **Prove the indexed slice remains unchanged across the loop (P1).**
+   [Section 6.4](design-review-2026-10-31.md#64-checked-arithmetic-and-bounds-in-loops)
+   originally said the required length stability holds for a slice. A slice
+   variable can be reassigned, including by reslicing itself; read-only elements
+   do not make its header constant. This accepted program must panic:
+
+   ```loke
+   values := [2]int{10, 20};
+   xs := values[:];
+   foreach (i in 0 ..< xs.len()) {
+       xs = xs[:0];
+       fmt.println(xs[i]);
+   }
+   ```
+
+   The range retains its original bound while indexing uses the new header.
+   Removing the check merely because `xs` has slice type changes the result.
+   Require a proof about the actual header/length at each access, including
+   writes through mutable aliases and calls. The broader range-analysis
+   proposal remains useful with that prerequisite.
+
+3. **Preserve generic `Status(E)` fallthrough when designing the alias (P2).**
+   [Section 2.3](design-review-2026-10-31.md#23-status-is-resultunit-e)
+   originally permitted falling through only when the expanded written result
+   named no generic argument. That excludes `Status(E)` when `E` is generic, even
+   though its success is always empty. This currently compiles and succeeds:
+
+   ```loke
+   succeed :: proc(error: $E) -> Status(E) {
+       _ = error;
+   }
+   ```
+
+   The proposed expansion is `Result(Unit, E)` and still names `E`, so the
+   stated rule would reject this body. Distinguish a generic-dependent success
+   payload from a generic failure payload, and specify bare `return;` alongside
+   fallthrough. [Success returns](design.md#success-returns) currently separates
+   payloadless success from the generic restriction on implicit wrapping; it
+   does not supply the single exclusion the proposal claims. The alias itself
+   remains worth designing, with inference and interface-file rules settled
+   before it is described as mostly internal.
+
+4. **Keep `any_view`'s storage and temporary rules when sharing its lowering
+   (P2).**
+   [Section 2.4](design-review-2026-10-31.md#24-existentials-any_view-as-a-dyn-view)
+   originally proposed using `dyn` lifetime rules with only implicit conversion
+   and variadic packing as differences. [An `any_view`](design.md#any_view-type)
+   also cannot be a result, field, ordinary container element, or captured
+   value; [ordinary `dyn` views](design.md#borrowed-dynamic-interface-values)
+   follow slice lifetimes instead. A temporary converted into an `any_view`
+   local lives to block end, whereas the ordinary `dyn` rule limits a view of
+   a temporary to its complete expression. For example,
+   `view: any_view = [dynamic]int{1, 2};` followed by `fmt.println(view);` is
+   valid today. Sharing a witness representation is compatible with retaining
+   these rules, but replacing them as written is a language change. List them
+   explicitly or narrow the proposal to representation and dispatch.
+
+5. **Remove the incorrect small-value ABI premise (P2).**
+   [Section 6.5](design-review-2026-10-31.md#65-union-layout-and-small-values)
+   originally attributed address-only passing of slices and `Option(^T)` to
+   `LARGE_VALUE_BYTES`. In [the emitter](src/emit_llvm_expr.odin) that threshold
+   is 4,096 bytes, not two words; [parameter lowering](src/emit_llvm_abi.odin)
+   passes smaller ordinary values as LLVM values. A fresh `-O0` assembly probe
+   receives a slice's pointer and length in `rcx` and `rdx`, and an
+   `Option(^int)` in `rcx` alone. The option already uses the null niche under
+   [Representation](design.md#representation). An LLVM aggregate does not by
+   itself mean an indirect machine argument. Remove this claimed opportunity
+   and measure a specific remaining ABI problem before changing the convention.
+   Scalarizing slices to attach pointer attributes is a separate justification
+   under section 6.1; general nested-union layout work also remains open.
+
+The strongest next steps are measured runtime LTO and unwind-bookkeeping
+experiments, explicit copy decisions beside drop hooks, and consolidating the
+specification's shared effect-resolution rules. Consolidation must retain
+per-call region substitution and the distinction between a pooled join and a
+spawn's effects on the parent's thread-local storage; see
+[Structured concurrency](design.md#structured-concurrency) and
+[Allocators and tasks](design.md#allocators-and-tasks).
+
+Treat enum/union implementation sharing and attribute placement as separate
+refactors with explicit public reflection and syntax migrations. Keep the
+reflection deletion and `Uninit(T)` replacement as open design questions: the
+latter trades generated prefix cleanup, including partial-copy failure cleanup,
+for manually maintained unsafe lifecycle code. The review's decision to retain
+`inout` is reasonable. Deleting `using`, typed SIMD splats, success returns, or
+`Option.ok_or`, and adding `some` or predeclared interfaces, are language-usage
+tradeoffs rather than demonstrated implementation wins; representative programs
+should decide their priority. The withdrawn proposals need not be reopened by
+any finding here.
+
+Validation used a fresh compiler built from `55610f79` with Odin vet checks.
+The pointer-comparison, generic-`Status`, and temporary-`any_view` probes ran
+successfully; the resliced-loop probe compiled and panicked with `index out of
+range` (exit 3), as required. A separate emitted-IR/Clang assembly probe checked
+small-value argument passing. No language or compiler changes were applied.
+
 ## Review of remaining generic aliases and view starts (2026-10-31)
 
 Reviewed `1d4a0c29` ("Read the remaining generic alias targets for private
