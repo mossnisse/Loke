@@ -1,0 +1,17 @@
+package main;
+
+// A procedure that registers no cleanup publishes no local for a replay: its
+// parameters, its locals, and a loop binding stored on every iteration all
+// stay out of an env it would never pass to the runtime, and none of the
+// frame's records is allocated.
+
+sum :: proc(xs: []int) -> int {
+	total := 0;
+	foreach (x in xs) { total += x; }
+	return total;
+}
+
+main :: proc() {
+	values := [3]int{1, 2, 3};
+	_ = sum(values[:]);
+}

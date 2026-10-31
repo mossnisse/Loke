@@ -52,6 +52,8 @@ Deferred :: struct {
 Unwind_Env_Binding :: struct {
 	symbol: Symbol_Id,
 	index:  int,
+	// Whether the thunk reads it. One it does not is never stored.
+	read: bool,
 }
 
 // One procedure's runtime-visible cleanup registration. A panic never unwinds
@@ -197,10 +199,11 @@ unwind_publish_env :: proc(e: ^Emitter, index: int, address: string) {
 	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", address, unwind_env_address(e, index))
 }
 
-// Names a local and publishes its address into the env for the thunk.
-//
-// ponytail: every local is published, not just the ones a cleanup names;
-// narrowing it needs a free-variable walk over every deferred statement.
+// Names a local and publishes its address into the env for the thunk. Which
+// locals the thunk reads is known only once it is written, after the body, so
+// every one is stored here through its slot's name, and
+// `without_unread_bindings` then removes the stores of those it does not read.
+// The prologue defines the names of those it does.
 @(private)
 bind_local :: proc(e: ^Emitter, symbol_id: Symbol_Id, name: string) {
 	e.names[symbol_id] = name
@@ -208,10 +211,55 @@ bind_local :: proc(e: ^Emitter, symbol_id: Symbol_Id, name: string) {
 	if symbol_id == INVALID_SYMBOL || !unwind_enabled(e) || e.unwind.env == "" {
 		return
 	}
-	fmt.sbprintfln(
-		&e.b, "  store ptr %s, ptr %s",
-		name, unwind_env_address(e, unwind_env_slot(e, symbol_id)),
-	)
+	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s.%d", name, e.unwind.env, unwind_env_slot(e, symbol_id))
+}
+
+// The body without the env stores of the locals the thunk does not read, which
+// are all of them when nothing is registered. Each such store is a line of its
+// own, ending in the slot's name.
+@(private)
+without_unread_bindings :: proc(e: ^Emitter, body: string) -> string {
+	u := &e.unwind
+	unread := make(map[int]bool, len(u.env_bindings), context.temp_allocator)
+	for binding in u.env_bindings {
+		if !binding.read {
+			unread[binding.index] = true
+		}
+	}
+	if len(unread) == 0 {
+		return body
+	}
+	needle := fmt.tprintf(", ptr %s.", u.env)
+	stripped := strings.builder_make(0, len(body))
+	kept, from := 0, 0
+	for {
+		at := strings.index(body[from:], needle)
+		if at < 0 {
+			break
+		}
+		at += from
+		digits := at + len(needle)
+		end := digits
+		for end < len(body) && body[end] >= '0' && body[end] <= '9' {
+			end += 1
+		}
+		from = end
+		if end == digits || end >= len(body) || body[end] != '\n' {
+			continue
+		}
+		index := 0
+		for c in body[digits:end] {
+			index = index * 10 + int(c - '0')
+		}
+		if !unread[index] {
+			continue
+		}
+		start := strings.last_index_byte(body[:at], '\n') + 1
+		strings.write_string(&stripped, body[kept:start])
+		kept = end + 1
+	}
+	strings.write_string(&stripped, body[kept:])
+	return strings.to_string(stripped)
 }
 
 @(private = "file")
@@ -257,35 +305,34 @@ unwind_clear :: proc(e: ^Emitter, slot: int) {
 	fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", unwind_live_address(e, slot))
 }
 
-// The frame prologue, written once the body is emitted and the array lengths
-// are known.
+// The frame prologue, written once the body and the thunk are emitted and the
+// array lengths and the locals the thunk reads are known.
 @(private)
 emit_unwind_prologue :: proc(e: ^Emitter) {
 	u := &e.unwind
-	if u.frame == "" {
+	if u.frame == "" || len(u.actions) == 0 {
+		// Nothing is registered, so nothing is pushed or replayed: the body's
+		// pops and env stores are gone (`without_unpushed_pops`,
+		// `without_unread_bindings`), and no slot is named.
 		return
 	}
-	// `{` is a directive to core:fmt, so the record type is written literally.
-	FRAME :: "{ ptr, ptr, ptr }"
-	alloca_named(e, u.frame, FRAME)
-	fmt.sbprint(&e.b, "  store ")
-	fmt.sbprint(&e.b, FRAME)
-	fmt.sbprint(&e.b, " zeroinitializer, ptr ")
-	fmt.sbprintln(&e.b, u.frame)
-	if len(u.actions) == 0 && u.env_count == 0 {
-		// Nothing is pushed; the zeroed record makes the epilogue's pop a no-op.
-		return
-	}
-	alloca_named(e, u.live, fmt.aprintf("[%d x i1]", max(len(u.actions), 1)))
+	// `{` is a directive to core:fmt, so the record type is written literally;
+	// the push fills in all of it.
+	alloca_named(e, u.frame, "{ ptr, ptr, ptr }")
+	alloca_named(e, u.live, fmt.aprintf("[%d x i1]", len(u.actions)))
 	fmt.sbprintfln(
 		&e.b, "  call void @llvm.memset.p0.i64(ptr %s, i8 0, i64 %d, i1 false)",
-		u.live, max(len(u.actions), 1),
+		u.live, len(u.actions),
 	)
 	alloca_named(e, u.env, fmt.aprintf("[%d x ptr]", max(u.env_count, 1)))
-	alloca_named(e, u.ctx, "[2 x ptr]")
-	if len(u.actions) == 0 {
-		return
+	for binding in u.env_bindings {
+		if binding.read {
+			fmt.sbprintfln(
+				&e.b, "  %s.%d = getelementptr ptr, ptr %s, i64 %d", u.env, binding.index, u.env, binding.index,
+			)
+		}
 	}
+	alloca_named(e, u.ctx, "[2 x ptr]")
 	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", u.live, u.ctx)
 	slot := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = getelementptr ptr, ptr %s, i64 1", slot, u.ctx)
@@ -356,11 +403,11 @@ begin_generated_frame :: proc(e: ^Emitter, name: string) -> strings.Builder {
 // Called once the body's closing brace is written.
 @(private)
 end_generated_frame :: proc(e: ^Emitter, header: strings.Builder) {
-	body := without_unpushed_pops(e, strings.to_string(e.b))
+	emit_unwind_thunk(e)
+	body := without_unread_bindings(e, without_unpushed_pops(e, strings.to_string(e.b)))
 	e.b = header
 	emit_unwind_prologue(e)
 	strings.write_string(&e.b, body)
-	emit_unwind_thunk(e)
 	// The thunk is a function of its own, so it waits for the end of the module.
 	append(&e.pending_thunks, ..e.pending[:])
 	clear(&e.pending)
@@ -378,8 +425,9 @@ emit_unwind_thunk :: proc(e: ^Emitter) {
 	// its unwind actions and result slot among it, since it replays the parent's
 	// own actions. What it emits into starts empty, and the whole state is put
 	// back afterwards. It runs once the parent's body is done, with no
-	// temporary frame open.
-	parent, parent_body := e.fn, e.b
+	// temporary frame open, and before the parent's prologue, which names only
+	// the env slots it reads.
+	parent, parent_body, parent_live := e.fn, e.b, u.live
 	e.b = strings.builder_make()
 	e.terminated = false
 	e.cleanups = make([dynamic]Cleanup_Scope)
@@ -393,12 +441,20 @@ emit_unwind_thunk :: proc(e: ^Emitter) {
 	u.live = load(e, "ptr", "%ctx")
 	env := unwind_env_load(e, "%ctx", 1)
 
-	// Rebind every published local to its address in the env. An empty saved
-	// name means "had none", and is deleted rather than restored.
+	// Rebind every published local to the value its address will be loaded
+	// into from the env. The loads are written once the replay is, and only for
+	// the locals it names. An empty saved name means "had none", and is deleted
+	// rather than restored.
+	loads_at := len(e.b.buf)
 	saved_names := make([dynamic]string, 0, len(u.env_bindings))
-	for binding in u.env_bindings {
+	values := make([dynamic]string, 0, len(u.env_bindings), context.temp_allocator)
+	reads := make(map[string]int, len(u.env_bindings), context.temp_allocator)
+	for binding, index in u.env_bindings {
 		append(&saved_names, e.names[binding.symbol])
-		e.names[binding.symbol] = unwind_env_load(e, env, binding.index)
+		value := temp(e)
+		append(&values, value)
+		e.names[binding.symbol] = value
+		reads[value] = index
 	}
 
 	// The `%deferN` flags are parent allocas the thunk cannot reach. Each gets a
@@ -449,6 +505,35 @@ emit_unwind_thunk :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "}")
 	fmt.sbprintln(&e.b, "")
 
+	// A local the replay read is one its text names after the loads' place.
+	replay := strings.to_string(e.b)
+	for at := loads_at; at < len(replay); {
+		found := strings.index_byte(replay[at:], '%')
+		if found < 0 {
+			break
+		}
+		start := at + found
+		end := start + 1
+		for end < len(replay) && llvm_name_char(replay[end]) {
+			end += 1
+		}
+		if index, bound := reads[replay[start:end]]; bound {
+			u.env_bindings[index].read = true
+		}
+		at = end
+	}
+	loads := strings.builder_make()
+	// A local the replay binds again, as one declared in a deferred block, has
+	// a name of the replay's own by now, so the values are the ones chosen above.
+	for binding, index in u.env_bindings {
+		if binding.read {
+			address := temp(e)
+			fmt.sbprintfln(&loads, "  %s = getelementptr ptr, ptr %s, i64 %d", address, env, binding.index)
+			fmt.sbprintfln(&loads, "  %s = load ptr, ptr %s", values[index], address)
+		}
+	}
+	text := strings.concatenate({replay[:loads_at], strings.to_string(loads), replay[loads_at:]})
+
 	for binding, index in u.env_bindings {
 		if saved_names[index] == "" {
 			delete_key(&e.names, binding.symbol)
@@ -456,8 +541,19 @@ emit_unwind_thunk :: proc(e: ^Emitter) {
 		}
 		e.names[binding.symbol] = saved_names[index]
 	}
-	append(&e.pending, splice_prologue(e, strings.to_string(e.b), e.prologue[:]))
+	append(&e.pending, splice_prologue(e, text, e.prologue[:]))
 	e.fn, e.b = parent, parent_body
+	u.live, u.replaying = parent_live, false
+}
+
+// A character that continues an LLVM local name after its `%`.
+@(private = "file")
+llvm_name_char :: proc(c: u8) -> bool {
+	switch c {
+	case 'a' ..= 'z', 'A' ..= 'Z', '0' ..= '9', '.', '_', '-', '$':
+		return true
+	}
+	return false
 }
 
 // Registers a partially constructed compiler-owned value for panic replay only;

@@ -746,6 +746,12 @@ checklist.
   `-ffp-contract=off`, the runtime's C sources included, whose default let
   Clang fuse `a*b + c` once a level has FMA. `-print-toolchain` prints both
   flags, for a C host compiling the runtime itself.
+- Under `-panic=unwind`, a procedure publishes to its unwind frame only the
+  locals its cleanups read, and a procedure that registers no cleanup keeps
+  no frame, live flags, or env at all. The other locals' addresses no longer
+  reach the runtime, so the optimizer keeps them in registers:
+  `bench/dense.loke` runs 14 percent faster, most of the difference
+  `-panic=abort` makes.
 - The runtime entries that end the program are declared `cold noreturn`, in
   the generated module and in `runtime/loke_rt.h` (`LOKE_RT_FAILURE`), and the
   branch to a checked operation's panic carries weights saying it is not

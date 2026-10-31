@@ -13,7 +13,8 @@ import "core:time";
 // `... -o <output>` it "compiles" by copying itself to the output. Run with no
 // arguments, as perf.ps1 runs a benchmark, it prints the bench/<name>.expected
 // its own file name selects, read from the working directory, so every
-// benchmark output matches. LOKE_PERF_FAKE changes that run:
+// benchmark output matches. Given `-fake-refuse` it fails instead, so a test can
+// tell that perf.ps1 passed its -BuildFlags on. LOKE_PERF_FAKE changes a run:
 //
 //   wrong-later   the first run of each program prints the expected output and
 //                 every later one prints something else, more slowly
@@ -29,6 +30,7 @@ main :: proc() -> Status(io.Error) {
 	}
 	if (os.args.len() > 1) {
 		for (i := 1; i + 1 < os.args.len(); i += 1) {
+			if (os.args[i] == "-fake-refuse") { os.exit(1); }
 			if (os.args[i] == "-o") {
 				bytes := fs.read_bytes(self) or_return;
 				fs.write_bytes(os.args[i + 1], bytes[:]) or_return;

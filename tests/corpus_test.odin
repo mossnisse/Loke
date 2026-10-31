@@ -267,10 +267,11 @@ perf_script_validates_and_cleans_up :: proc(t: ^testing.T) {
 // perf.ps1 driven by tests/perf/fake_compiler.loke, which builds in no time
 // and whose benchmarks print their .expected: a baseline that is also -Out is
 // compared before it is replaced, a record of other sources is not compared,
-// every run's output is checked rather than only the fastest's, a program
-// that hangs fails the measurement after -TimeoutSeconds, and an executable
-// still locked when the measurement fails neither hides that failure nor
-// stays behind.
+// a record built with other -BuildFlags is not compared, the flags reach the
+// compiler, every run's output is checked rather than only the fastest's, a
+// program that hangs fails the measurement after -TimeoutSeconds, and an
+// executable still locked when the measurement fails neither hides that
+// failure nor stays behind.
 @(test)
 perf_script_compares_and_checks_every_run :: proc(t: ^testing.T) {
 	os.make_directory(TMP)
@@ -304,6 +305,13 @@ perf_script_compares_and_checks_every_run :: proc(t: ^testing.T) {
 		written, _ := os.read_entire_file(baseline, context.temp_allocator)
 		testing.expectf(t, !strings.contains(string(written), "100000") && strings.contains(string(written), `"input"`), "-Out did not write the new record:\n%s", string(written))
 	}
+
+	state, stdout, stderr, err = perf(fake, inherited, "-Repeat", "1", "-Baseline", baseline, "-BuildFlags", "-panic=abort")
+	if testing.expectf(t, err == nil && state.exit_code == 0, "perf.ps1 with -BuildFlags failed:\n%s%s", stdout, stderr) {
+		testing.expectf(t, strings.contains(stdout, "build -opt=speed -panic=abort (ms)") && strings.contains(stdout, "(options changed)") && !strings.contains(stdout, "%)"), "a record built with other options was compared:\n%s", stdout)
+	}
+	state, stdout, stderr, err = perf(fake, inherited, "-Repeat", "1", "-BuildFlags", "-fake-refuse")
+	testing.expectf(t, err == nil && state.exit_code != 0 && strings.contains(stderr, "exited with 1"), "-BuildFlags did not reach the compiler:\n%s%s", stdout, stderr)
 
 	state, stdout, stderr, err = perf(fake, append_env(inherited, "LOKE_PERF_FAKE=wrong-later"), "-Repeat", "3")
 	testing.expectf(
@@ -1829,9 +1837,7 @@ object_build_links_into_a_c_host :: proc(t: ^testing.T) {
 			)
 			testing.expectf(
 				t,
-				strings.contains(text, "U loke_rt_v1_thread_attach") ||
-				strings.contains(text, "U loke_rt_v1_frame_pop") ||
-				strings.contains(text, "U memset"),
+				strings.contains(text, "U loke_rt_v1_"),
 				"the object resolved references its host should supply:\n%s",
 				text,
 			)

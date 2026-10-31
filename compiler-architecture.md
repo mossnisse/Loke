@@ -689,6 +689,14 @@ The runtime entries that end the program (`loke_rt_v1_panic`, `panic_end`,
 the module and `LOKE_RT_FAILURE` in `loke_rt.h`, and the branch to a checked
 operation's panic carries `!prof` weights (`branch_if_unlikely`).
 
+Under `-panic=unwind` a procedure that registers a cleanup pushes a frame whose
+thunk replays the registered actions. The thunk is emitted before the
+procedure's prologue, and only the locals it names are published: `bind_local`
+stores every local's address through its slot's name, then
+`without_unread_bindings` deletes the stores the thunk does not read, and the
+prologue names only the slots that remain. A procedure that registers nothing
+keeps no frame, live flags, or env at all.
+
 ## Source-code map
 
 Files directly in `src/` form the `lokec` package; `src/subprocess/` is a

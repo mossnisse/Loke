@@ -723,11 +723,12 @@ emit_proc_definition :: proc(
 	fmt.sbprintln(&e.b, "}")
 	fmt.sbprintln(&e.b, "")
 
-	body := without_unpushed_pops(e, strings.to_string(e.b))
+	// The thunk first: the locals it reads are the ones the body publishes.
+	emit_unwind_thunk(e)
+	body := without_unread_bindings(e, without_unpushed_pops(e, strings.to_string(e.b)))
 	e.b = module
 	emit_unwind_prologue(e)
 	strings.write_string(&e.b, body)
-	emit_unwind_thunk(e)
 	for text in e.pending {
 		strings.write_string(&e.b, text)
 	}

@@ -16,7 +16,10 @@ param(
     # A program that runs longer than this, or a language-server operation that
     # waits longer for its answer, fails the measurement rather than stalling it.
     [ValidateRange(1, 86400)]
-    [int]$TimeoutSeconds = 300
+    [int]$TimeoutSeconds = 300,
+    # Further lokec options for every -opt=speed build, such as -panic=abort.
+    # A baseline built with other options is not compared.
+    [string[]]$BuildFlags = @()
 )
 
 # Records what later changes to the compiler are compared against
@@ -322,10 +325,11 @@ try {
         $inputHash = Get-InputHash $source
         $check = Get-Fastest $Lokec @('-emit-ll', $source.FullName, '-o', "$work/out.ll") "lokec -emit-ll $name"
         $exe = "$work/$($source.BaseName).exe"
-        $build = Get-Fastest $Lokec @('-opt=speed', $source.FullName, '-o', $exe) "lokec -opt=speed $name"
+        $build = Get-Fastest $Lokec (@('-opt=speed') + $BuildFlags + @($source.FullName, '-o', $exe)) "lokec -opt=speed $name"
         $record = [ordered]@{
             program  = $name
             input    = $inputHash
+            flags    = $BuildFlags -join ' '
             check_ms = [math]::Round($check.Ms)
             build_ms = [math]::Round($build.Ms)
             peak_mb  = [math]::Round(($check.Peak, $build.Peak | Measure-Object -Maximum).Maximum / 1MB, 1)
@@ -372,8 +376,8 @@ try {
 if ($Out) { ConvertTo-Json @($records) | Set-Content -Encoding utf8 $Out }
 
 # A Markdown table of the records with these columns, each figure followed by
-# its change from the baseline. A baseline record of other sources is not
-# compared; one from before records named their sources is.
+# its change from the baseline. A baseline record of other sources or build
+# options is not compared; one from before records named them is.
 function Format-Records([object[]]$rows, [string[]]$columns, [string]$header) {
     $lines = @($header, ('| --- |' + (' ---: |' * $columns.Count)))
     foreach ($record in $rows) {
@@ -383,6 +387,7 @@ function Format-Records([object[]]$rows, [string[]]$columns, [string]$header) {
             $old = if ($previous) { $previous.$column }
             if ($null -eq $value) { '' }
             elseif ($old -and $previous.input -and $previous.input -ne $record.input) { "$value (sources changed)" }
+            elseif ($old -and $null -ne $previous.flags -and $null -ne $record.flags -and $previous.flags -ne $record.flags) { "$value (options changed)" }
             elseif ($old) { '{0} ({1:+0;-0;0}%)' -f $value, (100 * ($value - $old) / $old) }
             else { "$value" }
         }
@@ -391,7 +396,7 @@ function Format-Records([object[]]$rows, [string[]]$columns, [string]$header) {
     $lines
 }
 $lines = Format-Records @($records | Where-Object { $null -eq $_.open_ms }) @('check_ms', 'build_ms', 'peak_mb', 'exe_kb', 'run_ms') `
-    '| program | front end (ms) | build -opt=speed (ms) | lokec peak (MB) | exe (KB) | run (ms) |'
+    "| program | front end (ms) | build -opt=speed$(($BuildFlags | ForEach-Object { " $_" }) -join '') (ms) | lokec peak (MB) | exe (KB) | run (ms) |"
 $servers = @($records | Where-Object { $null -ne $_.open_ms })
 if ($servers.Count -gt 0) {
     $lines += ''

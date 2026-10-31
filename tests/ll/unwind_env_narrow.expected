@@ -1,0 +1,6 @@
+define internal i64 @loke.p.fill(i64 %arg0) {
+%uenv.*.1 = getelementptr ptr, ptr %uenv.*, i64 1
+store ptr %names.*, ptr %uenv.*.1
+store ptr %count.*, ptr %uenv.*.2
+not store ptr %p0.
+not %uenv.*.0 = getelementptr

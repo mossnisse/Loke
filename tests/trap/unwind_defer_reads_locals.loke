@@ -1,0 +1,33 @@
+package main;
+
+// design.md "What the unwind runs, and what it does not": a panic replays a
+// written `defer` with the values its locals hold at the panic. Each defer
+// here reads a different kind of local the replay must find through the env:
+// a value parameter, a pointer parameter, an unmanaged local changed after the
+// defer registered, an owner, and a local of the deferred block itself. The
+// loop binding is read by nothing, so it is not published.
+
+import "core:fmt";
+
+Counter :: struct { n: int }
+
+run :: proc(limit: int, counter: ^mut Counter) {
+	steps := 0;
+	names := [dynamic]string{};
+	names.append("first");
+	defer fmt.println("limit", limit, "counter", counter.n);
+	defer {
+		last := names.len();
+		fmt.println("steps", steps, "names", last);
+	}
+	foreach (i in 0 ..< limit) {
+		steps += 1;
+		counter.n += i;
+		if (i == 2) { panic("stopped at", i); }
+	}
+}
+
+main :: proc() {
+	counter := Counter{n = 10};
+	run(5, &mut counter);
+}

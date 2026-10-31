@@ -1,0 +1,23 @@
+package main;
+
+// A frame that is pushed publishes only the locals its replay reads: `names`,
+// which it drops, and `count`, which a written `defer` prints. The parameter
+// `limit` and the loop binding `i` are read by no cleanup, so neither is stored
+// into the env, and the loop stores nothing on each iteration.
+
+import "core:fmt";
+
+fill :: proc(limit: int) -> int {
+	names := [dynamic]string{};
+	count := 0;
+	defer fmt.println("filled", count);
+	foreach (i in 0 ..< limit) {
+		names.append("x");
+		count += i;
+	}
+	return names.len();
+}
+
+main :: proc() {
+	_ = fill(3);
+}
