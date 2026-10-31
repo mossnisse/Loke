@@ -43,7 +43,7 @@ placement :: proc(shape: Shape, colour: Colour, view: any_view) {
 }
 
 reflection :: proc() {
-	fmt.println(variants_of(Colour));
+	fmt.println(variants_of(Circle));
 	descriptor := variants_of(Shape)[0];
 	switch (Shape.circle({1})) {
 	case $v(_): fmt.println(v);

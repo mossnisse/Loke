@@ -25,7 +25,7 @@ L0426
 this switch is over `any_view`
 L0451
 @46:26
-`variants_of` needs a union type, found `Colour`
+`variants_of` needs a union or enum type, found `Circle`
 L0453
 @47:2
 `meta.Variant` exists only during compilation

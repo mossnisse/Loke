@@ -3253,7 +3253,8 @@ whose declarations differ from them.
 
 `fields_of(T)`, `enum_values_of(T)`, and `variants_of(T)` return compile-time
 fixed arrays of the corresponding descriptor type, for a struct, an enum, and a
-union, named or anonymous. Descriptors are opaque and cannot be forged. A
+union, named or anonymous; `variants_of` also takes an enum, whose members are
+its payloadless alternatives. Descriptors are opaque and cannot be forged. A
 descriptor describes only the type it was reflected from: `get` and `pointer`
 reject any other subject, even one with the same field, and descriptors from two
 types never compare equal. A `meta.Field` has `name`, `type`, and `index`: the
@@ -3263,8 +3264,10 @@ name is a constant `string_view`, `type` is a compile-time `type` value, and
 every member's value is exact, and `index` is the member's declaration index. A
 `meta.Variant` has `name`, `type`, and `index`: the name is the variant's label,
 `type` is its payload type, or `Unit` for a payloadless variant, and `index` is
-its declaration index, which is also its tag. An [expanded switch
-case](#per-variant-switch-cases) binds one.
+its declaration index, which is also its tag. An enum member's `meta.Variant`
+has `type` `Unit` and the member's declaration index; its value is read with
+`enum_values_of`, so a union's tag numbers stay unreadable through it. An
+[expanded switch case](#per-variant-switch-cases) binds one.
 
 All three preserve source declaration order, after conditional `when` selection.
 Reflection observes only declarations visible from its lookup package. Thus

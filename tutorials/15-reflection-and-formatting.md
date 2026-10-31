@@ -75,7 +75,9 @@ Append 4
 
 Use `Mode.values()` for ordinary runtime iteration over enum values. Use
 `enum_values_of(Mode)` with static expansion when generated code needs the
-declared names, backing values, or indices.
+declared names, backing values, or indices. `variants_of(Mode)` lists the same
+members as payloadless variants, without their values, so one generic loop can
+name the alternatives of an enum or a union.
 
 Descriptors cannot be stored in a runtime container or indexed with a runtime
 variable. Runtime inspection has a separate `type_info_of` API; it does not

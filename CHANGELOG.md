@@ -415,6 +415,11 @@ checklist.
 
 ### Added
 
+- `variants_of` takes an enum as well as a union, listing each member as a
+  `meta.Variant` with the payload `Unit` and its declaration index, so one
+  generic loop names the alternatives of either; a member's value stays with
+  `enum_values_of` ([Compile-time reflection](design.md#compile-time-reflection)).
+  `variants_of` of any other type is still `L0451`.
 - A type alias may bind `$` names, which an application supplies in order of
   first appearance: `Io_Result :: Result($T, Io_Error);` makes
   `Io_Result(int)` the type `Result(int, Io_Error)`, with no identity of its

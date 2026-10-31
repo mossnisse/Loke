@@ -34,8 +34,9 @@ Enum_Value :: struct {
 }
 
 /*
-	A union variant, as `variants_of` produces it: its label, its payload type
-	(`Unit` when it has none), and its declaration index.
+	A union variant or an enum member, as `variants_of` produces it: its label,
+	its payload type (`Unit` when it has none, and for every enum member), and
+	its declaration index.
 */
 @(intrinsic)
 Variant :: struct {

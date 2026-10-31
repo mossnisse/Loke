@@ -254,10 +254,26 @@ enum_values_descriptor_array :: proc(k: ^Checker, subject: Type_Id) -> (Type_Id,
 
 // Variants carry no visibility of their own either, for the same reasons as
 // enum members. A payloadless variant's `type` is `Unit`, the type `.as(.name)`
-// yields for it (design.md "Compile-time reflection").
+// yields for it (design.md "Compile-time reflection"). An enum's members are
+// its payloadless alternatives, so they are variants too, with no value: that
+// stays `enum_values_of`'s.
 @(private = "file")
 variants_descriptor_array :: proc(k: ^Checker, subject: Type_Id) -> (Type_Id, Const_Value, bool) {
 	info := underlying_info(k.c, subject)
+	if info != nil && info.kind == .Enum {
+		elements := make([dynamic]Const_Value, 0, len(info.fields), k.c.semantic_allocator)
+		for member in info.fields {
+			if sym := symbol_of(k.c, member); sym != nil {
+				values := make([]Const_Value, 4, k.c.semantic_allocator)
+				values[META_VARIANT_NAME] = string_view_const(identifier_text(k.c, sym.name))
+				values[META_VARIANT_TYPE] = type_const(k.c.unit_type)
+				values[META_VARIANT_INDEX] = int_const(k.c, i64(sym.index))
+				values[META_VARIANT_OWNER] = type_const(subject)
+				append(&elements, aggregate_const(k.c, meta_variant_type(k.c), values))
+			}
+		}
+		return descriptor_array(k.c, meta_variant_type(k.c), elements[:])
+	}
 	if info == nil || info.kind != .Union {
 		return INVALID_TYPE, Const_Value{}, false
 	}
@@ -780,7 +796,7 @@ check_reflection_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 	case .Variants_Of:
 		type, value, ok := variants_descriptor_array(k, subject)
 		if !ok {
-			errorf(k.c, expr_span(operand), "L0451", "`variants_of` needs a union type, found `%s`", type_name(k.c, subject))
+			errorf(k.c, expr_span(operand), "L0451", "`variants_of` needs a union or enum type, found `%s`", type_name(k.c, subject))
 			v.type = INVALID_TYPE
 			return
 		}

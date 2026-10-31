@@ -1,0 +1,24 @@
+// design.md "Compile-time reflection": `variants_of` takes an enum, whose
+// members are its payloadless alternatives: each has its name, the payload
+// `Unit`, and its declaration index, so one loop lists a union's alternatives
+// or an enum's. The member's value stays `enum_values_of`'s.
+package main;
+import "core:fmt";
+import "base:meta";
+
+Http_Status :: enum { Ok = 200, Not_Found = 404, Teapot = 418 }
+Reply :: union { ok, missing: string }
+
+names :: proc($T: type) {
+	foreach ($variant in variants_of(T)) {
+		static_assert(type_of(variant) == meta.Variant);
+		fmt.println(variant.name, variant.index, variant.type == Unit);
+	}
+}
+
+main :: proc() {
+	names(Http_Status);
+	names(Reply);
+	static_assert(variants_of(Http_Status).len() == 3);
+	fmt.println(enum_values_of(Http_Status)[2].value);
+}
