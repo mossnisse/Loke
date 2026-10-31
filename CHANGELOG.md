@@ -831,6 +831,10 @@ checklist.
 
 ### Fixed
 
+- A panic after a destructuring declaration, as `low, high := pair;`, runs the
+  `defer` the procedure registered first again. Binding each field that holds
+  no cleanup of its own cleared the frame's first registration
+  ([What the unwind runs, and what it does not](design.md#what-the-unwind-runs-and-what-it-does-not)).
 - Checking a procedure whose analysis needs more than one GiB of scratch
   memory no longer stops the compiler with `a procedure body's analysis
   outgrew its scratch arena reservation`; the analysis arenas grow past their

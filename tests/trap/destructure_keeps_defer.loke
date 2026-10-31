@@ -1,0 +1,19 @@
+package main;
+
+// design.md "What the unwind runs, and what it does not": binding the fields
+// of a destructured record, which hold no cleanup of their own, leaves the
+// frame's registrations alone, so a panic after it still replays the `defer`
+// registered first. It once cleared that registration.
+
+import "core:fmt";
+
+split :: proc(pair: (int, int)) -> int {
+	defer fmt.println("deferred ran");
+	low, high := pair;
+	if (low < high) { panic("low below high"); }
+	return low + high;
+}
+
+main :: proc() {
+	_ = split({1, 2});
+}

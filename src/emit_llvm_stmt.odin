@@ -346,7 +346,12 @@ emit_destructure_fields :: proc(
 	record := emit_expr(e, operand)
 	aggregate := llvm_type(e, plan.record)
 	values = make([]string, len(plan.fields))
+	// An unguarded field holds no registration; a zero slot would name the
+	// frame's first one, which binding the field would then clear.
 	guards = make([]Deferred, len(plan.fields))
+	for &guard in guards {
+		guard.slot = -1
+	}
 	for field_id, index in plan.fields {
 		field := symbol_of(e.c, field_id)
 		if field == nil {
