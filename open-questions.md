@@ -13,13 +13,28 @@ audit](nondeterminism-audit.md).
 
 ## Review of public types' private interface methods (2026-10-31)
 
-Reviewed `c0b30260` for correctness, simplification, and structure. Three
-findings remain:
+Reviewed `c0b30260` for correctness, simplification, and structure. Of three
+findings, the private formatter one (P2) is fixed: printing a public type with
+a private `format` reached an internal backend contract error (`L0405`). Such
+a type now gets the generated default for the `Formattable` slot and prints by
+it in every package, its own included, as
+[String format printing](design.md#string-format-printing) and
+[Interface bodies](design.md#interface-bodies) together require; the
+`tests/pkg/private_formatter` case pins it. Two questions the spec leaves
+open remain with that fix:
 
-- **Handle private formatters before building witnesses (P2).** Printing a
-  public type with a private `format` reaches an internal backend contract
-  error. The [reproduction and cause](known-gaps.md#a-public-types-private-formatter-reaches-an-invalid-backend-witness)
-  include passing parent and public-method controls.
+- **Ordinary lookup of a hidden default `format`.** Ordinary lookup of
+  `format` on such a type still finds only the written method: its package
+  calls it, and an importer gets `L0363` rather than the default that printing
+  uses. The alternative is to let an importer's lookup reach the default, as
+  it does on a type without a written `format`.
+- **Warning for an unused private `format`.** A public type's private
+  `format` is never what printing calls, which an author may not expect. A
+  warning at the declaration would say so, but would also fire for a method
+  meant only for direct calls in its package.
+
+The other two findings remain:
+
 - **Only diagnose private methods as methods (P3).** `private_slot_member`
   in [src/interface.odin](src/interface.odin) tests name and visibility but
   does not test symbol kind or receiver. A private constant named `call`,

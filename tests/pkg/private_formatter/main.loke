@@ -1,0 +1,28 @@
+package main;
+
+import "core:fmt";
+import "./lib";
+
+// A `package main` type's methods are private by default, and its `format`
+// still meets the slot.
+Local :: struct {}
+
+impl Local {
+	format :: proc(self, w: fmt.Writer, o: fmt.Options) { fmt.concat_to(w, "local"); }
+}
+
+show :: proc(value: ^$T) where fmt.Formattable(T) {
+	value^.format(fmt.stdout(), fmt.DEFAULT_OPTIONS);
+	fmt.println("");
+}
+
+main :: proc() {
+	static_assert(fmt.Formattable(lib.Secret));
+	lib.show_here();
+	s := lib.make_secret(2);
+	fmt.println(s);
+	view := (dyn fmt.Formattable)(&s);
+	fmt.println(view);
+	show(&s);
+	fmt.println([?]lib.Secret{s}, lib.Shown{}, Local{});
+}

@@ -1,0 +1,9 @@
+Secret{id = 1}
+Secret{id = 1}
+secret
+hidden
+["a"] b
+Secret{id = 2}
+Secret{id = 2}
+Secret{id = 2}
+[Secret{id = 2}] shown local
