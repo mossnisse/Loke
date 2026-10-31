@@ -52,6 +52,40 @@ branches, and reproduced the false rejection at 64 definitions and 129 such
 branches, both on the merged tree and on `68504095`. No implementation fixes
 were applied during review.
 
+## Review of private formatter defaults (2026-10-31)
+
+Reviewed `d16a9a2d` ("Print a public type with a private format by the
+generated default") and `404acdcb` ("Record a bound generic's direct
+format call as an open question") for correctness, simplification, and
+structure. Two findings remain:
+
+- **Keep hidden defaults out of completion (P2).** The checker hides the
+  generated default from ordinary lookup, but the editor still offers it
+  to an importer. Calling the suggested method produces `L0363`. The
+  [reproduction and cause](known-gaps.md#editor-completion-offers-a-hidden-generated-formatter)
+  include a check through the LSP completion entry point.
+- **Reuse the written-formatter search (P3, shrink).** The new
+  `written_format_member` in [src/format.odin](src/format.odin) performs
+  the same member walk and filtering as `formatter_of` immediately below
+  it. The latter's only caller discards its `Symbol_Id` result. Make it
+  a validation procedure using `written_format_member`, removing the
+  duplicate search and unused return contract; about 14 lines can go.
+
+The printed-form policy is consistent across erased printing, explicit
+interface views, nesting, and public generic instances. The defining
+package's bound generic reaches the private method under the current
+[ordinary-lookup-first rule](design.md#interface-bodies); `404acdcb`
+records a possible later change, rather than an implementation divergence.
+No other actionable structure finding was found.
+
+Validation passed on the current checkout, whose reviewed formatter and
+lookup code is unchanged since these commits: fresh compiler and LSP
+builds, 179 compiler unit tests, 43 LSP unit tests, executable and package
+corpora, both diagnostic corpora, LLVM shape checks, and heading citations.
+Additional probes covered a public generic's private formatter, a bound
+call in its defining package, nested strings through pointers, and the
+editor/lookup mismatch. No implementation fixes were applied.
+
 ## Review of public types' private interface methods (2026-10-31)
 
 Reviewed `c0b30260` for correctness, simplification, and structure. Of three

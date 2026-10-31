@@ -7,6 +7,47 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
+### Editor completion offers a hidden generated formatter
+
+After `d16a9a2d`, a public type with a private `format` also has a generated
+default for its `Formattable` slot. Ordinary lookup deliberately hides that
+default, but the editor's member query lists it as callable. The query should
+list the members visible at the use, as described in
+[Snapshots and queries](compiler-architecture.md#snapshots-and-queries) and
+[Language server](compiler-architecture.md#language-server).
+
+```loke
+// lib/lib.loke
+package lib;
+import "core:fmt";
+@(public) S :: struct {}
+impl S {
+    format :: proc(self, w: fmt.Writer, o: fmt.Options) {}
+}
+```
+
+```loke
+// main.loke
+package main;
+import "./lib";
+import "core:fmt";
+main :: proc() {
+    s := lib.S{};
+    fmt.println(s);
+    s.format(fmt.stdout(), fmt.DEFAULT_OPTIONS); // L0363
+}
+```
+
+Replacing the final call with an unfinished `s.` and requesting completion
+offers `format`, even though completing the call above is rejected.
+`query_members` in [src/queries.odin](src/queries.odin) filters by `public`
+and package alone, so the public synthetic method escapes the new check in
+`member_is_visible` in [src/impl.odin](src/impl.odin). Apply the same hidden
+default policy to the read-only query, preserving snapshot immutability,
+and add a completion regression. Confirmed through both `query_members` and
+the LSP `completion` entry point with a fresh build on 2026-10-31; the
+existing `tests/pkg/private_formatter` case also supplies the type.
+
 ### Reaching-definition limits weaken the per-storage chosen-place guarantee
 
 [Minimum provenance precision](design.md#minimum-provenance-precision)
