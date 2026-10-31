@@ -647,6 +647,14 @@ checklist.
 
 ### Changed
 
+- The specification no longer lists an implicit conversion from a variant's
+  payload to its union, which the compiler never had and `L0352` rejects
+  ([Implicit type conversions](design.md#implicit-type-conversions)). It now
+  says what a procedure type's runtime member table holds: its parameters,
+  then its result, as nameless entries ([`type` and
+  `typeid`](design.md#type-and-typeid)). The iteration protocol spells
+  `iter`'s receiver `self: ^`, as the catalogue's `Iterable` does, and says a
+  plain `self` also meets it ([Iteration protocol](design.md#iteration-protocol)).
 - Elements of a view at different constant indices are now different places
   wherever it is known where the view starts: in a view parameter, and in a
   local view borrowed from a range or resliced from one by a constant. So

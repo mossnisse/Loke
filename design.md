@@ -584,7 +584,6 @@ extensions cannot add conversions.
 - A procedure, or a capture literal's value, -> a [`dyn proc`
   view](#borrowed-callable-views) of a signature it meets, when a `dyn proc`
   parameter or typed destination is expected
-- Any of a union's variants to that union
 - A distinct procedure type <-> its underlying procedure type
 - Unfixed integers -> built-in integer types when in range, and built-in
   floating-point types under the [rounding rule](#number-literals)
@@ -3197,7 +3196,10 @@ Type_Info :: struct {
 ```
 
 `type_info_of` returns a read-only `^runtime.Type_Info` into shared static
-storage. Member tables expose public fields only and preserve source order.
+storage. Member tables expose public fields only and preserve source order. A
+procedure type's members are its parameters in order, each of kind
+`Parameter`, then one of kind `Result` when it has a result; they carry a
+`type` and no `name`.
 Unused fields are zero. Enum values use `value_low` and `value_high`; the owning
 type's `bits` and `signed` fields describe how to interpret them. A `Distinct`
 entry fills only `id`, `kind`, `name`, `size`, and `align`, and its `element` is
@@ -3961,7 +3963,9 @@ foreach (value in Countdown{3}) {
 An iterable type provides:
 
 - an `Element` type;
-- `iter(self) -> Iterator`, whose result type is the associated `Iterator`;
+- `iter(self: ^) -> Iterator`, whose result type is the associated `Iterator`;
+  a method taking a plain `self` also meets it ([Receiver
+  forms](#receiver-forms));
 - `next(self: inout Iterator) -> Option(Item)` on its iterator, whose payload is
   the associated `Item` and whose [yield mode](#yield-modes) says how a binding
   receives it;
