@@ -1,7 +1,8 @@
-// design.md "Typed fallibility": `Status(E)` is a fallible union whose success
-// carries nothing. Its body may end without `return .ok;` ("One result"),
-// `or_return` crosses between it and `Result(T, E)`, `or_else` yields `Unit`
-// for it, and `map_error` converts one that is kept.
+// design.md "Typed fallibility": `Status(E)` is `Result(Unit, E)`, through a
+// parametric alias. Its body may end without `return .ok;` ("One result"),
+// even when `E` is generic; `or_return` crosses between it and `Result(T, E)`;
+// `or_else` yields `Unit` for it; `map_error` converts one that is kept; and a
+// procedure generic over `Result($T, $E)` takes one.
 package main;
 import "core:fmt";
 
@@ -37,6 +38,19 @@ folded :: proc() -> Status(int) {
 }
 FOLDED :: folded();
 
+static_assert(Status(Disk) == Result(Unit, Disk));
+
+succeeded :: proc(r: Result($T, $E)) -> bool {
+	switch (r) {
+	case .ok:  return true;
+	case .err: return false;
+	}
+}
+
+quiet :: proc(error: $E) -> Status(E) {
+	_ = error;
+}
+
 main :: proc() {
 	fmt.println(store(false));
 	fmt.println(store(true));
@@ -47,4 +61,6 @@ main :: proc() {
 	kept := write(true).map_error(App_Error.disk);
 	fmt.println(kept);
 	fmt.println(FOLDED);
+	fmt.println(succeeded(write(false)), succeeded(write(true)), quiet(Disk.Gone));
+	fmt.println(typeid_of(Status(Disk)));
 }

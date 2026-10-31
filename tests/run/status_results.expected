@@ -8,3 +8,6 @@ Unit{}
 Unit{}
 .err(.disk(Full))
 .ok
+written
+true false .ok
+Result(Unit, Disk)

@@ -27,7 +27,7 @@ L0326
 this procedure returns `Result(Unit, Parse_Error)`, so `return` needs a value; a result is anonymous and has no local to fill
 L0310
 @48:9
-cannot return `Status(Parse_Error)` with `Parse_Error`
+cannot return `Parse_Error` from a procedure that returns `Result(Unit, Parse_Error)`: it is neither the result nor its `.ok` payload `Unit`
 L0310
 @53:9
 cannot return `Result([2]int, [2]int)` with `[2]int`

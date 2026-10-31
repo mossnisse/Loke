@@ -768,13 +768,14 @@ already writes that case plainly.
 
 A procedure that only fails returned `Result(Unit, E)`, so the empty type
 appeared in every such signature and every body ended in `return .ok;`.
-`Status(E)` is a fallible union of its own shape rather than a second name for
-`Unit`, which [A `()` unit type](#a--unit-type) rejected. A parametric alias,
-`Status :: Result(Unit, $E)`, would keep one type, so `map_error` and generic
-code over `Result` would work unchanged, but a type alias takes no parameters.
-The cost is that a generic procedure over `Result($T, $E)` does not accept a
-`Status(E)`. `Outcome` was the alternative name; `Status` was kept although it
-can be misread as a process exit status.
+`Status(E)` was first a fallible union of its own shape, since a type alias
+took no parameters, and a generic procedure over `Result($T, $E)` did not accept
+one. It is now the [parametric alias](#parametric-aliases)
+`Status :: Result(Unit, $E)`, so there is one type, one `map_error`, and one
+set of generic code; only the shorter name remains. A second name for `Unit`,
+which [A `()` unit type](#a--unit-type) rejected, would not have helped: the
+signature still names the empty type. `Outcome` was the alternative name;
+`Status` was kept although it can be misread as a process exit status.
 
 A body whose success carries nothing may reach its end, which returns that
 success. Every failure in such a procedure is written explicitly, so the end

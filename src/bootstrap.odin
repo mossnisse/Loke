@@ -10,6 +10,8 @@ import "core:slice"
 @(private = "file")
 Bootstrap_Kind :: enum {
 	Type,
+	// A type, or a parametric alias of one: `Status :: Result(Unit, $E)`.
+	Type_Or_Alias,
 	Proc_Group,
 }
 
@@ -26,7 +28,7 @@ bind_runtime_bootstrap :: proc(k: ^Checker, pkg: ^Package) {
 	unit := bootstrap_symbol(k, pkg, "Unit", .Type)
 	c.option_symbol = bootstrap_symbol(k, pkg, "Option", .Type)
 	c.result_symbol = bootstrap_symbol(k, pkg, "Result", .Type)
-	c.status_symbol = bootstrap_symbol(k, pkg, "Status", .Type)
+	status := bootstrap_symbol(k, pkg, "Status", .Type_Or_Alias)
 	c.shared_symbol = bootstrap_symbol(k, pkg, "Shared", .Type)
 	c.weak_symbol = bootstrap_symbol(k, pkg, "Weak", .Type)
 	c.shared_construct_symbol = bootstrap_symbol(k, pkg, "shared", .Proc_Group)
@@ -38,7 +40,7 @@ bind_runtime_bootstrap :: proc(k: ^Checker, pkg: ^Package) {
 	bind_universe_name(c, universe, "Unit", unit)
 	bind_universe_name(c, universe, "Option", c.option_symbol)
 	bind_universe_name(c, universe, "Result", c.result_symbol)
-	bind_universe_name(c, universe, "Status", c.status_symbol)
+	bind_universe_name(c, universe, "Status", status)
 	// design.md "Shared ownership": `Shared` and `Weak` are the types, and
 	// `shared` is the constructor group.
 	bind_universe_name(c, universe, "Shared", c.shared_symbol)
@@ -46,7 +48,9 @@ bind_runtime_bootstrap :: proc(k: ^Checker, pkg: ^Package) {
 	bind_universe_name(c, universe, "shared", c.shared_construct_symbol)
 	bind_universe_name(c, universe, "try_shared", c.try_shared_symbol)
 
-	c.alloc_result_type = status_type(k, TYPE_ALLOCATOR_ERROR)
+	// design.md "Container insertion": what a `try_` operation that produces
+	// nothing returns, `Status(Allocator_Error)`.
+	c.alloc_result_type = result_type(k, c.unit_type, TYPE_ALLOCATOR_ERROR)
 }
 
 @(private = "file")
@@ -56,6 +60,10 @@ bootstrap_symbol :: proc(k: ^Checker, pkg: ^Package, name: string, want: Bootstr
 		switch want {
 		case .Type:
 			if sym.kind == .Type {
+				return id
+			}
+		case .Type_Or_Alias:
+			if sym.kind == .Type || declaration_generic_kind(sym.decl) == .Alias {
 				return id
 			}
 		case .Proc_Group:
@@ -70,7 +78,7 @@ bootstrap_symbol :: proc(k: ^Checker, pkg: ^Package, name: string, want: Bootstr
 	errorf(
 		k.c, no_span(), "L0704",
 		"`base:runtime` must declare `%s` as a %s; the compiler cannot bootstrap without it",
-		name, want == .Type ? "type" : "procedure group",
+		name, want == .Proc_Group ? "procedure group" : "type",
 	)
 	return INVALID_SYMBOL
 }
@@ -98,14 +106,6 @@ result_type :: proc(k: ^Checker, payload, error: Type_Id, span := Span{}) -> Typ
 	}
 	args := [2]Type_Id{payload, error}
 	return instantiate_record_types(k, k.c.result_symbol, args[:], span)
-}
-
-status_type :: proc(k: ^Checker, error: Type_Id, span := Span{}) -> Type_Id {
-	if k.c.status_symbol == INVALID_SYMBOL || error == INVALID_TYPE {
-		return INVALID_TYPE
-	}
-	args := [1]Type_Id{error}
-	return instantiate_record_types(k, k.c.status_symbol, args[:], span)
 }
 
 // Is this an instance of `Shared(T)` or `Weak(T)`? design.md "Shared ownership"

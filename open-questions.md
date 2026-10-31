@@ -1584,11 +1584,6 @@ These parts are open:
 - **Binding the error in `errdefer`.** Zig's `errdefer |err|` names the error
   being returned. An `errdefer` reads locals today; binding needs a syntax and
   a rule for an error that has moved into the result.
-- **Generic code over both result shapes.** A procedure generic over
-  `Result($T, $E)` does not accept a `Status(E)`, so a library that is generic
-  over fallible results may need both forms. A parametric type alias,
-  `Status :: Result(Unit, $E)`, would have avoided this; see
-  [Parametric aliases](#parametric-aliases).
 
 ## Anonymous unions and their follow-ups (2026-10-18)
 

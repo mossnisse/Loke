@@ -10,6 +10,19 @@ checklist.
 
 ### Breaking changes
 
+- `Status(E)` is now `Result(Unit, E)`, declared as the parametric alias
+  `Status :: Result(Unit, $E);` rather than a union of its own
+  ([Typed fallibility](design.md#typed-fallibility)). A procedure generic over
+  `Result($T, $E)` now takes a `Status`, and `Status.map_error` is
+  `Result.map_error`. A `Status` type's name, in a `typeid`, reflection, or a
+  diagnostic, is now `Result(Unit, E)`, and a non-generic `Status` body that
+  returns a failure payload directly is reported by `L0310` as one returning
+  neither the result nor its `Unit` payload. Upgrade by updating expected
+  output that names `Status(...)`; by removing one of two overloads that take
+  `Status(E)` and `Result(Unit, E)`, which are now one type; and by writing a
+  generic `impl Status($E)` as `impl Result(Unit, $E)`, now an extension of
+  `Result`.
+
 - A union variant whose payload is `Unit` now prints as `.name`, as a
   payloadless one does, so a successful `Result(Unit, E)` prints `.ok` rather
   than `.ok(Unit{})` and `Option(Unit)` prints `.some`

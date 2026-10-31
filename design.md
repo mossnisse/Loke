@@ -9459,18 +9459,19 @@ Option :: union($T: type) @(zero=none, failure=none) { none, some: T }
 @(require_results)
 Result :: union($T, $E: type) @(failure=err) { ok: T, err: E }
 
-@(require_results)
-Status :: union($E: type) @(failure=err) { ok, err: E }
+Status :: Result(Unit, $E);
 ```
 
 - `Option` uses `.none` as both its all-zero absent value and its failure
   variant.
 - `Result` uses `.err` for failure, requires its result to be handled, and has
   no zero value.
-- `Status` follows `Result` but has no success payload. A procedure returning it
-  may reach the end or use `return;` to succeed, without writing `return .ok;`,
-  as one returning `Result(Unit, E)` may; see [One result](#one-result) and
-  [Success returns](#success-returns).
+- `Status(E)` is `Result(Unit, E)`, through a [parametric
+  alias](#parametric-aliases), for an operation that produces nothing on
+  success. A procedure returning it may reach the end or use `return;` to
+  succeed, without writing `return .ok;`; see [One result](#one-result) and
+  [Success returns](#success-returns). Generic code over `Result($T, $E)` takes
+  one, and its type's name is `Result(Unit, E)`.
 
 ```loke
 save :: proc(config: Config) -> Status(io.Error) {
@@ -9480,8 +9481,8 @@ save :: proc(config: Config) -> Status(io.Error) {
 ```
 
 `or_return` crosses between `Status(E)` and `Result(T, E)` in both directions,
-since only the failure payloads must agree. `Result(Unit, E)` remains valid, and
-`Unit` is still what `or_return` yields for a success that carries nothing.
+since only the failure payloads must agree, and `Unit` is what it yields for a
+`Status` success.
 
 A **fallible expression** is one whose type is a union of exactly two variants
 with `@(failure=name)` written on it. That is the only thing
@@ -9739,7 +9740,8 @@ outcome := parse(text).map_error(App_Error.parse);   // a Result(int, App_Error)
 
 `map_error` consumes its receiver and transfers the success payload, including
 move-only values. A temporary needs no marker; a bound result uses
-`move(outcome).map_error(...)`. `Status.map_error` is the same for a `Status`.
+`move(outcome).map_error(...)`. A `Status` is a `Result`, so it has the same
+`map_error`.
 
 The mapper takes the error through a `move` parameter and returns the target
 error type. A [variant constructor](#constructing-a-variant) transfers the error
@@ -12015,7 +12017,7 @@ language definition.
 | `Small_Array(T, N)`, `Bit_Set(Enum)`, `Enum_Array(Enum, T)` | `core:container` | [fixed-capacity arrays](#fixed-capacity-arrays), [enum iteration](#iterating-an-enumeration) |
 | Standard interfaces | `base:interfaces` | [interface catalogue](#standard-interface-catalogue) |
 | `meta.Field`, `meta.Enum_Value`, `meta.Variant` | `base:meta` | [compile-time reflection](#compile-time-reflection) |
-| `Result.map_error`, `Status.map_error`, `Option.ok_or` | `base:runtime` | [changing error domains](#changing-error-domains) |
+| `Result.map_error`, `Option.ok_or` | `base:runtime` | [changing error domains](#changing-error-domains) |
 | `Allocator_Error`, `Allocator`, `mem.Scratch`, `mem.Arena` | `base:runtime`, `core:mem` | [allocators](#allocators) |
 | `Logger` | `core:log` | [build-selected providers](#build-selected-providers) |
 | `Source_Code_Location` | `base:runtime` | [`caller_location`](#caller_location), [`source_location`](#source_location-or-source_locationentity) |

@@ -189,7 +189,6 @@ Compiler :: struct {
 	// recoverable operation with no success value returns exactly this type.
 	alloc_result_type:    Type_Id,
 	result_symbol:        Symbol_Id,
-	status_symbol:        Symbol_Id,
 	bootstrap_ready:      bool,
 	typeid_requested:     map[Type_Id]bool,
 	typeid_order:         [dynamic]Type_Id,

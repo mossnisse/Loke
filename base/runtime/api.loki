@@ -130,19 +130,13 @@ Option :: union($T: type) @(zero=none, failure=none) { none, some: T }
 Result :: union($T, $E: type) @(failure=err) { ok: T, err: E }
 
 /*
-	A fallible operation that produces nothing on success. Its success carries
-	no payload, so its body may end without `return .ok;`.
+	A fallible operation that produces nothing on success: `Result(Unit, E)`
+	under a shorter name, so its body may end without `return .ok;`.
 */
-@(require_results)
-Status :: union($E: type) @(failure=err) { ok, err: E }
+Status :: Result(Unit, $E);
 
 impl Result($T, $E) {
 	map_error :: proc(self: move, f: $C) -> Result(T, C.Result)
-		where interfaces.Callable(C, proc(error: move E) -> C.Result) ---;
-}
-
-impl Status($E) {
-	map_error :: proc(self: move, f: $C) -> Status(C.Result)
 		where interfaces.Callable(C, proc(error: move E) -> C.Result) ---;
 }
 

@@ -203,6 +203,11 @@ and field reordering. No change proposed, beyond the attribute position in
 
 ### 2.3 `Status` is `Result(Unit, E)`
 
+Adopted: [Typed fallibility](design.md#typed-fallibility) declares
+`Status :: Result(Unit, $E);`, after [One result](design.md#one-result) gave a
+`Unit` success what a payloadless one has and
+[Parametric aliases](design.md#parametric-aliases) were added.
+
 [`Status(E)`](design.md#typed-fallibility) is a separate nominal union that is
 isomorphic to `Result(Unit, E)`, and the specification pays for the duplicate
 in several places: a generic procedure over `Result($T, $E)` does not accept a
