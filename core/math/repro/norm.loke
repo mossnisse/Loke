@@ -1,4 +1,4 @@
-// deterministic-math-and-targets-plan.md "Lockstep integration and versioning":
+// standard-library.md "`core:math/repro`":
 // the magnitude of four components, sqrt(a^2 + b^2 + c^2 + d^2), in both
 // widths, behind `quaternion_abs`.
 //

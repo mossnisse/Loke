@@ -137,6 +137,36 @@ one procedure with an `Option(Vector3(T))` fallback, which
 [Arguments typed after inference](design.md#arguments-typed-after-inference)
 now allows.
 
+[`core:math/repro`](standard-library.md#coremathrepro) has every
+transcendental function of `core:math`, `sqrt`, and the two magnitudes,
+correctly rounded and dispatched to FMA at `x86-64-v3`. Still to do, in this
+order:
+
+1. Faster `f64` kernels. `exp`'s and `log`'s dependency chains were shortened
+   by counting their latencies; the other functions' chains have not been
+   counted. Measure worst observed latency, the slow paths' included, and a
+   simulation's frame time, not only throughput, and compare at baseline and
+   `x86-64-v3` under ordinary and adversarial arguments.
+2. A `core:math/fast` package only if a measured workload needs it, beginning
+   with `sin`, `cos`, `exp`, and `log`, never a copy of the whole of
+   `core:math`. Each approximation freezes its coefficients, reduction,
+   evaluation order, special cases, and use of FMA, which is either explicit
+   on every target, emulated where needed, or absent on every target, never
+   two evaluations dispatched because each is within the bound. It states its
+   domain, its behavior outside it, and a verified error bound, absolute
+   where relative error means nothing, avoids slow-path iteration where frame
+   time matters, and versions its results as `RESULTS_VERSION` does.
+3. The default. Once coverage and measurements justify it, a release decides
+   whether `core:math` takes the correctly rounded kernels. If it does,
+   `core:math/repro` stays as a compatible name, the C library's functions
+   move to `core:math/system`, and no second correctly rounded implementation
+   is kept.
+
+Arbitrary precision and directed-rounding or interval arithmetic are separate
+libraries that name their rounding, and a whole-program NaN canonicalization
+mode would be compiler work of its own; neither follows from
+`core:math/repro`.
+
 `core:math/dense` adds each of these with a caller who needs it: `try_` forms
 that return allocation failure; reversed views; a one-sided Jacobi SVD, slower
 and more accurate for tiny singular values; values-only forms of
@@ -443,6 +473,23 @@ trap, package, library, and C-interop suites pass in CI, with explicit expected
 ABI/platform differences instead of blanket skips. Debugging and installed
 release-bundle smoke tests pass on that target. Windows remains green throughout.
 Portable programs have the same specified behavior across supported targets.
+
+**Numerical certification for each target.** `core:math/repro` promises the
+same bits only where its corpus, the oracle, and `examples/lockstep.loke`'s
+hashes have run, so each target is listed as certified only after they pass
+there. Record by test the floating-point environment each OS gives a new
+process and thread, and add setup only where it differs from
+[Floating-point operators](design.md#floating-point-operators): MXCSR's
+rounding, FTZ, and DAZ on x64, FPCR on ARM64. Linux and macOS use the same
+Loke kernels, never glibc's or Apple's `libm` results; ARM64 has hardware FMA
+and its own SIMD conformance to check; 32-bit ARM is a separate target.
+WebAssembly needs its own architecture and host target (WASI or a browser),
+software FMA where the target lacks an exact one, never relaxed SIMD's
+multiply-add, and runs on several independent engines, since baseline Wasm
+leaves NaN bits to the engine
+([WebAssembly nondeterminism](https://github.com/WebAssembly/design/blob/main/Nondeterminism.md)).
+Cross-target tests compare numerical results, not object layout or native
+`int` serialization.
 
 ## Self-hosting
 

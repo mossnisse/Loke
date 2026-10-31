@@ -873,10 +873,10 @@ measure it. Open:
   ARITH 2026); checking the slow paths against them would settle those
   three.
 
-The [deterministic math and CPU targeting
-plan](deterministic-math-and-targets-plan.md) proposes answers: a separate
-correctly rounded package first, platform math kept, and a decision on the
-default after measurement.
+The answer so far is a separate correctly rounded package,
+[`core:math/repro`](standard-library.md#coremathrepro), with platform math
+kept and a decision on the default after measurement
+([Future plans](future-plans.md#standard-library-maturity)).
 
 ### Targeting x86-64 levels
 
@@ -916,9 +916,11 @@ baseline checks first and reports it. Open:
 - Should v4 and `native` follow? v4 needs AVX-512 hardware to test on, and
   `native` resolves to a feature set of its own rather than a level.
 
-The [deterministic math and CPU targeting
-plan](deterministic-math-and-targets-plan.md#cpu-targets-and-fma) keeps
-baseline as the default and adds run-time dispatch later only where measured.
+Baseline stays the default
+([A CPU level changes instructions, not results](comments.md#a-cpu-level-changes-instructions-not-results)),
+and run-time dispatch is added only where measured, as
+[`@(cpu_dispatch)`](design.md#cpu_dispatchstring) does for
+`core:math/repro`'s `f64` functions.
 
 ### Integer bit operations not yet provided
 

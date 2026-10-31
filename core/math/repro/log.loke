@@ -1,4 +1,4 @@
-// deterministic-math-and-targets-plan.md "Reproducible result contract": `log`
+// standard-library.md "`core:math/repro`": `log`
 // in both widths.
 //
 // The fast path writes x = 2^e y, y in [1, 2), takes i, the nearest integer

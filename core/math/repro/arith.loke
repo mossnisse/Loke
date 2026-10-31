@@ -4,13 +4,13 @@
 // The one operation a CPU level changes is `two_product`'s error, a b - p for
 // p = a b rounded: the FMA instruction's where `math.fma_is_instruction()`, in
 // a build for `x86-64-v3` and in the copies each public procedure's
-// `@(cpu_dispatch)` makes for it, and Dekker's product elsewhere, never `math.fma`'s integer arithmetic,
-// which is slower than Dekker's (deterministic-math-and-targets-plan.md "CPU
-// targets and FMA"). Both are exact for every call here, so every level
-// computes the same bits. The error is a multiple of the operands' units
-// times each other, 2^(ea - 52) 2^(eb - 52), and under ulp(p), so it is
-// representable unless that unit is below 2^-1074, and the fused error, a
-// sum rounded once, is then exact. Dekker's is exact when none of its steps
+// `@(cpu_dispatch)` makes for it, and Dekker's product elsewhere, never
+// `math.fma`'s integer arithmetic, which is slower than Dekker's
+// (comments.md "Fused multiply-add is written"). Both are exact for every
+// call here, so every level computes the same bits. The error is a multiple
+// of the operands' units times each other, 2^(ea - 52) 2^(eb - 52), and
+// under ulp(p), so it is representable unless that unit is below 2^-1074,
+// and the fused error, a sum rounded once, is then exact. Dekker's is exact when none of its steps
 // overflows or underflows (Dekker, "A floating-point technique for extending
 // the available precision", 1971): for operands under 2^995, so that
 // Veltkamp's split does not overflow, and a product that does not overflow

@@ -945,6 +945,27 @@ API:
   `SystemTimeToTzSpecificLocalTimeEx` in the machine's own zone. An
   `.expected` file holds no clock reading or offset of the machine's zone,
   only comparisons with one.
+- For `core:math/repro`: `tests/math_oracle.odin` is an independent oracle,
+  outward-rounded interval arithmetic on `core:math/big` integers with Ziv's
+  doubling of the precision, since the Windows toolchain provides no MPFR, and
+  a fixed precision followed by a cast could itself round twice. Host `libm`
+  is not an oracle. It implements every special case of the package's
+  contract. `tests/repro_test.odin` checks the tables and constants against
+  the oracle's derivation, the fast paths against the slow paths over
+  hundreds of thousands of seeded arguments, near multiples of pi/2 and of
+  every magnitude, the results against the oracle, arguments pinned to reach
+  each retry, and compile-time against run-time results, at every
+  optimization level and at `x86-64-v3` with and without dispatch.
+  `test-all.ps1 -Exhaustive`, about 25 minutes on six cores, runs every `f32`
+  bit pattern through the package with and without its first approximations
+  (`F32_FIRST_APPROXIMATION`); the release checklist runs it, and CI does not.
+  `tests/cpu_test.odin` disassembles an object build to show that at baseline
+  only a dispatched procedure's `.v3` copy holds an instruction beyond SSE2,
+  and that a written `a*b + c` is not fused at any level. A finite corpus is
+  regression evidence, not a proof of correct rounding; a change to
+  coefficients, range reduction, or a bound states its derivation in the
+  source. Real non-FMA hardware, or an emulator such as Intel SDE, is not
+  tested.
 
 Use fake short readers/writers as in `lib_io` and isolated temporary directories
 as in `lib_fs`. `lib_term` covers output and redirected handles;

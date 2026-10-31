@@ -1,4 +1,4 @@
-// deterministic-math-and-targets-plan.md "Validation and performance gates": an
+// compiler-architecture.md "Standard-library verification": an
 // oracle for the correctly rounded `exp`, `log`, `log2`, `log10`, `sin`, `cos`,
 // `tan`, `asin`, `acos`, `pow`, `atan2`, `hypot`, `sqrt`, and the magnitude of
 // four components of `f64` and `f32`, with the special cases of the
@@ -305,7 +305,7 @@ oracle_pow :: proc(o: ^Oracle, x, y: f64, format: Float_Format) -> u64 {
 	panic("the oracle could not decide a rounding of pow")
 }
 
-// deterministic-math-and-targets-plan.md "Special cases": pow's table, in
+// standard-library.md "`core:math/repro`": pow's table, in
 // its order, and x = -1 with an integer y, whose result is ±1.
 @(private = "file")
 pow_special_case :: proc(x, y: f64, format: Float_Format) -> (u64, bool) {

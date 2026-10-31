@@ -105,8 +105,7 @@ The `_f32` functions are not dispatched, so their repro and plain columns
 measure the same code in two processes; their difference, up to 3 ns, is
 this run's noise. Every repro checksum, in every mode, equals 2026-10-29's,
 which is consistent with the changes leaving each result's bits alone, as
-the [plan](../../deterministic-math-and-targets-plan.md#progress) records
-they were checked to.
+`tests/repro_test.odin` checked each of them to.
 
 The dependency model still matters. With dependent inputs, exp is 15.86
 versus 36.70 ns (2.31 times), sin 19.23 versus 51.14 (2.66), asin 21.98
@@ -116,8 +115,7 @@ UCRT's legacy path, exp is 5.74 versus 18.63 ns, sin 13.69 versus 39.10, and
 pow 21.20 versus 60.33.
 
 What remains of the `f64` gap is in the double-`f64` kernels' arithmetic;
-the plan's
-[experiments of 2026-10-30](../../deterministic-math-and-targets-plan.md#progress)
+the [experiments of 2026-10-30](../../comments.md#standard-library-api-choices)
 found that neither branch removal in the trigonometric kernels nor folding
 the logarithm constants' splits recovers much of it.
 
@@ -227,8 +225,9 @@ very different costs. The benchmark does not measure their worst case.
 
 Two separate temporary package copies tested whether implementation choices
 account for part of the cost. Neither change was applied to the library
-then; both were adopted afterwards, with revised bounds and validation, as
-the [plan](../../deterministic-math-and-targets-plan.md#progress) records:
+then; both were adopted afterwards, with revised bounds and validation, in
+`two_product` ([arith.loke](../../core/math/repro/arith.loke)) and
+`pair_root` ([arc.loke](../../core/math/repro/arc.loke)):
 
 - `fma`: on v3, replace only `two_product` with `p := a*b` and
   `return {p, math.fma(a, b, 0.0 - p)}`. Against the unchanged v3 build,

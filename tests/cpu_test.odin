@@ -12,7 +12,7 @@ import "core:testing"
 // `math.fma` and the rounding to an integral value as instructions, the bit
 // operations v3 has instructions for, vectors at twice the width, and the
 // distributions over all of them, `core:math/repro`'s functions included, and
-// the lockstep example, whose state hashes are the plan's phase 5 gate. Each
+// the lockstep example, whose state hashes must match at every level. Each
 // keeps its one `.expected`, which the ordinary run corpus, or the examples
 // test for the example, pins at baseline.
 // The trap case binds the check the entry also calls above baseline.
@@ -294,7 +294,7 @@ without_dispatch_cap :: proc(env: []string) -> []string {
 	return kept[:]
 }
 
-// deterministic-math-and-targets-plan.md "Validation and performance gates":
+// compiler-architecture.md "Standard-library verification":
 // the object code itself shows what may run where. Built for baseline, no
 // function but a dispatched procedure's copy for `x86-64-v3`, named `.v3`,
 // holds an instruction beyond SSE2, so forcing the plain copies never meets

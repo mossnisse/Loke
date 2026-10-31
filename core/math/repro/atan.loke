@@ -1,4 +1,4 @@
-// deterministic-math-and-targets-plan.md "Reproducible result contract":
+// standard-library.md "`core:math/repro`":
 // `atan2` and `atan` in both widths, past their tables of special cases.
 //
 // With n the smaller of |y| and |x| and d the larger, t = n/d is in (0, 1],

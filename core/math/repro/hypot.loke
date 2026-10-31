@@ -1,4 +1,4 @@
-// deterministic-math-and-targets-plan.md "Reproducible result contract":
+// standard-library.md "`core:math/repro`":
 // `hypot` in both widths.
 //
 // With a the larger magnitude and b the smaller, hypot is a sqrt(1 + (b/a)^2).

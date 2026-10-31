@@ -1,4 +1,4 @@
-// deterministic-math-and-targets-plan.md "Reproducible result contract": `pow`
+// standard-library.md "`core:math/repro`": `pow`
 // in both widths, past its table of special cases.
 //
 // x^y = e^z, z = y log x, for x > 0 other than 1. The fast path computes

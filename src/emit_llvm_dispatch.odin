@@ -7,8 +7,8 @@
 // A copy calls copies, so nothing compiled for the level runs before the check
 // says it may. The dispatcher is at the build's level, and LLVM never inlines a
 // function into one whose features lack the callee's, so the level's code stays
-// behind the check (deterministic-math-and-targets-plan.md "Code generation and
-// startup").
+// behind the check
+// (comments.md "A dispatched procedure is copied with its callees").
 package lokec
 
 import "core:fmt"

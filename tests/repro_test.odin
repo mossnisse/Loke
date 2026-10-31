@@ -1,4 +1,4 @@
-// deterministic-math-and-targets-plan.md "Validation and performance gates":
+// compiler-architecture.md "Standard-library verification":
 // `core:math/repro` against the oracle in tests/math_oracle.odin.
 package tests
 
@@ -221,7 +221,7 @@ EXHAUSTIVE_FUNCTIONS :: []string {
 	"pow_two", "pow_half", "pow_third", "pow_minus", "hypot", "norm",
 }
 
-// deterministic-math-and-targets-plan.md "Validation and performance gates":
+// compiler-architecture.md "Standard-library verification":
 // the `f32` first approximations, whose bounds are the tightest, never return
 // a result the double-`f64` path and the slow path behind them would not, for
 // any argument of the unary functions and of `pow_f32`, `hypot_f32`, and

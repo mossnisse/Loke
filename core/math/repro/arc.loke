@@ -1,4 +1,4 @@
-// deterministic-math-and-targets-plan.md "Reproducible result contract":
+// standard-library.md "`core:math/repro`":
 // `asin` and `acos` in both widths, past their special cases.
 //
 // With a = |x| and w = sqrt(1 - a^2), asin x is atan2(a, w) with x's sign,

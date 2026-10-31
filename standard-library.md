@@ -2778,9 +2778,9 @@ correctly rounded, so only a fix changes one, and the
 with the other versions its values depend on and refuses a recording with
 another, as [examples/lockstep.loke](examples/lockstep.loke) does.
 
-The plan for the rest of the package, and its special cases for further
-functions, is in the
-[deterministic math and CPU targeting plan](deterministic-math-and-targets-plan.md#special-cases).
+The reasons for the package's design are in
+[Standard-library API choices](comments.md#standard-library-api-choices), and
+its later work in [Future plans](future-plans.md#standard-library-maturity).
 
 ## `core:math/linalg`
 
@@ -3583,9 +3583,9 @@ value calls `exp` or `log`, and the other distributions call `exp`, `log`,
 [`core:math/repro`](#coremathrepro)'s, correctly rounded, so a distribution's
 values are the same on every machine, not only its draws. They are slower
 than the C library's where a value calls them, most for `beta` by Jöhnk's
-method, which calls `pow` twice per attempt; the
-[plan](deterministic-math-and-targets-plan.md#progress) records the
-measurements.
+method, which calls `pow` twice per attempt;
+[Standard-library API choices](comments.md#standard-library-api-choices)
+records the measurements.
 
 ### Sampling
 

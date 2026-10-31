@@ -1,4 +1,4 @@
-// deterministic-math-and-targets-plan.md "Reproducible result contract": `exp`
+// standard-library.md "`core:math/repro`": `exp`
 // in both widths.
 //
 // The fast path writes x = (128m + i) ln 2/128 + r with |r| <= ln 2/256, and

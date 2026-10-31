@@ -1664,8 +1664,8 @@ A C host is the exception the rule cannot reasonably cover: a library is
 called by code it did not write, which may run with flush-to-zero for its own
 graphics or an exception unmasked for its own debugging. So each procedure
 Loke defines with a foreign calling convention guards its own entry, rather
-than leaving a scoped enter-and-leave call to every host. The plan proposed
-such a call; a guard cannot be forgotten, and it covers what the call would
+than leaving a scoped enter-and-leave call to every host. Such a call was
+the first proposal; a guard cannot be forgotten, and it covers what the call would
 miss: a callback reached from a C library that changed the state, and a
 thread the host created. When the caller's control bits already match, which
 is every call from Loke and from a well-behaved host, the guard costs one
@@ -2107,7 +2107,7 @@ and `core:math/repro`'s fixed-point slow paths are such functions: inlined, each
 made every call of its public function pay its frame, 968 bytes for `exp`, and
 the saves and restores of the callee-saved registers it uses. Marked, `hypot`
 went from 17.9 to 13.4 ns a call and `pow` from 58.4 to 55.2, with every result
-unchanged ([plan](deterministic-math-and-targets-plan.md#progress)).
+unchanged, measured with [bench/math_compare](bench/math_compare/README.md).
 `core:math/geometry`'s predicates had the same shape: LLVM inlined each exact
 path into its filter, its one caller, and the `f64` `orient2d` filter then
 cost 1265 against the inliner's threshold of 225, so no caller inlined it.
@@ -2325,7 +2325,69 @@ boundaries and API shapes follow a few common choices:
   Jöhnk's method, though not at all for `normal` and `exponential`. A second,
   fast set beside the reproducible one would list every distribution twice,
   and the slow paths are better won back in `core:math/repro` itself, for
-  every caller.
+  every caller. Switching in place changed few values: of 2 million seeded
+  draws of each distribution, only `log_normal` and `gamma` below shape 1
+  changed any bits, and two of the 1,028 ziggurat entries had been the
+  UCRT's and an ulp off. Measured on 2026-10-29 at `-opt=speed` against the
+  UCRT's functions, `normal` and `exponential` stayed at about 7 and 4 ns,
+  `gamma` of shape 0.5 went from 40 to 112 ns, `poisson` at a mean of 4 from
+  24 to 53, `geometric` from 13 to 69, and `beta` by Jöhnk's method from 13
+  to 205.
+- **Reproducible math is a package, not a switch.** `core:math/repro` and
+  `core:math` coexist, so a game's simulation can be reproducible and its
+  renderer use platform math in one executable, and a library states which it
+  depends on in its imports. A global switch that silently redirected every
+  dependency's math would let a build flag change a library's results, and
+  the optimization level and CPU level decide effort and instructions, never
+  a contract. `core:math` keeps the C library until a release decides
+  otherwise (see [Future plans](future-plans.md#standard-library-maturity)).
+- **Reproducible means correctly rounded.** A fixed approximation, fdlibm's
+  or musl's, would be deterministic too, but it freezes one algorithm's bits,
+  so every bug fix is a breaking change, and it matches no other
+  implementation. A correctly rounded result is defined by the arithmetic
+  alone, so it is the same on every machine and at compile time, and the most
+  accurate the width holds; determinism and accuracy are separate properties,
+  and correct rounding gives both for ordinary results, which leaves only the
+  special cases and NaNs to specify. The functions are written in Loke rather
+  than bound from C, so compile-time evaluation runs the same code, and a
+  missing function is missing rather than a fallback to `libm`. Each has a
+  double-`f64` fast path within about 2^-67 relative, deciding at twice its
+  bound, and a slow path in 320-bit fixed point for the rest; most `_f32`
+  functions first try a single `f64`. `sqrt` is the instruction, which IEEE
+  754 requires to be correctly rounded: a software root agreed with it and
+  took 42 ns to its 1.5.
+- **The composite magnitudes are `core:math/repro`'s.** The only callers of
+  a nondeterministic function outside `core:math`'s own procedures were the
+  magnitudes of `Complex` and `Quaternion`. `core:math` cannot call
+  `core:math/repro`, which imports it, and `repro.hypot` took 30 ns to the
+  UCRT's 4.4, so `abs` keeps the C library and `core:math/repro` adds
+  `complex_abs` and `quaternion_abs`, the second rounded once where `q.abs()`
+  nests `hypot` and rounds three times. `hypot`'s proof of correct rounding
+  does not carry over to four components, whose smallest square can be finer
+  than any fixed point holds and still decide a near tie, so a root within
+  2^-300 of a midpoint is settled exactly in integers over the whole span,
+  about 4,200 bits.
+- **Reproducible results carry a version.** `repro.RESULTS_VERSION` and
+  `random.SEQUENCE_VERSION` change with any result of their package. Correct
+  rounding is a fixed target, but a bug fix still changes a shipped result,
+  so a replay or lockstep peer records the versions and refuses another,
+  rather than relying on the contract being unchanged. No build-configuration
+  field is needed, since no CPU or optimization level changes a value. The
+  rest of a lockstep recipe is the program's: a fixed timestep and input
+  order, no clock, entropy, address, map order, or scheduling in a step, a
+  canonical serialization with explicit byte order, an explicit rule for
+  signed zeros, which `==` equates but later arithmetic does not, and a
+  specified tie rule for SIMD extrema of equal signed-zero lanes, as
+  [examples/lockstep.loke](examples/lockstep.loke) shows. NaN results of
+  `core:math/repro` are canonical, but other arithmetic NaNs are not; a
+  program that inspects or serializes NaNs canonicalizes them first.
+- **Two `f64` experiments did not pay.** On 2026-10-30, specializing `log2`
+  and `log10` to their constant, so that its split folds, saved 1.3 of their
+  13 ns over `log`; and one trigonometric kernel with its coefficients chosen
+  by the quadrant, as the `f32` first approximation does, took 43.2 ns
+  against 42.8 for the branch it removed. The remaining `f64` gap is the
+  double-`f64` kernels' arithmetic, which a latency count of each chain, as
+  shortened `exp`'s and `log`'s, would locate.
 - **`Time` is an `i64` of nanoseconds.** It is what `fs.Metadata` already
   held and what Odin uses: arithmetic is one integer operation, and 1677 to
   2262 covers every clock reading and every file time. Seconds and
@@ -2852,6 +2914,36 @@ documented where its package is, which a generated table would not do.
 The declaration adds no symbol. It never reaches the selected view the checker
 walks, so no other pass treats a `---` body as a foreign procedure or a missing
 definition, and the name keeps the one identity the compiler gave it.
+
+### A CPU level changes instructions, not results
+
+The instructions a build may use, the numerical contract of its math, and its
+optimization effort are three separate choices: `-cpu`, the package a program
+imports, and `-opt`. A faster level must not relax a result, so a level with
+FMA accelerates an explicit `math.fma` and never turns `a*b + c` into one. The
+levels are the standard cumulative x86-64 ones, as GCC and Clang define them,
+rather than a hand-picked approximation such as "v3 means AVX2", and baseline
+stays the default. `x86-64-v4` waits for AVX-512 hardware to test on, and
+`native` for a reason to resolve one machine's features. There is no public
+`-target` while Windows x64 is the only target, since an option accepting one
+value would fix triple spelling before a second target forces it
+([More platforms](future-plans.md#more-platforms)).
+
+IR flags are not the only control on fusion: Clang's `-ffp-contract` also sets
+the backend's mode for `.ll` input, and the runtime's C sources would get
+Clang's default, which fuses within an expression. Harmless at baseline, which
+has no FMA, that stops being so at `x86-64-v3`, so every Clang command passes
+`-ffp-contract=off` rather than relying on a default.
+
+A build above baseline must check the processor before any code of its level
+runs. `wmain` carries an explicit baseline `"target-features"` list and calls
+the check first, which is compiled as baseline code under a
+`target("arch=x86-64")` pragma; a `"target-cpu"` attribute alone was not
+enough, since the command line's features still applied and a v3 callee was
+inlined into it. An object build enforces its level with a baseline static
+constructor that runs the same check before the host's `main`, rather than
+metadata every host would have to read; a host that chooses between builds
+can still ask `loke_rt_v1_cpu_supports` first.
 
 ### The processor check asks compiler-rt
 

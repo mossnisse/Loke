@@ -1,4 +1,4 @@
-// deterministic-math-and-targets-plan.md "Reproducible result contract":
+// standard-library.md "`core:math/repro`":
 // `tan` in both widths.
 //
 // |x| = q pi/2 + r as for `sin` and `cos`, and tan |x| is tan r for an even

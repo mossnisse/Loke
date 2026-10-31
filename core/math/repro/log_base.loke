@@ -1,4 +1,4 @@
-// deterministic-math-and-targets-plan.md "Reproducible result contract":
+// standard-library.md "`core:math/repro`":
 // `log2` and `log10` in both widths.
 //
 // log2 x and log10 x are log x times 1/ln 2 or 1/ln 10, from `log_kernel`'s

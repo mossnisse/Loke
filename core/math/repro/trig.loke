@@ -1,4 +1,4 @@
-// deterministic-math-and-targets-plan.md "Reproducible result contract": `sin`
+// standard-library.md "`core:math/repro`": `sin`
 // and `cos` in both widths.
 //
 // |x| = q pi/2 + r, |r| at most a little over pi/4, and sin or cos of |r| by
