@@ -48,7 +48,8 @@ check_generated_block :: proc(t: ^testing.T, path: string, expected: string) {
 
 // The package's functions agree with their slow paths, which the probe
 // reaches through a copy of the package with tests/repro/probe_hook.loke
-// added, over seeded arguments, and with the oracle over a sample of them.
+// added, over seeded arguments, and with the oracle over a sample of them
+// and the published hard-to-round cases of sin, cos, and tan.
 // The constants the probe folds agree with the same calls at run time. At
 // `x86-64-v3`, where `two_product` takes the FMA instruction's error, the
 // probe prints exactly what it does at baseline, where each public `f64`
@@ -119,6 +120,7 @@ repro_functions_round_correctly :: proc(t: ^testing.T) {
 	oracle_init(&o)
 	defer oracle_destroy(&o)
 	checked, constants := 0, 0
+	published := PUBLISHED_RESULTS
 	text := string(stdout)
 	for line in strings.split_lines_iterator(&text) {
 		fields := strings.fields(strings.trim_space(line), context.temp_allocator)
@@ -208,9 +210,42 @@ repro_functions_round_correctly :: proc(t: ^testing.T) {
 			want := oracle_eval(&o, function, argument, format)
 			testing.expectf(t, got == want, "%s at f%s of %v: got %x, the oracle %x", fields[0], fields[1], argument, got, want)
 			checked += 1
+			if fields[1] == "64" {
+				for &p in published {
+					if p.function == fields[0] && p.x == x {
+						testing.expectf(t, got == p.want, "%s of %x: got %x, the published result %x", fields[0], x, got, p.want)
+						p.seen = true
+					}
+				}
+			}
 		}
 	}
-	testing.expectf(t, checked == 37956 && constants == 107, "the probe printed %d checked results and %d constants", checked, constants)
+	testing.expectf(t, checked == 38044 && constants == 107, "the probe printed %d checked results and %d constants", checked, constants)
+	for p in published {
+		testing.expectf(t, p.seen, "the probe printed no %s of %x", p.function, p.x)
+	}
+}
+
+// Correctly rounded results published beside the hard-to-round cases of
+// sin, cos, and tan (Lefèvre, Ly, and Zimmermann, "Computing hard-to-round
+// cases of sin, cos, tan in double precision", ARITH 2026, appendix B, where
+// libraries returned others), which the probe's arguments include: a check
+// independent of the oracle.
+@(private = "file")
+Published_Result :: struct {
+	function: string,
+	x:        u64,
+	want:     u64,
+	seen:     bool,
+}
+
+@(private = "file")
+PUBLISHED_RESULTS :: [5]Published_Result {
+	{"Sin", 0x42817fa49f5bf327, 0x3f9adfaf34d5560f, false},
+	{"Cos", 0x429567fb180b78ba, 0x3fa94ca60f882065, false},
+	{"Tan", 0x42942ec31a947798, 0x3fabdcdf49882450, false},
+	{"Cos", 0x3feb4287fe717028, 0x3fe5130dee743525, false},
+	{"Sin", 0x3feb4287fe717028, 0x3fe81498bdcaa1e8, false},
 }
 
 // The functions tests/repro/exhaustive.loke runs every `f32` bit pattern

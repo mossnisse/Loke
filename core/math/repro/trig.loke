@@ -38,6 +38,20 @@
 // to the smallest sine, about 2^-61, and far less to a cosine, at least
 // 0.7.
 //
+// That rounds every argument correctly. Below 2^-26 for sin and 2^-27 for
+// cos, the result is x or 1, as `sin` and `cos` return. Above, no result is
+// a midpoint, sin and cos of a nonzero rational not being even algebraic
+// (Lindemann and Weierstrass), and the exhaustive searches list every x
+// whose sin or cos has at least 43 identical bits after the round bit:
+// Lefèvre, Ly, and Zimmermann's from 2^10 ("Computing hard-to-round cases of
+// sin, cos, tan in double precision", ARITH 2026) and CORE-MATH's BaCSeL
+// search below (sin.wc and cos.wc, sin's from 1 checked again by the
+// first). Every other result is at least 2^-44 ulps from a midpoint, and the
+// nearest listed, sin 0x1.ab63fa3669245p+348 and cos
+// 0x1.b7fe89bf86037p+917, 2^-62.2 and 2^-63.1 ulps: over 2^-117 relative,
+// far outside the slow path's error. The proof is as sound as those
+// searches; `tests/repro_test.odin` checks both paths on the hardest cases.
+//
 // An `f32` argument below 2^20 pi/2 first takes a single-`f64` approximation:
 // Cody and Waite's reduction with three of the parts, the first two
 // products exact and the third too, its 28 bits times q's 20, each

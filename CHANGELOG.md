@@ -651,6 +651,11 @@ checklist.
   `local/junction/../x` names `local/x`, while an extended-length `\\?\`
   path is not normalized ([`core:fs`](standard-library.md#corefs),
   [Filesystem operations](standard-library.md#filesystem-operations)).
+- `core:math/repro`'s `sin`, `cos`, and `tan` are proved correctly rounded for
+  every `f64` argument, against the published hard-to-round cases of
+  Lefèvre, Ly, and Zimmermann (ARITH 2026) and CORE-MATH, with the same
+  results; the probe checks them on the hardest of those cases
+  ([`core:math/repro`](standard-library.md#coremathrepro)).
 - `core:math/repro`'s `exp` takes 14 ns rather than 19, and `pow` 55 rather
   than 60, with the same results: their shared kernel's dependency chain is
   about a third shorter. `log`, `log2`, and `log10` take 1 to 4 ns less per

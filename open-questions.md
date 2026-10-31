@@ -595,11 +595,7 @@ kept and a decision on the default after measurement
   one-argument functions, exhaustive searches bound that distance, but none
   for binary64 `asin`, `acos`, `log2`, or `log10` is relied on here; no
   search covers two `f64` arguments, and no proof is known to rule it out.
-  Their results are the same everywhere either way. Binary64 `sin`, `cos`,
-  and `tan` now have published hard cases (Lefèvre, Ly, and Zimmermann,
-  "Computing hard-to-round cases of sin, cos, tan in double precision",
-  ARITH 2026); checking the slow paths against them would settle those
-  three.
+  Their results are the same everywhere either way.
 - Should the compile-time evaluator reclaim what a call frees? A call to
   `core:math/repro` that takes its fixed-point slow path uses 8 to 16 MB of
   the evaluator's 64 MB budget (`L0342`), since nothing a call frees is

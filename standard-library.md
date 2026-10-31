@@ -2738,7 +2738,15 @@ not the `f64` one narrowed, which could round twice.
 - `sin`, `cos`, and `tan` take radians. Every finite argument is reduced by
   an exact multiple of pi/2, however large. NaN and ±Inf give NaN; `sin(±0)`
   and `tan(±0)` are ±0 and `cos(±0)` is exactly 1, and `sin(-x)` and
-  `tan(-x)` are `-sin(x)` and `-tan(x)`.
+  `tan(-x)` are `-sin(x)` and `-tan(x)`. All three are proved correctly
+  rounded for every `f64` argument: their slow paths are within 2^-250 of
+  the result, relative, and the exhaustive searches for hard-to-round cases
+  (Lefèvre, Ly, and Zimmermann, "Computing hard-to-round cases of sin, cos,
+  tan in double precision", ARITH 2026, above 2^10, or 2^4 for `tan`, and
+  CORE-MATH's below) leave no result within 2^-117 of a midpoint, relative
+  to it. The proof is as sound as those searches. The functions not yet
+  proved are in
+  [Open questions](open-questions.md#deterministic-math-functions).
 - `asin` and `acos` give radians, from -pi/2 to pi/2 and from 0 to pi. NaN
   and every argument outside [-1, 1], ±Inf included, give NaN. `asin(±0)`
   is ±0 and `asin(±1)` is ±pi/2; `acos(1)` is +0, `acos(-1)` is pi, and

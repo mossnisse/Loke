@@ -18,10 +18,20 @@
 // argument (Kahan and McDonald), so the result is within 2^-250 relative.
 // tan of a nonzero rational is not even algebraic (Lindemann and
 // Weierstrass), so no result but tan ±0 is a midpoint or zero, and no `f64`
-// result overflows. Lefèvre, Ly, and Zimmermann's exhaustive search ("Computing
+// result overflows. The exhaustive searches list every x from
+// 0x1.d12ed0af1a27ep-27 on whose tan has at least 43 identical bits after
+// the round bit: Lefèvre, Ly, and Zimmermann's from 2^4 ("Computing
 // hard-to-round cases of sin, cos, tan in double precision", ARITH 2026)
-// gives binary64 tan's hard cases; nothing here relies on it, and
-// `tests/repro_test.odin` checks both paths against an independent oracle.
+// and CORE-MATH's BaCSeL search below 10.5 pi (tan.wc). Every other result
+// there is at least 2^-44 ulps from a midpoint, and the nearest listed, tan
+// 0x1.dffffffffff1fp-22, 2^-79.5 ulps. From 2^-27 to that bottom, tan x - x
+// grows with x and stays under half an ulp of x, by at least 2^-51.5 ulps,
+// its margin at 0x1.d12ed0af1a27dp-27, the last argument below; under 2^-27,
+// tan x rounds to x, as `tan` returns. So no result is within 2^-117 of a
+// midpoint relative to it, far outside 2^-250, and the slow path rounds
+// every argument correctly, as soundly as those searches;
+// `tests/repro_test.odin` checks both paths against an independent oracle,
+// on the hardest cases too.
 package repro;
 
 import "core:unsafe";

@@ -2355,7 +2355,11 @@ boundaries and API shapes follow a few common choices:
   bound, and a slow path in 320-bit fixed point for the rest; most `_f32`
   functions first try a single `f64`. `sqrt` is the instruction, which IEEE
   754 requires to be correctly rounded: a software root agreed with it and
-  took 42 ns to its 1.5.
+  took 42 ns to its 1.5. A slow path is a proof only with a bound on how
+  near a result comes to a midpoint, which for one argument the published
+  exhaustive searches for hard-to-round cases give; `exp`, `log`, `sin`,
+  `cos`, and `tan` rest on them, so they are as sound as those searches,
+  and tests on a finite corpus are regression evidence.
 - **The composite magnitudes are `core:math/repro`'s.** The only callers of
   a nondeterministic function outside `core:math`'s own procedures were the
   magnitudes of `Complex` and `Quaternion`. `core:math` cannot call

@@ -710,6 +710,33 @@ CONSTANT_HARD_TAN_F32 :: [2]f32{HARD_TAN_F32_0, HARD_TAN_F32_1};
 CONSTANT_TAN :: repro.tan(1.0e22);
 CONSTANT_TAN_F32 :: repro.tan_f32(f32(-3.0));
 
+// Published binary64 hard-to-round cases (Lefèvre, Ly, and Zimmermann,
+// "Computing hard-to-round cases of sin, cos, tan in double precision",
+// ARITH 2026, and CORE-MATH's sin.wc, cos.wc, and tan.wc): the paper's
+// tables of the hardest above 2^10 (above 2^4 for tan), the cases it reports
+// BaCSeL missed, the arguments of its library failures, and the hardest
+// to round to nearest of the files, up to 78 identical bits after the round
+// bit, which take the slow path; for tan also the bottom of its search,
+// 0x1.d12ed0af1a27ep-27, and the argument below it. Checked at run time
+// only: folding a slow path takes up to 16 MB of the evaluator's 64.
+HARD_PUBLISHED :: [44]u64{
+	0x7dee009c53148be1, 0x75bcfe482285f8ed, 0x7506ac5b262ca1ff, 0x6a7db41f3cb71d7b,
+	0x6404c96c11134d36, 0x4c4e7e44a78ac18c, 0x487230280c47f5c1, 0x482504cac51f1eaf,
+	0x416b951f1572eba5, 0x4004f1d73be27a31, 0x400821adbddf43c8, 0x4022d58d2e060d7d,
+	0x3fdfe767739d0f6d, 0x55bab63fa3669245, 0x569c2d3844aa10aa, 0x3f8598bae9e632f6,
+	0x42dd7f14b107e883, 0x42817fa49f5bf327, 0x3feb4287fe717028,
+	0x7ed5afb7107105d9, 0x7dfe009c53148be1, 0x794b7fe89bf86037, 0x7536ac5b262ca1ff,
+	0x7526ac5b262ca1ff, 0x7516ac5b262ca1ff, 0x51c1fa76750679fc, 0x483504cac51f1eaf,
+	0x417b951f1572eba5, 0x6f11b3921c006e90, 0x40034ec2f9fc9c00, 0x429567fb180b78ba,
+	0x3feb4287fe717028,
+	0x7dd20e3e80d2b617, 0x7b894bb90326441a, 0x7b752042b55571c6, 0x6a8fe6e530194af6,
+	0x6418b4c4b528e351, 0x54357237795e9208, 0x3e9dffffffffff1f, 0x3ec67fffffffe845,
+	0x403f671de534c343, 0x42942ec31a947798, 0x3e4d12ed0af1a27d, 0x3e4d12ed0af1a27e,
+};
+// The first 19 are sin's, the next 13 cos's, and the last 12 tan's.
+HARD_PUBLISHED_SIN :: 19;
+HARD_PUBLISHED_COS :: 13;
+
 // asin and acos: `f64` arguments found by search that take the slow path,
 // asin's with J = 0, acos's with w the numerator and of a negative x; then
 // `f32` arguments of an exhaustive pass, two that reach the double-`f64`
@@ -920,6 +947,20 @@ main :: proc() {
 		result := repro.tan(z);
 		fmt.println("Tan", 64, bits(z), bits(result));
 		fmt.println("constant", bits(constants_tan[i]) == bits(result));
+	}
+	published := HARD_PUBLISHED;
+	foreach (i in 0 ..< 44) {
+		function := Function.Tan;
+		if (i < HARD_PUBLISHED_SIN) {
+			function = .Sin;
+		} else if (i < HARD_PUBLISHED_SIN + HARD_PUBLISHED_COS) {
+			function = .Cos;
+		}
+		z := unsafe.transmute(f64, published[i])*one;
+		fmt.println(function, 64, bits(z), bits(fast64(function, z)));
+		// Its negation, which the oracle checks as well: sin and tan are odd,
+		// cos even.
+		fmt.println(function, 64, bits(0.0 - z), bits(fast64(function, 0.0 - z)));
 	}
 	hard_tan32 := HARD_TAN_F32;
 	constants_tan32 := CONSTANT_HARD_TAN_F32;
