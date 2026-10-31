@@ -4,9 +4,9 @@ import "core:fmt";
 import "core:math/geometry";
 import "core:math/linalg";
 
-// geometry-plan.md "Validation": orient2d, orient3d, incircle, and insphere
-// against the exact determinant of integer coordinates, computed here in
-// i128 by cofactor expansion of the raw rows (x, y, 1), (x, y, z, 1),
+// standard-library.md "`core:math/geometry`": orient2d, orient3d, incircle, and
+// insphere against the exact determinant of integer coordinates, computed here
+// in i128 by cofactor expansion of the raw rows (x, y, 1), (x, y, z, 1),
 // (x, y, x^2 + y^2, 1), and (x, y, z, x^2 + y^2 + z^2, 1), a formulation the
 // package does not use for its first stage. The configurations are random and
 // nearly degenerate: points on a line, a plane, a circle, or a sphere moved by

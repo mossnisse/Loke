@@ -7,7 +7,7 @@ import "core:math/linalg";
 import "core:math/repro";
 import "core:unsafe";
 
-// geometry-plan.md "Validation", milestone 2: boxes, circles, spheres,
+// standard-library.md "`core:math/geometry`": boxes, circles, spheres,
 // planes, segments, and triangles. Box algebra and the closed-set boundary
 // cases are checked exactly, at f64, f32, and integers; closest points
 // against brute force over a sampled triangle or segment; degenerate shapes

@@ -1,4 +1,4 @@
-// geometry-plan.md "Rays take their range": a ray is `origin + t*direction`,
+// standard-library.md "`core:math/geometry`": a ray is `origin + t*direction`,
 // and every cast searches the range of `t` its caller gives. A box and a
 // ball are solids, so a ray that starts inside one hits it at `t_min`.
 @(public)
@@ -111,7 +111,7 @@ slab :: proc(near: inout $T, far: inout T, low, high, origin, inverse: T) where 
 // faces chosen by a lane-wise select, which LLVM does not turn into a branch
 // on the direction's sign as it does the scalar choice, and each lane's
 // distances `slab`'s operations in its order, so the bits are the same
-// (geometry-plan.md "Milestone 5 results"). The fourth lane is computed and
+// (standard-library.md "`core:math/geometry`"). The fourth lane is computed and
 // dropped.
 @(private)
 slab_lanes :: proc(near: inout f32, far: inout f32, box: Aabb3(f32), origin: linalg.Vector3(f32), i: Simd(f32, 4)) {

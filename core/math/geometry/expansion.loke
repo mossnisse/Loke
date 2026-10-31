@@ -1,4 +1,4 @@
-// geometry-plan.md "Exact predicates": Shewchuk's expansion arithmetic
+// standard-library.md "`core:math/geometry`": Shewchuk's expansion arithmetic
 // (Discrete & Computational Geometry 18, 1997). An expansion is a slice of
 // `f64` components, in increasing magnitude and nonoverlapping, whose exact
 // sum is the value; each operation here is exact, given what design.md

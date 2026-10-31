@@ -40,7 +40,8 @@
 	level, and at compile time for whatever does not reach a square root,
 	which calls a foreign procedure.
 */
-// geometry-plan.md is the design this package implements, milestones 1 to 5.
+// standard-library.md "`core:math/geometry`" is the contract this package
+// implements.
 @(public)
 package geometry;
 

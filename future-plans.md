@@ -125,9 +125,8 @@ last its measured `Simd` paths, and
 products, LU, Cholesky, QR, least squares, the symmetric and Hermitian
 eigensolver, the SVD, measured `Simd`, blocked, and pooled kernels, and
 complex elements through `linalg.Scalar`.
-[`core:math/geometry`](standard-library.md#coremathgeometry) has every
-milestone of the [geometry library plan](geometry-plan.md#milestones), the
-exact predicates, the shapes with their point queries, rays, culling, and
+[`core:math/geometry`](standard-library.md#coremathgeometry) has the exact
+predicates, the shapes with their point queries, rays, culling, and
 transforms, polygons, and the measured `Simd` path of the `f32` box cast.
 
 `core:math/dense` adds each of these with a caller who needs it: `try_` forms
@@ -142,6 +141,20 @@ tridiagonalization, now the eigensolver's largest cost; a fast path for
 products with a strided `a`; a complex `Simd` kernel, which would have to keep
 `math.Complex`'s `ac - bd` and `ad + bc` in each lane; and a conjugating
 `dot`.
+
+`core:math/geometry` leaves these for a caller, each built on what it has:
+oriented boxes, capsules, and cylinders, with the separating-axis tests
+between them (Gottschalk et al., 1996) and the closest points of capsules;
+an exact frustum test by separating axes beside the conservative one;
+bounding volume hierarchies over `Aabb3` with deterministic construction,
+and a uniform grid for a 2D broad phase; Welzl's minimal enclosing circle and
+sphere, with a seeded `core:random` generator so the result is reproducible;
+Delaunay and constrained triangulation over the exact predicates, and polygon
+Boolean operations; Bézier evaluation, subdivision, bounds, and flattening to
+a polyline with a stated tolerance; and lane-wise batch queries over
+structure-of-arrays boxes, measured against `bench/geometry.loke`. Meshes,
+NURBS, geodesy on the ellipsoid, and contact generation for a physics solver
+can likewise be built on it.
 
 [`core:encoding/json`](standard-library.md#coreencodingjson) still needs this
 evidence, in this order; its open design questions are in

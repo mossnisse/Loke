@@ -1,5 +1,5 @@
-// geometry-plan.md "Exact predicates": each `f64` predicate is Shewchuk's
-// first stage, the determinant in floating point of the coordinate
+// standard-library.md "`core:math/geometry`": each `f64` predicate is
+// Shewchuk's first stage, the determinant in floating point of the coordinate
 // differences with his error bound, and, when the result is within the
 // bound, the exact determinant of expansion.loke. `f32` coordinates run the
 // `f64` predicate, every `f32` difference and product of up to five of them

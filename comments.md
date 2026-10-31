@@ -2454,6 +2454,89 @@ boundaries and API shapes follow a few common choices:
   sticky digit, so a tie broken by a later digit rounded the wrong way. Keeping
   767 digits and one standing for any nonzero remainder gives the correctly
   rounded result for any length, from a fixed buffer.
+- **Geometry shapes are plain records with named dimensions.** Public fields
+  with no padding beyond their vectors' let an array of boxes or triangles go
+  to a foreign API as it is. `Aabb2` and `Aabb3` follow `linalg`'s named
+  vectors: a generic `Aabb(T, N)` would need a vector type chosen by `N`,
+  which `linalg` rejected for the vectors themselves, and the two dimensions
+  share private generic helpers instead. `Aabb` is the name graphics,
+  physics, and Ericson's *Real-Time Collision Detection* use; `Box` would read
+  as the owning [`Box(T)`](design.md#owned-values). A box is its corners,
+  which the slab and overlap tests read, rather than a center and extents,
+  which cannot represent every box of float corners exactly. A plane is
+  `dot(normal, p) == offset` rather than `dot(n, p) + d == 0`, so `offset`
+  reads as the distance from the origin along the normal with no sign to
+  remember. The package is `core:math/geometry`, beside `linalg` and `dense`,
+  where its dependencies and its siblings are, rather than a top-level
+  `core:geometry`.
+- **Every geometric solid is closed.** Touching shapes intersect and
+  `contains` holds on the boundary: that is the collision literature's
+  convention, and the only one under which an overlap test between closed
+  sets has an exact answer. An integer `Aabb2` is closed too; a pixel or UI
+  rectangle with an exclusive maximum belongs with the image and UI code that
+  needs it, whose conventions, a width and height or a corner, differ again.
+  An empty box has no nearest point, so `closest_point` and the distances
+  panic for one rather than answer with a point outside it, and a negative or
+  NaN radius panics rather than meaning empty, which would make `contains`
+  with `r*r` silently true.
+- **Geometric conventions are arguments.** A ray query's `t_min` and `t_max`
+  are required, since a default of `[0, inf]` would hide the self-intersection
+  bug every ray tracer meets first; the frustum's clip depth and the polygon
+  fill rule are required because the domains disagree on them. `cast` takes
+  the reciprocal direction as an argument rather than through a second ray
+  type. The slab test (Williams et al., 2005) is conservative because bounding
+  volumes are where a false miss loses a hit and a false hit costs one more
+  test. Its widening is `2*gamma(4)` of the larger end's magnitude, from Ize's
+  (2013) `gamma(3)` bound on each distance, rather than `far*(1 + 2*gamma(3))`,
+  which narrows a line's range where it is negative. The triangle test is the
+  watertight one of Woop, Benthin, and Wald (2013), since Möller and
+  Trumbore's leaks at shared edges; it leaves out their axis swap for a
+  negative direction, which keeps the winding only for backface culling,
+  which `cast` does not do.
+- **The predicates are exact, in two stages.** Kettner et al. (2008) show the
+  floating-point formulas judging points collinear one way and not another,
+  building hulls with a dent, and flipping Delaunay edges forever. Shewchuk's
+  (1997) adaptive method needs exactly what
+  [Floating-point operators](design.md#floating-point-operators) guarantees,
+  and the package keeps its own copy of the error-free sum and product rather
+  than adding them to `core:math/repro`'s API. Shewchuk adds two intermediate
+  stages between the filter and the exact determinant; here the exact path
+  goes straight to the determinant of the raw coordinates, expanded into
+  pairwise minors so that no coordinate difference has to be exact. The sign
+  is the same and is reached only near a degenerate input. `f64` exactness is
+  a documented range for each predicate rather than every finite input:
+  scaling by a power of two outside it would cost a branch on every call, and
+  can be added without changing a result inside it. The predicates need only
+  `Numeric` and `Ordered`, so integers and user ordered types get them, and
+  one `Sign` serves all four, since "positive" means something different for
+  each anyway. `insphere`'s exact path keeps its 120 KB of expansions in its
+  own frame, so the common path's stays small.
+- **Polygons are slices, and a ring does not repeat its first vertex.**
+  Polygons come from files, tessellators, and other libraries as arrays of
+  points, which a slice borrows without a copy. A ring closed by repeating its
+  first vertex, as GeoJSON writes one, has an edge of no length, which
+  `is_convex` and `is_simple` reject; the caller drops the last vertex.
+  `is_convex` counts the sign changes of `b.x - a.x` around the polygon, which
+  tells a convex pentagon from a pentagram with comparisons alone. Andrew's
+  (1979) monotone chain takes into its upper chain only the points above the
+  line from the first sorted point to the last, so `out` needs room for `n`
+  points rather than `2n`.
+- **Only the `f32` box cast uses lanes.** Its three slabs are a
+  `Simd(f32, 4)`, since LLVM compiles the scalar choice of each slab's near
+  face to a branch on the direction's sign, which a random ray mispredicts
+  half the time, and a lane-wise select is never a branch. `f64` lanes are two
+  registers at `x86-64`; they were 20 to 25 % faster at `-opt=speed` but
+  13 % slower at `-opt=aggressive` and 64 % slower at `-opt=size`. The
+  predicates' filters in lanes were faster only at `x86-64`, and a slab test
+  without branches was 35 % slower. Timings moved with code placement, a
+  hand-written loop whose code did not change running 18 % faster after an
+  unrelated change, so each decision needed an effect at both CPU levels and
+  was checked at `-opt=aggressive` and `-opt=size`. What separates the casts
+  from a hand-written loop is mostly not their robustness: LLVM vectorizes the
+  hand-written box loop four rays at a time, which the cast's branches
+  prevent, and the `f64` `orient2d` filter is not inlined, because the exact
+  path is inlined into it first
+  ([Keeping a cold path out of line](open-questions.md#keeping-a-cold-path-out-of-line)).
 - **Geometry recomputes out-of-range values instead of always widening.** A
   ball query, a ball cast, or a triangle cast whose squares, edge functions,
   or determinant are normal numbers keeps its `T` arithmetic and its bits;

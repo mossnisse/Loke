@@ -1,4 +1,4 @@
-// geometry-plan.md "Frustums take their clip depth": the six planes of a
+// standard-library.md "`core:math/geometry`": the six planes of a
 // clip matrix by Gribb and Hartmann (2001), normals inward. The side planes
 // are the same for every depth range, and the near and far planes are the
 // rows its table gives.

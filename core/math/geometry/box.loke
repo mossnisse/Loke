@@ -1,5 +1,5 @@
-// geometry-plan.md "Every solid is closed": a box is its corners, contains its
-// faces, and is empty when a minimum exceeds its maximum on some axis. Its
+// standard-library.md "`core:math/geometry`": a box is its corners, contains
+// its faces, and is empty when a minimum exceeds its maximum on some axis. Its
 // comparisons use `<` and `==` alone, so a NaN corner makes it empty.
 @(public)
 package geometry;

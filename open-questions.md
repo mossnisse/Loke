@@ -673,7 +673,7 @@ short filter and an exact path reached only near a degenerate input. LLVM
 inlines the exact path into the filter, being its one caller, and the filter
 then costs 1265 against the inliner's threshold of 225, so no call site
 inlines the filter
-([Milestone 5 results](geometry-plan.md#milestone-5-results)). Loke has
+([Standard-library API choices](comments.md#standard-library-api-choices)). Loke has
 no attribute for either. A `@(cold)` on the procedure, or on a branch, would
 let the compiler keep the exact path out of line; it is a hint with no effect
 on results, so it could be added without a change of meaning. Not required

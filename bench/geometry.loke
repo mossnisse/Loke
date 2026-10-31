@@ -13,8 +13,8 @@ import "core:unsafe";
 // frustum, and the four predicates on inputs their floating-point filter
 // decides and on degenerate inputs that reach their exact path, each over
 // an array of operands, beside the plain test written by hand
-// (geometry-plan.md "Milestone 5 results"). The hand-written forms are what a
-// caller might write without the package: the slab test without its
+// (standard-library.md "`core:math/geometry`"). The hand-written forms are what
+// a caller might write without the package: the slab test without its
 // widening, Möller and Trumbore's ray-triangle test, the frustum test
 // inline, and each predicate's formula in `f64` without its filter. Run as
 // it is, it computes each once and prints a hash of every result bit, which

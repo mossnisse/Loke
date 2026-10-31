@@ -3144,9 +3144,8 @@ to share runs on the calling thread.
 ## `core:math/geometry`
 
 Shapes, rays, frustums, polygons, and exact geometric predicates over
-`core:math/linalg`'s vectors, from the
-[geometry library plan](geometry-plan.md), whose measured performance follows
-in its last milestone.
+`core:math/linalg`'s vectors. The reasons for its design are in
+[Standard-library API choices](comments.md#standard-library-api-choices).
 
 `orient2d(a, b, c)`, `orient3d(a, b, c, d)`, `incircle(a, b, c, d)`, and
 `insphere(a, b, c, d, e)` return a `Sign`, `.Negative`, `.Zero`, or
@@ -3354,7 +3353,7 @@ the same result, and every result is the same bits on every machine,
 unspecified. An `f32`
 box cast computes its three slabs in `Simd` lanes, each lane one axis in the
 documented order, which changes its speed and not its bits
-([Milestone 5 results](geometry-plan.md#milestone-5-results)).
+([Standard-library API choices](comments.md#standard-library-api-choices)).
 
 ## `core:random`
 

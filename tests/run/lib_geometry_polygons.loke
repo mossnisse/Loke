@@ -7,7 +7,7 @@ import "core:math/linalg";
 import "core:math/repro";
 import "core:unsafe";
 
-// geometry-plan.md "Validation", milestone 4: polygons. Convex hulls against
+// standard-library.md "`core:math/geometry`": polygons. Convex hulls against
 // the brute-force hull from exact triangle tests on every triple, winding
 // numbers against summed angles and against their additivity over a shared
 // edge, the polygon tests on hand-made and near-degenerate polygons, at f64,

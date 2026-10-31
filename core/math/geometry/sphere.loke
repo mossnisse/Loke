@@ -1,4 +1,4 @@
-// geometry-plan.md "Every solid is closed": a circle or a sphere holds its
+// standard-library.md "`core:math/geometry`": a circle or a sphere holds its
 // boundary. A negative or NaN radius describes no set a caller meant, so it
 // panics where it is read, as `math.clamp` does for reversed bounds.
 // standard-library.md "`core:math/geometry`": an `f32` or `f64` square that

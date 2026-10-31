@@ -1,4 +1,4 @@
-// geometry-plan.md "Planes and their sign": the points with
+// standard-library.md "`core:math/geometry`": the points with
 // `dot(normal, p) == offset`, the normal a unit vector from every constructor.
 @(public)
 package geometry;

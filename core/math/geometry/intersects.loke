@@ -1,4 +1,4 @@
-// geometry-plan.md "Every solid is closed": two shapes intersect when they
+// standard-library.md "`core:math/geometry`": two shapes intersect when they
 // share a point, so touching ones do. Each test compares the values it
 // computes, exactly for integers, and an empty box intersects nothing.
 @(public)

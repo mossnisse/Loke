@@ -6,12 +6,12 @@ import "core:math/geometry";
 import "core:math/linalg";
 import "core:unsafe";
 
-// geometry-plan.md "Milestone 5 results": the `f32` box cast, which computes
-// the three slabs in `Simd` lanes, and the triangle cast, which permutes the
-// axes rather than indexing by a run-time one, against the scalar formulas
-// they replaced, bit for bit, over random operands and the special values,
-// and folded at compile time; `f64`, which keeps the scalar box cast, the
-// same way.
+// standard-library.md "`core:math/geometry`": the `f32` box cast, which
+// computes the three slabs in `Simd` lanes, and the triangle cast, which
+// permutes the axes rather than indexing by a run-time one, against the scalar
+// formulas they replaced, bit for bit, over random operands and the special
+// values, and folded at compile time; `f64`, which keeps the scalar box cast,
+// the same way.
 
 failures := 0;
 

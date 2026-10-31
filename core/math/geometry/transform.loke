@@ -1,4 +1,4 @@
-// geometry-plan.md "Transforming shapes": a box by Arvo's method (Graphics
+// standard-library.md "`core:math/geometry`": a box by Arvo's method (Graphics
 // Gems, 1990), a plane through the inverse transpose of the linear part.
 // Spheres and circles have no transform: only a similarity keeps them round,
 // which a matrix does not say.

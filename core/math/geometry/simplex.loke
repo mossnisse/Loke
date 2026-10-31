@@ -1,4 +1,4 @@
-// geometry-plan.md "Every solid is closed": segments and triangles, and their
+// standard-library.md "`core:math/geometry`": segments and triangles, and their
 // closest points, Ericson's (Real-Time Collision Detection, 2005, 5.1.2 and
 // 5.1.5), written once over the vector type for both dimensions. Each region
 // test compares the dot products it computes, so a point exactly on a

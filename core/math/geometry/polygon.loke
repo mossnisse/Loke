@@ -1,7 +1,8 @@
-// geometry-plan.md "Polygons are slices": a polygon is its vertices in order,
-// the last edge closing back to the first, borrowed as a slice. Every side
-// test is an exact `orient2d` and every other decision a comparison of input
-// coordinates, so the tests below are exact for `f32`, `f64`, and integers.
+// standard-library.md "`core:math/geometry`": a polygon is its vertices in
+// order, the last edge closing back to the first, borrowed as a slice. Every
+// side test is an exact `orient2d` and every other decision a comparison of
+// input coordinates, so the tests below are exact for `f32`, `f64`, and
+// integers.
 @(public)
 package geometry;
 
