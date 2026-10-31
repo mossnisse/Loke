@@ -284,11 +284,22 @@ Prov_Slot :: struct {
 	// `[total]` for a pointer chosen between borrows of the two
 	// (`prov_note_offset`). Nil until a definition names storage, and then
 	// taken to point at the whole of it.
-	offsets: [][]Proj_Step,
-	// `offsets` took places past `PROV_OFFSET_LIMIT` as a prefix they share
+	offsets: []Prov_Offset,
+	// `offsets` took places past `PROV_OFFSET_LIMIT` or `PROV_OFFSET_TOTAL`
+	// as a prefix they share
 	// (`prov_union_offsets`), so it covers places the value may never point
 	// at (design.md "Minimum provenance precision").
 	offsets_merged: bool,
+}
+
+// One place a value may point at (`Prov_Slot.offsets`): `path` below the
+// storage it was reached in, which the carrier slot `storage` named. A value
+// holding places of several such storages is taken to point at each of its
+// places in every storage it names; `storage` only says which a place counts
+// against when the limits merge places (`prov_union_offsets`).
+Prov_Offset :: struct {
+	path:    []Proj_Step,
+	storage: int,
 }
 
 // How one definition of a named view slot relates what it views to the range

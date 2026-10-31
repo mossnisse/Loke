@@ -47,6 +47,25 @@ allocator without its callers changing, but it rejects programs that are
 safe, and the checker already infers the rest of the result contract from the
 body. A call it cannot follow keeps the signature reading.
 
+The [chosen-places minimum](design.md#minimum-provenance-precision) counts
+places per storage. A pointer chosen among fields of two records, as
+`cur := &mut left.count if flag else &mut right.total`, should not lose
+precision in one record because of choices made in the other; counted
+together, whether a write to `left` is accepted would depend on how many
+places of `right` the pointer may also point at. The limit exists to keep the
+loans and accesses a borrow through the pointer makes few, so a total of 64
+still bounds them when a pointer is chosen among many storages.
+
+The guarantee does not keep the storages apart: a pointer that may point into
+`s` or `t` is taken to point at each of its places in both, so after
+`q := &mut s.a if flag else &mut t.e`, a write to `t.a` may be rejected.
+Which storage a carrier names is known only once the borrow analysis solves
+the body, while its places are recorded as the body is walked. Keeping them
+apart would make every loan in that solve carry the places it is at, a cost
+for every body, for a case that choosing within one storage, or borrowing each
+storage separately, avoids. As with the other budgets, the rejection names the
+limit and says the borrow *may* cover the place.
+
 ### Splitting a mutable slice is compiler-known
 
 Two runtime slice ranges conservatively overlap, so after
