@@ -543,7 +543,7 @@ prov_view_at :: proc(graph: ^Flow_Graph, place: Expr, carriers: []int) -> Prov_V
 prov_offsets_agree :: proc(graph: ^Flow_Graph, carriers: []int, offsets: []Prov_Offset) -> bool {
 	for carrier in carriers {
 		if entry := graph.prov_slots[carrier]; entry.through_block == NO_BLOCK {
-			own := prov_slot_offsets(graph, carrier)
+			own, _ := prov_carrier_offsets(graph, carrier)
 			if !prov_offsets_cover(own, offsets, any_storage = true) || !prov_offsets_cover(offsets, own, any_storage = true) {
 				return false
 			}
@@ -803,8 +803,8 @@ prov_value_offset :: proc(graph: ^Flow_Graph, slots: []int) -> (out: []Prov_Offs
 		if entry.through_block != NO_BLOCK {
 			continue
 		}
-		offsets := prov_slot_offsets(graph, slot)
-		merged ||= entry.offsets_merged
+		offsets, slot_merged := prov_carrier_offsets(graph, slot)
+		merged ||= slot_merged
 		if found {
 			joined: bool
 			out, joined = prov_union_offsets(graph, out, offsets)
@@ -818,14 +818,28 @@ prov_value_offset :: proc(graph: ^Flow_Graph, slots: []int) -> (out: []Prov_Offs
 }
 
 // Records what a definition of `slot` from `sources` may point at, besides
-// what the slot's earlier definitions may.
+// what the slot's earlier definitions may, and, for a named slot, what this
+// one does (`prov_reaching_offsets`).
 @(private = "file")
 prov_note_offset :: proc(graph: ^Flow_Graph, slot: int, sources: []int) {
 	at, found, merged := prov_value_offset(graph, sources)
+	entry := &graph.prov_slots[slot]
+	reach := &graph.offset_reach
+	if entry.symbol != INVALID_SYMBOL && (found || slot in reach.defs) {
+		if slot not_in reach.defs {
+			reach.defs[slot] = make([dynamic]Prov_Offset_Def, 0, 2, graph.alloc)
+		}
+		// Past the bound the slot keeps one more, which marks it untracked.
+		if defs := &reach.defs[slot]; len(defs) <= PROV_REACHING_DEFS {
+			append(defs, Prov_Offset_Def{block = graph.current, offsets = at if found else nil, merged = merged})
+		}
+		if graph.blocks[graph.current].reach_known {
+			clear(&reach.exits)
+		}
+	}
 	if !found {
 		return
 	}
-	entry := &graph.prov_slots[slot]
 	if entry.offsets != nil {
 		joined: bool
 		entry.offsets, joined = prov_union_offsets(graph, entry.offsets, at)
@@ -845,6 +859,178 @@ prov_note_offset :: proc(graph: ^Flow_Graph, slot: int, sources: []int) {
 PROV_OFFSET_LIMIT :: 8
 @(private)
 PROV_OFFSET_TOTAL :: 64
+
+// The most definitions of one slot, and the most blocks one borrow walks
+// back over that no earlier walk did, that `prov_reaching_offsets` follows;
+// past either, the borrow takes what every definition of the slot may point
+// at. A definition is a bit of `Prov_Reach.exits`, beside
+// `PROV_REACH_UNKNOWN`.
+@(private = "file")
+PROV_REACHING_DEFS :: 63
+@(private = "file")
+PROV_REACHING_BLOCKS :: 256
+@(private = "file")
+PROV_REACH_UNKNOWN :: u64(1) << 63
+
+// What `slot` may point at where the event about to be emitted is, and
+// whether a limit merged places on the way.
+@(private = "file")
+prov_carrier_offsets :: proc(graph: ^Flow_Graph, slot: int) -> (offsets: []Prov_Offset, merged: bool) {
+	offsets, merged = prov_slot_offsets(graph, slot), graph.prov_slots[slot].offsets_merged
+	if reaching, reaching_merged, found := prov_reaching_offsets(graph, slot, offsets); found {
+		return reaching, merged || reaching_merged
+	}
+	return
+}
+
+// design.md "Minimum provenance precision": a named slot whose definitions
+// point into several storages, as `p` for `p := s; ...; p = t`, is taken to
+// point where the event about to be emitted is at what the definitions
+// reaching there do (`prov_reaching_defs`), so a place taken through it
+// counts against only the storage it names there. Each place of `all`, what
+// the slot's definitions recorded so far may point at, that none of theirs
+// covers is kept too, so `all` still bounds the paths taken. Not found for a
+// slot of one storage, or past the bounds.
+@(private = "file")
+prov_reaching_offsets :: proc(graph: ^Flow_Graph, slot: int, all: []Prov_Offset) -> (out: []Prov_Offset, merged: bool, found: bool) {
+	several := false
+	for at in all {
+		several ||= at.storage != all[0].storage
+	}
+	if !several || graph.current == NO_BLOCK {
+		return
+	}
+	defs, recorded := graph.offset_reach.defs[slot]
+	if !recorded || len(defs) < 2 || len(defs) > PROV_REACHING_DEFS {
+		return
+	}
+	mask, known := prov_reaching_defs(graph, slot, defs[:])
+	if !known || mask == 0 || mask & PROV_REACH_UNKNOWN != 0 {
+		return
+	}
+	for def, index in defs {
+		if mask & (u64(1) << uint(index)) == 0 {
+			continue
+		}
+		if found {
+			joined: bool
+			out, joined = prov_union_offsets(graph, out, def.offsets)
+			merged ||= joined
+		} else {
+			out = def.offsets
+		}
+		merged ||= def.merged
+		found = true
+	}
+	extra: [dynamic]Prov_Offset
+	for at in all {
+		if !prov_offset_covered_in(out, at.path, -1) {
+			if extra == nil {
+				extra = make([dynamic]Prov_Offset, 0, len(all), graph.alloc)
+			}
+			append(&extra, at)
+		}
+	}
+	if extra != nil {
+		joined: bool
+		out, joined = prov_union_offsets(graph, out, extra[:])
+		merged ||= joined
+	}
+	return
+}
+
+// The definitions of `slot` that reach the end of the current block so far,
+// as bits of `Prov_Reach.exits`: a block's last definition, or else what
+// reaches the end of each of its predecessors, the procedure's entry
+// reaching as `PROV_REACH_UNKNOWN`. Walks back depth first, and a block
+// whose definitions are known for good, as one not current that is not
+// waiting on a cycle still being walked (Tarjan's strongly connected
+// components), keeps them in `exits` for later walks, until a block taken
+// gains a predecessor. Blocks of one cycle that no definition breaks reach
+// the same definitions. Not known past `PROV_REACHING_BLOCKS`.
+@(private = "file")
+prov_reaching_defs :: proc(graph: ^Flow_Graph, slot: int, defs: []Prov_Offset_Def) -> (mask: u64, known: bool) {
+	reach := &graph.offset_reach
+	start := graph.current
+	if defined, own := prov_block_def(defs, start); own {
+		return defined, true
+	}
+	clear(&reach.frames)
+	clear(&reach.seen)
+	clear(&reach.scc)
+	discovered := 0
+	prov_reach_enter(graph, start, discovered)
+	for len(reach.frames) > 0 {
+		top := &reach.frames[len(reach.frames) - 1]
+		preds := graph.blocks[int(top.block)].preds
+		if top.next < len(preds) {
+			pred := preds[top.next]
+			top.next += 1
+			if exit, memo := reach.exits[Prov_Reach_Key{slot, pred}]; memo {
+				top.mask |= exit
+			} else if seen, taken := reach.seen[pred]; taken {
+				top.mask |= seen.mask
+				if seen.waiting {
+					top.low = min(top.low, seen.index)
+				}
+			} else if defined, own := prov_block_def(defs, pred); own {
+				top.mask |= defined
+			} else {
+				discovered += 1
+				if discovered > PROV_REACHING_BLOCKS {
+					return 0, false
+				}
+				prov_reach_enter(graph, pred, discovered)
+			}
+			continue
+		}
+		frame := pop(&reach.frames)
+		if frame.low == frame.index {
+			// The first block of a cycle, done with all of it.
+			for {
+				member := pop(&reach.scc)
+				reach.seen[member] = Prov_Reach_Seen{mask = frame.mask, index = reach.seen[member].index}
+				if frame.block != start {
+					reach.exits[Prov_Reach_Key{slot, member}] = frame.mask
+					graph.blocks[int(member)].reach_known = true
+				}
+				if member == frame.block {
+					break
+				}
+			}
+		} else {
+			reach.seen[frame.block] = Prov_Reach_Seen{mask = frame.mask, index = frame.index, waiting = true}
+		}
+		if len(reach.frames) == 0 {
+			return frame.mask, true
+		}
+		parent := &reach.frames[len(reach.frames) - 1]
+		parent.mask |= frame.mask
+		parent.low = min(parent.low, frame.low)
+	}
+	return 0, false
+}
+
+// Starts walking `block`, discovered `index`th (`prov_reaching_defs`).
+@(private = "file")
+prov_reach_enter :: proc(graph: ^Flow_Graph, block: Block_Id, index: int) {
+	reach := &graph.offset_reach
+	mask := PROV_REACH_UNKNOWN if len(graph.blocks[int(block)].preds) == 0 else 0
+	append(&reach.frames, Prov_Reach_Frame{block = block, mask = mask, index = index, low = index})
+	append(&reach.scc, block)
+	reach.seen[block] = Prov_Reach_Seen{index = index, waiting = true}
+}
+
+// The last of `defs` emitted in `block`, as a bit of `Prov_Reach.exits`.
+@(private = "file")
+prov_block_def :: proc(defs: []Prov_Offset_Def, block: Block_Id) -> (mask: u64, own: bool) {
+	#reverse for def, index in defs {
+		if def.block == block {
+			return PROV_REACH_UNKNOWN if def.offsets == nil else u64(1) << uint(index), true
+		}
+	}
+	return
+}
 
 // A slot whose definitions name no storage points at the whole of what it
 // names, which counts as storage of its own.

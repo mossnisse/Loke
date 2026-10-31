@@ -372,7 +372,7 @@ behavioral controls for all of it.
 | --- | --- |
 | Access through carriers: the hops to a place, the caller slots a parameter's loan stands for, and the reborrow a loaded copy takes | `prov_read_through_carrier`, `prov_place_hops`, `prov_caller_slots`, `prov_view_element`, `prov_reborrow_loaded` in `cfg_provenance.odin` |
 | Place loans, taken by a borrow, slice, traversal, or switch of a place reached through carriers, and the constant view element one is in | `Prov_Place_Loan`, `prov_place_loan`, `place_bit`, `check_place_loans`, `Prov_View_At`, `view_elements_apart` in `borrow.odin`; `prov_view_at` in `cfg_provenance.odin` |
-| Access events, the places a slot's definitions may point at, and their merging | `prov_access_through`, `Prov_Slot.offsets`, `prov_note_offset`, `prov_union_offsets` |
+| Access events, the places a slot's definitions may point at, those reaching a borrow, and their merging | `prov_access_through`, `Prov_Slot.offsets`, `prov_note_offset`, `Prov_Reach`, `prov_reaching_offsets`, `prov_union_offsets` |
 | Publication: a store through carriers, or what a call leaves of a `stored` argument | `publish_into_loan`, `publish_into_caller`, `read_caller_slots`, `resolve_content_reads` in `borrow.odin`; `prov_reborrow_retained` in `cfg_provenance.odin` |
 | Written-argument regions, by parameter and by path | `param_writes_caller`, `Compiler.written_regions`, `written_owner_regions`, `written_region_content`, `Prov_Region_Content` |
 | Region shapes and queries of a value's fields | `region_field_shape`, `Region_Query`, `prov_result_region_at`, `prov_result_region_fields` |
@@ -416,7 +416,16 @@ Keep these contracts:
   records the carrier slot whose storage it was reached in (`Prov_Offset`),
   and offsets merge past eight places of one such storage or 64 in all; place
   loans and `.Through` events take their paths in every storage the carriers
-  name. Alias paths stop at `WRITTEN_ALIAS_DEPTH`; a truncated path carries the
+  name. A slot's offsets gather every definition's, so a named slot whose
+  definitions point into several storages, as `p` for `p := s; ...; p = t`,
+  is taken where a borrow goes through it to point where the definitions
+  reaching there do (`prov_reaching_offsets`), keeping any place of the
+  gathered offsets those do not cover. The definitions reaching are found
+  walking back over the blocks linked so far, and what reaches a finished
+  block's end is kept for later walks (`Prov_Reach`) until a block walked
+  gains a predecessor, as a loop's head its back edge. Past 63 definitions of
+  the slot, or 256 blocks walked anew, the borrow takes the gathered offsets.
+  Alias paths stop at `WRITTEN_ALIAS_DEPTH`; a truncated path carries the
   precision marker, so `L0646`, `L0647`, and `L0730` say the borrow *may* be
   there, and recursive cursors converge. A place loan or `.Through` event made
   from merged offsets (`Prov_Slot.offsets_merged`) carries

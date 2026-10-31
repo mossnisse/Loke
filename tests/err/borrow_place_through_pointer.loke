@@ -198,6 +198,65 @@ chosen_from_other_storage :: proc(s: ^mut Sides, t: ^mut Sides, flag: bool) -> i
 	return value^;
 }
 
+// A carrier repointed between choices points into the storage it names where
+// each place is taken (design.md "Minimum provenance precision"). Repointed
+// on one path only, it may point into either where the later places are
+// taken, so they count against both: nine of `s`.
+chosen_repointed_on_one_path :: proc(s: ^mut Sides, t: ^mut Sides, flag: bool, i: int) -> int {
+	p := s;
+	q := &mut p^.left.a;
+	if (i == 1) { q = &mut p^.left.b; }
+	if (i == 2) { q = &mut p^.left.c; }
+	if (i == 3) { q = &mut p^.left.d; }
+	if (flag) { p = t; }
+	if (i == 4) { q = &mut p^.left.e; }
+	if (i == 5) { q = &mut p^.right.a; }
+	if (i == 6) { q = &mut p^.right.b; }
+	if (i == 7) { q = &mut p^.right.c; }
+	if (i == 8) { q = &mut p^.right.d; }
+	value := &q^;
+	s^.right.z = 1;
+	s^.left.z = 2;
+	return value^;
+}
+
+// Nine places of `t` taken after the carrier is repointed to it merge as
+// nine of `s` would.
+chosen_repointed_past_limit :: proc(s: ^mut Sides, t: ^mut Sides, i: int) -> int {
+	p := s;
+	q := &mut p^.left.a;
+	p = t;
+	if (i == 1) { q = &mut p^.left.b; }
+	if (i == 2) { q = &mut p^.left.c; }
+	if (i == 3) { q = &mut p^.left.d; }
+	if (i == 4) { q = &mut p^.left.e; }
+	if (i == 5) { q = &mut p^.right.a; }
+	if (i == 6) { q = &mut p^.right.b; }
+	if (i == 7) { q = &mut p^.right.c; }
+	if (i == 8) { q = &mut p^.right.d; }
+	if (i == 9) { q = &mut p^.right.e; }
+	value := &q^;
+	t^.right.z = 1;
+	t^.left.z = 2;
+	return value^;
+}
+
+// Within the limits, each place taken is one the pointer may point at: one
+// of `t` taken after the carrier was repointed, one of `s` taken before, and,
+// as in either storage, one of `t` in `s`.
+chosen_repointed_conflicts :: proc(s: ^mut Sides, t: ^mut Sides, i: int) -> int {
+	p := s;
+	q := &mut p^.left.a;
+	if (i == 1) { q = &mut p^.left.b; }
+	p = t;
+	if (i == 2) { q = &mut p^.right.a; }
+	value := &q^;
+	t^.right.a = 1;
+	s^.left.b = 2;
+	s^.right.a = 3;
+	return value^;
+}
+
 // Legal: other fields, read-only borrows beside each other, and uses after
 // the borrow is done.
 beside :: proc(h: ^mut Holder) -> int {
@@ -396,6 +455,28 @@ chosen_across_storages :: proc(s: ^mut Sides, t: ^mut Sides, i: int) -> int {
 	value := &q^;
 	s^.left.z = 1;
 	t^.left.z = 2;
+	return value^;
+}
+
+// The places a carrier repointed between choices takes count against the
+// storage it names where each is taken: four of `s` and five of `t`.
+chosen_repointed_between :: proc(s: ^mut Sides, t: ^mut Sides, i: int) -> int {
+	p := s;
+	q := &mut p^.left.a;
+	if (i == 1) { q = &mut p^.left.b; }
+	if (i == 2) { q = &mut p^.left.c; }
+	if (i == 3) { q = &mut p^.left.d; }
+	p = t;
+	if (i == 4) { q = &mut p^.left.e; }
+	if (i == 5) { q = &mut p^.right.a; }
+	if (i == 6) { q = &mut p^.right.b; }
+	if (i == 7) { q = &mut p^.right.c; }
+	if (i == 8) { q = &mut p^.right.d; }
+	value := &q^;
+	s^.left.z = 1;
+	s^.right.e = 2;
+	t^.left.z = 3;
+	t^.z = 4;
 	return value^;
 }
 
