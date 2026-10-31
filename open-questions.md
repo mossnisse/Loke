@@ -11,6 +11,28 @@ Design rationale and differences from Odin are recorded in
 The current behavior inventory is in [Nondeterminism and undefined behavior
 audit](nondeterminism-audit.md).
 
+## Review of the recorded-gap fixes (2026-10-31)
+
+Reviewed `cbac28d9` ("Fix the bugs recorded in known-gaps.md") for correctness,
+simplification, and structure. One remaining part of the alias fix needs work:
+an explicitly typed alias such as `Inner: type : Corner` in a generic `impl`
+still bypasses `L0740`, even after instantiation. Its reproduction and cause
+are in [Known gaps](known-gaps.md#an-explicitly-typed-alias-in-a-generic-impl-is-not-read-for-private-names).
+The already recorded [member-selection gap](known-gaps.md#a-generic-impls-public-alias-of-a-member-selection-is-not-read-for-private-names)
+also affects a concrete operand such as `Box(int).Hidden`.
+
+The `rule_of` extraction keeps fixed and registry-backed time-zone rules on
+one decoding path. Preparing all multiple-assignment destinations before any
+write also states evaluation order more directly than conditioning that work
+on which carrier locals are replaced. No further actionable simplification
+was found in those changes.
+
+Validation passed: 177 compiler unit tests; the borrow matrix, diagnostic,
+package-diagnostic, and library-package suites; the assignment and native
+time-zone regressions; all 13 time-zone package tests with `-opt=speed`; the
+assignment regression with `-opt=speed`; and the time package's API check.
+Both alias omissions were reproduced with a freshly built compiler.
+
 ## JSON follow-ups
 
 [`core:encoding/json`](standard-library.md#coreencodingjson) implements the
