@@ -16,3 +16,7 @@ L0342
 @41:10
 compile-time evaluation exceeded a call depth of 256
 in `grow_stack`, called here
+L0342
+@50:9
+compile-time evaluation exceeded 67108864 bytes of scratch memory
+in `hold_live`, called here

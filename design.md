@@ -5759,7 +5759,10 @@ view](#borrowed-callable-views) of one has no compile-time value.
 Only the executed path must satisfy these restrictions; every branch still
 parses and type-checks unless discarded by `when`. A reached panic or failed
 `assert` is a compilation error. Resource limits must also produce a diagnostic
-rather than silently moving evaluation to runtime.
+rather than silently moving evaluation to runtime. A memory limit bounds the
+storage evaluation holds at one time, not all it uses: storage released along
+the way is reused rather than counted again. An implementation may still count
+a value the evaluation can no longer reach until evaluation ends.
 
 Compile-time evaluation is deterministic and hermetic. It receives target and
 project information only through language constants and

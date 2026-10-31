@@ -3042,6 +3042,42 @@ A test cannot choose the processor it runs on, so
 which keeps the linker from taking the library's, and reports no level; the
 runtime's real check then reports a missing `x86-64-v2` on any machine.
 
+### The evaluator's memory limit counts what it holds
+
+[Compile-time evaluation](design.md#compile-time-procedure-evaluation) has a
+memory limit so that a runaway evaluation ends with a diagnostic. Counting
+storage that evaluation had already released did not help with that. It
+rejected ordinary constants instead: `core:math/repro`'s fixed-point slow path
+does thousands of integer operations, and `core:math/big` gives every result
+room for 32 digits whatever it needs, so one call left 4.7 to 24 MB charged
+and eight of the larger ones together passed the limit. The evaluator's
+allocator now honors a release (`src/eval_memory.odin`). A small block goes back
+to a free list of its size class, and the next request of that class reuses it.
+A block over 32 KB goes back to the system heap, so released large storage
+does not wait for a request of its own size. An integer built during
+evaluation is shrunk to the digits it uses, and its temporaries are released
+once dead; a returned frame releases its table and record, and an assignment its
+scratch arrays. The same calls now take 1.2 to 5.6 MB.
+
+The accounting depends only on the sizes and order of requests, never on
+addresses, so whether a constant fits is the same on every run. Each block's
+header records whether it is live, which turns a double or stray release in the
+compiler into an assertion rather than a corrupted free list. Evaluated code
+never addresses storage that is reused: its slots, elements, and strings are
+never released, so reuse cannot make a pointer in evaluated code read another
+value.
+
+A value the evaluated program drops is not reclaimed. Copies of a value share
+its integers' digits and its elements, as `copy_value` shares a slice's, so the
+evaluator cannot tell when the last copy goes. A tracing collector would need
+every temporary held on the host stack by the recursive interpreter as a root.
+Reference counts would need every copy of an `Eval_Value` to be explicit, and
+copies are ordinary Odin assignments throughout the interpreter. design.md
+lets such storage stay counted, so the limit holds either way. The remaining
+cost is temporaries the program creates and drops. An `append` in evaluated code
+copies the whole array into new storage, so building a long array by appending
+keeps every earlier copy charged.
+
 ### Compiler architecture audit (2026-09-28)
 
 The audit of `b2cc712` and its follow-up favored enforcing existing phase

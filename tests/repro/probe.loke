@@ -532,8 +532,7 @@ CONSTANT_LOG_F32 :: repro.log_f32(0.75);
 // `f32` arguments that reach the rare retries, found by search: `exp_f32`'s
 // double-`f64` step and its slow path, the slow paths of `sin_f32` and
 // `cos_f32`, and `log_f32`'s double-`f64` step and its slow path. Each is
-// checked against the oracle at run time and folded, each in a constant of
-// its own: a folded slow path takes up to 16 MB of the evaluator's 64.
+// checked against the oracle at run time and folded in a constant of its own.
 HARD_F32 :: [6]u32{0xc16912cd, 0x4371ade3, 0x46199998, 0x3c107fe6, 0x022ae487, 0x0dc8bba4};
 HARD_FUNCTIONS :: [6]Function{.Exp, .Sin, .Sin, .Cos, .Log, .Log};
 HARD_0 :: repro.exp_f32(unsafe.transmute(f32, u32(0xc16912cd)));
@@ -718,7 +717,8 @@ CONSTANT_TAN_F32 :: repro.tan_f32(f32(-3.0));
 // to round to nearest of the files, up to 78 identical bits after the round
 // bit, which take the slow path; for tan also the bottom of its search,
 // 0x1.d12ed0af1a27ep-27, and the argument below it. Checked at run time
-// only: folding a slow path takes up to 16 MB of the evaluator's 64.
+// only: the constants above cover folding, and folding 88 more slow paths
+// would lengthen every build of the probe.
 HARD_PUBLISHED :: [44]u64{
 	0x7dee009c53148be1, 0x75bcfe482285f8ed, 0x7506ac5b262ca1ff, 0x6a7db41f3cb71d7b,
 	0x6404c96c11134d36, 0x4c4e7e44a78ac18c, 0x487230280c47f5c1, 0x482504cac51f1eaf,
