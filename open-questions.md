@@ -11,6 +11,47 @@ Design rationale and differences from Odin are recorded in
 The current behavior inventory is in [Nondeterminism and undefined behavior
 audit](nondeterminism-audit.md).
 
+## Review of local-view loads and repointed-carrier places (2026-10-31)
+
+Reviewed `e6719c8d` and `68504095` for correctness, simplification, and
+structure. Two findings remain:
+
+- **Preserve the chosen-place guarantee past the reaching-analysis limits
+  (P2).** The new 63-definition and 256-block bounds reintroduce the
+  repointed-carrier rejection while each storage remains within its promised
+  eight places. The diagnostic names the place and storage limits rather
+  than the bound that caused the fallback. The
+  [known gap](known-gaps.md#reaching-definition-limits-weaken-the-per-storage-chosen-place-guarantee)
+  contains a reproduction for each bound, verified against a compiler built
+  from `68504095` itself. Keeping only a block's last definition would avoid
+  much redundant history; large control-flow graphs still need to retain the
+  specified precision.
+- **Remove the redundant per-definition merge flag (P3, shrink).**
+  `Prov_Offset_Def.merged` in [src/borrow.odin](src/borrow.odin) and its
+  propagation in `prov_reaching_offsets` in
+  [src/cfg_provenance.odin](src/cfg_provenance.odin) duplicate the slot's
+  accumulated `offsets_merged`. Every recorded definition's flag is already
+  joined into that slot flag by `prov_note_offset`, and
+  `prov_carrier_offsets` always joins the slot flag into its result. Remove
+  the field, its initializer, and `merged ||= def.merged`; retain the flag
+  for merges performed while joining reaching offsets. Net: two lines fewer.
+
+The local-view load fix shares the existing element-loan and reaching-view
+helpers, and no additional correctness finding was found in it. The offset
+walk separates definition recording, reaching-definition discovery, and
+offset joining; caching finished blocks and invalidating on new predecessors
+or definitions has a clear purpose. The bounds above leave the specification
+guarantee incomplete. The already-recorded
+[dynamic-array content-slot gap](known-gaps.md#a-copy-out-of-a-dynamic-arrays-view-suspends-the-other-elements-carriers)
+remains outside the local-view fix.
+
+Validation passed on the merged tree: 179 compiler unit tests, the diagnostic
+corpus and borrow matrix, and the `view_element_places` executable's expected
+output. Boundary probes passed at 63 definitions and 128 intervening empty
+branches, and reproduced the false rejection at 64 definitions and 129 such
+branches, both on the merged tree and on `68504095`. No implementation fixes
+were applied during review.
+
 ## Review of public types' private interface methods (2026-10-31)
 
 Reviewed `c0b30260` for correctness, simplification, and structure. Of three

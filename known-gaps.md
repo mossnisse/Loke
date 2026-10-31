@@ -7,6 +7,50 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
+### Reaching-definition limits weaken the per-storage chosen-place guarantee
+
+[Minimum provenance precision](design.md#minimum-provenance-precision)
+guarantees eight chosen places of each storage and 64 in all, without a
+separate limit on definitions or control-flow blocks. The reaching-offset
+analysis added by `68504095` falls back to all earlier definitions after 63
+definitions of a carrier, or after walking 256 previously uncached blocks.
+That fallback again counts later places against the storage the carrier
+named before it was repointed. This program chooses four places of `s` and
+five of `t`, but rejects the disjoint write:
+
+```loke
+package main;
+Wide :: struct { a: int, b: int, c: int, d: int, e: int, z: int }
+Sides :: struct { left: Wide, right: Wide, z: int }
+chosen :: proc(s: ^mut Sides, t: ^mut Sides, i: int) -> int {
+    p := s;
+    q := &mut p^.left.a;
+    if (i == 1) { q = &mut p^.left.b; }
+    if (i == 2) { q = &mut p^.left.c; }
+    if (i == 3) { q = &mut p^.left.d; }
+    p = t;
+    foreach ($repeat in 0 ..< 62) { p = t; }
+    if (i == 4) { q = &mut p^.left.e; }
+    if (i == 5) { q = &mut p^.right.a; }
+    if (i == 6) { q = &mut p^.right.b; }
+    if (i == 7) { q = &mut p^.right.c; }
+    if (i == 8) { q = &mut p^.right.d; }
+    value := &q^;
+    s^.left.z = 1; // L0641; should be accepted
+    return value^;
+}
+main :: proc() {}
+```
+
+Changing 62 to 61 compiles. Replacing the static loop with
+`foreach ($repeat in 0 ..< 129) { if (i < 0) {} }` also rejects the write,
+this time by exhausting the block walk. Both cases report the eight-place
+and multiple-storage precision limits, without naming the reaching-analysis
+limit that caused the loss. Keep the per-storage guarantee across these
+fallbacks; storing only the last definition in each block also avoids counting
+overwritten definitions against the definition bound. Reproduced on a compiler
+built from `68504095` and on the merged tree during review on 2026-10-31.
+
 ### A copy out of a dynamic array's view suspends the other elements' carriers
 
 [Weakening and reborrows](design.md#weakening-and-reborrows) makes elements
