@@ -1,0 +1,5 @@
+warning[L0507]: this binding clones part of `lists`, which may allocate
+@11:10
+L0732
+@28:7
+this uses `arena`'s allocator, which a running task reserves

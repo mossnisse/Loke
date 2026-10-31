@@ -442,13 +442,13 @@ impl Buffer_Writer {
 	`io.Writer`, latch the first `Error`, make every later write a no-op, and
 	return the latched error when formatting is done.
 */
-write_formatted :: proc(writer: inout $W, args: ..any_view) -> Status(Error) where Writer(W) {
+write_formatted :: proc(writer: inout $W, args: ..dyn fmt.Formattable) -> Status(Error) where Writer(W) {
 	latch := Latch{(dyn mut Writer)(&mut writer), .none};
 	fmt.format_to((fmt.Writer)(&mut latch), ..args);
 	return latched(latch.error);
 }
 
-write_formatted_line :: proc(writer: inout $W, args: ..any_view) -> Status(Error) where Writer(W) {
+write_formatted_line :: proc(writer: inout $W, args: ..dyn fmt.Formattable) -> Status(Error) where Writer(W) {
 	latch := Latch{(dyn mut Writer)(&mut writer), .none};
 	fmt.format_to((fmt.Writer)(&mut latch), ..args);
 	fmt.format_to((fmt.Writer)(&mut latch), "\n");

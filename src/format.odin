@@ -144,6 +144,40 @@ discover_formatters :: proc(c: ^Compiler) {
 	}
 }
 
+// design.md "String format printing": the view printing dispatches through,
+// which effects and thread transfers ask about, recorded once `core:fmt`'s
+// bodies are checked.
+record_printing_view :: proc(c: ^Compiler) {
+	for pkg in c.packages {
+		if pkg.key != STD_FMT { continue }
+		k := Checker{c = c}
+		k.pkg, k.lookup_pkg, k.scope = pkg.id, pkg.id, pkg.scope
+		if view, exists := package_type_named(&k, package_of(c, pkg.id), "Format_View"); exists {
+			c.runtime_types["Format_View"] = view
+		}
+		return
+	}
+}
+
+// Whether `element` is printing's `dyn fmt.Formattable`.
+dyn_views_printing :: proc(c: ^Compiler, element: Type_Id) -> bool {
+	info := underlying_info(c, element)
+	if info == nil || info.kind != .Dyn {
+		return false
+	}
+	sym := symbol_of(c, info.dyn_interface)
+	return sym != nil && package_of(c, sym.pkg).key == STD_FMT && identifier_text(c, sym.name) == "Formattable"
+}
+
+// Whether `type` writes a `format` that cannot serve printing, which
+// `formatter_of` reports once at its declaration rather than at every print.
+format_misdeclared :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	writer, has_writer := c.runtime_types["Writer"]
+	options, has_options := c.runtime_types["Options"]
+	sym := written_format_member(c, type)
+	return has_writer && has_options && sym != nil && !formatter_signature_ok(c, sym, type, writer, options)
+}
+
 // The thunk passes the caller's own storage, so the receiver must be a borrow
 // of the type itself, and nothing is given back.
 @(private = "file")

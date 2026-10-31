@@ -767,10 +767,12 @@ or a box or pointer to one prints quoted, escaping the backslash, the quote,
 `["a b", "c"]` and `.some('x')`. Printed on its own, as `fmt.println("a b")`, it
 is its text. A type with its own `format` prints by it in both places.
 
-The print procedures accept mixed `..any_view` arguments. For each erased
-argument, they recover the concrete type's `Formattable` witness and call its
-`format` slot with the borrowed value, writer, and options. The same method is
-selected by an explicit `(dyn fmt.Formattable)(&value)` conversion.
+The print procedures take mixed `..dyn fmt.Formattable` arguments. Each
+argument is [viewed](#variadic-parameters) with its concrete type's
+`Formattable` witness, and the procedure calls its `format` slot with the
+writer and options. The same method is selected by an explicit
+`(dyn fmt.Formattable)(&value)` conversion, and such a view passed to a print
+procedure is passed as itself, so it prints the value it views.
 
 For ordinary member lookup, a visible local extension named `format` takes
 precedence over the generated default. Interface slot selection remains

@@ -1,8 +1,8 @@
 package main;
 
-// The shape of coherent formatting: ordinary Formattable witnesses keyed by
-// frozen typeid, runtime-ABI wrappers for aggregates, and a checked lookup for
-// each erased argument. Defaults and custom methods use the same slot ABI.
+// The shape of coherent formatting: each printed argument paired with its
+// ordinary Formattable witness, and runtime-ABI wrappers for an aggregate's
+// fields. Defaults and custom methods use the same slot ABI.
 
 import "core:fmt";
 

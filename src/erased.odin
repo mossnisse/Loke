@@ -193,6 +193,13 @@ pass_variadic_element :: proc(k: ^Checker, e: Expr, element: Type_Id, prechecked
 		return e, false
 	}
 	concrete := base.type
+	// design.md "String format printing": a `format` that cannot serve printing
+	// is reported once, at its declaration (L0572), not at each print.
+	if dyn_views_printing(k.c, element) && format_misdeclared(k.c, concrete) {
+		base.erased_from = concrete
+		base.type = element
+		return e, true
+	}
 	if !variadic_view_satisfied(k, concrete, element, base.span, report = true) {
 		return e, false
 	}

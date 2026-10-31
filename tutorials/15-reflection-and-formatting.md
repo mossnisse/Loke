@@ -120,8 +120,9 @@ through the interface: (3.0, 4.0)
 
 `self: ^` borrows the vector without copying it. Plain `self` also satisfies
 this slot. The `dyn` view borrows `position`, so it cannot outlive that value.
-Both calls reach the same method: `println` accepts mixed arguments as
-`any_view`, then uses each concrete type's `Formattable` interface to print it.
+Both calls reach the same method: `println` takes `..dyn fmt.Formattable`, so it
+views each argument through its concrete type's `Formattable` interface, just as
+the explicit conversion does.
 
 `writer` is a borrowed output destination. Write to it so the method works
 whether `fmt` targets a terminal, a string, or another sink. Calling

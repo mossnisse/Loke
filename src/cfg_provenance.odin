@@ -9788,6 +9788,24 @@ prov_argument_regions :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []Region_Set
 		}
 		out[index] = set
 	}
+	// A pack built from separate arguments has no bound value: it is in its
+	// elements' regions, and known to be in none when they have none, so a
+	// callee using it does not read as using an unknown region.
+	if call_packs(v, v.variadic_slot) && v.variadic_slot < count {
+		form := prov_value(graph, prov_operand_value(graph, v, graph.expansion)).form.(Prov_Form_Call)
+		pack := prov_empty_region(graph)
+		for element in form.pack {
+			if element == 0 || !prov_type_has_region(c, prov_value(graph, element).type) {
+				continue
+			}
+			used := prov_used_region(graph, element)
+			region_merge(&pack, prov_caller_region(graph, used) if c.thread_facts_pending else prov_region_closure(graph, used))
+		}
+		if out == nil {
+			out = make([]Region_Set, count, graph.alloc)
+		}
+		out[v.variadic_slot] = pack
+	}
 	return out
 }
 

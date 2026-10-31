@@ -36,7 +36,7 @@ L0355
 `proc(a: int) -> bool capture(limit)` is not comparable
 L0310
 @65:14
-is a capture literal, which has no printed form, so no `any_view` can view it
+is a capture literal, which only a `dyn proc` view holds, so no `dyn Formattable` can view it
 L0474
 @67:11
 `limit` is a capture of `proc(a: int) -> bool capture(limit)`, which only the literal's body reads

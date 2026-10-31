@@ -485,9 +485,9 @@ transfer_facts_walk :: proc(
 	}
 }
 
-// design.md "String format printing": printing converts each printed type to
-// `dyn fmt.Formattable` in a pass after the effects, so its witnesses are not
-// all known while they are checked.
+// design.md "String format printing": a printed argument is viewed where it is
+// written, but a nested field or a generic instance reaches its formatter in a
+// pass after the effects, so these witnesses are not all known while checked.
 @(private = "file")
 view_is_printing :: proc(c: ^Compiler, view: ^Type_Info) -> bool {
 	format, found := c.runtime_types["Format_View"]

@@ -349,14 +349,14 @@ error; the bridge stops writing after the first stream failure and returns that
 error after formatting. `write_formatted_line` also appends a newline.
 
 ```loke
-write_formatted(writer, args: ..any_view) -> Status(Error)
-write_formatted_line(writer, args: ..any_view) -> Status(Error)
+write_formatted(writer, args: ..dyn fmt.Formattable) -> Status(Error)
+write_formatted_line(writer, args: ..dyn fmt.Formattable) -> Status(Error)
 ```
 
 `fmt` formats into memory with:
 
 ```loke
-to_string(allocator: Allocator, args: ..any_view) -> string
+to_string(allocator: Allocator, args: ..dyn Formattable) -> string
 ```
 
 The allocator is a required leading parameter because the variadic consumes
@@ -1043,16 +1043,16 @@ Formattable :: interface($Self: type) {
 	slot format: proc(self: ^, writer: Writer, options: Options);
 }
 
-print(args: ..any_view)
-println(args: ..any_view)
-eprint(args: ..any_view)
-eprintln(args: ..any_view)
+print(args: ..dyn Formattable)
+println(args: ..dyn Formattable)
+eprint(args: ..dyn Formattable)
+eprintln(args: ..dyn Formattable)
 stdout() -> Writer
 stderr() -> Writer
-format_to(w: Writer, args: ..any_view)
-concat_to(w: Writer, args: ..any_view)
-format_to_with(w: Writer, options: Options, args: ..any_view)
-to_string(allocator: Allocator, args: ..any_view) -> string
+format_to(w: Writer, args: ..dyn Formattable)
+concat_to(w: Writer, args: ..dyn Formattable)
+format_to_with(w: Writer, options: Options, args: ..dyn Formattable)
+to_string(allocator: Allocator, args: ..dyn Formattable) -> string
 
 Fixed :: struct { /* private */ }
 Padded :: struct($T: type) { /* private */ }
@@ -1079,10 +1079,10 @@ printable runtime types, so both custom methods and defaults satisfy
 and exposes the same slot that printing calls. Formatting does not copy or
 consume the receiver, including a move-only value.
 
-The variadic procedures retain `..any_view` so callers can mix types and forward
-arguments. Internally each erased value becomes a `dyn Formattable` view and
-is formatted through its slot. Extensions in
-other packages do not change a type's printed representation.
+The variadic procedures take `..dyn Formattable`, so callers can mix types and
+forward arguments: each argument is viewed where it is written and formatted
+through its slot, and a `dyn Formattable` argument is passed as itself.
+Extensions in other packages do not change a type's printed representation.
 
 `println` and `eprintln` append a newline; `print` and `eprint` do not.
 Arguments are separated by one space, except by `concat_to`, which writes them
@@ -1823,11 +1823,11 @@ Sink :: interface($Self: type) {
 }
 Logger :: dyn mut Sink;
 
-debug(args: ..any_view)
-info(args: ..any_view)
-warning(args: ..any_view)
-error(args: ..any_view)
-at(level: Level, args: ..any_view)
+debug(args: ..dyn fmt.Formattable)
+info(args: ..dyn fmt.Formattable)
+warning(args: ..dyn fmt.Formattable)
+error(args: ..dyn fmt.Formattable)
+at(level: Level, args: ..dyn fmt.Formattable)
 enabled(level: Level) -> bool
 current() -> Logger
 standard_logger() -> Logger

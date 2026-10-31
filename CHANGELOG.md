@@ -10,6 +10,15 @@ checklist.
 
 ### Breaking changes
 
+- The printers in `core:fmt` (`print`, `println`, `eprint`, `eprintln`,
+  `format_to`, `concat_to`, `format_to_with`, `to_string`), `core:log`'s
+  `debug`, `info`, `warning`, `error`, and `at`, and `io.write_formatted` and
+  `write_formatted_line` take `..dyn fmt.Formattable` rather than
+  `..any_view` ([String format printing](design.md#string-format-printing)).
+  A call that lists its arguments is unchanged and prints the same, and a lone
+  `any_view` argument still prints the value it views. Upgrade a procedure that
+  spreads its own `..any_view` arguments into them by declaring that parameter
+  `..dyn fmt.Formattable`.
 - `Status(E)` is now `Result(Unit, E)`, declared as the parametric alias
   `Status :: Result(Unit, $E);` rather than a union of its own
   ([Typed fallibility](design.md#typed-fallibility)). A procedure generic over
@@ -902,6 +911,13 @@ checklist.
 
 ### Fixed
 
+- A variadic pack built from separate arguments is now in the allocator
+  regions of its elements, so a `parallel` block whose task reserves an arena
+  reports the parent passing a list from that arena to a variadic callee that
+  clones it by naming the arena, not "an allocator region this procedure
+  cannot tell apart from it". A pack whose elements reach no allocator is in
+  none, rather than in an unknown region when no other argument has one
+  ([Allocators and tasks](design.md#allocators-and-tasks)).
 - A panic after a destructuring declaration, as `low, high := pair;`, runs the
   `defer` the procedure registered first again. Binding each field that holds
   no cleanup of its own cleared the frame's first registration

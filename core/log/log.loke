@@ -111,19 +111,19 @@ impl Standard {
 //
 //     when (LOKE_LOG_LEVEL <= .Debug) { log.debug("state", expensive()); }
 
-debug :: proc(args: ..any_view) {
+debug :: proc(args: ..dyn fmt.Formattable) {
 	when (LOKE_LOG_LEVEL <= Level.Debug) { record(Level.Debug, ..args); }
 }
 
-info :: proc(args: ..any_view) {
+info :: proc(args: ..dyn fmt.Formattable) {
 	when (LOKE_LOG_LEVEL <= Level.Info) { record(Level.Info, ..args); }
 }
 
-warning :: proc(args: ..any_view) {
+warning :: proc(args: ..dyn fmt.Formattable) {
 	when (LOKE_LOG_LEVEL <= Level.Warning) { record(Level.Warning, ..args); }
 }
 
-error :: proc(args: ..any_view) {
+error :: proc(args: ..dyn fmt.Formattable) {
 	when (LOKE_LOG_LEVEL <= Level.Error) { record(Level.Error, ..args); }
 }
 
@@ -149,7 +149,7 @@ enabled :: proc(level: Level) -> bool {
 // package: `<= Error` is false only when logging is compiled out entirely, so
 // an `off` build discards this body too. `enabled` then does the per-level
 // filtering that a compiled constant cannot, because the level is not one.
-at :: proc(level: Level, args: ..any_view) {
+at :: proc(level: Level, args: ..dyn fmt.Formattable) {
 	when (LOKE_LOG_LEVEL <= Level.Error) {
 		if (enabled(level)) { record(level, ..args); }
 	}
@@ -169,7 +169,7 @@ at :: proc(level: Level, args: ..any_view) {
 // `fmt.Sink`'s and stream into it instead. A suppressed call allocates
 // nothing: its whole body is discarded.
 @(private)
-record :: proc(level: Level, args: ..any_view) {
+record :: proc(level: Level, args: ..dyn fmt.Formattable) {
 	handle := current();
 	text := fmt.to_string(mem.default_allocator(), ..args);
 	handle.write(level, text);

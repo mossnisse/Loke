@@ -5,9 +5,10 @@
 	borrowed byte sink — a `dyn mut Sink` view — and `Options` is what a formatter
 	reads to spell a scalar.
 
-	The compiler supplies default methods for printable types. Erased arguments
-	recover the same coherent interface witness an explicit `dyn Formattable`
-	uses; importing an extension cannot change a type's printed representation.
+	The compiler supplies default methods for printable types. The printers take
+	`..dyn Formattable`, which views each argument with the same coherent witness
+	an explicit `(dyn Formattable)(&value)` uses; importing an extension cannot
+	change a type's printed representation.
 */
 // design.md "String format printing". Both layouts are shared with the seed
 // runtime, which is where a formatter's bytes finally go.
@@ -51,6 +52,7 @@ Formattable :: interface($Self: type) {
 	slot format: proc(self: ^, writer: Writer, options: Options);
 }
 
+// The compiler finds printing's interface through this name.
 @(private)
 Format_View :: dyn Formattable;
 
@@ -59,35 +61,30 @@ Format_View :: dyn Formattable;
 //   stdout_writer()      the process output sink
 //   stderr_writer()      the process error sink
 //   write_bytes(w, view) one string view, straight through the sink
-//   format_view(v)       borrow the value as `dyn Formattable`
+//   format_view(v)       borrow an `any_view` as `dyn Formattable`
 //
-// `any_view` keeps mixed variadic arguments and forwarding convenient. Only
-// recovering its concrete witness needs an intrinsic; formatting is a slot call.
-
-@(private)
-format_any :: proc(value: any_view, writer: Writer, options: Options) {
-	format_view(value).format(writer, options);
-}
+// A `..dyn Formattable` pack views each argument where it is written
+// (design.md "Variadic parameters"), so formatting one is a slot call.
 
 @(public)
-print :: proc(args: ..any_view) {
+print :: proc(args: ..dyn Formattable) {
 	emit(stdout_writer(), DEFAULT_OPTIONS, ..args);
 }
 
 @(public)
-println :: proc(args: ..any_view) {
+println :: proc(args: ..dyn Formattable) {
 	w := stdout_writer();
 	emit(w, DEFAULT_OPTIONS, ..args);
 	write_bytes(w, "\n");
 }
 
 @(public)
-eprint :: proc(args: ..any_view) {
+eprint :: proc(args: ..dyn Formattable) {
 	emit(stderr_writer(), DEFAULT_OPTIONS, ..args);
 }
 
 @(public)
-eprintln :: proc(args: ..any_view) {
+eprintln :: proc(args: ..dyn Formattable) {
 	w := stderr_writer();
 	emit(w, DEFAULT_OPTIONS, ..args);
 	write_bytes(w, "\n");
@@ -111,7 +108,7 @@ stderr :: proc() -> Writer { return stderr_writer(); }
 */
 // As design.md's own examples separate them.
 @(public)
-format_to :: proc(w: Writer, args: ..any_view) {
+format_to :: proc(w: Writer, args: ..dyn Formattable) {
 	emit(w, DEFAULT_OPTIONS, ..args);
 }
 
@@ -120,9 +117,9 @@ format_to :: proc(w: Writer, args: ..any_view) {
 	uses to write `(3, 4)`, and anything else whose punctuation is its own.
 */
 @(public)
-concat_to :: proc(w: Writer, args: ..any_view) {
+concat_to :: proc(w: Writer, args: ..dyn Formattable) {
 	foreach (a in args) {
-		format_any(a, w, DEFAULT_OPTIONS);
+		a.format(w, DEFAULT_OPTIONS);
 	}
 }
 
@@ -132,15 +129,14 @@ concat_to :: proc(w: Writer, args: ..any_view) {
 	first because a variadic absorbs the trailing arguments.
 */
 // The seed runtime has always implemented base 2 to 36 and both digit cases;
-// until this procedure existed nothing could ask for them, because
-// `format_any` is package-private and every call site here passed
-// `DEFAULT_OPTIONS`.
+// until this procedure existed nothing could ask for them, because every
+// printer here passed `DEFAULT_OPTIONS`.
 //
 // The name differs rather than overloading `format_to`, because an `Options`
 // is itself a formattable value — so `format_to(w, options, x)` would be an
 // ambiguous call rather than an obvious one.
 @(public)
-format_to_with :: proc(w: Writer, options: Options, args: ..any_view) {
+format_to_with :: proc(w: Writer, options: Options, args: ..dyn Formattable) {
 	emit(w, options, ..args);
 }
 
@@ -161,7 +157,7 @@ format_to_with :: proc(w: Writer, options: Options, args: ..any_view) {
 // imported package is emitted whole, and the measured cost of that import was
 // hello world's IR going from 397 lines to 4923.
 @(public)
-to_string :: proc(allocator: Allocator, args: ..any_view) -> string {
+to_string :: proc(allocator: Allocator, args: ..dyn Formattable) -> string {
 	collector := Collector{make([dynamic]u8, 0, 64, allocator)};
 	emit((Writer)(&mut collector), DEFAULT_OPTIONS, ..args);
 	// Every formatter writes UTF-8; a `format` overload that does not is the
@@ -184,14 +180,14 @@ impl Collector {
 }
 
 @(private)
-emit :: proc(w: Writer, options: Options, args: ..any_view) {
+emit :: proc(w: Writer, options: Options, args: ..dyn Formattable) {
 	first := true;
 	foreach (a in args) {
 		if (!first) {
 			write_bytes(w, " ");
 		}
 		first = false;
-		format_any(a, w, options);
+		a.format(w, options);
 	}
 }
 
@@ -256,9 +252,9 @@ impl Padded($T) {
 		// ponytail: the value is formatted twice, once to count it, rather than
 		// buffered; a `format` with side effects runs them twice.
 		counter := Rune_Counter{};
-		format_any(self.value, (Writer)(&mut counter), options);
+		emit((Writer)(&mut counter), options, self.value);
 		if (self.fill == .Right) {
-			format_any(self.value, writer, options);
+			emit(writer, options, self.value);
 		}
 		if (self.fill == .Zero) {
 			write_bytes(writer, counter.sign);
@@ -269,10 +265,10 @@ impl Padded($T) {
 			write_bytes(writer, pad);
 		}
 		if (self.fill == .Left) {
-			format_any(self.value, writer, options);
+			emit(writer, options, self.value);
 		} else if (self.fill == .Zero) {
 			unsigned := Unsigned{writer, counter.sign != ""};
-			format_any(self.value, (Writer)(&mut unsigned), options);
+			emit((Writer)(&mut unsigned), options, self.value);
 		}
 	}
 }

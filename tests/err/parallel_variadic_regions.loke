@@ -1,0 +1,31 @@
+package main;
+import "core:mem";
+
+// design.md "Allocators and tasks": a variadic pack built from separate
+// arguments is in its elements' regions, so a callee that clones one uses the
+// arena the argument came from, which a running task reserves. A pack of
+// values with no allocator is in none, which run/lib_thread_monitor_transport
+// relies on when a task and its parent both print.
+
+first_len :: proc(lists: ..[dynamic]int) -> int {
+	copy := lists[0];
+	return copy.len();
+}
+
+fill :: proc(a: Allocator) -> int {
+	list := make([dynamic]int, 0, 4, a);
+	list.append(1);
+	return list.len();
+}
+
+main :: proc() {
+	arena := mem.Arena.init();
+	list := make([dynamic]int, 0, 4, arena.allocator());
+	list.append(1);
+	x: int;
+	parallel {
+		spawn x = fill(arena.allocator());
+		_ = first_len(move(list));
+	}
+	_ = x;
+}

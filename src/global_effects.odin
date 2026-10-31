@@ -1502,9 +1502,9 @@ effect_targets :: proc(c: ^Compiler, call: Effect_Call, program: ^Effect_Program
 				}
 			}
 		}
-		// design.md "String format printing": the witness erased printing
-		// recovers for each printed type is built after this pass, so the slot
-		// may reach any `format` method.
+		// design.md "String format printing": the witnesses nested and generic
+		// printing reach are built after this pass, so the slot may reach any
+		// `format` method.
 		if view, found := c.runtime_types["Format_View"]; found && call.dyn_interface == underlying_info(c, view).dyn_interface {
 			for body, index in bodies {
 				if sym := symbol_of(c, body.symbol); sym != nil && sym.has_receiver && identifier_text(c, sym.name) == "format" {

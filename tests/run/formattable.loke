@@ -28,7 +28,7 @@ show :: proc(value: ^$T) where fmt.Formattable(T) {
 	fmt.println("");
 }
 
-forward :: proc(args: ..any_view) { fmt.println(..args); }
+forward :: proc(args: ..dyn fmt.Formattable) { fmt.println(..args); }
 
 main :: proc() {
 	static_assert(fmt.Formattable(int));
