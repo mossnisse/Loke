@@ -76,22 +76,21 @@ No implementation fixes were applied during review.
 Reviewed `4b31729d` (tangent bound and minimized integer copies), `d66b3d8b`
 (the summary/arena review record), `72da8ff0` (private names in generic
 aliases), and `cb7a73bf` (chosen places per storage) for correctness,
-simplification, and structure. Three gaps remain in the alias fix:
+simplification, and structure. Three gaps were found in the alias fix, all
+since fixed in [src/private_names.odin](src/private_names.odin) with
+regressions in the `private_names` package-diagnostic case:
 
 - **Recognize aliases of the written `type` (P2).** A public `Meta :: type`
-  makes `Inner: Meta : Corner` bypass the target check. The
-  [reproduction and cause](known-gaps.md#typed-generic-aliases-still-skip-targets-when-their-written-type-is-an-alias)
-  include an instance using the alias.
+  made `Inner: Meta : Corner` bypass the target check, even in an instance
+  using the alias. The written type is now resolved.
 - **Recognize composite member aliases containing generic parameters (P2).**
-  `Hidden :: []T` is not classified as a type, so a public alias selecting
-  `Box(T).Hidden` produces no warning. The
-  [reproduction and cause](known-gaps.md#generic-member-aliases-of-composite-types-are-not-recognized-as-types)
-  show why the helpers' differing lists of type-syntax nodes should share
-  one recognition rule.
+  `Hidden :: []T` was not classified as a type, so a public alias selecting
+  `Box(T).Hidden` produced no warning. The helpers' differing lists of
+  type-syntax nodes now share one recognition rule.
 - **Follow member aliases without an arbitrary depth cutoff (P2).** A long
-  acyclic chain loses the warning for a public alias of its private first
-  member. See the
-  [reproduction and cause](known-gaps.md#long-chains-of-member-aliases-lose-warnings-for-private-names).
+  acyclic chain lost the warning for a public alias of its private first
+  member. The chain is now followed until it ends or returns to a member it
+  has passed.
 
 The integer copy now uses the existing minimized-copy operation directly,
 which removes the extra allocation and copy. The provenance helpers keep
