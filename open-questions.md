@@ -116,11 +116,10 @@ from `e4c5dce6`, the merged state of the four reviewed commits.
 ## Review of summary visits and scratch arenas (2026-10-31)
 
 Reviewed `e4d3562b` ("Skip unchanged provenance summary visits and drop arena
-locks") for correctness, simplification, and structure. Two findings remain:
+locks") for correctness, simplification, and structure. The allocator
+panicked once a procedure's analysis outgrew one GiB, which the parent compiler
+accepted; it now chains another reserved range instead. One finding remains:
 
-- **Preserve arena growth (P2).** The new allocator panics on a valid
-  procedure the parent compiler accepts. The reproduction and cause are in
-  [Known gaps](known-gaps.md#a-procedures-analysis-panics-after-one-gib-of-scratch-allocations).
 - **Correct the reported performance range (P3).** The
   [changelog](CHANGELOG.md#unreleased),
   [baseline explanation](bench/baselines/README.md#skipped-summary-visits-and-lock-free-scratch-arenas),

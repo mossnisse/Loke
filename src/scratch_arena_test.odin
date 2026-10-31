@@ -17,9 +17,9 @@ scratch_arena_hands_out_zeroed_memory :: proc(t: ^testing.T) {
 
 	first := make([]u8, 100, allocator)
 	slice.fill(first, 0xAB)
-	testing.expect_value(t, arena.total_used, uint(100))
+	testing.expect_value(t, scratch_arena_used(&arena), uint(100))
 	free_all(allocator)
-	testing.expect_value(t, arena.total_used, uint(0))
+	testing.expect_value(t, scratch_arena_used(&arena), uint(0))
 	again := make([]u8, 100, allocator)
 	testing.expect(t, raw_data(again) == raw_data(first), "a reset does not reuse its pages")
 	testing.expect(t, slice.all_of(again, 0), "memory reused after a reset is not zeroed")
@@ -39,7 +39,57 @@ scratch_arena_hands_out_zeroed_memory :: proc(t: ^testing.T) {
 	// Growth past the first commit commits more, and alignment is kept.
 	large := make([]u64, 512 * 1024, allocator)
 	testing.expect(t, uintptr(raw_data(large)) % align_of(u64) == 0, "an allocation is misaligned")
-	testing.expect(t, arena.committed >= arena.total_used, "used memory is not committed")
+	testing.expect(t, arena.committed >= arena.used, "used memory is not committed")
 	large[len(large) - 1] = 7
 	testing.expect_value(t, large[len(large) - 1], u64(7))
+}
+
+// A body that outgrows its arena's reservation chains another range instead of
+// stopping the compilation (it used to panic past one GiB). What the earlier
+// ranges handed out stays put, growing an allocation across the boundary moves
+// it, one larger than a range gets a range of its own, and a reset releases
+// the chained ranges and reuses the first, zeroed.
+@(test)
+scratch_arena_grows_past_its_reservation :: proc(t: ^testing.T) {
+	RESERVE :: 4 * mem.Kilobyte
+	arena: Scratch_Arena
+	testing.expect_value(t, scratch_arena_init(&arena, RESERVE), nil)
+	defer scratch_arena_destroy(&arena)
+	allocator := scratch_allocator(&arena)
+	first_base := arena.base
+
+	chunks: [16][]u64
+	for &chunk, i in chunks {
+		chunk = make([]u64, 100, allocator)
+		testing.expect(t, chunk != nil, "an allocation past the reservation failed")
+		testing.expect(t, uintptr(raw_data(chunk)) % align_of(u64) == 0, "a chained allocation is misaligned")
+		testing.expect(t, slice.all_of(chunk, 0), "a chained allocation is not zeroed")
+		slice.fill(chunk, u64(i))
+	}
+	testing.expect(t, arena.prev != nil, "sixteen 800-byte allocations did not chain a range")
+	testing.expect(t, scratch_arena_used(&arena) >= 16 * 800, "used bytes do not count the earlier ranges")
+	for chunk, i in chunks {
+		testing.expect(t, slice.all_of(chunk, u64(i)), "an earlier range's allocation changed")
+	}
+
+	// The latest allocation cannot grow in place past its range's end.
+	grown := make([dynamic]u8, 0, 16, allocator)
+	append(&grown, 1, 2, 3)
+	reserve(&grown, 2 * RESERVE)
+	testing.expect(t, slice.equal(grown[:], []u8{1, 2, 3}), "an allocation moved across ranges lost its contents")
+	testing.expect(t, slice.all_of(([^]u8)(raw_data(grown))[3:cap(grown)], 0), "growth across ranges is not zeroed")
+
+	huge := make([]u8, 3 * RESERVE, allocator)
+	testing.expect(t, huge != nil && arena.reserved >= 3 * RESERVE, "an allocation larger than a range did not get its own")
+	huge[len(huge) - 1] = 9
+	for chunk, i in chunks {
+		testing.expect(t, slice.all_of(chunk, u64(i)), "an earlier range's allocation changed")
+	}
+
+	free_all(allocator)
+	testing.expect(t, arena.base == first_base && arena.prev == nil, "a reset kept a chained range")
+	testing.expect_value(t, scratch_arena_used(&arena), uint(0))
+	again := make([]u8, RESERVE, allocator)
+	testing.expect(t, raw_data(again) == first_base, "a reset does not reuse the first range")
+	testing.expect(t, slice.all_of(again, 0), "the first range is not zeroed after a reset")
 }

@@ -84,7 +84,7 @@ Prov_Effect_Program :: struct {
 build_provenance_replay :: proc(k: ^Checker, literal: ^Expr_Proc, mode: Flow_Mode) -> ^Flow_Graph {
 	allocator := k.c.analysis_allocator
 	started := time.tick_now()
-	initial_bytes := k.c.analysis_arena.total_used
+	initial_bytes := scratch_arena_used(&k.c.analysis_arena)
 	program := new(Prov_Effect_Program, allocator)
 	program.alloc = allocator
 	program.operations = make([dynamic]Prov_Effect_Site, allocator)
@@ -99,7 +99,7 @@ build_provenance_replay :: proc(k: ^Checker, literal: ^Expr_Proc, mode: Flow_Mod
 		// in the former fixed point. Keep its events and avoid another walk.
 		program.input = initial.input
 		program.normalization_time = time.tick_since(started)
-		program.peak_used_bytes = k.c.analysis_arena.total_used - initial_bytes
+		program.peak_used_bytes = scratch_arena_used(&k.c.analysis_arena) - initial_bytes
 		initial.normalized_effects = program
 		prov_note_replay_statistics(k.c, program)
 		return initial
@@ -129,7 +129,7 @@ build_provenance_replay :: proc(k: ^Checker, literal: ^Expr_Proc, mode: Flow_Mod
 			carry = prov_carry_facts(graph, scratch_allocator(carry_arena))
 		}
 		program.peak_used_bytes = max(program.peak_used_bytes,
-		                             k.c.analysis_arena.total_used - initial_bytes + carry_arena.total_used + replay_arena.total_used)
+		                             scratch_arena_used(&k.c.analysis_arena) - initial_bytes + scratch_arena_used(carry_arena) + scratch_arena_used(replay_arena))
 		scratch_arena_reset(replay_arena)
 		if settled { break }
 		seeded = current_weight
@@ -144,7 +144,7 @@ build_provenance_replay :: proc(k: ^Checker, literal: ^Expr_Proc, mode: Flow_Mod
 	prov_materialize_events(initial, final, program)
 	prov_seed_regions(initial, carry)
 	program.materialization_time = time.tick_since(materialization_started)
-	program.peak_used_bytes = max(program.peak_used_bytes, k.c.analysis_arena.total_used - initial_bytes + carry_arena.total_used)
+	program.peak_used_bytes = max(program.peak_used_bytes, scratch_arena_used(&k.c.analysis_arena) - initial_bytes + scratch_arena_used(carry_arena))
 	initial.normalized_effects = program
 	prov_note_replay_statistics(k.c, program)
 	return initial

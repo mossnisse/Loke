@@ -815,6 +815,10 @@ checklist.
 
 ### Fixed
 
+- Checking a procedure whose analysis needs more than one GiB of scratch
+  memory no longer stops the compiler with `a procedure body's analysis
+  outgrew its scratch arena reservation`; the analysis arenas grow past their
+  first reservation again.
 - `container.words_for_bits` and `container.bytes_for_bits` no longer
   overflow for capacities near the largest `int`, and `Index_Set(N)` can be
   instantiated at that boundary
