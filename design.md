@@ -741,7 +741,7 @@ A generated method prints:
 | map | `[key = value, ...]` in [iteration order](#maps) |
 | struct | `Name{x = 1, y = 2}`, with the public fields in declaration order |
 | anonymous record | `(x = 1, y = 2)`, or `(1, 2)` when unlabeled |
-| union, including `Option` | `.none` or `.some(3)`: the variant, and its payload in parentheses |
+| union, including `Option` | `.none` or `.some(3)`: the variant, and its payload in parentheses unless it is `Unit` |
 | `Box(T)` | its payload |
 | `any_view` | the value it views |
 | `dyn` view | its type's name |
@@ -2762,13 +2762,14 @@ variants keeps one byte. A tag wider than every payload raises the union's
 alignment, as any other member would.
 
 One exception stores no tag. A union of exactly two variants, one without a
-payload and the other with a [non-null](#types-with-no-zero-value) payload, is
-the payload alone: that payload's first word is a non-null address, so the null
-first word is the payloadless variant. `Option(^T)` is one address, as is
-`Option` of a procedure value, `cstring_view`, `Box(T)`, or `Shared(T)`;
-`Option(dyn I)` and `Option(any_view)` are their two words. Nothing else
-changes: the variants keep their declaration order, and the all-zero value is
-still the payloadless one.
+payload or with a `Unit` payload and the other with a
+[non-null](#types-with-no-zero-value) payload, is the payload alone: that
+payload's first word is a non-null address, so the null first word is the other
+variant. `Option(^T)` is one address, as is `Option` of a procedure value,
+`cstring_view`, `Box(T)`, or `Shared(T)`; `Option(dyn I)` and
+`Option(any_view)` are their two words, and `Result(Unit, ^T)` is one address
+as `Status(^T)` is. Nothing else changes: the variants keep their declaration
+order, and the all-zero value is still the variant without a reference.
 
 #### Anonymous unions
 
@@ -7273,17 +7274,23 @@ A procedure returns at most one value. `Results` is one `Result_Type`, never a
 list, and the result is anonymous: there is no name to fill in and no result
 local to assign. A procedure with a result must `return expression;` on every
 path that leaves it; a bare `return;` there is an error, except where the
-result's success carries nothing.
+result's success carries nothing or `Unit`.
 
 One result type may reach the end of its body: a [fallible
 union](#typed-fallibility) whose success variant carries no payload, such as
-`Status(E)`. Reaching the end returns that success variant, as if the body ended
-in `return .ok;`, and a bare `return;` returns it anywhere in the body ([Success
+`Status(E)`, or carries `Unit`, such as `Result(Unit, E)`. Reaching the end
+returns that success variant, as if the body ended in `return .ok;`, and a bare
+`return;` returns it anywhere in the body ([Success
 returns](#success-returns)). Every failure in such a procedure is written
 explicitly, so the end has one meaning, as it does in a procedure with no
-result. The rule covers a `main` returning one and a user union of that shape,
-but not `Result(Unit, E)`, whose success carries a payload, so a generic
-`Result($T, E)` body does not change meaning with its instance.
+result. The rule covers a `main` returning one, `Option(Unit)`, whose end
+returns `.some`, and a user union of either shape.
+
+The payload must be `Unit` as the result is written, not through a generic
+argument, so a body means the same in every instance. `-> Result(Unit, E)`
+qualifies when `E` is generic, since the success does not depend on `E`; a body
+generic over `Result(T, E)` does not, even in an instance where `T` is `Unit`,
+and returns with `return .ok;` there as in any other.
 
 To hand back several values, return one [anonymous record](#anonymous-records)
 and [destructure](#destructuring) it at the call site. Its fields need no names
@@ -9418,8 +9425,9 @@ Status :: union($E: type) @(failure=err) { ok, err: E }
 - `Result` uses `.err` for failure, requires its result to be handled, and has
   no zero value.
 - `Status` follows `Result` but has no success payload. A procedure returning it
-  may reach the end or use `return;` to succeed, without writing `return .ok;`;
-  see [One result](#one-result) and [Success returns](#success-returns).
+  may reach the end or use `return;` to succeed, without writing `return .ok;`,
+  as one returning `Result(Unit, E)` may; see [One result](#one-result) and
+  [Success returns](#success-returns).
 
 ```loke
 save :: proc(config: Config) -> Status(io.Error) {
@@ -9494,10 +9502,10 @@ and ABI lowering](#parameter-semantics-and-abi-lowering)). The
 wrapped return is a success return. The rule applies wherever `return` is
 written, an [`or_else` fallback](#or_else-expression) included.
 
-When the success carries nothing, as `Status(E)`'s does, `return;` returns it,
-as reaching the end of the body does ([One result](#one-result)).
-`Result(Unit, E)` is not covered: its success carries a `Unit`, and it returns
-with `return .ok;`.
+When the success carries nothing, as `Status(E)`'s does, or `Unit` as the
+result is written, as `Result(Unit, E)`'s does, `return;` returns it, as
+reaching the end of the body does ([One result](#one-result)). `return .ok;`
+stays valid in both.
 
 Implicit success wrapping is disabled when the written result names a generic
 argument and its failure variant carries a payload. Write `.ok(value)`

@@ -778,9 +778,15 @@ can be misread as a process exit status.
 
 A body whose success carries nothing may reach its end, which returns that
 success. Every failure in such a procedure is written explicitly, so the end
-has one meaning, as in a procedure with no result. `Result(Unit, E)` is not
-covered, so a generic `Result($T, E)` body cannot change meaning with its
-instance.
+has one meaning, as in a procedure with no result. A success that carries
+`Unit` has one value too, so `Result(Unit, E)` and `Option(Unit)` are covered
+and print `.ok` and `.some` as a payloadless variant does: `Unit` is the
+payload reflection already reports for a payloadless variant, and treating the
+two alike in returns, printing, and layout keeps `Status(E)` and
+`Result(Unit, E)` from differing in anything but their names. The rule reads
+the result as written rather than the instance, so a body generic over
+`Result(T, E)` does not gain it where `T` is `Unit`: a body whose meaning
+changed with its instance would be valid in some and an error in others.
 
 ### Success returns
 

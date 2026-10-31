@@ -10,6 +10,17 @@ checklist.
 
 ### Breaking changes
 
+- A union variant whose payload is `Unit` now prints as `.name`, as a
+  payloadless one does, so a successful `Result(Unit, E)` prints `.ok` rather
+  than `.ok(Unit{})` and `Option(Unit)` prints `.some`
+  ([String format printing](design.md#string-format-printing)). A two-variant
+  union of a `Unit` variant and a non-null reference, such as
+  `Result(Unit, ^T)`, now stores no tag, as `Status(^T)` already did, so it is
+  one address and a nullable C pointer at a foreign boundary
+  ([Representation](design.md#representation)). Upgrade by updating expected
+  output that contains `(Unit{})`, and any code or binding that relied on such
+  a union's size.
+
 - A public type's private method no longer meets an interface slot, in any
   package, so an importer can no longer call it by declaring an interface
   with a slot of its name and calling that from a bound generic procedure or
@@ -647,6 +658,12 @@ checklist.
 
 ### Changed
 
+- A procedure returning a fallible union whose success carries `Unit`, such
+  as `Result(Unit, E)` or `Option(Unit)`, may now reach the end of its body or
+  use `return;` to succeed, as one returning `Status(E)` may, when the result
+  as written makes the payload `Unit`. A body generic over `Result(T, E)` still
+  writes `return .ok;` in an instance where `T` is `Unit`, and its `return;`
+  is `L0326` with a note saying why ([One result](design.md#one-result)).
 - The specification no longer lists an implicit conversion from a variant's
   payload to its union, which the compiler never had and `L0352` rejects
   ([Implicit type conversions](design.md#implicit-type-conversions)). It now

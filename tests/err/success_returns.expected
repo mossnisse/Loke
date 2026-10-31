@@ -49,3 +49,5 @@ L0502
 L0526
 @82:9
 this string view cannot be returned: `s` ends when this procedure returns
+L0365
+this procedure can end without returning a value

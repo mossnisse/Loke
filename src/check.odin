@@ -64,6 +64,9 @@ Body_Context :: struct {
 	// Whether the written result names a generic argument of this instance
 	// (design.md "Success returns").
 	result_generic:    bool,
+	// Whether the result's success carries nothing or `Unit` as written, so the
+	// body may reach its end or use `return;` (design.md "One result").
+	bare_success:      bool,
 	// Lexical loop targets for `break` and `continue`, and defer restrictions.
 	loop_depth:        int,
 	// Runtime loops around a static expansion, which resets `loop_depth`; its
@@ -2754,6 +2757,7 @@ check_proc_body :: proc(k: ^Checker, literal: ^Expr_Proc) {
 	if result := literal.signature.result; result != nil {
 		k.body.result_generic = type_syntax_names_generic(k, outer_scope, result.type)
 	}
+	k.body.bare_success = success_needs_no_value(k, outer_scope, literal, symbol)
 
 	errors_before := k.c.error_count
 	held := len(k.c.held_copy_reports)
@@ -2783,20 +2787,17 @@ check_proc_body :: proc(k: ^Checker, literal: ^Expr_Proc) {
 	}
 }
 
-// design.md "One result": a body whose result is a fallible union with a
-// payloadless success variant, such as `Status(E)`, may reach its end, which
-// returns that success. The `return` is appended, so every later phase sees
-// the statement it means. Its span is empty, at the closing brace, so no query
-// finds it.
+// design.md "One result": a body whose result is a fallible union whose
+// success carries nothing or `Unit`, such as `Status(E)` or `Result(Unit, E)`,
+// may reach its end, which returns that success. The `return` is appended, so
+// every later phase sees the statement it means. Its span is empty, at the
+// closing brace, so no query finds it.
 @(private = "file")
 implicit_success :: proc(k: ^Checker, literal: ^Expr_Proc, symbol: ^Symbol) -> bool {
-	if literal.body == nil || symbol.result_inout {
+	if literal.body == nil || !k.body.bare_success {
 		return false
 	}
-	shape, fallible := fallible_of(k, symbol.result)
-	if !fallible || shape.info.variants[shape.success] != TYPE_VOID {
-		return false
-	}
+	shape, _ := fallible_of(k, symbol.result)
 	end := literal.body.span
 	end.lo = max(end.hi, 1) - 1
 	end.hi = end.lo
@@ -2822,6 +2823,61 @@ success_selector :: proc(k: ^Checker, result: Type_Id, index: int, at: Span) -> 
 	selector.span = at
 	selector.name = Name{text = name, span = at, id = intern_identifier(k.c, name)}
 	return selector
+}
+
+// design.md "One result": whether a body may return its success by reaching
+// its end or with `return;`. A payloadless success always may. A `Unit` one
+// may when the result as written makes it `Unit`, so that a body generic over
+// `Result(T, E)` means the same in an instance where `T` is `Unit` as in any
+// other.
+@(private = "file")
+success_needs_no_value :: proc(k: ^Checker, scope: ^Scope, literal: ^Expr_Proc, symbol: ^Symbol) -> bool {
+	if symbol.result_inout {
+		return false
+	}
+	shape, fallible := fallible_of(k, symbol.result)
+	if !fallible {
+		return false
+	}
+	payload := shape.info.variants[shape.success]
+	if payload == TYPE_VOID {
+		return true
+	}
+	if payload != k.c.unit_type {
+		return false
+	}
+	result := literal.signature.result
+	return result == nil || !success_names_generic(k, scope, result.type, shape.success)
+}
+
+// Whether the success payload of a written fallible result depends on a
+// generic argument bound in `scope`. `Result(Unit, E)` does not, though `E` is
+// one; `Result(T, E)` and a bare `R` do.
+@(private = "file")
+success_names_generic :: proc(k: ^Checker, scope: ^Scope, syntax: Expr, success: int) -> bool {
+	if !type_syntax_names_generic(k, scope, syntax) {
+		return false
+	}
+	#partial switch v in syntax {
+	case ^Expr_Call:
+		template := generic_template_of_callee(k, v.callee, .Record)
+		if template == nil || len(v.args) != len(template.params) {
+			return true
+		}
+		depends := success_parameters(k, template, success)
+		for arg, i in v.args {
+			if depends[i] && type_syntax_names_generic(k, scope, arg.value) {
+				return true
+			}
+		}
+		return false
+	case ^Type_Record:
+		if success < len(v.variants) {
+			payload := v.variants[success].type
+			return payload != nil && type_syntax_names_generic(k, scope, payload)
+		}
+	}
+	return true
 }
 
 // Whether type syntax names a generic argument bound in `scope`, as
@@ -4298,8 +4354,8 @@ check_return :: proc(k: ^Checker, s: ^Stmt_Return) -> Flow_Info {
 	}
 	if s.value == nil && k.result_type != INVALID_TYPE && !k.result_inout {
 		// design.md "Success returns": `return;` returns a success that carries
-		// nothing, as reaching the end of the body does.
-		if shape, fallible := fallible_of(k, k.result_type); fallible && shape.info.variants[shape.success] == TYPE_VOID {
+		// nothing or `Unit`, as reaching the end of the body does.
+		if shape, fallible := fallible_of(k, k.result_type); fallible && k.body.bare_success {
 			at := s.span
 			at.lo = at.hi
 			s.value = new(Return_Value, k.c.semantic_allocator)
@@ -4315,10 +4371,18 @@ check_return :: proc(k: ^Checker, s: ^Stmt_Return) -> Flow_Info {
 				type_name(k.c, k.result_type),
 			)
 			if shape, fallible := fallible_of(k, k.result_type); fallible && !k.result_inout {
-				add_notef(
-					k.c, s.span, "only a success that carries nothing, as `Status(E)`'s does, returns with `return;`; write `return .%s(value);`",
-					union_variant_name(k.c, k.result_type, shape.success),
-				)
+				name := union_variant_name(k.c, k.result_type, shape.success)
+				if shape.info.variants[shape.success] == k.c.unit_type {
+					add_notef(
+						k.c, s.span, "`.%s` carries `Unit` here only through a generic argument, so `return;` cannot build it; write `return .%s;`",
+						name, name,
+					)
+				} else {
+					add_notef(
+						k.c, s.span, "only a success that carries nothing or `Unit`, as `Status(E)`'s does, returns with `return;`; write `return .%s(value);`",
+						name,
+					)
+				}
 			}
 		}
 		return terminated

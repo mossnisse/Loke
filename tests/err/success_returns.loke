@@ -1,7 +1,7 @@
 // design.md "Success returns": only the success is built implicitly. An
 // implicit selector names a variant of the result, `nil` is never wrapped, a
-// result naming a generic argument with a failure payload is never wrapped in
-// any instance, and `return;` needs a success that carries nothing.
+// generic result with a failure payload is never wrapped in any instance, and
+// `return;` needs a success carrying nothing, or `Unit` not by a generic.
 package main;
 
 Parse_Error :: enum { Bad_Digit, Empty }
@@ -40,7 +40,7 @@ generic_value :: proc(value: $T, error: $E) -> Result(T, E) {
 	return value;
 }
 
-unit :: proc() -> Result(Unit, Parse_Error) {
+unit :: proc(value: $T, error: $E) -> Result(T, E) {
 	return;
 }
 
@@ -90,4 +90,10 @@ main :: proc() {
 	_ = generic_inline(1, [2]int{});
 	_ = generic_attribute(8, [16]u8{});
 	_ = generic_attribute_type(1, [16]u8{});
+	_ = unit(Unit{}, Parse_Error.Empty);
+	_ = unit_end(Unit{}, Parse_Error.Empty);
+}
+
+// Reaching the end is no more a success here than `return;` is.
+unit_end :: proc(value: $T, error: $E) -> Result(T, E) {
 }

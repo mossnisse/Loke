@@ -1,0 +1,15 @@
+written
+.ok .err(Full)
+not skipped
+.ok .ok
+.ok .ok
+got 5
+.ok .ok
+.kept .lost(4)
+.some
+.ok
+.marked .count(2)
+true true
+.err(9)
+err 9
+.ok

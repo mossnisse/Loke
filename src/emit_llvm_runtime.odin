@@ -820,7 +820,9 @@ emit_format_body :: proc(e: ^Emitter, type: Type_Id, address: string) {
 	}
 }
 
-// `.name` or `.name(payload)` for the active variant, chained like enums.
+// `.name` or `.name(payload)` for the active variant, chained like enums. A
+// `Unit` payload prints as `.name`, as a payloadless variant does (design.md
+// "String format printing").
 @(private = "file")
 emit_format_union :: proc(e: ^Emitter, under: Type_Id, address: string) {
 	info := type_of(e.c, under)
@@ -837,7 +839,7 @@ emit_format_union :: proc(e: ^Emitter, under: Type_Id, address: string) {
 		branch_if(e, matched, hit, next)
 		place_label(e, hit)
 		emit_format_literal(e, fmt.aprintf(".%s", identifier_text(e.c, info.variant_names[index])))
-		if variant != TYPE_VOID {
+		if variant != TYPE_VOID && variant != e.c.unit_type {
 			emit_format_literal(e, "(")
 			payload := gep_field(e, llvm_type(e, under), slot, 0)
 			emit_format_nested(e, variant, payload)

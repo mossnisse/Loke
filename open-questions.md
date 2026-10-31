@@ -147,6 +147,12 @@ prerequisites; the language changes themselves remain proposals.
    remains worth designing, with inference and interface-file rules settled
    before it is described as mostly internal.
 
+   Settled for the return rule: [One result](design.md#one-result) now lets a
+   `Unit` success reach the end and use `return;` when the result as written,
+   not a generic argument, makes it `Unit`, so `Result(Unit, E)` and the body
+   above keep both forms while a body generic over `Result(T, E)` gains
+   neither.
+
 4. **Keep `any_view`'s storage and temporary rules when sharing its lowering
    (P2).**
    [Section 2.4](design-review-2026-10-31.md#24-existentials-any_view-as-a-dyn-view)

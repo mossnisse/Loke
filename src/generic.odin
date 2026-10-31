@@ -722,6 +722,45 @@ register_generic_template :: proc(k: ^Checker, symbol_id: Symbol_Id, d: ^Decl, k
 	return template
 }
 
+// design.md "One result": which of a union template's parameters the payload
+// of its variant `success` names, as `Result`'s `ok: T` names `T`. A payload
+// holding an inline definition, or a template that is not a union, marks every
+// parameter, so the caller assumes the worst.
+success_parameters :: proc(k: ^Checker, template: ^Generic_Template, success: int) -> []bool {
+	Param_Marks :: struct {
+		c:      ^Compiler,
+		params: []Generic_Param_Decl,
+		marks:  []bool,
+	}
+	marks := make([]bool, len(template.params), context.temp_allocator)
+	record, is_record := template.decl.values[0].(^Type_Record)
+	if template.kind != .Record || !is_record || success >= len(record.variants) {
+		for &mark in marks { mark = true }
+		return marks
+	}
+	data := Param_Marks{c = k.c, params = template.params, marks = marks}
+	type_syntax_any_name(record.variants[success].type, &data, proc(data: rawptr, node: Expr) -> bool {
+		data := (^Param_Marks)(data)
+		name := INVALID_IDENTIFIER
+		#partial switch v in node {
+		case ^Expr_Ident:
+			name = identifier_of(data.c, v)
+		case ^Type_Poly:
+			name = name_identifier(data.c, v.name)
+		case:
+			for &mark in data.marks { mark = true }
+			return false
+		}
+		for parameter, i in data.params {
+			if parameter.name == name {
+				data.marks[i] = true
+			}
+		}
+		return false
+	})
+	return marks
+}
+
 // The symbol a callee names, whether written plainly or package-qualified.
 // `pkg.Table(int)` names a template as plainly as `Table(int)` does.
 named_callee_symbol :: proc(k: ^Checker, callee: Expr) -> Symbol_Id {
@@ -893,7 +932,7 @@ generic_value_text :: proc(c: ^Compiler, value: Const_Value, depth := 0) -> stri
 		if info != nil && info.kind == .Union {
 			strings.write_string(&b, ".")
 			strings.write_string(&b, identifier_text(c, info.variant_names[aggregate.variant]))
-			if info.variants[aggregate.variant] == TYPE_VOID { return strings.to_string(b) }
+			if payload := info.variants[aggregate.variant]; payload == TYPE_VOID || payload == c.unit_type { return strings.to_string(b) }
 			strings.write_string(&b, "(")
 		} else {
 			strings.write_string(&b, "{")

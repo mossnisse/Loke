@@ -1,0 +1,75 @@
+// design.md "One result": a success that carries `Unit` as the result is
+// written, as `Result(Unit, E)`'s does, may reach the end of its body or use
+// `return;`, as a payloadless one does, including when only the failure is
+// generic. A `Unit` payload prints as `.name` ("String format printing"), and
+// next to a non-null reference it leaves the null word as its tag
+// ("Representation").
+package main;
+import "core:fmt";
+
+Disk :: enum { Full, Gone }
+
+write :: proc(fail: bool) -> Result(Unit, Disk) {
+	if (fail) {
+		return .err(.Full);
+	}
+	fmt.println("written");
+}
+
+early :: proc(skip: bool) -> Result(Unit, Disk) {
+	if (skip) {
+		return;
+	}
+	fmt.println("not skipped");
+}
+
+// Only the failure is generic, so the success is `Unit` in every instance.
+succeed :: proc(error: $E) -> Result(Unit, E) {
+	_ = error;
+}
+
+fallback :: proc(value: Option(int)) -> Result(Unit, Disk) {
+	n := value or_else return;
+	fmt.println("got", n);
+}
+
+Saved :: union @(failure=lost) { kept: Unit, lost: int }
+
+save :: proc(fail: bool) -> Saved {
+	if (fail) { return .lost(4); }
+}
+
+found :: proc() -> Option(Unit) {
+}
+
+folded :: proc() -> Result(Unit, int) {
+	x := 1;
+	x += 1;
+}
+FOLDED :: folded();
+
+Mark :: union { marked: Unit, count: int }
+
+pointer_or_nothing :: proc(p: ^int) -> Result(Unit, ^int) {
+	return .err(p);
+}
+
+main :: proc() {
+	fmt.println(write(false), write(true));
+	fmt.println(early(true), early(false));
+	fmt.println(succeed(42), succeed("text"));
+	fmt.println(fallback(.none), fallback(.some(5)));
+	fmt.println(save(false), save(true));
+	fmt.println(found());
+	fmt.println(FOLDED);
+	fmt.println(Mark.marked, Mark.count(2));
+	fmt.println(size_of(Result(Unit, ^int)) == size_of(^int), size_of(Status(^int)) == size_of(^int));
+	x := 9;
+	fmt.println(pointer_or_nothing(&x));
+	switch (pointer_or_nothing(&x)) {
+	case .ok: fmt.println("ok");
+	case .err(p): fmt.println("err", p^);
+	}
+	ok: Result(Unit, ^int) = .ok;
+	fmt.println(ok);
+}

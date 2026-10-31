@@ -313,14 +313,17 @@ union_layout :: proc(c: ^Compiler, type: Type_Id, span := Span{file = NO_FILE}) 
 }
 
 // design.md "Representation": the variant of a two-variant union whose payload
-// is a non-null reference, when the other has no payload; -1 otherwise.
+// is a non-null reference, when the other has no payload or a `Unit` one;
+// -1 otherwise. A `Unit` is zero-sized, so its variant is the null word as a
+// payloadless one is.
 union_niche_variant :: proc(c: ^Compiler, type: Type_Id) -> int {
 	info := underlying_info(c, type)
 	if info == nil || info.kind != .Union || len(info.variants) != 2 {
 		return -1
 	}
 	for payload, index in info.variants {
-		if info.variants[1 - index] == TYPE_VOID && type_is_non_null(c, payload) {
+		other := info.variants[1 - index]
+		if (other == TYPE_VOID || other == c.unit_type) && type_is_non_null(c, payload) {
 			return index
 		}
 	}
