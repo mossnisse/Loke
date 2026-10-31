@@ -11,6 +11,52 @@ Design rationale and differences from Odin are recorded in
 The current behavior inventory is in [Nondeterminism and undefined behavior
 audit](nondeterminism-audit.md).
 
+## Review of remaining generic aliases and view starts (2026-10-31)
+
+Reviewed `1d4a0c29` ("Read the remaining generic alias targets for private
+names") and `4e475f11` ("Keep a local view's known start when only its length
+varies") for correctness, simplification, and structure. Three findings remain:
+
+- **Classify selected private aliases in the current instance (P2).** A
+  private `Hidden: T : Point` becomes a type alias in `Box(type)`, but public
+  typed and untyped aliases selecting `Box(T).Hidden` produce no `L0740`.
+  The [known gap](known-gaps.md#private-member-aliases-whose-types-are-known-only-in-an-instance-evade-l0740)
+  includes an instantiated reproduction and a control that spells `type`
+  directly. `Hidden :: type_of(T{})` has the same omission.
+- **Retain starts through zero-offset reslice loops (P2).** The length join
+  fixes branches, but a constant reslice from zero in a loop still makes
+  the start unknown. The [known gap](known-gaps.md#zero-offset-reslices-in-loops-lose-a-local-views-known-start)
+  includes a two-iteration reproduction and accepting straight-line and
+  branch controls. This is a remaining precision gap, not a new rejection.
+- **Reuse the exposure maps across instance alias targets (P3).** Every
+  `read_instance_alias` call in [src/private_names.odin](src/private_names.odin)
+  creates an arena and calls `exposure_of`, which scans every declaration
+  and implementation member in the package. A block with N public aliases
+  whose written type becomes `type` therefore builds N copies of maps with
+  at least N entries, even when every target is a public type. Build the
+  exposure lazily once for the pending implementation and reset only the
+  per-target owner and reported names. An illustrative three-run local
+  median for 1,600 declarations `@(public) Alias_N: T : Point`, instantiated
+  once with `T = type`, was 2,174 ms; spelling their written type as `type`
+  took 58 ms. These are generated-source controls, not a measured fix.
+
+The shared `writes_type` recognizer removes differing syntax lists, and
+following member chains iteratively with cycle detection removes the
+arbitrary depth cutoff. Sharing `view_element_loan` also keeps publication's
+loan narrowing in one place. Reusing the exposure maps is the actionable
+structural simplification; no further abstraction is needed.
+
+Each reviewed commit was built and tested in a separate source snapshot,
+because the commits came from separate branches. On each, 177 of 178 compiler
+unit tests passed initially; the subprocess deadline test failed to capture
+its child's first output under concurrent load and passed when rerun in
+isolation. Both 43-test LSP suites passed. The alias revision passed both
+diagnostic corpora and the package executable corpus; the view revision
+passed both diagnostic corpora, the borrow matrix, and the executable corpus.
+Fresh compiler/LSP builds and heading citation checks passed. Both remaining
+correctness gaps also reproduced on the merged tree. No implementation fixes
+were applied during review.
+
 ## Review of local-view loads and repointed-carrier places (2026-10-31)
 
 Reviewed `e6719c8d` and `68504095` for correctness, simplification, and

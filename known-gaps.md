@@ -7,6 +7,75 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
+### Private member aliases whose types are known only in an instance evade L0740
+
+[Private names in public declarations](design.md#private-names-in-public-declarations)
+reads an alias's target, including a private alias of a public type. After
+`1d4a0c29`, a public alias whose written type is bound to `type` is read in
+an instance, but selecting a private member that needs the same classification
+still produces no warning:
+
+```loke
+package shapes;
+@(public) Point :: struct {}
+@(public) Box :: struct($T: type) { value: int }
+impl Box($T) {
+    @(private) Hidden: T : Point;
+    @(public) Typed: T : Box(T).Hidden; // should warn L0740 for Box.Hidden
+    @(public) Untyped :: Box(T).Hidden; // should warn L0740 for Box.Hidden
+}
+@(private) use :: proc() {
+    _ = Box(type).Typed;
+    _ = Box(type).Untyped;
+}
+```
+
+Spelling `Hidden: type : Point` produces both warnings. The indirect case is
+also missed with `Hidden :: type_of(T{})` and `Box(Point).Untyped`, without
+any explicitly typed alias.
+
+`read_instance_alias` in [src/private_names.odin](src/private_names.odin)
+rebuilds its `Exposure` from template declarations. The private `Hidden`
+has no template-wide type classification, so `selected_member` treats it as
+a value and `found_name` ignores it in a type position. The instance pass
+skips private members and also skips aliases with no written type when their
+resolved value is a type, so neither form gets the missing classification.
+Use the current instance's resolved member kinds for these lookups and read
+untyped aliases whose targets could not be classified in the template too.
+Confirmed on a compiler built from `1d4a0c29` and on the merged tree during
+review on 2026-10-31.
+
+### Zero-offset reslices in loops lose a local view's known start
+
+[Weakening and reborrows](design.md#weakening-and-reborrows) separates constant
+elements of a local view whose reaching definitions are fresh range borrows
+or constant reslices with a known start. Every reslice below starts at zero,
+so only the view's length changes, but the distinct-element write is rejected:
+
+```loke
+package main;
+Counter :: struct { count: int }
+check :: proc() {
+    a := [3]Counter{};
+    s := &mut a[:];
+    for (i := 0; i < 2; i += 1) { s = &mut s[:2]; }
+    first := &mut s[0];
+    s[1].count += 1; // L0641; should be accepted
+    first^.count += 1;
+}
+main :: proc() { check(); }
+```
+
+Replacing the loop with a single `s = &mut s[:2]` compiles, as does a
+conditional zero-offset reslice. `publish_view_take` in
+[src/borrow.odin](src/borrow.odin) now joins differing lengths, but
+`publish_view_advance` rejects a definition reached while its own answer is
+unsettled before that join can retain the start. This remains a gap after
+`4e475f11`, rather than a new rejection introduced by it. Preserve starts
+around cycles whose reslices all have zero lower bounds, while keeping
+start-changing loops conservative. Confirmed on a compiler built from
+`4e475f11` and on the merged tree during review on 2026-10-31.
+
 ### Editor completion offers a hidden generated formatter
 
 After `d16a9a2d`, a public type with a private `format` also has a generated
