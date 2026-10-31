@@ -93,6 +93,7 @@ impl Row($N) {
 }
 impl Secret($T) {
 	@(public) HIDDEN :: Corner{}; // not reported: the subject is private
+	@(public) Within :: Corner; // not reported: the subject is private
 }
 impl Lone($T) {
 	@(public) LONE :: Corner{}; // with no instance
@@ -124,4 +125,34 @@ impl Shelf($T) {
 	_ = Shelf(int){};
 	_ = size_of(Shelf(bool).Paired);
 	_ = size_of(Shelf(int).Inner);
+}
+
+// An alias written with its type is read by its target in a generic `impl` as
+// in a plain one, and so is one that selects a type member from an instance,
+// whether the instance is written with a `$` name or a concrete type.
+@(public) Crate :: struct { value: int }
+@(public) Bin :: struct($T: type) { value: T }
+impl Crate {
+	@(public) Typed: type : Corner;
+	@(private) Hidden :: Corner;
+	@(public) Sibling :: Crate.Hidden;
+	@(public) Concrete :: Bin(int).Hidden;
+}
+impl Bin($T) {
+	@(public) Typed: type : Corner;
+	@(private) Hidden :: Corner;
+	@(private) Hidden_Typed: type : Corner;
+	@(private) Chained :: Bin(T).Hidden;
+	@(public) Open :: Point;
+	@(public) Sibling :: Bin(T).Hidden;
+	@(public) Concrete :: Bin(int).Hidden;
+	@(public) Sibling_Typed :: Bin(T).Hidden_Typed;
+	@(public) Followed :: Bin(T).Chained;
+	@(public) Through :: Secret(T).Within; // a private type's member
+	@(public) Opened :: Bin(T).Open; // not reported
+}
+@(private) bins :: proc() {
+	_ = size_of(Bin(int).Typed);
+	_ = size_of(Bin(int).Sibling);
+	_ = size_of(Bin(bool).Concrete);
 }
