@@ -648,6 +648,11 @@ checklist.
   decision lost a mispredicted branch. `sin_f32` takes 27 ns rather than 61,
   `tan_f32` 30 rather than 88, `pow_f32` 35 rather than 92, and `exp_f32` 14
   rather than 20.
+- `core:math/geometry`'s predicates are faster where their floating-point
+  filter decides, with the same results: their exact paths are `@(cold)`, so
+  the filter is inlined into its callers. `orient2d` takes 2.7 ns rather than
+  6.9, `orient3d` 5.9 rather than 10.5, `incircle` 6.3 rather than 7.2, and
+  `insphere` 16.7 rather than 17.9.
 - `math.sqrt` and `math.sqrt_f32` are the processor's square root instruction
   rather than a call to the C library: as correctly rounded, about as fast,
   and with a compile-time value, so `ROOT :: math.sqrt(2.0)` is a constant

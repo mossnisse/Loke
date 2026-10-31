@@ -349,11 +349,19 @@ cast_ray3_plane :: proc(ray: Ray3($T), plane: Plane(T), t_min, t_max: T) -> Opti
 }
 
 // The sign of the edge function `p.x*q.y - p.y*q.x` computed as `value`, and
-// where that is zero, the exact sign of the sheared corners for `f32` and
-// `f64`, as Woop et al. recompute it: `orient2d` of the origin, `p`, and `q`.
+// where that is zero, the exact sign of the sheared corners.
 @(private)
 edge_sign :: proc(value: $T, p, q: linalg.Vector2(T)) -> Sign where linalg.Real(T) {
 	if (!(value == T(0))) { return sign_of(value); }
+	return zero_edge_sign(p, q);
+}
+
+// For `f32` and `f64`, the exact sign of an edge function that computed as
+// zero, as Woop et al. recompute it: `orient2d` of the origin, `p`, and `q`.
+// Cold, so that `orient2d`'s filter, inlined here, leaves `edge_sign` small
+// enough to inline into the cast (design.md "@(cold)").
+@(private, cold)
+zero_edge_sign :: proc(p, q: linalg.Vector2($T)) -> Sign where linalg.Real(T) {
 	when (T == f32 || T == f64) {
 		return orient2d(linalg.Vector2(T).splat(T(0)), p, q);
 	} else {

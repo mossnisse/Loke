@@ -176,7 +176,7 @@ minor3 :: proc(pq, qr, rp: []f64, h: []mut f64) -> int {
 }
 
 // The exact orient2d: ab + bc + ca over the raw coordinates.
-@(private)
+@(private, cold)
 orient2d_exact :: proc(ax, ay, bx, by, cx, cy: f64) -> Sign {
 	ab: [4]f64 = {};
 	bc: [4]f64 = {};
@@ -247,7 +247,7 @@ xyz_minor :: proc(points: []Point, m: ^Minors, i, j, k, l: int, h: []mut f64) ->
 }
 
 // The exact orient3d: the determinant of the rows (x, y, z, 1) of a, b, c, d.
-@(private)
+@(private, cold)
 orient3d_exact :: proc(a, b, c, d: Point) -> Sign {
 	points := [4]Point{a, b, c, d};
 	m := minors(points[:]);
@@ -273,7 +273,7 @@ lift :: proc(p: Point, three: bool, h: []mut f64) -> int {
 
 // The exact incircle: the determinant of the rows (x, y, x^2 + y^2, 1) of
 // a, b, c, d, expanded along the lifted column.
-@(private)
+@(private, cold)
 incircle_exact :: proc(a, b, c, d: Point) -> Sign {
 	points := [4]Point{a, b, c, d};
 	m := minors(points[:]);
@@ -319,7 +319,7 @@ Insphere_Storage :: struct {
 // The exact insphere: the determinant of the rows (x, y, z, x^2 + y^2 + z^2,
 // 1) of a, b, c, d, e, expanded along the lifted column, the signs
 // alternating from `-` for a.
-@(private)
+@(private, cold)
 insphere_exact :: proc(a, b, c, d, e: Point) -> Sign {
 	points := [5]Point{a, b, c, d, e};
 	m := minors(points[:]);

@@ -2108,6 +2108,21 @@ made every call of its public function pay its frame, 968 bytes for `exp`, and
 the saves and restores of the callee-saved registers it uses. Marked, `hypot`
 went from 17.9 to 13.4 ns a call and `pow` from 58.4 to 55.2, with every result
 unchanged ([plan](deterministic-math-and-targets-plan.md#progress)).
+`core:math/geometry`'s predicates had the same shape: LLVM inlined each exact
+path into its filter, its one caller, and the `f64` `orient2d` filter then
+cost 1265 against the inliner's threshold of 225, so no caller inlined it.
+With the exact paths marked, on `bench/geometry.loke` at `-opt=speed`,
+`orient2d` went from 6.9 to 2.7 ns, `orient3d` from 10.5 to 5.9, `incircle`
+from 7.2 to 6.3, and `insphere` from 17.9 to 16.7; each filter was 6 to 62 %
+faster at both CPU levels and at `-opt=aggressive` and `-opt=size`, while the
+exact paths themselves cost a few percent more. A smaller callee can push its
+caller over the threshold instead: the triangle cast's `edge_sign`, with
+`orient2d`'s filter inlined, stopped being inlined into the cast and made the
+`f64` cast 42 % slower, so its zero case is a cold procedure of its own. The
+casts then run as before, but for the `f32` cast at `-opt=aggressive`, 4 %
+slower at `x86-64` and 12 % at `x86-64-v3`, whose code inside the benchmark
+loop is the same; the box casts, which call no predicate, moved by up to a
+quarter between the same two builds.
 
 The attribute marks a procedure rather than a branch. A branch-likelihood hint
 would order a caller's blocks but leave the rare code's frame in the caller,
@@ -2534,9 +2549,8 @@ boundaries and API shapes follow a few common choices:
   was checked at `-opt=aggressive` and `-opt=size`. What separates the casts
   from a hand-written loop is mostly not their robustness: LLVM vectorizes the
   hand-written box loop four rays at a time, which the cast's branches
-  prevent, and the `f64` `orient2d` filter is not inlined, because the exact
-  path is inlined into it first
-  ([Keeping a cold path out of line](open-questions.md#keeping-a-cold-path-out-of-line)).
+  prevent. The predicates' exact paths are `@(cold)`
+  ([Cold procedures stay out of line](#cold-procedures-stay-out-of-line)).
 - **Geometry recomputes out-of-range values instead of always widening.** A
   ball query, a ball cast, or a triangle cast whose squares, edge functions,
   or determinant are normal numbers keeps its `T` arithmetic and its bits;

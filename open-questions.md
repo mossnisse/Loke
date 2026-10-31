@@ -665,20 +665,6 @@ to use SIMD and other hardware features fully: compiler intrinsics, inline
 assembly, or both? `Simd(T, N)` covers lane-wise arithmetic; what it leaves
 out is the target-specific instruction.
 
-## Keeping a cold path out of line
-
-Should a procedure be able to say that a call is rarely taken, or that a
-procedure is not to be inlined? `core:math/geometry`'s `f64` predicates are a
-short filter and an exact path reached only near a degenerate input. LLVM
-inlines the exact path into the filter, being its one caller, and the filter
-then costs 1265 against the inliner's threshold of 225, so no call site
-inlines the filter
-([Standard-library API choices](comments.md#standard-library-api-choices)). Loke has
-no attribute for either. A `@(cold)` on the procedure, or on a branch, would
-let the compiler keep the exact path out of line; it is a hint with no effect
-on results, so it could be added without a change of meaning. Not required
-by anything shipped.
-
 ## Abstraction over SOA
 
 Is laying data out as a structure of arrays the programmer's responsibility,
