@@ -11,6 +11,36 @@ Design rationale and differences from Odin are recorded in
 The current behavior inventory is in [Nondeterminism and undefined behavior
 audit](nondeterminism-audit.md).
 
+## Review of the index-set, capture-evaluation, and integer-bit additions
+
+Review of `9a66aa7a`, `eae9478e`, and `ae7e1fb1` on 2026-10-31 found no
+correctness issue and one small simplification:
+
+- **Reuse the count emitter for `bit_width`.** In
+  [emit_llvm_calls.odin](src/emit_llvm_calls.odin), `emit_bit_width` repeats
+  the widening/narrowing to `int` already handled by `emit_bit_count`.
+  Call `emit_bit_count(e, v, "ctlz")`, then subtract that `int` from the
+  operand's width. A zero count is at most 128, so moving the conversion
+  before the subtraction preserves every result. This removes nine lines;
+  keep the source-width `emit_ctlz` helper for the power-of-two round-up.
+  Update the bit-width comment and the subtraction shape in
+  [lib_math_bits.expected](tests/ll/lib_math_bits.expected) to `i64`.
+
+The isolated simplification passes the integer-bit runtime regression at
+default and speed optimization, exhaustive compile-time and runtime checks
+of every `u8` and `i8` value against an independent reference, wider constant
+cases, the adjusted IR shapes, and LLVM assembly. The original commits pass
+all 177 compiler unit tests, diagnostics, LLVM shapes, both changed package
+interface checks, and all three affected runtime regressions at default and
+speed optimization. The three new panic cases also match their expected
+output and errors.
+
+The fallible resize keeps its transaction boundary by growing storage before
+changing membership or capacity, and compile-time captures reuse the existing
+record evaluator while checking the final result boundary. Their structure
+does not need another abstraction. The working tree's concurrent geometry
+and documentation edits were preserved.
+
 ## Review of the known-gap closure commits
 
 Review on 2026-10-30 covered removal of the view-start depth cutoff
