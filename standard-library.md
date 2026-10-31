@@ -3863,6 +3863,12 @@ zero value is UTC. `now_local()` is `local_zone().to_local(now())`. A zone
 chosen by name is not here; see
 [Named time zones](open-questions.md#named-time-zones).
 
+A fixed zone prints as its offset does, `+05:30`, or `Z` at zero, so the zero
+value and `fixed_zone(UTC)` print `Z`, and `parse_offset` reads the text back.
+The system zone prints `local`, which is not a zone name, and printing it
+reads nothing: no offset describes the zone at every instant, and the value
+follows a change to the setting. `fmt.Options` affect neither.
+
 The system zone's rules are Windows': `GetDynamicTimeZoneInformation` names
 the zone and `GetTimeZoneInformationForYear` gives each year's standard offset
 and daylight-saving rule, the rules `SystemTimeToTzSpecificLocalTimeEx`

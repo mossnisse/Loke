@@ -12,6 +12,7 @@
 @(public)
 package time;
 
+import "core:fmt";
 import "core:math";
 
 // -------------------------------------------------------------------- zones --
@@ -20,6 +21,9 @@ import "core:math";
 	A time zone: a fixed offset, or the zone the system's clock shows. It is
 	plain copyable data. The system zone reads Windows' setting on each use, so
 	one value follows a change to the setting. The zero value is UTC.
+
+	A fixed zone prints as its offset does, `+02:00` or `Z`; the system zone
+	prints `local`, without reading the setting.
 */
 Zone :: struct {
 	@(private) kind: Zone_Kind,
@@ -100,6 +104,17 @@ impl Zone {
 	*/
 	at :: proc(self, local: Date_Time, choice: Choice = .Compatible) -> Option(Offset_Date_Time) {
 		return choose(self.resolve(local), local, choice);
+	}
+
+	// standard-library "Time zones": the system zone prints what it is,
+	// not what the setting says now, which no instant pins down.
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
+		text := Text{};
+		switch (self.kind) {
+		case .fixed(offset): text.put_offset(offset, DEFAULT_STYLE);
+		case .system:        text.put_text("local");
+		}
+		text.send(writer);
 	}
 }
 

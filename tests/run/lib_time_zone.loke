@@ -143,6 +143,12 @@ main :: proc() {
 
 	fmt.println("-- folded:", FOLDED, FOLDED_AT);
 
+	// A fixed zone prints as its offset, and the system zone `local`, which
+	// names no setting and reads none.
+	east := time.fixed_zone(time.Offset.from_minutes(330) or_else panic("an offset"));
+	west := time.fixed_zone(time.Offset.from_minutes(-90) or_else panic("an offset"));
+	fmt.println("-- zones:", time.Zone{}, time.fixed_zone(time.UTC), east, west, zone, Option(time.Zone).some(zone));
+
 	// `now_local` reads the clock at the zone's offset.
 	reading := time.now_local();
 	instant := reading.to_time() or_else panic("in range");

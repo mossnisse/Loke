@@ -798,9 +798,6 @@ copyable, and nothing already in the package changes.
 - **The system zone's name.** Windows names its zones its own way, and the
   IANA name needs CLDR's mapping, which ICU has, so a `Zone` has no name. A
   caller that shows one, or records the zone beside a time, would need it.
-- **Printing a zone.** A `Zone` prints as `Zone{}`, whatever it holds, since
-  its field is private. A fixed zone could print its offset; what the system
-  zone prints waits on its name.
 
 ## Formatting
 

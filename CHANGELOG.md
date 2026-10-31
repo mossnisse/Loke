@@ -600,6 +600,9 @@ checklist.
   picks an instant with a `Choice`: `Compatible`, RFC 5545's and Temporal's,
   `Earlier`, `Later`, or `Reject`
   ([Time zones](standard-library.md#time-zones)).
+- A `core:time` `Zone` prints what it holds rather than `Zone{}`: a fixed
+  zone its offset, `+05:30` or `Z`, and the system zone `local`
+  ([Time zones](standard-library.md#time-zones)).
 
 - The warning `L0740` reports a public declaration that names a private one
   of its package where an importer would have to name it too: a private type

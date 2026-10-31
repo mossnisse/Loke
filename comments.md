@@ -2487,6 +2487,19 @@ boundaries and API shapes follow a few common choices:
   limited to the package that declares them. `Zone` is a struct around a
   private union, so a named variant can be added later without changing its
   type, and its zero value is the first variant's, UTC.
+- **A zone prints what it holds, not what it shows now.** A fixed zone is its
+  offset, so it prints as the `Offset` does, with `Z` at zero, as Java prints
+  a `ZoneOffset`; `+00:00` would print the zero `Zone` unlike the `UTC` it
+  holds. RFC 9557's bracketed suffix writes an offset zone `[+02:00]` and
+  never `[Z]`, but that suffix belongs to a timestamp the package does not
+  print. The system zone prints `local`, after `local_zone` and as Go's
+  `time.Local` prints `Local`; no IANA identifier is `local`, so the text
+  cannot be taken for one. Its current offset depends on the instant, so it
+  would describe one reading rather than the value, and printing it would
+  read the registry, panic where reading can, and leave log lines and test
+  output to the machine's setting. The value follows the setting, so it keeps
+  printing `local` once the system zone has a name: the name, like the
+  offset, is the setting's at one moment, for an accessor to answer.
 - **The rule evaluation is tested from inside the package.** Known rules have
   to reach private declarations, so they are `@(test)` procedures in
   `core/time/zone_test.loke`, which the integration harness runs for every

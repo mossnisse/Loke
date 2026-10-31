@@ -1,4 +1,5 @@
 -- system zone: 0 instants disagree with Windows, 0 inconsistent
 -- instants checked: true
 -- folded: 1970-01-01T05:30:00+05:30 .some(1970-01-01T00:00:00-01:30)
+-- zones: Z Z +05:30 -01:30 local .some(local)
 -- now_local: true true
