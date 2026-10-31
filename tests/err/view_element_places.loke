@@ -5,9 +5,12 @@ package main;
 // through an index that is no constant, one through a copy of the view, and
 // one of a view whose start a loop or a branch changes, or that is itself
 // borrowed, may be the borrowed element. A branch that only shortens a view,
-// and a fresh view of a dynamic array, keep the same element the same.
+// and a fresh view of a dynamic array, keep the same element the same. So
+// does a copy of a carrier out of an element, which reborrows the carrier
+// stored in that element alone.
 
 Counter :: struct { count: int, first: Option(^mut int) }
+Link :: struct { to: ^mut int }
 
 cond :: proc() -> bool { return true; }
 
@@ -101,6 +104,30 @@ dynamic_chosen_start :: proc() {
 	first := &mut view[0];
 	view[1].count += 1;
 	first^.count += 1;
+}
+
+copy_same_element :: proc() {
+	x := 1;
+	y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	view := &mut links[:];
+	held := view[0].to;
+	again := view[0].to;
+	again^ = 3;
+	held^ = 4;
+}
+
+copy_chosen_start :: proc() {
+	x := 1;
+	y := 2;
+	z := 3;
+	links := [3]Link{Link{&mut x}, Link{&mut y}, Link{&mut z}};
+	view := &mut links[:];
+	if (cond()) { view = &mut view[1:]; }
+	held := view[0].to;
+	again := view[1].to;
+	again^ = 3;
+	held^ = 4;
 }
 
 main :: proc() {}

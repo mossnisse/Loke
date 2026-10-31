@@ -3206,8 +3206,19 @@ load_pointee_content :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8,
 	for carrier in event.into {
 		row := reach_row(state, reach, carrier)
 		for index in 0 ..< state.loans {
+			if !bit_get(row, index) {
+				continue
+			}
 			elements := event.elements if index + 1 == event.element_loan else nil
-			if bit_get(row, index) && !load_through_loan(state, index, event.path, reach, &loss, reads, elements) {
+			// Out of a local view, the one element the load names, where it is
+			// known among those the loan lends (`view_element_loan`).
+			lent: []Proj_Step
+			if event.element.slot > 0 {
+				if narrowed, known := view_element_loan(graph, event.element, index); known {
+					lent = narrowed.path
+				}
+			}
+			if !load_through_loan(state, index, event.path, reach, &loss, reads, elements, lent) {
 				loss |= state.precision[carrier]
 			}
 		}
@@ -3395,6 +3406,7 @@ load_through_loan :: proc(
 	loss: ^Precision_Loss,
 	reads: ^[dynamic]int,
 	elements: []int = nil,
+	lent: []Proj_Step = nil,
 ) -> bool {
 	graph := state.graph
 	loan := graph.loans[loan_index]
@@ -3408,12 +3420,15 @@ load_through_loan :: proc(
 			bare[0] = index
 			slots = bare[:]
 		}
+		// Given `lent`, the part of what the loan lends the load names, as one
+		// element of a local view (`view_element_loan`), only slots there.
+		within := lent if lent != nil else loan.path
 		for index in slots {
 			slot := graph.prov_slots[index]
-			if !paths_overlap(slot.path, loan.path) {
+			if !paths_overlap(slot.path, within) {
 				continue
 			}
-			suffix := slot.path[min(len(loan.path), len(slot.path)):]
+			suffix := slot.path[min(len(within), len(slot.path)):]
 			if !paths_overlap(suffix, path) {
 				continue
 			}
@@ -3585,8 +3600,8 @@ view_element_in :: proc(graph: ^Flow_Graph, at: Prov_View_At, loan: int) -> (i64
 VIEW_OPEN_RANGE :: max(i64)
 
 // The loan `one`, narrowed to the one element of the range it lends that
-// `at` names when that is known (`view_element_in`), as a store into `s[k]`
-// names, with `s` a local view.
+// `at` names when that is known (`view_element_in`), as a store into or a
+// load out of `s[k]` names, with `s` a local view.
 @(private = "file")
 view_element_loan :: proc(graph: ^Flow_Graph, at: Prov_View_At, one: int) -> (Prov_Loan, bool) {
 	loan := graph.loans[one]

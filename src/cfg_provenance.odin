@@ -189,8 +189,9 @@ Prov_Event :: struct {
 	// `Def` of a named slot: one more than the index of its definition in
 	// `view_defs` (`prov_note_view`), or 0.
 	view_def:      int,
-	// `Through`, and the `Def` of a place loan's snapshot: the constant element
-	// of a named view the place is in (`Prov_View_At`).
+	// `Through`, the `Def` of a place loan's snapshot, and a `Load` out of a
+	// local view: the constant element of a named view the place is in
+	// (`Prov_View_At`).
 	element:       Prov_View_At,
 	// `Task_Start`, `Shared_Effect`: see `Prov_Kind`.
 	symbol:        Symbol_Id,
@@ -1734,11 +1735,17 @@ prov_load_content :: proc(
 	prov_reach(graph, carriers, span)
 	content := prov_temp_content(graph, type)
 	graph.has_content_load ||= len(content) > 0
-	// One element of a view parameter is read alone (`prov_view_element`).
+	// One element of a view parameter is read alone (`prov_view_element`),
+	// and so is one of a local view where the solve knows where it starts
+	// (`Prov_Event.element`).
 	element_loan: int
 	elements: []int
+	element: Prov_View_At
 	if place != nil && len(content) > 0 {
 		element_loan, elements = prov_view_element(graph, place)
+		if at := prov_view_at(graph, place, carriers); at.loan == 0 {
+			element = at
+		}
 	}
 	for slot in content {
 		graph.prov_slots[slot].loaded = true
@@ -1752,6 +1759,7 @@ prov_load_content :: proc(
 			walked       = walked,
 			element_loan = element_loan,
 			elements     = elements,
+			element      = element,
 		})
 	}
 	prov_emit(graph, Prov_Event{kind = .Live, sources = content, span = span, reads_only = reads_only})

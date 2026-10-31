@@ -440,7 +440,9 @@ Keep these contracts:
   (`Prov_View_Def`, `prov_local_view_element`, `publish_view_of`). The
   definitions need not agree on its length, as an index past a shorter one
   panics, and a fresh borrow whose end is not constant, as `&mut d[:]` of a
-  dynamic array, lends from its constant start on (`Prov_View_Def.open`). A parameter's loan publishes into its caller slots,
+  dynamic array, lends from its constant start on (`Prov_View_Def.open`). A
+  load out of such an element reads that element's slots alone
+  (`Prov_Event.element`, `view_element_loan`). A parameter's loan publishes into its caller slots,
   so the parameter itself holds nothing stored. A view parameter's slots
   stand for every element, so only a store into one element, `s[k]` with a
   constant `k`, lands in slots of that element (`prov_view_element`) and

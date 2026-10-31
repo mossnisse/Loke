@@ -141,6 +141,7 @@ MATRIX_USES := [?]Matrix_Use {
 	{"read_other_cells", "sink($O.cells[1]);", ""},
 	{"replace_other_first", "$O.first = .none;", ""},
 	{"pass_other_count", "bump(&mut $O.count);", ""},
+	{"copy_other", "other := $O.head;", "other^.value = 3;"},
 }
 
 // The use of the place itself that a use of another element of a view stands
@@ -153,6 +154,7 @@ matrix_same_element :: proc(use: Matrix_Use) -> string {
 	case "read_other_cells": return "read_cells"
 	case "replace_other_first": return "replace_first"
 	case "pass_other_count": return "pass_sibling"
+	case "copy_other": return "copy_same"
 	}
 	return ""
 }
@@ -304,7 +306,7 @@ matrix_applies :: proc(place: Matrix_Place, take: Matrix_Take, use: Matrix_Use, 
 		return !place.read_only
 	case "copy_same_option", "second_view":
 		return take != .Copy
-	case "store_through_same", "read_through_same", "copy_same":
+	case "store_through_same", "read_through_same", "copy_same", "copy_other":
 		return take != .Binding
 	case "replace_head":
 		return take != .Binding && !place.read_only

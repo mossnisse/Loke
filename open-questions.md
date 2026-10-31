@@ -38,7 +38,9 @@ a known start, while publication also uses the extent and underlying loan.
 The matrix now has a place whose view a branch only shortens
 (`local_shortened`). A matrix place for a dynamically backed view is still to
 add; the new dynamic `items` cases exercise the array stored inside an
-element instead.
+element instead, and copies out of such a view's elements still share one
+set of slots
+([known gap](known-gaps.md#a-copy-out-of-a-dynamic-arrays-view-suspends-the-other-elements-carriers)).
 
 The meaning of "fresh borrow of a range" in
 [Weakening and reborrows](design.md#weakening-and-reborrows) should also be
