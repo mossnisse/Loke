@@ -237,21 +237,13 @@ emit_ctlz :: proc(e: ^Emitter, llvm, operand: string) -> string {
 }
 
 // The width less the leading zeros, which a zero operand makes the width, so
-// the bit width of zero is zero; then widened or narrowed to `int` as a count.
+// the bit width of zero is zero. The count is at most 128, so subtracting it
+// as an `int` keeps every result.
 @(private = "file")
 emit_bit_width :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
-	source := expr_base(v.bound[0]).type
-	llvm := llvm_type(e, source)
-	leading := emit_ctlz(e, llvm, emit_expr(e, v.bound[0]))
-	width := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = sub %s %d, %s", width, llvm, type_bits(e.c, source), leading)
-	result := llvm_type(e, TYPE_INT)
-	if llvm == result {
-		return width
-	}
+	leading := emit_bit_count(e, v, "ctlz")
 	out := temp(e)
-	widen := type_bits(e.c, source) < type_bits(e.c, TYPE_INT)
-	fmt.sbprintfln(&e.b, "  %s = %s %s %s to %s", out, widen ? "zext" : "trunc", llvm, width, result)
+	fmt.sbprintfln(&e.b, "  %s = sub %s %d, %s", out, llvm_type(e, TYPE_INT), type_bits(e.c, expr_base(v.bound[0]).type), leading)
 	return out
 }
 

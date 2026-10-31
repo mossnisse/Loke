@@ -1226,26 +1226,3 @@ the declaration, not to a procedure-value type. `@(noreturn)` would state that
 more literally than punctuation. `-> never` also reads well, but should be
 spelled only if the language adds a real uninhabited type, with its rules for
 procedure types and conversions.
-
-## Small code findings
-
-Reviews found these simplifications and test gaps, none a divergence from the
-spec:
-
-- **`bit_width` can reuse the count emitter.** `emit_bit_width` in
-  [emit_llvm_calls.odin](src/emit_llvm_calls.odin) repeats the widening or
-  narrowing to `int` that `emit_bit_count` does. Call
-  `emit_bit_count(e, v, "ctlz")` and subtract from the operand's width; a
-  count is at most 128, so every result is kept. Update
-  [lib_math_bits.expected](tests/ll/lib_math_bits.expected) to the `i64`
-  subtraction, and keep `emit_ctlz` for the power-of-two round-up.
-- **Package tests are not in the optimization matrix.**
-  `library_packages_pass_their_tests` in
-  [corpus_test.odin](tests/corpus_test.odin) accepts `LOKE_TEST_FLAGS`, but
-  [test-all.ps1](test-all.ps1) leaves it out of `$matrix`, so `-Full` and CI
-  run `core:time`'s zone-rule tests at the baseline optimization level only.
-- **`System_Zone` repeats a Windows ABI prefix.** It restates the seven fields
-  of `Time_Zone_Information` in [zone.loke](core/time/zone.loke); one embedded
-  `information: Time_Zone_Information` field, as
-  [lib_time_zone.loke](tests/run/lib_time_zone.loke) has, keeps the layout
-  and the size assertions with one definition of the prefix.

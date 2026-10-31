@@ -14,8 +14,8 @@ call i64 @llvm.fshl.i64(i64
 = trunc i64 %* to i8
 call i8 @llvm.fshr.i8(i8
 call i16 @llvm.ctlz.i16(i16 %*, i1 false)
-= sub i16 16, %*
 = zext i16 %* to i64
+= sub i64 16, %*
 call i128 @llvm.bitreverse.i128(i128 %*)
 = icmp sgt i16 %*, 0
 = icmp sle i16 %*, 1

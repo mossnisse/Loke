@@ -371,13 +371,7 @@ Time_Zone_Information :: struct {
 // whether automatic adjustment for daylight saving is off; 432 bytes.
 @(private)
 System_Zone :: struct {
-	bias:                           i32,
-	standard_name:                  [32]u16,
-	standard_date:                  System_Time,
-	standard_bias:                  i32,
-	daylight_name:                  [32]u16,
-	daylight_date:                  System_Time,
-	daylight_bias:                  i32,
+	information:                    Time_Zone_Information,
 	key_name:                       [128]u16,
 	dynamic_daylight_time_disabled: u8,
 }
