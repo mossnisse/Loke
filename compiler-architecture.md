@@ -684,6 +684,11 @@ modification time, and runtime source/header names and contents. Installed sets 
 create a new set. On cache build/install failure, the link compiles sources
 directly and records the reason in `runtime/prebuilt/last-failure.txt`.
 
+The runtime entries that end the program (`loke_rt_v1_panic`, `panic_end`,
+`abort`, `alloc_failed`, `container_fault`) are declared `cold noreturn` in
+the module and `LOKE_RT_FAILURE` in `loke_rt.h`, and the branch to a checked
+operation's panic carries `!prof` weights (`branch_if_unlikely`).
+
 ## Source-code map
 
 Files directly in `src/` form the `lokec` package; `src/subprocess/` is a

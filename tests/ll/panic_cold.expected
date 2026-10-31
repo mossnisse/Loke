@@ -1,0 +1,8 @@
+declare void @loke_rt_v1_panic(ptr) cold noreturn
+declare void @loke_rt_v1_panic_begin(ptr) cold
+declare void @loke_rt_v1_panic_end() cold noreturn
+declare void @loke_rt_v1_abort(ptr) cold noreturn
+declare void @loke_rt_v1_alloc_failed(ptr) cold noreturn
+declare void @loke_rt_v1_container_fault(ptr) cold noreturn
+br i1 %*, label %int.overflow.*, label %ok.*, !prof !{!"branch_weights", i32 1, i32 1048575}
+br i1 %*, label %bounds.*, label %ok.*, !prof !{!"branch_weights", i32 1, i32 1048575}

@@ -746,6 +746,10 @@ checklist.
   `-ffp-contract=off`, the runtime's C sources included, whose default let
   Clang fuse `a*b + c` once a level has FMA. `-print-toolchain` prints both
   flags, for a C host compiling the runtime itself.
+- The runtime entries that end the program are declared `cold noreturn`, in
+  the generated module and in `runtime/loke_rt.h` (`LOKE_RT_FAILURE`), and the
+  branch to a checked operation's panic carries weights saying it is not
+  taken. This states what LLVM inferred; no benchmark changed measurably.
 - A procedure that registers no cleanup no longer calls the runtime to pop an
   unwind frame it never pushed each time it returns. The call survived
   optimization and inlining, so every such procedure paid for it; a small

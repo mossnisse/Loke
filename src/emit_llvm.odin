@@ -1116,6 +1116,26 @@ branch_if :: proc(e: ^Emitter, cond: string, then_label, else_label: string) {
 	e.terminated = true
 }
 
+// A branch whose `then_label` is a failure path, taken only on the way to a
+// panic. The weights state what the cold callee would let LLVM infer; the
+// tuple is written inline so that it takes no number from the debug metadata.
+@(private)
+branch_if_unlikely :: proc(e: ^Emitter, cond: string, then_label, else_label: string) {
+	if e.terminated {
+		return
+	}
+	fmt.sbprintfln(
+		&e.b, `  br i1 %s, label %%%s, label %%%s, !prof !{{!"branch_weights", i32 1, i32 1048575}`,
+		cond, then_label, else_label,
+	)
+	e.terminated = true
+}
+
+// The runtime entries that end the program, as `LOKE_RT_FAILURE` in
+// runtime/loke_rt.h declares them.
+@(private)
+FAILURE_ATTRIBUTES :: "cold noreturn"
+
 // Names carry the package's key; the root package's is empty.
 @(private)
 llvm_global_name :: proc(pkg: ^Package, name: string) -> string {

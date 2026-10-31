@@ -31,6 +31,17 @@ extern "C" {
 #define LOKE_RT_STATIC_ASSERT(cond, tag) \
 	typedef char loke_rt_static_assert_##tag[(cond) ? 1 : -1]
 
+/* An entry that ends the program, reached only on a failure path. The
+ * generated declarations say the same (`FAILURE_ATTRIBUTES` in the emitter),
+ * so the code that calls it is laid out and inlined as unlikely. */
+#if defined(__GNUC__) || defined(__clang__)
+#define LOKE_RT_FAILURE __attribute__((cold, noreturn))
+#elif defined(_MSC_VER)
+#define LOKE_RT_FAILURE __declspec(noreturn)
+#else
+#define LOKE_RT_FAILURE
+#endif
+
 /* -------------------------------------------------------------- allocator -- */
 
 /* design.md "Allocators": failure policy is a property of the allocator value,
@@ -162,7 +173,7 @@ void loke_rt_v1_free(const loke_rt_allocator_v1 *a, void *ptr, uint64_t size, ui
  * which is a runtime failure, not a diagnosable one. */
 void loke_rt_v1_reset(const loke_rt_allocator_v1 *a);
 /* An implicit allocation that failed, dispatched by the allocator's own policy. */
-void loke_rt_v1_alloc_failed(const loke_rt_allocator_v1 *a);
+LOKE_RT_FAILURE void loke_rt_v1_alloc_failed(const loke_rt_allocator_v1 *a);
 /* design.md "Allocation failure": an `Allocator_Error` is the refused size.
  * `take` moves this thread's noted refusal into one, and `restore` moves one
  * back before a policy call or a status return. All bits set means the
@@ -458,7 +469,7 @@ int32_t loke_rt_v1_checked_bytes(int64_t count, uint64_t size, uint64_t *out);
 
 /* An invalid index, a negative count, or a `len > cap` relationship is an
  * ordinary program fault, not an allocator failure. */
-void loke_rt_v1_container_fault(const char *what);
+LOKE_RT_FAILURE void loke_rt_v1_container_fault(const char *what);
 
 /* The byte-wise half of `hash`. design.md's catalogue promises `string` and
  * `string_view` satisfy `Hashable`, and the mix is the same FNV-1a step the
@@ -574,12 +585,12 @@ void loke_rt_v1_frame_pop(loke_rt_frame_v1 *frame);
 
 /* The program panic strategy. Under `-panic=abort` the compiler pushes no
  * frames, so this runs no cleanup and terminates at the point of the fault. */
-void loke_rt_v1_panic(const char *message);
+LOKE_RT_FAILURE void loke_rt_v1_panic(const char *message);
 
 /* The same panic in two halves, so the generated code can format an
  * `assert`/`panic`'s trailing arguments onto the report line between them. */
 void loke_rt_v1_panic_begin(const char *message);
-void loke_rt_v1_panic_end(void);
+LOKE_RT_FAILURE void loke_rt_v1_panic_end(void);
 
 /* A `-g` executable's `wmain` enables the stack trace a panic prints after its
  * report line: each Loke frame, newest first, from the PDB. */
@@ -589,7 +600,7 @@ void loke_rt_v1_panic_trace(void);
 /* Immediate abort, bypassing every strategy: an allocator whose failure policy
  * is `.Trap`, a panic raised while one is already unwinding, a fault in the
  * runtime's own records, and the end of every panic once its cleanup has run. */
-void loke_rt_v1_abort(const char *what);
+LOKE_RT_FAILURE void loke_rt_v1_abort(const char *what);
 
 /* ------------------------------------------------------------ CPU level -- */
 
