@@ -67,7 +67,7 @@ if ($LASTEXITCODE -eq 0) { .\args.exe first "two words" }
 | --- | --- |
 | `-o <path>` | Set the executable or object output path. Defaults to the input path with `.exe`, `.obj`, or, for a test build, `.test.exe`. |
 | `-test` | Build the root package's tests and run each in its own process; see [Running tests](#running-tests). |
-| `-opt=<mode>` | Set optimization: `none` (default), `minimal`, `size`, `speed`, or `aggressive`. These map to Clang `-O0`, `-O1`, `-Os`, `-O2`, and `-O3`. |
+| `-opt=<mode>` | Set optimization: `none` (default), `minimal`, `size`, `speed`, or `aggressive`. These map to Clang `-O0`, `-O1`, `-Os`, `-O2`, and `-O3`. Above `none`, when `lld-link.exe` is installed beside Clang, as the LLVM installer does, the runtime is linked as bitcode and optimized with the program; `-print-toolchain` reports this as `lto=yes`. |
 | `-cpu=<level>` | Set the instruction set the build may use: `x86-64` (default), `x86-64-v2`, or `x86-64-v3`; see [CPU levels](#cpu-levels). |
 | `-panic=unwind\|abort` | Select whether a panic runs registered cleanup before termination. Default: `unwind`. |
 | `-define:NAME=VALUE` | Supply a project-wide `build_config` value. Repeat for different names. |
@@ -350,7 +350,7 @@ package. An `obj` build selects the same way.
 | `-emit-ll` | Check the program and write LLVM IR, without invoking Clang or linking. The `.ll` path is derived from `-o`. |
 | `-keep-temps` | Keep the build's temporaries: the generated LLVM IR, the `-g` natvis rules, and any object NASM assembled for a `.asm` foreign import. Normally they are removed after the Clang step. |
 | `-check-layout` | Build and run an LLVM layout probe and compare sizes, alignments, and field offsets with the compiler's calculations. Requires the native toolchain. |
-| `-print-toolchain` | Print the Clang, MSVC toolset, and `-isystem`/`-L` flags a link would use on this machine, and whether one could run at all (`ready=yes`), then stop. Takes no input. |
+| `-print-toolchain` | Print the Clang, MSVC toolset, and `-isystem`/`-L` flags a link would use on this machine, whether an optimized build links the runtime as bitcode (`lto=yes`), and whether a link could run at all (`ready=yes`), then stop. Takes no input. |
 
 The parsing modes take a **file**, not a package directory:
 

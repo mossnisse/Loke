@@ -684,6 +684,18 @@ modification time, and runtime source/header names and contents. Installed sets 
 create a new set. On cache build/install failure, the link compiles sources
 directly and records the reason in `runtime/prebuilt/last-failure.txt`.
 
+An optimized build links the runtime as bitcode when `lld-link.exe` sits
+beside the clang it uses (`links_runtime_bitcode`). The cached set is then
+compiled with `-flto`, and the link passes `-flto -fuse-ld=lld`, so the module
+and the runtime are optimized together. `cpu.c` stays machine code, compiled by
+a second command into the same set, so that nothing compiled for the level is
+inlined into the startup check. A `-runtime=<dir>` build, a build whose cache
+failed, an `-opt=none` build, and a machine without lld-link link machine code
+as before. Linking bitcode does not inline the container operations into a
+program's loops: `dyn_append` and `map_find` stay out of line, and `map_find`
+still reaches `hash` and `==` through the operation table
+([Performance opportunities and actual semantic limits](open-questions.md#performance-opportunities-and-actual-semantic-limits)).
+
 The runtime entries that end the program (`loke_rt_v1_panic`, `panic_end`,
 `abort`, `alloc_failed`, `container_fault`) are declared `cold noreturn` in
 the module and `LOKE_RT_FAILURE` in `loke_rt.h`, and the branch to a checked

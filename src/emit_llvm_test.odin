@@ -923,3 +923,33 @@ rename_directory_waits_for_a_held_file :: proc(t: ^testing.T) {
 	thread.destroy(release)
 	testing.expectf(t, err == nil && os.exists(to), "the rename gave up while the file was held: %v", err)
 }
+
+// An optimized build that links the runtime as bitcode compiles every runtime
+// file with `-flto` except the CPU check, which stays machine code in a command
+// of its own; an unoptimized build compiles them all in one command, as before.
+// Only an unoptimized build never asks for lld-link.
+@(test)
+runtime_bitcode_keeps_the_cpu_check_native :: proc(t: ^testing.T) {
+	sources := []string{"runtime/alloc.c", "runtime/cpu.c", "runtime/panic.c"}
+	target := windows_x64_target(.X86_64)
+	has :: proc(command: []string, word: string) -> bool {
+		for each in command {
+			if each == word { return true }
+		}
+		return false
+	}
+	plain := runtime_compile_commands("runtime", sources, target, .Speed, false)
+	if testing.expectf(t, len(plain) == 1, "an unoptimized set took %d commands", len(plain)) {
+		testing.expect(t, !has(plain[0], "-flto"), "a machine-code set was compiled with -flto")
+		testing.expect(t, has(plain[0], "runtime/cpu.c") && has(plain[0], "runtime/alloc.c"), "a source is missing from the one command")
+	}
+	bitcode := runtime_compile_commands("runtime", sources, target, .Speed, true)
+	if testing.expectf(t, len(bitcode) == 2, "a bitcode set took %d commands", len(bitcode)) {
+		testing.expect(t, has(bitcode[0], "-flto") && has(bitcode[0], "runtime/alloc.c") && has(bitcode[0], "runtime/panic.c"), "the runtime was not compiled to bitcode")
+		testing.expect(t, !has(bitcode[0], "runtime/cpu.c"), "the CPU check was compiled to bitcode")
+		testing.expect(t, has(bitcode[1], "runtime/cpu.c") && !has(bitcode[1], "-flto"), "the CPU check is not machine code of its own")
+		testing.expect(t, has(bitcode[1], "-O2") && has(bitcode[1], "-march=x86-64"), "the CPU check lost the build's code-generation flags")
+	}
+	testing.expect(t, !links_runtime_bitcode(`C:\Program Files\LLVM\bin\clang.exe`, .None), "an unoptimized build links bitcode")
+	testing.expect(t, !links_runtime_bitcode("clang", .Speed), "a clang found on PATH, with no directory, was taken to have lld-link beside it")
+}

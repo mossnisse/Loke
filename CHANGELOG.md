@@ -746,6 +746,14 @@ checklist.
   `-ffp-contract=off`, the runtime's C sources included, whose default let
   Clang fuse `a*b + c` once a level has FMA. `-print-toolchain` prints both
   flags, for a C host compiling the runtime itself.
+- An optimized build links the runtime as LLVM bitcode, optimized together
+  with the program, when `lld-link.exe` is installed beside Clang, as the LLVM
+  installer puts it; `-print-toolchain` reports this as `lto=yes`. The
+  benchmarks run 2 to 9 percent faster and their executables are 5 to 30
+  percent smaller, for 6 to 12 percent longer optimized builds (a third
+  longer for the smallest). `-opt=none` builds, `-runtime=<dir>` builds, and
+  machines without lld-link link machine code as before
+  ([Common options](compiler-guide.md#common-options)).
 - Under `-panic=unwind`, a procedure publishes to its unwind frame only the
   locals its cleanups read, and a procedure that registers no cleanup keeps
   no frame, live flags, or env at all. The other locals' addresses no longer

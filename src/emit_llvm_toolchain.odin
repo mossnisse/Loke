@@ -296,12 +296,13 @@ prebuilt_runtime_objects :: proc(
 	target: Target_Info,
 	opt_mode: Opt_Mode,
 	custom_runtime: bool,
+	bitcode: bool,
 ) -> []string {
 	if custom_runtime {
 		return nil
 	}
-	command := runtime_compile_command(runtime_dir, sources, target, opt_mode)
-	manifest, identified := runtime_build_manifest(runtime_dir, command)
+	commands := runtime_compile_commands(runtime_dir, sources, target, opt_mode, bitcode)
+	manifest, identified := runtime_build_manifest(runtime_dir, commands)
 	if !identified {
 		return runtime_cache_failed(runtime_dir, "cannot read the runtime sources in `%s`", runtime_dir)
 	}
@@ -320,8 +321,10 @@ prebuilt_runtime_objects :: proc(
 	if err := os.make_directory_all(staging); err != nil {
 		return runtime_cache_failed(runtime_dir, "cannot create `%s`: %v", staging, err)
 	}
-	if reason := compile_runtime_sources(command, staging); reason != "" {
-		return runtime_cache_failed(runtime_dir, "%s", reason)
+	for command in commands {
+		if reason := compile_runtime_sources(command, staging); reason != "" {
+			return runtime_cache_failed(runtime_dir, "%s", reason)
+		}
 	}
 	if os.write_entire_file(join_path({staging, RUNTIME_MANIFEST}), transmute([]byte)manifest) != nil {
 		return runtime_cache_failed(runtime_dir, "cannot write `%s` in `%s`", RUNTIME_MANIFEST, staging)
@@ -370,19 +373,24 @@ runtime_cache_failed :: proc(runtime_dir: string, format: string, args: ..any) -
 	return nil
 }
 
-// Everything that decides the objects: the clang command, which names the
+// Everything that decides the objects: the clang commands, which name the
 // compiler, the flags, and the MSVC and SDK include roots; the clang binary's
 // modification time, which a reinstall changes; and each runtime source and
 // header's name and a hash of its contents, since an edit can keep both the
 // size and the modification time.
 @(private = "file")
-runtime_build_manifest :: proc(runtime_dir: string, command: []string) -> (manifest: string, ok: bool) {
+runtime_build_manifest :: proc(runtime_dir: string, commands: [][]string) -> (manifest: string, ok: bool) {
 	b := strings.builder_make()
-	for word in command {
-		strings.write_string(&b, word)
-		strings.write_byte(&b, '\n')
+	for command, index in commands {
+		if index > 0 {
+			strings.write_byte(&b, '\n')
+		}
+		for word in command {
+			strings.write_string(&b, word)
+			strings.write_byte(&b, '\n')
+		}
 	}
-	stamp, _ := os.modification_time_by_path(command[0])
+	stamp, _ := os.modification_time_by_path(commands[0][0])
 	fmt.sbprintfln(&b, "clang modified %d", time.to_unix_nanoseconds(stamp))
 	entries, err := os.read_all_directory_by_path(runtime_dir, context.temp_allocator)
 	if err != nil {
@@ -416,18 +424,60 @@ prebuilt_current :: proc(dir: string, objects: []string, manifest: string) -> bo
 	return true
 }
 
-// One clang process; `-c` with several inputs writes each object into the
-// working directory.
-@(private = "file")
-runtime_compile_command :: proc(runtime_dir: string, sources: []string, target: Target_Info, opt_mode: Opt_Mode) -> []string {
-	command := make([dynamic]string, context.temp_allocator)
-	append(&command, find_clang(), "-c")
-	for source in sources {
-		append(&command, source)
+// One clang process, and with `bitcode` a second; `-c` with several inputs
+// writes each object into the working directory. A bitcode set is the runtime
+// as LLVM bitcode for the link to optimize with the module, except the CPU
+// check, which stays machine code so nothing of a higher level is inlined into
+// it (compiler-guide.md "CPU levels").
+@(private)
+runtime_compile_commands :: proc(
+	runtime_dir: string, sources: []string, target: Target_Info, opt_mode: Opt_Mode, bitcode: bool,
+) -> [][]string {
+	compile :: proc(runtime_dir: string, sources: []string, target: Target_Info, opt_mode: Opt_Mode, lto: bool) -> []string {
+		command := make([dynamic]string, context.temp_allocator)
+		append(&command, find_clang(), "-c")
+		for source in sources {
+			append(&command, source)
+		}
+		append_codegen_flags(&command, target, opt_mode)
+		if lto {
+			append(&command, "-flto")
+		}
+		append_c_includes(&command, runtime_dir)
+		return command[:]
 	}
-	append_codegen_flags(&command, target, opt_mode)
-	append_c_includes(&command, runtime_dir)
-	return command[:]
+	commands := make([dynamic][]string, context.temp_allocator)
+	if !bitcode {
+		append(&commands, compile(runtime_dir, sources, target, opt_mode, false))
+		return commands[:]
+	}
+	optimized := make([dynamic]string, context.temp_allocator)
+	native := make([dynamic]string, context.temp_allocator)
+	for source in sources {
+		append(filepath.base(source) == CPU_CHECK_SOURCE ? &native : &optimized, source)
+	}
+	append(&commands, compile(runtime_dir, optimized[:], target, opt_mode, true))
+	if len(native) > 0 {
+		append(&commands, compile(runtime_dir, native[:], target, opt_mode, false))
+	}
+	return commands[:]
+}
+
+// The runtime file every function of which is baseline code.
+@(private)
+CPU_CHECK_SOURCE :: "cpu.c"
+
+// An optimized build links with lld-link when it sits beside clang, so the
+// runtime, compiled to bitcode, is optimized with the module and its small
+// operations can inline where they are hot. Without one the build links the
+// runtime's machine code as an unoptimized build does.
+@(private)
+links_runtime_bitcode :: proc(clang: string, opt_mode: Opt_Mode) -> bool {
+	if opt_mode == .None {
+		return false
+	}
+	dir := path_dir(clang, context.temp_allocator)
+	return dir != "" && dir != "." && os.is_file(join_path({dir, "lld-link.exe"}, context.temp_allocator))
 }
 
 // Why the sources did not compile, or "" when they did. Not reported: the link
@@ -492,9 +542,17 @@ link :: proc(c: ^Compiler, ll_path, natvis_path, exe_path: string, opts: Emissio
 	if natvis_path != "" {
 		append(&command, fmt.aprintf("-Wl,/NATVIS:%s", natvis_path))
 	}
+	// Only a prebuilt set is bitcode: sources the link compiles itself are
+	// compiled as an unoptimized build's are, `cpu.c` among them.
+	bitcode := links_runtime_bitcode(clang, c.opt_mode)
 	runtime_inputs := sources
-	if prebuilt := prebuilt_runtime_objects(runtime_dir, sources, c.target, c.opt_mode, opts.runtime_dir != ""); prebuilt != nil {
+	if prebuilt := prebuilt_runtime_objects(runtime_dir, sources, c.target, c.opt_mode, opts.runtime_dir != "", bitcode); prebuilt != nil {
 		runtime_inputs = prebuilt
+	} else {
+		bitcode = false
+	}
+	if bitcode {
+		append(&command, "-flto", "-fuse-ld=lld")
 	}
 	for input in runtime_inputs {
 		append(&command, input)
@@ -675,6 +733,8 @@ print_toolchain :: proc(cpu: Cpu_Level) -> int {
 	)
 	fmt.printfln("clang=%s", clang)
 	fmt.printfln("msvc=%s", msvc_tools_dir())
+	// Whether an optimized build links the runtime as bitcode.
+	fmt.printfln("lto=%s", links_runtime_bitcode(clang, .Speed) ? "yes" : "no")
 
 	fmt.printfln("flag=-march=%s", cpu_level_name(cpu))
 	fmt.println("flag=-ffp-contract=off")
