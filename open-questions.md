@@ -96,8 +96,8 @@ simplification, and structure. Three gaps remain in the alias fix:
 The integer copy now uses the existing minimized-copy operation directly,
 which removes the extra allocation and copy. The provenance helpers keep
 budget accounting separate from the paths used by accesses, and the remaining
-[repointed-carrier limitation](known-gaps.md#a-carrier-repointed-between-choices-counts-its-places-against-both-storages)
-is explicitly recorded. No further actionable simplification was found.
+repointed-carrier limitation was recorded in `known-gaps.md` (since fixed).
+No further actionable simplification was found.
 
 An independent exact rational interval for the listed hard tangent argument
 puts its relative midpoint distance strictly between `2^-134` and `2^-132`

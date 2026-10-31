@@ -302,6 +302,51 @@ Prov_Offset :: struct {
 	storage: int,
 }
 
+// One definition of a named slot, emitted in `block`, and what it may point
+// at (`prov_note_offset`): nil `offsets` when it names no storage. A slot's
+// definitions are kept in the order emitted.
+Prov_Offset_Def :: struct {
+	block:   Block_Id,
+	offsets: []Prov_Offset,
+	merged:  bool,
+}
+
+// Which definitions of named slots reach where (`prov_reaching_offsets`):
+// each slot's definitions, and per slot and finished block the set reaching
+// its end, bit `i` standing for definition `i` and `PROV_REACH_UNKNOWN` for
+// one that names no storage or for the procedure's entry. The rest is the
+// walk's scratch, kept to be reused.
+Prov_Reach :: struct {
+	defs:   map[int][dynamic]Prov_Offset_Def,
+	exits:  map[Prov_Reach_Key]u64,
+	frames: [dynamic]Prov_Reach_Frame,
+	seen:   map[Block_Id]Prov_Reach_Seen,
+	scc:    [dynamic]Block_Id,
+}
+
+Prov_Reach_Key :: struct {
+	slot:  int,
+	block: Block_Id,
+}
+
+// A block the walk is in: the next of its predecessors to take, the
+// definitions found so far, and its order of discovery and the lowest one it
+// reaches back to.
+Prov_Reach_Frame :: struct {
+	block:        Block_Id,
+	next:         int,
+	mask:         u64,
+	index, low:   int,
+}
+
+// A block the walk has taken: what reaches its end, its order of discovery,
+// and whether it waits on a block still being walked, which closes a cycle.
+Prov_Reach_Seen :: struct {
+	mask:    u64,
+	index:   int,
+	waiting: bool,
+}
+
 // How one definition of a named view slot relates what it views to the range
 // a fresh borrow lends (`prov_note_view`): that borrow itself, as
 // `s := &mut a[0:2]`; elements `lo` up to `hi` of another such slot, as

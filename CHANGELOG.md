@@ -815,6 +815,12 @@ checklist.
 
 ### Fixed
 
+- A place borrowed through a pointer that was repointed between choices, as
+  `p` in `p := s; q := &mut p^.left.a; p = t; q = &mut p^.right.a;`, now
+  counts only against the storage the pointer names where the place is
+  taken, so four places of `s` and five of `t` no longer reject a write to
+  another field of `s` naming the eight-place limit (`L0641`)
+  ([Minimum provenance precision](design.md#minimum-provenance-precision)).
 - `container.words_for_bits` and `container.bytes_for_bits` no longer
   overflow for capacities near the largest `int`, and `Index_Set(N)` can be
   instantiated at that boundary

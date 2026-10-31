@@ -110,6 +110,9 @@ Flow_Block :: struct {
 	use_entry:       []Span,
 	use_exit:        []Span,
 	prov_visited:    bool,
+	// `Prov_Reach.exits` holds what reaches this block's end, which a new
+	// predecessor may change.
+	reach_known:     bool,
 }
 
 Flow_Cleanup_Kind :: enum {
@@ -325,6 +328,9 @@ Prov_State :: struct {
 	// reborrows taken from its previous value (design.md "Chunks of a mutable
 	// slice").
 	fresh_slots:    map[int]bool,
+	// Per named slot, what each of its definitions may point at, so a borrow
+	// through it takes the places of those reaching it (`prov_reaching_offsets`).
+	offset_reach:   Prov_Reach,
 	// One slot per `carrier_shape` path of a local that holds carriers.
 	content_by_symbol: map[Symbol_Id][]int,
 	// Call results settled for this fact-building pass.
@@ -463,6 +469,13 @@ new_flow_graph :: proc(k: ^Checker, literal: ^Expr_Proc, allocator: mem.Allocato
 		graph.view_defs = make(map[int][dynamic]Prov_View_Def, allocator)
 		graph.receiver_content = make(map[^Expr_Call][]int, allocator)
 		graph.fresh_slots = make(map[int]bool, allocator)
+		graph.offset_reach = Prov_Reach {
+			defs   = make(map[int][dynamic]Prov_Offset_Def, allocator),
+			exits  = make(map[Prov_Reach_Key]u64, allocator),
+			frames = make([dynamic]Prov_Reach_Frame, allocator),
+			seen   = make(map[Block_Id]Prov_Reach_Seen, allocator),
+			scc    = make([dynamic]Block_Id, allocator),
+		}
 		graph.content_by_symbol = make(map[Symbol_Id][]int, allocator)
 		graph.call_results = make(map[^Expr_Call]Prov_Call_Result, allocator)
 		graph.operator_calls = make(map[rawptr]^Expr_Call, allocator)
@@ -541,6 +554,10 @@ link :: proc(graph: ^Flow_Graph, from, to: Block_Id) {
 		return
 	}
 	append(&graph.blocks[to].preds, from)
+	if graph.blocks[to].reach_known {
+		// As a loop's head is linked to its back edge (`prov_reaching_offsets`).
+		clear(&graph.offset_reach.exits)
+	}
 	append(&graph.blocks[from].succs, to)
 }
 
