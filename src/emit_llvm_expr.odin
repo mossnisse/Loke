@@ -1125,6 +1125,20 @@ emit_copied_expr :: proc(
 	return from == type ? value : emit_union_widen(e, value, from, type)
 }
 
+// The address an erased view of `expr` holds: the place itself, or a temporary
+// holding the value. A view reads its target at the type's alignment, which a
+// packed place may not have (design.md "@(packed)"), so it views an aligned copy.
+@(private)
+emit_viewed_address :: proc(e: ^Emitter, expr: Expr, from: Type_Id) -> string {
+	address := spill_iterable_at(e, expr, from)
+	if align, known := e.place_align[address]; known && align < type_align(e.c, from) {
+		aligned := temporary_slot(e, from)
+		copy_bytes(e, aligned, address, type_size(e.c, from))
+		address = aligned
+	}
+	return address
+}
+
 // Emits `expr` at `as_type`: its checked type, or the source type an implicit
 // conversion recorded on this node. Children keep their own checked types.
 @(private)
@@ -1140,17 +1154,15 @@ emit_expr_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 	   dyn_proc_signature(e.c, base.type) != INVALID_TYPE {
 		return emit_dyn_proc_value(e, expr, from, as_type)
 	}
+	// design.md "Variadic parameters": a value a `..dyn I` pack views, with the
+	// witness of its type. A `dyn` value erased into an `any_view` is emitted at
+	// its own type here and must not be viewed again.
+	if from := base.erased_from; from != INVALID_TYPE && as_type == base.type && type_is_dyn(e.c, as_type) {
+		return emit_dyn_view_value(e, emit_viewed_address(e, expr, from), from, as_type)
+	}
 	// A value becoming an `any_view`: its address plus the frozen `typeid`.
 	if from := base.erased_from; from != INVALID_TYPE && as_type == TYPE_ANY_VIEW {
-		address := spill_iterable_at(e, expr, from)
-		// A view reads its target at the type's alignment, which a packed place
-		// may not have (design.md "@(packed)"), so it views an aligned copy.
-		if align, known := e.place_align[address]; known && align < type_align(e.c, from) {
-			aligned := temporary_slot(e, from)
-			copy_bytes(e, aligned, address, type_size(e.c, from))
-			address = aligned
-		}
-		return emit_any_view_value(e, address, from)
+		return emit_any_view_value(e, emit_viewed_address(e, expr, from), from)
 	}
 	// A `string` borrowed as a `string_view`: the owning word is dropped, and
 	// addressing the source keeps an owned temporary alive.

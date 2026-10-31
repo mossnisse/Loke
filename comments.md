@@ -1429,6 +1429,19 @@ borrows across moves. Keeping those out makes dynamic dispatch usable without
 silently allocating. Closed owning sets use unions; an open owning abstraction
 needs an explicit storage and lifecycle contract.
 
+### A `..dyn I` pack views its arguments
+
+A `dyn` view is otherwise written `(dyn I)(&value)`, so that a borrow of a
+value is visible where it is made. A call that takes several values of
+different types through one interface would then spell that conversion at every
+argument, as `fmt.println` would without `any_view`. Converting the elements of
+a `..dyn I` pack keeps that call short without making the conversion general.
+The borrow ends with the call expression, as the pack itself does, so nothing
+the call site does not show can outlive it. A local or an ordinary parameter
+still converts explicitly, because a view held there outlives the expression
+that made it. A `..dyn mut I` pack does not convert: a mutable borrow is written
+`&mut` at the call, as every other one is.
+
 ### User-defined implicit conversions
 
 User-defined conversions are written at the call site. Otherwise an import or

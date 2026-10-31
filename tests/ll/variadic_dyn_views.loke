@@ -1,0 +1,24 @@
+package main;
+
+// design.md "Variadic parameters": each element of a `..dyn I` pack pairs the
+// viewed address with the witness of its type, and a packed place is viewed
+// through an aligned copy (design.md "@(packed)").
+
+Show :: interface($Self: type) {
+	slot show: proc(self: ^) -> int;
+}
+Point :: struct { x: int, y: int }
+impl Point { show :: proc(self) -> int { return self.x + self.y; } }
+
+Packed :: struct @(packed) { tag: u8, p: Point }
+
+total :: proc(args: ..dyn Show) -> int {
+	sum := 0;
+	foreach (a in args) { sum += a.show(); }
+	return sum;
+}
+
+main :: proc() {
+	q := Packed{1, Point{2, 3}};
+	_ = total(q.p);
+}

@@ -1620,6 +1620,21 @@ emit_dyn_value :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	return insert(e, storage, first, "ptr", second, DYN_WITNESS)
 }
 
+// design.md "Variadic parameters": the view a `..dyn I` pack holds of a value,
+// paired with the witness the checker requested for its type.
+@(private)
+emit_dyn_view_value :: proc(e: ^Emitter, address: string, from, as_type: Type_Id) -> string {
+	dyn := underlying_info(e.c, as_type)
+	witness := lookup_witness(e.c, dyn.dyn_interface, from, dyn.dyn_args)
+	if witness == nil {
+		backend_fail(e, "a value reached a `dyn` view with no witness")
+		return "undef"
+	}
+	storage := llvm_type(e, as_type)
+	first := insert(e, storage, "undef", "ptr", address, DYN_DATA)
+	return insert(e, storage, first, "ptr", e.witness_names[witness], DYN_WITNESS)
+}
+
 // design.md "Borrowed callable views": a procedure is the data word itself,
 // called by its signature's adapter, so the view borrows nothing; a capture
 // value is viewed where it is, or in a temporary, and called by its `call`.

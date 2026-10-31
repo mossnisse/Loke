@@ -362,6 +362,25 @@ argument_rank :: proc(k: ^Checker, arg: Arg_Info, param: Type_Id, mode: Param_Mo
 	return RANK_NONE
 }
 
+// design.md "Variadic parameters": a value a `..dyn I` pack views ranks as a
+// built-in conversion, at the default type of an untyped constant.
+@(private = "file")
+variadic_view_rank :: proc(k: ^Checker, arg: Arg_Info, element: Type_Id) -> int {
+	if arg.waiting || arg.mode == .Inout || !variadic_view_accepts(k.c, arg.type, element) {
+		return RANK_NONE
+	}
+	concrete := arg.type
+	if type_is_untyped(k.c, concrete) {
+		concrete = default_type(k.c, concrete)
+		if arg.is_const {
+			if _, fits := convert_const(k.c, arg.const_value, concrete, false); !fits {
+				return RANK_NONE
+			}
+		}
+	}
+	return variadic_view_satisfied(k, concrete, element, arg.span, report = false) ? RANK_BUILTIN : RANK_NONE
+}
+
 // ----------------------------------------------------------------- candidates --
 
 @(private = "file")
@@ -458,6 +477,9 @@ build_candidate :: proc(k: ^Checker, symbol_id: Symbol_Id, args: []Arg_Info) -> 
 			return cand
 		}
 		rank := argument_rank(k, arg, want, mode)
+		if rank == RANK_NONE && slot == pack && arg.mode != .Spread {
+			rank = variadic_view_rank(k, arg, element)
+		}
 		if rank == RANK_NONE && arg.waiting && mode == .Inout {
 			cand.reason = fmt.aprintf(
 				"it takes argument %d by `inout`, which needs a place",

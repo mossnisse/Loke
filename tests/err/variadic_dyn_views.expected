@@ -1,0 +1,28 @@
+L0646
+@20:34
+cannot reach `kept`
+L0444
+@24:12
+`Plain` does not satisfy `Show(Plain)`
+L0310
+@25:20
+cannot initialise `dyn Show` with `Point`
+L0310
+@26:10
+cannot pass `dyn Show` with `Point`
+L0310
+@27:16
+cannot pass `dyn mut Show` with `Point`
+L0378
+@28:12
+L0310
+@29:12
+`nil` is not a value of `dyn Show`
+L0574
+@31:12
+L0352
+@32:12
+L0513
+@38:6
+L0512
+@41:2

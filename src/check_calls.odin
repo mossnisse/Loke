@@ -1241,7 +1241,7 @@ bind_variadic_arguments :: proc(
 			ok = false
 			continue
 		}
-		value, passed := pass_argument(k, arg.value, element, prechecked)
+		value, passed := pass_variadic_element(k, arg.value, element, prechecked)
 		append(&elements, value)
 		append(&order, false)
 		// Managed or not: a pack copies what it is given.

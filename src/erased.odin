@@ -127,6 +127,92 @@ any_view_source_type :: proc(c: ^Compiler, from: Type_Id) -> Type_Id {
 	return type_is_untyped(c, from) ? default_type(c, from) : from
 }
 
+// design.md "Variadic parameters": the element of a `..dyn I` pack, which views
+// each value written at the call. A `dyn mut I` pack and a `dyn proc` pack take
+// views as they are.
+variadic_view_element :: proc(c: ^Compiler, element: Type_Id) -> bool {
+	info := underlying_info(c, element)
+	return info != nil && info.kind == .Dyn && !info.mutable && !dyn_is_callable(c, info)
+}
+
+// Whether a value of type `from` written into a `..dyn I` pack is viewed. A
+// value already assignable to the element, such as a `dyn I`, a `dyn mut I`, or
+// a view of a composing interface, is passed as it is.
+variadic_view_accepts :: proc(c: ^Compiler, from, element: Type_Id) -> bool {
+	if !variadic_view_element(c, element) || from == INVALID_TYPE || assignable(c, from, element) {
+		return false
+	}
+	if type_is_untyped(c, from) {
+		return from != TYPE_UNTYPED_NIL // through its default type
+	}
+	// design.md "Zero values": a `type` or descriptor exists only while
+	// compiling, so there is nothing at run time for a view to point at.
+	return type_is_supported(c, from) && compile_time_only_component(c, from) == INVALID_TYPE &&
+	       !type_is_capture_record(c, from)
+}
+
+// Whether `concrete` satisfies the interface a `..dyn I` pack views through.
+variadic_view_satisfied :: proc(k: ^Checker, concrete, element: Type_Id, span: Span, report: bool) -> bool {
+	dyn := underlying_info(k.c, element)
+	info := interface_info_for(k, dyn.dyn_interface)
+	return info != nil &&
+	       interface_satisfied(k, info, interface_application(k.c, info, concrete, dyn.dyn_args), span, report)
+}
+
+// One element of a `..dyn I` pack: a value is viewed where it is, or in a
+// temporary that lives through the call, with the witness of its type.
+pass_variadic_element :: proc(k: ^Checker, e: Expr, element: Type_Id, prechecked: bool) -> (Expr, bool) {
+	if !variadic_view_element(k.c, element) {
+		return pass_argument(k, e, element, prechecked)
+	}
+	if !prechecked && check_single_expr(k, e, element) == INVALID_TYPE {
+		return e, false
+	}
+	base := expr_base(e)
+	if base == nil || base.type == INVALID_TYPE {
+		return e, false
+	}
+	if !variadic_view_accepts(k.c, base.type, element) {
+		if offender := compile_time_only_component(k.c, base.type); offender != INVALID_TYPE {
+			report_compile_time_only(k, offender, base.span)
+			return e, false
+		}
+		// design.md "Borrowed callable views": a capture literal is held only by
+		// a `dyn proc` view.
+		if type_is_capture_record(k.c, base.type) {
+			errorf(
+				k.c, base.span, "L0310",
+				"`%s` is a capture literal, which only a `dyn proc` view holds, so no `%s` can view it",
+				type_name(k.c, base.type), type_name(k.c, element),
+			)
+			return e, false
+		}
+		return e, materialize_value_expr(k, e, element, "pass")
+	}
+	if type_is_untyped(k.c, base.type) && !materialize(k, e, default_type(k.c, base.type)) {
+		return e, false
+	}
+	concrete := base.type
+	if !variadic_view_satisfied(k, concrete, element, base.span, report = true) {
+		return e, false
+	}
+	dyn := underlying_info(k.c, element)
+	witness := request_witness(k, interface_info_for(k, dyn.dyn_interface), concrete, dyn.dyn_args, base.span)
+	for slot in witness.slots {
+		if slot.target == INVALID_SYMBOL {
+			errorf(
+				k.c, base.span, "L0464",
+				"`%s` supplies no coherent `%s` for `%s`",
+				type_name(k.c, concrete), identifier_text(k.c, slot.name), type_name(k.c, element),
+			)
+			return e, false
+		}
+	}
+	base.erased_from = concrete
+	base.type = element
+	return e, true
+}
+
 // `dyn Interface(args...)`, whose arguments omit the erased subject.
 dyn_type :: proc(
 	k: ^Checker,

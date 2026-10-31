@@ -581,6 +581,8 @@ extensions cannot add conversions.
   destination is expected; the result is a checked non-escaping borrow
 - `dyn Derived` -> `dyn Base` when `Derived` composes `Base`; the result keeps
   the same data borrow and selects the base witness
+- A value whose type satisfies `I` -> a `dyn I` view of it, when it is an
+  element of a [`..dyn I` parameter](#variadic-parameters)
 - A procedure, or a capture literal's value, -> a [`dyn proc`
   view](#borrowed-callable-views) of a signature it meets, when a `dyn proc`
   parameter or typed destination is expected
@@ -5169,7 +5171,8 @@ to the view type and the call mutates the erased referent, not the view header.
 Conversion is an ordinary explicit conversion from a pointer to the concrete
 subject. `&` builds a read-only view and `&mut` a mutable one; a mutable view
 requires `^mut Concrete`, while building a `dyn I` from a `^mut Concrete` is
-ordinary weakening:
+ordinary weakening. The one implicit conversion from a value is to an element
+of a [`..dyn I` parameter](#variadic-parameters):
 
 ```loke
 Canvas :: struct { strokes: int }
@@ -7303,6 +7306,40 @@ fmt.println(sum(1, 2, 3, 4, 5)); // 15
 
 odds := []int{1, 3, 5};
 fmt.println(sum(..odds));        // 9, passing a slice as varargs
+```
+
+The pack is a temporary of the complete call expression, as is anything an
+argument creates for it, so neither outlives that expression.
+
+A `..dyn I` parameter, whose element is a read-only
+[`dyn` view](#borrowed-dynamic-interface-values) other than a `dyn proc`, also
+takes values whose types satisfy `I`. Each such argument converts
+implicitly to a view of itself, borrowed where it is or from a temporary holding
+it. Nothing is copied, so a move-only place stays usable after the call. An
+untyped constant converts at its default type. An argument that is already a
+`dyn I`, or converts to one as a `dyn mut I` or a view of a composing interface
+does, is passed as it is rather than viewed again. A spread must already be a
+`[]dyn I`. The conversion applies only to the elements of such a pack; a `dyn`
+local, an ordinary `dyn` parameter, and a `..dyn mut I` element take an explicit
+`(dyn I)(&value)`.
+
+```loke
+Area :: interface($Self: type) {
+	slot area: proc(self: ^) -> f64;
+}
+Square :: struct { side: f64 }
+impl Square { area :: proc(self) -> f64 { return self.side * self.side; } }
+
+total_area :: proc(shapes: ..dyn Area) -> f64 {
+	sum := 0.0;
+	foreach (shape in shapes) {
+		sum += shape.area();
+	}
+	return sum;
+}
+
+small := Square{2};
+fmt.println(total_area(small, Square{3})); // 13.0: `small` and the temporary are viewed
 ```
 
 `..` before a union is a [union argument expansion](#union-argument-expansion)

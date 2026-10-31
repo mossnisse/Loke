@@ -1,0 +1,68 @@
+package main;
+import "core:fmt";
+
+// design.md "Variadic parameters": a `..dyn I` pack views each value written at
+// the call, borrowing a place or a temporary that lives through the call.
+
+Show :: interface($Self: type) {
+	slot show: proc(self: ^) -> int;
+}
+
+Point :: struct { x: int, y: int }
+impl Point {
+	show :: proc(self) -> int { return self.x * 10 + self.y; }
+}
+impl int {
+	show :: proc(self) -> int { return self; }
+}
+
+Guard :: struct { id: int }
+impl Guard {
+	release :: hook(drop) proc(self: inout Guard) { fmt.println("drop", self.id); }
+	show :: proc(self) -> int { return self.id; }
+}
+make_guard :: proc(id: int) -> Guard { return Guard{id}; }
+
+Token :: move_only struct { id: int }
+impl Token {
+	show :: proc(self) -> int { return self.id; }
+}
+
+Packed :: struct @(packed) { tag: u8, p: Point }
+
+total :: proc(args: ..dyn Show) -> int {
+	sum := 0;
+	foreach (a in args) { sum += a.show(); }
+	return sum;
+}
+
+// A sole spread forwards the slice; a spread among elements is copied in.
+forward :: proc(args: ..dyn Show) -> int { return total(..args); }
+mixed :: proc(args: ..dyn Show) -> int { return total(100, ..args); }
+
+// A generic procedure views the value of its own instance.
+twice :: proc(value: $T) -> int { return total(value, value); }
+
+// An exact fixed-arity overload outranks the viewing pack.
+pick_int :: proc(n: int) -> string { return "int"; }
+pick_views :: proc(args: ..dyn Show) -> string { return "views"; }
+pick :: proc{pick_int, pick_views};
+
+main :: proc() {
+	p := Point{1, 2};
+	view := (dyn Show)(&p);
+	fmt.println(total(42, p, view));
+	m := Point{3, 4};
+	mutable := (dyn mut Show)(&mut m);
+	fmt.println(total(mutable));
+	fmt.println(forward(1, 2, 3), mixed(1, 2));
+	fmt.println(total(make_guard(7), 1));
+	fmt.println("after");
+	q := Packed{1, Point{5, 6}};
+	fmt.println(total(q.p));
+	token := Token{9};
+	fmt.println(total(token), token.id);
+	fmt.println(twice(Point{1, 1}), twice(4));
+	fmt.println(pick(1), pick(p), pick(1, 2));
+	fmt.println(total());
+}

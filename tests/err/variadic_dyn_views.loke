@@ -1,0 +1,43 @@
+package main;
+
+// design.md "Variadic parameters": only the elements of a read-only `..dyn I`
+// pack view a value implicitly, and only one whose type satisfies `I`.
+
+Show :: interface($Self: type) {
+	slot show: proc(self: ^) -> int;
+}
+Point :: struct { x: int }
+impl Point { show :: proc(self) -> int { return self.x; } }
+Plain :: struct { x: int }
+make_point :: proc(x: int) -> Point { return Point{x}; }
+
+total :: proc(args: ..dyn Show) -> int { return args.len(); }
+total_mut :: proc(args: ..dyn mut Show) -> int { return args.len(); }
+one :: proc(arg: dyn Show) -> int { return arg.show(); }
+first :: proc(args: ..dyn Show) -> dyn Show { return args[0]; }
+
+kept: []dyn Show;
+keep :: proc(args: ..dyn Show) { kept = args; }
+
+main :: proc() {
+	p := Point{1};
+	_ = total(Plain{1});
+	local: dyn Show = p;
+	_ = one(p);
+	_ = total_mut(p);
+	_ = total(Point);
+	_ = total(nil);
+	xs := []int{1};
+	_ = total(..xs);
+	_ = total(99999999999999999999);
+	_ = local;
+}
+
+held_past_the_call :: proc() {
+	held := first(make_point(2));
+	_ = held.show();
+	p := Point{1};
+	viewed := first(p);
+	p = Point{5};
+	_ = viewed.show();
+}

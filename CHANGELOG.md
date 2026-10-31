@@ -415,6 +415,14 @@ checklist.
 
 ### Added
 
+- A `..dyn I` parameter takes any value whose type satisfies `I`, viewing
+  each argument where it is or in a temporary that lives through the call, so
+  `total(square, Circle{1})` needs no `(dyn I)(&...)` per argument
+  ([Variadic parameters](design.md#variadic-parameters)). A `dyn I` argument
+  is passed as it is, an untyped constant is viewed at its default type, and a
+  move-only place stays usable after the call. Only the elements of a read-only
+  `..dyn I` pack convert; a `dyn` local, an ordinary `dyn` parameter, and a
+  `..dyn mut I` pack still take an explicit conversion.
 - `variants_of` takes an enum as well as a union, listing each member as a
   `meta.Variant` with the payload `Unit` and its declaration index, so one
   generic loop names the alternatives of either; a member's value stays with

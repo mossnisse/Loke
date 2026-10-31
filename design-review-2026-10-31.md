@@ -71,11 +71,11 @@ lost, in rough priority order:
 2. **One way to list a sum's alternatives.** `variants_of` accepts an enum,
    whose members are payloadless variants; the integer mapping and
    `enum_values_of` stay `enum`'s ([2.1](#21-sums-enum-and-union)).
-3. **One erasure mechanism.** Delete `any_view`. The printers, `assert`, and
-   `panic` take `..dyn Formattable`, a value converts implicitly at a
-   `..dyn I` parameter, and `Formattable` moves to a `base:` package. Checked
-   inspection of an open type set goes; unions, generics, and interfaces cover
-   what it did ([2.4](#24-existentials-dyn-alone)).
+3. **One erasure mechanism.** Delete `any_view`. The printers take
+   `..dyn fmt.Formattable`, a value converts implicitly at a `..dyn I`
+   parameter, and `assert` and `panic` take any printable value by a built-in
+   rule. Checked inspection of an open type set goes; unions, generics, and
+   interfaces cover what it did ([2.4](#24-existentials-dyn-alone)).
 4. **Effects stated once**, as one algebra that the four inferred effects
    read ([2.6](#26-effects-as-one-algebra)).
 5. **Attributes in one position**, with `move_only` as one of them
@@ -307,14 +307,16 @@ variadic `dyn` parameters:
 - The variadic printers in `core:fmt`, the procedures in `core:log`, and
   `io.write_formatted` take `..dyn Formattable`. The generated default methods
   already satisfy it for every printable type.
-- `Formattable`, `Writer` with its `Sink`, and `Options` move into a `base:`
-  package that `core:fmt` re-exports. `assert` and `panic` then take
-  `..dyn Formattable` without making the language core depend on `core:fmt`,
-  just as Rust's `panic!` uses `core::fmt`. A program still calls them without
-  importing anything.
-- `@(c_vararg)` gets a spelling of its own, for example
-  `@(c_vararg) args: ..`, because its `..any_view` is only notation and not the
-  type.
+- `assert` and `panic` stay built-ins whose arguments after the message are
+  any printable value, a rule of their own rather than a parameter type. Each
+  argument is borrowed for the report and printed through its type's generated
+  format thunk, as a failing `main`'s error already is, so the language core
+  does not depend on `core:fmt` and a program still calls them without
+  importing anything. Typing them `..dyn fmt.Formattable` would instead need
+  `Formattable`, `Writer`, and `Options` in a `base:` package that `core:fmt`
+  re-exports, and an alias of an interface does not name that interface today.
+- `@(c_vararg)` is spelled `@(c_vararg) args: ..`, a bare `..` legal only with
+  the attribute, because its `..any_view` is only notation and not the type.
 - The checked extractions `.(T)` and `.as(T)` on an erased value go, along with
   the switch over a held type. grammar.md loses the `Type(name)` alternative of
   `Branch_Pattern`, type case values, and the matching clause under
@@ -342,9 +344,6 @@ view already carries its witness.
   into a default case.
 - **The `any_view` local.** `view: any_view = make_guard();` and its block-end
   extension go. The value is named instead.
-- **Library freedom in formatting.** `Formattable`'s signature, `Writer`, and
-  `Options` become part of the `base:` layer that the built-ins use, so
-  changing them is a language change rather than a library one.
 - **Migration.** A parameter typed `..any_view` becomes `..dyn fmt.Formattable`
   mechanically. Each `.(T)`, `.as(T)`, and type switch on an `any_view` is
   rewritten by hand into one of the forms above, so the change needs an
@@ -735,7 +734,7 @@ thing. Each row names the replacement and what is lost.
 | Delete | Replaced by | Lost | Priority |
 | --- | --- | --- | --- |
 | `Status` as a nominal type, `Status.map_error` | `Status :: Result(Unit, $E)` ([2.3](#23-status-is-resultunit-e)) | The type name `Status(E)` at run time; `Result(Unit, E)` gains fallthrough, bare `return;`, `.ok` printing, and the null niche | High |
-| `any_view`, its `.(T)`, `.as(T)`, and type switch | `..dyn fmt.Formattable` with implicit conversion at a variadic; unions, `$T`, and interfaces ([2.4](#24-existentials-dyn-alone)) | Checked inspection of an open type set; the block-end `any_view` local | High |
+| `any_view`, its `.(T)`, `.as(T)`, and type switch | `..dyn fmt.Formattable` with implicit conversion at a variadic, and a printable-argument rule for `assert` and `panic`; unions, `$T`, and interfaces ([2.4](#24-existentials-dyn-alone)) | Checked inspection of an open type set; the block-end `any_view` local | High |
 | Type-position attributes, inline nominal `enum`/`union` | Declaration attributes ([3.1](#31-attributes-in-one-position)) | `[size_of(enum { A, B })]u8` | Medium |
 | `move_only` keyword | `@(move_only)` ([2.8](#28-affine-types-a-drop-hook-needs-a-copy-decision)) | A reserved word | Medium |
 | "Any of a union's variants to that union" | Nothing; the compiler already rejects it | Nothing | Done with this review |
@@ -1034,15 +1033,18 @@ compiler, test, and changelog change in one commit as AGENTS.md requires.
       upgrade note for type names.
 4. `variants_of` accepts an enum ([2.1](#21-sums-enum-and-union)). Independent
    of step 3.
-5. Delete `any_view` ([2.4](#24-existentials-dyn-alone)), in two commits.
+5. Delete `any_view` ([2.4](#24-existentials-dyn-alone)), in five commits.
    Independent of the steps above.
-   1. Move `Formattable`, `Writer`, `Sink`, and `Options` into a `base:`
-      package that `core:fmt` re-exports, and let a value convert implicitly
-      at a `..dyn I` parameter. Nothing is removed yet.
-   2. Retype the printers, `core:log`, `io.write_formatted`, `assert`, and
-      `panic` as `..dyn Formattable`; give `@(c_vararg)` its own spelling; and
-      delete `any_view`, its extractions, and type switches, with an upgrade
-      note.
+   1. A value converts implicitly at a `..dyn I` parameter. Nothing is
+      removed yet.
+   2. The printers in `core:fmt`, `core:log`, and `io.write_formatted` take
+      `..dyn Formattable`; printed output does not change.
+   3. `assert` and `panic` take any printable value, printed through its
+      format thunk, and `@(c_vararg)` is spelled `..`.
+   4. Checked inspection goes: `.(T)`, `.as(T)` on an erased value, and type
+      cases in a switch.
+   5. The `any_view` type goes, with its conversions, storage rule, runtime
+      `Type_Kind` member, and the `typeid`-indexed witness table.
 6. Attributes in one position, `@(move_only)`, and the copy decision for drop
    hooks.
 7. Range facts and loop versioning for checked arithmetic

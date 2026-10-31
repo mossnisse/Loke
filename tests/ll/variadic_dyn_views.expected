@@ -1,0 +1,3 @@
+@loke.w.Show.Point = private unnamed_addr constant [1 x ptr] [ ptr @loke.w.Show.Point.thunk.0 ]
+call void @llvm.memcpy.p0.p0.i64(ptr %t*, ptr %t*, i64 16, i1 false)
+insertvalue %struct.dyn.dyn$20Show.* %t*, ptr @loke.w.Show.Point, 1
