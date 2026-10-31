@@ -427,29 +427,27 @@ prov_place_loan :: proc(
 	}
 	span := expr_span(place)
 	offsets, _, merged := prov_value_offset(graph, carriers)
-	paths := make([][]Proj_Step, len(offsets), graph.alloc)
+	places := make([]Prov_Offset, len(offsets), graph.alloc)
 	for at, index in offsets {
-		paths[index] = prov_concat_path(graph, at, path)
+		places[index] = Prov_Offset{prov_concat_path(graph, at.path, path), at.storage}
 	}
 	append(&graph.place_loans, Prov_Place_Loan {
-		paths = paths, mutable = mutable, borrows = borrows, what = what, span = span,
+		paths = prov_offset_paths(graph, places), mutable = mutable, borrows = borrows, what = what, span = span,
 		place = graph.k.c.sources[span.file].text[span.lo:span.hi],
 	})
 	slot := prov_temp_slot(graph)
 	loan := &graph.place_loans[len(graph.place_loans) - 1]
 	loan.slot = slot
 	// design.md "Minimum provenance precision": a loan of places merged past
-	// the limit may cover a place the carriers never point at, so a rejection
-	// it causes names the limit.
-	if merged {
-		graph.prov_slots[slot].precision |= {.Places}
-	}
+	// the limit, or of places of several storages, may cover a place the
+	// carriers never point at, so a rejection it causes names the limit.
+	graph.prov_slots[slot].precision |= prov_offset_precision(places, merged)
 	prov_emit(graph, Prov_Event {
 		kind = .Def, slot = slot, loan = NO_LOAN, sources = carriers, span = span, place_loan = len(graph.place_loans),
 	})
 	// A borrow points at the place it is of (`Prov_Slot.offsets`).
 	if borrows {
-		graph.prov_slots[slot].offsets = loan.paths
+		graph.prov_slots[slot].offsets = places
 		graph.prov_slots[slot].offsets_merged = merged
 	}
 	return prov_one(graph, slot)
@@ -486,8 +484,8 @@ prov_access_through :: proc(graph: ^Flow_Graph, carriers: []int, path: []Proj_St
 	offsets, _, merged := prov_value_offset(graph, carriers)
 	if prov_offsets_agree(graph, carriers, offsets) {
 		// As for a place loan (`prov_place_loan`): merged places name the limit.
-		precision: Precision_Loss = merged ? {.Places} : {}
-		for at in offsets {
+		precision := prov_offset_precision(offsets, merged)
+		for at in prov_offset_paths(graph, offsets) {
 			prov_emit(graph, Prov_Event {
 				kind = .Through, into = carriers, path = prov_concat_path(graph, at, path), span = span, verb = verb, access = access,
 				precision = precision,
@@ -505,11 +503,11 @@ prov_access_through :: proc(graph: ^Flow_Graph, carriers: []int, path: []Proj_St
 
 // Whether every slot of `carriers` that names storage points at `offsets`.
 @(private = "file")
-prov_offsets_agree :: proc(graph: ^Flow_Graph, carriers: []int, offsets: [][]Proj_Step) -> bool {
+prov_offsets_agree :: proc(graph: ^Flow_Graph, carriers: []int, offsets: []Prov_Offset) -> bool {
 	for carrier in carriers {
 		if entry := graph.prov_slots[carrier]; entry.through_block == NO_BLOCK {
-			own := prov_slot_offsets(entry)
-			if !prov_offsets_cover(own, offsets) || !prov_offsets_cover(offsets, own) {
+			own := prov_slot_offsets(graph, carrier)
+			if !prov_offsets_cover(own, offsets, any_storage = true) || !prov_offsets_cover(offsets, own, any_storage = true) {
 				return false
 			}
 		}
@@ -721,16 +719,16 @@ prov_note_reslice :: proc(graph: ^Flow_Graph, slot: int, value: Expr) {
 // point at (`Prov_Slot.offsets`): any of theirs, as a borrow's place loan
 // snapshot points at the place it is of. A slot standing for a borrow's
 // access, which names no storage, takes no part. False when no slot names
-// storage. `merged` when places past `PROV_OFFSET_LIMIT` were taken as a
-// prefix they share, here or in a slot's own offsets.
+// storage. `merged` when places past the limits were taken as a prefix they
+// share, here or in a slot's own offsets.
 @(private)
-prov_value_offset :: proc(graph: ^Flow_Graph, slots: []int) -> (out: [][]Proj_Step, found: bool, merged: bool) {
+prov_value_offset :: proc(graph: ^Flow_Graph, slots: []int) -> (out: []Prov_Offset, found: bool, merged: bool) {
 	for slot in slots {
 		entry := graph.prov_slots[slot]
 		if entry.through_block != NO_BLOCK {
 			continue
 		}
-		offsets := prov_slot_offsets(entry)
+		offsets := prov_slot_offsets(graph, slot)
 		merged ||= entry.offsets_merged
 		if found {
 			joined: bool
@@ -763,53 +761,96 @@ prov_note_offset :: proc(graph: ^Flow_Graph, slot: int, sources: []int) {
 	entry.offsets_merged ||= merged
 }
 
-// The most places a value is told apart at; past it, places are merged into a
-// prefix they share (`prov_union_offsets`). It is the specification's
-// minimum for chosen places, so a rejection the merge may cause names it
-// (design.md "Minimum provenance precision", `Precision_Limit.Places`).
+// The most places of one storage a value is told apart at, and the most in
+// all; past either, places are merged into a prefix they share
+// (`prov_union_offsets`). They are the specification's minimums for chosen
+// places, so a rejection the merge may cause names them (design.md "Minimum
+// provenance precision", `Precision_Limit.Places`).
 @(private)
 PROV_OFFSET_LIMIT :: 8
+@(private)
+PROV_OFFSET_TOTAL :: 64
 
-// A slot whose definitions name no storage points at the whole of it.
+// A slot whose definitions name no storage points at the whole of what it
+// names, which counts as storage of its own.
 @(private = "file")
-prov_whole_offset: [1][]Proj_Step
-
-@(private = "file")
-prov_slot_offsets :: proc(entry: Prov_Slot) -> [][]Proj_Step {
-	return entry.offsets if entry.offsets != nil else prov_whole_offset[:]
+prov_slot_offsets :: proc(graph: ^Flow_Graph, slot: int) -> []Prov_Offset {
+	if offsets := graph.prov_slots[slot].offsets; offsets != nil {
+		return offsets
+	}
+	whole := make([]Prov_Offset, 1, graph.alloc)
+	whole[0].storage = slot
+	return whole
 }
 
-// The places of `a` and those of `b`, a place inside another taken as that
-// one. Past the limit, the two places sharing the longest prefix, the first
-// such pair among equals, are taken as that prefix until few enough are left,
-// so `[inner, a]` and `[inner, b]` become `[inner]` while a place outside
-// `inner` stays apart. Each place of `a` and `b` stays inside one of the
-// result. `merged` when the limit took any.
+// The places of `offsets`, apart from which storage each was reached in, as a
+// place loan and an access through carriers take them.
 @(private = "file")
-prov_union_offsets :: proc(graph: ^Flow_Graph, a, b: [][]Proj_Step) -> (union_of: [][]Proj_Step, merged: bool) {
+prov_offset_paths :: proc(graph: ^Flow_Graph, offsets: []Prov_Offset) -> [][]Proj_Step {
+	out := make([dynamic][]Proj_Step, 0, len(offsets), graph.alloc)
+	for at in offsets {
+		if prov_offset_covered(out[:], at.path) {
+			continue
+		}
+		kept := 0
+		for path in out {
+			if !path_has_exact_prefix(path, at.path) {
+				out[kept] = path
+				kept += 1
+			}
+		}
+		resize(&out, kept)
+		append(&out, at.path)
+	}
+	return out[:]
+}
+
+// What a value pointing at `offsets` may wrongly be taken to point at: places
+// merged past the limits, and, holding places of several storages, those of
+// one storage in another (`Prov_Offset`).
+@(private = "file")
+prov_offset_precision :: proc(offsets: []Prov_Offset, merged: bool) -> (loss: Precision_Loss) {
+	if merged {
+		loss |= {.Places}
+	}
+	for at in offsets {
+		for other in offsets {
+			if other.storage != at.storage && !prov_offset_covered_in(offsets, other.path, at.storage) {
+				return loss | {.Storages}
+			}
+		}
+	}
+	return
+}
+
+// The places of `a` and those of `b`, a place inside another of the same
+// storage taken as that one. Past the limit for one storage, two of its places
+// sharing the longest prefix, the first such pair among equals, are taken as
+// that prefix until few enough are left, so `[inner, a]` and `[inner, b]`
+// become `[inner]` while a place outside `inner` stays apart; past the limit
+// in all, two of any storage are. Each place of `a` and `b` stays inside one
+// of the result. `merged` when a limit took any.
+@(private = "file")
+prov_union_offsets :: proc(graph: ^Flow_Graph, a, b: []Prov_Offset) -> (union_of: []Prov_Offset, merged: bool) {
 	if prov_offsets_cover(a, b) {
 		return a, false
 	}
 	if prov_offsets_cover(b, a) {
 		return b, false
 	}
-	out := make([dynamic][]Proj_Step, 0, len(a) + len(b), graph.alloc)
+	out := make([dynamic]Prov_Offset, 0, len(a) + len(b), graph.alloc)
 	for at in a {
 		prov_add_offset(&out, at)
 	}
 	for at in b {
 		prov_add_offset(&out, at)
 	}
-	for len(out) > PROV_OFFSET_LIMIT {
-		first, second, longest := 0, 1, -1
-		for i in 0 ..< len(out) {
-			for j in i + 1 ..< len(out) {
-				if shared := len(prov_common_prefix(out[i], out[j])); shared > longest {
-					first, second, longest = i, j, shared
-				}
-			}
+	for {
+		first, second := prov_offsets_past_limit(out[:])
+		if first < 0 {
+			break
 		}
-		shared := prov_common_prefix(out[first], out[second])
+		shared := Prov_Offset{prov_common_prefix(out[first].path, out[second].path), out[first].storage}
 		ordered_remove(&out, second)
 		ordered_remove(&out, first)
 		prov_add_offset(&out, shared)
@@ -818,36 +859,87 @@ prov_union_offsets :: proc(graph: ^Flow_Graph, a, b: [][]Proj_Step) -> (union_of
 	return out[:], merged
 }
 
+// The two places `prov_union_offsets` merges next, the first before the
+// second, or -1 when `offsets` are within the limits.
 @(private = "file")
-prov_add_offset :: proc(out: ^[dynamic][]Proj_Step, path: []Proj_Step) {
-	if prov_offset_covered(out[:], path) {
+prov_offsets_past_limit :: proc(offsets: []Prov_Offset) -> (first, second: int) {
+	if len(offsets) <= PROV_OFFSET_LIMIT {
+		return -1, -1
+	}
+	storage, past := -1, len(offsets) > PROV_OFFSET_TOTAL
+	if !past {
+		for at in offsets {
+			count := 0
+			for other in offsets {
+				count += 1 if other.storage == at.storage else 0
+			}
+			if count > PROV_OFFSET_LIMIT {
+				storage, past = at.storage, true
+				break
+			}
+		}
+	}
+	if !past {
+		return -1, -1
+	}
+	first, second = -1, -1
+	longest := -1
+	for i in 0 ..< len(offsets) {
+		for j in i + 1 ..< len(offsets) {
+			if storage >= 0 && (offsets[i].storage != storage || offsets[j].storage != storage) {
+				continue
+			}
+			if shared := len(prov_common_prefix(offsets[i].path, offsets[j].path)); shared > longest {
+				first, second, longest = i, j, shared
+			}
+		}
+	}
+	return
+}
+
+@(private = "file")
+prov_add_offset :: proc(out: ^[dynamic]Prov_Offset, offset: Prov_Offset) {
+	if prov_offset_covered_in(out[:], offset.path, offset.storage) {
 		return
 	}
 	kept := 0
 	for at in out {
-		if !path_has_exact_prefix(at, path) {
+		if at.storage != offset.storage || !path_has_exact_prefix(at.path, offset.path) {
 			out[kept] = at
 			kept += 1
 		}
 	}
 	resize(out, kept)
-	append(out, path)
+	append(out, offset)
 }
 
-// Whether every place of `inner` is inside one of `outer`.
+// Whether every place of `inner` is inside one of `outer` of the same storage,
+// or of any with `any_storage`.
 @(private = "file")
-prov_offsets_cover :: proc(outer, inner: [][]Proj_Step) -> bool {
-	for path in inner {
-		if !prov_offset_covered(outer, path) {
+prov_offsets_cover :: proc(outer, inner: []Prov_Offset, any_storage := false) -> bool {
+	for at in inner {
+		if !prov_offset_covered_in(outer, at.path, -1 if any_storage else at.storage) {
 			return false
 		}
 	}
 	return true
 }
 
+// Whether `path` is inside one of the places of `offsets` of `storage`, or of
+// any when `storage` is -1.
 @(private = "file")
-prov_offset_covered :: proc(offsets: [][]Proj_Step, path: []Proj_Step) -> bool {
+prov_offset_covered_in :: proc(offsets: []Prov_Offset, path: []Proj_Step, storage: int) -> bool {
 	for at in offsets {
+		if (storage < 0 || at.storage == storage) && path_has_exact_prefix(path, at.path) {
+			return true
+		}
+	}
+	return false
+}
+
+@(private = "file")
+prov_offset_covered :: proc(paths: [][]Proj_Step, path: []Proj_Step) -> bool {
+	for at in paths {
 		if path_has_exact_prefix(path, at) {
 			return true
 		}
@@ -6722,16 +6814,17 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 					// design.md "Values that contain borrows": carriers pointing at
 					// one place replace what it holds wherever they name one storage
 					// (`publish_into_loan`); a prefix places were merged into is not one.
-					if offsets, found, merged := prov_value_offset(graph, through); found && !merged && len(offsets) == 1 &&
-					   prov_offsets_agree(graph, through, offsets) && prov_path_names_one_place(offsets[0]) &&
+					offsets, found, merged := prov_value_offset(graph, through)
+					paths := prov_offset_paths(graph, offsets) if found && !merged else nil
+					if len(paths) == 1 && prov_offsets_agree(graph, through, offsets) && prov_path_names_one_place(paths[0]) &&
 					   prov_path_names_one_place(below) {
-						publish.path, publish.stored = prov_concat_path(graph, offsets[0], below), stored
+						publish.path, publish.stored = prov_concat_path(graph, paths[0], below), stored
 						graph.has_replacing_store = true
-					} else if any_element > 0 && found && !merged && len(offsets) == 1 && prov_offsets_agree(graph, through, offsets) &&
-					   prov_path_names_one_place(offsets[0]) {
+					} else if any_element > 0 && len(paths) == 1 && prov_offsets_agree(graph, through, offsets) &&
+					   prov_path_names_one_place(paths[0]) {
 						// It lands only in the slots along the place it names, whose
 						// copy is linked to them.
-						publish.path = prov_concat_path(graph, offsets[0], below)
+						publish.path = prov_concat_path(graph, paths[0], below)
 					}
 					if len(sources) > 0 || publish.stored != INVALID_TYPE {
 						prov_emit(graph, publish)

@@ -168,6 +168,36 @@ chosen_past_limit :: proc(s: ^mut Sides, i: int) -> int {
 	return value^;
 }
 
+// Places of another storage do not lift the limit for one: a ninth place of
+// `s` merges `left` as above, while `t^.right.e` stays usable.
+chosen_past_limit_of_one :: proc(s: ^mut Sides, t: ^mut Sides, i: int) -> int {
+	q := &mut s^.left.a;
+	if (i == 1) { q = &mut s^.left.b; }
+	if (i == 2) { q = &mut s^.left.c; }
+	if (i == 3) { q = &mut s^.left.d; }
+	if (i == 4) { q = &mut s^.left.e; }
+	if (i == 5) { q = &mut s^.right.a; }
+	if (i == 6) { q = &mut s^.right.b; }
+	if (i == 7) { q = &mut s^.right.c; }
+	if (i == 8) { q = &mut s^.right.d; }
+	if (i == 9) { q = &mut t^.right.a; }
+	value := &q^;
+	t^.right.e = 1;
+	s^.left.z = 2;
+	return value^;
+}
+
+// A pointer that may point into `s` or `t` is taken to point at each of its
+// places in both, so `t^.left.a` may be the place it points at.
+chosen_from_other_storage :: proc(s: ^mut Sides, t: ^mut Sides, flag: bool) -> int {
+	q := &mut s^.left.a;
+	if (flag) { q = &mut t^.left.e; }
+	value := &q^;
+	t^.left.b = 1;
+	t^.left.a = 2;
+	return value^;
+}
+
 // Legal: other fields, read-only borrows beside each other, and uses after
 // the borrow is done.
 beside :: proc(h: ^mut Holder) -> int {
@@ -319,6 +349,53 @@ chosen_at_limit :: proc(s: ^mut Sides, i: int) -> int {
 	s^.right.d = 3;
 	s^.right.e = 4;
 	s^.right.z = 5;
+	return value^;
+}
+
+// The guarantee is for each storage: eight places of `s` and eight of `t`
+// leave every other field of both usable.
+chosen_at_limit_of_each :: proc(s: ^mut Sides, t: ^mut Sides, i: int) -> int {
+	q := &mut s^.left.a;
+	if (i == 1) { q = &mut s^.left.b; }
+	if (i == 2) { q = &mut s^.left.c; }
+	if (i == 3) { q = &mut s^.left.d; }
+	if (i == 4) { q = &mut s^.left.e; }
+	if (i == 5) { q = &mut s^.right.a; }
+	if (i == 6) { q = &mut s^.right.b; }
+	if (i == 7) { q = &mut s^.right.c; }
+	if (i == 8) { q = &mut t^.left.a; }
+	if (i == 9) { q = &mut t^.left.b; }
+	if (i == 10) { q = &mut t^.left.c; }
+	if (i == 11) { q = &mut t^.left.d; }
+	if (i == 12) { q = &mut t^.left.e; }
+	if (i == 13) { q = &mut t^.right.a; }
+	if (i == 14) { q = &mut t^.right.b; }
+	if (i == 15) { q = &mut t^.right.c; }
+	value := &q^;
+	s^.z = 1;
+	s^.left.z = 2;
+	s^.right.d = 3;
+	t^.z = 4;
+	t^.left.z = 5;
+	t^.right.e = 6;
+	return value^;
+}
+
+// Four places of `s` and five of `t` are each within the guarantee, so a
+// field of either that the pointer cannot point at stays usable.
+chosen_across_storages :: proc(s: ^mut Sides, t: ^mut Sides, i: int) -> int {
+	q := &mut s^.left.a;
+	if (i == 1) { q = &mut s^.left.b; }
+	if (i == 2) { q = &mut s^.left.c; }
+	if (i == 3) { q = &mut s^.left.d; }
+	if (i == 4) { q = &mut t^.left.e; }
+	if (i == 5) { q = &mut t^.right.a; }
+	if (i == 6) { q = &mut t^.right.b; }
+	if (i == 7) { q = &mut t^.right.c; }
+	if (i == 8) { q = &mut t^.right.d; }
+	value := &q^;
+	s^.left.z = 1;
+	t^.left.z = 2;
 	return value^;
 }
 

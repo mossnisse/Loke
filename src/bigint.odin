@@ -63,8 +63,7 @@ bi_clone :: proc(storage: Value_Storage, value: Big_Int) -> Big_Int {
 	context.allocator = arena(storage)
 	value := value
 	result: Big_Int
-	big.int_copy(&result, &value)
-	bi_settle(storage, &result)
+	big.int_copy(&result, &value, minimize = is_eval_storage(storage))
 	return result
 }
 

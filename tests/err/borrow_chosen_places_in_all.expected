@@ -1,0 +1,4 @@
+L0641
+@154:2
+`g0` cannot be used here: a read-only reborrow of it that may cover this place is still in use
+provenance precision limit: a pointer that may point at more than 8 places of one storage, or 64 in all, is taken to point at a place they share

@@ -27,8 +27,9 @@
 // 0x1.dffffffffff1fp-22, 2^-79.5 ulps. From 2^-27 to that bottom, tan x - x
 // grows with x and stays under half an ulp of x, by at least 2^-51.5 ulps,
 // its margin at 0x1.d12ed0af1a27dp-27, the last argument below; under 2^-27,
-// tan x rounds to x, as `tan` returns. So no result is within 2^-117 of a
-// midpoint relative to it, far outside 2^-250, and the slow path rounds
+// tan x rounds to x, as `tan` returns. An ulp is at least 2^-53 of its
+// value, so no result is within 2^-134 of a midpoint relative to it, the
+// nearest listed about 2^-132.4, far outside 2^-250, and the slow path rounds
 // every argument correctly, as soundly as those searches;
 // `tests/repro_test.odin` checks both paths against an independent oracle,
 // on the hardest cases too.

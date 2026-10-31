@@ -1,0 +1,158 @@
+// design.md "Minimum provenance precision": a pointer chosen among borrows
+// keeps eight places of each storage apart, and 64 in all. Past 64, the two
+// places sharing the longest prefix are taken as it, whichever storages they
+// are of, and a rejection the merge may cause names the limit.
+package main;
+
+Row :: struct { a: int, b: int, c: int, d: int, e: int, f: int, g: int, h: int, y: int, z: int }
+Grid :: struct { r0: Row, r1: Row, r2: Row, r3: Row, r4: Row, r5: Row, r6: Row, r7: Row }
+
+// Eight places of each of eight storages, 64 in all, leave every other field
+// usable.
+chosen_in_all_at_limit :: proc(g0: ^mut Grid, g1: ^mut Grid, g2: ^mut Grid, g3: ^mut Grid, g4: ^mut Grid, g5: ^mut Grid, g6: ^mut Grid, g7: ^mut Grid, i: int) -> int {
+	q := &mut g0^.r0.a;
+	if (i == 1) { q = &mut g0^.r0.b; }
+	if (i == 2) { q = &mut g0^.r0.c; }
+	if (i == 3) { q = &mut g0^.r0.d; }
+	if (i == 4) { q = &mut g0^.r0.e; }
+	if (i == 5) { q = &mut g0^.r0.f; }
+	if (i == 6) { q = &mut g0^.r0.g; }
+	if (i == 7) { q = &mut g0^.r0.h; }
+	if (i == 8) { q = &mut g1^.r1.a; }
+	if (i == 9) { q = &mut g1^.r1.b; }
+	if (i == 10) { q = &mut g1^.r1.c; }
+	if (i == 11) { q = &mut g1^.r1.d; }
+	if (i == 12) { q = &mut g1^.r1.e; }
+	if (i == 13) { q = &mut g1^.r1.f; }
+	if (i == 14) { q = &mut g1^.r1.g; }
+	if (i == 15) { q = &mut g1^.r1.h; }
+	if (i == 16) { q = &mut g2^.r2.a; }
+	if (i == 17) { q = &mut g2^.r2.b; }
+	if (i == 18) { q = &mut g2^.r2.c; }
+	if (i == 19) { q = &mut g2^.r2.d; }
+	if (i == 20) { q = &mut g2^.r2.e; }
+	if (i == 21) { q = &mut g2^.r2.f; }
+	if (i == 22) { q = &mut g2^.r2.g; }
+	if (i == 23) { q = &mut g2^.r2.h; }
+	if (i == 24) { q = &mut g3^.r3.a; }
+	if (i == 25) { q = &mut g3^.r3.b; }
+	if (i == 26) { q = &mut g3^.r3.c; }
+	if (i == 27) { q = &mut g3^.r3.d; }
+	if (i == 28) { q = &mut g3^.r3.e; }
+	if (i == 29) { q = &mut g3^.r3.f; }
+	if (i == 30) { q = &mut g3^.r3.g; }
+	if (i == 31) { q = &mut g3^.r3.h; }
+	if (i == 32) { q = &mut g4^.r4.a; }
+	if (i == 33) { q = &mut g4^.r4.b; }
+	if (i == 34) { q = &mut g4^.r4.c; }
+	if (i == 35) { q = &mut g4^.r4.d; }
+	if (i == 36) { q = &mut g4^.r4.e; }
+	if (i == 37) { q = &mut g4^.r4.f; }
+	if (i == 38) { q = &mut g4^.r4.g; }
+	if (i == 39) { q = &mut g4^.r4.h; }
+	if (i == 40) { q = &mut g5^.r5.a; }
+	if (i == 41) { q = &mut g5^.r5.b; }
+	if (i == 42) { q = &mut g5^.r5.c; }
+	if (i == 43) { q = &mut g5^.r5.d; }
+	if (i == 44) { q = &mut g5^.r5.e; }
+	if (i == 45) { q = &mut g5^.r5.f; }
+	if (i == 46) { q = &mut g5^.r5.g; }
+	if (i == 47) { q = &mut g5^.r5.h; }
+	if (i == 48) { q = &mut g6^.r6.a; }
+	if (i == 49) { q = &mut g6^.r6.b; }
+	if (i == 50) { q = &mut g6^.r6.c; }
+	if (i == 51) { q = &mut g6^.r6.d; }
+	if (i == 52) { q = &mut g6^.r6.e; }
+	if (i == 53) { q = &mut g6^.r6.f; }
+	if (i == 54) { q = &mut g6^.r6.g; }
+	if (i == 55) { q = &mut g6^.r6.h; }
+	if (i == 56) { q = &mut g7^.r7.a; }
+	if (i == 57) { q = &mut g7^.r7.b; }
+	if (i == 58) { q = &mut g7^.r7.c; }
+	if (i == 59) { q = &mut g7^.r7.d; }
+	if (i == 60) { q = &mut g7^.r7.e; }
+	if (i == 61) { q = &mut g7^.r7.f; }
+	if (i == 62) { q = &mut g7^.r7.g; }
+	if (i == 63) { q = &mut g7^.r7.h; }
+	value := &q^;
+	g0^.r0.y = 1;
+	g7^.r7.y = 2;
+	g3^.r0.z = 3;
+	return value^;
+}
+
+// A 65th place, though the only one of its storage, takes `r0` of `g0` as
+// one place.
+chosen_in_all_past_limit :: proc(g0: ^mut Grid, g1: ^mut Grid, g2: ^mut Grid, g3: ^mut Grid, g4: ^mut Grid, g5: ^mut Grid, g6: ^mut Grid, g7: ^mut Grid, g8: ^mut Grid, i: int) -> int {
+	q := &mut g0^.r0.a;
+	if (i == 1) { q = &mut g0^.r0.b; }
+	if (i == 2) { q = &mut g0^.r0.c; }
+	if (i == 3) { q = &mut g0^.r0.d; }
+	if (i == 4) { q = &mut g0^.r0.e; }
+	if (i == 5) { q = &mut g0^.r0.f; }
+	if (i == 6) { q = &mut g0^.r0.g; }
+	if (i == 7) { q = &mut g0^.r0.h; }
+	if (i == 8) { q = &mut g1^.r1.a; }
+	if (i == 9) { q = &mut g1^.r1.b; }
+	if (i == 10) { q = &mut g1^.r1.c; }
+	if (i == 11) { q = &mut g1^.r1.d; }
+	if (i == 12) { q = &mut g1^.r1.e; }
+	if (i == 13) { q = &mut g1^.r1.f; }
+	if (i == 14) { q = &mut g1^.r1.g; }
+	if (i == 15) { q = &mut g1^.r1.h; }
+	if (i == 16) { q = &mut g2^.r2.a; }
+	if (i == 17) { q = &mut g2^.r2.b; }
+	if (i == 18) { q = &mut g2^.r2.c; }
+	if (i == 19) { q = &mut g2^.r2.d; }
+	if (i == 20) { q = &mut g2^.r2.e; }
+	if (i == 21) { q = &mut g2^.r2.f; }
+	if (i == 22) { q = &mut g2^.r2.g; }
+	if (i == 23) { q = &mut g2^.r2.h; }
+	if (i == 24) { q = &mut g3^.r3.a; }
+	if (i == 25) { q = &mut g3^.r3.b; }
+	if (i == 26) { q = &mut g3^.r3.c; }
+	if (i == 27) { q = &mut g3^.r3.d; }
+	if (i == 28) { q = &mut g3^.r3.e; }
+	if (i == 29) { q = &mut g3^.r3.f; }
+	if (i == 30) { q = &mut g3^.r3.g; }
+	if (i == 31) { q = &mut g3^.r3.h; }
+	if (i == 32) { q = &mut g4^.r4.a; }
+	if (i == 33) { q = &mut g4^.r4.b; }
+	if (i == 34) { q = &mut g4^.r4.c; }
+	if (i == 35) { q = &mut g4^.r4.d; }
+	if (i == 36) { q = &mut g4^.r4.e; }
+	if (i == 37) { q = &mut g4^.r4.f; }
+	if (i == 38) { q = &mut g4^.r4.g; }
+	if (i == 39) { q = &mut g4^.r4.h; }
+	if (i == 40) { q = &mut g5^.r5.a; }
+	if (i == 41) { q = &mut g5^.r5.b; }
+	if (i == 42) { q = &mut g5^.r5.c; }
+	if (i == 43) { q = &mut g5^.r5.d; }
+	if (i == 44) { q = &mut g5^.r5.e; }
+	if (i == 45) { q = &mut g5^.r5.f; }
+	if (i == 46) { q = &mut g5^.r5.g; }
+	if (i == 47) { q = &mut g5^.r5.h; }
+	if (i == 48) { q = &mut g6^.r6.a; }
+	if (i == 49) { q = &mut g6^.r6.b; }
+	if (i == 50) { q = &mut g6^.r6.c; }
+	if (i == 51) { q = &mut g6^.r6.d; }
+	if (i == 52) { q = &mut g6^.r6.e; }
+	if (i == 53) { q = &mut g6^.r6.f; }
+	if (i == 54) { q = &mut g6^.r6.g; }
+	if (i == 55) { q = &mut g6^.r6.h; }
+	if (i == 56) { q = &mut g7^.r7.a; }
+	if (i == 57) { q = &mut g7^.r7.b; }
+	if (i == 58) { q = &mut g7^.r7.c; }
+	if (i == 59) { q = &mut g7^.r7.d; }
+	if (i == 60) { q = &mut g7^.r7.e; }
+	if (i == 61) { q = &mut g7^.r7.f; }
+	if (i == 62) { q = &mut g7^.r7.g; }
+	if (i == 63) { q = &mut g7^.r7.h; }
+	if (i == 64) { q = &mut g8^.r0.z; }
+	value := &q^;
+	g7^.r7.y = 1;
+	g0^.r0.y = 2;
+	return value^;
+}
+
+main :: proc() {}
