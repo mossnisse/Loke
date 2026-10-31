@@ -17,6 +17,13 @@ baselines, and ran two probe programs against the shipped `lokec.exe` (see
 [language design review of 2026-10-03](open-questions.md#language-design-review-2026-10-03)
 and does not repeat what that review already settled.
 
+A second pass the same day checked each proposal against the specification,
+known-gaps.md, and the runtime, looking for costs the first draft had not
+counted. Proposals whose costs outweighed their gains were withdrawn; each is
+listed with its reason under [Withdrawn proposals](#withdrawn-proposals), so
+that it is not proposed again without an answer. Others were narrowed, and
+their **What is lost** now says what the first draft missed.
+
 ## Contents
 
 - [Summary](#summary)
@@ -28,58 +35,51 @@ and does not repeat what that review already settled.
 - [6. Performance of the generated code](#6-performance-of-the-generated-code)
 - [7. The specification itself](#7-the-specification-itself)
 - [8. Suggested order](#8-suggested-order)
+- [Withdrawn proposals](#withdrawn-proposals)
 - [Probes](#probes)
 
 ## Summary
 
 Loke's individual decisions are well argued, and comments.md records the
 argument for nearly every one. The problem is the sum. The specification is
-about 12,000 lines; it has four spellings of a sum type, two type-erasure
+about 12,000 lines; it has three spellings of a sum type, two type-erasure
 mechanisms, two reflection tiers, two mutable-borrow modes, four inferred
 effect systems, 26 attributes, and a list of about twenty implicit
-conversions. Each was added for a reason, but several pairs now express one
-idea twice, and the pairs are where the simplifications are.
+conversions. Each was added for a reason, and several pairs now express one
+idea twice; those pairs are where the simplifications are. Not every pair is a
+duplicate, though: `via` and construction with an allocator differ in a way
+that matters, and `inout` and `^mut T` may ([2.9](#29-one-capability-axis)).
 
 The recommendations with the best ratio of concepts removed to expressiveness
 lost, in rough priority order:
 
-1. **One mutable-borrow mode.** Fold `inout` into `^mut T`: `&mut x` at the
-   call, `self: ^mut` as a receiver, and keep `inout` only as the marker of a
-   place-returning result. This fixes the asymmetry that `self: ^` is a
-   receiver and `self: ^mut` is not ([2.4](#24-one-capability-axis)).
-2. **One erasure mechanism.** Make `any_view` a `dyn` view (`dyn Any`), give
-   every `dyn` view a checked downcast, and print through
-   `..dyn fmt.Formattable` ([2.5](#25-existentials-any_view-is-a-dyn-view)).
-3. **Enums are unions.** Define `enum` as a union whose variants are all
-   payloadless and whose representation is chosen, and merge the two
-   reflection descriptors and the two iteration spellings
-   ([2.1](#21-sums-enum-is-a-union)).
-4. **`Status(E)` is `Result(Unit, E)`** through a parametric type alias, which
+1. **`Status(E)` is `Result(Unit, E)`** through a parametric type alias, which
    removes a nominal type and the wart that generic code over `Result` does not
    accept a `Status` ([2.3](#23-status-is-resultunit-e)).
-5. **One allocator mechanism.** Remove `via` and the "declaration allocation
-   policy"; an allocator is a property of the value, chosen at construction
-   ([3.2](#32-allocators-via-make-and-init)).
-6. **Attributes in one position.** Nominal types are declared only as a
-   constant's value, so `@(packed)`, `@(align)`, `@(zero=)`, `@(failure=)`,
-   `@(thread_affine)`, and `@(wakes_on_drop)` can sit on the declaration with
-   every other attribute, and `move_only` can be one of them
-   ([3.1](#31-attributes-in-one-position)).
-7. **One reversal spelling** and a smaller iteration protocol
-   ([3.3](#33-the-iteration-protocol)).
-8. **Delete** the scalar-to-`Simd` splat conversion, `stdcall`, `using`, the
-   `for ((x in y))` escape hatch, and the stale "any of a union's variants to
-   that union" conversion ([5](#5-deletion-candidates)).
-9. **Generated-code performance.** Emit `noalias`, `readonly`, and
-   `captures(none)` from the facts the borrow checker already proves;
-   monomorphize the container fast paths in IR instead of calling the C runtime
-   with an operation table; move unwinding off the runtime frame list; and
-   prove the common index arithmetic overflow-free
-   ([6](#6-performance-of-the-generated-code)).
+2. **One type kind for sums.** `enum` and `union` share one kind in the
+   checker, the emitter, and reflection, and one reflection descriptor; the
+   integer mapping and ordering stay `enum`'s
+   ([2.1](#21-sums-one-type-kind-for-enum-and-union)).
+3. **One erasure lowering.** `any_view` is represented as a `dyn` view whose
+   witness carries the `typeid` and the format thunk, so printing calls the
+   formatter directly; the language surface does not change
+   ([2.4](#24-existentials-any_view-as-a-dyn-view)).
+4. **Effects stated once**, as one algebra that the four inferred effects
+   read ([2.6](#26-effects-as-one-algebra)).
+5. **Attributes in one position**, with `move_only` as one of them
+   ([3.1](#31-attributes-in-one-position)), and **a drop hook needs a written
+   copy decision** ([2.8](#28-affine-types-a-drop-hook-needs-a-copy-decision)).
+6. **Delete** `using` and, if wanted, the splat of a typed scalar into a
+   `Simd`; the stale "any of a union's variants to that union" conversion is
+   already gone ([5](#5-deletion-candidates)).
+7. **Generated-code performance.** Mark the panic entry `cold noreturn`; inline
+   the container fast paths, first by linking the runtime as bitcode; trim the
+   unwind bookkeeping; prove the common index arithmetic overflow-free; and emit
+   `noalias` from the facts the borrow checker proves once the gaps it depends
+   on are closed ([6](#6-performance-of-the-generated-code)).
 
-None of these changes what a Loke program can express. Together they would
-remove about a dozen concepts from design.md and a comparable number of parser
-and checker rules.
+Except where a section's **What is lost** says otherwise, none of these changes
+what a Loke program can express.
 
 ## 1. The shape of the language today
 
@@ -92,7 +92,7 @@ is:
 | Contextual keywords, each with a disambiguation rule | 15 | [Keywords](grammar.md#keywords) |
 | Attributes | 26 | [Attribute categories](design.md#attribute-categories) |
 | Implicit conversions | 20 | [Implicit type conversions](design.md#implicit-type-conversions) |
-| Spellings of a sum type | 4 | `enum`, `union`, `(a: A \| b: B)`, `Option`/`Result`/`Status` |
+| Spellings of a sum type | 3 | `enum`, `union`, `(a: A \| b: B)`; `Option`, `Result`, and `Status` are library unions |
 | Spellings of a product type | 3 | `struct`, `(a: A, b: B)`, `(A, B)` |
 | Type-erasure mechanisms | 2 | `any_view`, `dyn I` |
 | Reflection tiers | 2 | `meta.*` descriptors, `runtime.Type_Info` |
@@ -112,19 +112,22 @@ structured concurrency, and the inferred effects are about a third of the
 specification. That is also where Loke's value is: local borrow checking
 without lifetime annotations, and tasks checked without `Send` and `Sync`.
 Simplifying there means stating the mechanisms once rather than removing them
-([2.7](#27-effects-as-one-algebra)).
+([2.6](#26-effects-as-one-algebra)).
 
-**The duplicated concepts are mostly historical.** `inout` predates `^mut T`
-as a first-class checked borrow; `any_view` predates `dyn`; `enum` predates
-payloadless union variants; `Status` predates success returns; `via` predates
-`make` with an allocator argument. Each pair's second member made the first
-one mostly redundant without retiring it.
+**Some pairs say one thing twice, and some only look as if they do.**
+`any_view` and `dyn`, `enum` and a union of payloadless variants, and `Status`
+and `Result(Unit, E)` each describe one idea twice. Two pairs that look the
+same may not be: `inout` is written at every call that mutates, which a
+`^mut T` value forwarded without `&mut` is not
+([2.9](#29-one-capability-axis)), and `via` gives a declaration's fields and
+elements an allocator, which construction with an allocator does not
+([Withdrawn proposals](#withdrawn-proposals)).
 
 **The spec carries implementation detail.** The minimum provenance precision
 budgets, the normalized-input discussion, and several paragraphs under
 [Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)
 describe how a conforming analysis must behave in terms only an implementer
-reads. They belong in a conformance appendix or in compiler-architecture.md
+reads. They belong in a normative conformance appendix
 ([7](#7-the-specification-itself)).
 
 ## 2. Type theory as a simplifying lens
@@ -137,37 +140,41 @@ existential packages (`dyn`), region-based memory (allocator provenance), and
 an inferred effect system. Each is sound and conventional. The simplifications
 come from the places where one of those denotations has two spellings.
 
-### 2.1 Sums: `enum` is a union
+### 2.1 Sums: one type kind for `enum` and `union`
 
 A sum type is one thing. Loke spells it as `enum { A, B }`, as
-`union { a, b }`, as `(a: | b:)`, and the fallible shapes build on the second.
-The first two are the same type up to representation: a closed set of named,
-payloadless alternatives. What `enum` adds is a chosen backing integer, explicit
-member values with holes, an ordering, `from_int`, and `values()`.
+`union { a, b }`, and as `(a: | b:)`, and the fallible shapes build on the
+second. The first two are the same type up to representation: a closed set of
+named, payloadless alternatives. What `enum` adds is a chosen backing integer
+(`int` by default, where a union's tag is the narrowest integer that indexes
+its variants), explicit member values with holes, an ordering, integer
+conversion, `from_int`, and `values()`.
 
-**Proposal.** Keep the `enum` keyword as the readable spelling of a
-payloadless union with a chosen representation, and define it as one:
+**Proposal.** Unify the implementation and the reflection, not the surface:
 
-- `enum u8 { Ok = 200, Teapot = 418 }` is a union of payloadless variants whose
-  tag is a `u8` with the written values. A union without written values keeps
-  the narrowest tag indexing `0 ..< variant_count`, as today.
+- One type kind in the checker, the emitter, the reflection tables, and the
+  formatter, with an enum as the case whose representation is written.
+  `Type_Kind.Enum` stays as the name of that case.
 - `variants_of(T)` serves both, with `meta.Variant` gaining the tag `value`
   that `meta.Enum_Value` has; `enum_values_of` and `meta.Enum_Value` go.
-- `values()` and `from_int` are defined for any union whose variants are all
-  payloadless, so `union { a, b }` and `enum { a, b }` differ only in whether
-  a representation was written.
-- `Type_Kind.Enum` becomes a flag on `Union`, or stays as a name for the
-  payloadless case; either way one shape rule.
-- Ordering stays a property of a union whose variants are all payloadless and
-  whose tag values are its order, which is what enum ordering means today.
+- The integer mapping stays `enum`'s alone. Ordering, integer conversion,
+  `from_int`, `values()`, and `Bit_Set`/`Enum_Array` eligibility are not
+  extended to unions.
 
-**What is lost.** Nothing a program can write. A payloadless-variant union
-gains `values()` and `from_int`, which it should have anyway. The cost is a
-migration of `Type_Kind` consumers and of `base:meta`.
+**What is lost.** `enum_values_of` and `meta.Enum_Value`, which `variants_of`
+replaces. The cost is a migration of `Type_Kind` consumers and of `base:meta`.
 
-**Why it matters.** Two type kinds become one in the checker, the emitter, the
-reflection tables, the formatter, and `Bit_Set`/`Enum_Array`, whose
-constraints become "a payloadless union" rather than "an enum".
+**Why the surface stays.** A union's tag order is representation, not API:
+[Widening by label](design.md#widening-by-label) promises no tag number between
+two types, and [6.5](#65-union-layout-and-small-values) endorses letting the
+compiler choose union layout. Giving every payloadless union `from_int`,
+ordering, and integer conversion would make its declaration order a public
+contract: reordering or inserting a variant would silently change what
+`from_int(2)` and `<` mean, and adding a payload to one variant would take
+`values()`, ordering, and `Bit_Set` away from code that used them. The default
+sizes also differ: shrinking an enum's default `int` backing to a union's
+narrowest tag would change the layout of every foreign binding that uses an
+enum directly.
 
 ### 2.2 Products: the current split is right
 
@@ -178,10 +185,6 @@ the standard distinction, and comments.md
 gives the right reason to keep it: nominality is what pays for privacy, hooks,
 and field reordering. No change proposed, beyond the attribute position in
 [3.1](#31-attributes-in-one-position).
-
-One small irregularity: a fixed array `[N]T` is "a record containing one field
-per element" for layout, is comparable element-wise, and hashable, but is not a
-`Sequence` of its own until converted to a slice. That is fine.
 
 ### 2.3 `Status` is `Result(Unit, E)`
 
@@ -195,24 +198,176 @@ in several places: a generic procedure over `Result($T, $E)` does not accept a
 sentence. comments.md ["`Status(E)`"](comments.md#statuse) says why: a type
 alias takes no parameters.
 
-**Proposal.** Add parametric type aliases, `Status :: Result(Unit, $E);`, as
-[Parametric aliases](open-questions.md#parametric-aliases) already sketches. An
+**Proposal.** Add parametric type aliases, `Status :: Result(Unit, $E);`. An
 alias adds no identity, so `Status(E)` *is* `Result(Unit, E)`, `map_error` is
-one procedure, and generic code over `Result` takes a `Status`. The
-end-of-body rule becomes: a procedure whose written result, after alias
-expansion, has success payload `Unit` and names no generic argument may reach
-its end. That is the same exclusion [Success returns](design.md#success-returns)
-already uses, so the rule is stated once.
+one procedure, and generic code over `Result` takes a `Status`.
+[Parametric aliases](open-questions.md#parametric-aliases) says such an alias
+would not merge the two because their end-of-body rules differ; this proposal
+removes the difference. The rule becomes: a procedure whose written result,
+after alias expansion, has a success variant that carries nothing or carries
+`Unit`, and that names no generic argument, may reach its end. That is the
+exclusion [Success returns](design.md#success-returns) already uses, so a
+generic `Result($T, E)` body still does not change meaning with its instance,
+and the rule is stated once.
 
-**What is lost.** The spelling `return .ok;` stays valid. The one visible
-change is that `Result(Unit, E)` and `Status(E)` print the same way, which is
-correct.
+**What is lost.** Nothing a program can write. `return .ok;` stays valid; it is
+already how a `Result(Unit, E)` returns. A non-generic procedure written
+`-> Result(Unit, E)` may now reach its end, as a `Status(E)` one may.
+Diagnostics should keep the alias a type was written with, or every `Status(E)`
+in an error message reads `Result(Unit, E)`.
 
-Parametric aliases are a small, well-understood feature (a type-level function
-with no new identity), and they would also answer the `io.Result(T)` wish in
-the same open question.
+Parametric aliases are a type-level function with no new identity, and they
+would also answer the `io.Result(T)` wish in the same open question. They are
+still a generics feature with its own design: inference through an alias, its
+`api.loki` form, and whether an alias may be named without its arguments each
+need a rule.
 
-### 2.4 One capability axis
+### 2.4 Existentials: `any_view` as a `dyn` view
+
+A `dyn I` is an existential package: a data pointer and evidence about the
+hidden type (a witness). An [`any_view`](design.md#any_view-type) is the same
+shape with different evidence: a data pointer and a `typeid`. Both are two
+words, both borrow, and both have no zero value. Printing builds a
+`[]any_view`, then recovers each element's `Formattable` witness from its
+`typeid` through a table, which is the indirection a witness pointer would
+carry directly.
+
+**Proposal.** One lowering, with the surface unchanged:
+
+- `any_view` is represented as a `dyn` view of a built-in interface whose
+  witness starts with the concrete type's `typeid` and holds its format thunk.
+  Printing calls the thunk directly; the type `switch`, `.(T)`, and `.as(T)`
+  compare the `typeid`.
+- design.md states `any_view`'s lifetime rules as those of a `dyn` view, plus
+  its two differences: conversion to it is implicit at an `any_view`
+  destination, and a `..any_view` parameter may form a temporary slice.
+
+**What is lost.** Nothing a program can write. The cost is a witness table per
+erased type, which the format-thunk table already is, with a word for the
+`typeid`.
+
+**What is not proposed.** The first draft also retired `any_view` in favor of
+`..dyn fmt.Formattable` and gave every `dyn` view a checked downcast. Three
+costs decide against it:
+
+- A `dyn` conversion is explicit and starts from a pointer
+  ([Borrowed dynamic interface values](design.md#borrowed-dynamic-interface-values)).
+  `fmt.println(x, 42)` would need an implicit conversion from a value to `dyn`,
+  a new entry in the list [2.7](#27-coercions) wants shorter, or an exception
+  for variadic parameters, which is the exception the change was to remove.
+- `assert` and `panic` are built-ins. Typed with `fmt.Formattable`, they would
+  make the language core depend on `core:fmt`.
+- A downcast on every `dyn` lets code special-case the concrete type behind an
+  interface, and a wrapper type then silently loses those special cases, as
+  Go's interface upgrades do. Today a `dyn I` holder can only call slots, and
+  design.md sends checked inspection to `any_view`.
+
+### 2.5 Procedures are callable records
+
+`Callable(C, Signature)` "holds by a built-in rule, since a parameter list is
+not a requirement an interface body can spell". That is true, and the only
+general fix is variadic generics, which this review does not recommend. The
+smaller observation is that the catalogue already treats a procedure value as a
+record with a `call` method and no fields (`dyn proc(...)` is
+`dyn Callable(...)`, and a procedure "occupies the view's data word"). Saying
+so once in design.md, as the definition of procedure values, would let
+[Calling a value](design.md#calling-a-value), `Callable`, and
+[Borrowed callable views](design.md#borrowed-callable-views) share one
+paragraph of rules instead of restating them.
+
+### 2.6 Effects as one algebra
+
+Loke has an inferred effect system without naming it: the write effect, the
+reach effect, the allocator-use effect, and the pooled join's `thread_local`
+write-back are each defined with their own resolution rule for callbacks,
+procedure values, `dyn` views, and unions, and the specification says "with
+callbacks and unions resolved as under Global write effects" three times.
+
+**Proposal.** Define *effects* once: a procedure's effect is a set of facts
+(writes global `g`, reaches through global carrier `g`, operates on region `r`,
+writes `thread_local` `t`); a call takes the union of its callee's effects; a
+call through a value takes the union over every procedure the value may hold,
+by one rule for locals, parameters, `dyn` witnesses, and procedure groups. Then
+each of the four is one sentence naming which facts it reads and where. This
+does not change what is checked; it halves the text that specifies it, and
+gives [Per-call effect precision](open-questions.md#per-call-effect-precision)
+one place to improve instead of four.
+
+Type theory offers a second, larger question here: whether a declared effect
+(a `Send`-like marker, or a written effect row on public procedures) would be
+simpler than whole-program inference. comments.md
+["Tasks that borrow, joined by their block"](comments.md#tasks-that-borrow-joined-by-their-block)
+chooses inference deliberately and names the price: a body change elsewhere
+can reject a block here. The open proposal
+[Public borrow contracts should stand on their own](open-questions.md#public-borrow-contracts-should-stand-on-their-own)
+is the right boundary: inferred inside a package, written at the public
+surface. This review endorses it and adds that the same written form should
+carry a procedure's effect summary, so that an `api.loki` tells a reader what
+a call may touch without the body.
+
+### 2.7 Coercions
+
+[Implicit type conversions](design.md#implicit-type-conversions) lists twenty
+rules. Each is a subtyping or coercion rule that feeds the four-level overload
+ranking. Most are sound and useful (owner to view, `mut` to read-only, `dyn`
+to a composed base, unfixed constants). Three deserved attention:
+
+- **"Any of a union's variants to that union"** contradicted
+  [Unions](design.md#unions), which identifies a variant by name and allows two
+  variants of one payload type. The shipped compiler rejects
+  `v: Value = 7;` with `L0352` ([Probes](#probes)), so the line was a leftover
+  from Odin's type-based unions. It is deleted from design.md with this review.
+- **A scalar to `Simd(T, N)`, the splat.** Two cases share the rule. An unfixed
+  constant, as in `lanes * 2.0`, `v << 2`, or `half: Simd(f32, 4) = 0.5`
+  ([Construction and conversion](design.md#construction-and-conversion)), is
+  the common one; it belongs with the other unfixed-constant conversions and
+  should stay. A typed scalar variable splatting into a vector is the one case
+  in the list that manufactures a wider value from a run-time operand. If that
+  case goes, its replacement needs a rule of its own: `Simd(f32, 4)(x)` is
+  today a lane-wise conversion between vectors of the same lane count, so a
+  splat would be `simd.splat(x)` or a new conversion form. Low priority.
+- **A distinct procedure type to and from its underlying procedure type.** It
+  undoes `distinct` for exactly one kind of type. If a distinct procedure type
+  should be freely interchangeable with its base, it is an alias, not a
+  distinct type; if not, the conversion should be explicit as for every other
+  distinct type. The cost to weigh is that every named procedure or procedure
+  literal passed where a distinct procedure type is expected then writes the
+  conversion.
+
+### 2.8 Affine types: a drop hook needs a copy decision
+
+A `move_only struct` is an affine type. The keyword is needed because a type
+with `hook(drop)` and no `hook(copy)` still receives a *generated* field-wise
+copy, which for a file handle stored as an `int` duplicates the handle and
+double-closes it.
+
+Rust's rule, that a type with a destructor is not `Copy`, does not carry over.
+Rust's `Copy` is an implicit bitwise copy, and a type with a destructor may
+still derive a field-wise `Clone`, which is what Loke's generated copy is. The
+field-wise copy is right for a record whose fields own what its drop hook
+touches, such as a chain of `Box` fields with a drop hook that unlinks it
+iteratively, as [Owned values](design.md#owned-values) recommends. It is wrong
+for one whose drop hook releases something its fields only name.
+
+**Proposal.** Make the copy a written decision rather than a default either
+way:
+
+- A record that declares `hook(drop)` without `hook(copy)`, and is not
+  move-only, is rejected at its declaration unless it asks for the generated
+  field-wise copy with an attribute (spelling to be designed, for example
+  `@(fieldwise_copy)`).
+- `move_only` becomes an ordinary type attribute, `@(move_only)`, beside
+  `@(thread_affine)` and `@(wakes_on_drop)`, rather than a keyword with its own
+  grammar production ([3.1](#31-attributes-in-one-position)).
+
+**What is lost.** A record that relies on the generated copy beside its drop
+hook writes the attribute. In exchange no drop hook receives a copy nobody
+chose, and adding a drop hook never silently changes whether a type is
+copyable. The first draft's rule, that a drop hook implies move-only, would
+have made the iterative-unlink fix a breaking change, undone only by a
+hand-written `hook(copy)` that a field added later would silently skip.
+
+### 2.9 One capability axis
 
 [Capabilities and the one rule](design.md#capabilities-and-the-one-rule) says
 the language has one axis, read-only or `mut`, and spells it the same way on
@@ -243,140 +398,57 @@ position.
 - `-> inout T` stays as the one place-returning result form, which is what
   `operator([])` needs ([`inout` results](design.md#inout-results)). It is a
   second-class place, not a value, so the keyword fits it exactly, and nothing
-  else needs it. (If the keyword should go entirely, the alternative is
-  "`operator([])` returning `^mut T` is dereferenced in place position", which
-  is a narrower special case.)
+  else needs it.
 
 **What is lost.** `inout x` at a call is slightly more descriptive than
 `&mut x` to a reader who does not know the language; against that, `&mut` is
 already what the language writes for every other exclusive borrow, and it is
 what every call that passes `&mut a[:]` or `&mut counter` already looks like.
-The body writes `p^ = v` where it wrote `p = v`, which the implicit
-field-selection rule removes for the common record case.
+The body writes `p^ = v` where it wrote `p = v`.
 
 **Why it matters.** The parameter-mode table loses a row, the ownership table
 loses a column, grammar.md loses `Parameter_Mode`'s `inout` alternative in
 every binding form, and the "mutating methods use `self: inout`" rule and its
-exception disappear. The borrow checker already treats the two identically
-(both are destinations under [Retaining a borrow](design.md#retaining-a-borrow)).
+exception disappear. The borrow checker already treats the two alike: both are
+destinations under [Retaining a borrow](design.md#retaining-a-borrow).
 
-### 2.5 Existentials: `any_view` is a `dyn` view
+**Why it may be a bad idea.** The second pass found costs that the paragraphs
+above understate:
 
-A `dyn I` is an existential package: a data pointer and evidence about the
-hidden type (a witness). An [`any_view`](design.md#any_view-type) is the same
-shape with different evidence: a data pointer and a `typeid`. Both are two
-words, both borrow, both have no zero value, and each has rules the other lacks
-for no deep reason. `any_view` alone has the "variadic `..any_view` parameter
-is the only exception to the container rule", the `switch` over types, and the
-checked extractions `.(T)` and `.as(T)`; `dyn` alone has witnesses and slot
-calls. Printing builds a `[]any_view`, then recovers each element's
-`Formattable` witness from its `typeid` through a table, which is the
-indirection a `dyn fmt.Formattable` would carry directly.
+- **The call site stops showing every mutation.** An `inout` parameter
+  requires `inout expr` at every call
+  ([Parameter semantics and ABI lowering](design.md#parameter-semantics-and-abi-lowering)),
+  so a reader of the caller sees which calls may change which variable, and a
+  procedure that holds a `^mut T` and calls an `inout` one still writes
+  `f(inout p^)`. `&mut x` is the same marker only where it is written at the
+  call. A `^mut T` is a value: once `p := &mut x;` is formed, `f(p)` and
+  `g(p)` change `x` with nothing at either call to say so, and a procedure that
+  received `p` passes it on the same way. Today that is true only of
+  parameters declared `^mut T`; the proposal makes it true of every mutable
+  parameter. Seeing what a call may change from the call alone is the kind of
+  local reasoning the borrow rules otherwise protect.
+- **Scalars and whole values gain carets.** Field selection, indexing, and
+  method calls reach through a pointer ([Pointers](design.md#pointers)), so a
+  record or container parameter reads as before. A scalar or a whole-value
+  write does not: `count += 1` becomes `count^ += 1`, `out = parse(text)`
+  becomes `out^ = parse(text)`, and resetting a container parameter becomes
+  `values^ = {}`. Counters, out-parameters, and replacements are among the
+  commonest reasons to take a mutable parameter.
+- **It is the largest migration in this review, for a symmetry.** Every
+  `inout` parameter, argument, receiver, and interface slot in `core`, the
+  tests, and the examples changes, and what it buys is a row of one table, a
+  column of another, and the receiver sentence.
 
-**Proposal.** One erasure mechanism:
+**A cheaper fix for the asymmetry.** If both stay, explain them where the
+reader meets the difference. [Capabilities and the one
+rule](design.md#capabilities-and-the-one-rule) can say that a parameter spells
+the mutable capability `inout` because the body works on the caller's variable
+itself and every call must say so, while `^mut T` is the mutable borrow as a
+value that can be held and passed on. Then `self: inout` is simply the mutable
+receiver, and `self: ^mut Type` not being one follows from that rule instead
+of reading as an exception.
 
-- Every witness table starts with the concrete type's `typeid`. A `dyn I` view
-  then supports `view.as(T) -> Option(^T)`, `view.(T)`, and the type `switch`,
-  exactly as `any_view` does today, for any interface.
-- `any_view` becomes `dyn Any`, where `Any` is the empty interface every type
-  satisfies, or is simply retired in favor of `dyn fmt.Formattable` where
-  printing is the purpose, which it nearly always is.
-- `fmt.println`, `assert`, and `panic` take `..dyn fmt.Formattable`. The
-  "variadic exception" is then unnecessary: a `[]dyn I` is an ordinary slice of
-  views, allowed wherever a slice of borrows is.
-- `@(c_vararg)` keeps its own notation; it was already "signature notation,
-  not an `any_view`".
-
-**What is lost.** A type that satisfies no interface can still be erased
-(`Any` is empty), so nothing. The cost is a word in every witness table.
-
-**Why it matters.** One language type, one chapter, one set of lifetime rules,
-and one lowering go; [3.6](#36-runtime-reflection) asks what then remains for
-`Type_Info`.
-
-### 2.6 Procedures are callable records
-
-`Callable(C, Signature)` "holds by a built-in rule, since a parameter list is
-not a requirement an interface body can spell". That is true, and the only
-general fix is variadic generics, which this review does not recommend. The
-smaller observation is that the catalogue already treats a procedure value as a
-record with a `call` method and no fields (`dyn proc(...)` is
-`dyn Callable(...)`, and a procedure "occupies the view's data word"). Saying
-so once in design.md, as the definition of procedure values, would let
-[Calling a value](design.md#calling-a-value), `Callable`, and
-[Borrowed callable views](design.md#borrowed-callable-views) share one
-paragraph of rules instead of restating them.
-
-### 2.7 Effects as one algebra
-
-Loke has an inferred effect system without naming it: the write effect, the
-reach effect, the allocator-use effect, and the pooled join's `thread_local`
-write-back are each defined with their own resolution rule for callbacks,
-procedure values, `dyn` views, and unions, and the specification says "with
-callbacks and unions resolved as under Global write effects" three times.
-
-**Proposal.** Define *effects* once: a procedure's effect is a set of facts
-(writes global `g`, reaches through global carrier `g`, operates on region `r`,
-writes `thread_local` `t`); a call takes the union of its callee's effects; a
-call through a value takes the union over every procedure the value may hold,
-by one rule for locals, parameters, `dyn` witnesses, and procedure groups. Then
-each of the four is one sentence naming which facts it reads and where. This
-does not change what is checked; it halves the text that specifies it, and
-gives [Per-call effect precision](open-questions.md#per-call-effect-precision)
-one place to improve instead of four.
-
-Type theory offers a second, larger question here: whether a declared effect
-(a `Send`-like marker, or a written effect row on public procedures) would be
-simpler than whole-program inference. comments.md
-["Tasks that borrow, joined by their block"](comments.md#tasks-that-borrow-joined-by-their-block)
-chooses inference deliberately and names the price: a body change elsewhere
-can reject a block here. The open proposal
-[Public borrow contracts should stand on their own](open-questions.md#public-borrow-contracts-should-stand-on-their-own)
-is the right boundary: inferred inside a package, written at the public
-surface. This review endorses it and adds that the same written form should
-carry a procedure's effect summary, so that an `api.loki` tells a reader what
-a call may touch without the body.
-
-### 2.8 Coercions
-
-[Implicit type conversions](design.md#implicit-type-conversions) lists twenty
-rules. Each is a subtyping or coercion rule that feeds the four-level overload
-ranking. Most are sound and useful (owner to view, `mut` to read-only, `dyn`
-to a composed base, unfixed constants). Three deserve attention:
-
-- **"Any of a union's variants to that union"** contradicts
-  [Unions](design.md#unions), which identifies a variant by name and allows two
-  variants of one payload type. The shipped compiler rejects
-  `v: Value = 7;` with `L0352` ([Probes](#probes)), so this line is a leftover
-  from Odin's type-based unions and should be deleted from the spec.
-- **A scalar to `Simd(T, N)`, the splat.** It is the only implicit conversion
-  that *manufactures* a wider value, and it exists so that `lanes * 2.0`
-  reads well. The explicit `Simd(f32, 4)(2.0)` or a `simd.splat` costs a few
-  characters and removes a rule from ranking. Low priority, but it is the one
-  conversion a type theorist would strike first.
-- **A distinct procedure type to and from its underlying procedure type.** It
-  undoes `distinct` for exactly one kind of type. If a distinct procedure type
-  should be freely interchangeable with its base, it is an alias, not a
-  distinct type; if not, the conversion should be explicit as for every other
-  distinct type.
-
-### 2.9 Affine types: `move_only`
-
-A `move_only struct` is an affine type. The keyword is needed because a type
-with `hook(drop)` and no `hook(copy)` still receives a *generated* field-wise
-copy, which for a file handle duplicates the handle and double-closes it. That
-default is unsafe, and the keyword exists to turn it off.
-
-**Proposal.** A record that declares `hook(drop)` without `hook(copy)` is
-move-only (Rust's rule: a type with a destructor is not `Copy`). Then
-`move_only` is needed only for types that are move-only without a destructor
-(`Atomic(T)`, `Once`, a random generator), and for those it is an ordinary
-type attribute, `@(move_only)`, beside `@(thread_affine)` and
-`@(wakes_on_drop)`, rather than a keyword with its own grammar production.
-
-**What is lost.** A resource type that wants the generated field-wise copy
-*and* a drop hook writes `hook(copy)` to say so, which is the rare case and the
-one that deserves a written decision.
+This review lists the fold as a judgment call and leans against it.
 
 ### 2.10 What type theory should not drive
 
@@ -387,7 +459,7 @@ Three things the lens suggests and this review does **not** recommend:
   the right size for a systems language.
 - **Lifetime variables.** The inferred result contracts plus written escape
   levels cover what Loke promises. Written public contracts
-  ([2.7](#27-effects-as-one-algebra)) are the bounded alternative.
+  ([2.6](#26-effects-as-one-algebra)) are the bounded alternative.
 - **Nominal conformance.** comments.md
   ["Nominal conformance declarations"](comments.md#nominal-conformance-declarations)
   is right; structural satisfaction with `static_assert` is simpler.
@@ -412,101 +484,17 @@ only as a constant's value, and their attributes go on the declaration:
 grammar.md loses `Attributes?` from `Struct_Type` and `Union_Type`, the
 inline `[size_of(enum { A, B })]u8` corner under
 [Success returns](design.md#success-returns) goes with it, and `move_only`
-becomes an attribute in the same place ([2.9](#29-affine-types-move_only)).
+becomes an attribute in the same place
+([2.8](#28-affine-types-a-drop-hook-needs-a-copy-decision)).
 
-### 3.2 Allocators: `via`, `make`, and `init`
+**What is lost.** The inline nominal `enum` and `union`. The merged list also
+mixes attributes about the name (`public`, `deprecated`) with attributes about
+the layout (`packed`, `align`), which the two positions now keep apart, and it
+needs one new rule: a type attribute on a declaration whose value is not a
+`struct`, `union`, or `enum` definition, such as `@(packed) Alias :: Header;`,
+is an error.
 
-Allocator selection has three spellings: `via` on a declaration, `make` with an
-allocator argument, and library constructors such as `Arena.init(parent)` and
-`String_Builder.init(allocator)`. `via` is a contextual keyword with a parser
-rule, is forbidden on statics, on `string`, and on `Shared(T)`, and it
-introduces a concept the other two do not need: the **declaration allocation
-policy**, the allocator a later clone *into the variable* uses, which "belongs
-to the declaration, not to the value it holds" and in turn excludes such
-destinations from [last-use transfer](design.md#last-use-transfer).
-
-**Proposal.** An allocator is a property of the value, chosen where the value
-is constructed, as every library type already does:
-
-- Remove `via`. Write `data := make([dynamic]int, allocator = arena.allocator());`
-  or `data := [dynamic]int.init(arena.allocator());`, whichever spelling the
-  built-in containers adopt (one of them; see [3.5](#35-the-predeclared-universe)).
-- Copy assignment into a live container clones into *that container's* bound
-  allocator; into a dead or unbound one, into the default. A move transfers the
-  source's allocator, as now. `x = y.clone(arena)` is the explicit form.
-
-**What is lost.** After `move(x)` out of an arena-bound variable, a later
-plain copy into `x` goes to the default allocator, where today it returns to
-the arena. That case is rare and `clone(arena)` states it. In exchange the
-concept of a per-declaration policy, the `via` grammar and keyword, two
-forbidding rules, and a last-use-transfer exclusion go.
-
-### 3.3 The iteration protocol
-
-[Iteration protocol](design.md#iteration-protocol) is the largest protocol in
-the language: `Element`, `Iterator`, `Mut_Iterator`, `Item`, four yield modes,
-`iter`, `iter_mut`, `iter_reverse`, `iter_mut_reverse`, three compiler
-adapters, six container views, and three catalogue interfaces. Two cuts keep
-every loop writable:
-
-- **Reversal is an adapter, not a method quartet.** `reversed()` today requires
-  `iter_reverse`, and under `&mut` requires `iter_mut_reverse`, and
-  `Reverse_Iterable` names one of them. The spec already says that "a reverse
-  traversal that needs another iterator representation must instead be a
-  separate adapter with its own `Element` and `Iterator`". Make that the only
-  rule: a type that reverses provides an ordinary `reversed(self: ^)` method
-  returning an iterable view, the compiler provides it for built-in sequences,
-  and `iter_reverse`, `iter_mut_reverse`, and `Reverse_Iterable` go.
-- **`Element` can be inferred.** Every other associated type of the protocol
-  "follows from those signatures", but `Element` "is always written". It is
-  determined by `next`'s `Item` under the yield-mode table (`Item` itself,
-  the pointee of `^Item`, or the record with pointer fields stripped). Writing
-  it stays allowed; requiring it is one more rule than needed.
-
-The mutable protocol (`iter_mut`, `Mut_Iterator`) is worth keeping: making
-`foreach (&mut v in values)` reborrow the container is what lets a container
-lend elements without first making a `[]mut T`.
-
-### 3.4 The copying and consuming pairs
-
-Two pairs double a container's surface: `op`/`try_op`, which
-[The `op`/`try_op` pair](open-questions.md#the-optry_op-pair) already examines,
-and the copying and consuming members of `append` and `insert`, which a user
-container must write as a procedure group of two because only the built-in
-containers get "takes its element like an initialization" for free.
-
-The second pair is the one the language could remove. An **initializing
-parameter mode**, say `value: init T`, would mean exactly what
-[Container insertion](design.md#container-insertion) means: a place is cloned,
-a temporary or `move(x)` is transferred. A user container then writes one
-`append`, as `Small_Array` would like to. This is an addition of one mode, but
-it removes a group of two from every container and the exclusion rule that
-removes the copying member for move-only elements. It is also the mode `box`,
-`shared`, `find_or_insert`, variant construction, and record literals already
-use informally. One name for a rule that exists in five places is a
-simplification even though it adds a keyword.
-
-### 3.5 The predeclared universe
-
-[Predeclared names](design.md#predeclared-names) puts into every scope names
-that are also declared in packages: `Allocator` and `Allocator_Error`
-(`core:mem`, `base:runtime`), `Shared`, `Weak`, `shared`, `try_shared`
-(`base:runtime`, and the spec itself calls `Shared(T)` "a library type"),
-`make`, `try_make`, `free_all`, `box`, `try_box`. `Atomic`, `Once`, and
-`Lazy` are not predeclared though they are of the same kind as `Shared`.
-
-**Proposal.** Predeclare only what the language's own rules reach without an
-import: the primitive types, `Unit`, `Option`, `Result`, `Range`, `Simd`,
-`Box`, the compile-time built-ins, and the build constants. Move `Shared`,
-`Weak`, `shared`, `try_shared`, `Allocator`, `Allocator_Error`, `make`,
-`try_make`, and `free_all` to their packages, and spell construction with an
-allocator as a named constructor on the type (`[dynamic]T.init(len, cap,
-allocator)` and `map[K]V.init(reservation, allocator)`, with `try_init`),
-as `Arena.init` and `String_Builder.init` already do. `free_all(a)` becomes
-`a.reset()` with the same `@(allocator_reset)` contract. `box` and `try_box`
-can stay, since `Box` is a language type with a representation rule.
-
-### 3.6 Runtime reflection
+### 3.2 Runtime reflection
 
 `runtime.Type_Info` carries a `members` table whose `Member_Kind` covers
 fields, enum values, union variants, and, for a procedure type, its
@@ -517,9 +505,9 @@ where code can act on them, and comments.md
 leaves procedure reflection out of that tier "without a demonstrated
 consumer", so the runtime table is the one place a procedure's shape is
 reflected. Printing does not read `Type_Info`: it dispatches through
-generated `format` thunks. With `any_view` folded into `dyn`
-([2.5](#25-existentials-any_view-is-a-dyn-view)), the remaining consumer is a
-program that wants a type's name, size, or member table at run time.
+generated format thunks ([2.4](#24-existentials-any_view-as-a-dyn-view)), so
+the remaining consumer is a program that wants a type's name, size, or member
+table at run time.
 
 **Proposal.** Either state the table's purpose and keep it whole, or shrink
 `Type_Info` to `id`, `kind`, `name`, `size`, `align`, `element`, `key`, and
@@ -531,33 +519,7 @@ needs runtime member tables can build them from `fields_of` in a static
 `foreach`, which is the direction the language already prefers. This review
 records it as a judgment call rather than a deletion.
 
-### 3.7 `string` as the one sharing owner
-
-`string` is the one container whose copy *shares* storage, with an atomic
-handle count that [Thread-affine strings](open-questions.md#thread-affine-strings)
-measures at about 12.5 ns per copy-and-drop and calls "the most frequent hidden
-cost in ordinary code". The sharing rule is also a special case in at least
-eight places: the ownership table, `via`, `clone`, copy-cost diagnostics,
-last-use transfer, allocator provenance ("a shared-storage logical clone keeps
-the source allocation's provenance"), thread transfer, and
-`String_Builder.finish`'s copy.
-
-**Proposal to evaluate.** Make `string` an ordinary owner: a copy clones (one
-allocation, as a `[dynamic]u8` copy does), last-use transfer makes the last
-copy a move, and reading passes a `string_view`, which is what every text API
-already takes. The representation becomes data, length, and allocator, the
-same three words, with no header and no atomics; a literal has a null
-allocator and drops to nothing.
-
-**What is lost.** `second := first` on a heap string allocates where it now
-bumps a count. Programs that copy strings into many containers pay for it;
-programs that pass text around do not, because they pass views. The gain is a
-uniform value model, no atomic traffic, and one fewer special case in every
-rule that mentions `Shared(T)`. It should be measured on the repository's
-text-heavy programs before deciding, but it is the kind of change that
-simplifies and speeds up at once.
-
-### 3.8 `using`
+### 3.3 `using`
 
 [Promoted struct fields](design.md#promoted-struct-fields) is Odin's `using`
 narrowed to field lookup. It adds a contextual keyword, an ambiguity rule, and
@@ -567,7 +529,7 @@ bindings, for the saving of one selector (`entity.x` for
 composition it serves is written as plainly with the field named.
 Recommended for deletion, low urgency.
 
-### 3.9 `@(initialized=count)` and uninitialized storage
+### 3.4 `@(initialized=count)` and uninitialized storage
 
 [Uninitialized capacity](design.md#uninitialized-capacity) couples a fixed
 array field to a sibling `int` by attribute so that the generated copy, drop,
@@ -590,17 +552,16 @@ review leans toward the primitive but records it as a judgment call.
 
 Each of these is a place where the grammar's answer is correct and a reader
 still stumbles. Each fix below keeps the parser's bounded lookahead and a
-precise error message.
+precise error message. Two forms the first draft listed, the doubled
+parenthesis of `for ((key in counts))` and the parentheses of
+`(f() or_return).len()`, cost less than their fixes did; see
+[Withdrawn proposals](#withdrawn-proposals).
 
 | Today | Problem | Proposal |
 | --- | --- | --- |
-| `for ((key in counts)) { }` | A doubled parenthesis changes meaning, which no other construct does | Drop the special rejection of `for (key in counts)`. It type-checks only when `in` applies, so a mistyped traversal still fails, and the diagnostic can say "did you mean `foreach`" when `counts` is iterable and `key` is undeclared |
-| `(f() or_return).len()` | A member of a propagated payload needs parentheses because any primary token begins the failure operand | Parenthesize the operand instead: `f() or_return(.io)`. A bare `or_return` is then followed by the payload's suffixes, `f() or_return.len()`, and `f() or_return + 1` keeps its meaning |
 | `(&mut a[:]).indexed()` | `&mut` applied to a slice suffix is a special grammatical case, and a member of the result needs parentheses | A postfix spelling of mutable slicing, `a.slice_mut()` or `a[mut lo:hi]`, which chains like every other postfix and removes the `&mut`-before-slice rule from grammar.md |
-| `self: ^` | A dangling caret that looks like a typo | With [2.4](#24-one-capability-axis), the receiver forms are `self`, `self: ^`, `self: ^mut`, `self: move`; allowing `self: ^Self` as the spelled-out form gives a name to read |
 | `Name :: struct @(packed) { }` | Attributes in a second position | [3.1](#31-attributes-in-one-position) |
-| `move_only struct @(thread_affine) { }` | A keyword and an attribute for two properties of the same kind | [2.9](#29-affine-types-move_only) |
-| `data: [dynamic]int via arena.allocator() = {};` | A contextual keyword for one declaration-time choice | [3.2](#32-allocators-via-make-and-init) |
+| `move_only struct @(thread_affine) { }` | A keyword and an attribute for two properties of the same kind | [2.8](#28-affine-types-a-drop-hook-needs-a-copy-decision) |
 | `(dyn Drawable)(&circle)` | Conversion of a composite type is C-cast-like | Keep. `T(v)` with a parenthesized composite type is one rule for every conversion, and the alternative (`as`) is a keyword |
 
 ### 4.2 Verbosity hotspots
@@ -612,12 +573,18 @@ precise error message.
   generic code; `some` is the word
   [Returning a capture literal](open-questions.md#returning-a-capture-literal)
   already considers for results. This is an addition, but it replaces a longer
-  idiom, so it is a net reduction in what a reader sees.
+  idiom, so it is a net reduction in what a reader sees. Two costs come with
+  it. The procedure becomes generic with no `$` in its signature, so it is
+  instantiated per callable type and has no single procedure value; `some`
+  must be documented as saying so. And `some` is one more contextual keyword,
+  against [4.3](#43-parsing-decisions-worth-keeping).
 - **`interfaces.` everywhere.** The catalogue is used by nearly every generic
   procedure and must be qualified. Either predeclare the catalogue interfaces
   (they are language-defined predicates, closer to `Option` than to `fs`) or
   let `base:` packages be imported unqualified by a project setting. The
-  first is the simpler rule.
+  first is the simpler rule, and since a predeclared name may be shadowed
+  ([Predeclared names](design.md#predeclared-names)), a program's own
+  `Iterable` keeps working.
 - **`impl X { f :: proc(self, ...) -> T { } }`.** Three tokens (`::`, `proc`,
   and the receiver) per method. This is Odin's declaration model and is
   consistent with free procedures; no change recommended, but it is where
@@ -635,10 +602,10 @@ appearance. Keep them.
 
 The fifteen contextual keywords are a different matter. Each has a
 disambiguation rule in [Resolved ambiguities](grammar.md#resolved-ambiguities)
-that every tool must follow. [3.2](#32-allocators-via-make-and-init) removes
-`via`, [3.8](#38-using) removes `using`, and [2.4](#24-one-capability-axis)
-simplifies `inout`. `static` and `thread_local`, whose rule has four cases,
-would be simpler as reserved words: no program needs a type named `static`.
+that every tool must follow. [3.3](#33-using) removes `using`. `static` and
+`thread_local`, whose rule has four cases, would be simpler as reserved words:
+no program needs a type named `static`, and a keyword may still name a field
+or member ([Predeclared names](design.md#predeclared-names)).
 
 ### 4.4 Rules whose text is longer than what they save
 
@@ -660,24 +627,18 @@ thing. Each row names the replacement and what is lost.
 
 | Delete | Replaced by | Lost | Priority |
 | --- | --- | --- | --- |
-| `inout` parameter mode and `self: inout` | `^mut T`, `&mut x`, `self: ^mut` ([2.4](#24-one-capability-axis)) | The word `inout` at call sites | High |
-| `any_view`, `[]any_view` exception | `dyn Any` with downcast, `..dyn fmt.Formattable` ([2.5](#25-existentials-any_view-is-a-dyn-view)) | Nothing | High |
-| `enum_values_of`, `meta.Enum_Value`, separate enum kind | `variants_of`, `meta.Variant` with `value` ([2.1](#21-sums-enum-is-a-union)) | Nothing | High |
-| `Status` as a nominal type, `Status.map_error` | `Status :: Result(Unit, $E)` ([2.3](#23-status-is-resultunit-e)) | Nothing | High |
-| `via`, declaration allocation policy | Construction with an allocator ([3.2](#32-allocators-via-make-and-init)) | Re-binding an arena after a move | High |
-| `iter_reverse`, `iter_mut_reverse`, `Reverse_Iterable` | A `reversed()` method returning a view ([3.3](#33-the-iteration-protocol)) | Nothing | Medium |
+| `Status` as a nominal type, `Status.map_error` | `Status :: Result(Unit, $E)` ([2.3](#23-status-is-resultunit-e)) | Nothing; a non-generic `Result(Unit, E)` gains the end-of-body rule | High |
+| `enum_values_of`, `meta.Enum_Value`, a separate enum kind | `variants_of`, `meta.Variant` with `value`, one sum kind ([2.1](#21-sums-one-type-kind-for-enum-and-union)) | Nothing | Medium |
 | Type-position attributes, inline nominal `enum`/`union` | Declaration attributes ([3.1](#31-attributes-in-one-position)) | `[size_of(enum { A, B })]u8` | Medium |
-| `move_only` keyword | Drop hook implies move-only; `@(move_only)` otherwise ([2.9](#29-affine-types-move_only)) | Generated copy on a type with a drop hook, now written | Medium |
-| "Any of a union's variants to that union" | Nothing; the compiler already rejects it | Nothing | Editorial, do now |
-| Scalar-to-`Simd` splat conversion | `Simd(T, N)(x)` or `simd.splat(x)` | `v * 2.0` | Low |
-| Distinct-procedure-type conversions | Alias, or explicit conversion | Nothing | Low |
-| `stdcall` calling convention | `c`, which it equals on x64; add back with a 32-bit target | Nothing today | Low |
-| `using` | Named selection ([3.8](#38-using)) | One selector per access | Low |
-| `for ((x in y))` escape hatch | `for (x in y)` with a diagnostic hint | A doubled-parenthesis rule | Low |
+| `move_only` keyword | `@(move_only)` ([2.8](#28-affine-types-a-drop-hook-needs-a-copy-decision)) | A reserved word | Medium |
+| "Any of a union's variants to that union" | Nothing; the compiler already rejects it | Nothing | Done with this review |
+| Splat of a typed scalar into a `Simd` | `simd.splat(x)`; constant splats stay ([2.7](#27-coercions)) | `v * scale` for a scalar variable `scale` | Low |
+| Distinct-procedure-type conversions | Alias, or explicit conversion ([2.7](#27-coercions)) | The conversion at each site passing a procedure | Low |
+| `using` | Named selection ([3.3](#33-using)) | One selector per access | Low |
+| `inout` parameter mode and `self: inout` | `^mut T`, `&mut x`, `self: ^mut` ([2.9](#29-one-capability-axis)) | The marker at every call that mutates; carets on scalar and whole-value writes | Judgment call; leaning against |
 | Success returns | `return .ok(n);` ([4.4](#44-rules-whose-text-is-longer-than-what-they-save)) | Four characters per return | Judgment call |
 | `Option.ok_or` | `or_return .Variant` and a `switch` | An eager form for stored absences | Judgment call; the open question keeps it |
-| `Type_Info.members`, `Member_Info`, `Member_Kind` | `fields_of`, `enum_values_of`, `variants_of` at compile time ([3.6](#36-runtime-reflection)) | Runtime reflection of a procedure type's parameter and result types | Judgment call |
-| Predeclared `Shared`, `Weak`, `shared`, `try_shared`, `Allocator`, `Allocator_Error`, `make`, `try_make`, `free_all` | Their packages and named constructors ([3.5](#35-the-predeclared-universe)) | An import line | Medium |
+| `Type_Info.members`, `Member_Info`, `Member_Kind` | `fields_of` and `variants_of` at compile time ([3.2](#32-runtime-reflection)) | Runtime reflection of a procedure type's parameter and result types | Judgment call |
 
 Not recommended for deletion, though a simplification pass might ask:
 per-variant switch cases and union argument expansion (both are defined as
@@ -692,7 +653,9 @@ of bug.
 The emitter produces one textual LLVM module for the whole program and hands
 it to Clang at `-O0` through `-O3`, so cross-package inlining is free and the
 optimizer sees everything but the runtime. Within that design these are the
-opportunities, largest first. None changes a specified result.
+opportunities, largest first. None changes a specified result of a program the
+checker rightly accepts; [6.1](#61-alias-attributes-from-facts-the-checker-already-proves)
+also needs design.md to state what unchecked code may do during a call.
 
 ### 6.1 Alias attributes from facts the checker already proves
 
@@ -709,22 +672,48 @@ access. For the duration of a call, then:
 
 - a `^mut T` or `inout T` parameter is the only live path to its pointee:
   `noalias`;
-- a `^T` parameter's pointee is not written by anyone: `readonly`, unless the
-  type reaches a [`@(synchronized)`](design.md#synchronized) field, which an
-  atomic may write through a read-only receiver;
+- a `^T` parameter's pointee is not written by anyone, unless its type reaches
+  a [`@(synchronized)`](design.md#synchronized) field, as `Atomic(T)`,
+  `Mutex(T)`, and `Monitor(T)` do: `noalias readonly`. `readonly` alone says
+  only that the callee does not write through the pointer, which the
+  capability already guarantees; `noalias` says nobody else writes during the
+  call, which is what lets loads move. Rust emits the same pair for a `&T`
+  whose type has no interior mutability;
 - a `value: T` parameter that travels by pointer ("borrowed for the call;
-  borrows of its own storage cannot escape") is `readonly` and
+  borrows of its own storage cannot escape") is `noalias readonly` and
   `captures(none)` under the same exclusion;
 - a `@(escape=none)` parameter is `captures(none)` whatever its mode.
 
-This is exactly the argument Rust makes for `&mut` and `&`, and Loke's
-[What is not checked](design.md#what-is-not-checked) already assigns the
-unchecked cases (raw pointers, foreign aliases, `unsafe`) to the programmer.
-Slices and views need one ABI change to carry attributes: pass the data
-pointer and length as separate scalar parameters in the `loke` convention,
-which is private to the compiler. The gain is the usual one for `noalias`:
-loads hoisted out of loops across stores, vectorization of loops that write
-through one slice and read another, and fewer reloads around calls.
+This is exactly the argument Rust makes for `&mut` and `&`. Slices and views
+need one ABI change to carry attributes: pass the data pointer and length as
+separate scalar parameters in the `loke` convention, which is private to the
+compiler. The gain is the usual one for `noalias`: loads hoisted out of loops
+across stores, vectorization of loops that write through one slice and read
+another, and fewer reloads around calls.
+
+**Prerequisites.** The attributes turn a borrow the checker wrongly accepts
+into undefined behavior that the optimizer exploits, so they come last:
+
+- Close the soundness gaps first, or emit the attributes only behind an option
+  until they are closed. known-gaps.md lists accepted programs that leave two
+  live mutable carriers to one place
+  ([A call that moves carriers between elements or fields is not seen](known-gaps.md#a-call-that-moves-carriers-between-elements-or-fields-is-not-seen),
+  [A borrow stored through a mutable traversal binding is not seen in the container](known-gaps.md#a-borrow-stored-through-a-mutable-traversal-binding-is-not-seen-in-the-container)).
+  Today those alias as C code would; with `noalias` at `-opt=speed` they can
+  miscompile.
+- State an aliasing rule for unchecked code in design.md.
+  [What is not checked](design.md#what-is-not-checked) makes raw pointers the
+  programmer's responsibility but says nothing about aliasing, and the
+  standard library drops provenance through `rawptr` casts, as `Channel`'s
+  `queue_of` does
+  ([Public borrow contracts should stand on their own](open-questions.md#public-borrow-contracts-should-stand-on-their-own)).
+  The rule would be that while a `^mut T` parameter is live nothing else
+  accesses its pointee, and while a `^T` parameter is live nothing writes it,
+  by any route; each such cast in the library is then checked against it.
+- Measure with and without unwind frames. Where a frame is pushed, the
+  addresses stored in `%uenv` reach the runtime, which limits what LLVM may
+  assume about those locals and may cancel some of the gain
+  ([6.3](#63-unwind-bookkeeping)).
 
 ### 6.2 Container operations in IR, not through an operation table
 
@@ -735,24 +724,33 @@ drop, and a map lookup calls `loke_rt_v1_map_find` with `key_hash` and
 `key_equal` through pointers on every probe. Nothing inlines across that
 boundary, so the most common container operations in the language cost a
 call, an indirect call or two, and a table load each, whatever the element.
+Rust and Go both specialize these; it is the single largest difference between
+Loke's collections and theirs.
 
-**Proposal.** Keep the runtime for growth, rehashing, and the generic
-clone/drop loops, and emit the fast paths in the module, specialized per
-element type as every generic procedure already is: `append` as
-"if `len < cap` store and increment, else call grow"; `x[i]` already is
-inline; map probing with the key's `hash` and `==` called directly, so an
-`int` key hashes and compares inline. Rust and Go both specialize these; it is
-the single largest difference between Loke's collections and theirs. The ops
-table stays for the paths that remain in C.
+**Proposal, in two steps.**
 
-A related, smaller step: compile the runtime to bitcode and link it with
-`-flto` from the same cache, so that `string_retain`, `alloc`, and the
-dispatch helpers inline where they are hot. The cache key already covers the
-flags this needs.
+1. Compile the runtime to bitcode and link it with `-flto` from the same
+   cache, so that the container operations, `string_retain`, `alloc`, and the
+   dispatch helpers inline where they are hot. The fast paths stay in one
+   implementation, and the cache key already covers the flags this needs.
+2. If that leaves the indirect calls through the operation table on the hot
+   path, emit the fast paths in the module, specialized per element type as
+   every generic procedure already is: `append` as "if `len < cap` store and
+   increment, else call grow"; map probing with the key's `hash` and `==`
+   called directly, so an `int` key hashes and compares inline. The runtime
+   keeps growth, rehashing, and the generic clone/drop loops, and the ops
+   table stays for the paths that remain in C.
 
-### 6.3 Unwinding without a runtime frame list
+**What the second step costs.** The probe sequence then has two
+implementations, one in the emitted IR and one in the runtime's growth and
+rehash, which must agree forever; a disagreement corrupts a map silently
+rather than crashing. At the default `-opt=none` nothing inlines, so emit the
+specialized fast paths only when optimizing, or a debug build pays their IR
+for every element type and gains nothing.
 
-Under the `unwind` strategy the emitter maintains a shadow stack:
+### 6.3 Unwind bookkeeping
+
+Under the `unwind` strategy the emitter maintains a frame list:
 `loke_rt_v1_frame_push`/`pop` around procedures with cleanup, a live-flag
 array, and an environment table of local addresses that the generated thunk
 replays ([Probes](#probes) show the `%uframe`, `%ulive`, and `%uenv` allocas
@@ -760,15 +758,21 @@ and a store into `%uenv` on every loop iteration, left for LLVM to delete when
 the frame is never pushed). Where a frame is pushed, every call to the
 procedure pays the push, the pop, and the stores that keep the table current.
 
-Windows x64 has table-driven unwinding with no cost on the non-panicking path,
-and LLVM supports it through `invoke`, cleanup pads, and the MSVC personality.
-Because a Loke panic is never caught, the landing pads would only run
-cleanups and resume, which is the simple half of that machinery. The gain is
-every push, pop, and bookkeeping store in every procedure that has a managed
-local or a `defer`; the cost is a port of the cleanup emitter and a dependence
-on platform unwind tables, which the roadmap's Linux and macOS phases would
-have to provide (DWARF, which LLVM also emits). This should be measured
-first; `-panic=abort` already shows the upper bound of the saving.
+The design is deliberate. The runtime runs the registered cleanup without
+unwinding the native stack and then aborts
+([runtime/panic.c](runtime/panic.c)), so it runs every Loke frame's cleanup
+even where foreign frames sit between them, as in a callback from C or an
+`@(export)` procedure called by a host. Table-driven unwinding, which the first
+draft proposed, would have to pass through those foreign frames: a C++ host's
+`catch (...)` could catch the panic and continue, frames without unwind tables
+would stop it, and abort pads at each foreign entry would skip the cleanup of
+the Loke frames above it, which changes a specified result.
+
+**Proposal.** Keep the logical unwind and make its bookkeeping cheaper.
+Measure first: `-panic=abort` pushes no frames and shows the upper bound of the
+saving. Then start from the probe: `sum` stores a loop binding's address into
+`%uenv` on every iteration, though a borrowed `int` has nothing to drop.
+Record only the addresses a registered cleanup reads.
 
 ### 6.4 Checked arithmetic and bounds in loops
 
@@ -778,36 +782,36 @@ panic block, and the panic callee is declared without `cold` or `noreturn`
 measured cost is in
 [Overflow checks in index arithmetic](open-questions.md#overflow-checks-in-index-arithmetic):
 3.5 to 5.7 times on a column-major product, because the branch per element
-blocks vectorization. Two steps keep the semantics and remove most of the
+blocks vectorization. Three steps keep the semantics and remove most of the
 cost:
 
+- **Find out why LLVM does not already remove the checks.** It folds an
+  overflow intrinsic whose operands it can bound (IndVarSimplify through
+  `eliminateOverflowIntrinsic`, and correlated value propagation). On the
+  measured kernel the likely obstacle is the multiplication by a run-time
+  extent, which no range bounds; confirm that before building an analysis.
 - **Range facts for loop bindings and lengths.** A `foreach (i in 0 ..< n)`
   binding is in `[0, n)`; a slice or array length is at most
-  `MAX_INT / size_of(T)`; a constant is itself. From these, `i + 1`,
-  `i * stride` for a constant stride, and `row * columns + column` where the
-  product of the extents was computed once are provably in range, and the
-  emitter can write `add nsw` and a plain `getelementptr` instead of the
-  checked forms. The same facts remove the bounds check on `xs[i]` inside a
-  loop over `0 ..< xs.len()`. This is the standard induction-variable range
-  analysis; LLVM's own passes do part of it but cannot see through the
-  overflow intrinsic plus branch.
+  `MAX_INT / size_of(T)`; a constant is itself. From these, `i + 1` is
+  provably in range; so is `i * stride` for a constant stride when `n` is a
+  length whose element size is at least the stride, and
+  `row * columns + column` when `row < rows`, `column < columns`, and
+  `rows * columns` was computed, checked, before the loop. The emitter can then
+  write `add nsw` and a plain `getelementptr` instead of the checked forms. The
+  same facts remove the bounds check on `xs[i]` inside a loop over
+  `0 ..< xs.len()` when the body cannot change `xs`'s length, which holds for
+  a slice and not for a `[dynamic]T` the body appends to.
 - **Loop versioning** for the remaining affine index expressions: check once
   before the loop that the maximum index fits, and run an unchecked body when
   it does, the checked body otherwise. LLVM does this for runtime alias checks
-  but not for overflow intrinsics, so it is the compiler's to do.
+  but not for overflow intrinsics, so it is the compiler's to do, at the cost
+  of a second copy of the loop.
 
 Mark `loke_rt_v1_panic` `cold noreturn` and give the panic branch weights.
 It is cheap and makes the block layout and inlining decisions explicit
 rather than inferred.
 
-### 6.5 `string`
-
-[3.7](#37-string-as-the-one-sharing-owner) is a performance item as much as a
-design one: the atomic retain and release are an out-of-line call and a
-locked memory operation on every copy and drop of a heap string, in code that
-otherwise never touches a lock.
-
-### 6.6 Union layout and small values
+### 6.5 Union layout and small values
 
 The open item on compiler-chosen union layout
 ([Performance opportunities and actual semantic limits](open-questions.md#performance-opportunities-and-actual-semantic-limits))
@@ -818,15 +822,7 @@ two-word record such as a slice or an `Option(^T)` in registers rather than
 as an LLVM aggregate, which the current `LARGE_VALUE_BYTES` rule handles
 only by address.
 
-### 6.7 Defaults
-
-- `-cpu=x86-64-v2` as the default costs nothing on any machine that runs the
-  supported Windows versions ([Targeting x86-64 levels](open-questions.md#targeting-x86-64-levels))
-  and gives `popcnt` and SSE4.2 to every program.
-- `-opt=none` as the default is right for development. The guide should say
-  plainly that `speed` is `-O2` and is what a shipped program uses.
-
-### 6.8 What not to do
+### 6.6 What not to do
 
 Do not add a fast-math mode, relax the no-contraction rule, or make overflow
 checking depend on the optimization level. The reproducibility contract
@@ -843,14 +839,19 @@ reduction, a separately named operation says so, for example
   precision, how carrier paths are tracked, "known destinations keep their
   lifetime constraints and region updates when an unresolved target is also
   possible"). Move the second kind into a conformance appendix with its own
-  heading structure, or into compiler-architecture.md where it describes
-  this implementation. The programmer-facing text would be about half the
-  length.
+  heading structure. The appendix stays normative: minimum provenance
+  precision is what makes a program accepted today accepted tomorrow and by
+  another implementation, and known-gaps.md holds the compiler to it
+  ([Reaching-definition limits weaken the per-storage chosen-place guarantee](known-gaps.md#reaching-definition-limits-weaken-the-per-storage-chosen-place-guarantee)).
+  compiler-architecture.md is the place only for how this implementation goes
+  beyond it. The programmer-facing text would be about half the length.
 - **State each mechanism once.** The effect rules
-  ([2.7](#27-effects-as-one-algebra)), the "takes its element like an
-  initialization" rule ([3.4](#34-the-copying-and-consuming-pairs)), and the
-  generic-argument exclusion ([2.3](#23-status-is-resultunit-e)) each appear
-  in several places with slightly different wording.
+  ([2.6](#26-effects-as-one-algebra)), the "takes its element like an
+  initialization" rule, which [Container insertion](design.md#container-insertion),
+  `box`, `shared`, `find_or_insert`, variant construction, and record literals
+  each restate, and the generic-argument exclusion
+  ([2.3](#23-status-is-resultunit-e)) each appear in several places with
+  slightly different wording.
 - **Editorial defects found while reading**, fixed in design.md in the same
   change as this review:
   - [Implicit type conversions](design.md#implicit-type-conversions) listed
@@ -876,26 +877,101 @@ compiler, test, and changelog change in one commit as AGENTS.md requires.
 
 1. Editorial: delete the stale conversion, document procedure members, align
    the `iter` signatures. Done with this review; no behavior changes.
-2. Performance that needs no language change: alias attributes
-   ([6.1](#61-alias-attributes-from-facts-the-checker-already-proves)),
-   container fast paths in IR ([6.2](#62-container-operations-in-ir-not-through-an-operation-table)),
-   `cold noreturn` on the panic entry, and the `-cpu` default. Measure each
+2. Performance that needs no language change: `cold noreturn` on the panic
+   entry, the runtime linked as bitcode
+   ([6.2](#62-container-operations-in-ir-not-through-an-operation-table)), and
+   a leaner unwind bookkeeping ([6.3](#63-unwind-bookkeeping)). Measure each
    with `perf.ps1` and the `bench/` workloads before and after.
-3. `enum` as a payloadless union, and parametric aliases with `Status` as the
-   first user. Both are mostly internal and shrink reflection and the error
-   catalogue.
-4. `any_view` as a `dyn` view. Depends on nothing above; touches `fmt`,
-   `assert`, `panic`, and the witness layout.
-5. Attributes in one position, `move_only` as an attribute, and the drop-hook
-   rule.
-6. `inout` folded into `^mut`. The largest surface change; do it with the
-   formatter able to rewrite call sites and receivers mechanically.
-7. Remove `via`; add container constructors; prune the predeclared universe.
-8. Range facts and loop versioning for checked arithmetic
+3. Parametric aliases with `Status` as the first user, and one type kind for
+   `enum` and `union`. Both are mostly internal and shrink reflection and the
+   error catalogue.
+4. `any_view` lowered as a `dyn` view. Depends on nothing above; touches the
+   witness layout and the printing path.
+5. Attributes in one position, `@(move_only)`, and the copy decision for drop
+   hooks.
+6. Range facts and loop versioning for checked arithmetic
    ([6.4](#64-checked-arithmetic-and-bounds-in-loops)), then measure the
-   dense kernels again.
-9. Evaluate `string` as an ordinary owner and table-driven unwinding on the
-   repository's programs; decide on the measurements.
+   dense kernels again; container fast paths in IR if step 2 left them hot.
+7. Alias attributes ([6.1](#61-alias-attributes-from-facts-the-checker-already-proves)),
+   after the soundness gaps they depend on are closed and design.md states the
+   aliasing rule for unchecked code.
+8. If `inout` is folded into `^mut T` at all ([2.9](#29-one-capability-axis)),
+   last: it is the largest surface change, and it needs the formatter able to
+   rewrite call sites and receivers mechanically. The explanation in
+   [Capabilities and the one rule](design.md#capabilities-and-the-one-rule)
+   can be written now either way.
+
+## Withdrawn proposals
+
+The first draft made these proposals. Each had a cost it did not count that
+outweighs its gain, and none is recommended.
+
+- **Remove `via`.** Assigning to a field or element uses the policy of the
+  variable it belongs to ([Assignment statements](design.md#assignment-statements)).
+  Without it an unbound inner array, after `resize` or `{}`, clones into the
+  default allocator, so arena-backed nested structures spill onto the heap.
+  The proposed replacement, cloning into a live destination's own allocator,
+  contradicts [Last-use transfer](design.md#last-use-transfer): at a last use
+  `x = y` moves and brings `y`'s allocator, so `x`'s allocator would depend on
+  whether `y` is read later, which is why a `via` destination is excluded from
+  the transfer today.
+- **Infer the iteration `Element`.** The yield-mode table reads `Item` against
+  `Element` ([Yield modes](design.md#yield-modes)); for an `Item` of `^X` it
+  cannot tell an owned pointer from a borrowed `X`, and any default would
+  silently change what loop bindings receive.
+- **Make reversal only a `reversed()` method.** A `reversed(self: ^)` method
+  loses mutable reversal; a user container would write a view type and its
+  iterators instead of two methods returning its own iterator; and generic code
+  would lose `Reverse_Iterable`. A user's own `reversed()` already takes
+  precedence over the adapter ([Iteration adapters](design.md#iteration-adapters)).
+- **An `init T` parameter mode** for one `append` per user container. The
+  built-in `try_` forms copy a place only on success
+  ([Container insertion](design.md#container-insertion)); an `init` parameter
+  clones at the call site, before the callee can fail.
+- **Prune the predeclared names.** By the draft's own criterion, what the
+  language's rules reach without an import, `Allocator`, `Allocator_Error`,
+  `Shared`, and `Weak` stay: the `hook(copy)` signature, the `try_` forms, and
+  the region and ownership rules name them. What remained, `make` as named
+  constructors and `free_all` as `a.reset()`, was churn that removed no
+  concept.
+- **Make `string` an ordinary owner.** A copy would allocate and could fail;
+  returning a borrowed `string` parameter by value, as every getter of a
+  `string` field does, would allocate on each call
+  ([Parameter semantics and ABI lowering](design.md#parameter-semantics-and-abi-lowering));
+  and the repository's measurements give about 12.5 ns for a shared copy and
+  drop against 65 to 70 ns for an allocating 16-byte copy
+  ([Thread-affine strings](open-questions.md#thread-affine-strings)), so every
+  copy that is not a last use gets slower. The thread-affine string that open
+  question describes saves the atomic part of the cost without a semantic
+  change.
+- **Table-driven unwinding**, for the reasons in
+  [6.3](#63-unwind-bookkeeping).
+- **Accept `for (key in counts)` as a membership loop.** After `i := 0;`,
+  `for (i in 0 ..< n)` type-checks and loops forever or not at all; a hint for
+  an undeclared name does not catch it, and the rejection exists for exactly
+  that mistake ([Resolved ambiguities](grammar.md#resolved-ambiguities)).
+- **Parenthesize `or_return`'s failure operand**, as `f() or_return(.io)`, so
+  that `f() or_return.len()` reaches the payload. Whitespace does not separate
+  the two, so today's `f() or_return .io` would re-parse as member `.io` of the
+  success payload, changing old code's meaning where the payload has such a
+  member instead of failing; `.name` would stop being an implicit selector in
+  this one position; and every failure operand would grow to shorten the rarer
+  member access.
+- **Delete `stdcall`.** It records which of `core`'s Win32 bindings are
+  `WINAPI` ([Calling conventions](design.md#calling-conventions)). It equals
+  `c` on x64, but deleting it erases what a 32-bit target would need, and
+  adding it back would mean auditing every binding again.
+- **Default to `-cpu=x86-64-v2`.** It is free on Windows 11 24H2, which
+  requires SSE4.2 and POPCNT, but not on Windows 10, which runs on processors
+  without them, such as Core 2 and Phenom II. [CPU levels](compiler-guide.md#cpu-levels)
+  already recommends `x86-64` for distribution and says what `x86-64-v2`
+  costs, and the startup check makes opting in safe.
+- **Retire `any_view` for `..dyn fmt.Formattable` with a downcast on every
+  `dyn`**, for the reasons in [2.4](#24-existentials-any_view-as-a-dyn-view).
+- **A drop hook implies move-only**, for the reasons in
+  [2.8](#28-affine-types-a-drop-hook-needs-a-copy-decision).
+- **Give every payloadless union `enum`'s integer mapping and ordering**, for
+  the reasons in [2.1](#21-sums-one-type-kind-for-enum-and-union).
 
 ## Probes
 
