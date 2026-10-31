@@ -600,12 +600,6 @@ kept and a decision on the default after measurement
   "Computing hard-to-round cases of sin, cos, tan in double precision",
   ARITH 2026); checking the slow paths against them would settle those
   three.
-- Should the compile-time evaluator reclaim what a call frees? A call to
-  `core:math/repro` that takes its fixed-point slow path uses 8 to 16 MB of
-  the evaluator's 64 MB budget (`L0342`), since nothing a call frees is
-  reclaimed, so one constant can fold four such calls but not eight; a call
-  its fast path decides uses far less. `core:math`'s integer `fma` takes
-  about 250 KB a call the same way.
 
 ### Targeting x86-64 levels
 

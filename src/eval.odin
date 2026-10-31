@@ -4,7 +4,6 @@
 package lokec
 
 import "core:mem"
-import "core:mem/virtual"
 import "core:strings"
 import "core:unicode/utf8"
 
@@ -64,7 +63,7 @@ Eval_Frame :: struct {
 
 Evaluator :: struct {
 	k:      ^Checker,
-	arena:  virtual.Arena,
+	storage: Eval_Storage,
 	alloc:  mem.Allocator,
 	frames: [dynamic]^Eval_Frame,
 	steps:  int,
@@ -89,7 +88,7 @@ require_const :: proc(k: ^Checker, e: Expr, what: string, code := "L0340") -> (C
 		return base.const_value, true
 	}
 	ev := Evaluator{k = k, origin = expr_span(e), what = what}
-	defer virtual.arena_destroy(&ev.arena)
+	defer eval_storage_destroy(&ev.storage)
 	value, ok := eval_root(&ev, e, code, "%s must be a compile-time constant")
 	if !ok {
 		return Const_Value{}, false
@@ -107,7 +106,7 @@ require_const :: proc(k: ^Checker, e: Expr, what: string, code := "L0340") -> (C
 // escapes evaluation.
 evaluate_static_elements :: proc(k: ^Checker, e: Expr, what: string, code := "L0454") -> ([]Const_Value, bool) {
 	ev := Evaluator{k = k, origin = expr_span(e), what = what}
-	defer virtual.arena_destroy(&ev.arena)
+	defer eval_storage_destroy(&ev.storage)
 	value, ok := eval_root(&ev, e, code, "%s must be compile-time evaluable")
 	if !ok {
 		return nil, false
@@ -233,45 +232,12 @@ eval_step :: proc(ev: ^Evaluator, span: Span) -> bool {
 
 @(private = "file")
 init_evaluator :: proc(ev: ^Evaluator) -> bool {
-	if err := virtual.arena_init_growing(&ev.arena); err != nil {
+	if err := eval_storage_init(&ev.storage); err != nil {
 		return eval_fail(ev, ev.origin, "L0342", "cannot reserve compile-time scratch memory")
 	}
 	ev.alloc = mem.Allocator{eval_allocator_proc, ev}
 	ev.frames = make([dynamic]^Eval_Frame, 0, 8, ev.alloc)
 	return true
-}
-
-// All execution storage is charged here; frees reclaim nothing and a resize is
-// charged in full.
-@(private = "file")
-eval_allocator_proc :: proc(
-	data: rawptr, mode: mem.Allocator_Mode, size, alignment: int,
-	old_memory: rawptr, old_size: int, location := #caller_location,
-) -> ([]u8, mem.Allocator_Error) {
-	ev := (^Evaluator)(data)
-	#partial switch mode {
-	case .Alloc, .Alloc_Non_Zeroed, .Resize, .Resize_Non_Zeroed:
-		padding := max(alignment - 1, 0)
-		if ev.memory_error != nil || size < 0 || padding > EVAL_MAX_MEMORY - ev.bytes ||
-		   size > EVAL_MAX_MEMORY - ev.bytes - padding {
-			ev.memory_error = .Out_Of_Memory
-			return nil, .Out_Of_Memory
-		}
-		ev.bytes += size + padding
-	case .Free:
-		return nil, nil
-	case .Free_All:
-		return nil, .Mode_Not_Implemented
-	case .Query_Features:
-		if features := (^mem.Allocator_Mode_Set)(old_memory); features != nil {
-			features^ = {.Alloc, .Alloc_Non_Zeroed, .Free, .Resize, .Resize_Non_Zeroed, .Query_Features}
-		}
-		return nil, nil
-	}
-	backing := virtual.arena_allocator(&ev.arena)
-	result, err := backing.procedure(backing.data, mode, size, alignment, old_memory, old_size, location)
-	if err != nil && err != .Mode_Not_Implemented { ev.memory_error = err }
-	return result, err
 }
 
 // Reported outside the allocator, since reporting allocates too.
@@ -2644,13 +2610,24 @@ eval_invoke :: proc(
 
 	flow := eval_block(ev, literal.body)
 	pop(&ev.frames)
+	result, place := frame.result, frame.result_place
+	eval_release_frame(ev, frame)
 	if flow == .Fail {
 		return Eval_Value{}, false
 	}
 	if result_place != nil {
-		result_place^ = frame.result_place
+		result_place^ = place
 	}
-	return frame.result, true
+	return result, true
+}
+
+// A returned frame's table, `defer` list, and record are the evaluator's own,
+// which nothing else points at. Its slots stay: a value may still point at one.
+@(private = "file")
+eval_release_frame :: proc(ev: ^Evaluator, frame: ^Eval_Frame) {
+	delete(frame.locals)
+	delete(frame.defers)
+	free(frame, ev.alloc)
 }
 
 // design.md "Delegating operators": a forwarding overload calls what it
@@ -3406,11 +3383,13 @@ eval_assign :: proc(ev: ^Evaluator, s: ^Stmt_Assign) -> Eval_Flow {
 		if !ok {
 			return .Fail
 		}
+		defer delete(values, ev.alloc)
 		// design.md "Assignment statements": values, then destinations, then writes.
 		destinations, destination_err := make([]Eval_Destination, len(s.lhs), ev.alloc)
 		if destination_err != nil {
 			return .Fail
 		}
+		defer delete(destinations, ev.alloc)
 		for target, index in s.lhs {
 			if is_discard(target) {
 				continue
@@ -3432,8 +3411,10 @@ eval_assign :: proc(ev: ^Evaluator, s: ^Stmt_Assign) -> Eval_Flow {
 		}
 		return .Normal
 	}
+	// The arrays are scratch: each write copies a value out.
 	values, value_err := make([]Eval_Value, len(s.rhs), ev.alloc)
 	if value_err != nil { return .Fail }
+	defer delete(values, ev.alloc)
 	for value, index in s.rhs {
 		computed, ok := eval_expr(ev, value)
 		if !ok {
@@ -3447,6 +3428,7 @@ eval_assign :: proc(ev: ^Evaluator, s: ^Stmt_Assign) -> Eval_Flow {
 	}
 	destinations, destination_err := make([]Eval_Destination, len(s.lhs), ev.alloc)
 	if destination_err != nil { return .Fail }
+	defer delete(destinations, ev.alloc)
 	for target, index in s.lhs {
 		destination, ok := eval_destination(ev, target)
 		if !ok {

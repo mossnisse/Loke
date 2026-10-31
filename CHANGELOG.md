@@ -755,6 +755,12 @@ checklist.
   the compiling machine's library. Avoid them where results must agree bit for
   bit, as in lockstep simulation
   ([`core:math`](standard-library.md#coremath)).
+- Compile-time evaluation reuses the storage it releases, which no longer counts
+  against its 64 MB limit (`L0342`)
+  ([Compile-time procedure evaluation](design.md#compile-time-procedure-evaluation)).
+  A `core:math/repro` call that takes its slow path now uses 1.2 to 5.6 MB
+  rather than 4.7 to 24 MB, so one constant can fold eight or more such calls,
+  and a compile-time `math.fma` uses about a third of what it did.
 
 ### Fixed
 

@@ -43,3 +43,14 @@ grow_stack :: proc(n: int) -> int {
 	if (n == 0) { return 0; }
 	return 1 + grow_stack(n - 1);
 }
+
+// design.md "Compile-time procedure evaluation": storage live at once counts in
+// full. A returned frame releases its own records, but here every frame holds
+// its array until the deepest call returns: 200 of about 400 KB each.
+LIVE :: hold_live(200);
+hold_live :: proc(n: int) -> int {
+	row := [2000]u64{};
+	row[0] = u64(n);
+	if (n == 0) { return 0; }
+	return int(row[0]) + hold_live(n - 1);
+}

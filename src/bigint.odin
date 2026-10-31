@@ -24,6 +24,36 @@ arena :: proc(c: Value_Storage) -> mem.Allocator {
 	return context.allocator
 }
 
+// Evaluator storage charges every digit an integer holds (eval_memory.odin),
+// and core:math/big gives each result room for 32 whatever it needs. A result
+// built there keeps only the digits it uses; the rest goes back for reuse.
+@(private = "file")
+bi_settle :: proc(c: Value_Storage, r: ^Big_Int) {
+	if !is_eval_storage(c) {
+		return
+	}
+	needed := max(r.used, big._MIN_DIGIT_COUNT)
+	if cap(r.digit) > needed {
+		big.internal_int_grow(r, needed, allow_shrink = true)
+	}
+}
+
+// Releases integers this file built in evaluator storage and no value holds;
+// anywhere else they stay until their storage goes.
+@(private = "file")
+bi_release :: proc(c: Value_Storage, values: ..Big_Int) {
+	if !is_eval_storage(c) {
+		return
+	}
+	for value in values {
+		value := value
+		if value.digit.allocator.procedure == eval_allocator_proc {
+			context.allocator = value.digit.allocator
+			big.internal_int_destroy(&value)
+		}
+	}
+}
+
 bi_zero :: proc(c: Value_Storage) -> Big_Int {
 	return bi_from_i64(c, 0)
 }
@@ -34,6 +64,7 @@ bi_clone :: proc(storage: Value_Storage, value: Big_Int) -> Big_Int {
 	value := value
 	result: Big_Int
 	big.int_copy(&result, &value)
+	bi_settle(storage, &result)
 	return result
 }
 
@@ -41,6 +72,7 @@ bi_from_i64 :: proc(c: Value_Storage, v: i64) -> Big_Int {
 	context.allocator = arena(c)
 	r: Big_Int
 	big.int_set_from_integer(&r, v)
+	bi_settle(c, &r)
 	return r
 }
 
@@ -48,6 +80,7 @@ bi_from_u64 :: proc(c: Value_Storage, v: u64) -> Big_Int {
 	context.allocator = arena(c)
 	r: Big_Int
 	big.int_set_from_integer(&r, v)
+	bi_settle(c, &r)
 	return r
 }
 
@@ -55,6 +88,7 @@ bi_pow2 :: proc(c: Value_Storage, power: int) -> Big_Int {
 	context.allocator = arena(c)
 	r: Big_Int
 	big.power_of_two(&r, power)
+	bi_settle(c, &r)
 	return r
 }
 
@@ -128,7 +162,9 @@ bi_cmp :: proc(c: Value_Storage, a, b: Big_Int) -> int {
 }
 
 bi_eq_i64 :: proc(c: Value_Storage, a: Big_Int, b: i64) -> bool {
-	return bi_cmp(c, a, bi_from_i64(c, b)) == 0
+	other := bi_from_i64(c, b)
+	defer bi_release(c, other)
+	return bi_cmp(c, a, other) == 0
 }
 
 @(private = "file")
@@ -141,6 +177,7 @@ bi_binary :: proc(
 	a, b := a, b
 	r: Big_Int
 	op(&r, &a, &b)
+	bi_settle(c, &r)
 	return r
 }
 
@@ -156,6 +193,7 @@ bi_neg :: proc(c: Value_Storage, a: Big_Int) -> Big_Int {
 	a := a
 	r: Big_Int
 	big.int_neg(&r, &a)
+	bi_settle(c, &r)
 	return r
 }
 
@@ -165,11 +203,14 @@ bi_not :: proc(c: Value_Storage, a: Big_Int) -> Big_Int {
 	a := a
 	r: Big_Int
 	big.int_bit_complement(&r, &a)
+	bi_settle(c, &r)
 	return r
 }
 
 bi_and_not :: proc(c: Value_Storage, a, b: Big_Int) -> Big_Int {
-	return bi_and(c, a, bi_not(c, b))
+	inverse := bi_not(c, b)
+	defer bi_release(c, inverse)
+	return bi_and(c, a, inverse)
 }
 
 // Truncated quotient and remainder (design.md "Integer operators"). The caller
@@ -179,6 +220,8 @@ bi_quo :: proc(c: Value_Storage, a, b: Big_Int) -> Big_Int {
 	a, b := a, b
 	q, r: Big_Int
 	big.int_divmod(&q, &r, &a, &b)
+	bi_release(c, r)
+	bi_settle(c, &q)
 	return q
 }
 
@@ -187,6 +230,8 @@ bi_rem :: proc(c: Value_Storage, a, b: Big_Int) -> Big_Int {
 	a, b := a, b
 	q, r: Big_Int
 	big.int_divmod(&q, &r, &a, &b)
+	bi_release(c, q)
+	bi_settle(c, &r)
 	return r
 }
 
@@ -195,6 +240,7 @@ bi_shl :: proc(c: Value_Storage, a: Big_Int, count: int) -> Big_Int {
 	a := a
 	r: Big_Int
 	big.int_shl(&r, &a, count)
+	bi_settle(c, &r)
 	return r
 }
 
@@ -205,7 +251,10 @@ bi_shl :: proc(c: Value_Storage, a: Big_Int, count: int) -> Big_Int {
 // uses `x >> n == ~(~x >> n)`, where `~x` is non-negative.
 bi_shr :: proc(c: Value_Storage, a: Big_Int, count: int) -> Big_Int {
 	if bi_sign(a) < 0 {
-		return bi_not(c, bi_shr_logical(c, bi_not(c, a), count))
+		inverse := bi_not(c, a)
+		shifted := bi_shr_logical(c, inverse, count)
+		defer bi_release(c, inverse, shifted)
+		return bi_not(c, shifted)
 	}
 	return bi_shr_logical(c, a, count)
 }
@@ -219,6 +268,7 @@ bi_shr_logical :: proc(c: Value_Storage, a: Big_Int, count: int) -> Big_Int {
 	// core:math/big clamps the source rather than the result, which leaves a
 	// shift below one 60-bit digit with a stale leading zero digit.
 	big.internal_clamp(&r)
+	bi_settle(c, &r)
 	return r
 }
 
@@ -249,7 +299,10 @@ bi_fits :: proc(c: Value_Storage, v: Big_Int, bits: int, signed: bool) -> bool {
 		return false
 	}
 	// Exactly `bits` magnitude bits fits only as the most negative value.
-	return bi_cmp(c, v, bi_neg(c, bi_pow2(c, bits - 1))) == 0
+	power := bi_pow2(c, bits - 1)
+	lowest := bi_neg(c, power)
+	defer bi_release(c, power, lowest)
+	return bi_cmp(c, v, lowest) == 0
 }
 
 // The modulo-2^n projection every typed integer operation ends with
@@ -258,10 +311,19 @@ bi_wrap :: proc(c: Value_Storage, v: Big_Int, bits: int, signed: bool) -> Big_In
 	if bits <= 0 {
 		return bi_zero(c)
 	}
-	mask := bi_sub(c, bi_pow2(c, bits), bi_from_i64(c, 1))
+	modulus := bi_pow2(c, bits)
+	one := bi_from_i64(c, 1)
+	mask := bi_sub(c, modulus, one)
 	low := bi_and(c, v, mask)
-	if signed && bi_cmp(c, low, bi_pow2(c, bits - 1)) >= 0 {
-		return bi_sub(c, low, bi_pow2(c, bits))
+	bi_release(c, one, mask)
+	defer bi_release(c, modulus)
+	if signed {
+		half := bi_pow2(c, bits - 1)
+		defer bi_release(c, half)
+		if bi_cmp(c, low, half) >= 0 {
+			defer bi_release(c, low)
+			return bi_sub(c, low, modulus)
+		}
 	}
 	return low
 }
@@ -302,8 +364,13 @@ bi_to_float :: proc(c: Value_Storage, v: Big_Int, bits: u16) -> (result: f64, ok
 	shift := max(bi_magnitude_bits(c, magnitude) - keep, 0)
 	top := bi_shr(c, magnitude, shift)
 	high, _ := bi_to_u64(c, top)
-	if bi_cmp(c, bi_shl(c, top, shift), magnitude) != 0 {
+	restored := bi_shl(c, top, shift)
+	if bi_cmp(c, restored, magnitude) != 0 {
 		high |= 1
+	}
+	bi_release(c, top, restored)
+	if negative {
+		bi_release(c, magnitude)
 	}
 	result = round_float(math.ldexp(f64(high), shift), bits)
 	if negative {
@@ -417,6 +484,7 @@ bi_cmp_float :: proc(c: Value_Storage, a: Big_Int, y: f64) -> int {
 		return y > 0 ? -1 : 1
 	}
 	truncated, exact, _ := bi_from_f64_trunc(c, y)
+	defer bi_release(c, truncated)
 	if order := bi_cmp(c, a, truncated); order != 0 || exact {
 		return order
 	}

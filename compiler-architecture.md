@@ -328,7 +328,11 @@ diagnostics and dependencies are retained.
 `const_ops.odin` supplies shared constant semantics. `eval.odin` interprets
 already typed AST with bounded frames, mutation, calls, loops, containers, and
 `defer`. Aggregate assignment deep-copies, except that slices share elements
-and pointers share targets.
+and pointers share targets. `eval_memory.odin` charges each block to the memory
+limit until it is released and reuses released blocks by size class. Returned
+frames, assignment scratch, and integer temporaries are released; a value is
+not, since copies share its digits and elements, so it stays charged until
+evaluation ends.
 
 `generic.odin` owns inference, specialization, `where` checks, caching, and body
 commitment. Procedures and records are monomorphized with definition-site
@@ -702,7 +706,7 @@ be file-private. Paths below are relative to `src/`.
 | --- | --- |
 | `ast_clone.odin`, `generic.odin` | Clean syntax cloning, generic inference, specialization, monomorphization, and instance caches. |
 | `interface.odin` | Typed interface arguments, interface-local predicates, structural requirements, and slot lookup contexts. |
-| `eval.odin` | Bounded typed-AST interpreter for compile-time execution. |
+| `eval.odin`, `eval_memory.odin` | Bounded typed-AST interpreter for compile-time execution, and the storage its memory limit charges. |
 | `expand.odin`, `reflect.odin` | Static `foreach`, expanded switch cases and union argument expansion, reflection descriptors, `type_of`, `typeid_of`, and type-ID freezing. |
 | `materialize.odin` | Read-only storage for address-requiring constants. |
 | `bootstrap.odin`, `stdlib.odin` | Binding ordinary bootstrap declarations and contributing compiler-owned standard members without duplicating type identity. |
