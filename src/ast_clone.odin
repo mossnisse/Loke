@@ -337,6 +337,11 @@ clone_expr :: proc(c: ^Compiler, e: Expr) -> Expr {
 		return n
 
 	case ^Expr_Call:
+		if c.alias_view != nil {
+			if view := alias_view_of_application(c.alias_view, v); view != nil {
+				return view
+			}
+		}
 		n := new_clone(c, Expr_Call, &v.base)
 		n.callee = clone_expr(c, v.callee)
 		n.args = clone_arguments(c, v.args)
@@ -478,6 +483,14 @@ clone_expr :: proc(c: ^Compiler, e: Expr) -> Expr {
 		return new_clone(c, Type_Type, &v.base)
 
 	case ^Type_Poly:
+		if c.poly_substitution != nil {
+			if written, found := c.poly_substitution[name_identifier(c, v.name)]; found {
+				saved_substitution, saved_view := c.poly_substitution, c.alias_view
+				c.poly_substitution, c.alias_view = nil, nil
+				defer c.poly_substitution, c.alias_view = saved_substitution, saved_view
+				return clone_expr(c, written)
+			}
+		}
 		n := new_clone(c, Type_Poly, &v.base)
 		n.name = v.name
 		return n

@@ -1614,15 +1614,23 @@ when a program wants methods on a family of shapes.
 
 ### Parametric aliases
 
-Anonymous unions remove declarations but make signatures longer. A plain alias
-already shortens a signature, as `Io_Status :: Status(Io_Error);` and
-`Config_Error :: (io: io.Error | parse: Parse_Error);` do, and a named shape
-still widens and still matches another package's identical shape. What a plain
-alias cannot do is fix one argument of a generic: `Result(T, io.Error)` needs
-`io` to name `Result($T, Error)` once, as Rust's `io::Result` does. That is a
-separate generics feature with its own design. It would not merge `Status` into
-`Result`, whose end-of-body rule differs, but it would have let `Status` be an
-alias; see [Error handling](#error-handling-2026-10-13).
+Adopted as [Parametric aliases](design.md#parametric-aliases):
+`Io_Result :: Result($T, Io_Error);` fixes one argument of a generic, as Rust's
+`io::Result` does, and an application has its expansion's identity.
+comments.md ["Parametric aliases"](comments.md#parametric-aliases) records why.
+These parts are open:
+
+- **The alias's spelling in diagnostics.** A message names a type by its
+  expansion, so `Io_Result(int)` reads `Result(int, Io_Error)`. Keeping the
+  written spelling needs the syntax a type came from wherever a message names
+  one, since the interned type is shared with every other spelling of it.
+- **An `impl` over an alias's applications.** `impl Io_Result($T)` is `L0746`.
+  Read as `impl Result($T, Io_Error)`, its pattern would take names from the
+  alias's package and the `impl`'s at once, which generic `impl` installation
+  resolves in one scope. Revisit when a program wants methods on a family
+  written through an alias.
+- **Aliases in core.** `core:io` and others name `Result(T, Error)` in full;
+  whether each should declare a `Result($T)` of its own is a library question.
 
 ### Combining error sets
 

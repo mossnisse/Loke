@@ -628,7 +628,7 @@ compare_vectors :: proc(a, b: []int) -> int {
 // first, so a temporary or `move(...)` reaches a consuming member whatever the
 // members' shapes (design.md tie-breaker 1).
 @(private = "file")
-tie_break :: proc(a, b: ^Candidate) -> int {
+tie_break :: proc(k: ^Checker, a, b: ^Candidate) -> int {
 	if a.unconsumed != b.unconsumed {
 		return a.unconsumed < b.unconsumed ? -1 : 1
 	}
@@ -642,7 +642,7 @@ tie_break :: proc(a, b: ^Candidate) -> int {
 		return a.parametric ? 1 : -1
 	}
 	if a.parametric && b.parametric {
-		if preference := compare_generic_specificity(a.template, b.template); preference != 0 {
+		if preference := compare_generic_specificity(k, a.template, b.template); preference != 0 {
 			return preference
 		}
 	}
@@ -650,14 +650,14 @@ tie_break :: proc(a, b: ^Candidate) -> int {
 }
 
 @(private = "file")
-candidate_better :: proc(a, b: ^Candidate) -> bool {
+candidate_better :: proc(k: ^Checker, a, b: ^Candidate) -> bool {
 	switch compare_vectors(candidate_ranks(a), candidate_ranks(b)) {
 	case -1:
 		return true
 	case 1, 2:
 		return false
 	}
-	return tie_break(a, b) == -1
+	return tie_break(k, a, b) == -1
 }
 
 // ------------------------------------------------------------------- entry --
@@ -719,7 +719,7 @@ choose_candidate :: proc(
 	for index in viable {
 		dominated := false
 		for other in viable {
-			if other != index && candidate_better(&all[other], &all[index]) {
+			if other != index && candidate_better(k, &all[other], &all[index]) {
 				dominated = true
 				break
 			}

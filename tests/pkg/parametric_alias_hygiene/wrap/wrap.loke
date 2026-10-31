@@ -1,0 +1,13 @@
+package wrap;
+
+// What the alias's failure is; private, so an importer cannot name it.
+Local :: enum { Inner }
+
+// An outcome whose failure is this package's own `Local`.
+@(public)
+Wrap :: Result($T, Local);
+
+@(public)
+make_failed :: proc() -> Wrap(int) {
+	return .err(.Inner);
+}

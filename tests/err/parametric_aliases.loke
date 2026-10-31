@@ -1,0 +1,29 @@
+// design.md "Parametric aliases": each `$` name is bound where an argument
+// reaches it, by one kind; the body names a type and is not `distinct`; an
+// alias does not refer to itself, is declared at package scope, and is named
+// with its arguments; and an `impl` cannot range over its applications.
+package main;
+
+Io_Error :: enum { Closed, Eof }
+Io_Result :: Result($T, Io_Error);
+Buf :: [$N]u8;
+Pair :: struct($A, $B: type) { a: A, b: B }
+Hidden :: Pair($T, struct { x: $U });
+Both :: ([$N]u8, $N);
+Fresh :: distinct [$N]u8;
+Loop :: Option(Loop($T));
+Ping :: Option(Pong($T));
+Pong :: Option(Ping($T));
+Computed :: size_of($T);
+
+impl Buf($N) {
+	count :: proc(self) -> int { return N; }
+}
+
+bare :: proc(r: Io_Result) {}
+arity :: proc(r: Io_Result(int, int)) {}
+value :: proc(b: Buf(int)) {}
+
+main :: proc() {
+	Local :: Option($T);
+}

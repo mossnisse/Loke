@@ -1,0 +1,69 @@
+// design.md "Parametric aliases": an alias whose body binds `$` names takes
+// them as arguments in order of first appearance, and an application is the
+// type its body denotes, with no identity of its own. A parameter written
+// through one infers and ranks as its expansion ("Specialization"), and a
+// `Unit` success reached through one keeps its end-of-body return ("One
+// result").
+package main;
+import "core:fmt";
+
+Io_Error :: enum { Closed, Eof }
+Io_Result :: Result($T, Io_Error);
+Io_Status :: Result(Unit, $E);
+Buf :: [$N]u8;
+Twice :: ($T, $T);
+Maybe_Io :: Option(Io_Result($T));
+// The order is the order of first appearance, not of the body's structure.
+Swapped :: map[$K]Io_Result($V);
+
+static_assert(Io_Result(int) == Result(int, Io_Error));
+static_assert(Buf(4) == ([4]u8));
+static_assert(Twice(int) == ((int, int)));
+static_assert(Maybe_Io(int) == Option(Result(int, Io_Error)));
+static_assert(Swapped(string, int) == (map[string]Result(int, Io_Error)));
+
+read :: proc(fail: bool) -> Io_Result(int) {
+	if (fail) { return .err(.Eof); }
+	return 7;
+}
+
+payload :: proc(r: Io_Result($T)) -> T {
+	return r or_else panic("failed");
+}
+
+length :: proc(b: Buf($N)) -> int {
+	return N;
+}
+
+which_general :: proc(r: Result($T, $E)) -> string { return "general"; }
+which_io :: proc(r: Io_Result($T)) -> string { return "io"; }
+which :: proc { which_general, which_io }
+
+done :: proc(error: $E) -> Io_Status(E) {
+	_ = error;
+}
+
+early :: proc(error: $E, stop: bool) -> Io_Status(E) {
+	if (stop) { return; }
+	fmt.println("not stopped");
+}
+
+impl Io_Result(string) {
+	describe :: proc(self) -> string { return "one application"; }
+}
+
+main :: proc() {
+	fmt.println(read(false), read(true));
+	fmt.println(payload(read(false)));
+	fmt.println(length(Buf(16){}));
+	pair: Twice(int) = {1, 2};
+	fmt.println(pair);
+	maybe: Maybe_Io(string) = .some(.ok("x"));
+	fmt.println(maybe);
+	general: Result(int, string) = .ok(1);
+	fmt.println(which(general), which(read(false)));
+	fmt.println(done(3), early(4, true), early("x", false));
+	text: Io_Result(string) = .ok("t");
+	fmt.println(text.describe());
+	fmt.println(typeid_of(Io_Result(int)), typeid_of(Io_Status(int)));
+}

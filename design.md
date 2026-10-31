@@ -1999,6 +1999,44 @@ My_Int :: int;
 static_assert(My_Int == int);
 ```
 
+#### Parametric aliases
+
+An alias whose type binds `$` names is parametric: an application supplies
+them, and denotes the type the alias's body denotes with each name bound.
+
+```loke
+Io_Result :: Result($T, Io_Error);
+Buf :: [$N]u8;
+
+static_assert(Io_Result(int) == Result(int, Io_Error));
+static_assert(Buf(16) == ([16]u8));
+```
+
+- **Parameters.** The parameters are the distinct `$` names of the body, in
+  the order each first appears, so `Lookup :: map[$K]Option($V)` is applied as
+  `Lookup(string, int)`. A name is a constant parameter where it is an array
+  length, a `Simd` lane count, or a generic argument whose parameter is a
+  constant, with that parameter's type; elsewhere it is a `type` parameter. A
+  name bound both ways, or written where no argument can bind it, such as inside
+  an inline `struct` or an array-length expression, is an error.
+- **No identity.** An application is the type its body denotes, not a new one:
+  `Io_Result(int)` is `Result(int, Io_Error)` wherever either is written, in
+  type identity, conversions, overloads, `typeid`, and printing. A type's name,
+  in a diagnostic, a `typeid`, or a reflected descriptor, is its expansion's.
+- **Names.** The body's names resolve where the alias is declared, the
+  arguments' where the application is written, so a private name in the body
+  is the declaring package's even when an importer declares one of its own.
+- **Uses.** An application takes exactly the alias's parameters, positionally,
+  and a bare `Io_Result` names nothing. A parameter pattern written through an
+  alias, `r: Io_Result($T)`, matches and ranks as its expansion
+  ([Specialization](#specialization)). An `impl` may name one application,
+  `impl Io_Result(string)`, which is a block on that type, but not an
+  application to `$` names: write the generic type it stands for.
+- **Declaration.** A parametric alias is declared at package scope. Its body
+  names a type: not a `distinct` type, which would be new, nor a call that
+  computes one. An alias may not refer to itself, directly or through other
+  aliases.
+
 ### Distinct types
 
 A distinct type is a new type with the same representation as its underlying
@@ -7529,7 +7567,9 @@ behavior to foreign code, wrap a concrete instantiation in a
 ### Generic argument identity
 
 An instantiation is identified by its declaration and ordered generic
-arguments. A type argument uses type identity. A value argument uses its
+arguments; an application of a [parametric alias](#parametric-aliases) is not
+an instantiation, and has its expansion's identity. A type argument uses type
+identity. A value argument uses its
 declared parameter type and the constant after conversion to that type.
 
 A floating argument uses its exact IEEE-754 encoding at the converted width.
@@ -7781,6 +7821,9 @@ flip :: proc(pair: ($A, $B)) -> (B, A) {
   nothing, so a name that only it holds must be bound by another parameter.
 - A named record or union matches neither, since its fields and variants belong
   to its declaration.
+- A pattern written through a [parametric alias](#parametric-aliases),
+  `Io_Result($T)`, is its expansion: it binds as `Result($T, Io_Error)` binds,
+  and is as specific as that pattern for tie-breaker 5.
 
 The pattern binds types only. The argument must still convert to the parameter
 type it produces, following the mode, calling-convention, type-level effect, and

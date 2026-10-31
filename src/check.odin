@@ -870,6 +870,9 @@ resolve_declaration_signature :: proc(k: ^Checker, d: ^Decl) {
 			mark_template_operator(k, d)
 			mark_template_hook(k, d)
 			reject_uninstantiated_generic(k, d)
+			if template := generic_template_for(k, d.symbols[0]); template != nil && template.kind == .Alias {
+				check_alias_template(k, d, template)
+			}
 			return
 		}
 	}
@@ -2149,6 +2152,10 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 			}
 			return value.denoted_type
 		}
+		// design.md "Parametric aliases": `Status(int)` denotes its body's type.
+		if alias := generic_template_of_callee(k, value.callee, .Alias); alias != nil {
+			return resolve_alias_application(k, value, alias, report = true)
+		}
 		// `Table(string, int)`: a generic application in type position.
 		template := generic_template_of_callee(k, value.callee, .Record)
 		if template == nil {
@@ -2317,6 +2324,9 @@ report_unresolved_type :: proc(k: ^Checker, syntax: Expr) {
 		if template := generic_template_of_callee(k, call.callee, .Record); template != nil {
 			return
 		}
+		if template := generic_template_of_callee(k, call.callee, .Alias); template != nil {
+			return
+		}
 		if callee := symbol_of(k.c, named_callee_symbol(k, call.callee)); callee != nil && callee.kind == .Proc && call.type != INVALID_TYPE {
 			errorf(k.c, call.span, "L0306", "this call does not compute a type: it returns `%s`", type_name(k.c, call.type))
 			return
@@ -2396,6 +2406,12 @@ check_decl :: proc(k: ^Checker, d: ^Decl) {
 
 @(private = "file")
 check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
+	// design.md "Parametric aliases": one is declared at package scope, where
+	// every use can name it.
+	if !d.top_level && declaration_generic_kind(d) == .Alias {
+		errorf(k.c, d.span, "L0741", "a parametric alias is declared at package scope, not in a procedure")
+		return
+	}
 	// A template's body is checked in its instances.
 	if len(d.symbols) == 1 && d.symbols[0] != INVALID_SYMBOL && symbol_is_generic(k, d.symbols[0]) {
 		return
@@ -2861,6 +2877,9 @@ success_names_generic :: proc(k: ^Checker, scope: ^Scope, syntax: Expr, success:
 	#partial switch v in syntax {
 	case ^Expr_Call:
 		template := generic_template_of_callee(k, v.callee, .Record)
+		if template == nil {
+			template = generic_template_of_callee(k, v.callee, .Alias)
+		}
 		if template == nil || len(v.args) != len(template.params) {
 			return true
 		}

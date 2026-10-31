@@ -1154,6 +1154,37 @@ exported or passed as procedure values. Only concrete instantiations reach ABI
 lowering. A foreign wrapper exposes a concrete signature, keeping generic
 specialization separate from the binary interface.
 
+### Parametric aliases
+
+A plain alias cannot fix one argument of a generic, so a package whose
+operations all fail with one error type wrote `Result(T, Error)` in every
+signature, and `Status(E)` had to be a union of its own rather than a name for
+`Result(Unit, E)`. A [parametric alias](design.md#parametric-aliases) is a
+function from arguments to an existing type, not a new type: giving it an
+identity would make `Io_Result(int)` and `Result(int, Io_Error)` two types that
+convert to each other, which is a `distinct` type, and would bring back the
+split that made generic code over `Result` reject a `Status`.
+
+The parameters are the `$` names in order of first appearance rather than a
+written list, because the body already says where each one goes and what it
+is bound by, as a procedure's `$` parameters do; a list would repeat both and
+need a syntax of its own. A name an argument cannot bind, one inside an inline
+definition or an array-length expression, would make an application impossible
+to match against the type it denotes, so it is rejected where the alias is
+declared rather than at the first use.
+
+An application's names resolve where the alias is declared, as a generic
+record's fields do, so an alias over a package's private type is as good in an
+importer as in its own package. That rule is why an `impl` over an alias's
+applications is left out for now: generic `impl` installation matches a written
+pattern in the `impl`'s scope, and an alias's pattern needs the alias's scope
+for its body and the `impl`'s for its arguments.
+
+Diagnostics and `typeid` names spell the expansion. A type is interned once,
+whatever spelling reached it, so keeping the alias's name would need the written
+syntax at every message; that is left open in
+[Parametric aliases](open-questions.md#parametric-aliases).
+
 ### Colon annotations on inferred generic bindings
 
 `x: $T: Shape` had no specified constraint semantics. Parameter patterns such

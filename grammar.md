@@ -326,7 +326,9 @@ capability modifier, written on a slice, a pointer, a `dyn` view, or a unary
 `&`; see [design.md](design.md#capabilities-and-the-one-rule). `Type_Arguments`
 also carries specialization patterns such as `^Table($Key, $Value)`, since
 `$Name` is itself a `Type`. A generic argument is positional: it takes no
-`name =`, `inout`, or `..`.
+`name =`, `inout`, or `..`. A constant declaration whose type binds `$Name`,
+`Io_Result :: Result($T, Io_Error);`, is a parametric alias; see
+[design.md](design.md#parametric-aliases).
 
 An inferred `$Name` has no colon annotation. Structural shapes are written
 around the binding, as in `[]$Element`, and Boolean constraints use a

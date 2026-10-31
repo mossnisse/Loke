@@ -402,6 +402,16 @@ checklist.
 
 ### Added
 
+- A type alias may bind `$` names, which an application supplies in order of
+  first appearance: `Io_Result :: Result($T, Io_Error);` makes
+  `Io_Result(int)` the type `Result(int, Io_Error)`, with no identity of its
+  own, and `Buf :: [$N]u8;` takes a constant
+  ([Parametric aliases](design.md#parametric-aliases)). The body's names
+  resolve where the alias is declared. A parameter written through one,
+  `r: Io_Result($T)`, infers and ranks as its expansion. A misplaced or
+  doubly bound `$` name, a `distinct` or computed body, a self-reference, a
+  local alias, and an `impl` over an alias's applications are rejected with
+  `L0741` to `L0746`.
 - [Minimum provenance precision](design.md#minimum-provenance-precision)
   now guarantees that a pointer chosen among borrows by branches or
   reassignment keeps at least 8 places of each storage apart, and 64 in all,

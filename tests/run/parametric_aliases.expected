@@ -1,0 +1,10 @@
+.ok(7) .err(Eof)
+7
+16
+(1, 2)
+.some(.ok("x"))
+general io
+not stopped
+.ok .ok .ok
+one application
+Result(int, Io_Error) Result(Unit, int)

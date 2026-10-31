@@ -87,7 +87,7 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 		set_type_call(v, resolve_simd_application(k, v))
 		return
 	}
-	if generic_template_of_callee(k, v.callee, .Record) != nil {
+	if generic_template_of_callee(k, v.callee, .Record) != nil || generic_template_of_callee(k, v.callee, .Alias) != nil {
 		set_type_call(v, resolve_type_syntax(k, v))
 		return
 	}

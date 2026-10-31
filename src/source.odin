@@ -95,6 +95,13 @@ Compiler :: struct {
 	// captured names, which the clone rewrites to the receiver's fields
 	// (`ast_clone.odin`). Nil for every other clone.
 	capture_rewrite: ^Capture_Rewrite,
+	// While a parametric alias's body is cloned into a view: each parameter's
+	// written argument, which the clone puts where its `$` name was; and the
+	// checker whose scope tells which applications in the clone are aliases to
+	// expand the same way (`alias_view` in generic.odin). Nil for every other
+	// clone.
+	poly_substitution: ^map[Identifier_Id]Expr,
+	alias_view:        ^Checker,
 
 	// Hypothetical checks (overload bounds and interface requirements) may use
 	// the ordinary checker, but must not enroll backend artifacts in the final
@@ -133,6 +140,9 @@ Compiler :: struct {
 	generic_impls:         map[Symbol_Id][dynamic]^Generic_Impl,
 	instances:             map[string]^Instance,
 	procedure_instances:   map[Symbol_Id]^Instance,
+	// design.md "Parametric aliases": the type each application denotes, by the
+	// same key, so an alias names one type however often it is applied.
+	alias_expansions:      map[string]Type_Id,
 	instantiation_stack:   [dynamic]Instantiation_Frame,
 	instantiation_count:   int,
 	instantiation_limit_hit: bool,

@@ -1,0 +1,22 @@
+// design.md "Parametric aliases": an alias's body resolves where the alias is
+// declared, so `wrap.Wrap(T)` fails with `wrap`'s private `Local`, not this
+// package's, in a type, in a pattern, and in a value.
+package main;
+import "core:fmt";
+import "wrap";
+
+Local :: enum { Outer, Other }
+
+unwrap :: proc(r: wrap.Wrap($T)) -> bool {
+	switch (r) {
+	case .ok: return true;
+	case .err: return false;
+	}
+}
+
+main :: proc() {
+	r := wrap.make_failed();
+	fmt.println(r, unwrap(r));
+	ok: wrap.Wrap(string) = .ok("fine");
+	fmt.println(ok, unwrap(ok));
+}

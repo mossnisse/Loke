@@ -21,6 +21,17 @@ declare_impl_block :: proc(k: ^Checker, item: ^Item_Impl, quiet := true) {
 			register_generic_impl(k, item, template.symbol, call.args)
 			return
 		}
+		// design.md "Parametric aliases": a block over every application of an
+		// alias would bind names in two packages' scopes at once; one over a
+		// single application, `impl Io_Result(int)`, is a block on that type.
+		if template := generic_template_of_callee(k, call.callee, .Alias); template != nil && type_syntax_has_poly(item.type) {
+			item.declared = true
+			errorf(
+				k.c, expr_span(item.type), "L0746",
+				"an `impl` subject cannot apply a parametric alias to `$` names; write the generic type it stands for",
+			)
+			return
+		}
 	}
 
 	// A quiet attempt that fails is rolled back and retried, so it is a

@@ -113,6 +113,15 @@ Generic specialization and static `foreach` clone syntax through
 definition-site scope. An annotated template cannot serve as a fresh
 specialization.
 
+A parametric alias is a `Generic_Template` of kind `.Alias` that is never
+instantiated. `resolve_alias_application` binds the arguments as a record
+application does, resolves a clone of the body in an instance scope off the
+alias's own, and caches the type by the instance key; `match_alias_pattern`
+matches a pattern written through one by its body. The overload tie-breakers
+read syntax only, so they compare `alias_view`s, clones in which each
+application is its body with the arguments substituted. A view is never
+resolved, since its body's names belong to another scope.
+
 ### Disposable control-flow graphs
 
 `cfg.odin` builds `Flow_Graph` blocks referencing typed AST nodes.

@@ -1,0 +1,36 @@
+L0742
+@11:32
+`$U` is not where an argument of `Hidden` can bind it: write it as a type, an array length, or a generic argument
+L0743
+@12:18
+`$N` is bound by a type here and by a constant of type `int` earlier
+L0744
+@13:10
+a parametric alias names an existing type, so it cannot be `distinct`; declare a generic `struct` or `union` for a new one
+L0745
+@14:1
+the type alias `Loop` is defined in terms of itself
+L0745
+@15:1
+the type alias `Ping` is defined in terms of itself
+L0745
+@16:1
+the type alias `Pong` is defined in terms of itself
+L0744
+@17:13
+a parametric alias names a type; a call that computes one cannot bind `$` names
+L0746
+@19:6
+an `impl` subject cannot apply a parametric alias to `$` names; write the generic type it stands for
+L0431
+@23:17
+`Io_Result` is generic and needs its arguments, as in `Io_Result(...)`
+L0431
+@24:18
+`Io_Result` takes 1 generic argument, found 2
+L0432
+@25:22
+`int` is not representable
+L0741
+@28:2
+a parametric alias is declared at package scope, not in a procedure
