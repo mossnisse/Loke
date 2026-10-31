@@ -11,6 +11,49 @@ Design rationale and differences from Odin are recorded in
 The current behavior inventory is in [Nondeterminism and undefined behavior
 audit](nondeterminism-audit.md).
 
+## Review of the zone, math, Once, and evaluator commits (2026-10-31)
+
+Reviewed `da8e5fd7`, `a7ae660b`, `b505e25e`, and `e32d97f6` for correctness,
+simplification, and structure. Two findings remain:
+
+- **Correct the tangent proof's relative midpoint bound (P2).**
+  [tan.loke](core/math/repro/tan.loke) and
+  [`core:math/repro`](standard-library.md#coremathrepro) say no result is within
+  `2^-117` of a midpoint relative to its value. The listed hardest tangent
+  argument, `0x1.dffffffffff1fp-22`, contradicts that: its distance is about
+  `2^-79.518` ulps, or `2^-132.425` relative. Its nearest midpoint is halfway
+  between `0x1.e000000000151p-22` and `0x1.e000000000152p-22`. Exact rational
+  intervals from 24 alternating-series terms for sine and cosine, followed
+  by interval division, prove the relative distance is between `2^-134` and
+  `2^-132`, below the claimed bound. Convert the stated ulp distance to a
+  conservative relative bound, such as `2^-134`, in both places. The
+  `2^-250` slow-path error still leaves ample margin; this finding does not
+  demonstrate a misrounded result. The
+  [published search](https://www.vinc17.net/research/papers/arith33x.pdf) and
+  CORE-MATH's search-file comments agree with the stated coverage; the error
+  is in converting ulps to a relative distance for tangent.
+- **Use the existing minimized integer copy (P3).**
+  [bigint.odin](src/bigint.odin)'s `bi_clone` copies into the default 32-digit
+  allocation and immediately calls `bi_settle` to shrink it. Odin's
+  `big.int_copy` already accepts `minimize`: use
+  `big.int_copy(&result, &value, minimize = is_eval_storage(storage))` in
+  place of those two calls. It makes the same-sized result directly,
+  preserves the existing behavior outside evaluator storage, and removes an
+  allocation and copy for small evaluator integers. Net: one line fewer.
+
+Zone formatting follows the other time formatters. The `Once` wait rechecks
+the state under its lock, and settling takes the same lock before waking,
+which prevents a missed transition. The allocator keeps reuse separate from
+values evaluated code may address. No further actionable structural change
+was found.
+
+Validation passed: 177 compiler unit tests; the complete run and trap corpora,
+diagnostics, library-package tests, and math oracle probe; optimized runs of
+the zone, contended `Once`/`Lazy`, poisoned-waiter, and reclaimed-evaluator
+regressions; and the time and sync API checks. A temporary allocator probe
+also checked alignment, zeroing, grow/shrink preservation, live-byte
+accounting, and reuse across every small request size and alignment class.
+
 ## Review of the recorded-gap fixes (2026-10-31)
 
 Reviewed `cbac28d9` ("Fix the bugs recorded in known-gaps.md") for correctness,
