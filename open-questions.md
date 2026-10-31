@@ -11,6 +11,69 @@ Design rationale and differences from Odin are recorded in
 The current behavior inventory is in [Nondeterminism and undefined behavior
 audit](nondeterminism-audit.md).
 
+## Review of public types' private interface methods (2026-10-31)
+
+Reviewed `c0b30260` for correctness, simplification, and structure. Three
+findings remain:
+
+- **Handle private formatters before building witnesses (P2).** Printing a
+  public type with a private `format` reaches an internal backend contract
+  error. The [reproduction and cause](known-gaps.md#a-public-types-private-formatter-reaches-an-invalid-backend-witness)
+  include passing parent and public-method controls.
+- **Only diagnose private methods as methods (P3).** `private_slot_member`
+  in [src/interface.odin](src/interface.odin) tests name and visibility but
+  does not test symbol kind or receiver. A private constant named `call`,
+  or a private procedure without a receiver named for a slot, is described
+  as a private method when the bound fails. Neither could meet the slot
+  even if made public. Restrict this diagnostic to actual receiver methods,
+  including those reached through an overload group; otherwise retain the
+  missing-method/signature diagnostic. Both failures reproduce with:
+
+  ```loke
+  // lib/lib.loke
+  package lib;
+  @(public) S :: struct {}
+  impl S { call :: 42; poke :: proc() -> int { return 1; } }
+  ```
+
+  ```loke
+  // main.loke
+  package main;
+  import "./lib";
+  import "base:interfaces";
+  Check :: interface($T: type) { slot poke: proc(self) -> int; }
+  force :: proc(s: $T) where Check(T) {}
+  apply :: proc(f: $T) where interfaces.Callable(T, proc() -> int) {}
+  main :: proc() { s := lib.S{}; force(s); apply(s); }
+  ```
+
+- **Correct the associated-constant comments (P3).** The new comment in
+  [tests/pkg_err/private_slot/counter/counter.loke](tests/pkg_err/private_slot/counter/counter.loke)
+  says private associated constants meet no requirement anywhere. Ordinary
+  lookup still sees them in their own package: adding `Secret :: int` to
+  the public `S` above makes `Has_Secret(S)` true there for
+  `Has_Secret :: interface($T: type) { T.Secret -> type; }`, while the
+  corresponding foreign application is false. Conversely, the citing
+  comment above `required_associated_constant` in
+  [src/interface.odin](src/interface.odin) still describes its fallback as
+  an inherent member "whatever its visibility". State both the ordinary
+  lookup rule and the restricted fallback accurately, as
+  [Interface bodies](design.md#interface-bodies) does.
+
+Sharing `slot_candidates` between satisfaction, constrained lookup, and witness
+construction keeps the visibility policy in one place. The new helpers have
+focused responsibilities; no additional abstraction or actionable line-count
+simplification was found. The formatter failure exposes a caller that requests
+a witness without first ensuring that its slot has an eligible candidate.
+
+Validation passed: 178 compiler unit tests, 43 LSP unit tests, diagnostic and
+package-diagnostic suites, the package executable corpus, compiler/LSP builds,
+and heading citations. Additional probes covered public generic records,
+distinct types, unions, enums, same-package rejection of private slots, and
+the associated-constant visibility distinction. The formatter regression was
+compared with a freshly built parent compiler. No implementation fixes were
+applied during review.
+
 ## Review of constant view elements and the wider borrow matrix (2026-10-31)
 
 Reviewed `72431f48` for correctness, simplification, and structure. Two
