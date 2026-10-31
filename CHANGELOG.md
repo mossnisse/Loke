@@ -21,6 +21,14 @@ checklist.
   the method `@(public)`, if meeting the interface is meant to be part of the
   type's API, or by passing a private wrapper type instead.
 
+- For the same reason, a public type's private `format` no longer decides how
+  it prints: the type prints by the generated default in every package, its
+  own included, as an explicit `dyn fmt.Formattable` view does
+  ([String format printing](design.md#string-format-printing)). Code in its
+  package can still call the method directly. Upgrade by marking `format`
+  `@(public)` to keep the custom form. Private types and every type in a
+  `package main` are unchanged.
+
 - A store through a carrier that the same multiple assignment reassigns, as
   `p^.head` in `p, p^.head = &mut y, p^.tail`, is now checked where the
   carrier pointed before the statement, where the store lands

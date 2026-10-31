@@ -1,0 +1,51 @@
+package lib;
+
+import "core:fmt";
+
+// design.md "Interface bodies": a public type's private `format` meets no slot,
+// here included, so design.md "String format printing" uses the generated
+// default for it in every package. A private type's own `format` still serves.
+
+@(public)
+Secret :: struct { @(public) id: int, code: int }
+
+impl Secret {
+	format :: proc(self, w: fmt.Writer, o: fmt.Options) { fmt.concat_to(w, "secret"); }
+}
+
+@(public)
+Tag :: distinct string;
+
+impl Tag {
+	format :: proc(self, w: fmt.Writer, o: fmt.Options) { fmt.concat_to(w, "tag"); }
+}
+
+@(public)
+Shown :: struct {}
+
+impl Shown {
+	@(public)
+	format :: proc(self, w: fmt.Writer, o: fmt.Options) { fmt.concat_to(w, "shown"); }
+}
+
+hidden :: struct {}
+
+impl hidden {
+	format :: proc(self, w: fmt.Writer, o: fmt.Options) { fmt.concat_to(w, "hidden"); }
+}
+
+@(public)
+make_secret :: proc(id: int) -> Secret { return Secret{id, 7}; }
+
+@(public)
+show_here :: proc() {
+	s := Secret{1, 7};
+	fmt.println(s);
+	view := (dyn fmt.Formattable)(&s);
+	fmt.println(view);
+	// Ordinary lookup still finds the private method.
+	s.format(fmt.stdout(), fmt.DEFAULT_OPTIONS);
+	fmt.println("");
+	fmt.println(hidden{});
+	fmt.println([?]Tag{"a"}, Tag("b"));
+}

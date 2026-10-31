@@ -17,12 +17,17 @@ ensure_format_member :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) {
 	}
 	if writer == INVALID_TYPE || options == INVALID_TYPE { return }
 	k.c.runtime_types["Writer"], k.c.runtime_types["Options"] = writer, options
+	// A public type's private `format` meets no slot (design.md "Interface
+	// bodies"), so the slot, and with it printing, still needs the default.
+	hidden := type_is_exported(k.c, type)
 	id := INVALID_SYMBOL
 	for member in type_of(k.c, type).members {
-		if sym := symbol_of(k.c, member); sym != nil && sym.name == name {
-			if sym.synth != .Standard_Format { return }
+		sym := symbol_of(k.c, member)
+		if sym == nil || sym.name != name { continue }
+		if sym.synth == .Standard_Format {
 			id = member
-			break
+		} else if !(hidden && sym.synth == .None && !sym.public) {
+			return
 		}
 	}
 	if id == INVALID_SYMBOL {
@@ -49,19 +54,27 @@ type_is_printable :: proc(c: ^Compiler, type: Type_Id) -> bool {
 		!type_is_capture_record(c, type)
 }
 
-// Whether a type declares its own `format`, as `formatter_of` would find it.
+// Whether a type declares its own `format` that printing uses: one the
+// `Formattable` slot can meet. A public type's private `format` meets no slot
+// (design.md "Interface bodies"), so the type prints by the generated default.
 type_has_written_format :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	sym := written_format_member(c, type)
+	return sym != nil && (sym.public || !type_is_exported(c, type))
+}
+
+// A type's own declared `format`, whether or not a slot may use it.
+written_format_member :: proc(c: ^Compiler, type: Type_Id) -> ^Symbol {
 	info := type_of(c, type)
 	if info == nil {
-		return false
+		return nil
 	}
 	for member in info.members {
 		sym := symbol_of(c, member)
 		if sym != nil && sym.synth == .None && !sym.bound_excluded && identifier_text(c, sym.name) == "format" {
-			return true
+			return sym
 		}
 	}
-	return false
+	return nil
 }
 
 // A type's inherent `format`, or INVALID_SYMBOL when the compiler generates one.

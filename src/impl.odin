@@ -408,6 +408,11 @@ member_is_visible :: proc(k: ^Checker, sym: ^Symbol) -> bool {
 	// Local extensions remain callable; interface slots bypass this visibility
 	// rule and retain the concrete type's coherent printed representation.
 	if sym.synth == .Standard_Format {
+		// A public type's private `format` keeps its name for ordinary lookup,
+		// though the slot uses the default (design.md "Interface bodies").
+		if written_format_member(k.c, sym.owner_type) != nil {
+			return false
+		}
 		if pkg := package_of(k.c, lookup_package(k)); pkg != nil {
 			if visible_member_named(k, pkg.extensions[sym.owner_type], sym.name) != INVALID_SYMBOL {
 				return false
