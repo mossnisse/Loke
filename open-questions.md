@@ -11,6 +11,48 @@ Design rationale and differences from Odin are recorded in
 The current behavior inventory is in [Nondeterminism and undefined behavior
 audit](nondeterminism-audit.md).
 
+## Review of the follow-up fixes (2026-10-31)
+
+Reviewed `4b31729d` (tangent bound and minimized integer copies), `d66b3d8b`
+(the summary/arena review record), `72da8ff0` (private names in generic
+aliases), and `cb7a73bf` (chosen places per storage) for correctness,
+simplification, and structure. Three gaps remain in the alias fix:
+
+- **Recognize aliases of the written `type` (P2).** A public `Meta :: type`
+  makes `Inner: Meta : Corner` bypass the target check. The
+  [reproduction and cause](known-gaps.md#typed-generic-aliases-still-skip-targets-when-their-written-type-is-an-alias)
+  include an instance using the alias.
+- **Recognize composite member aliases containing generic parameters (P2).**
+  `Hidden :: []T` is not classified as a type, so a public alias selecting
+  `Box(T).Hidden` produces no warning. The
+  [reproduction and cause](known-gaps.md#generic-member-aliases-of-composite-types-are-not-recognized-as-types)
+  show why the helpers' differing lists of type-syntax nodes should share
+  one recognition rule.
+- **Follow member aliases without an arbitrary depth cutoff (P2).** A long
+  acyclic chain loses the warning for a public alias of its private first
+  member. See the
+  [reproduction and cause](known-gaps.md#long-chains-of-member-aliases-lose-warnings-for-private-names).
+
+The integer copy now uses the existing minimized-copy operation directly,
+which removes the extra allocation and copy. The provenance helpers keep
+budget accounting separate from the paths used by accesses, and the remaining
+[repointed-carrier limitation](known-gaps.md#a-carrier-repointed-between-choices-counts-its-places-against-both-storages)
+is explicitly recorded. No further actionable simplification was found.
+
+An independent exact rational interval for the listed hard tangent argument
+puts its relative midpoint distance strictly between `2^-134` and `2^-132`
+(about `2^-132.425`), consistent with the corrected bound. The math API check
+passes unchanged. No implementation fixes were applied during review.
+
+Validation passed: 178 compiler unit tests, 43 LSP unit tests, diagnostic and
+package-diagnostic suites, the borrow matrix, the executable corpus, the
+reproducible-math derivation and rounding suites, compiler/LSP builds, and
+heading citations. The three alias omissions were reproduced with
+the freshly built compiler; direct written `type`, shorter alias chains,
+and a plain `impl` provided controls that do warn. The reproductions and
+diagnostic/API checks were also confirmed with a dedicated compiler built
+from `e4c5dce6`, the merged state of the four reviewed commits.
+
 ## Review of summary visits and scratch arenas (2026-10-31)
 
 Reviewed `e4d3562b` ("Skip unchanged provenance summary visits and drop arena
