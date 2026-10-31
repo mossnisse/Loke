@@ -11,6 +11,70 @@ Design rationale and differences from Odin are recorded in
 The current behavior inventory is in [Nondeterminism and undefined behavior
 audit](nondeterminism-audit.md).
 
+## Review of unwind bookkeeping and runtime bitcode commits (2026-10-31)
+
+Reviewed `01cd3214` (destructure registrations), `9e0c7f4f` (failure
+attributes), `c43c7e20` (unwind-env publication), and `5b6a4da6` (runtime
+bitcode), including correctness, simplification, and structure. These findings
+remain open:
+
+1. **Treat an older benchmark record's missing flags as the old defaults
+   (P2).** In [perf.ps1](perf.ps1), `Format-Records` checks whether build
+   options differ only when both records have a non-null `flags` field.
+   Records written before `c43c7e20` have no such field and were built without
+   extra flags. Comparing one with a new `-BuildFlags -panic=abort` run still
+   reports a percentage, mixing a compiler change with a change of panic
+   strategy. The existing regression first rewrites its old-format baseline
+   through `-Out`, so it exercises only a baseline that already has `flags`.
+   Treat a missing previous field as the empty string when the current record
+   has flags, and exercise the old-format baseline before rewriting it.
+
+   Reproduced by invoking the script's actual `Format-Records` function with
+   these records and the `run_ms` column:
+
+   ```json
+   {"program":"bench/probe.loke","input":"same","run_ms":100}
+   {"program":"bench/probe.loke","input":"same","flags":"-panic=abort","run_ms":50}
+   ```
+
+   The output is `50 (-50%)`; it should identify changed options.
+
+2. **Keep unwind read tracking in emission state rather than rediscovering it
+   from LLVM syntax (P3, simplification).** In
+   [src/emit_llvm_cleanup.odin](src/emit_llvm_cleanup.odin), the new
+   `without_unread_bindings` parses publication-slot numbers out of generated
+   lines, while `emit_unwind_thunk` scans LLVM local names to discover reads.
+   This couples publication to exact instruction spelling and adds a second
+   description of LLVM name syntax. Record each publication's text span in
+   `bind_local`, and mark uses of the rebound parent addresses through a shared
+   symbol-name accessor during replay, including direct implicit-drop uses.
+   A local declared inside the replay must retain its new address and must not
+   mark the replaced parent address as used. Remove the two syntax scans and
+   `llvm_name_char`; keep the existing deferred prologue and text emitter.
+   Apply publication spans before removing pops, so earlier text removal does
+   not shift their offsets.
+   The estimated saving is about 50 lines after adding the small tracking
+   records and accessor. This is a maintainability finding; the reviewed
+   corpora exposed no missed replay read.
+
+3. **Give the new bitcode-command unit test a temporary allocator (P3).**
+   `runtime_bitcode_keeps_the_cpu_check_native` in
+   [src/emit_llvm_test.odin](src/emit_llvm_test.odin) calls toolchain discovery,
+   which allocates include paths through `context.allocator`. The test neither
+   frees them nor redirects that allocator. A full compiler unit run reports
+   15 leaked allocations, 1.23 KiB on this machine, all attributed to this
+   test. Use `context.allocator = context.temp_allocator`, as the adjacent
+   toolchain-discovery test does. The test runner currently exits successfully
+   despite these warnings.
+
+Validation: rebuilt the compiler and a separate language-server executable;
+all 180 compiler unit tests and six selected baseline integration suites
+passed. Five more suites passed at `-opt=speed` with `lto=yes`: run and trap
+corpora, CPU levels, CPU dispatch, and floating-point reproducibility. A
+`-g -opt=speed` unwind probe printed its expected cleanup and stack trace.
+All 2,845 specification citations resolved. No compiler correctness regression
+was found in these checks; the three findings above are not fixed here.
+
 ## Review of the design-review proposals (2026-10-31)
 
 Reviewed the full [language design review](design-review-2026-10-31.md#summary)
