@@ -1,4 +1,4 @@
-// linear-algebra-plan.md "Storage and multiplication order": column-major
+// standard-library.md "`core:math/linalg`": column-major
 // storage, column vectors, and one generic record for every shape, whose
 // members are restricted to the shapes they mean by method bounds.
 @(public)

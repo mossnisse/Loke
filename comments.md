@@ -2469,6 +2469,93 @@ boundaries and API shapes follow a few common choices:
   sticky digit, so a tie broken by a later digit rounded the wrong way. Keeping
   767 digits and one standing for any nonzero remainder gives the correctly
   rounded result for any length, from a fixed buffer.
+- **Small vectors and matrices are records, not `Simd`.** `Vector3(f32)` has
+  the layout of `[3]f32` and `Matrix(f32, 4, 4)` that of `[16]f32`, so arrays
+  of them have no padding the program did not ask for and go to a GPU upload
+  or a C library as they are; `Simd(f32, 4)` is 16-byte aligned and takes
+  only constant lane indices, the wrong contract for stored data. Vectors of
+  2 to 4 components are named records, since `p.x` reads as the mathematics
+  does and a fixed array has no `.x` and the language no swizzles. Matrices
+  are one generic `Matrix(T, R, C)`, so a 6 x 6 spatial inertia or a 3 x 4
+  fit needs nothing new, and a method bound restricts each operation to the
+  shapes it means; a failed bound removes the method from that instantiation
+  and leaves the type usable. A generic `Vector(T, N)` beside the named ones
+  would give `N = 3` two vector types with a conversion between them, the
+  interoperability problem the package exists to remove, so a vector of
+  another length is a column matrix. No short names are exported: an alias
+  is the same type, so a program's own `Vec3 :: linalg.Vector3(f32);` costs
+  nothing, and the package avoids a grid of `Vector3f`, `Vector3d`, and
+  `Vector3i`. Large or run-time sizes belong in `core:math/dense`.
+- **`linalg` is generic over `Real`, not specialized for the floats.** The
+  members that need a square root, trigonometry, or a degenerate-input test
+  are bounded by `linalg.Real(T)`, whose slots `linalg` implements for `f32`
+  and `f64` and a user type with inherent methods, so a dual number
+  differentiates through a transform and fixed point and intervals work with
+  nothing from the package. Blocks for `f32` and `f64` alone would have left
+  those types with arithmetic only. Methods need no `_f32` suffix, since the
+  receiver's type selects the member, and constructors that take only scalars
+  are members of the instantiated type, `Matrix(f32, 4, 4).perspective(...)`,
+  so an unfixed literal never chooses a width. `Real` requires unary `-`,
+  since `T(0) - x` loses the sign of zero, and its bodies compare with `<` and
+  `==` alone, since `Ordered` has no `<=` and `!(a < b)` holds for a NaN.
+  `Matrix.splat` exists because a zero-initialized record holds `T`'s zero
+  value, which for a user rational `{0, 0}` is not `T(0)`. `dot` is the
+  bilinear product for every `T`; the Hermitian products need a conjugate
+  and came with `linalg.Scalar` for the dense package.
+- **Vectors are columns, stored column-major, and `a * b` applies `b`
+  first.** It is the order OpenGL takes with `transpose = GL_FALSE`, Direct3D
+  and Vulkan shaders read as `column_major`, and LAPACK expects; a row-major
+  consumer transposes once at the boundary. `from_rows` lets a constant be
+  written as a textbook prints it.
+- **Conventions that differ between domains are names or arguments.** The
+  clip depth is a required `Depth_Range`, since a silent default is the
+  classic source of depth-buffer bugs; Vulkan's downward framebuffer `y` is a
+  viewport choice, not a fourth range. Euler angles take a required sequence,
+  since aerospace, robotics, and graphics each use a different one. The
+  camera constructors are right-handed, as mathematics, OpenGL, glTF, and
+  robotics are, with `_lh` forms for Direct3D's convention: a required
+  handedness argument would be noise for the right-handed majority, and a
+  right-handed library alone leaves the caller a `Z` flip that goes after the
+  view matrix and before the projection, which is easy to place wrongly. The
+  `_lh` projections are their twins times `diag(1, 1, -1, 1)`, bit for bit.
+  Invalid projection parameters panic, as `math.clamp` does for reversed
+  bounds, rather than returning an `Option` that no caller could handle
+  usefully. Rotations are `math.Quaternion(T)`: a separate unit-rotation type
+  could not keep its invariant through rounding, and since an extension
+  `impl` is visible only in its own package, the rotation operations are free
+  procedures.
+- **`approx_equal` takes both tolerances.** The absolute one governs near
+  zero, where a relative one means nothing, and no default suits both metres
+  and nanometres. An ulp-distance model breaks down at zero, which is where
+  geometric residuals land. An infinity equals only itself, since
+  `relative * max(|a|, |b|)` is infinite for an infinite operand and would
+  call `+Inf` close to `-Inf`.
+- **The rotation formulas avoid cancellation.** `quaternion_between` takes an
+  angle, `atan2(|u x v|, u . v)`, and an axis, `u x v` without its part along
+  `u`, rather than a halfway vector: `normalize(u + v)` and `1 + dot(u, v)`
+  cancel for nearly opposite vectors, and at `(1, 0, 0)` and
+  `(-1, 1e-9, 0)` the halfway vector was off by `1e-9` radians. `to_euler`
+  follows Bernardes and Viollet (PLOS ONE, 2022), one formula for every
+  sequence, and takes the middle angle from `4*(w*q_j - sign*q_i*q_k)`, which
+  does not cancel near 0, rather than from `2*atan2(n, p) - pi/2`; gimbal
+  lock is a pair within two ulps of each other, since at `f64(pi/2)` the pair
+  left by rounding is about one ulp. `slerp` takes its angle as
+  `2*atan2(|a - b|, |a + b|)`, accurate for close rotations where
+  `acos(dot)` is not, so neither it nor `nlerp` has a degenerate case to
+  return an `Option` for. `quaternion_from_matrix` returns a non-negative real
+  part, so a round trip gives the same quaternion and not its negation.
+- **Only three `f32` transforms use lanes.** `transform_point`,
+  `transform_direction`, and a 3 x 3 `m * v` at `f32` compute in a
+  `Simd(f32, 4)`, since LLVM compiled their scalar forms to two lanes and a
+  separate third: `transform_point` went from 2.48 to 1.84 ns. A 4 x 4 product
+  and `m * v` of a `Vector4` already vectorize to what lanes give. `f64` lanes
+  are two registers at `x86-64`, where `transform_point` ran 2.55 against
+  2.42 ns, faster only at `x86-64-v3`, and a program cannot choose by CPU
+  level in source. `rotate`'s cross products need lane shuffles, 23 % slower
+  at `f64`, and repacking a 3 x 3 product's columns gained 2 to 9 %, too
+  little for a second form. A hand-written loop over slices is slower than
+  the package, a product by three times, because it bounds-checks each index
+  where the records index fixed arrays by constants.
 - **Geometry shapes are plain records with named dimensions.** Public fields
   with no padding beyond their vectors' let an array of boxes or triangles go
   to a foreign API as it is. `Aabb2` and `Aabb3` follow `linalg`'s named

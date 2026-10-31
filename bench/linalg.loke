@@ -10,7 +10,7 @@ import "core:unsafe";
 // The operations of core:math/linalg that programs run in batches: 4 x 4 and
 // 3 x 3 products, a matrix times a vector, `transform_point`, and `rotate`,
 // each over an array of operands, beside the same arithmetic written by hand
-// over plain arrays (linear-algebra-plan.md "Milestone 4 results"). Run as it
+// over plain arrays (standard-library.md "`core:math/linalg`"). Run as it
 // is, it computes each once and prints a hash of every result bit, which
 // bench/linalg.expected holds, so perf.ps1 times the whole and checks that no
 // result changed: each hand-written case prints the same hash as the

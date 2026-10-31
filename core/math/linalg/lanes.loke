@@ -1,4 +1,4 @@
-// linear-algebra-plan.md "Milestone 4 results": the `Simd` forms of the
+// standard-library.md "`core:math/linalg`": the `Simd` forms of the
 // operations measured faster with them. Each lane computes one component of
 // the result with the scalar form's operations in the scalar form's order,
 // so the bits are the same; a lane past the result's last component is

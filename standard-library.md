@@ -2786,8 +2786,8 @@ functions, is in the
 
 Small vectors and matrices as ordinary records that never allocate, so that
 two libraries can pass a point or a transform to each other as it is. The
-design and its later milestones are in the
-[linear algebra library plan](linear-algebra-plan.md).
+reasons for its design are in
+[Standard-library API choices](comments.md#standard-library-api-choices).
 
 `Vector2(T)`, `Vector3(T)`, and `Vector4(T)` have the fields `x`, `y`, `z`,
 and `w` as their length allows, and the layout of `[N]T`.
@@ -2972,7 +2972,7 @@ unspecified. Calls can also be evaluated at compile time with
 the same result, including those that reach `math.sqrt`. At `f32`, `transform_point`,
 `transform_direction`, and a 3 x 3 `m * v` compute in `Simd` lanes, each lane
 one component in the documented order, which changes their speed and not
-their bits ([Milestone 4 results](linear-algebra-plan.md#milestone-4-results)).
+their bits ([Standard-library API choices](comments.md#standard-library-api-choices)).
 
 `linalg.Scalar(T)` is a real or complex number type, the element type of
 [`core:math/dense`](#coremathdense)'s factorizations: `Numeric`, `==`, unary

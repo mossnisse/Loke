@@ -118,9 +118,9 @@ the lane-wise and remaining integer bit operations (see
 [Integer bit operations not yet provided](open-questions.md#integer-bit-operations-not-yet-provided)).
 `core:simd`'s remaining gaps are specified in
 [What SIMD does not do](design.md#what-simd-does-not-do).
-[`core:math/linalg`](standard-library.md#coremathlinalg) has every milestone
-of the [linear algebra library plan](linear-algebra-plan.md#milestones), the
-last its measured `Simd` paths, and
+[`core:math/linalg`](standard-library.md#coremathlinalg) has vectors,
+matrices of any fixed shape, transforms, rotations, cameras, and measured
+`Simd` paths, and
 [`core:math/dense`](standard-library.md#coremathdense) has storage, views,
 products, LU, Cholesky, QR, least squares, the symmetric and Hermitian
 eigensolver, the SVD, measured `Simd`, blocked, and pooled kernels, and
@@ -128,6 +128,14 @@ complex elements through `linalg.Scalar`.
 [`core:math/geometry`](standard-library.md#coremathgeometry) has the exact
 predicates, the shapes with their point queries, rays, culling, and
 transforms, polygons, and the measured `Simd` path of the `f32` box cast.
+
+`core:math/linalg` adds, with a caller: structure-of-arrays batch transforms,
+a vector a lane rather than a component a lane, measured against
+`bench/linalg.loke`; proper Euler sequences such as `ZXZ`; dual quaternions; a
+condition estimate beside `inverse` and `solve`; and `quaternion_between` as
+one procedure with an `Option(Vector3(T))` fallback, which
+[Arguments typed after inference](design.md#arguments-typed-after-inference)
+now allows.
 
 `core:math/dense` adds each of these with a caller who needs it: `try_` forms
 that return allocation failure; reversed views; a one-sided Jacobi SVD, slower

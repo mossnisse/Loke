@@ -5,7 +5,7 @@ import "core:math";
 import "core:math/linalg";
 import "core:unsafe";
 
-// linear-algebra-plan.md "Milestone 4 results": the `f32` operations that
+// standard-library.md "`core:math/linalg`": the `f32` operations that
 // compute in `Simd` lanes, `transform_point`, `transform_direction`, and a
 // 3 x 3 matrix times a vector, against the scalar formula they replaced,
 // bit for bit, over random operands and the special values, and folded at

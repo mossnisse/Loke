@@ -1,4 +1,4 @@
-// linear-algebra-plan.md "Named vectors, generic matrices": named records, so a
+// standard-library.md "`core:math/linalg`": named records, so a
 // component reads as `p.x`, with the layout of `[N]T`. The three types are the
 // same surface at three lengths, written out, since a record cannot be generic
 // over its field names.

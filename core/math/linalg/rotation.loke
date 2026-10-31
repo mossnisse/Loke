@@ -1,4 +1,4 @@
-// linear-algebra-plan.md "Coordinates and rotations": rotations are
+// standard-library.md "`core:math/linalg`": rotations are
 // `math.Quaternion(T)`, and an extension block is visible only in its own
 // package, so the operations on them are free procedures.
 @(public)

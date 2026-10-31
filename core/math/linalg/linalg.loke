@@ -29,7 +29,8 @@
 	`Option`, and invalid projection parameters panic. Euler angles take an
 	explicit `Euler_Order`, since each field uses a different one.
 */
-// linear-algebra-plan.md is the design this package implements, milestones 1 and 2.
+// standard-library.md "`core:math/linalg`" is the contract this package
+// implements.
 @(public)
 package linalg;
 
@@ -59,7 +60,7 @@ import "core:math/repro";
 	`is_normal` is true for a finite value that is not zero and has full
 	precision; it is what the degenerate input checks test.
 */
-// linear-algebra-plan.md "Element types". Only `<` and `==` are required, so
+// standard-library.md "`core:math/linalg`". Only `<` and `==` are required, so
 // the generic bodies here compare with those alone: a user type need not
 // declare `<=`, and `!(a < b)` would wrongly hold for a NaN.
 Real :: interface($T: type) {

@@ -1,7 +1,7 @@
-// linear-algebra-plan.md "Coordinates and rotations" and "Projections and clip
-// depth": the constructors of square transforms, restricted to their shapes by
-// method bounds. Positive angles turn counterclockwise seen from the positive
-// end of the axis, in a right-handed space.
+// standard-library.md "`core:math/linalg`": the constructors of square
+// transforms, restricted to their shapes by method bounds. Positive angles turn
+// counterclockwise seen from the positive end of the axis, in a right-handed
+// space.
 @(public)
 package linalg;
 

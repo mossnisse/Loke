@@ -906,13 +906,12 @@ operations. Left out until a caller settles their contracts:
 
 ## Open questions from the linear algebra spike
 
-The [linear algebra library plan](linear-algebra-plan.md)'s first step tried
-its `Real` interface and generic matrix shapes against the compiler
-(`tests/pkg/real_interface`), its first two milestones built
-[`core:math/linalg`](standard-library.md#coremathlinalg) on them, and its third
-is [`core:math/dense`](standard-library.md#coremathdense). These
-language questions came out of it, and the library cannot settle them by
-itself.
+A spike tried `linalg`'s `Real` interface and generic matrix shapes against
+the compiler (`tests/pkg/real_interface`) before
+[`core:math/linalg`](standard-library.md#coremathlinalg) and then
+[`core:math/dense`](standard-library.md#coremathdense) were built on them.
+These language questions came out of that work, and the libraries cannot
+settle them by themselves.
 
 ### Positional literals for vocabulary records
 
