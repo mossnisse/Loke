@@ -89,6 +89,8 @@ Named :: struct {
 	public:  bool,
 	is_type: bool,
 	is_proc: bool,
+	// A generic `impl`'s member's value, which may select another member.
+	value:   Expr,
 }
 
 @(private = "file")
@@ -143,10 +145,13 @@ add_named :: proc(x: ^Exposure, into: ^map[string]Named, d: ^Decl, block: []Attr
 			named.is_type = symbol_names_type(x.c, symbol)
 			named.is_proc = symbol.kind == .Proc
 		} else {
-			// A generic `impl`'s member, which no symbol records.
+			// A generic `impl`'s member, which no symbol records: whether an
+			// alias is a type, `read_generic_impl_constants` decided.
 			named.is_proc = decl_proc_literal(d) != nil
+			named.is_type = name.span in x.c.generic_impl_types
 			if index < len(d.values) {
-				#partial switch _ in d.values[index] {
+				named.value = d.values[index]
+				#partial switch _ in named.value {
 				case ^Type_Record, ^Type_Enum, ^Type_Interface, ^Type_Distinct, ^Type_Proc:
 					named.is_type = true
 				}
@@ -226,9 +231,16 @@ read_public_decl :: proc(x: ^Exposure, d: ^Decl, subject: string) {
 			walk(x, d.values[index], .Type) // a type alias's target, written as one
 		case:
 			// A generic `impl`'s member has no symbol: whether its value is a
-			// type, `read_generic_impl_constants` decided, and a constant's
-			// value is read there by its type.
-			names_type := symbol_names_type(x.c, symbol) if symbol != nil else name.span in x.c.generic_impl_types
+			// type, `read_generic_impl_constants` decided, or the member it
+			// selects says, as `Box(T).Hidden`'s does; a constant's value is
+			// read there by its type.
+			names_type: bool
+			if symbol != nil {
+				names_type = symbol_names_type(x.c, symbol)
+			} else {
+				_, selected, selects := selected_member(x, d.values[index])
+				names_type = name.span in x.c.generic_impl_types || (selects && selected.is_type)
+			}
 			if names_type {
 				walk(x, d.values[index], .Type) // a type alias's target
 			} else if d.declared_type != nil {
@@ -423,13 +435,8 @@ walk :: proc(x: ^Exposure, e: Expr, position: Position) {
 			found_name(x, v.name, v.span, named, position)
 		}
 	case ^Expr_Selector:
-		// `Subject.member`; an import's name is no declaration of the package.
-		if operand, is_ident := v.operand.(^Expr_Ident); is_ident && !slice.contains(x.bound[:], operand.name) {
-			if members, found := x.members[operand.name]; found {
-				if named, is_member := members[v.name.text]; is_member {
-					found_name(x, strings.concatenate({operand.name, ".", v.name.text}), v.name.span, named, position)
-				}
-			}
+		if written, named, found := selected_member(x, v); found {
+			found_name(x, written, v.name.span, named, position)
 		}
 		walk(x, v.operand, position)
 	case ^Expr_Checked_Extract:
@@ -522,6 +529,34 @@ walk :: proc(x: ^Exposure, e: Expr, position: Position) {
 			walk(x, variant.type, position)
 		}
 	}
+}
+
+// The member of an `impl` of the package that `Subject.member` or, from an
+// instance, `Subject(...).member` selects, and its name as `Subject.member`; an
+// import's name is no declaration of the package. A generic `impl`'s member
+// that itself selects one is a type when that one is.
+@(private = "file")
+selected_member :: proc(x: ^Exposure, e: Expr, depth := 0) -> (written: string, named: Named, found: bool) {
+	selector, is_selector := e.(^Expr_Selector)
+	if !is_selector {
+		return
+	}
+	operand := selector.operand
+	if call, is_call := operand.(^Expr_Call); is_call {
+		operand = call.callee
+	}
+	subject, is_ident := operand.(^Expr_Ident)
+	if !is_ident || slice.contains(x.bound[:], subject.name) {
+		return
+	}
+	members := x.members[subject.name] or_return
+	named = members[selector.name.text] or_return
+	if !named.is_type && depth < 8 {
+		if _, inner, selects := selected_member(x, named.value, depth + 1); selects {
+			named.is_type = inner.is_type
+		}
+	}
+	return strings.concatenate({subject.name, ".", selector.name.text}), named, true
 }
 
 @(private = "file")
@@ -620,18 +655,24 @@ private_type_in :: proc(c: ^Compiler, scope: ^Scope, type: Type_Id, bound: []Typ
 // A member whose value is a type is a type alias, whose target
 // `check_private_names` reads by its syntax, as it does any alias's: a private
 // alias of a public type is a name an importer cannot write, though the type
-// it means is public. Resolution says so here for a value that names no `$`
-// name; one that does is a type when it instantiates a generic record, as
-// `Pair(T, Corner)` does.
+// it means is public. Its written type says so for `Inner: type : Corner`,
+// and resolution here for a value that names no `$` name; one that does is a
+// type when it instantiates a generic record, as `Pair(T, Corner)` does, or
+// when it selects a member that is a type, as `Box(T).Hidden` may, which
+// `check_private_names` sees by the member's syntax.
 read_generic_impl_constants :: proc(k: ^Checker, item: ^Item_Impl, template: ^Generic_Template) {
 	call, is_call := item.type.(^Expr_Call)
 	pkg := package_of(k.c, k.pkg)
 	if !is_call || pkg == nil || pkg.scope == nil || len(pkg.files) == 0 || pkg.files[0].package_name == "main" {
 		return
 	}
-	if subject := symbol_of(k.c, template.symbol); subject == nil || (subject.pkg == k.pkg && !subject.public) {
+	subject := symbol_of(k.c, template.symbol)
+	if subject == nil {
 		return
 	}
+	// The members of a private type are reached only through a value of it,
+	// but an alias elsewhere may select one, so they are classified all the same.
+	read := subject.pkg != k.pkg || subject.public
 	names := make([dynamic]string, context.temp_allocator)
 	poly_names(call, &names)
 	stand_ins := new_scope(k.c, k.scope, .Local)
@@ -641,9 +682,21 @@ read_generic_impl_constants :: proc(k: ^Checker, item: ^Item_Impl, template: ^Ge
 	}
 	for member in item.members {
 		d, is_decl := member.(^Decl)
-		if !is_decl || !untyped_constant(d) || !declaration_is_public(k, d) {
+		if !is_decl || !constant_value(d) {
 			continue
 		}
+		// A written type says what the value is: `Inner: type : Corner` is an
+		// alias, and any other type is read as written.
+		if d.declared_type != nil {
+			if _, is_alias := d.declared_type.(^Type_Type); is_alias {
+				for name in d.names {
+					k.c.generic_impl_types[name.span] = true
+				}
+			}
+			continue
+		}
+		// A private alias is classified too, since a public one may select it.
+		public := read && declaration_is_public(k, d)
 		for name, index in d.names {
 			if name.text == "_" || index >= len(d.values) {
 				continue
@@ -658,7 +711,7 @@ read_generic_impl_constants :: proc(k: ^Checker, item: ^Item_Impl, template: ^Ge
 			is_type := instantiates_generic_record(k, d.values[index]) if stand_ins.reached else type == TYPE_TYPE
 			if is_type {
 				k.c.generic_impl_types[name.span] = true
-			} else if !stand_ins.reached && type != INVALID_TYPE {
+			} else if public && !stand_ins.reached && type != INVALID_TYPE {
 				read_impl_constant(k.c, pkg.scope, item, name, type, nil)
 			}
 		}
@@ -716,7 +769,14 @@ check_instance_private_names :: proc(c: ^Compiler, pending: Pending_Impl) {
 // nor a type's definition.
 @(private = "file")
 untyped_constant :: proc(d: ^Decl) -> bool {
-	if d.kind != .Const || d.declared_type != nil || decl_proc_literal(d) != nil {
+	return d.declared_type == nil && constant_value(d)
+}
+
+// A constant whose value is neither a procedure, a group, nor a type's
+// definition.
+@(private = "file")
+constant_value :: proc(d: ^Decl) -> bool {
+	if d.kind != .Const || decl_proc_literal(d) != nil {
 		return false
 	}
 	for value in d.values {

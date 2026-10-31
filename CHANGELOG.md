@@ -801,6 +801,11 @@ checklist.
   private alias of a public type and a target such as `Pair(T, Corner)` that
   names the block's `$` names
   ([Private names in public declarations](design.md#private-names-in-public-declarations)).
+- `L0740` now also reads a type alias written with its type, as
+  `Inner: type : Corner`, in a generic `impl`, and an alias, anywhere, that
+  selects a private type member from an instance, as `Box(T).Hidden` or
+  `Box(int).Hidden` does
+  ([Private names in public declarations](design.md#private-names-in-public-declarations)).
 - `time.local_zone` on Windows no longer panics for a zone set without a
   registry key, as `SetTimeZoneInformation` can leave it, and a zone whose
   dynamic daylight saving is disabled keeps its fixed annual transitions

@@ -48,17 +48,35 @@ warning[L0740]: public `Holder.TWINNED` has the private type `Corner`
 warning[L0740]: public `Row.CORNERS` has the private type `Corner`
 @92:12
 warning[L0740]: public `Lone.LONE` has the private type `Corner`
-@98:12
+@99:12
 warning[L0740]: public `Shelf.Inner` names the private type `Corner`
-@115:21
+@116:21
 warning[L0740]: public `Shelf.Aliased` names the private type `Point_Alias`
-@116:23
+@117:23
 warning[L0740]: public `Shelf.Paired` names the private type `Corner`
-@117:30
+@118:30
 warning[L0740]: public `Shelf.Mapped` names the private type `Corner`
-@118:28
+@119:28
 warning[L0740]: public `Shelf.Callback` names the private type `Corner`
-@119:37
+@120:37
+warning[L0740]: public `Crate.Typed` names the private type `Corner`
+@136:26
+warning[L0740]: public `Crate.Sibling` names the private type `Crate.Hidden`
+@138:29
+warning[L0740]: public `Crate.Concrete` names the private type `Bin.Hidden`
+@139:33
+warning[L0740]: public `Bin.Typed` names the private type `Corner`
+@142:26
+warning[L0740]: public `Bin.Sibling` names the private type `Bin.Hidden`
+@147:30
+warning[L0740]: public `Bin.Concrete` names the private type `Bin.Hidden`
+@148:33
+warning[L0740]: public `Bin.Sibling_Typed` names the private type `Bin.Hidden_Typed`
+@149:36
+warning[L0740]: public `Bin.Followed` names the private type `Bin.Chained`
+@150:31
+warning[L0740]: public `Bin.Through` names the private type `Secret`
+@151:23
 !`Padded.hidden`
 !`area_int`
 !`twice`
@@ -79,3 +97,6 @@ warning[L0740]: public `Shelf.Callback` names the private type `Corner`
 !`Lone.LONE_TWIN`
 !`Shelf.Plain_Twin`
 !`Shelf.Itself`
+!`Secret.Within`
+!`Bin.Opened`
+!`Bin.Open`
