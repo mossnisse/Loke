@@ -1,0 +1,57 @@
+// design.md "Atomic operations and Once": a call that finds the action running
+// waits for it, so a return means the action has completed. Here the action
+// holds every other thread waiting long enough that each has stopped spinning
+// and blocked, and each must still return only after the action finished:
+// it must see the action's last write, which is relaxed, so only the `Once`
+// orders it. A `Lazy`'s `get` waits the same way.
+package main;
+
+import "core:fmt";
+import "core:sync";
+import "core:thread";
+import "core:time";
+
+WAITERS :: 8;
+
+gate: static sync.Once = {};
+value: static sync.Lazy(int) = {};
+
+arrived: static sync.Atomic(int) = {};
+runs: static sync.Atomic(int) = {};
+written: static sync.Atomic(int) = {};
+wrong: static sync.Atomic(int) = {};
+
+// Runs only once every waiter is on its way into `do`, and then outlasts any
+// spin before it finishes.
+slow :: proc() {
+	for (arrived.load() < WAITERS) {}
+	time.sleep(30 * time.MILLISECOND);
+	runs.add(1);
+	written.store(42, sync.Memory_Order.Relaxed);
+}
+
+slow_value :: proc() -> int {
+	for (arrived.load() < 2 * WAITERS) {}
+	time.sleep(30 * time.MILLISECOND);
+	runs.add(1);
+	return 7;
+}
+
+waiter :: proc() {
+	arrived.add(1);
+	gate.do(slow);
+	if (written.load(sync.Memory_Order.Relaxed) != 42) { wrong.add(1); }
+
+	arrived.add(1);
+	if (value.get(slow_value)^ != 7) { wrong.add(1); }
+}
+
+main :: proc() {
+	{
+		workers: [dynamic]thread.Thread = {};
+		foreach (_ in 0 ..< WAITERS) {
+			workers.append(thread.spawn(waiter));
+		}
+	} // dropping a worker joins it
+	fmt.println(runs.load(), wrong.load(), gate.is_done(), value.is_done());
+}

@@ -1,0 +1,60 @@
+// design.md "Atomic operations and Once": a `Once` and a `Lazy` whose setup
+// takes measurable time, reached at once by more threads than the machine has
+// processors. Each round has a fresh gate, so every round is one winner doing
+// the work and every other thread waiting for it.
+//
+// What matters is not this program's output but its run time and the CPU time
+// it burns: a waiter that spins takes a processor the winner could have had.
+package main;
+
+import "core:fmt";
+import "core:sync";
+import "core:thread";
+
+ROUNDS :: 16;
+
+// Iterations of the setup's arithmetic: a few milliseconds on one core.
+WORK :: 4_000_000;
+
+gates: static [ROUNDS]sync.Once = {};
+values: static [ROUNDS]sync.Lazy(u64) = {};
+
+runs: static sync.Atomic(int) = {};
+made: static sync.Atomic(int) = {};
+sink: static sync.Atomic(u64) = {};
+
+churn :: proc() -> u64 {
+	x := u64(1);
+	foreach (_ in 0 ..< WORK) {
+		x = x *% 6364136223846793005 +% 1442695040888963407;
+		x ~= x >> 29;
+	}
+	return x;
+}
+
+setup :: proc() {
+	sink.add(churn());
+	runs.add(1);
+}
+
+make_value :: proc() -> u64 {
+	made.add(1);
+	return churn();
+}
+
+worker :: proc() {
+	foreach (round in 0 ..< ROUNDS) {
+		gates[round].do(setup);
+		_ = values[round].get(make_value)^;
+	}
+}
+
+main :: proc() {
+	{
+		workers: [dynamic]thread.Thread = {};
+		foreach (_ in 0 ..< 4 * thread.processor_count()) {
+			workers.append(thread.spawn(worker));
+		}
+	} // dropping a worker joins it
+	fmt.println(runs.load(), made.load());
+}

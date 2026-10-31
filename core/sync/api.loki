@@ -122,6 +122,9 @@ impl Once {
 		returning means the action has *completed*, not merely started. Whatever
 		the action wrote is visible to every thread that returns from `do`.
 
+		A waiting thread blocks after a short spin, so a slow action costs the
+		threads waiting on it no processor time.
+
 		An action must not reach its own `once`: a re-entrant `do` waits for itself
 		and never returns, and nothing reports it.
 	*/
@@ -150,9 +153,10 @@ Lazy :: struct($T: type) {
 impl Lazy($T) {
 	/*
 		The value, made by calling `init` if no thread has yet. A caller that
-		arrives while another thread is still making it waits, so the value is
-		always complete. If `init` panics, the `Lazy` is poisoned as a `Once`
-		is: every later call, and every call waiting on it, panics.
+		arrives while another thread is still making it waits, blocking after a
+		short spin as `Once.do` does, so the value is always complete. If
+		`init` panics, the `Lazy` is poisoned as a `Once` is: every later call,
+		and every call waiting on it, panics.
 
 		`init` must not reach this `Lazy`: a re-entrant `get` waits for itself
 		and never returns, and nothing reports it.

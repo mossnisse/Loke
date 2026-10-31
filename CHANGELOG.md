@@ -617,6 +617,13 @@ checklist.
 
 ### Changed
 
+- A thread that finds a `sync.Once` action, or a `sync.Lazy(T)`'s `init`,
+  still running now blocks after a short spin instead of spinning until it
+  finishes, so slow setup no longer costs every waiting thread a processor
+  ([Atomic operations and Once](design.md#atomic-operations-and-once)). With
+  24 threads on 6 processors waiting on 6 ms setups, CPU time fell from about
+  1.3 s to 0.17 s, about what the setups themselves take. It needs no new
+  link library.
 - A bare `where` bound grants its declaration the associated constants that
   met the interface, as it grants slots, in the signature, the other bounds,
   the body, and a record's fields, and grants the slots of an application the

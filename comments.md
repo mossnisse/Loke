@@ -238,6 +238,29 @@ needs, but a `Lazy` that one thread uses has little reason to exist, and a
 contract tied to the receiver's own lifetime would need a write through a
 read-only receiver that the borrow rules can follow.
 
+**A waiting `Once` blocks.** A thread that finds a `Once` action or a `Lazy`
+`init` running spins for a hundred reloads and then sleeps on a condition
+variable until `settle` has stored done or poisoned. An unbounded spin cost
+each waiter a processor for as long as arbitrary user code ran, and on a
+machine with more threads than processors the waiters took time from the
+thread they were waiting for. A contention benchmark,
+[bench/once_contention.loke](bench/once_contention.loke), runs 24 threads on
+6 logical processors through 16 `Once` and 16 `Lazy` setups of about 6 ms
+each. On an idle machine, with the spin it took a median 1.28 s of CPU time
+and 221 ms elapsed; with the wait it takes 0.17 s and 183 ms, about what one
+thread running the 32 setups alone takes (0.19 s and 179 ms). The short spin
+keeps an action that ends within a few loads from paying for a sleep and a
+wake, and settling pays one wake per `Once`, not per call.
+
+Every `Once` in the process shares one kernel32 SRWLOCK and condition
+variable, so settling one wakes the waiters of every other, which recheck and
+sleep again. Waiting at all is rare, since it takes a second thread arriving
+during a slow action, and a wait of its own would cost more: a lock and a
+condition variable in each `Once` would grow it from 4 bytes to 24, and an
+address wait on the state word (`WaitOnAddress`) lives in
+`synchronization.lib`, which every C host of an object build importing
+`core:sync`, even through `core:log`, would have to add to its link.
+
 **A thread per task, with no serial fallback.** Running the tasks one after
 another would be cheaper, but it is a different program: `thread_local`
 storage starts fresh on each task's thread, and blocking tasks that wait for

@@ -470,12 +470,6 @@ when a variable it reads changes. Each needs a use of its own; [Thread transfer
 needs a visible contract](#thread-transfer-needs-a-visible-contract) already
 rules them out as the answer to borrowing across a join.
 
-`Once` in `core:sync` spins without yielding while another thread runs its
-action, and `sync.Lazy(T)`'s `get` spins the same way while another task runs
-its `init`. A blocking address wait would serve both if slow, contended
-initialization turns out to be a real workload; no contention benchmark has
-been run.
-
 ## Thread-affine strings
 
 `string` is an owning value whose copies share immutable backing storage, and

@@ -1,0 +1,36 @@
+// design.md "Atomic operations and Once": a call waiting on an action that
+// panics panics too. The waiter has blocked by the time the action panics, so
+// only the poisoning's wake can release it; without one this hangs. `main`'s
+// unwind joins the waiter, so the waiter's panic is what ends the program,
+// after `main`'s own report.
+package main;
+
+import "core:sync";
+import "core:thread";
+import "core:time";
+
+gate: static sync.Once = {};
+claimed: static sync.Atomic(bool) = {};
+arrived: static sync.Atomic(bool) = {};
+
+quiet :: proc() {}
+
+// Reaches `gate` only once `main` holds it.
+waiter :: proc() {
+	for (!claimed.load()) {}
+	arrived.store(true);
+	gate.do(quiet);
+}
+
+fail :: proc() {
+	claimed.store(true);
+	for (!arrived.load()) {}
+	time.sleep(30 * time.MILLISECOND);
+	panic("setup failed");
+}
+
+main :: proc() {
+	worker := thread.spawn(waiter);
+	defer worker.join();
+	gate.do(fail);
+}
