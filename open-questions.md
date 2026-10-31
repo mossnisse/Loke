@@ -11,6 +11,51 @@ Design rationale and differences from Odin are recorded in
 The current behavior inventory is in [Nondeterminism and undefined behavior
 audit](nondeterminism-audit.md).
 
+## Review of Unit successes, parametric aliases, Status, and enum variants (2026-10-31)
+
+Reviewed `e4d9c207`, `0ae279da`, `99057210`, and `3b49d840` for correctness,
+simplification, and structure. Five implementation divergences are recorded
+with reproductions in [known-gaps.md](known-gaps.md#gaps): a
+[local alias hiding a generic success dependency](known-gaps.md#a-local-alias-hides-a-generic-dependent-unit-success),
+[resolution-order-dependent recursive aliases](known-gaps.md#recursive-records-through-parametric-aliases-depend-on-resolution-order),
+[dependently typed value arguments](known-gaps.md#parametric-aliases-cannot-bind-a-dependently-typed-value-argument),
+[nested computed types](known-gaps.md#nested-computed-types-evade-parametric-alias-binding-validation),
+and [private type exposure warnings](known-gaps.md#parametric-aliases-are-omitted-from-private-type-exposure-checks).
+These remain open, along with two smaller findings:
+
+- **Delete the unreachable payloadless allocation-success branch (P3,
+  simplification).** `eval_alloc_ok` in [src/eval.odin](src/eval.odin) still
+  branches on `TYPE_VOID` for an older runtime's `Status`. All five call sites
+  are synthetic container operations whose result is `alloc_result_type`,
+  which [src/bootstrap.odin](src/bootstrap.odin) now always builds as
+  `Result(Unit, Allocator_Error)`, even with an older runtime. Build its `Unit`
+  directly and remove the payload query and payloadless branch, about four
+  executable lines. No extra compatibility abstraction is needed.
+- **Describe Status's success as Unit consistently (P3, editorial).**
+  [One result](design.md#one-result) and
+  [Success returns](design.md#success-returns) still use `Status(E)` as the
+  example of a success carrying no payload. It now carries `Unit`, because
+  it is an alias of `Result(Unit, E)`. Keep the payloadless rule for user
+  unions and describe `Status` alongside the other `Unit` successes.
+
+The overall phase structure is appropriate: aliases resolve to ordinary type
+IDs before emission, and declaring `Status` as an alias deletes its duplicate
+implementation. The separate scope-aware pattern matcher and syntax-only
+overload view serve different needs; merging them without preserving name
+ownership would lose hygiene. The alias code has a clear boundary within
+[src/generic.odin](src/generic.odin); no additional framework is needed.
+
+Validation: all 180 compiler and 43 language-server unit tests passed, with
+the already recorded toolchain-test allocation warnings. The quick gate
+could not replace the existing `loke-lsp.exe`; a separate language-server
+binary built successfully. A full integration attempt stopped in Odin's test
+runner with exception `0xC000001D`. Five selected integration suites passed:
+run programs, rejected programs, packages, tutorials, and bundled interface
+files. Three more passed for IR shapes, layout agreement, and trapping programs.
+All 2,870 specification citations resolved. Additional focused probes confirmed
+the divergences above and controls that compile when written without the
+problematic alias. No implementation fixes are included in this review.
+
 ## Review of unwind bookkeeping and runtime bitcode commits (2026-10-31)
 
 Reviewed `01cd3214` (destructure registrations), `9e0c7f4f` (failure

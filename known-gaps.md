@@ -7,6 +7,134 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
+### A local alias hides a generic-dependent Unit success
+
+[One result](design.md#one-result) permits a bare success return only when its
+payload is `Unit` as written, rather than through a generic argument. The
+dependency check added in `e4d9c207` reads the name of a local alias without
+following its target:
+
+```loke
+package main;
+outer :: proc(value: $T) {
+    Outcome :: Result(T, int);
+    inner :: proc() -> Outcome { return; }
+    _ = inner();
+}
+main :: proc() { outer(Unit{}); }
+```
+
+This compiles. Spelling the inner result `Result(T, int)` instead reports
+`L0326`, with the note that its success carries `Unit` only through a generic
+argument. The alias should preserve that restriction; otherwise the same body
+gains a bare success return only in its `Unit` instance. In
+[src/check.odin](src/check.odin), `success_names_generic` returns early because
+`type_syntax_names_generic` sees `Outcome` as a constant rather than a generic
+binding. Follow ordinary type-alias targets in their defining scopes when
+determining the success payload's dependency. Confirmed on `3b49d840` during
+review on 2026-10-31 (P2).
+
+### Recursive records through parametric aliases depend on resolution order
+
+A [parametric alias](design.md#parametric-aliases) has its expansion's identity,
+and a [generic type](design.md#generic-types) may recurse through a reference.
+An alias of that reference can nevertheless be rejected while its record is
+being resolved:
+
+```loke
+package main;
+Link :: ^Node($T);
+Node :: struct($T: type) { next: Option(Link(T)) }
+main :: proc() { _ = size_of(Link(int)); }
+```
+
+This reports `L0436`, claiming to exceed the 64-deep instantiation limit when
+only `Link(int)` and `Node(int)` are on the stack. Resolving `Node(int)` first,
+by adding `_ = size_of(Node(int));` before the use, makes the program compile.
+The alias body has no alias cycle; the record's reference breaks the size
+recursion. In [src/generic.odin](src/generic.odin),
+`resolve_alias_application` rejects any reentry of the same template through
+`template.expanding`, before the existing record instance can finish the
+expansion. Permit finite record-mediated reentry while retaining the alias
+cycle and actual depth checks. Confirmed on `3b49d840` during review on
+2026-10-31 (P2).
+
+### Parametric aliases cannot bind a dependently typed value argument
+
+[Parametric aliases](design.md#parametric-aliases) take a constant generic
+argument with that generic parameter's type, including when an earlier type
+argument determines it. The direct application below works, but the alias
+reaches an internal backend error:
+
+```loke
+package main;
+import "core:fmt";
+Value :: struct($T: type, $V: T) { item: T }
+Alias :: Value($T, $V);
+main :: proc() { fmt.println(Alias(int, 3){}); }
+```
+
+The diagnostic is `L0405`, "internal backend contract violation: `<invalid>`
+has no backend representation". Replacing `Alias(int, 3)` with `Value(int, 3)`
+compiles and prints `Value(int, 3){item = 0}`.
+`generic_parameter_kind` in [src/generic.odin](src/generic.odin) tries to resolve
+the parameter type `T` in `Value`'s template scope before it is bound.
+`check_alias_template` then marks the alias rejected on `INVALID_TYPE` without
+reporting a source error. Retain dependent parameter types until earlier
+application arguments are bound, as record applications do, and ensure a
+rejected alias has a diagnostic. Confirmed on `3b49d840` during review on
+2026-10-31 (P2).
+
+### Nested computed types evade parametric alias binding validation
+
+[Parametric aliases](design.md#parametric-aliases) reject a `$` name where an
+argument cannot bind it. The root call is checked for being a type constructor,
+but a nested computed call is treated as an ordinary constructor argument:
+
+```loke
+package main;
+Identity :: proc($T: type) -> type { return T; }
+Alias :: Option(Identity($T));
+read :: proc(value: Alias($T)) -> T {
+    return value or_else panic("none");
+}
+main :: proc() {
+    value: Alias(int) = .some(3);
+    _ = read(value);
+}
+```
+
+The alias is accepted, including when unused, and `Alias(int)` expands to
+`Option(int)`, but `read(value)` reports `L0392`: the type does not match its
+parameter's shape. The binding pass in
+[src/generic.odin](src/generic.odin), `alias_binding_uses`, traverses arbitrary
+calls, whereas `match_type_pattern` cannot infer a procedure's arguments from
+the type it computes. Reject the unreachable `$T` at the alias declaration;
+apply the constructor restriction recursively wherever a pattern must bind.
+Confirmed on `3b49d840` during review on 2026-10-31 (P2).
+
+### Parametric aliases are omitted from private type exposure checks
+
+[Private names in public declarations](design.md#private-names-in-public-declarations)
+requires `L0740` for a public alias's private target and for a private alias in
+a public signature. Neither warning is produced for these parametric aliases
+in a package imported by a main program:
+
+```loke
+package shapes;
+Hidden :: enum { Err }
+Hidden_Result :: Result($T, Hidden);
+@(public) Public_Result :: Result($T, Hidden);
+@(public) consume :: proc(x: Hidden_Result($T)) {}
+```
+
+Alias templates are registered as generic constants without a concrete type
+value. `symbol_names_type` in [src/private_names.odin](src/private_names.odin)
+therefore does not classify them as types: `read_public_decl` skips the public
+alias's target, and a signature walk skips the private alias. Include alias
+templates in the classification and bind their own parameter names while
+reading their targets. Confirmed on `3b49d840` during review on 2026-10-31 (P3).
+
 ### Private member aliases whose types are known only in an instance evade L0740
 
 [Private names in public declarations](design.md#private-names-in-public-declarations)
