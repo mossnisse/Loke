@@ -839,6 +839,16 @@ checklist.
   `s[k].head = s[k].tail`, no longer rejects a borrow of another field of the
   same or another element kept beside it in a loop (`L0641`)
   ([Weakening and reborrows](design.md#weakening-and-reborrows)).
+- A local view that a branch only shortens, as
+  `if (flag) { s = &mut s[:2]; }`, and a fresh view of a whole dynamic array,
+  as `s := &mut d[:]`, now keep their elements at different constant indices
+  apart, so `&mut s[0]` leaves `s[1]` usable; both were rejected with `L0641`
+  ([Weakening and reborrows](design.md#weakening-and-reborrows)).
+- A carrier copied out of one element of a local view, as `s[0].head`, no
+  longer suspends the carriers stored in its other elements, so copying
+  `s[1].head` beside it compiles, as it already did out of the array itself
+  and through a view parameter (`L0641`)
+  ([Weakening and reborrows](design.md#weakening-and-reborrows)).
 - A public constant with no written type in a generic `impl` now warns
   `L0740` when its value's type is private, as it does in a non-generic
   `impl`: at the declaration when the value names none of the block's `$`

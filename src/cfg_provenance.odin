@@ -189,8 +189,9 @@ Prov_Event :: struct {
 	// `Def` of a named slot: one more than the index of its definition in
 	// `view_defs` (`prov_note_view`), or 0.
 	view_def:      int,
-	// `Through`, and the `Def` of a place loan's snapshot: the constant element
-	// of a named view the place is in (`Prov_View_At`).
+	// `Through`, the `Def` of a place loan's snapshot, and a `Load` out of a
+	// local view: the constant element of a named view the place is in
+	// (`Prov_View_At`).
 	element:       Prov_View_At,
 	// `Task_Start`, `Shared_Effect`: see `Prov_Kind`.
 	symbol:        Symbol_Id,
@@ -695,7 +696,12 @@ prov_note_view :: proc(graph: ^Flow_Graph, event: Prov_Event) -> int {
 		return 0
 	}
 	def := Prov_View_Def{loan = NO_LOAN, unknown = true}
-	if reslice.slot == event.slot + 1 && event.place_loan == 0 && event.loan == NO_LOAN {
+	if reslice.slot == event.slot + 1 && reslice.open {
+		if event.place_loan == 0 && event.loan == NO_LOAN && len(event.sources) == 1 &&
+		   graph.prov_slots[event.sources[0]].fresh_loan != NO_LOAN {
+			def = Prov_View_Def{loan = graph.prov_slots[event.sources[0]].fresh_loan, lo = reslice.lo, open = true}
+		}
+	} else if reslice.slot == event.slot + 1 && event.place_loan == 0 && event.loan == NO_LOAN {
 		def = reslice
 		def.slot = 0
 	} else if event.place_loan == 0 {
@@ -713,14 +719,18 @@ prov_note_view :: proc(graph: ^Flow_Graph, event: Prov_Event) -> int {
 }
 
 // Announces that the next definition of `slot` takes `value`, when that is a
-// constant reslice of a local view, as `&mut s[1:]` or `s[0:2]`
-// (`prov_note_view`).
+// constant reslice of a local view, as `&mut s[1:]` or `s[0:2]`, or a fresh
+// borrow of elements from a constant start to an end that is not constant,
+// as `&mut d[:]` of a dynamic array, which is `open` (`prov_note_view`).
 @(private = "file")
 prov_note_reslice :: proc(graph: ^Flow_Graph, slot: int, value: Expr) {
 	graph.view_reslice = {}
 	c := graph.k.c
 	slice_expr, is_slice := value.(^Expr_Slice)
 	if !is_slice || len(slice_expr.bound) > 0 {
+		return
+	}
+	if prov_note_open_borrow(graph, slot, slice_expr) {
 		return
 	}
 	ident, named := slice_expr.operand.(^Expr_Ident)
@@ -749,6 +759,35 @@ prov_note_reslice :: proc(graph: ^Flow_Graph, slot: int, value: Expr) {
 		}
 	}
 	graph.view_reslice = Prov_View_Def{slot = slot + 1, loan = NO_LOAN, from = from + 1, lo = lo, hi = hi}
+}
+
+// `prov_note_reslice` for a slice of an array or dynamic array in a local
+// place whose range step is a wildcard (`prov_range_step`) though it starts
+// at a constant element, as `&mut d[:]` or `&mut a[1:n]`: the borrow it makes
+// lends the elements from there on (`Prov_View_Def.open`).
+@(private = "file")
+prov_note_open_borrow :: proc(graph: ^Flow_Graph, slot: int, slice_expr: ^Expr_Slice) -> bool {
+	kind := underlying_kind(graph.k.c, prov_type(graph, slice_expr.operand))
+	if kind != .Array && kind != .Dynamic_Array || prov_range_step(graph, slice_expr).kind != .Wild {
+		return false
+	}
+	if _, _, local := prov_place_of(graph, slice_expr.operand); !local {
+		return false
+	}
+	lo: i64
+	if slice_expr.lo != nil {
+		constant: bool
+		if lo, constant = prov_const_int(graph, slice_expr.lo); !constant || lo < 0 {
+			return false
+		}
+	}
+	if slice_expr.hi != nil {
+		if _, constant := prov_const_int(graph, slice_expr.hi); constant {
+			return false
+		}
+	}
+	graph.view_reslice = Prov_View_Def{slot = slot + 1, loan = NO_LOAN, lo = lo, hi = -1, open = true}
+	return true
 }
 
 // The paths below the storage `slots` name that a value made of them may
@@ -1696,11 +1735,17 @@ prov_load_content :: proc(
 	prov_reach(graph, carriers, span)
 	content := prov_temp_content(graph, type)
 	graph.has_content_load ||= len(content) > 0
-	// One element of a view parameter is read alone (`prov_view_element`).
+	// One element of a view parameter is read alone (`prov_view_element`),
+	// and so is one of a local view where the solve knows where it starts
+	// (`Prov_Event.element`).
 	element_loan: int
 	elements: []int
+	element: Prov_View_At
 	if place != nil && len(content) > 0 {
 		element_loan, elements = prov_view_element(graph, place)
+		if at := prov_view_at(graph, place, carriers); at.loan == 0 {
+			element = at
+		}
 	}
 	for slot in content {
 		graph.prov_slots[slot].loaded = true
@@ -1714,6 +1759,7 @@ prov_load_content :: proc(
 			walked       = walked,
 			element_loan = element_loan,
 			elements     = elements,
+			element      = element,
 		})
 	}
 	prov_emit(graph, Prov_Event{kind = .Live, sources = content, span = span, reads_only = reads_only})

@@ -98,15 +98,15 @@ applied during review.
 ## Review of constant view elements and the wider borrow matrix (2026-10-31)
 
 Reviewed `72431f48` for correctness, simplification, and structure. Two
-findings remain:
+findings were recorded, and the first is fixed:
 
 - **Keep known starts when lengths vary (P2).** Shortening a view on one
-  branch leaves its start unchanged, but accesses to different constant
-  elements still conflict. Full views of dynamic arrays have the same
-  problem with an unknown upper bound. The
-  [reproductions and cause](known-gaps.md#views-with-a-known-start-lose-element-precision-when-their-length-varies)
-  distinguish start information from the exact extent the publication
-  helper currently requires.
+  branch left its start unchanged, but accesses to different constant
+  elements still conflicted, and full views of dynamic arrays had the same
+  problem with an unknown upper bound. The definitions reaching a view now
+  need to agree only on where it starts (`publish_view_of` in
+  [src/borrow.odin](src/borrow.odin)), and a fresh `&mut d[:]` lends from a
+  known start (`Prov_View_Def.open`).
 - **Remove the matrix's lookup loop (P3, shrink).** `matrix_expected` in
   [tests/borrow_matrix_test.odin](tests/borrow_matrix_test.odin) only reads
   the operation's name. After `matrix_same_element` has remapped it, replace
@@ -119,9 +119,12 @@ findings remain:
 publication and place checks avoids duplicate walkers. The precision gap
 shows where those callers need different information: element separation needs
 a known start, while publication also uses the extent and underlying loan.
-Add a matrix place for a dynamically backed view, plus a branch changing
-only length; the new dynamic `items` cases exercise the array stored inside
-an element instead.
+The matrix now has a place whose view a branch only shortens
+(`local_shortened`). A matrix place for a dynamically backed view is still to
+add; the new dynamic `items` cases exercise the array stored inside an
+element instead, and copies out of such a view's elements still share one
+set of slots
+([known gap](known-gaps.md#a-copy-out-of-a-dynamic-arrays-view-suspends-the-other-elements-carriers)).
 
 The meaning of "fresh borrow of a range" in
 [Weakening and reborrows](design.md#weakening-and-reborrows) should also be
