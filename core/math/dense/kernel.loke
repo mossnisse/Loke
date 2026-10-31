@@ -1,4 +1,4 @@
-// dense-matrix-plan.md "Determinism and speed": the product's fast path for
+// standard-library.md "`core:math/dense`": the product's fast path for
 // `f32` and `f64` with contiguous columns. Each element of `out` is still
 // `((a[i, 0]*b[0, j] + a[i, 1]*b[1, j]) + ...)`, its terms in increasing `k`:
 // a `Simd` lane computes one element, exactly as the scalar kernel does, and

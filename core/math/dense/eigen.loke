@@ -1,8 +1,7 @@
-// dense-matrix-plan.md "Algorithms": the symmetric and Hermitian eigensolver,
-// Householder tridiagonalization as LAPACK's `sytd2` and `hetd2` do it from
-// the lower triangle, then
-// implicit QL with Wilkinson shifts, as EISPACK's `imtql2` and Numerical
-// Recipes' `tqli` do it. Convergence is decided by rounding, with no epsilon:
+// standard-library.md "`core:math/dense`": the symmetric and Hermitian
+// eigensolver, Householder tridiagonalization as LAPACK's `sytd2` and `hetd2`
+// do it from the lower triangle, then implicit QL with Wilkinson shifts, as
+// EISPACK's `imtql2` and Numerical Recipes' `tqli` do it. Convergence is decided by rounding, with no epsilon:
 // an off-diagonal element is negligible when adding it to the magnitudes of
 // its two diagonal neighbours changes nothing.
 @(public)

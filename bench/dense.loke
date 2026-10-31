@@ -9,7 +9,7 @@ import "core:unsafe";
 
 // The kernels of core:math/dense: products, LU, Cholesky, QR, the symmetric
 // eigensolver, and the SVD, at sizes where cache and memory bandwidth matter
-// (dense-matrix-plan.md "Milestone 4 results"). Run as it is, it computes each
+// (standard-library.md "`core:math/dense`"). Run as it is, it computes each
 // once and prints bit patterns of the results, which bench/dense.expected
 // holds, so perf.ps1 times the whole and checks that no result changed: the
 // `_Pool` cases, which use a pool of one worker per processor, and the

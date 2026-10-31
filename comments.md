@@ -2490,6 +2490,70 @@ boundaries and API shapes follow a few common choices:
   triangular solve, as LAPACK's `latrs` does: Hager's estimator is
   homogeneous, so one factor keeps a well-conditioned matrix's solutions
   near 1 at any scale, and the plain solves are kept.
+- **A dense matrix is one owner and two strided views.** `Matrix(T)` owns
+  column-major storage, the order LAPACK, Fortran, and `linalg.Matrix` use,
+  and `View(T)` and `View_Mut(T)` borrow elements anywhere through a row and a
+  column stride, so a block, a transpose, a row, and a foreign buffer in
+  either order are one type without a copy, and a vector is a view with one
+  column. The strides are private and every constructor checks the extent
+  once, so the kernels index through `unsafe.raw_data` with wrapping
+  arithmetic and stay memory-safe. Before the package was written, a spike
+  measured a 256 x 256 product through a view's checked `[r, c]` at five to
+  eight times the final kernel's time, and checked index arithmetic alone
+  kept the loop from vectorizing
+  ([Overflow checks in index arithmetic](open-questions.md#overflow-checks-in-index-arithmetic)).
+  The one rule, not a run-time check, keeps `multiply_into(out, a, b)` from
+  writing what it reads. Strides are not negative; a reversed view waits for
+  a caller.
+- **A dense matrix copies, and has no operators.** `move_only` would stop an
+  accidental copy, but a matrix is a value in every numerical language, an
+  algorithm sometimes wants the copy, and the copy-cost diagnostic already
+  names it. `*` and `+` allocating from the default allocator, as NumPy and
+  Eigen read, would hide an allocation and a temporary per operator, the cost
+  a numerical program most wants to see, so each operation is a named
+  procedure with an `_into` form that never allocates. One `dense.Error` for
+  every numerical failure keeps `or_return` working through "factor, solve,
+  refine"; a type per factorization would say more in each signature and
+  break that chain. The package is `core:math/dense` rather than
+  `core:math/matrix`, which reads as the home of the fixed-size matrices too,
+  or `core:math/linalg/dense`, a longer import for the same relation.
+- **Dense results keep one order, so there is no BLAS and no blocked QR.** A
+  foreign BLAS is faster, and its bits differ by machine, library, and thread
+  count; it belongs in a package that binds one and states that contract, not
+  behind a flag. Cache blocking, `Simd` lanes across outputs, and a pool that
+  splits the output keep each element's order, so `lu` and `cholesky` are
+  blocked. Splitting one sum into several accumulators does not, and neither
+  does the compact WY form of blocked Householder QR, LAPACK's choice, so QR
+  applies its reflectors a panel of columns at a time instead, and a faster
+  QR with other bits waits for a caller. Cholesky without a pool is
+  left-looking, 18.6 against 14.4 operations a nanosecond at `n = 1024`,
+  since it reads each earlier column once a panel and writes only the panel;
+  with a pool, the right-looking update is the one that splits into tasks.
+  Recording a sweep's rotations and applying them to the vectors in blocks
+  kept the bits and was 45 % slower, since applied at once, each rotation's
+  update overlaps the serial computation of the next, so the eigensolver and
+  the SVD apply them one at a time.
+- **The dense iterations pool their limit.** `symmetric_eigen` and `svd` allow
+  `30 n` sweeps for the whole matrix rather than 30 for each value, as
+  `dsvdc` and `imtql2` have it. In a 200 x 200 column-graded matrix the shift,
+  computed from the small trailing block, is lost in rounding against the
+  large top of the bidiagonal, so the sweeps converge only linearly: the first
+  singular value took 62 sweeps and the other 199 took 212 between them.
+  LAPACK's `bdsqr` pools its limit too. Neither decomposition has an in-place
+  form: each needs scratch vectors beyond the matrix, which would take a
+  workspace argument, and the allocator argument already places everything.
+- **Complex elements share one generic implementation.** `linalg.Scalar(T)`
+  adds `T.Real`, `conjugate`, `real_part`, and `imaginary_part` to what a
+  number needs, and generic code recognises a real `T` as `T == T.Real` and
+  keeps the real form of each step there, so no real result changed when
+  complex elements arrived, and `math.Complex` needs no second implementation
+  of each algorithm. The conjugate transpose is a view, `View.adjoint()`;
+  `View_Mut` has none, since a write through it would have to conjugate on
+  the way in. `dot` conjugates nothing, as `Numeric` defines it.
+  `symmetric_eigen` keeps its name for a Hermitian matrix, since a complex
+  symmetric one, `A = A^T`, is not what it computes. A pivot's magnitude is
+  LAPACK's `cabs1`, `|re| + |im|`, which needs no square root and is `|x|`
+  for a real element.
 - **The integer bit operations are compiler-known, and zero is the width.**
   A population count or a zero count written in Loke is a loop or a SWAR
   fold, and the default `-opt=none` build runs it as written; set-bit

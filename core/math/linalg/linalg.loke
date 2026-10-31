@@ -137,7 +137,7 @@ impl f64 {
 	        imaginary_part :: proc(self) -> Dual { return Dual{}; }
 	    }
 */
-// dense-matrix-plan.md "Complex elements". A real `T` is recognised in
+// standard-library.md "`core:math/linalg`". A real `T` is recognised in
 // generic code as `T == T.Real`, which lets an algorithm keep the real form
 // of each step; every requirement agrees with it for a real type, so the
 // two forms give the same bits.

@@ -1,4 +1,4 @@
-// dense-matrix-plan.md "Factorizations are values" and "Algorithms": each
+// standard-library.md "`core:math/dense`": each
 // factorization is a record that owns its factors, with an in-place form for
 // a caller who owns the storage. Every update in a factorization is one
 // subtraction per term into the running element, in increasing `k`, the

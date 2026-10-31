@@ -46,7 +46,7 @@
 	`fma`, so it gives the same bits on every machine, CPU level, and
 	optimization level.
 */
-// dense-matrix-plan.md is the design this package implements, milestones 1 to 5.
+// standard-library.md "`core:math/dense`" is the contract this package implements.
 @(public)
 package dense;
 
@@ -71,7 +71,7 @@ Error :: enum {
 	`(r, c)` is at `c*rows + r`, the order LAPACK and `linalg.Matrix` use. Its
 	allocator is the one chosen when it was made.
 */
-// dense-matrix-plan.md "One owner and two views". The fields are private so
+// standard-library.md "`core:math/dense`". The fields are private so
 // that `data` always holds exactly `row_count*column_count` elements, which
 // `view` relies on; accessors cannot share a field's name, so the fields are
 // `row_count` and `column_count`.

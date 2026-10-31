@@ -1,4 +1,4 @@
-// dense-matrix-plan.md "Algorithms": the singular value decomposition by
+// standard-library.md "`core:math/dense`": the singular value decomposition by
 // Golub and Reinsch, a Householder bidiagonalization as LAPACK's `gebd2`
 // does it, then the implicit-shift QR iteration of LINPACK's `dsvdc`, whose
 // tests for a negligible element are by rounding, with no epsilon.

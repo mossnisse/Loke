@@ -1,4 +1,4 @@
-// dense-matrix-plan.md "One owner and two views": every constructor checks
+// standard-library.md "`core:math/dense`": every constructor checks
 // once that the shape and strides stay inside the slice and that no two
 // elements share a place, so the kernels can index without a check per
 // element and a write through one element never changes another.
@@ -64,7 +64,7 @@ check_block :: proc(row, column, rows, columns, row_count, column_count: int) {
 // The kernels index with this. Every index they form is below the view's
 // checked extent, so the arithmetic cannot overflow and is written wrapping:
 // a checked `+` or `*` is a branch per element, which keeps a loop from
-// vectorizing (dense-matrix-plan.md "Spike results").
+// vectorizing (open-questions.md "Overflow checks in index arithmetic").
 @(private)
 offset :: proc(row, column, row_stride, column_stride: int) -> int {
 	return row*%row_stride +% column*%column_stride;

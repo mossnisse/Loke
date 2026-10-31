@@ -121,8 +121,7 @@ the lane-wise and remaining integer bit operations (see
 [`core:math/linalg`](standard-library.md#coremathlinalg) has every milestone
 of the [linear algebra library plan](linear-algebra-plan.md#milestones), the
 last its measured `Simd` paths, and
-[`core:math/dense`](standard-library.md#coremathdense) all five milestones
-of the [dense matrix plan](dense-matrix-plan.md#milestones): storage, views,
+[`core:math/dense`](standard-library.md#coremathdense) has storage, views,
 products, LU, Cholesky, QR, least squares, the symmetric and Hermitian
 eigensolver, the SVD, measured `Simd`, blocked, and pooled kernels, and
 complex elements through `linalg.Scalar`.
@@ -130,6 +129,19 @@ complex elements through `linalg.Scalar`.
 milestone of the [geometry library plan](geometry-plan.md#milestones), the
 exact predicates, the shapes with their point queries, rays, culling, and
 transforms, polygons, and the measured `Simd` path of the `f32` box cast.
+
+`core:math/dense` adds each of these with a caller who needs it: `try_` forms
+that return allocation failure; reversed views; a one-sided Jacobi SVD, slower
+and more accurate for tiny singular values; values-only forms of
+`symmetric_eigen` and `svd`, which would give the same values bit for bit;
+the full `U`; a QR in the blocked WY form under its own name, since its bits
+differ ([Standard-library API choices](comments.md#standard-library-api-choices));
+a pool for `qr`, `symmetric_eigen`, `svd`, and the one-call `solve`,
+`inverse`, and `least_squares`; a faster symmetric product in the
+tridiagonalization, now the eigensolver's largest cost; a fast path for
+products with a strided `a`; a complex `Simd` kernel, which would have to keep
+`math.Complex`'s `ac - bd` and `ad + bc` in each lane; and a conjugating
+`dot`.
 
 [`core:encoding/json`](standard-library.md#coreencodingjson) still needs this
 evidence, in this order; its open design questions are in

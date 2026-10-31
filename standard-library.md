@@ -2988,8 +2988,8 @@ implements it with an inherent `Real` constant naming itself, `conjugate` and
 Matrices whose size is known only at run time: an owner, views of it and of
 foreign buffers, products, the LU, Cholesky, and QR factorizations, least
 squares, the symmetric and Hermitian eigendecomposition, and the singular
-value decomposition, of real or complex elements. The design and its measured
-performance are in the [dense matrix plan](dense-matrix-plan.md).
+value decomposition, of real or complex elements. The reasons for its design
+are in [Standard-library API choices](comments.md#standard-library-api-choices).
 
 `Matrix(T)` owns `rows x columns` elements stored column-major in one
 allocation, the order LAPACK and `linalg.Matrix` use, from the allocator it was

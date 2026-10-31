@@ -1,7 +1,6 @@
-// dense-matrix-plan.md "Named procedures, not operators" and "Determinism and
-// speed": each operation in an `_into` form that never allocates and a form
-// that allocates its result, in the floating-point order its documentation
-// gives. The views' extents were checked when they were made, so the loops
+// standard-library.md "`core:math/dense`": each operation in an `_into` form
+// that never allocates and a form that allocates its result, in the
+// floating-point order its documentation gives. The views' extents were checked when they were made, so the loops
 // read and write through raw pointers, column by column of the output and
 // down each column.
 @(public)

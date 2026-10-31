@@ -3,8 +3,8 @@
 Status: implemented, 2026-10-30
 ([Milestone 1 results](#milestone-1-results),
 [Milestone 2 results](#milestone-2-results),
-[Milestone 4 results](#milestone-4-results)); milestone 3 is the
-[dense matrix plan](dense-matrix-plan.md), also done. This document
+[Milestone 4 results](#milestone-4-results)); milestone 3 is
+[`core:math/dense`](standard-library.md#coremathdense), also done. This document
 specifies the `core:math/linalg` package and
 outlines a later dense-matrix package; it does not change the language
 contract, and
@@ -422,8 +422,8 @@ Real:
 Sizes known only at run time are a different contract: they allocate, they
 are borrowed far more than copied, and the work is in solvers rather than in
 operators. They get their own package and plan, after `core:math/linalg`
-ships; the [dense matrix plan](dense-matrix-plan.md) is that plan. It has to
-settle:
+ships, now [`core:math/dense`](standard-library.md#coremathdense). Its plan
+had to settle:
 
 - an owning `Dense(T)` that takes an allocator, and borrowed `View(T)` and
   mutable views with a row stride and a column stride, so that a block, a
@@ -455,9 +455,8 @@ Ordered by how foundational each part is, not by a particular program:
    `quaternion_between`, `nlerp`, `slerp`, Euler sequences, rotation vectors,
    `angle_between`, `project`, `reject`, `reflect`, `normal_matrix`,
    `inverse_affine`, and `project_point`.
-3. **Dense matrices**, under their own plan, the
-   [dense matrix plan](dense-matrix-plan.md), whose five milestones,
-   [`core:math/dense`](standard-library.md#coremathdense), are done.
+3. **Dense matrices**, under their own plan, done as
+   [`core:math/dense`](standard-library.md#coremathdense).
 4. **Measured performance.** Done
    ([Milestone 4 results](#milestone-4-results)). Benchmarks of products,
    `rotate`, and batch transforms against hand-written loops, then `Simd`
@@ -530,7 +529,7 @@ Settled on 2026-10-29; the sections above carry the decisions.
   does not have, and belong with the dense package, where complex matrices
   are used; its fifth milestone added `Scalar`, the conjugate-aware interface,
   here beside `Real`
-  ([Milestone 5 results](dense-matrix-plan.md#milestone-5-results)).
+  ([`core:math/linalg`](standard-library.md#coremathlinalg)).
 - **Handedness**: right-handed unsuffixed names, plus `_lh` forms of the four
   camera constructors ([Coordinates and rotations](#coordinates-and-rotations)).
   A required handedness argument was rejected as noise for the right-handed

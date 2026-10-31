@@ -1,4 +1,4 @@
-// dense-matrix-plan.md "Complex elements": the arithmetic on the parts of a
+// standard-library.md "`core:math/dense`": the arithmetic on the parts of a
 // `linalg.Scalar` that the algorithms share. For a real `T`, `T == T.Real`,
 // each helper is the real step itself, so a real result keeps the bits it had
 // before complex elements. A bound `linalg.Scalar(T)` grants `T.Real` and

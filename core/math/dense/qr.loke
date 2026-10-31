@@ -1,4 +1,4 @@
-// dense-matrix-plan.md "Algorithms" and "Determinism and speed": Householder
+// standard-library.md "`core:math/dense`": Householder
 // QR, unblocked, so its result is one order everywhere. Each reflector is
 // built and applied as LAPACK's `larfg` and `larf` do, in the order the
 // documentation of `qr_in_place` gives; the blocked WY form reorders those
