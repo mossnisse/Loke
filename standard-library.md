@@ -2744,8 +2744,8 @@ not the `f64` one narrowed, which could round twice.
   (Lefèvre, Ly, and Zimmermann, "Computing hard-to-round cases of sin, cos,
   tan in double precision", ARITH 2026, above 2^10, or 2^4 for `tan`, and
   CORE-MATH's below) leave no result within 2^-117 of a midpoint, relative
-  to it. The proof is as sound as those searches. The functions not yet
-  proved are in
+  to it, for `sin` and `cos`, and 2^-134 for `tan`. The proof is as sound
+  as those searches. The functions not yet proved are in
   [Open questions](open-questions.md#deterministic-math-functions).
 - `asin` and `acos` give radians, from -pi/2 to pi/2 and from 0 to pi. NaN
   and every argument outside [-1, 1], ±Inf included, give NaN. `asin(±0)`
