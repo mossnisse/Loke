@@ -1,31 +1,39 @@
 L0623
 a foreign procedure has no Loke body; end its declaration with `---`
-@17:15
+@18:15
 
 L0625
 a foreign global is declared without an initializer
-@18:2
+@19:2
 
 L0627
 `@(c_vararg)` must mark the final parameter
-@19:28
+@20:28
 
 L0621
 a foreign parameter cannot use `move`: a C call acquires no cleanup responsibility
-@21:11
+@22:11
 
 L0624
 a generic declaration has no ABI and cannot appear in a foreign block
-@22:2
+@23:2
 
 L0627
-`@(c_vararg)` marks a variadic parameter
-@23:24
+`@(c_vararg)` marks a C variadic parameter, which has no Loke type
+@24:24
+
+L0627
+`@(c_vararg) args: ..`
+@25:22
+
+L0627
+a bare `..` is a C variadic parameter
+@26:23
 
 L0626
 `@(by_ptr)` is only allowed on a foreign procedure parameter
-@26:21
+@29:21
 
 L0628
 a C-variadic call cannot spread; pass each concrete argument
-@30:15
+@33:15

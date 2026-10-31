@@ -18,7 +18,7 @@ foreign import crt "system:msvcrt.lib";
 foreign crt {
 	empty_global: Empty;
 	carrier_global: Carrier;
-	printf :: proc(format: cstring_view, @(c_vararg) args: ..any_view) -> i32 ---;
+	printf :: proc(format: cstring_view, @(c_vararg) args: ..) -> i32 ---;
 }
 
 main :: proc() { printf("%d", Empty{}, Carrier{}); }

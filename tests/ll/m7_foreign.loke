@@ -11,8 +11,8 @@ foreign import libc "system:legacy_stdio_definitions.lib";
 
 foreign libc {
 	strlen :: proc "c" (s: cstring_view) -> uint ---;
-	printf :: proc "c" (fmt: cstring_view, @(c_vararg) args: ..any_view) -> i32 ---;
-	vararg_bool :: proc "c" (@(c_vararg) args: ..any_view) -> bool ---;
+	printf :: proc "c" (fmt: cstring_view, @(c_vararg) args: ..) -> i32 ---;
+	vararg_bool :: proc "c" (@(c_vararg) args: ..) -> bool ---;
 	@(link_name="?decorated@@YAHXZ") decorated :: proc "c" () -> i32 ---;
 	dot :: proc "c" (@(by_ptr) a: Vec, @(by_ptr) b: Vec) -> f64 ---;
 	consume :: proc "c" (@(by_ptr) value: Vec) ---;

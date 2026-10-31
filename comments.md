@@ -1613,6 +1613,17 @@ A formatter uses the sink during its call. A logger provider lends static
 storage for process lifetime. Neither requires an owned closure, and neither
 view has a null state.
 
+### `assert` and `panic` print without `core:fmt`
+
+The printers take `..dyn fmt.Formattable`, but `assert` and `panic` are
+built-ins, which a program calls without importing anything. Giving them that
+parameter type would make the language core name `core:fmt`, or move
+`Formattable`, `Writer`, and `Options` into a `base:` package that `core:fmt`
+re-exports, which needs an alias of an interface to name it. A built-in rule
+says the same thing with neither: each argument is a value with a printed form,
+borrowed for the report and printed through its type's generated thunk, which a
+failing `main`'s error already used.
+
 ### A checked pointer prints its referent
 
 Every other checked view prints what it views, and a box prints its payload. A

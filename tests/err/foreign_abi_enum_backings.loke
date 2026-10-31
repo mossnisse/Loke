@@ -22,7 +22,7 @@ foreign import crt "system:msvcrt.lib";
 foreign crt {
 	wide_global: Wide;
 	implicit_global: Implicit;
-	printf :: proc(format: cstring_view, @(c_vararg) args: ..any_view) -> i32 ---;
+	printf :: proc(format: cstring_view, @(c_vararg) args: ..) -> i32 ---;
 }
 
 main :: proc() { printf("%d", Wide.A, Unsigned.A, Implicit.A); }

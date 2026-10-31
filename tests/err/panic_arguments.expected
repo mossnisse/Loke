@@ -1,0 +1,8 @@
+L0310
+@9:27
+`proc(n: int) -> bool capture(limit)` has no printed form
+L0378
+@10:16
+L0310
+@10:21
+`nil` has no type, so it has no printed form

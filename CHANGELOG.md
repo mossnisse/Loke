@@ -10,6 +10,13 @@ checklist.
 
 ### Breaking changes
 
+- A C variadic parameter is written `@(c_vararg) args: ..`, with no type,
+  rather than `..any_view`, which is now `L0627`; a bare `..` without the
+  attribute is `L0627` too ([`@(c_vararg)`](design.md#c_vararg)). Upgrade by
+  deleting `any_view` from each such parameter. `assert` and `panic` now take
+  any printable value after the message by a rule of their own rather than as
+  an `any_view`, so a value with no printed form, such as a capture literal, is
+  `L0310` ([Built-in procedures](design.md#built-in-procedures)).
 - The printers in `core:fmt` (`print`, `println`, `eprint`, `eprintln`,
   `format_to`, `concat_to`, `format_to_with`, `to_string`), `core:log`'s
   `debug`, `info`, `warning`, `error`, and `at`, and `io.write_formatted` and

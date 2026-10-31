@@ -154,16 +154,18 @@ resolve_foreign_global :: proc(k: ^Checker, d: ^Decl) {
 	}
 }
 
-// design.md "`@(c_vararg)`": only the final `..any_view` parameter of a foreign
-// declaration.
+// design.md "`@(c_vararg)`": only the final parameter of a foreign
+// declaration, written `..` with no type.
 check_c_vararg_param :: proc(k: ^Checker, is_foreign: bool, literal: ^Expr_Proc, position: int, parameter: Parameter) {
 	if !is_foreign {
 		errorf(k.c, parameter.span, "L0627", "`@(c_vararg)` is only allowed on a foreign procedure parameter")
 		return
 	}
-	type := resolve_type_syntax(k, parameter.type)
-	if parameter.mode != .Variadic || (type != TYPE_ANY_VIEW && type != INVALID_TYPE) {
-		errorf(k.c, parameter.span, "L0627", "`@(c_vararg)` marks a variadic parameter: `@(c_vararg) args: ..any_view`")
+	if parameter.mode != .Variadic || parameter.type != nil {
+		errorf(
+			k.c, parameter.span, "L0627",
+			"`@(c_vararg)` marks a C variadic parameter, which has no Loke type: `@(c_vararg) args: ..`",
+		)
 		return
 	}
 	if position != len(literal.signature.params) - 1 {

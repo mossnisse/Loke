@@ -3329,12 +3329,11 @@ fmt.println(view);       // fine: the guard lives until the block ends
 ```
 
 **A variadic `..any_view` parameter is the only exception to the container
-rule.** Formatting procedures such as `fmt.println(a, b, c)` use this form. The
-caller converts each argument to `any_view`. It materializes a temporary
-`[]any_view` for the duration of the call.
+rule.** It takes mixed values: the caller converts each argument to `any_view`
+and materializes a temporary `[]any_view` for the duration of the call.
 
 ```loke
-println :: proc(args: ..any_view) { ... }
+show :: proc(args: ..any_view) { ... }
 ```
 
 The slice and its elements borrow the caller's temporary arguments and live only
@@ -9442,8 +9441,8 @@ The predeclared operations used by this document are:
 | `typeid_of(T)` | The runtime [`typeid`](#type-and-typeid) constant for a compile-time type |
 | `type_info_of(id)` | read-only `^runtime.Type_Info` for a `typeid`; the table is shared static storage |
 | `fields_of(T)`, `enum_values_of(T)`, `variants_of(T)` | Typed [compile-time reflection](#compile-time-reflection) descriptor arrays |
-| `assert(condition, message := "", ..args)` | Phase-neutral check; failure panics at runtime or diagnoses a required compile-time evaluation. `message` is a compile-time string, and `args` are `any_view`s printed after it |
-| `panic(message, ..args)` | Panics at runtime or diagnoses the currently evaluated compile-time call. `message` is a compile-time string, and `args` are `any_view`s printed after it. It [diverges](#diverging-procedures), so it stands wherever a value is expected |
+| `assert(condition, message := "", ..args)` | Phase-neutral check; failure panics at runtime or diagnoses a required compile-time evaluation. `message` is a compile-time string, and `args` are printable values printed after it |
+| `panic(message, ..args)` | Panics at runtime or diagnoses the currently evaluated compile-time call. `message` is a compile-time string, and `args` are printable values printed after it. It [diverges](#diverging-procedures), so it stands wherever a value is expected |
 | `make`, `free_all`, `drop` | [Allocation and release](#allocators) |
 | `box(value, allocator)`, `try_box(value, allocator)` | An [owned value](#owned-values) in an allocation of its own |
 | `exchange(inout destination, replacement)` | Replace a live place and return its previous value; see [Exchange](#exchange) |
@@ -9455,11 +9454,15 @@ procedures](#standard-customization-procedures).
 
 The `message` of `assert` and `panic` must be a compile-time string constant,
 such as a literal or a named string constant; a runtime `string` value is
-rejected. Runtime values go after it: each argument converts to an `any_view`,
-and the report prints it after the message, preceded by a space, as
-`fmt.eprintln` would. The report is written straight to the error stream, so the
-program need not import `core:fmt`. The arguments of an `assert` are evaluated
-only when its condition fails:
+rejected. Runtime values go after it. Each may be any value with a [printed
+form](#string-format-printing), not a capture literal or a compile-time-only
+value, and an untyped constant takes its default type. The report borrows each
+argument where it is, or from a temporary that lives until the report ends, and
+prints it after the message, preceded by a space, as `fmt.eprintln` would.
+Nothing is copied, so a move-only value stays usable when an `assert` holds. The
+report is written straight to the error stream, so the program need not import
+`core:fmt`. The arguments of an `assert` are evaluated only when its condition
+fails:
 
 ```loke
 assert(i < n, "index out of range:", i, "of", n);
@@ -11891,12 +11894,13 @@ Used to interface with vararg functions in foreign procedures.
 
 ```loke
 foreign libc {
-	printf :: proc(format: cstring_view, @(c_vararg) args: ..any_view) -> i32 ---;
+	printf :: proc(format: cstring_view, @(c_vararg) args: ..) -> i32 ---;
 }
 ```
 
-`any_view` is signature notation here. Each argument uses the C default argument
-promotions.
+The parameter writes `..` with no type: a C variadic argument has no Loke element
+type, and each uses the C default argument promotions. A bare `..` is legal only
+with the attribute; any other variadic parameter names its element type.
 
 ##### `@(by_ptr)`
 

@@ -236,7 +236,7 @@ check_assert_or_panic :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, ki
 		case index == first:
 			check_message_arg(k, arg.value, formatted = true)
 		case:
-			bound[index], _ = check_argument_value(k, arg.value, TYPE_ANY_VIEW)
+			check_printed_argument(k, arg.value)
 			if committing(k.c) {
 				k.c.format_requested = true
 			}
@@ -244,6 +244,39 @@ check_assert_or_panic :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, ki
 	}
 	v.bound = bound
 	v.type = TYPE_VOID
+}
+
+// design.md "Built-in procedures": a value an `assert` or `panic` prints after
+// its message, borrowed for the report and printed as its type prints. An
+// untyped constant takes its default type.
+@(private = "file")
+check_printed_argument :: proc(k: ^Checker, e: Expr) {
+	type := check_single_expr(k, e)
+	if type == INVALID_TYPE {
+		return
+	}
+	if type == TYPE_UNTYPED_NIL {
+		errorf(k.c, expr_span(e), "L0310", "`nil` has no type, so it has no printed form")
+		return
+	}
+	if type_is_untyped(k.c, type) {
+		if !materialize(k, e, default_type(k.c, type)) {
+			return
+		}
+		type = expr_base(e).type
+	}
+	// design.md "Zero values": a `type` or descriptor exists only while
+	// compiling, so there is nothing at run time to print.
+	if offender := compile_time_only_component(k.c, type); offender != INVALID_TYPE {
+		report_compile_time_only(k, offender, expr_span(e))
+		return
+	}
+	// design.md "Capture literals": a callable has no printed form.
+	if !type_is_printable(k.c, type) {
+		errorf(k.c, expr_span(e), "L0310", "`%s` has no printed form", type_name(k.c, type))
+		return
+	}
+	request_typeid(k.c, type)
 }
 
 // `static_assert(condition[, message])` answers here, whatever phase surrounds it.

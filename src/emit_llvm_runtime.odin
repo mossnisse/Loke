@@ -440,9 +440,13 @@ emit_formatted_panic :: proc(e: ^Emitter, v: ^Expr_Call, message_index: int, fal
 	// statement's end; the unwind drops them.
 	push_temporaries(e)
 	defer pop_temporaries(e)
-	views := make([dynamic]string, 0, len(v.bound), context.temp_allocator)
+	// Each argument is borrowed where it is, or from a temporary holding it.
+	addresses := make([dynamic]string, 0, len(v.bound), context.temp_allocator)
+	types := make([dynamic]Type_Id, 0, len(v.bound), context.temp_allocator)
 	for arg in v.bound[message_index + 1:] {
-		append(&views, emit_expr(e, arg))
+		type := expr_base(arg).type
+		append(&addresses, emit_viewed_address(e, arg, type))
+		append(&types, type)
 	}
 	writer := alloca(e, "{ ptr, ptr }")
 	// `{` is a format directive to core:fmt, so these are concatenated.
@@ -451,11 +455,9 @@ emit_formatted_panic :: proc(e: ^Emitter, v: ^Expr_Call, message_index: int, fal
 	}))
 	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_panic_begin(ptr %s)", message_global(e, message))
 	space := text_literal_global(e, " ")
-	storage := llvm_type(e, TYPE_ANY_VIEW)
-	for view in views {
+	for address, index in addresses {
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_bytes(ptr %s, ptr %s, i64 1)", writer, space)
-		data, id := extract(e, storage, view, ANY_VIEW_DATA), extract(e, storage, view, ANY_VIEW_ID)
-		emit_format_dispatch_at(e, data, id, writer, PANIC_OPTIONS)
+		emit_format_thunk_call(e, types[index], address, writer, PANIC_OPTIONS)
 	}
 	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_panic_end()")
 	fmt.sbprintln(&e.b, "  unreachable")
@@ -502,7 +504,7 @@ emit_entry_failure_report :: proc(e: ^Emitter, entry: string, result, failure: T
 	if emit_lifecycle(e, failure).managed {
 		held = begin_temporary_drop(e, failure, data)
 	}
-	emit_format_dispatch_at(e, data, fmt.tprintf("%d", typeid_value(e.c, failure)), writer, PANIC_OPTIONS)
+	emit_format_thunk_call(e, failure, data, writer, PANIC_OPTIONS)
 	newline := text_literal_global(e, "\n")
 	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_bytes(ptr %s, ptr %s, i64 1)", writer, newline)
 	drop_temporary_value(e, held)
@@ -634,11 +636,19 @@ emit_format_literal :: proc(e: ^Emitter, text: string) {
 
 @(private = "file")
 emit_format_call :: proc(e: ^Emitter, type: Type_Id, address: string) {
+	emit_format_thunk_call(e, type, address, "%w", "%o")
+}
+
+// Formats the value at `address` through its type's thunk, which forwards to
+// the type's coherent `Formattable` witness or spells it.
+@(private = "file")
+emit_format_thunk_call :: proc(e: ^Emitter, type: Type_Id, address, writer, options: string) {
 	if !type_is_printable(e.c, type) || typeid_value(e.c, type) == 0 {
-		emit_format_literal(e, "<unformattable>")
+		global := text_literal_global(e, "<unformattable>")
+		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_bytes(ptr %s, ptr %s, i64 %d)", writer, global, len("<unformattable>"))
 		return
 	}
-	fmt.sbprintfln(&e.b, "  call void %s(ptr %s, ptr %%w, ptr %%o)", fmt_thunk_name(e, type), address)
+	fmt.sbprintfln(&e.b, "  call void %s(ptr %s, ptr %s, ptr %s)", fmt_thunk_name(e, type), address, writer, options)
 }
 
 // An element, field, key, or payload. A string or rune here prints quoted, so

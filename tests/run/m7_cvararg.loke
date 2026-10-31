@@ -8,7 +8,7 @@ package main;
 foreign import libc "system:legacy_stdio_definitions.lib";
 
 foreign libc {
-	printf :: proc "c" (fmt: cstring_view, @(c_vararg) args: ..any_view) -> i32 ---;
+	printf :: proc "c" (fmt: cstring_view, @(c_vararg) args: ..) -> i32 ---;
 }
 
 main :: proc() {

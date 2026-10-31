@@ -1438,6 +1438,13 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 			saw_c_vararg = true
 			continue
 		}
+		if parameter.mode == .Variadic && parameter.type == nil {
+			errorf(
+				k.c, parameter.span, "L0627",
+				"a bare `..` is a C variadic parameter, written `@(c_vararg)` on a foreign procedure; a Loke one names its element type, as in `..T`",
+			)
+			continue
+		}
 		// `@(by_ptr) p: T` lowers to `T const *`; it is foreign-declaration metadata.
 		is_by_ptr := has_attribute(parameter.attributes, "by_ptr")
 		if is_by_ptr && !is_foreign {

@@ -452,7 +452,7 @@ Parameter    = Attributes? Parameter_Names
              | Attributes? Parameter_Names ":" Type ("=" Expression)?
              | Attributes? Parameter_Names ":" Parameter_Mode Type?
              | Attributes? Parameter_Names ":" "^"               // receiver `self: ^`
-             | Attributes? Parameter_Names ":" ".." Type
+             | Attributes? Parameter_Names ":" ".." Type?          // `..` alone: `@(c_vararg)`
              | Attributes? Parameter_Names ":" "=" Expression
 Parameter_Names = Parameter_Name ("," Parameter_Name)*
 Parameter_Name  = "$"? Identifier
@@ -481,7 +481,9 @@ in another form is written as its own parameter, as in
 `proc(self: inout, allocator: Allocator)`.
 
 `..T` is a variadic parameter, and only the last parameter of a procedure or
-procedure type may be one. Variadic, `inout`, and `move` parameters take no
+procedure type may be one. A `..` with no type is accepted by the parser and is
+legal only as a foreign declaration's
+[`@(c_vararg)`](design.md#c_vararg) parameter. Variadic, `inout`, and `move` parameters take no
 default, and a default may refer only to the receiver and the parameters to its
 left (see [design.md](design.md#default-values)). A result is anonymous, so
 `return` always carries its value. The `---` body marks a foreign declaration.

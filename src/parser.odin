@@ -3594,7 +3594,8 @@ parse_parameter :: proc(p: ^Parser) -> (Parameter, bool) {
 	case .Range:
 		advance(p) // `..`
 		param.mode = .Variadic
-		param.type = parse_type(p)
+		// design.md "`@(c_vararg)`": a C variadic parameter writes no Loke type.
+		if !receiver_type_omitted { param.type = parse_type(p) }
 	case .Assign:
 		advance(p) // `x: = default`, an inferred-type default
 		param.default = parse_expr(p)

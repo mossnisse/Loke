@@ -1,0 +1,11 @@
+package main;
+
+// design.md "Built-in procedures": what an `assert` or `panic` prints after its
+// message has a printed form; a capture literal, a `type`, and `nil` have none.
+
+main :: proc() {
+	limit := 3;
+	below := proc(n: int) -> bool capture(limit) { return n < limit; };
+	assert(below(1), "fine", below);
+	panic("stop", int, nil);
+}
