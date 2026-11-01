@@ -266,6 +266,9 @@ Prov_Slot_Kind :: enum u8 {
 Prov_Slot :: struct {
 	precision: Precision_Loss,
 	kind:      Prov_Slot_Kind,
+	// Holds a read-only view of what its loans lend, which may be mutable, so a read
+	// of the same storage conflicts with none of them (`prov_view_through_carrier`).
+	read_only_hold: bool,
 	symbol:    Symbol_Id,
 	name:      string,
 	span:      Span,
@@ -5915,7 +5918,7 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []Slot_Use
 		it := live_loans(state, live)
 		for slot, index in next_live_loan(&it) {
 			loan := graph.loans[index]
-			if !access_conflicts(loan, event) {
+			if !access_conflicts(loan, event) || event.access == .Read && graph.prov_slots[slot].read_only_hold {
 				continue
 			}
 			state.diagnostic_precision |= state.precision[slot]
@@ -6085,7 +6088,7 @@ live_reborrow_of :: proc(state: ^Prov_State, source: int, live: []Slot_Use, use:
 			// afresh, as a loop's `list^.head` loads its temporary again, so that
 			// slot's later uses are of the new value, not the one reborrowed here.
 			fresh := use.kind == .Load && slot == use.slot
-			if live[slot] == .Used && !fresh && prov_slots_overlap(state, source, slot) {
+			if live[slot] == .Used && !fresh && !(use.reads_only && graph.prov_slots[slot].read_only_hold) && prov_slots_overlap(state, source, slot) {
 				return reborrow, slot, true
 			}
 			for next in reborrows_of(state, slot) {

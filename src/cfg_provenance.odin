@@ -3742,14 +3742,12 @@ prov_view_through_carrier :: proc(graph: ^Flow_Graph, e: Expr, span: Span) -> (h
 	if _, _, named := prov_place_of(graph, e); named {
 		return nil, false
 	}
-	// A mutable call result holds its source's mutable loan, so holding it would
-	// also forbid reads of the source, which do not touch what is viewed. See
-	// known-gaps.md "A printed value through a mutable call result is not held".
+	// A mutable call result holds its source's mutable loan, but a view of what it
+	// names only needs that kept valid: a read of the source does not touch it.
+	read_only_hold := false
 	if hops := prov_place_hops(graph, e); len(hops) > 0 {
 		carrier := prov_value(graph, hops[len(hops) - 1].carrier).origin
-		if prov_expr_is_temporary(carrier) && type_carries_borrow(graph.k.c, prov_type(graph, carrier)).mutable {
-			return nil, false
-		}
+		read_only_hold = prov_expr_is_temporary(carrier) && type_carries_borrow(graph.k.c, prov_type(graph, carrier)).mutable
 	}
 	type := prov_type(graph, e)
 	only := prov_read_is_reads_only(graph.k.c, type)
@@ -3760,11 +3758,17 @@ prov_view_through_carrier :: proc(graph: ^Flow_Graph, e: Expr, span: Span) -> (h
 	content := prov_load_content(graph, carriers, path, type, span, only, place = e)
 	kept := prov_snapshot(graph, carriers, span)
 	for slot, index in carriers {
-		if prov_slot_is_mutable_carrier(graph, slot) {
+		if read_only_hold || prov_slot_is_mutable_carrier(graph, slot) {
 			append(&graph.reborrows, Prov_Reborrow{source = slot, derived = kept[index], span = span, mutable = false})
 		}
 	}
-	return prov_join(graph, content, kept), true
+	held = prov_join(graph, content, kept)
+	if read_only_hold {
+		for slot in held {
+			graph.prov_slots[slot].read_only_hold = true
+		}
+	}
+	return held, true
 }
 
 // design.md "string type conversions", "Dynamic arrays", and "Fixed arrays": a

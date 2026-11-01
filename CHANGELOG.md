@@ -10,6 +10,14 @@ checklist.
 
 ### Breaking changes
 
+- A value printed through a mutable call result is now held until printing ends
+  ([Built-in procedures](design.md#built-in-procedures)).
+  `fmt.println(m.find_or_insert(3, 7)^, clearing(inout m))` compiled and read the
+  value after `clear` emptied the map. It is now `L0511`, and the same goes for a
+  `panic` or `assert` report. A read of the source, as `m.len()` there, stays
+  allowed. A second call taking the source mutably is rejected whether or not it
+  writes, so `fmt.println(a.slice()[0], a.slice()[1])` on an `inout` `slice` is
+  `L0512`. Upgrade by binding the view first: `view := a.slice();`.
 - An owner moved by a swap or sort now keeps its region
   ([Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)).
   After `items[1] = fmt.to_string(arena.allocator(), 42);`, swapping or sorting a

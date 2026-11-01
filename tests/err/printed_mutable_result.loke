@@ -1,0 +1,54 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Built-in procedures" and "Variadic parameters": what a printed value is
+// viewed from stays in use until printing ends, also when it is reached through a
+// mutable call result, so what may invalidate it is rejected until then.
+
+clearing :: proc(m: inout map[int]int) -> int { m.clear(); return 0; }
+first_mut :: proc(d: ^mut [dynamic]int) -> ^mut int { return &mut d^[0]; }
+grow :: proc(d: ^mut [dynamic]int) -> int { d^.append(1); return 0; }
+
+cleared_while_printed :: proc() {
+	m := map[int]int{};
+	defer drop(m);
+	m.find_or_insert(3, 1);
+	fmt.println(m.find_or_insert(3, 7)^, clearing(inout m));
+}
+
+cleared_while_printed_through_inout :: proc(m: inout map[int]int) {
+	fmt.println(m.find_or_insert(3, 7)^, clearing(inout m));
+}
+
+inserted_while_printed :: proc() {
+	m := map[int]int{};
+	defer drop(m);
+	fmt.println(m.find_or_insert(3, 7)^, m.find_or_insert(4, 8)^);
+}
+
+grown_while_printed :: proc() {
+	d := [dynamic]int{1};
+	defer drop(d);
+	fmt.println(first_mut(&mut d)^, grow(&mut d));
+}
+
+grown_through_a_pointer :: proc(p: ^mut [dynamic]int) {
+	fmt.println(first_mut(p)^, grow(p));
+}
+
+cleared_in_a_panic_report :: proc() {
+	m := map[int]int{};
+	defer drop(m);
+	if (m.len() > 9) {
+		panic("too many", m.find_or_insert(3, 7)^, clearing(inout m));
+	}
+}
+
+cleared_in_an_assert_report :: proc() {
+	m := map[int]int{};
+	defer drop(m);
+	assert(m.len() > 9, "too few", m.find_or_insert(3, 7)^, clearing(inout m));
+}
+
+main :: proc() {}

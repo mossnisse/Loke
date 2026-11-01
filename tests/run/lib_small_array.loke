@@ -115,7 +115,8 @@ main :: proc() {
 	copied.append(Copied{1});
 	kept := Copied{2};
 	copied.append(kept);
-	fmt.println(copied.slice()[0].id, copied.slice()[1].id);
+	copied_view := copied.slice();
+	fmt.println(copied_view[0].id, copied_view[1].id);
 
 	// Insertion at each end and in the middle.
 	w: container.Small_Array(int, 4) = {};

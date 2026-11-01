@@ -282,32 +282,29 @@ asks that walk what a type requires, so the fix belongs in the two effect reader
 in a separate query. Found while fixing the empty slice literal's drop effects on
 2026-11-01 at `46cf2aa8` (P3, over-rejection).
 
-### A printed value through a mutable call result is not held
+### A map entry reached through a pointer is not held
 
-[Built-in procedures](design.md#built-in-procedures) and
-[Variadic parameters](design.md#variadic-parameters) keep what a printed value
-is viewed from in use until printing ends. A value reached through a named carrier
-or a read-only result now is, but one reached through a mutable call result is not:
+[Weakening and reborrows](design.md#weakening-and-reborrows) suspends a carrier while
+what was reborrowed through it is in use, and a map's entry is invalidated by a
+`clear`. A result of `find_or_insert` on a map reached through a local pointer holds
+neither the pointer nor the map, so this compiles and reads the cleared map:
 
 ```loke
 package main;
 import "core:fmt";
-clearing :: proc(m: inout map[int]int) -> int { m.clear(); return 0; }
 main :: proc() {
-    m := map[int]int{};
-    m.find_or_insert(3, 1);
-    fmt.println(m.find_or_insert(3, 7)^, clearing(inout m));
+    q: map[int]int = {};
+    p := &mut q;
+    e := p^.find_or_insert(3, 7);
+    p^.clear();
+    fmt.println(e^); // should be rejected
 }
 ```
 
-This compiles, and the view of the value is read after `clear` emptied the map.
-The same goes for a `panic` or `assert` report. `prov_view_through_carrier` in
-[src/cfg_provenance.odin](src/cfg_provenance.odin) leaves this form alone because
-the result holds the receiver's mutable loan, so holding the loan would also reject
-`fmt.println(m.find_or_insert(3, 7)^, m.len())`, which `tests/run/no_zero_containers`
-requires and which is sound, as a read does not move the value. Fixing it takes a
-way to hold a mutable loan for its invalidating accesses only. Found while fixing
-the report's borrows on 2026-11-01 at `46cf2aa8` (P2).
+`clear` may be written `clearing(inout p^)`, or a call handed `p`, with the same
+result. The same steps on `q` directly report `L0511`, and a user procedure returning
+`&mut d^[0]` from `p` reports `L0641`. The cause has not been traced. Found on
+2026-11-01 while holding a printed value through a mutable call result (P2).
 
 ### Printing a mutable slice field suspends it for a later read
 

@@ -524,6 +524,10 @@ Keep these contracts:
   another, and a call that copied between them is no second use when the view is
   next handed on. Other uses of a carrier keep nothing held there live: a load reads
   the slots it names, and a copy reads none.
+- **A printed view through a mutable call result holds its loan for invalidation
+  only.** A slot marked `Prov_Slot.read_only_hold` conflicts with no read of what its
+  loans lend, as a read does not move what is viewed, and with any write or further
+  mutable borrow (`prov_view_through_carrier`).
 - **Owners, handles, and fields stay apart.** Region facts are kept by path,
   and backing dependencies apart from payload dependencies: a record's fields,
   a container's elements and backing, a shared handle's control block and
