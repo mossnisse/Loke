@@ -971,10 +971,10 @@ checklist.
   store into `xs[1].first`
   ([Weakening and reborrows](design.md#weakening-and-reborrows)). An index
   that is no constant, or a copy of the view, may still name any element.
-- Checking is faster: front-end time fell 8-17% on the examples and
+- Checking is faster: front-end time fell 3-16% on the examples and
   benchmarks taking over 30 ms (`bench/workspace` 184 to 162 ms,
   `examples/corpus_runner.loke` 249 to 228 ms), compiler peak working set
-  1-7%, and language-server operations on `bench/workspace` 6-12%.
+  2-7%, and language-server operations on `bench/workspace` 6-12%.
   Provenance summaries no longer rebuild a body none of whose callees'
   summaries changed, and the per-body analysis arenas no longer lock on every
   allocation. Diagnostics are unchanged.
@@ -1158,6 +1158,10 @@ checklist.
 
 ### Fixed
 
+- A failed interface bound no longer calls a private constant, or a private
+  procedure without a receiver, a private method. `L0444` now says the type has no
+  such method, as neither could meet the slot if it were public
+  ([Interface bodies](design.md#interface-bodies)).
 - Comparing or hashing a zero-length array no longer counts its element's `==` or
   `hash`, which never run ([Global write effects](design.md#global-write-effects)).
   `a == b` on `[0]Clears` reported `L0512` under a view of what `Clears`'s `==`

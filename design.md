@@ -1431,7 +1431,7 @@ failure. It returns a [`Result`](#typed-fallibility), never a bare `bool`:
 - A never-allocating container such as
   [`Small_Array(T, N)`](#fixed-capacity-arrays) uses a library-declared error
   such as `Capacity_Error`.
-- A no-payload success uses `Status(E)`.
+- A success with nothing to return uses `Status(E)`.
 
 The prefix specifies the failure contract, not a particular error type. Ordinary
 absence is separate: `pop() -> Option(T)` returns `.none` for an empty
@@ -7308,9 +7308,9 @@ path that leaves it; a bare `return;` there is an error, except where the
 result's success carries nothing or `Unit`.
 
 One result type may reach the end of its body: a [fallible
-union](#typed-fallibility) whose success variant carries no payload, such as
-`Status(E)`, or carries `Unit`, such as `Result(Unit, E)`. Reaching the end
-returns that success variant, as if the body ended in `return .ok;`, and a bare
+union](#typed-fallibility) whose success variant carries no payload, as a user
+union's may, or carries `Unit`, such as `Status(E)` or `Result(Unit, E)`. Reaching
+the end returns that success variant, as if the body ended in `return .ok;`, and a bare
 `return;` returns it anywhere in the body ([Success
 returns](#success-returns)). Every failure in such a procedure is written
 explicitly, so the end has one meaning, as it does in a procedure with no
@@ -9637,9 +9637,9 @@ and ABI lowering](#parameter-semantics-and-abi-lowering)). The
 wrapped return is a success return. The rule applies wherever `return` is
 written, an [`or_else` fallback](#or_else-expression) included.
 
-When the success carries nothing, as `Status(E)`'s does, or `Unit` as the
-result is written, as `Result(Unit, E)`'s does, `return;` returns it, as
-reaching the end of the body does ([One result](#one-result)). `return .ok;`
+When the success carries nothing, as a user union's may, or `Unit` as the
+result is written, as `Status(E)`'s and `Result(Unit, E)`'s do, `return;` returns
+it, as reaching the end of the body does ([One result](#one-result)). `return .ok;`
 stays valid in both.
 
 Implicit success wrapping is disabled when the written result names a generic

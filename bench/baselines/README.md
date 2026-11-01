@@ -293,8 +293,8 @@ other compiler workload ran during capture. SHA-256 values:
 | `bench/workspace` | 184 / 162 | 72.7 / 68.2 |
 | `examples/corpus_runner.loke` | 249 / 228 | 103.0 / 97.1 |
 
-Front-end time fell 8-17% on the examples and benchmarks taking over 30 ms,
-and peak working set 1-7%. Workspace LSP measurements were open 406 / 358 ms,
+Front-end time fell 3-16% on the examples and benchmarks whose baseline took
+over 30 ms, and peak working set 2-7%. Workspace LSP measurements were open 406 / 358 ms,
 root edit 266 / 239 ms, library edit 329 / 310 ms, completion 263 / 245 ms, and
 peak working set 118.7 / 114.3 MB. All records completed, executable sizes
 stayed unchanged, and benchmark outputs matched.

@@ -2984,17 +2984,16 @@ local_alias_target :: proc(k: ^Checker, id: Symbol_Id) -> (target: Expr, scope: 
 	if symbol == nil || symbol.generic || symbol.decl == nil || symbol.decl.kind != .Const || !scope_in_instance(symbol.def_scope) {
 		return nil, nil
 	}
-	for declared, index in symbol.decl.symbols {
-		if declared != id || index >= len(symbol.decl.values) {
-			continue
-		}
-		#partial switch _ in symbol.decl.values[index] {
-		case ^Type_Record, ^Type_Enum, ^Type_Distinct, ^Type_Interface, ^Expr_Proc, ^Expr_Proc_Group, ^Expr_Operator:
-			return nil, nil
-		}
-		return symbol.decl.values[index], symbol.def_scope
+	// grammar.md "Declarations": a constant binds one name, and an incomplete
+	// declaration may have no initializer.
+	if len(symbol.decl.symbols) != 1 || symbol.decl.symbols[0] != id || len(symbol.decl.values) == 0 {
+		return nil, nil
 	}
-	return nil, nil
+	#partial switch _ in symbol.decl.values[0] {
+	case ^Type_Record, ^Type_Enum, ^Type_Distinct, ^Type_Interface, ^Expr_Proc, ^Expr_Proc_Group, ^Expr_Operator:
+		return nil, nil
+	}
+	return symbol.decl.values[0], symbol.def_scope
 }
 
 @(private = "file")

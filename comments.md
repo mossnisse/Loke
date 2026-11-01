@@ -3416,3 +3416,47 @@ per body: one collecting global writes, one discovering summaries, and one
 reporting diagnostics. The profiling records under
 [Provenance normalization](bench/baselines/README.md#provenance-normalization)
 distinguish normalization, fact replay, and event materialization cost.
+
+### Provenance slots and regions stay apart
+
+A review of the provenance checker on 2026-11-01 proposed two generalizations. One
+was that every root own one slot vector by carrier path, so that a load, store, or
+link addresses the slots of the loan's root that its path overlaps. The other was
+a region set per slot in the loan bits' per-block dataflow, which would shrink
+`Prov_Facts` to the summaries and remove the replay rounds. Each was measured
+before it was taken, and neither was taken whole.
+
+The half of the slot vector that could be checked quickly was built: `Prov_Slot.kind`
+says what a slot belongs to, and `root_own_slots` and `loan_own_slots` replace a map
+and several hand-written walks. Diagnostics and emitted IR were identical on 3,009
+inputs, with 56 lines added and 74 removed, and no measurable change in checking
+time. Caller slots stay keyed by loan, since each stands for a load depth or pointee
+that summaries read, and a `Param` root still stands for several storages. Moving
+them has no measured benefit, and it would close no gap: holding a named array's
+content through a view, the gap this seemed to need it for, was closed on the slots
+as they are, by extending only a value handed to a call. Extending every use of the
+view newly rejected two valid programs.
+
+Per-block region sets had no prototype, so a shadow measured a lower bound on their
+cost: each block visit also joined, transferred, compared, and copied one region
+set per slot, read by nothing. It added 0.1 to 6.5 ms to checks of 8.2 to 295.7 ms,
+the same order as the replay it could remove (0.6 to 17.8 ms), and the construction
+walk stays either way. The cost does not rule it out; the benefit does. Only
+[a write on every path does not end a received region](known-gaps.md#a-write-on-every-path-does-not-end-a-received-allocators-region)
+needs facts by program point, and that is an over-rejection, against moving 70
+procedures in the construction walk and 28 places that set an event's region. The
+other gap first blamed on the lattice, a swap of owners not being seen, was fixed on
+today's facts. Reconsider if a real program meets that over-rejection, or if a
+soundness gap turns up that does need facts by program point.
+
+### Unwind thunks scan their replay's text for reads
+
+`without_unread_bindings` and `emit_unwind_thunk` find which bindings a cleanup
+replay reads by scanning the LLVM text it emitted, which ties them to the
+compiler's own spelling of an instruction. Recording each publication's span and
+marking uses through a shared accessor would remove about 50 lines, but it was not
+taken. The scan cannot miss a read: whatever the replay's text names is loaded,
+whichever emitter path wrote it. Tracking would have about eight sites that read
+`e.names` mark each use, where a site that forgets leaves an undefined name in a
+thunk only a panic path exercises, and its spans would have to survive
+`without_unpushed_pops`. Worth revisiting if the emitter stops producing text.

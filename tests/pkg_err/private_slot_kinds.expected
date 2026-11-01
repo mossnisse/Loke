@@ -1,0 +1,16 @@
+L0444
+@25:2
+`S` does not satisfy `Pokes(S)`
+`S` has no method `poke` with this signature
+L0444
+@26:2
+`S` does not satisfy `Peeks(S)`
+`S.peek` is private, and a public type's private method meets no slot
+L0444
+@27:2
+`S` does not satisfy `Frees(S)`
+`S` has no method `free` with this signature
+L0444
+@28:2
+`S` does not satisfy `Callable(S, proc() -> int)`
+`S` has no method `call(self, ...)` matching `proc() -> int`

@@ -1,0 +1,18 @@
+package lib;
+
+// design.md "Interface bodies": only a method could meet a slot if it were public,
+// so only a method is reported as a private one.
+
+@(public)
+S :: struct {}
+
+impl S {
+	call :: 42;
+	poke :: proc() -> int { return 1; }
+	peek_int :: proc(self, n: int) -> int { return n; }
+	peek_f32 :: proc(self, n: f32) -> int { return 1; }
+	peek :: proc { peek_int, peek_f32 }
+	free_int :: proc(n: int) -> int { return n; }
+	free_f32 :: proc(n: f32) -> int { return 1; }
+	free :: proc { free_int, free_f32 }
+}

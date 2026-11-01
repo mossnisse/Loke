@@ -8030,7 +8030,7 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	split_receiver: []int
 	split_value: Value_Id
 	for index in input.order {
-		if index == 0 && prov_op_lends_receiver(container_op) && v.bound[0] != nil {
+		if index == 0 && .Lends_Receiver in CONTAINER_OP_EFFECTS[container_op] && v.bound[0] != nil {
 			split_receiver = walk_flow_expr(graph, v.bound[0])
 			split_value = input.capture
 			graph.captured_values[split_value] = prov_snapshot(graph, split_receiver, expr_span(v.bound[0]))
@@ -8039,7 +8039,7 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		actuals[index] = prov_call_argument(graph, v, index, receiver, has_receiver, container_op, &borrowed)
 		prov_hold_owner(graph, v.bound[index])
 	}
-	if prov_op_lends_receiver(container_op) && len(v.bound) > 0 && v.bound[0] != nil {
+	if .Lends_Receiver in CONTAINER_OP_EFFECTS[container_op] && len(v.bound) > 0 && v.bound[0] != nil {
 		actuals[0] = prov_lend_split_receiver(graph, split_receiver, graph.captured_values[split_value], expr_span(v.bound[0]))
 		borrowed = prov_join(graph, borrowed, actuals[0])
 	}
@@ -8482,7 +8482,7 @@ prov_call_argument :: proc(
 			return actual
 		}
 		if root, path, ok := prov_place_of(graph, argument); ok {
-			if prov_op_removes_element(container_op) {
+			if .Removes_Element in CONTAINER_OP_EFFECTS[container_op] {
 				// A removal returns what the element held, not a container borrow.
 				actual = prov_content_at(
 					graph, root, prov_element_path(graph, v, path, container_op),
@@ -8495,7 +8495,7 @@ prov_call_argument :: proc(
 		} else if through {
 			// design.md "Weakening and reborrows": a receiver behind a carrier is
 			// borrowed as `&mut p^` is, for that place only.
-			if prov_op_removes_element(container_op) {
+			if .Removes_Element in CONTAINER_OP_EFFECTS[container_op] {
 				actual = prov_load_deep(graph, carriers, v.span, path = prov_element_path(graph, v, below, container_op))
 			} else {
 				actual = prov_place_loan(graph, carriers, below, true, "borrow", argument, borrows = true)
@@ -8504,7 +8504,7 @@ prov_call_argument :: proc(
 		}
 		return actual
 	}
-	if index == 0 && prov_op_returns_view(container_op) {
+	if index == 0 && .Returns_View in CONTAINER_OP_EFFECTS[container_op] {
 		// design.md "Iteration adapters": a map view read-borrows the map, and
 		// also carries what the stored elements borrow.
 		held := walk_flow_expr(graph, argument)
@@ -8834,28 +8834,25 @@ prov_call_carrier_moves :: proc(graph: ^Flow_Graph, v: ^Expr_Call, container_op:
 	for target in consulted {
 		prov_note_summary_dependency(graph, target, prov_has_direct_body(c, target))
 	}
-	#partial switch container_op {
-	case .Swap, .Sort, .Reverse_Sort, .Insert, .Remove, .Remove_Unordered:
-		if len(actuals) > 0 {
-			if moves == nil {
-				moves = make([]Carrier_Move, len(actuals), graph.alloc)
-			}
-			receiver := underlying_info(c, prov_parameter_type(graph, v, 0))
-			element := receiver == nil ? INVALID_TYPE : receiver.element
-			if type_carries_borrow(c, element).any {
-				moves[0].types, moves[0].any = carried_types(c, element, graph.alloc)
-			}
+	if .Moves_Elements in CONTAINER_OP_EFFECTS[container_op] && len(actuals) > 0 {
+		if moves == nil {
+			moves = make([]Carrier_Move, len(actuals), graph.alloc)
+		}
+		receiver := underlying_info(c, prov_parameter_type(graph, v, 0))
+		element := receiver == nil ? INVALID_TYPE : receiver.element
+		if type_carries_borrow(c, element).any {
+			moves[0].types, moves[0].any = carried_types(c, element, graph.alloc)
 		}
 	}
 	for move, index in moves {
 		if !move.any && len(move.types) == 0 || index >= len(actuals) {
 			continue
 		}
-		if len(actuals[index]) == 0 && (index != 0 || !prov_op_removes_element(container_op)) {
+		if len(actuals[index]) == 0 && (index != 0 || .Removes_Element not_in CONTAINER_OP_EFFECTS[container_op]) {
 			continue
 		}
 		into := actuals[index]
-		if index == 0 && prov_op_removes_element(container_op) {
+		if index == 0 && .Removes_Element in CONTAINER_OP_EFFECTS[container_op] {
 			// Its actual is what the removal hands back, not the storage it shifts.
 			if root, path, ok := prov_place_of(graph, v.bound[0]); ok {
 				into = prov_borrow(graph, root, path, true, v.span, "borrow")
@@ -9469,32 +9466,6 @@ prov_parameter_label :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int) -> s
 	)
 }
 
-@(private = "file")
-prov_op_returns_view :: proc(op: Container_Op) -> bool {
-	#partial switch op {
-	case .Map_Entries, .Map_Keys, .Map_Values:
-		return true
-	}
-	return false
-}
-
-// design.md "Splitting a mutable slice", "Chunks of a mutable slice": the
-// result views what the receiver views, so the receiver is lent as a mutable
-// carrier argument is.
-@(private)
-prov_op_lends_receiver :: proc(op: Container_Op) -> bool {
-	return op == .Split_At_Mut || op == .Chunks_Mut
-}
-
-@(private = "file")
-prov_op_removes_element :: proc(op: Container_Op) -> bool {
-	#partial switch op {
-	case .Pop, .Remove, .Remove_Unordered, .Map_Remove:
-		return true
-	}
-	return false
-}
-
 // The content path a removal reads; a map removal reads only the value.
 @(private = "file")
 prov_element_path :: proc(
@@ -9523,9 +9494,8 @@ prov_map_call_step :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> Proj_Step {
 // assignment. A fallible write joins, since its failure edge changes nothing.
 @(private = "file")
 prov_container_content :: proc(graph: ^Flow_Graph, v: ^Expr_Call, op: Container_Op, actuals: [][]int) {
-	#partial switch op {
-	case .Append, .Insert, .Map_Try_Insert, .Map_Find_Or_Insert, .Clear, .Map_Clear, .Swap, .Sort, .Reverse_Sort:
-	case:
+	effects := CONTAINER_OP_EFFECTS[op]
+	if effects & {.Stores_Content, .Empties, .Permutes} == {} {
 		return
 	}
 	if len(v.bound) == 0 || v.bound[0] == nil {
@@ -9535,8 +9505,7 @@ prov_container_content :: proc(graph: ^Flow_Graph, v: ^Expr_Call, op: Container_
 	if info == nil {
 		return
 	}
-	#partial switch op {
-	case .Swap, .Sort, .Reverse_Sort:
+	if .Permutes in effects {
 		// A dynamic array's facts already stand for any element (`prov_region_path`).
 		if type_is_carrier(graph.k.c, prov_type(graph, v.bound[0])) && prov_type_has_region(graph.k.c, info.element) {
 			prov_store_permuted_region(graph, prov_input_value(graph, v.bound[0]))
@@ -9565,7 +9534,7 @@ prov_container_content :: proc(graph: ^Flow_Graph, v: ^Expr_Call, op: Container_
 	for value in stored_values {
 		prov_store_region(graph, prov_input_value(graph, v.bound[0]), prov_input_value(graph, value), element = true)
 	}
-	if op == .Clear || op == .Map_Clear {
+	if .Empties in effects {
 		if root, path, ok := prov_place_of(graph, v.bound[0]); ok {
 			if content := prov_content_at(graph, root, path); len(content) > 0 {
 				prov_define_content(
@@ -10545,14 +10514,6 @@ prov_argument_regions :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []Region_Set
 	return out
 }
 
-// Container operations that may allocate, resize, or free their storage, or
-// drop elements that own storage.
-@(private = "file")
-ALLOCATING_OPS :: bit_set[Container_Op]{
-	.Append, .Insert, .Clear, .Resize, .Reserve, .Shrink,
-	.Map_Find_Or_Insert, .Map_Try_Insert, .Map_Remove, .Map_Clear, .Map_Reserve, .Map_Shrink,
-}
-
 // The allocator use of a call the summaries do not follow into a body: a
 // builtin, a compiler-supplied member, a foreign procedure, or a conversion.
 // A followed call's, direct or through a value, comes from what its callees'
@@ -10576,7 +10537,7 @@ prov_call_allocator_use :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 	// container operation does.
 	member := symbol_of(c, v.resolution.chosen_overload)
 	supplied := member != nil && member.synth != .None
-	changes_storage := !supplied || (member.synth == .Container_Op && member.container_op in ALLOCATING_OPS)
+	changes_storage := !supplied || (member.synth == .Container_Op && .Allocates in CONTAINER_OP_EFFECTS[member.container_op])
 	followed := call_follows_bodies(c, v)
 	info := underlying_info(c, call_proc_type(c, v))
 	// A text operation borrows its operands rather than copying them.

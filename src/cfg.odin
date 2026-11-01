@@ -1292,20 +1292,13 @@ provider_field_assign_end :: proc(graph: ^Flow_Graph, target: Expr) {
 	}
 }
 
-// Container operations on a local that store a moved provider, and those that
-// may drop one.
-STORING_CONTAINER_OPS :: bit_set[Container_Op]{.Append, .Insert, .Map_Try_Insert}
-DROPPING_CONTAINER_OPS :: bit_set[Container_Op]{
-	.Pop, .Remove, .Remove_Unordered, .Clear, .Resize, .Map_Remove, .Map_Clear,
-}
-
 // A provider appended or inserted into a local container is stored there, so it
 // carries its region along.
 @(private)
 provider_container_moves :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 	sym := symbol_of(graph.k.c, v.resolution.chosen_overload)
 	if sym == nil || sym.synth != .Container_Op || len(v.bound) == 0 ||
-	   sym.container_op not_in STORING_CONTAINER_OPS ||
+	   .Stores_Provider not_in CONTAINER_OP_EFFECTS[sym.container_op] ||
 	   provider_place_root(graph, v.bound[0]) == INVALID_SYMBOL {
 		return
 	}
@@ -1325,12 +1318,12 @@ provider_container_end :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 	if sym == nil || sym.synth != .Container_Op || len(v.bound) == 0 {
 		return
 	}
-	if sym.container_op in DROPPING_CONTAINER_OPS {
+	if .Drops_Provider in CONTAINER_OP_EFFECTS[sym.container_op] {
 		provider_place_end(graph, v.bound[0], v, v.span, "removing", "from")
 		return
 	}
 	root := provider_place_root(graph, v.bound[0])
-	if root != INVALID_SYMBOL && sym.container_op in STORING_CONTAINER_OPS && graph.mode != .Lifecycle {
+	if root != INVALID_SYMBOL && .Stores_Provider in CONTAINER_OP_EFFECTS[sym.container_op] && graph.mode != .Lifecycle {
 		for argument in v.bound[1:] {
 			if argument != nil {
 				prov_merge_moved_bits(graph, root, prov_input_value(graph, argument))

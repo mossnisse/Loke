@@ -1063,7 +1063,7 @@ slot_candidates :: proc(k: ^Checker, subject: Type_Id, name: Identifier_Id, owne
 }
 
 // A private inherent method `slot_candidates` passed over, so a failure can say
-// why.
+// why. Anything else of that name could not meet the slot even if it were public.
 @(private = "file")
 private_slot_member :: proc(k: ^Checker, subject: Type_Id, name: Identifier_Id) -> ^Symbol {
 	info := type_of(k.c, subject)
@@ -1072,11 +1072,33 @@ private_slot_member :: proc(k: ^Checker, subject: Type_Id, name: Identifier_Id) 
 	}
 	for member in info.members {
 		sym := symbol_of(k.c, member)
-		if sym != nil && sym.name == name && !sym.public && sym.synth == .None && !sym.bound_excluded {
+		if sym != nil && sym.name == name && !sym.public && sym.synth == .None && !sym.bound_excluded && member_has_receiver(k, member) {
 			return sym
 		}
 	}
 	return nil
+}
+
+// Whether a member is a method, or an overload group with one among its members.
+@(private = "file")
+member_has_receiver :: proc(k: ^Checker, member: Symbol_Id) -> bool {
+	sym := symbol_of(k.c, member)
+	if sym == nil {
+		return false
+	}
+	if sym.decl != nil && sym.decl.sig_state == .Unchecked {
+		resolve_symbol_signature_in_place(k, member, sym.owner_type)
+		sym = symbol_of(k.c, member)
+	}
+	if sym.kind == .Proc_Group {
+		for nested in sym.members {
+			if member_has_receiver(k, nested) {
+				return true
+			}
+		}
+		return false
+	}
+	return sym.kind == .Proc && sym.has_receiver
 }
 
 @(private = "file")
@@ -1223,9 +1245,10 @@ required_slot_candidates :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id
 // design.md "Interface bodies": the associated constant `type.name` that the
 // interface application being checked, or a bare bound of the declaration
 // being checked, requires, found as its requirement found it when the
-// requiring package could not see it: an inherent member whatever its
-// visibility, or an extension in the package of the interface that writes
-// the requirement. Ordinary lookup has already failed.
+// requiring package could not see it: an inherent member a slot may use, so a
+// private one only on a type no importer can name, or an extension in the
+// package of the interface that writes the requirement. Ordinary lookup has
+// already failed.
 required_associated_constant :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> Symbol_Id {
 	if k.grant_depth >= MAX_INTERFACE_DEPTH {
 		return INVALID_SYMBOL

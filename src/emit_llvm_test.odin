@@ -883,6 +883,7 @@ rename_directory_waits_for_a_held_file :: proc(t: ^testing.T) {
 // Only an unoptimized build never asks for lld-link.
 @(test)
 runtime_bitcode_keeps_the_cpu_check_native :: proc(t: ^testing.T) {
+	context.allocator = context.temp_allocator
 	sources := []string{"runtime/alloc.c", "runtime/cpu.c", "runtime/panic.c"}
 	target := windows_x64_target(.X86_64)
 	has :: proc(command: []string, word: string) -> bool {

@@ -1,118 +1,25 @@
 # Open questions
 
 Decisions that are deliberately not yet made are recorded here rather than left
-implicit in normative prose. [`design.md`](design.md) defines the rules
-implementations must follow for the current language version; these questions
-concern possible later changes.
-
-Design rationale and differences from Odin are recorded in
-[comments.md](comments.md).
+implicit in normative prose, along with review findings not yet acted on.
+[`design.md`](design.md) defines the rules implementations must follow for the
+current language version; these questions concern possible later changes. An
+entry is removed once it is settled: the reasons go to
+[comments.md](comments.md), and a fix to its commit message.
 
 The current behavior inventory is in [Nondeterminism and undefined behavior
 audit](nondeterminism-audit.md).
 
-## Review of the provenance architecture (2026-11-01)
+## Provenance architecture
 
-Reviewed the root and region provenance implementation for structure rather
-than for one change: construction in
-[src/cfg_provenance.odin](src/cfg_provenance.odin) and the walk it shares with
-lifecycle analysis in [src/cfg.odin](src/cfg.odin), the solvers, summaries, and
-diagnostics in [src/borrow.odin](src/borrow.odin), and the normalized input in
-the `provenance_*.odin` files. The question was where its special cases come
-from, and which generalizations would remove classes of them rather than
-instances. One defect was confirmed with the checked-in compiler and fixed since;
-the rest are design questions, ordered by the payoff of a change against its
-risk.
-
-Some measure of the subject, so the questions carry their weight. The checker
-is about 25,000 lines, 10,400 of them construction in `cfg_provenance.odin` and
-6,700 solving, summaries, and diagnostics in `borrow.odin`. 378 of the
-repository's 1,459 commits touch these files, and 223 of the 533 `src` commits
-since 2026-10-01. 13 of the 25 gaps then open in [known-gaps.md](known-gaps.md)
-were in it. `Prov_State` holds 27 maps, 13 of which answer some form of "what does
-this storage hold, or view". `Prov_Event` has 46 fields, and what a `Publish`
-means depends on 13 of them; `publish_into_loan` takes 11 parameters.
-`Prov_Reborrow` carries 5 modifier flags, each a rule of its own in
-`live_reborrow_of`. `prov_call_argument` is 250 lines of shape tests whose
-order matters, and `prov_assign` is the most edited procedure in the checker,
-55 hunks in the last 120 commits to its file.
-
-- **A joining `Def` ended liveness (P1, fixed).** `run_live_event` ended the
-  slot of every `Def`, including a store at an indistinct path, whose `Def`
-  joins the slot's own value into its sources because the store may have left
-  it in place. The old borrow was then dead at the next conflicting access.
-  The gap's earlier record blamed a loop and the loan's identity, but two stores
-  at one variable index in straight-line code did the same. A `Def` now ends its
-  slot only when the slot is not among its sources, and
-  [tests/err/store_keeps_carrier_live.loke](tests/err/store_keeps_carrier_live.loke)
-  holds the cases. It was not the one line this review first expected. It also
-  closed a hole nothing had recorded: a call emits what a `stored` argument
-  leaves before its own use of the arguments, so that store hid from liveness
-  what an `inout` argument still held, and a callee could be handed ended
-  storage. And it exposed the
-  [value identity](#compositional-loan-construction) question: a reborrow edge is
-  flow-insensitive, so `held.append(rows)` in a loop compared the new temporary
-  with what an earlier iteration left in `held`. Another rule took care of that
-  by extending severing (`prov_slot_is_stored_temporary`), which is more evidence
-  for the exclusivity item below.
-
-- **What storage holds has six representations (P1 class).** A named local's
-  carriers are content slots (`content_by_symbol`), or one slot
-  (`slot_by_symbol`); a slice literal's hidden array has `Prov_Root.slots`; a
-  parameter's caller storage has `caller_slots` keyed by loan, told apart by
-  `caller_mutable`, `caller_one`, and `caller_element`; one element of a view
-  parameter has `view_elements`; a temporary has `prov_temp_content`; a loaded
-  value a `loaded` slot. Every consumer that must visit all the slots a carrier
-  may be in enumerates these by hand, and each misses some. Asking whether a slot
-  held a mutable carrier by its symbol left a literal's array out of every reborrow
-  check, six forms in all where a named array was rejected (fixed since, with
-  `prov_slot_is_stored`);
-  a use of a literal's view was extended to its content but a named array's was not
-  (fixed since: a call extends to what any storage it is handed holds,
-  `with_held_content`);
-  `prov_note_traversal` took a named-root branch for a protocol iterable
-  (fixed since: a store through a user iterator's binding lands by type);
-  `load_through_loan` branches four ways and `publish_into_loan` five.
-  Proposal: every root owns one slot vector by carrier path, a parameter's
-  caller storage and a literal's array included, and a loan names a root and a
-  path, so a load, store, link, or use addresses the slots of the loan's root
-  that its path overlaps and nothing else. `prov_caller_slots` already builds
-  such slots; it keys them by loan rather than by root. Whether a path names
-  one place, which `caller_one` and `caller_element` record, is a property of
-  the path. This would not by itself close the protocol traversal's gap, which is
-  about where an iterator lends from, and the named array's was closed without it. A
-  `Param` root also stands for several storages, one per load depth, which would have
-  to become roots first. The [outcome](#outcome-of-the-slot-vector-trial) below stops
-  short of this.
-
-- **Region facts are a second alias analysis with another lattice (P2,
-  largest).** Root provenance is a per-block dataflow over loan bits,
-  flow-sensitive. Region provenance is `Prov_Facts`: `region_of`,
-  `region_content`, `written_aliases`, `lent_locals`, and `provider_parents`,
-  flow-insensitive sets that only grow, carried between replay rounds.
-  `written_aliases` answers for regions the question the loan rows answer for
-  roots, what a local's carriers may point at. The replay machinery exists
-  only because these facts grow: `build_provenance_replay` returns the
-  construction graph when their weight is zero, and otherwise replays the
-  recorded fact operations to a fixed point and materializes the
-  fact-dependent events again
-  ([rationale](comments.md#provenance-replay-and-precise-publication)). Every
-  store site records twice: `prov_assign`, `prov_container_content`, and the
-  `Exchange` and `Unsafe_Write` builtins each call a loan path and a region
-  path. One gap follows from the lattice itself,
-  [a write on every path does not end a received region](known-gaps.md#a-write-on-every-path-does-not-end-a-received-allocators-region),
-  while the specification states its rules for what is live and until cleanup,
-  which is flow-sensitive. A second was first blamed on it, a swap of owners not
-  being seen, but it had another cause, as the
-  [outcome](#outcome-of-the-region-measurement) below says.
-  Proposal: carry a region set per slot in the same
-  per-block dataflow as the loan bits, joined at block entry, replaced by a
-  `Def`, joined by a `Publish`. `Prov_Facts` then shrinks to what crosses
-  bodies, the summaries; the replay rounds, the two replay arenas, the phase
-  rules under
-  [normalized provenance input](compiler-architecture.md#normalized-provenance-input),
-  and the [cost of normalization](#normalized-input-for-provenance-analysis)
-  question change with it.
+A review of the root and region provenance checker on 2026-11-01 asked where its
+special cases come from, and which generalizations would remove classes of them
+rather than instances. One slot vector per root and per-block region sets were
+tried and measured, and [not adopted](comments.md#provenance-slots-and-regions-stay-apart).
+These remain. None fixes a bug or accepts a new program, except where it says so,
+and estimates have been poor: the
+[borrow matrix](tests/borrow_matrix_test.odin), whose model is written apart from
+the compiler, is the oracle for any of them.
 
 - **Mutable exclusivity is kept by hand-built links (P2).** The solver knows
   which loans a slot may hold; whether two slots holding one mutable loan may
@@ -123,20 +30,13 @@ order matters, and `prov_assign` is the most edited procedure in the checker,
   `prov_reborrow_retained` for a `stored` argument, `prov_link_copied_carriers`
   with `copied_within` for a call that copies, and `prov_reborrow_loaded` with
   `pending` and `prov_activate_copies` for a copy read through a pointer,
-  settled after the solve. [Compositional loan
-  construction](#compositional-loan-construction) asked for explicit reaching
-  definitions "if another loop or branch form needs a fourth" rule; `pending`
-  and `copied_within` are the fourth and fifth. Two genuine rules remain
-  underneath: a carrier stored back through what it was loaded from replaces
-  that carrier (`via`), and a read-only reborrow is not suspended by its copies
-  (`passes_on`). The may-sets a permuting `Rearrange` leaves mean the solver
-  cannot by itself tell a copy from a move, so `Carrier_Move.copied` stays;
-  what one rule could replace is the per-shape linking: a `Def` whose sources
-  hold a mutable loan that another live slot holds, outside the chain the new
-  slot derives from, is the conflict. The
-  [borrow matrix](tests/borrow_matrix_test.odin) is the oracle for whether such
-  a rule rejects what the links let through.
-
+  settled after the solve. Two genuine rules remain underneath: a carrier stored
+  back through what it was loaded from replaces that carrier (`via`), and a
+  read-only reborrow is not suspended by its copies (`passes_on`). The may-sets a
+  permuting `Rearrange` leaves mean the solver cannot by itself tell a copy from a
+  move, so `Carrier_Move.copied` stays; what one rule could replace is the
+  per-shape linking: a `Def` whose sources hold a mutable loan that another live
+  slot holds, outside the chain the new slot derives from, is the conflict.
 - **Place loans beside root loans (P3).** A borrow of a named place is a loan
   of its root and path; one through carriers is a `Prov_Place_Loan`, a
   snapshot slot with a bit of its own, because which storage the carriers name
@@ -151,8 +51,7 @@ order matters, and `prov_assign` is the most edited procedure in the checker,
   resolve a place loan to loans of the roots its carriers reach, as
   `resolve_content_reads` already materializes loaded reborrows after the
   forward pass, leaving one check.
-
-- **Flags stand in for kinds, and order for rules (P3, local).** `Publish`'s
+- **Flags stand in for kinds, and order for rules (P3).** `Publish`'s
   modifiers (`stored`, `linked`, `retained`, `carried`, `permutes`, `strips`,
   `element_loan`, `elements`, `any_element`, `view_slot`, `view_index`,
   `view_reaching`, `replaces`) and `Load`'s (`deep`, `writable`, `walked`,
@@ -163,735 +62,25 @@ order matters, and `prov_assign` is the most edited procedure in the checker,
   tests twelve argument shapes in an order that matters, with nine callee
   names checked by hand (`Slice_Ref_Next`, `indexed_next_lends`,
   `Standard_Len`, `Standard_Cap`, `Standard_Hash`, `Adapter_Iter`,
-  `Iterator_Copy`, `Adapter_View`, `clone_copies_receiver`); printing takes a path
-  those tests do not, through `prov_erase` and `prov_printed_argument`. A `Container_Op`'s provenance is spread over eight predicates and tables
-  (`prov_op_returns_view`, `prov_op_lends_receiver`,
-  `prov_op_removes_element`, three switches in `prov_container_content`, the
-  list in `prov_call_carrier_moves`, `STORING_CONTAINER_OPS`,
-  `DROPPING_CONTAINER_OPS`, `ALLOCATING_OPS`).
+  `Iterator_Copy`, `Adapter_View`, `clone_copies_receiver`); printing takes a
+  path those tests do not, through `prov_erase` and `prov_printed_argument`.
   [provenance_call.odin](src/provenance_call.odin) is where a per-argument mode
-  and a per-operation row belong, and a compiler-known body with no source to
-  summarize should carry a written result contract rather than a name test in
+  belongs, beside `CONTAINER_OP_EFFECTS`, and a compiler-known body with no source
+  to summarize should carry a written result contract rather than a name test in
   the walk.
-
-- **Syntax as evidence (P3).** `prov_assign_permutes` compared source text (fixed
-  since: `prov_names_same_place` compares what each expression resolves to, as a
-  normalized `Prov_Place` could not, since every variable index in one is the same
-  wildcard); `prov_indices_may_write` reads an index's syntax where the global effects
-  already say what a call writes; and what counts as a fresh borrow of a range
-  for `Prov_View_Def` is
-  [open](#review-of-constant-view-elements-and-the-wider-borrow-matrix-2026-10-31).
-
-Order: fix the small soundness gaps as they are found, as the liveness, slice
-literal, and permutation fixes were. Try one slot vector per root on a throwaway
-branch, time-boxed, and compare diagnostics over the inputs the
-[architecture](compiler-architecture.md#normalized-provenance-input) lists before
-committing to it. Decide on regions only after that, on a measured cost. The local
-refactors can wait, as they fix nothing and accept nothing new, apart from a table
-of each `Container_Op`'s provenance, which is cheap. Estimates here have been poor:
-the one-line liveness fix took a second rule, and the slice literal's link took six
-sites and a split between using a value and keeping it live. The
-[borrow matrix](tests/borrow_matrix_test.odin) is the right oracle throughout,
-since its model is written apart from the compiler; it wants places for a
-slice literal's array, a view parameter's caller storage reached twice, a
-store at an unknown index between two uses, and a call that copies.
-
-### Outcome of the slot vector trial
-
-The trial, on 2026-11-01, built the half that could be checked quickly. `Prov_Slot.kind` says whether a slot is a temporary, a local's, a
-slice literal's, or a caller's, replacing `literal_content`, a map of caller slots,
-and a second loop in `prov_link_copied_carriers`. `root_own_slots` and
-`loan_own_slots` replace `content_by_symbol`, a condition duplicated in both loads,
-and two walks in each of `publish_replaced_slots` and `publish_into_loan`. Compared
-with its parent commit, the slice literal fix below:
-
-| Measure | Result |
-| --- | --- |
-| Diagnostics and emitted IR | identical on all 3,009 inputs under `tests`, `examples`, `bench`, `core`, and `base` |
-| A check that the lookup holds every slot with a symbol | held on the 1,979 inputs present then, and was then removed |
-| `.\test-all.ps1` | passed |
-| Lines in `src`, ignoring indentation | 56 added, 74 removed |
-| Changed lines with `if`, `for`, `case`, `&&`, or `\|\|` | 17 added, 30 removed |
-| `bench/dense.loke`, best of 25 at `-o:speed` | 403.6 ms before, 403.9 ms after |
-| `bench/provenance.loke`, same | 20.4 ms before, 20.9 ms after |
-| `examples/corpus_runner.loke`, same | 229.2 ms before, 230.5 ms after |
-
-It closes no gap, and it is not the whole proposal. Caller slots stay keyed by loan,
-since each stands for a load depth or pointee that summaries read, and a `Param` root
-still stands for several storages. The gain is a smaller vocabulary: the last bug
-here came from asking whether a slot was stored through its symbol, which a kind
-answers directly.
-
-The trial also found that the slice literal fix had made a call conflict with its
-own keep-alive, rejecting two copying calls on a literal that a named array accepts.
-That is fixed: a slot's liveness now tells a value only kept from one used
-(`Slot_Use`), and only a used one suspends a reborrow.
-
-Holding a named array's content through a view was then tried on the lookup, with
-that fix in place. Both forms reject the program that showed the gap, its
-`fmt.println` form, and `first(arr[:])`, and both reject `drop(values); view.len()`:
-
-| Extended on | Newly rejected valid fixtures | Other changes |
-| --- | --- | --- |
-| Every use of the view | 2 under `tests/run` | 3 rejection fixtures |
-| Only a value handed to a call | none | 1 note points at a different position |
-
-The first form rejects a write to what one field borrows while another field is read
-through a pointer. Before the `Slot_Use` fix the same two forms rejected more: 4
-fixtures and 72 borrow matrix programs for the first, and `two_copying_calls` for the
-second.
-
-The second form was adopted, with the `drop(values); view.len()` cost accepted, and
-closes the gap. It was widened to any root with slots of its own, as a slice held in
-a local and reached through a pointer had the same hole, and a slice literal now
-follows the same rule rather than extending on every use. Literal and named forms now
-agree on every form probed.
-
-Recommendation: stop here. Moving caller slots onto roots has no measured benefit,
-and the trial says nothing about regions.
-
-### Outcome of the region measurement
-
-Per-block region sets had no prototype, so their cost was measured with a shadow, on
-2026-11-01, which was then removed. Each block visit in `solve_reaching` also joined,
-transferred through `Def` and `Publish`, compared, and copied a vector of one 24-byte
-region set per slot, for bodies with region facts. Nothing read the result, so the
-fixed point was the loans' own. Checking time is the best of 15 runs at `-o:speed`:
-
-| Input | Check today | Replay and materialization today | Shadow's added check time | Largest body's vectors | Peak build today |
-| --- | --- | --- | --- | --- | --- |
-| `bench/provenance.loke` | 8.2 ms | 0.6 ms | 0.1 ms | 12 KiB | 347 KiB |
-| `bench/workspace` | 114.8 ms | 8.2 ms | 3.2 ms | 91 KiB | 873 KiB |
-| `bench/dense.loke` | 295.7 ms | 17.8 ms | 6.5 ms | 336 KiB | 2,757 KiB |
-| `examples/corpus_runner.loke` | 164.4 ms | 15.0 ms | 4.5 ms | 288 KiB | 1,992 KiB |
-
-This is a lower bound. It keeps no region per path beyond the slots, walks no loans
-for a `Publish`, and no event reads a set. Skipping bodies without region facts saves
-little, as 75% to 92% of the bodies solved have some. The cost does not rule the
-proposal out: it is the same order as the replay it could remove, and the construction
-walk, most of what is measured as normalization, stays either way.
-
-The benefit is what is small. Of the gaps cited, only the
-[received region](known-gaps.md#a-write-on-every-path-does-not-end-a-received-allocators-region)
-needs facts by program point, and it is an over-rejection. Against that, the change
-moves 70 procedures in the construction walk and 28 places that set an event's region,
-since what the walk now reads from settled facts would be known only to the solve.
-
-The other gap, a swap of owners not being seen, is fixed on today's facts, and was
-narrower than recorded. Elements or fields moved by hand were already seen, through
-calls too, as a copy entry in the summary. Only the built-in swap and sort recorded no
-such move, and they now record a copy of any element to any element, which reaches
-callers the same way. `Carrier_Move` did not need to say owners moved, as this review
-first supposed.
-
-Recommendation: leave region facts as they are. Reconsider if a real program meets
-the over-rejection, or if a soundness gap turns up that does need facts by program
-point.
-
-Validation: the review's probes were compiled with the checked-in `lokec.exe`.
-Two `&mut c` written in turn reported `L0511`; the same two around a store at an
-index a call returns, or one `&mut c` in a loop storing at such an index,
-compiled. Each outcome above states its own measurements.
-
-## Review of local result aliases, view cycles, and hook review notes (2026-11-01)
-
-Reviewed `045dcbce`, `166fdfab`, and `51bceeb4` for correctness,
-simplification, and structure. These are sibling commits based on `46cf2aa8`,
-so the two implementation changes were built and tested independently at their
-original revisions. Two remaining gaps were recorded with reproductions:
-
-- Qualified local aliases hid generic dependence, since fixed: the new
-  initializer walk handled a bare `Outcome`, but a local implementation block's
-  `Local.Outcome` still permitted a bare return, and `Local.Payload` still
-  permitted implicit success wrapping beside an error payload (P2).
-- Provisional short lengths lost a known start in zero-offset cycles, since fixed
-  by `publish_view_lengths`.
-  A reslice could become permanently unknown before another reaching definition
-  contributed its longer length. A safe loop still reported `L0641`; removing
-  the loop or lengthening only the initial view made it compile (P2).
-
-The documentation-only `166fdfab` accurately recorded the hook review's three
-confirmed divergences and distinguished the older excluded-hook failure from
-the two new copy-decision gaps. Those findings have since been fixed by
-`41c0cae6`, `2ca91fce`, and `d5e1dd6d`; they are not reopened here.
-
-One small simplification remains open (P3): `local_alias_target` in
-[src/check.odin](src/check.odin) scans `decl.symbols` and indexes parallel
-initializers even though [a constant declaration](grammar.md#declarations)
-has exactly one name and initializer. Guard the one binding and inspect index
-zero directly, keeping the checks needed for incomplete declarations. This
-removes about three lines and the unnecessary multi-binding path.
-
-The overall structure is appropriate: aliases are inspected in their declaring
-scopes, and nominal local type definitions remain opaque. The view analysis
-uses an explicit dependency walk and a fixed point, with a single pass for an
-acyclic graph; that machinery serves actual cycles and long reslice chains.
-Its abstract states needed to distinguish incomplete bounds from a final loss of
-offset information, which `publish_view_lengths` since does by settling the bounds first.
-
-Validation: each original implementation revision passed all 179 compiler unit
-tests, with the existing toolchain-test allocation warnings. Four integration
-suites passed per revision: run programs and diagnostics in both; packages and
-tutorials for the alias change; LLVM shapes and trapping programs for the view
-change. Focused probes confirmed both gaps and their controls on the original
-revisions and the current merged compiler. No implementation fixes are included
-in this review. Estimated simplification: net: -3 lines possible.
-
-## Review of drop-hook copy decisions and generic hook validation (2026-11-01)
-
-Reviewed `3a5b4f7b`, `bf5cb393`, and `46cf2aa8` for correctness,
-simplification, and structure. Two gaps it found in the new copy-decision check
-have since been fixed: a deferred record declaration bypassing `L0747`, and a
-successful first instance of a generic procedure hiding a later instance's
-failure, whose acceptance depended on the order of the calls.
-
-An excluded generic drop hook still supplying cleanup, which failed emission with
-an internal backend diagnostic, has also been fixed. It was confirmed with a
-compiler built from `bf5cb393`, so it was an adjacent existing gap, not a regression
-from `46cf2aa8`.
-
-The overall structure is appropriate: copy decisions validate declarations
-without adding another lifecycle representation or emitter path; instantiated
-hooks reuse `validate_semantic_hook`; and the early generic check handles the
-extension restriction and drop-hook shape that need no instance. Validation
-and diagnostic deduplication need to remain separate where the answer depends
-on the instance. The migration changes the declarations' explicit copyability
-without changing their hook bodies or adding replacement copy machinery.
-The specialized-copy-hook policy is already recorded under
-[A copy hook for some of a generic record's instances](#a-copy-hook-for-some-of-a-generic-records-instances).
-
-Validation: rebuilt the compiler and language server; all 179 compiler and 43
-language-server unit tests passed, with the existing toolchain-test allocation
-warnings. Ten integration suites passed: run programs, trapping programs,
-diagnostics, package diagnostics, LLVM shapes, packages, tutorials, bundled
-interface files, layout agreement, and examples. Focused probes confirmed both
-copy-decision gaps, their rejecting controls, and the older excluded-drop
-failure. The language-server suite was rerun from a binary beside the bundled
-libraries after an initial custom output directory made it unable to locate
-`base:runtime`. No implementation fixes are included in this review.
-
-## Review of variadic dyn views and any_view removal (2026-11-01)
-
-Reviewed `9337076b`, `03d04d34`, `701846e9`, `b73dfa55`, and `426f1a13` for
-correctness, simplification, and structure. One correctness regression, since
-fixed: assert and panic arguments did not borrow the places they print (P1),
-allowing a later argument to free storage the report will read.
-The two newer fixes, `210f1131` and `5580637f`, are outside this review's
-scope and address the unrelated divergences these commits recorded.
-
-The overall separation is appropriate: the new conversion is confined to pack
-elements rather than ordinary assignment, library printers call ordinary slots,
-and the removed type and extraction node are deleted across compiler phases.
-The compatibility handling for a misdeclared `format` preserves the existing
-declaration diagnostic; the separate call-time registration of printing's
-interface is needed before effect and transfer analysis. Neither requires a
-new abstraction layer.
-
-Validation: all 179 compiler and 43 language-server unit tests passed, with
-the existing toolchain-test allocation warnings. Eight selected integration
-suites passed: run programs, trapping programs, diagnostics, LLVM shapes,
-packages, tutorials, bundled interface files, and layout agreement. The quick
-gate could not write `tests.exe`; a full integration retry at a separate output
-path stopped in Odin's runner with exception `0xC000001D`. Focused probes
-confirmed the regression and its pre-change rejection, as well as generic and
-overloaded variadic calls and formatting through existing views. All 2,876
-specification citations resolved before the review notes were added. No
-implementation fixes are included in this review.
-
-## Review of slice-literal cleanup and received allocator unwrapping (2026-11-01)
-
-Reviewed `210f1131` and `5580637f` for correctness, simplification, and
-structure. Three issues in their fixes, all since fixed:
-
-- Slice cleanup read an initial snapshot rather than the backing array's current
-  content. Later stores could leave a hook reading freed data, and replacing an
-  initially borrowed element caused a new false rejection.
-- Empty literals contributed element hook effects despite containing no element
-  to drop.
-- A conditional write hid an incoming allocator because the parameter fallback
-  was conditional on the merged set being empty.
-
-The existing cleanup and normalized region-query machinery are appropriate
-places for these fixes; no additional analysis framework is needed. The main
-structural changes should be to read mutable backing storage at cleanup and
-retain incoming allocator facts when parameter storage is initialized, so all
-readers observe them alongside possible writes.
-
-One concrete simplification, since made, was in `prov_region_of` in
-[src/cfg_provenance.odin](src/cfg_provenance.odin): return the new projected
-struct-field query directly instead of merging it into a whole-record read.
-This removed one line and a redundant query, and fixed a pre-existing
-sibling-region false rejection.
-An isolated compiler with that change accepted the sibling-field control and
-still rejected nested and copied received allocator payloads. No production
-implementation changes are included in this review.
-
-Validation: all 179 compiler and 43 language-server unit tests passed, with
-the existing runtime toolchain allocation warnings. Both the rejected-program
-and executable-program integration suites passed after rebuilding the compiler. Focused probes were
-compared with a separate compiler built from `426f1a13`; they confirmed the
-new slice false rejections and the remaining holes. The baseline empty-literal
-program ran and printed `0` and `7`, confirming that no hook ran. Both compiler
-and language-server binaries built successfully; the language server was built
-to a separate temporary path. All 2,876 specification citations resolved,
-`git diff --check` passed, and the added documentation links were checked
-against their target headings.
-
-## Review of Unit successes, parametric aliases, Status, and enum variants (2026-10-31)
-
-Reviewed `e4d9c207`, `0ae279da`, `99057210`, and `3b49d840` for correctness,
-simplification, and structure. Five implementation divergences were found, all
-since fixed: a local alias hiding a generic success dependency,
-resolution-order-dependent recursive aliases, dependently typed value arguments,
-nested computed types, and private type exposure warnings. One smaller finding
-remains:
-
-- **Describe Status's success as Unit consistently (P3, editorial).**
-  [One result](design.md#one-result) and
-  [Success returns](design.md#success-returns) still use `Status(E)` as the
-  example of a success carrying no payload. It now carries `Unit`, because
-  it is an alias of `Result(Unit, E)`. Keep the payloadless rule for user
-  unions and describe `Status` alongside the other `Unit` successes.
-
-The overall phase structure is appropriate: aliases resolve to ordinary type
-IDs before emission, and declaring `Status` as an alias deletes its duplicate
-implementation. The separate scope-aware pattern matcher and syntax-only
-overload view serve different needs; merging them without preserving name
-ownership would lose hygiene. The alias code has a clear boundary within
-[src/generic.odin](src/generic.odin); no additional framework is needed.
-
-Validation: all 180 compiler and 43 language-server unit tests passed, with
-the already recorded toolchain-test allocation warnings. The quick gate
-could not replace the existing `loke-lsp.exe`; a separate language-server
-binary built successfully. A full integration attempt stopped in Odin's test
-runner with exception `0xC000001D`. Five selected integration suites passed:
-run programs, rejected programs, packages, tutorials, and bundled interface
-files. Three more passed for IR shapes, layout agreement, and trapping programs.
-All 2,870 specification citations resolved. Additional focused probes confirmed
-the divergences above and controls that compile when written without the
-problematic alias. No implementation fixes are included in this review.
-
-## Review of unwind bookkeeping and runtime bitcode commits (2026-10-31)
-
-Reviewed `01cd3214` (destructure registrations), `9e0c7f4f` (failure
-attributes), `c43c7e20` (unwind-env publication), and `5b6a4da6` (runtime
-bitcode), including correctness, simplification, and structure. These findings
-remain open:
-
-1. **Treat an older benchmark record's missing flags as the old defaults
-   (P2).** In [perf.ps1](perf.ps1), `Format-Records` checks whether build
-   options differ only when both records have a non-null `flags` field.
-   Records written before `c43c7e20` have no such field and were built without
-   extra flags. Comparing one with a new `-BuildFlags -panic=abort` run still
-   reports a percentage, mixing a compiler change with a change of panic
-   strategy. The existing regression first rewrites its old-format baseline
-   through `-Out`, so it exercises only a baseline that already has `flags`.
-   Treat a missing previous field as the empty string when the current record
-   has flags, and exercise the old-format baseline before rewriting it.
-
-   Reproduced by invoking the script's actual `Format-Records` function with
-   these records and the `run_ms` column:
-
-   ```json
-   {"program":"bench/probe.loke","input":"same","run_ms":100}
-   {"program":"bench/probe.loke","input":"same","flags":"-panic=abort","run_ms":50}
-   ```
-
-   The output is `50 (-50%)`; it should identify changed options.
-
-2. **Keep unwind read tracking in emission state rather than rediscovering it
-   from LLVM syntax (P3, simplification).** In
-   [src/emit_llvm_cleanup.odin](src/emit_llvm_cleanup.odin), the new
-   `without_unread_bindings` parses publication-slot numbers out of generated
-   lines, while `emit_unwind_thunk` scans LLVM local names to discover reads.
-   This couples publication to exact instruction spelling and adds a second
-   description of LLVM name syntax. Record each publication's text span in
-   `bind_local`, and mark uses of the rebound parent addresses through a shared
-   symbol-name accessor during replay, including direct implicit-drop uses.
-   A local declared inside the replay must retain its new address and must not
-   mark the replaced parent address as used. Remove the two syntax scans and
-   `llvm_name_char`; keep the existing deferred prologue and text emitter.
-   Apply publication spans before removing pops, so earlier text removal does
-   not shift their offsets.
-   The estimated saving is about 50 lines after adding the small tracking
-   records and accessor. This is a maintainability finding; the reviewed
-   corpora exposed no missed replay read.
-
-   Not taken on 2026-11-01. The scan cannot miss a read: whatever the replay's
-   text names is loaded, whichever emitter path wrote it. Tracking would have
-   about eight sites that read `e.names` mark each use, where a site that forgets
-   leaves an undefined name in a thunk only a panic path exercises, and its spans
-   would have to survive `without_unpushed_pops`. The saving is an estimate, and
-   the spelling the scan depends on is the compiler's own. Worth revisiting if
-   the emitter stops producing text.
-
-3. **Give the new bitcode-command unit test a temporary allocator (P3).**
-   `runtime_bitcode_keeps_the_cpu_check_native` in
-   [src/emit_llvm_test.odin](src/emit_llvm_test.odin) calls toolchain discovery,
-   which allocates include paths through `context.allocator`. The test neither
-   frees them nor redirects that allocator. A full compiler unit run reports
-   15 leaked allocations, 1.23 KiB on this machine, all attributed to this
-   test. Use `context.allocator = context.temp_allocator`, as the adjacent
-   toolchain-discovery test does. The test runner currently exits successfully
-   despite these warnings.
-
-Validation: rebuilt the compiler and a separate language-server executable;
-all 180 compiler unit tests and six selected baseline integration suites
-passed. Five more suites passed at `-opt=speed` with `lto=yes`: run and trap
-corpora, CPU levels, CPU dispatch, and floating-point reproducibility. A
-`-g -opt=speed` unwind probe printed its expected cleanup and stack trace.
-All 2,845 specification citations resolved. No compiler correctness regression
-was found in these checks; the three findings above are not fixed here.
-
-## Review of the design-review proposals (2026-10-31)
-
-Reviewed the full [language design review](design-review-2026-10-31.md#summary)
-against the specification and selected checker, emitter, and runtime paths.
-Five issues were found in the reviewed draft; these concerned the proposed
-changes, not current compiler divergences. All five are now addressed in the
-review document. The findings below retain the evidence and implementation
-prerequisites; the language changes themselves remain proposals.
-
-1. **Do not derive `captures(none)` from borrow escape levels (P1).**
-   [Section 6.1](design-review-2026-10-31.md#61-alias-attributes-from-facts-the-checker-already-proves)
-   originally mapped every `@(escape=none)` parameter to this LLVM attribute.
-   Loke's [escape levels](design.md#escape-levels) restrict retained borrows; they do
-   not prohibit observing a pointer's address. This valid procedure returns
-   `true` for equal addresses and `false` for different ones:
-
-   ```loke
-   same :: proc(@(escape=none) a: ^int, @(escape=none) b: ^int) -> bool {
-       return a == b;
-   }
-   ```
-
-   LLVM counts that observable result as
-   [address capture](https://llvm.org/docs/LangRef.html#address-capture), even
-   though no borrow survives the call. Adding `captures(none)` would therefore
-   violate the IR contract for a valid program. The proposal needs a separate
-   address-capture analysis; consider `captures(address)` only after proving
-   that provenance cannot escape through the unchecked routes either. Closing
-   the listed borrow-checker gaps alone does not establish this property.
-
-2. **Prove the indexed slice remains unchanged across the loop (P1).**
-   [Section 6.3](design-review-2026-10-31.md#63-checked-arithmetic-and-bounds-in-loops)
-   originally said the required length stability holds for a slice. A slice
-   variable can be reassigned, including by reslicing itself; read-only elements
-   do not make its header constant. This accepted program must panic:
-
-   ```loke
-   values := [2]int{10, 20};
-   xs := values[:];
-   foreach (i in 0 ..< xs.len()) {
-       xs = xs[:0];
-       fmt.println(xs[i]);
-   }
-   ```
-
-   The range retains its original bound while indexing uses the new header.
-   Removing the check merely because `xs` has slice type changes the result.
-   Require a proof about the actual header/length at each access, including
-   writes through mutable aliases and calls. The broader range-analysis
-   proposal remains useful with that prerequisite.
-
-3. **Preserve generic `Status(E)` fallthrough when designing the alias (P2).**
-   [Section 2.3](design-review-2026-10-31.md#adopted-proposals), since adopted,
-   originally permitted falling through only when the expanded written result
-   named no generic argument. That excludes `Status(E)` when `E` is generic, even
-   though its success is always empty. This currently compiles and succeeds:
-
-   ```loke
-   succeed :: proc(error: $E) -> Status(E) {
-       _ = error;
-   }
-   ```
-
-   The proposed expansion is `Result(Unit, E)` and still names `E`, so the
-   stated rule would reject this body. Distinguish a generic-dependent success
-   payload from a generic failure payload, and specify bare `return;` alongside
-   fallthrough. [Success returns](design.md#success-returns) currently separates
-   payloadless success from the generic restriction on implicit wrapping; it
-   does not supply the single exclusion the proposal claims. The alias itself
-   remains worth designing, with inference and interface-file rules settled
-   before it is described as mostly internal.
-
-   Settled for the return rule: [One result](design.md#one-result) now lets a
-   `Unit` success reach the end and use `return;` when the result as written,
-   not a generic argument, makes it `Unit`, so `Result(Unit, E)` and the body
-   above keep both forms while a body generic over `Result(T, E)` gains
-   neither.
-
-4. **Keep `any_view`'s storage and temporary rules when sharing its lowering
-   (P2).**
-   [Section 2.4](design-review-2026-10-31.md#adopted-proposals), since adopted,
-   originally proposed using `dyn` lifetime rules with only implicit conversion
-   and variadic packing as differences. An `any_view` also could not be a
-   result, field, ordinary container element, or captured value; [ordinary `dyn` views](design.md#borrowed-dynamic-interface-values)
-   follow slice lifetimes instead. A temporary converted into an `any_view`
-   local lives to block end, whereas the ordinary `dyn` rule limits a view of
-   a temporary to its complete expression. For example,
-   `view: any_view = [dynamic]int{1, 2};` followed by `fmt.println(view);` is
-   was valid. Sharing a witness representation is compatible with retaining
-   these rules, but replacing them as written is a language change. List them
-   explicitly or narrow the proposal to representation and dispatch.
-
-   Resolved: `any_view` is deleted, so no lowering has to keep these rules.
-   Its implicit conversion survives only at a `..dyn I` parameter, whose
-   temporaries live through the call, and the block-end local is gone with it.
-
-5. **Remove the incorrect small-value ABI premise (P2).**
-   [Section 6.4](design-review-2026-10-31.md#64-union-layout-and-small-values)
-   originally attributed address-only passing of slices and `Option(^T)` to
-   `LARGE_VALUE_BYTES`. In [the emitter](src/emit_llvm_expr.odin) that threshold
-   is 4,096 bytes, not two words; [parameter lowering](src/emit_llvm_abi.odin)
-   passes smaller ordinary values as LLVM values. A fresh `-O0` assembly probe
-   receives a slice's pointer and length in `rcx` and `rdx`, and an
-   `Option(^int)` in `rcx` alone. The option already uses the null niche under
-   [Representation](design.md#representation). An LLVM aggregate does not by
-   itself mean an indirect machine argument. Remove this claimed opportunity
-   and measure a specific remaining ABI problem before changing the convention.
-   Scalarizing slices to attach pointer attributes is a separate justification
-   under section 6.1; general nested-union layout work also remains open.
-
-The strongest next steps are measured runtime LTO and unwind-bookkeeping
-experiments, explicit copy decisions beside drop hooks, and consolidating the
-specification's shared effect-resolution rules. Consolidation must retain
-per-call region substitution and the distinction between a pooled join and a
-spawn's effects on the parent's thread-local storage; see
-[Structured concurrency](design.md#structured-concurrency) and
-[Allocators and tasks](design.md#allocators-and-tasks).
-
-Treat enum/union implementation sharing and attribute placement as separate
-refactors with explicit public reflection and syntax migrations. Keep the
-reflection deletion and `Uninit(T)` replacement as open design questions: the
-latter trades generated prefix cleanup, including partial-copy failure cleanup,
-for manually maintained unsafe lifecycle code. The review's decision to retain
-`inout` is reasonable. Deleting `using`, typed SIMD splats, success returns, or
-`Option.ok_or`, and adding `some` or predeclared interfaces, are language-usage
-tradeoffs rather than demonstrated implementation wins; representative programs
-should decide their priority. The withdrawn proposals need not be reopened by
-any finding here.
-
-Validation used a fresh compiler built from `55610f79` with Odin vet checks.
-The pointer-comparison, generic-`Status`, and temporary-`any_view` probes ran
-successfully; the resliced-loop probe compiled and panicked with `index out of
-range` (exit 3), as required. A separate emitted-IR/Clang assembly probe checked
-small-value argument passing. No language or compiler changes were applied.
-
-## Review of remaining generic aliases and view starts (2026-10-31)
-
-Reviewed `1d4a0c29` ("Read the remaining generic alias targets for private
-names") and `4e475f11` ("Keep a local view's known start when only its length
-varies") for correctness, simplification, and structure. One finding, since closed:
-
-- **Retain starts through zero-offset reslice loops (P2).** The length join
-  fixes branches, but a constant reslice from zero in a loop still makes
-  the start unknown. The known gap, since closed, had a two-iteration
-  reproduction and accepting straight-line and branch controls. This was a
-  remaining precision gap, not a new rejection.
-
-The shared `writes_type` recognizer removes differing syntax lists, and
-following member chains iteratively with cycle detection removes the
-arbitrary depth cutoff. Sharing `view_element_loan` also keeps publication's
-loan narrowing in one place. No further abstraction is needed.
-
-Each reviewed commit was built and tested in a separate source snapshot,
-because the commits came from separate branches. On each, 177 of 178 compiler
-unit tests passed initially; the subprocess deadline test failed to capture
-its child's first output under concurrent load and passed when rerun in
-isolation. Both 43-test LSP suites passed. The alias revision passed both
-diagnostic corpora and the package executable corpus; the view revision
-passed both diagnostic corpora, the borrow matrix, and the executable corpus.
-Fresh compiler/LSP builds and heading citation checks passed. Both remaining
-correctness gaps also reproduced on the merged tree. No implementation fixes
-were applied during review.
-
-## Review of local-view loads and repointed-carrier places (2026-10-31)
-
-Reviewed `e6719c8d` and `68504095` for correctness, simplification, and
-structure. Two findings, both since closed:
-
-- **Preserve the chosen-place guarantee past the reaching-analysis limits
-  (P2).** The new 63-definition and 256-block bounds reintroduce the
-  repointed-carrier rejection while each storage remains within its promised
-  eight places. The diagnostic names the place and storage limits rather
-  than the bound that caused the fallback. The known gap, since closed, had a
-  reproduction for each bound, verified against a compiler built from
-  `68504095` itself. Keeping only a block's last definition would avoid much
-  redundant history; large control-flow graphs still need to retain the
-  specified precision.
-- **Remove the redundant per-definition merge flag (P3, shrink).**
-  `Prov_Offset_Def.merged` in [src/borrow.odin](src/borrow.odin) and its
-  propagation in `prov_reaching_offsets` in
-  [src/cfg_provenance.odin](src/cfg_provenance.odin) duplicate the slot's
-  accumulated `offsets_merged`. Every recorded definition's flag is already
-  joined into that slot flag by `prov_note_offset`, and
-  `prov_carrier_offsets` always joins the slot flag into its result. Remove
-  the field, its initializer, and `merged ||= def.merged`; retain the flag
-  for merges performed while joining reaching offsets. Net: two lines fewer.
-  Done since, as the walk no longer keeps definitions.
-
-The local-view load fix shares the existing element-loan and reaching-view
-helpers, and no additional correctness finding was found in it. The offset
-walk separates definition recording, reaching-definition discovery, and
-offset joining; caching finished blocks and invalidating on new predecessors
-or definitions has a clear purpose. The bounds above leave the specification
-guarantee incomplete. The then-recorded dynamic-array content-slot gap was
-outside the local-view fix, and has since been
-[closed](comments.md#a-dynamic-arrays-elements-as-carrier-paths).
-
-Validation passed on the merged tree: 179 compiler unit tests, the diagnostic
-corpus and borrow matrix, and the `view_element_places` executable's expected
-output. Boundary probes passed at 63 definitions and 128 intervening empty
-branches, and reproduced the false rejection at 64 definitions and 129 such
-branches, both on the merged tree and on `68504095`. No implementation fixes
-were applied during review.
-
-## Review of private formatter defaults (2026-10-31)
-
-Reviewed `d16a9a2d` ("Print a public type with a private format by the
-generated default") and `404acdcb` ("Record a bound generic's direct
-format call as an open question") for correctness, simplification, and
-structure. Two findings, both since closed:
-
-- **Keep hidden defaults out of completion (P2), since fixed.** The checker
-  hid the generated default from ordinary lookup, but the editor still offered
-  it to an importer, and calling the suggested method produced `L0363`.
-- **Reuse the written-formatter search (P3, shrink), since done.**
-  `check_formatter` in [src/format.odin](src/format.odin) now asks
-  `written_format_member` rather than repeating its member walk.
-
-The printed-form policy is consistent across erased printing, explicit
-interface views, nesting, and public generic instances. The defining
-package's bound generic reaches the private method under the current
-[ordinary-lookup-first rule](design.md#interface-bodies); `404acdcb`
-records a possible later change, rather than an implementation divergence.
-No other actionable structure finding was found.
-
-Validation passed on the current checkout, whose reviewed formatter and
-lookup code is unchanged since these commits: fresh compiler and LSP
-builds, 179 compiler unit tests, 43 LSP unit tests, executable and package
-corpora, both diagnostic corpora, LLVM shape checks, and heading citations.
-Additional probes covered a public generic's private formatter, a bound
-call in its defining package, nested strings through pointers, and the
-editor/lookup mismatch. No implementation fixes were applied.
-
-## Review of public types' private interface methods (2026-10-31)
-
-Reviewed `c0b30260` for correctness, simplification, and structure. Of three
-findings, the private formatter one (P2) is fixed: printing a public type with
-a private `format` reached an internal backend contract error (`L0405`). Such
-a type now gets the generated default for the `Formattable` slot and prints by
-it in every package, its own included, as
-[String format printing](design.md#string-format-printing) and
-[Interface bodies](design.md#interface-bodies) together require; the
-`tests/pkg/private_formatter` case pins it. Three questions the spec leaves
-open remain with that fix:
-
-- **Ordinary lookup of a hidden default `format`.** Ordinary lookup of
-  `format` on such a type still finds only the written method: its package
-  calls it, and an importer gets `L0363` rather than the default that printing
-  uses. The alternative is to let an importer's lookup reach the default, as
-  it does on a type without a written `format`.
-- **Warning for an unused private `format`.** A public type's private
-  `format` is never what printing calls, which an author may not expect. A
-  warning at the declaration would say so, but would also fire for a method
-  meant only for direct calls in its package.
-- **A bound generic's direct call in the defining package.** There, a
-  procedure bound by `where fmt.Formattable(T)` that calls
-  `value^.format(...)` finds the private method by ordinary lookup, which
-  comes before the bound, while printing the same value uses the default.
-  Whether a call through the bound should instead reach the slot's method is
-  part of the first question.
-
-The other two findings remain:
-
-- **Only diagnose private methods as methods (P3).** `private_slot_member`
-  in [src/interface.odin](src/interface.odin) tests name and visibility but
-  does not test symbol kind or receiver. A private constant named `call`,
-  or a private procedure without a receiver named for a slot, is described
-  as a private method when the bound fails. Neither could meet the slot
-  even if made public. Restrict this diagnostic to actual receiver methods,
-  including those reached through an overload group; otherwise retain the
-  missing-method/signature diagnostic. Both failures reproduce with:
-
-  ```loke
-  // lib/lib.loke
-  package lib;
-  @(public) S :: struct {}
-  impl S { call :: 42; poke :: proc() -> int { return 1; } }
-  ```
-
-  ```loke
-  // main.loke
-  package main;
-  import "./lib";
-  import "base:interfaces";
-  Check :: interface($T: type) { slot poke: proc(self) -> int; }
-  force :: proc(s: $T) where Check(T) {}
-  apply :: proc(f: $T) where interfaces.Callable(T, proc() -> int) {}
-  main :: proc() { s := lib.S{}; force(s); apply(s); }
-  ```
-
-- **Correct the associated-constant comments (P3).** The new comment in
-  [tests/pkg_err/private_slot/counter/counter.loke](tests/pkg_err/private_slot/counter/counter.loke)
-  says private associated constants meet no requirement anywhere. Ordinary
-  lookup still sees them in their own package: adding `Secret :: int` to
-  the public `S` above makes `Has_Secret(S)` true there for
-  `Has_Secret :: interface($T: type) { T.Secret -> type; }`, while the
-  corresponding foreign application is false. Conversely, the citing
-  comment above `required_associated_constant` in
-  [src/interface.odin](src/interface.odin) still describes its fallback as
-  an inherent member "whatever its visibility". State both the ordinary
-  lookup rule and the restricted fallback accurately, as
-  [Interface bodies](design.md#interface-bodies) does.
-
-Sharing `slot_candidates` between satisfaction, constrained lookup, and witness
-construction keeps the visibility policy in one place. The new helpers have
-focused responsibilities; no additional abstraction or actionable line-count
-simplification was found. The formatter failure exposes a caller that requests
-a witness without first ensuring that its slot has an eligible candidate.
-
-Validation passed: 178 compiler unit tests, 43 LSP unit tests, diagnostic and
-package-diagnostic suites, the package executable corpus, compiler/LSP builds,
-and heading citations. Additional probes covered public generic records,
-distinct types, unions, enums, same-package rejection of private slots, and
-the associated-constant visibility distinction. The formatter regression was
-compared with a freshly built parent compiler. No implementation fixes were
-applied during review.
-
-## Review of constant view elements and the wider borrow matrix (2026-10-31)
-
-Reviewed `72431f48` for correctness, simplification, and structure. Two
-findings were recorded, and both are fixed:
-
-- **Keep known starts when lengths vary (P2).** Shortening a view on one
-  branch left its start unchanged, but accesses to different constant
-  elements still conflicted, and full views of dynamic arrays had the same
-  problem with an unknown upper bound. The definitions reaching a view now
-  need to agree only on where it starts (`publish_view_of` in
-  [src/borrow.odin](src/borrow.odin)), and a fresh `&mut d[:]` lends from a
-  known start (`Prov_View_Def.open`).
-- **Remove the matrix's lookup loop (P3, shrink).** `matrix_expected` in
-  [tests/borrow_matrix_test.odin](tests/borrow_matrix_test.odin) only reads
-  the operation's name, so it no longer scans `MATRIX_USES` for the fixture
-  `matrix_same_element` remaps to.
-
-`Prov_View_At` is a focused record, and sharing the start computation between
-publication and place checks avoids duplicate walkers. The precision gap
-shows where those callers need different information: element separation needs
-a known start, while publication also uses the extent and underlying loan.
-The matrix now has a place whose view a branch only shortens
-(`local_shortened`). A matrix place for a dynamically backed view is still to
-add; the new dynamic `items` cases exercise the array stored inside an
-element instead, and copies out of such a view's elements have since been
-[told apart](comments.md#a-dynamic-arrays-elements-as-carrier-paths).
-
-The meaning of "fresh borrow of a range" in
-[Weakening and reborrows](design.md#weakening-and-reborrows) should also be
-explicit about views made through another carrier. A local
-`s := &mut a^[0:2]`, with `a: ^mut [2]Counter`, rejects the same distinct
-element access:
+- **An index's syntax as evidence (P3).** `prov_indices_may_write` reads an
+  index's syntax where the global effects already say what a call writes. Asking
+  them would accept more rather than simplify, and a call may also write through
+  an argument, which those effects do not cover.
+- **Places the borrow matrix lacks.** A slice literal's array, a view parameter's
+  caller storage reached twice, a store at an unknown index between two uses, a
+  call that copies, and a dynamically backed view.
+
+### What counts as a fresh borrow of a range
+
+[Weakening and reborrows](design.md#weakening-and-reborrows) separates constant
+elements of a view that is a fresh borrow of a range. Its wording does not settle
+a view made through another carrier. This rejects a distinct element access:
 
 ```loke
 package main;
@@ -905,92 +94,33 @@ through_pointer :: proc(a: ^mut [2]Counter) {
 main :: proc() {}
 ```
 
-Such a slice reborrows the pointer, so whether it qualifies as "fresh" is
-not settled by the wording. `prov_slice` in
-[src/cfg_provenance.odin](src/cfg_provenance.odin) makes it a place-loan
-snapshot rather than a fresh range loan, and `prov_note_view` leaves its
-start unknown. Clarify whether that exclusion is intended; this case is a
-scope question rather than a confirmed implementation divergence.
+Such a slice reborrows the pointer. `prov_slice` in
+[src/cfg_provenance.odin](src/cfg_provenance.odin) makes it a place-loan snapshot
+rather than a fresh range loan, and `prov_note_view` leaves its start unknown.
+Clarify whether that exclusion is intended; this is a question of scope rather
+than a confirmed divergence.
 
-Validation passed: 178 compiler unit tests, 43 LSP unit tests, diagnostic and
-package-diagnostic suites, the expanded borrow matrix, the executable corpus,
-and compiler/LSP builds. The fixed-start/varying-length rejection was
-reproduced with a dedicated build of the reviewed compiler; unconditional
-reslicing and a bounded dynamic-array view provided accepting controls.
-No implementation fixes were applied during review.
+## A public type's private `format`
 
-## Review of the follow-up fixes (2026-10-31)
+Such a type gets the generated default for the `Formattable` slot and prints by
+it in every package, its own included
+([String format printing](design.md#string-format-printing),
+[Interface bodies](design.md#interface-bodies)). The specification leaves open:
 
-Reviewed `4b31729d` (tangent bound and minimized integer copies), `d66b3d8b`
-(the summary/arena review record), `72da8ff0` (private names in generic
-aliases), and `cb7a73bf` (chosen places per storage) for correctness,
-simplification, and structure. Three gaps were found in the alias fix, all
-since fixed in [src/private_names.odin](src/private_names.odin) with
-regressions in the `private_names` package-diagnostic case:
-
-- **Recognize aliases of the written `type` (P2).** A public `Meta :: type`
-  made `Inner: Meta : Corner` bypass the target check, even in an instance
-  using the alias. The written type is now resolved.
-- **Recognize composite member aliases containing generic parameters (P2).**
-  `Hidden :: []T` was not classified as a type, so a public alias selecting
-  `Box(T).Hidden` produced no warning. The helpers' differing lists of
-  type-syntax nodes now share one recognition rule.
-- **Follow member aliases without an arbitrary depth cutoff (P2).** A long
-  acyclic chain lost the warning for a public alias of its private first
-  member. The chain is now followed until it ends or returns to a member it
-  has passed.
-
-The integer copy now uses the existing minimized-copy operation directly,
-which removes the extra allocation and copy. The provenance helpers keep
-budget accounting separate from the paths used by accesses, and the remaining
-repointed-carrier limitation was recorded in `known-gaps.md` (since fixed).
-No further actionable simplification was found.
-
-An independent exact rational interval for the listed hard tangent argument
-puts its relative midpoint distance strictly between `2^-134` and `2^-132`
-(about `2^-132.425`), consistent with the corrected bound. The math API check
-passes unchanged. No implementation fixes were applied during review.
-
-Validation passed: 178 compiler unit tests, 43 LSP unit tests, diagnostic and
-package-diagnostic suites, the borrow matrix, the executable corpus, the
-reproducible-math derivation and rounding suites, compiler/LSP builds, and
-heading citations. The three alias omissions were reproduced with
-the freshly built compiler; direct written `type`, shorter alias chains,
-and a plain `impl` provided controls that do warn. The reproductions and
-diagnostic/API checks were also confirmed with a dedicated compiler built
-from `e4c5dce6`, the merged state of the four reviewed commits.
-
-## Review of summary visits and scratch arenas (2026-10-31)
-
-Reviewed `e4d3562b` ("Skip unchanged provenance summary visits and drop arena
-locks") for correctness, simplification, and structure. The allocator
-panicked once a procedure's analysis outgrew one GiB, which the parent compiler
-accepted; it now chains another reserved range instead. One finding remains:
-
-- **Correct the reported performance range (P3).** The
-  [changelog](CHANGELOG.md#unreleased),
-  [baseline explanation](bench/baselines/README.md#skipped-summary-visits-and-lock-free-scratch-arenas),
-  and [normalization question](#normalized-input-for-provenance-analysis)
-  say front-end time fell 8-17% on workloads taking over 30 ms. For records
-  whose baseline exceeds 30 ms, the saved JSON shows about 3-16% instead:
-  `bench/nbody.loke` goes from 31 to 30 ms (3.2%), and
-  `examples/timestamps.loke` from 126 to 106 ms (15.9%). If the cutoff refers
-  to the final measurements instead, `examples/parallel.loke` still goes
-  from 44 to 41 ms (6.8%). All compared source hashes match. State the
-  cutoff and range consistently with the saved data.
-
-The revision stamps remain local to summary inference, and the guards avoid
-work at its source. No further actionable structural change or simplification
-was found.
-
-Validation passed: 178 compiler unit tests, 43 LSP unit tests, the diagnostic
-and borrow-matrix suites, and all 81 integration tests other than the debugger
-test. The performance-script test failed its exact `(-100%)` output assertion
-in the parallel run, which printed `(-99%)`, then passed in isolation. The
-debugger test aborts in the Odin runner with both the parent and reviewed
-compilers. Both compiler/LSP builds and all 2,822 heading citations passed.
-The scratch-limit reproduction was compared with fresh parent and reviewed
-compiler builds; no implementation fixes were applied during review.
+- **Ordinary lookup of the hidden default.** Lookup of `format` on such a type
+  finds only the written method: its package calls it, and an importer gets
+  `L0363` rather than the default that printing uses. The alternative is to let
+  an importer's lookup reach the default, as it does on a type without a written
+  `format`.
+- **A warning for an unused private `format`.** A public type's private `format`
+  is never what printing calls, which an author may not expect. A warning at the
+  declaration would say so, but would also fire for a method meant only for direct
+  calls in its package.
+- **A bound generic's direct call in the defining package.** There, a procedure
+  bound by `where fmt.Formattable(T)` that calls `value^.format(...)` finds the
+  private method by ordinary lookup, which comes before the bound, while printing
+  the same value uses the default. Whether a call through the bound should instead
+  reach the slot's method is part of the first question.
 
 ## JSON follow-ups
 
@@ -1047,9 +177,9 @@ decisions remain open:
   decisions.
 - **The cost of normalization.** Normalization is still the largest provenance
   phase: about 40% of checking time on `bench/workspace` and
-  `examples/corpus_runner.loke` after skipped visits and lock-free scratch
-  arenas took 8-17% off front-end time (under "Skipped summary visits and
-  lock-free scratch arenas" in the repository's `bench/baselines/README.md`).
+  `examples/corpus_runner.loke`, even with skipped visits and lock-free scratch
+  arenas (under "Skipped summary visits and lock-free scratch arenas" in the
+  repository's `bench/baselines/README.md`).
   A sampling profile of the builds left interning as the largest single cost:
   `Prov_Input_Key`, about 72 bytes, is hashed byte by byte on every value and
   call lookup (`prov_intern_value`, `prov_input_call`, about 7% of build time).
@@ -1077,11 +207,12 @@ against a model written apart from the compiler. Still open:
   effects](design.md#global-write-effects) already can. Decide it together
   with [written public borrow
   contracts](#public-borrow-contracts-should-stand-on-their-own).
-- **Value identity.** Three rules now say which definition a reborrow belongs
-  to: a load defines its slot afresh, a reborrow records the carriers its load
-  went through (`Prov_Reborrow.via`), and reloading a temporary severs what was
-  reborrowed from its previous value. Explicit reaching definitions would state
-  them as one rule; evaluate that if another loop or branch form needs a fourth.
+- **Value identity.** Several rules say which definition a reborrow belongs to:
+  a load defines its slot afresh, a reborrow records the carriers its load went
+  through (`Prov_Reborrow.via`), reloading a temporary severs what was reborrowed
+  from its previous value, and `prov_slot_is_stored_temporary` extends that
+  severing to a stored temporary. Explicit reaching definitions would state them
+  as one rule; see [Provenance architecture](#provenance-architecture).
 - **Caller storage contents.** A store through a parameter's loan lands in the
   caller slots for the storage it names (`publish_into_caller`), and a later
   load reads them. The remaining imprecision: caller slots of different loans
@@ -1151,17 +282,11 @@ choices are needed before extending it:
 Hand-written documentation goes stale, because nothing checks it. The proposal:
 what a package tells its users is generated from its source, checked by the
 compiler, or run by the test runner, and prose is kept for intent, which goes
-stale slowest. Its first two steps and its seventh are built: [`///` doc
-comments](design.md#comments), whose reasons are in
-[comments.md](comments.md#doc-comments-start-with-), a checked-in [interface
-file](compiler-guide.md#interface-files), `api.loki`, generated and never read
-for the reasons in [Hand-written package header
-files](comments.md#hand-written-package-header-files), and
-[`@(intrinsic)`](design.md#intrinsic) declarations of the names the compiler
-supplies, whose reasons are in
-[comments.md](comments.md#compiler-supplied-names-are-declared-in-source). The
-rest is a proposal for review, not yet a plan of record: once accepted, its plan
-moves to [future-plans.md](future-plans.md) and the language rules to
+stale slowest. [`///` doc comments](design.md#comments), the checked-in
+[interface file](compiler-guide.md#interface-files), and
+[`@(intrinsic)`](design.md#intrinsic) declarations are built. The rest is a
+proposal for review, not yet a plan of record: once accepted, its plan moves to
+[future-plans.md](future-plans.md) and the language rules to
 [design.md](design.md).
 
 ### Proposed steps
@@ -1171,10 +296,9 @@ allocator it comes (the [result
 contract](design.md#procedure-result-contracts)), and whether a call writes
 package state (the [write effect](design.md#global-write-effects)). Neither
 `-doc`, hover, nor the interface file shows them, so a reader opens the body to
-learn them. The proposal continues at step 3; steps 1, 2, and 7 are the built
-ones above.
+learn them.
 
-**3. Inferred facts are shown, one line each.** The interface file and hover
+**1. Inferred facts are shown, one line each.** The interface file and hover
 add an `// inferred:` line to a public procedure for its result contract and
 its write effect, and say nothing when there is nothing to report:
 
@@ -1191,7 +315,7 @@ line of a bundled package as a possible break. A
 [written contract](#public-borrow-contracts-should-stand-on-their-own), once
 it exists, would be shown in its place, without "inferred".
 
-**4. Examples are tests.** `@(example=split)` marks a
+**2. Examples are tests.** `@(example=split)` marks a
 [test procedure](design.md#test-procedures) that illustrates `split`, or
 `Type.member` for an `impl` member, of its own package. It follows every test
 rule, and in addition it may name only public declarations, because it shows
@@ -1200,7 +324,7 @@ under its declaration (``// example: `split_on_commas` ``), and the HTML page
 shows its body. The gate builds each bundled package with `-test`, so an
 example that stops compiling or fails is caught.
 
-**5. Names in doc comments are checked.** A backticked span in a doc
+**3. Names in doc comments are checked.** A backticked span in a doc
 comment that is a name or dotted path, such as `split`, `Builder.len`, or
 `mem.Allocator`, must resolve, as rustdoc's intra-doc links must. It resolves
 in the documented declaration's package and imports, and also among its
@@ -1209,7 +333,7 @@ any other character, such as `builder.len()` or `[dynamic]u8`, is prose and is
 not checked. An unresolved name is a warning in every check, so the editor
 shows it. This catches renames and removals, not wrong claims.
 
-**6. `-doc` writes HTML for people.** A browser is on every computer, and a
+**4. `-doc` writes HTML for people.** A browser is on every computer, and a
 Markdown page needs a renderer and has no links. `lokec <dir> -doc` writes
 `index.html` and one page per package of the project into `doc/`, or the
 directory `-o` names. Each page is self-contained, with inline CSS for light
@@ -1229,7 +353,7 @@ interface file as a Loke document instead of a Markdown preview.
   precondition a caller must meet is written in the doc comment.
 - **Preconditions as code.** Checked clauses are a language feature, and
   types already carry many preconditions. They wait for what remains in doc
-  comments after the steps below.
+  comments after the steps above.
 - **Index and single-entry forms of `-doc`.** The interface file and grep
   cover what an agent needs.
 - **A checked list of a package's main entry points.** The overview's checked
@@ -1748,13 +872,9 @@ inside brackets, which `core/` leaves at the bracket's level.
 ## Language design review (2026-10-03)
 
 Proposals from a review of the specification, not amendments to it; backward
-compatibility was not a constraint. Of its recommendations, checked disjoint
-access was adopted as [Splitting a mutable
-slice](design.md#splitting-a-mutable-slice) and scoped workers as [Structured
-concurrency](design.md#structured-concurrency). The rest follow, in the order
-the review suggested: compiler-selected union layout and written borrow
-contracts first, then unchecked operations at their use and checked thread
-transfer. Try each on a parser, a resource container, a partitioning
+compatibility was not a constraint. In the order the review suggested:
+compiler-selected union layout and written borrow contracts first, then unchecked
+operations at their use and checked thread transfer. Try each on a parser, a resource container, a partitioning
 algorithm, and a parallel numeric kernel before deciding.
 
 ### Put unchecked obligations at their operation
@@ -1875,17 +995,9 @@ case.
 
 ### Thread transfer needs a visible contract
 
-Answered for work joined before its caller continues. [Structured
-concurrency](design.md#structured-concurrency) adds `parallel` blocks whose
-tasks keep their argument borrows until a join the block owns, which survives
-every early exit and cannot be skipped by `unsafe.forget`. The checks a task
-needs are inferred rather than declared through `Send` and `Sync`, apart from
-`@(thread_affine)`, `@(synchronized)`, and `@(cross_thread)`;
-[comments.md](comments.md#tasks-that-borrow-joined-by-their-block) gives the
-reasons. Futures, async syntax, and reactive variables were not needed to borrow
-across a join.
-
-Still open:
+[Structured concurrency](design.md#structured-concurrency) answers this for work
+joined before its caller continues
+([reasons](comments.md#tasks-that-borrow-joined-by-their-block)). Still open:
 
 - A thread `core:thread`'s `spawn` starts outlives any scope, so it still
   takes only `@(escape=static)` arguments, and keeping a `thread_local` borrow
@@ -1904,11 +1016,9 @@ Still open:
 
 ### Later concurrency extensions
 
-`parallel` blocks, `spawn`, monitors, channels, the join check, the polling
-ring, pools, indirect spawned calls, and `sync.Lazy(T)` are built: design.md
-specifies them under [Structured concurrency](design.md#structured-concurrency),
-and standard-library.md under [`core:thread`](standard-library.md#corethread).
-These questions remain; none blocks what is built.
+None of these blocks what [Structured
+concurrency](design.md#structured-concurrency) and
+[`core:thread`](standard-library.md#corethread) already specify.
 
 1. **Erased callables at a spawn.** A spawned call may go through a procedure
    value or a `dyn` view, and the effects follow the callbacks each call passes.
@@ -2017,10 +1127,7 @@ found no violation. Two checks remain:
 
 ## Error handling (2026-10-13)
 
-The error handling proposal of this date is adopted. design.md defines it under
-"The failure operand", "Typed fallibility", "One result", and "defer
-statement"; comments.md records the reasoning and the alternatives not taken.
-These parts are open:
+What the adopted error handling proposal left open:
 
 - **A replacement that discards information.** `f() or_return .Bad` drops the
   error `f` returned. That is explicit at the site, as the switch it replaces
@@ -2031,15 +1138,8 @@ These parts are open:
 
 ## Anonymous unions and their follow-ups (2026-10-18)
 
-A design exploration of 2026-10-17 and the proposal that followed it led to five
-adopted changes: [Success returns](design.md#success-returns), [Anonymous
-unions](design.md#anonymous-unions), [Widening by
-label](design.md#widening-by-label), [Per-variant switch
-cases](design.md#per-variant-switch-cases), and [Union argument
-expansion](design.md#union-argument-expansion). comments.md records why,
-including why `Result`, `Option`, and `Status` remain the fallible boundaries
-([Anonymous unions](comments.md#anonymous-unions)). What the proposal left open
-follows.
+What the adopted proposal left open; [comments.md](comments.md#anonymous-unions)
+records why it was adopted.
 
 ### Generic implementations on structural shapes
 
@@ -2053,11 +1153,7 @@ when a program wants methods on a family of shapes.
 
 ### Parametric aliases
 
-Adopted as [Parametric aliases](design.md#parametric-aliases):
-`Io_Result :: Result($T, Io_Error);` fixes one argument of a generic, as Rust's
-`io::Result` does, and an application has its expansion's identity.
-comments.md ["Parametric aliases"](comments.md#parametric-aliases) records why.
-These parts are open:
+What [Parametric aliases](design.md#parametric-aliases) left open:
 
 - **The alias's spelling in diagnostics.** A message names a type by its
   expansion, so `Io_Result(int)` reads `Result(int, Io_Error)`. Keeping the
@@ -2117,10 +1213,9 @@ programs](#evaluating-on-representative-programs) before deciding.
 
 ### Per-variant expansion
 
-[Per-variant switch cases](design.md#per-variant-switch-cases),
+What [per-variant switch cases](design.md#per-variant-switch-cases),
 [`variants_of`](design.md#compile-time-reflection), and
-[union argument expansion](design.md#union-argument-expansion) are
-implemented; comments.md records why. What is still open:
+[union argument expansion](design.md#union-argument-expansion) left open:
 
 - **Constructing from a descriptor.** A `meta.Variant` describes a variant but
   cannot build one, so generic code cannot yet map one union onto another by

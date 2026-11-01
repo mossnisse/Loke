@@ -1,7 +1,8 @@
 package counter;
 
-// design.md "Interface bodies": a public type's private members are not API,
-// so they meet no slot and no associated constant requirement anywhere.
+// design.md "Interface bodies": a public type's private members are not API.
+// They meet no slot anywhere, and an associated constant requirement only where
+// ordinary lookup sees them, which is in this package.
 
 @(public)
 Counter :: struct {

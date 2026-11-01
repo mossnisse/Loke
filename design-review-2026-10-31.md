@@ -24,7 +24,7 @@ listed with its reason under [Withdrawn proposals](#withdrawn-proposals), so
 that it is not proposed again without an answer. Others were narrowed, and
 their **What is lost** now says what the first draft missed.
 
-A [review of these proposals](open-questions.md#review-of-the-design-review-proposals-2026-10-31)
+A review of these proposals (`cfd20372`)
 then checked the return and lifetime rules, LLVM capture semantics, and emitted
 code. Its findings on address capture, slice bounds, and the small-value ABI
 are incorporated below; the two on generic `Status` fallthrough and `any_view`
@@ -777,13 +777,6 @@ reduction, a separately named operation says so, for example
   initialization" rule, which [Container insertion](design.md#container-insertion),
   `box`, `shared`, `find_or_insert`, variant construction, and record literals
   each restate, appear in several places with slightly different wording.
-  [One result](design.md#one-result) and
-  [Success returns](design.md#success-returns) still give `Status(E)` as the
-  example of a success with no payload, though as an alias of
-  `Result(Unit, E)` its success now carries `Unit`
-  ([review of Unit successes](open-questions.md#review-of-unit-successes-parametric-aliases-status-and-enum-variants-2026-10-31));
-  describe it with the other `Unit` successes, and keep the fallthrough rule
-  distinct from the generic restriction on implicit success wrapping.
 - **Keep the required-diagnostics table.** It is unusual in a language
   specification and valuable; the proposals above would shorten it rather
   than lengthen it.
@@ -823,10 +816,7 @@ steps that have landed are under [Adopted proposals](#adopted-proposals).
 
 These were proposed by this review and have landed; the specification and
 CHANGELOG.md describe the result. Reviews of the commits recorded their open
-findings in open-questions.md and known-gaps.md
-([Unit successes and aliases](open-questions.md#review-of-unit-successes-parametric-aliases-status-and-enum-variants-2026-10-31),
-[unwind and bitcode](open-questions.md#review-of-unwind-bookkeeping-and-runtime-bitcode-commits-2026-10-31),
-[variadic `dyn` and `any_view`](open-questions.md#review-of-variadic-dyn-views-and-any_view-removal-2026-11-01)).
+findings in open-questions.md and known-gaps.md.
 
 - **A record with a drop hook says how it is copied**
   ([Lifecycle hooks and resource types](design.md#lifecycle-hooks-and-resource-types),

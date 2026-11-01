@@ -387,7 +387,8 @@ function Format-Records([object[]]$rows, [string[]]$columns, [string]$header) {
             $old = if ($previous) { $previous.$column }
             if ($null -eq $value) { '' }
             elseif ($old -and $previous.input -and $previous.input -ne $record.input) { "$value (sources changed)" }
-            elseif ($old -and $null -ne $previous.flags -and $null -ne $record.flags -and $previous.flags -ne $record.flags) { "$value (options changed)" }
+            # A record from before `flags` was written was built with none.
+            elseif ($old -and $null -ne $record.flags -and "$($previous.flags)" -ne $record.flags) { "$value (options changed)" }
             elseif ($old) { '{0} ({1:+0;-0;0}%)' -f $value, (100 * ($value - $old) / $old) }
             else { "$value" }
         }

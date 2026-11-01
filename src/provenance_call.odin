@@ -35,6 +35,63 @@ Prov_Call_Input :: struct {
 	callee: Value_Id,
 }
 
+// What a container operation does to provenance that its signature does not say.
+Container_Op_Effect :: enum {
+	// Its arguments land in the receiver's content.
+	Stores_Content,
+	// A provider moved into it is stored there and carries its region along.
+	Stores_Provider,
+	// It may drop a provider the receiver holds.
+	Drops_Provider,
+	// It may allocate, resize, or free storage, or drop elements that own storage.
+	Allocates,
+	// It leaves the receiver's content empty.
+	Empties,
+	// It reorders the elements in place, storing none.
+	Permutes,
+	// A carrier in one element may end up in another.
+	Moves_Elements,
+	// It returns what an element held, not a borrow of the container.
+	Removes_Element,
+	// design.md "Iteration adapters": a map view read-borrows the map.
+	Returns_View,
+	// design.md "Splitting a mutable slice", "Chunks of a mutable slice": the
+	// result views what the receiver views, so the receiver is lent as a mutable
+	// carrier argument is.
+	Lends_Receiver,
+}
+
+// One row per operation, and not `#partial`, so a new operation has to say.
+@(rodata)
+CONTAINER_OP_EFFECTS := [Container_Op]bit_set[Container_Op_Effect] {
+	.None               = {},
+	.Append             = {.Stores_Content, .Stores_Provider, .Allocates},
+	.Insert             = {.Stores_Content, .Stores_Provider, .Allocates, .Moves_Elements},
+	.Pop                = {.Drops_Provider, .Removes_Element},
+	.Remove             = {.Drops_Provider, .Moves_Elements, .Removes_Element},
+	.Remove_Unordered   = {.Drops_Provider, .Moves_Elements, .Removes_Element},
+	.Clear              = {.Drops_Provider, .Allocates, .Empties},
+	.Resize             = {.Drops_Provider, .Allocates},
+	.Reserve            = {.Allocates},
+	.Shrink             = {.Allocates},
+	.Sort               = {.Permutes, .Moves_Elements},
+	.Reverse_Sort       = {.Permutes, .Moves_Elements},
+	.Swap               = {.Permutes, .Moves_Elements},
+	.Split_At_Mut       = {.Lends_Receiver},
+	.Chunks_Mut         = {.Lends_Receiver},
+	.Map_Find           = {},
+	.Map_Find_Or_Insert = {.Stores_Content, .Allocates},
+	.Map_Lookup_Value   = {},
+	.Map_Try_Insert     = {.Stores_Content, .Stores_Provider, .Allocates},
+	.Map_Remove         = {.Drops_Provider, .Allocates, .Removes_Element},
+	.Map_Clear          = {.Drops_Provider, .Allocates, .Empties},
+	.Map_Reserve        = {.Allocates},
+	.Map_Shrink         = {.Allocates},
+	.Map_Entries        = {.Returns_View},
+	.Map_Keys           = {.Returns_View},
+	.Map_Values         = {.Returns_View},
+}
+
 // design.md "Evaluation order", "Parameter semantics and ABI lowering",
 // "Splitting a mutable slice".
 // Keyed by the call node alone, as its capture is (`prov_input_capture`).
@@ -71,7 +128,7 @@ prov_input_call :: proc(graph: ^Flow_Graph, call: ^Expr_Call) -> Prov_Call_Input
 		input.arguments[index] = part
 		input.order[index] = call_slot_at(call, index)
 	}
-	if prov_op_lends_receiver(input.container) && len(call.bound) > 0 && call.bound[0] != nil {
+	if .Lends_Receiver in CONTAINER_OP_EFFECTS[input.container] && len(call.bound) > 0 && call.bound[0] != nil {
 		input.capture = prov_input_capture(graph, call, call.bound[0])
 	}
 	graph.input.calls[key] = input

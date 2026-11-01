@@ -1421,7 +1421,7 @@ emit_bound_call :: proc(
 			continue
 		}
 		mode := index < len(callee_type.param_modes) ? callee_type.param_modes[index] : Param_Mode.Value
-		if index == 0 && param_mode_is_pointer(mode) && symbol != nil && prov_op_lends_receiver(symbol.container_op) {
+		if index == 0 && param_mode_is_pointer(mode) && symbol != nil && .Lends_Receiver in CONTAINER_OP_EFFECTS[symbol.container_op] {
 			// design.md "Splitting a mutable slice": the receiver is evaluated
 			// before the index, which may rebind it, and the reborrow is taken of
 			// that value, so the callee reads a snapshot rather than the place.

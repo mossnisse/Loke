@@ -298,7 +298,13 @@ perf_script_compares_and_checks_every_run :: proc(t: ^testing.T) {
 	if !testing.expect(t, os.write_entire_file(baseline, transmute([]u8)string(old)) == nil, "cannot write the baseline") {
 		return
 	}
-	state, stdout, stderr, err := perf(fake, inherited, "-Repeat", "1", "-Out", baseline, "-Baseline", baseline)
+	// A record that names no flags was built with none, so these options differ.
+	state, stdout, stderr, err := perf(fake, inherited, "-Repeat", "1", "-Baseline", baseline, "-BuildFlags", "-panic=abort")
+	if testing.expectf(t, err == nil && state.exit_code == 0, "perf.ps1 with -BuildFlags on an older baseline failed:\n%s%s", stdout, stderr) {
+		testing.expectf(t, strings.contains(stdout, "(options changed)") && !strings.contains(stdout, "%)"), "a record with no flags was compared with one built with some:\n%s", stdout)
+	}
+
+	state, stdout, stderr, err = perf(fake, inherited, "-Repeat", "1", "-Out", baseline, "-Baseline", baseline)
 	if testing.expectf(t, err == nil && state.exit_code == 0, "perf.ps1 with the fake compiler failed:\n%s%s", stdout, stderr) {
 		testing.expectf(t, strings.contains(stdout, "| examples/hello.loke | ") && strings.contains(stdout, "(-100%)"), "the baseline was not compared before -Out replaced it:\n%s", stdout)
 		testing.expectf(t, strings.contains(stdout, "(sources changed)") && !strings.contains(stdout, "(+"), "a record of other sources was compared:\n%s", stdout)

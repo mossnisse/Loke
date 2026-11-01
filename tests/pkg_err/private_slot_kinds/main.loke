@@ -1,0 +1,29 @@
+package main;
+
+import "./lib";
+import "base:interfaces";
+
+Pokes :: interface($T: type) {
+	slot poke: proc(self) -> int;
+}
+
+Peeks :: interface($T: type) {
+	slot peek: proc(self, n: int) -> int;
+}
+
+Frees :: interface($T: type) {
+	slot free: proc(self, n: int) -> int;
+}
+
+pokes :: proc(s: $T) where Pokes(T) {}
+peeks :: proc(s: $T) where Peeks(T) {}
+frees :: proc(s: $T) where Frees(T) {}
+calls :: proc(f: $T) where interfaces.Callable(T, proc() -> int) {}
+
+main :: proc() {
+	s := lib.S{};
+	pokes(s);
+	peeks(s);
+	frees(s);
+	calls(s);
+}
