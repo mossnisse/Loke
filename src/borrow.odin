@@ -5800,6 +5800,9 @@ report_borrow_conflict :: proc(state: ^Prov_State, event: Prov_Event, loan: Prov
 			loan.mutable ? "mutable" : "read-only",
 			loan.what,
 		)
+	} else if event.access == .Read && event.verb != "" {
+		// design.md "Global write effects": a call's read of a global.
+		errorf(k.c, event.span, "L0511", invalidated, root_label(root), event.verb, "mutable", loan.what)
 	} else {
 		// design.md "@(synchronized)": such an access counts as a write, and a
 		// borrow of the field as a mutable one, whatever was written.

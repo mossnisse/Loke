@@ -39,6 +39,20 @@ cleanup may legitimately restore global state, but must not invalidate a live
 borrow. Copy hooks cannot write globals because copies can be inserted or
 elided in many contexts and their count is unspecified.
 
+The read effect beside it exists because a callee naming a global it was also
+given `^mut` to breaks the one rule as surely as a write does: the caller's
+exclusive borrow is not exclusive during the call, and `noalias` on a `^mut T`
+parameter would be a false promise. It conflicts only with a mutable borrow, since
+reads coexist with read-only ones, which leaves the common shape of a global
+table viewed by a caller and consulted by a callee untouched. It shares the write
+effect's per-global granularity rather than tracking fields, so `&mut g.a` beside a
+callee reading `g.b` is rejected: an effect with paths would have to follow them
+through every call, for a pattern that splits into two globals. A copy hook, which
+may not write, may still read, so unlike writes its effect has to count at copy
+sites; since a copy's count is unspecified, a site counts even where last-use
+transfer may remove the copy, rather than letting an optimization decide whether
+a program compiles.
+
 A result's [region provenance](design.md#allocator-regions-and-region-provenance)
 follows the callee's body, not its signature: an allocator a constructor takes
 but never uses backs nothing, so resetting it while the result is live is

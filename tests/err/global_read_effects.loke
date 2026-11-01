@@ -1,0 +1,367 @@
+package main; import "core:fmt";
+
+// design.md "Global write effects": a call reads whatever globals its callee may
+// read, directly or through its callees, so a mutable borrow of one that is live
+// across the call conflicts (design.md "Capabilities and the one rule"). The
+// effect names whole globals, and procedure values and hooks count as they do
+// for writes. What stays accepted is in tests/run/global_read_effects.loke.
+
+counter: int;
+
+// The gap's own program: the callee's parameter borrows what it reads by name.
+bump :: proc(p: ^mut int) {
+	p^ = 1;
+	fmt.println(counter);
+	p^ = 2;
+}
+as_an_argument :: proc() { bump(&mut counter); }
+
+// A read-only borrow in the callee is a read, as is one in a callee of the callee.
+peek :: proc() -> int { return counter; }
+deep :: proc() -> int { return peek(); }
+view_of_it :: proc() -> ^int { return &counter; }
+in_a_transitive_callee :: proc() {
+	p := &mut counter;
+	n := deep();
+	p^ = n;
+}
+as_a_borrow_in_the_callee :: proc() {
+	p := &mut counter;
+	q := view_of_it();
+	p^ = q^;
+}
+as_inout :: proc(value: inout int) { value = peek(); }
+as_an_inout_argument :: proc() { as_inout(inout counter); }
+
+// A borrow of a field conflicts with a read of the global: the effect has no
+// paths, which a read of another field is judged by too.
+Pair :: struct { a: int, b: int }
+pair: Pair;
+read_pair_a :: proc() -> int { return pair.a; }
+read_pair_b :: proc() -> int { return pair.b; }
+of_the_same_field :: proc() {
+	p := &mut pair.a;
+	n := read_pair_a();
+	p^ = n;
+}
+of_another_field :: proc() {
+	p := &mut pair.a;
+	n := read_pair_b();
+	p^ = n;
+}
+
+// A borrow reached through a local still names the global.
+through_a_local :: proc() {
+	p := &mut counter;
+	q := p;
+	n := peek();
+	q^ = n;
+}
+
+// A borrow carried around a loop's back edge is live at the call.
+around_a_loop :: proc() {
+	p := &mut counter;
+	for (i := 0; i < 2; i += 1) {
+		n := peek();
+		p^ = n + i;
+	}
+}
+
+// A mutable view of a global's elements, and a traversal of them.
+items: [dynamic]int;
+item_count :: proc() -> int { return items.len(); }
+of_a_mutable_slice :: proc() {
+	view: []mut int = &mut items[:];
+	n := item_count();
+	view[0] = n;
+}
+in_a_mutable_traversal :: proc() {
+	foreach (&mut item in items) {
+		item += item_count();
+	}
+}
+
+// A receiver borrowed mutably.
+Bag :: struct { n: int }
+bag: Bag;
+impl Bag {
+	refill :: proc(self: inout) { self.n = bag_size(); }
+}
+bag_size :: proc() -> int { return bag.n; }
+through_a_receiver :: proc() { bag.refill(); }
+
+// Hooks run implicitly: a drop at scope exit, by `drop`, and a conversion.
+hooked: int;
+Guard :: move_only struct { active: bool }
+impl Guard {
+	release :: hook(drop) proc(self: inout Guard) {
+		if (self.active) { fmt.println(hooked); }
+	}
+}
+at_scope_exit :: proc() {
+	p := &mut hooked;
+	{ guard := Guard{true}; }
+	p^ = 1;
+}
+by_drop :: proc() {
+	guard := Guard{true};
+	p := &mut hooked;
+	drop(guard);
+	p^ = 1;
+}
+converted: int;
+Meters :: struct { n: int }
+impl Meters {
+	from_int :: hook(convert) proc(n: int) -> Meters { return {n + converted}; }
+}
+by_conversion :: proc() {
+	p := &mut converted;
+	value := 1;
+	m := Meters(value);
+	p^ = m.n;
+}
+
+// A `format` method erased printing may reach.
+shown: int;
+Noisy :: struct { n: int }
+impl Noisy {
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) { fmt.format_to_with(writer, options, shown); }
+}
+by_formatting :: proc() {
+	p := &mut shown;
+	fmt.println(1);
+	p^ = 1;
+}
+
+// A named procedure passed for a parameter its callee calls takes that
+// procedure's effect there, and passing a local takes what it may hold.
+called: int;
+reads_called :: proc() -> int { return called; }
+returns_one :: proc() -> int { return 1; }
+call_it :: proc(f: proc() -> int) -> int { return f(); }
+through_a_callback :: proc() {
+	p := &mut called;
+	n := call_it(reads_called);
+	p^ = n;
+}
+through_a_held_local :: proc() {
+	p := &mut called;
+	f := reads_called;
+	n := f();
+	p^ = n;
+}
+
+// Any other call through a procedure value may run any procedure of its type,
+// and a `dyn` call any witness.
+any_value: int;
+reads_any :: proc(x: int) -> int { return any_value + x; }
+Table :: struct { f: proc(x: int) -> int }
+through_a_procedure_value :: proc(table: Table) {
+	p := &mut any_value;
+	n := table.f(1);
+	p^ = n;
+}
+Shape :: interface($Self: type) { slot area: proc(self) -> int; }
+sized: int;
+Circle :: struct { r: int }
+impl Circle { area :: proc(self) -> int { return sized + self.r; } }
+through_a_dyn_slot :: proc(shape: dyn Shape) {
+	p := &mut sized;
+	n := shape.area();
+	p^ = n;
+}
+builds_a_witness :: proc() {
+	circle := Circle{1};
+	through_a_dyn_slot((dyn Shape)(&circle));
+}
+
+// Operators reach the same effect as a named call.
+compared: int;
+Value :: struct { n: int }
+impl Value {
+	same :: operator(==) proc(a, b: Value) -> bool { return a.n == b.n + compared; }
+}
+through_an_operator :: proc(a, b: Value) {
+	p := &mut compared;
+	if (a == b) { p^ = 1; }
+}
+
+// A generic's instances, and `thread_local` storage.
+generic_read :: proc($T: type) -> int { return counter + size_of(T); }
+through_a_generic :: proc() {
+	p := &mut counter;
+	n := generic_read(int);
+	p^ = n;
+}
+local_state: thread_local int;
+read_local_state :: proc() -> int { return local_state; }
+of_thread_local_storage :: proc() {
+	p := &mut local_state;
+	n := read_local_state();
+	p^ = n;
+}
+
+// A copy may run a `hook(copy)`, which may read though it may not write, at each
+// site a copy is written or implied. How many run is unspecified, so a copy
+// last-use transfer may skip counts too.
+copied: [4]int;
+Tagged :: struct { n: int }
+impl Tagged {
+	duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Tagged, Allocator_Error) {
+		return .ok(Tagged{self.n + copied[0]});
+	}
+}
+Outer :: struct { inner: Tagged, m: int }
+Choice :: union { some: Tagged, none }
+by_clone :: proc(t: Tagged) {
+	p := &mut copied[0];
+	c := t.clone();
+	p^ = c.n;
+}
+by_binding :: proc(t: Tagged) {
+	p := &mut copied[0];
+	c := t;
+	p^ = c.n;
+}
+by_assignment :: proc(t: Tagged, c: inout Tagged) {
+	p := &mut copied[0];
+	c = t;
+	p^ = c.n;
+}
+of_a_part :: proc(o: Outer) {
+	p := &mut copied[0];
+	c := o;
+	p^ = c.m;
+}
+of_an_element :: proc(items: [dynamic]Tagged) {
+	p := &mut copied[0];
+	c := items.clone();
+	p^ = c.len();
+}
+by_destructure :: proc(o: Outer) {
+	p := &mut copied[0];
+	inner, m := o;
+	p^ = inner.n + m;
+}
+by_append :: proc(t: Tagged, into: inout [dynamic]Tagged) {
+	p := &mut copied[0];
+	into.append(t);
+	p^ = 1;
+}
+by_spread :: proc(items: []Tagged, into: inout [dynamic]Tagged) {
+	p := &mut copied[0];
+	into.append(..items);
+	p^ = 1;
+}
+by_map_read :: proc(items: map[int]Tagged) {
+	p := &mut copied[0];
+	c := items[1];
+	p^ = c.n;
+}
+by_as :: proc(c: Choice) {
+	p := &mut copied[0];
+	t := c.as(.some);
+	p^ = 1;
+	_ = t;
+}
+Key :: struct { n: int }
+impl Key {
+	duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Key, Allocator_Error) {
+		return .ok(Key{self.n + copied[0]});
+	}
+	hash :: proc(self, seed: uint) -> uint { return seed + uint(self.n); }
+	same :: operator(==) proc(a, b: Key) -> bool { return a.n == b.n; }
+}
+by_a_key_assignment :: proc(key: Key, into: inout map[Key]int) {
+	p := &mut copied[0];
+	into[key] = 1;
+	p^ = 1;
+}
+by_a_key_insertion :: proc(key: Key, into: inout map[Key]int) {
+	p := &mut copied[0];
+	_ = into.try_insert(key, 2);
+	p^ = 2;
+}
+in_a_copying_traversal :: proc(items: [dynamic]Tagged) {
+	p := &mut copied[0];
+	foreach (item in items.copied()) {
+		p^ += item.n;
+	}
+}
+in_repeated_slots :: proc() {
+	p := &mut copied[0];
+	c := [3]Tagged{0..=2 = Tagged{1}};
+	p^ = c[0].n;
+}
+in_a_literal :: proc(t: Tagged) {
+	p := &mut copied[0];
+	c := Outer{t, 1};
+	p^ = c.m;
+}
+GenericCopied :: struct($T: type) { value: T }
+impl GenericCopied($T) {
+	duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(GenericCopied(T), Allocator_Error) {
+		_ = copied[0];
+		return .ok(GenericCopied(T){self.value});
+	}
+}
+of_a_generic_record :: proc(g: GenericCopied(int)) {
+	p := &mut copied[0];
+	c := g.clone();
+	p^ = c.value;
+}
+reading_copied :: proc(t: Tagged) -> Tagged { c := t; return c; }
+through_a_callee_that_copies :: proc(t: Tagged) {
+	p := &mut copied[0];
+	c := reading_copied(t);
+	p^ = c.n;
+}
+
+main :: proc() {
+	as_an_argument();
+	in_a_transitive_callee();
+	as_a_borrow_in_the_callee();
+	as_an_inout_argument();
+	of_the_same_field();
+	of_another_field();
+	through_a_local();
+	around_a_loop();
+	of_a_mutable_slice();
+	in_a_mutable_traversal();
+	through_a_receiver();
+	at_scope_exit();
+	by_drop();
+	by_conversion();
+	fmt.println(Noisy{1});
+	by_formatting();
+	through_a_callback();
+	through_a_held_local();
+	fmt.println(returns_one());
+	through_a_procedure_value(Table{reads_any});
+	builds_a_witness();
+	through_an_operator(Value{1}, Value{1});
+	through_a_generic();
+	of_thread_local_storage();
+	by_clone(Tagged{1});
+	by_binding(Tagged{1});
+	held := Tagged{1};
+	by_assignment(Tagged{1}, inout held);
+	of_a_part(Outer{Tagged{1}, 1});
+	items_of := [dynamic]Tagged{};
+	of_an_element(items_of);
+	by_destructure(Outer{Tagged{1}, 1});
+	by_append(Tagged{1}, inout items_of);
+	spread_source := [dynamic]Tagged{};
+	by_spread(spread_source, inout items_of);
+	table := map[int]Tagged{};
+	by_map_read(table);
+	by_as(Choice.none);
+	in_a_literal(Tagged{1});
+	through_a_callee_that_copies(Tagged{1});
+	of_a_generic_record(GenericCopied(int){1});
+	in_a_copying_traversal(items_of);
+	in_repeated_slots();
+	keyed := map[Key]int{};
+	by_a_key_assignment(Key{1}, inout keyed);
+	by_a_key_insertion(Key{1}, inout keyed);
+}

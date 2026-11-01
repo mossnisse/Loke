@@ -1259,6 +1259,9 @@ bind_variadic_arguments :: proc(
 			ok = false
 		} else {
 			contribute_lifecycle_members(k, element)
+			for spread in spreads {
+				expr_base(spread).copied_as = element
+			}
 		}
 	}
 	v.is_variadic = true

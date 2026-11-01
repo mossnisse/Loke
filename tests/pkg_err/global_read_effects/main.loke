@@ -1,0 +1,41 @@
+package main;
+import "core:fmt";
+import "lib";
+
+// design.md "Global write effects": effects are whole-program, so a read in
+// another package counts at the call, whichever package holds the borrow.
+
+mine: int;
+read_mine :: proc(n: int) -> int { return mine + n; }
+
+// A mutable result of another package's global, across a call that reads it.
+across_a_package :: proc() {
+	p := lib.get_mut();
+	n := lib.peek();
+	p^ = n;
+}
+after_its_last_use :: proc() {
+	p := lib.get_mut();
+	p^ = 1;
+	fmt.println(lib.peek());
+}
+
+// A callback handed to another package reads this package's global there; the
+// procedure handed over decides.
+through_a_callback :: proc() {
+	p := &mut mine;
+	n := lib.apply(read_mine);
+	p^ = n;
+}
+another_callback :: proc() {
+	p := &mut mine;
+	n := lib.apply(lib.slot);
+	p^ = n;
+}
+
+main :: proc() {
+	across_a_package();
+	after_its_last_use();
+	through_a_callback();
+	another_callback();
+}

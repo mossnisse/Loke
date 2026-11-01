@@ -10,6 +10,18 @@ checklist.
 
 ### Breaking changes
 
+- A call is now `L0511` when its callee may read a global a mutable borrow of it
+  is still live across
+  ([Global write effects](design.md#global-write-effects)). Passing `&mut counter`
+  to a procedure that names `counter`, directly, through a callee, in a
+  `hook(drop)`, `hook(convert)`, or `hook(copy)` it runs, or through a procedure
+  value or `dyn` call that may reach such a procedure, used to compile, and the
+  callee read through a name while the caller's borrow was meant to be exclusive.
+  A read-only borrow beside such a call is still accepted, as is a mutable borrow
+  whose last use came before it. The effect names whole globals, so `&mut g.a`
+  beside a callee reading `g.b` is rejected too. Upgrade by ending the mutable
+  borrow before the call, passing the value the callee reads as an argument, or
+  having the callee read through its parameter instead of the global's name.
 - A generic record's hooks are now checked as a non-generic record's are. A wrong
   signature (`L0488`), a duplicate role (`L0488`), a `hook(copy)` on a `move_only`
   record or on an instance a field makes move-only (`L0488`), a written allocator

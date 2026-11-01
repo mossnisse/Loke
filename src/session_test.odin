@@ -722,10 +722,20 @@ session_body_effect_changes_match_fresh_checks :: proc(t: ^testing.T) {
 	defer destroy_session(&s)
 	config := session_test_config()
 	if !testing.expect(t, init_session(&s, config)) { return }
-	for scenario in 0 ..< 2 {
+	for scenario in 0 ..< 3 {
 		for edit in 0 ..< 3 {
 			text := ""
-			if scenario == 0 {
+			if scenario == 2 {
+				// design.md "Global write effects": a body that starts reading the
+				// global a mutable borrow of it is live across.
+				result := edit == 1 ? "value" : "1"
+				template := `package main;
+value: int;
+peek :: proc() -> int { return RESULT; }
+bump :: proc(p: ^mut int) { p^ = peek(); }
+main :: proc() { bump(&mut value); assert(value == 1); }`
+				text, _ = strings.replace_all(template, "RESULT", result, context.temp_allocator)
+			} else if scenario == 0 {
 				body := edit == 1 ? "values.clear();" : ""
 				template := `package main;
 values: [dynamic]int;
@@ -749,7 +759,7 @@ main :: proc() {
 			if edit == 1 {
 				diagnostics, captured := query_diagnostics(&s, snapshot)
 				found_borrow_error := false
-				for diagnostic in diagnostics { found_borrow_error ||= diagnostic.code == "L0512" }
+				for diagnostic in diagnostics { found_borrow_error ||= diagnostic.code == (scenario == 2 ? "L0511" : "L0512") }
 				testing.expect(t, captured && found_borrow_error)
 			}
 		}

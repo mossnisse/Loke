@@ -1676,7 +1676,8 @@ These questions remain; none blocks what is built.
     `@(thread_affine)` value stored in a plain global, as `window.handle` reads
     one. [Sharing with tasks](design.md#sharing-with-tasks) follows arguments,
     receivers, captures, and results, not globals, so this is not a divergence.
-    Closing it needs a read effect over globals, or a rule that rejects a
+    Closing it needs a task check over the
+    [read effect](design.md#global-write-effects), or a rule that rejects a
     global of a type that is or reaches one. A `Lazy` cannot hold one.
 
 ### Per-call effect precision

@@ -281,6 +281,54 @@ drop_hooks_walk :: proc(c: ^Compiler, type: Type_Id, visiting: ^map[Type_Id]bool
 	}
 }
 
+// The hand-written `hook(copy)`s copying a value of this type may run: its own,
+// which then decides how its parts are copied, or those of everything it owns.
+type_copy_hooks :: proc(c: ^Compiler, type: Type_Id) -> []Symbol_Id {
+	if !type_is_managed(c, type) {
+		return nil
+	}
+	hooks := make([dynamic]Symbol_Id, 0, 2, context.temp_allocator)
+	visiting := make(map[Type_Id]bool, 8, context.temp_allocator)
+	copy_hooks_walk(c, type, &visiting, &hooks)
+	return hooks[:]
+}
+
+@(private = "file")
+copy_hooks_walk :: proc(c: ^Compiler, type: Type_Id, visiting: ^map[Type_Id]bool, hooks: ^[dynamic]Symbol_Id) {
+	if !type_is_managed(c, type) {
+		return
+	}
+	under := type_underlying(c, type)
+	info := type_of(c, under)
+	if info == nil || visiting[under] {
+		return
+	}
+	visiting[under] = true
+	if hook := lifecycle_of(c, type).custom_try_clone; hook != INVALID_SYMBOL {
+		append(hooks, hook)
+		return
+	}
+	#partial switch info.kind {
+	case .Array, .Dynamic_Array, .Box:
+		copy_hooks_walk(c, info.element, visiting, hooks)
+	case .Map:
+		copy_hooks_walk(c, info.key, visiting, hooks)
+		copy_hooks_walk(c, info.element, visiting, hooks)
+	case .Struct:
+		for field in info.fields {
+			if sym := symbol_of(c, field); sym != nil {
+				copy_hooks_walk(c, sym.type, visiting, hooks)
+			}
+		}
+	case .Union:
+		for variant in info.variants {
+			if variant != TYPE_VOID {
+				copy_hooks_walk(c, variant, visiting, hooks)
+			}
+		}
+	}
+}
+
 type_clone_disabled :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	if type == INVALID_TYPE {
 		return false

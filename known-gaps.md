@@ -7,42 +7,6 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
-### A callee may read a global its mutable parameter borrows
-
-[Capabilities and the one rule](design.md#capabilities-and-the-one-rule) says
-that while a mutable borrow is live, its root cannot be accessed through a
-competing name. A call that passes a mutable borrow of a global to a callee
-that reads that global by name is accepted:
-
-```loke
-package main;
-import "core:fmt";
-
-counter: int;
-
-bump :: proc(p: ^mut int) {
-    p^ = 1;
-    fmt.println(counter); // should be rejected at the call: `p` borrows `counter`
-    p^ = 2;
-}
-
-main :: proc() {
-    bump(&mut counter);
-}
-```
-
-It prints `1`. [Global write effects](design.md#global-write-effects) make a
-call conflict with a live borrow of each global the callee may write, and
-[src/global_effects.odin](src/global_effects.odin) computes only those writes,
-so a read during the call is not seen. Closing it needs a read component in
-the effect, checked against mutable borrows live across the call. The same
-read effect would answer the thread-affine globals question under
-[Later concurrency extensions](open-questions.md#later-concurrency-extensions),
-and `noalias` on `^mut T` parameters depends on it
-([design review 6.1](design-review-2026-10-31.md#61-alias-attributes-from-facts-the-checker-already-proves)).
-Found while checking the alias-attribute proposal on 2026-11-01 with the
-compiler at `5580637f`.
-
 ### Assert and panic arguments do not borrow the places they print
 
 [Built-in procedures](design.md#built-in-procedures) requires an `assert` or

@@ -29,6 +29,9 @@ Expr_Base :: struct {
 	// An anonymous union widened by label: the smaller union to remap from. A
 	// copy site clones at this type before remapping.
 	widened_from: Type_Id,
+	// A copy site's source: the type a copy of this place clones at, which may
+	// run `hook(copy)`.
+	copied_as:   Type_Id,
 	// This node or any child is an error node.
 	has_error:   bool,
 }
