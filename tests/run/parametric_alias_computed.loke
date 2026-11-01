@@ -1,0 +1,48 @@
+// design.md "Parametric aliases": a call that computes a type binds no `$` name,
+// but may stand beside one that is bound, and every type constructor binds its
+// arguments at any depth. tests/err/parametric_alias_computed.loke holds what is
+// rejected.
+package main;
+
+import "core:fmt";
+
+Identity :: proc($T: type) -> type { return T; }
+Pair :: struct($A, $B: type) { a: A, b: B }
+Fixed :: struct($N: int) { values: [N]int }
+Tagged :: interface($Self: type, $Tag: type) {
+	slot tag: proc(self) -> int;
+}
+
+With_Computed :: Pair($T, Identity(int));
+With_Length :: Pair($T, [size_of(int)]u8);
+Boxed :: Option(Box($T));
+Ranged :: Option(Range($T));
+Vector :: Option(Simd($T, $N));
+Nested :: Option(Pair($T, Option($T)));
+Length :: Option(Fixed($N));
+View :: dyn Tagged($T);
+
+Counter :: struct { value: int }
+impl Counter {
+	tag :: proc(self) -> int { return self.value; }
+}
+
+first :: proc(value: With_Computed($T)) -> T { return value.a; }
+nested :: proc(value: Nested($T)) -> T { return (value or_else panic("none")).a; }
+lanes :: proc(value: Vector($T, $N)) -> int { return N; }
+tag :: proc(view: View($T)) -> int { return view.tag(); }
+
+main :: proc() {
+	fmt.println(first(With_Computed(string){"a", 2}));
+	value: Nested(int) = .some({a = 4, b = .none});
+	fmt.println(nested(value));
+	vector: Vector(f32, 4) = .none;
+	fmt.println(lanes(vector));
+	boxed: Boxed(int) = .none;
+	ranged: Ranged(int) = .none;
+	fixed: Length(3) = .none;
+	fmt.println(boxed, ranged, fixed, size_of(With_Length(int)));
+	counter := Counter{7};
+	view := View(string)(&counter);
+	fmt.println(tag(view));
+}

@@ -10,6 +10,11 @@ checklist.
 
 ### Breaking changes
 
+- A parametric alias with a `$` name inside a nested call that computes a type,
+  `Alias :: Option(Identity($T))`, is now `L0742` at its declaration
+  ([Parametric aliases](design.md#parametric-aliases)). It used to be accepted, and
+  a pattern written through it could never match (`L0392`). Upgrade by writing the
+  type the call computes where the `$` name stands, as `Option($T)`.
 - A result written through an alias declared in a generic body now depends on a
   generic argument as the same result written out does
   ([One result](design.md#one-result)). `Outcome :: Result(T, E)` as a result used

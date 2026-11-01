@@ -248,33 +248,29 @@ application arguments are bound, as record applications do, and ensure a
 rejected alias has a diagnostic. Confirmed on `3b49d840` during review on
 2026-10-31 (P2).
 
-### Nested computed types evade parametric alias binding validation
+### A nested `distinct` gives a parametric alias's application a new type
 
-[Parametric aliases](design.md#parametric-aliases) reject a `$` name where an
-argument cannot bind it. The root call is checked for being a type constructor,
-but a nested computed call is treated as an ordinary constructor argument:
+A [parametric alias](design.md#parametric-aliases)'s body is not "a `distinct`
+type, which would be new", and an application is "the type its body denotes, not
+a new one". `L0744` holds that only for the whole body:
 
 ```loke
 package main;
-Identity :: proc($T: type) -> type { return T; }
-Alias :: Option(Identity($T));
-read :: proc(value: Alias($T)) -> T {
-    return value or_else panic("none");
-}
+import "core:fmt";
+Alias :: Option(distinct $T);
 main :: proc() {
-    value: Alias(int) = .some(3);
-    _ = read(value);
+    a: Alias(int) = .none;
+    fmt.println(a);
 }
 ```
 
-The alias is accepted, including when unused, and `Alias(int)` expands to
-`Option(int)`, but `read(value)` reports `L0392`: the type does not match its
-parameter's shape. The binding pass in
-[src/generic.odin](src/generic.odin), `alias_binding_uses`, traverses arbitrary
-calls, whereas `match_type_pattern` cannot infer a procedure's arguments from
-the type it computes. Reject the unreachable `$T` at the alias declaration;
-apply the constructor restriction recursively wherever a pattern must bind.
-Confirmed on `3b49d840` during review on 2026-10-31 (P2).
+This compiles, and `Alias(int)` denotes `Option(distinct int)`, whose element no
+other spelling names. A pattern `Alias($T)` takes an `Option(Meters)` only as far
+as binding `T`, then reports `L0392`, since `Alias(f64)` is another new type. In
+[src/generic.odin](src/generic.odin), `check_alias_template` looks for
+`Type_Distinct` only at the root. Either reject it at any depth, or settle that a
+nested one is meant and say what it denotes. Found on 2026-11-01 beside the
+nested computed type check.
 
 ### Parametric aliases are omitted from private type exposure checks
 

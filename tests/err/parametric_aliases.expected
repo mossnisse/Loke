@@ -1,6 +1,6 @@
 L0742
 @11:32
-`$U` is not where an argument of `Hidden` can bind it: write it as a type, an array length, or a generic argument
+`$U` is not where an argument of `Hidden` can bind it: write it as a type, an array length, or an argument of a generic type
 L0743
 @12:18
 `$N` is bound by a type here and by a constant of type `int` earlier

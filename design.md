@@ -2020,7 +2020,8 @@ static_assert(Buf(16) == ([16]u8));
   length, a `Simd` lane count, or a generic argument whose parameter is a
   constant, with that parameter's type; elsewhere it is a `type` parameter. A
   name bound both ways, or written where no argument can bind it, such as inside
-  an inline `struct` or an array-length expression, is an error.
+  an inline `struct`, an array-length expression, or a call that computes a type,
+  at any depth, is an error.
 - **No identity.** An application is the type its body denotes, not a new one:
   `Io_Result(int)` is `Result(int, Io_Error)` wherever either is written, in
   type identity, conversions, overloads, `typeid`, and printing. A type's name,

@@ -892,7 +892,7 @@ Alias_Binding_Use :: struct {
 }
 
 // The positions `match_type_pattern` binds a `$` name in, and what each binds
-// it by. Callees resolve in `k.scope`, the alias's own.
+// it by, at any depth. Callees resolve in `k.scope`, the alias's own.
 @(private = "file")
 alias_binding_uses :: proc(k: ^Checker, e: Expr, out: ^[dynamic]Alias_Binding_Use) {
 	if e == nil {
@@ -919,7 +919,14 @@ alias_binding_uses :: proc(k: ^Checker, e: Expr, out: ^[dynamic]Alias_Binding_Us
 	case ^Type_Distinct:
 		alias_binding_uses(k, v.elem, out)
 	case ^Type_Dyn:
-		alias_binding_uses(k, v.interface_expr, out)
+		// `dyn Named($T)` binds its arguments as `dyn` does, for any interface.
+		if call, is_call := v.interface_expr.(^Expr_Call); is_call {
+			for arg in call.args {
+				alias_binding_uses(k, arg.value, out)
+			}
+		} else {
+			alias_binding_uses(k, v.interface_expr, out)
+		}
 	case ^Type_Array:
 		value_use(k, v.length, TYPE_INT, out)
 		alias_binding_uses(k, v.elem, out)
@@ -947,6 +954,11 @@ alias_binding_uses :: proc(k: ^Checker, e: Expr, out: ^[dynamic]Alias_Binding_Us
 			value_use(k, v.args[1].value, TYPE_INT, out)
 			return
 		}
+		// A call that computes a type cannot be read backwards from the type it
+		// computes. A callee naming nothing is left for its application to report.
+		if _, is_ident := v.callee.(^Expr_Ident); !alias_constructor_callee(k, v.callee) && (!is_ident || named_callee_symbol(k, v.callee) != INVALID_SYMBOL) {
+			return
+		}
 		template := generic_template_for(k, named_callee_symbol(k, v.callee))
 		for arg, index in v.args {
 			wanted := TYPE_TYPE
@@ -958,6 +970,15 @@ alias_binding_uses :: proc(k: ^Checker, e: Expr, out: ^[dynamic]Alias_Binding_Us
 			}
 		}
 	}
+}
+
+// Whether a call names a type by its arguments: a generic type, or a predeclared
+// constructor, rather than a procedure that computes one.
+@(private = "file")
+alias_constructor_callee :: proc(k: ^Checker, callee: Expr) -> bool {
+	return generic_template_of_callee(k, callee, .Record) != nil ||
+	       generic_template_of_callee(k, callee, .Alias) != nil ||
+	       simd_callee(k, callee) || box_type_callee(k, callee) || range_callee(k, callee)
 }
 
 // What a record or alias template's parameter `index` is bound by: `type`, or
@@ -1005,15 +1026,10 @@ check_alias_template :: proc(k: ^Checker, d: ^Decl, template: ^Generic_Template)
 	defer k.scope = saved
 	// Only a type constructor's application names a type by its arguments; a
 	// call that computes one, `size_of($T)` or `Index_Type($N)`, is folded once.
-	if call, is_call := body.(^Expr_Call); is_call {
-		constructor := generic_template_of_callee(k, call.callee, .Record) != nil ||
-		               generic_template_of_callee(k, call.callee, .Alias) != nil ||
-		               simd_callee(k, call.callee) || box_type_callee(k, call.callee) || range_callee(k, call.callee)
-		if !constructor {
-			errorf(k.c, expr_span(body), "L0744", "a parametric alias names a type; a call that computes one cannot bind `$` names")
-			template.rejected = true
-			return
-		}
+	if call, is_call := body.(^Expr_Call); is_call && !alias_constructor_callee(k, call.callee) {
+		errorf(k.c, expr_span(body), "L0744", "a parametric alias names a type; a call that computes one cannot bind `$` names")
+		template.rejected = true
+		return
 	}
 
 	// Every `$` name must be where an argument can bind it, or an application
@@ -1048,7 +1064,7 @@ check_alias_template :: proc(k: ^Checker, d: ^Decl, template: ^Generic_Template)
 		if !bound {
 			errorf(
 				k.c, poly.span, "L0742",
-				"`$%s` is not where an argument of `%s` can bind it: write it as a type, an array length, or a generic argument",
+				"`$%s` is not where an argument of `%s` can bind it: write it as a type, an array length, or an argument of a generic type",
 				poly.name.text, name,
 			)
 			failed = true
