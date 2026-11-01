@@ -1,7 +1,7 @@
 // design.md "Weakening and reborrows": handing a record over by value uses only what that
-// record's carriers reach, so a copy done with first, a read-only copy beside a read-only
-// view, a field beside the one handed over, and two fields at once are all free. A copy
-// suspended across the call is in tests/err/call_record_by_value.loke.
+// record's carriers reach, so a copy done with first, a field beside the one handed over,
+// and two fields at once are all free. A copy suspended across the call is in
+// tests/err/call_record_by_value.loke.
 package main;
 
 import "core:fmt";
@@ -29,8 +29,9 @@ copied_after :: proc(holder: Holder) {
 
 read_only_copy :: proc(links: []mut Link) -> int {
 	copy: ^int = links[0].to;
+	read := copy^;
 	take_read_only(Read_Only{links});
-	return copy^;
+	return read;
 }
 
 another_field :: proc(two: ^mut Two) {

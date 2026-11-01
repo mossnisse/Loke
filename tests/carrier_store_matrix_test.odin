@@ -1046,7 +1046,7 @@ RECORD_BY_VALUE_CASES := [?]Stored_Reach_Case {
 	{"read_only_pointer_in_record", "h: Ro_Ptr_Holder, l: ^mut Link", "x := l^.to; take_ro_ptr(Ro_Ptr_Holder{l}); x^ = 1;", true},
 	{"read_only_pointer_done", "l: ^mut Link", "x := l^.to; x^ = 1; take_ro_ptr(Ro_Ptr_Holder{l});", false},
 	{"read_only_view_in_record", "s: []mut Link", "x := s[0].to; take_ro(Ro_Holder{s}); x^ = 1;", true},
-	{"read_only_view_read_only_copy", "s: []mut Link", "x: ^int = s[0].to; take_ro(Ro_Holder{s}); y := x^;", false},
+	{"read_only_view_read_only_copy", "s: []mut Link", "x: ^int = s[0].to; take_ro(Ro_Holder{s}); y := x^;", true},
 	{"read_only_view_read_only_copy_mutable_call", "s: []mut Link", "x: ^int = s[0].to; take_holder(Holder{s}); y := x^;", true},
 	{"read_only_view_kept_reading", "h: Ro_Holder", "take_ro(h); y := h.links[0].to^;", false},
 	{"nested_record", "d: Deep", "x := d.h.links[0].to; take_deep(d); x^ = 1;", true},
@@ -1097,14 +1097,8 @@ RECORD_BY_VALUE_CASES := [?]Stored_Reach_Case {
 	// A receiver written `self: ^` is lent.
 	{"borrowed_receiver_field", "l: ^mut Ptr_Pair", "n := l^.size(); y := l^.a; l^.b^ = 1; y^ = n;", false},
 	{"borrowed_receiver_across", "l: ^mut Ptr_Pair", "y := l^.a; n := l^.size(); y^ = n;", true},
-	{"borrowed_receiver_read_only_across", "l: ^mut Ptr_Pair", "y: ^int = l^.a; n := l^.size(); z := y^;", false},
+	{"borrowed_receiver_read_only_across", "l: ^mut Ptr_Pair", "y: ^int = l^.a; n := l^.size(); z := y^;", true},
 	{"callable_called_through_pointer", "f: ^Call", "g := f; a := g^.size(); b := g^.size();", false},
-}
-
-// known-gaps.md "A receiver written `self: ^` behind a carrier conflicts with a read-only copy".
-@(private = "file")
-record_by_value_over_rejected :: proc(entry: Stored_Reach_Case) -> bool {
-	return entry.name == "borrowed_receiver_read_only_across"
 }
 
 @(test)
@@ -1124,8 +1118,7 @@ record_by_value_matrix :: proc(t: ^testing.T) {
 		return
 	}
 	for entry, at in RECORD_BY_VALUE_CASES {
-		expected := entry.rejected || record_by_value_over_rejected(entry)
-		store_matrix_expect(t, names[0], entry.name, first + 4 * at, errors[0], expected)
+		store_matrix_expect(t, names[0], entry.name, first + 4 * at, errors[0], entry.rejected)
 	}
 }
 
@@ -1157,6 +1150,22 @@ keep :: proc(dst: ^mut Link, @(escape=stored) c: ^mut int) { dst^.to = c; }
 keep_second :: proc(rec: Rec, @(escape=stored) c: ^mut int) { rec.b^.to = c; }
 set_pointer :: proc(out: ^mut ^mut Link, @(escape=stored) to: ^mut Link) { out^ = to; }
 copy_across :: proc(links: []mut Link) { links[0] = links[1]; }
+Held_Pair :: struct { a: ^mut int, n: int }
+Ro_Held :: struct { a: ^int, n: int }
+Held_Holder :: struct { pair: ^mut Held_Pair }
+Slice_Held :: struct { s: []mut int, n: int }
+impl Held_Pair {
+	size :: proc(self: ^) -> int { return self.n; }
+	writes :: proc(self: ^) { self.a^ = 1; }
+}
+write_pair :: proc(p: ^Held_Pair) { p^.a^ = 1; }
+read_pair :: proc(p: ^Held_Pair) -> int { return p^.n; }
+read_ro :: proc(p: ^Ro_Held) -> int { return p^.n; }
+write_holder :: proc(h: ^Held_Holder) { h^.pair^.a^ = 1; }
+write_view :: proc(s: []Held_Pair) { s[0].a^ = 1; }
+write_slice_pair :: proc(p: ^Slice_Held) { p^.s[0] = 1; }
+read_int :: proc(p: ^int) -> int { return p^; }
+read_view :: proc(s: []int) -> int { return s[0]; }
 `
 
 @(private = "file")
@@ -1427,6 +1436,32 @@ STORE_LANDING_CASES := [?]Stored_Reach_Case {
 	{"element_local_store_by_name_read_by_field_pointer", "@(escape=stored) other: ^mut int", "v := 1; w := Wrapped{Link{&mut v}, 1}; w.link.to = other; h := &mut w.link; x := h^.to; other^ = 1; x^ = 2;", true},
 	{"element_ok_view_read_by_field_pointer_done", "s: []mut Wrapped, @(escape=stored) other: ^mut int", "s[0].link.to = other; h := &mut s[0].link; x := h^.to; x^ = 2; other^ = 1;", false},
 	{"element_ok_record_other_field_pointer", "r: ^mut Two_Links, @(escape=stored) other: ^mut int", "r^.a.to = other; h := &mut r^.b; x := h^.to; other^ = 1; x^ = 2;", false},
+	// A mutable carrier behind a read-only one keeps its capability, so a call given the
+	// read-only one may write through it, whatever its body does.
+	{"reach_ro_copy_across_write", "l: ^mut Held_Pair", "y: ^int = l^.a; write_pair(l); z := y^;", true},
+	{"reach_ro_copy_across_read_signature", "l: ^mut Held_Pair", "y: ^int = l^.a; n := read_pair(l); z := y^;", true},
+	{"reach_ro_copy_across_method", "l: ^mut Held_Pair", "y: ^int = l^.a; n := l^.size(); z := y^;", true},
+	{"reach_ro_copy_across_write_method", "l: ^mut Held_Pair", "y: ^int = l^.a; l^.writes(); z := y^;", true},
+	{"reach_ro_copy_local_record", "v: ^mut int", "pair := Held_Pair{v, 0}; y: ^int = pair.a; write_pair(&pair); z := y^;", true},
+	{"reach_ro_copy_local_record_method", "v: ^mut int", "pair := Held_Pair{v, 0}; y: ^int = pair.a; pair.writes(); z := y^;", true},
+	{"reach_ro_copy_through_read_only_pointer", "l: ^Held_Pair", "y: ^int = l^.a; write_pair(l); z := y^;", true},
+	{"reach_ro_copy_deep", "h: ^mut Held_Holder", "y: ^int = h^.pair^.a; write_holder(h); z := y^;", true},
+	{"reach_ro_copy_read_only_view", "s: []mut Held_Pair", "y: ^int = s[0].a; write_view(s); z := y^;", true},
+	{"reach_ro_view_of_slice_field", "l: ^mut Slice_Held", "y: []int = l^.s; write_slice_pair(l); z := y[0];", true},
+	{"reach_ro_copy_indirect_call", "l: ^mut Held_Pair, call: proc(p: ^Held_Pair)", "y: ^int = l^.a; call(l); z := y^;", true},
+	{"reach_mutable_copy_across_read_signature", "l: ^mut Held_Pair", "y := l^.a; n := read_pair(l); y^ = n;", true},
+	{"reach_mutable_copy_across_method", "l: ^mut Held_Pair", "y := l^.a; n := l^.size(); y^ = n;", true},
+	{"reach_ok_ro_copy_done_before", "l: ^mut Held_Pair", "y: ^int = l^.a; z := y^; write_pair(l);", false},
+	{"reach_ok_ro_copy_after", "l: ^mut Held_Pair", "write_pair(l); y: ^int = l^.a; z := y^;", false},
+	{"reach_ok_method_done_before", "l: ^mut Held_Pair", "y: ^int = l^.a; z := y^; n := l^.size();", false},
+	{"reach_ok_read_only_record_all_the_way", "l: ^mut Ro_Held", "y: ^int = l^.a; n := read_ro(l); z := y^;", false},
+	{"reach_ok_field_it_cannot_write", "l: ^mut Held_Pair", "y := &l^.n; n := read_pair(l); z := y^;", false},
+	{"reach_ok_field_it_cannot_write_method", "l: ^mut Held_Pair", "y := &l^.n; n := l^.size(); z := y^;", false},
+	{"reach_ok_plain_data_behind_a_carrier", "p: ^mut int", "y: ^int = p; n := read_int(p); z := y^;", false},
+	{"reach_ok_plain_view", "s: []mut int", "y: []int = s; n := read_view(s); z := y[0];", false},
+	{"reach_ok_two_read_only_copies", "l: ^mut Held_Pair", "y: ^int = l^.a; w: ^int = l^.a; z := y^; u := w^;", false},
+	{"reach_ok_copy_of_a_different_pair", "l: ^mut Held_Pair, m: ^mut Held_Pair", "y: ^int = m^.a; write_pair(l); z := y^;", false},
+	{"reach_ok_read_by_name_beside_copy", "l: ^mut Held_Pair", "y: ^int = l^.a; u := l^.a^; z := y^;", false},
 }
 
 // known-gaps.md "A pointer to one field of a record stands for the others".

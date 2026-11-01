@@ -1,0 +1,61 @@
+// design.md "Weakening and reborrows", "Values that contain borrows": a mutable carrier behind a
+// read-only one keeps its capability, so a call given the read-only one may write through it,
+// and a copy of it is suspended across that call, read-only or not. What such a call leaves
+// free is in tests/run/call_behind_read_only_carrier.loke.
+package main;
+
+Pair :: struct { a: ^mut int, n: int }
+Holder :: struct { pair: ^mut Pair }
+
+impl Pair {
+	size :: proc(self: ^) -> int { return self.n; }
+}
+
+write :: proc(p: ^Pair) { p^.a^ = 1; }
+write_deep :: proc(h: ^Holder) { h^.pair^.a^ = 1; }
+write_view :: proc(s: []Pair) { s[0].a^ = 1; }
+
+read_only_copy :: proc(l: ^mut Pair) {
+	y: ^int = l^.a;
+	write(l);
+	z := y^;
+}
+
+through_a_read_only_pointer :: proc(l: ^Pair) {
+	y: ^int = l^.a;
+	write(l);
+	z := y^;
+}
+
+by_a_local :: proc(v: ^mut int) {
+	pair := Pair{v, 0};
+	y: ^int = pair.a;
+	write(&pair);
+	z := y^;
+}
+
+deeper :: proc(h: ^mut Holder) {
+	y: ^int = h^.pair^.a;
+	write_deep(h);
+	z := y^;
+}
+
+in_a_view :: proc(s: []mut Pair) {
+	y: ^int = s[0].a;
+	write_view(s);
+	z := y^;
+}
+
+an_indirect_call :: proc(l: ^mut Pair, call: proc(p: ^Pair)) {
+	y: ^int = l^.a;
+	call(l);
+	z := y^;
+}
+
+by_a_method :: proc(l: ^mut Pair) {
+	y: ^int = l^.a;
+	n := l^.size();
+	z := y^;
+}
+
+main :: proc() {}

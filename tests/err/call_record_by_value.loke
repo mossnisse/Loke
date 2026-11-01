@@ -75,6 +75,14 @@ read_only_view :: proc(links: []mut Link) {
 	copy^ = 1;
 }
 
+// What a read-only view reaches keeps its capability, so the call may write what a read-only
+// copy goes on reading.
+read_only_copy_beside_a_read_only_view :: proc(links: []mut Link) {
+	copy: ^int = links[0].to;
+	take_read_only(Read_Only{links});
+	x := copy^;
+}
+
 // A task holds what it is given until the join, so this is one conflict, not two.
 moved_to_a_task :: proc(holder: move Holder) {
 	copy := holder.links[0].to;

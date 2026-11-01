@@ -388,32 +388,29 @@ main :: proc() {}
 
 Read `r^.b.to` by name.
 
-### A receiver written `self: ^` behind a carrier conflicts with a read-only copy
+### The length of a dynamic array behind a pointer conflicts with a copy out of it
 
-A read-only copy of a mutable carrier does not suspend a read of it
-([Weakening and reborrows](design.md#weakening-and-reborrows)), and a procedure taking
-`^T` is accepted below. The same read as a method is `L0641`, as walking the receiver
-through the carrier does not say that it only reads:
+A call to `len` reads only the array's header and runs nothing of the program's, as the same
+call on a view shows. On a dynamic array reached through a carrier, walking the receiver reads
+what the array holds, so it conflicts with a read-only copy of a carrier stored there:
 
 ```loke
 package main;
-Pair :: struct { a: ^mut int, n: int }
-impl Pair { size :: proc(self: ^) -> int { return self.n; } }
-read_pair :: proc(p: ^Pair) -> int { return p^.n; }
-by_procedure :: proc(l: ^mut Pair) {
-    y: ^int = l^.a;
-    n := read_pair(l);
+Pair :: struct { a: ^mut int }
+in_a_view :: proc(s: []mut Pair) {
+    y: ^int = s[0].a;
+    n := s.len();
     z := y^;
 }
-by_method :: proc(l: ^mut Pair) {
-    y: ^int = l^.a;
-    n := l^.size(); // L0641; should be accepted
+in_a_dynamic_array :: proc(d: ^mut [dynamic]Pair) {
+    y: ^int = d^[0].a;
+    n := d^.len(); // L0641; should be accepted
     z := y^;
 }
 main :: proc() {}
 ```
 
-Use the procedure, or end the use of the copy before the call.
+Take the length before the copy, or end the use of the copy first.
 
 ### A read of a carrier a call may have weakened conflicts with the copy
 

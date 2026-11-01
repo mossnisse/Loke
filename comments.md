@@ -3518,6 +3518,19 @@ the loop. So the store now asks those bits too (`publish_place_settled`), rather
 meeting every definition first. A definition holding no such bit, as a pointer a call returns,
 is a whole reborrow of what it came from, which any use of that between conflicts with.
 
+### A read-only carrier does not stop a call writing what it reaches
+
+`p: ^Pair` with `Pair :: struct { a: ^mut int }` can write `p^.a^`: a mutable carrier in a
+read-only wrapper keeps its capability. So a call given `p` may write what a read-only copy of
+`a` goes on reading. A method taking `self: ^` was rejected for this and a procedure taking `^T`
+was not, because `prov_use_reached` took the capability of the carrier passed, not of what it
+reaches.
+
+That disagreement was first recorded the other way round, as an over-rejection of the method, by
+reading only "a read-only copy does not suspend a read". Checking whether the callee could write
+settled it. Two tables written from the same wrong reading were corrected with it, and the
+rule now says so in the specification. A copy that runs nothing still only reads what it reaches.
+
 ### A pointer into an element stays in that element
 
 `p := &mut s[0]` names one element, and what the solve knows of it is that it holds the place

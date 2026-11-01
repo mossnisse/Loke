@@ -1,0 +1,60 @@
+// design.md "Weakening and reborrows": a read-only parameter reaches only what it holds, so a
+// copy done with first, a field it can only read, read-only data all the way down, another
+// record, and a plain carrier weakened to read-only are all free across a call. What conflicts
+// is in tests/err/call_behind_read_only_carrier.loke.
+package main;
+
+import "core:fmt";
+
+Pair :: struct { a: ^mut int, n: int }
+Read_Only_Pair :: struct { a: ^int, n: int }
+
+write :: proc(p: ^Pair) { p^.a^ += 1; }
+read :: proc(p: ^Pair) -> int { return p^.n; }
+read_read_only :: proc(p: ^Read_Only_Pair) -> int { return p^.n; }
+read_int :: proc(p: ^int) -> int { return p^; }
+
+done_first :: proc(l: ^mut Pair) -> int {
+	y: ^int = l^.a;
+	z := y^;
+	write(l);
+	return z;
+}
+
+a_field_it_can_only_read :: proc(l: ^mut Pair) -> int {
+	y := &l^.n;
+	n := read(l);
+	return y^ + n;
+}
+
+read_only_all_the_way :: proc(l: ^mut Read_Only_Pair) -> int {
+	y: ^int = l^.a;
+	n := read_read_only(l);
+	return y^ + n;
+}
+
+another_record :: proc(l: ^mut Pair, m: ^mut Pair) -> int {
+	y: ^int = m^.a;
+	write(l);
+	return y^;
+}
+
+plain_data :: proc(p: ^mut int) -> int {
+	y: ^int = p;
+	n := read_int(p);
+	return y^ + n;
+}
+
+main :: proc() {
+	a := 1; b := 10;
+	first := Pair{&mut a, 100};
+	second := Pair{&mut b, 200};
+	fmt.println(done_first(&mut first));
+	fmt.println(a_field_it_can_only_read(&mut first));
+	fmt.println(another_record(&mut first, &mut second));
+	c := 5;
+	third := Read_Only_Pair{&c, 7};
+	fmt.println(read_read_only(&third));
+	fmt.println(read_only_all_the_way(&mut third));
+	fmt.println(plain_data(&mut b));
+}

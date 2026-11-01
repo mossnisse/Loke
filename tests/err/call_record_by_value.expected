@@ -26,5 +26,8 @@ L0641
 @74:17
 `links` cannot be used here: a mutable reborrow of it is still in use
 L0641
-@81:19
+@82:17
+`links` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@89:19
 `holder` cannot be used here: a mutable reborrow of it is still in use

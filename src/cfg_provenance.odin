@@ -8676,9 +8676,13 @@ prov_call_argument :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int, input:
 		actual = held
 	case .Read_Only:
 		// Weakened to a read-only parameter, the carrier is only read, all of
-		// what it points to.
+		// what it points to, while what is stored there keeps its capability.
 		actual = prov_read_carrier(graph, argument, true)
-		prov_use_reached(graph, actual, prov_parameter_type(graph, v, index), expr_span(argument))
+		if prov_call_may_use_reach(graph, v, container_op) {
+			if reached := prov_use_reached(graph, actual, prov_parameter_type(graph, v, index), expr_span(argument)); reached >= 0 {
+				prov_write_through(graph, prov_one(graph, reached), nil, expr_span(argument), "mutable argument")
+			}
+		}
 		prov_read_through(graph, actual, nil, expr_span(argument))
 	case .Value:
 		actual = walk_flow_expr(graph, argument)
@@ -8720,10 +8724,12 @@ prov_call_argument :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int, input:
 // design.md "Weakening and reborrows": a carrier handed to a call lets the
 // callee use the carriers stored where it points, so passing `list` uses
 // `list^.head`, which a mutable copy of it, as `node := list^.head`, suspends
-// until its last use. A read-only carrier lets it only read them.
+// until its last use. A mutable carrier stored behind a read-only one keeps its capability
+// (design.md "Values that contain borrows"), so a call given the read-only one may write
+// through it too, and only a `copy` that runs nothing just reads them.
 // The slot the load reads into, or -1 when there is none.
 @(private = "file")
-prov_use_reached :: proc(graph: ^Flow_Graph, slots: []int, parameter: Type_Id, span: Span) -> int {
+prov_use_reached :: proc(graph: ^Flow_Graph, slots: []int, parameter: Type_Id, span: Span, copy := false) -> int {
 	c := graph.k.c
 	info := underlying_info(c, parameter)
 	if len(slots) == 0 || info == nil || !type_is_carrier(c, parameter) || type_is_region_provider(c, parameter) ||
@@ -8734,14 +8740,13 @@ prov_use_reached :: proc(graph: ^Flow_Graph, slots: []int, parameter: Type_Id, s
 	slot := prov_temp_slot(graph)
 	prov_emit(graph, Prov_Event {
 		kind = .Load, slot = slot, into = slots, load = .Deep, span = span,
-		reads_only = !carrier_is_mutable(c, parameter),
+		reads_only = copy && !carrier_is_mutable(c, parameter),
 	})
 	return slot
 }
 
 // design.md "Weakening and reborrows": a record handed over by value lets the callee use
-// what its carriers point to, as a carrier handed over itself does (`prov_use_reached`),
-// each under its own capability.
+// what its carriers point to, as a carrier handed over itself does (`prov_use_reached`).
 @(private = "file")
 prov_use_reached_in_record :: proc(
 	graph: ^Flow_Graph, v: ^Expr_Call, index: int, container_op: Container_Op, argument: Expr, actual: []int, parameter: Type_Id,
@@ -8755,8 +8760,7 @@ prov_use_reached_in_record :: proc(
 	}
 	span := expr_span(argument)
 	// One load of them all, as what one holds is no conflict with using another.
-	mutable := make([dynamic]int, 0, len(actual), graph.alloc)
-	read_only := make([dynamic]int, 0, len(actual), graph.alloc)
+	carriers := make([dynamic]int, 0, len(actual), graph.alloc)
 	held := actual
 	// Only a record named as a place hands over what that place holds: `p^.a` leaves
 	// `p` and the rest of what it points to alone.
@@ -8770,18 +8774,12 @@ prov_use_reached_in_record :: proc(
 		   !type_carries_borrow(c, info.element).mutable {
 			continue
 		}
-		append(&read_only, slot)
-		if carrier_is_mutable(c, type) {
-			append(&mutable, slot)
-		}
+		append(&carriers, slot)
 	}
-	if len(read_only) > 0 {
+	if len(carriers) > 0 {
 		graph.has_content_load = true
-		prov_emit(graph, Prov_Event{kind = .Load, slot = prov_temp_slot(graph), into = read_only[:], load = .Deep, span = span, reads_only = true, repeats_inner = true})
-	}
-	if len(mutable) > 0 {
 		reached := prov_temp_slot(graph)
-		prov_emit(graph, Prov_Event{kind = .Load, slot = reached, into = mutable[:], load = .Deep, span = span, repeats_inner = true})
+		prov_emit(graph, Prov_Event{kind = .Load, slot = reached, into = carriers[:], load = .Deep, span = span, repeats_inner = true})
 		prov_write_through(graph, prov_one(graph, reached), nil, span, "mutable argument")
 	}
 }
@@ -8861,7 +8859,7 @@ prov_use_copied :: proc(graph: ^Flow_Graph, slots: []int, destination: Type_Id, 
 			append(&written, slot)
 		}
 	}
-	reached := prov_use_reached(graph, copied[:], destination, span)
+	reached := prov_use_reached(graph, copied[:], destination, span, copy = true)
 	if mutable && len(written) > 0 {
 		prov_write_through(graph, written[:], nil, span, "mutable copy")
 		if reached >= 0 {

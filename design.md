@@ -8309,7 +8309,7 @@ Reading or writing through the stored carrier, copying it again, or borrowing
 the place that holds it is a use of it; another field beside it, and storing a
 new carrier into its place, are not. Passing a carrier to a procedure lets the
 callee use what is stored where it points, so the call uses each mutable carrier
-reachable through it:
+reachable through it, as what a read-only carrier points to keeps its own capability:
 
 ```loke
 List :: struct { head: ^mut Node, count: int }

@@ -10,6 +10,14 @@ checklist.
 
 ### Breaking changes
 
+- A call given a read-only carrier now uses the mutable carriers stored behind it, as a
+  callee may write through them
+  ([Weakening and reborrows](design.md#weakening-and-reborrows)).
+  `y: ^int = l^.a; write(l); z := y^;` with `write :: proc(p: ^Pair) { p^.a^ = 1; }` compiled
+  with a live read-only copy of what the call writes, whatever the call's body did, and so
+  did the same with a read-only view, a record holding one, or an indirect call. A method
+  taking `self: ^` was already rejected. Each is now `L0641`. Upgrade by reading through the
+  copy before the call.
 - A store through a pointer redefined later in a loop now lands where that definition
   points too. `p := &mut r^.a; for (...) { p^ = other; y := r^.b; other^ = 1; y^ = 2;
   p = &mut r^.b; }` compiled with `y` and `other` live mutable paths to one place from the

@@ -38,7 +38,7 @@ L0641
 @125:2
 `links` cannot be used here: a mutable reborrow of it is still in use
 L0641
-@133:2
+@133:13
 `mixed` cannot be used here: a read-only reborrow of it is still in use
 L0641
 @141:11

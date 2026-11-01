@@ -1,0 +1,21 @@
+L0641
+@20:8
+`l` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@26:8
+`l` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@33:8
+`pair` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@39:13
+`h` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@45:13
+`s` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@51:7
+`l` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@57:7
+`l` cannot be used here: a read-only reborrow of it is still in use
