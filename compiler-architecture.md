@@ -471,7 +471,9 @@ Keep these contracts:
   round, and not in a multiple assignment that also writes `s`
   (`Prov_View_Def`, `prov_local_view_element`, `publish_view_of`). Where a
   reslice reaches itself, the starts are the least fixed point over the
-  definitions, so `s = &mut s[:2]` in a loop keeps the start. The
+  definitions, so `s = &mut s[:2]` in a loop keeps the start. The lengths
+  settle first, in a fixed point of their own (`publish_view_lengths`), as a
+  length still short would otherwise look like a reslice past its source. The
   definitions need not agree on its length, as an index past a shorter one
   panics, and a fresh borrow whose end is not constant, as `&mut d[:]` of a
   dynamic array, lends from its constant start on (`Prov_View_Def.open`). A

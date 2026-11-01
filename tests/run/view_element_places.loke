@@ -220,6 +220,44 @@ shortened_of_two_borrows :: proc() -> int {
 	return a[1].count * 10 + a[2].count;
 }
 
+// Mutually dependent views, one starting short. The other's length arrives only
+// around the loop, and every reslice starts at zero.
+Pointing :: struct { p: ^mut int }
+
+shortened_views_of_each_other :: proc(flag: bool) -> int {
+	a, b, c := 1, 2, 3;
+	held := [3]Pointing{{&mut a}, {&mut b}, {&mut c}};
+	base := held[:];
+	s := base[:1];
+	t := base[:];
+	for (i := 0; i < 2; i += 1) {
+		if (flag) { s = t[:]; }
+		t = s[:2];
+	}
+	first := s[0].p;
+	s[1].p^ += 1;
+	first^ += 1;
+	return a * 100 + b * 10 + c;
+}
+
+shortened_views_through_a_third :: proc(flag: bool) -> int {
+	a, b, c := 1, 2, 3;
+	held := [3]Pointing{{&mut a}, {&mut b}, {&mut c}};
+	base := held[:];
+	r := base[:1];
+	s := base[:];
+	t := base[:];
+	for (i := 0; i < 2; i += 1) {
+		if (flag) { r = t[:]; }
+		s = r[:2];
+		t = s[:];
+	}
+	first := r[0].p;
+	r[1].p^ += 1;
+	first^ += 1;
+	return a * 100 + b * 10 + c;
+}
+
 main :: proc() {
 	n := 1;
 	counters := [2]Counter{Counter{first = .some(&mut n)}, Counter{cells = [2]int{5, 6}}};
@@ -233,4 +271,5 @@ main :: proc() {
 	fmt.println(shortened_in_loop(), whole_in_loop(), shortened_each_round(), kept_across_rounds());
 	fmt.println(shortened_in_branch_in_loop(), shortened_in_nested_loops(), shortened_through_another_view());
 	fmt.println(shortened_from_a_start(), shortened_dynamic_in_loop(), shortened_of_two_borrows());
+	fmt.println(shortened_views_of_each_other(true), shortened_views_through_a_third(true));
 }

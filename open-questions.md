@@ -305,10 +305,11 @@ original revisions. Two remaining gaps were recorded with reproductions:
   initializer walk handled a bare `Outcome`, but a local implementation block's
   `Local.Outcome` still permitted a bare return, and `Local.Payload` still
   permitted implicit success wrapping beside an error payload (P2).
-- [Provisional short lengths lose a known start in zero-offset cycles](known-gaps.md#provisional-short-lengths-hide-a-zero-offset-view-cycles-known-start).
-  A reslice can become permanently unknown before another reaching definition
-  contributes its longer length. A safe loop still reports `L0641`; removing
-  the loop or lengthening only the initial view makes it compile (P2).
+- Provisional short lengths lost a known start in zero-offset cycles, since fixed
+  by `publish_view_lengths`.
+  A reslice could become permanently unknown before another reaching definition
+  contributed its longer length. A safe loop still reported `L0641`; removing
+  the loop or lengthening only the initial view made it compile (P2).
 
 The documentation-only `166fdfab` accurately recorded the hook review's three
 confirmed divergences and distinguished the older excluded-hook failure from
@@ -326,8 +327,8 @@ The overall structure is appropriate: aliases are inspected in their declaring
 scopes, and nominal local type definitions remain opaque. The view analysis
 uses an explicit dependency walk and a fixed point, with a single pass for an
 acyclic graph; that machinery serves actual cycles and long reslice chains.
-Its abstract states need to distinguish incomplete bounds from a final loss of
-offset information, as the remaining precision gap demonstrates.
+Its abstract states needed to distinguish incomplete bounds from a final loss of
+offset information, which `publish_view_lengths` since does by settling the bounds first.
 
 Validation: each original implementation revision passed all 179 compiler unit
 tests, with the existing toolchain-test allocation warnings. Four integration

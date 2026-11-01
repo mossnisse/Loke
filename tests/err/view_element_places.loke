@@ -267,4 +267,83 @@ reslice_past_length_in_loop :: proc() {
 	first^.count += 1;
 }
 
+// Mutually dependent views, one starting short: the same element, a reslice that
+// moves the start, starts that disagree, and a reslice or index past every length.
+Pointing :: struct { p: ^mut int }
+
+views_of_each_other_same_element :: proc(flag: bool) {
+	a, b := 1, 2;
+	held := [2]Pointing{{&mut a}, {&mut b}};
+	base := held[:];
+	s := base[:1];
+	t := base[:];
+	for (i := 0; i < 2; i += 1) {
+		if (flag) { s = t[:]; }
+		t = s[:2];
+	}
+	first := s[0].p;
+	s[0].p^ += 1;
+	first^ += 1;
+}
+
+views_of_each_other_moving :: proc(flag: bool) {
+	a, b, c := 1, 2, 3;
+	held := [3]Pointing{{&mut a}, {&mut b}, {&mut c}};
+	base := held[:];
+	s := base[:1];
+	t := base[:];
+	for (i := 0; i < 2; i += 1) {
+		if (flag) { s = t[1:]; }
+		t = s[:2];
+	}
+	first := s[0].p;
+	s[1].p^ += 1;
+	first^ += 1;
+}
+
+views_of_each_other_disagreeing :: proc(flag: bool) {
+	a, b, c := 1, 2, 3;
+	held := [3]Pointing{{&mut a}, {&mut b}, {&mut c}};
+	base := held[:];
+	s := base[1:];
+	t := base[:];
+	for (i := 0; i < 2; i += 1) {
+		if (flag) { s = t[:]; }
+		t = s[:2];
+	}
+	first := s[0].p;
+	s[1].p^ += 1;
+	first^ += 1;
+}
+
+views_of_each_other_past_every_length :: proc(flag: bool) {
+	a, b, c := 1, 2, 3;
+	held := [3]Pointing{{&mut a}, {&mut b}, {&mut c}};
+	base := held[:];
+	s := base[:1];
+	t := base[:];
+	for (i := 0; i < 2; i += 1) {
+		if (flag) { s = t[:]; }
+		t = s[:5];
+	}
+	first := s[0].p;
+	s[1].p^ += 1;
+	first^ += 1;
+}
+
+views_of_each_other_index_past_every_length :: proc(flag: bool) {
+	a, b, c := 1, 2, 3;
+	held := [3]Pointing{{&mut a}, {&mut b}, {&mut c}};
+	base := held[:];
+	s := base[:1];
+	t := base[:];
+	for (i := 0; i < 2; i += 1) {
+		if (flag) { s = t[:]; }
+		t = s[:2];
+	}
+	first := s[0].p;
+	s[3].p^ += 1;
+	first^ += 1;
+}
+
 main :: proc() {}

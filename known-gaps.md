@@ -7,51 +7,6 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
-### Provisional short lengths hide a zero-offset view cycle's known start
-
-[Weakening and reborrows](design.md#weakening-and-reborrows) preserves a local
-view's known start when every repeated reslice starts at zero. The fixed point
-in `51bceeb4` can still lose it when mutually dependent views contribute
-different lengths:
-
-```loke
-package main;
-import "core:fmt";
-Holder :: struct { p: ^mut int }
-run :: proc(flag: bool) {
-    a, b, c := 1, 2, 3;
-    arr := [3]Holder{{&mut a}, {&mut b}, {&mut c}};
-    base := arr[:];
-    s := base[:1];
-    t := base[:];
-    for (i := 0; i < 2; i += 1) {
-        if (flag) { s = t[:]; }
-        t = s[:2];
-    }
-    first := s[0].p;
-    s[1].p^ += 1;
-    first^ += 1;
-    fmt.println(a, b, c);
-}
-main :: proc() { run(true); }
-```
-
-This reports `L0641` at `s[1].p^`. Replacing the loop with a single block, or
-initializing `s` with `base[:2]` or `base[:]`, compiles; the block and full-length
-controls both print `2 3 3`. Every reslice starts at zero. The false branch can
-panic because the source is too short, but cannot make the two surviving
-element accesses overlap.
-
-`publish_view_def` in [src/borrow.odin](src/borrow.odin) produces an unknown
-start when its current source length is less than the requested constant end.
-During the new fixed point that length can still grow as other definitions
-contribute. Joining this provisional answer with the previous state through
-`publish_view_agree` makes unknown permanent, even after the longer source
-arrives. Settle the length information before concluding that the start is
-unknown, or distinguish provisional bounds from a genuinely unknown offset.
-Confirmed at `51bceeb4` and on the merged `1b7845aa` during review on
-2026-11-01 (P2, remaining precision gap).
-
 ### A hook in a `when` on a later constant comes too late for a record already used
 
 [Lifecycle hooks and resource types](design.md#lifecycle-hooks-and-resource-types)

@@ -4217,12 +4217,14 @@ Prov_View_Walk :: struct {
 // be what it made itself, so the answer is the least fixed point: every
 // definition starts as taking no loan, and is taken again from what its source
 // has come to until none changes. A value only rises, from not `present`
-// through `known` with a growing length to not `known`, and a known answer
-// holds of every execution by induction over its definitions: the first to
-// make the view is one that takes the loan, and each later one starts where
-// its source does plus its constant start. So `s = &mut s[:2]` in a loop keeps
-// the start, and `s = &mut s[1:]` does not, as what it makes disagrees with
-// what it read on the next round.
+// through `known` to not `known`, and a known answer holds of every execution
+// by induction over its definitions: the first to make the view is one that
+// takes the loan, and each later one starts where its source does plus its
+// constant start. So `s = &mut s[:2]` in a loop keeps the start, and
+// `s = &mut s[1:]` does not, as what it makes disagrees with what it read on
+// the next round. Whether a reslice lies past its source depends on the longest
+// the source may yet be, so the lengths settle first (`publish_view_lengths`):
+// taken along the way, a length still short would lose the start for good.
 //
 // Definitions are taken sources first, so without a cycle one round settles
 // them. Each one's value rises a few times at most, which bounds the rounds.
@@ -4232,17 +4234,20 @@ publish_view_of :: proc(graph: ^Flow_Graph, slot: int, reaching: []int, loan: in
 		return 0, 0, true, false
 	}
 	order, cyclic := publish_view_order(graph, slot, reaching)
+	lengths := publish_view_lengths(graph, order, cyclic, loan, range)
 	starts := make(map[[2]int]Prov_View_Start, len(order), graph.alloc)
 	for changed := true; changed; changed = cyclic && changed {
 		changed = false
 		for node in order {
 			def := graph.view_defs[node.key[0]][node.key[1]]
 			source: Prov_View_Start
+			longest: i64
 			if !def.unknown && def.from > 0 {
 				source = node.readable ? publish_view_join(graph, &starts, def.from - 1, def.reaching) : Prov_View_Start{present = true}
+				longest = publish_view_longest(graph, lengths, def.from - 1, def.reaching)
 			}
 			old := starts[node.key]
-			start := publish_view_agree(old, publish_view_def(def, source, loan, range))
+			start := publish_view_agree(old, publish_view_def(def, source, longest, loan, range))
 			if start != old {
 				starts[node.key] = start
 				changed = true
@@ -4251,6 +4256,51 @@ publish_view_of :: proc(graph: ^Flow_Graph, slot: int, reaching: []int, loan: in
 	}
 	view := publish_view_join(graph, &starts, slot, reaching)
 	return view.offset, view.length, view.present, view.known
+}
+
+// The most elements each of the definitions `order` holds may view of what
+// `loan` lends, for those that may take it. The least fixed point, as
+// `publish_view_of`'s is, of a value that only grows: what a reslice may view
+// grows with what its source may, and what it may not view from it, past a
+// constant end, it panics on. Going round a cycle only shortens a view, so the
+// longest comes by a path without one and the rounds are bounded.
+@(private = "file")
+publish_view_lengths :: proc(graph: ^Flow_Graph, order: []Prov_View_Node, cyclic: bool, loan: int, range: i64) -> map[[2]int]i64 {
+	lengths := make(map[[2]int]i64, len(order), graph.alloc)
+	for changed := true; changed; changed = cyclic && changed {
+		changed = false
+		for node in order {
+			def := graph.view_defs[node.key[0]][node.key[1]]
+			length := i64(-1)
+			if !def.unknown && def.from > 0 {
+				source := node.readable ? publish_view_longest(graph, lengths, def.from - 1, def.reaching) : -1
+				hi := def.hi < 0 ? source : min(def.hi, source)
+				if source >= 0 && def.lo >= 0 && def.lo <= hi {
+					length = hi - def.lo
+				}
+			} else if start := publish_view_def(def, {}, 0, loan, range); start.known {
+				length = start.length
+			}
+			if old, seen := lengths[node.key]; length >= 0 && (!seen || old < length) {
+				lengths[node.key] = length
+				changed = true
+			}
+		}
+	}
+	return lengths
+}
+
+// The longest of the definitions `reaching` of `slot` (`publish_view_lengths`),
+// or -1 when none may take the loan.
+@(private = "file")
+publish_view_longest :: proc(graph: ^Flow_Graph, lengths: map[[2]int]i64, slot: int, reaching: []int) -> i64 {
+	longest := i64(-1)
+	for index in reaching {
+		if length, seen := lengths[[2]int{slot, index}]; seen {
+			longest = max(longest, length)
+		}
+	}
+	return longest
 }
 
 // Whether what the definitions `reaching` of `slot` make can be worked out at
@@ -4346,23 +4396,24 @@ publish_view_agree :: proc(a, b: Prov_View_Start) -> Prov_View_Start {
 	return Prov_View_Start{offset = a.offset, length = max(a.length, b.length), present = true, known = true}
 }
 
-// Where `def` starts, `source` being the view a reslice reads. A reslice
-// past the most elements its source may view always panics, and is taken as
-// not known; one within them starts where its constant start says whatever
-// length the source has, as it panics where the source is shorter. An open
+// Where `def` starts, `source` being the view a reslice reads and `longest`
+// the most elements that may view (`publish_view_lengths`). A reslice past
+// them always panics, and is taken as not known; one within them starts where
+// its constant start says whatever length the source has, as it panics where
+// the source is shorter. An open
 // borrow starts where it says (`Prov_View_Def.open`), and only a loan whose
 // range the analysis cannot name, as `VIEW_OPEN_RANGE`, may be one.
 @(private = "file")
-publish_view_def :: proc(def: Prov_View_Def, source: Prov_View_Start, loan: int, range: i64) -> Prov_View_Start {
+publish_view_def :: proc(def: Prov_View_Def, source: Prov_View_Start, longest: i64, loan: int, range: i64) -> Prov_View_Start {
 	start: Prov_View_Start
 	switch {
 	case def.unknown:
 		start.present = true
 	case def.from > 0:
-		hi := def.hi < 0 ? source.length : def.hi
+		hi := def.hi < 0 ? longest : def.hi
 		if source.present {
 			start.present = true
-			if source.known && def.lo >= 0 && def.lo <= hi && hi <= source.length {
+			if source.known && def.lo >= 0 && def.lo <= hi && hi <= longest {
 				start.offset, start.length, start.known = source.offset + def.lo, hi - def.lo, true
 			}
 		}

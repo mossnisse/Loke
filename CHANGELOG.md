@@ -1193,6 +1193,10 @@ checklist.
   `s = &mut s[:2]`, now leaves the view's constant elements apart, so `s[1]`
   beside a live `&mut s[0]` is no longer `L0641`. A loop that moves the start,
   as `s = &mut s[1:]`, stays rejected.
+- Local views reslicing each other in a loop no longer lose where they start when
+  one begins short, as `s := base[:1]; t := base[:];` with `s = t[:]` and
+  `t = s[:2]` in the loop, so `s[1]` beside a live copy out of `s[0]` is no longer
+  `L0641` ([Weakening and reborrows](design.md#weakening-and-reborrows)).
 - A dynamic array's first 8 elements are now told apart by a constant index, as a
   fixed array's are ([Minimum provenance precision](design.md#minimum-provenance-precision)).
   `node := lists[0].head; other := lists[1].head;`, directly or through a fresh
