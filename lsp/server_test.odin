@@ -1023,6 +1023,30 @@ completion_hides_a_generated_formatter_as_lookup_does :: proc(t: ^testing.T) {
 	testing.expect_value(t, written, "The written one.")
 }
 
+// A method called through a pointer or box writes `r^` into the tree, at `r`'s
+// span. What completion lists from is the operand the source wrote.
+@(test)
+completion_follows_a_pointer_whose_method_is_called :: proc(t: ^testing.T) {
+	h: Harness
+	if !start(&h, t, "completion-pointer-method") { finish(&h); return }
+	defer finish(&h)
+	text := "package main;\nP :: struct { x: int }\nimpl P {\n\tsize :: proc(self) -> int { return 0; }\n\tgrow :: proc(self: inout) { self.x += 1; }\n}\nkeep :: proc(p: ^P) -> ^P { return p; }\nmain :: proc() {\n\tp := P{1};\n\tr := &p;\n\t_ = r.x;\n\t_ = r.size();\n\t_ = keep(r).size();\n\t_ = r^.size();\n\t_ = p.size();\n\tq := &mut p;\n\tq.grow();\n\tb := box(P{2});\n\t_ = b.size();\n}\n"
+	open(&h, "main.loke", text)
+
+	// A pointer offers what `r.x` does, its own members with its pointee's.
+	through := "clone grow hash size try_clone x"
+	direct := "clone grow size try_clone x"
+	Case :: struct { needle: string, column: int, labels: string }
+	for c in ([]Case{
+		{"r.x", 2, through}, {"r.size", 2, through}, {"keep(r).size", 8, through}, {"q.grow", 2, through},
+		{"r^.size", 3, direct}, {"p.size", 2, direct}, {"b.size", 2, direct},
+	}) {
+		reply := ask(&h, "textDocument/completion", "main.loke", position_of(t, text, c.needle, c.column))
+		labels := completion_labels(reply)
+		testing.expectf(t, labels == c.labels, "at %q: %q", c.needle, labels)
+	}
+}
+
 @(test)
 signature_help_follows_the_argument_being_written :: proc(t: ^testing.T) {
 	text := "package main;\nPoint :: struct { x, y: int }\nimpl Point {\n\tscale :: proc(self, factor: int) -> Point { return {self.x * factor, self.y * factor}; }\n}\n/// Adds two numbers.\nadd :: proc(a, b: int) -> int { return a + b; }\nplain :: proc(value: int) -> int { return value; }\nfloating :: proc(value: f64) -> f64 { return value; }\npick :: proc{plain, floating};\nmain :: proc() {\n\tp := Point{1, 2};\n\t_ = p.scale(2);\n\t_ = pick(1);\n\t_ = add(plain(1), 2);\n\t_ = add(b = 2, a = 1);\n\tif (add(1, 2) > 0) {}\n\tadd(1, \n}\n"

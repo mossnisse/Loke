@@ -196,9 +196,7 @@ index_query_operand :: proc(index: ^Query_Index, selector: ^Expr_Selector) {
 		if !added || link.name.span != span { break }
 		operand = link.operand
 	}
-	if deref, found := operand.(^Expr_Postfix); found && deref.op == .Caret {
-		if inner := expr_base(deref.operand); inner != nil && deref.op_span == inner.span { operand = deref.operand }
-	}
+	if is_implicit_deref(operand) { operand = operand.(^Expr_Postfix).operand }
 	base := expr_base(operand)
 	if base == nil { return }
 	type := base.denoted_type != INVALID_TYPE ? base.denoted_type : base.type
@@ -208,13 +206,23 @@ index_query_operand :: proc(index: ^Query_Index, selector: ^Expr_Selector) {
 	append(&index.q.operands, Query_Occurrence{span, symbol, type, false, base.denoted_type != INVALID_TYPE})
 }
 
+// An implicit `p^` spans what the source wrote and types what it does not. Recorded
+// at that span it would conflict with its operand's type, as two instantiations do.
+@(private = "file")
+is_implicit_deref :: proc(expr: Expr) -> bool {
+	deref, found := expr.(^Expr_Postfix)
+	if !found || deref.op != .Caret { return false }
+	inner := expr_base(deref.operand)
+	return inner != nil && deref.op_span == inner.span
+}
+
 index_query_expr :: proc(index: ^Query_Index, expr: Expr) {
 	if expr == nil { return }
 	base := expr_base(expr)
 	if !query_index_enter(index, base) { return }
 	type := base.denoted_type != INVALID_TYPE ? base.denoted_type : base.type
 	if base.resolution.kind == .Package { type = INVALID_TYPE }
-	if valid_query_span(index.c, base.span) {
+	if valid_query_span(index.c, base.span) && !is_implicit_deref(expr) {
 		append(&index.q.occurrences, Query_Occurrence{span = base.span, type = type, type_value = base.denoted_type != INVALID_TYPE})
 	}
 	switch v in expr {

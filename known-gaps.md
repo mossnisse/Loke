@@ -302,33 +302,6 @@ another is treated the same way, for the same reason. Resetting `allowed` itself
 the same thing. Telling them apart takes region facts by program point. Found while
 fixing the conditional write on 2026-11-01 at `46cf2aa8` (P3, over-rejection).
 
-### Completion lists nothing after a pointer whose method is already called
-
-[Language server](compiler-architecture.md#language-server) completion lists the
-members visible at a use. It does so after an unfinished `r.`, and after `r.x`,
-but lists no member when the selector already calls a method through the pointer:
-
-```loke
-package main;
-P :: struct { x: int }
-impl P {
-    size :: proc(self) -> int { return 0; }
-}
-main :: proc() {
-    p := P{1};
-    r := &p;
-    _ = r.size(); // completion at `size` offers nothing; at `p.size` it does
-}
-```
-
-`check_selector` in [src/check_expr.odin](src/check_expr.odin) rewrites the operand
-to `r^` through `implicit_pointer_deref` when the method is the pointee's. Both
-expressions occupy `r`'s span with different types, so `merge_occurrence` in
-[src/queries.odin](src/queries.odin) drops the type as a conflict, and
-`query_members` has no subject. Prefer the type the source wrote over the implicit
-dereference's. Confirmed through `loke-lsp.exe` on 2026-11-01 while fixing the
-generated formatter's completion.
-
 ### A call given a carrier and its copy in one use is not rejected
 
 [Weakening and reborrows](design.md#weakening-and-reborrows) suspends all use of

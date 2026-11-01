@@ -1136,6 +1136,9 @@ checklist.
   interface again, as `$V: Alias(T, 0)` beside `Alias :: Record($T, $V);`, now reports
   the instantiation limit (`L0436`) instead of overflowing the compiler's stack, and
   a limit first reached in a probe no longer uses up the report.
+- Completion lists a pointer's or box's members at `r.size` when `size` is a method
+  called through it ([Language server](compiler-architecture.md#language-server)),
+  where it offered nothing.
 - A `hook(drop)` or `hook(copy)` is no longer silently skipped when something asked
   about its record first
   ([Lifecycle hooks and resource types](design.md#lifecycle-hooks-and-resource-types)).
