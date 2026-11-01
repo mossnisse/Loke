@@ -2907,7 +2907,7 @@ prov_reborrow_loaded :: proc(graph: ^Flow_Graph, event: Prov_Event) {
 		if prov_slot_is_mutable_carrier(graph, source) || graph.prov_slots[source].caller_mutable {
 			append(&graph.reborrows, Prov_Reborrow {
 				source = source, derived = event.slot, span = event.span, mutable = mutable, passes_on = passes_on, via = event.into,
-				walked = event.walked,
+				walked = event.walked, moved = graph.prov_slots[event.slot].moved_out,
 			})
 		}
 	}
@@ -7385,6 +7385,7 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 			destinations[index] = Prov_Destination{through, below, reached, true}
 		}
 	}
+	permutes := prov_assign_permutes(graph, s)
 	for target, index in s.lhs {
 		clones := s.destructure.active ? s.destructure.clones : s.rhs_clones
 		copies := index < len(clones) && clones[index]
@@ -7411,6 +7412,18 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 			if prov_tracks_allocator_use(graph) && clone_may_allocate(graph.k.c, prov_type(graph, target)) &&
 			   expression_is_borrowed_place(value) {
 				prov_event(graph, Prov_Event_Allocator_Use{prov_input_value(graph, value), expr_span(value), true})
+			}
+		}
+		// design.md "Weakening and reborrows": a reordering leaves each carrier in one
+		// place, so what it reads is moved out rather than copied.
+		first_reborrow := len(graph.reborrows)
+		defer if permutes {
+			for &reborrow, at in graph.reborrows {
+				read := graph.prov_slots[reborrow.derived].kind == .Temporary && slice.contains(sources, reborrow.derived)
+				reborrow.moved ||= read || at >= first_reborrow && slice.contains(sources, reborrow.source)
+			}
+			for slot in sources {
+				graph.prov_slots[slot].moved_out = true
 			}
 		}
 		target_type := prov_type(graph, target)

@@ -272,27 +272,31 @@ together. Linking them as a field store does needs the copy told from a value th
 came from elsewhere, and from a swap written by hand. Found on 2026-11-01 while
 making a call use what its arguments reach at once.
 
-### A reordering of fields through a view parameter is rejected
+### Copies out of elements reordered whole through a view parameter are rejected
 
-[Weakening and reborrows](design.md#weakening-and-reborrows) says a reordering
-assignment leaves each carrier in one place, and in a view parameter elements at
-different constant indices are different places. Reordering a carrier field of
-two elements is still `L0641`:
+[Weakening and reborrows](design.md#weakening-and-reborrows) says a reordering leaves
+each carrier in one place, and in a view parameter elements at different constant
+indices are different places. After whole elements are reordered, a copy out of each
+is still `L0641`, though the same statement on their carrier fields compiles:
 
 ```loke
 package main;
 Link :: struct { to: ^mut int }
-swap_fields :: proc(links: []mut Link) {
-    links[0].to, links[1].to = links[1].to, links[0].to; // L0641; should be accepted
+copies_of_each :: proc(links: []mut Link) {
+    links[0], links[1] = links[1], links[0];
+    first := links[0].to;
+    second := links[1].to; // L0641; should be accepted
+    first^ = 1;
+    second^ = 2;
 }
 main :: proc() {}
 ```
 
-Reordering whole elements, `links[0], links[1] = links[1], links[0]`, is accepted,
-and so is this statement on a named `[2]Link`. It fails before any summary is
-reached, so proving the permutation does not help, and the compiler before that
-proof rejects it the same way. The cause has not been traced. Found on 2026-11-01
-while replacing the textual permutation check (P3, over-rejection).
+A record stored through a view parameter joins into the parameter itself
+(`prov_view_element`), which every load through it then reads, so both copies reborrow
+that one slot. Leaving the join out for a reordering loses what a moved copy reborrowed,
+since nothing links a record's carriers to the slots of the elements. Found on
+2026-11-01 while making a reordering of fields move its carriers (P3, over-rejection).
 
 ### A swap written with a temporary is rejected
 

@@ -1,0 +1,33 @@
+L0641
+@17:12
+`links` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@23:42
+`links` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@29:19
+`two` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@37:12
+`links` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@47:2
+`carrier` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@55:2
+`carrier` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@65:2
+`carrier` cannot be used here: a mutable reborrow of it is still in use
+L0512
+@75:2
+`y` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@84:2
+`x` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@94:2
+`x` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@103:2
+`y` cannot be assigned here: a mutable pointer of it is still in use

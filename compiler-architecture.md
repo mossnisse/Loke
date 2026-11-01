@@ -511,6 +511,13 @@ Keep these contracts:
   until a `Rearrange` activates them, so an earlier use conflicts with nothing,
   and they are never severed again, as what a copy left in two places stays
   there (`Prov_Reborrow.copied_within`).
+- **A reordering moves carriers.** Each value of an assignment that only reorders
+  its targets (`prov_assign_permutes`) still reborrows what it read, and the place it
+  lands in reborrows that, so what a carrier was copied from goes on to where it went.
+  But the reborrow it took from the place it read is `Prov_Reborrow.moved`: a walk
+  starting at that place passes over it, as what the place holds afterwards is
+  another carrier, and a walk reaching the place follows it. Reads of the statement
+  come before its writes, so a later read of a target finds the old value too.
 - **A dynamic array's first elements have carrier paths of their own.**
   `carrier_shape_walk` gives each of the first `CARRIER_ARRAY_ELEMENTS` a step
   and every later one a shared one, unless that would pass `CARRIER_WIDTH`, when

@@ -1183,6 +1183,11 @@ checklist.
   record's member bound evaluated before a later member, and a file-scope `when`
   asking before the block is declared. A hook whose own bound asks and fails is left
   out, where it failed in the backend with `L0405`.
+- Reordering carrier fields through a view parameter, as
+  `links[0].to, links[1].to = links[1].to, links[0].to;`, no longer reports `L0641`,
+  and what a reordering left can be copied again afterwards in a view parameter, a
+  pointer's fields, or after a `swap` of a named array
+  ([Weakening and reborrows](design.md#weakening-and-reborrows)).
 - A call that copies between elements at variable indices of a view of a local
   array, in the scope of the arena an element's owner is in, no longer reports
   `L0536`, as that leaves the array nothing new.

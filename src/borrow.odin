@@ -303,6 +303,9 @@ Prov_Slot :: struct {
 	// Stands for one element of a view parameter's caller storage, which only
 	// a store naming that element lands in and replaces (`prov_view_element`).
 	caller_element: bool,
+	// Read by a reordering, whose reborrow of what it read is a move
+	// (`Prov_Reborrow.moved`).
+	moved_out:      bool,
 	// Loaded on the way to a switch subject, which a payload binding views
 	// through it (`prov_subject_view`).
 	viewed: bool,
@@ -481,6 +484,10 @@ Prov_Reborrow :: struct {
 	// Links carriers a call may have copied among each other, in both directions
 	// (`prov_link_copied_carriers`).
 	copied_within: bool,
+	// `derived` took the carrier from `source` in a reordering (`prov_assign_permutes`),
+	// which leaves `source` a carrier of its own, so `source` is not suspended, while
+	// what `source` was itself derived from goes on to where the carrier went.
+	moved: bool,
 }
 
 // A loan of `place`, reached through carriers, at `path` below their pointee.
@@ -6135,7 +6142,7 @@ live_reborrow_of :: proc(state: ^Prov_State, source: int, live: []Slot_Use, use:
 		// Only a mutable reborrow excludes a read; what is derived from a
 		// read-only one is read-only too. A severed one was taken from an
 		// earlier value of a fresh source.
-		if reborrow.source != source || reborrow.passes_on || reborrow.walked || (use.reads_only && !reborrow.mutable) ||
+		if reborrow.source != source || reborrow.passes_on || reborrow.walked || reborrow.moved || (use.reads_only && !reborrow.mutable) ||
 		   (index < len(state.severed) && state.severed[index]) {
 			continue
 		}

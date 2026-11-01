@@ -1,0 +1,143 @@
+// design.md "Weakening and reborrows": reordering leaves each carrier in one place,
+// so it is no copy, whichever places it names and whatever holds one loan.
+package main;
+
+import "core:fmt";
+
+Link :: struct { to: ^mut int }
+Two :: struct { a: ^mut int, b: ^mut int }
+Slots :: struct { x: Link, y: Link }
+
+bump_both :: proc(links: []mut Link) { links[0].to^ += 1; links[1].to^ += 2; }
+bump_two :: proc(two: ^mut Two) { two^.a^ += 1; two^.b^ += 2; }
+
+// The reproduction, and each later use of what it left.
+exchange_fields :: proc(links: []mut Link) {
+	links[0].to, links[1].to = links[1].to, links[0].to;
+}
+
+then_through_each :: proc(links: []mut Link) {
+	links[0].to, links[1].to = links[1].to, links[0].to;
+	links[0].to^ += 1;
+	links[1].to^ += 2;
+}
+
+then_copies_of_each :: proc(links: []mut Link) {
+	links[0].to, links[1].to = links[1].to, links[0].to;
+	first := links[0].to;
+	second := links[1].to;
+	first^ += 1;
+	second^ += 2;
+}
+
+then_calls :: proc(links: []mut Link) {
+	links[0].to, links[1].to = links[1].to, links[0].to;
+	bump_both(links);
+	bump_both(links);
+}
+
+three_fields :: proc(links: []mut Link) {
+	links[0].to, links[1].to, links[2].to = links[2].to, links[0].to, links[1].to;
+	bump_both(links);
+}
+
+at_variable_indices :: proc(links: []mut Link, i: int, j: int) {
+	links[i].to, links[j].to = links[j].to, links[i].to;
+	bump_both(links);
+}
+
+in_a_loop :: proc(links: []mut Link) {
+	for (i := 0; i < 3; i += 1) {
+		links[0].to, links[1].to = links[1].to, links[0].to;
+	}
+	bump_both(links);
+}
+
+// One used before, and one taken again after.
+held_around :: proc(links: []mut Link) {
+	held := links[0].to;
+	held^ += 1;
+	links[0].to, links[1].to = links[1].to, links[0].to;
+	held = links[1].to;
+	held^ += 2;
+}
+
+through_a_pointer :: proc(two: ^mut Two) {
+	two^.a, two^.b = two^.b, two^.a;
+	bump_two(two);
+	first := two^.a;
+	second := two^.b;
+	first^ += 1;
+	second^ += 2;
+}
+
+records_through_a_pointer :: proc(slots: ^mut Slots) {
+	slots^.x, slots^.y = slots^.y, slots^.x;
+	first := slots^.x.to;
+	second := slots^.y.to;
+	first^ += 1;
+	second^ += 2;
+}
+
+through_a_local_view :: proc() -> int {
+	x := 0; y := 0;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	view := &mut links[:];
+	view[0].to, view[1].to = view[1].to, view[0].to;
+	bump_both(view);
+	return x * 10 + y;
+}
+
+// Named places, where `swap` then joins what each holds.
+then_swapped_in_a_local :: proc() -> int {
+	x := 0; y := 0;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	links[0], links[1] = links[1], links[0];
+	view := &mut links[:];
+	view.swap(0, 1);
+	bump_both(view);
+	first := links[0].to;
+	second := links[1].to;
+	first^ += 1;
+	second^ += 2;
+	return x * 10 + y;
+}
+
+locals :: proc() -> int {
+	x := 0; y := 0;
+	a := &mut x; b := &mut y;
+	a, b = b, a;
+	a^ += 1;
+	b^ += 2;
+	return x * 10 + y;
+}
+
+on_links :: proc(body: proc(links: []mut Link)) -> int {
+	x := 0; y := 0; z := 0;
+	links := [3]Link{Link{&mut x}, Link{&mut y}, Link{&mut z}};
+	body(&mut links[:]);
+	return x * 100 + y * 10 + z;
+}
+
+main :: proc() {
+	fmt.println(on_links(exchange_fields));
+	fmt.println(on_links(then_through_each));
+	fmt.println(on_links(then_copies_of_each));
+	fmt.println(on_links(then_calls));
+	fmt.println(on_links(three_fields));
+	fmt.println(on_links(in_a_loop));
+	fmt.println(on_links(held_around));
+	x := 0; y := 0; z := 0;
+	links := [3]Link{Link{&mut x}, Link{&mut y}, Link{&mut z}};
+	at_variable_indices(&mut links[:], 1, 2);
+	two := Two{links[0].to, links[1].to};
+	through_a_pointer(&mut two);
+	fmt.println(x, y, z);
+	p := 0; q := 0;
+	slots := Slots{Link{&mut p}, Link{&mut q}};
+	records_through_a_pointer(&mut slots);
+	fmt.println(p, q);
+	fmt.println(through_a_local_view());
+	fmt.println(then_swapped_in_a_local());
+	fmt.println(locals());
+}

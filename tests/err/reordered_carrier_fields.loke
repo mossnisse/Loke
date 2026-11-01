@@ -1,0 +1,107 @@
+// design.md "Weakening and reborrows": reordering leaves each carrier in one place,
+// which is another place than before, and what a carrier was copied from goes on
+// being suspended by the copy wherever it goes. An assignment that is no reordering
+// copies.
+package main;
+
+Link :: struct { to: ^mut int }
+Two :: struct { a: ^mut int, b: ^mut int }
+
+bump_both :: proc(links: []mut Link) { links[0].to^ += 1; links[1].to^ += 2; }
+exchange :: proc(links: []mut Link) { links[0], links[1] = links[1], links[0]; }
+exchange_fields :: proc(links: []mut Link) { links[0].to, links[1].to = links[1].to, links[0].to; }
+
+// Both values name one place.
+one_field_twice :: proc(links: []mut Link) {
+	links[0].to, links[1].to = links[1].to, links[1].to;
+	bump_both(links);
+}
+
+// What is read is a use of it.
+copy_used_after :: proc(links: []mut Link) {
+	first := links[0].to;
+	links[0].to, links[1].to = links[1].to, links[0].to;
+	first^ = 1;
+}
+
+other_copy_used_after :: proc(two: ^mut Two) {
+	held := two^.b;
+	two^.a, two^.b = two^.b, two^.a;
+	held^ = 1;
+}
+
+// It left one place: taking it twice still copies it.
+copied_after :: proc(links: []mut Link) {
+	links[0].to, links[1].to = links[1].to, links[0].to;
+	first := links[0].to;
+	second := links[0].to;
+	first^ = 1;
+	second^ = 2;
+}
+
+// A carrier moved keeps its reborrow of what it was copied from.
+moved_copy_field :: proc(links: []mut Link, @(escape=stored) carrier: ^mut int) {
+	links[0].to = carrier;
+	links[0].to, links[1].to = links[1].to, links[0].to;
+	held := links[1].to;
+	carrier^ = 2;
+	held^ = 1;
+}
+
+moved_copy_element :: proc(links: []mut Link, @(escape=stored) carrier: ^mut int) {
+	links[0].to = carrier;
+	links[0], links[1] = links[1], links[0];
+	held := links[1].to;
+	carrier^ = 2;
+	held^ = 1;
+}
+
+moved_copy_in_a_local :: proc() {
+	x := 1; y := 2;
+	carrier := &mut x;
+	links := [2]Link{Link{carrier}, Link{&mut y}};
+	links[0].to, links[1].to = links[1].to, links[0].to;
+	held := links[1].to;
+	carrier^ = 2;
+	held^ = 1;
+}
+
+// Where each now points, through a call or a view.
+after_a_call :: proc() {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	exchange(&mut links[:]);
+	held := links[1].to;
+	y = 3;
+	held^ = 4;
+}
+
+after_a_call_on_fields :: proc() {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	exchange_fields(&mut links[:]);
+	held := links[1].to;
+	x = 3;
+	held^ = 4;
+}
+
+in_a_local_view :: proc() {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	view := &mut links[:];
+	view[0].to, view[1].to = view[1].to, view[0].to;
+	held := links[1].to;
+	x = 3;
+	held^ = 4;
+}
+
+in_a_named_array :: proc() {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	links[0], links[1] = links[1], links[0];
+	held := links[0].to;
+	y = 5;
+	held^ = 1;
+}
+
+main :: proc() {}
