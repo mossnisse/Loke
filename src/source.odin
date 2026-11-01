@@ -150,10 +150,14 @@ Compiler :: struct {
 	// a deep instantiation does not attach it once per level.
 	last_noted_diagnostic: int,
 	pending_impl_instances: [dynamic]Pending_Impl,
-	// The names of generic `impl` constants already warned about by their
-	// value's type (`src/private_names.odin`), so one is reported once however
-	// many instances read it.
+	// What instances of a generic `impl` have read of its declarations
+	// (`src/private_names.odin`): a constant warned about by its value's type, and
+	// the name or written type of a declaration read by its syntax, so each is
+	// read once however many instances there are.
 	private_constants_read: map[Span]bool,
+	// Where a written private name has been warned about, so an instance's reading
+	// of a block's syntax does not repeat its template's.
+	private_names_warned: map[Span]bool,
 	// The names of public generic `impl` members whose value is a type, which
 	// no symbol in the template records, so `check_private_names` reads them
 	// as type aliases.

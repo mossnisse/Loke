@@ -301,7 +301,7 @@ check_package_bodies :: proc(k: ^Checker, package_id: Package_Id) {
 	check_deferred_foreign_signatures(k)
 
 	// Every symbol has its kind and its constant its type.
-	check_private_names(k.c, package_id)
+	check_private_names(k, package_id)
 	// Packages that print are checked after `core:fmt`, and their effects and
 	// thread transfers ask about printing's view.
 	if pkg.key == STD_FMT {

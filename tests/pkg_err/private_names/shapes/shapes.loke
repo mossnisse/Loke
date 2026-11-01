@@ -246,3 +246,67 @@ impl Private_Short(int) {
 impl Corner_Short {
 	@(public) within_plain :: proc(self) -> Corner { return {}; }
 }
+
+// Whether a generic `impl`'s private member is a type may be known only in an
+// instance, which reads what selects it, whichever `impl` that is, once. Syntax
+// that names no `$` name means the same anywhere, and is read at the declaration.
+@(public) Sealed :: struct($T: type) { @(public) value: int }
+impl Sealed($T) {
+	@(private) Bound_Hidden: T : Point;
+	@(public) Bound_Typed: T : Sealed(T).Bound_Hidden;
+	@(public) Bound_Untyped :: Sealed(T).Bound_Hidden;
+}
+@(public) Pouch :: struct($T: type) { @(public) value: T }
+impl Pouch($T) {
+	@(private) Inferred :: type_of(T{});
+	@(private) Size :: size_of(T);
+	@(public) Inferred_Leak :: Pouch(T).Inferred;
+	@(public) Inferred_Both :: Twin(Pouch(T).Inferred, Corner);
+	@(public) Inferred_Concrete :: Pouch(int).Inferred;
+	@(public) Inferred_Constant: Twin(Pouch(T).Inferred, int) : {};
+	@(public) inferred_result :: proc(self) -> Twin(Pouch(T).Inferred, int) { return {}; }
+	@(public) inferred_bounded :: proc(self, x: int) -> Twin(Pouch(T).Inferred, int) where is_copyable(T) { return {}; }
+	@(private) inferred_member :: proc(self, x: bool) -> Twin(Pouch(T).Inferred, int) { return {}; }
+	@(private) plain_member :: proc(self, x: f64) -> int { return 1; }
+	@(public) inferred_group :: proc{inferred_member, plain_member};
+	// Not reported: a value, whichever instance reads it; a public member; and a
+	// method whose bound excludes it from every instance.
+	@(public) Size_Open :: Pouch(T).Size;
+	@(public) Public_Inferred :: type_of(T{});
+	@(public) Public_Selected :: Pouch(T).Public_Inferred;
+	@(public) Leak_Selected :: Pouch(T).Inferred_Leak;
+	@(public) inferred_excluded :: proc(self, x: u8) -> Twin(Pouch(T).Inferred, int) where !is_copyable(T) { return {}; }
+}
+@(public) Pouch_Reader :: struct($T: type) { value: int }
+impl Pouch_Reader($T) {
+	@(public) Crossed :: Pouch(T).Inferred;
+}
+@(public) Pouch_Selected :: Sealed(type).Bound_Hidden;
+@(public) pouch_signature :: proc() -> Twin(Pouch(int).Inferred, int) { return {}; }
+@(public) Pouch_Crate :: struct { value: int }
+impl Pouch_Crate {
+	@(public) Bound_Concrete :: Sealed(type).Bound_Hidden;
+}
+// Not reported: no instance says what the first selects, and the second's subject
+// is a private type.
+@(public) Unused_Pouch :: struct($T: type) { value: int }
+impl Unused_Pouch($T) {
+	@(private) Never :: type_of(T{});
+	@(public) Never_Leak :: Unused_Pouch(T).Never;
+}
+@(private) Secret_Pouch :: struct($T: type) { value: int }
+impl Secret_Pouch($T) {
+	@(private) Inner :: type_of(T{});
+	@(public) Inner_Leak :: Secret_Pouch(T).Inner;
+}
+@(private) pouches :: proc() {
+	_ = Sealed(type).Bound_Typed;
+	_ = Sealed(type).Bound_Untyped;
+	_ = Pouch(Point){};
+	_ = Pouch(int){};
+	_ = Pouch(bool){};
+	_ = Pouch(int).Size_Open;
+	_ = size_of(Pouch(Point).Inferred_Leak);
+	_ = size_of(Pouch_Reader(int).Crossed);
+	_ = Secret_Pouch(int){};
+}

@@ -1,5 +1,6 @@
 package lokec
 
+import "core:mem"
 import "core:mem/virtual"
 import "core:slice"
 import "core:strings"
@@ -13,8 +14,9 @@ import "core:strings"
 // The one type read, an untyped constant's, is read for a generic `impl`'s
 // members by `read_generic_impl_constants` and `check_instance_private_names`;
 // the first also says which of those members are type aliases, and the second
-// reads an alias that is one only in an instance.
-check_private_names :: proc(c: ^Compiler, package_id: Package_Id) {
+// reads the block again where an instance says what its syntax could not.
+check_private_names :: proc(k: ^Checker, package_id: Package_Id) {
+	c := k.c
 	pkg := package_of(c, package_id)
 	// design.md "Exported names": nothing imports a `package main`.
 	if pkg == nil || len(pkg.files) == 0 || pkg.files[0].package_name == "main" {
@@ -27,11 +29,13 @@ check_private_names :: proc(c: ^Compiler, package_id: Package_Id) {
 	defer virtual.arena_destroy(&arena)
 	// The diagnostics outlive the arena, so their allocator is pinned first.
 	_ = diagnostic_allocator(c)
+	checker_allocator := context.allocator
 	context.allocator = virtual.arena_allocator(&arena)
 
-	x := exposure_of(c, pkg)
+	x := exposure_of(k, pkg, checker_allocator)
 	for file in pkg.files {
 		x.file = file
+		k.file, k.file_node, k.scope = file.file, file, pkg.scope
 		for item in file.active_items {
 			#partial switch v in item {
 			case ^Decl:
@@ -53,8 +57,8 @@ check_private_names :: proc(c: ^Compiler, package_id: Package_Id) {
 
 // The declarations of `pkg` by name, in the context's allocator.
 @(private = "file")
-exposure_of :: proc(c: ^Compiler, pkg: ^Package) -> Exposure {
-	x := Exposure{c = c, scope = pkg.scope}
+exposure_of :: proc(k: ^Checker, pkg: ^Package, checker_allocator: mem.Allocator) -> Exposure {
+	x := Exposure{k = k, c = k.c, scope = pkg.scope, checker_allocator = checker_allocator}
 	for file in pkg.files {
 		x.file = file
 		collect_named(&x, file.active_items)
@@ -64,7 +68,14 @@ exposure_of :: proc(c: ^Compiler, pkg: ^Package) -> Exposure {
 
 @(private = "file")
 Exposure :: struct {
+	k:        ^Checker,
 	c:        ^Compiler,
+	// What the checker allocates with, since what it records outlives this
+	// pass's arena.
+	checker_allocator: mem.Allocator,
+	// Reading a generic `impl`'s instance, whose scope binds the block's `$`
+	// names, and not its template.
+	instance: bool,
 	file:     ^File,
 	// The package's scope, which a private type a value's type holds is
 	// declared in.
@@ -99,6 +110,9 @@ Named :: struct {
 	is_proc: bool,
 	// A generic `impl`'s member's value, which may select another member.
 	value:   Expr,
+	// A generic `impl`'s member, whose `is_type` is what its syntax says: what
+	// an instance makes of it, only resolution knows.
+	unresolved: bool,
 }
 
 @(private = "file")
@@ -155,6 +169,7 @@ add_named :: proc(x: ^Exposure, into: ^map[string]Named, d: ^Decl, block: []Attr
 		} else {
 			// A generic `impl`'s member, which no symbol records: whether an
 			// alias is a type, `read_generic_impl_constants` decided.
+			named.unresolved = true
 			named.is_proc = decl_proc_literal(d) != nil
 			named.is_type = name.span in x.c.generic_impl_types
 			if index < len(d.values) {
@@ -273,7 +288,7 @@ read_public_decl :: proc(x: ^Exposure, d: ^Decl, subject: string) {
 				resize(&x.bound, mark)
 			} else if d.declared_type != nil {
 				walk(x, d.declared_type, .Type)
-			} else if symbol != nil && symbol.kind == .Const {
+			} else if !x.instance && symbol != nil && symbol.kind == .Const {
 				report_constant_type(x, name, symbol.type)
 			}
 		}
@@ -479,11 +494,11 @@ walk :: proc(x: ^Exposure, e: Expr, position: Position) {
 	#partial switch v in e {
 	case ^Expr_Ident:
 		if named, found := lookup(x, v.name); found {
-			found_name(x, v.name, v.span, named, position)
+			found_name(x, v.name, v.span, v, named, position)
 		}
 	case ^Expr_Selector:
 		if written, named, found := selected_member(x, v); found {
-			found_name(x, written, v.name.span, named, position)
+			found_name(x, written, v.name.span, v, named, position)
 		}
 		walk(x, v.operand, position)
 	case ^Expr_Index:
@@ -618,13 +633,23 @@ member_selected :: proc(x: ^Exposure, e: Expr) -> (written: string, named: Named
 }
 
 @(private = "file")
-found_name :: proc(x: ^Exposure, written: string, span: Span, named: Named, position: Position) {
-	if named.public || (position == .Type && !named.is_type) || slice.contains(x.reported[:], written) {
+found_name :: proc(x: ^Exposure, written: string, span: Span, e: Expr, named: Named, position: Position) {
+	if named.public || slice.contains(x.reported[:], written) {
+		return
+	}
+	is_type := named.is_type || (position == .Type && named.unresolved && resolves_to_type(x, e))
+	if position == .Type && !is_type {
 		return
 	}
 	append(&x.reported, written)
+	// An instance reads the block's syntax again for what its template could not
+	// see, so the template's own reports are not repeated.
+	if x.instance && span in x.c.private_names_warned {
+		return
+	}
+	x.c.private_names_warned[span] = true
 	where_clause := position == .Where
-	what := "type " if named.is_type && !where_clause else ""
+	what := "type " if is_type && !where_clause else ""
 	if x.group != "" {
 		warnf(
 			x.c, span, "L0740",
@@ -639,6 +664,37 @@ found_name :: proc(x: ^Exposure, written: string, span: Span, named: Named, posi
 		)
 	}
 	add_notef(x.c, named.span, "declared here; make it `@(public)` if it is part of the API")
+}
+
+// design.md "Private names in public declarations" reads a private alias, and
+// whether a generic `impl`'s member is one may depend on the instance, as
+// `Hidden: T : Point` in `Box(type)`. Syntax that names a `$` name means nothing
+// in a template, and is read when an instance binds it; other syntax, as
+// `Box(type).Hidden`, means what it means anywhere.
+@(private = "file")
+resolves_to_type :: proc(x: ^Exposure, e: Expr) -> bool {
+	if !x.instance && names_bound(x, e) {
+		return false
+	}
+	context.allocator = x.checker_allocator
+	probe := begin_probe(x.c)
+	type := check_single_expr(x.k, clone_expr(x.c, e))
+	end_probe(x.c, probe)
+	return type == TYPE_TYPE
+}
+
+// Whether `e` writes a `$` name, or a name a parameter or a `$` name binds.
+@(private = "file")
+names_bound :: proc(x: ^Exposure, e: Expr) -> bool {
+	return type_syntax_any_name(e, x, proc(data: rawptr, node: Expr) -> bool {
+		#partial switch v in node {
+		case ^Type_Poly:
+			return true
+		case ^Expr_Ident:
+			return slice.contains((^Exposure)(data).bound[:], v.name)
+		}
+		return false
+	})
 }
 
 // A constant with no written type has the type of its value, as `Fill` for
@@ -800,7 +856,13 @@ instantiates_generic_record :: proc(k: ^Checker, value: Expr) -> bool {
 // value has there. The types the instance binds to those names are passed
 // over, since a `$` name names no type: a constant whose type differs between
 // instances is warned about by the first that shows a private type of its own.
-check_instance_private_names :: proc(c: ^Compiler, pending: Pending_Impl) {
+//
+// The block's public declarations are read here too, by their syntax as the
+// template's were: only an instance says whether a private member they select is
+// a type, as `Box(T).Hidden` for `Hidden: T : Point` or `Hidden :: type_of(T{})`,
+// and whether a member such as `Inner: T : Corner` is an alias at all.
+check_instance_private_names :: proc(k: ^Checker, pending: Pending_Impl) {
+	c := k.c
 	pkg := package_of(c, pending.pkg)
 	if pkg == nil || pkg.scope == nil || len(pkg.files) == 0 || pkg.files[0].package_name == "main" {
 		return
@@ -819,51 +881,77 @@ check_instance_private_names :: proc(c: ^Compiler, pending: Pending_Impl) {
 			append(&bound, symbol.type)
 		}
 	}
+	unread := make([dynamic]^Decl, context.temp_allocator)
 	for member in pending.item.members {
 		d, is_decl := member.(^Decl)
-		if !is_decl || !constant_value(d) {
+		if !is_decl {
 			continue
 		}
-		for name, index in d.names {
-			symbol := symbol_of(c, d.symbols[index]) if index < len(d.symbols) else nil
-			if symbol == nil || !symbol.public || symbol.kind != .Const {
-				continue
-			}
-			names_type := symbol_names_type(c, symbol)
-			if d.declared_type == nil && !names_type {
-				read_impl_constant(c, pkg.scope, pending.item, name, symbol.type, bound[:])
-			} else if d.declared_type != nil && names_type && index < len(d.values) {
-				read_instance_alias(c, pkg, pending, name, d.values[index])
+		if constant_value(d) && d.declared_type == nil {
+			for name, index in d.names {
+				symbol := symbol_of(c, d.symbols[index]) if index < len(d.symbols) else nil
+				if symbol != nil && symbol.public && symbol.kind == .Const && !symbol_names_type(c, symbol) {
+					read_impl_constant(c, pkg.scope, pending.item, name, symbol.type, bound[:])
+				}
 			}
 		}
+		if decl_is_public(c, pending.file_node, d) && instance_declaration_unread(c, d) {
+			append(&unread, d)
+		}
+	}
+	if len(unread) > 0 {
+		read_instance_declarations(k, pkg, pending, unread[:])
 	}
 }
 
-// An alias whose written type names a `$` name, as `Inner: T : Corner` does,
-// is one only in an instance that binds the name to `type`, so its target is
-// read by its syntax as the first such instance is checked. One whose written
-// type says so in every instance `read_generic_impl_constants` classified, and
-// `check_private_names` has read.
+// Whether this instance shows anything of `d` that no earlier one has read. A
+// constant is an alias in the instances whose value is a type, and is otherwise
+// read by its written type: either way once, however many instances there are.
+// A method whose bound excludes it from an instance says nothing there.
 @(private = "file")
-read_instance_alias :: proc(c: ^Compiler, pkg: ^Package, pending: Pending_Impl, name: Name, value: Expr) {
-	if name.span in c.generic_impl_types || name.span in c.private_constants_read {
-		return
+instance_declaration_unread :: proc(c: ^Compiler, d: ^Decl) -> bool {
+	unread := false
+	for name, index in d.names {
+		symbol := symbol_of(c, d.symbols[index]) if index < len(d.symbols) else nil
+		if name.text == "_" || symbol == nil || symbol.bound_excluded || symbol.superseded {
+			continue
+		}
+		read_as := name.span
+		if constant_value(d) && !symbol_names_type(c, symbol) {
+			if d.declared_type == nil {
+				continue
+			}
+			read_as = expr_span(d.declared_type)
+		}
+		if !(read_as in c.private_constants_read) {
+			c.private_constants_read[read_as] = true
+			unread = true
+		}
 	}
-	c.private_constants_read[name.span] = true
+	return unread
+}
+
+@(private = "file")
+read_instance_declarations :: proc(k: ^Checker, pkg: ^Package, pending: Pending_Impl, decls: []^Decl) {
 	arena: virtual.Arena
 	if virtual.arena_init_growing(&arena) != nil {
 		return
 	}
 	defer virtual.arena_destroy(&arena)
-	_ = diagnostic_allocator(c)
+	_ = diagnostic_allocator(k.c)
+	checker_allocator := context.allocator
 	context.allocator = virtual.arena_allocator(&arena)
 
-	x := exposure_of(c, pkg)
+	x := exposure_of(k, pkg, checker_allocator)
+	x.instance = true
 	x.file = pending.file_node
 	x.subject = subject_name(pending.item.type)
 	bind_poly(&x, pending.item.type)
-	start(&x, strings.concatenate({x.subject, ".", name.text}), "")
-	walk(&x, value, .Type)
+	mark := len(x.bound)
+	for d in decls {
+		read_public_decl(&x, d, x.subject)
+		resize(&x.bound, mark)
+	}
 }
 
 // A constant whose value is neither a procedure, a group, nor a type's

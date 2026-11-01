@@ -121,7 +121,42 @@ warning[L0740]: public `Short.through_alias` names the private type `Corner`
 @235:43
 warning[L0740]: public `Point_Short.through_plain` names the private type `Corner`
 @238:43
+warning[L0740]: public `Sealed.Bound_Typed` names the private type `Sealed.Bound_Hidden`
+@256:39
+warning[L0740]: public `Sealed.Bound_Untyped` names the private type `Sealed.Bound_Hidden`
+@257:39
+warning[L0740]: public `Pouch.Inferred_Leak` names the private type `Pouch.Inferred`
+@263:38
+warning[L0740]: public `Pouch.Inferred_Both` names the private type `Pouch.Inferred`
+@264:43
+warning[L0740]: public `Pouch.Inferred_Both` names the private type `Corner`
+@264:53
+warning[L0740]: public `Pouch.Inferred_Concrete` names the private type `Pouch.Inferred`
+@265:44
+warning[L0740]: public `Pouch.Inferred_Constant` names the private type `Pouch.Inferred`
+@266:45
+warning[L0740]: public `Pouch.inferred_result` names the private type `Pouch.Inferred`
+@267:59
+warning[L0740]: public `Pouch.inferred_bounded` names the private type `Pouch.Inferred`
+@268:68
+warning[L0740]: `Pouch.inferred_member`, which the public group `Pouch.inferred_group` exports, names the private type `Pouch.Inferred`
+@269:69
+warning[L0740]: public `Pouch_Reader.Crossed` names the private type `Pouch.Inferred`
+@282:32
+warning[L0740]: public `Pouch_Selected` names the private type `Sealed.Bound_Hidden`
+@284:42
+warning[L0740]: public `pouch_signature` names the private type `Pouch.Inferred`
+@285:56
+warning[L0740]: public `Pouch_Crate.Bound_Concrete` names the private type `Sealed.Bound_Hidden`
+@288:43
 !`Padded.hidden`
+!`Pouch.Size_Open`
+!`Pouch.Public_Inferred`
+!`Pouch.Public_Selected`
+!`Pouch.Leak_Selected`
+!`Pouch.inferred_excluded`
+!`Unused_Pouch.Never_Leak`
+!`Secret_Pouch.Inner_Leak`
 !`Open_Result`
 !`Open_Again`
 !`Rebound`

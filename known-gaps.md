@@ -303,43 +303,42 @@ the type it computes. Reject the unreachable `$T` at the alias declaration;
 apply the constructor restriction recursively wherever a pattern must bind.
 Confirmed on `3b49d840` during review on 2026-10-31 (P2).
 
-### Private member aliases whose types are known only in an instance evade L0740
+### Instance-only private members evade L0740 outside `impl` blocks
 
 [Private names in public declarations](design.md#private-names-in-public-declarations)
-reads an alias's target, including a private alias of a public type. After
-`1d4a0c29`, a public alias whose written type is bound to `type` is read in
-an instance, but selecting a private member that needs the same classification
-still produces no warning:
+reads a private member that is a type only in an instance, and a generic `impl`'s
+own declarations are read so as each instance of the block is checked. These
+declarations are generic too, and select the same member, but no instance of
+theirs is read, so none warns:
 
 ```loke
 package shapes;
-@(public) Point :: struct {}
-@(public) Box :: struct($T: type) { value: int }
-impl Box($T) {
-    @(private) Hidden: T : Point;
-    @(public) Typed: T : Box(T).Hidden; // should warn L0740 for Box.Hidden
-    @(public) Untyped :: Box(T).Hidden; // should warn L0740 for Box.Hidden
+@(public) Twin :: struct($A: type, $B: type) { a: A, b: B }
+@(public) Bag :: struct($T: type) { @(public) value: T }
+impl Bag($T) {
+    @(private) Inferred :: type_of(T{});
 }
+@(public) Field :: struct($T: type) { @(public) field: Twin(Bag(T).Inferred, int) }
+@(public) result :: proc(x: $T) -> Twin(Bag(T).Inferred, int) { return {}; }
+@(public) Target :: map[$K]Twin(Bag(K).Inferred, int);
 @(private) use :: proc() {
-    _ = Box(type).Typed;
-    _ = Box(type).Untyped;
+    _ = Bag(int){};
+    _ = Field(int){};
+    _ = result(1);
+    a: Target(string) = {};
+    _ = a.len();
 }
 ```
 
-Spelling `Hidden: type : Point` produces both warnings. The indirect case is
-also missed with `Hidden :: type_of(T{})` and `Box(Point).Untyped`, without
-any explicitly typed alias.
-
-`read_instance_alias` in [src/private_names.odin](src/private_names.odin)
-rebuilds its `Exposure` from template declarations. The private `Hidden`
-has no template-wide type classification, so `selected_member` treats it as
-a value and `found_name` ignores it in a type position. The instance pass
-skips private members and also skips aliases with no written type when their
-resolved value is a type, so neither form gets the missing classification.
-Use the current instance's resolved member kinds for these lookups and read
-untyped aliases whose targets could not be classified in the template too.
-Confirmed on a compiler built from `1d4a0c29` and on the merged tree during
-review on 2026-10-31.
+`check_instance_private_names` in
+[src/private_names.odin](src/private_names.odin) runs for a block's instance. In
+the template pass, `resolves_to_type` cannot read syntax that names a `$` name, so
+a generic record's field, a generic procedure's signature, and a parametric
+alias's target are passed over. Read each as its record, procedure, or alias
+application is instantiated, with the checker in that instance's scope, as the
+block's instance does, and report each written name once through
+`private_names_warned`. Found while fixing the same omission for `impl` blocks on
+2026-11-01.
 
 ### Zero-offset reslices in loops lose a local view's known start
 
