@@ -819,6 +819,8 @@ mark_named_parameters :: proc(k: ^Checker, params: []Generic_Param_Decl, syntax:
 			name = identifier_of(data.c, v)
 		case ^Type_Poly:
 			name = name_identifier(data.c, v.name)
+		case ^Expr_Selector:
+			return false
 		case:
 			for &mark in data.marks { mark = true }
 			return false
@@ -2090,6 +2092,8 @@ names_unbound_parameter :: proc(data: rawptr, node: Expr) -> bool {
 		text = v.name
 	case ^Type_Poly:
 		text = v.name.text
+	case ^Expr_Selector:
+		return false
 	case:
 		unbound.found = unbound.names[0]
 		return true
@@ -2127,6 +2131,8 @@ names_poly_parameter :: proc(data: rawptr, node: Expr) -> bool {
 		return false
 	case ^Type_Poly:
 		return true
+	case ^Expr_Selector:
+		return false
 	}
 	return true
 }

@@ -7,43 +7,6 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
-### A qualified local alias hides a result's generic dependence
-
-[One result](design.md#one-result) and
-[Success returns](design.md#success-returns) read a result through a local alias
-as what that alias names. `045dcbce` follows a bare identifier, but not an alias
-selected from an implementation block on a type declared in the same generic
-body:
-
-```loke
-package main;
-outer :: proc(value: $T) {
-    Local :: struct {}
-    impl Local { Outcome :: Result(T, int); }
-    inner :: proc() -> Local.Outcome { return; }
-    _ = inner();
-}
-main :: proc() { outer(Unit{}); }
-```
-
-This compiles. Moving the same `Outcome :: Result(T, int)` directly into
-`outer` and returning `Outcome` reports `L0326`, as does spelling the result
-`Result(T, int)`. An associated `Payload :: T` selected in
-`Result(Local.Payload, int)` has the same omission. With `T` equal to `int`,
-`inner :: proc(x: T) -> Result(Local.Payload, int) { return x; }` also compiles,
-implicitly wrapping a value beside an error payload where the direct alias
-reports `L0310`.
-
-`type_syntax_any_name` in [src/ast.odin](src/ast.odin) visits only the operand of
-a selector. The operand `Local` defines a nominal type, so
-`local_alias_target` in [src/check.odin](src/check.odin) correctly does not
-follow it, but the selected constant's initializer is never inspected.
-Follow the selected alias in its declaration scope for both dependence and
-success-payload analysis, preserving bare returns for
-`Local.Outcome :: Result(Unit, T)`, whose success is explicitly `Unit`.
-Confirmed at `045dcbce` and on the merged `1b7845aa` during review on
-2026-11-01 (P2, remaining coverage gap).
-
 ### Provisional short lengths hide a zero-offset view cycle's known start
 
 [Weakening and reborrows](design.md#weakening-and-reborrows) preserves a local

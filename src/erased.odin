@@ -694,7 +694,7 @@ type_syntax_names :: proc(e: Expr, name: Identifier_Id) -> bool {
 		#partial switch v in node {
 		case ^Expr_Ident:
 			return v.name_id == (^Identifier_Id)(data)^
-		case ^Type_Poly:
+		case ^Type_Poly, ^Expr_Selector:
 			return false
 		}
 		return true // a declared body, conservatively

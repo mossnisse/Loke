@@ -1,0 +1,63 @@
+// design.md "One result" and "Success returns": an alias selected from a type
+// leaves alone a success that is `Unit` as written, and names only the generic
+// arguments bound where the result is written.
+// tests/err/qualified_alias_success.loke holds what is rejected.
+package main;
+
+import "core:fmt";
+
+failure_only :: proc(value: $T) {
+	Local :: struct {}
+	impl Local { Outcome :: Result(Unit, T); Failure :: T; }
+	early :: proc() -> Local.Outcome { return; }
+	reaches_end :: proc() -> Local.Outcome { }
+	argument :: proc() -> Result(Unit, Local.Failure) { return; }
+	fmt.println(early(), reaches_end(), argument());
+}
+
+concrete_in_generic :: proc(value: $T) {
+	Local :: struct {}
+	impl Local { Outcome :: Result(int, string); Status :: Result(Unit, int); }
+	wrapped :: proc() -> Local.Outcome { return 3; }
+	bare :: proc() -> Local.Status { return; }
+	fmt.println(wrapped(), bare());
+}
+
+concrete :: proc() {
+	Local :: struct {}
+	impl Local { Status :: Result(Unit, int); }
+	inner :: proc() -> Local.Status { return; }
+	fmt.println(inner());
+}
+
+// A payloadless failure cannot be confused with the success.
+payload_wrap :: proc(value: $T) {
+	Local :: struct {}
+	impl Local { Maybe :: Option(T); }
+	inner :: proc(x: T) -> Local.Maybe { return x; }
+	fmt.println(inner(value));
+}
+
+// `Box`'s own `$U` is not an argument of the body that names `Box(Unit)`: the
+// result is the same in every instance, as it is outside a generic body.
+Box :: struct($U: type) {}
+impl Box($U) { Outcome :: Result(U, int); }
+Package_Unit :: Box(Unit);
+Package_Int :: Box(int);
+
+other_generic :: proc(value: $T) {
+	Local_Unit :: Box(Unit);
+	bare :: proc() -> Package_Unit.Outcome { return; }
+	local :: proc() -> Local_Unit.Outcome { return; }
+	wrapped :: proc() -> Package_Int.Outcome { return 3; }
+	fmt.println(bare(), local(), wrapped());
+}
+
+main :: proc() {
+	failure_only(1);
+	failure_only(Unit{});
+	concrete_in_generic(1);
+	concrete();
+	payload_wrap(1);
+	other_generic(1);
+}

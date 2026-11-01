@@ -1,0 +1,108 @@
+// design.md "One result" and "Success returns": an alias selected from a type
+// declared in the generic body is read as what it names, as a bare one is. Each
+// of these is rejected in every instance, as the same result written out is;
+// tests/run/qualified_alias_success.loke holds what stays accepted.
+package main;
+
+outcome :: proc(value: $T) {
+	Local :: struct {}
+	impl Local { Outcome :: Result(T, int); }
+	inner :: proc() -> Local.Outcome { return; }
+	_ = inner();
+}
+
+reaches_end :: proc(value: $T) {
+	Local :: struct {}
+	impl Local { Outcome :: Result(T, int); }
+	inner :: proc() -> Local.Outcome { }
+	_ = inner();
+}
+
+argument :: proc(value: $T) {
+	Local :: struct {}
+	impl Local { Payload :: T; }
+	inner :: proc() -> Result(Local.Payload, int) { return; }
+	_ = inner();
+}
+
+// Through a member that selects another, a local alias, and a type alias.
+chain :: proc(value: $T) {
+	Local :: struct {}
+	impl Local { Outcome :: Result(T, int); Again :: Local.Outcome; }
+	inner :: proc() -> Local.Again { return; }
+	_ = inner();
+}
+
+through_local_alias :: proc(value: $T) {
+	Local :: struct {}
+	impl Local { Outcome :: Result(T, int); }
+	Same :: Local.Outcome;
+	inner :: proc() -> Same { return; }
+	_ = inner();
+}
+
+through_type_alias :: proc(value: $T) {
+	Local :: struct {}
+	impl Local { Outcome :: Result(T, int); }
+	Other :: Local;
+	inner :: proc() -> Other.Outcome { return; }
+	_ = inner();
+}
+
+through_member_type :: proc(value: $T) {
+	Local :: struct {}
+	Inner :: struct {}
+	impl Inner { Outcome :: Result(T, int); }
+	impl Local { Via :: Inner; }
+	inner :: proc() -> Local.Via.Outcome { return; }
+	_ = inner();
+}
+
+// Success wrapping asks the same question: in `Result(int, int)` a value meant
+// as the error would become the success.
+wrapping :: proc(value: $T) {
+	Local :: struct {}
+	impl Local { Payload :: T; }
+	inner :: proc(x: T) -> Result(Local.Payload, int) { return x; }
+	_ = inner(value);
+}
+
+length :: proc($N: int) {
+	Local :: struct {}
+	impl Local { Twice :: N * 2; }
+	inner :: proc(x: [Local.Twice]int) -> Result([Local.Twice]int, int) { return x; }
+	_ = inner({});
+}
+
+// A member selected through a generic argument is whatever that argument's type
+// declares, so what it is written as here says nothing about other instances.
+Status_Holder :: struct {}
+impl Status_Holder { Outcome :: Result(Unit, int); }
+
+selected_from_argument :: proc(value: $T) {
+	inner :: proc() -> T.Outcome { return; }
+	_ = inner();
+}
+
+Box :: struct($U: type) {}
+impl Box($U) { Outcome :: Result(Unit, U); }
+
+selected_from_application :: proc(value: $T) {
+	Applied :: Box(T);
+	inner :: proc() -> Applied.Outcome { return; }
+	_ = inner();
+}
+
+main :: proc() {
+	outcome(Unit{});
+	reaches_end(Unit{});
+	argument(Unit{});
+	chain(Unit{});
+	through_local_alias(Unit{});
+	through_type_alias(Unit{});
+	through_member_type(Unit{});
+	wrapping(1);
+	length(2);
+	selected_from_argument(Status_Holder{});
+	selected_from_application(1);
+}

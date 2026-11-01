@@ -2902,6 +2902,18 @@ success_names_generic :: proc(k: ^Checker, scope: ^Scope, syntax: Expr, success:
 			defer k.scope = saved
 			return success_names_generic(k, target_scope, target, success)
 		}
+	case ^Expr_Selector:
+		// `Local.Outcome` reads the same way. `T.Outcome` and `Box(T).Outcome` do
+		// not, since which member they select depends on the argument.
+		if type_syntax_names_generic(k, scope, v.operand) {
+			return true
+		}
+		if target, target_scope := local_alias_target(k, v.resolution.symbol); target != nil {
+			saved := k.scope
+			k.scope = target_scope
+			defer k.scope = saved
+			return success_names_generic(k, target_scope, target, success)
+		}
 	case ^Expr_Call:
 		template := generic_template_of_callee(k, v.callee, .Record)
 		if template == nil {
@@ -2935,7 +2947,7 @@ type_syntax_names_generic :: proc(k: ^Checker, scope: ^Scope, e: Expr) -> bool {
 	if !scope_in_instance(scope) {
 		return false
 	}
-	lookup := Generic_Lookup{k = k, scope = scope, followed = make([dynamic]Symbol_Id, context.temp_allocator)}
+	lookup := Generic_Lookup{k = k, scope = scope, from = scope, followed = make([dynamic]Symbol_Id, context.temp_allocator)}
 	return type_syntax_any_name(e, &lookup, names_generic_binding)
 }
 
@@ -2977,6 +2989,10 @@ local_alias_target :: proc(k: ^Checker, id: Symbol_Id) -> (target: Expr, scope: 
 Generic_Lookup :: struct {
 	k:        ^Checker,
 	scope:    ^Scope,
+	// Where the syntax is written. A selected member can name a binding this
+	// scope does not bind: `B.Outcome` for `B :: Box(Unit)` reads `Box`'s own `$U`,
+	// which is not a generic argument here.
+	from:     ^Scope,
 	// The aliases already read, since each answers once and a cyclic one, which
 	// its declaration reports, must not be read forever.
 	followed: [dynamic]Symbol_Id,
@@ -2984,8 +3000,8 @@ Generic_Lookup :: struct {
 
 // A `$` name is a generic argument. An inline definition depends on one only
 // through the types and values written inside it, such as `struct { x: T }` in
-// `size_of`, so those are walked rather than assumed, and a local alias through
-// what it names (design.md "Success returns").
+// `size_of`, so those are walked rather than assumed, and a local alias, named or
+// selected from a type, through what it names (design.md "Success returns").
 @(private = "file")
 names_generic_binding :: proc(data: rawptr, node: Expr) -> bool {
 	lookup := (^Generic_Lookup)(data)
@@ -3000,17 +3016,11 @@ names_generic_binding :: proc(data: rawptr, node: Expr) -> bool {
 			return false
 		}
 		if symbol.generic_binding {
-			return true
+			return lookup_symbol(lookup.from, symbol.name) == id
 		}
-		target, target_scope := local_alias_target(lookup.k, id)
-		if target == nil || slice.contains(lookup.followed[:], id) {
-			return false
-		}
-		append(&lookup.followed, id)
-		saved := lookup.scope
-		lookup.scope = target_scope
-		defer lookup.scope = saved
-		return any_of(target, data)
+		return alias_names_generic(lookup, id)
+	case ^Expr_Selector:
+		return alias_names_generic(lookup, v.resolution.symbol)
 	case ^Type_Poly:
 		return true
 	case ^Type_Record:
@@ -3055,6 +3065,20 @@ names_generic_binding :: proc(data: rawptr, node: Expr) -> bool {
 	}
 	// An interface describes requirements, not a layout.
 	return false
+}
+
+// Whether the local alias `id`, if it is one, names a generic argument.
+@(private = "file")
+alias_names_generic :: proc(lookup: ^Generic_Lookup, id: Symbol_Id) -> bool {
+	target, target_scope := local_alias_target(lookup.k, id)
+	if target == nil || slice.contains(lookup.followed[:], id) {
+		return false
+	}
+	append(&lookup.followed, id)
+	saved := lookup.scope
+	lookup.scope = target_scope
+	defer lookup.scope = saved
+	return type_syntax_any_name(target, lookup, names_generic_binding)
 }
 
 install_symbols :: proc(scope: ^Scope, c: ^Compiler, symbols: []Symbol_Id) {

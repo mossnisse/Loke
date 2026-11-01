@@ -24,6 +24,14 @@ checklist.
   is now `L0511`. Upgrade by destructuring before taking the borrow, or by ending the
   borrow first. A discarded field no longer counts, so `_, text := pair` is accepted
   there, where it was `L0511` when the discarded field's hook read the global.
+- An alias selected from a type declared in a generic body now counts as what it
+  names ([One result](design.md#one-result),
+  [Success returns](design.md#success-returns)), as a bare one does. With
+  `impl Local { Outcome :: Result(T, int); Payload :: T; }`, `-> Local.Outcome`
+  with `return;` compiled and is now `L0326`, reaching its end is `L0365`, and
+  `-> Result(Local.Payload, int)` with `return x;` is `L0310`. Upgrade by writing
+  `return .ok;` or `return .ok(x);`. `Local.Outcome` for `Result(Unit, T)` keeps
+  its bare return.
 - A value printed through a mutable call result is now held until printing ends
   ([Built-in procedures](design.md#built-in-procedures)).
   `fmt.println(m.find_or_insert(3, 7)^, clearing(inout m))` compiled and read the

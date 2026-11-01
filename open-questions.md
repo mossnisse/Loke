@@ -299,12 +299,12 @@ compiled. Each outcome above states its own measurements.
 Reviewed `045dcbce`, `166fdfab`, and `51bceeb4` for correctness,
 simplification, and structure. These are sibling commits based on `46cf2aa8`,
 so the two implementation changes were built and tested independently at their
-original revisions. Two remaining gaps are recorded with reproductions:
+original revisions. Two remaining gaps were recorded with reproductions:
 
-- [Qualified local aliases hide generic dependence](known-gaps.md#a-qualified-local-alias-hides-a-results-generic-dependence).
-  The new initializer walk handles a bare `Outcome`, but a local implementation
-  block's `Local.Outcome` still permits a bare return, and `Local.Payload` still
-  permits implicit success wrapping beside an error payload (P2).
+- Qualified local aliases hid generic dependence, since fixed: the new
+  initializer walk handled a bare `Outcome`, but a local implementation block's
+  `Local.Outcome` still permitted a bare return, and `Local.Payload` still
+  permitted implicit success wrapping beside an error payload (P2).
 - [Provisional short lengths lose a known start in zero-offset cycles](known-gaps.md#provisional-short-lengths-hide-a-zero-offset-view-cycles-known-start).
   A reslice can become permanently unknown before another reaching definition
   contributes its longer length. A safe loop still reports `L0641`; removing
