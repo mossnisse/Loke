@@ -3273,6 +3273,74 @@ positions that a particular analysis should ignore. Implementation details belon
 with the [semantic architecture](compiler-architecture.md#semantic-architecture);
 historical fix lists and test counts are available in Git history.
 
+### A dynamic array's elements as carrier paths
+
+The specification's constant-index element rule for a local view asks that
+`s[0].head` and `s[1].head` be different places, and a single wildcard element
+cannot say so of what they hold. Giving a dynamic array element paths as a fixed
+array has means a store at an index replaces what the slot held, which is true
+only until something moves the elements, so it waited on
+[calls that rearrange what an argument holds](#calls-that-rearrange-what-an-argument-holds):
+an earlier attempt without that summary made a copy between elements unsound.
+
+Slots beside the wildcard, created on demand, as a view parameter's constant
+element gets (`prov_view_element`), were considered. Those work because a
+parameter's caller slots are only written through known events and hold what the
+caller gave them at entry; a local dynamic array is written all through the body,
+so each such slot would need joining into by every other write, which is what
+path overlap already does for a fixed array.
+
+Budget: the first 8 elements match the fixed-array minimum, and a shared last
+path gives a constant index past them somewhere to land without a wildcard's
+overlap with the first 8. A type where this would pass 64 paths falls back rather
+than collapses, since a shape that fit before this should not lose its other
+paths for it. A map's keyed width is measured with one path per dynamic array,
+since the map's keys predate this and are worth more than its elements.
+
+Disjoint element loans follow from the same place path: `&mut d[0]` beside
+`d[1] = 2` is accepted. Writing one element reallocates nothing and moves no
+other, and every operation that does uses the whole root.
+
+Region facts keep a wildcard: they merge flow-insensitively, so one recorded at
+index 1 would still say index 1 after a `remove`. That also leaves a fixed array's
+[owners moved by a swap](known-gaps.md#a-swap-or-reverse-of-owners-in-a-fixed-array-is-not-seen)
+unseen, which predates this and is a different fix.
+
+### Calls that rearrange what an argument holds
+
+A body that stores into its argument's own storage retains nothing, so nothing
+in a signature or a retention summary shows it. The call could treat every
+writable argument as if it rearranged its carriers, which needs no summary, but
+that gives up what makes a view useful: `touch(xs); touch(xs);` with one element
+kept between the calls would be rejected, for a body that stored no carrier at
+all. Hence `Carrier_Move`, whose cost is one more per-symbol summary in the
+worklist.
+
+A move and a copy need different treatment. After a move, each carrier may hold
+what any held, and joining says so: two `exchange` calls in a row join again and
+nothing conflicts. A copy leaves two live mutable carriers, which the reborrow
+rule forbids using together, and the two places must therefore be linked. Linking
+every element to every other for every call that writes would make those same
+two `exchange` calls conflict, so the summary says separately whether a body may
+copy. The linking is flow-sensitive in the callee as well as in the caller: a
+body reading `links[0].to` before its own call to `duplicate` holds a carrier
+nothing has copied yet.
+
+A chain is the case that keeps a copy from being any store of a held carrier:
+`list^.head = list^.head^.next` reads a carrier below the place it lands, and
+what it replaces is the only path to that carrier, so the body is `Rearrange`
+without the links. Marking it as a copy would reject every traversal that pops.
+A reordering assignment is also not a copy, recognized by the values being the
+targets' own spelling; a reordering written with a temporary is not recognized,
+and [a hand-written swap in a body](known-gaps.md#a-swap-written-with-a-temporary-is-rejected)
+is rejected before the summary is reached.
+
+The same copy used through a later call is rejected. After `duplicate(v);`,
+another `touch(v)` uses what both elements hold while a copy taken before it may
+still be live, as `links[0] = links[1]; touch(view);` written out in the caller
+always was. A summary could say that a body uses only one element, but that is a
+per-path effect summary that nothing else needs yet.
+
 ### Provenance replay and precise publication
 
 Provenance analysis reads a

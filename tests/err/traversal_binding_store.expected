@@ -1,0 +1,81 @@
+L0511
+@28:2
+this write of `c` is not compatible with the mutable pointer of it that is still in use
+L0511
+@37:2
+this write of `c` is not compatible with the mutable pointer of it that is still in use
+L0511
+@46:2
+this write of `c` is not compatible with the read-only pointer of it that is still in use
+L0511
+@55:2
+this write of `c` is not compatible with the read-only pointer of it that is still in use
+L0511
+@65:2
+this write of `c` is not compatible with the read-only pointer of it that is still in use
+L0511
+@75:2
+this write of `c` is not compatible with the read-only pointer of it that is still in use
+L0511
+@85:2
+this write of `c` is not compatible with the read-only pointer of it that is still in use
+L0511
+@94:2
+this write of `c` is not compatible with the read-only pointer of it that is still in use
+L0511
+@103:2
+this write of `c` is not compatible with the read-only pointer of it that is still in use
+L0511
+@113:2
+this write of `c` is not compatible with the read-only pointer of it that is still in use
+L0511
+@122:2
+this write of `c` is not compatible with the read-only pointer of it that is still in use
+L0511
+@132:2
+this write of `c` is not compatible with the read-only pointer of it that is still in use
+L0511
+@141:2
+this write of `c` is not compatible with the read-only pointer of it that is still in use
+L0511
+@150:2
+this write of `c` is not compatible with the read-only pointer of it that is still in use
+L0511
+@159:2
+this write of `c` is not compatible with the read-only pointer of it that is still in use
+L0641
+@169:2
+`other` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@174:45
+`node` cannot be used here: a mutable reborrow of it is still in use
+L0647
+@179:33
+this pointer borrows `c`, which does not outlive `lists`: storage the caller owns
+L0511
+@179:45
+this write of `c` is not compatible with the mutable pointer of it that is still in use
+L0511
+@188:3
+this write of `a` is not compatible with the mutable pointer of it that is still in use
+L0511
+@199:3
+this write of `a` is not compatible with the mutable pointer of it that is still in use
+L0641
+@209:3
+`list` cannot be used here: a mutable reborrow of it is still in use
+L0537
+@219:3
+this reset would end the region backing `items`, which is still live here
+L0537
+@229:3
+this reset would end the region backing `items`, which is still live here
+L0537
+@238:3
+this reset would end the region backing `items`, which is still live here
+L0537
+@248:3
+this reset would end the region backing `doc`, which is still live here
+L0536
+@257:33
+this value is backed by an allocator region created in this procedure, so it cannot be stored in `items` (storage the caller owns), which outlives that region

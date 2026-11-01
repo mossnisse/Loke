@@ -1,0 +1,105 @@
+L0646
+@45:59
+this slice borrows `b`, which is not written `@(escape=stored)`, so it cannot reach `a`
+L0512
+@54:2
+`y` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@63:2
+`y` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@72:2
+`y` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@81:2
+`y` cannot be assigned here: a mutable pointer of it is still in use
+L0641
+@90:11
+`links` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@91:12
+`links` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@100:11
+`pair` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@101:12
+`pair` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@109:11
+`links` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@110:12
+`links` cannot be used here: a mutable reborrow of it is still in use
+L0512
+@121:2
+`y` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@130:2
+`y` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@139:2
+`y` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@148:2
+`y` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@157:2
+`y` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@166:2
+`y` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@175:2
+`y` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@185:2
+`y` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@194:2
+`y` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@203:2
+`y` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@213:2
+`y` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@223:2
+`y` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@233:2
+`y` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@242:2
+`y` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@251:2
+`y` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@260:2
+`x` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@269:2
+`y` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@278:2
+`y` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@287:2
+`y` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@297:2
+`y` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@308:2
+`y` cannot be assigned here: a read-only pointer of it is still in use
+L0512
+@317:2
+`x` cannot be assigned here: a mutable pointer of it is still in use
+L0641
+@326:2
+`mixed` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@336:12
+`links` cannot be used here: a mutable reborrow of it is still in use

@@ -1,0 +1,180 @@
+// design.md "Values that contain borrows", "By-reference iteration": what a
+// `&mut` binding stores lands in the source, and only at the place it names,
+// and using a carrier through the binding is a use of the stored carrier.
+package main;
+
+import "core:fmt";
+import "core:mem";
+import "core:strings";
+
+Node :: struct { value: int }
+List :: struct { head: ^mut Node }
+Ro :: struct { head: ^Node }
+Pair :: struct { p: ^mut Node, q: ^mut Node }
+RoPair :: struct { p: ^Node, q: ^Node }
+Grid :: struct { rows: [2]Ro, other: ^Node }
+Named :: struct { name: string, count: int }
+
+// The source is dead after the loop, so what it holds there holds nothing.
+store_into_a_dead_source :: proc() -> int {
+	a := Node{1}; b := Node{2}; c := Node{3};
+	lists := [2]List{List{&mut a}, List{&mut b}};
+	foreach (&mut list in lists) { list.head = &mut c; }
+	c.value = 5;
+	return c.value;
+}
+
+// The stored borrow is read-only and the target is not written while it lasts.
+read_what_was_stored :: proc() -> int {
+	a := Node{1}; b := Node{2}; c := Node{3};
+	lists := [2]Ro{Ro{&a}, Ro{&b}};
+	foreach (&mut list in lists) { list.head = &c; }
+	total := lists[0].head^.value + lists[1].head^.value;
+	c.value = 5;
+	return total + c.value;
+}
+
+// A read-only copy written back adds nothing, and the source does not come to
+// borrow itself, whether traversed as a place or through a view.
+read_only_copied_back :: proc() -> int {
+	a := Node{1}; b := Node{2}; c := Node{3};
+	lists := [2]Ro{Ro{&a}, Ro{&b}};
+	foreach (&mut list in lists) { list.head = list.head; }
+	node := lists[0].head;
+	lists[1].head = &c;
+	view := &mut lists[:];
+	foreach (&mut list in view) { list.head = list.head; }
+	lists[0].head = node;
+	return lists[0].head^.value + lists[1].head^.value;
+}
+
+// A store lands only at the field the binding's place names.
+sibling_field :: proc() -> int {
+	a := Node{1}; b := Node{2}; c := Node{3};
+	pairs := [1]Pair{Pair{&mut a, &mut b}};
+	foreach (&mut pair in pairs) { pair.p = &mut c; }
+	node := pairs[0].q;
+	c.value = 5;
+	node^.value = 7;
+	return b.value + c.value;
+}
+
+sibling_field_through_a_pointer :: proc() -> int {
+	a := Node{1}; b := Node{2}; c := Node{3};
+	grid := Grid{[2]Ro{Ro{&a}, Ro{&b}}, &a};
+	pointer := &mut grid;
+	foreach (&mut list in pointer^.rows) { list.head = &c; }
+	node := grid.other;
+	c.value = 5;
+	return node^.value + c.value;
+}
+
+sibling_field_of_an_iterated_field :: proc() -> int {
+	a := Node{1}; b := Node{2}; c := Node{3};
+	grid := Grid{[2]Ro{Ro{&a}, Ro{&b}}, &a};
+	foreach (&mut list in grid.rows) { list.head = &c; }
+	node := grid.other;
+	c.value = 5;
+	return node^.value + c.value;
+}
+
+sibling_binding :: proc() -> int {
+	a := Node{1}; b := Node{2}; c := Node{3};
+	pairs := [2]RoPair{RoPair{&a, &b}, RoPair{&a, &b}};
+	foreach (first, &mut second in pairs) { second = &c; }
+	node := pairs[1].p;
+	c.value = 5;
+	return node^.value + c.value;
+}
+
+// Using a carrier through the binding uses the stored carrier.
+use_through_the_binding :: proc() -> int {
+	a := Node{1}; b := Node{2};
+	lists := [2]List{List{&mut a}, List{&mut b}};
+	foreach (&mut list in lists) { list.head^.value += 10; }
+	lists[0].head^.value += 100;
+	a.value += 1000;
+	return a.value + b.value;
+}
+
+use_through_the_binding_of_a_dynamic_array :: proc() -> int {
+	a := Node{1}; b := Node{2};
+	lists := [dynamic]List{List{&mut a}, List{&mut b}};
+	foreach (&mut list in lists) { list.head^.value += 10; }
+	total := lists[0].head^.value;
+	drop(lists);
+	return total + a.value + b.value;
+}
+
+use_through_the_binding_over_a_view :: proc() -> int {
+	a := Node{1}; b := Node{2};
+	lists := [2]List{List{&mut a}, List{&mut b}};
+	view := &mut lists[:];
+	foreach (&mut list in view) { list.head^.value += 10; }
+	view[0].head^.value += 100;
+	return a.value + b.value;
+}
+
+copy_within_the_step :: proc() -> int {
+	a := Node{1}; b := Node{2};
+	lists := [2]List{List{&mut a}, List{&mut b}};
+	foreach (&mut list in lists) {
+		copy := list.head;
+		copy^.value += 10;
+		list.head^.value += 100;
+	}
+	lists[0].head^.value += 1000;
+	return a.value + b.value;
+}
+
+two_loops_over_a_parameter :: proc(lists: []mut List) -> int {
+	foreach (&mut list in lists) { list.head^.value += 10; }
+	foreach (&mut list in lists) { list.head^.value += 100; }
+	return lists[0].head^.value;
+}
+
+through_a_parameter :: proc() -> int {
+	a := Node{1}; b := Node{2};
+	lists := [2]List{List{&mut a}, List{&mut b}};
+	return two_loops_over_a_parameter(&mut lists[:]);
+}
+
+// An owner stored through the binding stays in the source's regions, which
+// last as long as it does.
+owners :: proc() {
+	arena := mem.Arena.init();
+	items := [2]string{strings.copy("a"), strings.copy("b")};
+	foreach (&mut item in items) { item = fmt.to_string(arena.allocator(), 42); }
+	fmt.println(items[0], items[1]);
+	drop(items);
+	named := [2]Named{Named{strings.copy("n"), 1}, Named{strings.copy("m"), 2}};
+	foreach (&mut entry in named) {
+		entry.count += 1;
+		fmt.println(entry.name, entry.count);
+	}
+	fmt.println(named[0].name);
+}
+
+left_in_a_parameter :: proc(items: []mut string) {
+	foreach (&mut item in items) { item = strings.copy("c"); }
+}
+
+main :: proc() {
+	fmt.println(store_into_a_dead_source());
+	fmt.println(read_what_was_stored());
+	fmt.println(read_only_copied_back());
+	fmt.println(sibling_field());
+	fmt.println(sibling_field_through_a_pointer());
+	fmt.println(sibling_field_of_an_iterated_field());
+	fmt.println(sibling_binding());
+	fmt.println(use_through_the_binding());
+	fmt.println(use_through_the_binding_of_a_dynamic_array());
+	fmt.println(use_through_the_binding_over_a_view());
+	fmt.println(copy_within_the_step());
+	fmt.println(through_a_parameter());
+	owners();
+	items := [1]string{strings.copy("a")};
+	left_in_a_parameter(&mut items[:]);
+	fmt.println(items[0]);
+	drop(items);
+}

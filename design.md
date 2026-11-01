@@ -4266,6 +4266,13 @@ iterator advances or is dropped.** That holds on every exit, `break` and
 [`chunks_mut`](#chunks-of-a-mutable-slice) is the one traversal that hands out
 mutable views which outlive their step, which no user-written iterator can.
 
+An `&mut` binding names the element, so what it holds is what the element
+holds, and [a copy of a carrier in it](#weakening-and-reborrows) reborrows the
+carrier stored there. What is stored through the binding is stored in the
+source: a borrow or an owner put there is
+[carried by the source](#values-that-contain-borrows) after the step, and may be
+in any element, so it joins what each of them holds rather than replacing it.
+
 #### Temporary roots
 
 A temporary root lives for the complete `foreach` statement and lends its
@@ -8091,7 +8098,7 @@ case bindings, `or_else`, and `or_return` pass it on when unwrapping.
 
 A type's **carrier paths** are the projection paths from the value to each
 built-in borrow carrier inside it. Records contribute fields, unions
-alternatives, and fixed arrays elements. Dynamic arrays and boxes use a wildcard
+alternatives, and fixed arrays and dynamic arrays elements. Boxes use a wildcard
 element; maps distinguish key and value paths and may distinguish a limited
 number of constant keys. Each path keeps its own capability, so a record
 containing both `[]int` and `[]mut int` does not have one aggregate capability.
@@ -8293,6 +8300,46 @@ relink :: proc(list: ^mut List) {
 }
 ```
 
+A call may also store what an argument holds elsewhere in the storage that
+argument reaches, which its signature does not say. What the call may run
+decides, as a call through a procedure value may run any body of its type. After
+a call that may move carriers within an argument, each carrier there that could
+hold a moved one may hold what any of them held. After a call that may leave a
+mutable carrier in two places, each of them is also a reborrow of the others. A
+carrier read from below the place it is stored in replaces the one it was read
+through, as `list^.head = list^.head^.next` does, and reordering, as `swap`,
+`sort`, or `a[0], a[1] = a[1], a[0]`, leaves each carrier in one place; neither
+is a copy. `insert`, `remove`, and `remove_unordered` on a dynamic array move
+what its elements hold in the same way. A call that stores no carrier leaves
+each one its own:
+
+```loke
+Link :: struct { to: ^mut int }
+
+exchange :: proc(links: []mut Link) { links.swap(0, 1); }
+duplicate :: proc(links: []mut Link) { links[0] = links[1]; }
+
+after_a_move :: proc() {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	exchange(&mut links[:]);
+	exchange(&mut links[:]);   // OK: nothing is in two places
+	held := links[0].to;       // may point at `x` or `y`
+	y = 5;                     // ERROR: `held` may point at `y`
+	held^ = 4;
+}
+
+after_a_copy :: proc() {
+	x := 1; y := 2;
+	links := [2]Link{Link{&mut x}, Link{&mut y}};
+	duplicate(&mut links[:]);
+	first := links[0].to;      // ERROR: `links[1].to` may be the same carrier
+	second := links[1].to;
+	first^ = 1;
+	second^ = 2;
+}
+```
+
 #### Places and overlap
 
 Borrow compatibility is decided for **places**, not only for variable names. A
@@ -8301,8 +8348,8 @@ fields, indices, ranges, and dereferences. Places with different roots do not
 overlap. Within one root, a path overlaps itself and every prefix or descendant
 of itself.
 
-Distinct struct fields and distinct constant fixed-array indices or ranges may
-be treated as disjoint. Union fields, dynamic indices or ranges, opaque
+Distinct struct fields and distinct constant indices or ranges of a fixed or
+dynamic array may be treated as disjoint. Union fields, dynamic indices or ranges, opaque
 dereferences, and user-defined indexing or slicing conservatively overlap every
 path that might name the same storage.
 
@@ -11959,6 +12006,7 @@ type sizes. Each guarantee applies while the other budgets are also satisfied:
 | Aggregate nesting | Preserve carrier leaves reached in at most **4 projection steps**. A record field, union alternative, or array element costs one step; a map entry plus its key/value projection costs two. The carrier itself costs no step. |
 | Carrier paths | Preserve at least **64 paths per value type**, after applying the other shape rules. Fields without borrows cost no paths. |
 | Fixed arrays | Distinguish every element of arrays of **1 through 8 elements**, when selected by a compile-time-known index. |
+| Dynamic arrays | Distinguish the **first 8 elements**, when selected by a compile-time-known index, wherever doing so keeps the value's type within its carrier paths. Later elements share a path, as may all of them otherwise. An operation that moves elements between indices joins what they hold ([Values that contain borrows](#values-that-contain-borrows)). |
 | Chosen places | Distinguish at least **8 places of each storage** a carrier may point into, and **64 places in all**, when its value is chosen among borrows by branches or reassignment, as `q := &mut s.a if flag else &mut t.b`. Places of one storage do not count against another's 8. A place inside another counts as that one. A carrier that may point into more than one storage may be taken to point at each of its places in every one. |
 | Map entry width | Distinguish constant keys when the nonrecursive key and value shapes together contain at most **2 carrier paths**, measured before replicating entries. |
 | Constant map keys | Distinguish at least the first **4 distinct supported constant keys encountered per procedure**, shared across its maps. Supported keys are strings, booleans, runes, and integers representable in signed 64 bits. Key identities are local to the body; result contracts merge map entries across calls while preserving enclosing paths and the key/value distinction. |

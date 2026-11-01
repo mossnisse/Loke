@@ -155,6 +155,10 @@ Proj_Step :: struct {
 	// design.md "@(synchronized)": the step selects a synchronized field from
 	// outside its package, so reaching the place is exclusive access.
 	synchronized: bool,
+	// An element of a dynamic array, which an operation may move to another
+	// index. Carrier slots see that happen (`rearrange_carriers`); region facts,
+	// being flow-insensitive, do not (`prov_region_path`).
+	shifts:    bool,
 	lo:        i64,
 	hi:        i64,
 }
@@ -178,6 +182,11 @@ proj_range :: proc(lo, hi: i64) -> Proj_Step {
 
 proj_wild :: proc() -> Proj_Step {
 	return Proj_Step{kind = .Wild}
+}
+
+// Element `index` of a dynamic array, one by itself up to the budget.
+proj_dynamic_element :: proc(index: i64) -> Proj_Step {
+	return Proj_Step{kind = .Range, lo = index, hi = index + 1, shifts = true}
 }
 
 // Two paths into one root overlap unless some step proves them disjoint, so a
@@ -443,6 +452,9 @@ Prov_Reborrow :: struct {
 	// carrier read one of a mutable carrier stored there
 	// (`prov_reborrow_loaded`); until then the solve does not see it.
 	pending: bool,
+	// Links carriers a call may have copied among each other, in both directions
+	// (`prov_link_copied_carriers`).
+	copied_within: bool,
 }
 
 // A loan of `place`, reached through carriers, at `path` below their pointee.
@@ -610,7 +622,9 @@ attribute_escape_level :: proc(c: ^Compiler, attributes: []Attribute) -> (level:
 // ----------------------------------------------------- carrier shapes --
 
 // A carrier shape lists where inside a value a borrow can be, as `Proj_Step`
-// paths. Shapes are finite: containers contribute one wildcard edge, depth past
+// paths. Shapes are finite: a dynamic array contributes an edge for each of its
+// first elements and one for the rest, or one wildcard edge where that would pass
+// `CARRIER_WIDTH`, other containers one wildcard edge, depth past
 // `CARRIER_DEPTH` becomes one truncated path, a shape wider than `CARRIER_WIDTH`
 // collapses to one path, and a scalar subtree contributes nothing. Both queries
 // run after all checking, so a cached answer never sees an incomplete type.
@@ -641,8 +655,12 @@ map_shape_is_keyed :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	c.map_keyed[type] = false
 	out := false
 	if info := underlying_info(c, type); info != nil && info.kind == .Map {
-		width := len(carrier_shape(c, info.key)) + len(carrier_shape(c, info.element))
-		out = width > 0 && width <= MAP_KEY_PATH_LIMIT
+		// Measured with one path per dynamic array, whose elements are replicated
+		// after this is decided, as a map's entries are.
+		paths := make([dynamic]Carrier_Path, 0, MAP_KEY_PATH_LIMIT + 1, context.temp_allocator)
+		carrier_shape_walk(c, info.key, nil, 0, &paths, elements = false)
+		carrier_shape_walk(c, info.element, nil, 0, &paths, elements = false)
+		out = len(paths) > 0 && len(paths) <= MAP_KEY_PATH_LIMIT
 	}
 	c.map_keyed[type] = out
 	return out
@@ -766,7 +784,13 @@ carrier_shape :: proc(c: ^Compiler, type: Type_Id) -> []Carrier_Path {
 		return cached
 	}
 	out := make([dynamic]Carrier_Path, 0, 4, c.semantic_allocator)
-	carrier_shape_walk(c, type, nil, 0, &out)
+	carrier_shape_walk(c, type, nil, 0, &out, elements = true)
+	if len(out) > CARRIER_WIDTH {
+		// Too wide with the elements of its dynamic arrays apart: not too wide
+		// with one path per dynamic array, as it may be, should not collapse.
+		clear(&out)
+		carrier_shape_walk(c, type, nil, 0, &out, elements = false)
+	}
 	shape := out[:]
 	if len(shape) > CARRIER_WIDTH {
 		whole := make([]Carrier_Path, 1, c.semantic_allocator)
@@ -784,6 +808,7 @@ carrier_shape_walk :: proc(
 	prefix: []Proj_Step,
 	depth: int,
 	out: ^[dynamic]Carrier_Path,
+	elements: bool,
 ) {
 	// One path past the width already collapses the shape to its whole value,
 	// so no more are collected (or allocated).
@@ -813,7 +838,7 @@ carrier_shape_walk :: proc(
 	}
 	// A shared handle's payload is reached as a box's is.
 	if payload := shared_payload_type(c, type); payload != INVALID_TYPE {
-		carrier_shape_walk(c, payload, carrier_steps(c, prefix, {proj_wild()}), depth + 1, out)
+		carrier_shape_walk(c, payload, carrier_steps(c, prefix, {proj_wild()}), depth + 1, out, elements)
 		return
 	}
 	#partial switch info.kind {
@@ -824,26 +849,41 @@ carrier_shape_walk :: proc(
 				continue
 			}
 			step := proj_field(int(sym.index))
-			carrier_shape_walk(c, sym.type, carrier_steps(c, prefix, {step}), depth + 1, out)
+			carrier_shape_walk(c, sym.type, carrier_steps(c, prefix, {step}), depth + 1, out, elements)
 		}
 	case .Union:
 		for variant in info.variants {
-			carrier_shape_walk(c, variant, carrier_steps(c, prefix, {proj_wild()}), depth + 1, out)
+			carrier_shape_walk(c, variant, carrier_steps(c, prefix, {proj_wild()}), depth + 1, out, elements)
 		}
 	case .Array:
 		if info.count > 0 && info.count <= CARRIER_ARRAY_ELEMENTS {
 			for index in 0 ..< i64(info.count) {
 				step := proj_range(index, index + 1)
-				carrier_shape_walk(c, info.element, carrier_steps(c, prefix, {step}), depth + 1, out)
+				carrier_shape_walk(c, info.element, carrier_steps(c, prefix, {step}), depth + 1, out, elements)
 			}
 			return
 		}
 		step := proj_wild()
 		if info.count > CARRIER_ARRAY_ELEMENTS { step.precision = {.Array_Elements} }
-		carrier_shape_walk(c, info.element, carrier_steps(c, prefix, {step}), depth + 1, out)
-	case .Dynamic_Array, .Box:
+		carrier_shape_walk(c, info.element, carrier_steps(c, prefix, {step}), depth + 1, out, elements)
+	case .Dynamic_Array:
+		if elements {
+			for index in 0 ..< i64(CARRIER_ARRAY_ELEMENTS) {
+				carrier_shape_walk(c, info.element, carrier_steps(c, prefix, {proj_dynamic_element(index)}), depth + 1, out, elements)
+			}
+			// Every element past those; an index that names one says it is merged
+			// (`prov_index_path_in`).
+			rest := proj_range(CARRIER_ARRAY_ELEMENTS, max(i64))
+			rest.shifts = true
+			carrier_shape_walk(c, info.element, carrier_steps(c, prefix, {rest}), depth + 1, out, elements)
+			return
+		}
+		merged := proj_wild()
+		merged.precision = {.Array_Elements}
+		carrier_shape_walk(c, info.element, carrier_steps(c, prefix, {merged}), depth + 1, out, elements)
+	case .Box:
 		// A box's payload is reached by the same one wildcard step a place `b^` takes.
-		carrier_shape_walk(c, info.element, carrier_steps(c, prefix, {proj_wild()}), depth + 1, out)
+		carrier_shape_walk(c, info.element, carrier_steps(c, prefix, {proj_wild()}), depth + 1, out, elements)
 	case .Map:
 		// No separate wildcard entry: an unknown key uses a wildcard step, which
 		// overlaps every keyed entry.
@@ -855,8 +895,8 @@ carrier_shape_walk :: proc(
 			step := entries == 1 ? proj_wild() : proj_range(i64(entry), i64(entry) + 1)
 			if entries == 1 { step.precision = {.Map_Width} }
 			base := carrier_steps(c, prefix, {step})
-			carrier_shape_walk(c, info.key, carrier_steps(c, base, {proj_field(PROJ_MAP_KEY)}), depth + 2, out)
-			carrier_shape_walk(c, info.element, carrier_steps(c, base, {proj_field(PROJ_MAP_VALUE)}), depth + 2, out)
+			carrier_shape_walk(c, info.key, carrier_steps(c, base, {proj_field(PROJ_MAP_KEY)}), depth + 2, out, elements)
+			carrier_shape_walk(c, info.element, carrier_steps(c, base, {proj_field(PROJ_MAP_VALUE)}), depth + 2, out, elements)
 		}
 	}
 }
@@ -1480,6 +1520,8 @@ Prov_State :: struct {
 	// Sized before `resolve_content_reads` adds reborrows of loaded carriers,
 	// which are never severed.
 	severed: []bool,
+	// The slots the last `Rearrange` reached.
+	rearranged: [dynamic]int,
 	// The reborrows of each source slot, by index in `graph.reborrows` and in
 	// its order (`reborrows_of`), as of `reborrows_indexed` of them.
 	reborrow_starts:    []int,
@@ -1740,15 +1782,21 @@ summarize_body :: proc(k: ^Checker, literal: ^Expr_Proc) -> bool {
 	}
 	changed := writes && collect_written_regions(k.c, graph, literal.symbol, sym)
 	// What a body stores in caller storage needs solving only when it borrows
-	// `thread_local` storage at all.
+	// `thread_local` storage at all, or may store what an argument held.
 	stores_thread_local := writes && graph_borrows_thread_local(graph)
+	moves_carriers := writes && graph_may_move_carriers(graph)
 	if sym.result == INVALID_TYPE {
 		record_summary_dependencies(k.c, literal.symbol, graph.summary_callees[:])
-		if stores_thread_local {
+		if stores_thread_local || moves_carriers {
 			state := Prov_State{graph = graph, k = k}
 			if prepare_state(&state) {
 				solve_reaching(&state)
-				changed = collect_thread_local_writes(&state, literal.symbol, len(sym.param_symbols)) || changed
+				if stores_thread_local {
+					changed = collect_thread_local_writes(&state, literal.symbol, len(sym.param_symbols)) || changed
+				}
+				if moves_carriers {
+					changed = collect_carrier_moves(&state, literal.symbol, len(sym.param_symbols)) || changed
+				}
 			}
 		}
 		return changed
@@ -1768,7 +1816,354 @@ summarize_body :: proc(k: ^Checker, literal: ^Expr_Proc) -> bool {
 	if stores_thread_local {
 		changed = collect_thread_local_writes(&state, literal.symbol, len(sym.param_symbols)) || changed
 	}
+	if moves_carriers {
+		changed = collect_carrier_moves(&state, literal.symbol, len(sym.param_symbols)) || changed
+	}
 	return collect_escape_provenance(&state, literal.symbol, summary) || changed
+}
+
+// design.md "Values that contain borrows": what a body may store in the storage
+// a writable parameter names out of what that argument held, as `links[0] =
+// links[1]` or `pair^.a = pair^.b`, which is no retention: its own storage is the
+// destination, so nothing else says so. A caller joins what the carriers there
+// hold, and keeps those the body may leave in two places as reborrows of each
+// other. Only such a body says either, so a call that merely writes through its
+// argument leaves each carrier its own (`prov_call_carrier_moves`).
+Carrier_Move :: struct {
+	// The carrier types stored there, or `any` for every one.
+	types: []Type_Id,
+	any:   bool,
+	// A mutable carrier stored there may also stay where it was read. Storing
+	// one read from below the place it lands, as `list^.head =
+	// list^.head^.next`, replaces the carrier it was read through, as `cur =
+	// cur^.next` does (design.md "Weakening and reborrows"), and does not say so.
+	copied: bool,
+}
+
+@(private = "file")
+graph_may_move_carriers :: proc(graph: ^Flow_Graph) -> bool {
+	for block in graph.blocks {
+		for event in block.prov {
+			switch {
+			case event.kind == .Publish && len(event.sources) > 0, event.kind == .Rearrange:
+				return true
+			case event.kind == .Def && len(event.sources) > 0:
+				if slot_stores_in_inout(graph, event.slot) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// Whether `slot` is storage of an `inout` parameter: a store into it needs no
+// carrier to name the caller's storage.
+@(private = "file")
+slot_stores_in_inout :: proc(graph: ^Flow_Graph, slot: int) -> bool {
+	sym := symbol_of(graph.k.c, graph.prov_slots[slot].symbol)
+	return sym != nil && sym.kind == .Parameter && sym.mode == .Inout
+}
+
+// `Carrier_Move` of a body, read off each store that reaches its end of solving.
+@(private = "file")
+collect_carrier_moves :: proc(state: ^Prov_State, declaration: Symbol_Id, count: int) -> bool {
+	graph := state.graph
+	changed := false
+	for block in graph.blocks {
+		if !block.prov_visited {
+			continue
+		}
+		copy(state.reach, block.reach_entry)
+		copy(state.precision, block.precision_entry)
+		copy(state.ended, block.ended_entry)
+		for event in block.prov {
+			#partial switch event.kind {
+			case .Publish:
+				mem.zero_slice(state.merged)
+				for source in event.sources {
+					bytes_or(state.merged, reach_row(state, state.reach, source))
+				}
+				for slot in event.strips {
+					for &byte, index in state.merged {
+						byte &= ~reach_row(state, state.reach, slot)[index]
+					}
+				}
+				types, any := carried_types(graph.k.c, event.carried, graph.alloc)
+				for slot in event.into {
+					row := reach_row(state, state.reach, slot)
+					for index in 0 ..< state.loans {
+						if bit_get(row, index) && !state.ended[index] {
+							loan := graph.loans[index]
+							// Reordering copies nothing: no place is deep enough to count.
+							level := event.permutes ? -1 : loan.depth + 1
+							changed = note_carrier_move(state, declaration, count, loan.root, level, types, any) || changed
+						}
+					}
+				}
+			case .Def:
+				if len(event.sources) > 0 && slot_stores_in_inout(graph, event.slot) {
+					mem.zero_slice(state.merged)
+					for source in event.sources {
+						if source != event.slot {
+							bytes_or(state.merged, reach_row(state, state.reach, source))
+						}
+					}
+					entry := graph.prov_slots[event.slot]
+					carried := entry.content_type
+					if carried == INVALID_TYPE && !entry.content_truncated && len(entry.path) == 0 {
+						carried = symbol_of(graph.k.c, entry.symbol).type
+					}
+					types, any := carried_types(graph.k.c, carried, graph.alloc)
+					for root, at in graph.roots {
+						if root.kind == .Param && root.symbol == entry.symbol {
+							changed = note_carrier_move(state, declaration, count, Root_Id(at), 0, types, any) || changed
+						}
+					}
+				}
+			case .Rearrange:
+				for slot in event.into {
+					row := reach_row(state, state.reach, slot)
+					for index in 0 ..< state.loans {
+						if !bit_get(row, index) || state.ended[index] {
+							continue
+						}
+						root := graph.roots[int(graph.loans[index].root)]
+						if root.kind == .Param {
+							changed = merge_carrier_move(graph.k.c, declaration, count, root.param_index, event.rearranged) || changed
+						}
+					}
+				}
+			}
+			run_prov_event(state, event, state.reach, state.ended)
+		}
+	}
+	return changed
+}
+
+// A store of `types` into parameter storage at `root`, at `level` loads below
+// the parameter, of what `state.merged` holds: a move when that holds what the
+// same parameter held, and a copy when it came from no deeper than it lands.
+@(private = "file")
+note_carrier_move :: proc(
+	state: ^Prov_State, declaration: Symbol_Id, count: int, root: Root_Id, level: int, types: []Type_Id, any: bool,
+) -> bool {
+	graph := state.graph
+	c := graph.k.c
+	descriptor := graph.roots[int(root)]
+	if descriptor.kind != .Param {
+		return false
+	}
+	type := symbol_of(c, descriptor.symbol).type
+	pointee := carrier_pointee_shape(c, type)
+	held, copied := false, false
+	for loan, index in graph.loans {
+		if loan.root != root || !loan.content || !bit_get(state.merged, index) {
+			continue
+		}
+		held = true
+		// A mutable carrier stored as a read-only one is a reborrow all the same.
+		// One pointee path's loan says whether that path holds one; otherwise
+		// the path it is on is not known.
+		mutable := loan.mutable
+		if loan.pointee == 0 {
+			mutable = false
+			for path in pointee { mutable ||= path.mutable }
+			mutable ||= len(pointee) == 0 && loan.mutable
+		}
+		copied ||= mutable && loan.depth <= level
+	}
+	if !held {
+		return false
+	}
+	return merge_carrier_move(c, declaration, count, descriptor.param_index, Carrier_Move{types, any, copied})
+}
+
+// The carriers in a value of `type`, or `any` when they are not all known. An
+// allocator and a region provider are shared by design, so moving one says
+// nothing (design.md "Weakening and reborrows").
+carried_types :: proc(c: ^Compiler, type: Type_Id, allocator: mem.Allocator) -> (out: []Type_Id, any: bool) {
+	if type == INVALID_TYPE {
+		return nil, true
+	}
+	list := make([dynamic]Type_Id, 0, 2, allocator)
+	add :: proc(c: ^Compiler, list: ^[dynamic]Type_Id, type: Type_Id) {
+		if !type_is_region_provider(c, type) && type_underlying(c, type) != TYPE_ALLOCATOR && !slice.contains(list[:], type) {
+			append(list, type)
+		}
+	}
+	if type_is_carrier(c, type) {
+		add(c, &list, type)
+		return list[:], false
+	}
+	for path in carrier_shape(c, type) {
+		if path.truncated || path.type == INVALID_TYPE {
+			return nil, true
+		}
+		add(c, &list, path.type)
+	}
+	return list[:], false
+}
+
+@(private = "file")
+merge_carrier_move :: proc(c: ^Compiler, declaration: Symbol_Id, count: int, index: int, move: Carrier_Move) -> bool {
+	if index >= count || !move.any && len(move.types) == 0 {
+		return false
+	}
+	rows, found := c.carrier_moves[declaration]
+	if !found {
+		rows = make([]Carrier_Move, count, c.semantic_allocator)
+		c.carrier_moves[declaration] = rows
+	}
+	row := &rows[index]
+	changed := move.any && !row.any || move.copied && !row.copied
+	row.any ||= move.any
+	row.copied ||= move.copied
+	for type in move.types {
+		if !slice.contains(row.types, type) {
+			grown := make([]Type_Id, len(row.types) + 1, c.semantic_allocator)
+			copy(grown, row.types)
+			grown[len(row.types)] = type
+			row.types = grown
+			changed = true
+		}
+	}
+	return changed
+}
+
+// What a call may do to each of its `count` arguments' carriers, by argument,
+// from the summary of every body it may run; `consulted` collects those. A
+// foreign procedure may do anything with what it can reach.
+call_carrier_moves :: proc(
+	c: ^Compiler, call: ^Expr_Call, body: Symbol_Id, count: int, consulted: ^[dynamic]Symbol_Id, allocator: mem.Allocator,
+) -> []Carrier_Move {
+	if !c.global_writes_ready || !call_writes_caller(c, call) {
+		return nil
+	}
+	targets := make([dynamic]Symbol_Id, 0, 4, context.temp_allocator)
+	if values, through := callee_values(c, call, body); through {
+		unresolved := false
+		for value in values {
+			#partial switch value.kind {
+			case .Procedure:
+				append(&targets, value.symbol)
+			case .Nil:
+			case:
+				unresolved = true
+			}
+		}
+		if unresolved {
+			indirect, _ := indirect_call_targets(c, call)
+			append(&targets, ..indirect)
+		}
+	} else {
+		append(&targets, ..call_thread_local_targets(c, call))
+	}
+	out := make([]Carrier_Move, count, allocator)
+	for index := 0; index < len(targets); index += 1 {
+		target := targets[index]
+		if original, shifted := c.receiver_contract_of[target]; shifted {
+			target = original
+		}
+		if is_contract_join(c, target) {
+			append(&targets, ..symbol_of(c, target).members)
+			continue
+		}
+		sym := symbol_of(c, target)
+		if sym == nil {
+			continue
+		}
+		append(consulted, target)
+		if sym.is_foreign {
+			for &move in out { move.any = true }
+			continue
+		}
+		shift := count - len(sym.param_symbols)
+		for row, position in c.carrier_moves[target] {
+			if at := position + shift; at >= 0 && at < count {
+				out[at].any ||= row.any
+				out[at].copied ||= row.copied
+				if len(row.types) > 0 {
+					joined := make([dynamic]Type_Id, 0, len(out[at].types) + len(row.types), allocator)
+					append(&joined, ..out[at].types)
+					for type in row.types {
+						if !slice.contains(joined[:], type) {
+							append(&joined, type)
+						}
+					}
+					out[at].types = joined[:]
+				}
+			}
+		}
+	}
+	return out
+}
+
+// Whether a carrier of `source` may have been stored where one of `destination`
+// is: it is the same carrier, perhaps weakened, or `destination` erases what it
+// holds. An unshaped slot stands for every carrier below it.
+@(private)
+carrier_may_land_in :: proc(c: ^Compiler, destination, source: Type_Id) -> bool {
+	if destination == source || destination == INVALID_TYPE || source == INVALID_TYPE {
+		return true
+	}
+	into, from := underlying_info(c, destination), underlying_info(c, source)
+	if into == nil || from == nil {
+		return true
+	}
+	#partial switch into.kind {
+	case .Pointer, .Slice, .String_View, .CString_View:
+		return into.kind == from.kind && into.element == from.element
+	}
+	return true
+}
+
+// The carrier type a slot holds, or INVALID_TYPE for one standing for every
+// carrier below its path.
+@(private = "file")
+slot_carrier_type :: proc(graph: ^Flow_Graph, index: int) -> Type_Id {
+	slot := graph.prov_slots[index]
+	if slot.content_truncated || slot.content_type != INVALID_TYPE {
+		return slot.content_type
+	}
+	if bare, exists := graph.slot_by_symbol[slot.symbol]; exists && bare == index {
+		return symbol_of(graph.k.c, slot.symbol).type
+	}
+	return INVALID_TYPE
+}
+
+// design.md "Values that contain borrows": a call moves carriers among the
+// storage its argument's mutable carriers lead to, so each there of a type the
+// call moves may now hold what any there of a type it may have come from held.
+@(private = "file")
+rearrange_carriers :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8) {
+	clear(&state.rearranged)
+	load_writable_content(state, event, reach, &state.rearranged)
+	reads := state.rearranged
+	join :: proc(state: ^Prov_State, reach: []u8, reads: []int, type: Type_Id, every: bool) {
+		graph := state.graph
+		mem.zero_slice(state.merged)
+		loss: Precision_Loss
+		for index in reads {
+			if every || carrier_may_land_in(graph.k.c, type, slot_carrier_type(graph, index)) {
+				bytes_or(state.merged, reach_row(state, reach, index))
+				loss |= state.precision[index]
+			}
+		}
+		for index in reads {
+			if every || slot_carrier_type(graph, index) == type || slot_carrier_type(graph, index) == INVALID_TYPE {
+				bytes_or(reach_row(state, reach, index), state.merged)
+				state.precision[index] |= loss
+			}
+		}
+	}
+	if event.rearranged.any {
+		join(state, reach, reads[:], INVALID_TYPE, true)
+		return
+	}
+	for type in event.rearranged.types {
+		join(state, reach, reads[:], type, false)
+	}
 }
 
 // The bodies whose summaries this one read. A callback's summary is read only
@@ -2952,9 +3347,10 @@ prepare_state :: proc(state: ^Prov_State) -> bool {
 	state.released_indices = make([dynamic]int, graph.alloc)
 	state.ended = make([]bool, state.loans, graph.alloc)
 	state.severed = make([]bool, len(graph.reborrows), graph.alloc)
+	state.rearranged = make([dynamic]int, graph.alloc)
 	severable := make([dynamic]int, 0, 4, graph.alloc)
 	for reborrow, index in graph.reborrows {
-		if graph.fresh_slots[reborrow.source] || prov_slot_is_loaded_temporary(graph, reborrow.source) {
+		if reborrow.copied_within || graph.fresh_slots[reborrow.source] || prov_slot_is_loaded_temporary(graph, reborrow.source) {
 			append(&severable, index)
 		}
 	}
@@ -3016,6 +3412,10 @@ solve_reaching :: proc(state: ^Prov_State) {
 				bit_mark(reach_row(state, state.reach, entry.slot), int(entry.loan))
 				state.precision[entry.slot] |= graph.prov_slots[entry.slot].precision
 			}
+			// No call has copied anything yet (`prov_link_copied_carriers`).
+			for index in state.severable {
+				state.severed[index] = graph.reborrows[index].copied_within
+			}
 		}
 		copy(block.reach_entry, state.reach)
 		copy(block.precision_entry, state.precision)
@@ -3050,16 +3450,24 @@ solve_reaching :: proc(state: ^Prov_State) {
 // reborrows of its previous value, and redefining a reborrow's derived slot
 // takes it afresh. A temporary loaded through a carrier is fresh too: only its
 // own expression reads it, so loading it again, as a loop's `cur^.next` does,
-// leaves nothing to use its last value.
+// leaves nothing to use its last value. What a call may have copied is linked
+// from that call on where it reached (`rearrange_carriers`), and the links stay.
 @(private = "file")
 run_severing_event :: proc(state: ^Prov_State, event: Prov_Event) {
 	graph := state.graph
-	if event.kind != .Def && event.kind != .Load {
+	if event.kind != .Def && event.kind != .Load && event.kind != .Rearrange {
 		return
 	}
 	for index in state.severable {
 		reborrow := graph.reborrows[index]
-		if reborrow.source == event.slot {
+		if reborrow.copied_within {
+			if event.kind == .Rearrange && reborrow.source == event.slot && slice.contains(state.rearranged[:], reborrow.derived) ||
+			   event.kind == .Rearrange && reborrow.derived == event.slot && slice.contains(state.rearranged[:], reborrow.source) {
+				state.severed[index] = false
+			}
+		} else if event.kind == .Rearrange {
+			continue
+		} else if reborrow.source == event.slot {
 			state.severed[index] = true
 		} else if reborrow.derived == event.slot {
 			state.severed[index] = false
@@ -3093,6 +3501,8 @@ run_prov_event :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8, ended
 		state.precision[event.slot] = loss
 	case .Load:
 		load_pointee_content(state, event, reach)
+	case .Rearrange:
+		rearrange_carriers(state, event, reach)
 	case .Rebind:
 		for slot in 0 ..< state.slots {
 			row := reach_row(state, reach, slot)
@@ -3110,6 +3520,12 @@ run_prov_event :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8, ended
 		for source in event.sources {
 			state.merged_precision |= state.precision[source]
 			bytes_or(state.merged, reach_row(state, reach, source))
+		}
+		for slot in event.strips {
+			row := reach_row(state, reach, slot)
+			for &byte, index in state.merged {
+				byte &= ~row[index]
+			}
 		}
 		one := publish_one_loan(state, event, reach, ended)
 		for slot in event.into {
@@ -5649,6 +6065,10 @@ live_reborrow_of :: proc(state: ^Prov_State, source: int, live: []bool, use: Pro
 				return reborrow, slot, true
 			}
 			for next in reborrows_of(state, slot) {
+				// A copy the call that may make it has not reached yet.
+				if graph.reborrows[next].copied_within && next < len(state.severed) && state.severed[next] {
+					continue
+				}
 				append(&pending, graph.reborrows[next].derived)
 			}
 		}

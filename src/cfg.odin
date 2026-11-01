@@ -272,6 +272,9 @@ Prov_State :: struct {
 	// The carrier slots of a lent loop element, which is the stored carrier
 	// rather than a copy: a copy taken from one reborrows these instead.
 	lent_aliases:   map[int][]int,
+	// The `&mut` loop bindings, and where a store through each lands
+	// (`prov_note_traversal`).
+	traversals:     map[Symbol_Id]Prov_Traversal,
 	// The slots standing for what the caller storage each parameter loan names
 	// holds (`prov_caller_slots`).
 	caller_slots:   map[Loan_Id][dynamic]int,
@@ -468,6 +471,7 @@ new_flow_graph :: proc(k: ^Checker, literal: ^Expr_Proc, allocator: mem.Allocato
 		graph.view_uses = make(map[Symbol_Id]Prov_View_Use, allocator)
 		graph.step_views = make(map[Symbol_Id]bool, allocator)
 		graph.lent_aliases = make(map[int][]int, allocator)
+		graph.traversals = make(map[Symbol_Id]Prov_Traversal, allocator)
 		graph.caller_slots = make(map[Loan_Id][dynamic]int, allocator)
 		graph.view_elements = make(map[Prov_View_Element][]int, allocator)
 		graph.view_defs = make(map[int][dynamic]Prov_View_Def, allocator)
@@ -1907,6 +1911,13 @@ walk_flow_foreach :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach) {
 	}
 	// A copied element keeps its own borrows without borrowing the container.
 	elements := iterated
+	// A diagnostic about what a step reads names what the loop traverses.
+	for slot in elements {
+		if entry := &graph.prov_slots[slot]; entry.name == "" {
+			span := expr_span(iterable)
+			entry.name = graph.k.c.sources[span.file].text[span.lo:span.hi]
+		}
+	}
 	through: []int
 	if graph.mode != .Lifecycle {
 		iterated = prov_iterate(graph, s, iterated)
@@ -1957,7 +1968,7 @@ walk_flow_foreach :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach) {
 		if !s.borrows && !place_loop && s.element_type != INVALID_TYPE {
 			prov_copy_effects(graph, s.element_type, expr_span(s.iterable))
 		}
-		walk_foreach_binding_provenance(graph, s, s.bindings, iterated, elements, through)
+		walk_foreach_binding_provenance(graph, s, s.bindings, iterated, elements, through, s.element_type, foreach_element_pattern(s), nil)
 	}
 	// design.md "By-reference iteration": a `&mut` binding's loan ends with its
 	// step, and a copied element is a local of its step.
@@ -1997,17 +2008,57 @@ foreach_reborrow_through_carrier :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach, p
 	return prov_place_loan(graph, carriers, below, place_loop, "element", source, borrows = true)
 }
 
+// What a level of a `foreach` pattern takes apart: a map entry's and an
+// `indexed()` pair's fields are no fields of what the source stores.
+@(private = "file")
+Foreach_Pattern :: enum { Value, Map_Entry, Indexed_Pair }
+
+@(private = "file")
+foreach_element_pattern :: proc(s: ^Stmt_Foreach) -> Foreach_Pattern {
+	if s.indexed {
+		return .Indexed_Pair
+	}
+	return s.kind == .Map ? .Map_Entry : .Value
+}
+
+// `below` is where this level of the pattern is inside the element, which
+// a `&mut` leaf names (`prov_note_traversal`).
 @(private = "file")
 walk_foreach_binding_provenance :: proc(
 	graph: ^Flow_Graph, s: ^Stmt_Foreach, bindings: []Foreach_Binding, iterated, elements, through: []int,
+	logical: Type_Id, pattern: Foreach_Pattern, below: []Proj_Step,
 ) {
-	for binding in bindings {
+	if len(bindings) == 1 && len(bindings[0].group) > 0 {
+		walk_foreach_binding_provenance(graph, s, bindings[0].group, iterated, elements, through, logical, pattern, below)
+		return
+	}
+	// design.md "Destructuring": a padding field fills no binding.
+	fields: []Symbol_Id
+	if info := underlying_info(graph.k.c, logical); len(bindings) > 1 && info != nil && info.kind == .Struct {
+		fields = named_fields(graph.k.c, info)
+	}
+	for binding, position in bindings {
+		part, part_pattern, at := logical, pattern, below
+		if position < len(fields) {
+			field := symbol_of(graph.k.c, fields[position])
+			part, part_pattern = field.type, .Value
+			switch pattern {
+			case .Value:
+				at = prov_extend(graph, below, proj_field(int(field.index)))
+			case .Map_Entry:
+				at = prov_extend(graph, below, proj_field(position == 0 ? PROJ_MAP_KEY : PROJ_MAP_VALUE))
+			case .Indexed_Pair:
+				if s.kind == .Map { part_pattern = .Map_Entry }
+			}
+		}
 		if len(binding.group) > 0 {
-			walk_foreach_binding_provenance(graph, s, binding.group, iterated, elements, through)
+			walk_foreach_binding_provenance(graph, s, binding.group, iterated, elements, through, part, part_pattern, at)
 			continue
 		}
+		// What a leaf holds is what the element holds. Only a borrow of it takes
+		// the traversal's own loans, which the view below gives it.
 		loans := iterated
-		if !binding.is_ref && s.kind != .Protocol && len(elements) > 0 {
+		if s.kind != .Protocol && len(elements) > 0 {
 			loans = elements
 		}
 		// design.md "Chunks of a mutable slice": a chunk takes the view's loans
@@ -2020,7 +2071,7 @@ walk_foreach_binding_provenance :: proc(
 		// reborrow what the container holds (design.md "Borrowing iteration"):
 		// reading it reads that carrier, which the iterator loan already guards.
 		sym := symbol_of(graph.k.c, binding.symbol)
-		lent := sym != nil && sym.borrowed_binding != .None && !binding.is_ref
+		lent := sym != nil && sym.borrowed_binding != .None
 		carrier := s.kind != .Protocol && len(elements) > 0 && type_is_carrier(graph.k.c, prov_type(graph, s.iterable))
 		// design.md "Procedure result contracts": the value of a carrier's lent
 		// element is what `values[i]` would load through the carrier, so a copy
@@ -2028,12 +2079,18 @@ walk_foreach_binding_provenance :: proc(
 		// uses the carrier through the view below.
 		if lent && carrier {
 			loans = prov_load_content(
-				graph, elements, nil, sym.type, expr_span(s.iterable),
+				graph, elements, binding.is_ref ? at : nil, sym.type, expr_span(s.iterable),
 				reads_only = prov_read_is_reads_only(graph.k.c, sym.type),
 			)
 		}
+		// The leaf starts as what the element holds, which only a store through
+		// it afterwards adds to.
+		delete_key(&graph.traversals, binding.symbol)
+		prov_forget_region_binding(graph, binding.symbol)
 		prov_bind_value(graph, binding.symbol, loans, expr_span(s.iterable), copies = !lent)
-		prov_bind_element_region(graph, binding.symbol, prov_input_value(graph, s.iterable))
+		// A user's iterator says nothing of where in the source it lends.
+		element := s.kind == .Protocol ? nil : prov_concat_path(graph, prov_extend(graph, nil, proj_wild()), at)
+		prov_bind_element_region(graph, binding.symbol, prov_input_value(graph, s.iterable), element, binding.is_ref)
 		// A lent or mutable element is the source's storage, not a copy
 		// (design.md "Borrowing iteration"). A carrier's elements live in what
 		// it views: the iterator loan on the variable guards it for the loop,
@@ -2056,6 +2113,9 @@ walk_foreach_binding_provenance :: proc(
 				}
 			}
 			prov_bind_view(graph, binding.symbol, viewed, lends = !foreach_is_place_loop(s))
+		}
+		if binding.is_ref {
+			prov_note_traversal(graph, s, binding.symbol, at, element, iterated, elements, through)
 		}
 	}
 }

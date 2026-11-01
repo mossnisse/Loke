@@ -1,0 +1,21 @@
+package links;
+
+// A summary crosses a package boundary with no sign in the signature.
+
+@(public)
+Link :: struct { @(public) to: ^mut int }
+
+@(public)
+exchange :: proc(links: []mut Link) { links.swap(0, 1); }
+
+@(public)
+duplicate :: proc(links: []mut Link) { links[0] = links[1]; }
+
+@(public)
+generic_exchange :: proc(values: []mut $T) { values.swap(0, 1); }
+
+@(public)
+generic_touch :: proc(values: []mut $T) { }
+
+@(public)
+touch :: proc(links: []mut Link) { links[0].to^ += 1; }

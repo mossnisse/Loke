@@ -56,6 +56,26 @@ checklist.
   a view, as `s[0]`, now keeps what the view names in use for the report and for
   `fmt.println` alike, so `fmt.println(s[0], grow(inout values))` is `L0511`. Upgrade
   by evaluating the later argument into a local first.
+- A call that moves or copies carriers within the storage an argument reaches is
+  now seen ([Values that contain borrows](design.md#values-that-contain-borrows)).
+  After `exchange(&mut links[:])` over a fixed array or `share(&mut pair)` between
+  fields, each carrier there kept what it held before the call, so a copy
+  `held := links[0].to` still allowed writing what it now pointed at; that is now
+  `L0512`, `L0511`, or `L0641`, whether the store is in a body, a generic instance,
+  another package, a call through a procedure value, or a built-in `swap`, `sort`,
+  or `reverse_sort`. After a call that may leave a mutable carrier in two places,
+  using both is `L0641`, as is using one after another call passing them, as for
+  the same store written out. Upgrade by ending the use of what was rearranged
+  before changing its target, or by reading the carriers before the call.
+- What is stored through a `foreach` loop's `&mut` binding is now seen in the
+  source ([By-reference iteration](design.md#by-reference-iteration)). A carrier
+  stored as `list.head = &mut c`, or an owner stored as
+  `item = fmt.to_string(arena.allocator(), 42)`, used to stay in the binding, so
+  `c` could be written, or `arena` dropped, while a later `lists[1].head` or
+  `items[0]` still held it; these are now `L0511`, `L0641`, `L0537`, or `L0536`
+  like the same store through `lists[i]`. Upgrade by ending the use of what was
+  stored before changing what it points at, or by keeping the source apart from
+  it.
 - A generic record's hooks are now checked as a non-generic record's are. A wrong
   signature (`L0488`), a duplicate role (`L0488`), a `hook(copy)` on a `move_only`
   record or on an instance a field makes move-only (`L0488`), a written allocator
@@ -1042,6 +1062,22 @@ checklist.
   `s = &mut s[:2]`, now leaves the view's constant elements apart, so `s[1]`
   beside a live `&mut s[0]` is no longer `L0641`. A loop that moves the start,
   as `s = &mut s[1:]`, stays rejected.
+- A dynamic array's first 8 elements are now told apart by a constant index, as a
+  fixed array's are ([Minimum provenance precision](design.md#minimum-provenance-precision)).
+  `node := lists[0].head; other := lists[1].head;`, directly or through a fresh
+  `&mut lists[:]`, was `L0641` as each element stood for all of them; and with it
+  `&mut d[0]` beside a use of `d[1]`, and a write of `y` while only
+  `links[0]`, built from `&mut x`, is in use. `insert`, `remove`,
+  `remove_unordered`, `swap`, the sorts, and any call that moves carriers join
+  what the elements hold.
+- A mutable carrier held by an element is now usable through a `foreach` loop's
+  `&mut` binding, as in `foreach (&mut list in lists) { list.head^.value = 3; }`,
+  and `&mut list` may be taken there. Any use of it was `L0641`, as the binding
+  counted as a copy of the carrier, and using the binding as a use of that
+  copy's source. It now names the element
+  ([By-reference iteration](design.md#by-reference-iteration)), and a copy out of
+  it reborrows the stored carrier, over a view as well, where the copy used to
+  keep only the view's borrows.
 - `free_all` of an allocator unwrapped by `or_else` from an unmarked
   `Option(Allocator)` parameter, as in `maybe or_else allowed`, is now
   `L0538`, as the same reset through a `switch` was. Only the fallback's

@@ -383,6 +383,7 @@ behavioral controls for all of it.
 | Place loans, taken by a borrow, slice, traversal, or switch of a place reached through carriers, and the constant view element one is in | `Prov_Place_Loan`, `prov_place_loan`, `place_bit`, `check_place_loans`, `Prov_View_At`, `view_elements_apart` in `borrow.odin`; `prov_view_at` in `cfg_provenance.odin` |
 | Access events, the places a slot's definitions may point at, those reaching a borrow, and their merging | `prov_access_through`, `Prov_Slot.offsets`, `prov_note_offset`, `Prov_Reach`, `prov_reaching_offsets`, `prov_union_offsets` |
 | Publication: a store through carriers, or what a call leaves of a `stored` argument | `publish_into_loan`, `publish_into_caller`, `read_caller_slots`, `resolve_content_reads` in `borrow.odin`; `prov_reborrow_retained` in `cfg_provenance.odin` |
+| What a call moves between the carriers an argument holds, and what that does in the caller | `Carrier_Move`, `collect_carrier_moves`, `call_carrier_moves`, `rearrange_carriers`, `carrier_may_land_in`, `Prov_Reborrow.copied_within` in `borrow.odin`; `prov_call_carrier_moves`, `prov_link_copied_carriers` in `cfg_provenance.odin` |
 | Written-argument regions, by parameter and by path | `param_writes_caller`, `Compiler.written_regions`, `written_owner_regions`, `written_region_content`, `Prov_Region_Content` |
 | Region shapes and queries of a value's fields | `region_field_shape`, `Region_Query`, `prov_result_region_at`, `prov_result_region_fields` |
 | Copies and clones | `Prov_Region_Copy`, `prov_copied_region_at`, `prov_clone_region_at`, `prov_define_value_regions` |
@@ -478,10 +479,33 @@ Keep these contracts:
   carrier the store copies is linked as a reborrow to the slots where it may
   land (`prov_reborrow_stored_content` for one inside a record), and only a
   store whose every copy is linked there skips the parameter itself
-  (`Prov_Event.linked`). What a call leaves of a `stored` argument publishes
+  (`Prov_Event.linked`). A store through a `foreach` loop's `&mut` binding
+  also lands in the element it names, whichever that is, joined into what each
+  holds (`Prov_Traversal`, `prov_publish_traversal`): by path into a source that
+  is a named place, otherwise as a `Publish` through what the traversal holds,
+  which leaves out those loans so the source does not come to borrow itself
+  (`Prov_Event.strips`). What a call leaves of a `stored` argument publishes
   the same way, linked to every slot a destination may stand for
   (`prov_reborrow_retained`); as for a copy, a named read-only reborrow
   linked there is extended rather than suspended (`Prov_Reborrow.passes_on`).
+  Publishing into a parameter's own storage what it already holds retains
+  nothing, so `summarize_body` records it instead: `Compiler.carrier_moves` says
+  per parameter which carrier types may move there and whether a mutable one
+  may be left in two places. A call emits a `Rearrange` joining what the
+  argument's carriers hold (`rearrange_carriers`). A copy also links those
+  carriers as reborrows of each other through a hub; these links stay severed
+  until a `Rearrange` activates them, so an earlier use conflicts with nothing,
+  and they are never severed again, as what a copy left in two places stays
+  there (`Prov_Reborrow.copied_within`).
+- **A dynamic array's first elements have carrier paths of their own.**
+  `carrier_shape_walk` gives each of the first `CARRIER_ARRAY_ELEMENTS` a step
+  and every later one a shared one, unless that would pass `CARRIER_WIDTH`, when
+  the whole type falls back to one wildcard element per dynamic array. A store
+  at a constant index replaces that element's slot, and so what moves an element
+  must say so: `prov_call_carrier_moves` emits a `Rearrange` for `insert`,
+  `remove`, `remove_unordered`, `swap`, and the sorts. Region facts are
+  flow-insensitive and could not follow that move, so they stay wildcards
+  (`Proj_Step.shifts`, `prov_region_path`).
 - **Owners, handles, and fields stay apart.** Region facts are kept by path,
   and backing dependencies apart from payload dependencies: a record's fields,
   a container's elements and backing, a shared handle's control block and

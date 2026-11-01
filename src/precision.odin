@@ -22,7 +22,7 @@ merge_precision :: proc(into: ^Precision_Loss, from: Precision_Loss) -> bool {
 
 add_precision_notes :: proc(c: ^Compiler, span: Span, loss: Precision_Loss) {
 	if .Array_Elements in loss {
-		add_notef(c, span, "provenance precision limit: fixed arrays longer than %d elements merge element borrows; this value may therefore depend on other elements", CARRIER_ARRAY_ELEMENTS)
+		add_notef(c, span, "provenance precision limit: fixed arrays longer than %d elements merge element borrows, as a dynamic array does past that many elements or where telling them apart would pass %d carrier paths; this value may therefore depend on other elements", CARRIER_ARRAY_ELEMENTS, CARRIER_WIDTH)
 	}
 	if .Depth in loss {
 		add_notef(c, span, "provenance precision limit: paths below %d aggregate projection steps are merged", CARRIER_DEPTH)

@@ -1,0 +1,542 @@
+// design.md "Minimum provenance precision": a dynamic array's first elements are
+// told apart by a constant index, which only stays sound while what moves an
+// element is seen, and only a constant index among those first elements names one.
+package main;
+
+import "core:fmt";
+import "core:mem";
+import "core:slice";
+
+Link :: struct { to: ^mut int }
+Holder :: struct { links: [dynamic]Link }
+
+impl Holder {
+	share :: proc(self: inout Holder) { self.links[0] = self.links[1]; }
+	shuffle :: proc(self: inout Holder) { self.links.swap(0, 1); }
+}
+
+duplicate :: proc(links: []mut Link) { links[0] = links[1]; }
+exchange :: proc(links: []mut Link) { links.swap(0, 1); }
+removed :: proc(links: inout [dynamic]Link) { links.remove(0); }
+removed_through :: proc(links: ^mut [dynamic]Link) { links^.remove(0); }
+inserted :: proc(links: inout [dynamic]Link, @(escape=stored) n: ^mut int) { links.insert(0, Link{n}); }
+set_first :: proc(links: inout [dynamic]Link, @(escape=stored) n: ^mut int) { links[0].to = n; }
+set_any :: proc(links: inout [dynamic]Link, @(escape=stored) n: ^mut int, i: int) { links[i].to = n; }
+first_after_remove :: proc(d: ^mut [dynamic]Link) -> ^mut int { d^.remove(0); return d^[0].to; }
+
+// The same element copied twice is still a reborrow of itself, as is any
+// element through an index that is not a constant.
+same_element :: proc() {
+	x := 1; y := 2;
+	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	first := links[0].to;
+	second := links[0].to;
+	second^ = 3;
+	first^ = 1;
+}
+
+same_element_through_a_view :: proc() {
+	x := 1; y := 2;
+	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	view := &mut links[:];
+	first := view[0].to;
+	second := view[0].to;
+	second^ = 3;
+	first^ = 1;
+}
+
+variable_index :: proc(i: int) {
+	x := 1; y := 2;
+	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	first := links[0].to;
+	second := links[i].to;
+	second^ = 3;
+	first^ = 1;
+}
+
+same_in_a_body :: proc(d: ^mut [dynamic]Link) {
+	first := d^[0].to;
+	second := d^[0].to;
+	first^ = 1;
+	second^ = 2;
+}
+
+// What the element holds is its own.
+its_own_target :: proc() {
+	x := 1; y := 2;
+	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	held := links[0].to;
+	x = 5;
+	held^ = 4;
+}
+
+// Elements past the first share a path, and say so.
+past_the_budget :: proc() {
+	a := 0; b := 0; c := 0; d := 0; e := 0; f := 0; g := 0; h := 0; i := 0; j := 0;
+	links := [dynamic]Link{Link{&mut a}, Link{&mut b}, Link{&mut c}, Link{&mut d}, Link{&mut e}, Link{&mut f}, Link{&mut g}, Link{&mut h}, Link{&mut i}, Link{&mut j}};
+	first := links[8].to;
+	second := links[9].to;
+	second^ += 1;
+	first^ += 1;
+}
+
+a_store_past_the_budget_replaces_nothing :: proc() {
+	x := 1; y := 2; a := 3; b := 4;
+	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	links[8].to = &mut a;
+	links[9].to = &mut b;
+	held := links[8].to;
+	a = 5;
+	held^ = 4;
+}
+
+through_a_view_past_the_budget :: proc() {
+	x := 1; y := 2; a := 3; b := 4;
+	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	view := &mut links[:];
+	view[8].to = &mut a;
+	view[9].to = &mut b;
+	held := view[8].to;
+	a = 5;
+	held^ = 4;
+}
+
+through_an_element_past_the_budget :: proc() {
+	x := 1; y := 2; z := 3;
+	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	element := &mut links[9];
+	element^.to = &mut z;
+	held := links[10].to;
+	z = 5;
+	held^ = 4;
+}
+
+// A store through what may be any element lands in all of them.
+stored_at_a_variable :: proc(i: int) {
+	x := 1; y := 2; z := 3;
+	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	links[i].to = &mut z;
+	held := links[0].to;
+	z = 5;
+	held^ = 4;
+}
+
+stored_keeps_the_old :: proc(i: int) {
+	x := 1; y := 2; z := 3;
+	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	links[i].to = &mut z;
+	held := links[0].to;
+	x = 5;
+	held^ = 4;
+}
+
+appended_is_anywhere :: proc() {
+	x := 1; y := 2; z := 3;
+	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	links.append(Link{&mut z});
+	held := links[0].to;
+	z = 5;
+	held^ = 4;
+}
+
+through_a_view_copy :: proc() {
+	x := 1; y := 2; z := 3;
+	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	view := &mut links[:];
+	copy := view;
+	copy[0].to = &mut z;
+	held := links[1].to;
+	z = 5;
+	held^ = 1;
+}
+
+traversal_store :: proc() {
+	x := 1; y := 2; z := 3;
+	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	foreach (&mut link in links) { link.to = &mut z; }
+	held := links[1].to;
+	z = 5;
+	held^ = 1;
+}
+
+// A store at a constant lands there, however it is reached.
+through_a_pointer :: proc() {
+	x := 1; y := 2; z := 3;
+	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	pointer := &mut links;
+	pointer^[0].to = &mut z;
+	held := links[0].to;
+	z = 5;
+	held^ = 4;
+}
+
+at_a_view_offset :: proc() {
+	x := 1; y := 2; z := 3;
+	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	view := &mut links[1:];
+	view[0].to = &mut z;
+	held := links[1].to;
+	z = 5;
+	held^ = 4;
+}
+
+through_an_element :: proc() {
+	x := 1; y := 2; z := 3;
+	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	element := &mut links[1];
+	element^.to = &mut z;
+	held := links[1].to;
+	z = 5;
+	held^ = 4;
+}
+
+split_halves :: proc() {
+	x := 1; y := 2; z := 3;
+	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	view := &mut links[:];
+	left, right := view.split_at_mut(1);
+	right[0].to = &mut z;
+	held := links[1].to;
+	z = 5;
+	held^ = 4;
+}
+
+called_with_the_first :: proc() {
+	x := 1; y := 2; z := 3;
+	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	set_first(inout links, &mut z);
+	held := links[0].to;
+	z = 5;
+	held^ = 4;
+}
+
+called_with_any :: proc(i: int) {
+	x := 1; y := 2; z := 3;
+	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	set_any(inout links, &mut z, i);
+	held := links[1].to;
+	z = 5;
+	held^ = 4;
+}
+
+// What moves an element: each store below sets the first apart from the second,
+// so the first's slot holding the second's after the call shows it was seen.
+remove_moves_down :: proc() {
+	x := 1; y := 2; z := 3;
+	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	links[0].to = &mut z;
+	links.remove(0);
+	held := links[0].to;
+	y = 5;
+	held^ = 4;
+}
+
+remove_unordered_moves_the_last :: proc() {
+	x := 1; y := 2; z := 3;
+	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	links[0].to = &mut z;
+	links.remove_unordered(0);
+	held := links[0].to;
+	y = 5;
+	held^ = 4;
+}
+
+insert_moves_up :: proc() {
+	x := 1; y := 2; z := 3; w := 4; v := 6;
+	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	links[0].to = &mut z;
+	links[1].to = &mut w;
+	links.insert(0, Link{&mut v});
+	held := links[1].to;
+	z = 5;
+	held^ = 4;
+}
+
+swap_moves :: proc() {
+	x := 1; y := 2; z := 3;
+	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	links[0].to = &mut z;
+	links.swap(0, 1);
+	held := links[1].to;
+	z = 5;
+	held^ = 4;
+}
+
+call_exchanges :: proc() {
+	x := 1; y := 2; z := 3;
+	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	links[0].to = &mut z;
+	exchange(&mut links[:]);
+	held := links[1].to;
+	z = 5;
+	held^ = 4;
+}
+
+call_copies :: proc() {
+	x := 1; y := 2;
+	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	duplicate(&mut links[:]);
+	held := links[0].to;
+	y = 5;
+	held^ = 4;
+}
+
+a_copy_left_in_two_places :: proc() {
+	x := 1; y := 2;
+	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	duplicate(&mut links[:]);
+	first := links[0].to;
+	second := links[1].to;
+	first^ = 1;
+	second^ = 2;
+}
+
+a_copy_seen_through_a_view :: proc() {
+	x := 1; y := 2;
+	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	view := &mut links[:];
+	duplicate(view);
+	first := view[0].to;
+	second := view[1].to;
+	first^ = 1;
+	second^ = 2;
+}
+
+a_copy_written_out :: proc() {
+	x := 1; y := 2;
+	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	links[0] = links[1];
+	first := links[0].to;
+	second := links[1].to;
+	first^ = 1;
+	second^ = 2;
+}
+
+a_copy_in_a_body :: proc(d: inout [dynamic]Link) {
+	d[0] = d[1];
+	first := d[0].to;
+	second := d[1].to;
+	first^ = 1;
+	second^ = 2;
+}
+
+library_reverse :: proc() {
+	x := 1; y := 2; z := 3;
+	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	links[0].to = &mut z;
+	slice.reverse(&mut links[:]);
+	held := links[1].to;
+	z = 5;
+	held^ = 4;
+}
+
+call_removes :: proc() {
+	x := 1; y := 2; z := 3;
+	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	links[0].to = &mut z;
+	removed(inout links);
+	held := links[0].to;
+	y = 5;
+	held^ = 4;
+}
+
+call_removes_through_a_pointer :: proc() {
+	x := 1; y := 2; z := 3;
+	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	links[0].to = &mut z;
+	removed_through(&mut links);
+	held := links[0].to;
+	y = 5;
+	held^ = 4;
+}
+
+call_inserts :: proc() {
+	x := 1; y := 2; z := 3; w := 4;
+	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	links[0].to = &mut z;
+	inserted(inout links, &mut w);
+	held := links[1].to;
+	z = 5;
+	held^ = 4;
+}
+
+result_after_a_remove :: proc() {
+	x := 1; y := 2; z := 3;
+	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	links[0].to = &mut z;
+	held := first_after_remove(&mut links);
+	y = 5;
+	held^ = 4;
+}
+
+method_copies :: proc() {
+	x := 1; y := 2;
+	holder := Holder{[dynamic]Link{Link{&mut x}, Link{&mut y}}};
+	holder.share();
+	first := holder.links[0].to;
+	second := holder.links[1].to;
+	first^ = 1;
+	second^ = 2;
+}
+
+method_moves :: proc() {
+	x := 1; y := 2;
+	holder := Holder{[dynamic]Link{Link{&mut x}, Link{&mut y}}};
+	holder.shuffle();
+	held := holder.links[0].to;
+	y = 5;
+	held^ = 4;
+}
+
+// An element's place is still part of the whole.
+removed_under_an_element :: proc() {
+	x := 1; y := 2;
+	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	first := &mut links[0];
+	links.remove(0);
+	first^.to^ = 1;
+}
+
+grown_under_an_element :: proc() {
+	numbers := make([dynamic]int);
+	numbers.append(1);
+	first := &mut numbers[0];
+	numbers.append(3);
+	first^ = 1;
+}
+
+replaced_under_an_element :: proc() {
+	numbers := make([dynamic]int);
+	numbers.append(1);
+	first := &numbers[0];
+	numbers = make([dynamic]int);
+	fmt.println(first^);
+}
+
+an_element_at_a_variable :: proc(i: int) {
+	numbers := make([dynamic]int);
+	numbers.append(1);
+	first := &mut numbers[0];
+	numbers[i] = 1;
+	first^ = 1;
+}
+
+stored_under_an_element :: proc() {
+	x := 1; y := 2; z := 3;
+	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	first := &mut links[0];
+	links[0].to = &mut z;
+	first^.to^ = 1;
+}
+
+// What holds the array keeps each element's paths.
+moved_away :: proc() {
+	x := 1; y := 2; z := 3;
+	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	links[1].to = &mut z;
+	other := move(links);
+	held := other[1].to;
+	z = 5;
+	held^ = 4;
+}
+
+cloned :: proc() {
+	x := 1; y := 2; z := 3;
+	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	links[1].to = &mut z;
+	other := links.clone();
+	held := other[1].to;
+	z = 5;
+	held^ = 4;
+}
+
+in_a_grid :: proc() {
+	x := 1; y := 2; z := 3;
+	row := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	row[1].to = &mut z;
+	grid := make([dynamic][dynamic]Link);
+	grid.append(move(row));
+	held := grid[0][1].to;
+	z = 5;
+	held^ = 4;
+}
+
+in_a_record :: proc() {
+	x := 1; y := 2; z := 3;
+	holder := Holder{[dynamic]Link{Link{&mut x}, Link{&mut y}}};
+	holder.links[1].to = &mut z;
+	moved := move(holder);
+	held := moved.links[1].to;
+	z = 5;
+	held^ = 4;
+}
+
+in_a_map :: proc() {
+	x := 1; y := 2;
+	table := make(map[string][dynamic]Link);
+	table["a"] = [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	held := table["a"][1].to;
+	y = 5;
+	held^ = 4;
+}
+
+popped :: proc() {
+	x := 1; y := 2; z := 3;
+	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	links[1].to = &mut z;
+	gone := links.pop() or_else panic("empty");
+	z = 5;
+	gone.to^ = 4;
+}
+
+// Past its carrier paths, a type keeps one path per dynamic array.
+Eight :: struct { a, b, c, d, e, f, g, h: ^mut int }
+wider_than_its_paths :: proc() {
+	x := 1; y := 2; c := 0; d := 0; e := 0; f := 0; g := 0; h := 0;
+	wide := [dynamic]Eight{Eight{&mut x, &mut y, &mut c, &mut d, &mut e, &mut f, &mut g, &mut h}};
+	first := wide[0].a;
+	second := wide[1].a;
+	second^ = 3;
+	first^ = 1;
+}
+
+// Region facts cannot follow a move, so they stand for any element.
+owner_removed :: proc() -> string {
+	arena := mem.Arena.init();
+	items := make([dynamic]string);
+	items.append("a");
+	items.append("b");
+	items[1] = fmt.to_string(arena.allocator(), 42);
+	items.remove(0);
+	return items[0];
+}
+
+owner_swapped :: proc() -> string {
+	arena := mem.Arena.init();
+	items := make([dynamic]string);
+	items.append("a");
+	items.append("b");
+	items[1] = fmt.to_string(arena.allocator(), 42);
+	items.swap(0, 1);
+	return items[0];
+}
+
+owner_moved_by_a_call :: proc() -> string {
+	arena := mem.Arena.init();
+	items := make([dynamic]string);
+	items.append("a");
+	items.append("b");
+	items[1] = fmt.to_string(arena.allocator(), 42);
+	slice.reverse(&mut items[:]);
+	return items[0];
+}
+
+owner_past_the_budget :: proc() -> string {
+	arena := mem.Arena.init();
+	items := make([dynamic]string);
+	items.append("a");
+	items[9] = fmt.to_string(arena.allocator(), 42);
+	return items[10];
+}
+
+main :: proc() {}

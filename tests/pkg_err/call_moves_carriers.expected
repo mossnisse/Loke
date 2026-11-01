@@ -1,0 +1,12 @@
+L0512
+@13:2
+`y` cannot be assigned here: a mutable pointer of it is still in use
+L0641
+@21:11
+`items` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@22:12
+`items` cannot be used here: a mutable reborrow of it is still in use
+L0512
+@32:2
+`y` cannot be assigned here: a mutable pointer of it is still in use

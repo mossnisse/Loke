@@ -28,7 +28,7 @@ grown_under_element_pointer :: proc(p: ^mut ^mut [dynamic]int) {
 
 read_under_mutable_element_pointer :: proc(p: ^mut ^mut [dynamic]int) {
 	element := &mut p^^[0];
-	fmt.println(p^^[1]);
+	fmt.println(p^^[0]);
 	element^ = 2;
 }
 

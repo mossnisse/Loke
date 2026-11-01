@@ -86,6 +86,42 @@ main :: proc() { }`)
 	testing.expect(t, len(carrier_shape(&p.c, chain)) == 0, "a cycle of scalars invented a path")
 }
 
+// design.md "Minimum provenance precision": a dynamic array's first elements are
+// told apart, and every later one shares a path, while the shape keeps to its
+// width; past that, it keeps the one path per dynamic array it had before.
+@(test)
+a_dynamic_arrays_first_elements_are_distinct_paths :: proc(t: ^testing.T) {
+	p: Checked
+	defer destroy_checked(&p)
+	check_source(&p, `package main;
+Links :: struct { items: [dynamic]^int }
+Seven :: struct { a, b, c, d, e, f, g: ^int }
+Eight :: struct { a, b, c, d, e, f, g, h: ^int }
+Sevens :: struct { items: [dynamic]Seven }
+Eights :: struct { items: [dynamic]Eight }
+Keyed :: struct { entries: map[string][dynamic]^int }
+main :: proc() {}`)
+	testing.expect(t, p.c.error_count == 0, "boundary types should check")
+	links := carrier_shape(&p.c, named_type(t, &p, "Links"))
+	testing.expect(t, len(links) == CARRIER_ARRAY_ELEMENTS + 1, "each first element and the rest are a path")
+	for path, index in links {
+		testing.expect(t, path.precision == {}, "a path of its own reported precision loss")
+		step := path.steps[1]
+		testing.expect(t, step.kind == .Range && step.lo == i64(index) && step.shifts, "an element's path names its index")
+	}
+	last := links[CARRIER_ARRAY_ELEMENTS].steps[1]
+	testing.expect(t, last.hi == max(i64), "the last path stands for every later element")
+	testing.expect(t, len(carrier_shape(&p.c, named_type(t, &p, "Sevens"))) == 7 * (CARRIER_ARRAY_ELEMENTS + 1), "63 paths must remain independent")
+	eights := carrier_shape(&p.c, named_type(t, &p, "Eights"))
+	testing.expect(t, len(eights) == 8, "past the width each field keeps its one path")
+	for path in eights {
+		testing.expect(t, !path.truncated && path.steps[1].kind == .Wild && .Array_Elements in path.precision, "the merge must explain itself")
+	}
+	// The map's keys are decided before its dynamic arrays are told apart.
+	keyed := carrier_shape(&p.c, named_type(t, &p, "Keyed"))
+	testing.expect(t, len(keyed) == MAP_KEY_SLOTS * (CARRIER_ARRAY_ELEMENTS + 1), "a map of one-path values keeps its keys")
+}
+
 // Neither field order nor querying the recursive edge first may change the answer.
 @(test)
 a_recursive_shape_is_finite_and_order_independent :: proc(t: ^testing.T) {
