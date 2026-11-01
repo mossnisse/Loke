@@ -92,6 +92,133 @@ CONTAINER_OP_EFFECTS := [Container_Op]bit_set[Container_Op_Effect] {
 	.Map_Values         = {.Returns_View},
 }
 
+// What a compiler-known procedure, which has no body to summarize, does with
+// the receiver it is given.
+Prov_Receiver_Contract :: enum u8 {
+	// Nothing of its own: a summary says, or the receiver is borrowed for what the
+	// call returns.
+	Unwritten,
+	// design.md "Borrowing iteration": its result is lent by the view the receiver
+	// holds, not by the receiver.
+	Lends_Held,
+	// It measures or hashes, which only reads, and its plain result keeps nothing.
+	Only_Reads,
+	// Its result holds what the receiver holds, never a loan of the receiver.
+	Copies,
+}
+
+@(private)
+prov_receiver_contract :: proc(c: ^Compiler, callee: ^Symbol) -> Prov_Receiver_Contract {
+	if callee == nil {
+		return .Unwritten
+	}
+	#partial switch callee.synth {
+	case .Slice_Ref_Next:
+		return .Lends_Held
+	case .Indexed_Next:
+		// `indexed()` lends only while it wraps a lending source.
+		return .Lends_Held if indexed_next_lends(c, callee) else .Unwritten
+	case .Standard_Len, .Standard_Cap, .Standard_Hash:
+		return .Only_Reads
+	case .Adapter_Iter, .Iterator_Copy:
+		return .Copies
+	case .Adapter_View:
+		return .Copies if type_of(c, callee.result).adapter_by_value else .Unwritten
+	case .Clone, .Try_Clone:
+		// design.md "Standard customization procedures": a clone is
+		// ownership-recursive, so a generated one's result carries what its receiver
+		// carries. A `hook(copy)` taking `self: ^` is the exception, since its body
+		// could hand a loan of the receiver out.
+		hook := symbol_of(c, lifecycle_of(c, callee.owner_type).custom_try_clone)
+		return .Copies if hook == nil || !param_mode_is_pointer(symbol_param_mode(c, hook, 0)) else .Unwritten
+	}
+	return .Unwritten
+}
+
+// What an argument is to its call, which decides what it lends (`prov_call_argument`).
+Prov_Argument_Kind :: enum u8 {
+	// A bound slot no argument was written for.
+	Absent,
+	// A variadic pack built from separate arguments.
+	Pack,
+	Moved_Receiver,
+	// A call whose result is `inout`, passed on `inout`.
+	Inout_Result,
+	Inout_Receiver,
+	// The receiver of a call returning a view of a map (`Returns_View`).
+	View_Receiver,
+	// An `inout` argument naming a root's place, or one reached through carriers.
+	Inout_Place,
+	Inout_Through,
+	// The receiver of a map's `lookup_value`.
+	Lookup_Receiver,
+	// A slice local of plain data given to what only reads its receiver.
+	Only_Read_Slice,
+	// A value borrowed from the caller by what only copies it (`Copies`).
+	Copied_Receiver,
+	// A value borrowed from the caller.
+	Borrowed,
+	// A carrier place given to a parameter that can write through nothing it
+	// receives (`prov_argument_only_read`).
+	Read_Only,
+	// Anything else, walked as a value.
+	Value,
+}
+
+// The first kind that applies, in this order: a receiver's declared mode decides
+// before its parameter's, and an `inout` argument that is neither a place nor reached
+// through carriers goes on as any other does.
+@(private)
+prov_argument_kind :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int, input: Prov_Call_Input) -> Prov_Argument_Kind {
+	c := graph.k.c
+	if call_packs(v, index) {
+		return .Pack
+	}
+	argument := v.bound[index]
+	if argument == nil {
+		return .Absent
+	}
+	inout := index < len(input.arguments) && input.arguments[index].mode == .Inout
+	if index == 0 && input.receiver == .Move {
+		return .Moved_Receiver
+	}
+	if inout && prov_names_inout_result(graph, argument) {
+		return .Inout_Result
+	}
+	if index == 0 && input.receiver == .Inout {
+		return .Inout_Receiver
+	}
+	if index == 0 && .Returns_View in CONTAINER_OP_EFFECTS[input.container] {
+		return .View_Receiver
+	}
+	if inout {
+		if _, _, place := prov_place_of(graph, argument); place {
+			return .Inout_Place
+		}
+		if len(prov_place_hops(graph, argument)) > 0 {
+			return .Inout_Through
+		}
+	}
+	if index == 0 && input.container == .Map_Lookup_Value {
+		return .Lookup_Receiver
+	}
+	if prov_argument_borrows_caller(graph, v, index, input.receiver, input.has_receiver) {
+		#partial switch prov_receiver_contract(c, symbol_of(c, v.resolution.chosen_overload)) {
+		case .Only_Reads:
+			if _, plain := prov_plain_slice_local(graph, argument); plain {
+				return .Only_Read_Slice
+			}
+		case .Copies:
+			return .Copied_Receiver
+		}
+		return .Borrowed
+	}
+	if !(index == 0 && input.has_receiver) && prov_argument_only_read(graph, argument, prov_parameter_type(graph, v, index)) {
+		return .Read_Only
+	}
+	return .Value
+}
+
 // design.md "Evaluation order", "Parameter semantics and ABI lowering",
 // "Splitting a mutable slice".
 // Keyed by the call node alone, as its capture is (`prov_input_capture`).

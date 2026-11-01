@@ -173,7 +173,7 @@ checked AST + settled lifecycle annotations
 | [provenance_input.odin](src/provenance_input.odin) | `Prov_Input`: body-local `Storage_Id` and `Value_Id` tables, zero meaning unresolved storage or no value; canonical typed places (`Prov_Place`). |
 | [provenance_form.odin](src/provenance_form.odin) | Each value's checked form (`Prov_Form`), with its operands, a call's argument and pack values, and the call a user operator stands for, all as values. |
 | [provenance_transfer.odin](src/provenance_transfer.odin), [provenance_transfer_facts.odin](src/provenance_transfer_facts.odin) | Typed transfers (constructors, owner views, payload extraction, widening, copies and moves) and how they apply to targets and regions. |
-| [provenance_call.odin](src/provenance_call.odin) | Checked call inputs: contract, signature, parameter modes, result type, argument slots in source evaluation order, a lending call's captured receiver, and the evaluated callee of a call through a procedure value, as `call_through_value` in `check_calls.odin` classifies it. |
+| [provenance_call.odin](src/provenance_call.odin) | Checked call inputs: contract, signature, parameter modes, result type, argument slots in source evaluation order, a lending call's captured receiver, and the evaluated callee of a call through a procedure value, as `call_through_value` in `check_calls.odin` classifies it. What a container operation does (`CONTAINER_OP_EFFECTS`), what a compiler-known procedure does with its receiver (`prov_receiver_contract`), and what an argument is to its call (`prov_argument_kind`). |
 | [provenance_read.odin](src/provenance_read.odin) | A leaf alias read, derived from a value and its form. |
 | [provenance_effect.odin](src/provenance_effect.odin) | Fact operations, their replay, and freezing. |
 | [provenance_event.odin](src/provenance_event.odin) | Event operations and their materialization. |
@@ -485,7 +485,7 @@ Keep these contracts:
   replaces what they hold. A carrier stored into a view parameter where the
   store names no one element, as `s[k]` with a variable `k`, lands in the
   slots standing for every element and in those of each constant element,
-  and replaces none (`prov_view_any_element_store`, `Prov_Event.any_element`);
+  and replaces none (`prov_view_any_element_store`, `Prov_Store_Any_Element`);
   any other store through a view also joins into the parameter itself. Each
   carrier the store copies is linked as a reborrow to the slots where it may
   land (`prov_reborrow_stored_content` for one inside a record), and only a
@@ -558,7 +558,7 @@ Keep these contracts:
   prints it write through those, so both stay lent.
 - **A call uses at once what its arguments reach.** After its arguments, a call that
   may run a program's code emits one deep `Load` of all of them
-  (`prov_use_reached_at_once`, `Prov_Event.at_once`). Being later than each argument,
+  (`prov_use_reached_at_once`, `Prov_Load_Kind.At_Once`). Being later than each argument,
   it keeps what it reads live for them, whatever their order, and `live_reborrow_of`
   also counts what it reads itself as in use. A source found only through what was
   reborrowed from it does not count (`at_once_reaches`): a copy points where its

@@ -396,7 +396,7 @@ Prov_State :: struct {
 	scope_drops:      map[Span]bool,
 	has_content_load: bool,
 	// A store through carriers that may replace what one place held
-	// (`Prov_Event.stored`), which the solve settles once reaching has.
+	// (`Prov_Event.one_place`), which the solve settles once reaching has.
 	has_replacing_store: bool,
 }
 

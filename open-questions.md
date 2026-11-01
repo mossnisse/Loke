@@ -51,23 +51,9 @@ the compiler, is the oracle for any of them.
   resolve a place loan to loans of the roots its carriers reach, as
   `resolve_content_reads` already materializes loaded reborrows after the
   forward pass, leaving one check.
-- **Flags stand in for kinds, and order for rules (P3).** `Publish`'s
-  modifiers (`stored`, `linked`, `retained`, `carried`, `permutes`, `strips`,
-  `element_loan`, `elements`, `any_element`, `view_slot`, `view_index`,
-  `view_reaching`, `replaces`) and `Load`'s (`deep`, `writable`, `walked`,
-  `element`) are each a destination or load form the walk worked out and the
-  solver works out again from the flags. A sum type for the store's target,
-  computed once by the walk, and one for the load's kind would let
-  `run_prov_event` and `publish_into_loan` dispatch once. `prov_call_argument`
-  tests twelve argument shapes in an order that matters, with nine callee
-  names checked by hand (`Slice_Ref_Next`, `indexed_next_lends`,
-  `Standard_Len`, `Standard_Cap`, `Standard_Hash`, `Adapter_Iter`,
-  `Iterator_Copy`, `Adapter_View`, `clone_copies_receiver`); printing takes a
-  path those tests do not, through `prov_erase` and `prov_printed_argument`.
-  [provenance_call.odin](src/provenance_call.odin) is where a per-argument mode
-  belongs, beside `CONTAINER_OP_EFFECTS`, and a compiler-known body with no source
-  to summarize should carry a written result contract rather than a name test in
-  the walk.
+- **Printing's arguments take a path of their own (P3).** A call's arguments are
+  classified once (`prov_argument_kind`), but printing goes through `prov_erase`
+  and `prov_printed_argument` instead, so it is not one of those kinds.
 - **An index's syntax as evidence (P3).** `prov_indices_may_write` reads an
   index's syntax where the global effects already say what a call writes. Asking
   them would accept more rather than simplify, and a call may also write through
