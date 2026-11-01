@@ -1,0 +1,12 @@
+L0641
+@17:2
+`carrier` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@26:2
+`carrier` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@36:2
+`carrier` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@47:2
+`carrier` cannot be used here: a read-only reborrow of it is still in use

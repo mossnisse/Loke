@@ -2778,9 +2778,10 @@ prov_reborrow :: proc(graph: ^Flow_Graph, slots: []int, destination: Type_Id, in
 		mutable_source := prov_slot_is_mutable_carrier(graph, slot) || prov_slot_is_loaded_mutable(graph, slot)
 		reborrowed := prov_slot_is_reborrow(graph, slot)
 		// A read-only copy loaded out through a pointer may copy a reborrow
-		// stored there, which only the solve can tell (`prov_reborrow_loaded`).
+		// stored there, which only the solve can tell (`prov_reborrow_loaded`), and so
+		// may one of a place a store or a call may land in (`prov_activate_landed_copies`).
 		pending := !mutable_source && !reborrowed &&
-			(prov_slot_is_loaded_read_only(graph, slot) || prov_slot_is_pending(graph, slot))
+			(prov_slot_is_loaded_read_only(graph, slot) || prov_slot_is_pending(graph, slot) || prov_slot_may_take_store(graph, slot))
 		reborrowed ||= pending
 		if !mutable_source && !reborrowed {
 			continue
@@ -2963,9 +2964,9 @@ prov_reborrow_loaded :: proc(graph: ^Flow_Graph, event: Prov_Event) {
 }
 
 // The pending reborrows taken from copies of `loaded`, which the solve found
-// to read a reborrow of a mutable carrier, now extend it.
+// to read a reborrow of a mutable carrier, now extend it. True if any did.
 @(private = "file")
-prov_activate_copies :: proc(graph: ^Flow_Graph, loaded: int) {
+prov_activate_copies :: proc(graph: ^Flow_Graph, loaded: int) -> (activated: bool) {
 	pending := make([dynamic]int, 0, 4, context.temp_allocator)
 	append(&pending, loaded)
 	for len(pending) > 0 {
@@ -2973,10 +2974,39 @@ prov_activate_copies :: proc(graph: ^Flow_Graph, loaded: int) {
 		for &reborrow in graph.reborrows {
 			if reborrow.pending && reborrow.source == slot {
 				reborrow.pending = false
+				activated = true
 				append(&pending, reborrow.derived)
 			}
 		}
 	}
+	return activated
+}
+
+// A read-only copy of a place the solve found a store or a call may leave a reborrow
+// of a mutable carrier in reborrows it too (design.md "Weakening and reborrows"). A copy
+// made before that store holds no loan of it, which the overlap check sees.
+@(private)
+prov_activate_landed_copies :: proc(graph: ^Flow_Graph) {
+	for activated := true; activated; {
+		activated = false
+		for reborrow in graph.reborrows {
+			if reborrow.from_store > 0 && prov_slot_reborrows_mutable(graph, reborrow.derived) {
+				activated = prov_activate_copies(graph, reborrow.derived) || activated
+			}
+		}
+	}
+}
+
+// Whether a read-only carrier sits in lasting storage a store through carriers or a
+// call may write. A parameter's own binding is no such place: nothing can write it.
+@(private = "file")
+prov_slot_may_take_store :: proc(graph: ^Flow_Graph, slot: int) -> bool {
+	entry := graph.prov_slots[slot]
+	sym := symbol_of(graph.k.c, entry.symbol)
+	if !prov_slot_is_stored(entry) || sym == nil || sym.kind == .Parameter && sym.immutable {
+		return false
+	}
+	return prov_type_is_read_only_carrier(graph.k.c, slot_carrier_type(graph, slot))
 }
 
 // Whether a pending reborrow derives `slot` (`Prov_Reborrow.pending`).
@@ -3024,10 +3054,13 @@ prov_slot_reborrows_mutable :: proc(graph: ^Flow_Graph, slot: int) -> bool {
 @(private = "file")
 prov_slot_is_loaded_read_only :: proc(graph: ^Flow_Graph, slot: int) -> bool {
 	entry := graph.prov_slots[slot]
-	c := graph.k.c
-	return entry.loaded && entry.content_type != INVALID_TYPE && type_is_carrier(c, entry.content_type) &&
-		!type_is_region_provider(c, entry.content_type) && type_underlying(c, entry.content_type) != TYPE_ALLOCATOR &&
-		!carrier_is_mutable(c, entry.content_type)
+	return entry.loaded && prov_type_is_read_only_carrier(graph.k.c, entry.content_type)
+}
+
+@(private = "file")
+prov_type_is_read_only_carrier :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	return type != INVALID_TYPE && type_is_carrier(c, type) && !type_is_region_provider(c, type) &&
+		type_underlying(c, type) != TYPE_ALLOCATOR && !carrier_is_mutable(c, type)
 }
 
 @(private = "file")

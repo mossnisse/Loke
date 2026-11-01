@@ -478,10 +478,11 @@ Prov_Reborrow :: struct {
 	// Loaded on the way to a place through `source` (`Prov_Load_Kind.Walked`): the
 	// access to that place stands for the use, so it suspends nothing.
 	walked: bool,
-	// Taken from a read-only carrier loaded out through a pointer, or from a
-	// copy of one, which extends a reborrow only once the solve finds that
-	// carrier read one of a mutable carrier stored there
-	// (`prov_reborrow_loaded`); until then the solve does not see it.
+	// Taken from a read-only carrier loaded out through a pointer, or in a place a
+	// store or a call may land in, or from a copy of one, which extends a reborrow only
+	// once the solve finds that carrier holds one of a mutable carrier
+	// (`prov_reborrow_loaded`, `prov_activate_landed_copies`); until then the solve does
+	// not see it.
 	pending: bool,
 	// Links carriers a call may have copied among each other, in both directions
 	// (`prov_link_copied_carriers`).
@@ -3360,6 +3361,9 @@ solve_provenance :: proc(k: ^Checker, graph: ^Flow_Graph) {
 	// Links depend on reach, and severing on links.
 	link_landed_stores(&state)
 	resolve_content_reads(&state)
+	if graph.has_linked_store {
+		prov_activate_landed_copies(graph)
+	}
 	solve_severing(&state)
 	solve_loan_liveness(&state)
 	report_provenance(&state)

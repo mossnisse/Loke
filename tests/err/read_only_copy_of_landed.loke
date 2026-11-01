@@ -1,0 +1,51 @@
+// design.md "Weakening and reborrows": a read-only carrier read back by name holds what a
+// store through a pointer, or a call that keeps its argument, left there, which only the
+// solve knows. So a copy of it reborrows what was left, whichever that is, and a write of
+// that conflicts while the copy is live.
+package main;
+
+Read_Only :: struct { to: ^int }
+
+keep :: proc(destination: ^mut Read_Only, @(escape=stored) carrier: ^mut int) { destination^.to = carrier; }
+
+stored_through_a_pointer :: proc(@(escape=stored) carrier: ^mut int) {
+	value := 1;
+	held := Read_Only{&value};
+	pointer := &mut held;
+	pointer^.to = carrier;
+	copy := held.to;
+	carrier^ = 1;
+	read := copy^;
+}
+
+kept_by_a_call :: proc(@(escape=stored) carrier: ^mut int) {
+	value := 1;
+	held := Read_Only{&value};
+	keep(&mut held, carrier);
+	copy := held.to;
+	carrier^ = 1;
+	read := copy^;
+}
+
+kept_through_a_pointer :: proc(@(escape=stored) carrier: ^mut int) {
+	value := 1;
+	held := Read_Only{&value};
+	pointer := &mut held;
+	keep(pointer, carrier);
+	copy := held.to;
+	carrier^ = 1;
+	read := copy^;
+}
+
+// A copy of a copy is the same reborrow.
+named_again :: proc(@(escape=stored) carrier: ^mut int) {
+	value := 1;
+	held := Read_Only{&value};
+	keep(&mut held, carrier);
+	copy := held.to;
+	again := copy;
+	carrier^ = 1;
+	read := again^;
+}
+
+main :: proc() {}

@@ -3459,6 +3459,15 @@ are left, as both come from what a call's landing joins rather than from the lin
 (known-gaps.md, "A carrier a call may have left stays after its place is replaced"
 and "What a call leaves through a pointer to one element counts for each").
 
+Moving these links to the solve first lost rejections: a read-only carrier read back by
+name, as `q := ro.to;` after `keep_ro(&mut ro, c);`, got a link only when the walk could
+already see one into it, and it could no longer. No fixture, comparison, or table caught
+that, as the tables read such a copy through a pointer, where it is loaded and pending
+already, and it took a table of call copies, written for the next step, to show it. So a
+copy of such a slot is now pending as a loaded one is, and the solve activates it from
+the links it finds (`prov_activate_landed_copies`). When moving links, check who reads
+them during the walk, as well as what the solve does with them.
+
 ### Provenance slots and regions stay apart
 
 A review of the provenance checker on 2026-11-01 proposed two generalizations. One

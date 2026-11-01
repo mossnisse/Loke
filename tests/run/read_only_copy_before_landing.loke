@@ -1,0 +1,37 @@
+// design.md "Weakening and reborrows": a read-only copy of a place holds only what the place
+// held then, so it does not reborrow what a later store leaves there, and one done with
+// leaves what was stored free.
+package main;
+
+import "core:fmt";
+
+Read_Only :: struct { to: ^int }
+
+keep :: proc(destination: ^mut Read_Only, @(escape=stored) carrier: ^mut int) { destination^.to = carrier; }
+
+copied_first :: proc(@(escape=stored) carrier: ^mut int) -> int {
+	value := 7;
+	held := Read_Only{&value};
+	copy := held.to;
+	keep(&mut held, carrier);
+	carrier^ += 1;
+	return copy^;
+}
+
+done_first :: proc(@(escape=stored) carrier: ^mut int) -> int {
+	value := 7;
+	held := Read_Only{&value};
+	pointer := &mut held;
+	pointer^.to = carrier;
+	copy := held.to;
+	read := copy^;
+	carrier^ += 1;
+	return read;
+}
+
+main :: proc() {
+	number := 1;
+	first := copied_first(&mut number);
+	second := done_first(&mut number);
+	fmt.println(first, second, number);
+}

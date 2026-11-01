@@ -412,6 +412,237 @@ stored_argument_reach_matrix :: proc(t: ^testing.T) {
 	}
 }
 
+// A call that may leave a carrier in two places of what its argument reaches
+// (design.md "Values that contain borrows"): each place may then hold a copy of the
+// other, in a direction the caller cannot know, and a call uses each mutable carrier it
+// can reach. Each verdict is worked out by hand as above.
+@(private = "file")
+CALL_COPY_PRELUDE :: `package main;
+Link :: struct { to: ^mut int }
+Pair :: struct { a: ^mut int, b: ^mut int }
+Holder :: struct { links: []mut Link }
+Slots :: struct { items: [2]Link }
+Mixed :: struct { a: ^mut int, b: ^int }
+RoLink :: struct { to: ^int }
+RoS :: struct { s: []int }
+flip :: proc() -> bool { return true; }
+duplicate :: proc(links: []mut Link) { links[0] = links[1]; }
+forward :: proc(links: []mut Link) { duplicate(links); }
+one_field :: proc(links: []mut Link) { links[0].to = links[1].to; }
+share :: proc(pair: ^mut Pair) { pair^.a = pair^.b; }
+in_an_array :: proc(links: inout [2]Link) { links[0] = links[1]; }
+behind_a_pointer :: proc(links: ^mut [2]Link) { links^[0] = links^[1]; }
+in_a_holder :: proc(holder: ^mut Holder) { holder^.links[0] = holder^.links[1]; }
+by_value_holder :: proc(holder: Holder) { holder.links[0] = holder.links[1]; }
+weakened :: proc(mixed: ^mut Mixed) { mixed^.b = mixed^.a; }
+weakened_view :: proc(mixed: []mut Mixed) { mixed[0].b = mixed[0].a; }
+keep_ro :: proc(dst: ^mut RoLink, @(escape=stored) c: ^mut int) { dst^.to = c; }
+keep_ro_copy :: proc(dst: ^mut RoLink, @(escape=stored) c: ^int) { dst^.to = c; }
+keep_pointer_ro :: proc(dst: ^mut ^int, @(escape=stored) c: ^mut int) { dst^ = c; }
+keep_rs :: proc(dst: ^mut RoS, @(escape=stored) s: []mut int) { dst^.s = s; }
+impl Slots {
+	shuffle :: proc(self: inout Slots) { self.items[0] = self.items[1]; }
+}
+`
+
+@(private = "file")
+Call_Copy_Place :: struct {
+	name, params, setup, call, first, second: string,
+}
+
+@(private = "file")
+COPY_ARRAY :: "v0 := 1; v1 := 2; ls := [2]Link{Link{&mut v0}, Link{&mut v1}};"
+@(private = "file")
+COPY_PAIR :: "v0 := 1; v1 := 2; pr := Pair{&mut v0, &mut v1};"
+@(private = "file")
+COPY_SLOTS :: "v0 := 1; v1 := 2; sl := Slots{[2]Link{Link{&mut v0}, Link{&mut v1}}};"
+
+@(private = "file")
+CALL_COPY_PLACES := [?]Call_Copy_Place {
+	{"copy_view_parameter", "s: []mut Link", "", "duplicate(s)", "s[0].to", "s[1].to"},
+	{"copy_view_parameter_any", "s: []mut Link, j: int, k: int", "", "duplicate(s)", "s[j].to", "s[k].to"},
+	{"copy_forwarded_parameter", "s: []mut Link", "", "forward(s)", "s[0].to", "s[1].to"},
+	{"copy_one_field_parameter", "s: []mut Link", "", "one_field(s)", "s[0].to", "s[1].to"},
+	{"copy_local_array", "", COPY_ARRAY, "duplicate(&mut ls[:])", "ls[0].to", "ls[1].to"},
+	{"copy_local_view", "", COPY_ARRAY + " view := &mut ls[:];", "duplicate(view)", "view[0].to", "view[1].to"},
+	{"copy_local_array_inout", "", COPY_ARRAY, "in_an_array(inout ls)", "ls[0].to", "ls[1].to"},
+	{"copy_inout_parameter", "ls: inout [2]Link", "", "in_an_array(inout ls)", "ls[0].to", "ls[1].to"},
+	{"copy_pointer_parameter", "a: ^mut [2]Link", "", "behind_a_pointer(a)", "a^[0].to", "a^[1].to"},
+	{"copy_pointer_to_local", "", COPY_ARRAY + " p := &mut ls;", "behind_a_pointer(p)", "p^[0].to", "p^[1].to"},
+	{"copy_pair_parameter", "t: ^mut Pair", "", "share(t)", "t^.a", "t^.b"},
+	{"copy_pair_local", "", COPY_PAIR, "share(&mut pr)", "pr.a", "pr.b"},
+	{"copy_pair_through_pointer", "", COPY_PAIR + " p := &mut pr;", "share(p)", "p^.a", "p^.b"},
+	{"copy_holder_parameter", "h: ^mut Holder", "", "in_a_holder(h)", "h^.links[0].to", "h^.links[1].to"},
+	{"copy_holder_by_value", "h: Holder", "", "by_value_holder(h)", "h.links[0].to", "h.links[1].to"},
+	{"copy_method_on_local", "", COPY_SLOTS, "sl.shuffle()", "sl.items[0].to", "sl.items[1].to"},
+	{"copy_method_on_inout", "sl: inout Slots", "", "sl.shuffle()", "sl.items[0].to", "sl.items[1].to"},
+}
+
+// `$CALL` is the call, and `$A` and `$B` the two places. Reading one may use what the
+// other was copied from, so copies done in turn still conflict.
+@(private = "file")
+CALL_COPY_CASES := [?]Store_Case {
+	{"both_copies_used", "$CALL; x := $A; y := $B; x^ = 1; y^ = 2;", true},
+	{"both_copies_other_order", "$CALL; x := $B; y := $A; x^ = 1; y^ = 2;", true},
+	{"copies_done_in_turn", "$CALL; x := $A; x^ = 1; y := $B; y^ = 2;", true},
+	{"one_copy", "$CALL; x := $A; x^ = 1;", false},
+	{"copies_before_call", "x := $A; y := $B; x^ = 1; y^ = 2; $CALL;", false},
+	{"copy_live_across_call", "x := $A; $CALL; x^ = 1;", true},
+	{"called_twice", "$CALL; $CALL; x := $A; y := $B; x^ = 1; y^ = 2;", true},
+	{"called_in_branch", "if (flip()) { $CALL; } x := $A; y := $B; x^ = 1; y^ = 2;", true},
+	{"called_in_loop", "for (i := 0; i < 2; i += 1) { $CALL; } x := $A; y := $B; x^ = 1; y^ = 2;", true},
+	{"read_before_call_in_loop", "for (i := 0; i < 2; i += 1) { x := $A; y := $B; x^ = 1; y^ = 2; $CALL; }", true},
+	{"other_storage_untouched", "$CALL; x := $A; y := o^.to; x^ = 1; y^ = 2;", false},
+	{"replaced_after_call", "$CALL; $A = fresh; x := $A; y := $B; x^ = 1; y^ = 2;", false},
+	{"other_replaced_after_call", "$CALL; $B = fresh; x := $A; y := $B; x^ = 1; y^ = 2;", false},
+}
+
+// What the place form changes: `s[j]`, or an element of a view a record holds, names
+// no one place. So nothing replaces it, its copies may be of one element, and one slot
+// stands for both places, which reading in turn does not make a conflict.
+@(private = "file")
+call_copy_rejected :: proc(place: Call_Copy_Place, entry: Store_Case) -> bool {
+	switch place.name {
+	case "copy_view_parameter_any", "copy_holder_parameter", "copy_holder_by_value":
+		switch entry.name {
+		case "copies_before_call", "replaced_after_call", "other_replaced_after_call":
+			return true
+		case "copies_done_in_turn":
+			return false
+		}
+	}
+	return entry.rejected
+}
+
+// Where the compiler disagrees with the rules: known-gaps.md "A copy out of a view in a
+// record is not used by a call given the record". Listed so that closing it shows up here.
+@(private = "file")
+call_copy_wrongly_accepted :: proc(place: Call_Copy_Place, entry: Store_Case) -> bool {
+	return place.name == "copy_holder_by_value" && entry.name == "copy_live_across_call"
+}
+
+@(test)
+call_copy_matrix :: proc(t: ^testing.T) {
+	names := make([dynamic]string, context.temp_allocator)
+	sources := make([dynamic]string, context.temp_allocator)
+	first := strings.count(CALL_COPY_PRELUDE, "\n") + 1
+	for place in CALL_COPY_PLACES {
+		source := strings.builder_make(context.temp_allocator)
+		strings.write_string(&source, CALL_COPY_PRELUDE)
+		for entry in CALL_COPY_CASES {
+			text, _ := strings.replace_all(entry.body, "$CALL", place.call, context.temp_allocator)
+			text, _ = strings.replace_all(text, "$A", place.first, context.temp_allocator)
+			text, _ = strings.replace_all(text, "$B", place.second, context.temp_allocator)
+			params := place.params
+			if strings.contains(text, "o^") {
+				params = fmt.tprintf("%s%so: ^mut Link", params, params == "" ? "" : ", ")
+			}
+			if strings.contains(text, "fresh") {
+				params = fmt.tprintf("%s%s@(escape=stored) fresh: ^mut int", params, params == "" ? "" : ", ")
+			}
+			// Every case takes up four lines, which the check below counts on.
+			fmt.sbprintf(&source, "%s :: proc(%s) {{\n\t%s\n\t%s\n}}\n", entry.name, params, place.setup, text)
+		}
+		strings.write_string(&source, "main :: proc() {}\n")
+		append(&names, place.name)
+		append(&sources, strings.to_string(source))
+	}
+	errors, compiled := store_matrix_compile(t, names[:], sources[:])
+	if !compiled {
+		return
+	}
+	for place, index in CALL_COPY_PLACES {
+		for entry, at in CALL_COPY_CASES {
+			expected := call_copy_rejected(place, entry) && !call_copy_wrongly_accepted(place, entry)
+			store_matrix_expect(t, place.name, entry.name, first + 4 * at, errors[index], expected)
+		}
+	}
+}
+
+@(private = "file")
+COPY_LOCALS :: "v := 1; w := 2; "
+@(private = "file")
+COPY_MIXED :: COPY_LOCALS + "mx := Mixed{&mut v, &w}; "
+@(private = "file")
+COPY_RO :: COPY_LOCALS + "ro := RoLink{&v}; "
+@(private = "file")
+COPY_RO_TWO :: COPY_RO + "ro2 := RoLink{&w}; "
+@(private = "file")
+COPY_KEPT :: "@(escape=stored) c: ^mut int"
+@(private = "file")
+COPY_VIEW_KEPT :: "@(escape=stored) s: []mut int"
+@(private = "file")
+COPY_RS :: "arr := [2]int{1, 2}; rs := RoS{arr[:]}; keep_rs(&mut rs, s); q := rs.s; "
+
+// A read-only carrier read back by name holds what a store, a call that keeps its
+// argument, or a call that copies may have left there, which only the solve knows, so
+// a copy of it is a read-only reborrow. A write of what it reborrows conflicts while it
+// is live; a read does not, and neither does anything done with what it held before.
+@(private = "file")
+READ_ONLY_COPY_CASES := [?]Stored_Reach_Case {
+	{"weakened_parameter", "m: ^mut Mixed", "weakened(m); x := m^.b; m^.a^ = 1; y := x^;", true},
+	{"weakened_parameter_named_copy", "m: ^mut Mixed", "weakened(m); x := m^.b; q := x; m^.a^ = 1; y := q^;", true},
+	{"weakened_parameter_done", "m: ^mut Mixed", "weakened(m); x := m^.b; y := x^; m^.a^ = 1;", false},
+	{"weakened_parameter_read", "m: ^mut Mixed", "weakened(m); x := m^.b; y := m^.a^; z := x^;", false},
+	{"weakened_local", "", COPY_MIXED + "weakened(&mut mx); x := mx.b; mx.a^ = 1; y := x^;", true},
+	{"weakened_local_named_copy", "", COPY_MIXED + "weakened(&mut mx); x := mx.b; q := x; mx.a^ = 1; y := q^;", true},
+	{"weakened_local_done", "", COPY_MIXED + "weakened(&mut mx); x := mx.b; y := x^; mx.a^ = 1;", false},
+	{"weakened_local_read", "", COPY_MIXED + "weakened(&mut mx); x := mx.b; y := mx.a^; z := x^;", false},
+	{"weakened_view_local", "", COPY_LOCALS + "ms := [1]Mixed{Mixed{&mut v, &w}}; weakened_view(&mut ms[:]); x := ms[0].b; ms[0].a^ = 1; y := x^;", true},
+	{"weakened_through_pointer", "", COPY_MIXED + "p := &mut mx; weakened(p); x := p^.b; p^.a^ = 1; y := x^;", true},
+	{"weakened_through_pointer_read_by_name", "", COPY_MIXED + "p := &mut mx; weakened(p); x := mx.b; mx.a^ = 1; y := x^;", true},
+	{"weakened_in_loop_copy_first", "", COPY_MIXED + "for (i := 0; i < 2; i += 1) { x := mx.b; q := x; mx.a^ = 1; y := q^; weakened(&mut mx); }", true},
+	{"kept_local", COPY_KEPT, COPY_RO + "keep_ro(&mut ro, c); q := ro.to; c^ = 1; y := q^;", true},
+	{"kept_local_named_copy", COPY_KEPT, COPY_RO + "keep_ro(&mut ro, c); q := ro.to; r := q; c^ = 1; y := r^;", true},
+	{"kept_local_done", COPY_KEPT, COPY_RO + "keep_ro(&mut ro, c); q := ro.to; y := q^; c^ = 1;", false},
+	{"kept_by_pointer", COPY_KEPT, COPY_RO + "p := &mut ro; keep_ro(p, c); q := ro.to; c^ = 1; y := q^;", true},
+	{"kept_whole_record_copy", COPY_KEPT, COPY_RO + "keep_ro(&mut ro, c); h := ro; c^ = 1; y := h.to^;", true},
+	{"kept_whole_record_copy_done", COPY_KEPT, COPY_RO + "keep_ro(&mut ro, c); h := ro; y := h.to^; c^ = 1;", false},
+	{"kept_in_named_pointer", COPY_KEPT, COPY_LOCALS + "r: ^int = &v; keep_pointer_ro(&mut r, c); q := r; c^ = 1; y := q^;", true},
+	{"kept_in_named_pointer_done", COPY_KEPT, COPY_LOCALS + "r: ^int = &v; keep_pointer_ro(&mut r, c); q := r; y := q^; c^ = 1;", false},
+	{"kept_read_only_view", COPY_VIEW_KEPT, COPY_RS + "s[0] = 1; y := q[0];", true},
+	{"kept_read_only_view_done", COPY_VIEW_KEPT, COPY_RS + "y := q[0]; s[0] = 1;", false},
+	{"stored_by_hand", COPY_KEPT, COPY_RO + "p := &mut ro; p^.to = c; q := ro.to; c^ = 1; y := q^;", true},
+	{"stored_by_hand_named_copy", COPY_KEPT, COPY_RO + "p := &mut ro; p^.to = c; q := ro.to; r := q; c^ = 1; y := r^;", true},
+	{"stored_by_hand_done", COPY_KEPT, COPY_RO + "p := &mut ro; p^.to = c; q := ro.to; y := q^; c^ = 1;", false},
+	{"stored_by_hand_read", COPY_KEPT, COPY_RO + "p := &mut ro; p^.to = c; q := ro.to; y := c^; z := q^;", false},
+	{"stored_through_local_view", COPY_KEPT, COPY_LOCALS + "ros := [1]RoLink{RoLink{&v}}; view := &mut ros[:]; view[0].to = c; q := ros[0].to; c^ = 1; y := q^;", true},
+	{"copy_before_the_store", COPY_KEPT, COPY_RO + "q := ro.to; p := &mut ro; p^.to = c; c^ = 1; y := q^;", false},
+	{"copy_before_the_call", COPY_KEPT, COPY_RO + "q := ro.to; keep_ro(&mut ro, c); c^ = 1; y := q^;", false},
+	{"passed_on_by_call", COPY_KEPT, COPY_RO_TWO + "keep_ro(&mut ro, c); keep_ro_copy(&mut ro2, ro.to); q := ro2.to; c^ = 1; y := q^;", true},
+	{"passed_on_in_loop", COPY_KEPT, COPY_RO_TWO + "for (i := 0; i < 2; i += 1) { keep_ro_copy(&mut ro2, ro.to); keep_ro(&mut ro, c); } q := ro2.to; c^ = 1; y := q^;", true},
+	{"stored_on_by_hand", COPY_KEPT, COPY_RO_TWO + "p := &mut ro; pp := &mut ro2; p^.to = c; q := ro.to; pp^.to = q; r := ro2.to; c^ = 1; y := r^;", true},
+	{"plain_read_only_never_conflicts", COPY_KEPT, COPY_RO + "q := ro.to; r := q; c^ = 1; y := r^;", false},
+}
+
+// known-gaps.md "A read of a carrier a call may have weakened conflicts with the copy".
+@(private = "file")
+read_only_copy_over_rejected :: proc(entry: Stored_Reach_Case) -> bool {
+	return entry.name == "weakened_parameter_read" || entry.name == "weakened_local_read"
+}
+
+@(test)
+read_only_copy_matrix :: proc(t: ^testing.T) {
+	source := strings.builder_make(context.temp_allocator)
+	strings.write_string(&source, CALL_COPY_PRELUDE)
+	first := strings.count(CALL_COPY_PRELUDE, "\n") + 1
+	for entry in READ_ONLY_COPY_CASES {
+		// Every case takes up four lines, which the check below counts on.
+		fmt.sbprintf(&source, "%s :: proc(%s) {{\n\t\n\t%s\n}}\n", entry.name, entry.params, entry.body)
+	}
+	strings.write_string(&source, "main :: proc() {}\n")
+	names := []string{"read_only_copy"}
+	sources := []string{strings.to_string(source)}
+	errors, compiled := store_matrix_compile(t, names, sources)
+	if !compiled {
+		return
+	}
+	for entry, at in READ_ONLY_COPY_CASES {
+		expected := entry.rejected || read_only_copy_over_rejected(entry)
+		store_matrix_expect(t, names[0], entry.name, first + 4 * at, errors[0], expected)
+	}
+}
+
 // Compiles each source, and returns the lines each one reports an error at.
 @(private = "file")
 store_matrix_compile :: proc(t: ^testing.T, names, sources: []string) -> (errors: [][]int, compiled: bool) {

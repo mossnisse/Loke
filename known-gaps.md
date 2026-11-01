@@ -388,6 +388,50 @@ main :: proc() {}
 
 Read the other element before the call, or end its use before using `other`.
 
+### A copy out of a view in a record is not used by a call given the record
+
+[Weakening and reborrows](design.md#weakening-and-reborrows) has a call use each mutable
+carrier it can reach, and a copy out of what it reaches is suspended by that. Given the
+view itself or a pointer to the record, that is `L0641`. Given the record by value, the
+call does not count as using the copy:
+
+```loke
+package main;
+Link :: struct { to: ^mut int }
+Holder :: struct { links: []mut Link }
+duplicate :: proc(holder: Holder) { holder.links[0] = holder.links[1]; }
+live_across_the_call :: proc(h: Holder) {
+    x := h.links[0].to;
+    duplicate(h); // should be L0641
+    x^ = 1;
+}
+main :: proc() {}
+```
+
+[carrier_store_matrix_test.odin](tests/carrier_store_matrix_test.odin) lists it.
+
+### A read of a carrier a call may have weakened conflicts with the copy
+
+A read-only copy does not suspend a read of what it reborrows
+([Weakening and reborrows](design.md#weakening-and-reborrows)), and after `m^.b = m^.a;`
+by hand the read below is accepted. After a call that does the same, it is `L0641`,
+as the links a call's copies get say nothing of which carrier was weakened:
+
+```loke
+package main;
+Mixed :: struct { a: ^mut int, b: ^int }
+weakened :: proc(mixed: ^mut Mixed) { mixed^.b = mixed^.a; }
+read_while_copy_live :: proc(m: ^mut Mixed) {
+    weakened(m);
+    x := m^.b;
+    y := m^.a^; // L0641; should be accepted
+    z := x^;
+}
+main :: proc() {}
+```
+
+Read through the mutable carrier before making the copy.
+
 ### A reordering of fields through a traversal binding is rejected
 
 [Weakening and reborrows](design.md#weakening-and-reborrows) says a reordering leaves
