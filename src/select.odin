@@ -149,6 +149,8 @@ activate_when_items :: proc(k: ^Checker, pkg: ^Package) -> bool {
 	if pkg == nil || pkg.scope == nil {
 		return false
 	}
+	k.c.impls_declaring += 1
+	defer k.c.impls_declaring -= 1
 	saved := save_checker_location(k)
 	defer restore_checker_location(k, saved)
 	k.scope, k.pkg, k.lookup_pkg = pkg.scope, pkg.id, pkg.id
@@ -308,7 +310,6 @@ callee_is_builtin :: proc(k: ^Checker, callee: Expr, kind: Builtin_Kind) -> bool
 // record, enum, or interface written inside a `when` condition declares its own
 // members rather than naming an outer one. The switch is exhaustive, so a new
 // form must say which it is.
-@(private = "file")
 first_unresolved_name :: proc(k: ^Checker, e: Expr) -> string {
 	if e == nil {
 		return ""

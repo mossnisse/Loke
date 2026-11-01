@@ -93,6 +93,16 @@ Body_Context :: struct {
 	// The innermost `parallel` block of this procedure being checked, which a
 	// `spawn` joins (design.md "Spawn statements").
 	parallel_block:    ^Stmt_Parallel,
+	// The statements still to come in the current scope, for
+	// `hoist_local_lifecycle_hooks`.
+	following:         ^Following_Stmts,
+}
+
+// What follows a statement: the rest of its sequence and, in a selected `when`
+// branch, which has no scope of its own, the rest of the sequence around it.
+Following_Stmts :: struct {
+	stmts: []Stmt,
+	outer: ^Following_Stmts,
 }
 
 // What a statement can do to control flow.
@@ -113,6 +123,8 @@ prepare_package :: proc(k: ^Checker, package_id: Package_Id) {
 	if pkg == nil {
 		return
 	}
+	k.c.impls_declaring += 1
+	defer k.c.impls_declaring -= 1
 	if pkg.scope == nil {
 		pkg.scope = new_scope(k.c, build_universe(k.c), .Package)
 	}
@@ -3100,6 +3112,9 @@ check_block :: proc(k: ^Checker, b: ^Block) -> Flow_Info {
 
 // The combined flow of a statement sequence: a block's, or one switch case's.
 check_stmts :: proc(k: ^Checker, stmts: []Stmt) -> Flow_Info {
+	outer_following := k.body.following
+	k.body.following = nil
+	defer k.body.following = outer_following
 	flow := check_stmt_sequence(k, stmts)
 	report_unread_required_results(k, stmts)
 	report_local_copy_decisions(k, stmts)
@@ -3142,7 +3157,12 @@ report_local_copy_decisions :: proc(k: ^Checker, stmts: []Stmt) {
 @(private = "file")
 check_stmt_sequence :: proc(k: ^Checker, stmts: []Stmt) -> Flow_Info {
 	flow := FLOWS
-	for stmt in stmts {
+	outer := k.body.following
+	defer k.body.following = outer
+	following := Following_Stmts{outer = outer}
+	k.body.following = &following
+	for stmt, index in stmts {
+		following.stmts = stmts[index + 1:]
 		result := check_stmt(k, stmt)
 		flow.returns ||= result.returns
 		flow.breaks ||= result.breaks
@@ -3222,6 +3242,98 @@ hoist_body_local_proc :: proc(k: ^Checker, d: ^Decl) {
 	}
 }
 
+// A body-local record's hooks, from the `impl` statements after it in its scope
+// (`declare_local_impl_hooks`). A local name is never shadowed in its body, so the
+// names it goes by say which blocks are its own.
+@(private = "file")
+hoist_local_lifecycle_hooks :: proc(k: ^Checker, d: ^Decl) {
+	if d.kind != .Const || len(d.values) != 1 || len(d.symbols) != 1 || k.body.following == nil {
+		return
+	}
+	record, is_record := d.values[0].(^Type_Record)
+	sym := symbol_of(k.c, d.symbols[0])
+	if !is_record || record.kind != .Struct || sym == nil || sym.kind != .Type {
+		return
+	}
+	subject := sym.type
+	names := make([dynamic]string, 0, 2, context.temp_allocator)
+	append(&names, d.names[0].text)
+	for following := k.body.following; following != nil; following = following.outer {
+		hoist_hooks_in_stmts(k, subject, &names, following.stmts)
+	}
+	// A `when` condition asked on the way may have read the record before a hook.
+	delete_key(&k.c.lifecycles, type_underlying(k.c, subject))
+}
+
+@(private = "file")
+hoist_hooks_in_stmts :: proc(k: ^Checker, subject: Type_Id, names: ^[dynamic]string, stmts: []Stmt) {
+	for stmt in stmts {
+		hoist_hooks_in_stmt(k, subject, names, stmt)
+	}
+}
+
+@(private = "file")
+hoist_hooks_in_stmt :: proc(k: ^Checker, subject: Type_Id, names: ^[dynamic]string, stmt: Stmt) {
+	names_subject :: proc(names: []string, e: Expr) -> bool {
+		ident, is_ident := e.(^Expr_Ident)
+		return is_ident && slice.contains(names, ident.name)
+	}
+	#partial switch s in stmt {
+	case ^Item_Impl:
+		if names_subject(names[:], s.type) {
+			declare_local_impl_hooks(k, s, subject)
+		}
+	case ^Decl:
+		// `Alias :: Record;` names the same record.
+		if s.kind == .Const && len(s.names) == 1 && len(s.values) == 1 && names_subject(names[:], s.values[0]) {
+			append(names, s.names[0].text)
+		}
+	case ^Block:
+		hoist_hooks_in_stmts(k, subject, names, s.stmts)
+	case ^Stmt_If:
+		if s.then != nil {
+			hoist_hooks_in_stmts(k, subject, names, s.then.stmts)
+		}
+		hoist_hooks_in_stmt(k, subject, names, s.otherwise)
+	case ^Stmt_For:
+		if s.body != nil {
+			hoist_hooks_in_stmts(k, subject, names, s.body.stmts)
+		}
+	case ^Stmt_Foreach:
+		// A static expansion checks copies of its body, each a block of its own.
+		if s.body != nil && !any_static_binding(s.bindings) {
+			hoist_hooks_in_stmts(k, subject, names, s.body.stmts)
+		}
+	case ^Stmt_Switch:
+		for case_clause in s.cases {
+			hoist_hooks_in_stmts(k, subject, names, case_clause.stmts)
+		}
+	case ^Stmt_Defer:
+		hoist_hooks_in_stmt(k, subject, names, s.stmt)
+	case ^Stmt_Parallel:
+		if s.body != nil {
+			hoist_hooks_in_stmts(k, subject, names, s.body.stmts)
+		}
+	case ^Stmt_When:
+		// A condition naming a constant declared later cannot be answered yet.
+		if first_unresolved_name(k, s.cond) != "" {
+			return
+		}
+		probe := begin_probe(k.c)
+		value, answered := check_when_condition(k, s.cond)
+		end_probe(k.c, probe)
+		switch {
+		case !answered:
+		case value:
+			if s.then != nil {
+				hoist_hooks_in_stmts(k, subject, names, s.then.stmts)
+			}
+		case:
+			hoist_hooks_in_stmt(k, subject, names, s.otherwise)
+		}
+	}
+}
+
 // The package phases, in the same order, for a declaration in a body: one
 // written there, or a capture literal's record.
 check_local_declaration :: proc(k: ^Checker, d: ^Decl) {
@@ -3244,6 +3356,7 @@ check_local_declaration :: proc(k: ^Checker, d: ^Decl) {
 	install_symbols(k.scope, k.c, d.symbols)
 	create_nominal_type_shell(k, d)
 	resolve_declaration_signature(k, d)
+	hoist_local_lifecycle_hooks(k, d)
 	hoist_body_local_proc(k, d)
 	// Local symbols do not exist during the package-wide attribute pass.
 	validate_decl_attributes(k, d, .Local)

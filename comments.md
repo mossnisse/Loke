@@ -606,6 +606,20 @@ as an error in whichever package first instantiated it. `@(fieldwise_copy)` on a
 record with no hook is an error for the same reason the rule exists: written ahead
 of time, it would decide for a hook nobody has written yet.
 
+### A body-local record's hooks come before their block
+
+A [hook belongs to its record wherever its block is
+written](design.md#lifecycle-hooks-and-resource-types), but a body is checked in
+order, and a value made before a body-local block needs an answer about its record
+straight away: whether a copy clones is decided at the copy. Keeping the answer open
+until the block is reached would not repair the decisions already made, so the hooks
+join the record where it is declared.
+
+Only the two lifecycle hooks do. Their roles are written in the syntax and their
+signatures are fixed, so nothing needs to resolve them early, and a block's names
+may be declared after the record. Hoisting a whole block would make methods visible
+above the statement that declares them, with signatures that cannot resolve there.
+
 ### Value-semantic assignment
 
 Copying a dynamic array or map produces an independent value; pointers and

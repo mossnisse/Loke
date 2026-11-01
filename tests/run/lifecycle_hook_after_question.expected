@@ -1,0 +1,53 @@
+false
+1
+asked close 1
+2 3
+value close 3
+value close 2
+dup 4
+4 14
+copied close 14
+copied close 4
+false
+5 1
+held close 6
+held close 5
+7
+later close 7
+8
+nested close 8
+9
+aliased close 9
+10
+selected close 10
+11
+when close 11
+12
+return close 12
+13
+first close 13
+14
+second close 14
+false 1
+generic close 1
+false s
+generic close s
+helper
+a
+later dup
+copy helper
+later dup
+holder ask
+1 1 1
+false false
+d
+own dup
+2 2 true
+two helper
+two helper
+g 3
+two drop g
+later drop a
+15 16
+when plain close 16
+when generic drop 15

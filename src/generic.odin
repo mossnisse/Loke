@@ -3321,7 +3321,7 @@ register_generic_impl :: proc(k: ^Checker, item: ^Item_Impl, template: Symbol_Id
 	// A late block still applies to instances that already exist.
 	if existing := k.c.generic_templates[template]; existing != nil {
 		for instance in existing.instances {
-			install_one_generic_impl(k, existing, instance, block)
+			install_one_generic_impl(k, instance, block)
 		}
 	}
 	return true
@@ -3434,12 +3434,103 @@ install_generic_impls :: proc(k: ^Checker, template: ^Generic_Template, instance
 		}
 		ordered[j + 1] = entry
 	}
-	for block in ordered {
-		install_one_generic_impl(k, template, instance, block)
+	install_generic_impl_blocks(k, instance, ordered[:])
+}
+
+install_one_generic_impl :: proc(k: ^Checker, instance: ^Instance, block: ^Generic_Impl) {
+	blocks := [1]^Generic_Impl{block}
+	install_generic_impl_blocks(k, instance, blocks[:])
+}
+
+// One block being installed on an instance.
+@(private = "file")
+Impl_Install :: struct {
+	block:     ^Generic_Impl,
+	clone:     ^Item_Impl,
+	scope:     ^Scope,
+	conflicts: []Impl_Conflict,
+}
+
+// design.md "Lifecycle hooks and resource types": a hook counts wherever it is
+// written among the blocks. So every member of every block is declared first,
+// which makes each hook's role known, and the hooks' bounds are evaluated before
+// any other member's: a bound on `helper` that asks `is_copyable` sees a
+// `hook(copy)` written after it, in this block or another. A hook's own bound
+// that asks gets what is known so far (`Type_Info.hooks_resolving`).
+@(private = "file")
+install_generic_impl_blocks :: proc(k: ^Checker, instance: ^Instance, blocks: []^Generic_Impl) {
+	installs := make([dynamic]Impl_Install, 0, len(blocks), context.temp_allocator)
+	set_hooks_resolving(k.c, instance.type, true)
+	for block in blocks {
+		if install, matched := declare_generic_impl_block(k, instance, block); matched {
+			append(&installs, install)
+		}
+	}
+	for install in installs {
+		resolve_instance_impl_members(k, instance, install, hooks = true)
+	}
+	set_hooks_resolving(k.c, instance.type, false)
+	for install in installs {
+		resolve_instance_impl_members(k, instance, install, hooks = false)
+	}
+	for install in installs {
+		block := install.block
+		saved := enter_impl_install(k, instance, install)
+		// Groups go last: a group declared before its members must not take one in
+		// before its bound has excluded it.
+		for member in install.clone.members {
+			if d, is_decl := member.(^Decl); is_decl && decl_is_proc_group(d) {
+				resolve_declaration_signature(k, d)
+			}
+		}
+		for member in install.clone.members {
+			if delegate, is_delegate := member.(^Item_Delegate); is_delegate {
+				check_delegate(k, delegate, instance.type, install.clone.kind, block.pkg)
+			}
+		}
+		append(&k.c.pending_impl_instances, Pending_Impl{item = install.clone, scope = install.scope, pkg = block.pkg, file = block.file, file_node = block.file_node, subject = instance.type, conflicts = install.conflicts})
+		restore_checker_location(k, saved)
 	}
 }
 
-install_one_generic_impl :: proc(k: ^Checker, template: ^Generic_Template, instance: ^Instance, block: ^Generic_Impl) {
+// Reacquires the type: resolving a member may grow the type store.
+@(private = "file")
+set_hooks_resolving :: proc(c: ^Compiler, type: Type_Id, resolving: bool) {
+	if info := type_of(c, type); info != nil {
+		info.hooks_resolving = resolving
+	}
+}
+
+// Positions the checker in the block, in its own scope.
+@(private = "file")
+enter_impl_install :: proc(k: ^Checker, instance: ^Instance, install: Impl_Install) -> Checker_Location {
+	block := install.block
+	saved := enter_generic_location(k, install.scope, block.pkg, block.pkg, INVALID_TYPE, block.file, block.file_node)
+	k.impl_type = instance.type
+	return saved
+}
+
+// The block's lifecycle hooks, or its other members that are not groups, each
+// with its bound.
+@(private = "file")
+resolve_instance_impl_members :: proc(k: ^Checker, instance: ^Instance, install: Impl_Install, hooks: bool) {
+	saved := enter_impl_install(k, instance, install)
+	defer restore_checker_location(k, saved)
+	for member in install.clone.members {
+		d, is_decl := member.(^Decl)
+		if !is_decl || decl_is_proc_group(d) {
+			continue
+		}
+		if decl_is_lifecycle_hook(d) == hooks {
+			resolve_declaration_signature(k, d)
+			exclude_member_on_failed_bound(k, d)
+		}
+	}
+}
+
+// Whether the block applies to the instance, and if so its declared members.
+@(private = "file")
+declare_generic_impl_block :: proc(k: ^Checker, instance: ^Instance, block: ^Generic_Impl) -> (install: Impl_Install, matched: bool) {
 	if len(block.args) != len(instance.bindings) {
 		return
 	}
@@ -3505,25 +3596,7 @@ install_one_generic_impl :: proc(k: ^Checker, template: ^Generic_Template, insta
 	k.impl_type = instance.type
 	conflicts := declare_instance_impl_members(k, clone, instance, block)
 	append(&instance.impls, block)
-	// Resolved here, in the block's own scope. Groups go last: a group declared
-	// before its members must not take one in before its bound has excluded it.
-	for member in clone.members {
-		if d, is_decl := member.(^Decl); is_decl && !decl_is_proc_group(d) {
-			resolve_declaration_signature(k, d)
-			exclude_member_on_failed_bound(k, d)
-		}
-	}
-	for member in clone.members {
-		if d, is_decl := member.(^Decl); is_decl && decl_is_proc_group(d) {
-			resolve_declaration_signature(k, d)
-		}
-	}
-	for member in clone.members {
-		if delegate, is_delegate := member.(^Item_Delegate); is_delegate {
-			check_delegate(k, delegate, instance.type, clone.kind, block.pkg)
-		}
-	}
-	append(&k.c.pending_impl_instances, Pending_Impl{item = clone, scope = scope, pkg = block.pkg, file = block.file, file_node = block.file_node, subject = instance.type, conflicts = conflicts})
+	return Impl_Install{block = block, clone = clone, scope = scope, conflicts = conflicts}, true
 }
 
 @(private = "file")
@@ -3625,6 +3698,7 @@ declare_instance_impl_members :: proc(k: ^Checker, item: ^Item_Impl, instance: ^
 				lookup_pkg = block.pkg,
 				owner_type = subject,
 				public     = declaration_is_public(k, d),
+				hook       = decl_hook_kind(d),
 				kind       = decl_proc_literal(d) != nil ? Symbol_Kind.Proc : Symbol_Kind.Const,
 				def_scope  = k.scope,
 				def_file   = k.file,

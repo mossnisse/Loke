@@ -1,0 +1,93 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Lifecycle hooks and resource types": a hook belongs to its record
+// wherever its block is written, and that holds for what rejects a use too.
+
+Later_Copy :: struct($T: type) { value: T }
+impl Later_Copy($T) {
+	helper :: proc(self) where is_copyable(Later_Copy(T)) { fmt.println("helper"); }
+	dup :: hook(copy) proc(self, allocator: Allocator) -> Result(Later_Copy(T), Allocator_Error) where T == int {
+		return .ok(Later_Copy(T){self.value});
+	}
+}
+
+// One block asks, and another declares the hook its bound leaves out.
+Two_Blocks :: struct($T: type) { value: T }
+impl Two_Blocks(string) {
+	helper :: proc(self) where is_copyable(Two_Blocks(string)) { fmt.println("helper"); }
+}
+impl Two_Blocks($T) {
+	dup :: hook(copy) proc(self, allocator: Allocator) -> Result(Two_Blocks(T), Allocator_Error) where T == int {
+		return .ok(Two_Blocks(T){self.value});
+	}
+}
+
+generic_uses :: proc() {
+	a := Later_Copy(string){"a"};
+	b := a;
+	a.helper();
+	fmt.println(b.value);
+
+	c := Two_Blocks(string){"c"};
+	d := c;
+	c.helper();
+	fmt.println(d.value);
+}
+
+// A body-local record's hooks count before their block's statement.
+local_uses :: proc() {
+	H :: move_only struct { fd: int }
+	a := H{1};
+	a.close();
+	impl H { close :: hook(drop) proc(self: inout H) { fmt.println("close", self.fd); } }
+	fmt.println(a.fd);
+
+	P :: struct @(fieldwise_copy) { x, y: int }
+	x, y := P{1, 2};
+	impl P { close :: hook(drop) proc(self: inout P) { fmt.println("close", self.x); } }
+	fmt.println(x, y);
+}
+
+// A method stays out of sight until its block, though a hook beside it does not.
+local_method :: proc() {
+	H :: move_only struct { fd: int }
+	a := H{1};
+	a.method();
+	impl H {
+		method :: proc(self) { fmt.println("method"); }
+		close :: hook(drop) proc(self: inout H) { fmt.println("close", self.fd); }
+	}
+}
+
+// known-gaps.md "A hook in a `when` on a later constant comes too late for a record
+// already used": what could not be selected where the record is declared.
+too_late :: proc() {
+	H :: move_only struct { fd: int }
+	a := H{1};
+	N :: 1;
+	when (N == 1) {
+		impl H { close :: hook(drop) proc(self: inout H) { fmt.println("close", self.fd); } }
+	}
+	fmt.println(a.fd);
+}
+
+// No value yet, so the same block is in time.
+in_time :: proc() {
+	H :: move_only struct { fd: int }
+	N :: 1;
+	when (N == 1) {
+		impl H { close :: hook(drop) proc(self: inout H) { fmt.println("close", self.fd); } }
+	}
+	a := H{1};
+	fmt.println(a.fd);
+}
+
+main :: proc() {
+	generic_uses();
+	local_uses();
+	local_method();
+	too_late();
+	in_time();
+}

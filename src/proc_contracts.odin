@@ -23,9 +23,9 @@ check_borrow_argument :: proc(k: ^Checker, value: Expr) -> bool {
 result_needs_contract :: proc(c: ^Compiler, type: Type_Id, inout_result: bool) -> bool {
 	if type == INVALID_TYPE { return false }
 	if inout_result || type_is_carrier(c, type) { return true }
-	// Hooks may still be resolving here. Asking lifecycle_of would cache an
-	// incomplete lifecycle and silently lose later copy/drop hooks. Aggregate
-	// results can carry ownership regions, so keep their contract conservatively.
+	// Hooks may still be resolving here, so what lifecycle_of says now may not
+	// hold for the finished record. Aggregate results can carry ownership regions,
+	// so keep their contract conservatively.
 	if info := underlying_info(c, type); info != nil {
 		#partial switch info.kind {
 		case .Allocator, .String, .Dynamic_Array, .Box, .Map, .Struct, .Union, .Array:

@@ -358,6 +358,15 @@ probes. Allocating-copy diagnostics wait for that decision. `lifecycle.odin`
 then settles initialization, liveness, and cleanup slots. All locals have
 initialization state; only managed locals need scope-exit cleanup.
 
+`lifecycle_of` caches its first answer for a type, so every hook must be known
+before an answer is kept. A file-scope block is declared in `prepare_package`, and
+nothing is kept while that or `activate_when_items` runs. A generic instance
+declares the members of all its blocks and evaluates its hooks' bounds before any
+other member's, and nothing about it or what holds it is kept until those bounds
+are evaluated (`Type_Info.hooks_resolving`). A body-local record takes its hooks from
+the statements after its declaration (`hoist_local_lifecycle_hooks`), with their
+signatures waiting for the block's own statement.
+
 Normal exits and panic unwind consume the same cleanup facts. Where `defer`
 is registered, CFG construction models a possible panic at each statement and
 walks the applicable cleanups. Unwind blocks record liveness for provenance but

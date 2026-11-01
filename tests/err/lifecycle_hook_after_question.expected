@@ -1,0 +1,24 @@
+L0503
+@29:7
+`Later_Copy(string)` is move-only, so this binding cannot copy it
+L0363
+@30:2
+`Later_Copy(string)` has no field or member `helper`
+L0503
+@34:7
+`Two_Blocks(string)` is move-only, so this binding cannot copy it
+L0363
+@35:2
+`Two_Blocks(string)` has no field or member `helper`
+L0412
+@43:2
+`close` implements `hook(drop)` and is not directly accessible
+L0508
+@48:10
+`P` has a custom `hook(copy)` or `hook(drop)`, so it cannot be taken apart by a destructure
+L0363
+@57:2
+`H` has no field or member `method`
+L0488
+@71:12
+`hook(drop)` comes too late: `H` was already used

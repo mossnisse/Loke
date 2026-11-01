@@ -37,6 +37,17 @@ checklist.
   `-> Result(Local.Payload, int)` with `return x;` is `L0310`. Upgrade by writing
   `return .ok;` or `return .ok(x);`. `Local.Outcome` for `Result(Unit, T)` keeps
   its bare return.
+- A question about a record's lifecycle no longer loses a hook written after it
+  ([Lifecycle hooks and resource types](design.md#lifecycle-hooks-and-resource-types)).
+  A generic record's `where T == int` on a `hook(copy)` after
+  `helper :: proc(self) where is_copyable(G(T))` left `G(string)` with a copy and a
+  `helper`. It now has neither, so `b := a;` is `L0503` and `a.helper()` is `L0363`.
+  Upgrade by writing `move(a)`, or a bound that the instance meets. A body-local
+  record's hook now counts from the record's declaration, so a copy made before the
+  block runs `hook(copy)`, `L0507` can report it, and a destructure there is `L0508`.
+  Upgrade by binding the whole value. A block in a `when` whose condition names a
+  constant declared after the record is `L0488` once the record has been used. Upgrade
+  by declaring the constant first, or by moving the use after the block.
 - A value printed through a mutable call result is now held until printing ends
   ([Built-in procedures](design.md#built-in-procedures)).
   `fmt.println(m.find_or_insert(3, 7)^, clearing(inout m))` compiled and read the
@@ -1125,6 +1136,13 @@ checklist.
   interface again, as `$V: Alias(T, 0)` beside `Alias :: Record($T, $V);`, now reports
   the instantiation limit (`L0436`) instead of overflowing the compiler's stack, and
   a limit first reached in a probe no longer uses up the report.
+- A `hook(drop)` or `hook(copy)` is no longer silently skipped when something asked
+  about its record first
+  ([Lifecycle hooks and resource types](design.md#lifecycle-hooks-and-resource-types)).
+  This covers `is_copyable(H)` or a value made before a body-local `impl H`, a generic
+  record's member bound evaluated before a later member, and a file-scope `when`
+  asking before the block is declared. A hook whose own bound asks and fails is left
+  out, where it failed in the backend with `L0405`.
 - A call that copies between elements at variable indices of a view of a local
   array, in the scope of the arena an element's owner is in, no longer reports
   `L0536`, as that leaves the array nothing new.

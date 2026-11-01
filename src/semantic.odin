@@ -190,6 +190,9 @@ Type_Info :: struct {
 	// here, so "already has members" can't be the idempotence guard: whichever
 	// ran first would suppress the other.
 	contributed: bit_set[Contribution],
+	// A generic instance whose hooks are declared and whose hooks' bounds are not
+	// all evaluated, so `lifecycle_of` keeps no answer about it yet.
+	hooks_resolving: bool,
 	parameters: []Type_Id,
 	param_modes: []Param_Mode,
 	// design.md "Procedure type": the reset effect and the escape levels are part

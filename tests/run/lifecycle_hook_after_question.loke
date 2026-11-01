@@ -1,0 +1,257 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Lifecycle hooks and resource types": a hook belongs to its record
+// wherever its block is written, so nothing asked about the record before the
+// block is reached may lose it.
+
+// ---------------------------------------------------- a body-local record --
+
+asked_first :: proc() {
+	H :: move_only struct { fd: int }
+	fmt.println(is_copyable(H));
+	impl H {
+		close :: hook(drop) proc(self: inout H) { fmt.println("asked close", self.fd); }
+	}
+	a := H{1};
+	fmt.println(a.fd);
+}
+
+value_first :: proc() {
+	H :: move_only struct { fd: int }
+	a := H{2};
+	impl H {
+		close :: hook(drop) proc(self: inout H) { fmt.println("value close", self.fd); }
+	}
+	b := H{3};
+	fmt.println(a.fd, b.fd);
+}
+
+// The copy made before the block runs the hook, and each value drops once.
+copied_first :: proc() {
+	C :: struct { x: int }
+	a := C{4};
+	b := a;
+	impl C {
+		dup :: hook(copy) proc(self, allocator: Allocator) -> Result(C, Allocator_Error) {
+			fmt.println("dup", self.x);
+			return .ok(C{self.x + 10});
+		}
+		close :: hook(drop) proc(self: inout C) { fmt.println("copied close", self.x); }
+	}
+	fmt.println(a.x, b.x);
+}
+
+// A record holding it, or a container of it, made before the block.
+held_first :: proc() {
+	H :: move_only struct { fd: int }
+	O :: struct { h: H }
+	fmt.println(is_copyable(O));
+	o := O{H{5}};
+	list: [dynamic]H = {};
+	list.append(H{6});
+	impl H {
+		close :: hook(drop) proc(self: inout H) { fmt.println("held close", self.fd); }
+	}
+	fmt.println(o.h.fd, list.len());
+}
+
+// A hook's signature and body may name what is declared after the record, so
+// they wait for the block's own statement.
+later_name :: proc() {
+	H :: move_only struct { fd: int }
+	a := H{7};
+	K :: struct { n: int }
+	impl H {
+		close :: hook(drop) proc(self: inout H) { k := K{self.fd}; fmt.println("later close", k.n); }
+	}
+	fmt.println(a.fd);
+}
+
+// Any block the record's own scope holds: nested, through an alias, in the
+// selected branch of a `when`, or after a `return`.
+nested :: proc() {
+	H :: move_only struct { fd: int }
+	a := H{8};
+	if (a.fd == 0) {
+		impl H { close :: hook(drop) proc(self: inout H) { fmt.println("nested close", self.fd); } }
+	}
+	fmt.println(a.fd);
+}
+
+aliased :: proc() {
+	H :: move_only struct { fd: int }
+	a := H{9};
+	A :: H;
+	impl A { close :: hook(drop) proc(self: inout H) { fmt.println("aliased close", self.fd); } }
+	fmt.println(a.fd);
+}
+
+selected :: proc() {
+	H :: move_only struct { fd: int }
+	a := H{10};
+	when (is_copyable(H)) {
+		impl H { close :: hook(drop) proc(self: inout H) { fmt.println("wrong close", self.fd); } }
+	} else {
+		impl H { close :: hook(drop) proc(self: inout H) { fmt.println("selected close", self.fd); } }
+	}
+	fmt.println(a.fd);
+}
+
+declared_in_when :: proc() {
+	when (true) {
+		H :: move_only struct { fd: int }
+	}
+	a := H{11};
+	impl H { close :: hook(drop) proc(self: inout H) { fmt.println("when close", self.fd); } }
+	fmt.println(a.fd);
+}
+
+after_return :: proc() {
+	H :: move_only struct { fd: int }
+	a := H{12};
+	fmt.println(a.fd);
+	return;
+	impl H { close :: hook(drop) proc(self: inout H) { fmt.println("return close", self.fd); } }
+}
+
+// Sibling scopes may reuse a name: each block is its own record's.
+siblings :: proc() {
+	{
+		H :: move_only struct { fd: int }
+		a := H{13};
+		impl H { close :: hook(drop) proc(self: inout H) { fmt.println("first close", self.fd); } }
+		fmt.println(a.fd);
+	}
+	{
+		H :: move_only struct { fd: int }
+		a := H{14};
+		impl H { close :: hook(drop) proc(self: inout H) { fmt.println("second close", self.fd); } }
+		fmt.println(a.fd);
+	}
+}
+
+// Each instance of a generic procedure declares its own record and hook.
+in_generic :: proc($T: type, value: T) {
+	H :: move_only struct { value: T }
+	a := H{value};
+	fmt.println(is_copyable(H), a.value);
+	impl H { close :: hook(drop) proc(self: inout H) { fmt.println("generic close", self.value); } }
+}
+
+// -------------------------------------------------------- a generic record --
+
+// A member's bound asks before a later hook is resolved.
+Later_Drop :: move_only struct($T: type) { value: T }
+impl Later_Drop($T) {
+	helper :: proc(self) where !is_copyable(Later_Drop(T)) { fmt.println("helper"); }
+	release :: hook(drop) proc(self: inout) { fmt.println("later drop", self.value); }
+}
+
+// The bound sees the hook's own bound applied, for the instance that keeps it and
+// the one that does not.
+Later_Copy :: struct($T: type) { value: T }
+impl Later_Copy($T) {
+	helper :: proc(self) where is_copyable(Later_Copy(T)) { fmt.println("copy helper"); }
+	dup :: hook(copy) proc(self, allocator: Allocator) -> Result(Later_Copy(T), Allocator_Error) where T == int {
+		fmt.println("later dup");
+		return .ok(Later_Copy(T){self.value});
+	}
+}
+
+// What holds one asks the same question and keeps no answer from before.
+Holds_Later :: struct($T: type) { inner: Later_Copy(T) }
+impl Holds_Later($T) {
+	ask :: proc(self) where is_copyable(Holds_Later(T)) { fmt.println("holder ask"); }
+}
+
+// A hook whose own bound asks is left out without leaving a name behind.
+Own_Bound :: move_only struct($T: type) { value: T }
+impl Own_Bound($T) {
+	release :: hook(drop) proc(self: inout) where is_copyable(Own_Bound(T)) { fmt.println("wrong drop", self.value); }
+}
+
+// A hook kept by a bound that asks.
+Own_Copy :: struct($T: type) { value: T }
+impl Own_Copy($T) {
+	dup :: hook(copy) proc(self, allocator: Allocator) -> Result(Own_Copy(T), Allocator_Error) where is_copyable(Own_Copy(T)) {
+		fmt.println("own dup");
+		return .ok(Own_Copy(T){self.value});
+	}
+}
+
+// One block asks, and another declares the hook.
+Two_Blocks :: move_only struct($T: type) { value: T }
+impl Two_Blocks($T) {
+	helper :: proc(self) where !is_copyable(Two_Blocks(T)) { fmt.println("two helper"); }
+}
+impl Two_Blocks(string) {
+	release :: hook(drop) proc(self: inout) { fmt.println("two drop", self.value); }
+}
+
+generics :: proc() {
+	a := Later_Drop(string){"a"};
+	a.helper();
+	fmt.println(a.value);
+
+	b := Later_Copy(int){1};
+	c := b;
+	b.helper();
+	holder := Holds_Later(int){b};
+	holder.ask();
+	fmt.println(b.value, c.value, holder.inner.value);
+	fmt.println(is_copyable(Later_Copy(string)), is_copyable(Holds_Later(string)));
+
+	d := Own_Bound(string){"d"};
+	fmt.println(d.value);
+
+	e := Own_Copy(int){2};
+	f := e;
+	fmt.println(e.value, f.value, is_copyable(Own_Copy(int)));
+
+	g := Two_Blocks(string){"g"};
+	h := Two_Blocks(int){3};
+	g.helper();
+	h.helper();
+	fmt.println(g.value, h.value);
+}
+
+// ------------------------------------------- a file-scope `when` that asks --
+
+// Asked while file-scope blocks are still being selected and declared.
+Asked_By_When :: move_only struct($T: type) { value: T }
+when (!is_copyable(Asked_By_When(int))) { WHEN_GENERIC :: 15; } else { WHEN_GENERIC :: 0; }
+impl Asked_By_When($T) {
+	release :: hook(drop) proc(self: inout) { fmt.println("when generic drop", self.value); }
+}
+
+Plain_By_When :: move_only struct { fd: int }
+when (!is_copyable(Plain_By_When)) { WHEN_PLAIN :: 16; } else { WHEN_PLAIN :: 0; }
+impl Plain_By_When {
+	close :: hook(drop) proc(self: inout) { fmt.println("when plain close", self.fd); }
+}
+
+file_scope :: proc() {
+	a := Asked_By_When(int){WHEN_GENERIC};
+	b := Plain_By_When{WHEN_PLAIN};
+	fmt.println(a.value, b.fd);
+}
+
+main :: proc() {
+	asked_first();
+	value_first();
+	copied_first();
+	held_first();
+	later_name();
+	nested();
+	aliased();
+	selected();
+	declared_in_when();
+	after_return();
+	siblings();
+	in_generic(int, 1);
+	in_generic(string, "s");
+	generics();
+	file_scope();
+}

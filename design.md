@@ -4398,6 +4398,10 @@ and dead; static-duration storage requires [`exchange`](#exchange) instead. See
 dropped in reverse declaration order after the containing type's drop hook
 returns.
 
+A hook belongs to its record wherever its block is written. A body-local record's
+block may come after values of the record, and its hook still serves them; the
+block's other members are visible from its statement on.
+
 A record with a `hook(drop)` says in writing how it is copied, because the
 generated copy is usually wrong beside one: a hook that releases something the
 fields only name would release it twice, and a hook that does work the generated

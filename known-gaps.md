@@ -52,63 +52,59 @@ unknown, or distinguish provisional bounds from a genuinely unknown offset.
 Confirmed at `51bceeb4` and on the merged `1b7845aa` during review on
 2026-11-01 (P2, remaining precision gap).
 
-### A lifecycle question asked before a record's hooks are in place loses them
+### A hook in a `when` on a later constant comes too late for a record already used
 
 [Lifecycle hooks and resource types](design.md#lifecycle-hooks-and-resource-types)
-runs a record's `hook(drop)` once per value, wherever the hook is written among the
-record's `impl` blocks. Asking about the record's lifecycle before the hook has been
-resolved loses it, with no diagnostic:
+counts a hook wherever its block is written, and a body-local record's hooks are
+found where the record is declared, ahead of their block. A `when` whose condition
+names a constant declared after the record cannot be selected there, so a record
+already used by the time that block is reached is rejected, though the program is
+valid:
 
 ```loke
 package main;
 import "core:fmt";
 main :: proc() {
     H :: move_only struct { fd: int }
-    fmt.println(is_copyable(H));
-    impl H {
-        close :: hook(drop) proc(self: inout H) { fmt.println("close", self.fd); }
+    a := H{1};
+    N :: 1;
+    when (N == 1) {
+        impl H { close :: hook(drop) proc(self: inout H) { fmt.println("close", self.fd); } }
     }
-    a := H{7};
     fmt.println(a.fd);
 }
 ```
 
-This prints `false` and `7`, and never `close 7`. Removing the `is_copyable` line
-runs the hook. Making a value first, `a := H{7};` before the `impl` block, loses the
-hook for that value and for every later one. A generic record does the same when a
-member's bound is evaluated before a later member is resolved:
+This is `L0488`, "comes too late". Moving `a` after the `when`, or `N` before `H`,
+compiles and runs the hook. A block inside a static `foreach` is treated the same,
+since each expansion checks its own copy. It is an error rather than a late hook
+because earlier copies may already have been decided without the hook, which would
+release a value twice. `reject_unhoisted_local_hook` in
+[src/impl.odin](src/impl.odin) reports it. Found on 2026-11-01 while fixing the lost
+hooks of a body-local record.
+
+### A file-scope `when` answers `is_copyable` without a later hook's bound
+
+[where clauses](design.md#where-clauses) leave a `hook(copy)` out of an instance that
+fails its bound, which makes the instance move-only. A file-scope `when` is selected
+before the package's blocks are declared, so it sees neither the hook nor its bound,
+and takes the other branch from the one the finished instance would:
 
 ```loke
 package main;
 import "core:fmt";
-G :: move_only struct($T: type) { value: T }
+G :: struct($T: type) { value: T }
+when (is_copyable(G(string))) { X :: 1; } else { X :: 2; }
 impl G($T) {
-    helper :: proc(self) where !is_copyable(G(T)) { fmt.println("helper"); }
-    release :: hook(drop) proc(self: inout) { fmt.println("drop", self.value); }
+    dup :: hook(copy) proc(self, allocator: Allocator) -> Result(G(T), Allocator_Error) where T == int { return .ok(G(T){self.value}); }
 }
-main :: proc() {
-    a := G(string){"a"};
-    a.helper();
-    fmt.println(a.value);
-}
+main :: proc() { fmt.println(X, is_copyable(G(string))); }
 ```
 
-This never prints `drop a`. A `hook(copy)` is lost in the same way, leaving the
-generated copy, and with a bound that fails, as `where T == int` on the `hook(copy)`
-after `helper :: proc(self) where is_copyable(G(T))`, `G(string)` keeps a copy it
-should not have. A hook whose own bound asks is excluded after the answer was kept:
-`release :: hook(drop) proc(self: inout) where is_copyable(G(T))` fails with `L0405`,
-"internal backend contract violation: a resolved operation has no emitted name",
-because the kept answer names a hook whose body is not emitted.
-
-`lifecycle_of` in [src/hooks.odin](src/hooks.odin) caches its first answer for a
-type, and `collect_hooks` can only see the members resolved so far: during
-`install_one_generic_impl` in [src/generic.odin](src/generic.odin) for an instance,
-and before the `impl` statement for a body-local record. A file-scope record is
-not affected, since its `impl` blocks are checked first. Do not cache an answer
-while the type or anything it holds can still gain a hook, as `lifecycle_of` already
-does for a record still resolving its fields, and answer the question from what is
-known so far. Found on 2026-11-01 while fixing the excluded generic drop hook.
+This prints `1 false`. The hook itself is no longer lost, since `lifecycle_of` keeps
+no answer during selection. The block cannot be declared first, as a `when` may select
+what it needs, so a fix has to say which questions a condition may ask. Found on
+2026-11-01 while fixing the lost hooks of a body-local record.
 
 ### Copying a zero-length array counts its element's copy hook
 

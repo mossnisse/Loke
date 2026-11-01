@@ -117,7 +117,12 @@ lifecycle_of :: proc(c: ^Compiler, type: Type_Id) -> ^Lifecycle {
 	// has a lifecycle to cache yet; assume no copy and possible cleanup until a
 	// later query can inspect the completed record.
 	visiting := make(map[Type_Id]bool, 8, context.temp_allocator)
-	if !lifecycle_fields_resolved(c, under, &visiting) {
+	// design.md "Lifecycle hooks and resource types": a hook counts wherever it is
+	// written. While file-scope blocks are still being declared, or an instance's
+	// hooks are being resolved, what this type holds can still gain or lose one, so
+	// the answer is what is known so far, and is not kept.
+	open := c.impls_declaring > 0
+	if !lifecycle_fields_resolved(c, under, &visiting, &open) {
 		entry.clone_disabled = true
 		entry.managed = true
 		return entry
@@ -141,32 +146,37 @@ lifecycle_of :: proc(c: ^Compiler, type: Type_Id) -> ^Lifecycle {
 			entry.clone_disabled ||
 			has_managed_part(c, under, info)
 	}
+	if open {
+		delete_key(&c.lifecycles, under)
+		return entry
+	}
 	entry.state = .Finite
 	return entry
 }
 
 @(private = "file")
-lifecycle_fields_resolved :: proc(c: ^Compiler, type: Type_Id, visiting: ^map[Type_Id]bool) -> bool {
+lifecycle_fields_resolved :: proc(c: ^Compiler, type: Type_Id, visiting: ^map[Type_Id]bool, open: ^bool) -> bool {
 	under := type_underlying(c, type)
 	info := type_of(c, under)
 	if info == nil || visiting[under] { return true }
 	if record_resolving(c, info) { return false }
+	open^ ||= info.hooks_resolving
 	visiting[under] = true
 	#partial switch info.kind {
 	case .Array, .Dynamic_Array, .Box:
-		return lifecycle_fields_resolved(c, info.element, visiting)
+		return lifecycle_fields_resolved(c, info.element, visiting, open)
 	case .Map:
-		return lifecycle_fields_resolved(c, info.key, visiting) &&
-		       lifecycle_fields_resolved(c, info.element, visiting)
+		return lifecycle_fields_resolved(c, info.key, visiting, open) &&
+		       lifecycle_fields_resolved(c, info.element, visiting, open)
 	case .Struct:
 		for field in info.fields {
-			if sym := symbol_of(c, field); sym != nil && !lifecycle_fields_resolved(c, sym.type, visiting) {
+			if sym := symbol_of(c, field); sym != nil && !lifecycle_fields_resolved(c, sym.type, visiting, open) {
 				return false
 			}
 		}
 	case .Union:
 		for variant in info.variants {
-			if !lifecycle_fields_resolved(c, variant, visiting) { return false }
+			if !lifecycle_fields_resolved(c, variant, visiting, open) { return false }
 		}
 	}
 	return true

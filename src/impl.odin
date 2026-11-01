@@ -101,6 +101,19 @@ check_local_impl :: proc(k: ^Checker, item: ^Item_Impl) {
 		)
 		return
 	}
+	for member in item.members {
+		d, is_decl := member.(^Decl)
+		if !is_decl {
+			continue
+		}
+		reject_unhoisted_local_hook(k, d, subject)
+		// A hoisted hook resolves here, where its block is written.
+		for id in d.symbols {
+			if sym := symbol_of(k.c, id); sym != nil {
+				sym.def_scope = k.scope
+			}
+		}
+	}
 	resolve_impl_signatures(k, item)
 	validate_impl_attributes(k, item)
 	for member in item.members {
@@ -109,6 +122,49 @@ check_local_impl :: proc(k: ^Checker, item: ^Item_Impl) {
 		}
 	}
 	check_impl_block(k, item)
+}
+
+// design.md "Lifecycle hooks and resource types": a hook counts wherever it is
+// written, so a body-local record's `hook(drop)` and `hook(copy)` join it as it is
+// declared, ahead of the statement holding their block. Their signatures wait for
+// that statement, as a block's names may be declared after the record, and what
+// asks about the record before then needs only that they exist. The other members
+// stay visible from the statement on.
+declare_local_impl_hooks :: proc(k: ^Checker, item: ^Item_Impl, subject: Type_Id) {
+	item.subject = subject
+	item.kind = .Impl
+	members := make([dynamic]Symbol_Id, 0, len(item.members), k.c.semantic_allocator)
+	existing := impl_member_table(k, .Impl, subject, k.pkg)
+	for member in item.members {
+		if d, is_decl := member.(^Decl); is_decl && decl_is_lifecycle_hook(d) {
+			declare_impl_member(k, item, d, existing, &members)
+		}
+	}
+	install_impl_members(k, .Impl, subject, members[:], k.pkg)
+}
+
+decl_is_lifecycle_hook :: proc(d: ^Decl) -> bool {
+	role := decl_hook_kind(d)
+	return role == .Drop || role == .Copy
+}
+
+// The one block `declare_local_impl_hooks` cannot reach is in a `when` whose
+// condition names a constant declared after the record. If the record's lifecycle
+// was already read, copies may have been decided without this hook, so running it
+// now could release a value twice. See known-gaps.md "A hook in a `when` on a later
+// constant comes too late for a record already used".
+@(private = "file")
+reject_unhoisted_local_hook :: proc(k: ^Checker, d: ^Decl, subject: Type_Id) {
+	if !decl_is_lifecycle_hook(d) || len(d.symbols) > 0 {
+		return
+	}
+	if _, read := k.c.lifecycles[type_underlying(k.c, subject)]; read {
+		errorf(
+			k.c, d.span, "L0488",
+			"`hook(%s)` comes too late: `%s` was already used, and whether this block applies could not be told where `%s` is declared",
+			hook_name(decl_hook_kind(d)), type_name(k.c, subject), type_name(k.c, subject),
+		)
+	}
 }
 
 // Whether the subject is a type this very procedure declares.
