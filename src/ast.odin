@@ -1364,8 +1364,8 @@ destroy_ast :: proc(f: ^File) {
 // the caller's data: an `Expr_Ident`, a `$` name (`Type_Poly`), or an inline
 // definition (`Expr_Proc`, `Type_Record`, `Type_Enum`, `Type_Interface`). Each
 // caller decides what a `$` name and a declared body mean for its question. An
-// `Expr_Selector` is asked about too, before its operand is walked, as what it
-// selects may matter beyond the operand.
+// `Expr_Selector` and a `Type_Distinct` are asked about too, before what they
+// hold is walked, as each can matter beyond that.
 Name_Match :: proc(data: rawptr, node: Expr) -> bool
 
 // Whether type syntax holds a node `matches` accepts, through the expressions a
@@ -1388,7 +1388,7 @@ type_syntax_any_name :: proc(e: Expr, data: rawptr, matches: Name_Match) -> bool
 	case ^Type_Dynamic_Array:
 		return type_syntax_any_name(v.elem, data, matches)
 	case ^Type_Distinct:
-		return type_syntax_any_name(v.elem, data, matches)
+		return matches(data, e) || type_syntax_any_name(v.elem, data, matches)
 	case ^Type_Dyn:
 		return type_syntax_any_name(v.interface_expr, data, matches)
 	case ^Type_Array:

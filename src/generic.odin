@@ -819,7 +819,7 @@ mark_named_parameters :: proc(k: ^Checker, params: []Generic_Param_Decl, syntax:
 			name = identifier_of(data.c, v)
 		case ^Type_Poly:
 			name = name_identifier(data.c, v.name)
-		case ^Expr_Selector:
+		case ^Expr_Selector, ^Type_Distinct:
 			return false
 		case:
 			for &mark in data.marks { mark = true }
@@ -1145,9 +1145,33 @@ check_alias_template :: proc(k: ^Checker, d: ^Decl, template: ^Generic_Template)
 		template.rejected = true
 		return
 	}
-	if _, is_distinct := body.(^Type_Distinct); is_distinct {
+	// At any depth, as `Option(distinct $T)` would denote a type no other spelling
+	// names, and a new one in each application.
+	fresh: Expr
+	find_distinct :: proc(data: rawptr, node: Expr) -> bool {
+		#partial switch v in node {
+		case ^Type_Distinct:
+			(^Expr)(data)^ = v
+			return true
+		case ^Type_Record:
+			for field in v.fields {
+				if type_syntax_any_name(field.type, data, find_distinct) {
+					return true
+				}
+			}
+			for variant in v.variants {
+				if type_syntax_any_name(variant.type, data, find_distinct) {
+					return true
+				}
+			}
+		case ^Expr_Proc:
+			return type_syntax_any_name(v.signature, data, find_distinct)
+		}
+		return false
+	}
+	if type_syntax_any_name(body, &fresh, find_distinct) {
 		errorf(
-			k.c, expr_span(body), "L0744",
+			k.c, expr_span(fresh), "L0744",
 			"a parametric alias names an existing type, so it cannot be `distinct`; declare a generic `struct` or `union` for a new one",
 		)
 		template.rejected = true
@@ -2092,7 +2116,7 @@ names_unbound_parameter :: proc(data: rawptr, node: Expr) -> bool {
 		text = v.name
 	case ^Type_Poly:
 		text = v.name.text
-	case ^Expr_Selector:
+	case ^Expr_Selector, ^Type_Distinct:
 		return false
 	case:
 		unbound.found = unbound.names[0]
@@ -2131,7 +2155,7 @@ names_poly_parameter :: proc(data: rawptr, node: Expr) -> bool {
 		return false
 	case ^Type_Poly:
 		return true
-	case ^Expr_Selector:
+	case ^Expr_Selector, ^Type_Distinct:
 		return false
 	}
 	return true

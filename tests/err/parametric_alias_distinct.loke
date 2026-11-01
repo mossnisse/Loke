@@ -1,0 +1,37 @@
+// design.md "Parametric aliases": a body is not a `distinct` type at any depth,
+// since an application is the type its body denotes, not a new one. The alias
+// is rejected at its declaration, used or not, and an application reports
+// nothing more. tests/run/parametric_alias_distinct.loke holds what stays accepted.
+package main;
+
+Pair :: struct($A, $B: type) { a: A, b: B }
+Tagged :: interface($Self: type, $Tag: type) {
+	slot tag: proc(self) -> int;
+}
+Wrapped :: Option($T);
+
+In_Option :: Option(distinct $T);
+Through_Pointer :: ^distinct $T;
+Through_C_Pointer :: [^]distinct $T;
+Through_Slice :: []distinct $T;
+Through_Dynamic :: [dynamic]distinct $T;
+Through_Array :: [2]distinct $T;
+Map_Key :: map[distinct $K]int;
+Map_Value :: map[$K]distinct $V;
+Through_Proc :: proc(x: distinct $T);
+Through_Result :: proc(x: $T) -> distinct int;
+Through_Record :: (distinct $T, int);
+Through_Dyn :: dyn Tagged(distinct $T);
+Beside_A_Binding :: Pair($T, distinct int);
+Deeper :: Option(Option(distinct $T));
+Through_Alias :: Wrapped(distinct $T);
+Twice :: Pair(distinct $T, distinct $T);
+
+read :: proc(value: In_Option($T)) -> bool {
+	return value == .none;
+}
+
+main :: proc() {
+	value: In_Option(int) = .none;
+	_ = read(value);
+}

@@ -2037,8 +2037,8 @@ static_assert(Buf(16) == ([16]u8));
   `impl Io_Result(string)`, which is a block on that type, but not an
   application to `$` names: write the generic type it stands for.
 - **Declaration.** A parametric alias is declared at package scope. Its body
-  names a type: not a `distinct` type, which would be new, nor a call that
-  computes one. An alias may not refer to itself, directly or through other
+  names a type: not a `distinct` type at any depth, which would be new, nor a
+  call that computes one. An alias may not refer to itself, directly or through other
   aliases.
 
 ### Distinct types

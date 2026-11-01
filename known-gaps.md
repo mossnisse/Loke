@@ -306,30 +306,6 @@ another is treated the same way, for the same reason. Resetting `allowed` itself
 the same thing. Telling them apart takes region facts by program point. Found while
 fixing the conditional write on 2026-11-01 at `46cf2aa8` (P3, over-rejection).
 
-### A nested `distinct` gives a parametric alias's application a new type
-
-A [parametric alias](design.md#parametric-aliases)'s body is not "a `distinct`
-type, which would be new", and an application is "the type its body denotes, not
-a new one". `L0744` holds that only for the whole body:
-
-```loke
-package main;
-import "core:fmt";
-Alias :: Option(distinct $T);
-main :: proc() {
-    a: Alias(int) = .none;
-    fmt.println(a);
-}
-```
-
-This compiles, and `Alias(int)` denotes `Option(distinct int)`, whose element no
-other spelling names. A pattern `Alias($T)` takes an `Option(Meters)` only as far
-as binding `T`, then reports `L0392`, since `Alias(f64)` is another new type. In
-[src/generic.odin](src/generic.odin), `check_alias_template` looks for
-`Type_Distinct` only at the root. Either reject it at any depth, or settle that a
-nested one is meant and say what it denotes. Found on 2026-11-01 beside the
-nested computed type check.
-
 ### Completion lists nothing after a pointer whose method is already called
 
 [Language server](compiler-architecture.md#language-server) completion lists the

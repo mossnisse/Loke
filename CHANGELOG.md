@@ -24,6 +24,11 @@ checklist.
   is now `L0511`. Upgrade by destructuring before taking the borrow, or by ending the
   borrow first. A discarded field no longer counts, so `_, text := pair` is accepted
   there, where it was `L0511` when the discarded field's hook read the global.
+- A [parametric alias](design.md#parametric-aliases)'s body may not hold a
+  `distinct` type at any depth. `Alias :: Option(distinct $T);` compiled and denoted
+  an `Option` of a new type that no other spelling names; it is now `L0744`, as
+  `Alias :: distinct Option($T);` already was. Upgrade by declaring the distinct type
+  by name, or a generic `struct` or `union` for a new type in each application.
 - An alias selected from a type declared in a generic body now counts as what it
   names ([One result](design.md#one-result),
   [Success returns](design.md#success-returns)), as a bare one does. With

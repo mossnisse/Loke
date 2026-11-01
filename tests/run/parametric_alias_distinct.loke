@@ -1,0 +1,34 @@
+// design.md "Parametric aliases": a body may name a `distinct` type declared
+// elsewhere, and an argument may be one, as neither makes an application new. An
+// alias with no `$` names is not parametric, and denotes its one type.
+// tests/err/parametric_alias_distinct.loke holds what is rejected.
+package main;
+
+import "core:fmt";
+
+Meters :: distinct f64;
+Wrapped :: Option($T);
+With_Meters :: (Meters, $T);
+
+Plain_Option :: Option(distinct int);
+Fresh :: distinct Wrapped(int);
+
+read :: proc(value: Wrapped($T)) -> T {
+	return value or_else panic("none");
+}
+
+main :: proc() {
+	length: Wrapped(Meters) = .some(Meters(2));
+	static_assert(Wrapped(Meters) == Option(Meters));
+	fmt.println(f64(read(length)));
+
+	pair: With_Meters(int) = {Meters(3), 4};
+	static_assert(With_Meters(int) == (Meters, int));
+	far, count := pair;
+	fmt.println(f64(far), count);
+
+	plain: Plain_Option = .none;
+	static_assert(Fresh != Option(int));
+	fresh := Fresh(Wrapped(int).some(5));
+	fmt.println(plain, Wrapped(int)(fresh));
+}
