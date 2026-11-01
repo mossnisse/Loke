@@ -1,0 +1,15 @@
+L0512
+@26:14
+`values` cannot be modified by `equal` here: a read-only slice of it is still in use
+L0512
+@31:14
+`values` cannot be modified by `equal` here: a read-only slice of it is still in use
+L0512
+@36:14
+`values` cannot be modified by `equal` here: a read-only slice of it is still in use
+L0512
+@41:14
+`values` cannot be modified by `hash` here: a read-only slice of it is still in use
+L0512
+@46:14
+`values` cannot be modified by `hash` here: a read-only slice of it is still in use

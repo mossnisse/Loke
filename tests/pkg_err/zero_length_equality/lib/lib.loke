@@ -1,0 +1,16 @@
+package lib;
+
+@(public)
+Private_Equality :: struct { @(public) id: int }
+
+impl Private_Equality {
+	equal :: operator(==) proc(a, b: Private_Equality) -> bool { return true; }
+}
+
+@(public)
+Public_Equality :: struct { @(public) id: int }
+
+impl Public_Equality {
+	@(public)
+	equal :: operator(==) proc(a, b: Public_Equality) -> bool { return true; }
+}

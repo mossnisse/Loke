@@ -147,36 +147,33 @@ while the type or anything it holds can still gain a hook, as `lifecycle_of` alr
 does for a record still resolving its fields, and answer the question from what is
 known so far. Found on 2026-11-01 while fixing the excluded generic drop hook.
 
-### Comparing zero-length arrays contributes nonexistent element effects
+### Copying a zero-length array counts its element's copy hook
 
-[Global write effects](design.md#global-write-effects) count the calls that run. A
-structural `==` of a `[0]T` compares no element, but still counts `T`'s `==`:
+[Global write effects](design.md#global-write-effects) count the hooks a copy may run.
+A `[0]T` has no element, but its copy still counts `T`'s `hook(copy)`:
 
 ```loke
 package main;
-import "core:fmt";
 values: [dynamic]int = {};
-Clears :: struct { id: int }
-impl Clears {
-    equal :: operator(==) proc(a, b: Clears) -> bool { values = {}; return true; }
+Tagged :: struct { n: int }
+impl Tagged {
+    duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Tagged, Allocator_Error) {
+        _ = values;
+        return .ok(Tagged{1});
+    }
 }
 main :: proc() {
-    values.append(7);
-    borrowed := values[:];
-    a: [0]Clears = {};
-    b: [0]Clears = {};
-    fmt.println(a == b);
-    fmt.println(borrowed[0]);
+    p := &mut values;
+    a: [0]Tagged = {};
+    b := a;
+    p.append(1);
 }
 ```
 
-This reports `L0512` at `a == b`. `prov_equality_effects` and `prov_hash_effects` in
-[src/global_effects.odin](src/global_effects.odin) take their parts from
-`own_equalities_within` in [src/hash.odin](src/hash.odin), which descends into an
-array's element whatever its length, as `drop_hooks_walk` used to. The checker also
-asks that walk what a type requires, so the fix belongs in the two effect readers or
-in a separate query. Found while fixing the empty slice literal's drop effects on
-2026-11-01 at `46cf2aa8` (P3, over-rejection).
+This reports `L0511` at `a`, though the generated `[0]Tagged` `try_clone` calls no
+element clone. `copy_hooks_walk` in [src/hooks.odin](src/hooks.odin) descends into an
+array's element whatever its length, as `drop_hooks_walk` beside it does not. Found
+while fixing the same for equality and hashing on 2026-11-01 (P3, over-rejection).
 
 ### An owned `next` counts a copy of its element that no step makes
 

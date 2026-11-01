@@ -284,13 +284,22 @@ own_equality :: proc(c: ^Compiler, type: Type_Id) -> (callable, declared: Symbol
 own_equalities_within :: proc(c: ^Compiler, type: Type_Id, out: ^[dynamic]Type_Id) {
 	seen: Type_Walk
 	defer delete(seen)
-	own_equalities_walk(c, type, out, &seen)
+	own_equalities_walk(c, type, out, &seen, false)
+}
+
+// Those a comparison or hash of a value of `type` calls: a zero-length array has
+// no element (design.md "Global write effects"), though comparing one still
+// requires of its element what `own_equalities_within` says.
+own_equalities_called :: proc(c: ^Compiler, type: Type_Id, out: ^[dynamic]Type_Id) {
+	seen: Type_Walk
+	defer delete(seen)
+	own_equalities_walk(c, type, out, &seen, true)
 }
 
 // Guarded because a record diagnosed as containing itself still reaches
 // body checking.
 @(private = "file")
-own_equalities_walk :: proc(c: ^Compiler, type: Type_Id, out: ^[dynamic]Type_Id, seen: ^Type_Walk) {
+own_equalities_walk :: proc(c: ^Compiler, type: Type_Id, out: ^[dynamic]Type_Id, seen: ^Type_Walk, called: bool) {
 	if type_own_equality(c, type) != INVALID_SYMBOL {
 		append(out, type)
 		return
@@ -302,16 +311,18 @@ own_equalities_walk :: proc(c: ^Compiler, type: Type_Id, out: ^[dynamic]Type_Id,
 	}
 	#partial switch info.kind {
 	case .Array:
-		own_equalities_walk(c, info.element, out, seen)
+		if !called || info.count > 0 {
+			own_equalities_walk(c, info.element, out, seen, called)
+		}
 	case .Struct:
 		for field in info.fields {
 			if sym := symbol_of(c, field); sym != nil {
-				own_equalities_walk(c, sym.type, out, seen)
+				own_equalities_walk(c, sym.type, out, seen, called)
 			}
 		}
 	case .Union:
 		for variant in info.variants {
-			own_equalities_walk(c, variant, out, seen)
+			own_equalities_walk(c, variant, out, seen, called)
 		}
 	}
 }

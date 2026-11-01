@@ -1,0 +1,15 @@
+package main;
+
+import "./lib";
+
+// design.md "Comparison operators": comparing a `[0]T` compares no element, but it
+// asks of `T` what comparing any array of `T` does.
+
+hidden :: proc(a, b: [0]lib.Private_Equality) -> bool {
+	return a == b;
+}
+visible :: proc(a, b: [0]lib.Public_Equality) -> bool {
+	return a == b;
+}
+
+main :: proc() {}

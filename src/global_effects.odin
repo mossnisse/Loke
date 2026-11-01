@@ -535,7 +535,7 @@ prov_hash_effects :: proc(graph: ^Flow_Graph, type: Type_Id, span: Span) {
 	c := graph.k.c
 	parts: [dynamic]Type_Id
 	defer delete(parts)
-	own_equalities_within(c, type, &parts)
+	own_equalities_called(c, type, &parts)
 	for part in parts {
 		if own := part_own_hash(c, part); own != INVALID_SYMBOL {
 			prov_effect_call(graph, Effect_Call{callee = own}, span)
@@ -548,7 +548,7 @@ prov_equality_effects :: proc(graph: ^Flow_Graph, type: Type_Id, span: Span) {
 	c := graph.k.c
 	parts: [dynamic]Type_Id
 	defer delete(parts)
-	own_equalities_within(c, type, &parts)
+	own_equalities_called(c, type, &parts)
 	for part in parts {
 		if own := type_own_equality(c, part); own != INVALID_SYMBOL {
 			prov_effect_call(graph, Effect_Call{callee = own}, span)

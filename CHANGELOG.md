@@ -1097,6 +1097,11 @@ checklist.
 
 ### Fixed
 
+- Comparing or hashing a zero-length array no longer counts its element's `==` or
+  `hash`, which never run ([Global write effects](design.md#global-write-effects)).
+  `a == b` on `[0]Clears` reported `L0512` under a view of what `Clears`'s `==`
+  writes, as did a record or union holding one. What the comparison requires of the
+  element's `==` is unchanged.
 - A public type's private `format` no longer counts as a call printing may make
   ([Interface bodies](design.md#interface-bodies),
   [Global write effects](design.md#global-write-effects)), as printing uses the
