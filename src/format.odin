@@ -62,6 +62,51 @@ type_has_written_format :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	return sym != nil && (sym.public || !type_is_exported(c, type))
 }
 
+// Whether printing a `type` may run a program's code: a `format` of its own or of
+// a part, or whatever a `dyn` view in it names. The rest prints by a generated
+// spelling, which writes nothing but the report.
+type_prints_through_method :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	visiting := make(map[Type_Id]bool, 8, context.temp_allocator)
+	return prints_through_method_walk(c, type, &visiting)
+}
+
+@(private = "file")
+prints_through_method_walk :: proc(c: ^Compiler, type: Type_Id, visiting: ^map[Type_Id]bool) -> bool {
+	if written_format_member(c, type) != nil {
+		return true
+	}
+	under := type_underlying(c, type)
+	info := type_of(c, under)
+	if info == nil || visiting[under] {
+		return false
+	}
+	visiting[under] = true
+	if written_format_member(c, under) != nil {
+		return true
+	}
+	#partial switch info.kind {
+	case .Dyn:
+		return true
+	case .Array, .Simd, .Slice, .Dynamic_Array, .Box, .Pointer:
+		return prints_through_method_walk(c, info.element, visiting)
+	case .Map:
+		return prints_through_method_walk(c, info.key, visiting) || prints_through_method_walk(c, info.element, visiting)
+	case .Struct:
+		for field in info.fields {
+			if sym := symbol_of(c, field); sym != nil && prints_through_method_walk(c, sym.type, visiting) {
+				return true
+			}
+		}
+	case .Union:
+		for variant in info.variants {
+			if variant != TYPE_VOID && prints_through_method_walk(c, variant, visiting) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // A type's own declared `format`, whether or not a slot may use it.
 written_format_member :: proc(c: ^Compiler, type: Type_Id) -> ^Symbol {
 	info := type_of(c, type)

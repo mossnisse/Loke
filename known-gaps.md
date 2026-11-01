@@ -43,39 +43,58 @@ and `noalias` on `^mut T` parameters depends on it
 Found while checking the alias-attribute proposal on 2026-11-01 with the
 compiler at `5580637f`.
 
-### Assert and panic arguments do not borrow the places they print
+### A printed value through a mutable call result is not held
 
-[Built-in procedures](design.md#built-in-procedures) requires an `assert` or
-`panic` report to borrow each printed argument through the report. Since
-`701846e9`, checking these arguments preserves their types but records no loan
-of the places the backend will address. A later argument may move and destroy
-an earlier argument's storage:
+[Built-in procedures](design.md#built-in-procedures) and
+[Variadic parameters](design.md#variadic-parameters) keep what a printed value
+is viewed from in use until printing ends. A value reached through a named carrier
+or a read-only result now is, but one reached through a mutable call result is not:
 
 ```loke
 package main;
-consume :: proc(values: move [dynamic]int) -> int { return values.len(); }
+import "core:fmt";
+clearing :: proc(m: inout map[int]int) -> int { m.clear(); return 0; }
 main :: proc() {
-    values := [dynamic]int{7, 8};
-    panic("stop", values[0], consume(move(values)));
+    m := map[int]int{};
+    m.find_or_insert(3, 1);
+    fmt.println(m.find_or_insert(3, 7)^, clearing(inout m));
 }
 ```
 
-This compiles. The emitted code retains the element's address, calls `consume`
-(which drops the array before returning), then loads the element through that
-freed address to print it. The same problem affects a failing `assert`.
-`check_printed_argument` in [src/check_builtin.odin](src/check_builtin.odin)
-checks printability and requests a type ID, but its replacement for the old
-erasure no longer reaches the loan creation in `prov_erase` in
-[src/cfg_provenance.odin](src/cfg_provenance.odin).
-Record the report's read-only borrow without erasing the argument's type, and
-keep it live across evaluation of later arguments and formatting.
+This compiles, and the view of the value is read after `clear` emptied the map.
+The same goes for a `panic` or `assert` report. `prov_view_through_carrier` in
+[src/cfg_provenance.odin](src/cfg_provenance.odin) leaves this form alone because
+the result holds the receiver's mutable loan, so holding the loan would also reject
+`fmt.println(m.find_or_insert(3, 7)^, m.len())`, which `tests/run/no_zero_containers`
+requires and which is sound, as a read does not move the value. Fixing it takes a
+way to hold a mutable loan for its invalidating accesses only. Found while fixing
+the report's borrows on 2026-11-01 at `46cf2aa8` (P2).
 
-Confirmed during review on 2026-11-01 with the compiler built at `5580637f`;
-the relevant code is unchanged from the reviewed `426f1a13`. A compiler built
-from `03d04d34`, immediately before the built-in printing change, rejects the
-same program with `L0512`; an equivalent `fmt.println` also rejects the move
-today. The local-mutation control `panic("stop", p, change(inout p))` likewise
-compiles while `fmt.println(p, change(inout p))` reports `L0511` (P1).
+### Printing a mutable slice field suspends it for a later read
+
+`fmt.println` takes a read-only view of what it prints, so a later read of the same
+place is allowed, as it is for a local:
+
+```loke
+package main;
+import "core:fmt";
+Holder :: struct { items: []mut int }
+len_of :: proc(xs: []int) -> int { return xs.len(); }
+main :: proc() {
+    storage := [2]int{1, 2};
+    held := Holder{&mut storage[:]};
+    fmt.println(held.items, len_of(held.items));
+}
+```
+
+This reports `L0641`, "a mutable reborrow of it is still in use". With `s := &mut
+storage[:]` in place of the field, `fmt.println(s, len_of(s))` compiles.
+`prov_call_argument` in [src/cfg_provenance.odin](src/cfg_provenance.odin) lends a
+pack operand that `type_carries_borrow` calls mutable with a mutable
+`prov_lend_carrier`, and `prov_erase` returns the field's own slot when it is not a
+plain-slice read. The over-rejection predates the fix to report borrows, which
+gives a report its own walk and so does not reach it. Found on 2026-11-01 at
+`46cf2aa8` (P3).
 
 ### A slice literal's drop keeps only its initial element borrows
 

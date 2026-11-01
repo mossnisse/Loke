@@ -3458,18 +3458,19 @@ prov_erase :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 	loans: []int
 	if ident, plain := prov_plain_slice_local(graph, e); plain {
 		loans = prov_reborrow_traversal(graph, prov_read_ident(graph, ident, .Read, reads_only = true), span, false)
-	} else if prov_plain_slice_place(graph, e) {
+	} else if prov_plain_slice_place(graph, e, prov_repr(graph, e).erased_from) {
 		loans = prov_reborrow_traversal(graph, prov_read_erased_place(graph, e), span, false)
 	} else {
+		prov_begin_conversion(graph, e, .Erasure)
+		held, through := prov_view_through_carrier(graph, e, span)
+		prov_end_conversion(graph)
+		if through {
+			return held
+		}
 		loans = walk_flow_expr_erased(graph, e)
 	}
-	if root, path, ok := prov_place_of(graph, e); ok {
-		return prov_join(graph, loans, prov_borrow(graph, root, path, false, span, "view"))
-	}
-	// A temporary ends with its statement unless a local's value extends it
-	// (design.md "Temporaries and procedure boundaries"), and the view with it.
-	if !expr_base(e).is_const {
-		return prov_join(graph, loans, prov_borrow(graph, prov_temp_root_of(graph, e, loans), nil, false, span, "view"))
+	if held, lent := prov_lend_read_only(graph, e, loans, span); lent {
+		return held
 	}
 	if len(loans) > 0 {
 		return loans
@@ -3478,6 +3479,79 @@ prov_erase :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 	root := prov_hidden_root(graph, span, "this erased value")
 	graph.roots[int(root)].extended = true
 	return prov_borrow(graph, root, nil, false, span, "view")
+}
+
+// What a read-only view of `e` holds beside the `loans` it read: a loan of the
+// place, or of the temporary holding the value. A constant has neither.
+@(private = "file")
+prov_lend_read_only :: proc(graph: ^Flow_Graph, e: Expr, loans: []int, span: Span) -> (held: []int, lent: bool) {
+	if root, path, ok := prov_place_of(graph, e); ok {
+		return prov_join(graph, loans, prov_borrow(graph, root, path, false, span, "view")), true
+	}
+	// A temporary ends with its statement unless a local's value extends it
+	// (design.md "Temporaries and procedure boundaries"), and the view with it.
+	if !expr_base(e).is_const {
+		return prov_join(graph, loans, prov_borrow(graph, prov_temp_root_of(graph, e, loans), nil, false, span, "view")), true
+	}
+	return nil, false
+}
+
+// design.md "Built-in procedures": an argument an `assert` or `panic` report
+// prints keeps its type and is read as a read-only view of it would be, so a
+// slice holding plain data is read rather than lent again.
+@(private = "file")
+prov_printed_argument :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
+	span := expr_span(e)
+	loans: []int
+	if ident, plain := prov_plain_slice_local(graph, e); plain {
+		loans = prov_reborrow_traversal(graph, prov_read_ident(graph, ident, .Read, reads_only = true), span, false)
+	} else if prov_plain_slice_place(graph, e, prov_type(graph, e)) {
+		loans = prov_reborrow_traversal(graph, prov_read_carrier(graph, e, true), span, false)
+	} else {
+		if held, through := prov_view_through_carrier(graph, e, span); through {
+			return held
+		}
+		loans = walk_flow_expr(graph, e)
+	}
+	held, lent := prov_lend_read_only(graph, e, loans, span)
+	return lent ? held : loans
+}
+
+// A read-only view of a field, element, or pointee reached through a pointer or
+// a slice, as `s[0]` or `p^.x`, is an address in what the carrier names, so it
+// keeps that in use whatever later happens to the carrier. A carrier it reborrows
+// is suspended for as long.
+@(private = "file")
+prov_view_through_carrier :: proc(graph: ^Flow_Graph, e: Expr, span: Span) -> (held: []int, through: bool) {
+	if !prov_reads_plainly_through(graph, e) {
+		return nil, false
+	}
+	if _, _, named := prov_place_of(graph, e); named {
+		return nil, false
+	}
+	// A mutable call result holds its source's mutable loan, so holding it would
+	// also forbid reads of the source, which do not touch what is viewed. See
+	// known-gaps.md "A printed value through a mutable call result is not held".
+	if hops := prov_place_hops(graph, e); len(hops) > 0 {
+		carrier := prov_value(graph, hops[len(hops) - 1].carrier).origin
+		if prov_expr_is_temporary(carrier) && type_carries_borrow(graph.k.c, prov_type(graph, carrier)).mutable {
+			return nil, false
+		}
+	}
+	type := prov_type(graph, e)
+	only := prov_read_is_reads_only(graph.k.c, type)
+	carriers, path, reached := prov_read_through_carrier(graph, e, only)
+	if !reached {
+		return nil, false
+	}
+	content := prov_load_content(graph, carriers, path, type, span, only, place = e)
+	kept := prov_snapshot(graph, carriers, span)
+	for slot, index in carriers {
+		if prov_slot_is_mutable_carrier(graph, slot) {
+			append(&graph.reborrows, Prov_Reborrow{source = slot, derived = kept[index], span = span, mutable = false})
+		}
+	}
+	return prov_join(graph, content, kept), true
 }
 
 // design.md "string type conversions", "Dynamic arrays", and "Fixed arrays": a
@@ -3521,23 +3595,18 @@ prov_hidden_root :: proc(graph: ^Flow_Graph, span: Span, name: string) -> Root_I
 	return root
 }
 
-// As `prov_plain_slice_local`, for a field or element of a local: an erased
-// slice whose elements hold no borrows.
+// As `prov_plain_slice_local`, for a field or element of a local read as `type`:
+// a slice whose elements hold no borrows.
 @(private = "file")
-prov_plain_slice_place :: proc(graph: ^Flow_Graph, e: Expr) -> bool {
-	if expr_base(e) == nil {
-		return false
-	}
-	repr := prov_repr(graph, e)
-	if repr.view_from != INVALID_TYPE || repr.erased_from == INVALID_TYPE {
+prov_plain_slice_place :: proc(graph: ^Flow_Graph, e: Expr, type: Type_Id) -> bool {
+	if expr_base(e) == nil || prov_repr(graph, e).view_from != INVALID_TYPE || type == INVALID_TYPE {
 		return false
 	}
 	if _, is_ident := e.(^Expr_Ident); is_ident {
 		return false
 	}
 	c := graph.k.c
-	if underlying_kind(c, repr.erased_from) != .Slice ||
-	   type_carries_borrow(c, underlying_info(c, repr.erased_from).element).any {
+	if underlying_kind(c, type) != .Slice || type_carries_borrow(c, underlying_info(c, type).element).any {
 		return false
 	}
 	_, _, place := prov_place_of(graph, e)
@@ -7728,6 +7797,31 @@ prov_builtin_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> (result: []int, 
 	}
 	if sym := symbol_of(c, v.resolution.symbol); sym != nil && sym.kind == .Builtin {
 		#partial switch sym.builtin {
+		case .Assert, .Panic:
+			// design.md "Built-in procedures": the report borrows what it prints
+			// until it has printed the last argument, so a later argument cannot
+			// change or destroy an earlier one.
+			printed := sym.builtin == .Assert ? 2 : 1
+			reported: []int
+			for argument, index in v.bound {
+				if index < printed {
+					walk_flow_expr(graph, argument)
+				} else {
+					reported = prov_join(graph, reported, prov_printed_argument(graph, argument))
+					prov_hold_owner(graph, argument)
+				}
+			}
+			for argument in v.bound[min(printed, len(v.bound)):] {
+				prov_report_effects(graph, prov_type(graph, argument), expr_span(argument))
+			}
+			if len(reported) > 0 {
+				prov_emit(graph, Prov_Event{kind = .Live, sources = reported, span = v.span})
+			}
+			// What holds a value only for the report goes with the unwind.
+			for argument in v.bound[min(printed, len(v.bound)):] {
+				prov_discarded_drop_effects(graph, argument)
+			}
+			return nil, true
 		case .Box_New, .Try_Box:
 			// design.md "Owned values": the payload's borrows land below the box's
 			// one step, path by path, so a box keeps its fields apart as a record

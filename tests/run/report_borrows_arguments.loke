@@ -1,0 +1,61 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Built-in procedures": a report's loans are read-only and end with
+// the report. Two reports of one place, a report beside a read of what it holds,
+// and a write of something else all stay accepted, and a `format` runs only for a
+// value that has one, so printing an `int` of a global writes nothing even where
+// some `format` writes that global.
+
+Point :: struct { x, y: int }
+Held :: struct { items, other: []int }
+Lent :: struct { items: []mut int }
+Token :: move_only struct { id: int }
+
+data: [dynamic]int = {};
+
+Clears :: struct { id: int }
+impl Clears {
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) { data = {}; }
+}
+
+peek :: proc(values: []int) -> int { return values.len(); }
+fresh :: proc() -> [dynamic]int { return [dynamic]int{1, 2}; }
+change :: proc(p: inout int) -> int { p += 1; return p; }
+consume :: proc(values: move [dynamic]int) -> int { return values.len(); }
+
+main :: proc() {
+	data.append(5);
+	values := [dynamic]int{7, 8};
+	s: []int = values[:];
+	held := Held{s, s};
+	p := Point{1, 2};
+	q := 3;
+	i := 1;
+	token := Token{9};
+	assert(i < 2, "never", i, i, s, s, s[0], held.items, held.items, held.other, values, values[0], p, p.x);
+	assert(i < 2, "never", s, peek(s), peek(values[:]));
+	assert(i < 2, "never", p.x, change(inout q));
+	assert(i < 2, "never", token, token.id);
+	assert(i < 2, "never", fresh(), fresh()[0], "text", 12, 1.5);
+	assert(i < 2, "never", data[0], data);
+	view := data[:];
+	assert(i < 2, "never", view[0]);
+	// A read beside a value printed through a mutable field, or through a mutable
+	// call's result, which a read does not move.
+	storage := [2]int{1, 2};
+	lent := Lent{&mut storage[:]};
+	assert(i < 2, "never", lent.items[0], peek(lent.items), lent.items);
+	counts := map[int]int{};
+	counts.find_or_insert(3, 1);
+	assert(i < 2, "never", counts.find_or_insert(3, 7)^, counts.len());
+	if (i == 2) {
+		panic("never", p, values, s, s[0], consume(fresh()));
+	}
+	// The loans ended with the reports.
+	q = change(inout q);
+	values.append(1);
+	data = {};
+	fmt.println(token.id, q, values.len(), data.len());
+}

@@ -572,6 +572,22 @@ prov_entry_report_effects :: proc(graph: ^Flow_Graph, span: Span) {
 	)
 }
 
+// design.md "Built-in procedures": an `assert` or `panic` report prints `type`
+// through its `format` methods and any `dyn` view in it. As for a failure `main`
+// returns, the slot may reach any `format` method. A value printed with no method
+// runs nothing, and that is most of them.
+prov_report_effects :: proc(graph: ^Flow_Graph, type: Type_Id, span: Span) {
+	c := graph.k.c
+	view, found := c.runtime_types["Format_View"]
+	if !found || !type_prints_through_method(c, type) {
+		return
+	}
+	prov_effect_call(
+		graph, Effect_Call{dyn_interface = underlying_info(c, view).dyn_interface}, span,
+		described = "modified by printing an argument of this report",
+	)
+}
+
 // A built-in `==` or `!=` compares structurally, and `in` looks a key up in a
 // map.
 prov_operator_effects :: proc(graph: ^Flow_Graph, v: ^Expr_Binary) {

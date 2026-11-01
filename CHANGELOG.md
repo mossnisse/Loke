@@ -10,6 +10,14 @@ checklist.
 
 ### Breaking changes
 
+- An `assert` or `panic` report now borrows what it prints
+  ([Built-in procedures](design.md#built-in-procedures)), as `fmt.println` does.
+  `panic("stop", values[0], consume(move(values)))` used to print freed memory and
+  is `L0512`; `panic("stop", p, change(inout p))` is `L0511`; and a printed value's
+  `format` that writes a global the report holds is `L0512`. A value printed through
+  a view, as `s[0]`, now keeps what the view names in use for the report and for
+  `fmt.println` alike, so `fmt.println(s[0], grow(inout values))` is `L0511`. Upgrade
+  by evaluating the later argument into a local first.
 - A generic record's hooks are now checked as a non-generic record's are. A wrong
   signature (`L0488`), a duplicate role (`L0488`), a `hook(copy)` on a `move_only`
   record or on an instance a field makes move-only (`L0488`), a written allocator
