@@ -9,3 +9,10 @@ and is still used when this is dropped at the end of its scope
 L0512
 @56:12
 `shared_values` cannot be modified by `retire` when this temporary is dropped here
+L0512
+@68:2
+`values` cannot be dropped here: a read-only slice of it is still in use
+and is still used when this is dropped at the end of its scope
+L0512
+@85:11
+`shared_values` cannot be modified by `retire` when this slice literal is dropped here

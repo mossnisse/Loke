@@ -2105,7 +2105,7 @@ prov_drop_use :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span, at_scope_ex
 // first: its drop hooks always run there, and what they read stays live.
 @(private)
 prov_extended_drop :: proc(graph: ^Flow_Graph, root: Prov_Root, effects_at, span: Span) {
-	prov_drop_effects(graph, root.dropped, effects_at, "this temporary", unnamed = true)
+	prov_drop_effects(graph, root.dropped, effects_at, root.name, unnamed = true)
 	if root.content < 0 {
 		return
 	}
@@ -6526,9 +6526,21 @@ prov_slice_literal :: proc(graph: ^Flow_Graph, literal: ^Expr_Composite, mutable
 	root := prov_root_for_storage(graph, storage)
 	graph.roots[int(root)].kind = .Slice_Literal
 	graph.roots[int(root)].name = "this slice literal"
+	// Its elements are dropped with the block's locals, so their drop hooks run
+	// there and read what the elements borrow then, even after the slice
+	// that viewed them was overwritten (design.md "Temporaries and procedure
+	// boundaries").
+	backing := prov_repr(graph, literal).backing
+	graph.roots[int(root)].extended = true
+	graph.roots[int(root)].dropped = backing
+	if len(elements) > 0 && type_drop_runs_hook(graph.k.c, backing) {
+		slot := prov_temp_slot(graph)
+		prov_emit(graph, Prov_Event{kind = .Def, slot = slot, loan = NO_LOAN, sources = elements, span = span})
+		graph.roots[int(root)].content = slot
+	}
 	for element, index in literal.elements {
 		if element.value == nil { continue }
-		step, _ := prov_element_step(graph, literal, prov_repr(graph, literal).backing, true, index)
+		step, _ := prov_element_step(graph, literal, backing, true, index)
 		copies := index < len(literal.element_clones) && literal.element_clones[index]
 		prov_define_value_regions(graph, root, {step}, prov_input_value(graph, element.value), copies = copies)
 	}

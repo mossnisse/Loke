@@ -59,9 +59,41 @@ writes_at_block_end :: proc() {
 	fmt.println(borrowed[0]);
 }
 
+// design.md "Slice literals": the hidden array is extended too, and its
+// elements are dropped with it, even after the slice is overwritten.
+overwritten_slice :: proc() {
+	values := [dynamic]int{7};
+	view: []Read = []Read{Read{values[:], 1}};
+	view = {};
+	drop(values);
+	fmt.println(view.len());
+}
+
+// Elements without a drop hook read nothing there.
+unhooked_slice :: proc() {
+	values := [dynamic]int{7};
+	view: []Plain = []Plain{Plain{values[:], 1}};
+	view = {};
+	drop(values);
+	fmt.println(view.len());
+}
+
+// An element's hook writes where the block ends, as `&Clear{1}`'s does.
+slice_writes_at_block_end :: proc() {
+	borrowed := shared_values[:];
+	{
+		view := []Clear{Clear{1}};
+		fmt.println(view.len());
+	}
+	fmt.println(borrowed[0]);
+}
+
 main :: proc() {
 	overwritten();
 	projected();
 	unhooked();
 	writes_at_block_end();
+	overwritten_slice();
+	unhooked_slice();
+	slice_writes_at_block_end();
 }

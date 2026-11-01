@@ -939,6 +939,12 @@ checklist.
 
 ### Fixed
 
+- A slice literal's elements keep what their drop hooks read borrowed until
+  the end of the block, where the hidden array drops them, as an extended
+  `&T{...}` temporary's do. After `view = {};` overwrote the slice, `drop` of
+  a value an element viewed was accepted, and the hook then read it; and a
+  hook's write to a global at the block's end went unchecked against a live
+  borrow of it ([Slice literals](design.md#slice-literals)).
 - A variadic pack built from separate arguments is now in the allocator
   regions of its elements, so a `parallel` block whose task reserves an arena
   reports the parent passing a list from that arena to a variadic callee that
