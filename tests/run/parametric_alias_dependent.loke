@@ -1,0 +1,70 @@
+// design.md "Parametric aliases": a constant parameter has its generic parameter's
+// type, which the arguments before it may decide, and so may be a different type
+// in each application. tests/err/parametric_alias_dependent.loke holds what is
+// rejected.
+package main;
+
+import "core:fmt";
+
+// Declared before the record's own `T`, which is the one its `$V` means.
+T :: string;
+
+Value :: struct($T: type, $V: T) { item: T }
+Pair :: struct($A, $B: type) { a: A, b: B }
+Triple :: struct($T: type, $A: T, $B: T) { item: T }
+Scaled :: interface($Self: type, $T: type, $Factor: T) {
+	slot scale: proc(self) -> T;
+}
+Window :: interface($Self: type, $Count: int)
+	where Count % 2 == 0 {
+	slot size: proc(self) -> int;
+}
+
+Alias :: Value($T, $V);
+Concrete :: Value(int, $V);
+Through :: Alias($T, $V);
+Twice :: (Value($T, $V), Value($T, $V));
+Nested :: Option(Value($T, $V));
+Prefixed :: Triple($T, 1, $B);
+// A written type decides, wherever it is written.
+Length_After :: Pair(Value($T, $N), [$N]u8);
+Length_Before :: Pair([$N]u8, Value($T, $N));
+Scaled_View :: dyn Scaled($T, $F);
+Window_View :: dyn Window($N);
+
+read :: proc(value: Alias($U, $W)) -> U { return W; }
+read_through :: proc(value: Through($U, $W)) -> U { return W; }
+read_nested :: proc(value: Nested($U, $W)) -> U { return W; }
+window_count :: proc(value: Window_View($N)) -> int { return N; }
+
+Meter :: struct { value: f64 }
+impl Meter {
+	scale :: proc(self) -> f64 { return self.value * 2.0; }
+	size :: proc(self) -> int { return 4; }
+}
+
+static_assert(Alias(int, 3) == Value(int, 3));
+static_assert(Alias(int, 1 + 2) == Value(int, 3));
+static_assert(Through(int, 3) == Value(int, 3));
+static_assert(Concrete(3) == Value(int, 3));
+static_assert(Alias(string, "x") == Value(string, "x"));
+
+main :: proc() {
+	fmt.println(Alias(int, 3){});
+	fmt.println(Alias(string, "x"){});
+	fmt.println(Alias(f32, 2.5){});
+	fmt.println(Concrete(4){});
+	fmt.println(Through(int, 5){});
+	fmt.println(Twice(int, 6){});
+	fmt.println(read(Value(int, 7){}));
+	fmt.println(read_through(Value(string, "s"){}));
+	nested: Nested(i64, 8) = .none;
+	fmt.println(read_nested(nested));
+	fmt.println(Prefixed(int, 2){});
+	fmt.println(Length_After(i64, 2){});
+	fmt.println(Length_Before(2, i64){});
+	meter := Meter{1.5};
+	scaled := Scaled_View(f64, 2.0)(&meter);
+	fmt.println(scaled.scale());
+	fmt.println(window_count(Window_View(4)(&meter)));
+}

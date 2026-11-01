@@ -1,0 +1,14 @@
+Value(int, 3){item = 0}
+Value(string, "x"){item = ""}
+Value(f32, 2.5){item = 0.0}
+Value(int, 4){item = 0}
+Value(int, 5){item = 0}
+(Value(int, 6){item = 0}, Value(int, 6){item = 0})
+7
+s
+8
+Triple(int, 1, 2){item = 0}
+Pair(Value(i64, 2), [2]u8){a = Value(i64, 2){item = 0}, b = [0, 0]}
+Pair([2]u8, Value(i64, 2)){a = [0, 0], b = Value(i64, 2){item = 0}}
+3.0
+4

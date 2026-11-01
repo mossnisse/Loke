@@ -222,32 +222,6 @@ expansion. Permit finite record-mediated reentry while retaining the alias
 cycle and actual depth checks. Confirmed on `3b49d840` during review on
 2026-10-31 (P2).
 
-### Parametric aliases cannot bind a dependently typed value argument
-
-[Parametric aliases](design.md#parametric-aliases) take a constant generic
-argument with that generic parameter's type, including when an earlier type
-argument determines it. The direct application below works, but the alias
-reaches an internal backend error:
-
-```loke
-package main;
-import "core:fmt";
-Value :: struct($T: type, $V: T) { item: T }
-Alias :: Value($T, $V);
-main :: proc() { fmt.println(Alias(int, 3){}); }
-```
-
-The diagnostic is `L0405`, "internal backend contract violation: `<invalid>`
-has no backend representation". Replacing `Alias(int, 3)` with `Value(int, 3)`
-compiles and prints `Value(int, 3){item = 0}`.
-`generic_parameter_kind` in [src/generic.odin](src/generic.odin) tries to resolve
-the parameter type `T` in `Value`'s template scope before it is bound.
-`check_alias_template` then marks the alias rejected on `INVALID_TYPE` without
-reporting a source error. Retain dependent parameter types until earlier
-application arguments are bound, as record applications do, and ensure a
-rejected alias has a diagnostic. Confirmed on `3b49d840` during review on
-2026-10-31 (P2).
-
 ### A nested `distinct` gives a parametric alias's application a new type
 
 A [parametric alias](design.md#parametric-aliases)'s body is not "a `distinct`

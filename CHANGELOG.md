@@ -977,6 +977,12 @@ checklist.
 
 ### Fixed
 
+- A [parametric alias](design.md#parametric-aliases) can bind a constant whose
+  type an earlier argument decides: `Alias :: Value($T, $V)` over
+  `Value :: struct($T: type, $V: T)` reported an internal `L0405`, and now
+  `Alias(int, 3)` is `Value(int, 3)`. An alias can also bind a constant argument
+  of a `dyn` interface, as `dyn Window($N)`, which was bound as a type, and a
+  generic parameter type that does not resolve is reported at the alias.
 - `free_all` of an allocator unwrapped by `or_else` from an unmarked
   `Option(Allocator)` parameter, as in `maybe or_else allowed`, is now
   `L0538`, as the same reset through a `switch` was. Only the fallback's

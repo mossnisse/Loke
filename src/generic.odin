@@ -4,6 +4,7 @@
 package lokec
 
 import "core:fmt"
+import "core:slice"
 import "core:strings"
 
 // Recursive instantiation need not terminate; running out is a diagnostic.
@@ -67,6 +68,12 @@ Generic_Param_Decl :: struct {
 	// parameter bound by a type, or the constant's type, as `int` for `$N` in
 	// `[$N]u8` (design.md "Parametric aliases").
 	fixed_type:  Type_Id,
+	// Alias templates only: the application in the body that decides a constant's
+	// type once the arguments before it are bound, as `Value($T, $V)` for `$V`
+	// where `Value :: struct($T: type, $V: T)`, and which of its parameters that
+	// is. With one, `fixed_type` means nothing.
+	dependent_on:    ^Expr_Call,
+	dependent_index: int,
 }
 
 // An `impl` block written against a generic type, kept aside until an
@@ -883,12 +890,15 @@ alias_parameters :: proc(k: ^Checker, body: Expr) -> []Generic_Param_Decl {
 }
 
 // One place a `$` name of an alias's body is bound: by a type, or by a
-// constant of `value_type`.
+// constant of `value_type`, or by a constant whose type `dependent_on`'s earlier
+// arguments decide.
 @(private = "file")
 Alias_Binding_Use :: struct {
-	name:       Identifier_Id,
-	span:       Span,
-	value_type: Type_Id, // TYPE_TYPE for a type
+	name:            Identifier_Id,
+	span:            Span,
+	value_type:      Type_Id, // TYPE_TYPE for a type
+	dependent_on:    ^Expr_Call,
+	dependent_index: int,
 }
 
 // The positions `match_type_pattern` binds a `$` name in, and what each binds
@@ -904,6 +914,29 @@ alias_binding_uses :: proc(k: ^Checker, e: Expr, out: ^[dynamic]Alias_Binding_Us
 			append(out, Alias_Binding_Use{name = name_identifier(k.c, poly.name), span = poly.span, value_type = value_type})
 		}
 		return is_poly
+	}
+	// Each argument against the parameter it binds, for a generic type and for a
+	// `dyn` interface alike.
+	application_uses :: proc(k: ^Checker, call: ^Expr_Call, out: ^[dynamic]Alias_Binding_Use) {
+		applied := applied_parameters(k, call.callee)
+		for arg, index in call.args {
+			at := applied.first + index
+			poly, is_poly := arg.value.(^Type_Poly)
+			if at < len(applied.params) && is_poly {
+				kind, dependent := generic_parameter_kind(k, applied, at)
+				if dependent {
+					append(out, Alias_Binding_Use {
+						name = name_identifier(k.c, poly.name), span = poly.span,
+						dependent_on = call, dependent_index = at,
+					})
+					continue
+				}
+				if kind != TYPE_TYPE && value_use(k, poly, kind, out) {
+					continue
+				}
+			}
+			alias_binding_uses(k, arg.value, out)
+		}
 	}
 	#partial switch v in e {
 	case ^Type_Poly:
@@ -921,9 +954,7 @@ alias_binding_uses :: proc(k: ^Checker, e: Expr, out: ^[dynamic]Alias_Binding_Us
 	case ^Type_Dyn:
 		// `dyn Named($T)` binds its arguments as `dyn` does, for any interface.
 		if call, is_call := v.interface_expr.(^Expr_Call); is_call {
-			for arg in call.args {
-				alias_binding_uses(k, arg.value, out)
-			}
+			application_uses(k, call, out)
 		} else {
 			alias_binding_uses(k, v.interface_expr, out)
 		}
@@ -959,16 +990,7 @@ alias_binding_uses :: proc(k: ^Checker, e: Expr, out: ^[dynamic]Alias_Binding_Us
 		if _, is_ident := v.callee.(^Expr_Ident); !alias_constructor_callee(k, v.callee) && (!is_ident || named_callee_symbol(k, v.callee) != INVALID_SYMBOL) {
 			return
 		}
-		template := generic_template_for(k, named_callee_symbol(k, v.callee))
-		for arg, index in v.args {
-			wanted := TYPE_TYPE
-			if template != nil && index < len(template.params) {
-				wanted = generic_parameter_kind(k, template, index)
-			}
-			if wanted == TYPE_TYPE || !value_use(k, arg.value, wanted, out) {
-				alias_binding_uses(k, arg.value, out)
-			}
-		}
+		application_uses(k, v, out)
 	}
 }
 
@@ -981,25 +1003,120 @@ alias_constructor_callee :: proc(k: ^Checker, callee: Expr) -> bool {
 	       simd_callee(k, callee) || box_type_callee(k, callee) || range_callee(k, callee)
 }
 
-// What a record or alias template's parameter `index` is bound by: `type`, or
-// the constant's type. INVALID_TYPE when that type does not resolve on its own.
+// The parameters an application's arguments bind, with the scope their types
+// resolve in. `first` passes over an interface's subject, which `dyn` erases;
+// `alias` is the template when they are an alias's.
 @(private = "file")
-generic_parameter_kind :: proc(k: ^Checker, template: ^Generic_Template, index: int) -> Type_Id {
-	parameter := template.params[index]
+Applied_Parameters :: struct {
+	params: []Generic_Param_Decl,
+	scope:  ^Scope,
+	first:  int,
+	alias:  ^Generic_Template,
+}
+
+// The parameters of what `callee` names, read in `k.scope`: none for a
+// predeclared constructor, whose arguments are typed by the constructor itself.
+@(private = "file")
+applied_parameters :: proc(k: ^Checker, callee: Expr) -> Applied_Parameters {
+	symbol := named_callee_symbol(k, callee)
+	if info := interface_info_for(k, symbol); info != nil {
+		return {params = info.params, scope = info.scope, first = 1}
+	}
+	template := generic_template_for(k, symbol)
+	if template == nil {
+		return {}
+	}
 	#partial switch template.kind {
+	case .Record:
+		return {params = template.params, scope = template.scope}
 	case .Alias:
 		template_rejected(k, template)
-		return template.params[index].fixed_type
-	case .Record:
-		if _, is_type := parameter.type_syntax.(^Type_Type); is_type || parameter.type_syntax == nil {
-			return TYPE_TYPE
-		}
-		saved := k.scope
-		k.scope = template.scope
-		defer k.scope = saved
-		return resolve_type_syntax(k, clone_expr(k.c, parameter.type_syntax))
+		return {params = template.params, scope = template.scope, alias = template}
 	}
-	return TYPE_TYPE
+	return {}
+}
+
+// What parameter `at` is bound by: `type`, or the constant's type. `dependent`
+// when an earlier parameter decides that, so that it has no one answer, as for
+// `$V` in `struct($T: type, $V: T)`. INVALID_TYPE, reported, when a type does not
+// resolve.
+@(private = "file")
+generic_parameter_kind :: proc(k: ^Checker, applied: Applied_Parameters, at: int) -> (kind: Type_Id, dependent: bool) {
+	parameter := applied.params[at]
+	if applied.alias != nil {
+		return parameter.fixed_type, parameter.dependent_on != nil
+	}
+	if _, is_type := parameter.type_syntax.(^Type_Type); is_type || parameter.type_syntax == nil {
+		return TYPE_TYPE, false
+	}
+	marks := make([]bool, at, context.temp_allocator)
+	mark_named_parameters(k, applied.params[:at], parameter.type_syntax, marks)
+	if slice.contains(marks, true) {
+		return INVALID_TYPE, true
+	}
+	saved := k.scope
+	k.scope = applied.scope
+	defer k.scope = saved
+	errors := k.c.error_count
+	syntax := clone_expr(k.c, parameter.type_syntax)
+	kind = resolve_type_syntax(k, syntax)
+	if kind == INVALID_TYPE && k.c.error_count == errors {
+		report_unresolved_type(k, syntax)
+	}
+	return kind, false
+}
+
+// design.md "Parametric aliases": the type of an alias's constant parameter that
+// its body's application decides, once the arguments before it are bound in
+// `scope`. INVALID_TYPE, reported, when they do not bind as that application asks.
+@(private = "file")
+alias_dependent_type :: proc(
+	k: ^Checker, template: ^Generic_Template, parameter: Generic_Param_Decl, scope: ^Scope, report: bool,
+) -> Type_Id {
+	saved := enter_instance(k, template, scope)
+	defer restore_checker_location(k, saved)
+	// A copy, since the arguments resolve for this application and not the next.
+	call := clone_expr(k.c, parameter.dependent_on).(^Expr_Call)
+	applied := applied_parameters(k, call.callee)
+	if parameter.dependent_index >= len(applied.params) {
+		return INVALID_TYPE
+	}
+	inner := new_scope(k.c, applied.scope == nil ? build_universe(k.c) : applied.scope, .Local)
+	if applied.first > 0 {
+		subject := applied.params[0]
+		bind_generic_name(k, inner, Generic_Binding{name = subject.name, span = subject.span, arg = Generic_Arg{is_type = true, type = TYPE_RAWPTR}})
+	}
+	bindings := make([dynamic]Generic_Binding, 0, len(applied.params), context.temp_allocator)
+	for at in applied.first ..< parameter.dependent_index {
+		wanted := parameter_type_in(k, applied, at, inner, report)
+		k.scope = scope
+		if wanted == INVALID_TYPE {
+			return INVALID_TYPE
+		}
+		arg := call.args[at - applied.first]
+		problem, bound := bind_record_argument(k, applied.params[at], arg, wanted, inner, &bindings, report)
+		if !bound {
+			if report && problem != "" {
+				errorf(k.c, arg.span, "L0432", "%s", problem)
+			}
+			return INVALID_TYPE
+		}
+	}
+	return parameter_type_in(k, applied, parameter.dependent_index, inner, report)
+}
+
+// The type of applied parameter `at`, with those before it bound in `inner`.
+@(private = "file")
+parameter_type_in :: proc(k: ^Checker, applied: Applied_Parameters, at: int, inner: ^Scope, report: bool) -> Type_Id {
+	parameter := applied.params[at]
+	if applied.alias != nil {
+		if parameter.dependent_on != nil {
+			return alias_dependent_type(k, applied.alias, parameter, inner, report)
+		}
+		return parameter.fixed_type
+	}
+	k.scope = inner
+	return resolve_type_syntax(k, clone_expr(k.c, parameter.type_syntax))
 }
 
 // design.md "Parametric aliases": the rules an alias declaration must meet
@@ -1072,26 +1189,42 @@ check_alias_template :: proc(k: ^Checker, d: ^Decl, template: ^Generic_Template)
 	}
 	for &parameter in template.params {
 		kind := INVALID_TYPE
-		for use in uses {
+		dependent: ^Alias_Binding_Use
+		for &use in uses {
 			if use.name != parameter.name {
+				continue
+			}
+			if use.dependent_on != nil {
+				if kind == TYPE_TYPE {
+					report_alias_binding_conflict(k, use.span, parameter.name, DEPENDENT_BINDING, kind)
+					failed = true
+					break
+				}
+				dependent = dependent == nil ? &use : dependent
 				continue
 			}
 			if use.value_type == INVALID_TYPE {
 				failed = true
 				break
 			}
+			if dependent != nil && use.value_type == TYPE_TYPE {
+				report_alias_binding_conflict(k, use.span, parameter.name, TYPE_TYPE, DEPENDENT_BINDING)
+				failed = true
+				break
+			}
 			if kind != INVALID_TYPE && kind != use.value_type {
-				errorf(
-					k.c, use.span, "L0743",
-					"`$%s` is bound by %s here and by %s earlier",
-					identifier_text(k.c, parameter.name), alias_binding_text(k, use.value_type), alias_binding_text(k, kind),
-				)
+				report_alias_binding_conflict(k, use.span, parameter.name, use.value_type, kind)
 				failed = true
 				break
 			}
 			kind = use.value_type
 		}
 		parameter.fixed_type = kind == INVALID_TYPE ? TYPE_TYPE : kind
+		// A written type is the answer wherever one use gives it; the use whose
+		// type depends then converts the constant as an application does.
+		if kind == INVALID_TYPE && dependent != nil {
+			parameter.dependent_on, parameter.dependent_index = dependent.dependent_on, dependent.dependent_index
+		}
 	}
 
 	// An application expands its body, so an alias reached again from inside its
@@ -1105,10 +1238,26 @@ check_alias_template :: proc(k: ^Checker, d: ^Decl, template: ^Generic_Template)
 	}
 }
 
+// A constant whose type an earlier argument decides, where a report names a kind.
+@(private = "file")
+DEPENDENT_BINDING :: INVALID_TYPE
+
+@(private = "file")
+report_alias_binding_conflict :: proc(k: ^Checker, span: Span, name: Identifier_Id, here, earlier: Type_Id) {
+	errorf(
+		k.c, span, "L0743",
+		"`$%s` is bound by %s here and by %s earlier",
+		identifier_text(k.c, name), alias_binding_text(k, here), alias_binding_text(k, earlier),
+	)
+}
+
 @(private = "file")
 alias_binding_text :: proc(k: ^Checker, value_type: Type_Id) -> string {
-	if value_type == TYPE_TYPE {
+	switch value_type {
+	case TYPE_TYPE:
 		return "a type"
+	case DEPENDENT_BINDING:
+		return "a constant whose type an earlier argument decides"
 	}
 	return fmt.aprintf("a constant of type `%s`", type_name(k.c, value_type), allocator = k.c.semantic_allocator)
 }
@@ -1162,7 +1311,19 @@ resolve_alias_application :: proc(k: ^Checker, v: ^Expr_Call, template: ^Generic
 	ok := true
 	for parameter, index in template.params {
 		arg := v.args[index]
-		bound, bound_ok := bind_record_argument(k, parameter, arg, parameter.fixed_type, scope, &bindings, report)
+		wanted := parameter.fixed_type
+		if parameter.dependent_on != nil {
+			// The arguments it depends on are earlier ones, reported if they failed.
+			if !ok {
+				continue
+			}
+			wanted = alias_dependent_type(k, template, parameter, scope, report)
+			if wanted == INVALID_TYPE {
+				ok = false
+				continue
+			}
+		}
+		bound, bound_ok := bind_record_argument(k, parameter, arg, wanted, scope, &bindings, report)
 		if !bound_ok {
 			if report && bound != "" {
 				errorf(k.c, arg.span, "L0432", "%s", bound)

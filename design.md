@@ -2018,7 +2018,8 @@ static_assert(Buf(16) == ([16]u8));
   the order each first appears, so `Lookup :: map[$K]Option($V)` is applied as
   `Lookup(string, int)`. A name is a constant parameter where it is an array
   length, a `Simd` lane count, or a generic argument whose parameter is a
-  constant, with that parameter's type; elsewhere it is a `type` parameter. A
+  constant, with that parameter's type, which the arguments before it may decide;
+  elsewhere it is a `type` parameter. A
   name bound both ways, or written where no argument can bind it, such as inside
   an inline `struct`, an array-length expression, or a call that computes a type,
   at any depth, is an error.
