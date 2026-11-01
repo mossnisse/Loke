@@ -201,6 +201,58 @@ since its model is written apart from the compiler; it wants places for a
 slice literal's array, a view parameter's caller storage reached twice, a
 store at an unknown index between two uses, and a call that copies.
 
+Outcome of the slot vector trial (2026-11-01). The trial built the half that could
+be checked quickly. `Prov_Slot.kind` says whether a slot is a temporary, a local's, a
+slice literal's, or a caller's, replacing `literal_content`, a map of caller slots,
+and a second loop in `prov_link_copied_carriers`. `root_own_slots` and
+`loan_own_slots` replace `content_by_symbol`, a condition duplicated in both loads,
+and two walks in each of `publish_replaced_slots` and `publish_into_loan`. Compared
+with its parent commit, the slice literal fix below:
+
+| Measure | Result |
+| --- | --- |
+| Diagnostics and emitted IR | identical on all 3,009 inputs under `tests`, `examples`, `bench`, `core`, and `base` |
+| A check that the lookup holds every slot with a symbol | held on the 1,979 inputs present then, and was then removed |
+| `.\test-all.ps1` | passed |
+| Lines in `src`, ignoring indentation | 56 added, 74 removed |
+| Changed lines with `if`, `for`, `case`, `&&`, or `\|\|` | 17 added, 30 removed |
+| `bench/dense.loke`, best of 25 at `-o:speed` | 403.6 ms before, 403.9 ms after |
+| `bench/provenance.loke`, same | 20.4 ms before, 20.9 ms after |
+| `examples/corpus_runner.loke`, same | 229.2 ms before, 230.5 ms after |
+
+It closes no gap, and it is not the whole proposal. Caller slots stay keyed by loan,
+since each stands for a load depth or pointee that summaries read, and a `Param` root
+still stands for several storages. The gain is a smaller vocabulary: the last bug
+here came from asking whether a slot was stored through its symbol, which a kind
+answers directly.
+
+The trial also found that the slice literal fix had made a call conflict with its
+own keep-alive, rejecting two copying calls on a literal that a named array accepts.
+That is fixed: a slot's liveness now tells a value only kept from one used
+(`Slot_Use`), and only a used one suspends a reborrow.
+
+Holding a named array's content through a view, the
+[named array gap](known-gaps.md#a-view-of-a-named-array-does-not-hold-what-its-elements-borrow),
+was then tried on the lookup, with that fix in place. Both forms reject the gap's
+program, its `fmt.println` form, and `first(arr[:])`, and both reject
+`drop(values); view.len()`:
+
+| Extended on | Newly rejected valid fixtures | Other changes |
+| --- | --- | --- |
+| Every use of the view | 2 under `tests/run` | 3 rejection fixtures |
+| Only a value handed to a call | none | 1 note points at a different position |
+
+The first form rejects a write to what one field borrows while another field is read
+through a pointer. The second marks the `Live` event a call emits for its borrowed
+arguments, about ten lines, and a slice literal would still extend on every use.
+Before the `Slot_Use` fix the same two forms rejected more: 4 fixtures and 72 borrow
+matrix programs for the first, and `two_copying_calls` for the second.
+
+Recommendation: land the kind and the lookup as a refactor. Moving caller slots onto
+roots has no measured benefit. The named array gap is now one decision from closed:
+whether `drop(values); view.len()` may be rejected for a named array, as it already
+is for a slice literal. The trial says nothing about regions, which stay undecided.
+
 Validation: the review's probes were compiled with the checked-in `lokec.exe`.
 Two `&mut c` written in turn reported `L0511`; the same two around a store at an
 index a call returns, or one `&mut c` in a loop storing at such an index,

@@ -249,11 +249,23 @@ Slot_Use :: enum u8 {
 	Used,
 }
 
+// What a slot is part of. `Local` is a variable's or parameter's own storage,
+// `Literal` a slice literal's hidden array, and `Caller` what a parameter's loan
+// stands for in storage this body cannot name (`prov_caller_slots`). A `Temporary`
+// is a value only its own expression reads.
+Prov_Slot_Kind :: enum u8 {
+	Temporary,
+	Local,
+	Literal,
+	Caller,
+}
+
 // A carrier value the analysis follows: a variable, parameter or expression
 // temporary. Reaching loans are per slot, so overwriting one carrier ends only
 // the value that was overwritten.
 Prov_Slot :: struct {
 	precision: Precision_Loss,
+	kind:      Prov_Slot_Kind,
 	symbol:    Symbol_Id,
 	name:      string,
 	span:      Span,
@@ -280,10 +292,6 @@ Prov_Slot :: struct {
 	// Read out through a carrier, so what it copies is known only once the
 	// `Load` is resolved.
 	loaded: bool,
-	// Holds what a slice literal's hidden array holds at `path`
-	// (`prov_slice_literal`): storage that lasts as a local's does, which only
-	// lacks a symbol (`prov_slot_is_stored`).
-	literal_content: bool,
 	// Stands for what caller storage a parameter reaches holds at `path`
 	// (`prov_caller_slots`), and that is a mutable carrier; `caller_one` when
 	// that storage is one place, so a store lands here (`publish_into_caller`).
@@ -426,6 +434,7 @@ Prov_View_At :: struct {
 // A slot holding no fresh borrow. Zero would name loan 0 and event 0.
 empty_prov_slot :: proc(symbol: Symbol_Id) -> Prov_Slot {
 	return Prov_Slot {
+		kind               = symbol != INVALID_SYMBOL ? .Local : .Temporary,
 		symbol             = symbol,
 		content_type       = INVALID_TYPE,
 		content_shape      = INVALID_TYPE,
@@ -3802,49 +3811,39 @@ load_writable_through :: proc(
 	root := graph.roots[int(loan.root)]
 	sym := symbol_of(c, root.symbol)
 	found := false
-	if len(root.slots) > 0 || sym != nil && !(root.kind == .Param && (loan.content || type_is_carrier(c, sym.type))) {
-		slots := root.slots if len(root.slots) > 0 else graph.content_by_symbol[root.symbol]
-		bare: [1]int
-		bare_type := INVALID_TYPE
-		if index, exists := graph.slot_by_symbol[root.symbol]; exists && sym != nil {
-			bare[0] = index
-			slots = bare[:]
-			bare_type = sym.type
+	for index in loan_own_slots(graph, loan, root) {
+		slot := graph.prov_slots[index]
+		if !paths_overlap(slot.path, loan.path) {
+			continue
 		}
-		for index in slots {
-			slot := graph.prov_slots[index]
-			if !paths_overlap(slot.path, loan.path) {
-				continue
+		found = true
+		loss^ |= state.precision[index]
+		if reads != nil && !slice.contains(reads[:], index) {
+			append(reads, index)
+		}
+		// A truncated or unshaped slot stands for every carrier below it.
+		destination, follow := true, true
+		type := slot_carrier_type(graph, index)
+		if type != INVALID_TYPE && !slot.content_truncated {
+			info := underlying_info(c, type)
+			pointee := info != nil ? info.element : INVALID_TYPE
+			destination = carrier_is_mutable(c, type) && type_carries_borrow(c, pointee).any
+			// design.md "Variadic parameters": a pack also carries its operands'
+			// loans, so a mutable operand's are destinations as well.
+			if info != nil && info.kind == .Slice {
+				element := underlying_info(c, pointee)
+				destination ||= carrier_is_mutable(c, pointee) && element != nil && type_carries_borrow(c, element.element).any
 			}
-			found = true
-			loss^ |= state.precision[index]
-			if reads != nil && !slice.contains(reads[:], index) {
-				append(reads, index)
-			}
-			// A truncated or unshaped slot stands for every carrier below it.
-			destination, follow := true, true
-			type := bare_type != INVALID_TYPE ? bare_type : slot.content_type
-			if type != INVALID_TYPE && !slot.content_truncated {
-				info := underlying_info(c, type)
-				pointee := info != nil ? info.element : INVALID_TYPE
-				destination = carrier_is_mutable(c, type) && type_carries_borrow(c, pointee).any
-				// design.md "Variadic parameters": a pack also carries its operands'
-				// loans, so a mutable operand's are destinations as well.
-				if info != nil && info.kind == .Slice {
-					element := underlying_info(c, pointee)
-					destination ||= carrier_is_mutable(c, pointee) && element != nil && type_carries_borrow(c, element.element).any
-				}
-				follow = destination || prov_type_reaches_destination(c, pointee)
-			}
-			row := reach_row(state, reach, index)
-			if destination {
-				bytes_or(state.merged, row)
-			}
-			if follow {
-				for held in 0 ..< state.loans {
-					if bit_get(row, held) {
-						pending[held] = true
-					}
+			follow = destination || prov_type_reaches_destination(c, pointee)
+		}
+		row := reach_row(state, reach, index)
+		if destination {
+			bytes_or(state.merged, row)
+		}
+		if follow {
+			for held in 0 ..< state.loans {
+				if bit_get(row, held) {
+					pending[held] = true
 				}
 			}
 		}
@@ -3903,33 +3902,24 @@ load_through_loan :: proc(
 	graph := state.graph
 	loan := graph.loans[loan_index]
 	root := graph.roots[int(loan.root)]
-	sym := symbol_of(graph.k.c, root.symbol)
 	found := false
-	if len(root.slots) > 0 || sym != nil && !(root.kind == .Param && (loan.content || type_is_carrier(graph.k.c, sym.type))) {
-		slots := root.slots if len(root.slots) > 0 else graph.content_by_symbol[root.symbol]
-		bare: [1]int
-		if index, exists := graph.slot_by_symbol[root.symbol]; exists && sym != nil {
-			bare[0] = index
-			slots = bare[:]
+	// Given `lent`, the part of what the loan lends the load names, as one
+	// element of a local view (`view_element_loan`), only slots there.
+	within := lent if lent != nil else loan.path
+	for index in loan_own_slots(graph, loan, root) {
+		slot := graph.prov_slots[index]
+		if !paths_overlap(slot.path, within) {
+			continue
 		}
-		// Given `lent`, the part of what the loan lends the load names, as one
-		// element of a local view (`view_element_loan`), only slots there.
-		within := lent if lent != nil else loan.path
-		for index in slots {
-			slot := graph.prov_slots[index]
-			if !paths_overlap(slot.path, within) {
-				continue
-			}
-			suffix := slot.path[min(len(within), len(slot.path)):]
-			if !paths_overlap(suffix, path) {
-				continue
-			}
-			found = true
-			loss^ |= state.precision[index]
-			bytes_or(state.merged, reach_row(state, reach, index))
-			if reads != nil && !slice.contains(reads[:], index) {
-				append(reads, index)
-			}
+		suffix := slot.path[min(len(within), len(slot.path)):]
+		if !paths_overlap(suffix, path) {
+			continue
+		}
+		found = true
+		loss^ |= state.precision[index]
+		bytes_or(state.merged, reach_row(state, reach, index))
+		if reads != nil && !slice.contains(reads[:], index) {
+			append(reads, index)
 		}
 	}
 	if !found {
@@ -4539,7 +4529,6 @@ publish_replaced_slots :: proc(state: ^Prov_State, event: Prov_Event, reach: []u
 	}
 	graph := state.graph
 	loan := publish_view_loan(graph, event, one)
-	symbol := graph.roots[int(loan.root)].symbol
 	out := make([dynamic]int, 0, 1, graph.alloc)
 	// One element of a view parameter is one place (`prov_view_element`).
 	if one + 1 == event.element_loan {
@@ -4558,13 +4547,8 @@ publish_replaced_slots :: proc(state: ^Prov_State, event: Prov_Event, reach: []u
 		}
 		return out[:]
 	}
-	for index in graph.roots[int(loan.root)].slots {
+	for index in root_own_slots(graph, graph.roots[int(loan.root)]) {
 		if publish_replaces(graph.k.c, graph.prov_slots[index], loan, event.path, event.stored) {
-			append(&out, index)
-		}
-	}
-	for slot, index in graph.prov_slots {
-		if symbol != INVALID_SYMBOL && slot.symbol == symbol && publish_replaces(graph.k.c, slot, loan, event.path, event.stored) {
 			append(&out, index)
 		}
 	}
@@ -4640,12 +4624,6 @@ publish_into_loan :: proc(
 		loan.path = view
 	}
 	root := graph.roots[int(loan.root)]
-	for index in root.slots {
-		publish_into_slot(state, reach, index, loan, path, stored, carrier_loss)
-	}
-	if root.symbol == INVALID_SYMBOL {
-		return
-	}
 	// A store whose copies no reborrow links to where it lands is still seen
 	// by every later load through the parameter, which then reborrows what
 	// it copied from.
@@ -4669,10 +4647,8 @@ publish_into_loan :: proc(
 			return
 		}
 	}
-	for slot, index in graph.prov_slots {
-		if slot.symbol == root.symbol {
-			publish_into_slot(state, reach, index, loan, path, stored, carrier_loss)
-		}
+	for index in root_own_slots(graph, root) {
+		publish_into_slot(state, reach, index, loan, path, stored, carrier_loss)
 	}
 }
 
@@ -6251,7 +6227,26 @@ prov_slot_is_stored_temporary :: proc(graph: ^Flow_Graph, reborrow: Prov_Reborro
 // literal's hidden array's (design.md "Slice literals"), rather than a value
 // only its own expression reads.
 prov_slot_is_stored :: proc(entry: Prov_Slot) -> bool {
-	return entry.symbol != INVALID_SYMBOL || entry.literal_content
+	return entry.kind == .Local || entry.kind == .Literal
+}
+
+// The slots holding what a root's own storage holds, a local's or a slice
+// literal's; none for a temporary root.
+root_own_slots :: proc(graph: ^Flow_Graph, root: Prov_Root) -> []int {
+	return root.slots if len(root.slots) > 0 else graph.own_slots[root.symbol]
+}
+
+// The slots of the storage a loan names that this body holds itself. What a
+// parameter already held when the call began, and what its carrier points at,
+// are in storage it cannot name (`read_caller_slots`).
+loan_own_slots :: proc(graph: ^Flow_Graph, loan: Prov_Loan, root: Prov_Root) -> []int {
+	if len(root.slots) == 0 && root.kind == .Param {
+		sym := symbol_of(graph.k.c, root.symbol)
+		if sym == nil || loan.content || type_is_carrier(graph.k.c, sym.type) {
+			return nil
+		}
+	}
+	return root_own_slots(graph, root)
 }
 
 // The source is suspended only while both slots' current values share a valid
@@ -6425,7 +6420,7 @@ report_suspended_reborrow :: proc(
 	// A place, or a temporary, used through a binding that views it. A slice
 	// literal's element has a description rather than a name.
 	name := fmt.tprintf("`%s`", event.name if event.name != "" else source.name)
-	if event.name == "" && source.literal_content {
+	if event.name == "" && source.kind == .Literal {
 		name = source.name
 	}
 	errorf(

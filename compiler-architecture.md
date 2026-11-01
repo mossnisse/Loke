@@ -514,7 +514,7 @@ Keep these contracts:
   (`prov_slot_is_stored_temporary`).
 - **A slice literal's hidden array is lasting storage.** Its content slots have no
   symbol, but count as a local's wherever a stored carrier is told from a temporary
-  (`prov_slot_is_stored`, `Prov_Slot.literal_content`). A use of a view of one keeps
+  (`prov_slot_is_stored`, `Prov_Slot.kind`). A use of a view of one keeps
   them live without using them (`Prov_Event.keeps_live`, `Slot_Use`): what they
   borrow lasts, and no reborrow of what they came from is suspended by it. Reading
   one element is so no use of another, and a call that copied between them is no

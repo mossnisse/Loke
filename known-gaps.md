@@ -383,7 +383,11 @@ of the view that hands it on goes unseen. A slice literal's array has the same s
 and is held, by `with_literal_content` extending each use of the slice with the
 slots of the array it views. Giving a named root the same treatment closes this, at
 the cost of also rejecting `drop(values); view.len()` for a named array, as a slice
-literal already does. Found while fixing a slice literal's drop on 2026-11-01 at
+literal already does. Applied to every use, that treatment also rejects valid
+programs such as a field read through a pointer to a record. Applied only to a value
+handed to a call, it rejects no valid fixture, as the
+[trial](open-questions.md#review-of-the-provenance-architecture-2026-11-01) measured,
+so what remains is the decision about `view.len()`. Found while fixing a slice literal's drop on 2026-11-01 at
 `46cf2aa8` (P1).
 
 ### A write on every path does not end a received allocator's region

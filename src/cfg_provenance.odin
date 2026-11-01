@@ -1623,6 +1623,7 @@ prov_slot_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> (int, bool) {
 	append(&graph.prov_slots, entry)
 	slot := len(graph.prov_slots) - 1
 	graph.slot_by_symbol[id] = slot
+	graph.own_slots[id] = prov_one(graph, slot)
 	if symbol_outlives_bodies(sym) {
 		loan := prov_new_loan(
 			graph, prov_existing_content_root(graph, id, sym), nil,
@@ -1862,12 +1863,15 @@ prov_content_slots :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> []int {
 	if id == INVALID_SYMBOL {
 		return nil
 	}
-	if existing, found := graph.content_by_symbol[id]; found {
+	if _, bare := graph.slot_by_symbol[id]; bare {
+		return nil // a bare carrier already has its own slot
+	}
+	if existing, found := graph.own_slots[id]; found {
 		return existing
 	}
 	sym := symbol_of(graph.k.c, id)
 	if sym == nil || type_is_carrier(graph.k.c, sym.type) {
-		return nil // a bare carrier already has its own slot
+		return nil
 	}
 	if sym.kind != .Var && sym.kind != .Parameter {
 		return nil
@@ -1900,7 +1904,7 @@ prov_content_slots :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> []int {
 			append(&graph.entry_defs, Prov_Entry_Def{slot = slots[index], loan = loan})
 		}
 	}
-	graph.content_by_symbol[id] = slots
+	graph.own_slots[id] = slots
 	return slots
 }
 
@@ -3380,6 +3384,7 @@ prov_caller_slot :: proc(
 	graph: ^Flow_Graph, loan: Loan_Id, path: Carrier_Path, held: Loan_Id, name: string, mutable: bool, one: bool,
 ) {
 	entry := empty_prov_slot(INVALID_SYMBOL)
+	entry.kind = .Caller
 	entry.name = name
 	entry.path = path.steps
 	entry.content_type = path.truncated ? INVALID_TYPE : path.type
@@ -6891,7 +6896,7 @@ prov_slice_literal :: proc(graph: ^Flow_Graph, literal: ^Expr_Composite, mutable
 	if slots == nil {
 		slots = prov_temp_content(graph, backing)
 		for slot in slots {
-			graph.prov_slots[slot].literal_content = true
+			graph.prov_slots[slot].kind = .Literal
 			graph.prov_slots[slot].name = "this slice literal's element"
 		}
 		graph.roots[int(root)].slots = slots
@@ -8717,7 +8722,7 @@ prov_link_copied_carriers :: proc(graph: ^Flow_Graph, hub: int, move: Carrier_Mo
 	}
 	for entry, candidate in graph.prov_slots {
 		sym := symbol_of(c, entry.symbol)
-		if sym == nil && !entry.literal_content || sym != nil && sym.kind == .Parameter && sym.immutable {
+		if entry.kind == .Temporary || sym != nil && sym.kind == .Parameter && sym.immutable {
 			continue
 		}
 		type := entry.content_type
@@ -8729,17 +8734,6 @@ prov_link_copied_carriers :: proc(graph: ^Flow_Graph, hub: int, move: Carrier_Mo
 		}
 		if may_hold(c, type, move) {
 			link(graph, hub, candidate, type, span)
-		}
-	}
-	for _, slots in graph.caller_slots {
-		for candidate in slots {
-			type := graph.prov_slots[candidate].content_type
-			if type != INVALID_TYPE && type_is_region_provider(c, type) {
-				continue
-			}
-			if may_hold(c, type, move) {
-				link(graph, hub, candidate, type, span)
-			}
 		}
 	}
 }
@@ -9189,10 +9183,6 @@ prov_publish_through :: proc(graph: ^Flow_Graph, carriers, sources: []int, span:
 @(private = "file")
 prov_reborrow_retained :: proc(graph: ^Flow_Graph, sources: []int, mutable: bool, span: Span) {
 	c := graph.k.c
-	caller := make(map[int]bool, 8, context.temp_allocator)
-	for _, slots in graph.caller_slots {
-		for slot in slots { caller[slot] = true }
-	}
 	linked := make([dynamic]int, 0, len(sources), context.temp_allocator)
 	pending := make([dynamic]int, 0, len(sources), context.temp_allocator)
 	append(&pending, ..sources)
@@ -9206,7 +9196,7 @@ prov_reborrow_retained :: proc(graph: ^Flow_Graph, sources: []int, mutable: bool
 		if entry.through_block != NO_BLOCK || entry.fresh_loan != NO_LOAN {
 			continue
 		}
-		if !prov_slot_is_stored(entry) && !entry.loaded && !caller[source] {
+		if entry.kind == .Temporary && !entry.loaded {
 			for reborrow in graph.reborrows {
 				if reborrow.derived == source {
 					append(&pending, reborrow.source)
@@ -9214,7 +9204,7 @@ prov_reborrow_retained :: proc(graph: ^Flow_Graph, sources: []int, mutable: bool
 			}
 			continue
 		}
-		mutable_caller := caller[source] && entry.content_type != INVALID_TYPE && carrier_is_mutable(c, entry.content_type)
+		mutable_caller := entry.kind == .Caller && entry.content_type != INVALID_TYPE && carrier_is_mutable(c, entry.content_type)
 		mutable_source := prov_slot_is_mutable_carrier(graph, source) || prov_slot_is_loaded_mutable(graph, source) || mutable_caller
 		if !mutable_source && !prov_slot_is_reborrow(graph, source) {
 			continue
@@ -9239,11 +9229,7 @@ prov_reborrow_retained :: proc(graph: ^Flow_Graph, sources: []int, mutable: bool
 				if !type_is_carrier(c, type) || type_is_region_provider(c, type) {
 					continue
 				}
-			} else if candidate.literal_content {
-				if type != INVALID_TYPE && type_is_region_provider(c, type) {
-					continue
-				}
-			} else if !caller[into] {
+			} else if candidate.kind == .Temporary || type != INVALID_TYPE && type_is_region_provider(c, type) {
 				continue
 			}
 			held := type == INVALID_TYPE ? candidate.caller_mutable : carrier_is_mutable(c, type)

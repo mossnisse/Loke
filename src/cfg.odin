@@ -335,8 +335,9 @@ Prov_State :: struct {
 	// Per named slot, what each of its definitions may point at, so a borrow
 	// through it takes the places of those reaching it (`prov_reaching_offsets`).
 	offset_reach:   Prov_Reach,
-	// One slot per `carrier_shape` path of a local that holds carriers.
-	content_by_symbol: map[Symbol_Id][]int,
+	// A local's own slots (`root_own_slots`): its carrier's one, or one per
+	// `carrier_shape` path when it holds carriers.
+	own_slots: map[Symbol_Id][]int,
 	// Call results settled for this fact-building pass.
 	call_results:   map[^Expr_Call]Prov_Call_Result,
 	// The call each user operator stands for, keyed by its node.
@@ -486,7 +487,7 @@ new_flow_graph :: proc(k: ^Checker, literal: ^Expr_Proc, allocator: mem.Allocato
 			scc     = make([dynamic]Block_Id, allocator),
 			stale   = make([dynamic]Block_Id, allocator),
 		}
-		graph.content_by_symbol = make(map[Symbol_Id][]int, allocator)
+		graph.own_slots = make(map[Symbol_Id][]int, allocator)
 		graph.call_results = make(map[^Expr_Call]Prov_Call_Result, allocator)
 		graph.operator_calls = make(map[rawptr]^Expr_Call, allocator)
 		graph.summary_callees = make([dynamic]Symbol_Id, allocator)
