@@ -432,6 +432,29 @@ main :: proc() {}
 
 Read through the mutable carrier before making the copy.
 
+### A read-only view of a mutable carrier lent to a task does not suspend it
+
+[Task borrows and the join](design.md#task-borrows-and-the-join) says a read-only
+argument keeps its root read-only borrowed until the join, and so it does for a local.
+Given a mutable carrier the procedure received, or a read-only copy of one, the
+parent may still write through the carrier while the task reads, which is a data race:
+
+```loke
+package main;
+read_entry :: proc(p: ^int) { y := p^; }
+the_carrier :: proc(c: ^mut int) {
+    parallel { spawn read_entry(c); c^ = 1; } // should be rejected
+}
+a_copy :: proc(c: ^mut int) {
+    x: ^int = c;
+    parallel { spawn read_entry(x); c^ = 1; } // should be rejected
+}
+main :: proc() {}
+```
+
+[carrier_store_matrix_test.odin](tests/carrier_store_matrix_test.odin) lists the forms
+that reach this through a store or a call. Do not write through the carrier in the block.
+
 ### A reordering of fields through a traversal binding is rejected
 
 [Weakening and reborrows](design.md#weakening-and-reborrows) says a reordering leaves

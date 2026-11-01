@@ -3468,6 +3468,12 @@ copy of such a slot is now pending as a loaded one is, and the solve activates i
 the links it finds (`prov_activate_landed_copies`). When moving links, check who reads
 them during the walk, as well as what the solve does with them.
 
+The links of a call that copies moved next, and changed no verdict and no diagnostic.
+They had been built by type during the walk and switched on by the slots a `Rearrange`
+reached, which needed severing to replay reach. Linking those slots once reach has
+settled does the same with no replay, no flag of their own, and no second copy of each
+link for an element slot made later, as a landing includes those.
+
 ### Provenance slots and regions stay apart
 
 A review of the provenance checker on 2026-11-01 proposed two generalizations. One

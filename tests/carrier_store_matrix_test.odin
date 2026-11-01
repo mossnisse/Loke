@@ -643,6 +643,114 @@ read_only_copy_matrix :: proc(t: ^testing.T) {
 	}
 }
 
+// What reads a link while the walk runs: a traversal, an argument evaluated before
+// another, and a spawn. A link the solve makes is not there yet, so each of these must
+// still see what a store, or a call that keeps its argument, leaves in a place. Each
+// verdict is worked out by hand as above.
+@(private = "file")
+WALK_READER_PRELUDE :: `package main;
+Link :: struct { to: ^mut int }
+RoS :: struct { s: []int }
+MuS :: struct { s: []mut int }
+RoLink :: struct { to: ^int }
+keep_rs :: proc(dst: ^mut RoS, @(escape=stored) s: []mut int) { dst^.s = s; }
+keep_ms :: proc(dst: ^mut MuS, @(escape=stored) s: []mut int) { dst^.s = s; }
+keep_ro :: proc(dst: ^mut RoLink, @(escape=stored) c: ^mut int) { dst^.to = c; }
+keep :: proc(dst: ^mut Link, @(escape=stored) c: ^mut int) { dst^.to = c; }
+keep_pointer :: proc(dst: ^mut ^mut int, @(escape=stored) c: ^mut int) { dst^ = c; }
+write_first :: proc(s: []mut int) -> int { s[0] = 1; return 0; }
+write_it :: proc(c: ^mut int) -> int { c^ = 1; return 0; }
+both_ro :: proc(a: []int, b: int) {}
+both_mu :: proc(a: []mut int, b: int) {}
+both_ptr :: proc(a: ^int, b: int) {}
+both_mptr :: proc(a: ^mut int, b: int) {}
+take_two :: proc(a: ^mut int, b: ^mut int) {}
+take_one_view :: proc(a: []mut int, b: []mut int) {}
+entry :: proc(p: ^mut int) { p^ = 1; }
+read_entry :: proc(p: ^int) { y := p^; }
+Pair_Ptr :: struct { a: ^mut int, b: int }
+`
+
+@(private = "file")
+WALK_READER_CASES := [?]Stored_Reach_Case {
+	// A traversal.
+	{"foreach_ro_by_hand", "@(escape=stored) s: []mut int", "arr := [2]int{1, 2}; rs := RoS{arr[:]}; p := &mut rs; p^.s = s; foreach (x in rs.s) { s[0] = x; }", true},
+	{"foreach_ro_by_call", "@(escape=stored) s: []mut int", "arr := [2]int{1, 2}; rs := RoS{arr[:]}; keep_rs(&mut rs, s); foreach (x in rs.s) { s[0] = x; }", true},
+	{"foreach_ro_by_hand_done", "@(escape=stored) s: []mut int", "arr := [2]int{1, 2}; rs := RoS{arr[:]}; p := &mut rs; p^.s = s; foreach (x in rs.s) { y := x; } s[0] = 1;", false},
+	{"foreach_ro_by_call_done", "@(escape=stored) s: []mut int", "arr := [2]int{1, 2}; rs := RoS{arr[:]}; keep_rs(&mut rs, s); foreach (x in rs.s) { y := x; } s[0] = 1;", false},
+	{"foreach_ro_named_by_hand", "@(escape=stored) s: []mut int", "arr := [2]int{1, 2}; rs := RoS{arr[:]}; p := &mut rs; p^.s = s; t := rs.s; foreach (x in t) { s[0] = x; }", true},
+	{"foreach_ro_named_by_call", "@(escape=stored) s: []mut int", "arr := [2]int{1, 2}; rs := RoS{arr[:]}; keep_rs(&mut rs, s); t := rs.s; foreach (x in t) { s[0] = x; }", true},
+	{"foreach_mu_by_hand", "@(escape=stored) s: []mut int", "arr := [2]int{1, 2}; ms := MuS{&mut arr[:]}; p := &mut ms; p^.s = s; foreach (x in ms.s) { s[0] = x; }", true},
+	{"foreach_mu_by_call", "@(escape=stored) s: []mut int", "arr := [2]int{1, 2}; ms := MuS{&mut arr[:]}; keep_ms(&mut ms, s); foreach (x in ms.s) { s[0] = x; }", true},
+	{"foreach_mu_named_by_hand", "@(escape=stored) s: []mut int", "arr := [2]int{1, 2}; ms := MuS{&mut arr[:]}; p := &mut ms; p^.s = s; t := ms.s; foreach (x in t) { s[0] = x; }", true},
+	{"foreach_mu_named_by_call", "@(escape=stored) s: []mut int", "arr := [2]int{1, 2}; ms := MuS{&mut arr[:]}; keep_ms(&mut ms, s); t := ms.s; foreach (x in t) { s[0] = x; }", true},
+	{"foreach_mu_by_call_done", "@(escape=stored) s: []mut int", "arr := [2]int{1, 2}; ms := MuS{&mut arr[:]}; keep_ms(&mut ms, s); foreach (x in ms.s) { y := x; } s[0] = 1;", false},
+	// An argument evaluated before another that writes.
+	{"argument_ro_by_hand", "@(escape=stored) s: []mut int", "arr := [2]int{1, 2}; rs := RoS{arr[:]}; p := &mut rs; p^.s = s; both_ro(rs.s, write_first(s));", true},
+	{"argument_ro_by_call", "@(escape=stored) s: []mut int", "arr := [2]int{1, 2}; rs := RoS{arr[:]}; keep_rs(&mut rs, s); both_ro(rs.s, write_first(s));", true},
+	{"argument_ro_named_by_call", "@(escape=stored) s: []mut int", "arr := [2]int{1, 2}; rs := RoS{arr[:]}; keep_rs(&mut rs, s); t := rs.s; both_ro(t, write_first(s));", true},
+	{"argument_ro_after_by_call", "@(escape=stored) s: []mut int", "arr := [2]int{1, 2}; rs := RoS{arr[:]}; keep_rs(&mut rs, s); n := write_first(s); both_ro(arr[:], n);", false},
+	{"argument_ptr_by_hand", "@(escape=stored) c: ^mut int", "v := 1; ro := RoLink{&v}; p := &mut ro; p^.to = c; both_ptr(ro.to, write_it(c));", true},
+	{"argument_ptr_by_call", "@(escape=stored) c: ^mut int", "v := 1; ro := RoLink{&v}; keep_ro(&mut ro, c); both_ptr(ro.to, write_it(c));", true},
+	{"argument_mu_by_hand", "@(escape=stored) s: []mut int", "arr := [2]int{1, 2}; ms := MuS{&mut arr[:]}; p := &mut ms; p^.s = s; both_mu(ms.s, write_first(s));", true},
+	{"argument_mu_by_call", "@(escape=stored) s: []mut int", "arr := [2]int{1, 2}; ms := MuS{&mut arr[:]}; keep_ms(&mut ms, s); both_mu(ms.s, write_first(s));", true},
+	{"argument_mptr_by_hand", "@(escape=stored) c: ^mut int", "v := 1; l := Link{&mut v}; p := &mut l; p^.to = c; both_mptr(l.to, write_it(c));", true},
+	{"argument_mptr_by_call", "@(escape=stored) c: ^mut int", "v := 1; l := Link{&mut v}; keep(&mut l, c); both_mptr(l.to, write_it(c));", true},
+	{"argument_mptr_pointer_by_call", "@(escape=stored) c: ^mut int", "v := 1; r := &mut v; pp := &mut r; keep_pointer(pp, c); both_mptr(r, write_it(c));", true},
+	{"two_arguments_by_call", "@(escape=stored) c: ^mut int", "v := 1; l := Link{&mut v}; keep(&mut l, c); take_two(l.to, c);", true},
+	{"two_arguments_by_hand", "@(escape=stored) c: ^mut int", "v := 1; l := Link{&mut v}; p := &mut l; p^.to = c; take_two(l.to, c);", true},
+	{"two_arguments_pointer_by_call", "@(escape=stored) c: ^mut int", "v := 1; r := &mut v; pp := &mut r; keep_pointer(pp, c); take_two(r, c);", true},
+	{"two_arguments_view_by_call", "@(escape=stored) s: []mut int", "arr := [2]int{1, 2}; ms := MuS{&mut arr[:]}; keep_ms(&mut ms, s); take_one_view(ms.s, s);", true},
+	{"record_literal_by_call", "@(escape=stored) c: ^mut int", "v := 1; l := Link{&mut v}; keep(&mut l, c); t := Pair_Ptr{l.to, write_it(c)}; t.a^ = 1;", true},
+	// A spawn.
+	{"spawn_copy_by_hand", "@(escape=stored) c: ^mut int", "v := 1; r := &mut v; pp := &mut r; pp^ = c; parallel { spawn entry(r); c^ = 1; }", true},
+	{"spawn_copy_by_call", "@(escape=stored) c: ^mut int", "v := 1; r := &mut v; pp := &mut r; keep_pointer(pp, c); parallel { spawn entry(r); c^ = 1; }", true},
+	{"spawn_field_by_call", "@(escape=stored) c: ^mut int", "v := 1; l := Link{&mut v}; keep(&mut l, c); parallel { spawn entry(l.to); c^ = 1; }", true},
+	{"spawn_field_by_hand", "@(escape=stored) c: ^mut int", "v := 1; l := Link{&mut v}; p := &mut l; p^.to = c; parallel { spawn entry(l.to); c^ = 1; }", true},
+	{"spawn_named_copy_by_call", "@(escape=stored) c: ^mut int", "v := 1; l := Link{&mut v}; keep(&mut l, c); x := l.to; parallel { spawn entry(x); c^ = 1; }", true},
+	{"spawn_named_copy_by_hand", "@(escape=stored) c: ^mut int", "v := 1; l := Link{&mut v}; p := &mut l; p^.to = c; x := l.to; parallel { spawn entry(x); c^ = 1; }", true},
+	{"spawn_read_only_by_call", "@(escape=stored) c: ^mut int", "v := 1; ro := RoLink{&v}; keep_ro(&mut ro, c); parallel { spawn read_entry(ro.to); c^ = 1; }", true},
+	{"spawn_read_only_named_by_call", "@(escape=stored) c: ^mut int", "v := 1; ro := RoLink{&v}; keep_ro(&mut ro, c); x := ro.to; parallel { spawn read_entry(x); c^ = 1; }", true},
+	{"spawn_read_only_by_hand", "@(escape=stored) c: ^mut int", "v := 1; ro := RoLink{&v}; p := &mut ro; p^.to = c; parallel { spawn read_entry(ro.to); c^ = 1; }", true},
+	{"spawn_done_by_call", "@(escape=stored) c: ^mut int", "v := 1; r := &mut v; pp := &mut r; keep_pointer(pp, c); parallel { spawn entry(r); } c^ = 1;", false},
+	{"spawn_two_copies_by_call", "@(escape=stored) c: ^mut int", "v := 1; l := Link{&mut v}; keep(&mut l, c); parallel { spawn entry(l.to); spawn entry(c); }", true},
+	{"spawn_two_copies_by_hand", "@(escape=stored) c: ^mut int", "v := 1; l := Link{&mut v}; p := &mut l; p^.to = c; parallel { spawn entry(l.to); spawn entry(c); }", true},
+	{"spawn_two_named_by_call", "@(escape=stored) c: ^mut int", "v := 1; l := Link{&mut v}; keep(&mut l, c); x := l.to; parallel { spawn entry(x); spawn entry(c); }", true},
+	{"spawn_two_read_only_named_by_call", "@(escape=stored) c: ^mut int", "v := 1; ro := RoLink{&v}; keep_ro(&mut ro, c); x := ro.to; parallel { spawn read_entry(x); spawn entry(c); }", true},
+}
+
+// known-gaps.md "A read-only view of a mutable carrier lent to a task does not suspend it".
+@(private = "file")
+walk_reader_wrongly_accepted :: proc(entry: Stored_Reach_Case) -> bool {
+	switch entry.name {
+	case "spawn_read_only_by_call", "spawn_read_only_named_by_call", "spawn_read_only_by_hand", "spawn_two_read_only_named_by_call":
+		return true
+	}
+	return false
+}
+
+@(test)
+walk_reader_matrix :: proc(t: ^testing.T) {
+	source := strings.builder_make(context.temp_allocator)
+	strings.write_string(&source, WALK_READER_PRELUDE)
+	first := strings.count(WALK_READER_PRELUDE, "\n") + 1
+	for entry in WALK_READER_CASES {
+		// Every case takes up four lines, which the check below counts on.
+		fmt.sbprintf(&source, "%s :: proc(%s) {{\n\t\n\t%s\n}}\n", entry.name, entry.params, entry.body)
+	}
+	strings.write_string(&source, "main :: proc() {}\n")
+	names := []string{"walk_reader"}
+	sources := []string{strings.to_string(source)}
+	errors, compiled := store_matrix_compile(t, names, sources)
+	if !compiled {
+		return
+	}
+	for entry, at in WALK_READER_CASES {
+		expected := entry.rejected && !walk_reader_wrongly_accepted(entry)
+		store_matrix_expect(t, names[0], entry.name, first + 4 * at, errors[0], expected)
+	}
+}
+
 // Compiles each source, and returns the lines each one reports an error at.
 @(private = "file")
 store_matrix_compile :: proc(t: ^testing.T, names, sources: []string) -> (errors: [][]int, compiled: bool) {

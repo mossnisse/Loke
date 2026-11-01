@@ -3567,41 +3567,11 @@ prov_view_element :: proc(graph: ^Flow_Graph, place: Expr) -> (Prov_Element_Slot
 			graph.prov_slots[slot].caller_element = true
 		}
 		graph.view_elements[key] = slots
-		prov_reborrow_element(graph, own, slots)
 	}
 	if len(slots) == 0 {
 		return {}, false
 	}
 	return Prov_Element_Slots{own, slots}, true
-}
-
-// The element slots of a view parameter stand for part of what the slots
-// standing for every element do, so what a call copied may be in one: each
-// reborrow linking a carrier to one of those (`prov_link_copied_carriers`) links
-// it to the element's slot at the same path too.
-@(private = "file")
-prov_reborrow_element :: proc(graph: ^Flow_Graph, own: Loan_Id, elements: []int) {
-	count := len(graph.reborrows)
-	for every in graph.caller_slots[own] {
-		entry := graph.prov_slots[every]
-		if entry.caller_element {
-			continue
-		}
-		for element in elements {
-			if !slice.equal(graph.prov_slots[element].path, entry.path) {
-				continue
-			}
-			for index in 0 ..< count {
-				if reborrow := graph.reborrows[index]; reborrow.derived == every {
-					reborrow.derived = element
-					append(&graph.reborrows, reborrow)
-				} else if reborrow.source == every && reborrow.copied_within {
-					reborrow.source = element
-					append(&graph.reborrows, reborrow)
-				}
-			}
-		}
-	}
 }
 
 // design.md "Values that contain borrows": `s[k]`, with `s` a local view and
@@ -3717,8 +3687,8 @@ prov_view_element_store :: proc(graph: ^Flow_Graph, target: Expr, stored: Type_I
 // may land in any element of the caller's view: in the slots standing for
 // every element, and in those of each constant element, as a load of that
 // element alone reads them. It joins into all of them and replaces none
-// (`publish_into_loan`), so its copy reborrows each that may hold it; an
-// element's slots made later inherit that (`prov_reborrow_element`). The
+// (`publish_into_loan`), so its copy reborrows each that may hold it
+// (`prov_link_landed`). The
 // parameter's own loan, or NO_LOAN when `target` is no such place, or a caller
 // slot it may land in holds another type, which the parameter itself then holds
 // instead.
@@ -8900,25 +8870,18 @@ prov_call_carrier_moves :: proc(graph: ^Flow_Graph, v: ^Expr_Call, container_op:
 		}
 		slot := prov_temp_slot(graph)
 		prov_emit(graph, Prov_Event{kind = .Rearrange, slot = slot, into = into, span = v.span, rearranged = move})
-		if move.copied {
-			prov_link_copied_carriers(graph, slot, move, v.span)
-		}
+		graph.has_linked_store ||= move.copied
 	}
 }
 
-// Every slot of lasting storage, or slot standing for caller storage, that holds
-// a carrier a call may have copied there is linked to the others through `hub`,
-// the slot of the call's `Rearrange`, as there may be many. The links hold from that event
-// on, for the slots it reaches (`run_severing_event`).
-@(private = "file")
-prov_link_copied_carriers :: proc(graph: ^Flow_Graph, hub: int, move: Carrier_Move, span: Span) {
+// Every slot of lasting storage, or slot standing for caller storage, that holds a
+// carrier a call may have copied there, of those `rearranged` found it reaching, is
+// linked to the others through the slot of the call's `Rearrange`, as there may be many.
+// Each link holds from that event on (`Prov_Reborrow.from_store`).
+@(private)
+prov_link_copied_carriers :: proc(graph: ^Flow_Graph, event: Prov_Event, rearranged: []int) {
 	c := graph.k.c
-	link :: proc(graph: ^Flow_Graph, hub, candidate: int, type: Type_Id, span: Span) {
-		// Only a mutable one suspends a read of it.
-		mutable := type == INVALID_TYPE || carrier_is_mutable(graph.k.c, type)
-		append(&graph.reborrows, Prov_Reborrow{source = candidate, derived = hub, span = span, mutable = mutable, copied_within = true})
-		append(&graph.reborrows, Prov_Reborrow{source = hub, derived = candidate, span = span, mutable = true, copied_within = true})
-	}
+	hub := event.slot
 	may_hold :: proc(c: ^Compiler, type: Type_Id, move: Carrier_Move) -> bool {
 		if type == INVALID_TYPE || move.any {
 			return true
@@ -8930,7 +8893,8 @@ prov_link_copied_carriers :: proc(graph: ^Flow_Graph, hub: int, move: Carrier_Mo
 		}
 		return false
 	}
-	for entry, candidate in graph.prov_slots {
+	for candidate in rearranged {
+		entry := graph.prov_slots[candidate]
 		sym := symbol_of(c, entry.symbol)
 		if entry.kind == .Temporary || sym != nil && sym.kind == .Parameter && sym.immutable {
 			continue
@@ -8942,8 +8906,11 @@ prov_link_copied_carriers :: proc(graph: ^Flow_Graph, hub: int, move: Carrier_Mo
 		if type != INVALID_TYPE && (!type_is_carrier(c, type) || type_is_region_provider(c, type)) {
 			continue
 		}
-		if may_hold(c, type, move) {
-			link(graph, hub, candidate, type, span)
+		if may_hold(c, type, event.rearranged) {
+			// Only a mutable one suspends a read of it.
+			mutable := type == INVALID_TYPE || carrier_is_mutable(c, type)
+			append(&graph.reborrows, Prov_Reborrow{source = candidate, derived = hub, span = event.span, mutable = mutable})
+			append(&graph.reborrows, Prov_Reborrow{source = hub, derived = candidate, span = event.span, mutable = true})
 		}
 	}
 }
