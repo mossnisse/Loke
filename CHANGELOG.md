@@ -965,6 +965,10 @@ checklist.
 
 ### Fixed
 
+- A reslice in a loop that never moves a local view's start, as
+  `s = &mut s[:2]`, now leaves the view's constant elements apart, so `s[1]`
+  beside a live `&mut s[0]` is no longer `L0641`. A loop that moves the start,
+  as `s = &mut s[1:]`, stays rejected.
 - `free_all` of an allocator unwrapped by `or_else` from an unmarked
   `Option(Allocator)` parameter, as in `maybe or_else allowed`, is now
   `L0538`, as the same reset through a `switch` was. Only the fallback's

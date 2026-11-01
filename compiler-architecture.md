@@ -453,9 +453,11 @@ Keep these contracts:
   `s`. Which definitions reach the store, and each reslice, is a
   reaching-definitions pass over the views stores name
   (`solve_view_defs`), so `s = &mut s[1:]` before a loop is known there, but
-  not inside it, where the reslice reaches itself, and not in a multiple
-  assignment that also writes `s`
-  (`Prov_View_Def`, `prov_local_view_element`, `publish_view_of`). The
+  not inside it, where the reslice reaches itself and moves the view each
+  round, and not in a multiple assignment that also writes `s`
+  (`Prov_View_Def`, `prov_local_view_element`, `publish_view_of`). Where a
+  reslice reaches itself, the starts are the least fixed point over the
+  definitions, so `s = &mut s[:2]` in a loop keeps the start. The
   definitions need not agree on its length, as an index past a shorter one
   panics, and a fresh borrow whose end is not constant, as `&mut d[:]` of a
   dynamic array, lends from its constant start on (`Prov_View_Def.open`). A

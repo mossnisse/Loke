@@ -357,9 +357,9 @@ varies") for correctness, simplification, and structure. Three findings remain:
   directly. `Hidden :: type_of(T{})` has the same omission.
 - **Retain starts through zero-offset reslice loops (P2).** The length join
   fixes branches, but a constant reslice from zero in a loop still makes
-  the start unknown. The [known gap](known-gaps.md#zero-offset-reslices-in-loops-lose-a-local-views-known-start)
-  includes a two-iteration reproduction and accepting straight-line and
-  branch controls. This is a remaining precision gap, not a new rejection.
+  the start unknown. The known gap, since closed, had a two-iteration
+  reproduction and accepting straight-line and branch controls. This was a
+  remaining precision gap, not a new rejection.
 - **Reuse the exposure maps across instance alias targets (P3).** Every
   `read_instance_alias` call in [src/private_names.odin](src/private_names.odin)
   creates an arena and calls `exposure_of`, which scans every declaration

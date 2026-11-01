@@ -4,9 +4,9 @@ package main;
 // own only where it is known where the view starts. The same element, one
 // through an index that is no constant, one through a copy of the view, and
 // one of a view whose start a loop or a branch changes, or that is itself
-// borrowed, may be the borrowed element. A branch that only shortens a view,
-// and a fresh view of a dynamic array, keep the same element the same. So
-// does a copy of a carrier out of an element, which reborrows the carrier
+// borrowed, may be the borrowed element. A branch or a loop that only shortens
+// a view, and a fresh view of a dynamic array, keep the same element the same.
+// So does a copy of a carrier out of an element, which reborrows the carrier
 // stored in that element alone.
 
 Counter :: struct { count: int, first: Option(^mut int) }
@@ -128,6 +128,143 @@ copy_chosen_start :: proc() {
 	again := view[1].to;
 	again^ = 3;
 	held^ = 4;
+}
+
+// A loop reslicing from a nonzero start moves the view each round, whatever
+// else the loop does, and however the reslice reaches itself.
+moved_in_loop :: proc() {
+	a := [3]Counter{};
+	s := &mut a[:];
+	for (i := 0; i < 2; i += 1) { s = &mut s[1:]; }
+	first := &mut s[0];
+	s[1].count += 1;
+	first^.count += 1;
+}
+
+moved_in_branch_in_loop :: proc() {
+	a := [3]Counter{};
+	s := &mut a[:];
+	for (i := 0; i < 2; i += 1) {
+		s = &mut s[:2];
+		if (cond()) { s = &mut s[1:]; }
+	}
+	first := &mut s[0];
+	s[1].count += 1;
+	first^.count += 1;
+}
+
+moved_through_another_view :: proc() {
+	a := [3]Counter{};
+	s := &mut a[:];
+	for (i := 0; i < 2; i += 1) {
+		t := &mut s[1:];
+		s = &mut t[:];
+	}
+	first := &mut s[0];
+	s[1].count += 1;
+	first^.count += 1;
+}
+
+moved_in_outer_loop :: proc() {
+	a := [3]Counter{};
+	s := &mut a[:];
+	for (i := 0; i < 2; i += 1) {
+		for (j := 0; j < 2; j += 1) { s = &mut s[:2]; }
+		s = &mut s[1:];
+	}
+	first := &mut s[0];
+	s[1].count += 1;
+	first^.count += 1;
+}
+
+// The loop only shortens it, but a branch after the loop moves it.
+moved_after_shortening_loop :: proc() {
+	a := [3]Counter{};
+	s := &mut a[:];
+	for (i := 0; i < 2; i += 1) { s = &mut s[:2]; }
+	if (cond()) { s = &mut s[1:]; }
+	first := &mut s[0];
+	s[1].count += 1;
+	first^.count += 1;
+}
+
+// `first` is element 0 of what `s` held a round ago, which is element 1 of
+// nothing the checker can name once a round has moved it.
+kept_across_moving_rounds :: proc() {
+	a := [3]Counter{};
+	other := Counter{};
+	s := &mut a[:];
+	first := &mut other;
+	for (i := 0; i < 2; i += 1) {
+		s[0].count += 1;
+		first^.count += 1;
+		first = &mut s[1];
+		s = &mut s[1:];
+	}
+	first^.count += 1;
+}
+
+// A loop that only shortens the view leaves each element itself.
+same_element_after_shortening_loop :: proc() {
+	a := [3]Counter{};
+	s := &mut a[:];
+	for (i := 0; i < 2; i += 1) { s = &mut s[:2]; }
+	first := &mut s[0];
+	s[0].count += 1;
+	first^.count += 1;
+}
+
+same_element_across_shortening_rounds :: proc() {
+	a := [3]Counter{};
+	other := Counter{};
+	s := &mut a[:];
+	first := &mut other;
+	for (i := 0; i < 2; i += 1) {
+		s[0].count += 1;
+		first^.count += 1;
+		first = &mut s[0];
+		s = &mut s[:2];
+	}
+}
+
+// Reslices whose ends or starts are not constant say nothing of where the
+// view starts or how long it is.
+variable_end_in_loop :: proc(n: int) {
+	a := [3]Counter{};
+	s := &mut a[:];
+	for (i := 0; i < 2; i += 1) { s = &mut s[:n]; }
+	first := &mut s[0];
+	s[1].count += 1;
+	first^.count += 1;
+}
+
+variable_start_in_loop :: proc(n: int) {
+	a := [3]Counter{};
+	s := &mut a[:];
+	for (i := 0; i < 2; i += 1) { s = &mut s[n:]; }
+	first := &mut s[0];
+	s[1].count += 1;
+	first^.count += 1;
+}
+
+// An index past the longest the view may be, and a reslice past it, which
+// always panics, name no element.
+past_every_length_after_loop :: proc() {
+	a := [3]Counter{};
+	s := &mut a[:];
+	for (i := 0; i < 2; i += 1) { s = &mut s[:2]; }
+	first := &mut s[0];
+	s[5].count += 1;
+	first^.count += 1;
+}
+
+reslice_past_length_in_loop :: proc() {
+	a := [3]Counter{};
+	s := &mut a[0:2];
+	for (i := 0; i < 2; i += 1) { s = &mut s[:5]; }
+	first := &mut s[0];
+	s[1].count += 1;
+	first^.count += 1;
 }
 
 main :: proc() {}

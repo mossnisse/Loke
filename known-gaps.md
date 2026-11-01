@@ -363,37 +363,6 @@ untyped aliases whose targets could not be classified in the template too.
 Confirmed on a compiler built from `1d4a0c29` and on the merged tree during
 review on 2026-10-31.
 
-### Zero-offset reslices in loops lose a local view's known start
-
-[Weakening and reborrows](design.md#weakening-and-reborrows) separates constant
-elements of a local view whose reaching definitions are fresh range borrows
-or constant reslices with a known start. Every reslice below starts at zero,
-so only the view's length changes, but the distinct-element write is rejected:
-
-```loke
-package main;
-Counter :: struct { count: int }
-check :: proc() {
-    a := [3]Counter{};
-    s := &mut a[:];
-    for (i := 0; i < 2; i += 1) { s = &mut s[:2]; }
-    first := &mut s[0];
-    s[1].count += 1; // L0641; should be accepted
-    first^.count += 1;
-}
-main :: proc() { check(); }
-```
-
-Replacing the loop with a single `s = &mut s[:2]` compiles, as does a
-conditional zero-offset reslice. `publish_view_take` in
-[src/borrow.odin](src/borrow.odin) now joins differing lengths, but
-`publish_view_advance` rejects a definition reached while its own answer is
-unsettled before that join can retain the start. This remains a gap after
-`4e475f11`, rather than a new rejection introduced by it. Preserve starts
-around cycles whose reslices all have zero lower bounds, while keeping
-start-changing loops conservative. Confirmed on a compiler built from
-`4e475f11` and on the merged tree during review on 2026-10-31.
-
 ### Editor completion offers a hidden generated formatter
 
 After `d16a9a2d`, a public type with a private `format` also has a generated
