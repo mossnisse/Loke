@@ -9286,7 +9286,9 @@ a `where` clause written in private terms. The warning applies to:
   declaration, whether or not an instance exists; one that names a `$` name
   has a type only in an instance, so it is read in each instance the build
   creates, and not at all when there is none. Either way it is warned about
-  once.
+  once. So too a generic `impl`'s private member may be a type only in an
+  instance, as `Hidden :: type_of(T{})` is: what selects it, as
+  `Box(T).Hidden`, is read in each instance the build creates.
 - **Any private declaration in a `where` clause**, or in the expression of an
   interface requirement: a procedure, interface, constant, or type.
 
@@ -9305,7 +9307,8 @@ It does not apply to:
   instance binds to one of the block's `$` names is read as that name.
 - The members of an `impl` whose subject is a private type. An importer
   reaches them only through a value of that type, and the declaration that
-  hands one out is the one warned about.
+  hands one out is the one warned about. A block written through a private
+  alias of a public type is on the public type, so its members are read.
 - A private field, which no importer reads.
 - A `package main`, which nothing imports.
 

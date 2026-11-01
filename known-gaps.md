@@ -221,65 +221,42 @@ as binding `T`, then reports `L0392`, since `Alias(f64)` is another new type. In
 nested one is meant and say what it denotes. Found on 2026-11-01 beside the
 nested computed type check.
 
-### Parametric aliases are omitted from private type exposure checks
+### Instance-only private members evade L0740 outside `impl` blocks
 
 [Private names in public declarations](design.md#private-names-in-public-declarations)
-requires `L0740` for a public alias's private target and for a private alias in
-a public signature. Neither warning is produced for these parametric aliases
-in a package imported by a main program:
+reads a private member that is a type only in an instance, and a generic `impl`'s
+own declarations are read so as each instance of the block is checked. These
+declarations are generic too, and select the same member, but no instance of
+theirs is read, so none warns:
 
 ```loke
 package shapes;
-Hidden :: enum { Err }
-Hidden_Result :: Result($T, Hidden);
-@(public) Public_Result :: Result($T, Hidden);
-@(public) consume :: proc(x: Hidden_Result($T)) {}
-```
-
-Alias templates are registered as generic constants without a concrete type
-value. `symbol_names_type` in [src/private_names.odin](src/private_names.odin)
-therefore does not classify them as types: `read_public_decl` skips the public
-alias's target, and a signature walk skips the private alias. Include alias
-templates in the classification and bind their own parameter names while
-reading their targets. Confirmed on `3b49d840` during review on 2026-10-31 (P3).
-
-### Private member aliases whose types are known only in an instance evade L0740
-
-[Private names in public declarations](design.md#private-names-in-public-declarations)
-reads an alias's target, including a private alias of a public type. After
-`1d4a0c29`, a public alias whose written type is bound to `type` is read in
-an instance, but selecting a private member that needs the same classification
-still produces no warning:
-
-```loke
-package shapes;
-@(public) Point :: struct {}
-@(public) Box :: struct($T: type) { value: int }
-impl Box($T) {
-    @(private) Hidden: T : Point;
-    @(public) Typed: T : Box(T).Hidden; // should warn L0740 for Box.Hidden
-    @(public) Untyped :: Box(T).Hidden; // should warn L0740 for Box.Hidden
+@(public) Twin :: struct($A: type, $B: type) { a: A, b: B }
+@(public) Bag :: struct($T: type) { @(public) value: T }
+impl Bag($T) {
+    @(private) Inferred :: type_of(T{});
 }
+@(public) Field :: struct($T: type) { @(public) field: Twin(Bag(T).Inferred, int) }
+@(public) result :: proc(x: $T) -> Twin(Bag(T).Inferred, int) { return {}; }
+@(public) Target :: map[$K]Twin(Bag(K).Inferred, int);
 @(private) use :: proc() {
-    _ = Box(type).Typed;
-    _ = Box(type).Untyped;
+    _ = Bag(int){};
+    _ = Field(int){};
+    _ = result(1);
+    a: Target(string) = {};
+    _ = a.len();
 }
 ```
 
-Spelling `Hidden: type : Point` produces both warnings. The indirect case is
-also missed with `Hidden :: type_of(T{})` and `Box(Point).Untyped`, without
-any explicitly typed alias.
-
-`read_instance_alias` in [src/private_names.odin](src/private_names.odin)
-rebuilds its `Exposure` from template declarations. The private `Hidden`
-has no template-wide type classification, so `selected_member` treats it as
-a value and `found_name` ignores it in a type position. The instance pass
-skips private members and also skips aliases with no written type when their
-resolved value is a type, so neither form gets the missing classification.
-Use the current instance's resolved member kinds for these lookups and read
-untyped aliases whose targets could not be classified in the template too.
-Confirmed on a compiler built from `1d4a0c29` and on the merged tree during
-review on 2026-10-31.
+`check_instance_private_names` in
+[src/private_names.odin](src/private_names.odin) runs for a block's instance. In
+the template pass, `resolves_to_type` cannot read syntax that names a `$` name, so
+a generic record's field, a generic procedure's signature, and a parametric
+alias's target are passed over. Read each as its record, procedure, or alias
+application is instantiated, with the checker in that instance's scope, as the
+block's instance does, and report each written name once through
+`private_names_warned`. Found while fixing the same omission for `impl` blocks on
+2026-11-01.
 
 ### Zero-offset reslices in loops lose a local view's known start
 
@@ -312,46 +289,32 @@ around cycles whose reslices all have zero lower bounds, while keeping
 start-changing loops conservative. Confirmed on a compiler built from
 `4e475f11` and on the merged tree during review on 2026-10-31.
 
-### Editor completion offers a hidden generated formatter
+### Completion lists nothing after a pointer whose method is already called
 
-After `d16a9a2d`, a public type with a private `format` also has a generated
-default for its `Formattable` slot. Ordinary lookup deliberately hides that
-default, but the editor's member query lists it as callable. The query should
-list the members visible at the use, as described in
-[Snapshots and queries](compiler-architecture.md#snapshots-and-queries) and
-[Language server](compiler-architecture.md#language-server).
+[Language server](compiler-architecture.md#language-server) completion lists the
+members visible at a use. It does so after an unfinished `r.`, and after `r.x`,
+but lists no member when the selector already calls a method through the pointer:
 
 ```loke
-// lib/lib.loke
-package lib;
-import "core:fmt";
-@(public) S :: struct {}
-impl S {
-    format :: proc(self, w: fmt.Writer, o: fmt.Options) {}
-}
-```
-
-```loke
-// main.loke
 package main;
-import "./lib";
-import "core:fmt";
+P :: struct { x: int }
+impl P {
+    size :: proc(self) -> int { return 0; }
+}
 main :: proc() {
-    s := lib.S{};
-    fmt.println(s);
-    s.format(fmt.stdout(), fmt.DEFAULT_OPTIONS); // L0363
+    p := P{1};
+    r := &p;
+    _ = r.size(); // completion at `size` offers nothing; at `p.size` it does
 }
 ```
 
-Replacing the final call with an unfinished `s.` and requesting completion
-offers `format`, even though completing the call above is rejected.
-`query_members` in [src/queries.odin](src/queries.odin) filters by `public`
-and package alone, so the public synthetic method escapes the new check in
-`member_is_visible` in [src/impl.odin](src/impl.odin). Apply the same hidden
-default policy to the read-only query, preserving snapshot immutability,
-and add a completion regression. Confirmed through both `query_members` and
-the LSP `completion` entry point with a fresh build on 2026-10-31; the
-existing `tests/pkg/private_formatter` case also supplies the type.
+`check_selector` in [src/check_expr.odin](src/check_expr.odin) rewrites the operand
+to `r^` through `implicit_pointer_deref` when the method is the pointee's. Both
+expressions occupy `r`'s span with different types, so `merge_occurrence` in
+[src/queries.odin](src/queries.odin) drops the type as a conflict, and
+`query_members` has no subject. Prefer the type the source wrote over the implicit
+dereference's. Confirmed through `loke-lsp.exe` on 2026-11-01 while fixing the
+generated formatter's completion.
 
 ### Reaching-definition limits weaken the per-storage chosen-place guarantee
 

@@ -1067,6 +1067,23 @@ checklist.
   `Box(T).Hidden` for `Hidden :: []T`; and follows a chain of member aliases
   however long it is, where it stopped after eight
   ([Private names in public declarations](design.md#private-names-in-public-declarations)).
+- `L0740` now reads parametric aliases as it does other aliases: a public one's
+  target, as `Public_Result :: Result($T, Hidden)`, and a private one applied in
+  a public declaration, as `consume :: proc(x: Hidden_Result($T))`. It also reads
+  the members of a block written through a private alias of a public type, as
+  `impl Short` for `Short :: Point`, which it used to take for a private type's
+  ([Private names in public declarations](design.md#private-names-in-public-declarations)).
+- `L0740` now reads a selection of a generic `impl`'s private member that is a
+  type only in an instance, as `Box(T).Hidden` for `Hidden: T : Point` in
+  `Box(type)` or for `Hidden :: type_of(T{})`, in a public alias with or without
+  a written type, a constant's written type, a method's signature, or a group's
+  member. A selection such as `Box(type).Hidden`, which names no `$` name, is read
+  at its declaration
+  ([Private names in public declarations](design.md#private-names-in-public-declarations)).
+- Editor completion no longer offers a type's generated `format` where a use
+  could not call it, on a public type with a private `format`, and shows a local
+  extension's `format` rather than the generated one it hides
+  ([Language server](compiler-architecture.md#language-server)).
 - `time.local_zone` on Windows no longer panics for a zone set without a
   registry key, as `SetTimeZoneInformation` can leave it, and a zone whose
   dynamic daylight saving is disabled keeps its fixed annual transitions

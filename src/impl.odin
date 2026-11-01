@@ -416,25 +416,41 @@ member_is_visible :: proc(k: ^Checker, sym: ^Symbol) -> bool {
 	if sym.bound_excluded {
 		return false
 	}
-	// A generated formatting default is a fallback for ordinary member lookup.
-	// Local extensions remain callable; interface slots bypass this visibility
-	// rule and retain the concrete type's coherent printed representation.
-	if sym.synth == .Standard_Format {
-		// A public type's private `format` keeps its name for ordinary lookup,
-		// though the slot uses the default (design.md "Interface bodies").
-		if written_format_member(k.c, sym.owner_type) != nil {
-			return false
-		}
-		if pkg := package_of(k.c, lookup_package(k)); pkg != nil {
-			if visible_member_named(k, pkg.extensions[sym.owner_type], sym.name) != INVALID_SYMBOL {
-				return false
-			}
-		}
+	hidden, extension := standard_format_hidden(k.c, sym, lookup_package(k))
+	if extension != nil {
+		extension.looked_up = true
+	}
+	if hidden {
+		return false
 	}
 	if !capture_field_visible(k, sym) {
 		return false
 	}
 	return sym.pkg == lookup_package(k) || sym.public
+}
+
+// Whether a generated formatting default is out of `observer`'s sight, and the
+// local extension that takes its name if one does. The default is a fallback for
+// ordinary member lookup: a public type's private `format` keeps the name, though
+// the slot uses the default (design.md "Interface bodies"), and a local extension
+// remains callable. Interface slots bypass this and retain the concrete type's
+// coherent printed representation. This writes nothing, so a query may ask it.
+standard_format_hidden :: proc(c: ^Compiler, sym: ^Symbol, observer: Package_Id) -> (hidden: bool, extension: ^Symbol) {
+	if sym.synth != .Standard_Format {
+		return false, nil
+	}
+	if written_format_member(c, sym.owner_type) != nil {
+		return true, nil
+	}
+	pkg := package_of(c, observer)
+	if pkg == nil {
+		return false, nil
+	}
+	local := symbol_of(c, member_named(c, pkg.extensions[sym.owner_type], sym.name))
+	if local == nil || local.bound_excluded || (local.pkg != observer && !local.public) {
+		return false, nil
+	}
+	return true, local
 }
 
 // Every field access path routes through here so they agree with reflection.

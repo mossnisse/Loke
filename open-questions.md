@@ -108,8 +108,8 @@ with reproductions in [known-gaps.md](known-gaps.md#gaps): a
 [resolution-order-dependent recursive aliases](known-gaps.md#recursive-records-through-parametric-aliases-depend-on-resolution-order),
 [dependently typed value arguments](known-gaps.md#parametric-aliases-cannot-bind-a-dependently-typed-value-argument),
 [nested computed types](known-gaps.md#nested-computed-types-evade-parametric-alias-binding-validation),
-and [private type exposure warnings](known-gaps.md#parametric-aliases-are-omitted-from-private-type-exposure-checks).
-These remain open, along with two smaller findings:
+and private type exposure warnings, since fixed. The others remain open, along
+with two smaller findings:
 
 - **Delete the unreachable payloadless allocation-success branch (P3,
   simplification).** `eval_alloc_ok` in [src/eval.odin](src/eval.odin) still
@@ -347,36 +347,18 @@ small-value argument passing. No language or compiler changes were applied.
 
 Reviewed `1d4a0c29` ("Read the remaining generic alias targets for private
 names") and `4e475f11` ("Keep a local view's known start when only its length
-varies") for correctness, simplification, and structure. Three findings remain:
+varies") for correctness, simplification, and structure. One finding remains:
 
-- **Classify selected private aliases in the current instance (P2).** A
-  private `Hidden: T : Point` becomes a type alias in `Box(type)`, but public
-  typed and untyped aliases selecting `Box(T).Hidden` produce no `L0740`.
-  The [known gap](known-gaps.md#private-member-aliases-whose-types-are-known-only-in-an-instance-evade-l0740)
-  includes an instantiated reproduction and a control that spells `type`
-  directly. `Hidden :: type_of(T{})` has the same omission.
 - **Retain starts through zero-offset reslice loops (P2).** The length join
   fixes branches, but a constant reslice from zero in a loop still makes
   the start unknown. The [known gap](known-gaps.md#zero-offset-reslices-in-loops-lose-a-local-views-known-start)
   includes a two-iteration reproduction and accepting straight-line and
   branch controls. This is a remaining precision gap, not a new rejection.
-- **Reuse the exposure maps across instance alias targets (P3).** Every
-  `read_instance_alias` call in [src/private_names.odin](src/private_names.odin)
-  creates an arena and calls `exposure_of`, which scans every declaration
-  and implementation member in the package. A block with N public aliases
-  whose written type becomes `type` therefore builds N copies of maps with
-  at least N entries, even when every target is a public type. Build the
-  exposure lazily once for the pending implementation and reset only the
-  per-target owner and reported names. An illustrative three-run local
-  median for 1,600 declarations `@(public) Alias_N: T : Point`, instantiated
-  once with `T = type`, was 2,174 ms; spelling their written type as `type`
-  took 58 ms. These are generated-source controls, not a measured fix.
 
 The shared `writes_type` recognizer removes differing syntax lists, and
 following member chains iteratively with cycle detection removes the
 arbitrary depth cutoff. Sharing `view_element_loan` also keeps publication's
-loan narrowing in one place. Reusing the exposure maps is the actionable
-structural simplification; no further abstraction is needed.
+loan narrowing in one place. No further abstraction is needed.
 
 Each reviewed commit was built and tested in a separate source snapshot,
 because the commits came from separate branches. On each, 177 of 178 compiler

@@ -984,6 +984,45 @@ signature_summary :: proc(reply: json.Value) -> string {
 	return strings.to_string(b)
 }
 
+// design.md "Interface bodies": a public type's private `format` leaves its slot
+// to a generated default, which ordinary lookup hides from a use that could not
+// call it. Completion lists what the lookup finds there, and no more.
+@(test)
+completion_hides_a_generated_formatter_as_lookup_does :: proc(t: ^testing.T) {
+	h: Harness
+	if !start(&h, t, "completion-format") { finish(&h); return }
+	defer finish(&h)
+	lib_text := "package lib;\nimport \"core:fmt\";\n@(public) Written :: struct {}\nimpl Written {\n\t/// The written one.\n\tformat :: proc(self, w: fmt.Writer, o: fmt.Options) {}\n\t@(public) size :: proc(self) -> int { return 0; }\n}\n@(public) Plain :: struct {}\nimpl Plain {\n\t@(public) size :: proc(self) -> int { return 0; }\n}\n@(public) Extended :: struct {}\nimpl Extended {\n\t@(public) size :: proc(self) -> int { return 0; }\n}\n@(private) inside :: proc() {\n\twritten := Written{};\n\tfmt.println(written);\n\t_ = written.size();\n}\n"
+	main_text := "package main;\nimport \"lib\";\nimport \"core:fmt\";\nimpl lib.Extended {\n\t/// The local one.\n\tformat :: proc(self, w: fmt.Writer, o: fmt.Options) {}\n}\nmain :: proc() {\n\twritten := lib.Written{};\n\tfmt.println(written);\n\t_ = written.size();\n\t_ = lib.Written.size;\n\tplain := lib.Plain{};\n\tfmt.println(plain);\n\t_ = plain.size();\n\textended := lib.Extended{};\n\tfmt.println(extended);\n\t_ = extended.size();\n\treference := &written;\n\treference.\n}\n"
+	write_file(&h, "lib/lib.loke", lib_text)
+	open(&h, "main.loke", main_text)
+
+	// The private `format` is out of reach here, and so is the default it hides.
+	reply := ask(&h, "textDocument/completion", "main.loke", position_of(t, main_text, "written.size", 8))
+	testing.expect_value(t, completion_labels(reply), "size")
+	reply = ask(&h, "textDocument/completion", "main.loke", position_of(t, main_text, "reference.\n}", 10))
+	testing.expect_value(t, completion_labels(reply), "size")
+	reply = ask(&h, "textDocument/completion", "main.loke", position_of(t, main_text, "Written.size", 8))
+	testing.expect_value(t, completion_labels(reply), "size")
+
+	// With no `format` written, the default is what a use calls.
+	reply = ask(&h, "textDocument/completion", "main.loke", position_of(t, main_text, "plain.size", 6))
+	testing.expect_value(t, completion_labels(reply), "format size")
+
+	// An extension here takes the name from the default.
+	reply = ask(&h, "textDocument/completion", "main.loke", position_of(t, main_text, "extended.size", 9))
+	testing.expect_value(t, completion_labels(reply), "format size")
+	local, _ := member_string(completion_item(reply, "format"), "documentation")
+	testing.expect_value(t, local, "The local one.")
+
+	// In its own package the private `format` is the one lookup finds.
+	open(&h, "lib/lib.loke", lib_text)
+	reply = ask(&h, "textDocument/completion", "lib/lib.loke", position_of(t, lib_text, "written.size", 8))
+	testing.expect_value(t, completion_labels(reply), "format size")
+	written, _ := member_string(completion_item(reply, "format"), "documentation")
+	testing.expect_value(t, written, "The written one.")
+}
+
 @(test)
 signature_help_follows_the_argument_being_written :: proc(t: ^testing.T) {
 	text := "package main;\nPoint :: struct { x, y: int }\nimpl Point {\n\tscale :: proc(self, factor: int) -> Point { return {self.x * factor, self.y * factor}; }\n}\n/// Adds two numbers.\nadd :: proc(a, b: int) -> int { return a + b; }\nplain :: proc(value: int) -> int { return value; }\nfloating :: proc(value: f64) -> f64 { return value; }\npick :: proc{plain, floating};\nmain :: proc() {\n\tp := Point{1, 2};\n\t_ = p.scale(2);\n\t_ = pick(1);\n\t_ = add(plain(1), 2);\n\t_ = add(b = 2, a = 1);\n\tif (add(1, 2) > 0) {}\n\tadd(1, \n}\n"
