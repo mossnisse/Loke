@@ -70,8 +70,8 @@ order matters, and `prov_assign` is the most edited procedure in the checker,
   a use of a literal's view was extended to its content but a named array's was not
   (fixed since: a call extends to what any storage it is handed holds,
   `with_held_content`);
-  `prov_note_traversal` takes a named-root branch for a protocol iterable
-  ([gap](known-gaps.md#a-mutable-protocol-traversal-publishes-into-the-iterable-instead-of-its-elements));
+  `prov_note_traversal` took a named-root branch for a protocol iterable
+  (fixed since: a store through a user iterator's binding lands by type);
   `load_through_loan` branches four ways and `publish_into_loan` five.
   Proposal: every root owns one slot vector by carrier path, a parameter's
   caller storage and a literal's array included, and a loan names a root and a
