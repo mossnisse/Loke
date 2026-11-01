@@ -182,7 +182,11 @@ collect_hooks :: proc(c: ^Compiler, type: Type_Id, info: ^Type_Info, entry: ^Lif
 		}
 		switch sym.hook {
 		case .Drop:
-			entry.custom_drop = member
+			// design.md "where clauses": an instance that fails the hook's bound has no
+			// such member, and no body of it is emitted; its parts still drop.
+			if !sym.bound_excluded {
+				entry.custom_drop = member
+			}
 		case .Copy:
 			// design.md "Lifecycle hooks and resource types": an instance that fails
 			// the hook's bound has no copy, rather than a bitwise one its drop hook

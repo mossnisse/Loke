@@ -1034,6 +1034,9 @@ checklist.
 
 ### Fixed
 
+- A generic record's `hook(drop)` bound by a `where` clause that an instance fails
+  is left out of that instance, whose parts still drop
+  ([where clauses](design.md#where-clauses)). It failed in the backend with `L0405`.
 - A generic record may recurse through a [parametric
   alias](design.md#parametric-aliases) of a reference to it however the two are
   reached first: `Link :: ^Node($T)` with a `Link(T)` field in `Node` reported a

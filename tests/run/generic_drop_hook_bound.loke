@@ -1,0 +1,104 @@
+package main;
+
+import "core:fmt";
+
+// design.md "where clauses": a generic record's method whose bound fails is not
+// part of that instance, and that holds for a drop hook. The instance has no cleanup
+// of its own, and whatever its parts own still drops.
+
+Inner :: move_only struct { id: int }
+impl Inner {
+	close :: hook(drop) proc(self: inout Inner) { fmt.println("inner", self.id); }
+}
+
+Only_Int :: move_only struct($T: type) { value: T }
+impl Only_Int($T) {
+	release :: hook(drop) proc(self: inout) where T == int { fmt.println("int", self.value); }
+}
+
+// One hook per instance, each excluding the other, and an instance with neither.
+Either :: move_only struct($T: type) { value: T }
+impl Either($T) {
+	on_int :: hook(drop) proc(self: inout) where T == int { fmt.println("either int", self.value); }
+	on_text :: hook(drop) proc(self: inout) where T == string { fmt.println("either text", self.value); }
+}
+
+// A bound holding only where the instance has a copy, which the attribute keeps.
+Kept :: struct($T: type) @(fieldwise_copy) { value: T }
+impl Kept($T) {
+	release :: hook(drop) proc(self: inout) where T == int { fmt.println("kept", self.value); }
+}
+
+// A specialized block's hook replaces one whose bound fails for it.
+Special :: move_only struct($T: type) { value: T }
+impl Special($T) {
+	release :: hook(drop) proc(self: inout) where T == string { fmt.println("general", self.value); }
+}
+impl Special(int) {
+	release :: hook(drop) proc(self: inout) { fmt.println("special", self.value); }
+}
+
+Holder :: move_only struct { excluded: Only_Int(string), included: Only_Int(int) }
+
+consume :: proc(value: move Only_Int(string)) { fmt.println("consume", value.value); }
+
+// Compile-time evaluation has no hook to refuse.
+evaluated :: proc() -> int {
+	value := Only_Int(string){"text"};
+	return value.value.len();
+}
+EVALUATED :: evaluated();
+
+main :: proc() {
+	fmt.println(EVALUATED);
+	{
+		fmt.println("excluded");
+		value := Only_Int(string){"a"};
+		fmt.println(value.value);
+	}
+	{
+		fmt.println("included");
+		value := Only_Int(int){1};
+		fmt.println(value.value);
+	}
+	{
+		fmt.println("parts");
+		inner := Only_Int(Inner){Inner{2}};
+		list := Only_Int([dynamic]Inner){{}};
+		list.value.append(Inner{3});
+		fmt.println(inner.value.id, list.value[0].id);
+	}
+	{
+		fmt.println("either");
+		a := Either(int){4};
+		b := Either(string){"b"};
+		c := Either(bool){true};
+		fmt.println(a.value, b.value, c.value);
+	}
+	{
+		fmt.println("copies");
+		a := Kept(string){"copied"};
+		b := a.clone();
+		c := Kept(int){5};
+		d := c.clone();
+		fmt.println(a.value, b.value, c.value, d.value);
+	}
+	{
+		fmt.println("specialized");
+		a := Special(int){6};
+		b := Special(string){"c"};
+		c := Special(bool){false};
+		fmt.println(a.value, b.value, c.value);
+	}
+	{
+		fmt.println("held");
+		held := Holder{Only_Int(string){"d"}, Only_Int(int){7}};
+		fmt.println(held.excluded.value, held.included.value);
+		list: [dynamic]Only_Int(string) = {};
+		list.append(Only_Int(string){"e"});
+		fmt.println(list[0].value);
+		consume(Only_Int(string){"f"});
+		gone := Only_Int(string){"g"};
+		drop(gone);
+	}
+}

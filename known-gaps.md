@@ -7,35 +7,63 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
-### An excluded generic drop hook still supplies cleanup
+### A lifecycle question asked before a record's hooks are in place loses them
 
-A generic method whose [bound](design.md#where-clauses) does not hold is not
-part of that instance. This also applies to a drop hook:
+[Lifecycle hooks and resource types](design.md#lifecycle-hooks-and-resource-types)
+runs a record's `hook(drop)` once per value, wherever the hook is written among the
+record's `impl` blocks. Asking about the record's lifecycle before the hook has been
+resolved loses it, with no diagnostic:
+
+```loke
+package main;
+import "core:fmt";
+main :: proc() {
+    H :: move_only struct { fd: int }
+    fmt.println(is_copyable(H));
+    impl H {
+        close :: hook(drop) proc(self: inout H) { fmt.println("close", self.fd); }
+    }
+    a := H{7};
+    fmt.println(a.fd);
+}
+```
+
+This prints `false` and `7`, and never `close 7`. Removing the `is_copyable` line
+runs the hook. Making a value first, `a := H{7};` before the `impl` block, loses the
+hook for that value and for every later one. A generic record does the same when a
+member's bound is evaluated before a later member is resolved:
 
 ```loke
 package main;
 import "core:fmt";
 G :: move_only struct($T: type) { value: T }
 impl G($T) {
-    release :: hook(drop) proc(self: inout) where T == int {
-        fmt.println("drop", self.value);
-    }
+    helper :: proc(self) where !is_copyable(G(T)) { fmt.println("helper"); }
+    release :: hook(drop) proc(self: inout) { fmt.println("drop", self.value); }
 }
 main :: proc() {
     a := G(string){"a"};
+    a.helper();
     fmt.println(a.value);
 }
 ```
 
-The program fails with `L0405`, "internal backend contract violation: a
-resolved operation has no emitted name". `collect_hooks` in
-[src/hooks.odin](src/hooks.odin) excludes a failed bound for a copy hook, but
-unconditionally selects a drop hook. Its body is correctly omitted by
-`check_pending_impl_instances` in [src/generic.odin](src/generic.odin), so the
-record's cleanup refers to a procedure that will not be emitted. Exclude a drop
-hook whose bound failed from lifecycle collection too. This predates the
-generic-hook validation change: confirmed on both `bf5cb393` and `46cf2aa8`
-during review on 2026-11-01 (P2, adjacent existing gap).
+This never prints `drop a`. A `hook(copy)` is lost in the same way, leaving the
+generated copy, and with a bound that fails, as `where T == int` on the `hook(copy)`
+after `helper :: proc(self) where is_copyable(G(T))`, `G(string)` keeps a copy it
+should not have. A hook whose own bound asks is excluded after the answer was kept:
+`release :: hook(drop) proc(self: inout) where is_copyable(G(T))` fails with `L0405`,
+"internal backend contract violation: a resolved operation has no emitted name",
+because the kept answer names a hook whose body is not emitted.
+
+`lifecycle_of` in [src/hooks.odin](src/hooks.odin) caches its first answer for a
+type, and `collect_hooks` can only see the members resolved so far: during
+`install_one_generic_impl` in [src/generic.odin](src/generic.odin) for an instance,
+and before the `impl` statement for a body-local record. A file-scope record is
+not affected, since its `impl` blocks are checked first. Do not cache an answer
+while the type or anything it holds can still gain a hook, as `lifecycle_of` already
+does for a record still resolving its fields, and answer the question from what is
+known so far. Found on 2026-11-01 while fixing the excluded generic drop hook.
 
 ### Comparing zero-length arrays contributes nonexistent element effects
 

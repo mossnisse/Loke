@@ -1,0 +1,27 @@
+4
+excluded
+a
+included
+1
+int 1
+parts
+2 3
+inner 3
+inner 2
+either
+4 b true
+either text b
+either int 4
+copies
+copied copied 5 5
+kept 5
+kept 5
+specialized
+6 c false
+general c
+special 6
+held
+d 7
+e
+consume f
+int 7

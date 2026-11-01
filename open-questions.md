@@ -19,10 +19,10 @@ have since been fixed: a deferred record declaration bypassing `L0747`, and a
 successful first instance of a generic procedure hiding a later instance's
 failure, whose acceptance depended on the order of the calls.
 
-An [excluded generic drop hook still supplies cleanup](known-gaps.md#an-excluded-generic-drop-hook-still-supplies-cleanup),
-which fails emission with an internal backend diagnostic. This was also
-confirmed with a compiler built from `bf5cb393`; it is an adjacent existing gap,
-not a regression from `46cf2aa8`.
+An excluded generic drop hook still supplying cleanup, which failed emission with
+an internal backend diagnostic, has also been fixed. It was confirmed with a
+compiler built from `bf5cb393`, so it was an adjacent existing gap, not a regression
+from `46cf2aa8`.
 
 One small simplification remains open (P3): in
 [src/hooks.odin](src/hooks.odin), `generic_hook_reported` and
