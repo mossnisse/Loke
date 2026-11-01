@@ -188,7 +188,7 @@ subject_name :: proc(e: Expr, allocator := context.allocator) -> string {
 @(private = "file")
 read_impl :: proc(x: ^Exposure, v: ^Item_Impl) {
 	subject := subject_name(v.type)
-	if named, declared := x.declared[subject]; declared && named.is_type && !named.public {
+	if named, declared := x.declared[subject]; declared && named.is_type && !named.public && !subject_type_is_public(x.c, v) {
 		return
 	}
 	x.subject = subject
@@ -202,6 +202,23 @@ read_impl :: proc(x: ^Exposure, v: ^Item_Impl) {
 			resize(&x.bound, mark)
 		}
 	}
+}
+
+// A block written through a private alias of a public type, as `impl Short(int)`
+// for `Short :: Box($T)`, is on that public type, whose values an importer has.
+// A generic block's subject is resolved only per instance, and a block cannot
+// apply an alias to `$` names, so such a block names the private type itself.
+@(private = "file")
+subject_type_is_public :: proc(c: ^Compiler, v: ^Item_Impl) -> bool {
+	info := type_of(c, v.subject)
+	if info == nil {
+		return false
+	}
+	declared := symbol_of(c, info.instance_of)
+	if declared == nil {
+		declared = symbol_of(c, info.symbol)
+	}
+	return declared != nil && declared.public
 }
 
 // `subject` is the written subject of the `impl` `d` is a member of.
@@ -247,7 +264,13 @@ read_public_decl :: proc(x: ^Exposure, d: ^Decl, subject: string) {
 				names_type = name.span in x.c.generic_impl_types || (selects && selected.is_type)
 			}
 			if names_type {
-				walk(x, value, .Type) // a type alias's target
+				// A type alias's target. A parametric alias binds the `$` names
+				// its target writes, which mean that parameter wherever they
+				// appear in it, whatever the package declares by the same name.
+				mark := len(x.bound)
+				bind_poly(x, value)
+				walk(x, value, .Type)
+				resize(&x.bound, mark)
 			} else if d.declared_type != nil {
 				walk(x, d.declared_type, .Type)
 			} else if symbol != nil && symbol.kind == .Const {
@@ -271,10 +294,15 @@ writes_type :: proc(e: Expr) -> bool {
 	return false
 }
 
-// A type, or a type alias, which is a constant whose value is a type.
+// A type, or a type alias: a constant whose value is a type, or a parametric
+// alias, a constant that has no value until an application supplies its `$`
+// names.
 @(private = "file")
 symbol_names_type :: proc(c: ^Compiler, symbol: ^Symbol) -> bool {
-	return symbol.kind == .Type || (symbol.kind == .Const && const_names_type(c, symbol.const_value, symbol.type))
+	if symbol.kind != .Const {
+		return symbol.kind == .Type
+	}
+	return const_names_type(c, symbol.const_value, symbol.type) || declaration_generic_kind(symbol.decl) == .Alias
 }
 
 @(private = "file")

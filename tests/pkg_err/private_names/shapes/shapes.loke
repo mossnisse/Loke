@@ -195,3 +195,54 @@ impl Rack($T) {
 	_ = size_of(Tray(Point).Many_Leak);
 	_ = Rack(type).Bound_Typed;
 }
+
+// A parametric alias is an alias: a public one's target is read with its own `$`
+// names bound, and a private one is a private type wherever it is applied.
+@(private) Failure :: enum { Lost }
+@(private) Failing :: Result($T, Failure);
+@(private) Plain_Result :: Result($T, int);
+@(public) Failing_Alias :: Result($T, Failure);
+@(public) Failing_Array :: [$N]Failure;
+@(public) Failing_Map :: map[$K]Plain_Result(K);
+@(public) Failing_Applied :: Plain_Result(int);
+@(public) failing_parameter :: proc(x: Failing($T)) {}
+@(public) failing_slice :: proc(x: []Plain_Result(int)) {}
+@(public) failing_result :: proc() -> Plain_Result(int) { return 1; }
+@(public) failing_where :: proc(x: $T) where T == Plain_Result(int) {}
+@(public) Failing_Field :: struct { @(public) field: Plain_Result(int) }
+@(public) Failing_Generic :: struct($T: type) { @(public) field: Plain_Result(T) }
+@(public) Failing_Variant :: union { held: Plain_Result(int), none }
+@(public) Failing_Host :: struct { value: int }
+impl Failing_Host {
+	@(public) method :: proc(self) -> Plain_Result(int) { return 1; }
+}
+// Not reported: a public alias over public types, and the alias's own `$` name,
+// which means the parameter however the package also declares that name; a length
+// is a value, and a body's use is no signature's.
+@(public) Open_Result :: Result($T, int);
+@(public) Open_Again :: Open_Result($T);
+@(public) Rebound :: map[$Corner]Corner;
+@(public) Sized :: [$LIMIT]u8;
+@(public) open_parameter :: proc(x: Open_Result($T)) {}
+@(public) open_length :: proc(x: Sized(LIMIT)) {}
+@(public) open_body :: proc() -> int { return size_of(Plain_Result(int)); }
+// A block through a private alias of a public type is on that public type; one
+// through a private alias of a private type is that type's.
+@(public) Carton :: struct($T: type) { value: T }
+@(private) Short :: Carton($T);
+@(private) Point_Short :: Point;
+impl Short(int) {
+	@(public) through_alias :: proc(self) -> Corner { return {}; }
+}
+impl Point_Short {
+	@(public) through_plain :: proc(self) -> Corner { return {}; }
+}
+@(private) Private_Box :: struct($T: type) { value: T }
+@(private) Private_Short :: Private_Box($T);
+@(private) Corner_Short :: Corner;
+impl Private_Short(int) {
+	@(public) within_alias :: proc(self) -> Corner { return {}; }
+}
+impl Corner_Short {
+	@(public) within_plain :: proc(self) -> Corner { return {}; }
+}

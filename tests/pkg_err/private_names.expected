@@ -93,7 +93,44 @@ warning[L0740]: public `Tray.Chain_Leak` names the private type `Tray.H0`
 @187:34
 warning[L0740]: public `Rack.Bound_Typed` names the private type `Corner`
 @191:29
+warning[L0740]: public `Failing_Alias` names the private type `Failure`
+@204:39
+warning[L0740]: public `Failing_Array` names the private type `Failure`
+@205:32
+warning[L0740]: public `Failing_Map` names the private type `Plain_Result`
+@206:33
+warning[L0740]: public `Failing_Applied` names the private type `Plain_Result`
+@207:30
+warning[L0740]: public `failing_parameter` names the private type `Failing`
+@208:40
+warning[L0740]: public `failing_slice` names the private type `Plain_Result`
+@209:38
+warning[L0740]: public `failing_result` names the private type `Plain_Result`
+@210:39
+warning[L0740]: public `failing_where` names the private `Plain_Result` in a `where` clause
+@211:51
+warning[L0740]: public `Failing_Field.field` names the private type `Plain_Result`
+@212:54
+warning[L0740]: public `Failing_Generic.field` names the private type `Plain_Result`
+@213:66
+warning[L0740]: public `Failing_Variant` names the private type `Plain_Result`
+@214:44
+warning[L0740]: public `Failing_Host.method` names the private type `Plain_Result`
+@217:36
+warning[L0740]: public `Short.through_alias` names the private type `Corner`
+@235:43
+warning[L0740]: public `Point_Short.through_plain` names the private type `Corner`
+@238:43
 !`Padded.hidden`
+!`Open_Result`
+!`Open_Again`
+!`Rebound`
+!`Sized`
+!`open_parameter`
+!`open_length`
+!`open_body`
+!`Private_Short.within_alias`
+!`Corner_Short.within_plain`
 !`area_int`
 !`twice`
 !`origin_twice`

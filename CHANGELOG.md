@@ -1043,6 +1043,12 @@ checklist.
   `Box(T).Hidden` for `Hidden :: []T`; and follows a chain of member aliases
   however long it is, where it stopped after eight
   ([Private names in public declarations](design.md#private-names-in-public-declarations)).
+- `L0740` now reads parametric aliases as it does other aliases: a public one's
+  target, as `Public_Result :: Result($T, Hidden)`, and a private one applied in
+  a public declaration, as `consume :: proc(x: Hidden_Result($T))`. It also reads
+  the members of a block written through a private alias of a public type, as
+  `impl Short` for `Short :: Point`, which it used to take for a private type's
+  ([Private names in public declarations](design.md#private-names-in-public-declarations)).
 - `time.local_zone` on Windows no longer panics for a zone set without a
   registry key, as `SetTimeZoneInformation` can leave it, and a zone whose
   dynamic daylight saving is disabled keeps its fixed annual transitions

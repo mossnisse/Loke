@@ -108,8 +108,8 @@ with reproductions in [known-gaps.md](known-gaps.md#gaps): a
 [resolution-order-dependent recursive aliases](known-gaps.md#recursive-records-through-parametric-aliases-depend-on-resolution-order),
 [dependently typed value arguments](known-gaps.md#parametric-aliases-cannot-bind-a-dependently-typed-value-argument),
 [nested computed types](known-gaps.md#nested-computed-types-evade-parametric-alias-binding-validation),
-and [private type exposure warnings](known-gaps.md#parametric-aliases-are-omitted-from-private-type-exposure-checks).
-These remain open, along with two smaller findings:
+and private type exposure warnings, since fixed. The others remain open, along
+with two smaller findings:
 
 - **Delete the unreachable payloadless allocation-success branch (P3,
   simplification).** `eval_alloc_ok` in [src/eval.odin](src/eval.odin) still

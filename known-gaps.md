@@ -303,28 +303,6 @@ the type it computes. Reject the unreachable `$T` at the alias declaration;
 apply the constructor restriction recursively wherever a pattern must bind.
 Confirmed on `3b49d840` during review on 2026-10-31 (P2).
 
-### Parametric aliases are omitted from private type exposure checks
-
-[Private names in public declarations](design.md#private-names-in-public-declarations)
-requires `L0740` for a public alias's private target and for a private alias in
-a public signature. Neither warning is produced for these parametric aliases
-in a package imported by a main program:
-
-```loke
-package shapes;
-Hidden :: enum { Err }
-Hidden_Result :: Result($T, Hidden);
-@(public) Public_Result :: Result($T, Hidden);
-@(public) consume :: proc(x: Hidden_Result($T)) {}
-```
-
-Alias templates are registered as generic constants without a concrete type
-value. `symbol_names_type` in [src/private_names.odin](src/private_names.odin)
-therefore does not classify them as types: `read_public_decl` skips the public
-alias's target, and a signature walk skips the private alias. Include alias
-templates in the classification and bind their own parameter names while
-reading their targets. Confirmed on `3b49d840` during review on 2026-10-31 (P3).
-
 ### Private member aliases whose types are known only in an instance evade L0740
 
 [Private names in public declarations](design.md#private-names-in-public-declarations)

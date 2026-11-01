@@ -9301,7 +9301,8 @@ It does not apply to:
   instance binds to one of the block's `$` names is read as that name.
 - The members of an `impl` whose subject is a private type. An importer
   reaches them only through a value of that type, and the declaration that
-  hands one out is the one warned about.
+  hands one out is the one warned about. A block written through a private
+  alias of a public type is on the public type, so its members are read.
 - A private field, which no importer reads.
 - A `package main`, which nothing imports.
 
