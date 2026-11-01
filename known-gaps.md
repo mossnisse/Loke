@@ -228,6 +228,74 @@ as binding `T`, then reports `L0392`, since `Alias(f64)` is another new type. In
 nested one is meant and say what it denotes. Found on 2026-11-01 beside the
 nested computed type check.
 
+### Reading only the first instance misses a private member that later becomes a type
+
+[Private names in public declarations](design.md#private-names-in-public-declarations)
+reads a generic `impl`'s selected private member in each instance the build creates,
+since whether it is a type can depend on that instance:
+
+```loke
+package shapes;
+@(public) Point :: struct { value: int }
+@(public) Item :: struct($T: type, $V: T) { value: int }
+@(public) Holder :: struct($T: type, $V: T) { value: int }
+impl Holder($T, $V) {
+    @(private) Hidden: T : V;
+    @(public) Exposed :: Item(T, Holder(T, V).Hidden);
+}
+@(private) use :: proc() {
+    _ = Holder(int, 0){};
+    _ = Holder(type, Point){};
+}
+```
+
+This emits no `L0740`, though `Holder(type, Point).Hidden` is a private alias of
+`Point`. Reversing the two uses warns about `Holder.Exposed` naming
+`Holder.Hidden`. In [src/private_names.odin](src/private_names.odin),
+`instance_declaration_unread` records `Exposed`'s span after its first instance,
+when `Hidden` is a value, and never reads the later instance where it is a type.
+Read instance-dependent selections in each instance and deduplicate the warnings,
+rather than marking the whole declaration read after its first one. Confirmed on
+`ad4ff130` and `1b7845aa` during review on 2026-11-01 (P2).
+
+### Private-name probes resolve a generic method's parameters in its block's scope
+
+[Private names in public declarations](design.md#private-names-in-public-declarations)
+does not read a parameter as a private declaration of the package, and a private
+value argument is not a private type. A generic method's own parameters are bound
+by its calls, separately from the generic `impl`'s parameters:
+
+```loke
+package shapes;
+@(public) Point :: struct { value: int }
+@(private) T :: type;
+@(private) V :: Point;
+@(public) Item :: struct($T: type, $V: T) { value: int }
+@(public) Holder :: struct($T: type, $V: T) { value: int }
+impl Holder($T, $V) {
+    @(private) Hidden: T : V;
+}
+@(public) Host :: struct($X: type) { value: int }
+impl Host($X) {
+    @(public) make :: proc(self, $T: type, $V: T) -> Item(T, Holder(T, V).Hidden) { return {}; }
+}
+@(private) use :: proc() {
+    host := Host(int){};
+    _ = host.make(int, 0);
+}
+```
+
+This warns that `Host.make` names the private type `Holder.Hidden`. Its only call
+binds `T = int` and `V = 0`, so that member is an integer value. Removing the two
+unused package aliases `T` and `V` removes the warning. `resolves_to_type` in
+[src/private_names.odin](src/private_names.odin) bypasses `names_bound` for an
+instance and probes the selection in the block's checker scope, where the method's
+parameters are absent and the package aliases resolve instead. Preserve the
+method's parameter scope, or defer a selection that depends on its own generics
+until a method instance supplies them. Introduced in `ad4ff130`; its parent
+`85ee47f3` does not warn. Confirmed on that commit and `1b7845aa` during review on
+2026-11-01 (P2).
+
 ### Instance-only private members evade L0740 outside `impl` blocks
 
 [Private names in public declarations](design.md#private-names-in-public-declarations)
