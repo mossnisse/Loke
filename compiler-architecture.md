@@ -563,7 +563,8 @@ Keep these contracts:
   prints it write through those, so both stay lent.
 - **A call uses at once what its arguments reach.** After its arguments, a call that
   may run a program's code emits one deep `Load` of all of them
-  (`prov_use_reached_at_once`, `Prov_Load_Kind.At_Once`). Being later than each argument,
+  (`prov_use_reached_at_once`, `Prov_Load_Kind.At_Once`), and one handed a record by
+  value uses what the record's carriers reach (`prov_use_reached_in_record`). Being later than each argument,
   it keeps what it reads live for them, whatever their order, and `live_reborrow_of`
   also counts what it reads itself as in use. A source found only through what was
   reborrowed from it does not count (`at_once_reaches`): a copy points where its

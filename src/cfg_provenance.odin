@@ -192,6 +192,9 @@ Prov_Event :: struct {
 	keeps_live:    []int,
 	// `Live`: a call's use of what it borrows, which may read whatever they reach.
 	hands_on:      bool,
+	// Checks nothing when a diagnostic was reported inside its span: it uses again
+	// what an expression there used, and one report of that is enough.
+	repeats_inner: bool,
 	// `Def`: one more than the index of the place loan the slot is the
 	// snapshot of, which its value then carries (`Prov_Place_Loan`), or 0.
 	place_loan:    int,
@@ -8696,6 +8699,7 @@ prov_call_argument :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int, input:
 		}
 	}
 	param_type := prov_parameter_type(graph, v, index)
+	prov_use_reached_in_record(graph, v, index, container_op, argument, actual, param_type)
 	prov_reborrow(graph, actual, param_type)
 	// A mutable carrier passed on as one is reborrowed until the call and what
 	// it returns are done with it, so no other argument may use it meanwhile.
@@ -8735,27 +8739,84 @@ prov_use_reached :: proc(graph: ^Flow_Graph, slots: []int, parameter: Type_Id, s
 	return slot
 }
 
-// design.md "Weakening and reborrows": a call uses every mutable carrier reachable
-// through its arguments at once, so one of them and a live reborrow of it are never
-// both left to it, however the arguments reach them (`Prov_Load_Kind.At_Once`). An
-// operation of the compiler's own runs nothing that uses them, unless it compares
-// elements with an operator a program wrote.
+// design.md "Weakening and reborrows": a record handed over by value lets the callee use
+// what its carriers point to, as a carrier handed over itself does (`prov_use_reached`),
+// each under its own capability.
 @(private = "file")
-prov_use_reached_at_once :: proc(graph: ^Flow_Graph, v: ^Expr_Call, container_op: Container_Op, borrowed: []int) {
+prov_use_reached_in_record :: proc(
+	graph: ^Flow_Graph, v: ^Expr_Call, index: int, container_op: Container_Op, argument: Expr, actual: []int, parameter: Type_Id,
+) {
 	c := graph.k.c
-	if len(borrowed) == 0 {
+	// A task holds what it is given until the join (`prov_spawn_reborrows`), which
+	// reports a conflict with it once.
+	if type_is_carrier(c, parameter) || !type_carries_borrow(c, parameter).any || !prov_call_may_use_reach(graph, v, container_op) ||
+	   v == graph.spawning || prov_receiver_is_lent(graph, v, index) {
 		return
 	}
-	if callee := symbol_of(c, v.resolution.chosen_overload); callee != nil {
+	span := expr_span(argument)
+	// One load of them all, as what one holds is no conflict with using another.
+	mutable := make([dynamic]int, 0, len(actual), graph.alloc)
+	read_only := make([dynamic]int, 0, len(actual), graph.alloc)
+	held := actual
+	// Only a record named as a place hands over what that place holds: `p^.a` leaves
+	// `p` and the rest of what it points to alone.
+	if _, _, named := prov_place_of(graph, argument); named {
+		held = prov_join(graph, held, prov_carrier_slots(graph, argument))
+	}
+	for slot in held {
+		type := slot_carrier_type(graph, slot)
+		info := underlying_info(c, type)
+		if graph.prov_slots[slot].borrow != nil || type == INVALID_TYPE || !type_is_carrier(c, type) || info == nil ||
+		   !type_carries_borrow(c, info.element).mutable {
+			continue
+		}
+		append(&read_only, slot)
+		if carrier_is_mutable(c, type) {
+			append(&mutable, slot)
+		}
+	}
+	if len(read_only) > 0 {
+		graph.has_content_load = true
+		prov_emit(graph, Prov_Event{kind = .Load, slot = prov_temp_slot(graph), into = read_only[:], load = .Deep, span = span, reads_only = true, repeats_inner = true})
+	}
+	if len(mutable) > 0 {
+		reached := prov_temp_slot(graph)
+		prov_emit(graph, Prov_Event{kind = .Load, slot = reached, into = mutable[:], load = .Deep, span = span, repeats_inner = true})
+		prov_write_through(graph, prov_one(graph, reached), nil, span, "mutable argument")
+	}
+}
+
+// A receiver written `self: ^` is lent, not handed over.
+@(private = "file")
+prov_receiver_is_lent :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int) -> bool {
+	input := prov_input_call(graph, v)
+	return index == 0 && input.has_receiver && input.receiver != .Value && input.receiver != .Move
+}
+
+// An operation of the compiler's own runs nothing that uses what its arguments reach,
+// unless it compares elements with an operator a program wrote.
+@(private = "file")
+prov_call_may_use_reach :: proc(graph: ^Flow_Graph, v: ^Expr_Call, container_op: Container_Op) -> bool {
+	if callee := symbol_of(graph.k.c, v.resolution.chosen_overload); callee != nil {
 		#partial switch callee.synth {
 		case .None, .Dyn_Forward, .Dyn_Proc_Adapter:
 		case .Container_Op:
-			if container_op != .Sort && container_op != .Reverse_Sort {
-				return
-			}
+			return container_op == .Sort || container_op == .Reverse_Sort
 		case:
-			return
+			return false
 		}
+	}
+	return true
+}
+
+// design.md "Weakening and reborrows": a call uses every mutable carrier reachable
+// through its arguments at once, so one of them and a live reborrow of it are never
+// both left to it, however the arguments reach them (`Prov_Load_Kind.At_Once`).
+@(private = "file")
+prov_use_reached_at_once :: proc(graph: ^Flow_Graph, v: ^Expr_Call, container_op: Container_Op, borrowed: []int) {
+	c := graph.k.c
+	if len(borrowed) == 0 || !prov_call_may_use_reach(graph, v, container_op) {
+		return
 	}
 	reaches := false
 	into := borrowed
@@ -8775,7 +8836,7 @@ prov_use_reached_at_once :: proc(graph: ^Flow_Graph, v: ^Expr_Call, container_op
 		return
 	}
 	graph.has_content_load = true
-	prov_emit(graph, Prov_Event{kind = .Load, slot = prov_temp_slot(graph), into = into, load = .At_Once, span = v.span})
+	prov_emit(graph, Prov_Event{kind = .Load, slot = prov_temp_slot(graph), into = into, load = .At_Once, span = v.span, repeats_inner = true})
 }
 
 // design.md "Weakening and reborrows": copying carriers out of storage, named

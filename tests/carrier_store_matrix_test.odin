@@ -514,13 +514,6 @@ call_copy_rejected :: proc(place: Call_Copy_Place, entry: Store_Case) -> bool {
 	return entry.rejected
 }
 
-// Where the compiler disagrees with the rules: known-gaps.md "A copy out of a view in a
-// record is not used by a call given the record". Listed so that closing it shows up here.
-@(private = "file")
-call_copy_wrongly_accepted :: proc(place: Call_Copy_Place, entry: Store_Case) -> bool {
-	return place.name == "copy_holder_by_value" && entry.name == "copy_live_across_call"
-}
-
 @(test)
 call_copy_matrix :: proc(t: ^testing.T) {
 	names := make([dynamic]string, context.temp_allocator)
@@ -553,8 +546,7 @@ call_copy_matrix :: proc(t: ^testing.T) {
 	}
 	for place, index in CALL_COPY_PLACES {
 		for entry, at in CALL_COPY_CASES {
-			expected := call_copy_rejected(place, entry) && !call_copy_wrongly_accepted(place, entry)
-			store_matrix_expect(t, place.name, entry.name, first + 4 * at, errors[index], expected)
+			store_matrix_expect(t, place.name, entry.name, first + 4 * at, errors[index], call_copy_rejected(place, entry))
 		}
 	}
 }
@@ -911,6 +903,172 @@ task_lending_matrix :: proc(t: ^testing.T) {
 	}
 	for entry, at in TASK_LENDING_CASES {
 		store_matrix_expect(t, names[0], entry.name, first + 4 * at, errors[0], entry.rejected)
+	}
+}
+
+// A call given a record by value holding a carrier (design.md "Weakening and reborrows"):
+// handing it over uses what its carriers point to, as handing over the carrier does.
+// Each verdict is worked out by hand as above.
+@(private = "file")
+RECORD_BY_VALUE_PRELUDE :: `package main;
+Link :: struct { to: ^mut int }
+Holder :: struct { links: []mut Link }
+Ro_Holder :: struct { links: []Link }
+Ptr_Holder :: struct { l: ^mut Link }
+Ro_Ptr_Holder :: struct { l: ^Link }
+Deep :: struct { h: Holder }
+Plain :: struct { p: ^mut int, n: int }
+Mixed :: struct { links: []mut Link, n: ^mut int }
+Either :: union { holder: Holder, number: int }
+Some :: struct { n: int }
+take_holder :: proc(holder: Holder) {}
+duplicate :: proc(holder: Holder) { holder.links[0] = holder.links[1]; }
+take_ro :: proc(holder: Ro_Holder) {}
+take_ptr :: proc(holder: Ptr_Holder) {}
+take_ro_ptr :: proc(holder: Ro_Ptr_Holder) {}
+take_deep :: proc(deep: Deep) {}
+take_plain :: proc(plain: Plain) {}
+take_mixed :: proc(mixed: Mixed) {}
+take_two :: proc(a: Holder, b: Holder) {}
+take_array :: proc(holders: [2]Holder) {}
+take_either :: proc(either: Either) {}
+take_view :: proc(links: []mut Link) {}
+Two_Holders :: struct { a: Holder, b: Holder }
+Two_Views :: struct { a: []mut Link, b: []mut Link }
+take_two_views :: proc(a: []mut Link, b: []mut Link) {}
+take_moved :: proc(holder: move Holder) {}
+Ptr_Pair :: struct { a: ^mut int, b: ^mut int, n: int }
+dup_view :: proc(links: []mut Link) { links[0] = links[1]; }
+take_ro_view :: proc(links: []Link) {}
+take_value :: proc(value: int) {}
+take_any :: proc(@(escape=stored) holder: Holder, dst: ^mut Holder) { dst^ = holder; }
+flip :: proc() -> bool { return true; }
+impl Holder {
+	by_value :: proc(self: Holder) {}
+}
+Call :: struct { p: ^mut int, n: int }
+impl Call { size :: proc(self) -> int { return self.n; } }
+impl Ptr_Pair {
+	size :: proc(self: ^) -> int { return self.n; }
+}
+`
+
+@(private = "file")
+RECORD_BY_VALUE_CASES := [?]Stored_Reach_Case {
+	// The record's view.
+	{"copy_live_across", "h: Holder", "x := h.links[0].to; duplicate(h); x^ = 1;", true},
+	{"copy_live_across_no_write", "h: Holder", "x := h.links[0].to; take_holder(h); x^ = 1;", true},
+	{"copy_done_first", "h: Holder", "x := h.links[0].to; x^ = 1; duplicate(h);", false},
+	{"copy_after_call", "h: Holder", "duplicate(h); x := h.links[0].to; x^ = 1;", false},
+	{"copy_read_across", "h: Holder", "x := h.links[0].to; take_holder(h); y := x^;", true},
+	{"no_copy_no_body", "h: Holder", "take_holder(h); take_holder(h);", false},
+	{"after_a_copy", "h: Holder", "duplicate(h); take_holder(h);", true},
+	{"after_a_copy_view_form", "s: []mut Link", "dup_view(s); take_view(s);", true},
+	{"copy_of_copy_across", "h: Holder", "x := h.links[0].to; q := x; take_holder(h); q^ = 1;", true},
+	{"copy_replaced_before_call", "h: Holder, @(escape=stored) d: ^mut int", "x := h.links[0].to; x = d; take_holder(h); x^ = 1;", false},
+	{"whole_element_copy_across", "h: Holder", "e := h.links[0]; take_holder(h); e.to^ = 1;", true},
+	{"view_copy_across", "h: Holder", "q := h.links; take_holder(h); q[0].to^ = 1;", true},
+	{"in_a_branch", "h: Holder", "x := h.links[0].to; if (flip()) { take_holder(h); } x^ = 1;", true},
+	{"in_a_loop", "h: Holder", "x := h.links[0].to; for (i := 0; i < 2; i += 1) { take_holder(h); } x^ = 1;", true},
+	{"read_before_call_in_loop", "h: Holder", "for (i := 0; i < 2; i += 1) { x := h.links[0].to; take_holder(h); x^ = 1; }", true},
+	{"read_done_in_loop", "h: Holder", "for (i := 0; i < 2; i += 1) { x := h.links[0].to; x^ = 1; take_holder(h); }", false},
+	// By name and in a literal.
+	{"view_by_name_literal", "s: []mut Link", "x := s[0].to; take_holder(Holder{s}); x^ = 1;", true},
+	{"view_by_name_literal_done", "s: []mut Link", "x := s[0].to; x^ = 1; take_holder(Holder{s});", false},
+	{"view_by_name_local", "s: []mut Link", "h := Holder{s}; x := h.links[0].to; take_holder(h); x^ = 1;", true},
+	{"view_by_name_local_read_through_original", "s: []mut Link", "h := Holder{s}; x := s[0].to; take_holder(h); x^ = 1;", true},
+	{"local_array", "", "v0 := 1; v1 := 2; ls := [2]Link{Link{&mut v0}, Link{&mut v1}}; h := Holder{&mut ls[:]}; x := h.links[0].to; take_holder(h); x^ = 1;", true},
+	{"local_array_done", "", "v0 := 1; v1 := 2; ls := [2]Link{Link{&mut v0}, Link{&mut v1}}; h := Holder{&mut ls[:]}; x := h.links[0].to; x^ = 1; take_holder(h);", false},
+	// The carrier itself, as the rule's baseline.
+	{"view_passed", "s: []mut Link", "x := s[0].to; take_view(s); x^ = 1;", true},
+	{"view_passed_read_only", "s: []mut Link", "x := s[0].to; take_ro_view(s); x^ = 1;", true},
+	{"field_view_passed", "h: Holder", "x := h.links[0].to; take_view(h.links); x^ = 1;", true},
+	// Other shapes.
+	{"pointer_in_record", "h: Ptr_Holder", "x := h.l^.to; take_ptr(h); x^ = 1;", true},
+	{"pointer_in_record_done", "h: Ptr_Holder", "x := h.l^.to; x^ = 1; take_ptr(h);", false},
+	{"read_only_pointer_in_record", "h: Ro_Ptr_Holder, l: ^mut Link", "x := l^.to; take_ro_ptr(Ro_Ptr_Holder{l}); x^ = 1;", true},
+	{"read_only_pointer_done", "l: ^mut Link", "x := l^.to; x^ = 1; take_ro_ptr(Ro_Ptr_Holder{l});", false},
+	{"read_only_view_in_record", "s: []mut Link", "x := s[0].to; take_ro(Ro_Holder{s}); x^ = 1;", true},
+	{"read_only_view_read_only_copy", "s: []mut Link", "x: ^int = s[0].to; take_ro(Ro_Holder{s}); y := x^;", false},
+	{"read_only_view_read_only_copy_mutable_call", "s: []mut Link", "x: ^int = s[0].to; take_holder(Holder{s}); y := x^;", true},
+	{"read_only_view_kept_reading", "h: Ro_Holder", "take_ro(h); y := h.links[0].to^;", false},
+	{"nested_record", "d: Deep", "x := d.h.links[0].to; take_deep(d); x^ = 1;", true},
+	{"nested_record_done", "d: Deep", "x := d.h.links[0].to; x^ = 1; take_deep(d);", false},
+	{"field_record_passed", "d: Deep", "x := d.h.links[0].to; take_holder(d.h); x^ = 1;", true},
+	{"array_of_records", "hs: [2]Holder", "x := hs[0].links[0].to; take_array(hs); x^ = 1;", true},
+	{"element_of_records_passed", "hs: [2]Holder", "x := hs[0].links[0].to; take_holder(hs[0]); x^ = 1;", true},
+	{"other_element_of_records_passed", "hs: [2]Holder", "x := hs[0].links[0].to; take_holder(hs[1]); x^ = 1;", false},
+	{"two_records_either", "h: Holder, g: Holder", "x := h.links[0].to; take_two(g, h); x^ = 1;", true},
+	{"unrelated_record", "h: Holder, g: Holder", "x := h.links[0].to; take_holder(g); x^ = 1;", false},
+	{"mixed_record_view", "m: Mixed", "x := m.links[0].to; take_mixed(m); x^ = 1;", true},
+	{"mixed_record_done", "m: Mixed", "x := m.links[0].to; x^ = 1; take_mixed(m);", false},
+	{"union_value", "h: Holder", "x := h.links[0].to; take_either(Either.holder(h)); x^ = 1;", true},
+	{"method_by_value", "h: Holder", "x := h.links[0].to; h.by_value(); x^ = 1;", true},
+	{"method_by_value_done", "h: Holder", "x := h.links[0].to; x^ = 1; h.by_value();", false},
+	{"indirect_call", "h: Holder, f: proc(holder: Holder)", "x := h.links[0].to; f(h); x^ = 1;", true},
+	{"indirect_call_done", "h: Holder, f: proc(holder: Holder)", "x := h.links[0].to; x^ = 1; f(h);", false},
+	// What reaches no carrier stays free.
+	{"plain_pointer_in_record", "p: Plain", "q := p.n; take_plain(p); r := q;", false},
+	{"plain_pointer_copy_across", "p: Plain", "q := p.p; take_plain(p); q^ = 1;", true},
+	{"plain_pointer_read_across", "p: Plain", "y: ^int = p.p; take_plain(p); z := y^;", true},
+	{"value_of_a_field", "l: Link", "x := l.to^; take_value(x); y := l.to^;", false},
+	{"number_in_record", "s: Some", "n := s.n; take_value(n); m := s.n;", false},
+	// What a call may leave.
+	{"kept_then_copy", "@(escape=stored) h: Holder, d: ^mut Holder", "take_any(h, d); x := d^.links[0].to; take_holder(h); x^ = 1;", true},
+	// A spawn, which shares nothing mutable.
+	{"spawn_by_value_across", "h: Holder", "x := h.links[0].to; parallel { spawn take_holder(h); x^ = 1; }", true},
+	{"spawn_shares_mutable", "h: Holder", "x := h.links[0].to; x^ = 1; parallel { spawn take_holder(h); }", true},
+	// The compiler's own operations run nothing that uses it.
+	{"stored_by_compiler_operation", "h: Holder", "list := [dynamic]Holder{}; x := h.links[0].to; list.append(h); x^ = 1;", false},
+	{"printed_field_number", "s: Some", "n := s.n; take_value(n);", false},
+	// Moved in: what the record reaches is still reached.
+	{"moved_across", "h: move Holder", "x := h.links[0].to; take_moved(move(h)); x^ = 1;", true},
+	{"moved_done", "h: move Holder", "x := h.links[0].to; x^ = 1; take_moved(move(h));", false},
+	// Behind a pointer: only that record.
+	{"record_behind_pointer", "p: ^mut Holder", "x := p^.links[0].to; take_holder(p^); x^ = 1;", true},
+	{"record_behind_pointer_done", "p: ^mut Holder", "x := p^.links[0].to; x^ = 1; take_holder(p^);", false},
+	{"record_behind_read_only_pointer", "p: ^Holder, s: []mut Link", "x := s[0].to; h := Holder{s}; q := &h; take_holder(q^); x^ = 1;", true},
+	{"two_fields_behind_pointer", "p: ^mut Two_Holders", "take_two(p^.a, p^.b);", false},
+	{"two_fields_of_pointer_copy_across", "p: ^mut Two_Holders", "x := p^.a.links[0].to; take_two(p^.a, p^.b); x^ = 1;", true},
+	{"sibling_field_copy_across", "p: ^mut Two_Holders", "x := p^.a.links[0].to; take_holder(p^.b); x^ = 1;", false},
+	{"same_field_twice", "p: ^mut Two_Holders", "take_two(p^.a, p^.a);", true},
+	{"two_views_behind_pointer", "p: ^mut Two_Views", "take_two_views(p^.a, p^.b);", false},
+	{"record_behind_pointer_twice", "p: ^mut Holder", "take_holder(p^); take_holder(p^);", false},
+	{"record_in_view_element", "hs: []mut Holder", "x := hs[0].links[0].to; take_holder(hs[0]); x^ = 1;", true},
+	{"record_in_view_element_done", "hs: []mut Holder", "x := hs[0].links[0].to; x^ = 1; take_holder(hs[0]);", false},
+	{"record_method_behind_pointer", "p: ^mut Holder", "x := p^.links[0].to; p^.by_value(); x^ = 1;", true},
+	// A receiver written `self: ^` is lent.
+	{"borrowed_receiver_field", "l: ^mut Ptr_Pair", "n := l^.size(); y := l^.a; l^.b^ = 1; y^ = n;", false},
+	{"borrowed_receiver_across", "l: ^mut Ptr_Pair", "y := l^.a; n := l^.size(); y^ = n;", true},
+	{"borrowed_receiver_read_only_across", "l: ^mut Ptr_Pair", "y: ^int = l^.a; n := l^.size(); z := y^;", false},
+	{"callable_called_through_pointer", "f: ^Call", "g := f; a := g^.size(); b := g^.size();", false},
+}
+
+// known-gaps.md "A receiver written `self: ^` behind a carrier conflicts with a read-only copy".
+@(private = "file")
+record_by_value_over_rejected :: proc(entry: Stored_Reach_Case) -> bool {
+	return entry.name == "borrowed_receiver_read_only_across"
+}
+
+@(test)
+record_by_value_matrix :: proc(t: ^testing.T) {
+	source := strings.builder_make(context.temp_allocator)
+	strings.write_string(&source, RECORD_BY_VALUE_PRELUDE)
+	first := strings.count(RECORD_BY_VALUE_PRELUDE, "\n") + 1
+	for entry in RECORD_BY_VALUE_CASES {
+		// Every case takes up four lines, which the check below counts on.
+		fmt.sbprintf(&source, "%s :: proc(%s) {{\n\t\n\t%s\n}}\n", entry.name, entry.params, entry.body)
+	}
+	strings.write_string(&source, "main :: proc() {}\n")
+	names := []string{"record_by_value"}
+	sources := []string{strings.to_string(source)}
+	errors, compiled := store_matrix_compile(t, names, sources)
+	if !compiled {
+		return
+	}
+	for entry, at in RECORD_BY_VALUE_CASES {
+		expected := entry.rejected || record_by_value_over_rejected(entry)
+		store_matrix_expect(t, names[0], entry.name, first + 4 * at, errors[0], expected)
 	}
 }
 

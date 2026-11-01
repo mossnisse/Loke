@@ -1,0 +1,30 @@
+L0641
+@25:7
+`holder` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@31:15
+`through` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@37:12
+`deep` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@43:14
+`links` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@49:7
+`pointer` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@55:2
+`holder` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@61:7
+`holder` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@67:13
+`holder` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@74:17
+`links` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@81:19
+`holder` cannot be used here: a mutable reborrow of it is still in use

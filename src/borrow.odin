@@ -5072,10 +5072,11 @@ report_provenance :: proc(state: ^Prov_State) {
 			placed := event.span != Span{}
 			if !placed || !reported[at] {
 				before := len(state.k.c.diagnostics)
-				if event.load != .At_Once || !reported_within(reported, event.span) {
+				already := event.repeats_inner && reported_within(reported, event.span)
+				if !already {
 					check_prov_event(state, event, live_after[index], use_after[index])
 				}
-				if placed && len(state.k.c.diagnostics) > before {
+				if placed && (already || len(state.k.c.diagnostics) > before) {
 					reported[at] = true
 				}
 			}

@@ -8262,7 +8262,8 @@ receiver's reborrow lasts through the call's other arguments and through what
 the call returns from it. While the borrow is in
 use, the carrier may still be used for a place that does not
 [overlap](#places-and-overlap) it, such as another field. Copying the carrier,
-or passing it to a procedure, uses all of what it points to:
+or passing it to a procedure, by itself or in a record passed by value, uses all
+of what it points to:
 
 ```loke
 Counter :: struct { count: int, total: int }

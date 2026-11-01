@@ -1,0 +1,57 @@
+// design.md "Weakening and reborrows": handing a record over by value uses only what that
+// record's carriers reach, so a copy done with first, a read-only copy beside a read-only
+// view, a field beside the one handed over, and two fields at once are all free. A copy
+// suspended across the call is in tests/err/call_record_by_value.loke.
+package main;
+
+import "core:fmt";
+
+Link :: struct { to: ^mut int }
+Holder :: struct { links: []mut Link }
+Read_Only :: struct { links: []Link }
+Two :: struct { first: Holder, second: Holder }
+
+take :: proc(holder: Holder) { holder.links[0].to^ += 1; }
+take_read_only :: proc(read_only: Read_Only) {}
+take_two :: proc(first: Holder, second: Holder) {}
+
+done_first :: proc(holder: Holder) {
+	copy := holder.links[0].to;
+	copy^ += 10;
+	take(holder);
+}
+
+copied_after :: proc(holder: Holder) {
+	take(holder);
+	copy := holder.links[0].to;
+	copy^ += 100;
+}
+
+read_only_copy :: proc(links: []mut Link) -> int {
+	copy: ^int = links[0].to;
+	take_read_only(Read_Only{links});
+	return copy^;
+}
+
+another_field :: proc(two: ^mut Two) {
+	copy := two^.first.links[0].to;
+	take(two^.second);
+	copy^ += 1000;
+}
+
+two_fields :: proc(two: ^mut Two) {
+	take_two(two^.first, two^.second);
+}
+
+main :: proc() {
+	a := 1; b := 2;
+	links_a := [1]Link{Link{&mut a}};
+	links_b := [1]Link{Link{&mut b}};
+	done_first(Holder{&mut links_a[:]});
+	copied_after(Holder{&mut links_a[:]});
+	read := read_only_copy(&mut links_a[:]);
+	two := Two{Holder{&mut links_a[:]}, Holder{&mut links_b[:]}};
+	another_field(&mut two);
+	two_fields(&mut two);
+	fmt.println(read, a, b);
+}

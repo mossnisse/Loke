@@ -1,0 +1,85 @@
+// design.md "Weakening and reborrows": handing a record over by value uses what its carriers
+// point to, as handing over the carrier does, so a copy read out of there is suspended
+// across the call, whatever the record's shape or however it arrives. What the call
+// does not reach stays free: tests/run/call_record_by_value.loke.
+package main;
+
+Link :: struct { to: ^mut int }
+Holder :: struct { links: []mut Link }
+Through :: struct { link: ^mut Link }
+Deep :: struct { holder: Holder }
+Read_Only :: struct { links: []Link }
+
+take :: proc(holder: Holder) {}
+take_through :: proc(through: Through) {}
+take_deep :: proc(deep: Deep) {}
+take_read_only :: proc(read_only: Read_Only) {}
+take_moved :: proc(holder: move Holder) {}
+
+impl Holder {
+	by_value :: proc(self: Holder) {}
+}
+
+a_view :: proc(holder: Holder) {
+	copy := holder.links[0].to;
+	take(holder);
+	copy^ = 1;
+}
+
+a_pointer :: proc(through: Through) {
+	copy := through.link^.to;
+	take_through(through);
+	copy^ = 1;
+}
+
+nested :: proc(deep: Deep) {
+	copy := deep.holder.links[0].to;
+	take_deep(deep);
+	copy^ = 1;
+}
+
+a_literal :: proc(links: []mut Link) {
+	copy := links[0].to;
+	take(Holder{links});
+	copy^ = 1;
+}
+
+behind_a_pointer :: proc(pointer: ^mut Holder) {
+	copy := pointer^.links[0].to;
+	take(pointer^);
+	copy^ = 1;
+}
+
+a_method :: proc(holder: Holder) {
+	copy := holder.links[0].to;
+	holder.by_value();
+	copy^ = 1;
+}
+
+an_indirect_call :: proc(holder: Holder, call: proc(holder: Holder)) {
+	copy := holder.links[0].to;
+	call(holder);
+	copy^ = 1;
+}
+
+moved_in :: proc(holder: move Holder) {
+	copy := holder.links[0].to;
+	take_moved(move(holder));
+	copy^ = 1;
+}
+
+// A read-only view in the record still lets the call read what a mutable copy suspends.
+read_only_view :: proc(links: []mut Link) {
+	copy := links[0].to;
+	take_read_only(Read_Only{links});
+	copy^ = 1;
+}
+
+// A task holds what it is given until the join, so this is one conflict, not two.
+moved_to_a_task :: proc(holder: move Holder) {
+	copy := holder.links[0].to;
+	parallel { spawn take_moved(move(holder)); }
+	copy^ = 1;
+}
+
+main :: proc() {}

@@ -3493,6 +3493,23 @@ corpus nor the first version of a table of 69 task programs contained two such
 conversions. The two extra errors in `parallel_indirect_calls` are on a line `L0729`
 already rejects: a shared callable with a mutable capture is not a plain view.
 
+### A record by value hands over what it reaches
+
+Passing a carrier has long used what it points to (`prov_use_reached`), so a copy read out
+of there is suspended across the call. That check asked whether the parameter was a carrier,
+so a record holding one passed it by: of 76 programs judged by hand, 27 were wrongly
+accepted, with a nested record, an array, a union, a method, or an indirect call.
+
+The first version loaded through each carrier of the record, and through what its place
+named. That wrongly rejected `core:slice`, `core:math/dense`, and a run test, in two ways
+worth keeping in mind. A load through one slot reads as a conflict with a sibling it was
+not told about, so a record's carriers are one load, as a call's are. And for `p^.a` what the
+place names includes `p`, which reaches `p^.b`, so only a record named directly hands over
+what its place holds. Exclusions tried first hid that second mistake and were removed once
+it was found; the one for moved records also accepted a real conflict. A spawn's own call
+still skips this, not for its verdicts but to report a conflict once, as the task already
+holds what it is given until the join.
+
 ### Provenance slots and regions stay apart
 
 A review of the provenance checker on 2026-11-01 proposed two generalizations. One

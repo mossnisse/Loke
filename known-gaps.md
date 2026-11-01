@@ -388,27 +388,32 @@ main :: proc() {}
 
 Read the other element before the call, or end its use before using `other`.
 
-### A copy out of a view in a record is not used by a call given the record
+### A receiver written `self: ^` behind a carrier conflicts with a read-only copy
 
-[Weakening and reborrows](design.md#weakening-and-reborrows) has a call use each mutable
-carrier it can reach, and a copy out of what it reaches is suspended by that. Given the
-view itself or a pointer to the record, that is `L0641`. Given the record by value, the
-call does not count as using the copy:
+A read-only copy of a mutable carrier does not suspend a read of it
+([Weakening and reborrows](design.md#weakening-and-reborrows)), and a procedure taking
+`^T` is accepted below. The same read as a method is `L0641`, as walking the receiver
+through the carrier does not say that it only reads:
 
 ```loke
 package main;
-Link :: struct { to: ^mut int }
-Holder :: struct { links: []mut Link }
-duplicate :: proc(holder: Holder) { holder.links[0] = holder.links[1]; }
-live_across_the_call :: proc(h: Holder) {
-    x := h.links[0].to;
-    duplicate(h); // should be L0641
-    x^ = 1;
+Pair :: struct { a: ^mut int, n: int }
+impl Pair { size :: proc(self: ^) -> int { return self.n; } }
+read_pair :: proc(p: ^Pair) -> int { return p^.n; }
+by_procedure :: proc(l: ^mut Pair) {
+    y: ^int = l^.a;
+    n := read_pair(l);
+    z := y^;
+}
+by_method :: proc(l: ^mut Pair) {
+    y: ^int = l^.a;
+    n := l^.size(); // L0641; should be accepted
+    z := y^;
 }
 main :: proc() {}
 ```
 
-[carrier_store_matrix_test.odin](tests/carrier_store_matrix_test.odin) lists it.
+Use the procedure, or end the use of the copy before the call.
 
 ### A read of a carrier a call may have weakened conflicts with the copy
 

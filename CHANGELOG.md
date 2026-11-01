@@ -10,6 +10,12 @@ checklist.
 
 ### Breaking changes
 
+- Passing a record by value now uses what its carriers point to, as passing the carrier
+  does ([Weakening and reborrows](design.md#weakening-and-reborrows)). `copy :=
+  holder.links[0].to; take(holder); copy^ = 1;` compiled with two live mutable paths to
+  one place, whatever `take` did with them, and so did the same through a nested record,
+  a union, a method taking `self: Holder`, an indirect call, or a moved record. Each is now
+  `L0641`. Upgrade by ending the use of the copy before the call.
 - A read-only argument to a task now keeps what it borrows through a mutable carrier
   read-only borrowed until the join, and a carrier loaded out of a field is lent as one
   passed by name is ([Task borrows and the join](design.md#task-borrows-and-the-join)).
