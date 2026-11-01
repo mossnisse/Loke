@@ -1,0 +1,11 @@
+1 2 2 3
+7 7
+consume 3
+close 3
+4 5
+local 5
+local 4
+release 7
+release 7
+wipe 2 3
+wipe 1 2

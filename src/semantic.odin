@@ -695,6 +695,8 @@ Symbol :: struct {
 	receiver:     Param_Mode,
 	// A closed compiler-controlled semantic role; operators use `operator` below.
 	hook:         Hook_Kind,
+	// `validate_semantic_hook` accepted this lifecycle role.
+	hook_bound:   bool,
 	// Which container operation a contributed member is (`src/container.odin`).
 	container_op: Container_Op,
 	// Which region-provider operation it is (`src/region.odin`).
@@ -985,6 +987,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.spawn_calls = make(map[^Expr_Call]^Spawn_Task, 2, c.semantic_allocator)
 	c.lifecycles = make(map[Type_Id]^Lifecycle, c.semantic_allocator)
 	c.validated_attributes = make(map[u64]bool, c.semantic_allocator)
+	c.checked_copy_decisions = make(map[u64]bool, c.semantic_allocator)
 	c.lifecycle_operations = make(map[Type_Id]Lifecycle_Operations, c.semantic_allocator)
 	c.runtime_types = make(map[string]Type_Id, c.semantic_allocator)
 	c.formatters = make(map[Type_Id]^Witness, c.semantic_allocator)

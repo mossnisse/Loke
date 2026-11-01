@@ -249,6 +249,9 @@ Compiler :: struct {
 	// body checked once per generic instance or static `foreach` element is a
 	// clone with the same spans, and must not report its attributes again.
 	validated_attributes: map[u64]bool,
+	// Each body-local record's `check_copy_decision`, by the same key, so generic
+	// instances of its procedure report it once.
+	checked_copy_decisions: map[u64]bool,
 	// Final value snapshots consumed by emission; no lazy classification or
 	// member selection is allowed through this interface.
 	lifecycle_operations:       map[Type_Id]Lifecycle_Operations,

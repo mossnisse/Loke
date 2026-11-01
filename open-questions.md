@@ -1432,6 +1432,15 @@ copyable, and nothing already in the package changes.
   IANA name needs CLDR's mapping, which ICU has, so a `Zone` has no name. A
   caller that shows one, or records the zone beside a time, would need it.
 
+## A copy hook for some of a generic record's instances
+
+[A record with a drop hook says how it is copied](design.md#lifecycle-hooks-and-resource-types),
+and a generic record decides once. A `hook(copy)` written only in a specialized
+block, `impl Cell(int)`, counts as that decision, so `Cell(string)` keeps the
+generated copy beside a drop hook from `impl Cell($T)` with no attribute saying so.
+Requiring the copy hook's block to be at least as general as the drop hook's would
+close this, at the cost of a rule about block specificity.
+
 ## Formatting
 
 The current formatter rules and rationale are in [comments.md

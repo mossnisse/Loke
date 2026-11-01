@@ -37,6 +37,9 @@ and the type stays move-only. `check_impl_block`
 ([src/impl.odin](src/impl.odin)) returns early for a generic block, and
 `check_pending_impl_instances` ([src/generic.odin](src/generic.odin)) calls only
 `check_decl` on its members, so `validate_semantic_hook` never runs for them.
+Until this is fixed, `check_copy_decision` ([src/hooks.odin](src/hooks.odin))
+takes any procedure under `hook(drop)` in a generic block as bound, and it should
+then read `hook_bound` as it does for a non-generic record.
 
 ### An extension block's hook on another package's generic record is ignored
 

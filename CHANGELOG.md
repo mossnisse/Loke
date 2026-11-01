@@ -10,6 +10,18 @@ checklist.
 
 ### Breaking changes
 
+- A record with `hook(drop)` and no `hook(copy)` must now say how it is copied
+  ([Lifecycle hooks and resource types](design.md#lifecycle-hooks-and-resource-types)):
+  `L0747` at its declaration. It used to get a generated field-wise copy, which
+  released twice what the hook released, or left a long chain's copy recursing
+  through the chain. A record that a move-only field already makes move-only
+  writes it too, and a generic record decides once for all of its instances. The
+  new `@(fieldwise_copy)` is `L0748` beside `move_only`, `hook(copy)`, or a
+  move-only field, and `L0749` on a record with no drop hook. Upgrade by writing
+  `Handle :: move_only struct { fd: int }` for a record that is never copied or
+  whose copy would be wrong, by declaring a `hook(copy)`, or by writing
+  `Key :: struct @(fieldwise_copy) { bytes: [dynamic]u8 }` where copying each field
+  is right. `thread.Ring(T)` now says `move_only`, as its fields already made it.
 - The `any_view` type is gone, with its implicit conversion, the explicit
   `any_view(value)`, and its storage diagnostic `L0462`; `any_view` is now an
   unknown name (`L0306`). `dyn` is the one type-erased view. A `..dyn I`
@@ -452,6 +464,9 @@ checklist.
 
 ### Added
 
+- [`@(fieldwise_copy)`](design.md#fieldwise_copy) keeps the generated field-wise
+  copy of a record with a `hook(drop)`, for a hook that adds a step each value
+  needs once.
 - A `..dyn I` parameter takes any value whose type satisfies `I`, viewing
   each argument where it is or in a temporary that lives through the call, so
   `total(square, Circle{1})` needs no `(dyn I)(&...)` per argument

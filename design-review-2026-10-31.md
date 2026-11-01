@@ -47,11 +47,9 @@ renumbered, and the inventory and probes are taken again from the compiler at
 
 A review of step 1 the same day found that the generated copy of the review's
 own example of a field-wise copy, a `Box` chain with an iterative drop hook,
-overflows the stack on a long chain ([Probes](#probes)). The copy decision is
-therefore argued on firmer ground in
-[2.5](#25-affine-types-a-drop-hook-needs-a-copy-decision) and split from the
-attribute move, which is syntax alone, in the
-[Suggested order](#8-suggested-order).
+overflows the stack on a long chain ([Probes](#probes)). The copy decision for
+drop hooks, argued on that ground and split from the attribute move, which is
+syntax alone, then landed and is under [Adopted proposals](#adopted-proposals).
 
 ## Contents
 
@@ -73,28 +71,24 @@ attribute move, which is syntax alone, in the
 Loke's individual decisions are well argued, and comments.md records the
 argument for nearly every one. The problem is the sum. The specification is
 about 12,000 lines; it has three spellings of a sum type, two reflection tiers,
-two mutable-borrow modes, four inferred effect systems, 26 attributes, and a
+two mutable-borrow modes, four inferred effect systems, 27 attributes, and a
 list of nineteen implicit conversions. Each was added for a reason. The two
 clearest pairs that expressed one idea twice, `Status` beside
 `Result(Unit, E)` and `any_view` beside `dyn`, are gone
 ([Adopted proposals](#adopted-proposals)). Of the pairs that remain, not every
 one is a duplicate: `via` and construction with an allocator differ in a way
-that matters, and `inout` and `^mut T` may ([2.6](#26-one-capability-axis)).
+that matters, and `inout` and `^mut T` may ([2.5](#25-one-capability-axis)).
 
 The remaining recommendations with the best ratio of concepts removed to
 expressiveness lost, in rough priority order:
 
 1. **Effects stated once**, as one algebra that the four inferred effects
    read ([2.3](#23-effects-as-one-algebra)).
-2. **A drop hook needs a written copy decision**
-   ([2.5](#25-affine-types-a-drop-hook-needs-a-copy-decision)). This removes
-   no concept; it closes a silent double release, and it comes before the
-   syntax changes.
-3. **Attributes in one position**, with `move_only` as one of them
+2. **Attributes in one position**, with `move_only` as one of them
    ([3.1](#31-attributes-in-one-position)).
-4. **Delete** `using` and, if wanted, the splat of a typed scalar into a
+3. **Delete** `using` and, if wanted, the splat of a typed scalar into a
    `Simd` ([5](#5-deletion-candidates)).
-5. **Generated-code performance.** Prove common index arithmetic
+4. **Generated-code performance.** Prove common index arithmetic
    overflow-free and indexed views' bounds stable; emit the container fast
    paths in the module, since linking the runtime as bitcode did not inline
    them; and emit `noalias` under `-panic=abort` once its soundness
@@ -113,7 +107,7 @@ is:
 | --- | --- | --- |
 | Reserved words | 36 | [Keywords](grammar.md#keywords) |
 | Contextual keywords, each with a disambiguation rule | 17 | [Keywords](grammar.md#keywords) |
-| Attributes | 26 | [Attribute categories](design.md#attribute-categories) |
+| Attributes | 27 | [Attribute categories](design.md#attribute-categories) |
 | Implicit conversions | 19 | [Implicit type conversions](design.md#implicit-type-conversions) |
 | Spellings of a sum type | 3 | `enum`, `union`, `(a: A \| b: B)`; `Option` and `Result` are library unions, and `Status` is a [parametric alias](design.md#parametric-aliases) of `Result(Unit, E)` |
 | Spellings of a product type | 3 | `struct`, `(a: A, b: B)`, `(A, B)` |
@@ -147,7 +141,7 @@ code over `Result` did not take a `Status`. `enum` and a union of payloadless
 variants now share `variants_of` and keep separate surfaces, because a union's
 tag order is not API. The pairs that remain only look alike: `inout` is
 written at every call that mutates, which a `^mut T` value forwarded without
-`&mut` is not ([2.6](#26-one-capability-axis)), and `via` gives a
+`&mut` is not ([2.5](#25-one-capability-axis)), and `via` gives a
 declaration's fields and elements an allocator, which construction with an
 allocator does not ([Withdrawn proposals](#withdrawn-proposals)).
 
@@ -257,66 +251,7 @@ a `..dyn I` parameter, unfixed constants). Two deserve attention:
   literal passed where a distinct procedure type is expected then writes the
   conversion.
 
-### 2.5 Affine types: a drop hook needs a copy decision
-
-A `move_only struct` is an affine type. The keyword is needed because a type
-with `hook(drop)` and no `hook(copy)` still receives a *generated* field-wise
-copy, which for a file handle stored as an `int` duplicates the handle and
-double-closes it.
-
-Rust's rule, that a type with a destructor is not `Copy`, does not carry over
-as it stands. Rust's `Copy` is an implicit bitwise copy, and a type with a
-destructor may still derive a field-wise `Clone`, which is what Loke's
-generated copy is. But a drop hook usually exists for one of two reasons, and
-the generated copy is wrong for both:
-
-- **The hook releases something the fields only name**, such as a handle in an
-  `int`. The copy duplicates the name, and the resource is released twice.
-- **The hook does structural work the generated operations do not**, such as
-  the iterative unlink that [Owned values](design.md#owned-values) prescribes
-  for a long chain of boxes. The same section says that copying a box chain
-  also nests as deeply as the chain, and the hook does nothing for the copy:
-  a million-node list whose drop hook unlinks it iteratively drops normally
-  and overflows the stack in `clone()` ([Probes](#probes)). An earlier
-  revision of this section cited that list as the case where the field-wise
-  copy is right.
-
-The field-wise copy is right where every field owns its data and the drop hook
-adds a step that a copy needs once per value: zeroing a key buffer before it
-is freed, or checking an invariant. Those cases exist but are the exception.
-
-**Proposal.** Make the copy a written decision rather than a default either
-way:
-
-- A record that declares `hook(drop)` without `hook(copy)`, and is not
-  move-only, is rejected at its declaration. The diagnostic offers the three
-  decisions in this order: make the type move-only, write `hook(copy)`, or ask
-  for the generated field-wise copy with an attribute (spelling to be
-  designed, for example `@(fieldwise_copy)`). The attribute together with
-  `hook(copy)` or move-only is an error.
-- [Owned values](design.md#owned-values) extends its advice for long box
-  chains from the drop hook to the copy: such a type is move-only or copies
-  iteratively in its own `hook(copy)`.
-
-Rejecting the declaration is better than making such a type move-only
-silently, which the first draft proposed: adding a drop hook to a public type
-would then turn copies in other packages into errors at their call sites,
-while the declaration's author, who knows what the hook releases, is the one
-who should decide.
-
-**What is lost.** A record that relies on the generated copy beside its drop
-hook writes the attribute, or, if it is a long chain, learns that its copy was
-not safe. In exchange no drop hook receives a copy nobody chose, and adding a
-drop hook never silently changes whether a type is copyable. A hand-written
-`hook(copy)` stays the answer only where the copy must differ from field-wise,
-since a field added later is silently skipped by one.
-
-**Not part of this change.** Spelling `move_only` as an attribute is syntax,
-and belongs with [3.1](#31-attributes-in-one-position). The rule above can
-land with the keyword as it is; its opt-in attribute goes in today's
-type-attribute position, beside `@(thread_affine)`.
-
-### 2.6 One capability axis
+### 2.5 One capability axis
 
 [Capabilities and the one rule](design.md#capabilities-and-the-one-rule) says
 the language has one axis, read-only or `mut`, and spells it the same way on
@@ -399,7 +334,7 @@ of reading as an exception.
 
 This review lists the fold as a judgment call and leans against it.
 
-### 2.7 What type theory should not drive
+### 2.6 What type theory should not drive
 
 Three things the lens suggests and this review does **not** recommend:
 
@@ -451,10 +386,9 @@ such as `@(packed) Alias :: Header;`, is an error.
 
 **Cost.** The gain is two grammar productions and a reserved word; the cost
 is that every use of `packed`, `align`, `zero`, `failure`, `thread_affine`,
-`wakes_on_drop`, and `move_only` moves. Do it only when `lokec -fmt` can
-rewrite the old forms mechanically, and separately from the copy decision of
-[2.5](#25-affine-types-a-drop-hook-needs-a-copy-decision), so that a semantic
-break and a syntax migration each get their own upgrade note.
+`fieldwise_copy`, `wakes_on_drop`, and `move_only` moves. Do it only when
+`lokec -fmt` can rewrite the old forms mechanically; it is token-preserving today
+and has no rewrite mode. The migration then gets its own upgrade note.
 
 ### 3.2 Runtime reflection
 
@@ -596,7 +530,7 @@ thing. Each row names the replacement and what is lost.
 | Splat of a typed scalar into a `Simd` | `simd.splat(x)`; constant splats stay ([2.4](#24-coercions)) | `v * scale` for a scalar variable `scale` | Low |
 | Distinct-procedure-type conversions | Alias, or explicit conversion ([2.4](#24-coercions)) | The conversion at each site passing a procedure | Low |
 | `using` | Named selection ([3.3](#33-using)) | One selector per access | Low |
-| `inout` parameter mode and `self: inout` | `^mut T`, `&mut x`, `self: ^mut` ([2.6](#26-one-capability-axis)) | The marker at every call that mutates; carets on scalar and whole-value writes | Judgment call; leaning against |
+| `inout` parameter mode and `self: inout` | `^mut T`, `&mut x`, `self: ^mut` ([2.5](#25-one-capability-axis)) | The marker at every call that mutates; carets on scalar and whole-value writes | Judgment call; leaning against |
 | Success returns | `return .ok(n);` ([4.4](#44-rules-whose-text-is-longer-than-what-they-save)) | Four characters per return | Judgment call |
 | `Option.ok_or` | `or_return .Variant` and a `switch` | An eager form for stored absences | Judgment call; the open question keeps it |
 | `Type_Info.members`, `Member_Info`, `Member_Kind` | `fields_of` and `variants_of` at compile time ([3.2](#32-runtime-reflection)) | Runtime reflection of a procedure type's parameter and result types | Judgment call |
@@ -861,19 +795,9 @@ Each step is independent of the others unless noted, and each is a spec,
 compiler, test, and changelog change in one commit as AGENTS.md requires. The
 steps that have landed are under [Adopted proposals](#adopted-proposals).
 
-1. The copy decision for drop hooks, then the attribute position, in two
-   commits that do not depend on each other:
-   1. A record with `hook(drop)`, no `hook(copy)`, and no move-only field or
-      keyword is rejected at its declaration until it chooses
-      ([2.5](#25-affine-types-a-drop-hook-needs-a-copy-decision)); the opt-in
-      to the field-wise copy goes in today's type-attribute position, and
-      [Owned values](design.md#owned-values) extends its box-chain advice to
-      copying. A breaking change with an upgrade note. Count how many types
-      take the opt-in: if almost none do, the attribute may not be worth
-      having.
-   2. Attributes in one position and `@(move_only)`
-      ([3.1](#31-attributes-in-one-position)), once `lokec -fmt` can rewrite
-      the old forms. A syntax migration with its own upgrade note.
+1. Attributes in one position and `@(move_only)`
+   ([3.1](#31-attributes-in-one-position)), once `lokec -fmt` can rewrite the
+   old forms. A syntax migration with its own upgrade note.
 2. Range facts and loop versioning for checked arithmetic
    ([6.3](#63-checked-arithmetic-and-bounds-in-loops)), with bounds proofs that
    account for reassigned slices, aliases, and calls. Then measure the dense
@@ -890,7 +814,7 @@ steps that have landed are under [Adopted proposals](#adopted-proposals).
    `noalias readonly` for `^T`) under `-panic=abort`, starting with `^mut T`,
    `inout`, and `self: ^mut` parameters. No capture attributes: LLVM infers
    them for internal procedures.
-5. If `inout` is folded into `^mut T` at all ([2.6](#26-one-capability-axis)),
+5. If `inout` is folded into `^mut T` at all ([2.5](#25-one-capability-axis)),
    last: it is the largest surface change, and it needs the formatter able to
    rewrite call sites and receivers mechanically. The explanation in
    [Capabilities and the one rule](design.md#capabilities-and-the-one-rule)
@@ -905,6 +829,18 @@ findings in open-questions.md and known-gaps.md
 [unwind and bitcode](open-questions.md#review-of-unwind-bookkeeping-and-runtime-bitcode-commits-2026-10-31),
 [variadic `dyn` and `any_view`](open-questions.md#review-of-variadic-dyn-views-and-any_view-removal-2026-11-01)).
 
+- **A record with a drop hook says how it is copied**
+  ([Lifecycle hooks and resource types](design.md#lifecycle-hooks-and-resource-types),
+  [`@(fieldwise_copy)`](design.md#fieldwise_copy), rationale under
+  ["A drop hook states its copy"](comments.md#a-drop-hook-states-its-copy)). The
+  rule is written only, which goes further than the step proposed: a record that
+  a move-only field already makes move-only still writes `move_only`, so a
+  generic record has one answer. The step asked for a count of the opt-ins, to
+  judge the attribute: of 124 records that had to decide, 111 took `move_only`
+  (`3a5b4f7b`) and 13 took `@(fieldwise_copy)`, all 13 in tests that exercise
+  copies of hooked values. None is in `core`, `examples`, or `bench`, so the
+  attribute has no use outside the tests yet and is worth revisiting if that
+  stays true.
 - **Editorial fixes** found while reading, with the review (`4f7ea5b2`): the
   stale "any of a union's variants to that union" conversion, which the
   compiler rejected with `L0352`, is deleted; [`type` and
@@ -1024,8 +960,11 @@ outweighs its gain, and none is recommended.
   representation and dispatch but kept every source rule, so the
   specification would not have shrunk, and it was superseded by deleting
   `any_view`.
-- **A drop hook implies move-only**, for the reasons in
-  [2.5](#25-affine-types-a-drop-hook-needs-a-copy-decision).
+- **A drop hook implies move-only.** Adding a hook to a public type would turn
+  copies in other packages into errors at their call sites, while the
+  declaration's author, who knows what the hook releases, is the one who should
+  decide. A record now [says in writing how it is
+  copied](design.md#lifecycle-hooks-and-resource-types) instead.
 - **Give every payloadless union `enum`'s integer mapping and ordering.** A
   union's tag order is representation, not API:
   [Widening by label](design.md#widening-by-label) promises no tag number
@@ -1169,9 +1108,11 @@ main :: proc() {
 }
 ```
 
-It exits with `0xC00000FD`, a stack overflow, in the clone; the buffered
-output is lost with it. Without the last two lines it prints `built 1000000`
-and exits 0, so the drop hook handles the drop and nothing handles the copy.
+On 2026-11-01, before the rule above landed, it exited with `0xC00000FD`, a stack
+overflow, in the clone; the buffered output was lost with it. Without the last
+two lines it printed `built 1000000` and exited 0, so the drop hook handled the
+drop and nothing handled the copy. It is now rejected with `L0747` at `List`, and
+written `move_only`, its `clone()` is rejected as a missing member.
 
 **Small arguments travel in registers.** On 2026-10-31, Clang assembly
 generated from emitted IR with `-S -O0` showed that the `sum(xs: []int)`

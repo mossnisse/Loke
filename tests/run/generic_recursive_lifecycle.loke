@@ -12,7 +12,7 @@ impl Noisy {
 	}
 }
 
-Copyable :: struct { n: int }
+Copyable :: struct @(fieldwise_copy) { n: int }
 impl Copyable {
 	bye :: hook(drop) proc(self: inout) {
 		if (self.n != 0) { fmt.println("copyable drop", self.n); }

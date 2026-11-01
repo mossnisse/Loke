@@ -4,7 +4,7 @@
 package main;
 import "core:fmt";
 
-Tracked :: struct { name: string }
+Tracked :: struct @(fieldwise_copy) { name: string }
 impl Tracked {
 	done :: hook(drop) proc(self: inout Tracked) { fmt.println("drop", self.name); }
 }

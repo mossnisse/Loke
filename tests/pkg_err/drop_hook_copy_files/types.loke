@@ -1,0 +1,10 @@
+// design.md "Lifecycle hooks and resource types": the decision is asked after every
+// file of the package, so the hook is found in another one.
+package main;
+
+Handle :: struct { fd: int }
+
+main :: proc() {
+	h := Handle{1};
+	_ = h;
+}

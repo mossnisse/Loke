@@ -1,0 +1,8 @@
+L0747
+@5:1
+`Handle` declares `hook(drop)`, so it must say how it is copied
+@4:2
+`hook(drop)` is declared here
+if a copy would release what the hook releases a second time, write `move_only` before `struct`
+if a copy must do more than copy each field, declare `hook(copy)`
+if copying each field is right, write `@(fieldwise_copy)` after `struct`

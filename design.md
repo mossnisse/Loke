@@ -1008,7 +1008,9 @@ replacement.
 Dropping, copying, and printing a box reach its payload, and through it any box
 the payload holds, so a long chain of boxes such as a linked list nests that
 deeply. A type that builds a long chain declares a drop hook that unlinks it
-iteratively, moving each node's successor out before the node is dropped.
+iteratively, moving each node's successor out before the node is dropped. The
+hook does nothing for a copy, so such a type is also `move_only`, or copies
+iteratively in its own `hook(copy)`.
 
 A box is neither comparable nor hashable, and it is not
 [foreign-ABI-safe](#foreign-abi-safe-types).
@@ -4386,6 +4388,22 @@ and dead; static-duration storage requires [`exchange`](#exchange) instead. See
 [Owners and `drop`](#owners-and-drop) for operand restrictions. Fields are
 dropped in reverse declaration order after the containing type's drop hook
 returns.
+
+A record with a `hook(drop)` says in writing how it is copied, because the
+generated copy is usually wrong beside one: a hook that releases something the
+fields only name would release it twice, and a hook that does work the generated
+operations do not, such as unlinking a long chain, leaves the copy without it. It
+is an error at the declaration unless the record does one of these:
+
+- writes `move_only`, so that it has no copy;
+- declares a `hook(copy)`;
+- asks for the generated copy with [`@(fieldwise_copy)`](#fieldwise_copy).
+
+The decision is read from the declaration and its own `impl` blocks. A record
+that a move-only field already makes move-only still writes `move_only`, and a
+generic record decides once, for all of its instances. A hook that is itself
+rejected asks for no decision, and a `hook(copy)` counts as the decision even
+when it is rejected or is written only for some instances.
 
 A `drop` hook runs **exactly once per completed initialization** that is not
 transferred or consumed. Hooks must accept the inert zero value: `{}` and
@@ -11284,6 +11302,7 @@ statements and blocks, but this specification defines none for those positions.
 | `@(synchronized)` | struct fields, and file-scope and `static` variables | [its package synchronizes every access](#synchronized) |
 | `@(thread_affine)` | struct and union types | [values stay on the thread that made them](#thread_affine) |
 | `@(wakes_on_drop)` | struct and union types | [a drop may wake threads waiting on what the value borrows](#wakes_on_drop) |
+| `@(fieldwise_copy)` | struct types with a `hook(drop)` | [keeps the generated field-wise copy beside the hook](#fieldwise_copy) |
 | `@(cross_thread)` | `move` parameters that are also `@(escape=static)`, and parameters of procedure type | [the argument goes to another thread](#cross_thread) |
 | `@(packed)`, `@(align=N)` | struct types; `align` also union types | [record layout](#packed) |
 | `@(allocator_reset)` | `Allocator` parameters | [a call may reset the region](#allocator_reset) |
@@ -11698,6 +11717,31 @@ holds, or reaches one is checked at a `parallel` block's join (see [Releasing
 before the join](#releasing-before-the-join)). Ordinary types need no
 annotation.
 
+#### `@(fieldwise_copy)`
+
+Written after `struct`, before its body, and after a generic record's
+parameters. A record with a `hook(drop)` keeps its generated field-wise copy, as
+one of the decisions under [Lifecycle hooks and resource
+types](#lifecycle-hooks-and-resource-types) requires. It takes no value.
+
+```loke
+// Wipes its key before the buffer is freed. Each copy owns its own buffer and
+// wipes it once.
+Key :: struct @(fieldwise_copy) { id: int, bytes: [dynamic]u8 }
+
+impl Key {
+	wipe :: hook(drop) proc(self: inout Key) {
+		foreach (&mut byte in self.bytes) { byte = 0; }
+	}
+}
+```
+
+It is right when every field owns its data and the hook adds a step each value
+needs once. It is an error on a record that has no generated copy to keep: a
+`move_only` one, one with a `hook(copy)`, or a non-generic one with a move-only
+field. It is also an error on a record with no `hook(drop)`, so that adding a hook
+later still asks for a decision.
+
 #### `@(cross_thread)`
 
 Marks a parameter whose argument goes to another thread, so that every call is
@@ -11887,6 +11931,7 @@ collects those requirements for conformance checking; omitting one is a defect.
 | When | The diagnostic names |
 | --- | --- |
 | A no-zero type is asked for a zero | the operation, and the two ways out: `@(zero=first_variant)`, or explicit construction ([§](#types-with-no-zero-value)) |
+| A record declares `hook(drop)` without saying how it is copied | the hook, and the decisions in this order: `move_only`, `hook(copy)`, `@(fieldwise_copy)`; only `move_only` when a field already makes it move-only ([§](#lifecycle-hooks-and-resource-types)) |
 | A variant or enum switch is not exhaustive | the variants it did not cover ([§](#inspecting-a-union)) |
 | An overloaded call stays ambiguous | every maximal candidate with its signature, and why selection failed, in the programmer's terms rather than as a rank vector or a tie-breaker number ([§](#operator-lookup-and-overload-resolution)) |
 | An overloaded call's result does not fit its destination | the member the arguments selected ([§](#operator-lookup-and-overload-resolution)) |

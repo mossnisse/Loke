@@ -1,0 +1,5 @@
+package main;
+
+impl Handle {
+	close :: hook(drop) proc(self: inout Handle) {}
+}

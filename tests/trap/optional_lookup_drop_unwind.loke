@@ -1,6 +1,6 @@
 package main; import "core:fmt";
 
-Key :: struct { id: int }
+Key :: struct @(fieldwise_copy) { id: int }
 Resource :: struct { id: int }
 impl Key {
 	hash :: proc(self, seed: uint) -> uint { return seed; }

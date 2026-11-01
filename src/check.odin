@@ -276,6 +276,17 @@ check_package_bodies :: proc(k: ^Checker, package_id: Package_Id) {
 		}
 	}
 
+	// Phase 3c: every inherent hook is validated, so each record's copy decision
+	// can be read (design.md "Lifecycle hooks and resource types").
+	for file in pkg.files {
+		k.file, k.file_node, k.scope = file.file, file, pkg.scope
+		for item in file.active_items {
+			if d, ok := item.(^Decl); ok {
+				check_copy_decision(k, d)
+			}
+		}
+	}
+
 	// Phase 3b: file-scope assertions, after every declaration, so they do not
 	// depend on declaration order.
 	for file in pkg.files {
@@ -3005,7 +3016,40 @@ check_block :: proc(k: ^Checker, b: ^Block) -> Flow_Info {
 check_stmts :: proc(k: ^Checker, stmts: []Stmt) -> Flow_Info {
 	flow := check_stmt_sequence(k, stmts)
 	report_unread_required_results(k, stmts)
+	report_local_copy_decisions(k, stmts)
 	return flow
+}
+
+// A body-local record's copy decision, asked after the whole sequence, since its
+// `impl` blocks are statements after it. Instances of a generic procedure check
+// the same declaration, which reports once.
+@(private = "file")
+report_local_copy_decisions :: proc(k: ^Checker, stmts: []Stmt) {
+	for stmt in stmts {
+		// design.md "when statement": the selected branch has no scope of its own.
+		if w, is_when := stmt.(^Stmt_When); is_when {
+			if selected := when_selected_block(w); selected != nil {
+				report_local_copy_decisions(k, selected.stmts)
+			}
+			continue
+		}
+		d, is_decl := stmt.(^Decl)
+		if !is_decl || d.kind != .Const || len(d.values) != 1 {
+			continue
+		}
+		if _, is_record := d.values[0].(^Type_Record); !is_record {
+			continue
+		}
+		// A speculative check discards its diagnostics, so it must not claim this.
+		if committing(k.c) {
+			key := u64(d.span.file) << 32 | u64(d.span.lo)
+			if k.c.checked_copy_decisions[key] {
+				continue
+			}
+			k.c.checked_copy_decisions[key] = true
+		}
+		check_copy_decision(k, d)
+	}
 }
 
 // A sequence that does not end a scope: a selected `when` branch, whose

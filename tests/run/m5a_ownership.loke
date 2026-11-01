@@ -10,7 +10,7 @@ package main; import "core:fmt"; import "core:unsafe";
 // Each procedure prints its own marker first, so the interleaving below is the
 // observable order rather than a claim about it.
 
-Res :: struct { id: int }
+Res :: struct @(fieldwise_copy) { id: int }
 
 impl Res {
 	release :: hook(drop) proc(self: inout Res) {

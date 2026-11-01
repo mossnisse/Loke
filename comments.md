@@ -561,6 +561,37 @@ declaration. A `stack` modifier would then exist only to undo that policy.
 Programs needing a large heap allocation can use an owning value. Oversized
 stack frames can still overflow.
 
+### A drop hook states its copy
+
+Every record receives a generated field-wise copy, which is right until a drop
+hook arrives, and then usually wrong. A drop hook tends to exist for one of two
+reasons. If it releases something the fields only name, such as a handle stored
+as an `int`, the copy duplicates the name and the resource is released twice. If
+it does structural work the generated operations do not, the copy keeps the
+problem the hook removed: a million-node `Box` list whose hook unlinks it
+iteratively drops normally, and overflows the stack in `clone()`. The field-wise
+copy is right only where every field owns its data and the hook adds a step each
+value needs once, such as wiping a key.
+
+Rust's rule, that a type with a destructor is not `Copy`, does not carry over as
+it stands: its `Copy` is an implicit bitwise copy, and a type with a destructor
+may still derive a field-wise `Clone`, which is what Loke's generated copy is.
+
+So a [record with a drop hook says how it is copied](design.md#lifecycle-hooks-and-resource-types).
+Making such a record move-only implicitly would be shorter, but adding a hook to a
+public type would then turn copies in other packages into errors at their call
+sites, and the author of the declaration, who knows what the hook releases, is the
+one who should decide. A hand-written `hook(copy)` is no answer for the field-wise
+case, since a field added later is silently skipped by one, so
+[`@(fieldwise_copy)`](design.md#fieldwise_copy) names that decision.
+
+The decision is written even where a field already makes the record move-only.
+Reading the declaration then tells the reader, without chasing field types, and
+a generic record has one answer rather than one per instance, which would surface
+as an error in whichever package first instantiated it. `@(fieldwise_copy)` on a
+record with no hook is an error for the same reason the rule exists: written ahead
+of time, it would decide for a hook nobody has written yet.
+
 ### Value-semantic assignment
 
 Copying a dynamic array or map produces an independent value; pointers and

@@ -93,6 +93,9 @@ attribute_spec :: proc(name: string) -> (Attr_Spec, bool) {
 		return {{.Struct_Field, .Var_Decl}, .None, false}, true
 	case "thread_affine", "wakes_on_drop":
 		return {{.Struct_Literal, .Union_Literal}, .None, false}, true
+	case "fieldwise_copy":
+		// What the record must be is `check_copy_decision`'.
+		return {{.Struct_Literal}, .None, false}, true
 	case "cross_thread":
 		// What the parameter must be is `check_cross_thread_attribute`'.
 		return {{.Parameter}, .None, false}, true

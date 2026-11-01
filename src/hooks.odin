@@ -910,7 +910,7 @@ validate_semantic_hook :: proc(k: ^Checker, item: ^Item_Impl, d: ^Decl, sym: ^Sy
 			errorf(k.c, sym.span, "L0488", "a `move_only` type cannot also declare `hook(copy)`")
 			return
 		}
-		require_hook_shape(k, sym, subject)
+		sym.hook_bound = require_hook_shape(k, sym, subject)
 	case .Convert:
 		if sym.has_receiver || len(sym.params) != 1 || sym.result != subject {
 			errorf(k.c, sym.span, "L0411", "`hook(convert)` takes one value without a receiver and returns `%s`", type_name(k.c, subject))
@@ -924,7 +924,7 @@ validate_semantic_hook :: proc(k: ^Checker, item: ^Item_Impl, d: ^Decl, sym: ^Sy
 }
 
 @(private = "file")
-require_hook_shape :: proc(k: ^Checker, sym: ^Symbol, subject: Type_Id) {
+require_hook_shape :: proc(k: ^Checker, sym: ^Symbol, subject: Type_Id) -> bool {
 	ok := sym.has_receiver && len(sym.params) > 0 && sym.params[0] == subject
 	shape: string
 	if sym.hook == .Drop {
@@ -937,7 +937,7 @@ require_hook_shape :: proc(k: ^Checker, sym: ^Symbol, subject: Type_Id) {
 	}
 	if !ok {
 		errorf(k.c, sym.span, "L0488", "`%s` has a fixed signature for `%s`: `%s`", hook_name(sym.hook), type_name(k.c, subject), shape)
-		return
+		return false
 	}
 	if sym.hook == .Copy && len(sym.param_defaults) > 1 {
 		if sym.param_defaults[1] != nil {
@@ -947,8 +947,117 @@ require_hook_shape :: proc(k: ^Checker, sym: ^Symbol, subject: Type_Id) {
 				"L0489",
 				"a lifecycle hook takes no written default; the compiler supplies `mem.default_allocator()`",
 			)
-			return
+			return false
 		}
 		sym.param_defaults[1] = default_allocator_arg(k.c)
 	}
+	return true
+}
+
+// design.md "Lifecycle hooks and resource types": a record with a drop hook says
+// in writing how it is copied. Asked once every `impl` block the record can have
+// is checked, so a hook another diagnostic rejected is not reported again. The
+// answer reads the declaration and its hooks only: what its fields make it does
+// not count, so a generic record has one answer for all of its instances.
+check_copy_decision :: proc(k: ^Checker, d: ^Decl) {
+	if d.kind != .Const || len(d.values) != 1 || len(d.symbols) != 1 || decl_is_intrinsic(d) {
+		return
+	}
+	record, is_record := d.values[0].(^Type_Record)
+	if !is_record || record.kind != .Struct {
+		return
+	}
+	opt_in, opted := find_attribute(record.attributes, "fieldwise_copy")
+	symbol_id := d.symbols[0]
+	drop_written, drop_bound, copy_written: bool
+	drop_span, copy_span: Span
+	template := generic_template_for(k, symbol_id)
+	if template != nil && template_rejected(k, template) {
+		return
+	}
+	// Read after the template settles: that may grow the symbol table.
+	sym := symbol_of(k.c, symbol_id)
+	if sym == nil {
+		return
+	}
+	name, subject, name_span := identifier_text(k.c, sym.name), sym.type, sym.span
+	if template != nil {
+		// No generic block is validated (known-gaps.md "A generic record's
+		// lifecycle hooks are not checked"), so a procedure under the role is
+		// taken as bound, and nothing else reports on it.
+		// Copied out: a range over the map entry itself faults when it has no blocks.
+		blocks := k.c.generic_impls[symbol_id]
+		for block in blocks {
+			if block.item.kind != .Impl {
+				continue
+			}
+			for member in block.item.members {
+				hook_decl, is_decl := member.(^Decl)
+				if !is_decl {
+					continue
+				}
+				#partial switch decl_hook_kind(hook_decl) {
+				case .Drop:
+					drop_written = true
+					if decl_proc_literal(hook_decl) != nil && !drop_bound {
+						drop_bound = true
+						drop_span = hook_decl.names[0].span
+					}
+				case .Copy:
+					copy_written = true
+					copy_span = hook_decl.names[0].span
+				}
+			}
+		}
+	} else {
+		info := type_of(k.c, subject)
+		if sym.kind != .Type || info == nil {
+			return
+		}
+		for member_id in info.members {
+			member := symbol_of(k.c, member_id)
+			if member == nil || member.synth != .None {
+				continue
+			}
+			#partial switch member.hook {
+			case .Drop:
+				drop_written = true
+				if member.hook_bound && !drop_bound {
+					drop_bound = true
+					drop_span = member.span
+				}
+			case .Copy:
+				copy_written = true
+				copy_span = member.span
+			}
+		}
+	}
+
+	if opted {
+		switch {
+		case record.move_only:
+			errorf(k.c, opt_in.span, "L0748", "`@(fieldwise_copy)` keeps a generated copy, but a `move_only` record has none")
+		case copy_written:
+			errorf(k.c, opt_in.span, "L0748", "`@(fieldwise_copy)` keeps the generated copy, but `%s` declares `hook(copy)`", name)
+			add_notef(k.c, copy_span, "`hook(copy)` is declared here")
+		case !drop_written:
+			errorf(k.c, opt_in.span, "L0749", "`@(fieldwise_copy)` is for a record with `hook(drop)`; `%s` declares none, so it already copies field by field", name)
+		case template == nil && type_clone_disabled(k.c, subject):
+			errorf(k.c, opt_in.span, "L0748", "`@(fieldwise_copy)` keeps a generated copy, but `%s` holds a move-only field and has none; write `move_only`", name)
+		}
+		return
+	}
+	if record.move_only || !drop_bound || copy_written {
+		return
+	}
+	errorf(k.c, name_span, "L0747", "`%s` declares `hook(drop)`, so it must say how it is copied", name)
+	add_notef(k.c, drop_span, "`hook(drop)` is declared here")
+	// A generic record has no answer of its own here: it depends on the instance.
+	if template == nil && type_clone_disabled(k.c, subject) {
+		add_notef(k.c, no_span(), "`%s` is already move-only through a field; write `move_only` before `struct` to say so", name)
+		return
+	}
+	add_notef(k.c, no_span(), "if a copy would release what the hook releases a second time, write `move_only` before `struct`")
+	add_notef(k.c, no_span(), "if a copy must do more than copy each field, declare `hook(copy)`")
+	add_notef(k.c, no_span(), "if copying each field is right, write `@(fieldwise_copy)` after `struct`")
 }

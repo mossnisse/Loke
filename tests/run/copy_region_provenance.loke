@@ -17,7 +17,7 @@ fallible :: proc(@(escape=static) allocator: Allocator) -> Result(Handle, Alloca
 	return .ok(Handle{allocator});
 }
 
-Copy_Handle :: struct { allocator: Allocator }
+Copy_Handle :: struct @(fieldwise_copy) { allocator: Allocator }
 impl Copy_Handle { release :: hook(drop) proc(self: inout Copy_Handle) {} }
 Wrap :: struct { value: Copy_Handle }
 copied: Copy_Handle;

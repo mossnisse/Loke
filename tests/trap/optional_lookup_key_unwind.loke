@@ -1,6 +1,6 @@
 package main; import "core:fmt";
 
-Resource :: struct { id: int }
+Resource :: struct @(fieldwise_copy) { id: int }
 impl Resource {
 	release :: hook(drop) proc(self: inout Resource) { if (self.id != 0) { fmt.println("drop", self.id); } }
 }

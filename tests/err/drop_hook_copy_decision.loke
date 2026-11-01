@@ -1,0 +1,117 @@
+// design.md "Lifecycle hooks and resource types": a record with `hook(drop)` says
+// in writing how it is copied.
+package main;
+
+// No decision: the first note names the hook, and the others the three fixes.
+Handle :: struct { fd: int }
+impl Handle {
+	close :: hook(drop) proc(self: inout Handle) {}
+}
+
+// The hook may sit in any `impl` block of the record.
+Split :: struct { fd: int }
+impl Split {
+	read :: proc(self) -> int { return self.fd; }
+}
+impl Split {
+	close :: hook(drop) proc(self: inout Split) {}
+}
+
+// A generic record is decided once, at its template: instantiated twice here, and
+// never at all below.
+Chain :: struct($T: type) { value: T }
+impl Chain($T) {
+	close :: hook(drop) proc(self: inout) {}
+}
+Unused :: struct($T: type) { value: T }
+impl Unused($T) {
+	close :: hook(drop) proc(self: inout) {}
+}
+
+// A move-only field does not count as the decision, and only `move_only` is
+// offered, since the other two fixes cannot apply.
+Token :: move_only struct { id: int }
+Holder :: struct { token: Token }
+impl Holder {
+	close :: hook(drop) proc(self: inout Holder) {}
+}
+
+// A hook another diagnostic rejects does not ask for a decision too.
+Wrong :: struct { fd: int }
+impl Wrong {
+	close :: hook(drop) proc(self) {}
+}
+Plain :: struct { fd: int }
+Named :: distinct Plain;
+impl Named {
+	close :: hook(drop) proc(self: inout Named) {}
+}
+
+// Of two drop hooks, the first is valid and asks for the decision.
+Twice :: struct { fd: int }
+impl Twice {
+	close :: hook(drop) proc(self: inout Twice) {}
+	shut :: hook(drop) proc(self: inout Twice) {}
+}
+
+// A decision, in each of its forms: none of these report.
+Decided :: move_only struct { fd: int }
+impl Decided {
+	close :: hook(drop) proc(self: inout Decided) {}
+}
+Copied :: struct { fd: int }
+impl Copied {
+	close :: hook(drop) proc(self: inout Copied) {}
+	copy :: hook(copy) proc(self, allocator: Allocator) -> Result(Copied, Allocator_Error) {
+		return .ok(Copied{self.fd});
+	}
+}
+Fields :: struct @(fieldwise_copy) { fd: int }
+impl Fields {
+	close :: hook(drop) proc(self: inout Fields) {}
+}
+Cell :: struct($T: type) @(fieldwise_copy) { value: T }
+impl Cell($T) {
+	close :: hook(drop) proc(self: inout) {}
+}
+Moved :: move_only struct($T: type) { value: T }
+impl Moved($T) {
+	close :: hook(drop) proc(self: inout) {}
+}
+
+// No hook, nothing to decide.
+Bare :: struct { fd: int }
+
+twice :: proc($T: type) {
+	// Instantiated twice, and reported once.
+	Inner :: struct { fd: int }
+	impl Inner {
+		close :: hook(drop) proc(self: inout Inner) {}
+	}
+}
+
+main :: proc() {
+	a := Chain(int){1};
+	b := Chain(string){"b"};
+	_, _ = a, b;
+	twice(int);
+	twice(string);
+
+	Local :: struct { fd: int }
+	impl Local {
+		close :: hook(drop) proc(self: inout Local) {}
+	}
+
+	// The hook comes in a nested block, which is still this body.
+	Later :: struct { fd: int }
+	{
+		impl Later {
+			close :: hook(drop) proc(self: inout Later) {}
+		}
+	}
+
+	Fine :: move_only struct { fd: int }
+	impl Fine {
+		close :: hook(drop) proc(self: inout Fine) {}
+	}
+}
