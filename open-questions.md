@@ -11,6 +11,55 @@ Design rationale and differences from Odin are recorded in
 The current behavior inventory is in [Nondeterminism and undefined behavior
 audit](nondeterminism-audit.md).
 
+## Review of drop-hook copy decisions and generic hook validation (2026-11-01)
+
+Reviewed `3a5b4f7b`, `bf5cb393`, and `46cf2aa8` for correctness,
+simplification, and structure. Two gaps remain in the new copy-decision check:
+
+- [A successful first instance suppresses later checks](known-gaps.md#a-local-records-copy-decision-is-checked-only-for-its-first-instance)
+  for a record inside a generic procedure. A later instance can add a drop hook
+  yet keep an unchosen generated copy; it can also acquire a move-only field
+  without reporting an invalid `@(fieldwise_copy)`. Reversing the calls changes
+  acceptance (P2).
+- [A deferred record declaration is skipped](known-gaps.md#a-deferred-record-declaration-bypasses-the-copy-decision-check).
+  Wrapping the declaration directly in `defer` bypasses `L0747`, although the
+  declaration and its subsequent implementation block are checked and its
+  values receive generated copies (P2).
+
+An [excluded generic drop hook still supplies cleanup](known-gaps.md#an-excluded-generic-drop-hook-still-supplies-cleanup),
+which fails emission with an internal backend diagnostic. This was also
+confirmed with a compiler built from `bf5cb393`; it is an adjacent existing gap,
+not a regression from `46cf2aa8`.
+
+One small simplification remains open (P3): in
+[src/hooks.odin](src/hooks.odin), `generic_hook_reported` and
+`mark_generic_hook_reported` wrap a single map read or write, and all their
+callers are in that file. Keep `generic_hook_key` and read/write
+`reported_generic_hooks[generic_hook_key(d)]` directly. This removes two trivial
+wrappers, about ten lines, while keeping source-position key construction in
+one place.
+
+The overall structure is appropriate: copy decisions validate declarations
+without adding another lifecycle representation or emitter path; instantiated
+hooks reuse `validate_semantic_hook`; and the early generic check handles the
+extension restriction and drop-hook shape that need no instance. Validation
+and diagnostic deduplication need to remain separate where the answer depends
+on the instance. The migration changes the declarations' explicit copyability
+without changing their hook bodies or adding replacement copy machinery.
+The specialized-copy-hook policy is already recorded under
+[A copy hook for some of a generic record's instances](#a-copy-hook-for-some-of-a-generic-records-instances).
+
+Validation: rebuilt the compiler and language server; all 179 compiler and 43
+language-server unit tests passed, with the existing toolchain-test allocation
+warnings. Ten integration suites passed: run programs, trapping programs,
+diagnostics, package diagnostics, LLVM shapes, packages, tutorials, bundled
+interface files, layout agreement, and examples. Focused probes confirmed both
+copy-decision gaps, their rejecting controls, and the older excluded-drop
+failure. The language-server suite was rerun from a binary beside the bundled
+libraries after an initial custom output directory made it unable to locate
+`base:runtime`. No implementation fixes are included in this review.
+Estimated simplification: net: -10 lines possible.
+
 ## Review of variadic dyn views and any_view removal (2026-11-01)
 
 Reviewed `9337076b`, `03d04d34`, `701846e9`, `b73dfa55`, and `426f1a13` for
