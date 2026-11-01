@@ -7,6 +7,126 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
+### A slice literal's drop keeps only its initial element borrows
+
+[Slice literals](design.md#slice-literals) have a hidden owner whose elements
+are dropped at the end of the block. A hook must therefore keep the elements'
+current borrows live until that cleanup, including borrows stored later:
+
+```loke
+package main;
+import "core:fmt";
+Read :: struct { data: []int }
+impl Read {
+    retire :: hook(drop) proc(self: inout Read) {
+        if (self.data.len() > 0) { fmt.println(self.data[0]); }
+    }
+}
+main :: proc() {
+    values := [dynamic]int{7};
+    view := []mut Read{Read{{}}};
+    view[0] = Read{values[:]};
+    view = {};
+    drop(values);
+}
+```
+
+This compiles, and the element's hook reads freed storage at block exit.
+Conversely, initializing the literal with `Read{values[:]}` and replacing the
+element with `Read{{}}` reports `L0512` at `drop(values)`, although the hook
+that read that borrow already ran during replacement. The latter is a
+regression from `426f1a13`; the former remains unfixed by `210f1131`.
+In [src/cfg_provenance.odin](src/cfg_provenance.odin), `prov_slice_literal`
+defines `root.content` from the original elements only, and
+`prov_extended_drop` reads that snapshot. Track the backing array's current
+content through element and field writes instead. Confirmed on `5580637f`
+during review on 2026-11-01 (P1).
+
+### An empty slice literal contributes nonexistent element drop effects
+
+An empty [slice literal](design.md#slice-literals) has no elements whose
+hooks can run. Since `210f1131`, its cleanup nevertheless applies the element
+type's global write effects:
+
+```loke
+package main;
+import "core:fmt";
+values: [dynamic]int = {};
+Clear :: struct { id: int }
+impl Clear {
+    retire :: hook(drop) proc(self: inout Clear) { values = {}; }
+}
+main :: proc() {
+    values.append(7);
+    borrowed := values[:];
+    {
+        view := []Clear{};
+        fmt.println(view.len());
+    }
+    fmt.println(borrowed[0]);
+}
+```
+
+This reports `L0512` at `[]Clear{}`, claiming that `retire` writes `values`
+when the slice literal is dropped. At `426f1a13` it compiles and prints `0`
+and `7`; the zero-length backing array runs no hook. `prov_slice_literal`
+now records its backing type for `prov_extended_drop`, but `type_drop_hooks`
+in [src/hooks.odin](src/hooks.odin) descends into the element type of a fixed
+array even when its length is zero. Exclude those nonexistent element effects.
+Confirmed on `5580637f` during review on 2026-11-01 (P2).
+
+### A conditional write hides a received allocator payload's region
+
+[The allocator reset promise](design.md#allocator_reset) must cover every
+pre-existing region that can be reset. A known write into a received `Option`
+can suppress the unknown incoming payload that `5580637f` added:
+
+```loke
+package main;
+reset :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator,
+              maybe: inout Option(Allocator), flag: bool) {
+    if (flag) { maybe = Option(Allocator).some(allowed); }
+    free_all(maybe or_else allowed);
+}
+main :: proc() {}
+```
+
+This compiles. With `flag` false, the reset can reach the incoming payload's
+region, which need not be `allowed`'s. Removing the conditional assignment
+reports `L0538`. In [src/cfg_provenance.odin](src/cfg_provenance.odin),
+`prov_result_region_at` adds the unknown parameter origin only when the whole
+queried set is empty. Region writes merge without regard to control flow, so
+the possible write of `allowed` makes that set nonempty even on the path where
+the incoming payload survives. Preserve the incoming origin alongside possible
+writes; seeding allocator leaves at parameter entry would also avoid repeating
+this fallback in individual readers. Confirmed on `5580637f` during review on
+2026-11-01 (P2); the conditional-write case also compiles at `426f1a13`.
+
+### A temporary record field also carries sibling allocator regions
+
+[Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)
+keeps a record's fields separate when projecting a temporary result:
+
+```loke
+package main;
+Pair :: struct { a, b: Allocator }
+reset :: proc(@(allocator_reset) allowed: Allocator, other: Allocator, flag: bool) {
+    free_all((Pair{allowed, other} if flag else Pair{allowed, other}).a);
+}
+main :: proc() {}
+```
+
+This reports `L0538`, although both possible values of `.a` are `allowed`.
+The failure predates the reviewed commits and reproduces at `426f1a13`.
+The projected query added in `5580637f` now obtains the correct field region,
+but `prov_region_of` in [src/cfg_provenance.odin](src/cfg_provenance.odin)
+merges it with `prov_read_region`'s whole-record result, retaining `.b`'s
+unmarked region. Return the projected query directly for a struct field and
+keep `prov_read_region` as the fallback. A scratch compiler with that
+one-line reduction accepts this case while still rejecting the received
+allocator payload probes. Confirmed on `5580637f` during review on 2026-11-01
+(P2, pre-existing; also a simplification opportunity).
+
 ### A local alias hides a generic-dependent Unit success
 
 [One result](design.md#one-result) permits a bare success return only when its

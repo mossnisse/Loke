@@ -11,6 +11,46 @@ Design rationale and differences from Odin are recorded in
 The current behavior inventory is in [Nondeterminism and undefined behavior
 audit](nondeterminism-audit.md).
 
+## Review of slice-literal cleanup and received allocator unwrapping (2026-11-01)
+
+Reviewed `210f1131` and `5580637f` for correctness, simplification, and
+structure. Three issues remain in their fixes:
+
+- [Slice cleanup reads an initial snapshot](known-gaps.md#a-slice-literals-drop-keeps-only-its-initial-element-borrows)
+  rather than the backing array's current content. Later stores can leave a
+  hook reading freed data, and replacing an initially borrowed element causes
+  a new false rejection.
+- [Empty literals contribute element hook effects](known-gaps.md#an-empty-slice-literal-contributes-nonexistent-element-drop-effects)
+  despite containing no element to drop.
+- [A conditional write hides an incoming allocator](known-gaps.md#a-conditional-write-hides-a-received-allocator-payloads-region)
+  because the parameter fallback is conditional on the merged set being empty.
+
+The existing cleanup and normalized region-query machinery are appropriate
+places for these fixes; no additional analysis framework is needed. The main
+structural changes should be to read mutable backing storage at cleanup and
+retain incoming allocator facts when parameter storage is initialized, so all
+readers observe them alongside possible writes.
+
+One concrete simplification is available in `prov_region_of` in
+[src/cfg_provenance.odin](src/cfg_provenance.odin): return the new projected
+struct-field query directly instead of merging it into a whole-record read.
+This removes one line and a redundant query, and fixes a
+[pre-existing sibling-region false rejection](known-gaps.md#a-temporary-record-field-also-carries-sibling-allocator-regions).
+An isolated compiler with that change accepted the sibling-field control and
+still rejected nested and copied received allocator payloads. No production
+implementation changes are included in this review.
+
+Validation: all 179 compiler and 43 language-server unit tests passed, with
+the existing runtime toolchain allocation warnings. Both the rejected-program
+and executable-program integration suites passed after rebuilding the compiler. Focused probes were
+compared with a separate compiler built from `426f1a13`; they confirmed the
+new slice false rejections and the remaining holes. The baseline empty-literal
+program ran and printed `0` and `7`, confirming that no hook ran. Both compiler
+and language-server binaries built successfully; the language server was built
+to a separate temporary path. All 2,876 specification citations resolved,
+`git diff --check` passed, and the added documentation links were checked
+against their target headings.
+
 ## Review of Unit successes, parametric aliases, Status, and enum variants (2026-10-31)
 
 Reviewed `e4d9c207`, `0ae279da`, `99057210`, and `3b49d840` for correctness,
