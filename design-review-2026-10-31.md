@@ -45,6 +45,14 @@ Their proposals are removed from the text and listed under
 renumbered, and the inventory and probes are taken again from the compiler at
 `4173b622`.
 
+A review of step 1 the same day found that the generated copy of the review's
+own example of a field-wise copy, a `Box` chain with an iterative drop hook,
+overflows the stack on a long chain ([Probes](#probes)). The copy decision is
+therefore argued on firmer ground in
+[2.5](#25-affine-types-a-drop-hook-needs-a-copy-decision) and split from the
+attribute move, which is syntax alone, in the
+[Suggested order](#8-suggested-order).
+
 ## Contents
 
 - [Summary](#summary)
@@ -78,12 +86,15 @@ expressiveness lost, in rough priority order:
 
 1. **Effects stated once**, as one algebra that the four inferred effects
    read ([2.3](#23-effects-as-one-algebra)).
-2. **Attributes in one position**, with `move_only` as one of them
-   ([3.1](#31-attributes-in-one-position)), and **a drop hook needs a written
-   copy decision** ([2.5](#25-affine-types-a-drop-hook-needs-a-copy-decision)).
-3. **Delete** `using` and, if wanted, the splat of a typed scalar into a
+2. **A drop hook needs a written copy decision**
+   ([2.5](#25-affine-types-a-drop-hook-needs-a-copy-decision)). This removes
+   no concept; it closes a silent double release, and it comes before the
+   syntax changes.
+3. **Attributes in one position**, with `move_only` as one of them
+   ([3.1](#31-attributes-in-one-position)).
+4. **Delete** `using` and, if wanted, the splat of a typed scalar into a
    `Simd` ([5](#5-deletion-candidates)).
-4. **Generated-code performance.** Prove common index arithmetic
+5. **Generated-code performance.** Prove common index arithmetic
    overflow-free and indexed views' bounds stable; emit the container fast
    paths in the module, since linking the runtime as bitcode did not inline
    them; and emit `noalias` under `-panic=abort` once its soundness
@@ -253,31 +264,57 @@ with `hook(drop)` and no `hook(copy)` still receives a *generated* field-wise
 copy, which for a file handle stored as an `int` duplicates the handle and
 double-closes it.
 
-Rust's rule, that a type with a destructor is not `Copy`, does not carry over.
-Rust's `Copy` is an implicit bitwise copy, and a type with a destructor may
-still derive a field-wise `Clone`, which is what Loke's generated copy is. The
-field-wise copy is right for a record whose fields own what its drop hook
-touches, such as a chain of `Box` fields with a drop hook that unlinks it
-iteratively, as [Owned values](design.md#owned-values) recommends. It is wrong
-for one whose drop hook releases something its fields only name.
+Rust's rule, that a type with a destructor is not `Copy`, does not carry over
+as it stands. Rust's `Copy` is an implicit bitwise copy, and a type with a
+destructor may still derive a field-wise `Clone`, which is what Loke's
+generated copy is. But a drop hook usually exists for one of two reasons, and
+the generated copy is wrong for both:
+
+- **The hook releases something the fields only name**, such as a handle in an
+  `int`. The copy duplicates the name, and the resource is released twice.
+- **The hook does structural work the generated operations do not**, such as
+  the iterative unlink that [Owned values](design.md#owned-values) prescribes
+  for a long chain of boxes. The same section says that copying a box chain
+  also nests as deeply as the chain, and the hook does nothing for the copy:
+  a million-node list whose drop hook unlinks it iteratively drops normally
+  and overflows the stack in `clone()` ([Probes](#probes)). An earlier
+  revision of this section cited that list as the case where the field-wise
+  copy is right.
+
+The field-wise copy is right where every field owns its data and the drop hook
+adds a step that a copy needs once per value: zeroing a key buffer before it
+is freed, or checking an invariant. Those cases exist but are the exception.
 
 **Proposal.** Make the copy a written decision rather than a default either
 way:
 
 - A record that declares `hook(drop)` without `hook(copy)`, and is not
-  move-only, is rejected at its declaration unless it asks for the generated
-  field-wise copy with an attribute (spelling to be designed, for example
-  `@(fieldwise_copy)`).
-- `move_only` becomes an ordinary type attribute, `@(move_only)`, beside
-  `@(thread_affine)` and `@(wakes_on_drop)`, rather than a keyword with its own
-  grammar production ([3.1](#31-attributes-in-one-position)).
+  move-only, is rejected at its declaration. The diagnostic offers the three
+  decisions in this order: make the type move-only, write `hook(copy)`, or ask
+  for the generated field-wise copy with an attribute (spelling to be
+  designed, for example `@(fieldwise_copy)`). The attribute together with
+  `hook(copy)` or move-only is an error.
+- [Owned values](design.md#owned-values) extends its advice for long box
+  chains from the drop hook to the copy: such a type is move-only or copies
+  iteratively in its own `hook(copy)`.
+
+Rejecting the declaration is better than making such a type move-only
+silently, which the first draft proposed: adding a drop hook to a public type
+would then turn copies in other packages into errors at their call sites,
+while the declaration's author, who knows what the hook releases, is the one
+who should decide.
 
 **What is lost.** A record that relies on the generated copy beside its drop
-hook writes the attribute. In exchange no drop hook receives a copy nobody
-chose, and adding a drop hook never silently changes whether a type is
-copyable. The first draft's rule, that a drop hook implies move-only, would
-have made the iterative-unlink fix a breaking change, undone only by a
-hand-written `hook(copy)` that a field added later would silently skip.
+hook writes the attribute, or, if it is a long chain, learns that its copy was
+not safe. In exchange no drop hook receives a copy nobody chose, and adding a
+drop hook never silently changes whether a type is copyable. A hand-written
+`hook(copy)` stays the answer only where the copy must differ from field-wise,
+since a field added later is silently skipped by one.
+
+**Not part of this change.** Spelling `move_only` as an attribute is syntax,
+and belongs with [3.1](#31-attributes-in-one-position). The rule above can
+land with the keyword as it is; its opt-in attribute goes in today's
+type-attribute position, beside `@(thread_affine)`.
 
 ### 2.6 One capability axis
 
@@ -387,7 +424,11 @@ attributes that describe the type. But a `struct` "is written only as the value
 of a constant declaration", and a nominal `union` or `enum` has no meaningful
 inline use either (the inline structural forms are the parenthesized record
 and union). So every type attribute is already on a declaration, one token to
-the right of where the others are.
+the right of where the others are. Nor do the two positions separate the
+name from the type cleanly today: `@(require_results)` describes the type and
+is written on the declaration, so
+`@(require_results) Reply :: union @(zero=none) { ... }` already splits one
+type's attributes across both.
 
 **Proposal.** Nominal `struct`, `union`, and `enum` definitions are written
 only as a constant's value, and their attributes go on the declaration:
@@ -396,15 +437,24 @@ only as a constant's value, and their attributes go on the declaration:
 grammar.md loses `Attributes?` from `Struct_Type` and `Union_Type`, the
 inline `[size_of(enum { A, B })]u8` corner under
 [Success returns](design.md#success-returns) goes with it, and `move_only`
-becomes an attribute in the same place
-([2.5](#25-affine-types-a-drop-hook-needs-a-copy-decision)).
+becomes `@(move_only)` in the same place, beside `@(thread_affine)` and
+`@(wakes_on_drop)`, and grammar.md loses `Move_Only_Struct_Type`. Like those
+two, `@(move_only)` applies to struct and union types; a union is move-only
+today only through a move-only payload. The name stays: "move-only" is the
+term the specification, its glossary, and the diagnostics use.
 
 **What is lost.** The inline nominal `enum` and `union`. The merged list also
 mixes attributes about the name (`public`, `deprecated`) with attributes about
-the layout (`packed`, `align`), which the two positions now keep apart, and it
-needs one new rule: a type attribute on a declaration whose value is not a
-`struct`, `union`, or `enum` definition, such as `@(packed) Alias :: Header;`,
-is an error.
+the layout (`packed`, `align`), and it needs one new rule: a type attribute on
+a declaration whose value is not a `struct`, `union`, or `enum` definition,
+such as `@(packed) Alias :: Header;`, is an error.
+
+**Cost.** The gain is two grammar productions and a reserved word; the cost
+is that every use of `packed`, `align`, `zero`, `failure`, `thread_affine`,
+`wakes_on_drop`, and `move_only` moves. Do it only when `lokec -fmt` can
+rewrite the old forms mechanically, and separately from the copy decision of
+[2.5](#25-affine-types-a-drop-hook-needs-a-copy-decision), so that a semantic
+break and a syntax migration each get their own upgrade note.
 
 ### 3.2 Runtime reflection
 
@@ -475,7 +525,7 @@ parenthesis of `for ((key in counts))` and the parentheses of
 | --- | --- | --- |
 | `(&mut a[:]).indexed()` | `&mut` applied to a slice suffix is a special grammatical case, and a member of the result needs parentheses | A postfix spelling of mutable slicing, `a.slice_mut()` or `a[mut lo:hi]`, which chains like every other postfix and removes the `&mut`-before-slice rule from grammar.md |
 | `Name :: struct @(packed) { }` | Attributes in a second position | [3.1](#31-attributes-in-one-position) |
-| `move_only struct @(thread_affine) { }` | A keyword and an attribute for two properties of the same kind | [2.5](#25-affine-types-a-drop-hook-needs-a-copy-decision) |
+| `move_only struct @(thread_affine) { }` | A keyword and an attribute for two properties of the same kind | [3.1](#31-attributes-in-one-position) |
 | `(dyn Drawable)(&circle)` | Conversion of a composite type is C-cast-like | Keep. `T(v)` with a parenthesized composite type is one rule for every conversion, and the alternative (`as`) is a keyword |
 
 ### 4.2 Verbosity hotspots
@@ -542,7 +592,7 @@ thing. Each row names the replacement and what is lost.
 | Delete | Replaced by | Lost | Priority |
 | --- | --- | --- | --- |
 | Type-position attributes, inline nominal `enum`/`union` | Declaration attributes ([3.1](#31-attributes-in-one-position)) | `[size_of(enum { A, B })]u8` | Medium |
-| `move_only` keyword | `@(move_only)` ([2.5](#25-affine-types-a-drop-hook-needs-a-copy-decision)) | A reserved word | Medium |
+| `move_only` keyword | `@(move_only)`, also on unions ([3.1](#31-attributes-in-one-position)) | A reserved word | Medium |
 | Splat of a typed scalar into a `Simd` | `simd.splat(x)`; constant splats stay ([2.4](#24-coercions)) | `v * scale` for a scalar variable `scale` | Low |
 | Distinct-procedure-type conversions | Alias, or explicit conversion ([2.4](#24-coercions)) | The conversion at each site passing a procedure | Low |
 | `using` | Named selection ([3.3](#33-using)) | One selector per access | Low |
@@ -811,9 +861,19 @@ Each step is independent of the others unless noted, and each is a spec,
 compiler, test, and changelog change in one commit as AGENTS.md requires. The
 steps that have landed are under [Adopted proposals](#adopted-proposals).
 
-1. Attributes in one position, `@(move_only)`, and the copy decision for drop
-   hooks ([3.1](#31-attributes-in-one-position),
-   [2.5](#25-affine-types-a-drop-hook-needs-a-copy-decision)).
+1. The copy decision for drop hooks, then the attribute position, in two
+   commits that do not depend on each other:
+   1. A record with `hook(drop)`, no `hook(copy)`, and no move-only field or
+      keyword is rejected at its declaration until it chooses
+      ([2.5](#25-affine-types-a-drop-hook-needs-a-copy-decision)); the opt-in
+      to the field-wise copy goes in today's type-attribute position, and
+      [Owned values](design.md#owned-values) extends its box-chain advice to
+      copying. A breaking change with an upgrade note. Count how many types
+      take the opt-in: if almost none do, the attribute may not be worth
+      having.
+   2. Attributes in one position and `@(move_only)`
+      ([3.1](#31-attributes-in-one-position)), once `lokec -fmt` can rewrite
+      the old forms. A syntax migration with its own upgrade note.
 2. Range facts and loop versioning for checked arithmetic
    ([6.3](#63-checked-arithmetic-and-bounds-in-loops)), with bounds proofs that
    account for reassigned slices, aliases, and calls. Then measure the dense
@@ -1071,6 +1131,47 @@ main :: proc() {
 
 The range bound does not shrink when the slice is reassigned. The panic is
 required behavior for a bounds-removal optimization to preserve.
+
+**A box chain's generated copy recurses.** This program builds a
+million-node list whose drop hook unlinks it iteratively, as
+[Owned values](design.md#owned-values) prescribes, and then clones it:
+
+```loke
+package main;
+import "core:fmt";
+
+Node :: struct { value: int, next: Option(Box(Node)) }
+List :: struct { head: Option(Box(Node)), count: int }
+
+impl List {
+	push_front :: proc(self: inout, value: int) {
+		rest := exchange(inout self.head, .none);
+		self.head = .some(box(Node{value, move(rest)}));
+		self.count += 1;
+	}
+	release :: hook(drop) proc(self: inout) {
+		rest := exchange(inout self.head, .none);
+		for (true) {
+			switch (move(rest)) {
+			case .none: break;
+			case .some(node): rest = exchange(inout node.next, .none);
+			}
+		}
+	}
+}
+
+main :: proc() {
+	list := List{};
+	for (i := 0; i < 1000000; i += 1) { list.push_front(i); }
+	fmt.println("built", list.count);
+	copy := list.clone();
+	fmt.println("cloned", copy.count);
+}
+```
+
+It exits with `0xC00000FD`, a stack overflow, in the clone; the buffered
+output is lost with it. Without the last two lines it prints `built 1000000`
+and exits 0, so the drop hook handles the drop and nothing handles the copy.
 
 **Small arguments travel in registers.** On 2026-10-31, Clang assembly
 generated from emitted IR with `-S -O0` showed that the `sum(xs: []int)`
