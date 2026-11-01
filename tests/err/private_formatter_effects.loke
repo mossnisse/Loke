@@ -1,0 +1,81 @@
+package sample;
+
+import "core:fmt";
+
+// design.md "Interface bodies", "Built-in procedures", "Global write effects":
+// only a `format` a slot can meet counts when printing. What a public type's private
+// `format` leaves out is in tests/pkg/private_formatter_effects. Each `format` here
+// that clears `data` is one printing may run, and a private method called by name
+// counts as a call.
+
+data: [dynamic]int = {};
+
+@(public)
+Shown :: struct { n: int }
+impl Shown {
+	@(public)
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) { data = {}; }
+}
+
+Own :: struct { n: int }
+impl Own {
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) { data = {}; }
+}
+
+@(public)
+Hidden :: struct { n: int }
+impl Hidden {
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {}
+}
+
+@(public)
+Generic :: struct($T: type) { value: T }
+impl Generic($T) {
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {}
+}
+
+@(public)
+Holds_Own :: struct { own: Own }
+impl Holds_Own {
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {}
+}
+
+@(public)
+Holds_View :: struct { view: dyn fmt.Formattable }
+impl Holds_View {
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {}
+}
+
+a_public_format :: proc() {
+	data.append(7);
+	panic("stop", data[0], Shown{1});
+}
+a_private_types_format :: proc() {
+	data.append(7);
+	panic("stop", data[0], Own{1});
+}
+a_format_in_a_generated_default :: proc() {
+	data.append(7);
+	panic("stop", data[0], Holds_Own{Own{1}});
+}
+a_generic_part :: proc() {
+	data.append(7);
+	panic("stop", data[0], Generic(Own){Own{1}});
+}
+a_dyn_part :: proc(holds: Holds_View) {
+	data.append(7);
+	panic("stop", data[0], holds);
+}
+a_direct_call :: proc(writer: fmt.Writer, options: fmt.Options) {
+	data.append(7);
+	view := data[:];
+	Own{1}.format(writer, options);
+	fmt.println(view[0]);
+}
+// A `format` that meets the slot is reachable from any print.
+any_print :: proc() {
+	data.append(7);
+	view := data[:];
+	fmt.println(1);
+	fmt.println(view[0]);
+}

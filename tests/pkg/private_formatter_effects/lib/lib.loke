@@ -1,0 +1,55 @@
+package lib;
+
+import "core:fmt";
+
+// design.md "Interface bodies": a public type's private `format` meets no slot, so
+// design.md "Built-in procedures" and "Global write effects" count no call of it
+// when printing. Each `format` here clears `data`, and each print happens under a
+// view of it, so counting one would report L0512. What does conflict is in
+// tests/err/private_formatter_effects.loke.
+
+data: [dynamic]int = {};
+
+@(public)
+Hidden :: struct { @(public) n: int }
+
+impl Hidden {
+	format :: proc(self, w: fmt.Writer, o: fmt.Options) { data = {}; }
+}
+
+@(public)
+Holds :: struct { @(public) hidden: Hidden, @(public) many: [1]Hidden }
+
+@(public)
+Generic :: struct($T: type) { @(public) value: T }
+
+impl Generic($T) {
+	format :: proc(self, w: fmt.Writer, o: fmt.Options) { data = {}; }
+}
+
+@(public)
+Tag :: distinct string;
+
+impl Tag {
+	format :: proc(self, w: fmt.Writer, o: fmt.Options) { data = {}; }
+}
+
+@(public)
+reports :: proc() {
+	data.append(7);
+	assert(data[0] == 7, "hidden", data[0], Hidden{1});
+	assert(data[0] == 7, "nested", data[0], Holds{Hidden{1}, [1]Hidden{Hidden{2}}});
+	assert(data[0] == 7, "generic", data[0], Generic(int){3});
+	assert(data[0] == 7, "distinct", data[0], Tag("t"));
+	fmt.println(data[0]);
+}
+
+// Printing reaches the slot, and so do the parts of a generated default.
+@(public)
+prints :: proc() {
+	view := data[:];
+	fmt.println(Hidden{1});
+	fmt.println(Holds{Hidden{1}, [1]Hidden{Hidden{2}}});
+	fmt.println(Generic(int){3}, Tag("t"));
+	fmt.println(view[0]);
+}

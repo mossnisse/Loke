@@ -1,0 +1,5 @@
+7
+Hidden{n = 1}
+Holds{hidden = Hidden{n = 1}, many = [Hidden{n = 2}]}
+Generic(int){value = 3} t
+7

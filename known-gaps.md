@@ -89,35 +89,6 @@ unknown, or distinguish provisional bounds from a genuinely unknown offset.
 Confirmed at `51bceeb4` and on the merged `1b7845aa` during review on
 2026-11-01 (P2, remaining precision gap).
 
-### Reports count a public type's private formatter that printing never calls
-
-[Interface bodies](design.md#interface-bodies) excludes a public type's private
-`format` from its coherent printed representation. [Built-in
-procedures](design.md#built-in-procedures) print report arguments through that
-representation:
-
-```loke
-package sample;
-import "core:fmt";
-data: [dynamic]int = {};
-@(public) Hidden :: struct { n: int }
-impl Hidden {
-    format :: proc(self, writer: fmt.Writer, options: fmt.Options) { data = {}; }
-}
-report :: proc() { data.append(7); panic("stop", data[0], Hidden{1}); }
-```
-
-Compile with `lokec sample.loke -build-mode=obj -emit-ll`. This reports `L0512`
-at `Hidden{1}`, claiming printing may modify `data`, although its generated
-formatter prints only its integer field. Removing `data[0]` permits emission,
-and the witness calls the generated `Hidden.format`, not the written private
-method. `prints_through_method_walk` in [src/format.odin](src/format.odin) tests
-`written_format_member` without the visibility rule already implemented by
-`type_has_written_format`. Apply that rule before deciding whether a report
-can run user formatting code, then inspect the default formatter's parts.
-Introduced in `a28b7aac`; the same program is accepted by its parent. Confirmed
-on `1b7845aa` during review on 2026-11-01 (P2).
-
 ### A lifecycle question asked before a record's hooks are in place loses them
 
 [Lifecycle hooks and resource types](design.md#lifecycle-hooks-and-resource-types)

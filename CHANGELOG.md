@@ -1097,6 +1097,12 @@ checklist.
 
 ### Fixed
 
+- A public type's private `format` no longer counts as a call printing may make
+  ([Interface bodies](design.md#interface-bodies),
+  [Global write effects](design.md#global-write-effects)), as printing uses the
+  generated default. `panic("stop", data[0], Hidden{1})` and `fmt.println(Hidden{1})`
+  under a view of `data` reported `L0512` when that method wrote `data`, as did any
+  print or report of another type once such a method existed.
 - A call that copies between elements at variable indices of a view of a local
   array, in the scope of the arena an element's owner is in, no longer reports
   `L0536`, as that leaves the array nothing new.

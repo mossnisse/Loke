@@ -1,0 +1,21 @@
+L0512
+@51:25
+`data` cannot be modified by printing an argument of this report here: a read-only view of it is still in use
+L0512
+@55:25
+`data` cannot be modified by printing an argument of this report here: a read-only view of it is still in use
+L0512
+@59:25
+`data` cannot be modified by printing an argument of this report here: a read-only view of it is still in use
+L0512
+@63:25
+`data` cannot be modified by printing an argument of this report here: a read-only view of it is still in use
+L0512
+@67:25
+`data` cannot be modified by printing an argument of this report here: a read-only view of it is still in use
+L0512
+@72:2
+`data` cannot be modified by `format` here: a read-only slice of it is still in use
+L0512
+@79:2
+`data` cannot be modified by `println` here: a read-only slice of it is still in use

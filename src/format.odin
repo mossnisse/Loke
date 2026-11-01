@@ -59,7 +59,11 @@ type_is_printable :: proc(c: ^Compiler, type: Type_Id) -> bool {
 // (design.md "Interface bodies"), so the type prints by the generated default.
 type_has_written_format :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	sym := written_format_member(c, type)
-	return sym != nil && (sym.public || !type_is_exported(c, type))
+	return sym != nil && format_meets_slot(c, sym, type)
+}
+
+format_meets_slot :: proc(c: ^Compiler, sym: ^Symbol, type: Type_Id) -> bool {
+	return sym.public || !type_is_exported(c, type)
 }
 
 // Whether printing a `type` may run a program's code: a `format` of its own or of
@@ -72,7 +76,7 @@ type_prints_through_method :: proc(c: ^Compiler, type: Type_Id) -> bool {
 
 @(private = "file")
 prints_through_method_walk :: proc(c: ^Compiler, type: Type_Id, visiting: ^map[Type_Id]bool) -> bool {
-	if written_format_member(c, type) != nil {
+	if type_has_written_format(c, type) {
 		return true
 	}
 	under := type_underlying(c, type)
@@ -81,7 +85,7 @@ prints_through_method_walk :: proc(c: ^Compiler, type: Type_Id, visiting: ^map[T
 		return false
 	}
 	visiting[under] = true
-	if written_format_member(c, under) != nil {
+	if type_has_written_format(c, under) {
 		return true
 	}
 	#partial switch info.kind {
