@@ -10,6 +10,17 @@ checklist.
 
 ### Breaking changes
 
+- A generic record's hooks are now checked as a non-generic record's are. A wrong
+  signature (`L0488`), a duplicate role (`L0488`), a `hook(copy)` on a `move_only`
+  record or on an instance a field makes move-only (`L0488`), a written allocator
+  default (`L0489`), a `hook(drop)` on a generic union (`L0488`), a member named
+  `clone` or `try_clone` (`L0487`), and a malformed `hook(convert)` (`L0411`) used to
+  be accepted, and with two drop hooks the second silently won. A hook in an `impl`
+  block on another package's generic record used to be accepted and never run, and
+  is now `L0486`. Upgrade by giving the hook its fixed signature, removing the
+  duplicate, moving the hook to the record's own package, or bounding a copy hook
+  with `where is_copyable(T)` so that it is left out of the instances it cannot
+  serve.
 - A record with `hook(drop)` and no `hook(copy)` must now say how it is copied
   ([Lifecycle hooks and resource types](design.md#lifecycle-hooks-and-resource-types)):
   `L0747` at its declaration. It used to get a generated field-wise copy, which

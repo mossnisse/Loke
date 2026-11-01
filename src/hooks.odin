@@ -880,7 +880,7 @@ validate_semantic_hook :: proc(k: ^Checker, item: ^Item_Impl, d: ^Decl, sym: ^Sy
 				continue
 			}
 			other := symbol_of(k.c, other_id)
-			if other == nil || other.synth != .None || other.hook != sym.hook {
+			if other == nil || other.synth != .None || other.hook != sym.hook || other.bound_excluded || other.superseded {
 				continue
 			}
 			conflict := sym.hook != .Convert
@@ -908,6 +908,10 @@ validate_semantic_hook :: proc(k: ^Checker, item: ^Item_Impl, d: ^Decl, sym: ^Sy
 		// second declaration of anything.
 		if sym.hook == .Copy && !sym.bound_excluded && type_clone_disabled(k.c, subject) {
 			errorf(k.c, sym.span, "L0488", "a `move_only` type cannot also declare `hook(copy)`")
+			// Which arguments make it so is the block's to say, by a bound on the hook.
+			if info := type_of(k.c, subject); info != nil && info.instance_of != INVALID_SYMBOL && !info.move_only {
+				add_notef(k.c, no_span(), "a field makes `%s` move-only; a bound on the hook, such as `where is_copyable(T)`, leaves it out of this instance", type_name(k.c, subject))
+			}
 			return
 		}
 		sym.hook_bound = require_hook_shape(k, sym, subject)
@@ -916,7 +920,9 @@ validate_semantic_hook :: proc(k: ^Checker, item: ^Item_Impl, d: ^Decl, sym: ^Sy
 			errorf(k.c, sym.span, "L0411", "`hook(convert)` takes one value without a receiver and returns `%s`", type_name(k.c, subject))
 			return
 		}
-		if convertible(k.c, sym.params[0], subject) {
+		// An instance's arguments may make one source convertible by accident, which
+		// says nothing about the block its author wrote.
+		if info := type_of(k.c, subject); info != nil && info.instance_of == INVALID_SYMBOL && convertible(k.c, sym.params[0], subject) {
 			errorf(k.c, sym.span, "L0411", "`%s` already has a built-in conversion to `%s`; a conversion hook for that pair would be unreachable", type_name(k.c, sym.params[0]), type_name(k.c, subject))
 		}
 	case .None:
@@ -954,6 +960,107 @@ require_hook_shape :: proc(k: ^Checker, sym: ^Symbol, subject: Type_Id) -> bool 
 	return true
 }
 
+// A generic block's hooks are validated per instance, since their types are the
+// instance's, by `validate_instance_hooks`. These two need no instance: a block
+// in another package may have none there, and a record decides its copy from the
+// shape of its drop hook whether or not it is instantiated.
+check_generic_impl_hooks :: proc(k: ^Checker, item: ^Item_Impl, template: ^Generic_Template) {
+	if len(template.decl.values) != 1 {
+		return
+	}
+	record, is_record := template.decl.values[0].(^Type_Record)
+	if !is_record {
+		return
+	}
+	for member in item.members {
+		d, is_decl := member.(^Decl)
+		if !is_decl || len(d.names) == 0 {
+			continue
+		}
+		role := decl_hook_kind(d)
+		switch {
+		case role == .None:
+			continue
+		case item.kind == .Extend:
+			errorf(
+				k.c, d.names[0].span, "L0486",
+				"a semantic hook belongs with the package that declares `%s`; an extension block cannot add `hook(%s)`",
+				identifier_text(k.c, symbol_of(k.c, template.symbol).name), hook_name(role),
+			)
+		case role == .Drop && record.kind == .Struct && !drop_hook_shaped(d):
+			errorf(
+				k.c, d.names[0].span, "L0488", "`drop` has a fixed signature for `%s`: `proc(self: inout T)`",
+				identifier_text(k.c, symbol_of(k.c, template.symbol).name),
+			)
+		case:
+			continue
+		}
+		mark_generic_hook_reported(k, d)
+	}
+}
+
+// The members of one instance's block, as `check_associated_member` for a
+// non-generic block. One hook is reported once, by the first instance it is wrong
+// for: its bound may hold or its fields be copyable only in some of them.
+validate_instance_hooks :: proc(k: ^Checker, item: ^Item_Impl) {
+	if item.kind != .Impl {
+		return
+	}
+	for member in item.members {
+		d, is_decl := member.(^Decl)
+		if !is_decl || generic_hook_reported(k, d) {
+			continue
+		}
+		role := decl_hook_kind(d)
+		literal := decl_proc_literal(d)
+		// A generic conversion is instantiated by the calls that find it.
+		if role == .Convert && literal != nil && proc_signature_is_generic(literal) {
+			continue
+		}
+		for symbol_id in d.symbols {
+			sym := symbol_of(k.c, symbol_id)
+			if sym == nil || sym.bound_excluded || sym.superseded {
+				continue
+			}
+			// A lifecycle hook with `$` parameters of its own resolves as a generic
+			// procedure, with no role; a non-generic block records it when declared.
+			sym.hook = role
+			errors := k.c.error_count
+			validate_semantic_hook(k, item, d, sym, symbol_id)
+			if k.c.error_count != errors {
+				mark_generic_hook_reported(k, d)
+			}
+		}
+	}
+}
+
+@(private = "file")
+generic_hook_key :: proc(d: ^Decl) -> u64 {
+	return u64(d.span.file) << 32 | u64(d.span.lo)
+}
+
+@(private = "file")
+generic_hook_reported :: proc(k: ^Checker, d: ^Decl) -> bool {
+	return k.c.reported_generic_hooks[generic_hook_key(d)]
+}
+
+@(private = "file")
+mark_generic_hook_reported :: proc(k: ^Checker, d: ^Decl) {
+	k.c.reported_generic_hooks[generic_hook_key(d)] = true
+}
+
+// The written shape of `proc(self: inout T)`, for a block with no instance to
+// resolve its types in. Whether `T` is the subject is left to the instance.
+@(private = "file")
+drop_hook_shaped :: proc(d: ^Decl) -> bool {
+	literal := decl_proc_literal(d)
+	if literal == nil || literal.signature == nil || literal.signature.result != nil {
+		return false
+	}
+	params := literal.signature.params
+	return len(params) == 1 && len(params[0].names) == 1 && params[0].mode == .Inout && params[0].names[0].name.text == "self"
+}
+
 // design.md "Lifecycle hooks and resource types": a record with a drop hook says
 // in writing how it is copied. Asked once every `impl` block the record can have
 // is checked, so a hook another diagnostic rejected is not reported again. The
@@ -982,9 +1089,8 @@ check_copy_decision :: proc(k: ^Checker, d: ^Decl) {
 	}
 	name, subject, name_span := identifier_text(k.c, sym.name), sym.type, sym.span
 	if template != nil {
-		// No generic block is validated (known-gaps.md "A generic record's
-		// lifecycle hooks are not checked"), so a procedure under the role is
-		// taken as bound, and nothing else reports on it.
+		// Asked before any instance's hooks are validated, so a hook counts as
+		// bound by its shape, which `check_generic_impl_hooks` reports the rest of.
 		// Copied out: a range over the map entry itself faults when it has no blocks.
 		blocks := k.c.generic_impls[symbol_id]
 		for block in blocks {
@@ -999,7 +1105,7 @@ check_copy_decision :: proc(k: ^Checker, d: ^Decl) {
 				#partial switch decl_hook_kind(hook_decl) {
 				case .Drop:
 					drop_written = true
-					if decl_proc_literal(hook_decl) != nil && !drop_bound {
+					if drop_hook_shaped(hook_decl) && !drop_bound {
 						drop_bound = true
 						drop_span = hook_decl.names[0].span
 					}

@@ -31,3 +31,6 @@ a semantic hook belongs with the package that declares `Vector2`; an extension b
 L0486
 @16:2
 a semantic hook belongs with the package that declares `Vector2`; an extension block cannot add `hook(drop)`
+L0486
+@40:2
+a semantic hook belongs with the package that declares `Cell`; an extension block cannot add `hook(drop)`

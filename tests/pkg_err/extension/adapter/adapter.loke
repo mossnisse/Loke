@@ -34,3 +34,8 @@ impl vendor.Count {
 count_here :: proc() -> vendor.Count {
 	return -(vendor.Count(2) + vendor.Count(3));
 }
+
+impl vendor.Cell($T) {
+	// Another package's generic record takes no hook either.
+	release :: hook(drop) proc(self: inout) { }
+}

@@ -4405,6 +4405,13 @@ generic record decides once, for all of its instances. A hook that is itself
 rejected asks for no decision, and a `hook(copy)` counts as the decision even
 when it is rejected or is written only for some instances.
 
+A `hook(copy)` on a record with no copy to customize is an error: a `move_only`
+one, or one a move-only field makes move-only. On a generic record that depends
+on the arguments, so a bound on the hook, such as `where is_copyable(T)`, leaves it
+out of the instances it cannot serve. Each of these rules, and the fixed signatures
+above, hold for a generic record's hooks as for any other's, and its `impl` blocks
+in another package may not add one.
+
 A `drop` hook runs **exactly once per completed initialization** that is not
 transferred or consumed. Hooks must accept the inert zero value: `{}` and
 zero-initialized static storage are completed initializations. In `File`,

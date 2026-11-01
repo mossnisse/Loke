@@ -308,6 +308,7 @@ check_impl_block :: proc(k: ^Checker, item: ^Item_Impl) {
 		if call, is_call := item.type.(^Expr_Call); is_call {
 			if template := generic_template_of_callee(k, call.callee, .Record); template != nil {
 				read_generic_impl_constants(k, item, template)
+				check_generic_impl_hooks(k, item, template)
 			}
 		}
 		return

@@ -24,3 +24,9 @@ impl Vector2 {
 	private_sum :: proc(self) -> i32 { return self.x + self.y; }
 	private_add :: operator(+) proc(a, b: Vector2) -> Vector2 { return {a.x + b.x, a.y + b.y}; }
 }
+
+@(public)
+Cell :: struct($T: type) {
+	@(public)
+	value: T,
+}

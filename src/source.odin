@@ -252,6 +252,9 @@ Compiler :: struct {
 	// Each body-local record's `check_copy_decision`, by the same key, so generic
 	// instances of its procedure report it once.
 	checked_copy_decisions: map[u64]bool,
+	// A generic block's hook already reported, by its declaration's position, so
+	// each of the record's instances does not report it again.
+	reported_generic_hooks: map[u64]bool,
 	// Final value snapshots consumed by emission; no lazy classification or
 	// member selection is allowed through this interface.
 	lifecycle_operations:       map[Type_Id]Lifecycle_Operations,

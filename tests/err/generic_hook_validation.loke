@@ -1,0 +1,137 @@
+// design.md "Hooks": a generic record's hooks have the fixed signatures and rules
+// of any other's. Each hook is reported once, however many instances it is wrong
+// for, and the drop hook's shape needs no instance at all.
+package main;
+
+Wrong :: move_only struct($T: type) { value: T }
+impl Wrong($T) {
+	close :: hook(drop) proc(self) {}
+}
+
+Unused :: move_only struct($T: type) { value: T }
+impl Unused($T) {
+	close :: hook(drop) proc(self: inout, extra: int) {}
+}
+
+// One report for two instances.
+Twice :: move_only struct($T: type) { value: T }
+impl Twice($T) {
+	close :: hook(drop) proc(self: inout) {}
+	shut :: hook(drop) proc(self: inout) {}
+}
+
+Bad_Copy :: struct($T: type) { value: T }
+impl Bad_Copy($T) {
+	copy :: hook(copy) proc(self) -> Bad_Copy(T) { return Bad_Copy(T){self.value}; }
+}
+
+Defaulted :: struct($T: type) { value: T }
+impl Defaulted($T) {
+	copy :: hook(copy) proc(self, allocator: Allocator = {}) -> Result(Defaulted(T), Allocator_Error) {
+		return .ok(Defaulted(T){self.value});
+	}
+}
+
+Own_Generic :: struct($T: type) { value: T }
+impl Own_Generic($T) {
+	copy :: hook(copy) proc(self, allocator: $A) -> Result(Own_Generic(T), Allocator_Error) {
+		return .ok(Own_Generic(T){self.value});
+	}
+}
+
+Declared :: move_only struct($T: type) { value: T }
+impl Declared($T) {
+	copy :: hook(copy) proc(self, allocator: Allocator) -> Result(Declared(T), Allocator_Error) {
+		return .ok(Declared(T){self.value});
+	}
+}
+
+Cloned :: struct($T: type) { value: T }
+impl Cloned($T) {
+	clone :: proc(self) -> Cloned(T) { return Cloned(T){self.value}; }
+}
+
+Variants :: union($T: type) { none, some: T }
+impl Variants($T) {
+	close :: hook(drop) proc(self: inout) {}
+}
+
+Converted :: struct($T: type) { value: T }
+impl Converted($T) {
+	from :: hook(convert) proc(self) -> Converted(T) { return Converted(T){self.value}; }
+}
+
+// A record's copy is move-only for this one argument, and the hook has no bound
+// that says so: reported for that instance alone, once.
+Token :: move_only struct { id: int }
+Cell :: struct($T: type) { size: int }
+impl Cell($T) {
+	copy :: hook(copy) proc(self, allocator: Allocator) -> Result(Cell(T), Allocator_Error) {
+		return .ok(Cell(T){self.size});
+	}
+}
+Holds :: struct($T: type) { value: T, size: int }
+impl Holds($T) {
+	copy :: hook(copy) proc(self, allocator: Allocator) -> Result(Holds(T), Allocator_Error) {
+		return .ok(Holds(T){size = self.size});
+	}
+}
+
+// Valid, in each way a generic block may be.
+Bounded :: struct($T: type) { value: T }
+impl Bounded($T) {
+	close :: hook(drop) proc(self: inout) {}
+	copy :: hook(copy) proc(self, allocator: Allocator) -> Result(Bounded(T), Allocator_Error) where is_copyable(T) {
+		return .ok(Bounded(T){self.value});
+	}
+}
+// A specialized block replaces the general hook of the same name.
+Special :: move_only struct($T: type) { value: T }
+impl Special($T) {
+	close :: hook(drop) proc(self: inout) {}
+}
+impl Special(int) {
+	close :: hook(drop) proc(self: inout) {}
+}
+// A generic conversion is instantiated by its calls.
+Vector :: struct($T: type) { x: T }
+impl Vector($T) {
+	from_vector :: hook(convert) proc(v: Vector($U)) -> Vector(T) where U != T {
+		return {T(v.x)};
+	}
+}
+
+// Two hooks only one instance sees, under different names.
+Both :: move_only struct($T: type) { value: T }
+impl Both($T) {
+	close :: hook(drop) proc(self: inout) {}
+}
+impl Both(int) {
+	shut :: hook(drop) proc(self: inout) {}
+}
+
+main :: proc() {
+	a := Wrong(int){1};
+	b := Twice(int){1};
+	c := Twice(string){"c"};
+	d := Bad_Copy(int){1};
+	e := Defaulted(int){1};
+	f := Own_Generic(int){1};
+	g := Declared(int){1};
+	h := Cloned(int){1};
+	i := Variants(int).none;
+	j := Converted(int){1};
+	k := Cell(int){1};
+	l := Cell(Token){1};
+	m := Holds(int){1, 1};
+	n := Holds(Token){Token{1}, 1};
+	o := Bounded(int){1};
+	p := Bounded(Token){Token{1}};
+	q := Special(int){1};
+	r := Special(string){"r"};
+	s := Vector(f64)(Vector(int){1});
+	t := Both(int){1};
+	u := Both(string){"u"};
+	_, _, _, _, _, _, _, _, _, _ = a, b, c, d, e, f, g, h, i, j;
+	_, _, _, _, _, _, _, _, _, _, _ = k, l, m, n, o, p, q, r, s, t, u;
+}
