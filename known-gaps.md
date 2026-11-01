@@ -7,6 +7,40 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
+### Assert and panic arguments do not borrow the places they print
+
+[Built-in procedures](design.md#built-in-procedures) requires an `assert` or
+`panic` report to borrow each printed argument through the report. Since
+`701846e9`, checking these arguments preserves their types but records no loan
+of the places the backend will address. A later argument may move and destroy
+an earlier argument's storage:
+
+```loke
+package main;
+consume :: proc(values: move [dynamic]int) -> int { return values.len(); }
+main :: proc() {
+    values := [dynamic]int{7, 8};
+    panic("stop", values[0], consume(move(values)));
+}
+```
+
+This compiles. The emitted code retains the element's address, calls `consume`
+(which drops the array before returning), then loads the element through that
+freed address to print it. The same problem affects a failing `assert`.
+`check_printed_argument` in [src/check_builtin.odin](src/check_builtin.odin)
+checks printability and requests a type ID, but its replacement for the old
+erasure no longer reaches the loan creation in `prov_erase` in
+[src/cfg_provenance.odin](src/cfg_provenance.odin).
+Record the report's read-only borrow without erasing the argument's type, and
+keep it live across evaluation of later arguments and formatting.
+
+Confirmed during review on 2026-11-01 with the compiler built at `5580637f`;
+the relevant code is unchanged from the reviewed `426f1a13`. A compiler built
+from `03d04d34`, immediately before the built-in printing change, rejects the
+same program with `L0512`; an equivalent `fmt.println` also rejects the move
+today. The local-mutation control `panic("stop", p, change(inout p))` likewise
+compiles while `fmt.println(p, change(inout p))` reports `L0511` (P1).
+
 ### A slice literal's drop keeps only its initial element borrows
 
 [Slice literals](design.md#slice-literals) have a hidden owner whose elements

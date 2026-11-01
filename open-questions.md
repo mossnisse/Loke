@@ -11,6 +11,54 @@ Design rationale and differences from Odin are recorded in
 The current behavior inventory is in [Nondeterminism and undefined behavior
 audit](nondeterminism-audit.md).
 
+## Review of variadic dyn views and any_view removal (2026-11-01)
+
+Reviewed `9337076b`, `03d04d34`, `701846e9`, `b73dfa55`, and `426f1a13` for
+correctness, simplification, and structure. One correctness regression remains
+open: [assert and panic arguments do not borrow the places they
+print](known-gaps.md#assert-and-panic-arguments-do-not-borrow-the-places-they-print)
+(P1), allowing a later argument to free storage the report will read.
+The two newer fixes, `210f1131` and `5580637f`, are outside this review's
+scope and address the unrelated divergences these commits recorded.
+
+Two smaller simplifications remain open:
+
+- **Share the dyn conversion's witness validation (P3, structure).**
+  `pass_variadic_element` in [src/erased.odin](src/erased.odin) duplicates the
+  conformance check, witness request, and missing-coherent-slot diagnostic in
+  `check_dyn_conversion`. Keep the different operand checks at their call
+  sites, and share the validation that a concrete type supplies a usable
+  witness for a dyn type. This removes about fifteen lines and keeps explicit
+  and implicit conversions' coherence rules together; overload ranking still
+  needs its noncommitting conformance query.
+- **Use the fmt package the caller already has (P3, simplification).**
+  `check_package_bodies` in [src/check.odin](src/check.odin) calls
+  `record_printing_view` only after recognizing `pkg.key == STD_FMT`.
+  The new helper in [src/format.odin](src/format.odin) searches every package
+  for that same package and constructs another checker. Resolve `Format_View`
+  with the caller's checker and package there, removing the search and helper,
+  about ten lines.
+
+The overall separation is appropriate: the new conversion is confined to pack
+elements rather than ordinary assignment, library printers call ordinary slots,
+and the removed type and extraction node are deleted across compiler phases.
+The compatibility handling for a misdeclared `format` preserves the existing
+declaration diagnostic; the separate call-time registration of printing's
+interface is needed before effect and transfer analysis. Neither requires a
+new abstraction layer.
+
+Validation: all 179 compiler and 43 language-server unit tests passed, with
+the existing toolchain-test allocation warnings. Eight selected integration
+suites passed: run programs, trapping programs, diagnostics, LLVM shapes,
+packages, tutorials, bundled interface files, and layout agreement. The quick
+gate could not write `tests.exe`; a full integration retry at a separate output
+path stopped in Odin's runner with exception `0xC000001D`. Focused probes
+confirmed the regression and its pre-change rejection, as well as generic and
+overloaded variadic calls and formatting through existing views. All 2,876
+specification citations resolved before the review notes were added. No
+implementation fixes are included in this review. Estimated simplification:
+net: -25 lines possible.
+
 ## Review of slice-literal cleanup and received allocator unwrapping (2026-11-01)
 
 Reviewed `210f1131` and `5580637f` for correctness, simplification, and
