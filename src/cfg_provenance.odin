@@ -5642,7 +5642,7 @@ prov_store_region_set :: proc(
 	element := false,
 	contents: []Prov_Region_Content = nil,
 ) {
-	if region_is_empty(region) {
+	if region_is_empty(region) && len(contents) == 0 {
 		return
 	}
 	if root, path, ok := prov_value_place_of(graph, destination); ok {
@@ -5730,7 +5730,7 @@ prov_clone_region_content :: proc(entry: Prov_Region_Content, region: Region_Set
 @(private)
 prov_store_region_through :: proc(graph: ^Flow_Graph, destination: Value_Id, region: Region_Set, owned: Region_Set, owner: string, suffix: []Proj_Step = nil,
                                    contents: []Prov_Region_Content = nil) {
-	if region_is_empty(region) {
+	if region_is_empty(region) && len(contents) == 0 {
 		return
 	}
 	destination_type := prov_value(graph, destination).type
@@ -9351,7 +9351,7 @@ prov_map_call_step :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> Proj_Step {
 @(private = "file")
 prov_container_content :: proc(graph: ^Flow_Graph, v: ^Expr_Call, op: Container_Op, actuals: [][]int) {
 	#partial switch op {
-	case .Append, .Insert, .Map_Try_Insert, .Map_Find_Or_Insert, .Clear, .Map_Clear:
+	case .Append, .Insert, .Map_Try_Insert, .Map_Find_Or_Insert, .Clear, .Map_Clear, .Swap, .Sort, .Reverse_Sort:
 	case:
 		return
 	}
@@ -9360,6 +9360,14 @@ prov_container_content :: proc(graph: ^Flow_Graph, v: ^Expr_Call, op: Container_
 	}
 	info := underlying_info(graph.k.c, prov_type(graph, v.bound[0]))
 	if info == nil {
+		return
+	}
+	#partial switch op {
+	case .Swap, .Sort, .Reverse_Sort:
+		// A dynamic array's facts already stand for any element (`prov_region_path`).
+		if type_is_carrier(graph.k.c, prov_type(graph, v.bound[0])) && prov_type_has_region(graph.k.c, info.element) {
+			prov_store_permuted_region(graph, prov_input_value(graph, v.bound[0]))
+		}
 		return
 	}
 	// A spread's elements are copied in, keeping the regions they are in.

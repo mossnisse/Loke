@@ -19,6 +19,7 @@ Prov_Effect_Targets :: struct { storage: Storage_Id, value: Value_Id, path: []Pr
 Prov_Effect_Call :: struct { value: Value_Id, kind: enum { Result, Write, Invalidate } }
 Prov_Effect_Store :: struct { destination, value: Value_Id, element: bool }
 Prov_Effect_Spread :: struct { destination, value: Value_Id }
+Prov_Effect_Permute :: struct { receiver: Value_Id }
 Prov_Effect_Map_Key :: struct { destination, value: Value_Id }
 Prov_Effect_Define :: struct { storage: Storage_Id, path: []Proj_Step, value: Value_Id, source: []Proj_Step, copies: bool, allocated_by: Symbol_Id }
 Prov_Effect_Parent :: struct { symbol: Symbol_Id, value: Value_Id, source: []Proj_Step, storage: bool }
@@ -29,7 +30,7 @@ Prov_Effect_Borrow_Owner :: struct { value: Value_Id }
 Prov_Fact_Operation :: union {
 	Prov_Effect_Declare, Prov_Effect_Element, Prov_Effect_Case,
 	Prov_Effect_Targets, Prov_Effect_Call, Prov_Effect_Store,
-	Prov_Effect_Spread, Prov_Effect_Map_Key, Prov_Effect_Define,
+	Prov_Effect_Spread, Prov_Effect_Permute, Prov_Effect_Map_Key, Prov_Effect_Define,
 	Prov_Effect_Parent, Prov_Effect_Assign, Prov_Effect_Move_Provider,
 	Prov_Effect_Forget_Binding, Prov_Effect_Borrow_Owner,
 }
@@ -285,6 +286,22 @@ prov_store_spread_region :: proc(graph: ^Flow_Graph, destination, value: Value_I
 	prov_store_region_set(graph, destination, region, region, prov_owner_name(graph, prov_value(graph, value).origin), element = true)
 }
 
+// design.md "Allocator regions and region provenance": a swap or sort moves what a
+// view's elements hold among them, so each element takes what any of them holds.
+// Nothing new enters the storage, so no escape is checked, and a summary records a
+// copy of any element to any element, which its caller resolves in turn.
+prov_store_permuted_region :: proc(graph: ^Flow_Graph, receiver: Value_Id) {
+	recorded := prov_effect_active(graph)
+	if recorded { prov_effect_begin(graph, Prov_Effect_Permute{prov_effect_value(graph, receiver)}) }
+	defer prov_effect_end(graph, recorded)
+	nothing := prov_empty_region(graph)
+	element := slice.clone([]Proj_Step{proj_wild()}, graph.alloc)
+	contents := make([]Prov_Region_Content, 2, graph.alloc)
+	contents[0] = Prov_Region_Content{path = element, region = nothing, handle = true, from = Prov_Region_Source{element, .All}}
+	contents[1] = Prov_Region_Content{path = element, region = nothing, from = Prov_Region_Source{element, .Owners}}
+	prov_store_region_through(graph, receiver, nothing, nothing, "", contents = contents)
+}
+
 prov_store_map_key_region :: proc(graph: ^Flow_Graph, destination, value: Value_Id) {
 	recorded := prov_effect_active(graph)
 	if recorded { prov_effect_begin(graph, Prov_Effect_Map_Key{prov_effect_value(graph, destination), prov_effect_value(graph, value)}) }
@@ -329,6 +346,8 @@ prov_replay_fact_operation :: proc(graph: ^Flow_Graph, op: Prov_Fact_Operation) 
 		prov_store_region(graph, operation.destination, operation.value, operation.element)
 	case Prov_Effect_Spread:
 		prov_store_spread_region(graph, operation.destination, operation.value)
+	case Prov_Effect_Permute:
+		prov_store_permuted_region(graph, operation.receiver)
 	case Prov_Effect_Map_Key:
 		prov_store_map_key_region(graph, operation.destination, operation.value)
 	case Prov_Effect_Define:

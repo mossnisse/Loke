@@ -102,9 +102,9 @@ order matters, and `prov_assign` is the most edited procedure in the checker,
   path. One gap follows from the lattice itself,
   [a write on every path does not end a received region](known-gaps.md#a-write-on-every-path-does-not-end-a-received-allocators-region),
   while the specification states its rules for what is live and until cleanup,
-  which is flow-sensitive. A second was first blamed on it, but
-  [a swap of owners is not seen](known-gaps.md#a-swap-or-reverse-of-owners-in-a-fixed-array-is-not-seen)
-  has another cause, as the [outcome](#outcome-of-the-region-measurement) below says.
+  which is flow-sensitive. A second was first blamed on it, a swap of owners not
+  being seen, but it had another cause, as the
+  [outcome](#outcome-of-the-region-measurement) below says.
   Proposal: carry a region set per slot in the same
   per-block dataflow as the loan bits, joined at block entry, replaced by a
   `Def`, joined by a `Publish`. `Prov_Facts` then shrinks to what crosses
@@ -277,18 +277,20 @@ walk, most of what is measured as normalization, stays either way.
 
 The benefit is what is small. Of the gaps cited, only the
 [received region](known-gaps.md#a-write-on-every-path-does-not-end-a-received-allocators-region)
-needs facts by program point, and it is an over-rejection. The
-[swap of owners](known-gaps.md#a-swap-or-reverse-of-owners-in-a-fixed-array-is-not-seen)
-would stay open in a flow-sensitive design, unless a swap's effect on regions is
-stated and `Carrier_Move` says owners moved, and both can be added to today's facts.
-That last point is reasoned from the code, and no fix was tried. Against that, the
-change moves 70 procedures in the construction walk and 28 places that set an event's
-region, since what the walk now reads from settled facts would be known only to the
-solve.
+needs facts by program point, and it is an over-rejection. Against that, the change
+moves 70 procedures in the construction walk and 28 places that set an event's region,
+since what the walk now reads from settled facts would be known only to the solve.
+
+The other gap, a swap of owners not being seen, is fixed on today's facts, and was
+narrower than recorded. Elements or fields moved by hand were already seen, through
+calls too, as a copy entry in the summary. Only the built-in swap and sort recorded no
+such move, and they now record a copy of any element to any element, which reaches
+callers the same way. `Carrier_Move` did not need to say owners moved, as this review
+first supposed.
 
 Recommendation: leave region facts as they are. Reconsider if a real program meets
 the over-rejection, or if a soundness gap turns up that does need facts by program
-point. Fix the swap of owners as a soundness gap on its own.
+point.
 
 Validation: the review's probes were compiled with the checked-in `lokec.exe`.
 Two `&mut c` written in turn reported `L0511`; the same two around a store at an

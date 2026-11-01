@@ -3302,9 +3302,9 @@ Disjoint element loans follow from the same place path: `&mut d[0]` beside
 other, and every operation that does uses the whole root.
 
 Region facts keep a wildcard: they merge flow-insensitively, so one recorded at
-index 1 would still say index 1 after a `remove`. That also leaves a fixed array's
-[owners moved by a swap](known-gaps.md#a-swap-or-reverse-of-owners-in-a-fixed-array-is-not-seen)
-unseen, which predates this and is a different fix.
+index 1 would still say index 1 after a `remove`. A fixed array keeps its constant
+indices, so a swap or sort records a move of any element to any element instead
+(`prov_store_permuted_region`).
 
 ### Calls that rearrange what an argument holds
 

@@ -535,42 +535,6 @@ expressions occupy `r`'s span with different types, so `merge_occurrence` in
 dereference's. Confirmed through `loke-lsp.exe` on 2026-11-01 while fixing the
 generated formatter's completion.
 
-### A swap or reverse of owners in a fixed array is not seen
-
-[Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)
-makes an owner carry its region wherever it is stored. Region facts are kept by
-path and flow-insensitively, so one recorded at a fixed array's constant index
-stays at that index when a swap or a call moves the owner to another, and a read
-of the other index finds no region, so this escape is accepted:
-
-```loke
-package main;
-import "core:fmt";
-import "core:mem";
-import "core:slice";
-swapped :: proc() -> string {
-    arena := mem.Arena.init();
-    items := [2]string{"a", "b"};
-    items[1] = fmt.to_string(arena.allocator(), 42);
-    view := &mut items[:];
-    view.swap(0, 1);
-    return items[0]; // should be rejected: `arena` is dropped here
-}
-by_a_call :: proc() -> string {
-    arena := mem.Arena.init();
-    items := [2]string{"a", "b"};
-    items[1] = fmt.to_string(arena.allocator(), 42);
-    slice.reverse(&mut items[:]);
-    return items[0]; // should be rejected
-}
-main :: proc() {}
-```
-
-A dynamic array's facts are wildcards for this reason (`prov_region_path`). Fields
-moved by a call are probably affected the same way. `Carrier_Move` does not say
-owners moved, as a summary would need to. Found while telling a dynamic array's
-constant elements apart on 2026-11-01.
-
 ### A call given a carrier and its copy in one use is not rejected
 
 [Weakening and reborrows](design.md#weakening-and-reborrows) suspends all use of

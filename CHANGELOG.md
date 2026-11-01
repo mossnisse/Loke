@@ -10,6 +10,13 @@ checklist.
 
 ### Breaking changes
 
+- An owner moved by a swap or sort now keeps its region
+  ([Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)).
+  After `items[1] = fmt.to_string(arena.allocator(), 42);`, swapping or sorting a
+  view of `items`, or calling `slice.reverse`, `slice.sort`, or a procedure that
+  does, then `return items[0]` compiled and returned a value from the dropped arena.
+  It is now `L0592`. Upgrade by allocating the result in an allocator that outlives
+  the procedure.
 - A call now keeps borrowed what the storage it is handed holds
   ([Values that contain borrows](design.md#values-that-contain-borrows)). After
   `holders := [1]Holder{Holder{values[:]}}; view := holders[:];`, `drop(values)`
@@ -1068,6 +1075,9 @@ checklist.
 
 ### Fixed
 
+- A call that copies between elements at variable indices of a view of a local
+  array, in the scope of the arena an element's owner is in, no longer reports
+  `L0536`, as that leaves the array nothing new.
 - A generic record's `hook(drop)` bound by a `where` clause that an instance fails
   is left out of that instance, whose parts still drop
   ([where clauses](design.md#where-clauses)). It failed in the backend with `L0405`.

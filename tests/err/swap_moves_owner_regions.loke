@@ -1,0 +1,138 @@
+package main;
+
+import "core:fmt";
+import "core:mem";
+import "core:slice";
+
+// design.md "Allocator regions and region provenance": an owner carries its region
+// wherever it is stored. A swap or sort moves what a view's elements hold among them,
+// so a read of any element finds the region of what any of them held.
+
+Pair :: struct { a: string, b: string }
+Box :: struct { items: [2]string }
+
+swap_elements :: proc(items: []mut string) { items.swap(0, 1); }
+forward :: proc(items: []mut string) { swap_elements(items); }
+by_index :: proc(items: []mut string, i: int, j: int) { items[i] = items[j]; }
+
+swapped_through_a_view :: proc() -> string {
+	arena := mem.Arena.init();
+	items := [2]string{"a", "b"};
+	items[1] = fmt.to_string(arena.allocator(), 42);
+	view := &mut items[:];
+	view.swap(0, 1);
+	return items[0];
+}
+
+swapped_through_a_slice_of_the_array :: proc() -> string {
+	arena := mem.Arena.init();
+	items := [2]string{"a", "b"};
+	items[1] = fmt.to_string(arena.allocator(), 42);
+	(&mut items[:]).swap(0, 1);
+	return items[0];
+}
+
+swapped_through_a_copy_of_the_view :: proc() -> string {
+	arena := mem.Arena.init();
+	items := [2]string{"a", "b"};
+	items[1] = fmt.to_string(arena.allocator(), 42);
+	view := &mut items[:];
+	again := view;
+	again.swap(0, 1);
+	return items[0];
+}
+
+swapped_in_a_reslice :: proc() -> string {
+	arena := mem.Arena.init();
+	items := [2]string{"a", "b"};
+	items[1] = fmt.to_string(arena.allocator(), 42);
+	view := &mut items[0:2];
+	view.swap(0, 1);
+	return items[0];
+}
+
+sorted_in_place :: proc() -> string {
+	arena := mem.Arena.init();
+	items := [2]string{"a", "b"};
+	items[1] = fmt.to_string(arena.allocator(), 42);
+	view := &mut items[:];
+	view.sort();
+	return items[0];
+}
+
+reversed_by_a_call :: proc() -> string {
+	arena := mem.Arena.init();
+	items := [2]string{"a", "b"};
+	items[1] = fmt.to_string(arena.allocator(), 42);
+	slice.reverse(&mut items[:]);
+	return items[0];
+}
+
+sorted_by_a_call :: proc() -> string {
+	arena := mem.Arena.init();
+	items := [2]string{"a", "b"};
+	items[1] = fmt.to_string(arena.allocator(), 42);
+	slice.sort(&mut items[:]);
+	return items[0];
+}
+
+reverse_sorted_by_a_call :: proc() -> string {
+	arena := mem.Arena.init();
+	items := [2]string{"a", "b"};
+	items[1] = fmt.to_string(arena.allocator(), 42);
+	slice.reverse_sort(&mut items[:]);
+	return items[0];
+}
+
+swapped_by_a_call :: proc() -> string {
+	arena := mem.Arena.init();
+	items := [2]string{"a", "b"};
+	items[1] = fmt.to_string(arena.allocator(), 42);
+	swap_elements(&mut items[:]);
+	return items[0];
+}
+
+swapped_by_a_call_through_a_view :: proc() -> string {
+	arena := mem.Arena.init();
+	items := [2]string{"a", "b"};
+	items[1] = fmt.to_string(arena.allocator(), 42);
+	view := &mut items[:];
+	swap_elements(view);
+	return items[0];
+}
+
+swapped_by_a_forwarding_call :: proc() -> string {
+	arena := mem.Arena.init();
+	items := [2]string{"a", "b"};
+	items[1] = fmt.to_string(arena.allocator(), 42);
+	forward(&mut items[:]);
+	return items[0];
+}
+
+copied_at_any_index_by_a_call :: proc() -> string {
+	arena := mem.Arena.init();
+	items := [2]string{"a", "b"};
+	items[1] = fmt.to_string(arena.allocator(), 42);
+	by_index(&mut items[:], 0, 1);
+	return items[0];
+}
+
+swapped_in_a_record :: proc() -> string {
+	arena := mem.Arena.init();
+	box := Box{[2]string{"a", "b"}};
+	box.items[1] = fmt.to_string(arena.allocator(), 42);
+	view := &mut box.items[:];
+	view.swap(0, 1);
+	return box.items[0];
+}
+
+swapped_records :: proc() -> string {
+	arena := mem.Arena.init();
+	rows := [2]Pair{Pair{"a", "b"}, Pair{"c", "d"}};
+	rows[1].b = fmt.to_string(arena.allocator(), 42);
+	view := &mut rows[:];
+	view.swap(0, 1);
+	return rows[0].b;
+}
+
+main :: proc() {}

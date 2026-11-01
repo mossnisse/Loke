@@ -531,7 +531,10 @@ Keep these contracts:
   Written-argument summaries keep the owners' part apart from allocator
   handles (`written_owner_regions`) and keep each part at the path the body
   wrote (`written_region_content`); a copy within one argument is a copy
-  entry the call resolves in its caller.
+  entry the call resolves in its caller. A swap or sort records a copy of any
+  element to any element (`prov_store_permuted_region`), and a summary leaves such
+  a copy out of its whole-argument union, since it leaves the argument nothing new,
+  so it is no store through a carrier to check.
 - **Copies keep their source's regions unless they allocate.** Newly
   allocated storage is in the destination; strings, shared handles, and
   borrowed parts keep their source regions, recursively, and custom copy hooks

@@ -2912,7 +2912,12 @@ collect_written_regions :: proc(c: ^Compiler, graph: ^Flow_Graph, declaration: S
 		content := prov_written_parameter_content(graph, id, index)
 		for entry in content {
 			region := entry.region
-			if entry.from != nil {
+			if from, copied := entry.from.?; copied {
+				// Moving what any element holds to any element leaves the argument
+				// nothing it did not hold, so only its row says so.
+				if prov_same_path(from.path, entry.path) {
+					continue
+				}
 				region = prov_empty_region(graph)
 				region.params[index] = true
 			}

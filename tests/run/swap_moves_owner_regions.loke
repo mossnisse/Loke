@@ -1,0 +1,94 @@
+package main;
+
+import "core:fmt";
+import "core:mem";
+import "core:slice";
+
+// design.md "Allocator regions and region provenance": moving owners among a view's
+// elements leaves nothing new in the storage, so a swap in a body that also holds the
+// arena is no escape, and elements of other storage keep their own regions.
+
+Mixed :: struct { name: string, items: [2]string }
+
+swap_elements :: proc(items: []mut string) { items.swap(0, 1); }
+by_index :: proc(items: []mut string, i: int, j: int) { items[i] = items[j]; }
+leave_in_place :: proc(items: []mut string) { items[0] = "fresh"; }
+
+read_in_the_arena_scope :: proc() {
+	arena := mem.Arena.init();
+	items := [2]string{"a", "b"};
+	items[1] = fmt.to_string(arena.allocator(), 42);
+	view := &mut items[:];
+	view.swap(0, 1);
+	fmt.println(items[0]);
+}
+
+swapped_by_a_call_in_the_arena_scope :: proc() {
+	arena := mem.Arena.init();
+	items := [2]string{"a", "b"};
+	items[1] = fmt.to_string(arena.allocator(), 43);
+	swap_elements(&mut items[:]);
+	fmt.println(items[0]);
+}
+
+reversed_by_a_call_in_the_arena_scope :: proc() {
+	arena := mem.Arena.init();
+	items := [2]string{"a", "b"};
+	items[1] = fmt.to_string(arena.allocator(), 44);
+	slice.reverse(&mut items[:]);
+	fmt.println(items[0]);
+}
+
+copied_at_any_index_in_the_arena_scope :: proc() {
+	arena := mem.Arena.init();
+	items := [2]string{"a", "b"};
+	items[1] = fmt.to_string(arena.allocator(), 45);
+	by_index(&mut items[:], 0, 1);
+	fmt.println(items[0]);
+}
+
+no_region_to_move :: proc() -> string {
+	items := [2]string{"c", "d"};
+	view := &mut items[:];
+	view.swap(0, 1);
+	return items[0];
+}
+
+other_array_swapped :: proc() -> string {
+	arena := mem.Arena.init();
+	items := [2]string{"a", "b"};
+	items[1] = fmt.to_string(arena.allocator(), 46);
+	cells := [2]string{"e", "f"};
+	view := &mut cells[:];
+	view.swap(0, 1);
+	return cells[0];
+}
+
+field_beside_the_array :: proc() -> string {
+	arena := mem.Arena.init();
+	box := Mixed{"g", [2]string{"a", "b"}};
+	box.items[1] = fmt.to_string(arena.allocator(), 47);
+	view := &mut box.items[:];
+	view.swap(0, 1);
+	return box.name;
+}
+
+// A call that only stores a value of its own moves nothing between elements.
+call_that_stores :: proc() -> string {
+	arena := mem.Arena.init();
+	items := [2]string{"a", "b"};
+	items[1] = fmt.to_string(arena.allocator(), 48);
+	leave_in_place(&mut items[:]);
+	return items[0];
+}
+
+main :: proc() {
+	read_in_the_arena_scope();
+	swapped_by_a_call_in_the_arena_scope();
+	reversed_by_a_call_in_the_arena_scope();
+	copied_at_any_index_in_the_arena_scope();
+	fmt.println(no_region_to_move());
+	fmt.println(other_array_swapped());
+	fmt.println(field_beside_the_array());
+	fmt.println(call_that_stores());
+}
