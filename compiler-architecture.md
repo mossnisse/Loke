@@ -535,6 +535,13 @@ Keep these contracts:
   another, and a call that copied between them is no second use when the view is
   next handed on. Other uses of a carrier keep nothing held there live: a load reads
   the slots it names, and a copy reads none.
+- **A printed slice or pointer to plain data is only read.** Wherever it is held, a
+  field, an element, or behind a carrier, printing it takes a read-only reborrow of
+  it, as a `[]T` parameter would (`prov_type_is_plain_view`), and a `reads_only` read
+  of a mutable carrier out of storage reborrows that carrier read-only
+  (`prov_project_content`, `prov_reborrow_loaded`). A distinct pointer may have a
+  `format` that writes through it, and one whose pointee holds borrows lets what
+  prints it write through those, so both stay lent.
 - **A printed view through a mutable call result holds its loan for invalidation
   only.** A slot marked `Prov_Slot.read_only_hold` conflicts with no read of what its
   loans lend, as a read does not move what is viewed, and with any write or further

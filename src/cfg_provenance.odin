@@ -1995,7 +1995,15 @@ prov_project_content :: proc(
 		graph.prov_slots[slot].precision |= path_precision(full)
 		selected := prov_select_content(graph, sources, source_type, full)
 		prov_emit(graph, Prov_Event{kind = .Live, sources = selected, span = span, reads_only = reads_only})
+		taken := len(graph.reborrows)
 		prov_define_one_content(graph, slot, selected, span)
+		// design.md "Weakening and reborrows": what is only read reborrows
+		// read-only, whatever the carrier's capability.
+		if reads_only {
+			for &reborrow in graph.reborrows[taken:] {
+				reborrow.mutable = false
+			}
+		}
 	}
 	return content
 }
@@ -2864,11 +2872,11 @@ prov_reborrow_loaded :: proc(graph: ^Flow_Graph, event: Prov_Event) {
 	if !prov_slot_is_loaded_mutable(graph, event.slot) {
 		return
 	}
-	// Its capability is the one the copy is stored with.
-	mutable := true
+	// Its capability is the one the copy is stored with, or none for a read.
+	mutable := !event.reads_only
 	for reborrow in graph.reborrows {
 		if reborrow.source == event.slot {
-			mutable = reborrow.mutable
+			mutable = reborrow.mutable && !event.reads_only
 		}
 	}
 	passes_on := graph.prov_slots[event.slot].viewed
@@ -3668,14 +3676,14 @@ prov_erase :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 		return walk_flow_expr_erased(graph, e)
 	}
 	// Also a use of what a carrier already refers to, so erasure cannot hide
-	// a stale view. A view of a slice local only reads it, so it holds a
-	// read-only reborrow, as a `[]T` parameter would.
-	// A field or element holding such a slice is read the same way, so two
-	// views of `held.items` may be live together.
+	// a stale view. A view of a slice or pointer local only reads it, so it
+	// holds a read-only reborrow, as a `[]T` parameter would.
+	// A field or element holding one is read the same way, so two views of
+	// `held.items` may be live together.
 	loans: []int
-	if ident, plain := prov_plain_slice_local(graph, e); plain {
+	if ident, plain := prov_plain_view_local(graph, e); plain {
 		loans = prov_reborrow_traversal(graph, prov_read_ident(graph, ident, .Read, reads_only = true), span, false)
-	} else if prov_plain_slice_place(graph, e, prov_repr(graph, e).erased_from) {
+	} else if prov_plain_view_place(graph, e, prov_repr(graph, e).erased_from) {
 		loans = prov_reborrow_traversal(graph, prov_read_erased_place(graph, e), span, false)
 	} else {
 		prov_begin_conversion(graph, e, .Erasure)
@@ -3715,14 +3723,14 @@ prov_lend_read_only :: proc(graph: ^Flow_Graph, e: Expr, loans: []int, span: Spa
 
 // design.md "Built-in procedures": an argument an `assert` or `panic` report
 // prints keeps its type and is read as a read-only view of it would be, so a
-// slice holding plain data is read rather than lent again.
+// slice or pointer to plain data is read rather than lent again.
 @(private = "file")
 prov_printed_argument :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 	span := expr_span(e)
 	loans: []int
-	if ident, plain := prov_plain_slice_local(graph, e); plain {
+	if ident, plain := prov_plain_view_local(graph, e); plain {
 		loans = prov_reborrow_traversal(graph, prov_read_ident(graph, ident, .Read, reads_only = true), span, false)
-	} else if prov_plain_slice_place(graph, e, prov_type(graph, e)) {
+	} else if prov_plain_view_place(graph, e, prov_type(graph, e)) {
 		loans = prov_reborrow_traversal(graph, prov_read_carrier(graph, e, true), span, false)
 	} else {
 		if held, through := prov_view_through_carrier(graph, e, span); through {
@@ -3754,7 +3762,7 @@ prov_view_through_carrier :: proc(graph: ^Flow_Graph, e: Expr, span: Span) -> (h
 		read_only_hold = prov_expr_is_temporary(carrier) && type_carries_borrow(graph.k.c, prov_type(graph, carrier)).mutable
 	}
 	type := prov_type(graph, e)
-	only := prov_read_is_reads_only(graph.k.c, type)
+	only := prov_read_is_reads_only(graph.k.c, type) || prov_type_is_plain_view(graph.k.c, type)
 	carriers, path, reached := prov_read_through_carrier(graph, e, only)
 	if !reached {
 		return nil, false
@@ -3816,18 +3824,50 @@ prov_hidden_root :: proc(graph: ^Flow_Graph, span: Span, name: string) -> Root_I
 	return root
 }
 
-// As `prov_plain_slice_local`, for a field or element of a local read as `type`:
-// a slice whose elements hold no borrows.
+// A slice whose elements hold no borrows, or a pointer to such a value, which
+// printing it, or a read-only `dyn` view of it, reads as a `[]T` or `^T` is read:
+// nothing it calls can write through it. A distinct pointer type is left out, as
+// its own `format` may take it by value and write what it names.
 @(private = "file")
-prov_plain_slice_place :: proc(graph: ^Flow_Graph, e: Expr, type: Type_Id) -> bool {
+prov_type_is_plain_view :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	#partial switch underlying_kind(c, type) {
+	case .Slice:
+	case .Pointer:
+		if type_underlying(c, type) != type {
+			return false
+		}
+	case:
+		return false
+	}
+	return !type_carries_borrow(c, underlying_info(c, type).element).any
+}
+
+// A local holding a plain view (`prov_type_is_plain_view`).
+@(private = "file")
+prov_plain_view_local :: proc(graph: ^Flow_Graph, e: Expr) -> (^Expr_Ident, bool) {
+	ident, is_ident := e.(^Expr_Ident)
+	if !is_ident || prov_repr(graph, ident).view_from != INVALID_TYPE {
+		return nil, false
+	}
+	// An erased operand's own type is a `dyn` view.
+	type := prov_repr(graph, ident).erased_from != INVALID_TYPE ? prov_repr(graph, ident).erased_from : prov_type(graph, ident)
+	if _, is_carrier := prov_slot_for_symbol(graph, ident.symbol); !is_carrier {
+		return nil, false
+	}
+	return ident, prov_type_is_plain_view(graph.k.c, type)
+}
+
+// A field or element of a local read as `type`, a plain view
+// (`prov_type_is_plain_view`).
+@(private = "file")
+prov_plain_view_place :: proc(graph: ^Flow_Graph, e: Expr, type: Type_Id) -> bool {
 	if expr_base(e) == nil || prov_repr(graph, e).view_from != INVALID_TYPE || type == INVALID_TYPE {
 		return false
 	}
 	if _, is_ident := e.(^Expr_Ident); is_ident {
 		return false
 	}
-	c := graph.k.c
-	if underlying_kind(c, type) != .Slice || type_carries_borrow(c, underlying_info(c, type).element).any {
+	if !prov_type_is_plain_view(graph.k.c, type) {
 		return false
 	}
 	_, _, place := prov_place_of(graph, e)

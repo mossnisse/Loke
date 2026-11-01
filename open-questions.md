@@ -163,9 +163,8 @@ order matters, and `prov_assign` is the most edited procedure in the checker,
   tests twelve argument shapes in an order that matters, with nine callee
   names checked by hand (`Slice_Ref_Next`, `indexed_next_lends`,
   `Standard_Len`, `Standard_Cap`, `Standard_Hash`, `Adapter_Iter`,
-  `Iterator_Copy`, `Adapter_View`, `clone_copies_receiver`); a
-  [printing gap](known-gaps.md#printing-a-mutable-slice-field-suspends-it-for-a-later-read)
-  is `prov_erase` and `prov_printed_argument` taking a path those tests do not. A `Container_Op`'s provenance is spread over eight predicates and tables
+  `Iterator_Copy`, `Adapter_View`, `clone_copies_receiver`); printing takes a path
+  those tests do not, through `prov_erase` and `prov_printed_argument`. A `Container_Op`'s provenance is spread over eight predicates and tables
   (`prov_op_returns_view`, `prov_op_lends_receiver`,
   `prov_op_removes_element`, three switches in `prov_container_content`, the
   list in `prov_call_carrier_moves`, `STORING_CONTAINER_OPS`,

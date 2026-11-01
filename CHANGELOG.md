@@ -48,6 +48,11 @@ checklist.
   Upgrade by binding the whole value. A block in a `when` whose condition names a
   constant declared after the record is `L0488` once the record has been used. Upgrade
   by declaring the constant first, or by moving the use after the block.
+- An `assert` or `panic` report now holds a mutable pointer to plain data until it has
+  printed ([Built-in procedures](design.md#built-in-procedures)). After
+  `p := &mut x;`, `assert(ok, "stop", p, write_through(p))` compiled, and printed what
+  the later argument left. It is now `L0641`, as `fmt.println(p, write_through(p))`
+  already was. Upgrade by calling it first: `done := write_through(p);`.
 - An `inout` receiver reached through a pointer or slice is now a borrow of that
   place ([Weakening and reborrows](design.md#weakening-and-reborrows)). After
   `p := &mut m; entry := p^.find_or_insert(3, 7);`, `p^.clear()` before a read of
@@ -1193,6 +1198,12 @@ checklist.
   `s = &mut s[:2]`, now leaves the view's constant elements apart, so `s[1]`
   beside a live `&mut s[0]` is no longer `L0641`. A loop that moves the start,
   as `s = &mut s[1:]`, stays rejected.
+- Printing only reads a mutable pointer to plain data, and a mutable slice or pointer
+  held in a field, element, or through a pointer, so `fmt.println(held.items,
+  len_of(held.items))`, `fmt.println(p, p)`, and `assert(ok, "stop", held.p, held.p)`
+  are no longer `L0641`. A read-only parameter reads a field the same way, so what it
+  returns no longer keeps a read of the field out
+  ([Weakening and reborrows](design.md#weakening-and-reborrows)).
 - Local views reslicing each other in a loop no longer lose where they start when
   one begins short, as `s := base[:1]; t := base[:];` with `s = t[:]` and
   `t = s[:2]` in the loop, so `s[1]` beside a live copy out of `s[0]` is no longer

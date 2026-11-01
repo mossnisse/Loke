@@ -1,0 +1,83 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Weakening and reborrows": printing only reads a mutable carrier, so a
+// later read of it is allowed, wherever the carrier is held. A pointer prints what it
+// views (design.md "String format printing"), so it is read as a slice is. It is free
+// again once printing ends.
+
+Holder :: struct { items: []mut int, p: ^mut int, count: int }
+Outer :: struct { held: Holder }
+
+len_of :: proc(xs: []int) -> int { return xs.len(); }
+get :: proc(p: ^int) -> int { return p^; }
+same :: proc(p: ^int) -> ^int { return p; }
+write :: proc(xs: []mut int) { xs[0] += 1; }
+write_through :: proc(p: ^mut int) { p^ += 1; }
+
+printed_fields :: proc() {
+	storage := [2]int{1, 2};
+	x := 3;
+	held := Holder{&mut storage[:], &mut x, 0};
+	fmt.println(held.items, len_of(held.items));
+	fmt.println(held.items, held.items, held.p, held.p, get(held.p), held.count);
+	assert(true, "stop", held.items, len_of(held.items), held.p, held.p, get(held.p));
+	write(held.items);
+	write_through(held.p);
+	fmt.println(held.items, held.p);
+}
+
+printed_nested_fields :: proc() {
+	storage := [2]int{1, 2};
+	x := 3;
+	outer := Outer{Holder{&mut storage[:], &mut x, 0}};
+	fmt.println(outer.held.items, outer.held.items, outer.held.p, outer.held.p);
+}
+
+printed_elements :: proc() {
+	storage := [2]int{1, 2};
+	x := 3;
+	row := [1]Holder{Holder{&mut storage[:], &mut x, 0}};
+	fmt.println(row[0].items, len_of(row[0].items), row[0].p, get(row[0].p));
+}
+
+printed_through_a_pointer :: proc(h: ^mut Holder) {
+	fmt.println(h^.items, len_of(h^.items), h^.p, get(h^.p));
+	assert(true, "stop", h^.items, h^.items, h^.p, h^.p);
+	write(h^.items);
+	write_through(h^.p);
+	fmt.println(h^.items, h^.p);
+}
+
+printed_locals :: proc() {
+	x := 3;
+	p := &mut x;
+	fmt.println(p, p, get(p));
+	assert(true, "stop", p, p, get(p));
+	write_through(p);
+	fmt.println(p);
+}
+
+// Read-only parameters read as printing does.
+kept_read_only :: proc() {
+	x := 3;
+	held := Holder{p = &mut x};
+	a := same(held.p);
+	b := same(held.p);
+	fmt.println(a^, b^, held.p);
+	held.p^ += 1;
+	fmt.println(held.p);
+}
+
+main :: proc() {
+	printed_fields();
+	printed_nested_fields();
+	printed_elements();
+	storage := [2]int{1, 2};
+	x := 3;
+	held := Holder{&mut storage[:], &mut x, 0};
+	printed_through_a_pointer(&mut held);
+	printed_locals();
+	kept_read_only();
+}

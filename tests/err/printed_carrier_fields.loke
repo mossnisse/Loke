@@ -1,0 +1,99 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Weakening and reborrows" and "Built-in procedures": what is printed is
+// held read-only until printing ends, so a later argument cannot write through it or
+// change it. A carrier whose pointee or elements hold borrows may be written through
+// by what prints them, and a distinct pointer by its own `format`, so those are lent.
+
+Holder :: struct { items: []mut int, p: ^mut int, count: int }
+Node :: struct { value: ^mut int }
+Cell :: distinct ^mut int;
+
+same :: proc(p: ^int) -> ^int { return p; }
+write :: proc(xs: []mut int) -> int { xs[0] = 2; return 0; }
+write_through :: proc(p: ^mut int) -> int { p^ = 2; return 0; }
+touch :: proc(h: ^mut Holder) -> int { h^.count = 1; return 0; }
+grow :: proc(d: ^mut [dynamic]int) -> int { d^.append(1); return 0; }
+
+slice_field :: proc(held: Holder) {
+	fmt.println(held.items, write(held.items));
+}
+
+pointer_field :: proc(held: Holder) {
+	fmt.println(held.p, write_through(held.p));
+}
+
+slice_field_in_a_report :: proc(held: Holder) {
+	assert(true, "stop", held.items, write(held.items));
+}
+
+pointer_field_in_a_report :: proc(held: Holder) {
+	assert(true, "stop", held.p, write_through(held.p));
+}
+
+local_pointer :: proc(x: int) {
+	y := x;
+	p := &mut y;
+	fmt.println(p, write_through(p));
+}
+
+// A later argument cannot change an earlier one in a report either.
+local_pointer_in_a_report :: proc(x: int) {
+	y := x;
+	p := &mut y;
+	assert(true, "stop", p, write_through(p));
+}
+
+grown_in_a_report :: proc(d: ^mut [dynamic]int) {
+	assert(true, "stop", d, grow(d));
+}
+
+inserted_in_a_report :: proc(m: ^mut map[int]int) {
+	assert(true, "stop", m, m^.find_or_insert(3, 7)^);
+}
+
+through_a_pointer :: proc(h: ^mut Holder) {
+	fmt.println(h^.items, write(h^.items));
+}
+
+pointer_field_through_a_pointer :: proc(h: ^mut Holder) {
+	fmt.println(h^.p, write_through(h^.p));
+}
+
+field_replaced :: proc(items: []mut int) {
+	x := 1;
+	held := Holder{items, &mut x, 0};
+	fmt.println(held.p, touch(&mut held));
+}
+
+// A read-only parameter's result stays a read-only reborrow.
+written_while_read :: proc(x: int) {
+	y := x;
+	held := Holder{p = &mut y};
+	kept := same(held.p);
+	held.p^ = 1;
+	fmt.println(kept^);
+}
+
+written_while_read_through_a_pointer :: proc(h: ^mut Holder) {
+	kept := same(h^.p);
+	write_through(h^.p);
+	fmt.println(kept^);
+}
+
+pointer_to_a_carrier :: proc(x: int) {
+	y := x;
+	node := Node{&mut y};
+	p := &mut node;
+	fmt.println(p, p);
+}
+
+distinct_pointer :: proc(x: int) {
+	y := x;
+	cell := Cell(&mut y);
+	fmt.println(cell, cell);
+}
+
+main :: proc() {}

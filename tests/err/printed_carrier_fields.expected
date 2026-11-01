@@ -1,0 +1,45 @@
+L0641
+@21:32
+`held` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@25:36
+`held` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@29:41
+`held` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@33:45
+`held` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@39:31
+`p` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@46:40
+`p` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@50:31
+`d` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@54:26
+`m` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@58:30
+`h` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@62:34
+`h` cannot be used here: a read-only reborrow of it is still in use
+L0511
+@68:28
+this write of `held` is not compatible with the read-only view of it that is still in use
+L0641
+@76:2
+`held` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@82:16
+`h` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@90:17
+`p` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@96:20
+`cell` cannot be used here: a read-only reborrow of it is still in use

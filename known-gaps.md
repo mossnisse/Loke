@@ -7,6 +7,61 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
+### A report's later argument can write through a carrier holding borrows
+
+[Built-in procedures](design.md#built-in-procedures) has a report borrow each argument
+until it has printed the last, so a later argument should not change an earlier one.
+Where what a mutable pointer names holds a borrow, this compiles, and prints `n = 2`:
+
+```loke
+package main;
+Node :: struct { value: ^mut int, n: int }
+grow :: proc(p: ^mut Node) -> int { p^.n = 2; return 0; }
+main :: proc() {
+    x := 1;
+    node := Node{&mut x, 1};
+    p := &mut node;
+    assert(false, "stop", p, grow(p));
+}
+```
+
+`fmt.println(p, grow(p))` reports `L0641`, and a pointer to plain data does in a report
+too. `prov_printed_argument` in [src/cfg_provenance.odin](src/cfg_provenance.odin) walks
+such a local without reborrowing it, as a borrow of `p` holds nothing of what it names.
+Reborrowing it there would also reject `assert(false, "stop", p, p)`, which only reads,
+so the fix needs the read told apart from a use that may write. Found on 2026-11-01
+while fixing printing of mutable fields (P3).
+
+### A distinct mutable slice is read as plain when printed
+
+`prov_type_is_plain_view` in [src/cfg_provenance.odin](src/cfg_provenance.odin) takes
+printing a slice of plain data to only read it, as
+[Weakening and reborrows](design.md#weakening-and-reborrows) says of printing, but a
+distinct slice type may have a `format` of its own that writes through its value. This
+compiles and prints `2 3`:
+
+```loke
+package main;
+import "core:fmt";
+D :: distinct []mut int;
+impl D {
+    format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
+        view := ([]mut int)(self);
+        view[0] += 1;
+        fmt.format_to(writer, view[0]);
+    }
+}
+main :: proc() {
+    storage := [2]int{1, 2};
+    d := D(&mut storage[:]);
+    fmt.println(d, d);
+}
+```
+
+A distinct pointer in the same place reports `L0641`. Leaving distinct slices out of the
+plain views as well would reject `fmt.println(d, d)` for every such type, including those
+with no `format`, so that wants the method's presence checked. Found on 2026-11-01 (P3).
+
 ### A hook in a `when` on a later constant comes too late for a record already used
 
 [Lifecycle hooks and resource types](design.md#lifecycle-hooks-and-resource-types)
@@ -162,52 +217,6 @@ content, and that definition is not a use, so nothing holds `t` at the read. A r
 initializer with a `.Live` event after the read (`prov_repeated_element_effects`), and
 the same would newly reject `u := t` with no later use. Found while fixing repeated
 elements' copy effects on 2026-11-01 (P3).
-
-### Printing a mutable slice field suspends it for a later read
-
-`fmt.println` takes a read-only view of what it prints, so a later read of the same
-place is allowed, as it is for a local:
-
-```loke
-package main;
-import "core:fmt";
-Holder :: struct { items: []mut int }
-len_of :: proc(xs: []int) -> int { return xs.len(); }
-main :: proc() {
-    storage := [2]int{1, 2};
-    held := Holder{&mut storage[:]};
-    fmt.println(held.items, len_of(held.items));
-}
-```
-
-This reports `L0641`, "a mutable reborrow of it is still in use". With `s := &mut
-storage[:]` in place of the field, `fmt.println(s, len_of(s))` compiles.
-`prov_call_argument` in [src/cfg_provenance.odin](src/cfg_provenance.odin) lends a
-pack operand that `type_carries_borrow` calls mutable with a mutable
-`prov_lend_carrier`, and `prov_erase` returns the field's own slot when it is not a
-plain-slice read. The over-rejection predates the fix to report borrows, which
-gives a report its own walk and so does not reach it. Found on 2026-11-01 at
-`46cf2aa8` (P3).
-
-Mutable pointer fields have the analogous problem in reports too:
-
-```loke
-package main;
-Holder :: struct { p: ^mut int }
-test :: proc(ok: bool) {
-    x := 1;
-    held := Holder{&mut x};
-    assert(ok, "stop", held.p, held.p);
-}
-main :: proc() { test(true); }
-```
-
-This reports `L0641` at the second `held.p`. A local `p := &mut x` printed twice
-is accepted. `prov_printed_argument` falls back to `walk_flow_expr` for the
-pointer field, which takes a mutable reborrow before borrowing the field
-read-only. The plain-slice case above has a separate read-only path. This
-pointer-field rejection is present in both `a28b7aac`'s parent and `1b7845aa`,
-so it predates the report-borrow fix. Confirmed during review on 2026-11-01.
 
 ### A write on every path does not end a received allocator's region
 
