@@ -485,7 +485,9 @@ Keep these contracts:
   replaces what they hold. Any other store through a view parameter's loan, as
   `s[k]` with a variable `k`, or through another carrier that names it, lands
   in the slots standing for every element and in those of each constant element,
-  and replaces none (`publish_into_loan`). A container operation on a receiver
+  and replaces none (`publish_into_loan`). A pointer into one element counts as
+  naming it wherever every borrow its carriers may hold is of that element
+  (`carriers_element`). A container operation on a receiver
   behind a carrier stores the same way (`prov_publish_contained`). A record
   whose carriers each have one type on their path lands as they would. Once reach
   has settled, each carrier the store copies is linked as a reborrow to the slots it

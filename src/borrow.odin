@@ -322,6 +322,10 @@ Prov_Slot :: struct {
 	// Stands for one element of a view parameter's caller storage, which only
 	// a store naming that element lands in and replaces (`prov_view_element`).
 	caller_element: bool,
+	// A definition has pointed it into an element of a view parameter, and one has
+	// pointed it anywhere else (`prov_note_element_pointer`).
+	element_defs:   bool,
+	other_defs:     bool,
 	// Read by a reordering, or handed back by a container's removal, whose reborrow
 	// of what it read is a move (`Prov_Reborrow.moved`).
 	moved_out:      bool,
@@ -514,6 +518,8 @@ Prov_Place_Loan :: struct {
 	span:    Span,
 	place:   string,
 	element: Prov_View_At,
+	// The slots of the view parameter's element the place is in (`carriers_element`).
+	in_element: Prov_Element_Slots,
 }
 
 // design.md "Storage roots and borrow carriers". `rawptr` and `[^]T` carry no
@@ -3713,14 +3719,53 @@ run_prov_event :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8, ended
 	}
 }
 
+// design.md "Places and overlap": the one element of a view parameter that `carriers` all
+// point into here, as `p` after `p := &mut s[0]`, so what goes through them is in that element
+// as what goes through `s[0]` is. Each must hold a borrow of it and no borrow of anything
+// else, which the place loan bits show wherever that borrow was made, past a loop's back edge
+// too. A definition that makes no such borrow the walk has ruled out, if it had met one
+// (`prov_may_point_at_element`), and one it had not uses all of `s`, and so conflicts with
+// what is left in it. Given `loan_held`, only the carriers holding that loan count.
+@(private = "file")
+carriers_element :: proc(state: ^Prov_State, carriers: []int, reach: []u8, loan_held := -1) -> Prov_Element_Slots {
+	found: Prov_Element_Slots
+	for slot in carriers {
+		row := reach_row(state, reach, slot)
+		if loan_held >= 0 && !bit_get(row, loan_held) {
+			continue
+		}
+		held := false
+		for loan, index in state.graph.place_loans {
+			if !loan.borrows || !bit_get(row, place_bit(state, index)) {
+				continue
+			}
+			if len(loan.in_element.slots) == 0 || len(found.slots) > 0 && raw_data(found.slots) != raw_data(loan.in_element.slots) {
+				return {}
+			}
+			found = loan.in_element
+			held = true
+		}
+		if !held {
+			return {}
+		}
+	}
+	return found
+}
+
 // A store whose carriers the walk took to point at one place (`Prov_Event.place_path`),
 // or that place's store with nothing known of where it lands when a borrow they may hold
 // here names another: `p` in a loop that ends in `p = &mut r^.b` names `r^.b` from the
 // second iteration on, as the walk had not reached when it met a store through `p`.
 @(private = "file")
 publish_place_settled :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8) -> Prov_Event {
+	settled := event
+	if event.through_element && event.store == nil {
+		if element := carriers_element(state, event.into, reach); len(element.slots) > 0 {
+			settled.store = element
+		}
+	}
 	if len(event.place_path) == 0 {
-		return event
+		return settled
 	}
 	for slot in event.into {
 		row := reach_row(state, reach, slot)
@@ -3731,7 +3776,6 @@ publish_place_settled :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8
 			for path in loan.paths {
 				for step, at in path[:min(len(path), len(event.place_path))] {
 					if step != event.place_path[at] {
-						settled := event
 						settled.path, settled.one_place, settled.place_path = nil, false, nil
 						return settled
 					}
@@ -3739,7 +3783,7 @@ publish_place_settled :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8
 			}
 		}
 	}
-	return event
+	return settled
 }
 
 // The one loan a store's carriers name (`Prov_Event.one_place`), or -1 when it
@@ -3875,13 +3919,17 @@ load_pointee_content :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8,
 	}
 	mem.zero_slice(state.merged)
 	loss := graph.prov_slots[event.slot].precision | path_precision(event.path)
+	named := event.load_element
+	if event.through_element {
+		named = carriers_element(state, event.into, reach)
+	}
 	for carrier in event.into {
 		row := reach_row(state, reach, carrier)
 		for index in 0 ..< state.loans {
 			if !bit_get(row, index) {
 				continue
 			}
-			elements := event.load_element.slots if Loan_Id(index) == event.load_element.loan else nil
+			elements := named.slots if Loan_Id(index) == named.loan else nil
 			// Out of a local view, the one element the load names, where it is
 			// known among those the loan lends (`view_element_loan`).
 			lent: []Proj_Step
@@ -4757,7 +4805,7 @@ publish_replaced_slots :: proc(state: ^Prov_State, event: Prov_Event, reach: []u
 	loan := publish_view_loan(graph, event, one)
 	out := make([dynamic]int, 0, 1, graph.alloc)
 	// One element of a view parameter is one place (`prov_view_element`).
-	if element, is_element := event.store.(Prov_Element_Slots); is_element && Loan_Id(one) == element.loan {
+	if element, is_element := publish_place_settled(state, event, reach).store.(Prov_Element_Slots); is_element && Loan_Id(one) == element.loan {
 		for index in element.slots {
 			if caller_replaces(graph.k.c, graph.prov_slots[index], event.path, event.carried) {
 				append(&out, index)
@@ -4853,25 +4901,29 @@ publish_into_loan :: proc(state: ^Prov_State, reach: []u8, loan_index: int, even
 			return
 		}
 	} else {
-		switch lands in event.store {
-		case nil:
+		element, names_element := event.store.(Prov_Element_Slots)
+		if _, is_retained := event.store.(Prov_Store_Retained); is_retained {
+			// What a call leaves in a view may be in any element, each of which
+			// these slots stand for, and which `prov_link_retained` links, unless
+			// all it was given of that view is a pointer to one.
+			if caller {
+				landing := slots[:]
+				if event.through_element {
+					if at := carriers_element(state, event.into, reach, loan_index); len(at.slots) > 0 && Loan_Id(loan_index) == at.loan {
+						landing = at.slots
+					}
+				}
+				publish_into_caller(state, reach, landing, loan, event.path, INVALID_TYPE, carrier_loss, INVALID_TYPE, by_type)
+			}
+		} else if names_element && one && Loan_Id(loan_index) == element.loan {
+			if publish_into_caller(state, reach, element.slots, loan, event.path, stored, carrier_loss, linked, by_type) {
+				return
+			}
+		} else if caller && event.linked &&
+		   publish_into_caller(state, reach, slots[:], loan, event.path, INVALID_TYPE, carrier_loss, linked, by_type) {
 			// It names no one element or place of what the loan's slots stand for,
 			// so it replaces none of them, and its copy is linked to each.
-			if caller && event.linked &&
-			   publish_into_caller(state, reach, slots[:], loan, event.path, INVALID_TYPE, carrier_loss, linked, by_type) {
-				return
-			}
-		case Prov_Element_Slots:
-			if one && Loan_Id(loan_index) == lands.loan &&
-			   publish_into_caller(state, reach, lands.slots, loan, event.path, stored, carrier_loss, linked, by_type) {
-				return
-			}
-		case Prov_Store_Retained:
-			// What a call leaves in a view may be in any element, each of which
-			// these slots stand for, and which `prov_link_retained` links.
-			if caller {
-				publish_into_caller(state, reach, slots[:], loan, event.path, INVALID_TYPE, carrier_loss, INVALID_TYPE, by_type)
-			}
+			return
 		}
 	}
 	for index in root_own_slots(graph, graph.roots[int(loan.root)]) {

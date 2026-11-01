@@ -232,6 +232,9 @@ Prov_Event :: struct {
 	// `Load`: the one element of a view parameter it names, whose caller slots it
 	// reads when through that loan, instead of those standing for every element.
 	load_element:  Prov_Element_Slots,
+	// `Load`, `Publish`: its carriers may all point into one element of a view
+	// parameter, which the solve settles (`carriers_element`).
+	through_element: bool,
 	// `Def` of a named slot: one more than the index of its definition in
 	// `view_defs` (`prov_note_view`), or 0.
 	view_def:      int,
@@ -480,13 +483,18 @@ prov_place_loan :: proc(
 		places[index] = Prov_Offset{prov_concat_path(graph, at.path, path), at.storage}
 	}
 	element := prov_view_at(graph, place, carriers)
+	in_element: Prov_Element_Slots
+	if borrows {
+		in_element, _ = prov_view_element(graph, place)
+	}
 	append(&graph.place_loans, Prov_Place_Loan {
 		paths = prov_offset_paths(graph, places), mutable = mutable, borrows = borrows, what = what, span = span,
-		place = graph.k.c.sources[span.file].text[span.lo:span.hi], element = element,
+		place = graph.k.c.sources[span.file].text[span.lo:span.hi], element = element, in_element = in_element,
 	})
 	slot := prov_temp_slot(graph)
 	loan := &graph.place_loans[len(graph.place_loans) - 1]
 	loan.slot = slot
+	graph.prov_slots[slot].element_defs = len(in_element.slots) > 0
 	// design.md "Minimum provenance precision": a loan of places merged past
 	// the limit, or of places of several storages, may cover a place the
 	// carriers never point at, so a rejection it causes names the limit.
@@ -722,6 +730,7 @@ prov_emit :: proc(graph: ^Flow_Graph, event: Prov_Event) {
 	emitted := event
 	if event.kind == .Def {
 		prov_note_offset(graph, event.slot, event.sources)
+		prov_note_element_pointer(graph, event)
 		emitted.view_def = prov_note_view(graph, event)
 	}
 	append(&graph.blocks[graph.current].prov, emitted)
@@ -2071,18 +2080,20 @@ prov_load_content :: proc(
 			element = at
 		}
 	}
+	through_element := len(load_element.slots) == 0 && prov_may_point_at_element(graph, carriers)
 	for slot in content {
 		graph.prov_slots[slot].loaded = true
 		prov_emit(graph, Prov_Event {
-			kind         = .Load,
-			slot         = slot,
-			into         = carriers,
-			path         = prov_concat_path(graph, path, graph.prov_slots[slot].path),
-			span         = span,
-			reads_only   = reads_only,
-			load         = .Walked if walked else .Place,
-			load_element = load_element,
-			element      = element,
+			kind            = .Load,
+			slot            = slot,
+			into            = carriers,
+			path            = prov_concat_path(graph, path, graph.prov_slots[slot].path),
+			span            = span,
+			reads_only      = reads_only,
+			load            = .Walked if walked else .Place,
+			load_element    = load_element,
+			element         = element,
+			through_element = through_element,
 		})
 	}
 	prov_emit(graph, Prov_Event{kind = .Live, sources = content, span = span, reads_only = reads_only})
@@ -3565,6 +3576,48 @@ prov_view_element :: proc(graph: ^Flow_Graph, place: Expr) -> (Prov_Element_Slot
 		return {}, false
 	}
 	return Prov_Element_Slots{own, slots}, true
+}
+
+// design.md "Places and overlap": whether `carriers` have only been defined to point into
+// an element of a view parameter, as `p` is by `p := &mut s[0]`, so far as the walk has
+// seen. Which element, and whether a definition it has yet to meet says otherwise, is for
+// the solve (`carriers_element`).
+@(private = "file")
+prov_may_point_at_element :: proc(graph: ^Flow_Graph, carriers: []int) -> bool {
+	for slot in carriers {
+		entry := graph.prov_slots[slot]
+		if !entry.element_defs || entry.other_defs {
+			return false
+		}
+	}
+	return len(carriers) > 0
+}
+
+// Records whether a definition of `slot` points it into an element of a view parameter
+// (`Prov_Slot.element_defs`): a borrow of that itself, or a copy of what only has been.
+@(private = "file")
+prov_note_element_pointer :: proc(graph: ^Flow_Graph, event: Prov_Event) {
+	if event.place_loan > 0 {
+		return
+	}
+	elements := false
+	for source in event.sources {
+		if prov_slot_is_through(graph, source) {
+			continue
+		}
+		entry := graph.prov_slots[source]
+		if !entry.element_defs || entry.other_defs {
+			elements = false
+			break
+		}
+		elements = true
+	}
+	slot := &graph.prov_slots[event.slot]
+	if elements {
+		slot.element_defs = true
+	} else {
+		slot.other_defs = true
+	}
 }
 
 // design.md "Values that contain borrows": `s[k]`, with `s` a local view and
@@ -7517,6 +7570,7 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 						kind = .Publish, span = expr_span(target), sources = sources, into = through,
 						linked = prov_store_linked(graph.k.c, stored), store = lands, carried = stored, links_copies = len(linked_sources) > 0,
 						permutes = prov_assign_permutes(graph, s), element = prov_local_view_element(graph, target),
+						through_element = lands == nil && prov_may_point_at_element(graph, through),
 					}
 					// design.md "Evaluation order": a destination is evaluated before an
 					// earlier target of the same statement is written, so the view it
@@ -9414,7 +9468,11 @@ prov_publish_through :: proc(graph: ^Flow_Graph, carriers, sources: []int, span:
 		lands = Prov_Store_Retained{mutable = retained_mutable}
 		graph.has_linked_store = true
 	}
-	prov_emit(graph, Prov_Event{kind = .Publish, span = span, sources = sources, into = carriers, store = lands})
+	through_element := false
+	for slot in carriers {
+		through_element ||= retained && prov_may_point_at_element(graph, prov_one(graph, slot))
+	}
+	prov_emit(graph, Prov_Event{kind = .Publish, span = span, sources = sources, into = carriers, store = lands, through_element = through_element})
 }
 
 // design.md "Retaining a borrow": a call may write what a `stored` argument

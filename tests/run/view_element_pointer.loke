@@ -1,0 +1,65 @@
+// design.md "Places and overlap": a pointer into one element of a view parameter leaves the
+// others free, as naming that element does: what is stored or read through it, and what a
+// call leaves through it. What conflicts is in tests/err/view_element_pointer.loke.
+package main;
+
+import "core:fmt";
+
+Link :: struct { to: ^mut int }
+Wrapped :: struct { link: Link, n: int }
+
+keep :: proc(dst: ^mut Link, @(escape=stored) c: ^mut int) { dst^.to = c; }
+
+read_through_one :: proc(s: []mut Link) {
+	p := &mut s[0];
+	x := p^.to;
+	y := s[1].to;
+	x^ += 1;
+	y^ += 10;
+}
+
+stored_through_one :: proc(s: []mut Link, @(escape=stored) other: ^mut int) {
+	p := &mut s[0];
+	p^.to = other;
+	y := s[1].to;
+	other^ += 100;
+	y^ += 1000;
+}
+
+two_pointers :: proc(s: []mut Link) {
+	p := &mut s[0];
+	q := &mut s[1];
+	x := p^.to;
+	y := q^.to;
+	x^ += 10000;
+	y^ += 100000;
+}
+
+left_by_a_call :: proc(s: []mut Link, @(escape=stored) other: ^mut int) {
+	keep(&mut s[0], other);
+	y := s[1].to;
+	other^ += 1000000;
+	y^ += 10000000;
+}
+
+to_a_field :: proc(s: []mut Wrapped, @(escape=stored) other: ^mut int) {
+	h := &mut s[0].link;
+	h^.to = other;
+	y := s[1].link.to;
+	other^ += 3;
+	y^ += 4;
+}
+
+main :: proc() {
+	a := 0; b := 0; c := 0; d := 0;
+	links := [2]Link{Link{&mut a}, Link{&mut b}};
+	read_through_one(&mut links[:]);
+	stored_through_one(&mut links[:], &mut c);
+	two_pointers(&mut links[:]);
+	left_by_a_call(&mut links[:], &mut d);
+	fmt.println(a, b, c, d);
+	e := 0; f := 0; g := 0;
+	wrapped := [2]Wrapped{Wrapped{Link{&mut e}, 0}, Wrapped{Link{&mut f}, 0}};
+	to_a_field(&mut wrapped[:], &mut g);
+	fmt.println(e, f, g);
+}

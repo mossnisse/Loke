@@ -1,0 +1,84 @@
+// design.md "Places and overlap": a pointer that may name more than one element of a view, or
+// any other place, stands for each it may. What a pointer to one element leaves free is in
+// tests/run/view_element_pointer.loke.
+package main;
+
+Link :: struct { to: ^mut int }
+
+flip :: proc() -> bool { return true; }
+second :: proc(s: []mut Link) -> ^mut Link { return &mut s[1]; }
+keep :: proc(dst: ^mut Link, @(escape=stored) c: ^mut int) { dst^.to = c; }
+
+// Whichever element it may name is met last.
+either_element :: proc(s: []mut Link, @(escape=stored) other: ^mut int) {
+	p := &mut s[0];
+	if (flip()) { p = &mut s[1]; }
+	p^.to = other;
+	y := s[0].to;
+	other^ = 1;
+	y^ = 2;
+}
+
+// From the second iteration on.
+over_a_back_edge :: proc(s: []mut Link, @(escape=stored) other: ^mut int) {
+	p := &mut s[1];
+	for (i := 0; i < 2; i += 1) {
+		p^.to = other;
+		y := s[0].to;
+		other^ = 1;
+		y^ = 2;
+		p = &mut s[0];
+	}
+}
+
+// What a call returns may be any element.
+from_a_call :: proc(s: []mut Link, @(escape=stored) other: ^mut int) {
+	p := &mut s[0];
+	if (flip()) { p = second(s); }
+	p^.to = other;
+	y := s[1].to;
+	other^ = 1;
+	y^ = 2;
+}
+
+// And so may a copy of what a call may have returned.
+copied_from_a_call :: proc(s: []mut Link, @(escape=stored) other: ^mut int) {
+	p := &mut s[0];
+	if (flip()) { p = second(s); }
+	c := p;
+	c^.to = other;
+	y := s[1].to;
+	other^ = 1;
+	y^ = 2;
+}
+
+// Through a copy of the view, the element may be any of them.
+through_a_copy_of_the_view :: proc(s: []mut Link, @(escape=stored) other: ^mut int) {
+	t := s;
+	p := &mut t[0];
+	p^.to = other;
+	y := s[1].to;
+	other^ = 1;
+	y^ = 2;
+}
+
+// The same element, by name.
+the_same_element :: proc(s: []mut Link, @(escape=stored) other: ^mut int) {
+	p := &mut s[0];
+	p^.to = other;
+	y := s[0].to;
+	other^ = 1;
+	y^ = 2;
+}
+
+// What a call leaves counts for each element it may name.
+left_by_a_call :: proc(s: []mut Link, @(escape=stored) other: ^mut int) {
+	p := &mut s[0];
+	if (flip()) { p = &mut s[1]; }
+	keep(p, other);
+	y := s[0].to;
+	other^ = 1;
+	y^ = 2;
+}
+
+main :: proc() {}

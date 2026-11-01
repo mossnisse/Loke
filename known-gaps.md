@@ -365,57 +365,28 @@ main :: proc() {}
 form this holds for, and a record of two carriers through a pointer is already accepted.
 End the use of `x` before using `other`.
 
-### What a call leaves through a pointer to one element counts for each
+### A pointer to one field of a record stands for the others
 
-A call given `&mut s[0]` can write only through that element, and a store by hand of
-`s[0].to = other` leaves `s[1].to` free (design.md
-[Weakening and reborrows](design.md#weakening-and-reborrows)). What a call may leave
-there lands in the slots standing for every element, so a copy out of any other element
-conflicts with the argument:
+A store by hand of `r^.a.to = other` leaves `r^.b.to` free, and so does a pointer into a view
+parameter's element ([Places and overlap](design.md#places-and-overlap)). A load through a
+pointer to one field of a record reached through a carrier reads what the other fields hold
+as well, so a copy out of one conflicts with what was stored in another:
 
 ```loke
 package main;
 Link :: struct { to: ^mut int }
-keep :: proc(dst: ^mut Link, @(escape=stored) c: ^mut int) { dst^.to = c; }
-other_element :: proc(s: []mut Link, @(escape=stored) other: ^mut int) {
-    keep(&mut s[0], other);
-    x := s[1].to;
+Two :: struct { a: Link, b: Link }
+other_field :: proc(r: ^mut Two, @(escape=stored) other: ^mut int) {
+    r^.a.to = other;
+    h := &mut r^.b;
+    x := h^.to;
     other^ = 1; // L0641; should be accepted
     x^ = 2;
 }
 main :: proc() {}
 ```
 
-Read the other element before the call, or end its use before using `other`.
-
-### A pointer to one element of a view parameter stands for each
-
-A store by hand of `s[0].to = other` leaves `s[1].to` free, and so does
-`first := &mut s[0]` ([Weakening and reborrows](design.md#weakening-and-reborrows)). The
-pointer names that element, but what is stored or read through it counts for every element
-of the view, as the solve knows only that it names the caller's storage:
-
-```loke
-package main;
-Link :: struct { to: ^mut int }
-stored :: proc(s: []mut Link, @(escape=stored) other: ^mut int) {
-    p := &mut s[0];
-    p^.to = other;
-    y := s[1].to;
-    other^ = 1; // L0641; should be accepted
-    y^ = 2;
-}
-read :: proc(s: []mut Link) {
-    p := &mut s[0];
-    x := p^.to;
-    y := s[1].to; // L0641; should be accepted
-    x^ = 1;
-    y^ = 2;
-}
-main :: proc() {}
-```
-
-Write through `s[0]` by name, or end the use of one before the other.
+Read `r^.b.to` by name.
 
 ### A receiver written `self: ^` behind a carrier conflicts with a read-only copy
 

@@ -21,10 +21,7 @@ checklist.
   view in a record, or a view behind a pointer, and `d^.append(Link{other})` followed by a
   read, `remove`, or `pop` through `d`, with `insert`, a spread, or a map's `try_insert`
   or `find_or_insert` alike. Each is now `L0641`. Upgrade by ending the use of the copy
-  before using what it copies. A store through a pointer to one element of a view parameter
-  now also conflicts with a read of another element
-  ([known gap](known-gaps.md#a-pointer-to-one-element-of-a-view-parameter-stands-for-each)):
-  read the other element first.
+  before using what it copies.
 - Passing a record by value now uses what its carriers point to, as passing the carrier
   does ([Weakening and reborrows](design.md#weakening-and-reborrows)). `copy :=
   holder.links[0].to; take(holder); copy^ = 1;` compiled with two live mutable paths to
@@ -1195,6 +1192,10 @@ checklist.
 
 ### Fixed
 
+- A pointer into one element of a view parameter leaves the others free, as naming that
+  element does ([Places and overlap](design.md#places-and-overlap)). `p := &mut s[0];
+  x := p^.to; y := s[1].to; x^ = 1; y^ = 2;` was `L0641`, and so was the same stored through
+  `p`, two such pointers, and what `keep(&mut s[0], other)` may leave, read from `s[1]`.
 - Two values removed from a local dynamic array or map can be live together:
   `x := d.remove(0); y := d.remove(0); x^ = 1; y^ = 2;` was `L0641`, though the same through
   a pointer compiled and neither leaves the container anything of what it hands out.

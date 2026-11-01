@@ -3454,10 +3454,9 @@ after every destination and so covered it. Without that event `keep_self(n); h :
 n^.next; n^.v = 1; h^.v = 2;` is accepted, and neither a fixture nor the comparison
 with the old compiler notices, while
 [carrier_store_matrix_test.odin](tests/carrier_store_matrix_test.odin) does. Landing
-stops a loaded argument conflicting with itself. Two over-rejections of the old rule
-are left, as both come from what a call's landing joins rather than from the links
-(known-gaps.md, "A carrier a call may have left stays after its place is replaced"
-and "What a call leaves through a pointer to one element counts for each").
+stops a loaded argument conflicting with itself. An over-rejection of the old rule is
+left, as it comes from what a call's landing joins rather than from the links
+(known-gaps.md, "A carrier a call may have left stays after its place is replaced").
 
 Moving these links to the solve first lost rejections: a read-only carrier read back by
 name, as `q := ro.to;` after `keep_ro(&mut ro, c);`, got a link only when the walk could
@@ -3503,8 +3502,7 @@ it was the view parameter's own element, so `t := s; t[0].to = other; x := s[0].
 holding `other`'s loan with no link between them, and the solver takes a shared loan without a
 link for no conflict. Landing it in what the loan's slots stand for, joining into all and
 replacing none, is what `s[i]` already did, so that case (`Prov_Store_Any_Element`) is gone
-along with the walk's test of which it was. The price is the known gap of a pointer to one
-element: that store now also reaches the others, where before it reached none.
+along with the walk's test of which it was.
 
 A container operation on a receiver behind a carrier published nothing, so what `d^.append(x)`
 stored was not there to read back. It is now a store through carriers. What a removal hands
@@ -3519,6 +3517,26 @@ borrow through such a pointer already conflicts by the place loan bits the solve
 the loop. So the store now asks those bits too (`publish_place_settled`), rather than the walk
 meeting every definition first. A definition holding no such bit, as a pointer a call returns,
 is a whole reborrow of what it came from, which any use of that between conflicts with.
+
+### A pointer into an element stays in that element
+
+`p := &mut s[0]` names one element, and what the solve knows of it is that it holds the place
+loan of `s[0]`. Which element is not in the path, as a view's elements collapse there, so a
+first version put it on the walk's offsets: two definitions naming different elements then
+merge into one offset, and one over a loop's back edge is not met in time. The place loan bits
+have neither fault, so `carriers_element` asks them. They do not show a definition that makes no
+borrow, as `p = pick(s)`, whose value holds only the loan `p` already had. `if (flip()) { p =
+pick(s); }` would leave the bit of `s[0]` alone in `p`, so the walk has each slot remember
+whether a definition pointed it elsewhere. Past a back edge the walk has not met that yet, and
+needs not: such a call uses all of `s`, and so conflicts with whatever was left there.
+
+A check that the place was all of the element was tried and removed. A pointer to a field is in
+that element too, and a table of what is read back through one found nothing it let through.
+
+Each check here was removed in turn against the cases in `store_landing_matrix`, and each but
+one then lost a rejection or an acceptance. That one is the rule that a carrier holding no such
+bit names no element, which no program written so far reaches, and which is what the reasoning
+above relies on, so it stays.
 
 ### A record by value hands over what it reaches
 

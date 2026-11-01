@@ -448,12 +448,6 @@ STORED_REACH_CASES := [?]Stored_Reach_Case {
 	{"local_replaced", STORED_OTHER + ", @(escape=stored) fresh: ^mut int", STORED_A + "keep(&mut a, other); a = Link{fresh}; x := a.to;" + STORED_USE, false},
 }
 
-// known-gaps.md "What a call leaves through a pointer to one element counts for each".
-@(private = "file")
-stored_reach_over_rejected :: proc(entry: Stored_Reach_Case) -> bool {
-	return entry.name == "element_other"
-}
-
 @(test)
 stored_argument_reach_matrix :: proc(t: ^testing.T) {
 	source := strings.builder_make(context.temp_allocator)
@@ -471,8 +465,7 @@ stored_argument_reach_matrix :: proc(t: ^testing.T) {
 		return
 	}
 	for entry, at in STORED_REACH_CASES {
-		expected := entry.rejected || stored_reach_over_rejected(entry)
-		store_matrix_expect(t, names[0], entry.name, first + 4 * at, errors[0], expected)
+		store_matrix_expect(t, names[0], entry.name, first + 4 * at, errors[0], entry.rejected)
 	}
 }
 
@@ -1151,9 +1144,19 @@ Wrap :: struct { links: [dynamic]Link }
 Ints :: struct { a: int, b: int }
 Cell :: struct { v: int }
 Cells :: struct { a: Cell, b: Cell }
+Deep :: struct { inner: ^mut Link }
+Wrapped :: struct { link: Link, n: int }
+Rec :: struct { a: ^mut Link, b: ^mut Link }
+Two_Links :: struct { a: Link, b: Link }
+Deep_Wrap :: struct { wrap: Wrapped }
 flip :: proc() -> bool { return true; }
 poke :: proc(links: []mut Link) {}
 pick :: proc(r: ^mut Two) -> ^mut ^mut int { return &mut r^.b; }
+pick_second :: proc(s: []mut Link) -> ^mut Link { return &mut s[1]; }
+keep :: proc(dst: ^mut Link, @(escape=stored) c: ^mut int) { dst^.to = c; }
+keep_second :: proc(rec: Rec, @(escape=stored) c: ^mut int) { rec.b^.to = c; }
+set_pointer :: proc(out: ^mut ^mut Link, @(escape=stored) to: ^mut Link) { out^ = to; }
+copy_across :: proc(links: []mut Link) { links[0] = links[1]; }
 `
 
 @(private = "file")
@@ -1332,16 +1335,104 @@ STORE_LANDING_CASES := [?]Stored_Reach_Case {
 	{"back_edge_ok_store_sequence", "r: ^mut Two, @(escape=stored) other: ^mut int, @(escape=stored) second: ^mut int", "p := &mut r^.a; p^ = other; y := r^.b; other^ = 1; y^ = 2; p = &mut r^.b; p^ = second;", false},
 	{"back_edge_ok_store_replaces_on_its_field", "r: ^mut Two, @(escape=stored) other: ^mut int, @(escape=stored) fine: ^mut int", "p := &mut r^.a; for (i := 0; i < 2; i += 1) { p^ = other; p^ = fine; other^ = 1; p = &mut r^.a; }", false},
 	{"back_edge_ok_nested_borrow", "r: ^mut Cells, @(escape=stored) other: ^mut int", "p := &mut r^.a; q := &mut p^.v; q^ = 1;", false},
+	// A pointer into one element of a view parameter is in that element, as a place named
+	// by it is, for as long as every borrow it may hold says so.
+	{"element_ok_copy_other", "s: []mut Link", "p := &mut s[0]; x := p^.to; y := s[1].to; x^ = 1; y^ = 2;", false},
+	{"element_ok_live_other", "s: []mut Link", "p := &mut s[0]; y := s[1].to; p^.to^ = 1; y^ = 2;", false},
+	{"element_ok_store_read_other", "s: []mut Link, @(escape=stored) other: ^mut int", "p := &mut s[0]; p^.to = other; y := s[1].to; other^ = 1; y^ = 2;", false},
+	{"element_ok_two_pointers", "s: []mut Link", "p := &mut s[0]; q := &mut s[1]; x := p^.to; y := q^.to; x^ = 1; y^ = 2;", false},
+	{"element_ok_two_pointers_store", "s: []mut Link, @(escape=stored) a: ^mut int, @(escape=stored) b: ^mut int", "p := &mut s[0]; q := &mut s[1]; p^.to = a; q^.to = b; x := p^.to; y := q^.to; x^ = 1; y^ = 2;", false},
+	{"element_ok_copy_of_the_pointer", "s: []mut Link, @(escape=stored) other: ^mut int", "p := &mut s[0]; c := p; c^.to = other; y := s[1].to; other^ = 1; y^ = 2;", false},
+	{"element_ok_read_only_pointer", "s: []mut Link", "p := &s[0]; x: ^int = p^.to; y := s[1].to; n := x^; y^ = n;", false},
+	{"element_ok_store_replaces", "s: []mut Link, @(escape=stored) other: ^mut int, @(escape=stored) fine: ^mut int", "p := &mut s[0]; p^.to = other; p^.to = fine; other^ = 1; y := p^.to; y^ = 2;", false},
+	{"element_ok_whole_record", "s: []mut Link, @(escape=stored) other: ^mut int", "p := &mut s[0]; p^ = Link{other}; y := s[1].to; other^ = 1; y^ = 2;", false},
+	{"element_ok_field_of_a_record_element", "s: []mut Wrapped, @(escape=stored) other: ^mut int", "p := &mut s[0]; p^.link.to = other; y := s[1].link.to; other^ = 1; y^ = 2;", false},
+	{"element_ok_redefined_on_the_same_element", "s: []mut Link, @(escape=stored) other: ^mut int", "p := &mut s[0]; if (flip()) { p = &mut s[0]; } p^.to = other; y := s[1].to; other^ = 1; y^ = 2;", false},
+	{"element_ok_set_in_each_iteration", "s: []mut Link, @(escape=stored) fine: ^mut int", "for (i := 0; i < 2; i += 1) { p := &mut s[0]; p^.to = fine; y := s[1].to; y^ = 2; }", false},
+	{"element_ok_done_in_turn", "s: []mut Link, @(escape=stored) other: ^mut int", "p := &mut s[0]; p^.to = other; y := s[0].to; y^ = 2; other^ = 1;", false},
+	{"element_same_store_by_pointer_read_by_name", "s: []mut Link, @(escape=stored) other: ^mut int", "p := &mut s[0]; p^.to = other; y := s[0].to; other^ = 1; y^ = 2;", true},
+	{"element_same_store_by_name_read_by_pointer", "s: []mut Link, @(escape=stored) other: ^mut int", "s[0].to = other; p := &mut s[0]; y := p^.to; other^ = 1; y^ = 2;", true},
+	{"element_same_store_by_pointer_read_by_pointer", "s: []mut Link, @(escape=stored) other: ^mut int", "p := &mut s[0]; p^.to = other; y := p^.to; other^ = 1; y^ = 2;", true},
+	{"element_same_two_copies", "s: []mut Link", "p := &mut s[0]; x := p^.to; y := s[0].to; x^ = 1; y^ = 2;", true},
+	{"element_same_read_live_pointer", "s: []mut Link", "p := &mut s[0]; y := s[0].to; p^.to^ = 1; y^ = 2;", true},
+	{"element_same_copy_of_the_pointer", "s: []mut Link, @(escape=stored) other: ^mut int", "p := &mut s[0]; c := p; c^.to = other; y := s[0].to; other^ = 1; y^ = 2;", true},
+	{"element_same_store_unknown_index", "s: []mut Link, i: int, @(escape=stored) other: ^mut int", "p := &mut s[0]; s[i].to = other; y := p^.to; other^ = 1; y^ = 2;", true},
+	{"element_same_pointer_store_read_unknown_index", "s: []mut Link, i: int, @(escape=stored) other: ^mut int", "p := &mut s[0]; p^.to = other; y := s[i].to; other^ = 1; y^ = 2;", true},
+	{"element_same_pointer_store_call_on_view", "s: []mut Link, @(escape=stored) other: ^mut int", "p := &mut s[0]; p^.to = other; copy_across(s); y := s[1].to; other^ = 1; y^ = 2;", true},
+	{"element_either_in_a_branch", "s: []mut Link, @(escape=stored) other: ^mut int", "p := &mut s[0]; if (flip()) { p = &mut s[1]; } p^.to = other; y := s[1].to; other^ = 1; y^ = 2;", true},
+	{"element_either_chosen", "s: []mut Link, @(escape=stored) other: ^mut int", "p := &mut s[0] if flip() else &mut s[1]; p^.to = other; y := s[1].to; other^ = 1; y^ = 2;", true},
+	{"element_either_over_the_back_edge", "s: []mut Link, @(escape=stored) other: ^mut int", "p := &mut s[0]; for (i := 0; i < 2; i += 1) { p^.to = other; y := s[1].to; other^ = 1; y^ = 2; p = &mut s[1]; }", true},
+	{"element_either_read_over_the_back_edge", "s: []mut Link", "p := &mut s[0]; for (i := 0; i < 2; i += 1) { x := p^.to; y := s[1].to; x^ = 1; y^ = 2; p = &mut s[1]; }", true},
+	{"element_either_through_a_copy_over_the_back_edge", "s: []mut Link, @(escape=stored) other: ^mut int", "p := &mut s[0]; for (i := 0; i < 2; i += 1) { c := p; c^.to = other; y := s[1].to; other^ = 1; y^ = 2; p = &mut s[1]; }", true},
+	{"element_either_from_a_call_in_a_branch", "s: []mut Link, @(escape=stored) other: ^mut int", "p := &mut s[0]; if (flip()) { p = pick_second(s); } p^.to = other; y := s[1].to; other^ = 1; y^ = 2;", true},
+	{"element_either_from_a_call_over_the_back_edge", "s: []mut Link, @(escape=stored) other: ^mut int", "p := &mut s[0]; for (i := 0; i < 2; i += 1) { p^.to = other; y := s[1].to; other^ = 1; y^ = 2; p = pick_second(s); }", true},
+	{"element_either_set_through_a_pointer", "s: []mut Link, @(escape=stored) other: ^mut int", "p := &mut s[0]; pp := &mut p; pp^ = &mut s[1]; p^.to = other; y := s[1].to; other^ = 1; y^ = 2;", true},
+	{"element_either_from_a_call_set_through_a_pointer", "s: []mut Link, @(escape=stored) other: ^mut int", "p := &mut s[0]; pp := &mut p; pp^ = pick_second(s); p^.to = other; y := s[1].to; other^ = 1; y^ = 2;", true},
+	{"element_either_copy_from_a_call_over_the_back_edge", "s: []mut Link, @(escape=stored) other: ^mut int", "p := &mut s[0]; for (i := 0; i < 2; i += 1) { c := p; c^.to = other; y := s[1].to; other^ = 1; y^ = 2; p = pick_second(s); }", true},
+	{"element_either_read_from_a_call_in_a_branch", "s: []mut Link", "p := &mut s[0]; if (flip()) { p = pick_second(s); } x := p^.to; y := s[1].to; x^ = 1; y^ = 2;", true},
+	{"element_either_of_two_views", "s: []mut Link, t: []mut Link, @(escape=stored) other: ^mut int", "p := &mut s[0]; if (flip()) { p = &mut t[0]; } p^.to = other; y := t[0].to; other^ = 1; y^ = 2;", true},
+	{"element_either_from_a_parameter", "s: []mut Link, q: ^mut Link, @(escape=stored) other: ^mut int", "p := &mut s[0]; if (flip()) { p = q; } p^.to = other; y := q^.to; other^ = 1; y^ = 2;", true},
+	{"element_either_from_a_reborrow_of_a_pointer", "s: []mut Link, @(escape=stored) other: ^mut int", "p := &mut s[0]; q := &mut s[1]; if (flip()) { p = &mut q^; } p^.to = other; y := s[1].to; other^ = 1; y^ = 2;", true},
+	{"element_either_read_first_in_a_branch", "s: []mut Link, @(escape=stored) other: ^mut int", "p := &mut s[0]; if (flip()) { p = &mut s[1]; } p^.to = other; y := s[0].to; other^ = 1; y^ = 2;", true},
+	{"element_either_read_first_chosen", "s: []mut Link, @(escape=stored) other: ^mut int", "p := &mut s[0] if flip() else &mut s[1]; p^.to = other; y := s[0].to; other^ = 1; y^ = 2;", true},
+	{"element_either_read_first_over_the_back_edge", "s: []mut Link, @(escape=stored) other: ^mut int", "p := &mut s[1]; for (i := 0; i < 2; i += 1) { p^.to = other; y := s[0].to; other^ = 1; y^ = 2; p = &mut s[0]; }", true},
+	{"element_either_load_read_first", "s: []mut Link", "p := &mut s[0]; if (flip()) { p = &mut s[1]; } x := p^.to; y := s[0].to; x^ = 1; y^ = 2;", true},
+	{"element_ok_set_through_a_pointer_replaces", "s: []mut Link, @(escape=stored) other: ^mut int", "p := &mut s[0]; pp := &mut p; pp^ = &mut s[1]; p^.to = other; y := s[0].to; other^ = 1; y^ = 2;", false},
+	{"element_either_set_by_a_call", "@(escape=stored) s: []mut Link, @(escape=stored) other: ^mut int", "p := &mut s[0]; q := &mut s[1]; set_pointer(&mut p, q); p^.to = other; y := s[1].to; other^ = 1; y^ = 2;", true},
+	{"element_either_mixed_sources", "s: []mut Link, @(escape=stored) other: ^mut int", "p := &mut s[0] if flip() else pick_second(s); p^.to = other; y := s[1].to; other^ = 1; y^ = 2;", true},
+	{"element_either_copy_after_a_call_in_a_branch", "s: []mut Link, @(escape=stored) other: ^mut int", "p := &mut s[0]; if (flip()) { p = pick_second(s); } c := p; c^.to = other; y := s[1].to; other^ = 1; y^ = 2;", true},
+	{"element_call_either_read_first", "s: []mut Link, @(escape=stored) other: ^mut int", "p := &mut s[0]; if (flip()) { p = &mut s[1]; } keep(p, other); y := s[0].to; other^ = 1; y^ = 2;", true},
+	{"element_call_given_a_record_of_two", "s: []mut Link, @(escape=stored) other: ^mut int", "p := &mut s[0]; q := &mut s[1]; keep_second(Rec{p, q}, other); y := s[1].to; other^ = 1; y^ = 2;", true},
+	{"element_either_set_through_a_pointer_in_a_branch", "s: []mut Link, @(escape=stored) other: ^mut int", "p := &mut s[0]; pp := &mut p; if (flip()) { pp^ = &mut s[1]; } p^.to = other; y := s[0].to; other^ = 1; y^ = 2;", true},
+	{"element_ok_pointer_to_a_field_store_other", "s: []mut Wrapped, @(escape=stored) other: ^mut int", "h := &mut s[0].link; h^.to = other; y := s[1].link.to; other^ = 1; y^ = 2;", false},
+	{"element_ok_pointer_to_a_field_load_other", "s: []mut Wrapped", "h := &mut s[0].link; x := h^.to; y := s[1].link.to; x^ = 1; y^ = 2;", false},
+	{"element_ok_pointer_to_a_carrier_store_other", "s: []mut Link, @(escape=stored) other: ^mut int", "h := &mut s[0].to; h^ = other; y := s[1].to; other^ = 1; y^ = 2;", false},
+	{"element_ok_pointer_to_a_carrier_load_other", "s: []mut Link", "h := &mut s[0].to; x := h^; y := s[1].to; x^ = 1; y^ = 2;", false},
+	{"element_pointer_to_a_carrier_same", "s: []mut Link, @(escape=stored) other: ^mut int", "h := &mut s[0].to; h^ = other; y := s[0].to; other^ = 1; y^ = 2;", true},
+	{"element_pointer_to_a_carrier_load_same", "s: []mut Link", "h := &mut s[0].to; x := h^; y := s[0].to; x^ = 1; y^ = 2;", true},
+	{"element_either_field_in_a_branch", "s: []mut Wrapped, @(escape=stored) other: ^mut int", "h := &mut s[0].link; if (flip()) { h = &mut s[1].link; } h^.to = other; y := s[0].link.to; other^ = 1; y^ = 2;", true},
+	{"element_pointer_to_a_field_copy_of_the_other_field", "s: []mut Two_Links, @(escape=stored) other: ^mut int", "h := &mut s[0].a; h^.to = other; y := s[0].a.to; other^ = 1; y^ = 2;", true},
+	{"element_ok_pointer_to_a_field_beside_a_field", "s: []mut Two_Links, @(escape=stored) other: ^mut int", "h := &mut s[0].a; h^.to = other; y := s[0].b.to; other^ = 1; y^ = 2;", false},
+	{"element_pointer_to_a_field_read_back", "s: []mut Wrapped, @(escape=stored) other: ^mut int", "h := &mut s[0].link; h^.to = other; y := h^.to; other^ = 1; y^ = 2;", true},
+	{"element_pointer_to_a_field_load_same", "s: []mut Wrapped", "h := &mut s[0].link; x := h^.to; y := s[0].link.to; x^ = 1; y^ = 2;", true},
+	{"element_copy_of_the_view_read_other", "s: []mut Link, @(escape=stored) other: ^mut int", "t := s; p := &mut t[0]; p^.to = other; y := s[1].to; other^ = 1; y^ = 2;", true},
+	{"element_index_not_constant", "s: []mut Link, i: int, @(escape=stored) other: ^mut int", "p := &mut s[i]; p^.to = other; y := s[1].to; other^ = 1; y^ = 2;", true},
+	{"element_deep_same_element", "s: []mut Deep, @(escape=stored) other: ^mut int", "p := &mut s[0]; q := p^.inner; q^.to = other; y := s[0].inner^.to; other^ = 1; y^ = 2;", true},
+	{"element_deep_through_copy_of_held_carrier", "s: []mut Deep, @(escape=stored) other: ^mut int", "p := &mut s[0]; q := p^.inner; q^.to = other; y := q^.to; other^ = 1; y^ = 2;", true},
+	{"element_pointer_to_a_field_same", "s: []mut Wrapped, @(escape=stored) other: ^mut int", "h := &mut s[0].link; h^.to = other; y := s[0].link.to; other^ = 1; y^ = 2;", true},
+	{"element_pointer_into_a_pointer_same", "s: []mut Link, @(escape=stored) other: ^mut int", "p := &mut s[0]; h := &mut p^.to; h^ = other; y := s[0].to; other^ = 1; y^ = 2;", true},
+	{"element_call_same_element", "s: []mut Link, @(escape=stored) other: ^mut int", "keep(&mut s[0], other); y := s[0].to; other^ = 1; y^ = 2;", true},
+	{"element_call_through_pointer_same", "s: []mut Link, @(escape=stored) other: ^mut int", "p := &mut s[0]; keep(p, other); y := s[0].to; other^ = 1; y^ = 2;", true},
+	{"element_call_either", "s: []mut Link, @(escape=stored) other: ^mut int", "p := &mut s[0]; if (flip()) { p = &mut s[1]; } keep(p, other); y := s[1].to; other^ = 1; y^ = 2;", true},
+	{"element_call_either_over_the_back_edge", "s: []mut Link, @(escape=stored) other: ^mut int", "p := &mut s[0]; for (i := 0; i < 2; i += 1) { keep(p, other); y := s[1].to; other^ = 1; y^ = 2; p = &mut s[1]; }", true},
+	{"element_call_unknown_index", "s: []mut Link, i: int, @(escape=stored) other: ^mut int", "keep(&mut s[i], other); y := s[1].to; other^ = 1; y^ = 2;", true},
+	{"element_ok_call_other_element", "s: []mut Link, @(escape=stored) other: ^mut int", "keep(&mut s[0], other); y := s[1].to; other^ = 1; y^ = 2;", false},
+	{"element_ok_call_through_pointer_other", "s: []mut Link, @(escape=stored) other: ^mut int", "p := &mut s[0]; keep(p, other); y := s[1].to; other^ = 1; y^ = 2;", false},
+	{"element_ok_call_done_in_turn", "s: []mut Link, @(escape=stored) other: ^mut int", "keep(&mut s[0], other); y := s[0].to; y^ = 2; other^ = 1;", false},
+	// What is read back through a pointer to a field.
+	{"element_view_store_by_name_read_by_field_pointer", "s: []mut Wrapped, @(escape=stored) other: ^mut int", "s[0].link.to = other; h := &mut s[0].link; x := h^.to; other^ = 1; x^ = 2;", true},
+	{"element_view_store_by_name_read_by_field_pointer_two", "s: []mut Two_Links, @(escape=stored) other: ^mut int", "s[0].a.to = other; h := &mut s[0].a; x := h^.to; other^ = 1; x^ = 2;", true},
+	{"element_view_store_whole_read_by_field_pointer", "s: []mut Wrapped, @(escape=stored) other: ^mut int", "s[0] = Wrapped{Link{other}, 1}; h := &mut s[0].link; x := h^.to; other^ = 1; x^ = 2;", true},
+	{"element_view_store_by_field_pointer_read_by_field_pointer", "s: []mut Wrapped, @(escape=stored) other: ^mut int", "h := &mut s[0].link; h^.to = other; g := &mut s[0].link; x := g^.to; other^ = 1; x^ = 2;", true},
+	{"element_view_store_by_pointer_read_by_field_pointer", "s: []mut Wrapped, @(escape=stored) other: ^mut int", "p := &mut s[0]; p^.link.to = other; h := &mut s[0].link; x := h^.to; other^ = 1; x^ = 2;", true},
+	{"element_view_store_unknown_read_by_field_pointer", "s: []mut Wrapped, i: int, @(escape=stored) other: ^mut int", "s[i].link.to = other; h := &mut s[0].link; x := h^.to; other^ = 1; x^ = 2;", true},
+	{"element_view_store_by_name_read_by_deep_field_pointer", "s: []mut Deep_Wrap, @(escape=stored) other: ^mut int", "s[0].wrap.link.to = other; h := &mut s[0].wrap.link; x := h^.to; other^ = 1; x^ = 2;", true},
+	{"element_view_store_by_name_read_by_mid_field_pointer", "s: []mut Deep_Wrap, @(escape=stored) other: ^mut int", "s[0].wrap.link.to = other; h := &mut s[0].wrap; x := h^.link.to; other^ = 1; x^ = 2;", true},
+	{"element_view_store_by_name_read_whole_field", "s: []mut Wrapped, @(escape=stored) other: ^mut int", "s[0].link.to = other; h := &mut s[0].link; l := h^; other^ = 1; l.to^ = 2;", true},
+	{"element_view_copy_live_across_field_pointer_read", "s: []mut Wrapped", "x := s[0].link.to; h := &mut s[0].link; y := h^.to; x^ = 1; y^ = 2;", true},
+	{"element_record_store_by_name_read_by_field_pointer", "r: ^mut Wrapped, @(escape=stored) other: ^mut int", "r^.link.to = other; h := &mut r^.link; x := h^.to; other^ = 1; x^ = 2;", true},
+	{"element_record_store_whole_read_by_field_pointer", "r: ^mut Wrapped, @(escape=stored) other: ^mut int", "r^ = Wrapped{Link{other}, 1}; h := &mut r^.link; x := h^.to; other^ = 1; x^ = 2;", true},
+	{"element_record_store_by_field_pointer_read_by_name", "r: ^mut Wrapped, @(escape=stored) other: ^mut int", "h := &mut r^.link; h^.to = other; x := r^.link.to; other^ = 1; x^ = 2;", true},
+	{"element_array_store_by_name_read_by_field_pointer", "a: ^mut [2]Wrapped, @(escape=stored) other: ^mut int", "a^[0].link.to = other; h := &mut a^[0].link; x := h^.to; other^ = 1; x^ = 2;", true},
+	{"element_local_store_by_name_read_by_field_pointer", "@(escape=stored) other: ^mut int", "v := 1; w := Wrapped{Link{&mut v}, 1}; w.link.to = other; h := &mut w.link; x := h^.to; other^ = 1; x^ = 2;", true},
+	{"element_ok_view_read_by_field_pointer_done", "s: []mut Wrapped, @(escape=stored) other: ^mut int", "s[0].link.to = other; h := &mut s[0].link; x := h^.to; x^ = 2; other^ = 1;", false},
+	{"element_ok_record_other_field_pointer", "r: ^mut Two_Links, @(escape=stored) other: ^mut int", "r^.a.to = other; h := &mut r^.b; x := h^.to; other^ = 1; x^ = 2;", false},
 }
 
-// known-gaps.md "A pointer to one element of a view parameter stands for each".
+// known-gaps.md "A pointer to one field of a record stands for the others".
 @(private = "file")
 store_landing_over_rejected :: proc(entry: Stored_Reach_Case) -> bool {
-	switch entry.name {
-	case "pointer_to_element_copy_other", "pointer_to_element_live_other", "store_by_pointer_then_read_other", "two_pointers_to_elements":
-		return true
-	}
-	return false
+	return entry.name == "element_ok_record_other_field_pointer"
 }
 
 @(test)
