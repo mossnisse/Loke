@@ -239,7 +239,7 @@ prerequisites; the language changes themselves remain proposals.
    the listed borrow-checker gaps alone does not establish this property.
 
 2. **Prove the indexed slice remains unchanged across the loop (P1).**
-   [Section 6.4](design-review-2026-10-31.md#64-checked-arithmetic-and-bounds-in-loops)
+   [Section 6.3](design-review-2026-10-31.md#63-checked-arithmetic-and-bounds-in-loops)
    originally said the required length stability holds for a slice. A slice
    variable can be reassigned, including by reslicing itself; read-only elements
    do not make its header constant. This accepted program must panic:
@@ -260,7 +260,7 @@ prerequisites; the language changes themselves remain proposals.
    proposal remains useful with that prerequisite.
 
 3. **Preserve generic `Status(E)` fallthrough when designing the alias (P2).**
-   [Section 2.3](design-review-2026-10-31.md#23-status-is-resultunit-e)
+   [Section 2.3](design-review-2026-10-31.md#adopted-proposals), since adopted,
    originally permitted falling through only when the expanded written result
    named no generic argument. That excludes `Status(E)` when `E` is generic, even
    though its success is always empty. This currently compiles and succeeds:
@@ -288,7 +288,7 @@ prerequisites; the language changes themselves remain proposals.
 
 4. **Keep `any_view`'s storage and temporary rules when sharing its lowering
    (P2).**
-   [Section 2.4](design-review-2026-10-31.md#24-existentials-dyn-alone)
+   [Section 2.4](design-review-2026-10-31.md#adopted-proposals), since adopted,
    originally proposed using `dyn` lifetime rules with only implicit conversion
    and variadic packing as differences. An `any_view` also could not be a
    result, field, ordinary container element, or captured value; [ordinary `dyn` views](design.md#borrowed-dynamic-interface-values)
@@ -305,7 +305,7 @@ prerequisites; the language changes themselves remain proposals.
    temporaries live through the call, and the block-end local is gone with it.
 
 5. **Remove the incorrect small-value ABI premise (P2).**
-   [Section 6.5](design-review-2026-10-31.md#65-union-layout-and-small-values)
+   [Section 6.4](design-review-2026-10-31.md#64-union-layout-and-small-values)
    originally attributed address-only passing of slices and `Option(^T)` to
    `LARGE_VALUE_BYTES`. In [the emitter](src/emit_llvm_expr.odin) that threshold
    is 4,096 bytes, not two words; [parameter lowering](src/emit_llvm_abi.odin)

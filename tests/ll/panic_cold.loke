@@ -1,6 +1,6 @@
 package main;
 
-// design-review-2026-10-31.md "6.4 Checked arithmetic and bounds in loops":
+// compiler-architecture.md "Runtime and library boundary":
 // the runtime entries that end the program are declared `cold noreturn`, and
 // the branch to a checked operation's panic carries weights saying it is not
 // taken: an overflow and a bounds check here. `panic_begin` returns, to let a
