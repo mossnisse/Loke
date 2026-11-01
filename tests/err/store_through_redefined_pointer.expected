@@ -1,0 +1,12 @@
+L0641
+@11:8
+`other` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@13:3
+`other` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@23:8
+`other` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@25:3
+`other` cannot be used here: a mutable reborrow of it is still in use

@@ -10,6 +10,11 @@ checklist.
 
 ### Breaking changes
 
+- A store through a pointer redefined later in a loop now lands where that definition
+  points too. `p := &mut r^.a; for (...) { p^ = other; y := r^.b; other^ = 1; y^ = 2;
+  p = &mut r^.b; }` compiled with `y` and `other` live mutable paths to one place from the
+  second iteration on, and is now `L0641`. Upgrade by keeping the pointer on one place in
+  the loop, or by ending the use of the copy first.
 - A carrier stored through carriers is now a reborrow wherever it is read back from.
   `t := s; t[0].to = other; x := s[0].to; other^ = 1; x^ = 2;` compiled with two live
   mutable paths to `other`, and so did the same stored through a pointer to an element, a

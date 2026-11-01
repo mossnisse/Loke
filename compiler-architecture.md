@@ -491,7 +491,10 @@ Keep these contracts:
   has settled, each carrier the store copies is linked as a reborrow to the slots it
   landed in (`link_landed_stores`, `prov_link_landed`), from that store on
   (`Prov_Reborrow.from_store`), and only a store whose every copy is linked there
-  skips the parameter itself (`Prov_Event.linked`). A store to one place ends what
+  skips the parameter itself (`Prov_Event.linked`). Where the walk took a store's
+  carriers to point at one place (`Prov_Event.place_path`), the solve checks the
+  place loan bits they may hold there, as a definition may come over a loop's back
+  edge after the walk met the store (`publish_place_settled`). A store to one place ends what
   was taken from what it replaced, unless it stores what it read there
   (`run_severing_event`, `stores_what_slot_held`), and severing is solved last for
   that reason (`solve_severing`). A store through a `foreach` loop's `&mut` binding

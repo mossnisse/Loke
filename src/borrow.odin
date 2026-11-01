@@ -3685,8 +3685,9 @@ run_prov_event :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8, ended
 		}
 	case .Publish:
 		// Joins into every root the carrier may name.
+		settled := publish_place_settled(state, event, reach)
 		mem.zero_slice(state.merged)
-		state.merged_precision = path_precision(event.path)
+		state.merged_precision = path_precision(settled.path)
 		for source in event.sources {
 			state.merged_precision |= state.precision[source]
 			bytes_or(state.merged, reach_row(state, reach, source))
@@ -3706,10 +3707,39 @@ run_prov_event :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8, ended
 				if !bit_get(row, index) || ended[index] {
 					continue
 				}
-				publish_into_loan(state, reach, index, event, index == one, state.precision[slot])
+				publish_into_loan(state, reach, index, settled, index == one, state.precision[slot])
 			}
 		}
 	}
+}
+
+// A store whose carriers the walk took to point at one place (`Prov_Event.place_path`),
+// or that place's store with nothing known of where it lands when a borrow they may hold
+// here names another: `p` in a loop that ends in `p = &mut r^.b` names `r^.b` from the
+// second iteration on, as the walk had not reached when it met a store through `p`.
+@(private = "file")
+publish_place_settled :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8) -> Prov_Event {
+	if len(event.place_path) == 0 {
+		return event
+	}
+	for slot in event.into {
+		row := reach_row(state, reach, slot)
+		for loan, index in state.graph.place_loans {
+			if !loan.borrows || !bit_get(row, place_bit(state, index)) {
+				continue
+			}
+			for path in loan.paths {
+				for step, at in path[:min(len(path), len(event.place_path))] {
+					if step != event.place_path[at] {
+						settled := event
+						settled.path, settled.one_place, settled.place_path = nil, false, nil
+						return settled
+					}
+				}
+			}
+		}
+	}
+	return event
 }
 
 // The one loan a store's carriers name (`Prov_Event.one_place`), or -1 when it
@@ -3718,7 +3748,7 @@ run_prov_event :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8, ended
 // is the program's responsibility (design.md "What is not checked").
 @(private = "file")
 publish_one_loan :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8, ended: []bool) -> int {
-	if !event.one_place {
+	if !publish_place_settled(state, event, reach).one_place {
 		return -1
 	}
 	one := -1

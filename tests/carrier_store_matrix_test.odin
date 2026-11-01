@@ -1148,8 +1148,12 @@ Outer :: struct { two: Two, c: ^mut int }
 Holder :: struct { links: []mut Link }
 Items :: struct { items: [dynamic]Link }
 Wrap :: struct { links: [dynamic]Link }
+Ints :: struct { a: int, b: int }
+Cell :: struct { v: int }
+Cells :: struct { a: Cell, b: Cell }
 flip :: proc() -> bool { return true; }
 poke :: proc(links: []mut Link) {}
+pick :: proc(r: ^mut Two) -> ^mut ^mut int { return &mut r^.b; }
 `
 
 @(private = "file")
@@ -1303,6 +1307,31 @@ STORE_LANDING_CASES := [?]Stored_Reach_Case {
 	{"field_copy_whole_then_field", "s: []mut Two, @(escape=stored) other: ^mut int", "t := s; t[0] = Two{other, other}; y := s[0].b; other^ = 1; y^ = 2;", true},
 	{"field_pointer_same_field", "s: []mut Two, @(escape=stored) other: ^mut int", "p := &mut s[0]; p^.a = other; y := s[0].a; other^ = 1; y^ = 2;", true},
 	{"field_dynamic_same_field", "d: ^mut [dynamic]Two, @(escape=stored) other: ^mut int", "d^[0].a = other; y := d^[0].a; other^ = 1; y^ = 2;", true},
+	// A pointer that names `a` on the first iteration and `b` from the second on, which the
+	// walk has not seen by the time it meets what goes through it.
+	{"back_edge_store_then_read", "r: ^mut Two, @(escape=stored) other: ^mut int", "p := &mut r^.a; for (i := 0; i < 2; i += 1) { p^ = other; y := r^.b; other^ = 1; y^ = 2; p = &mut r^.b; }", true},
+	{"back_edge_write_beside_a_borrow", "r: ^mut Ints", "p := &mut r^.a; for (i := 0; i < 2; i += 1) { q := &mut r^.b; p^ = 1; q^ = 2; p = &mut r^.b; }", true},
+	{"back_edge_read_beside_a_borrow", "r: ^mut Ints", "p := &mut r^.a; for (i := 0; i < 2; i += 1) { q := &mut r^.b; n := p^; q^ = n; p = &mut r^.b; }", true},
+	{"back_edge_borrow_through_it", "r: ^mut Cells", "p := &mut r^.a; for (i := 0; i < 2; i += 1) { x := &mut p^.v; y := &mut r^.b.v; x^ = 1; y^ = 2; p = &mut r^.b; }", true},
+	{"back_edge_borrow_beside_a_use", "r: ^mut Cells", "p := &mut r^.a; for (i := 0; i < 2; i += 1) { y := &mut r^.b.v; p^.v = 1; y^ = 2; p = &mut r^.b; }", true},
+	{"back_edge_while_form", "r: ^mut Ints", "p := &mut r^.a; i := 0; for (i < 2) { q := &mut r^.b; p^ = 1; q^ = 2; p = &mut r^.b; i += 1; }", true},
+	{"back_edge_by_a_copy", "r: ^mut Ints", "p := &mut r^.a; for (i := 0; i < 2; i += 1) { q := &mut r^.b; c := p; c^ = 1; q^ = 2; p = &mut r^.b; }", true},
+	{"back_edge_in_a_branch_of_the_loop", "r: ^mut Ints, go: bool", "p := &mut r^.a; for (i := 0; i < 2; i += 1) { q := &mut r^.b; p^ = 1; q^ = 2; if (go) { p = &mut r^.b; } }", true},
+	{"back_edge_elements_of_an_array", "r: ^mut [2]int", "p := &mut r^[0]; for (i := 0; i < 2; i += 1) { q := &mut r^[1]; p^ = 1; q^ = 2; p = &mut r^[1]; }", true},
+	{"back_edge_nested_loop", "r: ^mut Ints", "p := &mut r^.a; for (i := 0; i < 2; i += 1) { for (j := 0; j < 2; j += 1) { q := &mut r^.b; p^ = 1; q^ = 2; } p = &mut r^.b; }", true},
+	{"back_edge_ok_fixed_field", "r: ^mut Ints", "p := &mut r^.a; for (i := 0; i < 2; i += 1) { q := &mut r^.b; p^ = 1; q^ = 2; p = &mut r^.a; }", false},
+	{"back_edge_ok_set_before_use", "r: ^mut Ints", "for (i := 0; i < 2; i += 1) { p := &mut r^.a; q := &mut r^.b; p^ = 1; q^ = 2; }", false},
+	{"back_edge_ok_redefined_before_use", "r: ^mut Ints", "p := &mut r^.b; for (i := 0; i < 2; i += 1) { p = &mut r^.a; q := &mut r^.b; p^ = 1; q^ = 2; p = &mut r^.b; }", false},
+	{"back_edge_ok_after_the_loop_done", "r: ^mut Ints", "p := &mut r^.a; for (i := 0; i < 2; i += 1) { p^ = 1; p = &mut r^.b; } q := &mut r^.b; q^ = 2;", false},
+	{"back_edge_store_by_a_copy", "r: ^mut Two, @(escape=stored) other: ^mut int", "p := &mut r^.a; for (i := 0; i < 2; i += 1) { c := p; c^ = other; y := r^.b; other^ = 1; y^ = 2; p = &mut r^.b; }", true},
+	{"back_edge_store_after_a_call", "r: ^mut Two, @(escape=stored) other: ^mut int", "p := &mut r^.a; for (i := 0; i < 2; i += 1) { p^ = other; y := r^.b; other^ = 1; y^ = 2; p = pick(r); }", true},
+	{"back_edge_store_set_through_a_pointer", "r: ^mut Two, @(escape=stored) other: ^mut int", "p := &mut r^.a; pp := &mut p; for (i := 0; i < 2; i += 1) { p^ = other; y := r^.b; other^ = 1; y^ = 2; pp^ = &mut r^.b; }", true},
+	{"back_edge_store_replaces_at_first", "r: ^mut Two, @(escape=stored) other: ^mut int, @(escape=stored) fine: ^mut int", "p := &mut r^.a; for (i := 0; i < 2; i += 1) { x := r^.b; p^ = fine; x^ = 1; y := r^.b; p^ = other; other^ = 1; y^ = 2; p = &mut r^.b; }", true},
+	{"back_edge_store_stays_on_its_field", "r: ^mut Two, @(escape=stored) other: ^mut int", "p := &mut r^.a; for (i := 0; i < 2; i += 1) { p^ = other; y := r^.b; other^ = 1; y^ = 2; p = &mut r^.a; }", true},
+	{"back_edge_store_redefined_first", "r: ^mut Two, @(escape=stored) other: ^mut int", "p := &mut r^.b; for (i := 0; i < 2; i += 1) { p = &mut r^.a; p^ = other; y := r^.b; other^ = 1; y^ = 2; p = &mut r^.b; }", true},
+	{"back_edge_ok_store_sequence", "r: ^mut Two, @(escape=stored) other: ^mut int, @(escape=stored) second: ^mut int", "p := &mut r^.a; p^ = other; y := r^.b; other^ = 1; y^ = 2; p = &mut r^.b; p^ = second;", false},
+	{"back_edge_ok_store_replaces_on_its_field", "r: ^mut Two, @(escape=stored) other: ^mut int, @(escape=stored) fine: ^mut int", "p := &mut r^.a; for (i := 0; i < 2; i += 1) { p^ = other; p^ = fine; other^ = 1; p = &mut r^.a; }", false},
+	{"back_edge_ok_nested_borrow", "r: ^mut Cells, @(escape=stored) other: ^mut int", "p := &mut r^.a; q := &mut p^.v; q^ = 1;", false},
 }
 
 // known-gaps.md "A pointer to one element of a view parameter stands for each".

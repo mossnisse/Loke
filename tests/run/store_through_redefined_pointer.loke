@@ -1,0 +1,26 @@
+// design.md "Weakening and reborrows": what no loop repeats stays narrow. A store through a
+// pointer used only before it is redefined still lands in the one place it names, so what
+// is read from beside it is free. A conflict is in tests/err/store_through_redefined_pointer.loke.
+package main;
+
+import "core:fmt";
+
+Two :: struct { a: ^mut int, b: ^mut int }
+
+before_the_redefinition :: proc(r: ^mut Two, @(escape=stored) other: ^mut int, @(escape=stored) second: ^mut int) {
+	p := &mut r^.a;
+	p^ = other;
+	y := r^.b;
+	other^ += 1;
+	y^ += 10;
+	p = &mut r^.b;
+	p^ = second;
+}
+
+main :: proc() {
+	a := 0; b := 0; c := 0; d := 0;
+	two := Two{&mut a, &mut b};
+	before_the_redefinition(&mut two, &mut c, &mut d);
+	two.b^ += 100;
+	fmt.println(b, c, d);
+}

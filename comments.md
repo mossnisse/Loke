@@ -3512,6 +3512,14 @@ back needed more: as a plain copy it would conflict with the next removal, which
 rejected two of them. It is a `Prov_Reborrow.moved` link, as a reordering's is, which leaves the
 container free and still lets a copy's source reach the value.
 
+Narrowing a store to the place its pointer points at had a hole of its own, found while
+looking at this: the walk asks what the definitions it has met say, and one that comes over a
+loop's back edge is not among them. Only a store depended on that alone: a read, a write, or a
+borrow through such a pointer already conflicts by the place loan bits the solve carries around
+the loop. So the store now asks those bits too (`publish_place_settled`), rather than the walk
+meeting every definition first. A definition holding no such bit, as a pointer a call returns,
+is a whole reborrow of what it came from, which any use of that between conflicts with.
+
 ### A record by value hands over what it reaches
 
 Passing a carrier has long used what it points to (`prov_use_reached`), so a copy read out

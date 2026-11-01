@@ -197,6 +197,10 @@ Prov_Event :: struct {
 	// reaching has settled, whose earlier values it ends as a `Def` does.
 	one_place:     bool,
 	replaces:      []int,
+	// `Publish`: what the walk took its carriers to point at, which `path` starts with:
+	// what the definitions it had met said, so one over a loop's back edge may say more
+	// (`publish_place_settled`).
+	place_path:    []Proj_Step,
 	// `Publish`: each carrier it copies is linked as a reborrow to every slot it
 	// may land in: one carrier, which `prov_reborrow` links, or a value holding
 	// carriers, each on a path of one type, to the slots of that type where it
@@ -7531,13 +7535,13 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 					paths := prov_offset_paths(graph, offsets) if found && !merged else nil
 					if len(paths) == 1 && prov_offsets_agree(graph, through, offsets) && prov_path_names_one_place(paths[0]) &&
 					   prov_path_names_one_place(below) {
-						publish.path, publish.one_place = prov_concat_path(graph, paths[0], below), true
+						publish.path, publish.one_place, publish.place_path = prov_concat_path(graph, paths[0], below), true, paths[0]
 						graph.has_replacing_store = true
 					} else if lands == nil && publish.linked && len(paths) == 1 && prov_offsets_agree(graph, through, offsets) &&
 					   prov_path_names_one_place(paths[0]) {
 						// It lands only in the slots along the place it names, whose
 						// copy is linked to them.
-						publish.path = prov_concat_path(graph, paths[0], below)
+						publish.path, publish.place_path = prov_concat_path(graph, paths[0], below), paths[0]
 					}
 					if len(sources) > 0 || publish.one_place {
 						prov_emit(graph, publish)

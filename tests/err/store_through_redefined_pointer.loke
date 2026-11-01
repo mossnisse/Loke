@@ -1,0 +1,31 @@
+// design.md "Weakening and reborrows": a pointer redefined later in a loop names that place
+// too from the next iteration on, so a store through it may land there. The narrower check
+// of the first iteration alone let `y` and `other` be live mutable paths to one place.
+package main;
+
+Two :: struct { a: ^mut int, b: ^mut int }
+
+through_the_pointer :: proc(r: ^mut Two, @(escape=stored) other: ^mut int) {
+	p := &mut r^.a;
+	for (i := 0; i < 2; i += 1) {
+		p^ = other;
+		y := r^.b;
+		other^ = 1;
+		y^ = 2;
+		p = &mut r^.b;
+	}
+}
+
+through_a_copy :: proc(r: ^mut Two, @(escape=stored) other: ^mut int) {
+	p := &mut r^.a;
+	for (i := 0; i < 2; i += 1) {
+		c := p;
+		c^ = other;
+		y := r^.b;
+		other^ = 1;
+		y^ = 2;
+		p = &mut r^.b;
+	}
+}
+
+main :: proc() {}
