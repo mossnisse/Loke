@@ -4,12 +4,12 @@
 package main;
 import "core:fmt";
 
-Tracked :: struct { name: string }
+Tracked :: move_only struct { name: string }
 impl Tracked {
 	done :: hook(drop) proc(self: inout Tracked) { if (self.name.len() > 0) { fmt.println("drop", self.name); } }
 }
 
-Owner :: struct { name: string, items: [dynamic]int }
+Owner :: move_only struct { name: string, items: [dynamic]int }
 impl Owner {
 	done :: hook(drop) proc(self: inout Owner) { fmt.println("drop", self.name); }
 }

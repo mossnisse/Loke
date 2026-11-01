@@ -15,7 +15,7 @@ impl Box {
 	grow :: proc(self: inout Box, by: int) -> int { self.n += by; return self.n; }
 }
 
-Token :: struct { n: int }
+Token :: move_only struct { n: int }
 impl Token { release :: hook(drop) proc(self: inout Token) { fmt.println("drop", self.n); } }
 
 Holder :: struct { view: dyn Shape }

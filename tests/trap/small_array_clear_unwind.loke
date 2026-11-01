@@ -3,7 +3,7 @@ package main;
 import "core:container";
 import "core:fmt";
 
-Tracked :: struct { id: int }
+Tracked :: move_only struct { id: int }
 impl Tracked {
 	release :: hook(drop) proc(self: inout Tracked) {
 		id := self.id;

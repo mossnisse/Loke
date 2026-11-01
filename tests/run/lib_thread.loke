@@ -10,7 +10,7 @@ import "core:sync";
 import "core:thread";
 
 // Every thread drops its own copy; the zero one is inert.
-Noisy :: struct { id: int }
+Noisy :: move_only struct { id: int }
 
 impl Noisy {
 	release :: hook(drop) proc(self: inout Noisy) {

@@ -37,7 +37,7 @@ erase :: proc(s: Source) -> dyn Producer { return (dyn Producer)(&s); }
 
 // A type with a custom drop hook cannot be taken apart by a consuming
 // destructure: the hook would have to run on the value being decomposed.
-Handle :: struct { valid: bool, id: int }
+Handle :: move_only struct { valid: bool, id: int }
 released: int;
 impl Handle {
 	release :: hook(drop) proc(self: inout Handle) {

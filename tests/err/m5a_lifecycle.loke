@@ -33,7 +33,7 @@ impl Move_Only {
 	}
 }
 
-Resource :: struct { live: bool }
+Resource :: move_only struct { live: bool }
 
 impl Resource {
 	release :: hook(drop) proc(self: inout Resource) { self.live = false; }

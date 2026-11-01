@@ -5,7 +5,7 @@ package main;
 
 released: int;
 
-Cache :: struct { n: int }
+Cache :: move_only struct { n: int }
 
 impl Cache {
 	release :: hook(drop) proc(self: inout) {

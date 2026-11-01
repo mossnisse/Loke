@@ -9,7 +9,7 @@ Pair :: struct { a: int, b: int }
 
 Choice :: union { number: int, flag: bool }
 
-Res :: struct { id: int }
+Res :: move_only struct { id: int }
 
 impl Res {
 	release :: hook(drop) proc(self: inout Res) { self.id = 0; }

@@ -5,7 +5,7 @@ package main;
 
 import "core:fmt";
 
-Guard :: struct { name: string }
+Guard :: move_only struct { name: string }
 impl Guard {
 	done :: hook(drop) proc(self: inout Guard) {
 		if (self.name.len() > 0) { fmt.println("cleanup", self.name); }

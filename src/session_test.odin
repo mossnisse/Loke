@@ -775,7 +775,7 @@ main :: proc() { value := data.Value{item = 1}; fmt.println(value, typeid_of(dat
 	selected_missing, _ := strings.replace_all(text, "provider:factory", "provider:other", context.temp_allocator)
 	provider_text := "package provider; @(public) factory :: proc() -> Allocator { return {}; }"
 	if !write_session_source(t, path, text) || !write_session_source(t, provider, provider_text) ||
-	   !write_session_source(t, data, "@(public) package data; Value :: struct { item: int }") { return }
+	   !write_session_source(t, data, "@(public) package data; Value :: move_only struct { item: int }") { return }
 	s: Compilation_Session
 	defer destroy_session(&s)
 	config := session_test_config()
@@ -784,7 +784,7 @@ main :: proc() { value := data.Value{item = 1}; fmt.println(value, typeid_of(dat
 		switch edit {
 		case 1:
 			changed := `@(public) package data; import "core:fmt";
-Value :: struct { item: int }
+Value :: move_only struct { item: int }
 impl Value {
     format :: proc(self: ^, writer: fmt.Writer, options: fmt.Options) { fmt.concat_to(writer, "changed"); }
     done :: hook(drop) proc(self: inout) {}

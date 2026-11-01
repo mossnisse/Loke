@@ -8,7 +8,7 @@ package main; import "core:fmt";
 // The registration flag is what makes that distinction runtime-visible: it is
 // set only after the initializer has produced a value.
 
-Res :: struct { id: int }
+Res :: move_only struct { id: int }
 
 impl Res {
 	release :: hook(drop) proc(self: inout Res) { fmt.println(self.id); }

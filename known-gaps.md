@@ -18,7 +18,7 @@ non-generic record is held to this with `L0488`; a generic one is not:
 package main;
 import "core:fmt";
 
-G :: struct($T: type) { value: T }
+G :: move_only struct($T: type) { value: T }
 
 impl G($T) {
     release :: hook(drop) proc(self) { fmt.println("drop"); } // should be L0488: `self: inout`
@@ -152,7 +152,7 @@ current borrows live until that cleanup, including borrows stored later:
 ```loke
 package main;
 import "core:fmt";
-Read :: struct { data: []int }
+Read :: move_only struct { data: []int }
 impl Read {
     retire :: hook(drop) proc(self: inout Read) {
         if (self.data.len() > 0) { fmt.println(self.data[0]); }
@@ -188,7 +188,7 @@ type's global write effects:
 package main;
 import "core:fmt";
 values: [dynamic]int = {};
-Clear :: struct { id: int }
+Clear :: move_only struct { id: int }
 impl Clear {
     retire :: hook(drop) proc(self: inout Clear) { values = {}; }
 }

@@ -7,7 +7,7 @@ package main; import "core:fmt";
 //
 // So the frame's own managed local is dropped here and the TLS value is not.
 
-Res :: struct { id: int }
+Res :: move_only struct { id: int }
 
 impl Res {
 	release :: hook(drop) proc(self: inout Res) { fmt.println(self.id); }

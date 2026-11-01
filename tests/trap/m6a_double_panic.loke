@@ -6,7 +6,7 @@ package main; import "core:fmt";
 // cleanup runs, the second panic stops everything, and the outer frame's
 // registered drop never runs.
 
-Res :: struct { id: int }
+Res :: move_only struct { id: int }
 
 impl Res {
 	release :: hook(drop) proc(self: inout Res) {

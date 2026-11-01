@@ -56,7 +56,7 @@ foreign host {
 	env_dropped: i32;
 }
 
-Tracked :: struct { value: f64 }
+Tracked :: move_only struct { value: f64 }
 
 impl Tracked {
 	// Only a value the host set records, so the thread that never sets one

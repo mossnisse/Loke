@@ -4,7 +4,7 @@ package main; import "core:fmt";
 // storage": "A use that requires a value is valid only in the definitely-live
 // state."
 
-Res :: struct { id: int }
+Res :: move_only struct { id: int }
 
 impl Res {
 	release :: hook(drop) proc(self: inout Res) { self.id = 0; }

@@ -8,7 +8,7 @@ package main; import "core:fmt";
 // in the same registration list as the witness without displacing it: the
 // witness still drops, and the walk still reaches the end and terminates.
 
-Witness :: struct { id: int }
+Witness :: move_only struct { id: int }
 
 impl Witness {
 	release :: hook(drop) proc(self: inout Witness) { fmt.println(self.id); }

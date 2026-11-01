@@ -12,7 +12,7 @@ impl Key {
 		if (self.temporary) { panic("temporary key drop"); }
 	}
 }
-Resource :: struct { id: int }
+Resource :: move_only struct { id: int }
 impl Resource {
 	release :: hook(drop) proc(self: inout Resource) { fmt.println("drop", self.id); }
 }

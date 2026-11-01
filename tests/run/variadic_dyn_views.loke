@@ -16,7 +16,7 @@ impl int {
 	show :: proc(self) -> int { return self; }
 }
 
-Guard :: struct { id: int }
+Guard :: move_only struct { id: int }
 impl Guard {
 	release :: hook(drop) proc(self: inout Guard) { fmt.println("drop", self.id); }
 	show :: proc(self) -> int { return self.id; }

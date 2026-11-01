@@ -8,7 +8,7 @@ impl Key {
     hash :: proc(self, seed: uint) -> uint { if (self.id == 2) { panic("hash failed"); } return self.id.hash(seed); }
     same :: operator(==) proc(a, b: Key) -> bool { return a.id == b.id; }
 }
-Res :: struct { id: int }
+Res :: move_only struct { id: int }
 impl Res {
     release :: hook(drop) proc(self: inout Res) { fmt.println("drop", self.id); }
 }

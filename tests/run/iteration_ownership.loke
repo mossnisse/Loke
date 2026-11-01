@@ -46,7 +46,7 @@ impl Lender_Iterator {
 
 drops: int;
 Sequence :: struct { count: int, }
-Cursor :: struct { at: int, count: int, active: bool, }
+Cursor :: move_only struct { at: int, count: int, active: bool, }
 impl Sequence {
 	Element :: int;
 	Iterator :: Cursor;

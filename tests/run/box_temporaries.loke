@@ -6,7 +6,7 @@ package main;
 import "core:fmt";
 import "core:mem";
 
-Noisy :: struct { id: int }
+Noisy :: move_only struct { id: int }
 
 impl Noisy {
 	bye :: hook(drop) proc(self: inout Noisy) { fmt.println("drop", self.id); }

@@ -14,7 +14,7 @@ release :: proc(@(allocator_reset) allocator: Allocator) {
 
 // Provenance changes no cleanup lowering: this managed local still drops once on
 // the way out, exactly as it did before the analysis existed.
-Res :: struct { id: int }
+Res :: move_only struct { id: int }
 
 impl Res {
 	release :: hook(drop) proc(self: inout Res) { self.id = 0; }

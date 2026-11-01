@@ -50,7 +50,7 @@ finished: static sync.Atomic(int) = {};
 // drops the same handle thousands of times, and the payload must be dropped
 // exactly once — after the last strong handle, and never before.
 @(private)
-Payload :: struct {
+Payload :: move_only struct {
 	id: int,
 }
 

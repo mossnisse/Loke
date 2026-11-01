@@ -7,7 +7,7 @@ package main; import "core:fmt";
 // here prints, so a missing cleanup is a line that is not in the expected output
 // and a doubled one is a line that appears twice.
 
-Res :: struct { id: int }
+Res :: move_only struct { id: int }
 
 impl Res {
 	release :: hook(drop) proc(self: inout Res) {

@@ -4,7 +4,7 @@ package main; import "core:fmt";
 // return the runtime's detach drops each live managed `thread_local` value, so
 // the same declaration that a panic leaves alone is cleaned up here.
 
-Res :: struct { id: int }
+Res :: move_only struct { id: int }
 
 impl Res {
 	release :: hook(drop) proc(self: inout Res) { fmt.println(self.id); }

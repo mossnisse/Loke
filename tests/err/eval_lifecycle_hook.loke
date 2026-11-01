@@ -4,7 +4,7 @@ package main;
 // value whose drop or copy would run a hand-written hook, so such a record is
 // refused where evaluation makes it, folded or built, alone or held in another
 // record or a union constant, instead of being evaluated with its hook skipped.
-Tracked :: struct { n: int }
+Tracked :: move_only struct { n: int }
 impl Tracked {
 	release :: hook(drop) proc(self: inout Tracked) { panic("drop ran"); }
 }

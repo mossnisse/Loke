@@ -53,7 +53,7 @@ counted :: proc(fail: bool) -> Result(int, int) {
 	return .ok(count);
 }
 
-Tracked :: struct { name: string }
+Tracked :: move_only struct { name: string }
 impl Tracked {
 	done :: hook(drop) proc(self: inout Tracked) { fmt.println("drop", self.name); }
 }

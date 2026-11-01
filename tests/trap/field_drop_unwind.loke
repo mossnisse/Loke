@@ -6,7 +6,7 @@
 package main;
 import "core:fmt";
 import "core:unsafe";
-Tracked :: struct { id: int }
+Tracked :: move_only struct { id: int }
 impl Tracked {
     release :: hook(drop) proc(self: inout Tracked) {
         if (self.id == 0) { return; }

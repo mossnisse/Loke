@@ -19,7 +19,7 @@ impl Key {
 		if (armed && self.id == 2) { panic("key drop failed"); }
 	}
 }
-Value :: struct { id: int }
+Value :: move_only struct { id: int }
 impl Value {
 	release :: hook(drop) proc(self: inout Value) { values += 1; }
 }

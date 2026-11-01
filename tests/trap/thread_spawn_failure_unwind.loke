@@ -20,7 +20,7 @@ foreign kernel32 {
 	current_process :: proc "stdcall" () -> int ---;
 }
 
-Ticket :: struct { id: int }
+Ticket :: move_only struct { id: int }
 impl Ticket {
 	release :: hook(drop) proc(self: inout Ticket) { fmt.println("ticket dropped", self.id); }
 }

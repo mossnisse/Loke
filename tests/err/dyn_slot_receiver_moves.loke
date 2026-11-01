@@ -9,7 +9,7 @@ Read :: interface($Self: type) { slot get: proc(self) -> int; }
 Box :: struct { n: int }
 impl Box { get :: proc(self) -> int { return self.n; } }
 
-Token :: struct { n: int }
+Token :: move_only struct { n: int }
 impl Token { release :: hook(drop) proc(self: inout Token) {} }
 
 after :: proc(token: move Token, b: ^Box) -> dyn Read { return (dyn Read)(b); }

@@ -2,7 +2,7 @@
 
 import "core:fmt";
 
-Resource :: struct { id: int }
+Resource :: move_only struct { id: int }
 impl Resource {
 	release :: hook(drop) proc(self: inout Resource) {
 		fmt.println("cleanup ran", self.id);

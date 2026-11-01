@@ -2,7 +2,7 @@ package main;
 import "core:fmt";
 
 Pair :: struct { first: int, second: int }
-Resource :: struct { id: int }
+Resource :: move_only struct { id: int }
 impl Resource {
 	release :: hook(drop) proc(self: inout Resource) { fmt.println("drop", self.id); }
 }

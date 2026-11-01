@@ -169,7 +169,7 @@ impl Pool {
 	Dropping an endpoint closes its side. Dropping the ring drops the items
 	still queued. It is move-only and has no zero value.
 */
-Ring :: struct($T: type) {
+Ring :: move_only struct($T: type) {
 	// and fields private to the package
 }
 

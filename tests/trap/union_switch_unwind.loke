@@ -4,7 +4,7 @@ package main; import "core:fmt";
 // on every exit — including the one a panic takes. The outer locals unwind
 // after it, in reverse registration order, and nothing is dropped twice.
 
-Owned :: struct { id: int }
+Owned :: move_only struct { id: int }
 impl Owned {
 	release :: hook(drop) proc(self: inout Owned) { fmt.println("drop", self.id); }
 }

@@ -4,7 +4,7 @@ package main; import "core:fmt";
 // its live elements, as a `string` does to a `string_view`.
 
 drops: int;
-Res :: struct { id: int }
+Res :: move_only struct { id: int }
 impl Res { release :: hook(drop) proc(self: inout Res) { drops += 1; } }
 
 total :: proc(xs: []int) -> int { n := 0; foreach (x in xs) { n += x; } return n; }

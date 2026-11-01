@@ -1853,7 +1853,7 @@ ownership_worklist_converges_past_sixty_four_back_edges :: proc(t: ^testing.T) {
 	strings.builder_init(&b)
 	defer strings.builder_destroy(&b)
 	fmt.sbprintln(&b, "package main;")
-	fmt.sbprintln(&b, "Box :: struct { value: int }")
+	fmt.sbprintln(&b, "Box :: move_only struct { value: int }")
 	fmt.sbprintln(&b, "impl Box { release :: hook(drop) proc(self: inout Box) {} }")
 	fmt.sbprintln(&b, "main :: proc() {")
 	fmt.sbprintln(&b, "x := Box{1};")

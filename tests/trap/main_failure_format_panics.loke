@@ -5,7 +5,7 @@
 package main;
 import "core:fmt";
 
-Error :: struct { id: int }
+Error :: move_only struct { id: int }
 impl Error {
 	format :: proc(self, w: fmt.Writer, o: fmt.Options) { panic("formatter failed"); }
 	done :: hook(drop) proc(self: inout Error) { fmt.println("drop error", self.id); }

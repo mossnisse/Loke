@@ -5,7 +5,7 @@ import "core:fmt";
 DIRECT :: [2]int{21, 22};
 
 source_drops: int;
-Source_Item :: struct { id: int }
+Source_Item :: move_only struct { id: int }
 impl Source_Item {
 	release :: hook(drop) proc(self: inout Source_Item) {
 		source_drops += 1;
