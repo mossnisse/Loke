@@ -14,7 +14,7 @@ checklist.
   array is now checked as one in a named array is
   ([Weakening and reborrows](design.md#weakening-and-reborrows)). Taking two
   mutable copies of one element, using a carrier stored in an element while a copy
-  of it is in use, and using the elements after a call that may copy between them
+  of it is in use, and using two elements after a call that may copy between them
   all used to compile, and are now `L0641`. Upgrade by ending one use before the
   next, as for a named array.
 - An assignment counts as reordering its targets only when each value names a

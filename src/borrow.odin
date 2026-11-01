@@ -239,6 +239,16 @@ Prov_Loan :: struct {
 	pointee: int,
 }
 
+// What a later event wants of a slot's value. A `Kept` value is only held on to by
+// a use of a view of its storage (`Prov_Event.keeps_live`): what it borrows must
+// last, but nothing reads it, so it suspends nothing it reborrows
+// (`live_reborrow_of`).
+Slot_Use :: enum u8 {
+	None,
+	Kept,
+	Used,
+}
+
 // A carrier value the analysis follows: a variable, parameter or expression
 // temporary. Reaching loans are per slot, so overwriting one carrier ends only
 // the value that was overwritten.
@@ -1536,7 +1546,7 @@ Prov_State :: struct {
 	// Scratch: the loans one event ends, and their indices.
 	released: []bool,
 	released_indices: [dynamic]int,
-	live:    []bool,
+	live:    []Slot_Use,
 	uses:    []Span,
 	merged:  []u8,
 }
@@ -1556,14 +1566,14 @@ place_bit :: proc(state: ^Prov_State, place_loan: int) -> int {
 // The later use keeping a place loan lent: of its snapshot, or else of a live
 // slot carrying its bit. False when nothing live carries it.
 @(private = "file")
-place_loan_use :: proc(state: ^Prov_State, place_loan: int, live: []bool, uses: []Span) -> (Span, bool) {
+place_loan_use :: proc(state: ^Prov_State, place_loan: int, live: []Slot_Use, uses: []Span) -> (Span, bool) {
 	snapshot := state.graph.place_loans[place_loan].slot
-	if live[snapshot] {
+	if live[snapshot] != .None {
 		return uses[snapshot], true
 	}
 	bit := place_bit(state, place_loan)
 	for slot in 0 ..< state.slots {
-		if live[slot] && bit_get(reach_row(state, state.reach, slot), bit) {
+		if live[slot] != .None && bit_get(reach_row(state, state.reach, slot), bit) {
 			return uses[slot], true
 		}
 	}
@@ -1580,14 +1590,14 @@ bit_get :: proc(row: []u8, index: int) -> bool {
 Live_Loans :: struct {
 	state: ^Prov_State,
 	slots: []int, // nil means every slot in `state`, filtered by `live`
-	live:  []bool,
+	live:  []Slot_Use,
 	at:    int,
 	index: int,
 	row:   []u8,
 }
 
 @(private = "file")
-live_loans :: proc(state: ^Prov_State, live: []bool, slots: []int = nil) -> Live_Loans {
+live_loans :: proc(state: ^Prov_State, live: []Slot_Use, slots: []int = nil) -> Live_Loans {
 	return Live_Loans{state = state, live = live, slots = slots, at = -1, index = -1}
 }
 
@@ -1601,7 +1611,7 @@ next_live_loan :: proc(it: ^Live_Loans) -> (slot: int, index: int, ok: bool) {
 			if it.at >= count {
 				return 0, 0, false
 			}
-			if it.live != nil && !it.live[it.slots == nil ? it.at : it.slots[it.at]] {
+			if it.live != nil && it.live[it.slots == nil ? it.at : it.slots[it.at]] == .None {
 				continue
 			}
 			it.row = reach_row(it.state, it.state.reach, it.slots == nil ? it.at : it.slots[it.at])
@@ -3339,8 +3349,8 @@ prepare_state :: proc(state: ^Prov_State) -> bool {
 		block.ended_exit = make([]bool, state.loans, graph.alloc)
 		block.severed_entry = make([]bool, len(graph.reborrows), graph.alloc)
 		block.severed_exit = make([]bool, len(graph.reborrows), graph.alloc)
-		block.live_entry = make([]bool, max(state.slots, 1), graph.alloc)
-		block.live_exit = make([]bool, max(state.slots, 1), graph.alloc)
+		block.live_entry = make([]Slot_Use, max(state.slots, 1), graph.alloc)
+		block.live_exit = make([]Slot_Use, max(state.slots, 1), graph.alloc)
 		block.use_entry = make([]Span, max(state.slots, 1), graph.alloc)
 		block.use_exit = make([]Span, max(state.slots, 1), graph.alloc)
 		block.prov_visited = false
@@ -3360,7 +3370,7 @@ prepare_state :: proc(state: ^Prov_State) -> bool {
 		}
 	}
 	state.severable = severable[:]
-	state.live = make([]bool, max(state.slots, 1), graph.alloc)
+	state.live = make([]Slot_Use, max(state.slots, 1), graph.alloc)
 	state.uses = make([]Span, max(state.slots, 1), graph.alloc)
 	state.merged = make([]u8, max(state.row_bytes, 1), graph.alloc)
 	settle_pool_joins(state)
@@ -4581,8 +4591,8 @@ solve_loan_liveness :: proc(state: ^Prov_State) {
 		for successor in block.succs {
 			target := graph.blocks[successor]
 			for value, index in target.live_entry {
-				if value && !state.live[index] {
-					state.live[index] = true
+				if value > state.live[index] {
+					state.live[index] = value
 					state.uses[index] = target.use_entry[index]
 				}
 			}
@@ -4817,33 +4827,35 @@ paths_overlap_joined :: proc(a, prefix, rest: []Proj_Step) -> bool {
 }
 
 @(private = "file")
-run_live_event :: proc(event: Prov_Event, live: []bool, uses: []Span) {
+run_live_event :: proc(event: Prov_Event, live: []Slot_Use, uses: []Span) {
 	#partial switch event.kind {
 	case .Def:
 		// A definition joining the slot's own value, as a store that may have
 		// left what the slot held does, does not end that value (design.md
 		// "Places and overlap").
 		if !slice.contains(event.sources, event.slot) {
-			live[event.slot] = false
+			live[event.slot] = .None
 		}
 	case .Publish:
 		for slot in event.replaces {
-			live[slot] = false
+			live[slot] = .None
 		}
 	case .Load:
-		live[event.slot] = false
+		live[event.slot] = .None
 		for source in event.sources {
-			live[source] = true
+			live[source] = .Used
 			uses[source] = event.span
 		}
 	case .Live, .Escape:
 		for source in event.sources {
-			live[source] = true
+			live[source] = .Used
 			uses[source] = event.span
 		}
 		for slot in event.keeps_live {
-			live[slot] = true
-			uses[slot] = event.span
+			if live[slot] != .Used {
+				live[slot] = .Kept
+				uses[slot] = event.span
+			}
 		}
 	}
 }
@@ -4872,9 +4884,9 @@ report_provenance :: proc(state: ^Prov_State) {
 		window := window_entry[id]
 		count := len(block.prov)
 		// Liveness after each event that consults it, replayed from the block exit.
-		live_after := make([][]bool, count, graph.alloc)
+		live_after := make([][]Slot_Use, count, graph.alloc)
 		use_after := make([][]Span, count, graph.alloc)
-		live := make([]bool, max(state.slots, 1), graph.alloc)
+		live := make([]Slot_Use, max(state.slots, 1), graph.alloc)
 		uses := make([]Span, max(state.slots, 1), graph.alloc)
 		copy(live, block.live_exit)
 		copy(uses, block.use_exit)
@@ -5146,7 +5158,7 @@ view_chain_text :: proc(c: ^Compiler, reached: Type_Id, via: Transfer_Via) -> st
 // later, and every parameter, which the caller holds past the join. This does
 // not prove the task waits on that storage: it is conservative.
 @(private = "file")
-check_join_retention :: proc(state: ^Prov_State, event: Prov_Event, live: []bool) {
+check_join_retention :: proc(state: ^Prov_State, event: Prov_Event, live: []Slot_Use) {
 	graph := state.graph
 	c := state.k.c
 	if event.slot < 0 || event.slot >= len(graph.parallel_scopes) {
@@ -5176,7 +5188,7 @@ check_join_retention :: proc(state: ^Prov_State, event: Prov_Event, live: []bool
 		if sym == nil || is_task_slot[slot] || reported[info.symbol] {
 			continue
 		}
-		if !live[slot] && !kept_by_caller(sym) {
+		if live[slot] == .None && !kept_by_caller(sym) {
 			continue
 		}
 		waker, cached := wakers[info.symbol]
@@ -5900,7 +5912,7 @@ access_conflicts :: proc(loan: Prov_Loan, event: Prov_Event) -> bool {
 }
 
 @(private = "file")
-check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, uses: []Span) {
+check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []Slot_Use, uses: []Span) {
 	graph := state.graph
 	before := len(state.k.c.diagnostics)
 	state.diagnostic_precision = path_precision(event.path)
@@ -6049,7 +6061,7 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 // The first reborrow of `source` that a live slot still depends on, directly or
 // through reborrows of the reborrow, and that live slot.
 @(private = "file")
-live_reborrow_of :: proc(state: ^Prov_State, source: int, live: []bool, use: Prov_Event) -> (Prov_Reborrow, int, bool) {
+live_reborrow_of :: proc(state: ^Prov_State, source: int, live: []Slot_Use, use: Prov_Event) -> (Prov_Reborrow, int, bool) {
 	graph := state.graph
 	visited := make(map[int]bool, context.temp_allocator)
 	pending := make([dynamic]int, 0, 8, context.temp_allocator)
@@ -6090,7 +6102,7 @@ live_reborrow_of :: proc(state: ^Prov_State, source: int, live: []bool, use: Pro
 			// afresh, as a loop's `list^.head` loads its temporary again, so that
 			// slot's later uses are of the new value, not the one reborrowed here.
 			fresh := use.kind == .Load && slot == use.slot
-			if live[slot] && !fresh && prov_slots_overlap(state, source, slot) {
+			if live[slot] == .Used && !fresh && prov_slots_overlap(state, source, slot) {
 				return reborrow, slot, true
 			}
 			for next in reborrows_of(state, slot) {
@@ -6145,7 +6157,7 @@ reborrows_of :: proc(state: ^Prov_State, slot: int) -> []int {
 // reborrows"). An access through the loan itself, a carrier holding its bit,
 // is its own.
 @(private = "file")
-check_place_loans :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, uses: []Span) {
+check_place_loans :: proc(state: ^Prov_State, event: Prov_Event, live: []Slot_Use, uses: []Span) {
 	for loan, index in state.graph.place_loans {
 		if (event.access == .Read && !loan.mutable) || !place_loan_overlaps(loan, event.path) {
 			continue
@@ -6259,7 +6271,7 @@ prov_slots_overlap :: proc(state: ^Prov_State, source_slot, derived_slot: int) -
 // A reset is rejected when the body may not reset that region at all, or when an
 // owner or borrow of the region is still live.
 @(private = "file")
-check_region_reset :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, uses: []Span) {
+check_region_reset :: proc(state: ^Prov_State, event: Prov_Event, live: []Slot_Use, uses: []Span) {
 	graph := state.graph
 	if event.access == .Invalidate && !event.reset_covered {
 		errorf(

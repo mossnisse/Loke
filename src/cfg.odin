@@ -105,8 +105,8 @@ Flow_Block :: struct {
 	// fresh source (`Flow_Graph.fresh_slots`).
 	severed_entry:   []bool,
 	severed_exit:    []bool,
-	live_entry:      []bool,
-	live_exit:       []bool,
+	live_entry:      []Slot_Use,
+	live_exit:       []Slot_Use,
 	use_entry:       []Span,
 	use_exit:        []Span,
 	prov_visited:    bool,

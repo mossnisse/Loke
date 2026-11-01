@@ -515,8 +515,11 @@ Keep these contracts:
 - **A slice literal's hidden array is lasting storage.** Its content slots have no
   symbol, but count as a local's wherever a stored carrier is told from a temporary
   (`prov_slot_is_stored`, `Prov_Slot.literal_content`). A use of a view of one keeps
-  them live without using them (`Prov_Event.keeps_live`), so reading one element is
-  no use of another; a call handed the view uses them as it does any it reaches.
+  them live without using them (`Prov_Event.keeps_live`, `Slot_Use`): what they
+  borrow lasts, and no reborrow of what they came from is suspended by it. Reading
+  one element is so no use of another, and a call that copied between them is no
+  second use when the view is next handed on. A call handed the view uses them as
+  it does any it reaches.
 - **Owners, handles, and fields stay apart.** Region facts are kept by path,
   and backing dependencies apart from payload dependencies: a record's fields,
   a container's elements and backing, a shared handle's control block and

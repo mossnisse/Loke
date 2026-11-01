@@ -141,7 +141,7 @@ Prov_Event :: struct {
 	reads_only:    bool,
 	// `Live`: what the slice literals its sources view hold, which stays live
 	// for a use of a view of them, though the use may read one element and is
-	// no use of the others (`with_literal_content`).
+	// no use of the others (`with_literal_content`, `Slot_Use`).
 	keeps_live:    []int,
 	// `Load`: a carrier loaded on the way to a place through it
 	// (`prov_reach_hop`), which only the access to that place uses, so its

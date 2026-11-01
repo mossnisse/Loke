@@ -92,6 +92,39 @@ one_after_the_other :: proc() {
 	second^ = 2;
 }
 
+// A use of the view keeps the elements' borrows, and reads no element, so it does
+// not make a call that copied between them a second use of either.
+two_copying_calls :: proc() {
+	x := 1; y := 2;
+	links := []mut Link{Link{&mut x}, Link{&mut y}};
+	duplicate(links);
+	duplicate(links);
+}
+
+copy_then_length_then_copy :: proc() {
+	x := 1; y := 2;
+	links := []mut Link{Link{&mut x}, Link{&mut y}};
+	duplicate(links);
+	count := links.len();
+	duplicate(links);
+	_ = count;
+}
+
+a_call_after_a_copying_call :: proc() {
+	x := 1; y := 2;
+	links := []mut Link{Link{&mut x}, Link{&mut y}};
+	duplicate(links);
+	touch(links);
+}
+
+one_place_after_a_copying_call :: proc() {
+	x := 1; y := 2;
+	links := []mut Link{Link{&mut x}, Link{&mut y}};
+	duplicate(links);
+	links[0].to^ = 1;
+	links[0].to^ = 2;
+}
+
 after_a_reordering_call :: proc() {
 	x := 1; y := 2;
 	links := []mut Link{Link{&mut x}, Link{&mut y}};
