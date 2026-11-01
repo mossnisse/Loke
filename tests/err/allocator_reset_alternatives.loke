@@ -29,4 +29,25 @@ both :: proc(@(allocator_reset) allowed: Allocator, @(allocator_reset) other: Al
 	free_all(selected);
 }
 
+// `or_else` yields the payload as well as the fallback, so the payload's
+// region needs the promise too, unwrapped from the `Option` or from `.as`.
+unwrapped :: proc(@(allocator_reset) allowed: Allocator, maybe: Option(Allocator)) {
+	selected := maybe or_else allowed;
+	free_all(selected);
+}
+
+projected :: proc(@(allocator_reset) allowed: Allocator, maybe: Option(Holder)) {
+	free_all((maybe or_else Holder{allowed}).allocator);
+}
+
+as_variant :: proc(@(allocator_reset) allowed: Allocator, maybe: Option(Allocator)) {
+	free_all(maybe.as(.some) or_else allowed);
+}
+
+// A payload this body wrote with a marked allocator is covered.
+built :: proc(@(allocator_reset) allowed: Allocator, @(allocator_reset) other: Allocator) {
+	maybe := Option(Allocator).some(other);
+	free_all(maybe or_else allowed);
+}
+
 main :: proc() {}

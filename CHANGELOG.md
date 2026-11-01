@@ -939,6 +939,13 @@ checklist.
 
 ### Fixed
 
+- `free_all` of an allocator unwrapped by `or_else` from an unmarked
+  `Option(Allocator)` parameter, as in `maybe or_else allowed`, is now
+  `L0538`, as the same reset through a `switch` was. Only the fallback's
+  region was checked for the `@(allocator_reset)` promise, so an allowed
+  fallback hid the payload's reset; a field of an `or_else` result, as in
+  `(maybe or_else Holder{allowed}).allocator`, was likewise missed
+  ([Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)).
 - A slice literal's elements keep what their drop hooks read borrowed until
   the end of the block, where the hidden array drops them, as an extended
   `&T{...}` temporary's do. After `view = {};` overwrote the slice, `drop` of

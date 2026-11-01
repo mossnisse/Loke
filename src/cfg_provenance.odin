@@ -1315,7 +1315,15 @@ prov_result_region_at :: proc(graph: ^Flow_Graph, id: Value_Id, path: []Proj_Ste
 		}
 	}
 	if root, base, ok := prov_value_place_of(graph, id); ok {
-		return prov_region_content_at(graph, root, prov_concat_path(graph, base, path), query)
+		set := prov_region_content_at(graph, root, prov_concat_path(graph, base, path), query)
+		// An allocator a parameter received inside another value, such as an
+		// `Option(Allocator)` parameter's payload, is one the analysis cannot
+		// name, as a received record's field is in `prov_region_of`.
+		if query == .All && root != NO_ROOT && prov_root_is_parameter(graph, root) && region_is_empty(set) &&
+		   type_underlying(graph.k.c, prov_type_at(graph.k.c, type, path)) == TYPE_ALLOCATOR {
+			set.unknown = true
+		}
+		return set
 	}
 	if region, known := prov_read_storage_regions(graph, id, path, query); known { return region }
 	return prov_result_region(graph, id)
@@ -4256,7 +4264,14 @@ prov_region_of :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
 			}
 			return set
 		}
-		return prov_read_region(graph, id)
+		set := prov_read_region(graph, id)
+		// A field of a temporary is in what produced it, each alternative of a
+		// conditional or `or_else` included.
+		if selector, is_selector := form.(Prov_Form_Selector); is_selector && selector.field && selector.operand != 0 &&
+		   underlying_kind(c, prov_value(graph, selector.operand).type) == .Struct {
+			region_merge(&set, prov_result_region_at(graph, selector.operand, {selector.step}, .All))
+		}
+		return set
 	case Prov_Form_Binary, Prov_Form_Unary, Prov_Form_Slice:
 		if call := prov_operator_value(graph, id); call != 0 {
 			return prov_result_region(graph, call)
@@ -9902,4 +9917,12 @@ prov_note_fresh_owner :: proc(graph: ^Flow_Graph, e: Expr, via: Expr = nil) {
 		set = prov_input_value(graph, via)
 	}
 	prov_event(graph, Prov_Event_Allocator_Use{set, expr_span(e), true})
+}
+
+// Whether `root` is one of this body's parameters, whose contents the caller
+// supplied.
+@(private = "file")
+prov_root_is_parameter :: proc(graph: ^Flow_Graph, root: Root_Id) -> bool {
+	sym := symbol_of(graph.k.c, graph.roots[int(root)].symbol)
+	return sym != nil && sym.kind == .Parameter
 }
