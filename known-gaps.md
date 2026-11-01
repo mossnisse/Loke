@@ -7,6 +7,105 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
+### A local record's copy decision is checked only for its first instance
+
+[Lifecycle hooks and resource types](design.md#lifecycle-hooks-and-resource-types)
+requires a record with a drop hook to state its copy decision. Since
+`bf5cb393`, a record inside a generic procedure is checked only for the first
+instance of that procedure, even when a later instance adds the hook:
+
+```loke
+package main;
+import "core:fmt";
+outer :: proc($T: type) {
+    Handle :: struct { fd: int }
+    when (T == int) {
+        impl Handle {
+            close :: hook(drop) proc(self: inout Handle) {
+                fmt.println("close", self.fd);
+            }
+        }
+    }
+    a := Handle{7};
+    b := a.clone();
+    fmt.println(a.fd, b.fd);
+}
+main :: proc() { outer(bool); outer(int); }
+```
+
+This compiles and prints `close 7` twice for the second call's two values.
+Reversing the calls reports `L0747` at `Handle`, as required. A hook releasing
+the handle would release the same resource twice. The same cache suppresses
+`L0748` when a local `struct @(fieldwise_copy) { value: T }` is instantiated
+with `int` before a move-only `T`; reversing those calls reports the conflict.
+
+`report_local_copy_decisions` in [src/check.odin](src/check.odin) keys
+`checked_copy_decisions` by source position and records successful checks too.
+Check each concrete declaration, and deduplicate only diagnostics that have
+actually been reported, so a successful earlier instance cannot hide a later
+failure. Confirmed on `46cf2aa8` during review on 2026-11-01 (P2).
+
+### A deferred record declaration bypasses the copy-decision check
+
+[The copy-decision rule](design.md#lifecycle-hooks-and-resource-types) applies
+to every record declaration. A declaration directly wrapped by
+[`defer`](design.md#defer-statement) is checked and remains visible to the
+procedure, but the new validation does not visit it:
+
+```loke
+package main;
+import "core:fmt";
+main :: proc() {
+    defer Handle :: struct { fd: int }
+    impl Handle {
+        close :: hook(drop) proc(self: inout Handle) {
+            fmt.println("close", self.fd);
+        }
+    }
+    a := Handle{7};
+    b := a.clone();
+    fmt.println(a.fd, b.fd);
+}
+```
+
+This compiles and prints `7 7`, then `close 7` twice. Removing `defer` reports
+`L0747`, with no other change. `report_local_copy_decisions` in
+[src/check.odin](src/check.odin) visits direct declarations and selected
+`when` branches, but skips a declaration wrapped in `Stmt_Defer`.
+Include those declarations in the check after the enclosing statement sequence,
+once its implementation blocks have been checked. This is a coverage gap in
+`bf5cb393`, confirmed on `46cf2aa8` during review on 2026-11-01 (P2).
+
+### An excluded generic drop hook still supplies cleanup
+
+A generic method whose [bound](design.md#where-clauses) does not hold is not
+part of that instance. This also applies to a drop hook:
+
+```loke
+package main;
+import "core:fmt";
+G :: move_only struct($T: type) { value: T }
+impl G($T) {
+    release :: hook(drop) proc(self: inout) where T == int {
+        fmt.println("drop", self.value);
+    }
+}
+main :: proc() {
+    a := G(string){"a"};
+    fmt.println(a.value);
+}
+```
+
+The program fails with `L0405`, "internal backend contract violation: a
+resolved operation has no emitted name". `collect_hooks` in
+[src/hooks.odin](src/hooks.odin) excludes a failed bound for a copy hook, but
+unconditionally selects a drop hook. Its body is correctly omitted by
+`check_pending_impl_instances` in [src/generic.odin](src/generic.odin), so the
+record's cleanup refers to a procedure that will not be emitted. Exclude a drop
+hook whose bound failed from lifecycle collection too. This predates the
+generic-hook validation change: confirmed on both `bf5cb393` and `46cf2aa8`
+during review on 2026-11-01 (P2, adjacent existing gap).
+
 ### Comparing zero-length arrays contributes nonexistent element effects
 
 [Global write effects](design.md#global-write-effects) count the calls that run. A
