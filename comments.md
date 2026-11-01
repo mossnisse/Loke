@@ -3474,6 +3474,25 @@ reached, which needed severing to replay reach. Linking those slots once reach h
 settled does the same with no replay, no flag of their own, and no second copy of each
 link for an element slot made later, as a landing includes those.
 
+### A task holds what it is lent until the join
+
+A spawn suspended a carrier only through a mutable reborrow it could see during the walk.
+A read-only one was skipped, on the reasoning that a read-only loan lasts until the join
+anyway. That is so for a local, whose root the loan names. A mutable carrier a procedure
+received is reached through its own loan, which its owner may always use, so nothing
+stopped the parent writing through it while a task read. And a carrier loaded out of a
+field has no link at all until the solve, so even two writers went unnoticed.
+
+So a spawn now holds every reborrow it lends, under its own capability, and gives a loaded
+argument a reborrow of its own with the capability of the parameter it is lent to. A read-only
+hold makes one thing visible that nothing had needed: a use of the carrier that is
+really a read must say so. `(dyn Shape)(box)` handed its operand on as a call does, which
+holding a read-only view of `box` then rejected, so a read-only conversion of a plain
+view now reads as an implicit one does. It was found by trying that form, as neither the
+corpus nor the first version of a table of 69 task programs contained two such
+conversions. The two extra errors in `parallel_indirect_calls` are on a line `L0729`
+already rejects: a shared callable with a mutable capture is not a plain view.
+
 ### Provenance slots and regions stay apart
 
 A review of the provenance checker on 2026-11-01 proposed two generalizations. One

@@ -31,10 +31,16 @@ L0729
 @143:18
 `dyn proc(i16)` reaches `^mut int`, so a task sharing it could write what the parent reaches too; the view only borrows the callable: move the callable into the task through a generic `Callable` parameter instead
 
+L0641
+@144:9
+`bump` cannot be used here: a read-only reborrow of it is still in use
 L0729
 @144:18
 `dyn proc(i16)` reaches `^mut int`, so a task sharing it could write what the parent reaches too; the view only borrows the callable: move the callable into the task through a generic `Callable` parameter instead
 
+L0641
+@144:18
+`bump` cannot be used here: a read-only reborrow of it is still in use
 L0729
 @160:28
 `dyn proc(i64)`, which may view a `proc(n: i64) capture(&mut count)`, which reaches `^mut int`, so a task sharing it could write what the parent reaches too

@@ -719,16 +719,6 @@ WALK_READER_CASES := [?]Stored_Reach_Case {
 	{"spawn_two_read_only_named_by_call", "@(escape=stored) c: ^mut int", "v := 1; ro := RoLink{&v}; keep_ro(&mut ro, c); x := ro.to; parallel { spawn read_entry(x); spawn entry(c); }", true},
 }
 
-// known-gaps.md "A read-only view of a mutable carrier lent to a task does not suspend it".
-@(private = "file")
-walk_reader_wrongly_accepted :: proc(entry: Stored_Reach_Case) -> bool {
-	switch entry.name {
-	case "spawn_read_only_by_call", "spawn_read_only_named_by_call", "spawn_read_only_by_hand", "spawn_two_read_only_named_by_call":
-		return true
-	}
-	return false
-}
-
 @(test)
 walk_reader_matrix :: proc(t: ^testing.T) {
 	source := strings.builder_make(context.temp_allocator)
@@ -746,8 +736,181 @@ walk_reader_matrix :: proc(t: ^testing.T) {
 		return
 	}
 	for entry, at in WALK_READER_CASES {
-		expected := entry.rejected && !walk_reader_wrongly_accepted(entry)
-		store_matrix_expect(t, names[0], entry.name, first + 4 * at, errors[0], expected)
+		store_matrix_expect(t, names[0], entry.name, first + 4 * at, errors[0], entry.rejected)
+	}
+}
+
+// What a task is lent of a mutable carrier (design.md "Task borrows and the join"): a
+// read-only argument keeps what it borrows read-only borrowed until the join, so others may
+// read it and nothing may write it, and a mutable carrier is the task's alone. Each
+// verdict is worked out by hand as above.
+@(private = "file")
+TASK_LENDING_PRELUDE :: `package main;
+Link :: struct { to: ^mut int }
+RoLink :: struct { to: ^int }
+Node :: struct { v: int, w: int }
+Holder :: struct { l: ^mut Link }
+Views :: struct { s: []mut int }
+read_int :: proc(p: ^int) { y := p^; }
+write_int :: proc(p: ^mut int) { p^ = 1; }
+read_view :: proc(s: []int) { y := s[0]; }
+write_view :: proc(s: []mut int) { s[0] = 1; }
+read_ro :: proc(r: RoLink) { y := r.to^; }
+read_node :: proc(n: ^Node) { y := n^.v; }
+write_node :: proc(n: ^mut Node) { n^.v = 1; }
+keep_ro :: proc(dst: ^mut RoLink, @(escape=stored) c: ^mut int) { dst^.to = c; }
+flip :: proc() -> bool { return true; }
+Shape :: interface($Self: type) { slot area: proc(self: ^Self) -> int; }
+impl Node { area :: proc(self: ^Node) -> int { return self.v; } }
+take_shape :: proc(s: dyn Shape) { y := s.area(); }
+NodeRef :: struct { n: ^mut Node }
+take_view_ptr :: proc(n: ^Node) { y := n^.v; }
+`
+
+@(private = "file")
+TASK_LENDING_CASES := [?]Stored_Reach_Case {
+	// The carrier itself.
+	{"carrier_written", "c: ^mut int", "parallel { spawn read_int(c); c^ = 1; }", true},
+	{"carrier_written_first", "c: ^mut int", "c^ = 1; parallel { spawn read_int(c); }", false},
+	{"carrier_written_after_join", "c: ^mut int", "parallel { spawn read_int(c); } c^ = 1;", false},
+	{"carrier_read", "c: ^mut int", "parallel { spawn read_int(c); y := c^; }", false},
+	{"carrier_read_twice", "c: ^mut int", "parallel { spawn read_int(c); spawn read_int(c); }", false},
+	{"carrier_then_writer", "c: ^mut int", "parallel { spawn read_int(c); spawn write_int(c); }", true},
+	{"writer_then_carrier", "c: ^mut int", "parallel { spawn write_int(c); spawn read_int(c); }", true},
+	{"writer_twice", "c: ^mut int", "parallel { spawn write_int(c); spawn write_int(c); }", true},
+	{"writer_then_read", "c: ^mut int", "parallel { spawn write_int(c); y := c^; }", true},
+	{"carrier_written_in_branch", "c: ^mut int", "parallel { spawn read_int(c); if (flip()) { c^ = 1; } }", true},
+	{"spawned_in_branch_written", "c: ^mut int", "parallel { if (flip()) { spawn read_int(c); } c^ = 1; }", true},
+	{"written_in_nested_block", "c: ^mut int", "parallel { spawn read_int(c); parallel { spawn write_int(c); } }", true},
+	{"two_blocks_in_turn", "c: ^mut int", "parallel { spawn read_int(c); } parallel { spawn write_int(c); } parallel { spawn read_int(c); }", false},
+	{"loop_of_blocks", "c: ^mut int", "for (i := 0; i < 2; i += 1) { parallel { spawn read_int(c); } c^ = 1; }", false},
+	{"spawned_in_loop_written_after", "c: ^mut int", "parallel { for (i := 0; i < 2; i += 1) { spawn read_int(c); } c^ = 1; }", true},
+	{"spawned_in_loop_read_after", "c: ^mut int", "parallel { for (i := 0; i < 2; i += 1) { spawn read_int(c); } y := c^; }", false},
+	// A read-only copy.
+	{"copy_written", "c: ^mut int", "x: ^int = c; parallel { spawn read_int(x); c^ = 1; }", true},
+	{"copy_written_after_join", "c: ^mut int", "x: ^int = c; parallel { spawn read_int(x); } c^ = 1;", false},
+	{"copy_of_copy_written", "c: ^mut int", "x: ^int = c; q := x; parallel { spawn read_int(q); c^ = 1; }", true},
+	{"copy_read_by_parent", "c: ^mut int", "x: ^int = c; parallel { spawn read_int(x); y := x^; }", false},
+	{"copy_read_through_carrier", "c: ^mut int", "x: ^int = c; parallel { spawn read_int(x); y := c^; }", false},
+	{"copy_read_twice", "c: ^mut int", "x: ^int = c; parallel { spawn read_int(x); spawn read_int(x); }", false},
+	{"copy_and_carrier_read", "c: ^mut int", "x: ^int = c; parallel { spawn read_int(x); spawn read_int(c); }", false},
+	{"copy_then_writer", "c: ^mut int", "x: ^int = c; parallel { spawn read_int(x); spawn write_int(c); }", true},
+	{"copy_replaced_while_lent", "c: ^mut int, d: ^int", "x: ^int = c; parallel { spawn read_int(x); x = d; y := x^; }", false},
+	{"copy_replaced_then_written", "c: ^mut int, d: ^int", "x: ^int = c; parallel { spawn read_int(x); x = d; c^ = 1; }", true},
+	{"plain_read_only_shared", "r: ^int", "parallel { spawn read_int(r); y := r^; spawn read_int(r); }", false},
+	{"unrelated_carrier_written", "c: ^mut int, d: ^mut int", "parallel { spawn read_int(c); d^ = 1; }", false},
+	// A mutable copy weakened at the call.
+	{"mutable_copy_written", "c: ^mut int", "x := c; parallel { spawn read_int(x); c^ = 1; }", true},
+	{"mutable_copy_done_read", "c: ^mut int", "x := c; parallel { spawn read_int(x); y := x^; }", false},
+	{"mutable_copy_written_through_it", "c: ^mut int", "x := c; parallel { spawn read_int(x); x^ = 1; }", true},
+	// Views.
+	{"view_written", "s: []mut int", "parallel { spawn read_view(s); s[0] = 1; }", true},
+	{"view_read", "s: []mut int", "parallel { spawn read_view(s); y := s[0]; }", false},
+	{"view_written_after_join", "s: []mut int", "parallel { spawn read_view(s); } s[0] = 1;", false},
+	{"view_then_writer", "s: []mut int", "parallel { spawn read_view(s); spawn write_view(s); }", true},
+	{"view_read_twice", "s: []mut int", "parallel { spawn read_view(s); spawn read_view(s); }", false},
+	{"view_copy_written", "s: []mut int", "x: []int = s; parallel { spawn read_view(x); s[0] = 1; }", true},
+	{"slice_written_same", "s: []mut int", "parallel { spawn read_view(s[:2]); s[0] = 1; }", true},
+	{"slice_read", "s: []mut int", "parallel { spawn read_view(s[:2]); y := s[0]; }", false},
+	{"slice_named_written", "s: []mut int", "x := s[:2]; parallel { spawn read_view(x); s[0] = 1; }", true},
+	{"element_written", "s: []mut int", "parallel { spawn read_int(&s[0]); s[0] = 1; }", true},
+	{"element_read", "s: []mut int", "parallel { spawn read_int(&s[0]); y := s[0]; }", false},
+	// Through a pointer.
+	{"pointee_field_written", "n: ^mut Node", "parallel { spawn read_int(&n^.v); n^.v = 1; }", true},
+	{"pointee_field_read", "n: ^mut Node", "parallel { spawn read_int(&n^.v); y := n^.v; }", false},
+	{"pointee_other_field_written", "n: ^mut Node", "parallel { spawn read_int(&n^.v); n^.w = 1; }", false},
+	{"pointee_whole_written", "n: ^mut Node", "parallel { spawn read_node(n); n^.v = 1; }", true},
+	{"pointee_whole_writer", "n: ^mut Node", "parallel { spawn read_node(n); spawn write_node(n); }", true},
+	{"pointee_whole_read", "n: ^mut Node", "parallel { spawn read_node(n); y := n^.v; }", false},
+	{"carrier_in_a_field_written", "l: ^mut Link", "parallel { spawn read_int(l^.to); l^.to^ = 1; }", true},
+	{"carrier_in_a_field_read", "l: ^mut Link", "parallel { spawn read_int(l^.to); y := l^.to^; }", false},
+	{"carrier_in_a_field_copy_written", "l: ^mut Link", "x: ^int = l^.to; parallel { spawn read_int(x); l^.to^ = 1; }", true},
+	// Loaded out of a field: no link exists during the walk.
+	{"field_writer_then_written", "l: ^mut Link", "parallel { spawn write_int(l^.to); l^.to^ = 1; }", true},
+	{"field_writer_then_read", "l: ^mut Link", "parallel { spawn write_int(l^.to); y := l^.to^; }", true},
+	{"field_writer_twice", "l: ^mut Link", "parallel { spawn write_int(l^.to); spawn write_int(l^.to); }", true},
+	{"field_reader_then_writer", "l: ^mut Link", "parallel { spawn read_int(l^.to); spawn write_int(l^.to); }", true},
+	{"field_writer_then_reader", "l: ^mut Link", "parallel { spawn write_int(l^.to); spawn read_int(l^.to); }", true},
+	{"field_reader_twice", "l: ^mut Link", "parallel { spawn read_int(l^.to); spawn read_int(l^.to); }", false},
+	{"field_writer_after_join", "l: ^mut Link", "parallel { spawn write_int(l^.to); } l^.to^ = 1; y := l^.to^;", false},
+	{"field_replaced_while_read", "l: ^mut Link, @(escape=stored) d: ^mut int", "parallel { spawn read_int(l^.to); l^.to = d; }", false},
+	{"field_of_view_written", "s: []mut Link", "parallel { spawn read_int(s[0].to); s[0].to^ = 1; }", true},
+	{"field_of_view_writer_twice", "s: []mut Link", "parallel { spawn write_int(s[0].to); spawn write_int(s[0].to); }", true},
+	{"field_of_view_other_element", "s: []mut Link", "parallel { spawn write_int(s[0].to); spawn write_int(s[1].to); }", false},
+	{"field_of_local_written", "", "v := 1; a := Link{&mut v}; parallel { spawn read_int(a.to); a.to^ = 1; }", true},
+	{"field_of_local_writer_twice", "", "v := 1; a := Link{&mut v}; parallel { spawn write_int(a.to); spawn write_int(a.to); }", true},
+	{"deep_field_writer_twice", "h: ^mut Holder", "parallel { spawn write_int(h^.l^.to); spawn write_int(h^.l^.to); }", true},
+	{"deep_field_reader_written", "h: ^mut Holder", "parallel { spawn read_int(h^.l^.to); h^.l^.to^ = 1; }", true},
+	{"deep_view_writer_twice", "v: ^mut Views", "parallel { spawn write_view(v^.s); spawn write_view(v^.s); }", true},
+	{"deep_view_reader_written", "v: ^mut Views", "parallel { spawn read_view(v^.s); v^.s[0] = 1; }", true},
+	{"deep_view_reader_read", "v: ^mut Views", "parallel { spawn read_view(v^.s); y := v^.s[0]; }", false},
+	{"loaded_read_only_never_conflicts", "r: ^mut RoLink", "parallel { spawn read_int(r^.to); y := r^.to^; spawn read_int(r^.to); }", false},
+	// In a value.
+	{"record_written", "c: ^mut int", "r := RoLink{c}; parallel { spawn read_ro(r); c^ = 1; }", true},
+	{"record_read", "c: ^mut int", "r := RoLink{c}; parallel { spawn read_ro(r); y := c^; }", false},
+	{"record_literal_written", "c: ^mut int", "parallel { spawn read_ro(RoLink{c}); c^ = 1; }", true},
+	// A view converted at the spawn.
+	{"dyn_view_twice", "n: ^mut Node", "parallel { spawn take_shape((dyn Shape)(n)); spawn take_shape((dyn Shape)(n)); }", false},
+	{"dyn_view_read_by_parent", "n: ^mut Node", "parallel { spawn take_shape((dyn Shape)(n)); y := n^.v; }", false},
+	{"dyn_view_written", "n: ^mut Node", "parallel { spawn take_shape((dyn Shape)(n)); n^.v = 1; }", true},
+	{"dyn_view_then_writer", "n: ^mut Node", "parallel { spawn take_shape((dyn Shape)(n)); spawn write_node(n); }", true},
+	{"writer_then_dyn_view", "n: ^mut Node", "parallel { spawn write_node(n); spawn take_shape((dyn Shape)(n)); }", true},
+	{"dyn_view_after_join", "n: ^mut Node", "parallel { spawn take_shape((dyn Shape)(n)); } n^.v = 1;", false},
+	{"view_of_local_carrier_twice", "", "v := Node{1, 2}; n := &mut v; parallel { spawn take_shape((dyn Shape)(n)); spawn take_shape((dyn Shape)(n)); }", false},
+	{"view_named_twice", "n: ^mut Node", "s := (dyn Shape)(n); parallel { spawn take_shape(s); spawn take_shape(s); }", false},
+	{"view_named_written", "n: ^mut Node", "s := (dyn Shape)(n); parallel { spawn take_shape(s); n^.v = 1; }", true},
+	{"view_of_loaded_twice", "r: ^mut NodeRef", "parallel { spawn take_shape((dyn Shape)(r^.n)); spawn take_shape((dyn Shape)(r^.n)); }", false},
+	{"view_of_loaded_written", "r: ^mut NodeRef", "parallel { spawn take_shape((dyn Shape)(r^.n)); r^.n^.v = 1; }", true},
+	{"view_of_local_field_twice", "n: ^mut Node", "h := NodeRef{n}; parallel { spawn take_shape((dyn Shape)(h.n)); spawn take_shape((dyn Shape)(h.n)); }", false},
+	{"pointer_converted_twice", "n: ^mut Node", "parallel { spawn take_view_ptr((^Node)(n)); spawn take_view_ptr((^Node)(n)); }", false},
+	{"pointer_converted_written", "n: ^mut Node", "parallel { spawn take_view_ptr((^Node)(n)); n^.v = 1; }", true},
+	{"slice_converted_twice", "s: []mut int", "parallel { spawn read_view(([]int)(s)); spawn read_view(([]int)(s)); }", false},
+	{"slice_converted_written", "s: []mut int", "parallel { spawn read_view(([]int)(s)); s[0] = 1; }", true},
+	// A conversion outside a task reads as a read-only parameter does.
+	{"converted_outside_a_task_twice", "c: ^mut int", "x := (^int)(c); y := (^int)(c); a := x^; b := y^;", false},
+	{"converted_outside_a_task_written", "c: ^mut int", "x := (^int)(c); c^ = 1; a := x^;", true},
+	{"converted_outside_a_task_done", "c: ^mut int", "x := (^int)(c); a := x^; c^ = 1;", false},
+	{"view_outside_a_task_written", "n: ^mut Node", "s := (dyn Shape)(n); n^.v = 1; take_shape(s);", true},
+	{"view_outside_a_task_done", "n: ^mut Node", "s := (dyn Shape)(n); take_shape(s); n^.v = 1;", false},
+	{"view_outside_a_task_twice", "n: ^mut Node", "s := (dyn Shape)(n); t := (dyn Shape)(n); take_shape(s); take_shape(t);", false},
+	{"mutable_copy_live_across_conversion", "c: ^mut int", "x := c; y := (^int)(c); x^ = 1; a := y^;", true},
+	// What a store or a call left.
+	{"kept_field", "@(escape=stored) c: ^mut int", "v := 1; ro := RoLink{&v}; keep_ro(&mut ro, c); parallel { spawn read_int(ro.to); c^ = 1; }", true},
+	{"kept_named", "@(escape=stored) c: ^mut int", "v := 1; ro := RoLink{&v}; keep_ro(&mut ro, c); x := ro.to; parallel { spawn read_int(x); c^ = 1; }", true},
+	{"kept_named_then_writer", "@(escape=stored) c: ^mut int", "v := 1; ro := RoLink{&v}; keep_ro(&mut ro, c); x := ro.to; parallel { spawn read_int(x); spawn write_int(c); }", true},
+	{"kept_read", "@(escape=stored) c: ^mut int", "v := 1; ro := RoLink{&v}; keep_ro(&mut ro, c); x := ro.to; parallel { spawn read_int(x); y := c^; }", false},
+	{"kept_after_join", "@(escape=stored) c: ^mut int", "v := 1; ro := RoLink{&v}; keep_ro(&mut ro, c); x := ro.to; parallel { spawn read_int(x); } c^ = 1;", false},
+	{"stored_by_hand_field", "@(escape=stored) c: ^mut int", "v := 1; ro := RoLink{&v}; p := &mut ro; p^.to = c; parallel { spawn read_int(ro.to); c^ = 1; }", true},
+	{"stored_by_hand_named", "@(escape=stored) c: ^mut int", "v := 1; ro := RoLink{&v}; p := &mut ro; p^.to = c; x := ro.to; parallel { spawn read_int(x); c^ = 1; }", true},
+	{"stored_directly_field", "@(escape=stored) c: ^mut int", "v := 1; ro := RoLink{&v}; ro.to = c; parallel { spawn read_int(ro.to); c^ = 1; }", true},
+	{"stored_directly_named", "@(escape=stored) c: ^mut int", "v := 1; ro := RoLink{&v}; ro.to = c; x := ro.to; parallel { spawn read_int(x); c^ = 1; }", true},
+	{"copied_before_the_store", "@(escape=stored) c: ^mut int", "v := 1; ro := RoLink{&v}; x := ro.to; keep_ro(&mut ro, c); parallel { spawn read_int(x); c^ = 1; }", false},
+	// A local, which the loan already covered.
+	{"local_written", "", "v := 1; parallel { spawn read_int(&v); v = 1; }", true},
+	{"local_named_written", "", "v := 1; x := &v; parallel { spawn read_int(x); v = 1; }", true},
+	{"local_read", "", "v := 1; parallel { spawn read_int(&v); y := v; }", false},
+	{"local_view_written", "", "a := [2]int{1, 2}; parallel { spawn read_view(a[:]); a[0] = 1; }", true},
+	{"local_mutable_carrier_read_only", "", "v := 1; m := &mut v; parallel { spawn read_int(m); m^ = 1; }", true},
+}
+
+@(test)
+task_lending_matrix :: proc(t: ^testing.T) {
+	source := strings.builder_make(context.temp_allocator)
+	strings.write_string(&source, TASK_LENDING_PRELUDE)
+	first := strings.count(TASK_LENDING_PRELUDE, "\n") + 1
+	for entry in TASK_LENDING_CASES {
+		// Every case takes up four lines, which the check below counts on.
+		fmt.sbprintf(&source, "%s :: proc(%s) {{\n\t\n\t%s\n}}\n", entry.name, entry.params, entry.body)
+	}
+	strings.write_string(&source, "main :: proc() {}\n")
+	names := []string{"task_lending"}
+	sources := []string{strings.to_string(source)}
+	errors, compiled := store_matrix_compile(t, names, sources)
+	if !compiled {
+		return
+	}
+	for entry, at in TASK_LENDING_CASES {
+		store_matrix_expect(t, names[0], entry.name, first + 4 * at, errors[0], entry.rejected)
 	}
 }
 

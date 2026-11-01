@@ -10,6 +10,14 @@ checklist.
 
 ### Breaking changes
 
+- A read-only argument to a task now keeps what it borrows through a mutable carrier
+  read-only borrowed until the join, and a carrier loaded out of a field is lent as one
+  passed by name is ([Task borrows and the join](design.md#task-borrows-and-the-join)).
+  `parallel { spawn read(carrier); carrier^ = 1; }` compiled with a data race, as did
+  a read-only copy of the carrier, a view, or a record holding one, and
+  `parallel { spawn write(link^.to); spawn write(link^.to); }` compiled with two tasks
+  writing one place. Each is now `L0641`. Upgrade by writing after the join, or by
+  giving the task what it writes alone.
 - A record stored through a view parameter, and a carrier stored through a pointer to
   a local that holds one, now copy what they hold as a carrier stored alone does
   ([Weakening and reborrows](design.md#weakening-and-reborrows)). After
@@ -1166,6 +1174,10 @@ checklist.
 
 ### Fixed
 
+- A conversion of a slice or pointer to plain data to a read-only carrier, as
+  `(dyn Shape)(box)` or `(^int)(carrier)`, now only reads a mutable carrier, as an
+  implicit one does, so two such views may be live together
+  ([Weakening and reborrows](design.md#weakening-and-reborrows)).
 - A carrier loaded out of a place and passed as a `stored` argument no longer conflicts
   with itself in that call. `keep(l, m^.to); x := l^.to; x^ = 2; m^.to^ = 1;` was
   `L0641` at the call, though `x` is done by the last statement

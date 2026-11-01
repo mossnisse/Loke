@@ -1,0 +1,66 @@
+// design.md "Task borrows and the join", "Sharing with tasks": what a task is lent
+// read-only of a mutable carrier the parent and other tasks may read, and the carrier is
+// free again at the join. Writes alongside it are in tests/err/parallel_read_only_carrier.loke.
+package main;
+
+import "core:fmt";
+
+Link :: struct { to: ^mut int }
+Box :: struct { value: int }
+Shape :: interface($Self: type) { slot size: proc(self: ^Self) -> int; }
+impl Box { size :: proc(self: ^Box) -> int { return self.value; } }
+
+read_int :: proc(pointer: ^int) { value := pointer^; }
+write_int :: proc(pointer: ^mut int) { pointer^ += 1; }
+read_view :: proc(values: []int) { value := values[0]; }
+read_shape :: proc(shape: dyn Shape) { value := shape.size(); }
+
+readers :: proc(carrier: ^mut int) {
+	copy: ^int = carrier;
+	parallel {
+		spawn read_int(carrier);
+		spawn read_int(copy);
+		value := carrier^;
+	}
+	carrier^ += 10;
+}
+
+views :: proc(values: []mut int) {
+	parallel {
+		spawn read_view(values);
+		spawn read_view(values);
+		value := values[0];
+	}
+	values[0] += 100;
+}
+
+shapes :: proc(box: ^mut Box) {
+	parallel {
+		spawn read_shape((dyn Shape)(box));
+		spawn read_shape((dyn Shape)(box));
+		value := box^.value;
+	}
+	box^.value += 1000;
+}
+
+loaded :: proc(link: ^mut Link) {
+	parallel {
+		spawn read_int(link^.to);
+		spawn read_int(link^.to);
+	}
+	parallel { spawn write_int(link^.to); }
+	link^.to^ += 10000;
+}
+
+main :: proc() {
+	number := 1;
+	readers(&mut number);
+	values := [1]int{2};
+	views(&mut values[:]);
+	box := Box{3};
+	shapes(&mut box);
+	held := 4;
+	link := Link{&mut held};
+	loaded(&mut link);
+	fmt.println(number, values[0], box.value, held);
+}

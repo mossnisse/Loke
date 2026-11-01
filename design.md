@@ -10745,7 +10745,9 @@ the result's.
 
 A spawn's call is checked as a call that lasts until the join:
 
-- A read-only argument keeps its root read-only borrowed until the join. A
+- A read-only argument keeps its root read-only borrowed until the join, and
+  one that reborrows a mutable carrier leaves that carrier to be read and not
+  written, whether it is the carrier, a copy, a view, or loaded out of a field. A
   mutable carrier, `inout`, or `move` argument is the task's alone. A `[]mut T`
   passed by name reborrows the carrier until the join, so
   `spawn add(view); spawn add(view);` is an error, as two `&mut` arguments would

@@ -3903,6 +3903,27 @@ prov_type_is_plain_view :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	return !type_carries_borrow(c, underlying_info(c, type).element).any
 }
 
+// A plain view converted to a read-only carrier, as `(dyn Shape)(b)`, only reads it, as
+// one erased implicitly does (`prov_read_only_view`), so two such views of a mutable
+// carrier may be live together. False when `v` is no such conversion.
+@(private = "file")
+prov_read_only_conversion :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> ([]int, bool) {
+	c := graph.k.c
+	type := prov_type(graph, v)
+	if len(v.bound) != 1 || v.bound[0] == nil || !type_is_carrier(c, type) || type_carries_borrow(c, type).mutable {
+		return nil, false
+	}
+	e := v.bound[0]
+	span := expr_span(e)
+	if ident, plain := prov_plain_view_local(graph, e); plain {
+		return prov_reborrow_traversal(graph, prov_read_ident(graph, ident, .Read, reads_only = true), span, false), true
+	}
+	if prov_plain_view_place(graph, e, prov_type(graph, e)) {
+		return prov_reborrow_traversal(graph, prov_read_carrier(graph, e, true), span, false), true
+	}
+	return nil, false
+}
+
 // A local holding a plain view (`prov_type_is_plain_view`).
 @(private = "file")
 prov_plain_view_local :: proc(graph: ^Flow_Graph, e: Expr) -> (^Expr_Ident, bool) {
@@ -7974,6 +7995,13 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		if operand, erasing := explicit_erasure_operand(v); erasing {
 			return walk_flow_expr(graph, operand)
 		}
+		if viewed, is_view := prov_read_only_conversion(graph, v); is_view {
+			return viewed
+		}
+	case Call_Dyn_Conversion:
+		if viewed, is_view := prov_read_only_conversion(graph, v); is_view {
+			return viewed
+		}
 	}
 	if result, handled := prov_builtin_call(graph, v); handled {
 		return result
@@ -8110,8 +8138,9 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	prov_call_carrier_moves(graph, v, container_op, actuals)
 	if v == graph.spawning {
 		graph.spawn_held = prov_join(graph, graph.spawn_held, borrowed)
-		for actual in actuals {
+		for actual, index in actuals {
 			graph.spawn_held = prov_join(graph, graph.spawn_held, actual)
+			prov_spawn_lends_loaded(graph, v, index, actual)
 		}
 	}
 	return prov_store_call_results(graph, v, actuals)
@@ -8241,10 +8270,28 @@ prov_hold_until_join :: proc(graph: ^Flow_Graph, slot: int, held: []int, span, j
 	prov_emit(graph, Prov_Event{kind = .Def, slot = slot, loan = NO_LOAN, sources = prov_join(graph, prov_one(graph, slot), held), span = span})
 }
 
-// design.md "Task borrows and the join": a mutable carrier the spawned call
-// reborrows stays reborrowed until the join, so the carrier it came from is
-// suspended until then, and `spawn add(view); spawn add(view);` uses `view`
-// while the first task holds it. The hold is the spawn site's own, so the next
+// design.md "Task borrows and the join": a carrier loaded out of a place, as `l^.to`, is
+// reborrowed as one passed by name is, under the capability of the parameter it is
+// lent to, which only the call knows.
+@(private = "file")
+prov_spawn_lends_loaded :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int, actual: []int) {
+	mutable := type_carries_borrow(graph.k.c, prov_parameter_type(graph, v, index)).mutable
+	for slot in actual {
+		if !graph.prov_slots[slot].loaded {
+			continue
+		}
+		derived := prov_temp_slot(graph)
+		prov_emit(graph, Prov_Event{kind = .Def, slot = derived, loan = NO_LOAN, sources = prov_one(graph, slot), span = v.span})
+		append(&graph.reborrows, Prov_Reborrow{source = slot, derived = derived, span = v.span, mutable = mutable})
+		graph.spawn_held = prov_join(graph, graph.spawn_held, prov_one(graph, derived))
+	}
+}
+
+// design.md "Task borrows and the join": a carrier the spawned call reborrows stays
+// reborrowed until the join, so the carrier it came from is suspended until then, as
+// far as the reborrow's own capability says: `spawn add(view); spawn add(view);` uses
+// `view` while the first task holds it, and a read-only argument leaves `view` to be
+// read and not written. The hold is the spawn site's own, so the next
 // spawn's argument is not mistaken for what an earlier task holds, and a loop's
 // chunk binding, fresh on each step, may be lent again on the next.
 @(private = "file")
@@ -8254,11 +8301,13 @@ prov_spawn_reborrows :: proc(graph: ^Flow_Graph, hold: int, held: []int, span, j
 	for lent in held {
 		for index in 0 ..< existing {
 			reborrow := graph.reborrows[index]
-			if reborrow.derived != lent || !reborrow.mutable {
+			if reborrow.derived != lent {
 				continue
 			}
 			reborrows = true
-			append(&graph.reborrows, Prov_Reborrow{source = reborrow.source, derived = hold, span = span, mutable = true})
+			append(&graph.reborrows, Prov_Reborrow {
+				source = reborrow.source, derived = hold, span = span, mutable = reborrow.mutable, passes_on = reborrow.passes_on, pending = reborrow.pending,
+			})
 		}
 	}
 	if reborrows {

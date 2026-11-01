@@ -1,0 +1,75 @@
+// design.md "Task borrows and the join": a read-only argument keeps what it borrows
+// read-only borrowed until the join, and a mutable carrier is the task's alone, however
+// the argument reached it: the carrier itself, a read-only copy, a view, a record holding
+// one, or a carrier loaded out of a field. Reads alongside it are in
+// tests/run/parallel_read_only_carrier.loke.
+package main;
+
+Link :: struct { to: ^mut int }
+Read_Only :: struct { to: ^int }
+
+read_int :: proc(pointer: ^int) { value := pointer^; }
+write_int :: proc(pointer: ^mut int) { pointer^ = 1; }
+read_view :: proc(values: []int) { value := values[0]; }
+read_record :: proc(record: Read_Only) { value := record.to^; }
+
+the_carrier :: proc(carrier: ^mut int) {
+	parallel {
+		spawn read_int(carrier);
+		carrier^ = 1;
+	}
+}
+
+a_copy :: proc(carrier: ^mut int) {
+	copy: ^int = carrier;
+	parallel {
+		spawn read_int(copy);
+		carrier^ = 1;
+	}
+}
+
+reader_and_writer :: proc(carrier: ^mut int) {
+	parallel {
+		spawn read_int(carrier);
+		spawn write_int(carrier);
+	}
+}
+
+a_view :: proc(values: []mut int) {
+	parallel {
+		spawn read_view(values);
+		values[0] = 1;
+	}
+}
+
+a_record :: proc(carrier: ^mut int) {
+	record := Read_Only{carrier};
+	parallel {
+		spawn read_record(record);
+		carrier^ = 1;
+	}
+}
+
+// A carrier loaded out of a field, for a reader or a writer.
+loaded_read_only :: proc(link: ^mut Link) {
+	parallel {
+		spawn read_int(link^.to);
+		link^.to^ = 1;
+	}
+}
+
+loaded_twice :: proc(link: ^mut Link) {
+	parallel {
+		spawn write_int(link^.to);
+		spawn write_int(link^.to);
+	}
+}
+
+loaded_then_read :: proc(link: ^mut Link) {
+	parallel {
+		spawn write_int(link^.to);
+		value := link^.to^;
+	}
+}
+
+main :: proc() {}

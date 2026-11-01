@@ -1,0 +1,24 @@
+L0641
+@19:3
+`carrier` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@27:3
+`carrier` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@34:19
+`carrier` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@41:3
+`values` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@49:3
+`carrier` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@57:3
+`link` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@64:19
+`link` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@71:12
+`link` cannot be used here: a mutable reborrow of it is still in use
