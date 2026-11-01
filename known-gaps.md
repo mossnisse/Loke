@@ -580,3 +580,73 @@ is `xs[i].next = xs[i].next^.next` over a view parameter, where the element
 copied from and the one stored to are not known to be the same. Found while
 making what is stored through a traversal binding reach the source on
 2026-11-01.
+
+### A dependent alias parameter can recurse before the instantiation limit applies
+
+[Generic types](design.md#generic-types) bounds recursive instantiation with a
+diagnostic, but resolving the type of a parametric alias's constant argument can
+overflow the compiler's stack instead:
+
+```loke
+package main;
+Record :: struct($T: type, $V: Alias(T, 0)) { item: T }
+Alias :: Record($T, $V);
+main :: proc() { _ = size_of(Alias(int, 0)); }
+```
+
+`resolve_alias_application` in [src/generic.odin](src/generic.odin) calls
+`alias_dependent_type` before checking or pushing the instantiation stack. The
+parameter type applies the alias again, so no frame is ever pushed and the
+depth limit never sees the recursion. Guard dependent argument-type resolution
+as well as body expansion. Confirmed at `c588e439` and the current checkout:
+the process exits with Windows stack-overflow status `0xC00000FD` and no
+diagnostic; its parent reports internal `L0405` instead. Found while reviewing
+the dependent-constant alias change on 2026-11-01 (P2).
+
+### A mutable protocol traversal publishes into the iterable instead of its elements
+
+[By-reference iteration](design.md#by-reference-iteration) stores through a
+mutable binding into the element it names. A custom
+[iteration protocol](design.md#iteration-protocol) can lend elements reached
+through a slice, but the traversal's writes are recorded on the iterable object
+itself:
+
+```loke
+package main;
+Node :: struct { value: int }
+Ro :: struct { head: ^Node }
+Lender :: struct { values: []mut Ro }
+Cursor :: struct { values: []mut Ro, at: int }
+impl Lender {
+    Element :: Ro;
+    Mut_Iterator :: Cursor;
+    iter_mut :: proc(self: inout Lender) -> Cursor { return {self.values, 0}; }
+}
+impl Cursor {
+    next :: proc(self: inout Cursor) -> Option(^mut Ro) {
+        if (self.at >= self.values.len()) { return .none; }
+        value := &mut self.values[self.at];
+        self.at += 1;
+        return .some(value);
+    }
+}
+main :: proc() {
+    a := Node{1}; c := Node{3};
+    lists := [1]Ro{Ro{&a}};
+    source := Lender{&mut lists[:]};
+    foreach (&mut list in source) { list.head = &c; }
+    c.value = 5; // L0511; should be accepted when only the slice length is read
+    _ = source.values.len();
+}
+```
+
+This compiles before `cf7c9790` and is rejected after it. Conversely, replacing
+the last two statements with `node := lists[0].head; c.value = 5;
+_ = node^.value;` compiles on both revisions, although it must reject the write
+of `c`: the backing array still never learns about the stored borrow.
+`prov_note_traversal` in [src/cfg_provenance.odin](src/cfg_provenance.odin) takes
+the named-root branch for a protocol iterable, with no element path, so
+`prov_publish_traversal` puts the borrow into `source.values` itself. Publish
+through the storage the protocol lends rather than into the iterable's fields.
+Found while reviewing the mutable traversal store change on 2026-11-01 (P2 for
+the new false rejection; the backing-storage hole predates it).
