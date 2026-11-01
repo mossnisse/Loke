@@ -8108,6 +8108,20 @@ containing both `[]int` and `[]mut int` does not have one aggregate capability.
 How precisely an implementation must track these paths is set in the appendix
 under [Minimum provenance precision](#minimum-provenance-precision).
 
+A call handed a borrow of storage may read whatever that storage holds, so the
+borrows held there stay in use for the call, however many carriers lie between
+the argument and the storage. Only the call's signature is known here, so this
+holds of a call that reads nothing it was handed. A use that hands the carrier to
+no call, as copying it does, reads nothing held there.
+
+```loke
+values := [dynamic]int{7};
+holders := [1]Holder{Holder{values[:]}};
+view := holders[:];
+drop(values);          // ERROR: `values` is still borrowed
+print_rows(view);      // through what `holders` holds, which `view` lends
+```
+
 Replacing a borrow through a carrier ends the previous borrow only in the
 storage actually written. If several destinations remain possible, a write
 cannot prove that any other destination's old content was replaced. Taking the

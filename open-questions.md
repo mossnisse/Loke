@@ -67,9 +67,9 @@ order matters, and `prov_assign` is the most edited procedure in the checker,
   held a mutable carrier by its symbol left a literal's array out of every reborrow
   check, six forms in all where a named array was rejected (fixed since, with
   `prov_slot_is_stored`);
-  `with_literal_content` extends a use with a literal's content but not a
-  named array's
-  ([gap](known-gaps.md#a-view-of-a-named-array-does-not-hold-what-its-elements-borrow));
+  a use of a literal's view was extended to its content but a named array's was not
+  (fixed since: a call extends to what any storage it is handed holds,
+  `with_held_content`);
   `prov_note_traversal` takes a named-root branch for a protocol iterable
   ([gap](known-gaps.md#a-mutable-protocol-traversal-publishes-into-the-iterable-instead-of-its-elements));
   `load_through_loan` branches four ways and `publish_into_loan` five.
@@ -231,11 +231,9 @@ own keep-alive, rejecting two copying calls on a literal that a named array acce
 That is fixed: a slot's liveness now tells a value only kept from one used
 (`Slot_Use`), and only a used one suspends a reborrow.
 
-Holding a named array's content through a view, the
-[named array gap](known-gaps.md#a-view-of-a-named-array-does-not-hold-what-its-elements-borrow),
-was then tried on the lookup, with that fix in place. Both forms reject the gap's
-program, its `fmt.println` form, and `first(arr[:])`, and both reject
-`drop(values); view.len()`:
+Holding a named array's content through a view was then tried on the lookup, with
+that fix in place. Both forms reject the program that showed the gap, its
+`fmt.println` form, and `first(arr[:])`, and both reject `drop(values); view.len()`:
 
 | Extended on | Newly rejected valid fixtures | Other changes |
 | --- | --- | --- |
@@ -243,15 +241,18 @@ program, its `fmt.println` form, and `first(arr[:])`, and both reject
 | Only a value handed to a call | none | 1 note points at a different position |
 
 The first form rejects a write to what one field borrows while another field is read
-through a pointer. The second marks the `Live` event a call emits for its borrowed
-arguments, about ten lines, and a slice literal would still extend on every use.
-Before the `Slot_Use` fix the same two forms rejected more: 4 fixtures and 72 borrow
-matrix programs for the first, and `two_copying_calls` for the second.
+through a pointer. Before the `Slot_Use` fix the same two forms rejected more: 4
+fixtures and 72 borrow matrix programs for the first, and `two_copying_calls` for the
+second.
 
-Recommendation: land the kind and the lookup as a refactor. Moving caller slots onto
-roots has no measured benefit. The named array gap is now one decision from closed:
-whether `drop(values); view.len()` may be rejected for a named array, as it already
-is for a slice literal. The trial says nothing about regions, which stay undecided.
+The second form was adopted, with the `drop(values); view.len()` cost accepted, and
+closes the gap. It was widened to any root with slots of its own, as a slice held in
+a local and reached through a pointer had the same hole, and a slice literal now
+follows the same rule rather than extending on every use. Literal and named forms now
+agree on every form probed.
+
+Recommendation: stop here. Moving caller slots onto roots has no measured benefit,
+and the trial says nothing about regions, which stay undecided.
 
 Validation: the review's probes were compiled with the checked-in `lokec.exe`.
 Two `&mut c` written in turn reported `L0511`; the same two around a store at an

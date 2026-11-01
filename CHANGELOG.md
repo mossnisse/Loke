@@ -10,6 +10,16 @@ checklist.
 
 ### Breaking changes
 
+- A call now keeps borrowed what the storage it is handed holds
+  ([Values that contain borrows](design.md#values-that-contain-borrows)). After
+  `holders := [1]Holder{Holder{values[:]}}; view := holders[:];`, `drop(values)`
+  before `print_rows(view)` compiled and the call read the dropped array. It is now
+  `L0512`, as is the same through `first(holders[:])`, a pointer to a record or to
+  a slice, a view held in a record, and a write to what is held. A call that reads
+  nothing counts, so `view.len()` there is rejected as `holders.len()` already was.
+  Upgrade by ending the call before the drop or write, or by replacing what the
+  element holds first. A slice literal now follows the same rule, so
+  `drop(values); again := view;` on its view compiles, where it was rejected.
 - A mutable carrier held in a [slice literal](design.md#slice-literals)'s hidden
   array is now checked as one in a named array is
   ([Weakening and reborrows](design.md#weakening-and-reborrows)). Taking two

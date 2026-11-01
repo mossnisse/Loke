@@ -355,41 +355,6 @@ read-only. The plain-slice case above has a separate read-only path. This
 pointer-field rejection is present in both `a28b7aac`'s parent and `1b7845aa`,
 so it predates the report-borrow fix. Confirmed during review on 2026-11-01.
 
-### A view of a named array does not hold what its elements borrow
-
-[Values that contain borrows](design.md#values-that-contain-borrows) carry a borrow
-through whatever holds it. A slice of a local array in use does not keep in use what
-the array's elements borrow, so a call can read a stale one:
-
-```loke
-package main;
-import "core:fmt";
-Plain :: struct { data: []int }
-first :: proc(view: []Plain) -> int { return view[0].data[0]; }
-main :: proc() {
-    values := [dynamic]int{7};
-    arr := [1]Plain{Plain{values[:]}};
-    view := arr[:];
-    drop(values);
-    fmt.println(first(view));
-}
-```
-
-This compiles, and `first` reads the dropped array. `fmt.println(view)` in place of
-the call compiles too, and so does `first(arr[:])` with no local view. A load in the
-same body, `view[0].data[0]`, is rejected, since `load_through_loan` in
-[src/borrow.odin](src/borrow.odin) reads the element's slot at that point; only a use
-of the view that hands it on goes unseen. A slice literal's array has the same shape
-and is held, by `with_literal_content` extending each use of the slice with the
-slots of the array it views. Giving a named root the same treatment closes this, at
-the cost of also rejecting `drop(values); view.len()` for a named array, as a slice
-literal already does. Applied to every use, that treatment also rejects valid
-programs such as a field read through a pointer to a record. Applied only to a value
-handed to a call, it rejects no valid fixture, as the
-[trial](open-questions.md#review-of-the-provenance-architecture-2026-11-01) measured,
-so what remains is the decision about `view.len()`. Found while fixing a slice literal's drop on 2026-11-01 at
-`46cf2aa8` (P1).
-
 ### A write on every path does not end a received allocator's region
 
 [The allocator reset promise](design.md#allocator_reset) covers the regions a reset

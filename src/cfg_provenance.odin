@@ -139,10 +139,12 @@ Prov_Event :: struct {
 	// `Live`: the carrier is only read, so a live read-only reborrow of it does
 	// not conflict (design.md "Weakening and reborrows").
 	reads_only:    bool,
-	// `Live`: what the slice literals its sources view hold, which stays live
-	// for a use of a view of them, though the use may read one element and is
-	// no use of the others (`with_literal_content`, `Slot_Use`).
+	// `Live`: what the storage a call's arguments lend holds, which stays live for
+	// the call, though it may read one element and is no use of the others
+	// (`with_held_content`, `Slot_Use`).
 	keeps_live:    []int,
+	// `Live`: a call's use of what it borrows, which may read whatever they reach.
+	hands_on:      bool,
 	// `Load`: a carrier loaded on the way to a place through it
 	// (`prov_reach_hop`), which only the access to that place uses, so its
 	// reborrow of what it was loaded out of suspends nothing.
@@ -7896,7 +7898,7 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		prov_call_effects(graph, v)
 		graph.task_effects = false
 		if len(borrowed) > 0 {
-			prov_emit(graph, Prov_Event{kind = .Live, sources = borrowed, span = v.span})
+			prov_emit(graph, Prov_Event{kind = .Live, sources = borrowed, span = v.span, hands_on = true})
 		}
 		prov_call_carrier_moves(graph, v, .None, actuals)
 		return prov_store_call_results(graph, v, actuals)
@@ -7944,7 +7946,7 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	prov_argument_drop_effects(graph, v)
 	graph.task_effects = false
 	if len(borrowed) > 0 {
-		prov_emit(graph, Prov_Event{kind = .Live, sources = borrowed, span = v.span})
+		prov_emit(graph, Prov_Event{kind = .Live, sources = borrowed, span = v.span, hands_on = true})
 	}
 	// What the container stores reborrows the arguments, so it is stored after
 	// their use in the call: the operation's own read of an argument is not a

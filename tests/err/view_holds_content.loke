@@ -1,0 +1,152 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Values that contain borrows": a call handed a borrow of storage may
+// read what that storage holds, so what is held there stays borrowed for the call,
+// however many carriers lie between the argument and the storage.
+
+Plain :: struct { data: []int }
+Wrap :: struct { rows: []Plain }
+Grid :: struct { rows: [1]Plain }
+Box :: struct { inner: Plain, count: int }
+Link :: struct { to: ^mut int }
+
+first :: proc(view: []Plain) -> int { return view[0].data[0]; }
+look :: proc(held: ^Plain) -> int { return held^.data[0]; }
+read_slice :: proc(p: ^[]int) -> int { return p^[0]; }
+wrapped :: proc(w: Wrap) -> int { return w.rows[0].data[0]; }
+boxed :: proc(b: ^Box) -> int { return b^.inner.data[0]; }
+ignore :: proc(view: []Plain) {}
+cond :: proc() -> bool { return true; }
+
+view_handed_on :: proc() {
+	values := [dynamic]int{7};
+	arr := [1]Plain{Plain{values[:]}};
+	view := arr[:];
+	drop(values);
+	_ = first(view);
+}
+
+slice_of_the_array_handed_on :: proc() {
+	values := [dynamic]int{7};
+	arr := [1]Plain{Plain{values[:]}};
+	drop(values);
+	_ = first(arr[:]);
+}
+
+view_printed :: proc() {
+	values := [dynamic]int{7};
+	arr := [1]Plain{Plain{values[:]}};
+	view := arr[:];
+	drop(values);
+	fmt.println(view);
+}
+
+view_resliced :: proc() {
+	values := [dynamic]int{7};
+	arr := [1]Plain{Plain{values[:]}};
+	view := arr[:];
+	drop(values);
+	_ = first(view[0:1]);
+}
+
+copy_of_the_view :: proc() {
+	values := [dynamic]int{7};
+	arr := [1]Plain{Plain{values[:]}};
+	view := arr[:];
+	again := view;
+	drop(values);
+	_ = first(again);
+}
+
+view_held_in_a_record :: proc() {
+	values := [dynamic]int{7};
+	arr := [1]Plain{Plain{values[:]}};
+	w := Wrap{arr[:]};
+	drop(values);
+	_ = wrapped(w);
+}
+
+record_through_a_pointer :: proc() {
+	values := [dynamic]int{7};
+	held := Plain{values[:]};
+	p := &held;
+	drop(values);
+	_ = look(p);
+}
+
+slice_through_a_pointer :: proc() {
+	values := [dynamic]int{7};
+	s := values[:];
+	p := &s;
+	drop(values);
+	_ = read_slice(p);
+}
+
+nested_record_through_a_pointer :: proc() {
+	values := [dynamic]int{7};
+	b := Box{Plain{values[:]}, 0};
+	p := &b;
+	drop(values);
+	_ = boxed(p);
+}
+
+view_of_an_array_in_a_record :: proc() {
+	values := [dynamic]int{7};
+	g := Grid{[1]Plain{Plain{values[:]}}};
+	view := g.rows[:];
+	drop(values);
+	_ = first(view);
+}
+
+view_of_a_dynamic_array :: proc() {
+	values := [dynamic]int{7};
+	rows := [dynamic]Plain{Plain{values[:]}};
+	defer drop(rows);
+	view := rows[:];
+	drop(values);
+	_ = first(view);
+}
+
+dropped_on_one_path :: proc() {
+	values := [dynamic]int{7};
+	arr := [1]Plain{Plain{values[:]}};
+	view := arr[:];
+	if (cond()) { drop(values); }
+	_ = first(view);
+}
+
+write_while_a_view_is_handed_on :: proc() {
+	x := 1;
+	arr := [1]Link{Link{&mut x}};
+	view := arr[:];
+	x = 2;
+	_ = view.len();
+}
+
+// A call that reads no element is still a call: only its signature is known here.
+length_of_the_view :: proc() {
+	values := [dynamic]int{7};
+	arr := [1]Plain{Plain{values[:]}};
+	view := arr[:];
+	drop(values);
+	_ = view.len();
+}
+
+callee_reads_nothing :: proc() {
+	values := [dynamic]int{7};
+	arr := [1]Plain{Plain{values[:]}};
+	view := arr[:];
+	drop(values);
+	ignore(view);
+}
+
+slice_literal_handed_on :: proc() {
+	values := [dynamic]int{7};
+	view := []Plain{Plain{values[:]}};
+	drop(values);
+	_ = first(view);
+}
+
+main :: proc() {}

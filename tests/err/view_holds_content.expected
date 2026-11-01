@@ -1,0 +1,48 @@
+L0512
+@27:2
+`values` cannot be dropped here: a read-only slice of it is still in use
+L0512
+@34:2
+`values` cannot be dropped here: a read-only slice of it is still in use
+L0512
+@42:2
+`values` cannot be dropped here: a read-only slice of it is still in use
+L0512
+@50:2
+`values` cannot be dropped here: a read-only slice of it is still in use
+L0512
+@59:2
+`values` cannot be dropped here: a read-only slice of it is still in use
+L0512
+@67:2
+`values` cannot be dropped here: a read-only slice of it is still in use
+L0512
+@75:2
+`values` cannot be dropped here: a read-only slice of it is still in use
+L0512
+@83:2
+`values` cannot be dropped here: a read-only slice of it is still in use
+L0512
+@91:2
+`values` cannot be dropped here: a read-only slice of it is still in use
+L0512
+@99:2
+`values` cannot be dropped here: a read-only slice of it is still in use
+L0512
+@108:2
+`values` cannot be dropped here: a read-only slice of it is still in use
+L0512
+@116:16
+`values` cannot be dropped here: a read-only slice of it is still in use
+L0512
+@124:2
+`x` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@133:2
+`values` cannot be dropped here: a read-only slice of it is still in use
+L0512
+@141:2
+`values` cannot be dropped here: a read-only slice of it is still in use
+L0512
+@148:2
+`values` cannot be dropped here: a read-only slice of it is still in use

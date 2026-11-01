@@ -1,0 +1,81 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Values that contain borrows": what a view's storage holds is borrowed
+// only for what still holds it, and only until the last call handed the view.
+
+Plain :: struct { data: []int }
+
+first :: proc(view: []Plain) -> int { return view[0].data[0]; }
+
+dropped_after_the_last_call :: proc() -> int {
+	values := [dynamic]int{7};
+	arr := [1]Plain{Plain{values[:]}};
+	view := arr[:];
+	total := first(view);
+	drop(values);
+	return total;
+}
+
+// A use of the view that hands it to no call reads nothing.
+copied_after_the_drop :: proc() -> int {
+	values := [dynamic]int{7};
+	arr := [1]Plain{Plain{values[:]}};
+	view := arr[:];
+	drop(values);
+	again := view;
+	_ = again;
+	return 5;
+}
+
+// A store through the view replaces what the element held.
+replaced_before_the_drop :: proc() -> int {
+	values := [dynamic]int{7};
+	other := [dynamic]int{8};
+	defer drop(other);
+	arr := [1]Plain{Plain{values[:]}};
+	view := &mut arr[:];
+	view[0] = Plain{other[:]};
+	drop(values);
+	return first(view);
+}
+
+// Only what the viewed elements hold is borrowed.
+other_element_not_viewed :: proc() -> int {
+	values := [dynamic]int{7};
+	other := [dynamic]int{9};
+	defer drop(other);
+	arr := [2]Plain{Plain{values[:]}, Plain{other[:]}};
+	view := arr[1:2];
+	drop(values);
+	return first(view);
+}
+
+// A slice of plain values holds no borrow.
+plain_values :: proc() -> int {
+	values := [dynamic]int{7};
+	numbers := [2]int{1, 2};
+	view := numbers[:];
+	drop(values);
+	return view.len() + view[0];
+}
+
+// A use of a slice literal's view that hands it to no call reads nothing either.
+literal_copied_after_the_drop :: proc() -> int {
+	values := [dynamic]int{7};
+	view := []Plain{Plain{values[:]}};
+	drop(values);
+	again := view;
+	_ = again;
+	return 11;
+}
+
+main :: proc() {
+	fmt.println(dropped_after_the_last_call());
+	fmt.println(copied_after_the_drop());
+	fmt.println(replaced_before_the_drop());
+	fmt.println(other_element_not_viewed());
+	fmt.println(plain_values());
+	fmt.println(literal_copied_after_the_drop());
+}

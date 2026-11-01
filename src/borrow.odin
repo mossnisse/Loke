@@ -3997,13 +3997,13 @@ load_pointee_paths :: proc(state: ^Prov_State, root: Prov_Root, path: []Proj_Ste
 // mutation before `p^.view` conflicts with the borrow held in the pointee.
 @(private = "file")
 resolve_content_reads :: proc(state: ^Prov_State) {
-	if !state.graph.has_content_load && !state.graph.has_replacing_store { return }
-	literal_loans := make([dynamic]int, 0, 2, state.graph.alloc)
+	content_loans := make([dynamic]int, 0, 2, state.graph.alloc)
 	for loan, index in state.graph.loans {
-		if len(state.graph.roots[int(loan.root)].slots) > 0 {
-			append(&literal_loans, index)
+		if len(loan_own_slots(state.graph, loan, state.graph.roots[int(loan.root)])) > 0 {
+			append(&content_loans, index)
 		}
 	}
+	if len(content_loans) == 0 && !state.graph.has_content_load && !state.graph.has_replacing_store { return }
 	for block in state.graph.blocks {
 		if !block.prov_visited {
 			continue
@@ -4021,8 +4021,8 @@ resolve_content_reads :: proc(state: ^Prov_State) {
 				if event.kind == .Publish {
 					event.replaces = publish_replaced_slots(state, event, state.reach, state.ended)
 				}
-				if event.kind == .Live {
-					event.keeps_live = with_literal_content(state, event.sources, literal_loans[:])
+				if event.kind == .Live && event.hands_on {
+					event.keeps_live = with_held_content(state, event.sources, content_loans[:])
 				}
 				run_prov_event(state, event, state.reach, state.ended)
 			}
@@ -4032,12 +4032,13 @@ resolve_content_reads :: proc(state: ^Prov_State) {
 	state.reborrow_starts = nil
 }
 
-// design.md "Slice literals": what the slice literals `sources` view hold now, and
-// so on through any slice held there. Whatever a slice is handed to may read its
-// elements, so what they borrow stays live for a use of the slice.
+// design.md "Values that contain borrows": what the storage a use's sources lend
+// holds now, and so on through any carrier held there. Whatever a carrier is handed
+// to may read what it reaches, so what that storage borrows stays live for the
+// call.
 @(private = "file")
-with_literal_content :: proc(state: ^Prov_State, sources, literal_loans: []int) -> []int {
-	if len(literal_loans) == 0 {
+with_held_content :: proc(state: ^Prov_State, sources, content_loans: []int) -> []int {
+	if len(content_loans) == 0 {
 		return nil
 	}
 	graph := state.graph
@@ -4045,12 +4046,13 @@ with_literal_content :: proc(state: ^Prov_State, sources, literal_loans: []int) 
 	append(&out, ..sources)
 	for at := 0; at < len(out); at += 1 {
 		row := reach_row(state, state.reach, out[at])
-		for index in literal_loans {
+		for index in content_loans {
 			if !bit_get(row, index) {
 				continue
 			}
-			for slot in graph.roots[int(graph.loans[index].root)].slots {
-				if paths_overlap(graph.prov_slots[slot].path, graph.loans[index].path) && !slice.contains(out[:], slot) {
+			loan := graph.loans[index]
+			for slot in loan_own_slots(graph, loan, graph.roots[int(loan.root)]) {
+				if paths_overlap(graph.prov_slots[slot].path, loan.path) && !slice.contains(out[:], slot) {
 					append(&out, slot)
 				}
 			}

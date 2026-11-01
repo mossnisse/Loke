@@ -514,12 +514,16 @@ Keep these contracts:
   (`prov_slot_is_stored_temporary`).
 - **A slice literal's hidden array is lasting storage.** Its content slots have no
   symbol, but count as a local's wherever a stored carrier is told from a temporary
-  (`prov_slot_is_stored`, `Prov_Slot.kind`). A use of a view of one keeps
-  them live without using them (`Prov_Event.keeps_live`, `Slot_Use`): what they
-  borrow lasts, and no reborrow of what they came from is suspended by it. Reading
-  one element is so no use of another, and a call that copied between them is no
-  second use when the view is next handed on. A call handed the view uses them as
-  it does any it reaches.
+  (`prov_slot_is_stored`, `Prov_Slot.kind`).
+- **A call keeps live what the storage it is handed holds.** `Prov_Event.hands_on`
+  marks a call's use of its borrowed arguments. `with_held_content` follows the
+  loans they hold to each root's own slots (`loan_own_slots`), and on through any
+  carrier there, and keeps those slots live without using them
+  (`Prov_Event.keeps_live`, `Slot_Use`). What they borrow lasts, and no reborrow of
+  what they came from is suspended by it, so reading one element is no use of
+  another, and a call that copied between them is no second use when the view is
+  next handed on. Other uses of a carrier keep nothing held there live: a load reads
+  the slots it names, and a copy reads none.
 - **Owners, handles, and fields stay apart.** Region facts are kept by path,
   and backing dependencies apart from payload dependencies: a record's fields,
   a container's elements and backing, a shared handle's control block and

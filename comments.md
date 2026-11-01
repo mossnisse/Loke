@@ -3330,6 +3330,15 @@ A chain is the case that keeps a copy from being any store of a held carrier:
 `list^.head = list^.head^.next` reads a carrier below the place it lands, and
 what it replaces is the only path to that carrier, so the body is `Rearrange`
 without the links. Marking it as a copy would reject every traversal that pops.
+A call keeps borrowed what the storage it is handed holds, not any use of a view.
+Extending every use rejected valid programs: reading one field through a pointer
+would have held what the record's other field borrowed. A load already reads the
+slots it names, so only a call, which may read anything it reaches, needs the
+extension. It does reject `drop(values); view.len()`, since a call's signature does
+not say it reads nothing, and `holders.len()` was already rejected that way. Telling
+a built-in that reads no element from other calls could relax both; nothing here
+depends on either.
+
 A reordering assignment is also not a copy, recognized by the values naming the
 targets' own places; a reordering written with a temporary is not recognized,
 and [a hand-written swap in a body](known-gaps.md#a-swap-written-with-a-temporary-is-rejected)
