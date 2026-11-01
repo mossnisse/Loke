@@ -1711,7 +1711,7 @@ prov_element_prefix :: proc(graph: ^Flow_Graph, v: ^Expr_Composite, type: Type_I
 	case .Map:
 		entry := prov_extend(graph, nil, prov_map_entry_step(graph, type, v.elements[index].key))
 		return prov_extend(graph, entry, proj_field(PROJ_MAP_VALUE)), true
-	case .Array:
+	case .Array, .Dynamic_Array:
 		step, known := prov_element_step(graph, v, type, true, index)
 		return prov_extend(graph, nil, step), known
 	}
@@ -2227,7 +2227,7 @@ prov_define_content :: proc(
 @(private = "file")
 path_is_indistinct :: proc(path: []Proj_Step) -> bool {
 	for step in path {
-		if step.kind == .Wild {
+		if step.kind == .Wild || step.kind == .Range && step.hi - step.lo > 1 {
 			return true
 		}
 	}
@@ -4043,12 +4043,30 @@ Prov_Region_Alias :: struct {
 	path: []Proj_Step,
 }
 
+// Region facts are flow-insensitive, so one at an element of a dynamic array
+// would stay at that index whatever later moved the element: it stands for any.
+@(private = "file")
+prov_region_path :: proc(graph: ^Flow_Graph, path: []Proj_Step) -> []Proj_Step {
+	for step, index in path {
+		if step.shifts {
+			out := slice.clone(path, graph.alloc)
+			for &other in out[index:] {
+				if other.shifts {
+					other = proj_wild()
+				}
+			}
+			return out
+		}
+	}
+	return path
+}
+
 // Records a managed value stored at a path. Flow-insensitive, so writes merge.
 @(private = "file")
 prov_define_region_content :: proc(
 	graph: ^Flow_Graph,
 	root: Root_Id,
-	path: []Proj_Step,
+	written: []Proj_Step,
 	region: Region_Set,
 	handle := false,
 	own := false,
@@ -4056,6 +4074,7 @@ prov_define_region_content :: proc(
 	if root == NO_ROOT || region_is_empty(region) {
 		return
 	}
+	path := prov_region_path(graph, written)
 	id := graph.roots[int(root)].symbol
 	storage := prov_storage_for_root(graph, root)
 	if storage == 0 {
@@ -5511,7 +5530,9 @@ prov_define_copied_region :: proc(graph: ^Flow_Graph, root: Root_Id, at, from: [
 prov_define_copied_content :: proc(graph: ^Flow_Graph, root: Root_Id, contents: []Prov_Region_Content) {
 	storage := prov_storage_for_root(graph, root)
 	if storage == 0 { return }
-	next: for content in contents {
+	next: for copied in contents {
+		content := copied
+		content.path = prov_region_path(graph, content.path)
 		existing := graph.region_content[storage]
 		for entry in existing {
 			if prov_same_region_content(entry, content) { continue next }
@@ -6141,6 +6162,11 @@ prov_index_path_in :: proc(graph: ^Flow_Graph, v: ^Expr_Index, type: Type_Id) ->
 	#partial switch underlying_kind(graph.k.c, type) {
 	case .Array:
 		return prov_extend(graph, nil, prov_index_step(graph, v.indices))
+	case .Dynamic_Array:
+		step := prov_index_step(graph, v.indices)
+		step.shifts = true
+		if step.kind == .Range && step.lo >= CARRIER_ARRAY_ELEMENTS { step.precision = {.Array_Elements} }
+		return prov_extend(graph, nil, step)
 	case .Map:
 		key: Expr
 		if len(v.indices) == 1 {
@@ -8391,7 +8417,7 @@ prov_call_carrier_moves :: proc(graph: ^Flow_Graph, v: ^Expr_Call, container_op:
 		prov_note_summary_dependency(graph, target, prov_has_direct_body(c, target))
 	}
 	#partial switch container_op {
-	case .Swap, .Sort, .Reverse_Sort:
+	case .Swap, .Sort, .Reverse_Sort, .Insert, .Remove, .Remove_Unordered:
 		if len(actuals) > 0 {
 			if moves == nil {
 				moves = make([]Carrier_Move, len(actuals), graph.alloc)
@@ -8404,11 +8430,23 @@ prov_call_carrier_moves :: proc(graph: ^Flow_Graph, v: ^Expr_Call, container_op:
 		}
 	}
 	for move, index in moves {
-		if !move.any && len(move.types) == 0 || index >= len(actuals) || len(actuals[index]) == 0 {
+		if !move.any && len(move.types) == 0 || index >= len(actuals) {
 			continue
 		}
+		if len(actuals[index]) == 0 && (index != 0 || !prov_op_removes_element(container_op)) {
+			continue
+		}
+		into := actuals[index]
+		if index == 0 && prov_op_removes_element(container_op) {
+			// Its actual is what the removal hands back, not the storage it shifts.
+			if root, path, ok := prov_place_of(graph, v.bound[0]); ok {
+				into = prov_borrow(graph, root, path, true, v.span, "borrow")
+			} else {
+				into = prov_carrier_slots(graph, v.bound[0])
+			}
+		}
 		slot := prov_temp_slot(graph)
-		prov_emit(graph, Prov_Event{kind = .Rearrange, slot = slot, into = actuals[index], span = v.span, rearranged = move})
+		prov_emit(graph, Prov_Event{kind = .Rearrange, slot = slot, into = into, span = v.span, rearranged = move})
 		if move.copied {
 			prov_link_copied_carriers(graph, slot, move, v.span)
 		}

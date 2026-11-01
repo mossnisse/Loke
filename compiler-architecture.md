@@ -491,6 +491,15 @@ Keep these contracts:
   until a `Rearrange` activates them, so an earlier use conflicts with nothing,
   and they are never severed again, as what a copy left in two places stays
   there (`Prov_Reborrow.copied_within`).
+- **A dynamic array's first elements have carrier paths of their own.**
+  `carrier_shape_walk` gives each of the first `CARRIER_ARRAY_ELEMENTS` a step
+  and every later one a shared one, unless that would pass `CARRIER_WIDTH`, when
+  the whole type falls back to one wildcard element per dynamic array. A store
+  at a constant index replaces that element's slot, and so what moves an element
+  must say so: `prov_call_carrier_moves` emits a `Rearrange` for `insert`,
+  `remove`, `remove_unordered`, `swap`, and the sorts. Region facts are
+  flow-insensitive and could not follow that move, so they stay wildcards
+  (`Proj_Step.shifts`, `prov_region_path`).
 - **Owners, handles, and fields stay apart.** Region facts are kept by path,
   and backing dependencies apart from payload dependencies: a record's fields,
   a container's elements and backing, a shared handle's control block and

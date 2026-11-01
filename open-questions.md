@@ -419,9 +419,9 @@ helpers, and no additional correctness finding was found in it. The offset
 walk separates definition recording, reaching-definition discovery, and
 offset joining; caching finished blocks and invalidating on new predecessors
 or definitions has a clear purpose. The bounds above leave the specification
-guarantee incomplete. The already-recorded
-[dynamic-array content-slot gap](known-gaps.md#a-copy-out-of-a-dynamic-arrays-view-suspends-the-other-elements-carriers)
-remains outside the local-view fix.
+guarantee incomplete. The then-recorded dynamic-array content-slot gap was
+outside the local-view fix, and has since been
+[closed](comments.md#a-dynamic-arrays-elements-as-carrier-paths).
 
 Validation passed on the merged tree: 179 compiler unit tests, the diagnostic
 corpus and borrow matrix, and the `view_element_places` executable's expected
@@ -575,9 +575,8 @@ a known start, while publication also uses the extent and underlying loan.
 The matrix now has a place whose view a branch only shortens
 (`local_shortened`). A matrix place for a dynamically backed view is still to
 add; the new dynamic `items` cases exercise the array stored inside an
-element instead, and copies out of such a view's elements still share one
-set of slots
-([known gap](known-gaps.md#a-copy-out-of-a-dynamic-arrays-view-suspends-the-other-elements-carriers)).
+element instead, and copies out of such a view's elements have since been
+[told apart](comments.md#a-dynamic-arrays-elements-as-carrier-paths).
 
 The meaning of "fresh borrow of a range" in
 [Weakening and reborrows](design.md#weakening-and-reborrows) should also be

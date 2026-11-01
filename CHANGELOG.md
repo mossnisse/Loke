@@ -985,6 +985,14 @@ checklist.
 
 ### Fixed
 
+- A dynamic array's first 8 elements are now told apart by a constant index, as a
+  fixed array's are ([Minimum provenance precision](design.md#minimum-provenance-precision)).
+  `node := lists[0].head; other := lists[1].head;`, directly or through a fresh
+  `&mut lists[:]`, was `L0641` as each element stood for all of them; and with it
+  `&mut d[0]` beside a use of `d[1]`, and a write of `y` while only
+  `links[0]`, built from `&mut x`, is in use. `insert`, `remove`,
+  `remove_unordered`, `swap`, the sorts, and any call that moves carriers join
+  what the elements hold.
 - A mutable carrier held by an element is now usable through a `foreach` loop's
   `&mut` binding, as in `foreach (&mut list in lists) { list.head^.value = 3; }`,
   and `&mut list` may be taken there. Any use of it was `L0641`, as the binding

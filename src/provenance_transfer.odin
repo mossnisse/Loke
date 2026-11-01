@@ -156,7 +156,6 @@ prov_describe_transfer :: proc(graph: ^Flow_Graph, id: Value_Id) -> Prov_Transfe
 			}
 			if element.value == nil { continue }
 			path, known := prov_element_prefix(graph, v, value.type, index)
-			if kind == .Dynamic_Array { path, known = prov_extend(graph, nil, proj_wild()), true }
 			if !known { continue }
 			mode := Prov_Transfer_Mode.Read
 			if index < len(v.element_clones) && v.element_clones[index] { mode = .Clone }

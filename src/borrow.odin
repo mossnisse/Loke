@@ -151,6 +151,10 @@ Proj_Step :: struct {
 	// design.md "@(synchronized)": the step selects a synchronized field from
 	// outside its package, so reaching the place is exclusive access.
 	synchronized: bool,
+	// An element of a dynamic array, which an operation may move to another
+	// index. Carrier slots see that happen (`rearrange_carriers`); region facts,
+	// being flow-insensitive, do not (`prov_region_path`).
+	shifts:    bool,
 	lo:        i64,
 	hi:        i64,
 }
@@ -174,6 +178,11 @@ proj_range :: proc(lo, hi: i64) -> Proj_Step {
 
 proj_wild :: proc() -> Proj_Step {
 	return Proj_Step{kind = .Wild}
+}
+
+// Element `index` of a dynamic array, one by itself up to the budget.
+proj_dynamic_element :: proc(index: i64) -> Proj_Step {
+	return Proj_Step{kind = .Range, lo = index, hi = index + 1, shifts = true}
 }
 
 // Two paths into one root overlap unless some step proves them disjoint, so a
@@ -599,7 +608,9 @@ attribute_escape_level :: proc(c: ^Compiler, attributes: []Attribute) -> (level:
 // ----------------------------------------------------- carrier shapes --
 
 // A carrier shape lists where inside a value a borrow can be, as `Proj_Step`
-// paths. Shapes are finite: containers contribute one wildcard edge, depth past
+// paths. Shapes are finite: a dynamic array contributes an edge for each of its
+// first elements and one for the rest, or one wildcard edge where that would pass
+// `CARRIER_WIDTH`, other containers one wildcard edge, depth past
 // `CARRIER_DEPTH` becomes one truncated path, a shape wider than `CARRIER_WIDTH`
 // collapses to one path, and a scalar subtree contributes nothing. Both queries
 // run after all checking, so a cached answer never sees an incomplete type.
@@ -630,8 +641,12 @@ map_shape_is_keyed :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	c.map_keyed[type] = false
 	out := false
 	if info := underlying_info(c, type); info != nil && info.kind == .Map {
-		width := len(carrier_shape(c, info.key)) + len(carrier_shape(c, info.element))
-		out = width > 0 && width <= MAP_KEY_PATH_LIMIT
+		// Measured with one path per dynamic array, whose elements are replicated
+		// after this is decided, as a map's entries are.
+		paths := make([dynamic]Carrier_Path, 0, MAP_KEY_PATH_LIMIT + 1, context.temp_allocator)
+		carrier_shape_walk(c, info.key, nil, 0, &paths, elements = false)
+		carrier_shape_walk(c, info.element, nil, 0, &paths, elements = false)
+		out = len(paths) > 0 && len(paths) <= MAP_KEY_PATH_LIMIT
 	}
 	c.map_keyed[type] = out
 	return out
@@ -755,7 +770,13 @@ carrier_shape :: proc(c: ^Compiler, type: Type_Id) -> []Carrier_Path {
 		return cached
 	}
 	out := make([dynamic]Carrier_Path, 0, 4, c.semantic_allocator)
-	carrier_shape_walk(c, type, nil, 0, &out)
+	carrier_shape_walk(c, type, nil, 0, &out, elements = true)
+	if len(out) > CARRIER_WIDTH {
+		// Too wide with the elements of its dynamic arrays apart: not too wide
+		// with one path per dynamic array, as it may be, should not collapse.
+		clear(&out)
+		carrier_shape_walk(c, type, nil, 0, &out, elements = false)
+	}
 	shape := out[:]
 	if len(shape) > CARRIER_WIDTH {
 		whole := make([]Carrier_Path, 1, c.semantic_allocator)
@@ -773,6 +794,7 @@ carrier_shape_walk :: proc(
 	prefix: []Proj_Step,
 	depth: int,
 	out: ^[dynamic]Carrier_Path,
+	elements: bool,
 ) {
 	// One path past the width already collapses the shape to its whole value,
 	// so no more are collected (or allocated).
@@ -802,7 +824,7 @@ carrier_shape_walk :: proc(
 	}
 	// A shared handle's payload is reached as a box's is.
 	if payload := shared_payload_type(c, type); payload != INVALID_TYPE {
-		carrier_shape_walk(c, payload, carrier_steps(c, prefix, {proj_wild()}), depth + 1, out)
+		carrier_shape_walk(c, payload, carrier_steps(c, prefix, {proj_wild()}), depth + 1, out, elements)
 		return
 	}
 	#partial switch info.kind {
@@ -813,26 +835,41 @@ carrier_shape_walk :: proc(
 				continue
 			}
 			step := proj_field(int(sym.index))
-			carrier_shape_walk(c, sym.type, carrier_steps(c, prefix, {step}), depth + 1, out)
+			carrier_shape_walk(c, sym.type, carrier_steps(c, prefix, {step}), depth + 1, out, elements)
 		}
 	case .Union:
 		for variant in info.variants {
-			carrier_shape_walk(c, variant, carrier_steps(c, prefix, {proj_wild()}), depth + 1, out)
+			carrier_shape_walk(c, variant, carrier_steps(c, prefix, {proj_wild()}), depth + 1, out, elements)
 		}
 	case .Array:
 		if info.count > 0 && info.count <= CARRIER_ARRAY_ELEMENTS {
 			for index in 0 ..< i64(info.count) {
 				step := proj_range(index, index + 1)
-				carrier_shape_walk(c, info.element, carrier_steps(c, prefix, {step}), depth + 1, out)
+				carrier_shape_walk(c, info.element, carrier_steps(c, prefix, {step}), depth + 1, out, elements)
 			}
 			return
 		}
 		step := proj_wild()
 		if info.count > CARRIER_ARRAY_ELEMENTS { step.precision = {.Array_Elements} }
-		carrier_shape_walk(c, info.element, carrier_steps(c, prefix, {step}), depth + 1, out)
-	case .Dynamic_Array, .Box:
+		carrier_shape_walk(c, info.element, carrier_steps(c, prefix, {step}), depth + 1, out, elements)
+	case .Dynamic_Array:
+		if elements {
+			for index in 0 ..< i64(CARRIER_ARRAY_ELEMENTS) {
+				carrier_shape_walk(c, info.element, carrier_steps(c, prefix, {proj_dynamic_element(index)}), depth + 1, out, elements)
+			}
+			// Every element past those; an index that names one says it is merged
+			// (`prov_index_path_in`).
+			rest := proj_range(CARRIER_ARRAY_ELEMENTS, max(i64))
+			rest.shifts = true
+			carrier_shape_walk(c, info.element, carrier_steps(c, prefix, {rest}), depth + 1, out, elements)
+			return
+		}
+		merged := proj_wild()
+		merged.precision = {.Array_Elements}
+		carrier_shape_walk(c, info.element, carrier_steps(c, prefix, {merged}), depth + 1, out, elements)
+	case .Box:
 		// A box's payload is reached by the same one wildcard step a place `b^` takes.
-		carrier_shape_walk(c, info.element, carrier_steps(c, prefix, {proj_wild()}), depth + 1, out)
+		carrier_shape_walk(c, info.element, carrier_steps(c, prefix, {proj_wild()}), depth + 1, out, elements)
 	case .Map:
 		// No separate wildcard entry: an unknown key uses a wildcard step, which
 		// overlaps every keyed entry.
@@ -844,8 +881,8 @@ carrier_shape_walk :: proc(
 			step := entries == 1 ? proj_wild() : proj_range(i64(entry), i64(entry) + 1)
 			if entries == 1 { step.precision = {.Map_Width} }
 			base := carrier_steps(c, prefix, {step})
-			carrier_shape_walk(c, info.key, carrier_steps(c, base, {proj_field(PROJ_MAP_KEY)}), depth + 2, out)
-			carrier_shape_walk(c, info.element, carrier_steps(c, base, {proj_field(PROJ_MAP_VALUE)}), depth + 2, out)
+			carrier_shape_walk(c, info.key, carrier_steps(c, base, {proj_field(PROJ_MAP_KEY)}), depth + 2, out, elements)
+			carrier_shape_walk(c, info.element, carrier_steps(c, base, {proj_field(PROJ_MAP_VALUE)}), depth + 2, out, elements)
 		}
 	}
 }

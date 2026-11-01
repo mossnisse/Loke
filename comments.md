@@ -3259,6 +3259,39 @@ positions that a particular analysis should ignore. Implementation details belon
 with the [semantic architecture](compiler-architecture.md#semantic-architecture);
 historical fix lists and test counts are available in Git history.
 
+### A dynamic array's elements as carrier paths
+
+The specification's constant-index element rule for a local view asks that
+`s[0].head` and `s[1].head` be different places, and a single wildcard element
+cannot say so of what they hold. Giving a dynamic array element paths as a fixed
+array has means a store at an index replaces what the slot held, which is true
+only until something moves the elements, so it waited on
+[calls that rearrange what an argument holds](#calls-that-rearrange-what-an-argument-holds):
+an earlier attempt without that summary made a copy between elements unsound.
+
+Slots beside the wildcard, created on demand, as a view parameter's constant
+element gets (`prov_view_element`), were considered. Those work because a
+parameter's caller slots are only written through known events and hold what the
+caller gave them at entry; a local dynamic array is written all through the body,
+so each such slot would need joining into by every other write, which is what
+path overlap already does for a fixed array.
+
+Budget: the first 8 elements match the fixed-array minimum, and a shared last
+path gives a constant index past them somewhere to land without a wildcard's
+overlap with the first 8. A type where this would pass 64 paths falls back rather
+than collapses, since a shape that fit before this should not lose its other
+paths for it. A map's keyed width is measured with one path per dynamic array,
+since the map's keys predate this and are worth more than its elements.
+
+Disjoint element loans follow from the same place path: `&mut d[0]` beside
+`d[1] = 2` is accepted. Writing one element reallocates nothing and moves no
+other, and every operation that does uses the whole root.
+
+Region facts keep a wildcard: they merge flow-insensitively, so one recorded at
+index 1 would still say index 1 after a `remove`. That also leaves a fixed array's
+[owners moved by a swap](known-gaps.md#a-swap-or-reverse-of-owners-in-a-fixed-array-is-not-seen)
+unseen, which predates this and is a different fix.
+
 ### Calls that rearrange what an argument holds
 
 A body that stores into its argument's own storage retains nothing, so nothing

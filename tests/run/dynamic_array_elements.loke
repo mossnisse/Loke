@@ -1,0 +1,218 @@
+// design.md "Minimum provenance precision": a dynamic array's first elements are
+// told apart by a constant index, in what they hold and as places, as a fixed
+// array's are.
+package main;
+
+import "core:fmt";
+import "core:slice";
+
+Node :: struct { value: int }
+List :: struct { head: ^mut Node }
+Link :: struct { to: ^mut int }
+
+exchange :: proc(links: []mut Link) { links.swap(0, 1); }
+touch :: proc(links: []mut Link) { links[0].to^ += 1; }
+
+// The reproduction.
+through_a_dynamic_view :: proc() -> int {
+	a := Node{1}; b := Node{2};
+	lists := [dynamic]List{List{&mut a}, List{&mut b}};
+	s := &mut lists[:];
+	node := s[0].head;
+	other := s[1].head;
+	other^.value = 3;
+	node^.value = 10;
+	return a.value + b.value;
+}
+
+straight_out :: proc() -> int {
+	a := Node{1}; b := Node{2};
+	lists := [dynamic]List{List{&mut a}, List{&mut b}};
+	node := lists[0].head;
+	other := lists[1].head;
+	other^.value = 3;
+	node^.value = 10;
+	return a.value + b.value;
+}
+
+at_a_view_offset :: proc() -> int {
+	a := Node{1}; b := Node{2}; c := Node{3};
+	lists := [dynamic]List{List{&mut a}, List{&mut b}, List{&mut c}};
+	s := &mut lists[1:];
+	node := s[0].head;
+	other := s[1].head;
+	other^.value = 30;
+	node^.value = 20;
+	return a.value + b.value + c.value;
+}
+
+in_a_body :: proc(lists: ^mut [dynamic]List) -> int {
+	node := lists^[0].head;
+	other := lists^[1].head;
+	other^.value = 3;
+	node^.value = 10;
+	return node^.value + other^.value;
+}
+
+in_a_body_inout :: proc(lists: inout [dynamic]List) -> int {
+	node := lists[0].head;
+	other := lists[1].head;
+	other^.value = 3;
+	node^.value = 10;
+	return node^.value + other^.value;
+}
+
+// Moving carriers does not put one in two places.
+after_a_swap_in_a_body :: proc(lists: inout [dynamic]List) -> int {
+	lists.swap(0, 1);
+	node := lists[0].head;
+	other := lists[1].head;
+	other^.value = 3;
+	node^.value = 10;
+	return node^.value + other^.value;
+}
+
+two_calls_that_move :: proc() -> int {
+	x := 1; y := 2;
+	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	exchange(&mut links[:]);
+	exchange(&mut links[:]);
+	first := links[0].to;
+	second := links[1].to;
+	first^ += 10;
+	second^ += 20;
+	return x + y;
+}
+
+two_calls_in_the_library :: proc() -> int {
+	x := 1; y := 2;
+	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	slice.reverse(&mut links[:]);
+	slice.reverse(&mut links[:]);
+	first := links[0].to;
+	second := links[1].to;
+	first^ += 10;
+	second^ += 20;
+	return x + y;
+}
+
+two_calls_that_write_through :: proc() -> int {
+	x := 1; y := 2;
+	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	touch(&mut links[:]);
+	touch(&mut links[:]);
+	first := links[0].to;
+	second := links[1].to;
+	first^ += 10;
+	second^ += 20;
+	return x + y;
+}
+
+// What each element holds is its own.
+another_elements_target :: proc() -> int {
+	x := 1; y := 2;
+	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	held := links[0].to;
+	y = 5;
+	held^ += 10;
+	return x + y;
+}
+
+through_a_view :: proc() -> int {
+	x := 1; y := 2;
+	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	view := &mut links[:];
+	held := view[0].to;
+	y = 5;
+	held^ += 10;
+	return x + y;
+}
+
+replaced :: proc() -> int {
+	x := 1; y := 2; z := 3;
+	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	links[0].to = &mut z;
+	held := links[0].to;
+	x = 5;
+	held^ += 10;
+	return x + y + z;
+}
+
+replaced_through_a_view :: proc() -> int {
+	x := 1; y := 2; z := 3;
+	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
+	view := &mut links[:];
+	view[0].to = &mut z;
+	held := view[0].to;
+	x = 5;
+	held^ += 10;
+	return x + y + z;
+}
+
+// As places: writing one element moves no other.
+two_elements_mutably :: proc() -> int {
+	numbers := make([dynamic]int);
+	numbers.append(1);
+	numbers.append(2);
+	first := &mut numbers[0];
+	second := &mut numbers[1];
+	first^ += 10;
+	second^ += 20;
+	return numbers[0] + numbers[1];
+}
+
+an_element_beside_a_write :: proc() -> int {
+	numbers := make([dynamic]int);
+	numbers.append(1);
+	numbers.append(2);
+	first := &mut numbers[0];
+	numbers[1] = 5;
+	first^ += 10;
+	return numbers[0] + numbers[1];
+}
+
+// A map keeps its keys apart whatever its dynamic arrays do.
+map_keys_stay_apart :: proc() -> int {
+	x := 1; y := 2;
+	table := make(map[string][dynamic]^mut int);
+	table["a"] = [dynamic]^mut int{&mut x};
+	table["b"] = [dynamic]^mut int{&mut y};
+	held := table["a"][0];
+	y = 5;
+	held^ += 10;
+	return x + y;
+}
+
+// A type past its carrier paths keeps each field's own.
+Eight :: struct { a, b, c, d, e, f, g, h: ^mut int }
+each_field_of_a_wide_element :: proc() -> int {
+	x := 1; y := 2; c := 0; d := 0; e := 0; f := 0; g := 0; h := 0;
+	wide := [dynamic]Eight{Eight{&mut x, &mut y, &mut c, &mut d, &mut e, &mut f, &mut g, &mut h}};
+	first := wide[0].a;
+	second := wide[0].b;
+	first^ += 10;
+	second^ += 20;
+	return x + y;
+}
+
+main :: proc() {
+	fmt.println(through_a_dynamic_view());
+	fmt.println(straight_out());
+	fmt.println(at_a_view_offset());
+	a := Node{1}; b := Node{2};
+	lists := [dynamic]List{List{&mut a}, List{&mut b}};
+	fmt.println(in_a_body(&mut lists));
+	fmt.println(in_a_body_inout(inout lists));
+	fmt.println(after_a_swap_in_a_body(inout lists));
+	fmt.println(two_calls_that_move());
+	fmt.println(two_calls_in_the_library());
+	fmt.println(two_calls_that_write_through());
+	fmt.println(another_elements_target());
+	fmt.println(through_a_view());
+	fmt.println(replaced());
+	fmt.println(replaced_through_a_view());
+	fmt.println(two_elements_mutably());
+	fmt.println(an_element_beside_a_write());
+	fmt.println(map_keys_stay_apart());
+	fmt.println(each_field_of_a_wide_element());
+}

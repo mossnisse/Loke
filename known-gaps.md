@@ -479,49 +479,41 @@ fallbacks; storing only the last definition in each block also avoids counting
 overwritten definitions against the definition bound. Reproduced on a compiler
 built from `68504095` and on the merged tree during review on 2026-10-31.
 
-### A copy out of a dynamic array's view suspends the other elements' carriers
+### A swap or reverse of owners in a fixed array is not seen
 
-[Weakening and reborrows](design.md#weakening-and-reborrows) makes elements
-of a local view at different constant indices different places wherever it
-is known where the view starts, as it is for a fresh `&mut d[:]` of a
-dynamic array, and a carrier copied out of one element is no use of the
-carrier stored in another. Over a dynamic array, the second copy here is
-still rejected:
+[Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)
+makes an owner carry its region wherever it is stored. Region facts are kept by
+path and flow-insensitively, so one recorded at a fixed array's constant index
+stays at that index when a swap or a call moves the owner to another, and a read
+of the other index finds no region, so this escape is accepted:
 
 ```loke
 package main;
-Node :: struct { value: int }
-List :: struct { head: ^mut Node }
-through_dynamic_view :: proc() {
-    a := Node{1}; b := Node{2};
-    lists := [dynamic]List{List{&mut a}, List{&mut b}};
-    s := &mut lists[:];
-    node := s[0].head;
-    other := s[1].head; // L0641; should be accepted
-    other^.value = 3;
-    node^.value = 1;
+import "core:fmt";
+import "core:mem";
+import "core:slice";
+swapped :: proc() -> string {
+    arena := mem.Arena.init();
+    items := [2]string{"a", "b"};
+    items[1] = fmt.to_string(arena.allocator(), 42);
+    view := &mut items[:];
+    view.swap(0, 1);
+    return items[0]; // should be rejected: `arena` is dropped here
+}
+by_a_call :: proc() -> string {
+    arena := mem.Arena.init();
+    items := [2]string{"a", "b"};
+    items[1] = fmt.to_string(arena.allocator(), 42);
+    slice.reverse(&mut items[:]);
+    return items[0]; // should be rejected
 }
 main :: proc() {}
 ```
 
-The same copies compile over a fixed `[2]List`, and a borrow of `s[0]`
-beside a write of `s[1]` compiles over the dynamic array too. The carriers
-stored in a dynamic array's elements share one set of content slots
-(`carrier_shape_walk` in [src/borrow.odin](src/borrow.odin) gives every
-element one wildcard step), so a load naming one element of the view still
-reads what every element holds, and the diagnostic names no analysis budget
-as [Minimum provenance precision](design.md#minimum-provenance-precision)
-asks of a merge. Copying `lists[0].head` and `lists[1].head` straight out of
-the dynamic array is rejected the same way. Telling the elements apart needs
-content slots for constant elements of a dynamic array, as a view
-parameter's constant elements get caller slots of their own
-(`prov_view_element` in [src/cfg_provenance.odin](src/cfg_provenance.odin)).
-Found while making copies out of a local view's element read that element
-alone on 2026-10-31.
-An attempt on 2026-10-31 gave a dynamic array's first elements paths of their
-own and joined the carriers of elements a call may rearrange. It made a call
-that copies between elements unsound over a dynamic array, as it then was over a
-fixed one, since nothing said a body had copied.
+A dynamic array's facts are wildcards for this reason (`prov_region_path`). Fields
+moved by a call are probably affected the same way. `Carrier_Move` does not say
+owners moved, as a summary would need to. Found while telling a dynamic array's
+constant elements apart on 2026-11-01.
 
 ### A call given a carrier and its copy in one use is not rejected
 

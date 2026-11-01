@@ -1,0 +1,168 @@
+L0641
+@33:12
+`links` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@43:12
+`links` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@52:12
+`links` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@59:12
+`d` cannot be used here: a mutable reborrow of it is still in use
+L0512
+@69:2
+`x` cannot be assigned here: a mutable pointer of it is still in use
+L0641
+@78:12
+`links` cannot be used here: a mutable reborrow of it is still in use
+L0512
+@89:2
+`a` cannot be assigned here: a mutable pointer of it may still be in use
+L0512
+@100:2
+`a` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@110:2
+`z` cannot be assigned here: a mutable pointer of it may still be in use
+L0512
+@120:2
+`z` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@129:2
+`x` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@138:2
+`z` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@149:2
+`z` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@158:2
+`z` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@169:2
+`z` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@179:2
+`z` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@189:2
+`z` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@200:2
+`z` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@209:2
+`z` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@218:2
+`z` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@230:2
+`y` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@240:2
+`y` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@251:2
+`z` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@261:2
+`z` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@271:2
+`z` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@280:2
+`y` cannot be assigned here: a mutable pointer of it is still in use
+L0641
+@288:11
+`links` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@289:12
+`links` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@299:11
+`links` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@300:12
+`links` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@310:12
+`links` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@318:12
+`d` cannot be used here: a mutable reborrow of it is still in use
+L0512
+@329:2
+`z` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@339:2
+`y` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@349:2
+`y` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@359:2
+`z` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@368:2
+`y` cannot be assigned here: a mutable pointer of it is still in use
+L0641
+@376:11
+`holder` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@377:12
+`holder` cannot be used here: a mutable reborrow of it is still in use
+L0512
+@387:2
+`y` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@396:2
+`links` cannot be modified here: a mutable pointer of it is still in use
+L0512
+@404:2
+`numbers` cannot be modified here: a mutable pointer of it is still in use
+L0512
+@412:2
+`numbers` cannot be assigned here: a read-only pointer of it is still in use
+L0511
+@420:2
+this write of `numbers` is not compatible with the mutable pointer of it that is still in use
+L0511
+@428:2
+this write of `links` is not compatible with the mutable pointer of it that is still in use
+L0512
+@439:2
+`z` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@449:2
+`z` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@460:2
+`z` cannot be assigned here: a mutable pointer of it may still be in use
+L0512
+@470:2
+`z` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@479:2
+`y` cannot be assigned here: a mutable pointer of it is still in use
+L0512
+@488:2
+`z` cannot be assigned here: a mutable pointer of it is still in use
+L0641
+@498:12
+`wide` cannot be used here: a mutable reborrow of it is still in use
+L0592
+@511:9
+this result is backed by `arena`, an allocator region that ends when this procedure returns
+L0592
+@521:9
+this result is backed by `arena`, an allocator region that ends when this procedure returns
+L0592
+@531:9
+this result is backed by `arena`, an allocator region that ends when this procedure returns
+L0592
+@539:9
+this result is backed by `arena`, an allocator region that ends when this procedure returns
