@@ -374,7 +374,7 @@ variadic_view_rank :: proc(k: ^Checker, arg: Arg_Info, element: Type_Id) -> int 
 			}
 		}
 	}
-	return variadic_view_satisfied(k, concrete, element, arg.span, report = false) ? RANK_BUILTIN : RANK_NONE
+	return variadic_view_satisfied(k, concrete, element, arg.span) ? RANK_BUILTIN : RANK_NONE
 }
 
 // ----------------------------------------------------------------- candidates --

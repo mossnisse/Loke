@@ -53,16 +53,8 @@ allowing a later argument to free storage the report will read.
 The two newer fixes, `210f1131` and `5580637f`, are outside this review's
 scope and address the unrelated divergences these commits recorded.
 
-Two smaller simplifications remain open:
+One smaller simplification remains open:
 
-- **Share the dyn conversion's witness validation (P3, structure).**
-  `pass_variadic_element` in [src/erased.odin](src/erased.odin) duplicates the
-  conformance check, witness request, and missing-coherent-slot diagnostic in
-  `check_dyn_conversion`. Keep the different operand checks at their call
-  sites, and share the validation that a concrete type supplies a usable
-  witness for a dyn type. This removes about fifteen lines and keeps explicit
-  and implicit conversions' coherence rules together; overload ranking still
-  needs its noncommitting conformance query.
 - **Use the fmt package the caller already has (P3, simplification).**
   `check_package_bodies` in [src/check.odin](src/check.odin) calls
   `record_printing_view` only after recognizing `pkg.key == STD_FMT`.

@@ -41,12 +41,36 @@ variadic_view_accepts :: proc(c: ^Compiler, from, element: Type_Id) -> bool {
 	       !type_is_capture_record(c, from)
 }
 
-// Whether `concrete` satisfies the interface a `..dyn I` pack views through.
-variadic_view_satisfied :: proc(k: ^Checker, concrete, element: Type_Id, span: Span, report: bool) -> bool {
+// Whether `concrete` satisfies the interface a `..dyn I` pack views through,
+// reporting nothing, as ranking an overload must.
+variadic_view_satisfied :: proc(k: ^Checker, concrete, element: Type_Id, span: Span) -> bool {
 	dyn := underlying_info(k.c, element)
 	info := interface_info_for(k, dyn.dyn_interface)
 	return info != nil &&
-	       interface_satisfied(k, info, interface_application(k.c, info, concrete, dyn.dyn_args), span, report)
+	       interface_satisfied(k, info, interface_application(k.c, info, concrete, dyn.dyn_args), span, report = false)
+}
+
+// The witness by which `concrete` is viewed as the `dyn` type `view`, or nil once
+// it has reported why there is none. An explicit conversion and a pack element
+// differ in their operands and agree on this.
+dyn_view_witness :: proc(k: ^Checker, concrete, view: Type_Id, span: Span) -> ^Witness {
+	dyn := underlying_info(k.c, view)
+	info := interface_info_for(k, dyn.dyn_interface)
+	if info == nil || !interface_satisfied(k, info, interface_application(k.c, info, concrete, dyn.dyn_args), span, report = true) {
+		return nil
+	}
+	witness := request_witness(k, info, concrete, dyn.dyn_args, span)
+	for slot in witness.slots {
+		if slot.target == INVALID_SYMBOL {
+			errorf(
+				k.c, span, "L0464",
+				"`%s` supplies no coherent `%s` for `%s`",
+				type_name(k.c, concrete), identifier_text(k.c, slot.name), type_name(k.c, view),
+			)
+			return nil
+		}
+	}
+	return witness
 }
 
 // One element of a `..dyn I` pack: a value is viewed where it is, or in a
@@ -90,20 +114,8 @@ pass_variadic_element :: proc(k: ^Checker, e: Expr, element: Type_Id, prechecked
 		base.type = element
 		return e, true
 	}
-	if !variadic_view_satisfied(k, concrete, element, base.span, report = true) {
+	if dyn_view_witness(k, concrete, element, base.span) == nil {
 		return e, false
-	}
-	dyn := underlying_info(k.c, element)
-	witness := request_witness(k, interface_info_for(k, dyn.dyn_interface), concrete, dyn.dyn_args, base.span)
-	for slot in witness.slots {
-		if slot.target == INVALID_SYMBOL {
-			errorf(
-				k.c, base.span, "L0464",
-				"`%s` supplies no coherent `%s` for `%s`",
-				type_name(k.c, concrete), identifier_text(k.c, slot.name), type_name(k.c, element),
-			)
-			return e, false
-		}
 	}
 	base.erased_from = concrete
 	base.type = element
@@ -1050,34 +1062,10 @@ check_dyn_conversion :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
 		v.type = INVALID_TYPE
 		return
 	}
-	concrete := pointer.element
-	dyn := underlying_info(k.c, target)
-	info := interface_info_for(k, dyn.dyn_interface)
-	if info == nil {
+	witness := dyn_view_witness(k, pointer.element, target, v.span)
+	if witness == nil {
 		v.type = INVALID_TYPE
 		return
-	}
-
-	if !interface_satisfied(k, info, interface_application(k.c, info, concrete, dyn.dyn_args), v.span, report = true) {
-		v.type = INVALID_TYPE
-		return
-	}
-
-	witness := request_witness(k, info, concrete, dyn.dyn_args, v.span)
-	for slot in witness.slots {
-		if slot.target == INVALID_SYMBOL {
-			errorf(
-				k.c,
-				v.span,
-				"L0464",
-				"`%s` supplies no coherent `%s` for `%s`",
-				type_name(k.c, concrete),
-				identifier_text(k.c, slot.name),
-				type_name(k.c, target),
-			)
-			v.type = INVALID_TYPE
-			return
-		}
 	}
 	v.operation = Call_Dyn_Conversion{witness = witness}
 }
