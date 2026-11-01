@@ -1,0 +1,20 @@
+L0310
+@7:15
+warning[L0740]: `Later.grouped`, which the public group `Later.group` exports, names the private type `Later.Hidden`, which an importer cannot name
+@15:67
+warning[L0740]: public `Later.Exposed` names the private type `Later.Hidden`
+@17:43
+warning[L0740]: public `Later.Through` names the private type `Later.Chained`
+@18:43
+warning[L0740]: public `Later.Constant` names the private type `Later.Hidden`
+@19:42
+warning[L0740]: public `Later.method` names the private type `Later.Hidden`
+@20:56
+warning[L0740]: public `Later.Either` names the private type `Later.Hidden`
+@23:34
+warning[L0740]: public `Earlier.Exposed` names the private type `Earlier.Hidden`
+@33:45
+warning[L0740]: public `Twice.Exposed` names the private type `Twice.Hidden`
+@40:43
+!`Later.Opened`
+!`Never.Exposed`

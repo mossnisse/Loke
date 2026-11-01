@@ -367,36 +367,6 @@ as binding `T`, then reports `L0392`, since `Alias(f64)` is another new type. In
 nested one is meant and say what it denotes. Found on 2026-11-01 beside the
 nested computed type check.
 
-### Reading only the first instance misses a private member that later becomes a type
-
-[Private names in public declarations](design.md#private-names-in-public-declarations)
-reads a generic `impl`'s selected private member in each instance the build creates,
-since whether it is a type can depend on that instance:
-
-```loke
-package shapes;
-@(public) Point :: struct { value: int }
-@(public) Item :: struct($T: type, $V: T) { value: int }
-@(public) Holder :: struct($T: type, $V: T) { value: int }
-impl Holder($T, $V) {
-    @(private) Hidden: T : V;
-    @(public) Exposed :: Item(T, Holder(T, V).Hidden);
-}
-@(private) use :: proc() {
-    _ = Holder(int, 0){};
-    _ = Holder(type, Point){};
-}
-```
-
-This emits no `L0740`, though `Holder(type, Point).Hidden` is a private alias of
-`Point`. Reversing the two uses warns about `Holder.Exposed` naming
-`Holder.Hidden`. In [src/private_names.odin](src/private_names.odin),
-`instance_declaration_unread` records `Exposed`'s span after its first instance,
-when `Hidden` is a value, and never reads the later instance where it is a type.
-Read instance-dependent selections in each instance and deduplicate the warnings,
-rather than marking the whole declaration read after its first one. Confirmed on
-`ad4ff130` and `1b7845aa` during review on 2026-11-01 (P2).
-
 ### Private-name probes resolve a generic method's parameters in its block's scope
 
 [Private names in public declarations](design.md#private-names-in-public-declarations)

@@ -1252,6 +1252,11 @@ checklist.
   member. A selection such as `Box(type).Hidden`, which names no `$` name, is read
   at its declaration
   ([Private names in public declarations](design.md#private-names-in-public-declarations)).
+- `L0740` now reads such a selection in every instance, where it stopped after a
+  declaration's first, so `Item(T, Holder(T, V).Hidden)` warns for `Hidden: T : V`
+  when `Holder(int, 0)` is instantiated before `Holder(type, Point)`, as it did
+  the other way round
+  ([Private names in public declarations](design.md#private-names-in-public-declarations)).
 - Editor completion no longer offers a type's generated `format` where a use
   could not call it, on a public type with a private `format`, and shows a local
   extension's `format` rather than the generated one it hides

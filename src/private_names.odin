@@ -96,6 +96,9 @@ Exposure :: struct {
 	group:    string,
 	// The private names already reported for `owner`.
 	reported: [dynamic]string,
+	// Reading an instance found a member that is no type there, which a later
+	// instance may say it is.
+	undecided: bool,
 	// The private group members already read, so a member of two groups is
 	// read once.
 	read_members: map[^Decl]bool,
@@ -680,6 +683,7 @@ resolves_to_type :: proc(x: ^Exposure, e: Expr) -> bool {
 	probe := begin_probe(x.c)
 	type := check_single_expr(x.k, clone_expr(x.c, e))
 	end_probe(x.c, probe)
+	x.undecided ||= type != TYPE_TYPE
 	return type == TYPE_TYPE
 }
 
@@ -860,7 +864,9 @@ instantiates_generic_record :: proc(k: ^Checker, value: Expr) -> bool {
 // The block's public declarations are read here too, by their syntax as the
 // template's were: only an instance says whether a private member they select is
 // a type, as `Box(T).Hidden` for `Hidden: T : Point` or `Hidden :: type_of(T{})`,
-// and whether a member such as `Inner: T : Corner` is an alias at all.
+// and whether a member such as `Inner: T : Corner` is an alias at all. What is
+// a type in only some instances is read in each, as `read_instance_declarations`
+// says.
 check_instance_private_names :: proc(k: ^Checker, pending: Pending_Impl) {
 	c := k.c
 	pkg := package_of(c, pending.pkg)
@@ -904,12 +910,13 @@ check_instance_private_names :: proc(k: ^Checker, pending: Pending_Impl) {
 	}
 }
 
-// Whether this instance shows anything of `d` that no earlier one has read. A
+// Whether this instance shows anything of `d` that no earlier one has settled. A
 // constant is an alias in the instances whose value is a type, and is otherwise
-// read by its written type: either way once, however many instances there are.
-// A method whose bound excludes it from an instance says nothing there.
+// read by its written type, each settled once, however many instances there are.
+// A method whose bound excludes it from an instance says nothing there. With
+// `settle`, what this instance showed is marked settled.
 @(private = "file")
-instance_declaration_unread :: proc(c: ^Compiler, d: ^Decl) -> bool {
+instance_declaration_unread :: proc(c: ^Compiler, d: ^Decl, settle := false) -> bool {
 	unread := false
 	for name, index in d.names {
 		symbol := symbol_of(c, d.symbols[index]) if index < len(d.symbols) else nil
@@ -924,7 +931,9 @@ instance_declaration_unread :: proc(c: ^Compiler, d: ^Decl) -> bool {
 			read_as = expr_span(d.declared_type)
 		}
 		if !(read_as in c.private_constants_read) {
-			c.private_constants_read[read_as] = true
+			if settle {
+				c.private_constants_read[read_as] = true
+			}
 			unread = true
 		}
 	}
@@ -949,8 +958,15 @@ read_instance_declarations :: proc(k: ^Checker, pkg: ^Package, pending: Pending_
 	bind_poly(&x, pending.item.type)
 	mark := len(x.bound)
 	for d in decls {
+		// A member selected here may be a type in a later instance, as `Hidden: T : V`
+		// is in `Holder(type, Point)` but not `Holder(int, 0)`, so what selects it is
+		// read again; `found_name` warns once.
+		x.undecided = false
 		read_public_decl(&x, d, x.subject)
 		resize(&x.bound, mark)
+		if !x.undecided {
+			instance_declaration_unread(k.c, d, settle = true)
+		}
 	}
 }
 

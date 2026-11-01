@@ -1,0 +1,60 @@
+// design.md "Private names in public declarations": a generic `impl`'s private
+// member may be a type in only some instances, so what selects it is read in
+// each instance the build creates, and warned about once.
+package shapes;
+
+@(public) Point :: struct { value: int }
+@(public) Item :: struct($T: type, $V: T) { value: int }
+@(public) Twin :: struct($A: type, $B: type) { a: A, b: B }
+
+// A value in the first two instances, and a type in the third.
+@(public) Later :: struct($T: type, $V: T) { value: int }
+impl Later($T, $V) {
+	@(private) Hidden: T : V;
+	@(private) Chained :: Later(T, V).Hidden;
+	@(private) grouped :: proc(self, x: bool) -> Item(T, Later(T, V).Hidden) { return {}; }
+	@(private) plain :: proc(self, x: f64) -> int { return 1; }
+	@(public) Exposed :: Item(T, Later(T, V).Hidden);
+	@(public) Through :: Item(T, Later(T, V).Chained);
+	@(public) Constant: Item(T, Later(T, V).Hidden) : {};
+	@(public) method :: proc(self) -> Item(T, Later(T, V).Hidden) { return {}; }
+	@(public) group :: proc{grouped, plain};
+	// Either a value or an alias, which only an instance says.
+	@(public) Either :: Later(T, V).Hidden;
+	// Not reported: a public member.
+	@(public) Open: T : V;
+	@(public) Opened :: Item(T, Later(T, V).Open);
+}
+
+// A type in the first instance, and a value in the second: warned about once.
+@(public) Earlier :: struct($T: type, $V: T) { value: int }
+impl Earlier($T, $V) {
+	@(private) Hidden: T : V;
+	@(public) Exposed :: Item(T, Earlier(T, V).Hidden);
+}
+
+// A type in two instances: warned about once.
+@(public) Twice :: struct($T: type, $V: T) { value: int }
+impl Twice($T, $V) {
+	@(private) Hidden: T : V;
+	@(public) Exposed :: Item(T, Twice(T, V).Hidden);
+}
+
+// A value in every instance: not reported.
+@(public) Never :: struct($T: type, $V: T) { value: int }
+impl Never($T, $V) {
+	@(private) Hidden: T : V;
+	@(public) Exposed :: Item(T, Never(T, V).Hidden);
+}
+
+@(public) use :: proc() {
+	_ = Later(bool, true){};
+	_ = Later(int, 0){};
+	_ = Later(type, Point){};
+	_ = Earlier(type, Point){};
+	_ = Earlier(int, 0){};
+	_ = Twice(type, Point){};
+	_ = Twice(type, int){};
+	_ = Never(int, 0){};
+	_ = Never(bool, true){};
+}
