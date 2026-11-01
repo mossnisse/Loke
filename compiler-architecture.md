@@ -518,6 +518,11 @@ Keep these contracts:
   starting at that place passes over it, as what the place holds afterwards is
   another carrier, and a walk reaching the place follows it. Reads of the statement
   come before its writes, so a later read of a target finds the old value too.
+- **Storing a carrier back links nothing.** Storing what a place holds into that
+  place leaves it as it is, and one read from below it, as `list.next^.next` for
+  `list.next` (`prov_reads_below`), replaces the carrier it was read through, so
+  neither is linked to where it lands, whether the place is reached through carriers
+  or through a traversal's binding.
 - **A dynamic array's first elements have carrier paths of their own.**
   `carrier_shape_walk` gives each of the first `CARRIER_ARRAY_ELEMENTS` a step
   and every later one a shared one, unless that would pass `CARRIER_WIDTH`, when

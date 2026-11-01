@@ -1,0 +1,120 @@
+// design.md "Weakening and reborrows": storing a carrier into itself suspends
+// nothing, and a carrier read from below the place it is stored in replaces the one
+// it was read through, however that place is reached.
+package main;
+
+import "core:fmt";
+
+Node :: struct { value: int }
+List :: struct { head: ^mut Node }
+Cell :: struct { value: int, next: ^mut Cell }
+Chain :: struct { next: ^mut Cell }
+
+bump :: proc(list: ^mut List) { list^.head^.value += 1; }
+
+// The reproduction: the source is used afterwards.
+stored_back :: proc() -> int {
+	a := Node{1}; b := Node{2}; c := Node{3};
+	lists := [2]List{List{&mut a}, List{&mut b}};
+	foreach (&mut list in lists) { list.head = list.head; }
+	node := lists[0].head;
+	lists[1].head = &mut c;
+	node^.value = 10;
+	return a.value + b.value + c.value;
+}
+
+whole_element_stored_back :: proc() -> int {
+	a := Node{1}; b := Node{2};
+	lists := [2]List{List{&mut a}, List{&mut b}};
+	foreach (&mut list in lists) { list = list; }
+	node := lists[0].head;
+	node^.value = 10;
+	return a.value + b.value;
+}
+
+in_a_dynamic_array :: proc() -> int {
+	a := Node{1}; b := Node{2};
+	lists := [dynamic]List{List{&mut a}, List{&mut b}};
+	foreach (&mut list in lists) { list.head = list.head; }
+	node := lists[0].head;
+	node^.value = 10;
+	drop(lists);
+	return a.value + b.value;
+}
+
+through_a_local_view :: proc() -> int {
+	a := Node{1}; b := Node{2};
+	lists := [2]List{List{&mut a}, List{&mut b}};
+	view := &mut lists[:];
+	foreach (&mut list in view) { list.head = list.head; }
+	node := view[0].head;
+	node^.value = 10;
+	return a.value + b.value;
+}
+
+through_a_view_parameter :: proc(lists: []mut List) {
+	foreach (&mut list in lists) { list.head = list.head; }
+	node := lists[0].head;
+	node^.value += 1;
+}
+
+// Calls beside it, in the step and after the loop.
+with_calls :: proc() -> int {
+	a := Node{1}; b := Node{2};
+	lists := [2]List{List{&mut a}, List{&mut b}};
+	foreach (&mut list in lists) {
+		bump(&mut list);
+		list.head = list.head;
+		bump(&mut list);
+	}
+	bump(&mut lists[0]);
+	return a.value * 10 + b.value;
+}
+
+// Read from below, once and twice in a step.
+advanced :: proc(lists: []mut Chain) {
+	foreach (&mut list in lists) { list.next = list.next^.next; }
+}
+
+advanced_twice :: proc(lists: []mut Chain) {
+	foreach (&mut list in lists) {
+		list.next = list.next^.next;
+		list.next = list.next^.next;
+	}
+	node := lists[0].next;
+	node^.value += 1;
+}
+
+at_constant_indices :: proc(chains: []mut Chain) {
+	chains[0].next = chains[0].next^.next;
+	first := chains[0].next;
+	second := chains[1].next;
+	first^.value += 1;
+	second^.value += 1;
+}
+
+at_a_variable_index :: proc(chains: []mut Chain, i: int) {
+	chains[i].next = chains[i].next^.next;
+	node := chains[0].next;
+	node^.value += 1;
+}
+
+in_a_local :: proc(cell: ^mut Cell) {
+	chain := Chain{cell};
+	chain.next = chain.next^.next;
+	chain.next^.value += 1;
+	chain.next = chain.next^.next;
+	chain.next^.value += 1;
+}
+
+main :: proc() {
+	fmt.println(stored_back());
+	fmt.println(whole_element_stored_back());
+	fmt.println(in_a_dynamic_array());
+	fmt.println(through_a_local_view());
+	a := Node{1}; b := Node{2};
+	lists := [2]List{List{&mut a}, List{&mut b}};
+	through_a_view_parameter(&mut lists[:]);
+	fmt.println(lists[0].head^.value);
+	fmt.println(with_calls());
+}

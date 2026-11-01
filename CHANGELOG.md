@@ -1183,6 +1183,11 @@ checklist.
   record's member bound evaluated before a later member, and a file-scope `when`
   asking before the block is declared. A hook whose own bound asks and fails is left
   out, where it failed in the backend with `L0405`.
+- Storing a mutable carrier back through its `foreach (&mut x in xs)` binding,
+  `list.head = list.head`, or replacing it with one read from below,
+  `list.next = list.next^.next`, no longer reports `L0641`, and neither does a later
+  copy out of another element after `xs[0].next = xs[0].next^.next` on a view parameter
+  ([Weakening and reborrows](design.md#weakening-and-reborrows)).
 - Reordering carrier fields through a view parameter, as
   `links[0].to, links[1].to = links[1].to, links[0].to;`, no longer reports `L0641`,
   and what a reordering left can be copied again afterwards in a view parameter, a

@@ -2303,6 +2303,7 @@ prov_define_content :: proc(
 	preserve_previous := false,
 	copies := true,
 	replace_matching := false,
+	reborrows := true,
 ) {
 	indistinct := path_is_indistinct(written)
 	for slot in into {
@@ -2322,7 +2323,7 @@ prov_define_content :: proc(
 		   (indistinct || path_is_indistinct(entry.path) || partial_truncated_write)) {
 			sources = prov_join(graph, prov_one(graph, slot), sources)
 		}
-		prov_define_one_content(graph, slot, sources, span, path_precision(written), copies)
+		prov_define_one_content(graph, slot, sources, span, path_precision(written), copies, reborrows)
 	}
 }
 
@@ -2380,7 +2381,7 @@ prov_define_one_content :: proc(
 	}
 	prov_emit(graph, Prov_Event{kind = .Def, slot = slot, loan = NO_LOAN, sources = sources, span = span, precision = precision})
 	if traversal, traversed := graph.traversals[entry.symbol]; traversed && entry.symbol != INVALID_SYMBOL {
-		prov_publish_traversal(graph, traversal, slot, sources, span, type)
+		prov_publish_traversal(graph, traversal, slot, sources, span, type, reborrows)
 	} else if len(graph.region_aliases[entry.symbol]) > 0 {
 		prov_event(graph, Prov_Event_View_Publish {
 			symbol = entry.symbol, path = entry.path, sources = sources, span = span,
@@ -2450,7 +2451,7 @@ prov_note_traversal :: proc(
 // What `slot`, of a `&mut` binding, was just set to, also in the source
 // (`prov_note_traversal`). What the slot already held is there already.
 @(private = "file")
-prov_publish_traversal :: proc(graph: ^Flow_Graph, traversal: Prov_Traversal, slot: int, sources: []int, span: Span, type: Type_Id) {
+prov_publish_traversal :: proc(graph: ^Flow_Graph, traversal: Prov_Traversal, slot: int, sources: []int, span: Span, type: Type_Id, reborrows: bool) {
 	stored := make([dynamic]int, 0, len(sources), graph.alloc)
 	for source in sources {
 		if source != slot {
@@ -2464,12 +2465,12 @@ prov_publish_traversal :: proc(graph: ^Flow_Graph, traversal: Prov_Traversal, sl
 	if traversal.root != NO_ROOT && traversal.lent {
 		for held in prov_content_at(graph, traversal.root, traversal.path) {
 			if carrier_may_land_in(graph.k.c, slot_carrier_type(graph, held), type) {
-				prov_define_one_content(graph, held, prov_join(graph, prov_one(graph, held), stored[:]), span)
+				prov_define_one_content(graph, held, prov_join(graph, prov_one(graph, held), stored[:]), span, reborrows = reborrows)
 			}
 		}
 	} else if traversal.root != NO_ROOT {
 		written := prov_concat_path(graph, traversal.path, at)
-		prov_define_content(graph, prov_content_at(graph, traversal.root, written), stored[:], span, written, type, preserve_previous = true)
+		prov_define_content(graph, prov_content_at(graph, traversal.root, written), stored[:], span, written, type, preserve_previous = true, reborrows = reborrows)
 		return
 	}
 	if len(traversal.into) == 0 {
@@ -2481,8 +2482,10 @@ prov_publish_traversal :: proc(graph: ^Flow_Graph, traversal: Prov_Traversal, sl
 	}
 	if type != INVALID_TYPE && type_is_carrier(graph.k.c, type) {
 		publish.linked = type
-		prov_link_stored_carrier(graph, stored[:], type, span)
-		publish.any_element = prov_view_any_element_links(graph, traversal.view, publish.path, type, stored[:], span)
+		if reborrows {
+			prov_link_stored_carrier(graph, stored[:], type, span)
+		}
+		publish.any_element = prov_view_any_element_links(graph, traversal.view, publish.path, type, stored[:] if reborrows else nil, span)
 	}
 	prov_emit(graph, publish)
 }
@@ -7472,6 +7475,7 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 			continue
 		}
 		prov_retain_escape(graph, target, sources, expr_span(target))
+		replaces_read := value != nil && len(s.lhs) == 1 && prov_reads_below(graph.k.c, value, target)
 		root, path, place_ok := prov_place_of(graph, target)
 		if place_ok && s.op == .Assign {
 			prov_note_written_alias(graph, graph.roots[int(root)].symbol, value, path, target_type)
@@ -7508,12 +7512,14 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 				// design.md "Weakening and reborrows".
 				if len(through) > 0 {
 					stored := prov_type(graph, target)
-					element_loan, elements := prov_view_element_store(graph, target, stored, sources)
+					// What it reads through is replaced, so it copies nothing to link.
+					linked_sources := nil if replaces_read else sources
+					element_loan, elements := prov_view_element_store(graph, target, stored, linked_sources)
 					any_element := 0
 					if element_loan == 0 && len(sources) > 0 {
-						any_element = prov_view_any_element_store(graph, target, stored, sources)
+						any_element = prov_view_any_element_store(graph, target, stored, linked_sources)
 					}
-					if len(sources) > 0 {
+					if len(linked_sources) > 0 {
 						prov_link_stored_carrier(graph, sources, stored, expr_span(target))
 						prov_reborrow_stored_content(graph, sources, stored, expr_span(target))
 					}
@@ -7569,8 +7575,11 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 			}
 			prov_walk_subscripts(graph, target, s.op == .Assign)
 			prov_access(graph, root, path, .Write, expr_span(target))
-			if written := prov_content_at(graph, root, path); len(written) > 0 && s.op == .Assign {
-				prov_define_content(graph, written, sources, expr_span(target), path, prov_type(graph, target))
+			// design.md "Weakening and reborrows": storing a carrier into itself
+			// suspends nothing, and leaves what the place holds as it is.
+			stored_back := value != nil && len(s.lhs) == 1 && prov_names_same_place(graph.k.c, value, target)
+			if written := prov_content_at(graph, root, path); len(written) > 0 && s.op == .Assign && !stored_back {
+				prov_define_content(graph, written, sources, expr_span(target), path, prov_type(graph, target), reborrows = !replaces_read)
 			}
 			continue
 		}
@@ -7600,6 +7609,33 @@ prov_assign_permutes :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) -> bool {
 		return false
 	}
 	return true
+}
+
+// Whether `value` is read out through what `place` holds, as `list.next^.next` for
+// `list.next`, so storing it there replaces the carrier it was read through
+// (design.md "Weakening and reborrows").
+@(private = "file")
+prov_reads_below :: proc(c: ^Compiler, value, place: Expr) -> bool {
+	at := value
+	through := false
+	for at != nil {
+		if through && prov_names_same_place(c, at, place) {
+			return true
+		}
+		#partial switch v in at {
+		case ^Expr_Selector:
+			at = v.operand
+		case ^Expr_Postfix:
+			if v.op != .Caret {
+				return false
+			}
+			at = v.operand
+			through = true
+		case:
+			return false
+		}
+	}
+	return false
 }
 
 // Whether two expressions of one assignment name one place. Each is evaluated

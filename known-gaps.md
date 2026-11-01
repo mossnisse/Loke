@@ -347,36 +347,34 @@ which reads a later store makes into a move is a matter of flow. `run_severing_e
 would have to handle both, after `prov_reborrow_loaded` has added the loads' reborrows,
 which `solve_reaching` runs too early to see.
 
-### A mutable carrier copied back through its traversal binding is rejected
+### A reordering of fields through a traversal binding is rejected
 
-[Weakening and reborrows](design.md#weakening-and-reborrows) says storing a
-carrier into itself suspends nothing, but a copy of a mutable carrier stored
-back through a `foreach (&mut x in xs)` binding is `L0641` where the source is
-used afterwards, though the same store through an index is accepted:
+[Weakening and reborrows](design.md#weakening-and-reborrows) says a reordering leaves
+each carrier in one place. Reordering two carrier fields through a
+`foreach (&mut x in xs)` binding compiles, but a copy out of one field then conflicts
+with a use of the other, though the same statement through a view parameter's element
+or a pointer's fields does not:
 
 ```loke
 package main;
 Node :: struct { value: int }
-List :: struct { head: ^mut Node }
-stored_back :: proc() {
-    a := Node{1}; b := Node{2}; c := Node{3};
-    lists := [2]List{List{&mut a}, List{&mut b}};
-    foreach (&mut list in lists) { list.head = list.head; } // L0641; should be accepted
-    node := lists[0].head;
-    lists[1].head = &mut c;
+Two :: struct { a: ^mut Node, b: ^mut Node }
+fields_reordered :: proc() {
+    a := Node{1}; b := Node{2};
+    twos := [1]Two{Two{&mut a, &mut b}};
+    foreach (&mut two in twos) { two.a, two.b = two.b, two.a; }
+    node := twos[0].a; // L0641; should be accepted
+    twos[0].b^.value = 1;
     node^.value = 1;
 }
 main :: proc() {}
 ```
 
-The store joins into what every element holds (`prov_publish_traversal`), so
-each element's carrier is linked as a reborrow of the loop's copy of what the
-elements held, which each step reads again to bind the leaf. A read-only
-carrier is accepted. `list.next = list.next^.next` is rejected the same way, as
-is `xs[i].next = xs[i].next^.next` over a view parameter, where the element
-copied from and the one stored to are not known to be the same. Found while
-making what is stored through a traversal binding reach the source on
-2026-11-01.
+`twos[0].b` reaches `twos[0].a` through the loop's copy of what the elements held, the
+binding's slot, and the store's link: `Prov_Reborrow.moved` only stops a walk at the
+first step, and the first step here is the loop's copy, which a reordering in the body
+does not make a move. Found on 2026-11-01 while replacing a carrier through its
+traversal binding (P3, over-rejection).
 
 ### A declaration first checked in a probe loses its rejection
 

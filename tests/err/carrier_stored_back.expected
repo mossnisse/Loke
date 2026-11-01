@@ -1,0 +1,69 @@
+L0641
+@19:3
+`list` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@19:15
+`list` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@30:3
+`list` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@30:15
+`list` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@31:3
+`lists` cannot be used here: a mutable reborrow of it is still in use
+L0511
+@39:2
+this write of `list` is not compatible with the mutable pointer of it that is still in use
+L0511
+@39:14
+this read of `list` is not compatible with the mutable pointer of it that is still in use
+L0641
+@47:23
+`twos` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@47:31
+`two` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@47:39
+`two` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@49:12
+`twos` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@59:11
+`lists` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@60:12
+`lists` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@69:15
+`list` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@77:15
+`lists` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@87:3
+`list` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@95:12
+`lists` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@102:16
+`chain` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@109:2
+`chains` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@117:12
+`both` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@125:12
+`chains` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@132:11
+`chains` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@133:12
+`chains` cannot be used here: a mutable reborrow of it is still in use

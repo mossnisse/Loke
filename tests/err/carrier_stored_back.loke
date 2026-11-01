@@ -1,0 +1,138 @@
+// design.md "Weakening and reborrows": a carrier stored into itself, or read from
+// below the place it replaces, is no copy of the place. A copy taken before or after
+// is, and storing one read from another place copies that one.
+package main;
+
+Node :: struct { value: int }
+List :: struct { head: ^mut Node }
+Two :: struct { a: ^mut Node, b: ^mut Node }
+Cell :: struct { value: int, next: ^mut Cell }
+Chain :: struct { next: ^mut Cell }
+Both :: struct { first: ^mut Cell, second: ^mut Cell }
+
+// A copy in use across the store back.
+copy_before_stored_back :: proc() {
+	a := Node{1}; b := Node{2};
+	lists := [2]List{List{&mut a}, List{&mut b}};
+	foreach (&mut list in lists) {
+		held := list.head;
+		list.head = list.head;
+		held^.value = 2;
+	}
+}
+
+// A store back still writes the place a borrow of it reads.
+borrow_across_stored_back :: proc() {
+	a := Node{1}; b := Node{2};
+	lists := [2]List{List{&mut a}, List{&mut b}};
+	foreach (&mut list in lists) {
+		place := &mut list.head;
+		list.head = list.head;
+		place^^.value = 1;
+	}
+}
+
+local_borrow_across_stored_back :: proc() {
+	a := Node{1};
+	list := List{&mut a};
+	place := &mut list;
+	list.head = list.head;
+	place^.head^.value = 1;
+}
+
+// Another field, which is a copy.
+other_field :: proc() {
+	a := Node{1}; b := Node{2};
+	twos := [1]Two{Two{&mut a, &mut b}};
+	foreach (&mut two in twos) { two.a = two.b; }
+	first := twos[0].a;
+	second := twos[0].b;
+	first^.value = 1;
+	second^.value = 2;
+}
+
+// Another index, which may be another element.
+other_index :: proc(i: int, j: int) {
+	a := Node{1}; b := Node{2};
+	lists := [2]List{List{&mut a}, List{&mut b}};
+	lists[i].head = lists[j].head;
+	first := lists[0].head;
+	second := lists[1].head;
+	first^.value = 1;
+	second^.value = 2;
+}
+
+// Read from below, with a copy of the old value or of the new one in use.
+copy_of_what_was_read_through :: proc(lists: []mut Chain) {
+	foreach (&mut list in lists) {
+		held := list.next;
+		list.next = list.next^.next;
+		held^.value = 1;
+	}
+}
+
+copy_of_what_replaces_it :: proc(lists: []mut Chain) {
+	foreach (&mut list in lists) {
+		held := list.next^.next;
+		list.next = list.next^.next;
+		held^.value = 1;
+		list.next^.value = 2;
+	}
+}
+
+copy_after_it :: proc(lists: []mut Chain) {
+	foreach (&mut list in lists) {
+		list.next = list.next^.next;
+		held := list.next;
+		list.next^.value = 2;
+		held^.value = 1;
+	}
+}
+
+two_copies_after_the_loop :: proc(lists: []mut Chain) {
+	foreach (&mut list in lists) { list.next = list.next^.next; }
+	first := lists[0].next;
+	second := lists[0].next;
+	first^.value = 1;
+	second^.value = 2;
+}
+
+through_a_pointer :: proc(chain: ^mut Chain) {
+	held := chain^.next;
+	chain^.next = chain^.next^.next;
+	held^.value = 1;
+}
+
+at_a_constant_index :: proc(chains: []mut Chain) {
+	chains[0].next = chains[0].next^.next;
+	held := chains[0].next;
+	chains[0].next^.value = 1;
+	held^.value = 2;
+}
+
+// From below another place, which stays.
+below_another_field :: proc(both: ^mut Both) {
+	both^.first = both^.second^.next;
+	first := both^.first;
+	second := both^.second^.next;
+	first^.value = 1;
+	second^.value = 2;
+}
+
+below_another_element :: proc(chains: []mut Chain) {
+	chains[1].next = chains[0].next^.next;
+	first := chains[1].next;
+	second := chains[0].next^.next;
+	first^.value = 1;
+	second^.value = 2;
+}
+
+below_another_index :: proc(chains: []mut Chain, i: int, j: int) {
+	chains[i].next = chains[j].next^.next;
+	first := chains[i].next;
+	second := chains[j].next^.next;
+	first^.value = 1;
+	second^.value = 2;
+}
+
+main :: proc() {}
