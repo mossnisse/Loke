@@ -7,6 +7,79 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
+### A call copying carriers in a slice literal leaves no reborrow links
+
+[Weakening and reborrows](design.md#weakening-and-reborrows) treats carriers a call
+may leave in two places as reborrows of each other. The hidden array of a
+[slice literal](design.md#slice-literals) does not get those links:
+
+```loke
+package main;
+Link :: struct { to: ^mut int }
+duplicate :: proc(links: []mut Link) { links[0] = links[1]; }
+main :: proc() {
+    x := 1; y := 2;
+    links := []mut Link{Link{&mut x}, Link{&mut y}};
+    duplicate(links);
+    first := links[0].to;
+    second := links[1].to;
+    first^ = 1;
+    second^ = 2;
+}
+```
+
+This compiles, although `first` and `second` reborrow the same mutable carrier.
+Using a named `[2]Link` and passing `&mut links[:]` instead reports `L0641`.
+`63d2da2a` puts a literal's content in `Prov_Root.slots` with no symbol, while
+`prov_link_copied_carriers`, added in `5dcaacb8` in
+[src/cfg_provenance.odin](src/cfg_provenance.odin), skips every slot whose symbol
+is absent and only additionally visits caller slots. Include the hidden array's
+content slots in the links activated by `Rearrange`. Confirmed on `1b7845aa`
+during review of those commits on 2026-11-01 (P1).
+
+### Textually equal destinations do not prove a carrier permutation
+
+[Weakening and reborrows](design.md#weakening-and-reborrows) exempts an assignment
+that reorders its targets' values from copying carriers. Equal source text is not
+proof that two evaluations name the same place, under
+[Evaluation order](design.md#evaluation-order):
+
+```loke
+package main;
+Link :: struct { to: ^mut int }
+index: int = 0;
+next :: proc() -> int {
+    result := index;
+    index = 1;
+    return result;
+}
+duplicate :: proc(links: []mut Link) {
+    links[next()], links[next()] = links[next()], links[next()];
+}
+main :: proc() {
+    x := 1; y := 2;
+    links := [2]Link{Link{&mut x}, Link{&mut y}};
+    duplicate(&mut links[:]);
+    first := links[0].to;
+    second := links[1].to;
+    first^ = 1;
+    second^ = 2;
+}
+```
+
+This compiles. The destinations are elements 0 and 1, but both sources are
+element 1, so the call leaves the mutable carrier in two places. In
+[src/cfg_provenance.odin](src/cfg_provenance.odin), `prov_assign_permutes` matches
+the identical text of these four expressions and marks the stores as a
+permutation. `collect_carrier_moves` consequently omits the copied-carrier bit,
+so the caller gets no reborrow links and no `L0641`. Prove a permutation from
+stable resolved places, including whether their projections can change while
+the assignment evaluates. The text comparison also rejects a valid swap written
+`links[0], links[1] = links[ 1 ], links[ 0 ];`: calling that swap twice and then
+using `links[0].to` reports `L0641`, whereas the same program without the spaces
+is accepted. Both behaviors are in the code added by `5dcaacb8`; confirmed on
+`1b7845aa` during review on 2026-11-01 (P1 for the missed copy).
+
 ### A lifecycle question asked before a record's hooks are in place loses them
 
 [Lifecycle hooks and resource types](design.md#lifecycle-hooks-and-resource-types)
