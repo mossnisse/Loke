@@ -1,0 +1,10 @@
+// design.md "Parametric aliases": as tests/err/parametric_alias_dependent_limit.loke,
+// with new arguments each time, through a second alias and record.
+package main;
+
+Record :: struct($T: type, $V: Other([]T, 0)) { item: T }
+Second :: struct($T: type, $V: Alias(T, 0)) { item: T }
+Alias :: Record($T, $V);
+Other :: Second($T, $V);
+
+main :: proc() { _ = size_of(Alias(int, 0)); }

@@ -1121,6 +1121,10 @@ checklist.
   generated default. `panic("stop", data[0], Hidden{1})` and `fmt.println(Hidden{1})`
   under a view of `data` reported `L0512` when that method wrote `data`, as did any
   print or report of another type once such a method existed.
+- A constant generic parameter whose type applies its own alias, generic type, or
+  interface again, as `$V: Alias(T, 0)` beside `Alias :: Record($T, $V);`, now reports
+  the instantiation limit (`L0436`) instead of overflowing the compiler's stack, and
+  a limit first reached in a probe no longer uses up the report.
 - A call that copies between elements at variable indices of a view of a local
   array, in the scope of the arena an element's owner is in, no longer reports
   `L0536`, as that leaves the array nothing new.

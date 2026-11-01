@@ -440,28 +440,6 @@ copied from and the one stored to are not known to be the same. Found while
 making what is stored through a traversal binding reach the source on
 2026-11-01.
 
-### A dependent alias parameter can recurse before the instantiation limit applies
-
-[Generic types](design.md#generic-types) bounds recursive instantiation with a
-diagnostic, but resolving the type of a parametric alias's constant argument can
-overflow the compiler's stack instead:
-
-```loke
-package main;
-Record :: struct($T: type, $V: Alias(T, 0)) { item: T }
-Alias :: Record($T, $V);
-main :: proc() { _ = size_of(Alias(int, 0)); }
-```
-
-`resolve_alias_application` in [src/generic.odin](src/generic.odin) calls
-`alias_dependent_type` before checking or pushing the instantiation stack. The
-parameter type applies the alias again, so no frame is ever pushed and the
-depth limit never sees the recursion. Guard dependent argument-type resolution
-as well as body expansion. Confirmed at `c588e439` and the current checkout:
-the process exits with Windows stack-overflow status `0xC00000FD` and no
-diagnostic; its parent reports internal `L0405` instead. Found while reviewing
-the dependent-constant alias change on 2026-11-01 (P2).
-
 ### A mutable protocol traversal publishes into the iterable instead of its elements
 
 [By-reference iteration](design.md#by-reference-iteration) stores through a
@@ -509,3 +487,53 @@ the named-root branch for a protocol iterable, with no element path, so
 through the storage the protocol lends rather than into the iterable's fields.
 Found while reviewing the mutable traversal store change on 2026-11-01 (P2 for
 the new false rejection; the backing-storage hole predates it).
+
+### A declaration first checked in a probe loses its rejection
+
+A probe rolls back what it reports, but `check_alias_template` in
+[src/generic.odin](src/generic.odin) keeps `template.rejected` and the declaration
+stays settled, so what was wrong with it is never reported. The
+[parametric alias](design.md#parametric-aliases) rule below compiles, and moving
+`Bad` above `Record` reports `L0744`:
+
+```loke
+package main;
+Record :: struct($V: Bad(int)) {}
+Bad :: distinct Option($T);
+main :: proc() {}
+```
+
+`reject_typeid_generic_parameter` resolves `$V`'s type in a probe when `Record` is
+declared, which is the first thing to ask about `Bad`. The same loss turns a use into
+an internal error, as the only report is gone, so `size_of` reaches emission:
+
+```loke
+package main;
+Record :: struct($T: type, $V: Alias(int, 0)) { item: T }
+Alias :: Record($T, $V);
+main :: proc() { _ = size_of(Alias(int, 0)); }
+```
+
+This exits 2 with `L0405`, "an unfrozen compile-time built-in reached emission". A
+declaration settled in a probe should keep its report, or stay unsettled for the
+check that commits. Found on 2026-11-01 while fixing the instantiation limit for a
+parameter's type; traced for the alias only.
+
+### An `impl` on a record whose parameter type does not resolve reports L0350
+
+`check_generic_impl_subject` in [src/generic.odin](src/generic.odin) reads an `impl`
+subject's constant argument as a type when its parameter's type does not resolve, and
+reports it as a compiler defect:
+
+```loke
+package main;
+Record :: struct($T: type, $V: Unknown) { item: T }
+impl Record(int, 0) { }
+main :: proc() {}
+```
+
+This reports only `L0350`, "this construct parses, but the checker has no rule for
+it", at the `0`, and nothing about `Unknown`. So does `$V: Record(T, 0)`, where the
+instantiation limit is what stops the parameter's type. The site's comment says the
+template reports its own parameter types, and it does not here. Found on 2026-11-01
+while fixing the instantiation limit for a parameter's type.

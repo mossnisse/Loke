@@ -1,0 +1,9 @@
+// A generic type's constant parameter whose type applies that type again never
+// finishes, and no instance exists yet to count it, so the application itself
+// counts toward the instantiation limit. The record's declaration resolves the
+// type first in a probe, whose rolled-back report must not use up this one.
+package main;
+
+Record :: struct($T: type, $V: Record(T, 0)) { item: T }
+
+main :: proc() { _ = size_of(Record(int, 0)); }

@@ -1,0 +1,23 @@
+// A generic parameter's type may apply an alias or another generic type, and a
+// record may apply itself in a field, as long as resolving them finishes.
+// tests/err/parametric_alias_dependent_limit.loke holds one that does not.
+package main;
+
+import "core:fmt";
+
+Value :: struct($T: type, $V: T) { item: T }
+Alias :: Value($T, $V);
+Deep :: struct($T: type, $V: Alias(T, 3)) { item: T }
+Over :: Deep($T, $V);
+Linked :: struct($T: type, $V: int) { next: Option(^Linked(T, V)), item: T }
+Fixed :: struct($N: int) { values: [N]int }
+Scaled :: interface($Self: type, $Factor: int) {
+	slot scale: proc(self) -> int;
+}
+
+main :: proc() {
+	fmt.println(Over(int, Value(int, 3){}){item = 1}.item);
+	fmt.println(Linked(int, 2){item = 4}.item);
+	fmt.println(size_of(Fixed(3)));
+	fmt.println(size_of(dyn Scaled(2)) > 0);
+}

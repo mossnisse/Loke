@@ -1,0 +1,9 @@
+// As tests/err/generic_parameter_type_limit.loke, for an interface's constant
+// parameter, whose application makes no instance at all.
+package main;
+
+Scaled :: interface($Self: type, $T: type, $Factor: dyn Scaled(T, 0)) {
+	slot scale: proc(self) -> T;
+}
+
+main :: proc() { _ = size_of(dyn Scaled(int, 0)); }

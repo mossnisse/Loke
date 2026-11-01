@@ -262,10 +262,24 @@ interface_arguments_for :: proc(
 	defer k.scope = use_scope
 	for arg, index in written {
 		parameter := info.params[first + index]
+		// As for a record's: `$F: dyn Scaled(T, 0)` applies this interface again.
+		_, names_type := parameter.type_syntax.(^Type_Type)
+		if !names_type {
+			named := make([]Generic_Binding, index, context.temp_allocator)
+			for &binding, at in named {
+				binding.arg = out[at]
+			}
+			if !push_application_frame(k, arg.span, info.symbol, named, report) {
+				return nil, false
+			}
+		}
 		k.scope = bindings
 		errors := k.c.error_count
 		wanted := resolve_type_syntax(k, parameter.type_syntax)
 		k.scope = use_scope
+		if !names_type {
+			pop(&k.c.instantiation_stack)
+		}
 		if wanted == INVALID_TYPE {
 			if report && k.c.error_count == errors {
 				errorf(k.c, parameter.span, code, "this interface parameter's type does not resolve")

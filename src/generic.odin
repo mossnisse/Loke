@@ -1329,6 +1329,27 @@ alias_refers_to :: proc(k: ^Checker, body: Expr, scope: ^Scope, target: Symbol_I
 	})
 }
 
+// Counts a step of a type application that happens before any instance exists.
+// False, reported once, past the instantiation limit; otherwise the caller pops
+// the frame. A report a probe will roll back has not been made.
+push_application_frame :: proc(k: ^Checker, span: Span, symbol: Symbol_Id, bindings: []Generic_Binding, report: bool) -> bool {
+	name := generic_instance_name(k.c, symbol, bindings)
+	if len(k.c.instantiation_stack) >= MAX_INSTANTIATION_DEPTH {
+		if report && !k.c.instantiation_limit_hit {
+			k.c.instantiation_limit_hit = committing(k.c)
+			errorf(
+				k.c, span, "L0436",
+				"expanding `%s` exceeds the compiler's generic instantiation limit (%d deep)",
+				short_instantiation_name(k.c, name), MAX_INSTANTIATION_DEPTH,
+			)
+			note_instantiation_stack(k)
+		}
+		return false
+	}
+	append(&k.c.instantiation_stack, Instantiation_Frame{description = name, span = span, silent = !report})
+	return true
+}
+
 // design.md "Parametric aliases": `Status(int)` is the type its body denotes
 // with `$E` bound to `int`, and has no identity of its own. The body resolves
 // where the alias is declared; the arguments, where they are written.
@@ -1356,7 +1377,13 @@ resolve_alias_application :: proc(k: ^Checker, v: ^Expr_Call, template: ^Generic
 			if !ok {
 				continue
 			}
+			// Resolving its type can apply this alias again, as through a record's
+			// `$V: Alias(T, 0)`, so the limit counts it as it counts an expansion.
+			if !push_application_frame(k, v.span, template.symbol, bindings[:], report) {
+				return INVALID_TYPE
+			}
 			wanted = alias_dependent_type(k, template, parameter, scope, report)
+			pop(&k.c.instantiation_stack)
 			if wanted == INVALID_TYPE {
 				ok = false
 				continue
@@ -1383,20 +1410,9 @@ resolve_alias_application :: proc(k: ^Checker, v: ^Expr_Call, template: ^Generic
 	// already exists when it is reached again with the same arguments, as a
 	// reference in `Node(T)` to `Link(T)` that was reached from `Link :: ^Node($T)`
 	// does (design.md "Generic types"). New arguments each time are this limit's.
-	if len(k.c.instantiation_stack) >= MAX_INSTANTIATION_DEPTH {
-		if report && !k.c.instantiation_limit_hit {
-			k.c.instantiation_limit_hit = true
-			errorf(
-				k.c, v.span, "L0436",
-				"expanding `%s` exceeds the compiler's generic instantiation limit (%d deep)",
-				short_instantiation_name(k.c, generic_instance_name(k.c, template.symbol, bindings[:])), MAX_INSTANTIATION_DEPTH,
-			)
-			note_instantiation_stack(k)
-		}
+	if !push_application_frame(k, v.span, template.symbol, bindings[:], report) {
 		return INVALID_TYPE
 	}
-	name := generic_instance_name(k.c, template.symbol, bindings[:])
-	append(&k.c.instantiation_stack, Instantiation_Frame{description = name, span = v.span, silent = !report})
 	defer pop(&k.c.instantiation_stack)
 
 	saved := enter_instance(k, template, scope)
@@ -2589,7 +2605,7 @@ instantiate_generic :: proc(
 	   k.c.instantiation_count >= MAX_INSTANTIATIONS {
 		// Reported once, and never by a silent probe.
 		if report && !k.c.instantiation_limit_hit {
-			k.c.instantiation_limit_hit = true
+			k.c.instantiation_limit_hit = committing(k.c)
 			errorf(
 				k.c,
 				span,
@@ -2895,10 +2911,25 @@ instantiate_record_application :: proc(k: ^Checker, v: ^Expr_Call, template: ^Ge
 	ok := true
 	for parameter, index in template.params {
 		arg := v.args[index]
+		// A constant parameter's type can apply this template again, as
+		// `$V: Record(T, 0)` does, before any instance is pushed, so the limit
+		// counts it.
+		_, names_type := parameter.type_syntax.(^Type_Type)
+		counted := !names_type && parameter.type_syntax != nil
+		if counted && !push_application_frame(k, v.span, template.symbol, bindings[:], report) {
+			return INVALID_TYPE
+		}
 		k.scope = scope
 		// A copy, so `[N]int` names this application's `N` and not a cached earlier one.
 		wanted := resolve_type_syntax(k, clone_expr(k.c, parameter.type_syntax))
 		k.scope = saved_scope
+		if counted {
+			pop(&k.c.instantiation_stack)
+			// The argument is not a type to be read in its place.
+			if wanted == INVALID_TYPE && k.c.instantiation_limit_hit {
+				return INVALID_TYPE
+			}
+		}
 		bound, bound_ok := bind_record_argument(k, parameter, arg, wanted, scope, &bindings, report)
 		if !bound_ok {
 			if report && bound != "" {

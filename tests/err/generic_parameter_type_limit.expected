@@ -1,0 +1,3 @@
+L0436
+@7:32
+expanding `Record(int)` exceeds the compiler's generic instantiation limit (64 deep)

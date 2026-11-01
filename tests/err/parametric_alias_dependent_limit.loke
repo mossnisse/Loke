@@ -1,0 +1,10 @@
+// design.md "Parametric aliases": the type of a constant parameter that an earlier
+// argument decides can apply the alias again, through a record's parameter, before
+// any expansion. The instantiation limit counts that too, rather than the compiler
+// overflowing its stack. Only this one is reported, once.
+package main;
+
+Record :: struct($T: type, $V: Alias(T, 0)) { item: T }
+Alias :: Record($T, $V);
+
+main :: proc() { _ = size_of(Alias(int, 0)); }
