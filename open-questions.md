@@ -117,17 +117,9 @@ Reviewed `e4d9c207`, `0ae279da`, `99057210`, and `3b49d840` for correctness,
 simplification, and structure. Five implementation divergences were found, all
 since fixed: a local alias hiding a generic success dependency,
 resolution-order-dependent recursive aliases, dependently typed value arguments,
-nested computed types, and private type exposure warnings. Two smaller findings
-remain:
+nested computed types, and private type exposure warnings. One smaller finding
+remains:
 
-- **Delete the unreachable payloadless allocation-success branch (P3,
-  simplification).** `eval_alloc_ok` in [src/eval.odin](src/eval.odin) still
-  branches on `TYPE_VOID` for an older runtime's `Status`. All five call sites
-  are synthetic container operations whose result is `alloc_result_type`,
-  which [src/bootstrap.odin](src/bootstrap.odin) now always builds as
-  `Result(Unit, Allocator_Error)`, even with an older runtime. Build its `Unit`
-  directly and remove the payload query and payloadless branch, about four
-  executable lines. No extra compatibility abstraction is needed.
 - **Describe Status's success as Unit consistently (P3, editorial).**
   [One result](design.md#one-result) and
   [Success returns](design.md#success-returns) still use `Status(E)` as the

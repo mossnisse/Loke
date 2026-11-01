@@ -2218,15 +2218,10 @@ eval_or_return :: proc(ev: ^Evaluator, v: ^Expr_Postfix) -> (Eval_Value, bool) {
 }
 
 // `.ok`: an allocating container operation that had nothing to allocate. Its
-// success carries `Unit`, or nothing in a runtime that declares `Status` as a
-// union of its own.
+// success carries `Unit`.
 @(private = "file")
 eval_alloc_ok :: proc(ev: ^Evaluator, type: Type_Id) -> (Eval_Value, bool) {
-	payload := union_variant_payload(ev.k.c, type, union_index_of(ev.k.c, type, "ok"))
-	if payload == TYPE_VOID {
-		return eval_named_union(ev, type, "ok", Eval_Value{kind = .Invalid, type = TYPE_VOID})
-	}
-	unit, made := zero_value(ev, payload)
+	unit, made := zero_value(ev, ev.k.c.unit_type)
 	if !made {
 		return Eval_Value{}, false
 	}
