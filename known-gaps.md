@@ -261,6 +261,13 @@ at_variables :: proc(links: []mut Link, i: int, j: int) {
     links[i] = links[j];
     poke_both(links); // should be rejected
 }
+both_used :: proc(links: []mut Link) {
+    held := links[0];
+    links[1] = held;
+    copy := links[1].to;
+    held.to^ = 3; // should be rejected
+    copy^ = 4;
+}
 main :: proc() {}
 ```
 
@@ -268,7 +275,7 @@ The same store of the carrier field, `links[0].to = links[1].to`, is rejected, a
 the same call after `duplicate(links)`. A record stored through a view parameter
 joins into the parameter itself (`prov_view_element`), and nothing links its carriers
 to the slots of the elements, so the call reads no carrier and reborrow of it
-together. Linking them as a field store does needs the copy told from a value that
+together, and a copy out of the element is no reborrow of the local it came from. Linking them as a field store does needs the copy told from a value that
 came from elsewhere, and from a swap written by hand. Found on 2026-11-01 while
 making a call use what its arguments reach at once.
 
@@ -318,7 +325,27 @@ main :: proc() {}
 ```
 
 Found while separating calls that move carriers from calls that copy them on
-2026-11-01. The cause has not been traced; it does not depend on those summaries.
+2026-11-01. It does not depend on those summaries.
+
+The cause is traced, and three things stand in the way. Which storage a store through
+carriers names is known only to the solve, so `prov_reborrow_stored_content` and
+`prov_link_stored_carrier` link the copy to every local slot of its type, here
+`held.to`, which the third statement uses, and all of a view parameter's slots hold one
+loan, so `prov_slots_overlap` cannot tell them apart. That link can go where no mutable
+loan names the local, which makes the program above compile, but it is the only thing
+rejecting a real conflict after the swap: with it gone,
+`held.to^ = 3; links[1].to^ = 4;` afterwards compiles too, as the same store without the
+swap already does ([A whole element copied through a view parameter is not seen by a
+call](#a-whole-element-copied-through-a-view-parameter-is-not-seen-by-a-call)). Linking
+a record's carriers to the slots of the elements closes that, and then needs what the
+written-out swap of carrier fields, `held := links[0].to; links[0].to = links[1].to;
+links[1].to = held;`, needs today, which is `L0641` at its first read: that a link holds
+only from its store on, as `held` is not yet in `links[1]` when `links[1].to` is read,
+and that a slot replaced by a store is no longer suspended by what was taken from it
+(`Prov_Event.replaces`). A reordering's own reads are marked (`Prov_Reborrow.moved`), but
+which reads a later store makes into a move is a matter of flow. `run_severing_event`
+would have to handle both, after `prov_reborrow_loaded` has added the loads' reborrows,
+which `solve_reaching` runs too early to see.
 
 ### A mutable carrier copied back through its traversal binding is rejected
 
