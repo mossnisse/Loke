@@ -34,6 +34,28 @@ checklist.
   beside a callee reading `g.b` is rejected too. Upgrade by ending the mutable
   borrow before the call, passing the value the callee reads as an argument, or
   having the callee read through its parameter instead of the global's name.
+- A write into a parameter no longer hides the allocator it received there
+  ([`@(allocator_reset)`](design.md#allocator_reset)). After `if (flag) { maybe =
+  .some(allowed); }` on `maybe: inout Option(Allocator)`, `free_all(maybe or_else
+  allowed)` used to compile though the payload may still be the caller's; it is now
+  `L0538`, as a record's field, a `switch` binding, and `.as` are. A write on every
+  path is rejected too, as these facts do not follow control flow. Upgrade by
+  resetting the marked allocator itself.
+- A borrow stored through a slice literal's slice is now seen
+  ([Slice literals](design.md#slice-literals)). After `view := []mut []int{{}};
+  view[0] = values[:];`, `drop(values)` used to compile while `view[0][0]` read the
+  dropped array, and a hooked element's `hook(drop)` read it at the end of the block;
+  both are now `L0512`, and an element holding a local that ends first is `L0513`.
+  Upgrade by replacing the element before ending what it borrows, or by ending the
+  source after the literal's block.
+- An `assert` or `panic` report now borrows what it prints
+  ([Built-in procedures](design.md#built-in-procedures)), as `fmt.println` does.
+  `panic("stop", values[0], consume(move(values)))` used to print freed memory and
+  is `L0512`; `panic("stop", p, change(inout p))` is `L0511`; and a printed value's
+  `format` that writes a global the report holds is `L0512`. A value printed through
+  a view, as `s[0]`, now keeps what the view names in use for the report and for
+  `fmt.println` alike, so `fmt.println(s[0], grow(inout values))` is `L0511`. Upgrade
+  by evaluating the later argument into a local first.
 - A generic record's hooks are now checked as a non-generic record's are. A wrong
   signature (`L0488`), a duplicate role (`L0488`), a `hook(copy)` on a `move_only`
   record or on an instance a field makes move-only (`L0488`), a written allocator
@@ -1001,6 +1023,15 @@ checklist.
   `Alias(int, 3)` is `Value(int, 3)`. An alias can also bind a constant argument
   of a `dyn` interface, as `dyn Window($N)`, which was bound as a type, and a
   generic parameter type that does not resolve is reported at the alias.
+- `free_all` of a field read off a temporary record, as in `(Pair{allowed, other}
+  if flag else Pair{allowed, other}).a`, is no longer `L0538` for the region its
+  sibling `.b` is in.
+- An element of a slice literal replaced through its slice no longer keeps what it
+  borrowed before, so `view[0] = Read{{}}; drop(values);` is no longer `L0512` after
+  `view := []mut Read{Read{values[:]}};`.
+- Dropping a zero-length array, as an empty slice literal's backing, no longer
+  counts as running its element type's `hook(drop)`, so `[]Clear{}` beside a borrow
+  of a global that hook writes is no longer `L0512`.
 - `free_all` of an allocator unwrapped by `or_else` from an unmarked
   `Option(Allocator)` parameter, as in `maybe or_else allowed`, is now
   `L0538`, as the same reset through a `switch` was. Only the fallback's

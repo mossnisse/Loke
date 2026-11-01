@@ -1,0 +1,30 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Slice literals", "Global write effects": a zero-length array has no
+// element, so dropping one runs no element hook and writes nothing the hook
+// writes, however it is held. The hook here would clear `values` under `borrowed`.
+
+values: [dynamic]int = {};
+
+Clear :: move_only struct { id: int }
+impl Clear {
+	retire :: hook(drop) proc(self: inout Clear) { values = {}; }
+}
+Holds :: move_only struct { none: [0]Clear, tag: int }
+
+main :: proc() {
+	values.append(7);
+	borrowed := values[:];
+	{
+		shared := []Clear{};
+		exclusive := []mut Clear{};
+		local: [0]Clear = {};
+		held := Holds{{}, 1};
+		outer: [0][2]Clear = {};
+		inner: [2][0]Clear = {};
+		fmt.println(shared.len(), exclusive.len(), local.len(), held.tag, outer.len(), inner.len());
+	}
+	fmt.println(borrowed[0]);
+}

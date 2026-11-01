@@ -2555,12 +2555,11 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 			}
 		}
 		if prov {
+			if prov_repr(graph, v).backing != INVALID_TYPE {
+				return prov_slice_literal(graph, v, carrier_is_mutable(graph.k.c, prov_type(graph, v)))
+			}
 			if content := prov_temp_content(graph, prov_type(graph, v)); len(content) > 0 {
-				content = prov_composite_content(graph, v, content)
-				if prov_repr(graph, v).backing != INVALID_TYPE {
-					return prov_slice_literal(graph, v, carrier_is_mutable(graph.k.c, prov_type(graph, v)), content)
-				}
-				return content
+				return prov_composite_content(graph, v, content, prov_type(graph, v))
 			}
 		}
 		is_map := underlying_kind(graph.k.c, prov_type(graph, v)) == .Map

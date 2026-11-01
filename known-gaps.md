@@ -7,159 +7,144 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
-### Assert and panic arguments do not borrow the places they print
+### Comparing zero-length arrays contributes nonexistent element effects
 
-[Built-in procedures](design.md#built-in-procedures) requires an `assert` or
-`panic` report to borrow each printed argument through the report. Since
-`701846e9`, checking these arguments preserves their types but records no loan
-of the places the backend will address. A later argument may move and destroy
-an earlier argument's storage:
-
-```loke
-package main;
-consume :: proc(values: move [dynamic]int) -> int { return values.len(); }
-main :: proc() {
-    values := [dynamic]int{7, 8};
-    panic("stop", values[0], consume(move(values)));
-}
-```
-
-This compiles. The emitted code retains the element's address, calls `consume`
-(which drops the array before returning), then loads the element through that
-freed address to print it. The same problem affects a failing `assert`.
-`check_printed_argument` in [src/check_builtin.odin](src/check_builtin.odin)
-checks printability and requests a type ID, but its replacement for the old
-erasure no longer reaches the loan creation in `prov_erase` in
-[src/cfg_provenance.odin](src/cfg_provenance.odin).
-Record the report's read-only borrow without erasing the argument's type, and
-keep it live across evaluation of later arguments and formatting.
-
-Confirmed during review on 2026-11-01 with the compiler built at `5580637f`;
-the relevant code is unchanged from the reviewed `426f1a13`. A compiler built
-from `03d04d34`, immediately before the built-in printing change, rejects the
-same program with `L0512`; an equivalent `fmt.println` also rejects the move
-today. The local-mutation control `panic("stop", p, change(inout p))` likewise
-compiles while `fmt.println(p, change(inout p))` reports `L0511` (P1).
-
-### A slice literal's drop keeps only its initial element borrows
-
-[Slice literals](design.md#slice-literals) have a hidden owner whose elements
-are dropped at the end of the block. A hook must therefore keep the elements'
-current borrows live until that cleanup, including borrows stored later:
-
-```loke
-package main;
-import "core:fmt";
-Read :: move_only struct { data: []int }
-impl Read {
-    retire :: hook(drop) proc(self: inout Read) {
-        if (self.data.len() > 0) { fmt.println(self.data[0]); }
-    }
-}
-main :: proc() {
-    values := [dynamic]int{7};
-    view := []mut Read{Read{{}}};
-    view[0] = Read{values[:]};
-    view = {};
-    drop(values);
-}
-```
-
-This compiles, and the element's hook reads freed storage at block exit.
-Conversely, initializing the literal with `Read{values[:]}` and replacing the
-element with `Read{{}}` reports `L0512` at `drop(values)`, although the hook
-that read that borrow already ran during replacement. The latter is a
-regression from `426f1a13`; the former remains unfixed by `210f1131`.
-In [src/cfg_provenance.odin](src/cfg_provenance.odin), `prov_slice_literal`
-defines `root.content` from the original elements only, and
-`prov_extended_drop` reads that snapshot. Track the backing array's current
-content through element and field writes instead. Confirmed on `5580637f`
-during review on 2026-11-01 (P1).
-
-### An empty slice literal contributes nonexistent element drop effects
-
-An empty [slice literal](design.md#slice-literals) has no elements whose
-hooks can run. Since `210f1131`, its cleanup nevertheless applies the element
-type's global write effects:
+[Global write effects](design.md#global-write-effects) count the calls that run. A
+structural `==` of a `[0]T` compares no element, but still counts `T`'s `==`:
 
 ```loke
 package main;
 import "core:fmt";
 values: [dynamic]int = {};
-Clear :: move_only struct { id: int }
-impl Clear {
-    retire :: hook(drop) proc(self: inout Clear) { values = {}; }
+Clears :: struct { id: int }
+impl Clears {
+    equal :: operator(==) proc(a, b: Clears) -> bool { values = {}; return true; }
 }
 main :: proc() {
     values.append(7);
     borrowed := values[:];
-    {
-        view := []Clear{};
-        fmt.println(view.len());
-    }
+    a: [0]Clears = {};
+    b: [0]Clears = {};
+    fmt.println(a == b);
     fmt.println(borrowed[0]);
 }
 ```
 
-This reports `L0512` at `[]Clear{}`, claiming that `retire` writes `values`
-when the slice literal is dropped. At `426f1a13` it compiles and prints `0`
-and `7`; the zero-length backing array runs no hook. `prov_slice_literal`
-now records its backing type for `prov_extended_drop`, but `type_drop_hooks`
-in [src/hooks.odin](src/hooks.odin) descends into the element type of a fixed
-array even when its length is zero. Exclude those nonexistent element effects.
-Confirmed on `5580637f` during review on 2026-11-01 (P2).
+This reports `L0512` at `a == b`. `prov_equality_effects` and `prov_hash_effects` in
+[src/global_effects.odin](src/global_effects.odin) take their parts from
+`own_equalities_within` in [src/hash.odin](src/hash.odin), which descends into an
+array's element whatever its length, as `drop_hooks_walk` used to. The checker also
+asks that walk what a type requires, so the fix belongs in the two effect readers or
+in a separate query. Found while fixing the empty slice literal's drop effects on
+2026-11-01 at `46cf2aa8` (P3, over-rejection).
 
-### A conditional write hides a received allocator payload's region
+### A printed value through a mutable call result is not held
 
-[The allocator reset promise](design.md#allocator_reset) must cover every
-pre-existing region that can be reset. A known write into a received `Option`
-can suppress the unknown incoming payload that `5580637f` added:
+[Built-in procedures](design.md#built-in-procedures) and
+[Variadic parameters](design.md#variadic-parameters) keep what a printed value
+is viewed from in use until printing ends. A value reached through a named carrier
+or a read-only result now is, but one reached through a mutable call result is not:
 
 ```loke
 package main;
-reset :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator,
-              maybe: inout Option(Allocator), flag: bool) {
-    if (flag) { maybe = Option(Allocator).some(allowed); }
-    free_all(maybe or_else allowed);
+import "core:fmt";
+clearing :: proc(m: inout map[int]int) -> int { m.clear(); return 0; }
+main :: proc() {
+    m := map[int]int{};
+    m.find_or_insert(3, 1);
+    fmt.println(m.find_or_insert(3, 7)^, clearing(inout m));
+}
+```
+
+This compiles, and the view of the value is read after `clear` emptied the map.
+The same goes for a `panic` or `assert` report. `prov_view_through_carrier` in
+[src/cfg_provenance.odin](src/cfg_provenance.odin) leaves this form alone because
+the result holds the receiver's mutable loan, so holding the loan would also reject
+`fmt.println(m.find_or_insert(3, 7)^, m.len())`, which `tests/run/no_zero_containers`
+requires and which is sound, as a read does not move the value. Fixing it takes a
+way to hold a mutable loan for its invalidating accesses only. Found while fixing
+the report's borrows on 2026-11-01 at `46cf2aa8` (P2).
+
+### Printing a mutable slice field suspends it for a later read
+
+`fmt.println` takes a read-only view of what it prints, so a later read of the same
+place is allowed, as it is for a local:
+
+```loke
+package main;
+import "core:fmt";
+Holder :: struct { items: []mut int }
+len_of :: proc(xs: []int) -> int { return xs.len(); }
+main :: proc() {
+    storage := [2]int{1, 2};
+    held := Holder{&mut storage[:]};
+    fmt.println(held.items, len_of(held.items));
+}
+```
+
+This reports `L0641`, "a mutable reborrow of it is still in use". With `s := &mut
+storage[:]` in place of the field, `fmt.println(s, len_of(s))` compiles.
+`prov_call_argument` in [src/cfg_provenance.odin](src/cfg_provenance.odin) lends a
+pack operand that `type_carries_borrow` calls mutable with a mutable
+`prov_lend_carrier`, and `prov_erase` returns the field's own slot when it is not a
+plain-slice read. The over-rejection predates the fix to report borrows, which
+gives a report its own walk and so does not reach it. Found on 2026-11-01 at
+`46cf2aa8` (P3).
+
+### A view of a named array does not hold what its elements borrow
+
+[Values that contain borrows](design.md#values-that-contain-borrows) carry a borrow
+through whatever holds it. A slice of a local array in use does not keep in use what
+the array's elements borrow, so a call can read a stale one:
+
+```loke
+package main;
+import "core:fmt";
+Plain :: struct { data: []int }
+first :: proc(view: []Plain) -> int { return view[0].data[0]; }
+main :: proc() {
+    values := [dynamic]int{7};
+    arr := [1]Plain{Plain{values[:]}};
+    view := arr[:];
+    drop(values);
+    fmt.println(first(view));
+}
+```
+
+This compiles, and `first` reads the dropped array. `fmt.println(view)` in place of
+the call compiles too, and so does `first(arr[:])` with no local view. A load in the
+same body, `view[0].data[0]`, is rejected, since `load_through_loan` in
+[src/borrow.odin](src/borrow.odin) reads the element's slot at that point; only a use
+of the view that hands it on goes unseen. A slice literal's array has the same shape
+and is held, by `with_literal_content` extending each use of the slice with the
+slots of the array it views. Giving a named root the same treatment closes this, at
+the cost of also rejecting `drop(values); view.len()` for a named array, as a slice
+literal already does. Found while fixing a slice literal's drop on 2026-11-01 at
+`46cf2aa8` (P1).
+
+### A write on every path does not end a received allocator's region
+
+[The allocator reset promise](design.md#allocator_reset) covers the regions a reset
+can reach. A value a parameter received, written on every path before the reset,
+holds only what the write put there:
+
+```loke
+package main;
+Holder :: struct { allocator: Allocator }
+reset :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator, h: inout Holder) {
+    h.allocator = allowed;
+    free_all(h.allocator);
 }
 main :: proc() {}
 ```
 
-This compiles. With `flag` false, the reset can reach the incoming payload's
-region, which need not be `allowed`'s. Removing the conditional assignment
-reports `L0538`. In [src/cfg_provenance.odin](src/cfg_provenance.odin),
-`prov_result_region_at` adds the unknown parameter origin only when the whole
-queried set is empty. Region writes merge without regard to control flow, so
-the possible write of `allowed` makes that set nonempty even on the path where
-the incoming payload survives. Preserve the incoming origin alongside possible
-writes; seeding allocator leaves at parameter entry would also avoid repeating
-this fallback in individual readers. Confirmed on `5580637f` during review on
-2026-11-01 (P2); the conditional-write case also compiles at `426f1a13`.
-
-### A temporary record field also carries sibling allocator regions
-
-[Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)
-keeps a record's fields separate when projecting a temporary result:
-
-```loke
-package main;
-Pair :: struct { a, b: Allocator }
-reset :: proc(@(allocator_reset) allowed: Allocator, other: Allocator, flag: bool) {
-    free_all((Pair{allowed, other} if flag else Pair{allowed, other}).a);
-}
-main :: proc() {}
-```
-
-This reports `L0538`, although both possible values of `.a` are `allowed`.
-The failure predates the reviewed commits and reproduces at `426f1a13`.
-The projected query added in `5580637f` now obtains the correct field region,
-but `prov_region_of` in [src/cfg_provenance.odin](src/cfg_provenance.odin)
-merges it with `prov_read_region`'s whole-record result, retaining `.b`'s
-unmarked region. Return the projected query directly for a struct field and
-keep `prov_read_region` as the fallback. A scratch compiler with that
-one-line reduction accepts this case while still rejecting the received
-allocator payload probes. Confirmed on `5580637f` during review on 2026-11-01
-(P2, pre-existing; also a simplification opportunity).
+This reports `L0538`, though the reset can only reach `allowed`'s region. Region facts
+in [src/cfg_provenance.odin](src/cfg_provenance.odin) only grow and do not follow
+control flow, so `prov_add_received_allocator` cannot tell this from the same write
+under an `if`, and keeps the incoming region. An `Allocator` parameter reassigned from
+another is treated the same way, for the same reason. Resetting `allowed` itself says
+the same thing. Telling them apart takes region facts by program point. Found while
+fixing the conditional write on 2026-11-01 at `46cf2aa8` (P3, over-rejection).
 
 ### A nested `distinct` gives a parametric alias's application a new type
 

@@ -1,0 +1,75 @@
+package main;
+
+// design.md "@(allocator_reset)": what a parameter received inside another value may
+// still be there after a write this body may make, so the write does not cover a
+// reset of it. A value this body built holds only what the body put there, and a
+// managed parameter's allocator is the parameter's own, unmarked region.
+
+Holder :: struct { allocator: Allocator }
+Owned :: struct { items: [dynamic]int, allocator: Allocator }
+
+built_payload :: proc(@(allocator_reset) allowed: Allocator, @(allocator_reset) other: Allocator) {
+	maybe := Option(Allocator).some(other);
+	free_all(maybe or_else allowed);
+}
+built_and_rewritten :: proc(@(allocator_reset) allowed: Allocator, @(allocator_reset) other: Allocator, flag: bool) {
+	maybe := Option(Allocator).some(other);
+	if (flag) { maybe = Option(Allocator).some(allowed); }
+	free_all(maybe or_else allowed);
+}
+built_record :: proc(@(allocator_reset) allowed: Allocator, flag: bool) {
+	h := Holder{allowed};
+	if (flag) { h.allocator = allowed; }
+	free_all(h.allocator);
+}
+written_and_not_read :: proc(@(escape=stored) allowed: Allocator, maybe: inout Option(Allocator), flag: bool) {
+	if (flag) { maybe = Option(Allocator).some(allowed); }
+}
+
+option_payload :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator, maybe: inout Option(Allocator), flag: bool) {
+	if (flag) { maybe = Option(Allocator).some(allowed); }
+	free_all(maybe or_else allowed);
+}
+record_field :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator, h: inout Holder, flag: bool) {
+	if (flag) { h.allocator = allowed; }
+	free_all(h.allocator);
+}
+switch_binding :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator, maybe: inout Option(Allocator), flag: bool) {
+	if (flag) { maybe = Option(Allocator).some(allowed); }
+	switch (maybe) {
+	case .some(selected): free_all(selected);
+	case .none: free_all(allowed);
+	}
+}
+as_variant :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator, maybe: inout Option(Allocator), flag: bool) {
+	if (flag) { maybe = Option(Allocator).some(allowed); }
+	free_all(maybe.as(.some) or_else allowed);
+}
+payload_field :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator, maybe: inout Option(Holder), flag: bool) {
+	if (flag) { maybe = Option(Holder).some(Holder{allowed}); }
+	free_all((maybe or_else Holder{allowed}).allocator);
+}
+through_pointer :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator, h: ^mut Holder, flag: bool) {
+	if (flag) { h^.allocator = allowed; }
+	free_all(h^.allocator);
+}
+through_slice :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator, h: []mut Holder, flag: bool) {
+	if (flag) { h[0].allocator = allowed; }
+	free_all(h[0].allocator);
+}
+local_copy_of_payload :: proc(@(allocator_reset) allowed: Allocator, maybe: Option(Allocator), flag: bool) {
+	copy := maybe;
+	if (flag) { copy = Option(Allocator).some(allowed); }
+	free_all(copy or_else allowed);
+}
+local_copy_of_field :: proc(@(allocator_reset) allowed: Allocator, h: Holder, flag: bool) {
+	copy := h;
+	if (flag) { copy.allocator = allowed; }
+	free_all(copy.allocator);
+}
+managed_parameter :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator, h: inout Owned, flag: bool) {
+	if (flag) { h.allocator = allowed; }
+	free_all(h.allocator);
+}
+
+main :: proc() {}

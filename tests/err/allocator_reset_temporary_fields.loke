@@ -1,0 +1,55 @@
+package main;
+
+// design.md "Allocator regions and region provenance": a temporary's field is in
+// the region that field's value is in, each alternative included, and not in what
+// its siblings are in. So only the first group's resets are all covered. Field
+// reads through a carrier or of a received record name no region of their own.
+
+Pair :: struct { a, b: Allocator }
+Outer :: struct { p: Pair, tag: int }
+
+make_pair :: proc(a, b: Allocator) -> Pair { return Pair{a, b}; }
+
+constructed :: proc(@(allocator_reset) allowed: Allocator, other: Allocator) {
+	free_all(Pair{allowed, other}.a);
+}
+conditional :: proc(@(allocator_reset) allowed: Allocator, other: Allocator, flag: bool) {
+	free_all((Pair{allowed, other} if flag else Pair{allowed, other}).a);
+}
+nested :: proc(@(allocator_reset) allowed: Allocator, other: Allocator, flag: bool) {
+	free_all((Outer{Pair{allowed, other}, 1} if flag else Outer{Pair{allowed, other}, 2}).p.a);
+}
+unwrapped :: proc(@(allocator_reset) allowed: Allocator, other: Allocator) {
+	built := Option(Pair).some(Pair{allowed, other});
+	free_all((built or_else Pair{allowed, other}).a);
+}
+named_fields :: proc(@(allocator_reset) allowed: Allocator, other: Allocator, flag: bool) {
+	free_all((Pair{a = allowed, b = other} if flag else Pair{b = other, a = allowed}).a);
+}
+
+sibling :: proc(@(allocator_reset) allowed: Allocator, other: Allocator, flag: bool) {
+	free_all((Pair{allowed, other} if flag else Pair{allowed, other}).b);
+}
+one_alternative :: proc(@(allocator_reset) allowed: Allocator, other: Allocator, flag: bool) {
+	free_all((Pair{allowed, other} if flag else Pair{other, allowed}).a);
+}
+nested_sibling :: proc(@(allocator_reset) allowed: Allocator, other: Allocator) {
+	free_all(Outer{Pair{other, allowed}, 1}.p.a);
+}
+call_result :: proc(@(allocator_reset) allowed: Allocator, other: Allocator) {
+	free_all(make_pair(other, allowed).a);
+}
+received :: proc(@(allocator_reset) allowed: Allocator, p: Pair) {
+	free_all(p.a);
+}
+received_payload :: proc(@(allocator_reset) allowed: Allocator, maybe: Option(Pair)) {
+	free_all((maybe or_else Pair{allowed, allowed}).a);
+}
+through_pointer :: proc(@(allocator_reset) allowed: Allocator, p: ^Pair) {
+	free_all(p^.a);
+}
+through_slice :: proc(@(allocator_reset) allowed: Allocator, p: []Pair) {
+	free_all(p[0].a);
+}
+
+main :: proc() {}

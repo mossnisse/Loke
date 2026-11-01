@@ -1,0 +1,119 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Slice literals": what the hidden array's elements hold is what was
+// last stored in them. An element replaced runs its hook then and holds nothing of
+// what it held, so its old borrow ends there, whether the slice is still in use or
+// not. The order of the lines is the order of the hooks.
+
+Read :: move_only struct { data: []int }
+impl Read {
+	retire :: hook(drop) proc(self: inout Read) {
+		if (self.data.len() > 0) { fmt.println("retire", self.data[0]); }
+	}
+}
+Plain :: struct { data: []int }
+
+show :: proc(view: []Plain) { fmt.println(view.len()); }
+bump :: proc(view: []mut []mut int) { view[0][0] += 1; }
+
+replaced_then_overwritten :: proc() {
+	values := [dynamic]int{1};
+	view := []mut Read{Read{values[:]}};
+	view[0] = Read{{}};
+	view = {};
+	drop(values);
+}
+replaced_then_used :: proc() {
+	values := [dynamic]int{2};
+	view := []mut Read{Read{values[:]}};
+	view[0] = Read{{}};
+	drop(values);
+	fmt.println(view.len());
+}
+each_replaced :: proc() {
+	values := [dynamic]int{3};
+	view := []mut Read{Read{values[:]}, Read{values[:]}};
+	view[0] = Read{{}};
+	view[1] = Read{{}};
+	view = {};
+	drop(values);
+}
+field_replaced :: proc() {
+	values := [dynamic]int{4};
+	view := []mut Plain{Plain{values[:]}};
+	view[0].data = {};
+	drop(values);
+	show(view);
+}
+sole_element_at_unknown_index :: proc(i: int) {
+	values := [dynamic]int{5};
+	view := []mut Read{Read{values[:]}};
+	view[i] = Read{{}};
+	view = {};
+	drop(values);
+}
+stored_read_replaced :: proc() {
+	values := [dynamic]int{6};
+	view := []mut Plain{Plain{{}}};
+	show(view);
+	view[0] = Plain{values[:]};
+	fmt.println(view[0].data[0]);
+	view[0] = Plain{{}};
+	drop(values);
+	show(view);
+}
+hookless_overwritten :: proc() {
+	values := [dynamic]int{7};
+	view := []Plain{Plain{values[:]}};
+	view = {};
+	drop(values);
+}
+hookless_last_used_first :: proc() {
+	values := [dynamic]int{8};
+	view := []Plain{Plain{values[:]}};
+	fmt.println(view[0].data[0], view.len());
+	drop(values);
+}
+argument_only :: proc() {
+	values := [dynamic]int{9};
+	show([]Plain{Plain{values[:]}});
+	drop(values);
+}
+fresh_each_iteration :: proc() {
+	for (i := 0; i < 2; i += 1) {
+		values := [dynamic]int{10 + i};
+		view := []Plain{Plain{values[:]}};
+		fmt.println(view[0].data[0]);
+	}
+}
+mutable_element_done :: proc() {
+	a := [dynamic]int{11};
+	xs := &mut a[:];
+	view := []mut []mut int{xs};
+	bump(view);
+	xs[0] += 1;
+	fmt.println(a[0]);
+}
+retired_at_block_end :: proc() {
+	values := [dynamic]int{14};
+	view := []mut Read{Read{{}}};
+	view[0] = Read{values[:]};
+	fmt.println("before the block ends");
+}
+
+main :: proc() {
+	replaced_then_overwritten();
+	replaced_then_used();
+	each_replaced();
+	field_replaced();
+	sole_element_at_unknown_index(0);
+	stored_read_replaced();
+	hookless_overwritten();
+	hookless_last_used_first();
+	argument_only();
+	fresh_each_iteration();
+	mutable_element_done();
+	retired_at_block_end();
+}

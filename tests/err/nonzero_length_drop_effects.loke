@@ -1,0 +1,34 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Global write effects": an array with an element keeps the element's
+// drop effect, in a slice literal or a record beside a zero-length one.
+
+values: [dynamic]int = {};
+
+Clear :: move_only struct { id: int }
+impl Clear {
+	retire :: hook(drop) proc(self: inout Clear) { values = {}; }
+}
+Holds :: move_only struct { none: [0]Clear, one: [1]Clear }
+
+slice_literal :: proc() {
+	borrowed := values[:];
+	{
+		view := []Clear{Clear{1}};
+		fmt.println(view.len());
+	}
+	fmt.println(borrowed[0]);
+}
+
+record_field :: proc() {
+	borrowed := values[:];
+	{
+		held := Holds{{}, {Clear{1}}};
+		fmt.println(held.one[0].id);
+	}
+	fmt.println(borrowed[0]);
+}
+
+main :: proc() {}

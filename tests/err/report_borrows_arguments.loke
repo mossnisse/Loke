@@ -1,0 +1,89 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Built-in procedures": an `assert` or `panic` report borrows each
+// argument where it is, for the arguments after it and for printing. So a later
+// argument may not change or destroy an earlier one, whether the earlier one is
+// a local, its field or element, or a value reached through a view, and a printed
+// `format` is a call that may write what the report holds (design.md "Global
+// write effects"). `fmt.println` holds a value it reaches through a view too.
+
+Point :: struct { x, y: int }
+Box :: struct { s: []int }
+
+data: [dynamic]int = {};
+
+Clears :: struct { id: int }
+impl Clears {
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) { data = {}; }
+}
+Holds_Clears :: struct { parts: []Clears }
+
+consume :: proc(values: move [dynamic]int) -> int { return values.len(); }
+change :: proc(p: inout int) -> int { p += 1; return p; }
+change_point :: proc(p: inout Point) -> int { p.x += 1; return p.x; }
+grow :: proc(values: inout [dynamic]int) -> int { values.append(1); return values.len(); }
+replace :: proc(s: inout []int) -> int { s = {}; return 0; }
+bump :: proc(p: ^mut int) -> int { p^ += 1; return p^; }
+
+panic_moved_element :: proc() {
+	values := [dynamic]int{7, 8};
+	panic("stop", values[0], consume(move(values)));
+}
+assert_moved_element :: proc(ok: bool) {
+	values := [dynamic]int{7, 8};
+	assert(ok, "stop", values[0], consume(move(values)));
+}
+panic_changed_local :: proc() {
+	p := 1;
+	panic("stop", p, change(inout p));
+}
+assert_changed_local :: proc(ok: bool) {
+	p := 1;
+	assert(ok, "stop", p, change(inout p));
+}
+panic_changed_field :: proc() {
+	p := Point{1, 2};
+	panic("stop", p.x, change_point(inout p));
+}
+panic_grown_owner :: proc() {
+	values := [dynamic]int{7, 8};
+	panic("stop", values, grow(inout values));
+}
+panic_replaced_slice :: proc() {
+	values := [dynamic]int{7, 8};
+	s: []int = values[:];
+	panic("stop", s, replace(inout s));
+}
+panic_element_through_view :: proc() {
+	values := [dynamic]int{7, 8};
+	s: []int = values[:];
+	panic("stop", s[0], grow(inout values));
+}
+panic_field_through_view :: proc() {
+	values := [dynamic]int{7, 8};
+	b := Box{values[:]};
+	panic("stop", b.s[0], grow(inout values));
+}
+panic_new_view :: proc() {
+	values := [dynamic]int{7, 8};
+	panic("stop", values[:], grow(inout values));
+}
+panic_pointee :: proc() {
+	x := 1;
+	p := &mut x;
+	panic("stop", p^, bump(p));
+}
+panic_formatter_writes :: proc() {
+	panic("stop", Clears{1}, data[0]);
+}
+assert_nested_formatter_writes :: proc(ok: bool, held: Holds_Clears) {
+	assert(ok, "stop", data[0], held);
+}
+println_element_through_view :: proc() {
+	values := [dynamic]int{7, 8};
+	s: []int = values[:];
+	fmt.println(s[0], grow(inout values));
+}
+main :: proc() {}

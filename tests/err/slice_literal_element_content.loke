@@ -1,0 +1,177 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Slice literals": the hidden array is an owner like a named array, so
+// what its elements hold is what was last stored in them, through any view of it.
+// A drop hook reads that at the end of the block, and any use of the slice may read
+// it. An element replaced where the store cannot name it, or on one path only, may
+// still hold what it held.
+
+Read :: move_only struct { data: []int }
+impl Read {
+	retire :: hook(drop) proc(self: inout Read) {
+		if (self.data.len() > 0) { fmt.println(self.data[0]); }
+	}
+}
+Plain :: struct { data: []int }
+Mine :: struct { items: []Plain }
+
+show :: proc(view: []Plain) { fmt.println(view.len()); }
+first :: proc(view: []Plain) -> []int { return view[0].data; }
+put :: proc(view: []mut Read, @(escape=stored) data: []int) { view[0] = Read{data}; }
+bump :: proc(view: []mut []mut int) { view[0][0] += 1; }
+
+stored_element_read_by_hook :: proc() {
+	values := [dynamic]int{7};
+	view := []mut Read{Read{{}}};
+	view[0] = Read{values[:]};
+	view = {};
+	drop(values);
+}
+stored_field_read_by_hook :: proc() {
+	values := [dynamic]int{7};
+	view := []mut Read{Read{{}}};
+	view[0].data = values[:];
+	view = {};
+	drop(values);
+}
+stored_through_copy :: proc() {
+	values := [dynamic]int{7};
+	view := []mut Read{Read{{}}};
+	other := view;
+	other[0] = Read{values[:]};
+	other = {};
+	view = {};
+	drop(values);
+}
+stored_by_call :: proc() {
+	values := [dynamic]int{7};
+	view := []mut Read{Read{{}}};
+	put(view, values[:]);
+	view = {};
+	drop(values);
+}
+stored_at_unknown_index :: proc(i: int) {
+	values := [dynamic]int{7};
+	view := []mut Read{Read{{}}, Read{{}}};
+	view[i] = Read{values[:]};
+	view = {};
+	drop(values);
+}
+stored_on_one_path :: proc(flag: bool) {
+	values := [dynamic]int{7};
+	view := []mut Read{Read{{}}};
+	if (flag) { view[0] = Read{values[:]}; }
+	view = {};
+	drop(values);
+}
+replaced_on_one_path :: proc(flag: bool) {
+	values := [dynamic]int{7};
+	view := []mut Read{Read{values[:]}};
+	if (flag) { view[0] = Read{{}}; }
+	view = {};
+	drop(values);
+}
+one_of_two_replaced :: proc() {
+	values := [dynamic]int{7};
+	view := []mut Read{Read{values[:]}, Read{values[:]}};
+	view[0] = Read{{}};
+	view = {};
+	drop(values);
+}
+replaced_at_unknown_index :: proc(i: int) {
+	values := [dynamic]int{7};
+	view := []mut Read{Read{values[:]}, Read{values[:]}};
+	view[i] = Read{{}};
+	view = {};
+	drop(values);
+}
+stored_then_loaded :: proc() {
+	values := [dynamic]int{7};
+	view := []mut []int{{}};
+	view[0] = values[:];
+	drop(values);
+	fmt.println(view[0][0]);
+}
+stored_field_then_loaded :: proc() {
+	values := [dynamic]int{7};
+	view := []mut Plain{Plain{{}}};
+	view[0].data = values[:];
+	drop(values);
+	fmt.println(view[0].data[0]);
+}
+stored_in_a_loop :: proc(n: int) {
+	values := [dynamic]int{7};
+	view := []mut Plain{Plain{{}}, Plain{{}}};
+	for (i := 0; i < n; i += 1) {
+		view[i] = Plain{values[:]};
+	}
+	drop(values);
+	show(view);
+}
+stored_outlives_source :: proc() {
+	view := []mut []int{{}};
+	{
+		local := [dynamic]int{1};
+		view[0] = local[:];
+	}
+	fmt.println(view[0][0]);
+}
+slice_used_later :: proc() {
+	values := [dynamic]int{7};
+	view := []Plain{Plain{values[:]}};
+	drop(values);
+	fmt.println(view.len());
+}
+slice_passed_later :: proc() {
+	values := [dynamic]int{7};
+	view := []Plain{Plain{values[:]}};
+	drop(values);
+	show(view);
+}
+slice_in_a_record :: proc() {
+	values := [dynamic]int{7};
+	m := Mine{[]Plain{Plain{values[:]}}};
+	drop(values);
+	fmt.println(m.items.len());
+}
+slice_in_a_slice :: proc() {
+	values := [dynamic]int{7};
+	outer := [][]Plain{[]Plain{Plain{values[:]}}};
+	drop(values);
+	fmt.println(outer.len());
+}
+result_of_a_call :: proc() {
+	values := [dynamic]int{7};
+	got := first([]Plain{Plain{values[:]}});
+	drop(values);
+	fmt.println(got[0]);
+}
+element_copied_out :: proc() {
+	values := [dynamic]int{7};
+	view := []Plain{Plain{values[:]}};
+	got := view[0].data;
+	view = {};
+	drop(values);
+	fmt.println(got[0]);
+}
+mutable_element_suspends :: proc() {
+	a := [dynamic]int{1};
+	xs := &mut a[:];
+	view := []mut []mut int{xs};
+	xs[0] = 2;
+	bump(view);
+}
+mutable_element_lends :: proc() {
+	a := [dynamic]int{1};
+	view := []mut []mut int{&mut a[:]};
+	a.append(1);
+	bump(view);
+}
+source_ends_before_the_hook_runs :: proc() {
+	view := []mut Read{Read{{}}};
+	values := [dynamic]int{7};
+	view[0] = Read{values[:]};
+}
+main :: proc() {}

@@ -132,6 +132,10 @@ Prov_Root :: struct {
 	extended: bool,
 	dropped:  Type_Id,
 	content:  int,
+	// `Slice_Literal`: the slots holding what its hidden array holds, by the
+	// array's carrier shape, which stores and loads through a loan of it find as
+	// they find a named local's content.
+	slots:    []int,
 	// The managed temporary lending this root, before a view or erasure.
 	owner:    Expr,
 }
@@ -3354,11 +3358,11 @@ load_writable_through :: proc(
 	root := graph.roots[int(loan.root)]
 	sym := symbol_of(c, root.symbol)
 	found := false
-	if sym != nil && !(root.kind == .Param && (loan.content || type_is_carrier(c, sym.type))) {
-		slots := graph.content_by_symbol[root.symbol]
+	if len(root.slots) > 0 || sym != nil && !(root.kind == .Param && (loan.content || type_is_carrier(c, sym.type))) {
+		slots := root.slots if len(root.slots) > 0 else graph.content_by_symbol[root.symbol]
 		bare: [1]int
 		bare_type := INVALID_TYPE
-		if index, exists := graph.slot_by_symbol[root.symbol]; exists {
+		if index, exists := graph.slot_by_symbol[root.symbol]; exists && sym != nil {
 			bare[0] = index
 			slots = bare[:]
 			bare_type = sym.type
@@ -3380,8 +3384,8 @@ load_writable_through :: proc(
 				info := underlying_info(c, type)
 				pointee := info != nil ? info.element : INVALID_TYPE
 				destination = carrier_is_mutable(c, type) && type_carries_borrow(c, pointee).any
-				// design.md "Slice literals": a slice also carries its elements'
-				// loans, so a mutable element's are destinations as well.
+				// design.md "Variadic parameters": a pack also carries its operands'
+				// loans, so a mutable operand's are destinations as well.
 				if info != nil && info.kind == .Slice {
 					element := underlying_info(c, pointee)
 					destination ||= carrier_is_mutable(c, pointee) && element != nil && type_carries_borrow(c, element.element).any
@@ -3457,10 +3461,10 @@ load_through_loan :: proc(
 	root := graph.roots[int(loan.root)]
 	sym := symbol_of(graph.k.c, root.symbol)
 	found := false
-	if sym != nil && !(root.kind == .Param && (loan.content || type_is_carrier(graph.k.c, sym.type))) {
-		slots := graph.content_by_symbol[root.symbol]
+	if len(root.slots) > 0 || sym != nil && !(root.kind == .Param && (loan.content || type_is_carrier(graph.k.c, sym.type))) {
+		slots := root.slots if len(root.slots) > 0 else graph.content_by_symbol[root.symbol]
 		bare: [1]int
-		if index, exists := graph.slot_by_symbol[root.symbol]; exists {
+		if index, exists := graph.slot_by_symbol[root.symbol]; exists && sym != nil {
 			bare[0] = index
 			slots = bare[:]
 		}
@@ -3560,6 +3564,12 @@ load_pointee_paths :: proc(state: ^Prov_State, root: Prov_Root, path: []Proj_Ste
 @(private = "file")
 resolve_content_reads :: proc(state: ^Prov_State) {
 	if !state.graph.has_content_load && !state.graph.has_replacing_store { return }
+	literal_loans := make([dynamic]int, 0, 2, state.graph.alloc)
+	for loan, index in state.graph.loans {
+		if len(state.graph.roots[int(loan.root)].slots) > 0 {
+			append(&literal_loans, index)
+		}
+	}
 	for block in state.graph.blocks {
 		if !block.prov_visited {
 			continue
@@ -3577,12 +3587,42 @@ resolve_content_reads :: proc(state: ^Prov_State) {
 				if event.kind == .Publish {
 					event.replaces = publish_replaced_slots(state, event, state.reach, state.ended)
 				}
+				if event.kind == .Live {
+					event.sources = with_literal_content(state, event.sources, literal_loans[:])
+				}
 				run_prov_event(state, event, state.reach, state.ended)
 			}
 		}
 	}
 	// Activating pending reborrows changes no count, so the index is rebuilt.
 	state.reborrow_starts = nil
+}
+
+// design.md "Slice literals": `sources` and what the slice literals they view hold
+// now, and so on through any slice held there. Whatever a slice is handed to may
+// read its elements, so a use of the slice uses what they borrow.
+@(private = "file")
+with_literal_content :: proc(state: ^Prov_State, sources, literal_loans: []int) -> []int {
+	if len(literal_loans) == 0 {
+		return sources
+	}
+	graph := state.graph
+	out := make([dynamic]int, 0, len(sources) + 2, graph.alloc)
+	append(&out, ..sources)
+	for at := 0; at < len(out); at += 1 {
+		row := reach_row(state, state.reach, out[at])
+		for index in literal_loans {
+			if !bit_get(row, index) {
+				continue
+			}
+			for slot in graph.roots[int(graph.loans[index].root)].slots {
+				if paths_overlap(graph.prov_slots[slot].path, graph.loans[index].path) && !slice.contains(out[:], slot) {
+					append(&out, slot)
+				}
+			}
+		}
+	}
+	return out[:]
 }
 
 // `one`, the loan a store's carriers name, with the path of the one element
@@ -4043,6 +4083,11 @@ publish_replaced_slots :: proc(state: ^Prov_State, event: Prov_Event, reach: []u
 		}
 		return out[:]
 	}
+	for index in graph.roots[int(loan.root)].slots {
+		if publish_replaces(graph.k.c, graph.prov_slots[index], loan, event.path, event.stored) {
+			append(&out, index)
+		}
+	}
 	for slot, index in graph.prov_slots {
 		if symbol != INVALID_SYMBOL && slot.symbol == symbol && publish_replaces(graph.k.c, slot, loan, event.path, event.stored) {
 			append(&out, index)
@@ -4120,6 +4165,9 @@ publish_into_loan :: proc(
 		loan.path = view
 	}
 	root := graph.roots[int(loan.root)]
+	for index in root.slots {
+		publish_into_slot(state, reach, index, loan, path, stored, carrier_loss)
+	}
 	if root.symbol == INVALID_SYMBOL {
 		return
 	}
@@ -4147,17 +4195,30 @@ publish_into_loan :: proc(
 		}
 	}
 	for slot, index in graph.prov_slots {
-		if slot.symbol != root.symbol || !paths_overlap_joined(slot.path, loan.path, path) {
-			continue
+		if slot.symbol == root.symbol {
+			publish_into_slot(state, reach, index, loan, path, stored, carrier_loss)
 		}
-		if publish_replaces(graph.k.c, slot, loan, path, stored) {
-			copy(reach_row(state, reach, index), state.merged)
-			state.precision[index] = state.merged_precision | carrier_loss | slot.precision
-			continue
-		}
-		bytes_or(reach_row(state, reach, index), state.merged)
-		state.precision[index] |= state.merged_precision | carrier_loss | slot.precision | path_precision(loan.path)
 	}
+}
+
+// Replaces or joins `state.merged` into one slot of the storage a loan names, if
+// the store lands along it (`publish_into_loan`).
+@(private = "file")
+publish_into_slot :: proc(
+	state: ^Prov_State, reach: []u8, index: int, loan: Prov_Loan, path: []Proj_Step, stored: Type_Id, carrier_loss: Precision_Loss,
+) {
+	graph := state.graph
+	slot := graph.prov_slots[index]
+	if !paths_overlap_joined(slot.path, loan.path, path) {
+		return
+	}
+	if publish_replaces(graph.k.c, slot, loan, path, stored) {
+		copy(reach_row(state, reach, index), state.merged)
+		state.precision[index] = state.merged_precision | carrier_loss | slot.precision
+		return
+	}
+	bytes_or(reach_row(state, reach, index), state.merged)
+	state.precision[index] |= state.merged_precision | carrier_loss | slot.precision | path_precision(loan.path)
 }
 
 // design.md "Values that contain borrows": a store through a parameter's
