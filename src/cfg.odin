@@ -110,8 +110,9 @@ Flow_Block :: struct {
 	use_entry:       []Span,
 	use_exit:        []Span,
 	prov_visited:    bool,
-	// `Prov_Reach.exits` holds what reaches this block's end, which a new
-	// predecessor may change.
+	// A walk took what reaches this block's end, or what its last definition
+	// left, so a new predecessor or definition invalidates that
+	// (`prov_reach_invalidate`).
 	reach_known:     bool,
 }
 
@@ -473,11 +474,13 @@ new_flow_graph :: proc(k: ^Checker, literal: ^Expr_Proc, allocator: mem.Allocato
 		graph.receiver_content = make(map[^Expr_Call][]int, allocator)
 		graph.fresh_slots = make(map[int]bool, allocator)
 		graph.offset_reach = Prov_Reach {
-			defs   = make(map[int][dynamic]Prov_Offset_Def, allocator),
-			exits  = make(map[Prov_Reach_Key]u64, allocator),
-			frames = make([dynamic]Prov_Reach_Frame, allocator),
-			seen   = make(map[Block_Id]Prov_Reach_Seen, allocator),
-			scc    = make([dynamic]Block_Id, allocator),
+			places  = make(map[int][dynamic]Prov_Offset, allocator),
+			defined = make(map[Prov_Reach_Key]u128, allocator),
+			exits   = make(map[Prov_Reach_Key]Prov_Reach_Exit, allocator),
+			frames  = make([dynamic]Prov_Reach_Frame, allocator),
+			blocks  = make([dynamic]Prov_Reach_Block, allocator),
+			scc     = make([dynamic]Block_Id, allocator),
+			stale   = make([dynamic]Block_Id, allocator),
 		}
 		graph.content_by_symbol = make(map[Symbol_Id][]int, allocator)
 		graph.call_results = make(map[^Expr_Call]Prov_Call_Result, allocator)
@@ -561,7 +564,7 @@ link :: proc(graph: ^Flow_Graph, from, to: Block_Id) {
 	append(&graph.blocks[to].preds, from)
 	if graph.blocks[to].reach_known {
 		// As a loop's head is linked to its back edge (`prov_reaching_offsets`).
-		clear(&graph.offset_reach.exits)
+		prov_reach_invalidate(graph, to)
 	}
 	append(&graph.blocks[from].succs, to)
 }

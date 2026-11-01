@@ -480,4 +480,151 @@ chosen_repointed_between :: proc(s: ^mut Sides, t: ^mut Sides, i: int) -> int {
 	return value^;
 }
 
+// design.md "Minimum provenance precision": no number of definitions of `p`,
+// or of blocks between them, costs a place of `s` its storage's eight. Legal.
+chosen_past_redefinitions :: proc(s: ^mut Sides, t: ^mut Sides, i: int) -> int {
+	p := s;
+	q := &mut p^.left.a;
+	if (i == 1) { q = &mut p^.left.b; }
+	if (i == 2) { q = &mut p^.left.c; }
+	if (i == 3) { q = &mut p^.left.d; }
+	p = t;
+	foreach ($repeat in 0 ..< 200) { p = t; }
+	if (i == 4) { q = &mut p^.left.e; }
+	if (i == 5) { q = &mut p^.right.a; }
+	if (i == 6) { q = &mut p^.right.b; }
+	if (i == 7) { q = &mut p^.right.c; }
+	if (i == 8) { q = &mut p^.right.d; }
+	value := &q^;
+	s^.left.z = 1;
+	return value^;
+}
+
+chosen_past_definitions_in_branches :: proc(s: ^mut Sides, t: ^mut Sides, i: int) -> int {
+	p := s;
+	q := &mut p^.left.a;
+	if (i == 1) { q = &mut p^.left.b; }
+	if (i == 2) { q = &mut p^.left.c; }
+	if (i == 3) { q = &mut p^.left.d; }
+	p = t;
+	foreach ($repeat in 0 ..< 200) { if (i < 0) { p = t; } }
+	if (i == 4) { q = &mut p^.left.e; }
+	if (i == 5) { q = &mut p^.right.a; }
+	if (i == 6) { q = &mut p^.right.b; }
+	if (i == 7) { q = &mut p^.right.c; }
+	if (i == 8) { q = &mut p^.right.d; }
+	value := &q^;
+	s^.left.z = 1;
+	return value^;
+}
+
+chosen_past_branches :: proc(s: ^mut Sides, t: ^mut Sides, i: int) -> int {
+	p := s;
+	q := &mut p^.left.a;
+	if (i == 1) { q = &mut p^.left.b; }
+	if (i == 2) { q = &mut p^.left.c; }
+	if (i == 3) { q = &mut p^.left.d; }
+	p = t;
+	foreach ($repeat in 0 ..< 200) { if (i < 0) {} }
+	if (i == 4) { q = &mut p^.left.e; }
+	if (i == 5) { q = &mut p^.right.a; }
+	if (i == 6) { q = &mut p^.right.b; }
+	if (i == 7) { q = &mut p^.right.c; }
+	if (i == 8) { q = &mut p^.right.d; }
+	value := &q^;
+	s^.left.z = 1;
+	return value^;
+}
+
+chosen_past_loops :: proc(s: ^mut Sides, t: ^mut Sides, i: int) -> int {
+	p := s;
+	q := &mut p^.left.a;
+	if (i == 1) { q = &mut p^.left.b; }
+	if (i == 2) { q = &mut p^.left.c; }
+	if (i == 3) { q = &mut p^.left.d; }
+	p = t;
+	foreach ($repeat in 0 ..< 300) {
+		for (j := 0; j < i; j += 1) {
+			if (j == 1) { continue; }
+			if (j == 2) { break; }
+		}
+	}
+	if (i == 4) { q = &mut p^.left.e; }
+	if (i == 5) { q = &mut p^.right.a; }
+	if (i == 6) { q = &mut p^.right.b; }
+	if (i == 7) { q = &mut p^.right.c; }
+	if (i == 8) { q = &mut p^.right.d; }
+	value := &q^;
+	s^.left.z = 1;
+	return value^;
+}
+
+// However many definitions and blocks lie between, what may reach still counts.
+// Repointed on one path, `p` may still be `s`, so `s` has nine places.
+chosen_past_branches_repointed_on_one_path :: proc(s: ^mut Sides, t: ^mut Sides, i: int) -> int {
+	p := s;
+	q := &mut p^.left.a;
+	if (i == 1) { q = &mut p^.left.b; }
+	if (i == 2) { q = &mut p^.left.c; }
+	if (i == 3) { q = &mut p^.left.d; }
+	foreach ($repeat in 0 ..< 200) { if (i < 0) {} }
+	if (i == 9) { p = t; }
+	foreach ($repeat in 0 ..< 200) { if (i < 0) {} }
+	if (i == 4) { q = &mut p^.left.e; }
+	if (i == 5) { q = &mut p^.right.a; }
+	if (i == 6) { q = &mut p^.right.b; }
+	if (i == 7) { q = &mut p^.right.c; }
+	if (i == 8) { q = &mut p^.right.d; }
+	value := &q^;
+	s^.left.z = 1;
+	return value^;
+}
+
+// Nine places of `t` are past its eight, whatever came before them.
+chosen_past_branches_nine_of_one :: proc(s: ^mut Sides, t: ^mut Sides, i: int) -> int {
+	p := s;
+	q := &mut p^.left.a;
+	p = t;
+	foreach ($repeat in 0 ..< 200) { if (i < 0) { p = t; } }
+	q = &mut p^.left.a;
+	if (i == 1) { q = &mut p^.left.b; }
+	if (i == 2) { q = &mut p^.left.c; }
+	if (i == 3) { q = &mut p^.left.d; }
+	if (i == 4) { q = &mut p^.left.e; }
+	if (i == 5) { q = &mut p^.right.a; }
+	if (i == 6) { q = &mut p^.right.b; }
+	if (i == 7) { q = &mut p^.right.c; }
+	if (i == 8) { q = &mut p^.right.d; }
+	value := &q^;
+	t^.left.z = 1;
+	return value^;
+}
+
+// A place taken after the repointing is still a place of what `p` then names.
+chosen_past_redefinitions_conflicts :: proc(s: ^mut Sides, t: ^mut Sides, i: int) -> int {
+	p := s;
+	q := &mut p^.left.a;
+	p = t;
+	foreach ($repeat in 0 ..< 200) { if (i < 0) { p = t; } }
+	if (i == 1) { q = &mut p^.right.a; }
+	value := &q^;
+	t^.right.a = 1;
+	s^.left.a = 2;
+	return value^;
+}
+
+// Past the places told apart, `p` takes what every definition may point at, and
+// the field beside them stays apart.
+Many :: struct { xs: [130]int, z: int }
+
+chosen_past_tellable_places :: proc(s: ^mut Many, t: ^mut Many, i: int) -> int {
+	p := &mut s^.xs[0];
+	foreach ($k in 0 ..< 130) { if (i == k) { p = &mut s^.xs[k]; } }
+	foreach ($k in 0 ..< 130) { if (i == k) { p = &mut t^.xs[k]; } }
+	value := &p^;
+	s^.xs[1] = 1;
+	s^.z = 2;
+	return value^;
+}
+
 main :: proc() {}

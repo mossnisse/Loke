@@ -3,9 +3,9 @@
 // known where the view starts, so a borrow, payload binding, or traversal of
 // one leaves another usable: in a view parameter, in a local view borrowed
 // from an array, in one resliced from such a view by a constant before a
-// loop, in one a branch only shortens, and in one borrowed whole from a
-// dynamic array. A carrier copied out of one element of a local view leaves
-// the carrier in another free to copy.
+// loop, in one a branch or a loop only shortens, and in one borrowed whole
+// from a dynamic array. A carrier copied out of one element of a local view
+// leaves the carrier in another free to copy.
 package main;
 
 import "core:fmt";
@@ -96,6 +96,130 @@ local_copies :: proc() -> int {
 	return a.value * 10 + b.value;
 }
 
+shortened_in_loop :: proc() -> int {
+	a := [3]Counter{};
+	s := &mut a[:];
+	for (i := 0; i < 2; i += 1) { s = &mut s[:2]; }
+	first := &mut s[0];
+	s[1].count += 1;
+	first^.count += 2;
+	return a[0].count * 10 + a[1].count;
+}
+
+whole_in_loop :: proc() -> int {
+	a := [3]Counter{};
+	s := &mut a[:];
+	for (i := 0; i < 2; i += 1) { s = &mut s[0:]; }
+	first := &mut s[0];
+	s[2].count += 1;
+	first^.count += 2;
+	return a[0].count * 10 + a[2].count;
+}
+
+// Each round borrows through what the round before left, from the same start.
+shortened_each_round :: proc() -> int {
+	a := [3]Counter{};
+	s := &mut a[:];
+	for (i := 0; i < 2; i += 1) {
+		first := &mut s[0];
+		s[1].count += 1;
+		first^.count += 2;
+		s = &mut s[:2];
+	}
+	return a[0].count * 10 + a[1].count;
+}
+
+// The borrow outlives the round that took it, and the start never moves.
+kept_across_rounds :: proc() -> int {
+	a := [3]Counter{};
+	other := Counter{};
+	s := &mut a[:];
+	first := &mut other;
+	for (i := 0; i < 2; i += 1) {
+		first^.count += 2;
+		first = &mut s[0];
+		s[1].count += 1;
+		s = &mut s[:2];
+	}
+	first^.count += 2;
+	return a[0].count * 10 + a[1].count;
+}
+
+shortened_in_branch_in_loop :: proc() -> int {
+	a := [3]Counter{};
+	s := &mut a[:];
+	for (i := 0; i < 3; i += 1) {
+		if (i == 1) { s = &mut s[:2]; } else { s = &mut s[0:]; }
+	}
+	first := &mut s[0];
+	s[1].count += 1;
+	first^.count += 2;
+	return a[0].count * 10 + a[1].count;
+}
+
+shortened_in_nested_loops :: proc() -> int {
+	a := [3]Counter{};
+	s := &mut a[:];
+	for (i := 0; i < 2; i += 1) {
+		s = &mut s[0:];
+		for (j := 0; j < 2; j += 1) { s = &mut s[:2]; }
+	}
+	first := &mut s[0];
+	s[1].count += 1;
+	first^.count += 2;
+	return a[0].count * 10 + a[1].count;
+}
+
+shortened_through_another_view :: proc() -> int {
+	a := [3]Counter{};
+	s := &mut a[:];
+	for (i := 0; i < 2; i += 1) {
+		t := &mut s[:2];
+		s = &mut t[:];
+	}
+	first := &mut s[0];
+	s[1].count += 1;
+	first^.count += 2;
+	return a[0].count * 10 + a[1].count;
+}
+
+// The start the loop keeps is the one its view came in with.
+shortened_from_a_start :: proc() -> int {
+	a := [3]Counter{};
+	s := &mut a[:];
+	s = &mut s[1:];
+	for (i := 0; i < 2; i += 1) { s = &mut s[:2]; }
+	first := &mut s[0];
+	s[1].count += 1;
+	first^.count += 2;
+	return a[1].count * 10 + a[2].count;
+}
+
+shortened_dynamic_in_loop :: proc() -> int {
+	d := [dynamic]Counter{Counter{}, Counter{}, Counter{}};
+	s := &mut d[:];
+	for (i := 0; i < 2; i += 1) { s = &mut s[:2]; }
+	first := &mut s[0];
+	s[1].count += 1;
+	first^.count += 2;
+	return d[0].count * 10 + d[1].count;
+}
+
+// Two borrows, each from its own start: whichever `s` holds, its elements
+// differ, and nothing repoints it between the two uses.
+shortened_of_two_borrows :: proc() -> int {
+	a := [3]Counter{};
+	s := &mut a[:];
+	for (i := 0; i < 2; i += 1) {
+		if (i == 1) { s = &mut a[1:]; }
+		s = &mut s[:2];
+	}
+	first := &mut s[0];
+	s[1].count += 1;
+	first^.count += 2;
+	return a[1].count * 10 + a[2].count;
+}
+
 main :: proc() {
 	n := 1;
 	counters := [2]Counter{Counter{first = .some(&mut n)}, Counter{cells = [2]int{5, 6}}};
@@ -106,4 +230,7 @@ main :: proc() {
 	fmt.println(counters[0].cells[0], counters[0].cells[1], counters[1].cells[1]);
 	fmt.println(local_two_borrows(), local_resliced());
 	fmt.println(local_shortened(), local_dynamic(), local_copies());
+	fmt.println(shortened_in_loop(), whole_in_loop(), shortened_each_round(), kept_across_rounds());
+	fmt.println(shortened_in_branch_in_loop(), shortened_in_nested_loops(), shortened_through_another_view());
+	fmt.println(shortened_from_a_start(), shortened_dynamic_in_loop(), shortened_of_two_borrows());
 }

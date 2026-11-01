@@ -430,10 +430,14 @@ Keep these contracts:
   is taken where a borrow goes through it to point where the definitions
   reaching there do (`prov_reaching_offsets`), keeping any place of the
   gathered offsets those do not cover. The definitions reaching are found
-  walking back over the blocks linked so far, and what reaches a finished
-  block's end is kept for later walks (`Prov_Reach`) until a block walked
-  gains a predecessor, as a loop's head its back edge. Past 63 definitions of
-  the slot, or 256 blocks walked anew, the borrow takes the gathered offsets.
+  walking back over the blocks linked so far, carrying the set of places they
+  point at rather than the definitions themselves, so neither how many there
+  are nor how many blocks lie between them is limited. What reaches a finished
+  block's end is kept for later walks (`Prov_Reach`), and each borrow walks only
+  blocks none kept. A block gaining a predecessor, as a loop's head its back
+  edge, or a definition drops only what was kept for it and the blocks after it
+  (`prov_reach_invalidate`). Past 127 places of the slot, above the 64 the
+  specification asks for, the borrow takes the gathered offsets.
   Alias paths stop at `WRITTEN_ALIAS_DEPTH`; a truncated path carries the
   precision marker, so `L0646`, `L0647`, and `L0730` say the borrow *may* be
   there, and recursive cursors converge. A place loan or `.Through` event made
@@ -453,9 +457,11 @@ Keep these contracts:
   `s`. Which definitions reach the store, and each reslice, is a
   reaching-definitions pass over the views stores name
   (`solve_view_defs`), so `s = &mut s[1:]` before a loop is known there, but
-  not inside it, where the reslice reaches itself, and not in a multiple
-  assignment that also writes `s`
-  (`Prov_View_Def`, `prov_local_view_element`, `publish_view_of`). The
+  not inside it, where the reslice reaches itself and moves the view each
+  round, and not in a multiple assignment that also writes `s`
+  (`Prov_View_Def`, `prov_local_view_element`, `publish_view_of`). Where a
+  reslice reaches itself, the starts are the least fixed point over the
+  definitions, so `s = &mut s[:2]` in a loop keeps the start. The
   definitions need not agree on its length, as an index past a shorter one
   panics, and a fresh borrow whose end is not constant, as `&mut d[:]` of a
   dynamic array, lends from its constant start on (`Prov_View_Def.open`). A
