@@ -1,0 +1,8 @@
+package main;
+
+import "./shapes";
+
+main :: proc() {
+	shapes.use();
+	wrong: int = "text"; // the case's one error
+}

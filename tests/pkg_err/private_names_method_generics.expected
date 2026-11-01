@@ -1,0 +1,16 @@
+L0310
+@7:15
+warning[L0740]: public `Block.beside` names the private type `Bag.Inferred`
+@44:61
+warning[L0740]: public `Block.plain` names the private type `Bag.Inferred`
+@45:55
+warning[L0740]: public `plain_result` names the private type `Corner`
+@49:48
+warning[L0740]: public `plain_later` names the private type `Corner`
+@50:53
+warning[L0740]: public `plain_inner` names the private type `Corner`
+@51:62
+!`Host.make`
+!`Host.mixed`
+!`Host.member`
+!`Hiding.make`

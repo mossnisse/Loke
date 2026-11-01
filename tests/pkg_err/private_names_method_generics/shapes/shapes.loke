@@ -1,0 +1,64 @@
+// design.md "Private names in public declarations": a method's own `$` names are
+// bound by its calls, so what they mean is not what an instance of its block, or
+// the package, means by those names. A plain parameter's name is in no type's
+// scope, and hides nothing a type names.
+package shapes;
+
+@(public) Point :: struct { value: int }
+@(private) Corner :: struct { value: int }
+@(private) T :: type; // what the block's scope would find for the methods' `T`
+@(private) V :: Point; // and for their `V`
+@(public) Item :: struct($T: type, $V: T) { value: int }
+@(public) Twin :: struct($A: type, $B: type) { a: A, b: B }
+@(public) Holder :: struct($T: type, $V: T) { value: int }
+impl Holder($T, $V) {
+	@(private) Hidden: T : V;
+}
+@(public) Bag :: struct($T: type) { value: T }
+impl Bag($T) {
+	@(private) Inferred :: type_of(T{});
+}
+
+// Not reported: only a call says what these select, and these calls say it is a
+// value, whatever the package or the block means by those names.
+@(public) Host :: struct($X: type, $W: X) { value: int }
+impl Host($X, $W) {
+	@(public) make :: proc(self, $T: type, $V: T) -> Item(T, Holder(T, V).Hidden) { return {}; }
+	@(public) mixed :: proc(self, $V: X) -> Item(X, Holder(X, V).Hidden) { return {}; }
+	@(private) member :: proc(self, $V: bool, $T: type, x: bool) -> Item(bool, Holder(bool, V).Hidden) { return {}; }
+	@(private) other :: proc(self, x: f64) -> int { return 1; }
+	@(public) group :: proc{member, other};
+}
+
+// Not reported: a method's own `$T` hides the block's, which is `type` here, and
+// reading its signature by the block's would call the selected member a type.
+@(public) Hiding :: struct($T: type, $W: T) { value: int }
+impl Hiding($T, $W) {
+	@(public) make :: proc(self, $T: type, $W: T) -> Item(T, Holder(T, W).Hidden) { return {}; }
+}
+
+// What names only the block's `$` names is read in its instance, beside a
+// method's own, and through a plain parameter of the same name.
+@(public) Block :: struct($X: type) { value: int }
+impl Block($X) {
+	@(public) beside :: proc(self, $U: type) -> Twin(U, Bag(X).Inferred) { return {}; }
+	@(public) plain :: proc(self, X: int) -> Twin(Bag(X).Inferred, int) { return {}; }
+}
+
+// A plain parameter hides no type, in a signature or a procedure type within one.
+@(public) plain_result :: proc(Corner: int) -> Corner { return {}; }
+@(public) plain_later :: proc(Corner: int, other: []Corner) {}
+@(public) plain_inner :: proc(callback: proc(Corner: int) -> Corner) {}
+
+@(public) use :: proc() {
+	host := Host(int, 0){};
+	_ = host.make(int, 0);
+	_ = host.make(bool, true);
+	_ = host.mixed(1);
+	_ = host.group(true, int, false);
+	hiding := Hiding(type, Point){};
+	_ = hiding.make(int, 0);
+	block := Block(int){};
+	_ = block.beside(bool);
+	_ = block.plain(1);
+}

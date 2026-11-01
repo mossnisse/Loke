@@ -76,6 +76,10 @@ Exposure :: struct {
 	// Reading a generic `impl`'s instance, whose scope binds the block's `$`
 	// names, and not its template.
 	instance: bool,
+	// How many of `bound` the checker's scope binds, as such an instance's scope
+	// does the block's `$` names. A later one is a member's own: a method's calls
+	// bind it, so the scope knows nothing of it, or means something else by it.
+	scoped:   int,
 	file:     ^File,
 	// The package's scope, which a private type a value's type holds is
 	// declared in.
@@ -87,8 +91,8 @@ Exposure :: struct {
 	// The subject of the `impl` being read, whose members a written name may
 	// also mean.
 	subject:  string,
-	// The parameters and `$` names in scope, which a written name means before
-	// any declaration of the package.
+	// The `$` parameters and names in scope, which a written name means before any
+	// declaration of the package.
 	bound:    [dynamic]string,
 	// The public declaration being read, and the public group that exports it
 	// when it is a private member of one.
@@ -435,12 +439,16 @@ read_interface :: proc(x: ^Exposure, v: ^Type_Interface) {
 	}
 }
 
-// Each parameter's name, and each `$` name its types and defaults bind.
+// Each `$` parameter's name, and each `$` name its types and defaults bind. A
+// plain parameter's name is in no type's scope, so `proc(T: int) -> T` means what
+// `T` means outside it.
 @(private = "file")
 bind_parameters :: proc(x: ^Exposure, signature: ^Type_Proc) {
 	for parameter in signature.params {
 		for name in parameter.names {
-			append(&x.bound, name.name.text)
+			if name.is_poly {
+				append(&x.bound, name.name.text)
+			}
 		}
 		bind_poly(x, parameter.type)
 		bind_poly(x, parameter.default)
@@ -472,7 +480,7 @@ poly_names :: proc(e: Expr, out: ^[dynamic]string) {
 	})
 }
 
-// The declaration of the package a written name means, if no parameter or `$`
+// The declaration of the package a written name means, if no `$`
 // name binds it: one at file scope, or in an `impl`, a member of its subject.
 @(private = "file")
 lookup :: proc(x: ^Exposure, name: string) -> (Named, bool) {
@@ -673,10 +681,11 @@ found_name :: proc(x: ^Exposure, written: string, span: Span, e: Expr, named: Na
 // whether a generic `impl`'s member is one may depend on the instance, as
 // `Hidden: T : Point` in `Box(type)`. Syntax that names a `$` name means nothing
 // in a template, and is read when an instance binds it; other syntax, as
-// `Box(type).Hidden`, means what it means anywhere.
+// `Box(type).Hidden`, means what it means anywhere. An instance of a block binds
+// the block's `$` names, and syntax that names a member's own means nothing there.
 @(private = "file")
 resolves_to_type :: proc(x: ^Exposure, e: Expr) -> bool {
-	if !x.instance && names_bound(x, e) {
+	if names_unscoped(x, e) {
 		return false
 	}
 	context.allocator = x.checker_allocator
@@ -687,15 +696,17 @@ resolves_to_type :: proc(x: ^Exposure, e: Expr) -> bool {
 	return type == TYPE_TYPE
 }
 
-// Whether `e` writes a `$` name, or a name a parameter or a `$` name binds.
+// Whether `e` writes a `$` name, or a name a `$` name binds that the checker's
+// scope does not.
 @(private = "file")
-names_bound :: proc(x: ^Exposure, e: Expr) -> bool {
+names_unscoped :: proc(x: ^Exposure, e: Expr) -> bool {
 	return type_syntax_any_name(e, x, proc(data: rawptr, node: Expr) -> bool {
 		#partial switch v in node {
 		case ^Type_Poly:
 			return true
 		case ^Expr_Ident:
-			return slice.contains((^Exposure)(data).bound[:], v.name)
+			exposure := (^Exposure)(data)
+			return slice.contains(exposure.bound[exposure.scoped:], v.name)
 		}
 		return false
 	})
@@ -957,6 +968,7 @@ read_instance_declarations :: proc(k: ^Checker, pkg: ^Package, pending: Pending_
 	x.subject = subject_name(pending.item.type)
 	bind_poly(&x, pending.item.type)
 	mark := len(x.bound)
+	x.scoped = mark
 	for d in decls {
 		// A member selected here may be a type in a later instance, as `Hidden: T : V`
 		// is in `Holder(type, Point)` but not `Holder(int, 0)`, so what selects it is

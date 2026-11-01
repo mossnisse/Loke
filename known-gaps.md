@@ -367,44 +367,6 @@ as binding `T`, then reports `L0392`, since `Alias(f64)` is another new type. In
 nested one is meant and say what it denotes. Found on 2026-11-01 beside the
 nested computed type check.
 
-### Private-name probes resolve a generic method's parameters in its block's scope
-
-[Private names in public declarations](design.md#private-names-in-public-declarations)
-does not read a parameter as a private declaration of the package, and a private
-value argument is not a private type. A generic method's own parameters are bound
-by its calls, separately from the generic `impl`'s parameters:
-
-```loke
-package shapes;
-@(public) Point :: struct { value: int }
-@(private) T :: type;
-@(private) V :: Point;
-@(public) Item :: struct($T: type, $V: T) { value: int }
-@(public) Holder :: struct($T: type, $V: T) { value: int }
-impl Holder($T, $V) {
-    @(private) Hidden: T : V;
-}
-@(public) Host :: struct($X: type) { value: int }
-impl Host($X) {
-    @(public) make :: proc(self, $T: type, $V: T) -> Item(T, Holder(T, V).Hidden) { return {}; }
-}
-@(private) use :: proc() {
-    host := Host(int){};
-    _ = host.make(int, 0);
-}
-```
-
-This warns that `Host.make` names the private type `Holder.Hidden`. Its only call
-binds `T = int` and `V = 0`, so that member is an integer value. Removing the two
-unused package aliases `T` and `V` removes the warning. `resolves_to_type` in
-[src/private_names.odin](src/private_names.odin) bypasses `names_bound` for an
-instance and probes the selection in the block's checker scope, where the method's
-parameters are absent and the package aliases resolve instead. Preserve the
-method's parameter scope, or defer a selection that depends on its own generics
-until a method instance supplies them. Introduced in `ad4ff130`; its parent
-`85ee47f3` does not warn. Confirmed on that commit and `1b7845aa` during review on
-2026-11-01 (P2).
-
 ### Instance-only private members evade L0740 outside `impl` blocks
 
 [Private names in public declarations](design.md#private-names-in-public-declarations)

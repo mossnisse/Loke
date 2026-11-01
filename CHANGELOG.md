@@ -1257,6 +1257,13 @@ checklist.
   when `Holder(int, 0)` is instantiated before `Holder(type, Point)`, as it did
   the other way round
   ([Private names in public declarations](design.md#private-names-in-public-declarations)).
+- `L0740` no longer reads a generic method's own `$` names by what its block or
+  package means by those names, which warned for `Item(T, Holder(T, V).Hidden)`
+  in `make :: proc(self, $T: type, $V: T)` when the package also declared `T` and
+  `V`. It now reads a type past a plain parameter of the same name, which hides
+  nothing a type names, so `proc(Corner: int) -> Corner` warns for a private
+  `Corner`
+  ([Private names in public declarations](design.md#private-names-in-public-declarations)).
 - Editor completion no longer offers a type's generated `format` where a use
   could not call it, on a public type with a private `format`, and shows a local
   extension's `format` rather than the generated one it hides
