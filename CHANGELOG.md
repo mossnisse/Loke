@@ -92,8 +92,9 @@ checklist.
   `L0747` at its declaration. It used to get a generated field-wise copy, which
   released twice what the hook released, or left a long chain's copy recursing
   through the chain. A record that a move-only field already makes move-only
-  writes it too, and a generic record decides once for all of its instances. The
-  new `@(fieldwise_copy)` is `L0748` beside `move_only`, `hook(copy)`, or a
+  writes it too, a generic record decides once for all of its instances, and a
+  declaration wrapped directly in `defer` is held to the same rule. The new
+  `@(fieldwise_copy)` is `L0748` beside `move_only`, `hook(copy)`, or a
   move-only field, and `L0749` on a record with no drop hook. Upgrade by writing
   `Handle :: move_only struct { fd: int }` for a record that is never copied or
   whose copy would be wrong, by declaring a `hook(copy)`, or by writing

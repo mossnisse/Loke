@@ -3085,14 +3085,20 @@ check_stmts :: proc(k: ^Checker, stmts: []Stmt) -> Flow_Info {
 @(private = "file")
 report_local_copy_decisions :: proc(k: ^Checker, stmts: []Stmt) {
 	for stmt in stmts {
+		// design.md "defer statement": what a `defer` wraps directly is checked here
+		// and stays visible to this sequence, whatever runs it later.
+		inner := stmt
+		if deferred, is_deferred := stmt.(^Stmt_Defer); is_deferred {
+			inner = deferred.stmt
+		}
 		// design.md "when statement": the selected branch has no scope of its own.
-		if w, is_when := stmt.(^Stmt_When); is_when {
+		if w, is_when := inner.(^Stmt_When); is_when {
 			if selected := when_selected_block(w); selected != nil {
 				report_local_copy_decisions(k, selected.stmts)
 			}
 			continue
 		}
-		d, is_decl := stmt.(^Decl)
+		d, is_decl := inner.(^Decl)
 		if !is_decl || d.kind != .Const || len(d.values) != 1 {
 			continue
 		}

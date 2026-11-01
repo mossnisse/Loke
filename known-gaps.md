@@ -45,37 +45,6 @@ Check each concrete declaration, and deduplicate only diagnostics that have
 actually been reported, so a successful earlier instance cannot hide a later
 failure. Confirmed on `46cf2aa8` during review on 2026-11-01 (P2).
 
-### A deferred record declaration bypasses the copy-decision check
-
-[The copy-decision rule](design.md#lifecycle-hooks-and-resource-types) applies
-to every record declaration. A declaration directly wrapped by
-[`defer`](design.md#defer-statement) is checked and remains visible to the
-procedure, but the new validation does not visit it:
-
-```loke
-package main;
-import "core:fmt";
-main :: proc() {
-    defer Handle :: struct { fd: int }
-    impl Handle {
-        close :: hook(drop) proc(self: inout Handle) {
-            fmt.println("close", self.fd);
-        }
-    }
-    a := Handle{7};
-    b := a.clone();
-    fmt.println(a.fd, b.fd);
-}
-```
-
-This compiles and prints `7 7`, then `close 7` twice. Removing `defer` reports
-`L0747`, with no other change. `report_local_copy_decisions` in
-[src/check.odin](src/check.odin) visits direct declarations and selected
-`when` branches, but skips a declaration wrapped in `Stmt_Defer`.
-Include those declarations in the check after the enclosing statement sequence,
-once its implementation blocks have been checked. This is a coverage gap in
-`bf5cb393`, confirmed on `46cf2aa8` during review on 2026-11-01 (P2).
-
 ### An excluded generic drop hook still supplies cleanup
 
 A generic method whose [bound](design.md#where-clauses) does not hold is not
