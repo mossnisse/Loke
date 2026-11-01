@@ -1,0 +1,155 @@
+// design.md "Private names in public declarations": what selects a generic
+// `impl`'s private member, which may be a type only in an instance, is read in each
+// instance the build creates of the declaration that writes it, whichever kind that
+// is, and warned about once.
+package shapes;
+
+@(public) Point :: struct { value: int }
+@(public) Item :: struct($T: type, $V: T) { value: int }
+@(public) Twin :: struct($A: type, $B: type) { a: A, b: B }
+@(public) Bag :: struct($T: type) { @(public) value: T }
+impl Bag($T) {
+	@(private) Inferred :: type_of(T{});
+	@(private) Size :: size_of(T);
+	@(public) Open :: type_of(T{});
+}
+@(public) Holder :: struct($T: type, $V: T) { value: int }
+impl Holder($T, $V) {
+	@(private) Hidden: T : V;
+}
+
+// A generic record's public field and a union's variant, however many instances
+// there are. A private field and a record with a private name are not read, nor is a
+// member that is public or a value.
+@(public) Field :: struct($T: type) {
+	@(public) field: Twin(Bag(T).Inferred, int),
+	@(public) twice: Twin(Bag(T).Inferred, bool),
+	@(private) hidden: Twin(Bag(T).Inferred, f64),
+	@(public) open: Twin(Bag(T).Open, int),
+	@(public) size: [Bag(T).Size]int,
+}
+@(public) Variants :: union($T: type) { held: Twin(Bag(T).Inferred, int), none }
+@(private) Secret_Field :: struct($T: type) { @(public) field: Twin(Bag(T).Inferred, int) }
+
+// A generic procedure's parameter and result, inferred and named. Only an instance a
+// call selects is read: `picked` and `chosen` are selected, `passed_over` is not.
+@(public) result :: proc(x: $T) -> Twin(Bag(T).Inferred, int) { return {}; }
+@(public) parameter :: proc($T: type, x: Twin(Bag(T).Inferred, int)) {}
+@(private) picked :: proc(x: ^$T) -> Twin(Bag(T).Inferred, int) { return {}; }
+@(private) passed_over :: proc(x: []$T) -> Twin(Bag(T).Inferred, bool) { return {}; }
+@(public) pick :: proc{picked, passed_over};
+@(private) chosen :: proc(x: $T) -> Twin(Bag(T).Inferred, int) { return {}; }
+@(private) unused_private :: proc(x: $T) -> Twin(Bag(T).Inferred, int) { return {}; }
+@(public) choose :: proc{chosen};
+
+// A parametric alias's target, whose instance is its application, and one applied
+// only within another's.
+@(public) Target :: map[$K]Twin(Bag(K).Inferred, int);
+@(public) Inner_Target :: Twin($K, Bag(K).Inferred);
+@(public) Outer_Target :: []Inner_Target($K);
+// Not reported: a private alias, as a body names it; its application is its own case.
+@(private) Private_Target :: map[$K]Twin(Bag(K).Inferred, int);
+
+// A generic interface's requirements, whose instance is an application a type
+// satisfies. Not reported: an application no type satisfies shows nothing.
+@(public) Thing :: struct { value: int }
+impl Thing {
+	@(public) get :: proc(self) -> Twin(Thing, int) { return {}; }
+}
+@(public) Can_Get :: interface($T: type) {
+	(value: T) value.get() -> Twin(Bag(T).Inferred, int);
+}
+@(public) Never_Met :: interface($T: type) {
+	(value: T) value.missing() -> Twin(Bag(T).Inferred, int);
+}
+@(public) use_can :: proc(x: $T) where Can_Get(T) {}
+@(public) never_met :: proc(x: $T) where Never_Met(T) {}
+@(public) maybe_met :: proc{never_met, use_can};
+
+// A method's own `$` names, in a plain and a generic block, and hiding the block's.
+@(public) Crate :: struct { value: int }
+impl Crate {
+	@(public) make :: proc(self, $T: type) -> Twin(Bag(T).Inferred, int) { return {}; }
+	@(private) member :: proc(self, $T: type, x: bool) -> Twin(Bag(T).Inferred, bool) { return {}; }
+	@(private) plain :: proc(self, x: f64) -> int { return 1; }
+	@(public) group :: proc{member, plain};
+}
+@(public) Host :: struct($X: type) { value: int }
+impl Host($X) {
+	@(public) make :: proc(self, $T: type, $V: T) -> Item(T, Holder(T, V).Hidden) { return {}; }
+	@(public) both :: proc(self, $U: type) -> Twin(Bag(U).Inferred, Bag(X).Open) { return {}; }
+	@(public) hiding :: proc(self, $X: type) -> Twin(Bag(X).Inferred, int) { return {}; }
+	@(public) never_called :: proc(self, $U: type) -> Twin(Bag(U).Inferred, int) { return {}; }
+}
+// Not reported: the subject is private, so its members are reached only through a
+// value of it, whatever an instance makes of what they select.
+@(private) Secret :: struct($X: type) { value: int }
+impl Secret($X) {
+	@(public) make :: proc(self, $T: type) -> Twin(Bag(T).Inferred, int) { return {}; }
+}
+
+// A value in the first instance and a type in the second, in each kind.
+@(public) Later_Field :: struct($T: type, $V: T) { @(public) field: Item(T, Holder(T, V).Hidden) }
+@(public) later_result :: proc($T: type, $V: T) -> Item(T, Holder(T, V).Hidden) { return {}; }
+@(public) Later_Target :: Twin(Item($T, $V), Item(T, Holder(T, V).Hidden));
+// A value in every instance: not reported.
+@(public) Value_Field :: struct($T: type, $V: T) { @(public) field: Item(T, Holder(T, V).Hidden) }
+@(public) value_result :: proc($T: type, $V: T) -> Item(T, Holder(T, V).Hidden) { return {}; }
+
+// Not reported: no instance says what these select.
+@(public) Unused_Field :: struct($T: type) { @(public) field: Twin(Bag(T).Inferred, int) }
+@(public) unused_result :: proc(x: $T) -> Twin(Bag(T).Inferred, int) { return {}; }
+@(public) Unused_Target :: map[$K]Twin(Bag(K).Inferred, int);
+
+// Instantiated only by the importer.
+@(public) Imported_Field :: struct($T: type) { @(public) field: Twin(Bag(T).Inferred, int) }
+@(public) imported_result :: proc(x: $T) -> Twin(Bag(T).Inferred, int) { return {}; }
+@(public) Imported_Target :: map[$K]Twin(Bag(K).Inferred, int);
+
+@(private) use :: proc() {
+	_ = Bag(int){};
+	_ = Field(int){};
+	_ = Field(bool){};
+	_ = Secret_Field(int){};
+	_: Variants(int) = .none;
+
+	_ = result(1);
+	_ = result(true);
+	parameter(int, {});
+	number := 1;
+	_ = pick(&number);
+	_ = choose(1);
+
+	a: Target(string) = {};
+	_ = a.len();
+	_ = size_of(Outer_Target(int));
+	b: Private_Target(string) = {};
+	_ = b.len();
+
+	maybe_met(Thing{});
+	_ = Bag(Thing){};
+
+	crate := Crate{};
+	_ = crate.make(int);
+	_ = crate.group(int, true);
+	host := Host(int){};
+	_ = host.make(int, 0);
+	_ = host.make(type, Point);
+	_ = host.both(int);
+	_ = host.hiding(bool);
+	secret := Secret(int){};
+	_ = secret.make(int);
+
+	_ = Later_Field(int, 0){};
+	_ = Later_Field(type, Point){};
+	_ = later_result(int, 0);
+	_ = later_result(type, Point);
+	_ = size_of(Later_Target(int, 0));
+	_ = size_of(Later_Target(type, Point));
+	_ = Value_Field(int, 0){};
+	_ = Value_Field(bool, true){};
+	_ = value_result(int, 0);
+	_ = value_result(bool, true);
+}
+
+@(public) instantiate :: proc() { use(); }

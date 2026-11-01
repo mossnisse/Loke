@@ -150,6 +150,9 @@ Compiler :: struct {
 	// a deep instantiation does not attach it once per level.
 	last_noted_diagnostic: int,
 	pending_impl_instances: [dynamic]Pending_Impl,
+	// Instances of generic declarations that `check_pending_impl_instances` has yet
+	// to read for private names.
+	pending_private_reads: [dynamic]Pending_Private_Read,
 	// What instances of a generic `impl` have read of its declarations
 	// (`src/private_names.odin`): a constant warned about by its value's type, and
 	// the name or written type of a declaration read by its syntax, so each is

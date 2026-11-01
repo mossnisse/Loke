@@ -958,6 +958,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.alias_expansions = make(map[string]Type_Id, c.semantic_allocator)
 	c.instantiation_stack = make([dynamic]Instantiation_Frame, 0, 8, c.semantic_allocator)
 	c.pending_impl_instances = make([dynamic]Pending_Impl, 0, 4, c.semantic_allocator)
+	c.pending_private_reads = make([dynamic]Pending_Private_Read, 0, 4, c.semantic_allocator)
 	c.private_constants_read = make(map[Span]bool, c.semantic_allocator)
 	c.private_names_warned = make(map[Span]bool, c.semantic_allocator)
 	c.generic_impl_types = make(map[Span]bool, c.semantic_allocator)

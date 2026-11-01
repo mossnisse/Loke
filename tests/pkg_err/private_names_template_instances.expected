@@ -1,0 +1,59 @@
+L0310
+@23:15
+warning[L0740]: public `Field.field` names the private type `Bag.Inferred`
+@25:31
+warning[L0740]: public `Field.twice` names the private type `Bag.Inferred`
+@26:31
+warning[L0740]: public `Variants` names the private type `Bag.Inferred`
+@31:59
+warning[L0740]: public `result` names the private type `Bag.Inferred`
+@36:48
+warning[L0740]: public `parameter` names the private type `Bag.Inferred`
+@37:54
+warning[L0740]: `picked`, which the public group `pick` exports, names the private type `Bag.Inferred`
+@38:50
+warning[L0740]: `chosen`, which the public group `choose` exports, names the private type `Bag.Inferred`
+@41:49
+warning[L0740]: public `Target` names the private type `Bag.Inferred`
+@47:40
+warning[L0740]: public `Inner_Target` names the private type `Bag.Inferred`
+@48:43
+warning[L0740]: public `Can_Get` names the private type `Bag.Inferred`
+@60:40
+warning[L0740]: public `Crate.make` names the private type `Bag.Inferred`
+@72:56
+warning[L0740]: `Crate.member`, which the public group `Crate.group` exports, names the private type `Bag.Inferred`
+@73:68
+warning[L0740]: public `Host.make` names the private type `Holder.Hidden`
+@79:72
+warning[L0740]: public `Host.both` names the private type `Bag.Inferred`
+@80:56
+warning[L0740]: public `Host.hiding` names the private type `Bag.Inferred`
+@81:58
+warning[L0740]: public `Later_Field.field` names the private type `Holder.Hidden`
+@92:90
+warning[L0740]: public `later_result` names the private type `Holder.Hidden`
+@93:73
+warning[L0740]: public `Later_Target` names the private type `Holder.Hidden`
+@94:67
+warning[L0740]: public `Imported_Field.field` names the private type `Bag.Inferred`
+@105:77
+warning[L0740]: public `imported_result` names the private type `Bag.Inferred`
+@106:57
+warning[L0740]: public `Imported_Target` names the private type `Bag.Inferred`
+@107:49
+!`Field.hidden`
+!`Field.open`
+!`Field.size`
+!`Secret_Field.field`
+!`passed_over`
+!`unused_private`
+!`Private_Target`
+!`Never_Met`
+!`Host.never_called`
+!`Secret.make`
+!`Value_Field.field`
+!`value_result`
+!`Unused_Field.field`
+!`unused_result`
+!`Unused_Target`

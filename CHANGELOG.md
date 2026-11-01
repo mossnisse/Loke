@@ -1264,6 +1264,13 @@ checklist.
   nothing a type names, so `proc(Corner: int) -> Corner` warns for a private
   `Corner`
   ([Private names in public declarations](design.md#private-names-in-public-declarations)).
+- `L0740` now reads a selection such as `Twin(Bag(T).Inferred, int)`, for a member
+  that is a type only in an instance, wherever a generic declaration writes it: a
+  generic record's public field or variant, a generic procedure's signature, in a
+  method's own `$` names too, a parametric alias's target, and a generic interface's
+  requirement. Each is read in the instances the build creates, as a generic
+  `impl`'s own declarations already were
+  ([Private names in public declarations](design.md#private-names-in-public-declarations)).
 - Editor completion no longer offers a type's generated `format` where a use
   could not call it, on a public type with a private `format`, and shows a local
   extension's `format` rather than the generated one it hides

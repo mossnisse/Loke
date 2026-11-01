@@ -534,6 +534,14 @@ interface_check :: proc(
 			return failure, false
 		}
 	}
+	// design.md "Private names in public declarations": what the requirements
+	// select, this application says.
+	if declared := symbol_of(k.c, info.symbol); declared != nil && declared.decl != nil {
+		append(&k.c.pending_private_reads, Pending_Private_Read {
+			decl = declared.decl, scope = scope, pkg = info.pkg, lookup_pkg = info.pkg,
+			impl_type = INVALID_TYPE, file = info.file, file_node = info.file_node,
+		})
+	}
 	return Requirement_Failure{}, true
 }
 

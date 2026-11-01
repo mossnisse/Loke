@@ -1370,6 +1370,16 @@ other diagnostic, and is not read; one instance anywhere in the build is
 enough, and the warning names the declaration, once, however many instances
 show it.
 
+A selection of a member only an instance makes a type, as `Box(T).Hidden` for
+`Hidden :: type_of(T{})`, is read the same way wherever it is written, so whether
+a generic record's field warns can depend on what the build instantiates: a
+library's own build may see nothing that an importer's does. Its template cannot
+answer, since `Hidden: T : V` is a value in `Box(int, 0)` and a type in
+`Box(type, Point)`, and calling every such selection a private type would warn
+about members no instance makes one. A procedure is read in the instances calls
+select, not those overload resolution tried, since a candidate passed over is no
+part of the program.
+
 ### Standard free aliases
 
 `f(x)` uses lexical lookup; `x.f()` uses receiver lookup. Special aliases such

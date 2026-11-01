@@ -1,0 +1,24 @@
+package main;
+
+import "./shapes";
+
+// design.md "Exported names": nothing imports a `package main`, so nothing of it is
+// read, whatever it selects.
+Bag :: struct($T: type) { value: T }
+impl Bag($T) {
+	Inferred :: type_of(T{});
+}
+Pair :: struct($A: type, $B: type) { a: A, b: B }
+Field :: struct($T: type) { field: Pair(Bag(T).Inferred, int) }
+result :: proc(x: $T) -> Pair(Bag(T).Inferred, int) { return {}; }
+
+main :: proc() {
+	shapes.instantiate();
+	_ = shapes.Imported_Field(int){};
+	_ = shapes.imported_result(1);
+	imported: shapes.Imported_Target(string) = {};
+	_ = imported.len();
+	_ = Field(int){};
+	_ = result(1);
+	wrong: int = "text"; // the case's one error
+}

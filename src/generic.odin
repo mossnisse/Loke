@@ -180,6 +180,19 @@ Impl_Conflict :: struct {
 	late:  bool,
 }
 
+// An instance whose declaration is yet to be read for private names
+// (`check_generic_private_names`): an instance can appear inside a probe, which
+// would roll back a warning about it.
+Pending_Private_Read :: struct {
+	decl:       ^Decl,
+	scope:      ^Scope,
+	pkg:        Package_Id,
+	lookup_pkg: Package_Id,
+	impl_type:  Type_Id,
+	file:       u32,
+	file_node:  ^File,
+}
+
 // A procedure instance waiting to be named and emitted with its defining
 // package's items: a template's instance, or with no `template` a member of an
 // instantiated `impl` block.
@@ -1373,6 +1386,7 @@ resolve_alias_application :: proc(k: ^Checker, v: ^Expr_Call, template: ^Generic
 	}
 	k.c.alias_expansions[key] = type
 	mark_alias_application(v, template, type)
+	pend_template_private_read(k, template, scope)
 	return type
 }
 
@@ -2817,6 +2831,7 @@ instantiate_record_body :: proc(
 	check_finite_size(k, type, template.decl.span, &path)
 
 	append(&template.instances, instance)
+	pend_template_private_read(k, template, instance.scope)
 	install_generic_impls(k, template, instance)
 	return true
 }
@@ -3075,6 +3090,7 @@ promote_generic_instance :: proc(k: ^Checker, instance: ^Instance, span: Span) {
 		return
 	}
 	instance.selected_at = span.file == NO_FILE ? instance.span : span
+	pend_template_private_read(k, template, instance.scope)
 	literal := decl_proc_literal(instance.decl)
 	if literal == nil || literal.body == nil {
 		return
@@ -3752,6 +3768,14 @@ enter_pending_impl_member :: proc(k: ^Checker, d: ^Decl) -> bool {
 	return false
 }
 
+@(private = "file")
+pend_template_private_read :: proc(k: ^Checker, template: ^Generic_Template, scope: ^Scope) {
+	append(&k.c.pending_private_reads, Pending_Private_Read {
+		decl = template.decl, scope = scope, pkg = template.pkg, lookup_pkg = template.lookup_pkg,
+		impl_type = template.impl_type, file = template.file, file_node = template.file_node,
+	})
+}
+
 // The block instances discovered so far are checked after the package that
 // requested them, so a method's body sees every instantiation its own signature
 // created.
@@ -3817,4 +3841,17 @@ check_pending_impl_instances :: proc(k: ^Checker) {
 
 		restore_checker_location(k, saved)
 	}
+
+	if len(k.c.pending_private_reads) == 0 {
+		return
+	}
+	for index := 0; index < len(k.c.pending_private_reads); index += 1 {
+		read := k.c.pending_private_reads[index]
+		saved := enter_generic_location(k, read.scope, read.pkg, read.lookup_pkg, read.impl_type, read.file, read.file_node)
+		check_generic_private_names(k, read)
+		restore_checker_location(k, saved)
+	}
+	clear(&k.c.pending_private_reads)
+	// What those reads selected may have instantiated a block.
+	check_pending_impl_instances(k)
 }

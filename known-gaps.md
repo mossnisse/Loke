@@ -367,43 +367,6 @@ as binding `T`, then reports `L0392`, since `Alias(f64)` is another new type. In
 nested one is meant and say what it denotes. Found on 2026-11-01 beside the
 nested computed type check.
 
-### Instance-only private members evade L0740 outside `impl` blocks
-
-[Private names in public declarations](design.md#private-names-in-public-declarations)
-reads a private member that is a type only in an instance, and a generic `impl`'s
-own declarations are read so as each instance of the block is checked. These
-declarations are generic too, and select the same member, but no instance of
-theirs is read, so none warns:
-
-```loke
-package shapes;
-@(public) Twin :: struct($A: type, $B: type) { a: A, b: B }
-@(public) Bag :: struct($T: type) { @(public) value: T }
-impl Bag($T) {
-    @(private) Inferred :: type_of(T{});
-}
-@(public) Field :: struct($T: type) { @(public) field: Twin(Bag(T).Inferred, int) }
-@(public) result :: proc(x: $T) -> Twin(Bag(T).Inferred, int) { return {}; }
-@(public) Target :: map[$K]Twin(Bag(K).Inferred, int);
-@(private) use :: proc() {
-    _ = Bag(int){};
-    _ = Field(int){};
-    _ = result(1);
-    a: Target(string) = {};
-    _ = a.len();
-}
-```
-
-`check_instance_private_names` in
-[src/private_names.odin](src/private_names.odin) runs for a block's instance. In
-the template pass, `resolves_to_type` cannot read syntax that names a `$` name, so
-a generic record's field, a generic procedure's signature, and a parametric
-alias's target are passed over. Read each as its record, procedure, or alias
-application is instantiated, with the checker in that instance's scope, as the
-block's instance does, and report each written name once through
-`private_names_warned`. Found while fixing the same omission for `impl` blocks on
-2026-11-01.
-
 ### Completion lists nothing after a pointer whose method is already called
 
 [Language server](compiler-architecture.md#language-server) completion lists the

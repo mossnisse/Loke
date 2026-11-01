@@ -9384,7 +9384,10 @@ a `where` clause written in private terms. The warning applies to:
   creates, and not at all when there is none. Either way it is warned about
   once. So too a generic `impl`'s private member may be a type only in an
   instance, as `Hidden :: type_of(T{})` is: what selects it, as
-  `Box(T).Hidden`, is read in each instance the build creates.
+  `Box(T).Hidden`, is read in each instance the build creates of the
+  declaration that writes it. That is an instance of a generic `impl` or record,
+  an application of a parametric alias, an instance of a generic procedure that a
+  call selects, or an application of a generic interface that a type satisfies.
 - **Any private declaration in a `where` clause**, or in the expression of an
   interface requirement: a procedure, interface, constant, or type.
 
