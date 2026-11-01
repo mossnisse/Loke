@@ -398,6 +398,8 @@ Prov_State :: struct {
 	// A store through carriers that may replace what one place held
 	// (`Prov_Event.one_place`), which the solve settles once reaching has.
 	has_replacing_store: bool,
+	// A `Publish` the solve links to where it lands (`link_landed_stores`).
+	has_linked_store: bool,
 }
 
 // design.md "Allocator regions and region provenance": the flow-insensitive

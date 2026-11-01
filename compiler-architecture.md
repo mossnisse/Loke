@@ -486,11 +486,15 @@ Keep these contracts:
   store names no one element, as `s[k]` with a variable `k`, lands in the
   slots standing for every element and in those of each constant element,
   and replaces none (`prov_view_any_element_store`, `Prov_Store_Any_Element`);
-  any other store through a view also joins into the parameter itself. Each
-  carrier the store copies is linked as a reborrow to the slots where it may
-  land (`prov_reborrow_stored_content` for one inside a record), and only a
-  store whose every copy is linked there skips the parameter itself
-  (`Prov_Event.linked`). A store through a `foreach` loop's `&mut` binding
+  any other store through a view also joins into the parameter itself. A record
+  whose carriers each have one type on their path lands as they would. Once reach
+  has settled, each carrier the store copies is linked as a reborrow to the slots it
+  landed in (`link_landed_stores`, `prov_link_landed`), from that store on
+  (`Prov_Reborrow.from_store`), and only a store whose every copy is linked there
+  skips the parameter itself (`Prov_Event.linked`). A store to one place ends what
+  was taken from what it replaced, unless it stores what it read there
+  (`run_severing_event`, `stores_what_slot_held`), and severing is solved last for
+  that reason (`solve_severing`). A store through a `foreach` loop's `&mut` binding
   also lands in the element it names, whichever that is, joined into what each
   holds (`Prov_Traversal`, `prov_publish_traversal`): by path into a source that
   is a named place, otherwise as a `Publish` through what the traversal holds,
@@ -998,6 +1002,7 @@ reclamation. The integration harness is in `tests/`:
 | `runtime_test.odin` | Runtime-header ABI agreement and concurrent runtime-cache creation/reuse. |
 | `checker_fuzz_test.odin` | Deterministic source mutation; failures reduced and saved under `tests/tmp/fuzz/`. |
 | `borrow_matrix_test.odin` | Generated programs crossing place forms with mutable copies, payload bindings, borrows, slices, and traversals, and the uses beside them in straight-line code, branches, and loops, judged against `matrix_expected`, a model of the reborrow rules written apart from the compiler. |
+| `carrier_store_matrix_test.odin` | Carriers stored through carriers, copied or reordered, as fields or in records, with a temporary or in a statement, through each place form, against verdicts worked out by hand. |
 
 `every_diagnostic_code_is_pinned` requires each diagnostic to have a test or a
 reasoned entry in `UNPINNED` in `tests/corpus_test.odin`. Fuzzer failures become

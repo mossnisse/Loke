@@ -1,0 +1,145 @@
+// design.md "Weakening and reborrows": a store to one place replaces what it held, and
+// what a store links holds only from that store on, so moving carriers through a
+// temporary leaves each in one place, as reordering them in one statement does.
+package main;
+
+import "core:fmt";
+
+Link :: struct { to: ^mut int }
+Pair :: struct { x: Link, y: Link }
+
+swap_by_hand :: proc(links: []mut Link) {
+	held := links[0];
+	links[0] = links[1];
+	links[1] = held;
+}
+
+swap_then_each_place :: proc(links: []mut Link) {
+	held := links[0];
+	links[0] = links[1];
+	links[1] = held;
+	links[0].to^ += 10;
+	links[1].to^ += 20;
+}
+
+swap_fields_by_hand :: proc(links: []mut Link) {
+	held := links[0].to;
+	links[0].to = links[1].to;
+	links[1].to = held;
+	links[0].to^ += 100;
+	links[1].to^ += 200;
+}
+
+// Elements reordered whole: a copy out of each is of what that one now holds.
+copies_of_each :: proc(links: []mut Link) {
+	links[0], links[1] = links[1], links[0];
+	first := links[0].to;
+	second := links[1].to;
+	first^ += 1000;
+	second^ += 2000;
+}
+
+swap_through_a_pointer :: proc(pair: ^mut Pair) {
+	held := pair^.x;
+	pair^.x = pair^.y;
+	pair^.y = held;
+	first := pair^.x.to;
+	second := pair^.y.to;
+	first^ += 10000;
+	second^ += 20000;
+}
+
+// A record that stands apart from the one stored is not what was stored.
+other_element_kept :: proc(links: []mut Link, @(escape=stored) carrier: ^mut int) {
+	links[0] = Link{carrier};
+	held := links[1].to;
+	carrier^ += 1;
+	held^ += 1;
+}
+
+// A store through a pointer to a local replaces what the local held, each time.
+replaced_in_a_loop :: proc(@(escape=stored) carrier: ^mut int) -> int {
+	value := 7;
+	local := &mut value;
+	pointer := &mut local;
+	for (i := 0; i < 2; i += 1) { pointer^ = carrier; }
+	held := pointer^;
+	held^ += 1;
+	return value;
+}
+
+// Replacing what was copied leaves the copy the only holder of what it holds.
+copied_then_replaced :: proc(links: []mut Link, @(escape=stored) carrier: ^mut int) {
+	links[0] = links[1];
+	links[0] = Link{carrier};
+	first := links[0].to;
+	second := links[1].to;
+	first^ += 1;
+	second^ += 1;
+}
+
+run_swap_by_hand :: proc() {
+	a := 1; b := 2;
+	links := [2]Link{Link{&mut a}, Link{&mut b}};
+	swap_by_hand(&mut links[:]);
+	fmt.println(a, b);
+}
+
+run_swap_then_each_place :: proc() {
+	a := 1; b := 2;
+	links := [2]Link{Link{&mut a}, Link{&mut b}};
+	swap_then_each_place(&mut links[:]);
+	fmt.println(a, b);
+}
+
+run_swap_fields_by_hand :: proc() {
+	a := 1; b := 2;
+	links := [2]Link{Link{&mut a}, Link{&mut b}};
+	swap_fields_by_hand(&mut links[:]);
+	fmt.println(a, b);
+}
+
+run_copies_of_each :: proc() {
+	a := 1; b := 2;
+	links := [2]Link{Link{&mut a}, Link{&mut b}};
+	copies_of_each(&mut links[:]);
+	fmt.println(a, b);
+}
+
+run_swap_through_a_pointer :: proc() {
+	c := 1; d := 2;
+	pair := Pair{Link{&mut c}, Link{&mut d}};
+	swap_through_a_pointer(&mut pair);
+	fmt.println(c, d);
+}
+
+run_other_element_kept :: proc() {
+	e := 1; f := 2; g := 3;
+	kept := [2]Link{Link{&mut e}, Link{&mut f}};
+	other_element_kept(&mut kept[:], &mut g);
+	fmt.println(f, g);
+}
+
+run_replaced_in_a_loop :: proc() {
+	h := 1;
+	seven := replaced_in_a_loop(&mut h);
+	fmt.println(seven, h);
+}
+
+run_copied_then_replaced :: proc() {
+	i := 1; j := 2; k := 3;
+	copied := [2]Link{Link{&mut i}, Link{&mut j}};
+	copied_then_replaced(&mut copied[:], &mut k);
+	fmt.println(i, j, k);
+}
+
+main :: proc() {
+	run_swap_by_hand();
+	run_swap_then_each_place();
+	run_swap_fields_by_hand();
+	run_copies_of_each();
+	run_swap_through_a_pointer();
+	run_other_element_kept();
+	run_replaced_in_a_loop();
+	run_copied_then_replaced();
+}

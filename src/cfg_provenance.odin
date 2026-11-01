@@ -200,12 +200,16 @@ Prov_Event :: struct {
 	replaces:      []int,
 	// `Publish`: each carrier it copies is linked as a reborrow to every slot it
 	// may land in: one carrier, which `prov_reborrow` links, or a value holding
-	// carriers, each on a path of one type, which `prov_reborrow_stored_content`
-	// links to the slots of that type standing for one place, or
-	// `prov_view_any_element_store` to the slots of a view parameter's elements.
+	// carriers, each on a path of one type, to the slots of that type where it
+	// lands (`prov_link_landed`).
 	// Any other store through a parameter's loan, and one of such a value landing
 	// in another slot, also joins into the parameter itself (`publish_into_loan`).
 	linked:        bool,
+	// `Publish`: the solve links each carrier it copies to the slots it lands in
+	// (`prov_link_landed`), not when what it reads through is replaced, from this
+	// store on, which `store_id` tells its links from another's (`from_store`).
+	links_copies:  bool,
+	store_id:      int,
 	// `Publish`: the type stored, or INVALID_TYPE when not known
 	// (`Carrier_Move`).
 	carried:       Type_Id,
@@ -540,7 +544,7 @@ prov_access_through :: proc(
 		return first
 	}
 	for carrier in carriers {
-		if graph.prov_slots[carrier].through_block == NO_BLOCK {
+		if !prov_slot_is_through(graph, carrier) {
 			prov_access_through(graph, prov_one(graph, carrier), path, span, access, verb, element)
 		}
 	}
@@ -579,7 +583,7 @@ prov_view_at :: proc(graph: ^Flow_Graph, place: Expr, carriers: []int) -> Prov_V
 @(private = "file")
 prov_offsets_agree :: proc(graph: ^Flow_Graph, carriers: []int, offsets: []Prov_Offset) -> bool {
 	for carrier in carriers {
-		if entry := graph.prov_slots[carrier]; entry.through_block == NO_BLOCK {
+		if !prov_slot_is_through(graph, carrier) {
 			own, _ := prov_carrier_offsets(graph, carrier)
 			if !prov_offsets_cover(own, offsets, any_storage = true) || !prov_offsets_cover(offsets, own, any_storage = true) {
 				return false
@@ -738,8 +742,8 @@ prov_note_view :: proc(graph: ^Flow_Graph, event: Prov_Event) -> int {
 	def := Prov_View_Def{loan = NO_LOAN, unknown = true}
 	if reslice.slot == event.slot + 1 && reslice.open {
 		if event.place_loan == 0 && event.loan == NO_LOAN && len(event.sources) == 1 &&
-		   graph.prov_slots[event.sources[0]].fresh_loan != NO_LOAN {
-			def = Prov_View_Def{loan = graph.prov_slots[event.sources[0]].fresh_loan, lo = reslice.lo, open = true}
+		   prov_slot_fresh_loan(graph, event.sources[0]) != NO_LOAN {
+			def = Prov_View_Def{loan = prov_slot_fresh_loan(graph, event.sources[0]), lo = reslice.lo, open = true}
 		}
 	} else if reslice.slot == event.slot + 1 && event.place_loan == 0 && event.loan == NO_LOAN {
 		def = reslice
@@ -747,8 +751,8 @@ prov_note_view :: proc(graph: ^Flow_Graph, event: Prov_Event) -> int {
 	} else if event.place_loan == 0 {
 		if event.loan != NO_LOAN && len(event.sources) == 0 {
 			def = Prov_View_Def{loan = event.loan}
-		} else if event.loan == NO_LOAN && len(event.sources) == 1 && graph.prov_slots[event.sources[0]].fresh_loan != NO_LOAN {
-			def = Prov_View_Def{loan = graph.prov_slots[event.sources[0]].fresh_loan}
+		} else if event.loan == NO_LOAN && len(event.sources) == 1 && prov_slot_fresh_loan(graph, event.sources[0]) != NO_LOAN {
+			def = Prov_View_Def{loan = prov_slot_fresh_loan(graph, event.sources[0])}
 		}
 	}
 	if event.slot not_in graph.view_defs {
@@ -839,8 +843,7 @@ prov_note_open_borrow :: proc(graph: ^Flow_Graph, slot: int, slice_expr: ^Expr_S
 @(private)
 prov_value_offset :: proc(graph: ^Flow_Graph, slots: []int) -> (out: []Prov_Offset, found: bool, merged: bool) {
 	for slot in slots {
-		entry := graph.prov_slots[slot]
-		if entry.through_block != NO_BLOCK {
+		if prov_slot_is_through(graph, slot) {
 			continue
 		}
 		offsets, slot_merged := prov_carrier_offsets(graph, slot)
@@ -2493,9 +2496,11 @@ prov_publish_traversal :: proc(graph: ^Flow_Graph, traversal: Prov_Traversal, sl
 	if type != INVALID_TYPE && type_is_carrier(graph.k.c, type) {
 		publish.linked = true
 		if reborrows {
-			prov_link_stored_carrier(graph, stored[:], type, span)
+			prov_reborrow(graph, stored[:], type, span = span, copies = true)
+			publish.links_copies = true
+			graph.has_linked_store = true
 		}
-		if own := prov_view_any_element_links(graph, traversal.view, publish.path, type, stored[:] if reborrows else nil, span); own != NO_LOAN {
+		if own := prov_view_any_element_loan(graph, traversal.view, publish.path, type); own != NO_LOAN {
 			publish.store = Prov_Store_Any_Element{own}
 		}
 	}
@@ -2733,21 +2738,25 @@ prov_reborrow :: proc(graph: ^Flow_Graph, slots: []int, destination: Type_Id, in
 				}
 			}
 		}
-		if entry.through_block != NO_BLOCK {
+		switch borrow in entry.borrow {
+		case Prov_Through_Borrow:
 			if weakens {
 				// It still reads what it borrows.
-				for index in entry.through_index ..< entry.through_end {
-					graph.blocks[entry.through_block].prov[index].access = .Read
+				if borrow.writes.event >= 0 {
+					for index in borrow.writes.event ..< borrow.writes_end {
+						graph.blocks[borrow.writes.block].prov[index].access = .Read
+					}
 				}
-				prov_weaken_walk(graph, entry)
+				for at in borrow.walk_reads {
+					graph.blocks[at.block].prov[at.event].reads_only = true
+				}
 			}
 			continue
-		}
-		if entry.fresh_loan != NO_LOAN {
-			if weakens && !path_is_synchronized(graph.loans[int(entry.fresh_loan)].path) {
-				graph.loans[int(entry.fresh_loan)].mutable = false
-				if entry.fresh_access_index >= 0 {
-					graph.blocks[entry.fresh_access_block].prov[entry.fresh_access_index].access = .Read
+		case Prov_Fresh_Borrow:
+			if weakens && !path_is_synchronized(graph.loans[int(borrow.loan)].path) {
+				graph.loans[int(borrow.loan)].mutable = false
+				if borrow.access.event >= 0 {
+					graph.blocks[borrow.access.block].prov[borrow.access.event].access = .Read
 				}
 			}
 			continue
@@ -2790,60 +2799,73 @@ prov_reborrow :: proc(graph: ^Flow_Graph, slots: []int, destination: Type_Id, in
 	}
 }
 
-// A value holding carriers stored through carriers, as `p^ = q^` for a
-// record of pointers, copies each of them (design.md "Weakening and
-// reborrows"). As a carrier stored alone is, each copy is linked to every
-// slot of its type that may stand for where it lands: a named one, or one
-// standing for one caller storage, whose path ends where the carrier is
-// inside the value. Which storage the target names is known only to the
-// solve, and a slot stays suspended only while it holds the source's loan.
-// An untyped caller slot is no candidate: it may stand for storage holding
-// no carrier, as the `Node` a parameter's `^mut Node` field points at does,
-// which a store through a parameter, joining into it, would then leave
-// reborrowing the copy. A path cut at a budget has no one carrier type, and
-// is left unlinked, as `prov_define_one_content` leaves one stored into a
-// local.
+// A value holding carriers stored through carriers, as `p^ = q^` for a record of
+// pointers, copies each of them (design.md "Weakening and reborrows"). Where it is
+// written, each copy uses what its carrier points to, and weakens what it copies.
+// Which storage the target names is known only to the solve, which links each to
+// where it lands (`prov_link_landed`).
 @(private = "file")
-prov_reborrow_stored_content :: proc(graph: ^Flow_Graph, sources: []int, stored: Type_Id, span: Span) {
+prov_use_stored :: proc(graph: ^Flow_Graph, sources: []int, stored: Type_Id, span: Span) {
 	c := graph.k.c
 	if type_is_carrier(c, stored) {
+		prov_reborrow(graph, sources, stored, span = span, copies = true)
 		return
 	}
 	for path in carrier_shape(c, stored) {
 		if path.truncated || path.type == INVALID_TYPE {
 			continue
 		}
-		selected := prov_select_content(graph, sources, stored, path.steps)
-		if len(selected) == 0 {
+		if selected := prov_select_content(graph, sources, stored, path.steps); len(selected) > 0 {
+			prov_reborrow(graph, selected, path.type, span = span, copies = true)
+		}
+	}
+}
+
+// design.md "Weakening and reborrows": each carrier a store through carriers copies
+// reborrows the slots the solve found it landing in, from that store on
+// (`Prov_Reborrow.from_store`). An untyped caller slot takes a carrier stored alone,
+// as it stands for what the storage holds whatever that is.
+@(private)
+prov_link_landed :: proc(graph: ^Flow_Graph, event: Prov_Event, landed: []int) {
+	c := graph.k.c
+	stored := event.carried
+	for into in landed {
+		entry := graph.prov_slots[into]
+		type := slot_carrier_type(graph, into)
+		if type_is_carrier(c, stored) {
+			if type == stored || entry.kind == .Caller && type == INVALID_TYPE {
+				prov_reborrow(graph, event.sources, stored, into, event.span)
+			}
 			continue
 		}
-		prov_reborrow(graph, selected, path.type, span = span, copies = true)
-		for entry, candidate in graph.prov_slots {
-			if (prov_slot_is_stored(entry) || entry.caller_one) && entry.content_type == path.type &&
-			   prov_path_may_end_in(entry.path, path.steps) {
-				prov_reborrow(graph, selected, path.type, candidate, span)
+		for path in carrier_shape(c, stored) {
+			if path.truncated || path.type == INVALID_TYPE || type != path.type || !prov_path_may_end_in(entry.path, path.steps) {
+				continue
+			}
+			if selected := prov_select_content(graph, event.sources, stored, path.steps); len(selected) > 0 {
+				prov_reborrow(graph, selected, path.type, into, event.span)
 			}
 		}
 	}
 }
 
-// Which storage a store through carriers names is known only to the solve, so
-// a copy of a mutable carrier reborrows every named slot of its type, and every
-// slot standing for one caller storage that may hold it; one stays suspended
-// only while it holds the source's loan.
-@(private = "file")
-prov_link_stored_carrier :: proc(graph: ^Flow_Graph, sources: []int, stored: Type_Id, span: Span) {
-	prov_reborrow(graph, sources, stored, span = span, copies = true)
-	for entry, candidate in graph.prov_slots {
-		if prov_slot_is_stored(entry) && entry.content_type == stored ||
-		   entry.caller_one && (entry.content_type == stored || entry.content_type == INVALID_TYPE) {
-			prov_reborrow(graph, sources, stored, candidate, span)
+// Whether `slot`, of a place a store of `stored` lands along, holds a carrier it
+// stores: the carrier itself, or one on a path inside it whose place the slot may be.
+@(private)
+prov_slot_holds_stored :: proc(c: ^Compiler, slot: Prov_Slot, stored: Type_Id) -> bool {
+	if type_is_carrier(c, stored) {
+		return slot.content_type == stored
+	}
+	for inner in carrier_shape(c, stored) {
+		if !inner.truncated && inner.type == slot.content_type && prov_path_may_end_in(slot.path, inner.steps) {
+			return true
 		}
 	}
+	return false
 }
 
-// `Prov_Event.linked` for a store of `stored` through carriers: whether
-// `prov_reborrow` and `prov_reborrow_stored_content` link it to where it lands.
+// `Prov_Event.linked` for a store of `stored` through carriers: whether the solve
+// links each carrier it copies to where it lands (`prov_link_landed`).
 @(private = "file")
 prov_store_linked :: proc(c: ^Compiler, stored: Type_Id) -> bool {
 	if type_is_carrier(c, stored) {
@@ -2868,13 +2890,20 @@ prov_path_may_end_in :: proc(path, tail: []Proj_Step) -> bool {
 	return len(path) >= len(tail) && paths_overlap(path[len(path) - len(tail):], tail)
 }
 
-// The reads of the carriers a mutable borrow through them went through, made
-// reads only once the borrow is weakened (`Prov_Slot.walk_reads`).
+// Whether a slot stands for a borrow through carriers (`Prov_Through_Borrow`).
 @(private = "file")
-prov_weaken_walk :: proc(graph: ^Flow_Graph, marker: Prov_Slot) {
-	for at in marker.walk_reads {
-		graph.blocks[at.block].prov[at.event].reads_only = true
+prov_slot_is_through :: proc(graph: ^Flow_Graph, slot: int) -> bool {
+	_, through := graph.prov_slots[slot].borrow.(Prov_Through_Borrow)
+	return through
+}
+
+// The fresh loan a slot holds (`Prov_Fresh_Borrow`), or NO_LOAN.
+@(private = "file")
+prov_slot_fresh_loan :: proc(graph: ^Flow_Graph, slot: int) -> Loan_Id {
+	if fresh, is_fresh := graph.prov_slots[slot].borrow.(Prov_Fresh_Borrow); is_fresh {
+		return fresh.loan
 	}
+	return NO_LOAN
 }
 
 // A mutable carrier copied out through a pointer, as `pp^`, reborrows each
@@ -3092,9 +3121,7 @@ prov_borrow :: proc(
 	// field excludes every other access while it lasts.
 	loan := prov_new_loan(graph, root, path, mutable || path_is_synchronized(path), span, what)
 	slot := prov_temp_slot(graph)
-	graph.prov_slots[slot].fresh_loan = loan
-	graph.prov_slots[slot].fresh_access_block = access_block
-	graph.prov_slots[slot].fresh_access_index = access_index
+	graph.prov_slots[slot].borrow = Prov_Fresh_Borrow{loan, Prov_Event_At{access_block, access_index}}
 	prov_emit(graph, Prov_Event{kind = .Def, slot = slot, loan = loan, span = span})
 	return prov_join(graph, prov_one(graph, slot), prov_root_view(graph, root))
 }
@@ -3629,12 +3656,11 @@ prov_view_parameter_loan :: proc(graph: ^Flow_Graph, view: Symbol_Id) -> (Root_I
 	return NO_ROOT, NO_LOAN
 }
 
-// `prov_view_element` for a store of `stored` from `sources` at `target`,
-// whose copy reborrows the slots of that element it lands in, as a store's
-// copy reborrows the caller slots of one place (`prov_assign`).
+// `prov_view_element` for a store of `stored` at `target`, whose copies reborrow
+// the slots of that element it lands in (`prov_link_landed`).
 @(private = "file")
-prov_view_element_store :: proc(graph: ^Flow_Graph, target: Expr, stored: Type_Id, sources: []int) -> (Prov_Element_Slots, bool) {
-	if !type_is_carrier(graph.k.c, stored) {
+prov_view_element_store :: proc(graph: ^Flow_Graph, target: Expr, stored: Type_Id) -> (Prov_Element_Slots, bool) {
+	if !prov_store_linked(graph.k.c, stored) {
 		return {}, false
 	}
 	element, found := prov_view_element(graph, target)
@@ -3644,11 +3670,6 @@ prov_view_element_store :: proc(graph: ^Flow_Graph, target: Expr, stored: Type_I
 	below := prov_place_hops(graph, target)[0].path
 	if !prov_path_names_one_place(below) {
 		return {}, false
-	}
-	for slot in element.slots {
-		if entry := graph.prov_slots[slot]; entry.content_type == stored && paths_overlap(entry.path, below) {
-			prov_reborrow(graph, sources, stored, slot, expr_span(target))
-		}
 	}
 	return element, true
 }
@@ -3664,23 +3685,22 @@ prov_view_element_store :: proc(graph: ^Flow_Graph, target: Expr, stored: Type_I
 // slot it may land in holds another type, which the parameter itself then holds
 // instead.
 @(private = "file")
-prov_view_any_element_store :: proc(graph: ^Flow_Graph, target: Expr, stored: Type_Id, sources: []int) -> Loan_Id {
-	if !type_is_carrier(graph.k.c, stored) {
+prov_view_any_element_store :: proc(graph: ^Flow_Graph, target: Expr, stored: Type_Id) -> Loan_Id {
+	if !prov_store_linked(graph.k.c, stored) {
 		return NO_LOAN
 	}
 	view, _, found := prov_named_view_element(graph, target)
 	if !found {
 		return NO_LOAN
 	}
-	return prov_view_any_element_links(graph, view, prov_place_hops(graph, target)[0].path, stored, sources, expr_span(target))
+	return prov_view_any_element_loan(graph, view, prov_place_hops(graph, target)[0].path, stored)
 }
 
-// Links a copy stored at `below` in any element of the view parameter `view`
-// to each caller slot it may land in, as `prov_view_any_element_store` says.
-// The parameter's own loan, or NO_LOAN when it is no such parameter or a slot it
-// may land in holds another type.
+// The own loan of the view parameter `view`, for a store of `stored` at `below` in
+// any element, as `prov_view_any_element_store` says, or NO_LOAN when it is no such
+// parameter or a slot it may land in holds another type.
 @(private = "file")
-prov_view_any_element_links :: proc(graph: ^Flow_Graph, view: Symbol_Id, below: []Proj_Step, stored: Type_Id, sources: []int, span: Span) -> Loan_Id {
+prov_view_any_element_loan :: proc(graph: ^Flow_Graph, view: Symbol_Id, below: []Proj_Step, stored: Type_Id) -> Loan_Id {
 	_, own := prov_view_parameter_loan(graph, view)
 	slots, listed := graph.caller_slots[own]
 	if own == NO_LOAN || !listed {
@@ -3688,13 +3708,8 @@ prov_view_any_element_links :: proc(graph: ^Flow_Graph, view: Symbol_Id, below: 
 	}
 	for slot in slots {
 		entry := graph.prov_slots[slot]
-		if paths_overlap(entry.path, below) && entry.content_type != stored && entry.content_type != INVALID_TYPE {
+		if paths_overlap(entry.path, below) && entry.content_type != INVALID_TYPE && !prov_slot_holds_stored(graph.k.c, entry, stored) {
 			return NO_LOAN
-		}
-	}
-	for slot in slots {
-		if paths_overlap(graph.prov_slots[slot].path, below) {
-			prov_reborrow(graph, sources, stored, slot, span)
 		}
 	}
 	return own
@@ -3712,29 +3727,10 @@ prov_erase :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 		return walk_flow_expr_erased(graph, e)
 	}
 	// Also a use of what a carrier already refers to, so erasure cannot hide
-	// a stale view. A view of a slice or pointer local only reads it, so it
-	// holds a read-only reborrow, as a `[]T` parameter would.
-	// A field or element holding one is read the same way, so two views of
-	// `held.items` may be live together.
-	loans: []int
-	if ident, plain := prov_plain_view_local(graph, e); plain {
-		loans = prov_reborrow_traversal(graph, prov_read_ident(graph, ident, .Read, reads_only = true), span, false)
-	} else if prov_plain_view_place(graph, e, prov_repr(graph, e).erased_from) {
-		loans = prov_reborrow_traversal(graph, prov_read_erased_place(graph, e), span, false)
-	} else {
-		prov_begin_conversion(graph, e, .Erasure)
-		held, through := prov_view_through_carrier(graph, e, span)
-		prov_end_conversion(graph)
-		if through {
-			return held
-		}
-		loans = walk_flow_expr_erased(graph, e)
-	}
-	if held, lent := prov_lend_read_only(graph, e, loans, span); lent {
+	// a stale view.
+	held, lent := prov_read_only_view(graph, e, prov_repr(graph, e).erased_from, span, erasing = true)
+	if lent || len(held) > 0 {
 		return held
-	}
-	if len(loans) > 0 {
-		return loans
 	}
 	// A constant's hidden storage is a frame slot that follows the lexical scope.
 	root := prov_hidden_root(graph, span, "this erased value")
@@ -3742,8 +3738,41 @@ prov_erase :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 	return prov_borrow(graph, root, nil, false, span, "view")
 }
 
+// What a read-only view of `e`, of `type`, holds, as an erased `dyn` view or an
+// argument a report prints does; `lent` when that is more than what it read, which
+// for a constant it is not. A view of a slice or pointer local only reads it, so it
+// holds a read-only reborrow, as a `[]T` parameter would. A field or element holding
+// one is read the same way, so two views of `held.items` may be live together.
+// `erasing` keeps the erasure hook from running on the walk `prov_erase` came from.
+@(private = "file")
+prov_read_only_view :: proc(graph: ^Flow_Graph, e: Expr, type: Type_Id, span: Span, erasing := false) -> (held: []int, lent: bool) {
+	if ident, plain := prov_plain_view_local(graph, e); plain {
+		return prov_lend_read_only(graph, e, prov_reborrow_traversal(graph, prov_read_ident(graph, ident, .Read, reads_only = true), span, false), span)
+	}
+	loans: []int
+	plain_place := prov_plain_view_place(graph, e, type)
+	{
+		if erasing { prov_begin_conversion(graph, e, .Erasure) }
+		defer if erasing { prov_end_conversion(graph) }
+		if plain_place {
+			loans = prov_read_carrier(graph, e, true)
+		} else {
+			through: bool
+			if held, through = prov_view_through_carrier(graph, e, span); through {
+				return held, true
+			}
+			loans = walk_flow_expr(graph, e)
+		}
+	}
+	if plain_place {
+		loans = prov_reborrow_traversal(graph, loans, span, false)
+	}
+	return prov_lend_read_only(graph, e, loans, span)
+}
+
 // What a read-only view of `e` holds beside the `loans` it read: a loan of the
-// place, or of the temporary holding the value. A constant has neither.
+// place, or of the temporary holding the value. A constant has neither, and
+// holds the `loans` alone.
 @(private = "file")
 prov_lend_read_only :: proc(graph: ^Flow_Graph, e: Expr, loans: []int, span: Span) -> (held: []int, lent: bool) {
 	if root, path, ok := prov_place_of(graph, e); ok {
@@ -3754,7 +3783,7 @@ prov_lend_read_only :: proc(graph: ^Flow_Graph, e: Expr, loans: []int, span: Spa
 	if !expr_base(e).is_const {
 		return prov_join(graph, loans, prov_borrow(graph, prov_temp_root_of(graph, e, loans), nil, false, span, "view")), true
 	}
-	return nil, false
+	return loans, false
 }
 
 // design.md "Built-in procedures": an argument an `assert` or `panic` report
@@ -3762,20 +3791,8 @@ prov_lend_read_only :: proc(graph: ^Flow_Graph, e: Expr, loans: []int, span: Spa
 // slice or pointer to plain data is read rather than lent again.
 @(private = "file")
 prov_printed_argument :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
-	span := expr_span(e)
-	loans: []int
-	if ident, plain := prov_plain_view_local(graph, e); plain {
-		loans = prov_reborrow_traversal(graph, prov_read_ident(graph, ident, .Read, reads_only = true), span, false)
-	} else if prov_plain_view_place(graph, e, prov_type(graph, e)) {
-		loans = prov_reborrow_traversal(graph, prov_read_carrier(graph, e, true), span, false)
-	} else {
-		if held, through := prov_view_through_carrier(graph, e, span); through {
-			return held
-		}
-		loans = walk_flow_expr(graph, e)
-	}
-	held, lent := prov_lend_read_only(graph, e, loans, span)
-	return lent ? held : loans
+	held, _ := prov_read_only_view(graph, e, prov_type(graph, e), expr_span(e))
+	return held
 }
 
 // A read-only view of a field, element, or pointee reached through a pointer or
@@ -3908,14 +3925,6 @@ prov_plain_view_place :: proc(graph: ^Flow_Graph, e: Expr, type: Type_Id) -> boo
 	}
 	_, _, place := prov_place_of(graph, e)
 	return place
-}
-
-// What an erased place holds, read only, with the erasure hook suppressed.
-@(private = "file")
-prov_read_erased_place :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
-	prov_begin_conversion(graph, e, .Erasure)
-	defer prov_end_conversion(graph)
-	return prov_read_carrier(graph, e, true)
 }
 
 // The ordinary walk with the erasure hook suppressed.
@@ -6462,7 +6471,7 @@ prov_place_hops :: proc(graph: ^Flow_Graph, place: Expr) -> []Place_Hop {
 // the one whose pointee holds `place`, with the path below it. A `store`
 // leaves the subscripts below the last carrier to itself. False when `place`
 // is not reached through a carrier. `walk`, when given, collects the events
-// reading the carriers (`Prov_Slot.walk_reads`).
+// reading the carriers (`Prov_Through_Borrow.walk_reads`).
 @(private)
 prov_read_through_carrier :: proc(
 	graph: ^Flow_Graph, place: Expr, reads_only := false, store := false, walk: ^[dynamic]Prov_Event_At = nil, reads := true,
@@ -6871,7 +6880,7 @@ prov_borrow_place :: proc(graph: ^Flow_Graph, operand: Expr, mutable: bool, span
 	return prov_borrow(graph, root, path, mutable, span, what, access_block, access_index)
 }
 
-// A slot standing for a borrow through carriers (`Prov_Slot.through_block`):
+// A slot standing for a borrow through carriers (`Prov_Through_Borrow`):
 // its `.Through` events from `at` up to `end`, -1 for both when it writes
 // nothing, and the reads of the carriers it went through. Weakened to a read-only destination, as
 // `look(&mut p[0])` passes it, the borrow writes nothing and only reads the
@@ -6882,8 +6891,7 @@ prov_through_marker :: proc(graph: ^Flow_Graph, at, end: int, walk: []Prov_Event
 		return nil
 	}
 	marker := prov_temp_slot(graph)
-	entry := &graph.prov_slots[marker]
-	entry.through_block, entry.through_index, entry.through_end, entry.walk_reads = graph.current, at, end, walk
+	graph.prov_slots[marker].borrow = Prov_Through_Borrow{Prov_Event_At{graph.current, at}, end, walk}
 	return prov_one(graph, marker)
 }
 
@@ -7525,20 +7533,20 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 					// What it reads through is replaced, so it copies nothing to link.
 					linked_sources := nil if replaces_read else sources
 					lands: Prov_Store_Target
-					if element, found := prov_view_element_store(graph, target, stored, linked_sources); found {
+					if element, found := prov_view_element_store(graph, target, stored); found {
 						lands = element
 					} else if len(sources) > 0 {
-						if own := prov_view_any_element_store(graph, target, stored, linked_sources); own != NO_LOAN {
+						if own := prov_view_any_element_store(graph, target, stored); own != NO_LOAN {
 							lands = Prov_Store_Any_Element{own}
 						}
 					}
 					if len(linked_sources) > 0 {
-						prov_link_stored_carrier(graph, sources, stored, expr_span(target))
-						prov_reborrow_stored_content(graph, sources, stored, expr_span(target))
+						prov_use_stored(graph, sources, stored, expr_span(target))
+						graph.has_linked_store = true
 					}
 					publish := Prov_Event {
 						kind = .Publish, span = expr_span(target), sources = sources, into = through,
-						linked = prov_store_linked(graph.k.c, stored), store = lands, carried = stored,
+						linked = prov_store_linked(graph.k.c, stored), store = lands, carried = stored, links_copies = len(linked_sources) > 0,
 						permutes = prov_assign_permutes(graph, s), element = prov_local_view_element(graph, target),
 					}
 					// design.md "Evaluation order": a destination is evaluated before an
@@ -9361,7 +9369,7 @@ prov_reborrow_retained :: proc(graph: ^Flow_Graph, sources: []int, mutable: bool
 		}
 		append(&linked, source)
 		entry := graph.prov_slots[source]
-		if entry.through_block != NO_BLOCK || entry.fresh_loan != NO_LOAN {
+		if entry.borrow != nil {
 			continue
 		}
 		if entry.kind == .Temporary && !entry.loaded {

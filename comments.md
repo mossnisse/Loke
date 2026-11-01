@@ -3364,9 +3364,9 @@ a built-in that reads no element from other calls could relax both; nothing here
 depends on either.
 
 A reordering assignment is also not a copy, recognized by the values naming the
-targets' own places; a reordering written with a temporary is not recognized,
-and [a hand-written swap in a body](known-gaps.md#a-swap-written-with-a-temporary-is-rejected)
-is rejected before the summary is reached.
+targets' own places; [a reordering written with a
+temporary](known-gaps.md#a-call-that-swaps-with-a-temporary-counts-as-copying) is
+not recognized.
 
 The same copy used through a later call is rejected. After `duplicate(v);`,
 another `touch(v)` uses what both elements hold while a copy taken before it may
@@ -3416,6 +3416,35 @@ per body: one collecting global writes, one discovering summaries, and one
 reporting diagnostics. The profiling records under
 [Provenance normalization](bench/baselines/README.md#provenance-normalization)
 distinguish normalization, fact replay, and event materialization cost.
+
+### A store's links come from where it lands
+
+A store through carriers used to link each carrier it copied, while the walk
+built the graph, to every slot of its type, as only the solve knows which storage the
+target names. The overlap check then kept the links whose slots held the source's
+loan. That made a program's verdict depend on which other locals had that type: a
+swap written with a temporary was rejected because the copy was linked to the
+temporary itself, and a real conflict after the swap was rejected only by the same
+accident. A record stored through a view parameter joined into the parameter and
+linked nothing, so a copy and what it was copied from could both be used.
+
+The solve now links each carrier to the slots the store lands in, once reach has
+settled (`link_landed_stores`), a record's carriers to the slots of their paths, and a
+link holds from its store on (`Prov_Reborrow.from_store`). A store to one place also
+ends what was taken from what it replaced, unless it stores what it read from there.
+Severing is its own pass, as it now depends on every link (`solve_severing`).
+A temporary is never the first step of a conflict through such a link: only its own
+expression reads it, so a later use is of a new value, and the chain from what it was
+copied from still finds the copy.
+
+This is a first step toward [one rule for
+exclusivity](open-questions.md#provenance-architecture). Links from landing alone
+accepted real conflicts that the old rule rejected by accident. One showed in a
+fixture; another, a conflict after a swap, only in a reproduction in known-gaps.md,
+which no input of a 1,388-input comparison with the old compiler covered. So the
+comparison is not enough here, and a later change should first extend the verdicts
+worked out by hand in
+[carrier_store_matrix_test.odin](tests/carrier_store_matrix_test.odin).
 
 ### Provenance slots and regions stay apart
 

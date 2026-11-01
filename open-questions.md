@@ -23,14 +23,14 @@ the compiler, is the oracle for any of them.
 
 - **Mutable exclusivity is kept by hand-built links (P2).** The solver knows
   which loans a slot may hold; whether two slots holding one mutable loan may
-  both be used is decided by the reborrow graph, which the walk builds a link
-  at a time: `prov_reborrow` for a copy into a slot, `prov_link_stored_carrier`
-  and `prov_reborrow_stored_content` for a store through carriers,
-  `prov_view_any_element_links` for a store at an unknown view index,
-  `prov_reborrow_retained` for a `stored` argument, `prov_link_copied_carriers`
-  with `copied_within` for a call that copies, and `prov_reborrow_loaded` with
-  `pending` and `prov_activate_copies` for a copy read through a pointer,
-  settled after the solve. Two genuine rules remain underneath: a carrier stored
+  both be used is decided by the reborrow graph. A store through carriers now
+  [links where it lands](comments.md#a-stores-links-come-from-where-it-lands), and
+  the walk still builds the rest a link at a time: `prov_reborrow` for a copy into a
+  slot, `prov_reborrow_retained` for a `stored` argument, which links every slot by
+  type as stores did, `prov_link_copied_carriers` with `copied_within` for a call
+  that copies, and `prov_reborrow_loaded` with `pending` and `prov_activate_copies`
+  for a copy read through a pointer, settled after the solve. A `stored` argument is
+  the next to move. Two genuine rules remain underneath: a carrier stored
   back through what it was loaded from replaces that carrier (`via`), and a
   read-only reborrow is not suspended by its copies (`passes_on`). The may-sets a
   permuting `Rearrange` leaves mean the solver cannot by itself tell a copy from a
@@ -42,25 +42,23 @@ the compiler, is the oracle for any of them.
   snapshot slot with a bit of its own, because which storage the carriers name
   is known only to the solve. So there are two conflict checks,
   `access_conflicts` on `.Access` and `check_place_loans` on `.Through`, two
-  kinds of liveness bit, the marker slots of `prov_through_marker`, and ten
-  fields of `Prov_Slot` (`fresh_*`, `through_*`, `walk_reads`) that let
-  `prov_reborrow` weaken each kind separately. The
+  kinds of liveness bit, the marker slots of `prov_through_marker`, and two
+  kinds of `Prov_Slot.borrow` that let `prov_reborrow` weaken each separately. The
   [rationale](comments.md#local-borrow-checking) kept them apart to spare every
   loan the places it is at; the offsets machinery (`Prov_Slot.offsets`,
   `prov_reaching_offsets`) now records those places anyway. The solve could
   resolve a place loan to loans of the roots its carriers reach, as
   `resolve_content_reads` already materializes loaded reborrows after the
   forward pass, leaving one check.
-- **Printing's arguments take a path of their own (P3).** A call's arguments are
-  classified once (`prov_argument_kind`), but printing goes through `prov_erase`
-  and `prov_printed_argument` instead, so it is not one of those kinds.
 - **An index's syntax as evidence (P3).** `prov_indices_may_write` reads an
   index's syntax where the global effects already say what a call writes. Asking
   them would accept more rather than simplify, and a call may also write through
   an argument, which those effects do not cover.
-- **Places the borrow matrix lacks.** A slice literal's array, a view parameter's
+- **Places the matrices lack.** A slice literal's array, a view parameter's
   caller storage reached twice, a store at an unknown index between two uses, a
-  call that copies, and a dynamically backed view.
+  call that copies, and a dynamically backed view. Neither the [borrow
+  matrix](tests/borrow_matrix_test.odin) nor the [store
+  matrix](tests/carrier_store_matrix_test.odin) covers these.
 
 ### What counts as a fresh borrow of a range
 
@@ -206,8 +204,8 @@ against a model written apart from the compiler. Still open:
   through another that a cyclic structure makes the same (a mutable cycle
   such as `l.next = .some(&mut l)` keeps `l` suspended, so this cannot be
   exploited); a view's slots stand for all its elements, apart from an element
-  at a constant index; a record stored whole into a view parameter's element
-  joins into the parameter itself; and storage below the second load, or
+  at a constant index; a record whose carriers have no one type on each path,
+  stored into a view parameter's element, joins into the parameter itself; and storage below the second load, or
   through a view, is one slot.
 
 Language changes should be evaluated separately. The proposed [written public

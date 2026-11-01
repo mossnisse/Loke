@@ -47,9 +47,6 @@ L0641
 @149:12
 `links` cannot be used here: a mutable reborrow of it is still in use
 L0641
-@154:12
-`pair` cannot be used here: a mutable reborrow of it is still in use
-L0641
 @155:12
 `pair` cannot be used here: a mutable reborrow of it is still in use
 L0641

@@ -1,0 +1,91 @@
+// design.md "Weakening and reborrows": a record stored through carriers copies each
+// carrier it holds, as storing the carrier alone does, so a copy and what it was
+// copied from cannot both be used, wherever the value is stored.
+package main;
+
+Link :: struct { to: ^mut int }
+Deep :: struct { link: Link, count: int }
+
+poke_both :: proc(links: []mut Link) { links[0].to^ = 1; links[1].to^ = 2; }
+
+// A call uses at once what the view reaches, which holds one carrier twice.
+at_constants :: proc(links: []mut Link) {
+	links[0] = links[1];
+	poke_both(links);
+}
+
+at_variables :: proc(links: []mut Link, i: int, j: int) {
+	links[i] = links[j];
+	poke_both(links);
+}
+
+// A copy out of the element reborrows the local it came from.
+both_used :: proc(links: []mut Link) {
+	held := links[0];
+	links[1] = held;
+	copy := links[1].to;
+	held.to^ = 3;
+	copy^ = 4;
+}
+
+// A swap leaves each in one place, and the local still names one of them.
+swap_then_local_used :: proc(links: []mut Link) {
+	held := links[0];
+	links[0] = links[1];
+	links[1] = held;
+	held.to^ = 3;
+	links[1].to^ = 4;
+}
+
+// A composite stored through a view parameter holds what it was built from.
+built_and_stored :: proc(links: []mut Link, @(escape=stored) carrier: ^mut int) {
+	links[0] = Link{carrier};
+	held := links[0].to;
+	carrier^ = 2;
+	held^ = 1;
+}
+
+stored_at_a_variable :: proc(links: []mut Link, k: int, @(escape=stored) carrier: ^mut int) {
+	links[k] = Link{carrier};
+	held := links[k].to;
+	carrier^ = 2;
+	held^ = 1;
+}
+
+stored_inside_an_element :: proc(deeps: []mut Deep, @(escape=stored) carrier: ^mut int) {
+	deeps[0].link = Link{carrier};
+	held := deeps[0].link.to;
+	carrier^ = 2;
+	held^ = 1;
+}
+
+// A pointer to a local that holds a carrier stores into that local, read through
+// either.
+through_a_pointer_to_it :: proc(@(escape=stored) carrier: ^mut int) {
+	value := 7;
+	local := &mut value;
+	pointer := &mut local;
+	pointer^ = carrier;
+	held := pointer^;
+	carrier^ = 2;
+	held^ = 1;
+}
+
+read_back_by_name :: proc(@(escape=stored) carrier: ^mut int) {
+	value := 7;
+	local := &mut value;
+	pointer := &mut local;
+	pointer^ = carrier;
+	held := local;
+	carrier^ = 2;
+	held^ = 1;
+}
+
+// Storing at a variable may land in another element each time.
+in_a_loop_at_a_variable :: proc(links: []mut Link, k: int, @(escape=stored) carrier: ^mut int) {
+	for (i := 0; i < 2; i += 1) { links[k] = Link{carrier}; }
+	held := links[k].to;
+	held^ = 1;
+}
+
+main :: proc() {}

@@ -242,55 +242,60 @@ another is treated the same way, for the same reason. Resetting `allowed` itself
 the same thing. Telling them apart takes region facts by program point. Found while
 fixing the conditional write on 2026-11-01 at `46cf2aa8` (P3, over-rejection).
 
-### A whole element copied through a view parameter is not seen by a call
+### A swap with a temporary is rejected in a branch or a loop
 
-[Weakening and reborrows](design.md#weakening-and-reborrows) says a call uses each
-mutable carrier reachable through it, so a carrier and its copy cannot both be left
-to one call, but a body that copies a whole element through its view parameter and
-then hands the view on compiles, and the callee writes through both:
+[Weakening and reborrows](design.md#weakening-and-reborrows) lets a carrier leave its
+place, and a swap ends with each carrier in one place. Written with a temporary in a
+branch or a loop, it is `L0641`, in a branch at the reads after it, though the same
+swap in straight-line code and one written in a statement are accepted:
 
 ```loke
 package main;
 Link :: struct { to: ^mut int }
-poke_both :: proc(links: []mut Link) { links[0].to^ = 1; links[1].to^ = 2; }
-at_constants :: proc(links: []mut Link) {
-    links[0] = links[1];
-    poke_both(links); // should be rejected
+flip :: proc() -> bool { return true; }
+in_a_branch :: proc(links: ^mut [2]Link) {
+    if (flip()) {
+        held := links^[0];
+        links^[0] = links^[1];
+        links^[1] = held;
+    }
+    first := links^[0].to; // L0641; should be accepted
+    second := links^[1].to; // L0641; should be accepted
+    first^ = 1;
+    second^ = 2;
 }
-at_variables :: proc(links: []mut Link, i: int, j: int) {
-    links[i] = links[j];
-    poke_both(links); // should be rejected
-}
-both_used :: proc(links: []mut Link) {
-    held := links[0];
-    links[1] = held;
-    copy := links[1].to;
-    held.to^ = 3; // should be rejected
-    copy^ = 4;
+in_a_loop :: proc(links: ^mut [2]Link) {
+    for (i := 0; i < 2; i += 1) {
+        held := links^[0]; // L0641; should be accepted
+        links^[0] = links^[1]; // L0641; should be accepted
+        links^[1] = held; // L0641; should be accepted
+    }
 }
 main :: proc() {}
 ```
 
-The same store of the carrier field, `links[0].to = links[1].to`, is rejected, as is
-the same call after `duplicate(links)`. A record stored through a view parameter
-joins into the parameter itself (`prov_view_element`), and nothing links its carriers
-to the slots of the elements, so the call reads no carrier and reborrow of it
-together, and a copy out of the element is no reborrow of the local it came from. Linking them as a field store does needs the copy told from a value that
-came from elsewhere, and from a swap written by hand. Found on 2026-11-01 while
-making a call use what its arguments reach at once.
+What a store links holds from that store on, and a reborrow is severed only where it
+is severed on every path (`solve_severing`), so at the join, or round the loop, the
+links of the swap are live where the reads before them are made. Telling them apart
+needs them keyed by which definition reaches, as
+[Compositional loan construction](open-questions.md#compositional-loan-construction)
+says of value identity. Found on 2026-11-01 while deriving a store's links in the
+solve; `carrier_store_matrix` lists these cases (P3, over-rejection).
 
-### Copies out of elements reordered whole through a view parameter are rejected
+### Copies out of elements swapped with a temporary through a view parameter are rejected
 
-[Weakening and reborrows](design.md#weakening-and-reborrows) says a reordering leaves
-each carrier in one place, and in a view parameter elements at different constant
-indices are different places. After whole elements are reordered, a copy out of each
-is still `L0641`, though the same statement on their carrier fields compiles:
+[Weakening and reborrows](design.md#weakening-and-reborrows) says each carrier is in
+one place after a swap. Through a view parameter, a copy out of each is `L0641` after
+a swap with a temporary, though the same copies compile after a swap in a statement,
+and through any other place form:
 
 ```loke
 package main;
 Link :: struct { to: ^mut int }
 copies_of_each :: proc(links: []mut Link) {
-    links[0], links[1] = links[1], links[0];
+    held := links[0];
+    links[0] = links[1];
+    links[1] = held;
     first := links[0].to;
     second := links[1].to; // L0641; should be accepted
     first^ = 1;
@@ -299,53 +304,39 @@ copies_of_each :: proc(links: []mut Link) {
 main :: proc() {}
 ```
 
-A record stored through a view parameter joins into the parameter itself
-(`prov_view_element`), which every load through it then reads, so both copies reborrow
-that one slot. Leaving the join out for a reordering loses what a moved copy reborrowed,
-since nothing links a record's carriers to the slots of the elements. Found on
-2026-11-01 while making a reordering of fields move its carriers (P3, over-rejection).
+All of a view parameter's slots hold one loan, so `prov_slots_overlap` cannot tell what
+`first` holds from what `held` left in `links[1]`, and the chain through `held` still
+reaches `first`. Found on 2026-11-01 while deriving a store's links in the solve (P3,
+over-rejection).
 
-### A swap written with a temporary is rejected
+### A call that swaps with a temporary counts as copying
 
-[Weakening and reborrows](design.md#weakening-and-reborrows) lets a carrier leave
-its place, and a body reordering what it holds ends with each carrier in one
-place. Written with a temporary, the reordering is `L0641` at the second store,
-though `links[0], links[1] = links[1], links[0]` and `links.swap(0, 1)` are
-accepted:
+[Weakening and reborrows](design.md#weakening-and-reborrows) says a reordering is not
+a copy, and a call summary (`Carrier_Move.copied`) says which its body does. A swap
+with a temporary in the callee compiles but counts as a copy, so using both elements
+after the call is `L0641`, as it is not after the same swap in a statement:
 
 ```loke
 package main;
 Link :: struct { to: ^mut int }
 swap_by_hand :: proc(links: []mut Link) {
     held := links[0];
-    links[0] = links[1]; // L0641; should be accepted
+    links[0] = links[1];
     links[1] = held;
+}
+caller :: proc() {
+    a := 1; b := 2;
+    links := [2]Link{Link{&mut a}, Link{&mut b}};
+    swap_by_hand(&mut links[:]);
+    links[0].to^ = 1; // L0641; should be accepted
+    links[1].to^ = 2;
 }
 main :: proc() {}
 ```
 
-Found while separating calls that move carriers from calls that copy them on
-2026-11-01. It does not depend on those summaries.
-
-The cause is traced, and three things stand in the way. Which storage a store through
-carriers names is known only to the solve, so `prov_reborrow_stored_content` and
-`prov_link_stored_carrier` link the copy to every local slot of its type, here
-`held.to`, which the third statement uses, and all of a view parameter's slots hold one
-loan, so `prov_slots_overlap` cannot tell them apart. That link can go where no mutable
-loan names the local, which makes the program above compile, but it is the only thing
-rejecting a real conflict after the swap: with it gone,
-`held.to^ = 3; links[1].to^ = 4;` afterwards compiles too, as the same store without the
-swap already does ([A whole element copied through a view parameter is not seen by a
-call](#a-whole-element-copied-through-a-view-parameter-is-not-seen-by-a-call)). Linking
-a record's carriers to the slots of the elements closes that, and then needs what the
-written-out swap of carrier fields, `held := links[0].to; links[0].to = links[1].to;
-links[1].to = held;`, needs today, which is `L0641` at its first read: that a link holds
-only from its store on, as `held` is not yet in `links[1]` when `links[1].to` is read,
-and that a slot replaced by a store is no longer suspended by what was taken from it
-(`Prov_Event.replaces`). A reordering's own reads are marked (`Prov_Reborrow.moved`), but
-which reads a later store makes into a move is a matter of flow. `run_severing_event`
-would have to handle both, after `prov_reborrow_loaded` has added the loads' reborrows,
-which `solve_reaching` runs too early to see.
+`collect_carrier_moves` asks only whether each store permutes in its own statement
+(`prov_assign_permutes`). Found on 2026-11-01 while deriving a store's links in the
+solve (P3, over-rejection).
 
 ### A reordering of fields through a traversal binding is rejected
 

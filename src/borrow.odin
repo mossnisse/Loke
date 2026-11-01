@@ -260,6 +260,30 @@ Prov_Slot_Kind :: enum u8 {
 	Caller,
 }
 
+// A fresh borrow of a root, with its own `.Access` event, -1 when there is none,
+// so `ro: []int = xs[0:2]` registers a read, not a write.
+Prov_Fresh_Borrow :: struct {
+	loan:   Loan_Id,
+	access: Prov_Event_At,
+}
+
+// A borrow through carriers, which this otherwise empty slot stands for, so a
+// read-only destination can settle it as it does a fresh loan's access
+// (`prov_reborrow`). `writes` are its `.Through` events up to `writes_end`, none
+// for a borrow that writes nothing. `walk_reads` are the events reading the
+// carriers it goes through, which that destination makes reads only; the
+// subscripts on the way are not among them, as they may write.
+Prov_Through_Borrow :: struct {
+	writes:     Prov_Event_At,
+	writes_end: int,
+	walk_reads: []Prov_Event_At,
+}
+
+Prov_Slot_Borrow :: union {
+	Prov_Fresh_Borrow,
+	Prov_Through_Borrow,
+}
+
 // A carrier value the analysis follows: a variable, parameter or expression
 // temporary. Reaching loans are per slot, so overwriting one carrier ends only
 // the value that was overwritten.
@@ -283,13 +307,8 @@ Prov_Slot :: struct {
 	// `path` stands for every carrier below it, so a write joins rather than
 	// replaces.
 	content_truncated: bool,
-	// The fresh borrow this temporary holds, weakened once its destination is
-	// known, together with that borrow's own `.Access` event (so
-	// `ro: []int = xs[0:2]` registers a read, not a write). The index is -1 when
-	// there is none.
-	fresh_loan:         Loan_Id,
-	fresh_access_block: Block_Id,
-	fresh_access_index: int,
+	// The borrow this temporary stands for, weakened once its destination is known.
+	borrow: Prov_Slot_Borrow,
 	// A result held across its exit path's deferred statements.
 	returned: bool,
 	// Read out through a carrier, so what it copies is known only once the
@@ -309,17 +328,6 @@ Prov_Slot :: struct {
 	// Loaded on the way to a switch subject, which a payload binding views
 	// through it (`prov_subject_view`).
 	viewed: bool,
-	// The `.Through` events of a borrow through carriers, which this otherwise
-	// empty slot stands for, so a read-only destination can settle them as it
-	// does a fresh loan's access (`prov_reborrow`): those from `through_index`
-	// up to `through_end`, none for a borrow that writes nothing.
-	// `walk_reads` are the events reading the carriers the borrow goes
-	// through, which that destination makes reads only; the subscripts on the
-	// way are not among them, as they may write.
-	through_block: Block_Id,
-	through_index: int,
-	through_end:   int,
-	walk_reads:    []Prov_Event_At,
 	// The paths, below the storage this slot's loans name, that its value may
 	// point at, as `[count]` for `&mut h^.count`, and both `[count]` and
 	// `[total]` for a pointer chosen between borrows of the two
@@ -444,12 +452,6 @@ empty_prov_slot :: proc(symbol: Symbol_Id) -> Prov_Slot {
 		symbol             = symbol,
 		content_type       = INVALID_TYPE,
 		content_shape      = INVALID_TYPE,
-		fresh_loan         = NO_LOAN,
-		fresh_access_block = NO_BLOCK,
-		fresh_access_index = -1,
-		through_block      = NO_BLOCK,
-		through_index      = -1,
-		through_end        = -1,
 	}
 }
 
@@ -484,6 +486,9 @@ Prov_Reborrow :: struct {
 	// Links carriers a call may have copied among each other, in both directions
 	// (`prov_link_copied_carriers`).
 	copied_within: bool,
+	// Links a carrier to where a store through carriers landed it: the
+	// `Prov_Event.store_id` of that store, before which it holds nothing here.
+	from_store: int,
 	// `derived` took the carrier from `source` in a reordering (`prov_assign_permutes`),
 	// which leaves `source` a carrier of its own, so `source` is not suspended, while
 	// what `source` was itself derived from goes on to where the carrier went.
@@ -1530,6 +1535,8 @@ merge_provenance :: proc(c: ^Compiler, into: ^Result_Dependencies, from: Result_
 // holding it is.
 @(private = "file")
 Prov_State :: struct {
+	// The slots a `Publish` being run lands in (`link_landed_stores`).
+	landed: ^[dynamic]int,
 	// Why a diagnostic may be imprecise; never consulted by the rules.
 	precision:            []Precision_Loss,
 	merged_precision:     Precision_Loss,
@@ -3349,7 +3356,10 @@ solve_provenance :: proc(k: ^Checker, graph: ^Flow_Graph) {
 		return
 	}
 	solve_reaching(&state)
+	// Links depend on reach, and severing on links.
+	link_landed_stores(&state)
 	resolve_content_reads(&state)
+	solve_severing(&state)
 	solve_loan_liveness(&state)
 	report_provenance(&state)
 }
@@ -3374,8 +3384,6 @@ prepare_state :: proc(state: ^Prov_State) -> bool {
 		block.reach_exit = make([]u8, width, graph.alloc)
 		block.ended_entry = make([]bool, state.loans, graph.alloc)
 		block.ended_exit = make([]bool, state.loans, graph.alloc)
-		block.severed_entry = make([]bool, len(graph.reborrows), graph.alloc)
-		block.severed_exit = make([]bool, len(graph.reborrows), graph.alloc)
 		block.live_entry = make([]Slot_Use, max(state.slots, 1), graph.alloc)
 		block.live_exit = make([]Slot_Use, max(state.slots, 1), graph.alloc)
 		block.use_entry = make([]Span, max(state.slots, 1), graph.alloc)
@@ -3387,22 +3395,48 @@ prepare_state :: proc(state: ^Prov_State) -> bool {
 	state.released = make([]bool, state.loans, graph.alloc)
 	state.released_indices = make([dynamic]int, graph.alloc)
 	state.ended = make([]bool, state.loans, graph.alloc)
-	state.severed = make([]bool, len(graph.reborrows), graph.alloc)
 	state.rearranged = make([dynamic]int, graph.alloc)
-	severable := make([dynamic]int, 0, 4, graph.alloc)
-	for reborrow, index in graph.reborrows {
-		if reborrow.copied_within || graph.fresh_slots[reborrow.source] || prov_slot_is_loaded_temporary(graph, reborrow.source) ||
-		   prov_slot_is_stored_temporary(graph, reborrow) {
-			append(&severable, index)
-		}
-	}
-	state.severable = severable[:]
 	state.live = make([]Slot_Use, max(state.slots, 1), graph.alloc)
 	state.uses = make([]Span, max(state.slots, 1), graph.alloc)
 	state.merged = make([]u8, max(state.row_bytes, 1), graph.alloc)
 	settle_pool_joins(state)
 	solve_view_defs(graph)
 	return true
+}
+
+// Links each store's copies to the slots it lands in, at the settled reach.
+@(private = "file")
+link_landed_stores :: proc(state: ^Prov_State) {
+	graph := state.graph
+	if !graph.has_linked_store {
+		return
+	}
+	stores := 0
+	for block in graph.blocks {
+		if !block.prov_visited {
+			continue
+		}
+		copy(state.reach, block.reach_entry)
+		copy(state.precision, block.precision_entry)
+		copy(state.ended, block.ended_entry)
+		for &event in block.prov {
+			if event.kind != .Publish || !event.links_copies {
+				run_prov_event(state, event, state.reach, state.ended)
+				continue
+			}
+			landed := make([dynamic]int, 0, 4, graph.alloc)
+			state.landed = &landed
+			run_prov_event(state, event, state.reach, state.ended)
+			state.landed = nil
+			stores += 1
+			event.store_id = stores
+			taken := len(graph.reborrows)
+			prov_link_landed(graph, event, landed[:])
+			for &reborrow in graph.reborrows[taken:] {
+				reborrow.from_store = stores
+			}
+		}
+	}
 }
 
 // Forward: which loans each carrier slot may hold, and which loans an earlier
@@ -3421,7 +3455,6 @@ solve_reaching :: proc(state: ^Prov_State) {
 		mem.zero_slice(state.reach)
 		mem.zero_slice(state.precision)
 		mem.zero_slice(state.ended)
-		mem.zero_slice(state.severed)
 		if id != 0 {
 			seen := false
 			for predecessor in block.preds {
@@ -3436,12 +3469,8 @@ solve_reaching :: proc(state: ^Prov_State) {
 					for value, index in source.ended_exit {
 						state.ended[index] &&= value
 					}
-					for value, index in source.severed_exit {
-						state.severed[index] &&= value
-					}
 				} else {
 					copy(state.ended, source.ended_exit)
-					copy(state.severed, source.severed_exit)
 				}
 				seen = true
 			}
@@ -3454,31 +3483,116 @@ solve_reaching :: proc(state: ^Prov_State) {
 				bit_mark(reach_row(state, state.reach, entry.slot), int(entry.loan))
 				state.precision[entry.slot] |= graph.prov_slots[entry.slot].precision
 			}
-			// No call has copied anything yet (`prov_link_copied_carriers`).
-			for index in state.severable {
-				state.severed[index] = graph.reborrows[index].copied_within
-			}
 		}
 		copy(block.reach_entry, state.reach)
 		copy(block.precision_entry, state.precision)
 		copy(block.ended_entry, state.ended)
-		copy(block.severed_entry, state.severed)
 		for event in block.prov {
 			run_prov_event(state, event, state.reach, state.ended)
-			run_severing_event(state, event)
 		}
 		if block.prov_visited &&
 		   slice.equal(block.precision_exit, state.precision) &&
 		   slice.equal(block.reach_exit, state.reach) &&
-		   slice.equal(block.ended_exit, state.ended) &&
-		   slice.equal(block.severed_exit, state.severed) {
+		   slice.equal(block.ended_exit, state.ended) {
 			continue
 		}
 		copy(block.reach_exit, state.reach)
 		copy(block.precision_exit, state.precision)
 		copy(block.ended_exit, state.ended)
-		copy(block.severed_exit, state.severed)
 		block.prov_visited = true
+		for successor in block.succs {
+			if !queued[int(successor)] {
+				append(&queue, successor)
+				queued[int(successor)] = true
+			}
+		}
+	}
+}
+
+// Forward, once reach and every reborrow have settled: which reborrows were severed
+// on every path to each block (`run_severing_event`). Only a call's copies read reach,
+// which of them it rearranges.
+@(private = "file")
+solve_severing :: proc(state: ^Prov_State) {
+	graph := state.graph
+	severable := make([dynamic]int, 0, 4, graph.alloc)
+	replays := false
+	replaced := make(map[int]bool, graph.alloc)
+	for block in graph.blocks {
+		for event in block.prov {
+			if event.kind == .Publish {
+				for slot in event.replaces { replaced[slot] = true }
+			}
+		}
+	}
+	for reborrow, index in graph.reborrows {
+		if reborrow.copied_within || reborrow.from_store > 0 || replaced[reborrow.source] || reborrow_source_is_fresh(graph, reborrow) {
+			append(&severable, index)
+			replays ||= reborrow.copied_within
+		}
+	}
+	state.severable = severable[:]
+	state.severed = make([]bool, len(graph.reborrows), graph.alloc)
+	if len(severable) == 0 {
+		return
+	}
+	for block in graph.blocks {
+		block.severed_entry = make([]bool, len(graph.reborrows), graph.alloc)
+		block.severed_exit = make([]bool, len(graph.reborrows), graph.alloc)
+	}
+	visited := make([]bool, len(graph.blocks), graph.alloc)
+	queued := make([]bool, len(graph.blocks), graph.alloc)
+	queue := make([dynamic]Block_Id, 0, len(graph.blocks), graph.alloc)
+	append(&queue, Block_Id(0))
+	queued[0] = true
+	for head := 0; head < len(queue); head += 1 {
+		id := int(queue[head])
+		block := graph.blocks[id]
+		queued[id] = false
+		mem.zero_slice(state.severed)
+		if id != 0 {
+			seen := false
+			for predecessor in block.preds {
+				if !visited[int(predecessor)] {
+					continue
+				}
+				source := graph.blocks[predecessor]
+				// A predecessor not visited yet stays out of the meet.
+				if seen {
+					for value, index in source.severed_exit {
+						state.severed[index] &&= value
+					}
+				} else {
+					copy(state.severed, source.severed_exit)
+				}
+				seen = true
+			}
+			if !seen {
+				continue
+			}
+		} else {
+			// No call has copied anything yet (`prov_link_copied_carriers`).
+			for index in state.severable {
+				state.severed[index] = graph.reborrows[index].copied_within || graph.reborrows[index].from_store > 0
+			}
+		}
+		copy(block.severed_entry, state.severed)
+		if replays {
+			copy(state.reach, block.reach_entry)
+			copy(state.precision, block.precision_entry)
+			copy(state.ended, block.ended_entry)
+		}
+		for event in block.prov {
+			if replays {
+				run_prov_event(state, event, state.reach, state.ended)
+			}
+			run_severing_event(state, event)
+		}
+		if visited[id] && slice.equal(block.severed_exit, state.severed) {
+			continue
+		}
+		copy(block.severed_exit, state.severed)
+		visited[id] = true
 		for successor in block.succs {
 			if !queued[int(successor)] {
 				append(&queue, successor)
@@ -3497,11 +3611,29 @@ solve_reaching :: proc(state: ^Prov_State) {
 @(private = "file")
 run_severing_event :: proc(state: ^Prov_State, event: Prov_Event) {
 	graph := state.graph
+	if event.kind == .Publish {
+		// A store starts what it links, and ends what was taken from a slot it replaces,
+		// which holds another carrier now (design.md "Weakening and reborrows").
+		for index in state.severable {
+			reborrow := graph.reborrows[index]
+			if reborrow.from_store > 0 && reborrow.from_store == event.store_id {
+				state.severed[index] = false
+			} else if slice.contains(event.replaces, reborrow.source) && !stores_what_slot_held(state, event, reborrow.source) {
+				state.severed[index] = true
+			}
+		}
+		return
+	}
 	if event.kind != .Def && event.kind != .Load && event.kind != .Rearrange {
 		return
 	}
 	for index in state.severable {
 		reborrow := graph.reborrows[index]
+		if reborrow.from_store > 0 {
+			// Only its store starts it, and once started it stays: a chain through it
+			// goes on naming the carrier wherever that went.
+			continue
+		}
 		if reborrow.copied_within {
 			if event.kind == .Rearrange && reborrow.source == event.slot && slice.contains(state.rearranged[:], reborrow.derived) ||
 			   event.kind == .Rearrange && reborrow.derived == event.slot && slice.contains(state.rearranged[:], reborrow.source) {
@@ -4619,7 +4751,7 @@ publish_replaced_slots :: proc(state: ^Prov_State, event: Prov_Event, reach: []u
 		return out[:]
 	}
 	for index in root_own_slots(graph, graph.roots[int(loan.root)]) {
-		if publish_replaces(graph.k.c, graph.prov_slots[index], loan, event.path, event.carried) {
+		if publish_replaces(graph, index, loan, event.path, event.carried) {
 			append(&out, index)
 		}
 	}
@@ -4737,7 +4869,8 @@ publish_into_slot :: proc(
 	if !paths_overlap_joined(slot.path, loan.path, path) {
 		return
 	}
-	if publish_replaces(graph.k.c, slot, loan, path, stored) {
+	if state.landed != nil { append(state.landed, index) }
+	if publish_replaces(graph, index, loan, path, stored) {
 		copy(reach_row(state, reach, index), state.merged)
 		state.precision[index] = state.merged_precision | carrier_loss | slot.precision
 		return
@@ -4767,7 +4900,8 @@ publish_into_caller :: proc(
 			continue
 		}
 		found = true
-		landed = landed && (carrier || stored_content_linked(c, slot, linked))
+		if state.landed != nil { append(state.landed, index) }
+		landed = landed && (carrier || slot.content_type != INVALID_TYPE && prov_slot_holds_stored(c, slot, linked))
 		if caller_replaces(c, slot, path, stored) {
 			copy(reach_row(state, reach, index), state.merged)
 			state.precision[index] = state.merged_precision | carrier_loss | slot.precision
@@ -4779,21 +4913,6 @@ publish_into_caller :: proc(
 	return landed && found
 }
 
-// Whether `prov_reborrow_stored_content` links the carriers of a `stored`
-// value to `slot`, a caller slot it may land in: one standing for one place,
-// of the type of a carrier inside the value whose place it may be.
-@(private = "file")
-stored_content_linked :: proc(c: ^Compiler, slot: Prov_Slot, stored: Type_Id) -> bool {
-	if !slot.caller_one || slot.content_type == INVALID_TYPE {
-		return false
-	}
-	for inner in carrier_shape(c, stored) {
-		if !inner.truncated && inner.type == slot.content_type && prov_path_may_end_in(slot.path, inner.steps) {
-			return true
-		}
-	}
-	return false
-}
 
 // Whether a store of `stored` at `path` below a parameter loan's caller
 // storage replaces `slot`, one of its caller slots: the storage is one place,
@@ -4820,16 +4939,18 @@ caller_replaces :: proc(c: ^Compiler, slot: Prov_Slot, path: []Proj_Step, stored
 // carrier inside it, as storing it into a local does (design.md "Values that
 // contain borrows").
 @(private = "file")
-publish_replaces :: proc(c: ^Compiler, slot: Prov_Slot, loan: Prov_Loan, path: []Proj_Step, stored: Type_Id) -> bool {
-	if stored == INVALID_TYPE || slot.content_type == INVALID_TYPE || !path_is_exact(slot.path) ||
+publish_replaces :: proc(graph: ^Flow_Graph, index: int, loan: Prov_Loan, path: []Proj_Step, stored: Type_Id) -> bool {
+	slot := graph.prov_slots[index]
+	type := slot_carrier_type(graph, index)
+	if stored == INVALID_TYPE || type == INVALID_TYPE || !path_is_exact(slot.path) ||
 	   !path_is_exact(loan.path) || !path_is_exact(path) || !paths_overlap_joined(slot.path, loan.path, path) {
 		return false
 	}
 	at := len(loan.path) + len(path)
-	if slot.content_type == stored {
+	if type == stored {
 		return len(slot.path) == at
 	}
-	return len(slot.path) > at && !type_is_carrier(c, stored) && stored_carrier_at(c, stored, slot.path[at:], slot.content_type)
+	return len(slot.path) > at && !type_is_carrier(graph.k.c, stored) && stored_carrier_at(graph.k.c, stored, slot.path[at:], type)
 }
 
 // Whether a carrier of `type` lies exactly at `below` inside a `stored` value.
@@ -6138,6 +6259,11 @@ live_reborrow_of :: proc(state: ^Prov_State, source: int, live: []Slot_Use, use:
 		   (index < len(state.severed) && state.severed[index]) {
 			continue
 		}
+		// Only its own expression reads a temporary, so a later use of one is of a new
+		// value; what it was copied from is what a store's link suspends.
+		if reborrow.from_store > 0 && graph.prov_slots[source].kind == .Temporary {
+			continue
+		}
 		clear(&pending)
 		clear(&visited)
 		// What was derived from `source` and stored back into it, or into the
@@ -6171,12 +6297,12 @@ live_reborrow_of :: proc(state: ^Prov_State, source: int, live: []Slot_Use, use:
 				return reborrow, slot, true
 			}
 			for next in reborrows_of(state, slot) {
-				// A copy the call that may make it has not reached yet.
-				if graph.reborrows[next].copied_within && next < len(state.severed) && state.severed[next] {
+				// A copy the call or store that may make it has not reached yet.
+				if reborrow_starts_later(graph.reborrows[next]) && next < len(state.severed) && state.severed[next] {
 					continue
 				}
 				// A slot standing for many places holds the copy too, whichever it is.
-				if use.load == .At_Once && graph.reborrows[next].copied_within && graph.reborrows[next].derived == source &&
+				if use.load == .At_Once && reborrow_starts_later(graph.reborrows[next]) && graph.reborrows[next].derived == source &&
 				   slot_stands_for_many(graph.prov_slots[source]) && prov_slots_overlap(state, source, source) && at_once_reaches(state, use, source) {
 					return reborrow, source, true
 				}
@@ -6202,7 +6328,7 @@ at_once_reaches :: proc(state: ^Prov_State, use: Prov_Event, source: int) -> boo
 	append(&derived, source)
 	for at := 0; at < len(derived); at += 1 {
 		for next in reborrows_of(state, derived[at]) {
-			if !(graph.reborrows[next].copied_within && next < len(state.severed) && state.severed[next]) &&
+			if !(reborrow_starts_later(graph.reborrows[next]) && next < len(state.severed) && state.severed[next]) &&
 			   !slice.contains(derived[:], graph.reborrows[next].derived) {
 				append(&derived, graph.reborrows[next].derived)
 			}
@@ -6347,11 +6473,40 @@ place_loans_overlap :: proc(a, b: Prov_Place_Loan) -> bool {
 	return false
 }
 
-// A temporary loaded through a carrier, which only its own expression reads.
+// Whether a store into `slot` stores what was read out of it, as a copy of its old
+// value, so what else was taken from that value still names the same carrier.
 @(private = "file")
-prov_slot_is_loaded_temporary :: proc(graph: ^Flow_Graph, slot: int) -> bool {
-	entry := graph.prov_slots[slot]
-	return entry.loaded && entry.symbol == INVALID_SYMBOL
+stores_what_slot_held :: proc(state: ^Prov_State, event: Prov_Event, slot: int) -> bool {
+	graph := state.graph
+	derived := make([dynamic]int, 0, 8, context.temp_allocator)
+	append(&derived, slot)
+	for at := 0; at < len(derived); at += 1 {
+		if at > 0 && slice.contains(event.sources, derived[at]) {
+			return true
+		}
+		for next in reborrows_of(state, derived[at]) {
+			// A link a later store makes is no part of what this one read.
+			if !(reborrow_starts_later(graph.reborrows[next]) && next < len(state.severed) && state.severed[next]) &&
+			   !slice.contains(derived[:], graph.reborrows[next].derived) {
+				append(&derived, graph.reborrows[next].derived)
+			}
+		}
+	}
+	return false
+}
+
+// A reborrow that holds only from a later event on, which severed means it has not
+// reached yet.
+@(private = "file")
+reborrow_starts_later :: proc(reborrow: Prov_Reborrow) -> bool {
+	return reborrow.copied_within || reborrow.from_store > 0
+}
+
+// Whether redefining a reborrow's source ends what the reborrow took from it.
+@(private = "file")
+reborrow_source_is_fresh :: proc(graph: ^Flow_Graph, reborrow: Prov_Reborrow) -> bool {
+	return graph.fresh_slots[reborrow.source] || graph.prov_slots[reborrow.source].kind == .Temporary ||
+	       prov_slot_is_stored_temporary(graph, reborrow)
 }
 
 // A temporary stored into a named slot. Only its own expression reads it, before

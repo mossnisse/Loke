@@ -1,0 +1,30 @@
+L0641
+@14:12
+`links` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@19:2
+`links` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@27:2
+`held` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@36:2
+`held` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@44:2
+`carrier` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@51:2
+`carrier` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@58:2
+`carrier` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@70:2
+`carrier` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@80:2
+`carrier` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@86:48
+`carrier` cannot be used here: a mutable reborrow of it is still in use

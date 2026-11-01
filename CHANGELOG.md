@@ -10,6 +10,14 @@ checklist.
 
 ### Breaking changes
 
+- A record stored through a view parameter, and a carrier stored through a pointer to
+  a local that holds one, now copy what they hold as a carrier stored alone does
+  ([Weakening and reborrows](design.md#weakening-and-reborrows)). After
+  `links[0] = Link{carrier}; held := links[0].to;`, using `carrier` and `held` compiled
+  with two live mutable carriers to one place, and so did `links[0] = links[1];` before
+  a call given `links`, and `pointer^ = carrier; held := pointer^;`. Each is now
+  `L0641`. Upgrade by ending the use of one before the other, or by replacing the
+  place that holds the copy.
 - A repeated array element's copy hook now counts its reads after the initializer
   is evaluated ([Fixed arrays](design.md#fixed-arrays),
   [Global write effects](design.md#global-write-effects)), with what the initializer
@@ -1158,6 +1166,10 @@ checklist.
 
 ### Fixed
 
+- A swap of carriers written with a temporary through a pointer or view, `held :=
+  links[0]; links[0] = links[1]; links[1] = held;`, no longer conflicts with itself,
+  and copies out of elements reordered whole through a view parameter no longer
+  conflict ([Weakening and reborrows](design.md#weakening-and-reborrows)).
 - A failed interface bound no longer calls a private constant, or a private
   procedure without a receiver, a private method. `L0444` now says the type has no
   such method, as neither could meet the slot if it were public
