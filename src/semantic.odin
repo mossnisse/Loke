@@ -988,7 +988,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.spawn_calls = make(map[^Expr_Call]^Spawn_Task, 2, c.semantic_allocator)
 	c.lifecycles = make(map[Type_Id]^Lifecycle, c.semantic_allocator)
 	c.validated_attributes = make(map[u64]bool, c.semantic_allocator)
-	c.checked_copy_decisions = make(map[u64]bool, c.semantic_allocator)
+	c.reported_copy_failures = make(map[u64]bit_set[Copy_Failure], c.semantic_allocator)
 	c.reported_generic_hooks = make(map[u64]bool, c.semantic_allocator)
 	c.lifecycle_operations = make(map[Type_Id]Lifecycle_Operations, c.semantic_allocator)
 	c.runtime_types = make(map[string]Type_Id, c.semantic_allocator)

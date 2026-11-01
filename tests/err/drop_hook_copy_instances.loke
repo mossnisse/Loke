@@ -1,0 +1,165 @@
+// design.md "Lifecycle hooks and resource types": a record declared in a generic
+// procedure is a concrete declaration in each instance, with that instance's hooks
+// and fields. A successful instance hides no other's failure, whichever is checked
+// first, and instances that fail alike report it once.
+package main;
+
+Token :: move_only struct { id: int }
+Other :: move_only struct { id: int }
+
+// An instance adds the hook, after and before one that has none.
+hook_later :: proc($T: type) {
+	Later :: struct { fd: int }
+	when (T == int) {
+		impl Later {
+			close :: hook(drop) proc(self: inout Later) {}
+		}
+	}
+}
+hook_earlier :: proc($T: type) {
+	Earlier :: struct { fd: int }
+	when (T == int) {
+		impl Earlier {
+			close :: hook(drop) proc(self: inout Earlier) {}
+		}
+	}
+}
+
+// An instance acquires a move-only field, after and before one that copies.
+field_later :: proc($T: type) {
+	Later :: struct @(fieldwise_copy) { value: T }
+	impl Later {
+		close :: hook(drop) proc(self: inout Later) {}
+	}
+}
+field_earlier :: proc($T: type) {
+	Earlier :: struct @(fieldwise_copy) { value: T }
+	impl Earlier {
+		close :: hook(drop) proc(self: inout Earlier) {}
+	}
+}
+
+// An instance has no hook for the attribute to keep a copy beside.
+unhooked_later :: proc($T: type) {
+	Later :: struct @(fieldwise_copy) { fd: int }
+	when (T == int) {
+		impl Later {
+			close :: hook(drop) proc(self: inout Later) {}
+		}
+	}
+}
+unhooked_earlier :: proc($T: type) {
+	Earlier :: struct @(fieldwise_copy) { fd: int }
+	when (T == int) {
+		impl Earlier {
+			close :: hook(drop) proc(self: inout Earlier) {}
+		}
+	}
+}
+
+// An instance declares the copy the attribute would keep.
+copied_later :: proc($T: type) {
+	Later :: struct @(fieldwise_copy) { fd: int }
+	impl Later {
+		close :: hook(drop) proc(self: inout Later) {}
+	}
+	when (T == int) {
+		impl Later {
+			copy :: hook(copy) proc(self, allocator: Allocator) -> Result(Later, Allocator_Error) {
+				return .ok(Later{self.fd});
+			}
+		}
+	}
+}
+
+// Failing alike reports once, here with a different note for a move-only field.
+repeated :: proc($T: type) {
+	Undecided :: struct { value: T }
+	impl Undecided {
+		close :: hook(drop) proc(self: inout Undecided) {}
+	}
+	Holder :: struct @(fieldwise_copy) { value: T }
+	impl Holder {
+		close :: hook(drop) proc(self: inout Holder) {}
+	}
+}
+
+// Two instances can fail differently, and each failure is reported.
+different :: proc($T: type) {
+	Both :: struct @(fieldwise_copy) { value: T }
+	impl Both {
+		close :: hook(drop) proc(self: inout Both) {}
+	}
+	when (T == int) {
+		impl Both {
+			copy :: hook(copy) proc(self, allocator: Allocator) -> Result(Both, Allocator_Error) {
+				return .ok(Both{self.value});
+			}
+		}
+	}
+}
+
+// A static `foreach` checks a copy of its body per element too.
+each :: proc() {
+	foreach ($i in 0 ..< 3) {
+		Element :: struct { fd: int }
+		when (i == 1) {
+			impl Element {
+				close :: hook(drop) proc(self: inout Element) {}
+			}
+		}
+	}
+}
+
+// Every instance decides or has nothing to decide: none of these report.
+decided :: proc($T: type) {
+	Fields :: struct @(fieldwise_copy) { value: int }
+	impl Fields {
+		close :: hook(drop) proc(self: inout Fields) {}
+	}
+	Sole :: move_only struct { value: T }
+	impl Sole {
+		close :: hook(drop) proc(self: inout Sole) {}
+	}
+	Bare :: struct { value: T }
+	Conditional :: move_only struct { fd: int }
+	when (T == int) {
+		impl Conditional {
+			close :: hook(drop) proc(self: inout Conditional) {}
+		}
+	}
+}
+
+main :: proc() {
+	hook_later(bool);
+	hook_later(int);
+	hook_earlier(int);
+	hook_earlier(bool);
+
+	field_later(int);
+	field_later(Token);
+	field_earlier(Token);
+	field_earlier(int);
+
+	unhooked_later(int);
+	unhooked_later(bool);
+	unhooked_earlier(bool);
+	unhooked_earlier(int);
+
+	copied_later(int);
+	copied_later(bool);
+
+	repeated(Token);
+	repeated(Other);
+	repeated(int);
+
+	different(int);
+	different(Token);
+	different(Other);
+
+	each();
+
+	decided(int);
+	decided(bool);
+	decided(Token);
+}

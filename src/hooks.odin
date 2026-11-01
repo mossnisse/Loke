@@ -1114,6 +1114,32 @@ drop_hook_shaped :: proc(d: ^Decl) -> bool {
 	return len(params) == 1 && len(params[0].names) == 1 && params[0].mode == .Inout && params[0].names[0].name.text == "self"
 }
 
+// What `check_copy_decision` can find wrong with a declaration.
+Copy_Failure :: enum {
+	Undecided,
+	Opted_Move_Only,
+	Opted_Copy_Hook,
+	Opted_No_Drop_Hook,
+	Opted_Move_Only_Field,
+}
+
+// Whether to report this failure of `d`, which instances of a generic procedure
+// share while each checks its own copy. A speculative check discards what it
+// reports, so it does not count.
+@(private = "file")
+claim_copy_failure :: proc(k: ^Checker, d: ^Decl, failure: Copy_Failure) -> bool {
+	if !committing(k.c) {
+		return true
+	}
+	key := u64(d.span.file) << 32 | u64(d.span.lo)
+	reported := k.c.reported_copy_failures[key]
+	if failure in reported {
+		return false
+	}
+	k.c.reported_copy_failures[key] = reported + {failure}
+	return true
+}
+
 // design.md "Lifecycle hooks and resource types": a record with a drop hook says
 // in writing how it is copied. Asked once every `impl` block the record can have
 // is checked, so a hook another diagnostic rejected is not reported again. The
@@ -1195,18 +1221,26 @@ check_copy_decision :: proc(k: ^Checker, d: ^Decl) {
 	if opted {
 		switch {
 		case record.move_only:
-			errorf(k.c, opt_in.span, "L0748", "`@(fieldwise_copy)` keeps a generated copy, but a `move_only` record has none")
+			if claim_copy_failure(k, d, .Opted_Move_Only) {
+				errorf(k.c, opt_in.span, "L0748", "`@(fieldwise_copy)` keeps a generated copy, but a `move_only` record has none")
+			}
 		case copy_written:
-			errorf(k.c, opt_in.span, "L0748", "`@(fieldwise_copy)` keeps the generated copy, but `%s` declares `hook(copy)`", name)
-			add_notef(k.c, copy_span, "`hook(copy)` is declared here")
+			if claim_copy_failure(k, d, .Opted_Copy_Hook) {
+				errorf(k.c, opt_in.span, "L0748", "`@(fieldwise_copy)` keeps the generated copy, but `%s` declares `hook(copy)`", name)
+				add_notef(k.c, copy_span, "`hook(copy)` is declared here")
+			}
 		case !drop_written:
-			errorf(k.c, opt_in.span, "L0749", "`@(fieldwise_copy)` is for a record with `hook(drop)`; `%s` declares none, so it already copies field by field", name)
+			if claim_copy_failure(k, d, .Opted_No_Drop_Hook) {
+				errorf(k.c, opt_in.span, "L0749", "`@(fieldwise_copy)` is for a record with `hook(drop)`; `%s` declares none, so it already copies field by field", name)
+			}
 		case template == nil && type_clone_disabled(k.c, subject):
-			errorf(k.c, opt_in.span, "L0748", "`@(fieldwise_copy)` keeps a generated copy, but `%s` holds a move-only field and has none; write `move_only`", name)
+			if claim_copy_failure(k, d, .Opted_Move_Only_Field) {
+				errorf(k.c, opt_in.span, "L0748", "`@(fieldwise_copy)` keeps a generated copy, but `%s` holds a move-only field and has none; write `move_only`", name)
+			}
 		}
 		return
 	}
-	if record.move_only || !drop_bound || copy_written {
+	if record.move_only || !drop_bound || copy_written || !claim_copy_failure(k, d, .Undecided) {
 		return
 	}
 	errorf(k.c, name_span, "L0747", "`%s` declares `hook(drop)`, so it must say how it is copied", name)

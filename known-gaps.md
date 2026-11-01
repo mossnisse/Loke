@@ -7,44 +7,6 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
-### A local record's copy decision is checked only for its first instance
-
-[Lifecycle hooks and resource types](design.md#lifecycle-hooks-and-resource-types)
-requires a record with a drop hook to state its copy decision. Since
-`bf5cb393`, a record inside a generic procedure is checked only for the first
-instance of that procedure, even when a later instance adds the hook:
-
-```loke
-package main;
-import "core:fmt";
-outer :: proc($T: type) {
-    Handle :: struct { fd: int }
-    when (T == int) {
-        impl Handle {
-            close :: hook(drop) proc(self: inout Handle) {
-                fmt.println("close", self.fd);
-            }
-        }
-    }
-    a := Handle{7};
-    b := a.clone();
-    fmt.println(a.fd, b.fd);
-}
-main :: proc() { outer(bool); outer(int); }
-```
-
-This compiles and prints `close 7` twice for the second call's two values.
-Reversing the calls reports `L0747` at `Handle`, as required. A hook releasing
-the handle would release the same resource twice. The same cache suppresses
-`L0748` when a local `struct @(fieldwise_copy) { value: T }` is instantiated
-with `int` before a move-only `T`; reversing those calls reports the conflict.
-
-`report_local_copy_decisions` in [src/check.odin](src/check.odin) keys
-`checked_copy_decisions` by source position and records successful checks too.
-Check each concrete declaration, and deduplicate only diagnostics that have
-actually been reported, so a successful earlier instance cannot hide a later
-failure. Confirmed on `46cf2aa8` during review on 2026-11-01 (P2).
-
 ### An excluded generic drop hook still supplies cleanup
 
 A generic method whose [bound](design.md#where-clauses) does not hold is not

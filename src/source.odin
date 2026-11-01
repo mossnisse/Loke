@@ -253,9 +253,9 @@ Compiler :: struct {
 	// body checked once per generic instance or static `foreach` element is a
 	// clone with the same spans, and must not report its attributes again.
 	validated_attributes: map[u64]bool,
-	// Each body-local record's `check_copy_decision`, by the same key, so generic
-	// instances of its procedure report it once.
-	checked_copy_decisions: map[u64]bool,
+	// What `check_copy_decision` has reported of each declaration, by the same key,
+	// so instances of a generic procedure that fail alike report it once.
+	reported_copy_failures: map[u64]bit_set[Copy_Failure],
 	// A generic block's hook already reported, by its declaration's position, so
 	// each of the record's instances does not report it again.
 	reported_generic_hooks: map[u64]bool,

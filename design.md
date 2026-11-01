@@ -4410,9 +4410,12 @@ is an error at the declaration unless the record does one of these:
 
 The decision is read from the declaration and its own `impl` blocks. A record
 that a move-only field already makes move-only still writes `move_only`, and a
-generic record decides once, for all of its instances. A hook that is itself
-rejected asks for no decision, and a `hook(copy)` counts as the decision even
-when it is rejected or is written only for some instances.
+generic record decides once, for all of its instances. A record declared in a
+generic procedure's body is a declaration of each instance of the procedure, with
+that instance's fields and `impl` blocks, so each answers for itself. A hook that
+is itself rejected asks for no decision, and a `hook(copy)` counts as the decision
+even when it is rejected or is written only for some of a generic record's
+instances.
 
 A `hook(copy)` on a record with no copy to customize is an error: a `move_only`
 one, or one a move-only field makes move-only. On a generic record that depends

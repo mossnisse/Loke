@@ -14,16 +14,10 @@ audit](nondeterminism-audit.md).
 ## Review of drop-hook copy decisions and generic hook validation (2026-11-01)
 
 Reviewed `3a5b4f7b`, `bf5cb393`, and `46cf2aa8` for correctness,
-simplification, and structure. One gap remains in the new copy-decision check:
-
-- [A successful first instance suppresses later checks](known-gaps.md#a-local-records-copy-decision-is-checked-only-for-its-first-instance)
-  for a record inside a generic procedure. A later instance can add a drop hook
-  yet keep an unchosen generated copy; it can also acquire a move-only field
-  without reporting an invalid `@(fieldwise_copy)`. Reversing the calls changes
-  acceptance (P2).
-
-A deferred record declaration bypassing `L0747` was also found here and has been
-fixed.
+simplification, and structure. Two gaps it found in the new copy-decision check
+have since been fixed: a deferred record declaration bypassing `L0747`, and a
+successful first instance of a generic procedure hiding a later instance's
+failure, whose acceptance depended on the order of the calls.
 
 An [excluded generic drop hook still supplies cleanup](known-gaps.md#an-excluded-generic-drop-hook-still-supplies-cleanup),
 which fails emission with an internal backend diagnostic. This was also

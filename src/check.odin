@@ -3080,8 +3080,9 @@ check_stmts :: proc(k: ^Checker, stmts: []Stmt) -> Flow_Info {
 }
 
 // A body-local record's copy decision, asked after the whole sequence, since its
-// `impl` blocks are statements after it. Instances of a generic procedure check
-// the same declaration, which reports once.
+// `impl` blocks are statements after it. Each instance of a generic procedure
+// asks for its own copy of the declaration: its hooks and fields are that
+// instance's, so one instance's answer says nothing about another's.
 @(private = "file")
 report_local_copy_decisions :: proc(k: ^Checker, stmts: []Stmt) {
 	for stmt in stmts {
@@ -3104,14 +3105,6 @@ report_local_copy_decisions :: proc(k: ^Checker, stmts: []Stmt) {
 		}
 		if _, is_record := d.values[0].(^Type_Record); !is_record {
 			continue
-		}
-		// A speculative check discards its diagnostics, so it must not claim this.
-		if committing(k.c) {
-			key := u64(d.span.file) << 32 | u64(d.span.lo)
-			if k.c.checked_copy_decisions[key] {
-				continue
-			}
-			k.c.checked_copy_decisions[key] = true
 		}
 		check_copy_decision(k, d)
 	}
