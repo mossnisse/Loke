@@ -1,0 +1,62 @@
+// design.md "One result" and "Success returns": a result is read through an
+// alias declared in the generic body, so the alias does not change what the
+// result's success depends on. Each of these is rejected in every instance, as
+// the same result written out is; tests/run/local_alias_success.loke holds what
+// stays accepted.
+package main;
+
+outcome :: proc(value: $T) {
+	Outcome :: Result(T, int);
+	inner :: proc() -> Outcome { return; }
+	_ = inner();
+}
+
+reaches_end :: proc(value: $T) {
+	Outcome :: Result(T, int);
+	inner :: proc() -> Outcome { }
+	_ = inner();
+}
+
+whole_result :: proc(value: $R) {
+	Same :: R;
+	inner :: proc() -> Same { return; }
+	_ = inner();
+}
+
+chain :: proc(value: $T) {
+	Payload :: T;
+	Outcome :: Result(Payload, int);
+	Again :: Outcome;
+	inner :: proc() -> Again { return; }
+	_ = inner();
+}
+
+argument :: proc(value: $T) {
+	Payload :: T;
+	inner :: proc() -> Result(Payload, int) { return; }
+	_ = inner();
+}
+
+// Success wrapping asks the same question: in `Result(int, int)` a value meant
+// as the error would become the success.
+wrapping :: proc(value: $T) {
+	Outcome :: Result(T, int);
+	inner :: proc(x: T) -> Outcome { return x; }
+	_ = inner(value);
+}
+
+length :: proc($N: int) {
+	Twice :: N * 2;
+	inner :: proc(x: [Twice]int) -> Result([Twice]int, int) { return x; }
+	_ = inner({});
+}
+
+main :: proc() {
+	outcome(Unit{});
+	reaches_end(Unit{});
+	whole_result(Result(Unit, int).ok(Unit{}));
+	chain(Unit{});
+	argument(Unit{});
+	wrapping(1);
+	length(2);
+}

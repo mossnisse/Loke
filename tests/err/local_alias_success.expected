@@ -1,0 +1,17 @@
+L0326
+@10:31
+carries `Unit` here only through a generic argument
+L0365
+@16:11
+L0326
+@22:28
+L0326
+@30:29
+L0326
+@36:44
+L0310
+@44:42
+cannot return `Result(int, int)` with `int`
+L0310
+@50:67
+cannot return `Result([4]int, int)` with `[4]int`

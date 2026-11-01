@@ -197,33 +197,6 @@ one-line reduction accepts this case while still rejecting the received
 allocator payload probes. Confirmed on `5580637f` during review on 2026-11-01
 (P2, pre-existing; also a simplification opportunity).
 
-### A local alias hides a generic-dependent Unit success
-
-[One result](design.md#one-result) permits a bare success return only when its
-payload is `Unit` as written, rather than through a generic argument. The
-dependency check added in `e4d9c207` reads the name of a local alias without
-following its target:
-
-```loke
-package main;
-outer :: proc(value: $T) {
-    Outcome :: Result(T, int);
-    inner :: proc() -> Outcome { return; }
-    _ = inner();
-}
-main :: proc() { outer(Unit{}); }
-```
-
-This compiles. Spelling the inner result `Result(T, int)` instead reports
-`L0326`, with the note that its success carries `Unit` only through a generic
-argument. The alias should preserve that restriction; otherwise the same body
-gains a bare success return only in its `Unit` instance. In
-[src/check.odin](src/check.odin), `success_names_generic` returns early because
-`type_syntax_names_generic` sees `Outcome` as a constant rather than a generic
-binding. Follow ordinary type-alias targets in their defining scopes when
-determining the success payload's dependency. Confirmed on `3b49d840` during
-review on 2026-10-31 (P2).
-
 ### Recursive records through parametric aliases depend on resolution order
 
 A [parametric alias](design.md#parametric-aliases) has its expansion's identity,

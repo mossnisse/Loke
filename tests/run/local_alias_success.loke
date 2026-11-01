@@ -1,0 +1,53 @@
+// design.md "One result" and "Success returns": what a local alias names decides
+// a result's dependence on a generic argument, so an alias leaves alone a success
+// that is `Unit` as written, and a declaration that defines a type is not an
+// alias at all. tests/err/local_alias_success.loke holds what is rejected.
+package main;
+
+import "core:fmt";
+
+Package_Status :: Result(Unit, int);
+
+failure_only :: proc(value: $T) {
+	Outcome :: Result(Unit, T);
+	Same :: Outcome;
+	early :: proc() -> Outcome { return; }
+	reaches_end :: proc() -> Same { }
+	of_package :: proc() -> Package_Status { return; }
+	fmt.println(early(), reaches_end(), of_package());
+}
+
+concrete :: proc() {
+	Outcome :: Result(Unit, int);
+	inner :: proc() -> Outcome { return; }
+	fmt.println(inner());
+}
+
+concrete_in_generic :: proc(value: $T) {
+	Outcome :: Result(int, string);
+	inner :: proc() -> Outcome { return 3; }
+	fmt.println(inner());
+}
+
+// A payloadless failure cannot be confused with the success.
+payload_wrap :: proc(value: $T) {
+	Maybe :: Option(T);
+	inner :: proc(x: T) -> Maybe { return x; }
+	fmt.println(inner(value));
+}
+
+// Each instance's `Local` is one type, whatever `T` is.
+nominal :: proc(value: $T) {
+	Local :: struct { x: T }
+	inner :: proc(x: Local) -> Result(Local, int) { return x; }
+	fmt.println(inner(Local{value}));
+}
+
+main :: proc() {
+	failure_only(1);
+	failure_only(Unit{});
+	concrete();
+	concrete_in_generic(1);
+	payload_wrap(1);
+	nominal(2);
+}

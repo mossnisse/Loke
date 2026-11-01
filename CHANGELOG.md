@@ -10,6 +10,13 @@ checklist.
 
 ### Breaking changes
 
+- A result written through an alias declared in a generic body now depends on a
+  generic argument as the same result written out does
+  ([One result](design.md#one-result)). `Outcome :: Result(T, E)` as a result used
+  to allow a bare `return;` in the instance where `T` is `Unit` and an implicitly
+  wrapped `return value;` beside an error payload, each now `L0326`, `L0365`, or
+  `L0310` as for `Result(T, E)`. Upgrade by writing `return .ok;` or
+  `return .ok(value);`.
 - A generic record's hooks are now checked as a non-generic record's are. A wrong
   signature (`L0488`), a duplicate role (`L0488`), a `hook(copy)` on a `move_only`
   record or on an instance a field makes move-only (`L0488`), a written allocator

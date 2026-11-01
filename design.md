@@ -7305,7 +7305,9 @@ The payload must be `Unit` as the result is written, not through a generic
 argument, so a body means the same in every instance. `-> Result(Unit, E)`
 qualifies when `E` is generic, since the success does not depend on `E`; a body
 generic over `Result(T, E)` does not, even in an instance where `T` is `Unit`,
-and returns with `return .ok;` there as in any other.
+and returns with `return .ok;` there as in any other. A result written through
+an alias is read as what the alias names, so `Outcome :: Result(T, E)` declared
+in that body does not qualify either.
 
 To hand back several values, return one [anonymous record](#anonymous-records)
 and [destructure](#destructuring) it at the call site. Its fields need no names
@@ -9536,10 +9538,13 @@ ambiguity, so `return item;` still builds `.some(item)` for generic `Option(T)`.
 
 A result names a generic argument if its syntax references one anywhere,
 including `$T`, an array length such as `[N + 1]int`, or a type, value, or
-`@(align=N)` inside an inline definition. Variant names in `@(zero=name)` and
-`@(failure=name)` do not count. An inline definition with no generic reference,
-such as `[size_of(enum { A, B })]u8`, leaves the result concrete and permits the
-shorthand even in a generic body.
+`@(align=N)` inside an inline definition. A constant or alias declared in the
+generic body counts as what it is written as, so `Outcome :: Result(T, E)` and
+`Twice :: N * 2` name `T` and `N`; a type that declaration defines, such as
+`Local :: struct { x: T }`, does not, since it is one type in each instance.
+Variant names in `@(zero=name)` and `@(failure=name)` do not count. An inline
+definition with no generic reference, such as `[size_of(enum { A, B })]u8`,
+leaves the result concrete and permits the shorthand even in a generic body.
 
 #### Operator ownership
 
