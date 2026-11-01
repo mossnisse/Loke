@@ -1,0 +1,104 @@
+package main;
+
+// design.md "Slice literals": a slice literal's hidden array is storage like a
+// named array's, and design.md "Weakening and reborrows" holds of a carrier
+// stored there as of one stored anywhere.
+
+Link :: struct { to: ^mut int }
+
+duplicate :: proc(links: []mut Link) { links[0] = links[1]; }
+exchange :: proc(links: []mut Link) { links.swap(0, 1); }
+touch :: proc(links: []mut Link) { links[0].to^ = 3; }
+keep :: proc(links: []mut Link, @(escape=stored) p: ^mut int) { links[0].to = p; }
+pick :: proc() -> int { return 0; }
+
+// The reproduction: a call may leave one carrier in two elements.
+after_a_copying_call :: proc() {
+	x := 1; y := 2;
+	links := []mut Link{Link{&mut x}, Link{&mut y}};
+	duplicate(links);
+	first := links[0].to;
+	second := links[1].to;
+	first^ = 1;
+	second^ = 2;
+}
+
+one_element_twice :: proc() {
+	x := 1; y := 2;
+	links := []mut Link{Link{&mut x}, Link{&mut y}};
+	first := links[0].to;
+	second := links[0].to;
+	first^ = 1;
+	second^ = 2;
+}
+
+a_call_uses_what_it_reaches :: proc() {
+	x := 1; y := 2;
+	links := []mut Link{Link{&mut x}, Link{&mut y}};
+	first := links[0].to;
+	touch(links);
+	first^ = 1;
+}
+
+stored_at_a_constant :: proc(extra: ^mut int) {
+	x := 1; y := 2;
+	links := []mut Link{Link{&mut x}, Link{&mut y}};
+	links[0].to = extra;
+	extra^ = 1;
+	links[0].to^ = 2;
+}
+
+stored_at_a_variable :: proc(extra: ^mut int) {
+	x := 1; y := 2;
+	links := []mut Link{Link{&mut x}, Link{&mut y}};
+	links[pick()].to = extra;
+	extra^ = 1;
+	links[0].to^ = 2;
+}
+
+retained_by_a_call :: proc(extra: ^mut int) {
+	x := 1; y := 2;
+	links := []mut Link{Link{&mut x}, Link{&mut y}};
+	keep(links, extra);
+	extra^ = 1;
+	links[0].to^ = 2;
+}
+
+// Accepted, as for a named array: each element is its own place, a use ends, and
+// a call that only reorders leaves each carrier in one place.
+
+different_elements :: proc() {
+	x := 1; y := 2;
+	links := []mut Link{Link{&mut x}, Link{&mut y}};
+	first := links[0].to;
+	second := links[1].to;
+	first^ = 1;
+	second^ = 2;
+}
+
+through_each_element :: proc() {
+	x := 1; y := 2;
+	links := []mut Link{Link{&mut x}, Link{&mut y}};
+	links[0].to^ = 1;
+	links[1].to^ = 2;
+}
+
+one_after_the_other :: proc() {
+	x := 1; y := 2;
+	links := []mut Link{Link{&mut x}, Link{&mut y}};
+	first := links[0].to;
+	first^ = 1;
+	second := links[0].to;
+	second^ = 2;
+}
+
+after_a_reordering_call :: proc() {
+	x := 1; y := 2;
+	links := []mut Link{Link{&mut x}, Link{&mut y}};
+	exchange(links);
+	exchange(links);
+	held := links[0].to;
+	held^ = 4;
+}
+
+main :: proc() {}

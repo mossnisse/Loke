@@ -139,6 +139,10 @@ Prov_Event :: struct {
 	// `Live`: the carrier is only read, so a live read-only reborrow of it does
 	// not conflict (design.md "Weakening and reborrows").
 	reads_only:    bool,
+	// `Live`: what the slice literals its sources view hold, which stays live
+	// for a use of a view of them, though the use may read one element and is
+	// no use of the others (`with_literal_content`).
+	keeps_live:    []int,
 	// `Load`: a carrier loaded on the way to a place through it
 	// (`prov_reach_hop`), which only the access to that place uses, so its
 	// reborrow of what it was loaded out of suspends nothing.
@@ -2660,7 +2664,7 @@ prov_reborrow :: proc(graph: ^Flow_Graph, slots: []int, destination: Type_Id, in
 		return
 	}
 	weakens := !carrier_is_mutable(graph.k.c, destination)
-	if copies && (into < 0 || graph.prov_slots[into].symbol != INVALID_SYMBOL) {
+	if copies && (into < 0 || prov_slot_is_stored(graph.prov_slots[into])) {
 		prov_use_copied(graph, slots, destination, span, !weakens, into)
 	}
 	for slot in slots {
@@ -2714,7 +2718,7 @@ prov_reborrow :: proc(graph: ^Flow_Graph, slots: []int, destination: Type_Id, in
 		// An unnamed value read out of a mutable carrier, as `held.items`, has
 		// only this destination, so it takes the destination's capability as a
 		// fresh loan does.
-		if weakens && graph.prov_slots[slot].symbol == INVALID_SYMBOL {
+		if weakens && !prov_slot_is_stored(graph.prov_slots[slot]) {
 			for &earlier in graph.reborrows {
 				if earlier.derived == slot {
 					earlier.mutable = false
@@ -2723,7 +2727,7 @@ prov_reborrow :: proc(graph: ^Flow_Graph, slots: []int, destination: Type_Id, in
 		}
 		// A named read-only reborrow is not itself suspended by its copies, nor
 		// is a read-only carrier loaded out through a pointer.
-		passes_on := !mutable_source && (graph.prov_slots[slot].symbol != INVALID_SYMBOL || prov_slot_is_loaded_read_only(graph, slot))
+		passes_on := !mutable_source && (prov_slot_is_stored(graph.prov_slots[slot]) || prov_slot_is_loaded_read_only(graph, slot))
 		append(&graph.reborrows, Prov_Reborrow {
 			source = slot, derived = into, span = span, mutable = !weakens, passes_on = passes_on, pending = pending,
 		})
@@ -2759,7 +2763,7 @@ prov_reborrow_stored_content :: proc(graph: ^Flow_Graph, sources: []int, stored:
 		}
 		prov_reborrow(graph, selected, path.type, span = span, copies = true)
 		for entry, candidate in graph.prov_slots {
-			if (entry.symbol != INVALID_SYMBOL || entry.caller_one) && entry.content_type == path.type &&
+			if (prov_slot_is_stored(entry) || entry.caller_one) && entry.content_type == path.type &&
 			   prov_path_may_end_in(entry.path, path.steps) {
 				prov_reborrow(graph, selected, path.type, candidate, span)
 			}
@@ -2775,7 +2779,7 @@ prov_reborrow_stored_content :: proc(graph: ^Flow_Graph, sources: []int, stored:
 prov_link_stored_carrier :: proc(graph: ^Flow_Graph, sources: []int, stored: Type_Id, span: Span) {
 	prov_reborrow(graph, sources, stored, span = span, copies = true)
 	for entry, candidate in graph.prov_slots {
-		if entry.symbol != INVALID_SYMBOL && entry.content_type == stored ||
+		if prov_slot_is_stored(entry) && entry.content_type == stored ||
 		   entry.caller_one && (entry.content_type == stored || entry.content_type == INVALID_TYPE) {
 			prov_reborrow(graph, sources, stored, candidate, span)
 		}
@@ -2989,7 +2993,7 @@ prov_slot_is_mutable_carrier :: proc(graph: ^Flow_Graph, slot: int) -> bool {
 		type = sym.type
 	}
 	c := graph.k.c
-	return entry.symbol != INVALID_SYMBOL && !type_is_region_provider(c, type) && carrier_is_mutable(c, type)
+	return prov_slot_is_stored(entry) && !type_is_region_provider(c, type) && carrier_is_mutable(c, type)
 }
 
 @(private = "file")
@@ -6886,6 +6890,10 @@ prov_slice_literal :: proc(graph: ^Flow_Graph, literal: ^Expr_Composite, mutable
 	slots := graph.roots[int(root)].slots
 	if slots == nil {
 		slots = prov_temp_content(graph, backing)
+		for slot in slots {
+			graph.prov_slots[slot].literal_content = true
+			graph.prov_slots[slot].name = "this slice literal's element"
+		}
 		graph.roots[int(root)].slots = slots
 		graph.has_content_load ||= len(slots) > 0
 	}
@@ -7490,14 +7498,10 @@ prov_assign_permutes :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) -> bool {
 	if len(s.lhs) < 2 || len(s.lhs) != len(s.rhs) || s.op != .Assign {
 		return false
 	}
-	text :: proc(graph: ^Flow_Graph, e: Expr) -> string {
-		span := expr_span(e)
-		return graph.k.c.sources[span.file].text[span.lo:span.hi]
-	}
 	used := make([]bool, len(s.lhs), graph.alloc)
 	next: for value in s.rhs {
 		for target, index in s.lhs {
-			if !used[index] && text(graph, value) == text(graph, target) {
+			if !used[index] && prov_names_same_place(graph.k.c, value, target) {
 				used[index] = true
 				continue next
 			}
@@ -7505,6 +7509,56 @@ prov_assign_permutes :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) -> bool {
 		return false
 	}
 	return true
+}
+
+// Whether two expressions of one assignment name one place. Each is evaluated
+// before any write (design.md "Evaluation order"), so the variables they read
+// hold one value for both; what could change that between the evaluations is a
+// call, an operator, or a map's indexing, none of which this accepts. Two
+// expressions it cannot tell the same are taken to be different.
+@(private = "file")
+prov_names_same_place :: proc(c: ^Compiler, a, b: Expr) -> bool {
+	x, y := expr_base(a), expr_base(b)
+	if x == nil || y == nil || x.type != y.type {
+		return false
+	}
+	if x.is_const || y.is_const {
+		equal, comparable := const_equal(c, x.const_value, y.const_value)
+		return x.is_const && y.is_const && comparable && equal
+	}
+	converted :: proc(e: ^Expr_Base) -> bool {
+		return e.erased_from != INVALID_TYPE || e.view_from != INVALID_TYPE || e.splat_from != INVALID_TYPE || e.widened_from != INVALID_TYPE
+	}
+	if converted(x) || converted(y) {
+		return false
+	}
+	#partial switch first in a {
+	case ^Expr_Ident:
+		second, same := b.(^Expr_Ident)
+		return same && first.symbol != INVALID_SYMBOL && first.symbol == second.symbol
+	case ^Expr_Selector:
+		second, same := b.(^Expr_Selector)
+		return same && first.resolution.kind == .Field && second.resolution.kind == .Field && first.name.id == second.name.id &&
+		       first.operand != nil && second.operand != nil && prov_names_same_place(c, first.operand, second.operand)
+	case ^Expr_Postfix:
+		second, same := b.(^Expr_Postfix)
+		return same && first.op == .Caret && second.op == .Caret && prov_names_same_place(c, first.operand, second.operand)
+	case ^Expr_Index:
+		second, same := b.(^Expr_Index)
+		if !same || len(first.bound) != 0 || len(second.bound) != 0 || len(first.indices) != len(second.indices) ||
+		   first.resolution.kind == .User_Operator || second.resolution.kind == .User_Operator ||
+		   underlying_kind(c, expr_base(first.operand).type) == .Map ||
+		   !prov_names_same_place(c, first.operand, second.operand) {
+			return false
+		}
+		for index, at in first.indices {
+			if !prov_names_same_place(c, index, second.indices[at]) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 // design.md "Operator declarations": a user operator is a call to the procedure
@@ -8501,7 +8555,7 @@ prov_use_copied :: proc(graph: ^Flow_Graph, slots: []int, destination: Type_Id, 
 	written := make([dynamic]int, 0, len(slots), graph.alloc)
 	for slot in slots {
 		entry := graph.prov_slots[slot]
-		if slot == into || (entry.symbol == INVALID_SYMBOL && !entry.loaded) {
+		if slot == into || (!prov_slot_is_stored(entry) && !entry.loaded) {
 			continue
 		}
 		append(&copied, slot)
@@ -8637,9 +8691,9 @@ prov_call_carrier_moves :: proc(graph: ^Flow_Graph, v: ^Expr_Call, container_op:
 	}
 }
 
-// Every named slot, or slot standing for caller storage, that holds a carrier a
-// call may have copied there is linked to the others through `hub`, the slot of
-// the call's `Rearrange`, as there may be many. The links hold from that event
+// Every slot of lasting storage, or slot standing for caller storage, that holds
+// a carrier a call may have copied there is linked to the others through `hub`,
+// the slot of the call's `Rearrange`, as there may be many. The links hold from that event
 // on, for the slots it reaches (`run_severing_event`).
 @(private = "file")
 prov_link_copied_carriers :: proc(graph: ^Flow_Graph, hub: int, move: Carrier_Move, span: Span) {
@@ -8663,11 +8717,11 @@ prov_link_copied_carriers :: proc(graph: ^Flow_Graph, hub: int, move: Carrier_Mo
 	}
 	for entry, candidate in graph.prov_slots {
 		sym := symbol_of(c, entry.symbol)
-		if sym == nil || sym.kind == .Parameter && sym.immutable {
+		if sym == nil && !entry.literal_content || sym != nil && sym.kind == .Parameter && sym.immutable {
 			continue
 		}
 		type := entry.content_type
-		if type == INVALID_TYPE && !entry.content_truncated && len(entry.path) == 0 {
+		if type == INVALID_TYPE && !entry.content_truncated && len(entry.path) == 0 && sym != nil {
 			type = sym.type
 		}
 		if type != INVALID_TYPE && (!type_is_carrier(c, type) || type_is_region_provider(c, type)) {
@@ -9152,7 +9206,7 @@ prov_reborrow_retained :: proc(graph: ^Flow_Graph, sources: []int, mutable: bool
 		if entry.through_block != NO_BLOCK || entry.fresh_loan != NO_LOAN {
 			continue
 		}
-		if entry.symbol == INVALID_SYMBOL && !entry.loaded && !caller[source] {
+		if !prov_slot_is_stored(entry) && !entry.loaded && !caller[source] {
 			for reborrow in graph.reborrows {
 				if reborrow.derived == source {
 					append(&pending, reborrow.source)
@@ -9168,7 +9222,7 @@ prov_reborrow_retained :: proc(graph: ^Flow_Graph, sources: []int, mutable: bool
 		// As for a copy (`prov_reborrow`), a named read-only reborrow, or a
 		// read-only carrier loaded out through a pointer, is not itself
 		// suspended by what the call leaves of it: that only extends it.
-		passes_on := !mutable_source && (entry.symbol != INVALID_SYMBOL || prov_slot_is_loaded_read_only(graph, source))
+		passes_on := !mutable_source && (prov_slot_is_stored(entry) || prov_slot_is_loaded_read_only(graph, source))
 		for candidate, into in graph.prov_slots {
 			if into == source {
 				continue
@@ -9183,6 +9237,10 @@ prov_reborrow_retained :: proc(graph: ^Flow_Graph, sources: []int, mutable: bool
 					type = sym.type
 				}
 				if !type_is_carrier(c, type) || type_is_region_provider(c, type) {
+					continue
+				}
+			} else if candidate.literal_content {
+				if type != INVALID_TYPE && type_is_region_provider(c, type) {
 					continue
 				}
 			} else if !caller[into] {

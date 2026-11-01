@@ -1,0 +1,18 @@
+L0641
+@28:11
+`links` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@29:12
+`links` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@38:11
+`links` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@39:12
+`links` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@48:11
+`links` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@49:12
+`links` cannot be used here: a mutable reborrow of it is still in use

@@ -10,6 +10,20 @@ checklist.
 
 ### Breaking changes
 
+- A mutable carrier held in a [slice literal](design.md#slice-literals)'s hidden
+  array is now checked as one in a named array is
+  ([Weakening and reborrows](design.md#weakening-and-reborrows)). Taking two
+  mutable copies of one element, using a carrier stored in an element while a copy
+  of it is in use, and using the elements after a call that may copy between them
+  all used to compile, and are now `L0641`. Upgrade by ending one use before the
+  next, as for a named array.
+- An assignment counts as reordering its targets only when each value names a
+  target's own place ([Evaluation order](design.md#evaluation-order)), not when
+  their source text matches. `links[next()], links[next()] = links[next()],
+  links[next()]` used to count, whichever elements the calls named, so a caller
+  could keep one mutable carrier in two places; it now reports `L0641` there.
+  Upgrade by evaluating the indices first. `links[0], links[1] = links[ 1 ],
+  links[ 0 ]`, once rejected for its spacing, is now accepted.
 - A store or call that may leave what a place held no longer ends the borrow held
   there ([Places and overlap](design.md#places-and-overlap)). A second `&mut c`
   stored at an index that is no constant, in a loop, or through a

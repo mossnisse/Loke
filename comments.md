@@ -3330,8 +3330,8 @@ A chain is the case that keeps a copy from being any store of a held carrier:
 `list^.head = list^.head^.next` reads a carrier below the place it lands, and
 what it replaces is the only path to that carrier, so the body is `Rearrange`
 without the links. Marking it as a copy would reject every traversal that pops.
-A reordering assignment is also not a copy, recognized by the values being the
-targets' own spelling; a reordering written with a temporary is not recognized,
+A reordering assignment is also not a copy, recognized by the values naming the
+targets' own places; a reordering written with a temporary is not recognized,
 and [a hand-written swap in a body](known-gaps.md#a-swap-written-with-a-temporary-is-rejected)
 is rejected before the summary is reached.
 

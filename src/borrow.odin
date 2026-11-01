@@ -270,6 +270,10 @@ Prov_Slot :: struct {
 	// Read out through a carrier, so what it copies is known only once the
 	// `Load` is resolved.
 	loaded: bool,
+	// Holds what a slice literal's hidden array holds at `path`
+	// (`prov_slice_literal`): storage that lasts as a local's does, which only
+	// lacks a symbol (`prov_slot_is_stored`).
+	literal_content: bool,
 	// Stands for what caller storage a parameter reaches holds at `path`
 	// (`prov_caller_slots`), and that is a mutable carrier; `caller_one` when
 	// that storage is one place, so a store lands here (`publish_into_caller`).
@@ -4018,7 +4022,7 @@ resolve_content_reads :: proc(state: ^Prov_State) {
 					event.replaces = publish_replaced_slots(state, event, state.reach, state.ended)
 				}
 				if event.kind == .Live {
-					event.sources = with_literal_content(state, event.sources, literal_loans[:])
+					event.keeps_live = with_literal_content(state, event.sources, literal_loans[:])
 				}
 				run_prov_event(state, event, state.reach, state.ended)
 			}
@@ -4028,13 +4032,13 @@ resolve_content_reads :: proc(state: ^Prov_State) {
 	state.reborrow_starts = nil
 }
 
-// design.md "Slice literals": `sources` and what the slice literals they view hold
-// now, and so on through any slice held there. Whatever a slice is handed to may
-// read its elements, so a use of the slice uses what they borrow.
+// design.md "Slice literals": what the slice literals `sources` view hold now, and
+// so on through any slice held there. Whatever a slice is handed to may read its
+// elements, so what they borrow stays live for a use of the slice.
 @(private = "file")
 with_literal_content :: proc(state: ^Prov_State, sources, literal_loans: []int) -> []int {
 	if len(literal_loans) == 0 {
-		return sources
+		return nil
 	}
 	graph := state.graph
 	out := make([dynamic]int, 0, len(sources) + 2, graph.alloc)
@@ -4052,7 +4056,7 @@ with_literal_content :: proc(state: ^Prov_State, sources, literal_loans: []int) 
 			}
 		}
 	}
-	return out[:]
+	return out[len(sources):]
 }
 
 // `one`, the loan a store's carriers name, with the path of the one element
@@ -4836,6 +4840,10 @@ run_live_event :: proc(event: Prov_Event, live: []bool, uses: []Span) {
 		for source in event.sources {
 			live[source] = true
 			uses[source] = event.span
+		}
+		for slot in event.keeps_live {
+			live[slot] = true
+			uses[slot] = event.span
 		}
 	}
 }
@@ -6224,7 +6232,14 @@ prov_slot_is_loaded_temporary :: proc(graph: ^Flow_Graph, slot: int) -> bool {
 // keeps, is no reborrow of its new value: a loop's `held.append(rows)`.
 @(private = "file")
 prov_slot_is_stored_temporary :: proc(graph: ^Flow_Graph, reborrow: Prov_Reborrow) -> bool {
-	return graph.prov_slots[reborrow.source].symbol == INVALID_SYMBOL && graph.prov_slots[reborrow.derived].symbol != INVALID_SYMBOL
+	return !prov_slot_is_stored(graph.prov_slots[reborrow.source]) && prov_slot_is_stored(graph.prov_slots[reborrow.derived])
+}
+
+// Whether a slot holds a carrier stored in lasting storage, a local's or a slice
+// literal's hidden array's (design.md "Slice literals"), rather than a value
+// only its own expression reads.
+prov_slot_is_stored :: proc(entry: Prov_Slot) -> bool {
+	return entry.symbol != INVALID_SYMBOL || entry.literal_content
 }
 
 // The source is suspended only while both slots' current values share a valid
@@ -6395,13 +6410,17 @@ report_suspended_reborrow :: proc(
 	source := state.graph.prov_slots[reborrow.source]
 	derived := state.graph.prov_slots[reborrow.derived]
 	capability := reborrow.mutable ? "mutable" : "read-only"
-	// A place, or a temporary, used through a binding that views it.
-	name := event.name if event.name != "" else source.name
+	// A place, or a temporary, used through a binding that views it. A slice
+	// literal's element has a description rather than a name.
+	name := fmt.tprintf("`%s`", event.name if event.name != "" else source.name)
+	if event.name == "" && source.literal_content {
+		name = source.name
+	}
 	errorf(
 		k.c,
 		event.span,
 		"L0641",
-		"`%s` cannot be used here: a %s reborrow of it is still in use",
+		"%s cannot be used here: a %s reborrow of it is still in use",
 		name,
 		capability,
 	)

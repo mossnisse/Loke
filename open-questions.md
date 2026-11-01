@@ -63,10 +63,10 @@ order matters, and `prov_assign` is the most edited procedure in the checker,
   `caller_mutable`, `caller_one`, and `caller_element`; one element of a view
   parameter has `view_elements`; a temporary has `prov_temp_content`; a loaded
   value a `loaded` slot. Every consumer that must visit all the slots a carrier
-  may be in enumerates these by hand, and each misses some:
-  `prov_link_copied_carriers` visits named and caller slots but not a
-  literal's
-  ([gap](known-gaps.md#a-call-copying-carriers-in-a-slice-literal-leaves-no-reborrow-links));
+  may be in enumerates these by hand, and each misses some. Asking whether a slot
+  held a mutable carrier by its symbol left a literal's array out of every reborrow
+  check, six forms in all where a named array was rejected (fixed since, with
+  `prov_slot_is_stored`);
   `with_literal_content` extends a use with a literal's content but not a
   named array's
   ([gap](known-gaps.md#a-view-of-a-named-array-does-not-hold-what-its-elements-borrow));
@@ -79,7 +79,11 @@ order matters, and `prov_assign` is the most edited procedure in the checker,
   that its path overlaps and nothing else. `prov_caller_slots` already builds
   such slots; it keys them by loan rather than by root. Whether a path names
   one place, which `caller_one` and `caller_element` record, is a property of
-  the path.
+  the path. This would not by itself close the two gaps cited: the named array's
+  also needs a decision on rejecting `drop(values); view.len()`, and the protocol
+  traversal's is about where an iterator lends from. A `Param` root also stands for
+  several storages, one per load depth, which would have to become roots first, so
+  the proposal is unproven until tried.
 
 - **Region facts are a second alias analysis with another lattice (P2,
   largest).** Root provenance is a per-block dataflow over loan bits,
@@ -174,19 +178,24 @@ order matters, and `prov_assign` is the most edited procedure in the checker,
   summarize should carry a written result contract rather than a name test in
   the walk.
 
-- **Syntax as evidence (P3).** `prov_assign_permutes` compares source text
-  ([gap](known-gaps.md#textually-equal-destinations-do-not-prove-a-carrier-permutation)),
-  where the normalized `Prov_Place` gives place identity;
-  `prov_indices_may_write` reads an index's syntax where the global effects
+- **Syntax as evidence (P3).** `prov_assign_permutes` compared source text (fixed
+  since: `prov_names_same_place` compares what each expression resolves to, as a
+  normalized `Prov_Place` could not, since every variable index in one is the same
+  wildcard); `prov_indices_may_write` reads an index's syntax where the global effects
   already say what a call writes; and what counts as a fresh borrow of a range
   for `Prov_View_Def` is
   [open](#review-of-constant-view-elements-and-the-wider-borrow-matrix-2026-10-31).
 
-Order: the local refactors first, which change no acceptance and can be checked
-by the diagnostics comparison the
-[architecture](compiler-architecture.md#normalized-provenance-input)
-prescribes. Then one slot vector per root, which closes three gaps by
-construction; then regions on it; then the loan rule and place loans. The
+Order: fix the small soundness gaps as they are found, as the liveness, slice
+literal, and permutation fixes were. Try one slot vector per root on a throwaway
+branch, time-boxed, and compare diagnostics over the inputs the
+[architecture](compiler-architecture.md#normalized-provenance-input) lists before
+committing to it. Decide on regions only after that, on a measured cost: per-block
+region sets have no prototype, and their memory cost is not known. The local
+refactors can wait, as they fix nothing and accept nothing new, apart from a table
+of each `Container_Op`'s provenance, which is cheap. Estimates here have been poor:
+the one-line liveness fix took a second rule, and the slice literal's link took six
+sites and a split between using a value and keeping it live. The
 [borrow matrix](tests/borrow_matrix_test.odin) is the right oracle throughout,
 since its model is written apart from the compiler; it wants places for a
 slice literal's array, a view parameter's caller storage reached twice, a

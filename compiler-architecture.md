@@ -506,6 +506,17 @@ Keep these contracts:
   `remove`, `remove_unordered`, `swap`, and the sorts. Region facts are
   flow-insensitive and could not follow that move, so they stay wildcards
   (`Proj_Step.shifts`, `prov_region_path`).
+- **A store that may leave a value keeps it live.** A `Def` joining its slot's own
+  value, as a store at a path naming many places does, neither ends that slot's
+  liveness nor severs reborrows of it (`run_live_event`, `run_severing_event`). A
+  temporary stored into lasting storage is severed when evaluated again, as what an
+  earlier evaluation left there is no reborrow of its new value
+  (`prov_slot_is_stored_temporary`).
+- **A slice literal's hidden array is lasting storage.** Its content slots have no
+  symbol, but count as a local's wherever a stored carrier is told from a temporary
+  (`prov_slot_is_stored`, `Prov_Slot.literal_content`). A use of a view of one keeps
+  them live without using them (`Prov_Event.keeps_live`), so reading one element is
+  no use of another; a call handed the view uses them as it does any it reaches.
 - **Owners, handles, and fields stay apart.** Region facts are kept by path,
   and backing dependencies apart from payload dependencies: a record's fields,
   a container's elements and backing, a shared handle's control block and

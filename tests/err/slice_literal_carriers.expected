@@ -1,0 +1,21 @@
+L0641
+@20:11
+this slice literal's element cannot be used here: a mutable reborrow of it is still in use
+L0641
+@21:12
+this slice literal's element cannot be used here: a mutable reborrow of it is still in use
+L0641
+@30:12
+this slice literal's element cannot be used here: a mutable reborrow of it is still in use
+L0641
+@39:8
+this slice literal's element cannot be used here: a mutable reborrow of it is still in use
+L0641
+@47:2
+`extra` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@55:2
+`extra` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@63:2
+`extra` cannot be used here: a mutable reborrow of it is still in use
