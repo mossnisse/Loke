@@ -1316,17 +1316,32 @@ prov_result_region_at :: proc(graph: ^Flow_Graph, id: Value_Id, path: []Proj_Ste
 	}
 	if root, base, ok := prov_value_place_of(graph, id); ok {
 		set := prov_region_content_at(graph, root, prov_concat_path(graph, base, path), query)
-		// An allocator a parameter received inside another value, such as an
-		// `Option(Allocator)` parameter's payload, is one the analysis cannot
-		// name, as a received record's field is in `prov_region_of`.
-		if query == .All && root != NO_ROOT && prov_root_is_parameter(graph, root) && region_is_empty(set) &&
-		   type_underlying(graph.k.c, prov_type_at(graph.k.c, type, path)) == TYPE_ALLOCATOR {
-			set.unknown = true
+		if query == .All {
+			prov_add_received_allocator(graph, &set, root, prov_type_at(graph.k.c, type, path))
 		}
 		return set
 	}
 	if region, known := prov_read_storage_regions(graph, id, path, query); known { return region }
 	return prov_result_region(graph, id)
+}
+
+// design.md "@(allocator_reset)": an allocator a parameter received inside another
+// value, as an `Option(Allocator)`'s payload or a record's field, is one the analysis
+// cannot name. Region facts merge without regard to control flow, so a write this
+// body makes there, which they record beside it, does not show the incoming one gone.
+// A parameter `prov_bind_parameters` gives a region of its own names it by that.
+@(private = "file")
+prov_add_received_allocator :: proc(graph: ^Flow_Graph, set: ^Region_Set, root: Root_Id, type: Type_Id) {
+	c := graph.k.c
+	if root == NO_ROOT || !prov_root_is_parameter(graph, root) || type_underlying(c, type) != TYPE_ALLOCATOR {
+		return
+	}
+	received := symbol_of(c, graph.roots[int(root)].symbol).type
+	if type_underlying(c, received) == TYPE_ALLOCATOR || type_is_managed(c, received) ||
+	   type_is_carrier(c, received) && !type_is_region_provider(c, received) {
+		return
+	}
+	set.unknown = true
 }
 
 @(private = "file")
@@ -3755,13 +3770,16 @@ region_weight :: proc(set: Region_Set) -> int {
 @(private)
 prov_region_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id, viewed := false, owners := false) -> Region_Set {
 	out := prov_empty_region(graph)
+	sym := symbol_of(graph.k.c, id)
 	if aliases := graph.region_aliases[id]; len(aliases) > 0 {
 		for alias in aliases {
 			region_merge(&out, prov_region_content_at(graph, alias.root, alias.path, owners ? .Owners : .All))
+			if !owners && sym != nil {
+				prov_add_received_allocator(graph, &out, alias.root, sym.type)
+			}
 		}
 		if aliases[len(aliases) - 1].root != NO_ROOT { return out }
 	}
-	sym := symbol_of(graph.k.c, id)
 	carrier := sym != nil && type_is_carrier(graph.k.c, sym.type) && !type_is_region_provider(graph.k.c, sym.type) && type_underlying(graph.k.c, sym.type) != TYPE_ALLOCATOR
 	if direct, found := graph.region_of[id]; found && (viewed || !carrier) {
 		region_merge(&out, direct)
@@ -4326,11 +4344,11 @@ prov_region_of :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
 		}
 		if root, path, ok := prov_value_place_of(graph, id); ok {
 			set := prov_region_content_at(graph, root, path)
-			// An allocator no write named, such as one in a received record's
-			// field, is one the analysis cannot name.
+			// An allocator no write named is one the analysis cannot name.
 			if region_is_empty(set) && type_underlying(c, value.type) == TYPE_ALLOCATOR {
 				set.unknown = true
 			}
+			prov_add_received_allocator(graph, &set, root, value.type)
 			return set
 		}
 		// A field of a temporary is in what produced it, each alternative of a

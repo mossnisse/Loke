@@ -10,6 +10,13 @@ checklist.
 
 ### Breaking changes
 
+- A write into a parameter no longer hides the allocator it received there
+  ([`@(allocator_reset)`](design.md#allocator_reset)). After `if (flag) { maybe =
+  .some(allowed); }` on `maybe: inout Option(Allocator)`, `free_all(maybe or_else
+  allowed)` used to compile though the payload may still be the caller's; it is now
+  `L0538`, as a record's field, a `switch` binding, and `.as` are. A write on every
+  path is rejected too, as these facts do not follow control flow. Upgrade by
+  resetting the marked allocator itself.
 - A borrow stored through a slice literal's slice is now seen
   ([Slice literals](design.md#slice-literals)). After `view := []mut []int{{}};
   view[0] = values[:];`, `drop(values)` used to compile while `view[0][0]` read the

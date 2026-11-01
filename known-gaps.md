@@ -158,32 +158,29 @@ the cost of also rejecting `drop(values); view.len()` for a named array, as a sl
 literal already does. Found while fixing a slice literal's drop on 2026-11-01 at
 `46cf2aa8` (P1).
 
-### A conditional write hides a received allocator payload's region
+### A write on every path does not end a received allocator's region
 
-[The allocator reset promise](design.md#allocator_reset) must cover every
-pre-existing region that can be reset. A known write into a received `Option`
-can suppress the unknown incoming payload that `5580637f` added:
+[The allocator reset promise](design.md#allocator_reset) covers the regions a reset
+can reach. A value a parameter received, written on every path before the reset,
+holds only what the write put there:
 
 ```loke
 package main;
-reset :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator,
-              maybe: inout Option(Allocator), flag: bool) {
-    if (flag) { maybe = Option(Allocator).some(allowed); }
-    free_all(maybe or_else allowed);
+Holder :: struct { allocator: Allocator }
+reset :: proc(@(allocator_reset) @(escape=stored) allowed: Allocator, h: inout Holder) {
+    h.allocator = allowed;
+    free_all(h.allocator);
 }
 main :: proc() {}
 ```
 
-This compiles. With `flag` false, the reset can reach the incoming payload's
-region, which need not be `allowed`'s. Removing the conditional assignment
-reports `L0538`. In [src/cfg_provenance.odin](src/cfg_provenance.odin),
-`prov_result_region_at` adds the unknown parameter origin only when the whole
-queried set is empty. Region writes merge without regard to control flow, so
-the possible write of `allowed` makes that set nonempty even on the path where
-the incoming payload survives. Preserve the incoming origin alongside possible
-writes; seeding allocator leaves at parameter entry would also avoid repeating
-this fallback in individual readers. Confirmed on `5580637f` during review on
-2026-11-01 (P2); the conditional-write case also compiles at `426f1a13`.
+This reports `L0538`, though the reset can only reach `allowed`'s region. Region facts
+in [src/cfg_provenance.odin](src/cfg_provenance.odin) only grow and do not follow
+control flow, so `prov_add_received_allocator` cannot tell this from the same write
+under an `if`, and keeps the incoming region. An `Allocator` parameter reassigned from
+another is treated the same way, for the same reason. Resetting `allowed` itself says
+the same thing. Telling them apart takes region facts by program point. Found while
+fixing the conditional write on 2026-11-01 at `46cf2aa8` (P3, over-rejection).
 
 ### A local alias hides a generic-dependent Unit success
 
